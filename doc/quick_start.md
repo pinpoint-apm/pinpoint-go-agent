@@ -62,21 +62,21 @@ The functions for setting up the Pinpoint Go Agent are as follows:
   
 ## Web Request Trace
 
-As mentioned earlier, Go applications must be manually instrumented at the source code level. pinpoint-go-agent provides plugin modules to help developers keep track of their favorite lubricants. This module allows you to measure with simple source code modification.
+As mentioned earlier, the Go application must be manually instrumented at the source code level. Pinpoint-go-agent provides plugins modules to help developers trace the many-used libraries. These modules allow you to make instruments with simple source code modifications.
 
 ### Standard HTTP Library
 
-The pinpoint http plugin lets you track Go's built-in library, 'http' packages. For example, if you want to trace the handler of the http server below,
+The pinpoint http plugin lets you trace Go's built-in 'http' packages. For example, if you want to trace the handler of the http server below,
 
 ```go
 http.HandleFunc("/", indexHandler)
 ```
-You can write code for the measurement as shown below.
+you can write code for the instruments as shown below.
 ```go
 http.HandleFunc(phttp.WrapHandleFunc(agent, "index", "/", index))
 ```
 
-The complete example code for tracking the http server's handler is as follows:
+The complete example code for tracing the http server's handler is as follows:
 ``` go
 package main
 
@@ -91,8 +91,8 @@ func index(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	opts := []pinpoint.ConfigOption{
-		pinpoint.WithAppName("GoAgentTraceWebRequest"),
-		pinpoint.WithAgentId("GoAgentTraceWebRequestAgentId"),
+		pinpoint.WithAppName("TraceWebRequest"),
+		pinpoint.WithAgentId("TraceWebRequestAgent"),
 		pinpoint.WithCollectorHost("localhost"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
@@ -107,7 +107,7 @@ func main() {
 ```
 
 ### Web Framwork
-pinpoint-go-agent provides a plugin to track the Jin, Echo Web framework. Below is an example of tracking the handler of the Gin framework. Simply register the pinpoint gin plugin with the middleware of the gin.
+pinpoint-go-agent provides a plugin to track the Gin, Echo, Chi Web framework. Below is an example of tracking the handler of the Gin framework. Simply register the pinpoint gin plugin with the middleware of the Gin.
 
 ``` go
 router.Use(pgin.Middleware(agent))
@@ -137,7 +137,7 @@ func main() {
 ```
 
 ### Outgoing Http Request 
-If you are tracking outgoing HTTP requests, you must instrument the HTTP client. The WrapClient() function in the pinpoint http plugin allows you to track http client calls.
+If you are tracking outgoing HTTP requests, you must instrument the HTTP client. The WrapClient() function in the pinpoint http plugin allows you to trace http client calls.
 
 ``` go
 func outgoing(w http.ResponseWriter, r *http.Request) {
@@ -209,7 +209,7 @@ func query(w http.ResponseWriter, r *http.Request) {
 ```
 
 ## Context Passing
-In the example of Outgoing Http Request above, looking at the external() function, there is a code that invokes the FromContext() function to acquire the tracer.
+In the example of Outgoing Http Request above, looking at the outgoing() function, there is a code that invokes the FromContext() function to acquire the tracer.
 
 ``` go
 tracer := pinpoint.FromContext(r.Context())
@@ -222,7 +222,7 @@ ctx := pinpoint.NewContext(context.Background(), tracer)
 row := db.QueryRowContext(ctx, "SELECT count(*) from tables")
 ```
 
-The tracer is the object that implements the tracer interface of the pinpoint-go-agent, which generates and stores instrumentation information. When calling the go function, we use the context of the go to pass this tracer. The pinpoint-go-agent adds tracer to the context and provides the functions that are obtained.
+The tracer is the object that implements the tracer interface of the pinpoint-go-agent, which generates and stores instrumentation information. When calling the go function, we use the context of the go language to pass this tracer. Pinpoint-go-agent provides a function that adds a tracer to the context, and a function that imports the trace from the context, respectively.
 
 ``` go
 NewContext(ctx context.Context, tracer Tracer) context.Context 
