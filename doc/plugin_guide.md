@@ -31,7 +31,7 @@ func main() {
 }
 ```
 
-[Full Example Source](/plugin/chi/example/chi_example.go)
+[Full Example Source](/plugin/chi/example/chi_server.go)
 
 ## echo
 You can instrument [Echo web framewark](https://github.com/labstack/echo) using the pinpoint echo plugin.
@@ -477,7 +477,7 @@ func main() {
 }
 
 ```
-[Full Example Source](/plugin/grpc/example/server/server.go)
+[Full Example Source](/plugin/grpc/example/server.go)
 
 ### client
 ``` go
@@ -556,7 +556,7 @@ func doGrpc(w http.ResponseWriter, r *http.Request) {
 	streamCallUnaryReturn(ctx, client)
 }
 ```
-[Full Example Source](/plugin/grpc/example/client/client.go)
+[Full Example Source](/plugin/grpc/example/client.go)
 
 ## http
 You can instrument [go http package](https://google.golang.org/http) using the pinpoint http plugin.
