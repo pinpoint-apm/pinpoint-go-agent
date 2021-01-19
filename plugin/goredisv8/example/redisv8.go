@@ -52,11 +52,15 @@ func redisv8Cluster(w http.ResponseWriter, r *http.Request) {
 	err := client.Set(ctx, "key", "value", 0).Err()
 	if err != nil {
 		fmt.Println(err)
+		w.WriteHeader(500)
+		return
 	}
 
 	val, err := client.Get(ctx, "key").Result()
 	if err != nil {
 		fmt.Println(err)
+		w.WriteHeader(500)
+		return
 	}
 	fmt.Println("key", val)
 }

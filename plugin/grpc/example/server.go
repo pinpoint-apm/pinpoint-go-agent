@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
 	pgrpc "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc"
@@ -13,8 +14,6 @@ import (
 )
 
 type Server struct{}
-
-const numStreamSend = 2
 
 var returnMsg = &testapp.Greeting{Msg: "Hello!!"}
 
@@ -26,7 +25,7 @@ func (s *Server) UnaryCallUnaryReturn(ctx context.Context, msg *testapp.Greeting
 func (s *Server) UnaryCallStreamReturn(in *testapp.Greeting, stream testapp.Hello_UnaryCallStreamReturnServer) error {
 	printGreeting(stream.Context(), in)
 
-	for i := 0; i < numStreamSend; i++ {
+	for i := 0; i < 2; i++ {
 		if err := stream.Send(returnMsg); err != nil {
 			return err
 		}
@@ -76,7 +75,7 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("TestGrpcServer"),
 		pinpoint.WithAgentId("TestGrpcServerAgent"),
-		pinpoint.WithCollectorHost("localhost"),
+		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)

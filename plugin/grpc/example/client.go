@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
@@ -13,8 +14,6 @@ import (
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	"google.golang.org/grpc"
 )
-
-const numStreamSend = 2
 
 var greeting = &testapp.Greeting{Msg: "Hello!"}
 
@@ -59,7 +58,7 @@ func streamCallUnaryReturn(ctx context.Context, client testapp.HelloClient) {
 		log.Fatalf("streamCallUnaryReturn got error %v", err)
 	}
 
-	for i := 0; i < numStreamSend; i++ {
+	for i := 0; i < 2; i++ {
 		if err := stream.Send(greeting); err != nil {
 			if err == io.EOF {
 				break
@@ -99,7 +98,7 @@ func streamCallStreamReturn(ctx context.Context, client testapp.HelloClient) {
 		}
 	}()
 
-	for i := 0; i < numStreamSend; i++ {
+	for i := 0; i < 2; i++ {
 		if err := stream.Send(greeting); err != nil {
 			log.Fatalf("streamCallStreamReturn got error %v", err)
 		}
@@ -134,7 +133,7 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("TestGrpcClient"),
 		pinpoint.WithAgentId("TestGrpcClientAgent"),
-		pinpoint.WithCollectorHost("localhost"),
+		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)
