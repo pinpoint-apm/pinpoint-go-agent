@@ -51,7 +51,7 @@ func (m *monitor) Started(ctx context.Context, evt *event.CommandStartedEvent) {
 	dbTrace.DbName = evt.DatabaseName
 	dbTrace.DbHost = hostname
 
-	tracer = pinpoint.NewDatabaseTracer(tracer, "mongodb."+evt.CommandName, dbTrace)
+	tracer = pinpoint.NewDatabaseTracer(ctx, "mongodb."+evt.CommandName, dbTrace)
 	tracer.SpanEvent().Annotations().AppendString(annotationMongoCollectioInfo, collName(evt))
 	tracer.SpanEvent().Annotations().AppendStringString(annotationMongoJasonData, string(b), "")
 

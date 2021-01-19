@@ -5,8 +5,10 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"io"
 	"log"
 	"net/http"
+	"os"
 
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
@@ -30,13 +32,14 @@ func mongodb(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		panic(err)
 	}
+	io.WriteString(w, "insert success")
 }
 
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoMongoTest"),
 		pinpoint.WithAgentId("GoMongoTestAgent"),
-		pinpoint.WithCollectorHost("localhost"),
+		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)

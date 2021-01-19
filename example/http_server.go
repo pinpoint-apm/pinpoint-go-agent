@@ -76,7 +76,7 @@ func async(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoExample"),
-		pinpoint.WithAgentId("GoExampleAgent12345678901234567890"),
+		pinpoint.WithAgentId("GoExampleAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	c, _ := pinpoint.NewConfig(opts...)
