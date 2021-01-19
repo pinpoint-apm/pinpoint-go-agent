@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+service Hello {
+    rpc UnaryCallUnaryReturn(Greeting) returns (Greeting) {}
+    rpc UnaryCallStreamReturn(Greeting) returns (stream Greeting) {}
+    rpc StreamCallUnaryReturn(stream Greeting) returns (Greeting) {}
+    rpc StreamCallStreamReturn(stream Greeting) returns (stream Greeting) {}
+}
+
+message Greeting {
+    string msg = 1;
+}

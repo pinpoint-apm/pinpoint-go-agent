@@ -1,0 +1,8 @@
+#pinpoint go-agent configuration
+
+ApplicationName: "MyAppName"
+Collector:
+  Host: "my.collector.host"
+Sampling:
+  Rate: 10
+LogLevel: "error"
