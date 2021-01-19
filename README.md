@@ -1,7 +1,7 @@
 # Pinpoint Go Agent
 
 Pinpoint Go Agent is a library that allows Go applications to be monitored through pinpoint.
-Because Go is a compiled language and does not have a virtual machine like Java, instrument requires adding code that uses the pinpoint Go Agent API to the source code of the Go application. 
+Since Go is a compiled language and does not have a virtual machine like Java, developers must add code that uses the pinpoint Go Agent API to the source code to instrument the Go application.
 See the documents below for more information.
 
  * [Quick Start](doc/quick_start.md)
@@ -17,25 +17,65 @@ import pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
 ```
 
 ## Requirements
-Go 1.12+
+* Go 1.12+
+* Pinpoint 2.1.1+
 
-## Agent Creation and Configuration
+## Example
 
 ``` go
+package main
+
+import (
+	"io"
+	"log"
+	"net/http"
+
+	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
+)
+
+func index(w http.ResponseWriter, r *http.Request) {
+	io.WriteString(w, "hello world")
+}
+
+func outgoing(w http.ResponseWriter, r *http.Request) {
+	client := phttp.WrapClient(nil)
+
+	request, _ := http.NewRequest("GET", "http://localhost:9000/mongo", nil)
+	request = request.WithContext(r.Context())
+
+	resp, err := client.Do(request)
+	if nil != err {
+		io.WriteString(w, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(w, resp.Body)
+}
+
 func main() {
 	opts := []pinpoint.ConfigOption{
-		pinpoint.WithAppName("Your Application Name"),
-		pinpoint.WithAgentId("Agent Id"),
-		pinpoint.WithCollectorHost("pinpoint's collector host"),
+		pinpoint.WithAppName("GoAgentExample"),
+		pinpoint.WithAgentId("GoAgentLocalhost"),
+		pinpoint.WithCollectorHost("localhost"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
-	
-	...
+
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "index", "/", index))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "outgoing", "/outgoing", outgoing))
+
+	http.ListenAndServe(":8000", nil)
+	agent.Shutdown()
+}
 ```
+
+## Screen Shot
+![screenshot](doc/screenshot.png) 
 
 ## Plug-ins
 | project | plugin |
