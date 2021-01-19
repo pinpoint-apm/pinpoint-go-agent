@@ -70,6 +70,6 @@ func parseDSN(dt *pinpoint.DatabaseTrace, dsn string) {
 	dt.DbHost = host
 	dt.DbName = dbname
 
-	fmt.Println("host= " + host)
-	fmt.Println("dbname= " + dbname)
+	//fmt.Println("host= " + host)
+	//fmt.Println("dbname= " + dbname)
 }
