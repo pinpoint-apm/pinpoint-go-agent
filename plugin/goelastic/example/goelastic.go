@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	elasticsearch "github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
 	pelastic "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelastic"
