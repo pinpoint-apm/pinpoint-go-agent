@@ -84,7 +84,7 @@ func main() {
 | [echo](https://github.com/labstack/echo) | [plugin/echo](plugin/echo) |
 | [gin](https://github.com/gin-gonic/gin) | [plugin/gin](plugin/gin) |
 | [gocql](https://github.com/gocql/gocql) | [plugin/gocql](plugin/gocql) |
-| [go-elasticsearch](https://github.com/elastic/go-elasticsearch) | [plugin/goelastic](plugin/elastic) |
+| [go-elasticsearch](https://github.com/elastic/go-elasticsearch) | [plugin/goelastic](plugin/goelastic) |
 | [gohbase](https://github.com/tsuna/gohbase) | [plugin/gohbase](plugin/gohbase) |
 | [go-redis](https://github.com/go-redis/redis) | [plugin/goredis](plugin/goredis), [plugin/goredisv8](plugin/goredisv8) |
 | [grpc](https://google.golang.org/grpc) | [plugin/grpc](plugin/grpc) |
