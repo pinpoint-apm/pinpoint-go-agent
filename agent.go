@@ -49,6 +49,7 @@ type Agent struct {
 	sqlIdGen         int32
 	apiCache         *lru.Cache
 	apiIdGen         int32
+	metaMutex        sync.Mutex
 
 	enable bool
 }
@@ -278,6 +279,9 @@ func (agent *Agent) cacheErrorFunc(funcname string) int32 {
 
 	id = atomic.AddInt32(&agent.exceptionIdGen, 1)
 	agent.exceptionIdCache.Add(funcname, id)
+
+	agent.metaMutex.Lock()
+	defer agent.metaMutex.Unlock()
 	agent.agentGrpc.sendStringMetadata(id, funcname)
 
 	log("agent").Info("cache exception id: ", id, funcname)
@@ -299,6 +303,9 @@ func (agent *Agent) cacheSql(sql string) int32 {
 
 	id = atomic.AddInt32(&agent.sqlIdGen, 1)
 	agent.sqlCache.Add(sql, id)
+
+	agent.metaMutex.Lock()
+	defer agent.metaMutex.Unlock()
 	agent.agentGrpc.sendSqlMetadata(id, sql)
 
 	log("agent").Info("cache sql id: ", id, sql)
@@ -322,6 +329,9 @@ func (agent *Agent) cacheSpanApiId(descriptor string, apiType int) int32 {
 
 	id = atomic.AddInt32(&agent.apiIdGen, 1)
 	agent.apiCache.Add(key, id)
+
+	agent.metaMutex.Lock()
+	defer agent.metaMutex.Unlock()
 	agent.agentGrpc.sendApiMetadata(id, descriptor, -1, apiType)
 
 	log("agent").Info("cache api id: ", id, key)
