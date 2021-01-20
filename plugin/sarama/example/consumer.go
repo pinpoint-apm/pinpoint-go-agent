@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/Shopify/sarama"
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
@@ -78,7 +79,7 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoKafkaConsumer"),
 		pinpoint.WithAgentId("GoKafkaConsumerAgent"),
-		pinpoint.WithCollectorHost("localhost"),
+		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)

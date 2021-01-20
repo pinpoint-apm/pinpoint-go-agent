@@ -4,6 +4,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/gocql/gocql"
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
@@ -53,7 +54,7 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoCassandraTest"),
 		pinpoint.WithAgentId("GoCassandraTestAgent"),
-		pinpoint.WithCollectorHost("localhost"),
+		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)

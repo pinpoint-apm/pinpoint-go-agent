@@ -1,11 +1,9 @@
 package main
 
 import (
-	"errors"
 	"io"
 	"log"
 	"net/http"
-	"time"
 
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"

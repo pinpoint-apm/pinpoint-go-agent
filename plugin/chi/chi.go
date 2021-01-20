@@ -1,7 +1,6 @@
 package chi
 
 import (
-	"errors"
 	"net/http"
 
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"

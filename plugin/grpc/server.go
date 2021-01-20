@@ -2,7 +2,6 @@ package grpc
 
 import (
 	"context"
-	"strings"
 
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
 	"google.golang.org/grpc"
