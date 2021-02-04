@@ -28,4 +28,5 @@ require (
 	google.golang.org/genproto v0.0.0-20200319113533-08878b785e9c // indirect
 	google.golang.org/grpc v1.30.0
 	gopkg.in/yaml.v2 v2.3.0
+	github.com/stretchr/testify v1.7.0
 )

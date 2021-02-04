@@ -150,7 +150,7 @@ func (agentGrpc *agentGrpc) sendSqlMetadata(sqlId int32, sql string) {
 	ctx := grpcMetadataContext(agentGrpc.agent, -1)
 	_, err := agentGrpc.metadataClient.RequestSqlMetaData(ctx, &sqlmeta)
 	if err != nil {
-		log("grpc").Error("fail to call RequestSqlMetaData() - %v", err)
+		log("grpc").Errorf("fail to call RequestSqlMetaData() - %v", err)
 	}
 }
 
