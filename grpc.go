@@ -83,7 +83,7 @@ func newAgentGrpc(agent *Agent) (*agentGrpc, error) {
 	return &agentGrpc{conn, agentClient, metadataClient, 0, agent}, nil
 }
 
-func (agentGrpc *agentGrpc) sendAgentInfo() {
+func (agentGrpc *agentGrpc) sendAgentInfo() error {
 	var agentinfo pb.PAgentInfo
 	agentinfo.AgentVersion = AgentVersion
 
@@ -104,13 +104,18 @@ func (agentGrpc *agentGrpc) sendAgentInfo() {
 	log("grpc").Infof("send agent information: %s", agentinfo.String())
 
 	ctx := grpcMetadataContext(agentGrpc.agent, -1)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
 	_, err = agentGrpc.agentClient.RequestAgentInfo(ctx, &agentinfo)
 	if err != nil {
 		log("grpc").Errorf("fail to call RequestAgentInfo() - %v", err)
 	}
+
+	return err
 }
 
-func (agentGrpc *agentGrpc) sendApiMetadata(apiId int32, api string, line int, apiType int) {
+func (agentGrpc *agentGrpc) sendApiMetadata(apiId int32, api string, line int, apiType int) error {
 	var apimeta pb.PApiMetaData
 	apimeta.ApiId = apiId
 	apimeta.ApiInfo = api
@@ -120,13 +125,18 @@ func (agentGrpc *agentGrpc) sendApiMetadata(apiId int32, api string, line int, a
 	log("grpc").Infof("send API metadata: %s", apimeta.String())
 
 	ctx := grpcMetadataContext(agentGrpc.agent, -1)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
 	_, err := agentGrpc.metadataClient.RequestApiMetaData(ctx, &apimeta)
 	if err != nil {
 		log("grpc").Errorf("fail to call RequestApiMetaData() - %v", err)
 	}
+
+	return err
 }
 
-func (agentGrpc *agentGrpc) sendStringMetadata(strId int32, str string) {
+func (agentGrpc *agentGrpc) sendStringMetadata(strId int32, str string) error {
 	var strmeta pb.PStringMetaData
 	strmeta.StringId = strId
 	strmeta.StringValue = str
@@ -134,13 +144,18 @@ func (agentGrpc *agentGrpc) sendStringMetadata(strId int32, str string) {
 	log("grpc").Infof("send string metadata: %s", strmeta.String())
 
 	ctx := grpcMetadataContext(agentGrpc.agent, -1)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
 	_, err := agentGrpc.metadataClient.RequestStringMetaData(ctx, &strmeta)
 	if err != nil {
 		log("grpc").Errorf("fail to call RequestStringMetaData() - %v", err)
 	}
+
+	return err
 }
 
-func (agentGrpc *agentGrpc) sendSqlMetadata(sqlId int32, sql string) {
+func (agentGrpc *agentGrpc) sendSqlMetadata(sqlId int32, sql string) error {
 	var sqlmeta pb.PSqlMetaData
 	sqlmeta.SqlId = sqlId
 	sqlmeta.Sql = sql
@@ -148,10 +163,15 @@ func (agentGrpc *agentGrpc) sendSqlMetadata(sqlId int32, sql string) {
 	log("grpc").Infof("send SQL metadata: %s", sqlmeta.String())
 
 	ctx := grpcMetadataContext(agentGrpc.agent, -1)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
 	_, err := agentGrpc.metadataClient.RequestSqlMetaData(ctx, &sqlmeta)
 	if err != nil {
 		log("grpc").Errorf("fail to call RequestSqlMetaData() - %v", err)
 	}
+
+	return err
 }
 
 type pingStream struct {

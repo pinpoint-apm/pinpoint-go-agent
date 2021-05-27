@@ -40,6 +40,7 @@ type Agent struct {
 	statGrpc   *statGrpc
 	spanBuffer []*span
 	spanChan   chan *span
+	metaChan   chan interface{}
 	wg         sync.WaitGroup
 	sampler    traceSampler
 
@@ -49,9 +50,24 @@ type Agent struct {
 	sqlIdGen         int32
 	apiCache         *lru.Cache
 	apiIdGen         int32
-	metaMutex        sync.Mutex
 
 	enable bool
+}
+
+type apiMeta struct {
+	id         int32
+	descriptor string
+	apiType    int
+}
+
+type stringMeta struct {
+	id       int32
+	funcname string
+}
+
+type sqlMeta struct {
+	id  int32
+	sql string
 }
 
 func NewAgent(config *Config) (*Agent, error) {
@@ -71,21 +87,8 @@ func NewAgent(config *Config) (*Agent, error) {
 	}
 
 	var err error
-	agent.agentGrpc, err = newAgentGrpc(&agent)
-	if err != nil {
-		return nil, err
-	}
-
-	agent.spanGrpc, err = newSpanGrpc(&agent)
-	if err != nil {
-		return nil, err
-	}
-	agent.spanChan = make(chan *span, 10*1024)
-
-	agent.statGrpc, err = newStatGrpc(&agent)
-	if err != nil {
-		return nil, err
-	}
+	agent.spanChan = make(chan *span, 5*1024)
+	agent.metaChan = make(chan interface{}, 1*1024)
 
 	agent.exceptionIdGen = 0
 	agent.exceptionIdCache, err = lru.New(cacheSize)
@@ -112,16 +115,46 @@ func NewAgent(config *Config) (*Agent, error) {
 		agent.sampler = newBasicTraceSampler(baseSampler)
 	}
 
-	agent.enable = true
-	agent.agentGrpc.sendAgentInfo()
-	agent.agentGrpc.sendApiMetadata(asyncApiId, "Asynchronous Invocation", -1, ApiTypeInvocation)
+	go connectGrpc(&agent)
+	return &agent, nil
+}
 
+func connectGrpc(agent *Agent) error {
+	var err error
+
+	agent.agentGrpc, err = newAgentGrpc(agent)
+	if err != nil {
+		return err
+	}
+
+	agent.spanGrpc, err = newSpanGrpc(agent)
+	if err != nil {
+		return err
+	}
+
+	agent.statGrpc, err = newStatGrpc(agent)
+	if err != nil {
+		return err
+	}
+
+	err = agent.agentGrpc.sendAgentInfo()
+	if err != nil {
+		return err
+	}
+
+	err = agent.agentGrpc.sendApiMetadata(asyncApiId, "Asynchronous Invocation", -1, ApiTypeInvocation)
+	if err != nil {
+		return err
+	}
+
+	agent.enable = true
 	go agent.sendPingWorker()
 	go agent.sendSpanWorker()
-	go collectStats(&agent)
-	agent.wg.Add(3)
+	go agent.sendMetaWorker()
+	go collectStats(agent)
+	agent.wg.Add(4)
 
-	return &agent, nil
+	return nil
 }
 
 func (agent *Agent) Shutdown() {
@@ -236,7 +269,7 @@ func (agent *Agent) sendSpanWorker() {
 
 	for span := range agent.spanChan {
 		if !agent.enable {
-			continue
+			break
 		}
 
 		err := stream.sendSpan(span)
@@ -264,6 +297,52 @@ func (agent *Agent) tryEnqueueSpan(span *span) bool {
 	}
 }
 
+func (agent *Agent) sendMetaWorker() {
+	log("agent").Info("meta goroutine start")
+	defer agent.wg.Done()
+
+	for md := range agent.metaChan {
+		if !agent.enable {
+			break
+		}
+
+		var err error
+		switch md.(type) {
+		case apiMeta:
+			api := md.(apiMeta)
+			err = agent.agentGrpc.sendApiMetadata(api.id, api.descriptor, -1, api.apiType)
+			break
+		case stringMeta:
+			str := md.(stringMeta)
+			err = agent.agentGrpc.sendStringMetadata(str.id, str.funcname)
+			break
+		case sqlMeta:
+			sql := md.(sqlMeta)
+			err = agent.agentGrpc.sendSqlMetadata(sql.id, sql.sql)
+			break
+		}
+
+		if err != nil {
+			log("agent").Errorf("fail to sendMetadata(): %v", err)
+		}
+	}
+
+	log("agent").Info("meta goroutine finish")
+}
+
+func (agent *Agent) tryEnqueueMeta(md interface{}) bool {
+	if !agent.enable {
+		return false
+	}
+
+	select {
+	case agent.metaChan <- md:
+		return true
+	default:
+		return false
+	}
+}
+
 func (agent *Agent) cacheErrorFunc(funcname string) int32 {
 	var id int32
 
@@ -280,9 +359,10 @@ func (agent *Agent) cacheErrorFunc(funcname string) int32 {
 	id = atomic.AddInt32(&agent.exceptionIdGen, 1)
 	agent.exceptionIdCache.Add(funcname, id)
 
-	agent.metaMutex.Lock()
-	defer agent.metaMutex.Unlock()
-	agent.agentGrpc.sendStringMetadata(id, funcname)
+	md := stringMeta{}
+	md.id = id
+	md.funcname = funcname
+	agent.tryEnqueueMeta(md)
 
 	log("agent").Info("cache exception id: ", id, funcname)
 	return id
@@ -304,9 +384,10 @@ func (agent *Agent) cacheSql(sql string) int32 {
 	id = atomic.AddInt32(&agent.sqlIdGen, 1)
 	agent.sqlCache.Add(sql, id)
 
-	agent.metaMutex.Lock()
-	defer agent.metaMutex.Unlock()
-	agent.agentGrpc.sendSqlMetadata(id, sql)
+	md := sqlMeta{}
+	md.id = id
+	md.sql = sql
+	agent.tryEnqueueMeta(md)
 
 	log("agent").Info("cache sql id: ", id, sql)
 	return id
@@ -330,9 +411,11 @@ func (agent *Agent) cacheSpanApiId(descriptor string, apiType int) int32 {
 	id = atomic.AddInt32(&agent.apiIdGen, 1)
 	agent.apiCache.Add(key, id)
 
-	agent.metaMutex.Lock()
-	defer agent.metaMutex.Unlock()
-	agent.agentGrpc.sendApiMetadata(id, descriptor, -1, apiType)
+	md := apiMeta{}
+	md.id = id
+	md.descriptor = descriptor
+	md.apiType = apiType
+	agent.tryEnqueueMeta(md)
 
 	log("agent").Info("cache api id: ", id, key)
 	return id
