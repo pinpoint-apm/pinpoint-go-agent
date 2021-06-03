@@ -51,6 +51,14 @@ type Agent struct {
 	apiCache         *lru.Cache
 	apiIdGen         int32
 
+	spanStream         *spanStream
+	spanStreamReq      bool
+	spanStreamReqCount uint64
+
+	statStream         *statStream
+	statStreamReq      bool
+	statStreamReqCount uint64
+
 	enable bool
 }
 
@@ -119,42 +127,62 @@ func NewAgent(config *Config) (*Agent, error) {
 	return &agent, nil
 }
 
-func connectGrpc(agent *Agent) error {
+func connectGrpc(agent *Agent) {
 	var err error
 
-	agent.agentGrpc, err = newAgentGrpc(agent)
-	if err != nil {
-		return err
+	for true {
+		agent.agentGrpc, err = newAgentGrpc(agent)
+		if err != nil {
+			continue
+		}
+
+		agent.spanGrpc, err = newSpanGrpc(agent)
+		if err != nil {
+			agent.agentGrpc.close()
+			continue
+		}
+
+		agent.statGrpc, err = newStatGrpc(agent)
+		if err != nil {
+			agent.agentGrpc.close()
+			agent.spanGrpc.close()
+			continue
+		}
+
+		break
 	}
 
-	agent.spanGrpc, err = newSpanGrpc(agent)
-	if err != nil {
-		return err
+	for true {
+		err = agent.agentGrpc.sendAgentInfo()
+		if err == nil {
+			break
+		}
+		time.Sleep(1 * time.Second)
 	}
 
-	agent.statGrpc, err = newStatGrpc(agent)
-	if err != nil {
-		return err
-	}
-
-	err = agent.agentGrpc.sendAgentInfo()
-	if err != nil {
-		return err
-	}
-
-	err = agent.agentGrpc.sendApiMetadata(asyncApiId, "Asynchronous Invocation", -1, ApiTypeInvocation)
-	if err != nil {
-		return err
+	for true {
+		err = agent.agentGrpc.sendApiMetadata(asyncApiId, "Asynchronous Invocation", -1, ApiTypeInvocation)
+		if err == nil {
+			break
+		}
+		time.Sleep(1 * time.Second)
 	}
 
 	agent.enable = true
 	go agent.sendPingWorker()
 	go agent.sendSpanWorker()
+	go agent.sendStatsWorker()
 	go agent.sendMetaWorker()
-	go collectStats(agent)
-	agent.wg.Add(4)
 
-	return nil
+	agent.spanStreamReq = false
+	agent.spanStreamReqCount = 0
+	go agent.spanStreamMonitor()
+
+	agent.statStreamReq = false
+	agent.statStreamReqCount = 0
+	go agent.statStreamMonitor()
+
+	agent.wg.Add(6)
 }
 
 func (agent *Agent) Shutdown() {
@@ -255,7 +283,7 @@ func (agent *Agent) sendPingWorker() {
 			stream = agent.agentGrpc.newPingStreamWithRetry()
 		}
 
-		time.Sleep(5 * time.Second)
+		time.Sleep(60 * time.Second)
 	}
 
 	stream.close()
@@ -265,22 +293,26 @@ func (agent *Agent) sendPingWorker() {
 func (agent *Agent) sendSpanWorker() {
 	log("agent").Info("span goroutine start")
 	defer agent.wg.Done()
-	stream := agent.spanGrpc.newSpanStreamWithRetry()
+	agent.spanStream = agent.spanGrpc.newSpanStreamWithRetry()
 
 	for span := range agent.spanChan {
 		if !agent.enable {
 			break
 		}
 
-		err := stream.sendSpan(span)
+		agent.spanStreamReq = true
+		err := agent.spanStream.sendSpan(span)
+		agent.spanStreamReq = false
+		agent.spanStreamReqCount++
+
 		if err != nil {
 			log("agent").Errorf("fail to sendSpan(): %v", err)
-			stream.close()
-			stream = agent.spanGrpc.newSpanStreamWithRetry()
+			agent.spanStream.close()
+			agent.spanStream = agent.spanGrpc.newSpanStreamWithRetry()
 		}
 	}
 
-	stream.close()
+	agent.spanStream.close()
 	log("agent").Info("span goroutine finish")
 }
 
@@ -293,7 +325,40 @@ func (agent *Agent) tryEnqueueSpan(span *span) bool {
 	case agent.spanChan <- span:
 		return true
 	default:
-		return false
+		break
+	}
+
+	<-agent.spanChan
+	return false
+}
+
+func (agent *Agent) spanStreamMonitor() {
+	for true {
+		if !agent.enable {
+			break
+		}
+
+		c := agent.spanStreamReqCount
+		time.Sleep(5 * time.Second)
+
+		if agent.spanStreamReq == true && c == agent.spanStreamReqCount {
+			agent.spanStream.close()
+		}
+	}
+}
+
+func (agent *Agent) statStreamMonitor() {
+	for true {
+		if !agent.enable {
+			break
+		}
+
+		c := agent.statStreamReqCount
+		time.Sleep(5 * time.Second)
+
+		if agent.statStreamReq == true && c == agent.statStreamReqCount {
+			agent.statStream.close()
+		}
 	}
 }
 
@@ -339,8 +404,11 @@ func (agent *Agent) tryEnqueueMeta(md interface{}) bool {
 	case agent.metaChan <- md:
 		return true
 	default:
-		return false
+		break
 	}
+
+	<-agent.metaChan
+	return false
 }
 
 func (agent *Agent) cacheErrorFunc(funcname string) int32 {

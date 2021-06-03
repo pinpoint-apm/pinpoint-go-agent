@@ -61,6 +61,23 @@ var kacp = keepalive.ClientParameters{
 	PermitWithoutStream: true,
 }
 
+func connectToCollectorWithRetry(serverAddr string, opts []grpc.DialOption) (*grpc.ClientConn, error) {
+	var conn *grpc.ClientConn
+	var err error
+
+	for n := 1; n < 100; n++ {
+		log("grpc").Infof("connect to collector: %s", serverAddr)
+		conn, err = grpc.Dial(serverAddr, opts...)
+		if err == nil {
+			break
+		}
+		log("grpc").Errorf("fail to dial - %v", err)
+		backOffSleep(n)
+	}
+
+	return conn, err
+}
+
 func newAgentGrpc(agent *Agent) (*agentGrpc, error) {
 	var opts []grpc.DialOption
 
@@ -70,11 +87,8 @@ func newAgentGrpc(agent *Agent) (*agentGrpc, error) {
 	opts = append(opts, grpc.WithTimeout(3*time.Second))
 
 	serverAddr := fmt.Sprintf("%s:%d", agent.config.Collector.Host, agent.config.Collector.AgentPort)
-
-	log("grpc").Infof("connect to agent collector: %s", serverAddr)
-	conn, err := grpc.Dial(serverAddr, opts...)
+	conn, err := connectToCollectorWithRetry(serverAddr, opts)
 	if err != nil {
-		log("grpc").Errorf("fail to dial - %v", err)
 		return nil, err
 	}
 
@@ -259,11 +273,8 @@ func newSpanGrpc(agent *Agent) (*spanGrpc, error) {
 	opts = append(opts, grpc.WithTimeout(3*time.Second))
 
 	serverAddr := fmt.Sprintf("%s:%d", agent.config.Collector.Host, agent.config.Collector.SpanPort)
-	log("grpc").Infof("connect to span collector: %s", serverAddr)
-
-	conn, err := grpc.Dial(serverAddr, opts...)
+	conn, err := connectToCollectorWithRetry(serverAddr, opts)
 	if err != nil {
-		log("grpc").Errorf("fail to dial - %v", err)
 		return nil, err
 	}
 
@@ -490,11 +501,8 @@ func newStatGrpc(agent *Agent) (*statGrpc, error) {
 	opts = append(opts, grpc.WithTimeout(3*time.Second))
 
 	serverAddr := fmt.Sprintf("%s:%d", agent.config.Collector.Host, agent.config.Collector.StatPort)
-	log("grpc").Infof("connect to stat collector: %s", serverAddr)
-
-	conn, err := grpc.Dial(serverAddr, opts...)
+	conn, err := connectToCollectorWithRetry(serverAddr, opts)
 	if err != nil {
-		log("grpc").Errorf("fail to dial - %v", err)
 		return nil, err
 	}
 
