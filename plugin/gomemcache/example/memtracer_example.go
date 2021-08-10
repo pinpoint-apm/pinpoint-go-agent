@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	memtracer "github.com/ONG-YA/gomemcache"
+	memtracer "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache"
 	"log"
 	"net/http"
 	"os"
