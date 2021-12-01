@@ -11,7 +11,7 @@ import (
 
 const AnnotationProxyHttpHeader = 300
 
-func NewHttpServerTracer(agent *pinpoint.Agent, req *http.Request, operation string) pinpoint.Tracer {
+func NewHttpServerTracer(agent pinpoint.Agent, req *http.Request, operation string) pinpoint.Tracer {
 	tracer := agent.NewSpanTracerWithReader(operation, req.Header)
 
 	tracer.Span().SetRpcName(req.URL.Path)
@@ -103,8 +103,8 @@ func TraceHttpStatus(tracer pinpoint.Tracer, status int) {
 	}
 }
 
-func WrapHandle(agent *pinpoint.Agent, handlerName string, pattern string, handler http.Handler) (string, http.Handler) {
-	if agent == nil {
+func WrapHandle(agent pinpoint.Agent, handlerName string, pattern string, handler http.Handler) (string, http.Handler) {
+	if !agent.Enable() {
 		return pattern, handler
 	}
 
@@ -125,7 +125,7 @@ func WrapHandle(agent *pinpoint.Agent, handlerName string, pattern string, handl
 	})
 }
 
-func WrapHandleFunc(agent *pinpoint.Agent, handlerName string, pattern string, handler func(http.ResponseWriter, *http.Request)) (string, func(http.ResponseWriter, *http.Request)) {
+func WrapHandleFunc(agent pinpoint.Agent, handlerName string, pattern string, handler func(http.ResponseWriter, *http.Request)) (string, func(http.ResponseWriter, *http.Request)) {
 	p, h := WrapHandle(agent, handlerName, pattern, http.HandlerFunc(handler))
 	return p, func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }
 }

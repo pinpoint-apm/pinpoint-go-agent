@@ -5,12 +5,12 @@ import (
 )
 
 type noopSpan struct {
-	agent       *Agent
+	agent       Agent
 	noopSe      noopSpanEvent
 	annotations noopannotation
 }
 
-func newNoopSpan(agent *Agent) Tracer {
+func newNoopSpan(agent Agent) Tracer {
 	span := noopSpan{}
 	span.agent = agent
 	return &span
@@ -31,7 +31,7 @@ func (span *noopSpan) NewAsyncSpan() Tracer {
 func (span *noopSpan) EndSpanEvent() {}
 
 func (span *noopSpan) TransactionId() TransactionId {
-	return TransactionId{span.agent.config.AgentId, span.agent.startTime, -1}
+	return TransactionId{span.agent.Config().AgentId, span.agent.StartTime(), -1}
 }
 
 func (span *noopSpan) SpanId() int64 {

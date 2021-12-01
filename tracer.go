@@ -15,6 +15,21 @@ func (tid TransactionId) String() string {
 	return fmt.Sprintf("%s^%d^%d", tid.AgentId, tid.StartTime, tid.Sequence)
 }
 
+type Agent interface {
+	Shutdown()
+	NewSpanTracer(operation string) Tracer
+	NewSpanTracerWithReader(operation string, reader DistributedTracingContextReader) Tracer
+	RegisterSpanApiId(descriptor string, apiType int) int32
+	Config() Config
+	GenerateTransactionId() TransactionId
+	TryEnqueueSpan(span *span) bool
+	Enable() bool
+	StartTime() int64
+	CacheErrorFunc(funcname string) int32
+	CacheSql(sql string) int32
+	CacheSpanApiId(descriptor string, apiType int) int32
+}
+
 type Tracer interface {
 	NewSpanEvent(operationName string) Tracer
 	NewAsyncSpan() Tracer

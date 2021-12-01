@@ -139,7 +139,7 @@ func calcResponseAvg() int64 {
 	return 0
 }
 
-func (agent *Agent) sendStatsWorker() {
+func (agent *agent) sendStatsWorker() {
 	log("stats").Info("stat goroutine start")
 	defer agent.wg.Done()
 

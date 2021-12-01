@@ -19,12 +19,12 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-func grpcMetadataContext(agent *Agent, socketId int64) context.Context {
+func grpcMetadataContext(agent Agent, socketId int64) context.Context {
 	m := map[string]string{}
 
-	m["agentid"] = agent.config.AgentId
-	m["applicationname"] = agent.config.ApplicationName
-	m["starttime"] = strconv.FormatInt(agent.startTime, 10)
+	m["agentid"] = agent.Config().AgentId
+	m["applicationname"] = agent.Config().ApplicationName
+	m["starttime"] = strconv.FormatInt(agent.StartTime(), 10)
 
 	if socketId > 0 {
 		m["socketid"] = strconv.FormatInt(socketId, 10)
@@ -47,12 +47,56 @@ func backOffSleep(attempt int) {
 	time.Sleep(jitter)
 }
 
+type AgentGrpcClient interface {
+	RequestAgentInfo(ctx context.Context, agentinfo *pb.PAgentInfo) (*pb.PResult, error)
+	PingSession(ctx context.Context) (pb.Agent_PingSessionClient, error)
+}
+
+type agentGrpcClient struct {
+	client pb.AgentClient
+}
+
+func (agentGrpcClient *agentGrpcClient) RequestAgentInfo(ctx context.Context, agentinfo *pb.PAgentInfo) (*pb.PResult, error) {
+	result, err := agentGrpcClient.client.RequestAgentInfo(ctx, agentinfo)
+	return result, err
+}
+
+func (agentGrpcClient *agentGrpcClient) PingSession(ctx context.Context) (pb.Agent_PingSessionClient, error) {
+	session, err := agentGrpcClient.client.PingSession(ctx)
+	return session, err
+}
+
+type MetaGrpcClient interface {
+	RequestApiMetaData(ctx context.Context, in *pb.PApiMetaData) (*pb.PResult, error)
+	RequestSqlMetaData(ctx context.Context, in *pb.PSqlMetaData) (*pb.PResult, error)
+	RequestStringMetaData(ctx context.Context, in *pb.PStringMetaData) (*pb.PResult, error)
+}
+
+type metaGrpcClient struct {
+	client pb.MetadataClient
+}
+
+func (metaGrpcClient *metaGrpcClient) RequestApiMetaData(ctx context.Context, in *pb.PApiMetaData) (*pb.PResult, error) {
+	result, err := metaGrpcClient.client.RequestApiMetaData(ctx, in)
+	return result, err
+}
+
+func (metaGrpcClient *metaGrpcClient) RequestSqlMetaData(ctx context.Context, in *pb.PSqlMetaData) (*pb.PResult, error) {
+	result, err := metaGrpcClient.client.RequestSqlMetaData(ctx, in)
+	return result, err
+}
+
+func (metaGrpcClient *metaGrpcClient) RequestStringMetaData(ctx context.Context, in *pb.PStringMetaData) (*pb.PResult, error) {
+	result, err := metaGrpcClient.client.RequestStringMetaData(ctx, in)
+	return result, err
+}
+
 type agentGrpc struct {
 	agentConn      *grpc.ClientConn
-	agentClient    pb.AgentClient
-	metadataClient pb.MetadataClient
+	agentClient    AgentGrpcClient
+	metadataClient MetaGrpcClient
 	pingSocketId   int64
-	agent          *Agent
+	agent          Agent
 }
 
 var kacp = keepalive.ClientParameters{
@@ -78,7 +122,7 @@ func connectToCollectorWithRetry(serverAddr string, opts []grpc.DialOption) (*gr
 	return conn, err
 }
 
-func newAgentGrpc(agent *Agent) (*agentGrpc, error) {
+func newAgentGrpc(agent Agent) (*agentGrpc, error) {
 	var opts []grpc.DialOption
 
 	opts = append(opts, grpc.WithInsecure())
@@ -86,18 +130,18 @@ func newAgentGrpc(agent *Agent) (*agentGrpc, error) {
 	opts = append(opts, grpc.WithBlock())
 	opts = append(opts, grpc.WithTimeout(3*time.Second))
 
-	serverAddr := fmt.Sprintf("%s:%d", agent.config.Collector.Host, agent.config.Collector.AgentPort)
+	serverAddr := fmt.Sprintf("%s:%d", agent.Config().Collector.Host, agent.Config().Collector.AgentPort)
 	conn, err := connectToCollectorWithRetry(serverAddr, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	agentClient := pb.NewAgentClient(conn)
-	metadataClient := pb.NewMetadataClient(conn)
-	return &agentGrpc{conn, agentClient, metadataClient, 0, agent}, nil
+	agentClient := agentGrpcClient{pb.NewAgentClient(conn)}
+	metadataClient := metaGrpcClient{pb.NewMetadataClient(conn)}
+	return &agentGrpc{conn, &agentClient, &metadataClient, 0, agent}, nil
 }
 
-func (agentGrpc *agentGrpc) sendAgentInfo() error {
+func makeAgentInfo(agent Agent) (context.Context, *pb.PAgentInfo) {
 	var agentinfo pb.PAgentInfo
 	agentinfo.AgentVersion = AgentVersion
 
@@ -109,7 +153,8 @@ func (agentGrpc *agentGrpc) sendAgentInfo() error {
 
 	agentinfo.Hostname = hostname
 	agentinfo.Ip = getOutboundIP().String()
-	agentinfo.ServiceType = agentGrpc.agent.config.ApplicationType
+	agentinfo.ServiceType = agent.Config().ApplicationType
+	agentinfo.Container = agent.Config().IsContainer
 
 	var svrMeta pb.PServerMetaData
 	svrMeta.ServerInfo = "Go Agent"
@@ -117,11 +162,17 @@ func (agentGrpc *agentGrpc) sendAgentInfo() error {
 
 	log("grpc").Infof("send agent information: %s", agentinfo.String())
 
-	ctx := grpcMetadataContext(agentGrpc.agent, -1)
+	ctx := grpcMetadataContext(agent, -1)
+
+	return ctx, &agentinfo
+}
+
+func (agentGrpc *agentGrpc) sendAgentInfo() error {
+	ctx, agentinfo := makeAgentInfo(agentGrpc.agent)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	_, err = agentGrpc.agentClient.RequestAgentInfo(ctx, &agentinfo)
+	_, err := agentGrpc.agentClient.RequestAgentInfo(ctx, agentinfo)
 	if err != nil {
 		log("grpc").Errorf("fail to call RequestAgentInfo() - %v", err)
 	}
@@ -209,7 +260,7 @@ func (agentGrpc *agentGrpc) newPingStream() *pingStream {
 
 func (agentGrpc *agentGrpc) newPingStreamWithRetry() *pingStream {
 	for n := 1; n < 100; n++ {
-		if !agentGrpc.agent.enable {
+		if !agentGrpc.agent.Enable() {
 			break
 		}
 
@@ -254,17 +305,53 @@ func getOutboundIP() net.IP {
 	return localAddr.IP
 }
 
-type spanGrpc struct {
-	spanConn   *grpc.ClientConn
-	spanClient pb.SpanClient
-	agent      *Agent
+type SpanGrpcClient interface {
+	SendSpan(ctx context.Context) (pb.Span_SendSpanClient, error)
 }
 
-type spanStream struct {
+type spanGrpcClient struct {
+	client pb.SpanClient
+}
+
+func (spanGrpcClient *spanGrpcClient) SendSpan(ctx context.Context) (pb.Span_SendSpanClient, error) {
+	return spanGrpcClient.client.SendSpan(ctx)
+}
+
+type spanGrpc struct {
+	spanConn   *grpc.ClientConn
+	spanClient SpanGrpcClient
+	stream     SpanStreamInvoker
+	agent      Agent
+}
+
+type SpanStreamInvoker interface {
+	Send(*pb.PSpanMessage) error
+	CloseAndRecv() error
+	CloseSend() error
+}
+
+type spanStreamInvoker struct {
 	stream pb.Span_SendSpanClient
 }
 
-func newSpanGrpc(agent *Agent) (*spanGrpc, error) {
+func (invoker *spanStreamInvoker) Send(span *pb.PSpanMessage) error {
+	return invoker.stream.Send(span)
+}
+
+func (invoker *spanStreamInvoker) CloseAndRecv() error {
+	_, err := invoker.stream.CloseAndRecv()
+	return err
+}
+
+func (invoker *spanStreamInvoker) CloseSend() error {
+	return invoker.stream.CloseSend()
+}
+
+type spanStream struct {
+	stream SpanStreamInvoker
+}
+
+func newSpanGrpc(agent Agent) (*spanGrpc, error) {
 	var opts []grpc.DialOption
 
 	opts = append(opts, grpc.WithInsecure())
@@ -272,14 +359,14 @@ func newSpanGrpc(agent *Agent) (*spanGrpc, error) {
 	opts = append(opts, grpc.WithBlock())
 	opts = append(opts, grpc.WithTimeout(3*time.Second))
 
-	serverAddr := fmt.Sprintf("%s:%d", agent.config.Collector.Host, agent.config.Collector.SpanPort)
+	serverAddr := fmt.Sprintf("%s:%d", agent.Config().Collector.Host, agent.Config().Collector.SpanPort)
 	conn, err := connectToCollectorWithRetry(serverAddr, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	client := pb.NewSpanClient(conn)
-	return &spanGrpc{conn, client, agent}, nil
+	client := spanGrpcClient{pb.NewSpanClient(conn)}
+	return &spanGrpc{conn, &client, nil, agent}, nil
 }
 
 func (spanGrpc *spanGrpc) close() {
@@ -297,12 +384,12 @@ func (spanGrpc *spanGrpc) newSpanStream() *spanStream {
 		return &spanStream{nil}
 	}
 
-	return &spanStream{stream}
+	return &spanStream{&spanStreamInvoker{stream}}
 }
 
 func (spanGrpc *spanGrpc) newSpanStreamWithRetry() *spanStream {
 	for n := 1; n < 100; n++ {
-		if !spanGrpc.agent.enable {
+		if !spanGrpc.agent.Enable() {
 			break
 		}
 
@@ -317,12 +404,16 @@ func (spanGrpc *spanGrpc) newSpanStreamWithRetry() *spanStream {
 	return &spanStream{nil}
 }
 
+func (s *spanStream) setStreamInvoker(invoker SpanStreamInvoker) {
+	s.stream = invoker
+}
+
 func (s *spanStream) close() {
 	if s.stream == nil {
 		return
 	}
 
-	_, err := s.stream.CloseAndRecv()
+	err := s.stream.CloseAndRecv()
 	if err != nil {
 		log("grpc").Errorf("fail to close span stream - %v", err)
 	}
@@ -381,7 +472,7 @@ func makePSpan(span *span) *pb.PSpanMessage {
 				SpanEvent:              spanEventList,
 				Err:                    int32(span.err),
 				ExceptionInfo:          nil, //TODO
-				ApplicationServiceType: span.agent.config.ApplicationType,
+				ApplicationServiceType: span.agent.Config().ApplicationType,
 				LoggingTransactionInfo: span.loggingInfo,
 			},
 		},
@@ -424,7 +515,7 @@ func makePSpanChunk(span *span) *pb.PSpanMessage {
 				KeyTime:                span.startTime.UnixNano() / int64(time.Millisecond),
 				EndPoint:               span.endPoint,
 				SpanEvent:              spanEventList,
-				ApplicationServiceType: span.agent.config.ApplicationType,
+				ApplicationServiceType: span.agent.Config().ApplicationType,
 				LocalAsyncId: &pb.PLocalAsyncId{
 					AsyncId:  span.asyncId,
 					Sequence: span.asyncSequence,
@@ -482,17 +573,53 @@ func (s *spanStream) sendSpanFinish() {
 	s.stream.CloseSend()
 }
 
-type statGrpc struct {
-	statConn   *grpc.ClientConn
-	statClient pb.StatClient
-	agent      *Agent
+type StatGrpcClient interface {
+	SendAgentStat(ctx context.Context) (pb.Stat_SendAgentStatClient, error)
 }
 
-type statStream struct {
+type statGrpcClient struct {
+	client pb.StatClient
+}
+
+func (statGrpcClient *statGrpcClient) SendAgentStat(ctx context.Context) (pb.Stat_SendAgentStatClient, error) {
+	return statGrpcClient.client.SendAgentStat(ctx)
+}
+
+type statGrpc struct {
+	statConn   *grpc.ClientConn
+	statClient StatGrpcClient
+	stream     StatStreamInvoker
+	agent      Agent
+}
+
+type StatStreamInvoker interface {
+	Send(*pb.PStatMessage) error
+	CloseAndRecv() error
+	CloseSend() error
+}
+
+type statStreamInvoker struct {
 	stream pb.Stat_SendAgentStatClient
 }
 
-func newStatGrpc(agent *Agent) (*statGrpc, error) {
+func (invoker *statStreamInvoker) Send(stat *pb.PStatMessage) error {
+	return invoker.stream.Send(stat)
+}
+
+func (invoker *statStreamInvoker) CloseAndRecv() error {
+	_, err := invoker.stream.CloseAndRecv()
+	return err
+}
+
+func (invoker *statStreamInvoker) CloseSend() error {
+	return invoker.stream.CloseSend()
+}
+
+type statStream struct {
+	stream StatStreamInvoker
+}
+
+func newStatGrpc(agent Agent) (*statGrpc, error) {
 	var opts []grpc.DialOption
 
 	opts = append(opts, grpc.WithInsecure())
@@ -500,14 +627,14 @@ func newStatGrpc(agent *Agent) (*statGrpc, error) {
 	opts = append(opts, grpc.WithBlock())
 	opts = append(opts, grpc.WithTimeout(3*time.Second))
 
-	serverAddr := fmt.Sprintf("%s:%d", agent.config.Collector.Host, agent.config.Collector.StatPort)
+	serverAddr := fmt.Sprintf("%s:%d", agent.Config().Collector.Host, agent.Config().Collector.StatPort)
 	conn, err := connectToCollectorWithRetry(serverAddr, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	client := pb.NewStatClient(conn)
-	return &statGrpc{conn, client, agent}, nil
+	client := &statGrpcClient{pb.NewStatClient(conn)}
+	return &statGrpc{conn, client, nil, agent}, nil
 }
 
 func (statGrpc *statGrpc) close() {
@@ -525,12 +652,12 @@ func (statGrpc *statGrpc) newStatStream() *statStream {
 		return &statStream{nil}
 	}
 
-	return &statStream{stream}
+	return &statStream{&statStreamInvoker{stream}}
 }
 
 func (statGrpc *statGrpc) newStatStreamWithRetry() *statStream {
 	for n := 1; n < 100; n++ {
-		if !statGrpc.agent.enable {
+		if !statGrpc.agent.Enable() {
 			break
 		}
 
@@ -545,12 +672,16 @@ func (statGrpc *statGrpc) newStatStreamWithRetry() *statStream {
 	return &statStream{nil}
 }
 
+func (s *statStream) setStreamInvoker(invoker StatStreamInvoker) {
+	s.stream = invoker
+}
+
 func (s *statStream) close() {
 	if s.stream == nil {
 		return
 	}
 
-	_, err := s.stream.CloseAndRecv()
+	err := s.stream.CloseAndRecv()
 	if err != nil {
 		log("grpc").Errorf("fail to close stat stream - %v", err)
 	}

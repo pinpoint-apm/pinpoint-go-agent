@@ -60,7 +60,7 @@ func (se *spanEvent) SetError(e error) {
 		return
 	}
 
-	id := se.parentSpan.agent.cacheErrorFunc(se.operationName)
+	id := se.parentSpan.agent.CacheErrorFunc(se.operationName)
 	se.errorFuncId = id
 	se.errorString = e.Error()
 }
@@ -88,7 +88,7 @@ func (se *spanEvent) SetSQL(sql string) {
 
 	normalizer := newSqlNormalizer(sql)
 	nsql, param := normalizer.run()
-	id := se.parentSpan.agent.cacheSql(nsql)
+	id := se.parentSpan.agent.CacheSql(nsql)
 	se.annotations.AppendIntStringString(20, id, param, "" /* bind value for prepared stmt */)
 }
 

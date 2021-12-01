@@ -6,11 +6,11 @@ import (
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
-func Middleware(agent *pinpoint.Agent) gin.HandlerFunc {
+func Middleware(agent pinpoint.Agent) gin.HandlerFunc {
 	apiId := agent.RegisterSpanApiId("Go Gin Server", pinpoint.ApiTypeWebRequest)
 
 	return func(c *gin.Context) {
-		if agent != nil {
+		if agent.Enable() {
 			tracer := phttp.NewHttpServerTracer(agent, c.Request, "Gin Server")
 			defer tracer.EndSpan()
 			tracer.Span().SetApiId(apiId)

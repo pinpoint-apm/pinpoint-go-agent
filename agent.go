@@ -31,7 +31,7 @@ func log(srcFile string) *logrus.Entry {
 	return logger.WithFields(logrus.Fields{"module": "pinpoint", "src": srcFile})
 }
 
-type Agent struct {
+type agent struct {
 	config     Config
 	startTime  int64
 	sequence   int64
@@ -78,12 +78,13 @@ type sqlMeta struct {
 	sql string
 }
 
-func NewAgent(config *Config) (*Agent, error) {
+func NewAgent(config *Config) (Agent, error) {
+	agent := agent{}
+
 	if config == nil {
-		return nil, errors.New("configuration is missing")
+		return &agent, errors.New("configuration is missing")
 	}
 
-	agent := Agent{}
 	agent.config = *config
 	agent.startTime = time.Now().UnixNano() / int64(time.Millisecond)
 	agent.sequence = 0
@@ -101,19 +102,19 @@ func NewAgent(config *Config) (*Agent, error) {
 	agent.exceptionIdGen = 0
 	agent.exceptionIdCache, err = lru.New(cacheSize)
 	if err != nil {
-		return nil, err
+		return &agent, err
 	}
 
 	agent.sqlIdGen = 0
 	agent.sqlCache, err = lru.New(cacheSize)
 	if err != nil {
-		return nil, err
+		return &agent, err
 	}
 
 	agent.apiIdGen = asyncApiId
 	agent.apiCache, err = lru.New(cacheSize)
 	if err != nil {
-		return nil, err
+		return &agent, err
 	}
 
 	baseSampler := newRateSampler(uint64(config.Sampling.Rate))
@@ -123,11 +124,13 @@ func NewAgent(config *Config) (*Agent, error) {
 		agent.sampler = newBasicTraceSampler(baseSampler)
 	}
 
-	go connectGrpc(&agent)
+	if !config.OffGrpc {
+		go connectGrpc(&agent)
+	}
 	return &agent, nil
 }
 
-func connectGrpc(agent *Agent) {
+func connectGrpc(agent *agent) {
 	var err error
 
 	for true {
@@ -185,7 +188,7 @@ func connectGrpc(agent *Agent) {
 	agent.wg.Add(6)
 }
 
-func (agent *Agent) Shutdown() {
+func (agent *agent) Shutdown() {
 	if !agent.enable {
 		return
 	}
@@ -201,7 +204,7 @@ func (agent *Agent) Shutdown() {
 	agent.statGrpc.close()
 }
 
-func (agent *Agent) NewSpanTracer(operation string) Tracer {
+func (agent *agent) NewSpanTracer(operation string) Tracer {
 	var tracer Tracer
 
 	if agent.enable {
@@ -214,7 +217,7 @@ func (agent *Agent) NewSpanTracer(operation string) Tracer {
 	return tracer
 }
 
-func (agent *Agent) NewSpanTracerWithReader(operation string, reader DistributedTracingContextReader) Tracer {
+func (agent *agent) NewSpanTracerWithReader(operation string, reader DistributedTracingContextReader) Tracer {
 	if !agent.enable {
 		return newNoopSpan(agent)
 	}
@@ -253,20 +256,32 @@ func (agent *Agent) NewSpanTracerWithReader(operation string, reader Distributed
 	return tracer
 }
 
-func (agent *Agent) RegisterSpanApiId(descriptor string, apiType int) int32 {
+func (agent *agent) RegisterSpanApiId(descriptor string, apiType int) int32 {
 	if !agent.enable {
 		return 0
 	}
 
-	id := agent.cacheSpanApiId(descriptor, apiType)
+	id := agent.CacheSpanApiId(descriptor, apiType)
 	return id
 }
 
-func (agent *Agent) generateTransactionId() TransactionId {
+func (agent *agent) Config() Config {
+	return agent.config
+}
+
+func (agent *agent) GenerateTransactionId() TransactionId {
 	return TransactionId{agent.config.AgentId, agent.startTime, agent.sequence}
 }
 
-func (agent *Agent) sendPingWorker() {
+func (agent *agent) Enable() bool {
+	return agent.enable
+}
+
+func (agent *agent) StartTime() int64 {
+	return agent.startTime
+}
+
+func (agent *agent) sendPingWorker() {
 	log("agent").Info("ping goroutine start")
 	defer agent.wg.Done()
 	stream := agent.agentGrpc.newPingStreamWithRetry()
@@ -290,7 +305,7 @@ func (agent *Agent) sendPingWorker() {
 	log("agent").Info("ping goroutine finish")
 }
 
-func (agent *Agent) sendSpanWorker() {
+func (agent *agent) sendSpanWorker() {
 	log("agent").Info("span goroutine start")
 	defer agent.wg.Done()
 	agent.spanStream = agent.spanGrpc.newSpanStreamWithRetry()
@@ -316,7 +331,7 @@ func (agent *Agent) sendSpanWorker() {
 	log("agent").Info("span goroutine finish")
 }
 
-func (agent *Agent) tryEnqueueSpan(span *span) bool {
+func (agent *agent) TryEnqueueSpan(span *span) bool {
 	if !agent.enable {
 		return false
 	}
@@ -332,7 +347,7 @@ func (agent *Agent) tryEnqueueSpan(span *span) bool {
 	return false
 }
 
-func (agent *Agent) spanStreamMonitor() {
+func (agent *agent) spanStreamMonitor() {
 	for true {
 		if !agent.enable {
 			break
@@ -347,7 +362,7 @@ func (agent *Agent) spanStreamMonitor() {
 	}
 }
 
-func (agent *Agent) statStreamMonitor() {
+func (agent *agent) statStreamMonitor() {
 	for true {
 		if !agent.enable {
 			break
@@ -362,7 +377,7 @@ func (agent *Agent) statStreamMonitor() {
 	}
 }
 
-func (agent *Agent) sendMetaWorker() {
+func (agent *agent) sendMetaWorker() {
 	log("agent").Info("meta goroutine start")
 	defer agent.wg.Done()
 
@@ -395,7 +410,7 @@ func (agent *Agent) sendMetaWorker() {
 	log("agent").Info("meta goroutine finish")
 }
 
-func (agent *Agent) tryEnqueueMeta(md interface{}) bool {
+func (agent *agent) tryEnqueueMeta(md interface{}) bool {
 	if !agent.enable {
 		return false
 	}
@@ -411,7 +426,7 @@ func (agent *Agent) tryEnqueueMeta(md interface{}) bool {
 	return false
 }
 
-func (agent *Agent) cacheErrorFunc(funcname string) int32 {
+func (agent *agent) CacheErrorFunc(funcname string) int32 {
 	var id int32
 
 	if !agent.enable {
@@ -436,7 +451,7 @@ func (agent *Agent) cacheErrorFunc(funcname string) int32 {
 	return id
 }
 
-func (agent *Agent) cacheSql(sql string) int32 {
+func (agent *agent) CacheSql(sql string) int32 {
 	var id int32
 
 	if !agent.enable {
@@ -461,7 +476,7 @@ func (agent *Agent) cacheSql(sql string) int32 {
 	return id
 }
 
-func (agent *Agent) cacheSpanApiId(descriptor string, apiType int) int32 {
+func (agent *agent) CacheSpanApiId(descriptor string, apiType int) int32 {
 	var id int32
 
 	if !agent.enable {

@@ -7,8 +7,8 @@ import (
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
-func Middleware(agent *pinpoint.Agent) echo.MiddlewareFunc {
-	if agent == nil {
+func Middleware(agent pinpoint.Agent) echo.MiddlewareFunc {
+	if !agent.Enable() {
 		return func(next echo.HandlerFunc) echo.HandlerFunc {
 			return next
 		}
