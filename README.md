@@ -21,6 +21,7 @@ import pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
 ## Requirements
 * Go 1.12+
 * Pinpoint 2.1.1+
+* support Linux only
 
 ## Example
 
