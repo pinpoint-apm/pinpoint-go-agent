@@ -32,16 +32,16 @@ func log(srcFile string) *logrus.Entry {
 }
 
 type Agent struct {
-	config     Config
-	startTime  int64
-	sequence   int64
-	agentGrpc  *agentGrpc
-	spanGrpc   *spanGrpc
-	statGrpc   *statGrpc
-	spanBuffer []*span
-	spanChan   chan *span
-	wg         sync.WaitGroup
-	sampler    traceSampler
+	config    Config
+	startTime int64
+	sequence  int64
+	agentGrpc *agentGrpc
+	spanGrpc  *spanGrpc
+	statGrpc  *statGrpc
+	cmdGrpc   *cmdGrpc
+	spanChan  chan *span
+	wg        sync.WaitGroup
+	sampler   traceSampler
 
 	exceptionIdCache *lru.Cache
 	exceptionIdGen   int32
@@ -87,6 +87,11 @@ func NewAgent(config *Config) (*Agent, error) {
 		return nil, err
 	}
 
+	agent.cmdGrpc, err = newCommandGrpc(&agent)
+	if err != nil {
+		return nil, err
+	}
+
 	agent.exceptionIdGen = 0
 	agent.exceptionIdCache, err = lru.New(cacheSize)
 	if err != nil {
@@ -119,7 +124,9 @@ func NewAgent(config *Config) (*Agent, error) {
 	go agent.sendPingWorker()
 	go agent.sendSpanWorker()
 	go collectStats(&agent)
-	agent.wg.Add(3)
+	go commandService(&agent)
+
+	agent.wg.Add(4)
 
 	return &agent, nil
 }
@@ -222,7 +229,7 @@ func (agent *Agent) sendPingWorker() {
 			stream = agent.agentGrpc.newPingStreamWithRetry()
 		}
 
-		time.Sleep(5 * time.Second)
+		time.Sleep(60 * time.Second)
 	}
 
 	stream.close()

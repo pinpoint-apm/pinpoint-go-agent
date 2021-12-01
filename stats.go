@@ -212,6 +212,27 @@ func dropActiveSpan(spanId int64) {
 	log("stats").Debug("dropActiveSpan: ", spanId)
 }
 
+func getActiveSpanCount(now time.Time) []int32 {
+	activeSpanCount := []int32{0, 0, 0, 0}
+	activeSpan.Range(func(k, v interface{}) bool {
+		start := v.(time.Time)
+		d := now.Sub(start).Seconds()
+
+		if d < 1 {
+			activeSpanCount[0]++
+		} else if d < 3 {
+			activeSpanCount[1]++
+		} else if d < 5 {
+			activeSpanCount[2]++
+		} else {
+			activeSpanCount[3]++
+		}
+		return true
+	})
+
+	return activeSpanCount
+}
+
 func incrSampleNew() {
 	sampleNew++
 }
