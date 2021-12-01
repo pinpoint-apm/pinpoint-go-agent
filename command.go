@@ -10,7 +10,7 @@ import (
 
 var gDump *GoroutineDump
 
-func commandService(agent *Agent) {
+func (agent *agent) runCommandService() {
 	log("cmd").Info("command service goroutine start")
 	defer agent.wg.Done()
 

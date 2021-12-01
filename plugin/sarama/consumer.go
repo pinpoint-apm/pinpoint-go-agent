@@ -46,7 +46,7 @@ func (m *DistributedTracingContextReaderConsumer) Get(key string) string {
 	return ""
 }
 
-func WrapPartitionConsumer(pc sarama.PartitionConsumer, agent *pinpoint.Agent) *PartitionConsumer {
+func WrapPartitionConsumer(pc sarama.PartitionConsumer, agent pinpoint.Agent) *PartitionConsumer {
 	wrapped := &PartitionConsumer{
 		PartitionConsumer: pc,
 		messages:          make(chan *ConsumerMessage),
@@ -91,7 +91,7 @@ func makeRpcName(msg *sarama.ConsumerMessage) string {
 
 type Consumer struct {
 	sarama.Consumer
-	agent *pinpoint.Agent
+	agent pinpoint.Agent
 }
 
 func (c *Consumer) ConsumePartition(topic string, partition int32, offset int64) (*PartitionConsumer, error) {
@@ -102,7 +102,7 @@ func (c *Consumer) ConsumePartition(topic string, partition int32, offset int64)
 	return WrapPartitionConsumer(pc, c.agent), nil
 }
 
-func NewConsumer(addrs []string, config *sarama.Config, agent *pinpoint.Agent) (*Consumer, error) {
+func NewConsumer(addrs []string, config *sarama.Config, agent pinpoint.Agent) (*Consumer, error) {
 	consumer, err := sarama.NewConsumer(addrs, config)
 	if err != nil {
 		return nil, err

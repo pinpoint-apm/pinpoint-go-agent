@@ -31,7 +31,7 @@ func (m DistributedTracingContextReaderMD) Get(key string) string {
 	return v[0]
 }
 
-func startSpan(ctx context.Context, agent *pinpoint.Agent, apiId int32, rpcName string) pinpoint.Tracer {
+func startSpan(ctx context.Context, agent pinpoint.Agent, apiId int32, rpcName string) pinpoint.Tracer {
 	md, _ := metadata.FromIncomingContext(ctx) // nil is ok
 	reader := &DistributedTracingContextReaderMD{md}
 	tracer := agent.NewSpanTracerWithReader("Go GRPC Server", reader)
@@ -42,11 +42,11 @@ func startSpan(ctx context.Context, agent *pinpoint.Agent, apiId int32, rpcName 
 	return tracer
 }
 
-func UnaryServerInterceptor(agent *pinpoint.Agent) grpc.UnaryServerInterceptor {
+func UnaryServerInterceptor(agent pinpoint.Agent) grpc.UnaryServerInterceptor {
 	apiId := agent.RegisterSpanApiId("Go gRPC HTTP Server", pinpoint.ApiTypeWebRequest)
 
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		if agent == nil {
+		if !agent.Enable() {
 			return handler(ctx, req)
 		}
 
@@ -63,11 +63,11 @@ func UnaryServerInterceptor(agent *pinpoint.Agent) grpc.UnaryServerInterceptor {
 	}
 }
 
-func StreamServerInterceptor(agent *pinpoint.Agent) grpc.StreamServerInterceptor {
+func StreamServerInterceptor(agent pinpoint.Agent) grpc.StreamServerInterceptor {
 	apiId := agent.RegisterSpanApiId("Go gRPC HTTP Server", pinpoint.ApiTypeWebRequest)
 
 	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		if agent == nil {
+		if !agent.Enable() {
 			return handler(srv, stream)
 		}
 

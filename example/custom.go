@@ -12,7 +12,7 @@ import (
 )
 
 type handler struct {
-	agent *pinpoint.Agent
+	agent pinpoint.Agent
 }
 
 func doRequest(tracer pinpoint.Tracer) (string, error) {

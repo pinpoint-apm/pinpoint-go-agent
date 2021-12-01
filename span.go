@@ -12,7 +12,7 @@ import (
 var asyncIdGen int32 = 0
 
 type span struct {
-	agent              *Agent
+	agent              Agent
 	txId               TransactionId
 	spanId             int64
 	parentSpanId       int64
@@ -65,7 +65,7 @@ func defaultSpan() *span {
 	return &span
 }
 
-func newSampledSpan(agent *Agent, operation string) Tracer {
+func newSampledSpan(agent Agent, operation string) Tracer {
 	span := defaultSpan()
 
 	span.agent = agent
@@ -85,7 +85,7 @@ func (span *span) EndSpan() {
 	span.duration = time.Now().Sub(span.startTime)
 	collectResponseTime(toMilliseconds(span.duration))
 
-	if !span.agent.tryEnqueueSpan(span) {
+	if !span.agent.TryEnqueueSpan(span) {
 		log("span").Debug("span channel - max capacity reached or closed")
 	}
 }
@@ -99,8 +99,8 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 
 	writer.Set(HttpParentSpanId, strconv.FormatInt(span.spanId, 10))
 	writer.Set(HttpFlags, strconv.Itoa(span.flags))
-	writer.Set(HttpParentApplicationName, span.agent.config.ApplicationName)
-	writer.Set(HttpParentApplicationType, strconv.Itoa(int(span.agent.config.ApplicationType)))
+	writer.Set(HttpParentApplicationName, span.agent.Config().ApplicationName)
+	writer.Set(HttpParentApplicationType, strconv.Itoa(int(span.agent.Config().ApplicationType)))
 	writer.Set(HttpParentApplicationNamespace, "")
 
 	se.endPoint = se.destinationId
@@ -117,7 +117,7 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		span.txId.StartTime, _ = strconv.ParseInt(s[1], 10, 0)
 		span.txId.Sequence, _ = strconv.ParseInt(s[2], 10, 0)
 	} else {
-		span.txId = span.agent.generateTransactionId()
+		span.txId = span.agent.GenerateTransactionId()
 	}
 
 	spanid := reader.Get(HttpSpanId)

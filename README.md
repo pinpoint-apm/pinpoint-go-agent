@@ -1,3 +1,5 @@
+![ci](https://github.com/pinpoint-apm/pinpoint-go-agent/workflows/ci/badge.svg)
+
 # Pinpoint Go Agent
 
 Pinpoint Go Agent is a library that allows Go applications to be monitored through pinpoint.
@@ -19,6 +21,7 @@ import pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
 ## Requirements
 * Go 1.12+
 * Pinpoint 2.1.1+
+* support Linux only
 
 ## Example
 

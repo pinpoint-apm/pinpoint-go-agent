@@ -13,7 +13,7 @@ import (
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
-var agent *pinpoint.Agent
+var agent pinpoint.Agent
 
 func hello(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, "hello world")

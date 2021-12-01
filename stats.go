@@ -139,7 +139,7 @@ func calcResponseAvg() int64 {
 	return 0
 }
 
-func collectStats(agent *Agent) {
+func (agent *agent) sendStatsWorker() {
 	log("stats").Info("stat goroutine start")
 	defer agent.wg.Done()
 
@@ -149,7 +149,7 @@ func collectStats(agent *Agent) {
 	sleepTime := time.Duration(agent.config.Stat.CollectInterval) * time.Millisecond
 	time.Sleep(sleepTime)
 
-	statStream := agent.statGrpc.newStatStreamWithRetry()
+	agent.statStream = agent.statGrpc.newStatStreamWithRetry()
 	collected := make([]*inspectorStats, agent.config.Stat.BatchCount)
 	batch := 0
 
@@ -162,11 +162,15 @@ func collectStats(agent *Agent) {
 		batch++
 
 		if batch == agent.config.Stat.BatchCount {
-			err := statStream.sendStats(collected)
+			agent.statStreamReq = true
+			err := agent.statStream.sendStats(collected)
+			agent.statStreamReq = false
+			agent.statStreamReqCount++
+
 			if err != nil {
 				log("stats").Errorf("fail to sendStats(): %v", err)
-				statStream.close()
-				statStream = agent.statGrpc.newStatStreamWithRetry()
+				agent.statStream.close()
+				agent.statStream = agent.statGrpc.newStatStreamWithRetry()
 			}
 			batch = 0
 		}
@@ -174,7 +178,7 @@ func collectStats(agent *Agent) {
 		time.Sleep(sleepTime)
 	}
 
-	statStream.close()
+	agent.statStream.close()
 	log("stats").Info("stat goroutine finish")
 }
 

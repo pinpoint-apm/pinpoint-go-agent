@@ -35,9 +35,14 @@ type Config struct {
 		CollectInterval int
 		BatchCount      int
 	}
+
+	IsContainer bool
+	OffGrpc     bool //for test
 }
 
 type ConfigOption func(*Config)
+
+var setContainer bool
 
 func NewConfig(opts ...ConfigOption) (*Config, error) {
 	config := defaultConfig()
@@ -62,7 +67,24 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		log("config").Info("agentId is automatically generated: ", config.AgentId)
 	}
 
+	if !setContainer {
+		config.IsContainer = isContainerEnv()
+	}
+
 	return config, nil
+}
+
+func isContainerEnv() bool {
+	_, err := os.Stat("/.dockerenv")
+	if err == nil || !os.IsNotExist(err) {
+		return true
+	}
+
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		return true
+	}
+
+	return false
 }
 
 func defaultConfig() *Config {
@@ -86,6 +108,10 @@ func defaultConfig() *Config {
 	config.Stat.CollectInterval = 5000 //ms
 	config.Stat.BatchCount = 6
 
+	config.IsContainer = false
+	setContainer = false
+
+	config.OffGrpc = false
 	return config
 }
 
@@ -195,6 +221,13 @@ func WithStatCollectInterval(interval int) ConfigOption {
 func WithStatBatchCount(count int) ConfigOption {
 	return func(c *Config) {
 		c.Stat.BatchCount = count
+	}
+}
+
+func WithIsContainer(isContainer bool) ConfigOption {
+	setContainer = true
+	return func(c *Config) {
+		c.IsContainer = isContainer
 	}
 }
 
