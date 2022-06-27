@@ -59,7 +59,8 @@ type agent struct {
 	statStreamReq      bool
 	statStreamReqCount uint64
 
-	enable bool
+	httpStatusErrors *httpStatusError
+	enable           bool
 }
 
 type apiMeta struct {
@@ -89,11 +90,11 @@ func NewAgent(config *Config) (Agent, error) {
 	agent.startTime = time.Now().UnixNano() / int64(time.Millisecond)
 	agent.sequence = 0
 
-	log("agent").Info("config= ", agent.config.String())
 	logger.SetLevel(agent.config.LogLevel)
 	if config.LogLevel > logrus.InfoLevel {
 		logger.SetReportCaller(true)
 	}
+	agent.config.PrintConfigString()
 
 	var err error
 	agent.spanChan = make(chan *span, 5*1024)
@@ -117,12 +118,20 @@ func NewAgent(config *Config) (Agent, error) {
 		return &agent, err
 	}
 
-	baseSampler := newRateSampler(uint64(config.Sampling.Rate))
+	var baseSampler sampler
+	if config.Sampling.Type == SamplingTypeCounter {
+		baseSampler = newRateSampler(config.Sampling.Rate)
+	} else {
+		baseSampler = newPercentSampler(config.Sampling.PercentRate)
+	}
+
 	if config.Sampling.NewThroughput > 0 || config.Sampling.ContinueThroughput > 0 {
 		agent.sampler = newThroughputLimitTraceSampler(baseSampler, config.Sampling.NewThroughput, config.Sampling.ContinueThroughput)
 	} else {
 		agent.sampler = newBasicTraceSampler(baseSampler)
 	}
+
+	agent.httpStatusErrors = newHttpStatusError(agent.config)
 
 	if !config.OffGrpc {
 		go connectGrpc(&agent)
@@ -502,4 +511,8 @@ func (agent *agent) CacheSpanApiId(descriptor string, apiType int) int32 {
 
 	log("agent").Info("cache api id: ", id, key)
 	return id
+}
+
+func (agent *agent) IsHttpError(code int) bool {
+	return agent.httpStatusErrors.isError(code)
 }

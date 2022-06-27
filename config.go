@@ -5,8 +5,10 @@ import (
 	"errors"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
+	"io/ioutil"
 	"math/rand"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -26,7 +28,10 @@ type Config struct {
 	LogLevel logrus.Level
 
 	Sampling struct {
-		Rate               int
+		Type               string
+		Rate               int //same as CounterRate
+		CounterRate        int
+		PercentRate        float32
 		NewThroughput      int
 		ContinueThroughput int
 	}
@@ -34,6 +39,10 @@ type Config struct {
 	Stat struct {
 		CollectInterval int
 		BatchCount      int
+	}
+
+	Http struct {
+		StatusCodeErrors []string
 	}
 
 	IsContainer bool
@@ -65,6 +74,27 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	if config.AgentId == "" {
 		config.AgentId = randomString(MaxAgentIdLength)
 		log("config").Info("agentId is automatically generated: ", config.AgentId)
+	}
+
+	config.Sampling.Type = strings.ToUpper(strings.TrimSpace(config.Sampling.Type))
+	if config.Sampling.Type == SamplingTypeCounter {
+		if config.Sampling.CounterRate != -1 {
+			config.Sampling.Rate = config.Sampling.CounterRate
+		}
+		if config.Sampling.Rate < 0 {
+			config.Sampling.Rate = 0
+		}
+	} else if config.Sampling.Type == SamplingTypePercent {
+		if config.Sampling.PercentRate < 0 {
+			config.Sampling.PercentRate = 0
+		} else if config.Sampling.PercentRate < 0.01 {
+			config.Sampling.PercentRate = 0.01
+		} else if config.Sampling.PercentRate > 100 {
+			config.Sampling.PercentRate = 100
+		}
+	} else {
+		config.Sampling.Type = SamplingTypeCounter
+		config.Sampling.Rate = 1
 	}
 
 	if !setContainer {
@@ -101,12 +131,17 @@ func defaultConfig() *Config {
 
 	config.LogLevel = logrus.InfoLevel
 
+	config.Sampling.Type = SamplingTypeCounter
 	config.Sampling.Rate = 1
+	config.Sampling.CounterRate = -1
+	config.Sampling.PercentRate = 100
 	config.Sampling.NewThroughput = 0
 	config.Sampling.ContinueThroughput = 0
 
 	config.Stat.CollectInterval = 5000 //ms
 	config.Stat.BatchCount = 6
+
+	config.Http.StatusCodeErrors = []string{"5xx"}
 
 	config.IsContainer = false
 	setContainer = false
@@ -194,9 +229,28 @@ func WithLogLevel(level string) ConfigOption {
 	}
 }
 
+func WithSamplingType(samplingType string) ConfigOption {
+	return func(c *Config) {
+		c.Sampling.Type = samplingType
+	}
+}
+
+//DEPRECATED: Use WithSamplingCounterRate()
 func WithSamplingRate(rate int) ConfigOption {
 	return func(c *Config) {
 		c.Sampling.Rate = rate
+	}
+}
+
+func WithSamplingCounterRate(rate int) ConfigOption {
+	return func(c *Config) {
+		c.Sampling.CounterRate = rate
+	}
+}
+
+func WithSamplingPercentRate(rate float32) ConfigOption {
+	return func(c *Config) {
+		c.Sampling.PercentRate = rate
 	}
 }
 
@@ -231,9 +285,16 @@ func WithIsContainer(isContainer bool) ConfigOption {
 	}
 }
 
-func (config *Config) String() string {
+func (config *Config) PrintConfigString() {
+	if config.ConfigFilePath != "" {
+		dat, err := ioutil.ReadFile(config.ConfigFilePath)
+		if err == nil {
+			log("agent").Info("config_yaml_file=\n", string(dat))
+		}
+	}
+
 	j, _ := json.Marshal(config)
-	return string(j)
+	log("agent").Info("config= ", string(j))
 }
 
 const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"

@@ -1,7 +1,6 @@
 package http
 
 import (
-	"errors"
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
 	"net"
 	"net/http"
@@ -98,9 +97,7 @@ func setProxyHeader(tracer pinpoint.Tracer, r *http.Request) {
 
 func TraceHttpStatus(tracer pinpoint.Tracer, status int) {
 	tracer.Span().Annotations().AppendInt(pinpoint.AnnotationHttpStatusCode, int32(status))
-	if IsHttpError(status) {
-		tracer.Span().SetError(errors.New("HTTP Error"))
-	}
+	tracer.Span().SetHttpStatusCode(status)
 }
 
 func WrapHandle(agent pinpoint.Agent, handlerName string, pattern string, handler http.Handler) (string, http.Handler) {
@@ -142,12 +139,4 @@ func WrapResponseWriter(w http.ResponseWriter, status *int) *responseWriter {
 func (w *responseWriter) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 	*w.status = status
-}
-
-func IsHttpError(status int) bool {
-	if status >= 500 || status == 401 || status == 403 || status == 406 {
-		return true
-	}
-
-	return false
 }

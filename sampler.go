@@ -15,17 +15,43 @@ type rateSampler struct {
 	counter      uint64
 }
 
-func newRateSampler(r uint64) *rateSampler {
+func newRateSampler(r int) *rateSampler {
 	return &rateSampler{
-		samplingRate: r,
+		samplingRate: (uint64)(r),
 		counter:      0,
 	}
 }
 
 func (s *rateSampler) isSampled() bool {
+	if s.samplingRate == 0 {
+		return false
+	}
+
 	samplingCount := atomic.AddUint64(&s.counter, 1)
 	isSampled := samplingCount % s.samplingRate
 	return isSampled == 0
+}
+
+type percentSampler struct {
+	samplingRate uint64
+	counter      uint64
+}
+
+func newPercentSampler(r float32) *percentSampler {
+	return &percentSampler{
+		samplingRate: (uint64)(r * 100),
+		counter:      0,
+	}
+}
+
+func (s *percentSampler) isSampled() bool {
+	if s.samplingRate == 0 {
+		return false
+	}
+
+	samplingCount := atomic.AddUint64(&s.counter, s.samplingRate)
+	r := samplingCount % SmaplingMaxPercentRate
+	return r < s.samplingRate
 }
 
 type traceSampler interface {

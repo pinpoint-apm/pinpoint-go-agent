@@ -21,6 +21,7 @@ func EndHttpClientTracer(tracer pinpoint.Tracer, resp *http.Response, err error)
 	tracer.SpanEvent().SetError(err)
 	if resp != nil {
 		tracer.SpanEvent().Annotations().AppendInt(pinpoint.AnnotationHttpStatusCode, int32(resp.StatusCode))
+		tracer.Span().SetHttpStatusCode(resp.StatusCode)
 	}
 	tracer.EndSpanEvent()
 }

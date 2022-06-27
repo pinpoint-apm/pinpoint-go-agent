@@ -76,8 +76,10 @@ func newSampledSpan(agent Agent, operation string) Tracer {
 
 func (span *span) EndSpan() {
 	for e := span.stack.Front(); e != nil; e = e.Next() {
-		se := e.Value.(*spanEvent)
-		se.end()
+		se, ok := e.Value.(*spanEvent)
+		if ok {
+			se.end()
+		}
 	}
 
 	dropActiveSpan(span.spanId)
@@ -273,4 +275,11 @@ func (span *span) Annotations() Annotation {
 
 func (span *span) SetLogging(logInfo int32) {
 	span.loggingInfo = logInfo
+}
+
+func (span *span) SetHttpStatusCode(statusCode int) {
+	span.err = 0
+	if span.agent.IsHttpError(statusCode) {
+		span.err = 1
+	}
 }

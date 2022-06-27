@@ -28,6 +28,7 @@ type Agent interface {
 	CacheErrorFunc(funcname string) int32
 	CacheSql(sql string) int32
 	CacheSpanApiId(descriptor string, apiType int) int32
+	IsHttpError(code int) bool
 }
 
 type Tracer interface {
@@ -56,6 +57,7 @@ type SpanRecorder interface {
 	SetAcceptorHost(host string)
 	Annotations() Annotation
 	SetLogging(logInfo int32)
+	SetHttpStatusCode(statusCode int)
 }
 
 type SpanEventRecorder interface {
@@ -108,5 +110,8 @@ const (
 	ApiTypeWebRequest = 100
 	ApiTypeInvocation = 200
 
-	MaxAgentIdLength = 23
+	MaxAgentIdLength       = 23
+	SamplingTypeCounter    = "COUNTER"
+	SamplingTypePercent    = "PERCENT"
+	SmaplingMaxPercentRate = 100 * 100
 )

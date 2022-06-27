@@ -26,11 +26,11 @@ func seterror(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(500)
 }
 
-func outgoing(w http.ResponseWriter, r *http.Request) {
+func httpClientRequest(w http.ResponseWriter, ctx context.Context) {
 	client := phttp.WrapClient(nil)
 
 	request, _ := http.NewRequest("GET", "http://localhost:9000/hello", nil)
-	request = request.WithContext(r.Context())
+	request = request.WithContext(ctx)
 
 	resp, err := client.Do(request)
 	if nil != err {
@@ -39,6 +39,10 @@ func outgoing(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 	io.Copy(w, resp.Body)
+}
+
+func outgoing(w http.ResponseWriter, r *http.Request) {
+	httpClientRequest(w, r.Context())
 }
 
 func query(span pinpoint.Tracer) {
@@ -65,7 +69,8 @@ func async(w http.ResponseWriter, r *http.Request) {
 		defer asyncSpan.EndSpan() //!!must be called
 		defer asyncSpan.NewSpanEvent("async_go_routine").EndSpanEvent()
 
-		query(asyncSpan)
+		ctx := pinpoint.NewContext(context.Background(), asyncSpan)
+		httpClientRequest(w, ctx)
 		time.Sleep(10 * time.Millisecond)
 	}(tracer.NewAsyncSpan())
 

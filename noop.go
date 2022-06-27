@@ -72,6 +72,8 @@ func (span *noopSpan) Annotations() Annotation {
 
 func (span *noopSpan) SetLogging(logInfo int32) {}
 
+func (span *noopSpan) SetHttpStatusCode(statusCode int) {}
+
 type noopSpanEvent struct {
 	annotations noopannotation
 }

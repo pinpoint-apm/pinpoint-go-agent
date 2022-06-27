@@ -88,6 +88,10 @@ func (agent *mockAgent) CacheSpanApiId(descriptor string, apiType int) int32 {
 	return 1
 }
 
+func (agent *mockAgent) IsHttpError(code int) bool {
+	return false
+}
+
 //mock grpc
 
 type mockAgentGrpcClient struct {
