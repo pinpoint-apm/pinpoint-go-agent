@@ -378,6 +378,9 @@ func (spanGrpc *spanGrpc) newSpanStream() *spanStream {
 	//ctx, _ = context.WithTimeout(ctx, 30 * time.Second)
 	//defer cancel()
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	stream, err := spanGrpc.spanClient.SendSpan(ctx)
 	if err != nil {
 		log("grpc").Errorf("fail to make span stream - %v", err)
@@ -756,5 +759,360 @@ func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
 		FileDescriptor: nil,
 		DirectBuffer:   nil,
 		Metadata:       "",
+	}
+}
+
+type cmdGrpc struct {
+	agentConn *grpc.ClientConn
+	cmdClient pb.ProfilerCommandServiceClient
+	agent     Agent
+}
+
+type cmdStream struct {
+	stream pb.ProfilerCommandService_HandleCommandClient
+	cmdReq *pb.PCmdRequest
+}
+
+func newCommandGrpc(agent Agent) (*cmdGrpc, error) {
+	var opts []grpc.DialOption
+
+	opts = append(opts, grpc.WithInsecure())
+	opts = append(opts, grpc.WithKeepaliveParams(kacp))
+	opts = append(opts, grpc.WithBlock())
+	opts = append(opts, grpc.WithTimeout(3*time.Second))
+
+	serverAddr := fmt.Sprintf("%s:%d", agent.Config().Collector.Host, agent.Config().Collector.AgentPort)
+
+	log("grpc").Infof("connect to agent collector: %s", serverAddr)
+	conn, err := grpc.Dial(serverAddr, opts...)
+	if err != nil {
+		log("grpc").Errorf("fail to dial - %v", err)
+		return nil, err
+	}
+
+	cmdClient := pb.NewProfilerCommandServiceClient(conn)
+	return &cmdGrpc{conn, cmdClient, agent}, nil
+}
+
+func (cmdGrpc *cmdGrpc) newHandleCommandStream() *cmdStream {
+	ctx := grpcMetadataContext(cmdGrpc.agent, -1)
+	//ctx, _ = context.WithTimeout(ctx, 30 * time.Second)
+	//defer cancel()
+
+	stream, err := cmdGrpc.cmdClient.HandleCommand(ctx)
+	if err != nil {
+		log("grpc").Errorf("fail to make command stream - %v", err)
+		return &cmdStream{nil, nil}
+	}
+
+	return &cmdStream{stream, nil}
+}
+
+func (cmdGrpc *cmdGrpc) newCommandStreamWithRetry() *cmdStream {
+	for n := 1; n < 100; n++ {
+		if !cmdGrpc.agent.Enable() {
+			break
+		}
+
+		s := cmdGrpc.newHandleCommandStream()
+		if s.stream != nil {
+			log("grpc").Info("success to make command stream: ", n)
+			return s
+		}
+		backOffSleep(n)
+	}
+
+	return &cmdStream{nil, nil}
+}
+
+func (s *cmdStream) close() {
+	if s.stream == nil {
+		return
+	}
+
+	err := s.stream.CloseSend()
+	if err != nil {
+		log("grpc").Errorf("fail to close command stream - %v", err)
+	}
+	s.stream = nil
+}
+
+func (s *cmdStream) sendCommandMessage() error {
+	var gCmd *pb.PCmdMessage
+
+	if s.stream == nil {
+		return status.Errorf(codes.Unavailable, "command stream is nil")
+	}
+
+	sKeys := make([]int32, 0)
+	sKeys = append(sKeys, int32(pb.PCommandType_ECHO))
+	sKeys = append(sKeys, int32(pb.PCommandType_ACTIVE_THREAD_COUNT))
+	sKeys = append(sKeys, int32(pb.PCommandType_ACTIVE_THREAD_DUMP))
+	sKeys = append(sKeys, int32(pb.PCommandType_ACTIVE_THREAD_LIGHT_DUMP))
+
+	gCmd = &pb.PCmdMessage{
+		Message: &pb.PCmdMessage_HandshakeMessage{
+			HandshakeMessage: &pb.PCmdServiceHandshake{
+				SupportCommandServiceKey: sKeys,
+			},
+		},
+	}
+
+	log("grpc").Debug("PCmdMessage: ", gCmd.String())
+
+	return s.stream.Send(gCmd)
+}
+
+func (s *cmdStream) recvCommandRequest() error {
+	var gCmdReq *pb.PCmdRequest
+
+	if s.stream == nil {
+		return status.Errorf(codes.Unavailable, "command stream is nil")
+	}
+
+	gCmdReq, err := s.stream.Recv()
+	if err != nil {
+		log("grpc").Errorf("fail to recv command request - %v", err)
+		return err
+	}
+
+	log("grpc").Debug("PCmdRequest: ", gCmdReq.String())
+
+	s.cmdReq = gCmdReq
+	return nil
+}
+
+type activeThreadCountStream struct {
+	stream   pb.ProfilerCommandService_CommandStreamActiveThreadCountClient
+	reqId    int32
+	actCount int32
+}
+
+func (cmdGrpc *cmdGrpc) newActiveThreadCountStream(reqId int32) *activeThreadCountStream {
+	ctx := grpcMetadataContext(cmdGrpc.agent, -1)
+	//ctx, _ = context.WithTimeout(ctx, 30 * time.Second)
+	//defer cancel()
+
+	stream, err := cmdGrpc.cmdClient.CommandStreamActiveThreadCount(ctx)
+	if err != nil {
+		log("grpc").Errorf("fail to make active thread count stream - %v", err)
+		return &activeThreadCountStream{nil, -1, 0}
+	}
+
+	return &activeThreadCountStream{stream, reqId, 0}
+}
+
+func (s *activeThreadCountStream) close() {
+	if s.stream == nil {
+		return
+	}
+
+	err := s.stream.CloseSend()
+	if err != nil {
+		log("grpc").Errorf("fail to close command stream - %v", err)
+	}
+	s.stream = nil
+}
+
+func (s *activeThreadCountStream) sendActiveThreadCount() error {
+	var gRes *pb.PCmdActiveThreadCountRes
+
+	if s.stream == nil {
+		return status.Errorf(codes.Unavailable, "command stream is nil")
+	}
+
+	now := time.Now()
+	activeThreadCount := getActiveSpanCount(now)
+	s.actCount++
+
+	gRes = &pb.PCmdActiveThreadCountRes{
+		CommonStreamResponse: &pb.PCmdStreamResponse{
+			ResponseId: s.reqId,
+			SequenceId: s.actCount,
+			Message:    &wrappers.StringValue{Value: ""},
+		},
+		HistogramSchemaType: 2,
+		ActiveThreadCount:   activeThreadCount,
+		TimeStamp:           now.UnixNano() / int64(time.Millisecond),
+	}
+
+	log("grpc").Debug("PCmdActiveThreadCountRes: ", gRes.String())
+
+	return s.stream.Send(gRes)
+}
+
+func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadName []string, localId []int64, dump *GoroutineDump) {
+	var gRes *pb.PCmdActiveThreadDumpRes
+
+	gRes = &pb.PCmdActiveThreadDumpRes{
+		CommonResponse: &pb.PCmdResponse{
+			ResponseId: reqId,
+			Status:     0,
+			Message:    &wrappers.StringValue{Value: ""},
+		},
+		ThreadDump: makePActiveThreadDumpList(dump, int(limit), threadName, localId),
+		Type:       "Go",
+		SubType:    "",
+		Version:    "1.14",
+	}
+
+	log("grpc").Debug("send PCmdActiveThreadDumpRes: ", gRes.String())
+
+	ctx := grpcMetadataContext(cmdGrpc.agent, -1)
+	_, err := cmdGrpc.cmdClient.CommandActiveThreadDump(ctx, gRes)
+	if err != nil {
+		log("grpc").Errorf("fail to CommandActiveThreadDump() - %v", err)
+	}
+}
+
+func makePActiveThreadDumpList(dump *GoroutineDump, limit int, threadName []string, localId []int64) []*pb.PActiveThreadDump {
+	dumpList := make([]*pb.PActiveThreadDump, 0)
+
+	if limit < 1 {
+		limit = len(dump.goroutines)
+	}
+
+	selected := make([]*Goroutine, 0)
+	for _, tn := range threadName {
+		g := dump.Search(tn)
+		if g != nil {
+			selected = append(selected, g)
+		}
+	}
+
+	log("grpc").Debugf("send makePActiveThreadDumpList: %v", selected)
+
+	for i := 0; i < limit && i < len(selected); i++ {
+		aDump := makePActiveThreadDump(selected[i])
+		dumpList = append(dumpList, aDump)
+	}
+
+	return dumpList
+}
+
+func makePActiveThreadDump(g *Goroutine) *pb.PActiveThreadDump {
+	trace := make([]string, 0)
+	trace = append(trace, g.trace)
+
+	aDump := &pb.PActiveThreadDump{
+		StartTime:    time.Now().UnixNano() / int64(time.Millisecond),
+		LocalTraceId: 0,
+		ThreadDump: &pb.PThreadDump{
+			ThreadName:         g.header,
+			ThreadId:           int64(g.id),
+			BlockedTime:        0,
+			BlockedCount:       0,
+			WaitedTime:         0,
+			WaitedCount:        0,
+			LockName:           "",
+			LockOwnerId:        0,
+			LockOwnerName:      "",
+			InNative:           false,
+			Suspended:          false,
+			ThreadState:        goRoutineState(g),
+			StackTrace:         trace,
+			LockedMonitor:      nil,
+			LockedSynchronizer: nil,
+		},
+		Sampled:       false,
+		TransactionId: "",
+		EntryPoint:    "",
+	}
+
+	return aDump
+}
+
+func (cmdGrpc *cmdGrpc) sendActiveThreadLightDump(reqId int32, limit int32, dump *GoroutineDump) {
+	var gRes *pb.PCmdActiveThreadLightDumpRes
+
+	gRes = &pb.PCmdActiveThreadLightDumpRes{
+		CommonResponse: &pb.PCmdResponse{
+			ResponseId: reqId,
+			Status:     0,                                //error
+			Message:    &wrappers.StringValue{Value: ""}, //error message
+		},
+		ThreadDump: makePActiveThreadLightDumpList(dump, int(limit)),
+		Type:       "Go",
+		SubType:    "",
+		Version:    "1.14", //go version
+	}
+
+	log("grpc").Debug("send PCmdActiveThreadLightDumpRes: ", gRes.String())
+
+	ctx := grpcMetadataContext(cmdGrpc.agent, -1)
+	_, err := cmdGrpc.cmdClient.CommandActiveThreadLightDump(ctx, gRes)
+	if err != nil {
+		log("grpc").Errorf("fail to make CommandActiveThreadLightDump() - %v", err)
+	}
+}
+
+func makePActiveThreadLightDumpList(dump *GoroutineDump, limit int) []*pb.PActiveThreadLightDump {
+	dumpList := make([]*pb.PActiveThreadLightDump, 0)
+
+	if limit < 1 {
+		limit = len(dump.goroutines)
+	}
+
+	for i := 0; i < limit && i < len(dump.goroutines); i++ {
+		aDump := makePActiveThreadLightDump(dump.goroutines[i])
+		dumpList = append(dumpList, aDump)
+	}
+	return dumpList
+}
+
+func makePActiveThreadLightDump(g *Goroutine) *pb.PActiveThreadLightDump {
+	aDump := &pb.PActiveThreadLightDump{
+		StartTime:    time.Now().UnixNano() / int64(time.Millisecond),
+		LocalTraceId: 0,
+		ThreadDump: &pb.PThreadLightDump{
+			ThreadName:  g.header,
+			ThreadId:    int64(g.id),
+			ThreadState: goRoutineState(g),
+		},
+		Sampled:       false,
+		TransactionId: "",
+		EntryPoint:    "", //path
+	}
+
+	return aDump
+}
+
+func goRoutineState(g *Goroutine) pb.PThreadState {
+	switch g.metas[MetaState] {
+	case "running":
+		return pb.PThreadState_THREAD_STATE_RUNNABLE
+	case "select":
+		return pb.PThreadState_THREAD_STATE_WAITING
+	case "IO wait":
+		return pb.PThreadState_THREAD_STATE_WAITING
+	case "chan receive":
+		return pb.PThreadState_THREAD_STATE_WAITING
+	case "sleep":
+		return pb.PThreadState_THREAD_STATE_BLOCKED
+	default:
+		break
+	}
+
+	return pb.PThreadState_THREAD_STATE_UNKNOWN
+}
+
+func (cmdGrpc *cmdGrpc) sendEcho(reqId int32, msg string) {
+	var gRes *pb.PCmdEchoResponse
+
+	gRes = &pb.PCmdEchoResponse{
+		CommonResponse: &pb.PCmdResponse{
+			ResponseId: reqId,
+			Status:     0,                                //error
+			Message:    &wrappers.StringValue{Value: ""}, //error message
+		},
+		Message: msg,
+	}
+
+	log("grpc").Debug("send PCmdEchoResponse: ", gRes.String())
+
+	ctx := grpcMetadataContext(cmdGrpc.agent, -1)
+	_, err := cmdGrpc.cmdClient.CommandEcho(ctx, gRes)
+	if err != nil {
+		log("grpc").Errorf("fail to CommandEcho() - %v", err)
 	}
 }

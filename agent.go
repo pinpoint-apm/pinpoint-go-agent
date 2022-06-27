@@ -38,6 +38,7 @@ type agent struct {
 	agentGrpc  *agentGrpc
 	spanGrpc   *spanGrpc
 	statGrpc   *statGrpc
+	cmdGrpc    *cmdGrpc
 	spanBuffer []*span
 	spanChan   chan *span
 	metaChan   chan interface{}
@@ -161,6 +162,14 @@ func connectGrpc(agent *agent) {
 			continue
 		}
 
+		agent.cmdGrpc, err = newCommandGrpc(agent)
+		if err != nil {
+			agent.agentGrpc.close()
+			agent.spanGrpc.close()
+			agent.statGrpc.close()
+			continue
+		}
+
 		break
 	}
 
@@ -184,6 +193,7 @@ func connectGrpc(agent *agent) {
 	go agent.sendPingWorker()
 	go agent.sendSpanWorker()
 	go agent.sendStatsWorker()
+	go agent.runCommandService()
 	go agent.sendMetaWorker()
 
 	agent.spanStreamReq = false
@@ -194,7 +204,7 @@ func connectGrpc(agent *agent) {
 	agent.statStreamReqCount = 0
 	go agent.statStreamMonitor()
 
-	agent.wg.Add(6)
+	agent.wg.Add(7)
 }
 
 func (agent *agent) Shutdown() {
