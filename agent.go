@@ -132,7 +132,7 @@ func NewAgent(config *Config) (Agent, error) {
 		agent.sampler = newBasicTraceSampler(baseSampler)
 	}
 
-	agent.httpStatusErrors = newHttpStatusError(agent.config)
+	agent.httpStatusErrors = newHttpStatusError(config)
 
 	if !config.OffGrpc {
 		go connectGrpc(&agent)

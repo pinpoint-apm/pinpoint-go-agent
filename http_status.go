@@ -74,13 +74,13 @@ type httpStatusError struct {
 	errors []httpStatusCode
 }
 
-func newHttpStatusError(config Config) *httpStatusError {
+func newHttpStatusError(config *Config) *httpStatusError {
 	return &httpStatusError{
 		errors: setupHttpStatusErrors(config),
 	}
 }
 
-func setupHttpStatusErrors(config Config) []httpStatusCode {
+func setupHttpStatusErrors(config *Config) []httpStatusCode {
 	var errors []httpStatusCode
 
 	for _, s := range config.Http.StatusCodeErrors {
