@@ -95,7 +95,6 @@ func NewAgent(config *Config) (Agent, error) {
 	if config.LogLevel > logrus.InfoLevel {
 		logger.SetReportCaller(true)
 	}
-	agent.config.PrintConfigString()
 
 	var err error
 	agent.spanChan = make(chan *span, 5*1024)
@@ -382,13 +381,15 @@ func (agent *agent) spanStreamMonitor() {
 }
 
 func (agent *agent) statStreamMonitor() {
+	d := (time.Duration)(agent.config.Stat.CollectInterval*agent.config.Stat.BatchCount*2) * time.Millisecond
+
 	for true {
 		if !agent.enable {
 			break
 		}
 
 		c := agent.statStreamReqCount
-		time.Sleep(5 * time.Second)
+		time.Sleep(d)
 
 		if agent.statStreamReq == true && c == agent.statStreamReqCount {
 			agent.statStream.close()

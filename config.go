@@ -25,8 +25,6 @@ type Config struct {
 		StatPort  int
 	}
 
-	LogLevel logrus.Level
-
 	Sampling struct {
 		Type               string
 		Rate               int //same as CounterRate
@@ -46,6 +44,7 @@ type Config struct {
 	}
 
 	IsContainer bool
+	LogLevel    logrus.Level
 	OffGrpc     bool //for test
 }
 
@@ -100,6 +99,8 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	if !setContainer {
 		config.IsContainer = isContainerEnv()
 	}
+
+	config.printConfigString()
 
 	return config, nil
 }
@@ -285,11 +286,11 @@ func WithIsContainer(isContainer bool) ConfigOption {
 	}
 }
 
-func (config *Config) PrintConfigString() {
+func (config *Config) printConfigString() {
 	if config.ConfigFilePath != "" {
 		dat, err := ioutil.ReadFile(config.ConfigFilePath)
 		if err == nil {
-			log("agent").Info("config_yaml_file=\n", string(dat))
+			log("agent").Info("config_yaml_file= ", config.ConfigFilePath, "\n", string(dat))
 		}
 	}
 

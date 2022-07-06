@@ -101,6 +101,7 @@ func Test_pingStream_sendPing(t *testing.T) {
 			agent := tt.args.agent.(*mockAgent)
 			agent.setMockAgentGrpc(t)
 			stream := agent.agentGrpc.newPingStreamWithRetry()
+			stream.setStreamInvoker(agent.agentGrpc.stream)
 			err := stream.sendPing()
 			assert.NoError(t, err, "sendPing")
 		})

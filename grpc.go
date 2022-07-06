@@ -96,6 +96,7 @@ type agentGrpc struct {
 	agentClient    AgentGrpcClient
 	metadataClient MetaGrpcClient
 	pingSocketId   int64
+	stream         PingStreamInvoker
 	agent          Agent
 }
 
@@ -138,7 +139,7 @@ func newAgentGrpc(agent Agent) (*agentGrpc, error) {
 
 	agentClient := agentGrpcClient{pb.NewAgentClient(conn)}
 	metadataClient := metaGrpcClient{pb.NewMetadataClient(conn)}
-	return &agentGrpc{conn, &agentClient, &metadataClient, 0, agent}, nil
+	return &agentGrpc{conn, &agentClient, &metadataClient, 0, nil, agent}, nil
 }
 
 func makeAgentInfo(agent Agent) (context.Context, *pb.PAgentInfo) {
@@ -239,8 +240,34 @@ func (agentGrpc *agentGrpc) sendSqlMetadata(sqlId int32, sql string) error {
 	return err
 }
 
-type pingStream struct {
+type PingStreamInvoker interface {
+	Send(*pb.PPing) error
+	Recv() (*pb.PPing, error)
+	CloseSend() error
+}
+
+type pingStreamInvoker struct {
 	stream pb.Agent_PingSessionClient
+}
+
+func (invoker *pingStreamInvoker) Send(p *pb.PPing) error {
+	return invoker.stream.Send(p)
+}
+
+func (invoker *pingStreamInvoker) Recv() (*pb.PPing, error) {
+	return invoker.stream.Recv()
+}
+
+func (invoker *pingStreamInvoker) CloseSend() error {
+	return invoker.stream.CloseSend()
+}
+
+type pingStream struct {
+	stream PingStreamInvoker
+}
+
+func (s *pingStream) setStreamInvoker(invoker PingStreamInvoker) {
+	s.stream = invoker
 }
 
 func (agentGrpc *agentGrpc) newPingStream() *pingStream {
@@ -255,7 +282,7 @@ func (agentGrpc *agentGrpc) newPingStream() *pingStream {
 		return &pingStream{nil}
 	}
 
-	return &pingStream{stream}
+	return &pingStream{&pingStreamInvoker{stream}}
 }
 
 func (agentGrpc *agentGrpc) newPingStreamWithRetry() *pingStream {
