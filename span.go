@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"container/list"
+	"context"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -185,7 +186,7 @@ func (span *span) EndSpanEvent() {
 	}
 }
 
-func (span *span) NewAsyncSpan() Tracer {
+func (span *span) newAsyncSpan() Tracer {
 	se := span.stack.Front().Value.(*spanEvent)
 	asyncSpan := newSpanForAsync(span)
 
@@ -221,6 +222,32 @@ func (span *span) newSpanEventForAsync() {
 
 	span.spanEvents = append(span.spanEvents, se)
 	span.stack.PushFront(se)
+}
+
+//Deprecated
+func (span *span) NewAsyncSpan() Tracer {
+	return span.newAsyncSpan()
+}
+
+func (span *span) NewGoroutineTracer() Tracer {
+	return span.newAsyncSpan()
+}
+
+func (span *span) WrapGoroutine(goroutineName string, goroutine func(context.Context), ctx context.Context) func() {
+	asyncSpan := span.newAsyncSpan()
+
+	var newCtx context.Context
+	if ctx == nil {
+		newCtx = NewContext(context.Background(), asyncSpan)
+	} else {
+		newCtx = NewContext(ctx, asyncSpan)
+	}
+
+	return func() {
+		defer asyncSpan.EndSpan()
+		defer asyncSpan.NewSpanEvent(goroutineName).EndSpanEvent()
+		goroutine(newCtx)
+	}
 }
 
 func (span *span) TransactionId() TransactionId {

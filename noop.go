@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"context"
 	"time"
 )
 
@@ -26,6 +27,14 @@ func (span *noopSpan) NewAsyncSpan() Tracer {
 	asyncSpan := noopSpan{}
 	asyncSpan.agent = span.agent
 	return &asyncSpan
+}
+
+func (span *noopSpan) NewGoroutineTracer() Tracer {
+	return span.NewAsyncSpan()
+}
+
+func (span *noopSpan) WrapGoroutine(goroutineName string, goroutine func(context.Context), ctx context.Context) func() {
+	return func() {}
 }
 
 func (span *noopSpan) EndSpanEvent() {}

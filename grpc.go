@@ -384,7 +384,7 @@ func newSpanGrpc(agent Agent) (*spanGrpc, error) {
 	opts = append(opts, grpc.WithInsecure())
 	opts = append(opts, grpc.WithKeepaliveParams(kacp))
 	opts = append(opts, grpc.WithBlock())
-	opts = append(opts, grpc.WithTimeout(3*time.Second))
+	//opts = append(opts, grpc.WithTimeout(3*time.Second))
 
 	serverAddr := fmt.Sprintf("%s:%d", agent.Config().Collector.Host, agent.Config().Collector.SpanPort)
 	conn, err := connectToCollectorWithRetry(serverAddr, opts)
@@ -405,8 +405,8 @@ func (spanGrpc *spanGrpc) newSpanStream() *spanStream {
 	//ctx, _ = context.WithTimeout(ctx, 30 * time.Second)
 	//defer cancel()
 
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	//ctx, cancel := context.WithCancel(ctx)
+	//defer cancel()
 
 	stream, err := spanGrpc.spanClient.SendSpan(ctx)
 	if err != nil {
@@ -655,7 +655,7 @@ func newStatGrpc(agent Agent) (*statGrpc, error) {
 	opts = append(opts, grpc.WithInsecure())
 	opts = append(opts, grpc.WithKeepaliveParams(kacp))
 	opts = append(opts, grpc.WithBlock())
-	opts = append(opts, grpc.WithTimeout(3*time.Second))
+	//opts = append(opts, grpc.WithTimeout(3*time.Second))
 
 	serverAddr := fmt.Sprintf("%s:%d", agent.Config().Collector.Host, agent.Config().Collector.StatPort)
 	conn, err := connectToCollectorWithRetry(serverAddr, opts)
@@ -806,7 +806,7 @@ func newCommandGrpc(agent Agent) (*cmdGrpc, error) {
 	opts = append(opts, grpc.WithInsecure())
 	opts = append(opts, grpc.WithKeepaliveParams(kacp))
 	opts = append(opts, grpc.WithBlock())
-	opts = append(opts, grpc.WithTimeout(3*time.Second))
+	//opts = append(opts, grpc.WithTimeout(3*time.Second))
 
 	serverAddr := fmt.Sprintf("%s:%d", agent.Config().Collector.Host, agent.Config().Collector.AgentPort)
 

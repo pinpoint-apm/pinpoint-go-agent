@@ -197,7 +197,7 @@ func connectGrpc(agent *agent) {
 
 	agent.spanStreamReq = false
 	agent.spanStreamReqCount = 0
-	go agent.spanStreamMonitor()
+	//go agent.spanStreamMonitor()
 
 	agent.statStreamReq = false
 	agent.statStreamReqCount = 0

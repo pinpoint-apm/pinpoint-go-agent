@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -34,6 +35,8 @@ type Agent interface {
 type Tracer interface {
 	NewSpanEvent(operationName string) Tracer
 	NewAsyncSpan() Tracer
+	NewGoroutineTracer() Tracer
+	WrapGoroutine(goroutineName string, goroutine func(context.Context), ctx context.Context) func()
 	EndSpan()
 	EndSpanEvent()
 

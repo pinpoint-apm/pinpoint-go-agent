@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"context"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
@@ -135,7 +136,7 @@ func Test_span_EndSpanEvent(t *testing.T) {
 	}
 }
 
-func Test_span_NewAsyncSpan(t *testing.T) {
+func Test_span_NewGoroutineTracer(t *testing.T) {
 	type args struct {
 		operationName string
 	}
@@ -150,7 +151,7 @@ func Test_span_NewAsyncSpan(t *testing.T) {
 			s := defaultSpan()
 			s.agent = newMockAgent()
 			s.NewSpanEvent(tt.args.operationName)
-			a := s.NewAsyncSpan()
+			a := s.NewGoroutineTracer()
 
 			se := s.stack.Front().Value.(*spanEvent)
 			assert.Equal(t, se.asyncId, int32(1), "asyncId")
@@ -163,6 +164,42 @@ func Test_span_NewAsyncSpan(t *testing.T) {
 
 			ase := as.stack.Front().Value.(*spanEvent)
 			assert.Equal(t, ase.serviceType, int32(100), "serviceType")
+		})
+	}
+}
+
+func Test_span_WrapGoroutine(t *testing.T) {
+	type args struct {
+		operationName string
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		{"1", args{"t1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := defaultSpan()
+			s.agent = newMockAgent()
+			s.NewSpanEvent(tt.args.operationName)
+			f := s.WrapGoroutine("t1", func(ctx context.Context) {
+				tracer := FromContext(ctx)
+				as := tracer.(*span)
+				assert.Equal(t, as.agent, s.agent, "agent")
+				assert.Equal(t, as.txId, s.txId, "txId")
+				assert.Equal(t, as.spanId, s.spanId, "spanId")
+
+				ase := as.stack.Front().Value.(*spanEvent)
+				assert.Equal(t, ase.serviceType, int32(ServiceTypeGoFunction), "serviceType")
+				assert.Equal(t, as.stack.Len(), 2, "stack.Len()")
+			}, context.Background())
+
+			se := s.stack.Front().Value.(*spanEvent)
+			assert.Equal(t, se.asyncId, int32(2), "asyncId")
+			assert.Equal(t, se.asyncSeqGen, int32(1), "asyncSeqGen")
+
+			f()
 		})
 	}
 }
