@@ -52,12 +52,12 @@ The functions for setting up the Pinpoint Go Agent are as follows:
 * WithConfigFile(filePath string)
   * The aforementioned settings can be saved to the config file in YAML format. The format of the YAML setup file is as follows:
     ```
-    ApplicationName: "MyAppName"
-    Collector:
-      Host: "collector.myhost.com"
-    LogLevel: "error"
-    Sampling:
-      Rate: 10
+    applicationname: "MyAppName"
+    collector:
+      host: "collector.myhost.com"
+    logLevel: "error"
+    sampling:
+      rate: 10
     ```
   
 ## Web Request Trace
@@ -222,7 +222,7 @@ ctx := pinpoint.NewContext(context.Background(), tracer)
 row := db.QueryRowContext(ctx, "SELECT count(*) from tables")
 ```
 
-The tracer is the object that implements the tracer interface of the pinpoint-go-agent, which generates and stores instrumentation information. When calling the go function, we use the context of the go language to pass this tracer. Pinpoint-go-agent provides a function that adds a tracer to the context, and a function that imports the trace from the context, respectively.
+The tracer is the object that implements the Tracer interface of the pinpoint-go-agent, which generates and stores instrumentation information. When calling the go function, we use the context of the go language to pass this tracer. Pinpoint-go-agent provides a function that adds a tracer to the context, and a function that imports a tracer from the context, respectively.
 
 ``` go
 NewContext(ctx context.Context, tracer Tracer) context.Context 
@@ -230,3 +230,98 @@ FromContext(ctx context.Context) Tracer
 ```
 
 For information on the go context package, visit https://golang.org/pkg/context/.
+
+## Goroutine Trace
+
+Because a pinpoint tracer is designed to follow a single call stack, applications can be crashed if a tracer is shared on goroutines.
+The Tracer.NewAsyncSpan() function should be called to create a new tracer that traces a goroutine, and then pass it to the goroutine.
+To pass the tracer reference to the goroutine, there is a way to pass it over to the function parameter, through the channel, or in the context.Context.
+The Tracer.EndSpan() function must be called at the end of the goroutine.
+
+Example using function parameter:
+
+``` go
+func outGoingRequest(ctx context.Context) {
+	client := phttp.WrapClient(nil)
+	
+	request, _ := http.NewRequest("GET", "https://github.com/pinpoint-apm/pinpoint-go-agent", nil)
+	request = request.WithContext(ctx)
+
+	resp, err := client.Do(request)
+	if nil != err {
+		log.Println(err.Error())
+		return
+	}
+	defer resp.Body.Close()
+    log.Println(resp.Body)
+}
+
+func asyncWithTracer(w http.ResponseWriter, r *http.Request) {
+	tracer := pinpoint.FromContext(r.Context())
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+
+	go func(asyncTracer pinpoint.Tracer) {
+		defer wg.Done()
+
+		defer asyncTracer.EndSpan()
+		defer asyncTracer.NewSpanEvent("asyncWithTracer_goroutine").EndSpanEvent()
+
+		ctx := pinpoint.NewContext(context.Background(), asyncTracer)
+		outGoingRequest(ctx)
+	}(tracer.NewAsyncSpan())
+
+	wg.Wait()
+}
+```
+
+
+Example using channel:
+
+``` go
+func asyncWithChan(w http.ResponseWriter, r *http.Request) {
+	tracer := pinpoint.FromContext(r.Context())
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+
+	ch := make(chan pinpoint.Tracer)
+
+	go func() {
+		defer wg.Done()
+
+		asyncTracer := <-ch
+		defer asyncTracer.EndSpan()
+		defer asyncTracer.NewSpanEvent("asyncWithChan_goroutine").EndSpanEvent()
+
+		ctx := pinpoint.NewContext(context.Background(), asyncTracer)
+		outGoingRequest(ctx)
+	}()
+
+	ch <- tracer.NewAsyncSpan()
+
+	wg.Wait()
+}
+```
+
+Example using context:
+
+``` go
+func asyncWithContext(w http.ResponseWriter, r *http.Request) {
+	tracer := pinpoint.FromContext(r.Context())
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+
+	go func(asyncCtx context.Context) {
+		defer wg.Done()
+
+		asyncTracer := pinpoint.FromContext(asyncCtx)
+		defer asyncTracer.EndSpan()
+		defer asyncTracer.NewSpanEvent("asyncWithContext_goroutine").EndSpanEvent()
+
+		ctx := pinpoint.NewContext(context.Background(), asyncTracer)
+		outGoingRequest(ctx)
+	}(pinpoint.NewContext(context.Background(), tracer.NewAsyncSpan()))
+
+	wg.Wait()
+}
+```
