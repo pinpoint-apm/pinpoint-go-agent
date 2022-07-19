@@ -149,7 +149,7 @@ func (agent *agent) sendStatsWorker() {
 	sleepTime := time.Duration(agent.config.Stat.CollectInterval) * time.Millisecond
 	time.Sleep(sleepTime)
 
-	agent.statStream = agent.statGrpc.newStatStreamWithRetry()
+	statStream := agent.statGrpc.newStatStreamWithRetry()
 	collected := make([]*inspectorStats, agent.config.Stat.BatchCount)
 	batch := 0
 
@@ -162,15 +162,11 @@ func (agent *agent) sendStatsWorker() {
 		batch++
 
 		if batch == agent.config.Stat.BatchCount {
-			agent.statStreamReq = true
-			err := agent.statStream.sendStats(collected)
-			agent.statStreamReq = false
-			agent.statStreamReqCount++
-
+			err := statStream.sendStats(collected)
 			if err != nil {
 				log("stats").Errorf("fail to sendStats(): %v", err)
-				agent.statStream.close()
-				agent.statStream = agent.statGrpc.newStatStreamWithRetry()
+				statStream.close()
+				statStream = agent.statGrpc.newStatStreamWithRetry()
 			}
 			batch = 0
 		}
@@ -178,7 +174,7 @@ func (agent *agent) sendStatsWorker() {
 		time.Sleep(sleepTime)
 	}
 
-	agent.statStream.close()
+	statStream.close()
 	log("stats").Info("stat goroutine finish")
 }
 

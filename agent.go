@@ -52,14 +52,6 @@ type agent struct {
 	apiCache         *lru.Cache
 	apiIdGen         int32
 
-	spanStream         *spanStream
-	spanStreamReq      bool
-	spanStreamReqCount uint64
-
-	statStream         *statStream
-	statStreamReq      bool
-	statStreamReqCount uint64
-
 	httpStatusErrors *httpStatusError
 	enable           bool
 }
@@ -195,15 +187,7 @@ func connectGrpc(agent *agent) {
 	go agent.runCommandService()
 	go agent.sendMetaWorker()
 
-	agent.spanStreamReq = false
-	agent.spanStreamReqCount = 0
-	//go agent.spanStreamMonitor()
-
-	agent.statStreamReq = false
-	agent.statStreamReqCount = 0
-	go agent.statStreamMonitor()
-
-	agent.wg.Add(7)
+	agent.wg.Add(5)
 }
 
 func (agent *agent) Shutdown() {
@@ -326,26 +310,23 @@ func (agent *agent) sendPingWorker() {
 func (agent *agent) sendSpanWorker() {
 	log("agent").Info("span goroutine start")
 	defer agent.wg.Done()
-	agent.spanStream = agent.spanGrpc.newSpanStreamWithRetry()
+
+	spanStream := agent.spanGrpc.newSpanStreamWithRetry()
 
 	for span := range agent.spanChan {
 		if !agent.enable {
 			break
 		}
 
-		agent.spanStreamReq = true
-		err := agent.spanStream.sendSpan(span)
-		agent.spanStreamReq = false
-		agent.spanStreamReqCount++
-
+		err := spanStream.sendSpan(span)
 		if err != nil {
 			log("agent").Errorf("fail to sendSpan(): %v", err)
-			agent.spanStream.close()
-			agent.spanStream = agent.spanGrpc.newSpanStreamWithRetry()
+			spanStream.close()
+			spanStream = agent.spanGrpc.newSpanStreamWithRetry()
 		}
 	}
 
-	agent.spanStream.close()
+	spanStream.close()
 	log("agent").Info("span goroutine finish")
 }
 
@@ -363,38 +344,6 @@ func (agent *agent) TryEnqueueSpan(span *span) bool {
 
 	<-agent.spanChan
 	return false
-}
-
-func (agent *agent) spanStreamMonitor() {
-	for true {
-		if !agent.enable {
-			break
-		}
-
-		c := agent.spanStreamReqCount
-		time.Sleep(5 * time.Second)
-
-		if agent.spanStreamReq == true && c == agent.spanStreamReqCount {
-			agent.spanStream.close()
-		}
-	}
-}
-
-func (agent *agent) statStreamMonitor() {
-	d := (time.Duration)(agent.config.Stat.CollectInterval*agent.config.Stat.BatchCount*2) * time.Millisecond
-
-	for true {
-		if !agent.enable {
-			break
-		}
-
-		c := agent.statStreamReqCount
-		time.Sleep(d)
-
-		if agent.statStreamReq == true && c == agent.statStreamReqCount {
-			agent.statStream.close()
-		}
-	}
 }
 
 func (agent *agent) sendMetaWorker() {

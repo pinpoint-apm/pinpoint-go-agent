@@ -240,6 +240,25 @@ func (agentGrpc *agentGrpc) sendSqlMetadata(sqlId int32, sql string) error {
 	return err
 }
 
+func sendWithTimeout(f func() error, d time.Duration) error {
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- f()
+		close(errChan)
+	}()
+
+	t := time.NewTimer(d)
+	select {
+	case <-t.C:
+		return status.Errorf(codes.DeadlineExceeded, "stream.Send() is too slow")
+	case err := <-errChan:
+		if !t.Stop() {
+			<-t.C
+		}
+		return err
+	}
+}
+
 type PingStreamInvoker interface {
 	Send(*pb.PPing) error
 	Recv() (*pb.PPing, error)
@@ -251,7 +270,7 @@ type pingStreamInvoker struct {
 }
 
 func (invoker *pingStreamInvoker) Send(p *pb.PPing) error {
-	return invoker.stream.Send(p)
+	return sendWithTimeout(func() error { return invoker.stream.Send(p) }, 5*time.Second)
 }
 
 func (invoker *pingStreamInvoker) Recv() (*pb.PPing, error) {
@@ -273,9 +292,6 @@ func (s *pingStream) setStreamInvoker(invoker PingStreamInvoker) {
 func (agentGrpc *agentGrpc) newPingStream() *pingStream {
 	agentGrpc.pingSocketId++
 	ctx := grpcMetadataContext(agentGrpc.agent, agentGrpc.pingSocketId)
-	//ctx, _ = context.WithTimeout(ctx, 30 * time.Second)
-	//defer cancel()
-
 	stream, err := agentGrpc.agentClient.PingSession(ctx)
 	if err != nil {
 		log("grpc").Errorf("fail to make ping stream - %v", err)
@@ -362,7 +378,7 @@ type spanStreamInvoker struct {
 }
 
 func (invoker *spanStreamInvoker) Send(span *pb.PSpanMessage) error {
-	return invoker.stream.Send(span)
+	return sendWithTimeout(func() error { return invoker.stream.Send(span) }, 5*time.Second)
 }
 
 func (invoker *spanStreamInvoker) CloseAndRecv() error {
@@ -402,12 +418,6 @@ func (spanGrpc *spanGrpc) close() {
 
 func (spanGrpc *spanGrpc) newSpanStream() *spanStream {
 	ctx := grpcMetadataContext(spanGrpc.agent, -1)
-	//ctx, _ = context.WithTimeout(ctx, 30 * time.Second)
-	//defer cancel()
-
-	//ctx, cancel := context.WithCancel(ctx)
-	//defer cancel()
-
 	stream, err := spanGrpc.spanClient.SendSpan(ctx)
 	if err != nil {
 		log("grpc").Errorf("fail to make span stream - %v", err)
@@ -633,7 +643,7 @@ type statStreamInvoker struct {
 }
 
 func (invoker *statStreamInvoker) Send(stat *pb.PStatMessage) error {
-	return invoker.stream.Send(stat)
+	return sendWithTimeout(func() error { return invoker.stream.Send(stat) }, 5*time.Second)
 }
 
 func (invoker *statStreamInvoker) CloseAndRecv() error {
@@ -673,9 +683,6 @@ func (statGrpc *statGrpc) close() {
 
 func (statGrpc *statGrpc) newStatStream() *statStream {
 	ctx := grpcMetadataContext(statGrpc.agent, -1)
-	//ctx, _ = context.WithTimeout(ctx, 30 * time.Second)
-	//defer cancel()
-
 	stream, err := statGrpc.statClient.SendAgentStat(ctx)
 	if err != nil {
 		log("grpc").Errorf("fail to make stat stream - %v", err)
@@ -823,9 +830,6 @@ func newCommandGrpc(agent Agent) (*cmdGrpc, error) {
 
 func (cmdGrpc *cmdGrpc) newHandleCommandStream() *cmdStream {
 	ctx := grpcMetadataContext(cmdGrpc.agent, -1)
-	//ctx, _ = context.WithTimeout(ctx, 30 * time.Second)
-	//defer cancel()
-
 	stream, err := cmdGrpc.cmdClient.HandleCommand(ctx)
 	if err != nil {
 		log("grpc").Errorf("fail to make command stream - %v", err)
