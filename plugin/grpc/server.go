@@ -43,13 +43,12 @@ func startSpan(ctx context.Context, agent pinpoint.Agent, apiId int32, rpcName s
 }
 
 func UnaryServerInterceptor(agent pinpoint.Agent) grpc.UnaryServerInterceptor {
-	apiId := agent.RegisterSpanApiId("Go gRPC HTTP Server", pinpoint.ApiTypeWebRequest)
-
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		if !agent.Enable() {
+		if agent == nil || !agent.Enable() {
 			return handler(ctx, req)
 		}
 
+		apiId := agent.RegisterSpanApiId("Go gRPC HTTP Server", pinpoint.ApiTypeWebRequest)
 		tracer := startSpan(ctx, agent, apiId, info.FullMethod)
 		defer tracer.EndSpan()
 		defer tracer.NewSpanEvent(info.FullMethod).EndSpanEvent()
@@ -64,13 +63,12 @@ func UnaryServerInterceptor(agent pinpoint.Agent) grpc.UnaryServerInterceptor {
 }
 
 func StreamServerInterceptor(agent pinpoint.Agent) grpc.StreamServerInterceptor {
-	apiId := agent.RegisterSpanApiId("Go gRPC HTTP Server", pinpoint.ApiTypeWebRequest)
-
 	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		if !agent.Enable() {
+		if agent == nil || !agent.Enable() {
 			return handler(srv, stream)
 		}
 
+		apiId := agent.RegisterSpanApiId("Go gRPC HTTP Server", pinpoint.ApiTypeWebRequest)
 		tracer := startSpan(stream.Context(), agent, apiId, info.FullMethod)
 		defer tracer.EndSpan()
 		defer tracer.NewSpanEvent(info.FullMethod).EndSpanEvent()

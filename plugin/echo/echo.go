@@ -8,18 +8,15 @@ import (
 )
 
 func Middleware(agent pinpoint.Agent) echo.MiddlewareFunc {
-	if !agent.Enable() {
-		return func(next echo.HandlerFunc) echo.HandlerFunc {
-			return next
-		}
-	}
-
-	apiId := agent.RegisterSpanApiId("Go Echo Server", pinpoint.ApiTypeWebRequest)
-
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			req := c.Request()
+			if agent == nil || !agent.Enable() {
+				return next(c)
+			}
 
+			apiId := agent.RegisterSpanApiId("Go Echo Server", pinpoint.ApiTypeWebRequest)
+
+			req := c.Request()
 			tracer := phttp.NewHttpServerTracer(agent, req, "Echo Server")
 			defer tracer.EndSpan()
 			tracer.Span().SetApiId(apiId)
@@ -36,7 +33,6 @@ func Middleware(agent pinpoint.Agent) echo.MiddlewareFunc {
 
 			phttp.TraceHttpStatus(tracer, c.Response().Status)
 			return err
-
 		}
 	}
 }

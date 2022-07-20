@@ -102,7 +102,7 @@ func TraceHttpStatus(tracer pinpoint.Tracer, status int) {
 
 func WrapHandle(agent pinpoint.Agent, handlerName string, pattern string, handler http.Handler) (string, http.Handler) {
 	return pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !agent.Enable() {
+		if agent == nil || !agent.Enable() {
 			handler.ServeHTTP(w, r)
 			return
 		}

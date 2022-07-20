@@ -8,16 +8,15 @@ import (
 )
 
 func Middleware(agent pinpoint.Agent) func(http.Handler) http.Handler {
-	if !agent.Enable() {
-		return func(next http.Handler) http.Handler {
-			return next
-		}
-	}
-
-	apiId := agent.RegisterSpanApiId("Go Chi Server", pinpoint.ApiTypeWebRequest)
-
 	return func(next http.Handler) http.Handler {
 		fn := func(w http.ResponseWriter, r *http.Request) {
+			if agent == nil || !agent.Enable() {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			apiId := agent.RegisterSpanApiId("Go Chi Server", pinpoint.ApiTypeWebRequest)
+
 			tracer := phttp.NewHttpServerTracer(agent, r, "Chi Server")
 			defer tracer.EndSpan()
 			tracer.Span().SetApiId(apiId)

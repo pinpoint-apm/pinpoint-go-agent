@@ -7,26 +7,27 @@ import (
 )
 
 func Middleware(agent pinpoint.Agent) gin.HandlerFunc {
-	apiId := agent.RegisterSpanApiId("Go Gin Server", pinpoint.ApiTypeWebRequest)
-
 	return func(c *gin.Context) {
-		if agent.Enable() {
-			tracer := phttp.NewHttpServerTracer(agent, c.Request, "Gin Server")
-			defer tracer.EndSpan()
-			tracer.Span().SetApiId(apiId)
-
-			c.Request = pinpoint.RequestWithTracerContext(c.Request, tracer)
-			defer tracer.NewSpanEvent(c.HandlerName()).EndSpanEvent()
-
+		if agent == nil || !agent.Enable() {
 			c.Next()
+			return
+		}
 
-			phttp.TraceHttpStatus(tracer, c.Writer.Status())
+		apiId := agent.RegisterSpanApiId("Go Gin Server", pinpoint.ApiTypeWebRequest)
 
-			if len(c.Errors) > 0 {
-				tracer.Span().SetError(c.Errors.Last())
-			}
-		} else {
-			c.Next()
+		tracer := phttp.NewHttpServerTracer(agent, c.Request, "Gin Server")
+		defer tracer.EndSpan()
+		tracer.Span().SetApiId(apiId)
+
+		c.Request = pinpoint.RequestWithTracerContext(c.Request, tracer)
+		defer tracer.NewSpanEvent(c.HandlerName()).EndSpanEvent()
+
+		c.Next()
+
+		phttp.TraceHttpStatus(tracer, c.Writer.Status())
+
+		if len(c.Errors) > 0 {
+			tracer.Span().SetError(c.Errors.Last())
 		}
 	}
 }
