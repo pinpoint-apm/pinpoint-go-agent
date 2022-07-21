@@ -41,6 +41,7 @@ type span struct {
 	err           int
 	asyncId       int32
 	asyncSequence int32
+	goroutineId   uint64
 	stack         *list.List
 }
 
@@ -61,6 +62,7 @@ func defaultSpan() *span {
 	span.sampled = true
 	span.serviceType = ServiceTypeGoApp
 	span.startTime = time.Now()
+	span.goroutineId = 0
 
 	span.stack = list.New()
 	return &span
@@ -83,7 +85,7 @@ func (span *span) EndSpan() {
 		}
 	}
 
-	dropActiveSpan(span.spanId)
+	dropActiveSpan(span)
 
 	span.duration = time.Now().Sub(span.startTime)
 	collectResponseTime(toMilliseconds(span.duration))
@@ -164,7 +166,7 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		span.sampled = true
 	}
 
-	addActiveSpan(span.spanId, span.startTime)
+	addActiveSpan(span)
 	log("span").Debug("span extract: ", tid, spanid, pappname, pspanid, papptype, host, sampled)
 }
 

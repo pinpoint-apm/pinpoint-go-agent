@@ -3,256 +3,74 @@ package pinpoint
 import (
 	"bufio"
 	"bytes"
-	"crypto/md5"
+	"errors"
 	"fmt"
-	"hash"
 	"io"
-	"os"
 	"regexp"
-	"sort"
+	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"strings"
+	"sync"
 )
 
-type MetaType int
-
-var (
-	MetaState    MetaType = 0
-	MetaDuration MetaType = 1
-
-	durationPattern = regexp.MustCompile(`^\d+ minutes$`)
-)
-
-// Goroutine contains a goroutine info.
 type Goroutine struct {
-	id       int
-	header   string
-	trace    string
-	lines    int
-	duration int // In minutes.
-	metas    map[MetaType]string
+	id     uint64
+	header string
+	state  string
+	trace  string
 
-	lineMd5    []string
-	fullMd5    string
-	fullHasher hash.Hash
-	duplicates []int
+	spanInfo activeSpanInfo
 
 	frozen bool
 	buf    *bytes.Buffer
 }
 
-// AddLine appends a line to the goroutine info.
-func (g *Goroutine) AddLine(l string) {
-	if !g.frozen {
-		g.lines++
-		g.buf.WriteString(l)
-		g.buf.WriteString("\n")
-
-		if strings.HasPrefix(l, "\t") {
-			parts := strings.Split(l, " ")
-			if len(parts) != 2 {
-				fmt.Println("ignored one line for digest")
-				return
-			}
-
-			fl := strings.TrimSpace(parts[0])
-
-			h := md5.New()
-			io.WriteString(h, fl)
-			g.lineMd5 = append(g.lineMd5, string(h.Sum(nil)))
-
-			io.WriteString(g.fullHasher, fl)
-		}
+func (g *Goroutine) addLine(line string) {
+	if g.frozen {
+		return
 	}
+
+	g.buf.WriteString(line)
+	g.buf.WriteString("\n")
 }
 
-// Freeze freezes the goroutine info.
-func (g *Goroutine) Freeze() {
-	if !g.frozen {
-		g.frozen = true
-		g.trace = g.buf.String()
-		g.buf = nil
-
-		g.fullMd5 = string(g.fullHasher.Sum(nil))
+func (g *Goroutine) freeze() {
+	if g.frozen {
+		return
 	}
+
+	g.frozen = true
+	g.trace = g.buf.String()
+	g.buf = nil
 }
 
-// Print outputs the goroutine details to w.
-func (g Goroutine) Print(w io.Writer) error {
-	if _, err := fmt.Fprint(w, g.header); err != nil {
-		return err
-	}
-	if len(g.duplicates) > 0 {
-		if _, err := fmt.Fprintf(w, " %d times: [[", len(g.duplicates)); err != nil {
-			return err
-		}
-		for i, id := range g.duplicates {
-			if i > 0 {
-				if _, err := fmt.Fprint(w, ", "); err != nil {
-					return err
-				}
-			}
-			if _, err := fmt.Fprint(w, id); err != nil {
-				return err
-			}
-		}
-		if _, err := fmt.Fprint(w, "]"); err != nil {
-			return err
+func newGoroutine(line string) *Goroutine {
+	idx := strings.Index(line, "[")
+	parts := strings.Split(line[idx+1:len(line)-2], ",")
+	state := strings.TrimSpace(parts[0])
+
+	if id, err := strconv.Atoi(strings.TrimSpace(line[9:idx])); err == nil {
+		return &Goroutine{
+			id:     uint64(id),
+			header: line[0 : idx-1],
+			state:  state,
+			buf:    &bytes.Buffer{},
 		}
 	}
-	if _, err := fmt.Fprintln(w); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, g.trace); err != nil {
-		return err
-	}
+
 	return nil
 }
 
-// NewGoroutine creates and returns a new Goroutine.
-func NewGoroutine(metaline string) (*Goroutine, error) {
-	idx := strings.Index(metaline, "[")
-	parts := strings.Split(metaline[idx+1:len(metaline)-2], ",")
-	metas := map[MetaType]string{
-		MetaState: strings.TrimSpace(parts[0]),
-	}
-
-	duration := 0
-	if len(parts) > 1 {
-		value := strings.TrimSpace(parts[1])
-		metas[MetaDuration] = value
-		if durationPattern.MatchString(value) {
-			if d, err := strconv.Atoi(value[:len(value)-8]); err == nil {
-				duration = d
-			}
-		}
-	}
-
-	idstr := strings.TrimSpace(metaline[9:idx])
-	id, err := strconv.Atoi(idstr)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Goroutine{
-		id:         id,
-		lines:      1,
-		header:     metaline[0 : idx-1],
-		buf:        &bytes.Buffer{},
-		duration:   duration,
-		metas:      metas,
-		fullHasher: md5.New(),
-		duplicates: []int{},
-	}, nil
-}
-
-// GoroutineDump defines a goroutine dump.
 type GoroutineDump struct {
 	goroutines []*Goroutine
 }
 
-// Add appends a goroutine info to the list.
-func (gd *GoroutineDump) Add(g *Goroutine) {
+func (gd *GoroutineDump) add(g *Goroutine) {
 	gd.goroutines = append(gd.goroutines, g)
 }
 
-// Dedup finds goroutines with duplicated stack traces and keeps only one copy
-// of them.
-func (gd *GoroutineDump) Dedup() {
-	m := map[string][]int{}
-	for _, g := range gd.goroutines {
-		if _, ok := m[g.fullMd5]; ok {
-			m[g.fullMd5] = append(m[g.fullMd5], g.id)
-		} else {
-			m[g.fullMd5] = []int{g.id}
-		}
-	}
-
-	kept := make([]*Goroutine, 0, len(gd.goroutines))
-
-outter:
-	for digest, ids := range m {
-		for _, g := range gd.goroutines {
-			if g.fullMd5 == digest {
-				g.duplicates = ids
-				kept = append(kept, g)
-				continue outter
-			}
-		}
-	}
-
-	if len(gd.goroutines) != len(kept) {
-		fmt.Printf("Dedupped %d, kept %d\n", len(gd.goroutines), len(kept))
-		gd.goroutines = kept
-	}
-}
-
-// Diff shows the difference between two dumps.
-func (gd *GoroutineDump) Diff(another *GoroutineDump) (*GoroutineDump, *GoroutineDump, *GoroutineDump) {
-	lonly := map[int]*Goroutine{}
-	ronly := map[int]*Goroutine{}
-	common := map[int]*Goroutine{}
-
-	for _, v := range gd.goroutines {
-		lonly[v.id] = v
-	}
-	for _, v := range another.goroutines {
-		if _, ok := lonly[v.id]; ok {
-			delete(lonly, v.id)
-			common[v.id] = v
-		} else {
-			ronly[v.id] = v
-		}
-	}
-	return NewGoroutineDumpFromMap(lonly), NewGoroutineDumpFromMap(common), NewGoroutineDumpFromMap(ronly)
-}
-
-// Save saves the goroutine dump to the given file.
-func (gd GoroutineDump) Save(fn string) error {
-	f, err := os.Create(fn)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	for _, g := range gd.goroutines {
-		if err := g.Print(f); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// Sort sorts the goroutine entries.
-func (gd *GoroutineDump) Sort() {
-	fmt.Printf("# of goroutines: %d\n", len(gd.goroutines))
-}
-
-// Summary prints the summary of the goroutine dump.
-func (gd GoroutineDump) Summary() {
-	fmt.Printf("# of goroutines: %d\n", len(gd.goroutines))
-	stats := map[string]int{}
-	if len(gd.goroutines) > 0 {
-		for _, g := range gd.goroutines {
-			stats[g.metas[MetaState]]++
-		}
-		fmt.Println()
-	}
-	if len(stats) > 0 {
-		states := make([]string, 0, 10)
-		for k := range stats {
-			states = append(states, k)
-		}
-		sort.Sort(sort.StringSlice(states))
-
-		for _, k := range states {
-			fmt.Printf("%15s: %d\n", k, stats[k])
-		}
-		fmt.Println()
-	}
-}
-
-func (gd *GoroutineDump) Search(s string) *Goroutine {
+func (gd *GoroutineDump) search(s string) *Goroutine {
 	for _, g := range gd.goroutines {
 		if g.header == s {
 			return g
@@ -262,65 +80,194 @@ func (gd *GoroutineDump) Search(s string) *Goroutine {
 	return nil
 }
 
-// NewGoroutineDump creates and returns a new GoroutineDump.
-func NewGoroutineDump() *GoroutineDump {
+func newGoroutineDump() *GoroutineDump {
 	return &GoroutineDump{
 		goroutines: []*Goroutine{},
 	}
 }
 
-// NewGoroutineDumpFromMap creates and returns a new GoroutineDump from a map.
-func NewGoroutineDumpFromMap(gs map[int]*Goroutine) *GoroutineDump {
-	gd := &GoroutineDump{
-		goroutines: []*Goroutine{},
+func dumpGoroutine() *GoroutineDump {
+	var b bytes.Buffer
+	buf := bufio.NewWriter(&b)
+
+	if p := pprof.Lookup("goroutine"); p != nil {
+		if err := p.WriteTo(buf, 2); err != nil {
+			log("cmd").Errorf("fail to profile goroutine: %v", err)
+			return nil
+		}
 	}
-	for _, v := range gs {
-		gd.goroutines = append(gd.goroutines, v)
-	}
-	return gd
+
+	return parseProfile(&b)
 }
 
 var (
 	startLinePattern = regexp.MustCompile(`^goroutine\s+(\d+)\s+\[(.*)\]:$`)
 )
 
-func loadProfile(fn string) (*GoroutineDump, error) {
-	fn = strings.Trim(fn, "\"")
-	f, err := os.Open(fn)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	dump := NewGoroutineDump()
+func parseProfile(r io.Reader) *GoroutineDump {
+	dump := newGoroutineDump()
 	var goroutine *Goroutine
 
-	scanner := bufio.NewScanner(f)
+	goroutine = nil
+	scanner := bufio.NewScanner(r)
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if startLinePattern.MatchString(line) {
-			goroutine, err = NewGoroutine(line)
-			if err != nil {
-				return nil, err
+			goroutine = newGoroutine(line)
+			if goroutine == nil {
+				return nil
 			}
-			dump.Add(goroutine)
+
+			if v, ok := activeSpan.Load(goroutine.id); ok {
+				goroutine.spanInfo = v.(activeSpanInfo)
+				dump.add(goroutine)
+			}
 		} else if line == "" {
 			// End of a goroutine section.
 			if goroutine != nil {
-				goroutine.Freeze()
+				goroutine.freeze()
 			}
 			goroutine = nil
 		} else if goroutine != nil {
-			goroutine.AddLine(line)
+			goroutine.addLine(line)
 		}
 	}
 
-	if goroutine != nil {
-		goroutine.Freeze()
+	if err := scanner.Err(); err != nil {
+		log("cmd").Errorf("fail to scan goroutine profile: %v", err)
+		return nil
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, err
+	if goroutine != nil {
+		goroutine.freeze()
 	}
-	return dump, nil
+
+	return dump
+}
+
+// Sourced: https://github.com/golang/net/blob/master/http2/gotrack.go
+
+var goroutineSpace = []byte("goroutine ")
+
+func curGoroutineID() uint64 {
+	bp := littleBuf.Get().(*[]byte)
+	defer littleBuf.Put(bp)
+	b := *bp
+	b = b[:runtime.Stack(b, false)]
+	// Parse the 4707 out of "goroutine 4707 ["
+	b = bytes.TrimPrefix(b, goroutineSpace)
+	i := bytes.IndexByte(b, ' ')
+	if i < 0 {
+		panic(fmt.Sprintf("No space found in %q", b))
+	}
+	b = b[:i]
+	n, err := parseUintBytes(b, 10, 64)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to parse goroutine ID out of %q: %v", b, err))
+	}
+	fmt.Sprintf("curGoroutineID2: %v", n)
+	return n
+}
+
+var littleBuf = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, 64)
+		return &buf
+	},
+}
+
+// parseUintBytes is like strconv.ParseUint, but using a []byte.
+func parseUintBytes(s []byte, base int, bitSize int) (n uint64, err error) {
+	var cutoff, maxVal uint64
+
+	if bitSize == 0 {
+		bitSize = int(strconv.IntSize)
+	}
+
+	s0 := s
+	switch {
+	case len(s) < 1:
+		err = strconv.ErrSyntax
+		goto Error
+
+	case 2 <= base && base <= 36:
+		// valid base; nothing to do
+
+	case base == 0:
+		// Look for octal, hex prefix.
+		switch {
+		case s[0] == '0' && len(s) > 1 && (s[1] == 'x' || s[1] == 'X'):
+			base = 16
+			s = s[2:]
+			if len(s) < 1 {
+				err = strconv.ErrSyntax
+				goto Error
+			}
+		case s[0] == '0':
+			base = 8
+		default:
+			base = 10
+		}
+
+	default:
+		err = errors.New("invalid base " + strconv.Itoa(base))
+		goto Error
+	}
+
+	n = 0
+	cutoff = cutoff64(base)
+	maxVal = 1<<uint(bitSize) - 1
+
+	for i := 0; i < len(s); i++ {
+		var v byte
+		d := s[i]
+		switch {
+		case '0' <= d && d <= '9':
+			v = d - '0'
+		case 'a' <= d && d <= 'z':
+			v = d - 'a' + 10
+		case 'A' <= d && d <= 'Z':
+			v = d - 'A' + 10
+		default:
+			n = 0
+			err = strconv.ErrSyntax
+			goto Error
+		}
+		if int(v) >= base {
+			n = 0
+			err = strconv.ErrSyntax
+			goto Error
+		}
+
+		if n >= cutoff {
+			// n*base overflows
+			n = 1<<64 - 1
+			err = strconv.ErrRange
+			goto Error
+		}
+		n *= uint64(base)
+
+		n1 := n + uint64(v)
+		if n1 < n || n1 > maxVal {
+			// n+v overflows
+			n = 1<<64 - 1
+			err = strconv.ErrRange
+			goto Error
+		}
+		n = n1
+	}
+
+	return n, nil
+
+Error:
+	return n, &strconv.NumError{Func: "ParseUint", Num: string(s0), Err: err}
+}
+
+// Return the first number n such that n*base >= 1<<64.
+func cutoff64(base int) uint64 {
+	if base < 2 {
+		return 0
+	}
+	return (1<<64-1)/uint64(base) + 1
 }

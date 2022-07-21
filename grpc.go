@@ -921,9 +921,6 @@ type activeThreadCountStream struct {
 
 func (cmdGrpc *cmdGrpc) newActiveThreadCountStream(reqId int32) *activeThreadCountStream {
 	ctx := grpcMetadataContext(cmdGrpc.agent, -1)
-	//ctx, _ = context.WithTimeout(ctx, 30 * time.Second)
-	//defer cancel()
-
 	stream, err := cmdGrpc.cmdClient.CommandStreamActiveThreadCount(ctx)
 	if err != nil {
 		log("grpc").Errorf("fail to make active thread count stream - %v", err)
@@ -1005,7 +1002,7 @@ func makePActiveThreadDumpList(dump *GoroutineDump, limit int, threadName []stri
 
 	selected := make([]*Goroutine, 0)
 	for _, tn := range threadName {
-		g := dump.Search(tn)
+		g := dump.search(tn)
 		if g != nil {
 			selected = append(selected, g)
 		}
@@ -1026,7 +1023,7 @@ func makePActiveThreadDump(g *Goroutine) *pb.PActiveThreadDump {
 	trace = append(trace, g.trace)
 
 	aDump := &pb.PActiveThreadDump{
-		StartTime:    time.Now().UnixNano() / int64(time.Millisecond),
+		StartTime:    g.spanInfo.startTime.UnixNano() / int64(time.Millisecond),
 		LocalTraceId: 0,
 		ThreadDump: &pb.PThreadDump{
 			ThreadName:         g.header,
@@ -1045,8 +1042,8 @@ func makePActiveThreadDump(g *Goroutine) *pb.PActiveThreadDump {
 			LockedMonitor:      nil,
 			LockedSynchronizer: nil,
 		},
-		Sampled:       false,
-		TransactionId: "",
+		Sampled:       true,
+		TransactionId: g.spanInfo.txId.String(),
 		EntryPoint:    "",
 	}
 
@@ -1093,15 +1090,15 @@ func makePActiveThreadLightDumpList(dump *GoroutineDump, limit int) []*pb.PActiv
 
 func makePActiveThreadLightDump(g *Goroutine) *pb.PActiveThreadLightDump {
 	aDump := &pb.PActiveThreadLightDump{
-		StartTime:    time.Now().UnixNano() / int64(time.Millisecond),
+		StartTime:    g.spanInfo.startTime.UnixNano() / int64(time.Millisecond),
 		LocalTraceId: 0,
 		ThreadDump: &pb.PThreadLightDump{
 			ThreadName:  g.header,
 			ThreadId:    int64(g.id),
 			ThreadState: goRoutineState(g),
 		},
-		Sampled:       false,
-		TransactionId: "",
+		Sampled:       true,
+		TransactionId: g.spanInfo.txId.String(),
 		EntryPoint:    "", //path
 	}
 
@@ -1109,7 +1106,7 @@ func makePActiveThreadLightDump(g *Goroutine) *pb.PActiveThreadLightDump {
 }
 
 func goRoutineState(g *Goroutine) pb.PThreadState {
-	switch g.metas[MetaState] {
+	switch g.state {
 	case "running":
 		return pb.PThreadState_THREAD_STATE_RUNNABLE
 	case "select":
