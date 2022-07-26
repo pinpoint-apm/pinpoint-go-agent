@@ -9,7 +9,7 @@ require (
 	github.com/go-chi/chi v4.1.2+incompatible
 	github.com/go-redis/redis v6.10.0+incompatible
 	github.com/go-redis/redis/v8 v8.0.0-beta.7
-	github.com/go-sql-driver/mysql v1.5.0
+	github.com/go-sql-driver/mysql v1.6.0
 	github.com/gocql/gocql v0.0.0-20200815110948-5378c8f664e9
 	github.com/golang/mock v1.6.0
 	github.com/golang/protobuf v1.4.2
@@ -28,4 +28,7 @@ require (
 	google.golang.org/genproto v0.0.0-20200319113533-08878b785e9c // indirect
 	google.golang.org/grpc v1.30.0
 	gopkg.in/yaml.v2 v2.3.0
+	gorm.io/driver/mysql v1.3.3
+	gorm.io/gorm v1.23.4
+	github.com/gomodule/redigo v1.8.9
 )

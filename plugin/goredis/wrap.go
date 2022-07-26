@@ -52,7 +52,7 @@ func process(ctx context.Context, endpoint string) func(oldProcess func(cmd redi
 				return oldProcess(cmd)
 			}
 
-			tracer.NewSpanEvent(strings.ToUpper(cmd.Name()))
+			tracer.NewSpanEvent("goredis.process: " + strings.ToUpper(cmd.Name()))
 			defer tracer.EndSpanEvent()
 
 			span := tracer.SpanEvent()
@@ -90,7 +90,7 @@ func processPipeline(ctx context.Context, endpoint string) func(oldProcess func(
 				cmdNameBuf.WriteString(cmdName)
 			}
 
-			tracer.NewSpanEvent("redis.pipeline: " + cmdNameBuf.String())
+			tracer.NewSpanEvent("goredis.pipeline: " + cmdNameBuf.String())
 			defer tracer.EndSpanEvent()
 
 			span := tracer.SpanEvent()
