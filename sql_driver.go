@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"context"
 	"database/sql/driver"
+	"time"
 )
 
 type DatabaseTrace struct {
@@ -35,11 +36,6 @@ func NewDatabaseTracer(ctx context.Context, funcName string, dt *DatabaseTrace) 
 	se.SetSQL(dt.QueryString)
 
 	return tracer
-}
-
-func NewDatabaseTracerWithQuery(ctx context.Context, funcName string, dt *DatabaseTrace, sql string) Tracer {
-	dt.QueryString = sql
-	return NewDatabaseTracer(ctx, funcName, dt)
 }
 
 func makeDriver(drv *PinpointSqlDriver) driver.Driver {
@@ -144,21 +140,35 @@ func (c *PinpointSqlConn) PrepareContext(ctx context.Context, query string) (dri
 	return prepare(stmt, err, &c.trace, query)
 }
 
-func (c *PinpointSqlConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	tracer := NewDatabaseTracerWithQuery(ctx, "ExecContext", &c.trace, query)
-	result, err := c.originConn.(driver.ExecerContext).ExecContext(ctx, query, args)
-	if tracer != nil {
+func newSqlSpanEvent(ctx context.Context, operation string, dt *DatabaseTrace, start time.Time, err error) {
+	if tracer := NewDatabaseTracer(ctx, operation, dt); tracer != nil {
+		tracer.SpanEvent().SetError(err)
+		tracer.SpanEvent().FixDuration(start, time.Now())
 		tracer.EndSpanEvent()
 	}
+}
+
+func (c *PinpointSqlConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	start := time.Now()
+	result, err := c.originConn.(driver.ExecerContext).ExecContext(ctx, query, args)
+
+	if err != driver.ErrSkip {
+		c.trace.QueryString = query
+		newSqlSpanEvent(ctx, "ConnExecContext", &c.trace, start, err)
+	}
+
 	return result, err
 }
 
 func (c *PinpointSqlConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	tracer := NewDatabaseTracerWithQuery(ctx, "QueryContext", &c.trace, query)
+	start := time.Now()
 	rows, err := c.originConn.(driver.QueryerContext).QueryContext(ctx, query, args)
-	if tracer != nil {
-		tracer.EndSpanEvent()
+
+	if err != driver.ErrSkip {
+		c.trace.QueryString = query
+		newSqlSpanEvent(ctx, "ConnQueryContext", &c.trace, start, err)
 	}
+
 	return rows, err
 }
 
@@ -203,20 +213,18 @@ type PinpointSqlStmt struct {
 }
 
 func (s *PinpointSqlStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
-	tracer := NewDatabaseTracer(ctx, "StmtExecContext", s.trace)
+	start := time.Now()
 	result, err := s.originStmt.(driver.StmtExecContext).ExecContext(ctx, args)
-	if tracer != nil {
-		tracer.EndSpanEvent()
-	}
+	newSqlSpanEvent(ctx, "StmtExecContext", s.trace, start, err)
+
 	return result, err
 }
 
 func (s *PinpointSqlStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
-	tracer := NewDatabaseTracer(ctx, "StmtQueryContext", s.trace)
+	start := time.Now()
 	rows, err := s.originStmt.(driver.StmtQueryContext).QueryContext(ctx, args)
-	if tracer != nil {
-		tracer.EndSpanEvent()
-	}
+	newSqlSpanEvent(ctx, "StmtQueryContext", s.trace, start, err)
+
 	return rows, err
 }
 

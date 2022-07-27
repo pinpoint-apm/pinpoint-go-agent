@@ -40,6 +40,8 @@ func newSpanEvent(span *span, operationName string) *spanEvent {
 	se.serviceType = ServiceTypeGoFunction
 	se.isTimeFixed = false
 
+	log("span").Debug("newSpanEvent: ", se.operationName, se.sequence, se.depth, se.startTime)
+
 	return &se
 }
 
@@ -48,6 +50,8 @@ func (se *spanEvent) end() {
 	if !se.isTimeFixed {
 		se.duration = time.Now().Sub(se.startTime)
 	}
+
+	log("span").Debug("endSpanEvent: ", se.operationName)
 }
 
 func (se *spanEvent) generateNextSpanId() int64 {
