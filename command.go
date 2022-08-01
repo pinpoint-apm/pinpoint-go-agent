@@ -2,15 +2,29 @@ package pinpoint
 
 import (
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	"io"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
-var gDump *GoroutineDump
+var (
+	gGoroutineDump     *GoroutineDump
+	gAtcStreamCount    int32
+	realTimeActiveSpan sync.Map
+)
+
+type activeSpanInfo struct {
+	startTime  time.Time
+	txId       TransactionId
+	entryPoint string
+}
 
 func (agent *agent) runCommandService() {
 	log("cmd").Info("command service goroutine start")
 	defer agent.wg.Done()
 
+	gAtcStreamCount = 0
 	cmdStream := agent.cmdGrpc.newCommandStreamWithRetry()
 
 	for true {
@@ -47,17 +61,17 @@ func (agent *agent) runCommandService() {
 				go sendActiveThreadCount(atcStream)
 				break
 			case *pb.PCmdRequest_CommandActiveThreadDump:
-				if c := cmdReq.GetCommandActiveThreadDump(); c != nil && gDump != nil {
+				if c := cmdReq.GetCommandActiveThreadDump(); c != nil && gGoroutineDump != nil {
 					limit := c.GetLimit()
 					threadName := c.GetThreadName()
 					localId := c.GetLocalTraceId()
-					agent.cmdGrpc.sendActiveThreadDump(reqId, limit, threadName, localId, gDump)
+					agent.cmdGrpc.sendActiveThreadDump(reqId, limit, threadName, localId, gGoroutineDump)
 				}
 				break
 			case *pb.PCmdRequest_CommandActiveThreadLightDump:
 				limit := cmdReq.GetCommandActiveThreadLightDump().GetLimit()
-				if gDump = dumpGoroutine(); gDump != nil {
-					agent.cmdGrpc.sendActiveThreadLightDump(reqId, limit, gDump)
+				if gGoroutineDump = dumpGoroutine(); gGoroutineDump != nil {
+					agent.cmdGrpc.sendActiveThreadLightDump(reqId, limit, gGoroutineDump)
 				}
 				break
 			case nil:
@@ -77,13 +91,56 @@ func (agent *agent) runCommandService() {
 }
 
 func sendActiveThreadCount(s *activeThreadCountStream) {
+	atomic.AddInt32(&gAtcStreamCount, 1)
+	log("cmd").Infof("active thread count stream goroutine start: %d, %d", s.reqId, gAtcStreamCount)
+
 	for true {
 		err := s.sendActiveThreadCount()
 		if err != nil {
-			log("cmd").Errorf("fail to sendActiveThreadCount(): %d, %v", s.reqId, err)
+			if err != io.EOF {
+				log("cmd").Errorf("fail to sendActiveThreadCount(): %d, %v", s.reqId, err)
+			}
 			break
 		}
 		time.Sleep(1 * time.Second)
 	}
 	s.close()
+
+	atomic.AddInt32(&gAtcStreamCount, -1)
+	log("cmd").Infof("active thread count stream goroutine finish: %d, %d", s.reqId, gAtcStreamCount)
+}
+
+func addRealTimeActiveSpan(span *span) {
+	if gAtcStreamCount > 0 {
+		span.goroutineId = curGoroutineID()
+		s := activeSpanInfo{span.startTime, span.txId, span.rpcName}
+		realTimeActiveSpan.Store(span.goroutineId, s)
+		log("cmd").Debug("addRealTimeActiveSpan: ", span.goroutineId, s)
+	}
+}
+
+func dropRealTimeActiveSpan(span *span) {
+	realTimeActiveSpan.Delete(span.goroutineId)
+	log("cmd").Debug("addRealTimeActiveSpan: ", span.goroutineId)
+}
+
+func getActiveSpanCount(now time.Time) []int32 {
+	counts := []int32{0, 0, 0, 0}
+	realTimeActiveSpan.Range(func(k, v interface{}) bool {
+		s := v.(activeSpanInfo)
+		d := now.Sub(s.startTime).Seconds()
+
+		if d < 1 {
+			counts[0]++
+		} else if d < 3 {
+			counts[1]++
+		} else if d < 5 {
+			counts[2]++
+		} else {
+			counts[3]++
+		}
+		return true
+	})
+
+	return counts
 }

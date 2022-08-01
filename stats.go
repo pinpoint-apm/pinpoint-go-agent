@@ -47,11 +47,6 @@ var skipCont int64
 
 var activeSpan sync.Map
 
-type activeSpanInfo struct {
-	startTime time.Time
-	txId      TransactionId
-}
-
 func initStats() {
 	err := syscall.Getrusage(syscall.RUSAGE_SELF, &lastRusage)
 	if err != nil {
@@ -82,9 +77,9 @@ func getStats() *inspectorStats {
 
 	activeSpanCount := []int32{0, 0, 0, 0}
 	activeSpan.Range(func(k, v interface{}) bool {
-		s := v.(activeSpanInfo)
-		d := now.Sub(s.startTime).Seconds()
-		log("stats").Debug("getStats: ", now, s.startTime, d)
+		s := v.(time.Time)
+		d := now.Sub(s).Seconds()
+		log("stats").Debug("getStats: ", now, s, d)
 
 		if d < 1 {
 			activeSpanCount[0]++
@@ -208,36 +203,17 @@ func resetResponseTime() {
 }
 
 func addActiveSpan(span *span) {
-	span.goroutineId = curGoroutineID()
-	s := activeSpanInfo{span.startTime, span.txId}
-	activeSpan.Store(span.goroutineId, s)
-	log("stats").Debug("addActiveSpan: ", span.goroutineId, s)
+	activeSpan.Store(span.spanId, span.startTime)
+	log("stats").Debug("addActiveSpan: ", span.spanId, span.startTime)
+
+	addRealTimeActiveSpan(span)
 }
 
 func dropActiveSpan(span *span) {
-	activeSpan.Delete(span.goroutineId)
-	log("stats").Debug("dropActiveSpan: ", span.goroutineId)
-}
+	activeSpan.Delete(span.spanId)
+	log("stats").Debug("dropActiveSpan: ", span.spanId)
 
-func getActiveSpanCount(now time.Time) []int32 {
-	activeSpanCount := []int32{0, 0, 0, 0}
-	activeSpan.Range(func(k, v interface{}) bool {
-		s := v.(activeSpanInfo)
-		d := now.Sub(s.startTime).Seconds()
-
-		if d < 1 {
-			activeSpanCount[0]++
-		} else if d < 3 {
-			activeSpanCount[1]++
-		} else if d < 5 {
-			activeSpanCount[2]++
-		} else {
-			activeSpanCount[3]++
-		}
-		return true
-	})
-
-	return activeSpanCount
+	dropRealTimeActiveSpan(span)
 }
 
 func incrSampleNew() {

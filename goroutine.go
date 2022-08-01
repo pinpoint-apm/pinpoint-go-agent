@@ -119,7 +119,7 @@ func parseProfile(r io.Reader) *GoroutineDump {
 				return nil
 			}
 
-			if v, ok := activeSpan.Load(goroutine.id); ok {
+			if v, ok := realTimeActiveSpan.Load(goroutine.id); ok {
 				goroutine.spanInfo = v.(activeSpanInfo)
 				dump.add(goroutine)
 			}

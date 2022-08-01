@@ -1044,7 +1044,7 @@ func makePActiveThreadDump(g *Goroutine) *pb.PActiveThreadDump {
 		},
 		Sampled:       true,
 		TransactionId: g.spanInfo.txId.String(),
-		EntryPoint:    "",
+		EntryPoint:    g.spanInfo.entryPoint,
 	}
 
 	return aDump
@@ -1099,7 +1099,7 @@ func makePActiveThreadLightDump(g *Goroutine) *pb.PActiveThreadLightDump {
 		},
 		Sampled:       true,
 		TransactionId: g.spanInfo.txId.String(),
-		EntryPoint:    "", //path
+		EntryPoint:    g.spanInfo.entryPoint,
 	}
 
 	return aDump
