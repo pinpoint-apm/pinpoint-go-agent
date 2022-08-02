@@ -9,15 +9,15 @@ import (
 )
 
 var (
-	gGoroutineDump     *GoroutineDump
 	gAtcStreamCount    int32
 	realTimeActiveSpan sync.Map
 )
 
 type activeSpanInfo struct {
 	startTime  time.Time
-	txId       TransactionId
+	txId       string
 	entryPoint string
+	sampled    bool
 }
 
 func (agent *agent) runCommandService() {
@@ -61,17 +61,16 @@ func (agent *agent) runCommandService() {
 				go sendActiveThreadCount(atcStream)
 				break
 			case *pb.PCmdRequest_CommandActiveThreadDump:
-				if c := cmdReq.GetCommandActiveThreadDump(); c != nil && gGoroutineDump != nil {
+				if c := cmdReq.GetCommandActiveThreadDump(); c != nil {
 					limit := c.GetLimit()
 					threadName := c.GetThreadName()
 					localId := c.GetLocalTraceId()
-					agent.cmdGrpc.sendActiveThreadDump(reqId, limit, threadName, localId, gGoroutineDump)
+					agent.cmdGrpc.sendActiveThreadDump(reqId, limit, threadName, localId, dumpGoroutine())
 				}
 				break
 			case *pb.PCmdRequest_CommandActiveThreadLightDump:
-				limit := cmdReq.GetCommandActiveThreadLightDump().GetLimit()
-				if gGoroutineDump = dumpGoroutine(); gGoroutineDump != nil {
-					agent.cmdGrpc.sendActiveThreadLightDump(reqId, limit, gGoroutineDump)
+				if c := cmdReq.GetCommandActiveThreadLightDump(); c != nil {
+					agent.cmdGrpc.sendActiveThreadLightDump(reqId, c.GetLimit(), dumpGoroutine())
 				}
 				break
 			case nil:
@@ -110,18 +109,28 @@ func sendActiveThreadCount(s *activeThreadCountStream) {
 	log("cmd").Infof("active thread count stream goroutine finish: %d, %d", s.reqId, gAtcStreamCount)
 }
 
-func addRealTimeActiveSpan(span *span) {
+func addRealTimeSampledActiveSpan(span *span) {
 	if gAtcStreamCount > 0 {
 		span.goroutineId = curGoroutineID()
-		s := activeSpanInfo{span.startTime, span.txId, span.rpcName}
+		s := activeSpanInfo{span.startTime, span.txId.String(), span.rpcName, span.sampled}
 		realTimeActiveSpan.Store(span.goroutineId, s)
-		log("cmd").Debug("addRealTimeActiveSpan: ", span.goroutineId, s)
 	}
 }
 
-func dropRealTimeActiveSpan(span *span) {
+func dropRealTimeSampledActiveSpan(span *span) {
 	realTimeActiveSpan.Delete(span.goroutineId)
-	log("cmd").Debug("addRealTimeActiveSpan: ", span.goroutineId)
+}
+
+func addRealTimeUnSampledActiveSpan(span *noopSpan) {
+	if gAtcStreamCount > 0 {
+		span.goroutineId = curGoroutineID()
+		s := activeSpanInfo{span.startTime, "", span.rpcName, false}
+		realTimeActiveSpan.Store(span.goroutineId, s)
+	}
+}
+
+func dropRealTimeUnSampledActiveSpan(span *noopSpan) {
+	realTimeActiveSpan.Delete(span.goroutineId)
 }
 
 func getActiveSpanCount(now time.Time) []int32 {

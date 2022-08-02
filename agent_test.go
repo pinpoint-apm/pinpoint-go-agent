@@ -29,7 +29,7 @@ func Test_agent_NewSpanTracer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
-			span := agent.NewSpanTracer("test")
+			span := agent.NewSpanTracer("test", "/")
 
 			txid := span.TransactionId()
 			assert.Equal(t, txid.AgentId, "testagent", "AgentId")
@@ -73,7 +73,7 @@ func Test_agent_NewSpanTracerWithReader(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
-			span := agent.NewSpanTracerWithReader("test", tt.args.reader)
+			span := agent.NewSpanTracerWithReader("test", "/", tt.args.reader)
 
 			txid := span.TransactionId()
 			assert.Equal(t, txid.AgentId, "t123456", "AgentId")

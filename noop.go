@@ -7,17 +7,30 @@ import (
 
 type noopSpan struct {
 	agent       Agent
+	spanId      int64
+	startTime   time.Time
+	rpcName     string
+	goroutineId uint64
+
 	noopSe      noopSpanEvent
 	annotations noopannotation
 }
 
-func newNoopSpan(agent Agent) Tracer {
+func newNoopSpan(agent Agent, rpcName string) Tracer {
 	span := noopSpan{}
 	span.agent = agent
+	span.spanId = generateSpanId()
+	span.startTime = time.Now()
+	span.rpcName = rpcName
+
+	addUnSampledActiveSpan(&span)
+
 	return &span
 }
 
-func (span *noopSpan) EndSpan() {}
+func (span *noopSpan) EndSpan() {
+	dropUnSampledActiveSpan(span)
+}
 
 func (span *noopSpan) NewSpanEvent(operationName string) Tracer {
 	return span
@@ -34,7 +47,18 @@ func (span *noopSpan) NewGoroutineTracer() Tracer {
 }
 
 func (span *noopSpan) WrapGoroutine(goroutineName string, goroutine func(context.Context), ctx context.Context) func() {
-	return func() {}
+	asyncSpan := span.NewAsyncSpan()
+
+	var newCtx context.Context
+	if ctx == nil {
+		newCtx = NewContext(context.Background(), asyncSpan)
+	} else {
+		newCtx = NewContext(ctx, asyncSpan)
+	}
+
+	return func() {
+		goroutine(newCtx)
+	}
 }
 
 func (span *noopSpan) EndSpanEvent() {}
@@ -44,7 +68,7 @@ func (span *noopSpan) TransactionId() TransactionId {
 }
 
 func (span *noopSpan) SpanId() int64 {
-	return -1
+	return span.spanId
 }
 
 func (span *noopSpan) Span() SpanRecorder {

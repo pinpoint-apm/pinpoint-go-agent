@@ -18,8 +18,8 @@ func (tid TransactionId) String() string {
 
 type Agent interface {
 	Shutdown()
-	NewSpanTracer(operation string) Tracer
-	NewSpanTracerWithReader(operation string, reader DistributedTracingContextReader) Tracer
+	NewSpanTracer(operation string, rpcName string) Tracer
+	NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer
 	RegisterSpanApiId(descriptor string, apiType int) int32
 	Config() Config
 	GenerateTransactionId() TransactionId
@@ -58,9 +58,9 @@ type SpanRecorder interface {
 	SetRemoteAddress(remoteAddress string)
 	SetEndPoint(endPoint string)
 	SetAcceptorHost(host string)
-	Annotations() Annotation
 	SetLogging(logInfo int32)
 	SetHttpStatusCode(statusCode int)
+	Annotations() Annotation
 }
 
 type SpanEventRecorder interface {

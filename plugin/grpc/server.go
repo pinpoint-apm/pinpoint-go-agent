@@ -34,10 +34,9 @@ func (m DistributedTracingContextReaderMD) Get(key string) string {
 func startSpan(ctx context.Context, agent pinpoint.Agent, apiId int32, rpcName string) pinpoint.Tracer {
 	md, _ := metadata.FromIncomingContext(ctx) // nil is ok
 	reader := &DistributedTracingContextReaderMD{md}
-	tracer := agent.NewSpanTracerWithReader("Go GRPC Server", reader)
+	tracer := agent.NewSpanTracerWithReader("Go GRPC Server", rpcName, reader)
 	tracer.Span().SetServiceType(serviceTypeGrpcServer)
 	tracer.Span().SetApiId(apiId)
-	tracer.Span().SetRpcName(rpcName)
 
 	return tracer
 }

@@ -11,9 +11,7 @@ import (
 const AnnotationProxyHttpHeader = 300
 
 func NewHttpServerTracer(agent pinpoint.Agent, req *http.Request, operation string) pinpoint.Tracer {
-	tracer := agent.NewSpanTracerWithReader(operation, req.Header)
-
-	tracer.Span().SetRpcName(req.URL.Path)
+	tracer := agent.NewSpanTracerWithReader(operation, req.URL.Path, req.Header)
 	tracer.Span().SetEndPoint(req.Host)
 	tracer.Span().SetRemoteAddress(getRemoteAddr(req))
 	setProxyHeader(tracer, req)

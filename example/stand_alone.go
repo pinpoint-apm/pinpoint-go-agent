@@ -17,8 +17,7 @@ import (
 )
 
 func newSpan(agent pinpoint.Agent, name string) pinpoint.Tracer {
-	tracer := agent.NewSpanTracer(name)
-	tracer.Span().SetRpcName("/")
+	tracer := agent.NewSpanTracer(name, "/")
 	return tracer
 }
 

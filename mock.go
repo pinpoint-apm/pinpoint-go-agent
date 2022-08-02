@@ -44,12 +44,12 @@ func (agent *mockAgent) setMockStatGrpc(t *testing.T) {
 func (agent *mockAgent) Shutdown() {
 }
 
-func (agent *mockAgent) NewSpanTracer(operation string) Tracer {
-	return newNoopSpan(agent)
+func (agent *mockAgent) NewSpanTracer(operation string, rpcName string) Tracer {
+	return newNoopSpan(agent, rpcName)
 }
 
-func (agent *mockAgent) NewSpanTracerWithReader(operation string, reader DistributedTracingContextReader) Tracer {
-	return newNoopSpan(agent)
+func (agent *mockAgent) NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
+	return newNoopSpan(agent, rpcName)
 }
 
 func (agent *mockAgent) RegisterSpanApiId(descriptor string, apiType int) int32 {

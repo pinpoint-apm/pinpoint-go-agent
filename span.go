@@ -68,11 +68,12 @@ func defaultSpan() *span {
 	return &span
 }
 
-func newSampledSpan(agent Agent, operation string) Tracer {
+func newSampledSpan(agent Agent, operation string, rpcName string) Tracer {
 	span := defaultSpan()
 
 	span.agent = agent
 	span.operationName = operation
+	span.rpcName = rpcName
 
 	return span
 }
@@ -85,7 +86,7 @@ func (span *span) EndSpan() {
 		}
 	}
 
-	dropActiveSpan(span)
+	dropSampledActiveSpan(span)
 
 	span.duration = time.Now().Sub(span.startTime)
 	collectResponseTime(toMilliseconds(span.duration))
@@ -159,15 +160,8 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		span.endPoint = host
 	}
 
-	sampled := reader.Get(HttpSampled)
-	if sampled == "s0" {
-		span.sampled = false
-	} else {
-		span.sampled = true
-	}
-
-	addActiveSpan(span)
-	log("span").Debug("span extract: ", tid, spanid, pappname, pspanid, papptype, host, sampled)
+	addSampledActiveSpan(span)
+	log("span").Debug("span extract: ", tid, spanid, pappname, pspanid, papptype, host)
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {

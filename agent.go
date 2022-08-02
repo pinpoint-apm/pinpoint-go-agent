@@ -118,7 +118,8 @@ func NewAgent(config *Config) (Agent, error) {
 	}
 
 	if config.Sampling.NewThroughput > 0 || config.Sampling.ContinueThroughput > 0 {
-		agent.sampler = newThroughputLimitTraceSampler(baseSampler, config.Sampling.NewThroughput, config.Sampling.ContinueThroughput)
+		agent.sampler = newThroughputLimitTraceSampler(baseSampler, config.Sampling.NewThroughput,
+			config.Sampling.ContinueThroughput)
 	} else {
 		agent.sampler = newBasicTraceSampler(baseSampler)
 	}
@@ -206,56 +207,47 @@ func (agent *agent) Shutdown() {
 	agent.statGrpc.close()
 }
 
-func (agent *agent) NewSpanTracer(operation string) Tracer {
+func (agent *agent) NewSpanTracer(operation string, rpcName string) Tracer {
 	var tracer Tracer
 
 	if agent.enable {
 		reader := &noopDistributedTracingContextReader{}
-		tracer = agent.NewSpanTracerWithReader(operation, reader)
-		tracer.Extract(reader)
+		tracer = agent.NewSpanTracerWithReader(operation, rpcName, reader)
 	} else {
-		tracer = newNoopSpan(agent)
+		tracer = newNoopSpan(agent, rpcName)
 	}
 	return tracer
 }
 
-func (agent *agent) NewSpanTracerWithReader(operation string, reader DistributedTracingContextReader) Tracer {
-	if !agent.enable {
-		return newNoopSpan(agent)
+func (agent *agent) samplingSpan(samplingFunc func() bool, operation string, rpcName string,
+	reader DistributedTracingContextReader) Tracer {
+	if samplingFunc() {
+		tracer := newSampledSpan(agent, operation, rpcName)
+		tracer.Extract(reader)
+		return tracer
+	} else {
+		return newNoopSpan(agent, rpcName)
 	}
+}
 
-	atomic.AddInt64(&agent.sequence, 1)
+func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string,
+	reader DistributedTracingContextReader) Tracer {
+	if !agent.enable {
+		return newNoopSpan(agent, rpcName)
+	}
 
 	sampled := reader.Get(HttpSampled)
 	if sampled == "s0" {
 		incrUnsampleCont()
-		return newNoopSpan(agent)
+		return newNoopSpan(agent, rpcName)
 	}
-
-	var tracer Tracer
-	isSampled := false
 
 	tid := reader.Get(HttpTraceId)
 	if tid == "" {
-		if agent.sampler.isNewSampled() {
-			tracer = newSampledSpan(agent, operation)
-			isSampled = true
-		} else {
-			tracer = newNoopSpan(agent)
-		}
+		return agent.samplingSpan(agent.sampler.isNewSampled, operation, rpcName, reader)
 	} else {
-		if agent.sampler.isContinueSampled() {
-			tracer = newSampledSpan(agent, operation)
-			isSampled = true
-		} else {
-			tracer = newNoopSpan(agent)
-		}
+		return agent.samplingSpan(agent.sampler.isContinueSampled, operation, rpcName, reader)
 	}
-
-	if isSampled {
-		tracer.Extract(reader)
-	}
-	return tracer
 }
 
 func (agent *agent) RegisterSpanApiId(descriptor string, apiType int) int32 {
@@ -272,6 +264,7 @@ func (agent *agent) Config() Config {
 }
 
 func (agent *agent) GenerateTransactionId() TransactionId {
+	atomic.AddInt64(&agent.sequence, 1)
 	return TransactionId{agent.config.AgentId, agent.startTime, agent.sequence}
 }
 

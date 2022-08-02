@@ -202,18 +202,24 @@ func resetResponseTime() {
 	skipCont = 0
 }
 
-func addActiveSpan(span *span) {
+func addSampledActiveSpan(span *span) {
 	activeSpan.Store(span.spanId, span.startTime)
-	log("stats").Debug("addActiveSpan: ", span.spanId, span.startTime)
-
-	addRealTimeActiveSpan(span)
+	addRealTimeSampledActiveSpan(span)
 }
 
-func dropActiveSpan(span *span) {
+func dropSampledActiveSpan(span *span) {
 	activeSpan.Delete(span.spanId)
-	log("stats").Debug("dropActiveSpan: ", span.spanId)
+	dropRealTimeSampledActiveSpan(span)
+}
 
-	dropRealTimeActiveSpan(span)
+func addUnSampledActiveSpan(span *noopSpan) {
+	activeSpan.Store(span.spanId, span.startTime)
+	addRealTimeUnSampledActiveSpan(span)
+}
+
+func dropUnSampledActiveSpan(span *noopSpan) {
+	activeSpan.Delete(span.spanId)
+	dropRealTimeUnSampledActiveSpan(span)
 }
 
 func incrSampleNew() {

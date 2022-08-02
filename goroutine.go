@@ -20,7 +20,7 @@ type Goroutine struct {
 	state  string
 	trace  string
 
-	spanInfo activeSpanInfo
+	span activeSpanInfo
 
 	frozen bool
 	buf    *bytes.Buffer
@@ -57,6 +57,8 @@ func newGoroutine(line string) *Goroutine {
 			state:  state,
 			buf:    &bytes.Buffer{},
 		}
+	} else {
+		log("cmd").Errorf("fail to convert goroutine id: %v", err)
 	}
 
 	return nil
@@ -120,7 +122,7 @@ func parseProfile(r io.Reader) *GoroutineDump {
 			}
 
 			if v, ok := realTimeActiveSpan.Load(goroutine.id); ok {
-				goroutine.spanInfo = v.(activeSpanInfo)
+				goroutine.span = v.(activeSpanInfo)
 				dump.add(goroutine)
 			}
 		} else if line == "" {

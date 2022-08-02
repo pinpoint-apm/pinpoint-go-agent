@@ -972,11 +972,19 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadName []string, localId []int64, dump *GoroutineDump) {
 	var gRes *pb.PCmdActiveThreadDumpRes
 
+	status := int32(0)
+	msg := ""
+
+	if dump == nil {
+		status = -1
+		msg = "An error occurred while dumping Goroutine"
+	}
+
 	gRes = &pb.PCmdActiveThreadDumpRes{
 		CommonResponse: &pb.PCmdResponse{
 			ResponseId: reqId,
-			Status:     0,
-			Message:    &wrappers.StringValue{Value: ""},
+			Status:     status,
+			Message:    &wrappers.StringValue{Value: msg},
 		},
 		ThreadDump: makePActiveThreadDumpList(dump, int(limit), threadName, localId),
 		Type:       "Go",
@@ -989,30 +997,32 @@ func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadNam
 	ctx := grpcMetadataContext(cmdGrpc.agent, -1)
 	_, err := cmdGrpc.cmdClient.CommandActiveThreadDump(ctx, gRes)
 	if err != nil {
-		log("grpc").Errorf("fail to CommandActiveThreadDump() - %v", err)
+		log("grpc").Errorf("fail to send CommandActiveThreadDump() - %v", err)
 	}
 }
 
 func makePActiveThreadDumpList(dump *GoroutineDump, limit int, threadName []string, localId []int64) []*pb.PActiveThreadDump {
 	dumpList := make([]*pb.PActiveThreadDump, 0)
 
-	if limit < 1 {
-		limit = len(dump.goroutines)
-	}
-
-	selected := make([]*Goroutine, 0)
-	for _, tn := range threadName {
-		g := dump.search(tn)
-		if g != nil {
-			selected = append(selected, g)
+	if dump != nil {
+		if limit < 1 {
+			limit = len(dump.goroutines)
 		}
-	}
 
-	log("grpc").Debugf("send makePActiveThreadDumpList: %v", selected)
+		selected := make([]*Goroutine, 0)
+		for _, tn := range threadName {
+			g := dump.search(tn)
+			if g != nil {
+				selected = append(selected, g)
+			}
+		}
 
-	for i := 0; i < limit && i < len(selected); i++ {
-		aDump := makePActiveThreadDump(selected[i])
-		dumpList = append(dumpList, aDump)
+		log("grpc").Debugf("send makePActiveThreadDumpList: %v", selected)
+
+		for i := 0; i < limit && i < len(selected); i++ {
+			aDump := makePActiveThreadDump(selected[i])
+			dumpList = append(dumpList, aDump)
+		}
 	}
 
 	return dumpList
@@ -1023,7 +1033,7 @@ func makePActiveThreadDump(g *Goroutine) *pb.PActiveThreadDump {
 	trace = append(trace, g.trace)
 
 	aDump := &pb.PActiveThreadDump{
-		StartTime:    g.spanInfo.startTime.UnixNano() / int64(time.Millisecond),
+		StartTime:    g.span.startTime.UnixNano() / int64(time.Millisecond),
 		LocalTraceId: 0,
 		ThreadDump: &pb.PThreadDump{
 			ThreadName:         g.header,
@@ -1042,9 +1052,9 @@ func makePActiveThreadDump(g *Goroutine) *pb.PActiveThreadDump {
 			LockedMonitor:      nil,
 			LockedSynchronizer: nil,
 		},
-		Sampled:       true,
-		TransactionId: g.spanInfo.txId.String(),
-		EntryPoint:    g.spanInfo.entryPoint,
+		Sampled:       g.span.sampled,
+		TransactionId: g.span.txId,
+		EntryPoint:    g.span.entryPoint,
 	}
 
 	return aDump
@@ -1053,11 +1063,19 @@ func makePActiveThreadDump(g *Goroutine) *pb.PActiveThreadDump {
 func (cmdGrpc *cmdGrpc) sendActiveThreadLightDump(reqId int32, limit int32, dump *GoroutineDump) {
 	var gRes *pb.PCmdActiveThreadLightDumpRes
 
+	status := int32(0)
+	msg := ""
+
+	if dump == nil {
+		status = -1
+		msg = "An error occurred while dumping Goroutine"
+	}
+
 	gRes = &pb.PCmdActiveThreadLightDumpRes{
 		CommonResponse: &pb.PCmdResponse{
 			ResponseId: reqId,
-			Status:     0,                                //error
-			Message:    &wrappers.StringValue{Value: ""}, //error message
+			Status:     status,                            //error
+			Message:    &wrappers.StringValue{Value: msg}, //error message
 		},
 		ThreadDump: makePActiveThreadLightDumpList(dump, int(limit)),
 		Type:       "Go",
@@ -1070,36 +1088,39 @@ func (cmdGrpc *cmdGrpc) sendActiveThreadLightDump(reqId int32, limit int32, dump
 	ctx := grpcMetadataContext(cmdGrpc.agent, -1)
 	_, err := cmdGrpc.cmdClient.CommandActiveThreadLightDump(ctx, gRes)
 	if err != nil {
-		log("grpc").Errorf("fail to make CommandActiveThreadLightDump() - %v", err)
+		log("grpc").Errorf("fail to send CommandActiveThreadLightDump() - %v", err)
 	}
 }
 
 func makePActiveThreadLightDumpList(dump *GoroutineDump, limit int) []*pb.PActiveThreadLightDump {
 	dumpList := make([]*pb.PActiveThreadLightDump, 0)
 
-	if limit < 1 {
-		limit = len(dump.goroutines)
+	if dump != nil {
+		if limit < 1 {
+			limit = len(dump.goroutines)
+		}
+
+		for i := 0; i < limit && i < len(dump.goroutines); i++ {
+			aDump := makePActiveThreadLightDump(dump.goroutines[i])
+			dumpList = append(dumpList, aDump)
+		}
 	}
 
-	for i := 0; i < limit && i < len(dump.goroutines); i++ {
-		aDump := makePActiveThreadLightDump(dump.goroutines[i])
-		dumpList = append(dumpList, aDump)
-	}
 	return dumpList
 }
 
 func makePActiveThreadLightDump(g *Goroutine) *pb.PActiveThreadLightDump {
 	aDump := &pb.PActiveThreadLightDump{
-		StartTime:    g.spanInfo.startTime.UnixNano() / int64(time.Millisecond),
+		StartTime:    g.span.startTime.UnixNano() / int64(time.Millisecond),
 		LocalTraceId: 0,
 		ThreadDump: &pb.PThreadLightDump{
 			ThreadName:  g.header,
 			ThreadId:    int64(g.id),
 			ThreadState: goRoutineState(g),
 		},
-		Sampled:       true,
-		TransactionId: g.spanInfo.txId.String(),
-		EntryPoint:    g.spanInfo.entryPoint,
+		Sampled:       g.span.sampled,
+		TransactionId: g.span.txId,
+		EntryPoint:    g.span.entryPoint,
 	}
 
 	return aDump
