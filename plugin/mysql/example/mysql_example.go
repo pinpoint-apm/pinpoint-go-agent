@@ -27,12 +27,15 @@ func query(w http.ResponseWriter, r *http.Request) {
 	row.Scan(&count)
 
 	fmt.Println("number of tables in information_schema", count)
+	db.Close()
 }
 
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoMySQLTest"),
 		pinpoint.WithAgentId("GoMySQLTestId"),
+		pinpoint.WithSamplingType("PERCENT"),
+		pinpoint.WithSamplingPercentRate(10),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
@@ -43,6 +46,6 @@ func main() {
 
 	http.HandleFunc(phttp.WrapHandleFunc(agent, "query", "/query", query))
 
-	http.ListenAndServe(":9000", nil)
+	http.ListenAndServe(":9001", nil)
 	agent.Shutdown()
 }

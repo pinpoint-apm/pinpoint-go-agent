@@ -27,7 +27,9 @@ func (m *DistributedTracingContextWriterConsumer) Set(key string, value string) 
 func (p *SyncProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
 	span := startProducerSpan(p.ctx, p.addrs, msg)
 	partition, offset, err = p.SyncProducer.SendMessage(msg)
-	span.EndSpanEvent()
+	if span != nil {
+		span.EndSpanEvent()
+	}
 	return partition, offset, err
 }
 
@@ -40,7 +42,9 @@ func (p *SyncProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
 	err := p.SyncProducer.SendMessages(msgs)
 
 	for _, span := range spans {
-		span.EndSpanEvent()
+		if span != nil {
+			span.EndSpanEvent()
+		}
 	}
 	return err
 }
@@ -59,18 +63,20 @@ func NewSyncProducer(addrs []string, config *sarama.Config) (*SyncProducer, erro
 		return nil, err
 	}
 
-	return &SyncProducer{SyncProducer: producer, addrs: addrs}, nil
+	return &SyncProducer{SyncProducer: producer, addrs: addrs, ctx: context.Background()}, nil
 }
 
 func startProducerSpan(ctx context.Context, addrs []string, msg *sarama.ProducerMessage) pinpoint.Tracer {
 	tracer := pinpoint.FromContext(ctx)
-	span := tracer.NewSpanEvent("kafka.produce")
-	span.SpanEvent().SetServiceType(serviceTypeKafkaClient)
-	tracer.SpanEvent().Annotations().AppendString(annotationKafkaTopic, msg.Topic)
-	tracer.SpanEvent().SetDestination(addrs[0])
+	if tracer != nil {
+		tracer.NewSpanEvent("kafka.produce")
+		tracer.SpanEvent().SetServiceType(serviceTypeKafkaClient)
+		tracer.SpanEvent().Annotations().AppendString(annotationKafkaTopic, msg.Topic)
+		tracer.SpanEvent().SetDestination(addrs[0])
 
-	writer := &DistributedTracingContextWriterConsumer{msg}
-	tracer.Inject(writer)
+		writer := &DistributedTracingContextWriterConsumer{msg}
+		tracer.Inject(writer)
+	}
 
-	return span
+	return tracer
 }

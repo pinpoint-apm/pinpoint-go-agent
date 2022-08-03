@@ -109,7 +109,9 @@ const (
 	ServiceTypeGoApp        = 1800
 	ServiceTypeGoFunction   = 1801
 	ServiceTypeGoHttpClient = 9401
+	ServiceTypeAsync        = 100
 
+	ApiTypeDefault    = 0
 	ApiTypeWebRequest = 100
 	ApiTypeInvocation = 200
 

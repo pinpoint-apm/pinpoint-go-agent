@@ -49,6 +49,7 @@ func NewAsyncProducer(addrs []string, config *sarama.Config) (*AsyncProducer, er
 		input:     make(chan *sarama.ProducerMessage),
 		successes: make(chan *sarama.ProducerMessage),
 		errors:    make(chan *sarama.ProducerError),
+		ctx:       context.Background(),
 	}
 
 	go func() {
@@ -74,7 +75,9 @@ func NewAsyncProducer(addrs []string, config *sarama.Config) (*AsyncProducer, er
 					// if returning successes isn't enabled, we just finish the
 					// span right away because there's no way to know when it will
 					// be done
-					span.EndSpanEvent()
+					if span != nil {
+						span.EndSpanEvent()
+					}
 				}
 			case msg, ok := <-producer.Successes():
 				if !ok {

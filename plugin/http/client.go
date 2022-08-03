@@ -1,29 +1,47 @@
 package http
 
 import (
+	"context"
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
 	"net/http"
 )
 
 func NewHttpClientTracer(tracer pinpoint.Tracer, operationName string, req *http.Request) pinpoint.Tracer {
-	tracer.NewSpanEvent(operationName)
+	if tracer != nil {
+		tracer.NewSpanEvent(operationName)
 
-	tracer.SpanEvent().SetEndPoint(req.Host)
-	tracer.SpanEvent().SetDestination(req.Host)
-	tracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeGoHttpClient)
-	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHttpUrl, req.URL.String())
-	tracer.Inject(req.Header)
+		tracer.SpanEvent().SetEndPoint(req.Host)
+		tracer.SpanEvent().SetDestination(req.Host)
+		tracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeGoHttpClient)
+		tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHttpUrl, req.URL.String())
+		tracer.Inject(req.Header)
+	}
 
 	return tracer
 }
 
 func EndHttpClientTracer(tracer pinpoint.Tracer, resp *http.Response, err error) {
-	tracer.SpanEvent().SetError(err)
-	if resp != nil {
-		tracer.SpanEvent().Annotations().AppendInt(pinpoint.AnnotationHttpStatusCode, int32(resp.StatusCode))
-		tracer.Span().SetHttpStatusCode(resp.StatusCode)
+	if tracer != nil {
+		tracer.SpanEvent().SetError(err)
+		if resp != nil {
+			tracer.SpanEvent().Annotations().AppendInt(pinpoint.AnnotationHttpStatusCode, int32(resp.StatusCode))
+		}
+		tracer.EndSpanEvent()
 	}
-	tracer.EndSpanEvent()
+}
+
+func DoHttpClient(doFunc func(req *http.Request) (*http.Response, error), tracer pinpoint.Tracer, operation string,
+	req *http.Request) (*http.Response, error) {
+	tracer = NewHttpClientTracer(tracer, operation, req)
+	resp, err := doFunc(req)
+	EndHttpClientTracer(tracer, resp, err)
+
+	return resp, err
+}
+
+func DoHttpClientWithContext(doFunc func(req *http.Request) (*http.Response, error), ctx context.Context, operation string,
+	req *http.Request) (*http.Response, error) {
+	return DoHttpClient(doFunc, pinpoint.FromContext(ctx), operation, req)
 }
 
 type roundTripper struct {
@@ -64,9 +82,5 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	req = &clone
 
-	tracer = NewHttpClientTracer(tracer, "http.Client", req)
-	resp, err := r.original.RoundTrip(req)
-	EndHttpClientTracer(tracer, resp, err)
-
-	return resp, err
+	return DoHttpClient(r.original.RoundTrip, tracer, "http.Client.Do", req)
 }

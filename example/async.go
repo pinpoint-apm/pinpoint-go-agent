@@ -16,7 +16,7 @@ import (
 func outGoingRequest(w http.ResponseWriter, ctx context.Context) {
 	client := phttp.WrapClient(nil)
 
-	request, _ := http.NewRequest("GET", "https://github.com/pinpoint-apm/pinpoint-go-agent/blob/main/README.md", nil)
+	request, _ := http.NewRequest("GET", "http://localhost:9001/query", nil)
 	request = request.WithContext(ctx)
 
 	resp, err := client.Do(request)
@@ -105,6 +105,7 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoAsyncExample"),
 		pinpoint.WithAgentId("GoAsyncExampleAgent"),
+		//pinpoint.WithSamplingCounterRate(100),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	c, _ := pinpoint.NewConfig(opts...)

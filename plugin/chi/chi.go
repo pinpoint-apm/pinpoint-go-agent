@@ -15,11 +15,8 @@ func Middleware(agent pinpoint.Agent) func(http.Handler) http.Handler {
 				return
 			}
 
-			apiId := agent.RegisterSpanApiId("Go Chi Server", pinpoint.ApiTypeWebRequest)
-
 			tracer := phttp.NewHttpServerTracer(agent, r, "Chi Server")
 			defer tracer.EndSpan()
-			tracer.Span().SetApiId(apiId)
 
 			routePath := r.URL.Path
 			if r.URL.RawPath != "" {

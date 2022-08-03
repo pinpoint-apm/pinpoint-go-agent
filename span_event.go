@@ -25,7 +25,9 @@ type spanEvent struct {
 	isTimeFixed   bool
 }
 
-func newSpanEvent(span *span, operationName string) *spanEvent {
+var asyncApiId = int32(0)
+
+func defaultSpanEvent(span *span, operationName string) *spanEvent {
 	se := spanEvent{}
 
 	se.parentSpan = span
@@ -43,6 +45,26 @@ func newSpanEvent(span *span, operationName string) *spanEvent {
 	log("span").Debug("newSpanEvent: ", se.operationName, se.sequence, se.depth, se.startTime)
 
 	return &se
+}
+
+func newSpanEvent(span *span, operationName string) *spanEvent {
+	se := defaultSpanEvent(span, operationName)
+	se.apiId = span.agent.RegisterSpanApiId(operationName, ApiTypeDefault)
+
+	return se
+}
+
+func newSpanEventGoroutine(span *span) *spanEvent {
+	se := defaultSpanEvent(span, "")
+
+	//Asynchronous Invocation
+	if asyncApiId == 0 {
+		asyncApiId = span.agent.RegisterSpanApiId("Goroutine Invocation", ApiTypeInvocation)
+	}
+	se.apiId = asyncApiId
+	se.serviceType = ServiceTypeAsync
+
+	return se
 }
 
 func (se *spanEvent) end() {

@@ -3,9 +3,11 @@ package main
 import (
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"time"
 
 	"github.com/go-chi/chi"
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
@@ -16,6 +18,10 @@ import (
 var agent pinpoint.Agent
 
 func hello(w http.ResponseWriter, r *http.Request) {
+	seed := rand.NewSource(time.Now().UnixNano())
+	random := rand.New(seed)
+
+	time.Sleep(time.Duration(random.Intn(5000)+1) * time.Millisecond)
 	io.WriteString(w, "hello world")
 }
 
@@ -25,19 +31,19 @@ func shutdown(w http.ResponseWriter, r *http.Request) {
 }
 
 func outgoing(w http.ResponseWriter, r *http.Request) {
-	tracer := pinpoint.FromContext(r.Context())
-	req, _ := http.NewRequest("GET", "http://localhost:9000/query", nil)
-
-	tracer = phttp.NewHttpClientTracer(tracer, "http.DefaultClient.Do", req)
-	resp, err := http.DefaultClient.Do(req)
-	phttp.EndHttpClientTracer(tracer, resp, err)
-
+	req, _ := http.NewRequest("GET", "http://localhost:9000/async_wrapper", nil)
+	resp, err := phttp.DoHttpClientWithContext(http.DefaultClient.Do, r.Context(), "http.DefaultClient.Do", req)
 	if nil != err {
 		io.WriteString(w, err.Error())
 		return
 	}
+
 	defer resp.Body.Close()
 	io.Copy(w, resp.Body)
+
+	seed := rand.NewSource(time.Now().UnixNano())
+	random := rand.New(seed)
+	time.Sleep(time.Duration(random.Intn(2000)+1) * time.Millisecond)
 }
 
 func main() {
@@ -48,9 +54,10 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoChiTest"),
 		pinpoint.WithAgentId("GoChiTestAgent"),
+		pinpoint.WithSamplingCounterRate(10),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
-		//pinpoint.WithSamplingRate(5),
 	}
+
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, _ = pinpoint.NewAgent(cfg)
 	//if err != nil {

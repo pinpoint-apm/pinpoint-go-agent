@@ -95,10 +95,12 @@ func newSpanForGrpcClient(ctx context.Context, method string) (context.Context, 
 }
 
 func endSpan(tracer pinpoint.Tracer, err error) {
-	if err != nil && err != io.EOF {
-		tracer.SpanEvent().SetError(err)
+	if tracer != nil {
+		if err != nil && err != io.EOF {
+			tracer.SpanEvent().SetError(err)
+		}
+		tracer.EndSpanEvent()
 	}
-	tracer.EndSpanEvent()
 }
 
 func UnaryClientInterceptor() grpc.UnaryClientInterceptor {

@@ -52,18 +52,14 @@ func WrapPartitionConsumer(pc sarama.PartitionConsumer, agent pinpoint.Agent) *P
 		messages:          make(chan *ConsumerMessage),
 	}
 
-	apiId := agent.RegisterSpanApiId("Kafka Consumer Invocation", pinpoint.ApiTypeWebRequest)
-
 	go func() {
 		msgs := pc.Messages()
 
 		for msg := range msgs {
 			reader := &DistributedTracingContextReaderConsumer{msg}
-			tracer := agent.NewSpanTracerWithReader("kafka.consume", makeRpcName(msg), reader)
+			tracer := agent.NewSpanTracerWithReader("Kafka Consumer Invocation", makeRpcName(msg), reader)
 
 			tracer.Span().SetServiceType(serviceTypeKafkaClient)
-			tracer.Span().SetApiId(apiId)
-
 			tracer.Span().Annotations().AppendString(annotationKafkaTopic, msg.Topic)
 			tracer.Span().Annotations().AppendInt(annotationKafkaPartition, msg.Partition)
 			tracer.Span().Annotations().AppendInt(annotationKafkaOffset, int32(msg.Offset))

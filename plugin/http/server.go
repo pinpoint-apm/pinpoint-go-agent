@@ -105,12 +105,8 @@ func WrapHandle(agent pinpoint.Agent, handlerName string, pattern string, handle
 			return
 		}
 
-		apiId := agent.RegisterSpanApiId("Go Http Server", pinpoint.ApiTypeWebRequest)
-
 		tracer := NewHttpServerTracer(agent, r, "Http Server")
 		defer tracer.EndSpan()
-		tracer.Span().SetApiId(apiId)
-
 		defer tracer.NewSpanEvent(handlerName).EndSpanEvent()
 
 		status := http.StatusOK

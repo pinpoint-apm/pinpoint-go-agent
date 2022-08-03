@@ -36,7 +36,6 @@ type span struct {
 	startTime     time.Time
 	duration      time.Duration
 	operationName string
-	sampled       bool
 	flags         int
 	err           int
 	asyncId       int32
@@ -59,7 +58,6 @@ func defaultSpan() *span {
 	span.parentSpanId = -1
 	span.parentAppType = -1
 	span.eventDepth = 1
-	span.sampled = true
 	span.serviceType = ServiceTypeGoApp
 	span.startTime = time.Now()
 	span.goroutineId = 0
@@ -74,6 +72,7 @@ func newSampledSpan(agent Agent, operation string, rpcName string) Tracer {
 	span.agent = agent
 	span.operationName = operation
 	span.rpcName = rpcName
+	span.apiId = agent.RegisterSpanApiId(operation, ApiTypeWebRequest)
 
 	return span
 }
@@ -209,9 +208,7 @@ func newSpanForAsync(parentSpan *span) *span {
 }
 
 func (span *span) newSpanEventForAsync() {
-	se := newSpanEvent(span, "")
-	se.serviceType = 100 // ASYNC
-	se.apiId = asyncApiId
+	se := newSpanEventGoroutine(span)
 
 	span.eventSequence++
 	span.eventDepth++

@@ -13,11 +13,8 @@ func Middleware(agent pinpoint.Agent) gin.HandlerFunc {
 			return
 		}
 
-		apiId := agent.RegisterSpanApiId("Go Gin Server", pinpoint.ApiTypeWebRequest)
-
 		tracer := phttp.NewHttpServerTracer(agent, c.Request, "Gin Server")
 		defer tracer.EndSpan()
-		tracer.Span().SetApiId(apiId)
 
 		c.Request = pinpoint.RequestWithTracerContext(c.Request, tracer)
 		defer tracer.NewSpanEvent(c.HandlerName()).EndSpanEvent()

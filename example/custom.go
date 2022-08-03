@@ -51,9 +51,6 @@ func (h *handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	tracer := phttp.NewHttpServerTracer(h.agent, req, "Go Http Server")
 	defer tracer.EndSpan()
 
-	apiId := h.agent.RegisterSpanApiId("Go Http Server", pinpoint.ApiTypeWebRequest)
-	tracer.Span().SetApiId(apiId)
-
 	if req.URL.String() == "/hello" {
 		ret, _ := doRequest(tracer)
 

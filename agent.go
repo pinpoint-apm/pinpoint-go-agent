@@ -12,7 +12,6 @@ import (
 	prefixed "github.com/x-cray/logrus-prefixed-formatter"
 )
 
-const asyncApiId = 1
 const cacheSize = 1024
 
 var logger *logrus.Logger
@@ -104,7 +103,7 @@ func NewAgent(config *Config) (Agent, error) {
 		return &agent, err
 	}
 
-	agent.apiIdGen = asyncApiId
+	agent.apiIdGen = 0
 	agent.apiCache, err = lru.New(cacheSize)
 	if err != nil {
 		return &agent, err
@@ -167,14 +166,6 @@ func connectGrpc(agent *agent) {
 
 	for true {
 		err = agent.agentGrpc.sendAgentInfo()
-		if err == nil {
-			break
-		}
-		time.Sleep(1 * time.Second)
-	}
-
-	for true {
-		err = agent.agentGrpc.sendApiMetadata(asyncApiId, "Asynchronous Invocation", -1, ApiTypeInvocation)
 		if err == nil {
 			break
 		}
@@ -366,10 +357,27 @@ func (agent *agent) sendMetaWorker() {
 
 		if err != nil {
 			log("agent").Errorf("fail to sendMetadata(): %v", err)
+			agent.deleteMetaCache(md)
 		}
 	}
 
 	log("agent").Info("meta goroutine finish")
+}
+
+func (agent *agent) deleteMetaCache(md interface{}) {
+	switch md.(type) {
+	case apiMeta:
+		api := md.(apiMeta)
+		key := api.descriptor + "_" + strconv.Itoa(api.apiType)
+		agent.apiCache.Remove(key)
+		break
+	case stringMeta:
+		agent.exceptionIdCache.Remove(md.(stringMeta).funcname)
+		break
+	case sqlMeta:
+		agent.sqlCache.Remove(md.(sqlMeta).sql)
+		break
+	}
 }
 
 func (agent *agent) tryEnqueueMeta(md interface{}) bool {
@@ -388,45 +396,37 @@ func (agent *agent) tryEnqueueMeta(md interface{}) bool {
 	return false
 }
 
-func (agent *agent) CacheErrorFunc(funcname string) int32 {
-	var id int32
-
+func (agent *agent) CacheErrorFunc(funcName string) int32 {
 	if !agent.enable {
-		return -1
+		return 0
 	}
 
-	if agent.exceptionIdCache.Contains(funcname) {
-		v, _ := agent.exceptionIdCache.Get(funcname)
-		id = v.(int32)
-		return id
+	if v, ok := agent.exceptionIdCache.Get(funcName); ok {
+		return v.(int32)
 	}
 
-	id = atomic.AddInt32(&agent.exceptionIdGen, 1)
-	agent.exceptionIdCache.Add(funcname, id)
+	id := atomic.AddInt32(&agent.exceptionIdGen, 1)
+	agent.exceptionIdCache.Add(funcName, id)
 
 	md := stringMeta{}
 	md.id = id
-	md.funcname = funcname
+	md.funcname = funcName
 	agent.tryEnqueueMeta(md)
 
-	log("agent").Info("cache exception id: ", id, funcname)
+	log("agent").Info("cache exception id: ", id, funcName)
 	return id
 }
 
 func (agent *agent) CacheSql(sql string) int32 {
-	var id int32
-
 	if !agent.enable {
-		return -1
+		return 0
 	}
 
-	if agent.sqlCache.Contains(sql) {
-		v, _ := agent.sqlCache.Get(sql)
-		id = v.(int32)
-		return id
+	if v, ok := agent.sqlCache.Get(sql); ok {
+		return v.(int32)
 	}
 
-	id = atomic.AddInt32(&agent.sqlIdGen, 1)
+	id := atomic.AddInt32(&agent.sqlIdGen, 1)
 	agent.sqlCache.Add(sql, id)
 
 	md := sqlMeta{}
@@ -439,21 +439,17 @@ func (agent *agent) CacheSql(sql string) int32 {
 }
 
 func (agent *agent) CacheSpanApiId(descriptor string, apiType int) int32 {
-	var id int32
-
 	if !agent.enable {
-		return -1
+		return 0
 	}
 
 	key := descriptor + "_" + strconv.Itoa(apiType)
 
-	if agent.apiCache.Contains(key) {
-		v, _ := agent.apiCache.Get(key)
-		id = v.(int32)
-		return id
+	if v, ok := agent.apiCache.Get(key); ok {
+		return v.(int32)
 	}
 
-	id = atomic.AddInt32(&agent.apiIdGen, 1)
+	id := atomic.AddInt32(&agent.apiIdGen, 1)
 	agent.apiCache.Add(key, id)
 
 	md := apiMeta{}

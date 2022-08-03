@@ -14,12 +14,9 @@ func Middleware(agent pinpoint.Agent) echo.MiddlewareFunc {
 				return next(c)
 			}
 
-			apiId := agent.RegisterSpanApiId("Go Echo Server", pinpoint.ApiTypeWebRequest)
-
 			req := c.Request()
 			tracer := phttp.NewHttpServerTracer(agent, req, "Echo Server")
 			defer tracer.EndSpan()
-			tracer.Span().SetApiId(apiId)
 
 			ctx := pinpoint.NewContext(req.Context(), tracer)
 			c.SetRequest(req.WithContext(ctx))

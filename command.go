@@ -112,7 +112,7 @@ func sendActiveThreadCount(s *activeThreadCountStream) {
 func addRealTimeSampledActiveSpan(span *span) {
 	if gAtcStreamCount > 0 {
 		span.goroutineId = curGoroutineID()
-		s := activeSpanInfo{span.startTime, span.txId.String(), span.rpcName, span.sampled}
+		s := activeSpanInfo{span.startTime, span.txId.String(), span.rpcName, true}
 		realTimeActiveSpan.Store(span.goroutineId, s)
 	}
 }

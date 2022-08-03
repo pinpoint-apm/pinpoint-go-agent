@@ -479,7 +479,9 @@ func (s *spanStream) sendSpan(span *span) error {
 }
 
 func makePSpan(span *span) *pb.PSpanMessage {
-	span.annotations.AppendString(12, span.operationName)
+	if span.apiId == 0 && span.operationName != "" {
+		span.annotations.AppendString(12, span.operationName)
+	}
 
 	spanEventList := make([]*pb.PSpanEvent, 0)
 	for _, event := range span.spanEvents {
@@ -508,6 +510,7 @@ func makePSpan(span *span) *pb.PSpanMessage {
 					ParentInfo: nil,
 				},
 				Annotation:             span.annotations.list,
+				ApiId:                  span.apiId,
 				Flag:                   int32(span.flags),
 				SpanEvent:              spanEventList,
 				Err:                    int32(span.err),
@@ -526,10 +529,6 @@ func makePSpan(span *span) *pb.PSpanMessage {
 		}
 
 		gspan.GetSpan().AcceptEvent.ParentInfo = pinfo
-	}
-
-	if span.apiId > 0 {
-		gspan.GetSpan().ApiId = span.apiId
 	}
 
 	return gspan
