@@ -17,7 +17,7 @@ func Test_newSpanEvent(t *testing.T) {
 		name string
 		args args
 	}{
-		{"1", args{defaultSpan(), "t1"}},
+		{"1", args{defaultTestSpan(), "t1"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -38,7 +38,7 @@ func Test_spanEvent_end(t *testing.T) {
 		name string
 		args args
 	}{
-		{"1", args{defaultSpan(), "t1"}},
+		{"1", args{defaultTestSpan(), "t1"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -64,7 +64,7 @@ func Test_spanEvent_generateNextSpanId(t *testing.T) {
 		name string
 		args args
 	}{
-		{"1", args{defaultSpan(), "t1"}},
+		{"1", args{defaultTestSpan(), "t1"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -86,7 +86,7 @@ func Test_spanEvent_SetError(t *testing.T) {
 		name string
 		args args
 	}{
-		{"1", args{defaultSpan(), "t1"}},
+		{"1", args{defaultTestSpan(), "t1"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -108,7 +108,7 @@ func Test_spanEvent_SetSQL(t *testing.T) {
 		name string
 		args args
 	}{
-		{"1", args{defaultSpan(), "t1"}},
+		{"1", args{defaultTestSpan(), "t1"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

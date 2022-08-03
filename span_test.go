@@ -28,6 +28,12 @@ func (r *DistributedTracingContextMap) Set(key string, val string) {
 	r.m[key] = val
 }
 
+func defaultTestSpan() *span {
+	span := defaultSpan()
+	span.agent = newMockAgent()
+	return span
+}
+
 func Test_span_Extract(t *testing.T) {
 	type args struct {
 		reader DistributedTracingContextReader
@@ -47,7 +53,7 @@ func Test_span_Extract(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			span := defaultSpan()
+			span := defaultTestSpan()
 			span.Extract(tt.args.reader)
 
 			assert.Equal(t, span.txId.AgentId, "t123456", "AgentId")
@@ -74,8 +80,7 @@ func Test_span_Inject(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			span := defaultSpan()
-			span.agent = newMockAgent()
+			span := defaultTestSpan()
 			span.txId.AgentId = "t123456"
 			span.txId.StartTime = int64(12345)
 			span.txId.Sequence = int64(1)
@@ -99,7 +104,7 @@ func Test_span_NewSpanEvent(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			span := defaultSpan()
+			span := defaultTestSpan()
 			span.NewSpanEvent(tt.args.operationName)
 			assert.Equal(t, span.eventSequence, int32(1), "eventSequence")
 			assert.Equal(t, span.eventDepth, int32(2), "eventDepth")
@@ -123,7 +128,7 @@ func Test_span_EndSpanEvent(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			span := defaultSpan()
+			span := defaultTestSpan()
 			span.NewSpanEvent(tt.args.operationName)
 			span.NewSpanEvent("t2")
 			assert.Equal(t, span.stack.Len(), int(2), "stack.len")
@@ -147,8 +152,7 @@ func Test_span_NewGoroutineTracer(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := defaultSpan()
-			s.agent = newMockAgent()
+			s := defaultTestSpan()
 			s.NewSpanEvent(tt.args.operationName)
 			a := s.NewGoroutineTracer()
 
@@ -179,8 +183,7 @@ func Test_span_WrapGoroutine(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := defaultSpan()
-			s.agent = newMockAgent()
+			s := defaultTestSpan()
 			s.NewSpanEvent(tt.args.operationName)
 			f := s.WrapGoroutine("t1", func(ctx context.Context) {
 				tracer := FromContext(ctx)
