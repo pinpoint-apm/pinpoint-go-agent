@@ -34,7 +34,10 @@ func (agent *agent) runCommandService() {
 
 		err := cmdStream.sendCommandMessage()
 		if err != nil {
-			log("cmd").Errorf("fail to sendCommandMessage(): %v", err)
+			if err != io.EOF {
+				log("cmd").Errorf("fail to sendCommandMessage(): %v", err)
+			}
+
 			cmdStream.close()
 			cmdStream = agent.cmdGrpc.newCommandStreamWithRetry()
 			continue
@@ -43,7 +46,9 @@ func (agent *agent) runCommandService() {
 		for true {
 			err = cmdStream.recvCommandRequest()
 			if err != nil {
-				log("cmd").Errorf("fail to recvCommandRequest(): %v", err)
+				if err != io.EOF {
+					log("cmd").Errorf("fail to recvCommandRequest(): %v", err)
+				}
 				break
 			}
 
@@ -74,8 +79,8 @@ func (agent *agent) runCommandService() {
 				}
 				break
 			case nil:
-				// The field is not set.
 			default:
+				break
 			}
 		}
 

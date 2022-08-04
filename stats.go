@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"io"
 	"runtime"
 	"sync"
 	"syscall"
@@ -29,23 +30,25 @@ type inspectorStats struct {
 	activeSpan   []int32
 }
 
-var lastRusage syscall.Rusage
-var lastMemStats runtime.MemStats
-var lastCollectTime time.Time
-var statsMux sync.Mutex
+var (
+	lastRusage      syscall.Rusage
+	lastMemStats    runtime.MemStats
+	lastCollectTime time.Time
+	statsMux        sync.Mutex
 
-var accResponseTime int64
-var maxResponseTime int64
-var requestCount int64
+	accResponseTime int64
+	maxResponseTime int64
+	requestCount    int64
 
-var sampleNew int64
-var unsampleNew int64
-var sampleCont int64
-var unsampleCont int64
-var skipNew int64
-var skipCont int64
+	sampleNew    int64
+	unsampleNew  int64
+	sampleCont   int64
+	unsampleCont int64
+	skipNew      int64
+	skipCont     int64
 
-var activeSpan sync.Map
+	activeSpan sync.Map
+)
 
 func initStats() {
 	err := syscall.Getrusage(syscall.RUSAGE_SELF, &lastRusage)
@@ -164,7 +167,10 @@ func (agent *agent) sendStatsWorker() {
 		if batch == agent.config.Stat.BatchCount {
 			err := statStream.sendStats(collected)
 			if err != nil {
-				log("stats").Errorf("fail to sendStats(): %v", err)
+				if err != io.EOF {
+					log("stats").Errorf("fail to sendStats(): %v", err)
+				}
+
 				statStream.close()
 				statStream = agent.statGrpc.newStatStreamWithRetry()
 			}

@@ -6,7 +6,6 @@ import (
 )
 
 type noopSpan struct {
-	agent       Agent
 	spanId      int64
 	startTime   time.Time
 	rpcName     string
@@ -16,9 +15,8 @@ type noopSpan struct {
 	annotations noopannotation
 }
 
-func newNoopSpan(agent Agent, rpcName string) Tracer {
+func newNoopSpan(rpcName string) Tracer {
 	span := noopSpan{}
-	span.agent = agent
 	span.spanId = generateSpanId()
 	span.startTime = time.Now()
 	span.rpcName = rpcName
@@ -38,7 +36,6 @@ func (span *noopSpan) NewSpanEvent(operationName string) Tracer {
 
 func (span *noopSpan) NewAsyncSpan() Tracer {
 	asyncSpan := noopSpan{}
-	asyncSpan.agent = span.agent
 	return &asyncSpan
 }
 
@@ -64,7 +61,7 @@ func (span *noopSpan) WrapGoroutine(goroutineName string, goroutine func(context
 func (span *noopSpan) EndSpanEvent() {}
 
 func (span *noopSpan) TransactionId() TransactionId {
-	return TransactionId{span.agent.Config().AgentId, span.agent.StartTime(), -1}
+	return TransactionId{"Noop", 0, 0}
 }
 
 func (span *noopSpan) SpanId() int64 {

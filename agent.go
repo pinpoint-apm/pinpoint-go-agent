@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"errors"
+	"io"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -205,7 +206,7 @@ func (agent *agent) NewSpanTracer(operation string, rpcName string) Tracer {
 		reader := &noopDistributedTracingContextReader{}
 		tracer = agent.NewSpanTracerWithReader(operation, rpcName, reader)
 	} else {
-		tracer = newNoopSpan(agent, rpcName)
+		tracer = newNoopSpan(rpcName)
 	}
 	return tracer
 }
@@ -217,20 +218,20 @@ func (agent *agent) samplingSpan(samplingFunc func() bool, operation string, rpc
 		tracer.Extract(reader)
 		return tracer
 	} else {
-		return newNoopSpan(agent, rpcName)
+		return newNoopSpan(rpcName)
 	}
 }
 
 func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string,
 	reader DistributedTracingContextReader) Tracer {
 	if !agent.enable {
-		return newNoopSpan(agent, rpcName)
+		return newNoopSpan(rpcName)
 	}
 
 	sampled := reader.Get(HttpSampled)
 	if sampled == "s0" {
 		incrUnsampleCont()
-		return newNoopSpan(agent, rpcName)
+		return newNoopSpan(rpcName)
 	}
 
 	tid := reader.Get(HttpTraceId)
@@ -279,7 +280,10 @@ func (agent *agent) sendPingWorker() {
 
 		err := stream.sendPing()
 		if err != nil {
-			log("agent").Errorf("fail to sendPing(): %v", err)
+			if err != io.EOF {
+				log("agent").Errorf("fail to sendPing(): %v", err)
+			}
+
 			stream.close()
 			stream = agent.agentGrpc.newPingStreamWithRetry()
 		}
@@ -295,18 +299,36 @@ func (agent *agent) sendSpanWorker() {
 	log("agent").Info("span goroutine start")
 	defer agent.wg.Done()
 
-	spanStream := agent.spanGrpc.newSpanStreamWithRetry()
+	var (
+		skipOldSpan  = bool(false)
+		skipBaseTime time.Time
+	)
 
+	spanStream := agent.spanGrpc.newSpanStreamWithRetry()
 	for span := range agent.spanChan {
 		if !agent.enable {
 			break
 		}
 
+		if skipOldSpan {
+			if span.startTime.Before(skipBaseTime) {
+				continue //skip old span
+			} else {
+				skipOldSpan = false
+			}
+		}
+
 		err := spanStream.sendSpan(span)
 		if err != nil {
-			log("agent").Errorf("fail to sendSpan(): %v", err)
+			if err != io.EOF {
+				log("agent").Errorf("fail to sendSpan(): %v", err)
+			}
+
 			spanStream.close()
 			spanStream = agent.spanGrpc.newSpanStreamWithRetry()
+
+			skipOldSpan = true
+			skipBaseTime = time.Now().Add(-time.Second * 1)
 		}
 	}
 
