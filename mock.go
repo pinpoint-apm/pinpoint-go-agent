@@ -45,11 +45,11 @@ func (agent *mockAgent) Shutdown() {
 }
 
 func (agent *mockAgent) NewSpanTracer(operation string, rpcName string) Tracer {
-	return newNoopSpan(rpcName)
+	return newUnSampledSpan(rpcName)
 }
 
 func (agent *mockAgent) NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
-	return newNoopSpan(rpcName)
+	return newUnSampledSpan(rpcName)
 }
 
 func (agent *mockAgent) RegisterSpanApiId(descriptor string, apiType int) int32 {

@@ -206,7 +206,7 @@ func (agent *agent) NewSpanTracer(operation string, rpcName string) Tracer {
 		reader := &noopDistributedTracingContextReader{}
 		tracer = agent.NewSpanTracerWithReader(operation, rpcName, reader)
 	} else {
-		tracer = newNoopSpan(rpcName)
+		tracer = NoopTracer()
 	}
 	return tracer
 }
@@ -218,20 +218,20 @@ func (agent *agent) samplingSpan(samplingFunc func() bool, operation string, rpc
 		tracer.Extract(reader)
 		return tracer
 	} else {
-		return newNoopSpan(rpcName)
+		return newUnSampledSpan(rpcName)
 	}
 }
 
 func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string,
 	reader DistributedTracingContextReader) Tracer {
 	if !agent.enable {
-		return newNoopSpan(rpcName)
+		return NoopTracer()
 	}
 
 	sampled := reader.Get(HttpSampled)
 	if sampled == "s0" {
 		incrUnsampleCont()
-		return newNoopSpan(rpcName)
+		return newUnSampledSpan(rpcName)
 	}
 
 	tid := reader.Get(HttpTraceId)

@@ -44,6 +44,10 @@ func (agent *agent) runCommandService() {
 		}
 
 		for true {
+			if !agent.enable {
+				break
+			}
+
 			err = cmdStream.recvCommandRequest()
 			if err != nil {
 				if err != io.EOF {

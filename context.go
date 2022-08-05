@@ -13,13 +13,13 @@ func NewContext(ctx context.Context, tracer Tracer) context.Context {
 
 func FromContext(ctx context.Context) Tracer {
 	if v := ctx.Value(ContextKey); v != nil {
-		u, ok := v.(Tracer)
+		tracer, ok := v.(Tracer)
 		if !ok {
-			return nil
+			return NoopTracer()
 		}
-		return u
+		return tracer
 	} else {
-		return nil
+		return NoopTracer()
 	}
 }
 
@@ -29,9 +29,8 @@ func RequestWithTracerContext(req *http.Request, tracer Tracer) *http.Request {
 }
 
 func TracerFromRequestContext(req *http.Request) Tracer {
-	var tracer Tracer
 	if req != nil {
-		tracer = FromContext(req.Context())
+		return FromContext(req.Context())
 	}
-	return tracer
+	return NoopTracer()
 }

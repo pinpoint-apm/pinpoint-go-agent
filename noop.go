@@ -15,7 +15,13 @@ type noopSpan struct {
 	annotations noopannotation
 }
 
-func newNoopSpan(rpcName string) Tracer {
+var defaultNoopSpan = noopSpan{}
+
+func NoopTracer() Tracer {
+	return &defaultNoopSpan
+}
+
+func newUnSampledSpan(rpcName string) Tracer {
 	span := noopSpan{}
 	span.spanId = generateSpanId()
 	span.startTime = time.Now()
