@@ -31,6 +31,7 @@ type Agent interface {
 	CacheSpanApiId(descriptor string, apiType int) int32
 	IsHttpError(code int) bool
 	IsExcludedUrl(url string) bool
+	IsExcludedMethod(method string) bool
 }
 
 type Tracer interface {

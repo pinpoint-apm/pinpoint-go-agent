@@ -96,6 +96,10 @@ func (agent *mockAgent) IsExcludedUrl(url string) bool {
 	return false
 }
 
+func (agent *mockAgent) IsExcludedMethod(method string) bool {
+	return false
+}
+
 //mock grpc
 
 type mockAgentGrpcClient struct {

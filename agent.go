@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -493,4 +494,13 @@ func (agent *agent) IsHttpError(code int) bool {
 
 func (agent *agent) IsExcludedUrl(url string) bool {
 	return agent.httpUrlFilter.isFiltered(url)
+}
+
+func (agent *agent) IsExcludedMethod(method string) bool {
+	for _, em := range agent.config.Http.ExcludeMethod {
+		if strings.EqualFold(em, method) {
+			return true
+		}
+	}
+	return false
 }

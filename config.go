@@ -42,6 +42,7 @@ type Config struct {
 	Http struct {
 		StatusCodeErrors []string
 		ExcludeUrl       []string
+		ExcludeMethod    []string
 	}
 
 	IsContainer bool
@@ -97,6 +98,18 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		config.Sampling.Rate = 1
 	}
 
+	for i := 0; i < len(config.Http.StatusCodeErrors); i++ {
+		config.Http.StatusCodeErrors[i] = strings.TrimSpace(config.Http.StatusCodeErrors[i])
+	}
+
+	for i := 0; i < len(config.Http.ExcludeUrl); i++ {
+		config.Http.ExcludeUrl[i] = strings.TrimSpace(config.Http.ExcludeUrl[i])
+	}
+
+	for i := 0; i < len(config.Http.ExcludeMethod); i++ {
+		config.Http.ExcludeMethod[i] = strings.TrimSpace(config.Http.ExcludeMethod[i])
+	}
+
 	if !setContainer {
 		config.IsContainer = isContainerEnv()
 	}
@@ -145,6 +158,7 @@ func defaultConfig() *Config {
 
 	config.Http.StatusCodeErrors = []string{"5xx"}
 	config.Http.ExcludeUrl = []string{}
+	config.Http.ExcludeMethod = []string{}
 
 	config.IsContainer = false
 	setContainer = false
@@ -297,6 +311,12 @@ func WithHttpStatusCodeError(errors []string) ConfigOption {
 func WithHttpExcludeUrl(urlPath []string) ConfigOption {
 	return func(c *Config) {
 		c.Http.ExcludeUrl = urlPath
+	}
+}
+
+func WithHttpExcludeMethod(method []string) ConfigOption {
+	return func(c *Config) {
+		c.Http.ExcludeMethod = method
 	}
 }
 

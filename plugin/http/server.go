@@ -11,7 +11,7 @@ import (
 const AnnotationProxyHttpHeader = 300
 
 func NewHttpServerTracer(agent pinpoint.Agent, req *http.Request, operation string) pinpoint.Tracer {
-	if agent.IsExcludedUrl(req.URL.Path) {
+	if agent.IsExcludedUrl(req.URL.Path) || agent.IsExcludedMethod(req.Method) {
 		return pinpoint.NoopTracer()
 	} else {
 		tracer := agent.NewSpanTracerWithReader(operation, req.URL.Path, req.Header)

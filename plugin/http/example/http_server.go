@@ -6,11 +6,14 @@ import (
 	"net/http"
 	"os"
 
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 func index(w http.ResponseWriter, r *http.Request) {
+	tracer := pinpoint.FromContext(r.Context())
+	defer tracer.NewSpanEvent("dummy").EndSpanEvent()
+
 	io.WriteString(w, "hello world")
 }
 
@@ -52,6 +55,7 @@ func main() {
 		pinpoint.WithAgentId("GoHttpAgent"),
 		pinpoint.WithHttpStatusCodeError([]string{"5xx", "4xx"}),
 		pinpoint.WithHttpExcludeUrl([]string{"/wrapreq*", "/**/*.go", "/*/*.do", "/abc**"}),
+		pinpoint.WithHttpExcludeMethod([]string{"put", "POST"}),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

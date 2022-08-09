@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 type httpStatusCode interface {
@@ -88,15 +89,15 @@ func setupHttpStatusErrors(config *Config) []httpStatusCode {
 	var errors []httpStatusCode
 
 	for _, s := range config.Http.StatusCodeErrors {
-		if s == "5xx" {
+		if strings.EqualFold(s, "5xx") {
 			errors = append(errors, newHttpStatusServerError())
-		} else if s == "4xx" {
+		} else if strings.EqualFold(s, "4xx") {
 			errors = append(errors, newHttpStatusClientError())
-		} else if s == "3xx" {
+		} else if strings.EqualFold(s, "3xx") {
 			errors = append(errors, newHttpStatusRedirection())
-		} else if s == "2xx" {
+		} else if strings.EqualFold(s, "2xx") {
 			errors = append(errors, newHttpStatusSuccess())
-		} else if s == "1xx" {
+		} else if strings.EqualFold(s, "1xx") {
 			errors = append(errors, newHttpStatusInformational())
 		} else {
 			c, e := strconv.Atoi(s)
