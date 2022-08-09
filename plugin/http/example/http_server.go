@@ -4,6 +4,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
@@ -49,7 +50,9 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoHttpTest"),
 		pinpoint.WithAgentId("GoHttpAgent"),
-		pinpoint.WithCollectorHost("localhost"),
+		pinpoint.WithHttpStatusCodeError([]string{"5xx", "4xx"}),
+		pinpoint.WithHttpExcludeUrl([]string{"/wrapreq*", "/**/*.go", "/*/*.do", "/abc**"}),
+		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)
@@ -59,8 +62,17 @@ func main() {
 
 	http.HandleFunc(phttp.WrapHandleFunc(agent, "index", "/", index))
 	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapRequest", "/wraprequest", wrapRequest))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapRequest2", "/wraprequest/a.zo", wrapRequest))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapRequest3", "/wraprequest/aa/b.zo", wrapRequest))
 	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapClient", "/wrapclient", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapClient2", "/wrapclient/aa/a.go", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapClient3", "/wrapclient/aa/bb/a.go", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapClient4", "/wrapclient/c.do", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapClient5", "/wrapclient/dd/d.do", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapClient6", "/wrapclient/c@do", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapClient7", "/abcd", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapClient8", "/abcd/e.go", wrapClient))
 
-	http.ListenAndServe(":9000", nil)
+	http.ListenAndServe(":8000", nil)
 	agent.Shutdown()
 }

@@ -41,6 +41,7 @@ type Config struct {
 
 	Http struct {
 		StatusCodeErrors []string
+		ExcludeUrl       []string
 	}
 
 	IsContainer bool
@@ -143,6 +144,7 @@ func defaultConfig() *Config {
 	config.Stat.BatchCount = 6
 
 	config.Http.StatusCodeErrors = []string{"5xx"}
+	config.Http.ExcludeUrl = []string{}
 
 	config.IsContainer = false
 	setContainer = false
@@ -283,6 +285,18 @@ func WithIsContainer(isContainer bool) ConfigOption {
 	setContainer = true
 	return func(c *Config) {
 		c.IsContainer = isContainer
+	}
+}
+
+func WithHttpStatusCodeError(errors []string) ConfigOption {
+	return func(c *Config) {
+		c.Http.StatusCodeErrors = errors
+	}
+}
+
+func WithHttpExcludeUrl(urlPath []string) ConfigOption {
+	return func(c *Config) {
+		c.Http.ExcludeUrl = urlPath
 	}
 }
 

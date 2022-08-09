@@ -1,6 +1,10 @@
 package pinpoint
 
-import "strconv"
+import (
+	"bytes"
+	"regexp"
+	"strconv"
+)
 
 type httpStatusCode interface {
 	isError(code int) bool
@@ -109,6 +113,97 @@ func setupHttpStatusErrors(config *Config) []httpStatusCode {
 func (h *httpStatusError) isError(code int) bool {
 	for _, h := range h.errors {
 		if h.isError(code) {
+			return true
+		}
+	}
+	return false
+}
+
+type httpExcludeUrl struct {
+	pattern *regexp.Regexp
+}
+
+func (h *httpExcludeUrl) match(urlPath string) bool {
+	if h.pattern != nil {
+		return h.pattern.MatchString(urlPath)
+	}
+
+	return false
+}
+
+func newHttpExcludeUrl(urlPath string) *httpExcludeUrl {
+	h := httpExcludeUrl{pattern: nil}
+
+	log("agent").Debug("newHttpExcludeUrl: ", urlPath, convertToRegexp(urlPath))
+
+	r, err := regexp.Compile(convertToRegexp(urlPath))
+	if err == nil {
+		h.pattern = r
+	}
+	return &h
+}
+
+func convertToRegexp(antPath string) string {
+	var buf bytes.Buffer
+	buf.WriteRune('^')
+
+	afterStar := false
+	for _, c := range antPath {
+		if afterStar {
+			if c == '*' {
+				buf.WriteString(".*")
+			} else {
+				buf.WriteString("[^/]*")
+				writeRune(&buf, c)
+			}
+			afterStar = false
+		} else {
+			if c == '*' {
+				afterStar = true
+			} else {
+				writeRune(&buf, c)
+			}
+		}
+	}
+
+	if afterStar {
+		buf.WriteString("[^/]*")
+	}
+
+	buf.WriteRune('$')
+	return buf.String()
+}
+
+func writeRune(buf *bytes.Buffer, c rune) {
+	if c == '.' || c == '+' || c == '^' || c == '[' || c == ']' || c == '{' || c == '}' {
+		buf.WriteRune('\\')
+	}
+	buf.WriteRune(c)
+}
+
+type httpUrlFilter struct {
+	filters []*httpExcludeUrl
+}
+
+func newHttpUrlFilter(config *Config) *httpUrlFilter {
+	return &httpUrlFilter{
+		filters: setupHttpUrlFilter(config),
+	}
+}
+
+func setupHttpUrlFilter(config *Config) []*httpExcludeUrl {
+	var filters []*httpExcludeUrl
+
+	for _, u := range config.Http.ExcludeUrl {
+		filters = append(filters, newHttpExcludeUrl(u))
+	}
+
+	return filters
+}
+
+func (h *httpUrlFilter) isFiltered(url string) bool {
+	for _, h := range h.filters {
+		if h.match(url) {
 			return true
 		}
 	}

@@ -30,6 +30,7 @@ type Agent interface {
 	CacheSql(sql string) int32
 	CacheSpanApiId(descriptor string, apiType int) int32
 	IsHttpError(code int) bool
+	IsExcludedUrl(url string) bool
 }
 
 type Tracer interface {

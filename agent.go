@@ -53,7 +53,9 @@ type agent struct {
 	apiIdGen         int32
 
 	httpStatusErrors *httpStatusError
-	enable           bool
+	httpUrlFilter    *httpUrlFilter
+
+	enable bool
 }
 
 type apiMeta struct {
@@ -125,6 +127,7 @@ func NewAgent(config *Config) (Agent, error) {
 	}
 
 	agent.httpStatusErrors = newHttpStatusError(config)
+	agent.httpUrlFilter = newHttpUrlFilter(config)
 
 	if !config.OffGrpc {
 		go connectGrpc(&agent)
@@ -486,4 +489,8 @@ func (agent *agent) CacheSpanApiId(descriptor string, apiType int) int32 {
 
 func (agent *agent) IsHttpError(code int) bool {
 	return agent.httpStatusErrors.isError(code)
+}
+
+func (agent *agent) IsExcludedUrl(url string) bool {
+	return agent.httpUrlFilter.isFiltered(url)
 }

@@ -92,6 +92,10 @@ func (agent *mockAgent) IsHttpError(code int) bool {
 	return false
 }
 
+func (agent *mockAgent) IsExcludedUrl(url string) bool {
+	return false
+}
+
 //mock grpc
 
 type mockAgentGrpcClient struct {
