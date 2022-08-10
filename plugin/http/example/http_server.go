@@ -37,16 +37,20 @@ func wrapClient(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{}
 	client = phttp.WrapClient(client)
 
-	request, _ := http.NewRequest("GET", "http://localhost:9000/async", nil)
+	request, _ := http.NewRequest("GET", "http://localhost:9000/async_wrapper", nil)
 	request = request.WithContext(r.Context())
 
 	resp, err := client.Do(request)
 	if nil != err {
+		w.WriteHeader(http.StatusServiceUnavailable)
 		io.WriteString(w, err.Error())
 		return
 	}
 	defer resp.Body.Close()
-	io.Copy(w, resp.Body)
+
+	w.Header().Set("foo", "bar")
+	w.WriteHeader(http.StatusAccepted)
+	io.WriteString(w, "wrapClient success")
 }
 
 func main() {
@@ -56,6 +60,11 @@ func main() {
 		pinpoint.WithHttpStatusCodeError([]string{"5xx", "4xx"}),
 		pinpoint.WithHttpExcludeUrl([]string{"/wrapreq*", "/**/*.go", "/*/*.do", "/abc**"}),
 		pinpoint.WithHttpExcludeMethod([]string{"put", "POST"}),
+		//pinpoint.WithHttpRecordRequestHeader([]string{"HEADERS-ALL"}),
+		pinpoint.WithHttpRecordRequestHeader([]string{"user-agent", "connection", "foo"}),
+		//pinpoint.WithHttpRecordRespondHeader([]string{"content-length"}),
+		pinpoint.WithHttpRecordRespondHeader([]string{"HEADERS-ALL"}),
+		pinpoint.WithHttpRecordRequestCookie([]string{"_octo"}),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

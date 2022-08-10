@@ -20,11 +20,10 @@ func Middleware(agent pinpoint.Agent) gin.HandlerFunc {
 		defer tracer.NewSpanEvent(c.HandlerName()).EndSpanEvent()
 
 		c.Next()
-
-		phttp.TraceHttpStatus(tracer, c.Writer.Status())
-
 		if len(c.Errors) > 0 {
 			tracer.Span().SetError(c.Errors.Last())
 		}
+
+		phttp.RecordHttpServerResponse(tracer, c.Writer.Status(), c.Writer.Header())
 	}
 }

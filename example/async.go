@@ -21,11 +21,15 @@ func outGoingRequest(w http.ResponseWriter, ctx context.Context) {
 
 	resp, err := client.Do(request)
 	if nil != err {
+		w.Header().Set("foo", "error")
+		w.WriteHeader(http.StatusServiceUnavailable)
 		io.WriteString(w, err.Error())
 		return
 	}
 	defer resp.Body.Close()
-	io.Copy(w, resp.Body)
+
+	w.Header().Set("foo", "success")
+	io.WriteString(w, "success")
 }
 
 func asyncWithTracer(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +110,8 @@ func main() {
 		pinpoint.WithAppName("GoAsyncExample"),
 		pinpoint.WithAgentId("GoAsyncExampleAgent"),
 		//pinpoint.WithSamplingCounterRate(100),
+		pinpoint.WithHttpRecordRequestHeader([]string{"HEADERS-ALL"}),
+		pinpoint.WithHttpRecordRespondHeader([]string{"HEADERS-ALL"}),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	c, _ := pinpoint.NewConfig(opts...)

@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"context"
 	"math/rand"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -260,8 +261,6 @@ func (span *span) SpanEvent() SpanEventRecorder {
 }
 
 func (span *span) SetError(e error) {
-	//se := span.stack.Front().Value.(*spanEvent)
-	//se.SetError(e)
 	span.err = 1
 }
 
@@ -297,9 +296,18 @@ func (span *span) SetLogging(logInfo int32) {
 	span.loggingInfo = logInfo
 }
 
-func (span *span) SetHttpStatusCode(statusCode int) {
+func (span *span) RecordHttpStatus(status int) {
 	span.err = 0
-	if span.agent.IsHttpError(statusCode) {
+	if span.agent.IsHttpError(status) {
 		span.err = 1
 	}
+	span.annotations.AppendInt(AnnotationHttpStatusCode, int32(status))
+}
+
+func (span *span) RecordHttpHeader(annotation Annotation, key int, header http.Header) {
+	span.agent.HttpHeaderRecorder(key).recordHeader(annotation, key, header)
+}
+
+func (span *span) RecordHttpCookie(annotation Annotation, cookie []*http.Cookie) {
+	span.agent.HttpHeaderRecorder(AnnotationHttpCookie).recordCookie(annotation, cookie)
 }

@@ -8,16 +8,21 @@ import (
 	"strings"
 )
 
-const AnnotationProxyHttpHeader = 300
-
 func NewHttpServerTracer(agent pinpoint.Agent, req *http.Request, operation string) pinpoint.Tracer {
 	if agent.IsExcludedUrl(req.URL.Path) || agent.IsExcludedMethod(req.Method) {
 		return pinpoint.NoopTracer()
 	} else {
 		tracer := agent.NewSpanTracerWithReader(operation, req.URL.Path, req.Header)
-		tracer.Span().SetEndPoint(req.Host)
-		tracer.Span().SetRemoteAddress(getRemoteAddr(req))
-		setProxyHeader(tracer, req)
+
+		span := tracer.Span()
+		span.SetEndPoint(req.Host)
+		span.SetRemoteAddress(getRemoteAddr(req))
+
+		a := span.Annotations()
+		tracer.RecordHttpHeader(a, pinpoint.AnnotationHttpRequestHeader, req.Header)
+		tracer.RecordHttpCookie(a, req.Cookies())
+		setProxyHeader(a, req)
+
 		return tracer
 	}
 }
@@ -43,7 +48,7 @@ func getRemoteAddr(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-func setProxyHeader(tracer pinpoint.Tracer, r *http.Request) {
+func setProxyHeader(a pinpoint.Annotation, r *http.Request) {
 	var receivedTime int64
 	var durationTime, idlePercent, busyPercent int
 	var code int32 = 0
@@ -92,13 +97,14 @@ func setProxyHeader(tracer pinpoint.Tracer, r *http.Request) {
 	}
 
 	if code > 0 {
-		tracer.Span().Annotations().AppendLongIntIntByteByteString(AnnotationProxyHttpHeader, receivedTime, code, int32(durationTime), int32(idlePercent), int32(busyPercent), app)
+		a.AppendLongIntIntByteByteString(pinpoint.AnnotationProxyHttpHeader, receivedTime, code, int32(durationTime),
+			int32(idlePercent), int32(busyPercent), app)
 	}
 }
 
-func TraceHttpStatus(tracer pinpoint.Tracer, status int) {
-	tracer.Span().Annotations().AppendInt(pinpoint.AnnotationHttpStatusCode, int32(status))
-	tracer.Span().SetHttpStatusCode(status)
+func RecordHttpServerResponse(tracer pinpoint.Tracer, status int, header http.Header) {
+	tracer.RecordHttpStatus(status)
+	tracer.RecordHttpHeader(tracer.Span().Annotations(), pinpoint.AnnotationHttpResponseHeader, header)
 }
 
 func WrapHandle(agent pinpoint.Agent, handlerName string, pattern string, handler http.Handler) (string, http.Handler) {
@@ -115,12 +121,14 @@ func WrapHandle(agent pinpoint.Agent, handlerName string, pattern string, handle
 		status := http.StatusOK
 		w = WrapResponseWriter(w, &status)
 		r = pinpoint.RequestWithTracerContext(r, tracer)
+
 		handler.ServeHTTP(w, r)
-		TraceHttpStatus(tracer, status)
+		RecordHttpServerResponse(tracer, status, w.Header())
 	})
 }
 
-func WrapHandleFunc(agent pinpoint.Agent, handlerName string, pattern string, handler func(http.ResponseWriter, *http.Request)) (string, func(http.ResponseWriter, *http.Request)) {
+func WrapHandleFunc(agent pinpoint.Agent, handlerName string, pattern string,
+	handler func(http.ResponseWriter, *http.Request)) (string, func(http.ResponseWriter, *http.Request)) {
 	p, h := WrapHandle(agent, handlerName, pattern, http.HandlerFunc(handler))
 	return p, func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }
 }

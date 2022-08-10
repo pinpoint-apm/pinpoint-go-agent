@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"bytes"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -210,3 +211,65 @@ func (h *httpUrlFilter) isFiltered(url string) bool {
 	}
 	return false
 }
+
+type httpHeaderRecorder interface {
+	recordHeader(annotation Annotation, aKey int, header http.Header)
+	recordCookie(annotation Annotation, cookie []*http.Cookie)
+}
+
+type allHttpHeaderRecoder struct{}
+
+func newAllHttpHeaderRecoder() *allHttpHeaderRecoder {
+	return &allHttpHeaderRecoder{}
+}
+
+func (h *allHttpHeaderRecoder) recordHeader(annotation Annotation, key int, header http.Header) {
+	for name, values := range header {
+		vStr := strings.Join(values[:], ",")
+		annotation.AppendStringString(int32(key), name, vStr)
+	}
+}
+
+func (h *allHttpHeaderRecoder) recordCookie(annotation Annotation, cookie []*http.Cookie) {
+	for _, c := range cookie {
+		annotation.AppendStringString(AnnotationHttpCookie, c.Name, c.Value)
+	}
+}
+
+type defaultHttpHeaderRecoder struct {
+	cfg []string
+}
+
+func newDefaultHttpHeaderRecoder(headers []string) *defaultHttpHeaderRecoder {
+	return &defaultHttpHeaderRecoder{cfg: headers}
+}
+
+func (h *defaultHttpHeaderRecoder) recordHeader(annotation Annotation, key int, header http.Header) {
+	for _, name := range h.cfg {
+		if v := header.Values(name); v != nil && len(v) > 0 {
+			vStr := strings.Join(v[:], ",")
+			annotation.AppendStringString(int32(key), name, vStr)
+		}
+	}
+}
+
+func (h *defaultHttpHeaderRecoder) recordCookie(annotation Annotation, cookie []*http.Cookie) {
+	for _, name := range h.cfg {
+		for _, c := range cookie {
+			if strings.EqualFold(name, c.Name) {
+				annotation.AppendStringString(AnnotationHttpCookie, c.Name, c.Value)
+				break
+			}
+		}
+	}
+}
+
+type noopHttpHeaderRecoder struct{}
+
+func newNoopHttpHeaderRecoder() *noopHttpHeaderRecoder {
+	return &noopHttpHeaderRecoder{}
+}
+
+func (h *noopHttpHeaderRecoder) recordHeader(annotation Annotation, key int, header http.Header) {}
+
+func (h *noopHttpHeaderRecoder) recordCookie(annotation Annotation, cookie []*http.Cookie) {}

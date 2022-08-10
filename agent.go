@@ -53,8 +53,11 @@ type agent struct {
 	apiCache         *lru.Cache
 	apiIdGen         int32
 
-	httpStatusErrors *httpStatusError
-	httpUrlFilter    *httpUrlFilter
+	httpStatusErrors           *httpStatusError
+	httpUrlFilter              *httpUrlFilter
+	httpRequestHeaderRecorder  httpHeaderRecorder
+	httpResponseHeaderRecorder httpHeaderRecorder
+	httpCookieRecorder         httpHeaderRecorder
 
 	enable bool
 }
@@ -130,10 +133,24 @@ func NewAgent(config *Config) (Agent, error) {
 	agent.httpStatusErrors = newHttpStatusError(config)
 	agent.httpUrlFilter = newHttpUrlFilter(config)
 
+	agent.httpRequestHeaderRecorder = makeHttpHeaderRecoder(config.Http.RecordRequestHeader)
+	agent.httpResponseHeaderRecorder = makeHttpHeaderRecoder(config.Http.RecordRespondHeader)
+	agent.httpCookieRecorder = makeHttpHeaderRecoder(config.Http.RecordRequestCookie)
+
 	if !config.OffGrpc {
 		go connectGrpc(&agent)
 	}
 	return &agent, nil
+}
+
+func makeHttpHeaderRecoder(cfg []string) httpHeaderRecorder {
+	if len(cfg) == 0 {
+		return newNoopHttpHeaderRecoder()
+	} else if strings.EqualFold(cfg[0], "HEADERS-ALL") {
+		return newAllHttpHeaderRecoder()
+	} else {
+		return newDefaultHttpHeaderRecoder(cfg)
+	}
 }
 
 func connectGrpc(agent *agent) {
@@ -503,4 +520,16 @@ func (agent *agent) IsExcludedMethod(method string) bool {
 		}
 	}
 	return false
+}
+
+func (agent *agent) HttpHeaderRecorder(key int) httpHeaderRecorder {
+	if key == AnnotationHttpRequestHeader {
+		return agent.httpRequestHeaderRecorder
+	} else if key == AnnotationHttpResponseHeader {
+		return agent.httpResponseHeaderRecorder
+	} else if key == AnnotationHttpCookie {
+		return agent.httpCookieRecorder
+	} else {
+		return newNoopHttpHeaderRecoder()
+	}
 }

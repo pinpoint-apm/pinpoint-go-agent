@@ -6,8 +6,12 @@ import (
 )
 
 const (
-	AnnotationHttpUrl        = 40
-	AnnotationHttpStatusCode = 46
+	AnnotationHttpUrl            = 40
+	AnnotationHttpCookie         = 45
+	AnnotationHttpStatusCode     = 46
+	AnnotationHttpRequestHeader  = 47
+	AnnotationHttpResponseHeader = 55
+	AnnotationProxyHttpHeader    = 300
 )
 
 type annotation struct {

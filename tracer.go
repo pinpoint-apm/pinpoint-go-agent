@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 )
 
@@ -32,6 +33,7 @@ type Agent interface {
 	IsHttpError(code int) bool
 	IsExcludedUrl(url string) bool
 	IsExcludedMethod(method string) bool
+	HttpHeaderRecorder(key int) httpHeaderRecorder
 }
 
 type Tracer interface {
@@ -50,6 +52,10 @@ type Tracer interface {
 
 	Span() SpanRecorder
 	SpanEvent() SpanEventRecorder
+
+	RecordHttpStatus(status int)
+	RecordHttpHeader(annotation Annotation, key int, header http.Header)
+	RecordHttpCookie(annotation Annotation, cookie []*http.Cookie)
 }
 
 type SpanRecorder interface {
@@ -61,7 +67,6 @@ type SpanRecorder interface {
 	SetEndPoint(endPoint string)
 	SetAcceptorHost(host string)
 	SetLogging(logInfo int32)
-	SetHttpStatusCode(statusCode int)
 	Annotations() Annotation
 }
 

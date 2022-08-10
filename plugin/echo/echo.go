@@ -28,7 +28,7 @@ func Middleware(agent pinpoint.Agent) echo.MiddlewareFunc {
 				c.Error(err)
 			}
 
-			phttp.TraceHttpStatus(tracer, c.Response().Status)
+			phttp.RecordHttpServerResponse(tracer, c.Response().Status, c.Response().Header())
 			return err
 		}
 	}

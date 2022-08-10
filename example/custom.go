@@ -51,16 +51,18 @@ func (h *handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	tracer := phttp.NewHttpServerTracer(h.agent, req, "Go Http Server")
 	defer tracer.EndSpan()
 
+	status := http.StatusOK
 	if req.URL.String() == "/hello" {
 		ret, _ := doRequest(tracer)
 
 		io.WriteString(writer, ret)
 		time.Sleep(10 * time.Millisecond)
 	} else {
-		writer.WriteHeader(http.StatusNotFound)
+		status = http.StatusNotFound
+		writer.WriteHeader(status)
 	}
 
-	phttp.TraceHttpStatus(tracer, http.StatusOK)
+	phttp.RecordHttpServerResponse(tracer, status, writer.Header())
 }
 
 func main() {

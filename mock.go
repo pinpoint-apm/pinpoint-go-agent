@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	gomock "github.com/golang/mock/gomock"
+	"github.com/golang/mock/gomock"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 )
 
@@ -98,6 +98,10 @@ func (agent *mockAgent) IsExcludedUrl(url string) bool {
 
 func (agent *mockAgent) IsExcludedMethod(method string) bool {
 	return false
+}
+
+func (agent *mockAgent) HttpHeaderRecorder(key int) httpHeaderRecorder {
+	return newNoopHttpHeaderRecoder()
 }
 
 //mock grpc

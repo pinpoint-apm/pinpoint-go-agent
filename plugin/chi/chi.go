@@ -29,7 +29,7 @@ func Middleware(agent pinpoint.Agent) func(http.Handler) http.Handler {
 			r = pinpoint.RequestWithTracerContext(r, tracer)
 
 			next.ServeHTTP(w, r)
-			phttp.TraceHttpStatus(tracer, status)
+			phttp.RecordHttpServerResponse(tracer, status, w.Header())
 		}
 		return http.HandlerFunc(fn)
 	}

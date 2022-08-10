@@ -40,9 +40,12 @@ type Config struct {
 	}
 
 	Http struct {
-		StatusCodeErrors []string
-		ExcludeUrl       []string
-		ExcludeMethod    []string
+		StatusCodeErrors    []string
+		ExcludeUrl          []string
+		ExcludeMethod       []string
+		RecordRequestHeader []string
+		RecordRespondHeader []string
+		RecordRequestCookie []string
 	}
 
 	IsContainer bool
@@ -98,17 +101,12 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		config.Sampling.Rate = 1
 	}
 
-	for i := 0; i < len(config.Http.StatusCodeErrors); i++ {
-		config.Http.StatusCodeErrors[i] = strings.TrimSpace(config.Http.StatusCodeErrors[i])
-	}
-
-	for i := 0; i < len(config.Http.ExcludeUrl); i++ {
-		config.Http.ExcludeUrl[i] = strings.TrimSpace(config.Http.ExcludeUrl[i])
-	}
-
-	for i := 0; i < len(config.Http.ExcludeMethod); i++ {
-		config.Http.ExcludeMethod[i] = strings.TrimSpace(config.Http.ExcludeMethod[i])
-	}
+	trimStringSlice(config.Http.StatusCodeErrors)
+	trimStringSlice(config.Http.ExcludeUrl)
+	trimStringSlice(config.Http.ExcludeMethod)
+	trimStringSlice(config.Http.RecordRequestHeader)
+	trimStringSlice(config.Http.RecordRespondHeader)
+	trimStringSlice(config.Http.RecordRequestCookie)
 
 	if !setContainer {
 		config.IsContainer = isContainerEnv()
@@ -117,6 +115,12 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	config.printConfigString()
 
 	return config, nil
+}
+
+func trimStringSlice(slice []string) {
+	for i := range slice {
+		slice[i] = strings.TrimSpace(slice[i])
+	}
 }
 
 func isContainerEnv() bool {
@@ -159,6 +163,9 @@ func defaultConfig() *Config {
 	config.Http.StatusCodeErrors = []string{"5xx"}
 	config.Http.ExcludeUrl = []string{}
 	config.Http.ExcludeMethod = []string{}
+	config.Http.RecordRequestHeader = []string{}
+	config.Http.RecordRespondHeader = []string{}
+	config.Http.RecordRequestCookie = []string{}
 
 	config.IsContainer = false
 	setContainer = false
@@ -317,6 +324,24 @@ func WithHttpExcludeUrl(urlPath []string) ConfigOption {
 func WithHttpExcludeMethod(method []string) ConfigOption {
 	return func(c *Config) {
 		c.Http.ExcludeMethod = method
+	}
+}
+
+func WithHttpRecordRequestHeader(header []string) ConfigOption {
+	return func(c *Config) {
+		c.Http.RecordRequestHeader = header
+	}
+}
+
+func WithHttpRecordRespondHeader(header []string) ConfigOption {
+	return func(c *Config) {
+		c.Http.RecordRespondHeader = header
+	}
+}
+
+func WithHttpRecordRequestCookie(cookie []string) ConfigOption {
+	return func(c *Config) {
+		c.Http.RecordRequestCookie = cookie
 	}
 }
 
