@@ -39,6 +39,8 @@ type span struct {
 	operationName string
 	flags         int
 	err           int
+	errorFuncId   int32
+	errorString   string
 	asyncId       int32
 	asyncSequence int32
 	goroutineId   uint64
@@ -261,6 +263,13 @@ func (span *span) SpanEvent() SpanEventRecorder {
 }
 
 func (span *span) SetError(e error) {
+	if e == nil {
+		return
+	}
+
+	id := span.agent.CacheErrorFunc(span.operationName)
+	span.errorFuncId = id
+	span.errorString = e.Error()
 	span.err = 1
 }
 
@@ -297,11 +306,11 @@ func (span *span) SetLogging(logInfo int32) {
 }
 
 func (span *span) RecordHttpStatus(status int) {
-	span.err = 0
-	if span.agent.IsHttpError(status) {
+	span.annotations.AppendInt(AnnotationHttpStatusCode, int32(status))
+
+	if span.err == 0 && span.agent.IsHttpError(status) {
 		span.err = 1
 	}
-	span.annotations.AppendInt(AnnotationHttpStatusCode, int32(status))
 }
 
 func (span *span) RecordHttpHeader(annotation Annotation, key int, header http.Header) {

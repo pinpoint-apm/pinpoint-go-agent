@@ -10,6 +10,8 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"time"
 
@@ -142,38 +144,62 @@ func newAgentGrpc(agent Agent) (*agentGrpc, error) {
 	return &agentGrpc{conn, &agentClient, &metadataClient, 0, nil, agent}, nil
 }
 
-func makeAgentInfo(agent Agent) (context.Context, *pb.PAgentInfo) {
-	var agentinfo pb.PAgentInfo
-	agentinfo.AgentVersion = AgentVersion
+func getHostName() string {
+	if hostName, err := os.Hostname(); err == nil {
+		return hostName
+	}
+	return "unknown host"
+}
 
-	hostname, err := os.Hostname()
-	if err != nil {
-		log("grpc").Errorf("fail to os.Hostname() - %v", err)
-		hostname = "unknown"
+func makeGoLibraryInfo() *pb.PServiceInfo {
+	libs := make([]string, 0)
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, dep := range bi.Deps {
+			libs = append(libs, dep.Path+" ("+dep.Version+")")
+		}
 	}
 
-	agentinfo.Hostname = hostname
-	agentinfo.Ip = getOutboundIP().String()
-	agentinfo.ServiceType = agent.Config().ApplicationType
-	agentinfo.Container = agent.Config().IsContainer
+	return &pb.PServiceInfo{
+		ServiceName: "Go (" + runtime.GOOS + ", " + runtime.GOARCH + ", " + runtime.GOROOT() + ")",
+		ServiceLib:  libs,
+	}
+}
 
-	var svrMeta pb.PServerMetaData
-	svrMeta.ServerInfo = "Go Agent"
-	agentinfo.ServerMetaData = &svrMeta
+func makeAgentInfo(agent Agent) (context.Context, *pb.PAgentInfo) {
+	agentInfo := &pb.PAgentInfo{
+		Hostname:     getHostName(),
+		Ip:           getOutboundIP(),
+		ServiceType:  agent.Config().ApplicationType,
+		Pid:          int32(os.Getpid()),
+		AgentVersion: AgentVersion,
+		VmVersion:    runtime.Version(),
 
-	log("grpc").Infof("send agent information: %s", agentinfo.String())
+		ServerMetaData: &pb.PServerMetaData{
+			ServerInfo:  "Go Application",
+			VmArg:       os.Args[1:],
+			ServiceInfo: []*pb.PServiceInfo{makeGoLibraryInfo()},
+		},
+
+		JvmInfo: &pb.PJvmInfo{
+			Version:   0,
+			VmVersion: runtime.Version(),
+			GcType:    pb.PJvmGcType_JVM_GC_TYPE_CMS,
+		},
+		Container: agent.Config().IsContainer,
+	}
+
+	log("grpc").Infof("send agent information: %s", agentInfo.String())
 
 	ctx := grpcMetadataContext(agent, -1)
-
-	return ctx, &agentinfo
+	return ctx, agentInfo
 }
 
 func (agentGrpc *agentGrpc) sendAgentInfo() error {
-	ctx, agentinfo := makeAgentInfo(agentGrpc.agent)
+	ctx, agentInfo := makeAgentInfo(agentGrpc.agent)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	_, err := agentGrpc.agentClient.RequestAgentInfo(ctx, agentinfo)
+	_, err := agentGrpc.agentClient.RequestAgentInfo(ctx, agentInfo)
 	if err != nil {
 		log("grpc").Errorf("fail to call RequestAgentInfo() - %v", err)
 	}
@@ -182,19 +208,19 @@ func (agentGrpc *agentGrpc) sendAgentInfo() error {
 }
 
 func (agentGrpc *agentGrpc) sendApiMetadata(apiId int32, api string, line int, apiType int) error {
-	var apimeta pb.PApiMetaData
-	apimeta.ApiId = apiId
-	apimeta.ApiInfo = api
-	apimeta.Line = int32(line)
-	apimeta.Type = int32(apiType)
+	var apiMeta pb.PApiMetaData
+	apiMeta.ApiId = apiId
+	apiMeta.ApiInfo = api
+	apiMeta.Line = int32(line)
+	apiMeta.Type = int32(apiType)
 
-	log("grpc").Infof("send API metadata: %s", apimeta.String())
+	log("grpc").Infof("send API metadata: %s", apiMeta.String())
 
 	ctx := grpcMetadataContext(agentGrpc.agent, -1)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	_, err := agentGrpc.metadataClient.RequestApiMetaData(ctx, &apimeta)
+	_, err := agentGrpc.metadataClient.RequestApiMetaData(ctx, &apiMeta)
 	if err != nil {
 		log("grpc").Errorf("fail to call RequestApiMetaData() - %v", err)
 	}
@@ -203,17 +229,17 @@ func (agentGrpc *agentGrpc) sendApiMetadata(apiId int32, api string, line int, a
 }
 
 func (agentGrpc *agentGrpc) sendStringMetadata(strId int32, str string) error {
-	var strmeta pb.PStringMetaData
-	strmeta.StringId = strId
-	strmeta.StringValue = str
+	var strMeta pb.PStringMetaData
+	strMeta.StringId = strId
+	strMeta.StringValue = str
 
-	log("grpc").Infof("send string metadata: %s", strmeta.String())
+	log("grpc").Infof("send string metadata: %s", strMeta.String())
 
 	ctx := grpcMetadataContext(agentGrpc.agent, -1)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	_, err := agentGrpc.metadataClient.RequestStringMetaData(ctx, &strmeta)
+	_, err := agentGrpc.metadataClient.RequestStringMetaData(ctx, &strMeta)
 	if err != nil {
 		log("grpc").Errorf("fail to call RequestStringMetaData() - %v", err)
 	}
@@ -222,17 +248,17 @@ func (agentGrpc *agentGrpc) sendStringMetadata(strId int32, str string) error {
 }
 
 func (agentGrpc *agentGrpc) sendSqlMetadata(sqlId int32, sql string) error {
-	var sqlmeta pb.PSqlMetaData
-	sqlmeta.SqlId = sqlId
-	sqlmeta.Sql = sql
+	var sqlMeta pb.PSqlMetaData
+	sqlMeta.SqlId = sqlId
+	sqlMeta.Sql = sql
 
-	log("grpc").Infof("send SQL metadata: %s", sqlmeta.String())
+	log("grpc").Infof("send SQL metadata: %s", sqlMeta.String())
 
 	ctx := grpcMetadataContext(agentGrpc.agent, -1)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	_, err := agentGrpc.metadataClient.RequestSqlMetaData(ctx, &sqlmeta)
+	_, err := agentGrpc.metadataClient.RequestSqlMetaData(ctx, &sqlMeta)
 	if err != nil {
 		log("grpc").Errorf("fail to call RequestSqlMetaData() - %v", err)
 	}
@@ -240,7 +266,7 @@ func (agentGrpc *agentGrpc) sendSqlMetadata(sqlId int32, sql string) error {
 	return err
 }
 
-func sendWithTimeout(f func() error, d time.Duration) error {
+func sendStreamWithTimeout(f func() error, d time.Duration) error {
 	errChan := make(chan error, 1)
 	go func() {
 		errChan <- f()
@@ -270,7 +296,7 @@ type pingStreamInvoker struct {
 }
 
 func (invoker *pingStreamInvoker) Send(p *pb.PPing) error {
-	return sendWithTimeout(func() error { return invoker.stream.Send(p) }, 5*time.Second)
+	return sendStreamWithTimeout(func() error { return invoker.stream.Send(p) }, 5*time.Second)
 }
 
 func (invoker *pingStreamInvoker) Recv() (*pb.PPing, error) {
@@ -339,13 +365,13 @@ func (agentGrpc *agentGrpc) close() {
 	agentGrpc.agentConn.Close()
 }
 
-func getOutboundIP() net.IP {
+func getOutboundIP() string {
 	conn, _ := net.Dial("udp", "8.8.8.8:80")
 	defer conn.Close()
 
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
 
-	return localAddr.IP
+	return localAddr.IP.String()
 }
 
 type SpanGrpcClient interface {
@@ -378,7 +404,7 @@ type spanStreamInvoker struct {
 }
 
 func (invoker *spanStreamInvoker) Send(span *pb.PSpanMessage) error {
-	return sendWithTimeout(func() error { return invoker.stream.Send(span) }, 5*time.Second)
+	return sendStreamWithTimeout(func() error { return invoker.stream.Send(span) }, 5*time.Second)
 }
 
 func (invoker *spanStreamInvoker) CloseAndRecv() error {
@@ -514,21 +540,26 @@ func makePSpan(span *span) *pb.PSpanMessage {
 				Flag:                   int32(span.flags),
 				SpanEvent:              spanEventList,
 				Err:                    int32(span.err),
-				ExceptionInfo:          nil, //TODO
+				ExceptionInfo:          nil,
 				ApplicationServiceType: span.agent.Config().ApplicationType,
 				LoggingTransactionInfo: span.loggingInfo,
 			},
 		},
 	}
 
+	if span.errorString != "" {
+		gspan.GetSpan().ExceptionInfo = &pb.PIntStringValue{
+			IntValue:    span.errorFuncId,
+			StringValue: &wrappers.StringValue{Value: span.errorString},
+		}
+	}
+
 	if span.parentAppName != "" {
-		pinfo := &pb.PParentInfo{
+		gspan.GetSpan().AcceptEvent.ParentInfo = &pb.PParentInfo{
 			ParentApplicationName: span.parentAppName,
 			ParentApplicationType: int32(span.parentAppType),
 			AcceptorHost:          span.acceptorHost,
 		}
-
-		gspan.GetSpan().AcceptEvent.ParentInfo = pinfo
 	}
 
 	return gspan
@@ -642,7 +673,7 @@ type statStreamInvoker struct {
 }
 
 func (invoker *statStreamInvoker) Send(stat *pb.PStatMessage) error {
-	return sendWithTimeout(func() error { return invoker.stream.Send(stat) }, 5*time.Second)
+	return sendStreamWithTimeout(func() error { return invoker.stream.Send(stat) }, 5*time.Second)
 }
 
 func (invoker *statStreamInvoker) CloseAndRecv() error {

@@ -55,7 +55,7 @@ type Config struct {
 
 type ConfigOption func(*Config)
 
-var setContainer bool
+var setContainer = bool(false)
 
 func NewConfig(opts ...ConfigOption) (*Config, error) {
 	config := defaultConfig()
@@ -72,11 +72,13 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	}
 
 	if config.ApplicationName == "" {
-		return nil, errors.New("pinpoint config error: application name is missing")
+		return nil, errors.New("application name is required")
+	} else if len(config.ApplicationName) > MaxApplicationNameLength {
+		return nil, errors.New("application name is too long (max length: 24)")
 	}
 
-	if config.AgentId == "" {
-		config.AgentId = randomString(MaxAgentIdLength)
+	if config.AgentId == "" || len(config.AgentId) > MaxAgentIdLength {
+		config.AgentId = randomString(MaxAgentIdLength - 1)
 		log("config").Info("agentId is automatically generated: ", config.AgentId)
 	}
 
@@ -185,7 +187,7 @@ func readConfigFile(config *Config) error {
 	dec := yaml.NewDecoder(f)
 	err = dec.Decode(config)
 	if err != nil {
-		log("config").Error("yaml config file is corrupted - ", err)
+		log("config").Error("pinpoint config file is corrupted - ", err)
 	}
 
 	return err
@@ -205,9 +207,6 @@ func WithAppType(typ int32) ConfigOption {
 
 func WithAgentId(id string) ConfigOption {
 	return func(c *Config) {
-		if len(id) > MaxAgentIdLength {
-			id = id[:MaxAgentIdLength]
-		}
 		c.AgentId = id
 	}
 }

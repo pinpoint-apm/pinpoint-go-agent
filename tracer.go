@@ -122,8 +122,9 @@ const (
 	ApiTypeWebRequest = 100
 	ApiTypeInvocation = 200
 
-	MaxAgentIdLength       = 23
-	SamplingTypeCounter    = "COUNTER"
-	SamplingTypePercent    = "PERCENT"
-	SmaplingMaxPercentRate = 100 * 100
+	MaxApplicationNameLength = 24
+	MaxAgentIdLength         = 24
+	SamplingTypeCounter      = "COUNTER"
+	SamplingTypePercent      = "PERCENT"
+	SmaplingMaxPercentRate   = 100 * 100
 )
