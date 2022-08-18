@@ -187,9 +187,14 @@ func connectGrpc(agent *agent) {
 	}
 
 	for true {
-		err = agent.agentGrpc.sendAgentInfo()
+		res, err := agent.agentGrpc.sendAgentInfo()
 		if err == nil {
-			break
+			if res.Success {
+				break
+			} else {
+				log("agent").Errorf("agent registration failed: %s", res.Message)
+				return
+			}
 		}
 		time.Sleep(1 * time.Second)
 	}

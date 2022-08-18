@@ -115,6 +115,10 @@ func (span *noopSpan) RecordHttpHeader(annotation Annotation, key int, header ht
 
 func (span *noopSpan) RecordHttpCookie(annotation Annotation, cookie []*http.Cookie) {}
 
+func (span *noopSpan) IsSampled() bool {
+	return false
+}
+
 type noopSpanEvent struct {
 	annotations noopannotation
 }

@@ -20,7 +20,7 @@ func Test_agentGrpc_sendAgentInfo(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent.(*mockAgent)
 			agent.setMockAgentGrpc(t)
-			err := agent.agentGrpc.sendAgentInfo()
+			_, err := agent.agentGrpc.sendAgentInfo()
 			assert.NoError(t, err, "sendAgentInfo")
 		})
 	}

@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -57,6 +58,8 @@ type ConfigOption func(*Config)
 
 var setContainer = bool(false)
 
+const idPattern = "[a-zA-Z0-9\\._\\-]+"
+
 func NewConfig(opts ...ConfigOption) (*Config, error) {
 	config := defaultConfig()
 
@@ -71,13 +74,16 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		}
 	}
 
+	r, _ := regexp.Compile(idPattern)
 	if config.ApplicationName == "" {
 		return nil, errors.New("application name is required")
 	} else if len(config.ApplicationName) > MaxApplicationNameLength {
 		return nil, errors.New("application name is too long (max length: 24)")
+	} else if !r.MatchString(config.ApplicationName) {
+		return nil, errors.New("application name has invalid pattern (" + idPattern + ")")
 	}
 
-	if config.AgentId == "" || len(config.AgentId) > MaxAgentIdLength {
+	if config.AgentId == "" || len(config.AgentId) > MaxAgentIdLength || !r.MatchString(config.AgentId) {
 		config.AgentId = randomString(MaxAgentIdLength - 1)
 		log("config").Info("agentId is automatically generated: ", config.AgentId)
 	}

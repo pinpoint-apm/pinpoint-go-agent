@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log"
 	"net/http"
@@ -18,13 +19,10 @@ func index(w http.ResponseWriter, r *http.Request) {
 }
 
 func wrapRequest(w http.ResponseWriter, r *http.Request) {
-	tracer := pinpoint.FromContext(r.Context())
-	req, _ := http.NewRequest("GET", "http://localhost:9000/hello", nil)
+	ctx := pinpoint.NewContext(context.Background(), pinpoint.FromContext(r.Context()))
+	req, _ := http.NewRequestWithContext(ctx, "GET", "http://localhost:9000/hello", nil)
 
-	tracer = phttp.NewHttpClientTracer(tracer, "http.DefaultClient.Do", req)
-	resp, err := http.DefaultClient.Do(req)
-	phttp.EndHttpClientTracer(tracer, resp, err)
-
+	resp, err := phttp.DoClient(http.DefaultClient.Do, "http.DefaultClient.Do", req)
 	if nil != err {
 		io.WriteString(w, err.Error())
 		return
@@ -34,13 +32,9 @@ func wrapRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func wrapClient(w http.ResponseWriter, r *http.Request) {
-	client := &http.Client{}
-	client = phttp.WrapClient(client)
+	client := phttp.WrapClientWithContext(r.Context(), &http.Client{})
+	resp, err := client.Get("http://localhost:9000/async_wrapper?foo=bar&say=goodbye")
 
-	request, _ := http.NewRequest("GET", "http://localhost:9000/async_wrapper", nil)
-	request = request.WithContext(r.Context())
-
-	resp, err := client.Do(request)
 	if nil != err {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		io.WriteString(w, err.Error())

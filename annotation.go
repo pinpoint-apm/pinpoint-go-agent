@@ -6,7 +6,8 @@ import (
 )
 
 const (
-	AnnotationHttpUrl            = 40
+	AnnotationHttpUrl = 40
+	//AnnotationHttpParam          = 41
 	AnnotationHttpCookie         = 45
 	AnnotationHttpStatusCode     = 46
 	AnnotationHttpRequestHeader  = 47

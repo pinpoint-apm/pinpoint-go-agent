@@ -320,3 +320,7 @@ func (span *span) RecordHttpHeader(annotation Annotation, key int, header http.H
 func (span *span) RecordHttpCookie(annotation Annotation, cookie []*http.Cookie) {
 	span.agent.HttpHeaderRecorder(AnnotationHttpCookie).recordCookie(annotation, cookie)
 }
+
+func (span *span) IsSampled() bool {
+	return true
+}

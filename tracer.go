@@ -56,6 +56,8 @@ type Tracer interface {
 	RecordHttpStatus(status int)
 	RecordHttpHeader(annotation Annotation, key int, header http.Header)
 	RecordHttpCookie(annotation Annotation, cookie []*http.Cookie)
+
+	IsSampled() bool
 }
 
 type SpanRecorder interface {

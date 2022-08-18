@@ -1,53 +1,70 @@
 package http
 
 import (
+	"bytes"
 	"context"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"net/http"
 )
 
+//deprecated
 func NewHttpClientTracer(tracer pinpoint.Tracer, operationName string, req *http.Request) pinpoint.Tracer {
-	if tracer != nil {
+	return before(tracer, operationName, req)
+}
+
+func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pinpoint.Tracer {
+	if tracer == nil {
+		return tracer
+	}
+
+	if tracer.IsSampled() {
 		tracer.NewSpanEvent(operationName)
 
 		tracer.SpanEvent().SetEndPoint(req.Host)
 		tracer.SpanEvent().SetDestination(req.Host)
 		tracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeGoHttpClient)
-		tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHttpUrl, req.URL.String())
-		tracer.Inject(req.Header)
+
+		var b bytes.Buffer
+		b.WriteString(req.Method)
+		b.WriteString(" ")
+		b.WriteString(req.URL.String())
+		tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHttpUrl, b.String())
 	}
 
+	tracer.Inject(req.Header)
 	return tracer
 }
 
+//deprecated
 func EndHttpClientTracer(tracer pinpoint.Tracer, resp *http.Response, err error) {
-	if tracer != nil {
-		tracer.SpanEvent().SetError(err)
-		if resp != nil {
-			a := tracer.SpanEvent().Annotations()
-			a.AppendInt(pinpoint.AnnotationHttpStatusCode, int32(resp.StatusCode))
-			tracer.RecordHttpHeader(a, pinpoint.AnnotationHttpResponseHeader, resp.Header)
-		}
-		tracer.EndSpanEvent()
-	}
+	after(tracer, resp, err)
 }
 
-func DoHttpClient(doFunc func(req *http.Request) (*http.Response, error), tracer pinpoint.Tracer, operation string,
-	req *http.Request) (*http.Response, error) {
-	tracer = NewHttpClientTracer(tracer, operation, req)
+func after(tracer pinpoint.Tracer, resp *http.Response, err error) {
+	if tracer == nil {
+		return
+	}
+
+	tracer.SpanEvent().SetError(err)
+	if resp != nil {
+		a := tracer.SpanEvent().Annotations()
+		a.AppendInt(pinpoint.AnnotationHttpStatusCode, int32(resp.StatusCode))
+		tracer.RecordHttpHeader(a, pinpoint.AnnotationHttpResponseHeader, resp.Header)
+	}
+	tracer.EndSpanEvent()
+}
+
+func DoClient(doFunc func(req *http.Request) (*http.Response, error), operation string, req *http.Request) (*http.Response, error) {
+	tracer := before(pinpoint.TracerFromRequestContext(req), operation, req)
 	resp, err := doFunc(req)
-	EndHttpClientTracer(tracer, resp, err)
+	after(tracer, resp, err)
 
 	return resp, err
 }
 
-func DoHttpClientWithContext(doFunc func(req *http.Request) (*http.Response, error), ctx context.Context, operation string,
-	req *http.Request) (*http.Response, error) {
-	return DoHttpClient(doFunc, pinpoint.FromContext(ctx), operation, req)
-}
-
 type roundTripper struct {
 	original http.RoundTripper
+	ctx      context.Context
 }
 
 func WrapClient(client *http.Client) *http.Client {
@@ -56,27 +73,42 @@ func WrapClient(client *http.Client) *http.Client {
 	}
 
 	c := *client
-	c.Transport = wrapRoundTripper(c.Transport)
+	c.Transport = wrapRoundTripper(nil, c.Transport)
 	return &c
 }
 
-func wrapRoundTripper(original http.RoundTripper) http.RoundTripper {
+func WrapClientWithContext(ctx context.Context, client *http.Client) *http.Client {
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	c := *client
+	c.Transport = wrapRoundTripper(ctx, c.Transport)
+	return &c
+}
+
+func wrapRoundTripper(ctx context.Context, original http.RoundTripper) http.RoundTripper {
 	if original == nil {
 		original = http.DefaultTransport
 	}
 
 	return &roundTripper{
 		original: original,
+		ctx:      ctx,
 	}
 }
 
 func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	tracer := pinpoint.TracerFromRequestContext(req)
-	if tracer == nil {
-		return r.original.RoundTrip(req)
+	var tracer pinpoint.Tracer
+
+	if r.ctx != nil {
+		tracer = pinpoint.FromContext(r.ctx)
+	} else {
+		tracer = pinpoint.FromContext(req.Context())
 	}
 
-	//clone request
+	// By the specification of http.RoundTripper, it requires that the given Request is not changed.
+	// we make a copy of the Request because pinpoint headers need to be added.
 	clone := *req
 	clone.Header = make(http.Header, len(req.Header))
 	for k, v := range req.Header {
@@ -84,5 +116,9 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	req = &clone
 
-	return DoHttpClient(r.original.RoundTrip, tracer, "http.Client.Do", req)
+	tracer = before(tracer, "http.Client.Do", req)
+	resp, err := r.original.RoundTrip(req)
+	after(tracer, resp, err)
+
+	return resp, err
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log"
 	"math/rand"
@@ -31,8 +32,10 @@ func shutdown(w http.ResponseWriter, r *http.Request) {
 }
 
 func outgoing(w http.ResponseWriter, r *http.Request) {
-	req, _ := http.NewRequest("GET", "http://localhost:9000/async_wrapper", nil)
-	resp, err := phttp.DoHttpClientWithContext(http.DefaultClient.Do, r.Context(), "http.DefaultClient.Do", req)
+	ctx := pinpoint.NewContext(context.Background(), pinpoint.FromContext(r.Context()))
+	req, _ := http.NewRequestWithContext(ctx, "GET", "http://localhost:9000/async_wrapper", nil)
+
+	resp, err := phttp.DoClient(http.DefaultClient.Do, "http.DefaultClient.Do", req)
 	if nil != err {
 		io.WriteString(w, err.Error())
 		return

@@ -194,17 +194,17 @@ func makeAgentInfo(agent Agent) (context.Context, *pb.PAgentInfo) {
 	return ctx, agentInfo
 }
 
-func (agentGrpc *agentGrpc) sendAgentInfo() error {
+func (agentGrpc *agentGrpc) sendAgentInfo() (*pb.PResult, error) {
 	ctx, agentInfo := makeAgentInfo(agentGrpc.agent)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	_, err := agentGrpc.agentClient.RequestAgentInfo(ctx, agentInfo)
+	result, err := agentGrpc.agentClient.RequestAgentInfo(ctx, agentInfo)
 	if err != nil {
 		log("grpc").Errorf("fail to call RequestAgentInfo() - %v", err)
 	}
 
-	return err
+	return result, err
 }
 
 func (agentGrpc *agentGrpc) sendApiMetadata(apiId int32, api string, line int, apiType int) error {
