@@ -1,9 +1,11 @@
 package pinpoint
 
 import (
+	"bytes"
 	"context"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -13,6 +15,7 @@ type DatabaseTrace struct {
 	DbName      string
 	DbHost      string
 	QueryString string
+	bindArgs    string
 
 	ParseDSN func(td *DatabaseTrace, dataSourceName string)
 }
@@ -34,7 +37,7 @@ func NewDatabaseTracer(ctx context.Context, funcName string, dt *DatabaseTrace) 
 	se.SetServiceType(int32(dt.QueryType))
 	se.SetEndPoint(dt.DbHost)
 	se.SetDestination(dt.DbName)
-	se.SetSQL(dt.QueryString)
+	se.SetSQL(dt.QueryString, dt.bindArgs)
 
 	return tracer
 }
@@ -119,7 +122,7 @@ type sqlConn struct {
 	trace DatabaseTrace
 }
 
-func prepare(stmt driver.Stmt, err error, td *DatabaseTrace, query string, ctx context.Context) (driver.Stmt, error) {
+func prepare(stmt driver.Stmt, err error, td *DatabaseTrace, query string) (driver.Stmt, error) {
 	if nil != err {
 		return nil, err
 	}
@@ -128,22 +131,17 @@ func prepare(stmt driver.Stmt, err error, td *DatabaseTrace, query string, ctx c
 	return &sqlStmt{
 		Stmt:  stmt,
 		trace: td,
-		ctx:   ctx,
 	}, nil
-}
-
-func (c *sqlConn) Prepare(query string) (driver.Stmt, error) {
-	stmt, err := c.Conn.Prepare(query)
-	return prepare(stmt, err, &c.trace, query, context.Background())
 }
 
 func (c *sqlConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
 	if cpc, ok := c.Conn.(driver.ConnPrepareContext); ok {
 		stmt, err := cpc.PrepareContext(ctx, query)
-		return prepare(stmt, err, &c.trace, query, ctx)
+		return prepare(stmt, err, &c.trace, query)
 	}
 
-	return c.Prepare(query)
+	stmt, err := c.Conn.Prepare(query)
+	return prepare(stmt, err, &c.trace, query)
 }
 
 func newSqlSpanEvent(ctx context.Context, operation string, dt *DatabaseTrace, start time.Time, err error) {
@@ -162,6 +160,7 @@ func (c *sqlConn) ExecContext(ctx context.Context, query string, args []driver.N
 
 		if err != driver.ErrSkip {
 			c.trace.QueryString = query
+			c.trace.bindArgs = namedValueToString(args)
 			newSqlSpanEvent(ctx, "ConnExecContext", &c.trace, start, err)
 		}
 
@@ -183,6 +182,7 @@ func (c *sqlConn) ExecContext(ctx context.Context, query string, args []driver.N
 		result, err := e.Exec(query, dargs)
 		if err != driver.ErrSkip {
 			c.trace.QueryString = query
+			c.trace.bindArgs = valueToString(dargs)
 			newSqlSpanEvent(ctx, "ConnExec", &c.trace, start, err)
 		}
 
@@ -199,6 +199,7 @@ func (c *sqlConn) QueryContext(ctx context.Context, query string, args []driver.
 		rows, err := qc.QueryContext(ctx, query, args)
 		if err != driver.ErrSkip {
 			c.trace.QueryString = query
+			c.trace.bindArgs = namedValueToString(args)
 			newSqlSpanEvent(ctx, "ConnQueryContext", &c.trace, start, err)
 		}
 
@@ -220,6 +221,7 @@ func (c *sqlConn) QueryContext(ctx context.Context, query string, args []driver.
 		rows, err := q.Query(query, dargs)
 		if err != driver.ErrSkip {
 			c.trace.QueryString = query
+			c.trace.bindArgs = valueToString(dargs)
 			newSqlSpanEvent(ctx, "ConnQuery", &c.trace, start, err)
 		}
 
@@ -275,13 +277,14 @@ func (t *sqlTx) Rollback() (err error) {
 type sqlStmt struct {
 	driver.Stmt
 	trace *DatabaseTrace
-	ctx   context.Context
 }
 
 func (s *sqlStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
+	start := time.Now()
+
 	if sec, ok := s.Stmt.(driver.StmtExecContext); ok {
-		start := time.Now()
 		result, err := sec.ExecContext(ctx, args)
+		s.trace.bindArgs = namedValueToString(args)
 		newSqlSpanEvent(ctx, "StmtExecContext", s.trace, start, err)
 		return result, err
 	}
@@ -297,21 +300,18 @@ func (s *sqlStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (dr
 		return nil, ctx.Err()
 	}
 
-	s.ctx = ctx
-	return s.Exec(dargs)
-}
-
-func (s *sqlStmt) Exec(args []driver.Value) (driver.Result, error) {
-	start := time.Now()
-	result, err := s.Stmt.Exec(args)
-	newSqlSpanEvent(s.ctx, "StmtExec", s.trace, start, err)
+	result, err := s.Stmt.Exec(dargs)
+	s.trace.bindArgs = valueToString(dargs)
+	newSqlSpanEvent(ctx, "StmtExec", s.trace, start, err)
 	return result, err
 }
 
 func (s *sqlStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
+	start := time.Now()
+
 	if sqc, ok := s.Stmt.(driver.StmtQueryContext); ok {
-		start := time.Now()
 		rows, err := sqc.QueryContext(ctx, args)
+		s.trace.bindArgs = namedValueToString(args)
 		newSqlSpanEvent(ctx, "StmtQueryContext", s.trace, start, err)
 		return rows, err
 	}
@@ -327,14 +327,9 @@ func (s *sqlStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (d
 		return nil, ctx.Err()
 	}
 
-	s.ctx = ctx
-	return s.Query(dargs)
-}
-
-func (s *sqlStmt) Query(args []driver.Value) (driver.Rows, error) {
-	start := time.Now()
-	rows, err := s.Stmt.Query(args)
-	newSqlSpanEvent(s.ctx, "StmtQuery", s.trace, start, err)
+	rows, err := s.Stmt.Query(dargs)
+	s.trace.bindArgs = valueToString(dargs)
+	newSqlSpanEvent(ctx, "StmtQuery", s.trace, start, err)
 	return rows, err
 }
 
@@ -348,4 +343,42 @@ func namedValueToValue(named []driver.NamedValue) ([]driver.Value, error) {
 		dargs[n] = param.Value
 	}
 	return dargs, nil
+}
+
+const maxBindArgsLength = 1024
+
+func namedValueToString(named []driver.NamedValue) string {
+	var b bytes.Buffer
+
+	c := len(named) - 1
+	for i, param := range named {
+		b.WriteString(fmt.Sprint(param.Value))
+		if i < c {
+			b.WriteString(", ")
+		}
+		if b.Len() > maxBindArgsLength {
+			b.WriteString("...(1024)")
+			break
+		}
+	}
+
+	return b.String()
+}
+
+func valueToString(vals []driver.Value) string {
+	var b bytes.Buffer
+
+	c := len(vals) - 1
+	for i, v := range vals {
+		b.WriteString(fmt.Sprint(v))
+		if i < c {
+			b.WriteString(", ")
+		}
+		if b.Len() > maxBindArgsLength {
+			b.WriteString("...(1024)")
+			break
+		}
+	}
+
+	return b.String()
 }

@@ -107,7 +107,7 @@ func (se *spanEvent) SetEndPoint(endPoint string) {
 	se.endPoint = endPoint
 }
 
-func (se *spanEvent) SetSQL(sql string) {
+func (se *spanEvent) SetSQL(sql string, args string) {
 	if sql == "" {
 		return
 	}
@@ -115,7 +115,7 @@ func (se *spanEvent) SetSQL(sql string) {
 	normalizer := newSqlNormalizer(sql)
 	nsql, param := normalizer.run()
 	id := se.parentSpan.agent.CacheSql(nsql)
-	se.annotations.AppendIntStringString(20, id, param, "" /* bind value for prepared stmt */)
+	se.annotations.AppendIntStringString(AnnotationSqlId, id, param, args)
 }
 
 func (se *spanEvent) Annotations() Annotation {

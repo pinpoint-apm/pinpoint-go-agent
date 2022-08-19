@@ -133,10 +133,10 @@ func (se *noopSpanEvent) SetDestination(id string) {}
 
 func (se *noopSpanEvent) SetEndPoint(endPoint string) {}
 
-func (se *noopSpanEvent) SetSQL(sql string) {}
+func (se *noopSpanEvent) SetSQL(sql string, args string) {}
 
-func (span *noopSpanEvent) Annotations() Annotation {
-	return &span.annotations
+func (se *noopSpanEvent) Annotations() Annotation {
+	return &se.annotations
 }
 
 func (se *noopSpanEvent) FixDuration(start time.Time, end time.Time) {}
