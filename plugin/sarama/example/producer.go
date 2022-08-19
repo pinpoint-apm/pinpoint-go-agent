@@ -14,7 +14,7 @@ import (
 
 var fakeDB string
 
-const topic = "sample-topic"
+const topic = "go-sarama-test"
 
 var producer *psarama.SyncProducer
 var brokers = []string{"127.0.0.1:9092"}

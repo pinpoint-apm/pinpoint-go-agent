@@ -14,7 +14,7 @@ import (
 	psarama "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
 )
 
-const ctopic = "sample-topic"
+const ctopic = "go-sarama-test"
 
 var cbrokers = []string{"127.0.0.1:9092"}
 
