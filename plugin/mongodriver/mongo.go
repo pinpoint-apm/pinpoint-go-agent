@@ -45,13 +45,13 @@ func (m *monitor) Started(ctx context.Context, evt *event.CommandStartedEvent) {
 	//fmt.Println("hostname= " + hostname)
 	//fmt.Println("json= " + string(b))
 
-	dbTrace := &pinpoint.DatabaseTrace{}
-	dbTrace.DbType = serviceTypeMongo
-	dbTrace.QueryType = serviceTypeMongoExecuteQuery
-	dbTrace.DbName = evt.DatabaseName
-	dbTrace.DbHost = hostname
+	dbInfo := &pinpoint.DBInfo{}
+	dbInfo.DBType = serviceTypeMongo
+	dbInfo.QueryType = serviceTypeMongoExecuteQuery
+	dbInfo.DBName = evt.DatabaseName
+	dbInfo.DBHost = hostname
 
-	tracer = pinpoint.NewDatabaseTracer(ctx, "mongodb."+evt.CommandName, dbTrace)
+	tracer = pinpoint.NewDatabaseTracer(ctx, "mongodb."+evt.CommandName, dbInfo)
 	tracer.SpanEvent().Annotations().AppendString(annotationMongoCollectioInfo, collName(evt))
 	tracer.SpanEvent().Annotations().AppendStringString(annotationMongoJasonData, string(b), "")
 

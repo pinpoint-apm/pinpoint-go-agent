@@ -16,19 +16,19 @@ const (
 	serviceTypePgSqlExecuteQuery = 2501
 )
 
-var dbTrace = pinpoint.DatabaseTrace{
+var dbInfo = pinpoint.DBInfo{
 	ParseDSN: parseDSN,
 }
 
 func init() {
-	dbTrace.DbType = serviceTypePgSql
-	dbTrace.QueryType = serviceTypePgSqlExecuteQuery
-	sql.Register("pq-pinpoint", pinpoint.MakePinpointSQLDriver(&pq.Driver{}, dbTrace))
+	dbInfo.DBType = serviceTypePgSql
+	dbInfo.QueryType = serviceTypePgSqlExecuteQuery
+	sql.Register("pq-pinpoint", pinpoint.MakePinpointSQLDriver(&pq.Driver{}, dbInfo))
 }
 
 var dsnSplit = regexp.MustCompile(`(\w+)\s*=\s*('[^=]*'|[^'\s]+)`)
 
-func parseDSN(dt *pinpoint.DatabaseTrace, dsn string) {
+func parseDSN(info *pinpoint.DBInfo, dsn string) {
 	convDsn, err := pq.ParseURL(dsn)
 	if err != nil {
 		fmt.Println("error= " + err.Error())
@@ -67,8 +67,8 @@ func parseDSN(dt *pinpoint.DatabaseTrace, dsn string) {
 		host = "localhost"
 	}
 
-	dt.DbHost = host
-	dt.DbName = dbname
+	info.DBHost = host
+	info.DBName = dbname
 
 	//fmt.Println("host= " + host)
 	//fmt.Println("dbname= " + dbname)

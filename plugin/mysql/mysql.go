@@ -13,28 +13,27 @@ const (
 	serviceTypeMysqlExecuteQuery = 2101
 )
 
-var dbTrace = pinpoint.DatabaseTrace{
+var dbInfo = pinpoint.DBInfo{
 	ParseDSN: parseDSN,
 }
 
 func init() {
-	dbTrace.DbType = serviceTypeMysql
-	dbTrace.QueryType = serviceTypeMysqlExecuteQuery
-	sql.Register("mysql-pinpoint", pinpoint.MakePinpointSQLDriver(mysql.MySQLDriver{}, dbTrace))
+	dbInfo.DBType = serviceTypeMysql
+	dbInfo.QueryType = serviceTypeMysqlExecuteQuery
+	sql.Register("mysql-pinpoint", pinpoint.MakePinpointSQLDriver(mysql.MySQLDriver{}, dbInfo))
 }
 
-func parseDSN(dt *pinpoint.DatabaseTrace, dsn string) {
+func parseDSN(info *pinpoint.DBInfo, dsn string) {
 	cfg, err := mysql.ParseDSN(dsn)
 	if nil != err {
 		return
 	}
-	parseConfig(dt, cfg)
+	parseConfig(info, cfg)
 }
 
-func parseConfig(dt *pinpoint.DatabaseTrace, cfg *mysql.Config) {
-	dt.DbName = cfg.DBName
-
+func parseConfig(info *pinpoint.DBInfo, cfg *mysql.Config) {
 	var host string
+
 	switch cfg.Net {
 	case "unix", "unixgram", "unixpacket":
 		host = "localhost"
@@ -50,5 +49,6 @@ func parseConfig(dt *pinpoint.DatabaseTrace, cfg *mysql.Config) {
 		}
 	}
 
-	dt.DbHost = host
+	info.DBName = cfg.DBName
+	info.DBHost = host
 }
