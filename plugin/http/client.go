@@ -7,7 +7,7 @@ import (
 	"net/http"
 )
 
-//deprecated
+// NewHttpClientTracer deprecated
 func NewHttpClientTracer(tracer pinpoint.Tracer, operationName string, req *http.Request) pinpoint.Tracer {
 	return before(tracer, operationName, req)
 }
@@ -35,7 +35,7 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 	return tracer
 }
 
-//deprecated
+// EndHttpClientTracer deprecated
 func EndHttpClientTracer(tracer pinpoint.Tracer, resp *http.Response, err error) {
 	after(tracer, resp, err)
 }
@@ -108,7 +108,7 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	// By the specification of http.RoundTripper, it requires that the given Request is not changed.
-	// we make a copy of the Request because pinpoint headers need to be added.
+	// We make a copy of the Request because pinpoint headers need to be added.
 	clone := *req
 	clone.Header = make(http.Header, len(req.Header))
 	for k, v := range req.Header {
