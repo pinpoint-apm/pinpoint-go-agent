@@ -46,7 +46,7 @@ func query(w http.ResponseWriter, r *http.Request) {
 	stmt.Close()
 
 	stmt, _ = db.PrepareContext(ctx, "UPDATE employee SET emp_name = ? where id = ?")
-	res, _ = stmt.ExecContext(ctx, "ironman", id)
+	res, _ = stmt.Exec("ironman", id)
 	_, _ = res.RowsAffected()
 	stmt.Close()
 
@@ -77,7 +77,46 @@ func query(w http.ResponseWriter, r *http.Request) {
 	rows.Close()
 	stmt.Close()
 
+	tx(ctx, db)
+
 	res, _ = db.ExecContext(ctx, "DROP TABLE employee")
+}
+
+func tx(ctx context.Context, db *sql.DB) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = tx.ExecContext(ctx, "INSERT INTO employee(emp_name, department, created) VALUES ('ipad', 'apple', '2022-08-15'), ('chrome', 'google', '2022-08-18')")
+	if err != nil {
+		tx.Rollback()
+		return
+	}
+
+	// Run a query to get a count of all cats
+	row := tx.QueryRowContext(ctx, "SELECT count(*) FROM employee")
+	var catCount int
+	// Store the count in the `catCount` variable
+	err = row.Scan(&catCount)
+	if err != nil {
+		tx.Rollback()
+		return
+	}
+
+	// Now update the food table, increasing the quantity of cat food by 10x the number of cats
+	_, err = tx.ExecContext(ctx, "UPDATE employee SET emp_name = 'macbook' WHERE id = ?", 3)
+	if err != nil {
+		tx.Rollback()
+		return
+	}
+
+	// Commit the change if all queries ran successfully
+	err = tx.Commit()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 }
 
 func main() {

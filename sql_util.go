@@ -129,22 +129,21 @@ func (s *sqlNormalizer) consumeCharLiteral() {
 			break
 		}
 
-		s.param.WriteRune(ch)
 		if ch == ',' {
 			s.param.WriteRune(ch)
-		}
-
-		if ch == '\'' {
+		} else if ch == '\'' {
 			if s.lookahead('\'') {
 				s.param.WriteRune(s.read())
 			} else {
-				s.paramIndex++
 				s.output.WriteString(strconv.Itoa(s.paramIndex))
+				s.paramIndex++
 				s.output.WriteRune('$')
 				s.output.WriteRune('\'')
 				break
 			}
 		}
+
+		s.param.WriteRune(ch)
 	}
 }
 
@@ -155,8 +154,8 @@ func (s *sqlNormalizer) consumeNumberLiteral() {
 	if s.param.Len() > 0 {
 		s.param.WriteRune(',')
 	}
-	s.paramIndex++
 	s.output.WriteString(strconv.Itoa(s.paramIndex))
+	s.paramIndex++
 	s.output.WriteRune('#')
 
 	for {
@@ -167,6 +166,7 @@ func (s *sqlNormalizer) consumeNumberLiteral() {
 		if isDigit(ch) || ch == '.' || ch == 'E' || ch == 'e' {
 			s.param.WriteRune(ch)
 		} else {
+			s.unread()
 			break
 		}
 	}

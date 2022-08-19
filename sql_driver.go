@@ -119,7 +119,7 @@ type sqlConn struct {
 	trace DatabaseTrace
 }
 
-func prepare(stmt driver.Stmt, err error, td *DatabaseTrace, query string) (driver.Stmt, error) {
+func prepare(stmt driver.Stmt, err error, td *DatabaseTrace, query string, ctx context.Context) (driver.Stmt, error) {
 	if nil != err {
 		return nil, err
 	}
@@ -128,18 +128,19 @@ func prepare(stmt driver.Stmt, err error, td *DatabaseTrace, query string) (driv
 	return &sqlStmt{
 		Stmt:  stmt,
 		trace: td,
+		ctx:   ctx,
 	}, nil
 }
 
 func (c *sqlConn) Prepare(query string) (driver.Stmt, error) {
 	stmt, err := c.Conn.Prepare(query)
-	return prepare(stmt, err, &c.trace, query)
+	return prepare(stmt, err, &c.trace, query, context.Background())
 }
 
 func (c *sqlConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
 	if cpc, ok := c.Conn.(driver.ConnPrepareContext); ok {
 		stmt, err := cpc.PrepareContext(ctx, query)
-		return prepare(stmt, err, &c.trace, query)
+		return prepare(stmt, err, &c.trace, query, ctx)
 	}
 
 	return c.Prepare(query)
@@ -228,15 +229,58 @@ func (c *sqlConn) QueryContext(ctx context.Context, query string, args []driver.
 	return nil, driver.ErrSkip
 }
 
+func (c *sqlConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	start := time.Now()
+	c.trace.QueryString = ""
+
+	if cbt, ok := c.Conn.(driver.ConnBeginTx); ok {
+		tx, err := cbt.BeginTx(ctx, opts)
+		newSqlSpanEvent(ctx, "BeginTx", &c.trace, start, err)
+		if err != nil {
+			return nil, err
+		}
+		return &sqlTx{tx, &c.trace, ctx}, nil
+	}
+
+	tx, err := c.Conn.Begin()
+	newSqlSpanEvent(ctx, "Begin", &c.trace, start, err)
+	if err != nil {
+		return nil, err
+	}
+	return &sqlTx{tx, &c.trace, ctx}, nil
+}
+
+type sqlTx struct {
+	driver.Tx
+	trace *DatabaseTrace
+	ctx   context.Context
+}
+
+func (t *sqlTx) Commit() (err error) {
+	start := time.Now()
+	err = t.Tx.Commit()
+	t.trace.QueryString = ""
+	newSqlSpanEvent(t.ctx, "Commit", t.trace, start, err)
+	return err
+}
+
+func (t *sqlTx) Rollback() (err error) {
+	start := time.Now()
+	err = t.Tx.Rollback()
+	t.trace.QueryString = ""
+	newSqlSpanEvent(t.ctx, "Rollback", t.trace, start, err)
+	return err
+}
+
 type sqlStmt struct {
 	driver.Stmt
 	trace *DatabaseTrace
+	ctx   context.Context
 }
 
 func (s *sqlStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
-	start := time.Now()
-
 	if sec, ok := s.Stmt.(driver.StmtExecContext); ok {
+		start := time.Now()
 		result, err := sec.ExecContext(ctx, args)
 		newSqlSpanEvent(ctx, "StmtExecContext", s.trace, start, err)
 		return result, err
@@ -253,15 +297,20 @@ func (s *sqlStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (dr
 		return nil, ctx.Err()
 	}
 
-	result, err := s.Stmt.Exec(dargs)
-	newSqlSpanEvent(ctx, "StmtExec", s.trace, start, err)
+	s.ctx = ctx
+	return s.Exec(dargs)
+}
+
+func (s *sqlStmt) Exec(args []driver.Value) (driver.Result, error) {
+	start := time.Now()
+	result, err := s.Stmt.Exec(args)
+	newSqlSpanEvent(s.ctx, "StmtExec", s.trace, start, err)
 	return result, err
 }
 
 func (s *sqlStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
-	start := time.Now()
-
 	if sqc, ok := s.Stmt.(driver.StmtQueryContext); ok {
+		start := time.Now()
 		rows, err := sqc.QueryContext(ctx, args)
 		newSqlSpanEvent(ctx, "StmtQueryContext", s.trace, start, err)
 		return rows, err
@@ -278,8 +327,14 @@ func (s *sqlStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (d
 		return nil, ctx.Err()
 	}
 
-	rows, err := s.Stmt.Query(dargs)
-	newSqlSpanEvent(ctx, "StmtQuery", s.trace, start, err)
+	s.ctx = ctx
+	return s.Query(dargs)
+}
+
+func (s *sqlStmt) Query(args []driver.Value) (driver.Rows, error) {
+	start := time.Now()
+	rows, err := s.Stmt.Query(args)
+	newSqlSpanEvent(s.ctx, "StmtQuery", s.trace, start, err)
 	return rows, err
 }
 
