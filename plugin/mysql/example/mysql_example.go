@@ -67,6 +67,17 @@ func query(w http.ResponseWriter, r *http.Request) {
 	//not traced
 	rows, _ = db.Query("SELECT * FROM employee WHERE id = 1")
 	rows.Close()
+
+	stmt, _ = db.Prepare("SELECT * FROM employee WHERE id = ?")
+	rows, _ = stmt.QueryContext(ctx, 1)
+	for rows.Next() {
+		_ = rows.Scan(&uid, &empName, &department, &created)
+		fmt.Printf("user: %d, %s, %s, %s\n", uid, empName, department, created)
+	}
+	rows.Close()
+	stmt.Close()
+
+	res, _ = db.ExecContext(ctx, "DROP TABLE employee")
 }
 
 func main() {

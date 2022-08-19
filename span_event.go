@@ -118,8 +118,8 @@ func (se *spanEvent) SetSQL(sql string) {
 	se.annotations.AppendIntStringString(20, id, param, "" /* bind value for prepared stmt */)
 }
 
-func (span *spanEvent) Annotations() Annotation {
-	return &span.annotations
+func (se *spanEvent) Annotations() Annotation {
+	return &se.annotations
 }
 
 func (se *spanEvent) FixDuration(start time.Time, end time.Time) {

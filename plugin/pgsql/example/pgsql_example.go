@@ -68,7 +68,7 @@ func query(w http.ResponseWriter, r *http.Request) {
 		created    string
 	)
 
-	rows, _ := db.QueryContext(ctx, "SELECT * FROM employee")
+	rows, _ := db.QueryContext(ctx, "SELECT * FROM employee WHERE id = 1")
 	for rows.Next() {
 		_ = rows.Scan(&uid, &empName, &department, &created)
 		fmt.Printf("user: %d, %s, %s, %s\n", uid, empName, department, created)
@@ -76,7 +76,7 @@ func query(w http.ResponseWriter, r *http.Request) {
 	rows.Close()
 
 	//not traced
-	rows, _ = db.Query("SELECT * FROM employee WHERE id = 1")
+	rows, _ = db.Query("SELECT * FROM employee WHERE id = 2")
 	rows.Close()
 
 	stmt, _ = db.Prepare("SELECT * FROM employee WHERE id = $1")

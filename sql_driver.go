@@ -39,8 +39,8 @@ func NewDatabaseTracer(ctx context.Context, funcName string, dt *DatabaseTrace) 
 	return tracer
 }
 
-func makeDriver(drv *PinpointSqlDriver) driver.Driver {
-	if _, ok := drv.originDriver.(driver.DriverContext); ok {
+func makeDriver(drv *sqlDriver) driver.Driver {
+	if _, ok := drv.Driver.(driver.DriverContext); ok {
 		return struct {
 			driver.Driver
 			driver.DriverContext
@@ -53,70 +53,70 @@ func makeDriver(drv *PinpointSqlDriver) driver.Driver {
 }
 
 func MakePinpointSQLDriver(d driver.Driver, dt DatabaseTrace) driver.Driver {
-	return makeDriver(&PinpointSqlDriver{trace: dt, originDriver: d})
+	return makeDriver(&sqlDriver{trace: dt, Driver: d})
 }
 
-type PinpointSqlDriver struct {
-	trace        DatabaseTrace
-	originDriver driver.Driver
+type sqlDriver struct {
+	driver.Driver
+	trace DatabaseTrace
 }
 
-func (d *PinpointSqlDriver) Open(name string) (driver.Conn, error) {
-	conn, err := d.originDriver.Open(name)
+func (d *sqlDriver) Open(name string) (driver.Conn, error) {
+	conn, err := d.Driver.Open(name)
 	if err != nil {
 		return nil, err
 	}
 
-	psc := &PinpointSqlConn{
-		originConn: conn,
-		trace:      d.trace,
+	psc := &sqlConn{
+		Conn:  conn,
+		trace: d.trace,
 	}
 
 	parseDSN(&psc.trace, name)
 	return psc, nil
 }
 
-func (d *PinpointSqlDriver) OpenConnector(name string) (driver.Connector, error) {
-	conn, err := d.originDriver.(driver.DriverContext).OpenConnector(name)
+func (d *sqlDriver) OpenConnector(name string) (driver.Connector, error) {
+	conn, err := d.Driver.(driver.DriverContext).OpenConnector(name)
 	if err != nil {
 		return nil, err
 	}
 
-	psc := &PinpointSqlConnector{
-		originConnector: conn,
-		trace:           d.trace,
+	psc := &sqlConnector{
+		Connector: conn,
+		trace:     d.trace,
 	}
 
 	parseDSN(&psc.trace, name)
 	return psc, nil
 }
 
-type PinpointSqlConnector struct {
-	trace           DatabaseTrace
-	originConnector driver.Connector
+type sqlConnector struct {
+	driver.Connector
+	trace DatabaseTrace
 }
 
-func (c *PinpointSqlConnector) Connect(ctx context.Context) (driver.Conn, error) {
-	conn, err := c.originConnector.Connect(ctx)
+func (c *sqlConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	conn, err := c.Connector.Connect(ctx)
 	if nil != err {
 		return nil, err
 	}
-	return &PinpointSqlConn{
-		trace:      c.trace,
-		originConn: conn,
+	return &sqlConn{
+		Conn:  conn,
+		trace: c.trace,
 	}, nil
 }
 
-func (c *PinpointSqlConnector) Driver() driver.Driver {
-	return makeDriver(&PinpointSqlDriver{
-		trace:        c.trace,
-		originDriver: c.originConnector.Driver(),
+func (c *sqlConnector) Driver() driver.Driver {
+	return makeDriver(&sqlDriver{
+		Driver: c.Connector.Driver(),
+		trace:  c.trace,
 	})
 }
 
-type PinpointSqlConn struct {
-	trace      DatabaseTrace
-	originConn driver.Conn
+type sqlConn struct {
+	driver.Conn
+	trace DatabaseTrace
 }
 
 func prepare(stmt driver.Stmt, err error, td *DatabaseTrace, query string) (driver.Stmt, error) {
@@ -125,19 +125,19 @@ func prepare(stmt driver.Stmt, err error, td *DatabaseTrace, query string) (driv
 	}
 
 	td.QueryString = query
-	return &PinpointSqlStmt{
+	return &sqlStmt{
 		Stmt:  stmt,
 		trace: td,
 	}, nil
 }
 
-func (c *PinpointSqlConn) Prepare(query string) (driver.Stmt, error) {
-	stmt, err := c.originConn.Prepare(query)
+func (c *sqlConn) Prepare(query string) (driver.Stmt, error) {
+	stmt, err := c.Conn.Prepare(query)
 	return prepare(stmt, err, &c.trace, query)
 }
 
-func (c *PinpointSqlConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
-	if cpc, ok := c.originConn.(driver.ConnPrepareContext); ok {
+func (c *sqlConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	if cpc, ok := c.Conn.(driver.ConnPrepareContext); ok {
 		stmt, err := cpc.PrepareContext(ctx, query)
 		return prepare(stmt, err, &c.trace, query)
 	}
@@ -153,10 +153,10 @@ func newSqlSpanEvent(ctx context.Context, operation string, dt *DatabaseTrace, s
 	}
 }
 
-func (c *PinpointSqlConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+func (c *sqlConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	start := time.Now()
 
-	if ec, ok := c.originConn.(driver.ExecerContext); ok {
+	if ec, ok := c.Conn.(driver.ExecerContext); ok {
 		result, err := ec.ExecContext(ctx, query, args)
 
 		if err != driver.ErrSkip {
@@ -167,30 +167,34 @@ func (c *PinpointSqlConn) ExecContext(ctx context.Context, query string, args []
 		return result, err
 	}
 
+	// sourced: database/sql/cxtutil.go
 	dargs, err := namedValueToValue(args)
 	if err != nil {
 		return nil, err
 	}
-
 	select {
 	default:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 
-	result, err := c.originConn.(driver.Execer).Exec(query, dargs)
-	if err != driver.ErrSkip {
-		c.trace.QueryString = query
-		newSqlSpanEvent(ctx, "ConnExec", &c.trace, start, err)
+	if e, ok := c.Conn.(driver.Execer); ok {
+		result, err := e.Exec(query, dargs)
+		if err != driver.ErrSkip {
+			c.trace.QueryString = query
+			newSqlSpanEvent(ctx, "ConnExec", &c.trace, start, err)
+		}
+
+		return result, err
 	}
 
-	return result, err
+	return nil, driver.ErrSkip
 }
 
-func (c *PinpointSqlConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+func (c *sqlConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	start := time.Now()
 
-	if qc, ok := c.originConn.(driver.QueryerContext); ok {
+	if qc, ok := c.Conn.(driver.QueryerContext); ok {
 		rows, err := qc.QueryContext(ctx, query, args)
 		if err != driver.ErrSkip {
 			c.trace.QueryString = query
@@ -200,67 +204,36 @@ func (c *PinpointSqlConn) QueryContext(ctx context.Context, query string, args [
 		return rows, err
 	}
 
+	// sourced: database/sql/cxtutil.go
 	dargs, err := namedValueToValue(args)
 	if err != nil {
 		return nil, err
 	}
-
 	select {
 	default:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 
-	rows, err := c.originConn.(driver.Queryer).Query(query, dargs)
-	if err != driver.ErrSkip {
-		c.trace.QueryString = query
-		newSqlSpanEvent(ctx, "ConnQuery", &c.trace, start, err)
+	if q, ok := c.Conn.(driver.Queryer); ok {
+		rows, err := q.Query(query, dargs)
+		if err != driver.ErrSkip {
+			c.trace.QueryString = query
+			newSqlSpanEvent(ctx, "ConnQuery", &c.trace, start, err)
+		}
+
+		return rows, err
 	}
 
-	return rows, err
+	return nil, driver.ErrSkip
 }
 
-func (c *PinpointSqlConn) Begin() (driver.Tx, error) {
-	return c.originConn.Begin()
-}
-
-func (c *PinpointSqlConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	return c.originConn.(driver.ConnBeginTx).BeginTx(ctx, opts)
-}
-
-func (c *PinpointSqlConn) CheckNamedValue(v *driver.NamedValue) error {
-	return c.originConn.(driver.NamedValueChecker).CheckNamedValue(v)
-}
-
-func (c *PinpointSqlConn) Close() error {
-	return c.originConn.Close()
-}
-
-func (c *PinpointSqlConn) Exec(query string, args []driver.Value) (driver.Result, error) {
-	return c.originConn.(driver.Execer).Exec(query, args)
-}
-
-func (c *PinpointSqlConn) Ping(ctx context.Context) error {
-	return c.originConn.(driver.Pinger).Ping(ctx)
-}
-
-func (c *PinpointSqlConn) Query(query string, args []driver.Value) (driver.Rows, error) {
-	return c.originConn.(driver.Queryer).Query(query, args)
-}
-
-func (c *PinpointSqlConn) ResetSession(ctx context.Context) error {
-	if _, ok := c.originConn.(driver.SessionResetter); ok {
-		return c.originConn.(driver.SessionResetter).ResetSession(ctx)
-	}
-	return nil
-}
-
-type PinpointSqlStmt struct {
+type sqlStmt struct {
 	driver.Stmt
 	trace *DatabaseTrace
 }
 
-func (s *PinpointSqlStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
+func (s *sqlStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
 	start := time.Now()
 
 	if sec, ok := s.Stmt.(driver.StmtExecContext); ok {
@@ -269,11 +242,11 @@ func (s *PinpointSqlStmt) ExecContext(ctx context.Context, args []driver.NamedVa
 		return result, err
 	}
 
+	// sourced: database/sql/cxtutil.go
 	dargs, err := namedValueToValue(args)
 	if err != nil {
 		return nil, err
 	}
-
 	select {
 	default:
 	case <-ctx.Done():
@@ -285,7 +258,7 @@ func (s *PinpointSqlStmt) ExecContext(ctx context.Context, args []driver.NamedVa
 	return result, err
 }
 
-func (s *PinpointSqlStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
+func (s *sqlStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
 	start := time.Now()
 
 	if sqc, ok := s.Stmt.(driver.StmtQueryContext); ok {
@@ -294,11 +267,11 @@ func (s *PinpointSqlStmt) QueryContext(ctx context.Context, args []driver.NamedV
 		return rows, err
 	}
 
+	// sourced: database/sql/cxtutil.go
 	dargs, err := namedValueToValue(args)
 	if err != nil {
 		return nil, err
 	}
-
 	select {
 	default:
 	case <-ctx.Done():
@@ -308,13 +281,6 @@ func (s *PinpointSqlStmt) QueryContext(ctx context.Context, args []driver.NamedV
 	rows, err := s.Stmt.Query(dargs)
 	newSqlSpanEvent(ctx, "StmtQuery", s.trace, start, err)
 	return rows, err
-}
-
-func (s *PinpointSqlStmt) CheckNamedValue(v *driver.NamedValue) error {
-	if nvc, ok := s.Stmt.(driver.NamedValueChecker); ok {
-		return nvc.CheckNamedValue(v)
-	}
-	return driver.ErrSkip
 }
 
 // sourced: database/sql/cxtutil.go
@@ -328,28 +294,3 @@ func namedValueToValue(named []driver.NamedValue) ([]driver.Value, error) {
 	}
 	return dargs, nil
 }
-
-/*
-func (s *PinpointSqlStmt) Close() error {
-	return s.originStmt.Close()
-}
-
-func (s *PinpointSqlStmt) ColumnConverter(idx int) driver.ValueConverter {
-	if cc, ok := s.originStmt.(driver.ColumnConverter); ok {
-		return cc.ColumnConverter(idx)
-	}
-	return nil
-}
-
-func (s *PinpointSqlStmt) Exec(args []driver.Value) (driver.Result, error) {
-	return s.originStmt.Exec(args)
-}
-
-func (s *PinpointSqlStmt) NumInput() int {
-	return s.originStmt.NumInput()
-}
-
-func (s *PinpointSqlStmt) Query(args []driver.Value) (driver.Rows, error) {
-	return s.originStmt.Query(args)
-}
-*/

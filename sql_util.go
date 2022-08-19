@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"bufio"
+	"strconv"
 	"strings"
 )
 
@@ -63,7 +64,7 @@ func (s *sqlNormalizer) run() (string, string) {
 			} else {
 				s.output.WriteRune(ch)
 			}
-		} else if isLetter(ch) || ch == '.' || ch == '_' || ch == '@' || ch == ':' {
+		} else if isLetter(ch) || ch == '.' || ch == '_' || ch == '@' || ch == ':' || ch == '$' {
 			numberTokenStartEnable = false
 			s.output.WriteRune(ch)
 		} else {
@@ -138,7 +139,7 @@ func (s *sqlNormalizer) consumeCharLiteral() {
 				s.param.WriteRune(s.read())
 			} else {
 				s.paramIndex++
-				s.output.WriteString(string(s.paramIndex))
+				s.output.WriteString(strconv.Itoa(s.paramIndex))
 				s.output.WriteRune('$')
 				s.output.WriteRune('\'')
 				break
@@ -155,7 +156,7 @@ func (s *sqlNormalizer) consumeNumberLiteral() {
 		s.param.WriteRune(',')
 	}
 	s.paramIndex++
-	s.output.WriteString(string(s.paramIndex))
+	s.output.WriteString(strconv.Itoa(s.paramIndex))
 	s.output.WriteRune('#')
 
 	for {
