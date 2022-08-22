@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -17,9 +18,12 @@ func tableCount(w http.ResponseWriter, r *http.Request) {
 	tracer := pinpoint.FromContext(r.Context())
 
 	db, err := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/information_schema")
-	if nil != err {
-		panic(err)
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, err.Error())
+		return
 	}
+	defer db.Close()
 
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 	row := db.QueryRowContext(ctx, "SELECT count(*) from tables")
@@ -27,25 +31,42 @@ func tableCount(w http.ResponseWriter, r *http.Request) {
 	row.Scan(&count)
 
 	fmt.Println("number of tables in information_schema", count)
-	db.Close()
 }
 
 func query(w http.ResponseWriter, r *http.Request) {
-	db, _ := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/testdb")
+	db, err := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/testdb")
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, err.Error())
+		return
+	}
 	defer db.Close()
 
 	ctx := pinpoint.NewContext(context.Background(), pinpoint.TracerFromRequestContext(r))
 
 	res, _ := db.ExecContext(ctx, "CREATE TABLE employee (id INT AUTO_INCREMENT, emp_name VARCHAR(64), department VARCHAR(64), created DATE, PRIMARY KEY (id))")
 
-	stmt, _ := db.Prepare("INSERT employee SET emp_name = ?, department = ?, created = ?")
+	stmt, err := db.Prepare("INSERT employee SET emp_name = ?, department = ?, created = ?")
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, err.Error())
+		return
+	}
+
 	res, _ = stmt.ExecContext(ctx, "foo", "pinpoint", "2022-08-15")
 	res, _ = stmt.ExecContext(ctx, "bar", "avengers", "2022-08-16")
 	id, _ := res.LastInsertId()
 	fmt.Println("Insert ID", id)
 	stmt.Close()
 
-	stmt, _ = db.PrepareContext(ctx, "UPDATE employee SET emp_name = ? where id = ?")
+	stmt, err = db.PrepareContext(ctx, "UPDATE employee SET emp_name = ? where id = ?")
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, err.Error())
+		return
+	}
+
+	//not traced
 	res, _ = stmt.Exec("ironman", id)
 	_, _ = res.RowsAffected()
 	stmt.Close()
@@ -68,7 +89,13 @@ func query(w http.ResponseWriter, r *http.Request) {
 	rows, _ = db.Query("SELECT * FROM employee WHERE id = 1")
 	rows.Close()
 
-	stmt, _ = db.Prepare("SELECT * FROM employee WHERE id = ?")
+	stmt, err = db.Prepare("SELECT * FROM employee WHERE id = ?")
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, err.Error())
+		return
+	}
+
 	rows, _ = stmt.QueryContext(ctx, 1)
 	for rows.Next() {
 		_ = rows.Scan(&uid, &empName, &department, &created)
@@ -94,24 +121,20 @@ func tx(ctx context.Context, db *sql.DB) {
 		return
 	}
 
-	// Run a query to get a count of all cats
 	row := tx.QueryRowContext(ctx, "SELECT count(*) FROM employee")
-	var catCount int
-	// Store the count in the `catCount` variable
-	err = row.Scan(&catCount)
+	var count int
+	err = row.Scan(&count)
 	if err != nil {
 		tx.Rollback()
 		return
 	}
 
-	// Now update the food table, increasing the quantity of cat food by 10x the number of cats
 	_, err = tx.ExecContext(ctx, "UPDATE employee SET emp_name = 'macbook' WHERE id = ?", 3)
 	if err != nil {
 		tx.Rollback()
 		return
 	}
 
-	// Commit the change if all queries ran successfully
 	err = tx.Commit()
 	if err != nil {
 		log.Fatal(err)

@@ -7,6 +7,7 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -15,7 +16,9 @@ import (
 func tableCount(w http.ResponseWriter, r *http.Request) {
 	db, err := sql.Open("pq-pinpoint", "postgresql://testuser:p123@localhost/testdb?sslmode=disable")
 	if err != nil {
-		panic(err)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, err.Error())
+		return
 	}
 	defer db.Close()
 
@@ -35,7 +38,9 @@ func tableCount(w http.ResponseWriter, r *http.Request) {
 func query(w http.ResponseWriter, r *http.Request) {
 	db, err := sql.Open("pq-pinpoint", "postgresql://testuser:p123@localhost/testdb?sslmode=disable")
 	if err != nil {
-		panic(err)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, err.Error())
+		return
 	}
 	defer db.Close()
 
@@ -45,7 +50,9 @@ func query(w http.ResponseWriter, r *http.Request) {
 
 	stmt, err := db.Prepare("INSERT INTO employee VALUES ($1, $2, $3, $4)")
 	if err != nil {
-		panic(err)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, err.Error())
+		return
 	}
 
 	_, _ = stmt.ExecContext(ctx, 1, "foo", "pinpoint", "2022-08-15")
@@ -54,7 +61,9 @@ func query(w http.ResponseWriter, r *http.Request) {
 
 	stmt, err = db.PrepareContext(ctx, "UPDATE employee SET emp_name = $1 where id = $2")
 	if err != nil {
-		panic(err)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, err.Error())
+		return
 	}
 
 	res, _ := stmt.ExecContext(ctx, "ironman", 2)
@@ -79,7 +88,13 @@ func query(w http.ResponseWriter, r *http.Request) {
 	rows, _ = db.Query("SELECT * FROM employee WHERE id = 2")
 	rows.Close()
 
-	stmt, _ = db.Prepare("SELECT * FROM employee WHERE id = $1")
+	stmt, err = db.Prepare("SELECT * FROM employee WHERE id = $1")
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, err.Error())
+		return
+	}
+
 	rows, _ = stmt.QueryContext(ctx, 1)
 	for rows.Next() {
 		_ = rows.Scan(&uid, &empName, &department, &created)
@@ -106,24 +121,20 @@ func tx(ctx context.Context, db *sql.DB) {
 		return
 	}
 
-	// Run a query to get a count of all cats
 	row := tx.QueryRowContext(ctx, "SELECT count(*) FROM employee")
-	var catCount int
-	// Store the count in the `catCount` variable
-	err = row.Scan(&catCount)
+	var count int
+	err = row.Scan(&count)
 	if err != nil {
 		tx.Rollback()
 		return
 	}
 
-	// Now update the food table, increasing the quantity of cat food by 10x the number of cats
 	_, err = tx.ExecContext(ctx, "UPDATE employee SET emp_name = 'macbook' WHERE id = $1", 3)
 	if err != nil {
 		tx.Rollback()
 		return
 	}
 
-	// Commit the change if all queries ran successfully
 	err = tx.Commit()
 	if err != nil {
 		log.Fatal(err)
