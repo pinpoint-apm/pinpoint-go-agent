@@ -151,6 +151,15 @@ func getHostName() string {
 	return "unknown host"
 }
 
+func getOutboundIP() string {
+	conn, _ := net.Dial("udp", "8.8.8.8:80")
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+
+	return localAddr.IP.String()
+}
+
 func makeGoLibraryInfo() *pb.PServiceInfo {
 	libs := make([]string, 0)
 	if bi, ok := debug.ReadBuildInfo(); ok {
@@ -363,15 +372,6 @@ func (s *pingStream) close() {
 
 func (agentGrpc *agentGrpc) close() {
 	agentGrpc.agentConn.Close()
-}
-
-func getOutboundIP() string {
-	conn, _ := net.Dial("udp", "8.8.8.8:80")
-	defer conn.Close()
-
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-
-	return localAddr.IP.String()
 }
 
 type SpanGrpcClient interface {
@@ -784,13 +784,13 @@ func (s *statStream) sendStats(stats []*inspectorStats) error {
 func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
 	return &pb.PAgentStat{
 		Timestamp:       stat.sampleTime.UnixNano() / int64(time.Millisecond),
-		CollectInterval: 5000,
+		CollectInterval: stat.interval,
 		Gc: &pb.PJvmGc{
-			Type:                 1,
-			JvmMemoryHeapUsed:    stat.heapAlloc,
+			Type:                 pb.PJvmGcType_JVM_GC_TYPE_CMS,
+			JvmMemoryHeapUsed:    stat.heapUsed,
 			JvmMemoryHeapMax:     stat.heapMax,
-			JvmMemoryNonHeapUsed: stat.nonHeapAlloc,
-			JvmMemoryNonHeapMax:  stat.nonHeapAlloc + 1000,
+			JvmMemoryNonHeapUsed: stat.nonHeapUsed,
+			JvmMemoryNonHeapMax:  stat.nonHeapMax,
 			JvmGcOldCount:        stat.gcNum,
 			JvmGcOldTime:         stat.gcTime,
 			JvmGcDetailed:        nil,
@@ -819,10 +819,12 @@ func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
 			Avg: stat.responseAvg,
 			Max: stat.responseMax,
 		},
-		Deadlock:       nil,
-		FileDescriptor: nil,
-		DirectBuffer:   nil,
-		Metadata:       "",
+		Deadlock: nil,
+		FileDescriptor: &pb.PFileDescriptor{
+			OpenFileDescriptorCount: stat.numOpenFD,
+		},
+		DirectBuffer: nil,
+		Metadata:     "",
 	}
 }
 

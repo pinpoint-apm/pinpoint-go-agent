@@ -13,14 +13,16 @@ require (
 	github.com/gocql/gocql v0.0.0-20200815110948-5378c8f664e9
 	github.com/golang/mock v1.6.0
 	github.com/golang/protobuf v1.4.2
+	github.com/gomodule/redigo v1.8.9
 	github.com/hashicorp/golang-lru v0.5.4
 	github.com/labstack/echo v3.3.10+incompatible
 	github.com/labstack/gommon v0.3.0 // indirect
 	github.com/lib/pq v1.8.0
 	github.com/mattn/go-colorable v0.1.8 // indirect
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d // indirect
+	github.com/shirou/gopsutil/v3 v3.22.7
 	github.com/sirupsen/logrus v1.6.0
-	github.com/stretchr/testify v1.7.0
+	github.com/stretchr/testify v1.8.0
 	github.com/tsuna/gohbase v0.0.0-20200820233321-d669aff6255b
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2
 	go.mongodb.org/mongo-driver v1.3.5
@@ -30,5 +32,5 @@ require (
 	gopkg.in/yaml.v2 v2.3.0
 	gorm.io/driver/mysql v1.3.3
 	gorm.io/gorm v1.23.4
-	github.com/gomodule/redigo v1.8.9
+	modernc.org/strutil v1.1.2 // indirect
 )

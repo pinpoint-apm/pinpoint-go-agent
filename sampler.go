@@ -74,7 +74,7 @@ func (s *basicTraceSampler) isNewSampled() bool {
 	if sampled {
 		incrSampleNew()
 	} else {
-		incrUnsampleNew()
+		incrUnSampleNew()
 	}
 	return sampled
 }
@@ -84,7 +84,7 @@ func (s *basicTraceSampler) isContinueSampled() bool {
 	if sampled {
 		incrSampleCont()
 	} else {
-		incrUnsampleCont()
+		incrUnSampleCont()
 	}
 	return sampled
 }
@@ -117,7 +117,7 @@ func (s *throughputLimitTraceSampler) isNewSampled() bool {
 			incrSkipNew()
 		}
 	} else {
-		incrUnsampleNew()
+		incrUnSampleNew()
 	}
 
 	return sampled
@@ -133,7 +133,7 @@ func (s *throughputLimitTraceSampler) isContinueSampled() bool {
 			incrSkipCont()
 		}
 	} else {
-		incrUnsampleCont()
+		incrUnSampleCont()
 	}
 
 	return sampled

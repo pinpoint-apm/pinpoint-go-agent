@@ -256,7 +256,7 @@ func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string,
 
 	sampled := reader.Get(HttpSampled)
 	if sampled == "s0" {
-		incrUnsampleCont()
+		incrUnSampleCont()
 		return newUnSampledSpan(rpcName)
 	}
 
