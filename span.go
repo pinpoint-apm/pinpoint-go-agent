@@ -77,21 +77,30 @@ func newSampledSpan(agent Agent, operation string, rpcName string) Tracer {
 	span.rpcName = rpcName
 	span.apiId = agent.RegisterSpanApiId(operation, ApiTypeWebRequest)
 
+	addSampledActiveSpan(span)
+
 	return span
 }
 
 func (span *span) EndSpan() {
-	for e := span.stack.Front(); e != nil; e = e.Next() {
-		se, ok := e.Value.(*spanEvent)
-		if ok {
-			se.end()
-		}
+	if span.asyncId != 0 {
+		span.EndSpanEvent() //async span event
 	}
 
-	dropSampledActiveSpan(span)
+	if span.stack.Len() > 0 {
+		for e := span.stack.Front(); e != nil; e = e.Next() {
+			if se, ok := e.Value.(*spanEvent); ok {
+				se.end()
+			}
+		}
+		log("span").Warn("span has a event that is not closed")
+	}
 
 	span.duration = time.Now().Sub(span.startTime)
-	collectResponseTime(toMilliseconds(span.duration))
+	if span.asyncId == 0 {
+		dropSampledActiveSpan(span)
+		collectResponseTime(toMilliseconds(span.duration))
+	}
 
 	if !span.agent.TryEnqueueSpan(span) {
 		log("span").Debug("span channel - max capacity reached or closed")
@@ -99,22 +108,25 @@ func (span *span) EndSpan() {
 }
 
 func (span *span) Inject(writer DistributedTracingContextWriter) {
-	writer.Set(HttpTraceId, span.txId.String())
+	if se := span.currentSpanEvent(); se != nil {
+		writer.Set(HttpTraceId, span.txId.String())
 
-	se := span.stack.Front().Value.(*spanEvent)
-	nextSpanId := se.generateNextSpanId()
-	writer.Set(HttpSpanId, strconv.FormatInt(nextSpanId, 10))
+		nextSpanId := se.generateNextSpanId()
+		writer.Set(HttpSpanId, strconv.FormatInt(nextSpanId, 10))
 
-	writer.Set(HttpParentSpanId, strconv.FormatInt(span.spanId, 10))
-	writer.Set(HttpFlags, strconv.Itoa(span.flags))
-	writer.Set(HttpParentApplicationName, span.agent.Config().ApplicationName)
-	writer.Set(HttpParentApplicationType, strconv.Itoa(int(span.agent.Config().ApplicationType)))
-	writer.Set(HttpParentApplicationNamespace, "")
+		writer.Set(HttpParentSpanId, strconv.FormatInt(span.spanId, 10))
+		writer.Set(HttpFlags, strconv.Itoa(span.flags))
+		writer.Set(HttpParentApplicationName, span.agent.Config().ApplicationName)
+		writer.Set(HttpParentApplicationType, strconv.Itoa(int(span.agent.Config().ApplicationType)))
+		writer.Set(HttpParentApplicationNamespace, "")
 
-	se.endPoint = se.destinationId
-	writer.Set(HttpHost, se.destinationId)
+		se.endPoint = se.destinationId
+		writer.Set(HttpHost, se.destinationId)
 
-	log("span").Debug("span inject: ", span.txId, nextSpanId, span.spanId, se.destinationId)
+		log("span").Debug("span inject: ", span.txId, nextSpanId, span.spanId, se.destinationId)
+	} else {
+		log("span").Warn("span event is not exist to inject")
+	}
 }
 
 func (span *span) Extract(reader DistributedTracingContextReader) {
@@ -162,65 +174,60 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		span.endPoint = host
 	}
 
-	addSampledActiveSpan(span)
 	log("span").Debug("span extract: ", tid, spanid, pappname, pspanid, papptype, host)
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
 	se := newSpanEvent(span, operationName)
-	span.eventSequence++
-	span.eventDepth++
-
 	span.spanEvents = append(span.spanEvents, se)
 	span.stack.PushFront(se)
+	span.eventSequence++
+	span.eventDepth++
 
 	return span
 }
 
 func (span *span) EndSpanEvent() {
-	if span.stack.Len() > 0 {
-		e := span.stack.Front()
-		span.stack.Remove(e).(*spanEvent).end()
+	if e := span.stack.Front(); e != nil {
+		v := span.stack.Remove(e)
+		if se, ok := v.(*spanEvent); ok {
+			se.end()
+		}
+	} else {
+		log("span").Warn("span event is not exist to be closed")
 	}
 }
 
 func (span *span) newAsyncSpan() Tracer {
-	se := span.stack.Front().Value.(*spanEvent)
-	asyncSpan := newSpanForAsync(span)
+	if se := span.currentSpanEvent(); se != nil {
+		asyncSpan := defaultSpan()
 
-	if se.asyncId == 0 {
-		se.asyncId = atomic.AddInt32(&asyncIdGen, 1)
+		asyncSpan.agent = span.agent
+		asyncSpan.txId = span.txId
+		asyncSpan.spanId = span.spanId
+
+		if se.asyncId == 0 {
+			se.asyncId = atomic.AddInt32(&asyncIdGen, 1)
+		}
+		se.asyncSeqGen++
+
+		asyncSpan.asyncId = se.asyncId
+		asyncSpan.asyncSequence = se.asyncSeqGen
+
+		asyncSe := newSpanEventGoroutine(asyncSpan)
+		asyncSpan.spanEvents = append(asyncSpan.spanEvents, asyncSe)
+		asyncSpan.stack.PushFront(asyncSe)
+		asyncSpan.eventSequence++
+		asyncSpan.eventDepth++
+
+		return asyncSpan
+	} else {
+		log("span").Warn("span event is not exist to make async span")
+		return NoopTracer()
 	}
-	asyncSpan.asyncId = se.asyncId
-
-	se.asyncSeqGen++
-	asyncSpan.asyncSequence = se.asyncSeqGen
-	asyncSpan.newSpanEventForAsync()
-
-	return asyncSpan
 }
 
-func newSpanForAsync(parentSpan *span) *span {
-	span := defaultSpan()
-
-	span.agent = parentSpan.agent
-	span.txId = parentSpan.txId
-	span.spanId = parentSpan.spanId
-
-	return span
-}
-
-func (span *span) newSpanEventForAsync() {
-	se := newSpanEventGoroutine(span)
-
-	span.eventSequence++
-	span.eventDepth++
-
-	span.spanEvents = append(span.spanEvents, se)
-	span.stack.PushFront(se)
-}
-
-//Deprecated
+// Deprecated
 func (span *span) NewAsyncSpan() Tracer {
 	return span.newAsyncSpan()
 }
@@ -259,7 +266,21 @@ func (span *span) Span() SpanRecorder {
 }
 
 func (span *span) SpanEvent() SpanEventRecorder {
-	return span.stack.Front().Value.(*spanEvent)
+	if se := span.currentSpanEvent(); se != nil {
+		return se
+	}
+
+	log("span").Warn("span has no event")
+	return &noopSpanEvent{}
+}
+
+func (span *span) currentSpanEvent() *spanEvent {
+	if e := span.stack.Front(); e != nil {
+		if se, ok := e.Value.(*spanEvent); ok {
+			return se
+		}
+	}
+	return nil
 }
 
 func (span *span) SetError(e error) {

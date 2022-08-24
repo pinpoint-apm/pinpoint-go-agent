@@ -11,9 +11,10 @@ type noopSpan struct {
 	startTime   time.Time
 	rpcName     string
 	goroutineId uint64
+	withStats   bool
 
 	noopSe      noopSpanEvent
-	annotations noopannotation
+	annotations noopAnnotation
 }
 
 var defaultNoopSpan = noopSpan{}
@@ -27,6 +28,7 @@ func newUnSampledSpan(rpcName string) Tracer {
 	span.spanId = generateSpanId()
 	span.startTime = time.Now()
 	span.rpcName = rpcName
+	span.withStats = true
 
 	addUnSampledActiveSpan(&span)
 
@@ -34,24 +36,28 @@ func newUnSampledSpan(rpcName string) Tracer {
 }
 
 func (span *noopSpan) EndSpan() {
-	dropUnSampledActiveSpan(span)
+	if span.withStats {
+		dropUnSampledActiveSpan(span)
+		elapsed := time.Now().Sub(span.startTime)
+		collectResponseTime(toMilliseconds(elapsed))
+	}
 }
 
 func (span *noopSpan) NewSpanEvent(operationName string) Tracer {
 	return span
 }
 
+// Deprecated
 func (span *noopSpan) NewAsyncSpan() Tracer {
-	asyncSpan := noopSpan{}
-	return &asyncSpan
+	return &noopSpan{}
 }
 
 func (span *noopSpan) NewGoroutineTracer() Tracer {
-	return span.NewAsyncSpan()
+	return &noopSpan{}
 }
 
 func (span *noopSpan) WrapGoroutine(goroutineName string, goroutine func(context.Context), ctx context.Context) func() {
-	asyncSpan := span.NewAsyncSpan()
+	asyncSpan := span.NewGoroutineTracer()
 
 	var newCtx context.Context
 	if ctx == nil {
@@ -120,7 +126,7 @@ func (span *noopSpan) IsSampled() bool {
 }
 
 type noopSpanEvent struct {
-	annotations noopannotation
+	annotations noopAnnotation
 }
 
 func (se *noopSpanEvent) SetError(e error) {}
@@ -141,17 +147,17 @@ func (se *noopSpanEvent) Annotations() Annotation {
 
 func (se *noopSpanEvent) FixDuration(start time.Time, end time.Time) {}
 
-type noopannotation struct{}
+type noopAnnotation struct{}
 
-func (a *noopannotation) AppendInt(key int32, i int32) {}
+func (a *noopAnnotation) AppendInt(key int32, i int32) {}
 
-func (a *noopannotation) AppendString(key int32, s string) {}
+func (a *noopAnnotation) AppendString(key int32, s string) {}
 
-func (a *noopannotation) AppendStringString(key int32, s1 string, s2 string) {}
+func (a *noopAnnotation) AppendStringString(key int32, s1 string, s2 string) {}
 
-func (a *noopannotation) AppendIntStringString(key int32, i int32, s1 string, s2 string) {}
+func (a *noopAnnotation) AppendIntStringString(key int32, i int32, s1 string, s2 string) {}
 
-func (a *noopannotation) AppendLongIntIntByteByteString(key int32, l int64, i1 int32, i2 int32, b1 int32, b2 int32, s string) {
+func (a *noopAnnotation) AppendLongIntIntByteByteString(key int32, l int64, i1 int32, i2 int32, b1 int32, b2 int32, s string) {
 }
 
 type noopDistributedTracingContextReader struct{}
