@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const NoneAsyncId = 0
+
 var asyncIdGen int32 = 0
 
 type span struct {
@@ -35,7 +37,7 @@ type span struct {
 	eventDepth    int32
 
 	startTime     time.Time
-	duration      time.Duration
+	elapsed       time.Duration
 	operationName string
 	flags         int
 	err           int
@@ -64,6 +66,7 @@ func defaultSpan() *span {
 	span.serviceType = ServiceTypeGoApp
 	span.startTime = time.Now()
 	span.goroutineId = 0
+	span.asyncId = NoneAsyncId
 
 	span.stack = list.New()
 	return &span
@@ -83,8 +86,13 @@ func newSampledSpan(agent Agent, operation string, rpcName string) Tracer {
 }
 
 func (span *span) EndSpan() {
-	if span.asyncId != 0 {
+	span.elapsed = time.Now().Sub(span.startTime)
+
+	if span.isAsyncSpan() {
 		span.EndSpanEvent() //async span event
+	} else {
+		dropSampledActiveSpan(span)
+		collectResponseTime(toMilliseconds(span.elapsed))
 	}
 
 	if span.stack.Len() > 0 {
@@ -94,12 +102,6 @@ func (span *span) EndSpan() {
 			}
 		}
 		log("span").Warn("span has a event that is not closed")
-	}
-
-	span.duration = time.Now().Sub(span.startTime)
-	if span.asyncId == 0 {
-		dropSampledActiveSpan(span)
-		collectResponseTime(toMilliseconds(span.duration))
 	}
 
 	if !span.agent.TryEnqueueSpan(span) {
@@ -178,13 +180,15 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
-	se := newSpanEvent(span, operationName)
+	span.appendSpanEvent(newSpanEvent(span, operationName))
+	return span
+}
+
+func (span *span) appendSpanEvent(se *spanEvent) {
 	span.spanEvents = append(span.spanEvents, se)
 	span.stack.PushFront(se)
 	span.eventSequence++
 	span.eventDepth++
-
-	return span
 }
 
 func (span *span) EndSpanEvent() {
@@ -206,25 +210,24 @@ func (span *span) newAsyncSpan() Tracer {
 		asyncSpan.txId = span.txId
 		asyncSpan.spanId = span.spanId
 
-		if se.asyncId == 0 {
+		for se.asyncId == NoneAsyncId {
 			se.asyncId = atomic.AddInt32(&asyncIdGen, 1)
 		}
 		se.asyncSeqGen++
 
 		asyncSpan.asyncId = se.asyncId
 		asyncSpan.asyncSequence = se.asyncSeqGen
-
-		asyncSe := newSpanEventGoroutine(asyncSpan)
-		asyncSpan.spanEvents = append(asyncSpan.spanEvents, asyncSe)
-		asyncSpan.stack.PushFront(asyncSe)
-		asyncSpan.eventSequence++
-		asyncSpan.eventDepth++
+		asyncSpan.appendSpanEvent(newSpanEventGoroutine(asyncSpan))
 
 		return asyncSpan
 	} else {
 		log("span").Warn("span event is not exist to make async span")
 		return NoopTracer()
 	}
+}
+
+func (span *span) isAsyncSpan() bool {
+	return span.asyncId != NoneAsyncId
 }
 
 // Deprecated
@@ -271,7 +274,7 @@ func (span *span) SpanEvent() SpanEventRecorder {
 	}
 
 	log("span").Warn("span has no event")
-	return &noopSpanEvent{}
+	return &defaultNoopSpanEvent
 }
 
 func (span *span) currentSpanEvent() *spanEvent {

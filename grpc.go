@@ -493,10 +493,10 @@ func (s *spanStream) sendSpan(span *span) error {
 		return status.Errorf(codes.Unavailable, "span stream is nil")
 	}
 
-	if span.asyncId == 0 {
-		gspan = makePSpan(span)
-	} else {
+	if span.isAsyncSpan() {
 		gspan = makePSpanChunk(span)
+	} else {
+		gspan = makePSpan(span)
 	}
 
 	log("grpc").Debug("PSpanMessage: ", gspan.String())
@@ -527,7 +527,7 @@ func makePSpan(span *span) *pb.PSpanMessage {
 				SpanId:       span.spanId,
 				ParentSpanId: span.parentSpanId,
 				StartTime:    span.startTime.UnixNano() / int64(time.Millisecond),
-				Elapsed:      int32(toMilliseconds(span.duration)),
+				Elapsed:      int32(toMilliseconds(span.elapsed)),
 				ServiceType:  span.serviceType,
 				AcceptEvent: &pb.PAcceptEvent{
 					Rpc:        span.rpcName,
@@ -606,7 +606,7 @@ func makePSpanEvent(event *spanEvent) *pb.PSpanEvent {
 		Sequence:      event.sequence,
 		Depth:         event.depth,
 		StartElapsed:  int32(toMilliseconds(event.startElapsed)),
-		EndElapsed:    int32(toMilliseconds(event.duration)),
+		EndElapsed:    int32(toMilliseconds(event.endElapsed)),
 		ServiceType:   event.serviceType,
 		Annotation:    event.annotations.list,
 		ApiId:         event.apiId,

@@ -129,6 +129,8 @@ type noopSpanEvent struct {
 	annotations noopAnnotation
 }
 
+var defaultNoopSpanEvent = noopSpanEvent{}
+
 func (se *noopSpanEvent) SetError(e error) {}
 
 func (se *noopSpanEvent) SetApiId(id int32) {}

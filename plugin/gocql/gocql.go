@@ -25,12 +25,13 @@ func (o *Observer) ObserveQuery(ctx context.Context, query gocql.ObservedQuery) 
 	span := tracer.NewSpanEvent("cassandra.query")
 	defer span.EndSpanEvent()
 
-	span.SpanEvent().SetServiceType(serviceTypeCassandraExecuteQuery)
-	span.SpanEvent().SetEndPoint(query.Host.HostnameAndPort())
-	span.SpanEvent().SetDestination(query.Keyspace)
-	span.SpanEvent().SetSQL(query.Statement)
-	span.SpanEvent().FixDuration(query.Start, query.End)
-	span.SpanEvent().SetError(query.Err)
+	se := span.SpanEvent()
+	se.SetServiceType(serviceTypeCassandraExecuteQuery)
+	se.SetEndPoint(query.Host.HostnameAndPort())
+	se.SetDestination(query.Keyspace)
+	se.SetSQL(query.Statement, "")
+	se.FixDuration(query.Start, query.End)
+	se.SetError(query.Err)
 }
 
 func (o *Observer) ObserveBatch(ctx context.Context, batch gocql.ObservedBatch) {
@@ -42,10 +43,11 @@ func (o *Observer) ObserveBatch(ctx context.Context, batch gocql.ObservedBatch) 
 	span := tracer.NewSpanEvent("cassandra.batch")
 	defer span.EndSpanEvent()
 
-	span.SpanEvent().SetServiceType(serviceTypeCassandraExecuteQuery)
-	span.SpanEvent().SetEndPoint(batch.Host.HostnameAndPort())
-	span.SpanEvent().SetDestination(batch.Keyspace)
-	span.SpanEvent().FixDuration(batch.Start, batch.End)
+	se := span.SpanEvent()
+	se.SetServiceType(serviceTypeCassandraExecuteQuery)
+	se.SetEndPoint(batch.Host.HostnameAndPort())
+	se.SetDestination(batch.Keyspace)
+	se.FixDuration(batch.Start, batch.End)
 
 	var buffer bytes.Buffer
 	for _, statement := range batch.Statements {
@@ -53,6 +55,7 @@ func (o *Observer) ObserveBatch(ctx context.Context, batch gocql.ObservedBatch) 
 		buffer.WriteString(statement)
 		buffer.WriteString("]")
 	}
-	span.SpanEvent().SetSQL(buffer.String())
-	span.SpanEvent().SetError(batch.Err)
+
+	se.SetSQL(buffer.String(), "")
+	se.SetError(batch.Err)
 }

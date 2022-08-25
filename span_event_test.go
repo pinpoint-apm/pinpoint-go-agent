@@ -50,7 +50,7 @@ func Test_spanEvent_end(t *testing.T) {
 
 			assert.Equal(t, se.operationName, tt.args.operationName, "operationName")
 			assert.Equal(t, se.parentSpan.eventDepth, int32(0), "eventDepth")
-			assert.Greater(t, se.duration.Milliseconds(), int64(99), "duration")
+			assert.Greater(t, se.endElapsed.Milliseconds(), int64(99), "endElapsed")
 		})
 	}
 }
