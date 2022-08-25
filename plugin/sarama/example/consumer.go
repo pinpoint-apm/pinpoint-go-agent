@@ -42,17 +42,17 @@ func callElastic(tracer pinpoint.Tracer) (string, error) {
 }
 
 func processMessage(msg *psarama.ConsumerMessage) {
-	tracer := msg.SpanTracer()
-	tracer.NewSpanEvent("processMessage")
+	tracer := msg.Tracer()
+	defer tracer.EndSpan()
+	defer tracer.NewSpanEvent("processMessage").EndSpanEvent()
 
 	fmt.Println("Retrieving message: ", string(msg.Value))
 
 	ret, _ := callElastic(tracer)
 	fmt.Println("call Elasticsearch: ", ret)
-	tracer.EndSpanEvent()
 }
 
-func subscribe(topic string, consumer *psarama.Consumer) {
+func subscribe(topic string, consumer sarama.Consumer, agent pinpoint.Agent) {
 	partitionList, err := consumer.Partitions(topic) //get all partitions on the given topic
 	if err != nil {
 		fmt.Println("Error retrieving partitionList ", err)
@@ -62,10 +62,9 @@ func subscribe(topic string, consumer *psarama.Consumer) {
 	for _, partition := range partitionList {
 		pc, _ := consumer.ConsumePartition(topic, partition, initialOffset)
 
-		go func(pc *psarama.PartitionConsumer) {
-			for message := range pc.Messages() {
-				processMessage(message)
-				message.SpanTracer().EndSpan()
+		go func(pc sarama.PartitionConsumer) {
+			for msg := range pc.Messages() {
+				processMessage(psarama.WrapConsumerMessage(msg, agent))
 			}
 		}(pc)
 	}
@@ -89,12 +88,12 @@ func main() {
 
 	config := sarama.NewConfig()
 	config.Version = sarama.V2_3_0_0
-	consumer, err := psarama.NewConsumer(cbrokers, config, agent)
+	consumer, err := sarama.NewConsumer(cbrokers, config)
 	if err != nil {
 		log.Fatalf("Could not create consumer: %v", err)
 	}
 
-	subscribe(ctopic, consumer)
+	subscribe(ctopic, consumer, agent)
 
 	http.HandleFunc(phttp.WrapHandleFunc(agent, "index", "/", index))
 	log.Fatal(http.ListenAndServe(":8082", nil))

@@ -24,13 +24,8 @@ func (c *ConsumerMessage) SpanTracer() pinpoint.Tracer {
 	return c.tracer
 }
 
-type PartitionConsumer struct {
-	sarama.PartitionConsumer
-	messages chan *ConsumerMessage
-}
-
-func (pc *PartitionConsumer) Messages() <-chan *ConsumerMessage {
-	return pc.messages
+func (c *ConsumerMessage) Tracer() pinpoint.Tracer {
+	return c.tracer
 }
 
 type DistributedTracingContextReaderConsumer struct {
@@ -46,36 +41,23 @@ func (m *DistributedTracingContextReaderConsumer) Get(key string) string {
 	return ""
 }
 
-func WrapPartitionConsumer(pc sarama.PartitionConsumer, agent pinpoint.Agent) *PartitionConsumer {
-	wrapped := &PartitionConsumer{
-		PartitionConsumer: pc,
-		messages:          make(chan *ConsumerMessage),
+func WrapConsumerMessage(msg *sarama.ConsumerMessage, agent pinpoint.Agent) *ConsumerMessage {
+	var tracer pinpoint.Tracer
+
+	if agent != nil {
+		reader := &DistributedTracingContextReaderConsumer{msg}
+		tracer = agent.NewSpanTracerWithReader("Kafka Consumer Invocation", makeRpcName(msg), reader)
+	} else {
+		tracer = pinpoint.NoopTracer()
 	}
 
-	go func() {
-		msgs := pc.Messages()
-		var tracer pinpoint.Tracer
+	tracer.Span().SetServiceType(serviceTypeKafkaClient)
+	a := tracer.Span().Annotations()
+	a.AppendString(annotationKafkaTopic, msg.Topic)
+	a.AppendInt(annotationKafkaPartition, msg.Partition)
+	a.AppendInt(annotationKafkaOffset, int32(msg.Offset))
 
-		for msg := range msgs {
-			if agent != nil {
-				reader := &DistributedTracingContextReaderConsumer{msg}
-				tracer = agent.NewSpanTracerWithReader("Kafka Consumer Invocation", makeRpcName(msg), reader)
-			} else {
-				tracer = pinpoint.NoopTracer()
-			}
-
-			tracer.Span().SetServiceType(serviceTypeKafkaClient)
-			tracer.Span().Annotations().AppendString(annotationKafkaTopic, msg.Topic)
-			tracer.Span().Annotations().AppendInt(annotationKafkaPartition, msg.Partition)
-			tracer.Span().Annotations().AppendInt(annotationKafkaOffset, int32(msg.Offset))
-
-			wrapped.messages <- &ConsumerMessage{msg, tracer}
-		}
-
-		close(wrapped.messages)
-	}()
-
-	return wrapped
+	return &ConsumerMessage{msg, tracer}
 }
 
 func makeRpcName(msg *sarama.ConsumerMessage) string {
@@ -87,6 +69,32 @@ func makeRpcName(msg *sarama.ConsumerMessage) string {
 	buf.WriteString("&offset=" + strconv.Itoa(int(msg.Offset)))
 
 	return buf.String()
+}
+
+type PartitionConsumer struct {
+	sarama.PartitionConsumer
+	messages chan *ConsumerMessage
+}
+
+func (pc *PartitionConsumer) Messages() <-chan *ConsumerMessage {
+	return pc.messages
+}
+
+func WrapPartitionConsumer(pc sarama.PartitionConsumer, agent pinpoint.Agent) *PartitionConsumer {
+	wrapped := &PartitionConsumer{
+		PartitionConsumer: pc,
+		messages:          make(chan *ConsumerMessage),
+	}
+
+	go func() {
+		for msg := range pc.Messages() {
+			wrapped.messages <- WrapConsumerMessage(msg, agent)
+		}
+
+		close(wrapped.messages)
+	}()
+
+	return wrapped
 }
 
 type Consumer struct {

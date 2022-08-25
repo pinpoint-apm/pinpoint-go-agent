@@ -98,6 +98,7 @@ func NewAsyncProducer(addrs []string, config *sarama.Config) (*AsyncProducer, er
 				key := spanKey{err.Msg.Topic, err.Msg.Partition, err.Msg.Offset}
 				if span, ok := spans[key]; ok {
 					delete(spans, key)
+					span.SpanEvent().SetError(err.Err)
 					span.EndSpanEvent()
 				}
 				wrapped.errors <- err
