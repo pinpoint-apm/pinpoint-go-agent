@@ -13,11 +13,11 @@ type SyncProducer struct {
 	ctx   context.Context
 }
 
-type DistributedTracingContextWriterConsumer struct {
+type distributedTracingContextWriterConsumer struct {
 	msg *sarama.ProducerMessage
 }
 
-func (m *DistributedTracingContextWriterConsumer) Set(key string, value string) {
+func (m *distributedTracingContextWriterConsumer) Set(key string, value string) {
 	m.msg.Headers = append(m.msg.Headers, sarama.RecordHeader{
 		Key:   []byte(key),
 		Value: []byte(value),
@@ -25,7 +25,7 @@ func (m *DistributedTracingContextWriterConsumer) Set(key string, value string) 
 }
 
 func (p *SyncProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
-	span := startProducerSpan(p.ctx, p.addrs, msg)
+	span := newProducerTracer(p.ctx, p.addrs, msg)
 	partition, offset, err = p.SyncProducer.SendMessage(msg)
 	if span != nil {
 		span.EndSpanEvent()
@@ -36,7 +36,7 @@ func (p *SyncProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32
 func (p *SyncProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
 	spans := make([]pinpoint.Tracer, len(msgs))
 	for i, msg := range msgs {
-		spans[i] = startProducerSpan(p.ctx, p.addrs, msg)
+		spans[i] = newProducerTracer(p.ctx, p.addrs, msg)
 	}
 
 	err := p.SyncProducer.SendMessages(msgs)
@@ -66,15 +66,16 @@ func NewSyncProducer(addrs []string, config *sarama.Config) (*SyncProducer, erro
 	return &SyncProducer{SyncProducer: producer, addrs: addrs, ctx: context.Background()}, nil
 }
 
-func startProducerSpan(ctx context.Context, addrs []string, msg *sarama.ProducerMessage) pinpoint.Tracer {
+func newProducerTracer(ctx context.Context, addrs []string, msg *sarama.ProducerMessage) pinpoint.Tracer {
 	tracer := pinpoint.FromContext(ctx)
 	if tracer != nil {
 		tracer.NewSpanEvent("kafka.produce")
-		tracer.SpanEvent().SetServiceType(serviceTypeKafkaClient)
-		tracer.SpanEvent().Annotations().AppendString(annotationKafkaTopic, msg.Topic)
-		tracer.SpanEvent().SetDestination(addrs[0])
+		se := tracer.SpanEvent()
+		se.SetServiceType(serviceTypeKafkaClient)
+		se.Annotations().AppendString(annotationKafkaTopic, msg.Topic)
+		se.SetDestination(addrs[0])
 
-		writer := &DistributedTracingContextWriterConsumer{msg}
+		writer := &distributedTracingContextWriterConsumer{msg}
 		tracer.Inject(writer)
 	}
 

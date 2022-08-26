@@ -67,7 +67,7 @@ func NewAsyncProducer(addrs []string, config *sarama.Config) (*AsyncProducer, er
 			select {
 			case msg := <-wrapped.input:
 				key := spanKey{msg.Topic, msg.Partition, msg.Offset}
-				span := startProducerSpan(wrapped.ctx, addrs, msg)
+				span := newProducerTracer(wrapped.ctx, addrs, msg)
 				producer.Input() <- msg
 				if config.Producer.Return.Successes {
 					spans[key] = span

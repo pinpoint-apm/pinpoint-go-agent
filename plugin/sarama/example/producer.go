@@ -19,18 +19,6 @@ const topic = "go-sarama-test"
 var producer *psarama.SyncProducer
 var brokers = []string{"127.0.0.1:9092"}
 
-func newProducer() (*psarama.SyncProducer, error) {
-	config := sarama.NewConfig()
-	config.Producer.Partitioner = sarama.NewRandomPartitioner
-	config.Producer.RequiredAcks = sarama.WaitForAll
-	config.Producer.Return.Successes = true
-	config.Version = sarama.V2_3_0_0
-
-	producer, err := psarama.NewSyncProducer(brokers, config)
-
-	return producer, err
-}
-
 func prepareMessage(topic, message string) *sarama.ProducerMessage {
 	msg := &sarama.ProducerMessage{
 		Topic:     topic,
@@ -67,11 +55,16 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 
-	tmp, err := newProducer()
+	config := sarama.NewConfig()
+	config.Producer.Partitioner = sarama.NewRandomPartitioner
+	config.Producer.RequiredAcks = sarama.WaitForAll
+	config.Producer.Return.Successes = true
+	config.Version = sarama.V2_3_0_0
+
+	producer, err = psarama.NewSyncProducer(brokers, config)
 	if err != nil {
 		log.Fatalf("Could not create producer: %v ", err)
 	}
-	producer = tmp
 
 	http.HandleFunc(phttp.WrapHandleFunc(agent, "save", "/save", save))
 	log.Fatal(http.ListenAndServe(":8081", nil))

@@ -1,12 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"sync"
 
 	"github.com/Shopify/sarama"
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
@@ -18,38 +19,33 @@ const ctopic = "go-sarama-test"
 
 var cbrokers = []string{"127.0.0.1:9092"}
 
-func callElastic(tracer pinpoint.Tracer) (string, error) {
-	req, err := http.NewRequest("GET", "http://localhost:9000/goelastic", nil)
+func outGoingRequest(ctx context.Context) string {
+	client := phttp.WrapClient(nil)
+
+	request, _ := http.NewRequest("GET", "http://localhost:9001/query", nil)
+	request = request.WithContext(ctx)
+
+	resp, err := client.Do(request)
 	if nil != err {
-		return "", err
+		return err.Error()
 	}
-
-	client := &http.Client{}
-	tracer = phttp.NewHttpClientTracer(tracer, "callElastic", req)
-	resp, err := client.Do(req)
-	phttp.EndHttpClientTracer(tracer, resp, err)
-
-	if nil != err {
-		return "", err
-	}
-
-	fmt.Println("response code is", resp.StatusCode)
+	defer resp.Body.Close()
 
 	ret, _ := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-
-	return string(ret), nil
+	return string(ret)
 }
 
-func processMessage(msg *psarama.ConsumerMessage) {
+func processMessage(msg *psarama.ConsumerMessage) error {
 	tracer := msg.Tracer()
-	defer tracer.EndSpan()
 	defer tracer.NewSpanEvent("processMessage").EndSpanEvent()
 
-	fmt.Println("Retrieving message: ", string(msg.Value))
+	fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
+	fmt.Println("retrieving message: ", string(msg.Value))
 
-	ret, _ := callElastic(tracer)
-	fmt.Println("call Elasticsearch: ", ret)
+	ret := outGoingRequest(pinpoint.NewContext(context.Background(), tracer))
+	fmt.Println("outGoingRequest: ", ret)
+
+	return nil
 }
 
 func subscribe(topic string, consumer sarama.Consumer, agent pinpoint.Agent) {
@@ -59,19 +55,20 @@ func subscribe(topic string, consumer sarama.Consumer, agent pinpoint.Agent) {
 	}
 	initialOffset := sarama.OffsetOldest //get offset for the oldest message on the topic
 
+	var wg sync.WaitGroup
+
 	for _, partition := range partitionList {
 		pc, _ := consumer.ConsumePartition(topic, partition, initialOffset)
 
 		go func(pc sarama.PartitionConsumer) {
 			for msg := range pc.Messages() {
-				processMessage(psarama.WrapConsumerMessage(msg, agent))
+				psarama.ConsumeMessage(processMessage, msg, agent)
 			}
+			wg.Done()
 		}(pc)
+		wg.Add(1)
 	}
-}
-
-func index(w http.ResponseWriter, r *http.Request) {
-	io.WriteString(w, "hello world")
+	wg.Wait()
 }
 
 func main() {
@@ -94,7 +91,5 @@ func main() {
 	}
 
 	subscribe(ctopic, consumer, agent)
-
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "index", "/", index))
-	log.Fatal(http.ListenAndServe(":8082", nil))
+	agent.Shutdown()
 }
