@@ -15,9 +15,9 @@ func Test_agent_NewSpanTracer(t *testing.T) {
 		WithAgentId("testagent"),
 	}
 	c, _ := NewConfig(opts...)
+	c.OffGrpc = true
 	a, _ := NewAgent(c)
 	agent := a.(*agent)
-	agent.config.OffGrpc = true
 	agent.enable = true
 
 	tests := []struct {
@@ -53,9 +53,9 @@ func Test_agent_NewSpanTracerWithReader(t *testing.T) {
 		WithAgentId("testagent"),
 	}
 	c, _ := NewConfig(opts...)
+	c.OffGrpc = true
 	a, _ := NewAgent(c)
 	agent := a.(*agent)
-	agent.config.OffGrpc = true
 	agent.enable = true
 
 	m := map[string]string{

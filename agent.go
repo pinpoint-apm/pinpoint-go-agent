@@ -312,6 +312,7 @@ func (agent *agent) sendPingWorker() {
 
 			stream.close()
 			stream = agent.agentGrpc.newPingStreamWithRetry()
+			continue
 		}
 
 		time.Sleep(60 * time.Second)

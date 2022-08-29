@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 	"math"
@@ -36,7 +37,7 @@ func grpcMetadataContext(agent Agent, socketId int64) context.Context {
 	return metadata.NewOutgoingContext(context.Background(), md)
 }
 
-func backOffSleep(attempt int) {
+func backOffSleep(attempt int) time.Duration {
 	base := float64(1 * time.Second)
 	max := float64(60 * time.Second)
 
@@ -45,8 +46,7 @@ func backOffSleep(attempt int) {
 		dur = max
 	}
 
-	jitter := time.Duration(rand.Float64()*(dur-base) + base)
-	time.Sleep(jitter)
+	return time.Duration(rand.Float64()*(dur-base) + base)
 }
 
 type AgentGrpcClient interface {
@@ -98,7 +98,7 @@ type agentGrpc struct {
 	agentClient    AgentGrpcClient
 	metadataClient MetaGrpcClient
 	pingSocketId   int64
-	stream         PingStreamInvoker
+	pingStream     *pingStream
 	agent          Agent
 }
 
@@ -109,17 +109,22 @@ var kacp = keepalive.ClientParameters{
 }
 
 func connectToCollectorWithRetry(serverAddr string, opts []grpc.DialOption) (*grpc.ClientConn, error) {
-	var conn *grpc.ClientConn
-	var err error
+	var (
+		conn *grpc.ClientConn
+		err  error
+		n    int
+	)
 
-	for n := 1; n < 100; n++ {
+	for {
 		log("grpc").Infof("connect to collector: %s", serverAddr)
 		conn, err = grpc.Dial(serverAddr, opts...)
 		if err == nil {
 			break
 		}
 		log("grpc").Errorf("fail to dial - %v", err)
-		backOffSleep(n)
+
+		n++
+		time.Sleep(backOffSleep(n))
 	}
 
 	return conn, err
@@ -294,79 +299,80 @@ func sendStreamWithTimeout(f func() error, d time.Duration) error {
 	}
 }
 
-type PingStreamInvoker interface {
-	Send(*pb.PPing) error
-	Recv() (*pb.PPing, error)
-	CloseSend() error
+func waitUntilReady(grpcConn *grpc.ClientConn, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	state := grpcConn.GetState()
+	for state != connectivity.Ready {
+		log("grpc").Infof("waiting grpc connection ready. state: %s, timeout: %s", state.String(), timeout.String())
+
+		if grpcConn.WaitForStateChange(ctx, state) {
+			state = grpcConn.GetState()
+		} else {
+			return false
+		}
+	}
+
+	return true
 }
 
-type pingStreamInvoker struct {
-	stream pb.Agent_PingSessionClient
-}
+func newStreamWithRetry(agent Agent, grpcConn *grpc.ClientConn, newStreamFunc func() bool) bool {
+	for {
+		if !agent.Enable() {
+			return false
+		}
+		if newStreamFunc() {
+			return true
+		}
 
-func (invoker *pingStreamInvoker) Send(p *pb.PPing) error {
-	return sendStreamWithTimeout(func() error { return invoker.stream.Send(p) }, 5*time.Second)
-}
-
-func (invoker *pingStreamInvoker) Recv() (*pb.PPing, error) {
-	return invoker.stream.Recv()
-}
-
-func (invoker *pingStreamInvoker) CloseSend() error {
-	return invoker.stream.CloseSend()
+		if !agent.Config().OffGrpc {
+			retry := 1
+			for !waitUntilReady(grpcConn, backOffSleep(retry)) {
+				retry++
+			}
+		}
+	}
 }
 
 type pingStream struct {
-	stream PingStreamInvoker
+	client pb.Agent_PingSessionClient
 }
 
-func (s *pingStream) setStreamInvoker(invoker PingStreamInvoker) {
-	s.stream = invoker
-}
-
-func (agentGrpc *agentGrpc) newPingStream() *pingStream {
+func (agentGrpc *agentGrpc) newPingStream() bool {
 	agentGrpc.pingSocketId++
 	ctx := grpcMetadataContext(agentGrpc.agent, agentGrpc.pingSocketId)
 	stream, err := agentGrpc.agentClient.PingSession(ctx)
 	if err != nil {
 		log("grpc").Errorf("fail to make ping stream - %v", err)
-		return &pingStream{nil}
+		return false
 	}
 
-	return &pingStream{&pingStreamInvoker{stream}}
+	agentGrpc.pingStream = &pingStream{stream}
+	return true
 }
 
 func (agentGrpc *agentGrpc) newPingStreamWithRetry() *pingStream {
-	for n := 1; n < 100; n++ {
-		if !agentGrpc.agent.Enable() {
-			break
-		}
-
-		s := agentGrpc.newPingStream()
-		if s.stream != nil {
-			log("grpc").Info("success to make ping stream: ", n)
-			return s
-		}
-		backOffSleep(n)
+	if newStreamWithRetry(agentGrpc.agent, agentGrpc.agentConn, agentGrpc.newPingStream) {
+		log("grpc").Info("success to make ping stream")
+		return agentGrpc.pingStream
 	}
-
 	return &pingStream{nil}
 }
 
 var ping = pb.PPing{}
 
 func (s *pingStream) sendPing() error {
-	if s.stream == nil {
+	if s.client == nil {
 		return status.Errorf(codes.Unavailable, "ping stream is nil")
 	}
-
-	return s.stream.Send(&ping)
+	return sendStreamWithTimeout(func() error { return s.client.Send(&ping) }, 5*time.Second)
 }
 
 func (s *pingStream) close() {
-	if s.stream != nil {
-		s.stream.CloseSend()
-		s.stream = nil
+	if s.client != nil {
+		s.client.CloseSend()
+		s.client = nil
 	}
 }
 
@@ -389,35 +395,12 @@ func (spanGrpcClient *spanGrpcClient) SendSpan(ctx context.Context) (pb.Span_Sen
 type spanGrpc struct {
 	spanConn   *grpc.ClientConn
 	spanClient SpanGrpcClient
-	stream     SpanStreamInvoker
+	stream     *spanStream
 	agent      Agent
 }
 
-type SpanStreamInvoker interface {
-	Send(*pb.PSpanMessage) error
-	CloseAndRecv() error
-	CloseSend() error
-}
-
-type spanStreamInvoker struct {
-	stream pb.Span_SendSpanClient
-}
-
-func (invoker *spanStreamInvoker) Send(span *pb.PSpanMessage) error {
-	return sendStreamWithTimeout(func() error { return invoker.stream.Send(span) }, 5*time.Second)
-}
-
-func (invoker *spanStreamInvoker) CloseAndRecv() error {
-	_, err := invoker.stream.CloseAndRecv()
-	return err
-}
-
-func (invoker *spanStreamInvoker) CloseSend() error {
-	return invoker.stream.CloseSend()
-}
-
 type spanStream struct {
-	stream SpanStreamInvoker
+	stream pb.Span_SendSpanClient
 }
 
 func newSpanGrpc(agent Agent) (*spanGrpc, error) {
@@ -442,36 +425,24 @@ func (spanGrpc *spanGrpc) close() {
 	spanGrpc.spanConn.Close()
 }
 
-func (spanGrpc *spanGrpc) newSpanStream() *spanStream {
+func (spanGrpc *spanGrpc) newSpanStream() bool {
 	ctx := grpcMetadataContext(spanGrpc.agent, -1)
 	stream, err := spanGrpc.spanClient.SendSpan(ctx)
 	if err != nil {
 		log("grpc").Errorf("fail to make span stream - %v", err)
-		return &spanStream{nil}
+		return false
 	}
 
-	return &spanStream{&spanStreamInvoker{stream}}
+	spanGrpc.stream = &spanStream{stream}
+	return true
 }
 
 func (spanGrpc *spanGrpc) newSpanStreamWithRetry() *spanStream {
-	for n := 1; n < 100; n++ {
-		if !spanGrpc.agent.Enable() {
-			break
-		}
-
-		s := spanGrpc.newSpanStream()
-		if s.stream != nil {
-			log("grpc").Info("success to make span stream: ", n)
-			return s
-		}
-		backOffSleep(n)
+	if newStreamWithRetry(spanGrpc.agent, spanGrpc.spanConn, spanGrpc.newSpanStream) {
+		log("grpc").Info("success to make span stream")
+		return spanGrpc.stream
 	}
-
 	return &spanStream{nil}
-}
-
-func (s *spanStream) setStreamInvoker(invoker SpanStreamInvoker) {
-	s.stream = invoker
 }
 
 func (s *spanStream) close() {
@@ -479,7 +450,7 @@ func (s *spanStream) close() {
 		return
 	}
 
-	err := s.stream.CloseAndRecv()
+	_, err := s.stream.CloseAndRecv()
 	if err != nil {
 		log("grpc").Errorf("fail to close span stream - %v", err)
 	}
@@ -500,8 +471,7 @@ func (s *spanStream) sendSpan(span *span) error {
 	}
 
 	log("grpc").Debug("PSpanMessage: ", gspan.String())
-
-	return s.stream.Send(gspan)
+	return sendStreamWithTimeout(func() error { return s.stream.Send(gspan) }, 5*time.Second)
 }
 
 func makePSpan(span *span) *pb.PSpanMessage {
@@ -658,35 +628,12 @@ func (statGrpcClient *statGrpcClient) SendAgentStat(ctx context.Context) (pb.Sta
 type statGrpc struct {
 	statConn   *grpc.ClientConn
 	statClient StatGrpcClient
-	stream     StatStreamInvoker
+	stream     *statStream
 	agent      Agent
 }
 
-type StatStreamInvoker interface {
-	Send(*pb.PStatMessage) error
-	CloseAndRecv() error
-	CloseSend() error
-}
-
-type statStreamInvoker struct {
-	stream pb.Stat_SendAgentStatClient
-}
-
-func (invoker *statStreamInvoker) Send(stat *pb.PStatMessage) error {
-	return sendStreamWithTimeout(func() error { return invoker.stream.Send(stat) }, 5*time.Second)
-}
-
-func (invoker *statStreamInvoker) CloseAndRecv() error {
-	_, err := invoker.stream.CloseAndRecv()
-	return err
-}
-
-func (invoker *statStreamInvoker) CloseSend() error {
-	return invoker.stream.CloseSend()
-}
-
 type statStream struct {
-	stream StatStreamInvoker
+	stream pb.Stat_SendAgentStatClient
 }
 
 func newStatGrpc(agent Agent) (*statGrpc, error) {
@@ -711,36 +658,24 @@ func (statGrpc *statGrpc) close() {
 	statGrpc.statConn.Close()
 }
 
-func (statGrpc *statGrpc) newStatStream() *statStream {
+func (statGrpc *statGrpc) newStatStream() bool {
 	ctx := grpcMetadataContext(statGrpc.agent, -1)
 	stream, err := statGrpc.statClient.SendAgentStat(ctx)
 	if err != nil {
 		log("grpc").Errorf("fail to make stat stream - %v", err)
-		return &statStream{nil}
+		return false
 	}
 
-	return &statStream{&statStreamInvoker{stream}}
+	statGrpc.stream = &statStream{stream}
+	return true
 }
 
 func (statGrpc *statGrpc) newStatStreamWithRetry() *statStream {
-	for n := 1; n < 100; n++ {
-		if !statGrpc.agent.Enable() {
-			break
-		}
-
-		s := statGrpc.newStatStream()
-		if s.stream != nil {
-			log("grpc").Info("success to make stat stream: ", n)
-			return s
-		}
-		backOffSleep(n)
+	if newStreamWithRetry(statGrpc.agent, statGrpc.statConn, statGrpc.newStatStream) {
+		log("grpc").Info("success to make stat stream")
+		return statGrpc.stream
 	}
-
 	return &statStream{nil}
-}
-
-func (s *statStream) setStreamInvoker(invoker StatStreamInvoker) {
-	s.stream = invoker
 }
 
 func (s *statStream) close() {
@@ -748,7 +683,7 @@ func (s *statStream) close() {
 		return
 	}
 
-	err := s.stream.CloseAndRecv()
+	_, err := s.stream.CloseAndRecv()
 	if err != nil {
 		log("grpc").Errorf("fail to close stat stream - %v", err)
 	}
@@ -778,7 +713,7 @@ func (s *statStream) sendStats(stats []*inspectorStats) error {
 
 	log("grpc").Debug("PStatMessage: ", gstats.String())
 
-	return s.stream.Send(gstats)
+	return sendStreamWithTimeout(func() error { return s.stream.Send(gstats) }, 5*time.Second)
 }
 
 func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
@@ -831,6 +766,7 @@ func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
 type cmdGrpc struct {
 	agentConn *grpc.ClientConn
 	cmdClient pb.ProfilerCommandServiceClient
+	stream    *cmdStream
 	agent     Agent
 }
 
@@ -857,34 +793,26 @@ func newCommandGrpc(agent Agent) (*cmdGrpc, error) {
 	}
 
 	cmdClient := pb.NewProfilerCommandServiceClient(conn)
-	return &cmdGrpc{conn, cmdClient, agent}, nil
+	return &cmdGrpc{conn, cmdClient, nil, agent}, nil
 }
 
-func (cmdGrpc *cmdGrpc) newHandleCommandStream() *cmdStream {
+func (cmdGrpc *cmdGrpc) newHandleCommandStream() bool {
 	ctx := grpcMetadataContext(cmdGrpc.agent, -1)
 	stream, err := cmdGrpc.cmdClient.HandleCommand(ctx)
 	if err != nil {
 		log("grpc").Errorf("fail to make command stream - %v", err)
-		return &cmdStream{nil, nil}
+		return false
 	}
 
-	return &cmdStream{stream, nil}
+	cmdGrpc.stream = &cmdStream{stream, nil}
+	return true
 }
 
 func (cmdGrpc *cmdGrpc) newCommandStreamWithRetry() *cmdStream {
-	for n := 1; n < 100; n++ {
-		if !cmdGrpc.agent.Enable() {
-			break
-		}
-
-		s := cmdGrpc.newHandleCommandStream()
-		if s.stream != nil {
-			log("grpc").Info("success to make command stream: ", n)
-			return s
-		}
-		backOffSleep(n)
+	if newStreamWithRetry(cmdGrpc.agent, cmdGrpc.agentConn, cmdGrpc.newHandleCommandStream) {
+		log("grpc").Info("success to make command stream")
+		return cmdGrpc.stream
 	}
-
 	return &cmdStream{nil, nil}
 }
 

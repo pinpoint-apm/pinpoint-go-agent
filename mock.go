@@ -2,10 +2,11 @@ package pinpoint
 
 import (
 	"context"
-	"testing"
-
+	"errors"
 	"github.com/golang/mock/gomock"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	"testing"
+	"time"
 )
 
 type mockAgent struct {
@@ -23,22 +24,23 @@ func newMockAgent() Agent {
 	agent.config = *defaultConfig()
 	agent.config.ApplicationName = "mock"
 	agent.config.AgentId = "m1234"
+	agent.config.OffGrpc = true
 	agent.startTime = 12345
 	agent.sequence = 1
 
 	return &agent
 }
 
-func (agent *mockAgent) setMockAgentGrpc(t *testing.T) {
-	agent.agentGrpc = newMockAgentGrpc(agent, t)
+func (agent *mockAgent) setMockAgentGrpc(agentGrpc *agentGrpc) {
+	agent.agentGrpc = agentGrpc
 }
 
 func (agent *mockAgent) setMockSpanGrpc(t *testing.T) {
 	agent.spanGrpc = newMockSpanGrpc(agent, t)
 }
 
-func (agent *mockAgent) setMockStatGrpc(t *testing.T) {
-	agent.statGrpc = newMockStatGrpc(agent, t)
+func (agent *mockAgent) setMockStatGrpc(statGrpc *statGrpc) {
+	agent.statGrpc = statGrpc
 }
 
 func (agent *mockAgent) Shutdown() {
@@ -121,25 +123,6 @@ func (agentGrpcClient *mockAgentGrpcClient) PingSession(ctx context.Context) (pb
 	return agentGrpcClient.client.PingSession(ctx)
 }
 
-type mockPingStreamInvoker struct {
-	stream *MockAgent_PingSessionClient
-}
-
-func (invoker *mockPingStreamInvoker) Send(p *pb.PPing) error {
-	invoker.stream.EXPECT().Send(gomock.Any()).Return(nil)
-	return invoker.stream.Send(p)
-}
-
-func (invoker *mockPingStreamInvoker) Recv() (*pb.PPing, error) {
-	invoker.stream.EXPECT().Recv().Return(nil)
-	return invoker.stream.Recv()
-}
-
-func (invoker *mockPingStreamInvoker) CloseSend() error {
-	invoker.stream.EXPECT().CloseSend().Return(nil)
-	return invoker.stream.CloseSend()
-}
-
 type mockMetaGrpcClient struct {
 	client *MockMetadataClient
 }
@@ -164,7 +147,20 @@ func newMockAgentGrpc(agent Agent, t *testing.T) *agentGrpc {
 	stream := NewMockAgent_PingSessionClient(ctrl)
 	agentClient := mockAgentGrpcClient{NewMockAgentClient(ctrl), stream}
 	metadataClient := mockMetaGrpcClient{NewMockMetadataClient(ctrl)}
-	return &agentGrpc{nil, &agentClient, &metadataClient, -1, &mockPingStreamInvoker{stream}, agent}
+
+	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent}
+}
+
+func newMockAgentGrpcPing(agent Agent, t *testing.T) *agentGrpc {
+	ctrl := gomock.NewController(t)
+	stream := NewMockAgent_PingSessionClient(ctrl)
+	agentClient := mockAgentGrpcClient{NewMockAgentClient(ctrl), stream}
+	metadataClient := mockMetaGrpcClient{NewMockMetadataClient(ctrl)}
+
+	stream.EXPECT().Send(gomock.Any()).Return(nil)
+	//stream.EXPECT().CloseSend().Return(nil)
+
+	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent}
 }
 
 type mockSpanGrpcClient struct {
@@ -181,26 +177,10 @@ func newMockSpanGrpc(agent Agent, t *testing.T) *spanGrpc {
 	ctrl := gomock.NewController(t)
 	stream := NewMockSpan_SendSpanClient(ctrl)
 	spanClient := mockSpanGrpcClient{NewMockSpanClient(ctrl), stream}
-	return &spanGrpc{nil, &spanClient, &mockSpanStreamInvoker{stream}, agent}
-}
 
-type mockSpanStreamInvoker struct {
-	stream *MockSpan_SendSpanClient
-}
+	stream.EXPECT().Send(gomock.Any()).Return(nil)
 
-func (invoker *mockSpanStreamInvoker) Send(span *pb.PSpanMessage) error {
-	invoker.stream.EXPECT().Send(gomock.Any()).Return(nil)
-	return invoker.stream.Send(span)
-}
-
-func (invoker *mockSpanStreamInvoker) CloseAndRecv() error {
-	invoker.stream.EXPECT().CloseAndRecv().Return(nil)
-	return nil
-}
-
-func (invoker *mockSpanStreamInvoker) CloseSend() error {
-	invoker.stream.EXPECT().CloseSend().Return(nil)
-	return nil
+	return &spanGrpc{nil, &spanClient, nil, agent}
 }
 
 type mockStaGrpcClient struct {
@@ -217,24 +197,36 @@ func newMockStatGrpc(agent Agent, t *testing.T) *statGrpc {
 	ctrl := gomock.NewController(t)
 	stream := NewMockStat_SendAgentStatClient(ctrl)
 	statClient := mockStaGrpcClient{NewMockStatClient(ctrl), stream}
-	return &statGrpc{nil, &statClient, &mockStatStreamInvoker{stream}, agent}
+
+	stream.EXPECT().Send(gomock.Any()).Return(nil)
+
+	return &statGrpc{nil, &statClient, nil, agent}
 }
 
-type mockStatStreamInvoker struct {
+type mockRetryStaGrpcClient struct {
+	client *MockStatClient
 	stream *MockStat_SendAgentStatClient
+	retry  int
 }
 
-func (invoker *mockStatStreamInvoker) Send(span *pb.PStatMessage) error {
-	invoker.stream.EXPECT().Send(gomock.Any()).Return(nil)
-	return invoker.stream.Send(span)
+func (statGrpcClient *mockRetryStaGrpcClient) SendAgentStat(ctx context.Context) (pb.Stat_SendAgentStatClient, error) {
+	if statGrpcClient.retry < 3 {
+		time.Sleep(1 * time.Second)
+		_ = statGrpcClient.client.EXPECT().SendAgentStat(gomock.Any()).Return(nil, errors.New(""))
+	} else {
+		_ = statGrpcClient.client.EXPECT().SendAgentStat(gomock.Any()).Return(statGrpcClient.stream, nil)
+	}
+	statGrpcClient.retry++
+	return statGrpcClient.client.SendAgentStat(ctx)
 }
 
-func (invoker *mockStatStreamInvoker) CloseAndRecv() error {
-	invoker.stream.EXPECT().CloseAndRecv().Return(nil)
-	return nil
-}
+func newRetryMockStatGrpc(agent Agent, t *testing.T) *statGrpc {
+	ctrl := gomock.NewController(t)
+	stream := NewMockStat_SendAgentStatClient(ctrl)
+	statClient := mockRetryStaGrpcClient{NewMockStatClient(ctrl), stream, 0}
 
-func (invoker *mockStatStreamInvoker) CloseSend() error {
-	invoker.stream.EXPECT().CloseSend().Return(nil)
-	return nil
+	stream.EXPECT().Send(gomock.Any()).Return(nil)
+	//stream.EXPECT().Send(gomock.Any()).Return(errors.New("stat send fail"))
+
+	return &statGrpc{nil, &statClient, nil, agent}
 }
