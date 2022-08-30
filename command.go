@@ -23,42 +23,38 @@ type activeSpanInfo struct {
 func (agent *agent) runCommandService() {
 	log("cmd").Info("command service goroutine start")
 	defer agent.wg.Done()
-
 	gAtcStreamCount = 0
-	cmdStream := agent.cmdGrpc.newCommandStreamWithRetry()
 
-	for true {
+	for {
 		if !agent.enable {
 			break
 		}
 
+		cmdStream := agent.cmdGrpc.newCommandStreamWithRetry()
 		err := cmdStream.sendCommandMessage()
 		if err != nil {
 			if err != io.EOF {
-				log("cmd").Errorf("fail to sendCommandMessage(): %v", err)
+				log("cmd").Errorf("fail to send command message - %v", err)
 			}
-
 			cmdStream.close()
-			cmdStream = agent.cmdGrpc.newCommandStreamWithRetry()
 			continue
 		}
 
-		for true {
+		for {
 			if !agent.enable {
 				break
 			}
 
-			err = cmdStream.recvCommandRequest()
+			cmdReq, err := cmdStream.recvCommandRequest()
 			if err != nil {
 				if err != io.EOF {
-					log("cmd").Errorf("fail to recvCommandRequest(): %v", err)
+					log("cmd").Errorf("fail to recv command request - %v", err)
 				}
 				break
 			}
 
-			cmdReq := cmdStream.cmdReq
 			reqId := cmdReq.GetRequestId()
-			log("cmd").Debugf("command service request: %v, %v", cmdReq, reqId)
+			log("cmd").Infof("command service request: %v, %v", cmdReq, reqId)
 
 			switch cmdReq.Command.(type) {
 			case *pb.PCmdRequest_CommandEcho:
@@ -88,13 +84,9 @@ func (agent *agent) runCommandService() {
 			}
 		}
 
-		if err != nil {
-			cmdStream.close()
-			cmdStream = agent.cmdGrpc.newCommandStreamWithRetry()
-		}
+		cmdStream.close()
 	}
 
-	cmdStream.close()
 	log("cmd").Info("command service goroutine finish")
 }
 
@@ -102,11 +94,11 @@ func sendActiveThreadCount(s *activeThreadCountStream) {
 	atomic.AddInt32(&gAtcStreamCount, 1)
 	log("cmd").Infof("active thread count stream goroutine start: %d, %d", s.reqId, gAtcStreamCount)
 
-	for true {
+	for {
 		err := s.sendActiveThreadCount()
 		if err != nil {
 			if err != io.EOF {
-				log("cmd").Errorf("fail to sendActiveThreadCount(): %d, %v", s.reqId, err)
+				log("cmd").Errorf("fail to send active thread count - %d, %v", s.reqId, err)
 			}
 			break
 		}

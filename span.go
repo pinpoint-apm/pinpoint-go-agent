@@ -78,7 +78,7 @@ func newSampledSpan(agent Agent, operation string, rpcName string) Tracer {
 	span.agent = agent
 	span.operationName = operation
 	span.rpcName = rpcName
-	span.apiId = agent.RegisterSpanApiId(operation, ApiTypeWebRequest)
+	span.apiId = agent.CacheSpanApiId(operation, ApiTypeWebRequest)
 
 	addSampledActiveSpan(span)
 

@@ -49,7 +49,7 @@ func defaultSpanEvent(span *span, operationName string) *spanEvent {
 
 func newSpanEvent(span *span, operationName string) *spanEvent {
 	se := defaultSpanEvent(span, operationName)
-	se.apiId = span.agent.RegisterSpanApiId(operationName, ApiTypeDefault)
+	se.apiId = span.agent.CacheSpanApiId(operationName, ApiTypeDefault)
 
 	return se
 }
@@ -59,7 +59,7 @@ func newSpanEventGoroutine(span *span) *spanEvent {
 
 	//Asynchronous Invocation
 	if asyncApiId == 0 {
-		asyncApiId = span.agent.RegisterSpanApiId("Goroutine Invocation", ApiTypeInvocation)
+		asyncApiId = span.agent.CacheSpanApiId("Goroutine Invocation", ApiTypeInvocation)
 	}
 	se.apiId = asyncApiId
 	se.serviceType = ServiceTypeAsync

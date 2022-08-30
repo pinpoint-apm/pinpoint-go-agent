@@ -21,7 +21,6 @@ type Agent interface {
 	Shutdown()
 	NewSpanTracer(operation string, rpcName string) Tracer
 	NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer
-	RegisterSpanApiId(descriptor string, apiType int) int32
 	Config() Config
 	GenerateTransactionId() TransactionId
 	TryEnqueueSpan(span *span) bool

@@ -202,7 +202,7 @@ func (agent *agent) sendStatsWorker() {
 			err := statStream.sendStats(collected)
 			if err != nil {
 				if err != io.EOF {
-					log("stats").Errorf("fail to sendStats(): %v", err)
+					log("stats").Errorf("fail to send stats - %v", err)
 				}
 
 				statStream.close()

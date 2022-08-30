@@ -54,10 +54,6 @@ func (agent *mockAgent) NewSpanTracerWithReader(operation string, rpcName string
 	return newUnSampledSpan(rpcName)
 }
 
-func (agent *mockAgent) RegisterSpanApiId(descriptor string, apiType int) int32 {
-	return 1
-}
-
 func (agent *mockAgent) Config() Config {
 	return agent.config
 }

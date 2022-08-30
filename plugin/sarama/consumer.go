@@ -21,6 +21,7 @@ type ConsumerMessage struct {
 	tracer pinpoint.Tracer
 }
 
+// SpanTracer deprecated
 func (c *ConsumerMessage) SpanTracer() pinpoint.Tracer {
 	return c.tracer
 }

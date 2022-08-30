@@ -156,7 +156,7 @@ func makeHttpHeaderRecoder(cfg []string) httpHeaderRecorder {
 func connectGrpc(agent *agent) {
 	var err error
 
-	for true {
+	for {
 		agent.agentGrpc, err = newAgentGrpc(agent)
 		if err != nil {
 			continue
@@ -186,17 +186,8 @@ func connectGrpc(agent *agent) {
 		break
 	}
 
-	for true {
-		res, err := agent.agentGrpc.sendAgentInfo()
-		if err == nil {
-			if res.Success {
-				break
-			} else {
-				log("agent").Errorf("agent registration failed: %s", res.Message)
-				return
-			}
-		}
-		time.Sleep(1 * time.Second)
+	if !registerAgent(agent) {
+		return
 	}
 
 	agent.enable = true
@@ -207,6 +198,26 @@ func connectGrpc(agent *agent) {
 	go agent.sendMetaWorker()
 
 	agent.wg.Add(5)
+}
+
+func registerAgent(agent *agent) bool {
+	retry := 1
+	for {
+		res, err := agent.agentGrpc.sendAgentInfo()
+		if err == nil {
+			if res.Success {
+				break
+			} else {
+				log("agent").Errorf("fail to register agent - %s", res.Message)
+				return false
+			}
+		}
+
+		time.Sleep(backOffSleep(retry))
+		retry++
+	}
+
+	return true
 }
 
 func (agent *agent) Shutdown() {
@@ -223,6 +234,7 @@ func (agent *agent) Shutdown() {
 	agent.agentGrpc.close()
 	agent.spanGrpc.close()
 	agent.statGrpc.close()
+	agent.cmdGrpc.close()
 }
 
 func (agent *agent) NewSpanTracer(operation string, rpcName string) Tracer {
@@ -268,15 +280,6 @@ func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string,
 	}
 }
 
-func (agent *agent) RegisterSpanApiId(descriptor string, apiType int) int32 {
-	if !agent.enable {
-		return 0
-	}
-
-	id := agent.CacheSpanApiId(descriptor, apiType)
-	return id
-}
-
 func (agent *agent) Config() Config {
 	return agent.config
 }
@@ -299,7 +302,7 @@ func (agent *agent) sendPingWorker() {
 	defer agent.wg.Done()
 	stream := agent.agentGrpc.newPingStreamWithRetry()
 
-	for true {
+	for {
 		if !agent.enable {
 			break
 		}
@@ -307,7 +310,7 @@ func (agent *agent) sendPingWorker() {
 		err := stream.sendPing()
 		if err != nil {
 			if err != io.EOF {
-				log("agent").Errorf("fail to sendPing(): %v", err)
+				log("agent").Errorf("fail to send ping - %v", err)
 			}
 
 			stream.close()
@@ -348,7 +351,7 @@ func (agent *agent) sendSpanWorker() {
 		err := spanStream.sendSpan(span)
 		if err != nil {
 			if err != io.EOF {
-				log("agent").Errorf("fail to sendSpan(): %v", err)
+				log("agent").Errorf("fail to send span - %v", err)
 			}
 
 			spanStream.close()
@@ -405,7 +408,6 @@ func (agent *agent) sendMetaWorker() {
 		}
 
 		if err != nil {
-			log("agent").Errorf("fail to sendMetadata(): %v", err)
 			agent.deleteMetaCache(md)
 		}
 	}
@@ -462,7 +464,7 @@ func (agent *agent) CacheErrorFunc(funcName string) int32 {
 	md.funcname = funcName
 	agent.tryEnqueueMeta(md)
 
-	log("agent").Info("cache exception id: ", id, funcName)
+	log("agent").Infof("cache exception id: %d, %s", id, funcName)
 	return id
 }
 
@@ -483,7 +485,7 @@ func (agent *agent) CacheSql(sql string) int32 {
 	md.sql = sql
 	agent.tryEnqueueMeta(md)
 
-	log("agent").Info("cache sql id: ", id, sql)
+	log("agent").Infof("cache sql id: %d, %s", id, sql)
 	return id
 }
 
@@ -507,7 +509,7 @@ func (agent *agent) CacheSpanApiId(descriptor string, apiType int) int32 {
 	md.apiType = apiType
 	agent.tryEnqueueMeta(md)
 
-	log("agent").Info("cache api id: ", id, key)
+	log("agent").Infof("cache api id: %d, %s", id, key)
 	return id
 }
 
