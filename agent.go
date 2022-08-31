@@ -46,12 +46,12 @@ type agent struct {
 	wg         sync.WaitGroup
 	sampler    traceSampler
 
-	exceptionIdCache *lru.Cache
-	exceptionIdGen   int32
-	sqlCache         *lru.Cache
-	sqlIdGen         int32
-	apiCache         *lru.Cache
-	apiIdGen         int32
+	errorIdCache *lru.Cache
+	errorIdGen   int32
+	sqlCache     *lru.Cache
+	sqlIdGen     int32
+	apiCache     *lru.Cache
+	apiIdGen     int32
 
 	httpStatusErrors           *httpStatusError
 	httpUrlFilter              *httpUrlFilter
@@ -70,7 +70,7 @@ type apiMeta struct {
 
 type stringMeta struct {
 	id       int32
-	funcname string
+	funcName string
 }
 
 type sqlMeta struct {
@@ -98,8 +98,8 @@ func NewAgent(config *Config) (Agent, error) {
 	agent.spanChan = make(chan *span, 5*1024)
 	agent.metaChan = make(chan interface{}, 1*1024)
 
-	agent.exceptionIdGen = 0
-	agent.exceptionIdCache, err = lru.New(cacheSize)
+	agent.errorIdGen = 0
+	agent.errorIdCache, err = lru.New(cacheSize)
 	if err != nil {
 		return &agent, err
 	}
@@ -284,7 +284,7 @@ func (agent *agent) Config() Config {
 	return agent.config
 }
 
-func (agent *agent) GenerateTransactionId() TransactionId {
+func (agent *agent) generateTransactionId() TransactionId {
 	atomic.AddInt64(&agent.sequence, 1)
 	return TransactionId{agent.config.AgentId, agent.startTime, agent.sequence}
 }
@@ -366,7 +366,7 @@ func (agent *agent) sendSpanWorker() {
 	log("agent").Info("span goroutine finish")
 }
 
-func (agent *agent) TryEnqueueSpan(span *span) bool {
+func (agent *agent) enqueueSpan(span *span) bool {
 	if !agent.enable {
 		return false
 	}
@@ -399,7 +399,7 @@ func (agent *agent) sendMetaWorker() {
 			break
 		case stringMeta:
 			str := md.(stringMeta)
-			err = agent.agentGrpc.sendStringMetadata(str.id, str.funcname)
+			err = agent.agentGrpc.sendStringMetadata(str.id, str.funcName)
 			break
 		case sqlMeta:
 			sql := md.(sqlMeta)
@@ -423,7 +423,7 @@ func (agent *agent) deleteMetaCache(md interface{}) {
 		agent.apiCache.Remove(key)
 		break
 	case stringMeta:
-		agent.exceptionIdCache.Remove(md.(stringMeta).funcname)
+		agent.errorIdCache.Remove(md.(stringMeta).funcName)
 		break
 	case sqlMeta:
 		agent.sqlCache.Remove(md.(sqlMeta).sql)
@@ -447,28 +447,28 @@ func (agent *agent) tryEnqueueMeta(md interface{}) bool {
 	return false
 }
 
-func (agent *agent) CacheErrorFunc(funcName string) int32 {
+func (agent *agent) cacheErrorFunc(funcName string) int32 {
 	if !agent.enable {
 		return 0
 	}
 
-	if v, ok := agent.exceptionIdCache.Get(funcName); ok {
+	if v, ok := agent.errorIdCache.Get(funcName); ok {
 		return v.(int32)
 	}
 
-	id := atomic.AddInt32(&agent.exceptionIdGen, 1)
-	agent.exceptionIdCache.Add(funcName, id)
+	id := atomic.AddInt32(&agent.errorIdGen, 1)
+	agent.errorIdCache.Add(funcName, id)
 
 	md := stringMeta{}
 	md.id = id
-	md.funcname = funcName
+	md.funcName = funcName
 	agent.tryEnqueueMeta(md)
 
 	log("agent").Infof("cache exception id: %d, %s", id, funcName)
 	return id
 }
 
-func (agent *agent) CacheSql(sql string) int32 {
+func (agent *agent) cacheSql(sql string) int32 {
 	if !agent.enable {
 		return 0
 	}
@@ -489,7 +489,7 @@ func (agent *agent) CacheSql(sql string) int32 {
 	return id
 }
 
-func (agent *agent) CacheSpanApiId(descriptor string, apiType int) int32 {
+func (agent *agent) cacheSpanApiId(descriptor string, apiType int) int32 {
 	if !agent.enable {
 		return 0
 	}
@@ -513,7 +513,7 @@ func (agent *agent) CacheSpanApiId(descriptor string, apiType int) int32 {
 	return id
 }
 
-func (agent *agent) IsHttpError(code int) bool {
+func (agent *agent) isHttpError(code int) bool {
 	return agent.httpStatusErrors.isError(code)
 }
 
@@ -530,7 +530,7 @@ func (agent *agent) IsExcludedMethod(method string) bool {
 	return false
 }
 
-func (agent *agent) HttpHeaderRecorder(key int) httpHeaderRecorder {
+func (agent *agent) httpHeaderRecorder(key int) httpHeaderRecorder {
 	if key == AnnotationHttpRequestHeader {
 		return agent.httpRequestHeaderRecorder
 	} else if key == AnnotationHttpResponseHeader {

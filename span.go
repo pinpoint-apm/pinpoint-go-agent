@@ -78,7 +78,7 @@ func newSampledSpan(agent Agent, operation string, rpcName string) Tracer {
 	span.agent = agent
 	span.operationName = operation
 	span.rpcName = rpcName
-	span.apiId = agent.CacheSpanApiId(operation, ApiTypeWebRequest)
+	span.apiId = agent.cacheSpanApiId(operation, ApiTypeWebRequest)
 
 	addSampledActiveSpan(span)
 
@@ -104,7 +104,7 @@ func (span *span) EndSpan() {
 		log("span").Warn("span has a event that is not closed")
 	}
 
-	if !span.agent.TryEnqueueSpan(span) {
+	if !span.agent.enqueueSpan(span) {
 		log("span").Debug("span channel - max capacity reached or closed")
 	}
 }
@@ -139,7 +139,7 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		span.txId.StartTime, _ = strconv.ParseInt(s[1], 10, 0)
 		span.txId.Sequence, _ = strconv.ParseInt(s[2], 10, 0)
 	} else {
-		span.txId = span.agent.GenerateTransactionId()
+		span.txId = span.agent.generateTransactionId()
 	}
 
 	spanid := reader.Get(HttpSpanId)
@@ -291,7 +291,7 @@ func (span *span) SetError(e error) {
 		return
 	}
 
-	id := span.agent.CacheErrorFunc(span.operationName)
+	id := span.agent.cacheErrorFunc(span.operationName)
 	span.errorFuncId = id
 	span.errorString = e.Error()
 	span.err = 1
@@ -332,17 +332,17 @@ func (span *span) SetLogging(logInfo int32) {
 func (span *span) RecordHttpStatus(status int) {
 	span.annotations.AppendInt(AnnotationHttpStatusCode, int32(status))
 
-	if span.err == 0 && span.agent.IsHttpError(status) {
+	if span.err == 0 && span.agent.isHttpError(status) {
 		span.err = 1
 	}
 }
 
 func (span *span) RecordHttpHeader(annotation Annotation, key int, header http.Header) {
-	span.agent.HttpHeaderRecorder(key).recordHeader(annotation, key, header)
+	span.agent.httpHeaderRecorder(key).recordHeader(annotation, key, header)
 }
 
 func (span *span) RecordHttpCookie(annotation Annotation, cookie []*http.Cookie) {
-	span.agent.HttpHeaderRecorder(AnnotationHttpCookie).recordCookie(annotation, cookie)
+	span.agent.httpHeaderRecorder(AnnotationHttpCookie).recordCookie(annotation, cookie)
 }
 
 func (span *span) IsSampled() bool {

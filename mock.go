@@ -58,7 +58,7 @@ func (agent *mockAgent) Config() Config {
 	return agent.config
 }
 
-func (agent *mockAgent) GenerateTransactionId() TransactionId {
+func (agent *mockAgent) generateTransactionId() TransactionId {
 	return TransactionId{agent.config.AgentId, agent.startTime, agent.sequence}
 }
 
@@ -70,23 +70,23 @@ func (agent *mockAgent) StartTime() int64 {
 	return agent.startTime
 }
 
-func (agent *mockAgent) TryEnqueueSpan(span *span) bool {
+func (agent *mockAgent) enqueueSpan(span *span) bool {
 	return true
 }
 
-func (agent *mockAgent) CacheErrorFunc(funcname string) int32 {
+func (agent *mockAgent) cacheErrorFunc(funcname string) int32 {
 	return 1
 }
 
-func (agent *mockAgent) CacheSql(sql string) int32 {
+func (agent *mockAgent) cacheSql(sql string) int32 {
 	return 1
 }
 
-func (agent *mockAgent) CacheSpanApiId(descriptor string, apiType int) int32 {
+func (agent *mockAgent) cacheSpanApiId(descriptor string, apiType int) int32 {
 	return 1
 }
 
-func (agent *mockAgent) IsHttpError(code int) bool {
+func (agent *mockAgent) isHttpError(code int) bool {
 	return false
 }
 
@@ -98,7 +98,7 @@ func (agent *mockAgent) IsExcludedMethod(method string) bool {
 	return false
 }
 
-func (agent *mockAgent) HttpHeaderRecorder(key int) httpHeaderRecorder {
+func (agent *mockAgent) httpHeaderRecorder(key int) httpHeaderRecorder {
 	return newNoopHttpHeaderRecoder()
 }
 

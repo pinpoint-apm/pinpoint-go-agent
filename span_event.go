@@ -49,7 +49,7 @@ func defaultSpanEvent(span *span, operationName string) *spanEvent {
 
 func newSpanEvent(span *span, operationName string) *spanEvent {
 	se := defaultSpanEvent(span, operationName)
-	se.apiId = span.agent.CacheSpanApiId(operationName, ApiTypeDefault)
+	se.apiId = span.agent.cacheSpanApiId(operationName, ApiTypeDefault)
 
 	return se
 }
@@ -59,7 +59,7 @@ func newSpanEventGoroutine(span *span) *spanEvent {
 
 	//Asynchronous Invocation
 	if asyncApiId == 0 {
-		asyncApiId = span.agent.CacheSpanApiId("Goroutine Invocation", ApiTypeInvocation)
+		asyncApiId = span.agent.cacheSpanApiId("Goroutine Invocation", ApiTypeInvocation)
 	}
 	se.apiId = asyncApiId
 	se.serviceType = ServiceTypeAsync
@@ -86,7 +86,7 @@ func (se *spanEvent) SetError(e error) {
 		return
 	}
 
-	id := se.parentSpan.agent.CacheErrorFunc(se.operationName)
+	id := se.parentSpan.agent.cacheErrorFunc(se.operationName)
 	se.errorFuncId = id
 	se.errorString = e.Error()
 }
@@ -114,7 +114,7 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 
 	normalizer := newSqlNormalizer(sql)
 	nsql, param := normalizer.run()
-	id := se.parentSpan.agent.CacheSql(nsql)
+	id := se.parentSpan.agent.cacheSql(nsql)
 	se.annotations.AppendIntStringString(AnnotationSqlId, id, param, args)
 }
 

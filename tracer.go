@@ -22,17 +22,17 @@ type Agent interface {
 	NewSpanTracer(operation string, rpcName string) Tracer
 	NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer
 	Config() Config
-	GenerateTransactionId() TransactionId
-	TryEnqueueSpan(span *span) bool
 	Enable() bool
 	StartTime() int64
-	CacheErrorFunc(funcname string) int32
-	CacheSql(sql string) int32
-	CacheSpanApiId(descriptor string, apiType int) int32
-	IsHttpError(code int) bool
 	IsExcludedUrl(url string) bool
 	IsExcludedMethod(method string) bool
-	HttpHeaderRecorder(key int) httpHeaderRecorder
+	generateTransactionId() TransactionId
+	enqueueSpan(span *span) bool
+	cacheErrorFunc(funcName string) int32
+	cacheSql(sql string) int32
+	cacheSpanApiId(descriptor string, apiType int) int32
+	isHttpError(code int) bool
+	httpHeaderRecorder(key int) httpHeaderRecorder
 }
 
 type Tracer interface {
