@@ -1,12 +1,11 @@
 syntax = "proto3";
 
-import "google/protobuf/empty.proto";
-import "ThreadDump.proto";
+import "v1/ThreadDump.proto";
 
 option java_multiple_files = true;
 option java_package = "com.navercorp.pinpoint.grpc.trace";
 option java_outer_classname = "StatProto";
-option objc_class_prefix = "PIN";
+option go_package = "/v1";
 
 package v1;
 
@@ -17,6 +16,7 @@ message PStatMessage {
     oneof field {
         PAgentStat agentStat = 1;
         PAgentStatBatch agentStatBatch = 2;
+        PAgentUriStat agentUriStat = 3;
     }
 }
 
@@ -73,6 +73,8 @@ message PAgentStat {
     PFileDescriptor fileDescriptor = 10;
     PDirectBuffer directBuffer = 11;
     string metadata = 12;
+    PTotalThread totalThread = 13;
+    PLoadedClass loadedClass = 14;
 }
 
 message PAgentStatBatch {
@@ -157,4 +159,32 @@ message PDirectBuffer {
     int64 directMemoryUsed = 2;
     int64 mappedCount = 3;
     int64 mappedMemoryUsed = 4;
+}
+
+message PTotalThread {
+    int64 totalThreadCount = 1;
+}
+
+message PLoadedClass {
+    int64 loadedClassCount = 1;
+    int64 unloadedClassCount = 2;
+}
+
+message PAgentUriStat {
+    int64 timestamp = 1;
+    int32 bucketVersion = 2;
+    repeated PEachUriStat eachUriStat = 3;
+}
+
+message PEachUriStat {
+    string uri = 1;
+    PUriHistogram totalHistogram = 2;
+    PUriHistogram failedHistogram = 3;
+}
+
+message PUriHistogram {
+    int32 count = 1;
+    double avg = 2;
+    int64 max = 3;
+    repeated int32 histogram = 4;
 }

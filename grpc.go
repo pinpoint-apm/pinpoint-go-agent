@@ -764,7 +764,7 @@ func (cmdGrpc *cmdGrpc) close() {
 
 func (cmdGrpc *cmdGrpc) newHandleCommandStream() bool {
 	ctx := grpcMetadataContext(cmdGrpc.agent, -1)
-	stream, err := cmdGrpc.cmdClient.HandleCommand(ctx)
+	stream, err := cmdGrpc.cmdClient.HandleCommandV2(ctx)
 	if err != nil {
 		log("grpc").Errorf("fail to make command stream - %v", err)
 		return false

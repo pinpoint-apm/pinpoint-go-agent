@@ -1,13 +1,12 @@
 syntax = "proto3";
 
-import "google/protobuf/empty.proto";
-import "Annotation.proto";
+import "v1/Annotation.proto";
 
 
 option java_multiple_files = true;
 option java_package = "com.navercorp.pinpoint.grpc.trace";
 option java_outer_classname = "SpanProto";
-//option objc_class_prefix = "PIN";
+option go_package = "/v1";
 
 package v1;
 
@@ -23,8 +22,8 @@ message PSpan {
 
     PTransactionId transactionId = 2;
 
-    sfixed64 spanId = 3;
-    sfixed64 parentSpanId = 4;
+    sfixed64 spanId = 3 [jstype = JS_STRING];
+    sfixed64 parentSpanId = 4 [jstype = JS_STRING];
 
     // span event's startTimestamp
     int64 startTime = 5;
@@ -51,8 +50,8 @@ message PSpan {
 message PTransactionId {
     // identical to agentId if null
     string agentId = 1; //nullable
-    int64 agentStartTime = 2;
-    int64 sequence = 3;
+    int64 agentStartTime = 2 [jstype = JS_STRING];
+    int64 sequence = 3 [jstype = JS_STRING];
 }
 
 message PAcceptEvent {
@@ -109,7 +108,7 @@ message PSpanChunk {
 
     PTransactionId transactionId = 2;
 
-    sfixed64 spanId = 3;
+    sfixed64 spanId = 3 [jstype = JS_STRING];
 
     string endPoint = 4;
 
@@ -145,6 +144,7 @@ message PApiMetaData {
     string apiInfo = 2;
     int32 line = 3;
     int32 type = 4;
+    string location = 5;
 }
 
 message PStringMetaData {

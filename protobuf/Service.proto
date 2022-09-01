@@ -1,15 +1,14 @@
 syntax = "proto3";
 
 import "google/protobuf/empty.proto";
-import "Span.proto";
-import "Stat.proto";
-import "ThreadDump.proto";
-import "Cmd.proto";
+import "v1/Span.proto";
+import "v1/Stat.proto";
+import "v1/Cmd.proto";
 
 option java_multiple_files = true;
 option java_package = "com.navercorp.pinpoint.grpc.trace";
 option java_outer_classname = "ServiceProto";
-//option objc_class_prefix = "PIN";
+option go_package = "/v1";
 
 package v1;
 
@@ -40,7 +39,12 @@ service Stat {
 }
 
 service ProfilerCommandService {
+    // deprecated api
     rpc HandleCommand (stream PCmdMessage) returns (stream PCmdRequest) {
+        option deprecated = true;
+    }
+
+    rpc HandleCommandV2 (stream PCmdMessage) returns (stream PCmdRequest) {
     }
 
     rpc CommandEcho (PCmdEchoResponse) returns (google.protobuf.Empty) {

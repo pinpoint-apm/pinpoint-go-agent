@@ -12,7 +12,7 @@ require (
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/gocql/gocql v0.0.0-20200815110948-5378c8f664e9
 	github.com/golang/mock v1.6.0
-	github.com/golang/protobuf v1.4.2
+	github.com/golang/protobuf v1.5.2
 	github.com/gomodule/redigo v1.8.9
 	github.com/hashicorp/golang-lru v0.5.4
 	github.com/labstack/echo v3.3.10+incompatible
@@ -27,8 +27,8 @@ require (
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2
 	go.mongodb.org/mongo-driver v1.3.5
 	golang.org/x/time v0.0.0-20200416051211-89c76fbcd5d1
-	google.golang.org/genproto v0.0.0-20200319113533-08878b785e9c // indirect
-	google.golang.org/grpc v1.30.0
+	google.golang.org/grpc v1.49.0
+	google.golang.org/protobuf v1.28.1
 	gopkg.in/yaml.v2 v2.3.0
 	gorm.io/driver/mysql v1.3.3
 	gorm.io/gorm v1.23.4
