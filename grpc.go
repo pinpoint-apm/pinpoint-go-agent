@@ -465,7 +465,7 @@ func (s *spanStream) sendSpan(span *span) error {
 
 func makePSpan(span *span) *pb.PSpanMessage {
 	if span.apiId == 0 && span.operationName != "" {
-		span.annotations.AppendString(12, span.operationName)
+		span.annotations.AppendString(AnnotationApi, span.operationName)
 	}
 
 	spanEventList := make([]*pb.PSpanEvent, 0)
@@ -558,7 +558,7 @@ func makePSpanChunk(span *span) *pb.PSpanMessage {
 
 func makePSpanEvent(event *spanEvent) *pb.PSpanEvent {
 	if event.apiId == 0 && event.operationName != "" {
-		event.annotations.AppendString(12, event.operationName)
+		event.annotations.AppendString(AnnotationApi, event.operationName)
 	}
 
 	aSpanEvent := pb.PSpanEvent{

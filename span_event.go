@@ -86,7 +86,7 @@ func (se *spanEvent) SetError(e error) {
 		return
 	}
 
-	id := se.parentSpan.agent.cacheErrorFunc(se.operationName)
+	id := se.parentSpan.agent.cacheErrorFunc(se.operationName) //TODO: consider singleton id
 	se.errorFuncId = id
 	se.errorString = e.Error()
 }

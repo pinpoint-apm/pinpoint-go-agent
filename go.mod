@@ -4,6 +4,7 @@ go 1.12
 
 require (
 	github.com/Shopify/sarama v1.26.4
+	github.com/bradfitz/gomemcache v0.0.0-20220106215444-fb4bf637b56d
 	github.com/elastic/go-elasticsearch/v7 v7.10.0
 	github.com/gin-gonic/gin v1.6.2
 	github.com/go-chi/chi v4.1.2+incompatible

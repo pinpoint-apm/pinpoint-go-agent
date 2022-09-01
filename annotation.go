@@ -6,6 +6,8 @@ import (
 )
 
 const (
+	AnnotationArgs0   = -1
+	AnnotationApi     = 12
 	AnnotationSqlId   = 20
 	AnnotationHttpUrl = 40
 	//AnnotationHttpParam        = 41
