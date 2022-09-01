@@ -16,7 +16,6 @@ type inspectorStats struct {
 	interval     int64
 	cpuUserTime  float64
 	cpuSysTime   float64
-	goroutineNum int
 	heapUsed     int64
 	heapMax      int64
 	nonHeapUsed  int64
@@ -24,6 +23,7 @@ type inspectorStats struct {
 	gcNum        int64
 	gcTime       int64
 	numOpenFD    int64
+	numThreads   int64
 	responseAvg  int64
 	responseMax  int64
 	sampleNew    int64
@@ -86,6 +86,14 @@ func getNumFD() int32 {
 	return 0
 }
 
+func getNumThreads() int32 {
+	if proc != nil {
+		n, _ := proc.NumThreads()
+		return n
+	}
+	return 0
+}
+
 func getStats() *inspectorStats {
 	statsMux.Lock()
 	defer statsMux.Unlock()
@@ -103,7 +111,6 @@ func getStats() *inspectorStats {
 		interval:     int64(elapsed) * 1000,
 		cpuUserTime:  cpuUserPercent(cpuStat, lastCpuStat, elapsed),
 		cpuSysTime:   cpuSystemPercent(cpuStat, lastCpuStat, elapsed),
-		goroutineNum: runtime.NumGoroutine(),
 		heapUsed:     int64(memStat.HeapInuse),
 		heapMax:      int64(memStat.HeapSys),
 		nonHeapUsed:  int64(memStat.StackInuse),
@@ -111,6 +118,7 @@ func getStats() *inspectorStats {
 		gcNum:        int64(memStat.NumGC - lastMemStat.NumGC),
 		gcTime:       int64(memStat.PauseTotalNs-lastMemStat.PauseTotalNs) / int64(time.Millisecond),
 		numOpenFD:    int64(numFd),
+		numThreads:   int64(getNumThreads()),
 		responseAvg:  calcResponseAvg(),
 		responseMax:  maxResponseTime,
 		sampleNew:    sampleNew / int64(elapsed),

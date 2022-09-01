@@ -733,6 +733,10 @@ func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
 		},
 		DirectBuffer: nil,
 		Metadata:     "",
+		TotalThread: &pb.PTotalThread{
+			TotalThreadCount: stat.numThreads,
+		},
+		LoadedClass: nil,
 	}
 }
 
@@ -764,7 +768,7 @@ func (cmdGrpc *cmdGrpc) close() {
 
 func (cmdGrpc *cmdGrpc) newHandleCommandStream() bool {
 	ctx := grpcMetadataContext(cmdGrpc.agent, -1)
-	stream, err := cmdGrpc.cmdClient.HandleCommandV2(ctx)
+	stream, err := cmdGrpc.cmdClient.HandleCommand(ctx)
 	if err != nil {
 		log("grpc").Errorf("fail to make command stream - %v", err)
 		return false
