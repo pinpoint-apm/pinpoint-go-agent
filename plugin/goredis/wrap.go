@@ -52,7 +52,7 @@ func process(ctx context.Context, endpoint string) func(oldProcess func(cmd redi
 				return oldProcess(cmd)
 			}
 
-			tracer.NewSpanEvent("goredis.process: " + strings.ToUpper(cmd.Name()))
+			tracer.NewSpanEvent(makeMethodName("Cmd", []redis.Cmder{cmd}))
 			defer tracer.EndSpanEvent()
 
 			span := tracer.SpanEvent()
@@ -78,19 +78,7 @@ func processPipeline(ctx context.Context, endpoint string) func(oldProcess func(
 				return oldProcess(cmds)
 			}
 
-			var cmdNameBuf bytes.Buffer
-			for i, cmd := range cmds {
-				if i != 0 {
-					cmdNameBuf.WriteString(", ")
-				}
-				cmdName := strings.ToUpper(cmd.Name())
-				if cmdName == "" {
-					cmdName = "(empty command)"
-				}
-				cmdNameBuf.WriteString(cmdName)
-			}
-
-			tracer.NewSpanEvent("goredis.pipeline: " + cmdNameBuf.String())
+			tracer.NewSpanEvent(makeMethodName("Pipeline", cmds))
 			defer tracer.EndSpanEvent()
 
 			span := tracer.SpanEvent()
@@ -106,4 +94,23 @@ func processPipeline(ctx context.Context, endpoint string) func(oldProcess func(
 			return err
 		}
 	}
+}
+
+func makeMethodName(operation string, cmds []redis.Cmder) string {
+	var buf bytes.Buffer
+
+	buf.WriteString("goredis.")
+	buf.WriteString(operation)
+	buf.WriteString("(")
+	for i, cmd := range cmds {
+		if i != 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("'")
+		buf.WriteString(strings.ToLower(cmd.Name()))
+		buf.WriteString("'")
+	}
+	buf.WriteString(")")
+
+	return buf.String()
 }

@@ -1,6 +1,7 @@
 package redigo
 
 import (
+	"bytes"
 	"context"
 	"github.com/gomodule/redigo/redis"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
@@ -117,7 +118,7 @@ func (c *wrappedConn) Send(cmd string, args ...interface{}) error {
 		return c.base.Send(cmd, args...)
 	}
 
-	se := c.makeRedisSpanEvent("redigo.Send: " + strings.ToUpper(cmd))
+	se := c.makeRedisSpanEvent("Send", cmd)
 	defer c.tracer.EndSpanEvent()
 
 	err := c.base.Send(cmd, args...)
@@ -136,7 +137,7 @@ func (c *wrappedConn) Receive() (reply interface{}, err error) {
 		return c.base.Receive()
 	}
 
-	se := c.makeRedisSpanEvent("redigo.Receive")
+	se := c.makeRedisSpanEvent("Receive", "")
 	defer c.tracer.EndSpanEvent()
 
 	r, err := c.base.Receive()
@@ -146,8 +147,8 @@ func (c *wrappedConn) Receive() (reply interface{}, err error) {
 	return r, err
 }
 
-func (c *wrappedConn) makeRedisSpanEvent(operation string) pinpoint.SpanEventRecorder {
-	c.tracer.NewSpanEvent(operation)
+func (c *wrappedConn) makeRedisSpanEvent(operation string, cmd string) pinpoint.SpanEventRecorder {
+	c.tracer.NewSpanEvent(makeMethodName(operation, cmd))
 	se := c.tracer.SpanEvent()
 	se.SetServiceType(serviceTypeRedis)
 	se.SetDestination("REDIS")
@@ -156,12 +157,24 @@ func (c *wrappedConn) makeRedisSpanEvent(operation string) pinpoint.SpanEventRec
 	return se
 }
 
+func makeMethodName(operation string, cmd string) string {
+	var buf bytes.Buffer
+
+	buf.WriteString("redigo.")
+	buf.WriteString(operation)
+	buf.WriteString("('")
+	buf.WriteString(strings.ToLower(cmd))
+	buf.WriteString("')")
+
+	return buf.String()
+}
+
 func (c *wrappedConn) Do(cmd string, args ...interface{}) (interface{}, error) {
 	if c.tracer == nil {
 		return c.base.Do(cmd, args...)
 	}
 
-	se := c.makeRedisSpanEvent("redigo.Do: " + strings.ToUpper(cmd))
+	se := c.makeRedisSpanEvent("Do", cmd)
 	defer c.tracer.EndSpanEvent()
 
 	r, err := c.base.Do(cmd, args...)
@@ -178,7 +191,7 @@ func (c *wrappedConn) DoWithTimeout(readTimeout time.Duration, cmd string, args 
 		return cwt.DoWithTimeout(readTimeout, cmd, args...)
 	}
 
-	se := c.makeRedisSpanEvent("redigo.DoWithTimeout: " + strings.ToUpper(cmd))
+	se := c.makeRedisSpanEvent("DoWithTimeout", cmd)
 	defer c.tracer.EndSpanEvent()
 
 	r, err := cwt.DoWithTimeout(readTimeout, cmd, args...)
@@ -195,7 +208,7 @@ func (c *wrappedConn) ReceiveWithTimeout(timeout time.Duration) (reply interface
 		return cwt.ReceiveWithTimeout(timeout)
 	}
 
-	se := c.makeRedisSpanEvent("redigo.ReceiveWithTimeout")
+	se := c.makeRedisSpanEvent("ReceiveWithTimeout", "")
 	defer c.tracer.EndSpanEvent()
 
 	r, err := cwt.ReceiveWithTimeout(timeout)
@@ -215,7 +228,7 @@ func (c *wrappedConn) DoContext(ctx context.Context, cmd string, args ...interfa
 		return cwc.DoContext(ctx, cmd, args...)
 	}
 
-	se := c.makeRedisSpanEvent("redigo.DoContext: " + strings.ToUpper(cmd))
+	se := c.makeRedisSpanEvent("DoContext", cmd)
 	defer c.tracer.EndSpanEvent()
 
 	r, err := cwc.DoContext(ctx, cmd, args...)
@@ -235,7 +248,7 @@ func (c *wrappedConn) ReceiveContext(ctx context.Context) (interface{}, error) {
 		return cwc.ReceiveContext(ctx)
 	}
 
-	se := c.makeRedisSpanEvent("redigo.ReceiveContext")
+	se := c.makeRedisSpanEvent("ReceiveContext", "")
 	defer c.tracer.EndSpanEvent()
 
 	r, err := cwc.ReceiveContext(ctx)

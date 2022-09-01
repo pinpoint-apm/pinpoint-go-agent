@@ -45,7 +45,7 @@ func (r *hook) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Cont
 		return ctx, nil
 	}
 
-	tracer.NewSpanEvent("redis: " + getCmdName(cmd))
+	tracer.NewSpanEvent(makeMethodName("Cmd", []redis.Cmder{cmd}))
 	return ctx, nil
 }
 
@@ -76,15 +76,7 @@ func (r *hook) BeforeProcessPipeline(ctx context.Context, cmds []redis.Cmder) (c
 		return ctx, nil
 	}
 
-	var cmdNameBuf bytes.Buffer
-	for i, cmd := range cmds {
-		if i != 0 {
-			cmdNameBuf.WriteString(", ")
-		}
-		cmdNameBuf.WriteString(getCmdName(cmd))
-	}
-
-	tracer.NewSpanEvent("redis.pipeline: " + cmdNameBuf.String())
+	tracer.NewSpanEvent(makeMethodName("Pipeline", cmds))
 	return ctx, nil
 }
 
@@ -112,10 +104,21 @@ func (r *hook) AfterProcessPipeline(ctx context.Context, cmds []redis.Cmder) err
 	return nil
 }
 
-func getCmdName(cmd redis.Cmder) string {
-	cmdName := strings.ToUpper(cmd.Name())
-	if cmdName == "" {
-		cmdName = "(empty command)"
+func makeMethodName(operation string, cmds []redis.Cmder) string {
+	var buf bytes.Buffer
+
+	buf.WriteString("goredisv8.")
+	buf.WriteString(operation)
+	buf.WriteString("(")
+	for i, cmd := range cmds {
+		if i != 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("'")
+		buf.WriteString(strings.ToLower(cmd.Name()))
+		buf.WriteString("'")
 	}
-	return cmdName
+	buf.WriteString(")")
+
+	return buf.String()
 }
