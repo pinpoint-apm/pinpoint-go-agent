@@ -116,7 +116,7 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	req = &clone
 
-	tracer = before(tracer, "http.Client.Do", req)
+	tracer = before(tracer, "http/Client.Do(Request)", req)
 	resp, err := r.original.RoundTrip(req)
 	after(tracer, resp, err)
 

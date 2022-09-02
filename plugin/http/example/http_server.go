@@ -52,7 +52,7 @@ func main() {
 		pinpoint.WithAppName("GoHttpTest"),
 		pinpoint.WithAgentId("GoHttpAgent"),
 		pinpoint.WithHttpStatusCodeError([]string{"5xx", "4xx"}),
-		pinpoint.WithHttpExcludeUrl([]string{"/wrapreq*", "/**/*.go", "/*/*.do", "/abc**"}),
+		//pinpoint.WithHttpExcludeUrl([]string{"/wrapreq*", "/**/*.go", "/*/*.do", "/abc**"}),
 		pinpoint.WithHttpExcludeMethod([]string{"put", "POST"}),
 		//pinpoint.WithHttpRecordRequestHeader([]string{"HEADERS-ALL"}),
 		pinpoint.WithHttpRecordRequestHeader([]string{"user-agent", "connection", "foo"}),
@@ -67,18 +67,18 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "index", "/", index))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapRequest", "/wraprequest", wrapRequest))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapRequest2", "/wraprequest/a.zo", wrapRequest))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapRequest3", "/wraprequest/aa/b.zo", wrapRequest))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapClient", "/wrapclient", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapClient2", "/wrapclient/aa/a.go", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapClient3", "/wrapclient/aa/bb/a.go", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapClient4", "/wrapclient/c.do", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapClient5", "/wrapclient/dd/d.do", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapClient6", "/wrapclient/c@do", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapClient7", "/abcd", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "wrapClient8", "/abcd/e.go", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/", index))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wraprequest", wrapRequest))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wraprequest/a.zo", wrapRequest))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wraprequest/aa/b.zo", wrapRequest))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wrapclient", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wrapclient/aa/a.go", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wrapclient/aa/bb/a.go", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wrapclient/c.do", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wrapclient/dd/d.do", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wrapclient/c@do", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/abcd", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/abcd/e.go", wrapClient))
 
 	http.ListenAndServe(":8000", nil)
 	agent.Shutdown()

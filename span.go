@@ -291,7 +291,7 @@ func (span *span) SetError(e error) {
 		return
 	}
 
-	id := span.agent.cacheErrorFunc(span.operationName)
+	id := span.agent.cacheErrorFunc("error")
 	span.errorFuncId = id
 	span.errorString = e.Error()
 	span.err = 1
