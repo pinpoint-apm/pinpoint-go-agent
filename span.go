@@ -118,8 +118,8 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 
 		writer.Set(HttpParentSpanId, strconv.FormatInt(span.spanId, 10))
 		writer.Set(HttpFlags, strconv.Itoa(span.flags))
-		writer.Set(HttpParentApplicationName, span.agent.Config().ApplicationName)
-		writer.Set(HttpParentApplicationType, strconv.Itoa(int(span.agent.Config().ApplicationType)))
+		writer.Set(HttpParentApplicationName, ConfigString(cfgAppName))
+		writer.Set(HttpParentApplicationType, strconv.Itoa(ConfigInt(cfgAppType)))
 		writer.Set(HttpParentApplicationNamespace, "")
 
 		se.endPoint = se.destinationId

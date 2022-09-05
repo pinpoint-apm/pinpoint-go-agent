@@ -89,8 +89,8 @@ func NewAgent(config *Config) (Agent, error) {
 	agent.startTime = time.Now().UnixNano() / int64(time.Millisecond)
 	agent.sequence = 0
 
-	logger.SetLevel(agent.config.LogLevel)
-	if config.LogLevel > logrus.InfoLevel {
+	logger.SetLevel(agent.config.logLevel)
+	if config.logLevel > logrus.InfoLevel {
 		logger.SetReportCaller(true)
 	}
 
@@ -117,15 +117,15 @@ func NewAgent(config *Config) (Agent, error) {
 	}
 
 	var baseSampler sampler
-	if config.Sampling.Type == SamplingTypeCounter {
-		baseSampler = newRateSampler(config.Sampling.Rate)
+	if ConfigString(cfgSamplingType) == SamplingTypeCounter {
+		baseSampler = newRateSampler(ConfigInt(cfgSamplingCounterRate))
 	} else {
-		baseSampler = newPercentSampler(config.Sampling.PercentRate)
+		baseSampler = newPercentSampler(ConfigFloat32(cfgSamplingPercentRate))
 	}
 
-	if config.Sampling.NewThroughput > 0 || config.Sampling.ContinueThroughput > 0 {
-		agent.sampler = newThroughputLimitTraceSampler(baseSampler, config.Sampling.NewThroughput,
-			config.Sampling.ContinueThroughput)
+	if ConfigInt(cfgSamplingNewThroughput) > 0 || ConfigInt(cfgSamplingContinueThroughput) > 0 {
+		agent.sampler = newThroughputLimitTraceSampler(baseSampler, ConfigInt(cfgSamplingNewThroughput),
+			ConfigInt(cfgSamplingContinueThroughput))
 	} else {
 		agent.sampler = newBasicTraceSampler(baseSampler)
 	}
@@ -133,11 +133,11 @@ func NewAgent(config *Config) (Agent, error) {
 	agent.httpStatusErrors = newHttpStatusError(config)
 	agent.httpUrlFilter = newHttpUrlFilter(config)
 
-	agent.httpRequestHeaderRecorder = makeHttpHeaderRecoder(config.Http.RecordRequestHeader)
-	agent.httpResponseHeaderRecorder = makeHttpHeaderRecoder(config.Http.RecordRespondHeader)
-	agent.httpCookieRecorder = makeHttpHeaderRecoder(config.Http.RecordRequestCookie)
+	agent.httpRequestHeaderRecorder = makeHttpHeaderRecoder(ConfigStringSlice(cfgHttpRecordRequestHeader))
+	agent.httpResponseHeaderRecorder = makeHttpHeaderRecoder(ConfigStringSlice(cfgHttpRecordRespondHeader))
+	agent.httpCookieRecorder = makeHttpHeaderRecoder(ConfigStringSlice(cfgHttpRecordRequestCookie))
 
-	if !config.OffGrpc {
+	if !config.offGrpc {
 		go connectGrpc(&agent)
 	}
 	return &agent, nil
@@ -286,7 +286,7 @@ func (agent *agent) Config() Config {
 
 func (agent *agent) generateTransactionId() TransactionId {
 	atomic.AddInt64(&agent.sequence, 1)
-	return TransactionId{agent.config.AgentId, agent.startTime, agent.sequence}
+	return TransactionId{ConfigString(cfgAgentID), agent.startTime, agent.sequence}
 }
 
 func (agent *agent) Enable() bool {
@@ -522,7 +522,8 @@ func (agent *agent) IsExcludedUrl(url string) bool {
 }
 
 func (agent *agent) IsExcludedMethod(method string) bool {
-	for _, em := range agent.config.Http.ExcludeMethod {
+	em := ConfigStringSlice(cfgHttpExcludeMethod)
+	for _, em := range em {
 		if strings.EqualFold(em, method) {
 			return true
 		}

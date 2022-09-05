@@ -25,8 +25,8 @@ import (
 func grpcMetadataContext(agent Agent, socketId int64) context.Context {
 	m := map[string]string{}
 
-	m["agentid"] = agent.Config().AgentId
-	m["applicationname"] = agent.Config().ApplicationName
+	m["agentid"] = ConfigString(cfgAgentID)
+	m["applicationname"] = ConfigString(cfgAppName)
 	m["starttime"] = strconv.FormatInt(agent.StartTime(), 10)
 
 	if socketId > 0 {
@@ -136,7 +136,7 @@ func connectToCollectorWithRetry(serverAddr string) (*grpc.ClientConn, error) {
 }
 
 func newAgentGrpc(agent Agent) (*agentGrpc, error) {
-	serverAddr := fmt.Sprintf("%s:%d", agent.Config().Collector.Host, agent.Config().Collector.AgentPort)
+	serverAddr := fmt.Sprintf("%s:%d", ConfigString(cfgCollectorHost), ConfigInt(cfgCollectorAgentPort))
 	conn, err := connectToCollectorWithRetry(serverAddr)
 	if err != nil {
 		return nil, err
@@ -181,7 +181,7 @@ func makeAgentInfo(agent Agent) (context.Context, *pb.PAgentInfo) {
 	agentInfo := &pb.PAgentInfo{
 		Hostname:     getHostName(),
 		Ip:           getOutboundIP(),
-		ServiceType:  agent.Config().ApplicationType,
+		ServiceType:  int32(ConfigInt(cfgAppType)),
 		Pid:          int32(os.Getpid()),
 		AgentVersion: AgentVersion,
 		VmVersion:    runtime.Version(),
@@ -197,7 +197,7 @@ func makeAgentInfo(agent Agent) (context.Context, *pb.PAgentInfo) {
 			VmVersion: runtime.Version(),
 			GcType:    pb.PJvmGcType_JVM_GC_TYPE_CMS,
 		},
-		Container: agent.Config().IsContainer,
+		Container: ConfigBool(cfgRunOnContainer),
 	}
 
 	log("grpc").Infof("send agent information: %s", agentInfo.String())
@@ -325,7 +325,7 @@ func newStreamWithRetry(agent Agent, grpcConn *grpc.ClientConn, newStreamFunc fu
 			return true
 		}
 
-		if !agent.Config().OffGrpc {
+		if !agent.Config().offGrpc {
 			retry := 1
 			for !waitUntilReady(grpcConn, backOffSleep(retry), which) {
 				retry++
@@ -404,7 +404,7 @@ type spanStream struct {
 }
 
 func newSpanGrpc(agent Agent) (*spanGrpc, error) {
-	serverAddr := fmt.Sprintf("%s:%d", agent.Config().Collector.Host, agent.Config().Collector.SpanPort)
+	serverAddr := fmt.Sprintf("%s:%d", ConfigString(cfgCollectorHost), ConfigInt(cfgCollectorSpanPort))
 	conn, err := connectToCollectorWithRetry(serverAddr)
 	if err != nil {
 		return nil, err
@@ -500,7 +500,7 @@ func makePSpan(span *span) *pb.PSpanMessage {
 				SpanEvent:              spanEventList,
 				Err:                    int32(span.err),
 				ExceptionInfo:          nil,
-				ApplicationServiceType: span.agent.Config().ApplicationType,
+				ApplicationServiceType: int32(ConfigInt(cfgAppType)),
 				LoggingTransactionInfo: span.loggingInfo,
 			},
 		},
@@ -544,7 +544,7 @@ func makePSpanChunk(span *span) *pb.PSpanMessage {
 				KeyTime:                span.startTime.UnixNano() / int64(time.Millisecond),
 				EndPoint:               span.endPoint,
 				SpanEvent:              spanEventList,
-				ApplicationServiceType: span.agent.Config().ApplicationType,
+				ApplicationServiceType: int32(ConfigInt(cfgAppType)),
 				LocalAsyncId: &pb.PLocalAsyncId{
 					AsyncId:  span.asyncId,
 					Sequence: span.asyncSequence,
@@ -622,7 +622,7 @@ type statStream struct {
 }
 
 func newStatGrpc(agent Agent) (*statGrpc, error) {
-	serverAddr := fmt.Sprintf("%s:%d", agent.Config().Collector.Host, agent.Config().Collector.StatPort)
+	serverAddr := fmt.Sprintf("%s:%d", ConfigString(cfgCollectorHost), ConfigInt(cfgCollectorStatPort))
 	conn, err := connectToCollectorWithRetry(serverAddr)
 	if err != nil {
 		return nil, err
@@ -752,7 +752,7 @@ type cmdStream struct {
 }
 
 func newCommandGrpc(agent Agent) (*cmdGrpc, error) {
-	serverAddr := fmt.Sprintf("%s:%d", agent.Config().Collector.Host, agent.Config().Collector.AgentPort)
+	serverAddr := fmt.Sprintf("%s:%d", ConfigString(cfgCollectorHost), ConfigInt(cfgCollectorAgentPort))
 	conn, err := connectToCollectorWithRetry(serverAddr)
 	if err != nil {
 		return nil, err

@@ -19,10 +19,12 @@ require (
 	github.com/labstack/echo v3.3.10+incompatible
 	github.com/labstack/gommon v0.3.0 // indirect
 	github.com/lib/pq v1.8.0
-	github.com/mattn/go-colorable v0.1.8 // indirect
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d // indirect
 	github.com/shirou/gopsutil/v3 v3.22.7
 	github.com/sirupsen/logrus v1.6.0
+	github.com/spf13/cast v1.5.0
+	github.com/spf13/pflag v1.0.5
+	github.com/spf13/viper v1.12.0
 	github.com/stretchr/testify v1.8.0
 	github.com/tsuna/gohbase v0.0.0-20200820233321-d669aff6255b
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2
@@ -30,7 +32,7 @@ require (
 	golang.org/x/time v0.0.0-20200416051211-89c76fbcd5d1
 	google.golang.org/grpc v1.49.0
 	google.golang.org/protobuf v1.28.1
-	gopkg.in/yaml.v2 v2.3.0
+	gopkg.in/yaml.v2 v2.4.0
 	gorm.io/driver/mysql v1.3.3
 	gorm.io/gorm v1.23.4
 	modernc.org/strutil v1.1.2 // indirect

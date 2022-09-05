@@ -1,62 +1,124 @@
 package pinpoint
 
 import (
-	"encoding/json"
 	"errors"
-	"github.com/sirupsen/logrus"
-	"gopkg.in/yaml.v2"
+	"github.com/spf13/cast"
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 	"io/ioutil"
 	"math/rand"
 	"os"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
+const (
+	cfgAppName                    = "ApplicationName"
+	cfgAppType                    = "ApplicationType"
+	cfgAgentID                    = "AgentID"
+	cfgCollectorHost              = "Collector.Host"
+	cfgCollectorAgentPort         = "Collector.AgentPort"
+	cfgCollectorSpanPort          = "Collector.SpanPort"
+	cfgCollectorStatPort          = "Collector.StatPort"
+	cfgLogLevel                   = "LogLevel"
+	cfgSamplingType               = "Sampling.Type"
+	cfgSamplingCounterRate        = "Sampling.CounterRate"
+	cfgSamplingPercentRate        = "Sampling.PercentRate"
+	cfgSamplingNewThroughput      = "Sampling.NewThroughput"
+	cfgSamplingContinueThroughput = "Sampling.ContinueThroughput"
+	cfgStatCollectInterval        = "Stat.CollectInterval"
+	cfgStatBatchCount             = "Stat.BatchCount"
+	cfgHttpStatusCodeErrors       = "Http.StatusCodeErrors"
+	cfgHttpExcludeUrl             = "Http.ExcludeUrl"
+	cfgHttpExcludeMethod          = "Http.ExcludeMethod"
+	cfgHttpRecordRequestHeader    = "Http.RecordRequestHeader"
+	cfgHttpRecordRespondHeader    = "Http.RecordRespondHeader"
+	cfgHttpRecordRequestCookie    = "Http.RecordRequestCookie"
+	cfgRunOnContainer             = "RunOnContainer"
+	cfgProfile                    = "Profile"
+)
+
+type configMapItem struct {
+	value        interface{}
+	cmdKey       string
+	envKey       string
+	defaultValue interface{}
+}
+
+type configMap map[string]*configMapItem
+
+var cfgMap configMap
+
+func initConfigMapItem(key string, v interface{}) {
+	cfgMap[key] = &configMapItem{cmdKey: cmdName(key), envKey: envName(key), defaultValue: v}
+}
+
+func init() {
+	cfgMap = make(map[string]*configMapItem, 25)
+
+	initConfigMapItem(cfgAppName, "")
+	initConfigMapItem(cfgAppType, ServiceTypeGoApp)
+	initConfigMapItem(cfgAgentID, "")
+	initConfigMapItem(cfgCollectorHost, "localhost")
+	initConfigMapItem(cfgCollectorAgentPort, 9991)
+	initConfigMapItem(cfgCollectorSpanPort, 9993)
+	initConfigMapItem(cfgCollectorStatPort, 9992)
+	initConfigMapItem(cfgLogLevel, "info")
+	initConfigMapItem(cfgSamplingType, SamplingTypeCounter)
+	initConfigMapItem(cfgSamplingCounterRate, 1)
+	initConfigMapItem(cfgSamplingPercentRate, 100)
+	initConfigMapItem(cfgSamplingNewThroughput, 0)
+	initConfigMapItem(cfgSamplingContinueThroughput, 0)
+	initConfigMapItem(cfgStatCollectInterval, 5000)
+	initConfigMapItem(cfgStatBatchCount, 5)
+	initConfigMapItem(cfgHttpStatusCodeErrors, []string{"5xx"})
+	initConfigMapItem(cfgHttpExcludeUrl, []string{})
+	initConfigMapItem(cfgHttpExcludeMethod, []string{})
+	initConfigMapItem(cfgHttpRecordRequestHeader, []string{})
+	initConfigMapItem(cfgHttpRecordRespondHeader, []string{})
+	initConfigMapItem(cfgHttpRecordRequestCookie, []string{})
+	initConfigMapItem(cfgRunOnContainer, false)
+	initConfigMapItem(cfgProfile, "")
+
+	pflag.String(cmdName(cfgAppName), "", "")
+	pflag.Int(cmdName(cfgAppType), -1, "")
+	pflag.String(cmdName(cfgAgentID), "", "")
+	pflag.String(cmdName(cfgCollectorHost), "", "")
+	pflag.Int(cmdName(cfgCollectorAgentPort), -1, "")
+	pflag.Int(cmdName(cfgCollectorSpanPort), -1, "")
+	pflag.Int(cmdName(cfgCollectorStatPort), -1, "")
+	pflag.Int(cmdName(cfgSamplingType), -1, "")
+	pflag.Int(cmdName(cfgSamplingCounterRate), -1, "")
+	pflag.Float32(cmdName(cfgSamplingPercentRate), -1, "")
+	pflag.Int(cmdName(cfgSamplingNewThroughput), -1, "")
+	pflag.Int(cmdName(cfgSamplingContinueThroughput), -1, "")
+	pflag.Int(cmdName(cfgStatCollectInterval), -1, "")
+	pflag.Int(cmdName(cfgStatBatchCount), -1, "")
+	pflag.StringSlice(cmdName(cfgHttpStatusCodeErrors), nil, "")
+	pflag.StringSlice(cmdName(cfgHttpExcludeUrl), nil, "")
+	pflag.StringSlice(cmdName(cfgHttpExcludeMethod), nil, "")
+	pflag.StringSlice(cmdName(cfgHttpRecordRequestHeader), nil, "")
+	pflag.StringSlice(cmdName(cfgHttpRecordRespondHeader), nil, "")
+	pflag.StringSlice(cmdName(cfgHttpRecordRequestCookie), nil, "")
+	pflag.String(cmdName(cfgLogLevel), "", "")
+	pflag.Bool(cmdName(cfgRunOnContainer), false, "")
+	pflag.String(cmdName(cfgProfile), "", "")
+	pflag.Parse()
+
+}
+
 type Config struct {
-	ApplicationName string
-	ApplicationType int32
-	AgentId         string
-	ConfigFilePath  string
+	cfgFilePath string
+	logLevel    logrus.Level
 
-	Collector struct {
-		Host      string
-		AgentPort int
-		SpanPort  int
-		StatPort  int
-	}
-
-	Sampling struct {
-		Type               string
-		Rate               int //same as CounterRate
-		CounterRate        int
-		PercentRate        float32
-		NewThroughput      int
-		ContinueThroughput int
-	}
-
-	Stat struct {
-		CollectInterval int
-		BatchCount      int
-	}
-
-	Http struct {
-		StatusCodeErrors    []string
-		ExcludeUrl          []string
-		ExcludeMethod       []string
-		RecordRequestHeader []string
-		RecordRespondHeader []string
-		RecordRequestCookie []string
-	}
-
-	IsContainer bool
-	LogLevel    logrus.Level
-	OffGrpc     bool //for test
+	needContainerCheck bool
+	offGrpc            bool //for test
 }
 
 type ConfigOption func(*Config)
-
-var setContainer = bool(false)
 
 const idPattern = "[a-zA-Z0-9\\._\\-]+"
 
@@ -67,62 +129,115 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		fn(config)
 	}
 
-	if config.ConfigFilePath != "" {
-		err := readConfigFile(config)
-		if err != nil {
-			return nil, err
-		}
+	v1 := viper.New()
+	initCmdLineConfig(v1)
+	initEnvConfig(v1)
+
+	v2 := viper.New()
+	if config.cfgFilePath != "" {
+		v2.SetConfigFile(config.cfgFilePath)
+		v2.ReadInConfig()
+		//v3 := initProfile(v1)
 	}
 
+	loadConfig(v1, v2)
+
 	r, _ := regexp.Compile(idPattern)
-	if config.ApplicationName == "" {
+	appName := ConfigString(cfgAppName)
+	if appName == "" {
 		return nil, errors.New("application name is required")
-	} else if len(config.ApplicationName) > MaxApplicationNameLength {
+	} else if len(appName) > MaxApplicationNameLength {
 		return nil, errors.New("application name is too long (max length: 24)")
-	} else if !r.MatchString(config.ApplicationName) {
+	} else if !r.MatchString(appName) {
 		return nil, errors.New("application name has invalid pattern (" + idPattern + ")")
 	}
 
-	if config.AgentId == "" || len(config.AgentId) > MaxAgentIdLength || !r.MatchString(config.AgentId) {
-		config.AgentId = randomString(MaxAgentIdLength - 1)
-		log("config").Info("agentId is automatically generated: ", config.AgentId)
+	agentId := ConfigString(cfgAgentID)
+	if agentId == "" || len(agentId) > MaxAgentIdLength || !r.MatchString(agentId) {
+		cfgMap[cfgAgentID].value = randomString(MaxAgentIdLength - 1)
+		log("config").Infof("agentId is automatically generated: %v", cfgMap[cfgAgentID].value)
 	}
 
-	config.Sampling.Type = strings.ToUpper(strings.TrimSpace(config.Sampling.Type))
-	if config.Sampling.Type == SamplingTypeCounter {
-		if config.Sampling.CounterRate != -1 {
-			config.Sampling.Rate = config.Sampling.CounterRate
+	sampleType := ConfigString(cfgSamplingType)
+	sampleType = strings.ToUpper(strings.TrimSpace(sampleType))
+	if sampleType == SamplingTypeCounter {
+		rate := ConfigInt(cfgSamplingCounterRate)
+		if rate < 0 {
+			cfgMap[cfgSamplingCounterRate].value = 0
 		}
-		if config.Sampling.Rate < 0 {
-			config.Sampling.Rate = 0
+	} else if sampleType == SamplingTypePercent {
+		rate := ConfigFloat32(cfgSamplingPercentRate)
+		if rate < 0 {
+			rate = 0
+		} else if rate < 0.01 {
+			rate = 0.01
+		} else if rate > 100 {
+			rate = 100
 		}
-	} else if config.Sampling.Type == SamplingTypePercent {
-		if config.Sampling.PercentRate < 0 {
-			config.Sampling.PercentRate = 0
-		} else if config.Sampling.PercentRate < 0.01 {
-			config.Sampling.PercentRate = 0.01
-		} else if config.Sampling.PercentRate > 100 {
-			config.Sampling.PercentRate = 100
-		}
+		cfgMap[cfgSamplingPercentRate].value = rate
 	} else {
-		config.Sampling.Type = SamplingTypeCounter
-		config.Sampling.Rate = 1
+		cfgMap[cfgSamplingType].value = SamplingTypeCounter
+		cfgMap[cfgSamplingCounterRate].value = 1
 	}
 
-	trimStringSlice(config.Http.StatusCodeErrors)
-	trimStringSlice(config.Http.ExcludeUrl)
-	trimStringSlice(config.Http.ExcludeMethod)
-	trimStringSlice(config.Http.RecordRequestHeader)
-	trimStringSlice(config.Http.RecordRespondHeader)
-	trimStringSlice(config.Http.RecordRequestCookie)
+	trimStringSlice(ConfigStringSlice(cfgHttpStatusCodeErrors))
+	trimStringSlice(ConfigStringSlice(cfgHttpExcludeUrl))
+	trimStringSlice(ConfigStringSlice(cfgHttpExcludeMethod))
+	trimStringSlice(ConfigStringSlice(cfgHttpRecordRequestHeader))
+	trimStringSlice(ConfigStringSlice(cfgHttpRecordRespondHeader))
+	trimStringSlice(ConfigStringSlice(cfgHttpRecordRequestCookie))
 
-	if !setContainer {
-		config.IsContainer = isContainerEnv()
+	if config.needContainerCheck {
+		cfgMap[cfgRunOnContainer].value = isContainerEnv()
 	}
 
+	config.logLevel = parseLogLevel(ConfigString(cfgLogLevel))
 	config.printConfigString()
 
 	return config, nil
+}
+
+func parseLogLevel(level string) logrus.Level {
+	lvl, e := logrus.ParseLevel(level)
+	if e != nil {
+		log("config").Errorf("invalid log level: %v", e)
+		lvl = logrus.InfoLevel
+	}
+	return lvl
+}
+
+func loadConfig(cmdEnvViper *viper.Viper, cfgFileViper *viper.Viper) {
+	for k, v := range cfgMap {
+		if cmdEnvViper.IsSet(v.cmdKey) {
+			v.value = cmdEnvViper.Get(v.cmdKey)
+		} else if cmdEnvViper.IsSet(v.envKey) {
+			v.value = cmdEnvViper.Get(v.envKey)
+		} else if cfgFileViper.IsSet(k) {
+			v.value = cfgFileViper.Get(k)
+		}
+	}
+}
+
+func cmdName(cfgName string) string {
+	return "pinpoint-" + strings.ReplaceAll(strings.ToLower(cfgName), ".", "-")
+}
+
+func envName(cfgName string) string {
+	return strings.ReplaceAll(strings.ToLower(cfgName), ".", "_")
+}
+
+func initCmdLineConfig(v *viper.Viper) {
+	v.BindPFlags(pflag.CommandLine)
+}
+
+func initEnvConfig(v *viper.Viper) {
+	v.SetEnvPrefix("pinpoint_go")
+	v.AutomaticEnv()
+}
+
+func initProfile(v *viper.Viper) *viper.Viper {
+	profile := v.GetString(cmdName(cfgProfile))
+	return v.Sub("profile." + profile)
 }
 
 func trimStringSlice(slice []string) {
@@ -147,219 +262,194 @@ func isContainerEnv() bool {
 func defaultConfig() *Config {
 	config := new(Config)
 
-	config.ApplicationName = ""
-	config.ApplicationType = ServiceTypeGoApp
-	config.AgentId = ""
+	config.logLevel = logrus.InfoLevel
+	config.needContainerCheck = true
+	config.offGrpc = false
 
-	config.Collector.Host = "localhost"
-	config.Collector.AgentPort = 9991
-	config.Collector.StatPort = 9992
-	config.Collector.SpanPort = 9993
+	for _, v := range cfgMap {
+		v.value = v.defaultValue
+	}
 
-	config.LogLevel = logrus.InfoLevel
-
-	config.Sampling.Type = SamplingTypeCounter
-	config.Sampling.Rate = 1
-	config.Sampling.CounterRate = -1
-	config.Sampling.PercentRate = 100
-	config.Sampling.NewThroughput = 0
-	config.Sampling.ContinueThroughput = 0
-
-	config.Stat.CollectInterval = 5000 //ms
-	config.Stat.BatchCount = 6
-
-	config.Http.StatusCodeErrors = []string{"5xx"}
-	config.Http.ExcludeUrl = []string{}
-	config.Http.ExcludeMethod = []string{}
-	config.Http.RecordRequestHeader = []string{}
-	config.Http.RecordRespondHeader = []string{}
-	config.Http.RecordRequestCookie = []string{}
-
-	config.IsContainer = false
-	setContainer = false
-
-	config.OffGrpc = false
 	return config
 }
 
-func readConfigFile(config *Config) error {
-	f, err := os.Open(config.ConfigFilePath)
-	if err != nil {
-		log("config").Error("pinpoint config file error - ", err)
-		return err
-	}
-	defer f.Close()
+func ConfigString(cfgName string) string {
+	return cast.ToString(cfgMap[cfgName].value)
+}
 
-	dec := yaml.NewDecoder(f)
-	err = dec.Decode(config)
-	if err != nil {
-		log("config").Error("pinpoint config file is corrupted - ", err)
-	}
+func ConfigInt(cfgName string) int {
+	return cast.ToInt(cfgMap[cfgName].value)
+}
 
-	return err
+func ConfigFloat32(cfgName string) float32 {
+	return cast.ToFloat32(cfgMap[cfgName].value)
+}
+
+func ConfigStringSlice(cfgName string) []string {
+	return cast.ToStringSlice(cfgMap[cfgName].value)
+}
+
+func ConfigBool(cfgName string) bool {
+	return cast.ToBool(cfgMap[cfgName].value)
 }
 
 func WithAppName(name string) ConfigOption {
 	return func(c *Config) {
-		c.ApplicationName = name
+		cfgMap[cfgAppName].value = name
 	}
 }
 
 func WithAppType(typ int32) ConfigOption {
 	return func(c *Config) {
-		c.ApplicationType = typ
+		cfgMap[cfgAppType].value = typ
 	}
 }
 
 func WithAgentId(id string) ConfigOption {
 	return func(c *Config) {
-		c.AgentId = id
+		cfgMap[cfgAgentID].value = id
 	}
 }
 
 func WithConfigFile(filePath string) ConfigOption {
 	return func(c *Config) {
-		c.ConfigFilePath = filePath
+		c.cfgFilePath = filePath
 	}
 }
 
 func WithCollectorHost(host string) ConfigOption {
 	return func(c *Config) {
-		c.Collector.Host = host
+		cfgMap[cfgCollectorHost].value = host
 	}
 }
 
 func WithCollectorAgentPort(port int) ConfigOption {
 	return func(c *Config) {
-		c.Collector.AgentPort = port
+		cfgMap[cfgCollectorAgentPort].value = port
 	}
 }
 
 func WithCollectorSpanPort(port int) ConfigOption {
 	return func(c *Config) {
-		c.Collector.SpanPort = port
+		cfgMap[cfgCollectorSpanPort].value = port
 	}
 }
 
 func WithCollectorStatPort(port int) ConfigOption {
 	return func(c *Config) {
-		c.Collector.StatPort = port
+		cfgMap[cfgCollectorStatPort].value = port
 	}
 }
 
 func WithLogLevel(level string) ConfigOption {
 	return func(c *Config) {
-		l, e := logrus.ParseLevel(level)
-		if e != nil {
-			log("config").Error("invalid log level: ", e)
-			l = logrus.InfoLevel
-		}
-		c.LogLevel = l
+		c.logLevel = parseLogLevel(level)
 	}
 }
 
 func WithSamplingType(samplingType string) ConfigOption {
 	return func(c *Config) {
-		c.Sampling.Type = samplingType
+		cfgMap[cfgSamplingType].value = samplingType
 	}
 }
 
-//DEPRECATED: Use WithSamplingCounterRate()
+// WithSamplingRate DEPRECATED: Use WithSamplingCounterRate()
 func WithSamplingRate(rate int) ConfigOption {
 	return func(c *Config) {
-		c.Sampling.Rate = rate
+		cfgMap[cfgSamplingCounterRate].value = rate
 	}
 }
 
 func WithSamplingCounterRate(rate int) ConfigOption {
 	return func(c *Config) {
-		c.Sampling.CounterRate = rate
+		cfgMap[cfgSamplingCounterRate].value = rate
 	}
 }
 
 func WithSamplingPercentRate(rate float32) ConfigOption {
 	return func(c *Config) {
-		c.Sampling.PercentRate = rate
+		cfgMap[cfgSamplingPercentRate].value = rate
 	}
 }
 
 func WithSamplingNewThroughput(tps int) ConfigOption {
 	return func(c *Config) {
-		c.Sampling.NewThroughput = tps
+		cfgMap[cfgSamplingNewThroughput].value = tps
 	}
 }
 
 func WithSamplingContinueThroughput(tps int) ConfigOption {
 	return func(c *Config) {
-		c.Sampling.ContinueThroughput = tps
+		cfgMap[cfgSamplingContinueThroughput].value = tps
 	}
 }
 
 func WithStatCollectInterval(interval int) ConfigOption {
 	return func(c *Config) {
-		c.Stat.CollectInterval = interval
+		cfgMap[cfgStatCollectInterval].value = interval
 	}
 }
 
 func WithStatBatchCount(count int) ConfigOption {
 	return func(c *Config) {
-		c.Stat.BatchCount = count
+		cfgMap[cfgStatBatchCount].value = count
 	}
 }
 
 func WithIsContainer(isContainer bool) ConfigOption {
-	setContainer = true
 	return func(c *Config) {
-		c.IsContainer = isContainer
+		cfgMap[cfgRunOnContainer].value = isContainer
+		c.needContainerCheck = false
 	}
 }
 
 func WithHttpStatusCodeError(errors []string) ConfigOption {
 	return func(c *Config) {
-		c.Http.StatusCodeErrors = errors
+		cfgMap[cfgHttpStatusCodeErrors].value = errors
 	}
 }
 
 func WithHttpExcludeUrl(urlPath []string) ConfigOption {
 	return func(c *Config) {
-		c.Http.ExcludeUrl = urlPath
+		cfgMap[cfgHttpExcludeUrl].value = urlPath
 	}
 }
 
 func WithHttpExcludeMethod(method []string) ConfigOption {
 	return func(c *Config) {
-		c.Http.ExcludeMethod = method
+		cfgMap[cfgHttpExcludeMethod].value = method
 	}
 }
 
 func WithHttpRecordRequestHeader(header []string) ConfigOption {
 	return func(c *Config) {
-		c.Http.RecordRequestHeader = header
+		cfgMap[cfgHttpRecordRequestHeader].value = header
 	}
 }
 
 func WithHttpRecordRespondHeader(header []string) ConfigOption {
 	return func(c *Config) {
-		c.Http.RecordRespondHeader = header
+		cfgMap[cfgHttpRecordRespondHeader].value = header
 	}
 }
 
 func WithHttpRecordRequestCookie(cookie []string) ConfigOption {
 	return func(c *Config) {
-		c.Http.RecordRequestCookie = cookie
+		cfgMap[cfgHttpRecordRequestCookie].value = cookie
 	}
 }
 
 func (config *Config) printConfigString() {
-	if config.ConfigFilePath != "" {
-		dat, err := ioutil.ReadFile(config.ConfigFilePath)
+	if config.cfgFilePath != "" {
+		dat, err := ioutil.ReadFile(config.cfgFilePath)
 		if err == nil {
-			log("agent").Info("config_yaml_file= ", config.ConfigFilePath, "\n", string(dat))
+			log("agent").Info("config_yaml_file= ", config.cfgFilePath, "\n", string(dat))
 		}
 	}
 
-	j, _ := json.Marshal(config)
-	log("agent").Info("config= ", string(j))
+	for k, v := range cfgMap {
+		log("agent").Infof("config: %s = %v", k, v.value)
+	}
 }
 
 const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
