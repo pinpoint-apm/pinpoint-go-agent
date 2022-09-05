@@ -38,7 +38,14 @@ func main() {
 		pinpoint.WithHttpRecordRequestHeader([]string{"user-agent", "connection", "foo"}),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
-	cfg, _ := pinpoint.NewConfig(opts...)
+
+	//os.Setenv("PINPOINT_GO_COLLECTOR_HOST", "bbb")
+
+	cfg, err := pinpoint.NewConfig(opts...)
+	if err != nil {
+		log.Fatalf("pinpoint configuration fail: %v", err)
+	}
+
 	agent, err := pinpoint.NewAgent(cfg)
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)

@@ -89,7 +89,7 @@ func newHttpStatusError(config *Config) *httpStatusError {
 func setupHttpStatusErrors(config *Config) []httpStatusCode {
 	var errors []httpStatusCode
 
-	for _, s := range config.Http.StatusCodeErrors {
+	for _, s := range ConfigStringSlice(cfgHttpStatusCodeErrors) {
 		if strings.EqualFold(s, "5xx") {
 			errors = append(errors, newHttpStatusServerError())
 		} else if strings.EqualFold(s, "4xx") {
@@ -196,7 +196,7 @@ func newHttpUrlFilter(config *Config) *httpUrlFilter {
 func setupHttpUrlFilter(config *Config) []*httpExcludeUrl {
 	var filters []*httpExcludeUrl
 
-	for _, u := range config.Http.ExcludeUrl {
+	for _, u := range ConfigStringSlice(cfgHttpExcludeUrl) {
 		filters = append(filters, newHttpExcludeUrl(u))
 	}
 

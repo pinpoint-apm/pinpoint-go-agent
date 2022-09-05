@@ -193,9 +193,9 @@ func (agent *agent) sendStatsWorker() {
 	resetResponseTime()
 
 	statStream := agent.statGrpc.newStatStreamWithRetry()
-	interval := time.Duration(agent.config.Stat.CollectInterval) * time.Millisecond
+	interval := time.Duration(ConfigInt(cfgStatCollectInterval)) * time.Millisecond
 	time.Sleep(interval)
-	collected := make([]*inspectorStats, agent.config.Stat.BatchCount)
+	collected := make([]*inspectorStats, ConfigInt(cfgStatBatchCount))
 	batch := 0
 
 	for true {
@@ -206,7 +206,7 @@ func (agent *agent) sendStatsWorker() {
 		collected[batch] = getStats()
 		batch++
 
-		if batch == agent.config.Stat.BatchCount {
+		if batch == ConfigInt(cfgStatBatchCount) {
 			err := statStream.sendStats(collected)
 			if err != nil {
 				if err != io.EOF {

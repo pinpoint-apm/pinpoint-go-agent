@@ -22,9 +22,9 @@ func newMockAgent() Agent {
 	agent := mockAgent{}
 
 	agent.config = *defaultConfig()
-	agent.config.ApplicationName = "mock"
-	agent.config.AgentId = "m1234"
-	agent.config.OffGrpc = true
+	//agent.config.ApplicationName = "mock"
+	//agent.config.AgentId = "m1234"
+	agent.config.offGrpc = true
 	agent.startTime = 12345
 	agent.sequence = 1
 
@@ -59,7 +59,7 @@ func (agent *mockAgent) Config() Config {
 }
 
 func (agent *mockAgent) generateTransactionId() TransactionId {
-	return TransactionId{agent.config.AgentId, agent.startTime, agent.sequence}
+	return TransactionId{ConfigString(cfgAgentID), agent.startTime, agent.sequence}
 }
 
 func (agent *mockAgent) Enable() bool {
