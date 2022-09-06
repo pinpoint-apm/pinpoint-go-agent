@@ -28,7 +28,7 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "logging", "/logging", logging))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/logging", logging))
 
 	http.ListenAndServe(":9000", nil)
 	agent.Shutdown()

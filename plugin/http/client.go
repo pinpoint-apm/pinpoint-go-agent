@@ -49,7 +49,7 @@ func after(tracer pinpoint.Tracer, resp *http.Response, err error) {
 	if resp != nil {
 		a := tracer.SpanEvent().Annotations()
 		a.AppendInt(pinpoint.AnnotationHttpStatusCode, int32(resp.StatusCode))
-		tracer.RecordHttpHeader(a, pinpoint.AnnotationHttpResponseHeader, resp.Header)
+		recordHttpHeader(a, pinpoint.AnnotationHttpResponseHeader, resp.Header)
 	}
 	tracer.EndSpanEvent()
 }

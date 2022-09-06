@@ -185,17 +185,18 @@ func activeSpanCount(now time.Time) []int32 {
 	return count
 }
 
-func (agent *agent) sendStatsWorker() {
-	log("stats").Info("stat goroutine start")
+func (agent *agent) sendStatsWorker(config *Config) {
+	Log("stats").Info("stat goroutine start")
 	defer agent.wg.Done()
 
 	initStats()
 	resetResponseTime()
 
 	statStream := agent.statGrpc.newStatStreamWithRetry()
-	interval := time.Duration(ConfigInt(cfgStatCollectInterval)) * time.Millisecond
+	interval := time.Duration(config.Int(cfgStatCollectInterval)) * time.Millisecond
 	time.Sleep(interval)
-	collected := make([]*inspectorStats, ConfigInt(cfgStatBatchCount))
+	cfgBatchCount := config.Int(cfgStatBatchCount)
+	collected := make([]*inspectorStats, cfgBatchCount)
 	batch := 0
 
 	for true {
@@ -206,11 +207,11 @@ func (agent *agent) sendStatsWorker() {
 		collected[batch] = getStats()
 		batch++
 
-		if batch == ConfigInt(cfgStatBatchCount) {
+		if batch == cfgBatchCount {
 			err := statStream.sendStats(collected)
 			if err != nil {
 				if err != io.EOF {
-					log("stats").Errorf("fail to send stats - %v", err)
+					Log("stats").Errorf("fail to send stats - %v", err)
 				}
 
 				statStream.close()
@@ -223,7 +224,7 @@ func (agent *agent) sendStatsWorker() {
 	}
 
 	statStream.close()
-	log("stats").Info("stat goroutine finish")
+	Log("stats").Info("stat goroutine finish")
 }
 
 func collectResponseTime(resTime int64) {

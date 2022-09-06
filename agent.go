@@ -4,7 +4,6 @@ import (
 	"errors"
 	"io"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,12 +27,15 @@ func init() {
 	logger.Formatter = formatter
 }
 
-func log(srcFile string) *logrus.Entry {
-	return logger.WithFields(logrus.Fields{"module": "pinpoint", "src": srcFile})
+func Log(src string) *logrus.Entry {
+	return logger.WithFields(logrus.Fields{"module": "pinpoint", "src": src})
 }
 
 type agent struct {
-	config     Config
+	appName string
+	appType int32
+	agentID string
+
 	startTime  int64
 	sequence   int64
 	agentGrpc  *agentGrpc
@@ -52,12 +54,6 @@ type agent struct {
 	sqlIdGen     int32
 	apiCache     *lru.Cache
 	apiIdGen     int32
-
-	httpStatusErrors           *httpStatusError
-	httpUrlFilter              *httpUrlFilter
-	httpRequestHeaderRecorder  httpHeaderRecorder
-	httpResponseHeaderRecorder httpHeaderRecorder
-	httpCookieRecorder         httpHeaderRecorder
 
 	enable bool
 }
@@ -85,11 +81,14 @@ func NewAgent(config *Config) (Agent, error) {
 		return &agent, errors.New("configuration is missing")
 	}
 
-	agent.config = *config
+	agent.appName = config.String(cfgAppName)
+	agent.appType = int32(config.Int(cfgAppType))
+	agent.agentID = config.String(cfgAgentID)
+
 	agent.startTime = time.Now().UnixNano() / int64(time.Millisecond)
 	agent.sequence = 0
 
-	logger.SetLevel(agent.config.logLevel)
+	logger.SetLevel(config.logLevel)
 	if config.logLevel > logrus.InfoLevel {
 		logger.SetReportCaller(true)
 	}
@@ -117,65 +116,48 @@ func NewAgent(config *Config) (Agent, error) {
 	}
 
 	var baseSampler sampler
-	if ConfigString(cfgSamplingType) == SamplingTypeCounter {
-		baseSampler = newRateSampler(ConfigInt(cfgSamplingCounterRate))
+	if config.String(cfgSamplingType) == SamplingTypeCounter {
+		baseSampler = newRateSampler(config.Int(cfgSamplingCounterRate))
 	} else {
-		baseSampler = newPercentSampler(ConfigFloat32(cfgSamplingPercentRate))
+		baseSampler = newPercentSampler(config.Float(cfgSamplingPercentRate))
 	}
 
-	if ConfigInt(cfgSamplingNewThroughput) > 0 || ConfigInt(cfgSamplingContinueThroughput) > 0 {
-		agent.sampler = newThroughputLimitTraceSampler(baseSampler, ConfigInt(cfgSamplingNewThroughput),
-			ConfigInt(cfgSamplingContinueThroughput))
+	if config.Int(cfgSamplingNewThroughput) > 0 || config.Int(cfgSamplingContinueThroughput) > 0 {
+		agent.sampler = newThroughputLimitTraceSampler(baseSampler, config.Int(cfgSamplingNewThroughput),
+			config.Int(cfgSamplingContinueThroughput))
 	} else {
 		agent.sampler = newBasicTraceSampler(baseSampler)
 	}
 
-	agent.httpStatusErrors = newHttpStatusError(config)
-	agent.httpUrlFilter = newHttpUrlFilter(config)
-
-	agent.httpRequestHeaderRecorder = makeHttpHeaderRecoder(ConfigStringSlice(cfgHttpRecordRequestHeader))
-	agent.httpResponseHeaderRecorder = makeHttpHeaderRecoder(ConfigStringSlice(cfgHttpRecordRespondHeader))
-	agent.httpCookieRecorder = makeHttpHeaderRecoder(ConfigStringSlice(cfgHttpRecordRequestCookie))
-
-	if !config.offGrpc {
-		go connectGrpc(&agent)
+	if !offGrpc {
+		go connectGrpc(&agent, config)
 	}
 	return &agent, nil
 }
 
-func makeHttpHeaderRecoder(cfg []string) httpHeaderRecorder {
-	if len(cfg) == 0 {
-		return newNoopHttpHeaderRecoder()
-	} else if strings.EqualFold(cfg[0], "HEADERS-ALL") {
-		return newAllHttpHeaderRecoder()
-	} else {
-		return newDefaultHttpHeaderRecoder(cfg)
-	}
-}
-
-func connectGrpc(agent *agent) {
+func connectGrpc(agent *agent, config *Config) {
 	var err error
 
 	for {
-		agent.agentGrpc, err = newAgentGrpc(agent)
+		agent.agentGrpc, err = newAgentGrpc(agent, config)
 		if err != nil {
 			continue
 		}
 
-		agent.spanGrpc, err = newSpanGrpc(agent)
+		agent.spanGrpc, err = newSpanGrpc(agent, config)
 		if err != nil {
 			agent.agentGrpc.close()
 			continue
 		}
 
-		agent.statGrpc, err = newStatGrpc(agent)
+		agent.statGrpc, err = newStatGrpc(agent, config)
 		if err != nil {
 			agent.agentGrpc.close()
 			agent.spanGrpc.close()
 			continue
 		}
 
-		agent.cmdGrpc, err = newCommandGrpc(agent)
+		agent.cmdGrpc, err = newCommandGrpc(agent, config)
 		if err != nil {
 			agent.agentGrpc.close()
 			agent.spanGrpc.close()
@@ -193,7 +175,7 @@ func connectGrpc(agent *agent) {
 	agent.enable = true
 	go agent.sendPingWorker()
 	go agent.sendSpanWorker()
-	go agent.sendStatsWorker()
+	go agent.sendStatsWorker(config)
 	go agent.runCommandService()
 	go agent.sendMetaWorker()
 
@@ -208,7 +190,7 @@ func registerAgent(agent *agent) bool {
 			if res.Success {
 				break
 			} else {
-				log("agent").Errorf("fail to register agent - %s", res.Message)
+				Log("agent").Errorf("fail to register agent - %s", res.Message)
 				return false
 			}
 		}
@@ -280,13 +262,9 @@ func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string,
 	}
 }
 
-func (agent *agent) Config() Config {
-	return agent.config
-}
-
 func (agent *agent) generateTransactionId() TransactionId {
 	atomic.AddInt64(&agent.sequence, 1)
-	return TransactionId{ConfigString(cfgAgentID), agent.startTime, agent.sequence}
+	return TransactionId{agent.agentID, agent.startTime, agent.sequence}
 }
 
 func (agent *agent) Enable() bool {
@@ -297,8 +275,20 @@ func (agent *agent) StartTime() int64 {
 	return agent.startTime
 }
 
+func (agent *agent) ApplicationName() string {
+	return agent.appName
+}
+
+func (agent *agent) ApplicationType() int32 {
+	return agent.appType
+}
+
+func (agent *agent) AgentID() string {
+	return agent.agentID
+}
+
 func (agent *agent) sendPingWorker() {
-	log("agent").Info("ping goroutine start")
+	Log("agent").Info("ping goroutine start")
 	defer agent.wg.Done()
 	stream := agent.agentGrpc.newPingStreamWithRetry()
 
@@ -310,7 +300,7 @@ func (agent *agent) sendPingWorker() {
 		err := stream.sendPing()
 		if err != nil {
 			if err != io.EOF {
-				log("agent").Errorf("fail to send ping - %v", err)
+				Log("agent").Errorf("fail to send ping - %v", err)
 			}
 
 			stream.close()
@@ -322,11 +312,11 @@ func (agent *agent) sendPingWorker() {
 	}
 
 	stream.close()
-	log("agent").Info("ping goroutine finish")
+	Log("agent").Info("ping goroutine finish")
 }
 
 func (agent *agent) sendSpanWorker() {
-	log("agent").Info("span goroutine start")
+	Log("agent").Info("span goroutine start")
 	defer agent.wg.Done()
 
 	var (
@@ -351,7 +341,7 @@ func (agent *agent) sendSpanWorker() {
 		err := spanStream.sendSpan(span)
 		if err != nil {
 			if err != io.EOF {
-				log("agent").Errorf("fail to send span - %v", err)
+				Log("agent").Errorf("fail to send span - %v", err)
 			}
 
 			spanStream.close()
@@ -363,7 +353,7 @@ func (agent *agent) sendSpanWorker() {
 	}
 
 	spanStream.close()
-	log("agent").Info("span goroutine finish")
+	Log("agent").Info("span goroutine finish")
 }
 
 func (agent *agent) enqueueSpan(span *span) bool {
@@ -383,7 +373,7 @@ func (agent *agent) enqueueSpan(span *span) bool {
 }
 
 func (agent *agent) sendMetaWorker() {
-	log("agent").Info("meta goroutine start")
+	Log("agent").Info("meta goroutine start")
 	defer agent.wg.Done()
 
 	for md := range agent.metaChan {
@@ -412,7 +402,7 @@ func (agent *agent) sendMetaWorker() {
 		}
 	}
 
-	log("agent").Info("meta goroutine finish")
+	Log("agent").Info("meta goroutine finish")
 }
 
 func (agent *agent) deleteMetaCache(md interface{}) {
@@ -464,7 +454,7 @@ func (agent *agent) cacheErrorFunc(funcName string) int32 {
 	md.funcName = funcName
 	agent.tryEnqueueMeta(md)
 
-	log("agent").Infof("cache exception id: %d, %s", id, funcName)
+	Log("agent").Infof("cache exception id: %d, %s", id, funcName)
 	return id
 }
 
@@ -485,7 +475,7 @@ func (agent *agent) cacheSql(sql string) int32 {
 	md.sql = sql
 	agent.tryEnqueueMeta(md)
 
-	log("agent").Infof("cache sql id: %d, %s", id, sql)
+	Log("agent").Infof("cache sql id: %d, %s", id, sql)
 	return id
 }
 
@@ -509,36 +499,6 @@ func (agent *agent) cacheSpanApiId(descriptor string, apiType int) int32 {
 	md.apiType = apiType
 	agent.tryEnqueueMeta(md)
 
-	log("agent").Infof("cache api id: %d, %s", id, key)
+	Log("agent").Infof("cache api id: %d, %s", id, key)
 	return id
-}
-
-func (agent *agent) isHttpError(code int) bool {
-	return agent.httpStatusErrors.isError(code)
-}
-
-func (agent *agent) IsExcludedUrl(url string) bool {
-	return agent.httpUrlFilter.isFiltered(url)
-}
-
-func (agent *agent) IsExcludedMethod(method string) bool {
-	em := ConfigStringSlice(cfgHttpExcludeMethod)
-	for _, em := range em {
-		if strings.EqualFold(em, method) {
-			return true
-		}
-	}
-	return false
-}
-
-func (agent *agent) httpHeaderRecorder(key int) httpHeaderRecorder {
-	if key == AnnotationHttpRequestHeader {
-		return agent.httpRequestHeaderRecorder
-	} else if key == AnnotationHttpResponseHeader {
-		return agent.httpResponseHeaderRecorder
-	} else if key == AnnotationHttpCookie {
-		return agent.httpCookieRecorder
-	} else {
-		return newNoopHttpHeaderRecoder()
-	}
 }

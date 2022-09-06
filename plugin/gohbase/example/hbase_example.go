@@ -56,7 +56,7 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "doHbase", "/hbase", doHbase))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/hbase", doHbase))
 
 	http.ListenAndServe(":9000", nil)
 	agent.Shutdown()

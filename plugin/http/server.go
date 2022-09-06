@@ -2,17 +2,18 @@ package http
 
 import (
 	"bytes"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
 	"net"
 	"net/http"
 	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
 func NewHttpServerTracer(agent pinpoint.Agent, req *http.Request, operation string) pinpoint.Tracer {
-	if agent.IsExcludedUrl(req.URL.Path) || agent.IsExcludedMethod(req.Method) {
+	if isExcludedUrl(req.URL.Path) || isExcludedMethod(req.Method) {
 		return pinpoint.NoopTracer()
 	} else {
 		tracer := agent.NewSpanTracerWithReader(operation, req.URL.Path, req.Header)
@@ -22,8 +23,8 @@ func NewHttpServerTracer(agent pinpoint.Agent, req *http.Request, operation stri
 		span.SetRemoteAddress(getRemoteAddr(req))
 
 		a := span.Annotations()
-		tracer.RecordHttpHeader(a, pinpoint.AnnotationHttpRequestHeader, req.Header)
-		tracer.RecordHttpCookie(a, req.Cookies())
+		recordHttpHeader(a, pinpoint.AnnotationHttpRequestHeader, req.Header)
+		recordHttpCookie(a, req.Cookies())
 		setProxyHeader(a, req)
 
 		return tracer
@@ -106,8 +107,8 @@ func setProxyHeader(a pinpoint.Annotation, r *http.Request) {
 }
 
 func RecordHttpServerResponse(tracer pinpoint.Tracer, status int, header http.Header) {
-	tracer.RecordHttpStatus(status)
-	tracer.RecordHttpHeader(tracer.Span().Annotations(), pinpoint.AnnotationHttpResponseHeader, header)
+	recordHttpStatus(tracer.Span(), status)
+	recordHttpHeader(tracer.Span().Annotations(), pinpoint.AnnotationHttpResponseHeader, header)
 }
 
 func WrapHandle(agent pinpoint.Agent, pattern string, handler http.Handler) (string, http.Handler) {

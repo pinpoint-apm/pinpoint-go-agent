@@ -51,9 +51,9 @@ func main() {
 	c, _ := pinpoint.NewConfig(opts...)
 	t, _ := pinpoint.NewAgent(c)
 
-	http.HandleFunc(phttp.WrapHandleFunc(t, "index", "/", index))
-	http.HandleFunc(phttp.WrapHandleFunc(t, "error", "/error", seterror))
-	http.HandleFunc(phttp.WrapHandleFunc(t, "outgoing", "/outgoing", outgoing))
+	http.HandleFunc(phttp.WrapHandleFunc(t, "/", index))
+	http.HandleFunc(phttp.WrapHandleFunc(t, "/error", seterror))
+	http.HandleFunc(phttp.WrapHandleFunc(t, "/outgoing", outgoing))
 
 	http.ListenAndServe(":9000", nil)
 	t.Shutdown()

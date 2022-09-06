@@ -77,7 +77,7 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "memcacheTest", "/memcache", doMemcache))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/memcache", doMemcache))
 
 	http.ListenAndServe(":9000", nil)
 

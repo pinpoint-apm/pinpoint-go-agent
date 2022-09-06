@@ -10,7 +10,6 @@ import (
 )
 
 type mockAgent struct {
-	config    Config
 	startTime int64
 	sequence  int64
 	agentGrpc *agentGrpc
@@ -21,12 +20,9 @@ type mockAgent struct {
 func newMockAgent() Agent {
 	agent := mockAgent{}
 
-	agent.config = *defaultConfig()
-	//agent.config.ApplicationName = "mock"
-	//agent.config.AgentId = "m1234"
-	agent.config.offGrpc = true
 	agent.startTime = 12345
 	agent.sequence = 1
+	offGrpc = true
 
 	return &agent
 }
@@ -54,12 +50,8 @@ func (agent *mockAgent) NewSpanTracerWithReader(operation string, rpcName string
 	return newUnSampledSpan(rpcName)
 }
 
-func (agent *mockAgent) Config() Config {
-	return agent.config
-}
-
 func (agent *mockAgent) generateTransactionId() TransactionId {
-	return TransactionId{ConfigString(cfgAgentID), agent.startTime, agent.sequence}
+	return TransactionId{agent.AgentID(), agent.startTime, agent.sequence}
 }
 
 func (agent *mockAgent) Enable() bool {
@@ -68,6 +60,18 @@ func (agent *mockAgent) Enable() bool {
 
 func (agent *mockAgent) StartTime() int64 {
 	return agent.startTime
+}
+
+func (agent *mockAgent) ApplicationName() string {
+	return "mockAgent"
+}
+
+func (agent *mockAgent) ApplicationType() int32 {
+	return ServiceTypeGoApp
+}
+
+func (agent *mockAgent) AgentID() string {
+	return "mockAgentID"
 }
 
 func (agent *mockAgent) enqueueSpan(span *span) bool {
@@ -84,22 +88,6 @@ func (agent *mockAgent) cacheSql(sql string) int32 {
 
 func (agent *mockAgent) cacheSpanApiId(descriptor string, apiType int) int32 {
 	return 1
-}
-
-func (agent *mockAgent) isHttpError(code int) bool {
-	return false
-}
-
-func (agent *mockAgent) IsExcludedUrl(url string) bool {
-	return false
-}
-
-func (agent *mockAgent) IsExcludedMethod(method string) bool {
-	return false
-}
-
-func (agent *mockAgent) httpHeaderRecorder(key int) httpHeaderRecorder {
-	return newNoopHttpHeaderRecoder()
 }
 
 //mock grpc
@@ -144,7 +132,7 @@ func newMockAgentGrpc(agent Agent, t *testing.T) *agentGrpc {
 	agentClient := mockAgentGrpcClient{NewMockAgentClient(ctrl), stream}
 	metadataClient := mockMetaGrpcClient{NewMockMetadataClient(ctrl)}
 
-	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent}
+	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent, nil}
 }
 
 func newMockAgentGrpcPing(agent Agent, t *testing.T) *agentGrpc {
@@ -156,7 +144,7 @@ func newMockAgentGrpcPing(agent Agent, t *testing.T) *agentGrpc {
 	stream.EXPECT().Send(gomock.Any()).Return(nil)
 	//stream.EXPECT().CloseSend().Return(nil)
 
-	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent}
+	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent, nil}
 }
 
 type mockSpanGrpcClient struct {

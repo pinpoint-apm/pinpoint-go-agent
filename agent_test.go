@@ -15,7 +15,7 @@ func Test_agent_NewSpanTracer(t *testing.T) {
 		WithAgentId("testagent"),
 	}
 	c, _ := NewConfig(opts...)
-	c.offGrpc = true
+	offGrpc = true
 	a, _ := NewAgent(c)
 	agent := a.(*agent)
 	agent.enable = true
@@ -53,7 +53,7 @@ func Test_agent_NewSpanTracerWithReader(t *testing.T) {
 		WithAgentId("testagent"),
 	}
 	c, _ := NewConfig(opts...)
-	c.offGrpc = true
+	offGrpc = true
 	a, _ := NewAgent(c)
 	agent := a.(*agent)
 	agent.enable = true

@@ -37,7 +37,7 @@ type percentSampler struct {
 	counter      uint64
 }
 
-func newPercentSampler(r float32) *percentSampler {
+func newPercentSampler(r float64) *percentSampler {
 	return &percentSampler{
 		samplingRate: (uint64)(r * 100),
 		counter:      0,

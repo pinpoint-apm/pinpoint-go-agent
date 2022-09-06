@@ -2,7 +2,6 @@ package pinpoint
 
 import (
 	"context"
-	"net/http"
 	"time"
 )
 
@@ -91,6 +90,8 @@ func (span *noopSpan) SpanEvent() SpanEventRecorder {
 
 func (span *noopSpan) SetError(e error) {}
 
+func (span *noopSpan) SetFailure() {}
+
 func (span *noopSpan) SetApiId(id int32) {}
 
 func (span *noopSpan) SetServiceType(typ int32) {}
@@ -114,12 +115,6 @@ func (span *noopSpan) Annotations() Annotation {
 }
 
 func (span *noopSpan) SetLogging(logInfo int32) {}
-
-func (span *noopSpan) RecordHttpStatus(status int) {}
-
-func (span *noopSpan) RecordHttpHeader(annotation Annotation, key int, header http.Header) {}
-
-func (span *noopSpan) RecordHttpCookie(annotation Annotation, cookie []*http.Cookie) {}
 
 func (span *noopSpan) IsSampled() bool {
 	return false

@@ -156,8 +156,8 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "tableCount", "/tableCount", tableCount))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "query", "/query", query))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/tableCount", tableCount))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/query", query))
 
 	http.ListenAndServe(":9001", nil)
 	agent.Shutdown()

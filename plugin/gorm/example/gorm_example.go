@@ -65,7 +65,7 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "gormquery", "/gormquery", gormQuery))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/gormquery", gormQuery))
 
 	http.ListenAndServe(":9000", nil)
 	agent.Shutdown()

@@ -110,17 +110,17 @@ func main() {
 		pinpoint.WithAppName("GoAsyncExample"),
 		pinpoint.WithAgentId("GoAsyncExampleAgent"),
 		//pinpoint.WithSamplingCounterRate(100),
-		pinpoint.WithHttpRecordRequestHeader([]string{"HEADERS-ALL"}),
-		pinpoint.WithHttpRecordRespondHeader([]string{"HEADERS-ALL"}),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
+		phttp.WithHttpRecordRequestHeader([]string{"HEADERS-ALL"}),
+		phttp.WithHttpRecordRespondHeader([]string{"HEADERS-ALL"}),
 	}
 	c, _ := pinpoint.NewConfig(opts...)
 	t, _ := pinpoint.NewAgent(c)
 
-	http.HandleFunc(phttp.WrapHandleFunc(t, "asyncWithChan", "/async_chan", asyncWithChan))
-	http.HandleFunc(phttp.WrapHandleFunc(t, "asyncWithContext", "/async_context", asyncWithContext))
-	http.HandleFunc(phttp.WrapHandleFunc(t, "asyncWithTracer", "/async_tracer", asyncWithTracer))
-	http.HandleFunc(phttp.WrapHandleFunc(t, "asyncWithWrapper", "/async_wrapper", asyncWithWrapper))
+	http.HandleFunc(phttp.WrapHandleFunc(t, "/async_chan", asyncWithChan))
+	http.HandleFunc(phttp.WrapHandleFunc(t, "/async_context", asyncWithContext))
+	http.HandleFunc(phttp.WrapHandleFunc(t, "/async_tracer", asyncWithTracer))
+	http.HandleFunc(phttp.WrapHandleFunc(t, "/async_wrapper", asyncWithWrapper))
 
 	http.ListenAndServe(":9000", nil)
 	t.Shutdown()

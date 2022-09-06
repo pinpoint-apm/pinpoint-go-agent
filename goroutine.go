@@ -58,7 +58,7 @@ func newGoroutine(line string) *Goroutine {
 			buf:    &bytes.Buffer{},
 		}
 	} else {
-		log("cmd").Errorf("fail to convert goroutine id: %v", err)
+		Log("cmd").Errorf("fail to convert goroutine id: %v", err)
 	}
 
 	return nil
@@ -94,7 +94,7 @@ func dumpGoroutine() *GoroutineDump {
 
 	if p := pprof.Lookup("goroutine"); p != nil {
 		if err := p.WriteTo(buf, 2); err != nil {
-			log("cmd").Errorf("fail to profile goroutine: %v", err)
+			Log("cmd").Errorf("fail to profile goroutine: %v", err)
 			return nil
 		}
 	}
@@ -137,7 +137,7 @@ func parseProfile(r io.Reader) *GoroutineDump {
 	}
 
 	if err := scanner.Err(); err != nil {
-		log("cmd").Errorf("fail to scan goroutine profile: %v", err)
+		Log("cmd").Errorf("fail to scan goroutine profile: %v", err)
 		return nil
 	}
 

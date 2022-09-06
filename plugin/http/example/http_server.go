@@ -2,13 +2,12 @@ package main
 
 import (
 	"context"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	"io"
 	"log"
 	"net/http"
 	"os"
-
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 func index(w http.ResponseWriter, r *http.Request) {
@@ -51,15 +50,16 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoHttpTest"),
 		pinpoint.WithAgentId("GoHttpAgent"),
-		pinpoint.WithHttpStatusCodeError([]string{"5xx", "4xx"}),
-		//pinpoint.WithHttpExcludeUrl([]string{"/wrapreq*", "/**/*.go", "/*/*.do", "/abc**"}),
-		pinpoint.WithHttpExcludeMethod([]string{"put", "POST"}),
-		//pinpoint.WithHttpRecordRequestHeader([]string{"HEADERS-ALL"}),
-		pinpoint.WithHttpRecordRequestHeader([]string{"user-agent", "connection", "foo"}),
-		//pinpoint.WithHttpRecordRespondHeader([]string{"content-length"}),
-		pinpoint.WithHttpRecordRespondHeader([]string{"HEADERS-ALL"}),
-		pinpoint.WithHttpRecordRequestCookie([]string{"_octo"}),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
+
+		phttp.WithHttpStatusCodeError([]string{"5xx", "4xx"}),
+		phttp.WithHttpExcludeUrl([]string{"/wrapreq*", "/**/*.go", "/*/*.do", "/abc**"}),
+		phttp.WithHttpExcludeMethod([]string{"put", "POST"}),
+		phttp.WithHttpRecordRequestHeader([]string{"HEADERS-ALL"}),
+		phttp.WithHttpRecordRequestHeader([]string{"user-agent", "connection", "foo"}),
+		phttp.WithHttpRecordRespondHeader([]string{"content-length"}),
+		phttp.WithHttpRecordRespondHeader([]string{"HEADERS-ALL"}),
+		phttp.WithHttpRecordRequestCookie([]string{"_octo"}),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)

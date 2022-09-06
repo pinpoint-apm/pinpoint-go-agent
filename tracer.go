@@ -3,7 +3,6 @@ package pinpoint
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"time"
 )
 
@@ -21,18 +20,16 @@ type Agent interface {
 	Shutdown()
 	NewSpanTracer(operation string, rpcName string) Tracer
 	NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer
-	Config() Config
 	Enable() bool
+	ApplicationName() string
+	ApplicationType() int32
+	AgentID() string
 	StartTime() int64
-	IsExcludedUrl(url string) bool
-	IsExcludedMethod(method string) bool
 	generateTransactionId() TransactionId
 	enqueueSpan(span *span) bool
 	cacheErrorFunc(funcName string) int32
 	cacheSql(sql string) int32
 	cacheSpanApiId(descriptor string, apiType int) int32
-	isHttpError(code int) bool
-	httpHeaderRecorder(key int) httpHeaderRecorder
 }
 
 type Tracer interface {
@@ -52,10 +49,6 @@ type Tracer interface {
 	Span() SpanRecorder
 	SpanEvent() SpanEventRecorder
 
-	RecordHttpStatus(status int)
-	RecordHttpHeader(annotation Annotation, key int, header http.Header)
-	RecordHttpCookie(annotation Annotation, cookie []*http.Cookie)
-
 	IsSampled() bool
 }
 
@@ -63,6 +56,7 @@ type SpanRecorder interface {
 	SetApiId(id int32)
 	SetServiceType(typ int32)
 	SetError(e error)
+	SetFailure()
 	SetRpcName(rpc string)
 	SetRemoteAddress(remoteAddress string)
 	SetEndPoint(endPoint string)

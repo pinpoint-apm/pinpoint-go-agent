@@ -4,7 +4,6 @@ import (
 	"container/list"
 	"context"
 	"math/rand"
-	"net/http"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -101,11 +100,11 @@ func (span *span) EndSpan() {
 				se.end()
 			}
 		}
-		log("span").Warn("span has a event that is not closed")
+		Log("span").Warn("span has a event that is not closed")
 	}
 
 	if !span.agent.enqueueSpan(span) {
-		log("span").Debug("span channel - max capacity reached or closed")
+		Log("span").Debug("span channel - max capacity reached or closed")
 	}
 }
 
@@ -118,16 +117,16 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 
 		writer.Set(HttpParentSpanId, strconv.FormatInt(span.spanId, 10))
 		writer.Set(HttpFlags, strconv.Itoa(span.flags))
-		writer.Set(HttpParentApplicationName, ConfigString(cfgAppName))
-		writer.Set(HttpParentApplicationType, strconv.Itoa(ConfigInt(cfgAppType)))
+		writer.Set(HttpParentApplicationName, span.agent.ApplicationName())
+		writer.Set(HttpParentApplicationType, strconv.Itoa(int(span.agent.ApplicationType())))
 		writer.Set(HttpParentApplicationNamespace, "")
 
 		se.endPoint = se.destinationId
 		writer.Set(HttpHost, se.destinationId)
 
-		log("span").Debug("span inject: ", span.txId, nextSpanId, span.spanId, se.destinationId)
+		Log("span").Debug("span inject: ", span.txId, nextSpanId, span.spanId, se.destinationId)
 	} else {
-		log("span").Warn("span event is not exist to inject")
+		Log("span").Warn("span event is not exist to inject")
 	}
 }
 
@@ -176,7 +175,7 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		span.endPoint = host
 	}
 
-	log("span").Debug("span extract: ", tid, spanid, pappname, pspanid, papptype, host)
+	Log("span").Debug("span extract: ", tid, spanid, pappname, pspanid, papptype, host)
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
@@ -198,7 +197,7 @@ func (span *span) EndSpanEvent() {
 			se.end()
 		}
 	} else {
-		log("span").Warn("span event is not exist to be closed")
+		Log("span").Warn("span event is not exist to be closed")
 	}
 }
 
@@ -221,7 +220,7 @@ func (span *span) newAsyncSpan() Tracer {
 
 		return asyncSpan
 	} else {
-		log("span").Warn("span event is not exist to make async span")
+		Log("span").Warn("span event is not exist to make async span")
 		return NoopTracer()
 	}
 }
@@ -273,7 +272,7 @@ func (span *span) SpanEvent() SpanEventRecorder {
 		return se
 	}
 
-	log("span").Warn("span has no event")
+	Log("span").Warn("span has no event")
 	return &defaultNoopSpanEvent
 }
 
@@ -294,6 +293,10 @@ func (span *span) SetError(e error) {
 	id := span.agent.cacheErrorFunc("error")
 	span.errorFuncId = id
 	span.errorString = e.Error()
+	span.err = 1
+}
+
+func (span *span) SetFailure() {
 	span.err = 1
 }
 
@@ -327,22 +330,6 @@ func (span *span) Annotations() Annotation {
 
 func (span *span) SetLogging(logInfo int32) {
 	span.loggingInfo = logInfo
-}
-
-func (span *span) RecordHttpStatus(status int) {
-	span.annotations.AppendInt(AnnotationHttpStatusCode, int32(status))
-
-	if span.err == 0 && span.agent.isHttpError(status) {
-		span.err = 1
-	}
-}
-
-func (span *span) RecordHttpHeader(annotation Annotation, key int, header http.Header) {
-	span.agent.httpHeaderRecorder(key).recordHeader(annotation, key, header)
-}
-
-func (span *span) RecordHttpCookie(annotation Annotation, cookie []*http.Cookie) {
-	span.agent.httpHeaderRecorder(AnnotationHttpCookie).recordCookie(annotation, cookie)
 }
 
 func (span *span) IsSampled() bool {

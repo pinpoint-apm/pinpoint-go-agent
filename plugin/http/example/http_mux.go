@@ -1,13 +1,12 @@
 package main
 
 import (
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	"io"
 	"log"
 	"net/http"
 	"os"
-
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 func indexMux(w http.ResponseWriter, r *http.Request) {
@@ -34,9 +33,9 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoHttpMuxTest"),
 		pinpoint.WithAgentId("GoHttpMuxAgent"),
-		pinpoint.WithHttpStatusCodeError([]string{"5xx", "4xx"}),
-		pinpoint.WithHttpRecordRequestHeader([]string{"user-agent", "connection", "foo"}),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
+		phttp.WithHttpStatusCodeError([]string{"5xx", "4xx"}),
+		phttp.WithHttpRecordRequestHeader([]string{"user-agent", "connection", "foo"}),
 	}
 
 	//os.Setenv("PINPOINT_GO_COLLECTOR_HOST", "bbb")

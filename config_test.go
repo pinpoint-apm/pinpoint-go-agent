@@ -23,9 +23,9 @@ func TestNewConfig(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _ = NewConfig(tt.args.opts...)
-			assert.Equal(t, ConfigString(cfgAppName), "TestApp", "ApplicationName")
-			assert.Equal(t, ConfigString(cfgAgentID), "TestAgent", "AgentId")
+			c, _ := NewConfig(tt.args.opts...)
+			assert.Equal(t, c.String(cfgAppName), "TestApp", "ApplicationName")
+			assert.Equal(t, c.String(cfgAgentID), "TestAgent", "AgentId")
 		})
 	}
 }
@@ -70,9 +70,9 @@ func TestNewConfig_GenerateAgentId(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _ = NewConfig(tt.args.opts...)
-			assert.Equal(t, ConfigString(cfgAppName), "TestApp", "ApplicationName")
-			assert.NotNil(t, ConfigString(cfgAgentID), "AgentId")
+			c, _ := NewConfig(tt.args.opts...)
+			assert.Equal(t, c.String(cfgAppName), "TestApp", "ApplicationName")
+			assert.NotNil(t, c.String(cfgAgentID), "AgentId")
 		})
 	}
 }
@@ -96,11 +96,11 @@ func TestNewConfig_ReadConfigFile(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _ = NewConfig(tt.args.opts...)
-			assert.Equal(t, "MyAppName", ConfigString(cfgAppName), "ApplicationName")
-			assert.Equal(t, "my.collector.host", ConfigString(cfgCollectorHost), "Collector.Host")
-			assert.Equal(t, "PERCENT", ConfigString(cfgSamplingType), "Sampling.Type")
-			assert.Equal(t, float32(10), ConfigFloat32(cfgSamplingPercentRate), "Sampling.PercentRate")
+			c, _ := NewConfig(tt.args.opts...)
+			assert.Equal(t, "MyAppName", c.String(cfgAppName), "ApplicationName")
+			assert.Equal(t, "my.collector.host", c.String(cfgCollectorHost), "Collector.Host")
+			assert.Equal(t, "PERCENT", c.String(cfgSamplingType), "Sampling.Type")
+			assert.Equal(t, float64(10), c.Float(cfgSamplingPercentRate), "Sampling.PercentRate")
 		})
 	}
 }

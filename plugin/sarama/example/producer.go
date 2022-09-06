@@ -66,6 +66,6 @@ func main() {
 		log.Fatalf("Could not create producer: %v ", err)
 	}
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "save", "/save", save))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/save", save))
 	log.Fatal(http.ListenAndServe(":8081", nil))
 }

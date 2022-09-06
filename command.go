@@ -21,7 +21,7 @@ type activeSpanInfo struct {
 }
 
 func (agent *agent) runCommandService() {
-	log("cmd").Info("command service goroutine start")
+	Log("cmd").Info("command service goroutine start")
 	defer agent.wg.Done()
 	gAtcStreamCount = 0
 
@@ -34,7 +34,7 @@ func (agent *agent) runCommandService() {
 		err := cmdStream.sendCommandMessage()
 		if err != nil {
 			if err != io.EOF {
-				log("cmd").Errorf("fail to send command message - %v", err)
+				Log("cmd").Errorf("fail to send command message - %v", err)
 			}
 			cmdStream.close()
 			continue
@@ -48,13 +48,13 @@ func (agent *agent) runCommandService() {
 			cmdReq, err := cmdStream.recvCommandRequest()
 			if err != nil {
 				if err != io.EOF {
-					log("cmd").Errorf("fail to recv command request - %v", err)
+					Log("cmd").Errorf("fail to recv command request - %v", err)
 				}
 				break
 			}
 
 			reqId := cmdReq.GetRequestId()
-			log("cmd").Infof("command service request: %v, %v", cmdReq, reqId)
+			Log("cmd").Infof("command service request: %v, %v", cmdReq, reqId)
 
 			switch cmdReq.Command.(type) {
 			case *pb.PCmdRequest_CommandEcho:
@@ -87,18 +87,18 @@ func (agent *agent) runCommandService() {
 		cmdStream.close()
 	}
 
-	log("cmd").Info("command service goroutine finish")
+	Log("cmd").Info("command service goroutine finish")
 }
 
 func sendActiveThreadCount(s *activeThreadCountStream) {
 	atomic.AddInt32(&gAtcStreamCount, 1)
-	log("cmd").Infof("active thread count stream goroutine start: %d, %d", s.reqId, gAtcStreamCount)
+	Log("cmd").Infof("active thread count stream goroutine start: %d, %d", s.reqId, gAtcStreamCount)
 
 	for {
 		err := s.sendActiveThreadCount()
 		if err != nil {
 			if err != io.EOF {
-				log("cmd").Errorf("fail to send active thread count - %d, %v", s.reqId, err)
+				Log("cmd").Errorf("fail to send active thread count - %d, %v", s.reqId, err)
 			}
 			break
 		}
@@ -107,7 +107,7 @@ func sendActiveThreadCount(s *activeThreadCountStream) {
 	s.close()
 
 	atomic.AddInt32(&gAtcStreamCount, -1)
-	log("cmd").Infof("active thread count stream goroutine finish: %d, %d", s.reqId, gAtcStreamCount)
+	Log("cmd").Infof("active thread count stream goroutine finish: %d, %d", s.reqId, gAtcStreamCount)
 }
 
 func addRealTimeSampledActiveSpan(span *span) {

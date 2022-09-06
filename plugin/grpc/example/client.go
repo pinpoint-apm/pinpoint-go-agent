@@ -142,6 +142,6 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "grpc", "/grpc", doGrpc))
+	http.HandleFunc(phttp.WrapHandleFunc(agent, "/grpc", doGrpc))
 	http.ListenAndServe(":9000", nil)
 }
