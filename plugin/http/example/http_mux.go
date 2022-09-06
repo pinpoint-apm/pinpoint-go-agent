@@ -38,7 +38,7 @@ func main() {
 		phttp.WithHttpRecordRequestHeader([]string{"user-agent", "connection", "foo"}),
 	}
 
-	//os.Setenv("PINPOINT_GO_COLLECTOR_HOST", "bbb")
+	//os.Setenv("PINPOINT_GO_USEPROFILE", "real")
 
 	cfg, err := pinpoint.NewConfig(opts...)
 	if err != nil {

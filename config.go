@@ -5,7 +5,6 @@ import (
 	"github.com/spf13/cast"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"regexp"
@@ -32,7 +31,8 @@ const (
 	cfgStatCollectInterval        = "Stat.CollectInterval"
 	cfgStatBatchCount             = "Stat.BatchCount"
 	cfgRunOnContainer             = "RunOnContainer"
-	cfgProfile                    = "Profile"
+	cfgConfigFile                 = "ConfigFile"
+	cfgProfile                    = "UseProfile"
 	cfgIdPattern                  = "[a-zA-Z0-9\\._\\-]+"
 )
 
@@ -76,6 +76,7 @@ func init() {
 	AddConfig(cfgStatCollectInterval, CfgInt, 5000)
 	AddConfig(cfgStatBatchCount, CfgInt, 5)
 	AddConfig(cfgRunOnContainer, CfgBool, false)
+	AddConfig(cfgConfigFile, CfgString, "")
 	AddConfig(cfgProfile, CfgString, "")
 
 	flagSet.Parse(os.Args[1:])
@@ -112,7 +113,6 @@ func envName(cfgName string) string {
 }
 
 type Config struct {
-	cfgFilePath    string
 	logLevel       logrus.Level
 	containerCheck bool
 }
@@ -153,19 +153,14 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		fn(config)
 	}
 
-	v1 := viper.New()
-	v1.BindPFlags(flagSet)
-	v1.SetEnvPrefix("pinpoint_go")
-	v1.AutomaticEnv()
+	cmdEnvViper := viper.New()
+	cmdEnvViper.BindPFlags(flagSet)
+	cmdEnvViper.SetEnvPrefix("pinpoint_go")
+	cmdEnvViper.AutomaticEnv()
 
-	v2 := viper.New()
-	if config.cfgFilePath != "" {
-		v2.SetConfigFile(config.cfgFilePath)
-		v2.ReadInConfig()
-		//v3 := initProfile(v1)
-	}
-
-	loadConfig(v1, v2)
+	cfgFileViper := loadConfigFile(cmdEnvViper)
+	profileViper := loadProfile(cmdEnvViper, cfgFileViper)
+	loadConfig(cmdEnvViper, cfgFileViper, profileViper)
 
 	r, _ := regexp.Compile(cfgIdPattern)
 	appName := config.String(cfgAppName)
@@ -210,9 +205,8 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	}
 
 	config.logLevel = parseLogLevel(config.String(cfgLogLevel))
-	config.printConfigString()
-
 	globalConfig = config
+	printConfigString()
 
 	return config, nil
 }
@@ -230,12 +224,61 @@ func defaultConfig() *Config {
 	return config
 }
 
-func loadConfig(cmdEnvViper *viper.Viper, cfgFileViper *viper.Viper) {
+func loadConfigFile(cmdEnvViper *viper.Viper) *viper.Viper {
+	var cfgFile string
+
+	item := cfgMap[cfgConfigFile]
+	if cmdEnvViper.IsSet(item.cmdKey) {
+		cfgFile = cmdEnvViper.GetString(item.cmdKey)
+	} else if cmdEnvViper.IsSet(item.envKey) {
+		cfgFile = cmdEnvViper.GetString(item.envKey)
+	} else {
+		cfgFile = item.value.(string)
+	}
+
+	cfgFileViper := viper.New()
+	if cfgFile != "" {
+		cfgFileViper.SetConfigFile(cfgFile)
+		cfgFileViper.ReadInConfig()
+	}
+
+	return cfgFileViper
+}
+
+func loadProfile(cmdEnvViper *viper.Viper, cfgFileViper *viper.Viper) *viper.Viper {
+	var profile string
+
+	item := cfgMap[cfgProfile]
+	if cmdEnvViper.IsSet(item.cmdKey) {
+		profile = cmdEnvViper.GetString(item.cmdKey)
+	} else if cmdEnvViper.IsSet(item.envKey) {
+		profile = cmdEnvViper.GetString(item.envKey)
+	} else if cfgFileViper.IsSet(cfgProfile) {
+		profile = cfgFileViper.GetString(cfgProfile)
+	} else {
+		profile = item.value.(string)
+	}
+
+	if profile != "" {
+		profileViper := cfgFileViper.Sub("profile." + profile)
+		if profileViper != nil {
+			return profileViper
+		} else {
+			Log("config").Warnf("config file doesn't have the profile: %s", profile)
+		}
+	}
+
+	return viper.New()
+}
+
+func loadConfig(cmdEnvViper *viper.Viper, cfgFileViper *viper.Viper, profileViper *viper.Viper) {
 	for k, v := range cfgMap {
 		if cmdEnvViper.IsSet(v.cmdKey) {
 			v.value = cmdEnvViper.Get(v.cmdKey)
 		} else if cmdEnvViper.IsSet(v.envKey) {
 			v.value = cmdEnvViper.Get(v.envKey)
+		} else if profileViper.IsSet(k) {
+			v.value = profileViper.Get(k)
 		} else if cfgFileViper.IsSet(k) {
 			v.value = cfgFileViper.Get(k)
 		}
@@ -264,11 +307,6 @@ func parseLogLevel(level string) logrus.Level {
 	return lvl
 }
 
-func initProfile(v *viper.Viper) *viper.Viper {
-	profile := v.GetString(cmdName(cfgProfile))
-	return v.Sub("profile." + profile)
-}
-
 func WithAppName(name string) ConfigOption {
 	return func(c *Config) {
 		cfgMap[cfgAppName].value = name
@@ -289,7 +327,7 @@ func WithAgentId(id string) ConfigOption {
 
 func WithConfigFile(filePath string) ConfigOption {
 	return func(c *Config) {
-		c.cfgFilePath = filePath
+		cfgMap[cfgConfigFile].value = filePath
 	}
 }
 
@@ -379,14 +417,13 @@ func WithIsContainer(isContainer bool) ConfigOption {
 	}
 }
 
-func (config *Config) printConfigString() {
-	if config.cfgFilePath != "" {
-		dat, err := ioutil.ReadFile(config.cfgFilePath)
-		if err == nil {
-			Log("agent").Info("config_yaml_file= ", config.cfgFilePath, "\n", string(dat))
-		}
+func WithUseProfile(profile string) ConfigOption {
+	return func(c *Config) {
+		cfgMap[cfgProfile].value = profile
 	}
+}
 
+func printConfigString() {
 	for k, v := range cfgMap {
 		Log("agent").Infof("config: %s = %v", k, v.value)
 	}
