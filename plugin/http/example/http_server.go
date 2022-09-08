@@ -52,14 +52,15 @@ func main() {
 		pinpoint.WithAgentId("GoHttpAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 
-		phttp.WithHttpStatusCodeError([]string{"5xx", "4xx"}),
-		phttp.WithHttpExcludeUrl([]string{"/wrapreq*", "/**/*.go", "/*/*.do", "/abc**"}),
-		phttp.WithHttpExcludeMethod([]string{"put", "POST"}),
-		phttp.WithHttpRecordRequestHeader([]string{"HEADERS-ALL"}),
-		phttp.WithHttpRecordRequestHeader([]string{"user-agent", "connection", "foo"}),
-		phttp.WithHttpRecordRespondHeader([]string{"content-length"}),
-		phttp.WithHttpRecordRespondHeader([]string{"HEADERS-ALL"}),
-		phttp.WithHttpRecordRequestCookie([]string{"_octo"}),
+		phttp.WithHttpServerStatusCodeError([]string{"5xx", "4xx"}),
+		phttp.WithHttpServerExcludeUrl([]string{"/wrapreq*", "/**/*.go", "/*/*.do", "/abc**"}),
+		phttp.WithHttpServerExcludeMethod([]string{"put", "POST"}),
+		phttp.WithHttpServerRecordRequestHeader([]string{"HEADERS-ALL"}),
+		phttp.WithHttpClientRecordRequestHeader([]string{"user-agent", "connection", "foo"}),
+		phttp.WithHttpServerRecordRespondHeader([]string{"content-length"}),
+		phttp.WithHttpClientRecordRespondHeader([]string{"HEADERS-ALL"}),
+		phttp.WithHttpServerRecordRequestCookie([]string{"_octo"}),
+		phttp.WithHttpClientRecordRequestCookie([]string{"HEADERS-ALL"}),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)

@@ -17,18 +17,21 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 		return tracer
 	}
 
+	tracer.NewSpanEvent(operationName)
+	tracer.SpanEvent().SetEndPoint(req.Host)
+	tracer.SpanEvent().SetDestination(req.Host)
+	tracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeGoHttpClient)
+
 	if tracer.IsSampled() {
-		tracer.NewSpanEvent(operationName)
-
-		tracer.SpanEvent().SetEndPoint(req.Host)
-		tracer.SpanEvent().SetDestination(req.Host)
-		tracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeGoHttpClient)
-
 		var b bytes.Buffer
 		b.WriteString(req.Method)
 		b.WriteString(" ")
 		b.WriteString(req.URL.String())
 		tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHttpUrl, b.String())
+
+		a := tracer.SpanEvent().Annotations()
+		recordClientHttpRequestHeader(a, req.Header)
+		recordClientHttpCookie(a, req.Cookies())
 	}
 
 	tracer.Inject(req.Header)
@@ -46,10 +49,10 @@ func after(tracer pinpoint.Tracer, resp *http.Response, err error) {
 	}
 
 	tracer.SpanEvent().SetError(err)
-	if resp != nil {
+	if resp != nil && tracer.IsSampled() {
 		a := tracer.SpanEvent().Annotations()
 		a.AppendInt(pinpoint.AnnotationHttpStatusCode, int32(resp.StatusCode))
-		recordHttpHeader(a, pinpoint.AnnotationHttpResponseHeader, resp.Header)
+		recordClientHttpResponseHeader(a, resp.Header)
 	}
 	tracer.EndSpanEvent()
 }

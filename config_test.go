@@ -395,9 +395,12 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 
 	os.Args = []string{
 		"pinpoint_go_agent",
+		"--app-arg1=1",
+		"--app-arg2=2",
 		"--pinpoint-applicationname=CmdLineArgTest",
 		"--pinpoint-applicationtype=2100",
 		"--pinpoint-agentid=cmdAgentID",
+		"-app-arg3",
 		"--pinpoint-collector-host=cmd.collector.host",
 		"--pinpoint-collector-agentport=7000",
 		"--pinpoint-collector-spanport=7100",
@@ -410,9 +413,11 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 		"--pinpoint-stat-collectinterval=6000",
 		"--pinpoint-stat-batchcount=5",
 		"--pinpoint-loglevel=error",
+		"-app-arg4",
 		"--pinpoint-runoncontainer",
 		"--pinpoint-configfile=example/pinpoint-config.yaml",
 		"--pinpoint-useprofile=real",
+		"--app-arg5=5",
 	}
 
 	for _, tt := range tests {

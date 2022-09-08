@@ -47,19 +47,18 @@ const (
 type cfgMapItem struct {
 	value        interface{}
 	defaultValue interface{}
+	valueType    int
 	cmdKey       string
 	envKey       string
 }
 
 var (
 	cfgBaseMap   map[string]*cfgMapItem
-	flagSet      *pflag.FlagSet
 	globalConfig *Config
 )
 
 func initConfig() {
-	cfgBaseMap = make(map[string]*cfgMapItem, 25)
-	flagSet = pflag.NewFlagSet("pinpoint_go_agent", pflag.ContinueOnError)
+	cfgBaseMap = make(map[string]*cfgMapItem, 0)
 
 	AddConfig(cfgAppName, CfgString, "")
 	AddConfig(cfgAppType, CfgInt, ServiceTypeGoApp)
@@ -84,21 +83,9 @@ func initConfig() {
 func AddConfig(cfgName string, valueType int, defaultValue interface{}) {
 	cfgBaseMap[cfgName] = &cfgMapItem{
 		defaultValue: defaultValue,
+		valueType:    valueType,
 		cmdKey:       cmdName(cfgName),
 		envKey:       envName(cfgName),
-	}
-
-	switch valueType {
-	case CfgInt:
-		flagSet.Int(cmdName(cfgName), 0, "")
-	case CfgFloat:
-		flagSet.Float64(cmdName(cfgName), 0, "")
-	case CfgBool:
-		flagSet.Bool(cmdName(cfgName), false, "")
-	case CfgString:
-		flagSet.String(cmdName(cfgName), "", "")
-	case CfgStringSlice:
-		flagSet.StringSlice(cmdName(cfgName), nil, "")
 	}
 }
 
@@ -172,7 +159,10 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	}
 
 	cmdEnvViper := viper.New()
-	flagSet.Parse(os.Args[1:])
+	flagSet := config.newFlagSet()
+	if err := flagSet.Parse(filterCmdArgs()); err != nil {
+		Log("config").Errorf("commad line config loading error: %v", err)
+	}
 	cmdEnvViper.BindPFlags(flagSet)
 
 	cmdEnvViper.SetEnvPrefix("pinpoint_go")
@@ -239,10 +229,11 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 func defaultConfig() *Config {
 	config := new(Config)
 
-	config.cfgMap = make(map[string]*cfgMapItem, 25)
+	config.cfgMap = make(map[string]*cfgMapItem, 0)
 	for k, v := range cfgBaseMap {
 		config.cfgMap[k] = &cfgMapItem{
 			defaultValue: v.defaultValue,
+			valueType:    v.valueType,
 			cmdKey:       v.cmdKey,
 			envKey:       v.envKey,
 		}
@@ -254,6 +245,38 @@ func defaultConfig() *Config {
 
 	config.containerCheck = true
 	return config
+}
+
+func (config *Config) newFlagSet() *pflag.FlagSet {
+	flagSet := pflag.NewFlagSet("pinpoint_go_agent", pflag.ContinueOnError)
+
+	for _, v := range config.cfgMap {
+		switch v.valueType {
+		case CfgInt:
+			flagSet.Int(v.cmdKey, 0, "")
+		case CfgFloat:
+			flagSet.Float64(v.cmdKey, 0, "")
+		case CfgBool:
+			flagSet.Bool(v.cmdKey, false, "")
+		case CfgString:
+			flagSet.String(v.cmdKey, "", "")
+		case CfgStringSlice:
+			flagSet.StringSlice(v.cmdKey, nil, "")
+		}
+	}
+
+	return flagSet
+}
+
+func filterCmdArgs() []string {
+	cmdArgs := make([]string, 0)
+
+	for _, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "--pinpoint-") {
+			cmdArgs = append(cmdArgs, arg)
+		}
+	}
+	return cmdArgs
 }
 
 func (config *Config) loadConfigFile(cmdEnvViper *viper.Viper) *viper.Viper {
@@ -466,7 +489,7 @@ func WithUseProfile(profile string) ConfigOption {
 
 func (config *Config) printConfigString() {
 	for k, v := range config.cfgMap {
-		Log("agent").Infof("config: %s = %v", k, v.value)
+		Log("config").Infof("%s = %v", k, v.value)
 	}
 }
 

@@ -1,377 +1,184 @@
 package http
 
 import (
-	"bytes"
 	"net/http"
-	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
 const (
-	cfgHttpStatusCodeErrors    = "Http.StatusCodeErrors"
-	cfgHttpExcludeUrl          = "Http.ExcludeUrl"
-	cfgHttpExcludeMethod       = "Http.ExcludeMethod"
-	cfgHttpRecordRequestHeader = "Http.RecordRequestHeader"
-	cfgHttpRecordRespondHeader = "Http.RecordRespondHeader"
-	cfgHttpRecordRequestCookie = "Http.RecordRequestCookie"
+	cfgHttpServerStatusCodeErrors     = "Http.Server.StatusCodeErrors"
+	cfgHttpServerExcludeUrl           = "Http.Server.ExcludeUrl"
+	cfgHttpServerExcludeMethod        = "Http.Server.ExcludeMethod"
+	cfgHttpServerRecordRequestHeader  = "Http.Server.RecordRequestHeader"
+	cfgHttpServerRecordResponseHeader = "Http.Server.RecordResponseHeader"
+	cfgHttpServerRecordRequestCookie  = "Http.Server.RecordRequestCookie"
+	cfgHttpClientRecordRequestHeader  = "Http.Client.RecordRequestHeader"
+	cfgHttpClientRecordResponseHeader = "Http.Client.RecordResponseHeader"
+	cfgHttpClientRecordRequestCookie  = "Http.Client.RecordRequestCookie"
 )
 
 func init() {
-	pinpoint.AddConfig(cfgHttpStatusCodeErrors, pinpoint.CfgStringSlice, []string{"5xx"})
-	pinpoint.AddConfig(cfgHttpExcludeUrl, pinpoint.CfgStringSlice, []string{})
-	pinpoint.AddConfig(cfgHttpExcludeMethod, pinpoint.CfgStringSlice, []string{})
-	pinpoint.AddConfig(cfgHttpRecordRequestHeader, pinpoint.CfgStringSlice, []string{})
-	pinpoint.AddConfig(cfgHttpRecordRespondHeader, pinpoint.CfgStringSlice, []string{})
-	pinpoint.AddConfig(cfgHttpRecordRequestCookie, pinpoint.CfgStringSlice, []string{})
+	pinpoint.AddConfig(cfgHttpServerStatusCodeErrors, pinpoint.CfgStringSlice, []string{"5xx"})
+	pinpoint.AddConfig(cfgHttpServerExcludeUrl, pinpoint.CfgStringSlice, []string{})
+	pinpoint.AddConfig(cfgHttpServerExcludeMethod, pinpoint.CfgStringSlice, []string{})
+	pinpoint.AddConfig(cfgHttpServerRecordRequestHeader, pinpoint.CfgStringSlice, []string{})
+	pinpoint.AddConfig(cfgHttpServerRecordResponseHeader, pinpoint.CfgStringSlice, []string{})
+	pinpoint.AddConfig(cfgHttpServerRecordRequestCookie, pinpoint.CfgStringSlice, []string{})
+	pinpoint.AddConfig(cfgHttpClientRecordRequestHeader, pinpoint.CfgStringSlice, []string{})
+	pinpoint.AddConfig(cfgHttpClientRecordResponseHeader, pinpoint.CfgStringSlice, []string{})
+	pinpoint.AddConfig(cfgHttpClientRecordRequestCookie, pinpoint.CfgStringSlice, []string{})
 }
 
-type httpStatusCode interface {
-	isError(code int) bool
-}
-
-type httpStatusInformational struct{}
-
-func newHttpStatusInformational() *httpStatusInformational {
-	return &httpStatusInformational{}
-}
-
-func (h *httpStatusInformational) isError(code int) bool {
-	return 100 <= code && code <= 199
-}
-
-type httpStatusSuccess struct{}
-
-func newHttpStatusSuccess() *httpStatusSuccess {
-	return &httpStatusSuccess{}
-}
-
-func (h *httpStatusSuccess) isError(code int) bool {
-	return 200 <= code && code <= 299
-}
-
-type httpStatusRedirection struct{}
-
-func newHttpStatusRedirection() *httpStatusRedirection {
-	return &httpStatusRedirection{}
-}
-
-func (h *httpStatusRedirection) isError(code int) bool {
-	return 300 <= code && code <= 399
-}
-
-type httpStatusClientError struct{}
-
-func newHttpStatusClientError() *httpStatusClientError {
-	return &httpStatusClientError{}
-}
-
-func (h *httpStatusClientError) isError(code int) bool {
-	return 400 <= code && code <= 499
-}
-
-type httpStatusServerError struct{}
-
-func newHttpStatusServerError() *httpStatusServerError {
-	return &httpStatusServerError{}
-}
-
-func (h *httpStatusServerError) isError(code int) bool {
-	return 500 <= code && code <= 599
-}
-
-type httpStatusDefault struct {
-	statusCode int
-}
-
-func newHttpStatusDefault(code int) *httpStatusDefault {
-	return &httpStatusDefault{
-		statusCode: code,
+func WithHttpServerStatusCodeError(errors []string) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(cfgHttpServerStatusCodeErrors, errors)
 	}
 }
 
-func (h *httpStatusDefault) isError(code int) bool {
-	return h.statusCode == code
-}
-
-type httpStatusError struct {
-	errors []httpStatusCode
-}
-
-func newHttpStatusError() *httpStatusError {
-	return &httpStatusError{
-		errors: setupHttpStatusErrors(),
+func WithHttpServerExcludeUrl(urlPath []string) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(cfgHttpServerExcludeUrl, urlPath)
 	}
 }
 
-func setupHttpStatusErrors() []httpStatusCode {
-	var errors []httpStatusCode
-
-	cfgErrors := pinpoint.GetConfig().StringSlice(cfgHttpStatusCodeErrors)
-	trimStringSlice(cfgErrors)
-
-	for _, s := range cfgErrors {
-		if strings.EqualFold(s, "5xx") {
-			errors = append(errors, newHttpStatusServerError())
-		} else if strings.EqualFold(s, "4xx") {
-			errors = append(errors, newHttpStatusClientError())
-		} else if strings.EqualFold(s, "3xx") {
-			errors = append(errors, newHttpStatusRedirection())
-		} else if strings.EqualFold(s, "2xx") {
-			errors = append(errors, newHttpStatusSuccess())
-		} else if strings.EqualFold(s, "1xx") {
-			errors = append(errors, newHttpStatusInformational())
-		} else {
-			c, e := strconv.Atoi(s)
-			if e != nil {
-				c = -1
-			}
-			errors = append(errors, newHttpStatusDefault(c))
-		}
-	}
-
-	return errors
-}
-
-func (h *httpStatusError) isError(code int) bool {
-	for _, h := range h.errors {
-		if h.isError(code) {
-			return true
-		}
-	}
-	return false
-}
-
-type httpExcludeUrl struct {
-	pattern *regexp.Regexp
-}
-
-func (h *httpExcludeUrl) match(urlPath string) bool {
-	if h.pattern != nil {
-		return h.pattern.MatchString(urlPath)
-	}
-
-	return false
-}
-
-func newHttpExcludeUrl(urlPath string) *httpExcludeUrl {
-	h := httpExcludeUrl{pattern: nil}
-
-	pinpoint.Log("http").Debug("newHttpExcludeUrl: ", urlPath, convertToRegexp(urlPath))
-
-	r, err := regexp.Compile(convertToRegexp(urlPath))
-	if err == nil {
-		h.pattern = r
-	}
-	return &h
-}
-
-func convertToRegexp(antPath string) string {
-	var buf bytes.Buffer
-	buf.WriteRune('^')
-
-	afterStar := false
-	for _, c := range antPath {
-		if afterStar {
-			if c == '*' {
-				buf.WriteString(".*")
-			} else {
-				buf.WriteString("[^/]*")
-				writeRune(&buf, c)
-			}
-			afterStar = false
-		} else {
-			if c == '*' {
-				afterStar = true
-			} else {
-				writeRune(&buf, c)
-			}
-		}
-	}
-
-	if afterStar {
-		buf.WriteString("[^/]*")
-	}
-
-	buf.WriteRune('$')
-	return buf.String()
-}
-
-func writeRune(buf *bytes.Buffer, c rune) {
-	if c == '.' || c == '+' || c == '^' || c == '[' || c == ']' || c == '{' || c == '}' {
-		buf.WriteRune('\\')
-	}
-	buf.WriteRune(c)
-}
-
-type httpUrlFilter struct {
-	filters []*httpExcludeUrl
-}
-
-func newHttpUrlFilter() *httpUrlFilter {
-	return &httpUrlFilter{
-		filters: setupHttpUrlFilter(),
+func WithHttpServerExcludeMethod(method []string) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(cfgHttpServerExcludeMethod, method)
 	}
 }
 
-func setupHttpUrlFilter() []*httpExcludeUrl {
-	var filters []*httpExcludeUrl
-
-	cfgFilters := pinpoint.GetConfig().StringSlice(cfgHttpExcludeUrl)
-	trimStringSlice(cfgFilters)
-
-	for _, u := range cfgFilters {
-		filters = append(filters, newHttpExcludeUrl(u))
-	}
-
-	return filters
-}
-
-func (h *httpUrlFilter) isFiltered(url string) bool {
-	for _, h := range h.filters {
-		if h.match(url) {
-			return true
-		}
-	}
-	return false
-}
-
-type httpHeaderRecorder interface {
-	recordHeader(annotation pinpoint.Annotation, aKey int, header http.Header)
-	recordCookie(annotation pinpoint.Annotation, cookie []*http.Cookie)
-}
-
-type allHttpHeaderRecoder struct{}
-
-func newAllHttpHeaderRecoder() *allHttpHeaderRecoder {
-	return &allHttpHeaderRecoder{}
-}
-
-func (h *allHttpHeaderRecoder) recordHeader(annotation pinpoint.Annotation, key int, header http.Header) {
-	for name, values := range header {
-		vStr := strings.Join(values[:], ",")
-		annotation.AppendStringString(int32(key), name, vStr)
+func WithHttpServerRecordRequestHeader(header []string) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(cfgHttpServerRecordRequestHeader, header)
 	}
 }
 
-func (h *allHttpHeaderRecoder) recordCookie(annotation pinpoint.Annotation, cookie []*http.Cookie) {
-	for _, c := range cookie {
-		annotation.AppendStringString(pinpoint.AnnotationHttpCookie, c.Name, c.Value)
+func WithHttpServerRecordRespondHeader(header []string) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(cfgHttpServerRecordResponseHeader, header)
 	}
 }
 
-type defaultHttpHeaderRecoder struct {
-	cfg []string
-}
-
-func newDefaultHttpHeaderRecoder(headers []string) *defaultHttpHeaderRecoder {
-	return &defaultHttpHeaderRecoder{cfg: headers}
-}
-
-func (h *defaultHttpHeaderRecoder) recordHeader(annotation pinpoint.Annotation, key int, header http.Header) {
-	for _, name := range h.cfg {
-		if v := header.Values(name); v != nil && len(v) > 0 {
-			vStr := strings.Join(v[:], ",")
-			annotation.AppendStringString(int32(key), name, vStr)
-		}
+func WithHttpServerRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(cfgHttpServerRecordRequestCookie, cookie)
 	}
 }
 
-func (h *defaultHttpHeaderRecoder) recordCookie(annotation pinpoint.Annotation, cookie []*http.Cookie) {
-	for _, name := range h.cfg {
-		for _, c := range cookie {
-			if strings.EqualFold(name, c.Name) {
-				annotation.AppendStringString(pinpoint.AnnotationHttpCookie, c.Name, c.Value)
-				break
-			}
-		}
+func WithHttpClientRecordRequestHeader(header []string) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(cfgHttpClientRecordRequestHeader, header)
 	}
 }
 
-type noopHttpHeaderRecorder struct{}
-
-func newNoopHttpHeaderRecorder() *noopHttpHeaderRecorder {
-	return &noopHttpHeaderRecorder{}
+func WithHttpClientRecordRespondHeader(header []string) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(cfgHttpClientRecordResponseHeader, header)
+	}
 }
 
-func (h *noopHttpHeaderRecorder) recordHeader(annotation pinpoint.Annotation, key int, header http.Header) {
-}
-
-func (h *noopHttpHeaderRecorder) recordCookie(annotation pinpoint.Annotation, cookie []*http.Cookie) {
+func WithHttpClientRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(cfgHttpClientRecordRequestCookie, cookie)
+	}
 }
 
 var (
-	serverStatusErrors      *httpStatusError
-	serverUrlFilter         *httpUrlFilter
-	serverReqHeaderRecorder httpHeaderRecorder
-	serverResHeaderRecorder httpHeaderRecorder
-	srvCookieRecorder       httpHeaderRecorder
+	srvStatusErrors      *httpStatusError
+	srvUrlFilter         *httpUrlFilter
+	srvReqHeaderRecorder httpHeaderRecorder
+	srvResHeaderRecorder httpHeaderRecorder
+	srvCookieRecorder    httpHeaderRecorder
+
+	cltReqHeaderRecorder httpHeaderRecorder
+	cltResHeaderRecorder httpHeaderRecorder
+	cltCookieRecorder    httpHeaderRecorder
 )
 
-func httpStatusErrorHandler() *httpStatusError {
-	if serverStatusErrors == nil {
-		serverStatusErrors = newHttpStatusError()
+func serverStatusError() *httpStatusError {
+	if srvStatusErrors == nil {
+		srvStatusErrors = newHttpStatusError()
 	}
 
-	return serverStatusErrors
+	return srvStatusErrors
 }
 
-func httpUrlFilterHandler() *httpUrlFilter {
-	if serverUrlFilter == nil {
-		serverUrlFilter = newHttpUrlFilter()
+func serverUrlFilter() *httpUrlFilter {
+	if srvUrlFilter == nil {
+		srvUrlFilter = newHttpUrlFilter()
 	}
-	return serverUrlFilter
+	return srvUrlFilter
 }
 
 func serverRequestHeaderRecorder() httpHeaderRecorder {
-	if serverReqHeaderRecorder == nil {
-		cfgHeaders := pinpoint.GetConfig().StringSlice(cfgHttpRecordRequestHeader)
-		trimStringSlice(cfgHeaders)
-		serverReqHeaderRecorder = makeHttpHeaderRecoder(cfgHeaders)
+	if srvReqHeaderRecorder == nil {
+		srvReqHeaderRecorder = makeHttpHeaderRecorder(cfgHttpServerRecordRequestHeader)
 	}
-	return serverReqHeaderRecorder
+	return srvReqHeaderRecorder
 }
 
 func serverResponseHeaderRecorder() httpHeaderRecorder {
-	if serverResHeaderRecorder == nil {
-		cfgHeaders := pinpoint.GetConfig().StringSlice(cfgHttpRecordRequestHeader)
-		trimStringSlice(cfgHeaders)
-		serverResHeaderRecorder = makeHttpHeaderRecoder(cfgHeaders)
+	if srvResHeaderRecorder == nil {
+		srvResHeaderRecorder = makeHttpHeaderRecorder(cfgHttpServerRecordResponseHeader)
 	}
-	return serverResHeaderRecorder
+	return srvResHeaderRecorder
 }
 
 func serverCookieRecorder() httpHeaderRecorder {
 	if srvCookieRecorder == nil {
-		cfgHeaders := pinpoint.GetConfig().StringSlice(cfgHttpRecordRequestCookie)
-		trimStringSlice(cfgHeaders)
-		srvCookieRecorder = makeHttpHeaderRecoder(cfgHeaders)
+		srvCookieRecorder = makeHttpHeaderRecorder(cfgHttpServerRecordRequestCookie)
 	}
 	return srvCookieRecorder
 }
 
-func makeHttpHeaderRecoder(cfg []string) httpHeaderRecorder {
+func clientRequestHeaderRecorder() httpHeaderRecorder {
+	if cltReqHeaderRecorder == nil {
+		cltReqHeaderRecorder = makeHttpHeaderRecorder(cfgHttpClientRecordRequestHeader)
+	}
+	return cltReqHeaderRecorder
+}
+
+func clientResponseHeaderRecorder() httpHeaderRecorder {
+	if cltResHeaderRecorder == nil {
+		cltResHeaderRecorder = makeHttpHeaderRecorder(cfgHttpClientRecordResponseHeader)
+	}
+	return cltResHeaderRecorder
+}
+
+func clientCookieRecorder() httpHeaderRecorder {
+	if cltCookieRecorder == nil {
+		cltCookieRecorder = makeHttpHeaderRecorder(cfgHttpClientRecordRequestCookie)
+	}
+	return cltCookieRecorder
+}
+
+func makeHttpHeaderRecorder(cfgName string) httpHeaderRecorder {
+	cfg := pinpoint.GetConfig().StringSlice(cfgName)
+	trimStringSlice(cfg)
+
 	if len(cfg) == 0 {
 		return newNoopHttpHeaderRecorder()
 	} else if strings.EqualFold(cfg[0], "HEADERS-ALL") {
-		return newAllHttpHeaderRecoder()
+		return newAllHttpHeaderRecorder()
 	} else {
-		return newDefaultHttpHeaderRecoder(cfg)
+		return newDefaultHttpHeaderRecorder(cfg)
 	}
 }
 
-func isHttpError(code int) bool {
-	return httpStatusErrorHandler().isError(code)
+func trimStringSlice(slice []string) {
+	for i := range slice {
+		slice[i] = strings.TrimSpace(slice[i])
+	}
 }
 
 func isExcludedUrl(url string) bool {
-	return httpUrlFilterHandler().isFiltered(url)
+	return serverUrlFilter().isFiltered(url)
 }
 
 func isExcludedMethod(method string) bool {
-	cfgMethods := pinpoint.GetConfig().StringSlice(cfgHttpExcludeMethod)
+	cfgMethods := pinpoint.GetConfig().StringSlice(cfgHttpServerExcludeMethod)
 	trimStringSlice(cfgMethods)
 
 	for _, em := range cfgMethods {
@@ -382,72 +189,33 @@ func isExcludedMethod(method string) bool {
 	return false
 }
 
-func serverHttpHeaderRecorder(key int) httpHeaderRecorder {
-	if key == pinpoint.AnnotationHttpRequestHeader {
-		return serverRequestHeaderRecorder()
-	} else if key == pinpoint.AnnotationHttpResponseHeader {
-		return serverResponseHeaderRecorder()
-	} else if key == pinpoint.AnnotationHttpCookie {
-		return serverCookieRecorder()
-	} else {
-		return newNoopHttpHeaderRecorder()
-	}
-}
-
-func trimStringSlice(slice []string) {
-	for i := range slice {
-		slice[i] = strings.TrimSpace(slice[i])
-	}
-}
-
-func WithHttpStatusCodeError(errors []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(cfgHttpStatusCodeErrors, errors)
-	}
-}
-
-func WithHttpExcludeUrl(urlPath []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(cfgHttpExcludeUrl, urlPath)
-	}
-}
-
-func WithHttpExcludeMethod(method []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(cfgHttpExcludeMethod, method)
-	}
-}
-
-func WithHttpRecordRequestHeader(header []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(cfgHttpRecordRequestHeader, header)
-	}
-}
-
-func WithHttpRecordRespondHeader(header []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(cfgHttpRecordRespondHeader, header)
-	}
-}
-
-func WithHttpRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(cfgHttpRecordRequestCookie, cookie)
-	}
-}
-
-func recordHttpStatus(span pinpoint.SpanRecorder, status int) {
+func recordServerHttpStatus(span pinpoint.SpanRecorder, status int) {
 	span.Annotations().AppendInt(pinpoint.AnnotationHttpStatusCode, int32(status))
-	if isHttpError(status) {
+	if serverStatusError().isError(status) {
 		span.SetFailure()
 	}
 }
 
-func recordHttpHeader(annotation pinpoint.Annotation, key int, header http.Header) {
-	serverHttpHeaderRecorder(key).recordHeader(annotation, key, header)
+func recordServerHttpRequestHeader(annotation pinpoint.Annotation, header http.Header) {
+	serverRequestHeaderRecorder().recordHeader(annotation, pinpoint.AnnotationHttpRequestHeader, header)
 }
 
-func recordHttpCookie(annotation pinpoint.Annotation, cookie []*http.Cookie) {
-	serverHttpHeaderRecorder(pinpoint.AnnotationHttpCookie).recordCookie(annotation, cookie)
+func recordServerHttpResponseHeader(annotation pinpoint.Annotation, header http.Header) {
+	serverResponseHeaderRecorder().recordHeader(annotation, pinpoint.AnnotationHttpResponseHeader, header)
+}
 
+func recordServerHttpCookie(annotation pinpoint.Annotation, cookie []*http.Cookie) {
+	serverCookieRecorder().recordCookie(annotation, cookie)
+}
+
+func recordClientHttpRequestHeader(annotation pinpoint.Annotation, header http.Header) {
+	clientRequestHeaderRecorder().recordHeader(annotation, pinpoint.AnnotationHttpRequestHeader, header)
+}
+
+func recordClientHttpResponseHeader(annotation pinpoint.Annotation, header http.Header) {
+	clientResponseHeaderRecorder().recordHeader(annotation, pinpoint.AnnotationHttpResponseHeader, header)
+}
+
+func recordClientHttpCookie(annotation pinpoint.Annotation, cookie []*http.Cookie) {
+	clientCookieRecorder().recordCookie(annotation, cookie)
 }

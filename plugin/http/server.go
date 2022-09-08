@@ -22,10 +22,12 @@ func NewHttpServerTracer(agent pinpoint.Agent, req *http.Request, operation stri
 		span.SetEndPoint(req.Host)
 		span.SetRemoteAddress(getRemoteAddr(req))
 
-		a := span.Annotations()
-		recordHttpHeader(a, pinpoint.AnnotationHttpRequestHeader, req.Header)
-		recordHttpCookie(a, req.Cookies())
-		setProxyHeader(a, req)
+		if tracer.IsSampled() {
+			a := span.Annotations()
+			recordServerHttpRequestHeader(a, req.Header)
+			recordServerHttpCookie(a, req.Cookies())
+			setProxyHeader(a, req)
+		}
 
 		return tracer
 	}
@@ -107,8 +109,10 @@ func setProxyHeader(a pinpoint.Annotation, r *http.Request) {
 }
 
 func RecordHttpServerResponse(tracer pinpoint.Tracer, status int, header http.Header) {
-	recordHttpStatus(tracer.Span(), status)
-	recordHttpHeader(tracer.Span().Annotations(), pinpoint.AnnotationHttpResponseHeader, header)
+	if tracer.IsSampled() {
+		recordServerHttpStatus(tracer.Span(), status)
+		recordServerHttpResponseHeader(tracer.Span().Annotations(), header)
+	}
 }
 
 func WrapHandle(agent pinpoint.Agent, pattern string, handler http.Handler) (string, http.Handler) {

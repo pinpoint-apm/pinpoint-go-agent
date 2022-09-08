@@ -111,8 +111,8 @@ func main() {
 		pinpoint.WithAgentId("GoAsyncExampleAgent"),
 		//pinpoint.WithSamplingCounterRate(100),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
-		phttp.WithHttpRecordRequestHeader([]string{"HEADERS-ALL"}),
-		phttp.WithHttpRecordRespondHeader([]string{"HEADERS-ALL"}),
+		phttp.WithHttpServerRecordRequestHeader([]string{"HEADERS-ALL"}),
+		phttp.WithHttpServerRecordRespondHeader([]string{"HEADERS-ALL"}),
 	}
 	c, _ := pinpoint.NewConfig(opts...)
 	t, _ := pinpoint.NewAgent(c)

@@ -34,8 +34,8 @@ func main() {
 		pinpoint.WithAppName("GoHttpMuxTest"),
 		pinpoint.WithAgentId("GoHttpMuxAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
-		phttp.WithHttpStatusCodeError([]string{"5xx", "4xx"}),
-		phttp.WithHttpRecordRequestHeader([]string{"user-agent", "connection", "foo"}),
+		phttp.WithHttpServerStatusCodeError([]string{"500", "400"}),
+		phttp.WithHttpServerRecordRequestHeader([]string{"user-agent", "connection", "foo"}),
 	}
 
 	//os.Setenv("PINPOINT_GO_USEPROFILE", "real")
