@@ -1,5 +1,5 @@
 applicationName=PropAppName
-applicationype=1902
+applicationtype=1902
 agentid=PropAgentID
 
 collector.host=prop.collector.host
