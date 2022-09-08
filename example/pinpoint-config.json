@@ -1,0 +1,45 @@
+{
+  "applicationName": "JsonAppName",
+  "applicationtype": 1901,
+  "agentid": "JsonAgentID",
+  "collector": {
+    "host": "json.collector.host",
+    "agentPort": 9000,
+    "spanPort": 9001,
+    "statport": 9002
+  },
+  "sampling": {
+    "type": "PERCENT",
+    "percentRate": 0.2,
+    "counterRate": 20,
+    "NewThroughput": 50,
+    "ContinueThroughput": 60
+  },
+  "loglevel": "debug",
+  "Stat": {
+    "CollectInterval": 7000,
+    "BatchCount": 10
+  },
+  "runOnContainer": true,
+  "useProfile": "real",
+  "profile": {
+    "dev": {
+      "collector": {
+        "host": "dev.collector.host"
+      },
+      "sampling": {
+        "type": "COUNTER",
+        "CounterRate": 1
+      }
+    },
+    "real": {
+      "collector": {
+        "host": "real.collector.host"
+      },
+      "sampling": {
+        "type": "percent",
+        "percentRate": 5.5
+      }
+    }
+  }
+}

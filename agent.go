@@ -13,11 +13,14 @@ import (
 	prefixed "github.com/x-cray/logrus-prefixed-formatter"
 )
 
-const cacheSize = 1024
+func init() {
+	initLogger()
+	initConfig()
+}
 
 var logger *logrus.Logger
 
-func init() {
+func initLogger() {
 	logger = logrus.New()
 	formatter := new(prefixed.TextFormatter)
 	formatter.TimestampFormat = "2006-01-02 15:04:05.000000"
@@ -74,6 +77,8 @@ type sqlMeta struct {
 	sql string
 }
 
+const cacheSize = 1024
+
 func NewAgent(config *Config) (Agent, error) {
 	agent := agent{}
 
@@ -87,11 +92,6 @@ func NewAgent(config *Config) (Agent, error) {
 
 	agent.startTime = time.Now().UnixNano() / int64(time.Millisecond)
 	agent.sequence = 0
-
-	logger.SetLevel(config.logLevel)
-	if config.logLevel > logrus.InfoLevel {
-		logger.SetReportCaller(true)
-	}
 
 	var err error
 	agent.spanChan = make(chan *span, 5*1024)

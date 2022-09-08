@@ -1,8 +1,34 @@
 #pinpoint go-agent configuration
 
-ApplicationName: "MyAppName"
-Collector:
-  Host: "my.collector.host"
-Sampling:
-  Rate: 10
-LogLevel: "error"
+applicationname: "MyAppName"
+applicationtype: 1900
+agentid: "MyAgentID"
+collector:
+  host: "my.collector.host"
+  agentport: 9000
+  spanport: 9001
+  statport: 9002
+sampling:
+  type: "PERCENT"
+  percentrate: 0.1
+  counterrate: 20
+  NewThroughput: 50
+  ContinueThroughput: 60
+loglevel: "debug"
+Stat:
+  CollectInterval: 7000
+  BatchCount: 10
+runOnContainer: true
+profile:
+  dev:
+    collector:
+      host: "dev.collector.host"
+    sampling:
+      type: "COUNTER"
+      counterrate: 1
+  real:
+    collector:
+      host: "real.collector.host"
+    sampling:
+      type: "PERCENT"
+      percentrate: 5

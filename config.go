@@ -2,9 +2,6 @@ package pinpoint
 
 import (
 	"errors"
-	"github.com/spf13/cast"
-	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
 	"math/rand"
 	"os"
 	"regexp"
@@ -12,6 +9,9 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/spf13/cast"
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
 const (
@@ -32,7 +32,7 @@ const (
 	cfgStatBatchCount             = "Stat.BatchCount"
 	cfgRunOnContainer             = "RunOnContainer"
 	cfgConfigFile                 = "ConfigFile"
-	cfgProfile                    = "UseProfile"
+	cfgUseProfile                 = "UseProfile"
 	cfgIdPattern                  = "[a-zA-Z0-9\\._\\-]+"
 )
 
@@ -46,19 +46,20 @@ const (
 
 type cfgMapItem struct {
 	value        interface{}
-	valueType    int
 	defaultValue interface{}
 	cmdKey       string
 	envKey       string
 }
 
-var cfgMap map[string]*cfgMapItem
-var flagSet *pflag.FlagSet
-var globalConfig *Config
+var (
+	cfgBaseMap   map[string]*cfgMapItem
+	flagSet      *pflag.FlagSet
+	globalConfig *Config
+)
 
-func init() {
-	cfgMap = make(map[string]*cfgMapItem, 25)
-	flagSet = pflag.NewFlagSet(os.Args[0], pflag.ContinueOnError)
+func initConfig() {
+	cfgBaseMap = make(map[string]*cfgMapItem, 25)
+	flagSet = pflag.NewFlagSet("pinpoint_go_agent", pflag.ContinueOnError)
 
 	AddConfig(cfgAppName, CfgString, "")
 	AddConfig(cfgAppType, CfgInt, ServiceTypeGoApp)
@@ -74,17 +75,14 @@ func init() {
 	AddConfig(cfgSamplingNewThroughput, CfgInt, 0)
 	AddConfig(cfgSamplingContinueThroughput, CfgInt, 0)
 	AddConfig(cfgStatCollectInterval, CfgInt, 5000)
-	AddConfig(cfgStatBatchCount, CfgInt, 5)
+	AddConfig(cfgStatBatchCount, CfgInt, 6)
 	AddConfig(cfgRunOnContainer, CfgBool, false)
 	AddConfig(cfgConfigFile, CfgString, "")
-	AddConfig(cfgProfile, CfgString, "")
-
-	flagSet.Parse(os.Args[1:])
+	AddConfig(cfgUseProfile, CfgString, "")
 }
 
 func AddConfig(cfgName string, valueType int, defaultValue interface{}) {
-	cfgMap[cfgName] = &cfgMapItem{
-		valueType:    valueType,
+	cfgBaseMap[cfgName] = &cfgMapItem{
 		defaultValue: defaultValue,
 		cmdKey:       cmdName(cfgName),
 		envKey:       envName(cfgName),
@@ -113,7 +111,7 @@ func envName(cfgName string) string {
 }
 
 type Config struct {
-	logLevel       logrus.Level
+	cfgMap         map[string]*cfgMapItem
 	containerCheck bool
 }
 
@@ -124,43 +122,71 @@ func GetConfig() *Config {
 }
 
 func (config *Config) Set(cfgName string, value interface{}) {
-	cfgMap[cfgName].value = value
-}
-func (config *Config) String(cfgName string) string {
-	return cast.ToString(cfgMap[cfgName].value)
+	if v, ok := config.cfgMap[cfgName]; ok {
+		v.value = value
+	}
 }
 
 func (config *Config) Int(cfgName string) int {
-	return cast.ToInt(cfgMap[cfgName].value)
+	if v, ok := config.cfgMap[cfgName]; ok {
+		return cast.ToInt(v.value)
+	}
+	return 0
 }
 
 func (config *Config) Float(cfgName string) float64 {
-	return cast.ToFloat64(cfgMap[cfgName].value)
+	if v, ok := config.cfgMap[cfgName]; ok {
+		return cast.ToFloat64(v.value)
+	}
+	return 0
+}
+
+func (config *Config) String(cfgName string) string {
+	if v, ok := config.cfgMap[cfgName]; ok {
+		return cast.ToString(v.value)
+	}
+	return ""
 }
 
 func (config *Config) StringSlice(cfgName string) []string {
-	return cast.ToStringSlice(cfgMap[cfgName].value)
+	if v, ok := config.cfgMap[cfgName]; ok {
+		return cast.ToStringSlice(v.value)
+	}
+	return []string{}
 }
 
 func (config *Config) Bool(cfgName string) bool {
-	return cast.ToBool(cfgMap[cfgName].value)
+	if v, ok := config.cfgMap[cfgName]; ok {
+		return cast.ToBool(v.value)
+	}
+	return false
 }
 
 func NewConfig(opts ...ConfigOption) (*Config, error) {
 	config := defaultConfig()
 
-	for _, fn := range opts {
-		fn(config)
+	if opts != nil {
+		for _, fn := range opts {
+			fn(config)
+		}
 	}
 
 	cmdEnvViper := viper.New()
+	flagSet.Parse(os.Args[1:])
 	cmdEnvViper.BindPFlags(flagSet)
+
 	cmdEnvViper.SetEnvPrefix("pinpoint_go")
 	cmdEnvViper.AutomaticEnv()
 
-	cfgFileViper := loadConfigFile(cmdEnvViper)
-	profileViper := loadProfile(cmdEnvViper, cfgFileViper)
-	loadConfig(cmdEnvViper, cfgFileViper, profileViper)
+	cfgFileViper := config.loadConfigFile(cmdEnvViper)
+	profileViper := config.loadProfile(cmdEnvViper, cfgFileViper)
+	config.loadConfig(cmdEnvViper, cfgFileViper, profileViper)
+
+	logLevel := parseLogLevel(config.String(cfgLogLevel))
+	logger.SetLevel(logLevel)
+	if logLevel > logrus.InfoLevel {
+		logger.SetReportCaller(true)
+	}
 
 	r, _ := regexp.Compile(cfgIdPattern)
 	appName := config.String(cfgAppName)
@@ -174,8 +200,8 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 
 	agentId := config.String(cfgAgentID)
 	if agentId == "" || len(agentId) > MaxAgentIdLength || !r.MatchString(agentId) {
-		cfgMap[cfgAgentID].value = randomString(MaxAgentIdLength - 1)
-		Log("config").Infof("agentId is automatically generated: %v", cfgMap[cfgAgentID].value)
+		config.cfgMap[cfgAgentID].value = randomString(MaxAgentIdLength - 1)
+		Log("config").Infof("agentId is automatically generated: %v", config.cfgMap[cfgAgentID].value)
 	}
 
 	sampleType := config.String(cfgSamplingType)
@@ -183,7 +209,7 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	if sampleType == SamplingTypeCounter {
 		rate := config.Int(cfgSamplingCounterRate)
 		if rate < 0 {
-			cfgMap[cfgSamplingCounterRate].value = 0
+			config.cfgMap[cfgSamplingCounterRate].value = 0
 		}
 	} else if sampleType == SamplingTypePercent {
 		rate := config.Float(cfgSamplingPercentRate)
@@ -194,19 +220,18 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		} else if rate > 100 {
 			rate = 100
 		}
-		cfgMap[cfgSamplingPercentRate].value = rate
+		config.cfgMap[cfgSamplingPercentRate].value = rate
 	} else {
-		cfgMap[cfgSamplingType].value = SamplingTypeCounter
-		cfgMap[cfgSamplingCounterRate].value = 1
+		config.cfgMap[cfgSamplingType].value = SamplingTypeCounter
+		config.cfgMap[cfgSamplingCounterRate].value = 1
 	}
 
 	if config.containerCheck {
-		cfgMap[cfgRunOnContainer].value = isContainerEnv()
+		config.cfgMap[cfgRunOnContainer].value = isContainerEnv()
 	}
 
-	config.logLevel = parseLogLevel(config.String(cfgLogLevel))
+	config.printConfigString()
 	globalConfig = config
-	printConfigString()
 
 	return config, nil
 }
@@ -214,20 +239,27 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 func defaultConfig() *Config {
 	config := new(Config)
 
-	config.logLevel = logrus.InfoLevel
-	config.containerCheck = true
+	config.cfgMap = make(map[string]*cfgMapItem, 25)
+	for k, v := range cfgBaseMap {
+		config.cfgMap[k] = &cfgMapItem{
+			defaultValue: v.defaultValue,
+			cmdKey:       v.cmdKey,
+			envKey:       v.envKey,
+		}
+	}
 
-	for _, v := range cfgMap {
+	for _, v := range config.cfgMap {
 		v.value = v.defaultValue
 	}
 
+	config.containerCheck = true
 	return config
 }
 
-func loadConfigFile(cmdEnvViper *viper.Viper) *viper.Viper {
+func (config *Config) loadConfigFile(cmdEnvViper *viper.Viper) *viper.Viper {
 	var cfgFile string
 
-	item := cfgMap[cfgConfigFile]
+	item := config.cfgMap[cfgConfigFile]
 	if cmdEnvViper.IsSet(item.cmdKey) {
 		cfgFile = cmdEnvViper.GetString(item.cmdKey)
 	} else if cmdEnvViper.IsSet(item.envKey) {
@@ -239,22 +271,24 @@ func loadConfigFile(cmdEnvViper *viper.Viper) *viper.Viper {
 	cfgFileViper := viper.New()
 	if cfgFile != "" {
 		cfgFileViper.SetConfigFile(cfgFile)
-		cfgFileViper.ReadInConfig()
+		if err := cfgFileViper.ReadInConfig(); err != nil {
+			Log("config").Errorf("config file loading error: %v", err)
+		}
 	}
 
 	return cfgFileViper
 }
 
-func loadProfile(cmdEnvViper *viper.Viper, cfgFileViper *viper.Viper) *viper.Viper {
+func (config *Config) loadProfile(cmdEnvViper *viper.Viper, cfgFileViper *viper.Viper) *viper.Viper {
 	var profile string
 
-	item := cfgMap[cfgProfile]
+	item := config.cfgMap[cfgUseProfile]
 	if cmdEnvViper.IsSet(item.cmdKey) {
 		profile = cmdEnvViper.GetString(item.cmdKey)
 	} else if cmdEnvViper.IsSet(item.envKey) {
 		profile = cmdEnvViper.GetString(item.envKey)
-	} else if cfgFileViper.IsSet(cfgProfile) {
-		profile = cfgFileViper.GetString(cfgProfile)
+	} else if cfgFileViper.IsSet(cfgUseProfile) {
+		profile = cfgFileViper.GetString(cfgUseProfile)
 	} else {
 		profile = item.value.(string)
 	}
@@ -271,17 +305,24 @@ func loadProfile(cmdEnvViper *viper.Viper, cfgFileViper *viper.Viper) *viper.Vip
 	return viper.New()
 }
 
-func loadConfig(cmdEnvViper *viper.Viper, cfgFileViper *viper.Viper, profileViper *viper.Viper) {
-	for k, v := range cfgMap {
+func (config *Config) loadConfig(cmdEnvViper *viper.Viper, cfgFileViper *viper.Viper, profileViper *viper.Viper) {
+	for k, v := range config.cfgMap {
 		if cmdEnvViper.IsSet(v.cmdKey) {
-			v.value = cmdEnvViper.Get(v.cmdKey)
+			config.setFinalValue(k, v, cmdEnvViper.Get(v.cmdKey))
 		} else if cmdEnvViper.IsSet(v.envKey) {
-			v.value = cmdEnvViper.Get(v.envKey)
+			config.setFinalValue(k, v, cmdEnvViper.Get(v.envKey))
 		} else if profileViper.IsSet(k) {
-			v.value = profileViper.Get(k)
+			config.setFinalValue(k, v, profileViper.Get(k))
 		} else if cfgFileViper.IsSet(k) {
-			v.value = cfgFileViper.Get(k)
+			config.setFinalValue(k, v, cfgFileViper.Get(k))
 		}
+	}
+}
+
+func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value interface{}) {
+	item.value = value
+	if cfgName == cfgRunOnContainer {
+		config.containerCheck = false
 	}
 }
 
@@ -309,122 +350,122 @@ func parseLogLevel(level string) logrus.Level {
 
 func WithAppName(name string) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgAppName].value = name
+		c.cfgMap[cfgAppName].value = name
 	}
 }
 
 func WithAppType(typ int32) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgAppType].value = typ
+		c.cfgMap[cfgAppType].value = typ
 	}
 }
 
 func WithAgentId(id string) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgAgentID].value = id
+		c.cfgMap[cfgAgentID].value = id
 	}
 }
 
 func WithConfigFile(filePath string) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgConfigFile].value = filePath
+		c.cfgMap[cfgConfigFile].value = filePath
 	}
 }
 
 func WithCollectorHost(host string) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgCollectorHost].value = host
+		c.cfgMap[cfgCollectorHost].value = host
 	}
 }
 
 func WithCollectorAgentPort(port int) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgCollectorAgentPort].value = port
+		c.cfgMap[cfgCollectorAgentPort].value = port
 	}
 }
 
 func WithCollectorSpanPort(port int) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgCollectorSpanPort].value = port
+		c.cfgMap[cfgCollectorSpanPort].value = port
 	}
 }
 
 func WithCollectorStatPort(port int) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgCollectorStatPort].value = port
+		c.cfgMap[cfgCollectorStatPort].value = port
 	}
 }
 
 func WithLogLevel(level string) ConfigOption {
 	return func(c *Config) {
-		c.logLevel = parseLogLevel(level)
+		c.cfgMap[cfgLogLevel].value = level
 	}
 }
 
 func WithSamplingType(samplingType string) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgSamplingType].value = samplingType
+		c.cfgMap[cfgSamplingType].value = samplingType
 	}
 }
 
 // WithSamplingRate DEPRECATED: Use WithSamplingCounterRate()
 func WithSamplingRate(rate int) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgSamplingCounterRate].value = rate
+		c.cfgMap[cfgSamplingCounterRate].value = rate
 	}
 }
 
 func WithSamplingCounterRate(rate int) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgSamplingCounterRate].value = rate
+		c.cfgMap[cfgSamplingCounterRate].value = rate
 	}
 }
 
 func WithSamplingPercentRate(rate float32) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgSamplingPercentRate].value = rate
+		c.cfgMap[cfgSamplingPercentRate].value = rate
 	}
 }
 
 func WithSamplingNewThroughput(tps int) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgSamplingNewThroughput].value = tps
+		c.cfgMap[cfgSamplingNewThroughput].value = tps
 	}
 }
 
 func WithSamplingContinueThroughput(tps int) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgSamplingContinueThroughput].value = tps
+		c.cfgMap[cfgSamplingContinueThroughput].value = tps
 	}
 }
 
 func WithStatCollectInterval(interval int) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgStatCollectInterval].value = interval
+		c.cfgMap[cfgStatCollectInterval].value = interval
 	}
 }
 
 func WithStatBatchCount(count int) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgStatBatchCount].value = count
+		c.cfgMap[cfgStatBatchCount].value = count
 	}
 }
 
 func WithIsContainer(isContainer bool) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgRunOnContainer].value = isContainer
+		c.cfgMap[cfgRunOnContainer].value = isContainer
 		c.containerCheck = false
 	}
 }
 
 func WithUseProfile(profile string) ConfigOption {
 	return func(c *Config) {
-		cfgMap[cfgProfile].value = profile
+		c.cfgMap[cfgUseProfile].value = profile
 	}
 }
 
-func printConfigString() {
-	for k, v := range cfgMap {
+func (config *Config) printConfigString() {
+	for k, v := range config.cfgMap {
 		Log("agent").Infof("config: %s = %v", k, v.value)
 	}
 }

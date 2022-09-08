@@ -126,16 +126,16 @@ func (metaGrpcClient *mockMetaGrpcClient) RequestStringMetaData(ctx context.Cont
 	return metaGrpcClient.client.RequestStringMetaData(ctx, in)
 }
 
-func newMockAgentGrpc(agent Agent, t *testing.T) *agentGrpc {
+func newMockAgentGrpc(agent Agent, config *Config, t *testing.T) *agentGrpc {
 	ctrl := gomock.NewController(t)
 	stream := NewMockAgent_PingSessionClient(ctrl)
 	agentClient := mockAgentGrpcClient{NewMockAgentClient(ctrl), stream}
 	metadataClient := mockMetaGrpcClient{NewMockMetadataClient(ctrl)}
 
-	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent, nil}
+	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent, config}
 }
 
-func newMockAgentGrpcPing(agent Agent, t *testing.T) *agentGrpc {
+func newMockAgentGrpcPing(agent Agent, config *Config, t *testing.T) *agentGrpc {
 	ctrl := gomock.NewController(t)
 	stream := NewMockAgent_PingSessionClient(ctrl)
 	agentClient := mockAgentGrpcClient{NewMockAgentClient(ctrl), stream}
@@ -144,7 +144,7 @@ func newMockAgentGrpcPing(agent Agent, t *testing.T) *agentGrpc {
 	stream.EXPECT().Send(gomock.Any()).Return(nil)
 	//stream.EXPECT().CloseSend().Return(nil)
 
-	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent, nil}
+	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent, config}
 }
 
 type mockSpanGrpcClient struct {
