@@ -49,12 +49,12 @@ func main() {
 		//pinpoint.WithConfigFile("tmp/pinpoint-config.yaml"),
 	}
 	c, _ := pinpoint.NewConfig(opts...)
-	t, _ := pinpoint.NewAgent(c)
+	agent, _ := pinpoint.NewAgent(c)
+	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc(t, "/", index))
-	http.HandleFunc(phttp.WrapHandleFunc(t, "/error", seterror))
-	http.HandleFunc(phttp.WrapHandleFunc(t, "/outgoing", outgoing))
+	http.HandleFunc(phttp.WrapHandleFunc("/", index))
+	http.HandleFunc(phttp.WrapHandleFunc("/error", seterror))
+	http.HandleFunc(phttp.WrapHandleFunc("/outgoing", outgoing))
 
 	http.ListenAndServe(":9000", nil)
-	t.Shutdown()
 }

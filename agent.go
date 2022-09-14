@@ -16,6 +16,7 @@ import (
 func init() {
 	initLogger()
 	initConfig()
+	globalAgent = NoopAgent()
 }
 
 var logger *logrus.Logger
@@ -79,13 +80,23 @@ type sqlMeta struct {
 
 const cacheSize = 1024
 
+var globalAgent Agent
+
+func GetAgent() Agent {
+	return globalAgent
+}
+
 func NewAgent(config *Config) (Agent, error) {
-	agent := agent{}
+	noopAgent := NoopAgent()
 
 	if config == nil {
-		return &agent, errors.New("configuration is missing")
+		return noopAgent, errors.New("configuration is missing")
+	}
+	if globalAgent != noopAgent {
+		return globalAgent, errors.New("agent is already created")
 	}
 
+	agent := agent{}
 	agent.appName = config.String(cfgAppName)
 	agent.appType = int32(config.Int(cfgAppType))
 	agent.agentID = config.String(cfgAgentID)
@@ -132,7 +143,9 @@ func NewAgent(config *Config) (Agent, error) {
 	if !offGrpc {
 		go connectGrpc(&agent, config)
 	}
-	return &agent, nil
+
+	globalAgent = &agent
+	return globalAgent, nil
 }
 
 func connectGrpc(agent *agent, config *Config) {
@@ -208,15 +221,19 @@ func (agent *agent) Shutdown() {
 	}
 
 	agent.enable = false
+	globalAgent = NoopAgent()
 	time.Sleep(1 * time.Second)
 
 	close(agent.spanChan)
-	agent.wg.Wait()
+	close(agent.metaChan)
 
-	agent.agentGrpc.close()
-	agent.spanGrpc.close()
-	agent.statGrpc.close()
-	agent.cmdGrpc.close()
+	if !offGrpc {
+		agent.wg.Wait()
+		agent.agentGrpc.close()
+		agent.spanGrpc.close()
+		agent.statGrpc.close()
+		agent.cmdGrpc.close()
+	}
 }
 
 func (agent *agent) NewSpanTracer(operation string, rpcName string) Tracer {

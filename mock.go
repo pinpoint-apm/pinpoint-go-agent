@@ -10,20 +10,15 @@ import (
 )
 
 type mockAgent struct {
-	startTime int64
-	sequence  int64
+	Agent
 	agentGrpc *agentGrpc
 	spanGrpc  *spanGrpc
 	statGrpc  *statGrpc
 }
 
 func newMockAgent() Agent {
-	agent := mockAgent{}
-
-	agent.startTime = 12345
-	agent.sequence = 1
+	agent := mockAgent{Agent: newNoopAgent()}
 	offGrpc = true
-
 	return &agent
 }
 
@@ -39,55 +34,8 @@ func (agent *mockAgent) setMockStatGrpc(statGrpc *statGrpc) {
 	agent.statGrpc = statGrpc
 }
 
-func (agent *mockAgent) Shutdown() {
-}
-
-func (agent *mockAgent) NewSpanTracer(operation string, rpcName string) Tracer {
-	return newUnSampledSpan(rpcName)
-}
-
-func (agent *mockAgent) NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
-	return newUnSampledSpan(rpcName)
-}
-
-func (agent *mockAgent) generateTransactionId() TransactionId {
-	return TransactionId{agent.AgentID(), agent.startTime, agent.sequence}
-}
-
 func (agent *mockAgent) Enable() bool {
 	return true
-}
-
-func (agent *mockAgent) StartTime() int64 {
-	return agent.startTime
-}
-
-func (agent *mockAgent) ApplicationName() string {
-	return "mockAgent"
-}
-
-func (agent *mockAgent) ApplicationType() int32 {
-	return ServiceTypeGoApp
-}
-
-func (agent *mockAgent) AgentID() string {
-	return "mockAgentID"
-}
-
-func (agent *mockAgent) enqueueSpan(span *span) bool {
-	return true
-}
-
-func (agent *mockAgent) cacheErrorFunc(funcname string) int32 {
-	return 1
-}
-
-func (agent *mockAgent) cacheSql(sql string) int32 {
-	return 1
-}
-
-func (agent *mockAgent) cacheSpanApiId(descriptor string, apiType int) int32 {
-	return 1
 }
 
 //mock grpc

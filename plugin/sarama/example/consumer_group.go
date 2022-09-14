@@ -11,7 +11,6 @@ import (
 )
 
 type exampleConsumerGroupHandler struct {
-	agent pinpoint.Agent
 }
 
 func (exampleConsumerGroupHandler) Setup(_ sarama.ConsumerGroupSession) error   { return nil }
@@ -19,7 +18,7 @@ func (exampleConsumerGroupHandler) Cleanup(_ sarama.ConsumerGroupSession) error 
 func (h exampleConsumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	ctx := sess.Context()
 	for msg := range claim.Messages() {
-		_ = psarama.ConsumeMessageContext(process, ctx, msg, h.agent)
+		_ = psarama.ConsumeMessageContext(process, ctx, msg)
 		sess.MarkMessage(msg, "")
 	}
 	return nil
@@ -45,6 +44,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
+	defer agent.Shutdown()
 
 	config := sarama.NewConfig()
 	config.Version = sarama.V2_3_0_0 // specify appropriate version
@@ -66,7 +66,7 @@ func main() {
 	// Iterate over consumer sessions.
 	ctx := context.Background()
 	topics := []string{"go-sarama-test"}
-	handler := exampleConsumerGroupHandler{agent: agent}
+	handler := exampleConsumerGroupHandler{}
 
 	for {
 		err := group.Consume(ctx, topics, handler)

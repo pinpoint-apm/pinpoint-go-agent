@@ -30,14 +30,14 @@ func (c *ConsumerMessage) Tracer() pinpoint.Tracer {
 	return c.tracer
 }
 
-func WrapConsumerMessage(msg *sarama.ConsumerMessage, agent pinpoint.Agent) *ConsumerMessage {
-	return &ConsumerMessage{msg, newConsumerTracer(msg, agent)}
+func WrapConsumerMessage(msg *sarama.ConsumerMessage) *ConsumerMessage {
+	return &ConsumerMessage{msg, newConsumerTracer(msg)}
 }
 
 type HandlerFunc func(msg *ConsumerMessage) error
 
-func ConsumeMessage(handler HandlerFunc, msg *sarama.ConsumerMessage, agent pinpoint.Agent) error {
-	wrapped := WrapConsumerMessage(msg, agent)
+func ConsumeMessage(handler HandlerFunc, msg *sarama.ConsumerMessage) error {
+	wrapped := WrapConsumerMessage(msg)
 	defer wrapped.Tracer().EndSpan()
 
 	err := handler(wrapped)
@@ -47,8 +47,8 @@ func ConsumeMessage(handler HandlerFunc, msg *sarama.ConsumerMessage, agent pinp
 
 type HandlerContextFunc func(context.Context, *sarama.ConsumerMessage) error
 
-func ConsumeMessageContext(handler HandlerContextFunc, ctx context.Context, msg *sarama.ConsumerMessage, agent pinpoint.Agent) error {
-	tracer := newConsumerTracer(msg, agent)
+func ConsumeMessageContext(handler HandlerContextFunc, ctx context.Context, msg *sarama.ConsumerMessage) error {
+	tracer := newConsumerTracer(msg)
 	defer tracer.EndSpan()
 
 	err := handler(pinpoint.NewContext(ctx, tracer), msg)
@@ -80,15 +80,12 @@ func makeRpcName(msg *sarama.ConsumerMessage) string {
 	return buf.String()
 }
 
-func newConsumerTracer(msg *sarama.ConsumerMessage, agent pinpoint.Agent) pinpoint.Tracer {
+func newConsumerTracer(msg *sarama.ConsumerMessage) pinpoint.Tracer {
 	var tracer pinpoint.Tracer
 
-	if agent != nil {
-		reader := &distributedTracingContextReaderConsumer{msg}
-		tracer = agent.NewSpanTracerWithReader("Kafka Consumer Invocation", makeRpcName(msg), reader)
-	} else {
-		tracer = pinpoint.NoopTracer()
-	}
+	agent := pinpoint.GetAgent()
+	reader := &distributedTracingContextReaderConsumer{msg}
+	tracer = agent.NewSpanTracerWithReader("Kafka Consumer Invocation", makeRpcName(msg), reader)
 
 	tracer.Span().SetServiceType(serviceTypeKafkaClient)
 	a := tracer.Span().Annotations()
@@ -111,7 +108,7 @@ func (pc *PartitionConsumer) Messages() <-chan *ConsumerMessage {
 }
 
 // WrapPartitionConsumer deprecated
-func WrapPartitionConsumer(pc sarama.PartitionConsumer, agent pinpoint.Agent) *PartitionConsumer {
+func WrapPartitionConsumer(pc sarama.PartitionConsumer) *PartitionConsumer {
 	wrapped := &PartitionConsumer{
 		PartitionConsumer: pc,
 		messages:          make(chan *ConsumerMessage),
@@ -119,7 +116,7 @@ func WrapPartitionConsumer(pc sarama.PartitionConsumer, agent pinpoint.Agent) *P
 
 	go func() {
 		for msg := range pc.Messages() {
-			wrapped.messages <- WrapConsumerMessage(msg, agent)
+			wrapped.messages <- WrapConsumerMessage(msg)
 		}
 		close(wrapped.messages)
 	}()
@@ -130,7 +127,6 @@ func WrapPartitionConsumer(pc sarama.PartitionConsumer, agent pinpoint.Agent) *P
 // Consumer deprecated
 type Consumer struct {
 	sarama.Consumer
-	agent pinpoint.Agent
 }
 
 // ConsumePartition deprecated
@@ -139,15 +135,15 @@ func (c *Consumer) ConsumePartition(topic string, partition int32, offset int64)
 	if err != nil {
 		return nil, err
 	}
-	return WrapPartitionConsumer(pc, c.agent), nil
+	return WrapPartitionConsumer(pc), nil
 }
 
 // NewConsumer deprecated
-func NewConsumer(addrs []string, config *sarama.Config, agent pinpoint.Agent) (*Consumer, error) {
+func NewConsumer(addrs []string, config *sarama.Config) (*Consumer, error) {
 	consumer, err := sarama.NewConsumer(addrs, config)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Consumer{Consumer: consumer, agent: agent}, nil
+	return &Consumer{Consumer: consumer}, nil
 }

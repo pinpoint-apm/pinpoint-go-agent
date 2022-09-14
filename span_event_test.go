@@ -93,7 +93,7 @@ func Test_spanEvent_SetError(t *testing.T) {
 			tt.args.span.agent = newMockAgent()
 			se := newSpanEvent(tt.args.span, tt.args.operationName)
 			se.SetError(errors.New("TEST_ERROR"))
-			assert.Equal(t, se.errorFuncId, int32(1), "errorFuncId")
+			assert.Equal(t, se.errorFuncId, int32(0), "errorFuncId")
 			assert.Equal(t, se.errorString, "TEST_ERROR", "errorString")
 		})
 	}

@@ -46,9 +46,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
+	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/mongo", mongodb))
+	http.HandleFunc(phttp.WrapHandleFunc("/mongo", mongodb))
 
 	http.ListenAndServe(":9000", nil)
-	agent.Shutdown()
 }

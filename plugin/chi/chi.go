@@ -7,15 +7,15 @@ import (
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
-func Middleware(agent pinpoint.Agent) func(http.Handler) http.Handler {
+func Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		fn := func(w http.ResponseWriter, r *http.Request) {
-			if agent == nil || !agent.Enable() {
+			if !pinpoint.GetAgent().Enable() {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			tracer := phttp.NewHttpServerTracer(agent, r, "Chi Server")
+			tracer := phttp.NewHttpServerTracer(r, "Chi Server")
 			defer tracer.EndSpan()
 
 			routePath := r.URL.Path

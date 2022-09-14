@@ -90,8 +90,8 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(pgrpc.UnaryServerInterceptor(agent)),
-		grpc.StreamInterceptor(pgrpc.StreamServerInterceptor(agent)),
+		grpc.UnaryInterceptor(pgrpc.UnaryServerInterceptor()),
+		grpc.StreamInterceptor(pgrpc.StreamServerInterceptor()),
 	)
 	testapp.RegisterHelloServer(grpcServer, &Server{})
 	grpcServer.Serve(listener)

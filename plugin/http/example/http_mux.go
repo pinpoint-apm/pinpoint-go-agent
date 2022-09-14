@@ -49,11 +49,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
+	defer agent.Shutdown()
 
-	mux := phttp.NewServeMux(agent)
+	mux := phttp.NewServeMux()
 	mux.Handle("/foo", http.HandlerFunc(indexMux))
 	mux.HandleFunc("/bar", outGoing)
 
 	log.Fatal(http.ListenAndServe("localhost:8000", mux))
-
 }

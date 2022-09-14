@@ -12,7 +12,6 @@ import (
 )
 
 type handler struct {
-	agent pinpoint.Agent
 }
 
 func doRequest(tracer pinpoint.Tracer) (string, error) {
@@ -48,7 +47,7 @@ func doRequest(tracer pinpoint.Tracer) (string, error) {
 }
 
 func (h *handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
-	tracer := phttp.NewHttpServerTracer(h.agent, req, "Go Http Server")
+	tracer := phttp.NewHttpServerTracer(req, "Go Http Server")
 	defer tracer.EndSpan()
 
 	status := http.StatusOK
@@ -72,13 +71,13 @@ func main() {
 		pinpoint.WithCollectorHost("localhost"),
 	}
 	c, _ := pinpoint.NewConfig(opts...)
-	a, _ := pinpoint.NewAgent(c)
+	agent, _ := pinpoint.NewAgent(c)
+	defer agent.Shutdown()
 
 	server := http.Server{
 		Addr:    ":8000",
-		Handler: &handler{agent: a},
+		Handler: &handler{},
 	}
 
 	server.ListenAndServe()
-	a.Shutdown()
 }

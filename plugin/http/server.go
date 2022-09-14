@@ -12,11 +12,11 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
-func NewHttpServerTracer(agent pinpoint.Agent, req *http.Request, operation string) pinpoint.Tracer {
+func NewHttpServerTracer(req *http.Request, operation string) pinpoint.Tracer {
 	if isExcludedUrl(req.URL.Path) || isExcludedMethod(req.Method) {
 		return pinpoint.NoopTracer()
 	} else {
-		tracer := agent.NewSpanTracerWithReader(operation, req.URL.Path, req.Header)
+		tracer := pinpoint.GetAgent().NewSpanTracerWithReader(operation, req.URL.Path, req.Header)
 
 		span := tracer.Span()
 		span.SetEndPoint(req.Host)
@@ -115,14 +115,14 @@ func RecordHttpServerResponse(tracer pinpoint.Tracer, status int, header http.He
 	}
 }
 
-func WrapHandle(agent pinpoint.Agent, pattern string, handler http.Handler) (string, http.Handler) {
+func WrapHandle(pattern string, handler http.Handler) (string, http.Handler) {
 	return pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if agent == nil || !agent.Enable() {
+		if !pinpoint.GetAgent().Enable() {
 			handler.ServeHTTP(w, r)
 			return
 		}
 
-		tracer := NewHttpServerTracer(agent, r, "Http Server")
+		tracer := NewHttpServerTracer(r, "Http Server")
 		defer tracer.EndSpan()
 		defer tracer.NewSpanEvent("http/ServeMux.ServeHTTP(ResponseWriter, Request)").EndSpanEvent()
 		defer tracer.NewSpanEvent(makeMethodName(handler)).EndSpanEvent()
@@ -136,8 +136,8 @@ func WrapHandle(agent pinpoint.Agent, pattern string, handler http.Handler) (str
 	})
 }
 
-func WrapHandleFunc(agent pinpoint.Agent, pattern string, handler func(http.ResponseWriter, *http.Request)) (string, func(http.ResponseWriter, *http.Request)) {
-	p, h := WrapHandle(agent, pattern, http.HandlerFunc(handler))
+func WrapHandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) (string, func(http.ResponseWriter, *http.Request)) {
+	p, h := WrapHandle(pattern, http.HandlerFunc(handler))
 	return p, func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }
 }
 
@@ -157,23 +157,21 @@ func (w *responseWriter) WriteHeader(status int) {
 
 type ServeMux struct {
 	*http.ServeMux
-	agent pinpoint.Agent
 }
 
-func NewServeMux(agent pinpoint.Agent) *ServeMux {
+func NewServeMux() *ServeMux {
 	return &ServeMux{
 		ServeMux: http.NewServeMux(),
-		agent:    agent,
 	}
 }
 
 func (mux *ServeMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if mux.agent == nil || !mux.agent.Enable() {
+	if !pinpoint.GetAgent().Enable() {
 		mux.ServeMux.ServeHTTP(w, r)
 		return
 	}
 
-	tracer := NewHttpServerTracer(mux.agent, r, "Http Server")
+	tracer := NewHttpServerTracer(r, "Http Server")
 	defer tracer.EndSpan()
 	defer tracer.NewSpanEvent("http/ServeMux.ServeHTTP(ResponseWriter, Request)").EndSpanEvent()
 

@@ -16,8 +16,6 @@ import (
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
-var agent pinpoint.Agent
-
 func hello(w http.ResponseWriter, r *http.Request) {
 	seed := rand.NewSource(time.Now().UnixNano())
 	random := rand.New(seed)
@@ -27,7 +25,7 @@ func hello(w http.ResponseWriter, r *http.Request) {
 }
 
 func shutdown(w http.ResponseWriter, r *http.Request) {
-	agent.Shutdown()
+	pinpoint.GetAgent().Shutdown()
 	io.WriteString(w, "shutdown")
 }
 
@@ -62,17 +60,17 @@ func main() {
 	}
 
 	cfg, _ := pinpoint.NewConfig(opts...)
-	agent, _ = pinpoint.NewAgent(cfg)
+	agent, _ := pinpoint.NewAgent(cfg)
 	//if err != nil {
 	//	log.Fatalf("pinpoint agent start fail: %v", err)
 	//}
+	defer agent.Shutdown()
 
 	r := chi.NewRouter()
-	r.Use(pchi.Middleware(agent))
+	r.Use(pchi.Middleware())
 	r.Get("/hello", hello)
 	r.Get("/outgoing", outgoing)
 	r.Get("/shutdown", shutdown)
 
 	http.ListenAndServe(":8000", r)
-	agent.Shutdown()
 }

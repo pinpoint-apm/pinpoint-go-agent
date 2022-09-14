@@ -31,9 +31,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
+	defer agent.Shutdown()
 
 	e := echo.New()
-	e.Use(pecho.Middleware(agent))
+	e.Use(pecho.Middleware())
 
 	e.GET("/hello", hello)
 	e.GET("/error", myError)

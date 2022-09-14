@@ -16,9 +16,8 @@ import (
 	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
 )
 
-func newSpan(agent pinpoint.Agent, name string) pinpoint.Tracer {
-	tracer := agent.NewSpanTracer(name, "/")
-	return tracer
+func newSpan(name string) pinpoint.Tracer {
+	return pinpoint.GetAgent().NewSpanTracer(name, "/")
 }
 
 func query(ctx context.Context) {
@@ -62,8 +61,8 @@ func outGoing(ctx context.Context) {
 	resp.Body.Close()
 }
 
-func run(agent pinpoint.Agent) {
-	tracer := newSpan(agent, "SaAppTest")
+func run() {
+	tracer := newSpan("SaAppTest")
 	defer tracer.EndSpan()
 	defer tracer.NewSpanEvent("run").EndSpanEvent()
 
@@ -83,11 +82,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
+	defer agent.Shutdown()
 
 	for true {
-		run(agent)
+		run()
 		time.Sleep(3 * time.Second)
 	}
-
-	agent.Shutdown()
 }

@@ -48,9 +48,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
+	defer agent.Shutdown()
 
 	router := gin.Default()
-	router.Use(pgin.Middleware(agent))
+	router.Use(pgin.Middleware())
 
 	router.GET("/endpoint", endpoint)
 	router.GET("/external", extCall)

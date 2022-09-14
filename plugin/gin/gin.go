@@ -6,14 +6,14 @@ import (
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
-func Middleware(agent pinpoint.Agent) gin.HandlerFunc {
+func Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if agent == nil || !agent.Enable() {
+		if !pinpoint.GetAgent().Enable() {
 			c.Next()
 			return
 		}
 
-		tracer := phttp.NewHttpServerTracer(agent, c.Request, "Gin Server")
+		tracer := phttp.NewHttpServerTracer(c.Request, "Gin Server")
 		defer tracer.EndSpan()
 
 		c.Request = pinpoint.RequestWithTracerContext(c.Request, tracer)

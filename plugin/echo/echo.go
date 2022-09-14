@@ -7,15 +7,15 @@ import (
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
-func Middleware(agent pinpoint.Agent) echo.MiddlewareFunc {
+func Middleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			if agent == nil || !agent.Enable() {
+			if !pinpoint.GetAgent().Enable() {
 				return next(c)
 			}
 
 			req := c.Request()
-			tracer := phttp.NewHttpServerTracer(agent, req, "Echo Server")
+			tracer := phttp.NewHttpServerTracer(req, "Echo Server")
 			defer tracer.EndSpan()
 
 			ctx := pinpoint.NewContext(req.Context(), tracer)

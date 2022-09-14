@@ -61,9 +61,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
+	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/cassandra", doCassandra))
+	http.HandleFunc(phttp.WrapHandleFunc("/cassandra", doCassandra))
 
 	http.ListenAndServe(":9000", nil)
-	agent.Shutdown()
 }

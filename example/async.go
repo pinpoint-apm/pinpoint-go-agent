@@ -115,13 +115,13 @@ func main() {
 		phttp.WithHttpServerRecordRespondHeader([]string{"HEADERS-ALL"}),
 	}
 	c, _ := pinpoint.NewConfig(opts...)
-	t, _ := pinpoint.NewAgent(c)
+	agent, _ := pinpoint.NewAgent(c)
+	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc(t, "/async_chan", asyncWithChan))
-	http.HandleFunc(phttp.WrapHandleFunc(t, "/async_context", asyncWithContext))
-	http.HandleFunc(phttp.WrapHandleFunc(t, "/async_tracer", asyncWithTracer))
-	http.HandleFunc(phttp.WrapHandleFunc(t, "/async_wrapper", asyncWithWrapper))
+	http.HandleFunc(phttp.WrapHandleFunc("/async_chan", asyncWithChan))
+	http.HandleFunc(phttp.WrapHandleFunc("/async_context", asyncWithContext))
+	http.HandleFunc(phttp.WrapHandleFunc("/async_tracer", asyncWithTracer))
+	http.HandleFunc(phttp.WrapHandleFunc("/async_wrapper", asyncWithWrapper))
 
 	http.ListenAndServe(":9000", nil)
-	t.Shutdown()
 }

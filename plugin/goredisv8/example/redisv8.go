@@ -76,6 +76,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
+	defer agent.Shutdown()
 
 	addrs := []string{"localhost:6379", "localhost:6380"}
 
@@ -93,12 +94,11 @@ func main() {
 	redisClusterClient = redis.NewClusterClient(redisClusterOpts)
 	redisClusterClient.AddHook(predis.NewClusterHook(redisClusterOpts))
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/redis", redisv8))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/rediscluster", redisv8Cluster))
+	http.HandleFunc(phttp.WrapHandleFunc("/redis", redisv8))
+	http.HandleFunc(phttp.WrapHandleFunc("/rediscluster", redisv8Cluster))
 
 	http.ListenAndServe(":9000", nil)
 
 	redisClient.Close()
 	redisClusterClient.Close()
-	agent.Shutdown()
 }

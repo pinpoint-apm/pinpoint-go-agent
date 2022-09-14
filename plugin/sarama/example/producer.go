@@ -54,6 +54,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
+	defer agent.Shutdown()
 
 	config := sarama.NewConfig()
 	config.Producer.Partitioner = sarama.NewRandomPartitioner
@@ -66,6 +67,6 @@ func main() {
 		log.Fatalf("Could not create producer: %v ", err)
 	}
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/save", save))
+	http.HandleFunc(phttp.WrapHandleFunc("/save", save))
 	log.Fatal(http.ListenAndServe(":8081", nil))
 }

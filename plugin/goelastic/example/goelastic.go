@@ -178,9 +178,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
+	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/goelastic", goelastic))
+	http.HandleFunc(phttp.WrapHandleFunc("/goelastic", goelastic))
 
 	http.ListenAndServe(":9000", nil)
-	agent.Shutdown()
 }

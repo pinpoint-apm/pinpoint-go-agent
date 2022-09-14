@@ -5,6 +5,77 @@ import (
 	"time"
 )
 
+type noopAgent struct {
+	appName   string
+	agentID   string
+	startTime int64
+}
+
+var defaultNoopAgent = newNoopAgent()
+
+func NoopAgent() Agent {
+	return defaultNoopAgent
+}
+
+func newNoopAgent() Agent {
+	return &noopAgent{
+		appName:   "NoopAgent",
+		agentID:   "NoopAgentID",
+		startTime: time.Now().UnixNano() / int64(time.Millisecond),
+	}
+}
+
+func (agent *noopAgent) Shutdown() {
+}
+
+func (agent *noopAgent) NewSpanTracer(operation string, rpcName string) Tracer {
+	return NoopTracer()
+}
+
+func (agent *noopAgent) NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
+	return NoopTracer()
+}
+
+func (agent *noopAgent) generateTransactionId() TransactionId {
+	return TransactionId{agent.AgentID(), agent.startTime, 1}
+}
+
+func (agent *noopAgent) Enable() bool {
+	return false
+}
+
+func (agent *noopAgent) StartTime() int64 {
+	return agent.startTime
+}
+
+func (agent *noopAgent) ApplicationName() string {
+	return agent.appName
+}
+
+func (agent *noopAgent) ApplicationType() int32 {
+	return ServiceTypeGoApp
+}
+
+func (agent *noopAgent) AgentID() string {
+	return agent.agentID
+}
+
+func (agent *noopAgent) enqueueSpan(span *span) bool {
+	return false
+}
+
+func (agent *noopAgent) cacheErrorFunc(funcname string) int32 {
+	return 0
+}
+
+func (agent *noopAgent) cacheSql(sql string) int32 {
+	return 0
+}
+
+func (agent *noopAgent) cacheSpanApiId(descriptor string, apiType int) int32 {
+	return 0
+}
+
 type noopSpan struct {
 	spanId      int64
 	startTime   time.Time

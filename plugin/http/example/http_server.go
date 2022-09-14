@@ -67,20 +67,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
+	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/", index))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wraprequest", wrapRequest))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wraprequest/a.zo", wrapRequest))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wraprequest/aa/b.zo", wrapRequest))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wrapclient", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wrapclient/aa/a.go", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wrapclient/aa/bb/a.go", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wrapclient/c.do", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wrapclient/dd/d.do", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/wrapclient/c@do", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/abcd", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/abcd/e.go", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc("/", index))
+	http.HandleFunc(phttp.WrapHandleFunc("/wraprequest", wrapRequest))
+	http.HandleFunc(phttp.WrapHandleFunc("/wraprequest/a.zo", wrapRequest))
+	http.HandleFunc(phttp.WrapHandleFunc("/wraprequest/aa/b.zo", wrapRequest))
+	http.HandleFunc(phttp.WrapHandleFunc("/wrapclient", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc("/wrapclient/aa/a.go", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc("/wrapclient/aa/bb/a.go", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc("/wrapclient/c.do", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc("/wrapclient/dd/d.do", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc("/wrapclient/c@do", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc("/abcd", wrapClient))
+	http.HandleFunc(phttp.WrapHandleFunc("/abcd/e.go", wrapClient))
 
 	http.ListenAndServe(":8000", nil)
-	agent.Shutdown()
 }

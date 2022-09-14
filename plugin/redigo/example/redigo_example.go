@@ -58,8 +58,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
+	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "/redis", redigo_test))
+	http.HandleFunc(phttp.WrapHandleFunc("/redis", redigo_test))
 	http.ListenAndServe(":9000", nil)
-	agent.Shutdown()
 }

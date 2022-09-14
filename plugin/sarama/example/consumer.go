@@ -48,7 +48,7 @@ func processMessage(msg *psarama.ConsumerMessage) error {
 	return nil
 }
 
-func subscribe(topic string, consumer sarama.Consumer, agent pinpoint.Agent) {
+func subscribe(topic string, consumer sarama.Consumer) {
 	partitionList, err := consumer.Partitions(topic) //get all partitions on the given topic
 	if err != nil {
 		fmt.Println("Error retrieving partitionList ", err)
@@ -62,7 +62,7 @@ func subscribe(topic string, consumer sarama.Consumer, agent pinpoint.Agent) {
 
 		go func(pc sarama.PartitionConsumer) {
 			for msg := range pc.Messages() {
-				psarama.ConsumeMessage(processMessage, msg, agent)
+				psarama.ConsumeMessage(processMessage, msg)
 			}
 			wg.Done()
 		}(pc)
@@ -82,6 +82,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
+	defer agent.Shutdown()
 
 	config := sarama.NewConfig()
 	config.Version = sarama.V2_3_0_0
@@ -90,6 +91,5 @@ func main() {
 		log.Fatalf("Could not create consumer: %v", err)
 	}
 
-	subscribe(ctopic, consumer, agent)
-	agent.Shutdown()
+	subscribe(ctopic, consumer)
 }
