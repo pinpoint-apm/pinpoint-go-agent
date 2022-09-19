@@ -41,6 +41,10 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, false, c.Bool(cfgRunOnContainer), cfgRunOnContainer)
 			assert.Equal(t, "", c.String(cfgConfigFile), cfgConfigFile)
 			assert.Equal(t, "", c.String(cfgUseProfile), cfgUseProfile)
+			assert.Equal(t, true, c.Bool(cfgSQLTraceBindValue), cfgSQLTraceBindValue)
+			assert.Equal(t, 1024, c.Int(cfgSQLMaxBindValueSize), cfgSQLMaxBindValueSize)
+			assert.Equal(t, true, c.Bool(cfgSQLTraceCommit), cfgSQLTraceCommit)
+			assert.Equal(t, true, c.Bool(cfgSQLTraceRollback), cfgSQLTraceRollback)
 		})
 	}
 }
@@ -67,6 +71,10 @@ func TestNewConfig_WithFunc(t *testing.T) {
 		WithStatCollectInterval(10000),
 		WithStatBatchCount(3),
 		WithIsContainer(true),
+		WithSQLTraceBindValue(false),
+		WithSQLMaxBindValueSize(512),
+		WithSQLTraceCommit(false),
+		WithSQLTraceRollback(false),
 	}
 
 	tests := []struct {
@@ -94,6 +102,10 @@ func TestNewConfig_WithFunc(t *testing.T) {
 			assert.Equal(t, 10000, c.Int(cfgStatCollectInterval), cfgStatCollectInterval)
 			assert.Equal(t, 3, c.Int(cfgStatBatchCount), cfgStatBatchCount)
 			assert.Equal(t, true, c.Bool(cfgRunOnContainer), cfgRunOnContainer)
+			assert.Equal(t, false, c.Bool(cfgSQLTraceBindValue), cfgSQLTraceBindValue)
+			assert.Equal(t, 512, c.Int(cfgSQLMaxBindValueSize), cfgSQLMaxBindValueSize)
+			assert.Equal(t, false, c.Bool(cfgSQLTraceCommit), cfgSQLTraceCommit)
+			assert.Equal(t, false, c.Bool(cfgSQLTraceRollback), cfgSQLTraceRollback)
 		})
 	}
 }

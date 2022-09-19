@@ -33,6 +33,10 @@ const (
 	cfgRunOnContainer             = "RunOnContainer"
 	cfgConfigFile                 = "ConfigFile"
 	cfgUseProfile                 = "UseProfile"
+	cfgSQLTraceBindValue          = "SQL.TraceBindValue"
+	cfgSQLMaxBindValueSize        = "SQL.MaxBindValueSize"
+	cfgSQLTraceCommit             = "SQL.TraceCommit"
+	cfgSQLTraceRollback           = "SQL.TraceRollback"
 	cfgIdPattern                  = "[a-zA-Z0-9\\._\\-]+"
 )
 
@@ -78,6 +82,10 @@ func initConfig() {
 	AddConfig(cfgRunOnContainer, CfgBool, false)
 	AddConfig(cfgConfigFile, CfgString, "")
 	AddConfig(cfgUseProfile, CfgString, "")
+	AddConfig(cfgSQLTraceBindValue, CfgBool, true)
+	AddConfig(cfgSQLMaxBindValueSize, CfgInt, 1024)
+	AddConfig(cfgSQLTraceCommit, CfgBool, true)
+	AddConfig(cfgSQLTraceRollback, CfgBool, true)
 }
 
 func AddConfig(cfgName string, valueType int, defaultValue interface{}) {
@@ -218,6 +226,14 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 
 	if config.containerCheck {
 		config.cfgMap[cfgRunOnContainer].value = isContainerEnv()
+	}
+
+	maxBindSize := config.Int(cfgSQLMaxBindValueSize)
+	if maxBindSize > 1024 {
+		config.cfgMap[cfgSQLMaxBindValueSize].value = 1024
+	} else if maxBindSize < 0 {
+		config.cfgMap[cfgSQLTraceBindValue].value = false
+		config.cfgMap[cfgSQLMaxBindValueSize].value = 0
 	}
 
 	config.printConfigString()
@@ -484,6 +500,30 @@ func WithIsContainer(isContainer bool) ConfigOption {
 func WithUseProfile(profile string) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgUseProfile].value = profile
+	}
+}
+
+func WithSQLTraceBindValue(trace bool) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[cfgSQLTraceBindValue].value = trace
+	}
+}
+
+func WithSQLMaxBindValueSize(size int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[cfgSQLMaxBindValueSize].value = size
+	}
+}
+
+func WithSQLTraceCommit(trace bool) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[cfgSQLTraceCommit].value = trace
+	}
+}
+
+func WithSQLTraceRollback(trace bool) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[cfgSQLTraceRollback].value = trace
 	}
 }
 
