@@ -1,7 +1,6 @@
 package echo
 
 import (
-	"bytes"
 	"github.com/labstack/echo"
 
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
@@ -23,7 +22,7 @@ func Middleware() echo.MiddlewareFunc {
 				return next(c)
 			}
 
-			tracer.NewSpanEvent(handlerFuncName(next))
+			tracer.NewSpanEvent("echo.HandlerFunc(echo.Context)")
 			defer tracer.EndSpanEvent()
 
 			ctx := pinpoint.NewContext(req.Context(), tracer)
@@ -38,11 +37,4 @@ func Middleware() echo.MiddlewareFunc {
 			return err
 		}
 	}
-}
-
-func handlerFuncName(f interface{}) string {
-	var buf bytes.Buffer
-	buf.WriteString(pinpoint.GetAgent().FuncName(f))
-	buf.WriteString("(echo.Context)")
-	return buf.String()
 }

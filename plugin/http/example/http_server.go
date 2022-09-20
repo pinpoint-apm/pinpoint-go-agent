@@ -21,7 +21,7 @@ func wrapRequest(w http.ResponseWriter, r *http.Request) {
 	ctx := pinpoint.NewContext(context.Background(), pinpoint.FromContext(r.Context()))
 	req, _ := http.NewRequestWithContext(ctx, "GET", "http://localhost:9000/hello", nil)
 
-	resp, err := phttp.DoClient(http.DefaultClient.Do, "http.DefaultClient.Do", req)
+	resp, err := phttp.DoClient(http.DefaultClient.Do, req)
 	if nil != err {
 		io.WriteString(w, err.Error())
 		return

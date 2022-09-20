@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"math/rand"
@@ -33,7 +34,7 @@ func outgoing(w http.ResponseWriter, r *http.Request) {
 	ctx := pinpoint.NewContext(context.Background(), pinpoint.FromContext(r.Context()))
 	req, _ := http.NewRequestWithContext(ctx, "GET", "http://localhost:9000/async_wrapper", nil)
 
-	resp, err := phttp.DoClient(http.DefaultClient.Do, "http.DefaultClient.Do", req)
+	resp, err := phttp.DoClient(http.DefaultClient.Do, req)
 	if nil != err {
 		io.WriteString(w, err.Error())
 		return
@@ -47,6 +48,15 @@ func outgoing(w http.ResponseWriter, r *http.Request) {
 	time.Sleep(time.Duration(random.Intn(2000)+1) * time.Millisecond)
 }
 
+func myMiddleware(s string) func(http.Handler) http.Handler {
+	return func(h http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Println(s)
+			h.ServeHTTP(w, r)
+		})
+	}
+}
+
 func main() {
 	go func() {
 		log.Println(http.ListenAndServe("localhost:6060", nil))
@@ -55,7 +65,7 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoChiTest"),
 		pinpoint.WithAgentId("GoChiTestAgent"),
-		pinpoint.WithSamplingCounterRate(10),
+		//pinpoint.WithSamplingCounterRate(10),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 
@@ -67,7 +77,9 @@ func main() {
 	defer agent.Shutdown()
 
 	r := chi.NewRouter()
+	r.Use(myMiddleware("myMiddleware"))
 	r.Use(pchi.Middleware())
+
 	r.Get("/hello", hello)
 	r.Get("/outgoing", outgoing)
 	r.Get("/shutdown", shutdown)

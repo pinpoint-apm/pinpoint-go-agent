@@ -125,9 +125,6 @@ func WrapHandle(pattern string, handler http.Handler) (string, http.Handler) {
 			return
 		}
 
-		tracer.NewSpanEvent("http/ServeMux.ServeHTTP(ResponseWriter, *Request)")
-		defer tracer.EndSpanEvent()
-
 		tracer.NewSpanEvent(HandlerFuncName(handler))
 		defer tracer.EndSpanEvent()
 
@@ -183,9 +180,6 @@ func (mux *ServeMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tracer.NewSpanEvent("http/ServeMux.ServeHTTP(ResponseWriter, *Request)")
-	defer tracer.EndSpanEvent()
-
 	handler, _ := mux.Handler(r)
 	tracer.NewSpanEvent(HandlerFuncName(handler))
 	defer tracer.EndSpanEvent()
@@ -201,6 +195,6 @@ func (mux *ServeMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func HandlerFuncName(f interface{}) string {
 	var buf bytes.Buffer
 	buf.WriteString(pinpoint.GetAgent().FuncName(f))
-	buf.WriteString("(ResponseWriter, *Request)")
+	buf.WriteString("(http.ResponseWriter, *http.Request)")
 	return buf.String()
 }

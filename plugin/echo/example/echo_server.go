@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"log"
+	"os"
 
 	"github.com/labstack/echo"
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
@@ -22,9 +23,9 @@ func myError(c echo.Context) error {
 
 func main() {
 	opts := []pinpoint.ConfigOption{
-		pinpoint.WithAppName("testEcho"),
-		pinpoint.WithAgentId("testEchoAgent"),
-		pinpoint.WithCollectorHost("localhost"),
+		pinpoint.WithAppName("GoEchoTest"),
+		pinpoint.WithAgentId("GoEchoTestAgent"),
+		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)

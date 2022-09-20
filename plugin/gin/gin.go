@@ -22,7 +22,7 @@ func Middleware() gin.HandlerFunc {
 			return
 		}
 
-		tracer.NewSpanEvent(handlerFuncName(c.HandlerName()))
+		tracer.NewSpanEvent(handlerFuncName(c.Handler()))
 		defer tracer.EndSpanEvent()
 
 		c.Request = pinpoint.RequestWithTracerContext(c.Request, tracer)
@@ -35,9 +35,9 @@ func Middleware() gin.HandlerFunc {
 	}
 }
 
-func handlerFuncName(funcName string) string {
+func handlerFuncName(f interface{}) string {
 	var buf bytes.Buffer
-	buf.WriteString(funcName)
+	buf.WriteString(pinpoint.GetAgent().FuncName(f))
 	buf.WriteString("(*gin.Context)")
 	return buf.String()
 }

@@ -528,16 +528,23 @@ func (agent *agent) cacheSpanApiId(descriptor string, apiType int) int32 {
 	return id
 }
 
-func (agent *agent) FuncName(f interface{}) string {
+func (agent *agent) FuncName(f interface{}) (funcName string) {
 	if !agent.enable {
 		return ""
 	}
 
-	if v, ok := agent.apiCache.Peek(f); ok {
+	defer func() {
+		if e := recover(); e != nil {
+			funcName = "UnknownFunc"
+		}
+	}()
+
+	ptr := reflect.ValueOf(f).Pointer()
+	if v, ok := agent.apiCache.Peek(ptr); ok {
 		return v.(string)
 	}
 
-	funcName := runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
-	agent.apiCache.Add(f, funcName)
+	funcName = runtime.FuncForPC(ptr).Name()
+	agent.apiCache.Add(ptr, funcName)
 	return funcName
 }

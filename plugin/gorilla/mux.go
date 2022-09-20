@@ -1,13 +1,14 @@
-package chi
+package gorilla
 
 import (
 	"net/http"
 
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/gorilla/mux"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
-func Middleware() func(http.Handler) http.Handler {
+func Middleware() mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !pinpoint.GetAgent().Enable() {
@@ -15,15 +16,20 @@ func Middleware() func(http.Handler) http.Handler {
 				return
 			}
 
-			tracer := phttp.NewHttpServerTracer(r, "Chi Server")
+			tracer := phttp.NewHttpServerTracer(r, "Gorilla/Mux Server")
 			defer tracer.EndSpan()
-
 			if !tracer.IsSampled() {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			tracer.NewSpanEvent(phttp.HandlerFuncName(next))
+			var handler interface{}
+			if route := mux.CurrentRoute(r); route != nil {
+				handler = route.GetHandler()
+			} else {
+				handler = next
+			}
+			tracer.NewSpanEvent(phttp.HandlerFuncName(handler))
 			defer tracer.EndSpanEvent()
 
 			status := http.StatusOK

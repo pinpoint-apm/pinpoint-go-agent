@@ -57,8 +57,8 @@ func after(tracer pinpoint.Tracer, resp *http.Response, err error) {
 	tracer.EndSpanEvent()
 }
 
-func DoClient(doFunc func(req *http.Request) (*http.Response, error), operation string, req *http.Request) (*http.Response, error) {
-	tracer := before(pinpoint.TracerFromRequestContext(req), operation, req)
+func DoClient(doFunc func(req *http.Request) (*http.Response, error), req *http.Request) (*http.Response, error) {
+	tracer := before(pinpoint.TracerFromRequestContext(req), "http/Client.Do(*http.Request)", req)
 	resp, err := doFunc(req)
 	after(tracer, resp, err)
 
@@ -119,7 +119,7 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	req = &clone
 
-	tracer = before(tracer, "http/Client.Do(Request)", req)
+	tracer = before(tracer, "http/Client.Do(*http.Request)", req)
 	resp, err := r.original.RoundTrip(req)
 	after(tracer, resp, err)
 
