@@ -76,6 +76,10 @@ func (agent *noopAgent) cacheSpanApiId(descriptor string, apiType int) int32 {
 	return 0
 }
 
+func (agent *noopAgent) FuncName(f interface{}) string {
+	return ""
+}
+
 type noopSpan struct {
 	spanId      int64
 	startTime   time.Time

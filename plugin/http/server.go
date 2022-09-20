@@ -4,31 +4,26 @@ import (
 	"bytes"
 	"net"
 	"net/http"
-	"reflect"
-	"runtime"
 	"strconv"
 	"strings"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
-func NewHttpServerTracer(req *http.Request, operation string) pinpoint.Tracer {
+func NewHttpServerTracer(req *http.Request, operation string) (tracer pinpoint.Tracer) {
 	if isExcludedUrl(req.URL.Path) || isExcludedMethod(req.Method) {
 		return pinpoint.NoopTracer()
 	} else {
-		tracer := pinpoint.GetAgent().NewSpanTracerWithReader(operation, req.URL.Path, req.Header)
+		if tracer = pinpoint.GetAgent().NewSpanTracerWithReader(operation, req.URL.Path, req.Header); tracer.IsSampled() {
+			span := tracer.Span()
+			span.SetEndPoint(req.Host)
+			span.SetRemoteAddress(getRemoteAddr(req))
 
-		span := tracer.Span()
-		span.SetEndPoint(req.Host)
-		span.SetRemoteAddress(getRemoteAddr(req))
-
-		if tracer.IsSampled() {
 			a := span.Annotations()
 			recordServerHttpRequestHeader(a, req.Header)
 			recordServerHttpCookie(a, req.Cookies())
 			setProxyHeader(a, req)
 		}
-
 		return tracer
 	}
 }
@@ -124,8 +119,17 @@ func WrapHandle(pattern string, handler http.Handler) (string, http.Handler) {
 
 		tracer := NewHttpServerTracer(r, "Http Server")
 		defer tracer.EndSpan()
-		defer tracer.NewSpanEvent("http/ServeMux.ServeHTTP(ResponseWriter, Request)").EndSpanEvent()
-		defer tracer.NewSpanEvent(makeMethodName(handler)).EndSpanEvent()
+
+		if !tracer.IsSampled() {
+			handler.ServeHTTP(w, r)
+			return
+		}
+
+		tracer.NewSpanEvent("http/ServeMux.ServeHTTP(ResponseWriter, *Request)")
+		defer tracer.EndSpanEvent()
+
+		tracer.NewSpanEvent(HandlerFuncName(handler))
+		defer tracer.EndSpanEvent()
 
 		status := http.StatusOK
 		w = WrapResponseWriter(w, &status)
@@ -173,10 +177,18 @@ func (mux *ServeMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	tracer := NewHttpServerTracer(r, "Http Server")
 	defer tracer.EndSpan()
-	defer tracer.NewSpanEvent("http/ServeMux.ServeHTTP(ResponseWriter, Request)").EndSpanEvent()
+
+	if !tracer.IsSampled() {
+		mux.ServeMux.ServeHTTP(w, r)
+		return
+	}
+
+	tracer.NewSpanEvent("http/ServeMux.ServeHTTP(ResponseWriter, *Request)")
+	defer tracer.EndSpanEvent()
 
 	handler, _ := mux.Handler(r)
-	defer tracer.NewSpanEvent(makeMethodName(handler)).EndSpanEvent()
+	tracer.NewSpanEvent(HandlerFuncName(handler))
+	defer tracer.EndSpanEvent()
 
 	status := http.StatusOK
 	w = WrapResponseWriter(w, &status)
@@ -184,12 +196,11 @@ func (mux *ServeMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	mux.ServeMux.ServeHTTP(w, r)
 	RecordHttpServerResponse(tracer, status, w.Header())
-
 }
 
-func makeMethodName(f interface{}) string {
+func HandlerFuncName(f interface{}) string {
 	var buf bytes.Buffer
-	buf.WriteString(runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name())
-	buf.WriteString("(ResponseWriter, Request)")
+	buf.WriteString(pinpoint.GetAgent().FuncName(f))
+	buf.WriteString("(ResponseWriter, *Request)")
 	return buf.String()
 }

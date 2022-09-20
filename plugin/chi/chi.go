@@ -18,11 +18,13 @@ func Middleware() func(http.Handler) http.Handler {
 			tracer := phttp.NewHttpServerTracer(r, "Chi Server")
 			defer tracer.EndSpan()
 
-			routePath := r.URL.Path
-			if r.URL.RawPath != "" {
-				routePath = r.URL.RawPath
+			if !tracer.IsSampled() {
+				next.ServeHTTP(w, r)
+				return
 			}
-			defer tracer.NewSpanEvent(routePath).EndSpanEvent()
+
+			tracer.NewSpanEvent(phttp.HandlerFuncName(next))
+			defer tracer.EndSpanEvent()
 
 			status := http.StatusOK
 			w = phttp.WrapResponseWriter(w, &status)
