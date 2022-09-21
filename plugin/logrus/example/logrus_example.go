@@ -1,26 +1,51 @@
 package main
 
 import (
-	"github.com/sirupsen/logrus"
 	"log"
 	"net/http"
+	"os"
 
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	plogrus "github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus"
+	"github.com/sirupsen/logrus"
 )
 
-func logging(w http.ResponseWriter, r *http.Request) {
+func field(w http.ResponseWriter, r *http.Request) {
+	tracer := pinpoint.FromContext(r.Context())
+
+	logrus.SetFormatter(&logrus.JSONFormatter{})
+	entry := logrus.WithFields(plogrus.NewField(tracer))
+	entry.Info("my error log message")
+}
+
+func entry(w http.ResponseWriter, r *http.Request) {
+	tracer := pinpoint.FromContext(r.Context())
+
+	logrus.SetFormatter(&logrus.JSONFormatter{})
+	entry := plogrus.NewEntry(tracer).WithField("foo", "bar")
+	entry.Error("entry log message 1")
+
 	logger := logrus.New()
-	tracer := pinpoint.TracerFromRequestContext(r)
-	logger.WithFields(plogrus.WithField(tracer)).Fatal("ohhh, what a world")
+	logger.SetFormatter(&logrus.JSONFormatter{})
+	entry = plogrus.NewLoggerEntry(logger, tracer).WithField("foo", "bar")
+	entry.Error("entry log message 2")
+}
+
+func hook(w http.ResponseWriter, r *http.Request) {
+	logger := logrus.New()
+	logger.SetFormatter(&logrus.JSONFormatter{})
+	logger.AddHook(plogrus.NewHook())
+
+	entry := logger.WithContext(r.Context()).WithField("foo", "bar")
+	entry.Error("hook log message")
 }
 
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoLogrusTest"),
 		pinpoint.WithAgentId("GoLogrusTestAgent"),
-		pinpoint.WithCollectorHost("localhost"),
+		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)
@@ -29,7 +54,9 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc("/logging", logging))
+	http.HandleFunc(phttp.WrapHandleFunc("/field", field))
+	http.HandleFunc(phttp.WrapHandleFunc("/entry", entry))
+	http.HandleFunc(phttp.WrapHandleFunc("/hook", hook))
 
 	http.ListenAndServe(":9000", nil)
 }
