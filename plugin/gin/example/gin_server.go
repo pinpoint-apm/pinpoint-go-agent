@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 	pgin "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin"
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
@@ -51,9 +51,8 @@ func main() {
 	defer agent.Shutdown()
 
 	router := gin.Default()
-	router.Use(pgin.Middleware())
 
-	router.GET("/endpoint", endpoint)
-	router.GET("/external", extCall)
+	router.GET("/endpoint", pgin.WrapHandler(endpoint))
+	router.GET("/external", pgin.WrapHandler(extCall))
 	router.Run(":8000")
 }

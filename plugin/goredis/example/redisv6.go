@@ -60,8 +60,8 @@ func main() {
 	}
 	redisClusterClient = predis.NewClusterClient(redisClusterOpts)
 
-	http.HandleFunc(phttp.WrapHandleFunc("/redis", redisv6))
-	http.HandleFunc(phttp.WrapHandleFunc("/rediscluster", redisv6Cluster))
+	http.HandleFunc("/redis", phttp.WrapHandlerFunc(redisv6))
+	http.HandleFunc("/rediscluster", phttp.WrapHandlerFunc(redisv6Cluster))
 
 	http.ListenAndServe(":9000", nil)
 

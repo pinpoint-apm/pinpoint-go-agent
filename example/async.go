@@ -118,10 +118,10 @@ func main() {
 	agent, _ := pinpoint.NewAgent(c)
 	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc("/async_chan", asyncWithChan))
-	http.HandleFunc(phttp.WrapHandleFunc("/async_context", asyncWithContext))
-	http.HandleFunc(phttp.WrapHandleFunc("/async_tracer", asyncWithTracer))
-	http.HandleFunc(phttp.WrapHandleFunc("/async_wrapper", asyncWithWrapper))
+	http.HandleFunc("/async_chan", phttp.WrapHandlerFunc(asyncWithChan))
+	http.HandleFunc("/async_context", phttp.WrapHandlerFunc(asyncWithContext))
+	http.HandleFunc("/async_tracer", phttp.WrapHandlerFunc(asyncWithTracer))
+	http.HandleFunc("/async_wrapper", phttp.WrapHandlerFunc(asyncWithWrapper))
 
 	http.ListenAndServe(":9000", nil)
 }

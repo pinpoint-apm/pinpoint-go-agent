@@ -54,9 +54,9 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc("/field", field))
-	http.HandleFunc(phttp.WrapHandleFunc("/entry", entry))
-	http.HandleFunc(phttp.WrapHandleFunc("/hook", hook))
+	http.HandleFunc("/field", phttp.WrapHandlerFunc(field))
+	http.HandleFunc("/entry", phttp.WrapHandlerFunc(entry))
+	http.HandleFunc("/hook", phttp.WrapHandlerFunc(hook))
 
 	http.ListenAndServe(":9000", nil)
 }

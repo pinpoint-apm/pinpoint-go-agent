@@ -3,8 +3,6 @@ package pinpoint
 import (
 	"errors"
 	"io"
-	"reflect"
-	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -61,8 +59,7 @@ type agent struct {
 	apiCache     *lru.Cache
 	apiIdGen     int32
 
-	funcNameCache *lru.Cache
-	enable        bool
+	enable bool
 }
 
 type apiMeta struct {
@@ -125,11 +122,6 @@ func NewAgent(config *Config) (Agent, error) {
 
 	agent.apiIdGen = 0
 	agent.apiCache, err = lru.New(cacheSize)
-	if err != nil {
-		return &agent, err
-	}
-
-	agent.funcNameCache, err = lru.New(cacheSize)
 	if err != nil {
 		return &agent, err
 	}
@@ -526,25 +518,4 @@ func (agent *agent) cacheSpanApiId(descriptor string, apiType int) int32 {
 
 	Log("agent").Infof("cache api id: %d, %s", id, key)
 	return id
-}
-
-func (agent *agent) FuncName(f interface{}) (funcName string) {
-	if !agent.enable {
-		return ""
-	}
-
-	defer func() {
-		if e := recover(); e != nil {
-			funcName = "UnknownFunc"
-		}
-	}()
-
-	ptr := reflect.ValueOf(f).Pointer()
-	if v, ok := agent.apiCache.Peek(ptr); ok {
-		return v.(string)
-	}
-
-	funcName = runtime.FuncForPC(ptr).Name()
-	agent.apiCache.Add(ptr, funcName)
-	return funcName
 }

@@ -1,11 +1,12 @@
 package gin
 
 import (
-	"bytes"
 	"github.com/gin-gonic/gin"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
+
+const serverName = "Gin HTTP Server"
 
 func Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -14,7 +15,7 @@ func Middleware() gin.HandlerFunc {
 			return
 		}
 
-		tracer := phttp.NewHttpServerTracer(c.Request, "Gin Server")
+		tracer := phttp.NewHttpServerTracer(c.Request, serverName)
 		defer tracer.EndSpan()
 
 		if !tracer.IsSampled() {
@@ -22,7 +23,7 @@ func Middleware() gin.HandlerFunc {
 			return
 		}
 
-		tracer.NewSpanEvent(handlerFuncName(c.Handler()))
+		tracer.NewSpanEvent("gin.HandlerFunc()")
 		defer tracer.EndSpanEvent()
 
 		c.Request = pinpoint.RequestWithTracerContext(c.Request, tracer)
@@ -35,9 +36,32 @@ func Middleware() gin.HandlerFunc {
 	}
 }
 
-func handlerFuncName(f interface{}) string {
-	var buf bytes.Buffer
-	buf.WriteString(pinpoint.GetAgent().FuncName(f))
-	buf.WriteString("(*gin.Context)")
-	return buf.String()
+func WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc {
+	funcName := phttp.HandlerFuncName(handler)
+
+	return func(c *gin.Context) {
+		if !pinpoint.GetAgent().Enable() {
+			handler(c)
+			return
+		}
+
+		tracer := phttp.NewHttpServerTracer(c.Request, serverName)
+		defer tracer.EndSpan()
+
+		if !tracer.IsSampled() {
+			handler(c)
+			return
+		}
+
+		tracer.NewSpanEvent(funcName)
+		defer tracer.EndSpanEvent()
+
+		c.Request = pinpoint.RequestWithTracerContext(c.Request, tracer)
+		handler(c)
+		if len(c.Errors) > 0 {
+			tracer.Span().SetError(c.Errors.Last())
+		}
+
+		phttp.RecordHttpServerResponse(tracer, c.Writer.Status(), c.Writer.Header())
+	}
 }

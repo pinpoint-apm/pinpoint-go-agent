@@ -57,7 +57,7 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc("/hbase", doHbase))
+	http.HandleFunc("/hbase", phttp.WrapHandlerFunc(doHbase))
 
 	http.ListenAndServe(":9000", nil)
 }

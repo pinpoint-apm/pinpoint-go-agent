@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log"
 	"math/rand"
@@ -12,7 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 	pchi "github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi"
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
@@ -48,15 +47,6 @@ func outgoing(w http.ResponseWriter, r *http.Request) {
 	time.Sleep(time.Duration(random.Intn(2000)+1) * time.Millisecond)
 }
 
-func myMiddleware(s string) func(http.Handler) http.Handler {
-	return func(h http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			fmt.Println(s)
-			h.ServeHTTP(w, r)
-		})
-	}
-}
-
 func main() {
 	go func() {
 		log.Println(http.ListenAndServe("localhost:6060", nil))
@@ -70,19 +60,21 @@ func main() {
 	}
 
 	cfg, _ := pinpoint.NewConfig(opts...)
-	agent, _ := pinpoint.NewAgent(cfg)
-	//if err != nil {
-	//	log.Fatalf("pinpoint agent start fail: %v", err)
-	//}
+	agent, err := pinpoint.NewAgent(cfg)
+	if err != nil {
+		log.Fatalf("pinpoint agent start fail: %v", err)
+	}
 	defer agent.Shutdown()
 
 	r := chi.NewRouter()
-	r.Use(myMiddleware("myMiddleware"))
-	r.Use(pchi.Middleware())
 
-	r.Get("/hello", hello)
-	r.Get("/outgoing", outgoing)
-	r.Get("/shutdown", shutdown)
+	r.Get("/hello", pchi.WrapHandlerFunc(hello))
+	r.Get("/outgoing", pchi.WrapHandlerFunc(outgoing))
+	r.Handle("/shutdown", pchi.WrapHandler(http.HandlerFunc(shutdown)))
+
+	r.Get("/noname", pchi.WrapHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("noname handler"))
+	}))
 
 	http.ListenAndServe(":8000", r)
 }

@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"net"
 	"net/http"
+	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
+
+const defaultServerName = "HTTP Server"
 
 func NewHttpServerTracer(req *http.Request, operation string) (tracer pinpoint.Tracer) {
 	if isExcludedUrl(req.URL.Path) || isExcludedMethod(req.Method) {
@@ -110,14 +114,22 @@ func RecordHttpServerResponse(tracer pinpoint.Tracer, status int, header http.He
 	}
 }
 
-func WrapHandle(pattern string, handler http.Handler) (string, http.Handler) {
-	return pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func WrapHandler(handler http.Handler, serverName ...string) http.Handler {
+	var srvName string
+	if len(serverName) > 0 {
+		srvName = serverName[0]
+	} else {
+		srvName = defaultServerName
+	}
+	funcName := HandlerFuncName(handler)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !pinpoint.GetAgent().Enable() {
 			handler.ServeHTTP(w, r)
 			return
 		}
 
-		tracer := NewHttpServerTracer(r, "Http Server")
+		tracer := NewHttpServerTracer(r, srvName)
 		defer tracer.EndSpan()
 
 		if !tracer.IsSampled() {
@@ -125,7 +137,7 @@ func WrapHandle(pattern string, handler http.Handler) (string, http.Handler) {
 			return
 		}
 
-		tracer.NewSpanEvent(HandlerFuncName(handler))
+		tracer.NewSpanEvent(funcName)
 		defer tracer.EndSpanEvent()
 
 		status := http.StatusOK
@@ -137,8 +149,19 @@ func WrapHandle(pattern string, handler http.Handler) (string, http.Handler) {
 	})
 }
 
-func WrapHandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) (string, func(http.ResponseWriter, *http.Request)) {
-	p, h := WrapHandle(pattern, http.HandlerFunc(handler))
+func WrapHandlerFunc(handler func(http.ResponseWriter, *http.Request), serverName ...string) func(http.ResponseWriter, *http.Request) {
+	h := WrapHandler(http.HandlerFunc(handler), serverName...)
+	return func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }
+}
+
+// WrapHandle deprecated
+func WrapHandle(agent *pinpoint.Agent, handlerName string, pattern string, handler http.Handler) (string, http.Handler) {
+	return pattern, WrapHandler(handler)
+}
+
+// WrapHandleFunc deprecated
+func WrapHandleFunc(agent *pinpoint.Agent, handlerName string, pattern string, handler func(http.ResponseWriter, *http.Request)) (string, func(http.ResponseWriter, *http.Request)) {
+	p, h := WrapHandle(agent, handlerName, pattern, http.HandlerFunc(handler))
 	return p, func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }
 }
 
@@ -156,45 +179,27 @@ func (w *responseWriter) WriteHeader(status int) {
 	*w.status = status
 }
 
-type ServeMux struct {
+type serveMux struct {
 	*http.ServeMux
 }
 
-func NewServeMux() *ServeMux {
-	return &ServeMux{
+func NewServeMux() *serveMux {
+	return &serveMux{
 		ServeMux: http.NewServeMux(),
 	}
 }
 
-func (mux *ServeMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !pinpoint.GetAgent().Enable() {
-		mux.ServeMux.ServeHTTP(w, r)
-		return
-	}
+func (mux *serveMux) Handle(pattern string, handler http.Handler) {
+	mux.ServeMux.Handle(pattern, WrapHandler(handler))
+}
 
-	tracer := NewHttpServerTracer(r, "Http Server")
-	defer tracer.EndSpan()
-
-	if !tracer.IsSampled() {
-		mux.ServeMux.ServeHTTP(w, r)
-		return
-	}
-
-	handler, _ := mux.Handler(r)
-	tracer.NewSpanEvent(HandlerFuncName(handler))
-	defer tracer.EndSpanEvent()
-
-	status := http.StatusOK
-	w = WrapResponseWriter(w, &status)
-	r = pinpoint.RequestWithTracerContext(r, tracer)
-
-	mux.ServeMux.ServeHTTP(w, r)
-	RecordHttpServerResponse(tracer, status, w.Header())
+func (mux *serveMux) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
+	mux.ServeMux.HandleFunc(pattern, WrapHandlerFunc(handler))
 }
 
 func HandlerFuncName(f interface{}) string {
 	var buf bytes.Buffer
-	buf.WriteString(pinpoint.GetAgent().FuncName(f))
-	buf.WriteString("(http.ResponseWriter, *http.Request)")
+	buf.WriteString(runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name())
+	buf.WriteString("()")
 	return buf.String()
 }

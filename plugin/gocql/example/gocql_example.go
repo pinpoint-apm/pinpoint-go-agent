@@ -63,7 +63,7 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc("/cassandra", doCassandra))
+	http.HandleFunc("/cassandra", phttp.WrapHandlerFunc(doCassandra))
 
 	http.ListenAndServe(":9000", nil)
 }

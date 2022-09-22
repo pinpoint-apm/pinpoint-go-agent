@@ -66,7 +66,7 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc("/gormquery", gormQuery))
+	http.HandleFunc("/gormquery", phttp.WrapHandlerFunc(gormQuery))
 
 	http.ListenAndServe(":9000", nil)
 }

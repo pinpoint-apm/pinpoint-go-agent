@@ -60,6 +60,6 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc("/redis", redigo_test))
+	http.HandleFunc("/redis", phttp.WrapHandlerFunc(redigo_test))
 	http.ListenAndServe(":9000", nil)
 }

@@ -157,8 +157,8 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc("/tableCount", tableCount))
-	http.HandleFunc(phttp.WrapHandleFunc("/query", query))
+	http.HandleFunc("/tableCount", phttp.WrapHandlerFunc(tableCount))
+	http.HandleFunc("/query", phttp.WrapHandlerFunc(query))
 
 	http.ListenAndServe(":9001", nil)
 }

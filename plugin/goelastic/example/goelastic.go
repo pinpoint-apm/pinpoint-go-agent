@@ -180,7 +180,7 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc("/goelastic", goelastic))
+	http.HandleFunc("/goelastic", phttp.WrapHandlerFunc(goelastic))
 
 	http.ListenAndServe(":9000", nil)
 }

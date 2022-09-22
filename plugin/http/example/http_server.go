@@ -46,6 +46,16 @@ func wrapClient(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, "wrapClient success")
 }
 
+func handlerNotTraced(w http.ResponseWriter, r *http.Request) {
+	tracer := pinpoint.FromContext(r.Context())
+	defer tracer.NewSpanEvent("NotTrace").EndSpanEvent()
+	io.WriteString(w, "handler is not traced")
+}
+
+func trace(f func(http.ResponseWriter, *http.Request), serverName ...string) func(http.ResponseWriter, *http.Request) {
+	return phttp.WrapHandlerFunc(f)
+}
+
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoHttpTest"),
@@ -69,18 +79,19 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc("/", index))
-	http.HandleFunc(phttp.WrapHandleFunc("/wraprequest", wrapRequest))
-	http.HandleFunc(phttp.WrapHandleFunc("/wraprequest/a.zo", wrapRequest))
-	http.HandleFunc(phttp.WrapHandleFunc("/wraprequest/aa/b.zo", wrapRequest))
-	http.HandleFunc(phttp.WrapHandleFunc("/wrapclient", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc("/wrapclient/aa/a.go", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc("/wrapclient/aa/bb/a.go", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc("/wrapclient/c.do", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc("/wrapclient/dd/d.do", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc("/wrapclient/c@do", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc("/abcd", wrapClient))
-	http.HandleFunc(phttp.WrapHandleFunc("/abcd/e.go", wrapClient))
+	http.HandleFunc("/", trace(index))
+	http.HandleFunc("/wraprequest", trace(wrapRequest))
+	http.HandleFunc("/wraprequest/a.zo", trace(wrapRequest))
+	http.HandleFunc("/wraprequest/aa/b.zo", trace(wrapRequest))
+	http.HandleFunc("/wrapclient", trace(wrapClient))
+	http.HandleFunc("/wrapclient/aa/a.go", trace(wrapClient))
+	http.HandleFunc("/wrapclient/aa/bb/a.go", trace(wrapClient))
+	http.HandleFunc("/wrapclient/c.do", trace(wrapClient))
+	http.HandleFunc("/wrapclient/dd/d.do", trace(wrapClient))
+	http.HandleFunc("/wrapclient/c@do", phttp.WrapHandlerFunc(wrapClient))
+	http.HandleFunc("/abcd", trace(wrapClient))
+	http.HandleFunc("/abcd/e.go", trace(wrapClient))
+	http.HandleFunc("/notrace", handlerNotTraced)
 
 	http.ListenAndServe(":8000", nil)
 }

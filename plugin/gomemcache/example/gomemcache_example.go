@@ -78,7 +78,7 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc("/memcache", doMemcache))
+	http.HandleFunc("/memcache", phttp.WrapHandlerFunc(doMemcache))
 
 	http.ListenAndServe(":9000", nil)
 }

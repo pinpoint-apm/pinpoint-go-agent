@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-	pmux "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla"
 	"io"
 	"log"
 	"math/rand"
@@ -12,6 +10,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	pmux "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla"
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
@@ -39,13 +38,8 @@ func outGoing(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, "wrapClient success")
 }
 
-func myMiddleware(s string) mux.MiddlewareFunc {
-	return func(h http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			fmt.Println(s)
-			h.ServeHTTP(w, r)
-		})
-	}
+func notrace(w http.ResponseWriter, r *http.Request) {
+	io.WriteString(w, "handler is not traced")
 }
 
 func main() {
@@ -63,11 +57,11 @@ func main() {
 	defer agent.Shutdown()
 
 	r := mux.NewRouter()
-	r.Use(pmux.Middleware())
-	r.Use(myMiddleware("myMiddleware"))
+	//r.Use(pmux.Middleware())
 
-	r.HandleFunc("/", hello)
-	r.HandleFunc("/outgoing", outGoing)
+	r.Handle("/", pmux.WrapHandler(http.HandlerFunc(hello)))
+	r.HandleFunc("/outgoing", pmux.WrapHandlerFunc(outGoing))
+	r.HandleFunc("/notrace", notrace)
 
 	http.ListenAndServe(":8000", r)
 }

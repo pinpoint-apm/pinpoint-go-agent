@@ -3,9 +3,11 @@ package chi
 import (
 	"net/http"
 
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
+
+const serverName = "Chi HTTP Server"
 
 func Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -15,7 +17,7 @@ func Middleware() func(http.Handler) http.Handler {
 				return
 			}
 
-			tracer := phttp.NewHttpServerTracer(r, "Chi Server")
+			tracer := phttp.NewHttpServerTracer(r, serverName)
 			defer tracer.EndSpan()
 
 			if !tracer.IsSampled() {
@@ -23,7 +25,7 @@ func Middleware() func(http.Handler) http.Handler {
 				return
 			}
 
-			tracer.NewSpanEvent(phttp.HandlerFuncName(next))
+			tracer.NewSpanEvent("chi.HandlerFunc()")
 			defer tracer.EndSpanEvent()
 
 			status := http.StatusOK
@@ -34,4 +36,12 @@ func Middleware() func(http.Handler) http.Handler {
 			phttp.RecordHttpServerResponse(tracer, status, w.Header())
 		})
 	}
+}
+
+func WrapHandler(handler http.Handler) http.Handler {
+	return phttp.WrapHandler(handler, serverName)
+}
+
+func WrapHandlerFunc(f func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+	return phttp.WrapHandlerFunc(f, serverName)
 }

@@ -52,9 +52,9 @@ func main() {
 	agent, _ := pinpoint.NewAgent(c)
 	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc("/", index))
-	http.HandleFunc(phttp.WrapHandleFunc("/error", seterror))
-	http.HandleFunc(phttp.WrapHandleFunc("/outgoing", outgoing))
+	http.HandleFunc("/", phttp.WrapHandlerFunc(index))
+	http.HandleFunc("/error", phttp.WrapHandlerFunc(seterror))
+	http.HandleFunc("/outgoing", phttp.WrapHandlerFunc(outgoing))
 
 	http.ListenAndServe(":9000", nil)
 }

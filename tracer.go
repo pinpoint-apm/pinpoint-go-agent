@@ -30,7 +30,6 @@ type Agent interface {
 	cacheErrorFunc(funcName string) int32
 	cacheSql(sql string) int32
 	cacheSpanApiId(descriptor string, apiType int) int32
-	FuncName(f interface{}) string
 }
 
 type Tracer interface {

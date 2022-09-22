@@ -8,6 +8,8 @@ import (
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
+const serverName = "Gorilla/Mux HTTP Server"
+
 func Middleware() mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -16,20 +18,14 @@ func Middleware() mux.MiddlewareFunc {
 				return
 			}
 
-			tracer := phttp.NewHttpServerTracer(r, "Gorilla/Mux Server")
+			tracer := phttp.NewHttpServerTracer(r, serverName)
 			defer tracer.EndSpan()
 			if !tracer.IsSampled() {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			var handler interface{}
-			if route := mux.CurrentRoute(r); route != nil {
-				handler = route.GetHandler()
-			} else {
-				handler = next
-			}
-			tracer.NewSpanEvent(phttp.HandlerFuncName(handler))
+			tracer.NewSpanEvent("gorilla/mux.HandlerFunc()")
 			defer tracer.EndSpanEvent()
 
 			status := http.StatusOK
@@ -40,4 +36,12 @@ func Middleware() mux.MiddlewareFunc {
 			phttp.RecordHttpServerResponse(tracer, status, w.Header())
 		})
 	}
+}
+
+func WrapHandler(handler http.Handler) http.Handler {
+	return phttp.WrapHandler(handler, serverName)
+}
+
+func WrapHandlerFunc(f func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+	return phttp.WrapHandlerFunc(f, serverName)
 }

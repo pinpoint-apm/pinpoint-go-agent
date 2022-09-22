@@ -48,7 +48,7 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc("/mongo", mongodb))
+	http.HandleFunc("/mongo", phttp.WrapHandlerFunc(mongodb))
 
 	http.ListenAndServe(":9000", nil)
 }
