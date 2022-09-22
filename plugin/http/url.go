@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"regexp"
+	"strings"
 )
 
 type httpExcludeUrl struct {
@@ -94,6 +95,28 @@ func setupHttpUrlFilter() []*httpExcludeUrl {
 func (h *httpUrlFilter) isFiltered(url string) bool {
 	for _, h := range h.filters {
 		if h.match(url) {
+			return true
+		}
+	}
+	return false
+}
+
+type httpMethodFilter struct {
+	excludeMethod []string
+}
+
+func newHttpExcludeMethod() *httpMethodFilter {
+	cfg := pinpoint.GetConfig().StringSlice(cfgHttpServerExcludeMethod)
+	trimStringSlice(cfg)
+
+	return &httpMethodFilter{
+		excludeMethod: cfg,
+	}
+}
+
+func (h *httpMethodFilter) isExcludedMethod(method string) bool {
+	for _, em := range h.excludeMethod {
+		if strings.EqualFold(em, method) {
 			return true
 		}
 	}

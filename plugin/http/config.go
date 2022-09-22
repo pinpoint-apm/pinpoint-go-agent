@@ -86,8 +86,10 @@ func WithHttpClientRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
 }
 
 var (
-	srvStatusErrors      *httpStatusError
-	srvUrlFilter         *httpUrlFilter
+	srvStatusErrors *httpStatusError
+	srvUrlFilter    *httpUrlFilter
+	srvMethodFilter *httpMethodFilter
+
 	srvReqHeaderRecorder httpHeaderRecorder
 	srvResHeaderRecorder httpHeaderRecorder
 	srvCookieRecorder    httpHeaderRecorder
@@ -110,6 +112,13 @@ func serverUrlFilter() *httpUrlFilter {
 		srvUrlFilter = newHttpUrlFilter()
 	}
 	return srvUrlFilter
+}
+
+func serverMethodFilter() *httpMethodFilter {
+	if srvMethodFilter == nil {
+		srvMethodFilter = newHttpExcludeMethod()
+	}
+	return srvMethodFilter
 }
 
 func serverRequestHeaderRecorder() httpHeaderRecorder {
@@ -178,15 +187,7 @@ func isExcludedUrl(url string) bool {
 }
 
 func isExcludedMethod(method string) bool {
-	cfgMethods := pinpoint.GetConfig().StringSlice(cfgHttpServerExcludeMethod)
-	trimStringSlice(cfgMethods)
-
-	for _, em := range cfgMethods {
-		if strings.EqualFold(em, method) {
-			return true
-		}
-	}
-	return false
+	return serverMethodFilter().isExcludedMethod(method)
 }
 
 func recordServerHttpStatus(span pinpoint.SpanRecorder, status int) {
