@@ -93,7 +93,7 @@ func NoopTracer() Tracer {
 	return &defaultNoopSpan
 }
 
-func newUnSampledSpan(rpcName string) Tracer {
+func newUnSampledSpan(rpcName string) *noopSpan {
 	span := noopSpan{}
 	span.spanId = generateSpanId()
 	span.startTime = time.Now()

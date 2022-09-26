@@ -1,11 +1,11 @@
 package pinpoint
 
 import (
-	"container/list"
 	"context"
 	"math/rand"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -45,7 +45,8 @@ type span struct {
 	asyncId       int32
 	asyncSequence int32
 	goroutineId   uint64
-	stack         *list.List
+	eventStack    *stack
+	appendLock    sync.Mutex
 }
 
 func toMicroseconds(d time.Duration) int64 { return int64(d) / 1e3 }
@@ -67,19 +68,17 @@ func defaultSpan() *span {
 	span.goroutineId = 0
 	span.asyncId = NoneAsyncId
 
-	span.stack = list.New()
+	span.eventStack = &stack{}
 	return &span
 }
 
-func newSampledSpan(agent Agent, operation string, rpcName string) Tracer {
+func newSampledSpan(agent Agent, operation string, rpcName string) *span {
 	span := defaultSpan()
 
 	span.agent = agent
 	span.operationName = operation
 	span.rpcName = rpcName
 	span.apiId = agent.cacheSpanApiId(operation, ApiTypeWebRequest)
-
-	addSampledActiveSpan(span)
 
 	return span
 }
@@ -94,11 +93,9 @@ func (span *span) EndSpan() {
 		collectResponseTime(toMilliseconds(span.elapsed))
 	}
 
-	if span.stack.Len() > 0 {
-		for e := span.stack.Front(); e != nil; e = e.Next() {
-			if se, ok := e.Value.(*spanEvent); ok {
-				se.end()
-			}
+	if span.eventStack.len() > 0 {
+		for se, ok := span.eventStack.pop(); ok; {
+			se.end()
 		}
 		Log("span").Warn("span has a event that is not closed")
 	}
@@ -109,7 +106,7 @@ func (span *span) EndSpan() {
 }
 
 func (span *span) Inject(writer DistributedTracingContextWriter) {
-	if se := span.currentSpanEvent(); se != nil {
+	if se, ok := span.eventStack.peek(); ok {
 		writer.Set(HttpTraceId, span.txId.String())
 
 		nextSpanId := se.generateNextSpanId()
@@ -175,6 +172,7 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		span.endPoint = host
 	}
 
+	addSampledActiveSpan(span)
 	Log("span").Debug("span extract: ", tid, spanid, pappname, pspanid, papptype, host)
 }
 
@@ -184,25 +182,25 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 }
 
 func (span *span) appendSpanEvent(se *spanEvent) {
+	span.appendLock.Lock()
+	defer span.appendLock.Unlock()
+
 	span.spanEvents = append(span.spanEvents, se)
-	span.stack.PushFront(se)
+	span.eventStack.push(se)
 	span.eventSequence++
 	span.eventDepth++
 }
 
 func (span *span) EndSpanEvent() {
-	if e := span.stack.Front(); e != nil {
-		v := span.stack.Remove(e)
-		if se, ok := v.(*spanEvent); ok {
-			se.end()
-		}
+	if se, ok := span.eventStack.pop(); ok {
+		se.end()
 	} else {
 		Log("span").Warn("span event is not exist to be closed")
 	}
 }
 
 func (span *span) newAsyncSpan() Tracer {
-	if se := span.currentSpanEvent(); se != nil {
+	if se, ok := span.eventStack.peek(); ok {
 		asyncSpan := defaultSpan()
 
 		asyncSpan.agent = span.agent
@@ -268,21 +266,11 @@ func (span *span) Span() SpanRecorder {
 }
 
 func (span *span) SpanEvent() SpanEventRecorder {
-	if se := span.currentSpanEvent(); se != nil {
+	if se, ok := span.eventStack.peek(); ok {
 		return se
 	}
-
 	Log("span").Warn("span has no event")
 	return &defaultNoopSpanEvent
-}
-
-func (span *span) currentSpanEvent() *spanEvent {
-	if e := span.stack.Front(); e != nil {
-		if se, ok := e.Value.(*spanEvent); ok {
-			return se
-		}
-	}
-	return nil
 }
 
 func (span *span) SetError(e error) {
@@ -334,4 +322,52 @@ func (span *span) SetLogging(logInfo int32) {
 
 func (span *span) IsSampled() bool {
 	return true
+}
+
+type stack struct {
+	lock sync.RWMutex
+	top  *node
+	size int
+}
+
+type node struct {
+	value *spanEvent
+	next  *node
+}
+
+func (s *stack) len() int {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	return s.size
+}
+
+func (s *stack) push(v *spanEvent) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	s.top = &node{value: v, next: s.top}
+	s.size++
+}
+
+func (s *stack) pop() (*spanEvent, bool) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if s.size > 0 {
+		save := s.top.value
+		s.top = s.top.next
+		s.size--
+		return save, true
+	}
+	return nil, false
+}
+
+func (s *stack) peek() (*spanEvent, bool) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	if s.size > 0 {
+		return s.top.value, true
+	}
+	return nil, false
 }

@@ -52,7 +52,7 @@ func handlerNotTraced(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, "handler is not traced")
 }
 
-func trace(f func(http.ResponseWriter, *http.Request), serverName ...string) func(http.ResponseWriter, *http.Request) {
+func trace(f func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return phttp.WrapHandlerFunc(f)
 }
 
@@ -88,7 +88,7 @@ func main() {
 	http.HandleFunc("/wrapclient/aa/bb/a.go", trace(wrapClient))
 	http.HandleFunc("/wrapclient/c.do", trace(wrapClient))
 	http.HandleFunc("/wrapclient/dd/d.do", trace(wrapClient))
-	http.HandleFunc("/wrapclient/c@do", phttp.WrapHandlerFunc(wrapClient))
+	http.HandleFunc("/wrapclient/c@do", trace(wrapClient))
 	http.HandleFunc("/abcd", trace(wrapClient))
 	http.HandleFunc("/abcd/e.go", trace(wrapClient))
 	http.HandleFunc("/notrace", handlerNotTraced)

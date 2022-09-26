@@ -13,7 +13,7 @@ func Test_defaultSpan(t *testing.T) {
 	assert.Equal(t, span.parentAppType, -1, "parentAppType")
 	assert.Equal(t, span.eventDepth, int32(1), "eventDepth")
 	assert.Equal(t, span.serviceType, int32(ServiceTypeGoApp), "serviceType")
-	assert.NotNil(t, span.stack, "stack")
+	assert.NotNil(t, span.eventStack, "stack")
 }
 
 type DistributedTracingContextMap struct {
@@ -108,7 +108,7 @@ func Test_span_NewSpanEvent(t *testing.T) {
 			span.NewSpanEvent(tt.args.operationName)
 			assert.Equal(t, span.eventSequence, int32(1), "eventSequence")
 			assert.Equal(t, span.eventDepth, int32(2), "eventDepth")
-			assert.Equal(t, span.stack.Len(), int(1), "stack.len")
+			assert.Equal(t, span.eventStack.len(), int(1), "stack.len")
 
 			se := span.spanEvents[0]
 			assert.Equal(t, se.operationName, tt.args.operationName, "operationName")
@@ -131,11 +131,13 @@ func Test_span_EndSpanEvent(t *testing.T) {
 			span := defaultTestSpan()
 			span.NewSpanEvent(tt.args.operationName)
 			span.NewSpanEvent("t2")
-			assert.Equal(t, span.stack.Len(), int(2), "stack.len")
+			assert.Equal(t, span.eventStack.len(), int(2), "stack.len()")
 			span.EndSpanEvent()
-			assert.Equal(t, span.stack.Len(), int(1), "stack.len")
+			assert.Equal(t, span.eventStack.len(), int(1), "stack.len()")
 			span.EndSpanEvent()
-			assert.Equal(t, span.stack.Len(), int(0), "stack.len")
+			assert.Equal(t, span.eventStack.len(), int(0), "stack.len()")
+			span.EndSpanEvent()
+			assert.Equal(t, span.eventStack.len(), int(0), "stack.len()")
 		})
 	}
 }
@@ -156,7 +158,7 @@ func Test_span_NewGoroutineTracer(t *testing.T) {
 			s.NewSpanEvent(tt.args.operationName)
 			a := s.NewGoroutineTracer()
 
-			se := s.stack.Front().Value.(*spanEvent)
+			se, _ := s.eventStack.peek()
 			assert.Equal(t, se.asyncId, int32(1), "asyncId")
 			assert.Equal(t, se.asyncSeqGen, int32(1), "asyncSeqGen")
 
@@ -165,7 +167,7 @@ func Test_span_NewGoroutineTracer(t *testing.T) {
 			assert.Equal(t, as.txId, s.txId, "txId")
 			assert.Equal(t, as.spanId, s.spanId, "spanId")
 
-			ase := as.stack.Front().Value.(*spanEvent)
+			ase, _ := as.eventStack.peek()
 			assert.Equal(t, ase.serviceType, int32(100), "serviceType")
 		})
 	}
@@ -192,12 +194,12 @@ func Test_span_WrapGoroutine(t *testing.T) {
 				assert.Equal(t, as.txId, s.txId, "txId")
 				assert.Equal(t, as.spanId, s.spanId, "spanId")
 
-				ase := as.stack.Front().Value.(*spanEvent)
+				ase, _ := as.eventStack.peek()
 				assert.Equal(t, ase.serviceType, int32(ServiceTypeGoFunction), "serviceType")
-				assert.Equal(t, as.stack.Len(), 2, "stack.Len()")
+				assert.Equal(t, as.eventStack.len(), 2, "stack.len()")
 			}, context.Background())
 
-			se := s.stack.Front().Value.(*spanEvent)
+			se, _ := s.eventStack.peek()
 			assert.Equal(t, se.asyncId, int32(2), "asyncId")
 			assert.Equal(t, se.asyncSeqGen, int32(1), "asyncSeqGen")
 
