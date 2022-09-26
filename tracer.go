@@ -70,7 +70,7 @@ type SpanEventRecorder interface {
 	SetServiceType(typ int32)
 	SetDestination(id string)
 	SetEndPoint(endPoint string)
-	SetError(e error)
+	SetError(e error, errorName ...string)
 	SetSQL(sql string, args string)
 	Annotations() Annotation
 	FixDuration(start time.Time, end time.Time)

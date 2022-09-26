@@ -13,6 +13,14 @@ import (
 )
 
 func endpoint(c *gin.Context) {
+	tracer := pinpoint.FromContext(c.Request.Context())
+	defer tracer.NewSpanEvent("f1").EndSpanEvent()
+	defer tracer.NewSpanEvent("f2").EndSpanEvent()
+	tracer.NewSpanEvent("f3").EndSpanEvent()
+
+	var i http.ResponseWriter
+	i.Header() //panic
+
 	//	c.Writer.WriteString("endpoint")
 	c.Writer.WriteHeader(500)
 }
@@ -51,6 +59,7 @@ func main() {
 	defer agent.Shutdown()
 
 	router := gin.Default()
+	router.Use(gin.Recovery())
 
 	router.GET("/endpoint", pgin.WrapHandler(endpoint))
 	router.GET("/external", pgin.WrapHandler(extCall))

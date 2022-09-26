@@ -97,7 +97,7 @@ func newSpanForGrpcClient(ctx context.Context, method string) (context.Context, 
 func endSpan(tracer pinpoint.Tracer, err error) {
 	if tracer != nil {
 		if err != nil && err != io.EOF {
-			tracer.SpanEvent().SetError(err)
+			tracer.SpanEvent().SetError(err, "grpc error")
 		}
 		tracer.EndSpanEvent()
 	}

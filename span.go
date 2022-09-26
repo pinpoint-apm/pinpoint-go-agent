@@ -2,6 +2,8 @@ package pinpoint
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -42,6 +44,7 @@ type span struct {
 	err           int
 	errorFuncId   int32
 	errorString   string
+	recovered     bool
 	asyncId       int32
 	asyncSequence int32
 	goroutineId   uint64
@@ -194,6 +197,18 @@ func (span *span) appendSpanEvent(se *spanEvent) {
 func (span *span) EndSpanEvent() {
 	if se, ok := span.eventStack.pop(); ok {
 		se.end()
+		if !span.recovered {
+			if v := recover(); v != nil {
+				err, ok := v.(error)
+				if !ok {
+					err = errors.New(fmt.Sprint(v))
+				}
+				se.SetError(err, "panic")
+				span.SetError(err)
+				span.recovered = true
+				panic(err)
+			}
+		}
 	} else {
 		Log("span").Warn("span event is not exist to be closed")
 	}

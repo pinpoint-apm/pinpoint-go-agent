@@ -24,6 +24,13 @@ func Middleware() func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
+			defer func() {
+				if e := recover(); e != nil {
+					status := http.StatusInternalServerError
+					phttp.RecordHttpServerResponse(tracer, status, w.Header())
+					panic(e)
+				}
+			}()
 
 			tracer.NewSpanEvent("chi.HandlerFunc()")
 			defer tracer.EndSpanEvent()

@@ -197,7 +197,7 @@ type noopSpanEvent struct {
 
 var defaultNoopSpanEvent = noopSpanEvent{}
 
-func (se *noopSpanEvent) SetError(e error) {}
+func (se *noopSpanEvent) SetError(e error, errorName ...string) {}
 
 func (se *noopSpanEvent) SetApiId(id int32) {}
 

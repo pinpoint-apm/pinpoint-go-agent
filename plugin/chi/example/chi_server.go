@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/go-chi/chi/v5/middleware"
 	"io"
 	"log"
 	"math/rand"
@@ -10,13 +11,21 @@ import (
 	"os"
 	"time"
 
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	pchi "github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi"
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 func hello(w http.ResponseWriter, r *http.Request) {
+	tracer := pinpoint.FromContext(r.Context())
+	defer tracer.NewSpanEvent("f1").EndSpanEvent()
+	defer tracer.NewSpanEvent("f2").EndSpanEvent()
+	tracer.NewSpanEvent("f3").EndSpanEvent()
+
+	var i http.ResponseWriter
+	i.Header() //panic
+
 	seed := rand.NewSource(time.Now().UnixNano())
 	random := rand.New(seed)
 
@@ -67,6 +76,7 @@ func main() {
 	defer agent.Shutdown()
 
 	r := chi.NewRouter()
+	r.Use(middleware.Recoverer)
 
 	r.Get("/hello", pchi.WrapHandlerFunc(hello))
 	r.Get("/outgoing", pchi.WrapHandlerFunc(outgoing))

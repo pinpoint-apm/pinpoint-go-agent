@@ -10,6 +10,9 @@ import (
 )
 
 func indexMux(w http.ResponseWriter, r *http.Request) {
+	var i http.ResponseWriter
+	i.Header() //panic
+
 	io.WriteString(w, "hello world, mux")
 }
 

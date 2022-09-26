@@ -72,7 +72,6 @@ func (se *spanEvent) end() {
 	if !se.isTimeFixed {
 		se.endElapsed = time.Now().Sub(se.startTime)
 	}
-
 	Log("span").Debug("endSpanEvent: ", se.operationName)
 }
 
@@ -81,12 +80,19 @@ func (se *spanEvent) generateNextSpanId() int64 {
 	return se.nextSpanId
 }
 
-func (se *spanEvent) SetError(e error) {
+func (se *spanEvent) SetError(e error, errorName ...string) {
 	if e == nil {
 		return
 	}
 
-	id := se.parentSpan.agent.cacheErrorFunc("error")
+	var errName string
+	if len(errorName) > 0 {
+		errName = errorName[0]
+	} else {
+		errName = "error"
+	}
+
+	id := se.parentSpan.agent.cacheErrorFunc(errName)
 	se.errorFuncId = id
 	se.errorString = e.Error()
 }

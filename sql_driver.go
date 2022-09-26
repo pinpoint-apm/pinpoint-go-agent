@@ -173,7 +173,7 @@ func (c *sqlConn) newSqlSpanEventNoSql(ctx context.Context, operation string, st
 
 func setSqlSpanEvent(tracer Tracer, start time.Time, err error, sql string, args string) {
 	tracer.SpanEvent().SetSQL(sql, args)
-	tracer.SpanEvent().SetError(err)
+	tracer.SpanEvent().SetError(err, "SQL error")
 	tracer.SpanEvent().FixDuration(start, time.Now())
 }
 

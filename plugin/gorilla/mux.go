@@ -24,6 +24,13 @@ func Middleware() mux.MiddlewareFunc {
 				next.ServeHTTP(w, r)
 				return
 			}
+			defer func() {
+				if e := recover(); e != nil {
+					status := http.StatusInternalServerError
+					phttp.RecordHttpServerResponse(tracer, status, w.Header())
+					panic(e)
+				}
+			}()
 
 			tracer.NewSpanEvent("gorilla/mux.HandlerFunc()")
 			defer tracer.EndSpanEvent()

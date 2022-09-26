@@ -4,6 +4,7 @@ import (
 	"github.com/labstack/echo"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"net/http"
 )
 
 const serverName = "Echo HTTP Server"
@@ -22,6 +23,13 @@ func Middleware() echo.MiddlewareFunc {
 			if !tracer.IsSampled() {
 				return next(c)
 			}
+			defer func() {
+				if e := recover(); e != nil {
+					status := http.StatusInternalServerError
+					phttp.RecordHttpServerResponse(tracer, status, c.Response().Header())
+					panic(e)
+				}
+			}()
 
 			tracer.NewSpanEvent("echo.HandlerFunc()")
 			defer tracer.EndSpanEvent()
@@ -55,6 +63,13 @@ func WrapHandler(handler echo.HandlerFunc) echo.HandlerFunc {
 		if !tracer.IsSampled() {
 			return handler(c)
 		}
+		defer func() {
+			if e := recover(); e != nil {
+				status := http.StatusInternalServerError
+				phttp.RecordHttpServerResponse(tracer, status, c.Response().Header())
+				panic(e)
+			}
+		}()
 
 		tracer.NewSpanEvent(funcName)
 		defer tracer.EndSpanEvent()

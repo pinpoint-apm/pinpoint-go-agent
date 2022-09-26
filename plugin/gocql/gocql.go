@@ -31,7 +31,7 @@ func (o *Observer) ObserveQuery(ctx context.Context, query gocql.ObservedQuery) 
 	se.SetDestination(query.Keyspace)
 	se.SetSQL(query.Statement, "")
 	se.FixDuration(query.Start, query.End)
-	se.SetError(query.Err)
+	se.SetError(query.Err, "query error")
 }
 
 func (o *Observer) ObserveBatch(ctx context.Context, batch gocql.ObservedBatch) {
@@ -57,5 +57,5 @@ func (o *Observer) ObserveBatch(ctx context.Context, batch gocql.ObservedBatch) 
 	}
 
 	se.SetSQL(buffer.String(), "")
-	se.SetError(batch.Err)
+	se.SetError(batch.Err, "batch error")
 }

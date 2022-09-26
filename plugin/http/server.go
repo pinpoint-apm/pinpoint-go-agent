@@ -136,6 +136,13 @@ func WrapHandler(handler http.Handler, serverName ...string) http.Handler {
 			handler.ServeHTTP(w, r)
 			return
 		}
+		defer func() {
+			if e := recover(); e != nil {
+				status := http.StatusInternalServerError
+				RecordHttpServerResponse(tracer, status, w.Header())
+				panic(e)
+			}
+		}()
 
 		tracer.NewSpanEvent(funcName)
 		defer tracer.EndSpanEvent()
