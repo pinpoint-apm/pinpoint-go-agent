@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 	"math"
@@ -22,14 +23,12 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-var offGrpc = false //for test
-
-func grpcMetadataContext(agent Agent, socketId int64) context.Context {
+func grpcMetadataContext(agent *agent, socketId int64) context.Context {
 	m := map[string]string{}
 
-	m["agentid"] = agent.AgentID()
-	m["applicationname"] = agent.ApplicationName()
-	m["starttime"] = strconv.FormatInt(agent.StartTime(), 10)
+	m["agentid"] = agent.agentID
+	m["applicationname"] = agent.appName
+	m["starttime"] = strconv.FormatInt(agent.startTime, 10)
 
 	if socketId > 0 {
 		m["socketid"] = strconv.FormatInt(socketId, 10)
@@ -101,7 +100,7 @@ type agentGrpc struct {
 	metadataClient MetaGrpcClient
 	pingSocketId   int64
 	pingStream     *pingStream
-	agent          Agent
+	agent          *agent
 	config         *Config
 }
 
@@ -111,36 +110,23 @@ var kacp = keepalive.ClientParameters{
 	PermitWithoutStream: true,
 }
 
-func connectToCollectorWithRetry(serverAddr string) (*grpc.ClientConn, error) {
-	var (
-		opts  []grpc.DialOption
-		conn  *grpc.ClientConn
-		err   error
-		retry int
-	)
-
-	opts = append(opts, grpc.WithInsecure())
+func connectCollector(serverAddr string) (*grpc.ClientConn, error) {
+	opts := make([]grpc.DialOption, 0)
 	opts = append(opts, grpc.WithKeepaliveParams(kacp))
-	opts = append(opts, grpc.WithBlock())
+	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 
-	for {
-		Log("grpc").Infof("connect to collector: %s", serverAddr)
-		conn, err = grpc.Dial(serverAddr, opts...)
-		if err == nil {
-			break
-		}
+	Log("grpc").Infof("connect to collector: %s", serverAddr)
+	conn, err := grpc.Dial(serverAddr, opts...)
+	if err != nil {
 		Log("grpc").Errorf("fail to connect - %s, %v", serverAddr, err)
-
-		retry++
-		time.Sleep(backOffSleep(retry))
 	}
 
 	return conn, err
 }
 
-func newAgentGrpc(agent Agent, config *Config) (*agentGrpc, error) {
+func newAgentGrpc(agent *agent, config *Config) (*agentGrpc, error) {
 	serverAddr := fmt.Sprintf("%s:%d", config.String(cfgCollectorHost), config.Int(cfgCollectorAgentPort))
-	conn, err := connectToCollectorWithRetry(serverAddr)
+	conn, err := connectCollector(serverAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +176,7 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 	agentInfo := &pb.PAgentInfo{
 		Hostname:     getHostName(),
 		Ip:           getOutboundIP(),
-		ServiceType:  agentGrpc.agent.ApplicationType(),
+		ServiceType:  agentGrpc.agent.appType,
 		Pid:          int32(os.Getpid()),
 		AgentVersion: AgentVersion,
 		VmVersion:    runtime.Version(),
@@ -208,15 +194,13 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 		},
 		Container: agentGrpc.config.Bool(cfgRunOnContainer),
 	}
-
-	Log("grpc").Infof("send agent information: %s", agentInfo.String())
+	Log("grpc").Debugf("agent info: %s", agentInfo.String())
 
 	ctx := grpcMetadataContext(agentGrpc.agent, -1)
 	return ctx, agentInfo
 }
 
-func (agentGrpc *agentGrpc) sendAgentInfo() (*pb.PResult, error) {
-	ctx, agentInfo := agentGrpc.makeAgentInfo()
+func (agentGrpc *agentGrpc) sendAgentInfo(ctx context.Context, agentInfo *pb.PAgentInfo) (*pb.PResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -228,25 +212,74 @@ func (agentGrpc *agentGrpc) sendAgentInfo() (*pb.PResult, error) {
 	return result, err
 }
 
-func (agentGrpc *agentGrpc) sendApiMetadata(apiId int32, api string, line int, apiType int) error {
+func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
+	ctx, agentInfo := agentGrpc.makeAgentInfo()
+	for {
+		if agentGrpc.agent.shutdown {
+			break
+		}
+
+		res, err := agentGrpc.sendAgentInfo(ctx, agentInfo)
+		if err == nil {
+			if res.Success {
+				Log("agent").Info("success to register agent")
+				return true
+			} else {
+				Log("agent").Errorf("fail to register agent - %s", res.Message)
+				break
+			}
+		}
+
+		for retry := 1; !agentGrpc.agent.shutdown; retry++ {
+			if waitUntilReady(agentGrpc.agentConn, backOffSleep(retry), "agent") {
+				break
+			}
+		}
+	}
+	return false
+}
+
+func (agentGrpc *agentGrpc) sendApiMetadata(ctx context.Context, in *pb.PApiMetaData) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	_, err := agentGrpc.metadataClient.RequestApiMetaData(ctx, in)
+	if err != nil {
+		Log("grpc").Errorf("fail to send api metadata - %v", err)
+	}
+
+	return err
+}
+
+func (agentGrpc *agentGrpc) sendApiMetadataWithRetry(apiId int32, api string, line int, apiType int) error {
 	var apiMeta pb.PApiMetaData
 	apiMeta.ApiId = apiId
 	apiMeta.ApiInfo = api
 	apiMeta.Line = int32(line)
 	apiMeta.Type = int32(apiType)
 
-	Log("grpc").Infof("send api metadata: %s", apiMeta.String())
+	Log("grpc").Infof("api metadata: %s", apiMeta.String())
 
 	ctx := grpcMetadataContext(agentGrpc.agent, -1)
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 
-	_, err := agentGrpc.metadataClient.RequestApiMetaData(ctx, &apiMeta)
-	if err != nil {
-		Log("grpc").Errorf("fail to send api metadata - %v", err)
+	for {
+		if !agentGrpc.agent.Enable() {
+			break
+		}
+
+		err := agentGrpc.sendApiMetadata(ctx, &apiMeta)
+		if err == nil {
+			return nil
+		}
+
+		if !agentGrpc.agent.offGrpc {
+			retry := 1
+			for !waitUntilReady(agentGrpc.agentConn, backOffSleep(retry), "agent") {
+				retry++
+			}
+		}
 	}
-
-	return err
+	return nil
 }
 
 func (agentGrpc *agentGrpc) sendStringMetadata(strId int32, str string) error {
@@ -325,7 +358,7 @@ func waitUntilReady(grpcConn *grpc.ClientConn, timeout time.Duration, which stri
 	return true
 }
 
-func newStreamWithRetry(agent Agent, grpcConn *grpc.ClientConn, newStreamFunc func() bool, which string) bool {
+func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc func() bool, which string) bool {
 	for {
 		if !agent.Enable() {
 			return false
@@ -334,7 +367,7 @@ func newStreamWithRetry(agent Agent, grpcConn *grpc.ClientConn, newStreamFunc fu
 			return true
 		}
 
-		if !offGrpc {
+		if !agent.offGrpc {
 			retry := 1
 			for !waitUntilReady(grpcConn, backOffSleep(retry), which) {
 				retry++
@@ -405,16 +438,16 @@ type spanGrpc struct {
 	spanConn   *grpc.ClientConn
 	spanClient SpanGrpcClient
 	stream     *spanStream
-	agent      Agent
+	agent      *agent
 }
 
 type spanStream struct {
 	stream pb.Span_SendSpanClient
 }
 
-func newSpanGrpc(agent Agent, config *Config) (*spanGrpc, error) {
+func newSpanGrpc(agent *agent, config *Config) (*spanGrpc, error) {
 	serverAddr := fmt.Sprintf("%s:%d", config.String(cfgCollectorHost), config.Int(cfgCollectorSpanPort))
-	conn, err := connectToCollectorWithRetry(serverAddr)
+	conn, err := connectCollector(serverAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -513,7 +546,7 @@ func makePSpan(span *span) *pb.PSpanMessage {
 				SpanEvent:              spanEventList,
 				Err:                    int32(span.err),
 				ExceptionInfo:          nil,
-				ApplicationServiceType: span.agent.ApplicationType(),
+				ApplicationServiceType: span.agent.appType,
 				LoggingTransactionInfo: span.loggingInfo,
 			},
 		},
@@ -557,7 +590,7 @@ func makePSpanChunk(span *span) *pb.PSpanMessage {
 				KeyTime:                span.startTime.UnixNano() / int64(time.Millisecond),
 				EndPoint:               span.endPoint,
 				SpanEvent:              spanEventList,
-				ApplicationServiceType: span.agent.ApplicationType(),
+				ApplicationServiceType: span.agent.appType,
 				LocalAsyncId: &pb.PLocalAsyncId{
 					AsyncId:  span.asyncId,
 					Sequence: span.asyncSequence,
@@ -627,16 +660,16 @@ type statGrpc struct {
 	statConn   *grpc.ClientConn
 	statClient StatGrpcClient
 	stream     *statStream
-	agent      Agent
+	agent      *agent
 }
 
 type statStream struct {
 	stream pb.Stat_SendAgentStatClient
 }
 
-func newStatGrpc(agent Agent, config *Config) (*statGrpc, error) {
+func newStatGrpc(agent *agent, config *Config) (*statGrpc, error) {
 	serverAddr := fmt.Sprintf("%s:%d", config.String(cfgCollectorHost), config.Int(cfgCollectorStatPort))
-	conn, err := connectToCollectorWithRetry(serverAddr)
+	conn, err := connectCollector(serverAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -757,16 +790,16 @@ type cmdGrpc struct {
 	cmdConn   *grpc.ClientConn
 	cmdClient pb.ProfilerCommandServiceClient
 	stream    *cmdStream
-	agent     Agent
+	agent     *agent
 }
 
 type cmdStream struct {
 	stream pb.ProfilerCommandService_HandleCommandClient
 }
 
-func newCommandGrpc(agent Agent, config *Config) (*cmdGrpc, error) {
+func newCommandGrpc(agent *agent, config *Config) (*cmdGrpc, error) {
 	serverAddr := fmt.Sprintf("%s:%d", config.String(cfgCollectorHost), config.Int(cfgCollectorAgentPort))
-	conn, err := connectToCollectorWithRetry(serverAddr)
+	conn, err := connectCollector(serverAddr)
 	if err != nil {
 		return nil, err
 	}

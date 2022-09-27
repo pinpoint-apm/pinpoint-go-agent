@@ -108,6 +108,7 @@ func envName(cfgName string) string {
 type Config struct {
 	cfgMap         map[string]*cfgMapItem
 	containerCheck bool
+	offGrpc        bool //for test
 }
 
 type ConfigOption func(*Config)

@@ -90,11 +90,11 @@ func Test_spanEvent_SetError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.args.span.agent = newMockAgent()
+			tt.args.span.agent = newTestAgent()
 			se := newSpanEvent(tt.args.span, tt.args.operationName)
 			se.SetError(errors.New("TEST_ERROR"))
-			assert.Equal(t, se.errorFuncId, int32(0), "errorFuncId")
-			assert.Equal(t, se.errorString, "TEST_ERROR", "errorString")
+			assert.Equal(t, int32(1), se.errorFuncId, "errorFuncId")
+			assert.Equal(t, "TEST_ERROR", se.errorString, "errorString")
 		})
 	}
 }
@@ -112,7 +112,7 @@ func Test_spanEvent_SetSQL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.args.span.agent = newMockAgent()
+			tt.args.span.agent = newTestAgent()
 			se := newSpanEvent(tt.args.span, tt.args.operationName)
 			se.SetSQL("SELECT 1", "")
 			assert.Equal(t, len(se.annotations.list), int(1), "annotations.len")

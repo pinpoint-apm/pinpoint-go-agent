@@ -17,7 +17,7 @@ const NoneAsyncId = 0
 var asyncIdGen int32 = 0
 
 type span struct {
-	agent              Agent
+	agent              *agent
 	txId               TransactionId
 	spanId             int64
 	parentSpanId       int64
@@ -52,8 +52,6 @@ type span struct {
 	appendLock    sync.Mutex
 }
 
-func toMicroseconds(d time.Duration) int64 { return int64(d) / 1e3 }
-
 func toMilliseconds(d time.Duration) int64 { return int64(d) / 1e6 }
 
 func generateSpanId() int64 {
@@ -75,7 +73,7 @@ func defaultSpan() *span {
 	return &span
 }
 
-func newSampledSpan(agent Agent, operation string, rpcName string) *span {
+func newSampledSpan(agent *agent, operation string, rpcName string) *span {
 	span := defaultSpan()
 
 	span.agent = agent
@@ -117,8 +115,8 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 
 		writer.Set(HttpParentSpanId, strconv.FormatInt(span.spanId, 10))
 		writer.Set(HttpFlags, strconv.Itoa(span.flags))
-		writer.Set(HttpParentApplicationName, span.agent.ApplicationName())
-		writer.Set(HttpParentApplicationType, strconv.Itoa(int(span.agent.ApplicationType())))
+		writer.Set(HttpParentApplicationName, span.agent.appName)
+		writer.Set(HttpParentApplicationType, strconv.Itoa(int(span.agent.appType)))
 		writer.Set(HttpParentApplicationNamespace, "")
 
 		se.endPoint = se.destinationId

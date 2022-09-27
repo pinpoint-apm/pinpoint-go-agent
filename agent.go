@@ -59,7 +59,9 @@ type agent struct {
 	apiCache     *lru.Cache
 	apiIdGen     int32
 
-	enable bool
+	enable   bool
+	shutdown bool
+	offGrpc  bool //for test
 }
 
 type apiMeta struct {
@@ -100,6 +102,7 @@ func NewAgent(config *Config) (Agent, error) {
 	agent.appName = config.String(cfgAppName)
 	agent.appType = int32(config.Int(cfgAppType))
 	agent.agentID = config.String(cfgAgentID)
+	agent.offGrpc = config.offGrpc
 
 	agent.startTime = time.Now().UnixNano() / int64(time.Millisecond)
 	agent.sequence = 0
@@ -140,7 +143,7 @@ func NewAgent(config *Config) (Agent, error) {
 		agent.sampler = newBasicTraceSampler(baseSampler)
 	}
 
-	if !offGrpc {
+	if !agent.offGrpc {
 		go connectGrpc(&agent, config)
 	}
 
@@ -151,37 +154,27 @@ func NewAgent(config *Config) (Agent, error) {
 func connectGrpc(agent *agent, config *Config) {
 	var err error
 
-	for {
-		agent.agentGrpc, err = newAgentGrpc(agent, config)
-		if err != nil {
-			continue
-		}
-
-		agent.spanGrpc, err = newSpanGrpc(agent, config)
-		if err != nil {
-			agent.agentGrpc.close()
-			continue
-		}
-
-		agent.statGrpc, err = newStatGrpc(agent, config)
-		if err != nil {
-			agent.agentGrpc.close()
-			agent.spanGrpc.close()
-			continue
-		}
-
-		agent.cmdGrpc, err = newCommandGrpc(agent, config)
-		if err != nil {
-			agent.agentGrpc.close()
-			agent.spanGrpc.close()
-			agent.statGrpc.close()
-			continue
-		}
-
-		break
+	agent.agentGrpc, err = newAgentGrpc(agent, config)
+	if err != nil {
+		return
 	}
 
-	if !registerAgent(agent) {
+	if !agent.agentGrpc.registerAgentWithRetry() {
+		return
+	}
+
+	agent.spanGrpc, err = newSpanGrpc(agent, config)
+	if err != nil {
+		return
+	}
+
+	agent.statGrpc, err = newStatGrpc(agent, config)
+	if err != nil {
+		return
+	}
+
+	agent.cmdGrpc, err = newCommandGrpc(agent, config)
+	if err != nil {
 		return
 	}
 
@@ -195,27 +188,10 @@ func connectGrpc(agent *agent, config *Config) {
 	agent.wg.Add(5)
 }
 
-func registerAgent(agent *agent) bool {
-	retry := 1
-	for {
-		res, err := agent.agentGrpc.sendAgentInfo()
-		if err == nil {
-			if res.Success {
-				break
-			} else {
-				Log("agent").Errorf("fail to register agent - %s", res.Message)
-				return false
-			}
-		}
-
-		time.Sleep(backOffSleep(retry))
-		retry++
-	}
-
-	return true
-}
-
 func (agent *agent) Shutdown() {
+	agent.shutdown = true
+	Log("agent").Info("agent shutdown")
+
 	if !agent.enable {
 		return
 	}
@@ -227,7 +203,7 @@ func (agent *agent) Shutdown() {
 	close(agent.spanChan)
 	close(agent.metaChan)
 
-	if !offGrpc {
+	if !agent.offGrpc {
 		agent.wg.Wait()
 		agent.agentGrpc.close()
 		agent.spanGrpc.close()
@@ -286,22 +262,6 @@ func (agent *agent) generateTransactionId() TransactionId {
 
 func (agent *agent) Enable() bool {
 	return agent.enable
-}
-
-func (agent *agent) StartTime() int64 {
-	return agent.startTime
-}
-
-func (agent *agent) ApplicationName() string {
-	return agent.appName
-}
-
-func (agent *agent) ApplicationType() int32 {
-	return agent.appType
-}
-
-func (agent *agent) AgentID() string {
-	return agent.agentID
 }
 
 func (agent *agent) sendPingWorker() {
@@ -402,7 +362,7 @@ func (agent *agent) sendMetaWorker() {
 		switch md.(type) {
 		case apiMeta:
 			api := md.(apiMeta)
-			err = agent.agentGrpc.sendApiMetadata(api.id, api.descriptor, -1, api.apiType)
+			err = agent.agentGrpc.sendApiMetadataWithRetry(api.id, api.descriptor, -1, api.apiType)
 			break
 		case stringMeta:
 			str := md.(stringMeta)

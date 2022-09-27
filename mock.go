@@ -4,38 +4,29 @@ import (
 	"context"
 	"errors"
 	"github.com/golang/mock/gomock"
+	lru "github.com/hashicorp/golang-lru"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"testing"
 	"time"
 )
 
-type mockAgent struct {
-	Agent
-	agentGrpc *agentGrpc
-	spanGrpc  *spanGrpc
-	statGrpc  *statGrpc
-}
+func newTestAgent() *agent {
+	a := &agent{
+		appName:   "testApp",
+		agentID:   "testAgent",
+		appType:   ServiceTypeGoApp,
+		startTime: time.Now().UnixNano() / int64(time.Millisecond),
+		enable:    true,
+		spanChan:  make(chan *span, cacheSize),
+		metaChan:  make(chan interface{}, cacheSize),
+		sampler:   newBasicTraceSampler(newRateSampler(1)),
+		offGrpc:   true,
+	}
+	a.errorIdCache, _ = lru.New(cacheSize)
+	a.sqlCache, _ = lru.New(cacheSize)
+	a.apiCache, _ = lru.New(cacheSize)
 
-func newMockAgent() Agent {
-	agent := mockAgent{Agent: newNoopAgent()}
-	offGrpc = true
-	return &agent
-}
-
-func (agent *mockAgent) setMockAgentGrpc(agentGrpc *agentGrpc) {
-	agent.agentGrpc = agentGrpc
-}
-
-func (agent *mockAgent) setMockSpanGrpc(t *testing.T) {
-	agent.spanGrpc = newMockSpanGrpc(agent, t)
-}
-
-func (agent *mockAgent) setMockStatGrpc(statGrpc *statGrpc) {
-	agent.statGrpc = statGrpc
-}
-
-func (agent *mockAgent) Enable() bool {
-	return true
+	return a
 }
 
 //mock grpc
@@ -74,7 +65,7 @@ func (metaGrpcClient *mockMetaGrpcClient) RequestStringMetaData(ctx context.Cont
 	return metaGrpcClient.client.RequestStringMetaData(ctx, in)
 }
 
-func newMockAgentGrpc(agent Agent, config *Config, t *testing.T) *agentGrpc {
+func newMockAgentGrpc(agent *agent, config *Config, t *testing.T) *agentGrpc {
 	ctrl := gomock.NewController(t)
 	stream := NewMockAgent_PingSessionClient(ctrl)
 	agentClient := mockAgentGrpcClient{NewMockAgentClient(ctrl), stream}
@@ -83,7 +74,7 @@ func newMockAgentGrpc(agent Agent, config *Config, t *testing.T) *agentGrpc {
 	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent, config}
 }
 
-func newMockAgentGrpcPing(agent Agent, config *Config, t *testing.T) *agentGrpc {
+func newMockAgentGrpcPing(agent *agent, config *Config, t *testing.T) *agentGrpc {
 	ctrl := gomock.NewController(t)
 	stream := NewMockAgent_PingSessionClient(ctrl)
 	agentClient := mockAgentGrpcClient{NewMockAgentClient(ctrl), stream}
@@ -105,7 +96,7 @@ func (spanGrpcClient *mockSpanGrpcClient) SendSpan(ctx context.Context) (pb.Span
 	return spanGrpcClient.client.SendSpan(ctx)
 }
 
-func newMockSpanGrpc(agent Agent, t *testing.T) *spanGrpc {
+func newMockSpanGrpc(agent *agent, t *testing.T) *spanGrpc {
 	ctrl := gomock.NewController(t)
 	stream := NewMockSpan_SendSpanClient(ctrl)
 	spanClient := mockSpanGrpcClient{NewMockSpanClient(ctrl), stream}
@@ -125,7 +116,7 @@ func (statGrpcClient *mockStaGrpcClient) SendAgentStat(ctx context.Context) (pb.
 	return statGrpcClient.client.SendAgentStat(ctx)
 }
 
-func newMockStatGrpc(agent Agent, t *testing.T) *statGrpc {
+func newMockStatGrpc(agent *agent, t *testing.T) *statGrpc {
 	ctrl := gomock.NewController(t)
 	stream := NewMockStat_SendAgentStatClient(ctrl)
 	statClient := mockStaGrpcClient{NewMockStatClient(ctrl), stream}
@@ -152,7 +143,7 @@ func (statGrpcClient *mockRetryStaGrpcClient) SendAgentStat(ctx context.Context)
 	return statGrpcClient.client.SendAgentStat(ctx)
 }
 
-func newRetryMockStatGrpc(agent Agent, t *testing.T) *statGrpc {
+func newRetryMockStatGrpc(agent *agent, t *testing.T) *statGrpc {
 	ctrl := gomock.NewController(t)
 	stream := NewMockStat_SendAgentStatClient(ctrl)
 	statClient := mockRetryStaGrpcClient{NewMockStatClient(ctrl), stream, 0}

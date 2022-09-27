@@ -17,19 +17,10 @@ func (tid TransactionId) String() string {
 }
 
 type Agent interface {
-	Shutdown()
 	NewSpanTracer(operation string, rpcName string) Tracer
 	NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer
 	Enable() bool
-	ApplicationName() string
-	ApplicationType() int32
-	AgentID() string
-	StartTime() int64
-	generateTransactionId() TransactionId
-	enqueueSpan(span *span) bool
-	cacheErrorFunc(funcName string) int32
-	cacheSql(sql string) int32
-	cacheSpanApiId(descriptor string, apiType int) int32
+	Shutdown()
 }
 
 type Tracer interface {

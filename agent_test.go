@@ -30,7 +30,7 @@ func Test_agent_NewAgent(t *testing.T) {
 		WithAgentId("testagent"),
 	}
 	c, _ := NewConfig(opts...)
-	offGrpc = true
+	c.offGrpc = true
 
 	tests := []struct {
 		name string
@@ -42,17 +42,17 @@ func Test_agent_NewAgent(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := tt.args.config
 			a, err := NewAgent(c)
+			agent := a.(*agent)
 			assert.NoError(t, err, "NewAgent")
-			assert.Equal(t, "test", a.ApplicationName(), "ApplicationName")
-			assert.Equal(t, "testagent", a.AgentID(), "AgentID")
-			assert.Equal(t, int32(ServiceTypeGoApp), a.ApplicationType(), "ApplicationType")
-			assert.Greater(t, a.StartTime(), int64(0), "StartTime")
+			assert.Equal(t, "test", agent.appName, "ApplicationName")
+			assert.Equal(t, "testagent", agent.agentID, "AgentID")
+			assert.Equal(t, int32(ServiceTypeGoApp), agent.appType, "ApplicationType")
+			assert.Greater(t, agent.startTime, int64(0), "StartTime")
 			assert.Equal(t, globalAgent, a, "global agent")
 
-			agent := a.(*agent)
 			agent.startTime = 12345
 			agent.enable = true
-			assert.Equal(t, "testagent^12345^1", a.generateTransactionId().String(), "generateTransactionId")
+			assert.Equal(t, "testagent^12345^1", agent.generateTransactionId().String(), "generateTransactionId")
 
 			a.Shutdown()
 			assert.Equal(t, NoopAgent(), globalAgent, "global agent")
@@ -74,7 +74,7 @@ func Test_agent_GlobalAgent(t *testing.T) {
 		WithAgentId("testGlobalAgent"),
 	}
 	c, _ := NewConfig(opts...)
-	offGrpc = true
+	c.offGrpc = true
 	a, _ := NewAgent(c)
 	agent := a.(*agent)
 	agent.enable = true
@@ -88,10 +88,8 @@ func Test_agent_GlobalAgent(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := tt.args.config
+			assert.Equal(t, globalAgent, a, "global agent")
 			assert.NotEqual(t, globalAgent, NoopAgent(), "global agent")
-			assert.Equal(t, "testGlobal", globalAgent.ApplicationName(), "ApplicationName")
-			assert.Equal(t, "testGlobalAgent", globalAgent.AgentID(), "AgentID")
 
 			a, err := NewAgent(c)
 			assert.Error(t, err, "NewAgent")
@@ -110,7 +108,7 @@ func Test_agent_NewSpanTracer(t *testing.T) {
 		WithAgentId("testagent"),
 	}
 	c, _ := NewConfig(opts...)
-	offGrpc = true
+	c.offGrpc = true
 	a, _ := NewAgent(c)
 	agent := a.(*agent)
 	agent.enable = true
@@ -149,7 +147,7 @@ func Test_agent_NewSpanTracerWithReader(t *testing.T) {
 		WithAgentId("testagent"),
 	}
 	c, _ := NewConfig(opts...)
-	offGrpc = true
+	c.offGrpc = true
 	a, _ := NewAgent(c)
 	agent := a.(*agent)
 	agent.enable = true
