@@ -1,9 +1,9 @@
-package gohbase
+package ppgohbase
 
 import (
 	"context"
 
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 	hbase "github.com/tsuna/gohbase"
 	"github.com/tsuna/gohbase/hrpc"
 )

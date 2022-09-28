@@ -1,12 +1,13 @@
 package main
 
 import (
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	"io"
 	"log"
 	"net/http"
 	"os"
+
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 func indexMux(w http.ResponseWriter, r *http.Request) {
@@ -17,7 +18,7 @@ func indexMux(w http.ResponseWriter, r *http.Request) {
 }
 
 func outGoing(w http.ResponseWriter, r *http.Request) {
-	client := phttp.WrapClientWithContext(r.Context(), &http.Client{})
+	client := pphttp.WrapClientWithContext(r.Context(), &http.Client{})
 	resp, err := client.Get("http://localhost:9000/async_wrapper?foo=bar&say=goodbye")
 
 	if nil != err {
@@ -37,8 +38,8 @@ func main() {
 		pinpoint.WithAppName("GoHttpMuxTest"),
 		pinpoint.WithAgentId("GoHttpMuxAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
-		phttp.WithHttpServerStatusCodeError([]string{"500", "400"}),
-		phttp.WithHttpServerRecordRequestHeader([]string{"user-agent", "connection", "foo"}),
+		pphttp.WithHttpServerStatusCodeError([]string{"500", "400"}),
+		pphttp.WithHttpServerRecordRequestHeader([]string{"user-agent", "connection", "foo"}),
 	}
 
 	//os.Setenv("PINPOINT_GO_USEPROFILE", "real")
@@ -54,7 +55,7 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	mux := phttp.NewServeMux()
+	mux := pphttp.NewServeMux()
 	mux.Handle("/foo", http.HandlerFunc(indexMux))
 	mux.HandleFunc("/bar", outGoing)
 

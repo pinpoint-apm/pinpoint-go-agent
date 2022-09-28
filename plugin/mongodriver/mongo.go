@@ -1,4 +1,4 @@
-package mongodriver
+package ppmongo
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/event"
 )

@@ -1,7 +1,7 @@
-package logrus
+package pplogrus
 
 import (
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/sirupsen/logrus"
 )
 

@@ -4,15 +4,15 @@ import (
 	"log"
 	"net/http"
 
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	phbase "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	"github.com/tsuna/gohbase/filter"
 	"github.com/tsuna/gohbase/hrpc"
 )
 
 func doHbase(w http.ResponseWriter, r *http.Request) {
-	client := phbase.NewClient("localhost")
+	client := ppgohbase.NewClient("localhost")
 	ctx := r.Context()
 
 	values := map[string]map[string][]byte{"cf": {"a": []byte{0}}}
@@ -57,7 +57,7 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc("/hbase", phttp.WrapHandlerFunc(doHbase))
+	http.HandleFunc("/hbase", pphttp.WrapHandlerFunc(doHbase))
 
 	http.ListenAndServe(":9000", nil)
 }

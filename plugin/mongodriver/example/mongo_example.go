@@ -10,15 +10,15 @@ import (
 	"net/http"
 	"os"
 
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	pmongo "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver"
 )
 
 func mongodb(w http.ResponseWriter, r *http.Request) {
 	opts := options.Client()
 	opts.ApplyURI("mongodb://localhost:27017")
-	opts.Monitor = pmongo.NewMonitor()
+	opts.Monitor = ppmongo.NewMonitor()
 	ctx := context.Background()
 
 	client, err := mongo.Connect(ctx, opts)
@@ -48,7 +48,7 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc("/mongo", phttp.WrapHandlerFunc(mongodb))
+	http.HandleFunc("/mongo", pphttp.WrapHandlerFunc(mongodb))
 
 	http.ListenAndServe(":9000", nil)
 }

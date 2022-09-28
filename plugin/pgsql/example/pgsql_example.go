@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql"
 	"io"
 	"log"
@@ -155,8 +155,8 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc("/tableCount", phttp.WrapHandlerFunc(tableCount))
-	http.HandleFunc("/query", phttp.WrapHandlerFunc(query))
+	http.HandleFunc("/tableCount", pphttp.WrapHandlerFunc(tableCount))
+	http.HandleFunc("/query", pphttp.WrapHandlerFunc(query))
 
 	http.ListenAndServe(":9002", nil)
 }

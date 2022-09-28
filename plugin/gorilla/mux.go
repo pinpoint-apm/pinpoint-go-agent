@@ -1,11 +1,11 @@
-package gorilla
+package ppgorilla
 
 import (
 	"net/http"
 
 	"github.com/gorilla/mux"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 const serverName = "Gorilla/Mux HTTP Server"
@@ -18,7 +18,7 @@ func Middleware() mux.MiddlewareFunc {
 				return
 			}
 
-			tracer := phttp.NewHttpServerTracer(r, serverName)
+			tracer := pphttp.NewHttpServerTracer(r, serverName)
 			defer tracer.EndSpan()
 			if !tracer.IsSampled() {
 				next.ServeHTTP(w, r)
@@ -27,7 +27,7 @@ func Middleware() mux.MiddlewareFunc {
 			defer func() {
 				if e := recover(); e != nil {
 					status := http.StatusInternalServerError
-					phttp.RecordHttpServerResponse(tracer, status, w.Header())
+					pphttp.RecordHttpServerResponse(tracer, status, w.Header())
 					panic(e)
 				}
 			}()
@@ -36,19 +36,19 @@ func Middleware() mux.MiddlewareFunc {
 			defer tracer.EndSpanEvent()
 
 			status := http.StatusOK
-			w = phttp.WrapResponseWriter(w, &status)
+			w = pphttp.WrapResponseWriter(w, &status)
 			r = pinpoint.RequestWithTracerContext(r, tracer)
 
 			next.ServeHTTP(w, r)
-			phttp.RecordHttpServerResponse(tracer, status, w.Header())
+			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
 		})
 	}
 }
 
 func WrapHandler(handler http.Handler) http.Handler {
-	return phttp.WrapHandler(handler, serverName)
+	return pphttp.WrapHandler(handler, serverName)
 }
 
 func WrapHandlerFunc(f func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
-	return phttp.WrapHandlerFunc(f, serverName)
+	return pphttp.WrapHandlerFunc(f, serverName)
 }

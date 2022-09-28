@@ -1,9 +1,9 @@
-package gin
+package ppgin
 
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	"net/http"
 )
 
@@ -16,7 +16,7 @@ func Middleware() gin.HandlerFunc {
 			return
 		}
 
-		tracer := phttp.NewHttpServerTracer(c.Request, serverName)
+		tracer := pphttp.NewHttpServerTracer(c.Request, serverName)
 		defer tracer.EndSpan()
 
 		if !tracer.IsSampled() {
@@ -26,7 +26,7 @@ func Middleware() gin.HandlerFunc {
 		defer func() {
 			if e := recover(); e != nil {
 				status := http.StatusInternalServerError
-				phttp.RecordHttpServerResponse(tracer, status, c.Writer.Header())
+				pphttp.RecordHttpServerResponse(tracer, status, c.Writer.Header())
 				panic(e)
 			}
 		}()
@@ -40,12 +40,12 @@ func Middleware() gin.HandlerFunc {
 			tracer.Span().SetError(c.Errors.Last())
 		}
 
-		phttp.RecordHttpServerResponse(tracer, c.Writer.Status(), c.Writer.Header())
+		pphttp.RecordHttpServerResponse(tracer, c.Writer.Status(), c.Writer.Header())
 	}
 }
 
 func WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc {
-	funcName := phttp.HandlerFuncName(handler)
+	funcName := pphttp.HandlerFuncName(handler)
 
 	return func(c *gin.Context) {
 		if !pinpoint.GetAgent().Enable() {
@@ -53,7 +53,7 @@ func WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc {
 			return
 		}
 
-		tracer := phttp.NewHttpServerTracer(c.Request, serverName)
+		tracer := pphttp.NewHttpServerTracer(c.Request, serverName)
 		defer tracer.EndSpan()
 
 		if !tracer.IsSampled() {
@@ -63,7 +63,7 @@ func WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc {
 		defer func() {
 			if e := recover(); e != nil {
 				status := http.StatusInternalServerError
-				phttp.RecordHttpServerResponse(tracer, status, c.Writer.Header())
+				pphttp.RecordHttpServerResponse(tracer, status, c.Writer.Header())
 				panic(e)
 			}
 		}()
@@ -76,6 +76,6 @@ func WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc {
 		if len(c.Errors) > 0 {
 			tracer.Span().SetError(c.Errors.Last())
 		}
-		phttp.RecordHttpServerResponse(tracer, c.Writer.Status(), c.Writer.Header())
+		pphttp.RecordHttpServerResponse(tracer, c.Writer.Status(), c.Writer.Header())
 	}
 }

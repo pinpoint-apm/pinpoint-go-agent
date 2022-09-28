@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"github.com/go-chi/chi/v5/middleware"
 	"io"
 	"log"
 	"math/rand"
@@ -12,9 +11,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	pchi "github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 func hello(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +42,7 @@ func outgoing(w http.ResponseWriter, r *http.Request) {
 	ctx := pinpoint.NewContext(context.Background(), pinpoint.FromContext(r.Context()))
 	req, _ := http.NewRequestWithContext(ctx, "GET", "http://localhost:9000/async_wrapper", nil)
 
-	resp, err := phttp.DoClient(http.DefaultClient.Do, req)
+	resp, err := pphttp.DoClient(http.DefaultClient.Do, req)
 	if nil != err {
 		io.WriteString(w, err.Error())
 		return
@@ -78,11 +78,11 @@ func main() {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 
-	r.Get("/hello", pchi.WrapHandlerFunc(hello))
-	r.Get("/outgoing", pchi.WrapHandlerFunc(outgoing))
-	r.Handle("/shutdown", pchi.WrapHandler(http.HandlerFunc(shutdown)))
+	r.Get("/hello", ppchi.WrapHandlerFunc(hello))
+	r.Get("/outgoing", ppchi.WrapHandlerFunc(outgoing))
+	r.Handle("/shutdown", ppchi.WrapHandler(http.HandlerFunc(shutdown)))
 
-	r.Get("/noname", pchi.WrapHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	r.Get("/noname", ppchi.WrapHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("noname handler"))
 	}))
 

@@ -10,8 +10,8 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	pmux "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 func hello(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +23,7 @@ func hello(w http.ResponseWriter, r *http.Request) {
 }
 
 func outGoing(w http.ResponseWriter, r *http.Request) {
-	client := phttp.WrapClientWithContext(r.Context(), &http.Client{})
+	client := pphttp.WrapClientWithContext(r.Context(), &http.Client{})
 	resp, err := client.Get("http://localhost:9000/async_wrapper?foo=bar&say=goodbye")
 
 	if nil != err {
@@ -57,10 +57,10 @@ func main() {
 	defer agent.Shutdown()
 
 	r := mux.NewRouter()
-	//r.Use(pmux.Middleware())
+	//r.Use(ppgorilla.Middleware())
 
-	r.Handle("/", pmux.WrapHandler(http.HandlerFunc(hello)))
-	r.HandleFunc("/outgoing", pmux.WrapHandlerFunc(outGoing))
+	r.Handle("/", ppgorilla.WrapHandler(http.HandlerFunc(hello)))
+	r.HandleFunc("/outgoing", ppgorilla.WrapHandlerFunc(outGoing))
 	r.HandleFunc("/notrace", notrace)
 
 	http.ListenAndServe(":8000", r)

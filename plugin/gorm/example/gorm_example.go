@@ -8,8 +8,8 @@ import (
 	"os"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	pgorm "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -27,7 +27,7 @@ func gormQuery(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 
-	gormdb, err := pgorm.Open(mysql.New(mysql.Config{Conn: db}), &gorm.Config{})
+	gormdb, err := ppgorm.Open(mysql.New(mysql.Config{Conn: db}), &gorm.Config{})
 	if err != nil {
 		panic("failed to connect database")
 	}
@@ -66,7 +66,7 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc("/gormquery", phttp.WrapHandlerFunc(gormQuery))
+	http.HandleFunc("/gormquery", pphttp.WrapHandlerFunc(gormQuery))
 
 	http.ListenAndServe(":9000", nil)
 }

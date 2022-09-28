@@ -10,9 +10,9 @@ import (
 	"sync"
 
 	"github.com/Shopify/sarama"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	psarama "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
 )
 
 const ctopic = "go-sarama-test"
@@ -20,7 +20,7 @@ const ctopic = "go-sarama-test"
 var cbrokers = []string{"127.0.0.1:9092"}
 
 func outGoingRequest(ctx context.Context) string {
-	client := phttp.WrapClient(nil)
+	client := pphttp.WrapClient(nil)
 
 	request, _ := http.NewRequest("GET", "http://localhost:9001/query", nil)
 	request = request.WithContext(ctx)
@@ -35,7 +35,7 @@ func outGoingRequest(ctx context.Context) string {
 	return string(ret)
 }
 
-func processMessage(msg *psarama.ConsumerMessage) error {
+func processMessage(msg *ppsarama.ConsumerMessage) error {
 	tracer := msg.Tracer()
 	defer tracer.NewSpanEvent("processMessage").EndSpanEvent()
 
@@ -62,7 +62,7 @@ func subscribe(topic string, consumer sarama.Consumer) {
 
 		go func(pc sarama.PartitionConsumer) {
 			for msg := range pc.Messages() {
-				psarama.ConsumeMessage(processMessage, msg)
+				ppsarama.ConsumeMessage(processMessage, msg)
 			}
 			wg.Done()
 		}(pc)

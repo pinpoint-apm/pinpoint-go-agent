@@ -8,10 +8,10 @@ import (
 	"os"
 	"time"
 
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	pgrpc "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/example/testapp"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	"google.golang.org/grpc"
 )
 
@@ -111,8 +111,8 @@ func doGrpc(w http.ResponseWriter, r *http.Request) {
 	conn, err := grpc.Dial(
 		"localhost:8080",
 		grpc.WithInsecure(),
-		grpc.WithUnaryInterceptor(pgrpc.UnaryClientInterceptor()),
-		grpc.WithStreamInterceptor(pgrpc.StreamClientInterceptor()),
+		grpc.WithUnaryInterceptor(ppgrpc.UnaryClientInterceptor()),
+		grpc.WithStreamInterceptor(ppgrpc.StreamClientInterceptor()),
 	)
 	if err != nil {
 		panic(err)
@@ -142,6 +142,6 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc("/grpc", phttp.WrapHandlerFunc(doGrpc))
+	http.HandleFunc("/grpc", pphttp.WrapHandlerFunc(doGrpc))
 	http.ListenAndServe(":9000", nil)
 }

@@ -2,19 +2,20 @@ package main
 
 import (
 	"context"
-	"github.com/gomodule/redigo/redis"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	predigo "github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo"
 	"log"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/gomodule/redigo/redis"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo"
 )
 
 func redigo_test(w http.ResponseWriter, r *http.Request) {
 	//Dial
-	c, err := predigo.Dial("tcp", "127.0.0.1:6379")
+	c, err := ppredigo.Dial("tcp", "127.0.0.1:6379")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -23,12 +24,12 @@ func redigo_test(w http.ResponseWriter, r *http.Request) {
 
 	tracer := pinpoint.FromContext(r.Context())
 	ctx := pinpoint.NewContext(context.Background(), tracer)
-	predigo.WithContext(c, ctx)
+	ppredigo.WithContext(c, ctx)
 
 	c.Do("SET", "vehicle", "truck")
 	redis.DoWithTimeout(c, 1000*time.Millisecond, "GET", "vehicle")
 
-	predigo.WithContext(c, context.Background())
+	ppredigo.WithContext(c, context.Background())
 	c.Do("SET", "vehicle", "bus") //not traced
 
 	redis.DoContext(c, ctx, "GET", "vehicle")
@@ -36,12 +37,12 @@ func redigo_test(w http.ResponseWriter, r *http.Request) {
 	c.Close()
 
 	//DialUrl
-	c, err = predigo.DialURL("redis://127.0.0.1:6379")
+	c, err = ppredigo.DialURL("redis://127.0.0.1:6379")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	predigo.WithContext(c, ctx)
+	ppredigo.WithContext(c, ctx)
 	c.Do("SET", "vehicle", "suv")
 	redis.DoWithTimeout(c, 1000*time.Millisecond, "GET", "vehicle")
 	redis.DoContext(c, ctx, "INCR", "foo")
@@ -60,6 +61,6 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc("/redis", phttp.WrapHandlerFunc(redigo_test))
+	http.HandleFunc("/redis", pphttp.WrapHandlerFunc(redigo_test))
 	http.ListenAndServe(":9000", nil)
 }

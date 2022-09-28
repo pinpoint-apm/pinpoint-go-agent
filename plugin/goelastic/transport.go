@@ -1,7 +1,7 @@
-package goelastic
+package ppgoelastic
 
 import (
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"net/http"
 )
 

@@ -6,8 +6,8 @@ import (
 	"os"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	plogrus "github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus"
 	"github.com/sirupsen/logrus"
 )
 
@@ -15,7 +15,7 @@ func field(w http.ResponseWriter, r *http.Request) {
 	tracer := pinpoint.FromContext(r.Context())
 
 	logrus.SetFormatter(&logrus.JSONFormatter{})
-	entry := logrus.WithFields(plogrus.NewField(tracer))
+	entry := logrus.WithFields(pplogrus.NewField(tracer))
 	entry.Info("my error log message")
 }
 
@@ -23,19 +23,19 @@ func entry(w http.ResponseWriter, r *http.Request) {
 	tracer := pinpoint.FromContext(r.Context())
 
 	logrus.SetFormatter(&logrus.JSONFormatter{})
-	entry := plogrus.NewEntry(tracer).WithField("foo", "bar")
+	entry := pplogrus.NewEntry(tracer).WithField("foo", "bar")
 	entry.Error("entry log message 1")
 
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.JSONFormatter{})
-	entry = plogrus.NewLoggerEntry(logger, tracer).WithField("foo", "bar")
+	entry = pplogrus.NewLoggerEntry(logger, tracer).WithField("foo", "bar")
 	entry.Error("entry log message 2")
 }
 
 func hook(w http.ResponseWriter, r *http.Request) {
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.JSONFormatter{})
-	logger.AddHook(plogrus.NewHook())
+	logger.AddHook(pplogrus.NewHook())
 
 	entry := logger.WithContext(r.Context()).WithField("foo", "bar")
 	entry.Error("hook log message")
@@ -54,9 +54,9 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc("/field", phttp.WrapHandlerFunc(field))
-	http.HandleFunc("/entry", phttp.WrapHandlerFunc(entry))
-	http.HandleFunc("/hook", phttp.WrapHandlerFunc(hook))
+	http.HandleFunc("/field", pphttp.WrapHandlerFunc(field))
+	http.HandleFunc("/entry", pphttp.WrapHandlerFunc(entry))
+	http.HandleFunc("/hook", pphttp.WrapHandlerFunc(hook))
 
 	http.ListenAndServe(":9000", nil)
 }

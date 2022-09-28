@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/Shopify/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	psarama "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
 	"log"
 	"os"
 )
@@ -18,7 +18,7 @@ func (exampleConsumerGroupHandler) Cleanup(_ sarama.ConsumerGroupSession) error 
 func (h exampleConsumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	ctx := sess.Context()
 	for msg := range claim.Messages() {
-		_ = psarama.ConsumeMessageContext(process, ctx, msg)
+		_ = ppsarama.ConsumeMessageContext(process, ctx, msg)
 		sess.MarkMessage(msg, "")
 	}
 	return nil

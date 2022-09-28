@@ -1,11 +1,11 @@
-package gocql
+package ppgocql
 
 import (
 	"bytes"
 	"context"
 
 	"github.com/gocql/gocql"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
 const serviceTypeCassandraExecuteQuery = 2601

@@ -7,8 +7,8 @@ import (
 	"net"
 	"os"
 
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	pgrpc "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/example/testapp"
 	"google.golang.org/grpc"
 )
@@ -90,8 +90,8 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(pgrpc.UnaryServerInterceptor()),
-		grpc.StreamInterceptor(pgrpc.StreamServerInterceptor()),
+		grpc.UnaryInterceptor(ppgrpc.UnaryServerInterceptor()),
+		grpc.StreamInterceptor(ppgrpc.StreamServerInterceptor()),
 	)
 	testapp.RegisterHelloServer(grpcServer, &Server{})
 	grpcServer.Serve(listener)

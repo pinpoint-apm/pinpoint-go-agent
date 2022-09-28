@@ -11,11 +11,11 @@ import (
 	"strings"
 	"sync"
 
-	elasticsearch "github.com/elastic/go-elasticsearch/v7"
+	"github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	pelastic "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelastic"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelastic"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 //The example code below is from https://github.com/elastic/go-elasticsearch/blob/master/_examples/main.go.
@@ -31,7 +31,7 @@ func goelastic(w http.ResponseWriter, req *http.Request) {
 
 	es, err := elasticsearch.NewClient(
 		elasticsearch.Config{
-			Transport: pelastic.NewTransport(nil),
+			Transport: ppgoelastic.NewTransport(nil),
 		})
 	//es, err := elasticsearch.NewDefaultClient()
 	if err != nil {
@@ -180,7 +180,7 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc("/goelastic", phttp.WrapHandlerFunc(goelastic))
+	http.HandleFunc("/goelastic", pphttp.WrapHandlerFunc(goelastic))
 
 	http.ListenAndServe(":9000", nil)
 }

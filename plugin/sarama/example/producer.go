@@ -7,16 +7,16 @@ import (
 	"os"
 
 	"github.com/Shopify/sarama"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	psarama "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
 )
 
 var fakeDB string
 
 const topic = "go-sarama-test"
 
-var producer *psarama.SyncProducer
+var producer *ppsarama.SyncProducer
 var brokers = []string{"127.0.0.1:9092"}
 
 func prepareMessage(topic, message string) *sarama.ProducerMessage {
@@ -62,11 +62,11 @@ func main() {
 	config.Producer.Return.Successes = true
 	config.Version = sarama.V2_3_0_0
 
-	producer, err = psarama.NewSyncProducer(brokers, config)
+	producer, err = ppsarama.NewSyncProducer(brokers, config)
 	if err != nil {
 		log.Fatalf("Could not create producer: %v ", err)
 	}
 
-	http.HandleFunc("/save", phttp.WrapHandlerFunc(save))
+	http.HandleFunc("/save", pphttp.WrapHandlerFunc(save))
 	log.Fatal(http.ListenAndServe(":8081", nil))
 }

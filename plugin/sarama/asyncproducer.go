@@ -1,9 +1,9 @@
-package sarama
+package ppsarama
 
 import (
 	"context"
 	"github.com/Shopify/sarama"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
 type AsyncProducer struct {

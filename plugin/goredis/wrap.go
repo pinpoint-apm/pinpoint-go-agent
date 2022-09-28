@@ -1,4 +1,4 @@
-package goredis
+package ppgoredis
 
 import (
 	"bytes"
@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/go-redis/redis"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
 const serviceTypeRedis = 8200

@@ -7,7 +7,7 @@ import (
 
 	"github.com/labstack/echo"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	pecho "github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo"
 )
 
 func hello(c echo.Context) error {
@@ -36,7 +36,7 @@ func main() {
 
 	e := echo.New()
 
-	e.GET("/hello", pecho.WrapHandler(hello))
-	e.GET("/error", pecho.WrapHandler(myError))
+	e.GET("/hello", ppecho.WrapHandler(hello))
+	e.GET("/error", ppecho.WrapHandler(myError))
 	e.Start(":9000")
 }

@@ -1,10 +1,11 @@
-package echo
+package ppecho
 
 import (
+	"net/http"
+
 	"github.com/labstack/echo"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	"net/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 const serverName = "Echo HTTP Server"
@@ -17,7 +18,7 @@ func Middleware() echo.MiddlewareFunc {
 			}
 
 			req := c.Request()
-			tracer := phttp.NewHttpServerTracer(req, serverName)
+			tracer := pphttp.NewHttpServerTracer(req, serverName)
 			defer tracer.EndSpan()
 
 			if !tracer.IsSampled() {
@@ -26,7 +27,7 @@ func Middleware() echo.MiddlewareFunc {
 			defer func() {
 				if e := recover(); e != nil {
 					status := http.StatusInternalServerError
-					phttp.RecordHttpServerResponse(tracer, status, c.Response().Header())
+					pphttp.RecordHttpServerResponse(tracer, status, c.Response().Header())
 					panic(e)
 				}
 			}()
@@ -42,14 +43,14 @@ func Middleware() echo.MiddlewareFunc {
 				c.Error(err)
 			}
 
-			phttp.RecordHttpServerResponse(tracer, c.Response().Status, c.Response().Header())
+			pphttp.RecordHttpServerResponse(tracer, c.Response().Status, c.Response().Header())
 			return err
 		}
 	}
 }
 
 func WrapHandler(handler echo.HandlerFunc) echo.HandlerFunc {
-	funcName := phttp.HandlerFuncName(handler)
+	funcName := pphttp.HandlerFuncName(handler)
 
 	return func(c echo.Context) error {
 		if !pinpoint.GetAgent().Enable() {
@@ -57,7 +58,7 @@ func WrapHandler(handler echo.HandlerFunc) echo.HandlerFunc {
 		}
 
 		req := c.Request()
-		tracer := phttp.NewHttpServerTracer(req, serverName)
+		tracer := pphttp.NewHttpServerTracer(req, serverName)
 		defer tracer.EndSpan()
 
 		if !tracer.IsSampled() {
@@ -66,7 +67,7 @@ func WrapHandler(handler echo.HandlerFunc) echo.HandlerFunc {
 		defer func() {
 			if e := recover(); e != nil {
 				status := http.StatusInternalServerError
-				phttp.RecordHttpServerResponse(tracer, status, c.Response().Header())
+				pphttp.RecordHttpServerResponse(tracer, status, c.Response().Header())
 				panic(e)
 			}
 		}()
@@ -82,7 +83,7 @@ func WrapHandler(handler echo.HandlerFunc) echo.HandlerFunc {
 			c.Error(err)
 		}
 
-		phttp.RecordHttpServerResponse(tracer, c.Response().Status, c.Response().Header())
+		pphttp.RecordHttpServerResponse(tracer, c.Response().Status, c.Response().Header())
 		return err
 	}
 }

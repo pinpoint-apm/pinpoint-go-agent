@@ -1,11 +1,11 @@
-package mysql
+package ppmysql
 
 import (
 	"database/sql"
 	"net"
 
 	"github.com/go-sql-driver/mysql"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
 const (

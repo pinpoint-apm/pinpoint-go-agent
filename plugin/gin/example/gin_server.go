@@ -8,8 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	pgin "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 func endpoint(c *gin.Context) {
@@ -29,9 +29,9 @@ func extCall(c *gin.Context) {
 	tracer := pinpoint.FromContext(c.Request.Context())
 	req, _ := http.NewRequest("GET", "http://localhost:9000/query", nil)
 
-	tracer = phttp.NewHttpClientTracer(tracer, "http.DefaultClient.Do", req)
+	tracer = pphttp.NewHttpClientTracer(tracer, "http.DefaultClient.Do", req)
 	resp, err := http.DefaultClient.Do(req)
-	phttp.EndHttpClientTracer(tracer, resp, err)
+	pphttp.EndHttpClientTracer(tracer, resp, err)
 
 	if nil != err {
 		c.Writer.WriteString(err.Error())
@@ -61,7 +61,7 @@ func main() {
 	router := gin.Default()
 	router.Use(gin.Recovery())
 
-	router.GET("/endpoint", pgin.WrapHandler(endpoint))
-	router.GET("/external", pgin.WrapHandler(extCall))
+	router.GET("/endpoint", ppgin.WrapHandler(endpoint))
+	router.GET("/external", ppgin.WrapHandler(extCall))
 	router.Run(":8000")
 }

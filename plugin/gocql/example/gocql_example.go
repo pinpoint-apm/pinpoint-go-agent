@@ -7,9 +7,9 @@ import (
 	"os"
 
 	"github.com/gocql/gocql"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	pgocql "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 func doCassandra(w http.ResponseWriter, r *http.Request) {
@@ -17,7 +17,7 @@ func doCassandra(w http.ResponseWriter, r *http.Request) {
 	cluster.Keyspace = "example"
 	cluster.Consistency = gocql.Quorum
 
-	observer := pgocql.NewObserver()
+	observer := ppgocql.NewObserver()
 	cluster.QueryObserver = observer
 	cluster.BatchObserver = observer
 
@@ -63,7 +63,7 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc("/cassandra", phttp.WrapHandlerFunc(doCassandra))
+	http.HandleFunc("/cassandra", pphttp.WrapHandlerFunc(doCassandra))
 
 	http.ListenAndServe(":9000", nil)
 }

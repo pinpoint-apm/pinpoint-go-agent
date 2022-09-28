@@ -1,4 +1,4 @@
-package gorm
+package ppgorm
 
 import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"

@@ -1,4 +1,4 @@
-package pgsql
+package pppgsql
 
 import (
 	"database/sql"
@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/lib/pq"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
 const (

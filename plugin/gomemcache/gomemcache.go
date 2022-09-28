@@ -1,13 +1,14 @@
-package gomemcache
+package ppgomemcache
 
 //Contributed by ONG-YA (https://github.com/ONG-YA)
 
 import (
 	"context"
-	"github.com/bradfitz/gomemcache/memcache"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"strings"
 	"time"
+
+	"github.com/bradfitz/gomemcache/memcache"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
 const (

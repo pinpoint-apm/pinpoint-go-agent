@@ -1,9 +1,10 @@
-package http
+package pphttp
 
 import (
-	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"strconv"
 	"strings"
+
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
 type httpStatusCode interface {

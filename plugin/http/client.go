@@ -1,10 +1,11 @@
-package http
+package pphttp
 
 import (
 	"bytes"
 	"context"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"net/http"
+
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
 // NewHttpClientTracer deprecated

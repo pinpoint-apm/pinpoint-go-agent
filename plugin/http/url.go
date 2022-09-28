@@ -1,10 +1,11 @@
-package http
+package pphttp
 
 import (
 	"bytes"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"regexp"
 	"strings"
+
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
 type httpExcludeUrl struct {

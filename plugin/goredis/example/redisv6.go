@@ -8,13 +8,13 @@ import (
 	"time"
 
 	"github.com/go-redis/redis"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	predis "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
-var redisClient *predis.Client
-var redisClusterClient *predis.ClusterClient
+var redisClient *ppgoredis.Client
+var redisClusterClient *ppgoredis.ClusterClient
 
 func redisv6(w http.ResponseWriter, r *http.Request) {
 	c := redisClient.WithContext(r.Context())
@@ -52,16 +52,16 @@ func main() {
 	redisOpts := &redis.Options{
 		Addr: addrs[0],
 	}
-	redisClient = predis.NewClient(redisOpts)
+	redisClient = ppgoredis.NewClient(redisOpts)
 
 	//redis cluster client
 	redisClusterOpts := &redis.ClusterOptions{
 		Addrs: addrs,
 	}
-	redisClusterClient = predis.NewClusterClient(redisClusterOpts)
+	redisClusterClient = ppgoredis.NewClusterClient(redisClusterOpts)
 
-	http.HandleFunc("/redis", phttp.WrapHandlerFunc(redisv6))
-	http.HandleFunc("/rediscluster", phttp.WrapHandlerFunc(redisv6Cluster))
+	http.HandleFunc("/redis", pphttp.WrapHandlerFunc(redisv6))
+	http.HandleFunc("/rediscluster", pphttp.WrapHandlerFunc(redisv6Cluster))
 
 	http.ListenAndServe(":9000", nil)
 

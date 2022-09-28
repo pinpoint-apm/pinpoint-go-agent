@@ -10,14 +10,14 @@ import (
 
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	pmemcache "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 func doMemcache(w http.ResponseWriter, r *http.Request) {
 	addr := []string{"localhost:11211"}
 
-	mc := pmemcache.NewClient(addr...)
+	mc := ppgomemcache.NewClient(addr...)
 	mc.WithContext(r.Context())
 
 	_, _ = mc.Get("foo") // error
@@ -78,7 +78,7 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	http.HandleFunc("/memcache", phttp.WrapHandlerFunc(doMemcache))
+	http.HandleFunc("/memcache", pphttp.WrapHandlerFunc(doMemcache))
 
 	http.ListenAndServe(":9000", nil)
 }

@@ -1,4 +1,4 @@
-package grpc
+package ppgrpc
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"net"
 	"sync"
 
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
