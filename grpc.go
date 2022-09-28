@@ -214,13 +214,8 @@ func (agentGrpc *agentGrpc) sendAgentInfo(ctx context.Context, agentInfo *pb.PAg
 
 func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 	ctx, agentInfo := agentGrpc.makeAgentInfo()
-	for {
-		if agentGrpc.agent.shutdown {
-			break
-		}
-
-		res, err := agentGrpc.sendAgentInfo(ctx, agentInfo)
-		if err == nil {
+	for !agentGrpc.agent.shutdown {
+		if res, err := agentGrpc.sendAgentInfo(ctx, agentInfo); err == nil {
 			if res.Success {
 				Log("agent").Info("success to register agent")
 				return true
@@ -247,77 +242,104 @@ func (agentGrpc *agentGrpc) sendApiMetadata(ctx context.Context, in *pb.PApiMeta
 	if err != nil {
 		Log("grpc").Errorf("fail to send api metadata - %v", err)
 	}
-
 	return err
 }
 
-func (agentGrpc *agentGrpc) sendApiMetadataWithRetry(apiId int32, api string, line int, apiType int) error {
-	var apiMeta pb.PApiMetaData
-	apiMeta.ApiId = apiId
-	apiMeta.ApiInfo = api
-	apiMeta.Line = int32(line)
-	apiMeta.Type = int32(apiType)
-
+func (agentGrpc *agentGrpc) sendApiMetadataWithRetry(apiId int32, api string, line int, apiType int) bool {
+	ctx := grpcMetadataContext(agentGrpc.agent, -1)
+	apiMeta := pb.PApiMetaData{
+		ApiId:   apiId,
+		ApiInfo: api,
+		Line:    int32(line),
+		Type:    int32(apiType),
+	}
 	Log("grpc").Infof("api metadata: %s", apiMeta.String())
 
-	ctx := grpcMetadataContext(agentGrpc.agent, -1)
-
-	for {
-		if !agentGrpc.agent.Enable() {
-			break
-		}
-
-		err := agentGrpc.sendApiMetadata(ctx, &apiMeta)
-		if err == nil {
-			return nil
+	for agentGrpc.agent.Enable() {
+		if err := agentGrpc.sendApiMetadata(ctx, &apiMeta); err == nil {
+			return true
 		}
 
 		if !agentGrpc.agent.offGrpc {
-			retry := 1
-			for !waitUntilReady(agentGrpc.agentConn, backOffSleep(retry), "agent") {
-				retry++
+			for retry := 1; agentGrpc.agent.Enable(); retry++ {
+				if waitUntilReady(agentGrpc.agentConn, backOffSleep(retry), "agent") {
+					break
+				}
 			}
 		}
 	}
-	return nil
+	return false
 }
 
-func (agentGrpc *agentGrpc) sendStringMetadata(strId int32, str string) error {
-	var strMeta pb.PStringMetaData
-	strMeta.StringId = strId
-	strMeta.StringValue = str
-
-	Log("grpc").Infof("send string metadata: %s", strMeta.String())
-
-	ctx := grpcMetadataContext(agentGrpc.agent, -1)
+func (agentGrpc *agentGrpc) sendStringMetadata(ctx context.Context, in *pb.PStringMetaData) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	_, err := agentGrpc.metadataClient.RequestStringMetaData(ctx, &strMeta)
+	_, err := agentGrpc.metadataClient.RequestStringMetaData(ctx, in)
 	if err != nil {
 		Log("grpc").Errorf("fail to send string metadata - %v", err)
 	}
-
 	return err
 }
 
-func (agentGrpc *agentGrpc) sendSqlMetadata(sqlId int32, sql string) error {
-	var sqlMeta pb.PSqlMetaData
-	sqlMeta.SqlId = sqlId
-	sqlMeta.Sql = sql
-
-	Log("grpc").Infof("send sql metadata: %s", sqlMeta.String())
-
+func (agentGrpc *agentGrpc) sendStringMetadataWithRetry(strId int32, str string) bool {
 	ctx := grpcMetadataContext(agentGrpc.agent, -1)
+	strMeta := pb.PStringMetaData{
+		StringId:    strId,
+		StringValue: str,
+	}
+	Log("grpc").Infof("send string metadata: %s", strMeta.String())
+
+	for agentGrpc.agent.Enable() {
+		if err := agentGrpc.sendStringMetadata(ctx, &strMeta); err == nil {
+			return true
+		}
+
+		if !agentGrpc.agent.offGrpc {
+			for retry := 1; agentGrpc.agent.Enable(); retry++ {
+				if waitUntilReady(agentGrpc.agentConn, backOffSleep(retry), "agent") {
+					break
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (agentGrpc *agentGrpc) sendSqlMetadata(ctx context.Context, in *pb.PSqlMetaData) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	_, err := agentGrpc.metadataClient.RequestSqlMetaData(ctx, &sqlMeta)
+	_, err := agentGrpc.metadataClient.RequestSqlMetaData(ctx, in)
 	if err != nil {
 		Log("grpc").Errorf("fail to send sql metadata - %v", err)
 	}
 
 	return err
+}
+
+func (agentGrpc *agentGrpc) sendSqlMetadataWithRetry(sqlId int32, sql string) bool {
+	ctx := grpcMetadataContext(agentGrpc.agent, -1)
+	sqlMeta := pb.PSqlMetaData{
+		SqlId: sqlId,
+		Sql:   sql,
+	}
+	Log("grpc").Infof("send sql metadata: %s", sqlMeta.String())
+
+	for agentGrpc.agent.Enable() {
+		if err := agentGrpc.sendSqlMetadata(ctx, &sqlMeta); err == nil {
+			return true
+		}
+
+		if !agentGrpc.agent.offGrpc {
+			for retry := 1; agentGrpc.agent.Enable(); retry++ {
+				if waitUntilReady(agentGrpc.agentConn, backOffSleep(retry), "agent") {
+					break
+				}
+			}
+		}
+	}
+	return false
 }
 
 func sendStreamWithTimeout(send func() error, timeout time.Duration) error {
@@ -359,21 +381,20 @@ func waitUntilReady(grpcConn *grpc.ClientConn, timeout time.Duration, which stri
 }
 
 func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc func() bool, which string) bool {
-	for {
-		if !agent.Enable() {
-			return false
-		}
+	for agent.Enable() {
 		if newStreamFunc() {
 			return true
 		}
 
 		if !agent.offGrpc {
-			retry := 1
-			for !waitUntilReady(grpcConn, backOffSleep(retry), which) {
-				retry++
+			for retry := 1; agent.Enable(); retry++ {
+				if waitUntilReady(grpcConn, backOffSleep(retry), which) {
+					break
+				}
 			}
 		}
 	}
+	return false
 }
 
 type pingStream struct {

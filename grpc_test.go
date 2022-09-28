@@ -53,8 +53,8 @@ func Test_agentGrpc_sendApiMetadata(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
 			agent.agentGrpc = newMockAgentGrpc(agent, tt.args.config, t)
-			err := agent.agentGrpc.sendApiMetadataWithRetry(asyncApiId, "Asynchronous Invocation", -1, ApiTypeInvocation)
-			assert.NoError(t, err, "sendApiMetadata")
+			b := agent.agentGrpc.sendApiMetadataWithRetry(asyncApiId, "Asynchronous Invocation", -1, ApiTypeInvocation)
+			assert.Equal(t, true, b, "sendApiMetadata")
 		})
 	}
 }
@@ -80,8 +80,8 @@ func Test_agentGrpc_sendSqlMetadata(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
 			agent.agentGrpc = newMockAgentGrpc(agent, tt.args.config, t)
-			err := agent.agentGrpc.sendSqlMetadata(1, "SELECT 1")
-			assert.NoError(t, err, "sendSqlMetadata")
+			b := agent.agentGrpc.sendSqlMetadataWithRetry(1, "SELECT 1")
+			assert.Equal(t, true, b, "sendSqlMetadata")
 		})
 	}
 }
@@ -107,8 +107,8 @@ func Test_agentGrpc_sendStringMetadata(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
 			agent.agentGrpc = newMockAgentGrpc(agent, tt.args.config, t)
-			err := agent.agentGrpc.sendStringMetadata(1, "string value")
-			assert.NoError(t, err, "sendStringMetadata")
+			b := agent.agentGrpc.sendStringMetadataWithRetry(1, "string value")
+			assert.Equal(t, true, b, "sendStringMetadata")
 		})
 	}
 }

@@ -22,7 +22,7 @@ func newTestAgent() *agent {
 		sampler:   newBasicTraceSampler(newRateSampler(1)),
 		offGrpc:   true,
 	}
-	a.errorIdCache, _ = lru.New(cacheSize)
+	a.errorCache, _ = lru.New(cacheSize)
 	a.sqlCache, _ = lru.New(cacheSize)
 	a.apiCache, _ = lru.New(cacheSize)
 

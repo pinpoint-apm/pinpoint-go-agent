@@ -25,11 +25,7 @@ func (agent *agent) runCommandService() {
 	defer agent.wg.Done()
 	gAtcStreamCount = 0
 
-	for {
-		if !agent.enable {
-			break
-		}
-
+	for agent.enable {
 		cmdStream := agent.cmdGrpc.newCommandStreamWithRetry()
 		err := cmdStream.sendCommandMessage()
 		if err != nil {
@@ -40,11 +36,7 @@ func (agent *agent) runCommandService() {
 			continue
 		}
 
-		for {
-			if !agent.enable {
-				break
-			}
-
+		for agent.enable {
 			cmdReq, err := cmdStream.recvCommandRequest()
 			if err != nil {
 				if err != io.EOF {
@@ -63,7 +55,7 @@ func (agent *agent) runCommandService() {
 				break
 			case *pb.PCmdRequest_CommandActiveThreadCount:
 				atcStream := agent.cmdGrpc.newActiveThreadCountStream(reqId)
-				go sendActiveThreadCount(atcStream)
+				go agent.sendActiveThreadCount(atcStream)
 				break
 			case *pb.PCmdRequest_CommandActiveThreadDump:
 				if c := cmdReq.GetCommandActiveThreadDump(); c != nil {
@@ -90,11 +82,11 @@ func (agent *agent) runCommandService() {
 	Log("cmd").Info("command service goroutine finish")
 }
 
-func sendActiveThreadCount(s *activeThreadCountStream) {
+func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
 	atomic.AddInt32(&gAtcStreamCount, 1)
 	Log("cmd").Infof("active thread count stream goroutine start: %d, %d", s.reqId, gAtcStreamCount)
 
-	for {
+	for agent.enable {
 		err := s.sendActiveThreadCount()
 		if err != nil {
 			if err != io.EOF {

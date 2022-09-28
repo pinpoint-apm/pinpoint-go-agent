@@ -40,25 +40,24 @@ type agent struct {
 	appType int32
 	agentID string
 
-	startTime  int64
-	sequence   int64
-	agentGrpc  *agentGrpc
-	spanGrpc   *spanGrpc
-	statGrpc   *statGrpc
-	cmdGrpc    *cmdGrpc
-	spanBuffer []*span
-	spanChan   chan *span
-	metaChan   chan interface{}
-	wg         sync.WaitGroup
-	sampler    traceSampler
+	startTime int64
+	sequence  int64
+	agentGrpc *agentGrpc
+	spanGrpc  *spanGrpc
+	statGrpc  *statGrpc
+	cmdGrpc   *cmdGrpc
+	spanChan  chan *span
+	metaChan  chan interface{}
+	sampler   traceSampler
 
-	errorIdCache *lru.Cache
-	errorIdGen   int32
-	sqlCache     *lru.Cache
-	sqlIdGen     int32
-	apiCache     *lru.Cache
-	apiIdGen     int32
+	errorCache *lru.Cache
+	errorIdGen int32
+	sqlCache   *lru.Cache
+	sqlIdGen   int32
+	apiCache   *lru.Cache
+	apiIdGen   int32
 
+	wg       sync.WaitGroup
 	enable   bool
 	shutdown bool
 	offGrpc  bool //for test
@@ -89,44 +88,32 @@ func GetAgent() Agent {
 }
 
 func NewAgent(config *Config) (Agent, error) {
-	noopAgent := NoopAgent()
-
 	if config == nil {
-		return noopAgent, errors.New("configuration is missing")
+		return NoopAgent(), errors.New("configuration is missing")
 	}
-	if globalAgent != noopAgent {
+	if globalAgent != NoopAgent() {
 		return globalAgent, errors.New("agent is already created")
 	}
 
-	agent := agent{}
-	agent.appName = config.String(cfgAppName)
-	agent.appType = int32(config.Int(cfgAppType))
-	agent.agentID = config.String(cfgAgentID)
-	agent.offGrpc = config.offGrpc
-
-	agent.startTime = time.Now().UnixNano() / int64(time.Millisecond)
-	agent.sequence = 0
+	agent := &agent{
+		appName:   config.String(cfgAppName),
+		appType:   int32(config.Int(cfgAppType)),
+		agentID:   config.String(cfgAgentID),
+		offGrpc:   config.offGrpc,
+		startTime: time.Now().UnixNano() / int64(time.Millisecond),
+		spanChan:  make(chan *span, 5*1024),
+		metaChan:  make(chan interface{}, 1*1024),
+	}
 
 	var err error
-	agent.spanChan = make(chan *span, 5*1024)
-	agent.metaChan = make(chan interface{}, 1*1024)
-
-	agent.errorIdGen = 0
-	agent.errorIdCache, err = lru.New(cacheSize)
-	if err != nil {
-		return &agent, err
+	if agent.errorCache, err = lru.New(cacheSize); err != nil {
+		return NoopAgent(), err
 	}
-
-	agent.sqlIdGen = 0
-	agent.sqlCache, err = lru.New(cacheSize)
-	if err != nil {
-		return &agent, err
+	if agent.sqlCache, err = lru.New(cacheSize); err != nil {
+		return NoopAgent(), err
 	}
-
-	agent.apiIdGen = 0
-	agent.apiCache, err = lru.New(cacheSize)
-	if err != nil {
-		return &agent, err
+	if agent.apiCache, err = lru.New(cacheSize); err != nil {
+		return NoopAgent(), err
 	}
 
 	var baseSampler sampler
@@ -144,37 +131,29 @@ func NewAgent(config *Config) (Agent, error) {
 	}
 
 	if !agent.offGrpc {
-		go connectGrpc(&agent, config)
+		go connectGrpc(agent, config)
 	}
 
-	globalAgent = &agent
+	globalAgent = agent
 	return globalAgent, nil
 }
 
 func connectGrpc(agent *agent, config *Config) {
 	var err error
 
-	agent.agentGrpc, err = newAgentGrpc(agent, config)
-	if err != nil {
+	if agent.agentGrpc, err = newAgentGrpc(agent, config); err != nil {
 		return
 	}
-
 	if !agent.agentGrpc.registerAgentWithRetry() {
 		return
 	}
-
-	agent.spanGrpc, err = newSpanGrpc(agent, config)
-	if err != nil {
+	if agent.spanGrpc, err = newSpanGrpc(agent, config); err != nil {
 		return
 	}
-
-	agent.statGrpc, err = newStatGrpc(agent, config)
-	if err != nil {
+	if agent.statGrpc, err = newStatGrpc(agent, config); err != nil {
 		return
 	}
-
-	agent.cmdGrpc, err = newCommandGrpc(agent, config)
-	if err != nil {
+	if agent.cmdGrpc, err = newCommandGrpc(agent, config); err != nil {
 		return
 	}
 
@@ -198,16 +177,21 @@ func (agent *agent) Shutdown() {
 
 	agent.enable = false
 	globalAgent = NoopAgent()
-	time.Sleep(1 * time.Second)
 
 	close(agent.spanChan)
 	close(agent.metaChan)
 
-	if !agent.offGrpc {
-		agent.wg.Wait()
+	agent.wg.Wait()
+	if agent.agentGrpc != nil {
 		agent.agentGrpc.close()
+	}
+	if agent.spanGrpc != nil {
 		agent.spanGrpc.close()
+	}
+	if agent.statGrpc != nil {
 		agent.statGrpc.close()
+	}
+	if agent.cmdGrpc != nil {
 		agent.cmdGrpc.close()
 	}
 }
@@ -224,8 +208,7 @@ func (agent *agent) NewSpanTracer(operation string, rpcName string) Tracer {
 	return tracer
 }
 
-func (agent *agent) samplingSpan(samplingFunc func() bool, operation string, rpcName string,
-	reader DistributedTracingContextReader) Tracer {
+func (agent *agent) samplingSpan(samplingFunc func() bool, operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
 	if samplingFunc() {
 		tracer := newSampledSpan(agent, operation, rpcName)
 		tracer.Extract(reader)
@@ -235,8 +218,7 @@ func (agent *agent) samplingSpan(samplingFunc func() bool, operation string, rpc
 	}
 }
 
-func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string,
-	reader DistributedTracingContextReader) Tracer {
+func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
 	if !agent.enable {
 		return NoopTracer()
 	}
@@ -269,11 +251,7 @@ func (agent *agent) sendPingWorker() {
 	defer agent.wg.Done()
 	stream := agent.agentGrpc.newPingStreamWithRetry()
 
-	for {
-		if !agent.enable {
-			break
-		}
-
+	for agent.enable {
 		err := stream.sendPing()
 		if err != nil {
 			if err != io.EOF {
@@ -358,23 +336,23 @@ func (agent *agent) sendMetaWorker() {
 			break
 		}
 
-		var err error
+		var success bool
 		switch md.(type) {
 		case apiMeta:
 			api := md.(apiMeta)
-			err = agent.agentGrpc.sendApiMetadataWithRetry(api.id, api.descriptor, -1, api.apiType)
+			success = agent.agentGrpc.sendApiMetadataWithRetry(api.id, api.descriptor, -1, api.apiType)
 			break
 		case stringMeta:
 			str := md.(stringMeta)
-			err = agent.agentGrpc.sendStringMetadata(str.id, str.funcName)
+			success = agent.agentGrpc.sendStringMetadataWithRetry(str.id, str.funcName)
 			break
 		case sqlMeta:
 			sql := md.(sqlMeta)
-			err = agent.agentGrpc.sendSqlMetadata(sql.id, sql.sql)
+			success = agent.agentGrpc.sendSqlMetadataWithRetry(sql.id, sql.sql)
 			break
 		}
 
-		if err != nil {
+		if !success {
 			agent.deleteMetaCache(md)
 		}
 	}
@@ -390,7 +368,7 @@ func (agent *agent) deleteMetaCache(md interface{}) {
 		agent.apiCache.Remove(key)
 		break
 	case stringMeta:
-		agent.errorIdCache.Remove(md.(stringMeta).funcName)
+		agent.errorCache.Remove(md.(stringMeta).funcName)
 		break
 	case sqlMeta:
 		agent.sqlCache.Remove(md.(sqlMeta).sql)
@@ -419,12 +397,12 @@ func (agent *agent) cacheErrorFunc(funcName string) int32 {
 		return 0
 	}
 
-	if v, ok := agent.errorIdCache.Get(funcName); ok {
+	if v, ok := agent.errorCache.Get(funcName); ok {
 		return v.(int32)
 	}
 
 	id := atomic.AddInt32(&agent.errorIdGen, 1)
-	agent.errorIdCache.Add(funcName, id)
+	agent.errorCache.Add(funcName, id)
 
 	md := stringMeta{}
 	md.id = id

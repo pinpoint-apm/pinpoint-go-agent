@@ -199,11 +199,7 @@ func (agent *agent) sendStatsWorker(config *Config) {
 	collected := make([]*inspectorStats, cfgBatchCount)
 	batch := 0
 
-	for true {
-		if !agent.enable {
-			break
-		}
-
+	for agent.enable {
 		collected[batch] = getStats()
 		batch++
 

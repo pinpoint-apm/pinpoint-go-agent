@@ -88,9 +88,16 @@ func newGoroutineDump() *GoroutineDump {
 	}
 }
 
-func dumpGoroutine() *GoroutineDump {
+func dumpGoroutine() (dump *GoroutineDump) {
 	var b bytes.Buffer
 	buf := bufio.NewWriter(&b)
+
+	defer func() {
+		if e := recover(); e != nil {
+			Log("cmd").Errorf("fail to profile goroutine: %v", e)
+			dump = nil
+		}
+	}()
 
 	if p := pprof.Lookup("goroutine"); p != nil {
 		if err := p.WriteTo(buf, 2); err != nil {
@@ -99,7 +106,8 @@ func dumpGoroutine() *GoroutineDump {
 		}
 	}
 
-	return parseProfile(&b)
+	dump = parseProfile(&b)
+	return
 }
 
 var (
