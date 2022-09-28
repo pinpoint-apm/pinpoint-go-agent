@@ -17,7 +17,7 @@ Stat.CollectInterval=7000
 Stat.BatchCount=10
 
 loglevel=debug
-runOnContainer=true
+isContainerEnv=true
 
 profile.dev.collector.host=dev.collector.host
 profile.dev.sampling.type=COUNTER

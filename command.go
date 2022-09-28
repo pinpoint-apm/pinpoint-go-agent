@@ -21,32 +21,32 @@ type activeSpanInfo struct {
 }
 
 func (agent *agent) runCommandService() {
-	Log("cmd").Info("command service goroutine start")
+	Log("cmd").Info("start command goroutine")
 	defer agent.wg.Done()
 	gAtcStreamCount = 0
 
 	for agent.enable {
-		cmdStream := agent.cmdGrpc.newCommandStreamWithRetry()
-		err := cmdStream.sendCommandMessage()
+		stream := agent.cmdGrpc.newCommandStreamWithRetry()
+		err := stream.sendCommandMessage()
 		if err != nil {
 			if err != io.EOF {
-				Log("cmd").Errorf("fail to send command message - %v", err)
+				Log("cmd").Errorf("send command message - %v", err)
 			}
-			cmdStream.close()
+			stream.close()
 			continue
 		}
 
 		for agent.enable {
-			cmdReq, err := cmdStream.recvCommandRequest()
+			cmdReq, err := stream.recvCommandRequest()
 			if err != nil {
 				if err != io.EOF {
-					Log("cmd").Errorf("fail to recv command request - %v", err)
+					Log("cmd").Errorf("recv command request - %v", err)
 				}
 				break
 			}
 
 			reqId := cmdReq.GetRequestId()
-			Log("cmd").Infof("command service request: %v, %v", cmdReq, reqId)
+			Log("cmd").Infof("command request: %v, %v", cmdReq, reqId)
 
 			switch cmdReq.Command.(type) {
 			case *pb.PCmdRequest_CommandEcho:
@@ -76,10 +76,10 @@ func (agent *agent) runCommandService() {
 			}
 		}
 
-		cmdStream.close()
+		stream.close()
 	}
 
-	Log("cmd").Info("command service goroutine finish")
+	Log("cmd").Info("end command goroutine")
 }
 
 func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
@@ -90,7 +90,7 @@ func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
 		err := s.sendActiveThreadCount()
 		if err != nil {
 			if err != io.EOF {
-				Log("cmd").Errorf("fail to send active thread count - %d, %v", s.reqId, err)
+				Log("cmd").Errorf("send active thread count - %d, %v", s.reqId, err)
 			}
 			break
 		}

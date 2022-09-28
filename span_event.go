@@ -49,7 +49,7 @@ func defaultSpanEvent(span *span, operationName string) *spanEvent {
 
 func newSpanEvent(span *span, operationName string) *spanEvent {
 	se := defaultSpanEvent(span, operationName)
-	se.apiId = span.agent.cacheSpanApiId(operationName, ApiTypeDefault)
+	se.apiId = span.agent.cacheSpanApi(operationName, ApiTypeDefault)
 
 	return se
 }
@@ -59,7 +59,7 @@ func newSpanEventGoroutine(span *span) *spanEvent {
 
 	//Asynchronous Invocation
 	if asyncApiId == 0 {
-		asyncApiId = span.agent.cacheSpanApiId("Goroutine Invocation", ApiTypeInvocation)
+		asyncApiId = span.agent.cacheSpanApi("Goroutine Invocation", ApiTypeInvocation)
 	}
 	se.apiId = asyncApiId
 	se.serviceType = ServiceTypeAsync
@@ -92,7 +92,7 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 		errName = "error"
 	}
 
-	id := se.parentSpan.agent.cacheErrorFunc(errName)
+	id := se.parentSpan.agent.cacheError(errName)
 	se.errorFuncId = id
 	se.errorString = e.Error()
 }

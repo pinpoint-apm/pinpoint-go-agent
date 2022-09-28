@@ -20,7 +20,7 @@
     "CollectInterval": 7000,
     "BatchCount": 10
   },
-  "runOnContainer": true,
+  "isContainerEnv": true,
   "useProfile": "real",
   "profile": {
     "dev": {

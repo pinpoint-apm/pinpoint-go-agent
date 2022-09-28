@@ -95,6 +95,9 @@ func NewAgent(config *Config) (Agent, error) {
 		return globalAgent, errors.New("agent is already created")
 	}
 
+	Log("agent").Info("new pinpoint agent")
+	config.printConfigString()
+
 	agent := &agent{
 		appName:   config.String(cfgAppName),
 		appType:   int32(config.Int(cfgAppType)),
@@ -135,7 +138,7 @@ func NewAgent(config *Config) (Agent, error) {
 	}
 
 	globalAgent = agent
-	return globalAgent, nil
+	return agent, nil
 }
 
 func connectGrpc(agent *agent, config *Config) {
@@ -169,7 +172,7 @@ func connectGrpc(agent *agent, config *Config) {
 
 func (agent *agent) Shutdown() {
 	agent.shutdown = true
-	Log("agent").Info("agent shutdown")
+	Log("agent").Info("shutdown pinpoint agent")
 
 	if !agent.enable {
 		return
@@ -247,7 +250,7 @@ func (agent *agent) Enable() bool {
 }
 
 func (agent *agent) sendPingWorker() {
-	Log("agent").Info("ping goroutine start")
+	Log("agent").Info("start ping goroutine")
 	defer agent.wg.Done()
 	stream := agent.agentGrpc.newPingStreamWithRetry()
 
@@ -255,7 +258,7 @@ func (agent *agent) sendPingWorker() {
 		err := stream.sendPing()
 		if err != nil {
 			if err != io.EOF {
-				Log("agent").Errorf("fail to send ping - %v", err)
+				Log("agent").Errorf("send ping - %v", err)
 			}
 
 			stream.close()
@@ -267,11 +270,11 @@ func (agent *agent) sendPingWorker() {
 	}
 
 	stream.close()
-	Log("agent").Info("ping goroutine finish")
+	Log("agent").Info("end ping goroutine")
 }
 
 func (agent *agent) sendSpanWorker() {
-	Log("agent").Info("span goroutine start")
+	Log("agent").Info("start span goroutine")
 	defer agent.wg.Done()
 
 	var (
@@ -279,7 +282,7 @@ func (agent *agent) sendSpanWorker() {
 		skipBaseTime time.Time
 	)
 
-	spanStream := agent.spanGrpc.newSpanStreamWithRetry()
+	stream := agent.spanGrpc.newSpanStreamWithRetry()
 	for span := range agent.spanChan {
 		if !agent.enable {
 			break
@@ -293,22 +296,22 @@ func (agent *agent) sendSpanWorker() {
 			}
 		}
 
-		err := spanStream.sendSpan(span)
+		err := stream.sendSpan(span)
 		if err != nil {
 			if err != io.EOF {
-				Log("agent").Errorf("fail to send span - %v", err)
+				Log("agent").Errorf("send span - %v", err)
 			}
 
-			spanStream.close()
-			spanStream = agent.spanGrpc.newSpanStreamWithRetry()
+			stream.close()
+			stream = agent.spanGrpc.newSpanStreamWithRetry()
 
 			skipOldSpan = true
 			skipBaseTime = time.Now().Add(-time.Second * 1)
 		}
 	}
 
-	spanStream.close()
-	Log("agent").Info("span goroutine finish")
+	stream.close()
+	Log("agent").Info("end span goroutine")
 }
 
 func (agent *agent) enqueueSpan(span *span) bool {
@@ -328,7 +331,7 @@ func (agent *agent) enqueueSpan(span *span) bool {
 }
 
 func (agent *agent) sendMetaWorker() {
-	Log("agent").Info("meta goroutine start")
+	Log("agent").Info("start meta goroutine")
 	defer agent.wg.Done()
 
 	for md := range agent.metaChan {
@@ -357,7 +360,7 @@ func (agent *agent) sendMetaWorker() {
 		}
 	}
 
-	Log("agent").Info("meta goroutine finish")
+	Log("agent").Info("end meta goroutine")
 }
 
 func (agent *agent) deleteMetaCache(md interface{}) {
@@ -392,24 +395,24 @@ func (agent *agent) tryEnqueueMeta(md interface{}) bool {
 	return false
 }
 
-func (agent *agent) cacheErrorFunc(funcName string) int32 {
+func (agent *agent) cacheError(errorName string) int32 {
 	if !agent.enable {
 		return 0
 	}
 
-	if v, ok := agent.errorCache.Get(funcName); ok {
+	if v, ok := agent.errorCache.Get(errorName); ok {
 		return v.(int32)
 	}
 
 	id := atomic.AddInt32(&agent.errorIdGen, 1)
-	agent.errorCache.Add(funcName, id)
+	agent.errorCache.Add(errorName, id)
 
 	md := stringMeta{}
 	md.id = id
-	md.funcName = funcName
+	md.funcName = errorName
 	agent.tryEnqueueMeta(md)
 
-	Log("agent").Infof("cache exception id: %d, %s", id, funcName)
+	Log("agent").Infof("cache error id: %d, %s", id, errorName)
 	return id
 }
 
@@ -434,7 +437,7 @@ func (agent *agent) cacheSql(sql string) int32 {
 	return id
 }
 
-func (agent *agent) cacheSpanApiId(descriptor string, apiType int) int32 {
+func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 	if !agent.enable {
 		return 0
 	}

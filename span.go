@@ -79,7 +79,7 @@ func newSampledSpan(agent *agent, operation string, rpcName string) *span {
 	span.agent = agent
 	span.operationName = operation
 	span.rpcName = rpcName
-	span.apiId = agent.cacheSpanApiId(operation, ApiTypeWebRequest)
+	span.apiId = agent.cacheSpanApi(operation, ApiTypeWebRequest)
 
 	return span
 }
@@ -98,7 +98,7 @@ func (span *span) EndSpan() {
 		for se, ok := span.eventStack.pop(); ok; {
 			se.end()
 		}
-		Log("span").Warn("span has a event that is not closed")
+		Log("span").Warn("abnormal span - has unclosed event")
 	}
 
 	if !span.agent.enqueueSpan(span) {
@@ -122,9 +122,9 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 		se.endPoint = se.destinationId
 		writer.Set(HttpHost, se.destinationId)
 
-		Log("span").Debug("span inject: ", span.txId, nextSpanId, span.spanId, se.destinationId)
+		Log("span").Debugf("span inject: %v, %d, %d, %s", span.txId, nextSpanId, span.spanId, se.destinationId)
 	} else {
-		Log("span").Warn("span event is not exist to inject")
+		Log("span").Warn("abnormal span - has no event")
 	}
 }
 
@@ -174,7 +174,7 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 	}
 
 	addSampledActiveSpan(span)
-	Log("span").Debug("span extract: ", tid, spanid, pappname, pspanid, papptype, host)
+	Log("span").Debugf("span extract: %s, %s, %s, %s, %s, %s", tid, spanid, pappname, pspanid, papptype, host)
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
@@ -208,7 +208,7 @@ func (span *span) EndSpanEvent() {
 			}
 		}
 	} else {
-		Log("span").Warn("span event is not exist to be closed")
+		Log("span").Warn("abnormal span - has no event")
 	}
 }
 
@@ -231,7 +231,7 @@ func (span *span) newAsyncSpan() Tracer {
 
 		return asyncSpan
 	} else {
-		Log("span").Warn("span event is not exist to make async span")
+		Log("span").Warn("abnormal span - has no event")
 		return NoopTracer()
 	}
 }
@@ -282,7 +282,7 @@ func (span *span) SpanEvent() SpanEventRecorder {
 	if se, ok := span.eventStack.peek(); ok {
 		return se
 	}
-	Log("span").Warn("span has no event")
+	Log("span").Warn("abnormal span - has no event")
 	return &defaultNoopSpanEvent
 }
 
@@ -291,7 +291,7 @@ func (span *span) SetError(e error) {
 		return
 	}
 
-	id := span.agent.cacheErrorFunc("error")
+	id := span.agent.cacheError("error")
 	span.errorFuncId = id
 	span.errorString = e.Error()
 	span.err = 1

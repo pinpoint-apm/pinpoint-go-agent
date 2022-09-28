@@ -2,9 +2,11 @@ package pinpoint
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -30,7 +32,7 @@ const (
 	cfgSamplingContinueThroughput = "Sampling.ContinueThroughput"
 	cfgStatCollectInterval        = "Stat.CollectInterval"
 	cfgStatBatchCount             = "Stat.BatchCount"
-	cfgRunOnContainer             = "RunOnContainer"
+	cfgIsContainerEnv             = "IsContainerEnv"
 	cfgConfigFile                 = "ConfigFile"
 	cfgUseProfile                 = "UseProfile"
 	cfgSQLTraceBindValue          = "SQL.TraceBindValue"
@@ -79,7 +81,7 @@ func initConfig() {
 	AddConfig(cfgSamplingContinueThroughput, CfgInt, 0)
 	AddConfig(cfgStatCollectInterval, CfgInt, 5000)
 	AddConfig(cfgStatBatchCount, CfgInt, 6)
-	AddConfig(cfgRunOnContainer, CfgBool, false)
+	AddConfig(cfgIsContainerEnv, CfgBool, false)
 	AddConfig(cfgConfigFile, CfgString, "")
 	AddConfig(cfgUseProfile, CfgString, "")
 	AddConfig(cfgSQLTraceBindValue, CfgBool, true)
@@ -192,7 +194,7 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	if appName == "" {
 		return nil, errors.New("application name is required")
 	} else if len(appName) > MaxApplicationNameLength {
-		return nil, errors.New("application name is too long (max length: 24)")
+		return nil, errors.New("application name is too long (max length: " + fmt.Sprint(MaxApplicationNameLength) + ")")
 	} else if !r.MatchString(appName) {
 		return nil, errors.New("application name has invalid pattern (" + cfgIdPattern + ")")
 	}
@@ -200,7 +202,7 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	agentId := config.String(cfgAgentID)
 	if agentId == "" || len(agentId) > MaxAgentIdLength || !r.MatchString(agentId) {
 		config.cfgMap[cfgAgentID].value = randomString(MaxAgentIdLength - 1)
-		Log("config").Infof("agentId is automatically generated: %v", config.cfgMap[cfgAgentID].value)
+		Log("config").Infof("auto-generated AgentID: %v", config.cfgMap[cfgAgentID].value)
 	}
 
 	sampleType := config.String(cfgSamplingType)
@@ -226,7 +228,7 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	}
 
 	if config.containerCheck {
-		config.cfgMap[cfgRunOnContainer].value = isContainerEnv()
+		config.cfgMap[cfgIsContainerEnv].value = isContainerEnv()
 	}
 
 	maxBindSize := config.Int(cfgSQLMaxBindValueSize)
@@ -237,9 +239,7 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		config.cfgMap[cfgSQLMaxBindValueSize].value = 0
 	}
 
-	config.printConfigString()
 	globalConfig = config
-
 	return config, nil
 }
 
@@ -361,7 +361,7 @@ func (config *Config) loadConfig(cmdEnvViper *viper.Viper, cfgFileViper *viper.V
 
 func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value interface{}) {
 	item.value = value
-	if cfgName == cfgRunOnContainer {
+	if cfgName == cfgIsContainerEnv {
 		config.containerCheck = false
 	}
 }
@@ -491,9 +491,9 @@ func WithStatBatchCount(count int) ConfigOption {
 	}
 }
 
-func WithIsContainer(isContainer bool) ConfigOption {
+func WithIsContainerEnv(isContainer bool) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgRunOnContainer].value = isContainer
+		c.cfgMap[cfgIsContainerEnv].value = isContainer
 		c.containerCheck = false
 	}
 }
@@ -529,8 +529,14 @@ func WithSQLTraceRollback(trace bool) ConfigOption {
 }
 
 func (config *Config) printConfigString() {
-	for k, v := range config.cfgMap {
-		Log("config").Infof("%s = %v", k, v.value)
+	sortKeys := make([]string, 0)
+	for k := range config.cfgMap {
+		sortKeys = append(sortKeys, k)
+	}
+	sort.Strings(sortKeys)
+
+	for _, k := range sortKeys {
+		Log("config").Infof("%s = %v", k, config.cfgMap[k].value)
 	}
 }
 

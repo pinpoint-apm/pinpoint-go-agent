@@ -38,7 +38,7 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, 0, c.Int(cfgSamplingContinueThroughput), cfgSamplingContinueThroughput)
 			assert.Equal(t, 5000, c.Int(cfgStatCollectInterval), cfgStatCollectInterval)
 			assert.Equal(t, 6, c.Int(cfgStatBatchCount), cfgStatBatchCount)
-			assert.Equal(t, false, c.Bool(cfgRunOnContainer), cfgRunOnContainer)
+			assert.Equal(t, false, c.Bool(cfgIsContainerEnv), cfgIsContainerEnv)
 			assert.Equal(t, "", c.String(cfgConfigFile), cfgConfigFile)
 			assert.Equal(t, "", c.String(cfgUseProfile), cfgUseProfile)
 			assert.Equal(t, true, c.Bool(cfgSQLTraceBindValue), cfgSQLTraceBindValue)
@@ -70,7 +70,7 @@ func TestNewConfig_WithFunc(t *testing.T) {
 		WithSamplingContinueThroughput(30),
 		WithStatCollectInterval(10000),
 		WithStatBatchCount(3),
-		WithIsContainer(true),
+		WithIsContainerEnv(true),
 		WithSQLTraceBindValue(false),
 		WithSQLMaxBindValueSize(512),
 		WithSQLTraceCommit(false),
@@ -101,7 +101,7 @@ func TestNewConfig_WithFunc(t *testing.T) {
 			assert.Equal(t, 30, c.Int(cfgSamplingContinueThroughput), cfgSamplingContinueThroughput)
 			assert.Equal(t, 10000, c.Int(cfgStatCollectInterval), cfgStatCollectInterval)
 			assert.Equal(t, 3, c.Int(cfgStatBatchCount), cfgStatBatchCount)
-			assert.Equal(t, true, c.Bool(cfgRunOnContainer), cfgRunOnContainer)
+			assert.Equal(t, true, c.Bool(cfgIsContainerEnv), cfgIsContainerEnv)
 			assert.Equal(t, false, c.Bool(cfgSQLTraceBindValue), cfgSQLTraceBindValue)
 			assert.Equal(t, 512, c.Int(cfgSQLMaxBindValueSize), cfgSQLMaxBindValueSize)
 			assert.Equal(t, false, c.Bool(cfgSQLTraceCommit), cfgSQLTraceCommit)
@@ -192,7 +192,7 @@ func TestNewConfig_ConfigFileYaml(t *testing.T) {
 			assert.Equal(t, 60, c.Int(cfgSamplingContinueThroughput), cfgSamplingContinueThroughput)
 			assert.Equal(t, 7000, c.Int(cfgStatCollectInterval), cfgStatCollectInterval)
 			assert.Equal(t, 10, c.Int(cfgStatBatchCount), cfgStatBatchCount)
-			assert.Equal(t, true, c.Bool(cfgRunOnContainer), cfgRunOnContainer)
+			assert.Equal(t, true, c.Bool(cfgIsContainerEnv), cfgIsContainerEnv)
 		})
 	}
 }
@@ -232,7 +232,7 @@ func TestNewConfig_ConfigFileJson(t *testing.T) {
 			assert.Equal(t, 60, c.Int(cfgSamplingContinueThroughput), cfgSamplingContinueThroughput)
 			assert.Equal(t, 7000, c.Int(cfgStatCollectInterval), cfgStatCollectInterval)
 			assert.Equal(t, 10, c.Int(cfgStatBatchCount), cfgStatBatchCount)
-			assert.Equal(t, true, c.Bool(cfgRunOnContainer), cfgRunOnContainer)
+			assert.Equal(t, true, c.Bool(cfgIsContainerEnv), cfgIsContainerEnv)
 		})
 	}
 }
@@ -272,7 +272,7 @@ func TestNewConfig_ConfigFileProp(t *testing.T) {
 			assert.Equal(t, 60, c.Int(cfgSamplingContinueThroughput), cfgSamplingContinueThroughput)
 			assert.Equal(t, 7000, c.Int(cfgStatCollectInterval), cfgStatCollectInterval)
 			assert.Equal(t, 10, c.Int(cfgStatBatchCount), cfgStatBatchCount)
-			assert.Equal(t, true, c.Bool(cfgRunOnContainer), cfgRunOnContainer)
+			assert.Equal(t, true, c.Bool(cfgIsContainerEnv), cfgIsContainerEnv)
 		})
 	}
 }
@@ -318,7 +318,7 @@ func TestNewConfig_ConfigFileProfile(t *testing.T) {
 			assert.Equal(t, 60, c.Int(cfgSamplingContinueThroughput), cfgSamplingContinueThroughput)
 			assert.Equal(t, 7000, c.Int(cfgStatCollectInterval), cfgStatCollectInterval)
 			assert.Equal(t, 10, c.Int(cfgStatBatchCount), cfgStatBatchCount)
-			assert.Equal(t, true, c.Bool(cfgRunOnContainer), cfgRunOnContainer)
+			assert.Equal(t, true, c.Bool(cfgIsContainerEnv), cfgIsContainerEnv)
 		})
 	}
 }
@@ -356,7 +356,7 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 	os.Setenv("PINPOINT_GO_STAT_COLLECTINTERVAL", "3000")
 	os.Setenv("PINPOINT_GO_STAT_BATCHCOUNT", "11")
 	os.Setenv("PINPOINT_GO_LOGLEVEL", "trace")
-	os.Setenv("PINPOINT_GO_RUNONCONTAINER", "false")
+	os.Setenv("PINPOINT_GO_ISCONTAINERENV", "false")
 	os.Setenv("PINPOINT_GO_CONFIGFILE", "example/pinpoint-config.yaml")
 
 	for _, tt := range tests {
@@ -377,7 +377,7 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 			assert.Equal(t, 200, c.Int(cfgSamplingContinueThroughput), cfgSamplingContinueThroughput)
 			assert.Equal(t, 3000, c.Int(cfgStatCollectInterval), cfgStatCollectInterval)
 			assert.Equal(t, 11, c.Int(cfgStatBatchCount), cfgStatBatchCount)
-			assert.Equal(t, false, c.Bool(cfgRunOnContainer), cfgRunOnContainer)
+			assert.Equal(t, false, c.Bool(cfgIsContainerEnv), cfgIsContainerEnv)
 			assert.Equal(t, "example/pinpoint-config.yaml", c.String(cfgConfigFile), cfgConfigFile)
 			assert.Equal(t, "dev", c.String(cfgUseProfile), cfgUseProfile)
 		})
@@ -426,7 +426,7 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 		"--pinpoint-stat-batchcount=5",
 		"--pinpoint-loglevel=error",
 		"-app-arg4",
-		"--pinpoint-runoncontainer",
+		"--pinpoint-iscontainerenv=true",
 		"--pinpoint-configfile=example/pinpoint-config.yaml",
 		"--pinpoint-useprofile=real",
 		"--app-arg5=5",
@@ -451,7 +451,7 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 			assert.Equal(t, 600, c.Int(cfgSamplingContinueThroughput), cfgSamplingContinueThroughput)
 			assert.Equal(t, 6000, c.Int(cfgStatCollectInterval), cfgStatCollectInterval)
 			assert.Equal(t, 5, c.Int(cfgStatBatchCount), cfgStatBatchCount)
-			assert.Equal(t, true, c.Bool(cfgRunOnContainer), cfgRunOnContainer)
+			assert.Equal(t, true, c.Bool(cfgIsContainerEnv), cfgIsContainerEnv)
 			assert.Equal(t, "example/pinpoint-config.yaml", c.String(cfgConfigFile), cfgConfigFile)
 			assert.Equal(t, "real", c.String(cfgUseProfile), cfgUseProfile)
 		})
