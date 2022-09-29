@@ -365,6 +365,7 @@ func waitUntilReady(grpcConn *grpc.ClientConn, timeout time.Duration, which stri
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	grpcConn.Connect()
 	state := grpcConn.GetState()
 	Log("grpc").Infof("wait %s connection ready - state: %s, timeout: %s", which, state.String(), timeout.String())
 
