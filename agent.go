@@ -184,7 +184,14 @@ func (agent *agent) Shutdown() {
 	close(agent.spanChan)
 	close(agent.metaChan)
 
+	//To terminate the listening state of the command stream,
+	//close the command grpc channel first
+	if agent.cmdGrpc != nil {
+		agent.cmdGrpc.close()
+	}
+
 	agent.wg.Wait()
+
 	if agent.agentGrpc != nil {
 		agent.agentGrpc.close()
 	}
@@ -193,9 +200,6 @@ func (agent *agent) Shutdown() {
 	}
 	if agent.statGrpc != nil {
 		agent.statGrpc.close()
-	}
-	if agent.cmdGrpc != nil {
-		agent.cmdGrpc.close()
 	}
 }
 
