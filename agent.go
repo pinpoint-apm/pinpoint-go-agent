@@ -400,7 +400,7 @@ func (agent *agent) cacheError(errorName string) int32 {
 		return 0
 	}
 
-	if v, ok := agent.errorCache.Get(errorName); ok {
+	if v, ok := agent.errorCache.Peek(errorName); ok {
 		return v.(int32)
 	}
 
@@ -421,7 +421,7 @@ func (agent *agent) cacheSql(sql string) int32 {
 		return 0
 	}
 
-	if v, ok := agent.sqlCache.Get(sql); ok {
+	if v, ok := agent.sqlCache.Peek(sql); ok {
 		return v.(int32)
 	}
 
@@ -444,7 +444,7 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 
 	key := descriptor + "_" + strconv.Itoa(apiType)
 
-	if v, ok := agent.apiCache.Get(key); ok {
+	if v, ok := agent.apiCache.Peek(key); ok {
 		return v.(int32)
 	}
 
