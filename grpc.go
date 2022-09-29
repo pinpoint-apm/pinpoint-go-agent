@@ -94,6 +94,9 @@ func (metaGrpcClient *metaGrpcClient) RequestStringMetaData(ctx context.Context,
 	return result, err
 }
 
+const agentGrpcTimeOut = 60 * time.Second
+const sendStreamTimeOut = 5 * time.Second
+
 type agentGrpc struct {
 	agentConn      *grpc.ClientConn
 	agentClient    AgentGrpcClient
@@ -150,7 +153,10 @@ func getHostName() string {
 }
 
 func getOutboundIP() string {
-	conn, _ := net.Dial("udp", "8.8.8.8:80")
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return ""
+	}
 	defer conn.Close()
 
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
@@ -201,7 +207,7 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 }
 
 func (agentGrpc *agentGrpc) sendAgentInfo(ctx context.Context, agentInfo *pb.PAgentInfo) (*pb.PResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, agentGrpcTimeOut)
 	defer cancel()
 
 	result, err := agentGrpc.agentClient.RequestAgentInfo(ctx, agentInfo)
@@ -230,12 +236,15 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 				break
 			}
 		}
+		if agentInfo.Ip == "" {
+			agentInfo.Ip = getOutboundIP()
+		}
 	}
 	return false
 }
 
 func (agentGrpc *agentGrpc) sendApiMetadata(ctx context.Context, in *pb.PApiMetaData) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, agentGrpcTimeOut)
 	defer cancel()
 
 	_, err := agentGrpc.metadataClient.RequestApiMetaData(ctx, in)
@@ -272,7 +281,7 @@ func (agentGrpc *agentGrpc) sendApiMetadataWithRetry(apiId int32, api string, li
 }
 
 func (agentGrpc *agentGrpc) sendStringMetadata(ctx context.Context, in *pb.PStringMetaData) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, agentGrpcTimeOut)
 	defer cancel()
 
 	_, err := agentGrpc.metadataClient.RequestStringMetaData(ctx, in)
@@ -307,7 +316,7 @@ func (agentGrpc *agentGrpc) sendStringMetadataWithRetry(strId int32, str string)
 }
 
 func (agentGrpc *agentGrpc) sendSqlMetadata(ctx context.Context, in *pb.PSqlMetaData) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, agentGrpcTimeOut)
 	defer cancel()
 
 	_, err := agentGrpc.metadataClient.RequestSqlMetaData(ctx, in)
@@ -429,7 +438,7 @@ func (s *pingStream) sendPing() error {
 	if s.stream == nil {
 		return status.Errorf(codes.Unavailable, "ping stream is nil")
 	}
-	return sendStreamWithTimeout(func() error { return s.stream.Send(&ping) }, 5*time.Second)
+	return sendStreamWithTimeout(func() error { return s.stream.Send(&ping) }, sendStreamTimeOut)
 }
 
 func (s *pingStream) close() {
@@ -530,7 +539,7 @@ func (s *spanStream) sendSpan(span *span) error {
 	}
 
 	Log("grpc").Debugf("PSpanMessage: %s", gspan.String())
-	return sendStreamWithTimeout(func() error { return s.stream.Send(gspan) }, 5*time.Second)
+	return sendStreamWithTimeout(func() error { return s.stream.Send(gspan) }, sendStreamTimeOut)
 }
 
 func makePSpan(span *span) *pb.PSpanMessage {
@@ -757,7 +766,7 @@ func (s *statStream) sendStats(stats []*inspectorStats) error {
 	gstats.GetAgentStatBatch().AgentStat = as
 
 	Log("grpc").Debugf("PStatMessage: %s", gstats.String())
-	return sendStreamWithTimeout(func() error { return s.stream.Send(gstats) }, 5*time.Second)
+	return sendStreamWithTimeout(func() error { return s.stream.Send(gstats) }, sendStreamTimeOut)
 }
 
 func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
@@ -888,7 +897,7 @@ func (s *cmdStream) sendCommandMessage() error {
 	}
 
 	Log("grpc").Debugf("PCmdMessage: %s", gCmd.String())
-	return sendStreamWithTimeout(func() error { return s.stream.Send(gCmd) }, 5*time.Second)
+	return sendStreamWithTimeout(func() error { return s.stream.Send(gCmd) }, sendStreamTimeOut)
 }
 
 func (s *cmdStream) recvCommandRequest() (*pb.PCmdRequest, error) {
@@ -955,7 +964,7 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 	}
 
 	Log("grpc").Debugf("PCmdActiveThreadCountRes: %s", gRes.String())
-	return sendStreamWithTimeout(func() error { return s.stream.Send(gRes) }, 5*time.Second)
+	return sendStreamWithTimeout(func() error { return s.stream.Send(gRes) }, sendStreamTimeOut)
 }
 
 func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadName []string, localId []int64, dump *GoroutineDump) {
