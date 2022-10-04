@@ -23,15 +23,25 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+const (
+	headerAppName   = "applicationname"
+	headerAgentID   = "agentid"
+	headerAgentName = "agentname"
+	headerStartTime = "starttime"
+	headerSocketID  = "socketid"
+)
+
 func grpcMetadataContext(agent *agent, socketId int64) context.Context {
 	m := map[string]string{}
 
-	m["agentid"] = agent.agentID
-	m["applicationname"] = agent.appName
-	m["starttime"] = strconv.FormatInt(agent.startTime, 10)
-
+	m[headerAppName] = agent.appName
+	m[headerAgentID] = agent.agentID
+	m[headerStartTime] = strconv.FormatInt(agent.startTime, 10)
+	if agent.agentName != "" {
+		m[headerAgentName] = agent.agentName
+	}
 	if socketId > 0 {
-		m["socketid"] = strconv.FormatInt(socketId, 10)
+		m[headerSocketID] = strconv.FormatInt(socketId, 10)
 	}
 
 	md := metadata.New(m)

@@ -110,6 +110,7 @@ const (
 
 	MaxApplicationNameLength = 24
 	MaxAgentIdLength         = 24
+	MaxAgentNameLength       = 255
 	SamplingTypeCounter      = "COUNTER"
 	SamplingTypePercent      = "PERCENT"
 	SmaplingMaxPercentRate   = 100 * 100

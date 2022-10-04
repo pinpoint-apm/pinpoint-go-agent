@@ -36,9 +36,10 @@ func Log(src string) *logrus.Entry {
 }
 
 type agent struct {
-	appName string
-	appType int32
-	agentID string
+	appName   string
+	appType   int32
+	agentID   string
+	agentName string
 
 	startTime int64
 	sequence  int64
@@ -102,6 +103,7 @@ func NewAgent(config *Config) (Agent, error) {
 		appName:   config.String(cfgAppName),
 		appType:   int32(config.Int(cfgAppType)),
 		agentID:   config.String(cfgAgentID),
+		agentName: config.String(cfgAgentName),
 		offGrpc:   config.offGrpc,
 		startTime: time.Now().UnixNano() / int64(time.Millisecond),
 		spanChan:  make(chan *span, 5*1024),

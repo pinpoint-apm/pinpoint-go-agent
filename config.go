@@ -20,6 +20,7 @@ const (
 	cfgAppName                    = "ApplicationName"
 	cfgAppType                    = "ApplicationType"
 	cfgAgentID                    = "AgentID"
+	cfgAgentName                  = "AgentName"
 	cfgCollectorHost              = "Collector.Host"
 	cfgCollectorAgentPort         = "Collector.AgentPort"
 	cfgCollectorSpanPort          = "Collector.SpanPort"
@@ -69,6 +70,7 @@ func initConfig() {
 	AddConfig(cfgAppName, CfgString, "")
 	AddConfig(cfgAppType, CfgInt, ServiceTypeGoApp)
 	AddConfig(cfgAgentID, CfgString, "")
+	AddConfig(cfgAgentName, CfgString, "")
 	AddConfig(cfgCollectorHost, CfgString, "localhost")
 	AddConfig(cfgCollectorAgentPort, CfgInt, 9991)
 	AddConfig(cfgCollectorSpanPort, CfgInt, 9993)
@@ -203,6 +205,15 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	if agentId == "" || len(agentId) > MaxAgentIdLength || !r.MatchString(agentId) {
 		config.cfgMap[cfgAgentID].value = randomString(MaxAgentIdLength - 1)
 		Log("config").Infof("auto-generated AgentID: %v", config.cfgMap[cfgAgentID].value)
+	}
+
+	agentName := config.String(cfgAgentName)
+	if agentName != "" {
+		if len(agentName) > MaxAgentNameLength {
+			return nil, errors.New("agent name is too long (max length: " + fmt.Sprint(MaxAgentNameLength) + ")")
+		} else if !r.MatchString(agentName) {
+			return nil, errors.New("agent name has invalid pattern (" + cfgIdPattern + ")")
+		}
 	}
 
 	sampleType := config.String(cfgSamplingType)
@@ -403,6 +414,12 @@ func WithAppType(typ int32) ConfigOption {
 func WithAgentId(id string) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgAgentID].value = id
+	}
+}
+
+func WithAgentName(name string) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[cfgAgentName].value = name
 	}
 }
 

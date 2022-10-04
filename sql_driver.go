@@ -112,13 +112,14 @@ type sqlConn struct {
 }
 
 func newSqlConn(conn driver.Conn, dbInfo DBInfo) *sqlConn {
+	cfg := GetConfig()
 	return &sqlConn{
 		Conn:             conn,
 		dbInfo:           dbInfo,
-		traceBindValue:   GetConfig().Bool(cfgSQLTraceBindValue),
-		maxBindValueSize: GetConfig().Int(cfgSQLMaxBindValueSize),
-		traceCommit:      GetConfig().Bool(cfgSQLTraceCommit),
-		traceRollback:    GetConfig().Bool(cfgSQLTraceRollback),
+		traceBindValue:   cfg.Bool(cfgSQLTraceBindValue),
+		maxBindValueSize: cfg.Int(cfgSQLMaxBindValueSize),
+		traceCommit:      cfg.Bool(cfgSQLTraceCommit),
+		traceRollback:    cfg.Bool(cfgSQLTraceRollback),
 	}
 }
 

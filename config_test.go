@@ -26,6 +26,8 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			c, _ := NewConfig(tt.args.opts...)
 			assert.Equal(t, "TestApp", c.String(cfgAppName), cfgAppName)
 			assert.Equal(t, ServiceTypeGoApp, c.Int(cfgAppType), cfgAppType)
+			assert.NotEmpty(t, c.String(cfgAgentID), cfgAgentID)
+			assert.Empty(t, c.String(cfgAgentName), cfgAgentName)
 			assert.Equal(t, "localhost", c.String(cfgCollectorHost), cfgCollectorHost)
 			assert.Equal(t, 9991, c.Int(cfgCollectorAgentPort), cfgCollectorAgentPort)
 			assert.Equal(t, 9993, c.Int(cfgCollectorSpanPort), cfgCollectorSpanPort)
@@ -39,8 +41,8 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, 5000, c.Int(cfgStatCollectInterval), cfgStatCollectInterval)
 			assert.Equal(t, 6, c.Int(cfgStatBatchCount), cfgStatBatchCount)
 			assert.Equal(t, false, c.Bool(cfgIsContainerEnv), cfgIsContainerEnv)
-			assert.Equal(t, "", c.String(cfgConfigFile), cfgConfigFile)
-			assert.Equal(t, "", c.String(cfgUseProfile), cfgUseProfile)
+			assert.Empty(t, c.String(cfgConfigFile), cfgConfigFile)
+			assert.Empty(t, c.String(cfgUseProfile), cfgUseProfile)
 			assert.Equal(t, true, c.Bool(cfgSQLTraceBindValue), cfgSQLTraceBindValue)
 			assert.Equal(t, 1024, c.Int(cfgSQLMaxBindValueSize), cfgSQLMaxBindValueSize)
 			assert.Equal(t, true, c.Bool(cfgSQLTraceCommit), cfgSQLTraceCommit)
@@ -58,6 +60,7 @@ func TestNewConfig_WithFunc(t *testing.T) {
 		WithAppName("TestApp"),
 		WithAppType(1234),
 		WithAgentId("TestAgent"),
+		WithAgentName("TestAgentName"),
 		WithCollectorHost("func.collector.host"),
 		WithCollectorAgentPort(7777),
 		WithCollectorSpanPort(8888),
@@ -89,6 +92,7 @@ func TestNewConfig_WithFunc(t *testing.T) {
 			assert.Equal(t, "TestApp", c.String(cfgAppName), cfgAppName)
 			assert.Equal(t, 1234, c.Int(cfgAppType), cfgAppType)
 			assert.Equal(t, "TestAgent", c.String(cfgAgentID), cfgAgentID)
+			assert.Equal(t, "TestAgentName", c.String(cfgAgentName), cfgAgentName)
 			assert.Equal(t, "func.collector.host", c.String(cfgCollectorHost), cfgCollectorHost)
 			assert.Equal(t, 7777, c.Int(cfgCollectorAgentPort), cfgCollectorAgentPort)
 			assert.Equal(t, 8888, c.Int(cfgCollectorSpanPort), cfgCollectorSpanPort)
@@ -344,6 +348,7 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 	os.Setenv("PINPOINT_GO_APPLICATIONNAME", "EnvVarArgTest")
 	os.Setenv("PINPOINT_GO_APPLICATIONTYPE", "2000")
 	os.Setenv("PINPOINT_GO_AGENTID", "envagentid")
+	os.Setenv("PINPOINT_GO_AGENTNAME", "envagentname")
 	os.Setenv("PINPOINT_GO_COLLECTOR_HOST", "env.collector.host")
 	os.Setenv("PINPOINT_GO_COLLECTOR_AGENTPORT", "8000")
 	os.Setenv("PINPOINT_GO_COLLECTOR_SPANPORT", "8100")
@@ -365,6 +370,7 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 			assert.Equal(t, "EnvVarArgTest", c.String(cfgAppName), cfgAppName)
 			assert.Equal(t, 2000, c.Int(cfgAppType), cfgAppType)
 			assert.Equal(t, "envagentid", c.String(cfgAgentID), cfgAgentID)
+			assert.Equal(t, "envagentname", c.String(cfgAgentName), cfgAgentName)
 			assert.Equal(t, "env.collector.host", c.String(cfgCollectorHost), cfgCollectorHost)
 			assert.Equal(t, 8000, c.Int(cfgCollectorAgentPort), cfgCollectorAgentPort)
 			assert.Equal(t, 8100, c.Int(cfgCollectorSpanPort), cfgCollectorSpanPort)
@@ -412,6 +418,7 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 		"--pinpoint-applicationname=CmdLineArgTest",
 		"--pinpoint-applicationtype=2100",
 		"--pinpoint-agentid=cmdAgentID",
+		"--pinpoint-agentname=cmdAgentName",
 		"-app-arg3",
 		"--pinpoint-collector-host=cmd.collector.host",
 		"--pinpoint-collector-agentport=7000",
@@ -439,6 +446,7 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 			assert.Equal(t, "CmdLineArgTest", c.String(cfgAppName), cfgAppName)
 			assert.Equal(t, 2100, c.Int(cfgAppType), cfgAppType)
 			assert.Equal(t, "cmdAgentID", c.String(cfgAgentID), cfgAgentID)
+			assert.Equal(t, "cmdAgentName", c.String(cfgAgentName), cfgAgentName)
 			assert.Equal(t, "cmd.collector.host", c.String(cfgCollectorHost), cfgCollectorHost)
 			assert.Equal(t, 7000, c.Int(cfgCollectorAgentPort), cfgCollectorAgentPort)
 			assert.Equal(t, 7100, c.Int(cfgCollectorSpanPort), cfgCollectorSpanPort)
