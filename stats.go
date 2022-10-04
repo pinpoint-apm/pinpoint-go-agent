@@ -5,6 +5,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -95,9 +96,6 @@ func getNumThreads() int32 {
 }
 
 func getStats() *inspectorStats {
-	statsMux.Lock()
-	defer statsMux.Unlock()
-
 	now := time.Now()
 	cpuStat := getCpuUsage()
 	numFd := getNumFD()
@@ -121,12 +119,12 @@ func getStats() *inspectorStats {
 		numThreads:   int64(getNumThreads()),
 		responseAvg:  calcResponseAvg(),
 		responseMax:  maxResponseTime,
-		sampleNew:    sampleNew / int64(elapsed),
-		sampleCont:   sampleCont / int64(elapsed),
-		unSampleNew:  unSampleNew / int64(elapsed),
-		unSampleCont: unSampleCont / int64(elapsed),
-		skipNew:      skipNew / int64(elapsed),
-		skipCont:     skipCont / int64(elapsed),
+		sampleNew:    sampleNew,
+		sampleCont:   sampleCont,
+		unSampleNew:  unSampleNew,
+		unSampleCont: unSampleCont,
+		skipNew:      skipNew,
+		skipCont:     skipCont,
 		activeSpan:   activeSpanCount(now),
 	}
 
@@ -224,27 +222,24 @@ func (agent *agent) sendStatsWorker(config *Config) {
 }
 
 func collectResponseTime(resTime int64) {
-	statsMux.Lock()
-	defer statsMux.Unlock()
+	atomic.AddInt64(&accResponseTime, resTime)
+	atomic.AddInt64(&requestCount, 1)
 
-	accResponseTime += resTime
-	requestCount++
-
-	if maxResponseTime < resTime {
-		maxResponseTime = resTime
+	if atomic.LoadInt64(&maxResponseTime) < resTime {
+		atomic.StoreInt64(&maxResponseTime, resTime)
 	}
 }
 
 func resetResponseTime() {
-	accResponseTime = 0
-	requestCount = 0
-	maxResponseTime = 0
-	sampleNew = 0
-	unSampleNew = 0
-	sampleCont = 0
-	unSampleCont = 0
-	skipNew = 0
-	skipCont = 0
+	atomic.StoreInt64(&accResponseTime, 0)
+	atomic.StoreInt64(&requestCount, 0)
+	atomic.StoreInt64(&maxResponseTime, 0)
+	atomic.StoreInt64(&sampleNew, 0)
+	atomic.StoreInt64(&unSampleNew, 0)
+	atomic.StoreInt64(&sampleCont, 0)
+	atomic.StoreInt64(&unSampleCont, 0)
+	atomic.StoreInt64(&skipNew, 0)
+	atomic.StoreInt64(&skipCont, 0)
 }
 
 func addSampledActiveSpan(span *span) {
@@ -268,20 +263,20 @@ func dropUnSampledActiveSpan(span *noopSpan) {
 }
 
 func incrSampleNew() {
-	sampleNew++
+	atomic.AddInt64(&sampleNew, 1)
 }
 func incrUnSampleNew() {
-	unSampleNew++
+	atomic.AddInt64(&unSampleNew, 1)
 }
 func incrSampleCont() {
-	sampleCont++
+	atomic.AddInt64(&sampleCont, 1)
 }
 func incrUnSampleCont() {
-	unSampleCont++
+	atomic.AddInt64(&unSampleCont, 1)
 }
 func incrSkipNew() {
-	skipNew++
+	atomic.AddInt64(&skipNew, 1)
 }
 func incrSkipCont() {
-	skipCont++
+	atomic.AddInt64(&skipCont, 1)
 }

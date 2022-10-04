@@ -15,9 +15,12 @@ type rateSampler struct {
 	counter      uint64
 }
 
-func newRateSampler(r int) *rateSampler {
+func newRateSampler(rate int) *rateSampler {
+	if rate < 0 {
+		rate = 0
+	}
 	return &rateSampler{
-		samplingRate: (uint64)(r),
+		samplingRate: (uint64)(rate),
 		counter:      0,
 	}
 }
@@ -37,9 +40,17 @@ type percentSampler struct {
 	counter      uint64
 }
 
-func newPercentSampler(r float64) *percentSampler {
+func newPercentSampler(percent float64) *percentSampler {
+	if percent < 0 {
+		percent = 0
+	} else if percent < 0.01 {
+		percent = 0.01
+	} else if percent > 100 {
+		percent = 100
+	}
+
 	return &percentSampler{
-		samplingRate: (uint64)(r * 100),
+		samplingRate: (uint64)(percent * 100),
 		counter:      0,
 	}
 }
@@ -91,15 +102,26 @@ func (s *basicTraceSampler) isContinueSampled() bool {
 
 type throughputLimitTraceSampler struct {
 	baseSampler           sampler
-	newSamplelimiter      *rate.Limiter
-	continueSamplelimiter *rate.Limiter
+	newSampleLimiter      *rate.Limiter
+	continueSampleLimiter *rate.Limiter
 }
 
 func newThroughputLimitTraceSampler(base sampler, newTps int, continueTps int) *throughputLimitTraceSampler {
+	var (
+		newLimiter  *rate.Limiter
+		contLimiter *rate.Limiter
+	)
+
+	if newTps > 0 {
+		newLimiter = rate.NewLimiter(per(newTps, time.Second), 1)
+	}
+	if continueTps > 0 {
+		contLimiter = rate.NewLimiter(per(continueTps, time.Second), 1)
+	}
 	return &throughputLimitTraceSampler{
 		baseSampler:           base,
-		newSamplelimiter:      rate.NewLimiter(per(newTps, time.Second), 1),
-		continueSamplelimiter: rate.NewLimiter(per(continueTps, time.Second), 1),
+		newSampleLimiter:      newLimiter,
+		continueSampleLimiter: contLimiter,
 	}
 }
 
@@ -110,11 +132,15 @@ func per(throughput int, d time.Duration) rate.Limit {
 func (s *throughputLimitTraceSampler) isNewSampled() bool {
 	sampled := s.baseSampler.isSampled()
 	if sampled {
-		sampled = s.newSamplelimiter.Allow()
-		if sampled {
-			incrSampleNew()
+		if s.newSampleLimiter != nil {
+			sampled = s.newSampleLimiter.Allow()
+			if sampled {
+				incrSampleNew()
+			} else {
+				incrSkipNew()
+			}
 		} else {
-			incrSkipNew()
+			incrSampleNew()
 		}
 	} else {
 		incrUnSampleNew()
@@ -126,11 +152,15 @@ func (s *throughputLimitTraceSampler) isNewSampled() bool {
 func (s *throughputLimitTraceSampler) isContinueSampled() bool {
 	sampled := s.baseSampler.isSampled()
 	if sampled {
-		sampled = s.continueSamplelimiter.Allow()
-		if sampled {
-			incrSampleCont()
+		if s.continueSampleLimiter != nil {
+			sampled = s.continueSampleLimiter.Allow()
+			if sampled {
+				incrSampleCont()
+			} else {
+				incrSkipCont()
+			}
 		} else {
-			incrSkipCont()
+			incrSampleCont()
 		}
 	} else {
 		incrUnSampleCont()

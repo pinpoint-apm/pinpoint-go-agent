@@ -92,6 +92,7 @@ func initConfig() {
 	AddConfig(cfgSQLTraceRollback, CfgBool, true)
 }
 
+// AddConfig adds a configuration item.
 func AddConfig(cfgName string, valueType int, defaultValue interface{}) {
 	cfgBaseMap[cfgName] = &cfgMapItem{
 		defaultValue: defaultValue,
@@ -109,24 +110,29 @@ func envName(cfgName string) string {
 	return strings.ReplaceAll(strings.ToLower(cfgName), ".", "_")
 }
 
+// Config holds agent configuration, for passing to NewAgent.
 type Config struct {
 	cfgMap         map[string]*cfgMapItem
 	containerCheck bool
 	offGrpc        bool //for test
 }
 
+// ConfigOption represents an option that can be passed to NewConfig.
 type ConfigOption func(*Config)
 
+// GetConfig returns a global Config created by NewConfig.
 func GetConfig() *Config {
 	return globalConfig
 }
 
+// Set stores the specified configuration item value.
 func (config *Config) Set(cfgName string, value interface{}) {
 	if v, ok := config.cfgMap[cfgName]; ok {
 		v.value = value
 	}
 }
 
+// Int returns an integer value for the specified configuration item.
 func (config *Config) Int(cfgName string) int {
 	if v, ok := config.cfgMap[cfgName]; ok {
 		return cast.ToInt(v.value)
@@ -134,6 +140,7 @@ func (config *Config) Int(cfgName string) int {
 	return 0
 }
 
+// Float returns a float value for the specified configuration item.
 func (config *Config) Float(cfgName string) float64 {
 	if v, ok := config.cfgMap[cfgName]; ok {
 		return cast.ToFloat64(v.value)
@@ -141,6 +148,7 @@ func (config *Config) Float(cfgName string) float64 {
 	return 0
 }
 
+// String returns a string value for the specified configuration item.
 func (config *Config) String(cfgName string) string {
 	if v, ok := config.cfgMap[cfgName]; ok {
 		return cast.ToString(v.value)
@@ -148,6 +156,7 @@ func (config *Config) String(cfgName string) string {
 	return ""
 }
 
+// StringSlice returns a string slice value for the specified configuration item.
 func (config *Config) StringSlice(cfgName string) []string {
 	if v, ok := config.cfgMap[cfgName]; ok {
 		return cast.ToStringSlice(v.value)
@@ -155,6 +164,7 @@ func (config *Config) StringSlice(cfgName string) []string {
 	return []string{}
 }
 
+// Bool returns a boolean value for the specified configuration item.
 func (config *Config) Bool(cfgName string) bool {
 	if v, ok := config.cfgMap[cfgName]; ok {
 		return cast.ToBool(v.value)
@@ -162,6 +172,9 @@ func (config *Config) Bool(cfgName string) bool {
 	return false
 }
 
+// NewConfig creates a Config populated with default settings, command line arguments,
+// environment variables and the given config options.
+// The generated Config is maintained globally.
 func NewConfig(opts ...ConfigOption) (*Config, error) {
 	config := defaultConfig()
 
@@ -216,26 +229,10 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		}
 	}
 
-	sampleType := config.String(cfgSamplingType)
-	sampleType = strings.ToUpper(strings.TrimSpace(sampleType))
-	if sampleType == SamplingTypeCounter {
-		rate := config.Int(cfgSamplingCounterRate)
-		if rate < 0 {
-			config.cfgMap[cfgSamplingCounterRate].value = 0
-		}
-	} else if sampleType == SamplingTypePercent {
-		rate := config.Float(cfgSamplingPercentRate)
-		if rate < 0 {
-			rate = 0
-		} else if rate < 0.01 {
-			rate = 0.01
-		} else if rate > 100 {
-			rate = 100
-		}
-		config.cfgMap[cfgSamplingPercentRate].value = rate
-	} else {
+	sampleType := strings.ToUpper(strings.TrimSpace(config.String(cfgSamplingType)))
+	if sampleType != SamplingTypeCounter && sampleType != SamplingTypePercent {
 		config.cfgMap[cfgSamplingType].value = SamplingTypeCounter
-		config.cfgMap[cfgSamplingCounterRate].value = 1
+		config.cfgMap[cfgSamplingCounterRate].value = 0
 	}
 
 	if config.containerCheck {
@@ -399,66 +396,78 @@ func parseLogLevel(level string) logrus.Level {
 	return lvl
 }
 
+// WithAppName sets the application name.
 func WithAppName(name string) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgAppName].value = name
 	}
 }
 
+// WithAppType sets the application type.
 func WithAppType(typ int32) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgAppType].value = typ
 	}
 }
 
+// WithAgentId sets the agent ID.
 func WithAgentId(id string) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgAgentID].value = id
 	}
 }
 
+// WithAgentName sets the agent name.
 func WithAgentName(name string) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgAgentName].value = name
 	}
 }
 
+// WithConfigFile sets the configuration file.
 func WithConfigFile(filePath string) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgConfigFile].value = filePath
 	}
 }
 
+// WithCollectorHost sets the host address of pinpoint collector.
 func WithCollectorHost(host string) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgCollectorHost].value = host
 	}
 }
 
+// WithCollectorAgentPort sets the agent port of pinpoint collector.
 func WithCollectorAgentPort(port int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgCollectorAgentPort].value = port
 	}
 }
 
+// WithCollectorSpanPort sets the span port of pinpoint collector.
 func WithCollectorSpanPort(port int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgCollectorSpanPort].value = port
 	}
 }
 
+// WithCollectorStatPort sets the agent stat of pinpoint collector.
 func WithCollectorStatPort(port int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgCollectorStatPort].value = port
 	}
 }
 
+// WithLogLevel sets the logging level for agent logger.
 func WithLogLevel(level string) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgLogLevel].value = level
 	}
 }
 
+// WithSamplingType sets the type of agent sampler.
+// Either "COUNTER" or "PERCENT" must be specified.
 func WithSamplingType(samplingType string) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgSamplingType].value = samplingType
@@ -472,42 +481,50 @@ func WithSamplingRate(rate int) ConfigOption {
 	}
 }
 
+// WithSamplingCounterRate sets the sampling rate for a 'counter sampler'.
 func WithSamplingCounterRate(rate int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgSamplingCounterRate].value = rate
 	}
 }
 
+// WithSamplingPercentRate sets the sampling rate for a 'percent sampler'.
 func WithSamplingPercentRate(rate float32) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgSamplingPercentRate].value = rate
 	}
 }
 
+// WithSamplingNewThroughput sets the new tps for a 'throughput sampler'.
 func WithSamplingNewThroughput(tps int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgSamplingNewThroughput].value = tps
 	}
 }
 
+// WithSamplingContinueThroughput sets the cont tps for a 'throughput sampler'.
 func WithSamplingContinueThroughput(tps int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgSamplingContinueThroughput].value = tps
 	}
 }
 
+// WithStatCollectInterval sets the statistics collection cycle for the agent.
 func WithStatCollectInterval(interval int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgStatCollectInterval].value = interval
 	}
 }
 
+// WithStatBatchCount sets batch delivery units for collected statistics.
 func WithStatBatchCount(count int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgStatBatchCount].value = count
 	}
 }
 
+// WithIsContainerEnv sets whether the application is running in a container environment or not.
+// If this is not set, the agent automatically checks it.
 func WithIsContainerEnv(isContainer bool) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgIsContainerEnv].value = isContainer
@@ -515,30 +532,35 @@ func WithIsContainerEnv(isContainer bool) ConfigOption {
 	}
 }
 
+// WithUseProfile sets the configuration profile.
 func WithUseProfile(profile string) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgUseProfile].value = profile
 	}
 }
 
+// WithSQLTraceBindValue enables bind value tracing for SQL Driver.
 func WithSQLTraceBindValue(trace bool) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgSQLTraceBindValue].value = trace
 	}
 }
 
+// WithSQLMaxBindValueSize sets the max length of traced bind value for SQL Driver.
 func WithSQLMaxBindValueSize(size int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgSQLMaxBindValueSize].value = size
 	}
 }
 
+// WithSQLTraceCommit enables commit tracing for SQL Driver.
 func WithSQLTraceCommit(trace bool) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgSQLTraceCommit].value = trace
 	}
 }
 
+// WithSQLTraceRollback enables rollback tracing for SQL Driver.
 func WithSQLTraceRollback(trace bool) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[cfgSQLTraceRollback].value = trace
