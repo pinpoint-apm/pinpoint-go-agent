@@ -84,10 +84,13 @@ const cacheSize = 1024
 
 var globalAgent Agent
 
+// GetAgent returns a global Agent created by NewAgent.
 func GetAgent() Agent {
 	return globalAgent
 }
 
+// NewAgent creates an Agent and spawns goroutines that manage spans and statistical data.
+// The generated Agent is maintained globally.
 func NewAgent(config *Config) (Agent, error) {
 	if config == nil {
 		return NoopAgent(), errors.New("configuration is missing")
@@ -172,6 +175,9 @@ func connectGrpc(agent *agent, config *Config) {
 	agent.wg.Add(5)
 }
 
+// Shutdown stops all related goroutines managing this agent.
+// After Shutdown is called, The agent will never collect tracing data again.
+// This method blocks until all goroutines are finished.
 func (agent *agent) Shutdown() {
 	agent.shutdown = true
 	Log("agent").Info("shutdown pinpoint agent")
@@ -205,6 +211,8 @@ func (agent *agent) Shutdown() {
 	}
 }
 
+// NewSpanTracer returns a span Tracer indicating the start of a transaction.
+// A span is generated according to a given sampling policy, and trace data is not collected if not sampled.
 func (agent *agent) NewSpanTracer(operation string, rpcName string) Tracer {
 	var tracer Tracer
 
@@ -217,16 +225,9 @@ func (agent *agent) NewSpanTracer(operation string, rpcName string) Tracer {
 	return tracer
 }
 
-func (agent *agent) samplingSpan(samplingFunc func() bool, operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
-	if samplingFunc() {
-		tracer := newSampledSpan(agent, operation, rpcName)
-		tracer.Extract(reader)
-		return tracer
-	} else {
-		return newUnSampledSpan(rpcName)
-	}
-}
-
+// NewSpanTracerWithReader returns a span Tracer that continues a transaction passed from the previous node.
+// A span is generated according to a given sampling policy, and trace data is not collected if not sampled.
+// Distributed tracing headers are extracted from the reader. If it is nil, new transaction is started.
 func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
 	if !agent.enable {
 		return NoopTracer()
@@ -246,11 +247,22 @@ func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string, re
 	}
 }
 
+func (agent *agent) samplingSpan(samplingFunc func() bool, operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
+	if samplingFunc() {
+		tracer := newSampledSpan(agent, operation, rpcName)
+		tracer.Extract(reader)
+		return tracer
+	} else {
+		return newUnSampledSpan(rpcName)
+	}
+}
+
 func (agent *agent) generateTransactionId() TransactionId {
 	atomic.AddInt64(&agent.sequence, 1)
 	return TransactionId{agent.agentID, agent.startTime, agent.sequence}
 }
 
+// Enable returns whether the agent is in an operational state.
 func (agent *agent) Enable() bool {
 	return agent.enable
 }

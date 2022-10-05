@@ -70,7 +70,6 @@ func (span *noopSpan) NewSpanEvent(operationName string) Tracer {
 	return span
 }
 
-// Deprecated
 func (span *noopSpan) NewAsyncSpan() Tracer {
 	return &noopSpan{}
 }

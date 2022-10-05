@@ -175,6 +175,15 @@ func (config *Config) Bool(cfgName string) bool {
 // NewConfig creates a Config populated with default settings, command line arguments,
 // environment variables and the given config options.
 // The generated Config is maintained globally.
+// Config uses the following precedence order. Each item takes precedence over the item below it:
+//
+// 1. command line flag
+// 2. environment variable
+// 3. configuration file
+// 4. ConfigOption
+// 5. default
+//
+// configuration keys used in config files are case-insensitive.
 func NewConfig(opts ...ConfigOption) (*Config, error) {
 	config := defaultConfig()
 

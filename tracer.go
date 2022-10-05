@@ -6,16 +6,15 @@ import (
 	"time"
 )
 
-type TransactionId struct {
-	AgentId   string
-	StartTime int64
-	Sequence  int64
-}
-
-func (tid TransactionId) String() string {
-	return fmt.Sprintf("%s^%d^%d", tid.AgentId, tid.StartTime, tid.Sequence)
-}
-
+// Agent instruments a application and makes spans and manages it.
+// In Pinpoint, a transaction consists of a group of Spans.
+// Each span represents a trace of a single logical node where the transaction has gone through.
+// A span records important function invocations and their related data(arguments, return value, etc.)
+// before encapsulating them as SpanEvents in a call stack like representation.
+// The span itself and each of its SpanEvents represents a function invocation.
+// Find out more about the concept of Pinpoint at the links below.
+// https://pinpoint-apm.gitbook.io/pinpoint/documents/plugin-dev-guide
+// https://pinpoint-apm.gitbook.io/pinpoint/want-a-quick-tour/techdetail
 type Agent interface {
 	NewSpanTracer(operation string, rpcName string) Tracer
 	NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer
@@ -23,12 +22,7 @@ type Agent interface {
 	Shutdown()
 }
 
-// Tracer instruments a single call stack of applications and makes the result a single span and manages it.
-// In Pinpoint, a transaction consists of a group of Spans. Each span represents a trace of a single logical node
-// where the transaction has gone through.
-// A span records important method invocations and their related data(arguments, return value, etc.)
-// before encapsulating them as SpanEvents in a call stack like representation.
-// The span itself and each of its SpanEvents represents a method invocation.
+// Tracer instruments a single call stack of application and makes the result a single span.
 type Tracer interface {
 	// NewSpanEvent returns a span event.
 	NewSpanEvent(operationName string) Tracer
@@ -49,7 +43,10 @@ type Tracer interface {
 	// EndSpanEvent completes the span event.
 	EndSpanEvent()
 
+	// Inject injects distributed tracing headers to the writer.
 	Inject(writer DistributedTracingContextWriter)
+
+	// Extract extracts distributed tracing headers from the reader.
 	Extract(reader DistributedTracingContextReader)
 
 	// TransactionId returns the ID of the transaction containing the span.
@@ -103,6 +100,16 @@ type DistributedTracingContextReader interface {
 
 type DistributedTracingContextWriter interface {
 	Set(key string, value string)
+}
+
+type TransactionId struct {
+	AgentId   string
+	StartTime int64
+	Sequence  int64
+}
+
+func (tid TransactionId) String() string {
+	return fmt.Sprintf("%s^%d^%d", tid.AgentId, tid.StartTime, tid.Sequence)
 }
 
 const (
