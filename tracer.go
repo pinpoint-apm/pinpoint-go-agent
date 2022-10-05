@@ -23,23 +23,45 @@ type Agent interface {
 	Shutdown()
 }
 
+// Tracer instruments a single call stack of applications and makes the result a single span and manages it.
+// In Pinpoint, a transaction consists of a group of Spans. Each span represents a trace of a single logical node
+// where the transaction has gone through.
+// A span records important method invocations and their related data(arguments, return value, etc.)
+// before encapsulating them as SpanEvents in a call stack like representation.
+// The span itself and each of its SpanEvents represents a method invocation.
 type Tracer interface {
+	// NewSpanEvent returns a span event.
 	NewSpanEvent(operationName string) Tracer
+
+	// NewAsyncSpan is deprecated. Use NewGoroutineTracer.
 	NewAsyncSpan() Tracer
+
+	// NewGoroutineTracer returns a tracer that tracks the call stack of a goroutine.
 	NewGoroutineTracer() Tracer
+
+	// WrapGoroutine generates a tracer that tracks a given goroutine and passes it in context.
 	WrapGoroutine(goroutineName string, goroutine func(context.Context), ctx context.Context) func()
+
+	// EndSpan completes the span and transmits it to the collector.
+	// Sending a span is handled by a separate goroutine.
 	EndSpan()
+
+	// EndSpanEvent completes the span event.
 	EndSpanEvent()
 
 	Inject(writer DistributedTracingContextWriter)
 	Extract(reader DistributedTracingContextReader)
 
+	// TransactionId returns the ID of the transaction containing the span.
 	TransactionId() TransactionId
+
+	// SpanId returns the ID of the span.
 	SpanId() int64
 
 	Span() SpanRecorder
 	SpanEvent() SpanEventRecorder
 
+	// IsSampled returns whether the span has been sampled.
 	IsSampled() bool
 }
 
