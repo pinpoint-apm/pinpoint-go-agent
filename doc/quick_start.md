@@ -233,7 +233,7 @@ For information on the go context package, visit https://golang.org/pkg/context/
 
 ## Goroutine Trace
 
-Because a pinpoint tracer is designed to follow a single call stack, applications can be crashed if a tracer is shared on goroutines.
+Because a pinpoint tracer is designed to track a single call stack, applications can be crashed if a tracer is shared on goroutines.
 The Tracer.NewAsyncSpan() function should be called to create a new tracer that traces a goroutine, and then pass it to the goroutine.
 To pass the tracer reference to the goroutine, there is a way to pass it over to the function parameter, through the channel, or in the context.Context.
 The Tracer.EndSpan() function must be called at the end of the goroutine.

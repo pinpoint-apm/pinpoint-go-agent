@@ -24,6 +24,7 @@ func parseDSN(info *DBInfo, dsn string) {
 	}
 }
 
+// NewDatabaseTracer returns a Tracer for database operation.
 func NewDatabaseTracer(ctx context.Context, funcName string, info *DBInfo) Tracer {
 	tracer := FromContext(ctx)
 	tracer.NewSpanEvent(funcName)
@@ -35,7 +36,7 @@ func NewDatabaseTracer(ctx context.Context, funcName string, info *DBInfo) Trace
 	return tracer
 }
 
-func makeDriver(drv *sqlDriver) driver.Driver {
+func wrapDriver(drv *sqlDriver) driver.Driver {
 	if _, ok := drv.Driver.(driver.DriverContext); ok {
 		return struct {
 			driver.Driver
@@ -48,8 +49,9 @@ func makeDriver(drv *sqlDriver) driver.Driver {
 	}
 }
 
-func MakePinpointSQLDriver(drv driver.Driver, info DBInfo) driver.Driver {
-	return makeDriver(&sqlDriver{Driver: drv, dbInfo: info})
+// WrapSQLDriver wraps a driver.Driver and instruments SQL query calls.
+func WrapSQLDriver(drv driver.Driver, info DBInfo) driver.Driver {
+	return wrapDriver(&sqlDriver{Driver: drv, dbInfo: info})
 }
 
 type sqlDriver struct {

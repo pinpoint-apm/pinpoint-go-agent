@@ -14,7 +14,7 @@ import (
 	"sync"
 )
 
-type Goroutine struct {
+type goroutine struct {
 	id     uint64
 	header string
 	state  string
@@ -26,7 +26,7 @@ type Goroutine struct {
 	buf    *bytes.Buffer
 }
 
-func (g *Goroutine) addLine(line string) {
+func (g *goroutine) addLine(line string) {
 	if g.frozen {
 		return
 	}
@@ -35,7 +35,7 @@ func (g *Goroutine) addLine(line string) {
 	g.buf.WriteString("\n")
 }
 
-func (g *Goroutine) freeze() {
+func (g *goroutine) freeze() {
 	if g.frozen {
 		return
 	}
@@ -45,13 +45,13 @@ func (g *Goroutine) freeze() {
 	g.buf = nil
 }
 
-func newGoroutine(line string) *Goroutine {
+func newGoroutine(line string) *goroutine {
 	idx := strings.Index(line, "[")
 	parts := strings.Split(line[idx+1:len(line)-2], ",")
 	state := strings.TrimSpace(parts[0])
 
 	if id, err := strconv.Atoi(strings.TrimSpace(line[9:idx])); err == nil {
-		return &Goroutine{
+		return &goroutine{
 			id:     uint64(id),
 			header: line[0 : idx-1],
 			state:  state,
@@ -64,15 +64,15 @@ func newGoroutine(line string) *Goroutine {
 	return nil
 }
 
-type GoroutineDump struct {
-	goroutines []*Goroutine
+type goroutineDump struct {
+	goroutines []*goroutine
 }
 
-func (gd *GoroutineDump) add(g *Goroutine) {
+func (gd *goroutineDump) add(g *goroutine) {
 	gd.goroutines = append(gd.goroutines, g)
 }
 
-func (gd *GoroutineDump) search(s string) *Goroutine {
+func (gd *goroutineDump) search(s string) *goroutine {
 	for _, g := range gd.goroutines {
 		if g.header == s {
 			return g
@@ -82,13 +82,13 @@ func (gd *GoroutineDump) search(s string) *Goroutine {
 	return nil
 }
 
-func newGoroutineDump() *GoroutineDump {
-	return &GoroutineDump{
-		goroutines: []*Goroutine{},
+func newGoroutineDump() *goroutineDump {
+	return &goroutineDump{
+		goroutines: []*goroutine{},
 	}
 }
 
-func dumpGoroutine() (dump *GoroutineDump) {
+func dumpGoroutine() (dump *goroutineDump) {
 	var b bytes.Buffer
 	buf := bufio.NewWriter(&b)
 
@@ -110,37 +110,34 @@ func dumpGoroutine() (dump *GoroutineDump) {
 	return
 }
 
-var (
-	startLinePattern = regexp.MustCompile(`^goroutine\s+(\d+)\s+\[(.*)\]:$`)
-)
-
-func parseProfile(r io.Reader) *GoroutineDump {
+func parseProfile(r io.Reader) *goroutineDump {
 	dump := newGoroutineDump()
-	var goroutine *Goroutine
+	var g *goroutine
 
-	goroutine = nil
+	g = nil
 	scanner := bufio.NewScanner(r)
+	startLinePattern := regexp.MustCompile(`^goroutine\s+(\d+)\s+\[(.*)\]:$`)
 
 	for scanner.Scan() {
 		line := scanner.Text()
 		if startLinePattern.MatchString(line) {
-			goroutine = newGoroutine(line)
-			if goroutine == nil {
+			g = newGoroutine(line)
+			if g == nil {
 				return nil
 			}
 
-			if v, ok := realTimeActiveSpan.Load(goroutine.id); ok {
-				goroutine.span = v.(activeSpanInfo)
-				dump.add(goroutine)
+			if v, ok := realTimeActiveSpan.Load(g.id); ok {
+				g.span = v.(activeSpanInfo)
+				dump.add(g)
 			}
 		} else if line == "" {
 			// End of a goroutine section.
-			if goroutine != nil {
-				goroutine.freeze()
+			if g != nil {
+				g.freeze()
 			}
-			goroutine = nil
-		} else if goroutine != nil {
-			goroutine.addLine(line)
+			g = nil
+		} else if g != nil {
+			g.addLine(line)
 		}
 	}
 
@@ -149,8 +146,8 @@ func parseProfile(r io.Reader) *GoroutineDump {
 		return nil
 	}
 
-	if goroutine != nil {
-		goroutine.freeze()
+	if g != nil {
+		g.freeze()
 	}
 
 	return dump

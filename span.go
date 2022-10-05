@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const NoneAsyncId = 0
+const noneAsyncId = 0
 
 var asyncIdGen int32 = 0
 
@@ -67,7 +67,7 @@ func defaultSpan() *span {
 	span.serviceType = ServiceTypeGoApp
 	span.startTime = time.Now()
 	span.goroutineId = 0
-	span.asyncId = NoneAsyncId
+	span.asyncId = noneAsyncId
 
 	span.eventStack = &stack{}
 	return &span
@@ -220,7 +220,7 @@ func (span *span) newAsyncSpan() Tracer {
 		asyncSpan.txId = span.txId
 		asyncSpan.spanId = span.spanId
 
-		for se.asyncId == NoneAsyncId {
+		for se.asyncId == noneAsyncId {
 			se.asyncId = atomic.AddInt32(&asyncIdGen, 1)
 		}
 		se.asyncSeqGen++
@@ -237,10 +237,9 @@ func (span *span) newAsyncSpan() Tracer {
 }
 
 func (span *span) isAsyncSpan() bool {
-	return span.asyncId != NoneAsyncId
+	return span.asyncId != noneAsyncId
 }
 
-// Deprecated
 func (span *span) NewAsyncSpan() Tracer {
 	return span.newAsyncSpan()
 }
@@ -286,6 +285,10 @@ func (span *span) SpanEvent() SpanEventRecorder {
 	return &defaultNoopSpanEvent
 }
 
+func (span *span) IsSampled() bool {
+	return true
+}
+
 func (span *span) SetError(e error) {
 	if e == nil {
 		return
@@ -299,10 +302,6 @@ func (span *span) SetError(e error) {
 
 func (span *span) SetFailure() {
 	span.err = 1
-}
-
-func (span *span) SetApiId(id int32) {
-	span.apiId = id
 }
 
 func (span *span) SetServiceType(typ int32) {
@@ -331,10 +330,6 @@ func (span *span) Annotations() Annotation {
 
 func (span *span) SetLogging(logInfo int32) {
 	span.loggingInfo = logInfo
-}
-
-func (span *span) IsSampled() bool {
-	return true
 }
 
 type stack struct {

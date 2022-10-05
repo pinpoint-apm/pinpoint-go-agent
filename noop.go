@@ -115,8 +115,6 @@ func (span *noopSpan) SetError(e error) {}
 
 func (span *noopSpan) SetFailure() {}
 
-func (span *noopSpan) SetApiId(id int32) {}
-
 func (span *noopSpan) SetServiceType(typ int32) {}
 
 func (span *noopSpan) SetRpcName(rpc string) {}
@@ -150,8 +148,6 @@ type noopSpanEvent struct {
 var defaultNoopSpanEvent = noopSpanEvent{}
 
 func (se *noopSpanEvent) SetError(e error, errorName ...string) {}
-
-func (se *noopSpanEvent) SetApiId(id int32) {}
 
 func (se *noopSpanEvent) SetServiceType(typ int32) {}
 

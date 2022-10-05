@@ -23,7 +23,7 @@ var dbInfo = pinpoint.DBInfo{
 func init() {
 	dbInfo.DBType = serviceTypePgSql
 	dbInfo.QueryType = serviceTypePgSqlExecuteQuery
-	sql.Register("pq-pinpoint", pinpoint.MakePinpointSQLDriver(&pq.Driver{}, dbInfo))
+	sql.Register("pq-pinpoint", pinpoint.WrapSQLDriver(&pq.Driver{}, dbInfo))
 }
 
 var dsnSplit = regexp.MustCompile(`(\w+)\s*=\s*('[^=]*'|[^'\s]+)`)

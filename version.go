@@ -1,5 +1,5 @@
 package pinpoint
 
 const (
-	AgentVersion = "1.0.0"
+	agentVersion = "1.0.0"
 )

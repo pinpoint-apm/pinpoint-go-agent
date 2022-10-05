@@ -16,9 +16,20 @@ import (
 // https://pinpoint-apm.gitbook.io/pinpoint/documents/plugin-dev-guide
 // https://pinpoint-apm.gitbook.io/pinpoint/want-a-quick-tour/techdetail
 type Agent interface {
+	// NewSpanTracer returns a span Tracer indicating the start of a transaction.
+	// A span is generated according to a given sampling policy, and trace data is not collected if not sampled.
 	NewSpanTracer(operation string, rpcName string) Tracer
+
+	// NewSpanTracerWithReader returns a span Tracer that continues a transaction passed from the previous node.
+	// A span is generated according to a given sampling policy, and trace data is not collected if not sampled.
+	// Distributed tracing headers are extracted from the reader. If it is empty, new transaction is started.
 	NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer
+
+	// Enable returns whether the agent is in an operational state.
 	Enable() bool
+
+	// Shutdown stops all related goroutines managing this agent.
+	// After Shutdown is called, The agent will never collect tracing data again.
 	Shutdown()
 }
 
@@ -62,52 +73,100 @@ type Tracer interface {
 	IsSampled() bool
 }
 
+// SpanRecorder records the collected data in the fields of Span.
 type SpanRecorder interface {
-	SetApiId(id int32)
+	// SetServiceType sets the type of service.
 	SetServiceType(typ int32)
+
+	// SetError Record an error and indicate that operation has failed.
 	SetError(e error)
+
+	// SetFailure indicate that operation has failed.
 	SetFailure()
+
+	// SetRpcName sets the name of RPC.
+	// This value is displayed as the path of the span on the pinpoint web screen.
 	SetRpcName(rpc string)
+
+	// SetRemoteAddress sets the remote address.
 	SetRemoteAddress(remoteAddress string)
+
+	// SetEndPoint sets the end point of RPC.
 	SetEndPoint(endPoint string)
+
+	// SetAcceptorHost sets the host of acceptor.
 	SetAcceptorHost(host string)
+
+	// SetLogging sets whether the Span has been logged.
 	SetLogging(logInfo int32)
+
+	// Annotations returns annotations that the Span holds.
 	Annotations() Annotation
 }
 
+// SpanEventRecorder records the collected data in the fields of SpanEvent.
 type SpanEventRecorder interface {
-	SetApiId(id int32)
+	// SetServiceType sets the type of service.
 	SetServiceType(typ int32)
+
+	// SetDestination sets the destination of operation.
 	SetDestination(id string)
+
+	// SetEndPoint sets the end point of operation.
 	SetEndPoint(endPoint string)
+
+	// SetError Record an error and indicate that operation has failed.
 	SetError(e error, errorName ...string)
+
+	// SetSQL records the SQL string and bind variables.
 	SetSQL(sql string, args string)
+
+	// Annotations returns annotations that the SpanEvent holds.
 	Annotations() Annotation
+
+	// FixDuration fixes the elapsed time of operation.
 	FixDuration(start time.Time, end time.Time)
 }
 
+// Annotation is a key-value pair and used to annotate Span and SpanEvent with more information.
 type Annotation interface {
+	// AppendInt records an integer value to annotation.
 	AppendInt(key int32, i int32)
+
+	// AppendString records a string value to annotation.
 	AppendString(key int32, s string)
+
+	// AppendStringString records two string values to annotation.
 	AppendStringString(key int32, s1 string, s2 string)
+
+	// AppendIntStringString records an integer value and two string values to annotation.
 	AppendIntStringString(key int32, i int32, s1 string, s2 string)
+
+	// AppendLongIntIntByteByteString records a long integer value, two integer value, two byte value and a string value to annotation.
 	AppendLongIntIntByteByteString(key int32, l int64, i1 int32, i2 int32, b1 int32, b2 int32, s string)
 }
 
+// DistributedTracingContextReader reads distributed tracing headers from carrier.
 type DistributedTracingContextReader interface {
+	// Get returns the value of a given key from carrier.
 	Get(key string) string
 }
 
+// DistributedTracingContextWriter writes distributed tracing headers to carrier.
 type DistributedTracingContextWriter interface {
+	// Set sets a given key-value pair to carrier.
 	Set(key string, value string)
 }
 
+// TransactionId represents that different RPCs are associated with each other as a single transaction.
+// TransactionId consists of AgentId, application startup time, and sequence number.
 type TransactionId struct {
 	AgentId   string
 	StartTime int64
 	Sequence  int64
 }
 
+// String returns transaction id string.
 func (tid TransactionId) String() string {
 	return fmt.Sprintf("%s^%d^%d", tid.AgentId, tid.StartTime, tid.Sequence)
 }

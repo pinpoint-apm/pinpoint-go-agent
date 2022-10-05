@@ -20,7 +20,7 @@ var dbInfo = pinpoint.DBInfo{
 func init() {
 	dbInfo.DBType = serviceTypeMysql
 	dbInfo.QueryType = serviceTypeMysqlExecuteQuery
-	sql.Register("mysql-pinpoint", pinpoint.MakePinpointSQLDriver(mysql.MySQLDriver{}, dbInfo))
+	sql.Register("mysql-pinpoint", pinpoint.WrapSQLDriver(mysql.MySQLDriver{}, dbInfo))
 }
 
 func parseDSN(info *pinpoint.DBInfo, dsn string) {

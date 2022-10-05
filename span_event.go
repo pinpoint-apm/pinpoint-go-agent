@@ -37,7 +37,7 @@ func defaultSpanEvent(span *span, operationName string) *spanEvent {
 	se.depth = span.eventDepth
 	se.operationName = operationName
 	se.endPoint = ""
-	se.asyncId = NoneAsyncId
+	se.asyncId = noneAsyncId
 	se.asyncSeqGen = 0
 	se.serviceType = ServiceTypeGoFunction
 	se.isTimeFixed = false
@@ -95,10 +95,6 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 	id := se.parentSpan.agent.cacheError(errName)
 	se.errorFuncId = id
 	se.errorString = e.Error()
-}
-
-func (se *spanEvent) SetApiId(id int32) {
-	se.apiId = id
 }
 
 func (se *spanEvent) SetServiceType(typ int32) {

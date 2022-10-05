@@ -194,7 +194,7 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 		Ip:           getOutboundIP(),
 		ServiceType:  agentGrpc.agent.appType,
 		Pid:          int32(os.Getpid()),
-		AgentVersion: AgentVersion,
+		AgentVersion: agentVersion,
 		VmVersion:    runtime.Version(),
 
 		ServerMetaData: &pb.PServerMetaData{
@@ -978,7 +978,7 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 	return sendStreamWithTimeout(func() error { return s.stream.Send(gRes) }, sendStreamTimeOut)
 }
 
-func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadName []string, localId []int64, dump *GoroutineDump) {
+func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadName []string, localId []int64, dump *goroutineDump) {
 	var gRes *pb.PCmdActiveThreadDumpRes
 
 	status := int32(0)
@@ -1010,7 +1010,7 @@ func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadNam
 	}
 }
 
-func makePActiveThreadDumpList(dump *GoroutineDump, limit int, threadName []string, localId []int64) []*pb.PActiveThreadDump {
+func makePActiveThreadDumpList(dump *goroutineDump, limit int, threadName []string, localId []int64) []*pb.PActiveThreadDump {
 	dumpList := make([]*pb.PActiveThreadDump, 0)
 
 	if dump != nil {
@@ -1018,7 +1018,7 @@ func makePActiveThreadDumpList(dump *GoroutineDump, limit int, threadName []stri
 			limit = len(dump.goroutines)
 		}
 
-		selected := make([]*Goroutine, 0)
+		selected := make([]*goroutine, 0)
 		for _, tn := range threadName {
 			g := dump.search(tn)
 			if g != nil {
@@ -1037,7 +1037,7 @@ func makePActiveThreadDumpList(dump *GoroutineDump, limit int, threadName []stri
 	return dumpList
 }
 
-func makePActiveThreadDump(g *Goroutine) *pb.PActiveThreadDump {
+func makePActiveThreadDump(g *goroutine) *pb.PActiveThreadDump {
 	trace := make([]string, 0)
 	trace = append(trace, g.trace)
 
@@ -1069,7 +1069,7 @@ func makePActiveThreadDump(g *Goroutine) *pb.PActiveThreadDump {
 	return aDump
 }
 
-func (cmdGrpc *cmdGrpc) sendActiveThreadLightDump(reqId int32, limit int32, dump *GoroutineDump) {
+func (cmdGrpc *cmdGrpc) sendActiveThreadLightDump(reqId int32, limit int32, dump *goroutineDump) {
 	var gRes *pb.PCmdActiveThreadLightDumpRes
 
 	status := int32(0)
@@ -1101,7 +1101,7 @@ func (cmdGrpc *cmdGrpc) sendActiveThreadLightDump(reqId int32, limit int32, dump
 	}
 }
 
-func makePActiveThreadLightDumpList(dump *GoroutineDump, limit int) []*pb.PActiveThreadLightDump {
+func makePActiveThreadLightDumpList(dump *goroutineDump, limit int) []*pb.PActiveThreadLightDump {
 	dumpList := make([]*pb.PActiveThreadLightDump, 0)
 
 	if dump != nil {
@@ -1118,7 +1118,7 @@ func makePActiveThreadLightDumpList(dump *GoroutineDump, limit int) []*pb.PActiv
 	return dumpList
 }
 
-func makePActiveThreadLightDump(g *Goroutine) *pb.PActiveThreadLightDump {
+func makePActiveThreadLightDump(g *goroutine) *pb.PActiveThreadLightDump {
 	aDump := &pb.PActiveThreadLightDump{
 		StartTime:    g.span.startTime.UnixNano() / int64(time.Millisecond),
 		LocalTraceId: 0,
@@ -1135,7 +1135,7 @@ func makePActiveThreadLightDump(g *Goroutine) *pb.PActiveThreadLightDump {
 	return aDump
 }
 
-func goRoutineState(g *Goroutine) pb.PThreadState {
+func goRoutineState(g *goroutine) pb.PThreadState {
 	switch g.state {
 	case "running":
 		return pb.PThreadState_THREAD_STATE_RUNNABLE
