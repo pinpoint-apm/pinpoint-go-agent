@@ -33,7 +33,7 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, 9993, c.Int(cfgCollectorSpanPort), cfgCollectorSpanPort)
 			assert.Equal(t, 9992, c.Int(cfgCollectorStatPort), cfgCollectorStatPort)
 			assert.Equal(t, "info", c.String(cfgLogLevel), cfgLogLevel)
-			assert.Equal(t, SamplingTypeCounter, c.String(cfgSamplingType), cfgSamplingType)
+			assert.Equal(t, samplingTypeCounter, c.String(cfgSamplingType), cfgSamplingType)
 			assert.Equal(t, 1, c.Int(cfgSamplingCounterRate), cfgSamplingCounterRate)
 			assert.Equal(t, float64(100), c.Float(cfgSamplingPercentRate), cfgSamplingPercentRate)
 			assert.Equal(t, 0, c.Int(cfgSamplingNewThroughput), cfgSamplingNewThroughput)

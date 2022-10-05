@@ -8,18 +8,13 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
-const (
-	serviceTypeMysql             = 2100
-	serviceTypeMysqlExecuteQuery = 2101
-)
-
 var dbInfo = pinpoint.DBInfo{
 	ParseDSN: parseDSN,
 }
 
 func init() {
-	dbInfo.DBType = serviceTypeMysql
-	dbInfo.QueryType = serviceTypeMysqlExecuteQuery
+	dbInfo.DBType = pinpoint.ServiceTypeMysql
+	dbInfo.QueryType = pinpoint.ServiceTypeMysqlExecuteQuery
 	sql.Register("mysql-pinpoint", pinpoint.WrapSQLDriver(mysql.MySQLDriver{}, dbInfo))
 }
 

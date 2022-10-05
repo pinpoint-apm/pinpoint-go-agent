@@ -11,13 +11,6 @@ import (
 	"go.mongodb.org/mongo-driver/event"
 )
 
-const (
-	serviceTypeMongo             = 2650
-	serviceTypeMongoExecuteQuery = 2651
-	annotationMongoJasonData     = 150
-	annotationMongoCollectioInfo = 151
-)
-
 type spanKey struct {
 	ConnectionID string
 	RequestID    int64
@@ -46,14 +39,14 @@ func (m *monitor) Started(ctx context.Context, evt *event.CommandStartedEvent) {
 	//fmt.Println("json= " + string(b))
 
 	dbInfo := &pinpoint.DBInfo{}
-	dbInfo.DBType = serviceTypeMongo
-	dbInfo.QueryType = serviceTypeMongoExecuteQuery
+	dbInfo.DBType = pinpoint.ServiceTypeMongo
+	dbInfo.QueryType = pinpoint.ServiceTypeMongoExecuteQuery
 	dbInfo.DBName = evt.DatabaseName
 	dbInfo.DBHost = hostname
 
 	tracer = pinpoint.NewDatabaseTracer(ctx, "mongodb."+evt.CommandName, dbInfo)
-	tracer.SpanEvent().Annotations().AppendString(annotationMongoCollectioInfo, collName(evt))
-	tracer.SpanEvent().Annotations().AppendStringString(annotationMongoJasonData, string(b), "")
+	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationMongoCollectionInfo, collName(evt))
+	tracer.SpanEvent().Annotations().AppendStringString(pinpoint.AnnotationMongoJasonData, string(b), "")
 
 	key := spanKey{
 		ConnectionID: evt.ConnectionID,

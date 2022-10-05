@@ -41,8 +41,15 @@ const (
 	cfgSQLTraceCommit             = "SQL.TraceCommit"
 	cfgSQLTraceRollback           = "SQL.TraceRollback"
 	cfgIdPattern                  = "[a-zA-Z0-9\\._\\-]+"
+
+	maxApplicationNameLength = 24
+	maxAgentIdLength         = 24
+	maxAgentNameLength       = 255
+	samplingTypeCounter      = "COUNTER"
+	samplingTypePercent      = "PERCENT"
 )
 
+// Config value type
 const (
 	CfgInt int = iota
 	CfgFloat
@@ -76,7 +83,7 @@ func initConfig() {
 	AddConfig(cfgCollectorSpanPort, CfgInt, 9993)
 	AddConfig(cfgCollectorStatPort, CfgInt, 9992)
 	AddConfig(cfgLogLevel, CfgString, "info")
-	AddConfig(cfgSamplingType, CfgString, SamplingTypeCounter)
+	AddConfig(cfgSamplingType, CfgString, samplingTypeCounter)
 	AddConfig(cfgSamplingCounterRate, CfgInt, 1)
 	AddConfig(cfgSamplingPercentRate, CfgFloat, 100)
 	AddConfig(cfgSamplingNewThroughput, CfgInt, 0)
@@ -217,30 +224,30 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	appName := config.String(cfgAppName)
 	if appName == "" {
 		return nil, errors.New("application name is required")
-	} else if len(appName) > MaxApplicationNameLength {
-		return nil, errors.New("application name is too long (max length: " + fmt.Sprint(MaxApplicationNameLength) + ")")
+	} else if len(appName) > maxApplicationNameLength {
+		return nil, errors.New("application name is too long (max length: " + fmt.Sprint(maxApplicationNameLength) + ")")
 	} else if !r.MatchString(appName) {
 		return nil, errors.New("application name has invalid pattern (" + cfgIdPattern + ")")
 	}
 
 	agentId := config.String(cfgAgentID)
-	if agentId == "" || len(agentId) > MaxAgentIdLength || !r.MatchString(agentId) {
-		config.cfgMap[cfgAgentID].value = randomString(MaxAgentIdLength - 1)
+	if agentId == "" || len(agentId) > maxAgentIdLength || !r.MatchString(agentId) {
+		config.cfgMap[cfgAgentID].value = randomString(maxAgentIdLength - 1)
 		Log("config").Infof("auto-generated AgentID: %v", config.cfgMap[cfgAgentID].value)
 	}
 
 	agentName := config.String(cfgAgentName)
 	if agentName != "" {
-		if len(agentName) > MaxAgentNameLength {
-			return nil, errors.New("agent name is too long (max length: " + fmt.Sprint(MaxAgentNameLength) + ")")
+		if len(agentName) > maxAgentNameLength {
+			return nil, errors.New("agent name is too long (max length: " + fmt.Sprint(maxAgentNameLength) + ")")
 		} else if !r.MatchString(agentName) {
 			return nil, errors.New("agent name has invalid pattern (" + cfgIdPattern + ")")
 		}
 	}
 
 	sampleType := strings.ToUpper(strings.TrimSpace(config.String(cfgSamplingType)))
-	if sampleType != SamplingTypeCounter && sampleType != SamplingTypePercent {
-		config.cfgMap[cfgSamplingType].value = SamplingTypeCounter
+	if sampleType != samplingTypeCounter && sampleType != samplingTypePercent {
+		config.cfgMap[cfgSamplingType].value = samplingTypeCounter
 		config.cfgMap[cfgSamplingCounterRate].value = 0
 	}
 

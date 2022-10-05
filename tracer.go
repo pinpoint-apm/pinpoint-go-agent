@@ -159,7 +159,6 @@ type DistributedTracingContextWriter interface {
 }
 
 // TransactionId represents that different RPCs are associated with each other as a single transaction.
-// TransactionId consists of AgentId, application startup time, and sequence number.
 type TransactionId struct {
 	AgentId   string
 	StartTime int64
@@ -171,35 +170,54 @@ func (tid TransactionId) String() string {
 	return fmt.Sprintf("%s^%d^%d", tid.AgentId, tid.StartTime, tid.Sequence)
 }
 
+// service types pre-defined
 const (
-	HttpTraceId                    = "Pinpoint-TraceID"
-	HttpSpanId                     = "Pinpoint-SpanID"
-	HttpParentSpanId               = "Pinpoint-pSpanID"
-	HttpSampled                    = "Pinpoint-Sampled"
-	HttpFlags                      = "Pinpoint-Flags"
-	HttpParentApplicationName      = "Pinpoint-pAppName"
-	HttpParentApplicationType      = "Pinpoint-pAppType"
-	HttpParentApplicationNamespace = "Pinpoint-pAppNamespace"
-	HttpHost                       = "Pinpoint-Host"
+	ServiceTypeGoApp                 = 1800
+	ServiceTypeGoFunction            = 1801
+	ServiceTypeGoHttpClient          = 9401
+	ServiceTypeAsync                 = 100
+	ServiceTypeMysql                 = 2100
+	ServiceTypeMysqlExecuteQuery     = 2101
+	ServiceTypePgSql                 = 2500
+	ServiceTypePgSqlExecuteQuery     = 2501
+	ServiceTypeCassandraExecuteQuery = 2601
+	ServiceTypeMongo                 = 2650
+	ServiceTypeMongoExecuteQuery     = 2651
+	ServiceTypeGrpc                  = 9160
+	ServiceTypeGrpcServer            = 1130
+	ServiceTypeMemcached             = 8050
+	ServiceTypeRedis                 = 8200
+	ServiceTypeKafkaClient           = 8660
+	ServiceTypeHbaseClient           = 8800
+	ServiceTypeGoElastic             = 9203
+)
 
+// annotation keys pre-defined
+const (
+	AnnotationArgs0               = -1
+	AnnotationApi                 = 12
+	AnnotationSqlId               = 20
+	AnnotationHttpUrl             = 40
+	AnnotationHttpParam           = 41
+	AnnotationHttpCookie          = 45
+	AnnotationHttpStatusCode      = 46
+	AnnotationHttpRequestHeader   = 47
+	AnnotationHttpResponseHeader  = 55
+	AnnotationHttpProxyHeader     = 300
+	AnnotationKafkaTopic          = 140
+	AnnotationKafkaPartition      = 141
+	AnnotationKafkaOffset         = 142
+	AnnotationMongoJasonData      = 150
+	AnnotationMongoCollectionInfo = 151
+	AnnotationEsUrl               = 172
+	AnnotationEsDsl               = 173
+	AnnotationEsAction            = 174
+	AnnotationHbaseClientParams   = 320
+)
+
+const (
 	LogTransactionIdKey = "PtxId"
 	LogSpanIdKey        = "PspanId"
 	Logged              = 1
 	NotLogged           = 0
-
-	ServiceTypeGoApp        = 1800
-	ServiceTypeGoFunction   = 1801
-	ServiceTypeGoHttpClient = 9401
-	ServiceTypeAsync        = 100
-
-	ApiTypeDefault    = 0
-	ApiTypeWebRequest = 100
-	ApiTypeInvocation = 200
-
-	MaxApplicationNameLength = 24
-	MaxAgentIdLength         = 24
-	MaxAgentNameLength       = 255
-	SamplingTypeCounter      = "COUNTER"
-	SamplingTypePercent      = "PERCENT"
-	SmaplingMaxPercentRate   = 100 * 100
 )

@@ -5,19 +5,6 @@ import (
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 )
 
-const (
-	AnnotationArgs0              = -1
-	AnnotationApi                = 12
-	AnnotationSqlId              = 20
-	AnnotationHttpUrl            = 40
-	AnnotationHttpParam          = 41
-	AnnotationHttpCookie         = 45
-	AnnotationHttpStatusCode     = 46
-	AnnotationHttpRequestHeader  = 47
-	AnnotationHttpResponseHeader = 55
-	AnnotationProxyHttpHeader    = 300
-)
-
 type annotation struct {
 	list []*pb.PAnnotation
 }

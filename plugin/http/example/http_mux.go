@@ -11,8 +11,8 @@ import (
 )
 
 func indexMux(w http.ResponseWriter, r *http.Request) {
-	var i http.ResponseWriter
-	i.Header() //panic
+	//var i http.ResponseWriter
+	//i.Header() //panic
 
 	io.WriteString(w, "hello world, mux")
 }
@@ -37,6 +37,7 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoHttpMuxTest"),
 		pinpoint.WithAgentId("GoHttpMuxAgent"),
+		pinpoint.WithAgentName("GoHttpMuxTest_GoHttpMuxAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 		pphttp.WithHttpServerStatusCodeError([]string{"500", "400"}),
 		pphttp.WithHttpServerRecordRequestHeader([]string{"user-agent", "connection", "foo"}),

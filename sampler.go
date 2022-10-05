@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+const samplingMaxPercentRate = 100 * 100
+
 type sampler interface {
 	isSampled() bool
 }
@@ -61,7 +63,7 @@ func (s *percentSampler) isSampled() bool {
 	}
 
 	samplingCount := atomic.AddUint64(&s.counter, s.samplingRate)
-	r := samplingCount % SmaplingMaxPercentRate
+	r := samplingCount % samplingMaxPercentRate
 	return r < s.samplingRate
 }
 

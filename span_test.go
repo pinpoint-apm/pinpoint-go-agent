@@ -40,9 +40,9 @@ func Test_span_Extract(t *testing.T) {
 	}
 
 	m := map[string]string{
-		HttpTraceId:      "t123456^12345^1",
-		HttpSpanId:       "67890",
-		HttpParentSpanId: "123",
+		headerTraceId:      "t123456^12345^1",
+		headerSpanId:       "67890",
+		headerParentSpanId: "123",
 	}
 
 	tests := []struct {
@@ -87,7 +87,7 @@ func Test_span_Inject(t *testing.T) {
 			span.NewSpanEvent("t")
 
 			span.Inject(tt.args.writer)
-			assert.Equal(t, m[HttpTraceId], span.txId.String(), "HttpTraceId")
+			assert.Equal(t, m[headerTraceId], span.txId.String(), "headerTraceId")
 		})
 	}
 }

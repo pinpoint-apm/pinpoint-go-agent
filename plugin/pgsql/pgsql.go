@@ -11,18 +11,13 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
-const (
-	serviceTypePgSql             = 2500
-	serviceTypePgSqlExecuteQuery = 2501
-)
-
 var dbInfo = pinpoint.DBInfo{
 	ParseDSN: parseDSN,
 }
 
 func init() {
-	dbInfo.DBType = serviceTypePgSql
-	dbInfo.QueryType = serviceTypePgSqlExecuteQuery
+	dbInfo.DBType = pinpoint.ServiceTypePgSql
+	dbInfo.QueryType = pinpoint.ServiceTypePgSqlExecuteQuery
 	sql.Register("pq-pinpoint", pinpoint.WrapSQLDriver(&pq.Driver{}, dbInfo))
 }
 

@@ -8,11 +8,6 @@ import (
 	"github.com/tsuna/gohbase/hrpc"
 )
 
-const (
-	serviceTypeHbaseClient      = 8800
-	annotationHbaseClientParams = 320
-)
-
 type Client struct {
 	hbase.Client
 	host string
@@ -30,7 +25,7 @@ func (c *Client) trace(op string, ctx context.Context) pinpoint.Tracer {
 	}
 
 	tracer.NewSpanEvent(op)
-	tracer.SpanEvent().SetServiceType(serviceTypeHbaseClient)
+	tracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeHbaseClient)
 	tracer.SpanEvent().SetDestination("HBASE")
 	tracer.SpanEvent().SetEndPoint(c.host)
 
@@ -52,7 +47,7 @@ func (c *Client) Get(g *hrpc.Get) (*hrpc.Result, error) {
 	}
 
 	defer tracer.EndSpanEvent()
-	tracer.SpanEvent().Annotations().AppendString(annotationHbaseClientParams, keyString(g.Key()))
+	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHbaseClientParams, keyString(g.Key()))
 
 	r, e := c.Client.Get(g)
 	if e != nil {
@@ -68,7 +63,7 @@ func (c *Client) Put(p *hrpc.Mutate) (*hrpc.Result, error) {
 	}
 
 	defer tracer.EndSpanEvent()
-	tracer.SpanEvent().Annotations().AppendString(annotationHbaseClientParams, keyString(p.Key()))
+	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHbaseClientParams, keyString(p.Key()))
 
 	r, e := c.Client.Put(p)
 	tracer.SpanEvent().SetError(e)
@@ -82,7 +77,7 @@ func (c *Client) Delete(d *hrpc.Mutate) (*hrpc.Result, error) {
 	}
 
 	defer tracer.EndSpanEvent()
-	tracer.SpanEvent().Annotations().AppendString(annotationHbaseClientParams, keyString(d.Key()))
+	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHbaseClientParams, keyString(d.Key()))
 
 	r, e := c.Client.Delete(d)
 	tracer.SpanEvent().SetError(e)
@@ -96,7 +91,7 @@ func (c *Client) Append(a *hrpc.Mutate) (*hrpc.Result, error) {
 	}
 
 	defer tracer.EndSpanEvent()
-	tracer.SpanEvent().Annotations().AppendString(annotationHbaseClientParams, keyString(a.Key()))
+	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHbaseClientParams, keyString(a.Key()))
 
 	r, e := c.Client.Append(a)
 	tracer.SpanEvent().SetError(e)
@@ -110,7 +105,7 @@ func (c *Client) Increment(i *hrpc.Mutate) (int64, error) {
 	}
 
 	defer tracer.EndSpanEvent()
-	tracer.SpanEvent().Annotations().AppendString(annotationHbaseClientParams, keyString(i.Key()))
+	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHbaseClientParams, keyString(i.Key()))
 
 	r, e := c.Client.Increment(i)
 	tracer.SpanEvent().SetError(e)
@@ -124,7 +119,7 @@ func (c *Client) CheckAndPut(p *hrpc.Mutate, family string, qualifier string, ex
 	}
 
 	defer tracer.EndSpanEvent()
-	tracer.SpanEvent().Annotations().AppendString(annotationHbaseClientParams, keyString(p.Key()))
+	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHbaseClientParams, keyString(p.Key()))
 
 	r, e := c.Client.CheckAndPut(p, family, qualifier, expectedValue)
 	tracer.SpanEvent().SetError(e)
@@ -138,7 +133,7 @@ func (c *Client) Scan(s *hrpc.Scan) hrpc.Scanner {
 	}
 
 	defer tracer.EndSpanEvent()
-	tracer.SpanEvent().Annotations().AppendString(annotationHbaseClientParams, scanKeyString(s.StartRow(), s.StopRow()))
+	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHbaseClientParams, scanKeyString(s.StartRow(), s.StopRow()))
 
 	return c.Client.Scan(s)
 }

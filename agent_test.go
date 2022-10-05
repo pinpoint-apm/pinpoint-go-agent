@@ -154,9 +154,9 @@ func Test_agent_NewSpanTracerWithReader(t *testing.T) {
 	defer a.Shutdown()
 
 	m := map[string]string{
-		HttpTraceId:      "t123456^12345^1",
-		HttpSpanId:       "67890",
-		HttpParentSpanId: "123",
+		headerTraceId:      "t123456^12345^1",
+		headerSpanId:       "67890",
+		headerParentSpanId: "123",
 	}
 
 	tests := []struct {

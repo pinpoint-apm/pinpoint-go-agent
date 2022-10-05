@@ -11,8 +11,6 @@ import (
 	"time"
 )
 
-const serviceTypeRedis = 8200
-
 type wrappedConn struct {
 	base     redis.Conn
 	endpoint string
@@ -150,7 +148,7 @@ func (c *wrappedConn) Receive() (reply interface{}, err error) {
 func (c *wrappedConn) makeRedisSpanEvent(operation string, cmd string) pinpoint.SpanEventRecorder {
 	c.tracer.NewSpanEvent(makeMethodName(operation, cmd))
 	se := c.tracer.SpanEvent()
-	se.SetServiceType(serviceTypeRedis)
+	se.SetServiceType(pinpoint.ServiceTypeRedis)
 	se.SetDestination("REDIS")
 	se.SetEndPoint(c.endpoint)
 

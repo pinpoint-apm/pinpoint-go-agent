@@ -9,13 +9,6 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
-const (
-	serviceTypeKafkaClient   = 8660
-	annotationKafkaTopic     = 140
-	annotationKafkaPartition = 141
-	annotationKafkaOffset    = 142
-)
-
 type ConsumerMessage struct {
 	*sarama.ConsumerMessage
 	tracer pinpoint.Tracer
@@ -87,11 +80,11 @@ func newConsumerTracer(msg *sarama.ConsumerMessage) pinpoint.Tracer {
 	reader := &distributedTracingContextReaderConsumer{msg}
 	tracer = agent.NewSpanTracerWithReader("Kafka Consumer Invocation", makeRpcName(msg), reader)
 
-	tracer.Span().SetServiceType(serviceTypeKafkaClient)
+	tracer.Span().SetServiceType(pinpoint.ServiceTypeKafkaClient)
 	a := tracer.Span().Annotations()
-	a.AppendString(annotationKafkaTopic, msg.Topic)
-	a.AppendInt(annotationKafkaPartition, msg.Partition)
-	a.AppendInt(annotationKafkaOffset, int32(msg.Offset))
+	a.AppendString(pinpoint.AnnotationKafkaTopic, msg.Topic)
+	a.AppendInt(pinpoint.AnnotationKafkaPartition, msg.Partition)
+	a.AppendInt(pinpoint.AnnotationKafkaOffset, int32(msg.Offset))
 
 	return tracer
 }

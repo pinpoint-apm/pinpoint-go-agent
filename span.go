@@ -12,7 +12,24 @@ import (
 	"time"
 )
 
-const noneAsyncId = 0
+// keys of distributed tracing headers
+const (
+	headerTraceId                    = "Pinpoint-TraceID"
+	headerSpanId                     = "Pinpoint-SpanID"
+	headerParentSpanId               = "Pinpoint-pSpanID"
+	headerSampled                    = "Pinpoint-Sampled"
+	headerFlags                      = "Pinpoint-Flags"
+	headerParentApplicationName      = "Pinpoint-pAppName"
+	headerParentApplicationType      = "Pinpoint-pAppType"
+	headerParentApplicationNamespace = "Pinpoint-pAppNamespace"
+	headerHost                       = "Pinpoint-Host"
+)
+const (
+	apiTypeDefault    = 0
+	apiTypeWebRequest = 100
+	apiTypeInvocation = 200
+	noneAsyncId       = 0
+)
 
 var asyncIdGen int32 = 0
 
@@ -79,7 +96,7 @@ func newSampledSpan(agent *agent, operation string, rpcName string) *span {
 	span.agent = agent
 	span.operationName = operation
 	span.rpcName = rpcName
-	span.apiId = agent.cacheSpanApi(operation, ApiTypeWebRequest)
+	span.apiId = agent.cacheSpanApi(operation, apiTypeWebRequest)
 
 	return span
 }
@@ -108,19 +125,19 @@ func (span *span) EndSpan() {
 
 func (span *span) Inject(writer DistributedTracingContextWriter) {
 	if se, ok := span.eventStack.peek(); ok {
-		writer.Set(HttpTraceId, span.txId.String())
+		writer.Set(headerTraceId, span.txId.String())
 
 		nextSpanId := se.generateNextSpanId()
-		writer.Set(HttpSpanId, strconv.FormatInt(nextSpanId, 10))
+		writer.Set(headerSpanId, strconv.FormatInt(nextSpanId, 10))
 
-		writer.Set(HttpParentSpanId, strconv.FormatInt(span.spanId, 10))
-		writer.Set(HttpFlags, strconv.Itoa(span.flags))
-		writer.Set(HttpParentApplicationName, span.agent.appName)
-		writer.Set(HttpParentApplicationType, strconv.Itoa(int(span.agent.appType)))
-		writer.Set(HttpParentApplicationNamespace, "")
+		writer.Set(headerParentSpanId, strconv.FormatInt(span.spanId, 10))
+		writer.Set(headerFlags, strconv.Itoa(span.flags))
+		writer.Set(headerParentApplicationName, span.agent.appName)
+		writer.Set(headerParentApplicationType, strconv.Itoa(int(span.agent.appType)))
+		writer.Set(headerParentApplicationNamespace, "")
 
 		se.endPoint = se.destinationId
-		writer.Set(HttpHost, se.destinationId)
+		writer.Set(headerHost, se.destinationId)
 
 		Log("span").Debugf("span inject: %v, %d, %d, %s", span.txId, nextSpanId, span.spanId, se.destinationId)
 	} else {
@@ -129,7 +146,7 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 }
 
 func (span *span) Extract(reader DistributedTracingContextReader) {
-	tid := reader.Get(HttpTraceId)
+	tid := reader.Get(headerTraceId)
 	if tid != "" {
 		s := strings.Split(tid, "^")
 		span.txId.AgentId = s[0]
@@ -139,34 +156,34 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		span.txId = span.agent.generateTransactionId()
 	}
 
-	spanid := reader.Get(HttpSpanId)
+	spanid := reader.Get(headerSpanId)
 	if spanid != "" {
 		span.spanId, _ = strconv.ParseInt(spanid, 10, 0)
 	} else {
 		span.spanId = generateSpanId()
 	}
 
-	pspanid := reader.Get(HttpParentSpanId)
+	pspanid := reader.Get(headerParentSpanId)
 	if pspanid != "" {
 		span.parentSpanId, _ = strconv.ParseInt(pspanid, 10, 0)
 	}
 
-	flag := reader.Get(HttpFlags)
+	flag := reader.Get(headerFlags)
 	if flag != "" {
 		span.flags, _ = strconv.Atoi(flag)
 	}
 
-	pappname := reader.Get(HttpParentApplicationName)
+	pappname := reader.Get(headerParentApplicationName)
 	if pappname != "" {
 		span.parentAppName = pappname
 	}
 
-	papptype := reader.Get(HttpParentApplicationType)
+	papptype := reader.Get(headerParentApplicationType)
 	if papptype != "" {
 		span.parentAppType, _ = strconv.Atoi(papptype)
 	}
 
-	host := reader.Get(HttpHost)
+	host := reader.Get(headerHost)
 	if host != "" {
 		span.acceptorHost = host
 		span.remoteAddr = host

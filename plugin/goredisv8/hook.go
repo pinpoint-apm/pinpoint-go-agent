@@ -9,8 +9,6 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
-const serviceTypeRedis = 8200
-
 type hook struct {
 	endpoint string
 }
@@ -58,7 +56,7 @@ func (r *hook) AfterProcess(ctx context.Context, cmd redis.Cmder) error {
 	span := tracer.SpanEvent()
 	defer tracer.EndSpanEvent()
 
-	span.SetServiceType(serviceTypeRedis)
+	span.SetServiceType(pinpoint.ServiceTypeRedis)
 	span.SetDestination("REDIS")
 	span.SetEndPoint(r.endpoint)
 
@@ -89,7 +87,7 @@ func (r *hook) AfterProcessPipeline(ctx context.Context, cmds []redis.Cmder) err
 	span := tracer.SpanEvent()
 	defer tracer.EndSpanEvent()
 
-	span.SetServiceType(serviceTypeRedis)
+	span.SetServiceType(pinpoint.ServiceTypeRedis)
 	span.SetDestination("REDIS")
 	span.SetEndPoint(r.endpoint)
 

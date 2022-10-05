@@ -125,7 +125,7 @@ func NewAgent(config *Config) (Agent, error) {
 	}
 
 	var baseSampler sampler
-	if config.String(cfgSamplingType) == SamplingTypeCounter {
+	if config.String(cfgSamplingType) == samplingTypeCounter {
 		baseSampler = newRateSampler(config.Int(cfgSamplingCounterRate))
 	} else {
 		baseSampler = newPercentSampler(config.Float(cfgSamplingPercentRate))
@@ -221,17 +221,17 @@ func (agent *agent) NewSpanTracer(operation string, rpcName string) Tracer {
 }
 
 func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
-	if !agent.enable {
+	if !agent.enable || reader == nil {
 		return NoopTracer()
 	}
 
-	sampled := reader.Get(HttpSampled)
+	sampled := reader.Get(headerSampled)
 	if sampled == "s0" {
 		incrUnSampleCont()
 		return newUnSampledSpan(rpcName)
 	}
 
-	tid := reader.Get(HttpTraceId)
+	tid := reader.Get(headerTraceId)
 	if tid == "" {
 		return agent.samplingSpan(agent.sampler.isNewSampled, operation, rpcName, reader)
 	} else {

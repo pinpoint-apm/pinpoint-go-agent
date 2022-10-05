@@ -11,10 +11,6 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
-const (
-	serviceTypeMemcached = 8050
-)
-
 type Client struct {
 	*memcache.Client
 	endpoint string
@@ -32,7 +28,7 @@ func (c *Client) WithContext(ctx context.Context) {
 
 func (c *Client) newMemcacheSpanEvent(op string, key string, start time.Time, err error) {
 	se := c.tracer.NewSpanEvent("gomemcache." + op).SpanEvent()
-	se.SetServiceType(serviceTypeMemcached)
+	se.SetServiceType(pinpoint.ServiceTypeMemcached)
 	se.SetDestination("MEMCACHED")
 	se.SetEndPoint(c.endpoint)
 	se.Annotations().AppendString(pinpoint.AnnotationArgs0, key)

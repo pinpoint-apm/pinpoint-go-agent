@@ -12,8 +12,6 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-const serviceTypeGrpc = 9160
-
 type clientStream struct {
 	grpc.ClientStream
 	mutex      sync.Mutex
@@ -67,7 +65,7 @@ func newSpanForGrpcClient(ctx context.Context, method string) (context.Context, 
 	}
 
 	tracer = tracer.NewSpanEvent(method)
-	tracer.SpanEvent().SetServiceType(serviceTypeGrpc)
+	tracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeGrpc)
 
 	var p peer.Peer
 	grpc.Peer(&p)

@@ -8,8 +8,6 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-const serviceTypeGrpcServer = 1130
-
 type serverStream struct {
 	grpc.ServerStream
 	context context.Context
@@ -35,7 +33,7 @@ func startSpan(ctx context.Context, rpcName string) pinpoint.Tracer {
 	md, _ := metadata.FromIncomingContext(ctx) // nil is ok
 	reader := &DistributedTracingContextReaderMD{md}
 	tracer := pinpoint.GetAgent().NewSpanTracerWithReader("gRPC Server", rpcName, reader)
-	tracer.Span().SetServiceType(serviceTypeGrpcServer)
+	tracer.Span().SetServiceType(pinpoint.ServiceTypeGrpcServer)
 
 	return tracer
 }

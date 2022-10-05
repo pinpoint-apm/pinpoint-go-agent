@@ -5,12 +5,6 @@ import (
 	"net/http"
 )
 
-const (
-	serviceTypeGoElastic = 9203
-	annotationEsUrl      = 172
-	annotationEsAction   = 174
-)
-
 type transport struct {
 	rt http.RoundTripper
 }
@@ -33,21 +27,21 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	tracer.NewSpanEvent("elasticsearch")
 	defer tracer.EndSpanEvent()
 
-	tracer.SpanEvent().SetServiceType(serviceTypeGoElastic)
-	tracer.SpanEvent().SetDestination("ElasticSearch")
-	tracer.SpanEvent().SetEndPoint(req.Host)
-	tracer.SpanEvent().Annotations().AppendString(annotationEsUrl, req.URL.String())
-	tracer.SpanEvent().Annotations().AppendString(annotationEsAction, req.Method)
+	se := tracer.SpanEvent()
+	se.SetServiceType(pinpoint.ServiceTypeGoElastic)
+	se.SetDestination("ElasticSearch")
+	se.SetEndPoint(req.Host)
+
+	a := se.Annotations()
+	a.AppendString(pinpoint.AnnotationEsUrl, req.URL.String())
+	a.AppendString(pinpoint.AnnotationEsAction, req.Method)
 	dsl := dslString(req)
 	if dsl != "" {
-		tracer.SpanEvent().Annotations().AppendString(173, dsl)
+		a.AppendString(pinpoint.AnnotationEsDsl, dsl)
 	}
 
-	//log.Print(req)
-
-	//req = req.WithContext(ctx)
 	resp, err := t.rt.RoundTrip(req)
-	tracer.SpanEvent().SetError(err)
+	se.SetError(err)
 
 	return resp, err
 }

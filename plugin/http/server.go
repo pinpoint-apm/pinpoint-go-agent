@@ -102,7 +102,7 @@ func setProxyHeader(a pinpoint.Annotation, r *http.Request) {
 	}
 
 	if code > 0 {
-		a.AppendLongIntIntByteByteString(pinpoint.AnnotationProxyHttpHeader, receivedTime, code, int32(durationTime),
+		a.AppendLongIntIntByteByteString(pinpoint.AnnotationHttpProxyHeader, receivedTime, code, int32(durationTime),
 			int32(idlePercent), int32(busyPercent), app)
 	}
 }

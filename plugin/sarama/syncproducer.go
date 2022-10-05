@@ -71,8 +71,8 @@ func newProducerTracer(ctx context.Context, addrs []string, msg *sarama.Producer
 	if tracer != nil {
 		tracer.NewSpanEvent("kafka.produce")
 		se := tracer.SpanEvent()
-		se.SetServiceType(serviceTypeKafkaClient)
-		se.Annotations().AppendString(annotationKafkaTopic, msg.Topic)
+		se.SetServiceType(pinpoint.ServiceTypeKafkaClient)
+		se.Annotations().AppendString(pinpoint.AnnotationKafkaTopic, msg.Topic)
 		se.SetDestination(addrs[0])
 
 		writer := &distributedTracingContextWriterConsumer{msg}
