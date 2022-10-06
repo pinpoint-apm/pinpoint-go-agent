@@ -14,6 +14,9 @@ import (
 
 const defaultServerName = "HTTP Server"
 
+// NewHttpServerTracer returns a pinpoint.Tracer that instruments the request handler for http server.
+// The tracer extracts the pinpoint header from the http request header,
+// and then creates a span that initiates or continues the transaction.
 func NewHttpServerTracer(req *http.Request, operation string) (tracer pinpoint.Tracer) {
 	if isExcludedUrl(req.URL.Path) || isExcludedMethod(req.Method) {
 		return pinpoint.NoopTracer()
@@ -107,6 +110,7 @@ func setProxyHeader(a pinpoint.Annotation, r *http.Request) {
 	}
 }
 
+// RecordHttpServerResponse records http status and response header to span.
 func RecordHttpServerResponse(tracer pinpoint.Tracer, status int, header http.Header) {
 	if tracer.IsSampled() {
 		recordServerHttpStatus(tracer.Span(), status)
@@ -114,6 +118,8 @@ func RecordHttpServerResponse(tracer pinpoint.Tracer, status int, header http.He
 	}
 }
 
+// WrapHandler wraps the given http handler and adds the pinpoint.Tracer to the request's context.
+// By using the pinpoint.FromContext function, this tracer can be obtained.
 func WrapHandler(handler http.Handler, serverName ...string) http.Handler {
 	var srvName string
 	if len(serverName) > 0 {
@@ -156,17 +162,19 @@ func WrapHandler(handler http.Handler, serverName ...string) http.Handler {
 	})
 }
 
+// WrapHandlerFunc wraps the given http handler function and adds the pinpoint.Tracer to the request's context.
+// By using the pinpoint.FromContext function, this tracer can be obtained.
 func WrapHandlerFunc(handler func(http.ResponseWriter, *http.Request), serverName ...string) func(http.ResponseWriter, *http.Request) {
 	h := WrapHandler(http.HandlerFunc(handler), serverName...)
 	return func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }
 }
 
-// WrapHandle deprecated
+// WrapHandle is deprecated. Use WrapHandler.
 func WrapHandle(agent pinpoint.Agent, handlerName string, pattern string, handler http.Handler) (string, http.Handler) {
 	return pattern, WrapHandler(handler)
 }
 
-// WrapHandleFunc deprecated
+// WrapHandleFunc is deprecated. Use WrapHandlerFunc.
 func WrapHandleFunc(agent pinpoint.Agent, handlerName string, pattern string, handler func(http.ResponseWriter, *http.Request)) (string, func(http.ResponseWriter, *http.Request)) {
 	p, h := WrapHandle(agent, handlerName, pattern, http.HandlerFunc(handler))
 	return p, func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }
@@ -190,20 +198,26 @@ type serveMux struct {
 	*http.ServeMux
 }
 
+// NewServeMux wraps http.NewServeMux and returns a http.ServeMux ready to instrument.
 func NewServeMux() *serveMux {
 	return &serveMux{
 		ServeMux: http.NewServeMux(),
 	}
 }
 
+// Handle registers the handler for the given pattern.
+// The handler is wrapped by WrapHandler.
 func (mux *serveMux) Handle(pattern string, handler http.Handler) {
 	mux.ServeMux.Handle(pattern, WrapHandler(handler))
 }
 
+// HandleFunc registers the handler function for the given pattern.
+// The handler is wrapped by WrapHandlerFunc.
 func (mux *serveMux) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
 	mux.ServeMux.HandleFunc(pattern, WrapHandlerFunc(handler))
 }
 
+// HandlerFuncName returns the name of handler function.
 func HandlerFuncName(f interface{}) string {
 	var buf bytes.Buffer
 	buf.WriteString(runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name())

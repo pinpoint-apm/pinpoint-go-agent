@@ -1,3 +1,7 @@
+// Package ppmysql provides tracing functions for tracing the MySQL SQL driver (https://github.com/go-sql-driver/mysql).
+//
+// 	db, err := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/testdb")
+//
 package ppmysql
 
 import (

@@ -1,3 +1,7 @@
+// Package pppgsql provides tracing functions for tracing the postgres SQL driver (https://github.com/lib/pq).
+//
+// 	db, err := sql.Open("pq-pinpoint", "postgresql://testuser:p123@localhost/testdb?sslmode=disable")
+//
 package pppgsql
 
 import (

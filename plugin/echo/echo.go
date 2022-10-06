@@ -10,6 +10,7 @@ import (
 
 const serverName = "Echo HTTP Server"
 
+// Middleware returns an echo middleware that creates a pinpoint.Tracer that instruments the echo handler function.
 func Middleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -49,6 +50,8 @@ func Middleware() echo.MiddlewareFunc {
 	}
 }
 
+// WrapHandler wraps the given echo handler and adds the pinpoint.Tracer to the request's context.
+// By using the pinpoint.FromContext function, this tracer can be obtained.
 func WrapHandler(handler echo.HandlerFunc) echo.HandlerFunc {
 	funcName := pphttp.HandlerFuncName(handler)
 

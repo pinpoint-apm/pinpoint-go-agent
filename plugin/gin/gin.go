@@ -9,6 +9,7 @@ import (
 
 const serverName = "Gin HTTP Server"
 
+// Middleware returns a gin middleware that creates a pinpoint.Tracer that instruments the gin handler function.
 func Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !pinpoint.GetAgent().Enable() {
@@ -44,6 +45,8 @@ func Middleware() gin.HandlerFunc {
 	}
 }
 
+// WrapHandler wraps the given gin handler and adds the pinpoint.Tracer to the request's context.
+// By using the pinpoint.FromContext function, this tracer can be obtained.
 func WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc {
 	funcName := pphttp.HandlerFuncName(handler)
 

@@ -14,6 +14,7 @@ type Client struct {
 	endpoint string
 }
 
+// NewClient returns a new Client ready to instrument.
 func NewClient(opt *redis.Options) *Client {
 	return &Client{Client: redis.NewClient(opt), endpoint: opt.Addr}
 }
@@ -30,6 +31,7 @@ type ClusterClient struct {
 	endpoint string
 }
 
+// NewClusterClient returns a new ClusterClient ready to instrument.
 func NewClusterClient(opt *redis.ClusterOptions) *ClusterClient {
 	endpoint := strings.Join(opt.Addrs, ",")
 	return &ClusterClient{ClusterClient: redis.NewClusterClient(opt), endpoint: endpoint}

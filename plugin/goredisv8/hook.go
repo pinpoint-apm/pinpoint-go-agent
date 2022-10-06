@@ -13,6 +13,7 @@ type hook struct {
 	endpoint string
 }
 
+// NewHook creates a redis.Hook to instrument redis calls.
 func NewHook(opts *redis.Options) redis.Hook {
 	h := hook{}
 
@@ -25,6 +26,7 @@ func NewHook(opts *redis.Options) redis.Hook {
 	return &h
 }
 
+// NewClusterHook creates a redis.Hook to instrument redis cluster calls.
 func NewClusterHook(opts *redis.ClusterOptions) redis.Hook {
 	h := hook{}
 
