@@ -1,3 +1,23 @@
+// Package ppredigo instruments the gomodule/redigo package (https://github.com/gomodule/redigo).
+//
+// This package instruments the gomodule/redigo calls.
+// Use the Dial, DialContext (or DialURL, DialURLContext) as the redis.Dial.
+//
+//	c, err := ppredigo.Dial("tcp", "127.0.0.1:6379")
+//
+// It is necessary to pass the context containing the pinpoint.Tracer to redis.Conn.
+//
+//	ppredigo.WithContext(c, pinpoint.NewContext(context.Background(), tracer))
+//	c.Do("SET", "vehicle", "truck")
+//
+// or
+//
+//	redis.DoContext(c, pinpoint.NewContext(context.Background(), tracer), "GET", "vehicle")
+//
+// or
+//
+//	c, err := ppredigo.DialContext(pinpoint.NewContext(context.Background(), tracer), "tcp", "127.0.0.1:6379")
+//	c.Do("SET", "vehicle", "truck")
 package ppredigo
 
 import (
@@ -33,6 +53,7 @@ func (c *wrappedConn) WithContext(ctx context.Context) {
 	c.tracer = pinpoint.FromContext(ctx)
 }
 
+// WithContext passes the context containing the pinpoint.Tracer.
 func WithContext(c redis.Conn, ctx context.Context) {
 	if wc, ok := c.(pinpointContext); ok {
 		wc.WithContext(ctx)
@@ -48,6 +69,7 @@ func makeWrappedConn(c redis.Conn, address string) (redis.Conn, error) {
 	return wrapConn(c, host), nil
 }
 
+// Dial wraps redis.Dial and returns a new redis.Conn ready to instrument.
 func Dial(network string, address string, options ...redis.DialOption) (redis.Conn, error) {
 	c, err := redis.Dial(network, address, options...)
 	if err != nil {
@@ -57,6 +79,8 @@ func Dial(network string, address string, options ...redis.DialOption) (redis.Co
 	return makeWrappedConn(c, address)
 }
 
+// DialContext wraps redis.DialContext and returns a new redis.Conn ready to instrument.
+// It is possible to trace only when the given context contains a pinpoint.Tracer.
 func DialContext(ctx context.Context, network string, address string, options ...redis.DialOption) (redis.Conn, error) {
 	c, err := redis.DialContext(ctx, network, address, options...)
 	if err != nil {
@@ -85,6 +109,7 @@ func makeWrappedConnURL(c redis.Conn, rawurl string) (redis.Conn, error) {
 	return wrapConn(c, host), err
 }
 
+// DialURL wraps redis.DialURL and returns a new redis.Conn ready to instrument.
 func DialURL(rawurl string, options ...redis.DialOption) (redis.Conn, error) {
 	c, err := redis.DialURL(rawurl, options...)
 	if err != nil {
@@ -94,6 +119,8 @@ func DialURL(rawurl string, options ...redis.DialOption) (redis.Conn, error) {
 	return makeWrappedConnURL(c, rawurl)
 }
 
+// DialURLContext wraps redis.DialURLContext and returns a new redis.Conn ready to instrument.
+// It is possible to trace only when the given context contains a pinpoint.Tracer.
 func DialURLContext(ctx context.Context, rawurl string, options ...redis.DialOption) (redis.Conn, error) {
 	c, err := redis.DialURLContext(ctx, rawurl, options...)
 	if err != nil {

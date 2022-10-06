@@ -1,3 +1,14 @@
+// Package ppgorm instruments the go-gorm/gorm package (https://github.com/go-gorm/gorm).
+//
+// This package instruments the go-gorm/gorm calls.
+// Use the Open as the gorm.Open.
+//
+//	g, err := ppgorm.Open(mysql.New(mysql.Config{Conn: db}), &gorm.Config{})
+//
+// It is necessary to pass the context containing the pinpoint.Tracer to gorm.DB.
+//
+//	g = g.WithContext(pinpoint.NewContext(context.Background(), tracer))
+//	g.Create(&Product{Code: "D42", Price: 100})
 package ppgorm
 
 import (
@@ -5,6 +16,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// Open returns a new *gorm.DB ready to instrument.
 func Open(dialector gorm.Dialector, opts ...gorm.Option) (*gorm.DB, error) {
 	db, err := gorm.Open(dialector, opts...)
 	if err != nil {

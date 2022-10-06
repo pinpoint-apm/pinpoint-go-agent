@@ -1,3 +1,14 @@
+// Package pphttp instruments the request handlers of http server.
+//
+// This package instruments inbound requests handled by a http.ServeMux.
+// Use NewServeMux to trace all handlers:
+//
+//	mux := pphttp.NewServeMux()
+//	mux.HandleFunc("/bar", outGoing)
+//
+// Use WrapHandler or WrapHandlerFunc to select the handlers you want to track:
+//
+//	http.HandleFunc("/", pphttp.WrapHandlerFunc(index))
 package pphttp
 
 import (

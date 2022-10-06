@@ -1,3 +1,14 @@
+// Package ppecho instruments the labstack/echo package (https://github.com/labstack/echo).
+//
+// This package instruments inbound requests handled by a echo.Router.
+// Register the Middleware as the middleware of the router to trace all handlers:
+//
+//	e := echo.New()
+//	e.Use(ppecho.Middleware())
+//
+// Use WrapHandler to select the handlers you want to track:
+//
+//	e.GET("/hello", ppecho.WrapHandler(hello))
 package ppecho
 
 import (

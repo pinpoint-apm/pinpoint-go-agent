@@ -1,3 +1,15 @@
+// Package ppgohbase instruments the tsuna/gohbase package (https://github.com/tsuna/gohbase).
+//
+// This package instruments the gohbase calls.
+// Use the NewClient as the gohbase.NewClient.
+//
+//	client := ppgohbase.NewClient("localhost")
+//
+// It is necessary to pass the context containing the pinpoint.Tracer to gohbase.Client.
+//
+//	ctx := pinpoint.NewContext(context.Background(), tracer)
+//	putRequest, _ := hrpc.NewPutStr(ctx, "table", "key", values)
+//	client.Put(putRequest)
 package ppgohbase
 
 import (
@@ -13,6 +25,7 @@ type Client struct {
 	host string
 }
 
+// NewClient wraps gohbase.NewClient and returns a gohbase.Client ready to instrument.
 func NewClient(zkquorum string, options ...hbase.Option) *Client {
 	client := hbase.NewClient(zkquorum, options...)
 	return &Client{Client: client, host: zkquorum}

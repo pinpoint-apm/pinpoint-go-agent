@@ -50,11 +50,11 @@ func (cs *clientStream) endSpan(err error) {
 	}
 }
 
-type DistributedTracingContextWriterMD struct {
+type distributedTracingContextWriterMD struct {
 	md metadata.MD
 }
 
-func (m *DistributedTracingContextWriterMD) Set(key string, value string) {
+func (m *distributedTracingContextWriterMD) Set(key string, value string) {
 	m.md.Set(key, value)
 }
 
@@ -85,7 +85,7 @@ func newSpanForGrpcClient(ctx context.Context, method string) (context.Context, 
 		md = metadata.New(nil)
 	}
 
-	writer := &DistributedTracingContextWriterMD{md}
+	writer := &distributedTracingContextWriterMD{md}
 	tracer.Inject(writer)
 	ctx = metadata.NewOutgoingContext(ctx, writer.md)
 
@@ -101,6 +101,7 @@ func endSpan(tracer pinpoint.Tracer, err error) {
 	}
 }
 
+// UnaryClientInterceptor returns a new grpc.UnaryClientInterceptor ready to instrument.
 func UnaryClientInterceptor() grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		newCtx, clientSpan := newSpanForGrpcClient(ctx, method)
@@ -110,6 +111,7 @@ func UnaryClientInterceptor() grpc.UnaryClientInterceptor {
 	}
 }
 
+// StreamClientInterceptor returns a new grpc.StreamClientInterceptor ready to instrument.
 func StreamClientInterceptor() grpc.StreamClientInterceptor {
 	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 		newCtx, span := newSpanForGrpcClient(ctx, method)

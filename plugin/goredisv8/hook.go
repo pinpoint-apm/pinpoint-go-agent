@@ -1,3 +1,15 @@
+// Package ppgoredisv8 instruments the go-redis/redis/v8 package (https://github.com/go-redis/redis).
+//
+// This package instruments the go-redis/v8 calls.
+// Use the NewHook as the redis.Hook.
+//
+//	rc = redis.NewClient(redisOpts)
+//	rc.AddHook(ppgoredisv8.NewHook(redisOpts))
+//
+// It is necessary to pass the context containing the pinpoint.Tracer to redis.Client.
+//
+//	rc = rc.WithContext(pinpoint.NewContext(context.Background(), tracer))
+//	rc.Pipeline()
 package ppgoredisv8
 
 import (

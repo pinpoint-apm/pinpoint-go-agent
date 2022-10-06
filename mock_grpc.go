@@ -3,12 +3,13 @@ package pinpoint
 import (
 	"context"
 	"errors"
+	"testing"
+	"time"
+
 	"github.com/golang/mock/gomock"
 	lru "github.com/hashicorp/golang-lru"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/pinpoint-apm/pinpoint-go-agent/protobuf/mock"
-	"testing"
-	"time"
 )
 
 func newTestAgent() *agent {

@@ -1,3 +1,17 @@
+// Package ppmongo instruments the mongodb/mongo-go-driver package (https://github.com/mongodb/mongo-go-driver).
+//
+// This package instruments the mongo-go-driver calls.
+// Use the NewMonitor as Monitor field of mongo-go-driver's ClientOptions.
+//
+//	opts := options.Client()
+//	opts.Monitor = ppmongo.NewMonitor()
+//	client, err := mongo.Connect(ctx, opts)
+//
+// It is necessary to pass the context containing the pinpoint.Tracer to mongo.Client.
+//
+//	collection := client.Database("testdb").Collection("example")
+//	ctx := pinpoint.NewContext(context.Background(), tracer)
+//	collection.InsertOne(ctx, bson.M{"foo": "bar", "apm": "pinpoint"})
 package ppmongo
 
 import (
@@ -98,6 +112,7 @@ func (m *monitor) Finished(evt *event.CommandFinishedEvent, err error) {
 	tracer.EndSpanEvent()
 }
 
+// NewMonitor returns a *event.CommandMonitor ready to instrument.
 func NewMonitor() *event.CommandMonitor {
 	m := &monitor{
 		spans: make(map[spanKey]pinpoint.Tracer),

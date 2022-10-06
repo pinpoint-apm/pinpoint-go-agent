@@ -1,7 +1,14 @@
-// Package pppgsql provides tracing functions for tracing the postgres SQL driver (https://github.com/lib/pq).
+// Package pppgsql instruments the lib/pq package (https://github.com/lib/pq).
 //
-// 	db, err := sql.Open("pq-pinpoint", "postgresql://testuser:p123@localhost/testdb?sslmode=disable")
+// This package instruments the postgres driver calls.
+// Use this package's driver in place of the postgres driver.
 //
+//	db, err := sql.Open("pq-pinpoint", "postgresql://testuser:p123@localhost/testdb?sslmode=disable")
+//
+// It is necessary to pass the context containing the pinpoint.Tracer to all exec and query methods on SQL driver.
+//
+//	ctx := pinpoint.NewContext(context.Background(), tracer)
+//	row := db.QueryRowContext(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
 package pppgsql
 
 import (

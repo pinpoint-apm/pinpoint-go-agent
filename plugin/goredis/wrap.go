@@ -1,3 +1,14 @@
+// Package ppgoredis instruments the go-redis/redis package (https://github.com/go-redis/redis).
+//
+// This package instruments the go-redis calls.
+// Use the NewClient as the redis.NewClient.
+//
+//	rc = ppgoredis.NewClient(redisOpts)
+//
+// It is necessary to pass the context containing the pinpoint.Tracer to Client using Client.WithContext.
+//
+//	rc = rc.WithContext(pinpoint.NewContext(context.Background(), tracer))
+//	rc.Pipeline()
 package ppgoredis
 
 import (
@@ -9,6 +20,7 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
+// Client wraps redis.Client.
 type Client struct {
 	*redis.Client
 	endpoint string
@@ -19,6 +31,7 @@ func NewClient(opt *redis.Options) *Client {
 	return &Client{Client: redis.NewClient(opt), endpoint: opt.Addr}
 }
 
+// WithContext passes the context containing the pinpoint.Tracer
 func (c *Client) WithContext(ctx context.Context) *Client {
 	c.Client = c.Client.WithContext(ctx)
 	c.WrapProcess(process(ctx, c.endpoint))
@@ -26,6 +39,7 @@ func (c *Client) WithContext(ctx context.Context) *Client {
 	return c
 }
 
+// ClusterClient wraps redis.ClusterClient.
 type ClusterClient struct {
 	*redis.ClusterClient
 	endpoint string
@@ -37,6 +51,7 @@ func NewClusterClient(opt *redis.ClusterOptions) *ClusterClient {
 	return &ClusterClient{ClusterClient: redis.NewClusterClient(opt), endpoint: endpoint}
 }
 
+// WithContext passes the context containing the pinpoint.Tracer
 func (c *ClusterClient) WithContext(ctx context.Context) *ClusterClient {
 	c.ClusterClient = c.ClusterClient.WithContext(ctx)
 	c.WrapProcess(process(ctx, c.endpoint))

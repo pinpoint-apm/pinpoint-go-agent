@@ -1,3 +1,15 @@
+// Package pphttp instruments the http client requests.
+//
+// This package instruments outbound requests and add distributed tracing headers.
+// Use WrapClient, WrapClientWithContext or DoClient.
+//
+//	client := pphttp.WrapClient(&http.Client{})
+//	client.Get(external_url)
+//
+// or
+//
+//	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+//	pphttp.DoClient(http.DefaultClient.Do, req)
 package pphttp
 
 import (
@@ -8,7 +20,7 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
-// NewHttpClientTracer deprecated
+// NewHttpClientTracer is deprecated. Use WrapClient or DoClient.
 func NewHttpClientTracer(tracer pinpoint.Tracer, operationName string, req *http.Request) pinpoint.Tracer {
 	return before(tracer, operationName, req)
 }
@@ -39,7 +51,7 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 	return tracer
 }
 
-// EndHttpClientTracer deprecated
+// EndHttpClientTracer is deprecated.
 func EndHttpClientTracer(tracer pinpoint.Tracer, resp *http.Response, err error) {
 	after(tracer, resp, err)
 }
@@ -58,6 +70,11 @@ func after(tracer pinpoint.Tracer, resp *http.Response, err error) {
 	tracer.EndSpanEvent()
 }
 
+// DoClient instruments and executes a given doFunc.
+// It is necessary to pass the context containing the pinpoint.Tracer to the http.Request.
+//
+//	req, _ := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer), "GET", url, nil)
+//	pphttp.DoClient(http.DefaultClient.Do, req)
 func DoClient(doFunc func(req *http.Request) (*http.Response, error), req *http.Request) (*http.Response, error) {
 	tracer := before(pinpoint.TracerFromRequestContext(req), "http/Client.Do()", req)
 	resp, err := doFunc(req)
@@ -71,6 +88,12 @@ type roundTripper struct {
 	ctx      context.Context
 }
 
+// WrapClient returns a new *http.Client ready to instrument.
+// It is necessary to pass the context containing the pinpoint.Tracer to the http.Request.
+//
+//	req, _ := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer), "GET", url, nil)
+//	client := pphttp.WrapClient(&http.Client{})
+//	client.Do(req)
 func WrapClient(client *http.Client) *http.Client {
 	if client == nil {
 		client = http.DefaultClient
@@ -81,6 +104,11 @@ func WrapClient(client *http.Client) *http.Client {
 	return &c
 }
 
+// WrapClientWithContext returns a new *http.Client ready to instrument.
+// It is possible to trace only when the given context contains a pinpoint.Tracer.
+//
+//	client := pphttp.WrapClientWithContext(pinpoint.NewContext(context.Background(), tracer), &http.Client{})
+//	client.Get(external_url)
 func WrapClientWithContext(ctx context.Context, client *http.Client) *http.Client {
 	if client == nil {
 		client = http.DefaultClient

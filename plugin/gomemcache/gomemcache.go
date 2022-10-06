@@ -1,3 +1,14 @@
+// Package ppgomemcache instruments the bradfitz/gomemcache package (https://github.com/bradfitz/gomemcache).
+//
+// This package instruments the gomemcache calls.
+// Use the NewClient as the memcache.New.
+//
+//	mc := ppgomemcache.NewClient(addr...)
+//
+// It is necessary to pass the context containing the pinpoint.Tracer to Client using Client.WithContext.
+//
+//	mc.WithContext(pinpoint.NewContext(context.Background(), tracer))
+//	mc.Get("foo")
 package ppgomemcache
 
 //Contributed by ONG-YA (https://github.com/ONG-YA)
@@ -11,17 +22,20 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
+// Client wraps memcache.Client.
 type Client struct {
 	*memcache.Client
 	endpoint string
 	tracer   pinpoint.Tracer
 }
 
+// NewClient wraps memcache.New and returns a memcache.Client wrapper ready to instrument.
 func NewClient(server ...string) *Client {
 	client := memcache.New(server...)
 	return &Client{Client: client, endpoint: strings.Join(server, ","), tracer: pinpoint.NoopTracer()}
 }
 
+// WithContext passes the context containing the pinpoint.Tracer
 func (c *Client) WithContext(ctx context.Context) {
 	c.tracer = pinpoint.FromContext(ctx)
 }

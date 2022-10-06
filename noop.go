@@ -10,7 +10,7 @@ type noopAgent struct {
 
 var defaultNoopAgent = &noopAgent{}
 
-// NoopAgent returns a Agent that not collect tracing data.
+// NoopAgent returns a Agent that doesn't collect tracing data.
 func NoopAgent() Agent {
 	return defaultNoopAgent
 }
@@ -43,7 +43,7 @@ type noopSpan struct {
 
 var defaultNoopSpan = noopSpan{}
 
-// NoopTracer returns a Tracer that not collect tracing data.
+// NoopTracer returns a Tracer that doesn't collect tracing data.
 func NoopTracer() Tracer {
 	return &defaultNoopSpan
 }

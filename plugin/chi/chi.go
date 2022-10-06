@@ -1,3 +1,14 @@
+// Package ppchi instruments the go-chi/chi package (https://github.com/go-chi/chi).
+//
+// This package instruments inbound requests handled by a chi.Router.
+// Register the Middleware as the middleware of the router to trace all handlers:
+//
+//	r := chi.NewRouter()
+//	r.Use(ppchi.Middleware())
+//
+// Use WrapHandler or WrapHandlerFunc to select the handlers you want to track:
+//
+//	r.Get("/hello", ppchi.WrapHandlerFunc(hello))
 package ppchi
 
 import (

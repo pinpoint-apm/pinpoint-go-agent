@@ -1,3 +1,34 @@
+// Package ppgrpc instruments the grpc/grpc-go package (https://github.com/grpc/grpc-go).
+//
+// This package instruments gRPC servers and gRPC clients.
+// To instrument a gRPC server, use UnaryServerInterceptor and StreamServerInterceptor.
+//
+//	grpcServer := grpc.NewServer(
+//	    grpc.UnaryInterceptor(ppgrpc.UnaryServerInterceptor()),
+//	    grpc.StreamInterceptor(ppgrpc.StreamServerInterceptor()),
+//	)
+//
+// ppgrpc's server interceptor adds the pinpoint.Tracer to the gRPC server handler's context.
+// By using the pinpoint.FromContext function, this tracer can be obtained.
+//
+//	func (s *Server) UnaryCallUnaryReturn(ctx context.Context, msg *testapp.Greeting) (*testapp.Greeting, error) {
+//	    tracer := pinpoint.FromContext(ctx)
+//	    tracer.NewSpanEvent("gRPC Server Handler").EndSpanEvent()
+//	    return "hi", nil
+//	}
+//
+// To instrument a gRPC client, use UnaryClientInterceptor and StreamClientInterceptor.
+//
+//	conn, err := grpc.Dial(
+//	    "localhost:8080",
+//	    grpc.WithUnaryInterceptor(ppgrpc.UnaryClientInterceptor()),
+//	    grpc.WithStreamInterceptor(ppgrpc.StreamClientInterceptor()),
+//	)
+//
+// It is necessary to pass the context containing the pinpoint.Tracer to grpc.Client.
+//
+//	client := testapp.NewHelloClient(conn)
+//	client.UnaryCallUnaryReturn(pinpoint.NewContext(context.Background(), tracer), greeting)
 package ppgrpc
 
 import (
@@ -17,11 +48,11 @@ func (s *serverStream) Context() context.Context {
 	return s.context
 }
 
-type DistributedTracingContextReaderMD struct {
+type distributedTracingContextReaderMD struct {
 	md metadata.MD
 }
 
-func (m DistributedTracingContextReaderMD) Get(key string) string {
+func (m distributedTracingContextReaderMD) Get(key string) string {
 	v := m.md.Get(key)
 	if len(v) == 0 {
 		return ""
@@ -31,13 +62,16 @@ func (m DistributedTracingContextReaderMD) Get(key string) string {
 
 func startSpan(ctx context.Context, rpcName string) pinpoint.Tracer {
 	md, _ := metadata.FromIncomingContext(ctx) // nil is ok
-	reader := &DistributedTracingContextReaderMD{md}
+	reader := &distributedTracingContextReaderMD{md}
 	tracer := pinpoint.GetAgent().NewSpanTracerWithReader("gRPC Server", rpcName, reader)
 	tracer.Span().SetServiceType(pinpoint.ServiceTypeGrpcServer)
 
 	return tracer
 }
 
+// UnaryServerInterceptor returns a grpc.UnaryServerInterceptor ready to instrument
+// and adds the pinpoint.Tracer to the grpc.UnaryHandler's context.
+// By using the pinpoint.FromContext function, this tracer can be obtained.
 func UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		if !pinpoint.GetAgent().Enable() {
@@ -57,6 +91,9 @@ func UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 	}
 }
 
+// StreamServerInterceptor returns a grpc.StreamServerInterceptor ready to instrument
+// and adds the pinpoint.Tracer to the grpc.StreamHandler's context.
+// By using the pinpoint.FromContext function, this tracer can be obtained.
 func StreamServerInterceptor() grpc.StreamServerInterceptor {
 	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		if !pinpoint.GetAgent().Enable() {

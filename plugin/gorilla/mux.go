@@ -1,11 +1,14 @@
-// Package ppgorilla Package provides tracing functions for tracing the gorilla/mux package (https://github.com/gorilla/mux).
+// Package ppgorilla instruments the gorilla/mux package (https://github.com/gorilla/mux).
 //
-// Use this package to instrument inbound requests handled by a gorilla mux.Router.
-// Use the ppgorilla.Middleware as the first middleware registered with your router.
+// This package instruments inbound requests handled by a gorilla mux.Router.
+// Register the Middleware as the middleware of the router to trace all handlers:
 //
-// r := mux.NewRouter()
-// r.Use(ppgorilla.Middleware())
+//	r := mux.NewRouter()
+//	r.Use(ppgorilla.Middleware())
 //
+// Use WrapHandler or WrapHandlerFunc to select the handlers you want to track:
+//
+//	r.HandleFunc("/outgoing", ppgorilla.WrapHandlerFunc(outGoing))
 package ppgorilla
 
 import (

@@ -1,3 +1,14 @@
+// Package ppgoelastic instruments the elastic/go-elasticsearch package (https://github.com/elastic/go-elasticsearch).
+//
+// This package instruments the elasticsearch calls.
+// Use the NewTransport as the elasticsearch.Client's Transport.
+//
+//	elasticsearch.NewClient(elasticsearch.Config{Transport: ppgoelastic.NewTransport(nil)})
+//
+// It is necessary to pass the context containing the pinpoint.Tracer to elasticsearch.Client.
+//
+//	ctx := pinpoint.NewContext(context.Background(), tracer)
+//	es.Search(es.Search.WithContext(ctx), es.Search.WithIndex("test"))
 package ppgoelastic
 
 import (
@@ -9,6 +20,8 @@ type transport struct {
 	rt http.RoundTripper
 }
 
+// NewTransport returns a new http.RoundTripper to instrument elasticsearch calls.
+// If a http.RoundTripper parameter is not provided, http.DefaultTransport will be instrumented.
 func NewTransport(r http.RoundTripper) http.RoundTripper {
 	if r == nil {
 		r = http.DefaultTransport
@@ -62,11 +75,11 @@ func dslString(req *http.Request) string {
 	return string(dsl)
 }
 
-func RequestWithContext(req *http.Request) *http.Request {
-	url := req.URL
-	req.URL = nil
-	reqCopy := req.WithContext(req.Context())
-	reqCopy.URL = url
-	req.URL = url
-	return reqCopy
-}
+//func RequestWithContext(req *http.Request) *http.Request {
+//	url := req.URL
+//	req.URL = nil
+//	reqCopy := req.WithContext(req.Context())
+//	reqCopy.URL = url
+//	req.URL = url
+//	return reqCopy
+//}

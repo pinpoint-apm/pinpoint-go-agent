@@ -1,3 +1,14 @@
+// Package ppgin instruments the gin-gonic/gin package (https://github.com/gin-gonic/gin).
+//
+// This package instruments inbound requests handled by a gin.Engine.
+// Register the Middleware as the middleware of the router to trace all handlers:
+//
+//	r := gin.Default()
+//	r.Use(ppgin.Middleware())
+//
+// Use WrapHandler to select the handlers you want to track:
+//
+//	r.GET("/external", ppgin.WrapHandler(extCall))
 package ppgin
 
 import (
