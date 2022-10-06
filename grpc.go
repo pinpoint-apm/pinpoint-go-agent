@@ -60,7 +60,7 @@ func backOffSleep(attempt int) time.Duration {
 	return time.Duration(rand.Float64()*(dur-base) + base)
 }
 
-type AgentGrpcClient interface {
+type agentClient interface {
 	RequestAgentInfo(ctx context.Context, agentInfo *pb.PAgentInfo) (*pb.PResult, error)
 	PingSession(ctx context.Context) (pb.Agent_PingSessionClient, error)
 }
@@ -79,7 +79,7 @@ func (agentGrpcClient *agentGrpcClient) PingSession(ctx context.Context) (pb.Age
 	return session, err
 }
 
-type MetaGrpcClient interface {
+type metaClient interface {
 	RequestApiMetaData(ctx context.Context, in *pb.PApiMetaData) (*pb.PResult, error)
 	RequestSqlMetaData(ctx context.Context, in *pb.PSqlMetaData) (*pb.PResult, error)
 	RequestStringMetaData(ctx context.Context, in *pb.PStringMetaData) (*pb.PResult, error)
@@ -108,13 +108,13 @@ const agentGrpcTimeOut = 60 * time.Second
 const sendStreamTimeOut = 5 * time.Second
 
 type agentGrpc struct {
-	agentConn      *grpc.ClientConn
-	agentClient    AgentGrpcClient
-	metadataClient MetaGrpcClient
-	pingSocketId   int64
-	pingStream     *pingStream
-	agent          *agent
-	config         *Config
+	agentConn    *grpc.ClientConn
+	agentClient  agentClient
+	metaClient   metaClient
+	pingSocketId int64
+	pingStream   *pingStream
+	agent        *agent
+	config       *Config
 }
 
 var kacp = keepalive.ClientParameters{
@@ -144,14 +144,12 @@ func newAgentGrpc(agent *agent, config *Config) (*agentGrpc, error) {
 		return nil, err
 	}
 
-	agentClient := agentGrpcClient{pb.NewAgentClient(conn)}
-	metadataClient := metaGrpcClient{pb.NewMetadataClient(conn)}
 	return &agentGrpc{
-		agentConn:      conn,
-		agentClient:    &agentClient,
-		metadataClient: &metadataClient,
-		agent:          agent,
-		config:         config,
+		agentConn:   conn,
+		agentClient: &agentGrpcClient{pb.NewAgentClient(conn)},
+		metaClient:  &metaGrpcClient{pb.NewMetadataClient(conn)},
+		agent:       agent,
+		config:      config,
 	}, nil
 }
 
@@ -258,7 +256,7 @@ func (agentGrpc *agentGrpc) sendApiMetadata(ctx context.Context, in *pb.PApiMeta
 	ctx, cancel := context.WithTimeout(ctx, agentGrpcTimeOut)
 	defer cancel()
 
-	_, err := agentGrpc.metadataClient.RequestApiMetaData(ctx, in)
+	_, err := agentGrpc.metaClient.RequestApiMetaData(ctx, in)
 	if err != nil {
 		Log("grpc").Errorf("send api metadata - %v", err)
 	}
@@ -295,7 +293,7 @@ func (agentGrpc *agentGrpc) sendStringMetadata(ctx context.Context, in *pb.PStri
 	ctx, cancel := context.WithTimeout(ctx, agentGrpcTimeOut)
 	defer cancel()
 
-	_, err := agentGrpc.metadataClient.RequestStringMetaData(ctx, in)
+	_, err := agentGrpc.metaClient.RequestStringMetaData(ctx, in)
 	if err != nil {
 		Log("grpc").Errorf("send string metadata - %v", err)
 	}
@@ -330,7 +328,7 @@ func (agentGrpc *agentGrpc) sendSqlMetadata(ctx context.Context, in *pb.PSqlMeta
 	ctx, cancel := context.WithTimeout(ctx, agentGrpcTimeOut)
 	defer cancel()
 
-	_, err := agentGrpc.metadataClient.RequestSqlMetaData(ctx, in)
+	_, err := agentGrpc.metaClient.RequestSqlMetaData(ctx, in)
 	if err != nil {
 		Log("grpc").Errorf("send sql metadata - %v", err)
 	}
@@ -465,7 +463,7 @@ func (agentGrpc *agentGrpc) close() {
 	agentGrpc.agentConn.Close()
 }
 
-type SpanGrpcClient interface {
+type spanClient interface {
 	SendSpan(ctx context.Context) (pb.Span_SendSpanClient, error)
 }
 
@@ -479,7 +477,7 @@ func (spanGrpcClient *spanGrpcClient) SendSpan(ctx context.Context) (pb.Span_Sen
 
 type spanGrpc struct {
 	spanConn   *grpc.ClientConn
-	spanClient SpanGrpcClient
+	spanClient spanClient
 	stream     *spanStream
 	agent      *agent
 }
@@ -495,10 +493,9 @@ func newSpanGrpc(agent *agent, config *Config) (*spanGrpc, error) {
 		return nil, err
 	}
 
-	client := spanGrpcClient{pb.NewSpanClient(conn)}
 	return &spanGrpc{
 		spanConn:   conn,
-		spanClient: &client,
+		spanClient: &spanGrpcClient{pb.NewSpanClient(conn)},
 		agent:      agent,
 	}, nil
 }
@@ -688,7 +685,7 @@ func makePSpanEvent(event *spanEvent) *pb.PSpanEvent {
 	return &aSpanEvent
 }
 
-type StatGrpcClient interface {
+type statClient interface {
 	SendAgentStat(ctx context.Context) (pb.Stat_SendAgentStatClient, error)
 }
 
@@ -702,7 +699,7 @@ func (statGrpcClient *statGrpcClient) SendAgentStat(ctx context.Context) (pb.Sta
 
 type statGrpc struct {
 	statConn   *grpc.ClientConn
-	statClient StatGrpcClient
+	statClient statClient
 	stream     *statStream
 	agent      *agent
 }
@@ -718,8 +715,11 @@ func newStatGrpc(agent *agent, config *Config) (*statGrpc, error) {
 		return nil, err
 	}
 
-	client := &statGrpcClient{pb.NewStatClient(conn)}
-	return &statGrpc{statConn: conn, statClient: client, agent: agent}, nil
+	return &statGrpc{
+		statConn:   conn,
+		statClient: &statGrpcClient{pb.NewStatClient(conn)},
+		agent:      agent,
+	}, nil
 }
 
 func (statGrpc *statGrpc) close() {

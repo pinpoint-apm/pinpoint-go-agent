@@ -1,9 +1,0 @@
-#pinpoint go-agent configuration
-
-applicationname: "MyAppName"
-collector:
-  host: "my.collector.host"
-sampling:
-  type: "PERCENT"
-  percentrate: 10
-loglevel: "debug"
