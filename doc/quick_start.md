@@ -3,21 +3,21 @@
 ## Install
 ### Go get
 ```
-go get -u github.com/pinpoint-apm/pinpoint-go-agent
+go get github.com/pinpoint-apm/pinpoint-go-agent
 ```
 
 ### import
 ``` go
-import pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+import "github.com/pinpoint-apm/pinpoint-go-agent"
 ```
 
-## Requirements
-Go 1.12+
+## Create an Agent
+Go programs cannot be automatically instrumented because they are compiled into native machine code.
+Therefore, developers must add the codes for instrumenting to the Go program they want to track.
 
-## Agent Creation
-Java programs can be automatically instrumented by changing the byte code using the ‑javaagent flag, but Go programs cannot be automatically instrumented because they are compiled into native machine code. Therefore, users must add the code for measuring to the Go program they want to track.
-
-First, you can create a pinpoint agent from the main function or the init block. After you set the application name, agentid, point collector name, and so on for ConfigOptions, you can call the NewAgent() function to create an agent.
+First, you can create a pinpoint agent from the main function or the init block.
+After you set the application name, agent id, pinpoint collector name, and so on for ConfigOptions, 
+you can call the NewAgent() function to create an agent.
 
 ``` go
 func main() {
@@ -60,20 +60,23 @@ The functions for setting up the Pinpoint Go Agent are as follows:
       rate: 10
     ```
   
-## Web Request Trace
+## Instrument HTTP Request
 
-As mentioned earlier, the Go application must be manually instrumented at the source code level. Pinpoint-go-agent provides plugins modules to help developers trace the many-used libraries. These modules allow you to make instruments with simple source code modifications.
+As mentioned earlier, the Go application must be manually instrumented at the source code level. 
+Pinpoint Go Agent provides plugins packages to help developers trace the popular frameworks and toolkits. 
+These packages help you to make instruments with simple source code modifications.
 
-### Standard HTTP Library
+### Inbound Http Request
 
-The pinpoint http plugin lets you trace Go's built-in 'http' packages. For example, if you want to trace the handler of the http server below,
+The pinpoint http plugin lets you trace Go's built-in http packages.
+For example, if you want to trace the handler of the http server below,
 
 ```go
-http.HandleFunc("/", indexHandler)
+http.HandleFunc("/", index)
 ```
 you can write code for the instruments as shown below.
 ```go
-http.HandleFunc(phttp.WrapHandleFunc(agent, "index", "/", index))
+http.HandleFunc("/", pphttp.WrapHandlerFunc(index))
 ```
 
 The complete example code for tracing the http server's handler is as follows:
@@ -81,8 +84,8 @@ The complete example code for tracing the http server's handler is as follows:
 package main
 
 import (
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 func index(w http.ResponseWriter, r *http.Request) {
@@ -100,17 +103,19 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
+	defer agent.Shutdown()
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "index", "/", index))
-	agent.Shutdown()
+	http.HandleFunc("/", pphttp.WrapHandlerFunc(index))
 }
 ```
 
 ### Web Framwork
-pinpoint-go-agent provides a plugin to track the Gin, Echo, Chi Web framework. Below is an example of tracking the handler of the Gin framework. Simply register the pinpoint gin plugin with the middleware of the Gin.
+Pinpoint Go Agent provides a plugin to track the Gin, Echo, Chi, Gorilla Web framework. 
+Below is an example of tracking the handler of the Gin framework. 
+Simply register the pinpoint gin plugin with the middleware of the Gin.
 
 ``` go
-router.Use(pgin.Middleware(agent))
+router.Use(pgin.Middleware())
 ```
 ``` go
 package main
@@ -129,7 +134,7 @@ func main() {
 	... //set up agent
 	
 	router := gin.Default()
-	router.Use(pgin.Middleware(agent))
+	router.Use(pgin.Middleware())
 
 	router.GET("/hello", hello)
 	router.Run(":8000")
@@ -137,7 +142,8 @@ func main() {
 ```
 
 ### Outgoing Http Request 
-If you are tracking outgoing HTTP requests, you must instrument the HTTP client. The WrapClient() function in the pinpoint http plugin allows you to trace http client calls.
+If you are tracking outgoing HTTP requests, you must instrument the HTTP client. 
+The WrapClient() function in the pinpoint http plugin allows you to trace http client calls.
 
 ``` go
 func outgoing(w http.ResponseWriter, r *http.Request) {
@@ -158,23 +164,23 @@ func outgoing(w http.ResponseWriter, r *http.Request) {
 func main() {
 	... //setup agent
 	
-	http.HandleFunc(pinpointhttp.WrapHandleFunc(t, "outgoing", "/outgoing", outgoing))
+	http.HandleFunc("/outgoing", pphttp.WrapHandlerFunc(outgoing))
 
 	http.ListenAndServe(":8000", nil)
 	t.Shutdown()
 }
 ```
 
-## MySQL Trace
-pinpoint mysql plugin is a 'database/sql' driver that instruments the Go-MySQL-Driver(https://github.com/go-sql-driver/mysql). 
-When invoking the sql.Open() function, instead of the Go-MySQL-Driver,
+## Instrument Database Query
+Pinpoint mysql plugin is a 'database/sql' driver that instruments the go-sql-driver/mysql(https://github.com/go-sql-driver/mysql). 
+When invoking the sql.Open() function, instead of the go-sql-driver/mysql driver,
 ``` go
 import "database/sql"
 import _ "github.com/go-sql-driver/mysql"
 
 db, err := sql.Open("mysql", "user:password@/dbname")
 ```
-you can use the pinpont mysql plugin.
+you can use the pinpoint mysql plugin.
 ``` go
 db, err := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/information_schema")
 ```
@@ -209,20 +215,26 @@ func query(w http.ResponseWriter, r *http.Request) {
 ```
 
 ## Context Passing
-In the example of Outgoing Http Request above, looking at the outgoing() function, there is a code that invokes the FromContext() function to acquire the tracer.
+In the example of Outgoing Http Request above, looking at the outgoing() function,
+there is a code that invokes the FromContext() function to acquire the tracer.
 
 ``` go
 tracer := pinpoint.FromContext(r.Context())
 ```
 
-In the Trace SQL example, the query() function calls the NewContext() function and adds the tracer to the go context.
+In the Trace SQL example, the query() function calls the NewContext() function 
+and adds the tracer to the go context.
 
 ``` go
 ctx := pinpoint.NewContext(context.Background(), tracer)
 row := db.QueryRowContext(ctx, "SELECT count(*) from tables")
 ```
 
-The tracer is the object that implements the Tracer interface of the pinpoint-go-agent, which generates and stores instrumentation information. When calling the go function, we use the context of the go language to pass this tracer. Pinpoint-go-agent provides a function that adds a tracer to the context, and a function that imports a tracer from the context, respectively.
+The tracer is the object that implements the Tracer interface of the pinpoint-go-agent,
+which generates and stores instrumentation information. When calling the go function, 
+we use the context of the go language to pass this tracer. 
+Pinpoint-go-agent provides a function that adds a tracer to the context, 
+and a function that imports a tracer from the context, respectively.
 
 ``` go
 NewContext(ctx context.Context, tracer Tracer) context.Context 
@@ -231,11 +243,13 @@ FromContext(ctx context.Context) Tracer
 
 For information on the go context package, visit https://golang.org/pkg/context/.
 
-## Goroutine Trace
+## Instrument Goroutine
 
-Because a pinpoint tracer is designed to track a single call stack, applications can be crashed if a tracer is shared on goroutines.
-The Tracer.NewAsyncSpan() function should be called to create a new tracer that traces a goroutine, and then pass it to the goroutine.
-To pass the tracer reference to the goroutine, there is a way to pass it over to the function parameter, through the channel, or in the context.Context.
+Because a pinpoint tracer is designed to track a single call stack,
+applications can be crashed if a tracer is shared on goroutines.
+The Tracer.NewAsyncSpan() function should be called to create a new tracer that traces a goroutine, 
+and then pass it to the goroutine. To pass the tracer reference to the goroutine, 
+there is a way to pass it over to the function parameter, through the channel, or in the context.Context.
 The Tracer.EndSpan() function must be called at the end of the goroutine.
 
 Example using function parameter:

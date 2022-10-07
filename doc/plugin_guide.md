@@ -1,10 +1,40 @@
 # Pinpoint Go Agent Plug-ins
-## chi
-You can instrument [chi web framewark](https://github.com/go-chi/chi) using the pinpoint chi plugin.
-Register the pinpoint chi plugin with midleware of chi to start tracking.
+
+| plugin package | source directory                          | instrumented package                                                           |
+|----------------|-------------------------------------------|--------------------------------------------------------------------------------|
+| ppchi          | [plugin/chi](/plugin/chi)                 | go-chi/chi package (https://github.com/go-chi/chi)                             |
+| ppecho         | [plugin/echo](/plugin/echo)               | labstack/echo package (https://github.com/labstack/echo)                       |
+| ppgin          | [plugin/gin](/plugin/gin)                 | gin-gonic/gin package (https://github.com/gin-gonic/gin)                       |
+| ppgocql        | [plugin/gocql](/plugin/gocql)             | gocql package (https://github.com/gocql/gocql).                                |
+| ppgoelastic    | [plugin/goelastic](/plugin/goelastic)     | elastic/go-elasticsearch package (https://github.com/elastic/go-elasticsearch) |
+| ppgohbase      | [plugin/gohbase](/plugin/gohbase)         | tsuna/gohbase package (https://github.com/tsuna/gohbase).                      |
+| ppgomemcache   | [plugin/gomemcache](/plugin/gomemcache)   | bradfitz/gomemcache package (https://github.com/bradfitz/gomemcache)           |
+| ppgoredis      | [plugin/goredis](/plugin/goredis)         | go-redis/redis package (https://github.com/go-redis/redis)                     |
+| ppgoredisv8    | [plugin/goredisv8](/plugin/goredisv8)     | go-redis/redis/v8 package (https://github.com/go-redis/redis)                  |
+| ppgorilla      | [plugin/gorilla](/plugin/gorilla)         | gorilla/mux package (https://github.com/gorilla/mux).                          |
+| ppgorm         | [plugin/gorm](/plugin/gorm)               | go-gorm/gorm package (https://github.com/go-gorm/gorm)                         |
+| ppgrpc         | [plugin/grpc](/plugin/grpc)               | grpc/grpc-go package (https://github.com/grpc/grpc-go)                         |
+| pphttp         | [plugin/http](/plugin/http)               | Go standard HTTP library                                                       |
+| pplogrus       | [plugin/logrus](/plugin/logrus)           | sirupsen/logrus package (https://github.com/sirupsen/logrus)                   |
+| ppmongo        | [plugin/mongodriver](/plugin/mongodriver) | mongodb/mongo-go-driver package (https://github.com/mongodb/mongo-go-driver)   |
+| ppmysql        | [plugin/mysql](/plugin/mysql)             | go-sql-driver/mysql package (https://github.com/go-sql-driver/mysql)           |
+| pppgsql        | [plugin/pgsql](/plugin/pgsql)             | lib/pq package (https://github.com/lib/pq)                                     |
+| ppredigo       | [plugin/redigo](/plugin/redigo)           | gomodule/redigo package (https://github.com/gomodule/redigo)                   |
+| ppsarama       | [plugin/sarama](/plugin/sarama)           | Shopify/sarama package (https://github.com/Shopify/sarama)                     |
+
+## ppchi
+This package instruments inbound requests handled by a chi.Router. 
+Register the Middleware as the middleware of the router to trace all handlers:
+
 ``` go
 r := chi.NewRouter()
-r.Use(pchi.Middleware(agent))
+r.Use(ppchi.Middleware())
+```
+
+Use WrapHandler or WrapHandlerFunc to select the handlers you want to track:
+
+``` go
+r.Get("/hello", ppchi.WrapHandlerFunc(hello))
 ```
 
 ``` go
@@ -12,8 +42,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	pchi "github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi"
 )
 
 func hello(w http.ResponseWriter, r *http.Request) {
@@ -24,7 +54,7 @@ func main() {
 	... //setup agent
 	
 	r := chi.NewRouter()
-	r.Use(pchi.Middleware(agent))
+	r.Use(ppchi.Middleware())
 	r.Get("/hello", hello)
 
 	http.ListenAndServe(":8000", r)
@@ -33,12 +63,19 @@ func main() {
 
 [Full Example Source](/plugin/chi/example/chi_server.go)
 
-## echo
-You can instrument [Echo web framewark](https://github.com/labstack/echo) using the pinpoint echo plugin.
-Register the pinpoint echo plugin with midleware of echo to start tracking.
+## ppecho
+This package instruments inbound requests handled by an echo.Router.
+Register the Middleware as the middleware of the router to trace all handlers:
+
 ``` go
 e := echo.New()
-e.Use(pecho.Middleware(agent))
+e.Use(ppecho.Middleware())
+```
+
+Use WrapHandler to select the handlers you want to track:
+
+``` go
+e.GET("/hello", ppecho.WrapHandler(hello))
 ```
 
 ``` go
@@ -46,8 +83,8 @@ package main
 
 import (
 	"github.com/labstack/echo"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	pecho "github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo"
 )
 
 func hello(c echo.Context) error {
@@ -58,7 +95,7 @@ func main() {
 	... //setup agent
 	
 	e := echo.New()
-	e.Use(pecho.Middleware(agent))
+	e.Use(ppecho.Middleware())
 
 	e.GET("/hello", hello)
 	e.Start(":9000")
@@ -67,19 +104,109 @@ func main() {
 ```
 [Full Example Source](/plugin/echo/example/echo_server.go)
 
-## go-elasticsearch
-You can instrument [go-elasticsearch](https://github.com/elastic/go-elasticsearch/v8) using the pinpoint goelastic plugin.
-When you call the NewClient() function of the go-elasticsearch, you can start tracking by registering the pinpoint goelastic plugin as Transport.
+## ppgin
+This package instruments inbound requests handled by a gin.Engine. 
+Register the Middleware as the middleware of the router to trace all handlers:
+
+``` go
+r := gin.Default()
+r.Use(ppgin.Middleware())
+```
+
+Use WrapHandler to select the handlers you want to track:
+
+``` go
+r.GET("/external", ppgin.WrapHandler(extCall))
+```
+
+``` go
+package main
+
+import (
+	"github.com/gin-gonic/gin"
+    "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin"
+)
+
+func endpoint(c *gin.Context) {
+	c.Writer.WriteString("endpoint")
+}
+
+func main() {
+	... //setup agent
+	
+	router := gin.Default()
+	router.Use(ppgin.Middleware())
+
+	router.GET("/endpoint", endpoint)
+	router.Run(":8000")
+}
+
+```
+[Full Example Source](/plugin/gin/example/gin_server.go)
+
+## ppgocql
+This package instruments all queries created from gocql session. 
+Use the NewObserver as the gocql.QueryObserver or gocql.BatchObserver:
+
+``` go
+cluster := gocql.NewCluster("127.0.0.1")
+
+observer := ppgocql.NewObserver()
+cluster.QueryObserver = observer
+cluster.BatchObserver = observer
+```
+
+It is necessary to pass the context containing the pinpoint.Tracer using the pinpoint.WithContext function.
+
+``` go
+import (
+	"github.com/gocql/gocql"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql"
+)
+
+func doCassandra(w http.ResponseWriter, r *http.Request) {
+	cluster := gocql.NewCluster("127.0.0.1")
+	cluster.Keyspace = "example"
+	cluster.Consistency = gocql.Quorum
+
+	observer := ppgocql.NewObserver()
+	cluster.QueryObserver = observer
+	cluster.BatchObserver = observer
+
+	session, _ := cluster.CreateSession()
+	defer session.Close()
+
+	ctx := r.Context()
+	var id gocql.UUID
+	var text string
+
+	query := session.Query(`SELECT id, text FROM tweet WHERE timeline = ? LIMIT 1`, "me")
+	if err := query.WithContext(ctx).Consistency(gocql.One).Scan(&id, &text); err != nil {
+		log.Println(err)
+	}
+	io.WriteString(w, "Tweet:"+text)
+}
+
+```
+[Full Example Source](/plugin/gocql/example/gocql_example.go)
+
+## ppgoelastic
+This package instruments the elasticsearch calls.
+Use the NewTransport function as the elasticsearch.Client's Transport.
 
 ``` go
 es, err := elasticsearch.NewClient(
 	elasticsearch.Config{
-		Transport: pelastic.NewTransport(nil),
+		Transport: ppgoelastic.NewTransport(nil),
 })
 ```
 
-When invoking api of go-elasticsearch, you must call the WithContext() function to pass over the pinpoint context.
+It is necessary to pass the context containing the pinpoint.Tracer to elasticsearch.Client.
+
 ``` go
+ctx := pinpoint.NewContext(context.Background(), tracer)
 res, err = es.Search(
 	es.Search.WithContext(ctx),
 	es.Search.WithIndex("test"),
@@ -91,15 +218,15 @@ res, err = es.Search(
 import (
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/elastic/go-elasticsearch/v8/esapi"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	pelastic "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelastic"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelastic"
 )
 
 func goelastic(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	es, err := elasticsearch.NewClient(
 		elasticsearch.Config{
-			Transport: pelastic.NewTransport(nil),
+			Transport: ppgoelastic.NewTransport(nil),
 		})
 	if err != nil {
 		log.Fatalf("Error creating the client: %s", err)
@@ -132,104 +259,31 @@ func goelastic(w http.ResponseWriter, req *http.Request) {
 ```
 [Full Example Source](/plugin/goelastic/example/goelastic.go)
 
-## gin
-You can instrument [Gin web framewark](https://github.com/gin-gonic/gin) using the pinpoint gin plugin.
-Register the pinpoint gin plugin with midleware of gin to start tracking.
-``` go
-router := gin.Default()
-router.Use(pgin.Middleware(agent))
-```
-``` go
-package main
-
-import (
-	"github.com/gin-gonic/gin"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	pgin "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin"
-)
-
-func endpoint(c *gin.Context) {
-	c.Writer.WriteString("endpoint")
-}
-
-func main() {
-	... //setup agent
-	
-	router := gin.Default()
-	router.Use(pgin.Middleware(agent))
-
-	router.GET("/endpoint", endpoint)
-	router.Run(":8000")
-}
-
-```
-[Full Example Source](/plugin/gin/example/gin_server.go)
-
-## gocql
-You can instrument [gocql](https://github.com/gocql/gocql) using the pinpoint gocql plugin.
-Registering the pinpoint gocql plugin as an observer in gocql initiates tracking.
-
-``` go
-cluster := gocql.NewCluster("127.0.0.1")
-
-observer := pcass.NewObserver()
-cluster.QueryObserver = observer
-cluster.BatchObserver = observer
-```
-
-Before running query, you must pass the context using the WithContext() function.
-
-``` go
-import (
-	"github.com/gocql/gocql"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	pcass "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql"
-)
-
-func doCassandra(w http.ResponseWriter, r *http.Request) {
-	cluster := gocql.NewCluster("127.0.0.1")
-	cluster.Keyspace = "example"
-	cluster.Consistency = gocql.Quorum
-
-	observer := pcass.NewObserver()
-	cluster.QueryObserver = observer
-	cluster.BatchObserver = observer
-
-	session, _ := cluster.CreateSession()
-	defer session.Close()
-
-	ctx := r.Context()
-	var id gocql.UUID
-	var text string
-
-	query := session.Query(`SELECT id, text FROM tweet WHERE timeline = ? LIMIT 1`, "me")
-	if err := query.WithContext(ctx).Consistency(gocql.One).Scan(&id, &text); err != nil {
-		log.Println(err)
-	}
-	io.WriteString(w, "Tweet:"+text)
-}
-
-```
-[Full Example Source](/plugin/gocql/example/gocql_example.go)
-
-## gohbase
-You can instrument [gohbase](https://github.com/tsuna/gohbase) using the pinpoint gohbase plugin.
-When you create a gohbase client, you can call the NewClient() function of the pinpoint gohbase plugin. Because the pinpoint hbase plugin is the wrapper of the gohbase, the api call using the client is the same as the gohbase.
+## ppgohbase
+This package instruments the gohbase calls. Use the NewClient as the gohbase.NewClient.
 
 ```go
-client := phbase.NewClient("localhost")
+client := ppgohbase.NewClient("localhost")
+```
+
+It is necessary to pass the context containing the pinpoint.Tracer to gohbase.Client.
+
+``` go
+ctx := pinpoint.NewContext(context.Background(), tracer)
+putRequest, _ := hrpc.NewPutStr(ctx, "table", "key", values)
+client.Put(putRequest)
 ```
 
 ``` go
 import (
 	"github.com/tsuna/gohbase/filter"
 	"github.com/tsuna/gohbase/hrpc"
-	phbase "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase"
 )
 
 func doHbase(w http.ResponseWriter, r *http.Request) {
-	client := phbase.NewClient("localhost")
+	client := ppgohbase.NewClient("localhost")
 	ctx := r.Context()
 
 	values := map[string]map[string][]byte{"cf": {"a": []byte{0}}}
@@ -247,14 +301,53 @@ func doHbase(w http.ResponseWriter, r *http.Request) {
 ```
 [Full Example Source](/plugin/gohbase/example/hbase_example.go)
 
-## goredis
-You can instrument [go-redis](https://github.com/go-redis/redis) using the pinpoint goredis plugin.
-It supports go-redis v6.10.0 and later.
-You can track it using the newClient() or the NewClusterClient() function in the pinpoint goredis plugin.
+## ppgomemcache
+This package instruments the gomemcache calls. Use the NewClient as the memcache.New.
 
 ``` go
-redisClient = predis.NewClient(redisOpts)
-redisClusterClient = predis.NewClusterClient(redisClusterOpts)
+mc := ppgomemcache.NewClient(addr...)
+```
+
+It is necessary to pass the context containing the pinpoint.Tracer to Client using Client.WithContext.
+
+``` go
+mc.WithContext(pinpoint.NewContext(context.Background(), tracer))
+mc.Get("foo")
+```
+
+``` go
+import (
+	"github.com/bradfitz/gomemcache/memcache"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache"
+)
+
+func doMemcache(w http.ResponseWriter, r *http.Request) {
+	addr := []string{"localhost:11211"}
+
+	mc := ppgomemcache.NewClient(addr...)
+	mc.WithContext(r.Context())
+
+	_, _ = mc.Get("foo") // error
+	
+	...
+}
+```
+[Full Example Source](/plugin/gomemcache/example/gomemcache_example.go)
+
+## ppgoredis
+This package instruments the go-redis calls. Use the NewClient as the redis.NewClient.
+It supports go-redis v6.10.0 and later.
+
+``` go
+rc = ppgoredis.NewClient(redisOpts)
+```
+
+It is necessary to pass the context containing the pinpoint.Tracer to Client using Client.WithContext.
+
+``` go
+rc = rc.WithContext(pinpoint.NewContext(context.Background(), tracer))
+rc.Pipeline()
 ```
 
 ``` go
@@ -262,12 +355,12 @@ package main
 
 import (
 	"github.com/go-redis/redis"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	predis "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis"
 )
 
-var redisClient *predis.Client
-var redisClusterClient *predis.ClusterClient
+var redisClient *ppgoredis.Client
+var redisClusterClient *ppgoredis.ClusterClient
 
 func redisv6(w http.ResponseWriter, r *http.Request) {
 	c := redisClient.WithContext(r.Context())
@@ -295,16 +388,16 @@ func main() {
 	redisOpts := &redis.Options{
 		Addr: addrs[0],
 	}
-	redisClient = predis.NewClient(redisOpts)
+	redisClient = ppgoredis.NewClient(redisOpts)
 
 	//redis cluster client
 	redisClusterOpts := &redis.ClusterOptions{
 		Addrs: addrs,
 	}
-	redisClusterClient = predis.NewClusterClient(redisClusterOpts)
+	redisClusterClient = ppgoredis.NewClusterClient(redisClusterOpts)
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "redisTest", "/redis", redisv6))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "redisClusterTest", "/rediscluster", redisv6Cluster))
+	http.HandleFunc("/redis", phttp.WrapHandlerFunc(redisv6))
+	http.HandleFunc("/rediscluster", phttp.WrapHandlerFunc(redisv6Cluster))
 
 	http.ListenAndServe(":9000", nil)
 
@@ -315,13 +408,20 @@ func main() {
 ```
 [Full Example Source](/plugin/goredis/example/redisv6.go)
 
-## goredisv8
-You can instrument [go-redis](https://github.com/go-redis/redis) v8 and later using the pinpoint goredisv8 plugin.
+## ppgoredisv8
+This package instruments the go-redis/v8 calls. Use the NewHook as the redis.Hook.
 Only available in versions of go-redis with an AddHook() function.
-Registering the pinpoint goredisv8 plugin as the hook of the go-redis starts tracking.
 
 ``` go
-client.AddHook(predis.NewHook(opts))
+rc = redis.NewClient(redisOpts)
+client.AddHook(ppgoredisv8.NewHook(opts))
+```
+
+It is necessary to pass the context containing the pinpoint.Tracer to redis.Client.
+
+``` go
+rc = rc.WithContext(pinpoint.NewContext(context.Background(), tracer))
+rc.Pipeline()
 ```
 
 ``` go
@@ -329,8 +429,8 @@ package main
 
 import (
 	"github.com/go-redis/redis/v8"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	predis "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8"
 )
 
 var redisClient *redis.Client
@@ -391,17 +491,17 @@ func main() {
 		Addr: addrs[0],
 	}
 	redisClient = redis.NewClient(redisOpts)
-	redisClient.AddHook(predis.NewHook(redisOpts))
+	redisClient.AddHook(ppgoredisv8.NewHook(redisOpts))
 
 	//redis cluster client
 	redisClusterOpts := &redis.ClusterOptions{
 		Addrs: addrs,
 	}
 	redisClusterClient = redis.NewClusterClient(redisClusterOpts)
-	redisClusterClient.AddHook(predis.NewClusterHook(redisClusterOpts))
+	redisClusterClient.AddHook(ppgoredisv8.NewClusterHook(redisClusterOpts))
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "redisTest", "/redis", redisv8))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "redisClusterTest", "/rediscluster", redisv8Cluster))
+	http.HandleFunc("/redis", pphttp.WrapHandlerFunc(redisv8))
+	http.HandleFunc("/rediscluster", pphttp.WrapHandlerFunc(redisv8Cluster))
 
 	http.ListenAndServe(":9000", nil)
 
@@ -412,25 +512,145 @@ func main() {
 ```
 [Full Example Source](/plugin/goredisv8/example/redisv8.go)
 
-## grpc
-You can instrument [go grpc package](https://google.golang.org/grpc) using the pinpoint grpc plugin.
-Registering the pinpoint grpc plugin as the intercepter of grpc starts tracking.
+## ppgorilla
+This package instruments inbound requests handled by a gorilla mux.Router. 
+Register the Middleware as the middleware of the router to trace all handlers:
+
+``` go
+r := mux.NewRouter()
+r.Use(ppgorilla.Middleware())
+```
+
+Use WrapHandler or WrapHandlerFunc to select the handlers you want to track:
+
+``` go
+r.HandleFunc("/outgoing", ppgorilla.WrapHandlerFunc(outGoing))
+```
+
+``` go
+package main
+
+import (
+	"github.com/gorilla/mux"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+)
+
+func hello(w http.ResponseWriter, r *http.Request) {
+	io.WriteString(w, "hello world")
+}
+
+func main() {
+	... //setup agent
+	
+	r := mux.NewRouter()
+	r.Use(ppgorilla.Middleware())
+
+	//r.HandleFunc("/", ppgorilla.WrapHandlerFunc(hello)))
+	http.ListenAndServe(":8000", r)
+}
+
+```
+[Full Example Source](/plugin/gorilla/example/mux_server.go)
+
+## ppgorm
+This package instruments the go-gorm/gorm calls. Use the Open as the gorm.Open.
+
+``` go
+g, err := ppgorm.Open(mysql.New(mysql.Config{Conn: db}), &gorm.Config{})
+```
+
+It is necessary to pass the context containing the pinpoint.Tracer to gorm.DB.
+
+``` go
+g = g.WithContext(pinpoint.NewContext(context.Background(), tracer))
+g.Create(&Product{Code: "D42", Price: 100})
+```
+
+``` go
+package main
+
+import (
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm"
+	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+)
+
+type Product struct {
+	gorm.Model
+	Code  string
+	Price uint
+}
+
+func gormQuery(w http.ResponseWriter, r *http.Request) {
+	db, err := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/testdb")
+	if nil != err {
+		panic(err)
+	}
+
+	gormdb, err := ppgorm.Open(mysql.New(mysql.Config{Conn: db}), &gorm.Config{})
+	if err != nil {
+		panic("failed to connect database")
+	}
+
+	tracer := pinpoint.FromContext(r.Context())
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+	gormdb = gormdb.WithContext(ctx)
+
+	gormdb.AutoMigrate(&Product{})
+
+	// Create
+	gormdb.Create(&Product{Code: "D42", Price: 100})
+
+	// Read
+	var product Product
+	gormdb.First(&product, 1)
+	gormdb.First(&product, "code = ?", "D42")
+
+	// Update - update product's price to 200
+	gormdb.Model(&product).Update("Price", 200)
+
+	// Delete - delete product
+	gormdb.Delete(&product, 1)
+}
+```
+[Full Example Source](/plugin/gorm/example/gorm_example.go)
+
+## ppgrpc
+This package instruments gRPC servers and clients. 
 
 ### server
+To instrument a gRPC server, use UnaryServerInterceptor and StreamServerInterceptor.
+
 ``` go
 grpcServer := grpc.NewServer(
-	grpc.UnaryInterceptor(pinpointgrpc.UnaryServerInterceptor(agent)),
-	grpc.StreamInterceptor(pinpointgrpc.StreamServerInterceptor(agent)),
+	grpc.UnaryInterceptor(ppgrpc.UnaryServerInterceptor()),
+	grpc.StreamInterceptor(ppgrpc.StreamServerInterceptor()),
 )
 ```
+
+ppgrpc's server interceptor adds the pinpoint.Tracer to the gRPC server handler's context. 
+By using the pinpoint.FromContext function, this tracer can be obtained.
+
+``` go
+func (s *Server) UnaryCallUnaryReturn(ctx context.Context, msg *testapp.Greeting) (*testapp.Greeting, error) {
+    tracer := pinpoint.FromContext(ctx)
+    tracer.NewSpanEvent("gRPC Server Handler").EndSpanEvent()
+    return "hi", nil
+}
+```
+
 ``` go
 package main
 
 import (
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/example/testapp"
 	"google.golang.org/grpc"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	pgrpc "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc"
 )
 
 type Server struct{}
@@ -469,8 +689,8 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(pgrpc.UnaryServerInterceptor(agent)),
-		grpc.StreamInterceptor(pgrpc.StreamServerInterceptor(agent)),
+		grpc.UnaryInterceptor(ppgrpc.UnaryServerInterceptor()),
+		grpc.StreamInterceptor(ppgrpc.StreamServerInterceptor()),
 	)
 	testapp.RegisterHelloServer(grpcServer, &Server{})
 	grpcServer.Serve(listener)
@@ -480,20 +700,29 @@ func main() {
 [Full Example Source](/plugin/grpc/example/server.go)
 
 ### client
+To instrument a gRPC client, use UnaryClientInterceptor and StreamClientInterceptor.
+
 ``` go
 conn, err := grpc.Dial(
 	"localhost:8080",
 	grpc.WithInsecure(),
-	grpc.WithUnaryInterceptor(pgrpc.UnaryClientInterceptor()),
-	grpc.WithStreamInterceptor(pgrpc.StreamClientInterceptor()),
+	grpc.WithUnaryInterceptor(ppgrpc.UnaryClientInterceptor()),
+	grpc.WithStreamInterceptor(ppgrpc.StreamClientInterceptor()),
 )
+```
+
+It is necessary to pass the context containing the pinpoint.Tracer to grpc.Client.
+
+``` go
+client := testapp.NewHelloClient(conn)
+client.UnaryCallUnaryReturn(pinpoint.NewContext(context.Background(), tracer), greeting)
 ```
 
 ``` go
 import (
 	"google.golang.org/grpc"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	pgrpc "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/example/testapp"
 )
 
@@ -540,8 +769,8 @@ func doGrpc(w http.ResponseWriter, r *http.Request) {
 	conn, err := grpc.Dial(
 		"localhost:8080",
 		grpc.WithInsecure(),
-		grpc.WithUnaryInterceptor(pgrpc.UnaryClientInterceptor()),
-		grpc.WithStreamInterceptor(pgrpc.StreamClientInterceptor()),
+		grpc.WithUnaryInterceptor(ppgrpc.UnaryClientInterceptor()),
+		grpc.WithStreamInterceptor(ppgrpc.StreamClientInterceptor()),
 	)
 	if err != nil {
 		panic(err)

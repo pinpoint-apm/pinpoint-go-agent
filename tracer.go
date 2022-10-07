@@ -1,6 +1,6 @@
 // Package pinpoint provides the APIs to instrument Go applications for Pinpoint (https://github.com/pinpoint-apm/pinpoint).
 //
-// This package allows you to monitor Go applications using Pinpoint.
+// This package enables you to monitor Go applications using Pinpoint.
 // Go applications must be instrumented manually at the source code level,
 // because Go is a compiled language and does not have a virtual machine like Java.
 // Developers can instrument Go applications using the APIs provided in this package.
