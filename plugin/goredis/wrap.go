@@ -31,7 +31,8 @@ func NewClient(opt *redis.Options) *Client {
 	return &Client{Client: redis.NewClient(opt), endpoint: opt.Addr}
 }
 
-// WithContext passes the context containing the pinpoint.Tracer
+// WithContext sets the context.
+// It is possible to trace only when the given context contains a pinpoint.Tracer.
 func (c *Client) WithContext(ctx context.Context) *Client {
 	c.Client = c.Client.WithContext(ctx)
 	c.WrapProcess(process(ctx, c.endpoint))
@@ -51,7 +52,8 @@ func NewClusterClient(opt *redis.ClusterOptions) *ClusterClient {
 	return &ClusterClient{ClusterClient: redis.NewClusterClient(opt), endpoint: endpoint}
 }
 
-// WithContext passes the context containing the pinpoint.Tracer
+// WithContext sets the context.
+// It is possible to trace only when the given context contains a pinpoint.Tracer.
 func (c *ClusterClient) WithContext(ctx context.Context) *ClusterClient {
 	c.ClusterClient = c.ClusterClient.WithContext(ctx)
 	c.WrapProcess(process(ctx, c.endpoint))

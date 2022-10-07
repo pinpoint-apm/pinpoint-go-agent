@@ -1,15 +1,3 @@
-// Package pphttp instruments the http client requests.
-//
-// This package instruments outbound requests and add distributed tracing headers.
-// Use WrapClient, WrapClientWithContext or DoClient.
-//
-//	client := pphttp.WrapClient(&http.Client{})
-//	client.Get(external_url)
-//
-// or
-//
-//	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-//	pphttp.DoClient(http.DefaultClient.Do, req)
 package pphttp
 
 import (

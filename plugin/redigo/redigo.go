@@ -53,7 +53,8 @@ func (c *wrappedConn) WithContext(ctx context.Context) {
 	c.tracer = pinpoint.FromContext(ctx)
 }
 
-// WithContext passes the context containing the pinpoint.Tracer.
+// WithContext passes the context to the provided redis.Conn.
+// It is possible to trace only when the given context contains a pinpoint.Tracer.
 func WithContext(c redis.Conn, ctx context.Context) {
 	if wc, ok := c.(pinpointContext); ok {
 		wc.WithContext(ctx)

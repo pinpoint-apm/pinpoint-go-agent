@@ -2,12 +2,11 @@ package ppsarama
 
 import (
 	"context"
-
 	"github.com/Shopify/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
-type SyncProducer struct {
+type syncProducer struct {
 	sarama.SyncProducer
 	addrs []string
 	ctx   context.Context
@@ -24,16 +23,13 @@ func (m *distributedTracingContextWriterConsumer) Set(key string, value string) 
 	})
 }
 
-func (p *SyncProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
-	span := newProducerTracer(p.ctx, p.addrs, msg)
+func (p *syncProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
+	defer newProducerTracer(p.ctx, p.addrs, msg).EndSpanEvent()
 	partition, offset, err = p.SyncProducer.SendMessage(msg)
-	if span != nil {
-		span.EndSpanEvent()
-	}
 	return partition, offset, err
 }
 
-func (p *SyncProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
+func (p *syncProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
 	spans := make([]pinpoint.Tracer, len(msgs))
 	for i, msg := range msgs {
 		spans[i] = newProducerTracer(p.ctx, p.addrs, msg)
@@ -42,42 +38,50 @@ func (p *SyncProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
 	err := p.SyncProducer.SendMessages(msgs)
 
 	for _, span := range spans {
-		if span != nil {
-			span.EndSpanEvent()
-		}
+		span.EndSpanEvent()
 	}
 	return err
 }
 
-func (p *SyncProducer) Close() error {
+func (p *syncProducer) Close() error {
 	return p.SyncProducer.Close()
 }
 
-func (p *SyncProducer) WithContext(ctx context.Context) {
+func (p *syncProducer) WithContext(ctx context.Context) {
 	p.ctx = ctx
 }
 
-func NewSyncProducer(addrs []string, config *sarama.Config) (*SyncProducer, error) {
+// NewSyncProducer wraps sarama.NewSyncProducer and returns a sarama.SyncProducer ready to instrument.
+func NewSyncProducer(addrs []string, config *sarama.Config) (sarama.SyncProducer, error) {
 	producer, err := sarama.NewSyncProducer(addrs, config)
 	if err != nil {
 		return nil, err
 	}
 
-	return &SyncProducer{SyncProducer: producer, addrs: addrs, ctx: context.Background()}, nil
+	return &syncProducer{SyncProducer: producer, addrs: addrs, ctx: context.Background()}, nil
 }
 
 func newProducerTracer(ctx context.Context, addrs []string, msg *sarama.ProducerMessage) pinpoint.Tracer {
 	tracer := pinpoint.FromContext(ctx)
-	if tracer != nil {
-		tracer.NewSpanEvent("kafka.produce")
-		se := tracer.SpanEvent()
-		se.SetServiceType(pinpoint.ServiceTypeKafkaClient)
-		se.Annotations().AppendString(pinpoint.AnnotationKafkaTopic, msg.Topic)
-		se.SetDestination(addrs[0])
 
-		writer := &distributedTracingContextWriterConsumer{msg}
-		tracer.Inject(writer)
-	}
+	tracer.NewSpanEvent("sarama.SendMessage")
+	se := tracer.SpanEvent()
+	se.SetServiceType(pinpoint.ServiceTypeKafkaClient)
+	se.Annotations().AppendString(pinpoint.AnnotationKafkaTopic, msg.Topic)
+	se.SetDestination(addrs[0])
+
+	writer := &distributedTracingContextWriterConsumer{msg}
+	tracer.Inject(writer)
 
 	return tracer
+}
+
+// WithContext passes the context to the provided producer.
+// It is possible to trace only when the given context contains a pinpoint.Tracer.
+func WithContext(ctx context.Context, producer interface{}) {
+	if p, ok := producer.(*syncProducer); ok {
+		p.WithContext(ctx)
+	} else if p, ok := producer.(*asyncProducer); ok {
+		p.WithContext(ctx)
+	}
 }

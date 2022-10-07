@@ -1,6 +1,6 @@
 // Package ppgrpc instruments the grpc/grpc-go package (https://github.com/grpc/grpc-go).
 //
-// This package instruments gRPC servers and gRPC clients.
+// This package instruments gRPC servers and clients.
 // To instrument a gRPC server, use UnaryServerInterceptor and StreamServerInterceptor.
 //
 //	grpcServer := grpc.NewServer(

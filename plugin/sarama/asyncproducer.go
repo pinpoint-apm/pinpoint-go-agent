@@ -6,50 +6,51 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
-type AsyncProducer struct {
-	original  sarama.AsyncProducer
+type asyncProducer struct {
+	sarama.AsyncProducer
 	input     chan *sarama.ProducerMessage
 	successes chan *sarama.ProducerMessage
 	errors    chan *sarama.ProducerError
 	ctx       context.Context
 }
 
-func (p *AsyncProducer) Input() chan<- *sarama.ProducerMessage {
+func (p *asyncProducer) Input() chan<- *sarama.ProducerMessage {
 	return p.input
 }
 
-func (p *AsyncProducer) Successes() <-chan *sarama.ProducerMessage {
+func (p *asyncProducer) Successes() <-chan *sarama.ProducerMessage {
 	return p.successes
 }
 
-func (p *AsyncProducer) Errors() <-chan *sarama.ProducerError {
+func (p *asyncProducer) Errors() <-chan *sarama.ProducerError {
 	return p.errors
 }
 
-func (p *AsyncProducer) AsyncClose() {
-	p.original.AsyncClose()
+func (p *asyncProducer) AsyncClose() {
+	p.AsyncProducer.AsyncClose()
 }
 
-func (p *AsyncProducer) Close() error {
-	return p.original.Close()
+func (p *asyncProducer) Close() error {
+	return p.AsyncProducer.Close()
 }
 
-func (p *AsyncProducer) WithContext(ctx context.Context) {
+func (p *asyncProducer) WithContext(ctx context.Context) {
 	p.ctx = ctx
 }
 
-func NewAsyncProducer(addrs []string, config *sarama.Config) (*AsyncProducer, error) {
+// NewAsyncProducer wraps sarama.NewAsyncProducer and returns a sarama.AsyncProducer ready to instrument.
+func NewAsyncProducer(addrs []string, config *sarama.Config) (sarama.AsyncProducer, error) {
 	producer, err := sarama.NewAsyncProducer(addrs, config)
 	if err != nil {
 		return nil, err
 	}
 
-	wrapped := &AsyncProducer{
-		original:  producer,
-		input:     make(chan *sarama.ProducerMessage),
-		successes: make(chan *sarama.ProducerMessage),
-		errors:    make(chan *sarama.ProducerError),
-		ctx:       context.Background(),
+	wrapped := &asyncProducer{
+		AsyncProducer: producer,
+		input:         make(chan *sarama.ProducerMessage),
+		successes:     make(chan *sarama.ProducerMessage),
+		errors:        make(chan *sarama.ProducerError),
+		ctx:           context.Background(),
 	}
 
 	go func() {
@@ -72,12 +73,7 @@ func NewAsyncProducer(addrs []string, config *sarama.Config) (*AsyncProducer, er
 				if config.Producer.Return.Successes {
 					spans[key] = span
 				} else {
-					// if returning successes isn't enabled, we just finish the
-					// span right away because there's no way to know when it will
-					// be done
-					if span != nil {
-						span.EndSpanEvent()
-					}
+					span.EndSpanEvent()
 				}
 			case msg, ok := <-producer.Successes():
 				if !ok {

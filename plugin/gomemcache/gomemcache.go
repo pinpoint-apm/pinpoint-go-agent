@@ -35,7 +35,8 @@ func NewClient(server ...string) *Client {
 	return &Client{Client: client, endpoint: strings.Join(server, ","), tracer: pinpoint.NoopTracer()}
 }
 
-// WithContext passes the context containing the pinpoint.Tracer
+// WithContext sets the context.
+// It is possible to trace only when the given context contains a pinpoint.Tracer.
 func (c *Client) WithContext(ctx context.Context) {
 	c.tracer = pinpoint.FromContext(ctx)
 }

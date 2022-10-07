@@ -1,4 +1,4 @@
-// Package pphttp instruments the request handlers of http server.
+// Package pphttp instruments Go standard HTTP library.
 //
 // This package instruments inbound requests handled by a http.ServeMux.
 // Use NewServeMux to trace all handlers:
@@ -9,6 +9,17 @@
 // Use WrapHandler or WrapHandlerFunc to select the handlers you want to track:
 //
 //	http.HandleFunc("/", pphttp.WrapHandlerFunc(index))
+//
+// This package instruments outbound requests and add distributed tracing headers.
+// Use WrapClient, WrapClientWithContext or DoClient.
+//
+//	client := pphttp.WrapClient(&http.Client{})
+//	client.Get(external_url)
+//
+// or
+//
+//	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+//	pphttp.DoClient(http.DefaultClient.Do, req)
 package pphttp
 
 import (

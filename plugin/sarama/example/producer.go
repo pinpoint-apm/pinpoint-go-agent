@@ -16,7 +16,7 @@ var fakeDB string
 
 const topic = "go-sarama-test"
 
-var producer *ppsarama.SyncProducer
+var producer sarama.SyncProducer
 var brokers = []string{"127.0.0.1:9092"}
 
 func prepareMessage(topic, message string) *sarama.ProducerMessage {
@@ -33,7 +33,7 @@ func save(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	msg := prepareMessage(topic, "Hello, Kafka!!")
-	producer.WithContext(r.Context())
+	ppsarama.WithContext(r.Context(), producer)
 	partition, offset, err := producer.SendMessage(msg)
 
 	if err != nil {

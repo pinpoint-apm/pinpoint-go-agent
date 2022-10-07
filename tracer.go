@@ -1,3 +1,20 @@
+// Package pinpoint provides the APIs to instrument Go applications for Pinpoint (https://github.com/pinpoint-apm/pinpoint).
+//
+// This package allows you to monitor Go applications using Pinpoint.
+// Go applications must be instrumented manually at the source code level,
+// because Go is a compiled language and does not have a virtual machine like Java.
+// Developers can instrument Go applications using the APIs provided in this package.
+// It has support for instrumenting Go’s built-in http package, database/sql drivers
+// and plug-ins for popular frameworks and toolkits (like Gin and gRPC, ...).
+//
+// In Pinpoint, a transaction consists of a group of Spans.
+// Each span represents a trace of a single logical node where the transaction has gone through.
+// A span records important function invocations and their related data(arguments, return value, etc.)
+// before encapsulating them as SpanEvents in a call stack like representation.
+// The span itself and each of its SpanEvents represents a function invocation.
+// Find out more about the concept of Pinpoint at the links below:
+//   - https://pinpoint-apm.gitbook.io/pinpoint/documents/plugin-dev-guide
+//   - https://pinpoint-apm.gitbook.io/pinpoint/want-a-quick-tour/techdetail
 package pinpoint
 
 import (
@@ -6,15 +23,7 @@ import (
 	"time"
 )
 
-// Agent instruments a application and makes spans and manages it.
-// In Pinpoint, a transaction consists of a group of Spans.
-// Each span represents a trace of a single logical node where the transaction has gone through.
-// A span records important function invocations and their related data(arguments, return value, etc.)
-// before encapsulating them as SpanEvents in a call stack like representation.
-// The span itself and each of its SpanEvents represents a function invocation.
-// Find out more about the concept of Pinpoint at the links below.
-// https://pinpoint-apm.gitbook.io/pinpoint/documents/plugin-dev-guide
-// https://pinpoint-apm.gitbook.io/pinpoint/want-a-quick-tour/techdetail
+// Agent instruments an application and makes spans and manages it.
 type Agent interface {
 	// NewSpanTracer returns a span Tracer indicating the start of a transaction.
 	// A span is generated according to a given sampling policy, and trace data is not collected if not sampled.

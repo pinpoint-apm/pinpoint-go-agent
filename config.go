@@ -181,16 +181,23 @@ func (config *Config) Bool(cfgName string) bool {
 
 // NewConfig creates a Config populated with default settings, command line arguments,
 // environment variables and the given config options.
-// The generated Config is maintained globally.
 // Config uses the following precedence order. Each item takes precedence over the item below it:
-//
-// 1. command line flag
-// 2. environment variable
-// 3. configuration file
-// 4. ConfigOption
-// 5. default
+//  1. command line flag
+//  2. environment variable
+//  3. configuration file
+//  4. ConfigOption
+//  5. default
 //
 // configuration keys used in config files are case-insensitive.
+// The generated Config is maintained globally.
+//
+// example:
+//  opts := []pinpoint.ConfigOption{
+//    pinpoint.WithAppName("GoTestApp"),
+//    pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
+//  }
+//  cfg, err := pinpoint.NewConfig(opts...)
+//
 func NewConfig(opts ...ConfigOption) (*Config, error) {
 	config := defaultConfig()
 

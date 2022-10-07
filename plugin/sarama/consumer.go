@@ -1,3 +1,50 @@
+// Package ppsarama instruments the Shopify/sarama package (https://github.com/Shopify/sarama).
+//
+// This package instruments Kafka consumers and producers.
+// To instrument a Kafka consumer, use ConsumeMessage or ConsumeMessageContext.
+//
+//  pc, _ := consumer.ConsumePartition(topic, partition, offset)
+//  for msg := range pc.Messages() {
+//    ppsarama.ConsumeMessage(processMessage, msg)
+//  }
+//
+// ConsumeMessage wraps a sarama.ConsumerMessage and passes a ConsumerMessage having pinpoint.Tracer to HandlerFunc.
+// In HandlerFunc, this tracer can be obtained by using the ConsumerMessage.Tracer function.
+//
+//  func processMessage(msg *ppsarama.ConsumerMessage) error {
+//    tracer := msg.Tracer()
+//    defer tracer.NewSpanEvent("processMessage").EndSpanEvent()
+//
+//    fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
+//    fmt.Println("retrieving message: ", string(msg.Value))
+//
+// For sarama.ConsumerGroupHandler, ConsumeMessageContext is provided.
+//
+//  func (h exampleConsumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+//    ctx := sess.Context()
+//    for msg := range claim.Messages() {
+//      _ = ppsarama.ConsumeMessageContext(process, ctx, msg)
+//    }
+//
+// ConsumeMessageContext passes a context added pinpoint.Tracer to HandlerContextFunc.
+// In HandlerContextFunc, this tracer can be obtained by using the pinpoint.FromContext function.
+//
+//  func process(ctx context.Context, msg *sarama.ConsumerMessage) error {
+//    tracer := pinpoint.FromContext(ctx)
+//    defer tracer.NewSpanEvent("process").EndSpanEvent()
+//
+//    fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
+//
+// To instrument a Kafka producer, use NewSyncProducer or NewAsyncProducer.
+//
+//	config := sarama.NewConfig()
+//	producer, err = ppsarama.NewSyncProducer(brokers, config)
+//
+// It is necessary to pass the context containing the pinpoint.Tracer
+// to sarama.SyncProducer (or sarama.AsyncProducer) using WithContext function.
+//
+//  ppsarama.WithContext(pinpoint.NewContext(context.Background(), tracer), producer)
+//  partition, offset, err := producer.SendMessage(msg)
 package ppsarama
 
 import (
@@ -14,21 +61,30 @@ type ConsumerMessage struct {
 	tracer pinpoint.Tracer
 }
 
-// SpanTracer deprecated
+// SpanTracer is deprecated. Use Tracer.
 func (c *ConsumerMessage) SpanTracer() pinpoint.Tracer {
 	return c.tracer
 }
 
+// Tracer returns the pinpoint.Tracer.
 func (c *ConsumerMessage) Tracer() pinpoint.Tracer {
 	return c.tracer
 }
 
+// WrapConsumerMessage wraps a sarama.ConsumerMessage
+// and creates a pinpoint.Tracer that instruments the sarama.ConsumerMessage.
+// The tracer extracts the pinpoint header from message header,
+// and then creates a span that initiates or continues the transaction.
 func WrapConsumerMessage(msg *sarama.ConsumerMessage) *ConsumerMessage {
 	return &ConsumerMessage{msg, newConsumerTracer(msg)}
 }
 
 type HandlerFunc func(msg *ConsumerMessage) error
 
+// ConsumeMessage creates a pinpoint.Tracer that instruments the sarama.ConsumerMessage.
+// The tracer extracts the pinpoint header from message header,
+// and then creates a span that initiates or continues the transaction.
+// ConsumeMessage passes a ConsumerMessage having pinpoint.Tracer to HandlerFunc.
 func ConsumeMessage(handler HandlerFunc, msg *sarama.ConsumerMessage) error {
 	wrapped := WrapConsumerMessage(msg)
 	defer wrapped.Tracer().EndSpan()
@@ -40,6 +96,10 @@ func ConsumeMessage(handler HandlerFunc, msg *sarama.ConsumerMessage) error {
 
 type HandlerContextFunc func(context.Context, *sarama.ConsumerMessage) error
 
+// ConsumeMessageContext creates a pinpoint.Tracer that instruments the sarama.ConsumerMessage.
+// The tracer extracts the pinpoint header from message header,
+// and then creates a span that initiates or continues the transaction.
+// ConsumeMessageContext passes a context added pinpoint.Tracer to HandlerContextFunc.
 func ConsumeMessageContext(handler HandlerContextFunc, ctx context.Context, msg *sarama.ConsumerMessage) error {
 	tracer := newConsumerTracer(msg)
 	defer tracer.EndSpan()
@@ -78,7 +138,7 @@ func newConsumerTracer(msg *sarama.ConsumerMessage) pinpoint.Tracer {
 
 	agent := pinpoint.GetAgent()
 	reader := &distributedTracingContextReaderConsumer{msg}
-	tracer = agent.NewSpanTracerWithReader("Kafka Consumer Invocation", makeRpcName(msg), reader)
+	tracer = agent.NewSpanTracerWithReader("Sarama Consumer Invocation", makeRpcName(msg), reader)
 
 	tracer.Span().SetServiceType(pinpoint.ServiceTypeKafkaClient)
 	a := tracer.Span().Annotations()
@@ -89,18 +149,18 @@ func newConsumerTracer(msg *sarama.ConsumerMessage) pinpoint.Tracer {
 	return tracer
 }
 
-// PartitionConsumer deprecated
+// PartitionConsumer is deprecated.
 type PartitionConsumer struct {
 	sarama.PartitionConsumer
 	messages chan *ConsumerMessage
 }
 
-// Messages deprecated
+// Messages is deprecated.
 func (pc *PartitionConsumer) Messages() <-chan *ConsumerMessage {
 	return pc.messages
 }
 
-// WrapPartitionConsumer deprecated
+// WrapPartitionConsumer is deprecated.
 func WrapPartitionConsumer(pc sarama.PartitionConsumer) *PartitionConsumer {
 	wrapped := &PartitionConsumer{
 		PartitionConsumer: pc,
@@ -117,12 +177,12 @@ func WrapPartitionConsumer(pc sarama.PartitionConsumer) *PartitionConsumer {
 	return wrapped
 }
 
-// Consumer deprecated
+// Consumer is deprecated.
 type Consumer struct {
 	sarama.Consumer
 }
 
-// ConsumePartition deprecated
+// ConsumePartition is deprecated.
 func (c *Consumer) ConsumePartition(topic string, partition int32, offset int64) (*PartitionConsumer, error) {
 	pc, err := c.Consumer.ConsumePartition(topic, partition, offset)
 	if err != nil {
@@ -131,7 +191,7 @@ func (c *Consumer) ConsumePartition(topic string, partition int32, offset int64)
 	return WrapPartitionConsumer(pc), nil
 }
 
-// NewConsumer deprecated
+// NewConsumer is deprecated.
 func NewConsumer(addrs []string, config *sarama.Config) (*Consumer, error) {
 	consumer, err := sarama.NewConsumer(addrs, config)
 	if err != nil {
