@@ -48,6 +48,7 @@ func redigo_test(w http.ResponseWriter, r *http.Request) {
 	redis.DoContext(c, ctx, "INCR", "foo")
 	c.Close()
 }
+
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoRedigoTest"),

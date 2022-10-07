@@ -37,6 +37,9 @@ Use WrapHandler or WrapHandlerFunc to select the handlers you want to track:
 r.Get("/hello", ppchi.WrapHandlerFunc(hello))
 ```
 
+For each request, a pinpoint.Tracer is stored in the request context.
+By using the pinpoint.FromContext function, this tracer can be obtained in your handler.
+
 ``` go
 import (
 	"net/http"
@@ -78,6 +81,9 @@ Use WrapHandler to select the handlers you want to track:
 e.GET("/hello", ppecho.WrapHandler(hello))
 ```
 
+For each request, a pinpoint.Tracer is stored in the request context.
+By using the pinpoint.FromContext function, this tracer can be obtained in your handler.
+
 ``` go
 package main
 
@@ -118,6 +124,9 @@ Use WrapHandler to select the handlers you want to track:
 ``` go
 r.GET("/external", ppgin.WrapHandler(extCall))
 ```
+
+For each request, a pinpoint.Tracer is stored in the request context.
+By using the pinpoint.FromContext function, this tracer can be obtained in your handler.
 
 ``` go
 package main
@@ -527,6 +536,9 @@ Use WrapHandler or WrapHandlerFunc to select the handlers you want to track:
 r.HandleFunc("/outgoing", ppgorilla.WrapHandlerFunc(outGoing))
 ```
 
+For each request, a pinpoint.Tracer is stored in the request context.
+By using the pinpoint.FromContext function, this tracer can be obtained in your handler.
+
 ``` go
 package main
 
@@ -787,49 +799,46 @@ func doGrpc(w http.ResponseWriter, r *http.Request) {
 ```
 [Full Example Source](/plugin/grpc/example/client.go)
 
-## http
-You can instrument [go http package](https://google.golang.org/http) using the pinpoint http plugin.
-If you want to track the http server's handler, you can use the WrapHandleFunc() function to wrap the handler function.
+## pphttp
+### http server
+This package instruments inbound requests handled by a http.ServeMux. 
+Use NewServeMux to trace all handlers:
 
 ```go
-http.HandleFunc(phttp.WrapHandleFunc(agent, "index", "/", index))
+mux := pphttp.NewServeMux()
+mux.HandleFunc("/bar", outGoing)
 ```
 
-To track http client calls, use the NewHttpClientTracer() function to trigger the request.
+Use WrapHandler or WrapHandlerFunc to select the handlers you want to track:
 
 ```go
-req, _ := http.NewRequest("GET", "http://localhost:9000/hello", nil)
-tracer = phttp.NewHttpClientTracer(tracer, "http.DefaultClient", req)
+http.HandleFunc("/", pphttp.WrapHandlerFunc(index))
 ```
 
-Alternatively, you can use the WrapClient() function to wrap the http client.
+For each request, a pinpoint.Tracer is stored in the request context.
+By using the pinpoint.FromContext function, this tracer can be obtained in your handler.
+
+### http client
+This package instruments outbound requests and add distributed tracing headers. 
+Use WrapClient, WrapClientWithContext or DoClient.
 
 ```go
-client := &http.Client{}
-client = phttp.WrapClient(client)
+client := pphttp.WrapClient(&http.Client{})
+client.Get(external_url)
 ```
- 
+
+```go
+req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+pphttp.DoClient(http.DefaultClient.Do, req)
+```
+
+It is necessary to pass the context containing the pinpoint.Tracer to the http.Request.
+
 ``` go
 import (
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
-
-func wrapRequest(w http.ResponseWriter, r *http.Request) {
-	tracer := pinpoint.FromContext(r.Context())
-	req, _ := http.NewRequest("GET", "http://localhost:9000/hello", nil)
-
-	tracer = phttp.NewHttpClientTracer(tracer, "http.DefaultClient", req)
-	resp, err := http.DefaultClient.Do(req)
-	phttp.EndHttpClientTracer(tracer, resp, err)
-
-	if nil != err {
-		io.WriteString(w, err.Error())
-		return
-	}
-	defer resp.Body.Close()
-	io.Copy(w, resp.Body)
-}
 
 func wrapClient(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{}
@@ -850,8 +859,7 @@ func wrapClient(w http.ResponseWriter, r *http.Request) {
 func main() {
 	... //setup agent
 
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "external", "/wraprequest", wrapRequest))
-	http.HandleFunc(phttp.WrapHandleFunc(agent, "roundTripper", "/wrapclient", wrapClient))
+	http.HandleFunc("/wrapclient", phttp.WrapHandlerFunc(wrapClient))
 
 	http.ListenAndServe(":8000", nil)
 	agent.Shutdown()
@@ -860,34 +868,59 @@ func main() {
 ```
 [Full Example Source](/plugin/http/example/http_server.go)
 
-## logrus
-You can use the pinpoint logus plugin that has been wrapped from the [logrus](https://github.com/sirupsen/logrus) library to allow additional transaction id and span id of the pinpoint span to be printed in the log message. Call the WithField() function and pass the logus field back to the logger.
+## pplogrus
+This package allows additional transaction id and span id of the pinpoint span to be printed in the log message. 
+Use the NewField or NewEntry and pass the logrus field back to the logger.
+
 ``` go
-logger.WithFields(plogrus.WithField(tracer)).Fatal("ohhh, what a world")
+tracer := pinpoint.FromContext(ctx)
+logger.WithFields(pplogrus.NewField(tracer)).Fatal("oh, what a wonderful world")
+```
+``` go
+entry := pplogrus.NewEntry(tracer).WithField("foo", "bar")
+entry.Error("entry log message")
+```
+
+You can use NewHook as the logrus.Hook. 
+It is necessary to pass the context containing the pinpoint.Tracer to logrus.Logger.
+
+``` go
+logger.AddHook(pplogrus.NewHook())
+entry := logger.WithContext(pinpoint.NewContext(context.Background(), tracer)).WithField("foo", "bar")
+entry.Error("hook log message")
 ```
 
 ``` go
 import (
 	"github.com/sirupsen/logrus"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	plogrus "github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus"
 )
 
 func logging(w http.ResponseWriter, r *http.Request) {
 	logger := logrus.New()
 	tracer := pinpoint.TracerFromRequestContext(r)
-	logger.WithFields(plogrus.WithField(tracer)).Fatal("ohhh, what a world")
+	logger.WithFields(pplogrus.NewField(tracer)).Fatal("ohhh, what a world")
 }
 ```
 [Full Example Source](/plugin/logrus/example/logrus_example.go)
 
-## mongodriver
-You can instrument [mongo-driver](https://go.mongodb.org/mongo-driver) using the pinpoint mongodriver plugin.
-Registering the pinpoint mongodriver plugin as the monitor of the mongo-driver will start tracking.
+## ppmongo
+This package instruments the mongo-go-driver calls. 
+Use the NewMonitor as Monitor field of mongo-go-driver's ClientOptions.
 
 ``` go
 opts := options.Client()
-opts.Monitor = pmongo.NewMonitor()
+opts.Monitor = ppmongo.NewMonitor()
+client, err := mongo.Connect(ctx, opts)
+```
+
+It is necessary to pass the context containing the pinpoint.Tracer to mongo.Client.
+
+``` go
+collection := client.Database("testdb").Collection("example")
+ctx := pinpoint.NewContext(context.Background(), tracer)
+collection.InsertOne(ctx, bson.M{"foo": "bar", "apm": "pinpoint"})
 ```
 
 ``` go
@@ -895,14 +928,14 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	pmongo "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver"
 )
 
 func mongodb(w http.ResponseWriter, r *http.Request) {
 	opts := options.Client()
 	opts.ApplyURI("mongodb://localhost:27017")
-	opts.Monitor = pmongo.NewMonitor()
+	opts.Monitor = ppmongo.NewMonitor()
 	ctx := context.Background()
 
 	client, err := mongo.Connect(ctx, opts)
@@ -920,18 +953,25 @@ func mongodb(w http.ResponseWriter, r *http.Request) {
 ```
 [Full Example Source](/plugin/logrus/example/logrus_example.go)
 
-## mysql
-You can instrument [go-sql-driver/mysql](https://github.com/go-sql-driver/mysql) using the pinpoint mysql plugin.
-When calling the sql.Open() function, pass the driver name of the pinpoint mysql plugin ('mysql-pinpoint').
+## ppmysql
+This package instruments the mysql driver calls. 
+Use this package's driver in place of the mysql driver.
 
 ``` go
 db, err := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/information_schema")
 ```
 
+It is necessary to pass the context containing the pinpoint.Tracer to all exec and query methods on SQL driver.
+
+``` go
+ctx := pinpoint.NewContext(context.Background(), tracer)
+row := db.QueryRowContext(ctx, "SELECT count(*) from tables")
+```
+
 ``` go
 import (
 	"database/sql"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
 )
 
@@ -953,18 +993,25 @@ func query(w http.ResponseWriter, r *http.Request) {
 ```
 [Full Example Source](/plugin/mysql/example/mysql_example.go)
 
-## pgsql
-You can instrument [pq](github.com/lib/pq) using the pinpoint pgsql plugin.
-When calling the sql.Open() function, pass the driver name of the pinpoint pgsql plugin ('pq-pinpoint').
+## pppgsql
+This package instruments the postgres driver calls. 
+Use this package's driver in place of the postgres driver.
 
 ``` go
 db, err := sql.Open("pq-pinpoint", "postgresql://test:test!@localhost/testdb?sslmode=disable")
 ```
 
+It is necessary to pass the context containing the pinpoint.Tracer to all exec and query methods on SQL driver.
+
+``` go
+ctx := pinpoint.NewContext(context.Background(), tracer)
+row := db.QueryRowContext(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
+```
+
 ``` go
 import (
 	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql"
 )
 
@@ -988,78 +1035,167 @@ func query(w http.ResponseWriter, r *http.Request) {
 ```
 [Full Example Source](/plugin/pgsql/example/pgsql_example.go)
 
-## sarama
-You can instrument [sarama](https://github.com/Shopify/sarama) using the pinpoint sarama plugin.
+## ppredigo
+This package instruments the gomodule/redigo calls. Use the Dial, DialContext (or DialURL, DialURLContext) as the redis.Dial.
+
+``` go
+c, err := ppredigo.Dial("tcp", "127.0.0.1:6379")
+```
+
+It is necessary to pass the context containing the pinpoint.Tracer to redis.Conn.
+
+``` go
+ppredigo.WithContext(c, pinpoint.NewContext(context.Background(), tracer))
+c.Do("SET", "vehicle", "truck")
+```
+``` go
+redis.DoContext(c, pinpoint.NewContext(context.Background(), tracer), "GET", "vehicle")
+```
+``` go
+c, err := ppredigo.DialContext(pinpoint.NewContext(context.Background(), tracer), "tcp", "127.0.0.1:6379")
+c.Do("SET", "vehicle", "truck")
+```
+``` go
+package main
+
+import (
+	"github.com/gomodule/redigo/redis"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo"
+)
+
+func redigo_test(w http.ResponseWriter, r *http.Request) {
+	c, err := ppredigo.Dial("tcp", "127.0.0.1:6379")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	tracer := pinpoint.FromContext(r.Context())
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+	ppredigo.WithContext(c, ctx)
+
+	c.Do("SET", "vehicle", "truck")
+	redis.DoWithTimeout(c, 1000*time.Millisecond, "GET", "vehicle")
+
+	redis.DoContext(c, ctx, "GET", "vehicle")
+```
+[Full Example Source](/plugin/redigo/example/redigo_example.go)
+
+## ppsarama
+This package instruments Kafka consumers and producers.
 
 ### Consumer
-To track the sarama Consumer, use the NewConsumer() function of the pinpoint sarama plugin.
+To instrument a Kafka consumer, use ConsumeMessage or ConsumeMessageContext.
+
 ```go
-config := sarama.NewConfig()
-config.Version = sarama.V2_3_0_0
-consumer, err := psarama.NewConsumer(cbrokers, config, agent)
+pc, _ := consumer.ConsumePartition(topic, partition, offset)
+for msg := range pc.Messages() {
+    ppsarama.ConsumeMessage(processMessage, msg)
+}
+```
+
+ConsumeMessage wraps a sarama.ConsumerMessage and passes a ConsumerMessage having pinpoint.Tracer to HandlerFunc. 
+In HandlerFunc, this tracer can be obtained by using the ConsumerMessage.Tracer function.
+
+```go
+func processMessage(msg *ppsarama.ConsumerMessage) error {
+    tracer := msg.Tracer()
+    defer tracer.NewSpanEvent("processMessage").EndSpanEvent()
+
+    fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
+    fmt.Println("retrieving message: ", string(msg.Value))
+```
+
+For sarama.ConsumerGroupHandler, ConsumeMessageContext is provided.
+
+```go
+func (h exampleConsumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+    ctx := sess.Context()
+    for msg := range claim.Messages() {
+        _ = ppsarama.ConsumeMessageContext(process, ctx, msg)
+    }
+```
+
+ConsumeMessageContext passes a context added pinpoint.Tracer to HandlerContextFunc. 
+In HandlerContextFunc, this tracer can be obtained by using the pinpoint.FromContext function.
+
+```go
+func process(ctx context.Context, msg *sarama.ConsumerMessage) error {
+    tracer := pinpoint.FromContext(ctx)
+    defer tracer.NewSpanEvent("process").EndSpanEvent()
+
+    fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
 ```
 
 ``` go
+package main
 
 import (
 	"github.com/Shopify/sarama"
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	psarama "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
 )
 
-const ctopic = "sample-topic"
+const ctopic = "go-sarama-test"
 var cbrokers = []string{"127.0.0.1:9092"}
 
-func processMessage(msg *psarama.ConsumerMessage) {
-	tracer := msg.SpanTracer()
-	tracer.NewSpanEvent("processMessage")
-	fmt.Println("Retrieving message: ", string(msg.Value))
-	tracer.EndSpanEvent()
+func processMessage(msg *ppsarama.ConsumerMessage) error {
+	tracer := msg.Tracer()
+	defer tracer.NewSpanEvent("processMessage").EndSpanEvent()
+
+	fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
+	fmt.Println("retrieving message: ", string(msg.Value))
+	return nil
 }
 
-func subscribe(topic string, consumer *psarama.Consumer) {
+func subscribe(topic string, consumer sarama.Consumer) {
 	partitionList, err := consumer.Partitions(topic)
-	if err != nil {
-		fmt.Println("Error retrieving partitionList ", err)
-	}
 	initialOffset := sarama.OffsetOldest
+
+	var wg sync.WaitGroup
 
 	for _, partition := range partitionList {
 		pc, _ := consumer.ConsumePartition(topic, partition, initialOffset)
 
-		go func(pc *psarama.PartitionConsumer) {
-			for message := range pc.Messages() {
-				processMessage(message)
-				message.SpanTracer().EndSpan()
+		go func(pc sarama.PartitionConsumer) {
+			for msg := range pc.Messages() {
+				ppsarama.ConsumeMessage(processMessage, msg)
 			}
+			wg.Done()
 		}(pc)
+		wg.Add(1)
 	}
+	wg.Wait()
 }
 
 func main() {
 	... //setup agent
-	
+
 	config := sarama.NewConfig()
 	config.Version = sarama.V2_3_0_0
-	consumer, err := psarama.NewConsumer(cbrokers, config, agent)
+	consumer, err := sarama.NewConsumer(cbrokers, config)
 	if err != nil {
 		log.Fatalf("Could not create consumer: %v", err)
 	}
 
 	subscribe(ctopic, consumer)
 }
-
 ```
 [Full Example Source](/plugin/sarama/example/consumer.go)
 
 ### Producer
-To track the sarama Producer, use the NewSyncProducer() function of the pinpoint sarama plugin.
+To instrument a Kafka producer, use NewSyncProducer or NewAsyncProducer.
+
 ``` go
 config := sarama.NewConfig()
-config.Producer.Partitioner = sarama.NewRandomPartitioner
-config.Version = sarama.V2_3_0_0
+producer, err := ppsarama.NewSyncProducer(brokers, config)
+```
 
-producer, err := psarama.NewSyncProducer(brokers, config)
+It is necessary to pass the context containing the pinpoint.Tracer to sarama.SyncProducer (or sarama.AsyncProducer) using WithContext function.
+
+``` go
+ppsarama.WithContext(pinpoint.NewContext(context.Background(), tracer), producer)
+partition, offset, err := producer.SendMessage(msg)
 ```
 
 ``` go
