@@ -1002,6 +1002,7 @@ db, err := sql.Open("pq-pinpoint", "postgresql://test:test!@localhost/testdb?ssl
 ```
 
 It is necessary to pass the context containing the pinpoint.Tracer to all exec and query methods on SQL driver.
+Spans will be created for queries and other statement executions if the context methods are used, and the context includes a transaction.
 
 ``` go
 ctx := pinpoint.NewContext(context.Background(), tracer)
@@ -1036,25 +1037,26 @@ func query(w http.ResponseWriter, r *http.Request) {
 [Full Example Source](/plugin/pgsql/example/pgsql_example.go)
 
 ## ppredigo
-This package instruments the gomodule/redigo calls. Use the Dial, DialContext (or DialURL, DialURLContext) as the redis.Dial.
+This package instruments the gomodule/redigo calls.
+Use the Dial, DialContext (or DialURL, DialURLContext) as the redis.Dial.
 
 ``` go
 c, err := ppredigo.Dial("tcp", "127.0.0.1:6379")
 ```
 
-It is necessary to pass the context containing the pinpoint.Tracer to redis.Conn.
-
+It is necessary to propagate the context that contains the pinpoint.Tracer to redis.Conn.
+You can call WithContext to propagate a context containing a pinpoint.Tracer to the operations:
 ``` go
 ppredigo.WithContext(c, pinpoint.NewContext(context.Background(), tracer))
 c.Do("SET", "vehicle", "truck")
 ```
+
+Also, you can use function taking the context like redis.DoContext.
+
 ``` go
 redis.DoContext(c, pinpoint.NewContext(context.Background(), tracer), "GET", "vehicle")
 ```
-``` go
-c, err := ppredigo.DialContext(pinpoint.NewContext(context.Background(), tracer), "tcp", "127.0.0.1:6379")
-c.Do("SET", "vehicle", "truck")
-```
+
 ``` go
 package main
 
