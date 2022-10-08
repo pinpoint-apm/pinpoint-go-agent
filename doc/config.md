@@ -9,8 +9,11 @@ Each item takes precedence over the item below it:
 1. command line flag
 2. environment variable
 3. config file
-4. environment variable
+4. config function
 5. default
+
+For example, if a configuration item is specified simultaneously in the environment variable and in the configuration file,
+the value set in the environment variable is finally used.
 
 It is supported JSON, YAML and Properties config files
 and configuration keys used in config files are case-insensitive.
@@ -143,14 +146,14 @@ SQL.MaxBindValueSize option sets the max length (bytes) of traced bind value for
 | --pinpoint-sql-maxbindvaluesize | PINPOINT_GO_SQL_MAXBINDVALUESIZE | WithSQLMaxBindValueSize() | 1024    |
 
 ### SQL.TraceCommit
-SQL.TraceBindValue option enables commit tracing for SQL Driver.
+SQL.TraceCommit option enables commit tracing for SQL Driver.
 
 | command line flag          | environment variable        | config function      | default |
 |----------------------------|-----------------------------|----------------------|---------|
 | --pinpoint-sql-tracecommit | PINPOINT_GO_SQL_TRACECOMMIT | WithSQLTraceCommit() | true    |
 
 ### SQL.TraceRollback
-SQL.TraceBindValue option enables rollback tracing for SQL Driver.
+SQL.TraceRollback option enables rollback tracing for SQL Driver.
 
 | command line flag            | environment variable          | config function        | default |
 |------------------------------|-------------------------------|------------------------|---------|
