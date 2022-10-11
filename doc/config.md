@@ -12,178 +12,24 @@ Each item takes precedence over the item below it:
 4. config function
 5. default
 
-For example, if a configuration item is specified simultaneously in the environment variable and in the configuration file,
+For example, if a configuration item is specified in the environment variable and in the configuration file respectively,
 the value set in the environment variable is finally used.
-
-It is supported JSON, YAML and Properties config files
-and configuration keys used in config files are case-insensitive.
 
 ## Config Option
 The titles below are used as configuration keys in config files.
 
-### ApplicationName
-ApplicationName option sets the application name.
-If this option is not provided, the agent can't be started.
-
-| command line flag           | environment variable        | config function | default |
-|-----------------------------|-----------------------------|-----------------|---------|
-| --pinpoint-applicationname  | PINPOINT_GO_APPLICATIONNAME | WithAppName()   |         |
-
-### ApplicationType
-ApplicationType option sets the application type.
-
-| command line flag           | environment variable        | config function | default |
-|-----------------------------|-----------------------------|-----------------|---------|
-| --pinpoint-applicationtype  | PINPOINT_GO_APPLICATIONTYPE | WithAppType()   | 1800    |
-
-### AgentId
-AgentId option set id to distinguish agent.
-We recommend that you enable hostname to be included.
-If agent id is not set, automatically generated id is given.
-
-| command line flag  | environment variable | config function | default |
-|--------------------|----------------------|-----------------|---------|
-| --pinpoint-agentid | PINPOINT_GO_AGENTID  | WithAgentId()   |         |
-
-### AgentName
-AgentName option sets the agent name.
-
-| command line flag    | environment variable  | config function | default |
-|----------------------|-----------------------|-----------------|---------|
-| --pinpoint-agentname | PINPOINT_GO_AGENTNAME | WithAgentName() |         |
-
-### Collector.Host
-Collector.Host option sets the host address of Pinpoint collector.
-
-| command line flag         | environment variable       | config function     | default     |
-|---------------------------|----------------------------|---------------------|-------------|
-| --pinpoint-collector-host | PINPOINT_GO_COLLECTOR_HOST | WithCollectorHost() | "localhost" |
-
-### Collector.AgentPort
-Collector.AgentPort option sets the agent port of Pinpoint collector.
-
-| command line flag              | environment variable            | config function          | default |
-|--------------------------------|---------------------------------|--------------------------|---------|
-| --pinpoint-collector-agentport | PINPOINT_GO_COLLECTOR_AGENTPORT | WithCollectorAgentPort() | 9991    |
-
-### Collector.SpanPort
-Collector.SpanPort option sets the span port of Pinpoint collector.
-
-| command line flag             | environment variable           | config function         | default |
-|-------------------------------|--------------------------------|-------------------------|---------|
-| --pinpoint-collector-spanport | PINPOINT_GO_COLLECTOR_SPANPORT | WithCollectorSpanPort() | 9993    |
-
-### Collector.StatPort
-Collector.StatPort option sets the stat port of Pinpoint collector.
-
-| command line flag             | environment variable           | config function         | default |
-|-------------------------------|--------------------------------|-------------------------|---------|
-| --pinpoint-collector-statport | PINPOINT_GO_COLLECTOR_STATPORT | WithCollectorStatPort() | 9992    |
-
-### Sampling.Type
-Sampling.Type option sets the type of agent sampler.
-Either "COUNTER" or "PERCENT" must be specified.
-
-| command line flag        | environment variable      | config function    | default   |
-|--------------------------|---------------------------|--------------------|-----------|
-| --pinpoint-sampling-type | PINPOINT_GO_SAMPLING_TYPE | WithSamplingType() | "COUNTER" |
-
-### Sampling.CounterRate
-Sampling.CounterRate option sets the counter sampling rate.
-Sample 1/rate. In other words, if the rate is 1, then it will be 100% and if it is 100, it will be 1% sampling.
-
-| command line flag               | environment variable             | config function           | default |
-|---------------------------------|----------------------------------|---------------------------|---------|
-| --pinpoint-sampling-counterrate | PINPOINT_GO_SAMPLING_COUNTERRATE | WithSamplingCounterRate() | 1       |
-
-### Sampling.PercentRate
-Sampling.PercentRate option sets the sampling rate for a 'percent sampler'.
-
-| command line flag               | environment variable             | config function           | default |
-|---------------------------------|----------------------------------|---------------------------|---------|
-| --pinpoint-sampling-percentrate | PINPOINT_GO_SAMPLING_PERCENTRATE | WithSamplingPercentRate() | 100     |
-
-### Sampling.NewThroughput
-Sampling.NewThroughput option sets the new TPS for a 'throughput sampler'.
-
-| command line flag                 | environment variable               | config function             | default |
-|-----------------------------------|------------------------------------|-----------------------------|---------|
-| --pinpoint-sampling-newthroughput | PINPOINT_GO_SAMPLING_NEWTHROUGHPUT | WithSamplingNewThroughput() | 0       |
-
-### Sampling.ContinueThroughput
-Sampling.ContinueThroughput option sets the cont TPS for a 'throughput sampler'.
-
-| command line flag                      | environment variable                    | config function                  | default |
-|----------------------------------------|-----------------------------------------|----------------------------------|---------|
-| --pinpoint-sampling-continuethroughput | PINPOINT_GO_SAMPLING_CONTINUETHROUGHPUT | WithSamplingContinueThroughput() | 0       |
-
-### Stat.CollectInterval
-Stat.CollectInterval option sets the statistics collection cycle (milliseconds) for the agent.
-
-| command line flag               | environment variable             | config function           | default |
-|---------------------------------|----------------------------------|---------------------------|---------|
-| --pinpoint-stat-collectinterval | PINPOINT_GO_STAT_COLLECTINTERVAL | WithStatCollectInterval() | 5000    |
-
-### Stat.BatchCount
-Stat.BatchCount option sets batch delivery units for collected statistics.
-
-| command line flag                | environment variable              | config function      | default |
-|----------------------------------|-----------------------------------|----------------------|---------|
-| --pinpoint-stat-batchcount       | PINPOINT_GO_STAT_BATCHCOUNT       | WithStatBatchCount() | 6       |
-
-### SQL.TraceBindValue
-SQL.TraceBindValue option enables bind value tracing for SQL Driver.
-
-| command line flag             | environment variable           | config function         | default |
-|-------------------------------|--------------------------------|-------------------------|---------|
-| --pinpoint-sql-tracebindvalue | PINPOINT_GO_SQL_TRACEBINDVALUE | WithSQLTraceBindValue() | true    |
-
-### SQL.MaxBindValueSize
-SQL.MaxBindValueSize option sets the max length (bytes) of traced bind value for SQL Driver.
-
-| command line flag               | environment variable             | config function           | default |
-|---------------------------------|----------------------------------|---------------------------|---------|
-| --pinpoint-sql-maxbindvaluesize | PINPOINT_GO_SQL_MAXBINDVALUESIZE | WithSQLMaxBindValueSize() | 1024    |
-
-### SQL.TraceCommit
-SQL.TraceCommit option enables commit tracing for SQL Driver.
-
-| command line flag          | environment variable        | config function      | default |
-|----------------------------|-----------------------------|----------------------|---------|
-| --pinpoint-sql-tracecommit | PINPOINT_GO_SQL_TRACECOMMIT | WithSQLTraceCommit() | true    |
-
-### SQL.TraceRollback
-SQL.TraceRollback option enables rollback tracing for SQL Driver.
-
-| command line flag            | environment variable          | config function        | default |
-|------------------------------|-------------------------------|------------------------|---------|
-| --pinpoint-sql-tracerollback | PINPOINT_GO_SQL_TRACEROLLBACK | WithSQLTraceRollback() | true    |
-
-### LogLevel
-LogLevel option sets the level of log generated by the pinpoint agent. 
-Either debug, info, warn, or error must be set.
-
-| command line flag   | environment variable | config function | default |
-|---------------------|----------------------|-----------------|---------|
-| --pinpoint-loglevel | PINPOINT_GO_LOGLEVEL | WithLogLevel()  | "info"  |
-
-### IsContainerEnv
-IsContainerEnv option sets whether the application is running in a container environment or not.
-If this is not set, the agent automatically checks it.
-
-| command line flag         | environment variable       | config function      | default |
-|---------------------------|----------------------------|----------------------|---------|
-| --pinpoint-iscontainerenv | PINPOINT_GO_ISCONTAINERENV | WithIsContainerEnv() |         |
-
 ### ConfigFile
-The aforementioned settings can be saved to the config file is set by ConfigFile.
+The config options below can be saved to the config file is set by ConfigFile option.
 It is supported JSON, YAML and Properties config files
 and configuration keys used in config files are case-insensitive.
 
-| command line flag     | environment variable   | config function  | default |
-|-----------------------|------------------------|------------------|---------|
-| --pinpoint-configfile | PINPOINT_GO_CONFIGFILE | WithConfigFile() |         |
+* --pinpoint-configfile
+* PINPOINT_GO_CONFIGFILE
+* WithConfigFile()
+* string
+* case-sensitive
 
+For `.` delimited path keys, they are accessed in nested field.
 The format of the YAML config file is as follows:
 ``` yaml
 applicationName: "MyAppName"
@@ -203,9 +49,11 @@ logLevel: "error"
 The configuration profile feature is supported.
 You can set the profile in the config file and specify the profile to activate with the UseProfile option.
 
-| command line flag     | environment variable   | config function  | default |
-|-----------------------|------------------------|------------------|---------|
-| --pinpoint-useprofile | PINPOINT_GO_USEPROFILE | WithUseProfile() |         |
+* --pinpoint-useprofile
+* PINPOINT_GO_USEPROFILE
+* WithUseProfile()
+* string
+* case-insensitive
 
 ```json
 {
@@ -234,3 +82,314 @@ You can set the profile in the config file and specify the profile to activate w
   }
 }
 ```
+
+### ApplicationName
+ApplicationName option sets the application name.
+If this option is not provided, the agent can't be started.
+
+* --pinpoint-applicationname
+* PINPOINT_GO_APPLICATIONNAME
+* WithAppName()
+* string
+* case-sensitive
+
+### ApplicationType
+ApplicationType option sets the application type.
+
+* --pinpoint-applicationtype
+* PINPOINT_GO_APPLICATIONTYPE
+* WithAppType()
+* int
+* default: 1800
+
+### AgentId
+AgentId option set id to distinguish agent.
+We recommend that you enable hostname to be included.
+If agent id is not set, automatically generated id is given.
+
+* --pinpoint-agentid
+* PINPOINT_GO_AGENTID
+* WithAgentId()
+* string
+* case-sensitive
+
+### AgentName
+AgentName option sets the agent name.
+
+* --pinpoint-agentname
+* PINPOINT_GO_AGENTNAME
+* WithAgentName()
+* string
+* case-sensitive
+
+### Collector.Host
+Collector.Host option sets the host address of Pinpoint collector.
+
+* --pinpoint-collector-host
+* PINPOINT_GO_COLLECTOR_HOST
+* WithCollectorHost()
+* string
+* default: "localhost"
+* case-sensitive
+
+### Collector.AgentPort
+Collector.AgentPort option sets the agent port of Pinpoint collector.
+
+* --pinpoint-collector-agentport
+* PINPOINT_GO_COLLECTOR_AGENTPORT
+* WithCollectorAgentPort()
+* int
+* default: 9991
+
+### Collector.SpanPort
+Collector.SpanPort option sets the span port of Pinpoint collector.
+
+* --pinpoint-collector-spanport
+* PINPOINT_GO_COLLECTOR_SPANPORT
+* WithCollectorSpanPort()
+* int
+* default: 9993
+
+### Collector.StatPort
+Collector.StatPort option sets the stat port of Pinpoint collector.
+
+* --pinpoint-collector-statport
+* PINPOINT_GO_COLLECTOR_STATPORT
+* WithCollectorStatPort()
+* int
+* default: 9992
+
+### Sampling.Type
+Sampling.Type option sets the type of agent sampler.
+Either "COUNTER" or "PERCENT" must be specified.
+
+* --pinpoint-sampling-type
+* PINPOINT_GO_SAMPLING_TYPE
+* WithSamplingType()
+* string
+* default: "COUNTER"
+* case-insensitive
+
+### Sampling.CounterRate
+Sampling.CounterRate option sets the counter sampling rate.
+Sample 1/rate. In other words, if the rate is 1, then it will be 100% and if it is 100, it will be 1% sampling.
+
+* --pinpoint-sampling-counterrate
+* PINPOINT_GO_SAMPLING_COUNTERRATE
+* WithSamplingCounterRate()
+* int
+* default: 1
+* valid range: 0 ~ 100
+
+### Sampling.PercentRate
+Sampling.PercentRate option sets the sampling rate for a 'percent sampler'.
+
+* --pinpoint-sampling-percentrate
+* PINPOINT_GO_SAMPLING_PERCENTRATE
+* WithSamplingPercentRate()
+* float
+* default: 100
+* valid range: 0.01 ~ 100
+
+### Sampling.NewThroughput
+Sampling.NewThroughput option sets the new TPS for a 'throughput sampler'.
+
+* --pinpoint-sampling-newthroughput
+* PINPOINT_GO_SAMPLING_NEWTHROUGHPUT
+* WithSamplingNewThroughput()
+* type: int
+* default: 0
+
+### Sampling.ContinueThroughput
+Sampling.ContinueThroughput option sets the cont TPS for a 'throughput sampler'.
+
+* --pinpoint-sampling-continuethroughput
+* PINPOINT_GO_SAMPLING_CONTINUETHROUGHPUT
+* WithSamplingContinueThroughput()
+* type: int
+* default: 0
+
+### Stat.CollectInterval
+Stat.CollectInterval option sets the statistics collection cycle for the agent.
+
+* --pinpoint-stat-collectinterval
+* PINPOINT_GO_STAT_COLLECTINTERVAL
+* WithStatCollectInterval()
+* type: int
+* default: 5000
+* unit: milliseconds
+
+### Stat.BatchCount
+Stat.BatchCount option sets batch delivery units for collected statistics.
+
+* --pinpoint-stat-batchcount
+* PINPOINT_GO_STAT_BATCHCOUNT
+* WithStatBatchCount()
+* type: int
+* default: 6
+
+### SQL.TraceBindValue
+SQL.TraceBindValue option enables bind value tracing for SQL Driver.
+
+* --pinpoint-sql-tracebindvalue
+* PINPOINT_GO_SQL_TRACEBINDVALUE
+* WithSQLTraceBindValue()
+* type: bool 
+* default: true
+
+### SQL.MaxBindValueSize
+SQL.MaxBindValueSize option sets the max length of traced bind value for SQL Driver.
+
+* --pinpoint-sql-maxbindvaluesize
+* PINPOINT_GO_SQL_MAXBINDVALUESIZE
+* WithSQLMaxBindValueSize()
+* type: int
+* default: 1024
+* unit: bytes
+
+### SQL.TraceCommit
+SQL.TraceCommit option enables commit tracing for SQL Driver.
+
+* --pinpoint-sql-tracecommit
+* PINPOINT_GO_SQL_TRACECOMMIT
+* WithSQLTraceCommit()
+* type: bool
+* default: true
+
+### SQL.TraceRollback
+SQL.TraceRollback option enables rollback tracing for SQL Driver.
+
+* --pinpoint-sql-tracerollback
+* PINPOINT_GO_SQL_TRACEROLLBACK
+* WithSQLTraceRollback()
+* type: bool
+* default: true
+
+### LogLevel
+LogLevel option sets the level of log generated by the pinpoint agent. 
+Either debug, info, warn, or error must be set.
+
+* --pinpoint-loglevel
+* PINPOINT_GO_LOGLEVEL
+* WithLogLevel()
+* type: string
+* default: "info"
+* case-insensitive
+
+### IsContainerEnv
+IsContainerEnv option sets whether the application is running in a container environment or not.
+If this is not set, the agent automatically checks it.
+
+* --pinpoint-iscontainerenv
+* PINPOINT_GO_ISCONTAINERENV
+* WithIsContainerEnv()
+* type: bool
+* default: false
+
+### Http.Server.StatusCodeErrors
+Http.Server.StatusCodeErrors option sets HTTP status code with request failure.
+Refer https://pinpoint-apm.gitbook.io/pinpoint/documents/http-status-code-failure.
+
+* --pinpoint-http-server-statuscodeerrors
+* PINPOINT_GO_HTTP_SERVER_STATUSCODEERRORS
+* WithHttpServerStatusCodeError()
+* type: string slice
+* default: {"5xx"}
+* case-insensitive
+
+The string slice value is set as follows.
+```
+--pinpoint-http-server-statuscodeerrors=5xx,301,400
+```
+```
+export PINPOINT_GO_HTTP_SERVER_STATUSCODEERRORS=5xx,301,400
+```
+``` yaml
+http:
+  server: 
+    statusCodeErrors:
+      - 5xx
+      - 301
+      - 400
+```
+
+### Http.Server.ExcludeUrl
+Http.Server.ExcludeUrl option sets URLs to exclude from tracking.
+It supports ant style pattern. (e.g. /aa/*.html, /??/exclude.html)
+Refer https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/util/AntPathMatcher.html.
+
+* --pinpoint-http-server-excludeurl
+* PINPOINT_GO_HTTP_SERVER_EXCLUDEURL
+* WithHttpServerExcludeUrl()
+* type: string slice
+* case-sensitive
+
+### Http.Server.ExcludeMethod
+Http.Server.ExcludeMethod option sets HTTP Request methods to exclude from tracking.
+
+* --pinpoint-http-server-excludemethod
+* PINPOINT_GO_HTTP_SERVER_EXCLUDEMETHOD
+* WithHttpServerExcludeMethod()
+* type: string slice
+* case-insensitive
+
+### Http.Server.RecordRequestHeader
+Http.Server.RecordRequestHeader option sets HTTP request headers to be logged on the server side.
+If sets to "HEADERS-ALL", it records all request headers.
+
+* --pinpoint-http-server-recordrequestheader
+* PINPOINT_GO_HTTP_SERVER_RECORDREQUESTHEADER
+* WithHttpServerRecordRequestHeader()
+* type: string slice
+* case-insensitive
+
+### Http.Server.RecordResponseHeader
+Http.Server.RecordResponseHeader option sets HTTP response headers to be logged on the server side.
+If sets to "HEADERS-ALL", it records all request headers.
+
+* --pinpoint-http-server-recordresponseheader
+* PINPOINT_GO_HTTP_SERVER_RECORDRESPONSEHEADER
+* WithHttpServerRecordRespondHeader()
+* type: string slice
+* case-insensitive
+
+### Http.Server.RecordRequestCookie
+Http.Server.RecordRequestCookie option sets HTTP request cookies to be logged on the server side.
+If sets to "HEADERS-ALL", it records all request headers.
+
+* --pinpoint-http-server-recordrequestcookie
+* PINPOINT_GO_HTTP_SERVER_RECORDREQUESTCOOKIE
+* WithHttpServerRecordRequestCookie()
+* type: string slice
+* case-insensitive
+
+### Http.Client.RecordRequestHeader
+Http.Client.RecordRequestHeader option sets HTTP request headers to be logged on the client side.
+If sets to "HEADERS-ALL", it records all request headers.
+
+* --pinpoint-http-client-recordrequestheader
+* PINPOINT_GO_HTTP_CLIENT_RECORDREQUESTHEADER
+* WithHttpClientRecordRequestHeader()
+* type: string slice
+* case-insensitive
+
+### Http.Client.RecordResponseHeader
+Http.Client.RecordResponseHeader option sets HTTP response headers to be logged on the client side.
+If sets to "HEADERS-ALL", it records all request headers.
+
+* --pinpoint-http-client-recordresponseheader
+* PINPOINT_GO_HTTP_CLIENT_RECORDRESPONSEHEADER
+* WithHttpClientRecordRespondHeader()
+* type: string slice
+* case-insensitive
+
+
+### Http.Client.RecordRequestCookie
+Http.Client.RecordRequestCookie option sets HTTP request cookies to be logged on the client side.
+If sets to "HEADERS-ALL", it records all request headers.
+
+* --pinpoint-http-client-recordrequestcookie
+* PINPOINT_GO_HTTP_CLIENT_RECORDREQUESTCOOKIE
+* WithHttpClientRecordRequestCookie()
+* type: string slice
+* case-insensitive
