@@ -8,27 +8,27 @@ import (
 )
 
 const (
-	cfgHttpServerStatusCodeErrors     = "Http.Server.StatusCodeErrors"
-	cfgHttpServerExcludeUrl           = "Http.Server.ExcludeUrl"
-	cfgHttpServerExcludeMethod        = "Http.Server.ExcludeMethod"
-	cfgHttpServerRecordRequestHeader  = "Http.Server.RecordRequestHeader"
-	cfgHttpServerRecordResponseHeader = "Http.Server.RecordResponseHeader"
-	cfgHttpServerRecordRequestCookie  = "Http.Server.RecordRequestCookie"
-	cfgHttpClientRecordRequestHeader  = "Http.Client.RecordRequestHeader"
-	cfgHttpClientRecordResponseHeader = "Http.Client.RecordResponseHeader"
-	cfgHttpClientRecordRequestCookie  = "Http.Client.RecordRequestCookie"
+	CfgHttpServerStatusCodeErrors     = "Http.Server.StatusCodeErrors"
+	CfgHttpServerExcludeUrl           = "Http.Server.ExcludeUrl"
+	CfgHttpServerExcludeMethod        = "Http.Server.ExcludeMethod"
+	CfgHttpServerRecordRequestHeader  = "Http.Server.RecordRequestHeader"
+	CfgHttpServerRecordResponseHeader = "Http.Server.RecordResponseHeader"
+	CfgHttpServerRecordRequestCookie  = "Http.Server.RecordRequestCookie"
+	CfgHttpClientRecordRequestHeader  = "Http.Client.RecordRequestHeader"
+	CfgHttpClientRecordResponseHeader = "Http.Client.RecordResponseHeader"
+	CfgHttpClientRecordRequestCookie  = "Http.Client.RecordRequestCookie"
 )
 
 func init() {
-	pinpoint.AddConfig(cfgHttpServerStatusCodeErrors, pinpoint.CfgStringSlice, []string{"5xx"})
-	pinpoint.AddConfig(cfgHttpServerExcludeUrl, pinpoint.CfgStringSlice, []string{})
-	pinpoint.AddConfig(cfgHttpServerExcludeMethod, pinpoint.CfgStringSlice, []string{})
-	pinpoint.AddConfig(cfgHttpServerRecordRequestHeader, pinpoint.CfgStringSlice, []string{})
-	pinpoint.AddConfig(cfgHttpServerRecordResponseHeader, pinpoint.CfgStringSlice, []string{})
-	pinpoint.AddConfig(cfgHttpServerRecordRequestCookie, pinpoint.CfgStringSlice, []string{})
-	pinpoint.AddConfig(cfgHttpClientRecordRequestHeader, pinpoint.CfgStringSlice, []string{})
-	pinpoint.AddConfig(cfgHttpClientRecordResponseHeader, pinpoint.CfgStringSlice, []string{})
-	pinpoint.AddConfig(cfgHttpClientRecordRequestCookie, pinpoint.CfgStringSlice, []string{})
+	pinpoint.AddConfig(CfgHttpServerStatusCodeErrors, pinpoint.CfgStringSlice, []string{"5xx"})
+	pinpoint.AddConfig(CfgHttpServerExcludeUrl, pinpoint.CfgStringSlice, []string{})
+	pinpoint.AddConfig(CfgHttpServerExcludeMethod, pinpoint.CfgStringSlice, []string{})
+	pinpoint.AddConfig(CfgHttpServerRecordRequestHeader, pinpoint.CfgStringSlice, []string{})
+	pinpoint.AddConfig(CfgHttpServerRecordResponseHeader, pinpoint.CfgStringSlice, []string{})
+	pinpoint.AddConfig(CfgHttpServerRecordRequestCookie, pinpoint.CfgStringSlice, []string{})
+	pinpoint.AddConfig(CfgHttpClientRecordRequestHeader, pinpoint.CfgStringSlice, []string{})
+	pinpoint.AddConfig(CfgHttpClientRecordResponseHeader, pinpoint.CfgStringSlice, []string{})
+	pinpoint.AddConfig(CfgHttpClientRecordRequestCookie, pinpoint.CfgStringSlice, []string{})
 }
 
 // WithHttpServerStatusCodeError sets HTTP status code with request failure.
@@ -36,7 +36,7 @@ func init() {
 //	pphttp.WithHttpServerStatusCodeError([]string{"5xx", "4xx", "302"})
 func WithHttpServerStatusCodeError(errors []string) pinpoint.ConfigOption {
 	return func(c *pinpoint.Config) {
-		c.Set(cfgHttpServerStatusCodeErrors, errors)
+		c.Set(CfgHttpServerStatusCodeErrors, errors)
 	}
 }
 
@@ -46,7 +46,7 @@ func WithHttpServerStatusCodeError(errors []string) pinpoint.ConfigOption {
 //	pphttp.WithHttpServerExcludeUrl([]string{"/wrap_*", "/**/*.do"})
 func WithHttpServerExcludeUrl(urlPath []string) pinpoint.ConfigOption {
 	return func(c *pinpoint.Config) {
-		c.Set(cfgHttpServerExcludeUrl, urlPath)
+		c.Set(CfgHttpServerExcludeUrl, urlPath)
 	}
 }
 
@@ -55,7 +55,7 @@ func WithHttpServerExcludeUrl(urlPath []string) pinpoint.ConfigOption {
 //	pphttp.WithHttpServerExcludeMethod([]string{"put", "delete"})
 func WithHttpServerExcludeMethod(method []string) pinpoint.ConfigOption {
 	return func(c *pinpoint.Config) {
-		c.Set(cfgHttpServerExcludeMethod, method)
+		c.Set(CfgHttpServerExcludeMethod, method)
 	}
 }
 
@@ -69,7 +69,7 @@ func WithHttpServerExcludeMethod(method []string) pinpoint.ConfigOption {
 //	pphttp.WithHttpServerRecordRequestHeader([]string{"foo", "bar"})
 func WithHttpServerRecordRequestHeader(header []string) pinpoint.ConfigOption {
 	return func(c *pinpoint.Config) {
-		c.Set(cfgHttpServerRecordRequestHeader, header)
+		c.Set(CfgHttpServerRecordRequestHeader, header)
 	}
 }
 
@@ -83,7 +83,7 @@ func WithHttpServerRecordRequestHeader(header []string) pinpoint.ConfigOption {
 //	pphttp.WithHttpServerRecordRespondHeader([]string{"foo", "bar", "set-cookie"})
 func WithHttpServerRecordRespondHeader(header []string) pinpoint.ConfigOption {
 	return func(c *pinpoint.Config) {
-		c.Set(cfgHttpServerRecordResponseHeader, header)
+		c.Set(CfgHttpServerRecordResponseHeader, header)
 	}
 }
 
@@ -97,7 +97,7 @@ func WithHttpServerRecordRespondHeader(header []string) pinpoint.ConfigOption {
 //	pphttp.WithHttpServerRecordRequestCookie([]string{"foo", "bar"})
 func WithHttpServerRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
 	return func(c *pinpoint.Config) {
-		c.Set(cfgHttpServerRecordRequestCookie, cookie)
+		c.Set(CfgHttpServerRecordRequestCookie, cookie)
 	}
 }
 
@@ -111,7 +111,7 @@ func WithHttpServerRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
 //	pphttp.WithHttpClientRecordRequestHeader([]string{"foo", "bar"})
 func WithHttpClientRecordRequestHeader(header []string) pinpoint.ConfigOption {
 	return func(c *pinpoint.Config) {
-		c.Set(cfgHttpClientRecordRequestHeader, header)
+		c.Set(CfgHttpClientRecordRequestHeader, header)
 	}
 }
 
@@ -125,7 +125,7 @@ func WithHttpClientRecordRequestHeader(header []string) pinpoint.ConfigOption {
 //	pphttp.WithHttpClientRecordRespondHeader([]string{"foo", "bar"})
 func WithHttpClientRecordRespondHeader(header []string) pinpoint.ConfigOption {
 	return func(c *pinpoint.Config) {
-		c.Set(cfgHttpClientRecordResponseHeader, header)
+		c.Set(CfgHttpClientRecordResponseHeader, header)
 	}
 }
 
@@ -139,7 +139,7 @@ func WithHttpClientRecordRespondHeader(header []string) pinpoint.ConfigOption {
 //	pphttp.WithHttpClientRecordRequestCookie([]string{"foo", "bar"})
 func WithHttpClientRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
 	return func(c *pinpoint.Config) {
-		c.Set(cfgHttpClientRecordRequestCookie, cookie)
+		c.Set(CfgHttpClientRecordRequestCookie, cookie)
 	}
 }
 
@@ -181,42 +181,42 @@ func serverMethodFilter() *httpMethodFilter {
 
 func serverRequestHeaderRecorder() httpHeaderRecorder {
 	if srvReqHeaderRecorder == nil {
-		srvReqHeaderRecorder = makeHttpHeaderRecorder(cfgHttpServerRecordRequestHeader)
+		srvReqHeaderRecorder = makeHttpHeaderRecorder(CfgHttpServerRecordRequestHeader)
 	}
 	return srvReqHeaderRecorder
 }
 
 func serverResponseHeaderRecorder() httpHeaderRecorder {
 	if srvResHeaderRecorder == nil {
-		srvResHeaderRecorder = makeHttpHeaderRecorder(cfgHttpServerRecordResponseHeader)
+		srvResHeaderRecorder = makeHttpHeaderRecorder(CfgHttpServerRecordResponseHeader)
 	}
 	return srvResHeaderRecorder
 }
 
 func serverCookieRecorder() httpHeaderRecorder {
 	if srvCookieRecorder == nil {
-		srvCookieRecorder = makeHttpHeaderRecorder(cfgHttpServerRecordRequestCookie)
+		srvCookieRecorder = makeHttpHeaderRecorder(CfgHttpServerRecordRequestCookie)
 	}
 	return srvCookieRecorder
 }
 
 func clientRequestHeaderRecorder() httpHeaderRecorder {
 	if cltReqHeaderRecorder == nil {
-		cltReqHeaderRecorder = makeHttpHeaderRecorder(cfgHttpClientRecordRequestHeader)
+		cltReqHeaderRecorder = makeHttpHeaderRecorder(CfgHttpClientRecordRequestHeader)
 	}
 	return cltReqHeaderRecorder
 }
 
 func clientResponseHeaderRecorder() httpHeaderRecorder {
 	if cltResHeaderRecorder == nil {
-		cltResHeaderRecorder = makeHttpHeaderRecorder(cfgHttpClientRecordResponseHeader)
+		cltResHeaderRecorder = makeHttpHeaderRecorder(CfgHttpClientRecordResponseHeader)
 	}
 	return cltResHeaderRecorder
 }
 
 func clientCookieRecorder() httpHeaderRecorder {
 	if cltCookieRecorder == nil {
-		cltCookieRecorder = makeHttpHeaderRecorder(cfgHttpClientRecordRequestCookie)
+		cltCookieRecorder = makeHttpHeaderRecorder(CfgHttpClientRecordRequestCookie)
 	}
 	return cltCookieRecorder
 }

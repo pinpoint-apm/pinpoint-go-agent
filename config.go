@@ -192,12 +192,12 @@ func (config *Config) Bool(cfgName string) bool {
 // The generated Config is maintained globally.
 //
 // example:
-//  opts := []pinpoint.ConfigOption{
-//    pinpoint.WithAppName("GoTestApp"),
-//    pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
-//  }
-//  cfg, err := pinpoint.NewConfig(opts...)
 //
+//	opts := []pinpoint.ConfigOption{
+//	  pinpoint.WithAppName("GoTestApp"),
+//	  pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
+//	}
+//	cfg, err := pinpoint.NewConfig(opts...)
 func NewConfig(opts ...ConfigOption) (*Config, error) {
 	config := defaultConfig()
 
@@ -391,6 +391,12 @@ func (config *Config) loadConfig(cmdEnvViper *viper.Viper, cfgFileViper *viper.V
 }
 
 func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value interface{}) {
+	if item.valueType == CfgStringSlice {
+		if s, ok := value.(string); ok {
+			value = strings.Split(s, ",")
+		}
+	}
+
 	item.value = value
 	if cfgName == cfgIsContainerEnv {
 		config.containerCheck = false

@@ -57,6 +57,8 @@ func trace(f func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter,
 }
 
 func main() {
+	//os.Setenv("PINPOINT_GO_HTTP_SERVER_STATUSCODEERRORS", "5xx,301,400")
+
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoHttpTest"),
 		pinpoint.WithAgentId("GoHttpAgent"),
