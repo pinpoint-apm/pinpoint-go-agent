@@ -16,7 +16,9 @@ For example, if a configuration item is specified in the environment variable an
 the value set in the environment variable is finally used.
 
 ## Config Option
-The titles below are used as configuration keys in config files.
+The titles below are used as configuration keys in config file.
+In the description of each config option below, the list is shown in the order command flag, environment variable,
+config function, value type and additional information.
 
 ### ConfigFile
 The config options below can be saved to the config file is set by ConfigFile option.
@@ -55,6 +57,10 @@ You can set the profile in the config file and specify the profile to activate w
 * string
 * case-insensitive
 
+The example below shows that config file and profile are set by command flag.
+```
+--pinpoint-configfile=pinpoint-config.json --pinpoint-useprofile=dev
+```
 ```json
 {
   "applicationName": "JsonAppName",
@@ -86,6 +92,7 @@ You can set the profile in the config file and specify the profile to activate w
 ### ApplicationName
 ApplicationName option sets the application name.
 If this option is not provided, the agent can't be started.
+The maximum length of ApplicationName is 24.
 
 * --pinpoint-applicationname
 * PINPOINT_GO_APPLICATIONNAME
@@ -100,12 +107,13 @@ ApplicationType option sets the application type.
 * PINPOINT_GO_APPLICATIONTYPE
 * WithAppType()
 * int
-* default: 1800
+* default: 1800 (ServiceTypeGoApp)
 
 ### AgentId
 AgentId option set id to distinguish agent.
 We recommend that you enable hostname to be included.
-If agent id is not set, automatically generated id is given.
+The maximum length of AgentId is 24.
+If agent id is not set or the maximum length is exceeded, automatically generated id is given.
 
 * --pinpoint-agentid
 * PINPOINT_GO_AGENTID
@@ -115,6 +123,7 @@ If agent id is not set, automatically generated id is given.
 
 ### AgentName
 AgentName option sets the agent name.
+The maximum length of AgentName is 255.
 
 * --pinpoint-agentname
 * PINPOINT_GO_AGENTNAME
