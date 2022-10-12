@@ -98,7 +98,7 @@ Pinpoint Go Agent provides two functions below to read and write these data.
 * Tracer.Inject(writer DistributedTracingContextWriter) injects distributed tracing headers to the writer.
 
 Using Agent.NewSpanTracerWithReader(), you can create a span that continues the transaction started from previous node.
-(Use Tracer.Extract() function internally to read the transaction context.)
+(Tracer.Extract() function is used internally to read the transaction context.)
 
 If you request to another service and the next node is traceable, the transaction context must be propagated to the next node.
 Tracer.Inject() is provided for this action.
@@ -106,24 +106,24 @@ The following is an example of instrumenting a http request to other node:
 
 ``` go
 func externalRequest(tracer pinpoint.Tracer) int {
-	req, err := http.NewRequest("GET", "http://localhost:9000/async_wrapper", nil)
-	client := &http.Client{}
+    req, err := http.NewRequest("GET", "http://localhost:9000/async_wrapper", nil)
+    client := &http.Client{}
 
-	tracer.NewSpanEvent("externalRequest")
-	defer tracer.EndSpanEvent()
+    tracer.NewSpanEvent("externalRequest")
+    defer tracer.EndSpanEvent()
 
-	se := tracer.SpanEvent()
-	se.SetEndPoint(req.Host)
-	se.SetDestination(req.Host)
-	se.SetServiceType(pinpoint.ServiceTypeGoHttpClient)
-	se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, req.URL.String())
-	tracer.Inject(req.Header)
+    se := tracer.SpanEvent()
+    se.SetEndPoint(req.Host)
+    se.SetDestination(req.Host)
+    se.SetServiceType(pinpoint.ServiceTypeGoHttpClient)
+    se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, req.URL.String())
+    tracer.Inject(req.Header)
 
-	resp, err := client.Do(req)
-	defer resp.Body.Close()
+    resp, err := client.Do(req)
+    defer resp.Body.Close()
 
-	tracer.SpanEvent().SetError(err)
-	return resp.StatusCode
+    tracer.SpanEvent().SetError(err)
+    return resp.StatusCode
 }
 ```
 
@@ -186,36 +186,36 @@ The Tracer.EndSpan() function must be called at the end of the goroutine.
 
 ``` go
 func outGoingRequest(ctx context.Context) {
-	client := pphttp.WrapClient(nil)
+    client := pphttp.WrapClient(nil)
 	
-	request, _ := http.NewRequest("GET", "https://github.com/pinpoint-apm/pinpoint-go-agent", nil)
-	request = request.WithContext(ctx)
+    request, _ := http.NewRequest("GET", "https://github.com/pinpoint-apm/pinpoint-go-agent", nil)
+    request = request.WithContext(ctx)
 
-	resp, err := client.Do(request)
-	if nil != err {
-		log.Println(err.Error())
-		return
-	}
-	defer resp.Body.Close()
+    resp, err := client.Do(request)
+    if nil != err {
+        log.Println(err.Error())
+        return
+    }
+    defer resp.Body.Close()
     log.Println(resp.Body)
 }
 
 func asyncWithTracer(w http.ResponseWriter, r *http.Request) {
-	tracer := pinpoint.FromContext(r.Context())
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
+    tracer := pinpoint.FromContext(r.Context())
+    wg := &sync.WaitGroup{}
+    wg.Add(1)
 
-	go func(asyncTracer pinpoint.Tracer) {
-		defer wg.Done()
+    go func(asyncTracer pinpoint.Tracer) {
+        defer wg.Done()
 
-		defer asyncTracer.EndSpan() // must be called
-		defer asyncTracer.NewSpanEvent("asyncWithTracer_goroutine").EndSpanEvent()
+        defer asyncTracer.EndSpan() // must be called
+        defer asyncTracer.NewSpanEvent("asyncWithTracer_goroutine").EndSpanEvent()
 
-		ctx := pinpoint.NewContext(context.Background(), asyncTracer)
-		outGoingRequest(w, ctx)
-	}(tracer.NewGoroutineTracer())
+        ctx := pinpoint.NewContext(context.Background(), asyncTracer)
+        outGoingRequest(w, ctx)
+    }(tracer.NewGoroutineTracer())
 
-	wg.Wait()
+    wg.Wait()
 }
 ```
 
@@ -223,25 +223,25 @@ func asyncWithTracer(w http.ResponseWriter, r *http.Request) {
 
 ``` go
 func asyncWithChan(w http.ResponseWriter, r *http.Request) {
-	tracer := pinpoint.FromContext(r.Context())
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
+    tracer := pinpoint.FromContext(r.Context())
+    wg := &sync.WaitGroup{}
+    wg.Add(1)
 
-	ch := make(chan pinpoint.Tracer)
+    ch := make(chan pinpoint.Tracer)
 
-	go func() {
-		defer wg.Done()
+    go func() {
+        defer wg.Done()
 
-		asyncTracer := <-ch
-		defer asyncTracer.EndSpan() // must be called
-		defer asyncTracer.NewSpanEvent("asyncWithChan_goroutine").EndSpanEvent()
+        asyncTracer := <-ch
+        defer asyncTracer.EndSpan() // must be called
+        defer asyncTracer.NewSpanEvent("asyncWithChan_goroutine").EndSpanEvent()
 
-		ctx := pinpoint.NewContext(context.Background(), asyncTracer)
-		outGoingRequest(w, ctx)
-	}()
+        ctx := pinpoint.NewContext(context.Background(), asyncTracer)
+        outGoingRequest(w, ctx)
+    }()
 
-	ch <- tracer.NewGoroutineTracer()
-	wg.Wait()
+    ch <- tracer.NewGoroutineTracer()
+    wg.Wait()
 }
 ```
 
@@ -249,22 +249,22 @@ func asyncWithChan(w http.ResponseWriter, r *http.Request) {
 
 ``` go
 func asyncWithContext(w http.ResponseWriter, r *http.Request) {
-	tracer := pinpoint.FromContext(r.Context())
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
+    tracer := pinpoint.FromContext(r.Context())
+    wg := &sync.WaitGroup{}
+    wg.Add(1)
 
-	go func(asyncCtx context.Context) {
-		defer wg.Done()
+    go func(asyncCtx context.Context) {
+        defer wg.Done()
 
-		asyncTracer := pinpoint.FromContext(asyncCtx)
-		defer asyncTracer.EndSpan() // must be called
-		defer asyncTracer.NewSpanEvent("asyncWithContext_goroutine").EndSpanEvent()
+        asyncTracer := pinpoint.FromContext(asyncCtx)
+        defer asyncTracer.EndSpan() // must be called
+        defer asyncTracer.NewSpanEvent("asyncWithContext_goroutine").EndSpanEvent()
 
-		ctx := pinpoint.NewContext(context.Background(), asyncTracer)
-		outGoingRequest(w, ctx)
-	}(pinpoint.NewContext(context.Background(), tracer.NewGoroutineTracer()))
+        ctx := pinpoint.NewContext(context.Background(), asyncTracer)
+        outGoingRequest(w, ctx)
+    }(pinpoint.NewContext(context.Background(), tracer.NewGoroutineTracer()))
 
-	wg.Wait()
+    wg.Wait()
 }
 ```
 
@@ -276,14 +276,14 @@ We recommend using this function.
 
 ``` go
 func asyncFunc(asyncCtx context.Context) {
-	w := asyncCtx.Value("wr").(http.ResponseWriter)
-	outGoingRequest(w, asyncCtx)
+    w := asyncCtx.Value("wr").(http.ResponseWriter)
+    outGoingRequest(w, asyncCtx)
 }
 
 func asyncWithWrapper(w http.ResponseWriter, r *http.Request) {
-	tracer := pinpoint.FromContext(r.Context())
-	ctx := context.WithValue(context.Background(), "wr", w)
-	f := tracer.WrapGoroutine("asyncFunc", asyncFunc, ctx)
-	go f()
+    tracer := pinpoint.FromContext(r.Context())
+    ctx := context.WithValue(context.Background(), "wr", w)
+    f := tracer.WrapGoroutine("asyncFunc", asyncFunc, ctx)
+    go f()
 }
 ```
