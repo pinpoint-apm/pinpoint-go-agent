@@ -1,83 +1,70 @@
 package main
 
 import (
-	"fmt"
 	"io"
-	"io/ioutil"
+	"log"
 	"net/http"
+	"os"
 	"time"
 
-	pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
-type handler struct {
-}
-
-func doRequest(tracer pinpoint.Tracer) (string, error) {
-	req, err := http.NewRequest("GET", "http://localhost:9000/hello", nil)
-	if nil != err {
-		return "", err
-	}
+func externalRequest(tracer pinpoint.Tracer) int {
+	req, err := http.NewRequest("GET", "http://localhost:9000/async_wrapper", nil)
 	client := &http.Client{}
-	tracer = phttp.NewHttpClientTracer(tracer, "doRequest", req)
+
+	tracer.NewSpanEvent("externalRequest")
+	defer tracer.EndSpanEvent()
+
+	se := tracer.SpanEvent()
+	se.SetEndPoint(req.Host)
+	se.SetDestination(req.Host)
+	se.SetServiceType(pinpoint.ServiceTypeGoHttpClient)
+	se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, req.URL.String())
+	tracer.Inject(req.Header)
+
 	resp, err := client.Do(req)
-	phttp.EndHttpClientTracer(tracer, resp, err)
+	defer resp.Body.Close()
 
-	if nil != err {
-		return "", err
-	}
-
-	fmt.Println("response code is", resp.StatusCode)
-
-	ret, _ := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-
-	func() {
-		defer tracer.NewSpanEvent("f1").EndSpanEvent()
-
-		func() {
-			defer tracer.NewSpanEvent("f2").EndSpanEvent()
-			time.Sleep(2 * time.Millisecond)
-		}()
-		time.Sleep(2 * time.Millisecond)
-	}()
-
-	return string(ret), nil
+	tracer.SpanEvent().SetError(err)
+	return resp.StatusCode
 }
 
-func (h *handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
-	tracer := phttp.NewHttpServerTracer(req, "Go Http Server")
+func doHandle(w http.ResponseWriter, r *http.Request) {
+	tracer := pinpoint.GetAgent().NewSpanTracerWithReader("HTTP Server", r.URL.Path, r.Header)
 	defer tracer.EndSpan()
 
-	status := http.StatusOK
-	if req.URL.String() == "/hello" {
-		ret, _ := doRequest(tracer)
+	span := tracer.Span()
+	span.SetEndPoint(r.Host)
+	defer tracer.NewSpanEvent("doHandle").EndSpanEvent()
 
-		io.WriteString(writer, ret)
-		time.Sleep(10 * time.Millisecond)
-	} else {
-		status = http.StatusNotFound
-		writer.WriteHeader(status)
-	}
+	func() {
+		defer tracer.NewSpanEvent("func_1").EndSpanEvent()
 
-	phttp.RecordHttpServerResponse(tracer, status, writer.Header())
+		func() {
+			defer tracer.NewSpanEvent("func_2").EndSpanEvent()
+			externalRequest(tracer)
+		}()
+		time.Sleep(1 * time.Second)
+	}()
+
+	io.WriteString(w, "hello world")
 }
 
 func main() {
 	opts := []pinpoint.ConfigOption{
-		pinpoint.WithAppName("testGoAgent"),
-		pinpoint.WithAgentId("testGoAgentId"),
-		pinpoint.WithCollectorHost("localhost"),
+		pinpoint.WithAppName("GoCustomTest"),
+		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
-	c, _ := pinpoint.NewConfig(opts...)
-	agent, _ := pinpoint.NewAgent(c)
+
+	cfg, _ := pinpoint.NewConfig(opts...)
+	agent, err := pinpoint.NewAgent(cfg)
+	if err != nil {
+		log.Fatalf("pinpoint agent start fail: %v", err)
+	}
 	defer agent.Shutdown()
 
-	server := http.Server{
-		Addr:    ":8000",
-		Handler: &handler{},
-	}
-
-	server.ListenAndServe()
+	http.HandleFunc("/foo", doHandle)
+	log.Fatal(http.ListenAndServe("localhost:8000", nil))
 }

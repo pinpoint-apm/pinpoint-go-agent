@@ -27,13 +27,13 @@ Refer [Quick Start](doc/quick_start.md) for simple test run of Pinpoint Go Agent
 Pinpoint Go Agent provides support for instrumenting Go’s built-in http package, database/sql drivers
 and plug-ins for popular frameworks and toolkits.
 These packages help you to make instruments with simple source code modifications.
-Refer [Plugin Guide](/doc/plugin_guide.md) for more information.
+Refer the [Plugin User Guide](doc/plugin_guide.md) for more information.
 
 ## Documents
 * [Quick Start](doc/quick_start.md)
 * [Configuration](doc/config.md)
-* [Plugin Guide](/doc/plugin_guide.md)
-* [Technical Concept of Pinpoint](https://pinpoint-apm.gitbook.io/pinpoint/want-a-quick-tour/techdetail)
+* [Plugin User Guide](doc/plugin_guide.md)
+* [Custom Instrumentation](doc/instrument.md)
 
 ## Contributing
 

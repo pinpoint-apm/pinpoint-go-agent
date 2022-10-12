@@ -1,60 +1,83 @@
 package main
 
 import (
-	"context"
-	"errors"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
-	"os"
+	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
-func index(w http.ResponseWriter, r *http.Request) {
-	io.WriteString(w, "hello world")
+type handler struct {
 }
 
-func seterror(w http.ResponseWriter, r *http.Request) {
-	tracer := pinpoint.FromContext(r.Context())
-	tracer.SpanEvent().SetError(errors.New("my error message"))
-	w.WriteHeader(500)
-}
-
-func httpClientRequest(w http.ResponseWriter, ctx context.Context) {
-	client := phttp.WrapClient(nil)
-
-	request, _ := http.NewRequest("GET", "http://localhost:9000/hello", nil)
-	request = request.WithContext(ctx)
-
-	resp, err := client.Do(request)
+func doRequest(tracer pinpoint.Tracer) (string, error) {
+	req, err := http.NewRequest("GET", "http://localhost:9000/hello", nil)
 	if nil != err {
-		io.WriteString(w, err.Error())
-		return
+		return "", err
 	}
-	defer resp.Body.Close()
-	io.Copy(w, resp.Body)
+	client := &http.Client{}
+	tracer = pphttp.NewHttpClientTracer(tracer, "doRequest", req)
+	resp, err := client.Do(req)
+	pphttp.EndHttpClientTracer(tracer, resp, err)
+
+	if nil != err {
+		return "", err
+	}
+
+	fmt.Println("response code is", resp.StatusCode)
+
+	ret, _ := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	func() {
+		defer tracer.NewSpanEvent("f1").EndSpanEvent()
+
+		func() {
+			defer tracer.NewSpanEvent("f2").EndSpanEvent()
+			time.Sleep(2 * time.Millisecond)
+		}()
+		time.Sleep(2 * time.Millisecond)
+	}()
+
+	return string(ret), nil
 }
 
-func outgoing(w http.ResponseWriter, r *http.Request) {
-	httpClientRequest(w, r.Context())
+func (h *handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
+	tracer := pphttp.NewHttpServerTracer(req, "Go Http Server")
+	defer tracer.EndSpan()
+
+	status := http.StatusOK
+	if req.URL.String() == "/hello" {
+		ret, _ := doRequest(tracer)
+
+		io.WriteString(writer, ret)
+		time.Sleep(10 * time.Millisecond)
+	} else {
+		status = http.StatusNotFound
+		writer.WriteHeader(status)
+	}
+
+	pphttp.RecordHttpServerResponse(tracer, status, writer.Header())
 }
 
 func main() {
 	opts := []pinpoint.ConfigOption{
-		pinpoint.WithAppName("GoExample"),
-		pinpoint.WithAgentId("GoExampleAgent"),
-		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
-		//pinpoint.WithConfigFile("tmp/pinpoint-config.yaml"),
+		pinpoint.WithAppName("testGoAgent"),
+		pinpoint.WithAgentId("testGoAgentId"),
+		pinpoint.WithCollectorHost("localhost"),
 	}
 	c, _ := pinpoint.NewConfig(opts...)
 	agent, _ := pinpoint.NewAgent(c)
 	defer agent.Shutdown()
 
-	http.HandleFunc("/", phttp.WrapHandlerFunc(index))
-	http.HandleFunc("/error", phttp.WrapHandlerFunc(seterror))
-	http.HandleFunc("/outgoing", phttp.WrapHandlerFunc(outgoing))
+	server := http.Server{
+		Addr:    ":8000",
+		Handler: &handler{},
+	}
 
-	http.ListenAndServe(":9000", nil)
+	server.ListenAndServe()
 }
