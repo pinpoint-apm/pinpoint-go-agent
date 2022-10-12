@@ -47,19 +47,19 @@ logLevel: "error"
 * [JSON File Example](/example/pinpoint-config.json)
 * [Properties File Example](/example/pinpoint-config.prop)
 
-### UseProfile
+### ActiveProfile
 The configuration profile feature is supported.
-You can set the profile in the config file and specify the profile to activate with the UseProfile option.
+You can set the profile in the config file and specify the profile to activate with the ActiveProfile option.
 
-* --pinpoint-useprofile
-* PINPOINT_GO_USEPROFILE
-* WithUseProfile()
+* --pinpoint-activeprofile
+* PINPOINT_GO_ACTIVEPROFILE
+* WithActiveProfile()
 * string
 * case-insensitive
 
 The example below shows that config file and profile are set by command flag.
 ```
---pinpoint-configfile=pinpoint-config.json --pinpoint-useprofile=dev
+--pinpoint-configfile=pinpoint-config.json --pinpoint-activeprofile=dev
 ```
 ```json
 {

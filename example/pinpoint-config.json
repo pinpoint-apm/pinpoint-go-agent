@@ -21,7 +21,7 @@
     "BatchCount": 10
   },
   "isContainerEnv": true,
-  "useProfile": "real",
+  "activeProfile": "real",
   "profile": {
     "dev": {
       "collector": {

@@ -16,32 +16,35 @@ import (
 	"github.com/spf13/viper"
 )
 
+// Config option keys
 const (
-	cfgAppName                    = "ApplicationName"
-	cfgAppType                    = "ApplicationType"
-	cfgAgentID                    = "AgentID"
-	cfgAgentName                  = "AgentName"
-	cfgCollectorHost              = "Collector.Host"
-	cfgCollectorAgentPort         = "Collector.AgentPort"
-	cfgCollectorSpanPort          = "Collector.SpanPort"
-	cfgCollectorStatPort          = "Collector.StatPort"
-	cfgLogLevel                   = "LogLevel"
-	cfgSamplingType               = "Sampling.Type"
-	cfgSamplingCounterRate        = "Sampling.CounterRate"
-	cfgSamplingPercentRate        = "Sampling.PercentRate"
-	cfgSamplingNewThroughput      = "Sampling.NewThroughput"
-	cfgSamplingContinueThroughput = "Sampling.ContinueThroughput"
-	cfgStatCollectInterval        = "Stat.CollectInterval"
-	cfgStatBatchCount             = "Stat.BatchCount"
-	cfgIsContainerEnv             = "IsContainerEnv"
-	cfgConfigFile                 = "ConfigFile"
-	cfgUseProfile                 = "UseProfile"
-	cfgSQLTraceBindValue          = "SQL.TraceBindValue"
-	cfgSQLMaxBindValueSize        = "SQL.MaxBindValueSize"
-	cfgSQLTraceCommit             = "SQL.TraceCommit"
-	cfgSQLTraceRollback           = "SQL.TraceRollback"
-	cfgIdPattern                  = "[a-zA-Z0-9\\._\\-]+"
+	CfgAppName                    = "ApplicationName"
+	CfgAppType                    = "ApplicationType"
+	CfgAgentID                    = "AgentID"
+	CfgAgentName                  = "AgentName"
+	CfgCollectorHost              = "Collector.Host"
+	CfgCollectorAgentPort         = "Collector.AgentPort"
+	CfgCollectorSpanPort          = "Collector.SpanPort"
+	CfgCollectorStatPort          = "Collector.StatPort"
+	CfgLogLevel                   = "LogLevel"
+	CfgSamplingType               = "Sampling.Type"
+	CfgSamplingCounterRate        = "Sampling.CounterRate"
+	CfgSamplingPercentRate        = "Sampling.PercentRate"
+	CfgSamplingNewThroughput      = "Sampling.NewThroughput"
+	CfgSamplingContinueThroughput = "Sampling.ContinueThroughput"
+	CfgStatCollectInterval        = "Stat.CollectInterval"
+	CfgStatBatchCount             = "Stat.BatchCount"
+	CfgIsContainerEnv             = "IsContainerEnv"
+	CfgConfigFile                 = "ConfigFile"
+	CfgActiveProfile              = "ActiveProfile"
+	CfgSQLTraceBindValue          = "SQL.TraceBindValue"
+	CfgSQLMaxBindValueSize        = "SQL.MaxBindValueSize"
+	CfgSQLTraceCommit             = "SQL.TraceCommit"
+	CfgSQLTraceRollback           = "SQL.TraceRollback"
+)
 
+const (
+	cfgIdPattern             = "[a-zA-Z0-9\\._\\-]+"
 	maxApplicationNameLength = 24
 	maxAgentIdLength         = 24
 	maxAgentNameLength       = 255
@@ -74,29 +77,29 @@ var (
 func initConfig() {
 	cfgBaseMap = make(map[string]*cfgMapItem, 0)
 
-	AddConfig(cfgAppName, CfgString, "")
-	AddConfig(cfgAppType, CfgInt, ServiceTypeGoApp)
-	AddConfig(cfgAgentID, CfgString, "")
-	AddConfig(cfgAgentName, CfgString, "")
-	AddConfig(cfgCollectorHost, CfgString, "localhost")
-	AddConfig(cfgCollectorAgentPort, CfgInt, 9991)
-	AddConfig(cfgCollectorSpanPort, CfgInt, 9993)
-	AddConfig(cfgCollectorStatPort, CfgInt, 9992)
-	AddConfig(cfgLogLevel, CfgString, "info")
-	AddConfig(cfgSamplingType, CfgString, samplingTypeCounter)
-	AddConfig(cfgSamplingCounterRate, CfgInt, 1)
-	AddConfig(cfgSamplingPercentRate, CfgFloat, 100)
-	AddConfig(cfgSamplingNewThroughput, CfgInt, 0)
-	AddConfig(cfgSamplingContinueThroughput, CfgInt, 0)
-	AddConfig(cfgStatCollectInterval, CfgInt, 5000)
-	AddConfig(cfgStatBatchCount, CfgInt, 6)
-	AddConfig(cfgIsContainerEnv, CfgBool, false)
-	AddConfig(cfgConfigFile, CfgString, "")
-	AddConfig(cfgUseProfile, CfgString, "")
-	AddConfig(cfgSQLTraceBindValue, CfgBool, true)
-	AddConfig(cfgSQLMaxBindValueSize, CfgInt, 1024)
-	AddConfig(cfgSQLTraceCommit, CfgBool, true)
-	AddConfig(cfgSQLTraceRollback, CfgBool, true)
+	AddConfig(CfgAppName, CfgString, "")
+	AddConfig(CfgAppType, CfgInt, ServiceTypeGoApp)
+	AddConfig(CfgAgentID, CfgString, "")
+	AddConfig(CfgAgentName, CfgString, "")
+	AddConfig(CfgCollectorHost, CfgString, "localhost")
+	AddConfig(CfgCollectorAgentPort, CfgInt, 9991)
+	AddConfig(CfgCollectorSpanPort, CfgInt, 9993)
+	AddConfig(CfgCollectorStatPort, CfgInt, 9992)
+	AddConfig(CfgLogLevel, CfgString, "info")
+	AddConfig(CfgSamplingType, CfgString, samplingTypeCounter)
+	AddConfig(CfgSamplingCounterRate, CfgInt, 1)
+	AddConfig(CfgSamplingPercentRate, CfgFloat, 100)
+	AddConfig(CfgSamplingNewThroughput, CfgInt, 0)
+	AddConfig(CfgSamplingContinueThroughput, CfgInt, 0)
+	AddConfig(CfgStatCollectInterval, CfgInt, 5000)
+	AddConfig(CfgStatBatchCount, CfgInt, 6)
+	AddConfig(CfgIsContainerEnv, CfgBool, false)
+	AddConfig(CfgConfigFile, CfgString, "")
+	AddConfig(CfgActiveProfile, CfgString, "")
+	AddConfig(CfgSQLTraceBindValue, CfgBool, true)
+	AddConfig(CfgSQLMaxBindValueSize, CfgInt, 1024)
+	AddConfig(CfgSQLTraceCommit, CfgBool, true)
+	AddConfig(CfgSQLTraceRollback, CfgBool, true)
 }
 
 // AddConfig adds a configuration item.
@@ -221,14 +224,14 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	profileViper := config.loadProfile(cmdEnvViper, cfgFileViper)
 	config.loadConfig(cmdEnvViper, cfgFileViper, profileViper)
 
-	logLevel := parseLogLevel(config.String(cfgLogLevel))
+	logLevel := parseLogLevel(config.String(CfgLogLevel))
 	logger.SetLevel(logLevel)
 	if logLevel > logrus.InfoLevel {
 		logger.SetReportCaller(true)
 	}
 
 	r, _ := regexp.Compile(cfgIdPattern)
-	appName := config.String(cfgAppName)
+	appName := config.String(CfgAppName)
 	if appName == "" {
 		return nil, errors.New("application name is required")
 	} else if len(appName) > maxApplicationNameLength {
@@ -237,13 +240,13 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		return nil, errors.New("application name has invalid pattern (" + cfgIdPattern + ")")
 	}
 
-	agentId := config.String(cfgAgentID)
+	agentId := config.String(CfgAgentID)
 	if agentId == "" || len(agentId) > maxAgentIdLength || !r.MatchString(agentId) {
-		config.cfgMap[cfgAgentID].value = randomString(maxAgentIdLength - 1)
-		Log("config").Infof("auto-generated AgentID: %v", config.cfgMap[cfgAgentID].value)
+		config.cfgMap[CfgAgentID].value = randomString(maxAgentIdLength - 1)
+		Log("config").Infof("auto-generated AgentID: %v", config.cfgMap[CfgAgentID].value)
 	}
 
-	agentName := config.String(cfgAgentName)
+	agentName := config.String(CfgAgentName)
 	if agentName != "" {
 		if len(agentName) > maxAgentNameLength {
 			return nil, errors.New("agent name is too long (max length: " + fmt.Sprint(maxAgentNameLength) + ")")
@@ -252,22 +255,22 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		}
 	}
 
-	sampleType := strings.ToUpper(strings.TrimSpace(config.String(cfgSamplingType)))
+	sampleType := strings.ToUpper(strings.TrimSpace(config.String(CfgSamplingType)))
 	if sampleType != samplingTypeCounter && sampleType != samplingTypePercent {
-		config.cfgMap[cfgSamplingType].value = samplingTypeCounter
-		config.cfgMap[cfgSamplingCounterRate].value = 0
+		config.cfgMap[CfgSamplingType].value = samplingTypeCounter
+		config.cfgMap[CfgSamplingCounterRate].value = 0
 	}
 
 	if config.containerCheck {
-		config.cfgMap[cfgIsContainerEnv].value = isContainerEnv()
+		config.cfgMap[CfgIsContainerEnv].value = isContainerEnv()
 	}
 
-	maxBindSize := config.Int(cfgSQLMaxBindValueSize)
+	maxBindSize := config.Int(CfgSQLMaxBindValueSize)
 	if maxBindSize > 1024 {
-		config.cfgMap[cfgSQLMaxBindValueSize].value = 1024
+		config.cfgMap[CfgSQLMaxBindValueSize].value = 1024
 	} else if maxBindSize < 0 {
-		config.cfgMap[cfgSQLTraceBindValue].value = false
-		config.cfgMap[cfgSQLMaxBindValueSize].value = 0
+		config.cfgMap[CfgSQLTraceBindValue].value = false
+		config.cfgMap[CfgSQLMaxBindValueSize].value = 0
 	}
 
 	globalConfig = config
@@ -330,7 +333,7 @@ func filterCmdArgs() []string {
 func (config *Config) loadConfigFile(cmdEnvViper *viper.Viper) *viper.Viper {
 	var cfgFile string
 
-	item := config.cfgMap[cfgConfigFile]
+	item := config.cfgMap[CfgConfigFile]
 	if cmdEnvViper.IsSet(item.cmdKey) {
 		cfgFile = cmdEnvViper.GetString(item.cmdKey)
 	} else if cmdEnvViper.IsSet(item.envKey) {
@@ -353,13 +356,13 @@ func (config *Config) loadConfigFile(cmdEnvViper *viper.Viper) *viper.Viper {
 func (config *Config) loadProfile(cmdEnvViper *viper.Viper, cfgFileViper *viper.Viper) *viper.Viper {
 	var profile string
 
-	item := config.cfgMap[cfgUseProfile]
+	item := config.cfgMap[CfgActiveProfile]
 	if cmdEnvViper.IsSet(item.cmdKey) {
 		profile = cmdEnvViper.GetString(item.cmdKey)
 	} else if cmdEnvViper.IsSet(item.envKey) {
 		profile = cmdEnvViper.GetString(item.envKey)
-	} else if cfgFileViper.IsSet(cfgUseProfile) {
-		profile = cfgFileViper.GetString(cfgUseProfile)
+	} else if cfgFileViper.IsSet(CfgActiveProfile) {
+		profile = cfgFileViper.GetString(CfgActiveProfile)
 	} else {
 		profile = item.value.(string)
 	}
@@ -398,7 +401,7 @@ func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value inte
 	}
 
 	item.value = value
-	if cfgName == cfgIsContainerEnv {
+	if cfgName == CfgIsContainerEnv {
 		config.containerCheck = false
 	}
 }
@@ -428,70 +431,70 @@ func parseLogLevel(level string) logrus.Level {
 // WithAppName sets the application name.
 func WithAppName(name string) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgAppName].value = name
+		c.cfgMap[CfgAppName].value = name
 	}
 }
 
 // WithAppType sets the application type.
 func WithAppType(typ int32) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgAppType].value = typ
+		c.cfgMap[CfgAppType].value = typ
 	}
 }
 
 // WithAgentId sets the agent ID.
 func WithAgentId(id string) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgAgentID].value = id
+		c.cfgMap[CfgAgentID].value = id
 	}
 }
 
 // WithAgentName sets the agent name.
 func WithAgentName(name string) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgAgentName].value = name
+		c.cfgMap[CfgAgentName].value = name
 	}
 }
 
 // WithConfigFile sets the configuration file.
 func WithConfigFile(filePath string) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgConfigFile].value = filePath
+		c.cfgMap[CfgConfigFile].value = filePath
 	}
 }
 
 // WithCollectorHost sets the host address of pinpoint collector.
 func WithCollectorHost(host string) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgCollectorHost].value = host
+		c.cfgMap[CfgCollectorHost].value = host
 	}
 }
 
 // WithCollectorAgentPort sets the agent port of pinpoint collector.
 func WithCollectorAgentPort(port int) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgCollectorAgentPort].value = port
+		c.cfgMap[CfgCollectorAgentPort].value = port
 	}
 }
 
 // WithCollectorSpanPort sets the span port of pinpoint collector.
 func WithCollectorSpanPort(port int) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgCollectorSpanPort].value = port
+		c.cfgMap[CfgCollectorSpanPort].value = port
 	}
 }
 
 // WithCollectorStatPort sets the agent stat of pinpoint collector.
 func WithCollectorStatPort(port int) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgCollectorStatPort].value = port
+		c.cfgMap[CfgCollectorStatPort].value = port
 	}
 }
 
 // WithLogLevel sets the logging level for agent logger.
 func WithLogLevel(level string) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgLogLevel].value = level
+		c.cfgMap[CfgLogLevel].value = level
 	}
 }
 
@@ -499,56 +502,56 @@ func WithLogLevel(level string) ConfigOption {
 // Either "COUNTER" or "PERCENT" must be specified.
 func WithSamplingType(samplingType string) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgSamplingType].value = samplingType
+		c.cfgMap[CfgSamplingType].value = samplingType
 	}
 }
 
 // WithSamplingRate DEPRECATED: Use WithSamplingCounterRate()
 func WithSamplingRate(rate int) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgSamplingCounterRate].value = rate
+		c.cfgMap[CfgSamplingCounterRate].value = rate
 	}
 }
 
 // WithSamplingCounterRate sets the sampling rate for a 'counter sampler'.
 func WithSamplingCounterRate(rate int) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgSamplingCounterRate].value = rate
+		c.cfgMap[CfgSamplingCounterRate].value = rate
 	}
 }
 
 // WithSamplingPercentRate sets the sampling rate for a 'percent sampler'.
 func WithSamplingPercentRate(rate float32) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgSamplingPercentRate].value = rate
+		c.cfgMap[CfgSamplingPercentRate].value = rate
 	}
 }
 
 // WithSamplingNewThroughput sets the new tps for a 'throughput sampler'.
 func WithSamplingNewThroughput(tps int) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgSamplingNewThroughput].value = tps
+		c.cfgMap[CfgSamplingNewThroughput].value = tps
 	}
 }
 
 // WithSamplingContinueThroughput sets the cont tps for a 'throughput sampler'.
 func WithSamplingContinueThroughput(tps int) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgSamplingContinueThroughput].value = tps
+		c.cfgMap[CfgSamplingContinueThroughput].value = tps
 	}
 }
 
 // WithStatCollectInterval sets the statistics collection cycle for the agent.
 func WithStatCollectInterval(interval int) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgStatCollectInterval].value = interval
+		c.cfgMap[CfgStatCollectInterval].value = interval
 	}
 }
 
 // WithStatBatchCount sets batch delivery units for collected statistics.
 func WithStatBatchCount(count int) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgStatBatchCount].value = count
+		c.cfgMap[CfgStatBatchCount].value = count
 	}
 }
 
@@ -556,43 +559,43 @@ func WithStatBatchCount(count int) ConfigOption {
 // If this is not set, the agent automatically checks it.
 func WithIsContainerEnv(isContainer bool) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgIsContainerEnv].value = isContainer
+		c.cfgMap[CfgIsContainerEnv].value = isContainer
 		c.containerCheck = false
 	}
 }
 
-// WithUseProfile sets the configuration profile.
-func WithUseProfile(profile string) ConfigOption {
+// WithActiveProfile sets the configuration profile.
+func WithActiveProfile(profile string) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgUseProfile].value = profile
+		c.cfgMap[CfgActiveProfile].value = profile
 	}
 }
 
 // WithSQLTraceBindValue enables bind value tracing for SQL Driver.
 func WithSQLTraceBindValue(trace bool) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgSQLTraceBindValue].value = trace
+		c.cfgMap[CfgSQLTraceBindValue].value = trace
 	}
 }
 
 // WithSQLMaxBindValueSize sets the max length of traced bind value for SQL Driver.
 func WithSQLMaxBindValueSize(size int) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgSQLMaxBindValueSize].value = size
+		c.cfgMap[CfgSQLMaxBindValueSize].value = size
 	}
 }
 
 // WithSQLTraceCommit enables commit tracing for SQL Driver.
 func WithSQLTraceCommit(trace bool) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgSQLTraceCommit].value = trace
+		c.cfgMap[CfgSQLTraceCommit].value = trace
 	}
 }
 
 // WithSQLTraceRollback enables rollback tracing for SQL Driver.
 func WithSQLTraceRollback(trace bool) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[cfgSQLTraceRollback].value = trace
+		c.cfgMap[CfgSQLTraceRollback].value = trace
 	}
 }
 

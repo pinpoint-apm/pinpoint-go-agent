@@ -43,7 +43,7 @@ func main() {
 		pphttp.WithHttpServerRecordRequestHeader([]string{"user-agent", "connection", "foo"}),
 	}
 
-	//os.Setenv("PINPOINT_GO_USEPROFILE", "real")
+	//os.Setenv("PINPOINT_GO_ACTIVEPROFILE", "real")
 
 	cfg, err := pinpoint.NewConfig(opts...)
 	if err != nil {

@@ -138,7 +138,7 @@ func connectCollector(serverAddr string) (*grpc.ClientConn, error) {
 }
 
 func newAgentGrpc(agent *agent, config *Config) (*agentGrpc, error) {
-	serverAddr := fmt.Sprintf("%s:%d", config.String(cfgCollectorHost), config.Int(cfgCollectorAgentPort))
+	serverAddr := fmt.Sprintf("%s:%d", config.String(CfgCollectorHost), config.Int(CfgCollectorAgentPort))
 	conn, err := connectCollector(serverAddr)
 	if err != nil {
 		return nil, err
@@ -206,7 +206,7 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 			VmVersion: runtime.Version(),
 			GcType:    pb.PJvmGcType_JVM_GC_TYPE_CMS,
 		},
-		Container: agentGrpc.config.Bool(cfgIsContainerEnv),
+		Container: agentGrpc.config.Bool(CfgIsContainerEnv),
 	}
 	Log("grpc").Debugf("agent info: %s", agentInfo.String())
 
@@ -487,7 +487,7 @@ type spanStream struct {
 }
 
 func newSpanGrpc(agent *agent, config *Config) (*spanGrpc, error) {
-	serverAddr := fmt.Sprintf("%s:%d", config.String(cfgCollectorHost), config.Int(cfgCollectorSpanPort))
+	serverAddr := fmt.Sprintf("%s:%d", config.String(CfgCollectorHost), config.Int(CfgCollectorSpanPort))
 	conn, err := connectCollector(serverAddr)
 	if err != nil {
 		return nil, err
@@ -709,7 +709,7 @@ type statStream struct {
 }
 
 func newStatGrpc(agent *agent, config *Config) (*statGrpc, error) {
-	serverAddr := fmt.Sprintf("%s:%d", config.String(cfgCollectorHost), config.Int(cfgCollectorStatPort))
+	serverAddr := fmt.Sprintf("%s:%d", config.String(CfgCollectorHost), config.Int(CfgCollectorStatPort))
 	conn, err := connectCollector(serverAddr)
 	if err != nil {
 		return nil, err
@@ -843,7 +843,7 @@ type cmdStream struct {
 }
 
 func newCommandGrpc(agent *agent, config *Config) (*cmdGrpc, error) {
-	serverAddr := fmt.Sprintf("%s:%d", config.String(cfgCollectorHost), config.Int(cfgCollectorAgentPort))
+	serverAddr := fmt.Sprintf("%s:%d", config.String(CfgCollectorHost), config.Int(CfgCollectorAgentPort))
 	conn, err := connectCollector(serverAddr)
 	if err != nil {
 		return nil, err

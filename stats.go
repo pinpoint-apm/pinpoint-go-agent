@@ -191,9 +191,9 @@ func (agent *agent) sendStatsWorker(config *Config) {
 	resetResponseTime()
 
 	stream := agent.statGrpc.newStatStreamWithRetry()
-	interval := time.Duration(config.Int(cfgStatCollectInterval)) * time.Millisecond
+	interval := time.Duration(config.Int(CfgStatCollectInterval)) * time.Millisecond
 	time.Sleep(interval)
-	cfgBatchCount := config.Int(cfgStatBatchCount)
+	cfgBatchCount := config.Int(CfgStatBatchCount)
 	collected := make([]*inspectorStats, cfgBatchCount)
 	batch := 0
 

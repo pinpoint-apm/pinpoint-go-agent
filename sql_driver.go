@@ -118,10 +118,10 @@ func newSqlConn(conn driver.Conn, dbInfo DBInfo) *sqlConn {
 	return &sqlConn{
 		Conn:             conn,
 		dbInfo:           dbInfo,
-		traceBindValue:   cfg.Bool(cfgSQLTraceBindValue),
-		maxBindValueSize: cfg.Int(cfgSQLMaxBindValueSize),
-		traceCommit:      cfg.Bool(cfgSQLTraceCommit),
-		traceRollback:    cfg.Bool(cfgSQLTraceRollback),
+		traceBindValue:   cfg.Bool(CfgSQLTraceBindValue),
+		maxBindValueSize: cfg.Int(CfgSQLMaxBindValueSize),
+		traceCommit:      cfg.Bool(CfgSQLTraceCommit),
+		traceRollback:    cfg.Bool(CfgSQLTraceRollback),
 	}
 }
 
