@@ -31,10 +31,10 @@ Find out more about the concept of Pinpoint at the links below:
 Span represents a top-level operation in your application, such as an HTTP or RPC request.
 To report a span, You can call Agent interface.
 
-* Agent.NewSpanTracer returns a span Tracer indicating the start of a transaction.
+* **Agent.NewSpanTracer()** returns a span Tracer indicating the start of a transaction.
   A span is sampled according to a given sampling policy, and trace data is not collected if not sampled.
 
-* Agent.NewSpanTracerWithReader returns a span Tracer that continues a transaction passed from the previous node.
+* **Agent.NewSpanTracerWithReader()** returns a span Tracer that continues a transaction passed from the previous node.
   A span is sampled according to a given sampling policy, and trace data is not collected if not sampled.
   Distributed tracing headers are extracted from the reader. If it is empty, new transaction is started.
 
@@ -52,14 +52,15 @@ func doHandle(w http.ResponseWriter, r *http.Request) {
 ```
 
 You can instrument a single call stack of application and makes the result a single span using Tracer interface.
-Tracer.EndSpan() must be called to complete a span and deliver it to the collector.
+**Tracer.EndSpan()** must be called to complete a span and deliver it to the collector.
 
 The SpanRecorder and Annotation interface allow trace data to be recorded in a Span.
 
 ## SpanEvent
 
 SpanEvent represents an operation within a span, such as a database query, a request to another service, or function call.
-To report a span, You can call Tracer.NewSpanEvent(). Tracer.NewSpanEvent() must be called to complete a span event.
+To report a span, You can call **Tracer.NewSpanEvent()**.
+**Tracer.EndSpanEvent()** must be called to complete a span event.
 
 The SpanEventRecorder and Annotation interface allow trace data to be recorded in a SpanEvent.
 
@@ -94,10 +95,10 @@ If the request came from another node traced by a Pinpoint Agent, then the trans
 Most of these data are sent from the previous node, usually packed in the request message. 
 Pinpoint Go Agent provides two functions below to read and write these data.
 
-* Tracer.Extract(reader DistributedTracingContextReader) extracts distributed tracing headers from the reader.
-* Tracer.Inject(writer DistributedTracingContextWriter) injects distributed tracing headers to the writer.
+* **Tracer.Extract**(reader DistributedTracingContextReader) extracts distributed tracing headers from the reader.
+* **Tracer.Inject**(writer DistributedTracingContextWriter) injects distributed tracing headers to the writer.
 
-Using Agent.NewSpanTracerWithReader(), you can create a span that continues the transaction started from previous node.
+Using **Agent.NewSpanTracerWithReader()**, you can create a span that continues the transaction started from previous node.
 (Tracer.Extract() function is used internally to read the transaction context.)
 
 If you request to another service and the next node is traceable, the transaction context must be propagated to the next node.
@@ -144,10 +145,8 @@ Pinpoint Go Agent also uses Context to propagate the Tracer across API boundarie
 Pinpoint Go Agent provides a function that adds a tracer to the Context,
 and a function that imports a tracer from the Context, respectively.
 
-``` go
-NewContext(ctx context.Context, tracer Tracer) context.Context 
-FromContext(ctx context.Context) Tracer
-```
+* **NewContext()** adds a tracer to the Context. 
+* **FromContext()** imports a tracer from the Context.
 
 The following is an example of propagating Tracer to the sql driver using Context:
 
@@ -180,7 +179,7 @@ To pass the tracer to a goroutine, there is ways below:
 * channel
 * context.Context
 
-The Tracer.EndSpan() function must be called at the end of the goroutine.
+The **Tracer.EndSpan()** function must be called at the end of the goroutine.
 
 ### Function parameter
 
@@ -269,7 +268,7 @@ func asyncWithContext(w http.ResponseWriter, r *http.Request) {
 ```
 
 ### Wrapper function
-Tracer.WrapGoroutine() function creates a tracer for the goroutine and passes it to the goroutine in context.
+**Tracer.WrapGoroutine()** function creates a tracer for the goroutine and passes it to the goroutine in context.
 You don't need to call Tracer.EndSpan() because wrapper call it when the goroutine function ends.
 Just call the wrapped function as goroutine.
 We recommend using this function.
