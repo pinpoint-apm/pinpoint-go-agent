@@ -42,7 +42,7 @@ func defaultSpanEvent(span *span, operationName string) *spanEvent {
 	se.serviceType = ServiceTypeGoFunction
 	se.isTimeFixed = false
 
-	Log("span").Debug("newSpanEvent: ", se.operationName, se.sequence, se.depth, se.startTime)
+	Log("span").Tracef("newSpanEvent: %s, %d, %d, %s", se.operationName, se.sequence, se.depth, se.startTime)
 
 	return &se
 }
@@ -72,7 +72,7 @@ func (se *spanEvent) end() {
 	if !se.isTimeFixed {
 		se.endElapsed = time.Now().Sub(se.startTime)
 	}
-	Log("span").Debug("endSpanEvent: ", se.operationName)
+	Log("span").Tracef("endSpanEvent: %s", se.operationName)
 }
 
 func (se *spanEvent) generateNextSpanId() int64 {

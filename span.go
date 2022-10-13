@@ -119,7 +119,7 @@ func (span *span) EndSpan() {
 	}
 
 	if !span.agent.enqueueSpan(span) {
-		Log("span").Debug("span channel - max capacity reached or closed")
+		Log("span").Trace("span channel - max capacity reached or closed")
 	}
 }
 
@@ -139,7 +139,7 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 		se.endPoint = se.destinationId
 		writer.Set(headerHost, se.destinationId)
 
-		Log("span").Debugf("span inject: %v, %d, %d, %s", span.txId, nextSpanId, span.spanId, se.destinationId)
+		Log("span").Tracef("span inject: %v, %d, %d, %s", span.txId, nextSpanId, span.spanId, se.destinationId)
 	} else {
 		Log("span").Warn("abnormal span - has no event")
 	}
@@ -191,7 +191,7 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 	}
 
 	addSampledActiveSpan(span)
-	Log("span").Debugf("span extract: %s, %s, %s, %s, %s, %s", tid, spanid, pappname, pspanid, papptype, host)
+	Log("span").Tracef("span extract: %s, %s, %s, %s, %s, %s", tid, spanid, pappname, pspanid, papptype, host)
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {

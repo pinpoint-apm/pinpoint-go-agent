@@ -40,7 +40,7 @@ func (agent *agent) runCommandService() {
 			cmdReq, err := stream.recvCommandRequest()
 			if err != nil {
 				if agent.enable && err != io.EOF {
-					Log("cmd").Errorf("recv command request - %v", err)
+					Log("cmd").Warnf("recv command request - %v", err)
 				}
 				break
 			}

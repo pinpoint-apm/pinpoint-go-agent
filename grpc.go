@@ -546,7 +546,7 @@ func (s *spanStream) sendSpan(span *span) error {
 		gspan = makePSpan(span)
 	}
 
-	Log("grpc").Debugf("PSpanMessage: %s", gspan.String())
+	Log("grpc").Tracef("PSpanMessage: %s", gspan.String())
 	return sendStreamWithTimeout(func() error { return s.stream.Send(gspan) }, sendStreamTimeOut)
 }
 
@@ -776,7 +776,7 @@ func (s *statStream) sendStats(stats []*inspectorStats) error {
 	}
 	gstats.GetAgentStatBatch().AgentStat = as
 
-	Log("grpc").Debugf("PStatMessage: %s", gstats.String())
+	Log("grpc").Tracef("PStatMessage: %s", gstats.String())
 	return sendStreamWithTimeout(func() error { return s.stream.Send(gstats) }, sendStreamTimeOut)
 }
 

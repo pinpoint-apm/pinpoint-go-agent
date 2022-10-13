@@ -23,7 +23,7 @@ func (h *httpExcludeUrl) match(urlPath string) bool {
 func newHttpExcludeUrl(urlPath string) *httpExcludeUrl {
 	h := httpExcludeUrl{pattern: nil}
 
-	pinpoint.Log("http").Debug("newHttpExcludeUrl: ", urlPath, convertToRegexp(urlPath))
+	pinpoint.Log("http").Debugf("newHttpExcludeUrl: %s, %s", urlPath, convertToRegexp(urlPath))
 
 	r, err := regexp.Compile(convertToRegexp(urlPath))
 	if err == nil {
