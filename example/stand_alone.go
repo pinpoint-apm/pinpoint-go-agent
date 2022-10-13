@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
 )
 
@@ -46,7 +46,7 @@ func outGoing(ctx context.Context) {
 	tracer := pinpoint.FromContext(ctx)
 	defer tracer.NewSpanEvent("outGoing").EndSpanEvent()
 
-	client := phttp.WrapClient(nil)
+	client := pphttp.WrapClient(nil)
 
 	request, _ := http.NewRequest("GET", "https://github.com/pinpoint-apm/pinpoint-go-agent/blob/main/README.md", nil)
 	request = request.WithContext(ctx)

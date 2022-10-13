@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	phttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
 )
 
 func outGoingRequest(w http.ResponseWriter, ctx context.Context) {
-	client := phttp.WrapClient(nil)
+	client := pphttp.WrapClient(nil)
 
 	request, _ := http.NewRequest("GET", "http://localhost:9001/query", nil)
 	request = request.WithContext(ctx)
@@ -118,10 +118,10 @@ func main() {
 	agent, _ := pinpoint.NewAgent(c)
 	defer agent.Shutdown()
 
-	http.HandleFunc("/async_chan", phttp.WrapHandlerFunc(asyncWithChan))
-	http.HandleFunc("/async_context", phttp.WrapHandlerFunc(asyncWithContext))
-	http.HandleFunc("/async_tracer", phttp.WrapHandlerFunc(asyncWithTracer))
-	http.HandleFunc("/async_wrapper", phttp.WrapHandlerFunc(asyncWithWrapper))
+	http.HandleFunc("/async_chan", pphttp.WrapHandlerFunc(asyncWithChan))
+	http.HandleFunc("/async_context", pphttp.WrapHandlerFunc(asyncWithContext))
+	http.HandleFunc("/async_tracer", pphttp.WrapHandlerFunc(asyncWithTracer))
+	http.HandleFunc("/async_wrapper", pphttp.WrapHandlerFunc(asyncWithWrapper))
 
 	http.ListenAndServe(":9000", nil)
 }
