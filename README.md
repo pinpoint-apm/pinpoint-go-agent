@@ -34,6 +34,7 @@ Refer the [Plugin User Guide](doc/plugin_guide.md) for more information.
 * [Configuration](doc/config.md)
 * [Plugin User Guide](doc/plugin_guide.md)
 * [Custom Instrumentation](doc/instrument.md)
+* [Troubleshooting](doc/troubleshooting.md)
 
 ## Contributing
 
