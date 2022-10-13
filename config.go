@@ -41,6 +41,7 @@ const (
 	CfgSQLMaxBindValueSize        = "SQL.MaxBindValueSize"
 	CfgSQLTraceCommit             = "SQL.TraceCommit"
 	CfgSQLTraceRollback           = "SQL.TraceRollback"
+	CfgEnable                     = "Enable"
 )
 
 const (
@@ -100,6 +101,7 @@ func initConfig() {
 	AddConfig(CfgSQLMaxBindValueSize, CfgInt, 1024)
 	AddConfig(CfgSQLTraceCommit, CfgBool, true)
 	AddConfig(CfgSQLTraceRollback, CfgBool, true)
+	AddConfig(CfgEnable, CfgBool, true)
 }
 
 // AddConfig adds a configuration item.
@@ -596,6 +598,13 @@ func WithSQLTraceCommit(trace bool) ConfigOption {
 func WithSQLTraceRollback(trace bool) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgSQLTraceRollback].value = trace
+	}
+}
+
+// WithEnable enables the agent is operational state.
+func WithEnable(enable bool) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgEnable].value = enable
 	}
 }
 

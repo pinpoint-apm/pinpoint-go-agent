@@ -102,11 +102,14 @@ func GetAgent() Agent {
 //	cfg, err := pinpoint.NewConfig(opts...)
 //	agent, err := pinpoint.NewAgent(cfg)
 func NewAgent(config *Config) (Agent, error) {
+	if globalAgent != NoopAgent() {
+		return globalAgent, errors.New("agent is already created")
+	}
 	if config == nil {
 		return NoopAgent(), errors.New("configuration is missing")
 	}
-	if globalAgent != NoopAgent() {
-		return globalAgent, errors.New("agent is already created")
+	if !config.Bool(CfgEnable) {
+		return NoopAgent(), nil
 	}
 
 	Log("agent").Info("new pinpoint agent")

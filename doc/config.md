@@ -295,6 +295,16 @@ If this is not set, the agent automatically checks it.
 * type: bool
 * default: false
 
+### Enable
+Enable option enables the agent is operational state.
+If this is set as false, the agent doesn't start working.
+
+* --pinpoint-enable
+* PINPOINT_GO_ENABLE
+* WithEnable()
+* type: bool
+* default: true
+
 ### Http.Server.StatusCodeErrors
 Http.Server.StatusCodeErrors option sets HTTP status code with request failure.
 Refer https://pinpoint-apm.gitbook.io/pinpoint/documents/http-status-code-failure.

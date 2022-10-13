@@ -47,6 +47,7 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, 1024, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
 			assert.Equal(t, true, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
 			assert.Equal(t, true, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
+			assert.Equal(t, true, c.Bool(CfgEnable), CfgEnable)
 		})
 	}
 }
@@ -78,6 +79,7 @@ func TestNewConfig_WithFunc(t *testing.T) {
 		WithSQLMaxBindValueSize(512),
 		WithSQLTraceCommit(false),
 		WithSQLTraceRollback(false),
+		WithEnable(false),
 	}
 
 	tests := []struct {
@@ -110,6 +112,7 @@ func TestNewConfig_WithFunc(t *testing.T) {
 			assert.Equal(t, 512, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
 			assert.Equal(t, false, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
 			assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
+			assert.Equal(t, false, c.Bool(CfgEnable), CfgEnable)
 		})
 	}
 }
@@ -363,6 +366,7 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 	os.Setenv("PINPOINT_GO_LOGLEVEL", "trace")
 	os.Setenv("PINPOINT_GO_ISCONTAINERENV", "false")
 	os.Setenv("PINPOINT_GO_CONFIGFILE", "example/pinpoint-config.yaml")
+	os.Setenv("PINPOINT_GO_ENABLE", "false")
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -386,6 +390,7 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 			assert.Equal(t, false, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
 			assert.Equal(t, "example/pinpoint-config.yaml", c.String(CfgConfigFile), CfgConfigFile)
 			assert.Equal(t, "dev", c.String(CfgActiveProfile), CfgActiveProfile)
+			assert.Equal(t, false, c.Bool(CfgEnable), CfgEnable)
 		})
 	}
 }
@@ -436,6 +441,7 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 		"--pinpoint-iscontainerenv=true",
 		"--pinpoint-configfile=example/pinpoint-config.yaml",
 		"--pinpoint-activeprofile=real",
+		"--pinpoint-enable=false",
 		"--app-arg5=5",
 	}
 
@@ -462,6 +468,7 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 			assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
 			assert.Equal(t, "example/pinpoint-config.yaml", c.String(CfgConfigFile), CfgConfigFile)
 			assert.Equal(t, "real", c.String(CfgActiveProfile), CfgActiveProfile)
+			assert.Equal(t, false, c.Bool(CfgEnable), CfgEnable)
 		})
 	}
 }

@@ -38,7 +38,7 @@ type Agent interface {
 	Enable() bool
 
 	// Shutdown stops all related goroutines managing this agent.
-	// After Shutdown is called, The agent will never collect tracing data again.
+	// After Shutdown is called, the agent will never collect tracing data again.
 	Shutdown()
 }
 
