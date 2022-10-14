@@ -1,4 +1,5 @@
 ![ci](https://github.com/pinpoint-apm/pinpoint-go-agent/workflows/ci/badge.svg)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent)
 
 # Pinpoint Go Agent
 
