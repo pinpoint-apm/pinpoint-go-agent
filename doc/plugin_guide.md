@@ -863,7 +863,7 @@ func mongodb(w http.ResponseWriter, r *http.Request) {
     ...
 }
 ```
-[Full Example Source](/plugin/logrus/example/logrus_example.go)
+[Full Example Source](/plugin/mongodriver/example/mongo_example.go)
 
 ## ppmysql
 This package instruments the mysql driver calls. 
