@@ -360,7 +360,7 @@ func (agentGrpc *agentGrpc) sendSqlMetadataWithRetry(sqlId int32, sql string) bo
 	return false
 }
 
-func sendStreamWithTimeout(send func() error, timeout time.Duration) error {
+func sendStreamWithTimeout(send func() error, timeout time.Duration, which string) error {
 	errChan := make(chan error, 1)
 	go func() {
 		errChan <- send()
@@ -370,7 +370,7 @@ func sendStreamWithTimeout(send func() error, timeout time.Duration) error {
 	t := time.NewTimer(timeout)
 	select {
 	case <-t.C:
-		return status.Errorf(codes.DeadlineExceeded, "stream.Send() is too slow or blocked")
+		return status.Errorf(codes.DeadlineExceeded, which+" stream.Send() - too slow or blocked")
 	case err := <-errChan:
 		if !t.Stop() {
 			<-t.C
@@ -447,7 +447,28 @@ func (s *pingStream) sendPing() error {
 	if s.stream == nil {
 		return status.Errorf(codes.Unavailable, "ping stream is nil")
 	}
-	return sendStreamWithTimeout(func() error { return s.stream.Send(&ping) }, sendStreamTimeOut)
+	err := sendStreamWithTimeout(func() error { return s.stream.Send(&ping) }, sendStreamTimeOut, "ping")
+	if err != nil {
+		return err
+	}
+
+	errChan := make(chan error, 1)
+	go func() {
+		_, err = s.stream.Recv()
+		errChan <- err
+		close(errChan)
+	}()
+
+	t := time.NewTimer(sendStreamTimeOut)
+	select {
+	case <-t.C:
+		return status.Errorf(codes.DeadlineExceeded, "ping stream.Recv() - too slow or blocked")
+	case err = <-errChan:
+		if !t.Stop() {
+			<-t.C
+		}
+		return err
+	}
 }
 
 func (s *pingStream) close() {
@@ -547,7 +568,7 @@ func (s *spanStream) sendSpan(span *span) error {
 	}
 
 	Log("grpc").Tracef("PSpanMessage: %s", gspan.String())
-	return sendStreamWithTimeout(func() error { return s.stream.Send(gspan) }, sendStreamTimeOut)
+	return sendStreamWithTimeout(func() error { return s.stream.Send(gspan) }, sendStreamTimeOut, "span")
 }
 
 func makePSpan(span *span) *pb.PSpanMessage {
@@ -777,7 +798,7 @@ func (s *statStream) sendStats(stats []*inspectorStats) error {
 	gstats.GetAgentStatBatch().AgentStat = as
 
 	Log("grpc").Tracef("PStatMessage: %s", gstats.String())
-	return sendStreamWithTimeout(func() error { return s.stream.Send(gstats) }, sendStreamTimeOut)
+	return sendStreamWithTimeout(func() error { return s.stream.Send(gstats) }, sendStreamTimeOut, "stat")
 }
 
 func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
@@ -908,7 +929,7 @@ func (s *cmdStream) sendCommandMessage() error {
 	}
 
 	Log("grpc").Debugf("PCmdMessage: %s", gCmd.String())
-	return sendStreamWithTimeout(func() error { return s.stream.Send(gCmd) }, sendStreamTimeOut)
+	return sendStreamWithTimeout(func() error { return s.stream.Send(gCmd) }, sendStreamTimeOut, "cmd")
 }
 
 func (s *cmdStream) recvCommandRequest() (*pb.PCmdRequest, error) {
@@ -975,7 +996,7 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 	}
 
 	Log("grpc").Debugf("PCmdActiveThreadCountRes: %s", gRes.String())
-	return sendStreamWithTimeout(func() error { return s.stream.Send(gRes) }, sendStreamTimeOut)
+	return sendStreamWithTimeout(func() error { return s.stream.Send(gRes) }, sendStreamTimeOut, "arc")
 }
 
 func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadName []string, localId []int64, dump *goroutineDump) {
