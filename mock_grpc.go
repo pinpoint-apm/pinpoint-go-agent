@@ -83,7 +83,7 @@ func newMockAgentGrpcPing(agent *agent, config *Config, t *testing.T) *agentGrpc
 	metadataClient := mockMetaGrpcClient{mock.NewMockMetadataClient(ctrl)}
 
 	stream.EXPECT().Send(gomock.Any()).Return(nil)
-	//stream.EXPECT().CloseSend().Return(nil)
+	stream.EXPECT().Recv().Return(nil, nil)
 
 	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent, config}
 }
