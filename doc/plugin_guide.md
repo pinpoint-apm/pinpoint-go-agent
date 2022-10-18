@@ -15,6 +15,7 @@
 | ppgorilla      | [plugin/gorilla](/plugin/gorilla)         | gorilla/mux package (https://github.com/gorilla/mux).                          |
 | ppgorm         | [plugin/gorm](/plugin/gorm)               | go-gorm/gorm package (https://github.com/go-gorm/gorm)                         |
 | ppgrpc         | [plugin/grpc](/plugin/grpc)               | grpc/grpc-go package (https://github.com/grpc/grpc-go)                         |
+| pphttprouter   | [plugin/httprouter](/plugin/httprouter)   | julienschmidt/httprouter package (https://github.com/julienschmidt/httprouter) |
 | pplogrus       | [plugin/logrus](/plugin/logrus)           | sirupsen/logrus package (https://github.com/sirupsen/logrus)                   |
 | ppmongo        | [plugin/mongodriver](/plugin/mongodriver) | mongodb/mongo-go-driver package (https://github.com/mongodb/mongo-go-driver)   |
 | ppmysql        | [plugin/mysql](/plugin/mysql)             | go-sql-driver/mysql package (https://github.com/go-sql-driver/mysql)           |
@@ -787,6 +788,61 @@ func doGrpc(w http.ResponseWriter, r *http.Request) {
 }
 ```
 [Full Example Source](/plugin/grpc/example/client.go)
+
+## pphttprouter
+This package instruments inbound requests handled by a httprouter.Router.
+Use New() to trace all handlers:
+
+``` go
+r := pphttprouter.New()
+r.GET("/", Index)
+```
+
+Use WrapHandle to select the handlers you want to track:
+
+``` go
+r := httprouter.New()
+r.GET("/hello/:name", pphttprouter.WrapHandle(hello))
+```
+
+For each request, a pinpoint.Tracer is stored in the request context.
+By using the pinpoint.FromContext function, this tracer can be obtained in your handler.
+Alternatively, the context of the request may be propagated where the context that contains the pinpoint.Tracer is required.
+
+``` go
+import (
+    "github.com/julienschmidt/httprouter"
+    "github.com/pinpoint-apm/pinpoint-go-agent"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/httprouter"
+)
+
+func Index(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+    tracer := pinpoint.FromContext(r.Context())
+    func() {
+        defer tracer.NewSpanEvent("func_1").EndSpanEvent()
+        time.Sleep(1 * time.Second)
+    }()
+
+    fmt.Fprint(w, "Welcome!\n")
+}
+
+func main() {
+    ... //setup agent
+
+    router := pphttprouter.New()
+    router.GET("/", Index)
+    http.ListenAndServe(":8000", router)
+}
+```
+[Full Example Source](/plugin/httprouter/example/httprouter_server.go)
+
+### Config Options
+* [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
+* [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
+* [Http.Server.ExcludeMethod](/doc/config.md#Http.Server.ExcludeMethod)
+* [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
+* [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
+* [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
 
 ## pplogrus
 This package allows additional transaction id and span id of the pinpoint span to be printed in the log message. 

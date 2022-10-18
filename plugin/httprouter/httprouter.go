@@ -1,3 +1,17 @@
+// Package pphttprouter instruments the julienschmidt/httprouter package (https://github.com/julienschmidt/httprouter).
+//
+// This package instruments inbound requests handled by a httprouter.Router.
+// Use New() to trace all handlers:
+//
+//	r := pphttprouter.New()
+//	r.GET("/", Index)
+//	r.GET("/hello/:name", Hello)
+//
+// Use WrapHandle to select the handlers you want to track:
+//
+//	r := httprouter.New()
+//	r.GET("/", Index)
+//	r.GET("/hello/:name", pphttprouter.WrapHandle(hello))
 package pphttprouter
 
 import (
