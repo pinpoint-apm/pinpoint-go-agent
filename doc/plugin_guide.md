@@ -5,13 +5,16 @@
 | pphttp         | [plugin/http](/plugin/http)               | Go standard HTTP package                                                       |
 | ppchi          | [plugin/chi](/plugin/chi)                 | go-chi/chi package (https://github.com/go-chi/chi)                             |
 | ppecho         | [plugin/echo](/plugin/echo)               | labstack/echo package (https://github.com/labstack/echo)                       |
+| ppechov4       | [plugin/echov4](/plugin/echov4)           | labstack/echo/v4 package (https://github.com/labstack/echo)                    |
 | ppgin          | [plugin/gin](/plugin/gin)                 | gin-gonic/gin package (https://github.com/gin-gonic/gin)                       |
 | ppgocql        | [plugin/gocql](/plugin/gocql)             | gocql package (https://github.com/gocql/gocql).                                |
 | ppgoelastic    | [plugin/goelastic](/plugin/goelastic)     | elastic/go-elasticsearch package (https://github.com/elastic/go-elasticsearch) |
 | ppgohbase      | [plugin/gohbase](/plugin/gohbase)         | tsuna/gohbase package (https://github.com/tsuna/gohbase).                      |
 | ppgomemcache   | [plugin/gomemcache](/plugin/gomemcache)   | bradfitz/gomemcache package (https://github.com/bradfitz/gomemcache)           |
 | ppgoredis      | [plugin/goredis](/plugin/goredis)         | go-redis/redis package (https://github.com/go-redis/redis)                     |
+| ppgoredisv7    | [plugin/goredisv7](/plugin/goredisv7)     | go-redis/redis/v7 package (https://github.com/go-redis/redis)                  |
 | ppgoredisv8    | [plugin/goredisv8](/plugin/goredisv8)     | go-redis/redis/v8 package (https://github.com/go-redis/redis)                  |
+| ppgoredisv9    | [plugin/goredisv9](/plugin/goredisv9)     | go-redis/redis/v9 package (https://github.com/go-redis/redis)                  |
 | ppgorilla      | [plugin/gorilla](/plugin/gorilla)         | gorilla/mux package (https://github.com/gorilla/mux).                          |
 | ppgorm         | [plugin/gorm](/plugin/gorm)               | go-gorm/gorm package (https://github.com/go-gorm/gorm)                         |
 | ppgrpc         | [plugin/grpc](/plugin/grpc)               | grpc/grpc-go package (https://github.com/grpc/grpc-go)                         |
@@ -132,7 +135,7 @@ func main() {
 * [Http.Client.RecordRequestCookie](/doc/config.md#Http.Client.RecordRequestCookie)
 
 ## ppchi
-This package instruments inbound requests handled by a chi.Router. 
+This package instruments inbound requests handled by a chi.Router.
 Register the Middleware as the middleware of the router to trace all handlers:
 
 ``` go
@@ -237,8 +240,12 @@ func main() {
 * [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
 * [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
 
+## ppechov4
+This package instruments the echo/v4 package, and the APIs provided is the same as ppecho.
+Refer the [ppecho](plugin_guide.md#ppecho) paragraph.
+
 ## ppgin
-This package instruments inbound requests handled by a gin.Engine. 
+This package instruments inbound requests handled by a gin.Engine.
 Register the Middleware as the middleware of the router to trace all handlers:
 
 ``` go
@@ -291,7 +298,7 @@ func main() {
 * [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
 
 ## ppgocql
-This package instruments all queries created from gocql session. 
+This package instruments all queries created from gocql session.
 Use the NewObserver as the gocql.QueryObserver or gocql.BatchObserver:
 
 ``` go
@@ -443,7 +450,7 @@ func doMemcache(w http.ResponseWriter, r *http.Request) {
 [Full Example Source](/plugin/gomemcache/example/gomemcache_example.go)
 
 ## ppgoredis
-This package instruments the go-redis calls. 
+This package instruments the go-redis calls.
 Use the NewClient as the redis.NewClient and the NewClusterClient as redis.NewClusterClient, respectively.
 It supports go-redis v6.10.0 and later.
 
@@ -512,13 +519,13 @@ func main() {
 ```
 [Full Example Source](/plugin/goredis/example/redisv6.go)
 
-## ppgoredisv8
-This package instruments the go-redis/v8 calls. Use the NewHook or NewClusterHook as the redis.Hook.
+## ppgoredisv7
+This package instruments the go-redis/v7 calls. Use the NewHook or NewClusterHook as the redis.Hook.
 Only available in versions of go-redis with an AddHook() function.
 
 ``` go
 rc = redis.NewClient(redisOpts)
-client.AddHook(ppgoredisv8.NewHook(opts))
+client.AddHook(ppgoredisv7.NewHook(opts))
 ```
 
 It is necessary to pass the context containing the pinpoint.Tracer to redis.Client.
@@ -532,19 +539,19 @@ rc.Pipeline()
 package main
 
 import (
-    "github.com/go-redis/redis/v8"
+    "github.com/go-redis/redis/v7"
     "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv7"
 )
 
 var redisClient *redis.Client
 
-func redisv8(w http.ResponseWriter, r *http.Request) {
+func redisv7(w http.ResponseWriter, r *http.Request) {
     ctx := r.Context()
     client := redisClient.WithContext(ctx)
 
-    err := client.Set(ctx, "key", "value", 0).Err()
-    val, err := client.Get(ctx, "key").Result()
+    err := client.Set("key", "value", 0).Err()
+    val, err := client.Get("key").Result()
     fmt.Println("key", val)
 }
 
@@ -557,17 +564,25 @@ func main() {
         Addr: addrs[0],
     }
     redisClient = redis.NewClient(redisOpts)
-    redisClient.AddHook(ppgoredisv8.NewHook(redisOpts))
+    redisClient.AddHook(ppgoredisv7.NewHook(redisOpts))
 
-    http.HandleFunc("/redis", pphttp.WrapHandlerFunc(redisv8))
+    http.HandleFunc("/redis", pphttp.WrapHandlerFunc(redisv7))
 
     ...
 }
 ```
-[Full Example Source](/plugin/goredisv8/example/redisv8.go)
+[Full Example Source](/plugin/goredisv7/example/redisv7.go)
+
+## ppgoredisv8
+This package instruments the go-redis/v8 calls, and the APIs provided is the same as ppgoredisv7.
+Refer the [ppgoredisv7](plugin_guide.md#ppgoredisv7) paragraph.
+
+## ppgoredisv9
+This package instruments the go-redis/v9 calls, and the APIs provided is the same as ppgoredisv7.
+Refer the [ppgoredisv7](plugin_guide.md#ppgoredisv7) paragraph.
 
 ## ppgorilla
-This package instruments inbound requests handled by a gorilla mux.Router. 
+This package instruments inbound requests handled by a gorilla mux.Router.
 Register the Middleware as the middleware of the router to trace all handlers:
 
 ``` go
@@ -662,7 +677,7 @@ func gormQuery(w http.ResponseWriter, r *http.Request) {
 [Full Example Source](/plugin/gorm/example/gorm_example.go)
 
 ## ppgrpc
-This package instruments gRPC servers and clients. 
+This package instruments gRPC servers and clients.
 
 ### server
 To instrument a gRPC server, use UnaryServerInterceptor and StreamServerInterceptor.
@@ -674,7 +689,7 @@ grpcServer := grpc.NewServer(
 )
 ```
 
-ppgrpc's server interceptor adds the pinpoint.Tracer to the gRPC server handler's context. 
+ppgrpc's server interceptor adds the pinpoint.Tracer to the gRPC server handler's context.
 By using the pinpoint.FromContext function, this tracer can be obtained.
 Alternatively, the context of the handler may be propagated where the context that contains the pinpoint.Tracer is required.
 
@@ -845,7 +860,7 @@ func main() {
 * [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
 
 ## pplogrus
-This package allows additional transaction id and span id of the pinpoint span to be printed in the log message. 
+This package allows additional transaction id and span id of the pinpoint span to be printed in the log message.
 Use the NewField or NewEntry and pass the logrus field back to the logger.
 
 ``` go
@@ -857,7 +872,7 @@ entry := pplogrus.NewEntry(tracer).WithField("foo", "bar")
 entry.Error("entry log message")
 ```
 
-You can use NewHook as the logrus.Hook. 
+You can use NewHook as the logrus.Hook.
 It is necessary to pass the context containing the pinpoint.Tracer to logrus.Logger.
 
 ``` go
@@ -882,7 +897,7 @@ func logging(w http.ResponseWriter, r *http.Request) {
 [Full Example Source](/plugin/logrus/example/logrus_example.go)
 
 ## ppmongo
-This package instruments the mongo-go-driver calls. 
+This package instruments the mongo-go-driver calls.
 Use the NewMonitor as Monitor field of mongo-go-driver's ClientOptions.
 
 ``` go
@@ -922,7 +937,7 @@ func mongodb(w http.ResponseWriter, r *http.Request) {
 [Full Example Source](/plugin/mongodriver/example/mongo_example.go)
 
 ## ppmysql
-This package instruments the mysql driver calls. 
+This package instruments the mysql driver calls.
 Use this package's driver in place of the mysql driver.
 
 ``` go
@@ -955,7 +970,7 @@ func query(w http.ResponseWriter, r *http.Request) {
 [Full Example Source](/plugin/mysql/example/mysql_example.go)
 
 ## pppgsql
-This package instruments the postgres driver calls. 
+This package instruments the postgres driver calls.
 Use this package's driver in place of the postgres driver.
 
 ``` go
@@ -1043,7 +1058,7 @@ for msg := range pc.Messages() {
 }
 ```
 
-ConsumeMessage wraps a sarama.ConsumerMessage and passes a ConsumerMessage having pinpoint.Tracer to HandlerFunc. 
+ConsumeMessage wraps a sarama.ConsumerMessage and passes a ConsumerMessage having pinpoint.Tracer to HandlerFunc.
 In HandlerFunc, this tracer can be obtained by using the ConsumerMessage.Tracer function.
 
 ``` go
@@ -1065,7 +1080,7 @@ func (h exampleConsumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSessi
     }
 ```
 
-ConsumeMessageContext passes a context added pinpoint.Tracer to HandlerContextFunc. 
+ConsumeMessageContext passes a context added pinpoint.Tracer to HandlerContextFunc.
 In HandlerContextFunc, this tracer can be obtained by using the pinpoint.FromContext function.
 Alternatively, the context may be propagated where the context that contains the pinpoint.Tracer is required.
 
