@@ -3,6 +3,7 @@ package pphttp
 import (
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
@@ -144,81 +145,114 @@ func WithHttpClientRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
 }
 
 var (
-	srvStatusErrors *httpStatusError
-	srvUrlFilter    *httpUrlFilter
-	srvMethodFilter *httpMethodFilter
-
-	srvReqHeaderRecorder httpHeaderRecorder
-	srvResHeaderRecorder httpHeaderRecorder
-	srvCookieRecorder    httpHeaderRecorder
-
-	cltReqHeaderRecorder httpHeaderRecorder
-	cltResHeaderRecorder httpHeaderRecorder
-	cltCookieRecorder    httpHeaderRecorder
+	onceUrl sync.Once
+	srvUrl  *httpUrlFilter
 )
 
-func serverStatusError() *httpStatusError {
-	if srvStatusErrors == nil {
-		srvStatusErrors = newHttpStatusError()
-	}
-
-	return srvStatusErrors
+func isExcludedUrl(url string) bool {
+	onceUrl.Do(func() {
+		srvUrl = newHttpUrlFilter()
+	})
+	return srvUrl.isFiltered(url)
 }
 
-func serverUrlFilter() *httpUrlFilter {
-	if srvUrlFilter == nil {
-		srvUrlFilter = newHttpUrlFilter()
-	}
-	return srvUrlFilter
+var (
+	onceMethod sync.Once
+	srvMethod  *httpMethodFilter
+)
+
+func isExcludedMethod(method string) bool {
+	onceMethod.Do(func() {
+		srvMethod = newHttpExcludeMethod()
+	})
+	return srvMethod.isExcludedMethod(method)
 }
 
-func serverMethodFilter() *httpMethodFilter {
-	if srvMethodFilter == nil {
-		srvMethodFilter = newHttpExcludeMethod()
+var (
+	onceStatus sync.Once
+	srvStatus  *httpStatusError
+)
+
+func recordServerHttpStatus(span pinpoint.SpanRecorder, status int) {
+	onceStatus.Do(func() {
+		srvStatus = newHttpStatusError()
+	})
+	if srvStatus.isError(status) {
+		span.SetFailure()
 	}
-	return srvMethodFilter
+	span.Annotations().AppendInt(pinpoint.AnnotationHttpStatusCode, int32(status))
 }
 
-func serverRequestHeaderRecorder() httpHeaderRecorder {
-	if srvReqHeaderRecorder == nil {
-		srvReqHeaderRecorder = makeHttpHeaderRecorder(CfgHttpServerRecordRequestHeader)
-	}
-	return srvReqHeaderRecorder
+var (
+	onceSrvReq   sync.Once
+	srvReqHeader httpHeaderRecorder
+)
+
+func recordServerHttpRequestHeader(annotation pinpoint.Annotation, header http.Header) {
+	onceSrvReq.Do(func() {
+		srvReqHeader = makeHttpHeaderRecorder(CfgHttpServerRecordRequestHeader)
+	})
+	srvReqHeader.recordHeader(annotation, pinpoint.AnnotationHttpRequestHeader, header)
 }
 
-func serverResponseHeaderRecorder() httpHeaderRecorder {
-	if srvResHeaderRecorder == nil {
-		srvResHeaderRecorder = makeHttpHeaderRecorder(CfgHttpServerRecordResponseHeader)
-	}
-	return srvResHeaderRecorder
+var (
+	onceSrvRes   sync.Once
+	srvResHeader httpHeaderRecorder
+)
+
+func recordServerHttpResponseHeader(annotation pinpoint.Annotation, header http.Header) {
+	onceSrvRes.Do(func() {
+		srvResHeader = makeHttpHeaderRecorder(CfgHttpServerRecordResponseHeader)
+	})
+	srvResHeader.recordHeader(annotation, pinpoint.AnnotationHttpResponseHeader, header)
 }
 
-func serverCookieRecorder() httpHeaderRecorder {
-	if srvCookieRecorder == nil {
-		srvCookieRecorder = makeHttpHeaderRecorder(CfgHttpServerRecordRequestCookie)
-	}
-	return srvCookieRecorder
+var (
+	onceSrvCookie sync.Once
+	srvCookie     httpHeaderRecorder
+)
+
+func recordServerHttpCookie(annotation pinpoint.Annotation, cookie []*http.Cookie) {
+	onceSrvCookie.Do(func() {
+		srvCookie = makeHttpHeaderRecorder(CfgHttpServerRecordRequestCookie)
+	})
+	srvCookie.recordCookie(annotation, cookie)
 }
 
-func clientRequestHeaderRecorder() httpHeaderRecorder {
-	if cltReqHeaderRecorder == nil {
-		cltReqHeaderRecorder = makeHttpHeaderRecorder(CfgHttpClientRecordRequestHeader)
-	}
-	return cltReqHeaderRecorder
+var (
+	onceCltReq   sync.Once
+	cltReqHeader httpHeaderRecorder
+)
+
+func recordClientHttpRequestHeader(annotation pinpoint.Annotation, header http.Header) {
+	onceCltReq.Do(func() {
+		cltReqHeader = makeHttpHeaderRecorder(CfgHttpClientRecordRequestHeader)
+	})
+	cltReqHeader.recordHeader(annotation, pinpoint.AnnotationHttpRequestHeader, header)
 }
 
-func clientResponseHeaderRecorder() httpHeaderRecorder {
-	if cltResHeaderRecorder == nil {
-		cltResHeaderRecorder = makeHttpHeaderRecorder(CfgHttpClientRecordResponseHeader)
-	}
-	return cltResHeaderRecorder
+var (
+	onceCltRes   sync.Once
+	cltResHeader httpHeaderRecorder
+)
+
+func recordClientHttpResponseHeader(annotation pinpoint.Annotation, header http.Header) {
+	onceCltRes.Do(func() {
+		cltResHeader = makeHttpHeaderRecorder(CfgHttpClientRecordResponseHeader)
+	})
+	cltResHeader.recordHeader(annotation, pinpoint.AnnotationHttpResponseHeader, header)
 }
 
-func clientCookieRecorder() httpHeaderRecorder {
-	if cltCookieRecorder == nil {
-		cltCookieRecorder = makeHttpHeaderRecorder(CfgHttpClientRecordRequestCookie)
-	}
-	return cltCookieRecorder
+var (
+	onceCltCookie sync.Once
+	cltCookie     httpHeaderRecorder
+)
+
+func recordClientHttpCookie(annotation pinpoint.Annotation, cookie []*http.Cookie) {
+	onceCltCookie.Do(func() {
+		cltCookie = makeHttpHeaderRecorder(CfgHttpClientRecordRequestCookie)
+	})
+	cltCookie.recordCookie(annotation, cookie)
 }
 
 func makeHttpHeaderRecorder(cfgName string) httpHeaderRecorder {
@@ -238,43 +272,4 @@ func trimStringSlice(slice []string) {
 	for i := range slice {
 		slice[i] = strings.TrimSpace(slice[i])
 	}
-}
-
-func isExcludedUrl(url string) bool {
-	return serverUrlFilter().isFiltered(url)
-}
-
-func isExcludedMethod(method string) bool {
-	return serverMethodFilter().isExcludedMethod(method)
-}
-
-func recordServerHttpStatus(span pinpoint.SpanRecorder, status int) {
-	span.Annotations().AppendInt(pinpoint.AnnotationHttpStatusCode, int32(status))
-	if serverStatusError().isError(status) {
-		span.SetFailure()
-	}
-}
-
-func recordServerHttpRequestHeader(annotation pinpoint.Annotation, header http.Header) {
-	serverRequestHeaderRecorder().recordHeader(annotation, pinpoint.AnnotationHttpRequestHeader, header)
-}
-
-func recordServerHttpResponseHeader(annotation pinpoint.Annotation, header http.Header) {
-	serverResponseHeaderRecorder().recordHeader(annotation, pinpoint.AnnotationHttpResponseHeader, header)
-}
-
-func recordServerHttpCookie(annotation pinpoint.Annotation, cookie []*http.Cookie) {
-	serverCookieRecorder().recordCookie(annotation, cookie)
-}
-
-func recordClientHttpRequestHeader(annotation pinpoint.Annotation, header http.Header) {
-	clientRequestHeaderRecorder().recordHeader(annotation, pinpoint.AnnotationHttpRequestHeader, header)
-}
-
-func recordClientHttpResponseHeader(annotation pinpoint.Annotation, header http.Header) {
-	clientResponseHeaderRecorder().recordHeader(annotation, pinpoint.AnnotationHttpResponseHeader, header)
-}
-
-func recordClientHttpCookie(annotation pinpoint.Annotation, cookie []*http.Cookie) {
-	clientCookieRecorder().recordCookie(annotation, cookie)
 }
