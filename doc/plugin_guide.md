@@ -1,30 +1,30 @@
 # Pinpoint Go Agent Plug-ins
 
-| plugin package | source directory                          | instrumented package                                                           |
-|----------------|-------------------------------------------|--------------------------------------------------------------------------------|
-| pphttp         | [plugin/http](/plugin/http)               | Go standard HTTP package                                                       |
-| ppchi          | [plugin/chi](/plugin/chi)                 | go-chi/chi package (https://github.com/go-chi/chi)                             |
-| ppecho         | [plugin/echo](/plugin/echo)               | labstack/echo package (https://github.com/labstack/echo)                       |
-| ppechov4       | [plugin/echov4](/plugin/echov4)           | labstack/echo/v4 package (https://github.com/labstack/echo)                    |
-| ppgin          | [plugin/gin](/plugin/gin)                 | gin-gonic/gin package (https://github.com/gin-gonic/gin)                       |
-| ppgocql        | [plugin/gocql](/plugin/gocql)             | gocql package (https://github.com/gocql/gocql).                                |
-| ppgoelastic    | [plugin/goelastic](/plugin/goelastic)     | elastic/go-elasticsearch package (https://github.com/elastic/go-elasticsearch) |
-| ppgohbase      | [plugin/gohbase](/plugin/gohbase)         | tsuna/gohbase package (https://github.com/tsuna/gohbase).                      |
-| ppgomemcache   | [plugin/gomemcache](/plugin/gomemcache)   | bradfitz/gomemcache package (https://github.com/bradfitz/gomemcache)           |
-| ppgoredis      | [plugin/goredis](/plugin/goredis)         | go-redis/redis package (https://github.com/go-redis/redis)                     |
-| ppgoredisv7    | [plugin/goredisv7](/plugin/goredisv7)     | go-redis/redis/v7 package (https://github.com/go-redis/redis)                  |
-| ppgoredisv8    | [plugin/goredisv8](/plugin/goredisv8)     | go-redis/redis/v8 package (https://github.com/go-redis/redis)                  |
-| ppgoredisv9    | [plugin/goredisv9](/plugin/goredisv9)     | go-redis/redis/v9 package (https://github.com/go-redis/redis)                  |
-| ppgorilla      | [plugin/gorilla](/plugin/gorilla)         | gorilla/mux package (https://github.com/gorilla/mux).                          |
-| ppgorm         | [plugin/gorm](/plugin/gorm)               | go-gorm/gorm package (https://github.com/go-gorm/gorm)                         |
-| ppgrpc         | [plugin/grpc](/plugin/grpc)               | grpc/grpc-go package (https://github.com/grpc/grpc-go)                         |
-| pphttprouter   | [plugin/httprouter](/plugin/httprouter)   | julienschmidt/httprouter package (https://github.com/julienschmidt/httprouter) |
-| pplogrus       | [plugin/logrus](/plugin/logrus)           | sirupsen/logrus package (https://github.com/sirupsen/logrus)                   |
-| ppmongo        | [plugin/mongodriver](/plugin/mongodriver) | mongodb/mongo-go-driver package (https://github.com/mongodb/mongo-go-driver)   |
-| ppmysql        | [plugin/mysql](/plugin/mysql)             | go-sql-driver/mysql package (https://github.com/go-sql-driver/mysql)           |
-| pppgsql        | [plugin/pgsql](/plugin/pgsql)             | lib/pq package (https://github.com/lib/pq)                                     |
-| ppredigo       | [plugin/redigo](/plugin/redigo)           | gomodule/redigo package (https://github.com/gomodule/redigo)                   |
-| ppsarama       | [plugin/sarama](/plugin/sarama)           | Shopify/sarama package (https://github.com/Shopify/sarama)                     |
+| plugin package                               | source directory                          | instrumented package                                                           |
+|----------------------------------------------|-------------------------------------------|--------------------------------------------------------------------------------|
+| [pphttp](plugin_guide.md#pphttp)             | [plugin/http](/plugin/http)               | Go standard HTTP package                                                       |
+| [ppchi](plugin_guide.md#ppchi)               | [plugin/chi](/plugin/chi)                 | go-chi/chi package (https://github.com/go-chi/chi)                             |
+| [ppecho](plugin_guide.md#ppecho)             | [plugin/echo](/plugin/echo)               | labstack/echo package (https://github.com/labstack/echo)                       |
+| [ppechov4](plugin_guide.md#ppechov4)         | [plugin/echov4](/plugin/echov4)           | labstack/echo/v4 package (https://github.com/labstack/echo)                    |
+| [ppgin](plugin_guide.md#ppgin)               | [plugin/gin](/plugin/gin)                 | gin-gonic/gin package (https://github.com/gin-gonic/gin)                       |
+| [ppgocql](plugin_guide.md#ppgocql)           | [plugin/gocql](/plugin/gocql)             | gocql package (https://github.com/gocql/gocql).                                |
+| [ppgoelastic](plugin_guide.md#ppgoelastic)   | [plugin/goelastic](/plugin/goelastic)     | elastic/go-elasticsearch package (https://github.com/elastic/go-elasticsearch) |
+| [ppgohbase](plugin_guide.md#ppgohbase)       | [plugin/gohbase](/plugin/gohbase)         | tsuna/gohbase package (https://github.com/tsuna/gohbase).                      |
+| [ppgomemcache](plugin_guide.md#ppgomemcache) | [plugin/gomemcache](/plugin/gomemcache)   | bradfitz/gomemcache package (https://github.com/bradfitz/gomemcache)           |
+| [ppgoredis](plugin_guide.md#ppgoredis)       | [plugin/goredis](/plugin/goredis)         | go-redis/redis package (https://github.com/go-redis/redis)                     |
+| [ppgoredisv7](plugin_guide.md#ppgoredisv7)   | [plugin/goredisv7](/plugin/goredisv7)     | go-redis/redis/v7 package (https://github.com/go-redis/redis)                  |
+| [ppgoredisv8](plugin_guide.md#ppgoredisv8)   | [plugin/goredisv8](/plugin/goredisv8)     | go-redis/redis/v8 package (https://github.com/go-redis/redis)                  |
+| [ppgoredisv9](plugin_guide.md#ppgoredisv9)   | [plugin/goredisv9](/plugin/goredisv9)     | go-redis/redis/v9 package (https://github.com/go-redis/redis)                  |
+| [ppgorilla](plugin_guide.md#ppgorilla)       | [plugin/gorilla](/plugin/gorilla)         | gorilla/mux package (https://github.com/gorilla/mux).                          |
+| [ppgorm](plugin_guide.md#ppgorm)             | [plugin/gorm](/plugin/gorm)               | go-gorm/gorm package (https://github.com/go-gorm/gorm)                         |
+| [ppgrpc](plugin_guide.md#ppgrpc)             | [plugin/grpc](/plugin/grpc)               | grpc/grpc-go package (https://github.com/grpc/grpc-go)                         |
+| [pphttprouter](plugin_guide.md#pphttprouter) | [plugin/httprouter](/plugin/httprouter)   | julienschmidt/httprouter package (https://github.com/julienschmidt/httprouter) |
+| [pplogrus](plugin_guide.md#pplogrus)         | [plugin/logrus](/plugin/logrus)           | sirupsen/logrus package (https://github.com/sirupsen/logrus)                   |
+| [ppmongo](plugin_guide.md#ppmongo)           | [plugin/mongodriver](/plugin/mongodriver) | mongodb/mongo-go-driver package (https://github.com/mongodb/mongo-go-driver)   |
+| [ppmysql](plugin_guide.md#ppmysql)           | [plugin/mysql](/plugin/mysql)             | go-sql-driver/mysql package (https://github.com/go-sql-driver/mysql)           |
+| [pppgsql](plugin_guide.md#pppgsql)           | [plugin/pgsql](/plugin/pgsql)             | lib/pq package (https://github.com/lib/pq)                                     |
+| [ppredigo](plugin_guide.md#ppredigo)         | [plugin/redigo](/plugin/redigo)           | gomodule/redigo package (https://github.com/gomodule/redigo)                   |
+| [ppsarama](plugin_guide.md#ppsarama)         | [plugin/sarama](/plugin/sarama)           | Shopify/sarama package (https://github.com/Shopify/sarama)                     |
 
 ## pphttp
 ### http server
