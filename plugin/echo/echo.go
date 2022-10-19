@@ -13,6 +13,7 @@ package ppecho
 
 import (
 	"net/http"
+	"sync"
 
 	"github.com/labstack/echo"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
@@ -20,6 +21,18 @@ import (
 )
 
 const serverName = "Echo HTTP Server"
+
+var (
+	handlerNameMap map[string]string
+	once           sync.Once
+)
+
+func makeHandlerNameMap(c echo.Context) {
+	handlerNameMap = make(map[string]string, 0)
+	for _, r := range c.Echo().Routes() {
+		handlerNameMap[r.Path] = r.Name
+	}
+}
 
 // Middleware returns an echo middleware that creates a pinpoint.Tracer that instruments the echo handler function.
 func Middleware() echo.MiddlewareFunc {
@@ -44,7 +57,14 @@ func Middleware() echo.MiddlewareFunc {
 				}
 			}()
 
-			tracer.NewSpanEvent("echo.HandlerFunc()")
+			once.Do(func() {
+				makeHandlerNameMap(c)
+			})
+			if handlerName, ok := handlerNameMap[c.Path()]; ok {
+				tracer.NewSpanEvent(handlerName)
+			} else {
+				tracer.NewSpanEvent("echo.HandlerFunc()")
+			}
 			defer tracer.EndSpanEvent()
 
 			ctx := pinpoint.NewContext(req.Context(), tracer)
