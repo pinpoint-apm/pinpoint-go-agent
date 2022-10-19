@@ -36,7 +36,12 @@ func main() {
 
 	e := echo.New()
 
-	e.GET("/hello", ppechov4.WrapHandler(hello))
-	e.GET("/error", ppechov4.WrapHandler(myError))
+	e.Use(ppechov4.Middleware())
+	e.GET("/hello", hello)
+	e.GET("/error", myError)
+
+	//e.GET("/hello", ppechov4.WrapHandler(hello))
+	//e.GET("/error", ppechov4.WrapHandler(myError))
+
 	e.Start(":9000")
 }

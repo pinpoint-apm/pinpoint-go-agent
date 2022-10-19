@@ -4,15 +4,16 @@
 // Register the Middleware as the middleware of the router to trace all handlers:
 //
 //	e := echo.New()
-//	e.Use(ppecho.Middleware())
+//	e.Use(ppechov4.Middleware())
 //
 // Use WrapHandler to select the handlers you want to track:
 //
-//	e.GET("/hello", ppecho.WrapHandler(hello))
+//	e.GET("/hello", ppechov4.WrapHandler(hello))
 package ppechov4
 
 import (
 	"net/http"
+	"sync"
 
 	"github.com/labstack/echo/v4"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
@@ -20,6 +21,18 @@ import (
 )
 
 const serverName = "Echo HTTP Server"
+
+var (
+	handlerNameMap map[string]string
+	once           sync.Once
+)
+
+func makeHandlerNameMap(c echo.Context) {
+	handlerNameMap = make(map[string]string, 0)
+	for _, r := range c.Echo().Routes() {
+		handlerNameMap[r.Path] = r.Name + "()"
+	}
+}
 
 // Middleware returns an echo middleware that creates a pinpoint.Tracer that instruments the echo handler function.
 func Middleware() echo.MiddlewareFunc {
@@ -44,7 +57,14 @@ func Middleware() echo.MiddlewareFunc {
 				}
 			}()
 
-			tracer.NewSpanEvent("echo.HandlerFunc()")
+			once.Do(func() {
+				makeHandlerNameMap(c)
+			})
+			if handlerName, ok := handlerNameMap[c.Path()]; ok {
+				tracer.NewSpanEvent(handlerName)
+			} else {
+				tracer.NewSpanEvent("echo.HandlerFunc()")
+			}
 			defer tracer.EndSpanEvent()
 
 			ctx := pinpoint.NewContext(req.Context(), tracer)

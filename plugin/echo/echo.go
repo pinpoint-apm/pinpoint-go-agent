@@ -30,7 +30,7 @@ var (
 func makeHandlerNameMap(c echo.Context) {
 	handlerNameMap = make(map[string]string, 0)
 	for _, r := range c.Echo().Routes() {
-		handlerNameMap[r.Path] = r.Name
+		handlerNameMap[r.Path] = r.Name + "()"
 	}
 }
 
