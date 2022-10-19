@@ -7,30 +7,30 @@ import (
 	"os"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/go-redis/redis/v7"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv7"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 var redisClient *redis.Client
 
-func redisv8(w http.ResponseWriter, r *http.Request) {
+func redisv7(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	client := redisClient
+	client := redisClient.WithContext(ctx)
 
 	pipe := client.Pipeline()
-	incr := pipe.Incr(ctx, "foo")
-	pipe.Expire(ctx, "foo", time.Hour)
-	_, er := pipe.Exec(ctx)
+	incr := pipe.Incr("foo")
+	pipe.Expire("foo", time.Hour)
+	_, er := pipe.Exec()
 	fmt.Println(incr.Val(), er)
 
-	err := client.Set(ctx, "key", "value", 0).Err()
+	err := client.Set("key", "value", 0).Err()
 	if err != nil {
 		fmt.Println(err)
 	}
 
-	val, err := client.Get(ctx, "key").Result()
+	val, err := client.Get("key").Result()
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -39,24 +39,24 @@ func redisv8(w http.ResponseWriter, r *http.Request) {
 
 var redisClusterClient *redis.ClusterClient
 
-func redisv8Cluster(w http.ResponseWriter, r *http.Request) {
+func redisv7Cluster(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	client := redisClusterClient
+	client := redisClusterClient.WithContext(ctx)
 
 	pipe := client.Pipeline()
-	incr := pipe.Incr(ctx, "foo")
-	pipe.Expire(ctx, "foo", time.Hour)
-	_, er := pipe.Exec(ctx)
+	incr := pipe.Incr("foo")
+	pipe.Expire("foo", time.Hour)
+	_, er := pipe.Exec()
 	fmt.Println(incr.Val(), er)
 
-	err := client.Set(ctx, "key", "value", 0).Err()
+	err := client.Set("key", "value", 0).Err()
 	if err != nil {
 		fmt.Println(err)
 		w.WriteHeader(500)
 		return
 	}
 
-	val, err := client.Get(ctx, "key").Result()
+	val, err := client.Get("key").Result()
 	if err != nil {
 		fmt.Println(err)
 		w.WriteHeader(500)
@@ -67,8 +67,8 @@ func redisv8Cluster(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	opts := []pinpoint.ConfigOption{
-		pinpoint.WithAppName("GoRedisv8Test"),
-		pinpoint.WithAgentId("GoRedisv8TestAgent"),
+		pinpoint.WithAppName("GoRedisv7Test"),
+		pinpoint.WithAgentId("GoRedisv7TestAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
@@ -85,17 +85,17 @@ func main() {
 		Addr: addrs[0],
 	}
 	redisClient = redis.NewClient(redisOpts)
-	redisClient.AddHook(ppgoredisv8.NewHook(redisOpts))
+	redisClient.AddHook(ppgoredisv7.NewHook(redisOpts))
 
 	//redis cluster client
 	redisClusterOpts := &redis.ClusterOptions{
 		Addrs: addrs,
 	}
 	redisClusterClient = redis.NewClusterClient(redisClusterOpts)
-	redisClusterClient.AddHook(ppgoredisv8.NewClusterHook(redisClusterOpts))
+	redisClusterClient.AddHook(ppgoredisv7.NewClusterHook(redisClusterOpts))
 
-	http.HandleFunc("/redis", pphttp.WrapHandlerFunc(redisv8))
-	http.HandleFunc("/rediscluster", pphttp.WrapHandlerFunc(redisv8Cluster))
+	http.HandleFunc("/redis", pphttp.WrapHandlerFunc(redisv7))
+	http.HandleFunc("/rediscluster", pphttp.WrapHandlerFunc(redisv7Cluster))
 
 	http.ListenAndServe(":9000", nil)
 

@@ -9,7 +9,9 @@ require (
 	github.com/gin-gonic/gin v1.6.2
 	github.com/go-chi/chi/v5 v5.0.7
 	github.com/go-redis/redis v6.10.0+incompatible
-	github.com/go-redis/redis/v8 v8.0.0-beta.7
+	github.com/go-redis/redis/v7 v7.4.1
+	github.com/go-redis/redis/v8 v8.11.5
+	github.com/go-redis/redis/v9 v9.0.0-rc.1
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/gocql/gocql v0.0.0-20200815110948-5378c8f664e9
 	github.com/golang/mock v1.6.0

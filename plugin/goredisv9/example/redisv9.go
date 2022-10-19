@@ -7,15 +7,15 @@ import (
 	"os"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/go-redis/redis/v9"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv9"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 var redisClient *redis.Client
 
-func redisv8(w http.ResponseWriter, r *http.Request) {
+func redisv9(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	client := redisClient
 
@@ -39,7 +39,7 @@ func redisv8(w http.ResponseWriter, r *http.Request) {
 
 var redisClusterClient *redis.ClusterClient
 
-func redisv8Cluster(w http.ResponseWriter, r *http.Request) {
+func redisv9Cluster(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	client := redisClusterClient
 
@@ -67,8 +67,8 @@ func redisv8Cluster(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	opts := []pinpoint.ConfigOption{
-		pinpoint.WithAppName("GoRedisv8Test"),
-		pinpoint.WithAgentId("GoRedisv8TestAgent"),
+		pinpoint.WithAppName("GoRedisv9Test"),
+		pinpoint.WithAgentId("GoRedisv9TestAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
@@ -85,17 +85,17 @@ func main() {
 		Addr: addrs[0],
 	}
 	redisClient = redis.NewClient(redisOpts)
-	redisClient.AddHook(ppgoredisv8.NewHook(redisOpts))
+	redisClient.AddHook(ppgoredisv9.NewHook(redisOpts))
 
 	//redis cluster client
 	redisClusterOpts := &redis.ClusterOptions{
 		Addrs: addrs,
 	}
 	redisClusterClient = redis.NewClusterClient(redisClusterOpts)
-	redisClusterClient.AddHook(ppgoredisv8.NewClusterHook(redisClusterOpts))
+	redisClusterClient.AddHook(ppgoredisv9.NewClusterHook(redisClusterOpts))
 
-	http.HandleFunc("/redis", pphttp.WrapHandlerFunc(redisv8))
-	http.HandleFunc("/rediscluster", pphttp.WrapHandlerFunc(redisv8Cluster))
+	http.HandleFunc("/redis", pphttp.WrapHandlerFunc(redisv9))
+	http.HandleFunc("/rediscluster", pphttp.WrapHandlerFunc(redisv9Cluster))
 
 	http.ListenAndServe(":9000", nil)
 

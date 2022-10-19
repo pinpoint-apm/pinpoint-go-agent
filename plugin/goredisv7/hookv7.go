@@ -1,23 +1,23 @@
-// Package ppgoredisv8 instruments the go-redis/redis/v8 package (https://github.com/go-redis/redis).
+// Package ppgoredisv7 instruments the go-redis/redis/v7 package (https://github.com/go-redis/redis).
 //
-// This package instruments the go-redis/v8 calls.
+// This package instruments the go-redis/v7 calls.
 // Use the NewHook as the redis.Hook.
 //
 //	rc = redis.NewClient(redisOpts)
-//	rc.AddHook(ppgoredisv8.NewHook(redisOpts))
+//	rc.AddHook(ppgoredisv7.NewHook(redisOpts))
 //
 // It is necessary to pass the context containing the pinpoint.Tracer to redis.Client.
 //
 //	rc = rc.WithContext(pinpoint.NewContext(context.Background(), tracer))
 //	rc.Pipeline()
-package ppgoredisv8
+package ppgoredisv7
 
 import (
 	"bytes"
 	"context"
 	"strings"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/go-redis/redis/v7"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
@@ -73,6 +73,7 @@ func (r *hook) AfterProcess(ctx context.Context, cmd redis.Cmder) error {
 	se.SetDestination("REDIS")
 	se.SetEndPoint(r.endpoint)
 	se.SetError(cmd.Err())
+
 	return nil
 }
 
@@ -104,7 +105,7 @@ func (r *hook) AfterProcessPipeline(ctx context.Context, cmds []redis.Cmder) err
 func makeMethodName(operation string, cmds []redis.Cmder) string {
 	var buf bytes.Buffer
 
-	buf.WriteString("go-redis/v8.")
+	buf.WriteString("go-redis/v7.")
 	buf.WriteString(operation)
 	buf.WriteString("(")
 	for i, cmd := range cmds {
