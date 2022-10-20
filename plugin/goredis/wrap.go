@@ -65,23 +65,13 @@ func process(ctx context.Context, endpoint string) func(oldProcess func(cmd redi
 	return func(oldProcess func(cmd redis.Cmder) error) func(cmd redis.Cmder) error {
 		return func(cmd redis.Cmder) error {
 			tracer := pinpoint.FromContext(ctx)
-			if tracer == nil {
+			if !tracer.IsSampled() {
 				return oldProcess(cmd)
 			}
 
-			tracer.NewSpanEvent(makeMethodName("Cmd", []redis.Cmder{cmd}))
-			defer tracer.EndSpanEvent()
-
-			span := tracer.SpanEvent()
-			span.SetServiceType(pinpoint.ServiceTypeRedis)
-			span.SetDestination("REDIS")
-			span.SetEndPoint(endpoint)
-
+			defer newSpanEvent(tracer, "go-redis.Process()", endpoint, cmd.Name()).EndSpanEvent()
 			err := oldProcess(cmd)
-			if err != nil {
-				span.SetError(err)
-			}
-
+			tracer.SpanEvent().SetError(err)
 			return err
 		}
 	}
@@ -91,43 +81,36 @@ func processPipeline(ctx context.Context, endpoint string) func(oldProcess func(
 	return func(oldProcess func(cmds []redis.Cmder) error) func(cmds []redis.Cmder) error {
 		return func(cmds []redis.Cmder) error {
 			tracer := pinpoint.FromContext(ctx)
-			if tracer == nil {
+			if !tracer.IsSampled() {
 				return oldProcess(cmds)
 			}
 
-			tracer.NewSpanEvent(makeMethodName("Pipeline", cmds))
-			defer tracer.EndSpanEvent()
-
-			span := tracer.SpanEvent()
-			span.SetServiceType(pinpoint.ServiceTypeRedis)
-			span.SetDestination("REDIS")
-			span.SetEndPoint(endpoint)
-
+			defer newSpanEvent(tracer, "go-redis.ProcessPipeline()", endpoint, cmdName(cmds)).EndSpanEvent()
 			err := oldProcess(cmds)
-			if err != nil {
-				span.SetError(err)
-			}
-
+			tracer.SpanEvent().SetError(err)
 			return err
 		}
 	}
 }
 
-func makeMethodName(operation string, cmds []redis.Cmder) string {
+func newSpanEvent(tracer pinpoint.Tracer, operation string, endpoint string, cmd string) pinpoint.Tracer {
+	tracer.NewSpanEvent(operation)
+	se := tracer.SpanEvent()
+	se.SetServiceType(pinpoint.ServiceTypeRedis)
+	se.SetDestination("REDIS")
+	se.SetEndPoint(endpoint)
+	se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
+	return tracer
+}
+
+func cmdName(cmds []redis.Cmder) string {
 	var buf bytes.Buffer
 
-	buf.WriteString("goredis.")
-	buf.WriteString(operation)
-	buf.WriteString("(")
 	for i, cmd := range cmds {
 		if i != 0 {
 			buf.WriteString(", ")
 		}
-		buf.WriteString("'")
-		buf.WriteString(strings.ToLower(cmd.Name()))
-		buf.WriteString("'")
+		buf.WriteString(cmd.Name())
 	}
-	buf.WriteString(")")
-
 	return buf.String()
 }

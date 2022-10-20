@@ -21,20 +21,18 @@
 package ppredigo
 
 import (
-	"bytes"
 	"context"
 	"github.com/gomodule/redigo/redis"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"net"
 	"net/url"
-	"strings"
 	"time"
 )
 
 type wrappedConn struct {
 	base     redis.Conn
 	endpoint string
-	tracer   pinpoint.Tracer
+	ctx      context.Context
 }
 
 type pinpointContext interface {
@@ -45,12 +43,12 @@ func wrapConn(c redis.Conn, addr string) redis.Conn {
 	return &wrappedConn{
 		base:     c,
 		endpoint: addr,
-		tracer:   nil,
+		ctx:      context.Background(),
 	}
 }
 
 func (c *wrappedConn) WithContext(ctx context.Context) {
-	c.tracer = pinpoint.FromContext(ctx)
+	c.ctx = ctx
 }
 
 // WithContext passes the context to the provided redis.Conn.
@@ -140,17 +138,12 @@ func (c *wrappedConn) Err() error {
 }
 
 func (c *wrappedConn) Send(cmd string, args ...interface{}) error {
-	if c.tracer == nil {
-		return c.base.Send(cmd, args...)
-	}
-
-	se := c.makeRedisSpanEvent("Send", cmd)
-	defer c.tracer.EndSpanEvent()
+	tracer := c.newSpanEvent(c.ctx, "redigo.Send()", cmd)
+	defer tracer.EndSpanEvent()
 
 	err := c.base.Send(cmd, args...)
-	if err != nil {
-		se.SetError(err)
-	}
+	tracer.SpanEvent().SetError(err)
+
 	return err
 }
 
@@ -158,128 +151,80 @@ func (c *wrappedConn) Flush() error {
 	return c.base.Flush()
 }
 
-func (c *wrappedConn) Receive() (reply interface{}, err error) {
-	if c.tracer == nil {
-		return c.base.Receive()
-	}
-
-	se := c.makeRedisSpanEvent("Receive", "")
-	defer c.tracer.EndSpanEvent()
+func (c *wrappedConn) Receive() (interface{}, error) {
+	tracer := c.newSpanEvent(c.ctx, "redigo.Receive()", "")
+	defer tracer.EndSpanEvent()
 
 	r, err := c.base.Receive()
-	if err != nil {
-		se.SetError(err)
-	}
+	tracer.SpanEvent().SetError(err)
+
 	return r, err
 }
 
-func (c *wrappedConn) makeRedisSpanEvent(operation string, cmd string) pinpoint.SpanEventRecorder {
-	c.tracer.NewSpanEvent(makeMethodName(operation, cmd))
-	se := c.tracer.SpanEvent()
-	se.SetServiceType(pinpoint.ServiceTypeRedis)
-	se.SetDestination("REDIS")
-	se.SetEndPoint(c.endpoint)
-
-	return se
-}
-
-func makeMethodName(operation string, cmd string) string {
-	var buf bytes.Buffer
-
-	buf.WriteString("redigo.")
-	buf.WriteString(operation)
-	buf.WriteString("('")
-	buf.WriteString(strings.ToLower(cmd))
-	buf.WriteString("')")
-
-	return buf.String()
-}
-
 func (c *wrappedConn) Do(cmd string, args ...interface{}) (interface{}, error) {
-	if c.tracer == nil {
-		return c.base.Do(cmd, args...)
-	}
-
-	se := c.makeRedisSpanEvent("Do", cmd)
-	defer c.tracer.EndSpanEvent()
+	tracer := c.newSpanEvent(c.ctx, "redigo.Do()", cmd)
+	defer tracer.EndSpanEvent()
 
 	r, err := c.base.Do(cmd, args...)
-	if err != nil {
-		se.SetError(err)
-	}
+	tracer.SpanEvent().SetError(err)
+
 	return r, err
 }
 
 func (c *wrappedConn) DoWithTimeout(readTimeout time.Duration, cmd string, args ...interface{}) (interface{}, error) {
+	tracer := c.newSpanEvent(c.ctx, "redigo.DoWithTimeout()", cmd)
+	defer tracer.EndSpanEvent()
+
 	cwt, _ := c.base.(redis.ConnWithTimeout)
-
-	if c.tracer == nil {
-		return cwt.DoWithTimeout(readTimeout, cmd, args...)
-	}
-
-	se := c.makeRedisSpanEvent("DoWithTimeout", cmd)
-	defer c.tracer.EndSpanEvent()
-
 	r, err := cwt.DoWithTimeout(readTimeout, cmd, args...)
-	if err != nil {
-		se.SetError(err)
-	}
+	tracer.SpanEvent().SetError(err)
+
 	return r, err
 }
 
-func (c *wrappedConn) ReceiveWithTimeout(timeout time.Duration) (reply interface{}, err error) {
+func (c *wrappedConn) ReceiveWithTimeout(timeout time.Duration) (interface{}, error) {
+	tracer := c.newSpanEvent(c.ctx, "redigo.ReceiveWithTimeout()", "")
+	defer tracer.EndSpanEvent()
+
 	cwt, _ := c.base.(redis.ConnWithTimeout)
-
-	if c.tracer == nil {
-		return cwt.ReceiveWithTimeout(timeout)
-	}
-
-	se := c.makeRedisSpanEvent("ReceiveWithTimeout", "")
-	defer c.tracer.EndSpanEvent()
-
 	r, err := cwt.ReceiveWithTimeout(timeout)
-	if err != nil {
-		se.SetError(err)
-	}
+	tracer.SpanEvent().SetError(err)
+
 	return r, err
 }
 
 func (c *wrappedConn) DoContext(ctx context.Context, cmd string, args ...interface{}) (interface{}, error) {
+	tracer := c.newSpanEvent(ctx, "redigo.DoContext()", cmd)
+	defer tracer.EndSpanEvent()
+
 	cwc, _ := c.base.(redis.ConnWithContext)
-
-	if tracer := pinpoint.FromContext(ctx); tracer != nil {
-		c.tracer = tracer
-	}
-	if c.tracer == nil {
-		return cwc.DoContext(ctx, cmd, args...)
-	}
-
-	se := c.makeRedisSpanEvent("DoContext", cmd)
-	defer c.tracer.EndSpanEvent()
-
 	r, err := cwc.DoContext(ctx, cmd, args...)
-	if err != nil {
-		se.SetError(err)
-	}
+	tracer.SpanEvent().SetError(err)
+
 	return r, err
 }
 
 func (c *wrappedConn) ReceiveContext(ctx context.Context) (interface{}, error) {
+	tracer := c.newSpanEvent(ctx, "redigo.ReceiveContext()", "")
+	defer tracer.EndSpanEvent()
+
 	cwc, _ := c.base.(redis.ConnWithContext)
-
-	if tracer := pinpoint.FromContext(ctx); tracer != nil {
-		c.tracer = tracer
-	}
-	if c.tracer == nil {
-		return cwc.ReceiveContext(ctx)
-	}
-
-	se := c.makeRedisSpanEvent("ReceiveContext", "")
-	defer c.tracer.EndSpanEvent()
-
 	r, err := cwc.ReceiveContext(ctx)
-	if err != nil {
-		se.SetError(err)
-	}
+	tracer.SpanEvent().SetError(err)
+
 	return r, err
+}
+
+func (c *wrappedConn) newSpanEvent(ctx context.Context, operation string, cmd string) pinpoint.Tracer {
+	tracer := pinpoint.FromContext(ctx)
+	tracer.NewSpanEvent(operation)
+
+	se := tracer.SpanEvent()
+	se.SetServiceType(pinpoint.ServiceTypeRedis)
+	se.SetDestination("REDIS")
+	se.SetEndPoint(c.endpoint)
+	if cmd != "" {
+		se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
+	}
+	return tracer
 }

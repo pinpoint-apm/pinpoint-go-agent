@@ -195,7 +195,7 @@ const (
 	ServiceTypeGrpc                  = 9160
 	ServiceTypeGrpcServer            = 1130
 	ServiceTypeMemcached             = 8050
-	ServiceTypeRedis                 = 8200
+	ServiceTypeRedis                 = 8203
 	ServiceTypeKafkaClient           = 8660
 	ServiceTypeHbaseClient           = 8800
 	ServiceTypeGoElastic             = 9203

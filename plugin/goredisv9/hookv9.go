@@ -59,59 +59,55 @@ func (r *hook) DialHook(hook redis.DialHook) redis.DialHook {
 }
 
 func (r *hook) ProcessHook(hook redis.ProcessHook) redis.ProcessHook {
+	opName := "go-redis/v9.Process()"
+
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		tracer := pinpoint.FromContext(ctx)
 		if !tracer.IsSampled() {
 			return hook(ctx, cmd)
 		}
 
-		defer tracer.NewSpanEvent(makeMethodName("Process", []redis.Cmder{cmd})).EndSpanEvent()
-		se := tracer.SpanEvent()
-		se.SetServiceType(pinpoint.ServiceTypeRedis)
-		se.SetDestination("REDIS")
-		se.SetEndPoint(r.endpoint)
-		//se.Annotations().AppendString(pinpoint.AnnotationArgs0, makeMethodName("Process", []redis.Cmder{cmd}))
-
+		defer r.newSpanEvent(tracer, opName, cmd.Name()).EndSpanEvent()
 		err := hook(ctx, cmd)
-		se.SetError(err)
+		tracer.SpanEvent().SetError(err)
 		return err
 	}
 }
 
 func (r *hook) ProcessPipelineHook(hook redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	opName := "go-redis/v9.ProcessPipeline()"
+
 	return func(ctx context.Context, cmds []redis.Cmder) error {
 		tracer := pinpoint.FromContext(ctx)
 		if !tracer.IsSampled() {
 			return hook(ctx, cmds)
 		}
 
-		defer tracer.NewSpanEvent(makeMethodName("ProcessPipeline", cmds)).EndSpanEvent()
-		se := tracer.SpanEvent()
-		se.SetServiceType(pinpoint.ServiceTypeRedis)
-		se.SetDestination("REDIS")
-		se.SetEndPoint(r.endpoint)
-
+		defer r.newSpanEvent(tracer, opName, cmdName(cmds)).EndSpanEvent()
 		err := hook(ctx, cmds)
-		se.SetError(err)
+		tracer.SpanEvent().SetError(err)
 		return err
 	}
 }
 
-func makeMethodName(operation string, cmds []redis.Cmder) string {
+func (r *hook) newSpanEvent(tracer pinpoint.Tracer, operation string, cmd string) pinpoint.Tracer {
+	tracer.NewSpanEvent(operation)
+	se := tracer.SpanEvent()
+	se.SetServiceType(pinpoint.ServiceTypeRedis)
+	se.SetDestination("REDIS")
+	se.SetEndPoint(r.endpoint)
+	se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
+	return tracer
+}
+
+func cmdName(cmds []redis.Cmder) string {
 	var buf bytes.Buffer
 
-	buf.WriteString("go-redis/v9.")
-	buf.WriteString(operation)
-	buf.WriteString("(")
 	for i, cmd := range cmds {
 		if i != 0 {
 			buf.WriteString(", ")
 		}
-		buf.WriteString("'")
 		buf.WriteString(cmd.Name())
-		buf.WriteString("'")
 	}
-	buf.WriteString(")")
-
 	return buf.String()
 }

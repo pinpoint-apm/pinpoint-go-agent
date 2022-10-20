@@ -57,7 +57,7 @@ func (r *hook) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Cont
 		return ctx, nil
 	}
 
-	tracer.NewSpanEvent(makeMethodName("Process", []redis.Cmder{cmd}))
+	tracer.NewSpanEvent("go-redis/v8.Process()")
 	return ctx, nil
 }
 
@@ -67,12 +67,7 @@ func (r *hook) AfterProcess(ctx context.Context, cmd redis.Cmder) error {
 		return nil
 	}
 
-	defer tracer.EndSpanEvent()
-	se := tracer.SpanEvent()
-	se.SetServiceType(pinpoint.ServiceTypeRedis)
-	se.SetDestination("REDIS")
-	se.SetEndPoint(r.endpoint)
-	se.SetError(cmd.Err())
+	r.setSpanEvent(tracer, cmd.Name(), cmd.Err())
 	return nil
 }
 
@@ -82,7 +77,7 @@ func (r *hook) BeforeProcessPipeline(ctx context.Context, cmds []redis.Cmder) (c
 		return ctx, nil
 	}
 
-	tracer.NewSpanEvent(makeMethodName("ProcessPipeline", cmds))
+	tracer.NewSpanEvent("go-redis/v8.ProcessPipeline()")
 	return ctx, nil
 }
 
@@ -92,31 +87,29 @@ func (r *hook) AfterProcessPipeline(ctx context.Context, cmds []redis.Cmder) err
 		return nil
 	}
 
+	r.setSpanEvent(tracer, cmdName(cmds), pipeError(cmds))
+	return nil
+}
+
+func (r *hook) setSpanEvent(tracer pinpoint.Tracer, cmd string, err error) {
 	defer tracer.EndSpanEvent()
 	se := tracer.SpanEvent()
 	se.SetServiceType(pinpoint.ServiceTypeRedis)
 	se.SetDestination("REDIS")
 	se.SetEndPoint(r.endpoint)
-	se.SetError(pipeError(cmds))
-	return nil
+	se.SetError(err)
+	se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
 }
 
-func makeMethodName(operation string, cmds []redis.Cmder) string {
+func cmdName(cmds []redis.Cmder) string {
 	var buf bytes.Buffer
 
-	buf.WriteString("go-redis/v8.")
-	buf.WriteString(operation)
-	buf.WriteString("(")
 	for i, cmd := range cmds {
 		if i != 0 {
 			buf.WriteString(", ")
 		}
-		buf.WriteString("'")
-		buf.WriteString(strings.ToLower(cmd.Name()))
-		buf.WriteString("'")
+		buf.WriteString(cmd.Name())
 	}
-	buf.WriteString(")")
-
 	return buf.String()
 }
 
