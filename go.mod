@@ -14,6 +14,7 @@ require (
 	github.com/go-redis/redis/v9 v9.0.0-rc.1
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/gocql/gocql v0.0.0-20200815110948-5378c8f664e9
+	github.com/gofiber/fiber/v2 v2.37.0
 	github.com/golang/mock v1.6.0
 	github.com/golang/protobuf v1.5.2
 	github.com/gomodule/redigo v1.8.9
@@ -31,6 +32,7 @@ require (
 	github.com/spf13/viper v1.12.0
 	github.com/stretchr/testify v1.8.0
 	github.com/tsuna/gohbase v0.0.0-20200820233321-d669aff6255b
+	github.com/valyala/fasthttp v1.40.0 // indirect
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2
 	go.mongodb.org/mongo-driver v1.3.5
 	golang.org/x/time v0.0.0-20201208040808-7e3f01d25324
