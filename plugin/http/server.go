@@ -49,8 +49,8 @@ func NewHttpServerTracer(req *http.Request, operation string) (tracer pinpoint.T
 			span.SetRemoteAddress(getRemoteAddr(req))
 
 			a := span.Annotations()
-			recordServerHttpRequestHeader(a, req.Header)
-			recordServerHttpCookie(a, req.Cookies())
+			recordServerHttpRequestHeader(a, header{req.Header})
+			recordServerHttpCookie(a, cookie{req.Cookies()})
 			setProxyHeader(a, req)
 		}
 		return tracer
@@ -133,10 +133,10 @@ func setProxyHeader(a pinpoint.Annotation, r *http.Request) {
 }
 
 // RecordHttpServerResponse records http status and response header to span.
-func RecordHttpServerResponse(tracer pinpoint.Tracer, status int, header http.Header) {
+func RecordHttpServerResponse(tracer pinpoint.Tracer, status int, h http.Header) {
 	if tracer.IsSampled() {
 		recordServerHttpStatus(tracer.Span(), status)
-		recordServerHttpResponseHeader(tracer.Span().Annotations(), header)
+		recordServerHttpResponseHeader(tracer.Span().Annotations(), header{h})
 	}
 }
 
