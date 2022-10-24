@@ -6,6 +6,7 @@
 package ppfasthttp
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 
@@ -18,6 +19,7 @@ import (
 const serverName = "FastHttp Server"
 const CtxKey = "pinpoint"
 
+// WrapHandler wraps the given http request handler.
 func WrapHandler(handler fasthttp.RequestHandler) fasthttp.RequestHandler {
 	handlerName := pphttp.HandlerFuncName(handler)
 
@@ -66,4 +68,90 @@ func recordResponse(tracer pinpoint.Tracer, c *fasthttp.RequestCtx, status int) 
 		})
 		pphttp.RecordHttpServerResponse(tracer, status, h)
 	}
+}
+
+type distributedTracingContextWriterMD struct {
+	Header *fasthttp.RequestHeader
+}
+
+func (w *distributedTracingContextWriterMD) Set(key string, value string) {
+	w.Header.Set(key, value)
+}
+
+func before(tracer pinpoint.Tracer, operationName string, req *fasthttp.Request) pinpoint.Tracer {
+	tracer.NewSpanEvent(operationName)
+	tracer.SpanEvent().SetEndPoint(string(req.Host()))
+	tracer.SpanEvent().SetDestination(string(req.Host()))
+	tracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeGoHttpClient)
+
+	if tracer.IsSampled() {
+		var b bytes.Buffer
+		b.WriteString(string(req.Header.Method()))
+		b.WriteString(" ")
+		b.WriteString(req.URI().String())
+		tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHttpUrl, b.String())
+
+		a := tracer.SpanEvent().Annotations()
+		pphttp.RecordClientHttpRequestHeader(a, reqHeader{&req.Header})
+		pphttp.RecordClientHttpCookie(a, cookie{&req.Header})
+	}
+
+	wr := &distributedTracingContextWriterMD{&req.Header}
+	tracer.Inject(wr)
+	return tracer
+}
+
+func after(tracer pinpoint.Tracer, resp *fasthttp.Response, err error) {
+	tracer.SpanEvent().SetError(err)
+	if resp != nil && tracer.IsSampled() {
+		a := tracer.SpanEvent().Annotations()
+		a.AppendInt(pinpoint.AnnotationHttpStatusCode, int32(resp.StatusCode()))
+		pphttp.RecordClientHttpResponseHeader(a, resHeader{&resp.Header})
+	}
+	tracer.EndSpanEvent()
+}
+
+type reqHeader struct {
+	hdr *fasthttp.RequestHeader
+}
+
+func (h reqHeader) Values(key string) []string {
+	return []string{string(h.hdr.Peek(key))}
+}
+
+func (h reqHeader) VisitAll(f func(name string, values []string)) {
+	h.hdr.VisitAll(func(key, value []byte) {
+		f(string(key), []string{string(value)})
+	})
+}
+
+type resHeader struct {
+	hdr *fasthttp.ResponseHeader
+}
+
+func (h resHeader) Values(key string) []string {
+	return []string{string(h.hdr.Peek(key))}
+}
+
+func (h resHeader) VisitAll(f func(name string, values []string)) {
+	h.hdr.VisitAll(func(key, value []byte) {
+		f(string(key), []string{string(value)})
+	})
+}
+
+type cookie struct {
+	hdr *fasthttp.RequestHeader
+}
+
+func (c cookie) VisitAll(f func(name string, value string)) {
+	c.hdr.VisitAllCookie(func(key, value []byte) {
+		f(string(key), string(value))
+	})
+}
+
+func DoWithTracer(doFunc func() error, tracer pinpoint.Tracer, req *fasthttp.Request, res *fasthttp.Response) error {
+	before(tracer, "fasthttp/Client.Do()", req)
+	err := doFunc()
+	after(tracer, res, err)
+	return err
 }

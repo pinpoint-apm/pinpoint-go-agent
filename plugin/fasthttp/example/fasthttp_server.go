@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	"log"
 	"os"
 
@@ -16,6 +17,12 @@ func main() {
 		pinpoint.WithAppName("GoFastHttpTest"),
 		pinpoint.WithAgentId("GoFastHttpTestAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
+		pphttp.WithHttpClientRecordRequestHeader([]string{"HEADERS-ALL"}),
+		pphttp.WithHttpClientRecordRespondHeader([]string{"HEADERS-ALL"}),
+		pphttp.WithHttpClientRecordRequestCookie([]string{"HEADERS-ALL"}),
+		pphttp.WithHttpServerRecordRequestHeader([]string{"Cookie", "Accept"}),
+		pphttp.WithHttpServerRecordRespondHeader([]string{"Set-Cookie", "X-My-Header"}),
+		pphttp.WithHttpServerRecordRequestCookie([]string{"HEADERS-ALL"}),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)
@@ -49,6 +56,8 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 
 	fmt.Fprintf(ctx, "Raw request is:\n---CUT---\n%s\n---CUT---", &ctx.Request)
 
+	client(ctx)
+
 	ctx.SetContentType("text/plain; charset=utf8")
 
 	// Set arbitrary headers
@@ -59,4 +68,39 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 	c.SetKey("cookie-name")
 	c.SetValue("cookie-value")
 	ctx.Response.Header.SetCookie(&c)
+}
+
+func client(ctx *fasthttp.RequestCtx) {
+	tracer := pinpoint.FromContext(ctx.UserValue(ppfasthttp.CtxKey).(context.Context))
+	// Get URI from a pool
+	url := fasthttp.AcquireURI()
+	url.Parse(nil, []byte("http://localhost:8080/"))
+	url.SetUsername("Aladdin")
+	url.SetPassword("Open Sesame")
+
+	hc := &fasthttp.HostClient{
+		Addr: "localhost:8080", // The host address and port must be set explicitly
+	}
+
+	req := fasthttp.AcquireRequest()
+	req.SetURI(url)          // copy url into request
+	fasthttp.ReleaseURI(url) // now you may release the URI
+
+	req.Header.SetMethod(fasthttp.MethodGet)
+	req.Header.SetCookie("cookie-name", "cookie-value")
+	req.Header.Set("X-My-Header", "my-header-value")
+
+	resp := fasthttp.AcquireResponse()
+
+	err := ppfasthttp.DoWithTracer(func() error {
+		return hc.Do(req, resp)
+	}, tracer, req, resp)
+	fasthttp.ReleaseRequest(req)
+
+	if err == nil {
+		fmt.Printf("Response: %s\n", resp.Body())
+	} else {
+		fmt.Fprintf(os.Stderr, "Connection error: %v\n", err)
+	}
+	fasthttp.ReleaseResponse(resp)
 }

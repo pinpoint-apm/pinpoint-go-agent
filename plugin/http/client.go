@@ -31,8 +31,8 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 		tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHttpUrl, b.String())
 
 		a := tracer.SpanEvent().Annotations()
-		recordClientHttpRequestHeader(a, req.Header)
-		recordClientHttpCookie(a, req.Cookies())
+		RecordClientHttpRequestHeader(a, header{req.Header})
+		RecordClientHttpCookie(a, cookie{req.Cookies()})
 	}
 
 	tracer.Inject(req.Header)
@@ -53,9 +53,33 @@ func after(tracer pinpoint.Tracer, resp *http.Response, err error) {
 	if resp != nil && tracer.IsSampled() {
 		a := tracer.SpanEvent().Annotations()
 		a.AppendInt(pinpoint.AnnotationHttpStatusCode, int32(resp.StatusCode))
-		recordClientHttpResponseHeader(a, resp.Header)
+		RecordClientHttpResponseHeader(a, header{resp.Header})
 	}
 	tracer.EndSpanEvent()
+}
+
+type header struct {
+	header http.Header
+}
+
+func (h header) Values(key string) []string {
+	return h.header.Values(key)
+}
+
+func (h header) VisitAll(f func(name string, values []string)) {
+	for name, values := range h.header {
+		f(name, values)
+	}
+}
+
+type cookie struct {
+	cookie []*http.Cookie
+}
+
+func (c cookie) VisitAll(f func(name string, value string)) {
+	for _, ck := range c.cookie {
+		f(ck.Name, ck.Value)
+	}
 }
 
 // DoClient instruments and executes a given doFunc.

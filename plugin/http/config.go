@@ -1,7 +1,6 @@
 package pphttp
 
 import (
-	"net/http"
 	"strings"
 	"sync"
 
@@ -188,7 +187,7 @@ var (
 	srvReqHeader httpHeaderRecorder
 )
 
-func recordServerHttpRequestHeader(annotation pinpoint.Annotation, header http.Header) {
+func recordServerHttpRequestHeader(annotation pinpoint.Annotation, header Header) {
 	onceSrvReq.Do(func() {
 		srvReqHeader = makeHttpHeaderRecorder(CfgHttpServerRecordRequestHeader)
 	})
@@ -200,7 +199,7 @@ var (
 	srvResHeader httpHeaderRecorder
 )
 
-func recordServerHttpResponseHeader(annotation pinpoint.Annotation, header http.Header) {
+func recordServerHttpResponseHeader(annotation pinpoint.Annotation, header Header) {
 	onceSrvRes.Do(func() {
 		srvResHeader = makeHttpHeaderRecorder(CfgHttpServerRecordResponseHeader)
 	})
@@ -212,7 +211,7 @@ var (
 	srvCookie     httpHeaderRecorder
 )
 
-func recordServerHttpCookie(annotation pinpoint.Annotation, cookie []*http.Cookie) {
+func recordServerHttpCookie(annotation pinpoint.Annotation, cookie Cookie) {
 	onceSrvCookie.Do(func() {
 		srvCookie = makeHttpHeaderRecorder(CfgHttpServerRecordRequestCookie)
 	})
@@ -224,7 +223,7 @@ var (
 	cltReqHeader httpHeaderRecorder
 )
 
-func recordClientHttpRequestHeader(annotation pinpoint.Annotation, header http.Header) {
+func RecordClientHttpRequestHeader(annotation pinpoint.Annotation, header Header) {
 	onceCltReq.Do(func() {
 		cltReqHeader = makeHttpHeaderRecorder(CfgHttpClientRecordRequestHeader)
 	})
@@ -236,7 +235,7 @@ var (
 	cltResHeader httpHeaderRecorder
 )
 
-func recordClientHttpResponseHeader(annotation pinpoint.Annotation, header http.Header) {
+func RecordClientHttpResponseHeader(annotation pinpoint.Annotation, header Header) {
 	onceCltRes.Do(func() {
 		cltResHeader = makeHttpHeaderRecorder(CfgHttpClientRecordResponseHeader)
 	})
@@ -248,7 +247,7 @@ var (
 	cltCookie     httpHeaderRecorder
 )
 
-func recordClientHttpCookie(annotation pinpoint.Annotation, cookie []*http.Cookie) {
+func RecordClientHttpCookie(annotation pinpoint.Annotation, cookie Cookie) {
 	onceCltCookie.Do(func() {
 		cltCookie = makeHttpHeaderRecorder(CfgHttpClientRecordRequestCookie)
 	})

@@ -1,15 +1,23 @@
 package pphttp
 
 import (
-	"net/http"
 	"strings"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
+type Header interface {
+	Values(key string) []string
+	VisitAll(f func(name string, values []string))
+}
+
+type Cookie interface {
+	VisitAll(f func(name string, value string))
+}
+
 type httpHeaderRecorder interface {
-	recordHeader(annotation pinpoint.Annotation, aKey int, header http.Header)
-	recordCookie(annotation pinpoint.Annotation, cookie []*http.Cookie)
+	recordHeader(annotation pinpoint.Annotation, aKey int, header Header)
+	recordCookie(annotation pinpoint.Annotation, cookie Cookie)
 }
 
 type allHttpHeaderRecorder struct{}
@@ -18,17 +26,17 @@ func newAllHttpHeaderRecorder() *allHttpHeaderRecorder {
 	return &allHttpHeaderRecorder{}
 }
 
-func (h *allHttpHeaderRecorder) recordHeader(annotation pinpoint.Annotation, key int, header http.Header) {
-	for name, values := range header {
+func (h *allHttpHeaderRecorder) recordHeader(annotation pinpoint.Annotation, key int, header Header) {
+	header.VisitAll(func(name string, values []string) {
 		vStr := strings.Join(values[:], ",")
 		annotation.AppendStringString(int32(key), name, vStr)
-	}
+	})
 }
 
-func (h *allHttpHeaderRecorder) recordCookie(annotation pinpoint.Annotation, cookie []*http.Cookie) {
-	for _, c := range cookie {
-		annotation.AppendStringString(pinpoint.AnnotationHttpCookie, c.Name, c.Value)
-	}
+func (h *allHttpHeaderRecorder) recordCookie(annotation pinpoint.Annotation, cookie Cookie) {
+	cookie.VisitAll(func(name string, value string) {
+		annotation.AppendStringString(pinpoint.AnnotationHttpCookie, name, value)
+	})
 }
 
 type defaultHttpHeaderRecorder struct {
@@ -39,7 +47,7 @@ func newDefaultHttpHeaderRecorder(headers []string) *defaultHttpHeaderRecorder {
 	return &defaultHttpHeaderRecorder{cfg: headers}
 }
 
-func (h *defaultHttpHeaderRecorder) recordHeader(annotation pinpoint.Annotation, key int, header http.Header) {
+func (h *defaultHttpHeaderRecorder) recordHeader(annotation pinpoint.Annotation, key int, header Header) {
 	for _, name := range h.cfg {
 		if v := header.Values(name); v != nil && len(v) > 0 {
 			vStr := strings.Join(v[:], ",")
@@ -48,13 +56,17 @@ func (h *defaultHttpHeaderRecorder) recordHeader(annotation pinpoint.Annotation,
 	}
 }
 
-func (h *defaultHttpHeaderRecorder) recordCookie(annotation pinpoint.Annotation, cookie []*http.Cookie) {
+func (h *defaultHttpHeaderRecorder) recordCookie(annotation pinpoint.Annotation, cookie Cookie) {
+	found := false
 	for _, name := range h.cfg {
-		for _, c := range cookie {
-			if strings.EqualFold(name, c.Name) {
-				annotation.AppendStringString(pinpoint.AnnotationHttpCookie, c.Name, c.Value)
-				break
+		cookie.VisitAll(func(cname string, value string) {
+			if strings.EqualFold(name, cname) {
+				annotation.AppendStringString(pinpoint.AnnotationHttpCookie, cname, value)
+				found = true
 			}
+		})
+		if found {
+			break
 		}
 	}
 }
@@ -65,8 +77,8 @@ func newNoopHttpHeaderRecorder() *noopHttpHeaderRecorder {
 	return &noopHttpHeaderRecorder{}
 }
 
-func (h *noopHttpHeaderRecorder) recordHeader(annotation pinpoint.Annotation, key int, header http.Header) {
+func (h *noopHttpHeaderRecorder) recordHeader(annotation pinpoint.Annotation, key int, header Header) {
 }
 
-func (h *noopHttpHeaderRecorder) recordCookie(annotation pinpoint.Annotation, cookie []*http.Cookie) {
+func (h *noopHttpHeaderRecorder) recordCookie(annotation pinpoint.Annotation, cookie Cookie) {
 }
