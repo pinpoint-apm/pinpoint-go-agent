@@ -1,6 +1,6 @@
 module github.com/pinpoint-apm/pinpoint-go-agent
 
-go 1.12
+go 1.15
 
 require (
 	github.com/Shopify/sarama v1.26.4

@@ -1019,7 +1019,7 @@ func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadNam
 		ThreadDump: makePActiveThreadDumpList(dump, int(limit), threadName, localId),
 		Type:       "Go",
 		SubType:    "",
-		Version:    "1.14",
+		Version:    runtime.Version(),
 	}
 
 	Log("grpc").Debugf("send PCmdActiveThreadDumpRes: %s", gRes.String())
@@ -1110,7 +1110,7 @@ func (cmdGrpc *cmdGrpc) sendActiveThreadLightDump(reqId int32, limit int32, dump
 		ThreadDump: makePActiveThreadLightDumpList(dump, int(limit)),
 		Type:       "Go",
 		SubType:    "",
-		Version:    "1.14", //go version
+		Version:    runtime.Version(),
 	}
 
 	Log("grpc").Debugf("send PCmdActiveThreadLightDumpRes: %s", gRes.String())
