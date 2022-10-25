@@ -105,7 +105,7 @@ func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
 func addRealTimeSampledActiveSpan(span *span) {
 	if gAtcStreamCount > 0 {
 		span.goroutineId = curGoroutineID()
-		s := activeSpanInfo{span.startTime, span.txId.String(), span.rpcName, true}
+		s := &activeSpanInfo{span.startTime, span.txId.String(), span.rpcName, true}
 		realTimeActiveSpan.Store(span.goroutineId, s)
 	}
 }
@@ -117,7 +117,7 @@ func dropRealTimeSampledActiveSpan(span *span) {
 func addRealTimeUnSampledActiveSpan(span *noopSpan) {
 	if gAtcStreamCount > 0 {
 		span.goroutineId = curGoroutineID()
-		s := activeSpanInfo{span.startTime, "", span.rpcName, false}
+		s := &activeSpanInfo{span.startTime, "", span.rpcName, false}
 		realTimeActiveSpan.Store(span.goroutineId, s)
 	}
 }
@@ -129,7 +129,7 @@ func dropRealTimeUnSampledActiveSpan(span *noopSpan) {
 func getActiveSpanCount(now time.Time) []int32 {
 	counts := []int32{0, 0, 0, 0}
 	realTimeActiveSpan.Range(func(k, v interface{}) bool {
-		s := v.(activeSpanInfo)
+		s := v.(*activeSpanInfo)
 		d := now.Sub(s.startTime).Seconds()
 
 		if d < 1 {

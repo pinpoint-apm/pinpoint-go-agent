@@ -1059,15 +1059,12 @@ func makePActiveThreadDumpList(dump *goroutineDump, limit int, threadName []stri
 }
 
 func makePActiveThreadDump(g *goroutine) *pb.PActiveThreadDump {
-	trace := make([]string, 0)
-	trace = append(trace, g.trace)
-
 	aDump := &pb.PActiveThreadDump{
 		StartTime:    g.span.startTime.UnixNano() / int64(time.Millisecond),
 		LocalTraceId: 0,
 		ThreadDump: &pb.PThreadDump{
 			ThreadName:         g.header,
-			ThreadId:           int64(g.id),
+			ThreadId:           g.id,
 			BlockedTime:        0,
 			BlockedCount:       0,
 			WaitedTime:         0,
@@ -1077,8 +1074,8 @@ func makePActiveThreadDump(g *goroutine) *pb.PActiveThreadDump {
 			LockOwnerName:      "",
 			InNative:           false,
 			Suspended:          false,
-			ThreadState:        goRoutineState(g),
-			StackTrace:         trace,
+			ThreadState:        g.threadState(),
+			StackTrace:         g.stackTrace(),
 			LockedMonitor:      nil,
 			LockedSynchronizer: nil,
 		},
@@ -1145,8 +1142,8 @@ func makePActiveThreadLightDump(g *goroutine) *pb.PActiveThreadLightDump {
 		LocalTraceId: 0,
 		ThreadDump: &pb.PThreadLightDump{
 			ThreadName:  g.header,
-			ThreadId:    int64(g.id),
-			ThreadState: goRoutineState(g),
+			ThreadId:    g.id,
+			ThreadState: g.threadState(),
 		},
 		Sampled:       g.span.sampled,
 		TransactionId: g.span.txId,
@@ -1154,25 +1151,6 @@ func makePActiveThreadLightDump(g *goroutine) *pb.PActiveThreadLightDump {
 	}
 
 	return aDump
-}
-
-func goRoutineState(g *goroutine) pb.PThreadState {
-	switch g.state {
-	case "running":
-		return pb.PThreadState_THREAD_STATE_RUNNABLE
-	case "select":
-		return pb.PThreadState_THREAD_STATE_WAITING
-	case "IO wait":
-		return pb.PThreadState_THREAD_STATE_WAITING
-	case "chan receive":
-		return pb.PThreadState_THREAD_STATE_WAITING
-	case "sleep":
-		return pb.PThreadState_THREAD_STATE_BLOCKED
-	default:
-		break
-	}
-
-	return pb.PThreadState_THREAD_STATE_UNKNOWN
 }
 
 func (cmdGrpc *cmdGrpc) sendEcho(reqId int32, msg string) {

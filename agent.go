@@ -16,7 +16,7 @@ import (
 func init() {
 	initLogger()
 	initConfig()
-	initGoID()
+	initGoroutine()
 	globalAgent = NoopAgent()
 }
 
