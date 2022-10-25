@@ -64,7 +64,7 @@ type span struct {
 	recovered     bool
 	asyncId       int32
 	asyncSequence int32
-	goroutineId   uint64
+	goroutineId   int64
 	eventStack    *stack
 	appendLock    sync.Mutex
 }
