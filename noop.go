@@ -34,7 +34,7 @@ type noopSpan struct {
 	spanId      int64
 	startTime   time.Time
 	rpcName     string
-	goroutineId uint64
+	goroutineId int64
 	withStats   bool
 
 	noopSe      noopSpanEvent
