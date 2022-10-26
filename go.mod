@@ -7,8 +7,9 @@ require (
 	github.com/beego/beego/v2 v2.0.5
 	github.com/bradfitz/gomemcache v0.0.0-20220106215444-fb4bf637b56d
 	github.com/elastic/go-elasticsearch/v7 v7.10.0
-	github.com/gin-gonic/gin v1.6.2
+	github.com/gin-gonic/gin v1.7.7
 	github.com/go-chi/chi/v5 v5.0.7
+	github.com/go-kratos/kratos/v2 v2.5.2
 	github.com/go-redis/redis v6.10.0+incompatible
 	github.com/go-redis/redis/v7 v7.4.1
 	github.com/go-redis/redis/v8 v8.11.5
@@ -27,7 +28,7 @@ require (
 	github.com/lib/pq v1.10.5
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d // indirect
 	github.com/shirou/gopsutil/v3 v3.22.7
-	github.com/sirupsen/logrus v1.6.0
+	github.com/sirupsen/logrus v1.8.1
 	github.com/spf13/cast v1.5.0
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.12.0
@@ -37,6 +38,7 @@ require (
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2
 	go.mongodb.org/mongo-driver v1.3.5
 	golang.org/x/time v0.0.0-20201208040808-7e3f01d25324
+	google.golang.org/genproto v0.0.0-20220519153652-3a47de7e79bd
 	google.golang.org/grpc v1.49.0
 	google.golang.org/protobuf v1.28.1
 	gorm.io/driver/mysql v1.3.3
