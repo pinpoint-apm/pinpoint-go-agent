@@ -3,7 +3,6 @@ package pinpoint
 import (
 	"bufio"
 	"bytes"
-	"fmt"
 	"io"
 	"reflect"
 	"regexp"
@@ -148,18 +147,21 @@ func parseProfile(r io.Reader) *goroutineDump {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		match := re.FindAllStringSubmatch(line, 1)
-		if match != nil {
-			if g = newGoroutine(match[0][1], match[0][2], line); g != nil {
-				if v, ok := realTimeActiveSpan.Load(g.id); ok {
-					g.span = v.(*activeSpanInfo)
-					dump.add(g)
+		if g == nil {
+			if match := re.FindAllStringSubmatch(line, 1); match != nil {
+				if g = newGoroutine(match[0][1], match[0][2], line); g != nil {
+					if v, ok := realTimeActiveSpan.Load(g.id); ok {
+						g.span = v.(*activeSpanInfo)
+						dump.add(g)
+					}
 				}
 			}
-		} else if line == "" {
-			g = nil
-		} else if g != nil {
-			g.addLine(line)
+		} else {
+			if line == "" {
+				g = nil
+			} else {
+				g.addLine(line)
+			}
 		}
 	}
 
@@ -177,7 +179,7 @@ func curGoroutineID() int64 {
 		if logger.Level >= logrus.DebugLevel {
 			dumpId := goIdFromDump()
 			if id != dumpId {
-				panic(fmt.Sprintf("different goID: getg= %d, dump= %d", id, dumpId))
+				Log("cmd").Errorf("different goID: getg= %d, dump= %d", id, dumpId)
 			}
 		}
 		return id
