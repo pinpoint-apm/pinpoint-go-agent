@@ -33,10 +33,12 @@ package ppgrpc
 
 import (
 	"context"
+	"net"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 )
 
 type serverStream struct {
@@ -65,8 +67,20 @@ func startSpan(ctx context.Context, rpcName string) pinpoint.Tracer {
 	reader := &distributedTracingContextReaderMD{md}
 	tracer := pinpoint.GetAgent().NewSpanTracerWithReader("gRPC Server", rpcName, reader)
 	tracer.Span().SetServiceType(pinpoint.ServiceTypeGrpcServer)
+	tracer.Span().SetRemoteAddress(remoteAddr(ctx))
 
 	return tracer
+}
+
+func remoteAddr(ctx context.Context) (addr string) {
+	addr = ""
+	if p, ok := peer.FromContext(ctx); ok {
+		addr = p.Addr.String()
+	}
+	if addr, _, _ = net.SplitHostPort(addr); addr == "" {
+		addr = "127.0.0.1"
+	}
+	return addr
 }
 
 // UnaryServerInterceptor returns a grpc.UnaryServerInterceptor ready to instrument
@@ -84,9 +98,7 @@ func UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 
 		ctx = pinpoint.NewContext(ctx, tracer)
 		resp, err := handler(ctx, req)
-		if err != nil {
-			tracer.Span().SetError(err)
-		}
+		tracer.Span().SetError(err)
 		return resp, err
 	}
 }
@@ -107,9 +119,7 @@ func StreamServerInterceptor() grpc.StreamServerInterceptor {
 		ctx := pinpoint.NewContext(stream.Context(), tracer)
 		wrappedStream := &serverStream{stream, ctx}
 		err := handler(srv, wrappedStream)
-		if err != nil {
-			tracer.Span().SetError(err)
-		}
+		tracer.Span().SetError(err)
 		return err
 	}
 }

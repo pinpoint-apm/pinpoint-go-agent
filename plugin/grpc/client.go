@@ -1,10 +1,10 @@
 package ppgrpc
 
 import (
+	"bytes"
 	"context"
-	"google.golang.org/grpc/peer"
 	"io"
-	"net"
+	"strings"
 	"sync"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
@@ -45,7 +45,7 @@ func (cs *clientStream) endSpan(err error) {
 	cs.mutex.Lock()
 	defer cs.mutex.Unlock()
 	if !cs.isFinished {
-		endSpan(cs.tracer, err)
+		endSpanEvent(cs.tracer, err)
 		cs.isFinished = true
 	}
 }
@@ -58,33 +58,27 @@ func (m *distributedTracingContextWriterMD) Set(key string, value string) {
 	m.md.Set(key, value)
 }
 
-func newSpanForGrpcClient(ctx context.Context, method string) (context.Context, pinpoint.Tracer) {
-	tracer := pinpoint.FromContext(ctx)
-	if tracer == nil {
-		return ctx, nil
+func newClientTracer(ctx context.Context, method string, target string) (context.Context, pinpoint.Tracer) {
+	tracer := pinpoint.FromContext(ctx).NewSpanEvent(method)
+	if tracer.IsSampled() {
+		se := tracer.SpanEvent()
+		se.SetServiceType(pinpoint.ServiceTypeGrpc)
+
+		//refer https://github.com/grpc/grpc/blob/master/doc/naming.md
+		var remote string
+		if strings.HasPrefix(target, "unix:") {
+			remote = "localhost"
+		} else {
+			remote = strings.TrimPrefix(target, "dns:///")
+		}
+		se.SetDestination(remote)
+		se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, makeUrl(remote, method))
 	}
-
-	tracer = tracer.NewSpanEvent(method)
-	tracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeGrpc)
-
-	var p peer.Peer
-	grpc.Peer(&p)
-	var remoteAddress string
-	if p.Addr != nil {
-		remoteAddress, _, _ = net.SplitHostPort(p.Addr.String())
-	} else {
-		remoteAddress = "localhost"
-	}
-
-	url := "http://" + remoteAddress + "/" + method
-	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHttpUrl, url)
-	tracer.SpanEvent().SetDestination(remoteAddress)
 
 	md, ok := metadata.FromOutgoingContext(ctx)
 	if !ok {
 		md = metadata.New(nil)
 	}
-
 	writer := &distributedTracingContextWriterMD{md}
 	tracer.Inject(writer)
 	ctx = metadata.NewOutgoingContext(ctx, writer.md)
@@ -92,21 +86,27 @@ func newSpanForGrpcClient(ctx context.Context, method string) (context.Context, 
 	return ctx, tracer
 }
 
-func endSpan(tracer pinpoint.Tracer, err error) {
-	if tracer != nil {
-		if err != nil && err != io.EOF {
-			tracer.SpanEvent().SetError(err, "grpc error")
-		}
-		tracer.EndSpanEvent()
+func makeUrl(remote string, method string) string {
+	var buf bytes.Buffer
+	buf.WriteString("grpc://")
+	buf.WriteString(remote)
+	buf.WriteString(method)
+	return buf.String()
+}
+
+func endSpanEvent(tracer pinpoint.Tracer, err error) {
+	defer tracer.EndSpanEvent()
+	if err != nil && err != io.EOF {
+		tracer.SpanEvent().SetError(err, "grpc error")
 	}
 }
 
 // UnaryClientInterceptor returns a new grpc.UnaryClientInterceptor ready to instrument.
 func UnaryClientInterceptor() grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-		newCtx, clientSpan := newSpanForGrpcClient(ctx, method)
+		newCtx, tracer := newClientTracer(ctx, method, cc.Target())
 		err := invoker(newCtx, method, req, reply, cc, opts...)
-		endSpan(clientSpan, err)
+		endSpanEvent(tracer, err)
 		return err
 	}
 }
@@ -114,12 +114,12 @@ func UnaryClientInterceptor() grpc.UnaryClientInterceptor {
 // StreamClientInterceptor returns a new grpc.StreamClientInterceptor ready to instrument.
 func StreamClientInterceptor() grpc.StreamClientInterceptor {
 	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-		newCtx, span := newSpanForGrpcClient(ctx, method)
+		newCtx, tracer := newClientTracer(ctx, method, cc.Target())
 		stream, err := streamer(newCtx, desc, cc, method, opts...)
 		if err != nil {
-			endSpan(span, err)
+			endSpanEvent(tracer, err)
 			return nil, err
 		}
-		return &clientStream{ClientStream: stream, tracer: span}, nil
+		return &clientStream{ClientStream: stream, tracer: tracer}, nil
 	}
 }

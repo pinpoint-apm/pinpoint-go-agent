@@ -186,8 +186,8 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 	host := reader.Get(headerHost)
 	if host != "" {
 		span.acceptorHost = host
-		span.remoteAddr = host
 		span.endPoint = host
+		span.remoteAddr = host // for message queue (kafka, ...)
 	}
 
 	addSampledActiveSpan(span)
