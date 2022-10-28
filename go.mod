@@ -45,3 +45,5 @@ require (
 	gorm.io/gorm v1.23.4
 	modernc.org/strutil v1.1.2 // indirect
 )
+
+replace github.com/gomodule/redigo => github.com/gomodule/redigo v1.8.8

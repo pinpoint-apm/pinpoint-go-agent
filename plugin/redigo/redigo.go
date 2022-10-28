@@ -22,11 +22,12 @@ package ppredigo
 
 import (
 	"context"
-	"github.com/gomodule/redigo/redis"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"net"
 	"net/url"
 	"time"
+
+	"github.com/gomodule/redigo/redis"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
 type wrappedConn struct {
