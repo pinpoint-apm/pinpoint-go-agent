@@ -30,7 +30,7 @@ var (
 func makeHandlerNameMap(c echo.Context) {
 	handlerNameMap = make(map[string]string, 0)
 	for _, r := range c.Echo().Routes() {
-		handlerNameMap[r.Path] = r.Name + "()"
+		handlerNameMap[r.Method+r.Path] = r.Name + "()"
 	}
 }
 
@@ -57,10 +57,7 @@ func Middleware() echo.MiddlewareFunc {
 				}
 			}()
 
-			once.Do(func() {
-				makeHandlerNameMap(c)
-			})
-			if handlerName, ok := handlerNameMap[c.Path()]; ok {
+			if handlerName, ok := handlerNameMap[req.Method+c.Path()]; ok {
 				tracer.NewSpanEvent(handlerName)
 			} else {
 				tracer.NewSpanEvent("echo.HandlerFunc()")
