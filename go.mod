@@ -29,6 +29,7 @@ require (
 	github.com/lib/pq v1.10.5
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d // indirect
 	github.com/shirou/gopsutil/v3 v3.22.7
+	github.com/sijms/go-ora/v2 v2.5.3
 	github.com/sirupsen/logrus v1.8.1
 	github.com/spf13/cast v1.5.0
 	github.com/spf13/pflag v1.0.5

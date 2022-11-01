@@ -189,6 +189,8 @@ const (
 	ServiceTypeMysqlExecuteQuery     = 2101
 	ServiceTypeMssql                 = 2200
 	ServiceTypeMssqlExecuteQuery     = 2201
+	ServiceTypeOracle                = 2300
+	ServiceTypeOracleExecuteQuery    = 2301
 	ServiceTypePgSql                 = 2500
 	ServiceTypePgSqlExecuteQuery     = 2501
 	ServiceTypeCassandraExecuteQuery = 2601
