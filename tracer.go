@@ -187,6 +187,8 @@ const (
 	ServiceTypeAsync                 = 100
 	ServiceTypeMysql                 = 2100
 	ServiceTypeMysqlExecuteQuery     = 2101
+	ServiceTypeMssql                 = 2200
+	ServiceTypeMssqlExecuteQuery     = 2201
 	ServiceTypePgSql                 = 2500
 	ServiceTypePgSqlExecuteQuery     = 2501
 	ServiceTypeCassandraExecuteQuery = 2601
