@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"sync"
@@ -10,12 +11,14 @@ import (
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
 )
 
 func outGoingRequest(w http.ResponseWriter, ctx context.Context) {
-	client := pphttp.WrapClient(nil)
+	seed := rand.NewSource(time.Now().UnixNano())
+	random := rand.New(seed)
+	time.Sleep(time.Duration(random.Intn(10000)+1) * time.Millisecond)
 
+	client := pphttp.WrapClient(nil)
 	request, _ := http.NewRequest("GET", "http://localhost:9001/query", nil)
 	request = request.WithContext(ctx)
 
@@ -109,6 +112,7 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoAsyncExample"),
 		pinpoint.WithAgentId("GoAsyncExampleAgent"),
+		pinpoint.WithLogLevel("debug"),
 		//pinpoint.WithSamplingCounterRate(100),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 		//phttp.WithHttpServerRecordRequestHeader([]string{"HEADERS-ALL"}),
