@@ -232,7 +232,7 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 	for !agentGrpc.agent.shutdown {
 		if res, err := agentGrpc.sendAgentInfo(ctx, agentInfo); err == nil {
 			if res.Success {
-				Log("agent").Info("success to register agent")
+				Log("agent").Infof("success to register agent")
 				return true
 			} else {
 				Log("agent").Errorf("register agent - %s", res.Message)
@@ -435,7 +435,7 @@ func (agentGrpc *agentGrpc) newPingStream() bool {
 
 func (agentGrpc *agentGrpc) newPingStreamWithRetry() *pingStream {
 	if newStreamWithRetry(agentGrpc.agent, agentGrpc.agentConn, agentGrpc.newPingStream, "ping") {
-		Log("grpc").Info("success to make ping stream")
+		Log("grpc").Infof("success to make ping stream")
 		return agentGrpc.pingStream
 	}
 	return &pingStream{}
@@ -477,7 +477,7 @@ func (s *pingStream) close() {
 	}
 	s.stream.CloseSend()
 	s.stream = nil
-	Log("grpc").Info("close ping stream")
+	Log("grpc").Infof("close ping stream")
 }
 
 func (agentGrpc *agentGrpc) close() {
@@ -539,7 +539,7 @@ func (spanGrpc *spanGrpc) newSpanStream() bool {
 
 func (spanGrpc *spanGrpc) newSpanStreamWithRetry() *spanStream {
 	if newStreamWithRetry(spanGrpc.agent, spanGrpc.spanConn, spanGrpc.newSpanStream, "span") {
-		Log("grpc").Info("success to make span stream")
+		Log("grpc").Infof("success to make span stream")
 		return spanGrpc.stream
 	}
 	return &spanStream{}
@@ -551,7 +551,7 @@ func (s *spanStream) close() {
 	}
 	s.stream.CloseAndRecv()
 	s.stream = nil
-	Log("grpc").Info("close span stream")
+	Log("grpc").Infof("close span stream")
 }
 
 func (s *spanStream) sendSpan(span *span) error {
@@ -761,7 +761,7 @@ func (statGrpc *statGrpc) newStatStream() bool {
 
 func (statGrpc *statGrpc) newStatStreamWithRetry() *statStream {
 	if newStreamWithRetry(statGrpc.agent, statGrpc.statConn, statGrpc.newStatStream, "stat") {
-		Log("grpc").Info("success to make stat stream")
+		Log("grpc").Infof("success to make stat stream")
 		return statGrpc.stream
 	}
 	return &statStream{}
@@ -773,7 +773,7 @@ func (s *statStream) close() {
 	}
 	s.stream.CloseAndRecv()
 	s.stream = nil
-	Log("grpc").Info("close stat stream")
+	Log("grpc").Infof("close stat stream")
 }
 
 func (s *statStream) sendStats(stats []*inspectorStats) error {
@@ -892,7 +892,7 @@ func (cmdGrpc *cmdGrpc) newHandleCommandStream() bool {
 
 func (cmdGrpc *cmdGrpc) newCommandStreamWithRetry() *cmdStream {
 	if newStreamWithRetry(cmdGrpc.agent, cmdGrpc.cmdConn, cmdGrpc.newHandleCommandStream, "command") {
-		Log("grpc").Info("success to make command stream")
+		Log("grpc").Infof("success to make command stream")
 		return cmdGrpc.stream
 	}
 	return &cmdStream{}
@@ -904,7 +904,7 @@ func (s *cmdStream) close() {
 	}
 	s.stream.CloseSend()
 	s.stream = nil
-	Log("grpc").Info("close command stream")
+	Log("grpc").Infof("close command stream")
 }
 
 func (s *cmdStream) sendCommandMessage() error {

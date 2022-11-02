@@ -9,8 +9,6 @@ import (
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
-	"github.com/sirupsen/logrus"
-	prefixed "github.com/x-cray/logrus-prefixed-formatter"
 )
 
 func init() {
@@ -18,22 +16,6 @@ func init() {
 	initConfig()
 	initGoroutine()
 	globalAgent = NoopAgent()
-}
-
-var logger *logrus.Logger
-
-func initLogger() {
-	logger = logrus.New()
-	formatter := new(prefixed.TextFormatter)
-	formatter.TimestampFormat = "2006-01-02 15:04:05.000000"
-	formatter.FullTimestamp = true
-	formatter.ForceFormatting = true
-	formatter.ForceColors = true
-	logger.Formatter = formatter
-}
-
-func Log(src string) *logrus.Entry {
-	return logger.WithFields(logrus.Fields{"module": "pinpoint", "src": src})
 }
 
 type agent struct {
@@ -113,7 +95,7 @@ func NewAgent(config *Config) (Agent, error) {
 		return NoopAgent(), nil
 	}
 
-	Log("agent").Info("new pinpoint agent")
+	Log("agent").Infof("new pinpoint agent")
 	config.printConfigString()
 
 	agent := &agent{
@@ -191,7 +173,7 @@ func connectGrpc(agent *agent, config *Config) {
 
 func (agent *agent) Shutdown() {
 	agent.shutdown = true
-	Log("agent").Info("shutdown pinpoint agent")
+	Log("agent").Infof("shutdown pinpoint agent")
 
 	if !agent.enable {
 		return
@@ -273,7 +255,7 @@ func (agent *agent) Enable() bool {
 }
 
 func (agent *agent) sendPingWorker() {
-	Log("agent").Info("start ping goroutine")
+	Log("agent").Infof("start ping goroutine")
 	defer agent.wg.Done()
 	stream := agent.agentGrpc.newPingStreamWithRetry()
 
@@ -293,11 +275,11 @@ func (agent *agent) sendPingWorker() {
 	}
 
 	stream.close()
-	Log("agent").Info("end ping goroutine")
+	Log("agent").Infof("end ping goroutine")
 }
 
 func (agent *agent) sendSpanWorker() {
-	Log("agent").Info("start span goroutine")
+	Log("agent").Infof("start span goroutine")
 	defer agent.wg.Done()
 
 	var (
@@ -334,7 +316,7 @@ func (agent *agent) sendSpanWorker() {
 	}
 
 	stream.close()
-	Log("agent").Info("end span goroutine")
+	Log("agent").Infof("end span goroutine")
 }
 
 func (agent *agent) enqueueSpan(span *span) bool {
@@ -354,7 +336,7 @@ func (agent *agent) enqueueSpan(span *span) bool {
 }
 
 func (agent *agent) sendMetaWorker() {
-	Log("agent").Info("start meta goroutine")
+	Log("agent").Infof("start meta goroutine")
 	defer agent.wg.Done()
 
 	for md := range agent.metaChan {
@@ -383,7 +365,7 @@ func (agent *agent) sendMetaWorker() {
 		}
 	}
 
-	Log("agent").Info("end meta goroutine")
+	Log("agent").Infof("end meta goroutine")
 }
 
 func (agent *agent) deleteMetaCache(md interface{}) {

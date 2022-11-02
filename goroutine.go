@@ -14,7 +14,6 @@ import (
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/asm"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
-	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -175,14 +174,7 @@ func parseProfile(r io.Reader) *goroutineDump {
 
 func curGoroutineID() int64 {
 	if goIdOffset > 0 {
-		id := goIdFromG()
-		if logger.Level >= logrus.DebugLevel {
-			dumpId := goIdFromDump()
-			if id != dumpId {
-				Log("cmd").Errorf("different goID: getg= %d, dump= %d", id, dumpId)
-			}
-		}
-		return id
+		return goIdFromG()
 	} else {
 		return goIdFromDump()
 	}

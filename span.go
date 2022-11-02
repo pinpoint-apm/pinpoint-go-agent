@@ -115,11 +115,11 @@ func (span *span) EndSpan() {
 		for se, ok := span.eventStack.pop(); ok; {
 			se.end()
 		}
-		Log("span").Warn("abnormal span - has unclosed event")
+		Log("span").Warnf("abnormal span - has unclosed event")
 	}
 
 	if !span.agent.enqueueSpan(span) {
-		Log("span").Trace("span channel - max capacity reached or closed")
+		Log("span").Tracef("span channel - max capacity reached or closed")
 	}
 }
 
@@ -141,7 +141,7 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 
 		Log("span").Tracef("span inject: %v, %d, %d, %s", span.txId, nextSpanId, span.spanId, se.destinationId)
 	} else {
-		Log("span").Warn("abnormal span - has no event")
+		Log("span").Warnf("abnormal span - has no event")
 	}
 }
 
@@ -225,7 +225,7 @@ func (span *span) EndSpanEvent() {
 			}
 		}
 	} else {
-		Log("span").Warn("abnormal span - has no event")
+		Log("span").Warnf("abnormal span - has no event")
 	}
 }
 
@@ -248,7 +248,7 @@ func (span *span) newAsyncSpan() Tracer {
 
 		return asyncSpan
 	} else {
-		Log("span").Warn("abnormal span - has no event")
+		Log("span").Warnf("abnormal span - has no event")
 		return NoopTracer()
 	}
 }
@@ -298,7 +298,7 @@ func (span *span) SpanEvent() SpanEventRecorder {
 	if se, ok := span.eventStack.peek(); ok {
 		return se
 	}
-	Log("span").Warn("abnormal span - has no event")
+	Log("span").Warnf("abnormal span - has no event")
 	return &defaultNoopSpanEvent
 }
 

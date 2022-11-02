@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cast"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -226,11 +225,7 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	profileViper := config.loadProfile(cmdEnvViper, cfgFileViper)
 	config.loadConfig(cmdEnvViper, cfgFileViper, profileViper)
 
-	logLevel := parseLogLevel(config.String(CfgLogLevel))
-	logger.SetLevel(logLevel)
-	if logLevel > logrus.InfoLevel {
-		logger.SetReportCaller(true)
-	}
+	logger.SetLevel(config.String(CfgLogLevel))
 
 	r, _ := regexp.Compile(cfgIdPattern)
 	appName := config.String(CfgAppName)
@@ -419,15 +414,6 @@ func isContainerEnv() bool {
 	}
 
 	return false
-}
-
-func parseLogLevel(level string) logrus.Level {
-	lvl, e := logrus.ParseLevel(level)
-	if e != nil {
-		Log("config").Errorf("invalid Log level: %v", e)
-		lvl = logrus.InfoLevel
-	}
-	return lvl
 }
 
 // WithAppName sets the application name.

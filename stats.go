@@ -184,7 +184,7 @@ func activeSpanCount(now time.Time) []int32 {
 }
 
 func (agent *agent) sendStatsWorker(config *Config) {
-	Log("stats").Info("start stat goroutine")
+	Log("stats").Infof("start stat goroutine")
 	defer agent.wg.Done()
 
 	initStats()
@@ -218,7 +218,7 @@ func (agent *agent) sendStatsWorker(config *Config) {
 	}
 
 	stream.close()
-	Log("stats").Info("end stat goroutine")
+	Log("stats").Infof("end stat goroutine")
 }
 
 func collectResponseTime(resTime int64) {

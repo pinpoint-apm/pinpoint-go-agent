@@ -21,7 +21,7 @@ type activeSpanInfo struct {
 }
 
 func (agent *agent) runCommandService() {
-	Log("cmd").Info("start command goroutine")
+	Log("cmd").Infof("start command goroutine")
 	defer agent.wg.Done()
 	gAtcStreamCount = 0
 
@@ -79,7 +79,7 @@ func (agent *agent) runCommandService() {
 		stream.close()
 	}
 
-	Log("cmd").Info("end command goroutine")
+	Log("cmd").Infof("end command goroutine")
 }
 
 func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
