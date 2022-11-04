@@ -113,6 +113,7 @@ func main() {
 		pinpoint.WithAppName("GoAsyncExample"),
 		pinpoint.WithAgentId("GoAsyncExampleAgent"),
 		pinpoint.WithLogLevel("debug"),
+		pinpoint.WithLogOutput(os.Getenv("HOME") + "/tmp/pinpoint.log"),
 		//pinpoint.WithSamplingCounterRate(100),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 		//phttp.WithHttpServerRecordRequestHeader([]string{"HEADERS-ALL"}),

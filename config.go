@@ -25,7 +25,10 @@ const (
 	CfgCollectorAgentPort         = "Collector.AgentPort"
 	CfgCollectorSpanPort          = "Collector.SpanPort"
 	CfgCollectorStatPort          = "Collector.StatPort"
-	CfgLogLevel                   = "LogLevel"
+	CfgLogLevelOld                = "LogLevel"
+	CfgLogLevel                   = "Log.Level"
+	CfgLogOutput                  = "Log.Output"
+	CfgLogMaxSize                 = "Log.MaxSize"
 	CfgSamplingType               = "Sampling.Type"
 	CfgSamplingCounterRate        = "Sampling.CounterRate"
 	CfgSamplingPercentRate        = "Sampling.PercentRate"
@@ -85,7 +88,10 @@ func initConfig() {
 	AddConfig(CfgCollectorAgentPort, CfgInt, 9991)
 	AddConfig(CfgCollectorSpanPort, CfgInt, 9993)
 	AddConfig(CfgCollectorStatPort, CfgInt, 9992)
+	AddConfig(CfgLogLevelOld, CfgString, "info")
 	AddConfig(CfgLogLevel, CfgString, "info")
+	AddConfig(CfgLogOutput, CfgString, "stderr")
+	AddConfig(CfgLogMaxSize, CfgInt, 10)
 	AddConfig(CfgSamplingType, CfgString, samplingTypeCounter)
 	AddConfig(CfgSamplingCounterRate, CfgInt, 1)
 	AddConfig(CfgSamplingPercentRate, CfgFloat, 100)
@@ -125,6 +131,7 @@ func envName(cfgName string) string {
 type Config struct {
 	cfgMap         map[string]*cfgMapItem
 	containerCheck bool
+	useNewLogOpt   bool
 	offGrpc        bool //for test
 }
 
@@ -225,6 +232,10 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	profileViper := config.loadProfile(cmdEnvViper, cfgFileViper)
 	config.loadConfig(cmdEnvViper, cfgFileViper, profileViper)
 
+	if config.Int(CfgLogMaxSize) < 1 {
+		config.cfgMap[CfgLogMaxSize].value = 10
+	}
+	logger.SetOutput(config.String(CfgLogOutput), config.Int(CfgLogMaxSize))
 	logger.SetLevel(config.String(CfgLogLevel))
 
 	r, _ := regexp.Compile(cfgIdPattern)
@@ -377,7 +388,13 @@ func (config *Config) loadProfile(cmdEnvViper *viper.Viper, cfgFileViper *viper.
 }
 
 func (config *Config) loadConfig(cmdEnvViper *viper.Viper, cfgFileViper *viper.Viper, profileViper *viper.Viper) {
-	for k, v := range config.cfgMap {
+	sortKeys := make([]string, 0)
+	for k := range config.cfgMap {
+		sortKeys = append(sortKeys, k)
+	}
+	sort.Strings(sortKeys)
+	for _, k := range sortKeys {
+		v := config.cfgMap[k]
 		if cmdEnvViper.IsSet(v.cmdKey) {
 			config.setFinalValue(k, v, cmdEnvViper.Get(v.cmdKey))
 		} else if cmdEnvViper.IsSet(v.envKey) {
@@ -400,6 +417,10 @@ func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value inte
 	item.value = value
 	if cfgName == CfgIsContainerEnv {
 		config.containerCheck = false
+	} else if cfgName == CfgLogLevel {
+		config.useNewLogOpt = true
+	} else if cfgName == CfgLogLevelOld && !config.useNewLogOpt {
+		config.cfgMap[CfgLogLevel].value = value
 	}
 }
 
@@ -483,6 +504,20 @@ func WithCollectorStatPort(port int) ConfigOption {
 func WithLogLevel(level string) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgLogLevel].value = level
+	}
+}
+
+// WithLogOutput sets the output for agent logger.
+func WithLogOutput(output string) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgLogOutput].value = output
+	}
+}
+
+// WithLogMaxSize sets the max size of output file for agent logger.
+func WithLogMaxSize(size int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgLogMaxSize].value = size
 	}
 }
 

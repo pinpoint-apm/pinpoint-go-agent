@@ -33,6 +33,8 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, 9993, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
 			assert.Equal(t, 9992, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
 			assert.Equal(t, "info", c.String(CfgLogLevel), CfgLogLevel)
+			assert.Equal(t, "stderr", c.String(CfgLogOutput), CfgLogOutput)
+			assert.Equal(t, 10, c.Int(CfgLogMaxSize), CfgLogMaxSize)
 			assert.Equal(t, samplingTypeCounter, c.String(CfgSamplingType), CfgSamplingType)
 			assert.Equal(t, 1, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
 			assert.Equal(t, float64(100), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
@@ -67,6 +69,8 @@ func TestNewConfig_WithFunc(t *testing.T) {
 		WithCollectorSpanPort(8888),
 		WithCollectorStatPort(9999),
 		WithLogLevel("error"),
+		WithLogOutput("stdout"),
+		WithLogMaxSize(100),
 		WithSamplingType("percent"),
 		WithSamplingPercentRate(90),
 		WithSamplingCounterRate(200),
@@ -100,6 +104,8 @@ func TestNewConfig_WithFunc(t *testing.T) {
 			assert.Equal(t, 8888, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
 			assert.Equal(t, 9999, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
 			assert.Equal(t, "error", c.String(CfgLogLevel), CfgLogLevel)
+			assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
+			assert.Equal(t, 100, c.Int(CfgLogMaxSize), CfgLogMaxSize)
 			assert.Equal(t, "percent", c.String(CfgSamplingType), CfgSamplingType)
 			assert.Equal(t, 200, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
 			assert.Equal(t, float64(90), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
@@ -363,7 +369,9 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 	os.Setenv("PINPOINT_GO_SAMPLING_CONTINUETHROUGHPUT", "200")
 	os.Setenv("PINPOINT_GO_STAT_COLLECTINTERVAL", "3000")
 	os.Setenv("PINPOINT_GO_STAT_BATCHCOUNT", "11")
-	os.Setenv("PINPOINT_GO_LOGLEVEL", "trace")
+	os.Setenv("PINPOINT_GO_LOG_LEVEL", "trace")
+	os.Setenv("PINPOINT_GO_LOG_OUTPUT", "stdout")
+	os.Setenv("PINPOINT_GO_LOG_MAXSIZE", "50")
 	os.Setenv("PINPOINT_GO_ISCONTAINERENV", "false")
 	os.Setenv("PINPOINT_GO_CONFIGFILE", "example/pinpoint-config.yaml")
 	os.Setenv("PINPOINT_GO_ENABLE", "false")
@@ -380,6 +388,8 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 			assert.Equal(t, 8100, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
 			assert.Equal(t, 8200, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
 			assert.Equal(t, "trace", c.String(CfgLogLevel), CfgLogLevel)
+			assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
+			assert.Equal(t, 50, c.Int(CfgLogMaxSize), CfgLogMaxSize)
 			assert.Equal(t, "Percent", c.String(CfgSamplingType), CfgSamplingType)
 			assert.Equal(t, 100, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
 			assert.Equal(t, float64(120), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
@@ -436,7 +446,9 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 		"--pinpoint-sampling-continuethroughput=600",
 		"--pinpoint-stat-collectinterval=6000",
 		"--pinpoint-stat-batchcount=5",
-		"--pinpoint-loglevel=error",
+		"--pinpoint-log-level=error",
+		"--pinpoint-log-output=stdout",
+		"--pinpoint-log-maxsize=20",
 		"-app-arg4",
 		"--pinpoint-iscontainerenv=true",
 		"--pinpoint-configfile=example/pinpoint-config.yaml",
@@ -458,6 +470,8 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 			assert.Equal(t, 7100, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
 			assert.Equal(t, 7200, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
 			assert.Equal(t, "error", c.String(CfgLogLevel), CfgLogLevel)
+			assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
+			assert.Equal(t, 20, c.Int(CfgLogMaxSize), CfgLogMaxSize)
 			assert.Equal(t, "percent", c.String(CfgSamplingType), CfgSamplingType)
 			assert.Equal(t, 10, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
 			assert.Equal(t, 0.0001, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)

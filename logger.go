@@ -1,9 +1,12 @@
 package pinpoint
 
 import (
+	"os"
+	"strings"
+
 	"github.com/sirupsen/logrus"
 	prefixed "github.com/x-cray/logrus-prefixed-formatter"
-	"strings"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 var logger Logger
@@ -44,14 +47,16 @@ func parseLogLevel(level string) uint32 {
 	case "trace":
 		return TraceLevel
 	default:
-		Log("config").Errorf("invalid Log level: %s", level)
+		Log("config").Errorf("invalid log level: %s", level)
 		return InfoLevel
 	}
 }
 
 type Logger interface {
 	SetLevel(level string)
+	SetOutput(out string, maxSize int)
 	NewEntry(src string) LogEntry
+	Logger() interface{}
 }
 
 type LogEntry interface {
@@ -66,6 +71,10 @@ func SetLogger(l Logger) {
 	logger = l
 }
 
+func GetLogger() Logger {
+	return logger
+}
+
 type logrusLogger struct {
 	logger *logrus.Logger
 }
@@ -78,9 +87,31 @@ func (l *logrusLogger) SetLevel(level string) {
 	}
 }
 
+func (l *logrusLogger) SetOutput(out string, maxSize int) {
+	Log("config").Infof("log output: %s", out)
+
+	if strings.EqualFold(out, "stdout") {
+		l.logger.SetOutput(os.Stdout)
+	} else if strings.EqualFold(out, "stderr") {
+		l.logger.SetOutput(os.Stderr)
+	} else {
+		l.logger.SetOutput(&lumberjack.Logger{
+			Filename:   out,
+			MaxSize:    maxSize,
+			MaxBackups: 1,
+			MaxAge:     30,
+			Compress:   false,
+		})
+	}
+}
+
 func (l *logrusLogger) NewEntry(src string) LogEntry {
 	entry := l.logger.WithFields(logrus.Fields{"module": "pinpoint", "src": src})
 	return &logrusEntry{entry: entry}
+}
+
+func (l *logrusLogger) Logger() interface{} {
+	return l.logger
 }
 
 type logrusEntry struct {
