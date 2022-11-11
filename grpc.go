@@ -3,6 +3,11 @@ package pinpoint
 import (
 	"context"
 	"fmt"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 	"math"
 	"math/rand"
 	"net"
@@ -15,11 +20,7 @@ import (
 	"github.com/golang/protobuf/ptypes/wrappers"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/connectivity"
-	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
 )
 
 const (
@@ -117,15 +118,15 @@ type agentGrpc struct {
 }
 
 var kacp = keepalive.ClientParameters{
-	Time:                30 * time.Second,
-	Timeout:             60 * time.Second,
+	Time:                5 * time.Minute,
+	Timeout:             30 * time.Minute,
 	PermitWithoutStream: true,
 }
 
 func connectCollector(serverAddr string) (*grpc.ClientConn, error) {
 	opts := make([]grpc.DialOption, 0)
 	opts = append(opts, grpc.WithKeepaliveParams(kacp))
-	opts = append(opts, grpc.WithInsecure())
+	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 
 	Log("grpc").Infof("connect to collector: %s", serverAddr)
 	conn, err := grpc.Dial(serverAddr, opts...)
@@ -382,6 +383,7 @@ func waitUntilReady(grpcConn *grpc.ClientConn, timeout time.Duration, which stri
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	grpcConn.Connect()
 	state := grpcConn.GetState()
 	Log("grpc").Infof("wait %s connection ready - state: %s, timeout: %s", which, state.String(), timeout.String())
 
@@ -389,12 +391,8 @@ func waitUntilReady(grpcConn *grpc.ClientConn, timeout time.Duration, which stri
 		if grpcConn.WaitForStateChange(ctx, state) {
 			state = grpcConn.GetState()
 		} else {
-			// To exit IDLE state, it needs to try grpc action.
-			if state == connectivity.Idle && timeout.Seconds() > 30 {
-				return true
-			} else {
-				return false
-			}
+			//timeout
+			return false
 		}
 	}
 
@@ -406,6 +404,7 @@ func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc f
 		if newStreamFunc() {
 			return true
 		}
+
 		if !agent.offGrpc {
 			for retry := 1; agent.Enable(); retry++ {
 				if waitUntilReady(grpcConn, backOffSleep(retry), which) {
