@@ -167,6 +167,19 @@ type DistributedTracingContextWriter interface {
 	Set(key string, value string)
 }
 
+// keys of distributed tracing headers
+const (
+	HeaderTraceId                    = "Pinpoint-TraceID"
+	HeaderSpanId                     = "Pinpoint-SpanID"
+	HeaderParentSpanId               = "Pinpoint-pSpanID"
+	HeaderSampled                    = "Pinpoint-Sampled"
+	HeaderFlags                      = "Pinpoint-Flags"
+	HeaderParentApplicationName      = "Pinpoint-pAppName"
+	HeaderParentApplicationType      = "Pinpoint-pAppType"
+	HeaderParentApplicationNamespace = "Pinpoint-pAppNamespace"
+	HeaderHost                       = "Pinpoint-Host"
+)
+
 // TransactionId represents that different RPCs are associated with each other as a single transaction.
 type TransactionId struct {
 	AgentId   string

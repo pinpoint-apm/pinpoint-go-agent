@@ -221,13 +221,13 @@ func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string, re
 		return NoopTracer()
 	}
 
-	sampled := reader.Get(headerSampled)
+	sampled := reader.Get(HeaderSampled)
 	if sampled == "s0" {
 		incrUnSampleCont()
 		return newUnSampledSpan(rpcName)
 	}
 
-	tid := reader.Get(headerTraceId)
+	tid := reader.Get(HeaderTraceId)
 	if tid == "" {
 		return agent.samplingSpan(agent.sampler.isNewSampled, operation, rpcName, reader)
 	} else {
@@ -268,7 +268,6 @@ func (agent *agent) sendPingWorker() {
 
 			stream.close()
 			stream = agent.agentGrpc.newPingStreamWithRetry()
-			continue
 		}
 
 		time.Sleep(60 * time.Second)

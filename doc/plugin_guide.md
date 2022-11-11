@@ -1049,35 +1049,30 @@ func redigo_test(w http.ResponseWriter, r *http.Request) {
 This package instruments Kafka consumers and producers.
 
 ### Consumer
-To instrument a Kafka consumer, use ConsumeMessage or ConsumeMessageContext.
+To instrument a Kafka consumer, ConsumeMessageContext.
+In order to display the kafka broker on the pinpoint screen, a context with broker addresses must be created and delivered using NewContext.
 
+ConsumePartition example:
 ``` go
+ctx := ppsarama.NewContext(context.Background(), broker)
 pc, _ := consumer.ConsumePartition(topic, partition, offset)
 for msg := range pc.Messages() {
-    ppsarama.ConsumeMessage(processMessage, msg)
+    ppsarama.ConsumeMessageContext(processMessage, ctx, msg)
 }
 ```
-
-ConsumeMessage wraps a sarama.ConsumerMessage and passes a ConsumerMessage having pinpoint.Tracer to HandlerFunc.
-In HandlerFunc, this tracer can be obtained by using the ConsumerMessage.Tracer function.
-
-``` go
-func processMessage(msg *ppsarama.ConsumerMessage) error {
-    tracer := msg.Tracer()
-    defer tracer.NewSpanEvent("processMessage").EndSpanEvent()
-
-    fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
-    fmt.Println("retrieving message: ", string(msg.Value))
-```
-
-For sarama.ConsumerGroupHandler, ConsumeMessageContext is provided.
-
+ConsumerGroupHandler example:
 ``` go
 func (h exampleConsumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
     ctx := sess.Context()
     for msg := range claim.Messages() {
         _ = ppsarama.ConsumeMessageContext(process, ctx, msg)
     }
+}
+
+func main() {     
+    ctx := ppsarama.NewContext(context.Background(), broker)
+    handler := exampleConsumerGroupHandler{}
+    err := group.Consume(ctx, topics, handler)
 ```
 
 ConsumeMessageContext passes a context added pinpoint.Tracer to HandlerContextFunc.
@@ -1101,36 +1096,35 @@ import (
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
 )
 
-func processMessage(msg *ppsarama.ConsumerMessage) error {
-    tracer := msg.Tracer()
+func processMessage(ctx context.Context, msg *sarama.ConsumerMessage) error {
+    tracer := pinpoint.FromContext(ctx)
     defer tracer.NewSpanEvent("processMessage").EndSpanEvent()
     fmt.Println("retrieving message: ", string(msg.Value))
     ...
 }
 
-func subscribe(topic string, consumer sarama.Consumer) {
-    partitionList, err := consumer.Partitions(topic)
+func subscribe() {
+    broker := []string{"localhost:9092"}
+    config := sarama.NewConfig()
+    consumer, err := sarama.NewConsumer(broker, config)
     ...
     
+    ctx := ppsarama.NewContext(context.Background(), broker)
     for _, partition := range partitionList {
         pc, _ := consumer.ConsumePartition(topic, partition, initialOffset)
 
         go func(pc sarama.PartitionConsumer) {
             for msg := range pc.Messages() {
-                ppsarama.ConsumeMessage(processMessage, msg)
+                ppsarama.ConsumeMessageContext(processMessage, ctx, msg)
             }
-            wg.Done()
         }(pc)
-    ...
+	...	
 }
 
 func main() {
     ... //setup agent
 
-    config := sarama.NewConfig()
-    config.Version = sarama.V2_3_0_0
-    consumer, err := sarama.NewConsumer([]string{"127.0.0.1:9092"}, config)
-    subscribe("topic", consumer)
+    subscribe()
 }
 ```
 [Full Example Source](/plugin/sarama/example/consumer.go)

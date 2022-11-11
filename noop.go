@@ -129,7 +129,7 @@ func (span *noopSpan) SetAcceptorHost(host string) {}
 
 func (span *noopSpan) Inject(writer DistributedTracingContextWriter) {
 	if writer != nil {
-		writer.Set(headerSampled, "s0")
+		writer.Set(HeaderSampled, "s0")
 	}
 }
 

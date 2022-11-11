@@ -10,7 +10,7 @@ func Test_defaultSpan(t *testing.T) {
 	span := defaultSpan()
 
 	assert.Equal(t, span.parentSpanId, int64(-1), "parentSpanId")
-	assert.Equal(t, span.parentAppType, -1, "parentAppType")
+	assert.Equal(t, span.parentAppType, 1, "parentAppType")
 	assert.Equal(t, span.eventDepth, int32(1), "eventDepth")
 	assert.Equal(t, span.serviceType, int32(ServiceTypeGoApp), "serviceType")
 	assert.NotNil(t, span.eventStack, "stack")
@@ -40,9 +40,9 @@ func Test_span_Extract(t *testing.T) {
 	}
 
 	m := map[string]string{
-		headerTraceId:      "t123456^12345^1",
-		headerSpanId:       "67890",
-		headerParentSpanId: "123",
+		HeaderTraceId:      "t123456^12345^1",
+		HeaderSpanId:       "67890",
+		HeaderParentSpanId: "123",
 	}
 
 	tests := []struct {
@@ -87,7 +87,7 @@ func Test_span_Inject(t *testing.T) {
 			span.NewSpanEvent("t")
 
 			span.Inject(tt.args.writer)
-			assert.Equal(t, m[headerTraceId], span.txId.String(), "headerTraceId")
+			assert.Equal(t, m[HeaderTraceId], span.txId.String(), "headerTraceId")
 		})
 	}
 }
