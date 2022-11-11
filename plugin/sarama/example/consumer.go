@@ -15,10 +15,6 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
 )
 
-const ctopic = "go-sarama-test"
-
-var cbrokers = []string{"127.0.0.1:9092"}
-
 func outGoingRequest(ctx context.Context) string {
 	client := pphttp.WrapClient(nil)
 
@@ -35,8 +31,8 @@ func outGoingRequest(ctx context.Context) string {
 	return string(ret)
 }
 
-func processMessage(msg *ppsarama.ConsumerMessage) error {
-	tracer := msg.Tracer()
+func processMessage(ctx context.Context, msg *sarama.ConsumerMessage) error {
+	tracer := pinpoint.FromContext(ctx)
 	defer tracer.NewSpanEvent("processMessage").EndSpanEvent()
 
 	fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
@@ -48,21 +44,31 @@ func processMessage(msg *ppsarama.ConsumerMessage) error {
 	return nil
 }
 
-func subscribe(topic string, consumer sarama.Consumer) {
-	partitionList, err := consumer.Partitions(topic) //get all partitions on the given topic
+func subscribe() {
+	broker := []string{"localhost:9092"}
+	config := sarama.NewConfig()
+	config.Version = sarama.V2_3_0_0
+	consumer, err := sarama.NewConsumer(broker, config)
+	if err != nil {
+		log.Fatalf("Could not create consumer: %v", err)
+	}
+
+	topic := "go-sarama-test"
+	partitionList, err := consumer.Partitions(topic)
 	if err != nil {
 		fmt.Println("Error retrieving partitionList ", err)
 	}
-	initialOffset := sarama.OffsetOldest //get offset for the oldest message on the topic
+	initialOffset := sarama.OffsetNewest
 
 	var wg sync.WaitGroup
+	ctx := ppsarama.NewContext(context.Background(), broker)
 
 	for _, partition := range partitionList {
 		pc, _ := consumer.ConsumePartition(topic, partition, initialOffset)
 
 		go func(pc sarama.PartitionConsumer) {
 			for msg := range pc.Messages() {
-				ppsarama.ConsumeMessage(processMessage, msg)
+				ppsarama.ConsumeMessageContext(processMessage, ctx, msg)
 			}
 			wg.Done()
 		}(pc)
@@ -84,12 +90,5 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	config := sarama.NewConfig()
-	config.Version = sarama.V2_3_0_0
-	consumer, err := sarama.NewConsumer(cbrokers, config)
-	if err != nil {
-		log.Fatalf("Could not create consumer: %v", err)
-	}
-
-	subscribe(ctopic, consumer)
+	subscribe()
 }

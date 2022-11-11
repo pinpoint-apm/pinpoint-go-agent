@@ -600,7 +600,11 @@ func makePSpan(span *span) *pb.PSpanMessage {
 					Rpc:        span.rpcName,
 					EndPoint:   span.endPoint,
 					RemoteAddr: span.remoteAddr,
-					ParentInfo: nil,
+					ParentInfo: &pb.PParentInfo{
+						ParentApplicationName: span.parentAppName,
+						ParentApplicationType: int32(span.parentAppType),
+						AcceptorHost:          span.acceptorHost,
+					},
 				},
 				Annotation:             span.annotations.list,
 				ApiId:                  span.apiId,
@@ -618,14 +622,6 @@ func makePSpan(span *span) *pb.PSpanMessage {
 		gspan.GetSpan().ExceptionInfo = &pb.PIntStringValue{
 			IntValue:    span.errorFuncId,
 			StringValue: &wrappers.StringValue{Value: span.errorString},
-		}
-	}
-
-	if span.parentAppName != "" {
-		gspan.GetSpan().AcceptEvent.ParentInfo = &pb.PParentInfo{
-			ParentApplicationName: span.parentAppName,
-			ParentApplicationType: int32(span.parentAppType),
-			AcceptorHost:          span.acceptorHost,
 		}
 	}
 

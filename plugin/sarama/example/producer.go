@@ -14,10 +14,7 @@ import (
 
 var fakeDB string
 
-const topic = "go-sarama-test"
-
 var producer sarama.SyncProducer
-var brokers = []string{"127.0.0.1:9092"}
 
 func prepareMessage(topic, message string) *sarama.ProducerMessage {
 	msg := &sarama.ProducerMessage{
@@ -32,6 +29,7 @@ func prepareMessage(topic, message string) *sarama.ProducerMessage {
 func save(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
+	topic := "go-sarama-test"
 	msg := prepareMessage(topic, "Hello, Kafka!!")
 	ppsarama.WithContext(r.Context(), producer)
 	partition, offset, err := producer.SendMessage(msg)
@@ -62,6 +60,7 @@ func main() {
 	config.Producer.Return.Successes = true
 	config.Version = sarama.V2_3_0_0
 
+	var brokers = []string{"localhost:9092"}
 	producer, err = ppsarama.NewSyncProducer(brokers, config)
 	if err != nil {
 		log.Fatalf("Could not create producer: %v ", err)

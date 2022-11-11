@@ -79,7 +79,8 @@ func defaultSpan() *span {
 	span := span{}
 
 	span.parentSpanId = -1
-	span.parentAppType = -1
+	span.parentAppName = ""
+	span.parentAppType = 1 //UNKNOWN
 	span.eventDepth = 1
 	span.serviceType = ServiceTypeGoApp
 	span.startTime = time.Now()

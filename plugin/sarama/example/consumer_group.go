@@ -3,11 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
+
 	"github.com/Shopify/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
-	"log"
-	"os"
 )
 
 type exampleConsumerGroupHandler struct {
@@ -50,7 +51,8 @@ func main() {
 	config.Version = sarama.V2_3_0_0 // specify appropriate version
 	config.Consumer.Return.Errors = true
 
-	group, err := sarama.NewConsumerGroup([]string{"localhost:9092"}, "my-group", config)
+	broker := []string{"localhost:9092"}
+	group, err := sarama.NewConsumerGroup(broker, "my-group", config)
 	if err != nil {
 		panic(err)
 	}
@@ -64,7 +66,7 @@ func main() {
 	}()
 
 	// Iterate over consumer sessions.
-	ctx := context.Background()
+	ctx := ppsarama.NewContext(context.Background(), broker)
 	topics := []string{"go-sarama-test"}
 	handler := exampleConsumerGroupHandler{}
 
