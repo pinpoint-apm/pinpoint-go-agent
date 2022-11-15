@@ -3,6 +3,7 @@
 | plugin package                               | source directory                          | instrumented package                                                           |
 |----------------------------------------------|-------------------------------------------|--------------------------------------------------------------------------------|
 | [pphttp](plugin_guide.md#pphttp)             | [plugin/http](/plugin/http)               | Go standard HTTP package                                                       |
+| [ppbeego](plugin_guide.md#ppbeego)           | [plugin/beego](/plugin/beego)             | beego/beego/v2 package (https://github.com/beego/beego)                        |
 | [ppchi](plugin_guide.md#ppchi)               | [plugin/chi](/plugin/chi)                 | go-chi/chi package (https://github.com/go-chi/chi)                             |
 | [ppecho](plugin_guide.md#ppecho)             | [plugin/echo](/plugin/echo)               | labstack/echo package (https://github.com/labstack/echo)                       |
 | [ppechov4](plugin_guide.md#ppechov4)         | [plugin/echov4](/plugin/echov4)           | labstack/echo/v4 package (https://github.com/labstack/echo)                    |
@@ -128,6 +129,83 @@ func main() {
 
 ```
 [Full Example Source](/plugin/http/example/http_server.go)
+
+#### Config Options
+* [Http.Client.RecordRequestHeader](/doc/config.md#Http.Client.RecordRequestHeader)
+* [Http.Client.RecordResponseHeader](/doc/config.md#Http.Client.RecordResponseHeader)
+* [Http.Client.RecordRequestCookie](/doc/config.md#Http.Client.RecordRequestCookie)
+
+## ppbeego
+### server
+This package instruments inbound requests handled by a beego instance.
+Register the Middleware as the middleware of the router to trace all handlers:
+
+``` go
+web.RunWithMiddleWares("localhost:8080", ppbeego.Middleware())
+```
+
+For each request, a pinpoint.Tracer is stored in the request context.
+By using the pinpoint.FromContext function, this tracer can be obtained in your handler.
+Alternatively, the context of the request may be propagated where the context that contains the pinpoint.Tracer is required.
+
+``` go
+package main
+
+import (
+    "github.com/beego/beego/v2/server/web"
+    "github.com/pinpoint-apm/pinpoint-go-agent"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego"
+)
+
+func (m *MainController) Hello() {
+    tracer := pinpoint.FromContext(m.Ctx.Request.Context())
+    defer tracer.NewSpanEvent("f1").EndSpanEvent()
+
+    m.Ctx.WriteString("hello, world!!")
+}
+
+func main() {
+    //setup agent
+ 
+    web.Router("/", &MainController{})
+    web.RunWithMiddleWares("localhost:9000", ppbeego.Middleware())
+}
+
+```
+
+#### Config Options
+* [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
+* [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
+* [Http.Server.ExcludeMethod](/doc/config.md#Http.Server.ExcludeMethod)
+* [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
+* [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
+* [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
+
+### client
+This package instruments outbound requests and add distributed tracing headers.
+Use DoRequest.
+
+``` go
+req := httplib.Get("http://localhost:9090/")
+ppbeego.DoRequest(tracer, req)
+```
+``` go
+import (
+	"github.com/beego/beego/v2/client/httplib"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego"
+)
+
+func (m *MainController) Get() {
+    tracer := pinpoint.FromContext(m.Ctx.Request.Context())
+
+    req := httplib.Get("http://localhost:9090/")
+    ppbeego.DoRequest(tracer, req)
+    str, _ := req.String()
+    m.Ctx.WriteString(str)
+}
+```
+[Full Example Source](/plugin/beego/example/beego_server.go)
 
 #### Config Options
 * [Http.Client.RecordRequestHeader](/doc/config.md#Http.Client.RecordRequestHeader)

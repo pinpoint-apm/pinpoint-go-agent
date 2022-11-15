@@ -1,17 +1,17 @@
-// Package ppbeegov2 instruments the beego/v2 package (https://github.com/beego/beego).
+// Package ppbeego instruments the beego/v2 package (https://github.com/beego/beego).
 //
 // This package instruments inbound requests handled by a beego instance.
 // Register the Middleware as the middleware of the router to trace all handlers:
 //
-//  web.RunWithMiddleWares("localhost:8080", ppbeegov2.Middleware())
+//  web.RunWithMiddleWares("localhost:8080", ppbeego.Middleware())
 //
 // This package instruments outbound requests and add distributed tracing headers.
 // Use DoRequest.
 //
 //  req := httplib.Get("http://localhost:9090/")
-//  ppbeegov2.DoRequest(tracer, req)
+//  ppbeego.DoRequest(tracer, req)
 //
-package ppbeegov2
+package ppbeego
 
 import (
 	"net/http"

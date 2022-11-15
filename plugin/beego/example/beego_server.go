@@ -7,7 +7,7 @@ import (
 	"github.com/beego/beego/v2/client/httplib"
 	"github.com/beego/beego/v2/server/web"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/beegov2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego"
 )
 
 func main() {
@@ -24,7 +24,7 @@ func main() {
 	defer agent.Shutdown()
 
 	web.Router("/", &MainController{})
-	web.RunWithMiddleWares("localhost:9000", ppbeegov2.Middleware())
+	web.RunWithMiddleWares("localhost:9000", ppbeego.Middleware())
 }
 
 type MainController struct {
@@ -37,7 +37,7 @@ func (m *MainController) Get() {
 	defer tracer.NewSpanEvent("f2").EndSpanEvent()
 
 	req := httplib.Get("http://localhost:9090/")
-	ppbeegov2.DoRequest(tracer, req)
+	ppbeego.DoRequest(tracer, req)
 	str, err := req.String()
 	if err == nil {
 		m.Ctx.WriteString(str)

@@ -1,4 +1,4 @@
-module github.com/pinpoint-apm/pinpoint-go-agent/plugin/beegov2
+module github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego
 
 go 1.15
 
