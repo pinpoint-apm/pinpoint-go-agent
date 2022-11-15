@@ -97,15 +97,22 @@ func asyncWithContext(w http.ResponseWriter, r *http.Request) {
 
 func asyncFunc(asyncCtx context.Context) {
 	w := asyncCtx.Value("wr").(http.ResponseWriter)
+	wg := asyncCtx.Value("wg").(*sync.WaitGroup)
+	defer wg.Done()
 	outGoingRequest(w, asyncCtx)
 }
 
 func asyncWithWrapper(w http.ResponseWriter, r *http.Request) {
 	tracer := pinpoint.FromContext(r.Context())
+	wg := &sync.WaitGroup{}
+
 	ctx := context.WithValue(context.Background(), "wr", w)
+	ctx = context.WithValue(ctx, "wg", wg)
 	f := tracer.WrapGoroutine("asyncFunc", asyncFunc, ctx)
+
+	wg.Add(1)
 	go f()
-	time.Sleep(100 * time.Millisecond)
+	wg.Wait()
 }
 
 func main() {
