@@ -116,6 +116,29 @@ func Test_span_NewSpanEvent(t *testing.T) {
 	}
 }
 
+func Test_span_EndSpan(t *testing.T) {
+	type args struct {
+		spanEvents []string
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		{"check end span without span events", args{[]string{}}},
+		{"check end span clears all the span events", args{[]string{"t1", "t2", "t3"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			span := defaultTestSpan()
+			for _, event := range tt.args.spanEvents {
+				span.NewSpanEvent(event)
+			}
+			span.EndSpan()
+			assert.Equal(t, span.eventStack.len(), 0, "stack.len()")
+		})
+	}
+}
+
 func Test_span_EndSpanEvent(t *testing.T) {
 	type args struct {
 		operationName string
