@@ -101,7 +101,11 @@ func (span *span) EndSpan() {
 	}
 
 	if span.eventStack.len() > 0 {
-		for se, ok := span.eventStack.pop(); ok; {
+		for {
+			se, ok := span.eventStack.pop()
+			if !ok {
+				break
+			}
 			se.end()
 		}
 		Log("span").Warnf("abnormal span - has unclosed event")
