@@ -22,6 +22,7 @@
 | [ppgorm](plugin_guide.md#ppgorm)             | [plugin/gorm](/plugin/gorm)               | go-gorm/gorm package (https://github.com/go-gorm/gorm)                         |
 | [ppgrpc](plugin_guide.md#ppgrpc)             | [plugin/grpc](/plugin/grpc)               | grpc/grpc-go package (https://github.com/grpc/grpc-go)                         |
 | [pphttprouter](plugin_guide.md#pphttprouter) | [plugin/httprouter](/plugin/httprouter)   | julienschmidt/httprouter package (https://github.com/julienschmidt/httprouter) |
+| [ppkratos](plugin_guide.md#ppkratos )        | [plugin/kratos](/plugin/kratos)           | go-kratos/kratos/v2 package (https://github.com/go-kratos/kratos)              |
 | [pplogrus](plugin_guide.md#pplogrus)         | [plugin/logrus](/plugin/logrus)           | sirupsen/logrus package (https://github.com/sirupsen/logrus)                   |
 | [ppmongo](plugin_guide.md#ppmongo)           | [plugin/mongodriver](/plugin/mongodriver) | mongodb/mongo-go-driver package (https://github.com/mongodb/mongo-go-driver)   |
 | [ppmysql](plugin_guide.md#ppmysql)           | [plugin/mysql](/plugin/mysql)             | go-sql-driver/mysql package (https://github.com/go-sql-driver/mysql)           |
@@ -1074,6 +1075,107 @@ func main() {
 * [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
 * [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
 * [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
+
+## ppkratos
+This package instruments kratos servers and clients.
+
+### server
+To instrument a kratos server, use ServerMiddleware.
+
+``` go
+httpSrv := http.NewServer(
+    http.Address(":8000"),
+    http.Middleware(ppkratos.ServerMiddleware()),
+)
+```
+
+The server middleware adds the pinpoint.Tracer to the kratos server handler's context.
+By using the pinpoint.FromContext function, this tracer can be obtained.
+Alternatively, the context of the handler may be propagated where the context that contains the pinpoint.Tracer is required.
+
+``` go
+func (s *server) SayHello(ctx context.Context, in *helloworld.HelloRequest) (*helloworld.HelloReply, error) {
+    tracer := pinpoint.FromContext(ctx)
+    defer tracer.NewSpanEvent("f1").EndSpanEvent()
+    ...
+}
+```
+``` go
+package main
+
+import (
+    "github.com/go-kratos/kratos/v2"
+    "github.com/go-kratos/kratos/v2/transport"
+    "github.com/go-kratos/kratos/v2/transport/http"
+    "github.com/pinpoint-apm/pinpoint-go-agent"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratos"
+)
+
+type server struct {
+    helloworld.UnimplementedGreeterServer
+}
+
+func (s *server) SayHello(ctx context.Context, in *helloworld.HelloRequest) (*helloworld.HelloReply, error) {
+    tracer := pinpoint.FromContext(ctx)
+    defer tracer.NewSpanEvent("f1").EndSpanEvent()
+
+    return &helloworld.HelloReply{Message: fmt.Sprintf("Hello %+v", in.Name)}, nil
+}
+
+func main() {
+    ... //setup agent
+	
+    s := &server{}
+    httpSrv := http.NewServer(
+        http.Address(":8000"),
+        http.Middleware(
+            ppkratos.ServerMiddleware(),
+        ),
+    )
+    ...
+}
+
+```
+[Full Example Source](/plugin/kratos/example/server.go)
+
+### client
+To instrument a kratos client, use ClientMiddleware.
+
+``` go
+conn, err := transhttp.NewClient(
+    context.Background(),
+    transhttp.WithMiddleware(ppkratos.ClientMiddleware()),
+    transhttp.WithEndpoint("127.0.0.1:8000"),
+)
+```
+
+It is necessary to pass the context containing the pinpoint.Tracer to kratos client.
+
+``` go
+client := pb.NewGreeterHTTPClient(conn)
+reply, err := client.SayHello(pinpoint.NewContext(context.Background(), tracer), &pb.HelloRequest{Name: "kratos"})
+```
+
+``` go
+import (
+    transhttp "github.com/go-kratos/kratos/v2/transport/http"
+    "github.com/pinpoint-apm/pinpoint-go-agent"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratos"
+)
+
+func callHTTP(w http.ResponseWriter, r *http.Request) {
+    conn, err := transhttp.NewClient(
+        context.Background(),
+        transhttp.WithMiddleware(ppkratos.ClientMiddleware()),
+        transhttp.WithEndpoint("127.0.0.1:8000"),
+    )
+
+    client := pb.NewGreeterHTTPClient(conn)
+    reply, err := client.SayHello(r.Context(), &pb.HelloRequest{Name: "kratos"})
+    ...
+}
+```
+[Full Example Source](/plugin/kratos/example/client.go)
 
 ## pplogrus
 This package allows additional transaction id and span id of the pinpoint span to be printed in the log message.

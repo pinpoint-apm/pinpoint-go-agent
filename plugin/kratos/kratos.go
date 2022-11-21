@@ -1,21 +1,34 @@
 // Package ppkratos instruments the go-kratos/kratos/v2 package (https://github.com/go-kratos/kratos).
 //
 // This package instruments kratos servers and clients.
-// To instrument a kratos server, use ppkratos.ServerMiddleware.
+// To instrument a kratos server, use ServerMiddleware.
 //
-//   httpSrv := http.NewServer(
-//     http.Address(":8000"),
-//     http.Middleware(ppkratos.ServerMiddleware()),
-//   )
+//	httpSrv := http.NewServer(
+//		http.Address(":8000"),
+//		http.Middleware(ppkratos.ServerMiddleware()),
+//	)
 //
-// To instrument a gRPC client, use ppkratos.ClientMiddleware.
+// The server middleware adds the pinpoint.Tracer to the kratos server handler's context.
+// By using the pinpoint.FromContext function, this tracer can be obtained.
 //
-//   conn, err := transhttp.NewClient(
-//     context.Background(),
-//     transhttp.WithMiddleware(ppkratos.ClientMiddleware()),
-//     transhttp.WithEndpoint("127.0.0.1:8000"),
-//   )
+//	func (s *server) SayHello(ctx context.Context, in *helloworld.HelloRequest) (*helloworld.HelloReply, error) {
+//		tracer := pinpoint.FromContext(ctx)
+//		defer tracer.NewSpanEvent("f1").EndSpanEvent()
+//		...
+//	}
 //
+// To instrument a kratos client, use ClientMiddleware.
+//
+//	conn, err := transhttp.NewClient(
+//		context.Background(),
+//		transhttp.WithMiddleware(ppkratos.ClientMiddleware()),
+//		transhttp.WithEndpoint("127.0.0.1:8000"),
+//	)
+//
+// It is necessary to pass the context containing the pinpoint.Tracer to kratos client.
+//
+//	client := pb.NewGreeterHTTPClient(conn)
+//	reply, err := client.SayHello(pinpoint.NewContext(context.Background(), tracer), &pb.HelloRequest{Name: "kratos"})
 package ppkratos
 
 import (
@@ -31,6 +44,9 @@ import (
 	"google.golang.org/grpc/peer"
 )
 
+// ServerMiddleware returns a server side middleware ready to instrument
+// and adds the pinpoint.Tracer to the handler's context.
+// By using the pinpoint.FromContext function, this tracer can be obtained.
 func ServerMiddleware() middleware.Middleware {
 	return func(handler middleware.Handler) middleware.Handler {
 		return func(ctx context.Context, req interface{}) (reply interface{}, err error) {
@@ -88,6 +104,7 @@ func serverEndpoint(endpoint string) string {
 	}
 }
 
+// ClientMiddleware returns a client side middleware ready to instrument.
 func ClientMiddleware() middleware.Middleware {
 	return func(handler middleware.Handler) middleware.Handler {
 		return func(ctx context.Context, req interface{}) (reply interface{}, err error) {
