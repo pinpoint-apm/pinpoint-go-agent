@@ -8,6 +8,7 @@
 | [ppecho](plugin_guide.md#ppecho)             | [plugin/echo](/plugin/echo)               | labstack/echo package (https://github.com/labstack/echo)                       |
 | [ppechov4](plugin_guide.md#ppechov4)         | [plugin/echov4](/plugin/echov4)           | labstack/echo/v4 package (https://github.com/labstack/echo)                    |
 | [ppfasthttp](plugin_guide.md#ppfasthttp)     | [plugin/fasthttp](/plugin/fasthttp)       | valyala/fasthttp package (https://github.com/valyala/fasthttp)                 |
+| [ppfiber](plugin_guide.md#ppfiber)           | [plugin/fiber](/plugin/fiber)             | gofiber/fiber/v2 package (https://github.com/gofiber/fiber)                    |
 | [ppgin](plugin_guide.md#ppgin)               | [plugin/gin](/plugin/gin)                 | gin-gonic/gin package (https://github.com/gin-gonic/gin)                       |
 | [ppgocql](plugin_guide.md#ppgocql)           | [plugin/gocql](/plugin/gocql)             | gocql package (https://github.com/gocql/gocql).                                |
 | [ppgoelastic](plugin_guide.md#ppgoelastic)   | [plugin/goelastic](/plugin/goelastic)     | elastic/go-elasticsearch package (https://github.com/elastic/go-elasticsearch) |
@@ -405,6 +406,59 @@ func client(ctx *fasthttp.RequestCtx) {
 * [Http.Client.RecordRequestHeader](/doc/config.md#Http.Client.RecordRequestHeader)
 * [Http.Client.RecordResponseHeader](/doc/config.md#Http.Client.RecordResponseHeader)
 * [Http.Client.RecordRequestCookie](/doc/config.md#Http.Client.RecordRequestCookie)
+
+## ppfiber
+This package instruments inbound requests handled by a fiber instance.
+Register the Middleware as the middleware of the router to trace all handlers:
+
+``` go
+app := fiber.New()
+app.Use(ppfiber.Middleware())
+```
+
+Use WrapHandler to select the handlers you want to track:
+
+``` go
+app.Get("/hello", ppfiber.WrapHandler(hello))
+```
+
+For each request, a pinpoint.Tracer is stored in the user context.
+By using the pinpoint.FromContext function, this tracer can be obtained in your handler.
+Alternatively, the context of the request may be propagated where the context that contains the pinpoint.Tracer is required.
+
+``` go
+package main
+
+import (
+    "github.com/gofiber/fiber/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiber"
+)
+
+func hello(c *fiber.Ctx) error {
+    tracer := pinpoint.FromContext(c.UserContext())
+    defer tracer.NewSpanEvent("f1").EndSpanEvent()
+
+    return c.SendString("Hello, World !!")
+}
+
+func main() {
+    ... //setup agent
+	
+    app := fiber.New()
+    app.Use(ppfiber.Middleware())
+    log.Fatal(app.Listen(":9000"))
+}
+```
+[Full Example Source](/plugin/fiber/example/fiber_server.go)
+
+### Config Options
+* [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
+* [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
+* [Http.Server.ExcludeMethod](/doc/config.md#Http.Server.ExcludeMethod)
+* [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
+* [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
+* [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
 
 ## ppgin
 This package instruments inbound requests handled by a gin.Engine.

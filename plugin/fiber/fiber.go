@@ -5,6 +5,10 @@
 //
 //  app := fiber.New()
 //  app.Use(ppfiber.Middleware())
+//
+// Use WrapHandler to select the handlers you want to track:
+//
+//	app.Get("/hello", ppfiber.WrapHandler(hello))
 package ppfiber
 
 import (
@@ -66,6 +70,8 @@ func recordResponse(tracer pinpoint.Tracer, c *fiber.Ctx, status int) {
 	}
 }
 
+// WrapHandler wraps the given fiber handler and adds the pinpoint.Tracer to the user context.
+// By using the pinpoint.FromContext function, this tracer can be obtained.
 func WrapHandler(handler fiber.Handler) fiber.Handler {
 	handlerName := pphttp.HandlerFuncName(handler)
 
