@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	"log"
 	"os"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	"github.com/valyala/fasthttp"
 )
 
@@ -71,7 +71,6 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 }
 
 func client(ctx *fasthttp.RequestCtx) {
-	tracer := pinpoint.FromContext(ctx.UserValue(ppfasthttp.CtxKey).(context.Context))
 	// Get URI from a pool
 	url := fasthttp.AcquireURI()
 	url.Parse(nil, []byte("http://localhost:8080/"))
@@ -92,15 +91,17 @@ func client(ctx *fasthttp.RequestCtx) {
 
 	resp := fasthttp.AcquireResponse()
 
-	err := ppfasthttp.DoWithTracer(func() error {
+	ctxWithTracer := ctx.UserValue(ppfasthttp.CtxKey).(context.Context)
+	err := ppfasthttp.DoClient(func() error {
 		return hc.Do(req, resp)
-	}, tracer, req, resp)
-	fasthttp.ReleaseRequest(req)
+	}, ctxWithTracer, req, resp)
 
 	if err == nil {
 		fmt.Printf("Response: %s\n", resp.Body())
 	} else {
 		fmt.Fprintf(os.Stderr, "Connection error: %v\n", err)
 	}
+
+	fasthttp.ReleaseRequest(req)
 	fasthttp.ReleaseResponse(resp)
 }

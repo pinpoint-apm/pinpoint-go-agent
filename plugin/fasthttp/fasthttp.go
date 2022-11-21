@@ -1,8 +1,24 @@
 // Package ppfasthttp instruments the valyala/fasthttp package (https://github.com/valyala/fasthttp).
 //
 // This package instruments inbound requests handled by a fasthttp instance.
-// Register the Middleware as the middleware of the router to trace all handlers:
+// Use WrapHandler to select the handlers you want to track:
 //
+//	fasthttp.ListenAndServe(":9000", ppfasthttp.WrapHandler(requestHandler))
+//
+// WrapHandler sets the pinpoint.Tracer as a user value of fasthttp handler's context.
+// By using the ppfasthttp.CtxKey, this tracer can be obtained.
+//
+//	func requestHandler(ctx *fasthttp.RequestCtx) {
+//	    tracer := pinpoint.FromContext(ctx.UserValue(ppfasthttp.CtxKey).(context.Context))
+//
+// This package instruments outbound requests and add distributed tracing headers.
+// Use DoClient.
+//
+//	err := ppfasthttp.DoClient(func() error {
+//		return hc.Do(req, resp)
+//	}, ctx, req, resp)
+//
+// It is necessary to pass the context containing the pinpoint.Tracer to DoClient.
 package ppfasthttp
 
 import (
@@ -78,33 +94,34 @@ func (w *distributedTracingContextWriterMD) Set(key string, value string) {
 	w.Header.Set(key, value)
 }
 
-func before(tracer pinpoint.Tracer, operationName string, req *fasthttp.Request) pinpoint.Tracer {
+func before(tracer pinpoint.Tracer, operationName string, req *fasthttp.Request) {
 	tracer.NewSpanEvent(operationName)
-	tracer.SpanEvent().SetEndPoint(string(req.Host()))
-	tracer.SpanEvent().SetDestination(string(req.Host()))
-	tracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeGoHttpClient)
+	se := tracer.SpanEvent()
+	se.SetEndPoint(string(req.Host()))
+	se.SetDestination(string(req.Host()))
+	se.SetServiceType(pinpoint.ServiceTypeGoHttpClient)
 
 	if tracer.IsSampled() {
 		var b bytes.Buffer
 		b.WriteString(string(req.Header.Method()))
 		b.WriteString(" ")
 		b.WriteString(req.URI().String())
-		tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHttpUrl, b.String())
 
-		a := tracer.SpanEvent().Annotations()
+		a := se.Annotations()
+		a.AppendString(pinpoint.AnnotationHttpUrl, b.String())
 		pphttp.RecordClientHttpRequestHeader(a, reqHeader{&req.Header})
 		pphttp.RecordClientHttpCookie(a, cookie{&req.Header})
 	}
 
 	wr := &distributedTracingContextWriterMD{&req.Header}
 	tracer.Inject(wr)
-	return tracer
 }
 
 func after(tracer pinpoint.Tracer, resp *fasthttp.Response, err error) {
-	tracer.SpanEvent().SetError(err)
+	se := tracer.SpanEvent()
+	se.SetError(err)
 	if resp != nil && tracer.IsSampled() {
-		a := tracer.SpanEvent().Annotations()
+		a := se.Annotations()
 		a.AppendInt(pinpoint.AnnotationHttpStatusCode, int32(resp.StatusCode()))
 		pphttp.RecordClientHttpResponseHeader(a, resHeader{&resp.Header})
 	}
@@ -149,7 +166,9 @@ func (c cookie) VisitAll(f func(name string, value string)) {
 	})
 }
 
-func DoWithTracer(doFunc func() error, tracer pinpoint.Tracer, req *fasthttp.Request, res *fasthttp.Response) error {
+// DoClient instruments outbound requests and add distributed tracing headers.
+func DoClient(doFunc func() error, ctx context.Context, req *fasthttp.Request, res *fasthttp.Response) error {
+	tracer := pinpoint.FromContext(ctx)
 	before(tracer, "fasthttp/Client.Do()", req)
 	err := doFunc()
 	after(tracer, res, err)
