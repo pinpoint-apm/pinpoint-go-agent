@@ -1,4 +1,4 @@
-// Package ppgoora instruments the sijms/go-ora/v2 package (https://github.com/sijms/go-ora).
+// Package pporacle instruments the sijms/go-ora/v2 package (https://github.com/sijms/go-ora).
 //
 // This package instruments the Oracle driver calls.
 // Use this package's driver in place of the Oracle driver.
@@ -9,7 +9,7 @@
 //
 //	ctx := pinpoint.NewContext(context.Background(), tracer)
 //	row := db.QueryRowContext(ctx, "SELECT * FROM BONUS")
-package ppgoora
+package pporacle
 
 import (
 	"database/sql"

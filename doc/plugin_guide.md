@@ -27,6 +27,7 @@
 | [ppmongo](plugin_guide.md#ppmongo)           | [plugin/mongodriver](/plugin/mongodriver) | mongodb/mongo-go-driver package (https://github.com/mongodb/mongo-go-driver)   |
 | [ppmssql](plugin_guide.md#ppmssql)           | [plugin/mssql](/plugin/mssql)             | denisenkom/go-mssqldb package (https://github.com/denisenkom/go-mssqldb)       |
 | [ppmysql](plugin_guide.md#ppmysql)           | [plugin/mysql](/plugin/mysql)             | go-sql-driver/mysql package (https://github.com/go-sql-driver/mysql)           |
+| [pporacle](plugin_guide.md#pporacle)         | [plugin/oracle](/plugin/oracle)           | sijms/go-ora/v2 package (https://github.com/sijms/go-ora)                      |
 | [pppgsql](plugin_guide.md#pppgsql)           | [plugin/pgsql](/plugin/pgsql)             | lib/pq package (https://github.com/lib/pq)                                     |
 | [ppredigo](plugin_guide.md#ppredigo)         | [plugin/redigo](/plugin/redigo)           | gomodule/redigo package (https://github.com/gomodule/redigo)                   |
 | [ppsarama](plugin_guide.md#ppsarama)         | [plugin/sarama](/plugin/sarama)           | Shopify/sarama package (https://github.com/Shopify/sarama)                     |
@@ -1325,6 +1326,40 @@ func query(w http.ResponseWriter, r *http.Request) {
 }
 ```
 [Full Example Source](/plugin/mysql/example/mysql_example.go)
+
+## pporacle
+This package instruments the Oracle driver calls.
+Use this package's driver in place of the Oracle driver.
+
+``` go
+db, err := sql.Open("oracle-pinpoint", "oracle://scott:tiger@localhost:1521/xe")
+```
+
+It is necessary to pass the context containing the pinpoint.Tracer to all exec and query methods on SQL driver.
+
+``` go
+ctx := pinpoint.NewContext(context.Background(), tracer)
+row, err := db.QueryContext(ctx, "SELECT * FROM BONUS")
+```
+
+``` go
+import (
+    "database/sql"
+    "github.com/pinpoint-apm/pinpoint-go-agent"
+    _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle"
+)
+
+func query(w http.ResponseWriter, r *http.Request) {
+    conn, err := sql.Open("oracle-pinpoint", "oracle://scott:tiger@localhost:1521/xe")
+    rows, _ := conn.QueryContext(r.Context(), "SELECT * FROM BONUS")
+
+    for rows.Next() {
+        err = rows.Scan(&ename, &job, &sal, &comm)
+        fmt.Println("ENAME: ", ename, "\tJOB: ", job, "\tSAL: ", sal, "\tCOMM: ", comm)
+    }
+}
+```
+[Full Example Source](/plugin/oracle/example/oracle_example.go)
 
 ## pppgsql
 This package instruments the postgres driver calls.
