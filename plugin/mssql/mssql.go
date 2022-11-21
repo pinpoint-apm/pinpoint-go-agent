@@ -9,7 +9,7 @@
 // It is necessary to pass the context containing the pinpoint.Tracer to all exec and query methods on SQL driver.
 //
 //	ctx := pinpoint.NewContext(context.Background(), tracer)
-//	row := db.QueryRowContext(ctx, "SELECT * FROM Inventory")
+//	row, err := db.QueryContext(ctx, "SELECT * FROM Inventory")
 package ppmssqldb
 
 import (

@@ -25,6 +25,7 @@
 | [ppkratos](plugin_guide.md#ppkratos )        | [plugin/kratos](/plugin/kratos)           | go-kratos/kratos/v2 package (https://github.com/go-kratos/kratos)              |
 | [pplogrus](plugin_guide.md#pplogrus)         | [plugin/logrus](/plugin/logrus)           | sirupsen/logrus package (https://github.com/sirupsen/logrus)                   |
 | [ppmongo](plugin_guide.md#ppmongo)           | [plugin/mongodriver](/plugin/mongodriver) | mongodb/mongo-go-driver package (https://github.com/mongodb/mongo-go-driver)   |
+| [ppmssql](plugin_guide.md#ppmssql)           | [plugin/mssql](/plugin/mssql)             | denisenkom/go-mssqldb package (https://github.com/denisenkom/go-mssqldb)       |
 | [ppmysql](plugin_guide.md#ppmysql)           | [plugin/mysql](/plugin/mysql)             | go-sql-driver/mysql package (https://github.com/go-sql-driver/mysql)           |
 | [pppgsql](plugin_guide.md#pppgsql)           | [plugin/pgsql](/plugin/pgsql)             | lib/pq package (https://github.com/lib/pq)                                     |
 | [ppredigo](plugin_guide.md#ppredigo)         | [plugin/redigo](/plugin/redigo)           | gomodule/redigo package (https://github.com/gomodule/redigo)                   |
@@ -1253,6 +1254,44 @@ func mongodb(w http.ResponseWriter, r *http.Request) {
 }
 ```
 [Full Example Source](/plugin/mongodriver/example/mongo_example.go)
+
+## ppmssql
+This package instruments the MS SQL Server driver calls.
+Use this package's driver in place of the SQL Server driver.
+
+``` go
+dsn := "server=localhost;user id=sa;password=TestPass123;port=1433;database=TestDB"
+db, err := sql.Open("sqlserver-pinpoint", dsn)
+```
+
+It is necessary to pass the context containing the pinpoint.Tracer to all exec and query methods on SQL driver.
+
+``` go
+ctx := pinpoint.NewContext(context.Background(), tracer)
+row, err := db.QueryContext(ctx, "SELECT * FROM Inventory")
+```
+
+``` go
+import (
+    "database/sql"
+    "github.com/pinpoint-apm/pinpoint-go-agent"
+    _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql"
+)
+
+func query(w http.ResponseWriter, r *http.Request) {
+    dsn := "server=localhost;user id=sa;password=TestPass123;port=1433;database=TestDB"
+    db, err := sql.Open("sqlserver-pinpoint", dsn)
+    defer db.Close()
+
+    rows, _ := db.QueryContext(r.Context(), "SELECT * FROM Inventory")
+    for rows.Next() {
+        _ = rows.Scan(&id, &name, &quantity)
+        fmt.Printf("user: %d, %s, %d\n", id, name, quantity)
+    }
+    rows.Close()
+}
+```
+[Full Example Source](/plugin/mssql/example/mssql_example.go)
 
 ## ppmysql
 This package instruments the mysql driver calls.
