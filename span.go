@@ -113,9 +113,7 @@ func (span *span) EndSpan() {
 	}
 
 	if span.eventStack.len() > 0 {
-		for se, ok := span.eventStack.pop(); ok; {
-			se.end()
-		}
+		span.eventStack.empty()
 		Log("span").Warn("abnormal span - has unclosed event")
 	}
 
@@ -396,4 +394,15 @@ func (s *stack) peek() (*spanEvent, bool) {
 		return s.top.value, true
 	}
 	return nil, false
+}
+
+func (s *stack) empty() {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	for s.size > 0 {
+		s.top.value.end()
+		s.top = s.top.next
+		s.size--
+	}
 }
