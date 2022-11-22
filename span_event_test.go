@@ -43,13 +43,14 @@ func Test_spanEvent_end(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			se := newSpanEvent(tt.args.span, tt.args.operationName)
-			assert.Equal(t, se.parentSpan.eventDepth, int32(1), "serviceType")
+			tt.args.span.appendSpanEvent(se)
+			assert.Equal(t, se.parentSpan.eventDepth, int32(2), "eventDepth")
 
 			time.Sleep(100 * time.Millisecond)
 			se.end()
 
 			assert.Equal(t, se.operationName, tt.args.operationName, "operationName")
-			assert.Equal(t, se.parentSpan.eventDepth, int32(0), "eventDepth")
+			assert.Equal(t, se.parentSpan.eventDepth, int32(1), "eventDepth")
 			assert.Greater(t, se.endElapsed.Milliseconds(), int64(99), "endElapsed")
 		})
 	}

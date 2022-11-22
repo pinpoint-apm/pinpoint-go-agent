@@ -13,6 +13,10 @@ sampling.counterRate=20
 sampling.NewThroughput=50
 sampling.ContinueThroughput=60
 
+span.queueSize=-1
+span.maxCallstackDepth=0
+span.maxCallstackSequence=1
+
 Stat.CollectInterval=7000
 Stat.BatchCount=10
 

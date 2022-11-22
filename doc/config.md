@@ -218,6 +218,33 @@ Sampling.ContinueThroughput option sets the cont TPS for a 'throughput sampler'.
 * type: int
 * default: 0
 
+### Span.QueueSize
+Span.QueueSize option sets the size of agent's span queue for gRPC.
+
+* --pinpoint-span-queuesize
+* PINPOINT_GO_SPAN_QUEUESIZE
+* WithSpanQueueSize()
+* type: int
+* default: 1024
+
+### Span.MaxCallStackDepth
+Span.MaxCallStackDepth option sets the max callstack depth of a span, if -1 is unlimited and min is 2.
+
+* --pinpoint-span-maxcallstackdepth
+* PINPOINT_GO_SPAN_MAXCALLSTACKDEPTH
+* WithSpanMaxCallStackDepth()
+* type: int
+* default: 64
+
+### Span.MaxCallStackSequence
+Span.MaxCallStackDepth option sets the max callstack sequence of a span, if -1 is unlimited and min is 4.
+
+* --pinpoint-span-maxcallstacksequence
+* PINPOINT_GO_SPAN_MAXCALLSTACKSEQUENCE
+* WithSpanMaxCallStackSequence()
+* type: int
+* default: 5000
+
 ### Stat.CollectInterval
 Stat.CollectInterval option sets the statistics collection cycle for the agent.
 

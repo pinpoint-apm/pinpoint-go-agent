@@ -116,6 +116,162 @@ func Test_span_NewSpanEvent(t *testing.T) {
 	}
 }
 
+func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
+	type args struct {
+		operationName string
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		{"1", args{"t1"}},
+	}
+
+	save := maxEventDepth
+	maxEventDepth = 3
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := defaultTestSpan()
+			s.NewSpanEvent(tt.args.operationName)
+			s.NewSpanEvent(tt.args.operationName)
+			s.NewSpanEvent(tt.args.operationName)
+			s.NewSpanEvent(tt.args.operationName)
+
+			assert.Equal(t, s.eventSequence, int32(2), "eventSequence")
+			assert.Equal(t, s.eventDepth, int32(3), "eventDepth")
+			assert.Equal(t, s.eventOverflow, 2, "eventOverflow")
+			assert.Equal(t, s.eventOverflowLog, true, "eventOverflowLog")
+
+			s.EndSpanEvent()
+			assert.Equal(t, s.eventOverflow, 1, "eventOverflow")
+			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
+
+			s.EndSpanEvent()
+			assert.Equal(t, s.eventOverflow, 0, "eventOverflow")
+			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
+
+			s.EndSpanEvent()
+			assert.Equal(t, s.eventStack.len(), 1, "stack.len()")
+			s.EndSpanEvent()
+			assert.Equal(t, s.eventStack.len(), 0, "stack.len()")
+
+			s.NewSpanEvent(tt.args.operationName)
+			s.NewSpanEvent(tt.args.operationName)
+			s.NewSpanEvent(tt.args.operationName)
+			s.NewSpanEvent(tt.args.operationName)
+
+			assert.Equal(t, s.eventSequence, int32(4), "eventSequence")
+			assert.Equal(t, s.eventDepth, int32(3), "eventDepth")
+			assert.Equal(t, s.eventOverflow, 2, "eventOverflow")
+			assert.Equal(t, s.eventOverflowLog, true, "eventOverflowLog")
+
+			s.EndSpanEvent()
+			assert.Equal(t, s.eventOverflow, 1, "eventOverflow")
+			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
+
+			_, ok := s.SpanEvent().(*noopSpanEvent)
+			assert.Equal(t, ok, true, "noopSpanEvent")
+
+			tracer := s.NewGoroutineTracer()
+			noop, ok := tracer.(*noopSpan)
+			assert.Equal(t, ok, true, "noopSpan")
+			assert.Equal(t, noop.IsSampled(), false, "IsSampled")
+			assert.Equal(t, noop.SpanId(), int64(0), "SpanId")
+			assert.Equal(t, noop.withStats, false, "SpanId")
+
+			s.EndSpanEvent()
+			assert.Equal(t, s.eventOverflow, 0, "eventOverflow")
+			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
+
+			_, ok = s.SpanEvent().(*noopSpanEvent)
+			assert.Equal(t, ok, false, "noopSpanEvent")
+
+			se, ok := s.SpanEvent().(*spanEvent)
+			assert.Equal(t, ok, true, "spanEvent")
+			assert.Equal(t, se.depth, int32(2), "depth")
+			assert.Equal(t, se.sequence, int32(3), "sequence")
+
+			tracer = s.NewGoroutineTracer()
+			ss, ok := tracer.(*span)
+			assert.Equal(t, ok, true, "span")
+			assert.Equal(t, tracer.IsSampled(), true, "IsSampled")
+			assert.Equal(t, ss.isAsyncSpan(), true, "isAsyncSpan")
+			tracer.EndSpan()
+
+			s.EndSpanEvent()
+			assert.Equal(t, s.eventStack.len(), 1, "stack.len()")
+			s.EndSpanEvent()
+			assert.Equal(t, s.eventStack.len(), 0, "stack.len()")
+		})
+	}
+	maxEventDepth = save
+}
+
+func Test_span_NewSpanEventSequenceOverflow(t *testing.T) {
+	type args struct {
+		operationName string
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		{"1", args{"t1"}},
+	}
+
+	save := maxEventSequence
+	maxEventSequence = 5
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			span := defaultTestSpan()
+			span.NewSpanEvent(tt.args.operationName).EndSpanEvent()
+			span.NewSpanEvent(tt.args.operationName).EndSpanEvent()
+			span.NewSpanEvent(tt.args.operationName).EndSpanEvent()
+			span.NewSpanEvent(tt.args.operationName)
+			span.NewSpanEvent(tt.args.operationName)
+			assert.Equal(t, span.eventSequence, int32(5), "eventSequence")
+			assert.Equal(t, span.eventOverflow, 0, "eventOverflow")
+			assert.Equal(t, span.eventDepth, int32(3), "eventDepth")
+			assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
+
+			span.NewSpanEvent(tt.args.operationName)
+			assert.Equal(t, span.eventSequence, int32(5), "eventSequence")
+			assert.Equal(t, span.eventOverflow, 1, "eventOverflow")
+			assert.Equal(t, span.eventOverflowLog, true, "eventOverflowLog")
+			assert.Equal(t, span.eventDepth, int32(3), "eventDepth")
+			assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
+
+			span.NewSpanEvent(tt.args.operationName)
+			assert.Equal(t, span.eventSequence, int32(5), "eventSequence")
+			assert.Equal(t, span.eventOverflow, 2, "eventOverflow")
+			assert.Equal(t, span.eventDepth, int32(3), "eventDepth")
+			assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
+
+			span.EndSpanEvent()
+			assert.Equal(t, span.eventOverflow, 1, "eventOverflow")
+			assert.Equal(t, span.eventDepth, int32(3), "eventDepth")
+			assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
+
+			span.EndSpanEvent()
+			assert.Equal(t, span.eventOverflow, 0, "eventOverflow")
+			assert.Equal(t, span.eventDepth, int32(3), "eventDepth")
+			assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
+
+			span.EndSpanEvent()
+			assert.Equal(t, span.eventOverflow, 0, "eventOverflow")
+			assert.Equal(t, span.eventDepth, int32(2), "eventDepth")
+			assert.Equal(t, span.eventStack.len(), 1, "stack.len()")
+
+			span.EndSpanEvent()
+			assert.Equal(t, span.eventOverflow, 0, "eventOverflow")
+			assert.Equal(t, span.eventDepth, int32(1), "eventDepth")
+			assert.Equal(t, span.eventStack.len(), 0, "stack.len()")
+		})
+	}
+	maxEventSequence = save
+}
+
 func Test_span_EndSpan(t *testing.T) {
 	type args struct {
 		spanEvents []string
@@ -182,7 +338,7 @@ func Test_span_NewGoroutineTracer(t *testing.T) {
 			a := s.NewGoroutineTracer()
 
 			se, _ := s.eventStack.peek()
-			assert.Equal(t, se.asyncId, int32(1), "asyncId")
+			assert.Equal(t, se.asyncId, int32(2), "asyncId")
 			assert.Equal(t, se.asyncSeqGen, int32(1), "asyncSeqGen")
 
 			as := a.(*span)
@@ -223,7 +379,7 @@ func Test_span_WrapGoroutine(t *testing.T) {
 			}, context.Background())
 
 			se, _ := s.eventStack.peek()
-			assert.Equal(t, se.asyncId, int32(2), "asyncId")
+			assert.Equal(t, se.asyncId, int32(3), "asyncId")
 			assert.Equal(t, se.asyncSeqGen, int32(1), "asyncSeqGen")
 
 			f()

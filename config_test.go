@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"github.com/stretchr/testify/assert"
+	"math"
 	"os"
 	"testing"
 )
@@ -40,6 +41,9 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, float64(100), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
 			assert.Equal(t, 0, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
 			assert.Equal(t, 0, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
+			assert.Equal(t, defaultQueueSize, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+			assert.Equal(t, defaultEventDepth, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
+			assert.Equal(t, defaultEventSequence, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
 			assert.Equal(t, 5000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
 			assert.Equal(t, 6, c.Int(CfgStatBatchCount), CfgStatBatchCount)
 			assert.Equal(t, false, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
@@ -76,6 +80,9 @@ func TestNewConfig_WithFunc(t *testing.T) {
 		WithSamplingCounterRate(200),
 		WithSamplingNewThroughput(20),
 		WithSamplingContinueThroughput(30),
+		WithSpanQueueSize(2048),
+		WithSpanMaxCallStackDepth(100),
+		WithSpanMaxCallStackSequence(1000),
 		WithStatCollectInterval(10000),
 		WithStatBatchCount(3),
 		WithIsContainerEnv(true),
@@ -111,6 +118,9 @@ func TestNewConfig_WithFunc(t *testing.T) {
 			assert.Equal(t, float64(90), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
 			assert.Equal(t, 20, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
 			assert.Equal(t, 30, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
+			assert.Equal(t, 2048, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+			assert.Equal(t, 100, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
+			assert.Equal(t, 1000, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
 			assert.Equal(t, 10000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
 			assert.Equal(t, 3, c.Int(CfgStatBatchCount), CfgStatBatchCount)
 			assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
@@ -203,6 +213,9 @@ func TestNewConfig_ConfigFileYaml(t *testing.T) {
 			assert.Equal(t, 0.1, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
 			assert.Equal(t, 50, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
 			assert.Equal(t, 60, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
+			assert.Equal(t, 512, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+			assert.Equal(t, 32, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
+			assert.Equal(t, 512, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
 			assert.Equal(t, 7000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
 			assert.Equal(t, 10, c.Int(CfgStatBatchCount), CfgStatBatchCount)
 			assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
@@ -243,6 +256,9 @@ func TestNewConfig_ConfigFileJson(t *testing.T) {
 			assert.Equal(t, 5.5, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
 			assert.Equal(t, 50, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
 			assert.Equal(t, 60, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
+			assert.Equal(t, 1024, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+			assert.Equal(t, 10, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
+			assert.Equal(t, 50, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
 			assert.Equal(t, 7000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
 			assert.Equal(t, 10, c.Int(CfgStatBatchCount), CfgStatBatchCount)
 			assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
@@ -283,6 +299,11 @@ func TestNewConfig_ConfigFileProp(t *testing.T) {
 			assert.Equal(t, 5.5, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
 			assert.Equal(t, 50, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
 			assert.Equal(t, 60, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
+			assert.Equal(t, 1024, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+			assert.Equal(t, 0, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
+			assert.Equal(t, 1, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
+			assert.Equal(t, int32(2), maxEventDepth, "maxEventDepth")
+			assert.Equal(t, int32(4), maxEventSequence, "maxEventSequence")
 			assert.Equal(t, 7000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
 			assert.Equal(t, 10, c.Int(CfgStatBatchCount), CfgStatBatchCount)
 			assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
@@ -367,6 +388,9 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 	os.Setenv("PINPOINT_GO_SAMPLING_COUNTERRATE", "100")
 	os.Setenv("PINPOINT_GO_SAMPLING_NEWTHROUGHPUT", "100")
 	os.Setenv("PINPOINT_GO_SAMPLING_CONTINUETHROUGHPUT", "200")
+	os.Setenv("PINPOINT_GO_SPAN_QUEUESIZE", "1000")
+	os.Setenv("PINPOINT_GO_SPAN_MAXCALLSTACKDEPTH", "128")
+	os.Setenv("PINPOINT_GO_SPAN_MAXCALLSTACKSEQUENCE", "2000")
 	os.Setenv("PINPOINT_GO_STAT_COLLECTINTERVAL", "3000")
 	os.Setenv("PINPOINT_GO_STAT_BATCHCOUNT", "11")
 	os.Setenv("PINPOINT_GO_LOG_LEVEL", "trace")
@@ -395,6 +419,9 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 			assert.Equal(t, float64(120), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
 			assert.Equal(t, 100, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
 			assert.Equal(t, 200, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
+			assert.Equal(t, 1000, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+			assert.Equal(t, 128, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
+			assert.Equal(t, 2000, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
 			assert.Equal(t, 3000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
 			assert.Equal(t, 11, c.Int(CfgStatBatchCount), CfgStatBatchCount)
 			assert.Equal(t, false, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
@@ -444,6 +471,9 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 		"--pinpoint-sampling-counterrate=10",
 		"--pinpoint-sampling-newthroughput=500",
 		"--pinpoint-sampling-continuethroughput=600",
+		"--pinpoint-span-queuesize=10",
+		"--pinpoint-span-maxcallstackdepth=-1",
+		"--pinpoint-span-maxcallstacksequence=-1",
 		"--pinpoint-stat-collectinterval=6000",
 		"--pinpoint-stat-batchcount=5",
 		"--pinpoint-log-level=error",
@@ -477,6 +507,11 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 			assert.Equal(t, 0.0001, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
 			assert.Equal(t, 500, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
 			assert.Equal(t, 600, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
+			assert.Equal(t, 10, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+			assert.Equal(t, -1, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
+			assert.Equal(t, -1, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
+			assert.Equal(t, int32(math.MaxInt32), maxEventDepth, "maxEventDepth")
+			assert.Equal(t, int32(math.MaxInt32), maxEventSequence, "maxEventSequence")
 			assert.Equal(t, 6000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
 			assert.Equal(t, 5, c.Int(CfgStatBatchCount), CfgStatBatchCount)
 			assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)

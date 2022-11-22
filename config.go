@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"regexp"
@@ -34,6 +35,9 @@ const (
 	CfgSamplingPercentRate        = "Sampling.PercentRate"
 	CfgSamplingNewThroughput      = "Sampling.NewThroughput"
 	CfgSamplingContinueThroughput = "Sampling.ContinueThroughput"
+	CfgSpanQueueSize              = "Span.QueueSize"
+	CfgSpanMaxCallStackDepth      = "Span.MaxCallStackDepth"
+	CfgSpanMaxCallStackSequence   = "Span.MaxCallStackSequence"
 	CfgStatCollectInterval        = "Stat.CollectInterval"
 	CfgStatBatchCount             = "Stat.BatchCount"
 	CfgIsContainerEnv             = "IsContainerEnv"
@@ -97,6 +101,9 @@ func initConfig() {
 	AddConfig(CfgSamplingPercentRate, CfgFloat, 100)
 	AddConfig(CfgSamplingNewThroughput, CfgInt, 0)
 	AddConfig(CfgSamplingContinueThroughput, CfgInt, 0)
+	AddConfig(CfgSpanQueueSize, CfgInt, defaultQueueSize)
+	AddConfig(CfgSpanMaxCallStackDepth, CfgInt, defaultEventDepth)
+	AddConfig(CfgSpanMaxCallStackSequence, CfgInt, defaultEventSequence)
 	AddConfig(CfgStatCollectInterval, CfgInt, 5000)
 	AddConfig(CfgStatBatchCount, CfgInt, 6)
 	AddConfig(CfgIsContainerEnv, CfgBool, false)
@@ -279,6 +286,24 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	} else if maxBindSize < 0 {
 		config.cfgMap[CfgSQLTraceBindValue].value = false
 		config.cfgMap[CfgSQLMaxBindValueSize].value = 0
+	}
+
+	if config.Int(CfgSpanQueueSize) < 1 {
+		config.cfgMap[CfgSpanQueueSize].value = defaultQueueSize
+	}
+
+	maxEventDepth = int32(config.Int(CfgSpanMaxCallStackDepth))
+	if maxEventDepth == -1 {
+		maxEventDepth = math.MaxInt32
+	} else if maxEventDepth < minEventDepth {
+		maxEventDepth = minEventDepth
+	}
+
+	maxEventSequence = int32(config.Int(CfgSpanMaxCallStackSequence))
+	if maxEventSequence == -1 {
+		maxEventSequence = math.MaxInt32
+	} else if maxEventSequence < minEventSequence {
+		maxEventSequence = minEventSequence
 	}
 
 	globalConfig = config
@@ -626,6 +651,27 @@ func WithSQLTraceRollback(trace bool) ConfigOption {
 func WithEnable(enable bool) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgEnable].value = enable
+	}
+}
+
+// WithSpanQueueSize sets the size of the span queue for gRPC.
+func WithSpanQueueSize(size int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgSpanQueueSize].value = size
+	}
+}
+
+// WithSpanMaxCallStackDepth sets the max callstack depth of a span.
+func WithSpanMaxCallStackDepth(depth int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgSpanMaxCallStackDepth].value = depth
+	}
+}
+
+// WithSpanMaxCallStackSequence sets the max callstack sequence of a span.
+func WithSpanMaxCallStackSequence(seq int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgSpanMaxCallStackSequence].value = seq
 	}
 }
 

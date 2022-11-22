@@ -16,6 +16,10 @@
     "ContinueThroughput": 60
   },
   "loglevel": "debug",
+  "Span": {
+    "MaxCallstackDepth": 10,
+    "MaxCallstackSequence": 50
+  },
   "Stat": {
     "CollectInterval": 7000,
     "BatchCount": 10

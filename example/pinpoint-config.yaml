@@ -15,6 +15,10 @@ sampling:
   NewThroughput: 50
   ContinueThroughput: 60
 loglevel: "debug"
+span:
+  queueSize: 512
+  maxCallstackDepth: 32
+  maxCallstackSequence: 512
 Stat:
   CollectInterval: 7000
   BatchCount: 10

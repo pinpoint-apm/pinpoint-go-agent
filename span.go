@@ -13,13 +13,21 @@ import (
 )
 
 const (
-	apiTypeDefault    = 0
-	apiTypeWebRequest = 100
-	apiTypeInvocation = 200
-	noneAsyncId       = 0
+	apiTypeDefault       = 0
+	apiTypeWebRequest    = 100
+	apiTypeInvocation    = 200
+	noneAsyncId          = 0
+	minEventDepth        = 2
+	minEventSequence     = 4
+	defaultEventDepth    = 64
+	defaultEventSequence = 5000
 )
 
-var asyncIdGen int32 = 0
+var (
+	asyncIdGen       int32 = 0
+	maxEventDepth    int32 = defaultEventDepth
+	maxEventSequence int32 = defaultEventSequence
+)
 
 type span struct {
 	agent              *agent
@@ -39,8 +47,10 @@ type span struct {
 	loggingInfo        int32
 	apiId              int32
 
-	eventSequence int32
-	eventDepth    int32
+	eventSequence    int32
+	eventDepth       int32
+	eventOverflow    int
+	eventOverflowLog bool
 
 	startTime     time.Time
 	elapsed       time.Duration
@@ -111,6 +121,9 @@ func (span *span) EndSpan() {
 }
 
 func (span *span) Inject(writer DistributedTracingContextWriter) {
+	if span.eventOverflow > 0 {
+		return
+	}
 	if se, ok := span.eventStack.peek(); ok {
 		writer.Set(HeaderTraceId, span.txId.String())
 
@@ -182,7 +195,15 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
-	span.appendSpanEvent(newSpanEvent(span, operationName))
+	if span.eventSequence >= maxEventSequence || span.eventDepth >= maxEventDepth {
+		span.eventOverflow++
+		if !span.eventOverflowLog {
+			Log("span").Warnf("callStack maximum depth/sequence exceeded. (depth=%d, seq=%d)", span.eventDepth, span.eventSequence)
+			span.eventOverflowLog = true
+		}
+	} else {
+		span.appendSpanEvent(newSpanEvent(span, operationName))
+	}
 	return span
 }
 
@@ -197,6 +218,10 @@ func (span *span) appendSpanEvent(se *spanEvent) {
 }
 
 func (span *span) EndSpanEvent() {
+	if span.eventOverflow > 0 {
+		span.eventOverflow--
+		return
+	}
 	if se, ok := span.eventStack.pop(); ok {
 		se.end()
 		if !span.recovered {
@@ -217,6 +242,9 @@ func (span *span) EndSpanEvent() {
 }
 
 func (span *span) newAsyncSpan() Tracer {
+	if span.eventOverflow > 0 {
+		return NoopTracer()
+	}
 	if se, ok := span.eventStack.peek(); ok {
 		asyncSpan := defaultSpan()
 
@@ -282,6 +310,9 @@ func (span *span) Span() SpanRecorder {
 }
 
 func (span *span) SpanEvent() SpanEventRecorder {
+	if span.eventOverflow > 0 {
+		return &defaultNoopSpanEvent
+	}
 	if se, ok := span.eventStack.peek(); ok {
 		return se
 	}
@@ -294,7 +325,7 @@ func (span *span) IsSampled() bool {
 }
 
 func (span *span) SetError(e error) {
-	if e == nil {
+	if e == nil || span.eventOverflow > 0 {
 		return
 	}
 

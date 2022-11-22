@@ -63,7 +63,10 @@ type sqlMeta struct {
 	sql string
 }
 
-const cacheSize = 1024
+const (
+	cacheSize        = 1024
+	defaultQueueSize = 1024
+)
 
 var globalAgent Agent
 
@@ -105,8 +108,8 @@ func NewAgent(config *Config) (Agent, error) {
 		agentName: config.String(CfgAgentName),
 		offGrpc:   config.offGrpc,
 		startTime: time.Now().UnixNano() / int64(time.Millisecond),
-		spanChan:  make(chan *span, 5*1024),
-		metaChan:  make(chan interface{}, 1*1024),
+		spanChan:  make(chan *span, config.Int(CfgSpanQueueSize)),
+		metaChan:  make(chan interface{}, config.Int(CfgSpanQueueSize)),
 	}
 
 	var err error
