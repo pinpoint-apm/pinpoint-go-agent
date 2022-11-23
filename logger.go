@@ -16,16 +16,16 @@ func initLogger() {
 }
 
 func Log(src string) *logEntry {
-	return logger.NewEntry(src)
+	return logger.newEntry(src)
 }
 
-func AddLogger(l *logrus.Logger) {
-	logger.secondLogger = l
+func SetExtraLogger(lgr *logrus.Logger) {
+	logger.extraLogger = lgr
 }
 
 type logrusLogger struct {
 	defaultLogger *logrus.Logger
-	secondLogger  *logrus.Logger
+	extraLogger   *logrus.Logger
 }
 
 func newLogger() *logrusLogger {
@@ -39,7 +39,7 @@ func newLogger() *logrusLogger {
 	return &logrusLogger{defaultLogger: l}
 }
 
-func (l *logrusLogger) SetLevel(level string) {
+func (l *logrusLogger) setLevel(level string) {
 	lvl, err := logrus.ParseLevel(level)
 	if err != nil {
 		Log("config").Errorf("invalid log level: %s", level)
@@ -52,7 +52,7 @@ func (l *logrusLogger) SetLevel(level string) {
 	}
 }
 
-func (l *logrusLogger) SetOutput(out string, maxSize int) {
+func (l *logrusLogger) setOutput(out string, maxSize int) {
 	Log("config").Infof("log output: %s", out)
 
 	if strings.EqualFold(out, "stdout") {
@@ -70,52 +70,42 @@ func (l *logrusLogger) SetOutput(out string, maxSize int) {
 	}
 }
 
-func (l *logrusLogger) NewEntry(src string) *logEntry {
-	var e1, e2 *logrus.Entry
-	f := logrus.Fields{"module": "pinpoint", "src": src}
-	e1 = l.defaultLogger.WithFields(f)
-	if l.secondLogger != nil {
-		e2 = l.secondLogger.WithFields(f)
+func (l *logrusLogger) newEntry(src string) *logEntry {
+	return &logEntry{
+		entry:       logrus.NewEntry(l.defaultLogger).WithFields(logrus.Fields{"module": "pinpoint", "src": src}),
+		extraLogger: l.extraLogger,
 	}
-	return &logEntry{defaultEntry: e1, secondEntry: e2}
 }
 
 type logEntry struct {
-	defaultEntry *logrus.Entry
-	secondEntry  *logrus.Entry
+	entry       *logrus.Entry
+	extraLogger *logrus.Logger
+}
+
+func (l *logEntry) log(logFunc func(string, ...interface{}), format string, args ...interface{}) {
+	logFunc(format, args...)
+	if l.extraLogger != nil {
+		l.entry.Logger = l.extraLogger
+		logFunc(format, args...)
+	}
 }
 
 func (l *logEntry) Errorf(format string, args ...interface{}) {
-	l.defaultEntry.Errorf(format, args...)
-	if l.secondEntry != nil {
-		l.secondEntry.Errorf(format, args...)
-	}
+	l.log(l.entry.Errorf, format, args...)
 }
 
 func (l *logEntry) Warnf(format string, args ...interface{}) {
-	l.defaultEntry.Warnf(format, args...)
-	if l.secondEntry != nil {
-		l.secondEntry.Warnf(format, args...)
-	}
+	l.log(l.entry.Warnf, format, args...)
 }
 
 func (l *logEntry) Infof(format string, args ...interface{}) {
-	l.defaultEntry.Infof(format, args...)
-	if l.secondEntry != nil {
-		l.secondEntry.Infof(format, args...)
-	}
+	l.log(l.entry.Infof, format, args...)
 }
 
 func (l *logEntry) Debugf(format string, args ...interface{}) {
-	l.defaultEntry.Debugf(format, args...)
-	if l.secondEntry != nil {
-		l.secondEntry.Debugf(format, args...)
-	}
+	l.log(l.entry.Debugf, format, args...)
 }
 
 func (l *logEntry) Tracef(format string, args ...interface{}) {
-	l.defaultEntry.Tracef(format, args...)
-	if l.secondEntry != nil {
-		l.secondEntry.Tracef(format, args...)
-	}
+	l.log(l.entry.Tracef, format, args...)
 }

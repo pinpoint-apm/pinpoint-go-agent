@@ -242,8 +242,8 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	if config.Int(CfgLogMaxSize) < 1 {
 		config.cfgMap[CfgLogMaxSize].value = 10
 	}
-	logger.SetOutput(config.String(CfgLogOutput), config.Int(CfgLogMaxSize))
-	logger.SetLevel(config.String(CfgLogLevel))
+	logger.setOutput(config.String(CfgLogOutput), config.Int(CfgLogMaxSize))
+	logger.setLevel(config.String(CfgLogLevel))
 
 	r, _ := regexp.Compile(cfgIdPattern)
 	appName := config.String(CfgAppName)
