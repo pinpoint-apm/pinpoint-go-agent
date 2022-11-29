@@ -4,8 +4,8 @@ go 1.15
 
 require (
 	github.com/golang/protobuf v1.5.2
-	github.com/pinpoint-apm/pinpoint-go-agent v1.1.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.1.0
+	github.com/pinpoint-apm/pinpoint-go-agent v1.2.0
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.2.0
 	google.golang.org/grpc v1.49.0
 )
 

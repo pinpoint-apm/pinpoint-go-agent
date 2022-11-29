@@ -4,8 +4,8 @@ go 1.15
 
 require (
 	github.com/Shopify/sarama v1.26.4
-	github.com/pinpoint-apm/pinpoint-go-agent v1.1.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.1.0
+	github.com/pinpoint-apm/pinpoint-go-agent v1.2.0
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.2.0
 )
 
 replace github.com/pinpoint-apm/pinpoint-go-agent => ../..
