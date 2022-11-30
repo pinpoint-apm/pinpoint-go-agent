@@ -12,7 +12,9 @@
 package ppgoelastic
 
 import (
+	"bytes"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"io"
 	"net/http"
 )
 
@@ -72,6 +74,7 @@ func dslString(req *http.Request) string {
 
 	dsl := make([]byte, req.ContentLength)
 	req.Body.Read(dsl)
+	req.Body = io.NopCloser(bytes.NewReader(dsl))
 	return string(dsl)
 }
 
