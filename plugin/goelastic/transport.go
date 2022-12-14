@@ -12,12 +12,17 @@
 package ppgoelastic
 
 import (
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"bytes"
+	"compress/gzip"
+	"io"
 	"net/http"
+
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
 type transport struct {
-	rt http.RoundTripper
+	rt   http.RoundTripper
+	addr []string
 }
 
 // NewTransport returns a new http.RoundTripper to instrument elasticsearch calls.
@@ -30,10 +35,20 @@ func NewTransport(r http.RoundTripper) http.RoundTripper {
 	return t
 }
 
+// NewTransportWithAddr returns a new http.RoundTripper to instrument elasticsearch calls.
+// If a http.RoundTripper parameter is not provided, http.DefaultTransport will be instrumented.
+func NewTransportWithAddr(r http.RoundTripper, addr []string) http.RoundTripper {
+	if r == nil {
+		r = http.DefaultTransport
+	}
+	t := &transport{rt: r, addr: addr}
+	return t
+}
+
 func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	ctx := req.Context()
 	tracer := pinpoint.FromContext(ctx)
-	if tracer == nil {
+	if !tracer.IsSampled() {
 		return t.rt.RoundTrip(req)
 	}
 
@@ -41,15 +56,12 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	defer tracer.EndSpanEvent()
 
 	se := tracer.SpanEvent()
-	se.SetServiceType(pinpoint.ServiceTypeGoElastic)
+	se.SetServiceType(pinpoint.ServiceTypeGoHttpClient)
 	se.SetDestination("ElasticSearch")
-	se.SetEndPoint(req.Host)
+	se.SetEndPoint(t.endpoint(req))
 
 	a := se.Annotations()
-	a.AppendString(pinpoint.AnnotationEsUrl, req.URL.String())
-	a.AppendString(pinpoint.AnnotationEsAction, req.Method)
-	dsl := dslString(req)
-	if dsl != "" {
+	if dsl := dslString(req); dsl != "" {
 		a.AppendString(pinpoint.AnnotationEsDsl, dsl)
 	}
 
@@ -57,6 +69,20 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	se.SetError(err)
 
 	return resp, err
+}
+
+func (t *transport) endpoint(req *http.Request) string {
+	var endpoint string
+
+	if t.addr != nil {
+		endpoint = t.addr[0]
+	} else {
+		endpoint = req.Host
+	}
+	if endpoint == "" {
+		endpoint = "unknown"
+	}
+	return endpoint
 }
 
 func dslString(req *http.Request) string {
@@ -72,14 +98,15 @@ func dslString(req *http.Request) string {
 
 	dsl := make([]byte, req.ContentLength)
 	req.Body.Read(dsl)
+	req.Body.Close()
+	req.Body = io.NopCloser(bytes.NewReader(dsl))
+
+	if req.Header.Get("Content-Encoding") == "gzip" {
+		r, err := gzip.NewReader(bytes.NewReader(dsl))
+		if err != nil {
+			return string(dsl)
+		}
+		dsl, _ = io.ReadAll(r)
+	}
 	return string(dsl)
 }
-
-//func RequestWithContext(req *http.Request) *http.Request {
-//	url := req.URL
-//	req.URL = nil
-//	reqCopy := req.WithContext(req.Context())
-//	reqCopy.URL = url
-//	req.URL = url
-//	return reqCopy
-//}
