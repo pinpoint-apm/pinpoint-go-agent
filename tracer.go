@@ -215,7 +215,7 @@ const (
 	ServiceTypeRedis                 = 8203
 	ServiceTypeKafkaClient           = 8660
 	ServiceTypeHbaseClient           = 8800
-	ServiceTypeGoElastic             = 9203
+	ServiceTypeGoElastic             = 9204
 )
 
 // annotation keys pre-defined
@@ -235,9 +235,7 @@ const (
 	AnnotationKafkaOffset         = 142
 	AnnotationMongoJasonData      = 150
 	AnnotationMongoCollectionInfo = 151
-	AnnotationEsUrl               = 172
 	AnnotationEsDsl               = 173
-	AnnotationEsAction            = 174
 	AnnotationHbaseClientParams   = 320
 )
 
