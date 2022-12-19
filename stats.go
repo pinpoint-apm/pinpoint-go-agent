@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/process"
 )
@@ -279,4 +280,95 @@ func incrSkipNew() {
 }
 func incrSkipCont() {
 	atomic.AddInt64(&skipCont, 1)
+}
+
+const (
+	uriStatusUnknown     = 0
+	uriStatusSuccess     = 1
+	uriStatusFail        = 2
+	uriStatBucketVersion = 0
+	uriStatBucketSize    = 8
+)
+
+type uriStats struct {
+	uri     string
+	status  int
+	elapsed time.Duration
+}
+
+type eachUriStat struct {
+	uri             string
+	totalHistogram  uriStatHistogram
+	failedHistogram uriStatHistogram
+}
+
+type uriStatHistogram struct {
+	count     int
+	total     time.Duration
+	max       time.Duration
+	histogram [uriStatBucketSize]int
+}
+
+type uriStatSnapshot struct {
+	t        time.Time
+	uriCache *lru.Cache
+}
+
+func uriStatStatus(status int) int {
+	if status/100 < 4 {
+		return uriStatusSuccess
+	} else {
+		return uriStatusFail
+	}
+}
+
+func (hg *uriStatHistogram) add(elapsed time.Duration) {
+	hg.count++
+	hg.total += elapsed
+
+	if hg.max < elapsed {
+		hg.max = elapsed
+	}
+	hg.histogram[getBucket(elapsed)]++
+}
+
+func getBucket(elapsed time.Duration) int {
+	if elapsed < 100 {
+		return 0
+	} else if elapsed < 300 {
+		return 1
+	} else if elapsed < 500 {
+		return 2
+	} else if elapsed < 1000 {
+		return 3
+	} else if elapsed < 3000 {
+		return 4
+	} else if elapsed < 5000 {
+		return 5
+	} else if elapsed < 8000 {
+		return 6
+	} else {
+		return 7
+	}
+}
+
+func getUriStatSnapshot() *uriStatSnapshot {
+	c, _ := lru.New(1024)
+	return &uriStatSnapshot{t: time.Now(), uriCache: c}
+}
+
+func (snapshot *uriStatSnapshot) add(uri *uriStats) {
+	var e *eachUriStat
+
+	if v, ok := snapshot.uriCache.Peek(uri.uri); ok {
+		e = v.(*eachUriStat)
+	} else {
+		e = &eachUriStat{uri: uri.uri}
+		snapshot.uriCache.Add(uri.uri, e)
+	}
+
+	e.totalHistogram.add(uri.elapsed)
+	if uriStatStatus(uri.status) == uriStatusFail {
+		e.totalHistogram.add(uri.elapsed)
+	}
 }

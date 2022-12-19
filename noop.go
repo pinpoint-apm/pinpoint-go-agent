@@ -31,11 +31,13 @@ func (agent *noopAgent) Shutdown() {
 }
 
 type noopSpan struct {
+	agent       *agent
 	spanId      int64
 	startTime   time.Time
 	rpcName     string
 	goroutineId int64
 	withStats   bool
+	httpStatus  int
 
 	noopSe      noopSpanEvent
 	annotations noopAnnotation
@@ -48,12 +50,14 @@ func NoopTracer() Tracer {
 	return &defaultNoopSpan
 }
 
-func newUnSampledSpan(rpcName string) *noopSpan {
+func newUnSampledSpan(agent *agent, rpcName string) *noopSpan {
 	span := noopSpan{}
+	span.agent = agent
 	span.spanId = generateSpanId()
 	span.startTime = time.Now()
 	span.rpcName = rpcName
 	span.withStats = true
+	span.httpStatus = uriStatusUnknown
 
 	addUnSampledActiveSpan(&span)
 
@@ -65,6 +69,10 @@ func (span *noopSpan) EndSpan() {
 		dropUnSampledActiveSpan(span)
 		elapsed := time.Now().Sub(span.startTime)
 		collectResponseTime(toMilliseconds(elapsed))
+		if span.httpStatus != uriStatusUnknown {
+			stat := &uriStats{uri: span.rpcName, status: span.httpStatus, elapsed: elapsed}
+			span.agent.enqueueUriStat(stat)
+		}
 	}
 }
 
@@ -143,6 +151,10 @@ func (span *noopSpan) SetLogging(logInfo int32) {}
 
 func (span *noopSpan) IsSampled() bool {
 	return false
+}
+
+func (span *noopSpan) CollectUriStat(status int) {
+	span.httpStatus = status
 }
 
 type noopSpanEvent struct {

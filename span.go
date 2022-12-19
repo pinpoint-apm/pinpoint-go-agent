@@ -65,6 +65,7 @@ type span struct {
 	goroutineId   int64
 	eventStack    *stack
 	appendLock    sync.Mutex
+	httpStatus    int
 }
 
 func toMilliseconds(d time.Duration) int64 { return int64(d) / 1e6 }
@@ -84,8 +85,8 @@ func defaultSpan() *span {
 	span.startTime = time.Now()
 	span.goroutineId = 0
 	span.asyncId = noneAsyncId
-
 	span.eventStack = &stack{}
+	span.httpStatus = uriStatusUnknown
 	return &span
 }
 
@@ -117,6 +118,11 @@ func (span *span) EndSpan() {
 
 	if !span.agent.enqueueSpan(span) {
 		Log("span").Tracef("span channel - max capacity reached or closed")
+	}
+
+	if span.httpStatus != uriStatusUnknown {
+		stat := &uriStats{uri: span.rpcName, status: span.httpStatus, elapsed: span.elapsed}
+		span.agent.enqueueUriStat(stat)
 	}
 }
 
@@ -365,6 +371,10 @@ func (span *span) Annotations() Annotation {
 
 func (span *span) SetLogging(logInfo int32) {
 	span.loggingInfo = logInfo
+}
+
+func (span *span) CollectUriStat(status int) {
+	span.httpStatus = status
 }
 
 type stack struct {

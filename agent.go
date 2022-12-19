@@ -24,15 +24,16 @@ type agent struct {
 	agentID   string
 	agentName string
 
-	startTime int64
-	sequence  int64
-	agentGrpc *agentGrpc
-	spanGrpc  *spanGrpc
-	statGrpc  *statGrpc
-	cmdGrpc   *cmdGrpc
-	spanChan  chan *span
-	metaChan  chan interface{}
-	sampler   traceSampler
+	startTime   int64
+	sequence    int64
+	agentGrpc   *agentGrpc
+	spanGrpc    *spanGrpc
+	statGrpc    *statGrpc
+	cmdGrpc     *cmdGrpc
+	spanChan    chan *span
+	metaChan    chan interface{}
+	uriStatChan chan *uriStats
+	sampler     traceSampler
 
 	errorCache *lru.Cache
 	errorIdGen int32
@@ -102,14 +103,15 @@ func NewAgent(config *Config) (Agent, error) {
 	config.printConfigString()
 
 	agent := &agent{
-		appName:   config.String(CfgAppName),
-		appType:   int32(config.Int(CfgAppType)),
-		agentID:   config.String(CfgAgentID),
-		agentName: config.String(CfgAgentName),
-		offGrpc:   config.offGrpc,
-		startTime: time.Now().UnixNano() / int64(time.Millisecond),
-		spanChan:  make(chan *span, config.Int(CfgSpanQueueSize)),
-		metaChan:  make(chan interface{}, config.Int(CfgSpanQueueSize)),
+		appName:     config.String(CfgAppName),
+		appType:     int32(config.Int(CfgAppType)),
+		agentID:     config.String(CfgAgentID),
+		agentName:   config.String(CfgAgentName),
+		offGrpc:     config.offGrpc,
+		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
+		spanChan:    make(chan *span, config.Int(CfgSpanQueueSize)),
+		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),
+		uriStatChan: make(chan *uriStats, config.Int(CfgSpanQueueSize)),
 	}
 
 	var err error
@@ -170,8 +172,9 @@ func connectGrpc(agent *agent, config *Config) {
 	go agent.sendStatsWorker(config)
 	go agent.runCommandService()
 	go agent.sendMetaWorker()
+	go agent.sendUriStatWorker()
 
-	agent.wg.Add(5)
+	agent.wg.Add(6)
 }
 
 func (agent *agent) Shutdown() {
@@ -227,7 +230,7 @@ func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string, re
 	sampled := reader.Get(HeaderSampled)
 	if sampled == "s0" {
 		incrUnSampleCont()
-		return newUnSampledSpan(rpcName)
+		return newUnSampledSpan(agent, rpcName)
 	}
 
 	tid := reader.Get(HeaderTraceId)
@@ -244,7 +247,7 @@ func (agent *agent) samplingSpan(samplingFunc func() bool, operation string, rpc
 		tracer.Extract(reader)
 		return tracer
 	} else {
-		return newUnSampledSpan(rpcName)
+		return newUnSampledSpan(agent, rpcName)
 	}
 }
 
@@ -466,4 +469,36 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 
 	Log("agent").Infof("cache api id: %d, %s", id, key)
 	return id
+}
+
+func (agent *agent) enqueueUriStat(stat *uriStats) bool {
+	if !agent.enable {
+		return false
+	}
+
+	select {
+	case agent.uriStatChan <- stat:
+		return true
+	default:
+		break
+	}
+
+	<-agent.uriStatChan
+	return false
+}
+
+func (agent *agent) sendUriStatWorker() {
+	Log("agent").Infof("start uri stat goroutine")
+	defer agent.wg.Done()
+
+	for uri := range agent.uriStatChan {
+		if !agent.enable {
+			break
+		}
+
+		snapshot := getUriStatSnapshot()
+		snapshot.add(uri)
+	}
+
+	Log("agent").Infof("end uri stat goroutine")
 }
