@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -27,11 +28,9 @@ func elasticTest(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	log.SetFlags(0)
 
-	addr := []string{"http://localhost:9200"}
 	es, err := elasticsearch.NewClient(
 		elasticsearch.Config{
-			Addresses: addr,
-			Transport: ppgoelastic.NewTransport(nil, addr),
+			Transport: ppgoelastic.NewTransport(nil),
 		})
 	if err != nil {
 		log.Fatalf("Error creating the client: %s", err)
@@ -106,11 +105,17 @@ func searchDocument(ctx context.Context, es *elasticsearch.Client) bytes.Buffer 
 		log.Fatalf("Error encoding query: %s", err)
 	}
 
+	var zbuf bytes.Buffer
+	gz := gzip.NewWriter(&zbuf)
+	gz.Write(buf.Bytes())
+	gz.Close()
+
 	// Perform the search request.
 	res, err := es.Search(
 		es.Search.WithContext(ctx),
 		es.Search.WithIndex("test"),
-		es.Search.WithBody(&buf),
+		es.Search.WithHeader(map[string]string{"Content-Encoding": "gzip"}),
+		es.Search.WithBody(&zbuf),
 		es.Search.WithTrackTotalHits(true),
 		es.Search.WithPretty(),
 	)
@@ -150,7 +155,6 @@ func searchDocument(ctx context.Context, es *elasticsearch.Client) bytes.Buffer 
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoElasticTest"),
-		//pinpoint.WithCollectorHost("localhost"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
