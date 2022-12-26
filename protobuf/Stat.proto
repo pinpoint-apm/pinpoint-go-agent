@@ -171,20 +171,19 @@ message PLoadedClass {
 }
 
 message PAgentUriStat {
-    int64 timestamp = 1;
-    int32 bucketVersion = 2;
-    repeated PEachUriStat eachUriStat = 3;
+    int32 bucketVersion = 1;
+    repeated PEachUriStat eachUriStat = 2;
 }
 
 message PEachUriStat {
     string uri = 1;
     PUriHistogram totalHistogram = 2;
     PUriHistogram failedHistogram = 3;
+    int64 timestamp = 4;
 }
 
 message PUriHistogram {
-    int32 count = 1;
-    double avg = 2;
-    int64 max = 3;
-    repeated int32 histogram = 4;
+    int64 total = 1;
+    int64 max = 2;
+    repeated int32 histogram = 3;
 }

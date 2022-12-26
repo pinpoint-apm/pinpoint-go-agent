@@ -102,7 +102,8 @@ func newSampledSpan(agent *agent, operation string, rpcName string) *span {
 }
 
 func (span *span) EndSpan() {
-	span.elapsed = time.Now().Sub(span.startTime)
+	endTime := time.Now()
+	span.elapsed = endTime.Sub(span.startTime)
 
 	if span.isAsyncSpan() {
 		span.EndSpanEvent() //async span event
@@ -121,7 +122,7 @@ func (span *span) EndSpan() {
 	}
 
 	if span.httpStatus != uriStatusUnknown {
-		stat := &uriStats{uri: span.rpcName, status: span.httpStatus, elapsed: span.elapsed}
+		stat := &uriStats{uri: span.rpcName, status: span.httpStatus, endTime: endTime, elapsed: span.elapsed}
 		span.agent.enqueueUriStat(stat)
 	}
 }

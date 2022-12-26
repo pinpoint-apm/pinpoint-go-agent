@@ -31,6 +31,8 @@ func Middleware() gin.HandlerFunc {
 		tracer := pphttp.NewHttpServerTracer(c.Request, serverName)
 		defer tracer.EndSpan()
 
+		//c.FullPath()
+
 		if !tracer.IsSampled() {
 			c.Next()
 			return

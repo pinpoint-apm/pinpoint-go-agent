@@ -172,7 +172,7 @@ func connectGrpc(agent *agent, config *Config) {
 	go agent.sendStatsWorker(config)
 	go agent.runCommandService()
 	go agent.sendMetaWorker()
-	go agent.sendUriStatWorker()
+	go agent.collectUriStatWorker()
 
 	agent.wg.Add(6)
 }
@@ -487,7 +487,7 @@ func (agent *agent) enqueueUriStat(stat *uriStats) bool {
 	return false
 }
 
-func (agent *agent) sendUriStatWorker() {
+func (agent *agent) collectUriStatWorker() {
 	Log("agent").Infof("start uri stat goroutine")
 	defer agent.wg.Done()
 
@@ -496,8 +496,24 @@ func (agent *agent) sendUriStatWorker() {
 			break
 		}
 
-		snapshot := getUriStatSnapshot()
+		snapshot := currentUriStatSnapshot()
 		snapshot.add(uri)
+	}
+
+	Log("agent").Infof("end uri stat goroutine")
+}
+
+func (agent *agent) sendStatWorker() {
+	Log("agent").Infof("start uri stat goroutine")
+	defer agent.wg.Done()
+
+	interval := 30 * time.Second
+	time.Sleep(interval)
+
+	for agent.enable {
+		snapshot := takeUriStatSnapshot()
+		enqueueStat(makePAgentUriStat(snapshot))
+		time.Sleep(interval)
 	}
 
 	Log("agent").Infof("end uri stat goroutine")

@@ -849,6 +849,47 @@ func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
 	}
 }
 
+func makePAgentUriStat(stat *uriStatSnapshot) *pb.PStatMessage {
+	return &pb.PStatMessage{
+		Field: &pb.PStatMessage_AgentUriStat{
+			AgentUriStat: &pb.PAgentUriStat{
+				BucketVersion: uriStatBucketVersion,
+				EachUriStat:   makePEachUriStatList(stat),
+			},
+		},
+	}
+}
+
+func makePEachUriStatList(stat *uriStatSnapshot) []*pb.PEachUriStat {
+	dumpList := make([]*pb.PEachUriStat, 0)
+
+	if stat != nil {
+		for _, e := range stat.uriMap {
+			aDump := makePEachUriStat(e)
+			dumpList = append(dumpList, aDump)
+		}
+	}
+
+	return dumpList
+}
+
+func makePEachUriStat(e *eachUriStat) *pb.PEachUriStat {
+	return &pb.PEachUriStat{
+		Uri:             e.uri,
+		TotalHistogram:  makePUriHistogram(&e.totalHistogram),
+		FailedHistogram: makePUriHistogram(&e.failedHistogram),
+		Timestamp:       e.tickTime.UnixNano() / int64(time.Millisecond),
+	}
+}
+
+func makePUriHistogram(h *uriStatHistogram) *pb.PUriHistogram {
+	return &pb.PUriHistogram{
+		Total:     toMilliseconds(h.total),
+		Max:       toMilliseconds(h.max),
+		Histogram: h.histogram,
+	}
+}
+
 type cmdGrpc struct {
 	cmdConn   *grpc.ClientConn
 	cmdClient pb.ProfilerCommandServiceClient

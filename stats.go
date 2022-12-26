@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	lru "github.com/hashicorp/golang-lru"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/process"
 )
@@ -42,7 +42,6 @@ var (
 	lastCpuStat     *cpu.TimesStat
 	lastMemStat     runtime.MemStats
 	lastCollectTime time.Time
-	statsMux        sync.Mutex
 
 	accResponseTime int64
 	maxResponseTime int64
@@ -56,6 +55,8 @@ var (
 	skipCont     int64
 
 	activeSpan sync.Map
+
+	statChan chan *pb.PStatMessage
 )
 
 func initStats() {
@@ -70,6 +71,10 @@ func initStats() {
 	lastCollectTime = time.Now()
 
 	activeSpan = sync.Map{}
+
+	tick = newTickClock(30 * time.Second)
+	uriSnapshot = newUriStatSnapshot()
+	statChan = make(chan *pb.PStatMessage, 1024)
 }
 
 func getCpuUsage() *cpu.TimesStat {
@@ -293,6 +298,7 @@ const (
 type uriStats struct {
 	uri     string
 	status  int
+	endTime time.Time
 	elapsed time.Duration
 }
 
@@ -300,18 +306,18 @@ type eachUriStat struct {
 	uri             string
 	totalHistogram  uriStatHistogram
 	failedHistogram uriStatHistogram
+	tickTime        time.Time
 }
 
 type uriStatHistogram struct {
 	count     int
 	total     time.Duration
 	max       time.Duration
-	histogram [uriStatBucketSize]int
+	histogram []int32
 }
 
 type uriStatSnapshot struct {
-	t        time.Time
-	uriCache *lru.Cache
+	uriMap map[uriKey]*eachUriStat
 }
 
 func uriStatStatus(status int) int {
@@ -352,23 +358,85 @@ func getBucket(elapsed time.Duration) int {
 	}
 }
 
-func getUriStatSnapshot() *uriStatSnapshot {
-	c, _ := lru.New(1024)
-	return &uriStatSnapshot{t: time.Now(), uriCache: c}
+var (
+	tick        tickClock
+	uriSnapshot *uriStatSnapshot
+	uriMux      sync.Mutex
+)
+
+func newUriStatSnapshot() *uriStatSnapshot {
+	return &uriStatSnapshot{uriMap: make(map[uriKey]*eachUriStat, 0)}
 }
 
-func (snapshot *uriStatSnapshot) add(uri *uriStats) {
-	var e *eachUriStat
+func currentUriStatSnapshot() *uriStatSnapshot {
+	uriMux.Lock()
+	defer uriMux.Unlock()
+	return uriSnapshot
+}
 
-	if v, ok := snapshot.uriCache.Peek(uri.uri); ok {
-		e = v.(*eachUriStat)
-	} else {
-		e = &eachUriStat{uri: uri.uri}
-		snapshot.uriCache.Add(uri.uri, e)
+func takeUriStatSnapshot() *uriStatSnapshot {
+	uriMux.Lock()
+	defer uriMux.Unlock()
+
+	oldSnapshot := uriSnapshot
+	uriSnapshot = newUriStatSnapshot()
+	return oldSnapshot
+}
+
+func (snapshot *uriStatSnapshot) add(us *uriStats) {
+	key := uriKey{us.uri, tick.time(us.endTime)}
+
+	e, ok := snapshot.uriMap[key]
+	if !ok {
+		e = newEachUriStat(us.uri, key.tick)
+		snapshot.uriMap[key] = e
 	}
 
-	e.totalHistogram.add(uri.elapsed)
-	if uriStatStatus(uri.status) == uriStatusFail {
-		e.totalHistogram.add(uri.elapsed)
+	e.totalHistogram.add(us.elapsed)
+	if uriStatStatus(us.status) == uriStatusFail {
+		e.totalHistogram.add(us.elapsed)
 	}
+}
+
+func newEachUriStat(uri string, tick time.Time) *eachUriStat {
+	return &eachUriStat{
+		uri: uri,
+		totalHistogram: uriStatHistogram{
+			histogram: make([]int32, uriStatBucketSize),
+		},
+		failedHistogram: uriStatHistogram{
+			histogram: make([]int32, uriStatBucketSize),
+		},
+		tickTime: tick,
+	}
+}
+
+type tickClock struct {
+	d int64 //milliseconds
+}
+
+func newTickClock(d time.Duration) tickClock {
+	return tickClock{d.Milliseconds()}
+}
+
+func (t tickClock) time(tm time.Time) time.Time {
+	ms := tm.UnixMilli()
+	return time.UnixMilli(ms - (ms % t.d))
+}
+
+type uriKey struct {
+	uri  string
+	tick time.Time
+}
+
+func enqueueStat(stat *pb.PStatMessage) bool {
+	select {
+	case statChan <- stat:
+		return true
+	default:
+		break
+	}
+
+	<-statChan
+	return false
 }

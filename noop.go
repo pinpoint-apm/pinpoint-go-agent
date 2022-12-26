@@ -67,10 +67,11 @@ func newUnSampledSpan(agent *agent, rpcName string) *noopSpan {
 func (span *noopSpan) EndSpan() {
 	if span.withStats {
 		dropUnSampledActiveSpan(span)
-		elapsed := time.Now().Sub(span.startTime)
+		endTime := time.Now()
+		elapsed := endTime.Sub(span.startTime)
 		collectResponseTime(toMilliseconds(elapsed))
 		if span.httpStatus != uriStatusUnknown {
-			stat := &uriStats{uri: span.rpcName, status: span.httpStatus, elapsed: elapsed}
+			stat := &uriStats{uri: span.rpcName, status: span.httpStatus, endTime: endTime, elapsed: elapsed}
 			span.agent.enqueueUriStat(stat)
 		}
 	}
