@@ -53,6 +53,7 @@ func Middleware() func(http.Handler) http.Handler {
 
 			next.ServeHTTP(w, r)
 			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
+			//routePattern := chi.RouteContext(r.Context()).RoutePattern()
 		})
 	}
 }

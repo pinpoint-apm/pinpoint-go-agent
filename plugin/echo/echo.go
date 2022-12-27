@@ -75,6 +75,7 @@ func Middleware() echo.MiddlewareFunc {
 				c.Error(err)
 			}
 
+			//c.Path()
 			pphttp.RecordHttpServerResponse(tracer, c.Response().Status, c.Response().Header())
 			return err
 		}

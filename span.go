@@ -53,7 +53,7 @@ type span struct {
 	eventOverflowLog bool
 
 	startTime     time.Time
-	elapsed       time.Duration
+	elapsed       int64
 	operationName string
 	flags         int
 	err           int
@@ -67,8 +67,6 @@ type span struct {
 	appendLock    sync.Mutex
 	httpStatus    int
 }
-
-func toMilliseconds(d time.Duration) int64 { return int64(d) / 1e6 }
 
 func generateSpanId() int64 {
 	return rand.Int63()
@@ -103,13 +101,13 @@ func newSampledSpan(agent *agent, operation string, rpcName string) *span {
 
 func (span *span) EndSpan() {
 	endTime := time.Now()
-	span.elapsed = endTime.Sub(span.startTime)
+	span.elapsed = endTime.Sub(span.startTime).Milliseconds()
 
 	if span.isAsyncSpan() {
 		span.EndSpanEvent() //async span event
 	} else {
 		dropSampledActiveSpan(span)
-		collectResponseTime(toMilliseconds(span.elapsed))
+		collectResponseTime(span.elapsed)
 	}
 
 	if span.eventStack.len() > 0 {

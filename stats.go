@@ -1,14 +1,12 @@
 package pinpoint
 
 import (
-	"io"
 	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/process"
 )
@@ -55,8 +53,6 @@ var (
 	skipCont     int64
 
 	activeSpan sync.Map
-
-	statChan chan *pb.PStatMessage
 )
 
 func initStats() {
@@ -74,7 +70,6 @@ func initStats() {
 
 	tick = newTickClock(30 * time.Second)
 	uriSnapshot = newUriStatSnapshot()
-	statChan = make(chan *pb.PStatMessage, 1024)
 }
 
 func getCpuUsage() *cpu.TimesStat {
@@ -189,14 +184,13 @@ func activeSpanCount(now time.Time) []int32 {
 	return count
 }
 
-func (agent *agent) sendStatsWorker(config *Config) {
-	Log("stats").Infof("start stat goroutine")
+func (agent *agent) collectAgentStatWorker(config *Config) {
+	Log("stats").Infof("start collect agent stat goroutine")
 	defer agent.wg.Done()
 
 	initStats()
 	resetResponseTime()
 
-	stream := agent.statGrpc.newStatStreamWithRetry()
 	interval := time.Duration(config.Int(CfgStatCollectInterval)) * time.Millisecond
 	time.Sleep(interval)
 	cfgBatchCount := config.Int(CfgStatBatchCount)
@@ -208,23 +202,12 @@ func (agent *agent) sendStatsWorker(config *Config) {
 		batch++
 
 		if batch == cfgBatchCount {
-			err := stream.sendStats(collected)
-			if err != nil {
-				if err != io.EOF {
-					Log("stats").Errorf("send stats - %v", err)
-				}
-
-				stream.close()
-				stream = agent.statGrpc.newStatStreamWithRetry()
-			}
+			agent.enqueueStat(makePAgentStatBatch(collected))
 			batch = 0
 		}
-
 		time.Sleep(interval)
 	}
-
-	stream.close()
-	Log("stats").Infof("end stat goroutine")
+	Log("stats").Infof("end collect agent stat goroutine")
 }
 
 func collectResponseTime(resTime int64) {
@@ -299,7 +282,7 @@ type uriStats struct {
 	uri     string
 	status  int
 	endTime time.Time
-	elapsed time.Duration
+	elapsed int64
 }
 
 type eachUriStat struct {
@@ -310,10 +293,14 @@ type eachUriStat struct {
 }
 
 type uriStatHistogram struct {
-	count     int
-	total     time.Duration
-	max       time.Duration
+	total     int64
+	max       int64
 	histogram []int32
+}
+
+type uriKey struct {
+	uri  string
+	tick time.Time
 }
 
 type uriStatSnapshot struct {
@@ -328,17 +315,15 @@ func uriStatStatus(status int) int {
 	}
 }
 
-func (hg *uriStatHistogram) add(elapsed time.Duration) {
-	hg.count++
+func (hg *uriStatHistogram) add(elapsed int64) {
 	hg.total += elapsed
-
 	if hg.max < elapsed {
 		hg.max = elapsed
 	}
 	hg.histogram[getBucket(elapsed)]++
 }
 
-func getBucket(elapsed time.Duration) int {
+func getBucket(elapsed int64) int {
 	if elapsed < 100 {
 		return 0
 	} else if elapsed < 300 {
@@ -365,7 +350,9 @@ var (
 )
 
 func newUriStatSnapshot() *uriStatSnapshot {
-	return &uriStatSnapshot{uriMap: make(map[uriKey]*eachUriStat, 0)}
+	return &uriStatSnapshot{
+		uriMap: make(map[uriKey]*eachUriStat, 0),
+	}
 }
 
 func currentUriStatSnapshot() *uriStatSnapshot {
@@ -394,7 +381,7 @@ func (snapshot *uriStatSnapshot) add(us *uriStats) {
 
 	e.totalHistogram.add(us.elapsed)
 	if uriStatStatus(us.status) == uriStatusFail {
-		e.totalHistogram.add(us.elapsed)
+		e.failedHistogram.add(us.elapsed)
 	}
 }
 
@@ -422,21 +409,4 @@ func newTickClock(d time.Duration) tickClock {
 func (t tickClock) time(tm time.Time) time.Time {
 	ms := tm.UnixMilli()
 	return time.UnixMilli(ms - (ms % t.d))
-}
-
-type uriKey struct {
-	uri  string
-	tick time.Time
-}
-
-func enqueueStat(stat *pb.PStatMessage) bool {
-	select {
-	case statChan <- stat:
-		return true
-	default:
-		break
-	}
-
-	<-statChan
-	return false
 }

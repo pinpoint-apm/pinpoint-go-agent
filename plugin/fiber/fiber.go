@@ -56,6 +56,7 @@ func Middleware() func(c *fiber.Ctx) error {
 		tracer.Span().SetError(err)
 
 		recordResponse(tracer, c, c.Response().StatusCode())
+		//c.Route().path
 		return err
 	}
 }

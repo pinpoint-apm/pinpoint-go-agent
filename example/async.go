@@ -15,8 +15,8 @@ import (
 
 func outGoingRequest(w http.ResponseWriter, ctx context.Context) {
 	seed := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(seed)
-	time.Sleep(time.Duration(random.Intn(10000)+1) * time.Millisecond)
+	random := rand.New(seed).Intn(10000)
+	time.Sleep(time.Duration(random+1) * time.Millisecond)
 
 	client := pphttp.WrapClient(nil)
 	request, _ := http.NewRequest("GET", "http://localhost:9001/query", nil)
@@ -25,7 +25,9 @@ func outGoingRequest(w http.ResponseWriter, ctx context.Context) {
 	resp, err := client.Do(request)
 	if nil != err {
 		w.Header().Set("foo", "error")
-		w.WriteHeader(http.StatusServiceUnavailable)
+		if random > 5000 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
 		io.WriteString(w, err.Error())
 		return
 	}
@@ -119,8 +121,8 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoAsyncExample"),
 		pinpoint.WithAgentId("GoAsyncExampleAgent"),
-		pinpoint.WithLogLevel("debug"),
-		pinpoint.WithLogOutput(os.Getenv("HOME") + "/tmp/pinpoint.log"),
+		//pinpoint.WithLogLevel("debug"),
+		//pinpoint.WithLogOutput(os.Getenv("HOME") + "/tmp/pinpoint.log"),
 		//pinpoint.WithSamplingCounterRate(100),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 		//phttp.WithHttpServerRecordRequestHeader([]string{"HEADERS-ALL"}),

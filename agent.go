@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"errors"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"io"
 	"strconv"
 	"sync"
@@ -33,6 +34,7 @@ type agent struct {
 	spanChan    chan *span
 	metaChan    chan interface{}
 	uriStatChan chan *uriStats
+	statChan    chan *pb.PStatMessage
 	sampler     traceSampler
 
 	errorCache *lru.Cache
@@ -112,6 +114,7 @@ func NewAgent(config *Config) (Agent, error) {
 		spanChan:    make(chan *span, config.Int(CfgSpanQueueSize)),
 		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),
 		uriStatChan: make(chan *uriStats, config.Int(CfgSpanQueueSize)),
+		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),
 	}
 
 	var err error
@@ -169,12 +172,13 @@ func connectGrpc(agent *agent, config *Config) {
 	agent.enable = true
 	go agent.sendPingWorker()
 	go agent.sendSpanWorker()
-	go agent.sendStatsWorker(config)
 	go agent.runCommandService()
 	go agent.sendMetaWorker()
+	go agent.collectAgentStatWorker(config)
 	go agent.collectUriStatWorker()
-
-	agent.wg.Add(6)
+	go agent.sendUriStatWorker()
+	go agent.sendStatsWorker()
+	agent.wg.Add(8)
 }
 
 func (agent *agent) Shutdown() {
@@ -488,23 +492,22 @@ func (agent *agent) enqueueUriStat(stat *uriStats) bool {
 }
 
 func (agent *agent) collectUriStatWorker() {
-	Log("agent").Infof("start uri stat goroutine")
+	Log("agent").Infof("start collect uri stat goroutine")
 	defer agent.wg.Done()
 
 	for uri := range agent.uriStatChan {
 		if !agent.enable {
 			break
 		}
-
 		snapshot := currentUriStatSnapshot()
 		snapshot.add(uri)
 	}
 
-	Log("agent").Infof("end uri stat goroutine")
+	Log("agent").Infof("end collect uri stat goroutine")
 }
 
-func (agent *agent) sendStatWorker() {
-	Log("agent").Infof("start uri stat goroutine")
+func (agent *agent) sendUriStatWorker() {
+	Log("agent").Infof("start send uri stat goroutine")
 	defer agent.wg.Done()
 
 	interval := 30 * time.Second
@@ -512,9 +515,46 @@ func (agent *agent) sendStatWorker() {
 
 	for agent.enable {
 		snapshot := takeUriStatSnapshot()
-		enqueueStat(makePAgentUriStat(snapshot))
+		agent.enqueueStat(makePAgentUriStat(snapshot))
 		time.Sleep(interval)
 	}
 
-	Log("agent").Infof("end uri stat goroutine")
+	Log("agent").Infof("end send uri stat goroutine")
+}
+
+func (agent *agent) enqueueStat(stat *pb.PStatMessage) bool {
+	select {
+	case agent.statChan <- stat:
+		return true
+	default:
+		break
+	}
+
+	<-agent.statChan
+	return false
+}
+
+func (agent *agent) sendStatsWorker() {
+	Log("agent").Infof("start send stats goroutine")
+	defer agent.wg.Done()
+
+	stream := agent.statGrpc.newStatStreamWithRetry()
+	for stats := range agent.statChan {
+		if !agent.enable {
+			break
+		}
+
+		err := stream.sendStats(stats)
+		if err != nil {
+			if err != io.EOF {
+				Log("stats").Errorf("send stats - %v", err)
+			}
+
+			stream.close()
+			stream = agent.statGrpc.newStatStreamWithRetry()
+		}
+	}
+	stream.close()
+
+	Log("agent").Infof("end send stats goroutine")
 }

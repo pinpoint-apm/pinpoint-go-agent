@@ -73,6 +73,7 @@ func WrapHandler(handler fasthttp.RequestHandler) fasthttp.RequestHandler {
 		tracer.Span().SetError(ctx.Err())
 
 		recordResponse(tracer, ctx, ctx.Response.StatusCode())
+		//ctx.Path()
 	}
 }
 

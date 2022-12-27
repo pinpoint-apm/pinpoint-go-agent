@@ -53,6 +53,8 @@ func Middleware() mux.MiddlewareFunc {
 
 			next.ServeHTTP(w, r)
 			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
+
+			//mux.CurrentRoute(r).GetPathTemplate()
 		})
 	}
 }

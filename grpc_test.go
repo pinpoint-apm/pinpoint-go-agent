@@ -184,7 +184,8 @@ func Test_statStream_sendStat(t *testing.T) {
 
 			stats := make([]*inspectorStats, 1)
 			stats[0] = getStats()
-			err := stream.sendStats(stats)
+			msg := makePAgentStatBatch(stats)
+			err := stream.sendStats(msg)
 			assert.NoError(t, err, "sendStats")
 		})
 	}
@@ -208,7 +209,8 @@ func Test_statStream_sendStatRetry(t *testing.T) {
 
 			stats := make([]*inspectorStats, 1)
 			stats[0] = getStats()
-			err := stream.sendStats(stats)
+			msg := makePAgentStatBatch(stats)
+			err := stream.sendStats(msg)
 			assert.NoError(t, err, "sendStats")
 		})
 	}

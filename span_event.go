@@ -10,8 +10,8 @@ type spanEvent struct {
 	sequence      int32
 	depth         int32
 	startTime     time.Time
-	startElapsed  time.Duration
-	endElapsed    time.Duration
+	startElapsed  int64
+	endElapsed    int64
 	operationName string
 	nextSpanId    int64
 	annotations   annotation
@@ -32,7 +32,7 @@ func defaultSpanEvent(span *span, operationName string) *spanEvent {
 
 	se.parentSpan = span
 	se.startTime = time.Now()
-	se.startElapsed = se.startTime.Sub(span.startTime)
+	se.startElapsed = se.startTime.Sub(span.startTime).Milliseconds()
 	se.sequence = span.eventSequence
 	se.depth = span.eventDepth
 	se.operationName = operationName
@@ -70,7 +70,7 @@ func newSpanEventGoroutine(span *span) *spanEvent {
 func (se *spanEvent) end() {
 	se.parentSpan.eventDepth--
 	if !se.isTimeFixed {
-		se.endElapsed = time.Now().Sub(se.startTime)
+		se.endElapsed = time.Now().Sub(se.startTime).Milliseconds()
 	}
 	Log("span").Tracef("endSpanEvent: %s", se.operationName)
 }
@@ -126,7 +126,7 @@ func (se *spanEvent) Annotations() Annotation {
 
 func (se *spanEvent) FixDuration(start time.Time, end time.Time) {
 	se.startTime = start
-	se.startElapsed = start.Sub(se.parentSpan.startTime)
-	se.endElapsed = end.Sub(start)
+	se.startElapsed = start.Sub(se.parentSpan.startTime).Milliseconds()
+	se.endElapsed = end.Sub(start).Milliseconds()
 	se.isTimeFixed = true
 }

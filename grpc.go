@@ -595,7 +595,7 @@ func makePSpan(span *span) *pb.PSpanMessage {
 				SpanId:       span.spanId,
 				ParentSpanId: span.parentSpanId,
 				StartTime:    span.startTime.UnixNano() / int64(time.Millisecond),
-				Elapsed:      int32(toMilliseconds(span.elapsed)),
+				Elapsed:      int32(span.elapsed),
 				ServiceType:  span.serviceType,
 				AcceptEvent: &pb.PAcceptEvent{
 					Rpc:        span.rpcName,
@@ -669,8 +669,8 @@ func makePSpanEvent(event *spanEvent) *pb.PSpanEvent {
 	aSpanEvent := pb.PSpanEvent{
 		Sequence:      event.sequence,
 		Depth:         event.depth,
-		StartElapsed:  int32(toMilliseconds(event.startElapsed)),
-		EndElapsed:    int32(toMilliseconds(event.endElapsed)),
+		StartElapsed:  int32(event.startElapsed),
+		EndElapsed:    int32(event.endElapsed),
 		ServiceType:   event.serviceType,
 		Annotation:    event.annotations.list,
 		ApiId:         event.apiId,
@@ -773,29 +773,26 @@ func (s *statStream) close() {
 	Log("grpc").Infof("close stat stream")
 }
 
-func (s *statStream) sendStats(stats []*inspectorStats) error {
-	var gstats *pb.PStatMessage
-
+func (s *statStream) sendStats(stats *pb.PStatMessage) error {
 	if s.stream == nil {
 		return status.Errorf(codes.Unavailable, "stat stream is nil")
 	}
+	Log("grpc").Tracef("PStatMessage: %s", stats.String())
+	return sendStreamWithTimeout(func() error { return s.stream.Send(stats) }, sendStreamTimeOut, "stat")
+}
 
-	gstats = &pb.PStatMessage{
+func makePAgentStatBatch(stats []*inspectorStats) *pb.PStatMessage {
+	l := make([]*pb.PAgentStat, 0)
+	for _, s := range stats {
+		l = append(l, makePAgentStat(s))
+	}
+	return &pb.PStatMessage{
 		Field: &pb.PStatMessage_AgentStatBatch{
 			AgentStatBatch: &pb.PAgentStatBatch{
-				AgentStat: nil,
+				AgentStat: l,
 			},
 		},
 	}
-
-	var as []*pb.PAgentStat
-	for _, s := range stats {
-		as = append(as, makePAgentStat(s))
-	}
-	gstats.GetAgentStatBatch().AgentStat = as
-
-	Log("grpc").Tracef("PStatMessage: %s", gstats.String())
-	return sendStreamWithTimeout(func() error { return s.stream.Send(gstats) }, sendStreamTimeOut, "stat")
 }
 
 func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
@@ -861,16 +858,11 @@ func makePAgentUriStat(stat *uriStatSnapshot) *pb.PStatMessage {
 }
 
 func makePEachUriStatList(stat *uriStatSnapshot) []*pb.PEachUriStat {
-	dumpList := make([]*pb.PEachUriStat, 0)
-
-	if stat != nil {
-		for _, e := range stat.uriMap {
-			aDump := makePEachUriStat(e)
-			dumpList = append(dumpList, aDump)
-		}
+	l := make([]*pb.PEachUriStat, 0)
+	for _, e := range stat.uriMap {
+		l = append(l, makePEachUriStat(e))
 	}
-
-	return dumpList
+	return l
 }
 
 func makePEachUriStat(e *eachUriStat) *pb.PEachUriStat {
@@ -884,8 +876,8 @@ func makePEachUriStat(e *eachUriStat) *pb.PEachUriStat {
 
 func makePUriHistogram(h *uriStatHistogram) *pb.PUriHistogram {
 	return &pb.PUriHistogram{
-		Total:     toMilliseconds(h.total),
-		Max:       toMilliseconds(h.max),
+		Total:     h.total,
+		Max:       h.max,
 		Histogram: h.histogram,
 	}
 }
