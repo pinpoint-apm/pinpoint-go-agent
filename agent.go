@@ -33,7 +33,7 @@ type agent struct {
 	cmdGrpc     *cmdGrpc
 	spanChan    chan *span
 	metaChan    chan interface{}
-	uriStatChan chan *uriStats
+	urlStatChan chan *urlStat
 	statChan    chan *pb.PStatMessage
 	sampler     traceSampler
 
@@ -113,7 +113,7 @@ func NewAgent(config *Config) (Agent, error) {
 		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
 		spanChan:    make(chan *span, config.Int(CfgSpanQueueSize)),
 		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),
-		uriStatChan: make(chan *uriStats, config.Int(CfgSpanQueueSize)),
+		urlStatChan: make(chan *urlStat, config.Int(CfgSpanQueueSize)),
 		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),
 	}
 
@@ -175,8 +175,8 @@ func connectGrpc(agent *agent, config *Config) {
 	go agent.runCommandService()
 	go agent.sendMetaWorker()
 	go agent.collectAgentStatWorker(config)
-	go agent.collectUriStatWorker()
-	go agent.sendUriStatWorker()
+	go agent.collectUrlStatWorker()
+	go agent.sendUrlStatWorker()
 	go agent.sendStatsWorker()
 	agent.wg.Add(8)
 }
@@ -475,38 +475,38 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 	return id
 }
 
-func (agent *agent) enqueueUriStat(stat *uriStats) bool {
+func (agent *agent) enqueueUrlStat(stat *urlStat) bool {
 	if !agent.enable {
 		return false
 	}
 
 	select {
-	case agent.uriStatChan <- stat:
+	case agent.urlStatChan <- stat:
 		return true
 	default:
 		break
 	}
 
-	<-agent.uriStatChan
+	<-agent.urlStatChan
 	return false
 }
 
-func (agent *agent) collectUriStatWorker() {
+func (agent *agent) collectUrlStatWorker() {
 	Log("agent").Infof("start collect uri stat goroutine")
 	defer agent.wg.Done()
 
-	for uri := range agent.uriStatChan {
+	for uri := range agent.urlStatChan {
 		if !agent.enable {
 			break
 		}
-		snapshot := currentUriStatSnapshot()
+		snapshot := currentUrlStatSnapshot()
 		snapshot.add(uri)
 	}
 
 	Log("agent").Infof("end collect uri stat goroutine")
 }
 
-func (agent *agent) sendUriStatWorker() {
+func (agent *agent) sendUrlStatWorker() {
 	Log("agent").Infof("start send uri stat goroutine")
 	defer agent.wg.Done()
 
@@ -514,7 +514,7 @@ func (agent *agent) sendUriStatWorker() {
 	time.Sleep(interval)
 
 	for agent.enable {
-		snapshot := takeUriStatSnapshot()
+		snapshot := takeUrlStatSnapshot()
 		agent.enqueueStat(makePAgentUriStat(snapshot))
 		time.Sleep(interval)
 	}

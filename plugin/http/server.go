@@ -134,10 +134,8 @@ func setProxyHeader(a pinpoint.Annotation, r *http.Request) {
 
 // RecordHttpServerResponse records http status and response header to span.
 func RecordHttpServerResponse(tracer pinpoint.Tracer, status int, h http.Header) {
-	span := tracer.Span()
-	span.CollectUriStat(status)
-
 	if tracer.IsSampled() {
+		span := tracer.Span()
 		recordServerHttpStatus(span, status)
 		recordServerHttpResponseHeader(span.Annotations(), header{h})
 	}
@@ -160,8 +158,11 @@ func WrapHandler(handler http.Handler, serverName ...string) http.Handler {
 			return
 		}
 
+		status := http.StatusOK
 		tracer := NewHttpServerTracer(r, srvName)
 		defer tracer.EndSpan()
+		defer tracer.CollectUrlStat(r.URL.Path, &status)
+
 		defer func() {
 			if e := recover(); e != nil {
 				status := http.StatusInternalServerError
@@ -173,7 +174,6 @@ func WrapHandler(handler http.Handler, serverName ...string) http.Handler {
 		tracer.NewSpanEvent(funcName)
 		defer tracer.EndSpanEvent()
 
-		status := http.StatusOK
 		w = WrapResponseWriter(w, &status)
 		r = pinpoint.RequestWithTracerContext(r, tracer)
 

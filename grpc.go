@@ -846,35 +846,35 @@ func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
 	}
 }
 
-func makePAgentUriStat(stat *uriStatSnapshot) *pb.PStatMessage {
+func makePAgentUriStat(stat *urlStatSnapshot) *pb.PStatMessage {
 	return &pb.PStatMessage{
 		Field: &pb.PStatMessage_AgentUriStat{
 			AgentUriStat: &pb.PAgentUriStat{
-				BucketVersion: uriStatBucketVersion,
+				BucketVersion: urlStatBucketVersion,
 				EachUriStat:   makePEachUriStatList(stat),
 			},
 		},
 	}
 }
 
-func makePEachUriStatList(stat *uriStatSnapshot) []*pb.PEachUriStat {
+func makePEachUriStatList(stat *urlStatSnapshot) []*pb.PEachUriStat {
 	l := make([]*pb.PEachUriStat, 0)
-	for _, e := range stat.uriMap {
+	for _, e := range stat.urlMap {
 		l = append(l, makePEachUriStat(e))
 	}
 	return l
 }
 
-func makePEachUriStat(e *eachUriStat) *pb.PEachUriStat {
+func makePEachUriStat(e *eachUrlStat) *pb.PEachUriStat {
 	return &pb.PEachUriStat{
-		Uri:             e.uri,
+		Uri:             e.url,
 		TotalHistogram:  makePUriHistogram(&e.totalHistogram),
 		FailedHistogram: makePUriHistogram(&e.failedHistogram),
 		Timestamp:       e.tickTime.UnixNano() / int64(time.Millisecond),
 	}
 }
 
-func makePUriHistogram(h *uriStatHistogram) *pb.PUriHistogram {
+func makePUriHistogram(h *urlStatHistogram) *pb.PUriHistogram {
 	return &pb.PUriHistogram{
 		Total:     h.total,
 		Max:       h.max,

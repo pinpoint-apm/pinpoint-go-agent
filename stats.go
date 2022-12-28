@@ -68,8 +68,8 @@ func initStats() {
 
 	activeSpan = sync.Map{}
 
-	tick = newTickClock(30 * time.Second)
-	uriSnapshot = newUriStatSnapshot()
+	clock = newTickClock(30 * time.Second)
+	urlSnapshot = newUrlStatSnapshot()
 }
 
 func getCpuUsage() *cpu.TimesStat {
@@ -271,51 +271,50 @@ func incrSkipCont() {
 }
 
 const (
-	uriStatusUnknown     = 0
-	uriStatusSuccess     = 1
-	uriStatusFail        = 2
-	uriStatBucketVersion = 0
-	uriStatBucketSize    = 8
+	urlStatusSuccess     = 1
+	urlStatusFail        = 2
+	urlStatBucketVersion = 0
+	urlStatBucketSize    = 8
 )
 
-type uriStats struct {
-	uri     string
+type urlStat struct {
+	url     string
 	status  int
 	endTime time.Time
 	elapsed int64
 }
 
-type eachUriStat struct {
-	uri             string
-	totalHistogram  uriStatHistogram
-	failedHistogram uriStatHistogram
+type eachUrlStat struct {
+	url             string
+	totalHistogram  urlStatHistogram
+	failedHistogram urlStatHistogram
 	tickTime        time.Time
 }
 
-type uriStatHistogram struct {
+type urlStatHistogram struct {
 	total     int64
 	max       int64
 	histogram []int32
 }
 
-type uriKey struct {
-	uri  string
+type urlKey struct {
+	url  string
 	tick time.Time
 }
 
-type uriStatSnapshot struct {
-	uriMap map[uriKey]*eachUriStat
+type urlStatSnapshot struct {
+	urlMap map[urlKey]*eachUrlStat
 }
 
-func uriStatStatus(status int) int {
+func urlStatStatus(status int) int {
 	if status/100 < 4 {
-		return uriStatusSuccess
+		return urlStatusSuccess
 	} else {
-		return uriStatusFail
+		return urlStatusFail
 	}
 }
 
-func (hg *uriStatHistogram) add(elapsed int64) {
+func (hg *urlStatHistogram) add(elapsed int64) {
 	hg.total += elapsed
 	if hg.max < elapsed {
 		hg.max = elapsed
@@ -344,69 +343,68 @@ func getBucket(elapsed int64) int {
 }
 
 var (
-	tick        tickClock
-	uriSnapshot *uriStatSnapshot
-	uriMux      sync.Mutex
+	clock           tickClock
+	urlSnapshot     *urlStatSnapshot
+	urlSnapshotLock sync.Mutex
 )
 
-func newUriStatSnapshot() *uriStatSnapshot {
-	return &uriStatSnapshot{
-		uriMap: make(map[uriKey]*eachUriStat, 0),
+func newUrlStatSnapshot() *urlStatSnapshot {
+	return &urlStatSnapshot{
+		urlMap: make(map[urlKey]*eachUrlStat, 0),
 	}
 }
 
-func currentUriStatSnapshot() *uriStatSnapshot {
-	uriMux.Lock()
-	defer uriMux.Unlock()
-	return uriSnapshot
+func currentUrlStatSnapshot() *urlStatSnapshot {
+	urlSnapshotLock.Lock()
+	defer urlSnapshotLock.Unlock()
+	return urlSnapshot
 }
 
-func takeUriStatSnapshot() *uriStatSnapshot {
-	uriMux.Lock()
-	defer uriMux.Unlock()
+func takeUrlStatSnapshot() *urlStatSnapshot {
+	urlSnapshotLock.Lock()
+	defer urlSnapshotLock.Unlock()
 
-	oldSnapshot := uriSnapshot
-	uriSnapshot = newUriStatSnapshot()
+	oldSnapshot := urlSnapshot
+	urlSnapshot = newUrlStatSnapshot()
 	return oldSnapshot
 }
 
-func (snapshot *uriStatSnapshot) add(us *uriStats) {
-	key := uriKey{us.uri, tick.time(us.endTime)}
+func (snapshot *urlStatSnapshot) add(us *urlStat) {
+	key := urlKey{us.url, clock.tick(us.endTime)}
 
-	e, ok := snapshot.uriMap[key]
+	e, ok := snapshot.urlMap[key]
 	if !ok {
-		e = newEachUriStat(us.uri, key.tick)
-		snapshot.uriMap[key] = e
+		e = newEachUrlStat(us.url, key.tick)
+		snapshot.urlMap[key] = e
 	}
 
 	e.totalHistogram.add(us.elapsed)
-	if uriStatStatus(us.status) == uriStatusFail {
+	if urlStatStatus(us.status) == urlStatusFail {
 		e.failedHistogram.add(us.elapsed)
 	}
 }
 
-func newEachUriStat(uri string, tick time.Time) *eachUriStat {
-	return &eachUriStat{
-		uri: uri,
-		totalHistogram: uriStatHistogram{
-			histogram: make([]int32, uriStatBucketSize),
+func newEachUrlStat(url string, tick time.Time) *eachUrlStat {
+	return &eachUrlStat{
+		url: url,
+		totalHistogram: urlStatHistogram{
+			histogram: make([]int32, urlStatBucketSize),
 		},
-		failedHistogram: uriStatHistogram{
-			histogram: make([]int32, uriStatBucketSize),
+		failedHistogram: urlStatHistogram{
+			histogram: make([]int32, urlStatBucketSize),
 		},
 		tickTime: tick,
 	}
 }
 
 type tickClock struct {
-	d int64 //milliseconds
+	interval time.Duration
 }
 
-func newTickClock(d time.Duration) tickClock {
-	return tickClock{d.Milliseconds()}
+func newTickClock(interval time.Duration) tickClock {
+	return tickClock{interval}
 }
 
-func (t tickClock) time(tm time.Time) time.Time {
-	ms := tm.UnixMilli()
-	return time.UnixMilli(ms - (ms % t.d))
+func (t tickClock) tick(tm time.Time) time.Time {
+	return tm.Truncate(t.interval)
 }

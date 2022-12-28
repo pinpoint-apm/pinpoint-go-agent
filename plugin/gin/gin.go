@@ -28,18 +28,14 @@ func Middleware() gin.HandlerFunc {
 			return
 		}
 
+		status := http.StatusOK
 		tracer := pphttp.NewHttpServerTracer(c.Request, serverName)
 		defer tracer.EndSpan()
+		defer tracer.CollectUrlStat(c.FullPath(), &status)
 
-		//c.FullPath()
-
-		if !tracer.IsSampled() {
-			c.Next()
-			return
-		}
 		defer func() {
 			if e := recover(); e != nil {
-				status := http.StatusInternalServerError
+				status = http.StatusInternalServerError
 				pphttp.RecordHttpServerResponse(tracer, status, c.Writer.Header())
 				panic(e)
 			}
@@ -54,7 +50,8 @@ func Middleware() gin.HandlerFunc {
 			tracer.Span().SetError(c.Errors.Last())
 		}
 
-		pphttp.RecordHttpServerResponse(tracer, c.Writer.Status(), c.Writer.Header())
+		status = c.Writer.Status()
+		pphttp.RecordHttpServerResponse(tracer, status, c.Writer.Header())
 	}
 }
 
@@ -69,16 +66,14 @@ func WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc {
 			return
 		}
 
+		status := http.StatusOK
 		tracer := pphttp.NewHttpServerTracer(c.Request, serverName)
 		defer tracer.EndSpan()
+		defer tracer.CollectUrlStat(c.FullPath(), &status)
 
-		if !tracer.IsSampled() {
-			handler(c)
-			return
-		}
 		defer func() {
 			if e := recover(); e != nil {
-				status := http.StatusInternalServerError
+				status = http.StatusInternalServerError
 				pphttp.RecordHttpServerResponse(tracer, status, c.Writer.Header())
 				panic(e)
 			}
@@ -92,6 +87,7 @@ func WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc {
 		if len(c.Errors) > 0 {
 			tracer.Span().SetError(c.Errors.Last())
 		}
-		pphttp.RecordHttpServerResponse(tracer, c.Writer.Status(), c.Writer.Header())
+		status = c.Writer.Status()
+		pphttp.RecordHttpServerResponse(tracer, status, c.Writer.Header())
 	}
 }

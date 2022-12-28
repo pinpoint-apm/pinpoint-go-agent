@@ -80,6 +80,9 @@ type Tracer interface {
 
 	// IsSampled returns whether the span has been sampled.
 	IsSampled() bool
+
+	// CollectUrlStat collects HTTP URL statistics.
+	CollectUrlStat(url string, status *int)
 }
 
 // SpanRecorder records the collected data in the fields of Span.
@@ -108,9 +111,6 @@ type SpanRecorder interface {
 
 	// SetLogging sets whether the Span has been logged.
 	SetLogging(logInfo int32)
-
-	// CollectUriStat collects HTTP URI statistics.
-	CollectUriStat(status int)
 
 	// Annotations returns annotations that the Span holds.
 	Annotations() Annotation
