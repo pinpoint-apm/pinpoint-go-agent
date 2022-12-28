@@ -868,8 +868,8 @@ func makePEachUriStatList(stat *urlStatSnapshot) []*pb.PEachUriStat {
 func makePEachUriStat(e *eachUrlStat) *pb.PEachUriStat {
 	return &pb.PEachUriStat{
 		Uri:             e.url,
-		TotalHistogram:  makePUriHistogram(&e.totalHistogram),
-		FailedHistogram: makePUriHistogram(&e.failedHistogram),
+		TotalHistogram:  makePUriHistogram(e.totalHistogram),
+		FailedHistogram: makePUriHistogram(e.failedHistogram),
 		Timestamp:       e.tickTime.UnixNano() / int64(time.Millisecond),
 	}
 }
