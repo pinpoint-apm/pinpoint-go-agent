@@ -36,3 +36,7 @@ profile:
     sampling:
       type: "PERCENT"
       percentrate: 5
+http:
+  urlStat:
+    enable: true
+    limitSize: 1234

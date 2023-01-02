@@ -45,5 +45,11 @@
         "percentRate": 5.5
       }
     }
+  },
+  "http": {
+    "urlStat" : {
+      "enable": true,
+      "limitSize": 10
+    }
   }
 }

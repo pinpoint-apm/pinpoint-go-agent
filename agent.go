@@ -44,6 +44,7 @@ type agent struct {
 	apiCache   *lru.Cache
 	apiIdGen   int32
 
+	config   *Config
 	wg       sync.WaitGroup
 	enable   bool
 	shutdown bool
@@ -146,6 +147,7 @@ func NewAgent(config *Config) (Agent, error) {
 		go connectGrpc(agent, config)
 	}
 
+	agent.config = config
 	globalAgent = agent
 	return agent, nil
 }
@@ -194,6 +196,8 @@ func (agent *agent) Shutdown() {
 
 	close(agent.spanChan)
 	close(agent.metaChan)
+	close(agent.urlStatChan)
+	close(agent.statChan)
 
 	//To terminate the listening state of the command stream,
 	//close the command grpc channel first
@@ -488,12 +492,15 @@ func (agent *agent) enqueueUrlStat(stat *urlStat) bool {
 	}
 
 	<-agent.urlStatChan
+	Log("agent").Tracef("url stat channel - max capacity reached or closed")
 	return false
 }
 
 func (agent *agent) collectUrlStatWorker() {
 	Log("agent").Infof("start collect uri stat goroutine")
 	defer agent.wg.Done()
+
+	initUrlStat()
 
 	for uri := range agent.urlStatChan {
 		if !agent.enable {
@@ -514,8 +521,10 @@ func (agent *agent) sendUrlStatWorker() {
 	time.Sleep(interval)
 
 	for agent.enable {
-		snapshot := takeUrlStatSnapshot()
-		agent.enqueueStat(makePAgentUriStat(snapshot))
+		if agent.config.collectUrlStat {
+			snapshot := takeUrlStatSnapshot()
+			agent.enqueueStat(makePAgentUriStat(snapshot))
+		}
 		time.Sleep(interval)
 	}
 

@@ -373,8 +373,10 @@ func (span *span) SetLogging(logInfo int32) {
 }
 
 func (span *span) CollectUrlStat(uri string, status *int) {
-	span.url = uri
-	span.urlStatus = *status
+	if span.agent.config.collectUrlStat {
+		span.url = uri
+		span.urlStatus = *status
+	}
 }
 
 type stack struct {

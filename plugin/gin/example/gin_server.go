@@ -61,6 +61,8 @@ func main() {
 		pinpoint.WithAppName("GoGinTest"),
 		pinpoint.WithAgentId("GoGinTestAgent"),
 		pinpoint.WithSamplingRate(10),
+		pinpoint.WithHttpUrlStatEnable(true),
+		pinpoint.WithHttpUrlStatLimitSize(3),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

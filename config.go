@@ -48,6 +48,8 @@ const (
 	CfgSQLTraceCommit             = "SQL.TraceCommit"
 	CfgSQLTraceRollback           = "SQL.TraceRollback"
 	CfgEnable                     = "Enable"
+	CfgHttpUrlStatEnable          = "Http.UrlStat.Enable"
+	CfgHttpUrlStatLimitSize       = "Http.UrlStat.LimitSize"
 )
 
 const (
@@ -114,6 +116,8 @@ func initConfig() {
 	AddConfig(CfgSQLTraceCommit, CfgBool, true)
 	AddConfig(CfgSQLTraceRollback, CfgBool, true)
 	AddConfig(CfgEnable, CfgBool, true)
+	AddConfig(CfgHttpUrlStatEnable, CfgBool, false)
+	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1024)
 }
 
 // AddConfig adds a configuration item.
@@ -139,6 +143,7 @@ type Config struct {
 	cfgMap         map[string]*cfgMapItem
 	containerCheck bool
 	useNewLogOpt   bool
+	collectUrlStat bool
 	offGrpc        bool //for test
 }
 
@@ -305,6 +310,8 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	} else if maxEventSequence < minEventSequence {
 		maxEventSequence = minEventSequence
 	}
+
+	config.collectUrlStat = config.Bool(CfgHttpUrlStatEnable)
 
 	globalConfig = config
 	return config, nil
@@ -672,6 +679,20 @@ func WithSpanMaxCallStackDepth(depth int) ConfigOption {
 func WithSpanMaxCallStackSequence(seq int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgSpanMaxCallStackSequence].value = seq
+	}
+}
+
+// WithHttpUrlStatEnable enables the agent collects the HTTP URL statistics.
+func WithHttpUrlStatEnable(enable bool) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgHttpUrlStatEnable].value = enable
+	}
+}
+
+// WithHttpUrlStatLimitSize sets the maximum number of URLs that can be stored in one snapshot.
+func WithHttpUrlStatLimitSize(size int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgHttpUrlStatLimitSize].value = size
 	}
 }
 

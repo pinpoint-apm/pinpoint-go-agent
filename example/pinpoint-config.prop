@@ -32,3 +32,6 @@ profile.real.sampling.type=percent
 profile.real.sampling.percentRate=5.5
 
 activeProfile=real
+
+http.urlStat.enable=true
+http.urlStat.limitSize=10240

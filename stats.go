@@ -66,7 +66,6 @@ func initStats() {
 	runtime.ReadMemStats(&lastMemStat)
 	lastCollectTime = time.Now()
 	activeSpan = sync.Map{}
-	initUrlStat()
 }
 
 func getCpuUsage() *cpu.TimesStat {

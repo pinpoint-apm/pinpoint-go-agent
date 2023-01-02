@@ -155,8 +155,10 @@ func (span *noopSpan) IsSampled() bool {
 }
 
 func (span *noopSpan) CollectUrlStat(url string, status *int) {
-	span.url = url
-	span.urlStatus = *status
+	if span.withStats && span.agent.config.collectUrlStat {
+		span.url = url
+		span.urlStatus = *status
+	}
 }
 
 type noopSpanEvent struct {

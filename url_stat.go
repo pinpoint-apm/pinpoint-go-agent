@@ -6,10 +6,11 @@ import (
 )
 
 const (
-	urlStatusSuccess     = 1
-	urlStatusFail        = 2
-	urlStatBucketVersion = 0
-	urlStatBucketSize    = 8
+	urlStatusSuccess       = 1
+	urlStatusFail          = 2
+	urlStatBucketVersion   = 0
+	urlStatBucketSize      = 8
+	urlStatCollectInterval = 30 * time.Second
 )
 
 var (
@@ -19,7 +20,7 @@ var (
 )
 
 func initUrlStat() {
-	clock = newTickClock(30 * time.Second)
+	clock = newTickClock(urlStatCollectInterval)
 	urlSnapshot = newUrlStatSnapshot()
 }
 
@@ -31,7 +32,9 @@ type urlStat struct {
 }
 
 type urlStatSnapshot struct {
-	urlMap map[urlKey]*eachUrlStat
+	urlMap      map[urlKey]*eachUrlStat
+	maxCapacity int
+	count       int
 }
 
 type urlKey struct {
@@ -58,7 +61,8 @@ type tickClock struct {
 
 func newUrlStatSnapshot() *urlStatSnapshot {
 	return &urlStatSnapshot{
-		urlMap: make(map[urlKey]*eachUrlStat, 0),
+		urlMap:      make(map[urlKey]*eachUrlStat, 0),
+		maxCapacity: GetConfig().Int(CfgHttpUrlStatLimitSize),
 	}
 }
 
@@ -67,8 +71,12 @@ func (snapshot *urlStatSnapshot) add(us *urlStat) {
 
 	e, ok := snapshot.urlMap[key]
 	if !ok {
+		if snapshot.count >= snapshot.maxCapacity {
+			return
+		}
 		e = newEachUrlStat(us.url, key.tick)
 		snapshot.urlMap[key] = e
+		snapshot.count++
 	}
 
 	e.totalHistogram.add(us.elapsed)
