@@ -161,8 +161,9 @@ func WrapHandler(handler http.Handler, serverName ...string) http.Handler {
 		status := http.StatusOK
 		tracer := NewHttpServerTracer(r, srvName)
 		defer tracer.EndSpan()
-		defer tracer.CollectUrlStat(r.URL.Path, &status)
-
+		defer func() {
+			tracer.CollectUrlStat(r.URL.Path, status)
+		}()
 		defer func() {
 			if e := recover(); e != nil {
 				status := http.StatusInternalServerError

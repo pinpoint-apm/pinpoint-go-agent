@@ -154,10 +154,13 @@ func (span *noopSpan) IsSampled() bool {
 	return false
 }
 
-func (span *noopSpan) CollectUrlStat(url string, status *int) {
+func (span *noopSpan) CollectUrlStat(url string, status int) {
 	if span.withStats && span.agent.config.collectUrlStat {
+		if url == "" {
+			url = "UNKNOWN_URL"
+		}
 		span.url = url
-		span.urlStatus = *status
+		span.urlStatus = status
 	}
 }
 

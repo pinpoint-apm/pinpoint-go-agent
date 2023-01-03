@@ -372,10 +372,13 @@ func (span *span) SetLogging(logInfo int32) {
 	span.loggingInfo = logInfo
 }
 
-func (span *span) CollectUrlStat(uri string, status *int) {
+func (span *span) CollectUrlStat(url string, status int) {
 	if span.agent.config.collectUrlStat {
-		span.url = uri
-		span.urlStatus = *status
+		if url == "" {
+			url = "UNKNOWN_URL"
+		}
+		span.url = url
+		span.urlStatus = status
 	}
 }
 

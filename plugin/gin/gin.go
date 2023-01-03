@@ -22,72 +22,43 @@ const serverName = "Gin HTTP Server"
 
 // Middleware returns a gin middleware that creates a pinpoint.Tracer that instruments the gin handler function.
 func Middleware() gin.HandlerFunc {
+	return wrap(func(c *gin.Context) { c.Next() }, "gin.HandlerFunc()")
+}
+
+func wrap(doFunc func(c *gin.Context), funcName string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !pinpoint.GetAgent().Enable() {
-			c.Next()
+			doFunc(c)
 			return
 		}
 
 		status := http.StatusOK
 		tracer := pphttp.NewHttpServerTracer(c.Request, serverName)
-		defer tracer.EndSpan()
-		defer tracer.CollectUrlStat(c.FullPath(), &status)
 
+		defer tracer.EndSpan()
+		defer func() {
+			tracer.CollectUrlStat(c.FullPath(), status)
+			pphttp.RecordHttpServerResponse(tracer, status, c.Writer.Header())
+		}()
 		defer func() {
 			if e := recover(); e != nil {
 				status = http.StatusInternalServerError
-				pphttp.RecordHttpServerResponse(tracer, status, c.Writer.Header())
 				panic(e)
 			}
 		}()
-
-		tracer.NewSpanEvent("gin.HandlerFunc()")
-		defer tracer.EndSpanEvent()
+		defer tracer.NewSpanEvent(funcName).EndSpanEvent()
 
 		c.Request = pinpoint.RequestWithTracerContext(c.Request, tracer)
-		c.Next()
+		doFunc(c)
 		if len(c.Errors) > 0 {
 			tracer.Span().SetError(c.Errors.Last())
 		}
-
 		status = c.Writer.Status()
-		pphttp.RecordHttpServerResponse(tracer, status, c.Writer.Header())
 	}
 }
 
 // WrapHandler wraps the given gin handler and adds the pinpoint.Tracer to the request's context.
 // By using the pinpoint.FromContext function, this tracer can be obtained.
 func WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc {
-	funcName := pphttp.HandlerFuncName(handler)
-
-	return func(c *gin.Context) {
-		if !pinpoint.GetAgent().Enable() {
-			handler(c)
-			return
-		}
-
-		status := http.StatusOK
-		tracer := pphttp.NewHttpServerTracer(c.Request, serverName)
-		defer tracer.EndSpan()
-		defer tracer.CollectUrlStat(c.FullPath(), &status)
-
-		defer func() {
-			if e := recover(); e != nil {
-				status = http.StatusInternalServerError
-				pphttp.RecordHttpServerResponse(tracer, status, c.Writer.Header())
-				panic(e)
-			}
-		}()
-
-		tracer.NewSpanEvent(funcName)
-		defer tracer.EndSpanEvent()
-
-		c.Request = pinpoint.RequestWithTracerContext(c.Request, tracer)
-		handler(c)
-		if len(c.Errors) > 0 {
-			tracer.Span().SetError(c.Errors.Last())
-		}
-		status = c.Writer.Status()
-		pphttp.RecordHttpServerResponse(tracer, status, c.Writer.Header())
-	}
+	return wrap(func(c *gin.Context) { handler(c) }, pphttp.HandlerFuncName(handler))
 }

@@ -82,7 +82,7 @@ type Tracer interface {
 	IsSampled() bool
 
 	// CollectUrlStat collects HTTP URL statistics.
-	CollectUrlStat(url string, status *int)
+	CollectUrlStat(url string, status int)
 }
 
 // SpanRecorder records the collected data in the fields of Span.
