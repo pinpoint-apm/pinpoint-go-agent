@@ -24,47 +24,51 @@ const serverName = "Gorilla/Mux HTTP Server"
 // Middleware returns a mux middleware that creates a pinpoint.Tracer that instruments the http handler function.
 func Middleware() mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !pinpoint.GetAgent().Enable() {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			tracer := pphttp.NewHttpServerTracer(r, serverName)
-			defer tracer.EndSpan()
-			if !tracer.IsSampled() {
-				next.ServeHTTP(w, r)
-				return
-			}
-			defer func() {
-				if e := recover(); e != nil {
-					status := http.StatusInternalServerError
-					pphttp.RecordHttpServerResponse(tracer, status, w.Header())
-					panic(e)
-				}
-			}()
-
-			tracer.NewSpanEvent("gorilla/mux.HandlerFunc()")
-			defer tracer.EndSpanEvent()
-
-			status := http.StatusOK
-			w = pphttp.WrapResponseWriter(w, &status)
-			r = pinpoint.RequestWithTracerContext(r, tracer)
-
-			next.ServeHTTP(w, r)
-			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
-
-			//mux.CurrentRoute(r).GetPathTemplate()
-		})
+		return wrap(next, "gorilla/mux.HandlerFunc()")
 	}
 }
 
 // WrapHandler wraps the given http handler.
 func WrapHandler(handler http.Handler) http.Handler {
-	return pphttp.WrapHandler(handler, serverName)
+	return wrap(handler, pphttp.HandlerFuncName(handler))
 }
 
 // WrapHandlerFunc wraps the given http handler function.
 func WrapHandlerFunc(f func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
-	return pphttp.WrapHandlerFunc(f, serverName)
+	h := WrapHandler(http.HandlerFunc(f))
+	return func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }
+}
+
+func wrap(handler http.Handler, funcName string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !pinpoint.GetAgent().Enable() {
+			handler.ServeHTTP(w, r)
+			return
+		}
+
+		status := http.StatusOK
+		tracer := pphttp.NewHttpServerTracer(r, serverName)
+
+		defer tracer.EndSpan()
+		defer func() {
+			path := ""
+			if route := mux.CurrentRoute(r); route != nil {
+				path, _ = route.GetPathTemplate()
+			}
+			tracer.CollectUrlStat(path, status)
+			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
+		}()
+		defer func() {
+			if e := recover(); e != nil {
+				status = http.StatusInternalServerError
+				panic(e)
+			}
+		}()
+
+		defer tracer.NewSpanEvent(funcName).EndSpanEvent()
+
+		w = pphttp.WrapResponseWriter(w, &status)
+		r = pinpoint.RequestWithTracerContext(r, tracer)
+		handler.ServeHTTP(w, r)
+	})
 }
