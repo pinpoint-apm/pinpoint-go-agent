@@ -13,6 +13,7 @@ package ppfiber
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/gofiber/fiber/v2"
@@ -25,38 +26,51 @@ const serverName = "Fiber Server"
 
 // Middleware returns middleware that will trace incoming requests.
 func Middleware() func(c *fiber.Ctx) error {
+	return wrap(func(c *fiber.Ctx) error { return c.Next() }, "fiber.HandlerFunc()")
+}
+
+// WrapHandler wraps the given fiber handler and adds the pinpoint.Tracer to the user context.
+// By using the pinpoint.FromContext function, this tracer can be obtained.
+func WrapHandler(handler fiber.Handler) fiber.Handler {
+	return wrap(func(c *fiber.Ctx) error { return handler(c) }, pphttp.HandlerFuncName(handler))
+}
+
+func wrap(f func(c *fiber.Ctx) error, handlerName string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if !pinpoint.GetAgent().Enable() {
-			return c.Next()
+			return f(c)
 		}
 
 		req := new(http.Request)
 		if err := fasthttpadaptor.ConvertRequest(c.Context(), req, true); err != nil {
-			return c.Next()
+			return f(c)
 		}
 
+		status := http.StatusOK
 		tracer := pphttp.NewHttpServerTracer(req, serverName)
-		defer tracer.EndSpan()
 
-		if !tracer.IsSampled() {
-			return c.Next()
-		}
+		defer tracer.EndSpan()
+		defer func() {
+			tracer.CollectUrlStat(c.Route().Path, status)
+			recordResponse(tracer, c, status)
+		}()
 		defer func() {
 			if e := recover(); e != nil {
-				status := http.StatusInternalServerError
-				recordResponse(tracer, c, status)
+				status = http.StatusInternalServerError
 				panic(e)
 			}
 		}()
 
-		defer tracer.NewSpanEvent("fiber.HandlerFunc()").EndSpanEvent()
+		defer tracer.NewSpanEvent(handlerName).EndSpanEvent()
 
 		c.SetUserContext(pinpoint.NewContext(context.Background(), tracer))
-		err := c.Next()
-		tracer.Span().SetError(err)
-
-		recordResponse(tracer, c, c.Response().StatusCode())
-		//c.Route().path
+		err := f(c)
+		if err != nil {
+			tracer.Span().SetError(err)
+			status = statusCode(err)
+		} else {
+			status = c.Response().StatusCode()
+		}
 		return err
 	}
 }
@@ -71,42 +85,11 @@ func recordResponse(tracer pinpoint.Tracer, c *fiber.Ctx, status int) {
 	}
 }
 
-// WrapHandler wraps the given fiber handler and adds the pinpoint.Tracer to the user context.
-// By using the pinpoint.FromContext function, this tracer can be obtained.
-func WrapHandler(handler fiber.Handler) fiber.Handler {
-	handlerName := pphttp.HandlerFuncName(handler)
-
-	return func(c *fiber.Ctx) error {
-		if !pinpoint.GetAgent().Enable() {
-			return handler(c)
-		}
-
-		req := new(http.Request)
-		if err := fasthttpadaptor.ConvertRequest(c.Context(), req, true); err != nil {
-			return handler(c)
-		}
-
-		tracer := pphttp.NewHttpServerTracer(req, serverName)
-		defer tracer.EndSpan()
-
-		if !tracer.IsSampled() {
-			return handler(c)
-		}
-		defer func() {
-			if e := recover(); e != nil {
-				status := http.StatusInternalServerError
-				recordResponse(tracer, c, status)
-				panic(e)
-			}
-		}()
-
-		defer tracer.NewSpanEvent(handlerName).EndSpanEvent()
-
-		c.SetUserContext(pinpoint.NewContext(context.Background(), tracer))
-		err := handler(c)
-		tracer.Span().SetError(err)
-
-		recordResponse(tracer, c, c.Response().StatusCode())
-		return err
+func statusCode(err error) int {
+	var e *fiber.Error
+	code := fiber.StatusInternalServerError
+	if errors.As(err, &e) {
+		code = e.Code
 	}
+	return code
 }
