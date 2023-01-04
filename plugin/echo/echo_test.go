@@ -25,7 +25,7 @@ func Test_makeHandlerNameMap(t *testing.T) {
 		makeHandlerNameMap(c)
 
 		assert.Equal(t, 2, len(handlerNameMap))
-		assert.Equal(t, "github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo.handler1()", handlerNameMap["GET/hello"])
-		assert.Equal(t, "github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo.handler2()", handlerNameMap["POST/hello"])
+		assert.Equal(t, "github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo.handler1()", handlerNameMap[key{"GET", "/hello"}])
+		assert.Equal(t, "github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo.handler2()", handlerNameMap[key{"POST", "/hello"}])
 	})
 }

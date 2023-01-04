@@ -22,93 +22,63 @@ import (
 
 const serverName = "Echo HTTP Server"
 
+type key struct {
+	method string
+	path   string
+}
+
 var (
-	handlerNameMap map[string]string
+	handlerNameMap map[key]string
 	once           sync.Once
 )
 
 func makeHandlerNameMap(c echo.Context) {
-	handlerNameMap = make(map[string]string, 0)
+	handlerNameMap = make(map[key]string, 0)
 	for _, r := range c.Echo().Routes() {
-		handlerNameMap[r.Method+r.Path] = r.Name + "()"
+		k := key{r.Method, r.Path}
+		handlerNameMap[k] = r.Name + "()"
 	}
 }
 
-// Middleware returns an echo middleware that creates a pinpoint.Tracer that instruments the echo handler function.
-func Middleware() echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			if !pinpoint.GetAgent().Enable() {
-				return next(c)
-			}
+func handlerName(c echo.Context, r *http.Request) string {
+	once.Do(func() {
+		makeHandlerNameMap(c)
+	})
 
-			req := c.Request()
-			tracer := pphttp.NewHttpServerTracer(req, serverName)
-			defer tracer.EndSpan()
-
-			if !tracer.IsSampled() {
-				return next(c)
-			}
-			defer func() {
-				if e := recover(); e != nil {
-					status := http.StatusInternalServerError
-					pphttp.RecordHttpServerResponse(tracer, status, c.Response().Header())
-					panic(e)
-				}
-			}()
-
-			once.Do(func() {
-				makeHandlerNameMap(c)
-			})
-			if handlerName, ok := handlerNameMap[req.Method+c.Path()]; ok {
-				tracer.NewSpanEvent(handlerName)
-			} else {
-				tracer.NewSpanEvent("echo.HandlerFunc()")
-			}
-			defer tracer.EndSpanEvent()
-
-			ctx := pinpoint.NewContext(req.Context(), tracer)
-			c.SetRequest(req.WithContext(ctx))
-			err := next(c)
-			if err != nil {
-				tracer.Span().SetError(err)
-				c.Error(err)
-			}
-
-			//c.Path()
-			pphttp.RecordHttpServerResponse(tracer, c.Response().Status, c.Response().Header())
-			return err
-		}
+	k := key{r.Method, c.Path()}
+	if name, ok := handlerNameMap[k]; ok {
+		return name
+	} else {
+		return "echo.HandlerFunc()"
 	}
 }
 
-// WrapHandler wraps the given echo handler and adds the pinpoint.Tracer to the request's context.
-// By using the pinpoint.FromContext function, this tracer can be obtained.
-func WrapHandler(handler echo.HandlerFunc) echo.HandlerFunc {
-	funcName := pphttp.HandlerFuncName(handler)
-
+func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		if !pinpoint.GetAgent().Enable() {
 			return handler(c)
 		}
 
+		status := http.StatusOK
 		req := c.Request()
 		tracer := pphttp.NewHttpServerTracer(req, serverName)
-		defer tracer.EndSpan()
 
-		if !tracer.IsSampled() {
-			return handler(c)
-		}
+		defer tracer.EndSpan()
+		defer func() {
+			tracer.CollectUrlStat(c.Path(), status)
+			pphttp.RecordHttpServerResponse(tracer, status, c.Response().Header())
+		}()
 		defer func() {
 			if e := recover(); e != nil {
-				status := http.StatusInternalServerError
-				pphttp.RecordHttpServerResponse(tracer, status, c.Response().Header())
+				status = http.StatusInternalServerError
 				panic(e)
 			}
 		}()
 
-		tracer.NewSpanEvent(funcName)
-		defer tracer.EndSpanEvent()
+		if funcName == "" {
+			funcName = handlerName(c, req)
+		}
+		defer tracer.NewSpanEvent(funcName).EndSpanEvent()
 
 		ctx := pinpoint.NewContext(req.Context(), tracer)
 		c.SetRequest(req.WithContext(ctx))
@@ -117,8 +87,20 @@ func WrapHandler(handler echo.HandlerFunc) echo.HandlerFunc {
 			tracer.Span().SetError(err)
 			c.Error(err)
 		}
-
-		pphttp.RecordHttpServerResponse(tracer, c.Response().Status, c.Response().Header())
-		return err
+		status = c.Response().Status
+		return nil
 	}
+}
+
+// Middleware returns an echo middleware that creates a pinpoint.Tracer that instruments the echo handler function.
+func Middleware() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return wrap(next, "")
+	}
+}
+
+// WrapHandler wraps the given echo handler and adds the pinpoint.Tracer to the request's context.
+// By using the pinpoint.FromContext function, this tracer can be obtained.
+func WrapHandler(handler echo.HandlerFunc) echo.HandlerFunc {
+	return wrap(handler, pphttp.HandlerFuncName(handler))
 }
