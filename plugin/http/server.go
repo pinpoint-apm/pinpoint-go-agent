@@ -141,9 +141,7 @@ func RecordHttpServerResponse(tracer pinpoint.Tracer, status int, h http.Header)
 	}
 }
 
-// WrapHandler wraps the given http handler and adds the pinpoint.Tracer to the request's context.
-// By using the pinpoint.FromContext function, this tracer can be obtained.
-func WrapHandler(handler http.Handler, serverName ...string) http.Handler {
+func wrapHandler(pattern string, handler http.Handler, serverName ...string) http.Handler {
 	var srvName string
 	if len(serverName) > 0 {
 		srvName = serverName[0]
@@ -160,33 +158,39 @@ func WrapHandler(handler http.Handler, serverName ...string) http.Handler {
 
 		status := http.StatusOK
 		tracer := NewHttpServerTracer(r, srvName)
+
 		defer tracer.EndSpan()
 		defer func() {
-			tracer.CollectUrlStat(r.URL.Path, status)
+			if pattern != "" {
+				tracer.CollectUrlStat(pattern, status)
+			}
+			RecordHttpServerResponse(tracer, status, w.Header())
 		}()
 		defer func() {
 			if e := recover(); e != nil {
-				status := http.StatusInternalServerError
-				RecordHttpServerResponse(tracer, status, w.Header())
+				status = http.StatusInternalServerError
 				panic(e)
 			}
 		}()
 
-		tracer.NewSpanEvent(funcName)
-		defer tracer.EndSpanEvent()
+		defer tracer.NewSpanEvent(funcName).EndSpanEvent()
 
 		w = WrapResponseWriter(w, &status)
 		r = pinpoint.RequestWithTracerContext(r, tracer)
-
 		handler.ServeHTTP(w, r)
-		RecordHttpServerResponse(tracer, status, w.Header())
 	})
+}
+
+// WrapHandler wraps the given http handler and adds the pinpoint.Tracer to the request's context.
+// By using the pinpoint.FromContext function, this tracer can be obtained.
+func WrapHandler(handler http.Handler, serverName ...string) http.Handler {
+	return wrapHandler("", handler, serverName...)
 }
 
 // WrapHandlerFunc wraps the given http handler function and adds the pinpoint.Tracer to the request's context.
 // By using the pinpoint.FromContext function, this tracer can be obtained.
 func WrapHandlerFunc(handler func(http.ResponseWriter, *http.Request), serverName ...string) func(http.ResponseWriter, *http.Request) {
-	h := WrapHandler(http.HandlerFunc(handler), serverName...)
+	h := wrapHandler("", http.HandlerFunc(handler), serverName...)
 	return func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }
 }
 
@@ -229,13 +233,14 @@ func NewServeMux() *serveMux {
 // Handle registers the handler for the given pattern.
 // The handler is wrapped by WrapHandler.
 func (mux *serveMux) Handle(pattern string, handler http.Handler) {
-	mux.ServeMux.Handle(pattern, WrapHandler(handler))
+	mux.ServeMux.Handle(pattern, wrapHandler(pattern, handler))
 }
 
 // HandleFunc registers the handler function for the given pattern.
 // The handler is wrapped by WrapHandlerFunc.
 func (mux *serveMux) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
-	mux.ServeMux.HandleFunc(pattern, WrapHandlerFunc(handler))
+	h := wrapHandler(pattern, http.HandlerFunc(handler))
+	mux.ServeMux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) })
 }
 
 // HandlerFuncName returns the name of handler function.
