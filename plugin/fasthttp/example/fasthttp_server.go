@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp"
@@ -16,6 +19,7 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoFastHttpTest"),
 		pinpoint.WithAgentId("GoFastHttpTestAgent"),
+		pinpoint.WithHttpUrlStatEnable(true),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 		pphttp.WithHttpClientRecordRequestHeader([]string{"HEADERS-ALL"}),
 		pphttp.WithHttpClientRecordRespondHeader([]string{"HEADERS-ALL"}),
@@ -31,36 +35,35 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	if err := fasthttp.ListenAndServe(":9000", ppfasthttp.WrapHandler(requestHandler)); err != nil {
+	mux := func(ctx *fasthttp.RequestCtx) {
+		path := string(ctx.Path())
+		if strings.HasPrefix(path, "/foo") {
+			ppfasthttp.WrapHandler(fooHandler, "/foo")(ctx)
+		} else if strings.HasPrefix(path, "/bar") {
+			ppfasthttp.WrapHandler(barHandler, "/bar")(ctx)
+		} else {
+			ctx.Error("not found", fasthttp.StatusNotFound)
+		}
+	}
+	if err := fasthttp.ListenAndServe(":9000", mux); err != nil {
 		log.Fatalf("Error in ListenAndServe: %v", err)
 	}
 }
 
-func requestHandler(ctx *fasthttp.RequestCtx) {
+func fooHandler(ctx *fasthttp.RequestCtx) {
+	sleep()
+
 	tracer := pinpoint.FromContext(ctx.UserValue(ppfasthttp.CtxKey).(context.Context))
 	defer tracer.NewSpanEvent("f1").EndSpanEvent()
 	defer tracer.NewSpanEvent("f2").EndSpanEvent()
 
-	fmt.Fprintf(ctx, "Hello, world!\n\n")
-
 	fmt.Fprintf(ctx, "Request method is %q\n", ctx.Method())
 	fmt.Fprintf(ctx, "RequestURI is %q\n", ctx.RequestURI())
 	fmt.Fprintf(ctx, "Requested path is %q\n", ctx.Path())
-	fmt.Fprintf(ctx, "Host is %q\n", ctx.Host())
-	fmt.Fprintf(ctx, "Query string is %q\n", ctx.QueryArgs())
-	fmt.Fprintf(ctx, "User-Agent is %q\n", ctx.UserAgent())
-	fmt.Fprintf(ctx, "Connection has been established at %s\n", ctx.ConnTime())
-	fmt.Fprintf(ctx, "Request has been started at %s\n", ctx.Time())
-	fmt.Fprintf(ctx, "Serial request number for the current connection is %d\n", ctx.ConnRequestNum())
-	fmt.Fprintf(ctx, "Your ip is %q\n\n", ctx.RemoteIP())
-
-	fmt.Fprintf(ctx, "Raw request is:\n---CUT---\n%s\n---CUT---", &ctx.Request)
 
 	client(ctx)
 
 	ctx.SetContentType("text/plain; charset=utf8")
-
-	// Set arbitrary headers
 	ctx.Response.Header.Set("X-My-Header", "my-header-value")
 
 	// Set cookies
@@ -68,6 +71,14 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 	c.SetKey("cookie-name")
 	c.SetValue("cookie-value")
 	ctx.Response.Header.SetCookie(&c)
+}
+
+func barHandler(ctx *fasthttp.RequestCtx) {
+	sleep()
+
+	fmt.Fprintf(ctx, "RequestURI is %q\n", ctx.RequestURI())
+	fmt.Fprintf(ctx, "Requested path is %q\n", ctx.Path())
+	ctx.SetStatusCode(fasthttp.StatusBadRequest)
 }
 
 func client(ctx *fasthttp.RequestCtx) {
@@ -104,4 +115,10 @@ func client(ctx *fasthttp.RequestCtx) {
 
 	fasthttp.ReleaseRequest(req)
 	fasthttp.ReleaseResponse(resp)
+}
+
+func sleep() {
+	seed := rand.NewSource(time.Now().UnixNano())
+	random := rand.New(seed).Intn(10000)
+	time.Sleep(time.Duration(random+1) * time.Millisecond)
 }

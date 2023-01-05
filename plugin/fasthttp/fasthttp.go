@@ -36,7 +36,7 @@ const serverName = "FastHttp Server"
 const CtxKey = "pinpoint"
 
 // WrapHandler wraps the given http request handler.
-func WrapHandler(handler fasthttp.RequestHandler) fasthttp.RequestHandler {
+func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.RequestHandler {
 	handlerName := pphttp.HandlerFuncName(handler)
 
 	return func(ctx *fasthttp.RequestCtx) {
@@ -51,17 +51,19 @@ func WrapHandler(handler fasthttp.RequestHandler) fasthttp.RequestHandler {
 			return
 		}
 
+		status := http.StatusOK
 		tracer := pphttp.NewHttpServerTracer(req, serverName)
-		defer tracer.EndSpan()
 
-		if !tracer.IsSampled() {
-			handler(ctx)
-			return
-		}
+		defer tracer.EndSpan()
+		defer func() {
+			if len(pattern) > 0 {
+				tracer.CollectUrlStat(pattern[0], status)
+			}
+			recordResponse(tracer, ctx, status)
+		}()
 		defer func() {
 			if e := recover(); e != nil {
-				status := http.StatusInternalServerError
-				recordResponse(tracer, ctx, status)
+				status = http.StatusInternalServerError
 				panic(e)
 			}
 		}()
@@ -71,9 +73,7 @@ func WrapHandler(handler fasthttp.RequestHandler) fasthttp.RequestHandler {
 		ctx.SetUserValue(CtxKey, pinpoint.NewContext(context.Background(), tracer))
 		handler(ctx)
 		tracer.Span().SetError(ctx.Err())
-
-		recordResponse(tracer, ctx, ctx.Response.StatusCode())
-		//ctx.Path()
+		status = ctx.Response.StatusCode()
 	}
 }
 
