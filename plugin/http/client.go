@@ -48,6 +48,7 @@ func after(tracer pinpoint.Tracer, resp *http.Response, err error) {
 	if tracer == nil {
 		return
 	}
+	defer tracer.EndSpanEvent()
 
 	tracer.SpanEvent().SetError(err)
 	if resp != nil && tracer.IsSampled() {
@@ -55,7 +56,6 @@ func after(tracer pinpoint.Tracer, resp *http.Response, err error) {
 		a.AppendInt(pinpoint.AnnotationHttpStatusCode, int32(resp.StatusCode))
 		RecordClientHttpResponseHeader(a, header{resp.Header})
 	}
-	tracer.EndSpanEvent()
 }
 
 type header struct {

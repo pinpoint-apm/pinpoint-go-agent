@@ -14,16 +14,19 @@
 package ppbeego
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/beego/beego/v2/client/httplib"
+	"github.com/beego/beego/v2/server/web"
+	beegoContext "github.com/beego/beego/v2/server/web/context"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 const serverName = "Beego Server"
 
-// Middleware returns middleware that will trace incoming requests.
+// Middleware is deprecated. Use ServerFilterChain.
 func Middleware() func(http.Handler) http.Handler {
 	return func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -56,14 +59,66 @@ func Middleware() func(http.Handler) http.Handler {
 
 			h.ServeHTTP(w, r)
 			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
+
 		})
 	}
 }
 
-// DoRequest instruments and executes a given request.
+// ServerFilterChain returns filter function that will trace the incoming requests.
+func ServerFilterChain() func(web.FilterFunc) web.FilterFunc {
+	return func(next web.FilterFunc) web.FilterFunc {
+		return func(ctx *beegoContext.Context) {
+			if !pinpoint.GetAgent().Enable() {
+				next(ctx)
+				return
+			}
+
+			r := ctx.Request
+			status := http.StatusOK
+			tracer := pphttp.NewHttpServerTracer(r, serverName)
+
+			defer tracer.EndSpan()
+			defer func() {
+				routerPattern := ""
+				if rp := ctx.Input.GetData("RouterPattern"); rp != nil {
+					routerPattern = rp.(string)
+				}
+				tracer.CollectUrlStat(routerPattern, status)
+				pphttp.RecordHttpServerResponse(tracer, status, ctx.ResponseWriter.Header())
+			}()
+			defer func() {
+				if e := recover(); e != nil {
+					status = http.StatusInternalServerError
+					panic(e)
+				}
+			}()
+			defer tracer.NewSpanEvent("beegov2.HandlerFunc()").EndSpanEvent()
+
+			ctx.Request = pinpoint.RequestWithTracerContext(r, tracer)
+			next(ctx)
+			status = ctx.Output.Status
+		}
+	}
+}
+
+// DoRequest is deprecated. Use ClientFilterChain.
 func DoRequest(tracer pinpoint.Tracer, req *httplib.BeegoHTTPRequest) (*http.Response, error) {
 	pphttp.NewHttpClientTracer(tracer, "beegov2.DoRequest()", req.GetRequest())
 	resp, err := req.DoRequest()
 	pphttp.EndHttpClientTracer(tracer, resp, err)
 	return resp, err
+}
+
+// ClientFilterChain returns filter function that will trace the outgoing requests.
+func ClientFilterChain(tracer pinpoint.Tracer) func(httplib.Filter) httplib.Filter {
+	return func(next httplib.Filter) httplib.Filter {
+		return func(ctx context.Context, req *httplib.BeegoHTTPRequest) (resp *http.Response, err error) {
+			pphttp.NewHttpClientTracer(tracer, "beegov2.DoRequest()", req.GetRequest())
+			defer func() {
+				pphttp.EndHttpClientTracer(tracer, resp, err)
+			}()
+			resp, err = next(ctx, req)
+			return
+		}
+	}
 }
