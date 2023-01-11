@@ -3,7 +3,14 @@
 // This package instruments inbound requests handled by a fasthttp instance.
 // Use WrapHandler to select the handlers you want to track:
 //
-//	fasthttp.ListenAndServe(":9000", ppfasthttp.WrapHandler(requestHandler))
+//  fasthttp.ListenAndServe(":9000", func(ctx *fasthttp.RequestCtx) {
+//    path := string(ctx.Path())
+//    if strings.HasPrefix(path, "/foo") {
+//      ppfasthttp.WrapHandler(fooHandler, "/foo")(ctx)
+//    } else if strings.HasPrefix(path, "/bar") {
+//      ppfasthttp.WrapHandler(barHandler, "/bar")(ctx)
+//    }
+//  })
 //
 // WrapHandler sets the pinpoint.Tracer as a user value of fasthttp handler's context.
 // By using the ppfasthttp.CtxKey, this tracer can be obtained.

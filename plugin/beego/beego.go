@@ -1,15 +1,15 @@
 // Package ppbeego instruments the beego/v2 package (https://github.com/beego/beego).
 //
 // This package instruments inbound requests handled by a beego instance.
-// Register the Middleware as the middleware of the router to trace all handlers:
+// Register the ServerFilterChain as the filter chain of the router to trace all handlers:
 //
-//  web.RunWithMiddleWares("localhost:8080", ppbeego.Middleware())
+//  web.InsertFilterChain("/*", ppbeego.ServerFilterChain())
 //
 // This package instruments outbound requests and add distributed tracing headers.
-// Use DoRequest.
+// Add the ClientFilterChain as the filter chain of the request:
 //
 //  req := httplib.Get("http://localhost:9090/")
-//  ppbeego.DoRequest(tracer, req)
+//  req.AddFilters(ppbeego.ClientFilterChain(tracer))
 //
 package ppbeego
 
@@ -35,31 +35,24 @@ func Middleware() func(http.Handler) http.Handler {
 				return
 			}
 
+			status := http.StatusOK
 			tracer := pphttp.NewHttpServerTracer(r, serverName)
-			defer tracer.EndSpan()
 
-			if !tracer.IsSampled() {
-				h.ServeHTTP(w, r)
-				return
-			}
+			defer tracer.EndSpan()
+			defer func() {
+				pphttp.RecordHttpServerResponse(tracer, status, w.Header())
+			}()
 			defer func() {
 				if e := recover(); e != nil {
-					status := http.StatusInternalServerError
-					pphttp.RecordHttpServerResponse(tracer, status, w.Header())
+					status = http.StatusInternalServerError
 					panic(e)
 				}
 			}()
+			defer tracer.NewSpanEvent("beego/v2.HandlerFunc()").EndSpanEvent()
 
-			tracer.NewSpanEvent("beegov2.HandlerFunc()")
-			defer tracer.EndSpanEvent()
-
-			status := http.StatusOK
 			w = pphttp.WrapResponseWriter(w, &status)
 			r = pinpoint.RequestWithTracerContext(r, tracer)
-
 			h.ServeHTTP(w, r)
-			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
-
 		})
 	}
 }
@@ -92,7 +85,7 @@ func ServerFilterChain() func(web.FilterFunc) web.FilterFunc {
 					panic(e)
 				}
 			}()
-			defer tracer.NewSpanEvent("beegov2.HandlerFunc()").EndSpanEvent()
+			defer tracer.NewSpanEvent("beego/v2.HandlerFunc()").EndSpanEvent()
 
 			ctx.Request = pinpoint.RequestWithTracerContext(r, tracer)
 			next(ctx)
@@ -102,18 +95,20 @@ func ServerFilterChain() func(web.FilterFunc) web.FilterFunc {
 }
 
 // DoRequest is deprecated. Use ClientFilterChain.
-func DoRequest(tracer pinpoint.Tracer, req *httplib.BeegoHTTPRequest) (*http.Response, error) {
-	pphttp.NewHttpClientTracer(tracer, "beegov2.DoRequest()", req.GetRequest())
-	resp, err := req.DoRequest()
-	pphttp.EndHttpClientTracer(tracer, resp, err)
-	return resp, err
+func DoRequest(tracer pinpoint.Tracer, req *httplib.BeegoHTTPRequest) (resp *http.Response, err error) {
+	pphttp.NewHttpClientTracer(tracer, "beego/v2.DoRequest()", req.GetRequest())
+	defer func() {
+		pphttp.EndHttpClientTracer(tracer, resp, err)
+	}()
+	resp, err = req.DoRequest()
+	return
 }
 
 // ClientFilterChain returns filter function that will trace the outgoing requests.
 func ClientFilterChain(tracer pinpoint.Tracer) func(httplib.Filter) httplib.Filter {
 	return func(next httplib.Filter) httplib.Filter {
 		return func(ctx context.Context, req *httplib.BeegoHTTPRequest) (resp *http.Response, err error) {
-			pphttp.NewHttpClientTracer(tracer, "beegov2.DoRequest()", req.GetRequest())
+			pphttp.NewHttpClientTracer(tracer, "beego/v2.DoRequest()", req.GetRequest())
 			defer func() {
 				pphttp.EndHttpClientTracer(tracer, resp, err)
 			}()
