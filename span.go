@@ -65,8 +65,7 @@ type span struct {
 	goroutineId   int64
 	eventStack    *stack
 	appendLock    sync.Mutex
-	url           string
-	urlStatus     int
+	urlStat       *UrlStatEntry
 }
 
 func generateSpanId() int64 {
@@ -119,9 +118,8 @@ func (span *span) EndSpan() {
 		Log("span").Tracef("span channel - max capacity reached or closed")
 	}
 
-	if span.url != "" {
-		stat := &urlStat{url: span.url, status: span.urlStatus, endTime: endTime, elapsed: span.elapsed}
-		span.agent.enqueueUrlStat(stat)
+	if span.urlStat != nil {
+		span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed})
 	}
 }
 
@@ -372,13 +370,18 @@ func (span *span) SetLogging(logInfo int32) {
 	span.loggingInfo = logInfo
 }
 
-func (span *span) CollectUrlStat(url string, status int) {
+func (span *span) collectUrlStat(stat *UrlStatEntry) {
 	if span.agent.config.collectUrlStat {
-		if url == "" {
-			url = "UNKNOWN_URL"
+		if stat.Url == "" {
+			stat.Url = "UNKNOWN_URL"
 		}
-		span.url = url
-		span.urlStatus = status
+		span.urlStat = stat
+	}
+}
+
+func (span *span) AddMetric(metric string, value interface{}) {
+	if metric == MetricURLStat {
+		span.collectUrlStat(value.(*UrlStatEntry))
 	}
 }
 

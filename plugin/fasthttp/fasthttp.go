@@ -64,7 +64,7 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 		defer tracer.EndSpan()
 		defer func() {
 			if len(pattern) > 0 {
-				tracer.CollectUrlStat(pattern[0], status)
+				pphttp.CollectUrlStat(tracer, pattern[0], status)
 			}
 			recordResponse(tracer, ctx, status)
 		}()

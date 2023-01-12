@@ -25,8 +25,7 @@ func initUrlStat() {
 }
 
 type urlStat struct {
-	url     string
-	status  int
+	entry   *UrlStatEntry
 	endTime time.Time
 	elapsed int64
 }
@@ -67,20 +66,20 @@ func newUrlStatSnapshot() *urlStatSnapshot {
 }
 
 func (snapshot *urlStatSnapshot) add(us *urlStat) {
-	key := urlKey{us.url, clock.tick(us.endTime)}
+	key := urlKey{us.entry.Url, clock.tick(us.endTime)}
 
 	e, ok := snapshot.urlMap[key]
 	if !ok {
 		if snapshot.count >= snapshot.maxCapacity {
 			return
 		}
-		e = newEachUrlStat(us.url, key.tick)
+		e = newEachUrlStat(us.entry.Url, key.tick)
 		snapshot.urlMap[key] = e
 		snapshot.count++
 	}
 
 	e.totalHistogram.add(us.elapsed)
-	if urlStatStatus(us.status) == urlStatusFail {
+	if urlStatStatus(us.entry.Status) == urlStatusFail {
 		e.failedHistogram.add(us.elapsed)
 	}
 }

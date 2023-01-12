@@ -162,7 +162,7 @@ func wrapHandler(pattern string, handler http.Handler, serverName ...string) htt
 		defer tracer.EndSpan()
 		defer func() {
 			if pattern != "" {
-				tracer.CollectUrlStat(pattern, status)
+				CollectUrlStat(tracer, pattern, status)
 			}
 			RecordHttpServerResponse(tracer, status, w.Header())
 		}()
@@ -249,4 +249,9 @@ func HandlerFuncName(f interface{}) string {
 	buf.WriteString(runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name())
 	buf.WriteString("()")
 	return buf.String()
+}
+
+// CollectUrlStat collects HTTP URL statistics.
+func CollectUrlStat(tracer pinpoint.Tracer, url string, status int) {
+	tracer.AddMetric(pinpoint.MetricURLStat, &pinpoint.UrlStatEntry{Url: url, Status: status})
 }

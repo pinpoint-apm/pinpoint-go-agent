@@ -51,7 +51,7 @@ func wrap(f func(c *fiber.Ctx) error, handlerName string) fiber.Handler {
 
 		defer tracer.EndSpan()
 		defer func() {
-			tracer.CollectUrlStat(c.Route().Path, status)
+			pphttp.CollectUrlStat(tracer, c.Route().Path, status)
 			recordResponse(tracer, c, status)
 		}()
 		defer func() {

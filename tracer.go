@@ -81,8 +81,8 @@ type Tracer interface {
 	// IsSampled returns whether the span has been sampled.
 	IsSampled() bool
 
-	// CollectUrlStat collects HTTP URL statistics.
-	CollectUrlStat(url string, status int)
+	// AddMetric adds a custom metric.
+	AddMetric(metric string, value interface{})
 }
 
 // SpanRecorder records the collected data in the fields of Span.
@@ -195,6 +195,11 @@ func (tid TransactionId) String() string {
 	return fmt.Sprintf("%s^%d^%d", tid.AgentId, tid.StartTime, tid.Sequence)
 }
 
+type UrlStatEntry struct {
+	Url    string
+	Status int
+}
+
 // service types pre-defined
 const (
 	ServiceTypeGoApp                 = 1800
@@ -247,4 +252,5 @@ const (
 	LogSpanIdKey        = "PspanId"
 	Logged              = 1
 	NotLogged           = 0
+	MetricURLStat       = "URLStat"
 )

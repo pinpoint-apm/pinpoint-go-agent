@@ -40,7 +40,7 @@ func wrap(handler http.Handler, funcName string) http.Handler {
 
 		defer tracer.EndSpan()
 		defer func() {
-			tracer.CollectUrlStat(chi.RouteContext(r.Context()).RoutePattern(), status)
+			pphttp.CollectUrlStat(tracer, chi.RouteContext(r.Context()).RoutePattern(), status)
 			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
 		}()
 		defer func() {

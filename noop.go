@@ -37,8 +37,7 @@ type noopSpan struct {
 	rpcName     string
 	goroutineId int64
 	withStats   bool
-	url         string
-	urlStatus   int
+	urlStat     *UrlStatEntry
 
 	noopSe      noopSpanEvent
 	annotations noopAnnotation
@@ -70,9 +69,8 @@ func (span *noopSpan) EndSpan() {
 		endTime := time.Now()
 		elapsed := endTime.Sub(span.startTime).Milliseconds()
 		collectResponseTime(elapsed)
-		if span.url != "" {
-			stat := &urlStat{url: span.url, status: span.urlStatus, endTime: endTime, elapsed: elapsed}
-			span.agent.enqueueUrlStat(stat)
+		if span.urlStat != nil {
+			span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: elapsed})
 		}
 	}
 }
@@ -154,13 +152,18 @@ func (span *noopSpan) IsSampled() bool {
 	return false
 }
 
-func (span *noopSpan) CollectUrlStat(url string, status int) {
+func (span *noopSpan) collectUrlStat(stat *UrlStatEntry) {
 	if span.withStats && span.agent.config.collectUrlStat {
-		if url == "" {
-			url = "UNKNOWN_URL"
+		if stat.Url == "" {
+			stat.Url = "UNKNOWN_URL"
 		}
-		span.url = url
-		span.urlStatus = status
+		span.urlStat = stat
+	}
+}
+
+func (span *noopSpan) AddMetric(metric string, value interface{}) {
+	if metric == MetricURLStat {
+		span.collectUrlStat(value.(*UrlStatEntry))
 	}
 }
 

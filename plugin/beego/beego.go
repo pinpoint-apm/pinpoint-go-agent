@@ -76,7 +76,7 @@ func ServerFilterChain() func(web.FilterFunc) web.FilterFunc {
 				if rp := ctx.Input.GetData("RouterPattern"); rp != nil {
 					routerPattern = rp.(string)
 				}
-				tracer.CollectUrlStat(routerPattern, status)
+				pphttp.CollectUrlStat(tracer, routerPattern, status)
 				pphttp.RecordHttpServerResponse(tracer, status, ctx.ResponseWriter.Header())
 			}()
 			defer func() {
