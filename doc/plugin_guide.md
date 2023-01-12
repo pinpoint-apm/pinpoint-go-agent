@@ -1,36 +1,37 @@
 # Pinpoint Go Agent Plug-ins
 
-| plugin package                               | source directory                          | instrumented package                                                           |
-|----------------------------------------------|-------------------------------------------|--------------------------------------------------------------------------------|
-| [pphttp](plugin_guide.md#pphttp)             | [plugin/http](/plugin/http)               | Go standard HTTP package                                                       |
-| [ppbeego](plugin_guide.md#ppbeego)           | [plugin/beego](/plugin/beego)             | beego/beego/v2 package (https://github.com/beego/beego)                        |
-| [ppchi](plugin_guide.md#ppchi)               | [plugin/chi](/plugin/chi)                 | go-chi/chi package (https://github.com/go-chi/chi)                             |
-| [ppecho](plugin_guide.md#ppecho)             | [plugin/echo](/plugin/echo)               | labstack/echo package (https://github.com/labstack/echo)                       |
-| [ppechov4](plugin_guide.md#ppechov4)         | [plugin/echov4](/plugin/echov4)           | labstack/echo/v4 package (https://github.com/labstack/echo)                    |
-| [ppfasthttp](plugin_guide.md#ppfasthttp)     | [plugin/fasthttp](/plugin/fasthttp)       | valyala/fasthttp package (https://github.com/valyala/fasthttp)                 |
-| [ppfiber](plugin_guide.md#ppfiber)           | [plugin/fiber](/plugin/fiber)             | gofiber/fiber/v2 package (https://github.com/gofiber/fiber)                    |
-| [ppgin](plugin_guide.md#ppgin)               | [plugin/gin](/plugin/gin)                 | gin-gonic/gin package (https://github.com/gin-gonic/gin)                       |
-| [ppgocql](plugin_guide.md#ppgocql)           | [plugin/gocql](/plugin/gocql)             | gocql package (https://github.com/gocql/gocql).                                |
-| [ppgoelastic](plugin_guide.md#ppgoelastic)   | [plugin/goelastic](/plugin/goelastic)     | elastic/go-elasticsearch package (https://github.com/elastic/go-elasticsearch) |
-| [ppgohbase](plugin_guide.md#ppgohbase)       | [plugin/gohbase](/plugin/gohbase)         | tsuna/gohbase package (https://github.com/tsuna/gohbase).                      |
-| [ppgomemcache](plugin_guide.md#ppgomemcache) | [plugin/gomemcache](/plugin/gomemcache)   | bradfitz/gomemcache package (https://github.com/bradfitz/gomemcache)           |
-| [ppgoredis](plugin_guide.md#ppgoredis)       | [plugin/goredis](/plugin/goredis)         | go-redis/redis package (https://github.com/go-redis/redis)                     |
-| [ppgoredisv7](plugin_guide.md#ppgoredisv7)   | [plugin/goredisv7](/plugin/goredisv7)     | go-redis/redis/v7 package (https://github.com/go-redis/redis)                  |
-| [ppgoredisv8](plugin_guide.md#ppgoredisv8)   | [plugin/goredisv8](/plugin/goredisv8)     | go-redis/redis/v8 package (https://github.com/go-redis/redis)                  |
-| [ppgoredisv9](plugin_guide.md#ppgoredisv9)   | [plugin/goredisv9](/plugin/goredisv9)     | go-redis/redis/v9 package (https://github.com/go-redis/redis)                  |
-| [ppgorilla](plugin_guide.md#ppgorilla)       | [plugin/gorilla](/plugin/gorilla)         | gorilla/mux package (https://github.com/gorilla/mux).                          |
-| [ppgorm](plugin_guide.md#ppgorm)             | [plugin/gorm](/plugin/gorm)               | go-gorm/gorm package (https://github.com/go-gorm/gorm)                         |
-| [ppgrpc](plugin_guide.md#ppgrpc)             | [plugin/grpc](/plugin/grpc)               | grpc/grpc-go package (https://github.com/grpc/grpc-go)                         |
-| [pphttprouter](plugin_guide.md#pphttprouter) | [plugin/httprouter](/plugin/httprouter)   | julienschmidt/httprouter package (https://github.com/julienschmidt/httprouter) |
-| [ppkratos](plugin_guide.md#ppkratos )        | [plugin/kratos](/plugin/kratos)           | go-kratos/kratos/v2 package (https://github.com/go-kratos/kratos)              |
-| [pplogrus](plugin_guide.md#pplogrus)         | [plugin/logrus](/plugin/logrus)           | sirupsen/logrus package (https://github.com/sirupsen/logrus)                   |
-| [ppmongo](plugin_guide.md#ppmongo)           | [plugin/mongodriver](/plugin/mongodriver) | mongodb/mongo-go-driver package (https://github.com/mongodb/mongo-go-driver)   |
-| [ppmssql](plugin_guide.md#ppmssql)           | [plugin/mssql](/plugin/mssql)             | denisenkom/go-mssqldb package (https://github.com/denisenkom/go-mssqldb)       |
-| [ppmysql](plugin_guide.md#ppmysql)           | [plugin/mysql](/plugin/mysql)             | go-sql-driver/mysql package (https://github.com/go-sql-driver/mysql)           |
-| [pporacle](plugin_guide.md#pporacle)         | [plugin/oracle](/plugin/oracle)           | sijms/go-ora/v2 package (https://github.com/sijms/go-ora)                      |
-| [pppgsql](plugin_guide.md#pppgsql)           | [plugin/pgsql](/plugin/pgsql)             | lib/pq package (https://github.com/lib/pq)                                     |
-| [ppredigo](plugin_guide.md#ppredigo)         | [plugin/redigo](/plugin/redigo)           | gomodule/redigo package (https://github.com/gomodule/redigo)                   |
-| [ppsarama](plugin_guide.md#ppsarama)         | [plugin/sarama](/plugin/sarama)           | Shopify/sarama package (https://github.com/Shopify/sarama)                     |
+| plugin package                                       | source directory                                | instrumented package                                                           |
+|------------------------------------------------------|-------------------------------------------------|--------------------------------------------------------------------------------|
+| [pphttp](plugin_guide.md#pphttp)                     | [plugin/http](/plugin/http)                     | Go standard HTTP package                                                       |
+| [ppbeego](plugin_guide.md#ppbeego)                   | [plugin/beego](/plugin/beego)                   | beego/beego/v2 package (https://github.com/beego/beego)                        |
+| [ppchi](plugin_guide.md#ppchi)                       | [plugin/chi](/plugin/chi)                       | go-chi/chi package (https://github.com/go-chi/chi)                             |
+| [ppecho](plugin_guide.md#ppecho)                     | [plugin/echo](/plugin/echo)                     | labstack/echo package (https://github.com/labstack/echo)                       |
+| [ppechov4](plugin_guide.md#ppechov4)                 | [plugin/echov4](/plugin/echov4)                 | labstack/echo/v4 package (https://github.com/labstack/echo)                    |
+| [ppfasthttp](plugin_guide.md#ppfasthttp)             | [plugin/fasthttp](/plugin/fasthttp)             | valyala/fasthttp package (https://github.com/valyala/fasthttp)                 |
+| [ppfasthttprouter](plugin_guide.md#ppfasthttprouter) | [plugin/fasthttprouter](/plugin/fasthttprouter) | fasthttp/router package (https://github.com/fasthttp/router)                   |
+| [ppfiber](plugin_guide.md#ppfiber)                   | [plugin/fiber](/plugin/fiber)                   | gofiber/fiber/v2 package (https://github.com/gofiber/fiber)                    |
+| [ppgin](plugin_guide.md#ppgin)                       | [plugin/gin](/plugin/gin)                       | gin-gonic/gin package (https://github.com/gin-gonic/gin)                       |
+| [ppgocql](plugin_guide.md#ppgocql)                   | [plugin/gocql](/plugin/gocql)                   | gocql package (https://github.com/gocql/gocql).                                |
+| [ppgoelastic](plugin_guide.md#ppgoelastic)           | [plugin/goelastic](/plugin/goelastic)           | elastic/go-elasticsearch package (https://github.com/elastic/go-elasticsearch) |
+| [ppgohbase](plugin_guide.md#ppgohbase)               | [plugin/gohbase](/plugin/gohbase)               | tsuna/gohbase package (https://github.com/tsuna/gohbase).                      |
+| [ppgomemcache](plugin_guide.md#ppgomemcache)         | [plugin/gomemcache](/plugin/gomemcache)         | bradfitz/gomemcache package (https://github.com/bradfitz/gomemcache)           |
+| [ppgoredis](plugin_guide.md#ppgoredis)               | [plugin/goredis](/plugin/goredis)               | go-redis/redis package (https://github.com/go-redis/redis)                     |
+| [ppgoredisv7](plugin_guide.md#ppgoredisv7)           | [plugin/goredisv7](/plugin/goredisv7)           | go-redis/redis/v7 package (https://github.com/go-redis/redis)                  |
+| [ppgoredisv8](plugin_guide.md#ppgoredisv8)           | [plugin/goredisv8](/plugin/goredisv8)           | go-redis/redis/v8 package (https://github.com/go-redis/redis)                  |
+| [ppgoredisv9](plugin_guide.md#ppgoredisv9)           | [plugin/goredisv9](/plugin/goredisv9)           | go-redis/redis/v9 package (https://github.com/go-redis/redis)                  |
+| [ppgorilla](plugin_guide.md#ppgorilla)               | [plugin/gorilla](/plugin/gorilla)               | gorilla/mux package (https://github.com/gorilla/mux).                          |
+| [ppgorm](plugin_guide.md#ppgorm)                     | [plugin/gorm](/plugin/gorm)                     | go-gorm/gorm package (https://github.com/go-gorm/gorm)                         |
+| [ppgrpc](plugin_guide.md#ppgrpc)                     | [plugin/grpc](/plugin/grpc)                     | grpc/grpc-go package (https://github.com/grpc/grpc-go)                         |
+| [pphttprouter](plugin_guide.md#pphttprouter)         | [plugin/httprouter](/plugin/httprouter)         | julienschmidt/httprouter package (https://github.com/julienschmidt/httprouter) |
+| [ppkratos](plugin_guide.md#ppkratos )                | [plugin/kratos](/plugin/kratos)                 | go-kratos/kratos/v2 package (https://github.com/go-kratos/kratos)              |
+| [pplogrus](plugin_guide.md#pplogrus)                 | [plugin/logrus](/plugin/logrus)                 | sirupsen/logrus package (https://github.com/sirupsen/logrus)                   |
+| [ppmongo](plugin_guide.md#ppmongo)                   | [plugin/mongodriver](/plugin/mongodriver)       | mongodb/mongo-go-driver package (https://github.com/mongodb/mongo-go-driver)   |
+| [ppmssql](plugin_guide.md#ppmssql)                   | [plugin/mssql](/plugin/mssql)                   | denisenkom/go-mssqldb package (https://github.com/denisenkom/go-mssqldb)       |
+| [ppmysql](plugin_guide.md#ppmysql)                   | [plugin/mysql](/plugin/mysql)                   | go-sql-driver/mysql package (https://github.com/go-sql-driver/mysql)           |
+| [pporacle](plugin_guide.md#pporacle)                 | [plugin/oracle](/plugin/oracle)                 | sijms/go-ora/v2 package (https://github.com/sijms/go-ora)                      |
+| [pppgsql](plugin_guide.md#pppgsql)                   | [plugin/pgsql](/plugin/pgsql)                   | lib/pq package (https://github.com/lib/pq)                                     |
+| [ppredigo](plugin_guide.md#ppredigo)                 | [plugin/redigo](/plugin/redigo)                 | gomodule/redigo package (https://github.com/gomodule/redigo)                   |
+| [ppsarama](plugin_guide.md#ppsarama)                 | [plugin/sarama](/plugin/sarama)                 | Shopify/sarama package (https://github.com/Shopify/sarama)                     |
 
 ## pphttp
 ### http server
@@ -409,6 +410,52 @@ func client(ctx *fasthttp.RequestCtx) {
 * [Http.Client.RecordRequestHeader](/doc/config.md#Http.Client.RecordRequestHeader)
 * [Http.Client.RecordResponseHeader](/doc/config.md#Http.Client.RecordResponseHeader)
 * [Http.Client.RecordRequestCookie](/doc/config.md#Http.Client.RecordRequestCookie)
+
+## ppfasthttprouter
+This package instruments inbound requests handled by a fasthttp/router.Router.
+Use New() to trace all handlers:
+
+``` go
+r := ppfasthttprouter.New()
+r.GET("/user/{name}", user)
+```
+
+For each request, a pinpoint.Tracer is stored in the request context.
+By using the pinpoint.FromContext function, this tracer can be obtained in your handler.
+Alternatively, the context of the request may be propagated where the context that contains the pinpoint.Tracer is required.
+
+``` go
+import (
+    "github.com/pinpoint-apm/pinpoint-go-agent"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter"
+    "github.com/valyala/fasthttp"
+)
+
+func user(ctx *fasthttp.RequestCtx) {
+    tracer := pinpoint.FromContext(ctx.UserValue(ppfasthttp.CtxKey).(context.Context))
+    defer tracer.NewSpanEvent("f1").EndSpanEvent()
+
+    fmt.Fprintf(ctx, "hello, %s!\n", ctx.UserValue("name"))
+}
+
+func main() {
+    ... //setup agent
+
+    r := ppfasthttprouter.New()
+    r.GET("/user/{name}", user)
+    log.Fatal(fasthttp.ListenAndServe(":9000", r.Handler))
+}
+```
+[Full Example Source](/plugin/fasthttprouter/example/fasthttprouter_server.go)
+
+### Config Options
+* [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
+* [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
+* [Http.Server.ExcludeMethod](/doc/config.md#Http.Server.ExcludeMethod)
+* [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
+* [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
+* [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
 
 ## ppfiber
 This package instruments inbound requests handled by a fiber instance.
