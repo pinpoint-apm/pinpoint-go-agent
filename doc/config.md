@@ -449,7 +449,6 @@ If sets to "HEADERS-ALL", it records all request headers.
 * type: string slice
 * case-insensitive
 
-
 ### Http.Client.RecordRequestCookie
 Http.Client.RecordRequestCookie option sets HTTP request cookies to be logged on the client side.
 If sets to "HEADERS-ALL", it records all request headers.
@@ -459,3 +458,23 @@ If sets to "HEADERS-ALL", it records all request headers.
 * WithHttpClientRecordRequestCookie()
 * type: string slice
 * case-insensitive
+
+### Http.UrlStat.Enable
+Http.UrlStat.Enable option enables the agent's HTTP URL statistics feature.
+If this is set as false, the agent doesn't collect HTTP URL statistics. 
+The HTTP URL statistics feature is supported from Pinpoint version 2.5.0.
+
+* --pinpoint-http-urlstat-enable
+* PINPOINT_GO_HTTP_URLSTAT_ENABLE
+* WithHttpUrlStatEnable()
+* type: bool
+* default: false
+
+### Http.UrlStat.LimitSize
+Http.UrlStat.LimitSize option sets the limit size of the URLs to be collected.
+
+* --pinpoint-http-urlstat-limitsize
+* PINPOINT_GO_HTTP_URLSTAT_LIMITSIZE
+* WithHttpUrlStatLimitSize()
+* type: int
+* default: 1024

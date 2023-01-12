@@ -7,11 +7,6 @@
 //	r.GET("/", Index)
 //	r.GET("/hello/:name", Hello)
 //
-// Use ppfasthttp.WrapHandler to select the handlers you want to track:
-//
-//	r := router.New()
-//	r.GET("/", Index)
-//	r.GET("/hello/:name", ppfasthttp.WrapHandler(hello, "/hello/:name"))
 package ppfasthttprouter
 
 import (
