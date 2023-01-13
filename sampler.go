@@ -13,58 +13,62 @@ type sampler interface {
 }
 
 type rateSampler struct {
-	samplingRate uint64
-	counter      uint64
+	config  *Config
+	counter uint64
 }
 
-func newRateSampler(rate int) *rateSampler {
-	if rate < 0 {
-		rate = 0
+func newRateSampler(config *Config) *rateSampler {
+	if config.samplingCounterRate < 0 {
+		config.samplingCounterRate = 0
 	}
 	return &rateSampler{
-		samplingRate: (uint64)(rate),
-		counter:      0,
+		config:  config,
+		counter: 0,
 	}
 }
 
 func (s *rateSampler) isSampled() bool {
-	if s.samplingRate == 0 {
+	rate := s.config.samplingCounterRate
+	if rate == 0 {
 		return false
 	}
-
 	samplingCount := atomic.AddUint64(&s.counter, 1)
-	isSampled := samplingCount % s.samplingRate
+	isSampled := samplingCount % rate
 	return isSampled == 0
 }
 
 type percentSampler struct {
-	samplingRate uint64
-	counter      uint64
+	config  *Config
+	counter uint64
 }
 
-func newPercentSampler(percent float64) *percentSampler {
-	if percent < 0 {
-		percent = 0
-	} else if percent < 0.01 {
-		percent = 0.01
-	} else if percent > 100 {
-		percent = 100
+func newPercentSampler(config *Config) *percentSampler {
+	return &percentSampler{
+		config:  config,
+		counter: 0,
+	}
+}
+
+func adjustPercentRate(rate float64) uint64 {
+	if rate < 0 {
+		rate = 0
+	} else if rate < 0.01 {
+		rate = 0.01
+	} else if rate > 100 {
+		rate = 100
 	}
 
-	return &percentSampler{
-		samplingRate: (uint64)(percent * 100),
-		counter:      0,
-	}
+	return (uint64)(rate * 100)
 }
 
 func (s *percentSampler) isSampled() bool {
-	if s.samplingRate == 0 {
+	rate := s.config.samplingPercentRate
+	if rate == 0 {
 		return false
 	}
-
-	samplingCount := atomic.AddUint64(&s.counter, s.samplingRate)
+	samplingCount := atomic.AddUint64(&s.counter, rate)
 	r := samplingCount % samplingMaxPercentRate
-	return r < s.samplingRate
+	return r < rate
 }
 
 type traceSampler interface {

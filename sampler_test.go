@@ -4,24 +4,30 @@ import (
 	"testing"
 )
 
+func makeConfig(rate uint64) *Config {
+	c := defaultConfig()
+	c.samplingCounterRate = rate
+	return c
+}
+
 func Test_rateSampler_isSampled(t *testing.T) {
 	type fields struct {
-		samplingRate uint64
-		counter      uint64
+		config  *Config
+		counter uint64
 	}
 	tests := []struct {
 		name   string
 		fields fields
 		want   bool
 	}{
-		{"1", fields{1, 0}, true},
-		{"2", fields{10, 0}, false},
+		{"1", fields{makeConfig(1), 0}, true},
+		{"2", fields{makeConfig(10), 0}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &rateSampler{
-				samplingRate: tt.fields.samplingRate,
-				counter:      tt.fields.counter,
+				config:  tt.fields.config,
+				counter: tt.fields.counter,
 			}
 			if got := s.isSampled(); got != tt.want {
 				t.Errorf("rateSampler.isSampled() = %v, want %v", got, tt.want)
@@ -39,8 +45,8 @@ func Test_basicTraceSampler_isNewSampled(t *testing.T) {
 		fields fields
 		want   bool
 	}{
-		{"1", fields{newRateSampler(1)}, true},
-		{"2", fields{newRateSampler(10)}, false},
+		{"1", fields{newRateSampler(makeConfig(1))}, true},
+		{"2", fields{newRateSampler(makeConfig(10))}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -63,8 +69,8 @@ func Test_throughputLimitTraceSampler_isNewSampled(t *testing.T) {
 		fields fields
 		want   bool
 	}{
-		{"1", fields{newThroughputLimitTraceSampler(newRateSampler(1), 10, 10)}, true},
-		{"2", fields{newThroughputLimitTraceSampler(newRateSampler(10), 10, 10)}, false},
+		{"1", fields{newThroughputLimitTraceSampler(newRateSampler(makeConfig(1)), 10, 10)}, true},
+		{"2", fields{newThroughputLimitTraceSampler(newRateSampler(makeConfig(10)), 10, 10)}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

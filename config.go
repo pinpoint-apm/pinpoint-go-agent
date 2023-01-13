@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"errors"
 	"fmt"
+	"github.com/fsnotify/fsnotify"
 	"math"
 	"math/rand"
 	"os"
@@ -76,6 +77,7 @@ type cfgMapItem struct {
 	valueType    int
 	cmdKey       string
 	envKey       string
+	dynamic      bool
 }
 
 var (
@@ -86,47 +88,48 @@ var (
 func initConfig() {
 	cfgBaseMap = make(map[string]*cfgMapItem, 0)
 
-	AddConfig(CfgAppName, CfgString, "")
-	AddConfig(CfgAppType, CfgInt, ServiceTypeGoApp)
-	AddConfig(CfgAgentID, CfgString, "")
-	AddConfig(CfgAgentName, CfgString, "")
-	AddConfig(CfgCollectorHost, CfgString, "localhost")
-	AddConfig(CfgCollectorAgentPort, CfgInt, 9991)
-	AddConfig(CfgCollectorSpanPort, CfgInt, 9993)
-	AddConfig(CfgCollectorStatPort, CfgInt, 9992)
-	AddConfig(CfgLogLevelOld, CfgString, "info")
-	AddConfig(CfgLogLevel, CfgString, "info")
-	AddConfig(CfgLogOutput, CfgString, "stderr")
-	AddConfig(CfgLogMaxSize, CfgInt, 10)
-	AddConfig(CfgSamplingType, CfgString, samplingTypeCounter)
-	AddConfig(CfgSamplingCounterRate, CfgInt, 1)
-	AddConfig(CfgSamplingPercentRate, CfgFloat, 100)
-	AddConfig(CfgSamplingNewThroughput, CfgInt, 0)
-	AddConfig(CfgSamplingContinueThroughput, CfgInt, 0)
-	AddConfig(CfgSpanQueueSize, CfgInt, defaultQueueSize)
-	AddConfig(CfgSpanMaxCallStackDepth, CfgInt, defaultEventDepth)
-	AddConfig(CfgSpanMaxCallStackSequence, CfgInt, defaultEventSequence)
-	AddConfig(CfgStatCollectInterval, CfgInt, 5000)
-	AddConfig(CfgStatBatchCount, CfgInt, 6)
-	AddConfig(CfgIsContainerEnv, CfgBool, false)
-	AddConfig(CfgConfigFile, CfgString, "")
-	AddConfig(CfgActiveProfile, CfgString, "")
-	AddConfig(CfgSQLTraceBindValue, CfgBool, true)
-	AddConfig(CfgSQLMaxBindValueSize, CfgInt, 1024)
-	AddConfig(CfgSQLTraceCommit, CfgBool, true)
-	AddConfig(CfgSQLTraceRollback, CfgBool, true)
-	AddConfig(CfgEnable, CfgBool, true)
-	AddConfig(CfgHttpUrlStatEnable, CfgBool, false)
-	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1024)
+	AddConfig(CfgAppName, CfgString, "", false)
+	AddConfig(CfgAppType, CfgInt, ServiceTypeGoApp, false)
+	AddConfig(CfgAgentID, CfgString, "", false)
+	AddConfig(CfgAgentName, CfgString, "", false)
+	AddConfig(CfgCollectorHost, CfgString, "localhost", false)
+	AddConfig(CfgCollectorAgentPort, CfgInt, 9991, false)
+	AddConfig(CfgCollectorSpanPort, CfgInt, 9993, false)
+	AddConfig(CfgCollectorStatPort, CfgInt, 9992, false)
+	AddConfig(CfgLogLevelOld, CfgString, "info", false)
+	AddConfig(CfgLogLevel, CfgString, "info", false)
+	AddConfig(CfgLogOutput, CfgString, "stderr", false)
+	AddConfig(CfgLogMaxSize, CfgInt, 10, false)
+	AddConfig(CfgSamplingType, CfgString, samplingTypeCounter, false)
+	AddConfig(CfgSamplingCounterRate, CfgInt, 1, true)
+	AddConfig(CfgSamplingPercentRate, CfgFloat, 100, true)
+	AddConfig(CfgSamplingNewThroughput, CfgInt, 0, false)
+	AddConfig(CfgSamplingContinueThroughput, CfgInt, 0, false)
+	AddConfig(CfgSpanQueueSize, CfgInt, defaultQueueSize, false)
+	AddConfig(CfgSpanMaxCallStackDepth, CfgInt, defaultEventDepth, false)
+	AddConfig(CfgSpanMaxCallStackSequence, CfgInt, defaultEventSequence, false)
+	AddConfig(CfgStatCollectInterval, CfgInt, 5000, false)
+	AddConfig(CfgStatBatchCount, CfgInt, 6, false)
+	AddConfig(CfgIsContainerEnv, CfgBool, false, false)
+	AddConfig(CfgConfigFile, CfgString, "", false)
+	AddConfig(CfgActiveProfile, CfgString, "", false)
+	AddConfig(CfgSQLTraceBindValue, CfgBool, true, false)
+	AddConfig(CfgSQLMaxBindValueSize, CfgInt, 1024, false)
+	AddConfig(CfgSQLTraceCommit, CfgBool, true, false)
+	AddConfig(CfgSQLTraceRollback, CfgBool, true, false)
+	AddConfig(CfgEnable, CfgBool, true, false)
+	AddConfig(CfgHttpUrlStatEnable, CfgBool, false, true)
+	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1024, false)
 }
 
 // AddConfig adds a configuration item.
-func AddConfig(cfgName string, valueType int, defaultValue interface{}) {
+func AddConfig(cfgName string, valueType int, defaultValue interface{}, dynamic bool) {
 	cfgBaseMap[cfgName] = &cfgMapItem{
 		defaultValue: defaultValue,
 		valueType:    valueType,
 		cmdKey:       cmdName(cfgName),
 		envKey:       envName(cfgName),
+		dynamic:      dynamic,
 	}
 }
 
@@ -143,8 +146,12 @@ type Config struct {
 	cfgMap         map[string]*cfgMapItem
 	containerCheck bool
 	useNewLogOpt   bool
-	collectUrlStat bool
 	offGrpc        bool //for test
+
+	//dynamic config
+	samplingCounterRate uint64
+	samplingPercentRate uint64
+	collectUrlStat      bool
 }
 
 // ConfigOption represents an option that can be passed to NewConfig.
@@ -311,6 +318,8 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		maxEventSequence = minEventSequence
 	}
 
+	config.samplingCounterRate = uint64(config.Int(CfgSamplingCounterRate))
+	config.samplingPercentRate = adjustPercentRate(config.Float(CfgSamplingPercentRate))
 	config.collectUrlStat = config.Bool(CfgHttpUrlStatEnable)
 
 	globalConfig = config
@@ -388,6 +397,11 @@ func (config *Config) loadConfigFile(cmdEnvViper *viper.Viper) *viper.Viper {
 		if err := cfgFileViper.ReadInConfig(); err != nil {
 			Log("config").Errorf("config file loading error: %v", err)
 		}
+
+		cfgFileViper.OnConfigChange(func(e fsnotify.Event) {
+			config.reloadConfig(cfgFileViper)
+		})
+		cfgFileViper.WatchConfig()
 	}
 
 	return cfgFileViper
@@ -453,6 +467,37 @@ func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value inte
 		config.useNewLogOpt = true
 	} else if cfgName == CfgLogLevelOld && !config.useNewLogOpt {
 		config.cfgMap[CfgLogLevel].value = value
+	}
+}
+
+func (config *Config) reloadConfig(cfgFileViper *viper.Viper) {
+	if err := cfgFileViper.ReadInConfig(); err != nil {
+		Log("config").Errorf("config file reloading error: %v", err)
+		return
+	}
+
+	profileViper := config.loadProfile(viper.New(), cfgFileViper)
+	config.loadDynamicConfig(cfgFileViper, profileViper)
+
+	config.samplingCounterRate = uint64(config.Int(CfgSamplingCounterRate))
+	config.samplingPercentRate = adjustPercentRate(config.Float(CfgSamplingPercentRate))
+	config.collectUrlStat = config.Bool(CfgHttpUrlStatEnable)
+}
+
+func (config *Config) loadDynamicConfig(cfgFileViper *viper.Viper, profileViper *viper.Viper) {
+	sortKeys := make([]string, 0)
+	for k := range config.cfgMap {
+		sortKeys = append(sortKeys, k)
+	}
+	sort.Strings(sortKeys)
+	for _, k := range sortKeys {
+		if v := config.cfgMap[k]; v.dynamic {
+			if profileViper.IsSet(k) {
+				config.setFinalValue(k, v, profileViper.Get(k))
+			} else if cfgFileViper.IsSet(k) {
+				config.setFinalValue(k, v, cfgFileViper.Get(k))
+			}
+		}
 	}
 }
 

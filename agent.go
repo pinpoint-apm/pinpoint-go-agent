@@ -131,9 +131,9 @@ func NewAgent(config *Config) (Agent, error) {
 
 	var baseSampler sampler
 	if config.String(CfgSamplingType) == samplingTypeCounter {
-		baseSampler = newRateSampler(config.Int(CfgSamplingCounterRate))
+		baseSampler = newRateSampler(config)
 	} else {
-		baseSampler = newPercentSampler(config.Float(CfgSamplingPercentRate))
+		baseSampler = newPercentSampler(config)
 	}
 
 	if config.Int(CfgSamplingNewThroughput) > 0 || config.Int(CfgSamplingContinueThroughput) > 0 {
