@@ -6,9 +6,12 @@ import (
 )
 
 type noopAgent struct {
+	config *Config
 }
 
-var defaultNoopAgent = &noopAgent{}
+var defaultNoopAgent = &noopAgent{
+	config: defaultConfig(),
+}
 
 // NoopAgent returns a Agent that doesn't collect tracing data.
 func NoopAgent() Agent {
@@ -25,6 +28,10 @@ func (agent *noopAgent) NewSpanTracerWithReader(operation string, rpcName string
 
 func (agent *noopAgent) Enable() bool {
 	return false
+}
+
+func (agent *noopAgent) Config() *Config {
+	return agent.config
 }
 
 func (agent *noopAgent) Shutdown() {

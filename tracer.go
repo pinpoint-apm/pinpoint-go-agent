@@ -37,6 +37,9 @@ type Agent interface {
 	// Enable returns whether the agent is in an operational state.
 	Enable() bool
 
+	// Config returns the configuration associated with the agent.
+	Config() *Config
+
 	// Shutdown stops all related goroutines managing this agent.
 	// After Shutdown is called, the agent will never collect tracing data again.
 	Shutdown()

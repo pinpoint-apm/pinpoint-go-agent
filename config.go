@@ -78,11 +78,11 @@ type cfgMapItem struct {
 	cmdKey       string
 	envKey       string
 	dynamic      bool
+	oldValue     interface{}
 }
 
 var (
-	cfgBaseMap   map[string]*cfgMapItem
-	globalConfig *Config
+	cfgBaseMap map[string]*cfgMapItem
 )
 
 func initConfig() {
@@ -149,17 +149,19 @@ type Config struct {
 	offGrpc        bool //for test
 
 	//dynamic config
-	samplingCounterRate uint64
-	samplingPercentRate uint64
-	collectUrlStat      bool
+	collectUrlStat bool
+	reloadCallback []ConfigReloadCallback
 }
 
 // ConfigOption represents an option that can be passed to NewConfig.
 type ConfigOption func(*Config)
 
+// ConfigReloadCallback represents an option that can be passed to NewConfig.
+type ConfigReloadCallback func(*Config)
+
 // GetConfig returns a global Config created by NewConfig.
 func GetConfig() *Config {
-	return globalConfig
+	return GetAgent().Config()
 }
 
 // Set stores the specified configuration item value.
@@ -318,11 +320,9 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		maxEventSequence = minEventSequence
 	}
 
-	config.samplingCounterRate = uint64(config.Int(CfgSamplingCounterRate))
-	config.samplingPercentRate = adjustPercentRate(config.Float(CfgSamplingPercentRate))
 	config.collectUrlStat = config.Bool(CfgHttpUrlStatEnable)
+	config.reloadCallback = make([]ConfigReloadCallback, 0)
 
-	globalConfig = config
 	return config, nil
 }
 
@@ -470,6 +470,11 @@ func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value inte
 	}
 }
 
+// AddReloadCallback adds a callback function will be called after reloading config file.
+func (config *Config) AddReloadCallback(callback ConfigReloadCallback) {
+	config.reloadCallback = append(config.reloadCallback, callback)
+}
+
 func (config *Config) reloadConfig(cfgFileViper *viper.Viper) {
 	if err := cfgFileViper.ReadInConfig(); err != nil {
 		Log("config").Errorf("config file reloading error: %v", err)
@@ -478,10 +483,11 @@ func (config *Config) reloadConfig(cfgFileViper *viper.Viper) {
 
 	profileViper := config.loadProfile(viper.New(), cfgFileViper)
 	config.loadDynamicConfig(cfgFileViper, profileViper)
-
-	config.samplingCounterRate = uint64(config.Int(CfgSamplingCounterRate))
-	config.samplingPercentRate = adjustPercentRate(config.Float(CfgSamplingPercentRate))
 	config.collectUrlStat = config.Bool(CfgHttpUrlStatEnable)
+
+	for _, callback := range config.reloadCallback {
+		callback(config)
+	}
 }
 
 func (config *Config) loadDynamicConfig(cfgFileViper *viper.Viper, profileViper *viper.Viper) {
@@ -493,12 +499,22 @@ func (config *Config) loadDynamicConfig(cfgFileViper *viper.Viper, profileViper 
 	for _, k := range sortKeys {
 		if v := config.cfgMap[k]; v.dynamic {
 			if profileViper.IsSet(k) {
-				config.setFinalValue(k, v, profileViper.Get(k))
+				config.reloadFinalValue(k, v, profileViper)
 			} else if cfgFileViper.IsSet(k) {
-				config.setFinalValue(k, v, cfgFileViper.Get(k))
+				config.reloadFinalValue(k, v, cfgFileViper)
 			}
 		}
 	}
+}
+
+func (config *Config) reloadFinalValue(cfgName string, item *cfgMapItem, viper *viper.Viper) {
+	item.oldValue = item.value
+	config.setFinalValue(cfgName, item, viper.Get(cfgName))
+}
+
+func (config *Config) isChanged(cfgName string) bool {
+	item := config.cfgMap[cfgName]
+	return item.oldValue != item.value
 }
 
 func isContainerEnv() bool {

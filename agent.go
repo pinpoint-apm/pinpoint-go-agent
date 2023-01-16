@@ -129,11 +129,23 @@ func NewAgent(config *Config) (Agent, error) {
 		return NoopAgent(), err
 	}
 
+	agent.newSampler(config)
+	if !agent.offGrpc {
+		go agent.connectGrpc(config)
+	}
+
+	config.AddReloadCallback(agent.remakeSampler)
+	agent.config = config
+	globalAgent = agent
+	return agent, nil
+}
+
+func (agent *agent) newSampler(config *Config) {
 	var baseSampler sampler
 	if config.String(CfgSamplingType) == samplingTypeCounter {
-		baseSampler = newRateSampler(config)
+		baseSampler = newRateSampler(config.Int(CfgSamplingCounterRate))
 	} else {
-		baseSampler = newPercentSampler(config)
+		baseSampler = newPercentSampler(config.Float(CfgSamplingPercentRate))
 	}
 
 	if config.Int(CfgSamplingNewThroughput) > 0 || config.Int(CfgSamplingContinueThroughput) > 0 {
@@ -142,17 +154,19 @@ func NewAgent(config *Config) (Agent, error) {
 	} else {
 		agent.sampler = newBasicTraceSampler(baseSampler)
 	}
-
-	if !agent.offGrpc {
-		go connectGrpc(agent, config)
-	}
-
-	agent.config = config
-	globalAgent = agent
-	return agent, nil
 }
 
-func connectGrpc(agent *agent, config *Config) {
+func (agent *agent) remakeSampler(config *Config) {
+	if config.isChanged(CfgSamplingType) ||
+		config.isChanged(CfgSamplingCounterRate) ||
+		config.isChanged(CfgSamplingPercentRate) ||
+		config.isChanged(CfgSamplingNewThroughput) ||
+		config.isChanged(CfgSamplingContinueThroughput) {
+		agent.newSampler(config)
+	}
+}
+
+func (agent *agent) connectGrpc(config *Config) {
 	var err error
 
 	if agent.agentGrpc, err = newAgentGrpc(agent, config); err != nil {
@@ -266,6 +280,10 @@ func (agent *agent) generateTransactionId() TransactionId {
 
 func (agent *agent) Enable() bool {
 	return agent.enable
+}
+
+func (agent *agent) Config() *Config {
+	return agent.config
 }
 
 func (agent *agent) sendPingWorker() {

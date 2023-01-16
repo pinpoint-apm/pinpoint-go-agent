@@ -13,9 +13,6 @@ import (
 )
 
 func newTestAgent() *agent {
-	c := defaultConfig()
-	c.samplingCounterRate = 1
-
 	a := &agent{
 		appName:   "testApp",
 		agentID:   "testAgent",
@@ -24,7 +21,7 @@ func newTestAgent() *agent {
 		enable:    true,
 		spanChan:  make(chan *span, cacheSize),
 		metaChan:  make(chan interface{}, cacheSize),
-		sampler:   newBasicTraceSampler(newRateSampler(c)),
+		sampler:   newBasicTraceSampler(newRateSampler(1)),
 		offGrpc:   true,
 	}
 	a.errorCache, _ = lru.New(cacheSize)
