@@ -135,6 +135,7 @@ func NewAgent(config *Config) (Agent, error) {
 	}
 
 	config.AddReloadCallback(agent.remakeSampler)
+	config.AddReloadCallback(logger.reload)
 	agent.config = config
 	globalAgent = agent
 	return agent, nil

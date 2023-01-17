@@ -96,15 +96,15 @@ func initConfig() {
 	AddConfig(CfgCollectorAgentPort, CfgInt, 9991, false)
 	AddConfig(CfgCollectorSpanPort, CfgInt, 9993, false)
 	AddConfig(CfgCollectorStatPort, CfgInt, 9992, false)
-	AddConfig(CfgLogLevelOld, CfgString, "info", false)
-	AddConfig(CfgLogLevel, CfgString, "info", false)
-	AddConfig(CfgLogOutput, CfgString, "stderr", false)
-	AddConfig(CfgLogMaxSize, CfgInt, 10, false)
-	AddConfig(CfgSamplingType, CfgString, samplingTypeCounter, false)
+	AddConfig(CfgLogLevelOld, CfgString, "info", true)
+	AddConfig(CfgLogLevel, CfgString, "info", true)
+	AddConfig(CfgLogOutput, CfgString, "stderr", true)
+	AddConfig(CfgLogMaxSize, CfgInt, 10, true)
+	AddConfig(CfgSamplingType, CfgString, samplingTypeCounter, true)
 	AddConfig(CfgSamplingCounterRate, CfgInt, 1, true)
 	AddConfig(CfgSamplingPercentRate, CfgFloat, 100, true)
-	AddConfig(CfgSamplingNewThroughput, CfgInt, 0, false)
-	AddConfig(CfgSamplingContinueThroughput, CfgInt, 0, false)
+	AddConfig(CfgSamplingNewThroughput, CfgInt, 0, true)
+	AddConfig(CfgSamplingContinueThroughput, CfgInt, 0, true)
 	AddConfig(CfgSpanQueueSize, CfgInt, defaultQueueSize, false)
 	AddConfig(CfgSpanMaxCallStackDepth, CfgInt, defaultEventDepth, false)
 	AddConfig(CfgSpanMaxCallStackSequence, CfgInt, defaultEventSequence, false)
@@ -245,7 +245,6 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		Log("config").Errorf("commad line config loading error: %v", err)
 	}
 	cmdEnvViper.BindPFlags(flagSet)
-
 	cmdEnvViper.SetEnvPrefix("pinpoint_go")
 	cmdEnvViper.AutomaticEnv()
 
@@ -253,11 +252,7 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	profileViper := config.loadProfile(cmdEnvViper, cfgFileViper)
 	config.loadConfig(cmdEnvViper, cfgFileViper, profileViper)
 
-	if config.Int(CfgLogMaxSize) < 1 {
-		config.cfgMap[CfgLogMaxSize].value = 10
-	}
-	logger.setOutput(config.String(CfgLogOutput), config.Int(CfgLogMaxSize))
-	logger.setLevel(config.String(CfgLogLevel))
+	logger.setup(config)
 
 	r, _ := regexp.Compile(cfgIdPattern)
 	appName := config.String(CfgAppName)
