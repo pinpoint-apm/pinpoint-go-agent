@@ -258,9 +258,9 @@ func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string, re
 
 	tid := reader.Get(HeaderTraceId)
 	if tid == "" {
-		return agent.samplingSpan(agent.sampler.isNewSampled, operation, rpcName, reader)
+		return agent.samplingSpan(func() bool { return agent.sampler.isNewSampled() }, operation, rpcName, reader)
 	} else {
-		return agent.samplingSpan(agent.sampler.isContinueSampled, operation, rpcName, reader)
+		return agent.samplingSpan(func() bool { return agent.sampler.isContinueSampled() }, operation, rpcName, reader)
 	}
 }
 

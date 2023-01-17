@@ -23,6 +23,7 @@ func newTestAgent() *agent {
 		metaChan:  make(chan interface{}, cacheSize),
 		sampler:   newBasicTraceSampler(newRateSampler(1)),
 		offGrpc:   true,
+		config:    defaultConfig(),
 	}
 	a.errorCache, _ = lru.New(cacheSize)
 	a.sqlCache, _ = lru.New(cacheSize)

@@ -127,12 +127,13 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 		{"1", args{"t1"}},
 	}
 
-	save := maxEventDepth
-	maxEventDepth = 3
-
 	for _, tt := range tests {
+
 		t.Run(tt.name, func(t *testing.T) {
 			s := defaultTestSpan()
+			save := s.agent.config.spanMaxEventDepth
+			s.agent.config.spanMaxEventDepth = 3
+
 			s.NewSpanEvent(tt.args.operationName)
 			s.NewSpanEvent(tt.args.operationName)
 			s.NewSpanEvent(tt.args.operationName)
@@ -203,9 +204,10 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 			assert.Equal(t, s.eventStack.len(), 1, "stack.len()")
 			s.EndSpanEvent()
 			assert.Equal(t, s.eventStack.len(), 0, "stack.len()")
+
+			s.agent.config.spanMaxEventDepth = save
 		})
 	}
-	maxEventDepth = save
 }
 
 func Test_span_NewSpanEventSequenceOverflow(t *testing.T) {
@@ -219,12 +221,13 @@ func Test_span_NewSpanEventSequenceOverflow(t *testing.T) {
 		{"1", args{"t1"}},
 	}
 
-	save := maxEventSequence
-	maxEventSequence = 5
-
 	for _, tt := range tests {
+
 		t.Run(tt.name, func(t *testing.T) {
 			span := defaultTestSpan()
+			save := span.agent.config.spanMaxEventSequence
+			span.agent.config.spanMaxEventSequence = 5
+
 			span.NewSpanEvent(tt.args.operationName).EndSpanEvent()
 			span.NewSpanEvent(tt.args.operationName).EndSpanEvent()
 			span.NewSpanEvent(tt.args.operationName).EndSpanEvent()
@@ -267,9 +270,10 @@ func Test_span_NewSpanEventSequenceOverflow(t *testing.T) {
 			assert.Equal(t, span.eventOverflow, 0, "eventOverflow")
 			assert.Equal(t, span.eventDepth, int32(1), "eventDepth")
 			assert.Equal(t, span.eventStack.len(), 0, "stack.len()")
+
+			span.agent.config.spanMaxEventSequence = save
 		})
 	}
-	maxEventSequence = save
 }
 
 func Test_span_EndSpan(t *testing.T) {

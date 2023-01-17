@@ -3,7 +3,6 @@ package pinpoint
 import (
 	"errors"
 	"fmt"
-	"github.com/fsnotify/fsnotify"
 	"math"
 	"math/rand"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cast"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -106,17 +106,17 @@ func initConfig() {
 	AddConfig(CfgSamplingNewThroughput, CfgInt, 0, true)
 	AddConfig(CfgSamplingContinueThroughput, CfgInt, 0, true)
 	AddConfig(CfgSpanQueueSize, CfgInt, defaultQueueSize, false)
-	AddConfig(CfgSpanMaxCallStackDepth, CfgInt, defaultEventDepth, false)
-	AddConfig(CfgSpanMaxCallStackSequence, CfgInt, defaultEventSequence, false)
+	AddConfig(CfgSpanMaxCallStackDepth, CfgInt, defaultEventDepth, true)
+	AddConfig(CfgSpanMaxCallStackSequence, CfgInt, defaultEventSequence, true)
 	AddConfig(CfgStatCollectInterval, CfgInt, 5000, false)
 	AddConfig(CfgStatBatchCount, CfgInt, 6, false)
 	AddConfig(CfgIsContainerEnv, CfgBool, false, false)
 	AddConfig(CfgConfigFile, CfgString, "", false)
 	AddConfig(CfgActiveProfile, CfgString, "", false)
-	AddConfig(CfgSQLTraceBindValue, CfgBool, true, false)
-	AddConfig(CfgSQLMaxBindValueSize, CfgInt, 1024, false)
-	AddConfig(CfgSQLTraceCommit, CfgBool, true, false)
-	AddConfig(CfgSQLTraceRollback, CfgBool, true, false)
+	AddConfig(CfgSQLTraceBindValue, CfgBool, true, true)
+	AddConfig(CfgSQLMaxBindValueSize, CfgInt, 1024, true)
+	AddConfig(CfgSQLTraceCommit, CfgBool, true, true)
+	AddConfig(CfgSQLTraceRollback, CfgBool, true, true)
 	AddConfig(CfgEnable, CfgBool, true, false)
 	AddConfig(CfgHttpUrlStatEnable, CfgBool, false, true)
 	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1024, false)
@@ -149,12 +149,14 @@ type Config struct {
 	offGrpc        bool //for test
 
 	//dynamic config
-	reloadCallback      []ConfigReloadCallback
-	collectUrlStat      bool // CfgHttpUrlStatEnable
-	sqlTraceBindValue   bool // CfgSQLTraceBindValue
-	sqlMaxBindValueSize int  // CfgSQLMaxBindValueSize
-	sqlTraceCommit      bool // CfgSQLTraceCommit
-	sqlTraceRollback    bool // CfgSQLTraceRollback
+	reloadCallback       []ConfigReloadCallback
+	collectUrlStat       bool  // CfgHttpUrlStatEnable
+	sqlTraceBindValue    bool  // CfgSQLTraceBindValue
+	sqlMaxBindValueSize  int   // CfgSQLMaxBindValueSize
+	sqlTraceCommit       bool  // CfgSQLTraceCommit
+	sqlTraceRollback     bool  // CfgSQLTraceRollback
+	spanMaxEventDepth    int32 // CfgSpanMaxCallStackDepth
+	spanMaxEventSequence int32 // CfgSpanMaxCallStackSequence
 }
 
 // ConfigOption represents an option that can be passed to NewConfig.
@@ -236,7 +238,6 @@ func (config *Config) Bool(cfgName string) bool {
 //	cfg, err := pinpoint.NewConfig(opts...)
 func NewConfig(opts ...ConfigOption) (*Config, error) {
 	config := defaultConfig()
-
 	if opts != nil {
 		for _, fn := range opts {
 			fn(config)
@@ -256,6 +257,8 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	profileViper := config.loadProfile(cmdEnvViper, cfgFileViper)
 	config.loadConfig(cmdEnvViper, cfgFileViper, profileViper)
 
+	config.reloadCallback = make([]ConfigReloadCallback, 0)
+	config.applyDynamicConfig()
 	logger.setup(config)
 
 	r, _ := regexp.Compile(cfgIdPattern)
@@ -289,30 +292,11 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	if config.Int(CfgSpanQueueSize) < 1 {
 		config.cfgMap[CfgSpanQueueSize].value = defaultQueueSize
 	}
-
-	maxEventDepth = int32(config.Int(CfgSpanMaxCallStackDepth))
-	if maxEventDepth == -1 {
-		maxEventDepth = math.MaxInt32
-	} else if maxEventDepth < minEventDepth {
-		maxEventDepth = minEventDepth
-	}
-
-	maxEventSequence = int32(config.Int(CfgSpanMaxCallStackSequence))
-	if maxEventSequence == -1 {
-		maxEventSequence = math.MaxInt32
-	} else if maxEventSequence < minEventSequence {
-		maxEventSequence = minEventSequence
-	}
-
-	config.reloadCallback = make([]ConfigReloadCallback, 0)
-	config.setDynamicConfig()
-
 	return config, nil
 }
 
 func defaultConfig() *Config {
 	config := new(Config)
-
 	config.cfgMap = make(map[string]*cfgMapItem, 0)
 	for k, v := range cfgBaseMap {
 		config.cfgMap[k] = &cfgMapItem{
@@ -320,14 +304,22 @@ func defaultConfig() *Config {
 			valueType:    v.valueType,
 			cmdKey:       v.cmdKey,
 			envKey:       v.envKey,
+			dynamic:      v.dynamic,
 		}
 	}
-
 	for _, v := range config.cfgMap {
 		v.value = v.defaultValue
 	}
 
 	config.containerCheck = true
+	config.collectUrlStat = false
+	config.sqlTraceBindValue = true
+	config.sqlMaxBindValueSize = 1024
+	config.sqlTraceCommit = true
+	config.sqlTraceRollback = true
+	config.spanMaxEventDepth = defaultEventDepth
+	config.spanMaxEventSequence = defaultEventSequence
+
 	return config
 }
 
@@ -467,24 +459,24 @@ func (config *Config) reloadConfig(cfgFileViper *viper.Viper) {
 
 	profileViper := config.loadProfile(viper.New(), cfgFileViper)
 	config.loadDynamicConfig(cfgFileViper, profileViper)
-	config.setDynamicConfig()
+	config.applyDynamicConfig()
 
 	for _, callback := range config.reloadCallback {
 		callback(config)
 	}
 }
 
-func (config *Config) setDynamicConfig() {
+func (config *Config) applyDynamicConfig() {
 	sampleType := strings.ToUpper(strings.TrimSpace(config.String(CfgSamplingType)))
 	if sampleType != samplingTypeCounter && sampleType != samplingTypePercent {
 		config.cfgMap[CfgSamplingType].value = samplingTypeCounter
 		config.cfgMap[CfgSamplingCounterRate].value = 0
 	}
 
-	maxBindSize := config.Int(CfgSQLMaxBindValueSize)
-	if maxBindSize > 1024 {
+	maxBind := config.Int(CfgSQLMaxBindValueSize)
+	if maxBind > 1024 {
 		config.cfgMap[CfgSQLMaxBindValueSize].value = 1024
-	} else if maxBindSize < 0 {
+	} else if maxBind < 0 {
 		config.cfgMap[CfgSQLTraceBindValue].value = false
 		config.cfgMap[CfgSQLMaxBindValueSize].value = 0
 	}
@@ -493,6 +485,27 @@ func (config *Config) setDynamicConfig() {
 	config.sqlTraceCommit = config.Bool(CfgSQLTraceCommit)
 	config.sqlTraceRollback = config.Bool(CfgSQLTraceRollback)
 
+	maxDepth := config.Int(CfgSpanMaxCallStackDepth)
+	if maxDepth == -1 {
+		maxDepth = math.MaxInt32
+	} else if maxDepth < minEventDepth {
+		maxDepth = minEventDepth
+	}
+	config.cfgMap[CfgSpanMaxCallStackDepth].value = maxDepth
+	config.spanMaxEventDepth = int32(config.Int(CfgSpanMaxCallStackDepth))
+
+	maxSeq := config.Int(CfgSpanMaxCallStackSequence)
+	if maxSeq == -1 {
+		maxSeq = math.MaxInt32
+	} else if maxSeq < minEventSequence {
+		maxSeq = minEventSequence
+	}
+	config.cfgMap[CfgSpanMaxCallStackSequence].value = maxSeq
+	config.spanMaxEventSequence = int32(config.Int(CfgSpanMaxCallStackSequence))
+
+	if config.Int(CfgLogMaxSize) < 1 {
+		config.cfgMap[CfgLogMaxSize].value = 10
+	}
 	config.collectUrlStat = config.Bool(CfgHttpUrlStatEnable)
 }
 

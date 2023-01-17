@@ -24,9 +24,7 @@ const (
 )
 
 var (
-	asyncIdGen       int32 = 0
-	maxEventDepth    int32 = defaultEventDepth
-	maxEventSequence int32 = defaultEventSequence
+	asyncIdGen int32 = 0
 )
 
 type span struct {
@@ -198,7 +196,7 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
-	if span.eventSequence >= maxEventSequence || span.eventDepth >= maxEventDepth {
+	if span.eventSequence >= span.agent.config.spanMaxEventSequence || span.eventDepth >= span.agent.config.spanMaxEventDepth {
 		span.eventOverflow++
 		if !span.eventOverflowLog {
 			Log("span").Warnf("callStack maximum depth/sequence exceeded. (depth=%d, seq=%d)", span.eventDepth, span.eventSequence)
