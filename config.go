@@ -149,8 +149,12 @@ type Config struct {
 	offGrpc        bool //for test
 
 	//dynamic config
-	collectUrlStat bool
-	reloadCallback []ConfigReloadCallback
+	reloadCallback      []ConfigReloadCallback
+	collectUrlStat      bool // CfgHttpUrlStatEnable
+	sqlTraceBindValue   bool // CfgSQLTraceBindValue
+	sqlMaxBindValueSize int  // CfgSQLMaxBindValueSize
+	sqlTraceCommit      bool // CfgSQLTraceCommit
+	sqlTraceRollback    bool // CfgSQLTraceRollback
 }
 
 // ConfigOption represents an option that can be passed to NewConfig.
@@ -279,24 +283,9 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		}
 	}
 
-	sampleType := strings.ToUpper(strings.TrimSpace(config.String(CfgSamplingType)))
-	if sampleType != samplingTypeCounter && sampleType != samplingTypePercent {
-		config.cfgMap[CfgSamplingType].value = samplingTypeCounter
-		config.cfgMap[CfgSamplingCounterRate].value = 0
-	}
-
 	if config.containerCheck {
 		config.cfgMap[CfgIsContainerEnv].value = isContainerEnv()
 	}
-
-	maxBindSize := config.Int(CfgSQLMaxBindValueSize)
-	if maxBindSize > 1024 {
-		config.cfgMap[CfgSQLMaxBindValueSize].value = 1024
-	} else if maxBindSize < 0 {
-		config.cfgMap[CfgSQLTraceBindValue].value = false
-		config.cfgMap[CfgSQLMaxBindValueSize].value = 0
-	}
-
 	if config.Int(CfgSpanQueueSize) < 1 {
 		config.cfgMap[CfgSpanQueueSize].value = defaultQueueSize
 	}
@@ -315,8 +304,8 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		maxEventSequence = minEventSequence
 	}
 
-	config.collectUrlStat = config.Bool(CfgHttpUrlStatEnable)
 	config.reloadCallback = make([]ConfigReloadCallback, 0)
+	config.setDynamicConfig()
 
 	return config, nil
 }
@@ -478,11 +467,33 @@ func (config *Config) reloadConfig(cfgFileViper *viper.Viper) {
 
 	profileViper := config.loadProfile(viper.New(), cfgFileViper)
 	config.loadDynamicConfig(cfgFileViper, profileViper)
-	config.collectUrlStat = config.Bool(CfgHttpUrlStatEnable)
+	config.setDynamicConfig()
 
 	for _, callback := range config.reloadCallback {
 		callback(config)
 	}
+}
+
+func (config *Config) setDynamicConfig() {
+	sampleType := strings.ToUpper(strings.TrimSpace(config.String(CfgSamplingType)))
+	if sampleType != samplingTypeCounter && sampleType != samplingTypePercent {
+		config.cfgMap[CfgSamplingType].value = samplingTypeCounter
+		config.cfgMap[CfgSamplingCounterRate].value = 0
+	}
+
+	maxBindSize := config.Int(CfgSQLMaxBindValueSize)
+	if maxBindSize > 1024 {
+		config.cfgMap[CfgSQLMaxBindValueSize].value = 1024
+	} else if maxBindSize < 0 {
+		config.cfgMap[CfgSQLTraceBindValue].value = false
+		config.cfgMap[CfgSQLMaxBindValueSize].value = 0
+	}
+	config.sqlTraceBindValue = config.Bool(CfgSQLTraceBindValue)
+	config.sqlMaxBindValueSize = config.Int(CfgSQLMaxBindValueSize)
+	config.sqlTraceCommit = config.Bool(CfgSQLTraceCommit)
+	config.sqlTraceRollback = config.Bool(CfgSQLTraceRollback)
+
+	config.collectUrlStat = config.Bool(CfgHttpUrlStatEnable)
 }
 
 func (config *Config) loadDynamicConfig(cfgFileViper *viper.Viper, profileViper *viper.Viper) {
