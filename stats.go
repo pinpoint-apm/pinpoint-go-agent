@@ -180,16 +180,16 @@ func activeSpanCount(now time.Time) []int32 {
 	return count
 }
 
-func (agent *agent) collectAgentStatWorker(config *Config) {
+func (agent *agent) collectAgentStatWorker() {
 	Log("stats").Infof("start collect agent stat goroutine")
 	defer agent.wg.Done()
 
 	initStats()
 	resetResponseTime()
 
-	interval := time.Duration(config.Int(CfgStatCollectInterval)) * time.Millisecond
+	interval := time.Duration(agent.config.Int(CfgStatCollectInterval)) * time.Millisecond
 	time.Sleep(interval)
-	cfgBatchCount := config.Int(CfgStatBatchCount)
+	cfgBatchCount := agent.config.Int(CfgStatBatchCount)
 	collected := make([]*inspectorStats, cfgBatchCount)
 	batch := 0
 

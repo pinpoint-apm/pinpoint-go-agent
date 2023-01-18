@@ -80,7 +80,7 @@ func (l *logrusLogger) setup(config *Config) {
 }
 
 func (l *logrusLogger) reload(config *Config) {
-	if config.isChanged(CfgLogOutput) || config.isChanged(CfgLogMaxSize) {
+	if config.isReloaded(CfgLogOutput) || config.isReloaded(CfgLogMaxSize) {
 		if l.fileLogger != nil {
 			defer func(f *lumberjack.Logger) {
 				f.Close()
@@ -88,7 +88,7 @@ func (l *logrusLogger) reload(config *Config) {
 		}
 		l.setOutput(config.String(CfgLogOutput), config.Int(CfgLogMaxSize))
 	}
-	if config.isChanged(CfgLogLevel) {
+	if config.isReloaded(CfgLogLevel) {
 		l.setLevel(config.String(CfgLogLevel))
 	}
 }

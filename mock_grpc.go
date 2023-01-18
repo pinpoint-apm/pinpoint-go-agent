@@ -12,7 +12,7 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent/protobuf/mock"
 )
 
-func newTestAgent() *agent {
+func newTestAgent(config *Config) *agent {
 	a := &agent{
 		appName:   "testApp",
 		agentID:   "testAgent",
@@ -22,12 +22,12 @@ func newTestAgent() *agent {
 		spanChan:  make(chan *span, cacheSize),
 		metaChan:  make(chan interface{}, cacheSize),
 		sampler:   newBasicTraceSampler(newRateSampler(1)),
-		offGrpc:   true,
-		config:    defaultConfig(),
+		config:    config,
 	}
 	a.errorCache, _ = lru.New(cacheSize)
 	a.sqlCache, _ = lru.New(cacheSize)
 	a.apiCache, _ = lru.New(cacheSize)
+	a.config.offGrpc = true
 
 	return a
 }
@@ -68,16 +68,16 @@ func (metaGrpcClient *mockMetaGrpcClient) RequestStringMetaData(ctx context.Cont
 	return metaGrpcClient.client.RequestStringMetaData(ctx, in)
 }
 
-func newMockAgentGrpc(agent *agent, config *Config, t *testing.T) *agentGrpc {
+func newMockAgentGrpc(agent *agent, t *testing.T) *agentGrpc {
 	ctrl := gomock.NewController(t)
 	stream := mock.NewMockAgent_PingSessionClient(ctrl)
 	agentClient := mockAgentGrpcClient{mock.NewMockAgentClient(ctrl), stream}
 	metadataClient := mockMetaGrpcClient{mock.NewMockMetadataClient(ctrl)}
 
-	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent, config}
+	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent}
 }
 
-func newMockAgentGrpcPing(agent *agent, config *Config, t *testing.T) *agentGrpc {
+func newMockAgentGrpcPing(agent *agent, t *testing.T) *agentGrpc {
 	ctrl := gomock.NewController(t)
 	stream := mock.NewMockAgent_PingSessionClient(ctrl)
 	agentClient := mockAgentGrpcClient{mock.NewMockAgentClient(ctrl), stream}
@@ -86,7 +86,7 @@ func newMockAgentGrpcPing(agent *agent, config *Config, t *testing.T) *agentGrpc
 	stream.EXPECT().Send(gomock.Any()).Return(nil)
 	stream.EXPECT().Recv().Return(nil, nil)
 
-	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent, config}
+	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent}
 }
 
 type mockSpanGrpcClient struct {

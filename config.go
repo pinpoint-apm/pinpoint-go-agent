@@ -259,32 +259,6 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 
 	config.reloadCallback = make([]ConfigReloadCallback, 0)
 	config.applyDynamicConfig()
-	logger.setup(config)
-
-	r, _ := regexp.Compile(cfgIdPattern)
-	appName := config.String(CfgAppName)
-	if appName == "" {
-		return nil, errors.New("application name is required")
-	} else if len(appName) > maxApplicationNameLength {
-		return nil, errors.New("application name is too long (max length: " + fmt.Sprint(maxApplicationNameLength) + ")")
-	} else if !r.MatchString(appName) {
-		return nil, errors.New("application name has invalid pattern (" + cfgIdPattern + ")")
-	}
-
-	agentId := config.String(CfgAgentID)
-	if agentId == "" || len(agentId) > maxAgentIdLength || !r.MatchString(agentId) {
-		config.cfgMap[CfgAgentID].value = randomString(maxAgentIdLength - 1)
-		Log("config").Infof("auto-generated AgentID: %v", config.cfgMap[CfgAgentID].value)
-	}
-
-	agentName := config.String(CfgAgentName)
-	if agentName != "" {
-		if len(agentName) > maxAgentNameLength {
-			return nil, errors.New("agent name is too long (max length: " + fmt.Sprint(maxAgentNameLength) + ")")
-		} else if !r.MatchString(agentName) {
-			return nil, errors.New("agent name has invalid pattern (" + cfgIdPattern + ")")
-		}
-	}
 
 	if config.containerCheck {
 		config.cfgMap[CfgIsContainerEnv].value = isContainerEnv()
@@ -446,24 +420,32 @@ func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value inte
 	}
 }
 
-// AddReloadCallback adds a callback function will be called after reloading config file.
-func (config *Config) AddReloadCallback(callback ConfigReloadCallback) {
-	config.reloadCallback = append(config.reloadCallback, callback)
-}
-
-func (config *Config) reloadConfig(cfgFileViper *viper.Viper) {
-	if err := cfgFileViper.ReadInConfig(); err != nil {
-		Log("config").Errorf("config file reloading error: %v", err)
-		return
+func (config *Config) checkNameAndID() error {
+	r, _ := regexp.Compile(cfgIdPattern)
+	appName := config.String(CfgAppName)
+	if appName == "" {
+		return errors.New("application name is required")
+	} else if len(appName) > maxApplicationNameLength {
+		return errors.New("application name is too long (max length: " + fmt.Sprint(maxApplicationNameLength) + ")")
+	} else if !r.MatchString(appName) {
+		return errors.New("application name has invalid pattern (" + cfgIdPattern + ")")
 	}
 
-	profileViper := config.loadProfile(viper.New(), cfgFileViper)
-	config.loadDynamicConfig(cfgFileViper, profileViper)
-	config.applyDynamicConfig()
-
-	for _, callback := range config.reloadCallback {
-		callback(config)
+	agentId := config.String(CfgAgentID)
+	if agentId == "" || len(agentId) > maxAgentIdLength || !r.MatchString(agentId) {
+		config.cfgMap[CfgAgentID].value = randomString(maxAgentIdLength - 1)
+		Log("config").Infof("auto-generated AgentID: %v", config.cfgMap[CfgAgentID].value)
 	}
+
+	agentName := config.String(CfgAgentName)
+	if agentName != "" {
+		if len(agentName) > maxAgentNameLength {
+			return errors.New("agent name is too long (max length: " + fmt.Sprint(maxAgentNameLength) + ")")
+		} else if !r.MatchString(agentName) {
+			return errors.New("agent name has invalid pattern (" + cfgIdPattern + ")")
+		}
+	}
+	return nil
 }
 
 func (config *Config) applyDynamicConfig() {
@@ -509,6 +491,26 @@ func (config *Config) applyDynamicConfig() {
 	config.collectUrlStat = config.Bool(CfgHttpUrlStatEnable)
 }
 
+// AddReloadCallback adds a callback function will be called after reloading config file.
+func (config *Config) AddReloadCallback(callback ConfigReloadCallback) {
+	config.reloadCallback = append(config.reloadCallback, callback)
+}
+
+func (config *Config) reloadConfig(cfgFileViper *viper.Viper) {
+	if err := cfgFileViper.ReadInConfig(); err != nil {
+		Log("config").Errorf("config file reloading error: %v", err)
+		return
+	}
+
+	profileViper := config.loadProfile(viper.New(), cfgFileViper)
+	config.loadDynamicConfig(cfgFileViper, profileViper)
+	config.applyDynamicConfig()
+
+	for _, callback := range config.reloadCallback {
+		callback(config)
+	}
+}
+
 func (config *Config) loadDynamicConfig(cfgFileViper *viper.Viper, profileViper *viper.Viper) {
 	sortKeys := make([]string, 0)
 	for k := range config.cfgMap {
@@ -517,6 +519,7 @@ func (config *Config) loadDynamicConfig(cfgFileViper *viper.Viper, profileViper 
 	sort.Strings(sortKeys)
 	for _, k := range sortKeys {
 		if v := config.cfgMap[k]; v.dynamic {
+			v.oldValue = nil
 			if profileViper.IsSet(k) {
 				config.reloadFinalValue(k, v, profileViper)
 			} else if cfgFileViper.IsSet(k) {
@@ -531,9 +534,11 @@ func (config *Config) reloadFinalValue(cfgName string, item *cfgMapItem, viper *
 	config.setFinalValue(cfgName, item, viper.Get(cfgName))
 }
 
-func (config *Config) isChanged(cfgName string) bool {
-	item := config.cfgMap[cfgName]
-	return item.oldValue != item.value
+func (config *Config) isReloaded(cfgName string) bool {
+	if item, ok := config.cfgMap[cfgName]; ok {
+		return item.oldValue != nil && item.oldValue != item.value
+	}
+	return false
 }
 
 func isContainerEnv() bool {

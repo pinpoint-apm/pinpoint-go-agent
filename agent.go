@@ -48,7 +48,6 @@ type agent struct {
 	wg       sync.WaitGroup
 	enable   bool
 	shutdown bool
-	offGrpc  bool //for test
 }
 
 type apiMeta struct {
@@ -98,6 +97,11 @@ func NewAgent(config *Config) (Agent, error) {
 	if config == nil {
 		return NoopAgent(), errors.New("configuration is missing")
 	}
+
+	logger.setup(config)
+	if err := config.checkNameAndID(); err != nil {
+		return NoopAgent(), err
+	}
 	if !config.Bool(CfgEnable) {
 		return NoopAgent(), nil
 	}
@@ -110,12 +114,12 @@ func NewAgent(config *Config) (Agent, error) {
 		appType:     int32(config.Int(CfgAppType)),
 		agentID:     config.String(CfgAgentID),
 		agentName:   config.String(CfgAgentName),
-		offGrpc:     config.offGrpc,
 		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
 		spanChan:    make(chan *span, config.Int(CfgSpanQueueSize)),
 		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),
 		urlStatChan: make(chan *urlStat, config.Int(CfgSpanQueueSize)),
 		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),
+		config:      config,
 	}
 
 	var err error
@@ -130,13 +134,11 @@ func NewAgent(config *Config) (Agent, error) {
 	}
 
 	agent.newSampler(config)
-	if !agent.offGrpc {
-		go agent.connectGrpc(config)
+	if !config.offGrpc {
+		go agent.connectGrpcServer()
 	}
-
-	config.AddReloadCallback(agent.remakeSampler)
+	config.AddReloadCallback(agent.reloadSampler)
 	config.AddReloadCallback(logger.reload)
-	agent.config = config
 	globalAgent = agent
 	return agent, nil
 }
@@ -157,32 +159,32 @@ func (agent *agent) newSampler(config *Config) {
 	}
 }
 
-func (agent *agent) remakeSampler(config *Config) {
-	if config.isChanged(CfgSamplingType) ||
-		config.isChanged(CfgSamplingCounterRate) ||
-		config.isChanged(CfgSamplingPercentRate) ||
-		config.isChanged(CfgSamplingNewThroughput) ||
-		config.isChanged(CfgSamplingContinueThroughput) {
+func (agent *agent) reloadSampler(config *Config) {
+	if config.isReloaded(CfgSamplingType) ||
+		config.isReloaded(CfgSamplingCounterRate) ||
+		config.isReloaded(CfgSamplingPercentRate) ||
+		config.isReloaded(CfgSamplingNewThroughput) ||
+		config.isReloaded(CfgSamplingContinueThroughput) {
 		agent.newSampler(config)
 	}
 }
 
-func (agent *agent) connectGrpc(config *Config) {
+func (agent *agent) connectGrpcServer() {
 	var err error
 
-	if agent.agentGrpc, err = newAgentGrpc(agent, config); err != nil {
+	if agent.agentGrpc, err = newAgentGrpc(agent); err != nil {
 		return
 	}
 	if !agent.agentGrpc.registerAgentWithRetry() {
 		return
 	}
-	if agent.spanGrpc, err = newSpanGrpc(agent, config); err != nil {
+	if agent.spanGrpc, err = newSpanGrpc(agent); err != nil {
 		return
 	}
-	if agent.statGrpc, err = newStatGrpc(agent, config); err != nil {
+	if agent.statGrpc, err = newStatGrpc(agent); err != nil {
 		return
 	}
-	if agent.cmdGrpc, err = newCommandGrpc(agent, config); err != nil {
+	if agent.cmdGrpc, err = newCommandGrpc(agent); err != nil {
 		return
 	}
 
@@ -191,7 +193,7 @@ func (agent *agent) connectGrpc(config *Config) {
 	go agent.sendSpanWorker()
 	go agent.runCommandService()
 	go agent.sendMetaWorker()
-	go agent.collectAgentStatWorker(config)
+	go agent.collectAgentStatWorker()
 	go agent.collectUrlStatWorker()
 	go agent.sendUrlStatWorker()
 	go agent.sendStatsWorker()

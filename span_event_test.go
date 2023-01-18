@@ -91,7 +91,7 @@ func Test_spanEvent_SetError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.args.span.agent = newTestAgent()
+			tt.args.span.agent = newTestAgent(defaultConfig())
 			se := newSpanEvent(tt.args.span, tt.args.operationName)
 			se.SetError(errors.New("TEST_ERROR"))
 			assert.Equal(t, int32(1), se.errorFuncId, "errorFuncId")
@@ -113,7 +113,7 @@ func Test_spanEvent_SetSQL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.args.span.agent = newTestAgent()
+			tt.args.span.agent = newTestAgent(defaultConfig())
 			se := newSpanEvent(tt.args.span, tt.args.operationName)
 			se.SetSQL("SELECT 1", "")
 			assert.Equal(t, len(se.annotations.list), int(1), "annotations.len")

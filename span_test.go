@@ -30,7 +30,7 @@ func (r *DistributedTracingContextMap) Set(key string, val string) {
 
 func defaultTestSpan() *span {
 	span := defaultSpan()
-	span.agent = newTestAgent()
+	span.agent = newTestAgent(defaultConfig())
 	return span
 }
 

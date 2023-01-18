@@ -27,7 +27,7 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			c, _ := NewConfig(tt.args.opts...)
 			assert.Equal(t, "TestApp", c.String(CfgAppName), CfgAppName)
 			assert.Equal(t, ServiceTypeGoApp, c.Int(CfgAppType), CfgAppType)
-			assert.NotEmpty(t, c.String(CfgAgentID), CfgAgentID)
+			assert.Empty(t, c.String(CfgAgentID), CfgAgentID)
 			assert.Empty(t, c.String(CfgAgentName), CfgAgentName)
 			assert.Equal(t, "localhost", c.String(CfgCollectorHost), CfgCollectorHost)
 			assert.Equal(t, 9991, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
@@ -156,7 +156,8 @@ func TestNewConfig_AppNameMissing(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewConfig(tt.args.opts...)
+			c, err := NewConfig(tt.args.opts...)
+			err = c.checkNameAndID()
 			assert.Error(t, err, "error")
 		})
 	}
@@ -180,6 +181,7 @@ func TestNewConfig_GenerateAgentId(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, _ := NewConfig(tt.args.opts...)
+			c.checkNameAndID()
 			assert.Equal(t, c.String(CfgAppName), "TestApp", CfgAppName)
 			assert.NotNil(t, c.String(CfgAgentID), CfgAgentID)
 		})
