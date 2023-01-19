@@ -133,17 +133,21 @@ func NewAgent(config *Config) (Agent, error) {
 		return NoopAgent(), err
 	}
 
-	agent.newSampler(config)
+	agent.newSampler()
+	samplingOpts := []string{CfgSamplingType, CfgSamplingCounterRate, CfgSamplingPercentRate, CfgSamplingNewThroughput, CfgSamplingContinueThroughput}
+	config.AddReloadCallback(samplingOpts, agent.newSampler)
+	config.AddReloadCallback([]string{CfgLogLevel}, logger.reloadLevel)
+	config.AddReloadCallback([]string{CfgLogOutput, CfgLogMaxSize}, logger.reloadOutput)
+
 	if !config.offGrpc {
 		go agent.connectGrpcServer()
 	}
-	config.AddReloadCallback(agent.reloadSampler)
-	config.AddReloadCallback(logger.reload)
 	globalAgent = agent
 	return agent, nil
 }
 
-func (agent *agent) newSampler(config *Config) {
+func (agent *agent) newSampler() {
+	config := agent.config
 	var baseSampler sampler
 	if config.String(CfgSamplingType) == samplingTypeCounter {
 		baseSampler = newRateSampler(config.Int(CfgSamplingCounterRate))
@@ -156,16 +160,6 @@ func (agent *agent) newSampler(config *Config) {
 			config.Int(CfgSamplingContinueThroughput))
 	} else {
 		agent.sampler = newBasicTraceSampler(baseSampler)
-	}
-}
-
-func (agent *agent) reloadSampler(config *Config) {
-	if config.isReloaded(CfgSamplingType) ||
-		config.isReloaded(CfgSamplingCounterRate) ||
-		config.isReloaded(CfgSamplingPercentRate) ||
-		config.isReloaded(CfgSamplingNewThroughput) ||
-		config.isReloaded(CfgSamplingContinueThroughput) {
-		agent.newSampler(config)
 	}
 }
 

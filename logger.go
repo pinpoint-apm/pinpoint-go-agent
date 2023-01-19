@@ -27,6 +27,7 @@ type logrusLogger struct {
 	defaultLogger *logrus.Logger
 	extraLogger   *logrus.Logger
 	fileLogger    *lumberjack.Logger
+	config        *Config
 }
 
 func newLogger() *logrusLogger {
@@ -75,22 +76,22 @@ func (l *logrusLogger) setOutput(out string, maxSize int) {
 }
 
 func (l *logrusLogger) setup(config *Config) {
-	logger.setOutput(config.String(CfgLogOutput), config.Int(CfgLogMaxSize))
-	logger.setLevel(config.String(CfgLogLevel))
+	l.setOutput(config.String(CfgLogOutput), config.Int(CfgLogMaxSize))
+	l.setLevel(config.String(CfgLogLevel))
+	l.config = config
 }
 
-func (l *logrusLogger) reload(config *Config) {
-	if config.isReloaded(CfgLogOutput) || config.isReloaded(CfgLogMaxSize) {
-		if l.fileLogger != nil {
-			defer func(f *lumberjack.Logger) {
-				f.Close()
-			}(l.fileLogger)
-		}
-		l.setOutput(config.String(CfgLogOutput), config.Int(CfgLogMaxSize))
+func (l *logrusLogger) reloadLevel() {
+	l.setLevel(l.config.String(CfgLogLevel))
+}
+
+func (l *logrusLogger) reloadOutput() {
+	if l.fileLogger != nil {
+		defer func(f *lumberjack.Logger) {
+			f.Close()
+		}(l.fileLogger)
 	}
-	if config.isReloaded(CfgLogLevel) {
-		l.setLevel(config.String(CfgLogLevel))
-	}
+	l.setOutput(l.config.String(CfgLogOutput), l.config.Int(CfgLogMaxSize))
 }
 
 func (l *logrusLogger) newEntry(src string) *logEntry {

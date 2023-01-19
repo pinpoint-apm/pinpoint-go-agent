@@ -20,15 +20,15 @@ const (
 )
 
 func init() {
-	pinpoint.AddConfig(CfgHttpServerStatusCodeErrors, pinpoint.CfgStringSlice, []string{"5xx"}, false)
-	pinpoint.AddConfig(CfgHttpServerExcludeUrl, pinpoint.CfgStringSlice, []string{}, false)
-	pinpoint.AddConfig(CfgHttpServerExcludeMethod, pinpoint.CfgStringSlice, []string{}, false)
-	pinpoint.AddConfig(CfgHttpServerRecordRequestHeader, pinpoint.CfgStringSlice, []string{}, false)
-	pinpoint.AddConfig(CfgHttpServerRecordResponseHeader, pinpoint.CfgStringSlice, []string{}, false)
-	pinpoint.AddConfig(CfgHttpServerRecordRequestCookie, pinpoint.CfgStringSlice, []string{}, false)
-	pinpoint.AddConfig(CfgHttpClientRecordRequestHeader, pinpoint.CfgStringSlice, []string{}, false)
-	pinpoint.AddConfig(CfgHttpClientRecordResponseHeader, pinpoint.CfgStringSlice, []string{}, false)
-	pinpoint.AddConfig(CfgHttpClientRecordRequestCookie, pinpoint.CfgStringSlice, []string{}, false)
+	pinpoint.AddConfig(CfgHttpServerStatusCodeErrors, pinpoint.CfgStringSlice, []string{"5xx"}, true)
+	pinpoint.AddConfig(CfgHttpServerExcludeUrl, pinpoint.CfgStringSlice, []string{}, true)
+	pinpoint.AddConfig(CfgHttpServerExcludeMethod, pinpoint.CfgStringSlice, []string{}, true)
+	pinpoint.AddConfig(CfgHttpServerRecordRequestHeader, pinpoint.CfgStringSlice, []string{}, true)
+	pinpoint.AddConfig(CfgHttpServerRecordResponseHeader, pinpoint.CfgStringSlice, []string{}, true)
+	pinpoint.AddConfig(CfgHttpServerRecordRequestCookie, pinpoint.CfgStringSlice, []string{}, true)
+	pinpoint.AddConfig(CfgHttpClientRecordRequestHeader, pinpoint.CfgStringSlice, []string{}, true)
+	pinpoint.AddConfig(CfgHttpClientRecordResponseHeader, pinpoint.CfgStringSlice, []string{}, true)
+	pinpoint.AddConfig(CfgHttpClientRecordRequestCookie, pinpoint.CfgStringSlice, []string{}, true)
 }
 
 // WithHttpServerStatusCodeError sets HTTP status code with request failure.
@@ -150,7 +150,7 @@ var (
 
 func isExcludedUrl(url string) bool {
 	onceUrl.Do(func() {
-		srvUrl = newHttpUrlFilter()
+		initOptionExecutor(func() { srvUrl = newHttpUrlFilter() }, CfgHttpServerExcludeUrl)
 	})
 	return srvUrl.isFiltered(url)
 }
@@ -162,7 +162,7 @@ var (
 
 func isExcludedMethod(method string) bool {
 	onceMethod.Do(func() {
-		srvMethod = newHttpExcludeMethod()
+		initOptionExecutor(func() { srvMethod = newHttpExcludeMethod() }, CfgHttpServerExcludeMethod)
 	})
 	return srvMethod.isExcludedMethod(method)
 }
@@ -174,7 +174,7 @@ var (
 
 func recordServerHttpStatus(span pinpoint.SpanRecorder, status int) {
 	onceStatus.Do(func() {
-		srvStatus = newHttpStatusError()
+		initOptionExecutor(func() { srvStatus = newHttpStatusError() }, CfgHttpServerStatusCodeErrors)
 	})
 	if srvStatus.isError(status) {
 		span.SetFailure()
@@ -189,7 +189,9 @@ var (
 
 func recordServerHttpRequestHeader(annotation pinpoint.Annotation, header Header) {
 	onceSrvReq.Do(func() {
-		srvReqHeader = makeHttpHeaderRecorder(CfgHttpServerRecordRequestHeader)
+		initOptionExecutor(
+			func() { srvReqHeader = makeHttpHeaderRecorder(CfgHttpServerRecordRequestHeader) },
+			CfgHttpServerRecordRequestHeader)
 	})
 	srvReqHeader.recordHeader(annotation, pinpoint.AnnotationHttpRequestHeader, header)
 }
@@ -201,7 +203,9 @@ var (
 
 func recordServerHttpResponseHeader(annotation pinpoint.Annotation, header Header) {
 	onceSrvRes.Do(func() {
-		srvResHeader = makeHttpHeaderRecorder(CfgHttpServerRecordResponseHeader)
+		initOptionExecutor(
+			func() { srvResHeader = makeHttpHeaderRecorder(CfgHttpServerRecordResponseHeader) },
+			CfgHttpServerRecordResponseHeader)
 	})
 	srvResHeader.recordHeader(annotation, pinpoint.AnnotationHttpResponseHeader, header)
 }
@@ -213,7 +217,9 @@ var (
 
 func recordServerHttpCookie(annotation pinpoint.Annotation, cookie Cookie) {
 	onceSrvCookie.Do(func() {
-		srvCookie = makeHttpHeaderRecorder(CfgHttpServerRecordRequestCookie)
+		initOptionExecutor(
+			func() { srvCookie = makeHttpHeaderRecorder(CfgHttpServerRecordRequestCookie) },
+			CfgHttpServerRecordRequestCookie)
 	})
 	srvCookie.recordCookie(annotation, cookie)
 }
@@ -225,7 +231,9 @@ var (
 
 func RecordClientHttpRequestHeader(annotation pinpoint.Annotation, header Header) {
 	onceCltReq.Do(func() {
-		cltReqHeader = makeHttpHeaderRecorder(CfgHttpClientRecordRequestHeader)
+		initOptionExecutor(
+			func() { cltReqHeader = makeHttpHeaderRecorder(CfgHttpClientRecordRequestHeader) },
+			CfgHttpClientRecordRequestHeader)
 	})
 	cltReqHeader.recordHeader(annotation, pinpoint.AnnotationHttpRequestHeader, header)
 }
@@ -237,7 +245,9 @@ var (
 
 func RecordClientHttpResponseHeader(annotation pinpoint.Annotation, header Header) {
 	onceCltRes.Do(func() {
-		cltResHeader = makeHttpHeaderRecorder(CfgHttpClientRecordResponseHeader)
+		initOptionExecutor(
+			func() { cltResHeader = makeHttpHeaderRecorder(CfgHttpClientRecordResponseHeader) },
+			CfgHttpClientRecordResponseHeader)
 	})
 	cltResHeader.recordHeader(annotation, pinpoint.AnnotationHttpResponseHeader, header)
 }
@@ -249,9 +259,16 @@ var (
 
 func RecordClientHttpCookie(annotation pinpoint.Annotation, cookie Cookie) {
 	onceCltCookie.Do(func() {
-		cltCookie = makeHttpHeaderRecorder(CfgHttpClientRecordRequestCookie)
+		initOptionExecutor(
+			func() { cltCookie = makeHttpHeaderRecorder(CfgHttpClientRecordRequestCookie) },
+			CfgHttpClientRecordRequestCookie)
 	})
 	cltCookie.recordCookie(annotation, cookie)
+}
+
+func initOptionExecutor(initFunc func(), opt string) {
+	initFunc()
+	pinpoint.GetConfig().AddReloadCallback([]string{opt}, initFunc)
 }
 
 func makeHttpHeaderRecorder(cfgName string) httpHeaderRecorder {

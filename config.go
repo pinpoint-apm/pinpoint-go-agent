@@ -149,7 +149,7 @@ type Config struct {
 	offGrpc        bool //for test
 
 	//dynamic config
-	reloadCallback       []ConfigReloadCallback
+	callback             []reloadCallback
 	collectUrlStat       bool  // CfgHttpUrlStatEnable
 	sqlTraceBindValue    bool  // CfgSQLTraceBindValue
 	sqlMaxBindValueSize  int   // CfgSQLMaxBindValueSize
@@ -161,9 +161,6 @@ type Config struct {
 
 // ConfigOption represents an option that can be passed to NewConfig.
 type ConfigOption func(*Config)
-
-// ConfigReloadCallback represents an option that can be passed to NewConfig.
-type ConfigReloadCallback func(*Config)
 
 // GetConfig returns a global Config created by NewConfig.
 func GetConfig() *Config {
@@ -257,7 +254,7 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	profileViper := config.loadProfile(cmdEnvViper, cfgFileViper)
 	config.loadConfig(cmdEnvViper, cfgFileViper, profileViper)
 
-	config.reloadCallback = make([]ConfigReloadCallback, 0)
+	config.callback = make([]reloadCallback, 0)
 	config.applyDynamicConfig()
 
 	if config.containerCheck {
@@ -491,9 +488,14 @@ func (config *Config) applyDynamicConfig() {
 	config.collectUrlStat = config.Bool(CfgHttpUrlStatEnable)
 }
 
+type reloadCallback struct {
+	cfgNames []string
+	callback func()
+}
+
 // AddReloadCallback adds a callback function will be called after reloading config file.
-func (config *Config) AddReloadCallback(callback ConfigReloadCallback) {
-	config.reloadCallback = append(config.reloadCallback, callback)
+func (config *Config) AddReloadCallback(optNames []string, callback func()) {
+	config.callback = append(config.callback, reloadCallback{optNames, callback})
 }
 
 func (config *Config) reloadConfig(cfgFileViper *viper.Viper) {
@@ -506,8 +508,8 @@ func (config *Config) reloadConfig(cfgFileViper *viper.Viper) {
 	config.loadDynamicConfig(cfgFileViper, profileViper)
 	config.applyDynamicConfig()
 
-	for _, callback := range config.reloadCallback {
-		callback(config)
+	for _, cb := range config.callback {
+		cb.do(config)
 	}
 }
 
@@ -539,6 +541,15 @@ func (config *Config) isReloaded(cfgName string) bool {
 		return item.oldValue != nil && item.oldValue != item.value
 	}
 	return false
+}
+
+func (cb reloadCallback) do(config *Config) {
+	for _, k := range cb.cfgNames {
+		if config.isReloaded(k) {
+			cb.callback()
+			break
+		}
+	}
 }
 
 func isContainerEnv() bool {
