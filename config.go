@@ -151,6 +151,7 @@ type Config struct {
 	//dynamic config
 	callback             []reloadCallback
 	collectUrlStat       bool  // CfgHttpUrlStatEnable
+	urlStatLimitSize     int   // CfgHttpUrlStatLimitSize
 	sqlTraceBindValue    bool  // CfgSQLTraceBindValue
 	sqlMaxBindValueSize  int   // CfgSQLMaxBindValueSize
 	sqlTraceCommit       bool  // CfgSQLTraceCommit
@@ -284,6 +285,7 @@ func defaultConfig() *Config {
 
 	config.containerCheck = true
 	config.collectUrlStat = false
+	config.urlStatLimitSize = 1024
 	config.sqlTraceBindValue = true
 	config.sqlMaxBindValueSize = 1024
 	config.sqlTraceCommit = true
@@ -486,6 +488,7 @@ func (config *Config) applyDynamicConfig() {
 		config.cfgMap[CfgLogMaxSize].value = 10
 	}
 	config.collectUrlStat = config.Bool(CfgHttpUrlStatEnable)
+	config.urlStatLimitSize = config.Int(CfgHttpUrlStatLimitSize)
 }
 
 type reloadCallback struct {

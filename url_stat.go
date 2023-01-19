@@ -60,8 +60,7 @@ type tickClock struct {
 
 func newUrlStatSnapshot() *urlStatSnapshot {
 	return &urlStatSnapshot{
-		urlMap:      make(map[urlKey]*eachUrlStat, 0),
-		maxCapacity: GetConfig().Int(CfgHttpUrlStatLimitSize),
+		urlMap: make(map[urlKey]*eachUrlStat, 0),
 	}
 }
 
@@ -70,7 +69,7 @@ func (snapshot *urlStatSnapshot) add(us *urlStat) {
 
 	e, ok := snapshot.urlMap[key]
 	if !ok {
-		if snapshot.count >= snapshot.maxCapacity {
+		if snapshot.count >= GetConfig().urlStatLimitSize {
 			return
 		}
 		e = newEachUrlStat(us.entry.Url, key.tick)
