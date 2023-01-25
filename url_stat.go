@@ -19,9 +19,9 @@ var (
 	urlSnapshotLock sync.Mutex
 )
 
-func initUrlStat() {
+func (agent *agent) initUrlStat() {
 	clock = newTickClock(urlStatCollectInterval)
-	urlSnapshot = newUrlStatSnapshot()
+	urlSnapshot = agent.newUrlStatSnapshot()
 }
 
 type urlStat struct {
@@ -31,9 +31,9 @@ type urlStat struct {
 }
 
 type urlStatSnapshot struct {
-	urlMap      map[urlKey]*eachUrlStat
-	maxCapacity int
-	count       int
+	urlMap map[urlKey]*eachUrlStat
+	config *Config
+	count  int
 }
 
 type urlKey struct {
@@ -58,10 +58,26 @@ type tickClock struct {
 	interval time.Duration
 }
 
-func newUrlStatSnapshot() *urlStatSnapshot {
+func (agent *agent) newUrlStatSnapshot() *urlStatSnapshot {
 	return &urlStatSnapshot{
 		urlMap: make(map[urlKey]*eachUrlStat, 0),
+		config: agent.config,
 	}
+}
+
+func (agent *agent) currentUrlStatSnapshot() *urlStatSnapshot {
+	urlSnapshotLock.Lock()
+	defer urlSnapshotLock.Unlock()
+	return urlSnapshot
+}
+
+func (agent *agent) takeUrlStatSnapshot() *urlStatSnapshot {
+	urlSnapshotLock.Lock()
+	defer urlSnapshotLock.Unlock()
+
+	oldSnapshot := urlSnapshot
+	urlSnapshot = agent.newUrlStatSnapshot()
+	return oldSnapshot
 }
 
 func (snapshot *urlStatSnapshot) add(us *urlStat) {
@@ -69,7 +85,7 @@ func (snapshot *urlStatSnapshot) add(us *urlStat) {
 
 	e, ok := snapshot.urlMap[key]
 	if !ok {
-		if snapshot.count >= GetConfig().urlStatLimitSize {
+		if snapshot.count >= snapshot.config.urlStatLimitSize {
 			return
 		}
 		e = newEachUrlStat(us.entry.Url, key.tick)
@@ -81,21 +97,6 @@ func (snapshot *urlStatSnapshot) add(us *urlStat) {
 	if urlStatStatus(us.entry.Status) == urlStatusFail {
 		e.failedHistogram.add(us.elapsed)
 	}
-}
-
-func currentUrlStatSnapshot() *urlStatSnapshot {
-	urlSnapshotLock.Lock()
-	defer urlSnapshotLock.Unlock()
-	return urlSnapshot
-}
-
-func takeUrlStatSnapshot() *urlStatSnapshot {
-	urlSnapshotLock.Lock()
-	defer urlSnapshotLock.Unlock()
-
-	oldSnapshot := urlSnapshot
-	urlSnapshot = newUrlStatSnapshot()
-	return oldSnapshot
 }
 
 func newEachUrlStat(url string, tick time.Time) *eachUrlStat {

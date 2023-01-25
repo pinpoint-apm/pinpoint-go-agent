@@ -515,13 +515,13 @@ func (agent *agent) collectUrlStatWorker() {
 	Log("agent").Infof("start collect uri stat goroutine")
 	defer agent.wg.Done()
 
-	initUrlStat()
+	agent.initUrlStat()
 
 	for uri := range agent.urlStatChan {
 		if !agent.enable {
 			break
 		}
-		snapshot := currentUrlStatSnapshot()
+		snapshot := agent.currentUrlStatSnapshot()
 		snapshot.add(uri)
 	}
 
@@ -537,7 +537,7 @@ func (agent *agent) sendUrlStatWorker() {
 
 	for agent.enable {
 		if agent.config.collectUrlStat {
-			snapshot := takeUrlStatSnapshot()
+			snapshot := agent.takeUrlStatSnapshot()
 			agent.enqueueStat(makePAgentUriStat(snapshot))
 		}
 		time.Sleep(interval)
