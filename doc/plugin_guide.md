@@ -18,7 +18,7 @@
 | [ppgoredis](plugin_guide.md#ppgoredis)               | [plugin/goredis](/plugin/goredis)               | go-redis/redis package (https://github.com/go-redis/redis)                     |
 | [ppgoredisv7](plugin_guide.md#ppgoredisv7)           | [plugin/goredisv7](/plugin/goredisv7)           | go-redis/redis/v7 package (https://github.com/go-redis/redis)                  |
 | [ppgoredisv8](plugin_guide.md#ppgoredisv8)           | [plugin/goredisv8](/plugin/goredisv8)           | go-redis/redis/v8 package (https://github.com/go-redis/redis)                  |
-| [ppgoredisv9](plugin_guide.md#ppgoredisv9)           | [plugin/goredisv9](/plugin/goredisv9)           | go-redis/redis/v9 package (https://github.com/go-redis/redis)                  |
+| [ppgoredisv9](plugin_guide.md#ppgoredisv9)           | [plugin/goredisv9](/plugin/goredisv9)           | redis/go-redis/v9 package (https://github.com/redis/go-redis)                  |
 | [ppgorilla](plugin_guide.md#ppgorilla)               | [plugin/gorilla](/plugin/gorilla)               | gorilla/mux package (https://github.com/gorilla/mux).                          |
 | [ppgorm](plugin_guide.md#ppgorm)                     | [plugin/gorm](/plugin/gorm)                     | go-gorm/gorm package (https://github.com/go-gorm/gorm)                         |
 | [ppgrpc](plugin_guide.md#ppgrpc)                     | [plugin/grpc](/plugin/grpc)                     | grpc/grpc-go package (https://github.com/grpc/grpc-go)                         |
@@ -735,7 +735,7 @@ rc.Pipeline()
 package main
 
 import (
-    "github.com/go-redis/redis"
+    "github.com/redis/go-redis"
     "github.com/pinpoint-apm/pinpoint-go-agent"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis"
 )
@@ -805,7 +805,7 @@ rc.Pipeline()
 package main
 
 import (
-    "github.com/go-redis/redis/v7"
+    "github.com/redis/go-redis/v7"
     "github.com/pinpoint-apm/pinpoint-go-agent"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv7"
 )

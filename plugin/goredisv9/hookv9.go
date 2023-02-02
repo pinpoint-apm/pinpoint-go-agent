@@ -1,4 +1,4 @@
-// Package ppgoredisv9 instruments the go-redis/redis/v9 package (https://github.com/go-redis/redis).
+// Package ppgoredisv9 instruments the redis/go-redis/v9 package (https://github.com/redis/go-redis).
 //
 // This package instruments the go-redis/v9 calls.
 // Use the NewHook as the redis.Hook.
@@ -18,8 +18,8 @@ import (
 	"net"
 	"strings"
 
-	"github.com/go-redis/redis/v9"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/redis/go-redis/v9"
 )
 
 type hook struct {
