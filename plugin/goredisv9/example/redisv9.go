@@ -7,10 +7,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/go-redis/redis/v9"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv9"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/redis/go-redis/v9"
 )
 
 var redisClient *redis.Client
