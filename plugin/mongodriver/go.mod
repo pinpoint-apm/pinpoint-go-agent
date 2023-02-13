@@ -5,7 +5,7 @@ go 1.15
 require (
 	github.com/pinpoint-apm/pinpoint-go-agent v1.2.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.2.0
-	go.mongodb.org/mongo-driver v1.3.5
+	go.mongodb.org/mongo-driver v1.5.1
 )
 
 replace github.com/pinpoint-apm/pinpoint-go-agent => ../..
