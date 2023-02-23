@@ -4,8 +4,8 @@ go 1.15
 
 require (
 	github.com/beego/beego/v2 v2.0.5
-	github.com/pinpoint-apm/pinpoint-go-agent v1.2.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.2.0
+	github.com/pinpoint-apm/pinpoint-go-agent v1.3.0
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.3.0
 )
 
 replace github.com/pinpoint-apm/pinpoint-go-agent => ../..
