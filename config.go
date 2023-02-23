@@ -119,7 +119,7 @@ func initConfig() {
 	AddConfig(CfgSQLTraceRollback, CfgBool, true, true)
 	AddConfig(CfgEnable, CfgBool, true, false)
 	AddConfig(CfgHttpUrlStatEnable, CfgBool, false, true)
-	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1024, false)
+	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1024, true)
 }
 
 // AddConfig adds a configuration item.
