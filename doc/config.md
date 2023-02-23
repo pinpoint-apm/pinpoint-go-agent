@@ -488,7 +488,8 @@ If sets to "HEADERS-ALL", it records all request headers.
 
 ### Http.UrlStat.Enable
 Http.UrlStat.Enable option enables the agent's HTTP URL statistics feature.
-If this is set as false, the agent doesn't collect HTTP URL statistics. 
+If this is set as false, the agent doesn't collect HTTP URL statistics.
+Pinpoint Go Agent collects response times, successes and failures for all http requests regardless of sampling.
 The HTTP URL statistics feature is supported from Pinpoint version 2.5.0.
 
 * --pinpoint-http-urlstat-enable

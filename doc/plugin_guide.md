@@ -85,8 +85,10 @@ func main() {
     mux.HandleFunc("/bar", outGoing)
     http.ListenAndServe("localhost:8000", mux)
 }
-
 ```
+
+This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
+But, WrapHandler and WrapHandlerFunc function doesn't support URL Statistics feature.
 
 #### Config Options
 * [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
@@ -95,6 +97,8 @@ func main() {
 * [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
 * [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
 * [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
+* [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
+* [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)
 
 ### http client
 This package instruments outbound requests and add distributed tracing headers.
@@ -144,10 +148,10 @@ func main() {
 ## ppbeego
 ### server
 This package instruments inbound requests handled by a beego instance.
-Register the Middleware as the middleware of the router to trace all handlers:
+Register the ServerFilterChain as the filter chain of the router to trace all handlers:
 
 ``` go
-web.RunWithMiddleWares("localhost:8080", ppbeego.Middleware())
+web.InsertFilterChain("/*", ppbeego.ServerFilterChain())
 ```
 
 For each request, a pinpoint.Tracer is stored in the request context.
@@ -173,11 +177,14 @@ func (m *MainController) Hello() {
 func main() {
     //setup agent
  
-    web.Router("/", &MainController{})
-    web.RunWithMiddleWares("localhost:9000", ppbeego.Middleware())
+	ctrl := &MainController{}
+	web.Router("/hello", ctrl, "get:Hello")
+	web.InsertFilterChain("/*", ppbeego.ServerFilterChain())
+	web.Run("localhost:9000")
 }
-
 ```
+
+This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
 
 #### Config Options
 * [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
@@ -186,14 +193,16 @@ func main() {
 * [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
 * [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
 * [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
+* [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
+* [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)
 
 ### client
 This package instruments outbound requests and add distributed tracing headers.
-Use DoRequest.
+Add the ClientFilterChain as the filter chain of the request.
 
 ``` go
 req := httplib.Get("http://localhost:9090/")
-ppbeego.DoRequest(tracer, req)
+req.AddFilters(ppbeego.ClientFilterChain(tracer))
 ```
 ``` go
 import (
@@ -206,7 +215,7 @@ func (m *MainController) Get() {
     tracer := pinpoint.FromContext(m.Ctx.Request.Context())
 
     req := httplib.Get("http://localhost:9090/")
-    ppbeego.DoRequest(tracer, req)
+    req.AddFilters(ppbeego.ClientFilterChain(tracer))
     str, _ := req.String()
     m.Ctx.WriteString(str)
 }
@@ -263,6 +272,8 @@ func main() {
 
 [Full Example Source](/plugin/chi/example/chi_server.go)
 
+This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
+
 ### Config Options
 * [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
 * [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
@@ -270,6 +281,8 @@ func main() {
 * [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
 * [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
 * [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
+* [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
+* [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)
 
 ## ppecho
 This package instruments inbound requests handled by an echo.Router.
@@ -316,6 +329,8 @@ func main() {
 ```
 [Full Example Source](/plugin/echo/example/echo_server.go)
 
+This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
+
 ### Config Options
 * [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
 * [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
@@ -323,6 +338,8 @@ func main() {
 * [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
 * [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
 * [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
+* [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
+* [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)
 
 ## ppechov4
 This package instruments the echo/v4 package, and the APIs provided is the same as ppecho.
@@ -366,6 +383,8 @@ func main() {
 ```
 [Full Example Source](/plugin/fasthttp/example/fasthttp_server.go)
 
+This package supports URL Statistics feature. It aggregates response times, successes and failures for each pattern given as parameter of a WrapHandler function.
+
 ### Config Options
 * [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
 * [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
@@ -373,6 +392,8 @@ func main() {
 * [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
 * [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
 * [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
+* [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
+* [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)
 
 ### client
 This package instruments outbound requests and add distributed tracing headers.
@@ -449,6 +470,8 @@ func main() {
 ```
 [Full Example Source](/plugin/fasthttprouter/example/fasthttprouter_server.go)
 
+This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
+
 ### Config Options
 * [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
 * [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
@@ -456,6 +479,8 @@ func main() {
 * [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
 * [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
 * [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
+* [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
+* [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)
 
 ## ppfiber
 This package instruments inbound requests handled by a fiber instance.
@@ -502,6 +527,8 @@ func main() {
 ```
 [Full Example Source](/plugin/fiber/example/fiber_server.go)
 
+This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
+
 ### Config Options
 * [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
 * [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
@@ -509,6 +536,8 @@ func main() {
 * [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
 * [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
 * [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
+* [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
+* [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)
 
 ## ppgin
 This package instruments inbound requests handled by a gin.Engine.
@@ -555,6 +584,8 @@ func main() {
 ```
 [Full Example Source](/plugin/gin/example/gin_server.go)
 
+This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
+
 ### Config Options
 * [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
 * [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
@@ -562,6 +593,8 @@ func main() {
 * [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
 * [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
 * [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
+* [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
+* [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)
 
 ## ppgocql
 This package instruments all queries created from gocql session.
@@ -735,7 +768,7 @@ rc.Pipeline()
 package main
 
 import (
-    "github.com/redis/go-redis"
+    "github.com/go-redis/redis"
     "github.com/pinpoint-apm/pinpoint-go-agent"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis"
 )
@@ -805,7 +838,7 @@ rc.Pipeline()
 package main
 
 import (
-    "github.com/redis/go-redis/v7"
+    "github.com/go-redis/redis/v7"
     "github.com/pinpoint-apm/pinpoint-go-agent"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv7"
 )
@@ -893,6 +926,8 @@ func main() {
 ```
 [Full Example Source](/plugin/gorilla/example/mux_server.go)
 
+This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
+
 ### Config Options
 * [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
 * [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
@@ -900,6 +935,8 @@ func main() {
 * [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
 * [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
 * [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
+* [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
+* [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)
 
 ## ppgorm
 This package instruments the go-gorm/gorm calls. Use the Open as the gorm.Open.
@@ -1117,6 +1154,9 @@ func main() {
 ```
 [Full Example Source](/plugin/httprouter/example/httprouter_server.go)
 
+This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
+But, WrapHandle function doesn't support URL Statistics feature.
+
 ### Config Options
 * [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
 * [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
@@ -1124,6 +1164,8 @@ func main() {
 * [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
 * [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
 * [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
+* [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
+* [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)
 
 ## ppkratos
 This package instruments kratos servers and clients.
