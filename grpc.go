@@ -485,7 +485,9 @@ func (s *pingStream) close() {
 }
 
 func (agentGrpc *agentGrpc) close() {
-	agentGrpc.agentConn.Close()
+	if agentGrpc.agentConn != nil {
+		agentGrpc.agentConn.Close()
+	}
 }
 
 type spanClient interface {
@@ -525,7 +527,9 @@ func newSpanGrpc(agent *agent) (*spanGrpc, error) {
 }
 
 func (spanGrpc *spanGrpc) close() {
-	spanGrpc.spanConn.Close()
+	if spanGrpc.spanConn != nil {
+		spanGrpc.spanConn.Close()
+	}
 }
 
 func (spanGrpc *spanGrpc) newSpanStream() bool {
@@ -742,7 +746,9 @@ func newStatGrpc(agent *agent) (*statGrpc, error) {
 }
 
 func (statGrpc *statGrpc) close() {
-	statGrpc.statConn.Close()
+	if statGrpc.statConn != nil {
+		statGrpc.statConn.Close()
+	}
 }
 
 func (statGrpc *statGrpc) newStatStream() bool {
@@ -905,7 +911,9 @@ func newCommandGrpc(agent *agent) (*cmdGrpc, error) {
 }
 
 func (cmdGrpc *cmdGrpc) close() {
-	cmdGrpc.cmdConn.Close()
+	if cmdGrpc.cmdConn != nil {
+		cmdGrpc.cmdConn.Close()
+	}
 }
 
 func (cmdGrpc *cmdGrpc) newHandleCommandStream() bool {

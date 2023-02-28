@@ -86,6 +86,8 @@ type Tracer interface {
 
 	// AddMetric adds a custom metric.
 	AddMetric(metric string, value interface{})
+
+	JsonString() []byte
 }
 
 // SpanRecorder records the collected data in the fields of Span.

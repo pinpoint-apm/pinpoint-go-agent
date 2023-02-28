@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -381,6 +382,18 @@ func (span *span) AddMetric(metric string, value interface{}) {
 	if metric == MetricURLStat {
 		span.collectUrlStat(value.(*UrlStatEntry))
 	}
+}
+
+func (span *span) JsonString() []byte {
+	m := make(map[string]interface{}, 0)
+	m["RpcName"] = span.rpcName
+	m["EndPoint"] = span.endPoint
+	m["RemoteAddr"] = span.remoteAddr
+	m["Err"] = span.err
+	m["Events"] = span.spanEvents
+	m["Annotations"] = span.annotations.list
+	b, _ := json.Marshal(m)
+	return b
 }
 
 type stack struct {
