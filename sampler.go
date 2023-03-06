@@ -93,13 +93,8 @@ func (s *basicTraceSampler) isNewSampled() bool {
 }
 
 func (s *basicTraceSampler) isContinueSampled() bool {
-	sampled := s.baseSampler.isSampled()
-	if sampled {
-		incrSampleCont()
-	} else {
-		incrUnSampleCont()
-	}
-	return sampled
+	incrSampleCont()
+	return true
 }
 
 type throughputLimitTraceSampler struct {
@@ -152,20 +147,16 @@ func (s *throughputLimitTraceSampler) isNewSampled() bool {
 }
 
 func (s *throughputLimitTraceSampler) isContinueSampled() bool {
-	sampled := s.baseSampler.isSampled()
-	if sampled {
-		if s.continueSampleLimiter != nil {
-			sampled = s.continueSampleLimiter.Allow()
-			if sampled {
-				incrSampleCont()
-			} else {
-				incrSkipCont()
-			}
-		} else {
+	sampled := true
+	if s.continueSampleLimiter != nil {
+		sampled = s.continueSampleLimiter.Allow()
+		if sampled {
 			incrSampleCont()
+		} else {
+			incrSkipCont()
 		}
 	} else {
-		incrUnSampleCont()
+		incrSampleCont()
 	}
 
 	return sampled
