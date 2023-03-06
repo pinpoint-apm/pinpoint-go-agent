@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
@@ -581,4 +582,35 @@ func (agent *agent) sendStatsWorker() {
 	stream.close()
 
 	Log("agent").Infof("end send stats goroutine")
+}
+
+func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
+	config.offGrpc = true
+	logger.setup(config)
+
+	agent := &agent{
+		appName:     config.String(CfgAppName),
+		appType:     int32(config.Int(CfgAppType)),
+		agentID:     config.String(CfgAgentID),
+		agentName:   config.String(CfgAgentName),
+		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
+		spanChan:    make(chan *span, config.Int(CfgSpanQueueSize)),
+		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),
+		urlStatChan: make(chan *urlStat, config.Int(CfgSpanQueueSize)),
+		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),
+		config:      config,
+	}
+	agent.errorCache, _ = lru.New(cacheSize)
+	agent.sqlCache, _ = lru.New(cacheSize)
+	agent.apiCache, _ = lru.New(cacheSize)
+	agent.newSampler()
+
+	agent.agentGrpc = newMockAgentGrpc(agent, t)
+	//agent.spanGrpc = newMockSpanGrpc(agent, t)
+	//agent.statGrpc = newMockStatGrpc(agent, t)
+
+	globalAgent = agent
+	agent.enable = true
+
+	return agent, nil
 }

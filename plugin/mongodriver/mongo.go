@@ -37,30 +37,23 @@ type monitor struct {
 
 func (m *monitor) Started(ctx context.Context, evt *event.CommandStartedEvent) {
 	tracer := pinpoint.FromContext(ctx)
-	if tracer == nil {
+	if !tracer.IsSampled() {
 		return
 	}
 
-	//fmt.Println("db= " + evt.DatabaseName)
-	//fmt.Println("connId= " + evt.ConnectionID)
-	//fmt.Println("reqId= " + strconv.FormatInt(evt.RequestID, 10))
-	//fmt.Println("command= " + evt.CommandName)
-
 	hostname := getHost(evt.ConnectionID)
-	b, _ := bson.MarshalExtJSON(evt.Command, false, false)
-
-	//fmt.Println("hostname= " + hostname)
-	//fmt.Println("json= " + string(b))
-
-	dbInfo := &pinpoint.DBInfo{}
-	dbInfo.DBType = pinpoint.ServiceTypeMongo
-	dbInfo.QueryType = pinpoint.ServiceTypeMongoExecuteQuery
-	dbInfo.DBName = evt.DatabaseName
-	dbInfo.DBHost = hostname
-
+	dbInfo := &pinpoint.DBInfo{
+		DBType:    pinpoint.ServiceTypeMongo,
+		QueryType: pinpoint.ServiceTypeMongoExecuteQuery,
+		DBName:    evt.DatabaseName,
+		DBHost:    hostname,
+	}
 	tracer = pinpoint.NewDatabaseTracer(ctx, "mongodb."+evt.CommandName, dbInfo)
-	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationMongoCollectionInfo, collName(evt))
-	tracer.SpanEvent().Annotations().AppendStringString(pinpoint.AnnotationMongoJasonData, string(b), "")
+
+	a := tracer.SpanEvent().Annotations()
+	a.AppendString(pinpoint.AnnotationMongoCollectionInfo, collectionName(evt))
+	b, _ := bson.MarshalExtJSON(evt.Command, false, false)
+	a.AppendStringString(pinpoint.AnnotationMongoJasonData, string(b), "")
 
 	key := spanKey{
 		ConnectionID: evt.ConnectionID,
@@ -68,20 +61,14 @@ func (m *monitor) Started(ctx context.Context, evt *event.CommandStartedEvent) {
 	}
 
 	m.Lock()
-	defer m.Unlock()
 	m.spans[key] = tracer
+	m.Unlock()
 }
 
-func collName(e *event.CommandStartedEvent) string {
+func collectionName(e *event.CommandStartedEvent) string {
 	coll := e.Command.Lookup(e.CommandName)
 	collName, _ := coll.StringValueOK()
 	return collName
-}
-
-func queryString(e *event.CommandStartedEvent) string {
-	qry := e.Command.Lookup("documents")
-	queryStr, _ := qry.StringValueOK()
-	return queryStr
 }
 
 func (m *monitor) Succeeded(ctx context.Context, evt *event.CommandSucceededEvent) {
@@ -99,17 +86,16 @@ func (m *monitor) Finished(evt *event.CommandFinishedEvent, err error) {
 	}
 
 	m.Lock()
-	defer m.Unlock()
 	tracer, ok := m.spans[key]
-
-	if ok {
-		delete(m.spans, key)
-	} else {
+	if !ok {
+		m.Unlock()
 		return
 	}
 
+	defer tracer.EndSpanEvent()
+	delete(m.spans, key)
+	m.Unlock()
 	tracer.SpanEvent().SetError(err)
-	tracer.EndSpanEvent()
 }
 
 // NewMonitor returns a *event.CommandMonitor ready to instrument.

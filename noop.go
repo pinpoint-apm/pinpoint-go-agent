@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -172,6 +173,11 @@ func (span *noopSpan) AddMetric(metric string, value interface{}) {
 	if metric == MetricURLStat {
 		span.collectUrlStat(value.(*UrlStatEntry))
 	}
+}
+
+func (span *noopSpan) JsonString() []byte {
+	b, _ := json.Marshal(span)
+	return b
 }
 
 type noopSpanEvent struct {
