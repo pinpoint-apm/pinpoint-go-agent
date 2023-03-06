@@ -6,15 +6,17 @@ import (
 	"time"
 )
 
-const samplingMaxPercentRate = 100 * 100
+const (
+	samplingMaxPercentRate = 100 * 100
+)
 
 type sampler interface {
 	isSampled() bool
 }
 
 type rateSampler struct {
-	samplingRate uint64
-	counter      uint64
+	rate    uint64
+	counter uint64
 }
 
 func newRateSampler(rate int) *rateSampler {
@@ -22,24 +24,23 @@ func newRateSampler(rate int) *rateSampler {
 		rate = 0
 	}
 	return &rateSampler{
-		samplingRate: (uint64)(rate),
-		counter:      0,
+		rate:    uint64(rate),
+		counter: 0,
 	}
 }
 
 func (s *rateSampler) isSampled() bool {
-	if s.samplingRate == 0 {
+	if s.rate == 0 {
 		return false
 	}
-
 	samplingCount := atomic.AddUint64(&s.counter, 1)
-	isSampled := samplingCount % s.samplingRate
+	isSampled := samplingCount % s.rate
 	return isSampled == 0
 }
 
 type percentSampler struct {
-	samplingRate uint64
-	counter      uint64
+	rate    uint64
+	counter uint64
 }
 
 func newPercentSampler(percent float64) *percentSampler {
@@ -52,19 +53,18 @@ func newPercentSampler(percent float64) *percentSampler {
 	}
 
 	return &percentSampler{
-		samplingRate: (uint64)(percent * 100),
-		counter:      0,
+		rate:    uint64(percent * 100),
+		counter: 0,
 	}
 }
 
 func (s *percentSampler) isSampled() bool {
-	if s.samplingRate == 0 {
+	if s.rate == 0 {
 		return false
 	}
-
-	samplingCount := atomic.AddUint64(&s.counter, s.samplingRate)
+	samplingCount := atomic.AddUint64(&s.counter, s.rate)
 	r := samplingCount % samplingMaxPercentRate
-	return r < s.samplingRate
+	return r < s.rate
 }
 
 type traceSampler interface {
@@ -93,13 +93,8 @@ func (s *basicTraceSampler) isNewSampled() bool {
 }
 
 func (s *basicTraceSampler) isContinueSampled() bool {
-	sampled := s.baseSampler.isSampled()
-	if sampled {
-		incrSampleCont()
-	} else {
-		incrUnSampleCont()
-	}
-	return sampled
+	incrSampleCont()
+	return true
 }
 
 type throughputLimitTraceSampler struct {
@@ -152,20 +147,16 @@ func (s *throughputLimitTraceSampler) isNewSampled() bool {
 }
 
 func (s *throughputLimitTraceSampler) isContinueSampled() bool {
-	sampled := s.baseSampler.isSampled()
-	if sampled {
-		if s.continueSampleLimiter != nil {
-			sampled = s.continueSampleLimiter.Allow()
-			if sampled {
-				incrSampleCont()
-			} else {
-				incrSkipCont()
-			}
-		} else {
+	sampled := true
+	if s.continueSampleLimiter != nil {
+		sampled = s.continueSampleLimiter.Allow()
+		if sampled {
 			incrSampleCont()
+		} else {
+			incrSkipCont()
 		}
 	} else {
-		incrUnSampleCont()
+		incrSampleCont()
 	}
 
 	return sampled
