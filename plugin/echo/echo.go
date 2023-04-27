@@ -88,7 +88,7 @@ func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
 			c.Error(err)
 		}
 		status = c.Response().Status
-		return nil
+		return err
 	}
 }
 
