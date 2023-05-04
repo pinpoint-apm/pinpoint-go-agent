@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"context"
 	"fmt"
+	"github.com/sirupsen/logrus"
 	"math"
 	"math/rand"
 	"net"
@@ -574,7 +575,11 @@ func (s *spanStream) sendSpan(span *span) error {
 		gspan = makePSpan(span)
 	}
 
-	Log("grpc").Tracef("PSpanMessage: %s", gspan.String())
+	if Log("grpc").extraLogger.IsLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("PSpanMessage: %s", gspan.String())
+	} else {
+		Log("grpc").Infof("success to make PSpanMessage")
+	}
 	return sendStreamWithTimeout(func() error { return s.stream.Send(gspan) }, sendStreamTimeOut, "span")
 }
 
