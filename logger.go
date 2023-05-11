@@ -19,6 +19,10 @@ func Log(src string) *logEntry {
 	return logger.newEntry(src)
 }
 
+func IsLogLevelEnabled(level logrus.Level) bool {
+	return logger.defaultLogger.GetLevel() >= level
+}
+
 func SetExtraLogger(lgr *logrus.Logger) {
 	logger.extraLogger = lgr
 }
