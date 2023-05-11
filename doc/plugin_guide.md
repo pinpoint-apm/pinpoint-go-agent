@@ -31,6 +31,7 @@
 | [pporacle](plugin_guide.md#pporacle)                 | [plugin/oracle](/plugin/oracle)                 | sijms/go-ora/v2 package (https://github.com/sijms/go-ora)                      |
 | [pppgsql](plugin_guide.md#pppgsql)                   | [plugin/pgsql](/plugin/pgsql)                   | lib/pq package (https://github.com/lib/pq)                                     |
 | [ppredigo](plugin_guide.md#ppredigo)                 | [plugin/redigo](/plugin/redigo)                 | gomodule/redigo package (https://github.com/gomodule/redigo)                   |
+| [pprueidis](plugin_guide.md#pprueidis)               | [plugin/rueidis](/plugin/rueidis)               | redis/rueidis package (https://github.com/redis/rueidis)                       |
 | [ppsarama](plugin_guide.md#ppsarama)                 | [plugin/sarama](/plugin/sarama)                 | Shopify/sarama package (https://github.com/Shopify/sarama)                     |
 
 ## pphttp
@@ -1525,6 +1526,49 @@ func redigo_test(w http.ResponseWriter, r *http.Request) {
     //redis.DoContext(c, r.Context(), "GET", "vehicle")
 ```
 [Full Example Source](/plugin/redigo/example/redigo_example.go)
+
+## pprueidis
+This package instruments the redis/rueidis calls.
+Use the NewHook as the rueidis.Hook.
+
+``` go
+client, err := rueidis.NewClient(opt)
+client = rueidishook.WithHook(client, pprueidis.NewHook(opt))
+```
+
+It is necessary to pass the context containing the pinpoint.Tracer to rueidis.Client.
+
+``` go
+ctx := pinpoint.NewContext(context.Background(), tracer)
+err = client.Do(ctx, client.B().Set().Key("foo").Value("bar").Nx().Build()).Error()
+```
+
+``` go
+package main
+
+import (
+    "github.com/pinpoint-apm/pinpoint-go-agent"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis"
+    "github.com/redis/rueidis"
+    "github.com/redis/rueidis/rueidishook"
+)
+
+func rueidisv1(w http.ResponseWriter, r *http.Request) {
+    opt := rueidis.ClientOption{
+        InitAddress: []string{"localhost:6379"},
+    }
+
+    client, err := rueidis.NewClient(opt)
+    if err != nil {
+		fmt.Println(err)
+    }
+    client = rueidishook.WithHook(client, pprueidis.NewHook(opt))
+
+    ctx := r.Context()
+    err = client.Do(ctx, client.B().Set().Key("foo").Value("bar").Nx().Build()).Error()
+    ...
+```
+[Full Example Source](/plugin/rueidis/example/rueidis_example.go)
 
 ## ppsarama
 This package instruments Kafka consumers and producers.
