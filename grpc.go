@@ -14,6 +14,7 @@ import (
 
 	"github.com/golang/protobuf/ptypes/wrappers"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
@@ -210,7 +211,10 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 		},
 		Container: agentGrpc.agent.config.Bool(CfgIsContainerEnv),
 	}
-	Log("grpc").Debugf("agent info: %s", agentInfo.String())
+
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("agent info: %s", agentInfo.String())
+	}
 
 	ctx := grpcMetadataContext(agentGrpc.agent, -1)
 	return ctx, agentInfo
@@ -273,7 +277,10 @@ func (agentGrpc *agentGrpc) sendApiMetadataWithRetry(apiId int32, api string, li
 		Line:    int32(line),
 		Type:    int32(apiType),
 	}
-	Log("grpc").Debugf("api metadata: %s", apiMeta.String())
+
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("api metadata: %s", apiMeta.String())
+	}
 
 	for agentGrpc.agent.Enable() {
 		if err := agentGrpc.sendApiMetadata(ctx, &apiMeta); err == nil {
@@ -308,7 +315,10 @@ func (agentGrpc *agentGrpc) sendStringMetadataWithRetry(strId int32, str string)
 		StringId:    strId,
 		StringValue: str,
 	}
-	Log("grpc").Debugf("string metadata: %s", strMeta.String())
+
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("string metadata: %s", strMeta.String())
+	}
 
 	for agentGrpc.agent.Enable() {
 		if err := agentGrpc.sendStringMetadata(ctx, &strMeta); err == nil {
@@ -344,7 +354,10 @@ func (agentGrpc *agentGrpc) sendSqlMetadataWithRetry(sqlId int32, sql string) bo
 		SqlId: sqlId,
 		Sql:   sql,
 	}
-	Log("grpc").Debugf("sql metadata: %s", sqlMeta.String())
+
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("sql metadata: %s", sqlMeta.String())
+	}
 
 	for agentGrpc.agent.Enable() {
 		if err := agentGrpc.sendSqlMetadata(ctx, &sqlMeta); err == nil {
@@ -574,7 +587,10 @@ func (s *spanStream) sendSpan(span *span) error {
 		gspan = makePSpan(span)
 	}
 
-	Log("grpc").Tracef("PSpanMessage: %s", gspan.String())
+	if IsLogLevelEnabled(logrus.TraceLevel) {
+		Log("grpc").Tracef("PSpanMessage: %s", gspan.String())
+	}
+
 	return sendStreamWithTimeout(func() error { return s.stream.Send(gspan) }, sendStreamTimeOut, "span")
 }
 
@@ -784,7 +800,9 @@ func (s *statStream) sendStats(stats *pb.PStatMessage) error {
 	if s.stream == nil {
 		return status.Errorf(codes.Unavailable, "stat stream is nil")
 	}
-	Log("grpc").Tracef("PStatMessage: %s", stats.String())
+	if IsLogLevelEnabled(logrus.TraceLevel) {
+		Log("grpc").Tracef("PStatMessage: %s", stats.String())
+	}
 	return sendStreamWithTimeout(func() error { return s.stream.Send(stats) }, sendStreamTimeOut, "stat")
 }
 
@@ -966,7 +984,9 @@ func (s *cmdStream) sendCommandMessage() error {
 		},
 	}
 
-	Log("grpc").Debugf("PCmdMessage: %s", gCmd.String())
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("PCmdMessage: %s", gCmd.String())
+	}
 	return sendStreamWithTimeout(func() error { return s.stream.Send(gCmd) }, sendStreamTimeOut, "cmd")
 }
 
@@ -982,7 +1002,9 @@ func (s *cmdStream) recvCommandRequest() (*pb.PCmdRequest, error) {
 		return nil, err
 	}
 
-	Log("grpc").Debugf("PCmdRequest: %s", gCmdReq.String())
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("PCmdRequest: %s", gCmdReq.String())
+	}
 	return gCmdReq, nil
 }
 
@@ -1033,7 +1055,9 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 		TimeStamp:           now.UnixNano() / int64(time.Millisecond),
 	}
 
-	Log("grpc").Debugf("PCmdActiveThreadCountRes: %s", gRes.String())
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("PCmdActiveThreadCountRes: %s", gRes.String())
+	}
 	return sendStreamWithTimeout(func() error { return s.stream.Send(gRes) }, sendStreamTimeOut, "arc")
 }
 
@@ -1060,7 +1084,9 @@ func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadNam
 		Version:    runtime.Version(),
 	}
 
-	Log("grpc").Debugf("send PCmdActiveThreadDumpRes: %s", gRes.String())
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("send PCmdActiveThreadDumpRes: %s", gRes.String())
+	}
 
 	ctx := grpcMetadataContext(cmdGrpc.agent, -1)
 	_, err := cmdGrpc.cmdClient.CommandActiveThreadDump(ctx, gRes)
@@ -1085,7 +1111,9 @@ func makePActiveThreadDumpList(dump *goroutineDump, limit int, threadName []stri
 			}
 		}
 
-		Log("grpc").Debugf("send makePActiveThreadDumpList: %v", selected)
+		if IsLogLevelEnabled(logrus.DebugLevel) {
+			Log("grpc").Debugf("send makePActiveThreadDumpList: %v", selected)
+		}
 
 		for i := 0; i < limit && i < len(selected); i++ {
 			aDump := makePActiveThreadDump(selected[i])
@@ -1148,7 +1176,9 @@ func (cmdGrpc *cmdGrpc) sendActiveThreadLightDump(reqId int32, limit int32, dump
 		Version:    runtime.Version(),
 	}
 
-	Log("grpc").Debugf("send PCmdActiveThreadLightDumpRes: %s", gRes.String())
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("send PCmdActiveThreadLightDumpRes: %s", gRes.String())
+	}
 
 	ctx := grpcMetadataContext(cmdGrpc.agent, -1)
 	_, err := cmdGrpc.cmdClient.CommandActiveThreadLightDump(ctx, gRes)
@@ -1203,7 +1233,9 @@ func (cmdGrpc *cmdGrpc) sendEcho(reqId int32, msg string) {
 		Message: msg,
 	}
 
-	Log("grpc").Debugf("send PCmdEchoResponse: %s", gRes.String())
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("send PCmdEchoResponse: %s", gRes.String())
+	}
 
 	ctx := grpcMetadataContext(cmdGrpc.agent, -1)
 	_, err := cmdGrpc.cmdClient.CommandEcho(ctx, gRes)
