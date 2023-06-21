@@ -835,8 +835,8 @@ func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
 			JvmGcDetailed:        nil,
 		},
 		CpuLoad: &pb.PCpuLoad{
-			JvmCpuLoad:    stat.cpuUserTime,
-			SystemCpuLoad: stat.cpuSysTime,
+			JvmCpuLoad:    stat.cpuProcLoad,
+			SystemCpuLoad: stat.cpuSysLoad,
 		},
 		Transaction: &pb.PTransaction{
 			SampledNewCount:            stat.sampleNew,
