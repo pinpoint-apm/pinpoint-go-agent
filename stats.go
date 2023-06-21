@@ -14,8 +14,8 @@ import (
 type inspectorStats struct {
 	sampleTime   time.Time
 	interval     int64
-	cpuUserTime  float64
-	cpuSysTime   float64
+	cpuProcLoad  float64
+	cpuSysLoad   float64
 	heapUsed     int64
 	heapMax      int64
 	nonHeapUsed  int64
@@ -37,7 +37,6 @@ type inspectorStats struct {
 
 var (
 	proc            *process.Process
-	lastCpuStat     *cpu.TimesStat
 	lastMemStat     runtime.MemStats
 	lastCollectTime time.Time
 
@@ -60,20 +59,14 @@ func initStats() {
 	proc, err = process.NewProcess(int32(os.Getpid()))
 	if err != nil {
 		proc = nil
+	} else {
+		proc.Percent(0)
 	}
 
-	lastCpuStat = getCpuUsage()
+	cpu.Percent(0, false)
 	runtime.ReadMemStats(&lastMemStat)
 	lastCollectTime = time.Now()
 	activeSpan = sync.Map{}
-}
-
-func getCpuUsage() *cpu.TimesStat {
-	if proc != nil {
-		cpuStat, _ := proc.Times()
-		return cpuStat
-	}
-	return nil
 }
 
 func getNumFD() int32 {
@@ -92,10 +85,21 @@ func getNumThreads() int32 {
 	return 0
 }
 
+func getCpuLoad() (float64, float64) {
+	var procCpu float64
+	if proc != nil {
+		procCpu, _ = proc.Percent(0)
+	} else {
+		procCpu = 0
+	}
+	sysCpu, _ := cpu.Percent(0, false)
+
+	return procCpu / 100, sysCpu[0] / 100
+}
+
 func getStats() *inspectorStats {
 	now := time.Now()
-	cpuStat := getCpuUsage()
-	numFd := getNumFD()
+	procCpu, sysCpu := getCpuLoad()
 
 	var memStat runtime.MemStats
 	runtime.ReadMemStats(&memStat)
@@ -104,15 +108,15 @@ func getStats() *inspectorStats {
 	stats := inspectorStats{
 		sampleTime:   now,
 		interval:     int64(elapsed) * 1000,
-		cpuUserTime:  cpuUserPercent(cpuStat, lastCpuStat, elapsed),
-		cpuSysTime:   cpuSystemPercent(cpuStat, lastCpuStat, elapsed),
+		cpuProcLoad:  procCpu,
+		cpuSysLoad:   sysCpu,
 		heapUsed:     int64(memStat.HeapInuse),
 		heapMax:      int64(memStat.HeapSys),
 		nonHeapUsed:  int64(memStat.StackInuse),
 		nonHeapMax:   int64(memStat.StackSys),
 		gcNum:        int64(memStat.NumGC - lastMemStat.NumGC),
 		gcTime:       int64(memStat.PauseTotalNs-lastMemStat.PauseTotalNs) / int64(time.Millisecond),
-		numOpenFD:    int64(numFd),
+		numOpenFD:    int64(getNumFD()),
 		numThreads:   int64(getNumThreads()),
 		responseAvg:  calcResponseAvg(),
 		responseMax:  maxResponseTime,
@@ -125,30 +129,11 @@ func getStats() *inspectorStats {
 		activeSpan:   activeSpanCount(now),
 	}
 
-	lastCpuStat = cpuStat
 	lastMemStat = memStat
 	lastCollectTime = now
 	resetResponseTime()
 
 	return &stats
-}
-
-func cpuUserPercent(cur *cpu.TimesStat, prev *cpu.TimesStat, elapsed float64) float64 {
-	if cur == nil || prev == nil {
-		return 0
-	}
-	return cpuUtilization(cur.User, prev.User, elapsed)
-}
-
-func cpuSystemPercent(cur *cpu.TimesStat, prev *cpu.TimesStat, elapsed float64) float64 {
-	if cur == nil || prev == nil {
-		return 0
-	}
-	return cpuUtilization(cur.System, prev.System, elapsed)
-}
-
-func cpuUtilization(cur float64, prev float64, elapsed float64) float64 {
-	return (cur - prev) / (elapsed * float64(runtime.NumCPU())) * 100
 }
 
 func calcResponseAvg() int64 {
