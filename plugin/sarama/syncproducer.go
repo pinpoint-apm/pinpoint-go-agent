@@ -6,6 +6,12 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
+type SyncProducer interface {
+	sarama.SyncProducer
+	SendMessageContext(ctx context.Context, msg *sarama.ProducerMessage) (partition int32, offset int64, err error)
+	SendMessagesContext(ctx context.Context, msgs []*sarama.ProducerMessage) error
+}
+
 type syncProducer struct {
 	sarama.SyncProducer
 	addrs []string
@@ -23,16 +29,20 @@ func (m *distributedTracingContextWriterConsumer) Set(key string, value string) 
 	})
 }
 
-func (p *syncProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
-	defer newProducerTracer(p.ctx, p.addrs, msg).EndSpanEvent()
+func (p *syncProducer) SendMessageContext(ctx context.Context, msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
+	defer newProducerTracer(ctx, p.addrs, msg).EndSpanEvent()
 	partition, offset, err = p.SyncProducer.SendMessage(msg)
 	return partition, offset, err
 }
 
-func (p *syncProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
+func (p *syncProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
+	return p.SendMessageContext(p.ctx, msg)
+}
+
+func (p *syncProducer) SendMessagesContext(ctx context.Context, msgs []*sarama.ProducerMessage) error {
 	spans := make([]pinpoint.Tracer, len(msgs))
 	for i, msg := range msgs {
-		spans[i] = newProducerTracer(p.ctx, p.addrs, msg)
+		spans[i] = newProducerTracer(ctx, p.addrs, msg)
 	}
 
 	err := p.SyncProducer.SendMessages(msgs)
@@ -41,6 +51,10 @@ func (p *syncProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
 		span.EndSpanEvent()
 	}
 	return err
+}
+
+func (p *syncProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
+	return p.SendMessagesContext(p.ctx, msgs)
 }
 
 func (p *syncProducer) Close() error {
@@ -52,7 +66,7 @@ func (p *syncProducer) WithContext(ctx context.Context) {
 }
 
 // NewSyncProducer wraps sarama.NewSyncProducer and returns a sarama.SyncProducer ready to instrument.
-func NewSyncProducer(addrs []string, config *sarama.Config) (sarama.SyncProducer, error) {
+func NewSyncProducer(addrs []string, config *sarama.Config) (SyncProducer, error) {
 	producer, err := sarama.NewSyncProducer(addrs, config)
 	if err != nil {
 		return nil, err

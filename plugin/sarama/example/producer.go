@@ -14,7 +14,7 @@ import (
 
 var fakeDB string
 
-var producer sarama.SyncProducer
+var producer ppsarama.SyncProducer
 
 func prepareMessage(topic, message string) *sarama.ProducerMessage {
 	msg := &sarama.ProducerMessage{
@@ -31,8 +31,11 @@ func save(w http.ResponseWriter, r *http.Request) {
 
 	topic := "go-sarama-test"
 	msg := prepareMessage(topic, "Hello, Kafka!!")
-	ppsarama.WithContext(r.Context(), producer)
-	partition, offset, err := producer.SendMessage(msg)
+
+	//ppsarama.WithContext(r.Context(), producer)
+	//partition, offset, err := producer.SendMessage(msg)
+
+	partition, offset, err := producer.SendMessageContext(r.Context(), msg)
 
 	if err != nil {
 		fmt.Fprintf(w, "%s error occured.", err.Error())
