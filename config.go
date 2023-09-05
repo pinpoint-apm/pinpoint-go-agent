@@ -51,6 +51,7 @@ const (
 	CfgEnable                     = "Enable"
 	CfgHttpUrlStatEnable          = "Http.UrlStat.Enable"
 	CfgHttpUrlStatLimitSize       = "Http.UrlStat.LimitSize"
+	CfgHttpUrlStatWithMethod      = "Http.UrlStat.WithMethod"
 )
 
 const (
@@ -120,6 +121,7 @@ func initConfig() {
 	AddConfig(CfgEnable, CfgBool, true, false)
 	AddConfig(CfgHttpUrlStatEnable, CfgBool, false, true)
 	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1024, true)
+	AddConfig(CfgHttpUrlStatWithMethod, CfgBool, false, true)
 }
 
 // AddConfig adds a configuration item.
@@ -152,6 +154,7 @@ type Config struct {
 	callback             []reloadCallback
 	collectUrlStat       bool  // CfgHttpUrlStatEnable
 	urlStatLimitSize     int   // CfgHttpUrlStatLimitSize
+	urlStatWithMethod    bool  // CfgHttpUrlStatWithMethod
 	sqlTraceBindValue    bool  // CfgSQLTraceBindValue
 	sqlMaxBindValueSize  int   // CfgSQLMaxBindValueSize
 	sqlTraceCommit       bool  // CfgSQLTraceCommit
@@ -286,6 +289,7 @@ func defaultConfig() *Config {
 	config.containerCheck = true
 	config.collectUrlStat = false
 	config.urlStatLimitSize = 1024
+	config.urlStatWithMethod = false
 	config.sqlTraceBindValue = true
 	config.sqlMaxBindValueSize = 1024
 	config.sqlTraceCommit = true
@@ -489,6 +493,7 @@ func (config *Config) applyDynamicConfig() {
 	}
 	config.collectUrlStat = config.Bool(CfgHttpUrlStatEnable)
 	config.urlStatLimitSize = config.Int(CfgHttpUrlStatLimitSize)
+	config.urlStatWithMethod = config.Bool(CfgHttpUrlStatWithMethod)
 }
 
 type reloadCallback struct {
@@ -792,6 +797,13 @@ func WithHttpUrlStatEnable(enable bool) ConfigOption {
 func WithHttpUrlStatLimitSize(size int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgHttpUrlStatLimitSize].value = size
+	}
+}
+
+// WithHttpUrlStatWithMethod adds http method as prefix to uri string key.
+func WithHttpUrlStatWithMethod(withMethod bool) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgHttpUrlStatWithMethod].value = withMethod
 	}
 }
 

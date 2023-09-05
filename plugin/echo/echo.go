@@ -65,7 +65,7 @@ func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
 
 		defer tracer.EndSpan()
 		defer func() {
-			pphttp.CollectUrlStat(tracer, c.Path(), status)
+			pphttp.CollectUrlStat(tracer, c.Path(), req.Method, status)
 			pphttp.RecordHttpServerResponse(tracer, status, c.Response().Header())
 		}()
 		defer func() {

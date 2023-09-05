@@ -48,7 +48,7 @@ func wrapHandleWithName(handler httprouter.Handle, handlerName string, path stri
 		defer tracer.EndSpan()
 		defer func() {
 			if path != "" {
-				pphttp.CollectUrlStat(tracer, path, status)
+				pphttp.CollectUrlStat(tracer, path, r.Method, status)
 			}
 			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
 		}()

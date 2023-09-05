@@ -165,6 +165,7 @@ func (span *noopSpan) collectUrlStat(stat *UrlStatEntry) {
 		if stat.Url == "" {
 			stat.Url = "UNKNOWN_URL"
 		}
+
 		span.urlStat = stat
 	}
 }

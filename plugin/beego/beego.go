@@ -3,14 +3,13 @@
 // This package instruments inbound requests handled by a beego instance.
 // Register the ServerFilterChain as the filter chain of the router to trace all handlers:
 //
-//  web.InsertFilterChain("/*", ppbeego.ServerFilterChain())
+//	web.InsertFilterChain("/*", ppbeego.ServerFilterChain())
 //
 // This package instruments outbound requests and add distributed tracing headers.
 // Add the ClientFilterChain as the filter chain of the request:
 //
-//  req := httplib.Get("http://localhost:9090/")
-//  req.AddFilters(ppbeego.ClientFilterChain(tracer))
-//
+//	req := httplib.Get("http://localhost:9090/")
+//	req.AddFilters(ppbeego.ClientFilterChain(tracer))
 package ppbeego
 
 import (
@@ -76,7 +75,7 @@ func ServerFilterChain() func(web.FilterFunc) web.FilterFunc {
 				if rp := ctx.Input.GetData("RouterPattern"); rp != nil {
 					routerPattern = rp.(string)
 				}
-				pphttp.CollectUrlStat(tracer, routerPattern, status)
+				pphttp.CollectUrlStat(tracer, routerPattern, r.Method, status)
 				pphttp.RecordHttpServerResponse(tracer, status, ctx.ResponseWriter.Header())
 			}()
 			defer func() {

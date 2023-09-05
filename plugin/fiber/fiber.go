@@ -3,8 +3,8 @@
 // This package instruments inbound requests handled by a fiber instance.
 // Register the Middleware as the middleware of the router to trace all handlers:
 //
-//  app := fiber.New()
-//  app.Use(ppfiber.Middleware())
+//	app := fiber.New()
+//	app.Use(ppfiber.Middleware())
 //
 // Use WrapHandler to select the handlers you want to track:
 //
@@ -51,7 +51,7 @@ func wrap(f func(c *fiber.Ctx) error, handlerName string) fiber.Handler {
 
 		defer tracer.EndSpan()
 		defer func() {
-			pphttp.CollectUrlStat(tracer, c.Route().Path, status)
+			pphttp.CollectUrlStat(tracer, c.Route().Path, req.Method, status)
 			recordResponse(tracer, c, status)
 		}()
 		defer func() {

@@ -81,14 +81,21 @@ func (agent *agent) takeUrlStatSnapshot() *urlStatSnapshot {
 }
 
 func (snapshot *urlStatSnapshot) add(us *urlStat) {
-	key := urlKey{us.entry.Url, clock.tick(us.endTime)}
+	var url string
+	if snapshot.config.urlStatWithMethod && us.entry.Method != "" {
+		url = us.entry.Method + " " + us.entry.Url
+	} else {
+		url = us.entry.Url
+	}
+
+	key := urlKey{url, clock.tick(us.endTime)}
 
 	e, ok := snapshot.urlMap[key]
 	if !ok {
 		if snapshot.count >= snapshot.config.urlStatLimitSize {
 			return
 		}
-		e = newEachUrlStat(us.entry.Url, key.tick)
+		e = newEachUrlStat(url, key.tick)
 		snapshot.urlMap[key] = e
 		snapshot.count++
 	}
