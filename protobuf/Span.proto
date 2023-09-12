@@ -13,7 +13,7 @@ package v1;
 message PSpanMessage {
     oneof field {
         PSpan span = 1;
-        PSpanChunk spanChunk =2;
+        PSpanChunk spanChunk = 2;
     }
 }
 
@@ -119,7 +119,6 @@ message PSpanChunk {
     int64 keyTime = 7;
 
     PLocalAsyncId localAsyncId = 8;
-
 }
 
 // 1.6.x- : version = 0;
@@ -139,6 +138,11 @@ message PSqlMetaData {
     string sql = 2;
 }
 
+message PSqlUidMetaData {
+    bytes sqlUid = 1;
+    string sql = 2;
+}
+
 message PApiMetaData {
     int32 apiId = 1;
     string apiInfo = 2;
@@ -150,4 +154,28 @@ message PApiMetaData {
 message PStringMetaData {
     int32 stringId = 1;
     string stringValue = 2;
+}
+
+message PExceptionMetaData {
+    repeated PException exceptions = 1;
+    PTransactionId transactionId = 2;
+    sfixed64 spanId = 3 [jstype = JS_STRING];
+    string uriTemplate = 4;
+}
+
+message PException {
+    string exceptionClassName = 1;
+    string exceptionMessage = 2;
+    int64 startTime = 3;
+    int64 exceptionId = 4;
+    int32 exceptionDepth = 5;
+
+    repeated PStackTraceElement stackTraceElement = 6;
+}
+
+message PStackTraceElement {
+    string className = 1;
+    string fileName = 2;
+    int32 lineNumber = 3;
+    string methodName = 4;
 }

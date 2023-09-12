@@ -21,6 +21,12 @@ message PIntStringStringValue {
     google.protobuf.StringValue stringValue2 = 3;
 }
 
+message PBytesStringStringValue {
+    bytes bytesValue = 1;
+    google.protobuf.StringValue stringValue1 = 2;
+    google.protobuf.StringValue stringValue2 = 3;
+}
+
 message PLongIntIntByteByteStringValue {
     int64 longValue = 1;
     int32 intValue1 = 2;
@@ -59,6 +65,7 @@ message PAnnotationValue {
         PIntStringStringValue intStringStringValue = 11;
         PLongIntIntByteByteStringValue longIntIntByteByteStringValue = 12;
         PIntBooleanIntBooleanValue intBooleanIntBooleanValue = 13;
+        PBytesStringStringValue bytesStringStringValue = 14;
     }
 }
 
