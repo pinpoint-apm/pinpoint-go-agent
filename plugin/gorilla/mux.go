@@ -55,7 +55,7 @@ func wrap(handler http.Handler, funcName string) http.Handler {
 			if route := mux.CurrentRoute(r); route != nil {
 				path, _ = route.GetPathTemplate()
 			}
-			pphttp.CollectUrlStat(tracer, path, status)
+			pphttp.CollectUrlStat(tracer, path, r.Method, status)
 			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
 		}()
 		defer func() {

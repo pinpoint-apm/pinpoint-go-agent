@@ -211,6 +211,7 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 		},
 		Container: agentGrpc.agent.config.Bool(CfgIsContainerEnv),
 	}
+
 	if IsLogLevelEnabled(logrus.DebugLevel) {
 		Log("grpc").Debugf("agent info: %s", agentInfo.String())
 	}
@@ -276,6 +277,7 @@ func (agentGrpc *agentGrpc) sendApiMetadataWithRetry(apiId int32, api string, li
 		Line:    int32(line),
 		Type:    int32(apiType),
 	}
+
 	if IsLogLevelEnabled(logrus.DebugLevel) {
 		Log("grpc").Debugf("api metadata: %s", apiMeta.String())
 	}
@@ -313,6 +315,7 @@ func (agentGrpc *agentGrpc) sendStringMetadataWithRetry(strId int32, str string)
 		StringId:    strId,
 		StringValue: str,
 	}
+
 	if IsLogLevelEnabled(logrus.DebugLevel) {
 		Log("grpc").Debugf("string metadata: %s", strMeta.String())
 	}
@@ -351,6 +354,7 @@ func (agentGrpc *agentGrpc) sendSqlMetadataWithRetry(sqlId int32, sql string) bo
 		SqlId: sqlId,
 		Sql:   sql,
 	}
+
 	if IsLogLevelEnabled(logrus.DebugLevel) {
 		Log("grpc").Debugf("sql metadata: %s", sqlMeta.String())
 	}
@@ -586,6 +590,7 @@ func (s *spanStream) sendSpan(span *span) error {
 	if IsLogLevelEnabled(logrus.TraceLevel) {
 		Log("grpc").Tracef("PSpanMessage: %s", gspan.String())
 	}
+
 	return sendStreamWithTimeout(func() error { return s.stream.Send(gspan) }, sendStreamTimeOut, "span")
 }
 
@@ -979,7 +984,9 @@ func (s *cmdStream) sendCommandMessage() error {
 		},
 	}
 
-	Log("grpc").Debugf("PCmdMessage: %s", gCmd.String())
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("PCmdMessage: %s", gCmd.String())
+	}
 	return sendStreamWithTimeout(func() error { return s.stream.Send(gCmd) }, sendStreamTimeOut, "cmd")
 }
 

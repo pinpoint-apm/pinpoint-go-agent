@@ -202,6 +202,7 @@ func (tid TransactionId) String() string {
 
 type UrlStatEntry struct {
 	Url    string
+	Method string
 	Status int
 }
 

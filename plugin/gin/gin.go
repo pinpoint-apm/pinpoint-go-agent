@@ -37,7 +37,7 @@ func wrap(doFunc func(c *gin.Context), funcName string) gin.HandlerFunc {
 
 		defer tracer.EndSpan()
 		defer func() {
-			pphttp.CollectUrlStat(tracer, c.FullPath(), status)
+			pphttp.CollectUrlStat(tracer, c.FullPath(), c.Request.Method, status)
 			pphttp.RecordHttpServerResponse(tracer, status, c.Writer.Header())
 		}()
 		defer func() {
