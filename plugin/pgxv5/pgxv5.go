@@ -3,9 +3,6 @@ package pppgxv5
 import (
 	"context"
 	"fmt"
-	"os"
-	"runtime"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,56 +10,56 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
-const serviceTypePgSqlExecuteQuery = 2501
-
-type TracerPgx struct {
-	span pinpoint.Tracer
-}
-
 // Checking interface implementations
 var _ pgx.QueryTracer = (*TracerPgx)(nil)
 
+const serviceTypePgSqlExecuteQuery = 2501
+
+type TracerPgx struct {
+}
+
 func NewTracerPgx() *TracerPgx {
-	return &TracerPgx{span: nil}
+	return &TracerPgx{}
 }
 
 func (t *TracerPgx) TraceQueryStart(ctx context.Context, c *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
-	t.span = pinpoint.FromContext(ctx)
-	ctx = pinpoint.NewContext(context.Background(), t.span)
-	t.span.NewSpanEvent(SkippedFunctionName(2))
-	stringArgs := composeArgs(data)
+	tracer := pinpoint.FromContext(ctx)
+	if !tracer.IsSampled() {
+		return ctx
+	}
+	tracer.NewSpanEvent("pgx")
+	sqlArgs := composeArgs(data)
 
-	se := t.span.SpanEvent()
-	se.SetSQL(data.SQL, stringArgs)
-	se.SetServiceType(serviceTypePgSqlExecuteQuery)
-	se.SetEndPoint(c.Config().Host)
-	se.SetDestination(c.Config().Database)
-	se.Annotations().AppendString(pinpoint.AnnotationSqlId, data.SQL)
+	ctx = pinpoint.NewContext(ctx, tracer)
+	ctx = context.WithValue(ctx, "sql", data.SQL)
+	ctx = context.WithValue(ctx, "sqlargs", sqlArgs)
 	return ctx
 }
 
-func (t *TracerPgx) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
-	t.span.EndSpanEvent()
-}
+func (t *TracerPgx) TraceQueryEnd(ctx context.Context, c *pgx.Conn, data pgx.TraceQueryEndData) {
+	tracer := pinpoint.FromContext(ctx)
+	if !tracer.IsSampled() {
+		return
+	}
+	defer tracer.EndSpanEvent()
 
-// SkippedFunctionName returns function caller's name with skipped count.
-func SkippedFunctionName(skip int) string {
-	pc, _, _, ok := runtime.Caller(skip)
-	if !ok {
-		return ""
+	sql := ctx.Value("sql")
+	if sql == nil {
+		return
 	}
 
-	fn := runtime.FuncForPC(pc)
-	result := fn.Name()
-
-	cwd, err := os.Getwd()
-	if err == nil {
-		result = strings.TrimPrefix(result, cwd)
-		moduleFnNames := strings.Split(result, "/")
-		result = moduleFnNames[len(moduleFnNames)-1]
+	sqlArgs := ctx.Value("sqlargs")
+	if sqlArgs == nil {
+		return
 	}
 
-	return result
+	se := tracer.SpanEvent()
+	se.SetSQL(sql.(string), sqlArgs.(string))
+	se.SetServiceType(serviceTypePgSqlExecuteQuery)
+	se.SetEndPoint(c.Config().Host)
+	se.SetDestination(c.Config().Database)
+	se.Annotations().AppendString(pinpoint.AnnotationSqlId, sql.(string))
+	se.SetError(data.Err)
 }
 
 func composeArgs(data pgx.TraceQueryStartData) string {
