@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"github.com/go-chi/chi/v5/middleware"
 	"io"
 	"log"
@@ -52,6 +53,8 @@ func outgoing(w http.ResponseWriter, r *http.Request) {
 
 	defer resp.Body.Close()
 	io.Copy(w, resp.Body)
+
+	fmt.Errorf("aaa", err.Error())
 
 	//seed := rand.NewSource(time.Now().UnixNano())
 	//random := rand.New(seed)
