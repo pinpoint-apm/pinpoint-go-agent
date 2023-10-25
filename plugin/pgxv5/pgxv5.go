@@ -27,12 +27,16 @@ func (t *TracerPgx) TraceQueryStart(ctx context.Context, c *pgx.Conn, data pgx.T
 	if !tracer.IsSampled() {
 		return ctx
 	}
-	tracer.NewSpanEvent("pgx")
-	sqlArgs := composeArgs(data)
 
-	ctx = pinpoint.NewContext(ctx, tracer)
-	ctx = context.WithValue(ctx, "sql", data.SQL)
-	ctx = context.WithValue(ctx, "sqlargs", sqlArgs)
+	config := c.Config()
+	se := tracer.NewSpanEvent("pgx.Query()").SpanEvent()
+	se.SetServiceType(serviceTypePgSqlExecuteQuery)
+	se.SetEndPoint(config.Host)
+	se.SetDestination(config.Database)
+
+	sqlArgs := composeArgs(data)
+	se.SetSQL(data.SQL, sqlArgs)
+
 	return ctx
 }
 
@@ -41,25 +45,11 @@ func (t *TracerPgx) TraceQueryEnd(ctx context.Context, c *pgx.Conn, data pgx.Tra
 	if !tracer.IsSampled() {
 		return
 	}
+
 	defer tracer.EndSpanEvent()
 
-	sql := ctx.Value("sql")
-	if sql == nil {
-		return
-	}
-
-	sqlArgs := ctx.Value("sqlargs")
-	if sqlArgs == nil {
-		return
-	}
-
 	se := tracer.SpanEvent()
-	se.SetSQL(sql.(string), sqlArgs.(string))
-	se.SetServiceType(serviceTypePgSqlExecuteQuery)
-	se.SetEndPoint(c.Config().Host)
-	se.SetDestination(c.Config().Database)
-	se.Annotations().AppendString(pinpoint.AnnotationSqlId, sql.(string))
-	se.SetError(data.Err)
+	se.SetError(data.Err, "SQL error")
 }
 
 func composeArgs(data pgx.TraceQueryStartData) string {
