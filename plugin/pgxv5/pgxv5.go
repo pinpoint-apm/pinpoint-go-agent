@@ -22,6 +22,30 @@ func NewTracerPgx() *TracerPgx {
 	return &TracerPgx{}
 }
 
+func (t *TracerPgx) TraceConnectStart(ctx context.Context, c pgx.TraceConnectStartData) context.Context {
+	tracer := pinpoint.FromContext(ctx)
+	if !tracer.IsSampled() {
+		return ctx
+	}
+
+	config := c.ConnConfig
+	se := tracer.NewSpanEvent("pgx.Connect").SpanEvent()
+	se.SetServiceType(serviceTypePgSqlExecuteQuery)
+	se.SetEndPoint(config.Host)
+	se.SetDestination(config.Database)
+
+	return ctx
+}
+
+func (t *TracerPgx) TraceConnectEnd(ctx context.Context, data pgx.TraceConnectEndData) {
+	tracer := pinpoint.FromContext(ctx)
+	if !tracer.IsSampled() {
+		return
+	}
+
+	tracer.EndSpanEvent()
+}
+
 func (t *TracerPgx) TraceQueryStart(ctx context.Context, c *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
 	tracer := pinpoint.FromContext(ctx)
 	if !tracer.IsSampled() {
@@ -29,12 +53,12 @@ func (t *TracerPgx) TraceQueryStart(ctx context.Context, c *pgx.Conn, data pgx.T
 	}
 
 	config := c.Config()
-	se := tracer.NewSpanEvent("pgx.Query()").SpanEvent()
+	se := tracer.NewSpanEvent("pgx.Query").SpanEvent()
 	se.SetServiceType(serviceTypePgSqlExecuteQuery)
 	se.SetEndPoint(config.Host)
 	se.SetDestination(config.Database)
 
-	sqlArgs := composeArgs(data)
+	sqlArgs := composeArgs(data.Args)
 	se.SetSQL(data.SQL, sqlArgs)
 
 	return ctx
@@ -52,9 +76,83 @@ func (t *TracerPgx) TraceQueryEnd(ctx context.Context, c *pgx.Conn, data pgx.Tra
 	se.SetError(data.Err, "SQL error")
 }
 
-func composeArgs(data pgx.TraceQueryStartData) string {
+func (t *TracerPgx) TraceBatchStart(ctx context.Context, c *pgx.Conn, _ pgx.TraceBatchStartData) context.Context {
+	tracer := pinpoint.FromContext(ctx)
+	if !tracer.IsSampled() {
+		return ctx
+	}
+
+	config := c.Config()
+	se := tracer.NewSpanEvent("pgx.Batch").SpanEvent()
+	se.SetServiceType(serviceTypePgSqlExecuteQuery)
+	se.SetEndPoint(config.Host)
+	se.SetDestination(config.Database)
+
+	return ctx
+}
+
+func (t *TracerPgx) TraceBatchQuery(ctx context.Context, c *pgx.Conn, data pgx.TraceBatchQueryData) {
+	tracer := pinpoint.FromContext(ctx)
+	if !tracer.IsSampled() {
+		return
+	}
+
+	config := c.Config()
+	se := tracer.NewSpanEvent("pgx.BatchQuery").SpanEvent()
+	defer tracer.EndSpanEvent()
+
+	se.SetServiceType(serviceTypePgSqlExecuteQuery)
+	se.SetEndPoint(config.Host)
+	se.SetDestination(config.Database)
+
+	sqlArgs := composeArgs(data.Args)
+	se.SetSQL(data.SQL, sqlArgs)
+	se.SetError(data.Err, "SQL error")
+}
+
+func (t *TracerPgx) TraceBatchEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceBatchEndData) {
+	tracer := pinpoint.FromContext(ctx)
+	if !tracer.IsSampled() {
+		return
+	}
+
+	defer tracer.EndSpanEvent()
+
+	se := tracer.SpanEvent()
+	se.SetError(data.Err, "Batch error")
+}
+
+func (t *TracerPgx) TraceCopyFromStart(ctx context.Context, c *pgx.Conn, data pgx.TraceCopyFromStartData) context.Context {
+	tracer := pinpoint.FromContext(ctx)
+	if !tracer.IsSampled() {
+		return ctx
+	}
+
+	config := c.Config()
+	se := tracer.NewSpanEvent("pgx.CopyFrom").SpanEvent()
+	se.SetServiceType(serviceTypePgSqlExecuteQuery)
+	se.SetEndPoint(config.Host)
+	se.SetDestination(config.Database)
+	se.Annotations().AppendString(pinpoint.AnnotationArgs0, data.TableName.Sanitize())
+
+	return ctx
+}
+
+func (t *TracerPgx) TraceCopyFromEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceCopyFromEndData) {
+	tracer := pinpoint.FromContext(ctx)
+	if !tracer.IsSampled() {
+		return
+	}
+
+	defer tracer.EndSpanEvent()
+
+	se := tracer.SpanEvent()
+	se.SetError(data.Err, "CopyFrom error")
+}
+
+func composeArgs(args []any) string {
 	stringArgs := ""
-	for _, v := range data.Args {
+	for _, v := range args {
 		arg := ""
 		switch val := v.(type) {
 		case pgtype.Timestamp:
