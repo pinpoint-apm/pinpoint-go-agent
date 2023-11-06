@@ -25,7 +25,7 @@ func getDBPool() *pgxpool.Pool {
 		os.Exit(1)
 	}
 
-	config.ConnConfig.Tracer = pppgxv5.NewTracerPgx()
+	config.ConnConfig.Tracer = pppgxv5.NewPgxTracer()
 
 	dbpool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {

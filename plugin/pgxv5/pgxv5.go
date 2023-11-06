@@ -1,205 +1,146 @@
 package pppgxv5
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
+type pgxTracer struct {
+	agentConfig *pinpoint.Config
+}
+
 // Checking interface implementations
-var _ pgx.QueryTracer = (*TracerPgx)(nil)
+var (
+	_ pgx.QueryTracer    = (*pgxTracer)(nil)
+	_ pgx.BatchTracer    = (*pgxTracer)(nil)
+	_ pgx.ConnectTracer  = (*pgxTracer)(nil)
+	_ pgx.CopyFromTracer = (*pgxTracer)(nil)
+	//_ pgx.PrepareTracer  = (*pgxTracer)(nil)
+)
 
-const serviceTypePgSqlExecuteQuery = 2501
-
-type TracerPgx struct {
-}
-
-func NewTracerPgx() *TracerPgx {
-	return &TracerPgx{}
-}
-
-func (t *TracerPgx) TraceConnectStart(ctx context.Context, c pgx.TraceConnectStartData) context.Context {
-	tracer := pinpoint.FromContext(ctx)
-	if !tracer.IsSampled() {
-		return ctx
+func NewPgxTracer() *pgxTracer {
+	return &pgxTracer{
+		agentConfig: pinpoint.GetConfig(),
 	}
+}
 
-	config := c.ConnConfig
-	se := tracer.NewSpanEvent("pgx.Connect").SpanEvent()
-	se.SetServiceType(serviceTypePgSqlExecuteQuery)
-	se.SetEndPoint(config.Host)
-	se.SetDestination(config.Database)
+func (t *pgxTracer) TraceConnectStart(ctx context.Context, c pgx.TraceConnectStartData) context.Context {
+	newSpanEvent(ctx, c.ConnConfig, "pgx.Connect")
+	return ctx
+}
+
+func (t *pgxTracer) TraceConnectEnd(ctx context.Context, data pgx.TraceConnectEndData) {
+	if tracer := pinpoint.FromContext(ctx); tracer.IsSampled() {
+		tracer.EndSpanEvent()
+	}
+}
+
+func (t *pgxTracer) TraceQueryStart(ctx context.Context, c *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if tracer := newSpanEvent(ctx, c.Config(), "pgx.Query"); tracer.IsSampled() {
+		se := tracer.SpanEvent()
+		sqlArgs := t.composeArgs(data.Args)
+		se.SetSQL(data.SQL, sqlArgs)
+	}
 
 	return ctx
 }
 
-func (t *TracerPgx) TraceConnectEnd(ctx context.Context, data pgx.TraceConnectEndData) {
-	tracer := pinpoint.FromContext(ctx)
-	if !tracer.IsSampled() {
-		return
-	}
+func (t *pgxTracer) TraceQueryEnd(ctx context.Context, c *pgx.Conn, data pgx.TraceQueryEndData) {
+	if tracer := pinpoint.FromContext(ctx); tracer.IsSampled() {
+		defer tracer.EndSpanEvent()
 
-	tracer.EndSpanEvent()
+		se := tracer.SpanEvent()
+		se.SetError(data.Err, "SQL error")
+	}
 }
 
-func (t *TracerPgx) TraceQueryStart(ctx context.Context, c *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
-	tracer := pinpoint.FromContext(ctx)
-	if !tracer.IsSampled() {
-		return ctx
+func (t *pgxTracer) TraceBatchStart(ctx context.Context, c *pgx.Conn, _ pgx.TraceBatchStartData) context.Context {
+	newSpanEvent(ctx, c.Config(), "pgx.Batch")
+	return ctx
+}
+
+func (t *pgxTracer) TraceBatchQuery(ctx context.Context, c *pgx.Conn, data pgx.TraceBatchQueryData) {
+	if tracer := newSpanEvent(ctx, c.Config(), "pgx.BatchQuery"); tracer.IsSampled() {
+		defer tracer.EndSpanEvent()
+
+		se := tracer.SpanEvent()
+		sqlArgs := t.composeArgs(data.Args)
+		se.SetSQL(data.SQL, sqlArgs)
+		se.SetError(data.Err, "SQL error")
 	}
+}
 
-	config := c.Config()
-	se := tracer.NewSpanEvent("pgx.Query").SpanEvent()
-	se.SetServiceType(serviceTypePgSqlExecuteQuery)
-	se.SetEndPoint(config.Host)
-	se.SetDestination(config.Database)
+func (t *pgxTracer) TraceBatchEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceBatchEndData) {
+	if tracer := pinpoint.FromContext(ctx); tracer.IsSampled() {
+		defer tracer.EndSpanEvent()
 
-	sqlArgs := composeArgs(data.Args)
-	se.SetSQL(data.SQL, sqlArgs)
+		se := tracer.SpanEvent()
+		se.SetError(data.Err, "Batch error")
+	}
+}
+
+func (t *pgxTracer) TraceCopyFromStart(ctx context.Context, c *pgx.Conn, data pgx.TraceCopyFromStartData) context.Context {
+	if tracer := newSpanEvent(ctx, c.Config(), "pgx.CopyFrom"); tracer.IsSampled() {
+		se := tracer.SpanEvent()
+		se.Annotations().AppendString(pinpoint.AnnotationArgs0, data.TableName.Sanitize())
+	}
 
 	return ctx
 }
 
-func (t *TracerPgx) TraceQueryEnd(ctx context.Context, c *pgx.Conn, data pgx.TraceQueryEndData) {
-	tracer := pinpoint.FromContext(ctx)
-	if !tracer.IsSampled() {
-		return
+func (t *pgxTracer) TraceCopyFromEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceCopyFromEndData) {
+	if tracer := pinpoint.FromContext(ctx); tracer.IsSampled() {
+		defer tracer.EndSpanEvent()
+
+		se := tracer.SpanEvent()
+		se.SetError(data.Err, "CopyFrom error")
 	}
-
-	defer tracer.EndSpanEvent()
-
-	se := tracer.SpanEvent()
-	se.SetError(data.Err, "SQL error")
 }
 
-func (t *TracerPgx) TraceBatchStart(ctx context.Context, c *pgx.Conn, _ pgx.TraceBatchStartData) context.Context {
+func newSpanEvent(ctx context.Context, config *pgx.ConnConfig, cmd string) pinpoint.Tracer {
 	tracer := pinpoint.FromContext(ctx)
-	if !tracer.IsSampled() {
-		return ctx
+	if tracer.IsSampled() {
+		se := tracer.NewSpanEvent(cmd).SpanEvent()
+		se.SetServiceType(pinpoint.ServiceTypePgSqlExecuteQuery)
+		se.SetEndPoint(config.Host)
+		se.SetDestination(config.Database)
 	}
 
-	config := c.Config()
-	se := tracer.NewSpanEvent("pgx.Batch").SpanEvent()
-	se.SetServiceType(serviceTypePgSqlExecuteQuery)
-	se.SetEndPoint(config.Host)
-	se.SetDestination(config.Database)
-
-	return ctx
+	return tracer
 }
 
-func (t *TracerPgx) TraceBatchQuery(ctx context.Context, c *pgx.Conn, data pgx.TraceBatchQueryData) {
-	tracer := pinpoint.FromContext(ctx)
-	if !tracer.IsSampled() {
-		return
+func (t *pgxTracer) composeArgs(args []any) string {
+	if args == nil || len(args) == 0 || !t.agentConfig.Bool(pinpoint.CfgSQLTraceBindValue) {
+		return ""
 	}
 
-	config := c.Config()
-	se := tracer.NewSpanEvent("pgx.BatchQuery").SpanEvent()
-	defer tracer.EndSpanEvent()
+	var b bytes.Buffer
+	numComma := len(args) - 1
+	maxSize := t.agentConfig.Int(pinpoint.CfgSQLMaxBindValueSize)
 
-	se.SetServiceType(serviceTypePgSqlExecuteQuery)
-	se.SetEndPoint(config.Host)
-	se.SetDestination(config.Database)
-
-	sqlArgs := composeArgs(data.Args)
-	se.SetSQL(data.SQL, sqlArgs)
-	se.SetError(data.Err, "SQL error")
-}
-
-func (t *TracerPgx) TraceBatchEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceBatchEndData) {
-	tracer := pinpoint.FromContext(ctx)
-	if !tracer.IsSampled() {
-		return
-	}
-
-	defer tracer.EndSpanEvent()
-
-	se := tracer.SpanEvent()
-	se.SetError(data.Err, "Batch error")
-}
-
-func (t *TracerPgx) TraceCopyFromStart(ctx context.Context, c *pgx.Conn, data pgx.TraceCopyFromStartData) context.Context {
-	tracer := pinpoint.FromContext(ctx)
-	if !tracer.IsSampled() {
-		return ctx
-	}
-
-	config := c.Config()
-	se := tracer.NewSpanEvent("pgx.CopyFrom").SpanEvent()
-	se.SetServiceType(serviceTypePgSqlExecuteQuery)
-	se.SetEndPoint(config.Host)
-	se.SetDestination(config.Database)
-	se.Annotations().AppendString(pinpoint.AnnotationArgs0, data.TableName.Sanitize())
-
-	return ctx
-}
-
-func (t *TracerPgx) TraceCopyFromEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceCopyFromEndData) {
-	tracer := pinpoint.FromContext(ctx)
-	if !tracer.IsSampled() {
-		return
-	}
-
-	defer tracer.EndSpanEvent()
-
-	se := tracer.SpanEvent()
-	se.SetError(data.Err, "CopyFrom error")
-}
-
-func composeArgs(args []any) string {
-	stringArgs := ""
-	for _, v := range args {
-		arg := ""
-		switch val := v.(type) {
-		case pgtype.Timestamp:
-			if val.Valid {
-				arg = fmt.Sprintf("%v", val.Time.Format(time.RFC3339))
-			} else {
-				arg = "<nil>"
-			}
-		case pgtype.Date:
-			if val.Valid {
-				arg = fmt.Sprintf("%v", val.Time.Format(time.RFC3339))
-			} else {
-				arg = "<nil>"
-			}
-		case pgtype.Int4:
-			if val.Valid {
-				arg = fmt.Sprintf("%v", val.Int32)
-			} else {
-				arg = "<nil>"
-			}
-		case pgtype.Float8:
-			if val.Valid {
-				arg = fmt.Sprintf("%v", val.Float64)
-			} else {
-				arg = "<nil>"
-			}
-		case pgtype.Text:
-			if val.Valid {
-				arg = fmt.Sprintf("%v", val.String)
-			} else {
-				arg = "<nil>"
-			}
-		case pgtype.Bool:
-			if val.Valid {
-				arg = fmt.Sprintf("%t", val.Bool)
-			} else {
-				arg = "<nil>"
-			}
-		default:
-			if val != nil {
-				arg = fmt.Sprintf("%v", val)
-			} else {
-				arg = "<nil>"
-			}
+	for i, v := range args {
+		if !writeArg(&b, i, v, numComma, maxSize) {
+			break
 		}
-		stringArgs += fmt.Sprintf("%v,", arg)
 	}
 
-	return stringArgs
+	return b.String()
+}
+
+func writeArg(b *bytes.Buffer, index int, value any, numComma int, maxSize int) bool {
+	b.WriteString(fmt.Sprint(value))
+	if index < numComma {
+		b.WriteString(", ")
+	}
+	if b.Len() > maxSize {
+		b.WriteString("...(")
+		b.WriteString(fmt.Sprint(maxSize))
+		b.WriteString(")")
+		return false
+	}
+	return true
 }
