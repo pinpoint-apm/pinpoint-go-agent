@@ -19,10 +19,10 @@ var (
 	_ pgx.BatchTracer    = (*pgxTracer)(nil)
 	_ pgx.ConnectTracer  = (*pgxTracer)(nil)
 	_ pgx.CopyFromTracer = (*pgxTracer)(nil)
-	//_ pgx.PrepareTracer  = (*pgxTracer)(nil)
 )
 
-func NewPgxTracer() *pgxTracer {
+// NewTracer creates a tracer to instrument jackc/pgx calls.
+func NewTracer() *pgxTracer {
 	return &pgxTracer{
 		agentConfig: pinpoint.GetConfig(),
 	}
@@ -54,7 +54,7 @@ func (t *pgxTracer) TraceQueryEnd(ctx context.Context, c *pgx.Conn, data pgx.Tra
 		defer tracer.EndSpanEvent()
 
 		se := tracer.SpanEvent()
-		se.SetError(data.Err, "SQL error")
+		se.SetError(data.Err, "pgx.Query error")
 	}
 }
 
@@ -70,7 +70,7 @@ func (t *pgxTracer) TraceBatchQuery(ctx context.Context, c *pgx.Conn, data pgx.T
 		se := tracer.SpanEvent()
 		sqlArgs := t.composeArgs(data.Args)
 		se.SetSQL(data.SQL, sqlArgs)
-		se.SetError(data.Err, "SQL error")
+		se.SetError(data.Err, "pgx.BatchQuery error")
 	}
 }
 
@@ -79,7 +79,7 @@ func (t *pgxTracer) TraceBatchEnd(ctx context.Context, _ *pgx.Conn, data pgx.Tra
 		defer tracer.EndSpanEvent()
 
 		se := tracer.SpanEvent()
-		se.SetError(data.Err, "Batch error")
+		se.SetError(data.Err, "pgx.Batch error")
 	}
 }
 
@@ -97,7 +97,7 @@ func (t *pgxTracer) TraceCopyFromEnd(ctx context.Context, _ *pgx.Conn, data pgx.
 		defer tracer.EndSpanEvent()
 
 		se := tracer.SpanEvent()
-		se.SetError(data.Err, "CopyFrom error")
+		se.SetError(data.Err, "pgx.CopyFrom error")
 	}
 }
 

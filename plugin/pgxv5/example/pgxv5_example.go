@@ -9,58 +9,68 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5"
 )
 
-func getDBPool() *pgxpool.Pool {
-	ctx := context.Background()
+var connUrl = "postgresql://testuser:p123@localhost/testdb?sslmode=disable"
 
-	urlExample := "postgresql://testuser:p123@localhost/testdb?sslmode=disable"
-	config, err := pgxpool.ParseConfig(urlExample)
+func connect() *pgx.Conn {
+	cfg, err := pgx.ParseConfig(connUrl)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Unable to parse connection config: %v\n", err)
 		os.Exit(1)
 	}
 
-	config.ConnConfig.Tracer = pppgxv5.NewPgxTracer()
+	cfg.Tracer = pppgxv5.NewTracer()
 
-	dbpool, err := pgxpool.NewWithConfig(ctx, config)
+	conn, err := pgx.ConnectConfig(context.Background(), cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
+		os.Exit(1)
+	}
+
+	log.Println("successfully connected to db")
+
+	return conn
+}
+
+func connectionPool() *pgxpool.Pool {
+	cfg, err := pgxpool.ParseConfig(connUrl)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Unable to parse connection config: %v\n", err)
+		os.Exit(1)
+	}
+
+	cfg.ConnConfig.Tracer = pppgxv5.NewTracer()
+
+	dbPool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Unable to create connection pool: %v\n", err)
 		os.Exit(1)
 	}
 
-	rows, err := dbpool.Query(ctx, "select 1")
-	if err != nil {
-		panic(err)
-	}
+	log.Println("successfully created connection pool")
 
-	if err := rows.Err(); err != nil {
-		panic(err)
-	}
-
-	log.Println("successfully connected to db")
-
-	return dbpool
+	return dbPool
 }
 
 func tableCount(w http.ResponseWriter, r *http.Request) {
-	dbPool := getDBPool()
-
-	if dbPool == nil {
+	dbConn := connect()
+	if dbConn == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		io.WriteString(w, "db connection fail")
 		return
 	}
-	//defer dbPool.Close()
+	defer dbConn.Close(context.Background())
 
 	tracer := pinpoint.FromContext(r.Context())
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 
-	rows := dbPool.QueryRow(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
+	rows := dbConn.QueryRow(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
 
 	var count int
 	err := rows.Scan(&count)
@@ -73,14 +83,12 @@ func tableCount(w http.ResponseWriter, r *http.Request) {
 }
 
 func query(w http.ResponseWriter, r *http.Request) {
-	dbPool := getDBPool()
-
+	dbPool := connectionPool()
 	if dbPool == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		io.WriteString(w, "db connection fail")
 		return
 	}
-	//defer dbPool.Close()
 
 	ctx := pinpoint.NewContext(context.Background(), pinpoint.TracerFromRequestContext(r))
 
@@ -155,8 +163,49 @@ func tx(ctx context.Context, db *pgxpool.Pool) {
 	}
 }
 
+func batch(w http.ResponseWriter, r *http.Request) {
+	dbConn := connect()
+	if dbConn == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, "db connection fail")
+		return
+	}
+	defer dbConn.Close(context.Background())
+
+	tracer := pinpoint.FromContext(r.Context())
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+
+	_, _ = dbConn.Exec(ctx, "CREATE TABLE employee (id INTEGER PRIMARY KEY, emp_name VARCHAR(64), department VARCHAR(64), created DATE)")
+
+	insert := "INSERT INTO employee VALUES (@id, @emp, @depart, @created)"
+
+	b := &pgx.Batch{}
+	arg1 := pgx.NamedArgs{
+		"id":      1,
+		"emp":     "foo",
+		"depart":  "pinpoint",
+		"created": "2022-08-15",
+	}
+	b.Queue(insert, arg1)
+
+	arg2 := pgx.NamedArgs{
+		"id":      2,
+		"emp":     "bar",
+		"depart":  "avengers",
+		"created": "2022-08-16",
+	}
+	b.Queue(insert, arg2)
+
+	bRes := dbConn.SendBatch(ctx, b)
+	_, _ = bRes.Exec()
+	_, _ = bRes.Exec()
+	bRes.Close()
+
+	_, _ = dbConn.Exec(ctx, "DROP TABLE employee")
+}
+
 func queryStdSql(w http.ResponseWriter, r *http.Request) {
-	db, err := sql.Open("pgxv5-pinpoint", "postgresql://testuser:p123@localhost/testdb?sslmode=disable")
+	db, err := sql.Open("pgxv5-pinpoint", connUrl)
 	if err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		io.WriteString(w, err.Error())
@@ -259,7 +308,6 @@ func txStdSql(ctx context.Context, db *sql.DB) {
 	if err != nil {
 		log.Fatal(err)
 	}
-
 }
 
 func main() {
@@ -278,6 +326,7 @@ func main() {
 
 	http.HandleFunc("/tableCount", pphttp.WrapHandlerFunc(tableCount))
 	http.HandleFunc("/query", pphttp.WrapHandlerFunc(query))
+	http.HandleFunc("/batch", pphttp.WrapHandlerFunc(batch))
 	http.HandleFunc("/query_std", pphttp.WrapHandlerFunc(queryStdSql))
 
 	http.ListenAndServe(":9002", nil)
