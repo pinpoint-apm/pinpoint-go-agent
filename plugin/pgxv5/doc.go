@@ -9,8 +9,8 @@
 //
 // It is necessary to pass the context containing the pinpoint.Tracer to pgx calls.
 //
-// This package instruments the database/sql driver of postgres calls also.
-// Use this package's driver in place of the postgres driver.
+// This package instruments the database/sql driver of pgx calls also.
+// Use this package's driver in place of the pgx driver.
 //
 //	db, err := sql.Open("pgxv5-pinpoint", connUrl)
 //

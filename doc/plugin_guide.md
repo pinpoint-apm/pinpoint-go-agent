@@ -30,6 +30,7 @@
 | [ppmysql](plugin_guide.md#ppmysql)                   | [plugin/mysql](/plugin/mysql)                   | go-sql-driver/mysql package (https://github.com/go-sql-driver/mysql)           |
 | [pporacle](plugin_guide.md#pporacle)                 | [plugin/oracle](/plugin/oracle)                 | sijms/go-ora/v2 package (https://github.com/sijms/go-ora)                      |
 | [pppgsql](plugin_guide.md#pppgsql)                   | [plugin/pgsql](/plugin/pgsql)                   | lib/pq package (https://github.com/lib/pq)                                     |
+| [pppgxv5](plugin_guide.md#pppgxv5)                   | [plugin/pgxv5](/plugin/pgxv5)                   | jackc/pgx/v5 package (https://github.com/jackc/pgx)                            |
 | [ppredigo](plugin_guide.md#ppredigo)                 | [plugin/redigo](/plugin/redigo)                 | gomodule/redigo package (https://github.com/gomodule/redigo)                   |
 | [pprueidis](plugin_guide.md#pprueidis)               | [plugin/rueidis](/plugin/rueidis)               | redis/rueidis package (https://github.com/redis/rueidis)                       |
 | [ppsarama](plugin_guide.md#ppsarama)                 | [plugin/sarama](/plugin/sarama)                 | Shopify/sarama package (https://github.com/Shopify/sarama)                     |
@@ -1484,6 +1485,66 @@ func query(w http.ResponseWriter, r *http.Request) {
 }
 ```
 [Full Example Source](/plugin/pgsql/example/pgsql_example.go)
+
+## pppgxv5
+This package instruments the jackc/pgx/v5.
+Use the NewTracer as the pgx.ConnConfig.Tracer.
+
+``` go
+cfg, err := pgx.ParseConfig("postgresql://test:test!@localhost/testdb?sslmode=disable")
+cfg.Tracer = pppgxv5.NewTracer()
+conn, err := pgx.ConnectConfig(context.Background(), cfg)
+```
+
+It is necessary to pass the context containing the pinpoint.Tracer to pgx calls.
+
+``` go
+ctx := pinpoint.NewContext(context.Background(), tracer)
+rows := conn.QueryRow(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
+```
+
+``` go
+import (
+    "github.com/jackc/pgx/v5"
+    "github.com/pinpoint-apm/pinpoint-go-agent"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5"
+)
+
+func connect() *pgx.Conn {
+    cfg, err := pgx.ParseConfig(connUrl)
+    cfg.Tracer = pppgxv5.NewTracer()
+    conn, err := pgx.ConnectConfig(context.Background(), cfg)
+    return conn
+}
+
+func tableCount(w http.ResponseWriter, r *http.Request) {
+    dbConn := connect()
+    defer dbConn.Close(context.Background())
+
+    tracer := pinpoint.FromContext(r.Context())
+    ctx := pinpoint.NewContext(context.Background(), tracer)
+
+    rows := dbConn.QueryRow(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
+    ...
+}
+```
+
+[Full Example Source](/plugin/pgxv5/example/pgxv5_example.go)
+
+This package instruments the database/sql driver of pgx calls also.
+Use this package's driver in place of the pgx driver.
+
+``` go
+db, err := sql.Open("pgxv5-pinpoint", "postgresql://test:test!@localhost/testdb?sslmode=disable")
+```
+
+It is necessary to pass the context containing the pinpoint.Tracer to all exec and query methods on SQL driver.
+Spans will be created for queries and other statement executions if the context methods are used, and the context includes a transaction.
+
+``` go
+ctx := pinpoint.NewContext(context.Background(), tracer)
+row := db.QueryRowContext(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
+```
 
 ## ppredigo
 This package instruments the gomodule/redigo calls.
