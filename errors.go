@@ -52,7 +52,7 @@ type withCallStack struct {
 
 func (w *withCallStack) Unwrap() error { return w.error }
 
-func WrapError(err error) error {
+func WrapError(err error) *withCallStack {
 	if err == nil {
 		return nil
 	}

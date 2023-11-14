@@ -150,6 +150,9 @@ type Annotation interface {
 	// AppendInt records an integer value to annotation.
 	AppendInt(key int32, i int32)
 
+	// AppendLong records a long value to annotation.
+	AppendLong(key int32, l int64)
+
 	// AppendString records a string value to annotation.
 	AppendString(key int32, s string)
 
@@ -251,6 +254,7 @@ const (
 	AnnotationMongoCollectionInfo = 151
 	AnnotationEsDsl               = 173
 	AnnotationHbaseClientParams   = 320
+	AnnotationExceptionLinkId     = -52
 )
 
 const (

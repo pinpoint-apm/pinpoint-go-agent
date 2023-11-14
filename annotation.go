@@ -20,6 +20,17 @@ func (a *annotation) AppendInt(key int32, i int32) {
 	})
 }
 
+func (a *annotation) AppendLong(key int32, l int64) {
+	a.list = append(a.list, &pb.PAnnotation{
+		Key: key,
+		Value: &pb.PAnnotationValue{
+			Field: &pb.PAnnotationValue_LongValue{
+				LongValue: l,
+			},
+		},
+	})
+}
+
 func (a *annotation) AppendString(key int32, s string) {
 	a.list = append(a.list, &pb.PAnnotation{
 		Key: key,

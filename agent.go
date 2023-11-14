@@ -67,6 +67,22 @@ type sqlMeta struct {
 	sql string
 }
 
+type exceptionMeta struct {
+	exceptions    []*errorTrace
+	transactionId TransactionId
+	spanId        int64
+	uriTemplate   string
+}
+
+type errorTrace struct {
+	errorModuleName string
+	errorMessage    string
+	startTime       time.Time
+	exceptionId     int64
+	exceptionDepth  int32
+	callstack       *withCallStack
+}
+
 const (
 	cacheSize        = 1024
 	defaultQueueSize = 1024
@@ -387,6 +403,9 @@ func (agent *agent) sendMetaWorker() {
 			sql := md.(sqlMeta)
 			success = agent.agentGrpc.sendSqlMetadataWithRetry(sql.id, sql.sql)
 			break
+		case exceptionMeta:
+			exception := md.(exceptionMeta)
+			success = agent.agentGrpc.sendExceptionMetadataWithRetry(&exception)
 		}
 
 		if !success {
@@ -409,6 +428,8 @@ func (agent *agent) deleteMetaCache(md interface{}) {
 		break
 	case sqlMeta:
 		agent.sqlCache.Remove(md.(sqlMeta).sql)
+		break
+	case exceptionMeta:
 		break
 	}
 }
@@ -493,6 +514,38 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 
 	Log("agent").Infof("cache api id: %d, %s", id, key)
 	return id
+}
+
+func (agent *agent) enqueueExceptionMeta(span *span) {
+	if !agent.enable {
+		return
+	}
+
+	md := exceptionMeta{}
+	md.transactionId = span.txId
+	md.spanId = span.spanId
+	if span.urlStat != nil {
+		md.uriTemplate = span.urlStat.Url
+	} else {
+		md.uriTemplate = "NULL"
+	}
+
+	for _, se := range span.spanEvents {
+		if se.callStack != nil {
+			et := errorTrace{}
+			et.errorModuleName = "main"
+			et.errorMessage = se.callStack.Error()
+			et.startTime = se.startTime
+			et.exceptionId = span.exceptionId
+			et.exceptionDepth = 1
+			et.callstack = se.callStack
+
+			md.exceptions = append(md.exceptions, &et)
+		}
+	}
+
+	agent.tryEnqueueMeta(md)
+	Log("agent").Debugf("enqueue exception meta: %v", md)
 }
 
 func (agent *agent) enqueueUrlStat(stat *urlStat) bool {

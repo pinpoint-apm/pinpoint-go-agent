@@ -207,6 +207,8 @@ type noopAnnotation struct{}
 
 func (a *noopAnnotation) AppendInt(key int32, i int32) {}
 
+func (a *noopAnnotation) AppendLong(key int32, l int64) {}
+
 func (a *noopAnnotation) AppendString(key int32, s string) {}
 
 func (a *noopAnnotation) AppendStringString(key int32, s1 string, s2 string) {}

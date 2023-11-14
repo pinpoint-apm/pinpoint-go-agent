@@ -83,6 +83,7 @@ type metaClient interface {
 	RequestApiMetaData(ctx context.Context, in *pb.PApiMetaData) (*pb.PResult, error)
 	RequestSqlMetaData(ctx context.Context, in *pb.PSqlMetaData) (*pb.PResult, error)
 	RequestStringMetaData(ctx context.Context, in *pb.PStringMetaData) (*pb.PResult, error)
+	RequestExceptionMetaData(ctx context.Context, in *pb.PExceptionMetaData) (*pb.PResult, error)
 }
 
 type metaGrpcClient struct {
@@ -101,6 +102,11 @@ func (metaGrpcClient *metaGrpcClient) RequestSqlMetaData(ctx context.Context, in
 
 func (metaGrpcClient *metaGrpcClient) RequestStringMetaData(ctx context.Context, in *pb.PStringMetaData) (*pb.PResult, error) {
 	result, err := metaGrpcClient.client.RequestStringMetaData(ctx, in)
+	return result, err
+}
+
+func (metaGrpcClient *metaGrpcClient) RequestExceptionMetaData(ctx context.Context, in *pb.PExceptionMetaData) (*pb.PResult, error) {
+	result, err := metaGrpcClient.client.RequestExceptionMetaData(ctx, in)
 	return result, err
 }
 
@@ -373,6 +379,108 @@ func (agentGrpc *agentGrpc) sendSqlMetadataWithRetry(sqlId int32, sql string) bo
 		}
 	}
 	return false
+}
+
+func (agentGrpc *agentGrpc) sendExceptionMetadata(ctx context.Context, in *pb.PExceptionMetaData) error {
+	ctx, cancel := context.WithTimeout(ctx, agentGrpcTimeOut)
+	defer cancel()
+
+	_, err := agentGrpc.metaClient.RequestExceptionMetaData(ctx, in)
+	if err != nil {
+		Log("grpc").Errorf("send sql metadata - %v", err)
+	}
+
+	return err
+}
+
+func (agentGrpc *agentGrpc) sendExceptionMetadataWithRetry(exception *exceptionMeta) bool {
+	ctx := grpcMetadataContext(agentGrpc.agent, -1)
+	exceptMeta := makePExceptionMetaData(exception)
+
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("exception metadata: %s", exceptMeta.String())
+	}
+
+	for agentGrpc.agent.Enable() {
+		if err := agentGrpc.sendExceptionMetadata(ctx, exceptMeta); err == nil {
+			return true
+		}
+
+		if !agentGrpc.agent.config.offGrpc {
+			for retry := 1; agentGrpc.agent.Enable(); retry++ {
+				if waitUntilReady(agentGrpc.agentConn, backOffSleep(retry), "agent") {
+					break
+				}
+			}
+		}
+	}
+	return false
+}
+
+func makePExceptionMetaData(exception *exceptionMeta) *pb.PExceptionMetaData {
+	aExp := &pb.PExceptionMetaData{
+		TransactionId: &pb.PTransactionId{
+			AgentId:        exception.transactionId.AgentId,
+			AgentStartTime: exception.transactionId.StartTime,
+			Sequence:       exception.transactionId.Sequence,
+		},
+		SpanId:      exception.spanId,
+		UriTemplate: exception.uriTemplate,
+		Exceptions:  makePExceptionList(exception.exceptions),
+	}
+
+	return aExp
+}
+
+func makePExceptionList(et []*errorTrace) []*pb.PException {
+	expList := make([]*pb.PException, 0)
+
+	if et != nil {
+		for i := 0; i < len(et); i++ {
+			exp := makePException(et[i])
+			expList = append(expList, exp)
+		}
+	}
+
+	return expList
+}
+
+func makePException(et *errorTrace) *pb.PException {
+	exp := &pb.PException{
+		ExceptionClassName: et.errorModuleName,
+		ExceptionMessage:   et.errorMessage,
+		StartTime:          et.startTime.UnixNano() / int64(time.Millisecond),
+		ExceptionId:        et.exceptionId,
+		ExceptionDepth:     et.exceptionDepth,
+		StackTraceElement:  makePStackTraceElementList(et.callstack),
+	}
+
+	return exp
+}
+
+func makePStackTraceElementList(cs *withCallStack) []*pb.PStackTraceElement {
+	stList := make([]*pb.PStackTraceElement, 0)
+
+	if cs != nil {
+		f := cs.stackTrace()
+		for i := 0; i < len(f); i++ {
+			st := makePStackTraceElement(f[i])
+			stList = append(stList, st)
+		}
+	}
+
+	return stList
+}
+
+func makePStackTraceElement(f frame) *pb.PStackTraceElement {
+	aExp := &pb.PStackTraceElement{
+		ClassName:  "main",
+		FileName:   f.file,
+		LineNumber: int32(f.line),
+		MethodName: f.funcName,
+	}
+
+	return aExp
 }
 
 func sendStreamWithTimeout(send func() error, timeout time.Duration, which string) error {

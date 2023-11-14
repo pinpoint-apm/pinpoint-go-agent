@@ -23,6 +23,7 @@ type spanEvent struct {
 	asyncSeqGen   int32
 	apiId         int32
 	isTimeFixed   bool
+	callStack     *withCallStack
 }
 
 var asyncApiId = int32(0)
@@ -41,6 +42,7 @@ func defaultSpanEvent(span *span, operationName string) *spanEvent {
 	se.asyncSeqGen = 0
 	se.serviceType = ServiceTypeGoFunction
 	se.isTimeFixed = false
+	se.callStack = nil
 
 	Log("span").Tracef("newSpanEvent: %s, %d, %d, %s", se.operationName, se.sequence, se.depth, se.startTime)
 
@@ -95,6 +97,10 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 	id := se.parentSpan.agent.cacheError(errName)
 	se.errorFuncId = id
 	se.errorString = e.Error()
+
+	se.callStack = WrapError(e)
+	se.Annotations().AppendLong(AnnotationExceptionLinkId, se.parentSpan.exceptionId)
+
 }
 
 func (se *spanEvent) SetServiceType(typ int32) {

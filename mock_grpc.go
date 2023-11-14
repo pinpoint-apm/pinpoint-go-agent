@@ -68,6 +68,12 @@ func (metaGrpcClient *mockMetaGrpcClient) RequestStringMetaData(ctx context.Cont
 	return metaGrpcClient.client.RequestStringMetaData(ctx, in)
 }
 
+func (metaGrpcClient *mockMetaGrpcClient) RequestExceptionMetaData(ctx context.Context, in *pb.PExceptionMetaData) (*pb.PResult, error) {
+	//_ = metaGrpcClient.client.EXPECT().RequestExceptionMetaData(gomock.Any(), gomock.Any()).Return(&pb.PResult{Success: true, Message: "success"}, nil)
+	//return metaGrpcClient.client.RequestExceptionMetaData(ctx, in)
+	return nil, nil
+}
+
 func newMockAgentGrpc(agent *agent, t *testing.T) *agentGrpc {
 	ctrl := gomock.NewController(t)
 	stream := mock.NewMockAgent_PingSessionClient(ctrl)
