@@ -6,24 +6,24 @@ import (
 	"time"
 )
 
-type errorCallStack struct {
-	error
-	errorTime time.Time
-	callstack []uintptr
+type errorWithCallStack struct {
+	errorMessage string
+	errorTime    time.Time
+	callstack    []uintptr
 }
 
-func genCallStack(err error) *errorCallStack {
-	var pcs [32]uintptr
-	n := runtime.Callers(4, pcs[:])
+func dumpCallStack(errMsg string, depth int) *errorWithCallStack {
+	pcs := make([]uintptr, depth+3)
+	n := runtime.Callers(3, pcs)
 
-	return &errorCallStack{
-		err,
-		time.Now(),
-		pcs[0:n],
+	return &errorWithCallStack{
+		errorMessage: errMsg,
+		errorTime:    time.Now(),
+		callstack:    pcs[0:n],
 	}
 }
 
-func (e *errorCallStack) stackTrace() []frame {
+func (e *errorWithCallStack) stackTrace() []frame {
 	f := make([]frame, len(e.callstack))
 	for i := 0; i < len(f); i++ {
 		f[i] = newFrame(e.callstack[i])
@@ -45,8 +45,7 @@ func newFrame(f uintptr) frame {
 	line := 0
 
 	pc := uintptr(f) - 1
-	fn := runtime.FuncForPC(pc)
-	if fn != nil {
+	if fn := runtime.FuncForPC(pc); fn != nil {
 		file, line = fn.FileLine(pc)
 		moduleName, funcName = splitName(fn.Name())
 	}

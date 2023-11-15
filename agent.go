@@ -76,7 +76,7 @@ type exceptionMeta struct {
 
 type exception struct {
 	exceptionId int64
-	callstack   *errorCallStack
+	callstack   *errorWithCallStack
 }
 
 const (
@@ -400,8 +400,8 @@ func (agent *agent) sendMetaWorker() {
 			success = agent.agentGrpc.sendSqlMetadataWithRetry(sql.id, sql.sql)
 			break
 		case exceptionMeta:
-			exception := md.(exceptionMeta)
-			success = agent.agentGrpc.sendExceptionMetadataWithRetry(&exception)
+			em := md.(exceptionMeta)
+			success = agent.agentGrpc.sendExceptionMetadataWithRetry(&em)
 		}
 
 		if !success {
@@ -513,28 +513,32 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 }
 
 func (agent *agent) enqueueExceptionMeta(span *span) {
-	if !agent.enable {
+	if !agent.enable || !agent.config.errorTraceCallStack {
 		return
 	}
 
-	md := exceptionMeta{}
-	md.txId = span.txId
-	md.spanId = span.spanId
+	exps := make([]*exception, 0)
+	for _, se := range span.spanEvents {
+		if se.callStack != nil {
+			exps = append(exps, &exception{
+				exceptionId: span.exceptionId,
+				callstack:   se.callStack,
+			})
+		}
+	}
+	if len(exps) < 1 {
+		return
+	}
+
+	md := exceptionMeta{
+		txId:       span.txId,
+		spanId:     span.spanId,
+		exceptions: exps,
+	}
 	if span.urlStat != nil {
 		md.uriTemplate = span.urlStat.Url
 	} else {
 		md.uriTemplate = "NULL"
-	}
-	md.exceptions = make([]*exception, 0)
-
-	for _, se := range span.spanEvents {
-		if se.callStack != nil {
-			et := exception{}
-			et.exceptionId = span.exceptionId
-			et.callstack = se.callStack
-
-			md.exceptions = append(md.exceptions, &et)
-		}
 	}
 
 	agent.tryEnqueueMeta(md)

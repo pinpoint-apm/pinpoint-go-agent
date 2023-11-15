@@ -52,6 +52,8 @@ const (
 	CfgHttpUrlStatEnable          = "Http.UrlStat.Enable"
 	CfgHttpUrlStatLimitSize       = "Http.UrlStat.LimitSize"
 	CfgHttpUrlStatWithMethod      = "Http.UrlStat.WithMethod"
+	CfgErrorTraceCallStack        = "Error.TraceCallStack"
+	CfgErrorCallStackDepth        = "Error.CallStackDepth"
 )
 
 const (
@@ -122,6 +124,8 @@ func initConfig() {
 	AddConfig(CfgHttpUrlStatEnable, CfgBool, false, true)
 	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1024, true)
 	AddConfig(CfgHttpUrlStatWithMethod, CfgBool, false, true)
+	AddConfig(CfgErrorTraceCallStack, CfgBool, false, true)
+	AddConfig(CfgErrorCallStackDepth, CfgInt, 32, true)
 }
 
 // AddConfig adds a configuration item.
@@ -161,6 +165,8 @@ type Config struct {
 	sqlTraceRollback     bool  // CfgSQLTraceRollback
 	spanMaxEventDepth    int32 // CfgSpanMaxCallStackDepth
 	spanMaxEventSequence int32 // CfgSpanMaxCallStackSequence
+	errorTraceCallStack  bool  // CfgErrorTraceCallStack
+	errorCallStackDepth  int   // CfgErrorCallStackDepth
 }
 
 // ConfigOption represents an option that can be passed to NewConfig.
@@ -296,6 +302,8 @@ func defaultConfig() *Config {
 	config.sqlTraceRollback = true
 	config.spanMaxEventDepth = defaultEventDepth
 	config.spanMaxEventSequence = defaultEventSequence
+	config.errorTraceCallStack = false
+	config.errorCallStackDepth = 32
 
 	return config
 }
@@ -494,6 +502,8 @@ func (config *Config) applyDynamicConfig() {
 	config.collectUrlStat = config.Bool(CfgHttpUrlStatEnable)
 	config.urlStatLimitSize = config.Int(CfgHttpUrlStatLimitSize)
 	config.urlStatWithMethod = config.Bool(CfgHttpUrlStatWithMethod)
+	config.errorTraceCallStack = config.Bool(CfgErrorTraceCallStack)
+	config.errorCallStackDepth = config.Int(CfgErrorCallStackDepth)
 }
 
 type reloadCallback struct {
@@ -804,6 +814,20 @@ func WithHttpUrlStatLimitSize(size int) ConfigOption {
 func WithHttpUrlStatWithMethod(withMethod bool) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgHttpUrlStatWithMethod].value = withMethod
+	}
+}
+
+// WithErrorTraceCallStack enables the agent collects a call stack when error occurs.
+func WithErrorTraceCallStack(trace bool) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgErrorTraceCallStack].value = trace
+	}
+}
+
+// WithErrorCallStackDepth sets the maximum depth of call stack that can be dumped.
+func WithErrorCallStackDepth(depth int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgErrorCallStackDepth].value = depth
 	}
 }
 

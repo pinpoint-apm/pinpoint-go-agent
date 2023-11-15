@@ -418,7 +418,7 @@ func (agentGrpc *agentGrpc) sendExceptionMetadataWithRetry(exception *exceptionM
 }
 
 func makePExceptionMetaData(e *exceptionMeta) *pb.PExceptionMetaData {
-	em := &pb.PExceptionMetaData{
+	return &pb.PExceptionMetaData{
 		TransactionId: &pb.PTransactionId{
 			AgentId:        e.txId.AgentId,
 			AgentStartTime: e.txId.StartTime,
@@ -428,57 +428,39 @@ func makePExceptionMetaData(e *exceptionMeta) *pb.PExceptionMetaData {
 		UriTemplate: e.uriTemplate,
 		Exceptions:  makePExceptionList(e.exceptions),
 	}
-
-	return em
 }
 
-func makePExceptionList(et []*exception) []*pb.PException {
-	expList := make([]*pb.PException, 0)
-
-	if et != nil {
-		for i := 0; i < len(et); i++ {
-			exp := makePException(et[i])
-			expList = append(expList, exp)
-		}
+func makePExceptionList(exceptions []*exception) []*pb.PException {
+	list := make([]*pb.PException, 0)
+	for _, e := range exceptions {
+		list = append(list, makePException(e))
 	}
-
-	return expList
+	return list
 }
 
-func makePException(et *exception) *pb.PException {
-	cs := et.callstack.stackTrace()
-	exp := &pb.PException{
-		ExceptionClassName: cs[0].moduleName,
-		ExceptionMessage:   et.callstack.Error(),
-		StartTime:          et.callstack.errorTime.UnixNano() / int64(time.Millisecond),
-		ExceptionId:        et.exceptionId,
+func makePException(e *exception) *pb.PException {
+	frames := e.callstack.stackTrace()
+	return &pb.PException{
+		ExceptionClassName: frames[0].moduleName,
+		ExceptionMessage:   e.callstack.errorMessage,
+		StartTime:          e.callstack.errorTime.UnixNano() / int64(time.Millisecond),
+		ExceptionId:        e.exceptionId,
 		ExceptionDepth:     1,
-		StackTraceElement:  makePStackTraceElementList(cs),
+		StackTraceElement:  makePStackTraceElementList(frames),
 	}
-
-	return exp
 }
 
-func makePStackTraceElementList(cs []frame) []*pb.PStackTraceElement {
-	stList := make([]*pb.PStackTraceElement, 0)
-
-	for i := 0; i < len(cs); i++ {
-		st := makePStackTraceElement(cs[i])
-		stList = append(stList, st)
+func makePStackTraceElementList(frames []frame) []*pb.PStackTraceElement {
+	list := make([]*pb.PStackTraceElement, 0)
+	for _, f := range frames {
+		list = append(list, &pb.PStackTraceElement{
+			ClassName:  f.moduleName,
+			FileName:   f.file,
+			LineNumber: f.line,
+			MethodName: f.funcName,
+		})
 	}
-
-	return stList
-}
-
-func makePStackTraceElement(f frame) *pb.PStackTraceElement {
-	aExp := &pb.PStackTraceElement{
-		ClassName:  f.moduleName,
-		FileName:   f.file,
-		LineNumber: f.line,
-		MethodName: f.funcName,
-	}
-
-	return aExp
+	return list
 }
 
 func sendStreamWithTimeout(send func() error, timeout time.Duration, which string) error {

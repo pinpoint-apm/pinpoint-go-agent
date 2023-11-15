@@ -23,7 +23,7 @@ type spanEvent struct {
 	asyncSeqGen   int32
 	apiId         int32
 	isTimeFixed   bool
-	callStack     *errorCallStack
+	callStack     *errorWithCallStack
 }
 
 var asyncApiId = int32(0)
@@ -98,9 +98,10 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 	se.errorFuncId = id
 	se.errorString = e.Error()
 
-	se.callStack = genCallStack(e)
-	se.Annotations().AppendLong(AnnotationExceptionLinkId, se.parentSpan.exceptionId)
-
+	if se.parentSpan.agent.config.errorTraceCallStack {
+		se.callStack = dumpCallStack(se.errorString, se.parentSpan.agent.config.errorCallStackDepth)
+		se.Annotations().AppendLong(AnnotationExceptionLinkId, se.parentSpan.exceptionId)
+	}
 }
 
 func (se *spanEvent) SetServiceType(typ int32) {
