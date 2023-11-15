@@ -2,62 +2,59 @@ package pinpoint
 
 import (
 	"runtime"
+	"strings"
+	"time"
 )
 
+type errorCallStack struct {
+	error
+	errorTime time.Time
+	callstack []uintptr
+}
+
+func genCallStack(err error) *errorCallStack {
+	var pcs [32]uintptr
+	n := runtime.Callers(4, pcs[:])
+
+	return &errorCallStack{
+		err,
+		time.Now(),
+		pcs[0:n],
+	}
+}
+
+func (e *errorCallStack) stackTrace() []frame {
+	f := make([]frame, len(e.callstack))
+	for i := 0; i < len(f); i++ {
+		f[i] = newFrame(e.callstack[i])
+	}
+	return f
+}
+
 type frame struct {
-	file     string
-	line     int
-	funcName string
+	moduleName string
+	funcName   string
+	file       string
+	line       int32
 }
 
 func newFrame(f uintptr) frame {
-	file := "unknown"
+	moduleName := "unknown"
 	funcName := "unknown"
+	file := "unknown"
 	line := 0
 
 	pc := uintptr(f) - 1
 	fn := runtime.FuncForPC(pc)
 	if fn != nil {
 		file, line = fn.FileLine(pc)
-		funcName = fn.Name()
+		moduleName, funcName = splitName(fn.Name())
 	}
 
-	return frame{file, line, funcName}
+	return frame{moduleName, funcName, file, int32(line)}
 }
 
-type callstack []uintptr
-
-func (cs *callstack) stackTrace() []frame {
-	f := make([]frame, len(*cs))
-	for i := 0; i < len(f); i++ {
-		f[i] = newFrame((*cs)[i])
-	}
-	return f
-}
-
-func callers() *callstack {
-	const depth = 32
-	var pcs [depth]uintptr
-
-	n := runtime.Callers(3, pcs[:])
-	var st callstack = pcs[0:n]
-
-	return &st
-}
-
-type withCallStack struct {
-	error
-	*callstack
-}
-
-func (w *withCallStack) Unwrap() error { return w.error }
-
-func WrapError(err error) *withCallStack {
-	if err == nil {
-		return nil
-	}
-	return &withCallStack{
-		err,
-		callers(),
-	}
+func splitName(fullName string) (string, string) {
+	lastIdx := strings.LastIndex(fullName, ".")
+	return fullName[:lastIdx], fullName[lastIdx+1:]
 }

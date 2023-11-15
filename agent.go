@@ -68,19 +68,15 @@ type sqlMeta struct {
 }
 
 type exceptionMeta struct {
-	exceptions    []*errorTrace
-	transactionId TransactionId
-	spanId        int64
-	uriTemplate   string
+	txId        TransactionId
+	spanId      int64
+	uriTemplate string
+	exceptions  []*exception
 }
 
-type errorTrace struct {
-	errorModuleName string
-	errorMessage    string
-	startTime       time.Time
-	exceptionId     int64
-	exceptionDepth  int32
-	callstack       *withCallStack
+type exception struct {
+	exceptionId int64
+	callstack   *errorCallStack
 }
 
 const (
@@ -522,22 +518,19 @@ func (agent *agent) enqueueExceptionMeta(span *span) {
 	}
 
 	md := exceptionMeta{}
-	md.transactionId = span.txId
+	md.txId = span.txId
 	md.spanId = span.spanId
 	if span.urlStat != nil {
 		md.uriTemplate = span.urlStat.Url
 	} else {
 		md.uriTemplate = "NULL"
 	}
+	md.exceptions = make([]*exception, 0)
 
 	for _, se := range span.spanEvents {
 		if se.callStack != nil {
-			et := errorTrace{}
-			et.errorModuleName = "main"
-			et.errorMessage = se.callStack.Error()
-			et.startTime = se.startTime
+			et := exception{}
 			et.exceptionId = span.exceptionId
-			et.exceptionDepth = 1
 			et.callstack = se.callStack
 
 			md.exceptions = append(md.exceptions, &et)

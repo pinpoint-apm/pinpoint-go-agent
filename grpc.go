@@ -417,22 +417,22 @@ func (agentGrpc *agentGrpc) sendExceptionMetadataWithRetry(exception *exceptionM
 	return false
 }
 
-func makePExceptionMetaData(exception *exceptionMeta) *pb.PExceptionMetaData {
-	aExp := &pb.PExceptionMetaData{
+func makePExceptionMetaData(e *exceptionMeta) *pb.PExceptionMetaData {
+	em := &pb.PExceptionMetaData{
 		TransactionId: &pb.PTransactionId{
-			AgentId:        exception.transactionId.AgentId,
-			AgentStartTime: exception.transactionId.StartTime,
-			Sequence:       exception.transactionId.Sequence,
+			AgentId:        e.txId.AgentId,
+			AgentStartTime: e.txId.StartTime,
+			Sequence:       e.txId.Sequence,
 		},
-		SpanId:      exception.spanId,
-		UriTemplate: exception.uriTemplate,
-		Exceptions:  makePExceptionList(exception.exceptions),
+		SpanId:      e.spanId,
+		UriTemplate: e.uriTemplate,
+		Exceptions:  makePExceptionList(e.exceptions),
 	}
 
-	return aExp
+	return em
 }
 
-func makePExceptionList(et []*errorTrace) []*pb.PException {
+func makePExceptionList(et []*exception) []*pb.PException {
 	expList := make([]*pb.PException, 0)
 
 	if et != nil {
@@ -445,28 +445,26 @@ func makePExceptionList(et []*errorTrace) []*pb.PException {
 	return expList
 }
 
-func makePException(et *errorTrace) *pb.PException {
+func makePException(et *exception) *pb.PException {
+	cs := et.callstack.stackTrace()
 	exp := &pb.PException{
-		ExceptionClassName: et.errorModuleName,
-		ExceptionMessage:   et.errorMessage,
-		StartTime:          et.startTime.UnixNano() / int64(time.Millisecond),
+		ExceptionClassName: cs[0].moduleName,
+		ExceptionMessage:   et.callstack.Error(),
+		StartTime:          et.callstack.errorTime.UnixNano() / int64(time.Millisecond),
 		ExceptionId:        et.exceptionId,
-		ExceptionDepth:     et.exceptionDepth,
-		StackTraceElement:  makePStackTraceElementList(et.callstack),
+		ExceptionDepth:     1,
+		StackTraceElement:  makePStackTraceElementList(cs),
 	}
 
 	return exp
 }
 
-func makePStackTraceElementList(cs *withCallStack) []*pb.PStackTraceElement {
+func makePStackTraceElementList(cs []frame) []*pb.PStackTraceElement {
 	stList := make([]*pb.PStackTraceElement, 0)
 
-	if cs != nil {
-		f := cs.stackTrace()
-		for i := 0; i < len(f); i++ {
-			st := makePStackTraceElement(f[i])
-			stList = append(stList, st)
-		}
+	for i := 0; i < len(cs); i++ {
+		st := makePStackTraceElement(cs[i])
+		stList = append(stList, st)
 	}
 
 	return stList
@@ -474,9 +472,9 @@ func makePStackTraceElementList(cs *withCallStack) []*pb.PStackTraceElement {
 
 func makePStackTraceElement(f frame) *pb.PStackTraceElement {
 	aExp := &pb.PStackTraceElement{
-		ClassName:  "main",
+		ClassName:  f.moduleName,
 		FileName:   f.file,
-		LineNumber: int32(f.line),
+		LineNumber: f.line,
 		MethodName: f.funcName,
 	}
 

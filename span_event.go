@@ -23,7 +23,7 @@ type spanEvent struct {
 	asyncSeqGen   int32
 	apiId         int32
 	isTimeFixed   bool
-	callStack     *withCallStack
+	callStack     *errorCallStack
 }
 
 var asyncApiId = int32(0)
@@ -98,7 +98,7 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 	se.errorFuncId = id
 	se.errorString = e.Error()
 
-	se.callStack = WrapError(e)
+	se.callStack = genCallStack(e)
 	se.Annotations().AppendLong(AnnotationExceptionLinkId, se.parentSpan.exceptionId)
 
 }
