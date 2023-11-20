@@ -51,5 +51,9 @@
       "enable": true,
       "limitSize": 10
     }
+  },
+  "error": {
+    "traceCallStack": true,
+    "callStackDepth": 30
   }
 }

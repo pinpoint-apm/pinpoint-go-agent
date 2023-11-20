@@ -56,6 +56,8 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, true, c.Bool(CfgEnable), CfgEnable)
 			assert.Equal(t, false, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
 			assert.Equal(t, 1024, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
+			assert.Equal(t, false, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
+			assert.Equal(t, 32, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 		})
 	}
 }
@@ -95,6 +97,8 @@ func TestNewConfig_WithFunc(t *testing.T) {
 		WithEnable(false),
 		WithHttpUrlStatEnable(true),
 		WithHttpUrlStatLimitSize(2048),
+		WithErrorTraceCallStack(true),
+		WithErrorCallStackDepth(64),
 	}
 
 	tests := []struct {
@@ -135,6 +139,8 @@ func TestNewConfig_WithFunc(t *testing.T) {
 			assert.Equal(t, false, c.Bool(CfgEnable), CfgEnable)
 			assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
 			assert.Equal(t, 2048, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
+			assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
+			assert.Equal(t, 64, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 		})
 	}
 }
@@ -229,6 +235,8 @@ func TestNewConfig_ConfigFileYaml(t *testing.T) {
 			assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
 			assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
 			assert.Equal(t, 1234, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
+			assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
+			assert.Equal(t, 20, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 		})
 	}
 }
@@ -274,6 +282,8 @@ func TestNewConfig_ConfigFileJson(t *testing.T) {
 			assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
 			assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
 			assert.Equal(t, 10, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
+			assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
+			assert.Equal(t, 30, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 		})
 	}
 }
@@ -319,6 +329,8 @@ func TestNewConfig_ConfigFileProp(t *testing.T) {
 			assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
 			assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
 			assert.Equal(t, 10240, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
+			assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
+			assert.Equal(t, 40, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 		})
 	}
 }
@@ -413,6 +425,8 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 	os.Setenv("PINPOINT_GO_ENABLE", "false")
 	os.Setenv("PINPOINT_GO_HTTP_URLSTAT_ENABLE", "true")
 	os.Setenv("PINPOINT_GO_HTTP_URLSTAT_LIMITSIZE", "100")
+	os.Setenv("PINPOINT_GO_ERROR_TRACECALLSTACK", "true")
+	os.Setenv("PINPOINT_GO_ERROR_CALLSTACKDEPTH", "50")
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -444,6 +458,8 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 			assert.Equal(t, false, c.Bool(CfgEnable), CfgEnable)
 			assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
 			assert.Equal(t, 100, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
+			assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
+			assert.Equal(t, 50, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 		})
 	}
 }
@@ -503,6 +519,8 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 		"--pinpoint-http-urlstat-enable=true",
 		"--pinpoint-http-urlstat-limitsize=200",
 		"--app-arg5=5",
+		"--pinpoint-error-tracecallstack=true",
+		"--pinpoint-error-callstackdepth=100",
 	}
 
 	for _, tt := range tests {
@@ -536,6 +554,8 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 			assert.Equal(t, false, c.Bool(CfgEnable), CfgEnable)
 			assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
 			assert.Equal(t, 200, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
+			assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
+			assert.Equal(t, 100, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 		})
 	}
 }

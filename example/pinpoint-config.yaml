@@ -40,3 +40,6 @@ http:
   urlStat:
     enable: true
     limitSize: 1234
+error:
+  traceCallStack: true
+  callStackDepth: 20

@@ -35,3 +35,6 @@ activeProfile=real
 
 http.urlStat.enable=true
 http.urlStat.limitSize=10240
+
+error.traceCallStack=true
+error.callStackDepth=40
