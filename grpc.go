@@ -82,6 +82,7 @@ func (agentGrpcClient *agentGrpcClient) PingSession(ctx context.Context) (pb.Age
 type metaClient interface {
 	RequestApiMetaData(ctx context.Context, in *pb.PApiMetaData) (*pb.PResult, error)
 	RequestSqlMetaData(ctx context.Context, in *pb.PSqlMetaData) (*pb.PResult, error)
+	RequestSqlUidMetaData(ctx context.Context, in *pb.PSqlUidMetaData) (*pb.PResult, error)
 	RequestStringMetaData(ctx context.Context, in *pb.PStringMetaData) (*pb.PResult, error)
 	RequestExceptionMetaData(ctx context.Context, in *pb.PExceptionMetaData) (*pb.PResult, error)
 }
@@ -97,6 +98,11 @@ func (metaGrpcClient *metaGrpcClient) RequestApiMetaData(ctx context.Context, in
 
 func (metaGrpcClient *metaGrpcClient) RequestSqlMetaData(ctx context.Context, in *pb.PSqlMetaData) (*pb.PResult, error) {
 	result, err := metaGrpcClient.client.RequestSqlMetaData(ctx, in)
+	return result, err
+}
+
+func (metaGrpcClient *metaGrpcClient) RequestSqlUidMetaData(ctx context.Context, in *pb.PSqlUidMetaData) (*pb.PResult, error) {
+	result, err := metaGrpcClient.client.RequestSqlUidMetaData(ctx, in)
 	return result, err
 }
 
@@ -367,6 +373,45 @@ func (agentGrpc *agentGrpc) sendSqlMetadataWithRetry(sqlId int32, sql string) bo
 
 	for agentGrpc.agent.Enable() {
 		if err := agentGrpc.sendSqlMetadata(ctx, &sqlMeta); err == nil {
+			return true
+		}
+
+		if !agentGrpc.agent.config.offGrpc {
+			for retry := 1; agentGrpc.agent.Enable(); retry++ {
+				if waitUntilReady(agentGrpc.agentConn, backOffSleep(retry), "agent") {
+					break
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (agentGrpc *agentGrpc) sendSqlUidMetadata(ctx context.Context, in *pb.PSqlUidMetaData) error {
+	ctx, cancel := context.WithTimeout(ctx, agentGrpcTimeOut)
+	defer cancel()
+
+	_, err := agentGrpc.metaClient.RequestSqlUidMetaData(ctx, in)
+	if err != nil {
+		Log("grpc").Errorf("send sql uid metadata - %v", err)
+	}
+
+	return err
+}
+
+func (agentGrpc *agentGrpc) sendSqlUidMetadataWithRetry(sqlUid []byte, sql string) bool {
+	ctx := grpcMetadataContext(agentGrpc.agent, -1)
+	sqlUidMeta := pb.PSqlUidMetaData{
+		SqlUid: sqlUid,
+		Sql:    sql,
+	}
+
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("sql uid metadata: %s", sqlUidMeta.String())
+	}
+
+	for agentGrpc.agent.Enable() {
+		if err := agentGrpc.sendSqlUidMetadata(ctx, &sqlUidMeta); err == nil {
 			return true
 		}
 

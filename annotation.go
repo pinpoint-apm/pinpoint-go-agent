@@ -71,6 +71,21 @@ func (a *annotation) AppendIntStringString(key int32, i int32, s1 string, s2 str
 	})
 }
 
+func (a *annotation) AppendBytesStringString(key int32, bs []byte, s1 string, s2 string) {
+	a.list = append(a.list, &pb.PAnnotation{
+		Key: key,
+		Value: &pb.PAnnotationValue{
+			Field: &pb.PAnnotationValue_BytesStringStringValue{
+				BytesStringStringValue: &pb.PBytesStringStringValue{
+					BytesValue:   bs,
+					StringValue1: &wrappers.StringValue{Value: s1},
+					StringValue2: &wrappers.StringValue{Value: s2},
+				},
+			},
+		},
+	})
+}
+
 func (a *annotation) AppendLongIntIntByteByteString(key int32, l int64, i1 int32, i2 int32, b1 int32, b2 int32, s string) {
 	a.list = append(a.list, &pb.PAnnotation{
 		Key: key,

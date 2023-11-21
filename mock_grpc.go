@@ -26,6 +26,7 @@ func newTestAgent(config *Config) *agent {
 	}
 	a.errorCache, _ = lru.New(cacheSize)
 	a.sqlCache, _ = lru.New(cacheSize)
+	a.sqlUidCache, _ = lru.New(cacheSize)
 	a.apiCache, _ = lru.New(cacheSize)
 	a.config.offGrpc = true
 
@@ -61,6 +62,12 @@ func (metaGrpcClient *mockMetaGrpcClient) RequestApiMetaData(ctx context.Context
 func (metaGrpcClient *mockMetaGrpcClient) RequestSqlMetaData(ctx context.Context, in *pb.PSqlMetaData) (*pb.PResult, error) {
 	_ = metaGrpcClient.client.EXPECT().RequestSqlMetaData(gomock.Any(), gomock.Any()).Return(&pb.PResult{Success: true, Message: "success"}, nil)
 	return metaGrpcClient.client.RequestSqlMetaData(ctx, in)
+}
+
+func (metaGrpcClient *mockMetaGrpcClient) RequestSqlUidMetaData(ctx context.Context, in *pb.PSqlUidMetaData) (*pb.PResult, error) {
+	//_ = metaGrpcClient.client.EXPECT().RequestSqlMetaData(gomock.Any(), gomock.Any()).Return(&pb.PResult{Success: true, Message: "success"}, nil)
+	//return metaGrpcClient.client.RequestSqlUidMetaData(ctx, in)
+	return nil, nil
 }
 
 func (metaGrpcClient *mockMetaGrpcClient) RequestStringMetaData(ctx context.Context, in *pb.PStringMetaData) (*pb.PResult, error) {

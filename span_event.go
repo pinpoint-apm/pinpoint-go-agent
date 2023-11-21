@@ -123,8 +123,16 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 
 	normalizer := newSqlNormalizer(sql)
 	nsql, param := normalizer.run()
-	id := se.parentSpan.agent.cacheSql(nsql)
-	se.annotations.AppendIntStringString(AnnotationSqlId, id, param, args)
+
+	if se.parentSpan.agent.config.sqlCollectStat {
+		if id := se.parentSpan.agent.cacheSqlUid(nsql); id != nil {
+			se.annotations.AppendBytesStringString(AnnotationSqlUid, id, param, args)
+		}
+	} else {
+		if id := se.parentSpan.agent.cacheSql(nsql); id != 0 {
+			se.annotations.AppendIntStringString(AnnotationSqlId, id, param, args)
+		}
+	}
 }
 
 func (se *spanEvent) Annotations() Annotation {

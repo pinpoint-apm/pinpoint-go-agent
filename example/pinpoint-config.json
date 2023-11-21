@@ -55,5 +55,12 @@
   "error": {
     "traceCallStack": true,
     "callStackDepth": 30
+  },
+  "sql": {
+    "traceBindValue": false,
+    "maxBindValueSize": 256,
+    "traceCommit": false,
+    "traceRollback": false,
+    "collectStat": true
   }
 }

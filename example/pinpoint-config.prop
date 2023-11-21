@@ -38,3 +38,9 @@ http.urlStat.limitSize=10240
 
 error.traceCallStack=true
 error.callStackDepth=40
+
+sql.traceBindValue=false
+sql.maxBindValueSize=128
+sql.traceCommit=false
+sql.traceRollback=false
+sql.collectStat=true

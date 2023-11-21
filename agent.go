@@ -2,7 +2,6 @@ package pinpoint
 
 import (
 	"errors"
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"io"
 	"strconv"
 	"sync"
@@ -10,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	lru "github.com/hashicorp/golang-lru"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 )
 
 func init() {
@@ -38,12 +39,13 @@ type agent struct {
 	statChan    chan *pb.PStatMessage
 	sampler     traceSampler
 
-	errorCache *lru.Cache
-	errorIdGen int32
-	sqlCache   *lru.Cache
-	sqlIdGen   int32
-	apiCache   *lru.Cache
-	apiIdGen   int32
+	errorCache  *lru.Cache
+	errorIdGen  int32
+	sqlCache    *lru.Cache
+	sqlIdGen    int32
+	sqlUidCache *lru.Cache
+	apiCache    *lru.Cache
+	apiIdGen    int32
 
 	config   *Config
 	wg       sync.WaitGroup
@@ -64,6 +66,11 @@ type stringMeta struct {
 
 type sqlMeta struct {
 	id  int32
+	sql string
+}
+
+type sqlUidMeta struct {
+	uid []byte
 	sql string
 }
 
@@ -140,6 +147,9 @@ func NewAgent(config *Config) (Agent, error) {
 		return NoopAgent(), err
 	}
 	if agent.sqlCache, err = lru.New(cacheSize); err != nil {
+		return NoopAgent(), err
+	}
+	if agent.sqlUidCache, err = lru.New(cacheSize); err != nil {
 		return NoopAgent(), err
 	}
 	if agent.apiCache, err = lru.New(cacheSize); err != nil {
@@ -399,6 +409,10 @@ func (agent *agent) sendMetaWorker() {
 			sql := md.(sqlMeta)
 			success = agent.agentGrpc.sendSqlMetadataWithRetry(sql.id, sql.sql)
 			break
+		case sqlUidMeta:
+			sql := md.(sqlUidMeta)
+			success = agent.agentGrpc.sendSqlUidMetadataWithRetry(sql.uid, sql.sql)
+			break
 		case exceptionMeta:
 			em := md.(exceptionMeta)
 			success = agent.agentGrpc.sendExceptionMetadataWithRetry(&em)
@@ -424,6 +438,9 @@ func (agent *agent) deleteMetaCache(md interface{}) {
 		break
 	case sqlMeta:
 		agent.sqlCache.Remove(md.(sqlMeta).sql)
+		break
+	case sqlUidMeta:
+		agent.sqlUidCache.Remove(md.(sqlUidMeta).sql)
 		break
 	case exceptionMeta:
 		break
@@ -485,6 +502,28 @@ func (agent *agent) cacheSql(sql string) int32 {
 	agent.tryEnqueueMeta(md)
 
 	Log("agent").Infof("cache sql id: %d, %s", id, sql)
+	return id
+}
+
+func (agent *agent) cacheSqlUid(sql string) []byte {
+	if !agent.enable {
+		return nil
+	}
+
+	if v, ok := agent.sqlUidCache.Peek(sql); ok {
+		return v.([]byte)
+	}
+
+	uuid, _ := uuid.NewRandom()
+	id, _ := uuid.MarshalBinary()
+	agent.sqlUidCache.Add(sql, id)
+
+	md := sqlUidMeta{}
+	md.uid = id
+	md.sql = sql
+	agent.tryEnqueueMeta(md)
+
+	Log("agent").Infof("cache sql uid: %s, %s", uuid.String(), sql)
 	return id
 }
 
@@ -652,6 +691,7 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 	}
 	agent.errorCache, _ = lru.New(cacheSize)
 	agent.sqlCache, _ = lru.New(cacheSize)
+	agent.sqlUidCache, _ = lru.New(cacheSize)
 	agent.apiCache, _ = lru.New(cacheSize)
 	agent.newSampler()
 

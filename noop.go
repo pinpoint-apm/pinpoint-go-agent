@@ -215,6 +215,8 @@ func (a *noopAnnotation) AppendStringString(key int32, s1 string, s2 string) {}
 
 func (a *noopAnnotation) AppendIntStringString(key int32, i int32, s1 string, s2 string) {}
 
+func (a *noopAnnotation) AppendBytesStringString(key int32, b []byte, s1 string, s2 string) {}
+
 func (a *noopAnnotation) AppendLongIntIntByteByteString(key int32, l int64, i1 int32, i2 int32, b1 int32, b2 int32, s string) {
 }
 

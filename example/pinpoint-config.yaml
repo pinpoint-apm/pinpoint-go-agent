@@ -43,3 +43,9 @@ http:
 error:
   traceCallStack: true
   callStackDepth: 20
+sql:
+  traceBindValue: false
+  maxBindValueSize: 512
+  traceCommit: false
+  traceRollback: false
+  collectStat: true

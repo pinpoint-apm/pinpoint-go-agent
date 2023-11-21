@@ -162,6 +162,9 @@ type Annotation interface {
 	// AppendIntStringString records an integer value and two string values to annotation.
 	AppendIntStringString(key int32, i int32, s1 string, s2 string)
 
+	// AppendBytesStringString records an array of byte and two string values to annotation.
+	AppendBytesStringString(key int32, b []byte, s1 string, s2 string)
+
 	// AppendLongIntIntByteByteString records a long integer value, two integer value, two byte value and a string value to annotation.
 	AppendLongIntIntByteByteString(key int32, l int64, i1 int32, i2 int32, b1 int32, b2 int32, s string)
 }
@@ -240,6 +243,7 @@ const (
 	AnnotationArgs0               = -1
 	AnnotationApi                 = 12
 	AnnotationSqlId               = 20
+	AnnotationSqlUid              = 25
 	AnnotationHttpUrl             = 40
 	AnnotationHttpParam           = 41
 	AnnotationHttpCookie          = 45
