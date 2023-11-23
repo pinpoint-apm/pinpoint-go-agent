@@ -94,12 +94,13 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 		errName = "error"
 	}
 
-	id := se.parentSpan.agent.cacheError(errName)
+	id := se.agent().cacheError(errName)
 	se.errorFuncId = id
 	se.errorString = e.Error()
 
-	if se.parentSpan.agent.config.errorTraceCallStack {
-		se.callStack = dumpCallStack(se.errorString, se.parentSpan.agent.config.errorCallStackDepth)
+	cfg := se.config()
+	if cfg.errorTraceCallStack {
+		se.callStack = dumpCallStack(se.errorString, cfg.errorCallStackDepth)
 		se.Annotations().AppendLong(AnnotationExceptionLinkId, se.parentSpan.exceptionId)
 	}
 }
@@ -124,12 +125,13 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	normalizer := newSqlNormalizer(sql)
 	nsql, param := normalizer.run()
 
-	if se.parentSpan.agent.config.sqlCollectStat {
-		if id := se.parentSpan.agent.cacheSqlUid(nsql); id != nil {
+	agent := se.agent()
+	if se.config().sqlCollectStat {
+		if id := agent.cacheSqlUid(nsql); id != nil {
 			se.annotations.AppendBytesStringString(AnnotationSqlUid, id, param, args)
 		}
 	} else {
-		if id := se.parentSpan.agent.cacheSql(nsql); id != 0 {
+		if id := agent.cacheSql(nsql); id != 0 {
 			se.annotations.AppendIntStringString(AnnotationSqlId, id, param, args)
 		}
 	}
@@ -144,4 +146,12 @@ func (se *spanEvent) FixDuration(start time.Time, end time.Time) {
 	se.startElapsed = start.Sub(se.parentSpan.startTime).Milliseconds()
 	se.endElapsed = end.Sub(start).Milliseconds()
 	se.isTimeFixed = true
+}
+
+func (se *spanEvent) agent() *agent {
+	return se.parentSpan.agent
+}
+
+func (se *spanEvent) config() *Config {
+	return se.agent().config
 }

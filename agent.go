@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	lru "github.com/hashicorp/golang-lru"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	"github.com/spaolacci/murmur3"
 )
 
 func init() {
@@ -475,9 +475,10 @@ func (agent *agent) cacheError(errorName string) int32 {
 	id := atomic.AddInt32(&agent.errorIdGen, 1)
 	agent.errorCache.Add(errorName, id)
 
-	md := stringMeta{}
-	md.id = id
-	md.funcName = errorName
+	md := stringMeta{
+		id:       id,
+		funcName: errorName,
+	}
 	agent.tryEnqueueMeta(md)
 
 	Log("agent").Infof("cache error id: %d, %s", id, errorName)
@@ -496,9 +497,10 @@ func (agent *agent) cacheSql(sql string) int32 {
 	id := atomic.AddInt32(&agent.sqlIdGen, 1)
 	agent.sqlCache.Add(sql, id)
 
-	md := sqlMeta{}
-	md.id = id
-	md.sql = sql
+	md := sqlMeta{
+		id:  id,
+		sql: sql,
+	}
 	agent.tryEnqueueMeta(md)
 
 	Log("agent").Infof("cache sql id: %d, %s", id, sql)
@@ -514,17 +516,19 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 		return v.([]byte)
 	}
 
-	uuid, _ := uuid.NewRandom()
-	id, _ := uuid.MarshalBinary()
-	agent.sqlUidCache.Add(sql, id)
+	hash := murmur3.New128()
+	hash.Write([]byte(sql))
+	uid := hash.Sum(nil)
+	agent.sqlUidCache.Add(sql, uid)
 
-	md := sqlUidMeta{}
-	md.uid = id
-	md.sql = sql
+	md := sqlUidMeta{
+		uid: uid,
+		sql: sql,
+	}
 	agent.tryEnqueueMeta(md)
 
-	Log("agent").Infof("cache sql uid: %s, %s", uuid.String(), sql)
-	return id
+	Log("agent").Infof("cache sql uid: %#v, %s", uid, sql)
+	return uid
 }
 
 func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {

@@ -203,7 +203,8 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
-	if span.eventSequence >= span.agent.config.spanMaxEventSequence || span.eventDepth >= span.agent.config.spanMaxEventDepth {
+	cfg := span.config()
+	if span.eventSequence >= cfg.spanMaxEventSequence || span.eventDepth >= cfg.spanMaxEventDepth {
 		span.eventOverflow++
 		if !span.eventOverflowLog {
 			Log("span").Warnf("callStack maximum depth/sequence exceeded. (depth=%d, seq=%d)", span.eventDepth, span.eventSequence)
@@ -376,7 +377,7 @@ func (span *span) SetLogging(logInfo int32) {
 }
 
 func (span *span) collectUrlStat(stat *UrlStatEntry) {
-	if span.agent.config.collectUrlStat {
+	if span.config().collectUrlStat {
 		if stat.Url == "" {
 			stat.Url = "UNKNOWN_URL"
 		}
@@ -401,6 +402,10 @@ func (span *span) JsonString() []byte {
 	m["Annotations"] = span.annotations.list
 	b, _ := json.Marshal(m)
 	return b
+}
+
+func (span *span) config() *Config {
+	return span.agent.config
 }
 
 type stack struct {
