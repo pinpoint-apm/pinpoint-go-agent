@@ -22,4 +22,5 @@ require (
 	google.golang.org/grpc v1.49.0
 	google.golang.org/protobuf v1.28.1
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
+	github.com/pkg/errors v0.9.1
 )

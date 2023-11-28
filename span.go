@@ -25,8 +25,7 @@ const (
 )
 
 var (
-	asyncIdGen     int32 = 0
-	exceptionIdGen int64 = 0
+	asyncIdGen int32 = 0
 )
 
 type span struct {
@@ -66,7 +65,6 @@ type span struct {
 	eventStack    *stack
 	appendLock    sync.Mutex
 	urlStat       *UrlStatEntry
-	exceptionId   int64
 }
 
 func generateSpanId() int64 {
@@ -85,7 +83,6 @@ func defaultSpan() *span {
 	span.goroutineId = 0
 	span.asyncId = noneAsyncId
 	span.eventStack = &stack{}
-	span.exceptionId = atomic.AddInt64(&exceptionIdGen, 1)
 
 	return &span
 }

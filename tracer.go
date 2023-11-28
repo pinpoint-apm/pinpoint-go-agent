@@ -258,7 +258,7 @@ const (
 	AnnotationMongoCollectionInfo = 151
 	AnnotationEsDsl               = 173
 	AnnotationHbaseClientParams   = 320
-	AnnotationExceptionLinkId     = -52
+	AnnotationExceptionChainId    = -52
 )
 
 const (

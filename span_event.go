@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"sync/atomic"
 	"time"
 )
 
@@ -23,10 +24,14 @@ type spanEvent struct {
 	asyncSeqGen   int32
 	apiId         int32
 	isTimeFixed   bool
+	exceptionId   int64
 	callStack     *errorWithCallStack
 }
 
-var asyncApiId = int32(0)
+var (
+	asyncApiId     int32 = 0
+	exceptionIdGen int64 = 0
+)
 
 func defaultSpanEvent(span *span, operationName string) *spanEvent {
 	se := spanEvent{}
@@ -100,8 +105,9 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 
 	cfg := se.config()
 	if cfg.errorTraceCallStack {
-		se.callStack = dumpCallStack(se.errorString, cfg.errorCallStackDepth)
-		se.Annotations().AppendLong(AnnotationExceptionLinkId, se.parentSpan.exceptionId)
+		se.callStack = traceCallStack(e, cfg.errorCallStackDepth)
+		se.exceptionId = atomic.AddInt64(&exceptionIdGen, 1)
+		se.Annotations().AppendLong(AnnotationExceptionChainId, se.exceptionId)
 	}
 }
 

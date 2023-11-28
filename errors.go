@@ -4,7 +4,14 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unsafe"
+
+	pkgError "github.com/pkg/errors"
 )
+
+type pkgErrorStackTracer interface {
+	StackTrace() pkgError.StackTrace
+}
 
 type errorWithCallStack struct {
 	errorMessage string
@@ -12,14 +19,22 @@ type errorWithCallStack struct {
 	callstack    []uintptr
 }
 
-func dumpCallStack(errMsg string, depth int) *errorWithCallStack {
-	pcs := make([]uintptr, depth+3)
-	n := runtime.Callers(3, pcs)
+func traceCallStack(e error, depth int) *errorWithCallStack {
+	var callstack []uintptr
+
+	if err, ok := e.(pkgErrorStackTracer); ok {
+		st := err.StackTrace()
+		callstack = *(*[]uintptr)(unsafe.Pointer(&st))
+	} else {
+		pcs := make([]uintptr, depth+3)
+		n := runtime.Callers(3, pcs)
+		callstack = pcs[0:n]
+	}
 
 	return &errorWithCallStack{
-		errorMessage: errMsg,
+		errorMessage: e.Error(),
 		errorTime:    time.Now(),
-		callstack:    pcs[0:n],
+		callstack:    callstack,
 	}
 }
 

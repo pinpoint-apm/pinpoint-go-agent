@@ -564,7 +564,7 @@ func (agent *agent) enqueueExceptionMeta(span *span) {
 	for _, se := range span.spanEvents {
 		if se.callStack != nil {
 			exps = append(exps, &exception{
-				exceptionId: span.exceptionId,
+				exceptionId: se.exceptionId,
 				callstack:   se.callStack,
 			})
 		}
