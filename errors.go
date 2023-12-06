@@ -60,14 +60,14 @@ func splitName(fullName string) (string, string) {
 }
 
 type errorChain struct {
-	ecs         *errorWithCallStack
+	callstack   *errorWithCallStack
 	exceptionId int64
 }
 
 func (span *span) findError(err error) *errorChain {
-	for _, ec := range span.errorChains {
-		if ec.ecs.err == err {
-			return ec
+	for _, chain := range span.errorChains {
+		if chain.callstack.err == err {
+			return chain
 		}
 	}
 	return nil
@@ -87,6 +87,7 @@ func (span *span) traceCallStack(err error, depth int) int64 {
 			if !ok2 {
 				break
 			}
+
 			e = c.Cause()
 			if ec := span.findError(e); ec != nil {
 				eid = ec.exceptionId
@@ -105,12 +106,16 @@ func (span *span) traceCallStack(err error, depth int) int64 {
 	if eid == 0 {
 		eid = atomic.AddInt64(&exceptionIdGen, 1)
 	}
-	ecs := &errorWithCallStack{
-		err:       err,
-		errorTime: time.Now(),
-		callstack: callstack,
-	}
 
-	span.errorChains = append(span.errorChains, &errorChain{ecs: ecs, exceptionId: eid})
+	chain := &errorChain{
+		callstack: &errorWithCallStack{
+			err:       err,
+			errorTime: time.Now(),
+			callstack: callstack,
+		},
+		exceptionId: eid,
+	}
+	span.errorChains = append(span.errorChains, chain)
+
 	return eid
 }
