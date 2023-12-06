@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -13,29 +14,14 @@ type pkgErrorStackTracer interface {
 	StackTrace() pkgError.StackTrace
 }
 
-type errorWithCallStack struct {
-	errorMessage string
-	errorTime    time.Time
-	callstack    []uintptr
+type causer interface {
+	Cause() error
 }
 
-func traceCallStack(e error, depth int) *errorWithCallStack {
-	var callstack []uintptr
-
-	if err, ok := e.(pkgErrorStackTracer); ok {
-		st := err.StackTrace()
-		callstack = *(*[]uintptr)(unsafe.Pointer(&st))
-	} else {
-		pcs := make([]uintptr, depth+3)
-		n := runtime.Callers(3, pcs)
-		callstack = pcs[0:n]
-	}
-
-	return &errorWithCallStack{
-		errorMessage: e.Error(),
-		errorTime:    time.Now(),
-		callstack:    callstack,
-	}
+type errorWithCallStack struct {
+	err       error
+	errorTime time.Time
+	callstack []uintptr
 }
 
 func (e *errorWithCallStack) stackTrace() []frame {
@@ -71,4 +57,60 @@ func newFrame(f uintptr) frame {
 func splitName(fullName string) (string, string) {
 	lastIdx := strings.LastIndex(fullName, ".")
 	return fullName[:lastIdx], fullName[lastIdx+1:]
+}
+
+type errorChain struct {
+	ecs         *errorWithCallStack
+	exceptionId int64
+}
+
+func (span *span) findError(err error) *errorChain {
+	for _, ec := range span.errorChains {
+		if ec.ecs.err == err {
+			return ec
+		}
+	}
+	return nil
+}
+
+func (span *span) traceCallStack(err error, depth int) int64 {
+	var callstack []uintptr
+	var eid = int64(0)
+
+	if pkgErr, ok := err.(pkgErrorStackTracer); ok {
+		if ec := span.findError(err); ec != nil {
+			return ec.exceptionId
+		}
+
+		for e := err; e != nil; {
+			c, ok2 := e.(causer)
+			if !ok2 {
+				break
+			}
+			e = c.Cause()
+			if ec := span.findError(e); ec != nil {
+				eid = ec.exceptionId
+				break
+			}
+		}
+
+		st := pkgErr.StackTrace()
+		callstack = *(*[]uintptr)(unsafe.Pointer(&st))
+	} else {
+		pcs := make([]uintptr, depth+3)
+		n := runtime.Callers(3, pcs)
+		callstack = pcs[0:n]
+	}
+
+	if eid == 0 {
+		eid = atomic.AddInt64(&exceptionIdGen, 1)
+	}
+	ecs := &errorWithCallStack{
+		err:       err,
+		errorTime: time.Now(),
+		callstack: callstack,
+	}
+
+	span.errorChains = append(span.errorChains, &errorChain{ecs: ecs, exceptionId: eid})
+	return eid
 }

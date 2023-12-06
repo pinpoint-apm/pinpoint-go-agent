@@ -65,6 +65,7 @@ type span struct {
 	eventStack    *stack
 	appendLock    sync.Mutex
 	urlStat       *UrlStatEntry
+	errorChains   []*errorChain
 }
 
 func generateSpanId() int64 {
