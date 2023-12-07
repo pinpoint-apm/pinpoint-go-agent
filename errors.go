@@ -73,49 +73,76 @@ func (span *span) findError(err error) *errorChain {
 	return nil
 }
 
-func (span *span) traceCallStack(err error, depth int) int64 {
-	var callstack []uintptr
-	var eid = int64(0)
-
-	if pkgErr, ok := err.(pkgErrorStackTracer); ok {
+func (span *span) getExceptionChainId(err error) (int64, bool) {
+	if _, ok := err.(pkgErrorStackTracer); ok {
 		if ec := span.findError(err); ec != nil {
-			return ec.exceptionId
+			return ec.exceptionId, false
 		}
 
 		for e := err; e != nil; {
-			c, ok2 := e.(causer)
-			if !ok2 {
-				break
-			}
-
-			e = c.Cause()
-			if ec := span.findError(e); ec != nil {
-				eid = ec.exceptionId
+			if c, ok := e.(causer); ok {
+				e = c.Cause()
+				if ec := span.findError(e); ec != nil {
+					return ec.exceptionId, true
+				}
+			} else {
 				break
 			}
 		}
-
-		st := pkgErr.StackTrace()
-		callstack = *(*[]uintptr)(unsafe.Pointer(&st))
-	} else {
-		pcs := make([]uintptr, depth+3)
-		n := runtime.Callers(3, pcs)
-		callstack = pcs[0:n]
 	}
 
-	if eid == 0 {
-		eid = atomic.AddInt64(&exceptionIdGen, 1)
-	}
+	return atomic.AddInt64(&exceptionIdGen, 1), true
+}
 
-	chain := &errorChain{
-		callstack: &errorWithCallStack{
-			err:       err,
-			errorTime: time.Now(),
-			callstack: callstack,
-		},
-		exceptionId: eid,
-	}
-	span.errorChains = append(span.errorChains, chain)
+func (span *span) addCauserCallStack(err error, eid int64) {
+	for e := err; e != nil; {
+		c, ok := e.(causer)
+		if !ok {
+			break
+		}
 
+		e = c.Cause()
+		if t := span.findError(e); t == nil {
+			if pkgErr, ok := e.(pkgErrorStackTracer); ok {
+				st := pkgErr.StackTrace()
+				chain := &errorChain{
+					callstack: &errorWithCallStack{
+						err:       e,
+						errorTime: time.Now(),
+						callstack: *(*[]uintptr)(unsafe.Pointer(&st)),
+					},
+					exceptionId: eid,
+				}
+				span.errorChains = append(span.errorChains, chain)
+			}
+		}
+	}
+}
+
+func (span *span) traceCallStack(err error, depth int) int64 {
+	var callstack []uintptr
+
+	eid, newId := span.getExceptionChainId(err)
+	if newId {
+		if pkgErr, ok := err.(pkgErrorStackTracer); ok {
+			span.addCauserCallStack(err, eid)
+			st := pkgErr.StackTrace()
+			callstack = *(*[]uintptr)(unsafe.Pointer(&st))
+		} else {
+			pcs := make([]uintptr, depth+3)
+			n := runtime.Callers(3, pcs)
+			callstack = pcs[0:n]
+		}
+
+		chain := &errorChain{
+			callstack: &errorWithCallStack{
+				err:       err,
+				errorTime: time.Now(),
+				callstack: callstack,
+			},
+			exceptionId: eid,
+		}
+		span.errorChains = append(span.errorChains, chain)
+	}
 	return eid
 }
