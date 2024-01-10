@@ -539,3 +539,13 @@ Http.UrlStat.LimitSize option sets the limit size of the URLs to be collected.
 * type: int
 * default: 1024
 * dynamic
+
+### Http.UrlStat.WithMethod
+Http.UrlStat.WithMethod option adds http method as prefix to url string key.
+
+* --pinpoint-http-urlstat-withmethod
+* PINPOINT_GO_HTTP_URLSTAT_WITHMETHOD
+* WithHttpUrlStatWithMethod()
+* type: bool
+* default: false
+* dynamic
