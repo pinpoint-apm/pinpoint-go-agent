@@ -560,21 +560,10 @@ func (agent *agent) enqueueExceptionMeta(span *span) {
 		return
 	}
 
-	exps := make([]*exception, 0)
-	for _, ec := range span.errorChains {
-		exps = append(exps, &exception{
-			exceptionId: ec.exceptionId,
-			callstack:   ec.callstack,
-		})
-	}
-	if len(exps) < 1 {
-		return
-	}
-
 	md := exceptionMeta{
 		txId:       span.txId,
 		spanId:     span.spanId,
-		exceptions: exps,
+		exceptions: span.errorChains,
 	}
 	if span.urlStat != nil {
 		md.uriTemplate = span.urlStat.Url

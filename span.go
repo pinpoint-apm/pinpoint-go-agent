@@ -65,7 +65,7 @@ type span struct {
 	eventStack    *stack
 	appendLock    sync.Mutex
 	urlStat       *UrlStatEntry
-	errorChains   []*errorChain
+	errorChains   []*exception
 }
 
 func generateSpanId() int64 {
@@ -84,6 +84,8 @@ func defaultSpan() *span {
 	span.goroutineId = 0
 	span.asyncId = noneAsyncId
 	span.eventStack = &stack{}
+	span.spanEvents = make([]*spanEvent, 0)
+	span.errorChains = make([]*exception, 0)
 
 	return &span
 }
@@ -115,10 +117,12 @@ func (span *span) EndSpan() {
 		Log("span").Warnf("abnormal span - has unclosed event")
 	}
 
-	if !span.agent.enqueueSpan(span) {
-		Log("span").Tracef("span channel - max capacity reached or closed")
+	if span.agent.enqueueSpan(span) {
+		if len(span.errorChains) > 0 {
+			span.agent.enqueueExceptionMeta(span)
+		}
 	} else {
-		span.agent.enqueueExceptionMeta(span)
+		Log("span").Tracef("span channel - max capacity reached or closed")
 	}
 
 	if span.urlStat != nil {

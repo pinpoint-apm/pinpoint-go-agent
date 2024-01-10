@@ -59,12 +59,7 @@ func splitName(fullName string) (string, string) {
 	return fullName[:lastIdx], fullName[lastIdx+1:]
 }
 
-type errorChain struct {
-	callstack   *errorWithCallStack
-	exceptionId int64
-}
-
-func (span *span) findError(err error) *errorChain {
+func (span *span) findError(err error) *exception {
 	for _, chain := range span.errorChains {
 		if chain.callstack.err == err {
 			return chain
@@ -105,7 +100,7 @@ func (span *span) addCauserCallStack(err error, eid int64) {
 		if t := span.findError(e); t == nil {
 			if pkgErr, ok := e.(pkgErrorStackTracer); ok {
 				st := pkgErr.StackTrace()
-				chain := &errorChain{
+				chain := &exception{
 					callstack: &errorWithCallStack{
 						err:       e,
 						errorTime: time.Now(),
@@ -134,7 +129,7 @@ func (span *span) traceCallStack(err error, depth int) int64 {
 			callstack = pcs[0:n]
 		}
 
-		chain := &errorChain{
+		chain := &exception{
 			callstack: &errorWithCallStack{
 				err:       err,
 				errorTime: time.Now(),
