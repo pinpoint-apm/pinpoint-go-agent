@@ -1,5 +1,5 @@
 package pinpoint
 
 const (
-	Version = "1.4.0"
+	Version = "1.4.1"
 )
