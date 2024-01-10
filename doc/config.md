@@ -364,7 +364,7 @@ Log.MaxSize option sets the max size of log file. The unit of value is MB.
 ### Error.TraceCallStack
 Error.TraceCallStack option enables trace callstack dump when a error occurs.
 
-* --pinpoint-error-TraceCallStack
+* --pinpoint-error-tracecallstack
 * PINPOINT_GO_ERROR_TRACECALLSTACK
 * WithErrorTraceCallStack()
 * type: bool
