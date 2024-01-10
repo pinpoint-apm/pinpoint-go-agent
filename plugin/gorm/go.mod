@@ -3,9 +3,9 @@ module github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm
 go 1.15
 
 require (
-	github.com/pinpoint-apm/pinpoint-go-agent v1.3.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.3.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql v1.3.0
+	github.com/pinpoint-apm/pinpoint-go-agent v1.4.0
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.4.0
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql v1.4.0
 	gorm.io/driver/mysql v1.3.3
 	gorm.io/gorm v1.23.4
 )

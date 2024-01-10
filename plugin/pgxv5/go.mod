@@ -4,8 +4,8 @@ go 1.18
 
 require (
 	github.com/jackc/pgx/v5 v5.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent v1.3.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.3.0
+	github.com/pinpoint-apm/pinpoint-go-agent v1.4.0
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.4.0
 )
 
 require (
@@ -26,9 +26,11 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/pelletier/go-toml v1.9.5 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.1 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/shirou/gopsutil/v3 v3.22.7 // indirect
 	github.com/sirupsen/logrus v1.8.1 // indirect
+	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spf13/afero v1.8.2 // indirect
 	github.com/spf13/cast v1.5.0 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
