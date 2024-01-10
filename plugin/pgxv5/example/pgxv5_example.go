@@ -14,7 +14,6 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5"
-	pkgErr "github.com/pkg/errors"
 )
 
 var connUrl = "postgresql://testuser:p123@localhost/testdb?sslmode=disable"
@@ -78,9 +77,6 @@ func tableCount(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Fatalf("sql error: %v", err)
 	}
-
-	pkgErr := pkgErr.New("table count error")
-	tracer.SpanEvent().SetError(pkgErr)
 
 	fmt.Println("number of entries in pg_catalog.pg_tables", count)
 	io.WriteString(w, "success")
@@ -314,49 +310,12 @@ func txStdSql(ctx context.Context, db *sql.DB) {
 	}
 }
 
-func e1(ctx context.Context) error {
-	tracer := pinpoint.FromContext(ctx)
-	tracer.NewSpanEvent("e1")
-	defer tracer.EndSpanEvent()
-
-	e := pkgErr.Wrap(e2(ctx), "outer")
-	tracer.SpanEvent().SetError(e, "error 1")
-	return e
-}
-
-func e2(ctx context.Context) error {
-	tracer := pinpoint.FromContext(ctx)
-	tracer.NewSpanEvent("e2")
-	defer tracer.EndSpanEvent()
-
-	e := pkgErr.Wrap(e3(ctx), "middle")
-	tracer.SpanEvent().SetError(e, "error 2")
-	return e
-}
-
-func e3(ctx context.Context) error {
-	tracer := pinpoint.FromContext(ctx)
-	tracer.NewSpanEvent("e3")
-	defer tracer.EndSpanEvent()
-
-	e := pkgErr.New("inner")
-	tracer.SpanEvent().SetError(e, "error 3")
-	return e
-}
-
-func wrapError(w http.ResponseWriter, r *http.Request) {
-	e1(r.Context())
-	io.WriteString(w, "wrap error")
-}
-
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoPgxv5Test"),
 		pinpoint.WithAgentId("GoPgxv5TestId"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 		pinpoint.WithLogLevel("debug"),
-		pinpoint.WithErrorTraceCallStack(true),
-		pinpoint.WithSQLCollectStat(true),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)
@@ -369,7 +328,6 @@ func main() {
 	http.HandleFunc("/query", pphttp.WrapHandlerFunc(query))
 	http.HandleFunc("/batch", pphttp.WrapHandlerFunc(batch))
 	http.HandleFunc("/query_std", pphttp.WrapHandlerFunc(queryStdSql))
-	http.HandleFunc("/wrap_error", pphttp.WrapHandlerFunc(wrapError))
 
 	http.ListenAndServe(":9002", nil)
 }
