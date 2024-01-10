@@ -29,6 +29,8 @@ func (m *distributedTracingContextWriterConsumer) Set(key string, value string) 
 	})
 }
 
+// SendMessageContext produces a given message with the context.
+// It is possible to trace only when the given context contains a pinpoint.Tracer.
 func (p *syncProducer) SendMessageContext(ctx context.Context, msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
 	defer newProducerTracer(ctx, p.addrs, msg).EndSpanEvent()
 	partition, offset, err = p.SyncProducer.SendMessage(msg)
@@ -39,6 +41,8 @@ func (p *syncProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32
 	return p.SendMessageContext(p.ctx, msg)
 }
 
+// SendMessagesContext produces a given set of messages with the context.
+// It is possible to trace only when the given context contains a pinpoint.Tracer.
 func (p *syncProducer) SendMessagesContext(ctx context.Context, msgs []*sarama.ProducerMessage) error {
 	spans := make([]pinpoint.Tracer, len(msgs))
 	for i, msg := range msgs {

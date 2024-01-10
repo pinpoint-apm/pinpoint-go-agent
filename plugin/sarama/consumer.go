@@ -8,28 +8,28 @@
 //
 // ConsumePartition example:
 //
-//  ctx := ppsarama.NewContext(context.Background(), broker)
-//  pc, _ := consumer.ConsumePartition(topic, partition, offset)
-//  for msg := range pc.Messages() {
-//    ppsarama.ConsumeMessageContext(processMessage, ctx, msg)
-//  }
+//	ctx := ppsarama.NewContext(context.Background(), broker)
+//	pc, _ := consumer.ConsumePartition(topic, partition, offset)
+//	for msg := range pc.Messages() {
+//	  ppsarama.ConsumeMessageContext(processMessage, ctx, msg)
+//	}
 //
 // ConsumerGroupHandler example:
 //
-//  func (h exampleConsumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-//    ctx := sess.Context()
-//    for msg := range claim.Messages() {
-//      _ = ppsarama.ConsumeMessageContext(process, ctx, msg)
-//    }
+//	func (h exampleConsumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+//	  ctx := sess.Context()
+//	  for msg := range claim.Messages() {
+//	    _ = ppsarama.ConsumeMessageContext(process, ctx, msg)
+//	  }
 //
 // ConsumeMessageContext passes a context added pinpoint.Tracer to HandlerContextFunc.
 // In HandlerContextFunc, this tracer can be obtained by using the pinpoint.FromContext function.
 //
-//  func process(ctx context.Context, msg *sarama.ConsumerMessage) error {
-//    tracer := pinpoint.FromContext(ctx)
-//    defer tracer.NewSpanEvent("process").EndSpanEvent()
+//	func process(ctx context.Context, msg *sarama.ConsumerMessage) error {
+//	  tracer := pinpoint.FromContext(ctx)
+//	  defer tracer.NewSpanEvent("process").EndSpanEvent()
 //
-//    fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
+//	  fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
 //
 // To instrument a Kafka producer, use NewSyncProducer or NewAsyncProducer.
 //
@@ -39,8 +39,12 @@
 // It is necessary to pass the context containing the pinpoint.Tracer
 // to sarama.SyncProducer (or sarama.AsyncProducer) using WithContext function.
 //
-//  ppsarama.WithContext(pinpoint.NewContext(context.Background(), tracer), producer)
-//  partition, offset, err := producer.SendMessage(msg)
+//	ppsarama.WithContext(pinpoint.NewContext(context.Background(), tracer), producer)
+//	partition, offset, err := producer.SendMessage(msg)
+//
+// The WithContext function() function is not thread-safe, so use the SendMessageContext function() if you have a data trace.
+//
+//	partition, offset, err := producer.SendMessageContext(r.Context(), msg)
 package ppsarama
 
 import (
