@@ -48,7 +48,7 @@ const (
 	CfgSQLMaxBindValueSize        = "SQL.MaxBindValueSize"
 	CfgSQLTraceCommit             = "SQL.TraceCommit"
 	CfgSQLTraceRollback           = "SQL.TraceRollback"
-	CfgSQLCollectStat             = "SQL.CollectStat"
+	CfgSQLTraceQueryStat          = "SQL.TraceQueryStat"
 	CfgEnable                     = "Enable"
 	CfgHttpUrlStatEnable          = "Http.UrlStat.Enable"
 	CfgHttpUrlStatLimitSize       = "Http.UrlStat.LimitSize"
@@ -121,7 +121,7 @@ func initConfig() {
 	AddConfig(CfgSQLMaxBindValueSize, CfgInt, 1024, true)
 	AddConfig(CfgSQLTraceCommit, CfgBool, true, true)
 	AddConfig(CfgSQLTraceRollback, CfgBool, true, true)
-	AddConfig(CfgSQLCollectStat, CfgBool, false, true)
+	AddConfig(CfgSQLTraceQueryStat, CfgBool, false, true)
 	AddConfig(CfgEnable, CfgBool, true, false)
 	AddConfig(CfgHttpUrlStatEnable, CfgBool, false, true)
 	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1024, true)
@@ -165,7 +165,7 @@ type Config struct {
 	sqlMaxBindValueSize  int   // CfgSQLMaxBindValueSize
 	sqlTraceCommit       bool  // CfgSQLTraceCommit
 	sqlTraceRollback     bool  // CfgSQLTraceRollback
-	sqlCollectStat       bool  // CfgSQLCollectStat
+	sqlTraceQueryStat    bool  // CfgSQLTraceQueryStat
 	spanMaxEventDepth    int32 // CfgSpanMaxCallStackDepth
 	spanMaxEventSequence int32 // CfgSpanMaxCallStackSequence
 	errorTraceCallStack  bool  // CfgErrorTraceCallStack
@@ -303,7 +303,7 @@ func defaultConfig() *Config {
 	config.sqlMaxBindValueSize = 1024
 	config.sqlTraceCommit = true
 	config.sqlTraceRollback = true
-	config.sqlCollectStat = false
+	config.sqlTraceQueryStat = false
 	config.spanMaxEventDepth = defaultEventDepth
 	config.spanMaxEventSequence = defaultEventSequence
 	config.errorTraceCallStack = false
@@ -481,7 +481,7 @@ func (config *Config) applyDynamicConfig() {
 	config.sqlMaxBindValueSize = config.Int(CfgSQLMaxBindValueSize)
 	config.sqlTraceCommit = config.Bool(CfgSQLTraceCommit)
 	config.sqlTraceRollback = config.Bool(CfgSQLTraceRollback)
-	config.sqlCollectStat = config.Bool(CfgSQLCollectStat)
+	config.sqlTraceQueryStat = config.Bool(CfgSQLTraceQueryStat)
 
 	maxDepth := config.Int(CfgSpanMaxCallStackDepth)
 	if maxDepth == -1 {
@@ -773,10 +773,10 @@ func WithSQLTraceRollback(trace bool) ConfigOption {
 	}
 }
 
-// WithSQLCollectStat enables to collect SQL statistics for SQL Driver.
-func WithSQLCollectStat(collect bool) ConfigOption {
+// WithSQLTraceQueryStat enables to trace SQL query statistics for SQL Driver.
+func WithSQLTraceQueryStat(collect bool) ConfigOption {
 	return func(c *Config) {
-		c.cfgMap[CfgSQLCollectStat].value = collect
+		c.cfgMap[CfgSQLTraceQueryStat].value = collect
 	}
 }
 

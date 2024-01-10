@@ -43,4 +43,4 @@ sql.traceBindValue=false
 sql.maxBindValueSize=128
 sql.traceCommit=false
 sql.traceRollback=false
-sql.collectStat=true
+sql.traceQueryStat=true

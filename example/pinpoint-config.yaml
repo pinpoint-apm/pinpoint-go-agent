@@ -48,4 +48,4 @@ sql:
   maxBindValueSize: 512
   traceCommit: false
   traceRollback: false
-  collectStat: true
+  traceQueryStat: true

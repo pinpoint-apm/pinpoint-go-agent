@@ -128,7 +128,7 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	nsql, param := normalizer.run()
 
 	agent := se.agent()
-	if se.config().sqlCollectStat {
+	if se.config().sqlTraceQueryStat {
 		if id := agent.cacheSqlUid(nsql); id != nil {
 			se.annotations.AppendBytesStringString(AnnotationSqlUid, id, param, args)
 		}

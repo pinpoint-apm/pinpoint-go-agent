@@ -61,6 +61,6 @@
     "maxBindValueSize": 256,
     "traceCommit": false,
     "traceRollback": false,
-    "collectStat": true
+    "traceQueryStat": true
   }
 }

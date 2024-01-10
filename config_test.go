@@ -53,7 +53,7 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, 1024, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
 			assert.Equal(t, true, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
 			assert.Equal(t, true, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
-			assert.Equal(t, false, c.Bool(CfgSQLCollectStat), CfgSQLCollectStat)
+			assert.Equal(t, false, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
 			assert.Equal(t, true, c.Bool(CfgEnable), CfgEnable)
 			assert.Equal(t, false, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
 			assert.Equal(t, 1024, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
@@ -95,7 +95,7 @@ func TestNewConfig_WithFunc(t *testing.T) {
 		WithSQLMaxBindValueSize(512),
 		WithSQLTraceCommit(false),
 		WithSQLTraceRollback(false),
-		WithSQLCollectStat(true),
+		WithSQLTraceQueryStat(true),
 		WithEnable(false),
 		WithHttpUrlStatEnable(true),
 		WithHttpUrlStatLimitSize(2048),
@@ -138,7 +138,7 @@ func TestNewConfig_WithFunc(t *testing.T) {
 			assert.Equal(t, 512, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
 			assert.Equal(t, false, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
 			assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
-			assert.Equal(t, true, c.Bool(CfgSQLCollectStat), CfgSQLCollectStat)
+			assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
 			assert.Equal(t, false, c.Bool(CfgEnable), CfgEnable)
 			assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
 			assert.Equal(t, 2048, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
@@ -240,7 +240,7 @@ func TestNewConfig_ConfigFileYaml(t *testing.T) {
 			assert.Equal(t, 512, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
 			assert.Equal(t, false, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
 			assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
-			assert.Equal(t, true, c.Bool(CfgSQLCollectStat), CfgSQLCollectStat)
+			assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
 			assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
 			assert.Equal(t, 1234, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
 			assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
@@ -292,7 +292,7 @@ func TestNewConfig_ConfigFileJson(t *testing.T) {
 			assert.Equal(t, 256, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
 			assert.Equal(t, false, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
 			assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
-			assert.Equal(t, true, c.Bool(CfgSQLCollectStat), CfgSQLCollectStat)
+			assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
 			assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
 			assert.Equal(t, 10, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
 			assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
@@ -344,7 +344,7 @@ func TestNewConfig_ConfigFileProp(t *testing.T) {
 			assert.Equal(t, 128, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
 			assert.Equal(t, false, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
 			assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
-			assert.Equal(t, true, c.Bool(CfgSQLCollectStat), CfgSQLCollectStat)
+			assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
 			assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
 			assert.Equal(t, 10240, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
 			assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
@@ -443,7 +443,7 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 	os.Setenv("PINPOINT_GO_SQL_MAXBINDVALUESIZE", "100")
 	os.Setenv("PINPOINT_GO_SQL_TRACECOMMIT", "false")
 	os.Setenv("PINPOINT_GO_SQL_TRACEROLLBACK", "false")
-	os.Setenv("PINPOINT_GO_SQL_COLLECTSTAT", "true")
+	os.Setenv("PINPOINT_GO_SQL_TRACEQUERYSTAT", "true")
 	os.Setenv("PINPOINT_GO_CONFIGFILE", "example/pinpoint-config.yaml")
 	os.Setenv("PINPOINT_GO_ENABLE", "false")
 	os.Setenv("PINPOINT_GO_HTTP_URLSTAT_ENABLE", "true")
@@ -480,7 +480,7 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 			assert.Equal(t, 100, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
 			assert.Equal(t, false, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
 			assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
-			assert.Equal(t, true, c.Bool(CfgSQLCollectStat), CfgSQLCollectStat)
+			assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
 			assert.Equal(t, "example/pinpoint-config.yaml", c.String(CfgConfigFile), CfgConfigFile)
 			assert.Equal(t, "dev", c.String(CfgActiveProfile), CfgActiveProfile)
 			assert.Equal(t, false, c.Bool(CfgEnable), CfgEnable)
@@ -545,7 +545,7 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 		"--pinpoint-sql-maxbindvaluesize=500",
 		"--pinpoint-sql-tracecommit=true",
 		"--pinpoint-sql-tracerollback=false",
-		"--pinpoint-sql-collectstat=true",
+		"--pinpoint-sql-tracequerystat=true",
 		"--pinpoint-configfile=example/pinpoint-config.yaml",
 		"--pinpoint-activeprofile=real",
 		"--pinpoint-enable=false",
@@ -586,7 +586,7 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 			assert.Equal(t, 500, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
 			assert.Equal(t, true, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
 			assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
-			assert.Equal(t, true, c.Bool(CfgSQLCollectStat), CfgSQLCollectStat)
+			assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
 			assert.Equal(t, "example/pinpoint-config.yaml", c.String(CfgConfigFile), CfgConfigFile)
 			assert.Equal(t, "real", c.String(CfgActiveProfile), CfgActiveProfile)
 			assert.Equal(t, false, c.Bool(CfgEnable), CfgEnable)
