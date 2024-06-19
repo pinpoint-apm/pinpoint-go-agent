@@ -16,8 +16,8 @@ go get github.com/pinpoint-apm/pinpoint-go-agent
 ```
 
 ## Requirements
-* Go 1.15+
-* Pinpoint 2.1.1+
+* Go 1.21+
+* Pinpoint 2.4.0+
 * Linux, OS X, and Windows are supported.
 
 ## Getting Started
