@@ -732,6 +732,9 @@ func makePSpan(span *span) *pb.PSpanMessage {
 		span.annotations.AppendString(AnnotationApi, span.operationName)
 	}
 
+	span.spanEventsLock.Lock()
+	defer span.spanEventsLock.Unlock()
+
 	spanEventList := make([]*pb.PSpanEvent, 0)
 	for _, event := range span.spanEvents {
 		aSpanEvent := makePSpanEvent(event)
@@ -785,6 +788,9 @@ func makePSpan(span *span) *pb.PSpanMessage {
 }
 
 func makePSpanChunk(span *span) *pb.PSpanMessage {
+	span.spanEventsLock.Lock()
+	defer span.spanEventsLock.Unlock()
+
 	spanEventList := make([]*pb.PSpanEvent, 0)
 	for _, event := range span.spanEvents {
 		aSpanEvent := makePSpanEvent(event)

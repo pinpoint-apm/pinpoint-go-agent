@@ -42,6 +42,7 @@ type span struct {
 	remoteAddr         string
 	acceptorHost       string
 	spanEvents         []*spanEvent
+	spanEventsLock     sync.Mutex
 	annotations        annotation
 	loggingInfo        int32
 	apiId              int32
@@ -63,7 +64,6 @@ type span struct {
 	asyncSequence int32
 	goroutineId   int64
 	eventStack    *stack
-	appendLock    sync.Mutex
 	urlStat       *UrlStatEntry
 	errorChains   []*exception
 }
@@ -219,8 +219,8 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 }
 
 func (span *span) appendSpanEvent(se *spanEvent) {
-	span.appendLock.Lock()
-	defer span.appendLock.Unlock()
+	span.spanEventsLock.Lock()
+	defer span.spanEventsLock.Unlock()
 
 	span.spanEvents = append(span.spanEvents, se)
 	span.eventStack.push(se)
