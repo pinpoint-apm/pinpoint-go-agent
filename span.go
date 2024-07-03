@@ -66,6 +66,7 @@ type span struct {
 	eventStack    *stack
 	urlStat       *UrlStatEntry
 	errorChains   []*exception
+	corrupted     bool
 }
 
 func generateSpanId() int64 {
@@ -81,7 +82,7 @@ func defaultSpan() *span {
 	span.eventDepth = 1
 	span.serviceType = ServiceTypeGoApp
 	span.startTime = time.Now()
-	span.goroutineId = 0
+	span.goroutineId = -1
 	span.asyncId = noneAsyncId
 	span.eventStack = &stack{}
 	span.spanEvents = make([]*spanEvent, 0)
@@ -117,16 +118,18 @@ func (span *span) EndSpan() {
 		Log("span").Warnf("abnormal span - has unclosed event")
 	}
 
-	if span.agent.enqueueSpan(span) {
-		if len(span.errorChains) > 0 {
-			span.agent.enqueueExceptionMeta(span)
+	if !span.corrupted {
+		if span.agent.enqueueSpan(span) {
+			if len(span.errorChains) > 0 {
+				span.agent.enqueueExceptionMeta(span)
+			}
+		} else {
+			Log("span").Tracef("span channel - max capacity reached or closed")
 		}
-	} else {
-		Log("span").Tracef("span channel - max capacity reached or closed")
-	}
 
-	if span.urlStat != nil {
-		span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed})
+		if span.urlStat != nil {
+			span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed})
+		}
 	}
 }
 
@@ -205,6 +208,16 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
+	if goIdOffset > 0 {
+		if span.goroutineId < 0 {
+			span.goroutineId = goIdFromG()
+		} else if span.goroutineId != goIdFromG() {
+			Log("span").Warnf("span is shared by more than two goroutines.")
+			span.corrupted = true
+			return span
+		}
+	}
+
 	cfg := span.config()
 	if span.eventSequence >= cfg.spanMaxEventSequence || span.eventDepth >= cfg.spanMaxEventDepth {
 		span.eventOverflow++
