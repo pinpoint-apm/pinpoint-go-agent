@@ -52,21 +52,22 @@ type span struct {
 	eventOverflow    int
 	eventOverflowLog bool
 
-	startTime     time.Time
-	elapsed       int64
-	operationName string
-	flags         int
-	err           int
-	errorFuncId   int32
-	errorString   string
-	recovered     bool
-	asyncId       int32
-	asyncSequence int32
-	goroutineId   int64
-	eventStack    *stack
-	urlStat       *UrlStatEntry
-	errorChains   []*exception
-	corrupted     bool
+	startTime       time.Time
+	elapsed         int64
+	operationName   string
+	flags           int
+	err             int
+	errorFuncId     int32
+	errorString     string
+	recovered       bool
+	asyncId         int32
+	asyncSequence   int32
+	goroutineId     int64
+	eventStack      *stack
+	urlStat         *UrlStatEntry
+	errorChains     []*exception
+	errorChainsLock sync.Mutex
+	corrupted       bool
 }
 
 func generateSpanId() int64 {
