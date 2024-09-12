@@ -752,7 +752,7 @@ func makePSpan(span *span) *pb.PSpanMessage {
 				},
 				SpanId:       span.spanId,
 				ParentSpanId: span.parentSpanId,
-				StartTime:    span.startTime.UnixNano() / int64(time.Millisecond),
+				StartTime:    span.startTime.UnixMilli(),
 				Elapsed:      int32(span.elapsed),
 				ServiceType:  span.serviceType,
 				AcceptEvent: &pb.PAcceptEvent{
@@ -807,7 +807,7 @@ func makePSpanChunk(span *span) *pb.PSpanMessage {
 					Sequence:       span.txId.Sequence,
 				},
 				SpanId:                 span.spanId,
-				KeyTime:                span.startTime.UnixNano() / int64(time.Millisecond),
+				KeyTime:                span.startTime.UnixMilli(),
 				EndPoint:               span.endPoint,
 				SpanEvent:              spanEventList,
 				ApplicationServiceType: span.agent.appType,

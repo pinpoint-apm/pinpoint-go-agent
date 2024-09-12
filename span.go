@@ -105,7 +105,7 @@ func newSampledSpan(agent *agent, operation string, rpcName string) *span {
 
 func (span *span) EndSpan() {
 	endTime := time.Now()
-	span.elapsed = endTime.Sub(span.startTime).Milliseconds()
+	span.elapsed = endTime.UnixMilli() - span.startTime.UnixMilli()
 
 	if span.isAsyncSpan() {
 		span.EndSpanEvent() //async span event
@@ -120,6 +120,8 @@ func (span *span) EndSpan() {
 	}
 
 	if !span.corrupted {
+		span.optimizeSpanEvents()
+
 		if span.agent.enqueueSpan(span) {
 			if len(span.errorChains) > 0 {
 				span.agent.enqueueExceptionMeta(span)
@@ -131,6 +133,25 @@ func (span *span) EndSpan() {
 		if span.urlStat != nil {
 			span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed})
 		}
+	}
+}
+
+func (span *span) optimizeSpanEvents() {
+	var prevSe *spanEvent
+	var prevDepth int32
+
+	for i, se := range span.spanEvents {
+		if i == 0 {
+			se.startElapsed = se.startTime - span.startTime.UnixMilli()
+		} else {
+			se.startElapsed = se.startTime - prevSe.startTime
+			curDepth := se.depth
+			if prevDepth == curDepth {
+				se.depth = 0
+			}
+			prevDepth = curDepth
+		}
+		prevSe = se
 	}
 }
 
