@@ -119,6 +119,7 @@ func (metaGrpcClient *metaGrpcClient) RequestExceptionMetaData(ctx context.Conte
 const (
 	agentGrpcTimeOut      = 60 * time.Second
 	sendStreamTimeOut     = 5 * time.Second
+	closeStreamTimeOut    = 1 * time.Second
 	grpcFlowControlWindow = 1 * 1024 * 1024
 	grpcWriteBufferSize   = 1 * 1024 * 1024
 	grpcMaxMessageSize    = 4 * 1024 * 1024
@@ -635,7 +636,8 @@ func (s *pingStream) close() {
 	if s.stream == nil {
 		return
 	}
-	s.stream.CloseSend()
+
+	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, closeStreamTimeOut, "ping")
 	s.stream = nil
 	Log("grpc").Infof("close ping stream")
 }
@@ -712,7 +714,8 @@ func (s *spanStream) close() {
 	if s.stream == nil {
 		return
 	}
-	s.stream.CloseAndRecv()
+
+	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, closeStreamTimeOut, "span")
 	s.stream = nil
 	Log("grpc").Infof("close span stream")
 }
@@ -730,6 +733,9 @@ func (s *spanStream) sendSpan(span *span) error {
 		gspan = makePSpan(span)
 	}
 
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("PSpanMessage Size: %d", gspan.XXX_Size())
+	}
 	if IsLogLevelEnabled(logrus.TraceLevel) {
 		Log("grpc").Tracef("PSpanMessage: %s", gspan.String())
 	}
@@ -940,7 +946,8 @@ func (s *statStream) close() {
 	if s.stream == nil {
 		return
 	}
-	s.stream.CloseAndRecv()
+
+	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, closeStreamTimeOut, "stat")
 	s.stream = nil
 	Log("grpc").Infof("close stat stream")
 }
@@ -1107,7 +1114,8 @@ func (s *cmdStream) close() {
 	if s.stream == nil {
 		return
 	}
-	s.stream.CloseSend()
+
+	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, closeStreamTimeOut, "cmd")
 	s.stream = nil
 	Log("grpc").Infof("close command stream")
 }
@@ -1178,7 +1186,8 @@ func (s *activeThreadCountStream) close() {
 	if s.stream == nil {
 		return
 	}
-	s.stream.CloseSend()
+
+	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, closeStreamTimeOut, "arc")
 	s.stream = nil
 }
 
