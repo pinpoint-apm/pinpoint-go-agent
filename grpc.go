@@ -117,8 +117,12 @@ func (metaGrpcClient *metaGrpcClient) RequestExceptionMetaData(ctx context.Conte
 }
 
 const (
-	agentGrpcTimeOut  = 60 * time.Second
-	sendStreamTimeOut = 5 * time.Second
+	agentGrpcTimeOut      = 60 * time.Second
+	sendStreamTimeOut     = 5 * time.Second
+	grpcFlowControlWindow = 1 * 1024 * 1024
+	grpcWriteBufferSize   = 1 * 1024 * 1024
+	grpcMaxMessageSize    = 4 * 1024 * 1024
+	grpcMaxHeaderListSize = 8 * 1024
 )
 
 var kacp = keepalive.ClientParameters{
@@ -131,6 +135,12 @@ func connectCollector(config *Config, portOption string) (*grpc.ClientConn, erro
 	opts := make([]grpc.DialOption, 0)
 	opts = append(opts, grpc.WithKeepaliveParams(kacp))
 	opts = append(opts, grpc.WithInsecure())
+	opts = append(opts, grpc.WithInitialWindowSize(grpcFlowControlWindow))
+	opts = append(opts, grpc.WithWriteBufferSize(grpcWriteBufferSize))
+	opts = append(opts, grpc.WithMaxHeaderListSize(grpcMaxHeaderListSize))
+	opts = append(opts, grpc.WithDefaultCallOptions(
+		grpc.MaxCallSendMsgSize(grpcMaxMessageSize),
+		grpc.MaxCallRecvMsgSize(grpcMaxMessageSize)))
 
 	addr := serverAddr(config, portOption)
 	Log("grpc").Infof("connect to collector: %s", addr)
