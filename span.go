@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -67,7 +69,6 @@ type span struct {
 	urlStat         *UrlStatEntry
 	errorChains     []*exception
 	errorChainsLock sync.Mutex
-	corrupted       bool
 }
 
 func generateSpanId() int64 {
@@ -119,20 +120,18 @@ func (span *span) EndSpan() {
 		Log("span").Warnf("abnormal span - has unclosed event")
 	}
 
-	if !span.corrupted {
-		span.optimizeSpanEvents()
+	span.optimizeSpanEvents()
 
-		if span.agent.enqueueSpan(span) {
-			if len(span.errorChains) > 0 {
-				span.agent.enqueueExceptionMeta(span)
-			}
-		} else {
-			Log("span").Tracef("span channel - max capacity reached or closed")
+	if span.agent.enqueueSpan(span) {
+		if len(span.errorChains) > 0 {
+			span.agent.enqueueExceptionMeta(span)
 		}
+	} else {
+		Log("span").Tracef("span channel - max capacity reached or closed")
+	}
 
-		if span.urlStat != nil {
-			span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed})
-		}
+	if span.urlStat != nil {
+		span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed})
 	}
 }
 
@@ -230,13 +229,14 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
-	if goIdOffset > 0 {
-		if span.goroutineId < 0 {
-			span.goroutineId = goIdFromG()
-		} else if span.goroutineId != goIdFromG() {
-			Log("span").Warnf("span is shared by more than two goroutines.")
-			span.corrupted = true
-			return span
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		if goIdOffset > 0 {
+			if span.goroutineId < 0 {
+				span.goroutineId = goIdFromG()
+			} else if span.goroutineId != goIdFromG() {
+				Log("span").Warnf("span is shared by more than two goroutines.")
+				return span
+			}
 		}
 	}
 
