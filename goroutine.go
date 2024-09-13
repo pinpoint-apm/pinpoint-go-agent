@@ -23,11 +23,6 @@ var (
 
 func initGoroutine() {
 	goIdOffset = getOffset()
-	if goIdOffset > 0 {
-		Log("cmd").Infof("goroutine id from runtime.g (offset = %d)", goIdOffset)
-	} else {
-		Log("cmd").Infof("goroutine id from stack dump")
-	}
 
 	stateMap = make(map[string]pb.PThreadState, 0)
 	stateMap[""] = pb.PThreadState_THREAD_STATE_UNKNOWN

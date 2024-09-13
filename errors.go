@@ -117,6 +117,9 @@ func (span *span) addCauserCallStack(err error, eid int64) {
 func (span *span) traceCallStack(err error, depth int) int64 {
 	var callstack []uintptr
 
+	span.errorChainsLock.Lock()
+	defer span.errorChainsLock.Unlock()
+
 	eid, newId := span.getExceptionChainId(err)
 	if newId {
 		if pkgErr, ok := err.(pkgErrorStackTracer); ok {

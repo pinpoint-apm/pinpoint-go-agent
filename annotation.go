@@ -1,15 +1,21 @@
 package pinpoint
 
 import (
+	"sync"
+
 	"github.com/golang/protobuf/ptypes/wrappers"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 )
 
 type annotation struct {
-	list []*pb.PAnnotation
+	list           []*pb.PAnnotation
+	annotationLock sync.Mutex
 }
 
 func (a *annotation) AppendInt(key int32, i int32) {
+	a.annotationLock.Lock()
+	defer a.annotationLock.Unlock()
+
 	a.list = append(a.list, &pb.PAnnotation{
 		Key: key,
 		Value: &pb.PAnnotationValue{
@@ -21,6 +27,9 @@ func (a *annotation) AppendInt(key int32, i int32) {
 }
 
 func (a *annotation) AppendLong(key int32, l int64) {
+	a.annotationLock.Lock()
+	defer a.annotationLock.Unlock()
+
 	a.list = append(a.list, &pb.PAnnotation{
 		Key: key,
 		Value: &pb.PAnnotationValue{
@@ -32,6 +41,9 @@ func (a *annotation) AppendLong(key int32, l int64) {
 }
 
 func (a *annotation) AppendString(key int32, s string) {
+	a.annotationLock.Lock()
+	defer a.annotationLock.Unlock()
+
 	a.list = append(a.list, &pb.PAnnotation{
 		Key: key,
 		Value: &pb.PAnnotationValue{
@@ -43,6 +55,9 @@ func (a *annotation) AppendString(key int32, s string) {
 }
 
 func (a *annotation) AppendStringString(key int32, s1 string, s2 string) {
+	a.annotationLock.Lock()
+	defer a.annotationLock.Unlock()
+
 	a.list = append(a.list, &pb.PAnnotation{
 		Key: key,
 		Value: &pb.PAnnotationValue{
@@ -57,6 +72,9 @@ func (a *annotation) AppendStringString(key int32, s1 string, s2 string) {
 }
 
 func (a *annotation) AppendIntStringString(key int32, i int32, s1 string, s2 string) {
+	a.annotationLock.Lock()
+	defer a.annotationLock.Unlock()
+
 	a.list = append(a.list, &pb.PAnnotation{
 		Key: key,
 		Value: &pb.PAnnotationValue{
@@ -72,6 +90,9 @@ func (a *annotation) AppendIntStringString(key int32, i int32, s1 string, s2 str
 }
 
 func (a *annotation) AppendBytesStringString(key int32, bs []byte, s1 string, s2 string) {
+	a.annotationLock.Lock()
+	defer a.annotationLock.Unlock()
+
 	a.list = append(a.list, &pb.PAnnotation{
 		Key: key,
 		Value: &pb.PAnnotationValue{
@@ -87,6 +108,9 @@ func (a *annotation) AppendBytesStringString(key int32, bs []byte, s1 string, s2
 }
 
 func (a *annotation) AppendLongIntIntByteByteString(key int32, l int64, i1 int32, i2 int32, b1 int32, b2 int32, s string) {
+	a.annotationLock.Lock()
+	defer a.annotationLock.Unlock()
+
 	a.list = append(a.list, &pb.PAnnotation{
 		Key: key,
 		Value: &pb.PAnnotationValue{
@@ -102,4 +126,13 @@ func (a *annotation) AppendLongIntIntByteByteString(key int32, l int64, i1 int32
 			},
 		},
 	})
+}
+
+func (a *annotation) getList() []*pb.PAnnotation {
+	a.annotationLock.Lock()
+	defer a.annotationLock.Unlock()
+
+	copied := make([]*pb.PAnnotation, len(a.list))
+	copy(copied, a.list)
+	return copied
 }

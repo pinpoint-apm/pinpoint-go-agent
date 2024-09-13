@@ -117,8 +117,13 @@ func (metaGrpcClient *metaGrpcClient) RequestExceptionMetaData(ctx context.Conte
 }
 
 const (
-	agentGrpcTimeOut  = 60 * time.Second
-	sendStreamTimeOut = 5 * time.Second
+	agentGrpcTimeOut      = 60 * time.Second
+	sendStreamTimeOut     = 5 * time.Second
+	closeStreamTimeOut    = 1 * time.Second
+	grpcFlowControlWindow = 1 * 1024 * 1024
+	grpcWriteBufferSize   = 1 * 1024 * 1024
+	grpcMaxMessageSize    = 4 * 1024 * 1024
+	grpcMaxHeaderListSize = 8 * 1024
 )
 
 var kacp = keepalive.ClientParameters{
@@ -131,6 +136,12 @@ func connectCollector(config *Config, portOption string) (*grpc.ClientConn, erro
 	opts := make([]grpc.DialOption, 0)
 	opts = append(opts, grpc.WithKeepaliveParams(kacp))
 	opts = append(opts, grpc.WithInsecure())
+	opts = append(opts, grpc.WithInitialWindowSize(grpcFlowControlWindow))
+	opts = append(opts, grpc.WithWriteBufferSize(grpcWriteBufferSize))
+	opts = append(opts, grpc.WithMaxHeaderListSize(grpcMaxHeaderListSize))
+	opts = append(opts, grpc.WithDefaultCallOptions(
+		grpc.MaxCallSendMsgSize(grpcMaxMessageSize),
+		grpc.MaxCallRecvMsgSize(grpcMaxMessageSize)))
 
 	addr := serverAddr(config, portOption)
 	Log("grpc").Infof("connect to collector: %s", addr)
@@ -218,7 +229,7 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 
 		JvmInfo: &pb.PJvmInfo{
 			Version:   0,
-			VmVersion: runtime.Version(),
+			VmVersion: fmt.Sprintf("%s(%d)", runtime.Version(), goIdOffset),
 			GcType:    pb.PJvmGcType_JVM_GC_TYPE_CMS,
 		},
 		Container: agentGrpc.agent.config.Bool(CfgIsContainerEnv),
@@ -625,7 +636,8 @@ func (s *pingStream) close() {
 	if s.stream == nil {
 		return
 	}
-	s.stream.CloseSend()
+
+	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, closeStreamTimeOut, "ping")
 	s.stream = nil
 	Log("grpc").Infof("close ping stream")
 }
@@ -702,7 +714,8 @@ func (s *spanStream) close() {
 	if s.stream == nil {
 		return
 	}
-	s.stream.CloseAndRecv()
+
+	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, closeStreamTimeOut, "span")
 	s.stream = nil
 	Log("grpc").Infof("close span stream")
 }
@@ -720,6 +733,9 @@ func (s *spanStream) sendSpan(span *span) error {
 		gspan = makePSpan(span)
 	}
 
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("PSpanMessage Size: %d", gspan.XXX_Size())
+	}
 	if IsLogLevelEnabled(logrus.TraceLevel) {
 		Log("grpc").Tracef("PSpanMessage: %s", gspan.String())
 	}
@@ -731,6 +747,9 @@ func makePSpan(span *span) *pb.PSpanMessage {
 	if span.apiId == 0 && span.operationName != "" {
 		span.annotations.AppendString(AnnotationApi, span.operationName)
 	}
+
+	span.spanEventsLock.Lock()
+	defer span.spanEventsLock.Unlock()
 
 	spanEventList := make([]*pb.PSpanEvent, 0)
 	for _, event := range span.spanEvents {
@@ -749,7 +768,7 @@ func makePSpan(span *span) *pb.PSpanMessage {
 				},
 				SpanId:       span.spanId,
 				ParentSpanId: span.parentSpanId,
-				StartTime:    span.startTime.UnixNano() / int64(time.Millisecond),
+				StartTime:    span.startTime.UnixMilli(),
 				Elapsed:      int32(span.elapsed),
 				ServiceType:  span.serviceType,
 				AcceptEvent: &pb.PAcceptEvent{
@@ -762,7 +781,7 @@ func makePSpan(span *span) *pb.PSpanMessage {
 						AcceptorHost:          span.acceptorHost,
 					},
 				},
-				Annotation:             span.annotations.list,
+				Annotation:             span.annotations.getList(),
 				ApiId:                  span.apiId,
 				Flag:                   int32(span.flags),
 				SpanEvent:              spanEventList,
@@ -785,6 +804,9 @@ func makePSpan(span *span) *pb.PSpanMessage {
 }
 
 func makePSpanChunk(span *span) *pb.PSpanMessage {
+	span.spanEventsLock.Lock()
+	defer span.spanEventsLock.Unlock()
+
 	spanEventList := make([]*pb.PSpanEvent, 0)
 	for _, event := range span.spanEvents {
 		aSpanEvent := makePSpanEvent(event)
@@ -801,7 +823,7 @@ func makePSpanChunk(span *span) *pb.PSpanMessage {
 					Sequence:       span.txId.Sequence,
 				},
 				SpanId:                 span.spanId,
-				KeyTime:                span.startTime.UnixNano() / int64(time.Millisecond),
+				KeyTime:                span.startTime.UnixMilli(),
 				EndPoint:               span.endPoint,
 				SpanEvent:              spanEventList,
 				ApplicationServiceType: span.agent.appType,
@@ -827,7 +849,7 @@ func makePSpanEvent(event *spanEvent) *pb.PSpanEvent {
 		StartElapsed:  int32(event.startElapsed),
 		EndElapsed:    int32(event.endElapsed),
 		ServiceType:   event.serviceType,
-		Annotation:    event.annotations.list,
+		Annotation:    event.annotations.getList(),
 		ApiId:         event.apiId,
 		ExceptionInfo: nil,
 		NextEvent:     nil,
@@ -924,7 +946,8 @@ func (s *statStream) close() {
 	if s.stream == nil {
 		return
 	}
-	s.stream.CloseAndRecv()
+
+	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, closeStreamTimeOut, "stat")
 	s.stream = nil
 	Log("grpc").Infof("close stat stream")
 }
@@ -1091,7 +1114,8 @@ func (s *cmdStream) close() {
 	if s.stream == nil {
 		return
 	}
-	s.stream.CloseSend()
+
+	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, closeStreamTimeOut, "cmd")
 	s.stream = nil
 	Log("grpc").Infof("close command stream")
 }
@@ -1162,7 +1186,8 @@ func (s *activeThreadCountStream) close() {
 	if s.stream == nil {
 		return
 	}
-	s.stream.CloseSend()
+
+	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, closeStreamTimeOut, "arc")
 	s.stream = nil
 }
 

@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -42,6 +44,7 @@ type span struct {
 	remoteAddr         string
 	acceptorHost       string
 	spanEvents         []*spanEvent
+	spanEventsLock     sync.Mutex
 	annotations        annotation
 	loggingInfo        int32
 	apiId              int32
@@ -51,21 +54,21 @@ type span struct {
 	eventOverflow    int
 	eventOverflowLog bool
 
-	startTime     time.Time
-	elapsed       int64
-	operationName string
-	flags         int
-	err           int
-	errorFuncId   int32
-	errorString   string
-	recovered     bool
-	asyncId       int32
-	asyncSequence int32
-	goroutineId   int64
-	eventStack    *stack
-	appendLock    sync.Mutex
-	urlStat       *UrlStatEntry
-	errorChains   []*exception
+	startTime       time.Time
+	elapsed         int64
+	operationName   string
+	flags           int
+	err             int
+	errorFuncId     int32
+	errorString     string
+	recovered       bool
+	asyncId         int32
+	asyncSequence   int32
+	goroutineId     int64
+	eventStack      *stack
+	urlStat         *UrlStatEntry
+	errorChains     []*exception
+	errorChainsLock sync.Mutex
 }
 
 func generateSpanId() int64 {
@@ -81,7 +84,7 @@ func defaultSpan() *span {
 	span.eventDepth = 1
 	span.serviceType = ServiceTypeGoApp
 	span.startTime = time.Now()
-	span.goroutineId = 0
+	span.goroutineId = -1
 	span.asyncId = noneAsyncId
 	span.eventStack = &stack{}
 	span.spanEvents = make([]*spanEvent, 0)
@@ -103,7 +106,7 @@ func newSampledSpan(agent *agent, operation string, rpcName string) *span {
 
 func (span *span) EndSpan() {
 	endTime := time.Now()
-	span.elapsed = endTime.Sub(span.startTime).Milliseconds()
+	span.elapsed = endTime.UnixMilli() - span.startTime.UnixMilli()
 
 	if span.isAsyncSpan() {
 		span.EndSpanEvent() //async span event
@@ -117,6 +120,8 @@ func (span *span) EndSpan() {
 		Log("span").Warnf("abnormal span - has unclosed event")
 	}
 
+	span.optimizeSpanEvents()
+
 	if span.agent.enqueueSpan(span) {
 		if len(span.errorChains) > 0 {
 			span.agent.enqueueExceptionMeta(span)
@@ -127,6 +132,25 @@ func (span *span) EndSpan() {
 
 	if span.urlStat != nil {
 		span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed})
+	}
+}
+
+func (span *span) optimizeSpanEvents() {
+	var prevSe *spanEvent
+	var prevDepth int32
+
+	for i, se := range span.spanEvents {
+		if i == 0 {
+			se.startElapsed = se.startTime - span.startTime.UnixMilli()
+		} else {
+			se.startElapsed = se.startTime - prevSe.startTime
+			curDepth := se.depth
+			if prevDepth == curDepth {
+				se.depth = 0
+			}
+			prevDepth = curDepth
+		}
+		prevSe = se
 	}
 }
 
@@ -205,6 +229,17 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		if goIdOffset > 0 {
+			if span.goroutineId < 0 {
+				span.goroutineId = goIdFromG()
+			} else if span.goroutineId != goIdFromG() {
+				Log("span").Warnf("span is shared by more than two goroutines.")
+				return span
+			}
+		}
+	}
+
 	cfg := span.config()
 	if span.eventSequence >= cfg.spanMaxEventSequence || span.eventDepth >= cfg.spanMaxEventDepth {
 		span.eventOverflow++
@@ -219,8 +254,8 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 }
 
 func (span *span) appendSpanEvent(se *spanEvent) {
-	span.appendLock.Lock()
-	defer span.appendLock.Unlock()
+	span.spanEventsLock.Lock()
+	defer span.spanEventsLock.Unlock()
 
 	span.spanEvents = append(span.spanEvents, se)
 	span.eventStack.push(se)
