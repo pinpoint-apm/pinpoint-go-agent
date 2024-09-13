@@ -80,8 +80,8 @@ func (l *logrusLogger) setOutput(out string, maxSize int) {
 }
 
 func (l *logrusLogger) setup(config *Config) {
-	l.setOutput(config.String(CfgLogOutput), config.Int(CfgLogMaxSize))
 	l.setLevel(config.String(CfgLogLevel))
+	l.setOutput(config.String(CfgLogOutput), config.Int(CfgLogMaxSize))
 	l.config = config
 }
 

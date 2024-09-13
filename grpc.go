@@ -229,7 +229,7 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 
 		JvmInfo: &pb.PJvmInfo{
 			Version:   0,
-			VmVersion: runtime.Version(),
+			VmVersion: fmt.Sprintf("%s(%d)", runtime.Version(), goIdOffset),
 			GcType:    pb.PJvmGcType_JVM_GC_TYPE_CMS,
 		},
 		Container: agentGrpc.agent.config.Bool(CfgIsContainerEnv),
