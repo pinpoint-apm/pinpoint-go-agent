@@ -33,7 +33,7 @@ type agent struct {
 	spanGrpc    *spanGrpc
 	statGrpc    *statGrpc
 	cmdGrpc     *cmdGrpc
-	spanChan    chan *span
+	spanChan    chan *spanChunk
 	metaChan    chan interface{}
 	urlStatChan chan *urlStat
 	statChan    chan *pb.PStatMessage
@@ -135,7 +135,7 @@ func NewAgent(config *Config) (Agent, error) {
 		agentID:     config.String(CfgAgentID),
 		agentName:   config.String(CfgAgentName),
 		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
-		spanChan:    make(chan *span, config.Int(CfgSpanQueueSize)),
+		spanChan:    make(chan *spanChunk, config.Int(CfgSpanQueueSize)),
 		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),
 		urlStatChan: make(chan *urlStat, config.Int(CfgSpanQueueSize)),
 		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),
@@ -339,20 +339,20 @@ func (agent *agent) sendSpanWorker() {
 	)
 
 	stream := agent.spanGrpc.newSpanStreamWithRetry()
-	for span := range agent.spanChan {
+	for chunk := range agent.spanChan {
 		if !agent.enable {
 			break
 		}
 
 		if skipOldSpan {
-			if span.startTime.Before(skipBaseTime) {
+			if chunk.span.startTime.Before(skipBaseTime) {
 				continue //skip old span
 			} else {
 				skipOldSpan = false
 			}
 		}
 
-		err := stream.sendSpan(span)
+		err := stream.sendSpan(chunk)
 		if err != nil {
 			if err != io.EOF {
 				Log("agent").Errorf("send span - %v", err)
@@ -370,7 +370,7 @@ func (agent *agent) sendSpanWorker() {
 	Log("agent").Infof("end span goroutine")
 }
 
-func (agent *agent) enqueueSpan(span *span) bool {
+func (agent *agent) enqueueSpan(span *spanChunk) bool {
 	if !agent.enable {
 		return false
 	}
@@ -674,7 +674,7 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 		agentID:     config.String(CfgAgentID),
 		agentName:   config.String(CfgAgentName),
 		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
-		spanChan:    make(chan *span, config.Int(CfgSpanQueueSize)),
+		spanChan:    make(chan *spanChunk, config.Int(CfgSpanQueueSize)),
 		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),
 		urlStatChan: make(chan *urlStat, config.Int(CfgSpanQueueSize)),
 		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),

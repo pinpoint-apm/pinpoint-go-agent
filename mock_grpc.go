@@ -19,7 +19,7 @@ func newTestAgent(config *Config) *agent {
 		appType:   ServiceTypeGoApp,
 		startTime: time.Now().UnixNano() / int64(time.Millisecond),
 		enable:    true,
-		spanChan:  make(chan *span, cacheSize),
+		spanChan:  make(chan *spanChunk, cacheSize),
 		metaChan:  make(chan interface{}, cacheSize),
 		sampler:   newBasicTraceSampler(newRateSampler(1)),
 		config:    config,

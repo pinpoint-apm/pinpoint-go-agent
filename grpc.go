@@ -720,17 +720,17 @@ func (s *spanStream) close() {
 	Log("grpc").Infof("close span stream")
 }
 
-func (s *spanStream) sendSpan(span *span) error {
+func (s *spanStream) sendSpan(chunk *spanChunk) error {
 	var gspan *pb.PSpanMessage
 
 	if s.stream == nil {
 		return status.Errorf(codes.Unavailable, "span stream is nil")
 	}
 
-	if span.isAsyncSpan() {
-		gspan = makePSpanChunk(span)
+	if !chunk.final || chunk.span.isAsyncSpan() {
+		gspan = makePSpanChunk(chunk)
 	} else {
-		gspan = makePSpan(span)
+		gspan = makePSpan(chunk)
 	}
 
 	if IsLogLevelEnabled(logrus.DebugLevel) {
@@ -743,7 +743,8 @@ func (s *spanStream) sendSpan(span *span) error {
 	return sendStreamWithTimeout(func() error { return s.stream.Send(gspan) }, sendStreamTimeOut, "span")
 }
 
-func makePSpan(span *span) *pb.PSpanMessage {
+func makePSpan(chunk *spanChunk) *pb.PSpanMessage {
+	span := chunk.span
 	if span.apiId == 0 && span.operationName != "" {
 		span.annotations.AppendString(AnnotationApi, span.operationName)
 	}
@@ -752,7 +753,7 @@ func makePSpan(span *span) *pb.PSpanMessage {
 	defer span.spanEventsLock.Unlock()
 
 	spanEventList := make([]*pb.PSpanEvent, 0)
-	for _, event := range span.spanEvents {
+	for _, event := range chunk.eventChunk {
 		aSpanEvent := makePSpanEvent(event)
 		spanEventList = append(spanEventList, aSpanEvent)
 	}
@@ -803,12 +804,13 @@ func makePSpan(span *span) *pb.PSpanMessage {
 	return gspan
 }
 
-func makePSpanChunk(span *span) *pb.PSpanMessage {
+func makePSpanChunk(chunk *spanChunk) *pb.PSpanMessage {
+	span := chunk.span
 	span.spanEventsLock.Lock()
 	defer span.spanEventsLock.Unlock()
 
 	spanEventList := make([]*pb.PSpanEvent, 0)
-	for _, event := range span.spanEvents {
+	for _, event := range chunk.eventChunk {
 		aSpanEvent := makePSpanEvent(event)
 		spanEventList = append(spanEventList, aSpanEvent)
 	}
@@ -823,16 +825,20 @@ func makePSpanChunk(span *span) *pb.PSpanMessage {
 					Sequence:       span.txId.Sequence,
 				},
 				SpanId:                 span.spanId,
-				KeyTime:                span.startTime.UnixMilli(),
+				KeyTime:                chunk.keyTime,
 				EndPoint:               span.endPoint,
 				SpanEvent:              spanEventList,
 				ApplicationServiceType: span.agent.appType,
-				LocalAsyncId: &pb.PLocalAsyncId{
-					AsyncId:  span.asyncId,
-					Sequence: span.asyncSequence,
-				},
+				LocalAsyncId:           nil,
 			},
 		},
+	}
+
+	if span.isAsyncSpan() {
+		gspan.GetSpanChunk().LocalAsyncId = &pb.PLocalAsyncId{
+			AsyncId:  span.asyncId,
+			Sequence: span.asyncSequence,
+		}
 	}
 
 	return gspan
