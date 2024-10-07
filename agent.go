@@ -602,8 +602,7 @@ func (agent *agent) collectUrlStatWorker() {
 		if !agent.enable {
 			break
 		}
-		snapshot := agent.currentUrlStatSnapshot()
-		snapshot.add(uri)
+		agent.addUrlStatSnapshot(uri)
 	}
 
 	Log("agent").Infof("end collect uri stat goroutine")
