@@ -18,19 +18,28 @@ type syncProducer struct {
 	ctx   context.Context
 }
 
-type distributedTracingContextWriterConsumer struct {
+type distributedTracingContextWriterProducer struct {
 	msg *sarama.ProducerMessage
 }
 
-func (m *distributedTracingContextWriterConsumer) Set(key string, value string) {
+func (m *distributedTracingContextWriterProducer) Set(key string, value string) {
 	m.msg.Headers = append(m.msg.Headers, sarama.RecordHeader{
 		Key:   []byte(key),
 		Value: []byte(value),
 	})
 }
 
+func (m *distributedTracingContextWriterProducer) Get(key string) string {
+	for _, h := range m.msg.Headers {
+		if string(h.Key) == key {
+			return string(h.Value)
+		}
+	}
+	return ""
+}
+
 func (p *syncProducer) SendMessageContext(ctx context.Context, msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
-	defer newProducerTracer(ctx, p.addrs, msg).EndSpanEvent()
+	defer newSyncProducerTracer(ctx, p.addrs, msg).EndSpanEvent()
 	partition, offset, err = p.SyncProducer.SendMessage(msg)
 	return partition, offset, err
 }
@@ -42,7 +51,7 @@ func (p *syncProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32
 func (p *syncProducer) SendMessagesContext(ctx context.Context, msgs []*sarama.ProducerMessage) error {
 	spans := make([]pinpoint.Tracer, len(msgs))
 	for i, msg := range msgs {
-		spans[i] = newProducerTracer(ctx, p.addrs, msg)
+		spans[i] = newSyncProducerTracer(ctx, p.addrs, msg)
 	}
 
 	err := p.SyncProducer.SendMessages(msgs)
@@ -75,16 +84,16 @@ func NewSyncProducer(addrs []string, config *sarama.Config) (SyncProducer, error
 	return &syncProducer{SyncProducer: producer, addrs: addrs, ctx: context.Background()}, nil
 }
 
-func newProducerTracer(ctx context.Context, addrs []string, msg *sarama.ProducerMessage) pinpoint.Tracer {
+func newSyncProducerTracer(ctx context.Context, addrs []string, msg *sarama.ProducerMessage) pinpoint.Tracer {
 	tracer := pinpoint.FromContext(ctx)
 
-	tracer.NewSpanEvent("sarama.SendMessage")
+	tracer.NewSpanEvent("sarama.SyncProducer.SendMessage")
 	se := tracer.SpanEvent()
 	se.SetServiceType(pinpoint.ServiceTypeKafkaClient)
 	se.Annotations().AppendString(pinpoint.AnnotationKafkaTopic, msg.Topic)
 	se.SetDestination(addrs[0])
 
-	writer := &distributedTracingContextWriterConsumer{msg}
+	writer := &distributedTracingContextWriterProducer{msg}
 	tracer.Inject(writer)
 
 	return tracer

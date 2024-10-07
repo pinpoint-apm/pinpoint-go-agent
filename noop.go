@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -118,6 +119,10 @@ func (span *noopSpan) TransactionId() TransactionId {
 
 func (span *noopSpan) SpanId() int64 {
 	return span.spanId
+}
+
+func (span *noopSpan) AsyncSpanId() string {
+	return fmt.Sprintf("%d^Noop", span.spanId)
 }
 
 func (span *noopSpan) Span() SpanRecorder {

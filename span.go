@@ -347,6 +347,10 @@ func (span *span) SpanId() int64 {
 	return span.spanId
 }
 
+func (span *span) AsyncSpanId() string {
+	return fmt.Sprintf("%d^%d^%d", span.spanId, span.asyncId, span.asyncSequence)
+}
+
 func (span *span) Span() SpanRecorder {
 	return span
 }
