@@ -15,7 +15,7 @@ import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM"
 This package instruments Kafka consumers and producers.
 
 ### Consumer
-To instrument a Kafka consumer, ConsumeMessageContext.
+To instrument a Kafka consumer, use ConsumeMessageContext.
 In order to display the kafka broker on the pinpoint screen, a context with broker addresses must be created and delivered using NewContext.
 
 ConsumePartition example:
@@ -96,18 +96,21 @@ func main() {
 [Full Example Source](/plugin/sarama-IBM/example/consumer.go)
 
 ### Producer
-To instrument a Kafka producer, use NewSyncProducer or NewAsyncProducer.
+#### SyncProducer
+To instrument a Kafka sync producer, use NewSyncProducer.
 
 ``` go
 config := sarama.NewConfig()
+config.Producer.Return.Successes = true
 producer, err := ppsaramaibm.NewSyncProducer(brokers, config)
 ```
 
-It is necessary to pass the context containing the pinpoint.Tracer to sarama.SyncProducer (or sarama.AsyncProducer) using WithContext function.
+Use SendMessageContext with the context containing the pinpoint.Tracer.
+You can also use SendMessage with WithContext, but we recommend using SendMessageContext because the WithContext is not thread-safe.
 
 ``` go
-ppsaramaibm.WithContext(pinpoint.NewContext(context.Background(), tracer), producer)
-partition, offset, err := producer.SendMessage(msg)
+ctx := pinpoint.NewContext(context.Background(), tracer)
+partition, offset, err := producer.SendMessageContext(ctx, msg)
 ```
 
 ``` go
@@ -122,15 +125,13 @@ import (
 func prepareMessage(topic, message string) *sarama.ProducerMessage {
     return &sarama.ProducerMessage{
         Topic:     topic,
-        Partition: -1,
         Value:     sarama.StringEncoder(message),
     }
 }
 
 func save(w http.ResponseWriter, r *http.Request) {
     msg := prepareMessage("topic", "Hello, Kafka!!")
-    ppsaramaibm.WithContext(r.Context(), producer)
-    partition, offset, err := producer.SendMessage(msg)
+    partition, offset, err := producer.SendMessageContext(r.Context(), msg)
     ...
 }
 
@@ -140,6 +141,7 @@ func main() {
     ... //setup agent
 	
     config := sarama.NewConfig()
+    config.Producer.Return.Successes = true
     ...
 
     producer, err := ppsaramaibm.NewSyncProducer([]string{"127.0.0.1:9092"}, config)
@@ -148,3 +150,69 @@ func main() {
 
 ```
 [Full Example Source](/plugin/sarama-IBM/example/producer.go)
+
+#### AsyncProducer
+To instrument a Kafka async producer, use NewAsyncProducer.
+
+``` go
+config := sarama.NewConfig()
+config.Producer.Return.Successes = true
+producer, err := ppsaramaibm.NewAsyncProducer(brokers, config)
+```
+
+Use InputContext with the context containing the pinpoint.Tracer.
+You can also use Input with WithContext, but we recommend using InputContext because the WithContext is not thread-safe.
+
+``` go
+ctx := pinpoint.NewContext(context.Background(), tracer)
+producer.InputContext(ctx, msg)
+```
+
+``` go
+package main
+
+import (
+    "github.com/IBM/sarama"
+    "github.com/pinpoint-apm/pinpoint-go-agent"
+    "github.com/github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM"
+)
+
+func prepareAsyncMessage(topic, message string) *sarama.ProducerMessage {
+    return &sarama.ProducerMessage{
+        Topic:     topic,
+        Value:     sarama.StringEncoder(message),
+    }
+}
+
+func saveAsync(w http.ResponseWriter, r *http.Request) {
+    msg := prepareMessage("topic", "Hello, Kafka!!")
+    producer.InputContext(r.Context(), msg)
+    ...
+}
+
+var producer sarama.AsyncProducer
+
+func main() {
+    ... //setup agent
+	
+    config := sarama.NewConfig()
+    config.Producer.Return.Successes = true
+    ...
+
+    producer, err := ppsaramaibm.NewAsyncProducer([]string{"127.0.0.1:9092"}, config)
+    go func() {
+        for {
+            select {
+            case success := <-producer.Successes():
+                log.Printf("Partition %d at offset %d\n", success.Partition, success.Offset)
+            case err := <-producer.Errors():
+                log.Printf("Failed to send message: %v", err)
+            }
+        }
+    }()
+
+    http.HandleFunc("/save", pphttp.WrapHandlerFunc(saveAsync))
+}
+
+```
+[Full Example Source](/plugin/sarama-IBM/example/asyncproducer.go)

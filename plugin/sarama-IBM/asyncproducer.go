@@ -11,6 +11,7 @@ type producerMessageContext struct {
 	ctx context.Context
 }
 
+// AsyncProducer wraps the sarama.AsyncProducer and provides additional function InputContext for trace.
 type AsyncProducer interface {
 	sarama.AsyncProducer
 	InputContext(ctx context.Context, msg *sarama.ProducerMessage)
@@ -25,12 +26,14 @@ type asyncProducer struct {
 	ctx          context.Context
 }
 
+// InputContext sends a given message with tracer context to the input channel of sarama.AsyncProducer.
 func (p *asyncProducer) InputContext(ctx context.Context, msg *sarama.ProducerMessage) {
 	tracer := pinpoint.FromContext(ctx)
 	newCtx := pinpoint.NewContext(context.Background(), tracer.NewGoroutineTracer())
 	p.inputContext <- &producerMessageContext{msg, newCtx}
 }
 
+// Input returns the input channel of sarama.AsyncProducer. For trace, WithContext should be called first.
 func (p *asyncProducer) Input() chan<- *sarama.ProducerMessage {
 	return p.input
 }
@@ -51,12 +54,17 @@ func (p *asyncProducer) Close() error {
 	return p.AsyncProducer.Close()
 }
 
+// WithContext is deprecated and not thread-safe. Use InputContext.
+// WithContext passes the context to the provided producer.
+// It is possible to trace only when the given context contains a pinpoint.Tracer.
 func (p *asyncProducer) WithContext(ctx context.Context) {
 	tracer := pinpoint.FromContext(ctx)
 	p.ctx = pinpoint.NewContext(context.Background(), tracer.NewGoroutineTracer())
 }
 
 // NewAsyncProducer wraps sarama.NewAsyncProducer and returns a AsyncProducer ready to instrument.
+// It requires the underlying sarama Config.Producer.Return.Successes,
+// so we can know whether successes will be returned.
 func NewAsyncProducer(addrs []string, config *sarama.Config) (AsyncProducer, error) {
 	producer, err := sarama.NewAsyncProducer(addrs, config)
 	if err != nil {
@@ -125,6 +133,7 @@ func newAsyncProducerTracer(ctx context.Context, addrs []string, msg *sarama.Pro
 
 	if config.Producer.Return.Successes && tracer.IsSampled() {
 		writer.Set(HeaderAsyncSpanId, tracer.AsyncSpanId())
+		//fmt.Printf("Set HeaderAsyncSpanId :%s, topic : %s\n", tracer.AsyncSpanId(), msg.Topic)
 	}
 
 	return tracer
@@ -143,6 +152,7 @@ func endAsyncProducerTracer(spans map[string]pinpoint.Tracer, msg *sarama.Produc
 	headers := &distributedTracingContextWriterProducer{msg}
 	if id := headers.Get(HeaderAsyncSpanId); id != "" {
 		if span, ok := spans[id]; ok {
+			//fmt.Printf("Get HeaderAsyncSpanId :%s, topic : %s\n", id, msg.Topic)
 			if err != nil {
 				span.SpanEvent().SetError(err)
 			}
