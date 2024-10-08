@@ -150,7 +150,7 @@ func Test_spanStream_sendSpan(t *testing.T) {
 			span := defaultSpan()
 			span.agent = agent
 			span.NewSpanEvent("t1")
-			err := stream.sendSpan(span)
+			err := stream.sendSpan(span.newEventChunk(true))
 			assert.NoError(t, err, "sendSpan")
 		})
 	}

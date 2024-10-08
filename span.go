@@ -45,8 +45,6 @@ type span struct {
 	endPoint           string
 	remoteAddr         string
 	acceptorHost       string
-	spanEvents         []*spanEvent
-	spanEventsLock     sync.Mutex
 	annotations        annotation
 	loggingInfo        int32
 	apiId              int32
@@ -55,7 +53,8 @@ type span struct {
 	eventDepth       int32
 	eventOverflow    int
 	eventOverflowLog bool
-	eventChunk       []*spanEvent
+	spanEvents       []*spanEvent
+	spanEventLock    sync.Mutex
 
 	startTime       time.Time
 	elapsed         int64
@@ -90,8 +89,7 @@ func defaultSpan() *span {
 	span.goroutineId = -1
 	span.asyncId = noneAsyncId
 	span.eventStack = &stack{}
-	span.spanEvents = make([]*spanEvent, 0)
-	span.eventChunk = make([]*spanEvent, 0)
+	span.spanEvents = make([]*spanEvent, 0, defaultEventChunkSize)
 	span.errorChains = make([]*exception, 0)
 
 	return &span
@@ -124,7 +122,10 @@ func (span *span) EndSpan() {
 		Log("span").Warnf("abnormal span - has unclosed event")
 	}
 
-	chunk := newChunk(span, true)
+	span.spanEventLock.Lock()
+	defer span.spanEventLock.Unlock()
+
+	chunk := span.newEventChunk(true)
 	if chunk.enqueue() {
 		if len(span.errorChains) > 0 {
 			span.agent.enqueueExceptionMeta(span)
@@ -238,10 +239,9 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 }
 
 func (span *span) appendSpanEvent(se *spanEvent) {
-	span.spanEventsLock.Lock()
-	defer span.spanEventsLock.Unlock()
+	span.spanEventLock.Lock()
+	defer span.spanEventLock.Unlock()
 
-	span.spanEvents = append(span.spanEvents, se)
 	span.eventStack.push(se)
 	span.eventSequence++
 	span.eventDepth++
@@ -267,16 +267,15 @@ func (span *span) EndSpanEvent() {
 			}
 		}
 
-		span.spanEventsLock.Lock()
-		defer span.spanEventsLock.Unlock()
+		span.spanEventLock.Lock()
+		defer span.spanEventLock.Unlock()
 
-		span.eventChunk = append(span.eventChunk, se)
-		if len(span.eventChunk) >= defaultEventChunkSize {
-			chunk := newChunk(span, false)
+		span.spanEvents = append(span.spanEvents, se)
+		if len(span.spanEvents) >= span.config().spanEventChunkSize {
+			chunk := span.newEventChunk(false)
 			if !chunk.enqueue() {
 				Log("span").Tracef("span channel - max capacity reached or closed")
 			}
-			span.eventChunk = make([]*spanEvent, 0)
 		}
 	} else {
 		Log("span").Warnf("abnormal span - has no event")
@@ -435,7 +434,6 @@ func (span *span) JsonString() []byte {
 	m["EndPoint"] = span.endPoint
 	m["RemoteAddr"] = span.remoteAddr
 	m["Err"] = span.err
-	m["Events"] = span.spanEvents
 	m["Annotations"] = span.annotations.list
 	b, _ := json.Marshal(m)
 	return b
@@ -452,13 +450,21 @@ type spanChunk struct {
 	keyTime    int64
 }
 
-func newChunk(span *span, final bool) *spanChunk {
-	return &spanChunk{
+func (span *span) newEventChunk(final bool) *spanChunk {
+	// must spanEventLock holder
+	chunk := &spanChunk{
 		span:       span,
-		eventChunk: span.eventChunk,
+		eventChunk: span.spanEvents,
 		final:      final,
 		keyTime:    0,
 	}
+
+	capacity := defaultEventChunkSize
+	if final {
+		capacity = 0
+	}
+	span.spanEvents = make([]*spanEvent, 0, capacity)
+	return chunk
 }
 
 func (chunk *spanChunk) enqueue() bool {
