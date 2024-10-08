@@ -236,6 +236,15 @@ Span.QueueSize option sets the size of agent's span queue for gRPC.
 * type: int
 * default: 1024
 
+### Span.EventChunkSize
+Span.EventChunkSize option sets the size of span event chunk for gRPC.
+
+* --pinpoint-span-eventchunksize
+* PINPOINT_GO_SPAN_EVENTCHUNKSIZE
+* WithSpanEventChunkSize()
+* type: int
+* default: 20
+
 ### Span.MaxCallStackDepth
 Span.MaxCallStackDepth option sets the max callstack depth of a span, if -1 is unlimited and min is 2.
 
