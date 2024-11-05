@@ -84,7 +84,7 @@ func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
 		c.SetRequest(req.WithContext(ctx))
 		err := handler(c)
 		if err != nil {
-			tracer.Span().SetError(err)
+			pphttp.RecordHttpHandlerError(tracer, err)
 			c.Error(err)
 		}
 		status = c.Response().Status
