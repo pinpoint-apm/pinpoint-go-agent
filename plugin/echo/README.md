@@ -65,5 +65,6 @@ This package supports URL Statistics feature. It aggregates response times, succ
 * [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
 * [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
 * [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
+* [Http.Server.RecordHandlerError](/doc/config.md#Http.Server.RecordHandlerError)
 * [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
 * [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)

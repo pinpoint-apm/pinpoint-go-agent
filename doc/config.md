@@ -493,6 +493,16 @@ If sets to "HEADERS-ALL", it records all request headers.
 * case-insensitive
 * dynamic
 
+### Http.Server.RecordHandlerError
+Http.Server.RecordHandlerError sets whether to record the error returned by http handler.
+
+* --pinpoint-http-server-recordhandlererror
+* PINPOINT_GO_HTTP_SERVER_RECORDHANDLERERROR
+* WithHttpServerRecordHandlerError()
+* type: bool
+* default: true
+* dynamic
+
 ### Http.Client.RecordRequestHeader
 Http.Client.RecordRequestHeader option sets HTTP request headers to be logged on the client side.
 If sets to "HEADERS-ALL", it records all request headers.
