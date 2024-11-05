@@ -715,7 +715,13 @@ func (s *spanStream) close() {
 		return
 	}
 
-	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, closeStreamTimeOut, "span")
+	sendStreamWithTimeout(
+		func() error {
+			_, err := s.stream.CloseAndRecv()
+			return err
+		},
+		closeStreamTimeOut, "span",
+	)
 	s.stream = nil
 	Log("grpc").Infof("close span stream")
 }
@@ -948,7 +954,13 @@ func (s *statStream) close() {
 		return
 	}
 
-	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, closeStreamTimeOut, "stat")
+	sendStreamWithTimeout(
+		func() error {
+			_, err := s.stream.CloseAndRecv()
+			return err
+		},
+		closeStreamTimeOut, "stat",
+	)
 	s.stream = nil
 	Log("grpc").Infof("close stat stream")
 }
@@ -1188,7 +1200,13 @@ func (s *activeThreadCountStream) close() {
 		return
 	}
 
-	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, closeStreamTimeOut, "arc")
+	sendStreamWithTimeout(
+		func() error {
+			_, err := s.stream.CloseAndRecv()
+			return err
+		},
+		closeStreamTimeOut, "arc",
+	)
 	s.stream = nil
 }
 
