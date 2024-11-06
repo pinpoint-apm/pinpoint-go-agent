@@ -4,8 +4,8 @@ go 1.21
 
 require (
 	github.com/jackc/pgx/v5 v5.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent v1.4.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.4.0
+	github.com/pinpoint-apm/pinpoint-go-agent v1.4.4
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.4.4
 )
 
 require (

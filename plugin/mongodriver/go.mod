@@ -3,8 +3,8 @@ module github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver
 go 1.21
 
 require (
-	github.com/pinpoint-apm/pinpoint-go-agent v1.4.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.4.0
+	github.com/pinpoint-apm/pinpoint-go-agent v1.4.4
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.4.4
 	go.mongodb.org/mongo-driver v1.5.1
 )
 
