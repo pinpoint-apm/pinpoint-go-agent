@@ -22,7 +22,7 @@ type activeSpanInfo struct {
 
 func (agent *agent) runCommandService() {
 	Log("cmd").Infof("start command goroutine")
-	defer agent.wg.Done()
+	defer agent.workerWg.Done()
 	gAtcStreamCount = 0
 
 	for agent.enable {
