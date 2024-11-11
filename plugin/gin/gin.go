@@ -51,7 +51,7 @@ func wrap(doFunc func(c *gin.Context), funcName string) gin.HandlerFunc {
 		c.Request = pinpoint.RequestWithTracerContext(c.Request, tracer)
 		doFunc(c)
 		if len(c.Errors) > 0 {
-			tracer.Span().SetError(c.Errors.Last())
+			pphttp.RecordHttpHandlerError(tracer, c.Errors.Last())
 		}
 		status = c.Writer.Status()
 	}

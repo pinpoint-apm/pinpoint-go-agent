@@ -79,7 +79,8 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 
 		ctx.SetUserValue(CtxKey, pinpoint.NewContext(context.Background(), tracer))
 		handler(ctx)
-		tracer.Span().SetError(ctx.Err())
+		pphttp.RecordHttpHandlerError(tracer, ctx.Err())
+
 		status = ctx.Response.StatusCode()
 	}
 }

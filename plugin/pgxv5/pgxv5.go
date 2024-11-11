@@ -4,28 +4,48 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
-type pgxTracer struct {
-	agentConfig *pinpoint.Config
-}
+type pgxTracer struct{}
 
-// Checking interface implementations
 var (
+	// Checking interface implementations
 	_ pgx.QueryTracer    = (*pgxTracer)(nil)
 	_ pgx.BatchTracer    = (*pgxTracer)(nil)
 	_ pgx.ConnectTracer  = (*pgxTracer)(nil)
 	_ pgx.CopyFromTracer = (*pgxTracer)(nil)
+
+	onceLoadConfig    sync.Once
+	gTraceBindValue   bool
+	gMaxBindValueSize int
 )
+
+func initTracerOptions(opt []string, initFunc func()) {
+	initFunc()
+	pinpoint.GetConfig().AddReloadCallback(opt, initFunc)
+}
 
 // NewTracer creates a tracer to instrument jackc/pgx calls.
 func NewTracer() *pgxTracer {
-	return &pgxTracer{
-		agentConfig: pinpoint.GetConfig(),
-	}
+	onceLoadConfig.Do(func() {
+		initTracerOptions(
+			[]string{
+				pinpoint.CfgSQLTraceBindValue,
+				pinpoint.CfgSQLMaxBindValueSize,
+			},
+			func() {
+				cfg := pinpoint.GetConfig()
+				gTraceBindValue = cfg.Bool(pinpoint.CfgSQLTraceBindValue)
+				gMaxBindValueSize = cfg.Int(pinpoint.CfgSQLMaxBindValueSize)
+			},
+		)
+	})
+
+	return &pgxTracer{}
 }
 
 func (t *pgxTracer) TraceConnectStart(ctx context.Context, c pgx.TraceConnectStartData) context.Context {
@@ -114,16 +134,15 @@ func newSpanEvent(ctx context.Context, config *pgx.ConnConfig, cmd string) pinpo
 }
 
 func (t *pgxTracer) composeArgs(args []any) string {
-	if args == nil || len(args) == 0 || !t.agentConfig.Bool(pinpoint.CfgSQLTraceBindValue) {
+	if args == nil || len(args) == 0 || !gTraceBindValue {
 		return ""
 	}
 
 	var b bytes.Buffer
 	numComma := len(args) - 1
-	maxSize := t.agentConfig.Int(pinpoint.CfgSQLMaxBindValueSize)
 
 	for i, v := range args {
-		if !writeArg(&b, i, v, numComma, maxSize) {
+		if !writeArg(&b, i, v, numComma, gMaxBindValueSize) {
 			break
 		}
 	}

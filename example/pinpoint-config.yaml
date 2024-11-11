@@ -17,6 +17,7 @@ sampling:
 loglevel: "debug"
 span:
   queueSize: 512
+  eventChunkSize: 50
   maxCallstackDepth: 32
   maxCallstackSequence: 512
 Stat:

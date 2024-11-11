@@ -167,7 +167,7 @@ func activeSpanCount(now time.Time) []int32 {
 
 func (agent *agent) collectAgentStatWorker() {
 	Log("stats").Infof("start collect agent stat goroutine")
-	defer agent.wg.Done()
+	defer agent.workerWg.Done()
 
 	initStats()
 	resetResponseTime()

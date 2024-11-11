@@ -3,9 +3,9 @@ module github.com/pinpoint-apm/pinpoint-go-agent/example
 go 1.21
 
 require (
-	github.com/pinpoint-apm/pinpoint-go-agent v1.4.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.4.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql v1.4.0
+	github.com/pinpoint-apm/pinpoint-go-agent v1.4.4
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.4.4
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql v1.4.4
 	github.com/pkg/errors v0.9.1
 	gorm.io/driver/mysql v1.4.3
 	gorm.io/gorm v1.24.0

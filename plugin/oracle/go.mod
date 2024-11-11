@@ -3,8 +3,8 @@ module github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle
 go 1.21
 
 require (
-	github.com/pinpoint-apm/pinpoint-go-agent v1.4.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.4.0
+	github.com/pinpoint-apm/pinpoint-go-agent v1.4.4
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.4.4
 	github.com/sijms/go-ora/v2 v2.5.3
 )
 

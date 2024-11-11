@@ -2,7 +2,7 @@ module github.com/pinpoint-apm/pinpoint-go-agent/plugin/http
 
 go 1.21
 
-require github.com/pinpoint-apm/pinpoint-go-agent v1.4.0
+require github.com/pinpoint-apm/pinpoint-go-agent v1.4.4
 
 require (
 	github.com/fsnotify/fsnotify v1.6.0 // indirect

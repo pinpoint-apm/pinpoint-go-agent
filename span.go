@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,14 +17,15 @@ import (
 )
 
 const (
-	apiTypeDefault       = 0
-	apiTypeWebRequest    = 100
-	apiTypeInvocation    = 200
-	noneAsyncId          = 0
-	minEventDepth        = 2
-	minEventSequence     = 4
-	defaultEventDepth    = 64
-	defaultEventSequence = 5000
+	apiTypeDefault        = 0
+	apiTypeWebRequest     = 100
+	apiTypeInvocation     = 200
+	noneAsyncId           = 0
+	minEventDepth         = 2
+	minEventSequence      = 4
+	defaultEventDepth     = 64
+	defaultEventSequence  = 5000
+	defaultEventChunkSize = 20
 )
 
 var (
@@ -43,8 +45,6 @@ type span struct {
 	endPoint           string
 	remoteAddr         string
 	acceptorHost       string
-	spanEvents         []*spanEvent
-	spanEventsLock     sync.Mutex
 	annotations        annotation
 	loggingInfo        int32
 	apiId              int32
@@ -53,6 +53,8 @@ type span struct {
 	eventDepth       int32
 	eventOverflow    int
 	eventOverflowLog bool
+	spanEvents       []*spanEvent
+	spanEventLock    sync.Mutex
 
 	startTime       time.Time
 	elapsed         int64
@@ -87,7 +89,7 @@ func defaultSpan() *span {
 	span.goroutineId = -1
 	span.asyncId = noneAsyncId
 	span.eventStack = &stack{}
-	span.spanEvents = make([]*spanEvent, 0)
+	span.spanEvents = make([]*spanEvent, 0, defaultEventChunkSize)
 	span.errorChains = make([]*exception, 0)
 
 	return &span
@@ -120,9 +122,11 @@ func (span *span) EndSpan() {
 		Log("span").Warnf("abnormal span - has unclosed event")
 	}
 
-	span.optimizeSpanEvents()
+	span.spanEventLock.Lock()
+	defer span.spanEventLock.Unlock()
 
-	if span.agent.enqueueSpan(span) {
+	chunk := span.newEventChunk(true)
+	if chunk.enqueue() {
 		if len(span.errorChains) > 0 {
 			span.agent.enqueueExceptionMeta(span)
 		}
@@ -132,25 +136,6 @@ func (span *span) EndSpan() {
 
 	if span.urlStat != nil {
 		span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed})
-	}
-}
-
-func (span *span) optimizeSpanEvents() {
-	var prevSe *spanEvent
-	var prevDepth int32
-
-	for i, se := range span.spanEvents {
-		if i == 0 {
-			se.startElapsed = se.startTime - span.startTime.UnixMilli()
-		} else {
-			se.startElapsed = se.startTime - prevSe.startTime
-			curDepth := se.depth
-			if prevDepth == curDepth {
-				se.depth = 0
-			}
-			prevDepth = curDepth
-		}
-		prevSe = se
 	}
 }
 
@@ -254,10 +239,9 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 }
 
 func (span *span) appendSpanEvent(se *spanEvent) {
-	span.spanEventsLock.Lock()
-	defer span.spanEventsLock.Unlock()
+	span.spanEventLock.Lock()
+	defer span.spanEventLock.Unlock()
 
-	span.spanEvents = append(span.spanEvents, se)
 	span.eventStack.push(se)
 	span.eventSequence++
 	span.eventDepth++
@@ -280,6 +264,17 @@ func (span *span) EndSpanEvent() {
 				span.SetError(err)
 				span.recovered = true
 				panic(err)
+			}
+		}
+
+		span.spanEventLock.Lock()
+		defer span.spanEventLock.Unlock()
+
+		span.spanEvents = append(span.spanEvents, se)
+		if len(span.spanEvents) >= span.config().spanEventChunkSize {
+			chunk := span.newEventChunk(false)
+			if !chunk.enqueue() {
+				Log("span").Tracef("span channel - max capacity reached or closed")
 			}
 		}
 	} else {
@@ -349,6 +344,10 @@ func (span *span) TransactionId() TransactionId {
 
 func (span *span) SpanId() int64 {
 	return span.spanId
+}
+
+func (span *span) AsyncSpanId() string {
+	return fmt.Sprintf("%d^%d^%d", span.spanId, span.asyncId, span.asyncSequence)
 }
 
 func (span *span) Span() SpanRecorder {
@@ -435,7 +434,6 @@ func (span *span) JsonString() []byte {
 	m["EndPoint"] = span.endPoint
 	m["RemoteAddr"] = span.remoteAddr
 	m["Err"] = span.err
-	m["Events"] = span.spanEvents
 	m["Annotations"] = span.annotations.list
 	b, _ := json.Marshal(m)
 	return b
@@ -443,6 +441,67 @@ func (span *span) JsonString() []byte {
 
 func (span *span) config() *Config {
 	return span.agent.config
+}
+
+type spanChunk struct {
+	span       *span
+	eventChunk []*spanEvent
+	final      bool
+	keyTime    int64
+}
+
+func (span *span) newEventChunk(final bool) *spanChunk {
+	// must spanEventLock holder
+	chunk := &spanChunk{
+		span:       span,
+		eventChunk: span.spanEvents,
+		final:      final,
+		keyTime:    0,
+	}
+
+	capacity := defaultEventChunkSize
+	if final {
+		capacity = 0
+	}
+	span.spanEvents = make([]*spanEvent, 0, capacity)
+	return chunk
+}
+
+func (chunk *spanChunk) enqueue() bool {
+	chunk.optimizeSpanEvents()
+	return chunk.span.agent.enqueueSpan(chunk)
+}
+
+func (chunk *spanChunk) optimizeSpanEvents() {
+	var prevSe *spanEvent
+	var prevDepth int32
+
+	if len(chunk.eventChunk) < 1 {
+		return
+	}
+
+	sort.Slice(chunk.eventChunk, func(i, j int) bool {
+		return chunk.eventChunk[i].sequence < chunk.eventChunk[j].sequence
+	})
+	if chunk.final {
+		chunk.keyTime = chunk.span.startTime.UnixMilli()
+	} else {
+		chunk.keyTime = chunk.eventChunk[0].startTime
+	}
+
+	for i, se := range chunk.eventChunk {
+		if i == 0 {
+			se.startElapsed = se.startTime - chunk.keyTime
+		} else {
+			se.startElapsed = se.startTime - prevSe.startTime
+			curDepth := se.depth
+			if prevDepth == curDepth {
+				se.depth = 0
+			}
+			prevDepth = curDepth
+		}
+		prevSe = se
+	}
 }
 
 type stack struct {

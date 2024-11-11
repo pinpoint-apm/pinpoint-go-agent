@@ -38,9 +38,9 @@ func extCall(c *gin.Context) {
 	pphttp.EndHttpClientTracer(tracer, resp, err)
 
 	if nil != err {
-		c.Writer.WriteHeader(500)
+		c.Writer.WriteHeader(200)
 		c.Writer.WriteString(err.Error())
-		tracer.SpanEvent().SetError(err)
+		c.Error(err)
 		return
 	}
 
@@ -60,11 +60,13 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoGinTest"),
 		pinpoint.WithAgentId("GoGinTestAgent"),
-		pinpoint.WithSamplingRate(10),
 		pinpoint.WithHttpUrlStatEnable(true),
 		pinpoint.WithHttpUrlStatLimitSize(3),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
+		pphttp.WithHttpServerRecordHandlerError(false),
 	}
+	//os.Setenv("PINPOINT_GO_HTTP_SERVER_RECORDHANDLERERROR", "false")
+
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)
 	if err != nil {

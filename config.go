@@ -37,6 +37,7 @@ const (
 	CfgSamplingNewThroughput      = "Sampling.NewThroughput"
 	CfgSamplingContinueThroughput = "Sampling.ContinueThroughput"
 	CfgSpanQueueSize              = "Span.QueueSize"
+	CfgSpanEventChunkSize         = "Span.EventChunkSize"
 	CfgSpanMaxCallStackDepth      = "Span.MaxCallStackDepth"
 	CfgSpanMaxCallStackSequence   = "Span.MaxCallStackSequence"
 	CfgStatCollectInterval        = "Stat.CollectInterval"
@@ -110,6 +111,7 @@ func initConfig() {
 	AddConfig(CfgSamplingNewThroughput, CfgInt, 0, true)
 	AddConfig(CfgSamplingContinueThroughput, CfgInt, 0, true)
 	AddConfig(CfgSpanQueueSize, CfgInt, defaultQueueSize, false)
+	AddConfig(CfgSpanEventChunkSize, CfgInt, defaultEventChunkSize, true)
 	AddConfig(CfgSpanMaxCallStackDepth, CfgInt, defaultEventDepth, true)
 	AddConfig(CfgSpanMaxCallStackSequence, CfgInt, defaultEventSequence, true)
 	AddConfig(CfgStatCollectInterval, CfgInt, 5000, false)
@@ -166,6 +168,7 @@ type Config struct {
 	sqlTraceCommit       bool  // CfgSQLTraceCommit
 	sqlTraceRollback     bool  // CfgSQLTraceRollback
 	sqlTraceQueryStat    bool  // CfgSQLTraceQueryStat
+	spanEventChunkSize   int   // CfgSpanEventChunkSize
 	spanMaxEventDepth    int32 // CfgSpanMaxCallStackDepth
 	spanMaxEventSequence int32 // CfgSpanMaxCallStackSequence
 	errorTraceCallStack  bool  // CfgErrorTraceCallStack
@@ -304,6 +307,7 @@ func defaultConfig() *Config {
 	config.sqlTraceCommit = true
 	config.sqlTraceRollback = true
 	config.sqlTraceQueryStat = false
+	config.spanEventChunkSize = defaultEventChunkSize
 	config.spanMaxEventDepth = defaultEventDepth
 	config.spanMaxEventSequence = defaultEventSequence
 	config.errorTraceCallStack = false
@@ -482,6 +486,13 @@ func (config *Config) applyDynamicConfig() {
 	config.sqlTraceCommit = config.Bool(CfgSQLTraceCommit)
 	config.sqlTraceRollback = config.Bool(CfgSQLTraceRollback)
 	config.sqlTraceQueryStat = config.Bool(CfgSQLTraceQueryStat)
+
+	eventChunkSize := config.Int(CfgSpanEventChunkSize)
+	if eventChunkSize < 1 {
+		eventChunkSize = defaultEventChunkSize
+	}
+	config.cfgMap[CfgSpanEventChunkSize].value = eventChunkSize
+	config.spanEventChunkSize = config.Int(CfgSpanEventChunkSize)
 
 	maxDepth := config.Int(CfgSpanMaxCallStackDepth)
 	if maxDepth == -1 {
@@ -791,6 +802,13 @@ func WithEnable(enable bool) ConfigOption {
 func WithSpanQueueSize(size int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgSpanQueueSize].value = size
+	}
+}
+
+// WithSpanEventChunkSize sets the event chunk of a span.
+func WithSpanEventChunkSize(size int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgSpanEventChunkSize].value = size
 	}
 }
 

@@ -33,7 +33,7 @@ type agent struct {
 	spanGrpc    *spanGrpc
 	statGrpc    *statGrpc
 	cmdGrpc     *cmdGrpc
-	spanChan    chan *span
+	spanChan    chan *spanChunk
 	metaChan    chan interface{}
 	urlStatChan chan *urlStat
 	statChan    chan *pb.PStatMessage
@@ -47,10 +47,11 @@ type agent struct {
 	apiCache    *lru.Cache
 	apiIdGen    int32
 
-	config   *Config
-	wg       sync.WaitGroup
-	enable   bool
-	shutdown bool
+	config    *Config
+	connectWg sync.WaitGroup
+	workerWg  sync.WaitGroup
+	enable    bool
+	shutdown  bool
 }
 
 type apiMeta struct {
@@ -135,7 +136,7 @@ func NewAgent(config *Config) (Agent, error) {
 		agentID:     config.String(CfgAgentID),
 		agentName:   config.String(CfgAgentName),
 		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
-		spanChan:    make(chan *span, config.Int(CfgSpanQueueSize)),
+		spanChan:    make(chan *spanChunk, config.Int(CfgSpanQueueSize)),
 		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),
 		urlStatChan: make(chan *urlStat, config.Int(CfgSpanQueueSize)),
 		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),
@@ -163,6 +164,7 @@ func NewAgent(config *Config) (Agent, error) {
 	config.AddReloadCallback([]string{CfgLogOutput, CfgLogMaxSize}, logger.reloadOutput)
 
 	if !config.offGrpc {
+		agent.connectWg.Add(1)
 		go agent.connectGrpcServer()
 	}
 	globalAgent = agent
@@ -188,6 +190,7 @@ func (agent *agent) newSampler() {
 
 func (agent *agent) connectGrpcServer() {
 	var err error
+	defer agent.connectWg.Done()
 
 	if agent.agentGrpc, err = newAgentGrpc(agent); err != nil {
 		return
@@ -214,13 +217,18 @@ func (agent *agent) connectGrpcServer() {
 	go agent.collectUrlStatWorker()
 	go agent.sendUrlStatWorker()
 	go agent.sendStatsWorker()
-	agent.wg.Add(8)
+	agent.workerWg.Add(8)
 }
 
 func (agent *agent) Shutdown() {
+	// get delay in case shutdown was called too early
+	time.Sleep(1 * time.Second)
+
 	agent.shutdown = true
 	Log("agent").Infof("shutdown pinpoint agent")
 
+	// wait for the grpc connection to be completed
+	agent.connectWg.Wait()
 	if !agent.enable {
 		return
 	}
@@ -239,7 +247,7 @@ func (agent *agent) Shutdown() {
 		agent.cmdGrpc.close()
 	}
 
-	agent.wg.Wait()
+	agent.workerWg.Wait()
 
 	if agent.agentGrpc != nil {
 		agent.agentGrpc.close()
@@ -308,7 +316,7 @@ func (agent *agent) Config() *Config {
 
 func (agent *agent) sendPingWorker() {
 	Log("agent").Infof("start ping goroutine")
-	defer agent.wg.Done()
+	defer agent.workerWg.Done()
 	stream := agent.agentGrpc.newPingStreamWithRetry()
 
 	for agent.enable {
@@ -331,7 +339,7 @@ func (agent *agent) sendPingWorker() {
 
 func (agent *agent) sendSpanWorker() {
 	Log("agent").Infof("start span goroutine")
-	defer agent.wg.Done()
+	defer agent.workerWg.Done()
 
 	var (
 		skipOldSpan  = bool(false)
@@ -339,20 +347,20 @@ func (agent *agent) sendSpanWorker() {
 	)
 
 	stream := agent.spanGrpc.newSpanStreamWithRetry()
-	for span := range agent.spanChan {
+	for chunk := range agent.spanChan {
 		if !agent.enable {
 			break
 		}
 
 		if skipOldSpan {
-			if span.startTime.Before(skipBaseTime) {
+			if chunk.span.startTime.Before(skipBaseTime) {
 				continue //skip old span
 			} else {
 				skipOldSpan = false
 			}
 		}
 
-		err := stream.sendSpan(span)
+		err := stream.sendSpan(chunk)
 		if err != nil {
 			if err != io.EOF {
 				Log("agent").Errorf("send span - %v", err)
@@ -370,7 +378,7 @@ func (agent *agent) sendSpanWorker() {
 	Log("agent").Infof("end span goroutine")
 }
 
-func (agent *agent) enqueueSpan(span *span) bool {
+func (agent *agent) enqueueSpan(span *spanChunk) bool {
 	if !agent.enable {
 		return false
 	}
@@ -388,7 +396,7 @@ func (agent *agent) enqueueSpan(span *span) bool {
 
 func (agent *agent) sendMetaWorker() {
 	Log("agent").Infof("start meta goroutine")
-	defer agent.wg.Done()
+	defer agent.workerWg.Done()
 
 	for md := range agent.metaChan {
 		if !agent.enable {
@@ -594,7 +602,7 @@ func (agent *agent) enqueueUrlStat(stat *urlStat) bool {
 
 func (agent *agent) collectUrlStatWorker() {
 	Log("agent").Infof("start collect uri stat goroutine")
-	defer agent.wg.Done()
+	defer agent.workerWg.Done()
 
 	agent.initUrlStat()
 
@@ -602,8 +610,7 @@ func (agent *agent) collectUrlStatWorker() {
 		if !agent.enable {
 			break
 		}
-		snapshot := agent.currentUrlStatSnapshot()
-		snapshot.add(uri)
+		agent.addUrlStatSnapshot(uri)
 	}
 
 	Log("agent").Infof("end collect uri stat goroutine")
@@ -611,7 +618,7 @@ func (agent *agent) collectUrlStatWorker() {
 
 func (agent *agent) sendUrlStatWorker() {
 	Log("agent").Infof("start send uri stat goroutine")
-	defer agent.wg.Done()
+	defer agent.workerWg.Done()
 
 	interval := 30 * time.Second
 	time.Sleep(interval)
@@ -641,7 +648,7 @@ func (agent *agent) enqueueStat(stat *pb.PStatMessage) bool {
 
 func (agent *agent) sendStatsWorker() {
 	Log("agent").Infof("start send stats goroutine")
-	defer agent.wg.Done()
+	defer agent.workerWg.Done()
 
 	stream := agent.statGrpc.newStatStreamWithRetry()
 	for stats := range agent.statChan {
@@ -674,7 +681,7 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 		agentID:     config.String(CfgAgentID),
 		agentName:   config.String(CfgAgentName),
 		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
-		spanChan:    make(chan *span, config.Int(CfgSpanQueueSize)),
+		spanChan:    make(chan *spanChunk, config.Int(CfgSpanQueueSize)),
 		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),
 		urlStatChan: make(chan *urlStat, config.Int(CfgSpanQueueSize)),
 		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),

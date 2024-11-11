@@ -67,7 +67,7 @@ func main() {
 
 	// Iterate over consumer sessions.
 	ctx := ppsaramaibm.NewContext(context.Background(), broker)
-	topics := []string{"go-sarama-test"}
+	topics := []string{"go-sarama-test", "go-kafka-test"}
 	handler := exampleConsumerGroupHandler{}
 
 	for {

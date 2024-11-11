@@ -17,6 +17,7 @@
   },
   "loglevel": "debug",
   "Span": {
+    "EventChunkSize": 10,
     "MaxCallstackDepth": 10,
     "MaxCallstackSequence": 50
   },

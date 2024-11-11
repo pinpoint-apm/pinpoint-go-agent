@@ -88,6 +88,7 @@ type Tracer interface {
 	AddMetric(metric string, value interface{})
 
 	JsonString() []byte
+	AsyncSpanId() string
 }
 
 // SpanRecorder records the collected data in the fields of Span.

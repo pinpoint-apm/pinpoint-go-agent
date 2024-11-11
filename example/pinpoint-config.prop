@@ -14,6 +14,7 @@ sampling.NewThroughput=50
 sampling.ContinueThroughput=60
 
 span.queueSize=-1
+span.eventChunkSize=0
 span.maxCallstackDepth=0
 span.maxCallstackSequence=1
 

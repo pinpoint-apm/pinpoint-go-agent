@@ -66,7 +66,7 @@ func wrap(f func(c *fiber.Ctx) error, handlerName string) fiber.Handler {
 		c.SetUserContext(pinpoint.NewContext(context.Background(), tracer))
 		err := f(c)
 		if err != nil {
-			tracer.Span().SetError(err)
+			pphttp.RecordHttpHandlerError(tracer, err)
 			status = statusCode(err)
 		} else {
 			status = c.Response().StatusCode()

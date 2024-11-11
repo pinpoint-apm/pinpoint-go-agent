@@ -65,10 +65,11 @@ func (agent *agent) newUrlStatSnapshot() *urlStatSnapshot {
 	}
 }
 
-func (agent *agent) currentUrlStatSnapshot() *urlStatSnapshot {
+func (agent *agent) addUrlStatSnapshot(us *urlStat) {
 	urlSnapshotLock.Lock()
 	defer urlSnapshotLock.Unlock()
-	return urlSnapshot
+
+	urlSnapshot.add(us)
 }
 
 func (agent *agent) takeUrlStatSnapshot() *urlStatSnapshot {
