@@ -110,7 +110,8 @@ func Test_span_NewSpanEvent(t *testing.T) {
 			assert.Equal(t, span.eventDepth, int32(2), "eventDepth")
 			assert.Equal(t, span.eventStack.len(), int(1), "stack.len")
 
-			se := span.spanEvents[0]
+			se, exist := span.eventStack.peek()
+			assert.Equal(t, exist, true, "eventStack.peek")
 			assert.Equal(t, se.operationName, tt.args.operationName, "operationName")
 		})
 	}
