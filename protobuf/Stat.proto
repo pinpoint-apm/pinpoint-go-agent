@@ -17,6 +17,7 @@ message PStatMessage {
         PAgentStat agentStat = 1;
         PAgentStatBatch agentStatBatch = 2;
         PAgentUriStat agentUriStat = 3;
+        PProfilerMetric profilerMetric = 4;
     }
 }
 
@@ -58,6 +59,7 @@ enum PJvmGcType {
     JVM_GC_TYPE_PARALLEL = 2;
     JVM_GC_TYPE_CMS = 3;
     JVM_GC_TYPE_G1 = 4;
+    JVM_GC_TYPE_ZGC = 5;
 }
 
 message PAgentStat {
@@ -75,6 +77,22 @@ message PAgentStat {
     string metadata = 12;
     PTotalThread totalThread = 13;
     PLoadedClass loadedClass = 14;
+}
+
+message PProfilerMetric {
+    int64 timestamp = 1;
+    int64 collectInterval = 2;
+    string name = 3;
+    repeated PProfilerMetricField fields = 4;
+    repeated PProfilerMetricField tags = 5;
+}
+
+message PProfilerMetricField {
+    string name = 1;
+    oneof value {
+        string stringValue = 2;
+        int64 longValue = 3;
+    }
 }
 
 message PAgentStatBatch {

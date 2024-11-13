@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -740,7 +741,7 @@ func (s *spanStream) sendSpan(chunk *spanChunk) error {
 	}
 
 	if IsLogLevelEnabled(logrus.DebugLevel) {
-		Log("grpc").Debugf("PSpanMessage Size: %d", gspan.XXX_Size())
+		Log("grpc").Debugf("PSpanMessage Size: %d", proto.Size(gspan))
 	}
 	if IsLogLevelEnabled(logrus.TraceLevel) {
 		Log("grpc").Tracef("PSpanMessage: %s", gspan.String())

@@ -98,7 +98,7 @@ message PNextEvent {
 }
 
 message PMessageEvent {
-    sfixed64 nextSpanId = 1;
+    sfixed64 nextSpanId = 1 [jstype = JS_STRING];
     string endPoint = 2;
     string destinationId = 3;
 }
