@@ -254,12 +254,14 @@ func (agent *agent) Shutdown() {
 		agent.cmdGrpc.close()
 	}
 
-	agent.pingTicker.Stop()
-	agent.pingDone <- true
-	agent.statTicker.Stop()
-	agent.statDone <- true
-	agent.urlStatTicker.Stop()
-	agent.urlStatDone <- true
+	if !agent.config.offGrpc {
+		agent.pingTicker.Stop()
+		agent.pingDone <- true
+		agent.statTicker.Stop()
+		agent.statDone <- true
+		agent.urlStatTicker.Stop()
+		agent.urlStatDone <- true
+	}
 	agent.workerWg.Wait()
 
 	if agent.agentGrpc != nil {
