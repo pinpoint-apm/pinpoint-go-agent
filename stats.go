@@ -173,22 +173,28 @@ func (agent *agent) collectAgentStatWorker() {
 	resetResponseTime()
 
 	interval := time.Duration(agent.config.Int(CfgStatCollectInterval)) * time.Millisecond
-	time.Sleep(interval)
+	agent.statTicker = time.NewTicker(interval)
+	agent.statDone = make(chan bool)
+
 	cfgBatchCount := agent.config.Int(CfgStatBatchCount)
 	collected := make([]*inspectorStats, cfgBatchCount)
 	batch := 0
 
 	for agent.enable {
-		collected[batch] = getStats()
-		batch++
+		select {
+		case <-agent.statDone:
+			Log("stats").Infof("end collect agent stat goroutine")
+			return
+		case <-agent.statTicker.C:
+			collected[batch] = getStats()
+			batch++
 
-		if batch == cfgBatchCount {
-			agent.enqueueStat(makePAgentStatBatch(collected))
-			batch = 0
+			if batch == cfgBatchCount {
+				agent.enqueueStat(makePAgentStatBatch(collected))
+				batch = 0
+			}
 		}
-		time.Sleep(interval)
 	}
-	Log("stats").Infof("end collect agent stat goroutine")
 }
 
 func collectResponseTime(resTime int64) {

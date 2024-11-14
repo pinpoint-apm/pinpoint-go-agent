@@ -52,6 +52,13 @@ type agent struct {
 	workerWg  sync.WaitGroup
 	enable    bool
 	shutdown  bool
+
+	pingTicker    *time.Ticker
+	pingDone      chan bool
+	statTicker    *time.Ticker
+	statDone      chan bool
+	urlStatTicker *time.Ticker
+	urlStatDone   chan bool
 }
 
 type apiMeta struct {
@@ -238,8 +245,8 @@ func (agent *agent) Shutdown() {
 
 	close(agent.spanChan)
 	close(agent.metaChan)
-	close(agent.urlStatChan)
 	close(agent.statChan)
+	close(agent.urlStatChan)
 
 	//To terminate the listening state of the command stream,
 	//close the command grpc channel first
@@ -247,6 +254,12 @@ func (agent *agent) Shutdown() {
 		agent.cmdGrpc.close()
 	}
 
+	agent.pingTicker.Stop()
+	agent.pingDone <- true
+	agent.statTicker.Stop()
+	agent.statDone <- true
+	agent.urlStatTicker.Stop()
+	agent.urlStatDone <- true
 	agent.workerWg.Wait()
 
 	if agent.agentGrpc != nil {
@@ -317,6 +330,9 @@ func (agent *agent) Config() *Config {
 func (agent *agent) sendPingWorker() {
 	Log("agent").Infof("start ping goroutine")
 	defer agent.workerWg.Done()
+
+	agent.pingTicker = time.NewTicker(60 * time.Second)
+	agent.pingDone = make(chan bool)
 	stream := agent.agentGrpc.newPingStreamWithRetry()
 
 	for agent.enable {
@@ -330,11 +346,15 @@ func (agent *agent) sendPingWorker() {
 			stream = agent.agentGrpc.newPingStreamWithRetry()
 		}
 
-		time.Sleep(60 * time.Second)
+		select {
+		case <-agent.pingDone:
+			Log("agent").Infof("end ping goroutine")
+			stream.close()
+			return
+		case t := <-agent.pingTicker.C:
+			Log("agent").Debugf("ping at", t)
+		}
 	}
-
-	stream.close()
-	Log("agent").Infof("end ping goroutine")
 }
 
 func (agent *agent) sendSpanWorker() {
@@ -620,18 +640,21 @@ func (agent *agent) sendUrlStatWorker() {
 	Log("agent").Infof("start send uri stat goroutine")
 	defer agent.workerWg.Done()
 
-	interval := 30 * time.Second
-	time.Sleep(interval)
+	agent.urlStatTicker = time.NewTicker(30 * time.Second)
+	agent.urlStatDone = make(chan bool)
 
 	for agent.enable {
-		if agent.config.collectUrlStat {
-			snapshot := agent.takeUrlStatSnapshot()
-			agent.enqueueStat(makePAgentUriStat(snapshot))
+		select {
+		case <-agent.urlStatDone:
+			Log("agent").Infof("end send uri stat goroutine")
+			return
+		case <-agent.urlStatTicker.C:
+			if agent.config.collectUrlStat {
+				snapshot := agent.takeUrlStatSnapshot()
+				agent.enqueueStat(makePAgentUriStat(snapshot))
+			}
 		}
-		time.Sleep(interval)
 	}
-
-	Log("agent").Infof("end send uri stat goroutine")
 }
 
 func (agent *agent) enqueueStat(stat *pb.PStatMessage) bool {
