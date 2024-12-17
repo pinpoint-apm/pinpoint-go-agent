@@ -53,7 +53,7 @@ func main() {
 		pinpoint.WithAppName("GoKafkaAsyncProducer"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 		pinpoint.WithSamplingType("percent"),
-		pinpoint.WithSamplingPercentRate(10),
+		//pinpoint.WithSamplingPercentRate(10),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)
@@ -78,10 +78,14 @@ func main() {
 	go func() {
 		for {
 			select {
-			case success := <-asyncProducer.Successes():
-				log.Printf("Message sent to partition %d at offset %d\n", success.Partition, success.Offset)
-			case err := <-asyncProducer.Errors():
-				log.Printf("Failed to send message: %v", err)
+			case success, ok := <-asyncProducer.Successes():
+				if ok {
+					log.Printf("Message sent to partition %d at offset %d\n", success.Partition, success.Offset)
+				}
+			case err, ok := <-asyncProducer.Errors():
+				if ok {
+					log.Printf("Failed to send message: %v", err)
+				}
 			}
 		}
 	}()
