@@ -2,6 +2,8 @@ package ppsaramaibm
 
 import (
 	"context"
+	"sync"
+
 	"github.com/IBM/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
@@ -24,6 +26,8 @@ type asyncProducer struct {
 	successes    chan *sarama.ProducerMessage
 	errors       chan *sarama.ProducerError
 	ctx          context.Context
+	spans        map[string]pinpoint.Tracer
+	spansLock    sync.Mutex
 }
 
 // InputContext sends a given message with tracer context to the input channel of sarama.AsyncProducer.
@@ -78,37 +82,52 @@ func NewAsyncProducer(addrs []string, config *sarama.Config) (AsyncProducer, err
 		successes:     make(chan *sarama.ProducerMessage),
 		errors:        make(chan *sarama.ProducerError),
 		ctx:           context.Background(),
+		spans:         make(map[string]pinpoint.Tracer),
+		spansLock:     sync.Mutex{},
 	}
 
 	go func() {
-		spans := make(map[string]pinpoint.Tracer)
+		for {
+			select {
+			case msgCtx, ok := <-wrapped.inputContext:
+				if !ok {
+					return
+				}
+				span := newAsyncProducerTracer(msgCtx.ctx, addrs, msgCtx.msg, config)
+				producer.Input() <- msgCtx.msg
+				saveAsyncProducerTracer(config, wrapped, span)
+
+			case msg, ok := <-wrapped.input:
+				if !ok {
+					return
+				}
+				span := newAsyncProducerTracer(wrapped.ctx, addrs, msg, config)
+				producer.Input() <- msg
+				saveAsyncProducerTracer(config, wrapped, span)
+			}
+		}
+	}()
+
+	go func() {
+		defer close(wrapped.inputContext)
+		defer close(wrapped.input)
 		defer close(wrapped.successes)
 		defer close(wrapped.errors)
 
 		for {
 			select {
-			case msgCtx := <-wrapped.inputContext:
-				span := newAsyncProducerTracer(msgCtx.ctx, addrs, msgCtx.msg, config)
-				producer.Input() <- msgCtx.msg
-				saveAsyncProducerTracer(config, spans, span)
-
-			case msg := <-wrapped.input:
-				span := newAsyncProducerTracer(wrapped.ctx, addrs, msg, config)
-				producer.Input() <- msg
-				saveAsyncProducerTracer(config, spans, span)
-
 			case msg, ok := <-producer.Successes():
 				if !ok {
-					return // producer was closed, so exit
+					return
 				}
-				endAsyncProducerTracer(spans, msg, nil)
+				endAsyncProducerTracer(wrapped, msg, nil)
 				wrapped.successes <- msg
 
 			case e, ok := <-producer.Errors():
 				if !ok {
-					return // producer was closed
+					return
 				}
-				endAsyncProducerTracer(spans, e.Msg, e.Err)
+				endAsyncProducerTracer(wrapped, e.Msg, e.Err)
 				wrapped.errors <- e
 			}
 		}
@@ -139,19 +158,25 @@ func newAsyncProducerTracer(ctx context.Context, addrs []string, msg *sarama.Pro
 	return tracer
 }
 
-func saveAsyncProducerTracer(config *sarama.Config, spans map[string]pinpoint.Tracer, span pinpoint.Tracer) {
+func saveAsyncProducerTracer(config *sarama.Config, wrapped *asyncProducer, span pinpoint.Tracer) {
 	if config.Producer.Return.Successes && span.IsSampled() {
-		spans[span.AsyncSpanId()] = span
+		wrapped.spansLock.Lock()
+		defer wrapped.spansLock.Unlock()
+
+		wrapped.spans[span.AsyncSpanId()] = span
 	} else {
 		span.EndSpanEvent()
 		span.EndSpan()
 	}
 }
 
-func endAsyncProducerTracer(spans map[string]pinpoint.Tracer, msg *sarama.ProducerMessage, err error) {
+func endAsyncProducerTracer(wrapped *asyncProducer, msg *sarama.ProducerMessage, err error) {
 	headers := &distributedTracingContextWriterProducer{msg}
 	if id := headers.Get(HeaderAsyncSpanId); id != "" {
-		if span, ok := spans[id]; ok {
+		wrapped.spansLock.Lock()
+		defer wrapped.spansLock.Unlock()
+
+		if span, ok := wrapped.spans[id]; ok {
 			//fmt.Printf("Get HeaderAsyncSpanId :%s, topic : %s\n", id, msg.Topic)
 			if err != nil {
 				span.SpanEvent().SetError(err)
@@ -159,7 +184,7 @@ func endAsyncProducerTracer(spans map[string]pinpoint.Tracer, msg *sarama.Produc
 			span.EndSpanEvent()
 			span.EndSpan()
 
-			delete(spans, id)
+			delete(wrapped.spans, id)
 		}
 	}
 }
