@@ -281,6 +281,12 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 	return false
 }
 
+func isRetryableError(e error) bool {
+	// retry only for network error
+	code := status.Code(e)
+	return code == codes.Unavailable || code == codes.DeadlineExceeded
+}
+
 func (agentGrpc *agentGrpc) sendApiMetadata(ctx context.Context, in *pb.PApiMetaData) error {
 	ctx, cancel := context.WithTimeout(ctx, agentGrpcTimeOut)
 	defer cancel()
@@ -308,6 +314,8 @@ func (agentGrpc *agentGrpc) sendApiMetadataWithRetry(apiId int32, api string, li
 	for agentGrpc.agent.Enable() {
 		if err := agentGrpc.sendApiMetadata(ctx, &apiMeta); err == nil {
 			return true
+		} else if !isRetryableError(err) {
+			break
 		}
 
 		if !agentGrpc.agent.config.offGrpc {
@@ -346,6 +354,8 @@ func (agentGrpc *agentGrpc) sendStringMetadataWithRetry(strId int32, str string)
 	for agentGrpc.agent.Enable() {
 		if err := agentGrpc.sendStringMetadata(ctx, &strMeta); err == nil {
 			return true
+		} else if !isRetryableError(err) {
+			break
 		}
 
 		if !agentGrpc.agent.config.offGrpc {
@@ -385,6 +395,8 @@ func (agentGrpc *agentGrpc) sendSqlMetadataWithRetry(sqlId int32, sql string) bo
 	for agentGrpc.agent.Enable() {
 		if err := agentGrpc.sendSqlMetadata(ctx, &sqlMeta); err == nil {
 			return true
+		} else if !isRetryableError(err) {
+			break
 		}
 
 		if !agentGrpc.agent.config.offGrpc {
@@ -424,6 +436,8 @@ func (agentGrpc *agentGrpc) sendSqlUidMetadataWithRetry(sqlUid []byte, sql strin
 	for agentGrpc.agent.Enable() {
 		if err := agentGrpc.sendSqlUidMetadata(ctx, &sqlUidMeta); err == nil {
 			return true
+		} else if !isRetryableError(err) {
+			break
 		}
 
 		if !agentGrpc.agent.config.offGrpc {
@@ -460,6 +474,8 @@ func (agentGrpc *agentGrpc) sendExceptionMetadataWithRetry(exception *exceptionM
 	for agentGrpc.agent.Enable() {
 		if err := agentGrpc.sendExceptionMetadata(ctx, exceptMeta); err == nil {
 			return true
+		} else if !isRetryableError(err) {
+			break
 		}
 
 		if !agentGrpc.agent.config.offGrpc {
