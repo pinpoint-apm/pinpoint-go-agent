@@ -101,7 +101,7 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 	se.errorString = e.Error()
 
 	cfg := se.config()
-	if cfg.errorTraceCallStack {
+	if cfg.errorTraceCallStack && se.parentSpan.canAddErrorChain() {
 		se.exceptionId = se.parentSpan.traceCallStack(e, cfg.errorCallStackDepth)
 		se.Annotations().AppendLong(AnnotationExceptionChainId, se.exceptionId)
 	}

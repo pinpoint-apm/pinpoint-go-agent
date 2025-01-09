@@ -26,6 +26,7 @@ const (
 	defaultEventDepth     = 64
 	defaultEventSequence  = 5000
 	defaultEventChunkSize = 20
+	maxErrorChainEntry    = 10
 )
 
 var (
@@ -127,8 +128,9 @@ func (span *span) EndSpan() {
 
 	chunk := span.newEventChunk(true)
 	if chunk.enqueue() {
-		if len(span.errorChains) > 0 {
+		if span.errorChains != nil && len(span.errorChains) > 0 {
 			span.agent.enqueueExceptionMeta(span)
+			span.errorChains = nil
 		}
 	} else {
 		Log("span").Tracef("span channel - max capacity reached or closed")
@@ -441,6 +443,10 @@ func (span *span) JsonString() []byte {
 
 func (span *span) config() *Config {
 	return span.agent.config
+}
+
+func (span *span) canAddErrorChain() bool {
+	return span.errorChains != nil && len(span.errorChains) < maxErrorChainEntry
 }
 
 type spanChunk struct {

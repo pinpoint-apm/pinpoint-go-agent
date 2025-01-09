@@ -452,12 +452,19 @@ func (agentGrpc *agentGrpc) sendSqlUidMetadataWithRetry(sqlUid []byte, sql strin
 }
 
 func (agentGrpc *agentGrpc) sendExceptionMetadata(ctx context.Context, in *pb.PExceptionMetaData) error {
+	// size check before proto buffer encoding to ensure grpc stability
+	if in.XXX_Size() >= grpcWriteBufferSize {
+		err := status.Errorf(codes.ResourceExhausted, "gRPC message exceeds maximum size: %d", grpcWriteBufferSize)
+		Log("grpc").Warnf("skip exception metadata - %v", err)
+		return err
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, agentGrpcTimeOut)
 	defer cancel()
 
 	_, err := agentGrpc.metaClient.RequestExceptionMetaData(ctx, in)
 	if err != nil {
-		Log("grpc").Errorf("send sql metadata - %v", err)
+		Log("grpc").Errorf("send exception metadata - %v", err)
 	}
 
 	return err
