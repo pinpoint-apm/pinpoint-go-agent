@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"sync"
@@ -97,6 +98,7 @@ type exception struct {
 const (
 	cacheSize        = 1024
 	defaultQueueSize = 1024
+	maxSqlSize       = 64 * 1024
 )
 
 var globalAgent Agent
@@ -515,6 +517,13 @@ func (agent *agent) cacheError(errorName string) int32 {
 	return id
 }
 
+func abbreviateString(str string, length int) string {
+	if len(str) <= length {
+		return str
+	}
+	return str[:length] + "...(" + fmt.Sprint(length) + ")"
+}
+
 func (agent *agent) cacheSql(sql string) int32 {
 	if !agent.enable {
 		return 0
@@ -527,13 +536,14 @@ func (agent *agent) cacheSql(sql string) int32 {
 	id := atomic.AddInt32(&agent.sqlIdGen, 1)
 	agent.sqlCache.Add(sql, id)
 
+	aSql := abbreviateString(sql, maxSqlSize)
 	md := sqlMeta{
 		id:  id,
-		sql: sql,
+		sql: aSql,
 	}
 	agent.tryEnqueueMeta(md)
 
-	Log("agent").Infof("cache sql id: %d, %s", id, sql)
+	Log("agent").Infof("cache sql id: %d, %s", id, aSql)
 	return id
 }
 
@@ -551,13 +561,14 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 	uid := hash.Sum(nil)
 	agent.sqlUidCache.Add(sql, uid)
 
+	aSql := abbreviateString(sql, maxSqlSize)
 	md := sqlUidMeta{
 		uid: uid,
-		sql: sql,
+		sql: aSql,
 	}
 	agent.tryEnqueueMeta(md)
 
-	Log("agent").Infof("cache sql uid: %#v, %s", uid, sql)
+	Log("agent").Infof("cache sql uid: %#v, %s", uid, aSql)
 	return uid
 }
 

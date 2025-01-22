@@ -30,6 +30,8 @@ type spanKey struct {
 	RequestID    int64
 }
 
+const maxJsonSize = 64 * 1024
+
 type monitor struct {
 	sync.Mutex
 	spans map[spanKey]pinpoint.Tracer
@@ -53,7 +55,9 @@ func (m *monitor) Started(ctx context.Context, evt *event.CommandStartedEvent) {
 	a := tracer.SpanEvent().Annotations()
 	a.AppendString(pinpoint.AnnotationMongoCollectionInfo, collectionName(evt))
 	b, _ := bson.MarshalExtJSON(evt.Command, false, false)
-	a.AppendStringString(pinpoint.AnnotationMongoJasonData, string(b), "")
+	if b != nil {
+		a.AppendStringString(pinpoint.AnnotationMongoJasonData, abbreviateJson(b, maxJsonSize), "")
+	}
 
 	key := spanKey{
 		ConnectionID: evt.ConnectionID,
@@ -120,4 +124,11 @@ func getHost(connId string) string {
 		hostname = hostname[:idx]
 	}
 	return hostname
+}
+
+func abbreviateJson(b []byte, length int) string {
+	if len(b) <= length {
+		return string(b)
+	}
+	return string(b[:length]) + "...(" + fmt.Sprint(length) + ")"
 }

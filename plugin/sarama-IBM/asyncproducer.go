@@ -28,6 +28,7 @@ type asyncProducer struct {
 	ctx          context.Context
 	spans        map[string]pinpoint.Tracer
 	spansLock    sync.Mutex
+	isClosed     bool
 }
 
 // InputContext sends a given message with tracer context to the input channel of sarama.AsyncProducer.
@@ -51,10 +52,12 @@ func (p *asyncProducer) Errors() <-chan *sarama.ProducerError {
 }
 
 func (p *asyncProducer) AsyncClose() {
+	p.isClosed = true
 	p.AsyncProducer.AsyncClose()
 }
 
 func (p *asyncProducer) Close() error {
+	p.isClosed = true
 	return p.AsyncProducer.Close()
 }
 
@@ -84,13 +87,20 @@ func NewAsyncProducer(addrs []string, config *sarama.Config) (AsyncProducer, err
 		ctx:           context.Background(),
 		spans:         make(map[string]pinpoint.Tracer),
 		spansLock:     sync.Mutex{},
+		isClosed:      false,
 	}
 
 	go func() {
+		defer func() {
+			if recover() != nil {
+				wrapped.isClosed = true
+			}
+		}()
+
 		for {
 			select {
 			case msgCtx, ok := <-wrapped.inputContext:
-				if !ok {
+				if !ok || wrapped.isClosed {
 					return
 				}
 				span := newAsyncProducerTracer(msgCtx.ctx, addrs, msgCtx.msg, config)
@@ -98,7 +108,7 @@ func NewAsyncProducer(addrs []string, config *sarama.Config) (AsyncProducer, err
 				saveAsyncProducerTracer(config, wrapped, span)
 
 			case msg, ok := <-wrapped.input:
-				if !ok {
+				if !ok || wrapped.isClosed {
 					return
 				}
 				span := newAsyncProducerTracer(wrapped.ctx, addrs, msg, config)
@@ -117,14 +127,14 @@ func NewAsyncProducer(addrs []string, config *sarama.Config) (AsyncProducer, err
 		for {
 			select {
 			case msg, ok := <-producer.Successes():
-				if !ok {
+				if !ok || wrapped.isClosed {
 					return
 				}
 				endAsyncProducerTracer(wrapped, msg, nil)
 				wrapped.successes <- msg
 
 			case e, ok := <-producer.Errors():
-				if !ok {
+				if !ok || wrapped.isClosed {
 					return
 				}
 				endAsyncProducerTracer(wrapped, e.Msg, e.Err)

@@ -95,6 +95,9 @@ func (span *span) addCauserCallStack(err error, eid int64) {
 		if !ok {
 			break
 		}
+		if !span.canAddErrorChain() {
+			break
+		}
 
 		e = c.Cause()
 		if t := span.findError(e); t == nil {
