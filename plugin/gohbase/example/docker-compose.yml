@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  hbase:
+    image: dajobe/hbase
+    container_name: hbase-gohbase-test
+    hostname: hbase
+    ports:
+      - "2181:2181"   # Zookeeper
+      - "16000:16000" # HBase Master
+      - "16010:16010" # HBase Master Web UI
+      - "16020:16020" # HBase RegionServer
+      - "16030:16030" # HBase RegionServer Web UI
+    environment:
+      - HBASE_MANAGES_ZK=true
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo 'status' | /hbase/bin/hbase shell -n 2>/dev/null | grep -q 'active master'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+

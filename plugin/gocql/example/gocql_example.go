@@ -8,8 +8,8 @@ import (
 
 	"github.com/gocql/gocql"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppgocql "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 func doCassandra(w http.ResponseWriter, r *http.Request) {
@@ -65,5 +65,5 @@ func main() {
 
 	http.HandleFunc("/cassandra", pphttp.WrapHandlerFunc(doCassandra))
 
-	http.ListenAndServe(":9000", nil)
+	http.ListenAndServe(":9015", nil)
 }

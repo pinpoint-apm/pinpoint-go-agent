@@ -8,8 +8,8 @@ import (
 	"os"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppgorm "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -68,5 +68,5 @@ func main() {
 
 	http.HandleFunc("/gormquery", pphttp.WrapHandlerFunc(gormQuery))
 
-	http.ListenAndServe(":9000", nil)
+	http.ListenAndServe(":9019", nil)
 }

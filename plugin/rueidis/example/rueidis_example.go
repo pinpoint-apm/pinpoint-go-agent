@@ -7,8 +7,8 @@ import (
 	"os"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	pprueidis "github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis"
 	"github.com/redis/rueidis"
 	"github.com/redis/rueidis/rueidishook"
 )
@@ -53,5 +53,5 @@ func main() {
 	defer agent.Shutdown()
 
 	http.HandleFunc("/rueidis", pphttp.WrapHandlerFunc(rueidisv1))
-	http.ListenAndServe(":9000", nil)
+	http.ListenAndServe(":9014", nil)
 }

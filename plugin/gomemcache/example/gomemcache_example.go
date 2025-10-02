@@ -10,8 +10,8 @@ import (
 
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppgomemcache "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 func doMemcache(w http.ResponseWriter, r *http.Request) {
@@ -80,5 +80,5 @@ func main() {
 
 	http.HandleFunc("/memcache", pphttp.WrapHandlerFunc(doMemcache))
 
-	http.ListenAndServe(":9000", nil)
+	http.ListenAndServe(":9017", nil)
 }

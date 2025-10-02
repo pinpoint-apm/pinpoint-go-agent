@@ -17,8 +17,8 @@ import (
 	"github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelastic"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppgoelastic "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelastic"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 // The example below is referred from
@@ -165,5 +165,5 @@ func main() {
 	defer agent.Shutdown()
 
 	http.HandleFunc("/elastic", pphttp.WrapHandlerFunc(elasticTest))
-	http.ListenAndServe(":9000", nil)
+	http.ListenAndServe(":9018", nil)
 }

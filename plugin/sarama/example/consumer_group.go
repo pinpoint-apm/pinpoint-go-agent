@@ -3,11 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/Shopify/sarama"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
 	"log"
 	"os"
+
+	"github.com/Shopify/sarama"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	ppsarama "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
 )
 
 type exampleConsumerGroupHandler struct {

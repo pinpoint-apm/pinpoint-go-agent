@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  memcached:
+    image: memcached:1.6-alpine
+    container_name: memcached-gomemcache-test
+    ports:
+      - "11211:11211"
+    command: memcached -m 64
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "11211"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+

@@ -9,8 +9,8 @@ import (
 
 	"github.com/gomodule/redigo/redis"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppredigo "github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo"
 )
 
 func redigo_test(w http.ResponseWriter, r *http.Request) {
@@ -63,5 +63,5 @@ func main() {
 	defer agent.Shutdown()
 
 	http.HandleFunc("/redis", pphttp.WrapHandlerFunc(redigo_test))
-	http.ListenAndServe(":9000", nil)
+	http.ListenAndServe(":9013", nil)
 }

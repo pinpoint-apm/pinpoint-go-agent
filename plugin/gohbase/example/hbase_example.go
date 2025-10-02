@@ -5,8 +5,8 @@ import (
 	"net/http"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppgohbase "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	"github.com/tsuna/gohbase/filter"
 	"github.com/tsuna/gohbase/hrpc"
 )
@@ -59,5 +59,5 @@ func main() {
 
 	http.HandleFunc("/hbase", pphttp.WrapHandlerFunc(doHbase))
 
-	http.ListenAndServe(":9000", nil)
+	http.ListenAndServe(":9016", nil)
 }

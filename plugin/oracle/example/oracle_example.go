@@ -9,7 +9,7 @@ import (
 	"os"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle"
 )
 
@@ -119,5 +119,5 @@ func main() {
 	defer agent.Shutdown()
 
 	http.HandleFunc("/query", pphttp.WrapHandlerFunc(query))
-	http.ListenAndServe(":9000", nil)
+	http.ListenAndServe(":9022", nil)
 }

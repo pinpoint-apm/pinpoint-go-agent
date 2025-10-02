@@ -11,8 +11,8 @@ import (
 
 	"github.com/Shopify/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppsarama "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
 )
 
 func outGoingRequest(ctx context.Context) string {

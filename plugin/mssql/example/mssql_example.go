@@ -9,11 +9,26 @@ import (
 	"os"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql"
 )
 
 func query(w http.ResponseWriter, r *http.Request) {
+	// First connect to master database to create TestDB if it doesn't exist
+	masterDsn := "server=localhost;user id=sa;password=TestPass123;port=1433;database=master"
+	masterDb, err := sql.Open("sqlserver-pinpoint", masterDsn)
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, err.Error())
+		return
+	}
+
+	ctx := r.Context()
+	// Create TestDB if it doesn't exist
+	_, _ = masterDb.ExecContext(ctx, "IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = 'TestDB') CREATE DATABASE TestDB")
+	masterDb.Close()
+
+	// Now connect to TestDB
 	dsn := "server=localhost;user id=sa;password=TestPass123;port=1433;database=TestDB"
 	db, err := sql.Open("sqlserver-pinpoint", dsn)
 	if err != nil {
@@ -23,7 +38,8 @@ func query(w http.ResponseWriter, r *http.Request) {
 	}
 	defer db.Close()
 
-	ctx := r.Context()
+	// Drop table if exists and create new one
+	_, _ = db.ExecContext(ctx, "DROP TABLE IF EXISTS Inventory")
 	_, _ = db.ExecContext(ctx, "CREATE TABLE Inventory (id INT, name NVARCHAR(50), quantity INT)")
 
 	stmt, err := db.Prepare("INSERT INTO Inventory VALUES (@p1, @p2, @p3)")
@@ -65,5 +81,5 @@ func main() {
 
 	http.HandleFunc("/query", pphttp.WrapHandlerFunc(query))
 
-	http.ListenAndServe(":9000", nil)
+	http.ListenAndServe(":9021", nil)
 }

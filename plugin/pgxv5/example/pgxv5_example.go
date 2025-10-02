@@ -12,8 +12,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	pppgxv5 "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5"
 )
 
 var connUrl = "postgresql://testuser:p123@localhost/testdb?sslmode=disable"
@@ -329,5 +329,5 @@ func main() {
 	http.HandleFunc("/batch", pphttp.WrapHandlerFunc(batch))
 	http.HandleFunc("/query_std", pphttp.WrapHandlerFunc(queryStdSql))
 
-	http.ListenAndServe(":9002", nil)
+	http.ListenAndServe(":9003", nil)
 }

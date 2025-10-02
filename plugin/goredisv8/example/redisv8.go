@@ -9,8 +9,8 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppgoredisv8 "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
 var redisClient *redis.Client
@@ -97,7 +97,7 @@ func main() {
 	http.HandleFunc("/redis", pphttp.WrapHandlerFunc(redisv8))
 	http.HandleFunc("/rediscluster", pphttp.WrapHandlerFunc(redisv8Cluster))
 
-	http.ListenAndServe(":9000", nil)
+	http.ListenAndServe(":9011", nil)
 
 	redisClient.Close()
 	redisClusterClient.Close()
