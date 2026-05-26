@@ -1,0 +1,3 @@
+[submodule "pinpoint-grpc-idl"]
+	path = pinpoint-grpc-idl
+	url = https://github.com/pinpoint-apm/pinpoint-grpc-idl.git
