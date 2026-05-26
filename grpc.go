@@ -607,6 +607,7 @@ func (agentGrpc *agentGrpc) newPingStream() bool {
 	ctx, cancel := context.WithCancel(grpcMetadataContext(agentGrpc.agent, agentGrpc.pingSocketId))
 	stream, err := agentGrpc.agentClient.PingSession(ctx)
 	if err != nil {
+		cancel()
 		Log("grpc").Errorf("make ping stream - %v", err)
 		return false
 	}
@@ -718,6 +719,7 @@ func (spanGrpc *spanGrpc) newSpanStream() bool {
 	ctx, cancel := context.WithCancel(grpcMetadataContext(spanGrpc.agent, -1))
 	stream, err := spanGrpc.spanClient.SendSpan(ctx)
 	if err != nil {
+		cancel()
 		Log("grpc").Errorf("make span stream - %v", err)
 		return false
 	}
@@ -963,6 +965,7 @@ func (statGrpc *statGrpc) newStatStream() bool {
 	ctx, cancel := context.WithCancel(grpcMetadataContext(statGrpc.agent, -1))
 	stream, err := statGrpc.statClient.SendAgentStat(ctx)
 	if err != nil {
+		cancel()
 		Log("grpc").Errorf("make stat stream - %v", err)
 		return false
 	}
