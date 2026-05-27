@@ -1,8 +1,10 @@
 package pinpoint
 
 import (
-	"github.com/stretchr/testify/assert"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func Test_agentGrpc_sendAgentInfo(t *testing.T) {
@@ -152,8 +154,109 @@ func Test_spanStream_sendSpan(t *testing.T) {
 			span.NewSpanEvent("t1")
 			err := stream.sendSpan(span.newEventChunk(true))
 			assert.NoError(t, err, "sendSpan")
+			stream.close()
 		})
 	}
+}
+
+func Test_spanGrpc_sendSpanBatch(t *testing.T) {
+	type args struct {
+		agent *agent
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		{"1", args{newTestAgent(defaultConfig())}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			agent := tt.args.agent
+			agent.spanGrpc = newMockSpanGrpc(agent, t)
+
+			span := defaultSpan()
+			span.agent = agent
+			span.NewSpanEvent("t1")
+			agent.spanGrpc.sendSpanBatchAsync([]*spanChunk{span.newEventChunk(true)})
+			agent.spanGrpc.awaitInFlightSpanBatch()
+
+			client := agent.spanGrpc.spanClient.(*mockSpanGrpcClient)
+			assert.Equal(t, 1, client.requestCount(), "sendSpanBatch")
+			assert.Len(t, client.lastRequest().GetSpan(), 1, "span batch size")
+		})
+	}
+}
+
+func Test_agent_enqueueSpan_discardsOldestAndEnqueuesNewest(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgSpanBatchEnable, true)
+	agent := newTestAgent(cfg)
+	agent.spanChan = make(chan *spanChunk, 2)
+
+	first := newTestSpanChunk(agent)
+	second := newTestSpanChunk(agent)
+	third := newTestSpanChunk(agent)
+
+	assert.True(t, agent.enqueueSpan(first), "enqueue first")
+	assert.True(t, agent.enqueueSpan(second), "enqueue second")
+	assert.True(t, agent.enqueueSpan(third), "enqueue third")
+
+	assert.Equal(t, second, <-agent.spanChan, "oldest span should be discarded")
+	assert.Equal(t, third, <-agent.spanChan, "newest span should be enqueued")
+}
+
+func Test_agent_enqueueSpan_streamModeDropsNewest(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.spanChan = make(chan *spanChunk, 2)
+
+	first := newTestSpanChunk(agent)
+	second := newTestSpanChunk(agent)
+	third := newTestSpanChunk(agent)
+
+	assert.True(t, agent.enqueueSpan(first), "enqueue first")
+	assert.True(t, agent.enqueueSpan(second), "enqueue second")
+	assert.False(t, agent.enqueueSpan(third), "stream mode reports newest span as dropped")
+
+	assert.Equal(t, second, <-agent.spanChan, "oldest span should be discarded")
+	assert.Empty(t, agent.spanChan, "newest span should not be enqueued in legacy stream mode")
+}
+
+func Test_spanGrpc_collectSpanBatch_stopsAtBatchSize(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	spanGrpc := newMockSpanGrpc(agent, t)
+	spanGrpc.batchSize = 2
+	spanGrpc.batchCollectDeadline = time.Second
+
+	first := newTestSpanChunk(agent)
+	second := newTestSpanChunk(agent)
+	third := newTestSpanChunk(agent)
+	spanChan := make(chan *spanChunk, 2)
+	spanChan <- second
+	spanChan <- third
+
+	batch, closed := spanGrpc.collectSpanBatch(first, spanChan)
+
+	assert.False(t, closed)
+	assert.Equal(t, []*spanChunk{first, second}, batch)
+	assert.Equal(t, 1, len(spanChan), "third chunk should wait for the next batch")
+}
+
+func Test_spanGrpc_collectSpanBatch_flushesClosedChannel(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	spanGrpc := newMockSpanGrpc(agent, t)
+	spanGrpc.batchSize = 50
+	spanGrpc.batchCollectDeadline = time.Second
+
+	first := newTestSpanChunk(agent)
+	second := newTestSpanChunk(agent)
+	spanChan := make(chan *spanChunk, 1)
+	spanChan <- second
+	close(spanChan)
+
+	batch, closed := spanGrpc.collectSpanBatch(first, spanChan)
+
+	assert.True(t, closed)
+	assert.Equal(t, []*spanChunk{first, second}, batch)
 }
 
 func Test_statStream_sendStat(t *testing.T) {
@@ -179,6 +282,12 @@ func Test_statStream_sendStat(t *testing.T) {
 			assert.NoError(t, err, "sendStats")
 		})
 	}
+}
+
+func newTestSpanChunk(agent *agent) *spanChunk {
+	span := defaultSpan()
+	span.agent = agent
+	return span.newEventChunk(true)
 }
 
 func Test_statStream_sendStatRetry(t *testing.T) {

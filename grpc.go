@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/golang/protobuf/ptypes/wrappers"
@@ -674,21 +675,38 @@ func (agentGrpc *agentGrpc) close() {
 
 type spanClient interface {
 	SendSpan(ctx context.Context) (pb.Span_SendSpanClient, error)
+	SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch) (*pb.PSpanResultBatch, error)
 }
 
 type spanGrpcClient struct {
 	client pb.SpanClient
 }
 
+func (spanGrpcClient *spanGrpcClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch) (*pb.PSpanResultBatch, error) {
+	return spanGrpcClient.client.SendSpanBatch(ctx, in)
+}
+
 func (spanGrpcClient *spanGrpcClient) SendSpan(ctx context.Context) (pb.Span_SendSpanClient, error) {
 	return spanGrpcClient.client.SendSpan(ctx)
 }
 
+// spanGrpc supports both span send transports: the legacy long-lived SendSpan stream
+// and the SendSpanBatch unary sender selected by Span.Batch.Enable.
 type spanGrpc struct {
-	spanConn   *grpc.ClientConn
-	spanClient spanClient
-	stream     *spanStream
-	agent      *agent
+	spanConn              *grpc.ClientConn
+	spanClient            spanClient
+	stream                *spanStream
+	agent                 *agent
+	batchSize             int
+	batchFlushTimeout     time.Duration
+	batchCollectDeadline  time.Duration
+	maxConcurrentRequests int
+
+	// Buffered channel used as a semaphore that bounds the number of
+	// in-flight SendSpanBatch requests. Acquire = send to it; release =
+	// receive from it.
+	concurrentRequestPermit chan struct{}
+	inFlight                sync.WaitGroup
 }
 
 type spanStream struct {
@@ -703,13 +721,19 @@ func newSpanGrpc(agent *agent) (*spanGrpc, error) {
 	}
 
 	return &spanGrpc{
-		spanConn:   conn,
-		spanClient: &spanGrpcClient{pb.NewSpanClient(conn)},
-		agent:      agent,
+		spanConn:                conn,
+		spanClient:              &spanGrpcClient{pb.NewSpanClient(conn)},
+		agent:                   agent,
+		batchSize:               agent.config.Int(CfgSpanBatchSize),
+		batchFlushTimeout:       time.Duration(agent.config.Int(CfgSpanBatchFlushInterval)) * time.Millisecond,
+		batchCollectDeadline:    time.Duration(agent.config.Int(CfgSpanBatchCollectDeadline)) * time.Millisecond,
+		maxConcurrentRequests:   agent.config.Int(CfgSpanBatchMaxConcurrentRequests),
+		concurrentRequestPermit: make(chan struct{}, agent.config.Int(CfgSpanBatchMaxConcurrentRequests)),
 	}, nil
 }
 
 func (spanGrpc *spanGrpc) close() {
+	spanGrpc.awaitInFlightSpanBatch()
 	if spanGrpc.spanConn != nil {
 		spanGrpc.spanConn.Close()
 	}
@@ -778,6 +802,156 @@ func (s *spanStream) sendSpan(chunk *spanChunk) error {
 		s.cancel()
 	}
 	return err
+}
+
+// collectSpanBatch gathers the first span plus queued spans until batch size or collect deadline is reached.
+// The batch worker blocks for the first item, then uses a short collection window to improve
+// batch density without delaying sparse traffic too long.
+func (spanGrpc *spanGrpc) collectSpanBatch(first *spanChunk, spanChan <-chan *spanChunk) ([]*spanChunk, bool) {
+	batch := make([]*spanChunk, 0, spanGrpc.batchSize)
+	batch = append(batch, first)
+
+	timer := time.NewTimer(spanGrpc.batchCollectDeadline)
+	defer timer.Stop()
+
+	for len(batch) < spanGrpc.batchSize {
+		select {
+		case chunk, ok := <-spanChan:
+			if !ok {
+				return batch, true
+			}
+			batch = append(batch, chunk)
+		case <-timer.C:
+			return batch, false
+		}
+	}
+
+	return batch, false
+}
+
+// sendSpanBatchAsync applies concurrent request limiting and sends a unary batch request.
+// If no permit becomes available within the flush timeout, the whole batch is skipped rather than
+// blocking the worker forever behind slow in-flight requests; completed calls always release their permit.
+func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
+	spanMessageBatch := makePSpanMessageBatch(chunks)
+	if len(spanMessageBatch.GetSpan()) == 0 {
+		return
+	}
+
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("SendSpanBatch size=%d messageSize=%d", len(spanMessageBatch.GetSpan()), proto.Size(spanMessageBatch))
+	}
+	if IsLogLevelEnabled(logrus.TraceLevel) {
+		Log("grpc").Tracef("PSpanMessageBatch: %s", spanMessageBatch.String())
+	}
+
+	if !spanGrpc.acquireSpanBatchPermit() {
+		Log("grpc").Infof(
+			"SendSpanBatch skipped: no available permits within %s concurrentRequests:%d/%d",
+			spanGrpc.batchFlushTimeout.String(),
+			len(spanGrpc.concurrentRequestPermit),
+			spanGrpc.maxConcurrentRequests,
+		)
+		return
+	}
+
+	spanGrpc.inFlight.Add(1)
+	go func() {
+		defer spanGrpc.inFlight.Done()
+		defer spanGrpc.releaseSpanBatchPermit()
+
+		ctx, cancel := context.WithTimeout(grpcMetadataContext(spanGrpc.agent, -1), sendStreamTimeOut)
+		defer cancel()
+
+		response, err := spanGrpc.spanClient.SendSpanBatch(ctx, spanMessageBatch)
+		if err != nil {
+			Log("grpc").Infof("SendSpanBatch failed - %v", err)
+			return
+		}
+		handleSpanBatchResponse(response)
+	}()
+}
+
+// acquireSpanBatchPermit waits up to the configured flush timeout for an async batch request slot.
+// The buffered channel acts like the semaphore: its capacity is maxConcurrentRequests.
+func (spanGrpc *spanGrpc) acquireSpanBatchPermit() bool {
+	timer := time.NewTimer(spanGrpc.batchFlushTimeout)
+	defer timer.Stop()
+
+	select {
+	case spanGrpc.concurrentRequestPermit <- struct{}{}:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+func (spanGrpc *spanGrpc) releaseSpanBatchPermit() {
+	<-spanGrpc.concurrentRequestPermit
+}
+
+// awaitInFlightSpanBatch waits briefly for async sends.
+// Shutdown is best effort: wait up to three seconds for accepted requests, then continue closing.
+func (spanGrpc *spanGrpc) awaitInFlightSpanBatch() {
+	done := make(chan struct{})
+	go func() {
+		spanGrpc.inFlight.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		Log("grpc").Warnf("Timed out waiting for in-flight span requests to complete")
+	}
+}
+
+// handleSpanBatchResponse logs collector-side partial success without failing the sender loop.
+// A partial success means the collector accepted the request but rejected some spans, so the
+// sender records the warning and continues with later batches.
+func handleSpanBatchResponse(response *pb.PSpanResultBatch) {
+	if response == nil || response.GetPartialSuccess() == nil {
+		return
+	}
+
+	partialSuccess := response.GetPartialSuccess()
+	rejectedSpans := partialSuccess.GetRejectedSpans()
+	if rejectedSpans > 0 {
+		Log("grpc").Warnf(
+			"SendSpanBatch partial success: rejectedSpans=%d, errorId=%d, errorMessage=%s",
+			rejectedSpans,
+			partialSuccess.GetErrorId(),
+			partialSuccess.GetErrorMessage(),
+		)
+		return
+	}
+
+	if partialSuccess.GetErrorMessage() != "" {
+		Log("grpc").Infof(
+			"SendSpanBatch warning: errorId=%d, %s",
+			partialSuccess.GetErrorId(),
+			partialSuccess.GetErrorMessage(),
+		)
+	}
+}
+
+// makePSpanMessageBatch preserves the existing span/chunk conversion while wrapping messages for SendSpanBatch.
+// Final synchronous spans become PSpan messages; non-final chunks and async spans keep the PSpanChunk path.
+func makePSpanMessageBatch(chunks []*spanChunk) *pb.PSpanMessageBatch {
+	spanMessages := make([]*pb.PSpanMessage, 0, len(chunks))
+	for _, chunk := range chunks {
+		if chunk == nil || chunk.span == nil {
+			continue
+		}
+
+		if !chunk.final || chunk.span.isAsyncSpan() {
+			spanMessages = append(spanMessages, makePSpanChunk(chunk))
+		} else {
+			spanMessages = append(spanMessages, makePSpan(chunk))
+		}
+	}
+
+	return &pb.PSpanMessageBatch{Span: spanMessages}
 }
 
 func makePSpan(chunk *spanChunk) *pb.PSpanMessage {

@@ -98,7 +98,13 @@ type exception struct {
 const (
 	cacheSize        = 1024
 	defaultQueueSize = 1024
-	maxSqlSize       = 64 * 1024
+
+	defaultSpanBatchSize                  = 50
+	defaultSpanBatchFlushInterval         = 1000
+	defaultSpanBatchCollectDeadline       = 500
+	defaultSpanBatchMaxConcurrentRequests = 10
+
+	maxSqlSize = 64 * 1024
 )
 
 var globalAgent Agent
@@ -219,7 +225,11 @@ func (agent *agent) connectGrpcServer() {
 
 	agent.enable = true
 	go agent.sendPingWorker()
-	go agent.sendSpanWorker()
+	if agent.config.Bool(CfgSpanBatchEnable) {
+		go agent.sendSpanBatchWorker()
+	} else {
+		go agent.sendSpanWorker()
+	}
 	go agent.runCommandService()
 	go agent.sendMetaWorker()
 	go agent.collectAgentStatWorker()
@@ -402,11 +412,38 @@ func (agent *agent) sendSpanWorker() {
 	Log("agent").Infof("end span goroutine")
 }
 
+func (agent *agent) sendSpanBatchWorker() {
+	Log("agent").Infof("start span batch goroutine")
+	defer agent.workerWg.Done()
+
+	// Drain span chunks into unary SendSpanBatch requests.
+	// The first chunk starts a batch, collectSpanBatch opportunistically gathers more chunks,
+	// and sendSpanBatchAsync hands the batch to a bounded async sender.
+	for {
+		chunk, ok := <-agent.spanChan
+		if !ok {
+			break
+		}
+
+		batch, closed := agent.spanGrpc.collectSpanBatch(chunk, agent.spanChan)
+		agent.spanGrpc.sendSpanBatchAsync(batch)
+		if closed {
+			break
+		}
+	}
+
+	// The span channel is closed during shutdown; wait for already accepted async batches
+	// before the worker exits so queued spans get the same best-effort flush.
+	agent.spanGrpc.awaitInFlightSpanBatch()
+	Log("agent").Infof("end span batch goroutine")
+}
+
 func (agent *agent) enqueueSpan(span *spanChunk) bool {
 	if !agent.enable {
 		return false
 	}
 
+	// Fast path keeps enqueue non-blocking while the queue has capacity.
 	select {
 	case agent.spanChan <- span:
 		return true
@@ -414,8 +451,20 @@ func (agent *agent) enqueueSpan(span *spanChunk) bool {
 		break
 	}
 
-	<-agent.spanChan
-	return false
+	// When the queue is full, discard the oldest span
+	// and enqueue the newest so recent traces are favored under backpressure.
+	select {
+	case <-agent.spanChan:
+		Log("agent").Debugf("discard oldest span queue size:%d", len(agent.spanChan))
+	default:
+	}
+
+	select {
+	case agent.spanChan <- span:
+		return true
+	default:
+		return false
+	}
 }
 
 func (agent *agent) sendMetaWorker() {

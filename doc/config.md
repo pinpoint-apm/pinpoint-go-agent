@@ -236,6 +236,53 @@ Span.QueueSize option sets the size of agent's span queue for gRPC.
 * type: int
 * default: 1024
 
+### Span.Batch.Enable
+Span.Batch.Enable option enables SendSpanBatch unary requests instead of the long-lived SendSpan stream.
+
+* --pinpoint-span-batch-enable
+* PINPOINT_GO_SPAN_BATCH_ENABLE
+* WithSpanBatchEnable()
+* type: bool
+* default: false
+
+### Span.BatchSize
+Span.BatchSize option sets the max number of spans per SendSpanBatch request.
+
+* --pinpoint-span-batchsize
+* PINPOINT_GO_SPAN_BATCHSIZE
+* WithSpanBatchSize()
+* type: int
+* default: 50
+
+### Span.BatchFlushInterval
+Span.BatchFlushInterval option sets how long span batch sender waits for an available request permit.
+
+* --pinpoint-span-batchflushinterval
+* PINPOINT_GO_SPAN_BATCHFLUSHINTERVAL
+* WithSpanBatchFlushInterval()
+* type: int
+* default: 1000
+* unit: milliseconds
+
+### Span.BatchCollectDeadline
+Span.BatchCollectDeadline option sets how long span batch sender collects additional spans after the first span arrives.
+
+* --pinpoint-span-batchcollectdeadline
+* PINPOINT_GO_SPAN_BATCHCOLLECTDEADLINE
+* WithSpanBatchCollectDeadline()
+* type: int
+* default: 500
+* unit: milliseconds
+
+### Span.BatchMaxConcurrentRequests
+Span.BatchMaxConcurrentRequests option sets the max number of concurrent SendSpanBatch requests.
+
+* --pinpoint-span-batchmaxconcurrentrequests
+* PINPOINT_GO_SPAN_BATCHMAXCONCURRENTREQUESTS
+* WithSpanBatchMaxConcurrentRequests()
+* type: int
+* default: 10
+
 ### Span.EventChunkSize
 Span.EventChunkSize option sets the size of span event chunk for gRPC.
 

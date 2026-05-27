@@ -3,10 +3,12 @@ package pinpoint
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/golang/mock/gomock"
+	empty "github.com/golang/protobuf/ptypes/empty"
 	lru "github.com/hashicorp/golang-lru"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/pinpoint-apm/pinpoint-go-agent/protobuf/mock"
@@ -102,24 +104,74 @@ func newMockAgentGrpcPing(agent *agent, t *testing.T) *agentGrpc {
 	return &agentGrpc{nil, &agentClient, &metadataClient, -1, nil, agent}
 }
 
+// mockSpanGrpcClient supports both span transports used by tests:
+// it returns a mock SendSpan stream for legacy mode and records SendSpanBatch payloads for batch mode.
 type mockSpanGrpcClient struct {
-	client *mock.MockSpanClient
-	stream *mock.MockSpan_SendSpanClient
+	mu       sync.Mutex
+	requests []*pb.PSpanMessageBatch
+	response *pb.PSpanResultBatch
+	err      error
+	stream   *mock.MockSpan_SendSpanClient
+	client   *mock.MockSpanClient
+	useMock  bool
 }
 
 func (spanGrpcClient *mockSpanGrpcClient) SendSpan(ctx context.Context) (pb.Span_SendSpanClient, error) {
-	_ = spanGrpcClient.client.EXPECT().SendSpan(gomock.Any()).Return(spanGrpcClient.stream, nil)
-	return spanGrpcClient.client.SendSpan(ctx)
+	if spanGrpcClient.useMock {
+		_ = spanGrpcClient.client.EXPECT().SendSpan(gomock.Any()).Return(spanGrpcClient.stream, nil)
+		return spanGrpcClient.client.SendSpan(ctx)
+	}
+	return spanGrpcClient.stream, nil
+}
+
+func (spanGrpcClient *mockSpanGrpcClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch) (*pb.PSpanResultBatch, error) {
+	spanGrpcClient.mu.Lock()
+	spanGrpcClient.requests = append(spanGrpcClient.requests, in)
+	spanGrpcClient.mu.Unlock()
+
+	if spanGrpcClient.response != nil || spanGrpcClient.err != nil {
+		return spanGrpcClient.response, spanGrpcClient.err
+	}
+	return &pb.PSpanResultBatch{}, nil
+}
+
+func (spanGrpcClient *mockSpanGrpcClient) requestCount() int {
+	spanGrpcClient.mu.Lock()
+	defer spanGrpcClient.mu.Unlock()
+	return len(spanGrpcClient.requests)
+}
+
+func (spanGrpcClient *mockSpanGrpcClient) lastRequest() *pb.PSpanMessageBatch {
+	spanGrpcClient.mu.Lock()
+	defer spanGrpcClient.mu.Unlock()
+	if len(spanGrpcClient.requests) == 0 {
+		return nil
+	}
+	return spanGrpcClient.requests[len(spanGrpcClient.requests)-1]
 }
 
 func newMockSpanGrpc(agent *agent, t *testing.T) *spanGrpc {
+	t.Helper()
 	ctrl := gomock.NewController(t)
 	stream := mock.NewMockSpan_SendSpanClient(ctrl)
-	spanClient := mockSpanGrpcClient{mock.NewMockSpanClient(ctrl), stream}
+	stream.EXPECT().Send(gomock.Any()).Return(nil).AnyTimes()
+	stream.EXPECT().CloseAndRecv().Return(&empty.Empty{}, nil).AnyTimes()
+	spanClient := &mockSpanGrpcClient{
+		client:  mock.NewMockSpanClient(ctrl),
+		stream:  stream,
+		useMock: true,
+	}
 
-	stream.EXPECT().Send(gomock.Any()).Return(nil)
-
-	return &spanGrpc{nil, &spanClient, nil, agent}
+	return &spanGrpc{
+		spanClient:              spanClient,
+		agent:                   agent,
+		stream:                  nil,
+		batchSize:               defaultSpanBatchSize,
+		batchFlushTimeout:       time.Duration(defaultSpanBatchFlushInterval) * time.Millisecond,
+		batchCollectDeadline:    time.Duration(defaultSpanBatchCollectDeadline) * time.Millisecond,
+		maxConcurrentRequests:   defaultSpanBatchMaxConcurrentRequests,
+		concurrentRequestPermit: make(chan struct{}, defaultSpanBatchMaxConcurrentRequests),
+	}
 }
 
 type mockStaGrpcClient struct {
