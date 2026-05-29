@@ -51,8 +51,73 @@ var (
 	skipNew      int64
 	skipCont     int64
 
-	activeSpan sync.Map
+	activeSpan = newActiveSpanRegistry()
 )
+
+// activeSpanRegistry tracks the start time of in-flight spans keyed by span id.
+// It replaces a sync.Map so that store/delete on the span hot path avoid boxing
+// the int64 key and time.Time value into interface{} (the sync.Map did 3 heap
+// allocations per sampled span). Sharding by span id keeps the per-span
+// store/delete churn from serializing on a single lock.
+const activeSpanShardCount = 32 // must be a power of two
+
+type activeSpanRegistry struct {
+	shards [activeSpanShardCount]activeSpanShard
+}
+
+type activeSpanShard struct {
+	mu sync.Mutex
+	m  map[int64]time.Time
+}
+
+func newActiveSpanRegistry() *activeSpanRegistry {
+	r := &activeSpanRegistry{}
+	for i := range r.shards {
+		r.shards[i].m = make(map[int64]time.Time)
+	}
+	return r
+}
+
+func (r *activeSpanRegistry) shard(spanId int64) *activeSpanShard {
+	return &r.shards[uint64(spanId)&(activeSpanShardCount-1)]
+}
+
+func (r *activeSpanRegistry) store(spanId int64, startTime time.Time) {
+	s := r.shard(spanId)
+	s.mu.Lock()
+	s.m[spanId] = startTime
+	s.mu.Unlock()
+}
+
+func (r *activeSpanRegistry) remove(spanId int64) {
+	s := r.shard(spanId)
+	s.mu.Lock()
+	delete(s.m, spanId)
+	s.mu.Unlock()
+}
+
+// count buckets active spans by elapsed time: [<1s, <3s, <5s, >=5s].
+func (r *activeSpanRegistry) count(now time.Time) []int32 {
+	count := []int32{0, 0, 0, 0}
+	for i := range r.shards {
+		s := &r.shards[i]
+		s.mu.Lock()
+		for _, startTime := range s.m {
+			d := now.Sub(startTime).Seconds()
+			if d < 1 {
+				count[0]++
+			} else if d < 3 {
+				count[1]++
+			} else if d < 5 {
+				count[2]++
+			} else {
+				count[3]++
+			}
+		}
+		s.mu.Unlock()
+	}
+	return count
+}
 
 type statsCounterSnapshot struct {
 	accResponseTime int64
@@ -78,7 +143,7 @@ func initStats() {
 	cpu.Percent(0, false)
 	runtime.ReadMemStats(&lastMemStat)
 	lastCollectTime = time.Now()
-	activeSpan = sync.Map{}
+	activeSpan = newActiveSpanRegistry()
 }
 
 func getNumFD() int32 {
@@ -171,24 +236,7 @@ func calcResponseAvg(accResponseTime int64, requestCount int64) int64 {
 }
 
 func activeSpanCount(now time.Time) []int32 {
-	count := []int32{0, 0, 0, 0}
-	activeSpan.Range(func(k, v interface{}) bool {
-		s := v.(time.Time)
-		d := now.Sub(s).Seconds()
-
-		if d < 1 {
-			count[0]++
-		} else if d < 3 {
-			count[1]++
-		} else if d < 5 {
-			count[2]++
-		} else {
-			count[3]++
-		}
-		return true
-	})
-
-	return count
+	return activeSpan.count(now)
 }
 
 func (agent *agent) collectAgentStatWorker() {
@@ -251,22 +299,22 @@ func resetResponseTime() {
 }
 
 func addSampledActiveSpan(span *span) {
-	activeSpan.Store(span.spanId, span.startTime)
+	activeSpan.store(span.spanId, span.startTime)
 	addRealTimeSampledActiveSpan(span)
 }
 
 func dropSampledActiveSpan(span *span) {
-	activeSpan.Delete(span.spanId)
+	activeSpan.remove(span.spanId)
 	dropRealTimeSampledActiveSpan(span)
 }
 
 func addUnSampledActiveSpan(span *noopSpan) {
-	activeSpan.Store(span.spanId, span.startTime)
+	activeSpan.store(span.spanId, span.startTime)
 	addRealTimeUnSampledActiveSpan(span)
 }
 
 func dropUnSampledActiveSpan(span *noopSpan) {
-	activeSpan.Delete(span.spanId)
+	activeSpan.remove(span.spanId)
 	dropRealTimeUnSampledActiveSpan(span)
 }
 
