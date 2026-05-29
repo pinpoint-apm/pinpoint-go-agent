@@ -20,6 +20,7 @@ import (
 	"math"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -333,6 +334,18 @@ func BenchmarkSetSQL(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		se := newSpanEvent(s, "query")
 		se.SetSQL(query, "")
+	}
+}
+
+// BenchmarkSendStreamWithTimeout measures the per-send overhead of the timeout
+// wrapper used by the streaming span/ping/stat/command senders (goroutine +
+// channel + timer per Send). The send itself is a no-op so the result is pure
+// wrapper overhead.
+func BenchmarkSendStreamWithTimeout(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = sendStreamWithTimeout(func() error { return nil }, 5*time.Second, "bench")
 	}
 }
 

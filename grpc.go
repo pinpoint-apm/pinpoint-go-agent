@@ -540,6 +540,34 @@ func makePStackTraceElementList(frames []frame) []*pb.PStackTraceElement {
 	return list
 }
 
+// streamTimerPool reuses timers across stream Send timeouts. A timer carries an
+// internal channel, so pooling avoids allocating both the *time.Timer and that
+// channel on every send.
+var streamTimerPool = sync.Pool{
+	New: func() interface{} {
+		t := time.NewTimer(time.Hour)
+		t.Stop()
+		return t
+	},
+}
+
+func acquireStreamTimer(d time.Duration) *time.Timer {
+	t := streamTimerPool.Get().(*time.Timer)
+	t.Reset(d)
+	return t
+}
+
+func releaseStreamTimer(t *time.Timer) {
+	if !t.Stop() {
+		// drain a possibly-fired timer so the reused timer starts empty
+		select {
+		case <-t.C:
+		default:
+		}
+	}
+	streamTimerPool.Put(t)
+}
+
 func sendStreamWithTimeout(send func() error, timeout time.Duration, which string) error {
 	errChan := make(chan error, 1)
 	go func() {
@@ -547,14 +575,13 @@ func sendStreamWithTimeout(send func() error, timeout time.Duration, which strin
 		close(errChan)
 	}()
 
-	t := time.NewTimer(timeout)
+	t := acquireStreamTimer(timeout)
+	defer releaseStreamTimer(t)
+
 	select {
 	case <-t.C:
 		return status.Errorf(codes.DeadlineExceeded, which+" stream.Send() - too slow or blocked")
 	case err := <-errChan:
-		if !t.Stop() {
-			<-t.C
-		}
 		return err
 	}
 }
