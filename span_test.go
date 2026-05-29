@@ -65,6 +65,41 @@ func Test_span_Extract(t *testing.T) {
 	}
 }
 
+func Test_span_Extract_malformedTraceId(t *testing.T) {
+	// A malformed or hostile Pinpoint-TraceID must not panic; the span falls
+	// back to a freshly generated transaction id.
+	cases := []string{
+		"",                // empty -> new transaction
+		"no-separator",    // missing both separators (would index s[1] before)
+		"agent^123",       // missing sequence separator (would index s[2] before)
+		"agent^bad^worse", // non-numeric time/sequence
+	}
+	for _, tid := range cases {
+		t.Run(tid, func(t *testing.T) {
+			span := defaultTestSpan()
+			reader := &DistributedTracingContextMap{m: map[string]string{HeaderTraceId: tid}}
+
+			assert.NotPanics(t, func() { span.Extract(reader) }, "Extract must not panic")
+			assert.NotEmpty(t, span.txId.AgentId, "a transaction id is always assigned")
+		})
+	}
+}
+
+func Test_splitTransactionId(t *testing.T) {
+	agentId, startTime, sequence, ok := splitTransactionId("t123456^12345^1")
+	assert.True(t, ok)
+	assert.Equal(t, "t123456", agentId)
+	assert.Equal(t, int64(12345), startTime)
+	assert.Equal(t, int64(1), sequence)
+
+	_, _, _, ok = splitTransactionId("")
+	assert.False(t, ok, "empty")
+	_, _, _, ok = splitTransactionId("abc")
+	assert.False(t, ok, "no separator")
+	_, _, _, ok = splitTransactionId("abc^1")
+	assert.False(t, ok, "one separator")
+}
+
 func Test_span_Inject(t *testing.T) {
 	type args struct {
 		writer DistributedTracingContextWriter

@@ -15,16 +15,17 @@ import (
 )
 
 const (
-	apiTypeDefault        = 0
-	apiTypeWebRequest     = 100
-	apiTypeInvocation     = 200
-	noneAsyncId           = 0
-	minEventDepth         = 2
-	minEventSequence      = 4
-	defaultEventDepth     = 64
-	defaultEventSequence  = 5000
-	defaultEventChunkSize = 20
-	maxErrorChainEntry    = 10
+	apiTypeDefault         = 0
+	apiTypeWebRequest      = 100
+	apiTypeInvocation      = 200
+	noneAsyncId            = 0
+	minEventDepth          = 2
+	minEventSequence       = 4
+	defaultEventDepth      = 64
+	defaultEventSequence   = 5000
+	defaultEventChunkSize  = 20
+	defaultEventStackDepth = 8
+	maxErrorChainEntry     = 10
 )
 
 var (
@@ -87,7 +88,7 @@ func defaultSpan() *span {
 	span.startTime = time.Now()
 	span.goroutineId = -1
 	span.asyncId = noneAsyncId
-	span.eventStack = &stack{}
+	span.eventStack = newStack()
 	span.spanEvents = make([]*spanEvent, 0, defaultEventChunkSize)
 	span.errorChains = make([]*exception, 0)
 
@@ -168,12 +169,14 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 
 func (span *span) Extract(reader DistributedTracingContextReader) {
 	tid := reader.Get(HeaderTraceId)
-	if tid != "" {
-		s := strings.Split(tid, "^")
-		span.txId.AgentId = s[0]
-		span.txId.StartTime, _ = strconv.ParseInt(s[1], 10, 0)
-		span.txId.Sequence, _ = strconv.ParseInt(s[2], 10, 0)
+	if agentId, startTime, sequence, ok := splitTransactionId(tid); ok {
+		span.txId.AgentId = agentId
+		span.txId.StartTime = startTime
+		span.txId.Sequence = sequence
 	} else {
+		if tid != "" {
+			Log("span").Warnf("malformed trace id header: %q", tid)
+		}
 		span.txId = span.agent.generateTransactionId()
 	}
 
@@ -215,6 +218,31 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 	if IsTraceLogLevelEnabled() {
 		Log("span").Tracef("span extract: %s, %s, %s, %s, %s, %s", tid, spanid, pappname, pspanid, papptype, host)
 	}
+}
+
+// splitTransactionId parses an "agentId^startTime^sequence" trace id header
+// without allocating (no strings.Split slice) and without risking an
+// index-out-of-range panic on a malformed or hostile header. ok is false when
+// the structure is missing the two separators, in which case the caller starts
+// a new transaction. Numeric parse errors in the time/sequence fields are
+// tolerated (left as 0), matching the previous behavior.
+func splitTransactionId(tid string) (agentId string, startTime int64, sequence int64, ok bool) {
+	if tid == "" {
+		return "", 0, 0, false
+	}
+	i := strings.IndexByte(tid, '^')
+	if i < 0 {
+		return "", 0, 0, false
+	}
+	rest := tid[i+1:]
+	j := strings.IndexByte(rest, '^')
+	if j < 0 {
+		return "", 0, 0, false
+	}
+	agentId = tid[:i]
+	startTime, _ = strconv.ParseInt(rest[:j], 10, 64)
+	sequence, _ = strconv.ParseInt(rest[j+1:], 10, 64)
+	return agentId, startTime, sequence, true
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
@@ -512,50 +540,50 @@ func (chunk *spanChunk) optimizeSpanEvents() {
 	}
 }
 
+// stack is the LIFO of currently-open span events. It is backed by a slice
+// (not a linked list) so that pushing an event reuses the preallocated backing
+// array instead of allocating a node per call on the hot path.
 type stack struct {
-	lock sync.RWMutex
-	top  *node
-	size int
+	lock sync.Mutex
+	buf  []*spanEvent
 }
 
-type node struct {
-	value *spanEvent
-	next  *node
+func newStack() *stack {
+	return &stack{buf: make([]*spanEvent, 0, defaultEventStackDepth)}
 }
 
 func (s *stack) len() int {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
-	return s.size
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	return len(s.buf)
 }
 
 func (s *stack) push(v *spanEvent) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-
-	s.top = &node{value: v, next: s.top}
-	s.size++
+	s.buf = append(s.buf, v)
 }
 
 func (s *stack) pop() (*spanEvent, bool) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	if s.size > 0 {
-		save := s.top.value
-		s.top = s.top.next
-		s.size--
+	n := len(s.buf)
+	if n > 0 {
+		save := s.buf[n-1]
+		s.buf[n-1] = nil // don't retain the popped event
+		s.buf = s.buf[:n-1]
 		return save, true
 	}
 	return nil, false
 }
 
 func (s *stack) peek() (*spanEvent, bool) {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
+	s.lock.Lock()
+	defer s.lock.Unlock()
 
-	if s.size > 0 {
-		return s.top.value, true
+	if n := len(s.buf); n > 0 {
+		return s.buf[n-1], true
 	}
 	return nil, false
 }
@@ -564,9 +592,10 @@ func (s *stack) empty() {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	for s.size > 0 {
-		s.top.value.end()
-		s.top = s.top.next
-		s.size--
+	// end most-recent first to preserve the original LIFO close order
+	for i := len(s.buf) - 1; i >= 0; i-- {
+		s.buf[i].end()
+		s.buf[i] = nil
 	}
+	s.buf = s.buf[:0]
 }

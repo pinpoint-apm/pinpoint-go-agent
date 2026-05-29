@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -40,13 +39,14 @@ type agent struct {
 	statChan    chan *pb.PStatMessage
 	sampler     traceSampler
 
-	errorCache  *lru.Cache
-	errorIdGen  int32
-	sqlCache    *lru.Cache
-	sqlIdGen    int32
-	sqlUidCache *lru.Cache
-	apiCache    *lru.Cache
-	apiIdGen    int32
+	errorCache   *lru.Cache
+	errorIdGen   int32
+	sqlCache     *lru.Cache
+	sqlIdGen     int32
+	sqlUidCache  *lru.Cache
+	apiCache     map[apiCacheKey]int32
+	apiCacheLock sync.RWMutex
+	apiIdGen     int32
 
 	config    *Config
 	connectWg sync.WaitGroup
@@ -64,6 +64,14 @@ type agent struct {
 
 type apiMeta struct {
 	id         int32
+	descriptor string
+	apiType    int
+}
+
+// apiCacheKey identifies a cached API id by its descriptor and type.
+// Using a comparable struct as the map key lets cacheSpanApi look up the id
+// without building a "descriptor_apiType" string on every span event.
+type apiCacheKey struct {
 	descriptor string
 	apiType    int
 }
@@ -168,9 +176,7 @@ func NewAgent(config *Config) (Agent, error) {
 	if agent.sqlUidCache, err = lru.New(cacheSize); err != nil {
 		return NoopAgent(), err
 	}
-	if agent.apiCache, err = lru.New(cacheSize); err != nil {
-		return NoopAgent(), err
-	}
+	agent.apiCache = make(map[apiCacheKey]int32)
 
 	agent.newSampler()
 	samplingOpts := []string{CfgSamplingType, CfgSamplingCounterRate, CfgSamplingPercentRate, CfgSamplingNewThroughput, CfgSamplingContinueThroughput}
@@ -329,8 +335,11 @@ func (agent *agent) samplingSpan(samplingFunc func() bool, operation string, rpc
 }
 
 func (agent *agent) generateTransactionId() TransactionId {
-	atomic.AddInt64(&agent.sequence, 1)
-	return TransactionId{agent.agentID, agent.startTime, agent.sequence}
+	// Use the value returned by AddInt64: reading agent.sequence separately
+	// races with concurrent increments and could hand two transactions the
+	// same sequence (or a torn read on 32-bit).
+	seq := atomic.AddInt64(&agent.sequence, 1)
+	return TransactionId{agent.agentID, agent.startTime, seq}
 }
 
 func (agent *agent) Enable() bool {
@@ -515,8 +524,9 @@ func (agent *agent) deleteMetaCache(md interface{}) {
 	switch md.(type) {
 	case apiMeta:
 		api := md.(apiMeta)
-		key := api.descriptor + "_" + strconv.Itoa(api.apiType)
-		agent.apiCache.Remove(key)
+		agent.apiCacheLock.Lock()
+		delete(agent.apiCache, apiCacheKey{api.descriptor, api.apiType})
+		agent.apiCacheLock.Unlock()
 		break
 	case stringMeta:
 		agent.errorCache.Remove(md.(stringMeta).funcName)
@@ -633,22 +643,36 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 		return 0
 	}
 
-	key := descriptor + "_" + strconv.Itoa(apiType)
+	key := apiCacheKey{descriptor, apiType}
 
-	if v, ok := agent.apiCache.Peek(key); ok {
-		return v.(int32)
+	// Hot path: a shared read lock and an allocation-free map lookup. The
+	// struct key avoids building a "descriptor_apiType" string per span event.
+	agent.apiCacheLock.RLock()
+	id, ok := agent.apiCache[key]
+	agent.apiCacheLock.RUnlock()
+	if ok {
+		return id
 	}
 
-	id := atomic.AddInt32(&agent.apiIdGen, 1)
-	agent.apiCache.Add(key, id)
+	// Miss: register under the write lock. Re-check so concurrent first-time
+	// callers for the same key don't each generate an id and enqueue metadata.
+	agent.apiCacheLock.Lock()
+	if id, ok = agent.apiCache[key]; ok {
+		agent.apiCacheLock.Unlock()
+		return id
+	}
+	id = atomic.AddInt32(&agent.apiIdGen, 1)
+	agent.apiCache[key] = id
+	agent.apiCacheLock.Unlock()
 
-	md := apiMeta{}
-	md.id = id
-	md.descriptor = descriptor
-	md.apiType = apiType
+	md := apiMeta{
+		id:         id,
+		descriptor: descriptor,
+		apiType:    apiType,
+	}
 	agent.tryEnqueueMeta(md)
 
-	Log("agent").Infof("cache api id: %d, %s", id, key)
+	Log("agent").Infof("cache api id: %d, %s_%d", id, descriptor, apiType)
 	return id
 }
 
@@ -792,7 +816,7 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 	agent.errorCache, _ = lru.New(cacheSize)
 	agent.sqlCache, _ = lru.New(cacheSize)
 	agent.sqlUidCache, _ = lru.New(cacheSize)
-	agent.apiCache, _ = lru.New(cacheSize)
+	agent.apiCache = make(map[apiCacheKey]int32)
 	agent.newSampler()
 
 	agent.agentGrpc = newMockAgentGrpc(agent, t)
