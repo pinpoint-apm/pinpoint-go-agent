@@ -205,8 +205,14 @@ func Test_agent_enqueueSpan_discardsOldestAndEnqueuesNewest(t *testing.T) {
 	assert.Equal(t, third, <-agent.spanChan, "newest span should be enqueued")
 }
 
-func Test_agent_enqueueSpan_streamModeDropsNewest(t *testing.T) {
-	agent := newTestAgent(defaultConfig())
+func Test_agent_enqueueSpan_streamModeAlsoDiscardsOldest(t *testing.T) {
+	// The queue-full drop policy is independent of the span transport: even in
+	// legacy stream mode (Span.Batch.Enable=false) enqueueSpan discards the
+	// oldest span and enqueues the newest, so recent traces are favored under
+	// backpressure just like in batch mode.
+	cfg := defaultConfig()
+	cfg.Set(CfgSpanBatchEnable, false)
+	agent := newTestAgent(cfg)
 	agent.spanChan = make(chan *spanChunk, 2)
 
 	first := newTestSpanChunk(agent)
@@ -215,10 +221,10 @@ func Test_agent_enqueueSpan_streamModeDropsNewest(t *testing.T) {
 
 	assert.True(t, agent.enqueueSpan(first), "enqueue first")
 	assert.True(t, agent.enqueueSpan(second), "enqueue second")
-	assert.False(t, agent.enqueueSpan(third), "stream mode reports newest span as dropped")
+	assert.True(t, agent.enqueueSpan(third), "newest span is enqueued after discarding the oldest")
 
 	assert.Equal(t, second, <-agent.spanChan, "oldest span should be discarded")
-	assert.Empty(t, agent.spanChan, "newest span should not be enqueued in legacy stream mode")
+	assert.Equal(t, third, <-agent.spanChan, "newest span should be enqueued")
 }
 
 func Test_spanGrpc_collectSpanBatch_stopsAtBatchSize(t *testing.T) {
