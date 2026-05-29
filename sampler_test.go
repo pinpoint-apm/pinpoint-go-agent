@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -153,16 +154,16 @@ func Test_throughputLimitTraceSampler_skipNew(t *testing.T) {
 			for i := 0; i < 100; i++ {
 				s.isNewSampled()
 			}
-			assert.Equal(t, int64(1), sampleNew, "sampleNew")
-			assert.Equal(t, int64(99), skipNew, "skipNew")
+			assert.Equal(t, int64(1), atomic.LoadInt64(&sampleNew), "sampleNew")
+			assert.Equal(t, int64(99), atomic.LoadInt64(&skipNew), "skipNew")
 
 			time.Sleep(1 * time.Second)
 
 			for i := 0; i < 100; i++ {
 				s.isNewSampled()
 			}
-			assert.Equal(t, int64(1*2), sampleNew, "sampleNew")
-			assert.Equal(t, int64(99*2), skipNew, "skipNew")
+			assert.Equal(t, int64(1*2), atomic.LoadInt64(&sampleNew), "sampleNew")
+			assert.Equal(t, int64(99*2), atomic.LoadInt64(&skipNew), "skipNew")
 		})
 	}
 }
@@ -208,16 +209,16 @@ func Test_throughputLimitTraceSampler_skipContinue(t *testing.T) {
 			for i := 0; i < 100; i++ {
 				s.isContinueSampled()
 			}
-			assert.Equal(t, int64(1), sampleCont, "sampleCont")
-			assert.Equal(t, int64(99), skipCont, "skipCont")
+			assert.Equal(t, int64(1), atomic.LoadInt64(&sampleCont), "sampleCont")
+			assert.Equal(t, int64(99), atomic.LoadInt64(&skipCont), "skipCont")
 
 			time.Sleep(1 * time.Second)
 
 			for i := 0; i < 100; i++ {
 				s.isContinueSampled()
 			}
-			assert.Equal(t, int64(1*2), sampleCont, "sampleCont")
-			assert.Equal(t, int64(99*2), skipCont, "skipCont")
+			assert.Equal(t, int64(1*2), atomic.LoadInt64(&sampleCont), "sampleCont")
+			assert.Equal(t, int64(99*2), atomic.LoadInt64(&skipCont), "skipCont")
 		})
 	}
 }

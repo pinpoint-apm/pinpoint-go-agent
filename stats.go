@@ -54,6 +54,18 @@ var (
 	activeSpan sync.Map
 )
 
+type statsCounterSnapshot struct {
+	accResponseTime int64
+	maxResponseTime int64
+	requestCount    int64
+	sampleNew       int64
+	unSampleNew     int64
+	sampleCont      int64
+	unSampleCont    int64
+	skipNew         int64
+	skipCont        int64
+}
+
 func initStats() {
 	var err error
 	proc, err = process.NewProcess(int32(os.Getpid()))
@@ -100,6 +112,7 @@ func getCpuLoad() (float64, float64) {
 func getStats() *inspectorStats {
 	now := time.Now()
 	procCpu, sysCpu := getCpuLoad()
+	counters := drainStatsCounters()
 
 	var memStat runtime.MemStats
 	runtime.ReadMemStats(&memStat)
@@ -118,25 +131,38 @@ func getStats() *inspectorStats {
 		gcTime:       int64(memStat.PauseTotalNs-lastMemStat.PauseTotalNs) / int64(time.Millisecond),
 		numOpenFD:    int64(getNumFD()),
 		numThreads:   int64(getNumThreads()),
-		responseAvg:  calcResponseAvg(),
-		responseMax:  maxResponseTime,
-		sampleNew:    sampleNew,
-		sampleCont:   sampleCont,
-		unSampleNew:  unSampleNew,
-		unSampleCont: unSampleCont,
-		skipNew:      skipNew,
-		skipCont:     skipCont,
+		responseAvg:  calcResponseAvg(counters.accResponseTime, counters.requestCount),
+		responseMax:  counters.maxResponseTime,
+		sampleNew:    counters.sampleNew,
+		sampleCont:   counters.sampleCont,
+		unSampleNew:  counters.unSampleNew,
+		unSampleCont: counters.unSampleCont,
+		skipNew:      counters.skipNew,
+		skipCont:     counters.skipCont,
 		activeSpan:   activeSpanCount(now),
 	}
 
 	lastMemStat = memStat
 	lastCollectTime = now
-	resetResponseTime()
 
 	return &stats
 }
 
-func calcResponseAvg() int64 {
+func drainStatsCounters() statsCounterSnapshot {
+	return statsCounterSnapshot{
+		accResponseTime: atomic.SwapInt64(&accResponseTime, 0),
+		maxResponseTime: atomic.SwapInt64(&maxResponseTime, 0),
+		requestCount:    atomic.SwapInt64(&requestCount, 0),
+		sampleNew:       atomic.SwapInt64(&sampleNew, 0),
+		unSampleNew:     atomic.SwapInt64(&unSampleNew, 0),
+		sampleCont:      atomic.SwapInt64(&sampleCont, 0),
+		unSampleCont:    atomic.SwapInt64(&unSampleCont, 0),
+		skipNew:         atomic.SwapInt64(&skipNew, 0),
+		skipCont:        atomic.SwapInt64(&skipCont, 0),
+	}
+}
+
+func calcResponseAvg(accResponseTime int64, requestCount int64) int64 {
 	if requestCount > 0 {
 		return accResponseTime / requestCount
 	}
@@ -201,8 +227,14 @@ func collectResponseTime(resTime int64) {
 	atomic.AddInt64(&accResponseTime, resTime)
 	atomic.AddInt64(&requestCount, 1)
 
-	if atomic.LoadInt64(&maxResponseTime) < resTime {
-		atomic.StoreInt64(&maxResponseTime, resTime)
+	for {
+		max := atomic.LoadInt64(&maxResponseTime)
+		if max >= resTime {
+			return
+		}
+		if atomic.CompareAndSwapInt64(&maxResponseTime, max, resTime) {
+			return
+		}
 	}
 }
 
