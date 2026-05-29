@@ -1,8 +1,11 @@
 package pinpoint
 
 import (
-	"github.com/stretchr/testify/assert"
 	"testing"
+	"time"
+
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	"github.com/stretchr/testify/assert"
 )
 
 func Test_agent_NewAgentError(t *testing.T) {
@@ -176,5 +179,55 @@ func Test_agent_NewSpanTracerWithReader(t *testing.T) {
 			assert.Equal(t, int64(1), txId.Sequence, "Sequence")
 			assert.Equal(t, int64(67890), span.SpanId(), "SpanId")
 		})
+	}
+}
+
+func Test_agent_tryEnqueueMetaReturnsWhenDropRaceLeavesQueueEmpty(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.metaChan = make(chan interface{})
+
+	result := callBoolWithTimeout(t, "tryEnqueueMeta", func() bool {
+		return agent.tryEnqueueMeta(stringMeta{id: 1, funcName: "error"})
+	})
+
+	assert.False(t, result)
+}
+
+func Test_agent_enqueueUrlStatReturnsWhenDropRaceLeavesQueueEmpty(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.urlStatChan = make(chan *urlStat)
+
+	result := callBoolWithTimeout(t, "enqueueUrlStat", func() bool {
+		return agent.enqueueUrlStat(&urlStat{})
+	})
+
+	assert.False(t, result)
+}
+
+func Test_agent_enqueueStatReturnsWhenDropRaceLeavesQueueEmpty(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.statChan = make(chan *pb.PStatMessage)
+
+	result := callBoolWithTimeout(t, "enqueueStat", func() bool {
+		return agent.enqueueStat(nil)
+	})
+
+	assert.False(t, result)
+}
+
+func callBoolWithTimeout(t *testing.T, name string, fn func() bool) bool {
+	t.Helper()
+
+	done := make(chan bool, 1)
+	go func() {
+		done <- fn()
+	}()
+
+	select {
+	case result := <-done:
+		return result
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("%s blocked", name)
+		return false
 	}
 }

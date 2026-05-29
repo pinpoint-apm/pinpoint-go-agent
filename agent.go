@@ -540,7 +540,10 @@ func (agent *agent) tryEnqueueMeta(md interface{}) bool {
 		break
 	}
 
-	<-agent.metaChan
+	select {
+	case <-agent.metaChan:
+	default:
+	}
 	return false
 }
 
@@ -677,7 +680,10 @@ func (agent *agent) enqueueUrlStat(stat *urlStat) bool {
 		break
 	}
 
-	<-agent.urlStatChan
+	select {
+	case <-agent.urlStatChan:
+	default:
+	}
 	Log("agent").Tracef("url stat channel - max capacity reached or closed")
 	return false
 }
@@ -727,7 +733,10 @@ func (agent *agent) enqueueStat(stat *pb.PStatMessage) bool {
 		break
 	}
 
-	<-agent.statChan
+	select {
+	case <-agent.statChan:
+	default:
+	}
 	return false
 }
 
