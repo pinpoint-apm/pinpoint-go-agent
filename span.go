@@ -466,7 +466,7 @@ func (span *span) JsonString() []byte {
 	m["EndPoint"] = span.endPoint
 	m["RemoteAddr"] = span.remoteAddr
 	m["Err"] = span.err
-	m["Annotations"] = span.annotations.list
+	m["Annotations"] = span.annotations.getList()
 	b, _ := json.Marshal(m)
 	return b
 }

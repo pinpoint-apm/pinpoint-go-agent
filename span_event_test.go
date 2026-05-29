@@ -116,7 +116,7 @@ func Test_spanEvent_SetSQL(t *testing.T) {
 			tt.args.span.agent = newTestAgent(defaultConfig())
 			se := newSpanEvent(tt.args.span, tt.args.operationName)
 			se.SetSQL("SELECT 1", "")
-			assert.Equal(t, len(se.annotations.list), int(1), "annotations.len")
+			assert.Equal(t, len(se.annotations.values), int(1), "annotations.len")
 		})
 	}
 }

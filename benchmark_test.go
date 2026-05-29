@@ -277,8 +277,10 @@ func BenchmarkCacheSpanApiParallel(b *testing.B) {
 	})
 }
 
-// BenchmarkAnnotationAppendString measures the eager protobuf object allocation
-// done per annotation (PAnnotation + PAnnotationValue + oneof wrapper).
+// BenchmarkAnnotationAppendString measures recording a string annotation on the
+// application hot path. Protobuf construction is deferred to getList(), so the
+// append itself is just a slice append (the &annotation{} allocation here is
+// benchmark setup, not part of Append).
 func BenchmarkAnnotationAppendString(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -288,14 +290,32 @@ func BenchmarkAnnotationAppendString(b *testing.B) {
 	}
 }
 
-// BenchmarkAnnotationAppendIntStringString covers the SQL-id annotation shape
-// (extra StringValue wrappers).
+// BenchmarkAnnotationAppendIntStringString covers the SQL-id annotation shape on
+// the hot path (the eager path previously allocated the PIntStringStringValue
+// plus two StringValue wrappers per call).
 func BenchmarkAnnotationAppendIntStringString(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		a := &annotation{}
 		a.AppendIntStringString(AnnotationSqlId, 1, "params", "args")
+	}
+}
+
+// BenchmarkAnnotationBuildList measures the deferred sender-side cost: record a
+// few annotations and materialize the protobuf list via getList() (what the
+// agent does once per span/event during serialization). Confirms that deferring
+// construction does not increase the total work, only relocates it off the
+// request hot path.
+func BenchmarkAnnotationBuildList(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		a := &annotation{}
+		a.AppendString(AnnotationHttpUrl, "/bench/rpc?q=1")
+		a.AppendInt(AnnotationHttpStatusCode, 200)
+		a.AppendIntStringString(AnnotationSqlId, 1, "params", "args")
+		_ = a.getList()
 	}
 }
 
