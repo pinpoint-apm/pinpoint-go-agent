@@ -349,6 +349,59 @@ func BenchmarkSendStreamWithTimeout(b *testing.B) {
 	}
 }
 
+// BenchmarkGrpcMetadataContext measures building the outgoing gRPC metadata
+// context for a unary/stream send (socketId <= 0). It is called per metadata
+// send and per span batch on the default batch path, so it is now served from a
+// cached base context instead of rebuilding the metadata map each time.
+func BenchmarkGrpcMetadataContext(b *testing.B) {
+	a := benchAgent()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = grpcMetadataContext(a, -1)
+	}
+}
+
+// BenchmarkGrpcMetadataContextPing measures the ping path (socketId > 0), which
+// still builds the metadata map fresh because the socket id varies. It is the
+// same construction the socketId <= 0 path used before caching, so it shows the
+// cost BenchmarkGrpcMetadataContext now avoids.
+func BenchmarkGrpcMetadataContextPing(b *testing.B) {
+	a := benchAgent()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = grpcMetadataContext(a, int64(i+1))
+	}
+}
+
+// BenchmarkMakePSpanMessageBatch measures span serialization on the sender
+// goroutine: building the protobuf PSpanMessage for a final span with several
+// events. Exercises the preallocated span-event slice and deferred annotation
+// construction.
+func BenchmarkMakePSpanMessageBatch(b *testing.B) {
+	a := benchAgent()
+	s := newSampledSpan(a, "operation", "/bench/rpc")
+	for i := 0; i < 5; i++ {
+		s.NewSpanEvent("event").EndSpanEvent()
+	}
+	chunk := &spanChunk{
+		span:       s,
+		eventChunk: s.spanEvents,
+		final:      true,
+		keyTime:    s.startTime.UnixMilli(),
+	}
+	batch := []*spanChunk{chunk}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = makePSpanMessageBatch(batch)
+	}
+}
+
 // BenchmarkSpanEventSetError measures the error-recording path (cacheError +
 // errorString) without call-stack collection (errorTraceCallStack defaults off).
 func BenchmarkSpanEventSetError(b *testing.B) {

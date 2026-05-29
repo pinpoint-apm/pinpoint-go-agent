@@ -34,20 +34,36 @@ const (
 )
 
 func grpcMetadataContext(agent *agent, socketId int64) context.Context {
-	m := map[string]string{}
+	// The common case (socketId <= 0) carries only immutable agent headers, so
+	// reuse a context built once instead of allocating a metadata map per send.
+	if socketId <= 0 {
+		return agent.baseOutgoingContext()
+	}
 
-	m[headerAppName] = agent.appName
-	m[headerAgentID] = agent.agentID
-	m[headerStartTime] = strconv.FormatInt(agent.startTime, 10)
+	// Only the ping stream sets a socketId; it is low frequency, so build fresh.
+	m := agentHeaderMap(agent)
+	m[headerSocketID] = strconv.FormatInt(socketId, 10)
+	return metadata.NewOutgoingContext(context.Background(), metadata.New(m))
+}
+
+func agentHeaderMap(agent *agent) map[string]string {
+	m := map[string]string{
+		headerAppName:   agent.appName,
+		headerAgentID:   agent.agentID,
+		headerStartTime: strconv.FormatInt(agent.startTime, 10),
+	}
 	if agent.agentName != "" {
 		m[headerAgentName] = agent.agentName
 	}
-	if socketId > 0 {
-		m[headerSocketID] = strconv.FormatInt(socketId, 10)
-	}
+	return m
+}
 
-	md := metadata.New(m)
-	return metadata.NewOutgoingContext(context.Background(), md)
+func (agent *agent) baseOutgoingContext() context.Context {
+	agent.grpcMetaOnce.Do(func() {
+		md := metadata.New(agentHeaderMap(agent))
+		agent.grpcMetaCtx = metadata.NewOutgoingContext(context.Background(), md)
+	})
+	return agent.grpcMetaCtx
 }
 
 func backOffSleep(attempt int) time.Duration {
@@ -508,7 +524,7 @@ func makePExceptionMetaData(e *exceptionMeta) *pb.PExceptionMetaData {
 }
 
 func makePExceptionList(exceptions []*exception) []*pb.PException {
-	list := make([]*pb.PException, 0)
+	list := make([]*pb.PException, 0, len(exceptions))
 	for _, e := range exceptions {
 		list = append(list, makePException(e))
 	}
@@ -528,7 +544,7 @@ func makePException(e *exception) *pb.PException {
 }
 
 func makePStackTraceElementList(frames []frame) []*pb.PStackTraceElement {
-	list := make([]*pb.PStackTraceElement, 0)
+	list := make([]*pb.PStackTraceElement, 0, len(frames))
 	for _, f := range frames {
 		list = append(list, &pb.PStackTraceElement{
 			ClassName:  f.moduleName,
@@ -987,7 +1003,7 @@ func makePSpan(chunk *spanChunk) *pb.PSpanMessage {
 		span.annotations.AppendString(AnnotationApi, span.operationName)
 	}
 
-	spanEventList := make([]*pb.PSpanEvent, 0)
+	spanEventList := make([]*pb.PSpanEvent, 0, len(chunk.eventChunk))
 	for _, event := range chunk.eventChunk {
 		aSpanEvent := makePSpanEvent(event)
 		spanEventList = append(spanEventList, aSpanEvent)
@@ -1042,7 +1058,7 @@ func makePSpan(chunk *spanChunk) *pb.PSpanMessage {
 func makePSpanChunk(chunk *spanChunk) *pb.PSpanMessage {
 	span := chunk.span
 
-	spanEventList := make([]*pb.PSpanEvent, 0)
+	spanEventList := make([]*pb.PSpanEvent, 0, len(chunk.eventChunk))
 	for _, event := range chunk.eventChunk {
 		aSpanEvent := makePSpanEvent(event)
 		spanEventList = append(spanEventList, aSpanEvent)
@@ -1216,7 +1232,7 @@ func (s *statStream) sendStats(stats *pb.PStatMessage) error {
 }
 
 func makePAgentStatBatch(stats []*inspectorStats) *pb.PStatMessage {
-	l := make([]*pb.PAgentStat, 0)
+	l := make([]*pb.PAgentStat, 0, len(stats))
 	for _, s := range stats {
 		l = append(l, makePAgentStat(s))
 	}
@@ -1292,7 +1308,7 @@ func makePAgentUriStat(stat *urlStatSnapshot) *pb.PStatMessage {
 }
 
 func makePEachUriStatList(stat *urlStatSnapshot) []*pb.PEachUriStat {
-	l := make([]*pb.PEachUriStat, 0)
+	l := make([]*pb.PEachUriStat, 0, len(stat.urlMap))
 	for _, e := range stat.urlMap {
 		l = append(l, makePEachUriStat(e))
 	}
@@ -1383,7 +1399,7 @@ func (s *cmdStream) sendCommandMessage() error {
 		return status.Errorf(codes.Unavailable, "command stream is nil")
 	}
 
-	sKeys := make([]int32, 0)
+	sKeys := make([]int32, 0, 4)
 	sKeys = append(sKeys, int32(pb.PCommandType_ECHO))
 	sKeys = append(sKeys, int32(pb.PCommandType_ACTIVE_THREAD_COUNT))
 	sKeys = append(sKeys, int32(pb.PCommandType_ACTIVE_THREAD_DUMP))

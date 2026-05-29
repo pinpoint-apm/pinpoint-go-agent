@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -53,6 +54,12 @@ type agent struct {
 	workerWg  sync.WaitGroup
 	enable    bool
 	shutdown  bool
+
+	// grpcMetaCtx caches the outgoing-metadata context (socketId <= 0), whose
+	// headers are immutable for the agent's lifetime, so per-send callers reuse
+	// it instead of rebuilding the metadata map on every request.
+	grpcMetaOnce sync.Once
+	grpcMetaCtx  context.Context
 
 	pingTicker    *time.Ticker
 	pingDone      chan bool
