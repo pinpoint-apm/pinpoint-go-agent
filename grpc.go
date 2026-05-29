@@ -1321,6 +1321,7 @@ func (cmdGrpc *cmdGrpc) newHandleCommandStream() bool {
 	ctx, cancel := context.WithCancel(grpcMetadataContext(cmdGrpc.agent, -1))
 	stream, err := cmdGrpc.cmdClient.HandleCommand(ctx)
 	if err != nil {
+		cancel()
 		Log("grpc").Errorf("make command stream - %v", err)
 		return false
 	}
@@ -1409,6 +1410,7 @@ func (cmdGrpc *cmdGrpc) newActiveThreadCountStream(reqId int32) *activeThreadCou
 	ctx, cancel := context.WithCancel(grpcMetadataContext(cmdGrpc.agent, -1))
 	stream, err := cmdGrpc.cmdClient.CommandStreamActiveThreadCount(ctx)
 	if err != nil {
+		cancel()
 		Log("grpc").Errorf("make active thread count stream - %v", err)
 		return &activeThreadCountStream{nil, -1, 0, nil}
 	}
