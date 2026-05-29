@@ -20,7 +20,18 @@ func Log(src string) *logEntry {
 }
 
 func IsLogLevelEnabled(level logrus.Level) bool {
-	return logger.defaultLogger.GetLevel() >= level
+	if logger.defaultLogger.GetLevel() >= level {
+		return true
+	}
+	return logger.extraLogger != nil && logger.extraLogger.GetLevel() >= level
+}
+
+func IsDebugLogLevelEnabled() bool {
+	return IsLogLevelEnabled(logrus.DebugLevel)
+}
+
+func IsTraceLogLevelEnabled() bool {
+	return IsLogLevelEnabled(logrus.TraceLevel)
 }
 
 func SetExtraLogger(lgr *logrus.Logger) {

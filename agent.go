@@ -366,7 +366,9 @@ func (agent *agent) sendPingWorker() {
 			stream.close()
 			return
 		case t := <-agent.pingTicker.C:
-			Log("agent").Debugf("ping at", t)
+			if IsDebugLogLevelEnabled() {
+				Log("agent").Debugf("ping at", t)
+			}
 		}
 	}
 }
@@ -455,7 +457,9 @@ func (agent *agent) enqueueSpan(span *spanChunk) bool {
 	// and enqueue the newest so recent traces are favored under backpressure.
 	select {
 	case <-agent.spanChan:
-		Log("agent").Debugf("discard oldest span queue size:%d", len(agent.spanChan))
+		if IsDebugLogLevelEnabled() {
+			Log("agent").Debugf("discard oldest span queue size:%d", len(agent.spanChan))
+		}
 	default:
 	}
 
@@ -665,7 +669,9 @@ func (agent *agent) enqueueExceptionMeta(span *span) {
 	}
 
 	agent.tryEnqueueMeta(md)
-	Log("agent").Debugf("enqueue exception meta: %v", md)
+	if IsDebugLogLevelEnabled() {
+		Log("agent").Debugf("enqueue exception meta: %v", md)
+	}
 }
 
 func (agent *agent) enqueueUrlStat(stat *urlStat) bool {
@@ -684,7 +690,9 @@ func (agent *agent) enqueueUrlStat(stat *urlStat) bool {
 	case <-agent.urlStatChan:
 	default:
 	}
-	Log("agent").Tracef("url stat channel - max capacity reached or closed")
+	if IsTraceLogLevelEnabled() {
+		Log("agent").Tracef("url stat channel - max capacity reached or closed")
+	}
 	return false
 }
 

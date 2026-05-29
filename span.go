@@ -12,8 +12,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -132,7 +130,7 @@ func (span *span) EndSpan() {
 			span.agent.enqueueExceptionMeta(span)
 			span.errorChains = nil
 		}
-	} else {
+	} else if IsTraceLogLevelEnabled() {
 		Log("span").Tracef("span channel - max capacity reached or closed")
 	}
 
@@ -160,7 +158,9 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 		se.endPoint = se.destinationId
 		writer.Set(HeaderHost, se.destinationId)
 
-		Log("span").Tracef("span inject: %v, %d, %d, %s", span.txId, nextSpanId, span.spanId, se.destinationId)
+		if IsTraceLogLevelEnabled() {
+			Log("span").Tracef("span inject: %v, %d, %d, %s", span.txId, nextSpanId, span.spanId, se.destinationId)
+		}
 	} else {
 		Log("span").Warnf("abnormal span - has no event")
 	}
@@ -212,11 +212,13 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 	}
 
 	addSampledActiveSpan(span)
-	Log("span").Tracef("span extract: %s, %s, %s, %s, %s, %s", tid, spanid, pappname, pspanid, papptype, host)
+	if IsTraceLogLevelEnabled() {
+		Log("span").Tracef("span extract: %s, %s, %s, %s, %s, %s", tid, spanid, pappname, pspanid, papptype, host)
+	}
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
-	if IsLogLevelEnabled(logrus.DebugLevel) {
+	if IsDebugLogLevelEnabled() {
 		if goIdOffset > 0 {
 			if span.goroutineId < 0 {
 				span.goroutineId = goIdFromG()
@@ -275,7 +277,7 @@ func (span *span) EndSpanEvent() {
 		span.spanEvents = append(span.spanEvents, se)
 		if len(span.spanEvents) >= span.config().spanEventChunkSize {
 			chunk := span.newEventChunk(false)
-			if !chunk.enqueue() {
+			if !chunk.enqueue() && IsTraceLogLevelEnabled() {
 				Log("span").Tracef("span channel - max capacity reached or closed")
 			}
 		}
