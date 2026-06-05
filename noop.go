@@ -47,6 +47,7 @@ type noopSpan struct {
 	goroutineId int64
 	withStats   bool
 	urlStat     *UrlStatEntry
+	statusErr   int
 
 	noopSe      noopSpanEvent
 	annotations noopAnnotation
@@ -79,7 +80,7 @@ func (span *noopSpan) EndSpan() {
 		elapsed := endTime.UnixMilli() - span.startTime.UnixMilli()
 		collectResponseTime(elapsed)
 		if span.urlStat != nil {
-			span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: elapsed})
+			span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: elapsed, statusErr: span.statusErr})
 		}
 	}
 }
@@ -135,7 +136,9 @@ func (span *noopSpan) SpanEvent() SpanEventRecorder {
 
 func (span *noopSpan) SetError(e error) {}
 
-func (span *noopSpan) SetFailure() {}
+func (span *noopSpan) SetFailure() {
+	span.statusErr = 1
+}
 
 func (span *noopSpan) SetServiceType(typ int32) {}
 

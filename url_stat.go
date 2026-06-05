@@ -25,9 +25,10 @@ func (agent *agent) initUrlStat() {
 }
 
 type urlStat struct {
-	entry   *UrlStatEntry
-	endTime time.Time
-	elapsed int64
+	entry     *UrlStatEntry
+	endTime   time.Time
+	elapsed   int64
+	statusErr int
 }
 
 type urlStatSnapshot struct {
@@ -82,6 +83,10 @@ func (agent *agent) takeUrlStatSnapshot() *urlStatSnapshot {
 }
 
 func (snapshot *urlStatSnapshot) add(us *urlStat) {
+	if us.endTime.IsZero() {
+		return
+	}
+
 	var url string
 	if snapshot.config.urlStatWithMethod && us.entry.Method != "" {
 		url = us.entry.Method + " " + us.entry.Url
@@ -102,7 +107,7 @@ func (snapshot *urlStatSnapshot) add(us *urlStat) {
 	}
 
 	e.totalHistogram.add(us.elapsed)
-	if urlStatStatus(us.entry.Status) == urlStatusFail {
+	if urlStatStatus(us.statusErr) == urlStatusFail {
 		e.failedHistogram.add(us.elapsed)
 	}
 }
@@ -128,6 +133,15 @@ func (hg *urlStatHistogram) add(elapsed int64) {
 		hg.max = elapsed
 	}
 	hg.histogram[getBucket(elapsed)]++
+}
+
+func (hg *urlStatHistogram) isEmpty() bool {
+	for _, count := range hg.histogram {
+		if count != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func getBucket(elapsed int64) int {
@@ -158,8 +172,8 @@ func (t tickClock) tick(tm time.Time) time.Time {
 	return tm.Truncate(t.interval)
 }
 
-func urlStatStatus(status int) int {
-	if status/100 < 4 {
+func urlStatStatus(statusErr int) int {
+	if statusErr == 0 {
 		return urlStatusSuccess
 	} else {
 		return urlStatusFail
