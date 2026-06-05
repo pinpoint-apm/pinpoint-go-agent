@@ -29,7 +29,7 @@ func newSqlNormalizer(sql string) *sqlNormalizer {
 }
 
 func (s *sqlNormalizer) run() (string, string) {
-	numberTokenStartEnable := false
+	numberTokenStartEnable := true
 
 	for {
 		if ch := s.read(); ch == eof {
