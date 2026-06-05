@@ -1325,6 +1325,10 @@ func makePEachUriStat(e *eachUrlStat) *pb.PEachUriStat {
 }
 
 func makePUriHistogram(h *urlStatHistogram) *pb.PUriHistogram {
+	if h == nil || h.isEmpty() {
+		return &pb.PUriHistogram{}
+	}
+
 	return &pb.PUriHistogram{
 		Total:     h.total,
 		Max:       h.max,

@@ -61,6 +61,7 @@ type span struct {
 	operationName   string
 	flags           int
 	err             int
+	statusErr       int
 	errorFuncId     int32
 	errorString     string
 	recovered       bool
@@ -136,7 +137,7 @@ func (span *span) EndSpan() {
 	}
 
 	if span.urlStat != nil {
-		span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed})
+		span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed, statusErr: span.statusErr})
 	}
 }
 
@@ -414,6 +415,7 @@ func (span *span) SetError(e error) {
 
 func (span *span) SetFailure() {
 	span.err = 1
+	span.statusErr = 1
 }
 
 func (span *span) SetServiceType(typ int32) {
