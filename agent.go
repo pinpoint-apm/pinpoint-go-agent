@@ -42,14 +42,13 @@ type agent struct {
 	statChan    chan *pb.PStatMessage
 	sampler     traceSampler
 
-	errorCache   *lru.Cache
-	errorIdGen   int32
-	sqlCache     *lru.Cache
-	sqlIdGen     int32
-	sqlUidCache  *lru.Cache
-	apiCache     map[apiCacheKey]int32
-	apiCacheLock sync.RWMutex
-	apiIdGen     int32
+	errorCache  *lru.Cache
+	errorIdGen  int32
+	sqlCache    *lru.Cache
+	sqlIdGen    int32
+	sqlUidCache *lru.Cache
+	apiCache    *lru.Cache
+	apiIdGen    int32
 
 	config    *Config
 	connectWg sync.WaitGroup
@@ -78,8 +77,6 @@ type apiMeta struct {
 }
 
 // apiCacheKey identifies a cached API id by its descriptor and type.
-// Using a comparable struct as the map key lets cacheSpanApi look up the id
-// without building a "descriptor_apiType" string on every span event.
 type apiCacheKey struct {
 	descriptor string
 	apiType    int
@@ -187,7 +184,9 @@ func NewAgent(config *Config) (Agent, error) {
 	if agent.sqlUidCache, err = lru.New(cacheSize); err != nil {
 		return NoopAgent(), err
 	}
-	agent.apiCache = make(map[apiCacheKey]int32)
+	if agent.apiCache, err = lru.New(cacheSize); err != nil {
+		return NoopAgent(), err
+	}
 
 	agent.newSampler()
 	samplingOpts := []string{CfgSamplingType, CfgSamplingCounterRate, CfgSamplingPercentRate, CfgSamplingNewThroughput, CfgSamplingContinueThroughput}
@@ -535,9 +534,7 @@ func (agent *agent) deleteMetaCache(md interface{}) {
 	switch md.(type) {
 	case apiMeta:
 		api := md.(apiMeta)
-		agent.apiCacheLock.Lock()
-		delete(agent.apiCache, apiCacheKey{api.descriptor, api.apiType})
-		agent.apiCacheLock.Unlock()
+		agent.apiCache.Remove(apiCacheKey{api.descriptor, api.apiType})
 		break
 	case stringMeta:
 		agent.errorCache.Remove(md.(stringMeta).funcName)
@@ -582,7 +579,9 @@ func (agent *agent) cacheError(errorName string) int32 {
 	}
 
 	id := atomic.AddInt32(&agent.errorIdGen, 1)
-	agent.errorCache.Add(errorName, id)
+	if v, ok, _ := agent.errorCache.PeekOrAdd(errorName, id); ok {
+		return v.(int32)
+	}
 
 	md := stringMeta{
 		id:       id,
@@ -611,7 +610,9 @@ func (agent *agent) cacheSql(sql string) int32 {
 	}
 
 	id := atomic.AddInt32(&agent.sqlIdGen, 1)
-	agent.sqlCache.Add(sql, id)
+	if v, ok, _ := agent.sqlCache.PeekOrAdd(sql, id); ok {
+		return v.(int32)
+	}
 
 	aSql := abbreviateString(sql, maxSqlSize)
 	md := sqlMeta{
@@ -636,7 +637,9 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 	hash := murmur3.New128()
 	hash.Write([]byte(sql))
 	uid := hash.Sum(nil)
-	agent.sqlUidCache.Add(sql, uid)
+	if v, ok, _ := agent.sqlUidCache.PeekOrAdd(sql, uid); ok {
+		return v.([]byte)
+	}
 
 	aSql := abbreviateString(sql, maxSqlSize)
 	md := sqlUidMeta{
@@ -656,25 +659,14 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 
 	key := apiCacheKey{descriptor, apiType}
 
-	// Hot path: a shared read lock and an allocation-free map lookup. The
-	// struct key avoids building a "descriptor_apiType" string per span event.
-	agent.apiCacheLock.RLock()
-	id, ok := agent.apiCache[key]
-	agent.apiCacheLock.RUnlock()
-	if ok {
-		return id
+	if v, ok := agent.apiCache.Peek(key); ok {
+		return v.(int32)
 	}
 
-	// Miss: register under the write lock. Re-check so concurrent first-time
-	// callers for the same key don't each generate an id and enqueue metadata.
-	agent.apiCacheLock.Lock()
-	if id, ok = agent.apiCache[key]; ok {
-		agent.apiCacheLock.Unlock()
-		return id
+	id := atomic.AddInt32(&agent.apiIdGen, 1)
+	if v, ok, _ := agent.apiCache.PeekOrAdd(key, id); ok {
+		return v.(int32)
 	}
-	id = atomic.AddInt32(&agent.apiIdGen, 1)
-	agent.apiCache[key] = id
-	agent.apiCacheLock.Unlock()
 
 	md := apiMeta{
 		id:         id,
@@ -842,7 +834,7 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 	agent.errorCache, _ = lru.New(cacheSize)
 	agent.sqlCache, _ = lru.New(cacheSize)
 	agent.sqlUidCache, _ = lru.New(cacheSize)
-	agent.apiCache = make(map[apiCacheKey]int32)
+	agent.apiCache, _ = lru.New(cacheSize)
 	agent.newSampler()
 
 	agent.agentGrpc = newMockAgentGrpc(agent, t)

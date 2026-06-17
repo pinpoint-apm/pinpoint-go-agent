@@ -12,7 +12,7 @@ package pinpoint
 //	go test -run=^$ -bench=Parallel -benchmem -cpu=1,4,8   // scalability under contention
 //
 // The parallel variants are the important ones for shared-state contention:
-// the apiCache RWMutex (cacheSpanApi) and the activeSpan sync.Map are taken on
+// the apiCache lru lock (cacheSpanApi) and the activeSpan sync.Map are taken on
 // every span event / span, so their cost only shows up across multiple cores.
 
 import (
@@ -137,7 +137,7 @@ func BenchmarkSpanEventNested(b *testing.B) {
 }
 
 // BenchmarkSpanEventParallel exercises the shared-state contention of the span
-// event path across cores: every goroutine hits the same apiCache RWMutex in
+// event path across cores: every goroutine hits the same apiCache lru lock in
 // cacheSpanApi. Each goroutine owns its own span (spans are not goroutine-safe).
 func BenchmarkSpanEventParallel(b *testing.B) {
 	a := benchAgent()
@@ -174,7 +174,7 @@ func BenchmarkSpanLifecycle(b *testing.B) {
 }
 
 // BenchmarkSpanLifecycleParallel measures the full transaction path under
-// contention: activeSpan sync.Map churn and apiCache lock across cores.
+// contention: activeSpan sync.Map churn and apiCache lru lock across cores.
 func BenchmarkSpanLifecycleParallel(b *testing.B) {
 	a := benchAgent()
 	stop := startDrain(a)
@@ -246,9 +246,8 @@ func BenchmarkSplitTransactionId(b *testing.B) {
 	}
 }
 
-// BenchmarkCacheSpanApi isolates the per-event API-id cache lookup: the
-// struct-keyed map read under the apiCache RWMutex RLock on the steady-state
-// cache-hit path.
+// BenchmarkCacheSpanApi isolates the per-event API-id cache lookup on the
+// steady-state cache-hit path.
 func BenchmarkCacheSpanApi(b *testing.B) {
 	a := benchAgent()
 	stop := startDrain(a)
@@ -262,7 +261,7 @@ func BenchmarkCacheSpanApi(b *testing.B) {
 	}
 }
 
-// BenchmarkCacheSpanApiParallel measures apiCache RLock contention across cores.
+// BenchmarkCacheSpanApiParallel measures apiCache lru lock contention across cores.
 func BenchmarkCacheSpanApiParallel(b *testing.B) {
 	a := benchAgent()
 	stop := startDrain(a)

@@ -35,7 +35,7 @@ func newTestAgent(config *Config) *agent {
 	a.errorCache, _ = lru.New(cacheSize)
 	a.sqlCache, _ = lru.New(cacheSize)
 	a.sqlUidCache, _ = lru.New(cacheSize)
-	a.apiCache = make(map[apiCacheKey]int32)
+	a.apiCache, _ = lru.New(cacheSize)
 	a.config.offGrpc = true
 
 	return a
