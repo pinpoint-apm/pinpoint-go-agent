@@ -192,6 +192,7 @@ const (
 	HeaderParentApplicationName      = "Pinpoint-pAppName"
 	HeaderParentApplicationType      = "Pinpoint-pAppType"
 	HeaderParentApplicationNamespace = "Pinpoint-pAppNamespace"
+	HeaderParentServiceName          = "Pinpoint-pServiceName"
 	HeaderHost                       = "Pinpoint-Host"
 )
 

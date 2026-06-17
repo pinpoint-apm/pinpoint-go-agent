@@ -40,6 +40,7 @@ type span struct {
 	parentAppName      string
 	parentAppType      int
 	parentAppNamespace string
+	parentServiceName  string
 	serviceType        int32
 	rpcName            string
 	endPoint           string
@@ -84,6 +85,7 @@ func defaultSpan() *span {
 	span.parentSpanId = -1
 	span.parentAppName = ""
 	span.parentAppType = 1 //UNKNOWN
+	span.parentServiceName = ""
 	span.eventDepth = 1
 	span.serviceType = ServiceTypeGoApp
 	span.startTime = time.Now()
@@ -157,6 +159,13 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 		writer.Set(HeaderParentApplicationType, strconv.Itoa(int(span.agent.appType)))
 		writer.Set(HeaderParentApplicationNamespace, "")
 
+		// Propagate this agent's serviceName so downstream records it as the
+		// parent serviceName. Only set when present (v4), matching the Java
+		// agent's "serviceName != NOT_SET" guard; v1/v3 emit no such header.
+		if span.agent.serviceName != "" {
+			writer.Set(HeaderParentServiceName, span.agent.serviceName)
+		}
+
 		se.endPoint = se.destinationId
 		writer.Set(HeaderHost, se.destinationId)
 
@@ -206,6 +215,11 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 	papptype := reader.Get(HeaderParentApplicationType)
 	if papptype != "" {
 		span.parentAppType, _ = strconv.Atoi(papptype)
+	}
+
+	pservicename := reader.Get(HeaderParentServiceName)
+	if pservicename != "" {
+		span.parentServiceName = pservicename
 	}
 
 	host := reader.Get(HeaderHost)
