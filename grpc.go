@@ -26,11 +26,15 @@ import (
 )
 
 const (
-	headerAppName   = "applicationname"
-	headerAgentID   = "agentid"
-	headerAgentName = "agentname"
-	headerStartTime = "starttime"
-	headerSocketID  = "socketid"
+	headerAppName         = "applicationname"
+	headerAgentID         = "agentid"
+	headerAgentName       = "agentname"
+	headerStartTime       = "starttime"
+	headerSocketID        = "socketid"
+	headerServiceType     = "servicetype"
+	headerProtocolVersion = "protocol.version"
+	headerServiceName     = "servicename"
+	headerApiKey          = "apikey"
 )
 
 func grpcMetadataContext(agent *agent, socketId int64) context.Context {
@@ -47,12 +51,23 @@ func grpcMetadataContext(agent *agent, socketId int64) context.Context {
 }
 
 func agentHeaderMap(agent *agent) map[string]string {
+	// Headers branch on the ObjectName version, mirroring the Java agent's
+	// ClientHeaderFactoryV1 (v1/v3, protocol.version=100) and
+	// ClientHeaderFactoryV4 (v4, protocol.version=400).
 	m := map[string]string{
-		headerAppName:   agent.appName,
-		headerAgentID:   agent.agentID,
-		headerStartTime: strconv.FormatInt(agent.startTime, 10),
+		headerAppName:         agent.appName,
+		headerAgentID:         agent.agentID,
+		headerStartTime:       strconv.FormatInt(agent.startTime, 10),
+		headerServiceType:     strconv.Itoa(int(agent.appType)),
+		headerProtocolVersion: strconv.Itoa(agent.objName.protocolVersion()),
 	}
-	if agent.agentName != "" {
+	if agent.objName.isV4() {
+		// v4: agentName is always present; servicename and apikey are sent.
+		m[headerAgentName] = agent.agentName
+		m[headerServiceName] = agent.serviceName
+		m[headerApiKey] = agent.objName.apiKey
+	} else if agent.agentName != "" {
+		// v1/v3: agentName is optional on the wire.
 		m[headerAgentName] = agent.agentName
 	}
 	return m
@@ -1031,6 +1046,7 @@ func makePSpan(chunk *spanChunk) *pb.PSpanMessage {
 						ParentApplicationName: span.parentAppName,
 						ParentApplicationType: int32(span.parentAppType),
 						AcceptorHost:          span.acceptorHost,
+						ParentServiceName:     span.parentServiceName,
 					},
 				},
 				Annotation:             span.annotations.getList(),

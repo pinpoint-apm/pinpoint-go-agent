@@ -23,10 +23,12 @@ func init() {
 }
 
 type agent struct {
-	appName   string
-	appType   int32
-	agentID   string
-	agentName string
+	appName     string
+	appType     int32
+	agentID     string
+	agentName   string
+	serviceName string
+	objName     *objectName
 
 	startTime   int64
 	sequence    int64
@@ -161,10 +163,12 @@ func NewAgent(config *Config) (Agent, error) {
 	config.printConfigString()
 
 	agent := &agent{
-		appName:     config.String(CfgAppName),
+		appName:     config.objName.applicationName,
 		appType:     int32(config.Int(CfgAppType)),
-		agentID:     config.String(CfgAgentID),
-		agentName:   config.String(CfgAgentName),
+		agentID:     config.objName.agentID,
+		agentName:   config.objName.agentName,
+		serviceName: config.objName.serviceName,
+		objName:     config.objName,
 		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
 		spanChan:    make(chan *spanChunk, config.Int(CfgSpanQueueSize)),
 		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),
@@ -808,11 +812,26 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 	config.offGrpc = true
 	logger.setup(config)
 
+	if config.objName == nil {
+		if err := config.checkNameAndID(); err != nil {
+			// Tests may omit required identity fields; fall back to a default
+			// v3 identity so the header builder has a non-nil object name.
+			config.objName = &objectName{
+				version:         nameV3,
+				agentID:         config.String(CfgAgentID),
+				agentName:       config.String(CfgAgentName),
+				applicationName: config.String(CfgAppName),
+			}
+		}
+	}
+
 	agent := &agent{
-		appName:     config.String(CfgAppName),
+		appName:     config.objName.applicationName,
 		appType:     int32(config.Int(CfgAppType)),
-		agentID:     config.String(CfgAgentID),
-		agentName:   config.String(CfgAgentName),
+		agentID:     config.objName.agentID,
+		agentName:   config.objName.agentName,
+		serviceName: config.objName.serviceName,
+		objName:     config.objName,
 		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
 		spanChan:    make(chan *spanChunk, config.Int(CfgSpanQueueSize)),
 		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),

@@ -25,6 +25,12 @@ func newTestAgent(config *Config) *agent {
 		metaChan:  make(chan interface{}, cacheSize),
 		sampler:   newBasicTraceSampler(newRateSampler(1)),
 		config:    config,
+		objName: &objectName{
+			version:         nameV3,
+			agentID:         "testAgent",
+			agentName:       "testAgent",
+			applicationName: "testApp",
+		},
 	}
 	a.errorCache, _ = lru.New(cacheSize)
 	a.sqlCache, _ = lru.New(cacheSize)

@@ -1,15 +1,10 @@
 package pinpoint
 
 import (
-	"errors"
-	"fmt"
 	"math"
-	"math/rand"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cast"
@@ -61,15 +56,15 @@ const (
 	CfgHttpUrlStatWithMethod          = "Http.UrlStat.WithMethod"
 	CfgErrorTraceCallStack            = "Error.TraceCallStack"
 	CfgErrorCallStackDepth            = "Error.CallStackDepth"
+	CfgUIDVersion                     = "Uid.Version"
+	CfgServiceName                    = "ServiceName"
+	CfgApiKey                         = "ApiKey"
 )
 
 const (
-	cfgIdPattern             = "[a-zA-Z0-9\\._\\-]+"
-	maxApplicationNameLength = 24
-	maxAgentIdLength         = 24
-	maxAgentNameLength       = 255
-	samplingTypeCounter      = "COUNTER"
-	samplingTypePercent      = "PERCENT"
+	cfgIdPattern        = "[a-zA-Z0-9\\._\\-]+"
+	samplingTypeCounter = "COUNTER"
+	samplingTypePercent = "PERCENT"
 )
 
 // Config value type
@@ -140,6 +135,9 @@ func initConfig() {
 	AddConfig(CfgHttpUrlStatWithMethod, CfgBool, false, true)
 	AddConfig(CfgErrorTraceCallStack, CfgBool, false, true)
 	AddConfig(CfgErrorCallStackDepth, CfgInt, 32, true)
+	AddConfig(CfgUIDVersion, CfgString, "v3", false)
+	AddConfig(CfgServiceName, CfgString, "", false)
+	AddConfig(CfgApiKey, CfgString, "", false)
 }
 
 // AddConfig adds a configuration item.
@@ -167,6 +165,7 @@ type Config struct {
 	containerCheck bool
 	useNewLogOpt   bool
 	offGrpc        bool //for test
+	objName        *objectName
 
 	//dynamic config
 	callback             []reloadCallback
@@ -462,31 +461,20 @@ func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value inte
 	}
 }
 
+// checkNameAndID resolves the agent self-identification (ObjectName) according
+// to the configured version (Uid.Version: v1/v3/v4) and writes the resolved
+// values back into config so accessors stay consistent. Missing required fields
+// (applicationName for all versions; serviceName/apiKey for v4) return an error
+// that aborts agent startup.
 func (config *Config) checkNameAndID() error {
-	r, _ := regexp.Compile(cfgIdPattern)
-	appName := config.String(CfgAppName)
-	if appName == "" {
-		return errors.New("application name is required")
-	} else if len(appName) > maxApplicationNameLength {
-		return errors.New("application name is too long (max length: " + fmt.Sprint(maxApplicationNameLength) + ")")
-	} else if !r.MatchString(appName) {
-		return errors.New("application name has invalid pattern (" + cfgIdPattern + ")")
+	objName, err := resolveObjectName(config)
+	if err != nil {
+		return err
 	}
-
-	agentId := config.String(CfgAgentID)
-	if agentId == "" || len(agentId) > maxAgentIdLength || !r.MatchString(agentId) {
-		config.cfgMap[CfgAgentID].value = randomString(maxAgentIdLength - 1)
-		Log("config").Infof("auto-generated AgentID: %v", config.cfgMap[CfgAgentID].value)
-	}
-
-	agentName := config.String(CfgAgentName)
-	if agentName != "" {
-		if len(agentName) > maxAgentNameLength {
-			return errors.New("agent name is too long (max length: " + fmt.Sprint(maxAgentNameLength) + ")")
-		} else if !r.MatchString(agentName) {
-			return errors.New("agent name has invalid pattern (" + cfgIdPattern + ")")
-		}
-	}
+	config.objName = objName
+	config.cfgMap[CfgAgentID].value = objName.agentID
+	config.cfgMap[CfgAgentName].value = objName.agentName
+	config.cfgMap[CfgServiceName].value = objName.serviceName
 	return nil
 }
 
@@ -647,6 +635,28 @@ func WithAgentId(id string) ConfigOption {
 func WithAgentName(name string) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgAgentName].value = name
+	}
+}
+
+// WithUidVersion sets the agent self-identification version (v1, v3, or v4).
+// Unknown values fall back to v3.
+func WithUidVersion(version string) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgUIDVersion].value = version
+	}
+}
+
+// WithServiceName sets the service name (required for v4).
+func WithServiceName(name string) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgServiceName].value = name
+	}
+}
+
+// WithApiKey sets the api key (required for v4).
+func WithApiKey(apiKey string) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgApiKey].value = apiKey
 	}
 }
 
@@ -927,19 +937,14 @@ func (config *Config) printConfigString() {
 	sort.Strings(sortKeys)
 
 	for _, k := range sortKeys {
+		if k == CfgApiKey {
+			if config.cfgMap[k].value == "" {
+				Log("config").Infof("%s = ", k)
+			} else {
+				Log("config").Infof("%s = ****", k)
+			}
+			continue
+		}
 		Log("config").Infof("%s = %v", k, config.cfgMap[k].value)
 	}
-}
-
-const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-
-func randomString(n int) string {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	l := len(charset)
-
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = charset[r.Intn(l)]
-	}
-	return string(b)
 }
