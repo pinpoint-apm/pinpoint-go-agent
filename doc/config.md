@@ -96,7 +96,7 @@ The example below shows that config file and profile are set by command flag.
 ### ApplicationName
 ApplicationName option sets the application name.
 If this option is not provided, the agent can't be started.
-The maximum length of ApplicationName is 24.
+The maximum length depends on Uid.Version: 24 bytes for v1, and 254 bytes for v3.
 
 * --pinpoint-applicationname
 * PINPOINT_GO_APPLICATIONNAME
@@ -116,8 +116,8 @@ ApplicationType option sets the application type.
 ### AgentId
 AgentId option set id to distinguish agent.
 We recommend that you enable hostname to be included.
-The maximum length of AgentId is 24.
-If agent id is not set or the maximum length is exceeded, automatically generated id is given.
+For Uid.Version v1 and v3, the maximum length of AgentId is 24 bytes.
+If agent id is not set, has invalid characters, or the maximum length is exceeded, an id is automatically generated.
 
 * --pinpoint-agentid
 * PINPOINT_GO_AGENTID
@@ -127,13 +127,26 @@ If agent id is not set or the maximum length is exceeded, automatically generate
 
 ### AgentName
 AgentName option sets the agent name.
-The maximum length of AgentName is 255.
+If this option is not set, the resolved AgentId is used as AgentName.
+The maximum length is 255 bytes for Uid.Version v1 and v3.
 
 * --pinpoint-agentname
 * PINPOINT_GO_AGENTNAME
 * WithAgentName()
 * string
 * case-sensitive
+
+### Uid.Version
+Uid.Version option selects the agent identity format used to identify the agent to Pinpoint collector.
+Supported values are v1 and v3.
+The default is v3, and unknown values fall back to v3.
+
+* --pinpoint-uid-version
+* PINPOINT_GO_UID_VERSION
+* WithUidVersion()
+* string
+* default: "v3"
+* case-insensitive
 
 ### Collector.Host
 Collector.Host option sets the host address of Pinpoint collector.
