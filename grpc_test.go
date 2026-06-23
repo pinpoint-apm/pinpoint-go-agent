@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func Test_agentGrpc_sendAgentInfo(t *testing.T) {
@@ -294,6 +296,62 @@ func newTestSpanChunk(agent *agent) *spanChunk {
 	span := defaultSpan()
 	span.agent = agent
 	return span.newEventChunk(true)
+}
+
+func Test_streamState_isFailure(t *testing.T) {
+	// Mirrors the Java SimpleStreamState contract: a failure is reported only
+	// once the window is both dense (> limitCount) and long (> limitTime).
+	s := &streamState{limitCount: 3, limitTime: 50 * time.Millisecond}
+
+	assert.False(t, s.isFailure(), "no fails yet")
+
+	for i := 0; i < 10; i++ {
+		s.fail()
+	}
+	assert.False(t, s.isFailure(), "count exceeded but time window not yet elapsed")
+
+	time.Sleep(60 * time.Millisecond)
+	assert.True(t, s.isFailure(), "count and time both exceeded")
+
+	// A success resets the window entirely.
+	s.success()
+	assert.False(t, s.isFailure(), "success clears the failure window")
+	s.fail()
+	assert.False(t, s.isFailure(), "single fail after reset is tolerated")
+}
+
+func Test_streamSender_toleratesTransientBlockThenSucceeds(t *testing.T) {
+	// A send that is briefly slow (longer than one not-ready probe) but well
+	// within the failure window must succeed without tearing down the stream.
+	sender := newStreamSender()
+	defer sender.close()
+	state := newStreamState()
+
+	err := sender.send(func() error {
+		time.Sleep(sendStreamReadyTimeout * 3)
+		return nil
+	}, state, "test")
+
+	assert.NoError(t, err, "transient slowness should be tolerated")
+	assert.False(t, state.isFailure(), "successful send resets the failure window")
+}
+
+func Test_streamSender_givesUpAfterFailureWindow(t *testing.T) {
+	// A send that stays blocked past the failure window returns DeadlineExceeded
+	// so the worker can recreate the stream. A small window keeps the test fast.
+	sender := newStreamSender()
+	defer sender.close()
+	state := &streamState{limitCount: 2, limitTime: 30 * time.Millisecond}
+
+	release := make(chan struct{})
+	err := sender.send(func() error {
+		<-release // stay blocked until the sender goroutine is told to unblock
+		return nil
+	}, state, "test")
+	close(release) // unblock the in-flight send so the sender goroutine can exit
+
+	assert.Error(t, err, "sustained backpressure should surface an error")
+	assert.Equal(t, codes.DeadlineExceeded, status.Code(err), "give-up uses DeadlineExceeded")
 }
 
 func Test_statStream_sendStatRetry(t *testing.T) {

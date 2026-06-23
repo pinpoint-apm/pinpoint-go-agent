@@ -158,6 +158,24 @@ const (
 	grpcWriteBufferSize   = 1 * 1024 * 1024
 	grpcMaxMessageSize    = 4 * 1024 * 1024
 	grpcMaxHeaderListSize = 8 * 1024
+
+	// Flow-control backpressure tuning for the streaming send paths (span/stat).
+	//
+	// grpc-go's stream.Send() blocks until HTTP/2 flow control has window space
+	// for the message (or the stream breaks). A Send that stays blocked is the
+	// Go analog of the Java agent's stream.isReady()==false. Rather than tear the
+	// stream down on the first slow Send (the old 5s-timeout-then-recreate policy),
+	// the sender tolerates a window of sustained backpressure, mirroring the Java
+	// agent's SimpleStreamState(100, 5000): give up only after streamFailLimitCount
+	// not-ready probes spanning more than streamFailLimitTime.
+	//
+	// sendStreamReadyTimeout is how long we wait for an in-flight Send to make
+	// progress before counting one not-ready probe. It is sized so the count limit
+	// and the time limit are reached together (100 * 50ms ≈ 5s), so a continuously
+	// blocked stream is recreated after ~5s of backpressure, matching Java.
+	sendStreamReadyTimeout = 50 * time.Millisecond
+	streamFailLimitCount   = 100
+	streamFailLimitTime    = 5 * time.Second
 )
 
 var kacp = keepalive.ClientParameters{
@@ -617,6 +635,132 @@ func sendStreamWithTimeout(send func() error, timeout time.Duration, which strin
 	}
 }
 
+// streamState is a port of the Java agent's SimpleStreamState. It tracks a
+// rolling window of "not ready" (flow-control blocked) send probes and reports a
+// failure only once that window is both long enough (limitTime) and dense enough
+// (limitCount) to conclude the stream is no longer draining. A successful send
+// resets the window. It is accessed only from a stream's single sender path, so
+// it needs no synchronization.
+type streamState struct {
+	limitCount  int
+	limitTime   time.Duration
+	failCount   int
+	failureTime time.Time
+}
+
+func newStreamState() *streamState {
+	return &streamState{limitCount: streamFailLimitCount, limitTime: streamFailLimitTime}
+}
+
+func (s *streamState) init() {
+	s.failCount = 0
+	s.failureTime = time.Time{}
+}
+
+func (s *streamState) success() {
+	s.failCount = 0
+	s.failureTime = time.Time{}
+}
+
+func (s *streamState) fail() {
+	if s.failureTime.IsZero() {
+		s.failureTime = time.Now()
+	}
+	s.failCount++
+}
+
+func (s *streamState) isFailure() bool {
+	if s.failureTime.IsZero() {
+		return false
+	}
+	return time.Since(s.failureTime) > s.limitTime && s.failCount > s.limitCount
+}
+
+// streamSender owns a single long-lived goroutine that performs the blocking
+// stream.Send() for one stream. Replacing the previous goroutine-per-send model,
+// it lets the worker submit one send at a time and wait on it with a
+// backpressure-tolerance window instead of recreating the stream on the first
+// slow send. The goroutine lives exactly as long as its stream and is stopped by
+// close().
+type streamSender struct {
+	reqChan chan func() error
+	resChan chan error
+	done    chan struct{}
+	wg      sync.WaitGroup
+}
+
+func newStreamSender() *streamSender {
+	s := &streamSender{
+		reqChan: make(chan func() error),
+		resChan: make(chan error, 1),
+		done:    make(chan struct{}),
+	}
+	s.wg.Add(1)
+	go s.loop()
+	return s
+}
+
+func (s *streamSender) loop() {
+	defer s.wg.Done()
+	for {
+		select {
+		case send := <-s.reqChan:
+			// resChan is buffered (cap 1) and only one send is ever in flight,
+			// so this never blocks even if the worker has already given up on a
+			// slow send and stopped reading the result.
+			s.resChan <- send()
+		case <-s.done:
+			return
+		}
+	}
+}
+
+// send submits one blocking send to the sender goroutine and waits for it,
+// tolerating transient flow-control backpressure. While the send stays blocked
+// it records "not ready" probes against state; it returns a DeadlineExceeded
+// error only once the failure window is exceeded (sustained backpressure), a
+// real error when the send fails, or nil on success. The caller tears the stream
+// down on any non-nil error, which cancels the stream context and unblocks the
+// in-flight send.
+func (s *streamSender) send(send func() error, state *streamState, which string) error {
+	select {
+	case s.reqChan <- send:
+	case <-s.done:
+		return status.Errorf(codes.Unavailable, which+" stream sender closed")
+	}
+
+	t := acquireStreamTimer(sendStreamReadyTimeout)
+	defer releaseStreamTimer(t)
+
+	for {
+		select {
+		case err := <-s.resChan:
+			if err == nil {
+				state.success()
+			}
+			return err
+		case <-t.C:
+			state.fail()
+			if state.isFailure() {
+				return status.Errorf(codes.DeadlineExceeded, which+" stream.Send() - flow control blocked beyond failure window")
+			}
+			t.Reset(sendStreamReadyTimeout)
+		}
+	}
+}
+
+// close stops the sender goroutine. It must be called only when no send is in
+// flight: the worker reaches it after send() has returned (the error path has
+// already cancelled the stream) or after the queue is drained at shutdown, so
+// the goroutine is idle and exits promptly.
+func (s *streamSender) close() {
+	if s == nil {
+		return
+	}
+	close(s.done)
+	s.wg.Wait()
+}
+
 func waitUntilReady(grpcConn *grpc.ClientConn, timeout time.Duration, which string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -770,6 +914,8 @@ type spanGrpc struct {
 type spanStream struct {
 	stream pb.Span_SendSpanClient
 	cancel context.CancelFunc
+	sender *streamSender
+	state  *streamState
 }
 
 func newSpanGrpc(agent *agent) (*spanGrpc, error) {
@@ -806,7 +952,7 @@ func (spanGrpc *spanGrpc) newSpanStream() bool {
 		return false
 	}
 
-	spanGrpc.stream = &spanStream{stream, cancel}
+	spanGrpc.stream = &spanStream{stream: stream, cancel: cancel, sender: newStreamSender(), state: newStreamState()}
 	return true
 }
 
@@ -824,6 +970,9 @@ func (s *spanStream) close() {
 	}
 	defer s.cancel()
 
+	// Stop the sender goroutine before CloseAndRecv: SendMsg and CloseAndRecv
+	// must not run concurrently, and at this point no send is in flight.
+	s.sender.close()
 	sendStreamWithTimeout(
 		func() error {
 			_, err := s.stream.CloseAndRecv()
@@ -855,7 +1004,7 @@ func (s *spanStream) sendSpan(chunk *spanChunk) error {
 		Log("grpc").Tracef("PSpanMessage: %s", gspan.String())
 	}
 
-	err := sendStreamWithTimeout(func() error { return s.stream.Send(gspan) }, sendStreamTimeOut, "span")
+	err := s.sender.send(func() error { return s.stream.Send(gspan) }, s.state, "span")
 	if err != nil {
 		s.cancel()
 	}
@@ -1173,6 +1322,8 @@ type statGrpc struct {
 type statStream struct {
 	stream pb.Stat_SendAgentStatClient
 	cancel context.CancelFunc
+	sender *streamSender
+	state  *streamState
 }
 
 func newStatGrpc(agent *agent) (*statGrpc, error) {
@@ -1203,7 +1354,7 @@ func (statGrpc *statGrpc) newStatStream() bool {
 		return false
 	}
 
-	statGrpc.stream = &statStream{stream, cancel}
+	statGrpc.stream = &statStream{stream: stream, cancel: cancel, sender: newStreamSender(), state: newStreamState()}
 	return true
 }
 
@@ -1221,6 +1372,8 @@ func (s *statStream) close() {
 	}
 	defer s.cancel()
 
+	// Stop the sender goroutine before CloseAndRecv (see spanStream.close).
+	s.sender.close()
 	sendStreamWithTimeout(
 		func() error {
 			_, err := s.stream.CloseAndRecv()
@@ -1240,7 +1393,7 @@ func (s *statStream) sendStats(stats *pb.PStatMessage) error {
 		Log("grpc").Tracef("PStatMessage: %s", stats.String())
 	}
 
-	err := sendStreamWithTimeout(func() error { return s.stream.Send(stats) }, sendStreamTimeOut, "stat")
+	err := s.sender.send(func() error { return s.stream.Send(stats) }, s.state, "stat")
 	if err != nil {
 		s.cancel()
 	}
