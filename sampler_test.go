@@ -1,6 +1,8 @@
 package pinpoint
 
 import (
+	"math"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -221,4 +223,51 @@ func Test_throughputLimitTraceSampler_skipContinue(t *testing.T) {
 			assert.Equal(t, int64(99*2), atomic.LoadInt64(&skipCont), "skipCont")
 		})
 	}
+}
+
+// countConcurrent fires n concurrent calls and returns how many were sampled.
+func countConcurrent(n int, isSampled func() bool) int {
+	var wg sync.WaitGroup
+	var count int64
+
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			if isSampled() {
+				atomic.AddInt64(&count, 1)
+			}
+		}()
+	}
+	wg.Wait()
+	return int(count)
+}
+
+func Test_throughputLimitTraceSampler_burst(t *testing.T) {
+	const tps = 100
+	s := newThroughputLimitTraceSampler(newRateSampler(1), tps, tps)
+
+	// a burst of tps requests arriving at once is sampled in full: the limiter
+	// starts with tps tokens, like the fixed window of the Java and C++ agents.
+	assert.Equal(t, tps, countConcurrent(tps, s.isNewSampled), "new burst")
+	assert.Equal(t, tps, countConcurrent(tps, s.isContinueSampled), "continue burst")
+
+	// the burst does not raise the average: the tokens are spent now, so a
+	// second of sustained load past the empty bucket yields about tps samples.
+	sampled := 0
+	for deadline := time.Now().Add(1 * time.Second); time.Now().Before(deadline); {
+		if s.isNewSampled() {
+			sampled++
+		}
+	}
+	assert.InDelta(t, tps, sampled, tps/10, "new average")
+}
+
+func Test_throughputLimitTraceSampler_hugeThroughput(t *testing.T) {
+	// a tps beyond one event per nanosecond makes per() an infinite rate: the
+	// burst of tps must neither overflow the limiter nor throttle anything.
+	s := newThroughputLimitTraceSampler(newRateSampler(1), math.MaxInt32, math.MaxInt32)
+
+	assert.Equal(t, 1000, countConcurrent(1000, s.isNewSampled), "new")
+	assert.Equal(t, 1000, countConcurrent(1000, s.isContinueSampled), "continue")
 }
