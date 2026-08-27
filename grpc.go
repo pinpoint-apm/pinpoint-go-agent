@@ -11,6 +11,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang/protobuf/ptypes/wrappers"
@@ -558,50 +559,24 @@ func makePStackTraceElementList(frames []frame) []*pb.PStackTraceElement {
 	return list
 }
 
-// streamTimerPool reuses timers across stream Send timeouts. A timer carries an
-// internal channel, so pooling avoids allocating both the *time.Timer and that
-// channel on every send.
-var streamTimerPool = sync.Pool{
-	New: func() interface{} {
-		t := time.NewTimer(time.Hour)
-		t.Stop()
-		return t
-	},
-}
-
-func acquireStreamTimer(d time.Duration) *time.Timer {
-	t := streamTimerPool.Get().(*time.Timer)
-	t.Reset(d)
-	return t
-}
-
-func releaseStreamTimer(t *time.Timer) {
-	if !t.Stop() {
-		// drain a possibly-fired timer so the reused timer starts empty
-		select {
-		case <-t.C:
-		default:
-		}
+// sendStreamWithTimeout runs op on the calling goroutine and cancels the
+// stream if op blocks past timeout. grpc-go unblocks a flow-control-blocked
+// Send/Recv/CloseSend once the stream context is cancelled, so nothing is
+// spawned or abandoned — the Go analog of the C++ agent's bounded wait plus
+// TryCancel. Killing the stream on timeout matches the callers: they already
+// close and re-create the stream on any send error.
+func sendStreamWithTimeout(op func() error, cancelStream context.CancelFunc, timeout time.Duration, which string) error {
+	var timedOut atomic.Bool
+	t := time.AfterFunc(timeout, func() {
+		timedOut.Store(true)
+		cancelStream()
+	})
+	err := op()
+	t.Stop()
+	if timedOut.Load() {
+		return status.Errorf(codes.DeadlineExceeded, which+" - too slow or blocked")
 	}
-	streamTimerPool.Put(t)
-}
-
-func sendStreamWithTimeout(send func() error, timeout time.Duration, which string) error {
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- send()
-		close(errChan)
-	}()
-
-	t := acquireStreamTimer(timeout)
-	defer releaseStreamTimer(t)
-
-	select {
-	case <-t.C:
-		return status.Errorf(codes.DeadlineExceeded, which+" stream.Send() - too slow or blocked")
-	case err := <-errChan:
-		return err
-	}
+	return err
 }
 
 // waitUntilReady waits up to timeout for the connection to become ready. The
@@ -685,29 +660,19 @@ func (s *pingStream) sendPing() error {
 	if s.stream == nil {
 		return status.Errorf(codes.Unavailable, "ping stream is nil")
 	}
-	err := sendStreamWithTimeout(func() error { return s.stream.Send(&ping) }, sendStreamTimeOut, "ping")
+	err := sendStreamWithTimeout(func() error { return s.stream.Send(&ping) }, s.cancel, sendStreamTimeOut, "ping stream.Send()")
 	if err != nil {
 		s.cancel()
 		return err
 	}
 
-	errChan := make(chan error, 1)
-	go func() {
-		_, err = s.stream.Recv()
-		errChan <- err
-		close(errChan)
-	}()
-
-	t := time.NewTimer(sendStreamTimeOut)
-	select {
-	case <-t.C:
-		return status.Errorf(codes.DeadlineExceeded, "ping stream.Recv() - too slow or blocked")
-	case err = <-errChan:
-		if !t.Stop() {
-			<-t.C
-		}
-		return err
-	}
+	return sendStreamWithTimeout(
+		func() error {
+			_, err := s.stream.Recv()
+			return err
+		},
+		s.cancel, sendStreamTimeOut, "ping stream.Recv()",
+	)
 }
 
 func (s *pingStream) close() {
@@ -716,7 +681,7 @@ func (s *pingStream) close() {
 	}
 	defer s.cancel()
 
-	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, closeStreamTimeOut, "ping")
+	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, s.cancel, closeStreamTimeOut, "ping stream.CloseSend()")
 	s.stream = nil
 	Log("grpc").Infof("close ping stream")
 }
@@ -825,7 +790,7 @@ func (s *spanStream) close() {
 			_, err := s.stream.CloseAndRecv()
 			return err
 		},
-		closeStreamTimeOut, "span",
+		s.cancel, closeStreamTimeOut, "span stream.CloseAndRecv()",
 	)
 	s.stream = nil
 	Log("grpc").Infof("close span stream")
@@ -851,7 +816,7 @@ func (s *spanStream) sendSpan(chunk *spanChunk) error {
 		Log("grpc").Tracef("PSpanMessage: %s", gspan.String())
 	}
 
-	err := sendStreamWithTimeout(func() error { return s.stream.Send(gspan) }, sendStreamTimeOut, "span")
+	err := sendStreamWithTimeout(func() error { return s.stream.Send(gspan) }, s.cancel, sendStreamTimeOut, "span stream.Send()")
 	if err != nil {
 		s.cancel()
 	}
@@ -1233,7 +1198,7 @@ func (s *statStream) close() {
 			_, err := s.stream.CloseAndRecv()
 			return err
 		},
-		closeStreamTimeOut, "stat",
+		s.cancel, closeStreamTimeOut, "stat stream.CloseAndRecv()",
 	)
 	s.stream = nil
 	Log("grpc").Infof("close stat stream")
@@ -1247,7 +1212,7 @@ func (s *statStream) sendStats(stats *pb.PStatMessage) error {
 		Log("grpc").Tracef("PStatMessage: %s", stats.String())
 	}
 
-	err := sendStreamWithTimeout(func() error { return s.stream.Send(stats) }, sendStreamTimeOut, "stat")
+	err := sendStreamWithTimeout(func() error { return s.stream.Send(stats) }, s.cancel, sendStreamTimeOut, "stat stream.Send()")
 	if err != nil {
 		s.cancel()
 	}
@@ -1414,7 +1379,7 @@ func (s *cmdStream) close() {
 	}
 	defer s.cancel()
 
-	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, closeStreamTimeOut, "cmd")
+	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, s.cancel, closeStreamTimeOut, "cmd stream.CloseSend()")
 	s.stream = nil
 	Log("grpc").Infof("close command stream")
 }
@@ -1444,7 +1409,7 @@ func (s *cmdStream) sendCommandMessage() error {
 		Log("grpc").Debugf("PCmdMessage: %s", gCmd.String())
 	}
 
-	err := sendStreamWithTimeout(func() error { return s.stream.Send(gCmd) }, sendStreamTimeOut, "cmd")
+	err := sendStreamWithTimeout(func() error { return s.stream.Send(gCmd) }, s.cancel, sendStreamTimeOut, "cmd stream.Send()")
 	if err != nil {
 		s.cancel()
 	}
@@ -1499,7 +1464,7 @@ func (s *activeThreadCountStream) close() {
 			_, err := s.stream.CloseAndRecv()
 			return err
 		},
-		closeStreamTimeOut, "arc",
+		s.cancel, closeStreamTimeOut, "arc stream.CloseAndRecv()",
 	)
 	s.stream = nil
 }
@@ -1530,7 +1495,7 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 		Log("grpc").Debugf("PCmdActiveThreadCountRes: %s", gRes.String())
 	}
 
-	err := sendStreamWithTimeout(func() error { return s.stream.Send(gRes) }, sendStreamTimeOut, "arc")
+	err := sendStreamWithTimeout(func() error { return s.stream.Send(gRes) }, s.cancel, sendStreamTimeOut, "arc stream.Send()")
 	if err != nil {
 		s.cancel()
 	}

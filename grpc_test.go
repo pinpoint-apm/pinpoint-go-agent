@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"context"
 	"math"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -10,7 +11,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/status"
 )
 
 func Test_agentGrpc_sendAgentInfo(t *testing.T) {
@@ -476,4 +479,39 @@ func Test_waitUntilReady_connectsIdleChannel(t *testing.T) {
 	// An IDLE channel used to sit there for the whole interval; it must now
 	// have been asked to connect.
 	assert.NotEqual(t, connectivity.Idle, conn.GetState())
+}
+
+func Test_sendStreamWithTimeout_passesThroughResult(t *testing.T) {
+	assert.NoError(t, sendStreamWithTimeout(func() error { return nil }, func() {}, time.Second, "test"))
+
+	sendErr := status.Errorf(codes.Internal, "boom")
+	assert.Equal(t, sendErr, sendStreamWithTimeout(func() error { return sendErr }, func() {}, time.Second, "test"))
+}
+
+// An unresponsive stream: Send blocks until the stream context is cancelled,
+// which is how a grpc-go Send stuck on flow control behaves. The wrapper must
+// unblock it via cancel and, running the send on the calling goroutine, leave
+// no goroutines behind no matter how many sends time out.
+func Test_sendStreamWithTimeout_unresponsiveStreamLeaksNothing(t *testing.T) {
+	before := runtime.NumGoroutine()
+
+	for i := 0; i < 100; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		err := sendStreamWithTimeout(
+			func() error {
+				<-ctx.Done()
+				return ctx.Err()
+			},
+			cancel, time.Millisecond, "test stream.Send()",
+		)
+		assert.Equal(t, codes.DeadlineExceeded, status.Code(err))
+	}
+
+	// Allow the fired AfterFunc callbacks to finish; they are the only
+	// transient goroutines this path may create.
+	deadline := time.Now().Add(time.Second)
+	for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	assert.LessOrEqual(t, runtime.NumGoroutine(), before+2)
 }
