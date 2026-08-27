@@ -156,16 +156,16 @@ func Test_throughputLimitTraceSampler_skipNew(t *testing.T) {
 			for i := 0; i < 100; i++ {
 				s.isNewSampled()
 			}
-			assert.Equal(t, int64(1), atomic.LoadInt64(&sampleNew), "sampleNew")
-			assert.Equal(t, int64(99), atomic.LoadInt64(&skipNew), "skipNew")
+			assert.Equal(t, int64(1), readStatsCounters().sampleNew, "sampleNew")
+			assert.Equal(t, int64(99), readStatsCounters().skipNew, "skipNew")
 
 			time.Sleep(1 * time.Second)
 
 			for i := 0; i < 100; i++ {
 				s.isNewSampled()
 			}
-			assert.Equal(t, int64(1*2), atomic.LoadInt64(&sampleNew), "sampleNew")
-			assert.Equal(t, int64(99*2), atomic.LoadInt64(&skipNew), "skipNew")
+			assert.Equal(t, int64(1*2), readStatsCounters().sampleNew, "sampleNew")
+			assert.Equal(t, int64(99*2), readStatsCounters().skipNew, "skipNew")
 		})
 	}
 }
@@ -211,16 +211,16 @@ func Test_throughputLimitTraceSampler_skipContinue(t *testing.T) {
 			for i := 0; i < 100; i++ {
 				s.isContinueSampled()
 			}
-			assert.Equal(t, int64(1), atomic.LoadInt64(&sampleCont), "sampleCont")
-			assert.Equal(t, int64(99), atomic.LoadInt64(&skipCont), "skipCont")
+			assert.Equal(t, int64(1), readStatsCounters().sampleCont, "sampleCont")
+			assert.Equal(t, int64(99), readStatsCounters().skipCont, "skipCont")
 
 			time.Sleep(1 * time.Second)
 
 			for i := 0; i < 100; i++ {
 				s.isContinueSampled()
 			}
-			assert.Equal(t, int64(1*2), atomic.LoadInt64(&sampleCont), "sampleCont")
-			assert.Equal(t, int64(99*2), atomic.LoadInt64(&skipCont), "skipCont")
+			assert.Equal(t, int64(1*2), readStatsCounters().sampleCont, "sampleCont")
+			assert.Equal(t, int64(99*2), readStatsCounters().skipCont, "skipCont")
 		})
 	}
 }
