@@ -96,7 +96,8 @@ The example below shows that config file and profile are set by command flag.
 ### ApplicationName
 ApplicationName option sets the application name.
 If this option is not provided, the agent can't be started.
-The maximum length depends on Uid.Version: 24 bytes for v1, and 254 bytes for v3.
+The maximum length depends on Uid.Version: 24 bytes for v1, and 254 bytes for v3 and v4.
+See [Identity Versions](#identity-versions).
 
 * --pinpoint-applicationname
 * PINPOINT_GO_APPLICATIONNAME
@@ -118,6 +119,8 @@ AgentId option set id to distinguish agent.
 We recommend that you enable hostname to be included.
 For Uid.Version v1 and v3, the maximum length of AgentId is 24 bytes.
 If agent id is not set, has invalid characters, or the maximum length is exceeded, an id is automatically generated.
+For Uid.Version v4 this option is ignored: the agent id is always generated at startup.
+See [Identity Versions](#identity-versions).
 
 * --pinpoint-agentid
 * PINPOINT_GO_AGENTID
@@ -128,7 +131,8 @@ If agent id is not set, has invalid characters, or the maximum length is exceede
 ### AgentName
 AgentName option sets the agent name.
 If this option is not set, the resolved AgentId is used as AgentName.
-The maximum length is 255 bytes for Uid.Version v1 and v3.
+The maximum length is 255 bytes for Uid.Version v1 and v3, and 254 bytes for v4.
+See [Identity Versions](#identity-versions).
 
 * --pinpoint-agentname
 * PINPOINT_GO_AGENTNAME
@@ -138,8 +142,14 @@ The maximum length is 255 bytes for Uid.Version v1 and v3.
 
 ### Uid.Version
 Uid.Version option selects the agent identity format used to identify the agent to Pinpoint collector.
-Supported values are v1 and v3.
-The default is v3, and unknown values fall back to v3.
+It mirrors the Java agent's `pinpoint.modules.uid.version` property.
+Supported values are v1, v3 and v4.
+The default is v3, and unknown or empty values fall back to v3.
+
+**v4 is not usable at this time.**
+The v4 identity protocol is implemented in the agent, but it has not been released on the Pinpoint server side yet,
+so no collector accepts it.
+Use v1 or v3; the v4 details below are documented for when server-side support ships.
 
 * --pinpoint-uid-version
 * PINPOINT_GO_UID_VERSION
@@ -147,6 +157,63 @@ The default is v3, and unknown values fall back to v3.
 * string
 * default: "v3"
 * case-insensitive
+
+#### Identity Versions
+
+| | v1 | v3 (default) | v4 |
+|---|---|---|---|
+| ApplicationName | **required**, max 24 bytes | **required**, max 254 bytes | **required**, max 254 bytes |
+| AgentId | optional, max 24 bytes; auto-generated when unset or invalid | same as v1 | not configurable, always auto-generated |
+| AgentName | optional, max 255 bytes; falls back to AgentId | same as v1 | optional, max 254 bytes; falls back to AgentId |
+| ServiceName | not used | not used | **required**, max 254 bytes |
+| ApiKey | not used | not used | **required**, non-empty (no length or character check) |
+| gRPC `protocol.version` header | 100 | 100 | 400 |
+| gRPC headers sent | `applicationname`, `agentid`, `agentname`, `starttime`, `servicetype`, `protocol.version` | same as v1 | v1 headers plus `servicename` and `apikey` |
+
+ApplicationName, AgentId, AgentName and ServiceName must match `[a-zA-Z0-9\._\-]+`,
+and the maximum lengths above are UTF-8 byte lengths.
+ApiKey is checked for non-emptiness only.
+
+An auto-generated agent id is a 22 character URL-safe Base64 UUIDv7.
+Because v4 always generates it, the agent id changes on every restart; use AgentName for a stable label.
+
+v1 and v3 are identical on the wire, both sending `protocol.version=100`;
+they differ only in the ApplicationName length limit.
+A missing or invalid required value aborts agent startup:
+NewAgent returns a no-op agent and an error.
+
+The `socketid` header is not listed above because it is not part of the identity headers;
+it is added by the ping stream for every version.
+
+### ServiceName
+ServiceName option sets the service name reported to Pinpoint collector.
+It is used only when Uid.Version is v4, where it is required and its maximum length is 254 bytes.
+It is ignored for v1 and v3.
+If it is not set, has invalid characters, or the maximum length is exceeded, agent startup fails.
+Note that v4 is not usable at this time, so this option currently has no effect. See [Uid.Version](#uidversion).
+
+* --pinpoint-servicename
+* PINPOINT_GO_SERVICENAME
+* WithServiceName()
+* string
+* default: ""
+* case-sensitive
+
+### ApiKey
+ApiKey option sets the api key sent to Pinpoint collector on the `apikey` gRPC header.
+It is used only when Uid.Version is v4, where it is required.
+It is ignored for v1 and v3.
+Only non-emptiness is checked; there is no length or character restriction.
+If it is not set, agent startup fails.
+The value is masked in agent logs and is never logged in plaintext.
+Note that v4 is not usable at this time, so this option currently has no effect. See [Uid.Version](#uidversion).
+
+* --pinpoint-apikey
+* PINPOINT_GO_APIKEY
+* WithApiKey()
+* string
+* default: ""
+* case-sensitive
 
 ### Collector.Host
 Collector.Host option sets the host address of Pinpoint collector.
