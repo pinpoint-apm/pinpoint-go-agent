@@ -127,6 +127,51 @@ func Test_span_Inject(t *testing.T) {
 	}
 }
 
+func Test_span_Inject_EventOverflow(t *testing.T) {
+	// Overflow limits profiling detail; it is not a sampling decision. The
+	// trace context must still be written or the downstream starts a new
+	// trace and the call chain is cut here.
+	tests := []struct {
+		name     string
+		overflow func(s *span)
+	}{
+		{"depth overflow - ancestor event left on the stack", func(s *span) {
+			s.agent.config.spanMaxEventDepth = 2
+			s.NewSpanEvent("t1")
+			s.NewSpanEvent("t2")
+		}},
+		{"sequence overflow - empty stack", func(s *span) {
+			s.agent.config.spanMaxEventSequence = 1
+			s.NewSpanEvent("t1").EndSpanEvent()
+			s.NewSpanEvent("t2")
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := defaultTestSpan()
+			s.spanId = int64(12345)
+			s.txId = TransactionId{AgentId: "t123456", StartTime: int64(12345), Sequence: int64(1)}
+			tt.overflow(s)
+			assert.Equal(t, s.eventOverflow, 1, "eventOverflow")
+
+			m := make(map[string]string)
+			s.Inject(&DistributedTracingContextMap{m})
+
+			assert.Equal(t, m[HeaderTraceId], s.txId.String(), "HeaderTraceId")
+			assert.Equal(t, m[HeaderParentSpanId], "12345", "HeaderParentSpanId")
+			assert.NotEmpty(t, m[HeaderSpanId], "HeaderSpanId")
+			assert.NotEqual(t, m[HeaderSpanId], m[HeaderParentSpanId], "nextSpanId != spanId")
+
+			// the dropped event carries no link back, and an ancestor event
+			// must not be credited with a call it did not make
+			if se, ok := s.eventStack.peek(); ok {
+				assert.Equal(t, se.nextSpanId, int64(0), "ancestor event nextSpanId")
+			}
+		})
+	}
+}
+
 func Test_span_NewSpanEvent(t *testing.T) {
 	type args struct {
 		operationName string
