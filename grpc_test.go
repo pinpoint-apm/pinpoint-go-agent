@@ -149,8 +149,7 @@ func Test_spanStream_sendSpan(t *testing.T) {
 			agent.spanGrpc = newMockSpanGrpc(agent, t)
 			stream := agent.spanGrpc.newSpanStreamWithRetry()
 
-			span := defaultSpan()
-			span.agent = agent
+			span := defaultSpan(agent)
 			span.NewSpanEvent("t1")
 			err := stream.sendSpan(span.newEventChunk(true))
 			assert.NoError(t, err, "sendSpan")
@@ -174,8 +173,7 @@ func Test_spanGrpc_sendSpanBatch(t *testing.T) {
 			agent := tt.args.agent
 			agent.spanGrpc = newMockSpanGrpc(agent, t)
 
-			span := defaultSpan()
-			span.agent = agent
+			span := defaultSpan(agent)
 			span.NewSpanEvent("t1")
 			agent.spanGrpc.sendSpanBatchAsync([]*spanChunk{span.newEventChunk(true)})
 			agent.spanGrpc.awaitInFlightSpanBatch()
@@ -291,9 +289,7 @@ func Test_statStream_sendStat(t *testing.T) {
 }
 
 func newTestSpanChunk(agent *agent) *spanChunk {
-	span := defaultSpan()
-	span.agent = agent
-	return span.newEventChunk(true)
+	return defaultSpan(agent).newEventChunk(true)
 }
 
 func Test_statStream_sendStatRetry(t *testing.T) {

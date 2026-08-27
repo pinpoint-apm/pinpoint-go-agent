@@ -158,8 +158,7 @@ func Test_urlStatFailureUsesStatusFailureOnly(t *testing.T) {
 }
 
 func Test_spanStatusErrIsSetOnlyBySetFailure(t *testing.T) {
-	span := defaultSpan()
-	span.agent = newTestAgent(defaultConfig())
+	span := defaultSpan(newTestAgent(defaultConfig()))
 
 	span.SetError(errors.New("application error"))
 	assert.Equal(t, 1, span.err)
@@ -190,8 +189,8 @@ type expectedUrlHistogram struct {
 
 func newUrlStatTestSnapshot(limit int, withMethod bool) (*urlStatSnapshot, time.Time) {
 	config := defaultConfig()
-	config.urlStatLimitSize = limit
-	config.urlStatWithMethod = withMethod
+	config.Set(CfgHttpUrlStatLimitSize, limit)
+	config.Set(CfgHttpUrlStatWithMethod, withMethod)
 	agent := newTestAgent(config)
 	clock = newTickClock(urlStatCollectInterval)
 

@@ -18,6 +18,7 @@ import (
 func init() {
 	initLogger()
 	initConfig()
+	initNoopAgent()
 	initGoroutine()
 	globalAgent = NoopAgent()
 }
@@ -40,7 +41,6 @@ type agent struct {
 	metaChan    chan interface{}
 	urlStatChan chan *urlStat
 	statChan    chan *pb.PStatMessage
-	sampler     traceSampler
 
 	errorCache  *lru.Cache
 	errorIdGen  int32
@@ -195,9 +195,6 @@ func NewAgent(config *Config) (Agent, error) {
 		return NoopAgent(), err
 	}
 
-	agent.newSampler()
-	samplingOpts := []string{CfgSamplingType, CfgSamplingCounterRate, CfgSamplingPercentRate, CfgSamplingNewThroughput, CfgSamplingContinueThroughput}
-	config.AddReloadCallback(samplingOpts, agent.newSampler)
 	config.AddReloadCallback([]string{CfgLogLevel}, logger.reloadLevel)
 	config.AddReloadCallback([]string{CfgLogOutput, CfgLogMaxSize}, logger.reloadOutput)
 
@@ -207,23 +204,6 @@ func NewAgent(config *Config) (Agent, error) {
 	}
 	globalAgent = agent
 	return agent, nil
-}
-
-func (agent *agent) newSampler() {
-	config := agent.config
-	var baseSampler sampler
-	if config.String(CfgSamplingType) == samplingTypeCounter {
-		baseSampler = newRateSampler(config.Int(CfgSamplingCounterRate))
-	} else {
-		baseSampler = newPercentSampler(config.Float(CfgSamplingPercentRate))
-	}
-
-	if config.Int(CfgSamplingNewThroughput) > 0 || config.Int(CfgSamplingContinueThroughput) > 0 {
-		agent.sampler = newThroughputLimitTraceSampler(baseSampler, config.Int(CfgSamplingNewThroughput),
-			config.Int(CfgSamplingContinueThroughput))
-	} else {
-		agent.sampler = newBasicTraceSampler(baseSampler)
-	}
 }
 
 func (agent *agent) connectGrpcServer() {
@@ -361,11 +341,12 @@ func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string, re
 		return newUnSampledSpan(agent, rpcName)
 	}
 
+	sampler := agent.config.load().sampler
 	tid := reader.Get(HeaderTraceId)
 	if tid == "" {
-		return agent.samplingSpan(func() bool { return agent.sampler.isNewSampled() }, operation, rpcName, reader)
+		return agent.samplingSpan(func() bool { return sampler.isNewSampled() }, operation, rpcName, reader)
 	} else {
-		return agent.samplingSpan(func() bool { return agent.sampler.isContinueSampled() }, operation, rpcName, reader)
+		return agent.samplingSpan(func() bool { return sampler.isContinueSampled() }, operation, rpcName, reader)
 	}
 }
 
@@ -715,7 +696,7 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 }
 
 func (agent *agent) enqueueExceptionMeta(span *span) {
-	if !agent.enable.Load() || !agent.config.errorTraceCallStack {
+	if !agent.enable.Load() || !span.cfg.errorTraceCallStack {
 		return
 	}
 
@@ -787,7 +768,7 @@ func (agent *agent) sendUrlStatWorker() {
 			Log("agent").Infof("end send uri stat goroutine")
 			return
 		case <-agent.urlStatTicker.C:
-			if agent.config.collectUrlStat {
+			if agent.config.load().collectUrlStat {
 				snapshot := agent.takeUrlStatSnapshot()
 				agent.enqueueStat(makePAgentUriStat(snapshot))
 			}
@@ -870,7 +851,6 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 	agent.sqlCache, _ = lru.New(cacheSize)
 	agent.sqlUidCache, _ = lru.New(cacheSize)
 	agent.apiCache, _ = lru.New(cacheSize)
-	agent.newSampler()
 
 	agent.agentGrpc = newMockAgentGrpc(agent, t)
 	//agent.spanGrpc = newMockSpanGrpc(agent, t)
