@@ -20,7 +20,6 @@ func newTestAgent(config *Config) *agent {
 		agentID:   "testAgent",
 		appType:   ServiceTypeGoApp,
 		startTime: time.Now().UnixNano() / int64(time.Millisecond),
-		enable:    true,
 		spanChan:  make(chan *spanChunk, cacheSize),
 		metaChan:  make(chan interface{}, cacheSize),
 		sampler:   newBasicTraceSampler(newRateSampler(1)),
@@ -32,6 +31,7 @@ func newTestAgent(config *Config) *agent {
 			applicationName: "testApp",
 		},
 	}
+	a.enable.Store(true)
 	a.errorCache, _ = lru.New(cacheSize)
 	a.sqlCache, _ = lru.New(cacheSize)
 	a.sqlUidCache, _ = lru.New(cacheSize)

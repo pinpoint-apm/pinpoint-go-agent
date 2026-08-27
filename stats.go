@@ -254,7 +254,7 @@ func (agent *agent) collectAgentStatWorker() {
 	collected := make([]*inspectorStats, cfgBatchCount)
 	batch := 0
 
-	for agent.enable {
+	for agent.enable.Load() {
 		select {
 		case <-agent.statDone:
 			Log("stats").Infof("end collect agent stat goroutine")

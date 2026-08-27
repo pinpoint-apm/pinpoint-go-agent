@@ -54,7 +54,7 @@ func Test_agent_NewAgent(t *testing.T) {
 			assert.Equal(t, globalAgent, a, "global agent")
 
 			agent.startTime = 12345
-			agent.enable = true
+			agent.enable.Store(true)
 			assert.Equal(t, "testagent^12345^1", agent.generateTransactionId().String(), "generateTransactionId")
 
 			a.Shutdown()
@@ -80,7 +80,7 @@ func Test_agent_GlobalAgent(t *testing.T) {
 	c.offGrpc = true
 	a, _ := NewAgent(c)
 	agent := a.(*agent)
-	agent.enable = true
+	agent.enable.Store(true)
 	defer a.Shutdown()
 
 	tests := []struct {
@@ -114,7 +114,7 @@ func Test_agent_NewSpanTracer(t *testing.T) {
 	c.offGrpc = true
 	a, _ := NewAgent(c)
 	agent := a.(*agent)
-	agent.enable = true
+	agent.enable.Store(true)
 	defer a.Shutdown()
 
 	tests := []struct {
@@ -153,7 +153,7 @@ func Test_agent_NewSpanTracerWithReader(t *testing.T) {
 	c.offGrpc = true
 	a, _ := NewAgent(c)
 	agent := a.(*agent)
-	agent.enable = true
+	agent.enable.Store(true)
 	defer a.Shutdown()
 
 	m := map[string]string{

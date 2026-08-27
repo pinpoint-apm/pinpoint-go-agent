@@ -292,7 +292,7 @@ func (agentGrpc *agentGrpc) sendAgentInfo(ctx context.Context, agentInfo *pb.PAg
 func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 	ctx, agentInfo := agentGrpc.makeAgentInfo()
 
-	for !agentGrpc.agent.shutdown {
+	for !agentGrpc.agent.shutdown.Load() {
 		if res, err := agentGrpc.sendAgentInfo(ctx, agentInfo); err == nil {
 			if res.Success {
 				Log("agent").Infof("success to register agent")
@@ -303,7 +303,7 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 			}
 		}
 
-		for retry := 1; !agentGrpc.agent.shutdown; retry++ {
+		for retry := 1; !agentGrpc.agent.shutdown.Load(); retry++ {
 			if waitUntilReady(agentGrpc.agentConn, backOffSleep(retry), "agent") {
 				break
 			}
