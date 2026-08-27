@@ -24,6 +24,7 @@ package pphttp
 
 import (
 	"bytes"
+	"math"
 	"net"
 	"net/http"
 	"reflect"
@@ -87,40 +88,57 @@ func setProxyHeader(a pinpoint.Annotation, r *http.Request) {
 	if xff := r.Header.Get("Pinpoint-ProxyApache"); xff != "" {
 		parts := strings.Split(xff, " ")
 		for _, str := range parts {
-			e := strings.Split(str, "=")
-			if e[0] == "t" {
-				receivedTime, _ = strconv.ParseInt(e[1], 10, 64)
+			k, v, ok := strings.Cut(str, "=")
+			if !ok {
+				continue
+			}
+			if k == "t" {
+				receivedTime, _ = strconv.ParseInt(v, 10, 64)
 				receivedTime = receivedTime / 1000
-			} else if e[0] == "D" {
-				durationTime, _ = strconv.Atoi(e[1])
-			} else if e[0] == "i" {
-				idlePercent, _ = strconv.Atoi(e[1])
-			} else if e[0] == "b" {
-				busyPercent, _ = strconv.Atoi(e[1])
+			} else if k == "D" {
+				durationTime, _ = strconv.Atoi(v)
+			} else if k == "i" {
+				idlePercent, _ = strconv.Atoi(v)
+			} else if k == "b" {
+				busyPercent, _ = strconv.Atoi(v)
 			}
 		}
 		code = 3
 	} else if xff := r.Header.Get("Pinpoint-ProxyNginx"); xff != "" {
 		parts := strings.Split(xff, " ")
 		for _, str := range parts {
-			e := strings.Split(str, "=")
-			if e[0] == "t" {
-				tmp, _ := strconv.ParseFloat(e[1], 64)
+			k, v, ok := strings.Cut(str, "=")
+			if !ok {
+				continue
+			}
+			if k == "t" {
+				tmp, _ := strconv.ParseFloat(v, 64)
 				tmp = tmp * 1000
-				receivedTime = int64(tmp)
-			} else if e[0] == "D" {
-				durationTime, _ = strconv.Atoi(e[1])
+				// Reject non-finite or out-of-range products before the cast:
+				// the header is untrusted input and converting such a float64
+				// to int64 yields an implementation-defined value. NaN fails
+				// both comparisons; ±Inf fails one. The upper bound uses '<'
+				// because float64(math.MaxInt64) rounds up to 2^63, which is
+				// not representable as int64.
+				if tmp >= float64(math.MinInt64) && tmp < float64(math.MaxInt64) {
+					receivedTime = int64(tmp)
+				}
+			} else if k == "D" {
+				durationTime, _ = strconv.Atoi(v)
 			}
 		}
 		code = 2
 	} else if xff := r.Header.Get("Pinpoint-ProxyApp"); xff != "" {
 		parts := strings.Split(xff, " ")
 		for _, str := range parts {
-			e := strings.Split(str, "=")
-			if e[0] == "t" {
-				receivedTime, _ = strconv.ParseInt(e[1], 10, 64)
-			} else if e[0] == "app" {
-				app = e[1]
+			k, v, ok := strings.Cut(str, "=")
+			if !ok {
+				continue
+			}
+			if k == "t" {
+				receivedTime, _ = strconv.ParseInt(v, 10, 64)
+			} else if k == "app" {
+				app = v
 			}
 		}
 		code = 1
