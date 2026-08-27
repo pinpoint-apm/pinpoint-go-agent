@@ -81,16 +81,27 @@ func (agent *agent) baseOutgoingContext() context.Context {
 	return agent.grpcMetaCtx
 }
 
-func backOffSleep(attempt int) time.Duration {
-	base := float64(1 * time.Second)
-	max := float64(60 * time.Second)
+const (
+	// Reconnect back-off, matching the C++ agent's GrpcClientTuning: a gentle
+	// x1.2 ramp from 3s to a 30s ceiling, randomized +/-30%.
+	backOffInitialInterval = 3 * time.Second
+	backOffMultiplier      = 1.2
+	backOffMaxInterval     = 30 * time.Second
+	backOffJitter          = 0.3
+)
 
-	dur := base * math.Pow(2, float64(attempt))
-	if dur > max {
-		dur = max
+// backOffSleep returns how long to wait before reconnect attempt+1, with the
+// first attempt numbered 0.
+func backOffSleep(attempt int) time.Duration {
+	dur := float64(backOffInitialInterval) * math.Pow(backOffMultiplier, float64(attempt))
+	if dur > float64(backOffMaxInterval) {
+		dur = float64(backOffMaxInterval)
 	}
 
-	return time.Duration(rand.Float64()*(dur-base) + base)
+	// Randomize so agents restarted together do not reconnect in lockstep. The
+	// jitter is applied after the clamp, as in the C++ agent, so a capped
+	// interval lands within +/-30% of the ceiling rather than always on it.
+	return time.Duration(dur * (1 - backOffJitter + rand.Float64()*2*backOffJitter))
 }
 
 type agentClient interface {
@@ -303,11 +314,7 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 			}
 		}
 
-		for retry := 1; !agentGrpc.agent.shutdown.Load(); retry++ {
-			if waitUntilReady(agentGrpc.agentConn, backOffSleep(retry), "agent") {
-				break
-			}
-		}
+		backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
 		if agentInfo.Ip == "" {
 			agentInfo.Ip = getOutboundIP()
 		}
@@ -352,11 +359,7 @@ func (agentGrpc *agentGrpc) sendApiMetadataWithRetry(apiId int32, api string, li
 		}
 
 		if !agentGrpc.agent.config.offGrpc {
-			for retry := 1; agentGrpc.agent.Enable(); retry++ {
-				if waitUntilReady(agentGrpc.agentConn, backOffSleep(retry), "agent") {
-					break
-				}
-			}
+			backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
 		}
 	}
 	return false
@@ -391,11 +394,7 @@ func (agentGrpc *agentGrpc) sendStringMetadataWithRetry(strId int32, str string)
 		}
 
 		if !agentGrpc.agent.config.offGrpc {
-			for retry := 1; agentGrpc.agent.Enable(); retry++ {
-				if waitUntilReady(agentGrpc.agentConn, backOffSleep(retry), "agent") {
-					break
-				}
-			}
+			backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
 		}
 	}
 	return false
@@ -431,11 +430,7 @@ func (agentGrpc *agentGrpc) sendSqlMetadataWithRetry(sqlId int32, sql string) bo
 		}
 
 		if !agentGrpc.agent.config.offGrpc {
-			for retry := 1; agentGrpc.agent.Enable(); retry++ {
-				if waitUntilReady(agentGrpc.agentConn, backOffSleep(retry), "agent") {
-					break
-				}
-			}
+			backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
 		}
 	}
 	return false
@@ -471,11 +466,7 @@ func (agentGrpc *agentGrpc) sendSqlUidMetadataWithRetry(sqlUid []byte, sql strin
 		}
 
 		if !agentGrpc.agent.config.offGrpc {
-			for retry := 1; agentGrpc.agent.Enable(); retry++ {
-				if waitUntilReady(agentGrpc.agentConn, backOffSleep(retry), "agent") {
-					break
-				}
-			}
+			backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
 		}
 	}
 	return false
@@ -515,11 +506,7 @@ func (agentGrpc *agentGrpc) sendExceptionMetadataWithRetry(exception *exceptionM
 		}
 
 		if !agentGrpc.agent.config.offGrpc {
-			for retry := 1; agentGrpc.agent.Enable(); retry++ {
-				if waitUntilReady(agentGrpc.agentConn, backOffSleep(retry), "agent") {
-					break
-				}
-			}
+			backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
 		}
 	}
 	return false
@@ -617,27 +604,40 @@ func sendStreamWithTimeout(send func() error, timeout time.Duration, which strin
 	}
 }
 
-func waitUntilReady(grpcConn *grpc.ClientConn, timeout time.Duration, which string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+// waitUntilReady waits up to timeout for the connection to become ready. The
+// wait is bound to ctx as well, so cancelling ctx aborts it immediately.
+func waitUntilReady(ctx context.Context, grpcConn *grpc.ClientConn, timeout time.Duration, which string) bool {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	state := grpcConn.GetState()
 	Log("grpc").Infof("wait %s connection ready - state: %s, timeout: %s", which, state.String(), timeout.String())
 
 	for state != connectivity.Ready {
-		if grpcConn.WaitForStateChange(ctx, state) {
-			state = grpcConn.GetState()
-		} else {
-			// To exit IDLE state, it needs to try grpc action.
-			if state == connectivity.Idle && timeout.Seconds() > 30 {
-				return true
-			} else {
-				return false
-			}
+		// An IDLE channel never leaves that state on its own, so waiting on it
+		// would burn the whole interval; ask it to connect instead, mirroring
+		// the C++ agent's GetState(try_to_connect=true).
+		if state == connectivity.Idle {
+			grpcConn.Connect()
 		}
+		if !grpcConn.WaitForStateChange(ctx, state) {
+			return false
+		}
+		state = grpcConn.GetState()
 	}
 
 	return true
+}
+
+// backOffUntilReady waits for the connection to become ready, backing off
+// between attempts. It returns as soon as shutdown begins, so a pending
+// back-off interval does not delay it.
+func backOffUntilReady(agent *agent, grpcConn *grpc.ClientConn, which string) {
+	for attempt := 0; !agent.shutdown.Load(); attempt++ {
+		if waitUntilReady(agent.stopSignal(), grpcConn, backOffSleep(attempt), which) {
+			return
+		}
+	}
 }
 
 func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc func() bool, which string) bool {
@@ -646,11 +646,7 @@ func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc f
 			return true
 		}
 		if !agent.config.offGrpc {
-			for retry := 1; agent.Enable(); retry++ {
-				if waitUntilReady(grpcConn, backOffSleep(retry), which) {
-					break
-				}
-			}
+			backOffUntilReady(agent, grpcConn, which)
 		}
 	}
 	return false
