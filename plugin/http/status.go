@@ -1,123 +1,83 @@
 package pphttp
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
-type httpStatusCode interface {
-	isError(code int) bool
-}
+// statusTableSize is how many status codes the bit table covers. HTTP tops out
+// at the 5xx class, so every code a response can carry fits below it.
+const statusTableSize = 640 // 10 uint64 words
 
-type httpStatusInformational struct{}
-
-func newHttpStatusInformational() *httpStatusInformational {
-	return &httpStatusInformational{}
-}
-
-func (h *httpStatusInformational) isError(code int) bool {
-	return 100 <= code && code <= 199
-}
-
-type httpStatusSuccess struct{}
-
-func newHttpStatusSuccess() *httpStatusSuccess {
-	return &httpStatusSuccess{}
-}
-
-func (h *httpStatusSuccess) isError(code int) bool {
-	return 200 <= code && code <= 299
-}
-
-type httpStatusRedirection struct{}
-
-func newHttpStatusRedirection() *httpStatusRedirection {
-	return &httpStatusRedirection{}
-}
-
-func (h *httpStatusRedirection) isError(code int) bool {
-	return 300 <= code && code <= 399
-}
-
-type httpStatusClientError struct{}
-
-func newHttpStatusClientError() *httpStatusClientError {
-	return &httpStatusClientError{}
-}
-
-func (h *httpStatusClientError) isError(code int) bool {
-	return 400 <= code && code <= 499
-}
-
-type httpStatusServerError struct{}
-
-func newHttpStatusServerError() *httpStatusServerError {
-	return &httpStatusServerError{}
-}
-
-func (h *httpStatusServerError) isError(code int) bool {
-	return 500 <= code && code <= 599
-}
-
-type httpStatusDefault struct {
-	statusCode int
-}
-
-func newHttpStatusDefault(code int) *httpStatusDefault {
-	return &httpStatusDefault{
-		statusCode: code,
-	}
-}
-
-func (h *httpStatusDefault) isError(code int) bool {
-	return h.statusCode == code
-}
-
+// httpStatusError decides whether a response status counts as a failure.
+//
+// The configured tokens are flattened into a bit table once, when the config is
+// parsed, so a request pays a bounds check and one bit lookup instead of an
+// interface call per configured entry.
 type httpStatusError struct {
-	errors []httpStatusCode
+	codes [statusTableSize / 64]uint64
+
+	// Codes the table cannot hold: a number outside it, or a token that does
+	// not parse - which the old per-token matcher kept as -1 and compared
+	// against the status. No net/http response carries one, but the exported
+	// RecordHttpServerResponse takes any int, so they are kept rather than
+	// dropped, and the verdict stays what it was for every input.
+	outOfTable []int
 }
 
 func newHttpStatusError() *httpStatusError {
-	return &httpStatusError{
-		errors: setupHttpStatusErrors(),
-	}
+	return parseHttpStatusErrors(pinpoint.GetConfig().StringSlice(CfgHttpServerStatusCodeErrors))
 }
 
-func setupHttpStatusErrors() []httpStatusCode {
-	var errors []httpStatusCode
+// parseHttpStatusErrors expands the configured tokens - a status class, "1xx"
+// through "5xx" case-insensitively, or a single status code - into the table.
+func parseHttpStatusErrors(cfg []string) *httpStatusError {
+	h := &httpStatusError{}
 
-	cfgErrors := trimStringSlice(pinpoint.GetConfig().StringSlice(CfgHttpServerStatusCodeErrors))
-
-	for _, s := range cfgErrors {
-		if strings.EqualFold(s, "5xx") {
-			errors = append(errors, newHttpStatusServerError())
-		} else if strings.EqualFold(s, "4xx") {
-			errors = append(errors, newHttpStatusClientError())
-		} else if strings.EqualFold(s, "3xx") {
-			errors = append(errors, newHttpStatusRedirection())
-		} else if strings.EqualFold(s, "2xx") {
-			errors = append(errors, newHttpStatusSuccess())
-		} else if strings.EqualFold(s, "1xx") {
-			errors = append(errors, newHttpStatusInformational())
-		} else {
-			c, e := strconv.Atoi(s)
-			if e != nil {
+	for _, s := range trimStringSlice(cfg) {
+		switch {
+		case strings.EqualFold(s, "1xx"):
+			h.setRange(100, 199)
+		case strings.EqualFold(s, "2xx"):
+			h.setRange(200, 299)
+		case strings.EqualFold(s, "3xx"):
+			h.setRange(300, 399)
+		case strings.EqualFold(s, "4xx"):
+			h.setRange(400, 499)
+		case strings.EqualFold(s, "5xx"):
+			h.setRange(500, 599)
+		default:
+			c, err := strconv.Atoi(s)
+			if err != nil {
 				c = -1
 			}
-			errors = append(errors, newHttpStatusDefault(c))
+			h.set(c)
 		}
 	}
 
-	return errors
+	return h
+}
+
+func (h *httpStatusError) setRange(min, max int) {
+	for code := min; code <= max; code++ {
+		h.set(code)
+	}
+}
+
+func (h *httpStatusError) set(code int) {
+	if uint(code) < statusTableSize {
+		h.codes[code/64] |= 1 << (uint(code) % 64)
+	} else {
+		h.outOfTable = append(h.outOfTable, code)
+	}
 }
 
 func (h *httpStatusError) isError(code int) bool {
-	for _, h := range h.errors {
-		if h.isError(code) {
-			return true
-		}
+	if uint(code) < statusTableSize {
+		return h.codes[code/64]&(1<<(uint(code)%64)) != 0
 	}
-	return false
+	return slices.Contains(h.outOfTable, code)
 }
