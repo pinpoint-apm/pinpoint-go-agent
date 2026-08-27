@@ -56,6 +56,14 @@ type agent struct {
 	enable    atomic.Bool
 	shutdown  atomic.Bool
 
+	// stopCtx is cancelled when shutdown begins. The shutdown flag above is
+	// only polled, so it cannot wake a goroutine already blocked in a
+	// reconnect wait; the context can. Created lazily because the agent is
+	// built as a struct literal in several places, including test helpers.
+	stopOnce   sync.Once
+	stopCtx    context.Context
+	stopCancel context.CancelFunc
+
 	// grpcMetaCtx caches the outgoing-metadata context (socketId <= 0), whose
 	// headers are immutable for the agent's lifetime, so per-send callers reuse
 	// it instead of rebuilding the metadata map on every request.
@@ -242,6 +250,24 @@ func (agent *agent) connectGrpcServer() {
 	go agent.sendStatsWorker()
 }
 
+// stopSignal returns a context cancelled when shutdown begins. Reconnect waits
+// derive their deadline from it, so a shutdown aborts them instead of holding
+// the agent for a whole back-off interval.
+func (agent *agent) stopSignal() context.Context {
+	agent.stopOnce.Do(func() {
+		agent.stopCtx, agent.stopCancel = context.WithCancel(context.Background())
+	})
+	return agent.stopCtx
+}
+
+// signalShutdown marks the agent as shutting down and unblocks the waits that
+// are already in progress.
+func (agent *agent) signalShutdown() {
+	agent.shutdown.Store(true)
+	agent.stopSignal() // ensure the context exists before cancelling it
+	agent.stopCancel()
+}
+
 // waitTimeout waits for wg and reports whether it completed within timeout.
 func waitTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {
 	done := make(chan struct{})
@@ -267,7 +293,7 @@ func (agent *agent) Shutdown() {
 	// the normal shutdown path pays nothing here.
 	waitTimeout(&agent.connectWg, connectGraceTimeout)
 
-	agent.shutdown.Store(true)
+	agent.signalShutdown()
 	Log("agent").Infof("shutdown pinpoint agent")
 
 	// wait for the grpc connection to be completed

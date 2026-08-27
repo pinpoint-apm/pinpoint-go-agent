@@ -1,10 +1,14 @@
 package pinpoint
 
 import (
+	"context"
+	"math"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 )
 
 func Test_agentGrpc_sendAgentInfo(t *testing.T) {
@@ -315,4 +319,68 @@ func Test_statStream_sendStatRetry(t *testing.T) {
 			assert.NoError(t, err, "sendStats")
 		})
 	}
+}
+
+func Test_backOffUntilReady_abortsOnShutdown(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	// Port 1 has no listener, so this connection never becomes ready and the
+	// back-off loop keeps waiting until it is told to stop.
+	conn, err := grpc.Dial("127.0.0.1:1", grpc.WithInsecure())
+	assert.NoError(t, err)
+	defer conn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		backOffUntilReady(agent, conn, "test")
+	}()
+
+	// Let the goroutine reach the blocking wait. The first back-off interval is
+	// at least 2.1s, so returning within 1s can only be the stop signal.
+	time.Sleep(100 * time.Millisecond)
+	agent.signalShutdown()
+
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatal("backOffUntilReady did not return within 1s of shutdown")
+	}
+}
+
+func Test_backOffSleep_rampsGentlyToCeiling(t *testing.T) {
+	// 3s x 1.2^attempt, clamped at 30s, then randomized by +/-30%.
+	wantMillis := []float64{
+		3000, 3600, 4320, 5184, 6220.8, 7464.96, 8957.952, 10749.5424,
+		12899.45088, 15479.341056, 18575.2092672, 22290.25112064,
+		26748.301344768, 30000,
+	}
+	for attempt, want := range wantMillis {
+		got := backOffSleep(attempt)
+		lo := time.Duration(want * (1 - backOffJitter) * float64(time.Millisecond))
+		hi := time.Duration(math.Ceil(want*(1+backOffJitter)) * float64(time.Millisecond))
+		assert.GreaterOrEqual(t, got, lo, "attempt %d", attempt)
+		assert.LessOrEqual(t, got, hi, "attempt %d", attempt)
+	}
+
+	// The ceiling holds once reached: 13 attempts of gentle ramp, unlike the
+	// base-2 ramp this replaced, which pinned itself in 4.
+	for attempt := len(wantMillis) - 1; attempt < 100; attempt++ {
+		got := backOffSleep(attempt)
+		assert.GreaterOrEqual(t, got, time.Duration(float64(backOffMaxInterval)*(1-backOffJitter)), "attempt %d", attempt)
+		assert.LessOrEqual(t, got, time.Duration(float64(backOffMaxInterval)*(1+backOffJitter)), "attempt %d", attempt)
+	}
+}
+
+func Test_waitUntilReady_connectsIdleChannel(t *testing.T) {
+	// NewClient, not Dial: it leaves the channel IDLE instead of connecting
+	// eagerly, which is the state this path exists for.
+	conn, err := grpc.NewClient("127.0.0.1:1", grpc.WithInsecure())
+	assert.NoError(t, err)
+	defer conn.Close()
+
+	assert.Equal(t, connectivity.Idle, conn.GetState())
+	assert.False(t, waitUntilReady(context.Background(), conn, 200*time.Millisecond, "test"))
+	// An IDLE channel used to sit there for the whole interval; it must now
+	// have been asked to connect.
+	assert.NotEqual(t, connectivity.Idle, conn.GetState())
 }
