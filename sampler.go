@@ -109,11 +109,15 @@ func newThroughputLimitTraceSampler(base sampler, newTps int, continueTps int) *
 		contLimiter *rate.Limiter
 	)
 
+	// The burst is the tps itself, not 1: the Java and C++ agents refill a
+	// fixed window with tps tokens every second, so a burst of tps requests
+	// arriving at once is sampled in full. A burst of 1 would spread the same
+	// tps into one sample per 1/tps seconds and drop most of a bursty load.
 	if newTps > 0 {
-		newLimiter = rate.NewLimiter(per(newTps, time.Second), 1)
+		newLimiter = rate.NewLimiter(per(newTps, time.Second), newTps)
 	}
 	if continueTps > 0 {
-		contLimiter = rate.NewLimiter(per(continueTps, time.Second), 1)
+		contLimiter = rate.NewLimiter(per(continueTps, time.Second), continueTps)
 	}
 	return &throughputLimitTraceSampler{
 		baseSampler:           base,
