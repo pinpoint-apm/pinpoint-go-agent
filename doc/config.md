@@ -501,6 +501,11 @@ http:
 ### Http.Server.ExcludeUrl
 Http.Server.ExcludeUrl option sets URLs to exclude from tracking.
 It supports ant style pattern. (e.g. /aa/*.html, /??/exclude.html)
+A pattern matches the whole URL path, where `?` matches exactly one character other than `/`,
+`*` matches zero or more characters within a single path segment, and `**` matches zero or more
+characters across path segments. Every other character, including regular expression
+metacharacters, is matched literally. URI template variables (e.g. `/aa/{name}.html`) are not
+supported.
 Refer https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/util/AntPathMatcher.html.
 
 * --pinpoint-http-server-excludeurl
