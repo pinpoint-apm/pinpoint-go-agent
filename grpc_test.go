@@ -195,7 +195,7 @@ func Test_agent_enqueueSpan_discardsOldestAndEnqueuesNewest(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgSpanBatchEnable, true)
 	agent := newTestAgent(cfg)
-	agent.spanChan = make(chan *spanChunk, 2)
+	agent.spanQueue = newSpanQueue(2) // single shard: FIFO is deterministic
 
 	first := newTestSpanChunk(agent)
 	second := newTestSpanChunk(agent)
@@ -205,8 +205,10 @@ func Test_agent_enqueueSpan_discardsOldestAndEnqueuesNewest(t *testing.T) {
 	assert.True(t, agent.enqueueSpan(second), "enqueue second")
 	assert.True(t, agent.enqueueSpan(third), "enqueue third")
 
-	assert.Equal(t, second, <-agent.spanChan, "oldest span should be discarded")
-	assert.Equal(t, third, <-agent.spanChan, "newest span should be enqueued")
+	got, _ := agent.spanQueue.tryDequeue()
+	assert.Equal(t, second, got, "oldest span should be discarded")
+	got, _ = agent.spanQueue.tryDequeue()
+	assert.Equal(t, third, got, "newest span should be enqueued")
 }
 
 func Test_agent_enqueueSpan_streamModeAlsoDiscardsOldest(t *testing.T) {
@@ -217,7 +219,7 @@ func Test_agent_enqueueSpan_streamModeAlsoDiscardsOldest(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgSpanBatchEnable, false)
 	agent := newTestAgent(cfg)
-	agent.spanChan = make(chan *spanChunk, 2)
+	agent.spanQueue = newSpanQueue(2) // single shard: FIFO is deterministic
 
 	first := newTestSpanChunk(agent)
 	second := newTestSpanChunk(agent)
@@ -227,33 +229,32 @@ func Test_agent_enqueueSpan_streamModeAlsoDiscardsOldest(t *testing.T) {
 	assert.True(t, agent.enqueueSpan(second), "enqueue second")
 	assert.True(t, agent.enqueueSpan(third), "newest span is enqueued after discarding the oldest")
 
-	assert.Equal(t, second, <-agent.spanChan, "oldest span should be discarded")
-	assert.Equal(t, third, <-agent.spanChan, "newest span should be enqueued")
+	got, _ := agent.spanQueue.tryDequeue()
+	assert.Equal(t, second, got, "oldest span should be discarded")
+	got, _ = agent.spanQueue.tryDequeue()
+	assert.Equal(t, third, got, "newest span should be enqueued")
 }
 
 func Test_agent_enqueueSpan_saturatedConcurrentProducers(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
-	const queueCap = 8
-	agent.spanChan = make(chan *spanChunk, queueCap)
+	const queueCap = 256 // 8 shards of 32
+	agent.spanQueue = newSpanQueue(queueCap)
 	chunk := newTestSpanChunk(agent)
 
 	const producers = 16
 	const perProducer = 500
 
 	var consumed atomic.Int64
-	stop := make(chan struct{})
 	var consumerWg sync.WaitGroup
 	consumerWg.Add(1)
 	go func() {
 		defer consumerWg.Done()
 		for {
-			select {
-			case <-agent.spanChan:
-				consumed.Add(1)
-				time.Sleep(10 * time.Microsecond) // slow consumer keeps the queue saturated
-			case <-stop:
+			if _, ok := agent.spanQueue.dequeue(); !ok {
 				return
 			}
+			consumed.Add(1)
+			time.Sleep(10 * time.Microsecond) // slow consumer keeps the queue saturated
 		}
 	}()
 
@@ -267,32 +268,50 @@ func Test_agent_enqueueSpan_saturatedConcurrentProducers(t *testing.T) {
 				if !agent.enqueueSpan(chunk) {
 					rejected.Add(1)
 				}
-				if n := len(agent.spanChan); n > queueCap {
+				if n := agent.spanQueue.length(); n > queueCap {
 					t.Errorf("queue length %d exceeds capacity %d", n, queueCap)
 				}
 			}
 		}()
 	}
 	producerWg.Wait()
-	close(stop)
+	agent.spanQueue.close() // the consumer drains the rest, then dequeue reports done
 	consumerWg.Wait()
 
-	remaining := int64(len(agent.spanChan))
-	dropped := agent.spanDropCount.Load()
+	dropped := agent.spanQueue.dropCount()
 	assert.Zero(t, rejected.Load(), "a saturated queue must never lose the new span")
 	assert.Positive(t, dropped, "test must actually saturate the queue")
-	assert.Equal(t, int64(producers*perProducer), consumed.Load()+dropped+remaining,
-		"produced == consumed + dropped + remaining")
+	assert.Zero(t, agent.spanQueue.length(), "consumer must drain the closed queue")
+	assert.Equal(t, int64(producers*perProducer), consumed.Load()+dropped,
+		"produced == consumed + dropped")
+}
+
+// Multi-producer enqueue with a draining consumer: the producer-contention
+// path a loaded service exercises on every request.
+func Benchmark_agent_enqueueSpan_parallel(b *testing.B) {
+	agent := newTestAgent(defaultConfig())
+	stop := startDrain(agent)
+	defer stop()
+	chunk := newTestSpanChunk(agent)
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			agent.enqueueSpan(chunk)
+		}
+	})
 }
 
 // Every enqueue exercises the queue-full drop-oldest path: the queue is
 // pre-filled and there is no consumer.
 func Benchmark_agent_enqueueSpan_saturated(b *testing.B) {
 	agent := newTestAgent(defaultConfig())
-	agent.spanChan = make(chan *spanChunk, cacheSize)
+	agent.spanQueue = newSpanQueue(cacheSize)
 	chunk := newTestSpanChunk(agent)
-	for i := 0; i < cacheSize; i++ {
-		agent.spanChan <- chunk
+	for i := range agent.spanQueue.shards {
+		shard := &agent.spanQueue.shards[i]
+		for shard.tryEnqueue(chunk) {
+		}
 	}
 
 	b.ResetTimer()
@@ -312,18 +331,18 @@ func Test_spanGrpc_collectSpanBatch_stopsAtBatchSize(t *testing.T) {
 	first := newTestSpanChunk(agent)
 	second := newTestSpanChunk(agent)
 	third := newTestSpanChunk(agent)
-	spanChan := make(chan *spanChunk, 2)
-	spanChan <- second
-	spanChan <- third
+	queue := newSpanQueue(2)
+	queue.enqueue(second)
+	queue.enqueue(third)
 
-	batch, closed := spanGrpc.collectSpanBatch(first, spanChan)
+	batch, closed := spanGrpc.collectSpanBatch(first, queue)
 
 	assert.False(t, closed)
 	assert.Equal(t, []*spanChunk{first, second}, batch)
-	assert.Equal(t, 1, len(spanChan), "third chunk should wait for the next batch")
+	assert.Equal(t, 1, queue.length(), "third chunk should wait for the next batch")
 }
 
-func Test_spanGrpc_collectSpanBatch_flushesClosedChannel(t *testing.T) {
+func Test_spanGrpc_collectSpanBatch_flushesClosedQueue(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	spanGrpc := newMockSpanGrpc(agent, t)
 	spanGrpc.batchSize = 50
@@ -331,11 +350,11 @@ func Test_spanGrpc_collectSpanBatch_flushesClosedChannel(t *testing.T) {
 
 	first := newTestSpanChunk(agent)
 	second := newTestSpanChunk(agent)
-	spanChan := make(chan *spanChunk, 1)
-	spanChan <- second
-	close(spanChan)
+	queue := newSpanQueue(1)
+	queue.enqueue(second)
+	queue.close()
 
-	batch, closed := spanGrpc.collectSpanBatch(first, spanChan)
+	batch, closed := spanGrpc.collectSpanBatch(first, queue)
 
 	assert.True(t, closed)
 	assert.Equal(t, []*spanChunk{first, second}, batch)
