@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -230,4 +231,62 @@ func callBoolWithTimeout(t *testing.T, name string, fn func() bool) bool {
 		t.Fatalf("%s blocked", name)
 		return false
 	}
+}
+
+func Test_waitTimeout(t *testing.T) {
+	var wg sync.WaitGroup
+	assert.True(t, waitTimeout(&wg, time.Second), "already done")
+
+	wg.Add(1)
+	start := time.Now()
+	assert.False(t, waitTimeout(&wg, 100*time.Millisecond), "timed out")
+	assert.Less(t, time.Since(start), 500*time.Millisecond, "returns at the deadline")
+
+	wg.Done()
+	assert.True(t, waitTimeout(&wg, time.Second), "done before the deadline")
+}
+
+// A worker stuck on an unreachable collector must not hold Shutdown forever.
+func Test_agent_ShutdownDeadline(t *testing.T) {
+	opts := []ConfigOption{
+		WithAppName("test"),
+		WithAgentId("testagent"),
+	}
+	c, _ := NewConfig(opts...)
+	c.offGrpc = true
+	a, _ := NewAgent(c)
+	agent := a.(*agent)
+	agent.enable.Store(true)
+
+	stuck := make(chan struct{})
+	defer close(stuck)
+	agent.workerWg.Add(1)
+	go func() {
+		defer agent.workerWg.Done()
+		<-stuck
+	}()
+
+	start := time.Now()
+	a.Shutdown()
+	elapsed := time.Since(start)
+
+	assert.GreaterOrEqual(t, elapsed, shutdownTimeout, "waits for the deadline")
+	assert.Less(t, elapsed, shutdownTimeout+2*time.Second, "gives up at the deadline")
+}
+
+// The normal path must not pay the startup grace delay.
+func Test_agent_ShutdownNoStartupDelay(t *testing.T) {
+	opts := []ConfigOption{
+		WithAppName("test"),
+		WithAgentId("testagent"),
+	}
+	c, _ := NewConfig(opts...)
+	c.offGrpc = true
+	a, _ := NewAgent(c)
+	a.(*agent).enable.Store(true)
+
+	start := time.Now()
+	a.Shutdown()
+
+	assert.Less(t, time.Since(start), connectGraceTimeout, "no unconditional sleep")
 }
