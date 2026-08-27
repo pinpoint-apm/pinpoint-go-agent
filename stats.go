@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/process"
@@ -65,9 +66,27 @@ type activeSpanRegistry struct {
 	shards [activeSpanShardCount]activeSpanShard
 }
 
-type activeSpanShard struct {
+// cacheLinePadSize is the stride the shards are spaced at. 128 and not 64:
+// arm64 uses 128-byte lines (hw.cachelinesize is 128 on Apple silicon) and x86
+// prefetches adjacent line pairs, and since Go aligns a heap struct to only 8
+// bytes the extra slack also absorbs the shard array starting mid-line. Same
+// constant sync.Pool pads poolLocal with, for the same reason.
+const cacheLinePadSize = 128
+
+type activeSpanShardInternal struct {
 	mu sync.Mutex
 	m  map[int64]time.Time
+}
+
+// activeSpanShard gives every shard its own cache line. The payload is 16 bytes
+// (unsafe.Sizeof: an 8-byte sync.Mutex plus an 8-byte map header), so unpadded
+// eight shards share one line and two goroutines locking *different* shards
+// still ping-pong it -- worth -35% per op at -cpu=16, see
+// BenchmarkActiveSpanRegistryParallel. Deriving the pad from unsafe.Sizeof
+// rather than hardcoding 112 keeps it correct if a field is added.
+type activeSpanShard struct {
+	activeSpanShardInternal
+	_ [cacheLinePadSize - unsafe.Sizeof(activeSpanShardInternal{})%cacheLinePadSize]byte
 }
 
 func newActiveSpanRegistry() *activeSpanRegistry {

@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"sync/atomic"
 	"testing"
+	"unsafe"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -59,4 +60,12 @@ func Test_collectResponseTimePreservesMax(t *testing.T) {
 
 func Test_calcResponseAvgReturnsZeroWithoutRequests(t *testing.T) {
 	assert.Equal(t, int64(0), calcResponseAvg(100, 0))
+}
+
+// Test_activeSpanShardIsCacheLinePadded guards the false-sharing fix: the shards
+// must stay a whole cache line apart, not packed several to a line.
+func Test_activeSpanShardIsCacheLinePadded(t *testing.T) {
+	if got := unsafe.Sizeof(activeSpanShard{}); got%cacheLinePadSize != 0 {
+		t.Errorf("activeSpanShard is %d bytes, not a multiple of the %d-byte shard stride: shards share a cache line", got, cacheLinePadSize)
+	}
 }
