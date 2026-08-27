@@ -3,6 +3,8 @@ package pinpoint
 import (
 	"context"
 	"math"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -227,6 +229,78 @@ func Test_agent_enqueueSpan_streamModeAlsoDiscardsOldest(t *testing.T) {
 
 	assert.Equal(t, second, <-agent.spanChan, "oldest span should be discarded")
 	assert.Equal(t, third, <-agent.spanChan, "newest span should be enqueued")
+}
+
+func Test_agent_enqueueSpan_saturatedConcurrentProducers(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	const queueCap = 8
+	agent.spanChan = make(chan *spanChunk, queueCap)
+	chunk := newTestSpanChunk(agent)
+
+	const producers = 16
+	const perProducer = 500
+
+	var consumed atomic.Int64
+	stop := make(chan struct{})
+	var consumerWg sync.WaitGroup
+	consumerWg.Add(1)
+	go func() {
+		defer consumerWg.Done()
+		for {
+			select {
+			case <-agent.spanChan:
+				consumed.Add(1)
+				time.Sleep(10 * time.Microsecond) // slow consumer keeps the queue saturated
+			case <-stop:
+				return
+			}
+		}
+	}()
+
+	var rejected atomic.Int64
+	var producerWg sync.WaitGroup
+	for i := 0; i < producers; i++ {
+		producerWg.Add(1)
+		go func() {
+			defer producerWg.Done()
+			for j := 0; j < perProducer; j++ {
+				if !agent.enqueueSpan(chunk) {
+					rejected.Add(1)
+				}
+				if n := len(agent.spanChan); n > queueCap {
+					t.Errorf("queue length %d exceeds capacity %d", n, queueCap)
+				}
+			}
+		}()
+	}
+	producerWg.Wait()
+	close(stop)
+	consumerWg.Wait()
+
+	remaining := int64(len(agent.spanChan))
+	dropped := agent.spanDropCount.Load()
+	assert.Zero(t, rejected.Load(), "a saturated queue must never lose the new span")
+	assert.Positive(t, dropped, "test must actually saturate the queue")
+	assert.Equal(t, int64(producers*perProducer), consumed.Load()+dropped+remaining,
+		"produced == consumed + dropped + remaining")
+}
+
+// Every enqueue exercises the queue-full drop-oldest path: the queue is
+// pre-filled and there is no consumer.
+func Benchmark_agent_enqueueSpan_saturated(b *testing.B) {
+	agent := newTestAgent(defaultConfig())
+	agent.spanChan = make(chan *spanChunk, cacheSize)
+	chunk := newTestSpanChunk(agent)
+	for i := 0; i < cacheSize; i++ {
+		agent.spanChan <- chunk
+	}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			agent.enqueueSpan(chunk)
+		}
+	})
 }
 
 func Test_spanGrpc_collectSpanBatch_stopsAtBatchSize(t *testing.T) {
