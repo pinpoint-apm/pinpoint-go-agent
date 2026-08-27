@@ -11,14 +11,16 @@ package pinpoint
 //	go test -run=^$ -bench=. -benchmem
 //	go test -run=^$ -bench=Parallel -benchmem -cpu=1,4,8   // scalability under contention
 //
-// The parallel variants are the important ones for shared-state contention:
-// the apiCache lru lock (cacheSpanApi) and the activeSpan sync.Map are taken on
-// every span event / span, so their cost only shows up across multiple cores.
+// The parallel variants are the important ones for shared-state contention: the
+// apiCache lru lock (cacheSpanApi) is taken on every span event and an
+// active-span registry shard lock on every span, so their cost only shows up
+// across multiple cores.
 
 import (
 	"errors"
 	"math"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -154,7 +156,9 @@ func BenchmarkSpanEventParallel(b *testing.B) {
 
 // BenchmarkSpanLifecycle measures a full transaction end to end: span creation,
 // a few span events, and EndSpan. Beyond the event path this also covers the
-// activeSpan sync.Map store/delete and the response-time atomics.
+// sharded active-span registry store/remove, the real-time active-span sync.Map
+// delete EndSpan runs whether or not a stream is active, and the response-time
+// atomics.
 func BenchmarkSpanLifecycle(b *testing.B) {
 	a := benchAgent()
 	stop := startDrain(a)
@@ -172,7 +176,8 @@ func BenchmarkSpanLifecycle(b *testing.B) {
 }
 
 // BenchmarkSpanLifecycleParallel measures the full transaction path under
-// contention: activeSpan sync.Map churn and apiCache lru lock across cores.
+// contention: active-span registry shard churn and the apiCache lru lock across
+// cores.
 func BenchmarkSpanLifecycleParallel(b *testing.B) {
 	a := benchAgent()
 	stop := startDrain(a)
@@ -191,9 +196,43 @@ func BenchmarkSpanLifecycleParallel(b *testing.B) {
 	})
 }
 
+// BenchmarkActiveSpanRegistryParallel measures the in-flight span registry the
+// way requests hit it: every goroutine registers a span and immediately
+// unregisters it, walking its own span-id range so the goroutines land on
+// different shards the way random span ids spread them in production.
+//
+// Run with -cpu=1,4,16. The -cpu=1 number is the uncontended store/delete cost;
+// what the higher counts add on top is shard contention, which is both the lock
+// itself and any cache line two shards happen to share.
+func BenchmarkActiveSpanRegistryParallel(b *testing.B) {
+	const residentPerShard = 8
+
+	r := newActiveSpanRegistry()
+	start := time.Now()
+	// Keep a working set registered so the measured store/delete hits populated
+	// map buckets instead of a degenerate empty map.
+	for i := 0; i < activeSpanShardCount*residentPerShard; i++ {
+		r.store(int64(i), start)
+	}
+
+	var idBase int64
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		// A private id range per goroutine, incremented every iteration: no two
+		// goroutines contend on the same key, and consecutive ids sweep all shards.
+		id := atomic.AddInt64(&idBase, 1<<32)
+		for pb.Next() {
+			r.store(id, start)
+			r.remove(id)
+			id++
+		}
+	})
+}
+
 // BenchmarkExtractContinue isolates distributed-tracing header parsing on the
 // continue-trace path (TraceID present): trace-id parsing + ParseInt + the
-// activeSpan sync.Map store. The span is allocated once so the measurement
+// active-span registry store. The span is allocated once so the measurement
 // reflects Extract itself, not span creation (covered by BenchmarkNewSampledSpan).
 func BenchmarkExtractContinue(b *testing.B) {
 	a := benchAgent()
