@@ -118,6 +118,13 @@ const (
 	defaultSpanBatchCollectDeadline       = 500
 	defaultSpanBatchMaxConcurrentRequests = 10
 
+	// shutdownTimeout bounds how long Shutdown waits for the worker goroutines
+	// to drain their queues before abandoning them.
+	shutdownTimeout = 3 * time.Second
+	// connectGraceTimeout bounds how long Shutdown waits for an in-progress
+	// agent registration, in case Shutdown was called too early.
+	connectGraceTimeout = 1 * time.Second
+
 	maxSqlSize = 64 * 1024
 )
 
@@ -240,6 +247,7 @@ func (agent *agent) connectGrpcServer() {
 	}
 
 	agent.enable.Store(true)
+	agent.workerWg.Add(8)
 	go agent.sendPingWorker()
 	if agent.config.Bool(CfgSpanBatchEnable) {
 		go agent.sendSpanBatchWorker()
@@ -252,12 +260,32 @@ func (agent *agent) connectGrpcServer() {
 	go agent.collectUrlStatWorker()
 	go agent.sendUrlStatWorker()
 	go agent.sendStatsWorker()
-	agent.workerWg.Add(8)
+}
+
+// waitTimeout waits for wg and reports whether it completed within timeout.
+func waitTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 func (agent *agent) Shutdown() {
-	// get delay in case shutdown was called too early
-	time.Sleep(1 * time.Second)
+	// Give an in-progress registration a moment to finish, in case shutdown was
+	// called too early. A registered agent has already released connectWg, so
+	// the normal shutdown path pays nothing here.
+	waitTimeout(&agent.connectWg, connectGraceTimeout)
 
 	agent.shutdown.Store(true)
 	Log("agent").Infof("shutdown pinpoint agent")
@@ -293,7 +321,11 @@ func (agent *agent) Shutdown() {
 		agent.urlStatTicker.Stop()
 		agent.urlStatDone <- true
 	}
-	agent.workerWg.Wait()
+	// Bound the drain: a collector outage must not keep the process alive.
+	// Abandoned workers are unblocked by the connection close below.
+	if !waitTimeout(&agent.workerWg, shutdownTimeout) {
+		Log("agent").Warnf("shutdown timeout(%v) exceeded, abandon in-flight workers", shutdownTimeout)
+	}
 
 	if agent.agentGrpc != nil {
 		agent.agentGrpc.close()
