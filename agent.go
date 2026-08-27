@@ -38,6 +38,11 @@ type agent struct {
 	statGrpc    *statGrpc
 	cmdGrpc     *cmdGrpc
 	spanChan    chan *spanChunk
+	// spanDropMu serializes the queue-full path of enqueueSpan; spanDropCount
+	// counts spans discarded there.
+	spanDropMu    sync.Mutex
+	spanDropCount atomic.Int64
+
 	metaChan    chan interface{}
 	urlStatChan chan *urlStat
 	statChan    chan *pb.PStatMessage
@@ -514,22 +519,34 @@ func (agent *agent) enqueueSpan(span *spanChunk) bool {
 		break
 	}
 
-	// When the queue is full, discard the oldest span
-	// and enqueue the newest so recent traces are favored under backpressure.
-	select {
-	case <-agent.spanChan:
-		if IsDebugLogLevelEnabled() {
-			Log("agent").Debugf("discard oldest span queue size:%d", len(agent.spanChan))
-		}
-	default:
-	}
+	// When the queue is full, discard the oldest span and enqueue the newest so
+	// recent traces are favored under backpressure. The mutex makes the
+	// drop-then-send pair atomic against other saturated producers; without it,
+	// another producer can fill the freed slot between the recv and the send,
+	// losing the new span on top of the dropped one. A fast-path send above can
+	// still take the slot, but that span was enqueued, so every drop counted
+	// below pairs with exactly one successful enqueue.
+	agent.spanDropMu.Lock()
+	defer agent.spanDropMu.Unlock()
 
-	select {
-	case agent.spanChan <- span:
-		return true
-	default:
-		return false
+	for agent.enable.Load() {
+		select {
+		case agent.spanChan <- span:
+			return true
+		default:
+		}
+
+		select {
+		case <-agent.spanChan:
+			agent.spanDropCount.Add(1)
+			if IsDebugLogLevelEnabled() {
+				Log("agent").Debugf("discard oldest span queue size:%d", len(agent.spanChan))
+			}
+		default:
+			// the consumer drained the queue between the two selects; resend
+		}
 	}
+	return false
 }
 
 func (agent *agent) sendMetaWorker() {
