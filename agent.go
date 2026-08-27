@@ -53,8 +53,8 @@ type agent struct {
 	config    *Config
 	connectWg sync.WaitGroup
 	workerWg  sync.WaitGroup
-	enable    bool
-	shutdown  bool
+	enable    atomic.Bool
+	shutdown  atomic.Bool
 
 	// grpcMetaCtx caches the outgoing-metadata context (socketId <= 0), whose
 	// headers are immutable for the agent's lifetime, so per-send callers reuse
@@ -239,7 +239,7 @@ func (agent *agent) connectGrpcServer() {
 		return
 	}
 
-	agent.enable = true
+	agent.enable.Store(true)
 	go agent.sendPingWorker()
 	if agent.config.Bool(CfgSpanBatchEnable) {
 		go agent.sendSpanBatchWorker()
@@ -259,16 +259,19 @@ func (agent *agent) Shutdown() {
 	// get delay in case shutdown was called too early
 	time.Sleep(1 * time.Second)
 
-	agent.shutdown = true
+	agent.shutdown.Store(true)
 	Log("agent").Infof("shutdown pinpoint agent")
 
 	// wait for the grpc connection to be completed
 	agent.connectWg.Wait()
-	if !agent.enable {
+	// CompareAndSwap, not Load-then-Store: two concurrent Shutdown calls could
+	// both pass a plain check and both reach the close() calls below, panicking
+	// on the second close of an already-closed channel. Only the swap winner
+	// proceeds.
+	if !agent.enable.CompareAndSwap(true, false) {
 		return
 	}
 
-	agent.enable = false
 	globalAgent = NoopAgent()
 
 	close(agent.spanChan)
@@ -306,7 +309,7 @@ func (agent *agent) Shutdown() {
 func (agent *agent) NewSpanTracer(operation string, rpcName string) Tracer {
 	var tracer Tracer
 
-	if agent.enable {
+	if agent.enable.Load() {
 		reader := &noopDistributedTracingContextReader{}
 		tracer = agent.NewSpanTracerWithReader(operation, rpcName, reader)
 	} else {
@@ -316,7 +319,7 @@ func (agent *agent) NewSpanTracer(operation string, rpcName string) Tracer {
 }
 
 func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
-	if !agent.enable || reader == nil {
+	if !agent.enable.Load() || reader == nil {
 		return NoopTracer()
 	}
 
@@ -353,7 +356,7 @@ func (agent *agent) generateTransactionId() TransactionId {
 }
 
 func (agent *agent) Enable() bool {
-	return agent.enable
+	return agent.enable.Load()
 }
 
 func (agent *agent) Config() *Config {
@@ -368,7 +371,7 @@ func (agent *agent) sendPingWorker() {
 	agent.pingDone = make(chan bool)
 	stream := agent.agentGrpc.newPingStreamWithRetry()
 
-	for agent.enable {
+	for agent.enable.Load() {
 		err := stream.sendPing()
 		if err != nil {
 			if err != io.EOF {
@@ -403,7 +406,7 @@ func (agent *agent) sendSpanWorker() {
 
 	stream := agent.spanGrpc.newSpanStreamWithRetry()
 	for chunk := range agent.spanChan {
-		if !agent.enable {
+		if !agent.enable.Load() {
 			break
 		}
 
@@ -460,7 +463,7 @@ func (agent *agent) sendSpanBatchWorker() {
 }
 
 func (agent *agent) enqueueSpan(span *spanChunk) bool {
-	if !agent.enable {
+	if !agent.enable.Load() {
 		return false
 	}
 
@@ -495,7 +498,7 @@ func (agent *agent) sendMetaWorker() {
 	defer agent.workerWg.Done()
 
 	for md := range agent.metaChan {
-		if !agent.enable {
+		if !agent.enable.Load() {
 			break
 		}
 
@@ -551,7 +554,7 @@ func (agent *agent) deleteMetaCache(md interface{}) {
 }
 
 func (agent *agent) tryEnqueueMeta(md interface{}) bool {
-	if !agent.enable {
+	if !agent.enable.Load() {
 		return false
 	}
 
@@ -570,7 +573,7 @@ func (agent *agent) tryEnqueueMeta(md interface{}) bool {
 }
 
 func (agent *agent) cacheError(errorName string) int32 {
-	if !agent.enable {
+	if !agent.enable.Load() {
 		return 0
 	}
 
@@ -601,7 +604,7 @@ func abbreviateString(str string, length int) string {
 }
 
 func (agent *agent) cacheSql(sql string) int32 {
-	if !agent.enable {
+	if !agent.enable.Load() {
 		return 0
 	}
 
@@ -626,7 +629,7 @@ func (agent *agent) cacheSql(sql string) int32 {
 }
 
 func (agent *agent) cacheSqlUid(sql string) []byte {
-	if !agent.enable {
+	if !agent.enable.Load() {
 		return nil
 	}
 
@@ -653,7 +656,7 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 }
 
 func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
-	if !agent.enable {
+	if !agent.enable.Load() {
 		return 0
 	}
 
@@ -680,7 +683,7 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 }
 
 func (agent *agent) enqueueExceptionMeta(span *span) {
-	if !agent.enable || !agent.config.errorTraceCallStack {
+	if !agent.enable.Load() || !agent.config.errorTraceCallStack {
 		return
 	}
 
@@ -702,7 +705,7 @@ func (agent *agent) enqueueExceptionMeta(span *span) {
 }
 
 func (agent *agent) enqueueUrlStat(stat *urlStat) bool {
-	if !agent.enable {
+	if !agent.enable.Load() {
 		return false
 	}
 
@@ -730,7 +733,7 @@ func (agent *agent) collectUrlStatWorker() {
 	agent.initUrlStat()
 
 	for uri := range agent.urlStatChan {
-		if !agent.enable {
+		if !agent.enable.Load() {
 			break
 		}
 		agent.addUrlStatSnapshot(uri)
@@ -746,7 +749,7 @@ func (agent *agent) sendUrlStatWorker() {
 	agent.urlStatTicker = time.NewTicker(30 * time.Second)
 	agent.urlStatDone = make(chan bool)
 
-	for agent.enable {
+	for agent.enable.Load() {
 		select {
 		case <-agent.urlStatDone:
 			Log("agent").Infof("end send uri stat goroutine")
@@ -781,7 +784,7 @@ func (agent *agent) sendStatsWorker() {
 
 	stream := agent.statGrpc.newStatStreamWithRetry()
 	for stats := range agent.statChan {
-		if !agent.enable {
+		if !agent.enable.Load() {
 			break
 		}
 
@@ -842,7 +845,7 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 	//agent.statGrpc = newMockStatGrpc(agent, t)
 
 	globalAgent = agent
-	agent.enable = true
+	agent.enable.Store(true)
 
 	return agent, nil
 }

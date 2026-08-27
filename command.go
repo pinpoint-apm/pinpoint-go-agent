@@ -25,7 +25,7 @@ func (agent *agent) runCommandService() {
 	defer agent.workerWg.Done()
 	gAtcStreamCount = 0
 
-	for agent.enable {
+	for agent.enable.Load() {
 		stream := agent.cmdGrpc.newCommandStreamWithRetry()
 		err := stream.sendCommandMessage()
 		if err != nil {
@@ -36,10 +36,10 @@ func (agent *agent) runCommandService() {
 			continue
 		}
 
-		for agent.enable {
+		for agent.enable.Load() {
 			cmdReq, err := stream.recvCommandRequest()
 			if err != nil {
-				if agent.enable && err != io.EOF {
+				if agent.enable.Load() && err != io.EOF {
 					Log("cmd").Warnf("recv command request - %v", err)
 				}
 				break
@@ -86,7 +86,7 @@ func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
 	atomic.AddInt32(&gAtcStreamCount, 1)
 	Log("cmd").Infof("active thread count stream goroutine start: %d, %d", s.reqId, gAtcStreamCount)
 
-	for agent.enable {
+	for agent.enable.Load() {
 		err := s.sendActiveThreadCount()
 		if err != nil {
 			if err != io.EOF {
