@@ -144,36 +144,56 @@ func (span *span) EndSpan() {
 }
 
 func (span *span) Inject(writer DistributedTracingContextWriter) {
-	if span.eventOverflow > 0 {
-		return
+	// The trace context is written even when the span has overflowed
+	// (spanMaxEventDepth/spanMaxEventSequence exceeded). Overflow limits
+	// profiling detail; it is not a sampling decision. Skipping the headers
+	// makes the downstream start a new trace and silently cuts the call chain.
+	//
+	// se is nil while overflowed: the overflowed event was never pushed, so
+	// there is nothing to record the link on - peek() would hand back an
+	// ancestor event that did not make this call.
+	var se *spanEvent
+	if span.eventOverflow == 0 {
+		if cur, ok := span.eventStack.peek(); ok {
+			se = cur
+		} else {
+			Log("span").Warnf("abnormal span - has no event")
+		}
 	}
-	if se, ok := span.eventStack.peek(); ok {
-		writer.Set(HeaderTraceId, span.txId.String())
 
-		nextSpanId := se.generateNextSpanId()
-		writer.Set(HeaderSpanId, strconv.FormatInt(nextSpanId, 10))
+	writer.Set(HeaderTraceId, span.txId.String())
 
-		writer.Set(HeaderParentSpanId, strconv.FormatInt(span.spanId, 10))
-		writer.Set(HeaderFlags, strconv.Itoa(span.flags))
-		writer.Set(HeaderParentApplicationName, span.agent.appName)
-		writer.Set(HeaderParentApplicationType, strconv.Itoa(int(span.agent.appType)))
-		writer.Set(HeaderParentApplicationNamespace, "")
+	// Overflowed: the next span id is generated but not recorded, so the
+	// downstream still joins this transaction under this span as its parent.
+	// Only the caller-side event->span link is lost, along with the event.
+	nextSpanId := generateSpanId()
+	if se != nil {
+		nextSpanId = se.generateNextSpanId()
+	}
+	writer.Set(HeaderSpanId, strconv.FormatInt(nextSpanId, 10))
 
-		// Propagate this agent's serviceName so downstream records it as the
-		// parent serviceName. Only set when present (v4), matching the Java
-		// agent's "serviceName != NOT_SET" guard; v1/v3 emit no such header.
-		if span.agent.serviceName != "" {
-			writer.Set(HeaderParentServiceName, span.agent.serviceName)
-		}
+	writer.Set(HeaderParentSpanId, strconv.FormatInt(span.spanId, 10))
+	writer.Set(HeaderFlags, strconv.Itoa(span.flags))
+	writer.Set(HeaderParentApplicationName, span.agent.appName)
+	writer.Set(HeaderParentApplicationType, strconv.Itoa(int(span.agent.appType)))
+	writer.Set(HeaderParentApplicationNamespace, "")
 
+	// Propagate this agent's serviceName so downstream records it as the
+	// parent serviceName. Only set when present (v4), matching the Java
+	// agent's "serviceName != NOT_SET" guard; v1/v3 emit no such header.
+	if span.agent.serviceName != "" {
+		writer.Set(HeaderParentServiceName, span.agent.serviceName)
+	}
+
+	destinationId := ""
+	if se != nil {
 		se.endPoint = se.destinationId
-		writer.Set(HeaderHost, se.destinationId)
+		destinationId = se.destinationId
+		writer.Set(HeaderHost, destinationId)
+	}
 
-		if IsTraceLogLevelEnabled() {
-			Log("span").Tracef("span inject: %v, %d, %d, %s", span.txId, nextSpanId, span.spanId, se.destinationId)
-		}
-	} else {
-		Log("span").Warnf("abnormal span - has no event")
+	if IsTraceLogLevelEnabled() {
+		Log("span").Tracef("span inject: %v, %d, %d, %s", span.txId, nextSpanId, span.spanId, destinationId)
 	}
 }
 
