@@ -628,6 +628,108 @@ func Test_sendStreamWithTimeout_unresponsiveStreamLeaksNothing(t *testing.T) {
 	assert.LessOrEqual(t, runtime.NumGoroutine(), before+2)
 }
 
+// failingMetaClient fails every metadata request with a fixed error, counting
+// the attempts.
+type failingMetaClient struct {
+	calls int32
+	err   error
+}
+
+func (c *failingMetaClient) fail() error {
+	atomic.AddInt32(&c.calls, 1)
+	return c.err
+}
+
+func (c *failingMetaClient) callCount() int32 {
+	return atomic.LoadInt32(&c.calls)
+}
+
+func (c *failingMetaClient) RequestApiMetaData(context.Context, *pb.PApiMetaData) (*pb.PResult, error) {
+	return nil, c.fail()
+}
+
+func (c *failingMetaClient) RequestSqlMetaData(context.Context, *pb.PSqlMetaData) (*pb.PResult, error) {
+	return nil, c.fail()
+}
+
+func (c *failingMetaClient) RequestSqlUidMetaData(context.Context, *pb.PSqlUidMetaData) (*pb.PResult, error) {
+	return nil, c.fail()
+}
+
+func (c *failingMetaClient) RequestStringMetaData(context.Context, *pb.PStringMetaData) (*pb.PResult, error) {
+	return nil, c.fail()
+}
+
+func (c *failingMetaClient) RequestExceptionMetaData(context.Context, *pb.PExceptionMetaData) (*pb.PResult, error) {
+	return nil, c.fail()
+}
+
+func newFailingMetaAgentGrpc(agent *agent, err error) (*agentGrpc, *failingMetaClient) {
+	failing := &failingMetaClient{err: err}
+	return &agentGrpc{metaClient: failing, agent: agent}, failing
+}
+
+func Test_retryMeta_stopsAtRetryBound(t *testing.T) {
+	cfg, _ := NewConfig(WithAppName("TestApp"))
+	agent := newTestAgent(cfg)
+	agentGrpc, failing := newFailingMetaAgentGrpc(agent, status.Errorf(codes.Unavailable, "collector down"))
+
+	ok := agentGrpc.sendApiMetadataWithRetry(1, "test.api", -1, apiTypeInvocation)
+
+	assert.False(t, ok, "retryable errors must stop at the bound")
+	assert.Equal(t, int32(metaRetryMaxAttempts), failing.callCount())
+}
+
+func Test_retryMeta_noRetryOnNonRetryableError(t *testing.T) {
+	cfg, _ := NewConfig(WithAppName("TestApp"))
+	agent := newTestAgent(cfg)
+	agentGrpc, failing := newFailingMetaAgentGrpc(agent, status.Errorf(codes.Internal, "bad request"))
+
+	ok := agentGrpc.sendStringMetadataWithRetry(1, "test.error")
+
+	assert.False(t, ok)
+	assert.Equal(t, int32(1), failing.callCount(), "non-retryable errors must not retry")
+}
+
+// A collector that keeps failing must not wedge the metadata worker: each item
+// gives up at the retry bound, the worker moves on to the next item, and the
+// failed items' cache entries are released so their next use re-registers them.
+func Test_sendMetaWorker_movesOnAndReleasesCache(t *testing.T) {
+	cfg, _ := NewConfig(WithAppName("TestApp"))
+	agent := newTestAgent(cfg)
+	agentGrpc, failing := newFailingMetaAgentGrpc(agent, status.Errorf(codes.Unavailable, "collector down"))
+	agent.agentGrpc = agentGrpc
+
+	apiKey := apiCacheKey{"test.api", apiTypeInvocation}
+	apiCached := func() bool { _, ok := agent.apiCache.peek(apiKey); return ok }
+	errCached := func() bool { _, ok := agent.errorCache.peek("test.error"); return ok }
+	assert.NotZero(t, agent.cacheSpanApi(apiKey.descriptor, apiKey.apiType))
+	assert.NotZero(t, agent.cacheError("test.error"))
+	assert.True(t, apiCached())
+	assert.True(t, errCached())
+
+	agent.workerWg.Add(1)
+	go agent.sendMetaWorker()
+
+	// both queued items exhaust their retry budget: the worker was not wedged
+	// by the first one
+	assert.Eventually(t, func() bool {
+		return failing.callCount() == int32(2*metaRetryMaxAttempts)
+	}, 5*time.Second, 5*time.Millisecond, "worker must drain both items, got %d calls", failing.callCount())
+
+	agent.signalShutdown()
+	agent.workerWg.Wait()
+
+	// the failed items released their cache entries...
+	assert.False(t, apiCached())
+	assert.False(t, errCached())
+
+	// ...so the next use re-registers and re-enqueues the metadata
+	assert.NotZero(t, agent.cacheSpanApi(apiKey.descriptor, apiKey.apiType))
+	assert.True(t, apiCached())
+	assert.Equal(t, 1, len(agent.metaChan))
+}
+
 // countingAgentClient counts RequestAgentInfo calls and fails them on demand.
 type countingAgentClient struct {
 	calls atomic.Int32
