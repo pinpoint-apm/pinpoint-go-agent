@@ -413,6 +413,33 @@ func isRetryableError(e error) bool {
 	return code == codes.Unavailable || code == codes.DeadlineExceeded
 }
 
+// metaRetryMaxAttempts bounds sends of one metadata item, matching the C++
+// agent's meta_retry_max_attempts. All metadata is sent serially from the
+// single sendMetaWorker goroutine; without a bound, one item facing a slow
+// collector occupies the worker forever while metaChan overflows and new
+// metadata is dropped.
+const metaRetryMaxAttempts = 3
+
+// retryMeta reports failure once the attempt budget is exhausted so that
+// sendMetaWorker releases the item's cache entry and the metadata is
+// re-registered on its next use.
+func (agentGrpc *agentGrpc) retryMeta(send func() error) bool {
+	for attempt := 1; agentGrpc.agent.Enable(); attempt++ {
+		err := send()
+		if err == nil {
+			return true
+		}
+		if !isRetryableError(err) || attempt >= metaRetryMaxAttempts {
+			break
+		}
+
+		if !agentGrpc.agent.config.offGrpc {
+			backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
+		}
+	}
+	return false
+}
+
 func (agentGrpc *agentGrpc) sendApiMetadata(in *pb.PApiMetaData) error {
 	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), agentGrpcTimeOut)
 	defer cancel()
@@ -436,18 +463,9 @@ func (agentGrpc *agentGrpc) sendApiMetadataWithRetry(apiId int32, api string, li
 		Log("grpc").Debugf("api metadata: %s", apiMeta.String())
 	}
 
-	for agentGrpc.agent.Enable() {
-		if err := agentGrpc.sendApiMetadata(&apiMeta); err == nil {
-			return true
-		} else if !isRetryableError(err) {
-			break
-		}
-
-		if !agentGrpc.agent.config.offGrpc {
-			backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
-		}
-	}
-	return false
+	return agentGrpc.retryMeta(func() error {
+		return agentGrpc.sendApiMetadata(&apiMeta)
+	})
 }
 
 func (agentGrpc *agentGrpc) sendStringMetadata(in *pb.PStringMetaData) error {
@@ -471,18 +489,9 @@ func (agentGrpc *agentGrpc) sendStringMetadataWithRetry(strId int32, str string)
 		Log("grpc").Debugf("string metadata: %s", strMeta.String())
 	}
 
-	for agentGrpc.agent.Enable() {
-		if err := agentGrpc.sendStringMetadata(&strMeta); err == nil {
-			return true
-		} else if !isRetryableError(err) {
-			break
-		}
-
-		if !agentGrpc.agent.config.offGrpc {
-			backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
-		}
-	}
-	return false
+	return agentGrpc.retryMeta(func() error {
+		return agentGrpc.sendStringMetadata(&strMeta)
+	})
 }
 
 func (agentGrpc *agentGrpc) sendSqlMetadata(in *pb.PSqlMetaData) error {
@@ -507,18 +516,9 @@ func (agentGrpc *agentGrpc) sendSqlMetadataWithRetry(sqlId int32, sql string) bo
 		Log("grpc").Debugf("sql metadata: %s", sqlMeta.String())
 	}
 
-	for agentGrpc.agent.Enable() {
-		if err := agentGrpc.sendSqlMetadata(&sqlMeta); err == nil {
-			return true
-		} else if !isRetryableError(err) {
-			break
-		}
-
-		if !agentGrpc.agent.config.offGrpc {
-			backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
-		}
-	}
-	return false
+	return agentGrpc.retryMeta(func() error {
+		return agentGrpc.sendSqlMetadata(&sqlMeta)
+	})
 }
 
 func (agentGrpc *agentGrpc) sendSqlUidMetadata(in *pb.PSqlUidMetaData) error {
@@ -543,18 +543,9 @@ func (agentGrpc *agentGrpc) sendSqlUidMetadataWithRetry(sqlUid []byte, sql strin
 		Log("grpc").Debugf("sql uid metadata: %s", sqlUidMeta.String())
 	}
 
-	for agentGrpc.agent.Enable() {
-		if err := agentGrpc.sendSqlUidMetadata(&sqlUidMeta); err == nil {
-			return true
-		} else if !isRetryableError(err) {
-			break
-		}
-
-		if !agentGrpc.agent.config.offGrpc {
-			backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
-		}
-	}
-	return false
+	return agentGrpc.retryMeta(func() error {
+		return agentGrpc.sendSqlUidMetadata(&sqlUidMeta)
+	})
 }
 
 func (agentGrpc *agentGrpc) sendExceptionMetadata(in *pb.PExceptionMetaData) error {
@@ -583,18 +574,9 @@ func (agentGrpc *agentGrpc) sendExceptionMetadataWithRetry(exception *exceptionM
 		Log("grpc").Debugf("exception metadata: %s", exceptMeta.String())
 	}
 
-	for agentGrpc.agent.Enable() {
-		if err := agentGrpc.sendExceptionMetadata(exceptMeta); err == nil {
-			return true
-		} else if !isRetryableError(err) {
-			break
-		}
-
-		if !agentGrpc.agent.config.offGrpc {
-			backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
-		}
-	}
-	return false
+	return agentGrpc.retryMeta(func() error {
+		return agentGrpc.sendExceptionMetadata(exceptMeta)
+	})
 }
 
 func makePExceptionMetaData(e *exceptionMeta) *pb.PExceptionMetaData {
