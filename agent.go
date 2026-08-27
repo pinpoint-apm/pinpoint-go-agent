@@ -37,12 +37,7 @@ type agent struct {
 	spanGrpc    *spanGrpc
 	statGrpc    *statGrpc
 	cmdGrpc     *cmdGrpc
-	spanChan    chan *spanChunk
-	// spanDropMu serializes the queue-full path of enqueueSpan; spanDropCount
-	// counts spans discarded there.
-	spanDropMu    sync.Mutex
-	spanDropCount atomic.Int64
-
+	spanQueue   *spanQueue
 	metaChan    chan interface{}
 	urlStatChan chan *urlStat
 	statChan    chan *pb.PStatMessage
@@ -187,7 +182,7 @@ func NewAgent(config *Config) (Agent, error) {
 		serviceName: config.objName.serviceName,
 		objName:     config.objName,
 		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
-		spanChan:    make(chan *spanChunk, config.Int(CfgSpanQueueSize)),
+		spanQueue:   newSpanQueue(config.Int(CfgSpanQueueSize)),
 		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),
 		urlStatChan: make(chan *urlStat, config.Int(CfgSpanQueueSize)),
 		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),
@@ -313,7 +308,7 @@ func (agent *agent) Shutdown() {
 
 	globalAgent = NoopAgent()
 
-	close(agent.spanChan)
+	agent.spanQueue.close()
 	close(agent.metaChan)
 	close(agent.statChan)
 	close(agent.urlStatChan)
@@ -449,8 +444,9 @@ func (agent *agent) sendSpanWorker() {
 	)
 
 	stream := agent.spanGrpc.newSpanStreamWithRetry()
-	for chunk := range agent.spanChan {
-		if !agent.enable.Load() {
+	for {
+		chunk, ok := agent.spanQueue.dequeue()
+		if !ok || !agent.enable.Load() {
 			break
 		}
 
@@ -488,19 +484,19 @@ func (agent *agent) sendSpanBatchWorker() {
 	// The first chunk starts a batch, collectSpanBatch opportunistically gathers more chunks,
 	// and sendSpanBatchAsync hands the batch to a bounded async sender.
 	for {
-		chunk, ok := <-agent.spanChan
+		chunk, ok := agent.spanQueue.dequeue()
 		if !ok {
 			break
 		}
 
-		batch, closed := agent.spanGrpc.collectSpanBatch(chunk, agent.spanChan)
+		batch, closed := agent.spanGrpc.collectSpanBatch(chunk, agent.spanQueue)
 		agent.spanGrpc.sendSpanBatchAsync(batch)
 		if closed {
 			break
 		}
 	}
 
-	// The span channel is closed during shutdown; wait for already accepted async batches
+	// The span queue is closed during shutdown; wait for already accepted async batches
 	// before the worker exits so queued spans get the same best-effort flush.
 	agent.spanGrpc.awaitInFlightSpanBatch()
 	Log("agent").Infof("end span batch goroutine")
@@ -510,43 +506,7 @@ func (agent *agent) enqueueSpan(span *spanChunk) bool {
 	if !agent.enable.Load() {
 		return false
 	}
-
-	// Fast path keeps enqueue non-blocking while the queue has capacity.
-	select {
-	case agent.spanChan <- span:
-		return true
-	default:
-		break
-	}
-
-	// When the queue is full, discard the oldest span and enqueue the newest so
-	// recent traces are favored under backpressure. The mutex makes the
-	// drop-then-send pair atomic against other saturated producers; without it,
-	// another producer can fill the freed slot between the recv and the send,
-	// losing the new span on top of the dropped one. A fast-path send above can
-	// still take the slot, but that span was enqueued, so every drop counted
-	// below pairs with exactly one successful enqueue.
-	agent.spanDropMu.Lock()
-	defer agent.spanDropMu.Unlock()
-
-	for agent.enable.Load() {
-		select {
-		case agent.spanChan <- span:
-			return true
-		default:
-		}
-
-		select {
-		case <-agent.spanChan:
-			agent.spanDropCount.Add(1)
-			if IsDebugLogLevelEnabled() {
-				Log("agent").Debugf("discard oldest span queue size:%d", len(agent.spanChan))
-			}
-		default:
-			// the consumer drained the queue between the two selects; resend
-		}
-	}
-	return false
+	return agent.spanQueue.enqueue(span)
 }
 
 func (agent *agent) sendMetaWorker() {
@@ -884,7 +844,7 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 		serviceName: config.objName.serviceName,
 		objName:     config.objName,
 		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
-		spanChan:    make(chan *spanChunk, config.Int(CfgSpanQueueSize)),
+		spanQueue:   newSpanQueue(config.Int(CfgSpanQueueSize)),
 		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),
 		urlStatChan: make(chan *urlStat, config.Int(CfgSpanQueueSize)),
 		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),

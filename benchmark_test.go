@@ -49,9 +49,9 @@ func benchSpan(a *agent) *span {
 	return defaultSpan(a)
 }
 
-// startDrain consumes spanChan/metaChan in the background so enqueue stays on
-// its non-blocking fast path, mirroring production where the sender keeps up.
-// Without this, the buffered channels fill after ~1024 chunks and the benchmark
+// startDrain consumes the span queue/metaChan in the background so enqueue
+// stays on its non-saturated path, mirroring production where the sender keeps
+// up. Without this, the buffers fill after ~1024 chunks and the benchmark
 // would instead measure the queue-full drop path.
 func startDrain(a *agent) (stop func()) {
 	done := make(chan struct{})
@@ -60,10 +60,15 @@ func startDrain(a *agent) (stop func()) {
 	go func() {
 		defer wg.Done()
 		for {
+			for {
+				if _, ok := a.spanQueue.tryDequeue(); !ok {
+					break
+				}
+			}
 			select {
 			case <-done:
 				return
-			case <-a.spanChan:
+			case <-a.spanQueue.wake:
 			}
 		}
 	}()

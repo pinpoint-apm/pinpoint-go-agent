@@ -861,7 +861,7 @@ func (s *spanStream) sendSpan(chunk *spanChunk) error {
 // collectSpanBatch gathers the first span plus queued spans until batch size or collect deadline is reached.
 // The batch worker blocks for the first item, then uses a short collection window to improve
 // batch density without delaying sparse traffic too long.
-func (spanGrpc *spanGrpc) collectSpanBatch(first *spanChunk, spanChan <-chan *spanChunk) ([]*spanChunk, bool) {
+func (spanGrpc *spanGrpc) collectSpanBatch(first *spanChunk, queue *spanQueue) ([]*spanChunk, bool) {
 	batch := make([]*spanChunk, 0, spanGrpc.batchSize)
 	batch = append(batch, first)
 
@@ -869,12 +869,23 @@ func (spanGrpc *spanGrpc) collectSpanBatch(first *spanChunk, spanChan <-chan *sp
 	defer timer.Stop()
 
 	for len(batch) < spanGrpc.batchSize {
-		select {
-		case chunk, ok := <-spanChan:
-			if !ok {
-				return batch, true
-			}
+		if chunk, ok := queue.tryDequeue(); ok {
 			batch = append(batch, chunk)
+			continue
+		}
+		select {
+		case <-queue.wake:
+		case <-queue.done:
+			// Drain what remains; report closed only once the queue is empty so
+			// the worker comes back for a leftover larger than one batch.
+			for len(batch) < spanGrpc.batchSize {
+				chunk, ok := queue.tryDequeue()
+				if !ok {
+					return batch, true
+				}
+				batch = append(batch, chunk)
+			}
+			return batch, false
 		case <-timer.C:
 			return batch, false
 		}

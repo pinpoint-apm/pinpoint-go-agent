@@ -20,7 +20,7 @@ func newTestAgent(config *Config) *agent {
 		agentID:   "testAgent",
 		appType:   ServiceTypeGoApp,
 		startTime: time.Now().UnixNano() / int64(time.Millisecond),
-		spanChan:  make(chan *spanChunk, cacheSize),
+		spanQueue: newSpanQueue(cacheSize),
 		metaChan:  make(chan interface{}, cacheSize),
 		config:    config,
 		objName: &objectName{
