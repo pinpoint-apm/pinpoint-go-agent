@@ -7,7 +7,7 @@ import (
 )
 
 func Test_defaultSpan(t *testing.T) {
-	span := defaultSpan()
+	span := defaultSpan(newTestAgent(defaultConfig()))
 
 	assert.Equal(t, span.parentSpanId, int64(-1), "parentSpanId")
 	assert.Equal(t, span.parentAppType, 1, "parentAppType")
@@ -29,9 +29,14 @@ func (r *DistributedTracingContextMap) Set(key string, val string) {
 }
 
 func defaultTestSpan() *span {
-	span := defaultSpan()
-	span.agent = newTestAgent(defaultConfig())
-	return span
+	return testSpanWithConfig(defaultConfig())
+}
+
+// testSpanWithConfig pins the span to config, so callers that need non-default
+// limits must set them before the span is created - a live span keeps the
+// snapshot it was born with.
+func testSpanWithConfig(config *Config) *span {
+	return defaultSpan(newTestAgent(config))
 }
 
 func Test_span_Extract(t *testing.T) {
@@ -131,25 +136,32 @@ func Test_span_Inject_EventOverflow(t *testing.T) {
 	// Overflow limits profiling detail; it is not a sampling decision. The
 	// trace context must still be written or the downstream starts a new
 	// trace and the call chain is cut here.
+	// The limits are the smallest publishable ones: applyDynamicConfig clamps
+	// MaxCallStackDepth to minEventDepth and MaxCallStackSequence to
+	// minEventSequence, so the event counts below are what it takes to overflow.
 	tests := []struct {
 		name     string
+		limitOpt string
+		limit    int
 		overflow func(s *span)
 	}{
-		{"depth overflow - ancestor event left on the stack", func(s *span) {
-			s.agent.config.spanMaxEventDepth = 2
+		{"depth overflow - ancestor event left on the stack", CfgSpanMaxCallStackDepth, minEventDepth, func(s *span) {
 			s.NewSpanEvent("t1")
 			s.NewSpanEvent("t2")
 		}},
-		{"sequence overflow - empty stack", func(s *span) {
-			s.agent.config.spanMaxEventSequence = 1
-			s.NewSpanEvent("t1").EndSpanEvent()
+		{"sequence overflow - empty stack", CfgSpanMaxCallStackSequence, minEventSequence, func(s *span) {
+			for i := 0; i < minEventSequence; i++ {
+				s.NewSpanEvent("t1").EndSpanEvent()
+			}
 			s.NewSpanEvent("t2")
 		}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := defaultTestSpan()
+			config := defaultConfig()
+			config.Set(tt.limitOpt, tt.limit)
+			s := testSpanWithConfig(config)
 			s.spanId = int64(12345)
 			s.txId = TransactionId{AgentId: "t123456", StartTime: int64(12345), Sequence: int64(1)}
 			tt.overflow(s)
@@ -211,9 +223,9 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 	for _, tt := range tests {
 
 		t.Run(tt.name, func(t *testing.T) {
-			s := defaultTestSpan()
-			save := s.agent.config.spanMaxEventDepth
-			s.agent.config.spanMaxEventDepth = 3
+			config := defaultConfig()
+			config.Set(CfgSpanMaxCallStackDepth, 3)
+			s := testSpanWithConfig(config)
 
 			s.NewSpanEvent(tt.args.operationName)
 			s.NewSpanEvent(tt.args.operationName)
@@ -285,8 +297,6 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 			assert.Equal(t, s.eventStack.len(), 1, "stack.len()")
 			s.EndSpanEvent()
 			assert.Equal(t, s.eventStack.len(), 0, "stack.len()")
-
-			s.agent.config.spanMaxEventDepth = save
 		})
 	}
 }
@@ -305,9 +315,9 @@ func Test_span_NewSpanEventSequenceOverflow(t *testing.T) {
 	for _, tt := range tests {
 
 		t.Run(tt.name, func(t *testing.T) {
-			span := defaultTestSpan()
-			save := span.agent.config.spanMaxEventSequence
-			span.agent.config.spanMaxEventSequence = 5
+			config := defaultConfig()
+			config.Set(CfgSpanMaxCallStackSequence, 5)
+			span := testSpanWithConfig(config)
 
 			span.NewSpanEvent(tt.args.operationName).EndSpanEvent()
 			span.NewSpanEvent(tt.args.operationName).EndSpanEvent()
@@ -351,8 +361,6 @@ func Test_span_NewSpanEventSequenceOverflow(t *testing.T) {
 			assert.Equal(t, span.eventOverflow, 0, "eventOverflow")
 			assert.Equal(t, span.eventDepth, int32(1), "eventDepth")
 			assert.Equal(t, span.eventStack.len(), 0, "stack.len()")
-
-			span.agent.config.spanMaxEventSequence = save
 		})
 	}
 }

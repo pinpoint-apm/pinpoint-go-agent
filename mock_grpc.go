@@ -22,7 +22,6 @@ func newTestAgent(config *Config) *agent {
 		startTime: time.Now().UnixNano() / int64(time.Millisecond),
 		spanChan:  make(chan *spanChunk, cacheSize),
 		metaChan:  make(chan interface{}, cacheSize),
-		sampler:   newBasicTraceSampler(newRateSampler(1)),
 		config:    config,
 		objName: &objectName{
 			version:         nameV3,

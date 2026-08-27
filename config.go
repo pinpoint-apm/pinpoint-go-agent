@@ -3,8 +3,11 @@ package pinpoint
 import (
 	"math"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cast"
@@ -83,7 +86,6 @@ type cfgMapItem struct {
 	cmdKey       string
 	envKey       string
 	dynamic      bool
-	oldValue     interface{}
 }
 
 var (
@@ -160,15 +162,34 @@ func envName(cfgName string) string {
 }
 
 // Config holds agent configuration, for passing to NewAgent.
+//
+// Everything a config file reload can change lives in an immutable
+// configSnapshot behind an atomic pointer. The Config value itself is handed
+// out by GetConfig and held for the process lifetime, so its identity is
+// stable; only the snapshot it points at is replaced.
 type Config struct {
-	cfgMap         map[string]*cfgMapItem
+	// mu guards the cfgMap staging area and the reload callback list. Readers
+	// never take it - they load the published snapshot instead - so it is only
+	// ever contended between startup and the config watcher goroutine.
+	mu       sync.Mutex
+	cfgMap   map[string]*cfgMapItem
+	callback []reloadCallback
+	snapshot atomic.Pointer[configSnapshot]
+
 	containerCheck bool
 	useNewLogOpt   bool
 	offGrpc        bool //for test
 	objName        *objectName
+}
 
-	//dynamic config
-	callback             []reloadCallback
+// configSnapshot is the immutable view of the config that request goroutines
+// read: the option values plus every component derived from them. A reload
+// builds a whole new snapshot and publishes it with a single atomic store, so
+// an in-flight request can never observe a half-applied reload.
+type configSnapshot struct {
+	values  map[string]interface{}
+	sampler traceSampler
+
 	collectUrlStat       bool  // CfgHttpUrlStatEnable
 	urlStatLimitSize     int   // CfgHttpUrlStatLimitSize
 	urlStatWithMethod    bool  // CfgHttpUrlStatWithMethod
@@ -184,6 +205,20 @@ type Config struct {
 	errorCallStackDepth  int   // CfgErrorCallStackDepth
 }
 
+// emptyConfigSnapshot stands in for a Config that was built by hand instead of
+// by NewConfig, so its accessors keep returning zero values rather than panic.
+var emptyConfigSnapshot = &configSnapshot{}
+
+// load returns the currently published snapshot. Callers that must see a
+// consistent set of options - a span, a single request - load it once and keep
+// the returned pointer instead of calling load per field.
+func (config *Config) load() *configSnapshot {
+	if snapshot := config.snapshot.Load(); snapshot != nil {
+		return snapshot
+	}
+	return emptyConfigSnapshot
+}
+
 // ConfigOption represents an option that can be passed to NewConfig.
 type ConfigOption func(*Config)
 
@@ -194,49 +229,57 @@ func GetConfig() *Config {
 
 // Set stores the specified configuration item value.
 func (config *Config) Set(cfgName string, value interface{}) {
+	config.mu.Lock()
+	defer config.mu.Unlock()
+
 	if v, ok := config.cfgMap[cfgName]; ok {
 		v.value = value
+		config.publish()
 	}
 }
 
 // Int returns an integer value for the specified configuration item.
 func (config *Config) Int(cfgName string) int {
-	if v, ok := config.cfgMap[cfgName]; ok {
-		return cast.ToInt(v.value)
-	}
-	return 0
+	return cast.ToInt(config.load().values[cfgName])
 }
 
 // Float returns a float value for the specified configuration item.
 func (config *Config) Float(cfgName string) float64 {
-	if v, ok := config.cfgMap[cfgName]; ok {
-		return cast.ToFloat64(v.value)
-	}
-	return 0
+	return cast.ToFloat64(config.load().values[cfgName])
 }
 
 // String returns a string value for the specified configuration item.
 func (config *Config) String(cfgName string) string {
-	if v, ok := config.cfgMap[cfgName]; ok {
-		return cast.ToString(v.value)
-	}
-	return ""
+	return cast.ToString(config.load().values[cfgName])
 }
 
 // StringSlice returns a string slice value for the specified configuration item.
+// The returned slice belongs to the published snapshot - copy it before writing.
 func (config *Config) StringSlice(cfgName string) []string {
-	if v, ok := config.cfgMap[cfgName]; ok {
-		return cast.ToStringSlice(v.value)
-	}
-	return []string{}
+	return cast.ToStringSlice(config.load().values[cfgName])
 }
 
 // Bool returns a boolean value for the specified configuration item.
 func (config *Config) Bool(cfgName string) bool {
+	return cast.ToBool(config.load().values[cfgName])
+}
+
+// staged reads a value straight out of the cfgMap staging area. Only the
+// snapshot build path may use it: it bypasses the published snapshot, and the
+// caller must hold config.mu.
+func (config *Config) staged(cfgName string) interface{} {
 	if v, ok := config.cfgMap[cfgName]; ok {
-		return cast.ToBool(v.value)
+		return v.value
 	}
-	return false
+	return nil
+}
+
+func (config *Config) stagedInt(cfgName string) int {
+	return cast.ToInt(config.staged(cfgName))
+}
+
+func (config *Config) stagedString(cfgName string) string {
+	return cast.ToString(config.staged(cfgName))
 }
 
 // NewConfig creates a Config populated with default settings, command line arguments,
@@ -275,31 +318,35 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	cmdEnvViper.SetEnvPrefix("pinpoint_go")
 	cmdEnvViper.AutomaticEnv()
 
+	// loadConfigFile starts the file watcher, so everything past this point can
+	// run concurrently with a reload and has to hold the lock.
 	cfgFileViper := config.loadConfigFile(cmdEnvViper)
+
+	config.mu.Lock()
+	defer config.mu.Unlock()
+
 	profileViper := config.loadProfile(cmdEnvViper, cfgFileViper)
 	config.loadConfig(cmdEnvViper, cfgFileViper, profileViper)
-
-	config.callback = make([]reloadCallback, 0)
-	config.applyDynamicConfig()
 
 	if config.containerCheck {
 		config.cfgMap[CfgIsContainerEnv].value = isContainerEnv()
 	}
-	if config.Int(CfgSpanQueueSize) < 1 {
+	if config.stagedInt(CfgSpanQueueSize) < 1 {
 		config.cfgMap[CfgSpanQueueSize].value = defaultQueueSize
 	}
-	if config.Int(CfgSpanBatchSize) < 1 {
+	if config.stagedInt(CfgSpanBatchSize) < 1 {
 		config.cfgMap[CfgSpanBatchSize].value = defaultSpanBatchSize
 	}
-	if config.Int(CfgSpanBatchFlushInterval) < 1 {
+	if config.stagedInt(CfgSpanBatchFlushInterval) < 1 {
 		config.cfgMap[CfgSpanBatchFlushInterval].value = defaultSpanBatchFlushInterval
 	}
-	if config.Int(CfgSpanBatchCollectDeadline) < 1 {
+	if config.stagedInt(CfgSpanBatchCollectDeadline) < 1 {
 		config.cfgMap[CfgSpanBatchCollectDeadline].value = defaultSpanBatchCollectDeadline
 	}
-	if config.Int(CfgSpanBatchMaxConcurrentRequests) < 1 {
+	if config.stagedInt(CfgSpanBatchMaxConcurrentRequests) < 1 {
 		config.cfgMap[CfgSpanBatchMaxConcurrentRequests].value = defaultSpanBatchMaxConcurrentRequests
 	}
+	config.publish()
 
 	return config, nil
 }
@@ -321,19 +368,11 @@ func defaultConfig() *Config {
 	}
 
 	config.containerCheck = true
-	config.collectUrlStat = false
-	config.urlStatLimitSize = 1024
-	config.urlStatWithMethod = false
-	config.sqlTraceBindValue = true
-	config.sqlMaxBindValueSize = 1024
-	config.sqlTraceCommit = true
-	config.sqlTraceRollback = true
-	config.sqlTraceQueryStat = false
-	config.spanEventChunkSize = defaultEventChunkSize
-	config.spanMaxEventDepth = defaultEventDepth
-	config.spanMaxEventSequence = defaultEventSequence
-	config.errorTraceCallStack = false
-	config.errorCallStackDepth = 32
+	config.callback = make([]reloadCallback, 0)
+
+	config.mu.Lock()
+	defer config.mu.Unlock()
+	config.publish()
 
 	return config
 }
@@ -471,66 +510,123 @@ func (config *Config) checkNameAndID() error {
 	if err != nil {
 		return err
 	}
+	config.mu.Lock()
+	defer config.mu.Unlock()
+
 	config.objName = objName
 	config.cfgMap[CfgAgentID].value = objName.agentID
 	config.cfgMap[CfgAgentName].value = objName.agentName
 	config.cfgMap[CfgServiceName].value = objName.serviceName
+	config.publish()
 	return nil
 }
 
-func (config *Config) applyDynamicConfig() {
-	sampleType := strings.ToUpper(strings.TrimSpace(config.String(CfgSamplingType)))
+var samplingOpts = []string{
+	CfgSamplingType, CfgSamplingCounterRate, CfgSamplingPercentRate,
+	CfgSamplingNewThroughput, CfgSamplingContinueThroughput,
+}
+
+// publish normalizes the staged cfgMap values and installs the result as a new
+// snapshot with a single atomic store. Everything derived from the config is
+// built here so that one store makes the whole generation visible at once.
+// The caller must hold config.mu.
+func (config *Config) publish() {
+	sampleType := strings.ToUpper(strings.TrimSpace(config.stagedString(CfgSamplingType)))
 	if sampleType != samplingTypeCounter && sampleType != samplingTypePercent {
 		config.cfgMap[CfgSamplingType].value = samplingTypeCounter
 		config.cfgMap[CfgSamplingCounterRate].value = 0
 	}
 
-	maxBind := config.Int(CfgSQLMaxBindValueSize)
+	maxBind := config.stagedInt(CfgSQLMaxBindValueSize)
 	if maxBind > 1024 {
 		config.cfgMap[CfgSQLMaxBindValueSize].value = 1024
 	} else if maxBind < 0 {
 		config.cfgMap[CfgSQLTraceBindValue].value = false
 		config.cfgMap[CfgSQLMaxBindValueSize].value = 0
 	}
-	config.sqlTraceBindValue = config.Bool(CfgSQLTraceBindValue)
-	config.sqlMaxBindValueSize = config.Int(CfgSQLMaxBindValueSize)
-	config.sqlTraceCommit = config.Bool(CfgSQLTraceCommit)
-	config.sqlTraceRollback = config.Bool(CfgSQLTraceRollback)
-	config.sqlTraceQueryStat = config.Bool(CfgSQLTraceQueryStat)
 
-	eventChunkSize := config.Int(CfgSpanEventChunkSize)
-	if eventChunkSize < 1 {
-		eventChunkSize = defaultEventChunkSize
+	if config.stagedInt(CfgSpanEventChunkSize) < 1 {
+		config.cfgMap[CfgSpanEventChunkSize].value = defaultEventChunkSize
 	}
-	config.cfgMap[CfgSpanEventChunkSize].value = eventChunkSize
-	config.spanEventChunkSize = config.Int(CfgSpanEventChunkSize)
 
-	maxDepth := config.Int(CfgSpanMaxCallStackDepth)
+	maxDepth := config.stagedInt(CfgSpanMaxCallStackDepth)
 	if maxDepth == -1 {
 		maxDepth = math.MaxInt32
 	} else if maxDepth < minEventDepth {
 		maxDepth = minEventDepth
 	}
 	config.cfgMap[CfgSpanMaxCallStackDepth].value = maxDepth
-	config.spanMaxEventDepth = int32(config.Int(CfgSpanMaxCallStackDepth))
 
-	maxSeq := config.Int(CfgSpanMaxCallStackSequence)
+	maxSeq := config.stagedInt(CfgSpanMaxCallStackSequence)
 	if maxSeq == -1 {
 		maxSeq = math.MaxInt32
 	} else if maxSeq < minEventSequence {
 		maxSeq = minEventSequence
 	}
 	config.cfgMap[CfgSpanMaxCallStackSequence].value = maxSeq
-	config.spanMaxEventSequence = int32(config.Int(CfgSpanMaxCallStackSequence))
 
-	if config.Int(CfgLogMaxSize) < 1 {
+	if config.stagedInt(CfgLogMaxSize) < 1 {
 		config.cfgMap[CfgLogMaxSize].value = 10
 	}
-	config.collectUrlStat = config.Bool(CfgHttpUrlStatEnable)
-	config.urlStatLimitSize = config.Int(CfgHttpUrlStatLimitSize)
-	config.urlStatWithMethod = config.Bool(CfgHttpUrlStatWithMethod)
-	config.errorTraceCallStack = config.Bool(CfgErrorTraceCallStack)
-	config.errorCallStackDepth = config.Int(CfgErrorCallStackDepth)
+
+	values := make(map[string]interface{}, len(config.cfgMap))
+	for k, v := range config.cfgMap {
+		values[k] = v.value
+	}
+
+	snapshot := &configSnapshot{
+		values:               values,
+		collectUrlStat:       cast.ToBool(values[CfgHttpUrlStatEnable]),
+		urlStatLimitSize:     cast.ToInt(values[CfgHttpUrlStatLimitSize]),
+		urlStatWithMethod:    cast.ToBool(values[CfgHttpUrlStatWithMethod]),
+		sqlTraceBindValue:    cast.ToBool(values[CfgSQLTraceBindValue]),
+		sqlMaxBindValueSize:  cast.ToInt(values[CfgSQLMaxBindValueSize]),
+		sqlTraceCommit:       cast.ToBool(values[CfgSQLTraceCommit]),
+		sqlTraceRollback:     cast.ToBool(values[CfgSQLTraceRollback]),
+		sqlTraceQueryStat:    cast.ToBool(values[CfgSQLTraceQueryStat]),
+		spanEventChunkSize:   cast.ToInt(values[CfgSpanEventChunkSize]),
+		spanMaxEventDepth:    cast.ToInt32(values[CfgSpanMaxCallStackDepth]),
+		spanMaxEventSequence: cast.ToInt32(values[CfgSpanMaxCallStackSequence]),
+		errorTraceCallStack:  cast.ToBool(values[CfgErrorTraceCallStack]),
+		errorCallStackDepth:  cast.ToInt(values[CfgErrorCallStackDepth]),
+	}
+	snapshot.sampler = newTraceSampler(config.load(), values)
+
+	config.snapshot.Store(snapshot)
+}
+
+// newTraceSampler carries the previous sampler over when no sampling option
+// changed, so an unrelated reload does not reset the throughput limiter's
+// counters.
+func newTraceSampler(prev *configSnapshot, values map[string]interface{}) traceSampler {
+	if prev != nil && prev.sampler != nil && sameValues(prev.values, values, samplingOpts) {
+		return prev.sampler
+	}
+
+	var baseSampler sampler
+	if cast.ToString(values[CfgSamplingType]) == samplingTypeCounter {
+		baseSampler = newRateSampler(cast.ToInt(values[CfgSamplingCounterRate]))
+	} else {
+		baseSampler = newPercentSampler(cast.ToFloat64(values[CfgSamplingPercentRate]))
+	}
+
+	newTps := cast.ToInt(values[CfgSamplingNewThroughput])
+	continueTps := cast.ToInt(values[CfgSamplingContinueThroughput])
+	if newTps > 0 || continueTps > 0 {
+		return newThroughputLimitTraceSampler(baseSampler, newTps, continueTps)
+	}
+	return newBasicTraceSampler(baseSampler)
+}
+
+// sameValues compares config values with DeepEqual: a value can be a slice
+// (CfgStringSlice options), and == panics on those.
+func sameValues(a, b map[string]interface{}, keys []string) bool {
+	for _, k := range keys {
+		if !reflect.DeepEqual(a[k], b[k]) {
+			return false
+		}
+	}
+	return true
 }
 
 type reloadCallback struct {
@@ -540,6 +636,9 @@ type reloadCallback struct {
 
 // AddReloadCallback adds a callback function will be called after reloading config file.
 func (config *Config) AddReloadCallback(optNames []string, callback func()) {
+	config.mu.Lock()
+	defer config.mu.Unlock()
+
 	config.callback = append(config.callback, reloadCallback{optNames, callback})
 }
 
@@ -549,48 +648,56 @@ func (config *Config) reloadConfig(cfgFileViper *viper.Viper) {
 		return
 	}
 
+	config.mu.Lock()
 	profileViper := config.loadProfile(viper.New(), cfgFileViper)
-	config.loadDynamicConfig(cfgFileViper, profileViper)
-	config.applyDynamicConfig()
+	changed := config.loadDynamicConfig(cfgFileViper, profileViper)
+	config.publish()
+	// Callbacks read the config they were just given a new generation of, and
+	// may register further callbacks, so run them off a copy with the lock
+	// released.
+	callback := make([]reloadCallback, len(config.callback))
+	copy(callback, config.callback)
+	config.mu.Unlock()
 
-	for _, cb := range config.callback {
-		cb.do(config)
+	for _, cb := range callback {
+		cb.do(changed)
 	}
 }
 
-func (config *Config) loadDynamicConfig(cfgFileViper *viper.Viper, profileViper *viper.Viper) {
+// loadDynamicConfig restages the dynamic options from the config file and
+// returns the set of option names whose value actually changed.
+func (config *Config) loadDynamicConfig(cfgFileViper *viper.Viper, profileViper *viper.Viper) map[string]bool {
+	changed := make(map[string]bool)
+
 	sortKeys := make([]string, 0)
 	for k := range config.cfgMap {
 		sortKeys = append(sortKeys, k)
 	}
 	sort.Strings(sortKeys)
 	for _, k := range sortKeys {
-		if v := config.cfgMap[k]; v.dynamic {
-			v.oldValue = nil
-			if profileViper.IsSet(k) {
-				config.reloadFinalValue(k, v, profileViper)
-			} else if cfgFileViper.IsSet(k) {
-				config.reloadFinalValue(k, v, cfgFileViper)
-			}
+		v := config.cfgMap[k]
+		if !v.dynamic {
+			continue
+		}
+
+		oldValue := v.value
+		if profileViper.IsSet(k) {
+			config.setFinalValue(k, v, profileViper.Get(k))
+		} else if cfgFileViper.IsSet(k) {
+			config.setFinalValue(k, v, cfgFileViper.Get(k))
+		} else {
+			continue
+		}
+		if !reflect.DeepEqual(oldValue, v.value) {
+			changed[k] = true
 		}
 	}
+	return changed
 }
 
-func (config *Config) reloadFinalValue(cfgName string, item *cfgMapItem, viper *viper.Viper) {
-	item.oldValue = item.value
-	config.setFinalValue(cfgName, item, viper.Get(cfgName))
-}
-
-func (config *Config) isReloaded(cfgName string) bool {
-	if item, ok := config.cfgMap[cfgName]; ok {
-		return item.oldValue != nil && item.oldValue != item.value
-	}
-	return false
-}
-
-func (cb reloadCallback) do(config *Config) {
+func (cb reloadCallback) do(changed map[string]bool) {
 	for _, k := range cb.cfgNames {
-		if config.isReloaded(k) {
+		if changed[k] {
 			cb.callback()
 			break
 		}
@@ -930,21 +1037,23 @@ func WithErrorCallStackDepth(depth int) ConfigOption {
 }
 
 func (config *Config) printConfigString() {
+	values := config.load().values
+
 	sortKeys := make([]string, 0)
-	for k := range config.cfgMap {
+	for k := range values {
 		sortKeys = append(sortKeys, k)
 	}
 	sort.Strings(sortKeys)
 
 	for _, k := range sortKeys {
 		if k == CfgApiKey {
-			if config.cfgMap[k].value == "" {
+			if values[k] == "" {
 				Log("config").Infof("%s = ", k)
 			} else {
 				Log("config").Infof("%s = ****", k)
 			}
 			continue
 		}
-		Log("config").Infof("%s = %v", k, config.cfgMap[k].value)
+		Log("config").Infof("%s = %v", k, values[k])
 	}
 }

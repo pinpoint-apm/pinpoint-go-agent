@@ -33,7 +33,10 @@ var (
 )
 
 type span struct {
-	agent              *agent
+	agent *agent
+	// cfg is pinned when the span is created and kept for its whole life, so a
+	// reload can never move this span's event limits mid-trace.
+	cfg                *configSnapshot
 	txId               TransactionId
 	spanId             int64
 	parentSpanId       int64
@@ -79,9 +82,14 @@ func generateSpanId() int64 {
 	return rand.Int63()
 }
 
-func defaultSpan() *span {
+// defaultSpan pins the agent's current config snapshot along with the agent
+// itself: the two always travel together, and the span keeps that snapshot for
+// its whole life.
+func defaultSpan(agent *agent) *span {
 	span := span{}
 
+	span.agent = agent
+	span.cfg = agent.config.load()
 	span.parentSpanId = -1
 	span.parentAppName = ""
 	span.parentAppType = 1 //UNKNOWN
@@ -99,9 +107,8 @@ func defaultSpan() *span {
 }
 
 func newSampledSpan(agent *agent, operation string, rpcName string) *span {
-	span := defaultSpan()
+	span := defaultSpan(agent)
 
-	span.agent = agent
 	span.operationName = operation
 	span.rpcName = rpcName
 	span.apiId = agent.cacheSpanApi(operation, apiTypeWebRequest)
@@ -354,9 +361,9 @@ func (span *span) newAsyncSpan() Tracer {
 		return NoopTracer()
 	}
 	if se, ok := span.eventStack.peek(); ok {
-		asyncSpan := defaultSpan()
+		asyncSpan := defaultSpan(span.agent)
 
-		asyncSpan.agent = span.agent
+		asyncSpan.cfg = span.cfg // an async span continues under its parent's snapshot
 		asyncSpan.txId = span.txId
 		asyncSpan.spanId = span.spanId
 
@@ -507,8 +514,8 @@ func (span *span) JsonString() []byte {
 	return b
 }
 
-func (span *span) config() *Config {
-	return span.agent.config
+func (span *span) config() *configSnapshot {
+	return span.cfg
 }
 
 func (span *span) canAddErrorChain() bool {

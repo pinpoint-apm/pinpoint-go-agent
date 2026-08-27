@@ -3,8 +3,10 @@ package pinpoint
 import (
 	"math"
 	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -643,4 +645,70 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 			assert.Equal(t, 100, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 		})
 	}
+}
+
+func Test_reloadConfig(t *testing.T) {
+	const sliceOpt = "Test.StringSlice"
+
+	config, err := NewConfig(WithAppName("reloadApp"))
+	assert.NoError(t, err)
+
+	// The core registers no dynamic string slice option, but the http plugin
+	// does; inject one so the reload path is exercised with a slice value.
+	config.cfgMap[sliceOpt] = &cfgMapItem{
+		value:        []string{"before"},
+		defaultValue: []string{},
+		valueType:    CfgStringSlice,
+		dynamic:      true,
+	}
+
+	var reloadedSlice, reloadedDepth, reloadedUntouched int
+	config.AddReloadCallback([]string{sliceOpt}, func() { reloadedSlice++ })
+	config.AddReloadCallback([]string{CfgSpanMaxCallStackDepth}, func() { reloadedDepth++ })
+	config.AddReloadCallback([]string{CfgSQLTraceCommit}, func() { reloadedUntouched++ })
+
+	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	body := `
+Test:
+  StringSlice:
+    - after
+    - /**/*.do
+Span:
+  MaxCallStackDepth: 12
+`
+	assert.NoError(t, os.WriteFile(cfgFile, []byte(body), 0o600))
+
+	cfgFileViper := viper.New()
+	cfgFileViper.SetConfigFile(cfgFile)
+	config.reloadConfig(cfgFileViper)
+
+	assert.Equal(t, []string{"after", "/**/*.do"}, config.StringSlice(sliceOpt))
+	assert.Equal(t, 12, config.Int(CfgSpanMaxCallStackDepth))
+	assert.Equal(t, int32(12), config.load().spanMaxEventDepth)
+	assert.Equal(t, 1, reloadedSlice)
+	assert.Equal(t, 1, reloadedDepth)
+	assert.Equal(t, 0, reloadedUntouched, "callback fired for an option the file did not change")
+
+	// Reloading the same file again changes nothing, so no callback fires.
+	config.reloadConfig(cfgFileViper)
+	assert.Equal(t, 1, reloadedSlice)
+	assert.Equal(t, 1, reloadedDepth)
+}
+
+func Test_reloadConfig_keepsSamplerWhenSamplingUnchanged(t *testing.T) {
+	config, err := NewConfig(WithAppName("reloadApp"), WithSamplingNewThroughput(10))
+	assert.NoError(t, err)
+
+	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	assert.NoError(t, os.WriteFile(cfgFile, []byte("Span:\n  MaxCallStackDepth: 12\n"), 0o600))
+	cfgFileViper := viper.New()
+	cfgFileViper.SetConfigFile(cfgFile)
+
+	sampler := config.load().sampler
+	config.reloadConfig(cfgFileViper)
+	assert.Same(t, sampler, config.load().sampler, "unrelated reload rebuilt the sampler")
+
+	assert.NoError(t, os.WriteFile(cfgFile, []byte("Sampling:\n  NewThroughput: 20\n"), 0o600))
+	config.reloadConfig(cfgFileViper)
+	assert.NotSame(t, sampler, config.load().sampler, "sampling change did not rebuild the sampler")
 }

@@ -11,8 +11,12 @@ type noopAgent struct {
 	config *Config
 }
 
-var defaultNoopAgent = &noopAgent{
-	config: defaultConfig(),
+var defaultNoopAgent = &noopAgent{}
+
+// initNoopAgent must run after initConfig: defaultConfig reads cfgBaseMap, and
+// package variable initialization happens before any init function.
+func initNoopAgent() {
+	defaultNoopAgent.config = defaultConfig()
 }
 
 // NoopAgent returns a Agent that doesn't collect tracing data.
@@ -41,6 +45,7 @@ func (agent *noopAgent) Shutdown() {
 
 type noopSpan struct {
 	agent       *agent
+	cfg         *configSnapshot
 	spanId      int64
 	startTime   time.Time
 	rpcName     string
@@ -63,6 +68,7 @@ func NoopTracer() Tracer {
 func newUnSampledSpan(agent *agent, rpcName string) *noopSpan {
 	span := noopSpan{}
 	span.agent = agent
+	span.cfg = agent.config.load()
 	span.spanId = generateSpanId()
 	span.startTime = time.Now()
 	span.rpcName = rpcName
@@ -169,7 +175,7 @@ func (span *noopSpan) IsSampled() bool {
 }
 
 func (span *noopSpan) collectUrlStat(stat *UrlStatEntry) {
-	if span.withStats && span.agent.config.collectUrlStat {
+	if span.withStats && span.cfg.collectUrlStat {
 		if stat.Url == "" {
 			stat.Url = "UNKNOWN_URL"
 		}

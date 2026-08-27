@@ -30,8 +30,8 @@ import (
 // long-lived span never trips the overflow path mid-benchmark.
 func benchAgent() *agent {
 	cfg := defaultConfig()
-	cfg.spanMaxEventSequence = math.MaxInt32
-	cfg.spanMaxEventDepth = math.MaxInt32
+	cfg.Set(CfgSpanMaxCallStackSequence, math.MaxInt32)
+	cfg.Set(CfgSpanMaxCallStackDepth, math.MaxInt32)
 
 	// Keep trace/debug guards short-circuited (the production-relevant condition
 	// for the hot path) regardless of any level a previously run unit test left
@@ -44,9 +44,7 @@ func benchAgent() *agent {
 }
 
 func benchSpan(a *agent) *span {
-	s := defaultSpan()
-	s.agent = a
-	return s
+	return defaultSpan(a)
 }
 
 // startDrain consumes spanChan/metaChan in the background so enqueue stays on

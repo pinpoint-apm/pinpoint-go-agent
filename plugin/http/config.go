@@ -3,6 +3,7 @@ package pphttp
 import (
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
@@ -154,143 +155,123 @@ func WithHttpClientRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
 	}
 }
 
+// httpConfig bundles every component derived from this plugin's options. A
+// reload rebuilds it whole and publishes it with a single atomic store, so a
+// request never sees a partially initialized filter or recorder.
+type httpConfig struct {
+	srvUrl             *httpUrlFilter
+	srvMethod          *httpMethodFilter
+	srvStatus          *httpStatusError
+	srvReqHeader       httpHeaderRecorder
+	srvResHeader       httpHeaderRecorder
+	srvCookie          httpHeaderRecorder
+	cltReqHeader       httpHeaderRecorder
+	cltResHeader       httpHeaderRecorder
+	cltCookie          httpHeaderRecorder
+	recordHandlerError bool
+}
+
+var httpConfigOpts = []string{
+	CfgHttpServerStatusCodeErrors,
+	CfgHttpServerExcludeUrl,
+	CfgHttpServerExcludeMethod,
+	CfgHttpServerRecordRequestHeader,
+	CfgHttpServerRecordResponseHeader,
+	CfgHttpServerRecordRequestCookie,
+	CfgHttpServerRecordHandlerError,
+	CfgHttpClientRecordRequestHeader,
+	CfgHttpClientRecordResponseHeader,
+	CfgHttpClientRecordRequestCookie,
+}
+
 var (
-	onceUrl sync.Once
-	srvUrl  *httpUrlFilter
+	onceHttpConfig sync.Once
+	curHttpConfig  atomic.Pointer[httpConfig]
 )
+
+// httpCfg returns the published config. The first call builds it - the agent
+// config does not exist yet at package init time - and registers the reload
+// callback that republishes it.
+//
+// ponytail: this store and the agent's config snapshot are two separate
+// publications, so a reload lands in two steps. Nothing couples them (each is
+// internally consistent on its own), and folding these into the agent snapshot
+// would mean either an import cycle or a map[string]any registry with a type
+// assertion on every request. Revisit if a derived value ever has to agree with
+// an agent option within the same generation.
+func httpCfg() *httpConfig {
+	onceHttpConfig.Do(func() {
+		curHttpConfig.Store(newHttpConfig())
+		pinpoint.GetConfig().AddReloadCallback(httpConfigOpts, func() {
+			curHttpConfig.Store(newHttpConfig())
+		})
+	})
+	return curHttpConfig.Load()
+}
+
+func newHttpConfig() *httpConfig {
+	return &httpConfig{
+		srvUrl:             newHttpUrlFilter(),
+		srvMethod:          newHttpExcludeMethod(),
+		srvStatus:          newHttpStatusError(),
+		srvReqHeader:       makeHttpHeaderRecorder(CfgHttpServerRecordRequestHeader),
+		srvResHeader:       makeHttpHeaderRecorder(CfgHttpServerRecordResponseHeader),
+		srvCookie:          makeHttpHeaderRecorder(CfgHttpServerRecordRequestCookie),
+		cltReqHeader:       makeHttpHeaderRecorder(CfgHttpClientRecordRequestHeader),
+		cltResHeader:       makeHttpHeaderRecorder(CfgHttpClientRecordResponseHeader),
+		cltCookie:          makeHttpHeaderRecorder(CfgHttpClientRecordRequestCookie),
+		recordHandlerError: pinpoint.GetConfig().Bool(CfgHttpServerRecordHandlerError),
+	}
+}
 
 func isExcludedUrl(url string) bool {
-	onceUrl.Do(func() {
-		initOptionExecutor(func() { srvUrl = newHttpUrlFilter() }, CfgHttpServerExcludeUrl)
-	})
-	return srvUrl.isFiltered(url)
+	return httpCfg().srvUrl.isFiltered(url)
 }
-
-var (
-	onceMethod sync.Once
-	srvMethod  *httpMethodFilter
-)
 
 func isExcludedMethod(method string) bool {
-	onceMethod.Do(func() {
-		initOptionExecutor(func() { srvMethod = newHttpExcludeMethod() }, CfgHttpServerExcludeMethod)
-	})
-	return srvMethod.isExcludedMethod(method)
+	return httpCfg().srvMethod.isExcludedMethod(method)
 }
 
-var (
-	onceStatus sync.Once
-	srvStatus  *httpStatusError
-)
-
 func recordServerHttpStatus(span pinpoint.SpanRecorder, status int) {
-	onceStatus.Do(func() {
-		initOptionExecutor(func() { srvStatus = newHttpStatusError() }, CfgHttpServerStatusCodeErrors)
-	})
-	if srvStatus.isError(status) {
+	if httpCfg().srvStatus.isError(status) {
 		span.SetFailure()
 	}
 	span.Annotations().AppendInt(pinpoint.AnnotationHttpStatusCode, int32(status))
 }
 
-var (
-	onceSrvReq   sync.Once
-	srvReqHeader httpHeaderRecorder
-)
-
 func recordServerHttpRequestHeader(annotation pinpoint.Annotation, header Header) {
-	onceSrvReq.Do(func() {
-		initOptionExecutor(
-			func() { srvReqHeader = makeHttpHeaderRecorder(CfgHttpServerRecordRequestHeader) },
-			CfgHttpServerRecordRequestHeader,
-		)
-	})
-	srvReqHeader.recordHeader(annotation, pinpoint.AnnotationHttpRequestHeader, header)
+	httpCfg().srvReqHeader.recordHeader(annotation, pinpoint.AnnotationHttpRequestHeader, header)
 }
-
-var (
-	onceSrvRes   sync.Once
-	srvResHeader httpHeaderRecorder
-)
 
 func recordServerHttpResponseHeader(annotation pinpoint.Annotation, header Header) {
-	onceSrvRes.Do(func() {
-		initOptionExecutor(
-			func() { srvResHeader = makeHttpHeaderRecorder(CfgHttpServerRecordResponseHeader) },
-			CfgHttpServerRecordResponseHeader,
-		)
-	})
-	srvResHeader.recordHeader(annotation, pinpoint.AnnotationHttpResponseHeader, header)
+	httpCfg().srvResHeader.recordHeader(annotation, pinpoint.AnnotationHttpResponseHeader, header)
 }
-
-var (
-	onceSrvCookie sync.Once
-	srvCookie     httpHeaderRecorder
-)
 
 func recordServerHttpCookie(annotation pinpoint.Annotation, cookie Cookie) {
-	onceSrvCookie.Do(func() {
-		initOptionExecutor(
-			func() { srvCookie = makeHttpHeaderRecorder(CfgHttpServerRecordRequestCookie) },
-			CfgHttpServerRecordRequestCookie,
-		)
-	})
-	srvCookie.recordCookie(annotation, cookie)
+	httpCfg().srvCookie.recordCookie(annotation, cookie)
 }
-
-var (
-	onceCltReq   sync.Once
-	cltReqHeader httpHeaderRecorder
-)
 
 func RecordClientHttpRequestHeader(annotation pinpoint.Annotation, header Header) {
-	onceCltReq.Do(func() {
-		initOptionExecutor(
-			func() { cltReqHeader = makeHttpHeaderRecorder(CfgHttpClientRecordRequestHeader) },
-			CfgHttpClientRecordRequestHeader,
-		)
-	})
-	cltReqHeader.recordHeader(annotation, pinpoint.AnnotationHttpRequestHeader, header)
+	httpCfg().cltReqHeader.recordHeader(annotation, pinpoint.AnnotationHttpRequestHeader, header)
 }
-
-var (
-	onceCltRes   sync.Once
-	cltResHeader httpHeaderRecorder
-)
 
 func RecordClientHttpResponseHeader(annotation pinpoint.Annotation, header Header) {
-	onceCltRes.Do(func() {
-		initOptionExecutor(
-			func() { cltResHeader = makeHttpHeaderRecorder(CfgHttpClientRecordResponseHeader) },
-			CfgHttpClientRecordResponseHeader,
-		)
-	})
-	cltResHeader.recordHeader(annotation, pinpoint.AnnotationHttpResponseHeader, header)
+	httpCfg().cltResHeader.recordHeader(annotation, pinpoint.AnnotationHttpResponseHeader, header)
 }
-
-var (
-	onceCltCookie sync.Once
-	cltCookie     httpHeaderRecorder
-)
 
 func RecordClientHttpCookie(annotation pinpoint.Annotation, cookie Cookie) {
-	onceCltCookie.Do(func() {
-		initOptionExecutor(
-			func() { cltCookie = makeHttpHeaderRecorder(CfgHttpClientRecordRequestCookie) },
-			CfgHttpClientRecordRequestCookie,
-		)
-	})
-	cltCookie.recordCookie(annotation, cookie)
+	httpCfg().cltCookie.recordCookie(annotation, cookie)
 }
 
-func initOptionExecutor(initFunc func(), opt string) {
-	initFunc()
-	pinpoint.GetConfig().AddReloadCallback([]string{opt}, initFunc)
+// RecordHttpHandlerError records error returned by http handler.
+func RecordHttpHandlerError(tracer pinpoint.Tracer, err error) {
+	if tracer.IsSampled() && httpCfg().recordHandlerError {
+		tracer.Span().SetError(err)
+	}
 }
 
 func makeHttpHeaderRecorder(cfgName string) httpHeaderRecorder {
-	cfg := pinpoint.GetConfig().StringSlice(cfgName)
-	trimStringSlice(cfg)
+	cfg := trimStringSlice(pinpoint.GetConfig().StringSlice(cfgName))
 
 	if len(cfg) == 0 {
 		return newNoopHttpHeaderRecorder()
@@ -301,27 +282,12 @@ func makeHttpHeaderRecorder(cfgName string) httpHeaderRecorder {
 	}
 }
 
-func trimStringSlice(slice []string) {
-	for i := range slice {
-		slice[i] = strings.TrimSpace(slice[i])
+// trimStringSlice returns a trimmed copy: the slice handed out by StringSlice
+// belongs to the published config snapshot and must not be written to.
+func trimStringSlice(slice []string) []string {
+	trimmed := make([]string, len(slice))
+	for i, s := range slice {
+		trimmed[i] = strings.TrimSpace(s)
 	}
-}
-
-var (
-	onceHandlerError   sync.Once
-	recordHandlerError bool
-)
-
-// RecordHttpHandlerError records error returned by http handler.
-func RecordHttpHandlerError(tracer pinpoint.Tracer, err error) {
-	onceHandlerError.Do(func() {
-		initOptionExecutor(
-			func() { recordHandlerError = pinpoint.GetConfig().Bool(CfgHttpServerRecordHandlerError) },
-			CfgHttpServerRecordHandlerError,
-		)
-	})
-	if tracer.IsSampled() && recordHandlerError {
-		span := tracer.Span()
-		span.SetError(err)
-	}
+	return trimmed
 }

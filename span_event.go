@@ -157,6 +157,6 @@ func (se *spanEvent) agent() *agent {
 	return se.parentSpan.agent
 }
 
-func (se *spanEvent) config() *Config {
-	return se.agent().config
+func (se *spanEvent) config() *configSnapshot {
+	return se.parentSpan.cfg
 }

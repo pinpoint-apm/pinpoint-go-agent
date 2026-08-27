@@ -88,8 +88,7 @@ func newHttpStatusError() *httpStatusError {
 func setupHttpStatusErrors() []httpStatusCode {
 	var errors []httpStatusCode
 
-	cfgErrors := pinpoint.GetConfig().StringSlice(CfgHttpServerStatusCodeErrors)
-	trimStringSlice(cfgErrors)
+	cfgErrors := trimStringSlice(pinpoint.GetConfig().StringSlice(CfgHttpServerStatusCodeErrors))
 
 	for _, s := range cfgErrors {
 		if strings.EqualFold(s, "5xx") {

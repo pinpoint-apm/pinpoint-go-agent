@@ -33,7 +33,7 @@ type urlStat struct {
 
 type urlStatSnapshot struct {
 	urlMap map[urlKey]*eachUrlStat
-	config *Config
+	config *configSnapshot
 	count  int
 }
 
@@ -62,7 +62,7 @@ type tickClock struct {
 func (agent *agent) newUrlStatSnapshot() *urlStatSnapshot {
 	return &urlStatSnapshot{
 		urlMap: make(map[urlKey]*eachUrlStat, 0),
-		config: agent.config,
+		config: agent.config.load(),
 	}
 }
 
