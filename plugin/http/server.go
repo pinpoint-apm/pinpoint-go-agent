@@ -23,6 +23,7 @@
 package pphttp
 
 import (
+	"bufio"
 	"bytes"
 	"math"
 	"net"
@@ -235,6 +236,39 @@ func WrapResponseWriter(w http.ResponseWriter, status *int) *responseWriter {
 func (w *responseWriter) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 	*w.status = status
+}
+
+// The wrapper hides the underlying writer's optional interfaces from type
+// assertions - embedding the http.ResponseWriter interface promotes only its
+// own three methods - so without the passthroughs below, wrapping a handler
+// breaks WebSocket upgrades (http.Hijacker) and SSE flushing (http.Flusher).
+// Each delegates dynamically and degrades the way http.ResponseController
+// does, with http.ErrNotSupported, when the underlying writer lacks the
+// capability.
+
+// Unwrap lets http.ResponseController reach the underlying writer.
+func (w *responseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *responseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := w.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
+}
+
+func (w *responseWriter) Push(target string, opts *http.PushOptions) error {
+	if p, ok := w.ResponseWriter.(http.Pusher); ok {
+		return p.Push(target, opts)
+	}
+	return http.ErrNotSupported
 }
 
 type serveMux struct {

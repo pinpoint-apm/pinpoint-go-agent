@@ -1,6 +1,9 @@
 package pphttp
 
 import (
+	"bufio"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -107,5 +110,45 @@ func Test_setProxyHeader(t *testing.T) {
 				t.Errorf("%s: %q\n got: %+v\nwant: %+v", tt.header, tt.value, a.got, want)
 			}
 		})
+	}
+}
+
+type hijackableRecorder struct {
+	*httptest.ResponseRecorder
+	hijacked bool
+}
+
+func (r *hijackableRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	r.hijacked = true
+	return nil, nil, nil
+}
+
+// The wrapper must keep the underlying writer's optional interfaces reachable:
+// WebSocket upgrades assert http.Hijacker and SSE handlers assert http.Flusher
+// on the writer the handler receives.
+func Test_responseWriter_PreservesOptionalInterfaces(t *testing.T) {
+	status := 0
+	rec := httptest.NewRecorder() // a Flusher, not a Hijacker
+	w := WrapResponseWriter(rec, &status)
+
+	if w.Unwrap() != http.ResponseWriter(rec) {
+		t.Errorf("Unwrap() did not return the underlying writer")
+	}
+
+	http.ResponseWriter(w).(http.Flusher).Flush()
+	if !rec.Flushed {
+		t.Errorf("Flush() was not delegated to the underlying writer")
+	}
+
+	if _, _, err := w.Hijack(); !errors.Is(err, http.ErrNotSupported) {
+		t.Errorf("Hijack() on a non-hijackable writer = %v, want http.ErrNotSupported", err)
+	}
+	if err := w.Push("/asset", nil); !errors.Is(err, http.ErrNotSupported) {
+		t.Errorf("Push() on a non-pusher writer = %v, want http.ErrNotSupported", err)
+	}
+
+	h := &hijackableRecorder{ResponseRecorder: httptest.NewRecorder()}
+	if _, _, err := WrapResponseWriter(h, &status).Hijack(); err != nil || !h.hijacked {
+		t.Errorf("Hijack() = %v (delegated: %v), want delegation to the underlying writer", err, h.hijacked)
 	}
 }
