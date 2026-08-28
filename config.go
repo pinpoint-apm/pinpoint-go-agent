@@ -71,6 +71,7 @@ const (
 	CfgSQLTraceCommit                 = "SQL.TraceCommit"
 	CfgSQLTraceRollback               = "SQL.TraceRollback"
 	CfgSQLTraceQueryStat              = "SQL.TraceQueryStat"
+	CfgSQLEnableRawSqlCache           = "SQL.EnableRawSqlCache"
 	CfgEnable                         = "Enable"
 	CfgHttpUrlStatEnable              = "Http.UrlStat.Enable"
 	CfgHttpUrlStatLimitSize           = "Http.UrlStat.LimitSize"
@@ -163,6 +164,7 @@ func initConfig() {
 	AddConfig(CfgSQLTraceCommit, CfgBool, true, true)
 	AddConfig(CfgSQLTraceRollback, CfgBool, true, true)
 	AddConfig(CfgSQLTraceQueryStat, CfgBool, false, true)
+	AddConfig(CfgSQLEnableRawSqlCache, CfgBool, true, true)
 	AddConfig(CfgEnable, CfgBool, true, false)
 	AddConfig(CfgHttpUrlStatEnable, CfgBool, false, true)
 	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1024, true)
@@ -231,6 +233,7 @@ type configSnapshot struct {
 	sqlTraceCommit       bool  // CfgSQLTraceCommit
 	sqlTraceRollback     bool  // CfgSQLTraceRollback
 	sqlTraceQueryStat    bool  // CfgSQLTraceQueryStat
+	sqlEnableRawSqlCache bool  // CfgSQLEnableRawSqlCache
 	spanEventChunkSize   int   // CfgSpanEventChunkSize
 	spanMaxEventDepth    int32 // CfgSpanMaxCallStackDepth
 	spanMaxEventSequence int32 // CfgSpanMaxCallStackSequence
@@ -626,6 +629,7 @@ func (config *Config) publish() {
 		sqlTraceCommit:       cast.ToBool(values[CfgSQLTraceCommit]),
 		sqlTraceRollback:     cast.ToBool(values[CfgSQLTraceRollback]),
 		sqlTraceQueryStat:    cast.ToBool(values[CfgSQLTraceQueryStat]),
+		sqlEnableRawSqlCache: cast.ToBool(values[CfgSQLEnableRawSqlCache]),
 		spanEventChunkSize:   cast.ToInt(values[CfgSpanEventChunkSize]),
 		spanMaxEventDepth:    cast.ToInt32(values[CfgSpanMaxCallStackDepth]),
 		spanMaxEventSequence: cast.ToInt32(values[CfgSpanMaxCallStackSequence]),
@@ -1059,6 +1063,13 @@ func WithSQLTraceCommit(trace bool) ConfigOption {
 func WithSQLTraceRollback(trace bool) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgSQLTraceRollback].value = trace
+	}
+}
+
+// WithSQLEnableRawSqlCache enables caching of SQL normalization results keyed by raw SQL text.
+func WithSQLEnableRawSqlCache(enable bool) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgSQLEnableRawSqlCache].value = enable
 	}
 }
 
