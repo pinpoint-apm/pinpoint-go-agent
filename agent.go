@@ -542,46 +542,62 @@ func (agent *agent) sendMetaWorker() {
 	Log("agent").Infof("start meta goroutine")
 	defer agent.workerWg.Done()
 
+	// Metadata sends are pipelined: registration has no ordering requirement
+	// (the collector accepts duplicates and metadata arriving after its
+	// spans), while serial sends cap throughput at one item per round trip,
+	// which falls behind when high error rates produce exception metadata
+	// per span.
+	permit := make(chan struct{}, metaMaxConcurrentRequests)
+	var inFlight sync.WaitGroup
+	// Deferred so both exits -- the stop signal and a disabled agent -- wait
+	// for the sends already accepted, giving them the same best-effort flush.
+	defer func() {
+		inFlight.Wait()
+		Log("agent").Infof("end meta goroutine")
+	}()
+
 	stop := agent.stopSignal().Done()
 
 	for agent.enable.Load() {
 		var md interface{}
 		select {
 		case <-stop:
-			Log("agent").Infof("end meta goroutine")
 			return
 		case md = <-agent.metaChan:
 		}
 
-		var success bool
-		switch md.(type) {
-		case apiMeta:
-			api := md.(apiMeta)
-			success = agent.agentGrpc.sendApiMetadataWithRetry(api.id, api.descriptor, -1, api.apiType)
-			break
-		case stringMeta:
-			str := md.(stringMeta)
-			success = agent.agentGrpc.sendStringMetadataWithRetry(str.id, str.funcName)
-			break
-		case sqlMeta:
-			sql := md.(sqlMeta)
-			success = agent.agentGrpc.sendSqlMetadataWithRetry(sql.id, sql.sql)
-			break
-		case sqlUidMeta:
-			sql := md.(sqlUidMeta)
-			success = agent.agentGrpc.sendSqlUidMetadataWithRetry(sql.uid, sql.sql)
-			break
-		case exceptionMeta:
-			em := md.(exceptionMeta)
-			success = agent.agentGrpc.sendExceptionMetadataWithRetry(&em)
-		}
+		permit <- struct{}{}
+		inFlight.Add(1)
+		go func(md interface{}) {
+			defer inFlight.Done()
+			defer func() { <-permit }()
 
-		if !success {
-			agent.deleteMetaCache(md)
-		}
+			if !agent.sendMetadata(md) {
+				agent.deleteMetaCache(md)
+			}
+		}(md)
 	}
+}
 
-	Log("agent").Infof("end meta goroutine")
+func (agent *agent) sendMetadata(md interface{}) bool {
+	switch md.(type) {
+	case apiMeta:
+		api := md.(apiMeta)
+		return agent.agentGrpc.sendApiMetadataWithRetry(api.id, api.descriptor, -1, api.apiType)
+	case stringMeta:
+		str := md.(stringMeta)
+		return agent.agentGrpc.sendStringMetadataWithRetry(str.id, str.funcName)
+	case sqlMeta:
+		sql := md.(sqlMeta)
+		return agent.agentGrpc.sendSqlMetadataWithRetry(sql.id, sql.sql)
+	case sqlUidMeta:
+		sql := md.(sqlUidMeta)
+		return agent.agentGrpc.sendSqlUidMetadataWithRetry(sql.uid, sql.sql)
+	case exceptionMeta:
+		em := md.(exceptionMeta)
+		return agent.agentGrpc.sendExceptionMetadataWithRetry(&em)
+	}
+	return false
 }
 
 func (agent *agent) deleteMetaCache(md interface{}) {
