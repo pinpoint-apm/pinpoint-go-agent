@@ -22,18 +22,34 @@ package ppredigo
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
+// The same errors redigo's own helpers return when a connection lacks the
+// optional interface; the wrapper advertises both unconditionally, so it must
+// answer for a base connection that has neither instead of panicking.
+var (
+	errTimeoutNotSupported = errors.New("redis: connection does not support ConnWithTimeout")
+	errContextNotSupported = errors.New("redis: connection does not support ConnWithContext")
+)
+
 type wrappedConn struct {
 	base     redis.Conn
 	endpoint string
-	ctx      context.Context
+
+	// ctxMu guards the context bound by WithContext; opMu serializes span
+	// event recording (see startSpanEvent). Two locks, because an operation
+	// can hold opMu across a blocking Receive and must not block WithContext.
+	ctxMu sync.Mutex
+	ctx   context.Context
+	opMu  sync.Mutex
 }
 
 type pinpointContext interface {
@@ -49,7 +65,15 @@ func wrapConn(c redis.Conn, addr string) redis.Conn {
 }
 
 func (c *wrappedConn) WithContext(ctx context.Context) {
+	c.ctxMu.Lock()
 	c.ctx = ctx
+	c.ctxMu.Unlock()
+}
+
+func (c *wrappedConn) currentContext() context.Context {
+	c.ctxMu.Lock()
+	defer c.ctxMu.Unlock()
+	return c.ctx
 }
 
 // WithContext passes the context to the provided redis.Conn.
@@ -138,85 +162,98 @@ func (c *wrappedConn) Err() error {
 	return c.base.Err()
 }
 
-func (c *wrappedConn) Send(cmd string, args ...interface{}) error {
-	tracer := c.newSpanEvent(c.ctx, "redigo.Send()", cmd)
-	defer tracer.EndSpanEvent()
+func (c *wrappedConn) Send(cmd string, args ...interface{}) (err error) {
+	end := c.startSpanEvent(c.currentContext(), "redigo.Send()", cmd)
+	defer func() { end(err) }()
 
-	err := c.base.Send(cmd, args...)
-	tracer.SpanEvent().SetError(err)
-
-	return err
+	err = c.base.Send(cmd, args...)
+	return
 }
 
 func (c *wrappedConn) Flush() error {
 	return c.base.Flush()
 }
 
-func (c *wrappedConn) Receive() (interface{}, error) {
-	tracer := c.newSpanEvent(c.ctx, "redigo.Receive()", "")
-	defer tracer.EndSpanEvent()
+func (c *wrappedConn) Receive() (r interface{}, err error) {
+	end := c.startSpanEvent(c.currentContext(), "redigo.Receive()", "")
+	defer func() { end(err) }()
 
-	r, err := c.base.Receive()
-	tracer.SpanEvent().SetError(err)
-
-	return r, err
+	r, err = c.base.Receive()
+	return
 }
 
-func (c *wrappedConn) Do(cmd string, args ...interface{}) (interface{}, error) {
-	tracer := c.newSpanEvent(c.ctx, "redigo.Do()", cmd)
-	defer tracer.EndSpanEvent()
+func (c *wrappedConn) Do(cmd string, args ...interface{}) (r interface{}, err error) {
+	end := c.startSpanEvent(c.currentContext(), "redigo.Do()", cmd)
+	defer func() { end(err) }()
 
-	r, err := c.base.Do(cmd, args...)
-	tracer.SpanEvent().SetError(err)
-
-	return r, err
+	r, err = c.base.Do(cmd, args...)
+	return
 }
 
-func (c *wrappedConn) DoWithTimeout(readTimeout time.Duration, cmd string, args ...interface{}) (interface{}, error) {
-	tracer := c.newSpanEvent(c.ctx, "redigo.DoWithTimeout()", cmd)
-	defer tracer.EndSpanEvent()
+func (c *wrappedConn) DoWithTimeout(readTimeout time.Duration, cmd string, args ...interface{}) (r interface{}, err error) {
+	cwt, ok := c.base.(redis.ConnWithTimeout)
+	if !ok {
+		return nil, errTimeoutNotSupported
+	}
 
-	cwt, _ := c.base.(redis.ConnWithTimeout)
-	r, err := cwt.DoWithTimeout(readTimeout, cmd, args...)
-	tracer.SpanEvent().SetError(err)
+	end := c.startSpanEvent(c.currentContext(), "redigo.DoWithTimeout()", cmd)
+	defer func() { end(err) }()
 
-	return r, err
+	r, err = cwt.DoWithTimeout(readTimeout, cmd, args...)
+	return
 }
 
-func (c *wrappedConn) ReceiveWithTimeout(timeout time.Duration) (interface{}, error) {
-	tracer := c.newSpanEvent(c.ctx, "redigo.ReceiveWithTimeout()", "")
-	defer tracer.EndSpanEvent()
+func (c *wrappedConn) ReceiveWithTimeout(timeout time.Duration) (r interface{}, err error) {
+	cwt, ok := c.base.(redis.ConnWithTimeout)
+	if !ok {
+		return nil, errTimeoutNotSupported
+	}
 
-	cwt, _ := c.base.(redis.ConnWithTimeout)
-	r, err := cwt.ReceiveWithTimeout(timeout)
-	tracer.SpanEvent().SetError(err)
+	end := c.startSpanEvent(c.currentContext(), "redigo.ReceiveWithTimeout()", "")
+	defer func() { end(err) }()
 
-	return r, err
+	r, err = cwt.ReceiveWithTimeout(timeout)
+	return
 }
 
-func (c *wrappedConn) DoContext(ctx context.Context, cmd string, args ...interface{}) (interface{}, error) {
-	tracer := c.newSpanEvent(ctx, "redigo.DoContext()", cmd)
-	defer tracer.EndSpanEvent()
+func (c *wrappedConn) DoContext(ctx context.Context, cmd string, args ...interface{}) (r interface{}, err error) {
+	cwc, ok := c.base.(redis.ConnWithContext)
+	if !ok {
+		return nil, errContextNotSupported
+	}
 
-	cwc, _ := c.base.(redis.ConnWithContext)
-	r, err := cwc.DoContext(ctx, cmd, args...)
-	tracer.SpanEvent().SetError(err)
+	end := c.startSpanEvent(ctx, "redigo.DoContext()", cmd)
+	defer func() { end(err) }()
 
-	return r, err
+	r, err = cwc.DoContext(ctx, cmd, args...)
+	return
 }
 
-func (c *wrappedConn) ReceiveContext(ctx context.Context) (interface{}, error) {
-	tracer := c.newSpanEvent(ctx, "redigo.ReceiveContext()", "")
-	defer tracer.EndSpanEvent()
+func (c *wrappedConn) ReceiveContext(ctx context.Context) (r interface{}, err error) {
+	cwc, ok := c.base.(redis.ConnWithContext)
+	if !ok {
+		return nil, errContextNotSupported
+	}
 
-	cwc, _ := c.base.(redis.ConnWithContext)
-	r, err := cwc.ReceiveContext(ctx)
-	tracer.SpanEvent().SetError(err)
+	end := c.startSpanEvent(ctx, "redigo.ReceiveContext()", "")
+	defer func() { end(err) }()
 
-	return r, err
+	r, err = cwc.ReceiveContext(ctx)
+	return
 }
 
-func (c *wrappedConn) newSpanEvent(ctx context.Context, operation string, cmd string) pinpoint.Tracer {
+// startSpanEvent records the operation on the tracer in ctx and returns the
+// function that completes the recording. redigo supports one goroutine in
+// Send/Flush concurrent with another blocked in Receive (the pub/sub pattern),
+// but a pinpoint.Tracer is not goroutine-safe: interleaved NewSpanEvent/
+// EndSpanEvent pairs from two goroutines corrupt its event stack. When another
+// operation on this connection is already recording, this one proceeds
+// untraced instead.
+func (c *wrappedConn) startSpanEvent(ctx context.Context, operation string, cmd string) func(error) {
+	if !c.opMu.TryLock() {
+		return func(error) {}
+	}
+
 	tracer := pinpoint.FromContext(ctx)
 	tracer.NewSpanEvent(operation)
 
@@ -227,5 +264,10 @@ func (c *wrappedConn) newSpanEvent(ctx context.Context, operation string, cmd st
 	if cmd != "" {
 		se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
 	}
-	return tracer
+
+	return func(err error) {
+		tracer.SpanEvent().SetError(err)
+		tracer.EndSpanEvent()
+		c.opMu.Unlock()
+	}
 }
