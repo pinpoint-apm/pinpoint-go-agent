@@ -162,33 +162,62 @@ func (metaGrpcClient *metaGrpcClient) RequestExceptionMetaData(ctx context.Conte
 }
 
 const (
-	agentGrpcTimeOut      = 60 * time.Second
-	sendStreamTimeOut     = 5 * time.Second
-	closeStreamTimeOut    = 1 * time.Second
-	commandStreamTimeOut  = 1 * time.Second
-	grpcFlowControlWindow = 1 * 1024 * 1024
-	grpcWriteBufferSize   = 1 * 1024 * 1024
-	grpcMaxMessageSize    = 4 * 1024 * 1024
-	grpcMaxHeaderListSize = 8 * 1024
+	agentGrpcTimeOut     = 60 * time.Second
+	sendStreamTimeOut    = 5 * time.Second
+	closeStreamTimeOut   = 1 * time.Second
+	commandStreamTimeOut = 1 * time.Second
+
+	// Defaults for the Collector.Grpc.* config keys, matching the C++ agent.
+	grpcKeepAliveTime               = 30000 // ms
+	grpcKeepAliveTimeout            = 60000 // ms
+	grpcKeepAlivePermitWithoutCalls = false
+	grpcFlowControlWindow           = 1 * 1024 * 1024
+	grpcWriteBufferSize             = 1 * 1024 * 1024
+	grpcMaxMessageSize              = 4 * 1024 * 1024
+	grpcMaxHeaderListSize           = 8 * 1024
 )
 
-var kacp = keepalive.ClientParameters{
-	Time:                30 * time.Second,
-	Timeout:             60 * time.Second,
-	PermitWithoutStream: true,
+// grpcChannelOptions holds the channel options connectCollector applies to
+// every collector connection, resolved from the Collector.Grpc.* config keys.
+type grpcChannelOptions struct {
+	keepAlive         keepalive.ClientParameters
+	flowControlWindow int32
+	writeBufferSize   int
+	maxSendMsgSize    int
+	maxRecvMsgSize    int
+	maxHeaderListSize uint32
+}
+
+func newGrpcChannelOptions(config *Config) grpcChannelOptions {
+	return grpcChannelOptions{
+		keepAlive: keepalive.ClientParameters{
+			Time:                time.Duration(config.Int(CfgCollectorGrpcKeepAliveTime)) * time.Millisecond,
+			Timeout:             time.Duration(config.Int(CfgCollectorGrpcKeepAliveTimeout)) * time.Millisecond,
+			PermitWithoutStream: config.Bool(CfgCollectorGrpcKeepAlivePermitWithoutCalls),
+		},
+		flowControlWindow: int32(config.Int(CfgCollectorGrpcFlowControlWindow)),
+		writeBufferSize:   config.Int(CfgCollectorGrpcWriteBufferSize),
+		maxSendMsgSize:    config.Int(CfgCollectorGrpcMaxSendMessageSize),
+		maxRecvMsgSize:    config.Int(CfgCollectorGrpcMaxReceiveMessageSize),
+		maxHeaderListSize: uint32(config.Int(CfgCollectorGrpcMaxHeaderListSize)),
+	}
+}
+
+func (o grpcChannelOptions) dialOptions() []grpc.DialOption {
+	return []grpc.DialOption{
+		grpc.WithKeepaliveParams(o.keepAlive),
+		grpc.WithInsecure(),
+		grpc.WithInitialWindowSize(o.flowControlWindow),
+		grpc.WithWriteBufferSize(o.writeBufferSize),
+		grpc.WithMaxHeaderListSize(o.maxHeaderListSize),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallSendMsgSize(o.maxSendMsgSize),
+			grpc.MaxCallRecvMsgSize(o.maxRecvMsgSize)),
+	}
 }
 
 func connectCollector(config *Config, portOption string) (*grpc.ClientConn, error) {
-	opts := make([]grpc.DialOption, 0)
-	opts = append(opts, grpc.WithKeepaliveParams(kacp))
-	opts = append(opts, grpc.WithInsecure())
-	opts = append(opts, grpc.WithInitialWindowSize(grpcFlowControlWindow))
-	opts = append(opts, grpc.WithWriteBufferSize(grpcWriteBufferSize))
-	opts = append(opts, grpc.WithMaxHeaderListSize(grpcMaxHeaderListSize))
-	opts = append(opts, grpc.WithDefaultCallOptions(
-		grpc.MaxCallSendMsgSize(grpcMaxMessageSize),
-		grpc.MaxCallRecvMsgSize(grpcMaxMessageSize)))
-
+	opts := newGrpcChannelOptions(config).dialOptions()
 	addr := serverAddr(config, portOption)
 	Log("grpc").Infof("connect to collector: %s", addr)
 	conn, err := grpc.Dial(addr, opts...)
