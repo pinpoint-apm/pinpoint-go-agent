@@ -323,6 +323,31 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 	return false
 }
 
+// refreshAgentInfo re-sends AgentInfo once, trying up to maxTry sends spaced
+// retryInterval apart. Unlike boot-time registration it never loops forever:
+// a failed refresh is simply left for the next refresh cycle, mirroring the
+// C++ agent's send_agent_info_with_retries.
+func (agentGrpc *agentGrpc) refreshAgentInfo(maxTry int, retryInterval time.Duration) bool {
+	ctx, agentInfo := agentGrpc.makeAgentInfo()
+
+	for try := 0; try < maxTry && !agentGrpc.agent.shutdown.Load(); try++ {
+		if res, err := agentGrpc.sendAgentInfo(ctx, agentInfo); err == nil && res.Success {
+			Log("agent").Infof("success to refresh agent info")
+			return true
+		}
+		if try+1 < maxTry {
+			select {
+			case <-agentGrpc.agent.stopSignal().Done():
+				return false
+			case <-time.After(retryInterval):
+			}
+		}
+	}
+
+	Log("agent").Warnf("failed to refresh agent info")
+	return false
+}
+
 func isRetryableError(e error) bool {
 	// retry only for network error
 	code := status.Code(e)

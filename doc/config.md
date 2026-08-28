@@ -252,6 +252,38 @@ Collector.StatPort option sets the stat port of Pinpoint collector.
 * int
 * default: 9992
 
+### Collector.AgentInfo.RefreshInterval
+Collector.AgentInfo.RefreshInterval option sets the cycle for re-sending the agent information to the collector.
+If it is 0 or less, the agent information is sent only once at agent startup.
+
+* --pinpoint-collector-agentinfo-refreshinterval
+* PINPOINT_GO_COLLECTOR_AGENTINFO_REFRESHINTERVAL
+* WithCollectorAgentInfoRefreshInterval()
+* type: int
+* default: 0 (disabled)
+* unit: milliseconds
+
+### Collector.AgentInfo.SendRetryInterval
+Collector.AgentInfo.SendRetryInterval option sets the wait between agent information send retries within one refresh cycle.
+It has no effect unless Collector.AgentInfo.RefreshInterval is set.
+
+* --pinpoint-collector-agentinfo-sendretryinterval
+* PINPOINT_GO_COLLECTOR_AGENTINFO_SENDRETRYINTERVAL
+* WithCollectorAgentInfoSendRetryInterval()
+* type: int
+* default: 3000
+* unit: milliseconds
+
+### Collector.AgentInfo.MaxTryPerAttempt
+Collector.AgentInfo.MaxTryPerAttempt option sets the max number of agent information sends per refresh cycle.
+It has no effect unless Collector.AgentInfo.RefreshInterval is set.
+
+* --pinpoint-collector-agentinfo-maxtryperattempt
+* PINPOINT_GO_COLLECTOR_AGENTINFO_MAXTRYPERATTEMPT
+* WithCollectorAgentInfoMaxTryPerAttempt()
+* type: int
+* default: 3
+
 ### Sampling.Type
 Sampling.Type option sets the type of agent sampler.
 Either "COUNTER" or "PERCENT" must be specified.
