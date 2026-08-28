@@ -40,7 +40,7 @@ func benchAgent() *agent {
 	// on the global logger. Warn also suppresses the one-time cache-miss INFO
 	// lines so they don't clutter benchmark output.
 	logger.defaultLogger.SetLevel(logrus.WarnLevel)
-	logger.extraLogger = nil
+	logger.extraLogger.Store(nil)
 
 	return newTestAgent(cfg)
 }

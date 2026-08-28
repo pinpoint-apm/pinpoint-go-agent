@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"os"
 	"strings"
+	"sync/atomic"
 
 	"github.com/sirupsen/logrus"
 	prefixed "github.com/x-cray/logrus-prefixed-formatter"
@@ -23,7 +24,8 @@ func IsLogLevelEnabled(level logrus.Level) bool {
 	if logger.defaultLogger.GetLevel() >= level {
 		return true
 	}
-	return logger.extraLogger != nil && logger.extraLogger.GetLevel() >= level
+	extra := logger.extra()
+	return extra != nil && extra.GetLevel() >= level
 }
 
 func IsDebugLogLevelEnabled() bool {
@@ -34,15 +36,22 @@ func IsTraceLogLevelEnabled() bool {
 	return IsLogLevelEnabled(logrus.TraceLevel)
 }
 
+// SetExtraLogger installs an additional logger every pinpoint log line is
+// also written to. It may be called while other goroutines are logging, so the
+// logger is held atomically rather than as a plain field.
 func SetExtraLogger(lgr *logrus.Logger) {
-	logger.extraLogger = lgr
+	logger.extraLogger.Store(lgr)
 }
 
 type logrusLogger struct {
 	defaultLogger *logrus.Logger
-	extraLogger   *logrus.Logger
+	extraLogger   atomic.Pointer[logrus.Logger]
 	fileLogger    *lumberjack.Logger
 	config        *Config
+}
+
+func (l *logrusLogger) extra() *logrus.Logger {
+	return l.extraLogger.Load()
 }
 
 func newLogger() *logrusLogger {
@@ -112,7 +121,7 @@ func (l *logrusLogger) reloadOutput() {
 func (l *logrusLogger) newEntry(src string) *logEntry {
 	return &logEntry{
 		entry:       logrus.NewEntry(l.defaultLogger).WithFields(logrus.Fields{"module": "pinpoint", "src": src}),
-		extraLogger: l.extraLogger,
+		extraLogger: l.extra(),
 	}
 }
 
