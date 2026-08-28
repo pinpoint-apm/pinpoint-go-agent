@@ -113,14 +113,22 @@ func (c fiberCookie) VisitAll(f func(name string, value string)) {
 	})
 }
 
+type fiberResponseHeader struct {
+	header *fasthttp.ResponseHeader
+}
+
+func (h fiberResponseHeader) Values(key string) []string {
+	return []string{string(h.header.Peek(key))}
+}
+
+func (h fiberResponseHeader) VisitAll(f func(name string, values []string)) {
+	h.header.VisitAll(func(key, value []byte) {
+		f(string(key), []string{string(value)})
+	})
+}
+
 func recordResponse(tracer pinpoint.Tracer, c *fiber.Ctx, status int) {
-	if tracer.IsSampled() {
-		h := make(http.Header)
-		c.Context().Response.Header.VisitAll(func(k, v []byte) {
-			h.Set(string(k), string(v))
-		})
-		pphttp.RecordHttpServerResponse(tracer, status, h)
-	}
+	pphttp.RecordHttpServerResponseWithReader(tracer, status, fiberResponseHeader{&c.Context().Response.Header})
 }
 
 func statusCode(err error) int {

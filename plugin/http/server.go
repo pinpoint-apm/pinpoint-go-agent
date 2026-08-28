@@ -182,10 +182,18 @@ func setProxyHeader(a pinpoint.Annotation, h Header) {
 
 // RecordHttpServerResponse records http status and response header to span.
 func RecordHttpServerResponse(tracer pinpoint.Tracer, status int, h http.Header) {
+	RecordHttpServerResponseWithReader(tracer, status, header{h})
+}
+
+// RecordHttpServerResponseWithReader is RecordHttpServerResponse for adapters
+// whose native response header is not an http.Header: the header is read only
+// when a response-header recorder is configured, so passing a reader avoids
+// copying every header into a map that the default noop recorder ignores.
+func RecordHttpServerResponseWithReader(tracer pinpoint.Tracer, status int, h Header) {
 	if tracer.IsSampled() {
 		span := tracer.Span()
 		recordServerHttpStatus(span, status)
-		recordServerHttpResponseHeader(span.Annotations(), header{h})
+		recordServerHttpResponseHeader(span.Annotations(), h)
 	}
 }
 

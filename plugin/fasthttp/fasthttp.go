@@ -87,13 +87,7 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 }
 
 func recordResponse(tracer pinpoint.Tracer, c *fasthttp.RequestCtx, status int) {
-	if tracer.IsSampled() {
-		h := make(http.Header)
-		c.Response.Header.VisitAll(func(k, v []byte) {
-			h.Set(string(k), string(v))
-		})
-		pphttp.RecordHttpServerResponse(tracer, status, h)
-	}
+	pphttp.RecordHttpServerResponseWithReader(tracer, status, resHeader{&c.Response.Header})
 }
 
 type distributedTracingContextWriterMD struct {
