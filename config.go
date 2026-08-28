@@ -40,6 +40,8 @@ const (
 	CfgCollectorGrpcFlowControlWindow           = "Collector.Grpc.FlowControlWindow"
 	CfgCollectorGrpcWriteBufferSize             = "Collector.Grpc.WriteBufferSize"
 	CfgCollectorGrpcMaxHeaderListSize           = "Collector.Grpc.MaxHeaderListSize"
+	CfgCollectorGrpcSslEnable                   = "Collector.Grpc.SslEnable"
+	CfgCollectorGrpcTrustCertFilePath           = "Collector.Grpc.TrustCertFilePath"
 
 	CfgLogLevelOld                    = "LogLevel"
 	CfgLogLevel                       = "Log.Level"
@@ -131,6 +133,8 @@ func initConfig() {
 	AddConfig(CfgCollectorGrpcFlowControlWindow, CfgInt, grpcFlowControlWindow, false)
 	AddConfig(CfgCollectorGrpcWriteBufferSize, CfgInt, grpcWriteBufferSize, false)
 	AddConfig(CfgCollectorGrpcMaxHeaderListSize, CfgInt, grpcMaxHeaderListSize, false)
+	AddConfig(CfgCollectorGrpcSslEnable, CfgBool, false, false)
+	AddConfig(CfgCollectorGrpcTrustCertFilePath, CfgString, "", false)
 	AddConfig(CfgLogLevelOld, CfgString, "info", true)
 	AddConfig(CfgLogLevel, CfgString, "info", true)
 	AddConfig(CfgLogOutput, CfgString, "stderr", true)
@@ -917,6 +921,22 @@ func WithCollectorGrpcWriteBufferSize(size int) ConfigOption {
 func WithCollectorGrpcMaxHeaderListSize(size int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgCollectorGrpcMaxHeaderListSize].value = size
+	}
+}
+
+// WithCollectorGrpcSslEnable enables TLS on the gRPC channels to pinpoint collector.
+func WithCollectorGrpcSslEnable(enable bool) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorGrpcSslEnable].value = enable
+	}
+}
+
+// WithCollectorGrpcTrustCertFilePath sets the PEM certificate used as the trust
+// root when verifying the collector's TLS certificate.
+// If not set, the system root CAs are used.
+func WithCollectorGrpcTrustCertFilePath(path string) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorGrpcTrustCertFilePath].value = path
 	}
 }
 

@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"math"
 	"math/rand"
@@ -20,6 +21,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -203,10 +206,10 @@ func newGrpcChannelOptions(config *Config) grpcChannelOptions {
 	}
 }
 
-func (o grpcChannelOptions) dialOptions() []grpc.DialOption {
+func (o grpcChannelOptions) dialOptions(creds credentials.TransportCredentials) []grpc.DialOption {
 	return []grpc.DialOption{
 		grpc.WithKeepaliveParams(o.keepAlive),
-		grpc.WithInsecure(),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithInitialWindowSize(o.flowControlWindow),
 		grpc.WithWriteBufferSize(o.writeBufferSize),
 		grpc.WithMaxHeaderListSize(o.maxHeaderListSize),
@@ -216,10 +219,37 @@ func (o grpcChannelOptions) dialOptions() []grpc.DialOption {
 	}
 }
 
+// collectorCredentials mirrors the C++ agent's make_channel_credentials:
+// TLS disabled is insecure, a configured trust cert path is the trust root,
+// and an empty path with TLS enabled falls back to the system root CAs. An
+// unreadable or invalid cert is an error, never a silent insecure downgrade.
+func collectorCredentials(config *Config) (credentials.TransportCredentials, error) {
+	if !config.Bool(CfgCollectorGrpcSslEnable) {
+		return insecure.NewCredentials(), nil
+	}
+
+	certPath := config.String(CfgCollectorGrpcTrustCertFilePath)
+	if certPath == "" {
+		return credentials.NewTLS(&tls.Config{}), nil
+	}
+
+	creds, err := credentials.NewClientTLSFromFile(certPath, "")
+	if err != nil {
+		return nil, fmt.Errorf("gRPC TLS trust certificate %s: %w", certPath, err)
+	}
+	return creds, nil
+}
+
 func connectCollector(config *Config, portOption string) (*grpc.ClientConn, error) {
-	opts := newGrpcChannelOptions(config).dialOptions()
+	creds, err := collectorCredentials(config)
+	if err != nil {
+		Log("grpc").Errorf("collector TLS credentials - %v", err)
+		return nil, err
+	}
+
+	opts := newGrpcChannelOptions(config).dialOptions(creds)
 	addr := serverAddr(config, portOption)
-	Log("grpc").Infof("connect to collector: %s", addr)
+	Log("grpc").Infof("connect to collector: %s (ssl: %v)", addr, config.Bool(CfgCollectorGrpcSslEnable))
 	conn, err := grpc.Dial(addr, opts...)
 	if err != nil {
 		Log("grpc").Errorf("connect to collector - %s, %v", addr, err)
