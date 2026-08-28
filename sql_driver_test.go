@@ -99,3 +99,23 @@ func Test_sqlConn_OptionalInterfacePassthrough(t *testing.T) {
 	assert.Equal(t, driver.DefaultParameterConverter,
 		stmt.ColumnConverter(0), "no ColumnConverter: default converter")
 }
+
+// A connection must read the live config, not the one captured when it was
+// opened: connections opened before NewAgent otherwise kept the noop agent's
+// config forever, so no setting and no reload ever reached them.
+func Test_sqlConn_UsesLiveConfig(t *testing.T) {
+	conn := newSqlConn(&fakeDriverConn{}, DBInfo{})
+	assert.Equal(t, GetConfig().load(), conn.cfg(), "config resolved per operation")
+
+	c, err := NewConfig(WithAppName("TestApp"), WithSQLMaxBindValueSize(7))
+	assert.NoError(t, err)
+	c.offGrpc = true
+	a, err := NewAgent(c)
+	assert.NoError(t, err)
+	defer a.Shutdown()
+
+	assert.Equal(t, 7, conn.cfg().sqlMaxBindValueSize, "connection sees the new agent's config")
+
+	c.Set(CfgSQLMaxBindValueSize, 9)
+	assert.Equal(t, 9, conn.cfg().sqlMaxBindValueSize, "connection sees the reload")
+}

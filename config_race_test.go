@@ -60,7 +60,9 @@ Http:
 		t.Fatal(err)
 	}
 	agent := newTestAgent(config)
-	conn := &sqlConn{config: config}
+	// sqlConn reads the live config through the global agent, which newTestAgent
+	// registered above with this very Config.
+	conn := &sqlConn{}
 
 	cfgFileViper := viper.New()
 	cfgFileViper.SetConfigFile(cfgFile)

@@ -107,15 +107,22 @@ func (c *sqlConnector) Driver() driver.Driver {
 type sqlConn struct {
 	driver.Conn
 	dbInfo DBInfo
-	config *Config
 }
 
 func newSqlConn(conn driver.Conn, dbInfo DBInfo) *sqlConn {
 	return &sqlConn{
 		Conn:   conn,
 		dbInfo: dbInfo,
-		config: GetConfig(),
 	}
+}
+
+// cfg resolves the settings per operation rather than pinning the Config the
+// connection was opened with. A connection opened before NewAgent - a Ping
+// from package init, a pool warmed at startup - captured the noop agent's own
+// Config, and no setting of the real agent, nor any reload, ever reached that
+// long-lived pooled connection.
+func (c *sqlConn) cfg() *configSnapshot {
+	return GetConfig().load()
 }
 
 // The wrapper embeds the driver.Conn interface, which hides the underlying
@@ -211,7 +218,7 @@ func setSqlSpanEvent(tracer Tracer, start time.Time, err error, sql string, args
 }
 
 func (c *sqlConn) namedValueToString(named []driver.NamedValue) string {
-	cfg := c.config.load()
+	cfg := c.cfg()
 	if !cfg.sqlTraceBindValue || named == nil {
 		return ""
 	}
@@ -227,7 +234,7 @@ func (c *sqlConn) namedValueToString(named []driver.NamedValue) string {
 }
 
 func (c *sqlConn) valueToString(values []driver.Value) string {
-	cfg := c.config.load()
+	cfg := c.cfg()
 	if !cfg.sqlTraceBindValue || values == nil {
 		return ""
 	}
@@ -338,7 +345,7 @@ func (c *sqlConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx
 	start := time.Now()
 	if cbt, ok := c.Conn.(driver.ConnBeginTx); ok {
 		tx, err = cbt.BeginTx(ctx, opts)
-		if cfg := c.config.load(); cfg.sqlTraceCommit || cfg.sqlTraceRollback {
+		if cfg := c.cfg(); cfg.sqlTraceCommit || cfg.sqlTraceRollback {
 			c.newSqlSpanEventNoSql(ctx, "BeginTx", start, err)
 			if err == nil {
 				tx = &sqlTx{tx, c, ctx}
@@ -367,7 +374,7 @@ func (c *sqlConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx
 		default:
 		}
 	}
-	if cfg := c.config.load(); cfg.sqlTraceCommit || cfg.sqlTraceRollback {
+	if cfg := c.cfg(); cfg.sqlTraceCommit || cfg.sqlTraceRollback {
 		c.newSqlSpanEventNoSql(ctx, "Begin", start, err)
 		if err == nil {
 			tx = &sqlTx{tx, c, ctx}
@@ -385,7 +392,7 @@ type sqlTx struct {
 func (t *sqlTx) Commit() (err error) {
 	start := time.Now()
 	err = t.Tx.Commit()
-	if t.conn.config.load().sqlTraceCommit {
+	if t.conn.cfg().sqlTraceCommit {
 		t.conn.newSqlSpanEventNoSql(t.ctx, "Commit", start, err)
 	}
 	return err
@@ -394,7 +401,7 @@ func (t *sqlTx) Commit() (err error) {
 func (t *sqlTx) Rollback() (err error) {
 	start := time.Now()
 	err = t.Tx.Rollback()
-	if t.conn.config.load().sqlTraceRollback {
+	if t.conn.cfg().sqlTraceRollback {
 		t.conn.newSqlSpanEventNoSql(t.ctx, "Rollback", start, err)
 	}
 	return err
