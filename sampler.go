@@ -67,9 +67,13 @@ func (s *percentSampler) isSampled() bool {
 	return r < s.rate
 }
 
+// traceSampler takes the agentStats to count into as an argument rather than
+// holding one: the sampler is built by Config, which outlives - and is created
+// before - any agent. The C++ agent's TraceSampler holds an AgentService and
+// asks it for getAgentStats() per decision, which is the same thing.
 type traceSampler interface {
-	isNewSampled() bool
-	isContinueSampled() bool
+	isNewSampled(stats *agentStats) bool
+	isContinueSampled(stats *agentStats) bool
 }
 
 type basicTraceSampler struct {
@@ -82,18 +86,18 @@ func newBasicTraceSampler(base sampler) *basicTraceSampler {
 	}
 }
 
-func (s *basicTraceSampler) isNewSampled() bool {
+func (s *basicTraceSampler) isNewSampled(stats *agentStats) bool {
 	sampled := s.baseSampler.isSampled()
 	if sampled {
-		incrSampleNew()
+		stats.incrSampleNew()
 	} else {
-		incrUnSampleNew()
+		stats.incrUnSampleNew()
 	}
 	return sampled
 }
 
-func (s *basicTraceSampler) isContinueSampled() bool {
-	incrSampleCont()
+func (s *basicTraceSampler) isContinueSampled(stats *agentStats) bool {
+	stats.incrSampleCont()
 	return true
 }
 
@@ -130,37 +134,37 @@ func per(throughput int, d time.Duration) rate.Limit {
 	return rate.Every(d / time.Duration(throughput))
 }
 
-func (s *throughputLimitTraceSampler) isNewSampled() bool {
+func (s *throughputLimitTraceSampler) isNewSampled(stats *agentStats) bool {
 	sampled := s.baseSampler.isSampled()
 	if sampled {
 		if s.newSampleLimiter != nil {
 			sampled = s.newSampleLimiter.Allow()
 			if sampled {
-				incrSampleNew()
+				stats.incrSampleNew()
 			} else {
-				incrSkipNew()
+				stats.incrSkipNew()
 			}
 		} else {
-			incrSampleNew()
+			stats.incrSampleNew()
 		}
 	} else {
-		incrUnSampleNew()
+		stats.incrUnSampleNew()
 	}
 
 	return sampled
 }
 
-func (s *throughputLimitTraceSampler) isContinueSampled() bool {
+func (s *throughputLimitTraceSampler) isContinueSampled(stats *agentStats) bool {
 	sampled := true
 	if s.continueSampleLimiter != nil {
 		sampled = s.continueSampleLimiter.Allow()
 		if sampled {
-			incrSampleCont()
+			stats.incrSampleCont()
 		} else {
-			incrSkipCont()
+			stats.incrSkipCont()
 		}
 	} else {
-		incrSampleCont()
+		stats.incrSampleCont()
 	}
 
 	return sampled

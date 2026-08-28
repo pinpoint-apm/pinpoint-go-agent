@@ -81,12 +81,12 @@ type agent struct {
 	realTimeActiveSpan sync.Map
 	atcStreamCount     atomic.Int32
 
-	// urlSnapshot accumulates this agent's url stats until its worker drains
-	// it. It used to be a package global that initUrlStat reassigned on every
-	// agent start, so a restart could swap the snapshot out from under the
-	// previous agent's worker and mix the two agents' stats.
-	urlSnapshot     *urlStatSnapshot
-	urlSnapshotLock sync.Mutex
+	// stats and urlStats hold this agent's statistics (see agentStats and
+	// urlStats). Per-agent, not package-global: a restart used to re-prime or
+	// swap the counters and the url snapshot while the previous agent's
+	// abandoned workers and still-in-flight spans were reading them.
+	stats    *agentStats
+	urlStats *urlStats
 
 	config    *Config
 	connectWg sync.WaitGroup
@@ -227,6 +227,8 @@ func NewAgent(config *Config) (Agent, error) {
 		urlStatChan: make(chan *urlStat, config.Int(CfgHttpUrlStatQueueSize)),
 		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),
 		config:      config,
+		stats:       newAgentStats(),
+		urlStats:    newUrlStats(config),
 	}
 	agent.stopSignal()
 
@@ -434,16 +436,16 @@ func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string, re
 
 	sampled := reader.Get(HeaderSampled)
 	if sampled == "s0" {
-		incrUnSampleCont()
+		agent.stats.incrUnSampleCont()
 		return newUnSampledSpan(agent, rpcName)
 	}
 
 	sampler := agent.config.load().sampler
 	tid := reader.Get(HeaderTraceId)
 	if tid == "" {
-		return agent.samplingSpan(func() bool { return sampler.isNewSampled() }, operation, rpcName, reader)
+		return agent.samplingSpan(func() bool { return sampler.isNewSampled(agent.stats) }, operation, rpcName, reader)
 	} else {
-		return agent.samplingSpan(func() bool { return sampler.isContinueSampled() }, operation, rpcName, reader)
+		return agent.samplingSpan(func() bool { return sampler.isContinueSampled(agent.stats) }, operation, rpcName, reader)
 	}
 }
 
@@ -890,8 +892,6 @@ func (agent *agent) collectUrlStatWorker() {
 	Log("agent").Infof("start collect uri stat goroutine")
 	defer agent.workerWg.Done()
 
-	agent.initUrlStat()
-
 	stop := agent.stopSignal().Done()
 
 	for agent.enable.Load() {
@@ -900,7 +900,7 @@ func (agent *agent) collectUrlStatWorker() {
 			Log("agent").Infof("end collect uri stat goroutine")
 			return
 		case uri := <-agent.urlStatChan:
-			agent.addUrlStatSnapshot(uri)
+			agent.urlStats.add(uri)
 		}
 	}
 
@@ -922,7 +922,7 @@ func (agent *agent) sendUrlStatWorker() {
 			return
 		case <-ticker.C:
 			if agent.config.load().collectUrlStat {
-				snapshot := agent.takeUrlStatSnapshot()
+				snapshot := agent.urlStats.takeSnapshot()
 				agent.enqueueStat(makePAgentUriStat(snapshot))
 			}
 		}
@@ -1006,6 +1006,8 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 		urlStatChan: make(chan *urlStat, config.Int(CfgHttpUrlStatQueueSize)),
 		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),
 		config:      config,
+		stats:       newAgentStats(),
+		urlStats:    newUrlStats(config),
 	}
 	agent.errorCache = newMetaCache[string, int32](cacheSize, hashStringKey)
 	agent.sqlCache = newMetaCache[string, int32](cacheSize, hashStringKey)

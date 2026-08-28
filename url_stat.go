@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"sync"
 	"time"
 )
 
@@ -12,15 +13,6 @@ const (
 	urlStatCollectInterval = 30 * time.Second
 )
 
-// clock buckets url stats by collection interval. It stays package level
-// because it holds no per-agent state - the interval is a constant - but it is
-// built once here instead of being reassigned on every agent start.
-var clock = newTickClock(urlStatCollectInterval)
-
-func (agent *agent) initUrlStat() {
-	agent.urlSnapshot = agent.newUrlStatSnapshot()
-}
-
 type urlStat struct {
 	entry     *UrlStatEntry
 	endTime   time.Time
@@ -28,9 +20,61 @@ type urlStat struct {
 	statusErr int
 }
 
+// urlStats owns this agent's url statistics: the clock that buckets them and
+// the snapshot its collect worker fills until the send worker takes it. One
+// instance per agent, mirroring the C++ agent's UrlStats class - the clock used
+// to be a package global and the snapshot was reassigned per agent start, so a
+// restart could swap the snapshot out from under the previous agent's worker
+// and mix the two agents' stats.
+type urlStats struct {
+	config   *Config
+	clock    tickClock
+	mu       sync.Mutex
+	snapshot *urlStatSnapshot
+}
+
+func newUrlStats(config *Config) *urlStats {
+	stats := &urlStats{
+		config: config,
+		clock:  newTickClock(urlStatCollectInterval),
+	}
+	stats.snapshot = stats.newSnapshot()
+	return stats
+}
+
+func (stats *urlStats) newSnapshot() *urlStatSnapshot {
+	return &urlStatSnapshot{
+		urlMap: make(map[urlKey]*eachUrlStat),
+		config: stats.config.load(),
+		clock:  stats.clock,
+	}
+}
+
+func (stats *urlStats) add(us *urlStat) {
+	stats.mu.Lock()
+	defer stats.mu.Unlock()
+
+	stats.snapshot.add(us)
+}
+
+func (stats *urlStats) takeSnapshot() *urlStatSnapshot {
+	// The replacement is built before the lock is taken: allocating the map
+	// and loading the config snapshot has nothing to do with the handover, and
+	// doing it under the lock would stall the request-path adds for it.
+	fresh := stats.newSnapshot()
+
+	stats.mu.Lock()
+	defer stats.mu.Unlock()
+
+	old := stats.snapshot
+	stats.snapshot = fresh
+	return old
+}
+
 type urlStatSnapshot struct {
 	urlMap map[urlKey]*eachUrlStat
 	config *configSnapshot
+	clock  tickClock
 	count  int
 }
 
@@ -56,29 +100,6 @@ type tickClock struct {
 	interval time.Duration
 }
 
-func (agent *agent) newUrlStatSnapshot() *urlStatSnapshot {
-	return &urlStatSnapshot{
-		urlMap: make(map[urlKey]*eachUrlStat, 0),
-		config: agent.config.load(),
-	}
-}
-
-func (agent *agent) addUrlStatSnapshot(us *urlStat) {
-	agent.urlSnapshotLock.Lock()
-	defer agent.urlSnapshotLock.Unlock()
-
-	agent.urlSnapshot.add(us)
-}
-
-func (agent *agent) takeUrlStatSnapshot() *urlStatSnapshot {
-	agent.urlSnapshotLock.Lock()
-	defer agent.urlSnapshotLock.Unlock()
-
-	oldSnapshot := agent.urlSnapshot
-	agent.urlSnapshot = agent.newUrlStatSnapshot()
-	return oldSnapshot
-}
-
 func (snapshot *urlStatSnapshot) add(us *urlStat) {
 	if us.endTime.IsZero() {
 		return
@@ -91,7 +112,7 @@ func (snapshot *urlStatSnapshot) add(us *urlStat) {
 		url = us.entry.Url
 	}
 
-	key := urlKey{url, clock.tick(us.endTime)}
+	key := urlKey{url, snapshot.clock.tick(us.endTime)}
 
 	e, ok := snapshot.urlMap[key]
 	if !ok {

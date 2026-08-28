@@ -84,7 +84,7 @@ func Test_basicTraceSampler_isNewSampled(t *testing.T) {
 			s := &basicTraceSampler{
 				baseSampler: tt.fields.baseSampler,
 			}
-			if got := s.isNewSampled(); got != tt.want {
+			if got := s.isNewSampled(newAgentStats()); got != tt.want {
 				t.Errorf("basicTraceSampler.isNewSampled() = %v, want %v", got, tt.want)
 			}
 		})
@@ -108,7 +108,7 @@ func Test_basicTraceSampler_isContinueSampled(t *testing.T) {
 			s := &basicTraceSampler{
 				baseSampler: tt.fields.baseSampler,
 			}
-			if got := s.isContinueSampled(); got != tt.want {
+			if got := s.isContinueSampled(newAgentStats()); got != tt.want {
 				t.Errorf("basicTraceSampler.isNewSampled() = %v, want %v", got, tt.want)
 			}
 		})
@@ -130,7 +130,7 @@ func Test_throughputLimitTraceSampler_isNewSampled(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := tt.fields.sampler
-			if got := s.isNewSampled(); got != tt.want {
+			if got := s.isNewSampled(newAgentStats()); got != tt.want {
 				t.Errorf("throughputLimitTraceSampler.isNewSampled() = %v, want %v", got, tt.want)
 			}
 		})
@@ -151,21 +151,21 @@ func Test_throughputLimitTraceSampler_skipNew(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := tt.fields.sampler
-			resetResponseTime()
+			stats := newAgentStats()
 
 			for i := 0; i < 100; i++ {
-				s.isNewSampled()
+				s.isNewSampled(stats)
 			}
-			assert.Equal(t, int64(1), readStatsCounters().sampleNew, "sampleNew")
-			assert.Equal(t, int64(99), readStatsCounters().skipNew, "skipNew")
+			assert.Equal(t, int64(1), stats.readCounters().sampleNew, "sampleNew")
+			assert.Equal(t, int64(99), stats.readCounters().skipNew, "skipNew")
 
 			time.Sleep(1 * time.Second)
 
 			for i := 0; i < 100; i++ {
-				s.isNewSampled()
+				s.isNewSampled(stats)
 			}
-			assert.Equal(t, int64(1*2), readStatsCounters().sampleNew, "sampleNew")
-			assert.Equal(t, int64(99*2), readStatsCounters().skipNew, "skipNew")
+			assert.Equal(t, int64(1*2), stats.readCounters().sampleNew, "sampleNew")
+			assert.Equal(t, int64(99*2), stats.readCounters().skipNew, "skipNew")
 		})
 	}
 }
@@ -185,7 +185,7 @@ func Test_throughputLimitTraceSampler_isContinueSampled(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := tt.fields.sampler
-			if got := s.isContinueSampled(); got != tt.want {
+			if got := s.isContinueSampled(newAgentStats()); got != tt.want {
 				t.Errorf("throughputLimitTraceSampler.isNewSampled() = %v, want %v", got, tt.want)
 			}
 		})
@@ -206,21 +206,21 @@ func Test_throughputLimitTraceSampler_skipContinue(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := tt.fields.sampler
-			resetResponseTime()
+			stats := newAgentStats()
 
 			for i := 0; i < 100; i++ {
-				s.isContinueSampled()
+				s.isContinueSampled(stats)
 			}
-			assert.Equal(t, int64(1), readStatsCounters().sampleCont, "sampleCont")
-			assert.Equal(t, int64(99), readStatsCounters().skipCont, "skipCont")
+			assert.Equal(t, int64(1), stats.readCounters().sampleCont, "sampleCont")
+			assert.Equal(t, int64(99), stats.readCounters().skipCont, "skipCont")
 
 			time.Sleep(1 * time.Second)
 
 			for i := 0; i < 100; i++ {
-				s.isContinueSampled()
+				s.isContinueSampled(stats)
 			}
-			assert.Equal(t, int64(1*2), readStatsCounters().sampleCont, "sampleCont")
-			assert.Equal(t, int64(99*2), readStatsCounters().skipCont, "skipCont")
+			assert.Equal(t, int64(1*2), stats.readCounters().sampleCont, "sampleCont")
+			assert.Equal(t, int64(99*2), stats.readCounters().skipCont, "skipCont")
 		})
 	}
 }
@@ -246,17 +246,18 @@ func countConcurrent(n int, isSampled func() bool) int {
 func Test_throughputLimitTraceSampler_burst(t *testing.T) {
 	const tps = 100
 	s := newThroughputLimitTraceSampler(newRateSampler(1), tps, tps)
+	stats := newAgentStats()
 
 	// a burst of tps requests arriving at once is sampled in full: the limiter
 	// starts with tps tokens, like the fixed window of the Java and C++ agents.
-	assert.Equal(t, tps, countConcurrent(tps, s.isNewSampled), "new burst")
-	assert.Equal(t, tps, countConcurrent(tps, s.isContinueSampled), "continue burst")
+	assert.Equal(t, tps, countConcurrent(tps, func() bool { return s.isNewSampled(stats) }), "new burst")
+	assert.Equal(t, tps, countConcurrent(tps, func() bool { return s.isContinueSampled(stats) }), "continue burst")
 
 	// the burst does not raise the average: the tokens are spent now, so a
 	// second of sustained load past the empty bucket yields about tps samples.
 	sampled := 0
 	for deadline := time.Now().Add(1 * time.Second); time.Now().Before(deadline); {
-		if s.isNewSampled() {
+		if s.isNewSampled(stats) {
 			sampled++
 		}
 	}
@@ -267,7 +268,8 @@ func Test_throughputLimitTraceSampler_hugeThroughput(t *testing.T) {
 	// a tps beyond one event per nanosecond makes per() an infinite rate: the
 	// burst of tps must neither overflow the limiter nor throttle anything.
 	s := newThroughputLimitTraceSampler(newRateSampler(1), math.MaxInt32, math.MaxInt32)
+	stats := newAgentStats()
 
-	assert.Equal(t, 1000, countConcurrent(1000, s.isNewSampled), "new")
-	assert.Equal(t, 1000, countConcurrent(1000, s.isContinueSampled), "continue")
+	assert.Equal(t, 1000, countConcurrent(1000, func() bool { return s.isNewSampled(stats) }), "new")
+	assert.Equal(t, 1000, countConcurrent(1000, func() bool { return s.isContinueSampled(stats) }), "continue")
 }

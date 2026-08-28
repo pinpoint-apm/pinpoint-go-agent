@@ -212,7 +212,8 @@ func BenchmarkSpanLifecycleParallel(b *testing.B) {
 func BenchmarkActiveSpanRegistryParallel(b *testing.B) {
 	const residentPerShard = 8
 
-	r := newActiveSpanRegistry()
+	var r activeSpanRegistry
+	r.init()
 	start := time.Now()
 	// Keep a working set registered so the measured store/delete hits populated
 	// map buckets instead of a degenerate empty map.

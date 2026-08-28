@@ -25,6 +25,8 @@ func newTestAgent(config *Config) *agent {
 		spanQueue: newSpanQueue(cacheSize),
 		metaChan:  make(chan interface{}, cacheSize),
 		config:    config,
+		stats:     newAgentStats(),
+		urlStats:  newUrlStats(config),
 		objName: &objectName{
 			version:         nameV3,
 			agentID:         "testAgent",

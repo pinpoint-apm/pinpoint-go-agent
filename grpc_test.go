@@ -445,7 +445,7 @@ func Test_statStream_sendStat(t *testing.T) {
 			stream := agent.statGrpc.newStatStreamWithRetry()
 
 			stats := make([]*inspectorStats, 1)
-			stats[0] = newStatSampler().getStats()
+			stats[0] = agent.stats.getStats()
 			msg := makePAgentStatBatch(stats)
 			err := stream.sendStats(msg)
 			assert.NoError(t, err, "sendStats")
@@ -474,7 +474,7 @@ func Test_statStream_sendStatRetry(t *testing.T) {
 			stream := agent.statGrpc.newStatStreamWithRetry()
 
 			stats := make([]*inspectorStats, 1)
-			stats[0] = newStatSampler().getStats()
+			stats[0] = agent.stats.getStats()
 			msg := makePAgentStatBatch(stats)
 			err := stream.sendStats(msg)
 			assert.NoError(t, err, "sendStats")

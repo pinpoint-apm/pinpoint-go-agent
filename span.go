@@ -119,7 +119,7 @@ func (span *span) EndSpan() {
 		span.EndSpanEvent() //async span event
 	} else {
 		dropSampledActiveSpan(span)
-		collectResponseTime(span.elapsed)
+		span.agent.stats.collectResponseTime(span.elapsed)
 	}
 
 	if span.eventStack.len() > 0 {

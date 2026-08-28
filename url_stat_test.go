@@ -191,11 +191,13 @@ func newUrlStatTestSnapshot(limit int, withMethod bool) (*urlStatSnapshot, time.
 	config := defaultConfig()
 	config.Set(CfgHttpUrlStatLimitSize, limit)
 	config.Set(CfgHttpUrlStatWithMethod, withMethod)
-	agent := newTestAgent(config)
-	clock = newTickClock(urlStatCollectInterval)
 
-	return agent.newUrlStatSnapshot(), time.Unix(1700000000, 123000000).UTC()
+	return newUrlStats(config).newSnapshot(), time.Unix(1700000000, 123000000).UTC()
 }
+
+// testTickClock is the clock every snapshot above buckets with, for tests that
+// need to rebuild a key.
+var testTickClock = newTickClock(urlStatCollectInterval)
 
 func addTestUrlStat(snapshot *urlStatSnapshot, url string, method string, statusErr int, elapsed int64, endTime time.Time) {
 	snapshot.add(&urlStat{
@@ -212,7 +214,7 @@ func addTestUrlStat(snapshot *urlStatSnapshot, url string, method string, status
 func findEachUrlStat(t *testing.T, snapshot *urlStatSnapshot, url string, endTime time.Time) *eachUrlStat {
 	t.Helper()
 
-	stat, ok := snapshot.urlMap[urlKey{url: url, tick: clock.tick(endTime)}]
+	stat, ok := snapshot.urlMap[urlKey{url: url, tick: testTickClock.tick(endTime)}]
 	assert.True(t, ok, "url=%s", url)
 	if !ok {
 		return nil
@@ -230,7 +232,7 @@ func histogramCount(histogram *urlStatHistogram) int32 {
 
 func makeExpectedUrlStats(samples []urlStatSample, endTime time.Time) map[string]*expectedUrlStat {
 	expected := make(map[string]*expectedUrlStat)
-	timestamp := clock.tick(endTime).UnixNano() / int64(time.Millisecond)
+	timestamp := testTickClock.tick(endTime).UnixNano() / int64(time.Millisecond)
 
 	for _, sample := range samples {
 		stat := expected[sample.url]
@@ -287,20 +289,18 @@ func (histogram expectedUrlHistogram) isEmpty() bool {
 	return true
 }
 
-// Url stats accumulate on the agent, not in a package global that initUrlStat
-// reassigns: a second agent starts with an empty snapshot and cannot have its
-// snapshot swapped out from under the first agent's worker.
+// Url stats accumulate in the agent's own urlStats, not in a package global: a
+// second agent starts with an empty snapshot and cannot have its snapshot
+// swapped out from under the first agent's worker.
 func Test_agent_urlStatSnapshot_isPerAgent(t *testing.T) {
 	first, second := newTestAgent(defaultConfig()), newTestAgent(defaultConfig())
-	first.initUrlStat()
-	second.initUrlStat()
 
 	endTime := time.Unix(1700000000, 123000000).UTC()
-	addTestUrlStat(first.urlSnapshot, "/only-on-first", "GET", urlStatusSuccess, 100, endTime)
+	addTestUrlStat(first.urlStats.snapshot, "/only-on-first", "GET", urlStatusSuccess, 100, endTime)
 
-	assert.Equal(t, 1, first.takeUrlStatSnapshot().count, "first agent")
-	assert.Equal(t, 0, second.takeUrlStatSnapshot().count, "second agent")
+	assert.Equal(t, 1, first.urlStats.takeSnapshot().count, "first agent")
+	assert.Equal(t, 0, second.urlStats.takeSnapshot().count, "second agent")
 
 	// taking the snapshot leaves the agent a fresh one to keep filling
-	assert.Equal(t, 0, first.urlSnapshot.count, "first agent after take")
+	assert.Equal(t, 0, first.urlStats.snapshot.count, "first agent after take")
 }

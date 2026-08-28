@@ -36,29 +36,6 @@ type inspectorStats struct {
 	activeSpan   []int32
 }
 
-var (
-	// proc, like activeSpan below, is built once here and never reassigned.
-	// initStats used to rebuild it on every agent start, which wrote a global
-	// that a previous agent's stat worker could still be reading in getStats
-	// if a shutdown timeout had abandoned it.
-	proc = newProcHandle()
-
-	// activeSpan is created once here and read by the request path on every
-	// span begin and end; re-creating it on agent start raced with in-flight
-	// spans and dropped the entries of spans that began before a restart and
-	// ended after it.
-	activeSpan = newActiveSpanRegistry()
-)
-
-func newProcHandle() *process.Process {
-	p, err := process.NewProcess(int32(os.Getpid()))
-	if err != nil {
-		return nil
-	}
-	p.Percent(0)
-	return p
-}
-
 // The per-request counters (response time acc/max/count plus the six sampler
 // outcomes) are sharded by goroutine id. As process-global singles, every
 // request's atomic RMW hit the same cache lines and the max update spun on a
@@ -83,17 +60,71 @@ type statShard struct {
 	_               [7]int64
 }
 
-var statShards [statShardCount]statShard
+// agentStats owns everything the agent stat collector reads: the per-request
+// counters, the registry of in-flight spans, the process handle and the
+// previous sample's baselines. One instance per agent, reached from the request
+// path through span.agent, mirroring the C++ agent's AgentStats class. As
+// package globals these had to be built once for the process lifetime and
+// never rebuilt, because a restart would otherwise re-prime or swap them while
+// a previous agent's abandoned stat worker and its still-in-flight spans were
+// reading them; owning them per agent is what makes rebuilding them safe.
+type agentStats struct {
+	// proc is nil when the process handle cannot be opened; every reader
+	// below tolerates that.
+	proc *process.Process
 
-// statShardSelf returns the calling goroutine's shard. When the goid offset
-// is unavailable (goIdOffset == 0) every goroutine shares shard 0: the
-// goIdFromDump fallback parses a stack dump and is far too slow for this
-// path, and a single shard is exactly the pre-sharding behavior.
-func statShardSelf() *statShard {
-	if goIdOffset == 0 {
-		return &statShards[0]
+	shards     [statShardCount]statShard
+	activeSpan activeSpanRegistry
+
+	// The previous sample's memory counters and timestamp, which the next
+	// sample turns into GC deltas and a collection interval. Only the agent's
+	// single stat worker touches them.
+	lastMemStat     runtime.MemStats
+	lastCollectTime time.Time
+}
+
+func newAgentStats() *agentStats {
+	stats := &agentStats{proc: newProcHandle()}
+	stats.activeSpan.init()
+	stats.init()
+	return stats
+}
+
+// init primes the CPU and memory baselines and clears the counters so the
+// first collection interval measures a real period. Mirrors the C++ agent's
+// AgentStats::initAgentStats: the stat worker calls it again when it starts,
+// which can be seconds after the agent was created.
+func (stats *agentStats) init() {
+	// The system-wide CPU baseline lives in a gopsutil package global, so it
+	// is the one piece of this state that cannot move onto the agent.
+	cpu.Percent(0, false)
+	if stats.proc != nil {
+		stats.proc.Percent(0)
 	}
-	return &statShards[uint64(goIdFromG())&(statShardCount-1)]
+
+	stats.reset()
+	runtime.ReadMemStats(&stats.lastMemStat)
+	stats.lastCollectTime = time.Now()
+}
+
+func newProcHandle() *process.Process {
+	p, err := process.NewProcess(int32(os.Getpid()))
+	if err != nil {
+		return nil
+	}
+	p.Percent(0)
+	return p
+}
+
+// shard returns the calling goroutine's counter shard. When the goid offset is
+// unavailable (goIdOffset == 0) every goroutine shares shard 0: the
+// goIdFromDump fallback parses a stack dump and is far too slow for this path,
+// and a single shard is exactly the pre-sharding behavior.
+func (stats *agentStats) shard() *statShard {
+	if goIdOffset == 0 {
+		return &stats.shards[0]
+	}
+	return &stats.shards[uint64(goIdFromG())&(statShardCount-1)]
 }
 
 // activeSpanRegistry tracks the start time of in-flight spans keyed by span id.
@@ -130,12 +161,12 @@ type activeSpanShard struct {
 	_ [cacheLinePadSize - unsafe.Sizeof(activeSpanShardInternal{})%cacheLinePadSize]byte
 }
 
-func newActiveSpanRegistry() *activeSpanRegistry {
-	r := &activeSpanRegistry{}
+// init allocates the shard maps. The registry is a value field of agentStats,
+// so it is initialized in place rather than returned by a constructor.
+func (r *activeSpanRegistry) init() {
 	for i := range r.shards {
 		r.shards[i].m = make(map[int64]time.Time)
 	}
-	return r
 }
 
 func (r *activeSpanRegistry) shard(spanId int64) *activeSpanShard {
@@ -191,69 +222,48 @@ type statsCounterSnapshot struct {
 	skipCont        int64
 }
 
-// initStats primes the system-wide CPU baseline so the collector's first
-// sample measures a real interval. What used to live here besides that is now
-// either built once at package init (proc, activeSpan) or per stat worker
-// (statSampler), because writing it per agent start raced with the previous
-// agent's stat worker and with the request path.
-func initStats() {
-	cpu.Percent(0, false)
-}
-
-func getNumFD() int32 {
-	if proc != nil {
-		n, _ := proc.NumFDs()
+func (stats *agentStats) numFD() int32 {
+	if stats.proc != nil {
+		n, _ := stats.proc.NumFDs()
 		return n
 	}
 	return 0
 }
 
-func getNumThreads() int32 {
-	if proc != nil {
-		n, _ := proc.NumThreads()
+func (stats *agentStats) numThreads() int32 {
+	if stats.proc != nil {
+		n, _ := stats.proc.NumThreads()
 		return n
 	}
 	return 0
 }
 
-func getCpuLoad() (float64, float64) {
+func (stats *agentStats) cpuLoad() (float64, float64) {
 	var procCpu float64
-	if proc != nil {
-		procCpu, _ = proc.Percent(0)
-	} else {
-		procCpu = 0
+	if stats.proc != nil {
+		procCpu, _ = stats.proc.Percent(0)
 	}
-	sysCpu, _ := cpu.Percent(0, false)
 
-	return procCpu / 100, sysCpu[0] / 100
+	// A failed reading returns no per-cpu entries; reporting 0 keeps a
+	// transient error from panicking the stat worker (and with it the process).
+	var sysCpu float64
+	if percent, err := cpu.Percent(0, false); err == nil && len(percent) > 0 {
+		sysCpu = percent[0]
+	}
+
+	return procCpu / 100, sysCpu / 100
 }
 
-// statSampler carries the previous sample's memory counters and timestamp,
-// which the next sample turns into GC deltas and a collection interval. One per
-// stat worker rather than a pair of package globals: a shutdown that times out
-// abandons its stat worker, and the next agent's worker would then write those
-// globals while the abandoned one was still reading them.
-type statSampler struct {
-	lastMemStat     runtime.MemStats
-	lastCollectTime time.Time
-}
-
-func newStatSampler() *statSampler {
-	s := &statSampler{lastCollectTime: time.Now()}
-	runtime.ReadMemStats(&s.lastMemStat)
-	return s
-}
-
-func (s *statSampler) getStats() *inspectorStats {
+func (stats *agentStats) getStats() *inspectorStats {
 	now := time.Now()
-	procCpu, sysCpu := getCpuLoad()
-	counters := drainStatsCounters()
+	procCpu, sysCpu := stats.cpuLoad()
+	counters := stats.drainCounters()
 
 	var memStat runtime.MemStats
 	runtime.ReadMemStats(&memStat)
-	elapsed := now.Sub(s.lastCollectTime).Seconds()
+	elapsed := now.Sub(stats.lastCollectTime).Seconds()
 
-	stats := inspectorStats{
+	inspector := inspectorStats{
 		sampleTime:   now,
 		interval:     int64(elapsed) * 1000,
 		cpuProcLoad:  procCpu,
@@ -262,10 +272,10 @@ func (s *statSampler) getStats() *inspectorStats {
 		heapMax:      int64(memStat.HeapSys),
 		nonHeapUsed:  int64(memStat.StackInuse),
 		nonHeapMax:   int64(memStat.StackSys),
-		gcNum:        int64(memStat.NumGC - s.lastMemStat.NumGC),
-		gcTime:       int64(memStat.PauseTotalNs-s.lastMemStat.PauseTotalNs) / int64(time.Millisecond),
-		numOpenFD:    int64(getNumFD()),
-		numThreads:   int64(getNumThreads()),
+		gcNum:        int64(memStat.NumGC - stats.lastMemStat.NumGC),
+		gcTime:       int64(memStat.PauseTotalNs-stats.lastMemStat.PauseTotalNs) / int64(time.Millisecond),
+		numOpenFD:    int64(stats.numFD()),
+		numThreads:   int64(stats.numThreads()),
 		responseAvg:  calcResponseAvg(counters.accResponseTime, counters.requestCount),
 		responseMax:  counters.maxResponseTime,
 		sampleNew:    counters.sampleNew,
@@ -274,26 +284,26 @@ func (s *statSampler) getStats() *inspectorStats {
 		unSampleCont: counters.unSampleCont,
 		skipNew:      counters.skipNew,
 		skipCont:     counters.skipCont,
-		activeSpan:   activeSpanCount(now),
+		activeSpan:   stats.activeSpan.count(now),
 	}
 
-	s.lastMemStat = memStat
-	s.lastCollectTime = now
+	stats.lastMemStat = memStat
+	stats.lastCollectTime = now
 
-	return &stats
+	return &inspector
 }
 
-// drainStatsCounters sweeps every shard, swapping each counter to zero and
-// summing (max-combining maxResponseTime). Accuracy: each increment lands in
-// exactly one collection interval — no loss, no double count — but the
-// interval boundary is fuzzy by the duration of the sweep, and one request's
+// drainCounters sweeps every shard, swapping each counter to zero and summing
+// (max-combining maxResponseTime). Accuracy: each increment lands in exactly
+// one collection interval — no loss, no double count — but the interval
+// boundary is fuzzy by the duration of the sweep, and one request's
 // (accResponseTime, requestCount) pair can split across two intervals if the
 // sweep interleaves between the two adds. Both were already true of the nine
 // sequential global swaps this replaces.
-func drainStatsCounters() statsCounterSnapshot {
+func (stats *agentStats) drainCounters() statsCounterSnapshot {
 	var c statsCounterSnapshot
-	for i := range statShards {
-		s := &statShards[i]
+	for i := range stats.shards {
+		s := &stats.shards[i]
 		c.accResponseTime += atomic.SwapInt64(&s.accResponseTime, 0)
 		if max := atomic.SwapInt64(&s.maxResponseTime, 0); max > c.maxResponseTime {
 			c.maxResponseTime = max
@@ -317,17 +327,11 @@ func calcResponseAvg(accResponseTime int64, requestCount int64) int64 {
 	return 0
 }
 
-func activeSpanCount(now time.Time) []int32 {
-	return activeSpan.count(now)
-}
-
 func (agent *agent) collectAgentStatWorker() {
 	Log("stats").Infof("start collect agent stat goroutine")
 	defer agent.workerWg.Done()
 
-	initStats()
-	resetResponseTime()
-	sampler := newStatSampler()
+	agent.stats.init()
 
 	interval := time.Duration(agent.config.Int(CfgStatCollectInterval)) * time.Millisecond
 	ticker := time.NewTicker(interval)
@@ -344,7 +348,7 @@ func (agent *agent) collectAgentStatWorker() {
 			Log("stats").Infof("end collect agent stat goroutine")
 			return
 		case <-ticker.C:
-			collected[batch] = sampler.getStats()
+			collected[batch] = agent.stats.getStats()
 			batch++
 
 			if batch == cfgBatchCount {
@@ -355,8 +359,8 @@ func (agent *agent) collectAgentStatWorker() {
 	}
 }
 
-func collectResponseTime(resTime int64) {
-	s := statShardSelf()
+func (stats *agentStats) collectResponseTime(resTime int64) {
+	s := stats.shard()
 	atomic.AddInt64(&s.accResponseTime, resTime)
 	atomic.AddInt64(&s.requestCount, 1)
 
@@ -371,9 +375,9 @@ func collectResponseTime(resTime int64) {
 	}
 }
 
-func resetResponseTime() {
-	for i := range statShards {
-		s := &statShards[i]
+func (stats *agentStats) reset() {
+	for i := range stats.shards {
+		s := &stats.shards[i]
 		atomic.StoreInt64(&s.accResponseTime, 0)
 		atomic.StoreInt64(&s.requestCount, 0)
 		atomic.StoreInt64(&s.maxResponseTime, 0)
@@ -387,40 +391,40 @@ func resetResponseTime() {
 }
 
 func addSampledActiveSpan(span *span) {
-	activeSpan.store(span.spanId, span.startTime)
+	span.agent.stats.activeSpan.store(span.spanId, span.startTime)
 	addRealTimeSampledActiveSpan(span)
 }
 
 func dropSampledActiveSpan(span *span) {
-	activeSpan.remove(span.spanId)
+	span.agent.stats.activeSpan.remove(span.spanId)
 	dropRealTimeSampledActiveSpan(span)
 }
 
 func addUnSampledActiveSpan(span *noopSpan) {
-	activeSpan.store(span.spanId, span.startTime)
+	span.agent.stats.activeSpan.store(span.spanId, span.startTime)
 	addRealTimeUnSampledActiveSpan(span)
 }
 
 func dropUnSampledActiveSpan(span *noopSpan) {
-	activeSpan.remove(span.spanId)
+	span.agent.stats.activeSpan.remove(span.spanId)
 	dropRealTimeUnSampledActiveSpan(span)
 }
 
-func incrSampleNew() {
-	atomic.AddInt64(&statShardSelf().sampleNew, 1)
+func (stats *agentStats) incrSampleNew() {
+	atomic.AddInt64(&stats.shard().sampleNew, 1)
 }
-func incrUnSampleNew() {
-	atomic.AddInt64(&statShardSelf().unSampleNew, 1)
+func (stats *agentStats) incrUnSampleNew() {
+	atomic.AddInt64(&stats.shard().unSampleNew, 1)
 }
-func incrSampleCont() {
-	atomic.AddInt64(&statShardSelf().sampleCont, 1)
+func (stats *agentStats) incrSampleCont() {
+	atomic.AddInt64(&stats.shard().sampleCont, 1)
 }
-func incrUnSampleCont() {
-	atomic.AddInt64(&statShardSelf().unSampleCont, 1)
+func (stats *agentStats) incrUnSampleCont() {
+	atomic.AddInt64(&stats.shard().unSampleCont, 1)
 }
-func incrSkipNew() {
-	atomic.AddInt64(&statShardSelf().skipNew, 1)
+func (stats *agentStats) incrSkipNew() {
+	atomic.AddInt64(&stats.shard().skipNew, 1)
 }
-func incrSkipCont() {
-	atomic.AddInt64(&statShardSelf().skipCont, 1)
+func (stats *agentStats) incrSkipCont() {
+	atomic.AddInt64(&stats.shard().skipCont, 1)
 }

@@ -9,12 +9,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// readStatsCounters sums the shards without resetting them, for tests that
-// assert on cumulative counts (drainStatsCounters is destructive).
-func readStatsCounters() statsCounterSnapshot {
+// readCounters sums the shards without resetting them, for tests that assert
+// on cumulative counts (drainCounters is destructive).
+func (stats *agentStats) readCounters() statsCounterSnapshot {
 	var c statsCounterSnapshot
-	for i := range statShards {
-		s := &statShards[i]
+	for i := range stats.shards {
+		s := &stats.shards[i]
 		c.sampleNew += atomic.LoadInt64(&s.sampleNew)
 		c.skipNew += atomic.LoadInt64(&s.skipNew)
 		c.sampleCont += atomic.LoadInt64(&s.sampleCont)
@@ -24,18 +24,18 @@ func readStatsCounters() statsCounterSnapshot {
 }
 
 func Test_drainStatsCountersSwapsAndResets(t *testing.T) {
-	resetResponseTime()
+	stats := newAgentStats()
 
-	collectResponseTime(100)
-	collectResponseTime(200)
-	incrSampleNew()
-	incrUnSampleNew()
-	incrSampleCont()
-	incrUnSampleCont()
-	incrSkipNew()
-	incrSkipCont()
+	stats.collectResponseTime(100)
+	stats.collectResponseTime(200)
+	stats.incrSampleNew()
+	stats.incrUnSampleNew()
+	stats.incrSampleCont()
+	stats.incrUnSampleCont()
+	stats.incrSkipNew()
+	stats.incrSkipCont()
 
-	counters := drainStatsCounters()
+	counters := stats.drainCounters()
 
 	assert.Equal(t, int64(300), counters.accResponseTime)
 	assert.Equal(t, int64(200), counters.maxResponseTime)
@@ -47,13 +47,13 @@ func Test_drainStatsCountersSwapsAndResets(t *testing.T) {
 	assert.Equal(t, int64(1), counters.skipNew)
 	assert.Equal(t, int64(1), counters.skipCont)
 
-	assert.Equal(t, statsCounterSnapshot{}, drainStatsCounters(), "second drain must return zeros")
+	assert.Equal(t, statsCounterSnapshot{}, stats.drainCounters(), "second drain must return zeros")
 }
 
 // Every increment must be aggregated exactly once across all shards,
 // regardless of which goroutine (and therefore which shard) recorded it.
 func Test_drainStatsCountersAggregatesAllShards(t *testing.T) {
-	resetResponseTime()
+	stats := newAgentStats()
 
 	const goroutines = 64
 	const perG = 100
@@ -64,19 +64,19 @@ func Test_drainStatsCountersAggregatesAllShards(t *testing.T) {
 		go func(g int) {
 			defer wg.Done()
 			for i := 0; i < perG; i++ {
-				collectResponseTime(int64(g*perG + i + 1))
-				incrSampleNew()
-				incrUnSampleNew()
-				incrSampleCont()
-				incrUnSampleCont()
-				incrSkipNew()
-				incrSkipCont()
+				stats.collectResponseTime(int64(g*perG + i + 1))
+				stats.incrSampleNew()
+				stats.incrUnSampleNew()
+				stats.incrSampleCont()
+				stats.incrUnSampleCont()
+				stats.incrSkipNew()
+				stats.incrSkipCont()
 			}
 		}(g)
 	}
 	wg.Wait()
 
-	counters := drainStatsCounters()
+	counters := stats.drainCounters()
 
 	const n = int64(goroutines * perG)
 	assert.Equal(t, n*(n+1)/2, counters.accResponseTime)
@@ -88,23 +88,23 @@ func Test_drainStatsCountersAggregatesAllShards(t *testing.T) {
 	assert.Equal(t, n, counters.unSampleCont)
 	assert.Equal(t, n, counters.skipNew)
 	assert.Equal(t, n, counters.skipCont)
-	assert.Equal(t, statsCounterSnapshot{}, drainStatsCounters(), "second drain must return zeros")
+	assert.Equal(t, statsCounterSnapshot{}, stats.drainCounters(), "second drain must return zeros")
 }
 
 // Without a goid offset the counters degrade to a single shard but must
 // still aggregate correctly.
-func Test_statShardSelfWithoutGoIdOffset(t *testing.T) {
+func Test_statShardWithoutGoIdOffset(t *testing.T) {
 	saved := goIdOffset
 	goIdOffset = 0
 	defer func() { goIdOffset = saved }()
 
-	resetResponseTime()
-	collectResponseTime(100)
-	incrSkipNew()
+	stats := newAgentStats()
+	stats.collectResponseTime(100)
+	stats.incrSkipNew()
 
-	assert.Equal(t, &statShards[0], statShardSelf())
+	assert.Equal(t, &stats.shards[0], stats.shard())
 
-	counters := drainStatsCounters()
+	counters := stats.drainCounters()
 	assert.Equal(t, int64(100), counters.accResponseTime)
 	assert.Equal(t, int64(100), counters.maxResponseTime)
 	assert.Equal(t, int64(1), counters.requestCount)
@@ -112,13 +112,13 @@ func Test_statShardSelfWithoutGoIdOffset(t *testing.T) {
 }
 
 func Test_collectResponseTimePreservesMax(t *testing.T) {
-	resetResponseTime()
+	stats := newAgentStats()
 
-	collectResponseTime(300)
-	collectResponseTime(100)
-	collectResponseTime(200)
+	stats.collectResponseTime(300)
+	stats.collectResponseTime(100)
+	stats.collectResponseTime(200)
 
-	counters := drainStatsCounters()
+	counters := stats.drainCounters()
 
 	assert.Equal(t, int64(600), counters.accResponseTime)
 	assert.Equal(t, int64(3), counters.requestCount)

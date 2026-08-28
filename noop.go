@@ -84,7 +84,7 @@ func (span *noopSpan) EndSpan() {
 		dropUnSampledActiveSpan(span)
 		endTime := time.Now()
 		elapsed := endTime.UnixMilli() - span.startTime.UnixMilli()
-		collectResponseTime(elapsed)
+		span.agent.stats.collectResponseTime(elapsed)
 		if span.urlStat != nil {
 			span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: elapsed, statusErr: span.statusErr})
 		}
