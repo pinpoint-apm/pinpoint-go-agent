@@ -488,6 +488,53 @@ func Test_sendStreamWithTimeout_passesThroughResult(t *testing.T) {
 	assert.Equal(t, sendErr, sendStreamWithTimeout(func() error { return sendErr }, func() {}, time.Second, "test"))
 }
 
+func Test_sendStreamWithTimeout_waitsForStartedCallback(t *testing.T) {
+	// Force Stop to lose to the timer while cancelStream is still running.
+	// The helper must join that callback instead of letting cancellation escape.
+	cancelStarted := make(chan struct{})
+	finishCancel := make(chan struct{})
+	cancelFinished := make(chan struct{})
+	result := make(chan error, 1)
+	var finishOnce sync.Once
+	finish := func() { finishOnce.Do(func() { close(finishCancel) }) }
+	defer finish()
+
+	go func() {
+		result <- sendStreamWithTimeout(
+			func() error {
+				<-cancelStarted
+				return nil
+			},
+			func() {
+				close(cancelStarted)
+				<-finishCancel
+				close(cancelFinished)
+			},
+			0, "test stream.Send()",
+		)
+	}()
+
+	<-cancelStarted
+	select {
+	case err := <-result:
+		t.Fatalf("returned %v while the cancellation callback was still running", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	finish()
+	select {
+	case err := <-result:
+		assert.Equal(t, codes.DeadlineExceeded, status.Code(err))
+		select {
+		case <-cancelFinished:
+		default:
+			t.Fatal("returned before the cancellation callback completed")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("did not return after the cancellation callback completed")
+	}
+}
+
 // An unresponsive stream: Send blocks until the stream context is cancelled,
 // which is how a grpc-go Send stuck on flow control behaves. The wrapper must
 // unblock it via cancel and, running the send on the calling goroutine, leave
@@ -507,8 +554,8 @@ func Test_sendStreamWithTimeout_unresponsiveStreamLeaksNothing(t *testing.T) {
 		assert.Equal(t, codes.DeadlineExceeded, status.Code(err))
 	}
 
-	// Allow the fired AfterFunc callbacks to finish; they are the only
-	// transient goroutines this path may create.
+	// Fired AfterFunc callbacks are joined before each call returns; give any
+	// unrelated runtime cleanup a moment to settle before comparing.
 	deadline := time.Now().Add(time.Second)
 	for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
