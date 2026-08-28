@@ -344,7 +344,11 @@ func (span *span) EndSpanEvent() {
 				se.SetError(err, "panic")
 				span.SetError(err)
 				span.recovered = true
-				panic(err)
+				// Re-panic with the original value, not the recorded error:
+				// converting a non-error panic to an error broke every
+				// upstream recover comparing against the value it panicked
+				// with (a sentinel string, a custom type).
+				panic(v)
 			}
 		}
 

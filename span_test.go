@@ -553,3 +553,19 @@ func TestSpan_ExtractParsesFullRangeSpanId(t *testing.T) {
 	assert.Equal(t, int64(9007199254740993), span.spanId, "spanId")
 	assert.Equal(t, int64(-9007199254740993), span.parentSpanId, "parentSpanId")
 }
+
+// EndSpanEvent records a panic and re-panics; the value an upstream recover
+// sees must be the original one, or sentinel comparisons stop matching.
+func TestSpan_EndSpanEventRepanicsOriginalValue(t *testing.T) {
+	span := defaultTestSpan()
+	span.NewSpanEvent("event")
+
+	var got interface{}
+	func() {
+		defer func() { got = recover() }()
+		defer span.EndSpanEvent()
+		panic("sentinel")
+	}()
+
+	assert.Equal(t, "sentinel", got, "original panic value preserved")
+}
