@@ -12,7 +12,6 @@
 package ppfiber
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
@@ -63,7 +62,10 @@ func wrap(f func(c *fiber.Ctx) error, handlerName string) fiber.Handler {
 
 		defer tracer.NewSpanEvent(handlerName).EndSpanEvent()
 
-		c.SetUserContext(pinpoint.NewContext(context.Background(), tracer))
+		// Derive from the request's own user context, not a fresh background
+		// one: replacing it discarded whatever an earlier middleware had put
+		// there - auth values, deadlines - for the rest of the handler.
+		c.SetUserContext(pinpoint.NewContext(c.UserContext(), tracer))
 		err := f(c)
 		if err != nil {
 			pphttp.RecordHttpHandlerError(tracer, err)
