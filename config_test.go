@@ -730,3 +730,10 @@ func TestNewConfig_HttpUrlStatQueueSizeIsIndependentOfSpanQueueSize(t *testing.T
 	assert.NoError(t, err)
 	assert.Equal(t, defaultQueueSize, c.Int(CfgHttpUrlStatQueueSize), CfgHttpUrlStatQueueSize)
 }
+
+func TestNewConfig_ClampStatOptions(t *testing.T) {
+	c, err := NewConfig(WithAppName("TestApp"), WithStatCollectInterval(0), WithStatBatchCount(-1))
+	assert.NoError(t, err)
+	assert.Equal(t, 5000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
+	assert.Equal(t, 6, c.Int(CfgStatBatchCount), CfgStatBatchCount)
+}

@@ -391,6 +391,14 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	if config.stagedInt(CfgCollectorAgentInfoMaxTryPerAttempt) < 1 {
 		config.cfgMap[CfgCollectorAgentInfoMaxTryPerAttempt].value = defaultAgentInfoMaxTryPerAttempt
 	}
+	// A non-positive interval panics time.NewTicker and a non-positive batch
+	// count panics the stat worker's batch indexing, killing the host process.
+	if config.stagedInt(CfgStatCollectInterval) < 1 {
+		config.cfgMap[CfgStatCollectInterval].value = 5000
+	}
+	if config.stagedInt(CfgStatBatchCount) < 1 {
+		config.cfgMap[CfgStatBatchCount].value = 6
+	}
 	config.publish()
 
 	return config, nil
