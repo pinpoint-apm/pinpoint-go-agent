@@ -63,7 +63,7 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	// Since the service type ELASTICSEARCH_HIGHLEVEL_CLIENT(9204) depends on HTTP_CLIENT_4(9052),
 	// an additional span event must be added like elasticsearch-plugin of java agent.
-	defer tracer.NewSpanEvent("transport.RoundTrip()").SpanEvent()
+	defer tracer.NewSpanEvent("transport.RoundTrip()").EndSpanEvent()
 	se = tracer.SpanEvent()
 	se.SetServiceType(ServiceTypeHttpClient4)
 	se.SetDestination(req.URL.Host)
