@@ -3,6 +3,8 @@ package pinpoint
 import (
 	"context"
 	"github.com/stretchr/testify/assert"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -487,4 +489,52 @@ func TestSpan_AddMetric_IgnoresWrongValueType(t *testing.T) {
 		span.AddMetric(MetricURLStat, UrlStatEntry{Url: "/", Status: 200})
 		NoopTracer().AddMetric(MetricURLStat, UrlStatEntry{Url: "/", Status: 200})
 	})
+}
+
+func TestSpan_EndSpanTwiceCountsOnce(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	span := defaultSpan(agent)
+
+	span.EndSpan()
+	span.EndSpan()
+
+	var requests int64
+	for i := range agent.stats.shards {
+		requests += atomic.LoadInt64(&agent.stats.shards[i].requestCount)
+	}
+	assert.Equal(t, int64(1), requests, "response time collected once")
+}
+
+func TestNoopSpan_EndSpanTwiceCountsOnce(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	span := newUnSampledSpan(agent, "/")
+
+	span.SetFailure()
+	assert.Equal(t, 1, span.statusErr, "unsampled span still records failure")
+
+	span.EndSpan()
+	span.EndSpan()
+
+	var requests int64
+	for i := range agent.stats.shards {
+		requests += atomic.LoadInt64(&agent.stats.shards[i].requestCount)
+	}
+	assert.Equal(t, int64(1), requests, "response time collected once")
+}
+
+// The shared noop singleton must stay immutable: concurrent tracer-less
+// requests call SetFailure on it. Run under -race.
+func TestNoopSpan_SharedSingletonSetFailureIsRaceFree(t *testing.T) {
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				NoopTracer().Span().SetFailure()
+			}
+		}()
+	}
+	wg.Wait()
+	assert.Equal(t, 0, defaultNoopSpan.statusErr, "singleton untouched")
 }

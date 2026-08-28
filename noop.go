@@ -81,6 +81,7 @@ func newUnSampledSpan(agent *agent, rpcName string) *noopSpan {
 
 func (span *noopSpan) EndSpan() {
 	if span.withStats {
+		span.withStats = false // a second EndSpan must not double-count
 		dropUnSampledActiveSpan(span)
 		endTime := time.Now()
 		elapsed := endTime.UnixMilli() - span.startTime.UnixMilli()
@@ -143,7 +144,13 @@ func (span *noopSpan) SpanEvent() SpanEventRecorder {
 func (span *noopSpan) SetError(e error) {}
 
 func (span *noopSpan) SetFailure() {
-	span.statusErr = 1
+	// Write only on per-request unsampled spans. The defaultNoopSpan singleton
+	// is shared by every tracer-less request, so writing its field here is a
+	// data race between concurrent handlers (e.g. two 5xx responses) - and its
+	// statusErr is never read anyway.
+	if span.withStats {
+		span.statusErr = 1
+	}
 }
 
 func (span *noopSpan) SetServiceType(typ int32) {}
