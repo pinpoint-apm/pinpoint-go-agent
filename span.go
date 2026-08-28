@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -26,10 +25,6 @@ const (
 	defaultEventChunkSize  = 20
 	defaultEventStackDepth = 8
 	maxErrorChainEntry     = 10
-)
-
-var (
-	asyncIdGen int32 = 0
 )
 
 type span struct {
@@ -368,7 +363,7 @@ func (span *span) newAsyncSpan() Tracer {
 		asyncSpan.spanId = span.spanId
 
 		for se.asyncId == noneAsyncId {
-			se.asyncId = atomic.AddInt32(&asyncIdGen, 1)
+			se.asyncId = span.agent.asyncIdGen.Add(1)
 		}
 		se.asyncSeqGen++
 

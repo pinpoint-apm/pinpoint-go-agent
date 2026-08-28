@@ -1419,7 +1419,7 @@ func newCommandGrpc(agent *agent) (*cmdGrpc, error) {
 	}
 
 	cmdClient := pb.NewProfilerCommandServiceClient(conn)
-	return &cmdGrpc{cmdConn: conn, cmdClient: cmdClient, agent: agent}, nil
+	return &cmdGrpc{cmdConn: conn, cmdClient: cmdClient, agent: agent, atcStreams: atcStreams{agent: agent}}, nil
 }
 
 func (cmdGrpc *cmdGrpc) close() {
@@ -1540,6 +1540,7 @@ func (s *cmdStream) recvCommandRequest() (*pb.PCmdRequest, error) {
 }
 
 type activeThreadCountStream struct {
+	agent    *agent
 	stream   pb.ProfilerCommandService_CommandStreamActiveThreadCountClient
 	reqId    int32
 	actCount int32
@@ -1552,8 +1553,8 @@ type activeThreadCountStream struct {
 	stopOnce sync.Once
 }
 
-func newActiveThreadCountStream(reqId int32) *activeThreadCountStream {
-	return &activeThreadCountStream{reqId: reqId, stop: make(chan struct{})}
+func newActiveThreadCountStream(agent *agent, reqId int32) *activeThreadCountStream {
+	return &activeThreadCountStream{agent: agent, reqId: reqId, stop: make(chan struct{})}
 }
 
 // openActiveThreadCountStream opens the gRPC stream for an already registered
@@ -1610,7 +1611,7 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 	}
 
 	now := time.Now()
-	activeThreadCount := getActiveSpanCount(now)
+	activeThreadCount := s.agent.getActiveSpanCount(now)
 	s.actCount++
 
 	gRes = &pb.PCmdActiveThreadCountRes{

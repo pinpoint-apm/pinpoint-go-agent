@@ -431,7 +431,7 @@ func Test_span_NewGoroutineTracer(t *testing.T) {
 			a := s.NewGoroutineTracer()
 
 			se, _ := s.eventStack.peek()
-			assert.Equal(t, se.asyncId, int32(2), "asyncId")
+			assert.Equal(t, se.asyncId, int32(1), "asyncId")
 			assert.Equal(t, se.asyncSeqGen, int32(1), "asyncSeqGen")
 
 			as := a.(*span)
@@ -472,7 +472,7 @@ func Test_span_WrapGoroutine(t *testing.T) {
 			}, context.Background())
 
 			se, _ := s.eventStack.peek()
-			assert.Equal(t, se.asyncId, int32(3), "asyncId")
+			assert.Equal(t, se.asyncId, int32(1), "asyncId")
 			assert.Equal(t, se.asyncSeqGen, int32(1), "asyncSeqGen")
 
 			f()

@@ -1,7 +1,6 @@
 package pinpoint
 
 import (
-	"sync"
 	"time"
 )
 
@@ -13,15 +12,13 @@ const (
 	urlStatCollectInterval = 30 * time.Second
 )
 
-var (
-	clock           tickClock
-	urlSnapshot     *urlStatSnapshot
-	urlSnapshotLock sync.Mutex
-)
+// clock buckets url stats by collection interval. It stays package level
+// because it holds no per-agent state - the interval is a constant - but it is
+// built once here instead of being reassigned on every agent start.
+var clock = newTickClock(urlStatCollectInterval)
 
 func (agent *agent) initUrlStat() {
-	clock = newTickClock(urlStatCollectInterval)
-	urlSnapshot = agent.newUrlStatSnapshot()
+	agent.urlSnapshot = agent.newUrlStatSnapshot()
 }
 
 type urlStat struct {
@@ -67,18 +64,18 @@ func (agent *agent) newUrlStatSnapshot() *urlStatSnapshot {
 }
 
 func (agent *agent) addUrlStatSnapshot(us *urlStat) {
-	urlSnapshotLock.Lock()
-	defer urlSnapshotLock.Unlock()
+	agent.urlSnapshotLock.Lock()
+	defer agent.urlSnapshotLock.Unlock()
 
-	urlSnapshot.add(us)
+	agent.urlSnapshot.add(us)
 }
 
 func (agent *agent) takeUrlStatSnapshot() *urlStatSnapshot {
-	urlSnapshotLock.Lock()
-	defer urlSnapshotLock.Unlock()
+	agent.urlSnapshotLock.Lock()
+	defer agent.urlSnapshotLock.Unlock()
 
-	oldSnapshot := urlSnapshot
-	urlSnapshot = agent.newUrlStatSnapshot()
+	oldSnapshot := agent.urlSnapshot
+	agent.urlSnapshot = agent.newUrlStatSnapshot()
 	return oldSnapshot
 }
 

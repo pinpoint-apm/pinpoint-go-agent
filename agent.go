@@ -57,6 +57,10 @@ type agent struct {
 	apiCache    *metaCache[apiCacheKey, int32]
 	apiIdGen    int32
 
+	// asyncIdGen numbers this agent's async chunks. Like the ids above it is
+	// reported with the agent's own transaction ids, so it restarts per agent.
+	asyncIdGen atomic.Int32
+
 	// exceptionIdGen numbers this agent's exception chains. Chain ids are
 	// scoped to the span they are reported with, so a new agent starts over
 	// rather than continuing a previous agent's count.
@@ -68,6 +72,21 @@ type agent struct {
 	// must mint and register its own. Accessed atomically; 0 means not cached
 	// yet (cacheSpanApi returns 0 while the agent is disabled, so it retries).
 	asyncApiId int32
+
+	// realTimeActiveSpan tracks this agent's in-flight spans by goroutine id
+	// for the real-time active thread views, gated by atcStreamCount so the
+	// span path only pays for it while a viewer is attached. Per-agent: a
+	// package map kept the entries of spans still in flight at shutdown for
+	// the life of the process.
+	realTimeActiveSpan sync.Map
+	atcStreamCount     atomic.Int32
+
+	// urlSnapshot accumulates this agent's url stats until its worker drains
+	// it. It used to be a package global that initUrlStat reassigned on every
+	// agent start, so a restart could swap the snapshot out from under the
+	// previous agent's worker and mix the two agents' stats.
+	urlSnapshot     *urlStatSnapshot
+	urlSnapshotLock sync.Mutex
 
 	config    *Config
 	connectWg sync.WaitGroup

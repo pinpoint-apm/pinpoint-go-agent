@@ -286,3 +286,21 @@ func (histogram expectedUrlHistogram) isEmpty() bool {
 	}
 	return true
 }
+
+// Url stats accumulate on the agent, not in a package global that initUrlStat
+// reassigns: a second agent starts with an empty snapshot and cannot have its
+// snapshot swapped out from under the first agent's worker.
+func Test_agent_urlStatSnapshot_isPerAgent(t *testing.T) {
+	first, second := newTestAgent(defaultConfig()), newTestAgent(defaultConfig())
+	first.initUrlStat()
+	second.initUrlStat()
+
+	endTime := time.Unix(1700000000, 123000000).UTC()
+	addTestUrlStat(first.urlSnapshot, "/only-on-first", "GET", urlStatusSuccess, 100, endTime)
+
+	assert.Equal(t, 1, first.takeUrlStatSnapshot().count, "first agent")
+	assert.Equal(t, 0, second.takeUrlStatSnapshot().count, "second agent")
+
+	// taking the snapshot leaves the agent a fresh one to keep filling
+	assert.Equal(t, 0, first.urlSnapshot.count, "first agent after take")
+}

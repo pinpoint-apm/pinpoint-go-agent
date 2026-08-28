@@ -110,7 +110,7 @@ func newGoroutineDump() *goroutineDump {
 	}
 }
 
-func dumpGoroutine() (dump *goroutineDump) {
+func dumpGoroutine(agent *agent) (dump *goroutineDump) {
 	var b bytes.Buffer
 	buf := bufio.NewWriter(&b)
 
@@ -128,11 +128,11 @@ func dumpGoroutine() (dump *goroutineDump) {
 		}
 	}
 
-	dump = parseProfile(&b)
+	dump = parseProfile(&b, agent)
 	return
 }
 
-func parseProfile(r io.Reader) *goroutineDump {
+func parseProfile(r io.Reader, agent *agent) *goroutineDump {
 	dump := newGoroutineDump()
 	var g *goroutine
 
@@ -144,7 +144,7 @@ func parseProfile(r io.Reader) *goroutineDump {
 		if g == nil {
 			if match := re.FindAllStringSubmatch(line, 1); match != nil {
 				if g = newGoroutine(match[0][1], match[0][2], line); g != nil {
-					if v, ok := realTimeActiveSpan.Load(g.id); ok {
+					if v, ok := agent.realTimeActiveSpan.Load(g.id); ok {
 						g.span = v.(*activeSpanInfo)
 						dump.add(g)
 					}

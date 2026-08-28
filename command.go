@@ -4,7 +4,6 @@ import (
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"io"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -22,14 +21,10 @@ const (
 	activeThreadCountInterval = 1 * time.Second
 )
 
-var (
-	gAtcStreamCount    int32
-	realTimeActiveSpan sync.Map
-)
-
 // atcStreams holds the running active thread count streams, so a re-issued
 // request id can reclaim its predecessor and so the total can be capped.
 type atcStreams struct {
+	agent   *agent
 	mu      sync.Mutex
 	streams map[*activeThreadCountStream]struct{}
 }
@@ -80,7 +75,7 @@ func (r *atcStreams) count() int {
 // reads it on every span start and cannot afford to take this lock. Callers
 // must hold r.mu.
 func (r *atcStreams) publishCount() {
-	atomic.StoreInt32(&gAtcStreamCount, int32(len(r.streams)))
+	r.agent.atcStreamCount.Store(int32(len(r.streams)))
 }
 
 type activeSpanInfo struct {
@@ -130,12 +125,12 @@ func (agent *agent) runCommandService() {
 					limit := c.GetLimit()
 					threadName := c.GetThreadName()
 					localId := c.GetLocalTraceId()
-					agent.cmdGrpc.sendActiveThreadDump(reqId, limit, threadName, localId, dumpGoroutine())
+					agent.cmdGrpc.sendActiveThreadDump(reqId, limit, threadName, localId, dumpGoroutine(agent))
 				}
 				break
 			case *pb.PCmdRequest_CommandActiveThreadLightDump:
 				if c := cmdReq.GetCommandActiveThreadLightDump(); c != nil {
-					agent.cmdGrpc.sendActiveThreadLightDump(reqId, c.GetLimit(), dumpGoroutine())
+					agent.cmdGrpc.sendActiveThreadLightDump(reqId, c.GetLimit(), dumpGoroutine(agent))
 				}
 				break
 			case nil:
@@ -154,7 +149,7 @@ func (agent *agent) runCommandService() {
 // rejects the request when maxActiveThreadCountStreams are already running.
 // Mirrors the C++ agent's handle_active_thread_count().
 func (agent *agent) handleActiveThreadCount(reqId int32, cmd *cmdStream) {
-	s := newActiveThreadCountStream(reqId)
+	s := newActiveThreadCountStream(agent, reqId)
 
 	// Register before opening the gRPC stream: the cap and the stop of a
 	// same-id predecessor are then decided under a single lock, and a request
@@ -210,32 +205,32 @@ func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
 }
 
 func addRealTimeSampledActiveSpan(span *span) {
-	if atomic.LoadInt32(&gAtcStreamCount) > 0 {
+	if span.agent.atcStreamCount.Load() > 0 {
 		span.goroutineId = curGoroutineID()
 		s := &activeSpanInfo{span.startTime, span.txId.String(), span.rpcName, true}
-		realTimeActiveSpan.Store(span.goroutineId, s)
+		span.agent.realTimeActiveSpan.Store(span.goroutineId, s)
 	}
 }
 
 func dropRealTimeSampledActiveSpan(span *span) {
-	realTimeActiveSpan.Delete(span.goroutineId)
+	span.agent.realTimeActiveSpan.Delete(span.goroutineId)
 }
 
 func addRealTimeUnSampledActiveSpan(span *noopSpan) {
-	if atomic.LoadInt32(&gAtcStreamCount) > 0 {
+	if span.agent.atcStreamCount.Load() > 0 {
 		span.goroutineId = curGoroutineID()
 		s := &activeSpanInfo{span.startTime, "", span.rpcName, false}
-		realTimeActiveSpan.Store(span.goroutineId, s)
+		span.agent.realTimeActiveSpan.Store(span.goroutineId, s)
 	}
 }
 
 func dropRealTimeUnSampledActiveSpan(span *noopSpan) {
-	realTimeActiveSpan.Delete(span.goroutineId)
+	span.agent.realTimeActiveSpan.Delete(span.goroutineId)
 }
 
-func getActiveSpanCount(now time.Time) []int32 {
+func (agent *agent) getActiveSpanCount(now time.Time) []int32 {
 	counts := []int32{0, 0, 0, 0}
-	realTimeActiveSpan.Range(func(k, v interface{}) bool {
+	agent.realTimeActiveSpan.Range(func(k, v interface{}) bool {
 		s := v.(*activeSpanInfo)
 		d := now.Sub(s.startTime).Seconds()
 

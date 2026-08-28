@@ -335,6 +335,6 @@ func (c *mockCmdGrpcClient) streamCount() int {
 // command stream the agent answers on and the client that hands out streams.
 func newMockCmdGrpc(agent *agent) (*cmdStream, *mockCmdGrpcClient) {
 	client := &mockCmdGrpcClient{}
-	agent.cmdGrpc = &cmdGrpc{cmdClient: client, agent: agent}
+	agent.cmdGrpc = &cmdGrpc{cmdClient: client, agent: agent, atcStreams: atcStreams{agent: agent}}
 	return &cmdStream{stream: &mockCmdStream{}, cancel: func() {}}, client
 }
