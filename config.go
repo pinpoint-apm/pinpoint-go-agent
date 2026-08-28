@@ -484,6 +484,11 @@ func (config *Config) loadConfigFile(cmdEnvViper *viper.Viper) *viper.Viper {
 		cfgFileViper.OnConfigChange(func(e fsnotify.Event) {
 			config.reloadConfig(cfgFileViper)
 		})
+		// Known limitation: viper exposes no way to stop WatchConfig, so this
+		// fsnotify goroutine and its descriptor live until the process exits -
+		// one per NewConfig call that names a config file, and the watch
+		// outlives the agent's Shutdown. Stopping it means replacing viper's
+		// watcher with an fsnotify watcher this package owns.
 		cfgFileViper.WatchConfig()
 	}
 
