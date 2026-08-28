@@ -37,11 +37,25 @@ func TestHttpExcludeUrlMatch(t *testing.T) {
 			noMatch: []string{"/a/c", "/ac", "/abbc"},
 		},
 		{
+			name:    "? matches one Unicode character",
+			pattern: "/?",
+			kind:    patternAnt,
+			match:   []string{"/한", "/é", "/🙂"},
+			noMatch: []string{"/", "//", "/한글"},
+		},
+		{
 			name:    "doc example: * stays inside one segment",
 			pattern: "/aa/*.html",
 			kind:    patternAnt,
 			match:   []string{"/aa/.html", "/aa/index.html", "/aa/a.b.html"},
 			noMatch: []string{"/aa/bb/index.html", "/aa/index.htm", "/bb/index.html"},
+		},
+		{
+			name:    "Unicode literals and * stay inside one segment",
+			pattern: "/한*/끝",
+			kind:    patternAnt,
+			match:   []string{"/한/끝", "/한글🙂/끝"},
+			noMatch: []string{"/한글/중간/끝", "/한글/끗", "/글/끝"},
 		},
 		{
 			name:    "trailing * is a segment prefix",
