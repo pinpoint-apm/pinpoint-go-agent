@@ -37,14 +37,16 @@ func Test_spanQueue_singleProducerUsesFullCapacity(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	chunk := newTestSpanChunk(agent)
 
-	enqueued := 20 * capacity // enough for random placement to hit every shard
-	for i := 0; i < enqueued; i++ {
+	for i := 0; i < capacity; i++ {
 		assert.True(t, q.enqueue(chunk))
 	}
 
 	assert.Equal(t, capacity, q.length(), "retained spans must fill the whole buffer")
-	assert.Equal(t, int64(enqueued-capacity), q.dropCount(),
-		"every enqueue beyond capacity is a counted drop")
+	assert.Zero(t, q.dropCount(), "filling the configured capacity must not drop spans")
+
+	assert.True(t, q.enqueue(chunk))
+	assert.Equal(t, capacity, q.length(), "the queue must remain bounded after saturation")
+	assert.Equal(t, int64(1), q.dropCount(), "an enqueue beyond capacity must count one drop")
 }
 
 func Test_spanQueue_closeRejectsEnqueueAndReportsDone(t *testing.T) {

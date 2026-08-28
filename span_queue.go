@@ -92,8 +92,8 @@ func newSpanQueue(capacity int) *spanQueue {
 
 // enqueue never blocks and, until close, never rejects: a full shard head-drops
 // its oldest chunk in the same critical section, so recent traces are favored
-// under backpressure. Trying a second shard first keeps a momentarily full
-// shard from dropping while the queue as a whole still has room.
+// under backpressure. A full first-choice shard triggers a scan; overwrite is
+// used only after every shard reports full.
 func (q *spanQueue) enqueue(chunk *spanChunk) bool {
 	if q.closed.Load() {
 		return false
@@ -104,12 +104,14 @@ func (q *spanQueue) enqueue(chunk *spanChunk) bool {
 		q.notify()
 		return true
 	}
-	second := rand.IntN(len(q.shards))
-	if second != first && q.shards[second].tryEnqueue(chunk) {
-		q.notify()
-		return true
+	for i := 1; i < len(q.shards); i++ {
+		shard := (first + i) % len(q.shards)
+		if q.shards[shard].tryEnqueue(chunk) {
+			q.notify()
+			return true
+		}
 	}
-	q.shards[second].enqueueOrOverwrite(chunk)
+	q.shards[first].enqueueOrOverwrite(chunk)
 	q.notify()
 	return true
 }
