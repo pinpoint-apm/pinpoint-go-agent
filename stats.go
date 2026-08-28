@@ -188,7 +188,9 @@ func initStats() {
 	cpu.Percent(0, false)
 	runtime.ReadMemStats(&lastMemStat)
 	lastCollectTime = time.Now()
-	activeSpan = newActiveSpanRegistry()
+	// activeSpan is created once at package init and is read by the request
+	// path; re-creating it here raced with in-flight spans and dropped the
+	// entries of spans that started before a restart and ended after it.
 }
 
 func getNumFD() int32 {
