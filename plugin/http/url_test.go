@@ -79,7 +79,13 @@ func TestHttpExcludeUrlMatch(t *testing.T) {
 				"/aa/bb/index.html",
 				"/aa/bb/cc/index.html",
 			},
-			noMatch: []string{"/aa/index.htm", "/bb/index.html", "/aaindex.html"},
+			noMatch: []string{
+				"/aa/index.htm",
+				"/bb/index.html",
+				"/aaindex.html",
+				"/aa/not-index.html",
+				"/aa/fooindex.html",
+			},
 		},
 		{
 			name:    "leading ** spans segments",
