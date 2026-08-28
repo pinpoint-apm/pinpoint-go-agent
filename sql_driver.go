@@ -211,6 +211,10 @@ func writeBindValue(b *bytes.Buffer, index int, value interface{}, numComma int,
 		b.WriteString(", ")
 	}
 	if b.Len() > maxSize {
+		// Drop the overflow: a single multi-MB bind value would otherwise be
+		// kept whole in the annotation and could push the span message past
+		// the gRPC send limit.
+		b.Truncate(maxSize)
 		b.WriteString("...(")
 		b.WriteString(fmt.Sprint(maxSize))
 		b.WriteString(")")
