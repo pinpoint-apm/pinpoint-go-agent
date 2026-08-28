@@ -310,7 +310,26 @@ func (c *sqlConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx
 		return tx, err
 	}
 
+	// database/sql routes every BeginTx here because the wrapper implements
+	// driver.ConnBeginTx, so its own fallback checks never run; mirror them
+	// (database/sql/ctxutil.go). Silently calling Begin would downgrade a
+	// Serializable or read-only request to a default read-write transaction.
+	if opts.Isolation != 0 { // 0 == sql.LevelDefault
+		return nil, errors.New("sql: driver does not support non-default isolation level")
+	}
+	if opts.ReadOnly {
+		return nil, errors.New("sql: driver does not support read-only transactions")
+	}
+
 	tx, err = c.Conn.Begin()
+	if err == nil {
+		select {
+		case <-ctx.Done():
+			tx.Rollback()
+			return nil, ctx.Err()
+		default:
+		}
+	}
 	if cfg := c.config.load(); cfg.sqlTraceCommit || cfg.sqlTraceRollback {
 		c.newSqlSpanEventNoSql(ctx, "Begin", start, err)
 		if err == nil {
