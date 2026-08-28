@@ -17,14 +17,18 @@ import (
 
 // Config option keys
 const (
-	CfgAppName                        = "ApplicationName"
-	CfgAppType                        = "ApplicationType"
-	CfgAgentID                        = "AgentID"
-	CfgAgentName                      = "AgentName"
-	CfgCollectorHost                  = "Collector.Host"
-	CfgCollectorAgentPort             = "Collector.AgentPort"
-	CfgCollectorSpanPort              = "Collector.SpanPort"
-	CfgCollectorStatPort              = "Collector.StatPort"
+	CfgAppName                             = "ApplicationName"
+	CfgAppType                             = "ApplicationType"
+	CfgAgentID                             = "AgentID"
+	CfgAgentName                           = "AgentName"
+	CfgCollectorHost                       = "Collector.Host"
+	CfgCollectorAgentPort                  = "Collector.AgentPort"
+	CfgCollectorSpanPort                   = "Collector.SpanPort"
+	CfgCollectorStatPort                   = "Collector.StatPort"
+	CfgCollectorAgentInfoRefreshInterval   = "Collector.AgentInfo.RefreshInterval"
+	CfgCollectorAgentInfoSendRetryInterval = "Collector.AgentInfo.SendRetryInterval"
+	CfgCollectorAgentInfoMaxTryPerAttempt  = "Collector.AgentInfo.MaxTryPerAttempt"
+
 	CfgLogLevelOld                    = "LogLevel"
 	CfgLogLevel                       = "Log.Level"
 	CfgLogOutput                      = "Log.Output"
@@ -104,6 +108,9 @@ func initConfig() {
 	AddConfig(CfgCollectorAgentPort, CfgInt, 9991, false)
 	AddConfig(CfgCollectorSpanPort, CfgInt, 9993, false)
 	AddConfig(CfgCollectorStatPort, CfgInt, 9992, false)
+	AddConfig(CfgCollectorAgentInfoRefreshInterval, CfgInt, 0, false)
+	AddConfig(CfgCollectorAgentInfoSendRetryInterval, CfgInt, defaultAgentInfoSendRetryInterval, false)
+	AddConfig(CfgCollectorAgentInfoMaxTryPerAttempt, CfgInt, defaultAgentInfoMaxTryPerAttempt, false)
 	AddConfig(CfgLogLevelOld, CfgString, "info", true)
 	AddConfig(CfgLogLevel, CfgString, "info", true)
 	AddConfig(CfgLogOutput, CfgString, "stderr", true)
@@ -350,6 +357,12 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	}
 	if config.stagedInt(CfgSpanBatchMaxConcurrentRequests) < 1 {
 		config.cfgMap[CfgSpanBatchMaxConcurrentRequests].value = defaultSpanBatchMaxConcurrentRequests
+	}
+	if config.stagedInt(CfgCollectorAgentInfoSendRetryInterval) < 1 {
+		config.cfgMap[CfgCollectorAgentInfoSendRetryInterval].value = defaultAgentInfoSendRetryInterval
+	}
+	if config.stagedInt(CfgCollectorAgentInfoMaxTryPerAttempt) < 1 {
+		config.cfgMap[CfgCollectorAgentInfoMaxTryPerAttempt].value = defaultAgentInfoMaxTryPerAttempt
 	}
 	config.publish()
 
@@ -804,6 +817,30 @@ func WithCollectorSpanPort(port int) ConfigOption {
 func WithCollectorStatPort(port int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgCollectorStatPort].value = port
+	}
+}
+
+// WithCollectorAgentInfoRefreshInterval sets the cycle for re-sending the agent information
+// to the collector, in milliseconds. If 0 or less, it is sent only once at startup.
+func WithCollectorAgentInfoRefreshInterval(interval int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorAgentInfoRefreshInterval].value = interval
+	}
+}
+
+// WithCollectorAgentInfoSendRetryInterval sets the wait between agent information send retries
+// within one refresh cycle, in milliseconds.
+func WithCollectorAgentInfoSendRetryInterval(interval int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorAgentInfoSendRetryInterval].value = interval
+	}
+}
+
+// WithCollectorAgentInfoMaxTryPerAttempt sets the max number of agent information sends
+// per refresh cycle.
+func WithCollectorAgentInfoMaxTryPerAttempt(count int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorAgentInfoMaxTryPerAttempt].value = count
 	}
 }
 

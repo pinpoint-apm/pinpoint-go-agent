@@ -626,3 +626,76 @@ func Test_sendStreamWithTimeout_unresponsiveStreamLeaksNothing(t *testing.T) {
 	}
 	assert.LessOrEqual(t, runtime.NumGoroutine(), before+2)
 }
+
+// countingAgentClient counts RequestAgentInfo calls and fails them on demand.
+type countingAgentClient struct {
+	calls atomic.Int32
+	fail  atomic.Bool
+}
+
+func (c *countingAgentClient) RequestAgentInfo(ctx context.Context, agentInfo *pb.PAgentInfo) (*pb.PResult, error) {
+	c.calls.Add(1)
+	if c.fail.Load() {
+		return nil, status.Errorf(codes.Unavailable, "collector down")
+	}
+	return &pb.PResult{Success: true}, nil
+}
+
+func (c *countingAgentClient) PingSession(ctx context.Context) (pb.Agent_PingSessionClient, error) {
+	return nil, status.Errorf(codes.Unimplemented, "not used")
+}
+
+func Test_config_agentInfoRefreshDisabledByDefault(t *testing.T) {
+	cfg, _ := NewConfig(WithAppName("TestApp"))
+	assert.Equal(t, 0, cfg.Int(CfgCollectorAgentInfoRefreshInterval))
+	assert.Equal(t, defaultAgentInfoSendRetryInterval, cfg.Int(CfgCollectorAgentInfoSendRetryInterval))
+	assert.Equal(t, defaultAgentInfoMaxTryPerAttempt, cfg.Int(CfgCollectorAgentInfoMaxTryPerAttempt))
+}
+
+func Test_agentGrpc_refreshAgentInfo_stopsAtMaxTry(t *testing.T) {
+	cfg, _ := NewConfig(WithAppName("TestApp"))
+	agent := newTestAgent(cfg)
+	client := &countingAgentClient{}
+	client.fail.Store(true)
+	agentGrpc := &agentGrpc{agentClient: client, agent: agent}
+
+	ok := agentGrpc.refreshAgentInfo(3, time.Millisecond)
+
+	assert.False(t, ok, "refresh must give up after maxTry sends")
+	assert.EqualValues(t, 3, client.calls.Load())
+}
+
+func Test_agentGrpc_refreshAgentInfo_stopsOnSuccess(t *testing.T) {
+	cfg, _ := NewConfig(WithAppName("TestApp"))
+	agent := newTestAgent(cfg)
+	client := &countingAgentClient{}
+	agentGrpc := &agentGrpc{agentClient: client, agent: agent}
+
+	ok := agentGrpc.refreshAgentInfo(3, time.Millisecond)
+
+	assert.True(t, ok)
+	assert.EqualValues(t, 1, client.calls.Load())
+}
+
+func Test_agent_refreshAgentInfoWorker_honorsInterval(t *testing.T) {
+	cfg, _ := NewConfig(WithAppName("TestApp"),
+		WithCollectorAgentInfoRefreshInterval(20),
+		WithCollectorAgentInfoSendRetryInterval(10),
+		WithCollectorAgentInfoMaxTryPerAttempt(1),
+	)
+	agent := newTestAgent(cfg)
+	client := &countingAgentClient{}
+	agent.agentGrpc = &agentGrpc{agentClient: client, agent: agent}
+
+	agent.workerWg.Add(1)
+	go agent.refreshAgentInfoWorker(20 * time.Millisecond)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for client.calls.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	agent.signalShutdown()
+	agent.workerWg.Wait()
+
+	assert.GreaterOrEqual(t, client.calls.Load(), int32(2), "worker must re-send agent info every interval")
+}

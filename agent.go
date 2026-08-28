@@ -128,6 +128,12 @@ const (
 	defaultSpanBatchCollectDeadline       = 500
 	defaultSpanBatchMaxConcurrentRequests = 10
 
+	// AgentInfo refresh, matching the C++ agent's Collector.AgentInfo defaults
+	// except the interval: 0 keeps the refresh off, preserving the historical
+	// Go behavior of sending AgentInfo only once at startup.
+	defaultAgentInfoSendRetryInterval = 3000
+	defaultAgentInfoMaxTryPerAttempt  = 3
+
 	// shutdownTimeout bounds how long Shutdown waits for the worker goroutines
 	// to drain their queues before abandoning them.
 	shutdownTimeout = 3 * time.Second
@@ -242,6 +248,37 @@ func (agent *agent) connectGrpcServer() {
 	go agent.collectUrlStatWorker()
 	go agent.sendUrlStatWorker()
 	go agent.sendStatsWorker()
+
+	if interval := time.Duration(agent.config.Int(CfgCollectorAgentInfoRefreshInterval)) * time.Millisecond; interval > 0 {
+		agent.workerWg.Add(1)
+		go agent.refreshAgentInfoWorker(interval)
+	}
+}
+
+// refreshAgentInfoWorker re-sends AgentInfo every refresh interval, mirroring
+// the C++ agent's AgentInfo scheduler. Best-effort: a failed cycle waits for
+// the next interval and never affects the agent's enabled state.
+func (agent *agent) refreshAgentInfoWorker(interval time.Duration) {
+	Log("agent").Infof("start agent info refresh goroutine")
+	defer agent.workerWg.Done()
+
+	retryInterval := time.Duration(agent.config.Int(CfgCollectorAgentInfoSendRetryInterval)) * time.Millisecond
+	maxTry := agent.config.Int(CfgCollectorAgentInfoMaxTryPerAttempt)
+
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	stop := agent.stopSignal().Done()
+
+	for {
+		select {
+		case <-stop:
+			Log("agent").Infof("end agent info refresh goroutine")
+			return
+		case <-timer.C:
+		}
+		agent.agentGrpc.refreshAgentInfo(maxTry, retryInterval)
+		timer.Reset(interval)
+	}
 }
 
 // stopSignal returns a context cancelled when shutdown begins. Reconnect waits
