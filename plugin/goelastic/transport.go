@@ -103,15 +103,25 @@ func dslString(req *http.Request) (string, error) {
 	return string(dsl), err
 }
 
+// maxBodyRead bounds what is read for the annotation. Only the first
+// MaxDslLength characters are ever recorded, so reading a whole multi-megabyte
+// _bulk payload just to slice 256 bytes off it was pure waste; the slack keeps
+// the truncation marker meaningful for gzipped bodies.
+const maxBodyRead = 4 * MaxDslLength
+
 func getBodyFromCopy(req *http.Request) ([]byte, error) {
 	body, err := req.GetBody()
 	if err != nil {
 		return nil, err
 	}
 	defer body.Close()
-	return io.ReadAll(body)
+	// A copy the request itself does not use, so it can be read partially.
+	return io.ReadAll(io.LimitReader(body, maxBodyRead))
 }
 
+// getBody must read the body in full: it is the request's only copy, and it is
+// handed back below for the transport to send. Only the annotation is limited,
+// by the MaxDslLength slice in the caller.
 func getBody(req *http.Request) ([]byte, error) {
 	dsl, err := io.ReadAll(req.Body)
 	req.Body.Close()
@@ -125,5 +135,7 @@ func unzip(dsl []byte) ([]byte, error) {
 		return dsl, err
 	}
 	defer r.Close()
-	return io.ReadAll(r)
+	// Inflating the whole payload would undo the read limit above; the result
+	// feeds the annotation only.
+	return io.ReadAll(io.LimitReader(r, maxBodyRead))
 }
