@@ -2,10 +2,13 @@ package pinpoint
 
 import (
 	"context"
-	"github.com/stretchr/testify/assert"
+	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func Test_defaultSpan(t *testing.T) {
@@ -105,6 +108,21 @@ func Test_splitTransactionId(t *testing.T) {
 	assert.False(t, ok, "no separator")
 	_, _, _, ok = splitTransactionId("abc^1")
 	assert.False(t, ok, "one separator")
+}
+
+// Test_TransactionId_String pins the hand-rolled formatter to the "%s^%d^%d" it
+// replaced, including the widest int64s - which is what sizes its stack buffer.
+func Test_TransactionId_String(t *testing.T) {
+	for _, tid := range []TransactionId{
+		{"t123456", 12345, 1},
+		{"", 0, 0},
+		{"agent-id", math.MinInt64, math.MaxInt64},
+		{"agent-id", math.MaxInt64, math.MinInt64},
+		{"agent-id", -1, -1},
+	} {
+		want := fmt.Sprintf("%s^%d^%d", tid.AgentId, tid.StartTime, tid.Sequence)
+		assert.Equal(t, want, tid.String())
+	}
 }
 
 func Test_span_Inject(t *testing.T) {

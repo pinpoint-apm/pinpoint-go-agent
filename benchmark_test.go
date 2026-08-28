@@ -313,6 +313,18 @@ func BenchmarkSplitTransactionId(b *testing.B) {
 	}
 }
 
+// BenchmarkTransactionIdString is the write side of BenchmarkSplitTransactionId:
+// Inject formats the trace id for every outbound request.
+func BenchmarkTransactionIdString(b *testing.B) {
+	tid := TransactionId{AgentId: "test-agent", StartTime: 1610000000000, Sequence: 12345}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = tid.String()
+	}
+}
+
 // BenchmarkCacheSpanApi isolates the per-event API-id cache lookup on the
 // steady-state cache-hit path.
 func BenchmarkCacheSpanApi(b *testing.B) {

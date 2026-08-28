@@ -19,7 +19,8 @@ package pinpoint
 
 import (
 	"context"
-	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -205,7 +206,22 @@ type TransactionId struct {
 
 // String returns transaction id string.
 func (tid TransactionId) String() string {
-	return fmt.Sprintf("%s^%d^%d", tid.AgentId, tid.StartTime, tid.Sequence)
+	// Assembled by hand rather than with fmt.Sprintf: Inject formats a trace id
+	// for every outbound request, and the reflection-based formatter boxes both
+	// integers on the way. The numeric half is rendered into a stack array
+	// first so the builder can be grown to the exact final length, leaving the
+	// returned string as the only allocation.
+	var num [48]byte // two int64s at their 20-char widest, plus the separator
+	n := strconv.AppendInt(num[:0], tid.StartTime, 10)
+	n = append(n, '^')
+	n = strconv.AppendInt(n, tid.Sequence, 10)
+
+	var b strings.Builder
+	b.Grow(len(tid.AgentId) + 1 + len(n))
+	b.WriteString(tid.AgentId)
+	b.WriteByte('^')
+	b.Write(n)
+	return b.String()
 }
 
 type UrlStatEntry struct {
