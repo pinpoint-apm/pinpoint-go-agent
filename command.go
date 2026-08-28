@@ -89,7 +89,26 @@ func (agent *agent) runCommandService() {
 	Log("cmd").Infof("start command goroutine")
 	defer agent.workerWg.Done()
 
-	for agent.enable.Load() {
+	stop := agent.stopSignal().Done()
+
+	for attempt := 0; agent.enable.Load(); attempt++ {
+		if attempt > 0 {
+			// Pace consecutive stream failures. newCommandStreamWithRetry's
+			// back-off only waits while the connection is not ready, so a
+			// collector whose channel is READY but whose command stream fails
+			// immediately (unimplemented, instant close) would otherwise spin
+			// this loop hot, opening streams and sending handshakes
+			// continuously inside the host application.
+			t := time.NewTimer(backOffSleep(attempt - 1))
+			select {
+			case <-stop:
+				t.Stop()
+				Log("cmd").Infof("end command goroutine")
+				return
+			case <-t.C:
+			}
+		}
+
 		stream := agent.cmdGrpc.newCommandStreamWithRetry()
 		err := stream.sendCommandMessage()
 		if err != nil {
@@ -108,6 +127,7 @@ func (agent *agent) runCommandService() {
 				}
 				break
 			}
+			attempt = 0 // the stream is healthy; restart the back-off
 
 			reqId := cmdReq.GetRequestId()
 			Log("cmd").Infof("command request: %v, %v", cmdReq, reqId)
