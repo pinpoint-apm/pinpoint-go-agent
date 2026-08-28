@@ -1,12 +1,13 @@
 package pinpoint
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -574,8 +575,11 @@ func (chunk *spanChunk) optimizeSpanEvents() {
 		return
 	}
 
-	sort.Slice(chunk.eventChunk, func(i, j int) bool {
-		return chunk.eventChunk[i].sequence < chunk.eventChunk[j].sequence
+	// slices.SortFunc, not sort.Slice: this runs on the request goroutine per
+	// chunk, and sort.Slice builds a reflect-based swapper for the slice on
+	// every call.
+	slices.SortFunc(chunk.eventChunk, func(a, b *spanEvent) int {
+		return cmp.Compare(a.sequence, b.sequence)
 	})
 	if chunk.final {
 		chunk.keyTime = chunk.span.startTime.UnixMilli()

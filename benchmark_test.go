@@ -201,6 +201,30 @@ func BenchmarkSpanLifecycleParallel(b *testing.B) {
 	})
 }
 
+// BenchmarkOptimizeSpanEvents measures the per-chunk sort and elapsed-time pass
+// EndSpan/EndSpanEvent run on the request goroutine before enqueueing. The input
+// is in completion order, which is what EndSpanEvent appends: a nested call
+// stack closes inner-first, so the chunk arrives out of sequence order.
+func BenchmarkOptimizeSpanEvents(b *testing.B) {
+	const n = defaultEventChunkSize
+	a := benchAgent()
+	s := benchSpan(a)
+
+	src := make([]*spanEvent, n)
+	for i := range src {
+		src[i] = &spanEvent{sequence: int32(n - 1 - i), startTime: int64(i)}
+	}
+	work := make([]*spanEvent, n)
+	chunk := &spanChunk{span: s, eventChunk: work, final: true}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		copy(work, src) // restore the unsorted order; sorting is in place
+		chunk.optimizeSpanEvents()
+	}
+}
+
 // BenchmarkActiveSpanRegistryParallel measures the in-flight span registry the
 // way requests hit it: every goroutine registers a span and immediately
 // unregisters it, walking its own span-id range so the goroutines land on
