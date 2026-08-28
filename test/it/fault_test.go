@@ -1,7 +1,10 @@
 package it
 
 import (
+	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -564,4 +567,232 @@ func TestRecoversTracingAcrossRepeatedCreateShutdownCycles(t *testing.T) {
 		"a span ended after its agent shut down must never be re-attributed to the replacement agent")
 	// One registration for the first agent plus one per rebuilt agent.
 	assert.GreaterOrEqual(t, len(s.AgentInfos), cycles+1)
+}
+
+// Metadata sends are bounded by metaRetryMaxAttempts. Once the budget is spent
+// the item is abandoned and its cache entry released, so the same API string is
+// re-cached under a fresh id and published again.
+func TestReRegistersMetadataAfterRetryExhaustion(t *testing.T) {
+	mc, agent := startStack(t, defaultAgentConfig())
+
+	const operation = "retry.exhausted.api"
+	// One initial attempt plus its retries: every attempt for this item must
+	// fail before the sender gives up on it.
+	for i := 0; i < 3; i++ {
+		mc.FailNext(RpcApiMetadata, codes.Unavailable,
+			fmt.Sprintf("metadata attempt %d rejected", i))
+	}
+
+	first := agent.NewSpanTracer(operation, "/retry-exhausted-1")
+	require.True(t, first.IsSampled())
+	first.EndSpan()
+
+	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+		failed := 0
+		for _, r := range resultsFor(s, RpcApiMetadata) {
+			if r.Code == codes.Unavailable {
+				failed++
+			}
+		}
+		return failed >= 3
+	}, longTimeout))
+
+	// Exhaustion releases the cache entry, so the same operation is re-cached
+	// under a fresh id and published successfully. The release happens on the
+	// sender worker shortly after the last failure, hence the poll.
+	require.True(t, waitUntil(func() bool {
+		second := agent.NewSpanTracer(operation, "/retry-exhausted-2")
+		second.EndSpan()
+		s := mc.Snapshot()
+		return countApiMetadata(s, operation) >= 4 &&
+			hasResultSuccess(s, RpcApiMetadata, codes.OK, true)
+	}, longTimeout))
+
+	ids := make(map[int32]bool)
+	for _, r := range mc.Snapshot().ApiMetadata {
+		if r.Message.GetApiInfo() == operation {
+			ids[r.Message.GetApiId()] = true
+		}
+	}
+	assert.GreaterOrEqual(t, len(ids), 2, "an exhausted item must be re-cached under a fresh id")
+	assert.True(t, agent.Enable())
+}
+
+// Metadata is published through a bounded pipeline rather than one serial
+// worker, so a single item stalling on a slow collector must not hold up the
+// rest.
+func TestKeepsPublishingMetadataWhileOneItemStalls(t *testing.T) {
+	mc, agent := startStack(t, defaultAgentConfig())
+
+	// The first metadata publication after this point is withheld until the
+	// client's deadline; everything queued behind it must still get through.
+	mc.TimeoutNext(RpcApiMetadata)
+
+	stalled := agent.NewSpanTracer("stalled.metadata.api", "/stalled-metadata")
+	require.True(t, stalled.IsSampled())
+	stalled.EndSpan()
+
+	for i := 0; i < 3; i++ {
+		operation := fmt.Sprintf("pipelined.metadata.api.%d", i)
+		tracer := agent.NewSpanTracer(operation, fmt.Sprintf("/pipelined-metadata-%d", i))
+		require.True(t, tracer.IsSampled())
+		tracer.EndSpan()
+	}
+
+	// The stalled call is still parked on the collector at this point, so these
+	// can only have arrived through a concurrent send.
+	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+		for i := 0; i < 3; i++ {
+			if !hasApiMetadata(s, fmt.Sprintf("pipelined.metadata.api.%d", i), apiTypeWebRequest) {
+				return false
+			}
+		}
+		return true
+	}, waitTimeout))
+	assert.True(t, agent.Enable())
+}
+
+// The agent caps concurrent active-thread-count streams. Beyond the cap a
+// request is refused with a fail message on the command stream instead of
+// silently starting another responder goroutine.
+func TestRejectsActiveThreadCountStreamsBeyondLimit(t *testing.T) {
+	mc, agent := startStack(t, defaultAgentConfig())
+	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.CommandStreams) > 0 }, waitTimeout))
+
+	const firstID = int32(601)
+	const maxStreams = 10
+	for i := int32(0); i < maxStreams; i++ {
+		mc.SendActiveThreadCountCommand(firstID + i)
+	}
+	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+		for i := int32(0); i < maxStreams; i++ {
+			if countActiveThreadResponses(s, firstID+i) < 1 {
+				return false
+			}
+		}
+		return true
+	}, waitTimeout))
+
+	const rejectedID = firstID + maxStreams
+	mc.SendActiveThreadCountCommand(rejectedID)
+	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+		return findFailMessage(s, rejectedID) != nil
+	}, waitTimeout))
+
+	s := mc.Snapshot()
+	fail := findFailMessage(s, rejectedID)
+	require.NotNil(t, fail)
+	assert.Equal(t, "too many active thread count streams", fail.GetMessage().GetValue())
+	// The refused request must not have opened a stream at all.
+	assert.Equal(t, 0, countActiveThreadResponses(s, rejectedID))
+	assert.Len(t, s.ActiveThreadCountStreams, maxStreams)
+	assert.True(t, agent.Enable())
+}
+
+// Shutdown runs while the application is still finishing requests. Span, URL
+// stat and metadata records are all enqueued from the request path, so a
+// producer that is mid-send when the agent stops must not be left writing into
+// a torn-down queue -- that crashed the whole process.
+func TestKeepsProducingSpansWhileShuttingDown(t *testing.T) {
+	mc, agent := startStack(t, defaultAgentConfig())
+
+	stop := make(chan struct{})
+	var producers sync.WaitGroup
+	for worker := 0; worker < 8; worker++ {
+		producers.Add(1)
+		go func(worker int) {
+			defer producers.Done()
+			for i := 0; ; i++ {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				// Exercises every request-path producer at once: the span
+				// queue, the URL stat queue and the metadata channel.
+				tracer := agent.NewSpanTracer(
+					fmt.Sprintf("shutdown.load.%d.%d", worker, i),
+					fmt.Sprintf("/shutdown-load/%d/%d", worker, i))
+				tracer.NewSpanEvent("shutdown.load.work")
+				tracer.SpanEvent().SetError(errors.New("shutdown load"), "ShutdownLoad")
+				tracer.EndSpanEvent()
+				tracer.AddMetric(pinpoint.MetricURLStat, &pinpoint.UrlStatEntry{
+					Url: "/shutdown-load/{id}", Method: "GET", Status: 200,
+				})
+				tracer.EndSpan()
+			}
+		}(worker)
+	}
+
+	// Let the load reach the workers before pulling the agent out from under it.
+	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(allSpanMessages(s)) > 0 }, waitTimeout))
+	agent.Shutdown()
+	close(stop)
+	producers.Wait()
+
+	// Surviving the race is the assertion: a producer racing the shutdown used
+	// to panic on a closed channel and take the process with it.
+	assert.False(t, agent.Enable())
+	assert.Equal(t, pinpoint.NoopAgent(), pinpoint.GetAgent())
+}
+
+// The span transport recycles its protobuf graph through pooled slabs, so a
+// message released too early would surface as one span carrying another's
+// content. Every span here is self-identifying: its annotation repeats its RPC
+// name, so any crossed wire shows up as a mismatch.
+func TestDeliversEveryConcurrentSpanIntactUnderLoad(t *testing.T) {
+	cfg := defaultAgentConfig()
+	// Room for the whole burst, so a drop cannot be mistaken for corruption.
+	cfg.spanQueueSize = 1024
+	mc, agent := startStack(t, cfg)
+
+	const workers = 8
+	const perWorker = 25
+	const totalSpans = workers * perWorker
+
+	var producers sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		producers.Add(1)
+		go func(worker int) {
+			defer producers.Done()
+			for i := 0; i < perWorker; i++ {
+				rpc := fmt.Sprintf("/load-integrity/%d/%d", worker, i)
+				tracer := agent.NewSpanTracer("load.integrity", rpc)
+				tracer.Span().Annotations().AppendString(9300, rpc)
+				for event := 0; event < 3; event++ {
+					tracer.NewSpanEvent(fmt.Sprintf("load.event.%d", event))
+					tracer.SpanEvent().Annotations().AppendString(9301, rpc)
+					tracer.EndSpanEvent()
+				}
+				tracer.EndSpan()
+			}
+		}(worker)
+	}
+	producers.Wait()
+
+	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+		return countSpansByRpcPrefix(s, "/load-integrity/") >= totalSpans
+	}, longTimeout), "not every span reached the collector")
+
+	s := mc.Snapshot()
+	delivered := 0
+	for _, message := range allSpanMessages(s) {
+		span := message.GetSpan()
+		if span == nil || !strings.HasPrefix(span.GetAcceptEvent().GetRpc(), "/load-integrity/") {
+			continue
+		}
+		delivered++
+		rpc := span.GetAcceptEvent().GetRpc()
+		annotation := findAnnotation(span.GetAnnotation(), 9300)
+		require.NotNil(t, annotation, rpc)
+		assert.Equal(t, rpc, annotation.GetValue().GetStringValue(),
+			"span %s carries another span's annotation", rpc)
+		for _, event := range eventsForSpan(s, span.GetSpanId()) {
+			if a := findAnnotation(event.GetAnnotation(), 9301); a != nil {
+				assert.Equal(t, rpc, a.GetValue().GetStringValue(),
+					"an event of span %s carries another span's annotation", rpc)
+			}
+		}
+	}
+	assert.Equal(t, totalSpans, delivered)
 }

@@ -16,6 +16,31 @@ Collector:
   SpanPort: 9993
   StatPort: 9992
 
+  # Periodic AgentInfo re-send. Off by default in the agent; the live suite
+  # turns it on so a long run exercises the refresh scheduler and its bounded
+  # retry, not just the boot registration.
+  AgentInfo:
+    RefreshInterval: 30000 # ms; 0 disables the periodic re-send
+    SendRetryInterval: 3000 # ms between tries within one refresh
+    MaxTryPerAttempt: 3
+
+  # Channel options, spelled out at their defaults so a run exercises the
+  # configured path rather than the built-in constants.
+  Grpc:
+    KeepAliveTime: 30000 # ms
+    KeepAliveTimeout: 60000 # ms
+    KeepAlivePermitWithoutCalls: false
+    MaxSendMessageSize: 4194304
+    MaxReceiveMessageSize: 4194304
+    FlowControlWindow: 1048576
+    WriteBufferSize: 1048576
+    MaxHeaderListSize: 8192
+    # For a TLS collector, set these (or PINPOINT_GO_COLLECTOR_GRPC_SSLENABLE
+    # and PINPOINT_GO_COLLECTOR_GRPC_TRUSTCERTFILEPATH) on the run. An empty
+    # trust path with TLS on falls back to the system root CAs.
+    SslEnable: false
+    TrustCertFilePath: ""
+
 # --- Logging ---
 Log:
   Level: "info" # debug / info / warn / error
@@ -54,6 +79,7 @@ Http:
   UrlStat:
     Enable: true
     LimitSize: 1024
+    QueueSize: 4096 # per-request records buffered until the next aggregation
     WithMethod: true
   Server:
     StatusCodeErrors: ["4xx", "5xx"]
@@ -101,6 +127,9 @@ SQL:
   TraceQueryStat: true
   TraceBindValue: true
   MaxBindValueSize: 2048
+  # The /db-* endpoints replay the same statements repeatedly, so this keeps
+  # the normalizer off the hot path.
+  EnableRawSqlCache: true
 
 # --- Errors ---
 Error:

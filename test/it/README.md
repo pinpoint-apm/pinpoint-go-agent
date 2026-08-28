@@ -58,10 +58,20 @@ their collector wire representation:
   address/header handling for the Apache, Nginx and App proxy headers
   (priority order, out-of-range timestamp rejection)
 - profiler commands over the real bidirectional stream: echo, active-thread
-  count, and the light-dump-then-targeted-dump flow a collector uses to drill
-  into one in-flight request
+  count, the light-dump-then-targeted-dump flow a collector uses to drill into
+  one in-flight request, and the concurrent-stream cap that refuses further
+  requests with a fail message instead of starting another responder
 - config-file watcher reloads that change sampling live without re-registering
   the agent
+- the periodic AgentInfo re-send: its bounded per-cycle retry, and the default
+  that keeps a single boot registration when the refresh interval is zero
+- TLS collector channels: registration, spans, statistics and commands over an
+  encrypted hop, and the three ways it must fail closed instead of downgrading
+  to plaintext -- an unverifiable certificate, a plaintext collector, and an
+  unreadable trust certificate
+- concurrent load: every span arrives with its own annotations (the transport
+  recycles its protobuf graph through pooled slabs), and requests still
+  finishing while `Shutdown()` runs cannot crash the process
 - the noop agent produced by `Enable: false`
 
 ## Failure injection
@@ -76,6 +86,8 @@ their collector wire representation:
 - `StopEndpoint()` and `StartEndpoint()` close and rebind the Agent, Span or
   Stat listener on its original ephemeral port, exercising a real connection
   outage rather than only an RPC-level error.
+- `UseTLS()` makes every endpoint serve TLS, so an agent configured with
+  `Collector.Grpc.SslEnable` can be driven over an encrypted hop.
 - `BeginOutage()` and `EndOutage()` simulate a sustained collector failure:
   every subsequent RPC on all three endpoints keeps failing (default
   `Unavailable`) until the outage ends. The ports stay open, so the agent sees
@@ -119,21 +131,18 @@ the agent.
 
 **Process-global agent state constrains the suite.** A Pinpoint agent is a
 process-global singleton, so the tests run sequentially and each shuts its
-agent down in `t.Cleanup`. Two consequences:
-
-- The `plugin/http` package publishes its own config snapshot once per process,
-  so every test here shares the HTTP settings from `defaultAgentConfig`.
-  Changing them per test would silently have no effect.
-- `asyncApiId` (the "Goroutine Invocation" API id) is a package global, so only
-  the first agent in the process publishes it. The async tests therefore do not
-  assert on that API metadata.
+agent down in `t.Cleanup`. One consequence remains: the `plugin/http` package
+publishes its own config snapshot once per process, so every test here shares
+the HTTP settings from `defaultAgentConfig`. Changing them per test would
+silently have no effect.
 
 **Differences from the C++ suite.** Some C++ tests have no Go counterpart
 because the feature does not exist here: the C API and fork scenarios, the
-`Stat.Enable: false` gate, the active-thread-count stream limit, URL-stat path
-trimming (the Go API takes an already-normalized URL template), and the
-destructor-driven cleanup of an abandoned span. Where behavior differs, the Go
-test asserts the Go behavior and says so in a comment — a malformed inbound
+`Stat.Enable: false` gate, URL-stat path trimming (the Go API takes an
+already-normalized URL template), and the destructor-driven cleanup of an
+abandoned span. Where behavior differs, the Go test asserts the Go behavior and says so in a comment — a malformed inbound
 trace id starts a new transaction instead of dropping the request, `EndSpan`
 discards events the application left open, and a metadata publication rejected
-with `PResult.success=false` is not retried.
+with `PResult.success=false` is not retried (a transport error is, up to the
+agent's attempt budget, after which the cache entry is released and the item is
+re-registered under a fresh id).

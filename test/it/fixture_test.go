@@ -56,6 +56,15 @@ type agentConfig struct {
 	serviceName string
 	apiKey      string
 
+	// AgentInfo refresh. A zero interval keeps the periodic re-send off, which
+	// is the agent's default.
+	agentInfoRefreshInterval   int
+	agentInfoSendRetryInterval int
+	agentInfoMaxTryPerAttempt  int
+
+	grpcSslEnable         bool
+	grpcTrustCertFilePath string
+
 	spanQueueSize                  int
 	spanBatchSize                  int
 	spanBatchFlushInterval         int
@@ -74,6 +83,7 @@ type agentConfig struct {
 
 	urlStatEnable     bool
 	urlStatWithMethod bool
+	urlStatQueueSize  int
 
 	errorTraceCallStack bool
 	errorCallStackDepth int
@@ -97,6 +107,9 @@ func defaultAgentConfig() *agentConfig {
 
 		uidVersion: "v3",
 
+		agentInfoSendRetryInterval: 50,
+		agentInfoMaxTryPerAttempt:  2,
+
 		spanQueueSize: 128,
 		spanBatchSize: 4,
 		// Short enough that a single span reaches the collector within a test's
@@ -119,6 +132,7 @@ func defaultAgentConfig() *agentConfig {
 
 		urlStatEnable:     true,
 		urlStatWithMethod: true,
+		urlStatQueueSize:  128,
 
 		errorTraceCallStack: true,
 		errorCallStackDepth: 8,
@@ -151,6 +165,11 @@ func (c *agentConfig) options(mc *MockCollector) []pinpoint.ConfigOption {
 		pinpoint.WithCollectorAgentPort(mc.AgentPort()),
 		pinpoint.WithCollectorSpanPort(mc.SpanPort()),
 		pinpoint.WithCollectorStatPort(mc.StatPort()),
+		pinpoint.WithCollectorAgentInfoRefreshInterval(c.agentInfoRefreshInterval),
+		pinpoint.WithCollectorAgentInfoSendRetryInterval(c.agentInfoSendRetryInterval),
+		pinpoint.WithCollectorAgentInfoMaxTryPerAttempt(c.agentInfoMaxTryPerAttempt),
+		pinpoint.WithCollectorGrpcSslEnable(c.grpcSslEnable),
+		pinpoint.WithCollectorGrpcTrustCertFilePath(c.grpcTrustCertFilePath),
 
 		pinpoint.WithSamplingType(c.samplingType),
 		pinpoint.WithSamplingCounterRate(c.samplingCounterRate),
@@ -177,6 +196,7 @@ func (c *agentConfig) options(mc *MockCollector) []pinpoint.ConfigOption {
 
 		pinpoint.WithHttpUrlStatEnable(c.urlStatEnable),
 		pinpoint.WithHttpUrlStatWithMethod(c.urlStatWithMethod),
+		pinpoint.WithHttpUrlStatQueueSize(c.urlStatQueueSize),
 
 		pinpoint.WithErrorTraceCallStack(c.errorTraceCallStack),
 		pinpoint.WithErrorCallStackDepth(c.errorCallStackDepth),
@@ -562,6 +582,16 @@ func expectCommonMetadata(t *testing.T, md RpcMetadata, expectSocketID bool) {
 	assert.Equal(t, expectSocketID, md.Has("socketid"))
 }
 
+// findFailMessage returns the command-stream rejection recorded for responseID,
+// which is the only channel the protocol offers for refusing a command.
+func findFailMessage(s Snapshot, responseID int32) *pb.PCmdResponse {
+	for _, r := range s.CommandStreamMessages {
+		if fail := r.Message.GetFailMessage(); fail != nil && fail.GetResponseId() == responseID {
+			return fail
+		}
+	}
+	return nil
+}
 
 func findExceptionForSpan(s Snapshot, spanID int64) *pb.PExceptionMetaData {
 	for _, r := range s.ExceptionMetadata {
@@ -633,4 +663,15 @@ func expectSamplingPattern(t *testing.T, s Snapshot, rpcPrefix string, expected 
 		}
 		assert.Equal(t, count, countSpansByRpc(s, rpc), rpc)
 	}
+}
+
+func countSpansByRpcPrefix(s Snapshot, prefix string) int {
+	count := 0
+	for _, m := range allSpanMessages(s) {
+		if span := m.GetSpan(); span != nil &&
+			strings.HasPrefix(span.GetAcceptEvent().GetRpc(), prefix) {
+			count++
+		}
+	}
+	return count
 }

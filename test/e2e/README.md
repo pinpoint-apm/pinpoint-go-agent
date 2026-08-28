@@ -38,7 +38,11 @@ export PINPOINT_GO_COLLECTOR_HOST="your-collector-host"
 ```
 
 `pinpoint-config.yaml` intentionally has no `Collector.Host`, which makes the
-collector an explicit runtime setting. Each process gets a unique
+collector an explicit runtime setting. For a TLS collector, set
+`Collector.Grpc.SslEnable` and `Collector.Grpc.TrustCertFilePath` in that file,
+or export `PINPOINT_GO_COLLECTOR_GRPC_SSLENABLE=true` and
+`PINPOINT_GO_COLLECTOR_GRPC_TRUSTCERTFILEPATH=/path/to/ca.pem` for the run. An
+empty trust path with TLS on falls back to the system root CAs. Each process gets a unique
 `PINPOINT_GO_AGENTNAME`/`PINPOINT_GO_AGENTID`, so concurrent runs are
 distinguishable under the stable applications `go-e2e-http-upstream`,
 `go-e2e-http-downstream` and `go-e2e-grpc-downstream`.
@@ -93,6 +97,12 @@ The suite fails unless all of the following are observed:
 - every process log contains a successful AgentInfo registration, the upstream
   log shows span batches leaving for the collector, and none of them was
   rejected.
+
+`pinpoint-config.yaml` also spells out the collector channel options, the
+periodic AgentInfo refresh and the URL-stat queue size, so a live run exercises
+the configured paths rather than the built-in defaults. Their behavior is
+asserted deterministically in [test/it](../it/README.md); here they only have to
+survive a real run.
 
 The local response assertions prove propagation and public API behavior. The
 transport-log assertions prove that data reached the configured collector. If a

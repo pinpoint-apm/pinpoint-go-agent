@@ -228,3 +228,64 @@ func TestCreatesNoopAgentWhenDisabledByConfig(t *testing.T) {
 	agent.Shutdown()
 	assert.False(t, agent.Enable())
 }
+
+// Boot registration retries forever, but the periodic AgentInfo re-sender is
+// bounded by Collector.AgentInfo.MaxTryPerAttempt and a failed cycle is
+// best-effort: it must retry within the cycle and leave the agent enabled
+// either way. The other retry tests here all cover the boot path, which is a
+// different loop.
+func TestRetriesPeriodicAgentInfoResendAfterFailure(t *testing.T) {
+	cfg := defaultAgentConfig()
+	// Short enough that a refresh lands during the test; the retry interval and
+	// attempt count come from the fixture (50ms, 2 tries).
+	cfg.agentInfoRefreshInterval = 200
+	mc, agent := startStack(t, cfg)
+
+	require.GreaterOrEqual(t, len(mc.Snapshot().AgentInfos), 1)
+
+	// Armed only now, so boot registration keeps its own success and the fault
+	// lands on a re-send instead.
+	mc.FailNext(RpcAgentInfo, codes.Unavailable, "periodic re-send rejected")
+
+	// The failed attempt and its retry both reach the collector. Locate the
+	// injected failure instead of assuming its index: a periodic re-send can
+	// land between the snapshot above and FailNext arming, shifting every later
+	// entry by one.
+	findFailed := func(results []RpcResult) int {
+		for i, r := range results {
+			if r.Code == codes.Unavailable {
+				return i
+			}
+		}
+		return -1
+	}
+	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+		results := resultsFor(s, RpcAgentInfo)
+		failed := findFailed(results)
+		return failed >= 0 && failed+1 < len(results)
+	}, waitTimeout))
+
+	results := resultsFor(mc.Snapshot(), RpcAgentInfo)
+	failed := findFailed(results)
+	require.GreaterOrEqual(t, failed, 0)
+	assert.False(t, results[failed].Success)
+	retried := results[failed+1]
+	assert.Equal(t, codes.OK, retried.Code)
+	assert.True(t, retried.Success)
+	// A best-effort cycle must never take the agent offline.
+	assert.True(t, agent.Enable())
+}
+
+// The refresh interval defaults to zero, which keeps the periodic re-sender off
+// and preserves the historical behavior of registering exactly once.
+func TestSendsAgentInfoOnceWhenRefreshDisabled(t *testing.T) {
+	cfg := defaultAgentConfig()
+	require.Zero(t, cfg.agentInfoRefreshInterval)
+	mc, agent := startStack(t, cfg)
+
+	require.Len(t, mc.Snapshot().AgentInfos, 1)
+	// Several refresh intervals' worth of time for a worker that must not exist.
+	time.Sleep(time.Second)
+	assert.Len(t, mc.Snapshot().AgentInfos, 1)
+	assert.True(t, agent.Enable())
+}

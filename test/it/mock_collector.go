@@ -14,6 +14,7 @@ import (
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -174,6 +175,7 @@ type endpointServer struct {
 	port     int
 	server   *grpc.Server
 	listener net.Listener
+	creds    credentials.TransportCredentials
 	register func(*grpc.Server)
 }
 
@@ -232,6 +234,20 @@ func (c *MockCollector) Start() error {
 			c.Shutdown()
 			return err
 		}
+	}
+	return nil
+}
+
+// UseTLS makes every endpoint serve TLS with the given certificate, so an
+// agent configured with Collector.Grpc.SslEnable can be exercised end to end.
+// It must be called before Start.
+func (c *MockCollector) UseTLS(certFile, keyFile string) error {
+	creds, err := credentials.NewServerTLSFromFile(certFile, keyFile)
+	if err != nil {
+		return fmt.Errorf("load collector certificate: %w", err)
+	}
+	for _, e := range c.endpoints {
+		e.creds = creds
 	}
 	return nil
 }
@@ -426,7 +442,11 @@ func (e *endpointServer) start(port int) error {
 	}
 	e.listener = ln
 	e.port = ln.Addr().(*net.TCPAddr).Port
-	e.server = grpc.NewServer()
+	var opts []grpc.ServerOption
+	if e.creds != nil {
+		opts = append(opts, grpc.Creds(e.creds))
+	}
+	e.server = grpc.NewServer(opts...)
 	e.register(e.server)
 	go e.server.Serve(ln)
 	return nil
