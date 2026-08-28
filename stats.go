@@ -304,8 +304,9 @@ func (agent *agent) collectAgentStatWorker() {
 	resetResponseTime()
 
 	interval := time.Duration(agent.config.Int(CfgStatCollectInterval)) * time.Millisecond
-	agent.statTicker = time.NewTicker(interval)
-	agent.statDone = make(chan bool)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	stop := agent.stopSignal().Done()
 
 	cfgBatchCount := agent.config.Int(CfgStatBatchCount)
 	collected := make([]*inspectorStats, cfgBatchCount)
@@ -313,10 +314,10 @@ func (agent *agent) collectAgentStatWorker() {
 
 	for agent.enable.Load() {
 		select {
-		case <-agent.statDone:
+		case <-stop:
 			Log("stats").Infof("end collect agent stat goroutine")
 			return
-		case <-agent.statTicker.C:
+		case <-ticker.C:
 			collected[batch] = getStats()
 			batch++
 
