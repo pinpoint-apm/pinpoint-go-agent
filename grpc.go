@@ -561,18 +561,22 @@ func makePStackTraceElementList(frames []frame) []*pb.PStackTraceElement {
 
 // sendStreamWithTimeout runs op on the calling goroutine and cancels the
 // stream if op blocks past timeout. grpc-go unblocks a flow-control-blocked
-// Send/Recv/CloseSend once the stream context is cancelled, so nothing is
-// spawned or abandoned — the Go analog of the C++ agent's bounded wait plus
-// TryCancel. Killing the stream on timeout matches the callers: they already
-// close and re-create the stream on any send error.
+// Send/Recv/CloseSend once the stream context is cancelled, so no operation
+// goroutine is spawned or abandoned — the Go analog of the C++ agent's bounded
+// wait plus TryCancel. Killing the stream on timeout matches the callers: they
+// already close and re-create the stream on any send error.
 func sendStreamWithTimeout(op func() error, cancelStream context.CancelFunc, timeout time.Duration, which string) error {
 	var timedOut atomic.Bool
+	callbackDone := make(chan struct{})
 	t := time.AfterFunc(timeout, func() {
-		timedOut.Store(true)
+		defer close(callbackDone)
 		cancelStream()
+		timedOut.Store(true)
 	})
 	err := op()
-	t.Stop()
+	if !t.Stop() {
+		<-callbackDone
+	}
 	if timedOut.Load() {
 		return status.Errorf(codes.DeadlineExceeded, which+" - too slow or blocked")
 	}
