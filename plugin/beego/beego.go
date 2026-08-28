@@ -71,9 +71,12 @@ func ServerFilterChain() func(web.FilterFunc) web.FilterFunc {
 
 			defer tracer.EndSpan()
 			defer func() {
+				// Comma-ok: Input.GetData is an interface{} store keyed by
+				// string, so anything the application put under the same key
+				// panicked the deferred stat collection.
 				routerPattern := ""
-				if rp := ctx.Input.GetData("RouterPattern"); rp != nil {
-					routerPattern = rp.(string)
+				if rp, ok := ctx.Input.GetData("RouterPattern").(string); ok {
+					routerPattern = rp
 				}
 				pphttp.CollectUrlStat(tracer, routerPattern, r.Method, status)
 				pphttp.RecordHttpServerResponse(tracer, status, ctx.ResponseWriter.Header())
