@@ -304,7 +304,7 @@ func BenchmarkCacheSpanApi(b *testing.B) {
 	}
 }
 
-// BenchmarkCacheSpanApiParallel measures apiCache lru lock contention across cores.
+// BenchmarkCacheSpanApiParallel measures apiCache hit scalability across cores.
 func BenchmarkCacheSpanApiParallel(b *testing.B) {
 	a := benchAgent()
 	stop := startDrain(a)

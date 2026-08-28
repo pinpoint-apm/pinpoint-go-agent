@@ -4,6 +4,8 @@ import (
 	"container/list"
 	"hash/maphash"
 	"sync"
+	"sync/atomic"
+	"unsafe"
 )
 
 // metaCache replaces the four hashicorp/golang-lru metadata caches. That
@@ -11,13 +13,12 @@ import (
 // Peek/PeekOrAdd pattern used here never promoted entries, so eviction order
 // degenerated to insertion order (FIFO): a hot SQL was evicted before a
 // cold-but-recent one, re-issuing its id and re-sending its metadata to the
-// collector. This cache shards the key space (per-shard RWMutex) and restores
-// real LRU ordering with aged promotion, mirroring the C++ agent's
-// ShardedLruCache (src/cache.h): a hit only takes the write lock to splice
-// when the shard is full AND the entry has aged past half the shard capacity.
-// Promoting on every hit would serialize all hits behind the exclusive lock
-// (C++ measured 75 ns vs 1,333 ns per hot-set hit at 16 threads). Typed keys
-// also drop the interface{} boxing golang-lru forced on every lookup.
+// collector. This cache shards the key space and restores real LRU ordering
+// with aged promotion, mirroring the C++ agent's ShardedLruCache (src/cache.h):
+// sync.Map keeps steady-state hits lock-free, while an aged entry only takes
+// the shard lock when it needs to move to the front. Promoting on every hit
+// would serialize all hits behind the lock (C++ measured 75 ns vs 1,333 ns
+// per hot-set hit at 16 threads).
 const metaCacheShardCount = 16 // power of two; matches the C++ agent
 
 var metaCacheSeed = maphash.MakeSeed()
@@ -29,31 +30,36 @@ func hashApiCacheKey(k apiCacheKey) uint64 {
 }
 
 type metaCacheEntry[K comparable, V any] struct {
-	key   K
-	value V
-	// Shard opSeq at insert / last promotion. Written under the shard's
-	// write lock, read under its read lock.
-	lastPromoted uint64
+	key     K
+	value   V
+	element *list.Element
+	shard   *metaCacheShard
+	// Shard opSeq at insert / last promotion. Reads are lock-free.
+	lastPromoted atomic.Uint64
 }
 
-// metaCacheShard is padded to cacheLinePadSize for the same reason as
-// activeSpanShard in stats.go: the mutex and opSeq are the contended words,
-// and unpadded shards would ping-pong a shared line between goroutines
-// holding *different* shard locks. The payload is 64 bytes; the size
-// assertion in meta_cache_test.go fails if a field changes that.
-type metaCacheShard[K comparable, V any] struct {
-	mu           sync.RWMutex
-	m            map[K]*list.Element
+type metaCacheShardInternal struct {
+	mu           sync.Mutex
 	order        *list.List // front = most recently used
 	cap          int
 	ageThreshold uint64
-	opSeq        uint64 // counts inserts and promotions; entry age = opSeq - lastPromoted
-	_            [cacheLinePadSize - 64]byte
+	opSeq        atomic.Uint64 // counts inserts and promotions; entry age = opSeq - lastPromoted
+	size         atomic.Int64
+}
+
+// metaCacheShard is padded to cacheLinePadSize for the same reason as
+// activeSpanShard in stats.go: the mutex and atomics are the contended words,
+// and unpadded shards would ping-pong a shared line between goroutines using
+// *different* shards.
+type metaCacheShard struct {
+	metaCacheShardInternal
+	_ [cacheLinePadSize - unsafe.Sizeof(metaCacheShardInternal{})%cacheLinePadSize]byte
 }
 
 type metaCache[K comparable, V any] struct {
 	hash   func(K) uint64
-	shards [metaCacheShardCount]metaCacheShard[K, V]
+	m      sync.Map // K -> *metaCacheEntry[K, V]
+	shards [metaCacheShardCount]metaCacheShard
 }
 
 // newMetaCache splits capacity evenly across the shards, so a hot shard
@@ -67,7 +73,6 @@ func newMetaCache[K comparable, V any](capacity int, hash func(K) uint64) *metaC
 	}
 	for i := range c.shards {
 		s := &c.shards[i]
-		s.m = make(map[K]*list.Element, perShard+1)
 		s.order = list.New()
 		s.cap = perShard
 		s.ageThreshold = uint64(perShard / 2)
@@ -78,38 +83,43 @@ func newMetaCache[K comparable, V any](capacity int, hash func(K) uint64) *metaC
 	return c
 }
 
-func (c *metaCache[K, V]) shard(key K) *metaCacheShard[K, V] {
+func (c *metaCache[K, V]) shard(key K) *metaCacheShard {
 	return &c.shards[c.hash(key)&(metaCacheShardCount-1)]
 }
 
-// peek returns the cached value. A hit is normally a pure read-lock lookup;
-// only when the shard is full and the entry has aged past ageThreshold does
-// it take the write lock to move the entry to the front (aged promotion).
+// peek returns the cached value. A hit is normally lock-free; only when the
+// shard is full and the entry has aged past ageThreshold does it take the
+// shard lock to move the entry to the front (aged promotion).
 func (c *metaCache[K, V]) peek(key K) (V, bool) {
-	s := c.shard(key)
-	s.mu.RLock()
-	el, ok := s.m[key]
+	raw, ok := c.m.Load(key)
 	if !ok {
-		s.mu.RUnlock()
 		var zero V
 		return zero, false
 	}
-	e := el.Value.(*metaCacheEntry[K, V])
+	e := raw.(*metaCacheEntry[K, V])
+	s := e.shard
 	v := e.value
-	promote := len(s.m) >= s.cap && s.opSeq-e.lastPromoted >= s.ageThreshold
-	s.mu.RUnlock()
-
-	if promote {
-		s.mu.Lock()
-		// Re-resolve: the entry may have been evicted or removed between
-		// the two locks. The value read above is still a valid answer.
-		if el, ok := s.m[key]; ok {
-			s.order.MoveToFront(el)
-			s.opSeq++
-			el.Value.(*metaCacheEntry[K, V]).lastPromoted = s.opSeq
-		}
-		s.mu.Unlock()
+	if s.size.Load() < int64(s.cap) {
+		return v, true
 	}
+	lastPromoted := e.lastPromoted.Load()
+	opSeq := s.opSeq.Load()
+	if opSeq-lastPromoted < s.ageThreshold {
+		return v, true
+	}
+
+	s.mu.Lock()
+	// Re-resolve and re-check: another goroutine may have promoted, evicted,
+	// or removed the entry while this goroutine waited for the lock.
+	if raw, ok := c.m.Load(key); ok && raw.(*metaCacheEntry[K, V]) == e {
+		lastPromoted = e.lastPromoted.Load()
+		opSeq = s.opSeq.Load()
+		if s.size.Load() >= int64(s.cap) && opSeq-lastPromoted >= s.ageThreshold {
+			s.order.MoveToFront(e.element)
+			e.lastPromoted.Store(s.opSeq.Add(1))
+		}
+	}
+	s.mu.Unlock()
 	return v, true
 }
 
@@ -121,18 +131,21 @@ func (c *metaCache[K, V]) peek(key K) (V, bool) {
 func (c *metaCache[K, V]) peekOrAdd(key K, value V) (V, bool) {
 	s := c.shard(key)
 	s.mu.Lock()
-	if el, ok := s.m[key]; ok {
-		v := el.Value.(*metaCacheEntry[K, V]).value
+	if raw, ok := c.m.Load(key); ok {
+		v := raw.(*metaCacheEntry[K, V]).value
 		s.mu.Unlock()
 		return v, true
 	}
-	s.opSeq++
-	e := &metaCacheEntry[K, V]{key: key, value: value, lastPromoted: s.opSeq}
-	s.m[key] = s.order.PushFront(e)
-	if len(s.m) > s.cap {
-		victim := s.order.Back()
-		delete(s.m, victim.Value.(*metaCacheEntry[K, V]).key)
-		s.order.Remove(victim)
+	opSeq := s.opSeq.Add(1)
+	e := &metaCacheEntry[K, V]{key: key, value: value, shard: s}
+	e.lastPromoted.Store(opSeq)
+	e.element = s.order.PushFront(e)
+	c.m.Store(key, e)
+	if s.size.Add(1) > int64(s.cap) {
+		victim := s.order.Back().Value.(*metaCacheEntry[K, V])
+		c.m.Delete(victim.key)
+		s.order.Remove(victim.element)
+		s.size.Add(-1)
 	}
 	s.mu.Unlock()
 	var zero V
@@ -144,9 +157,11 @@ func (c *metaCache[K, V]) peekOrAdd(key K, value V) (V, bool) {
 func (c *metaCache[K, V]) remove(key K) {
 	s := c.shard(key)
 	s.mu.Lock()
-	if el, ok := s.m[key]; ok {
-		delete(s.m, key)
-		s.order.Remove(el)
+	if raw, ok := c.m.Load(key); ok {
+		e := raw.(*metaCacheEntry[K, V])
+		c.m.Delete(key)
+		s.order.Remove(e.element)
+		s.size.Add(-1)
 	}
 	s.mu.Unlock()
 }

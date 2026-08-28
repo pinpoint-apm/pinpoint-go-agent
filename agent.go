@@ -839,7 +839,7 @@ const maxCacheableSqlLength = 64 * 1024
 // normalizeSql returns the normalized SQL and extracted parameters for sql,
 // memoized by the raw SQL text so repeated statements skip re-parsing. It uses
 // the same sharded metaCache as the id caches above, so a hot statement is a
-// read-lock lookup and stays resident under aged promotion.
+// lock-free lookup and stays resident under aged promotion.
 func (agent *agent) normalizeSql(sql string) (string, string) {
 	if len(sql) > maxCacheableSqlLength {
 		return newSqlNormalizer(sql).run()
