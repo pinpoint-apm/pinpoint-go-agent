@@ -420,6 +420,11 @@ func isRetryableError(e error) bool {
 // metadata is dropped.
 const metaRetryMaxAttempts = 3
 
+// metaMaxConcurrentRequests bounds how many metadata sends sendMetaWorker
+// keeps in flight at once, matching the C++ agent's
+// meta_max_concurrent_requests.
+const metaMaxConcurrentRequests = 4
+
 // retryMeta reports failure once the attempt budget is exhausted so that
 // sendMetaWorker releases the item's cache entry and the metadata is
 // re-registered on its next use.

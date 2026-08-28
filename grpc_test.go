@@ -730,6 +730,99 @@ func Test_sendMetaWorker_movesOnAndReleasesCache(t *testing.T) {
 	assert.Equal(t, 1, len(agent.metaChan))
 }
 
+// blockingMetaClient parks every metadata request until release is closed,
+// tracking how many requests are in flight at once.
+type blockingMetaClient struct {
+	mu      sync.Mutex
+	current int
+	max     int
+	total   int
+	release chan struct{}
+}
+
+func (c *blockingMetaClient) block() error {
+	c.mu.Lock()
+	c.current++
+	c.total++
+	if c.current > c.max {
+		c.max = c.current
+	}
+	c.mu.Unlock()
+
+	<-c.release
+
+	c.mu.Lock()
+	c.current--
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *blockingMetaClient) inFlight() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.current
+}
+
+func (c *blockingMetaClient) stats() (max, total int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.max, c.total
+}
+
+func (c *blockingMetaClient) RequestApiMetaData(context.Context, *pb.PApiMetaData) (*pb.PResult, error) {
+	return nil, c.block()
+}
+
+func (c *blockingMetaClient) RequestSqlMetaData(context.Context, *pb.PSqlMetaData) (*pb.PResult, error) {
+	return nil, c.block()
+}
+
+func (c *blockingMetaClient) RequestSqlUidMetaData(context.Context, *pb.PSqlUidMetaData) (*pb.PResult, error) {
+	return nil, c.block()
+}
+
+func (c *blockingMetaClient) RequestStringMetaData(context.Context, *pb.PStringMetaData) (*pb.PResult, error) {
+	return nil, c.block()
+}
+
+func (c *blockingMetaClient) RequestExceptionMetaData(context.Context, *pb.PExceptionMetaData) (*pb.PResult, error) {
+	return nil, c.block()
+}
+
+// While earlier sends are still waiting on the collector, the worker must keep
+// pulling items and pipeline up to metaMaxConcurrentRequests sends -- and no
+// more.
+func Test_sendMetaWorker_pipelinesUpToConcurrencyLimit(t *testing.T) {
+	cfg, _ := NewConfig(WithAppName("TestApp"))
+	agent := newTestAgent(cfg)
+	blocking := &blockingMetaClient{release: make(chan struct{})}
+	agent.agentGrpc = &agentGrpc{metaClient: blocking, agent: agent}
+
+	const items = 2 * metaMaxConcurrentRequests
+	for i := 0; i < items; i++ {
+		agent.metaChan <- apiMeta{id: int32(i), descriptor: "test.api", apiType: apiTypeInvocation}
+	}
+
+	agent.workerWg.Add(1)
+	go agent.sendMetaWorker()
+
+	assert.Eventually(t, func() bool {
+		return blocking.inFlight() == metaMaxConcurrentRequests
+	}, 5*time.Second, time.Millisecond, "sends must pipeline while the collector is slow")
+
+	close(blocking.release)
+	assert.Eventually(t, func() bool {
+		_, total := blocking.stats()
+		return total == items
+	}, 5*time.Second, time.Millisecond, "every queued item must be sent")
+
+	agent.signalShutdown()
+	agent.workerWg.Wait()
+
+	max, _ := blocking.stats()
+	assert.Equal(t, metaMaxConcurrentRequests, max, "in-flight sends must not exceed the limit")
+}
+
 // countingAgentClient counts RequestAgentInfo calls and fails them on demand.
 type countingAgentClient struct {
 	calls atomic.Int32
