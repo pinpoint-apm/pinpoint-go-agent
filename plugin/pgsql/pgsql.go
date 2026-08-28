@@ -13,7 +13,6 @@ package pppgsql
 
 import (
 	"database/sql"
-	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -37,7 +36,7 @@ var dsnSplit = regexp.MustCompile(`(\w+)\s*=\s*('[^=]*'|[^'\s]+)`)
 func parseDSN(info *pinpoint.DBInfo, dsn string) {
 	convDsn, err := pq.ParseURL(dsn)
 	if err != nil {
-		fmt.Println("error= " + err.Error())
+		pinpoint.Log("pgsql").Errorf("dsn parse error: %v", err)
 		return
 	}
 

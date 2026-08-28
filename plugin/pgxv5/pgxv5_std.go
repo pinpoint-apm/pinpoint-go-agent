@@ -2,7 +2,6 @@ package pppgxv5
 
 import (
 	"database/sql"
-	"fmt"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -22,7 +21,7 @@ func init() {
 func parseDSN(info *pinpoint.DBInfo, dsn string) {
 	config, err := pgconn.ParseConfig(dsn)
 	if err != nil {
-		fmt.Println("error= " + err.Error())
+		pinpoint.Log("pgxv5").Errorf("dsn parse error: %v", err)
 		return
 	}
 
