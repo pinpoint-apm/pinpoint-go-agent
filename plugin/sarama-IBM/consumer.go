@@ -158,7 +158,12 @@ func newConsumerTracer(ctx context.Context, msg *sarama.ConsumerMessage) pinpoin
 
 	brokerAddr := unknownAddr
 	if v := ctx.Value(contextKey); v != nil {
-		brokerAddr, _ = v.([]string)
+		// Keep the Unknown fallback for an empty or mistyped value: brokerAddr
+		// is indexed below, and a panic here propagates out of ConsumeClaim
+		// and kills the consumer.
+		if addrs, ok := v.([]string); ok && len(addrs) > 0 {
+			brokerAddr = addrs
+		}
 	} else if host := reader.Get(pinpoint.HeaderHost); host != "" {
 		brokerAddr = make([]string, 1)
 		brokerAddr[0] = host
