@@ -12,6 +12,7 @@
 package ppechov4
 
 import (
+	"errors"
 	"net/http"
 	"sync"
 
@@ -85,9 +86,16 @@ func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
 		err := handler(c)
 		if err != nil {
 			pphttp.RecordHttpHandlerError(tracer, err)
-			c.Error(err)
+			// Do not call c.Error here: returning the error already routes it
+			// to echo's HTTPErrorHandler, and calling it as well ran that
+			// handler - and its logging, metrics and other side effects -
+			// twice for every failed request. Derive the status from the
+			// error instead of reading it off the not-yet-committed response,
+			// as the fiber plugin does.
+			status = statusCode(err)
+		} else {
+			status = c.Response().Status
 		}
-		status = c.Response().Status
 		return err
 	}
 }
@@ -103,4 +111,13 @@ func Middleware() echo.MiddlewareFunc {
 // By using the pinpoint.FromContext function, this tracer can be obtained.
 func WrapHandler(handler echo.HandlerFunc) echo.HandlerFunc {
 	return wrap(handler, pphttp.HandlerFuncName(handler))
+}
+
+// statusCode reports the status echo's HTTPErrorHandler will send for err.
+func statusCode(err error) int {
+	var e *echo.HTTPError
+	if errors.As(err, &e) {
+		return e.Code
+	}
+	return http.StatusInternalServerError
 }

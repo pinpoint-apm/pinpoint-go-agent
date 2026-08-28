@@ -1,100 +1,57 @@
 package ppecho
 
 import (
-	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/labstack/echo"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/stretchr/testify/assert"
 )
 
-func handler1(c echo.Context) error { return c.String(http.StatusOK, "hello-get") }
-func handler2(c echo.Context) error { return c.String(http.StatusOK, "hello-post") }
-
-func Test_makeHandlerNameMap(t *testing.T) {
-	t.Run("new handlerNameMap", func(t *testing.T) {
-		e := echo.New()
-
-		e.GET("/hello", handler1)
-		e.POST("/hello", handler2)
-
-		req := httptest.NewRequest(http.MethodPost, "/hello", nil)
-		rec := httptest.NewRecorder()
-
-		c := e.NewContext(req, rec)
-		makeHandlerNameMap(c)
-
-		assert.Equal(t, 2, len(handlerNameMap))
-		assert.Equal(t, "github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo.handler1()", handlerNameMap[key{"GET", "/hello"}])
-		assert.Equal(t, "github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo.handler2()", handlerNameMap[key{"POST", "/hello"}])
-	})
+// The wrapper reports the status echo's HTTPErrorHandler will send, instead of
+// invoking that handler itself to read the status off the response.
+func Test_statusCode(t *testing.T) {
+	if got := statusCode(echo.NewHTTPError(http.StatusNotFound)); got != http.StatusNotFound {
+		t.Errorf("statusCode(404) = %d, want 404", got)
+	}
+	if got := statusCode(errors.New("boom")); got != http.StatusInternalServerError {
+		t.Errorf("statusCode(plain error) = %d, want 500", got)
+	}
 }
 
-func Test_Middleware(t *testing.T) {
-	opts := []pinpoint.ConfigOption{
-		pinpoint.WithAppName("GoEchovTest"),
+// A handler that returns an error must have echo's HTTPErrorHandler run once -
+// by echo, from the returned error - not once by the wrapper and again by echo.
+func Test_wrapHandler_RunsErrorHandlerOnce(t *testing.T) {
+	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentId("testAgent"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	cfg, _ := pinpoint.NewConfig(opts...)
-	agent, _ := pinpoint.NewTestAgent(cfg, t)
+	agent, err := pinpoint.NewTestAgent(config, t)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer agent.Shutdown()
 
-	t.Run("middleware", func(t *testing.T) {
-		e := echo.New()
-		e.Use(Middleware())
+	e := echo.New()
+	calls := 0
+	e.HTTPErrorHandler = func(err error, c echo.Context) {
+		calls++
+		e.DefaultHTTPErrorHandler(err, c)
+	}
+	e.GET("/boom", WrapHandler(func(c echo.Context) error {
+		return echo.NewHTTPError(http.StatusTeapot)
+	}))
 
-		var tracer pinpoint.Tracer
-		e.GET("/hello", func(c echo.Context) error {
-			tracer = pinpoint.TracerFromRequestContext(c.Request())
-			assert.Equal(t, true, tracer.IsSampled())
-			return c.String(http.StatusBadGateway, "hello-get")
-		})
+	req, _ := http.NewRequest(http.MethodGet, "/boom", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
 
-		r := httptest.NewRequest(http.MethodGet, "/hello", nil)
-		w := httptest.NewRecorder()
-		e.ServeHTTP(w, r)
-
-		j := tracer.JsonString()
-		fmt.Println(string(j))
-
-		var m map[string]interface{}
-		json.Unmarshal(j, &m)
-		assert.Equal(t, "/hello", m["RpcName"])
-		assert.Equal(t, "example.com", m["EndPoint"])
-		assert.Equal(t, "192.0.2.1", m["RemoteAddr"])
-		assert.Equal(t, float64(1), m["Err"])
-
-		a := m["Annotations"].([]interface{})[0].(map[string]interface{})
-		assert.Equal(t, float64(pinpoint.AnnotationHttpStatusCode), a["key"])
-	})
-
-	t.Run("check if the middleware propagates an error", func(t *testing.T) {
-		var capturedError error
-
-		e := echo.New()
-		e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-			return func(echoCtx echo.Context) error {
-				resErr := next(echoCtx)
-				capturedError = resErr
-				return resErr
-			}
-		})
-		e.Use(Middleware())
-		e.GET("/hello", func(c echo.Context) error {
-			err := fmt.Errorf("error from handler")
-			c.Error(err)
-			return err
-		})
-
-		req := httptest.NewRequest(http.MethodGet, "/hello", nil)
-		rec := httptest.NewRecorder()
-
-		e.ServeHTTP(rec, req)
-
-		assert.Error(t, capturedError)
-		assert.Equal(t, "error from handler", capturedError.Error())
-	})
+	if calls != 1 {
+		t.Errorf("HTTPErrorHandler ran %d times, want 1", calls)
+	}
+	if rec.Code != http.StatusTeapot {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusTeapot)
+	}
 }
