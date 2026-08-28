@@ -120,3 +120,37 @@ func Test_spanEvent_SetSQL(t *testing.T) {
 		})
 	}
 }
+
+// A goroutine span event must carry an api id its own agent registered: ids
+// come from the per-agent apiIdGen, so a process-global cache would make the
+// second agent (Shutdown() + NewAgent()) reuse an id it never published.
+func Test_newSpanEventGoroutine_apiIdIsPerAgent(t *testing.T) {
+	publishedGoroutineApiId := func(a *agent) int32 {
+		for {
+			select {
+			case md := <-a.metaChan:
+				if api, ok := md.(apiMeta); ok && api.descriptor == "Goroutine Invocation" {
+					assert.Equal(t, apiTypeInvocation, api.apiType, "apiType")
+					return api.id
+				}
+			default:
+				return 0
+			}
+		}
+	}
+
+	for _, name := range []string{"first agent", "second agent"} {
+		t.Run(name, func(t *testing.T) {
+			s := defaultTestSpan()
+			se := newSpanEventGoroutine(s)
+
+			assert.Equal(t, int32(ServiceTypeAsync), se.serviceType, "serviceType")
+			assert.NotZero(t, se.apiId, "apiId")
+			assert.Equal(t, se.apiId, publishedGoroutineApiId(s.agent), "registered apiId")
+
+			// second event on the same agent reuses the id, publishing nothing
+			assert.Equal(t, se.apiId, newSpanEventGoroutine(s).apiId, "cached apiId")
+			assert.Zero(t, publishedGoroutineApiId(s.agent), "re-registered apiId")
+		})
+	}
+}

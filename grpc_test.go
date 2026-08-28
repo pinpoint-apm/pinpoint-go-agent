@@ -125,7 +125,7 @@ func Test_agentGrpc_sendApiMetadata(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
 			agent.agentGrpc = newMockAgentGrpc(agent, t)
-			b := agent.agentGrpc.sendApiMetadataWithRetry(asyncApiId, "Asynchronous Invocation", -1, apiTypeInvocation)
+			b := agent.agentGrpc.sendApiMetadataWithRetry(1, "Asynchronous Invocation", -1, apiTypeInvocation)
 			assert.Equal(t, true, b, "sendApiMetadata")
 		})
 	}

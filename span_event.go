@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"sync/atomic"
 	"time"
 )
 
@@ -26,10 +27,7 @@ type spanEvent struct {
 	exceptionId   int64
 }
 
-var (
-	asyncApiId     int32 = 0
-	exceptionIdGen int64 = 0
-)
+var exceptionIdGen int64 = 0
 
 func defaultSpanEvent(span *span, operationName string) *spanEvent {
 	se := spanEvent{}
@@ -64,10 +62,12 @@ func newSpanEventGoroutine(span *span) *spanEvent {
 	se := defaultSpanEvent(span, "")
 
 	//Asynchronous Invocation
-	if asyncApiId == 0 {
-		asyncApiId = span.agent.cacheSpanApi("Goroutine Invocation", apiTypeInvocation)
+	apiId := atomic.LoadInt32(&span.agent.asyncApiId)
+	if apiId == 0 {
+		apiId = span.agent.cacheSpanApi("Goroutine Invocation", apiTypeInvocation)
+		atomic.StoreInt32(&span.agent.asyncApiId, apiId)
 	}
-	se.apiId = asyncApiId
+	se.apiId = apiId
 	se.serviceType = ServiceTypeAsync
 
 	return se

@@ -57,6 +57,13 @@ type agent struct {
 	apiCache    *metaCache[apiCacheKey, int32]
 	apiIdGen    int32
 
+	// asyncApiId caches this agent's id for the "Goroutine Invocation" API.
+	// Per-agent, not package-global: ids come from apiIdGen and are published
+	// through this agent's metadata channel, so a new agent after Shutdown()
+	// must mint and register its own. Accessed atomically; 0 means not cached
+	// yet (cacheSpanApi returns 0 while the agent is disabled, so it retries).
+	asyncApiId int32
+
 	config    *Config
 	connectWg sync.WaitGroup
 	workerWg  sync.WaitGroup
