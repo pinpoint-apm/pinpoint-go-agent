@@ -104,7 +104,7 @@ func Test_setProxyHeader(t *testing.T) {
 			}
 
 			a := &proxyAnnotation{}
-			setProxyHeader(a, req)
+			setProxyHeader(a, header{req.Header})
 
 			if a.got != want {
 				t.Errorf("%s: %q\n got: %+v\nwant: %+v", tt.header, tt.value, a.got, want)

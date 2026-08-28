@@ -36,7 +36,6 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	"github.com/valyala/fasthttp"
-	"github.com/valyala/fasthttp/fasthttpadaptor"
 )
 
 const serverName = "FastHttp Server"
@@ -56,15 +55,12 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 		requestHeader := reqHeader{&ctx.Request.Header}
 		status := http.StatusOK
 		tracer := pphttp.NewHttpServerTracerWithReader(method, string(ctx.Path()), serverName, requestHeader)
-		if tracer.IsSampled() {
-			req := new(http.Request)
-			if err := fasthttpadaptor.ConvertRequest(ctx, req, true); err != nil {
-				tracer.EndSpan()
-				handler(ctx)
-				return
-			}
-			pphttp.RecordHttpServerRequest(tracer, req)
-		}
+		// Record straight from the fasthttp request: converting it to a
+		// net/http request (fasthttpadaptor.ConvertRequest) materialized the
+		// full header map, parsed the URL and buffered the body per sampled
+		// request, only for values the default noop recorders never read.
+		pphttp.RecordHttpServerRequestWithReader(tracer, string(ctx.Host()), ctx.RemoteAddr().String(),
+			requestHeader, cookie{&ctx.Request.Header})
 
 		defer tracer.EndSpan()
 		defer func() {

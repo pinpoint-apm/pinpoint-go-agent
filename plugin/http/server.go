@@ -59,48 +59,63 @@ func NewHttpServerTracerWithReader(method, path, operation string, reader pinpoi
 
 // RecordHttpServerRequest records sampled request attributes on tracer.
 func RecordHttpServerRequest(tracer pinpoint.Tracer, req *http.Request) {
+	RecordHttpServerRequestWithReader(tracer, req.Host, req.RemoteAddr, header{req.Header}, cookie{req})
+}
+
+// RecordHttpServerRequestWithReader records sampled request attributes from
+// framework-native request data. Adapters without a net/http request (fasthttp,
+// fiber) use this instead of materializing one just to have it read here.
+// remoteAddr is the transport-level peer address; X-Forwarded-For and
+// X-Real-Ip override it, exactly as in RecordHttpServerRequest.
+func RecordHttpServerRequestWithReader(tracer pinpoint.Tracer, host string, remoteAddr string, h Header, c Cookie) {
 	if !tracer.IsSampled() {
 		return
 	}
 
 	span := tracer.Span()
-	span.SetEndPoint(req.Host)
-	span.SetRemoteAddress(getRemoteAddr(req))
+	span.SetEndPoint(host)
+	span.SetRemoteAddress(resolveRemoteAddr(h, remoteAddr))
 
 	a := span.Annotations()
-	recordServerHttpRequestHeader(a, header{req.Header})
-	recordServerHttpCookie(a, cookie{req})
-	setProxyHeader(a, req)
+	recordServerHttpRequestHeader(a, h)
+	recordServerHttpCookie(a, c)
+	setProxyHeader(a, h)
 }
 
-func getRemoteAddr(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if parts := strings.Split(xff, ","); len(parts) > 0 {
-			return strings.TrimSpace(parts[0])
-		}
+// headerFirst returns the first value of key, or "" when absent.
+func headerFirst(h Header, key string) string {
+	if v := h.Values(key); len(v) > 0 {
+		return v[0]
+	}
+	return ""
+}
+
+func resolveRemoteAddr(h Header, remoteAddr string) string {
+	if xff := headerFirst(h, "X-Forwarded-For"); xff != "" {
+		first, _, _ := strings.Cut(xff, ",")
+		return strings.TrimSpace(first)
 	}
 
-	if xff := r.Header.Get("X-Real-Ip"); xff != "" {
-		if parts := strings.Split(xff, ","); len(parts) > 0 {
-			return strings.TrimSpace(parts[0])
-		}
+	if xff := headerFirst(h, "X-Real-Ip"); xff != "" {
+		first, _, _ := strings.Cut(xff, ",")
+		return strings.TrimSpace(first)
 	}
 
-	addr, _, err := net.SplitHostPort(r.RemoteAddr)
+	addr, _, err := net.SplitHostPort(remoteAddr)
 	if err == nil {
 		return addr
 	}
 
-	return r.RemoteAddr
+	return remoteAddr
 }
 
-func setProxyHeader(a pinpoint.Annotation, r *http.Request) {
+func setProxyHeader(a pinpoint.Annotation, h Header) {
 	var receivedTime int64
 	var durationTime, idlePercent, busyPercent int
 	var code int32 = 0
 	var app = ""
 
-	if xff := r.Header.Get("Pinpoint-ProxyApache"); xff != "" {
+	if xff := headerFirst(h, "Pinpoint-ProxyApache"); xff != "" {
 		parts := strings.Split(xff, " ")
 		for _, str := range parts {
 			k, v, ok := strings.Cut(str, "=")
@@ -119,7 +134,7 @@ func setProxyHeader(a pinpoint.Annotation, r *http.Request) {
 			}
 		}
 		code = 3
-	} else if xff := r.Header.Get("Pinpoint-ProxyNginx"); xff != "" {
+	} else if xff := headerFirst(h, "Pinpoint-ProxyNginx"); xff != "" {
 		parts := strings.Split(xff, " ")
 		for _, str := range parts {
 			k, v, ok := strings.Cut(str, "=")
@@ -143,7 +158,7 @@ func setProxyHeader(a pinpoint.Annotation, r *http.Request) {
 			}
 		}
 		code = 2
-	} else if xff := r.Header.Get("Pinpoint-ProxyApp"); xff != "" {
+	} else if xff := headerFirst(h, "Pinpoint-ProxyApp"); xff != "" {
 		parts := strings.Split(xff, " ")
 		for _, str := range parts {
 			k, v, ok := strings.Cut(str, "=")
