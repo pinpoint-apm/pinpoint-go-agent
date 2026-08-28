@@ -3,7 +3,6 @@ package it
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -563,25 +562,6 @@ func expectCommonMetadata(t *testing.T, md RpcMetadata, expectSocketID bool) {
 	assert.Equal(t, expectSocketID, md.Has("socketid"))
 }
 
-// isolate re-executes the calling test in a child process and reports whether
-// this process is that child.
-//
-// Some scenarios deliberately leave a never-enabled agent installed as the
-// process-global singleton: Agent.Shutdown clears the global only when the
-// agent was enabled, so a later NewAgent in the same process is refused.
-// Running those in their own process keeps the rest of the suite
-// order-independent.
-func isolate(t *testing.T) bool {
-	if os.Getenv("PINPOINT_IT_ISOLATED") == t.Name() {
-		return true
-	}
-	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$", "-test.v", "-test.timeout=5m")
-	cmd.Env = append(os.Environ(), "PINPOINT_IT_ISOLATED="+t.Name())
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("isolated run failed: %v\n%s", err, out)
-	}
-	return false
-}
 
 func findExceptionForSpan(s Snapshot, spanID int64) *pb.PExceptionMetaData {
 	for _, r := range s.ExceptionMetadata {

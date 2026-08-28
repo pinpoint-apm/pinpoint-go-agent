@@ -190,9 +190,6 @@ func TestRetriesAgentRegistrationAfterInitialFailure(t *testing.T) {
 // permanent rejection, not a transport error: the agent must stop retrying and
 // stay disabled rather than loop forever against a collector that refuses it.
 func TestStopsRegistrationAfterApplicationRejection(t *testing.T) {
-	if !isolate(t) {
-		return
-	}
 	mc := startCollector(t)
 	mc.RejectNext(RpcAgentInfo, "collector rejected this agent")
 	agent := startAgent(t, mc, defaultAgentConfig())

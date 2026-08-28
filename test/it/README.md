@@ -119,12 +119,8 @@ the agent.
 
 **Process-global agent state constrains the suite.** A Pinpoint agent is a
 process-global singleton, so the tests run sequentially and each shuts its
-agent down in `t.Cleanup`. Three consequences:
+agent down in `t.Cleanup`. Two consequences:
 
-- `Agent.Shutdown()` only clears the global agent when the agent had been
-  enabled, so a test that deliberately shuts down a never-registered agent
-  would break every later test in the process. Those tests call `isolate(t)`,
-  which re-runs the single test in a child process.
 - The `plugin/http` package publishes its own config snapshot once per process,
   so every test here shares the HTTP settings from `defaultAgentConfig`.
   Changing them per test would silently have no effect.

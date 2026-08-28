@@ -67,13 +67,7 @@ func TestEnablesAndStartsAllGrpcWorkersAfterCollectorRecovery(t *testing.T) {
 
 // Shutting down before registration completes must interrupt the collector
 // wait instead of holding the process for a whole back-off interval.
-//
-// Isolated: the agent never became enabled, so Shutdown leaves it installed as
-// the process-global agent and no later test in this process could create one.
 func TestShutdownInterruptsInitialCollectorWait(t *testing.T) {
-	if !isolate(t) {
-		return
-	}
 	mc, agent := startWithUnavailableCollector(t)
 
 	// Give the connect goroutine time to enter its back-off wait while all
@@ -88,6 +82,12 @@ func TestShutdownInterruptsInitialCollectorWait(t *testing.T) {
 	assert.Less(t, elapsed, 3*time.Second,
 		"shutdown must interrupt the initial collector wait, not wait out the back-off")
 	assert.False(t, agent.Enable())
+
+	// The agent never became enabled, but shutting it down must still release
+	// the process-global singleton, or nothing in this process could ever
+	// create an agent again.
+	assert.Equal(t, pinpoint.NoopAgent(), pinpoint.GetAgent(),
+		"shutdown must release the global agent even when registration never completed")
 
 	s := mc.Snapshot()
 	assert.Empty(t, s.AgentInfos)
