@@ -29,37 +29,44 @@ func NewHook(opts rueidis.ClientOption) *Hook {
 }
 
 func (h *Hook) Do(client rueidis.Client, ctx context.Context, cmd rueidis.Completed) (resp rueidis.RedisResult) {
-	tracer := h.newSpanEvent(ctx, "rueidis.Do()", strings.Join(cmd.Commands(), ","))
+	tracer := h.newSpanEvent(ctx, "rueidis.Do()", func() string {
+		return strings.Join(cmd.Commands(), ",")
+	})
 	defer tracer.EndSpanEvent()
 
 	resp = client.Do(ctx, cmd)
 
-	if resp.Error() != nil {
+	if tracer.IsSampled() && resp.Error() != nil {
 		tracer.SpanEvent().SetError(resp.Error())
 	}
 	return
 }
 
 func (h *Hook) DoMulti(client rueidis.Client, ctx context.Context, multi ...rueidis.Completed) (resps []rueidis.RedisResult) {
-	tracer := h.newSpanEvent(ctx, "rueidis.DoMulti()", cmdCompletedName(multi))
+	tracer := h.newSpanEvent(ctx, "rueidis.DoMulti()", func() string {
+		return cmdCompletedName(multi)
+	})
 	defer tracer.EndSpanEvent()
 
 	resps = client.DoMulti(ctx, multi...)
 
-	err := multiResultError(resps)
-	if err != nil {
-		tracer.SpanEvent().SetError(err)
+	if tracer.IsSampled() {
+		if err := multiResultError(resps); err != nil {
+			tracer.SpanEvent().SetError(err)
+		}
 	}
 	return
 }
 
 func (h *Hook) DoCache(client rueidis.Client, ctx context.Context, cmd rueidis.Cacheable, ttl time.Duration) (resp rueidis.RedisResult) {
-	tracer := h.newSpanEvent(ctx, "rueidis.DoCache()", strings.Join(cmd.Commands(), ","))
+	tracer := h.newSpanEvent(ctx, "rueidis.DoCache()", func() string {
+		return strings.Join(cmd.Commands(), ",")
+	})
 	defer tracer.EndSpanEvent()
 
 	resp = client.DoCache(ctx, cmd, ttl)
 
-	if resp.Error() != nil {
+	if tracer.IsSampled() && resp.Error() != nil {
 		tracer.SpanEvent().SetError(resp.Error())
 
 	}
@@ -67,39 +74,47 @@ func (h *Hook) DoCache(client rueidis.Client, ctx context.Context, cmd rueidis.C
 }
 
 func (h *Hook) DoMultiCache(client rueidis.Client, ctx context.Context, multi ...rueidis.CacheableTTL) (resps []rueidis.RedisResult) {
-	tracer := h.newSpanEvent(ctx, "rueidis.DoMultiCache()", cmdCacheableName(multi))
+	tracer := h.newSpanEvent(ctx, "rueidis.DoMultiCache()", func() string {
+		return cmdCacheableName(multi)
+	})
 	defer tracer.EndSpanEvent()
 
 	resps = client.DoMultiCache(ctx, multi...)
 
-	err := multiResultError(resps)
-	if err != nil {
-		tracer.SpanEvent().SetError(err)
+	if tracer.IsSampled() {
+		if err := multiResultError(resps); err != nil {
+			tracer.SpanEvent().SetError(err)
+		}
 	}
 	return
 }
 
 func (h *Hook) Receive(client rueidis.Client, ctx context.Context, subscribe rueidis.Completed, fn func(msg rueidis.PubSubMessage)) (err error) {
-	tracer := h.newSpanEvent(ctx, "rueidis.Receive()", strings.Join(subscribe.Commands(), ","))
+	tracer := h.newSpanEvent(ctx, "rueidis.Receive()", func() string {
+		return strings.Join(subscribe.Commands(), ",")
+	})
 	defer tracer.EndSpanEvent()
 
 	err = client.Receive(ctx, subscribe, fn)
 
-	if err != nil {
+	if tracer.IsSampled() && err != nil {
 		tracer.SpanEvent().SetError(err)
 
 	}
 	return err
 }
 
-func (h *Hook) newSpanEvent(ctx context.Context, operation string, cmd string) pinpoint.Tracer {
+func (h *Hook) newSpanEvent(ctx context.Context, operation string, commandName func() string) pinpoint.Tracer {
 	tracer := pinpoint.FromContext(ctx)
+	if !tracer.IsSampled() {
+		return tracer
+	}
 
 	se := tracer.NewSpanEvent(operation).SpanEvent()
 	se.SetServiceType(pinpoint.ServiceTypeRedis)
 	se.SetDestination("REDIS")
 	se.SetEndPoint(h.endpoint)
-	if cmd != "" {
+	if cmd := commandName(); cmd != "" {
 		se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
 	}
 

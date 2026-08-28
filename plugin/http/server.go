@@ -42,21 +42,35 @@ const defaultServerName = "HTTP Server"
 // The tracer extracts the pinpoint header from the http request header,
 // and then creates a span that initiates or continues the transaction.
 func NewHttpServerTracer(req *http.Request, operation string) (tracer pinpoint.Tracer) {
-	if isExcludedUrl(req.URL.Path) || isExcludedMethod(req.Method) {
-		return pinpoint.NoopTracer()
-	} else {
-		if tracer = pinpoint.GetAgent().NewSpanTracerWithReader(operation, req.URL.Path, req.Header); tracer.IsSampled() {
-			span := tracer.Span()
-			span.SetEndPoint(req.Host)
-			span.SetRemoteAddress(getRemoteAddr(req))
+	tracer = NewHttpServerTracerWithReader(req.Method, req.URL.Path, operation, req.Header)
+	RecordHttpServerRequest(tracer, req)
+	return tracer
+}
 
-			a := span.Annotations()
-			recordServerHttpRequestHeader(a, header{req.Header})
-			recordServerHttpCookie(a, cookie{req.Cookies()})
-			setProxyHeader(a, req)
-		}
-		return tracer
+// NewHttpServerTracerWithReader creates an HTTP server tracer without requiring
+// a net/http request. Framework adapters can make the sampling decision from
+// their native request before converting it for sampled-request annotations.
+func NewHttpServerTracerWithReader(method, path, operation string, reader pinpoint.DistributedTracingContextReader) pinpoint.Tracer {
+	if isExcludedUrl(path) || isExcludedMethod(method) {
+		return pinpoint.NoopTracer()
 	}
+	return pinpoint.GetAgent().NewSpanTracerWithReader(operation, path, reader)
+}
+
+// RecordHttpServerRequest records sampled request attributes on tracer.
+func RecordHttpServerRequest(tracer pinpoint.Tracer, req *http.Request) {
+	if !tracer.IsSampled() {
+		return
+	}
+
+	span := tracer.Span()
+	span.SetEndPoint(req.Host)
+	span.SetRemoteAddress(getRemoteAddr(req))
+
+	a := span.Annotations()
+	recordServerHttpRequestHeader(a, header{req.Header})
+	recordServerHttpCookie(a, cookie{req.Cookies()})
+	setProxyHeader(a, req)
 }
 
 func getRemoteAddr(r *http.Request) string {

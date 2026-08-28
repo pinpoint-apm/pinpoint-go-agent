@@ -945,10 +945,21 @@ func (spanGrpc *spanGrpc) collectSpanBatch(first *spanChunk, queue *spanQueue) (
 // If no permit becomes available within the flush timeout, the whole batch is skipped rather than
 // blocking the worker forever behind slow in-flight requests; completed calls always release their permit.
 func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
+	if !spanGrpc.acquireSpanBatchPermit() {
+		Log("grpc").Infof(
+			"SendSpanBatch skipped: no available permits within %s concurrentRequests:%d/%d",
+			spanGrpc.batchFlushTimeout.String(),
+			len(spanGrpc.concurrentRequestPermit),
+			spanGrpc.maxConcurrentRequests,
+		)
+		return
+	}
+
 	builder := acquireSpanMessageBuilder()
 	spanMessageBatch := builder.makePSpanMessageBatch(chunks)
 	if len(spanMessageBatch.GetSpan()) == 0 {
 		releaseSpanMessageBuilder(builder)
+		spanGrpc.releaseSpanBatchPermit()
 		return
 	}
 
@@ -959,16 +970,6 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 		Log("grpc").Tracef("PSpanMessageBatch: %s", spanMessageBatch.String())
 	}
 
-	if !spanGrpc.acquireSpanBatchPermit() {
-		Log("grpc").Infof(
-			"SendSpanBatch skipped: no available permits within %s concurrentRequests:%d/%d",
-			spanGrpc.batchFlushTimeout.String(),
-			len(spanGrpc.concurrentRequestPermit),
-			spanGrpc.maxConcurrentRequests,
-		)
-		releaseSpanMessageBuilder(builder)
-		return
-	}
 	if grpc.EnableTracing {
 		// Completed unary traces can also retain their request.
 		spanMessageBatch = proto.Clone(spanMessageBatch).(*pb.PSpanMessageBatch)

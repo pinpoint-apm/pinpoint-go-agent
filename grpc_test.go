@@ -259,6 +259,18 @@ func Test_spanGrpc_sendSpanBatch(t *testing.T) {
 	}
 }
 
+func Test_spanGrpc_sendSpanBatchEmptyReleasesPermit(t *testing.T) {
+	spanGrpc := &spanGrpc{
+		batchFlushTimeout:       time.Millisecond,
+		maxConcurrentRequests:   1,
+		concurrentRequestPermit: make(chan struct{}, 1),
+	}
+
+	spanGrpc.sendSpanBatchAsync(nil)
+
+	assert.Empty(t, spanGrpc.concurrentRequestPermit)
+}
+
 func Test_agent_enqueueSpan_discardsOldestAndEnqueuesNewest(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgSpanBatchEnable, true)

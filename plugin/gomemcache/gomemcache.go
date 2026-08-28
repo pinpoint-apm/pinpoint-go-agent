@@ -64,6 +64,13 @@ func (c *Client) currentTracer() pinpoint.Tracer {
 
 func (c *Client) newMemcacheSpanEvent(op string, key string, start time.Time, err error) {
 	tracer := c.currentTracer()
+	if !tracer.IsSampled() {
+		return
+	}
+	c.recordMemcacheSpanEvent(tracer, op, key, start, err)
+}
+
+func (c *Client) recordMemcacheSpanEvent(tracer pinpoint.Tracer, op string, key string, start time.Time, err error) {
 	se := tracer.NewSpanEvent("gomemcache." + op).SpanEvent()
 	se.SetServiceType(pinpoint.ServiceTypeMemcached)
 	se.SetDestination("MEMCACHED")
@@ -105,7 +112,10 @@ func (c *Client) Get(key string) (item *memcache.Item, err error) {
 func (c *Client) GetMulti(keys []string) (map[string]*memcache.Item, error) {
 	start := time.Now()
 	items, err := c.Client.GetMulti(keys)
-	c.newMemcacheSpanEvent("GetMulti()", strings.Join(keys, ","), start, err)
+	tracer := c.currentTracer()
+	if tracer.IsSampled() {
+		c.recordMemcacheSpanEvent(tracer, "GetMulti()", strings.Join(keys, ","), start, err)
+	}
 	return items, err
 }
 

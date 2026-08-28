@@ -18,6 +18,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttp/fasthttpadaptor"
 )
 
@@ -40,17 +41,26 @@ func wrap(f func(c *fiber.Ctx) error, handlerName string) fiber.Handler {
 			return f(c)
 		}
 
-		req := new(http.Request)
-		if err := fasthttpadaptor.ConvertRequest(c.Context(), req, true); err != nil {
-			return f(c)
-		}
-
+		method := string(c.Context().Method())
 		status := http.StatusOK
-		tracer := pphttp.NewHttpServerTracer(req, serverName)
+		tracer := pphttp.NewHttpServerTracerWithReader(
+			method,
+			string(c.Context().Path()),
+			serverName,
+			fiberRequestHeader{&c.Context().Request.Header},
+		)
+		if tracer.IsSampled() {
+			req := new(http.Request)
+			if err := fasthttpadaptor.ConvertRequest(c.Context(), req, true); err != nil {
+				tracer.EndSpan()
+				return f(c)
+			}
+			pphttp.RecordHttpServerRequest(tracer, req)
+		}
 
 		defer tracer.EndSpan()
 		defer func() {
-			pphttp.CollectUrlStat(tracer, c.Route().Path, req.Method, status)
+			pphttp.CollectUrlStat(tracer, c.Route().Path, method, status)
 			recordResponse(tracer, c, status)
 		}()
 		defer func() {
@@ -75,6 +85,14 @@ func wrap(f func(c *fiber.Ctx) error, handlerName string) fiber.Handler {
 		}
 		return err
 	}
+}
+
+type fiberRequestHeader struct {
+	header *fasthttp.RequestHeader
+}
+
+func (h fiberRequestHeader) Get(key string) string {
+	return string(h.header.Peek(key))
 }
 
 func recordResponse(tracer pinpoint.Tracer, c *fiber.Ctx, status int) {

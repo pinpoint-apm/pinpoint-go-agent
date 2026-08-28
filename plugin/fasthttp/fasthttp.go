@@ -52,19 +52,24 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 			return
 		}
 
-		req := new(http.Request)
-		if err := fasthttpadaptor.ConvertRequest(ctx, req, true); err != nil {
-			handler(ctx)
-			return
-		}
-
+		method := string(ctx.Method())
+		requestHeader := reqHeader{&ctx.Request.Header}
 		status := http.StatusOK
-		tracer := pphttp.NewHttpServerTracer(req, serverName)
+		tracer := pphttp.NewHttpServerTracerWithReader(method, string(ctx.Path()), serverName, requestHeader)
+		if tracer.IsSampled() {
+			req := new(http.Request)
+			if err := fasthttpadaptor.ConvertRequest(ctx, req, true); err != nil {
+				tracer.EndSpan()
+				handler(ctx)
+				return
+			}
+			pphttp.RecordHttpServerRequest(tracer, req)
+		}
 
 		defer tracer.EndSpan()
 		defer func() {
 			if len(pattern) > 0 {
-				pphttp.CollectUrlStat(tracer, pattern[0], req.Method, status)
+				pphttp.CollectUrlStat(tracer, pattern[0], method, status)
 			}
 			recordResponse(tracer, ctx, status)
 		}()
@@ -139,6 +144,10 @@ func after(tracer pinpoint.Tracer, resp *fasthttp.Response, err error) {
 
 type reqHeader struct {
 	hdr *fasthttp.RequestHeader
+}
+
+func (h reqHeader) Get(key string) string {
+	return string(h.hdr.Peek(key))
 }
 
 func (h reqHeader) Values(key string) []string {

@@ -33,7 +33,7 @@ func NewClient(zkquorum string, options ...hbase.Option) *Client {
 
 func (c *Client) trace(op string, ctx context.Context) pinpoint.Tracer {
 	tracer := pinpoint.FromContext(ctx)
-	if tracer == nil {
+	if !tracer.IsSampled() {
 		return nil
 	}
 

@@ -30,7 +30,7 @@ func NewObserver() *Observer {
 //	query.WithContext(ctx).Consistency(gocql.One).Scan(&id, &text)
 func (o *Observer) ObserveQuery(ctx context.Context, query gocql.ObservedQuery) {
 	tracer := pinpoint.FromContext(ctx)
-	if tracer == nil {
+	if !tracer.IsSampled() {
 		return
 	}
 
@@ -51,7 +51,7 @@ func (o *Observer) ObserveQuery(ctx context.Context, query gocql.ObservedQuery) 
 // Refer an example of ObserveQuery.
 func (o *Observer) ObserveBatch(ctx context.Context, batch gocql.ObservedBatch) {
 	tracer := pinpoint.FromContext(ctx)
-	if tracer == nil {
+	if !tracer.IsSampled() {
 		return
 	}
 
