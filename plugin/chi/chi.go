@@ -28,6 +28,17 @@ func Middleware() func(http.Handler) http.Handler {
 	}
 }
 
+// routePattern returns the chi route pattern of r, or "" when there is none.
+// chi.RouteContext returns nil whenever the handler runs outside a chi router -
+// mounted on a plain ServeMux, or invoked directly - so the result cannot be
+// dereferenced blindly.
+func routePattern(r *http.Request) string {
+	if rctx := chi.RouteContext(r.Context()); rctx != nil {
+		return rctx.RoutePattern()
+	}
+	return ""
+}
+
 func wrap(handler http.Handler, funcName string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !pinpoint.GetAgent().Enable() {
@@ -40,7 +51,7 @@ func wrap(handler http.Handler, funcName string) http.Handler {
 
 		defer tracer.EndSpan()
 		defer func() {
-			pphttp.CollectUrlStat(tracer, chi.RouteContext(r.Context()).RoutePattern(), r.Method, status)
+			pphttp.CollectUrlStat(tracer, routePattern(r), r.Method, status)
 			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
 		}()
 		defer func() {
