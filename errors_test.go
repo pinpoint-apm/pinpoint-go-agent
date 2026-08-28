@@ -29,3 +29,12 @@ func TestSpan_TraceCallStackBoundsCauserCycle(t *testing.T) {
 		t.Fatal("traceCallStack did not terminate on a self-causing error")
 	}
 }
+func Test_splitName_NoDot(t *testing.T) {
+	module, fn := splitName("main")
+	assert.Equal(t, "unknown", module, "module name")
+	assert.Equal(t, "main", fn, "func name")
+
+	module, fn = splitName("pkg.Func")
+	assert.Equal(t, "pkg", module, "module name")
+	assert.Equal(t, "Func", fn, "func name")
+}

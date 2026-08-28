@@ -55,6 +55,12 @@ func newFrame(f uintptr) frame {
 
 func splitName(fullName string) (string, string) {
 	lastIdx := strings.LastIndex(fullName, ".")
+	if lastIdx < 0 {
+		// fullName[:-1] would panic. Ordinary Go frames always carry a dot,
+		// but the frames can come from a user error type's StackTrace(), and
+		// this runs on the recover-less metadata sender goroutine.
+		return "unknown", fullName
+	}
 	return fullName[:lastIdx], fullName[lastIdx+1:]
 }
 
