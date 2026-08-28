@@ -37,12 +37,27 @@ type inspectorStats struct {
 }
 
 var (
-	proc            *process.Process
-	lastMemStat     runtime.MemStats
-	lastCollectTime time.Time
+	// proc, like activeSpan below, is built once here and never reassigned.
+	// initStats used to rebuild it on every agent start, which wrote a global
+	// that a previous agent's stat worker could still be reading in getStats
+	// if a shutdown timeout had abandoned it.
+	proc = newProcHandle()
 
+	// activeSpan is created once here and read by the request path on every
+	// span begin and end; re-creating it on agent start raced with in-flight
+	// spans and dropped the entries of spans that began before a restart and
+	// ended after it.
 	activeSpan = newActiveSpanRegistry()
 )
+
+func newProcHandle() *process.Process {
+	p, err := process.NewProcess(int32(os.Getpid()))
+	if err != nil {
+		return nil
+	}
+	p.Percent(0)
+	return p
+}
 
 // The per-request counters (response time acc/max/count plus the six sampler
 // outcomes) are sharded by goroutine id. As process-global singles, every
@@ -176,21 +191,13 @@ type statsCounterSnapshot struct {
 	skipCont        int64
 }
 
+// initStats primes the system-wide CPU baseline so the collector's first
+// sample measures a real interval. What used to live here besides that is now
+// either built once at package init (proc, activeSpan) or per stat worker
+// (statSampler), because writing it per agent start raced with the previous
+// agent's stat worker and with the request path.
 func initStats() {
-	var err error
-	proc, err = process.NewProcess(int32(os.Getpid()))
-	if err != nil {
-		proc = nil
-	} else {
-		proc.Percent(0)
-	}
-
 	cpu.Percent(0, false)
-	runtime.ReadMemStats(&lastMemStat)
-	lastCollectTime = time.Now()
-	// activeSpan is created once at package init and is read by the request
-	// path; re-creating it here raced with in-flight spans and dropped the
-	// entries of spans that started before a restart and ended after it.
 }
 
 func getNumFD() int32 {
@@ -221,14 +228,30 @@ func getCpuLoad() (float64, float64) {
 	return procCpu / 100, sysCpu[0] / 100
 }
 
-func getStats() *inspectorStats {
+// statSampler carries the previous sample's memory counters and timestamp,
+// which the next sample turns into GC deltas and a collection interval. One per
+// stat worker rather than a pair of package globals: a shutdown that times out
+// abandons its stat worker, and the next agent's worker would then write those
+// globals while the abandoned one was still reading them.
+type statSampler struct {
+	lastMemStat     runtime.MemStats
+	lastCollectTime time.Time
+}
+
+func newStatSampler() *statSampler {
+	s := &statSampler{lastCollectTime: time.Now()}
+	runtime.ReadMemStats(&s.lastMemStat)
+	return s
+}
+
+func (s *statSampler) getStats() *inspectorStats {
 	now := time.Now()
 	procCpu, sysCpu := getCpuLoad()
 	counters := drainStatsCounters()
 
 	var memStat runtime.MemStats
 	runtime.ReadMemStats(&memStat)
-	elapsed := now.Sub(lastCollectTime).Seconds()
+	elapsed := now.Sub(s.lastCollectTime).Seconds()
 
 	stats := inspectorStats{
 		sampleTime:   now,
@@ -239,8 +262,8 @@ func getStats() *inspectorStats {
 		heapMax:      int64(memStat.HeapSys),
 		nonHeapUsed:  int64(memStat.StackInuse),
 		nonHeapMax:   int64(memStat.StackSys),
-		gcNum:        int64(memStat.NumGC - lastMemStat.NumGC),
-		gcTime:       int64(memStat.PauseTotalNs-lastMemStat.PauseTotalNs) / int64(time.Millisecond),
+		gcNum:        int64(memStat.NumGC - s.lastMemStat.NumGC),
+		gcTime:       int64(memStat.PauseTotalNs-s.lastMemStat.PauseTotalNs) / int64(time.Millisecond),
 		numOpenFD:    int64(getNumFD()),
 		numThreads:   int64(getNumThreads()),
 		responseAvg:  calcResponseAvg(counters.accResponseTime, counters.requestCount),
@@ -254,8 +277,8 @@ func getStats() *inspectorStats {
 		activeSpan:   activeSpanCount(now),
 	}
 
-	lastMemStat = memStat
-	lastCollectTime = now
+	s.lastMemStat = memStat
+	s.lastCollectTime = now
 
 	return &stats
 }
@@ -304,6 +327,7 @@ func (agent *agent) collectAgentStatWorker() {
 
 	initStats()
 	resetResponseTime()
+	sampler := newStatSampler()
 
 	interval := time.Duration(agent.config.Int(CfgStatCollectInterval)) * time.Millisecond
 	ticker := time.NewTicker(interval)
@@ -320,7 +344,7 @@ func (agent *agent) collectAgentStatWorker() {
 			Log("stats").Infof("end collect agent stat goroutine")
 			return
 		case <-ticker.C:
-			collected[batch] = getStats()
+			collected[batch] = sampler.getStats()
 			batch++
 
 			if batch == cfgBatchCount {
