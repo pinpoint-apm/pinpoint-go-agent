@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"context"
 	"errors"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	empty "github.com/golang/protobuf/ptypes/empty"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/pinpoint-apm/pinpoint-go-agent/protobuf/mock"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -228,4 +230,110 @@ func newRetryMockStatGrpc(agent *agent, t *testing.T) *statGrpc {
 	//stream.EXPECT().Send(gomock.Any()).Return(errors.New("stat send fail"))
 
 	return &statGrpc{nil, &statClient, nil, agent}
+}
+
+// mockAtcStream stands in for the collector side of an active thread count
+// stream: it counts samples and records that it was closed.
+type mockAtcStream struct {
+	grpc.ClientStream // never called; the agent only uses Send/CloseAndRecv
+	mu                sync.Mutex
+	sends             int
+	closed            bool
+	sendErr           error
+}
+
+func (s *mockAtcStream) Send(*pb.PCmdActiveThreadCountRes) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sends++
+	return s.sendErr
+}
+
+func (s *mockAtcStream) CloseAndRecv() (*empty.Empty, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	return &empty.Empty{}, nil
+}
+
+func (s *mockAtcStream) sendCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sends
+}
+
+func (s *mockAtcStream) isClosed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
+}
+
+// mockCmdStream records what the agent writes back on the command stream.
+type mockCmdStream struct {
+	grpc.ClientStream // never called; the agent only uses Send/Recv
+	mu                sync.Mutex
+	sent              []*pb.PCmdMessage
+}
+
+func (s *mockCmdStream) Send(m *pb.PCmdMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sent = append(s.sent, m)
+	return nil
+}
+
+func (s *mockCmdStream) Recv() (*pb.PCmdRequest, error) {
+	return nil, io.EOF
+}
+
+func (s *mockCmdStream) failMessages() []*pb.PCmdResponse {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fails := make([]*pb.PCmdResponse, 0, len(s.sent))
+	for _, m := range s.sent {
+		if f := m.GetFailMessage(); f != nil {
+			fails = append(fails, f)
+		}
+	}
+	return fails
+}
+
+// mockCmdGrpcClient hands out mockAtcStreams and keeps them in issue order.
+type mockCmdGrpcClient struct {
+	pb.ProfilerCommandServiceClient // never called; only the method below is
+	mu                              sync.Mutex
+	streams                         []*mockAtcStream
+	sendErr                         error
+	openErr                         error
+}
+
+func (c *mockCmdGrpcClient) CommandStreamActiveThreadCount(ctx context.Context, opts ...grpc.CallOption) (pb.ProfilerCommandService_CommandStreamActiveThreadCountClient, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.openErr != nil {
+		return nil, c.openErr
+	}
+	s := &mockAtcStream{sendErr: c.sendErr}
+	c.streams = append(c.streams, s)
+	return s, nil
+}
+
+func (c *mockCmdGrpcClient) stream(i int) *mockAtcStream {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.streams[i]
+}
+
+func (c *mockCmdGrpcClient) streamCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.streams)
+}
+
+// newMockCmdGrpc wires a test agent to a mock command service, returning the
+// command stream the agent answers on and the client that hands out streams.
+func newMockCmdGrpc(agent *agent) (*cmdStream, *mockCmdGrpcClient) {
+	client := &mockCmdGrpcClient{}
+	agent.cmdGrpc = &cmdGrpc{cmdClient: client, agent: agent}
+	return &cmdStream{stream: &mockCmdStream{}, cancel: func() {}}, client
 }
