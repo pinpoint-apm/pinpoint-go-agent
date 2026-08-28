@@ -1,11 +1,15 @@
 package pinpoint
 
 import (
+	"bytes"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -319,4 +323,94 @@ func Test_agent_ShutdownNoStartupDelay(t *testing.T) {
 	a.Shutdown()
 
 	assert.Less(t, time.Since(start), connectGraceTimeout, "no unconditional sleep")
+}
+
+// captureWarnLog redirects the agent log to buf until the returned func is called.
+func captureWarnLog(buf *bytes.Buffer) func() {
+	prevOut, prevLevel := logger.defaultLogger.Out, logger.defaultLogger.GetLevel()
+	logger.defaultLogger.SetOutput(buf)
+	logger.defaultLogger.SetLevel(logrus.WarnLevel)
+	return func() {
+		logger.defaultLogger.SetOutput(prevOut)
+		logger.defaultLogger.SetLevel(prevLevel)
+	}
+}
+
+func Test_agent_enqueueUrlStatCountsEveryDroppedRecord(t *testing.T) {
+	const queueSize, enqueued = 4, 100
+
+	agent := newTestAgent(defaultConfig())
+	agent.urlStatChan = make(chan *urlStat, queueSize)
+	defer captureWarnLog(&bytes.Buffer{})()
+
+	for i := 0; i < enqueued; i++ {
+		agent.enqueueUrlStat(&urlStat{})
+	}
+
+	close(agent.urlStatChan)
+	queued := 0
+	for range agent.urlStatChan {
+		queued++
+	}
+
+	// Nothing drained the queue while it filled, so every record that is not
+	// still sitting in it was dropped - both the rejected enqueues and the
+	// oldest entries evicted to make room for them.
+	assert.Equal(t, int64(enqueued-queued), agent.urlStatDrops.Load(),
+		"drop counter must account for every record that never reached the consumer")
+}
+
+func Test_agent_enqueueUrlStatCountsDropsFromConcurrentProducers(t *testing.T) {
+	const producers, perProducer = 8, 250
+
+	agent := newTestAgent(defaultConfig())
+	agent.urlStatChan = make(chan *urlStat, 4)
+	defer captureWarnLog(&bytes.Buffer{})()
+
+	var wg sync.WaitGroup
+	for i := 0; i < producers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < perProducer; j++ {
+				agent.enqueueUrlStat(&urlStat{})
+			}
+		}()
+	}
+	wg.Wait()
+
+	close(agent.urlStatChan)
+	queued := 0
+	for range agent.urlStatChan {
+		queued++
+	}
+
+	assert.Equal(t, int64(producers*perProducer-queued), agent.urlStatDrops.Load())
+}
+
+func Test_agent_enqueueUrlStatRateLimitsOverflowWarning(t *testing.T) {
+	const queueSize, enqueued = 4, 100
+
+	agent := newTestAgent(defaultConfig())
+	agent.urlStatChan = make(chan *urlStat, queueSize)
+
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	for i := 0; i < enqueued; i++ {
+		agent.enqueueUrlStat(&urlStat{})
+	}
+
+	assert.Greater(t, agent.urlStatDrops.Load(), int64(1), "test did not saturate the queue")
+	assert.Equal(t, 1, strings.Count(buf.String(), "url stat queue overflow"),
+		"a saturated queue must warn once per report interval, not once per dropped record")
+
+	// The next drop after the report interval elapses warns again, carrying the
+	// running total rather than restarting the count.
+	agent.urlStatDropReportAt.Store(0)
+	agent.enqueueUrlStat(&urlStat{})
+
+	assert.Equal(t, 2, strings.Count(buf.String(), "url stat queue overflow"))
+	assert.Contains(t, buf.String(), fmt.Sprintf("%d dropped in total (max queue size %d)",
+		agent.urlStatDrops.Load(), queueSize))
 }

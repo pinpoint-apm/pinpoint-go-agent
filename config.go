@@ -56,6 +56,7 @@ const (
 	CfgEnable                         = "Enable"
 	CfgHttpUrlStatEnable              = "Http.UrlStat.Enable"
 	CfgHttpUrlStatLimitSize           = "Http.UrlStat.LimitSize"
+	CfgHttpUrlStatQueueSize           = "Http.UrlStat.QueueSize"
 	CfgHttpUrlStatWithMethod          = "Http.UrlStat.WithMethod"
 	CfgErrorTraceCallStack            = "Error.TraceCallStack"
 	CfgErrorCallStackDepth            = "Error.CallStackDepth"
@@ -134,6 +135,7 @@ func initConfig() {
 	AddConfig(CfgEnable, CfgBool, true, false)
 	AddConfig(CfgHttpUrlStatEnable, CfgBool, false, true)
 	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1024, true)
+	AddConfig(CfgHttpUrlStatQueueSize, CfgInt, defaultQueueSize, false)
 	AddConfig(CfgHttpUrlStatWithMethod, CfgBool, false, true)
 	AddConfig(CfgErrorTraceCallStack, CfgBool, false, true)
 	AddConfig(CfgErrorCallStackDepth, CfgInt, 32, true)
@@ -333,6 +335,9 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	}
 	if config.stagedInt(CfgSpanQueueSize) < 1 {
 		config.cfgMap[CfgSpanQueueSize].value = defaultQueueSize
+	}
+	if config.stagedInt(CfgHttpUrlStatQueueSize) < 1 {
+		config.cfgMap[CfgHttpUrlStatQueueSize].value = defaultQueueSize
 	}
 	if config.stagedInt(CfgSpanBatchSize) < 1 {
 		config.cfgMap[CfgSpanBatchSize].value = defaultSpanBatchSize
@@ -1012,6 +1017,14 @@ func WithHttpUrlStatEnable(enable bool) ConfigOption {
 func WithHttpUrlStatLimitSize(size int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgHttpUrlStatLimitSize].value = size
+	}
+}
+
+// WithHttpUrlStatQueueSize sets the size of the queue buffering per-request URL
+// statistics records until they are aggregated into a snapshot.
+func WithHttpUrlStatQueueSize(size int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgHttpUrlStatQueueSize].value = size
 	}
 }
 

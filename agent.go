@@ -41,6 +41,13 @@ type agent struct {
 	urlStatChan chan *urlStat
 	statChan    chan *pb.PStatMessage
 
+	// urlStatDrops is the cumulative count of url stat records lost to a full
+	// queue, updated from the request path. urlStatDropReportAt is the unix
+	// nano before which the overflow warning stays silent; it starts at zero
+	// so the first drop always reports.
+	urlStatDrops        atomic.Int64
+	urlStatDropReportAt atomic.Int64
+
 	errorCache  *metaCache[string, int32]
 	errorIdGen  int32
 	sqlCache    *metaCache[string, int32]
@@ -112,6 +119,9 @@ type exception struct {
 const (
 	cacheSize        = 1024
 	defaultQueueSize = 1024
+	// urlStatDropReportInterval bounds how often a saturated url stat queue
+	// may warn, matching the C++ QueueDropReporter::kDefaultReportInterval.
+	urlStatDropReportInterval = 60 * time.Second
 
 	defaultSpanBatchSize                  = 50
 	defaultSpanBatchFlushInterval         = 1000
@@ -176,7 +186,7 @@ func NewAgent(config *Config) (Agent, error) {
 		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
 		spanQueue:   newSpanQueue(config.Int(CfgSpanQueueSize)),
 		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),
-		urlStatChan: make(chan *urlStat, config.Int(CfgSpanQueueSize)),
+		urlStatChan: make(chan *urlStat, config.Int(CfgHttpUrlStatQueueSize)),
 		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),
 		config:      config,
 	}
@@ -709,14 +719,35 @@ func (agent *agent) enqueueUrlStat(stat *urlStat) bool {
 		break
 	}
 
+	// The queue is full: stat is rejected, and the oldest queued record is
+	// evicted on top of it to leave room for the next enqueue (unless the
+	// consumer already drained one meanwhile). Both are records the snapshot
+	// will never see, so both are counted.
+	dropped := int64(1)
 	select {
 	case <-agent.urlStatChan:
+		dropped++
 	default:
 	}
-	if IsTraceLogLevelEnabled() {
-		Log("agent").Tracef("url stat channel - max capacity reached or closed")
-	}
+	agent.reportUrlStatDrops(dropped)
 	return false
+}
+
+// reportUrlStatDrops adds n to the cumulative drop count and logs the running
+// total at most once per urlStatDropReportInterval. WARN so the data loss is
+// visible at the default log level, rate-limited so a saturated queue cannot
+// log once per dropped request from the request path. Mirrors the C++ agent's
+// QueueDropReporter::record().
+func (agent *agent) reportUrlStatDrops(n int64) {
+	total := agent.urlStatDrops.Add(n)
+
+	now := time.Now().UnixNano()
+	next := agent.urlStatDropReportAt.Load()
+	if now < next || !agent.urlStatDropReportAt.CompareAndSwap(next, now+int64(urlStatDropReportInterval)) {
+		return
+	}
+	Log("agent").Warnf("url stat queue overflow: %d dropped in total (max queue size %d)",
+		total, cap(agent.urlStatChan))
 }
 
 func (agent *agent) collectUrlStatWorker() {
@@ -824,7 +855,7 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
 		spanQueue:   newSpanQueue(config.Int(CfgSpanQueueSize)),
 		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),
-		urlStatChan: make(chan *urlStat, config.Int(CfgSpanQueueSize)),
+		urlStatChan: make(chan *urlStat, config.Int(CfgHttpUrlStatQueueSize)),
 		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),
 		config:      config,
 	}
