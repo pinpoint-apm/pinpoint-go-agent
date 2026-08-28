@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
 
@@ -485,7 +486,7 @@ func Test_backOffUntilReady_abortsOnShutdown(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	// Port 1 has no listener, so this connection never becomes ready and the
 	// back-off loop keeps waiting until it is told to stop.
-	conn, err := grpc.Dial("127.0.0.1:1", grpc.WithInsecure())
+	conn, err := grpc.Dial("127.0.0.1:1", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	assert.NoError(t, err)
 	defer conn.Close()
 
@@ -534,7 +535,7 @@ func Test_backOffSleep_rampsGentlyToCeiling(t *testing.T) {
 func Test_waitUntilReady_connectsIdleChannel(t *testing.T) {
 	// NewClient, not Dial: it leaves the channel IDLE instead of connecting
 	// eagerly, which is the state this path exists for.
-	conn, err := grpc.NewClient("127.0.0.1:1", grpc.WithInsecure())
+	conn, err := grpc.NewClient("127.0.0.1:1", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	assert.NoError(t, err)
 	defer conn.Close()
 
@@ -717,7 +718,7 @@ func Test_grpcChannelOptions_defaults(t *testing.T) {
 	assert.Equal(t, 4*1024*1024, o.maxSendMsgSize, "max send message size")
 	assert.Equal(t, 4*1024*1024, o.maxRecvMsgSize, "max receive message size")
 	assert.Equal(t, uint32(8*1024), o.maxHeaderListSize, "max header list size")
-	assert.Len(t, o.dialOptions(), 6)
+	assert.Len(t, o.dialOptions(insecure.NewCredentials()), 6)
 }
 
 func Test_grpcChannelOptions_configured(t *testing.T) {

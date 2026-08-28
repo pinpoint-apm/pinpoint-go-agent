@@ -361,6 +361,33 @@ Collector.Grpc.MaxHeaderListSize option sets the max size in bytes of gRPC respo
 * int
 * default: 8192
 
+### Collector.Grpc.SslEnable
+Collector.Grpc.SslEnable option enables TLS on all gRPC channels
+(agent, metadata, span, stat) to Pinpoint collector.
+When disabled (default), the agent connects in plaintext as before.
+
+* --pinpoint-collector-grpc-sslenable
+* PINPOINT_GO_COLLECTOR_GRPC_SSLENABLE
+* WithCollectorGrpcSslEnable()
+* bool
+* default: false
+
+### Collector.Grpc.TrustCertFilePath
+Collector.Grpc.TrustCertFilePath option sets the path of a PEM certificate
+used as the trust root when verifying the collector's TLS certificate.
+If it is not set, the system root CAs are used.
+If the file cannot be read or is not a valid certificate, the agent logs an
+error and fails the collector connection instead of falling back to plaintext,
+so the agent stays disabled.
+It is ignored unless [Collector.Grpc.SslEnable](#collectorgrpcsslenable) is enabled.
+
+* --pinpoint-collector-grpc-trustcertfilepath
+* PINPOINT_GO_COLLECTOR_GRPC_TRUSTCERTFILEPATH
+* WithCollectorGrpcTrustCertFilePath()
+* string
+* default: ""
+* case-sensitive
+
 ### Sampling.Type
 Sampling.Type option sets the type of agent sampler.
 Either "COUNTER" or "PERCENT" must be specified.
