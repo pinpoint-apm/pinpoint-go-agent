@@ -556,8 +556,14 @@ func (agent *agent) sendSpanWorker() {
 
 	stream := agent.spanGrpc.newSpanStreamWithRetry()
 	for {
+		// Break on a drained queue only, not on the disabled flag: shutdown
+		// clears enable before it closes the queue, so also breaking here
+		// dropped everything still queued - the very spans the shutdown drain
+		// window exists to flush. Matches sendSpanBatchWorker's best-effort
+		// flush; if the stream is already gone, each send fails fast and the
+		// drain stays bounded by the queue length.
 		chunk, ok := agent.spanQueue.dequeue()
-		if !ok || !agent.enable.Load() {
+		if !ok {
 			break
 		}
 
