@@ -708,6 +708,18 @@ func (agent *agent) deleteMetaCache(md interface{}) {
 	}
 }
 
+// enqueueMeta queues md for the metadata sender, dropping the cache entry that
+// published its id when the queue cannot take it. The id was already handed to
+// the spans referencing it, so leaving the entry cached would keep every later
+// span pointing at an id the collector never received; dropping it makes the
+// next span register the metadata again. Same policy the send-failure path
+// uses.
+func (agent *agent) enqueueMeta(md interface{}) {
+	if !agent.tryEnqueueMeta(md) {
+		agent.deleteMetaCache(md)
+	}
+}
+
 func (agent *agent) tryEnqueueMeta(md interface{}) bool {
 	if !agent.enable.Load() {
 		return false
@@ -721,7 +733,8 @@ func (agent *agent) tryEnqueueMeta(md interface{}) bool {
 	}
 
 	select {
-	case <-agent.metaChan:
+	case dropped := <-agent.metaChan:
+		agent.deleteMetaCache(dropped)
 	default:
 	}
 	return false
@@ -745,7 +758,7 @@ func (agent *agent) cacheError(errorName string) int32 {
 		id:       id,
 		funcName: errorName,
 	}
-	agent.tryEnqueueMeta(md)
+	agent.enqueueMeta(md)
 
 	Log("agent").Infof("cache error id: %d, %s", id, errorName)
 	return id
@@ -777,7 +790,7 @@ func (agent *agent) cacheSql(sql string) int32 {
 		id:  id,
 		sql: aSql,
 	}
-	agent.tryEnqueueMeta(md)
+	agent.enqueueMeta(md)
 
 	Log("agent").Infof("cache sql id: %d, %s", id, aSql)
 	return id
@@ -804,7 +817,7 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 		uid: uid,
 		sql: aSql,
 	}
-	agent.tryEnqueueMeta(md)
+	agent.enqueueMeta(md)
 
 	Log("agent").Infof("cache sql uid: %#v, %s", uid, aSql)
 	return uid
@@ -860,7 +873,7 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 		descriptor: descriptor,
 		apiType:    apiType,
 	}
-	agent.tryEnqueueMeta(md)
+	agent.enqueueMeta(md)
 
 	Log("agent").Infof("cache api id: %d, %s_%d", id, descriptor, apiType)
 	return id
@@ -882,7 +895,7 @@ func (agent *agent) enqueueExceptionMeta(span *span) {
 		md.uriTemplate = "NULL"
 	}
 
-	agent.tryEnqueueMeta(md)
+	agent.enqueueMeta(md)
 	if IsDebugLogLevelEnabled() {
 		Log("agent").Debugf("enqueue exception meta: %v", md)
 	}

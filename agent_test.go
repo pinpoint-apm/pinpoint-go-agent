@@ -487,3 +487,23 @@ func Test_agent_GetAgentIsRaceFreeAgainstShutdown(t *testing.T) {
 
 	assert.Equal(t, NoopAgent(), GetAgent(), "global agent released")
 }
+
+// A metadata item dropped by a full queue must not stay cached: its id was
+// already handed to spans, so the entry has to be re-registered rather than
+// left pointing at an id the collector never received.
+func Test_agent_MetaCacheDropsEntryWhenQueueIsFull(t *testing.T) {
+	a := newTestAgent(defaultConfig())
+
+	for full := false; !full; {
+		select {
+		case a.metaChan <- stringMeta{}:
+		default:
+			full = true
+		}
+	}
+
+	first := a.cacheError("boom")
+	second := a.cacheError("boom")
+	assert.NotZero(t, first, "id minted")
+	assert.NotEqual(t, first, second, "dropped metadata is re-registered with a new id")
+}
