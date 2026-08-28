@@ -691,6 +691,19 @@ Http.UrlStat.LimitSize option sets the limit size of the URLs to be collected.
 * default: 1024
 * dynamic
 
+### Http.UrlStat.QueueSize
+Http.UrlStat.QueueSize option sets the size of the agent's URL statistics queue.
+This queue buffers the per-request URL records waiting to be aggregated into a snapshot,
+unlike Http.UrlStat.LimitSize which caps the number of distinct URLs kept in one snapshot.
+When the queue is full the records are dropped, and the agent logs a rate-limited warning
+carrying the cumulative number of dropped records.
+
+* --pinpoint-http-urlstat-queuesize
+* PINPOINT_GO_HTTP_URLSTAT_QUEUESIZE
+* WithHttpUrlStatQueueSize()
+* type: int
+* default: 1024
+
 ### Http.UrlStat.WithMethod
 Http.UrlStat.WithMethod option adds http method as prefix to url string key.
 

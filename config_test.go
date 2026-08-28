@@ -66,6 +66,7 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, true, c.Bool(CfgEnable), CfgEnable)
 			assert.Equal(t, false, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
 			assert.Equal(t, 1024, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
+			assert.Equal(t, 1024, c.Int(CfgHttpUrlStatQueueSize), CfgHttpUrlStatQueueSize)
 			assert.Equal(t, false, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
 			assert.Equal(t, 32, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 		})
@@ -711,4 +712,21 @@ func Test_reloadConfig_keepsSamplerWhenSamplingUnchanged(t *testing.T) {
 	assert.NoError(t, os.WriteFile(cfgFile, []byte("Sampling:\n  NewThroughput: 20\n"), 0o600))
 	config.reloadConfig(cfgFileViper)
 	assert.NotSame(t, sampler, config.load().sampler, "sampling change did not rebuild the sampler")
+}
+
+func TestNewConfig_HttpUrlStatQueueSizeIsIndependentOfSpanQueueSize(t *testing.T) {
+	c, err := NewConfig(WithAppName("TestApp"), WithSpanQueueSize(8192))
+	assert.NoError(t, err)
+	assert.Equal(t, 8192, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+	assert.Equal(t, defaultQueueSize, c.Int(CfgHttpUrlStatQueueSize), CfgHttpUrlStatQueueSize)
+
+	c, err = NewConfig(WithAppName("TestApp"), WithHttpUrlStatQueueSize(64))
+	assert.NoError(t, err)
+	assert.Equal(t, 64, c.Int(CfgHttpUrlStatQueueSize), CfgHttpUrlStatQueueSize)
+	assert.Equal(t, defaultQueueSize, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+
+	// Same lower-bound guard the span queue gets.
+	c, err = NewConfig(WithAppName("TestApp"), WithHttpUrlStatQueueSize(0))
+	assert.NoError(t, err)
+	assert.Equal(t, defaultQueueSize, c.Int(CfgHttpUrlStatQueueSize), CfgHttpUrlStatQueueSize)
 }
