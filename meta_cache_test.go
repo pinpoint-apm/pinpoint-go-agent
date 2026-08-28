@@ -12,9 +12,7 @@ import (
 )
 
 func TestMetaCacheShardPadding(t *testing.T) {
-	// The [cacheLinePadSize - 64]byte pad in metaCacheShard hardcodes the
-	// 64-byte payload; this breaks when a field changes that.
-	assert.Equal(t, uintptr(cacheLinePadSize), unsafe.Sizeof(metaCacheShard[string, int32]{}))
+	assert.Equal(t, uintptr(cacheLinePadSize), unsafe.Sizeof(metaCacheShard{}))
 }
 
 func TestMetaCacheBasics(t *testing.T) {
@@ -143,7 +141,7 @@ func TestMetaCacheLruBeatsFifoOnResends(t *testing.T) {
 
 func TestMetaCacheConcurrent(t *testing.T) {
 	// Small capacity keeps every shard full, so promotion, eviction, and
-	// removal all race against read-locked peeks under -race.
+	// removal all race against lock-free peeks under -race.
 	c := newMetaCache[string, int32](64, hashStringKey)
 	keys := make([]string, 512)
 	for i := range keys {
