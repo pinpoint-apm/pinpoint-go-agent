@@ -128,11 +128,17 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 		return
 	}
 
-	normalizer := newSqlNormalizer(sql)
-	nsql, param := normalizer.run()
-
 	agent := se.agent()
-	if se.config().sqlTraceQueryStat {
+	cfg := se.config()
+
+	var nsql, param string
+	if cfg.sqlEnableRawSqlCache {
+		nsql, param = agent.normalizeSql(sql)
+	} else {
+		nsql, param = newSqlNormalizer(sql).run()
+	}
+
+	if cfg.sqlTraceQueryStat {
 		if id := agent.cacheSqlUid(nsql); id != nil {
 			se.annotations.AppendBytesStringString(AnnotationSqlUid, id, param, args)
 		}

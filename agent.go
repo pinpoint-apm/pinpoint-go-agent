@@ -53,6 +53,7 @@ type agent struct {
 	sqlCache    *metaCache[string, int32]
 	sqlIdGen    int32
 	sqlUidCache *metaCache[string, []byte]
+	rawSqlCache *metaCache[string, normalizedSql]
 	apiCache    *metaCache[apiCacheKey, int32]
 	apiIdGen    int32
 
@@ -201,6 +202,7 @@ func NewAgent(config *Config) (Agent, error) {
 	agent.errorCache = newMetaCache[string, int32](cacheSize, hashStringKey)
 	agent.sqlCache = newMetaCache[string, int32](cacheSize, hashStringKey)
 	agent.sqlUidCache = newMetaCache[string, []byte](cacheSize, hashStringKey)
+	agent.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize, hashStringKey)
 	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize, hashApiCacheKey)
 
 	config.AddReloadCallback([]string{CfgLogLevel}, logger.reloadLevel)
@@ -722,6 +724,35 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 	return uid
 }
 
+// normalizedSql is the immutable result of normalizing one raw SQL text.
+// Both fields are strings, so a cached value can be handed to any number of
+// callers without copying.
+type normalizedSql struct {
+	sql   string
+	param string
+}
+
+// maxCacheableSqlLength bounds the memory one rawSqlCache entry can pin: a
+// statement longer than this is still normalized correctly but bypasses the
+// cache (same 64KB guard as the C++ agent's RawSqlCache).
+const maxCacheableSqlLength = 64 * 1024
+
+// normalizeSql returns the normalized SQL and extracted parameters for sql,
+// memoized by the raw SQL text so repeated statements skip re-parsing. It uses
+// the same sharded metaCache as the id caches above, so a hot statement is a
+// read-lock lookup and stays resident under aged promotion.
+func (agent *agent) normalizeSql(sql string) (string, string) {
+	if len(sql) > maxCacheableSqlLength {
+		return newSqlNormalizer(sql).run()
+	}
+	if n, ok := agent.rawSqlCache.peek(sql); ok {
+		return n.sql, n.param
+	}
+	nsql, param := newSqlNormalizer(sql).run()
+	agent.rawSqlCache.peekOrAdd(sql, normalizedSql{sql: nsql, param: param})
+	return nsql, param
+}
+
 func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 	if !agent.enable.Load() {
 		return 0
@@ -938,6 +969,7 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 	agent.errorCache = newMetaCache[string, int32](cacheSize, hashStringKey)
 	agent.sqlCache = newMetaCache[string, int32](cacheSize, hashStringKey)
 	agent.sqlUidCache = newMetaCache[string, []byte](cacheSize, hashStringKey)
+	agent.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize, hashStringKey)
 	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize, hashApiCacheKey)
 
 	agent.agentGrpc = newMockAgentGrpc(agent, t)
