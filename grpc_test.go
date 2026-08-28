@@ -9,12 +9,34 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/status"
 )
+
+type blockingAgentInfoClient struct {
+	started  chan struct{}
+	canceled chan struct{}
+	release  chan struct{}
+}
+
+func (c *blockingAgentInfoClient) RequestAgentInfo(ctx context.Context, _ *pb.PAgentInfo) (*pb.PResult, error) {
+	close(c.started)
+	select {
+	case <-ctx.Done():
+		close(c.canceled)
+		return nil, ctx.Err()
+	case <-c.release:
+		return nil, context.Canceled
+	}
+}
+
+func (*blockingAgentInfoClient) PingSession(context.Context) (pb.Agent_PingSessionClient, error) {
+	return nil, nil
+}
 
 func Test_agentGrpc_sendAgentInfo(t *testing.T) {
 	type args struct {
@@ -38,6 +60,48 @@ func Test_agentGrpc_sendAgentInfo(t *testing.T) {
 			b := agent.agentGrpc.registerAgentWithRetry()
 			assert.Equal(t, true, b, "sendAgentInfo")
 		})
+	}
+}
+
+func Test_agentGrpc_registerAgentWithRetry_cancelsRequestOnShutdown(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.enable.Store(false)
+	client := &blockingAgentInfoClient{
+		started:  make(chan struct{}),
+		canceled: make(chan struct{}),
+		release:  make(chan struct{}),
+	}
+	defer close(client.release)
+	agent.agentGrpc = &agentGrpc{agentClient: client, agent: agent}
+
+	agent.connectWg.Add(1)
+	go func() {
+		defer agent.connectWg.Done()
+		agent.agentGrpc.registerAgentWithRetry()
+	}()
+
+	select {
+	case <-client.started:
+	case <-time.After(time.Second):
+		t.Fatal("RequestAgentInfo did not start")
+	}
+
+	shutdownDone := make(chan struct{})
+	go func() {
+		agent.Shutdown()
+		close(shutdownDone)
+	}()
+
+	select {
+	case <-client.canceled:
+	case <-time.After(connectGraceTimeout + 2*time.Second):
+		t.Fatal("shutdown did not cancel RequestAgentInfo")
+	}
+
+	select {
+	case <-shutdownDone:
+	case <-time.After(time.Second):
+		t.Fatal("Shutdown remained blocked after canceling RequestAgentInfo")
 	}
 }
 
