@@ -24,7 +24,7 @@ const (
 	tokenLiteral         tokenKind = iota
 	tokenStar                      // '*'  - zero or more characters within one path segment
 	tokenDoubleStar                // '**' - zero or more characters across path segments
-	tokenDoubleStarSlash           // '**/' - like '**', but only while URL input remains
+	tokenDoubleStarSlash           // '**/' - zero or more whole path segments
 	tokenQuestion                  // '?'  - exactly one character, never the path separator
 )
 
@@ -155,13 +155,21 @@ func (h *httpExcludeUrl) antMatch(urlPath string) bool {
 			for j := u - 1; j >= 0; j-- {
 				cur[j] = next[j] || (urlPath[j] != '/' && cur[j+1])
 			}
-		case tokenDoubleStar, tokenDoubleStarSlash:
-			// '**/' may skip the separator, but only while URL input remains.
-			cur[u] = t.kind == tokenDoubleStar && next[u]
+		case tokenDoubleStar:
+			cur[u] = next[u]
 			running := next[u]
 			for j := u - 1; j >= 0; j-- {
 				running = running || next[j]
 				cur[j] = running
+			}
+		case tokenDoubleStarSlash:
+			cur[u] = next[u]
+			running := false
+			for j := u - 1; j >= 0; j-- {
+				if urlPath[j] == '/' {
+					running = running || next[j+1]
+				}
+				cur[j] = next[j] || running
 			}
 		}
 		cur, next = next, cur
