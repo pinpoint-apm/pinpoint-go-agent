@@ -538,3 +538,18 @@ func TestNoopSpan_SharedSingletonSetFailureIsRaceFree(t *testing.T) {
 	wg.Wait()
 	assert.Equal(t, 0, defaultNoopSpan.statusErr, "singleton untouched")
 }
+
+// Span ids are int64: bitSize 0 (platform int) dropped an upstream node's id
+// on a 32-bit build, silently breaking the trace chain.
+func TestSpan_ExtractParsesFullRangeSpanId(t *testing.T) {
+	span := defaultSpan(newTestAgent(defaultConfig()))
+	reader := &DistributedTracingContextMap{m: map[string]string{
+		HeaderTraceId:      "agent^1^1",
+		HeaderSpanId:       "9007199254740993",
+		HeaderParentSpanId: "-9007199254740993",
+	}}
+
+	span.Extract(reader)
+	assert.Equal(t, int64(9007199254740993), span.spanId, "spanId")
+	assert.Equal(t, int64(-9007199254740993), span.parentSpanId, "parentSpanId")
+}

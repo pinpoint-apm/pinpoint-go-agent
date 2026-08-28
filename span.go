@@ -223,14 +223,17 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 
 	spanid := reader.Get(HeaderSpanId)
 	if spanid != "" {
-		span.spanId, _ = strconv.ParseInt(spanid, 10, 0)
+		// bitSize 64, not 0: span ids are int64 and 0 means platform int, so
+		// a 32-bit build failed to parse an upstream node's id and silently
+		// left the span id at zero, breaking the distributed trace.
+		span.spanId, _ = strconv.ParseInt(spanid, 10, 64)
 	} else {
 		span.spanId = generateSpanId()
 	}
 
 	pspanid := reader.Get(HeaderParentSpanId)
 	if pspanid != "" {
-		span.parentSpanId, _ = strconv.ParseInt(pspanid, 10, 0)
+		span.parentSpanId, _ = strconv.ParseInt(pspanid, 10, 64)
 	}
 
 	flag := reader.Get(HeaderFlags)
