@@ -339,10 +339,15 @@ func (agent *agent) Shutdown() {
 
 	globalAgent = NoopAgent()
 
+	// spanQueue.close() signals; it does not close the channel producers use.
+	// The three chans below get the same treatment - deliberately never closed.
+	// Their producers (request-path goroutines for url stat and meta, ticker
+	// workers for stat) only check enable before sending, which is check-then-
+	// act against a close and panics with "send on closed channel" when the
+	// send lands after it. signalShutdown() above already cancelled stopCtx,
+	// which is what stops the consumers; whatever is still queued is dropped
+	// with the channel itself.
 	agent.spanQueue.close()
-	close(agent.metaChan)
-	close(agent.statChan)
-	close(agent.urlStatChan)
 
 	//To terminate the listening state of the command stream,
 	//close the command grpc channel first
@@ -537,9 +542,15 @@ func (agent *agent) sendMetaWorker() {
 	Log("agent").Infof("start meta goroutine")
 	defer agent.workerWg.Done()
 
-	for md := range agent.metaChan {
-		if !agent.enable.Load() {
-			break
+	stop := agent.stopSignal().Done()
+
+	for agent.enable.Load() {
+		var md interface{}
+		select {
+		case <-stop:
+			Log("agent").Infof("end meta goroutine")
+			return
+		case md = <-agent.metaChan:
 		}
 
 		var success bool
@@ -793,11 +804,16 @@ func (agent *agent) collectUrlStatWorker() {
 
 	agent.initUrlStat()
 
-	for uri := range agent.urlStatChan {
-		if !agent.enable.Load() {
-			break
+	stop := agent.stopSignal().Done()
+
+	for agent.enable.Load() {
+		select {
+		case <-stop:
+			Log("agent").Infof("end collect uri stat goroutine")
+			return
+		case uri := <-agent.urlStatChan:
+			agent.addUrlStatSnapshot(uri)
 		}
-		agent.addUrlStatSnapshot(uri)
 	}
 
 	Log("agent").Infof("end collect uri stat goroutine")
@@ -845,9 +861,17 @@ func (agent *agent) sendStatsWorker() {
 	defer agent.workerWg.Done()
 
 	stream := agent.statGrpc.newStatStreamWithRetry()
-	for stats := range agent.statChan {
-		if !agent.enable.Load() {
-			break
+	defer func() { stream.close() }()
+
+	stop := agent.stopSignal().Done()
+
+	for agent.enable.Load() {
+		var stats *pb.PStatMessage
+		select {
+		case <-stop:
+			Log("agent").Infof("end send stats goroutine")
+			return
+		case stats = <-agent.statChan:
 		}
 
 		err := stream.sendStats(stats)
@@ -860,7 +884,6 @@ func (agent *agent) sendStatsWorker() {
 			stream = agent.statGrpc.newStatStreamWithRetry()
 		}
 	}
-	stream.close()
 
 	Log("agent").Infof("end send stats goroutine")
 }

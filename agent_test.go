@@ -414,3 +414,28 @@ func Test_agent_enqueueUrlStatRateLimitsOverflowWarning(t *testing.T) {
 	assert.Contains(t, buf.String(), fmt.Sprintf("%d dropped in total (max queue size %d)",
 		agent.urlStatDrops.Load(), queueSize))
 }
+
+// Shutdown must not close the channels its producers send on. The producers
+// (request-path goroutines for meta and url stat, ticker workers for stat)
+// only check enable before sending, so a close races them into a "send on
+// closed channel" panic - a raw send models a producer that passed that check
+// just before Shutdown flipped it. Shutdown must still stop the consumers,
+// which used to ride on the close, so it has to return well inside its own
+// worker deadline rather than timing out on workers stuck in a receive.
+func Test_agent_ShutdownDoesNotCloseProducerChannels(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.statChan = make(chan *pb.PStatMessage, 1)
+	agent.urlStatChan = make(chan *urlStat, 1)
+
+	agent.workerWg.Add(2)
+	go agent.sendMetaWorker()
+	go agent.collectUrlStatWorker()
+
+	start := time.Now()
+	agent.Shutdown()
+	assert.Less(t, time.Since(start), shutdownTimeout, "consumers must stop on the shutdown signal")
+
+	assert.NotPanics(t, func() { agent.metaChan <- stringMeta{} }, "metaChan")
+	assert.NotPanics(t, func() { agent.statChan <- &pb.PStatMessage{} }, "statChan")
+	assert.NotPanics(t, func() { agent.urlStatChan <- &urlStat{} }, "urlStatChan")
+}
