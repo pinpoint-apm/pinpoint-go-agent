@@ -19,7 +19,7 @@ func init() {
 	initConfig()
 	initNoopAgent()
 	initGoroutine()
-	globalAgent = NoopAgent()
+	setGlobalAgent(NoopAgent())
 }
 
 type agent struct {
@@ -176,11 +176,30 @@ const (
 	maxSqlSize = 64 * 1024
 )
 
-var globalAgent Agent
+// globalAgent is an atomic.Value rather than a plain interface variable:
+// plugins call GetAgent on every request while NewAgent and Shutdown swap the
+// value, and an unsynchronized two-word interface write can be torn - a reader
+// could pair one implementation's itab with another's data pointer.
+// globalAgentLock serializes the writers, so two concurrent NewAgent calls
+// cannot both pass the already-created check and leak the loser's agent.
+var (
+	globalAgent     atomic.Value // holds agentHolder
+	globalAgentLock sync.Mutex
+)
+
+// agentHolder keeps the concrete type stored in globalAgent constant across
+// the *agent and noop implementations; atomic.Value panics when it varies.
+type agentHolder struct {
+	agent Agent
+}
 
 // GetAgent returns a global Agent created by NewAgent.
 func GetAgent() Agent {
-	return globalAgent
+	return globalAgent.Load().(agentHolder).agent
+}
+
+func setGlobalAgent(a Agent) {
+	globalAgent.Store(agentHolder{a})
 }
 
 // NewAgent creates an Agent and spawns goroutines that manage spans and statistical data.
@@ -196,8 +215,11 @@ func GetAgent() Agent {
 //	cfg, err := pinpoint.NewConfig(opts...)
 //	agent, err := pinpoint.NewAgent(cfg)
 func NewAgent(config *Config) (Agent, error) {
-	if globalAgent != NoopAgent() {
-		return globalAgent, errors.New("agent is already created")
+	globalAgentLock.Lock()
+	defer globalAgentLock.Unlock()
+
+	if a := GetAgent(); a != NoopAgent() {
+		return a, errors.New("agent is already created")
 	}
 	if config == nil {
 		return NoopAgent(), errors.New("configuration is missing")
@@ -245,7 +267,7 @@ func NewAgent(config *Config) (Agent, error) {
 		agent.connectWg.Add(1)
 		go agent.connectGrpcServer()
 	}
-	globalAgent = agent
+	setGlobalAgent(agent)
 	return agent, nil
 }
 
@@ -371,9 +393,11 @@ func (agent *agent) Shutdown() {
 	// make every later NewAgent fail with "agent is already created", so a
 	// process could never retry after a failed startup. Guarded by identity so
 	// a second Shutdown of an old agent cannot unseat a newer one.
-	if globalAgent == agent {
-		globalAgent = NoopAgent()
+	globalAgentLock.Lock()
+	if GetAgent() == Agent(agent) {
+		setGlobalAgent(NoopAgent())
 	}
+	globalAgentLock.Unlock()
 
 	// CompareAndSwap, not Load-then-Store: two concurrent Shutdown calls could
 	// both pass a plain check and both reach the teardown below, panicking on
@@ -1019,7 +1043,7 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 	//agent.spanGrpc = newMockSpanGrpc(agent, t)
 	//agent.statGrpc = newMockStatGrpc(agent, t)
 
-	globalAgent = agent
+	setGlobalAgent(agent)
 	agent.enable.Store(true)
 
 	return agent, nil

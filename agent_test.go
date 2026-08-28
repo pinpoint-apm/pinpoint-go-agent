@@ -56,14 +56,14 @@ func Test_agent_NewAgent(t *testing.T) {
 			assert.Equal(t, "testagent", agent.agentID, "AgentID")
 			assert.Equal(t, int32(ServiceTypeGoApp), agent.appType, "ApplicationType")
 			assert.Greater(t, agent.startTime, int64(0), "StartTime")
-			assert.Equal(t, globalAgent, a, "global agent")
+			assert.Equal(t, GetAgent(), a, "global agent")
 
 			agent.startTime = 12345
 			agent.enable.Store(true)
 			assert.Equal(t, "testagent^12345^1", agent.generateTransactionId().String(), "generateTransactionId")
 
 			a.Shutdown()
-			assert.Equal(t, NoopAgent(), globalAgent, "global agent")
+			assert.Equal(t, NoopAgent(), GetAgent(), "global agent")
 			assert.Equal(t, false, a.Enable(), "Enable")
 
 			span := agent.NewSpanTracer("test", "/")
@@ -96,12 +96,12 @@ func Test_agent_GlobalAgent(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, globalAgent, a, "global agent")
-			assert.NotEqual(t, globalAgent, NoopAgent(), "global agent")
+			assert.Equal(t, GetAgent(), a, "global agent")
+			assert.NotEqual(t, GetAgent(), NoopAgent(), "global agent")
 
 			a, err := NewAgent(c)
 			assert.Error(t, err, "NewAgent")
-			assert.Equal(t, globalAgent, a, "global agent")
+			assert.Equal(t, GetAgent(), a, "global agent")
 		})
 	}
 }
@@ -464,4 +464,26 @@ func Test_agent_ShutdownReleasesGlobalWhenNeverRegistered(t *testing.T) {
 	a.Shutdown()
 	assert.Equal(t, a2, GetAgent(), "stale shutdown leaves the new agent alone")
 	a2.Shutdown()
+}
+
+func Test_agent_GetAgentIsRaceFreeAgainstShutdown(t *testing.T) {
+	c, _ := NewConfig(WithAppName("test"), WithAgentId("testagent"))
+	c.offGrpc = true
+	a, err := NewAgent(c)
+	assert.NoError(t, err, "new agent")
+	a.(*agent).enable.Store(true)
+
+	// Request-path readers concurrent with the Shutdown swap; run under -race.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			GetAgent().Enable()
+		}
+	}()
+	a.Shutdown()
+	wg.Wait()
+
+	assert.Equal(t, NoopAgent(), GetAgent(), "global agent released")
 }
