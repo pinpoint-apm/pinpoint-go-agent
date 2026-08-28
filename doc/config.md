@@ -284,6 +284,83 @@ It has no effect unless Collector.AgentInfo.RefreshInterval is set.
 * type: int
 * default: 3
 
+### Collector.Grpc.KeepAliveTime
+Collector.Grpc.KeepAliveTime option sets the interval in milliseconds after which the agent sends an HTTP/2
+keepalive ping on an idle collector connection.
+The options below apply equally to every collector connection (agent, metadata, span, stat and command channels).
+
+* --pinpoint-collector-grpc-keepalivetime
+* PINPOINT_GO_COLLECTOR_GRPC_KEEPALIVETIME
+* WithCollectorGrpcKeepAliveTime()
+* int
+* default: 30000
+
+### Collector.Grpc.KeepAliveTimeout
+Collector.Grpc.KeepAliveTimeout option sets the time in milliseconds the agent waits for a keepalive ping ack
+before closing the connection.
+
+* --pinpoint-collector-grpc-keepalivetimeout
+* PINPOINT_GO_COLLECTOR_GRPC_KEEPALIVETIMEOUT
+* WithCollectorGrpcKeepAliveTimeout()
+* int
+* default: 60000
+
+### Collector.Grpc.KeepAlivePermitWithoutCalls
+Collector.Grpc.KeepAlivePermitWithoutCalls option sets whether keepalive pings are sent even when there is no
+active stream.
+The default is false, matching the C++ agent. Agents older than this release always behaved as if it were true.
+
+* --pinpoint-collector-grpc-keepalivepermitwithoutcalls
+* PINPOINT_GO_COLLECTOR_GRPC_KEEPALIVEPERMITWITHOUTCALLS
+* WithCollectorGrpcKeepAlivePermitWithoutCalls()
+* type: bool
+* default: false
+
+### Collector.Grpc.MaxSendMessageSize
+Collector.Grpc.MaxSendMessageSize option sets the max size in bytes of a gRPC message the agent can send.
+
+* --pinpoint-collector-grpc-maxsendmessagesize
+* PINPOINT_GO_COLLECTOR_GRPC_MAXSENDMESSAGESIZE
+* WithCollectorGrpcMaxSendMessageSize()
+* int
+* default: 4194304
+
+### Collector.Grpc.MaxReceiveMessageSize
+Collector.Grpc.MaxReceiveMessageSize option sets the max size in bytes of a gRPC message the agent can receive.
+
+* --pinpoint-collector-grpc-maxreceivemessagesize
+* PINPOINT_GO_COLLECTOR_GRPC_MAXRECEIVEMESSAGESIZE
+* WithCollectorGrpcMaxReceiveMessageSize()
+* int
+* default: 4194304
+
+### Collector.Grpc.FlowControlWindow
+Collector.Grpc.FlowControlWindow option sets the initial HTTP/2 flow-control window size in bytes.
+
+* --pinpoint-collector-grpc-flowcontrolwindow
+* PINPOINT_GO_COLLECTOR_GRPC_FLOWCONTROLWINDOW
+* WithCollectorGrpcFlowControlWindow()
+* int
+* default: 1048576
+
+### Collector.Grpc.WriteBufferSize
+Collector.Grpc.WriteBufferSize option sets the gRPC transport write buffer size in bytes.
+
+* --pinpoint-collector-grpc-writebuffersize
+* PINPOINT_GO_COLLECTOR_GRPC_WRITEBUFFERSIZE
+* WithCollectorGrpcWriteBufferSize()
+* int
+* default: 1048576
+
+### Collector.Grpc.MaxHeaderListSize
+Collector.Grpc.MaxHeaderListSize option sets the max size in bytes of gRPC response headers the agent accepts.
+
+* --pinpoint-collector-grpc-maxheaderlistsize
+* PINPOINT_GO_COLLECTOR_GRPC_MAXHEADERLISTSIZE
+* WithCollectorGrpcMaxHeaderListSize()
+* int
+* default: 8192
+
 ### Sampling.Type
 Sampling.Type option sets the type of agent sampler.
 Either "COUNTER" or "PERCENT" must be specified.

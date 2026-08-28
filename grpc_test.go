@@ -699,3 +699,48 @@ func Test_agent_refreshAgentInfoWorker_honorsInterval(t *testing.T) {
 
 	assert.GreaterOrEqual(t, client.calls.Load(), int32(2), "worker must re-send agent info every interval")
 }
+
+// With no Collector.Grpc.* keys set, the channel options must equal the
+// values that were hard-coded before they became configurable, except for
+// PermitWithoutStream, which was deliberately flipped to false to match the
+// C++ agent.
+func Test_grpcChannelOptions_defaults(t *testing.T) {
+	cfg, err := NewConfig(WithAppName("TestApp"))
+	assert.NoError(t, err)
+
+	o := newGrpcChannelOptions(cfg)
+	assert.Equal(t, 30*time.Second, o.keepAlive.Time, "keepalive time")
+	assert.Equal(t, 60*time.Second, o.keepAlive.Timeout, "keepalive timeout")
+	assert.Equal(t, false, o.keepAlive.PermitWithoutStream, "permit without calls")
+	assert.Equal(t, int32(1*1024*1024), o.flowControlWindow, "flow control window")
+	assert.Equal(t, 1*1024*1024, o.writeBufferSize, "write buffer size")
+	assert.Equal(t, 4*1024*1024, o.maxSendMsgSize, "max send message size")
+	assert.Equal(t, 4*1024*1024, o.maxRecvMsgSize, "max receive message size")
+	assert.Equal(t, uint32(8*1024), o.maxHeaderListSize, "max header list size")
+	assert.Len(t, o.dialOptions(), 6)
+}
+
+func Test_grpcChannelOptions_configured(t *testing.T) {
+	cfg, err := NewConfig(
+		WithAppName("TestApp"),
+		WithCollectorGrpcKeepAliveTime(10000),
+		WithCollectorGrpcKeepAliveTimeout(20000),
+		WithCollectorGrpcKeepAlivePermitWithoutCalls(true),
+		WithCollectorGrpcMaxSendMessageSize(8*1024*1024),
+		WithCollectorGrpcMaxReceiveMessageSize(16*1024*1024),
+		WithCollectorGrpcFlowControlWindow(2*1024*1024),
+		WithCollectorGrpcWriteBufferSize(512*1024),
+		WithCollectorGrpcMaxHeaderListSize(16*1024),
+	)
+	assert.NoError(t, err)
+
+	o := newGrpcChannelOptions(cfg)
+	assert.Equal(t, 10*time.Second, o.keepAlive.Time, "keepalive time")
+	assert.Equal(t, 20*time.Second, o.keepAlive.Timeout, "keepalive timeout")
+	assert.Equal(t, true, o.keepAlive.PermitWithoutStream, "permit without calls")
+	assert.Equal(t, int32(2*1024*1024), o.flowControlWindow, "flow control window")
+	assert.Equal(t, 512*1024, o.writeBufferSize, "write buffer size")
+	assert.Equal(t, 8*1024*1024, o.maxSendMsgSize, "max send message size")
+	assert.Equal(t, 16*1024*1024, o.maxRecvMsgSize, "max receive message size")
+	assert.Equal(t, uint32(16*1024), o.maxHeaderListSize, "max header list size")
+}

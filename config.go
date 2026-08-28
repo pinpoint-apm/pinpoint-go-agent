@@ -29,6 +29,18 @@ const (
 	CfgCollectorAgentInfoSendRetryInterval = "Collector.AgentInfo.SendRetryInterval"
 	CfgCollectorAgentInfoMaxTryPerAttempt  = "Collector.AgentInfo.MaxTryPerAttempt"
 
+	// Collector.Grpc.* mirrors the C++ agent's channel option keys; time values
+	// are in milliseconds without a "Ms" suffix, following the convention of
+	// the other millisecond keys (Stat.CollectInterval, Span.BatchFlushInterval).
+	CfgCollectorGrpcKeepAliveTime               = "Collector.Grpc.KeepAliveTime"
+	CfgCollectorGrpcKeepAliveTimeout            = "Collector.Grpc.KeepAliveTimeout"
+	CfgCollectorGrpcKeepAlivePermitWithoutCalls = "Collector.Grpc.KeepAlivePermitWithoutCalls"
+	CfgCollectorGrpcMaxSendMessageSize          = "Collector.Grpc.MaxSendMessageSize"
+	CfgCollectorGrpcMaxReceiveMessageSize       = "Collector.Grpc.MaxReceiveMessageSize"
+	CfgCollectorGrpcFlowControlWindow           = "Collector.Grpc.FlowControlWindow"
+	CfgCollectorGrpcWriteBufferSize             = "Collector.Grpc.WriteBufferSize"
+	CfgCollectorGrpcMaxHeaderListSize           = "Collector.Grpc.MaxHeaderListSize"
+
 	CfgLogLevelOld                    = "LogLevel"
 	CfgLogLevel                       = "Log.Level"
 	CfgLogOutput                      = "Log.Output"
@@ -111,6 +123,14 @@ func initConfig() {
 	AddConfig(CfgCollectorAgentInfoRefreshInterval, CfgInt, 0, false)
 	AddConfig(CfgCollectorAgentInfoSendRetryInterval, CfgInt, defaultAgentInfoSendRetryInterval, false)
 	AddConfig(CfgCollectorAgentInfoMaxTryPerAttempt, CfgInt, defaultAgentInfoMaxTryPerAttempt, false)
+	AddConfig(CfgCollectorGrpcKeepAliveTime, CfgInt, grpcKeepAliveTime, false)
+	AddConfig(CfgCollectorGrpcKeepAliveTimeout, CfgInt, grpcKeepAliveTimeout, false)
+	AddConfig(CfgCollectorGrpcKeepAlivePermitWithoutCalls, CfgBool, grpcKeepAlivePermitWithoutCalls, false)
+	AddConfig(CfgCollectorGrpcMaxSendMessageSize, CfgInt, grpcMaxMessageSize, false)
+	AddConfig(CfgCollectorGrpcMaxReceiveMessageSize, CfgInt, grpcMaxMessageSize, false)
+	AddConfig(CfgCollectorGrpcFlowControlWindow, CfgInt, grpcFlowControlWindow, false)
+	AddConfig(CfgCollectorGrpcWriteBufferSize, CfgInt, grpcWriteBufferSize, false)
+	AddConfig(CfgCollectorGrpcMaxHeaderListSize, CfgInt, grpcMaxHeaderListSize, false)
 	AddConfig(CfgLogLevelOld, CfgString, "info", true)
 	AddConfig(CfgLogLevel, CfgString, "info", true)
 	AddConfig(CfgLogOutput, CfgString, "stderr", true)
@@ -841,6 +861,62 @@ func WithCollectorAgentInfoSendRetryInterval(interval int) ConfigOption {
 func WithCollectorAgentInfoMaxTryPerAttempt(count int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgCollectorAgentInfoMaxTryPerAttempt].value = count
+	}
+}
+
+// WithCollectorGrpcKeepAliveTime sets the gRPC keepalive ping interval in milliseconds.
+func WithCollectorGrpcKeepAliveTime(ms int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorGrpcKeepAliveTime].value = ms
+	}
+}
+
+// WithCollectorGrpcKeepAliveTimeout sets the gRPC keepalive ping timeout in milliseconds.
+func WithCollectorGrpcKeepAliveTimeout(ms int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorGrpcKeepAliveTimeout].value = ms
+	}
+}
+
+// WithCollectorGrpcKeepAlivePermitWithoutCalls sets whether keepalive pings are sent without active streams.
+func WithCollectorGrpcKeepAlivePermitWithoutCalls(permit bool) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorGrpcKeepAlivePermitWithoutCalls].value = permit
+	}
+}
+
+// WithCollectorGrpcMaxSendMessageSize sets the max size in bytes of a gRPC message the agent can send.
+func WithCollectorGrpcMaxSendMessageSize(size int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorGrpcMaxSendMessageSize].value = size
+	}
+}
+
+// WithCollectorGrpcMaxReceiveMessageSize sets the max size in bytes of a gRPC message the agent can receive.
+func WithCollectorGrpcMaxReceiveMessageSize(size int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorGrpcMaxReceiveMessageSize].value = size
+	}
+}
+
+// WithCollectorGrpcFlowControlWindow sets the initial HTTP/2 flow-control window size in bytes.
+func WithCollectorGrpcFlowControlWindow(size int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorGrpcFlowControlWindow].value = size
+	}
+}
+
+// WithCollectorGrpcWriteBufferSize sets the gRPC transport write buffer size in bytes.
+func WithCollectorGrpcWriteBufferSize(size int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorGrpcWriteBufferSize].value = size
+	}
+}
+
+// WithCollectorGrpcMaxHeaderListSize sets the max size in bytes of gRPC response headers.
+func WithCollectorGrpcMaxHeaderListSize(size int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorGrpcMaxHeaderListSize].value = size
 	}
 }
 
