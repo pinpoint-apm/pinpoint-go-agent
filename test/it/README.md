@@ -111,14 +111,6 @@ collector:
 
 ## Known limitations
 
-**`TestKeepsServingWhileSpanEndpointIsDownAndRecovers` is flaky.** Its recovery
-probe creates a new `/queue-recovered` span on every 10ms `waitUntil` poll, so
-when delivery takes longer than one poll the application really does create two
-of them and the closing `assert.Equal(t, 1, ...)` fails. It fails in about half
-the runs here, with and without `-race`, and it is a test defect: the agent
-delivers exactly the spans it was handed. Fixing it means making the probe
-count what it created rather than assuming one.
-
 The suite no longer reports data races. It used to surface agent races between
 `Shutdown()` and the worker goroutines (`statTicker`/`statDone`,
 `urlStatTicker`/`urlStatDone`, `pingTicker`/`pingDone`), on `gAtcStreamCount`,

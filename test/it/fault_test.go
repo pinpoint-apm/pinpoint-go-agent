@@ -436,11 +436,27 @@ func TestKeepsServingWhileSpanEndpointIsDownAndRecovers(t *testing.T) {
 
 	require.NoError(t, mc.StartEndpoint(EndpointSpan))
 
-	// Tracing resumes once the channel is ready again.
+	// Tracing resumes once the channel is ready again. Every poll sends another
+	// probe, each under its own URI, and the poll succeeds as soon as any of
+	// them has arrived -- a probe may take several polls to land. Sharing one
+	// URI instead made a slow delivery indistinguishable from the sender
+	// duplicating a span, which is what the count below checks for.
+	var probes []string
+	landed := ""
 	require.True(t, waitUntil(func() bool {
-		recovered := agent.NewSpanTracer("queue.recovered", "/queue-recovered")
+		probe := fmt.Sprintf("/queue-recovered-%d", len(probes)+1)
+		probes = append(probes, probe)
+		recovered := agent.NewSpanTracer("queue.recovered", probe)
 		recovered.EndSpan()
-		return findSpanByRpc(mc.Snapshot(), "/queue-recovered") != nil
+
+		snapshot := mc.Snapshot()
+		for _, p := range probes {
+			if findSpanByRpc(snapshot, p) != nil {
+				landed = p
+				return true
+			}
+		}
+		return false
 	}, longTimeout))
 
 	s := mc.Snapshot()
@@ -449,10 +465,10 @@ func TestKeepsServingWhileSpanEndpointIsDownAndRecovers(t *testing.T) {
 		survivors += countSpansByRpc(s, fmt.Sprintf("/queue-outage-%d", i))
 	}
 	// Whatever the sender managed to deliver, the queue never grew past its
-	// bound. The recovery probe is retried until one lands, so several of them
-	// can arrive.
+	// bound and nothing was duplicated: the probe that landed was created once
+	// and arrived once.
 	assert.LessOrEqual(t, survivors, outageSpans)
-	assert.GreaterOrEqual(t, countSpansByRpc(s, "/queue-recovered"), 1)
+	assert.Equal(t, 1, countSpansByRpc(s, landed))
 }
 
 func TestShutdownStopsTracingAndServesNoopTracersToTheApp(t *testing.T) {
