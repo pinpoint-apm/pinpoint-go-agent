@@ -622,6 +622,13 @@ func (config *Config) publish() {
 		config.cfgMap[CfgLogMaxSize].value = 10
 	}
 
+	// Dynamic key, so it must be clamped here rather than in NewConfig: a
+	// reload could inject a value that makes traceCallStack's
+	// make([]uintptr, depth+3) panic on the request goroutine.
+	if config.stagedInt(CfgErrorCallStackDepth) < 1 {
+		config.cfgMap[CfgErrorCallStackDepth].value = 32
+	}
+
 	values := make(map[string]interface{}, len(config.cfgMap))
 	for k, v := range config.cfgMap {
 		values[k] = v.value

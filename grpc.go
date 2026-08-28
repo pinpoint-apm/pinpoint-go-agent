@@ -607,8 +607,14 @@ func makePExceptionList(exceptions []*exception) []*pb.PException {
 
 func makePException(e *exception) *pb.PException {
 	frames := e.callstack.stackTrace()
+	// A user error's StackTrace() may return an empty trace; this goroutine
+	// has no recover, so an unguarded frames[0] would kill the host process.
+	className := "unknown"
+	if len(frames) > 0 {
+		className = frames[0].moduleName
+	}
 	return &pb.PException{
-		ExceptionClassName: frames[0].moduleName,
+		ExceptionClassName: className,
 		ExceptionMessage:   e.callstack.err.Error(),
 		StartTime:          e.callstack.errorTime.UnixNano() / int64(time.Millisecond),
 		ExceptionId:        e.exceptionId,

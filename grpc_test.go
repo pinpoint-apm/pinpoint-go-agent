@@ -940,3 +940,18 @@ func Test_grpcChannelOptions_configured(t *testing.T) {
 	assert.Equal(t, 16*1024*1024, o.maxRecvMsgSize, "max receive message size")
 	assert.Equal(t, uint32(16*1024), o.maxHeaderListSize, "max header list size")
 }
+
+func Test_makePException_EmptyCallstack(t *testing.T) {
+	e := &exception{
+		callstack: &errorWithCallStack{
+			err:       status.Error(codes.Unknown, "boom"),
+			errorTime: time.Now(),
+		},
+		exceptionId: 1,
+	}
+
+	var p *pb.PException
+	assert.NotPanics(t, func() { p = makePException(e) })
+	assert.Equal(t, "unknown", p.ExceptionClassName)
+	assert.Empty(t, p.StackTraceElement)
+}

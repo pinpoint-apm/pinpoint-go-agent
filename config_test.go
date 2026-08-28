@@ -737,3 +737,14 @@ func TestNewConfig_ClampStatOptions(t *testing.T) {
 	assert.Equal(t, 5000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
 	assert.Equal(t, 6, c.Int(CfgStatBatchCount), CfgStatBatchCount)
 }
+
+func TestNewConfig_ClampErrorCallStackDepth(t *testing.T) {
+	c, err := NewConfig(WithAppName("TestApp"), WithErrorCallStackDepth(0))
+	assert.NoError(t, err)
+	assert.Equal(t, 32, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
+
+	// Dynamic option, so the clamp must also hold on the publish path a
+	// reload or Set goes through.
+	c.Set(CfgErrorCallStackDepth, -4)
+	assert.Equal(t, 32, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
+}
