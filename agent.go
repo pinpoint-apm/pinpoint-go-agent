@@ -760,7 +760,11 @@ func (agent *agent) cacheError(errorName string) int32 {
 	}
 	agent.enqueueMeta(md)
 
-	Log("agent").Infof("cache error id: %d, %s", id, errorName)
+	// Debug, not info: a miss runs on the request goroutine, and a workload
+	// whose cardinality exceeds the cache would otherwise log per request.
+	if IsDebugLogLevelEnabled() {
+		Log("agent").Debugf("cache error id: %d, %s", id, errorName)
+	}
 	return id
 }
 
@@ -792,7 +796,9 @@ func (agent *agent) cacheSql(sql string) int32 {
 	}
 	agent.enqueueMeta(md)
 
-	Log("agent").Infof("cache sql id: %d, %s", id, aSql)
+	if IsDebugLogLevelEnabled() {
+		Log("agent").Debugf("cache sql id: %d, %s", id, aSql)
+	}
 	return id
 }
 
@@ -819,7 +825,9 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 	}
 	agent.enqueueMeta(md)
 
-	Log("agent").Infof("cache sql uid: %#v, %s", uid, aSql)
+	if IsDebugLogLevelEnabled() {
+		Log("agent").Debugf("cache sql uid: %#v, %s", uid, aSql)
+	}
 	return uid
 }
 
@@ -875,7 +883,9 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 	}
 	agent.enqueueMeta(md)
 
-	Log("agent").Infof("cache api id: %d, %s_%d", id, descriptor, apiType)
+	if IsDebugLogLevelEnabled() {
+		Log("agent").Debugf("cache api id: %d, %s_%d", id, descriptor, apiType)
+	}
 	return id
 }
 
