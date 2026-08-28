@@ -71,6 +71,7 @@ type span struct {
 	urlStat         *UrlStatEntry
 	errorChains     []*exception
 	errorChainsLock sync.Mutex
+	finished        bool
 }
 
 func generateSpanId() int64 {
@@ -112,6 +113,14 @@ func newSampledSpan(agent *agent, operation string, rpcName string) *span {
 }
 
 func (span *span) EndSpan() {
+	// A second EndSpan would double-count the response time, re-enqueue the
+	// url stat and send a second final chunk with the same span id.
+	if span.finished {
+		Log("span").Warnf("abnormal span - EndSpan already called")
+		return
+	}
+	span.finished = true
+
 	endTime := time.Now()
 	span.elapsed = endTime.UnixMilli() - span.startTime.UnixMilli()
 
