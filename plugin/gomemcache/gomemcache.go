@@ -6,9 +6,11 @@
 //	mc := ppgomemcache.NewClient(addr...)
 //
 // It is necessary to pass the context containing the pinpoint.Tracer to Client using Client.WithContext.
+// WithContext returns a per-request copy; use that copy for the request's calls
+// and keep the original client shared:
 //
-//	mc.WithContext(pinpoint.NewContext(context.Background(), tracer))
-//	mc.Get("foo")
+//	c := mc.WithContext(pinpoint.NewContext(context.Background(), tracer))
+//	c.Get("foo")
 package ppgomemcache
 
 //Contributed by ONG-YA (https://github.com/ONG-YA)
@@ -16,6 +18,7 @@ package ppgomemcache
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
@@ -26,7 +29,12 @@ import (
 type Client struct {
 	*memcache.Client
 	endpoint string
-	tracer   pinpoint.Tracer
+
+	// The memcache client is goroutine-safe and meant to be shared, so the
+	// tracer bound by WithContext must be too: an unguarded interface field
+	// written per request is a torn-readable data race.
+	mu     sync.Mutex
+	tracer pinpoint.Tracer
 }
 
 // NewClient wraps memcache.New and returns a memcache.Client wrapper ready to instrument.
@@ -35,21 +43,35 @@ func NewClient(server ...string) *Client {
 	return &Client{Client: client, endpoint: strings.Join(server, ","), tracer: pinpoint.NoopTracer()}
 }
 
-// WithContext sets the context.
-// It is possible to trace only when the given context contains a pinpoint.Tracer.
-func (c *Client) WithContext(ctx context.Context) {
-	c.tracer = pinpoint.FromContext(ctx)
+// WithContext returns a copy of the client bound to the tracer in the given
+// context. It is possible to trace only when the given context contains a
+// pinpoint.Tracer. Use the returned copy for the request's calls: the receiver
+// is also updated for backward compatibility, but concurrent requests sharing
+// the receiver record their commands on whichever tracer was bound last.
+func (c *Client) WithContext(ctx context.Context) *Client {
+	tracer := pinpoint.FromContext(ctx)
+	c.mu.Lock()
+	c.tracer = tracer
+	c.mu.Unlock()
+	return &Client{Client: c.Client, endpoint: c.endpoint, tracer: tracer}
+}
+
+func (c *Client) currentTracer() pinpoint.Tracer {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.tracer
 }
 
 func (c *Client) newMemcacheSpanEvent(op string, key string, start time.Time, err error) {
-	se := c.tracer.NewSpanEvent("gomemcache." + op).SpanEvent()
+	tracer := c.currentTracer()
+	se := tracer.NewSpanEvent("gomemcache." + op).SpanEvent()
 	se.SetServiceType(pinpoint.ServiceTypeMemcached)
 	se.SetDestination("MEMCACHED")
 	se.SetEndPoint(c.endpoint)
 	se.Annotations().AppendString(pinpoint.AnnotationArgs0, key)
 	se.SetError(err)
 	se.FixDuration(start, time.Now())
-	c.tracer.EndSpanEvent()
+	tracer.EndSpanEvent()
 }
 
 func (c *Client) Add(item *memcache.Item) error {

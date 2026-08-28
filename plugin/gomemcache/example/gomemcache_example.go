@@ -18,7 +18,7 @@ func doMemcache(w http.ResponseWriter, r *http.Request) {
 	addr := []string{"localhost:11211"}
 
 	mc := ppgomemcache.NewClient(addr...)
-	mc.WithContext(r.Context())
+	mc = mc.WithContext(r.Context())
 
 	_, _ = mc.Get("foo") // error
 

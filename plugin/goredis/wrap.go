@@ -6,9 +6,11 @@
 //	rc = ppgoredis.NewClient(redisOpts)
 //
 // It is necessary to pass the context containing the pinpoint.Tracer to Client using Client.WithContext.
+// WithContext returns a per-request copy; use that copy for the request's calls
+// and keep the original client shared:
 //
-//	rc = rc.WithContext(pinpoint.NewContext(context.Background(), tracer))
-//	rc.Pipeline()
+//	c := rc.WithContext(pinpoint.NewContext(context.Background(), tracer))
+//	c.Pipeline()
 package ppgoredis
 
 import (
@@ -31,13 +33,16 @@ func NewClient(opt *redis.Options) *Client {
 	return &Client{Client: redis.NewClient(opt), endpoint: opt.Addr}
 }
 
-// WithContext sets the context.
+// WithContext returns a copy of the client bound to the given context.
 // It is possible to trace only when the given context contains a pinpoint.Tracer.
+// The receiver is not modified: the wrapped client is typically shared by
+// concurrent requests, and rebinding it in place both races the field write
+// and records one request's commands on another request's tracer.
 func (c *Client) WithContext(ctx context.Context) *Client {
-	c.Client = c.Client.WithContext(ctx)
-	c.WrapProcess(process(ctx, c.endpoint))
-	c.WrapProcessPipeline(processPipeline(ctx, c.endpoint))
-	return c
+	copied := &Client{Client: c.Client.WithContext(ctx), endpoint: c.endpoint}
+	copied.WrapProcess(process(ctx, c.endpoint))
+	copied.WrapProcessPipeline(processPipeline(ctx, c.endpoint))
+	return copied
 }
 
 // ClusterClient wraps redis.ClusterClient.
@@ -52,13 +57,14 @@ func NewClusterClient(opt *redis.ClusterOptions) *ClusterClient {
 	return &ClusterClient{ClusterClient: redis.NewClusterClient(opt), endpoint: endpoint}
 }
 
-// WithContext sets the context.
+// WithContext returns a copy of the client bound to the given context.
 // It is possible to trace only when the given context contains a pinpoint.Tracer.
+// The receiver is not modified, for the same reason as Client.WithContext.
 func (c *ClusterClient) WithContext(ctx context.Context) *ClusterClient {
-	c.ClusterClient = c.ClusterClient.WithContext(ctx)
-	c.WrapProcess(process(ctx, c.endpoint))
-	c.WrapProcessPipeline(processPipeline(ctx, c.endpoint))
-	return c
+	copied := &ClusterClient{ClusterClient: c.ClusterClient.WithContext(ctx), endpoint: c.endpoint}
+	copied.WrapProcess(process(ctx, c.endpoint))
+	copied.WrapProcessPipeline(processPipeline(ctx, c.endpoint))
+	return copied
 }
 
 func process(ctx context.Context, endpoint string) func(oldProcess func(cmd redis.Cmder) error) func(cmd redis.Cmder) error {
