@@ -56,9 +56,9 @@ type agent struct {
 	shutdown  atomic.Bool
 
 	// stopCtx is cancelled when shutdown begins. The shutdown flag above is
-	// only polled, so it cannot wake a goroutine already blocked in a
-	// reconnect wait; the context can. Created lazily because the agent is
-	// built as a struct literal in several places, including test helpers.
+	// only polled, so it cannot wake a goroutine already blocked in a wait;
+	// the context can. NewAgent creates it before starting goroutines, while
+	// stopOnce also supports agents built as struct literals in tests.
 	stopOnce   sync.Once
 	stopCtx    context.Context
 	stopCancel context.CancelFunc
@@ -68,13 +68,6 @@ type agent struct {
 	// it instead of rebuilding the metadata map on every request.
 	grpcMetaOnce sync.Once
 	grpcMetaCtx  context.Context
-
-	pingTicker    *time.Ticker
-	pingDone      chan bool
-	statTicker    *time.Ticker
-	statDone      chan bool
-	urlStatTicker *time.Ticker
-	urlStatDone   chan bool
 }
 
 type apiMeta struct {
@@ -187,6 +180,7 @@ func NewAgent(config *Config) (Agent, error) {
 		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),
 		config:      config,
 	}
+	agent.stopSignal()
 
 	agent.errorCache = newMetaCache[string, int32](cacheSize, hashStringKey)
 	agent.sqlCache = newMetaCache[string, int32](cacheSize, hashStringKey)
@@ -309,14 +303,6 @@ func (agent *agent) Shutdown() {
 		agent.cmdGrpc.close()
 	}
 
-	if !agent.config.offGrpc {
-		agent.pingTicker.Stop()
-		agent.pingDone <- true
-		agent.statTicker.Stop()
-		agent.statDone <- true
-		agent.urlStatTicker.Stop()
-		agent.urlStatDone <- true
-	}
 	// Bound the drain: a collector outage must not keep the process alive.
 	// Abandoned workers are unblocked by the connection close below.
 	if !waitTimeout(&agent.workerWg, shutdownTimeout) {
@@ -396,8 +382,9 @@ func (agent *agent) sendPingWorker() {
 	Log("agent").Infof("start ping goroutine")
 	defer agent.workerWg.Done()
 
-	agent.pingTicker = time.NewTicker(60 * time.Second)
-	agent.pingDone = make(chan bool)
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	stop := agent.stopSignal().Done()
 	stream := agent.agentGrpc.newPingStreamWithRetry()
 
 	for agent.enable.Load() {
@@ -412,11 +399,11 @@ func (agent *agent) sendPingWorker() {
 		}
 
 		select {
-		case <-agent.pingDone:
+		case <-stop:
 			Log("agent").Infof("end ping goroutine")
 			stream.close()
 			return
-		case t := <-agent.pingTicker.C:
+		case t := <-ticker.C:
 			if IsDebugLogLevelEnabled() {
 				Log("agent").Debugf("ping at", t)
 			}
@@ -752,15 +739,16 @@ func (agent *agent) sendUrlStatWorker() {
 	Log("agent").Infof("start send uri stat goroutine")
 	defer agent.workerWg.Done()
 
-	agent.urlStatTicker = time.NewTicker(30 * time.Second)
-	agent.urlStatDone = make(chan bool)
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	stop := agent.stopSignal().Done()
 
 	for agent.enable.Load() {
 		select {
-		case <-agent.urlStatDone:
+		case <-stop:
 			Log("agent").Infof("end send uri stat goroutine")
 			return
-		case <-agent.urlStatTicker.C:
+		case <-ticker.C:
 			if agent.config.load().collectUrlStat {
 				snapshot := agent.takeUrlStatSnapshot()
 				agent.enqueueStat(makePAgentUriStat(snapshot))

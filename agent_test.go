@@ -246,6 +246,36 @@ func Test_waitTimeout(t *testing.T) {
 	assert.True(t, waitTimeout(&wg, time.Second), "done before the deadline")
 }
 
+// Shutdown must not wait for a Done receiver after a ticker worker has already
+// observed enable=false and exited.
+func Test_agent_ShutdownAfterPingWorkerExited(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.agentGrpc = &agentGrpc{agent: agent}
+	agent.statChan = make(chan *pb.PStatMessage)
+	agent.urlStatChan = make(chan *urlStat)
+
+	agent.enable.Store(false)
+	agent.workerWg.Add(1)
+	go agent.sendPingWorker()
+	if !waitTimeout(&agent.workerWg, time.Second) {
+		t.Fatal("ping worker did not exit")
+	}
+
+	agent.config.offGrpc = false
+	agent.enable.Store(true)
+	done := make(chan struct{})
+	go func() {
+		agent.Shutdown()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Shutdown blocked signaling an exited worker")
+	}
+}
+
 // A worker stuck on an unreachable collector must not hold Shutdown forever.
 func Test_agent_ShutdownDeadline(t *testing.T) {
 	opts := []ConfigOption{
