@@ -418,7 +418,8 @@ func TestSharesAsyncIdAcrossAsyncSpansFromOneEvent(t *testing.T) {
 	require.True(t, mc.WaitFor(func(s Snapshot) bool {
 		return findSpanByRpc(s, "/async-parent") != nil &&
 			len(asyncChunksFor(s, spanID)) >= 2 &&
-			len(eventsForSpan(s, spanID)) >= 3
+			len(eventsForSpan(s, spanID)) >= 3 &&
+			hasApiMetadata(s, "Goroutine Invocation", apiTypeInvocation)
 	}, waitTimeout))
 
 	s := mc.Snapshot()
@@ -430,10 +431,14 @@ func TestSharesAsyncIdAcrossAsyncSpansFromOneEvent(t *testing.T) {
 	assert.Equal(t, []int32{1, 2}, sequences)
 	asyncID := chunks[0].GetLocalAsyncId().GetAsyncId()
 
-	// Each async chunk starts with the async root event.
+	// Each async chunk starts with the async root event, whose apiId this agent
+	// registered as "Goroutine Invocation" - the id is per-agent, so it must be
+	// published by the agent that uses it.
+	assert.True(t, hasApiMetadata(s, "Goroutine Invocation", apiTypeInvocation))
 	for _, chunk := range chunks {
 		require.GreaterOrEqual(t, len(chunk.GetSpanEvent()), 1)
 		assert.Equal(t, int32(pinpoint.ServiceTypeAsync), chunk.GetSpanEvent()[0].GetServiceType())
+		assert.Greater(t, chunk.GetSpanEvent()[0].GetApiId(), int32(0))
 	}
 
 	// The spawning event carries the async id so the collector can stitch the
