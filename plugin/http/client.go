@@ -32,7 +32,7 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 
 		a := tracer.SpanEvent().Annotations()
 		RecordClientHttpRequestHeader(a, header{req.Header})
-		RecordClientHttpCookie(a, cookie{req.Cookies()})
+		RecordClientHttpCookie(a, cookie{req})
 	}
 
 	tracer.Inject(req.Header)
@@ -72,12 +72,16 @@ func (h header) VisitAll(f func(name string, values []string)) {
 	}
 }
 
+// cookie parses the request's Cookie header lazily, inside VisitAll: the
+// recorder is a noop unless cookie recording is configured, and eagerly calling
+// req.Cookies() paid a full parse plus allocations per sampled request just to
+// discard the result.
 type cookie struct {
-	cookie []*http.Cookie
+	req *http.Request
 }
 
 func (c cookie) VisitAll(f func(name string, value string)) {
-	for _, ck := range c.cookie {
+	for _, ck := range c.req.Cookies() {
 		f(ck.Name, ck.Value)
 	}
 }

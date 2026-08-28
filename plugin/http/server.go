@@ -69,7 +69,7 @@ func RecordHttpServerRequest(tracer pinpoint.Tracer, req *http.Request) {
 
 	a := span.Annotations()
 	recordServerHttpRequestHeader(a, header{req.Header})
-	recordServerHttpCookie(a, cookie{req.Cookies()})
+	recordServerHttpCookie(a, cookie{req})
 	setProxyHeader(a, req)
 }
 

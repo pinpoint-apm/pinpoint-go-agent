@@ -57,18 +57,18 @@ func (h *defaultHttpHeaderRecorder) recordHeader(annotation pinpoint.Annotation,
 }
 
 func (h *defaultHttpHeaderRecorder) recordCookie(annotation pinpoint.Annotation, cookie Cookie) {
-	found := false
-	for _, name := range h.cfg {
-		cookie.VisitAll(func(cname string, value string) {
+	// One pass over the cookies: VisitAll may parse the Cookie header lazily,
+	// so visiting once per configured name would re-parse it per name. This
+	// also records every configured cookie, where the old per-name loop
+	// stopped at the first configured name that matched anything.
+	cookie.VisitAll(func(cname string, value string) {
+		for _, name := range h.cfg {
 			if strings.EqualFold(name, cname) {
 				annotation.AppendStringString(pinpoint.AnnotationHttpCookie, cname, value)
-				found = true
+				break
 			}
-		})
-		if found {
-			break
 		}
-	}
+	})
 }
 
 type noopHttpHeaderRecorder struct{}
