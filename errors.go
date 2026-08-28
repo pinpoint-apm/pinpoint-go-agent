@@ -67,13 +67,19 @@ func (span *span) findError(err error) *exception {
 	return nil
 }
 
+// maxCauserDepth bounds how far the Cause() chain of a user error is walked.
+// The chain comes from an arbitrary user implementation: one whose Cause()
+// returns the error itself, or cycles back to an ancestor, would otherwise
+// hang the request goroutine inside SetError.
+const maxCauserDepth = 64
+
 func (span *span) getExceptionChainId(err error) (int64, bool) {
 	if _, ok := err.(pkgErrorStackTracer); ok {
 		if ec := span.findError(err); ec != nil {
 			return ec.exceptionId, false
 		}
 
-		for e := err; e != nil; {
+		for e, depth := err, 0; e != nil && depth < maxCauserDepth; depth++ {
 			if c, ok := e.(causer); ok {
 				e = c.Cause()
 				if ec := span.findError(e); ec != nil {
@@ -89,7 +95,7 @@ func (span *span) getExceptionChainId(err error) (int64, bool) {
 }
 
 func (span *span) addCauserCallStack(err error, eid int64) {
-	for e := err; e != nil; {
+	for e, depth := err, 0; e != nil && depth < maxCauserDepth; depth++ {
 		c, ok := e.(causer)
 		if !ok {
 			break
