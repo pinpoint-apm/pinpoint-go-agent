@@ -57,6 +57,11 @@ type agent struct {
 	apiCache    *metaCache[apiCacheKey, int32]
 	apiIdGen    int32
 
+	// exceptionIdGen numbers this agent's exception chains. Chain ids are
+	// scoped to the span they are reported with, so a new agent starts over
+	// rather than continuing a previous agent's count.
+	exceptionIdGen atomic.Int64
+
 	// asyncApiId caches this agent's id for the "Goroutine Invocation" API.
 	// Per-agent, not package-global: ids come from apiIdGen and are published
 	// through this agent's metadata channel, so a new agent after Shutdown()

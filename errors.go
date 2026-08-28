@@ -3,7 +3,6 @@ package pinpoint
 import (
 	"runtime"
 	"strings"
-	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -86,7 +85,7 @@ func (span *span) getExceptionChainId(err error) (int64, bool) {
 		}
 	}
 
-	return atomic.AddInt64(&exceptionIdGen, 1), true
+	return span.agent.exceptionIdGen.Add(1), true
 }
 
 func (span *span) addCauserCallStack(err error, eid int64) {

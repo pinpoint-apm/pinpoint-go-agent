@@ -154,3 +154,20 @@ func Test_newSpanEventGoroutine_apiIdIsPerAgent(t *testing.T) {
 		})
 	}
 }
+
+// Exception chain ids are per-agent: a new agent (Shutdown() + NewAgent())
+// numbers its chains from 1 instead of continuing the previous agent's count.
+func Test_span_getExceptionChainId_isPerAgent(t *testing.T) {
+	for _, name := range []string{"first agent", "second agent"} {
+		t.Run(name, func(t *testing.T) {
+			s := defaultTestSpan()
+
+			id, isNew := s.getExceptionChainId(errors.New("boom"))
+			assert.Equal(t, int64(1), id, "first chain id")
+			assert.True(t, isNew, "isNew")
+
+			next, _ := s.getExceptionChainId(errors.New("bang"))
+			assert.Equal(t, int64(2), next, "second chain id")
+		})
+	}
+}

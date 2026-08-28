@@ -27,8 +27,6 @@ type spanEvent struct {
 	exceptionId   int64
 }
 
-var exceptionIdGen int64 = 0
-
 func defaultSpanEvent(span *span, operationName string) *spanEvent {
 	se := spanEvent{}
 
