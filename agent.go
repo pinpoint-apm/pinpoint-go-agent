@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	lru "github.com/hashicorp/golang-lru"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/spaolacci/murmur3"
 )
@@ -42,12 +41,12 @@ type agent struct {
 	urlStatChan chan *urlStat
 	statChan    chan *pb.PStatMessage
 
-	errorCache  *lru.Cache
+	errorCache  *metaCache[string, int32]
 	errorIdGen  int32
-	sqlCache    *lru.Cache
+	sqlCache    *metaCache[string, int32]
 	sqlIdGen    int32
-	sqlUidCache *lru.Cache
-	apiCache    *lru.Cache
+	sqlUidCache *metaCache[string, []byte]
+	apiCache    *metaCache[apiCacheKey, int32]
 	apiIdGen    int32
 
 	config    *Config
@@ -189,19 +188,10 @@ func NewAgent(config *Config) (Agent, error) {
 		config:      config,
 	}
 
-	var err error
-	if agent.errorCache, err = lru.New(cacheSize); err != nil {
-		return NoopAgent(), err
-	}
-	if agent.sqlCache, err = lru.New(cacheSize); err != nil {
-		return NoopAgent(), err
-	}
-	if agent.sqlUidCache, err = lru.New(cacheSize); err != nil {
-		return NoopAgent(), err
-	}
-	if agent.apiCache, err = lru.New(cacheSize); err != nil {
-		return NoopAgent(), err
-	}
+	agent.errorCache = newMetaCache[string, int32](cacheSize, hashStringKey)
+	agent.sqlCache = newMetaCache[string, int32](cacheSize, hashStringKey)
+	agent.sqlUidCache = newMetaCache[string, []byte](cacheSize, hashStringKey)
+	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize, hashApiCacheKey)
 
 	config.AddReloadCallback([]string{CfgLogLevel}, logger.reloadLevel)
 	config.AddReloadCallback([]string{CfgLogOutput, CfgLogMaxSize}, logger.reloadOutput)
@@ -553,16 +543,16 @@ func (agent *agent) deleteMetaCache(md interface{}) {
 	switch md.(type) {
 	case apiMeta:
 		api := md.(apiMeta)
-		agent.apiCache.Remove(apiCacheKey{api.descriptor, api.apiType})
+		agent.apiCache.remove(apiCacheKey{api.descriptor, api.apiType})
 		break
 	case stringMeta:
-		agent.errorCache.Remove(md.(stringMeta).funcName)
+		agent.errorCache.remove(md.(stringMeta).funcName)
 		break
 	case sqlMeta:
-		agent.sqlCache.Remove(md.(sqlMeta).sql)
+		agent.sqlCache.remove(md.(sqlMeta).sql)
 		break
 	case sqlUidMeta:
-		agent.sqlUidCache.Remove(md.(sqlUidMeta).sql)
+		agent.sqlUidCache.remove(md.(sqlUidMeta).sql)
 		break
 	case exceptionMeta:
 		break
@@ -593,13 +583,13 @@ func (agent *agent) cacheError(errorName string) int32 {
 		return 0
 	}
 
-	if v, ok := agent.errorCache.Peek(errorName); ok {
-		return v.(int32)
+	if v, ok := agent.errorCache.peek(errorName); ok {
+		return v
 	}
 
 	id := atomic.AddInt32(&agent.errorIdGen, 1)
-	if v, ok, _ := agent.errorCache.PeekOrAdd(errorName, id); ok {
-		return v.(int32)
+	if v, ok := agent.errorCache.peekOrAdd(errorName, id); ok {
+		return v
 	}
 
 	md := stringMeta{
@@ -624,13 +614,13 @@ func (agent *agent) cacheSql(sql string) int32 {
 		return 0
 	}
 
-	if v, ok := agent.sqlCache.Peek(sql); ok {
-		return v.(int32)
+	if v, ok := agent.sqlCache.peek(sql); ok {
+		return v
 	}
 
 	id := atomic.AddInt32(&agent.sqlIdGen, 1)
-	if v, ok, _ := agent.sqlCache.PeekOrAdd(sql, id); ok {
-		return v.(int32)
+	if v, ok := agent.sqlCache.peekOrAdd(sql, id); ok {
+		return v
 	}
 
 	aSql := abbreviateString(sql, maxSqlSize)
@@ -649,15 +639,15 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 		return nil
 	}
 
-	if v, ok := agent.sqlUidCache.Peek(sql); ok {
-		return v.([]byte)
+	if v, ok := agent.sqlUidCache.peek(sql); ok {
+		return v
 	}
 
 	hash := murmur3.New128()
 	hash.Write([]byte(sql))
 	uid := hash.Sum(nil)
-	if v, ok, _ := agent.sqlUidCache.PeekOrAdd(sql, uid); ok {
-		return v.([]byte)
+	if v, ok := agent.sqlUidCache.peekOrAdd(sql, uid); ok {
+		return v
 	}
 
 	aSql := abbreviateString(sql, maxSqlSize)
@@ -678,13 +668,13 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 
 	key := apiCacheKey{descriptor, apiType}
 
-	if v, ok := agent.apiCache.Peek(key); ok {
-		return v.(int32)
+	if v, ok := agent.apiCache.peek(key); ok {
+		return v
 	}
 
 	id := atomic.AddInt32(&agent.apiIdGen, 1)
-	if v, ok, _ := agent.apiCache.PeekOrAdd(key, id); ok {
-		return v.(int32)
+	if v, ok := agent.apiCache.peekOrAdd(key, id); ok {
+		return v
 	}
 
 	md := apiMeta{
@@ -850,10 +840,10 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),
 		config:      config,
 	}
-	agent.errorCache, _ = lru.New(cacheSize)
-	agent.sqlCache, _ = lru.New(cacheSize)
-	agent.sqlUidCache, _ = lru.New(cacheSize)
-	agent.apiCache, _ = lru.New(cacheSize)
+	agent.errorCache = newMetaCache[string, int32](cacheSize, hashStringKey)
+	agent.sqlCache = newMetaCache[string, int32](cacheSize, hashStringKey)
+	agent.sqlUidCache = newMetaCache[string, []byte](cacheSize, hashStringKey)
+	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize, hashApiCacheKey)
 
 	agent.agentGrpc = newMockAgentGrpc(agent, t)
 	//agent.spanGrpc = newMockSpanGrpc(agent, t)

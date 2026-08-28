@@ -9,7 +9,6 @@ import (
 
 	"github.com/golang/mock/gomock"
 	empty "github.com/golang/protobuf/ptypes/empty"
-	lru "github.com/hashicorp/golang-lru"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/pinpoint-apm/pinpoint-go-agent/protobuf/mock"
 )
@@ -31,10 +30,10 @@ func newTestAgent(config *Config) *agent {
 		},
 	}
 	a.enable.Store(true)
-	a.errorCache, _ = lru.New(cacheSize)
-	a.sqlCache, _ = lru.New(cacheSize)
-	a.sqlUidCache, _ = lru.New(cacheSize)
-	a.apiCache, _ = lru.New(cacheSize)
+	a.errorCache = newMetaCache[string, int32](cacheSize, hashStringKey)
+	a.sqlCache = newMetaCache[string, int32](cacheSize, hashStringKey)
+	a.sqlUidCache = newMetaCache[string, []byte](cacheSize, hashStringKey)
+	a.apiCache = newMetaCache[apiCacheKey, int32](cacheSize, hashApiCacheKey)
 	a.config.offGrpc = true
 
 	return a
