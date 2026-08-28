@@ -10,6 +10,7 @@ import (
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -157,6 +158,57 @@ func Test_spanMessageBuilder_streamReuseKeepsSentBytes(t *testing.T) {
 		var msg pb.PSpanMessage
 		assert.NoError(t, proto.Unmarshal(s.bytes, &msg))
 		assert.NoError(t, verifySeedMessage(&msg, s.seed, 4))
+	}
+}
+
+type retainingSpanSendClient struct {
+	pb.Span_SendSpanClient
+	request *pb.PSpanMessage
+}
+
+func (c *retainingSpanSendClient) Send(in *pb.PSpanMessage) error {
+	c.request = in
+	return nil
+}
+
+type retainingSpanBatchClient struct {
+	request *pb.PSpanMessageBatch
+}
+
+func (c *retainingSpanBatchClient) SendSpan(context.Context) (pb.Span_SendSpanClient, error) {
+	panic("not used")
+}
+
+func (c *retainingSpanBatchClient) SendSpanBatch(_ context.Context, in *pb.PSpanMessageBatch) (*pb.PSpanResultBatch, error) {
+	c.request = in
+	return &pb.PSpanResultBatch{}, nil
+}
+
+// grpc-go tracing retains request pointers after Send returns. Those requests
+// must be detached from the slabs before their builders are recycled.
+func Test_spanGrpc_tracingRetainsStableMessages(t *testing.T) {
+	previous := grpc.EnableTracing
+	grpc.EnableTracing = true
+	defer func() { grpc.EnableTracing = previous }()
+
+	agent := newTestAgent(defaultConfig())
+	streamClient := &retainingSpanSendClient{}
+	stream := &spanStream{stream: streamClient, cancel: func() {}}
+	assert.NoError(t, stream.sendSpan(slabTestChunk(agent, 7, 3)))
+	assert.NoError(t, verifySeedMessage(streamClient.request, 7, 3))
+
+	batchClient := &retainingSpanBatchClient{}
+	spanGrpc := &spanGrpc{
+		spanClient:              batchClient,
+		agent:                   agent,
+		batchFlushTimeout:       time.Second,
+		maxConcurrentRequests:   1,
+		concurrentRequestPermit: make(chan struct{}, 1),
+	}
+	spanGrpc.sendSpanBatchAsync([]*spanChunk{slabTestChunk(agent, 8, 3)})
+	spanGrpc.inFlight.Wait()
+	if assert.Len(t, batchClient.request.GetSpan(), 1) {
+		assert.NoError(t, verifySeedMessage(batchClient.request.GetSpan()[0], 8, 3))
 	}
 }
 

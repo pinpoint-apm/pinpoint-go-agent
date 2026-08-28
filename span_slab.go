@@ -60,8 +60,9 @@ func (s *ptrSlab[T]) reset() {
 // and dies at releaseSpanMessageBuilder. Release strictly after the collector
 // send completes: stream.Send marshals synchronously before returning, and a
 // unary SendSpanBatch call marshals during the call, so "after Send / the call
-// returns" is the reuse boundary. Releasing earlier recycles memory a send
-// still references and mixes data between spans.
+// returns" is the normal reuse boundary. grpc-go tracing retains requests
+// beyond that boundary, so senders pass it a GC-owned clone instead. Releasing
+// earlier recycles memory a send still references and mixes data between spans.
 type spanMessageBuilder struct {
 	messages      slab[pb.PSpanMessage]
 	spanOneofs    slab[pb.PSpanMessage_Span]

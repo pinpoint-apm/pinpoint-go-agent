@@ -802,8 +802,6 @@ func (s *spanStream) sendSpan(chunk *spanChunk) error {
 	}
 
 	builder := acquireSpanMessageBuilder()
-	// Send marshals the message before it returns (also when it errors or the
-	// timeout cancels the stream), so the graph is dead once it does.
 	defer releaseSpanMessageBuilder(builder)
 
 	gspan := builder.makePSpanMessage(chunk)
@@ -813,6 +811,10 @@ func (s *spanStream) sendSpan(chunk *spanChunk) error {
 	}
 	if IsLogLevelEnabled(logrus.TraceLevel) {
 		Log("grpc").Tracef("PSpanMessage: %s", gspan.String())
+	}
+	if grpc.EnableTracing {
+		// grpc-go's lazy trace keeps the request after Send returns.
+		gspan = proto.Clone(gspan).(*pb.PSpanMessage)
 	}
 
 	err := sendStreamWithTimeout(func() error { return s.stream.Send(gspan) }, s.cancel, sendStreamTimeOut, "span stream.Send()")
@@ -886,13 +888,15 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 		releaseSpanMessageBuilder(builder)
 		return
 	}
+	if grpc.EnableTracing {
+		// Completed unary traces can also retain their request.
+		spanMessageBatch = proto.Clone(spanMessageBatch).(*pb.PSpanMessageBatch)
+	}
 
 	spanGrpc.inFlight.Add(1)
 	go func() {
 		defer spanGrpc.inFlight.Done()
 		defer spanGrpc.releaseSpanBatchPermit()
-		// The unary call marshals the request while it runs, so the batch
-		// graph is dead once SendSpanBatch returns.
 		defer releaseSpanMessageBuilder(builder)
 
 		ctx, cancel := context.WithTimeout(grpcMetadataContext(spanGrpc.agent, -1), sendStreamTimeOut)
