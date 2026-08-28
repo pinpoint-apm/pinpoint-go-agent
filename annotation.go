@@ -3,7 +3,6 @@ package pinpoint
 import (
 	"sync"
 
-	"github.com/golang/protobuf/ptypes/wrappers"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 )
 
@@ -79,58 +78,69 @@ func (a *annotation) AppendLongIntIntByteByteString(key int32, l int64, i1 int32
 	a.append(annotationValue{key: key, typ: annotationTypeLongIntIntByteByteString, l: l, i1: i1, i2: i2, b1: b1, b2: b2, s1: s})
 }
 
-// toProto builds the protobuf annotation for a stored value. Called off the hot
-// path (sender goroutine) during serialization.
-func (v *annotationValue) toProto() *pb.PAnnotation {
-	value := &pb.PAnnotationValue{}
+// toProtoInto builds the protobuf annotation for a stored value on the
+// builder's slabs. Called off the hot path (sender goroutine) during
+// serialization; the result dies when the builder is released.
+func (v *annotationValue) toProtoInto(b *spanMessageBuilder) *pb.PAnnotation {
+	value := b.annotationValues.get()
 
 	switch v.typ {
 	case annotationTypeInt:
-		value.Field = &pb.PAnnotationValue_IntValue{IntValue: v.i1}
+		oneof := b.intOneofs.get()
+		oneof.IntValue = v.i1
+		value.Field = oneof
 	case annotationTypeLong:
-		value.Field = &pb.PAnnotationValue_LongValue{LongValue: v.l}
+		oneof := b.longOneofs.get()
+		oneof.LongValue = v.l
+		value.Field = oneof
 	case annotationTypeString:
-		value.Field = &pb.PAnnotationValue_StringValue{StringValue: v.s1}
+		oneof := b.stringOneofs.get()
+		oneof.StringValue = v.s1
+		value.Field = oneof
 	case annotationTypeStringString:
-		value.Field = &pb.PAnnotationValue_StringStringValue{
-			StringStringValue: &pb.PStringStringValue{
-				StringValue1: &wrappers.StringValue{Value: v.s1},
-				StringValue2: &wrappers.StringValue{Value: v.s2},
-			},
-		}
+		inner := b.stringStrings.get()
+		inner.StringValue1 = b.stringValue(v.s1)
+		inner.StringValue2 = b.stringValue(v.s2)
+		oneof := b.stringStringOneofs.get()
+		oneof.StringStringValue = inner
+		value.Field = oneof
 	case annotationTypeIntStringString:
-		value.Field = &pb.PAnnotationValue_IntStringStringValue{
-			IntStringStringValue: &pb.PIntStringStringValue{
-				IntValue:     v.i1,
-				StringValue1: &wrappers.StringValue{Value: v.s1},
-				StringValue2: &wrappers.StringValue{Value: v.s2},
-			},
-		}
+		inner := b.intStringStrings.get()
+		inner.IntValue = v.i1
+		inner.StringValue1 = b.stringValue(v.s1)
+		inner.StringValue2 = b.stringValue(v.s2)
+		oneof := b.intStringStringOneofs.get()
+		oneof.IntStringStringValue = inner
+		value.Field = oneof
 	case annotationTypeBytesStringString:
-		value.Field = &pb.PAnnotationValue_BytesStringStringValue{
-			BytesStringStringValue: &pb.PBytesStringStringValue{
-				BytesValue:   v.bytes,
-				StringValue1: &wrappers.StringValue{Value: v.s1},
-				StringValue2: &wrappers.StringValue{Value: v.s2},
-			},
-		}
+		inner := b.bytesStringStrings.get()
+		inner.BytesValue = v.bytes
+		inner.StringValue1 = b.stringValue(v.s1)
+		inner.StringValue2 = b.stringValue(v.s2)
+		oneof := b.bytesStringStringOneofs.get()
+		oneof.BytesStringStringValue = inner
+		value.Field = oneof
 	case annotationTypeLongIntIntByteByteString:
-		value.Field = &pb.PAnnotationValue_LongIntIntByteByteStringValue{
-			LongIntIntByteByteStringValue: &pb.PLongIntIntByteByteStringValue{
-				LongValue:   v.l,
-				IntValue1:   v.i1,
-				IntValue2:   v.i2,
-				ByteValue1:  v.b1,
-				ByteValue2:  v.b2,
-				StringValue: &wrappers.StringValue{Value: v.s1},
-			},
-		}
+		inner := b.longIntIntByteByteStrings.get()
+		inner.LongValue = v.l
+		inner.IntValue1 = v.i1
+		inner.IntValue2 = v.i2
+		inner.ByteValue1 = v.b1
+		inner.ByteValue2 = v.b2
+		inner.StringValue = b.stringValue(v.s1)
+		oneof := b.longIntIntByteByteStringOneofs.get()
+		oneof.LongIntIntByteByteStringValue = inner
+		value.Field = oneof
 	}
 
-	return &pb.PAnnotation{Key: v.key, Value: value}
+	annotation := b.annotations.get()
+	annotation.Key = v.key
+	annotation.Value = value
+	return annotation
 }
 
-func (a *annotation) getList() []*pb.PAnnotation {
+// getListInto materializes the annotation list on the builder's slabs.
+func (a *annotation) getListInto(b *spanMessageBuilder) []*pb.PAnnotation {
 	a.annotationLock.Lock()
 	defer a.annotationLock.Unlock()
 
@@ -138,9 +148,15 @@ func (a *annotation) getList() []*pb.PAnnotation {
 		return nil
 	}
 
-	list := make([]*pb.PAnnotation, len(a.values))
+	list := b.annotationLists.take(len(a.values))
 	for i := range a.values {
-		list[i] = a.values[i].toProto()
+		list[i] = a.values[i].toProtoInto(b)
 	}
 	return list
+}
+
+// getList materializes the list on a throwaway builder, so the result is
+// plainly GC-owned. Non-transport callers (JsonString) use this.
+func (a *annotation) getList() []*pb.PAnnotation {
+	return a.getListInto(&spanMessageBuilder{})
 }
