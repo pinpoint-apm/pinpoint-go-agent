@@ -1413,10 +1413,11 @@ func makePUriHistogram(h *urlStatHistogram) *pb.PUriHistogram {
 }
 
 type cmdGrpc struct {
-	cmdConn   *grpc.ClientConn
-	cmdClient pb.ProfilerCommandServiceClient
-	stream    *cmdStream
-	agent     *agent
+	cmdConn    *grpc.ClientConn
+	cmdClient  pb.ProfilerCommandServiceClient
+	stream     *cmdStream
+	agent      *agent
+	atcStreams atcStreams
 }
 
 type cmdStream struct {
@@ -1504,6 +1505,35 @@ func (s *cmdStream) sendCommandMessage() error {
 	return err
 }
 
+// sendFailMessage rejects a command on the command stream itself, which is the
+// only channel the protocol offers for a request the agent will not serve:
+// PCmdMessage.failMessage. Matches the C++ agent's write_fail_message(), which
+// sets the request id and a reason and leaves status at its default.
+func (s *cmdStream) sendFailMessage(reqId int32, msg string) error {
+	if s.stream == nil {
+		return status.Errorf(codes.Unavailable, "command stream is nil")
+	}
+
+	gCmd := &pb.PCmdMessage{
+		Message: &pb.PCmdMessage_FailMessage{
+			FailMessage: &pb.PCmdResponse{
+				ResponseId: reqId,
+				Message:    &wrappers.StringValue{Value: msg},
+			},
+		},
+	}
+
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("PCmdMessage: %s", gCmd.String())
+	}
+
+	err := sendStreamWithTimeout(func() error { return s.stream.Send(gCmd) }, s.cancel, sendStreamTimeOut, "cmd stream.Send()")
+	if err != nil {
+		s.cancel()
+	}
+	return err
+}
+
 func (s *cmdStream) recvCommandRequest() (*pb.PCmdRequest, error) {
 	var gCmdReq *pb.PCmdRequest
 
@@ -1527,18 +1557,46 @@ type activeThreadCountStream struct {
 	reqId    int32
 	actCount int32
 	cancel   context.CancelFunc
+
+	// stop is the only cross-goroutine signal to this stream, closed by
+	// requestStop. cancel stays owned by the goroutine running the stream, so
+	// a stop never races with the stream being opened.
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
-func (cmdGrpc *cmdGrpc) newActiveThreadCountStream(reqId int32) *activeThreadCountStream {
+func newActiveThreadCountStream(reqId int32) *activeThreadCountStream {
+	return &activeThreadCountStream{reqId: reqId, stop: make(chan struct{})}
+}
+
+// openActiveThreadCountStream opens the gRPC stream for an already registered
+// s and reports whether it succeeded.
+func (cmdGrpc *cmdGrpc) openActiveThreadCountStream(s *activeThreadCountStream) bool {
 	ctx, cancel := context.WithCancel(grpcMetadataContext(cmdGrpc.agent, -1))
 	stream, err := cmdGrpc.cmdClient.CommandStreamActiveThreadCount(ctx)
 	if err != nil {
 		cancel()
 		Log("grpc").Errorf("make active thread count stream - %v", err)
-		return &activeThreadCountStream{nil, -1, 0, nil}
+		return false
 	}
 
-	return &activeThreadCountStream{stream, reqId, 0, cancel}
+	s.stream, s.cancel = stream, cancel
+	return true
+}
+
+// requestStop asks the stream to finish. Safe from any goroutine, and safe to
+// call more than once - a stream can be superseded while already stopping.
+func (s *activeThreadCountStream) requestStop() {
+	s.stopOnce.Do(func() { close(s.stop) })
+}
+
+func (s *activeThreadCountStream) stopped() bool {
+	select {
+	case <-s.stop:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *activeThreadCountStream) close() {
