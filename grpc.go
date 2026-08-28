@@ -797,17 +797,16 @@ func (s *spanStream) close() {
 }
 
 func (s *spanStream) sendSpan(chunk *spanChunk) error {
-	var gspan *pb.PSpanMessage
-
 	if s.stream == nil {
 		return status.Errorf(codes.Unavailable, "span stream is nil")
 	}
 
-	if !chunk.final || chunk.span.isAsyncSpan() {
-		gspan = makePSpanChunk(chunk)
-	} else {
-		gspan = makePSpan(chunk)
-	}
+	builder := acquireSpanMessageBuilder()
+	// Send marshals the message before it returns (also when it errors or the
+	// timeout cancels the stream), so the graph is dead once it does.
+	defer releaseSpanMessageBuilder(builder)
+
+	gspan := builder.makePSpanMessage(chunk)
 
 	if IsLogLevelEnabled(logrus.DebugLevel) {
 		Log("grpc").Debugf("PSpanMessage Size: %d", proto.Size(gspan))
@@ -863,8 +862,10 @@ func (spanGrpc *spanGrpc) collectSpanBatch(first *spanChunk, queue *spanQueue) (
 // If no permit becomes available within the flush timeout, the whole batch is skipped rather than
 // blocking the worker forever behind slow in-flight requests; completed calls always release their permit.
 func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
-	spanMessageBatch := makePSpanMessageBatch(chunks)
+	builder := acquireSpanMessageBuilder()
+	spanMessageBatch := builder.makePSpanMessageBatch(chunks)
 	if len(spanMessageBatch.GetSpan()) == 0 {
+		releaseSpanMessageBuilder(builder)
 		return
 	}
 
@@ -882,6 +883,7 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 			len(spanGrpc.concurrentRequestPermit),
 			spanGrpc.maxConcurrentRequests,
 		)
+		releaseSpanMessageBuilder(builder)
 		return
 	}
 
@@ -889,6 +891,9 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 	go func() {
 		defer spanGrpc.inFlight.Done()
 		defer spanGrpc.releaseSpanBatchPermit()
+		// The unary call marshals the request while it runs, so the batch
+		// graph is dead once SendSpanBatch returns.
+		defer releaseSpanMessageBuilder(builder)
 
 		ctx, cancel := context.WithTimeout(grpcMetadataContext(spanGrpc.agent, -1), sendStreamTimeOut)
 		defer cancel()
@@ -965,162 +970,153 @@ func handleSpanBatchResponse(response *pb.PSpanResultBatch) {
 	}
 }
 
-// makePSpanMessageBatch preserves the existing span/chunk conversion while wrapping messages for SendSpanBatch.
-// Final synchronous spans become PSpan messages; non-final chunks and async spans keep the PSpanChunk path.
-func makePSpanMessageBatch(chunks []*spanChunk) *pb.PSpanMessageBatch {
-	spanMessages := make([]*pb.PSpanMessage, 0, len(chunks))
+func (b *spanMessageBuilder) makePSpanMessageBatch(chunks []*spanChunk) *pb.PSpanMessageBatch {
+	spanMessages := b.messageLists.take(len(chunks))[:0]
 	for _, chunk := range chunks {
 		if chunk == nil || chunk.span == nil {
 			continue
 		}
-
-		if !chunk.final || chunk.span.isAsyncSpan() {
-			spanMessages = append(spanMessages, makePSpanChunk(chunk))
-		} else {
-			spanMessages = append(spanMessages, makePSpan(chunk))
-		}
+		spanMessages = append(spanMessages, b.makePSpanMessage(chunk))
 	}
 
 	return &pb.PSpanMessageBatch{Span: spanMessages}
 }
 
-func makePSpan(chunk *spanChunk) *pb.PSpanMessage {
+// makePSpanMessage converts one dequeued chunk: final synchronous spans become
+// PSpan messages; non-final chunks and async spans keep the PSpanChunk shape.
+func (b *spanMessageBuilder) makePSpanMessage(chunk *spanChunk) *pb.PSpanMessage {
+	if !chunk.final || chunk.span.isAsyncSpan() {
+		return b.makePSpanChunk(chunk)
+	}
+	return b.makePSpan(chunk)
+}
+
+func (b *spanMessageBuilder) makePSpan(chunk *spanChunk) *pb.PSpanMessage {
 	span := chunk.span
 	if span.apiId == 0 && span.operationName != "" {
 		span.annotations.AppendString(AnnotationApi, span.operationName)
 	}
 
-	spanEventList := make([]*pb.PSpanEvent, 0, len(chunk.eventChunk))
-	for _, event := range chunk.eventChunk {
-		aSpanEvent := makePSpanEvent(event)
-		spanEventList = append(spanEventList, aSpanEvent)
-	}
+	pspan := b.spans.get()
+	pspan.Version = 1
+	txId := b.txIds.get()
+	txId.AgentId = span.txId.AgentId
+	txId.AgentStartTime = span.txId.StartTime
+	txId.Sequence = span.txId.Sequence
+	pspan.TransactionId = txId
+	pspan.SpanId = span.spanId
+	pspan.ParentSpanId = span.parentSpanId
+	pspan.StartTime = span.startTime.UnixMilli()
+	pspan.Elapsed = int32(span.elapsed)
+	pspan.ServiceType = span.serviceType
 
-	gspan := &pb.PSpanMessage{
-		Field: &pb.PSpanMessage_Span{
-			Span: &pb.PSpan{
-				Version: 1,
-				TransactionId: &pb.PTransactionId{
-					AgentId:        span.txId.AgentId,
-					AgentStartTime: span.txId.StartTime,
-					Sequence:       span.txId.Sequence,
-				},
-				SpanId:       span.spanId,
-				ParentSpanId: span.parentSpanId,
-				StartTime:    span.startTime.UnixMilli(),
-				Elapsed:      int32(span.elapsed),
-				ServiceType:  span.serviceType,
-				AcceptEvent: &pb.PAcceptEvent{
-					Rpc:        span.rpcName,
-					EndPoint:   span.endPoint,
-					RemoteAddr: span.remoteAddr,
-					ParentInfo: &pb.PParentInfo{
-						ParentApplicationName: span.parentAppName,
-						ParentApplicationType: int32(span.parentAppType),
-						AcceptorHost:          span.acceptorHost,
-						ParentServiceName:     span.parentServiceName,
-					},
-				},
-				Annotation:             span.annotations.getList(),
-				ApiId:                  span.apiId,
-				Flag:                   int32(span.flags),
-				SpanEvent:              spanEventList,
-				Err:                    int32(span.err),
-				ExceptionInfo:          nil,
-				ApplicationServiceType: span.agent.appType,
-				LoggingTransactionInfo: span.loggingInfo,
-			},
-		},
-	}
+	acceptEvent := b.acceptEvents.get()
+	acceptEvent.Rpc = span.rpcName
+	acceptEvent.EndPoint = span.endPoint
+	acceptEvent.RemoteAddr = span.remoteAddr
+	parentInfo := b.parentInfos.get()
+	parentInfo.ParentApplicationName = span.parentAppName
+	parentInfo.ParentApplicationType = int32(span.parentAppType)
+	parentInfo.AcceptorHost = span.acceptorHost
+	parentInfo.ParentServiceName = span.parentServiceName
+	acceptEvent.ParentInfo = parentInfo
+	pspan.AcceptEvent = acceptEvent
+
+	pspan.Annotation = span.annotations.getListInto(b)
+	pspan.ApiId = span.apiId
+	pspan.Flag = int32(span.flags)
+	pspan.SpanEvent = b.makePSpanEventList(chunk)
+	pspan.Err = int32(span.err)
+	pspan.ApplicationServiceType = span.agent.appType
+	pspan.LoggingTransactionInfo = span.loggingInfo
 
 	if span.errorString != "" {
-		gspan.GetSpan().ExceptionInfo = &pb.PIntStringValue{
-			IntValue:    span.errorFuncId,
-			StringValue: &wrappers.StringValue{Value: span.errorString},
-		}
+		exceptionInfo := b.intStringValues.get()
+		exceptionInfo.IntValue = span.errorFuncId
+		exceptionInfo.StringValue = b.stringValue(span.errorString)
+		pspan.ExceptionInfo = exceptionInfo
 	}
 
+	oneof := b.spanOneofs.get()
+	oneof.Span = pspan
+	gspan := b.messages.get()
+	gspan.Field = oneof
 	return gspan
 }
 
-func makePSpanChunk(chunk *spanChunk) *pb.PSpanMessage {
+func (b *spanMessageBuilder) makePSpanChunk(chunk *spanChunk) *pb.PSpanMessage {
 	span := chunk.span
 
-	spanEventList := make([]*pb.PSpanEvent, 0, len(chunk.eventChunk))
-	for _, event := range chunk.eventChunk {
-		aSpanEvent := makePSpanEvent(event)
-		spanEventList = append(spanEventList, aSpanEvent)
-	}
-
-	gspan := &pb.PSpanMessage{
-		Field: &pb.PSpanMessage_SpanChunk{
-			SpanChunk: &pb.PSpanChunk{
-				Version: 1,
-				TransactionId: &pb.PTransactionId{
-					AgentId:        span.txId.AgentId,
-					AgentStartTime: span.txId.StartTime,
-					Sequence:       span.txId.Sequence,
-				},
-				SpanId:                 span.spanId,
-				KeyTime:                chunk.keyTime,
-				EndPoint:               span.endPoint,
-				SpanEvent:              spanEventList,
-				ApplicationServiceType: span.agent.appType,
-				LocalAsyncId:           nil,
-			},
-		},
-	}
+	pchunk := b.chunks.get()
+	pchunk.Version = 1
+	txId := b.txIds.get()
+	txId.AgentId = span.txId.AgentId
+	txId.AgentStartTime = span.txId.StartTime
+	txId.Sequence = span.txId.Sequence
+	pchunk.TransactionId = txId
+	pchunk.SpanId = span.spanId
+	pchunk.KeyTime = chunk.keyTime
+	pchunk.EndPoint = span.endPoint
+	pchunk.SpanEvent = b.makePSpanEventList(chunk)
+	pchunk.ApplicationServiceType = span.agent.appType
 
 	if span.isAsyncSpan() {
-		gspan.GetSpanChunk().LocalAsyncId = &pb.PLocalAsyncId{
-			AsyncId:  span.asyncId,
-			Sequence: span.asyncSequence,
-		}
+		localAsyncId := b.localAsyncIds.get()
+		localAsyncId.AsyncId = span.asyncId
+		localAsyncId.Sequence = span.asyncSequence
+		pchunk.LocalAsyncId = localAsyncId
 	}
 
+	oneof := b.chunkOneofs.get()
+	oneof.SpanChunk = pchunk
+	gspan := b.messages.get()
+	gspan.Field = oneof
 	return gspan
 }
 
-func makePSpanEvent(event *spanEvent) *pb.PSpanEvent {
+func (b *spanMessageBuilder) makePSpanEventList(chunk *spanChunk) []*pb.PSpanEvent {
+	spanEventList := b.eventLists.take(len(chunk.eventChunk))
+	for i, event := range chunk.eventChunk {
+		spanEventList[i] = b.makePSpanEvent(event)
+	}
+	return spanEventList
+}
+
+func (b *spanMessageBuilder) makePSpanEvent(event *spanEvent) *pb.PSpanEvent {
 	if event.apiId == 0 && event.operationName != "" {
 		event.annotations.AppendString(AnnotationApi, event.operationName)
 	}
 
-	aSpanEvent := pb.PSpanEvent{
-		Sequence:      event.sequence,
-		Depth:         event.depth,
-		StartElapsed:  int32(event.startElapsed),
-		EndElapsed:    int32(event.endElapsed),
-		ServiceType:   event.serviceType,
-		Annotation:    event.annotations.getList(),
-		ApiId:         event.apiId,
-		ExceptionInfo: nil,
-		NextEvent:     nil,
-		AsyncEvent:    event.asyncId,
-	}
+	aSpanEvent := b.events.get()
+	aSpanEvent.Sequence = event.sequence
+	aSpanEvent.Depth = event.depth
+	aSpanEvent.StartElapsed = int32(event.startElapsed)
+	aSpanEvent.EndElapsed = int32(event.endElapsed)
+	aSpanEvent.ServiceType = event.serviceType
+	aSpanEvent.Annotation = event.annotations.getListInto(b)
+	aSpanEvent.ApiId = event.apiId
+	aSpanEvent.AsyncEvent = event.asyncId
 
 	if event.errorString != "" {
-		aSpanEvent.ExceptionInfo = &pb.PIntStringValue{
-			IntValue:    event.errorFuncId,
-			StringValue: &wrappers.StringValue{Value: event.errorString},
-		}
+		exceptionInfo := b.intStringValues.get()
+		exceptionInfo.IntValue = event.errorFuncId
+		exceptionInfo.StringValue = b.stringValue(event.errorString)
+		aSpanEvent.ExceptionInfo = exceptionInfo
 	}
 
 	if event.destinationId != "" {
-		next := &pb.PNextEvent{
-			Field: &pb.PNextEvent_MessageEvent{
-				MessageEvent: &pb.PMessageEvent{
-					NextSpanId:    event.nextSpanId,
-					EndPoint:      event.endPoint,
-					DestinationId: event.destinationId,
-				},
-			},
-		}
-
+		messageEvent := b.messageEvents.get()
+		messageEvent.NextSpanId = event.nextSpanId
+		messageEvent.EndPoint = event.endPoint
+		messageEvent.DestinationId = event.destinationId
+		oneof := b.nextEventOneofs.get()
+		oneof.MessageEvent = messageEvent
+		next := b.nextEvents.get()
+		next.Field = oneof
 		aSpanEvent.NextEvent = next
 	}
 
-	return &aSpanEvent
+	return aSpanEvent
 }
 
 type statClient interface {

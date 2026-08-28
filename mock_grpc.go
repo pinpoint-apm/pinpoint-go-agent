@@ -12,6 +12,7 @@ import (
 	lru "github.com/hashicorp/golang-lru"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/pinpoint-apm/pinpoint-go-agent/protobuf/mock"
+	"google.golang.org/protobuf/proto"
 )
 
 func newTestAgent(config *Config) *agent {
@@ -130,8 +131,11 @@ func (spanGrpcClient *mockSpanGrpcClient) SendSpan(ctx context.Context) (pb.Span
 }
 
 func (spanGrpcClient *mockSpanGrpcClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch) (*pb.PSpanResultBatch, error) {
+	// Clone like the real transport, which marshals the request during the
+	// call: the sender recycles the message once SendSpanBatch returns, so a
+	// retained pointer would later observe recycled memory.
 	spanGrpcClient.mu.Lock()
-	spanGrpcClient.requests = append(spanGrpcClient.requests, in)
+	spanGrpcClient.requests = append(spanGrpcClient.requests, proto.Clone(in).(*pb.PSpanMessageBatch))
 	spanGrpcClient.mu.Unlock()
 
 	if spanGrpcClient.response != nil || spanGrpcClient.err != nil {
