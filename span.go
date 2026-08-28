@@ -494,7 +494,11 @@ func (span *span) collectUrlStat(stat *UrlStatEntry) {
 
 func (span *span) AddMetric(metric string, value interface{}) {
 	if metric == MetricURLStat {
-		span.collectUrlStat(value.(*UrlStatEntry))
+		if entry, ok := value.(*UrlStatEntry); ok {
+			span.collectUrlStat(entry)
+		} else {
+			Log("span").Warnf("AddMetric: value for %s must be *UrlStatEntry", MetricURLStat)
+		}
 	}
 }
 

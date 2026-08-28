@@ -479,3 +479,12 @@ func Test_span_WrapGoroutine(t *testing.T) {
 		})
 	}
 }
+
+func TestSpan_AddMetric_IgnoresWrongValueType(t *testing.T) {
+	span := defaultSpan(newTestAgent(defaultConfig()))
+
+	assert.NotPanics(t, func() {
+		span.AddMetric(MetricURLStat, UrlStatEntry{Url: "/", Status: 200})
+		NoopTracer().AddMetric(MetricURLStat, UrlStatEntry{Url: "/", Status: 200})
+	})
+}
