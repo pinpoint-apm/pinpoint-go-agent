@@ -1,0 +1,108 @@
+# Pinpoint Go Agent - full-feature end-to-end test configuration.
+# Every process in the run reads this file; per-process identity and the
+# collector host come from PINPOINT_GO_* environment variables set by
+# run_e2e.sh.
+
+Enable: true
+
+IsContainerEnv: true
+
+# --- Collector (gRPC) ---
+# Collector.Host is intentionally absent: run_e2e.sh must supply
+# PINPOINT_GO_COLLECTOR_HOST, which makes the collector an explicit runtime
+# setting rather than a file default.
+Collector:
+  AgentPort: 9991
+  SpanPort: 9993
+  StatPort: 9992
+
+# --- Logging ---
+Log:
+  Level: "info" # debug / info / warn / error
+  Output: "stderr" # the runner captures one file per process
+  MaxSize: 50 # MB
+
+# --- Sampling ---
+# CounterRate 1 samples every request.
+Sampling:
+  Type: "COUNTER"
+  CounterRate: 1
+  PercentRate: 100
+  NewThroughput: 0 # unlimited
+  ContinueThroughput: 0 # unlimited
+
+# --- Span ---
+Span:
+  QueueSize: 4096 # larger queue for the load phase
+  MaxCallStackDepth: 16 # /deep?depth=32 verifies depth overflow safely
+  MaxCallStackSequence: 128 # /wide?width=256 verifies sequence overflow safely
+  EventChunkSize: 8 # forces multiple PSpanChunk sends in the smoke phase
+  Batch:
+    Enable: true
+  BatchSize: 8
+  BatchFlushInterval: 500
+  BatchCollectDeadline: 1000
+  BatchMaxConcurrentRequests: 4
+
+# --- Statistics ---
+Stat:
+  CollectInterval: 5000 # ms
+  BatchCount: 6
+
+# --- HTTP ---
+Http:
+  UrlStat:
+    Enable: true
+    LimitSize: 1024
+    WithMethod: true
+  Server:
+    StatusCodeErrors: ["4xx", "5xx"]
+    # One entry per pattern kind the Ant matcher compiles to, each exercised by
+    # a /filter/* probe in smoke_test.sh: exact, '**' prefix, single-'*' segment
+    # prefix, a wildcard mid-pattern, and a single-character wildcard. Nothing
+    # else in the suite lives under /filter/, so these cannot silently drop
+    # spans another assertion depends on.
+    ExcludeUrl:
+      - "/filter/exact" # exact
+      - "/filter/prefix/**" # prefix
+      - "/filter/seg/*" # segment prefix
+      - "/filter/*/ant/**" # ant, wildcard mid-pattern
+      - "/filter/q?ery" # ant, single-character wildcard
+    # OPTIONS is used by nothing else here, so excluding it cannot affect
+    # another assertion.
+    ExcludeMethod: ["OPTIONS"]
+    RecordRequestHeader:
+      - "User-Agent"
+      - "Content-Type"
+      - "Accept"
+      - "Host"
+      - "X-Request-ID"
+      - "X-Forwarded-For"
+    RecordRequestCookie:
+      - "session_id"
+      - "token"
+    RecordResponseHeader:
+      - "Content-Type"
+      - "X-Response-Time"
+      - "X-Request-ID"
+  Client:
+    RecordRequestHeader:
+      - "User-Agent"
+      - "Content-Type"
+      - "Host"
+      - "X-Request-ID"
+    RecordResponseHeader:
+      - "Content-Type"
+      - "X-It-Trace-Id"
+      - "X-It-Span-Id"
+
+# --- SQL ---
+SQL:
+  TraceQueryStat: true
+  TraceBindValue: true
+  MaxBindValueSize: 2048
+
+# --- Errors ---
+Error:
+  TraceCallStack: true
+  CallStackDepth: 32
