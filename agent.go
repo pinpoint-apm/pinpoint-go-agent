@@ -331,15 +331,25 @@ func (agent *agent) Shutdown() {
 
 	// wait for the grpc connection to be completed
 	agent.connectWg.Wait()
+
+	// Release the global on every path, before the enable guard below. An agent
+	// whose registration never finished was never enabled, and leaving
+	// globalAgent pointing at it would keep GetAgent returning a dead agent and
+	// make every later NewAgent fail with "agent is already created", so a
+	// process could never retry after a failed startup. Guarded by identity so
+	// a second Shutdown of an old agent cannot unseat a newer one.
+	if globalAgent == agent {
+		globalAgent = NoopAgent()
+	}
+
 	// CompareAndSwap, not Load-then-Store: two concurrent Shutdown calls could
-	// both pass a plain check and both reach the close() calls below, panicking
-	// on the second close of an already-closed channel. Only the swap winner
-	// proceeds.
+	// both pass a plain check and both reach the teardown below, panicking on
+	// the second close of spanQueue's already-closed done channel. Only the
+	// swap winner proceeds. A never-enabled agent stops here: it has no
+	// workers, queues or streams to tear down.
 	if !agent.enable.CompareAndSwap(true, false) {
 		return
 	}
-
-	globalAgent = NoopAgent()
 
 	// spanQueue.close() signals; it does not close the channel producers use.
 	// The three chans below get the same treatment - deliberately never closed.

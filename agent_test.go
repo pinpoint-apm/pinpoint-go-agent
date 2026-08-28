@@ -439,3 +439,29 @@ func Test_agent_ShutdownDoesNotCloseProducerChannels(t *testing.T) {
 	assert.NotPanics(t, func() { agent.statChan <- &pb.PStatMessage{} }, "statChan")
 	assert.NotPanics(t, func() { agent.urlStatChan <- &urlStat{} }, "urlStatChan")
 }
+
+// An agent that never finished registration must still release the global, so
+// GetAgent stops handing out the dead agent and NewAgent can be retried.
+func Test_agent_ShutdownReleasesGlobalWhenNeverRegistered(t *testing.T) {
+	opts := []ConfigOption{
+		WithAppName("test"),
+		WithAgentId("testagent"),
+	}
+	c, _ := NewConfig(opts...)
+	c.offGrpc = true
+	a, err := NewAgent(c)
+	assert.NoError(t, err, "new agent")
+	assert.False(t, a.(*agent).enable.Load(), "never registered")
+
+	a.Shutdown()
+	assert.Equal(t, NoopAgent(), GetAgent(), "global agent released")
+
+	// A second Shutdown must not panic, nor unseat the agent created after it.
+	c2, _ := NewConfig(opts...)
+	c2.offGrpc = true
+	a2, err := NewAgent(c2)
+	assert.NoError(t, err, "agent creation can be retried")
+	a.Shutdown()
+	assert.Equal(t, a2, GetAgent(), "stale shutdown leaves the new agent alone")
+	a2.Shutdown()
+}
