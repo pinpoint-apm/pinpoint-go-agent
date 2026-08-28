@@ -539,7 +539,7 @@ func (agent *agent) sendPingWorker() {
 			return
 		case t := <-ticker.C:
 			if IsDebugLogLevelEnabled() {
-				Log("agent").Debugf("ping at", t)
+				Log("agent").Debugf("ping at %v", t)
 			}
 		}
 	}
