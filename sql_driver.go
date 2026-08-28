@@ -118,6 +118,43 @@ func newSqlConn(conn driver.Conn, dbInfo DBInfo) *sqlConn {
 	}
 }
 
+// The wrapper embeds the driver.Conn interface, which hides the underlying
+// connection's optional interfaces from database/sql's type assertions:
+// without the passthroughs below, a driver's custom argument types stop
+// converting (NamedValueChecker), dead connections get reused after network
+// blips (Validator/SessionResetter) and Ping degrades to a no-op. Each method
+// delegates when the underlying connection implements the interface and
+// otherwise answers exactly as database/sql would have for a driver without
+// it.
+
+func (c *sqlConn) Ping(ctx context.Context) error {
+	if p, ok := c.Conn.(driver.Pinger); ok {
+		return p.Ping(ctx)
+	}
+	return nil
+}
+
+func (c *sqlConn) ResetSession(ctx context.Context) error {
+	if r, ok := c.Conn.(driver.SessionResetter); ok {
+		return r.ResetSession(ctx)
+	}
+	return nil
+}
+
+func (c *sqlConn) IsValid() bool {
+	if v, ok := c.Conn.(driver.Validator); ok {
+		return v.IsValid()
+	}
+	return true
+}
+
+func (c *sqlConn) CheckNamedValue(nv *driver.NamedValue) error {
+	if nvc, ok := c.Conn.(driver.NamedValueChecker); ok {
+		return nvc.CheckNamedValue(nv)
+	}
+	return driver.ErrSkip // use the default argument handling
+}
+
 func prepare(stmt driver.Stmt, err error, conn *sqlConn, sql string) (driver.Stmt, error) {
 	if nil != err {
 		return nil, err
@@ -367,6 +404,27 @@ type sqlStmt struct {
 	driver.Stmt
 	conn *sqlConn
 	sql  string
+}
+
+// CheckNamedValue mirrors database/sql's own checker selection for the wrapped
+// pair: it consults only the outermost statement's checker, so this must fall
+// back from the underlying statement to the underlying connection before
+// yielding to the default handling.
+func (s *sqlStmt) CheckNamedValue(nv *driver.NamedValue) error {
+	if nvc, ok := s.Stmt.(driver.NamedValueChecker); ok {
+		return nvc.CheckNamedValue(nv)
+	}
+	if nvc, ok := s.conn.Conn.(driver.NamedValueChecker); ok {
+		return nvc.CheckNamedValue(nv)
+	}
+	return driver.ErrSkip
+}
+
+func (s *sqlStmt) ColumnConverter(idx int) driver.ValueConverter {
+	if cc, ok := s.Stmt.(driver.ColumnConverter); ok {
+		return cc.ColumnConverter(idx)
+	}
+	return driver.DefaultParameterConverter
 }
 
 func (s *sqlStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {

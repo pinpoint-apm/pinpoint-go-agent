@@ -25,6 +25,23 @@ type fakeDriverTx struct{ rolledBack bool }
 func (t *fakeDriverTx) Commit() error   { return nil }
 func (t *fakeDriverTx) Rollback() error { t.rolledBack = true; return nil }
 
+type checkerDriverConn struct {
+	fakeDriverConn
+	checked bool
+}
+
+func (c *checkerDriverConn) CheckNamedValue(nv *driver.NamedValue) error {
+	c.checked = true
+	return nil
+}
+
+type fakeDriverStmt struct{}
+
+func (s *fakeDriverStmt) Close() error                                    { return nil }
+func (s *fakeDriverStmt) NumInput() int                                   { return -1 }
+func (s *fakeDriverStmt) Exec(args []driver.Value) (driver.Result, error) { return nil, nil }
+func (s *fakeDriverStmt) Query(args []driver.Value) (driver.Rows, error)  { return nil, nil }
+
 func Test_writeBindValue_TruncatesOversizedValue(t *testing.T) {
 	var b bytes.Buffer
 	more := writeBindValue(&b, 0, strings.Repeat("x", 5000), 0, 1024)
@@ -56,4 +73,29 @@ func Test_sqlConn_BeginTxFallbackHonorsOptions(t *testing.T) {
 	cancel()
 	_, err = conn.BeginTx(canceled, driver.TxOptions{})
 	assert.ErrorIs(t, err, context.Canceled)
+}
+
+// The wrapper must keep the underlying connection's optional interfaces
+// working, and answer as database/sql would when they are absent.
+func Test_sqlConn_OptionalInterfacePassthrough(t *testing.T) {
+	plain := newSqlConn(&fakeDriverConn{}, DBInfo{})
+	assert.NoError(t, plain.Ping(context.Background()), "no Pinger: succeed like database/sql")
+	assert.NoError(t, plain.ResetSession(context.Background()), "no SessionResetter: succeed")
+	assert.True(t, plain.IsValid(), "no Validator: assume valid")
+	assert.ErrorIs(t, plain.CheckNamedValue(&driver.NamedValue{}), driver.ErrSkip, "no checker: default handling")
+
+	checker := &checkerDriverConn{}
+	conn := newSqlConn(checker, DBInfo{})
+	assert.NoError(t, conn.CheckNamedValue(&driver.NamedValue{}))
+	assert.True(t, checker.checked, "conn checker delegated")
+
+	// database/sql consults only the outermost statement's checker, so the
+	// statement must fall back to the connection's checker itself.
+	checker.checked = false
+	stmt := &sqlStmt{Stmt: &fakeDriverStmt{}, conn: conn}
+	assert.NoError(t, stmt.CheckNamedValue(&driver.NamedValue{}))
+	assert.True(t, checker.checked, "stmt falls back to the conn checker")
+
+	assert.Equal(t, driver.DefaultParameterConverter,
+		stmt.ColumnConverter(0), "no ColumnConverter: default converter")
 }
