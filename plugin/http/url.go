@@ -2,6 +2,7 @@ package pphttp
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
@@ -144,9 +145,10 @@ func (h *httpExcludeUrl) antMatch(urlPath string) bool {
 				cur[j] = urlPath[j] == t.value && next[j+1]
 			}
 		case tokenQuestion:
-			cur[u] = false
-			for j := u - 1; j >= 0; j-- {
-				cur[j] = urlPath[j] != '/' && next[j+1]
+			clear(cur)
+			for j, r := range urlPath {
+				_, size := utf8.DecodeRuneInString(urlPath[j:])
+				cur[j] = r != '/' && next[j+size]
 			}
 		case tokenStar:
 			cur[u] = next[u]
