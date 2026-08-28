@@ -25,10 +25,11 @@ type asyncProducer struct {
 	input        chan *sarama.ProducerMessage
 	successes    chan *sarama.ProducerMessage
 	errors       chan *sarama.ProducerError
+	done         chan struct{}
+	closeOnce    sync.Once
 	ctx          context.Context
 	spans        map[string]pinpoint.Tracer
 	spansLock    sync.Mutex
-	isClosed     bool
 }
 
 // InputContext sends a given message with tracer context to the input channel of sarama.AsyncProducer.
@@ -52,13 +53,32 @@ func (p *asyncProducer) Errors() <-chan *sarama.ProducerError {
 }
 
 func (p *asyncProducer) AsyncClose() {
-	p.isClosed = true
+	p.closeOnce.Do(func() { close(p.done) })
 	p.AsyncProducer.AsyncClose()
 }
 
+// Close mirrors sarama's own Close - AsyncClose, discard the remaining
+// successes, collect the remaining errors - but drains through the wrapper's
+// channels. Calling the underlying Close instead would have sarama's internal
+// drain and the forwarder below compete for the same delivery events, so some
+// spans would never be ended and the returned ProducerErrors would be
+// incomplete.
 func (p *asyncProducer) Close() error {
-	p.isClosed = true
-	return p.AsyncProducer.Close()
+	p.AsyncClose()
+
+	go func() {
+		for range p.successes {
+		}
+	}()
+
+	var errs sarama.ProducerErrors
+	for e := range p.errors {
+		errs = append(errs, e)
+	}
+	if len(errs) > 0 {
+		return errs
+	}
+	return nil
 }
 
 // WithContext is deprecated and not thread-safe. Use InputContext.
@@ -78,64 +98,72 @@ func NewAsyncProducer(addrs []string, config *sarama.Config) (AsyncProducer, err
 		return nil, err
 	}
 
+	return wrapAsyncProducer(producer, addrs, config), nil
+}
+
+func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sarama.Config) *asyncProducer {
 	wrapped := &asyncProducer{
 		AsyncProducer: producer,
 		inputContext:  make(chan *producerMessageContext),
 		input:         make(chan *sarama.ProducerMessage),
 		successes:     make(chan *sarama.ProducerMessage),
 		errors:        make(chan *sarama.ProducerError),
+		done:          make(chan struct{}),
 		ctx:           context.Background(),
 		spans:         make(map[string]pinpoint.Tracer),
-		spansLock:     sync.Mutex{},
-		isClosed:      false,
 	}
 
 	go func() {
+		// The send to producer.Input() races AsyncClose closing that channel.
+		// Raw sarama panics the sender in that misuse case; a panic here would
+		// kill the host application, so drop the message instead.
 		defer func() {
-			if recover() != nil {
-				wrapped.isClosed = true
-			}
+			recover()
 		}()
 
 		for {
+			// The tracer is saved before the send: a broker ack can reach the
+			// forwarder below before a save placed after the send, and the
+			// span would then never be ended.
 			select {
-			case msgCtx, ok := <-wrapped.inputContext:
-				if !ok || wrapped.isClosed {
-					return
-				}
+			case <-wrapped.done:
+				return
+			case msgCtx := <-wrapped.inputContext:
 				span := newAsyncProducerTracer(msgCtx.ctx, addrs, msgCtx.msg, config)
+				saveAsyncProducerTracer(config, wrapped, span)
 				producer.Input() <- msgCtx.msg
-				saveAsyncProducerTracer(config, wrapped, span)
-
-			case msg, ok := <-wrapped.input:
-				if !ok || wrapped.isClosed {
-					return
-				}
+			case msg := <-wrapped.input:
 				span := newAsyncProducerTracer(wrapped.ctx, addrs, msg, config)
-				producer.Input() <- msg
 				saveAsyncProducerTracer(config, wrapped, span)
+				producer.Input() <- msg
 			}
 		}
 	}()
 
 	go func() {
-		defer close(wrapped.inputContext)
-		defer close(wrapped.input)
+		// Closed only here, and only after sarama has closed its own pair:
+		// AsyncClose guarantees delivery of every in-flight message on
+		// Successes/Errors before closing them, and the user is entitled to
+		// drain all of it through the wrapper. wrapped.input/inputContext are
+		// never closed - their senders are user goroutines, and closing a
+		// channel under a sender panics the send.
 		defer close(wrapped.successes)
 		defer close(wrapped.errors)
 
-		for {
+		successes, errs := producer.Successes(), producer.Errors()
+		for successes != nil || errs != nil {
 			select {
-			case msg, ok := <-producer.Successes():
-				if !ok || wrapped.isClosed {
-					return
+			case msg, ok := <-successes:
+				if !ok {
+					successes = nil
+					continue
 				}
 				endAsyncProducerTracer(wrapped, msg, nil)
 				wrapped.successes <- msg
-
-			case e, ok := <-producer.Errors():
-				if !ok || wrapped.isClosed {
-					return
+			case e, ok := <-errs:
+				if !ok {
+					errs = nil
+					continue
 				}
 				endAsyncProducerTracer(wrapped, e.Msg, e.Err)
 				wrapped.errors <- e
@@ -143,7 +171,7 @@ func NewAsyncProducer(addrs []string, config *sarama.Config) (AsyncProducer, err
 		}
 	}()
 
-	return wrapped, nil
+	return wrapped
 }
 
 const HeaderAsyncSpanId = "Pinpoint-AsyncSpanID"
@@ -162,7 +190,6 @@ func newAsyncProducerTracer(ctx context.Context, addrs []string, msg *sarama.Pro
 
 	if config.Producer.Return.Successes && tracer.IsSampled() {
 		writer.Set(HeaderAsyncSpanId, tracer.AsyncSpanId())
-		//fmt.Printf("Set HeaderAsyncSpanId :%s, topic : %s\n", tracer.AsyncSpanId(), msg.Topic)
 	}
 
 	return tracer
@@ -187,7 +214,6 @@ func endAsyncProducerTracer(wrapped *asyncProducer, msg *sarama.ProducerMessage,
 		defer wrapped.spansLock.Unlock()
 
 		if span, ok := wrapped.spans[id]; ok {
-			//fmt.Printf("Get HeaderAsyncSpanId :%s, topic : %s\n", id, msg.Topic)
 			if err != nil {
 				span.SpanEvent().SetError(err)
 			}
