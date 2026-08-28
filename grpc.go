@@ -285,7 +285,7 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 		Log("grpc").Debugf("agent info: %s", agentInfo.String())
 	}
 
-	ctx := grpcMetadataContext(agentGrpc.agent, -1)
+	ctx := metadata.NewOutgoingContext(agentGrpc.agent.stopSignal(), metadata.New(agentHeaderMap(agentGrpc.agent)))
 	return ctx, agentInfo
 }
 
