@@ -387,6 +387,29 @@ func (agent *agent) Shutdown() {
 	// wait for the grpc connection to be completed
 	agent.connectWg.Wait()
 
+	// Close whatever connections connectGrpcServer managed to create, on every
+	// path: grpc dials lazily, so an agent whose registration never finished
+	// (collector down at boot) still holds a live agent connection, and the
+	// never-enabled early return below would leak it once per failed
+	// NewAgent/Shutdown retry cycle. Deferred so the enabled path keeps its
+	// order - workers drain first, connections close last. The closes are
+	// nil-checked and idempotent, so a second Shutdown is harmless. Reading
+	// the fields is safe: connectGrpcServer wrote them before connectWg.Done.
+	defer func() {
+		if agent.agentGrpc != nil {
+			agent.agentGrpc.close()
+		}
+		if agent.spanGrpc != nil {
+			agent.spanGrpc.close()
+		}
+		if agent.statGrpc != nil {
+			agent.statGrpc.close()
+		}
+		if agent.cmdGrpc != nil {
+			agent.cmdGrpc.close()
+		}
+	}()
+
 	// Release the global on every path, before the enable guard below. An agent
 	// whose registration never finished was never enabled, and leaving
 	// globalAgent pointing at it would keep GetAgent returning a dead agent and
@@ -428,16 +451,6 @@ func (agent *agent) Shutdown() {
 	// Abandoned workers are unblocked by the connection close below.
 	if !waitTimeout(&agent.workerWg, shutdownTimeout) {
 		Log("agent").Warnf("shutdown timeout(%v) exceeded, abandon in-flight workers", shutdownTimeout)
-	}
-
-	if agent.agentGrpc != nil {
-		agent.agentGrpc.close()
-	}
-	if agent.spanGrpc != nil {
-		agent.spanGrpc.close()
-	}
-	if agent.statGrpc != nil {
-		agent.statGrpc.close()
 	}
 }
 
