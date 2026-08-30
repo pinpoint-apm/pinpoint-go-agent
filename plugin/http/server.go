@@ -24,7 +24,6 @@ package pphttp
 
 import (
 	"bufio"
-	"bytes"
 	"math"
 	"net"
 	"net/http"
@@ -332,12 +331,18 @@ func (mux *serveMux) HandleFunc(pattern string, handler func(http.ResponseWriter
 	mux.ServeMux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) })
 }
 
-// HandlerFuncName returns the name of handler function.
+// HandlerFuncName returns the handler's function or concrete type name.
 func HandlerFuncName(f interface{}) string {
-	var buf bytes.Buffer
-	buf.WriteString(runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name())
-	buf.WriteString("()")
-	return buf.String()
+	v := reflect.ValueOf(f)
+	if v.Kind() == reflect.Func {
+		if fn := runtime.FuncForPC(v.Pointer()); fn != nil {
+			return fn.Name() + "()"
+		}
+	}
+	if !v.IsValid() { // a nil handler: reflect.Value.Type would panic
+		return "<nil>()"
+	}
+	return v.Type().String() + "()"
 }
 
 // CollectUrlStat collects HTTP URL statistics.

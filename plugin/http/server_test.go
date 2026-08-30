@@ -152,3 +152,45 @@ func Test_responseWriter_PreservesOptionalInterfaces(t *testing.T) {
 		t.Errorf("Hijack() = %v (delegated: %v), want delegation to the underlying writer", err, h.hijacked)
 	}
 }
+
+type handlerNameTestHandler struct{}
+
+func (handlerNameTestHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handlerNameTestFunc(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func TestWrapHandler_ConcreteHandler(t *testing.T) {
+	tests := []struct {
+		name     string
+		handler  http.Handler
+		wantName string
+	}{
+		{name: "function", handler: http.HandlerFunc(handlerNameTestFunc), wantName: "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http.handlerNameTestFunc()"},
+		{name: "value", handler: handlerNameTestHandler{}, wantName: "pphttp.handlerNameTestHandler()"},
+		{name: "pointer", handler: &handlerNameTestHandler{}, wantName: "*pphttp.handlerNameTestHandler()"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := HandlerFuncName(tt.handler); got != tt.wantName {
+				t.Errorf("HandlerFuncName() = %q, want %q", got, tt.wantName)
+			}
+
+			rec := httptest.NewRecorder()
+			WrapHandler(tt.handler).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+			if rec.Code != http.StatusNoContent {
+				t.Errorf("status = %d, want %d", rec.Code, http.StatusNoContent)
+			}
+		})
+	}
+}
+
+func TestHandlerFuncName_Nil(t *testing.T) {
+	if got := HandlerFuncName(nil); got != "<nil>()" {
+		t.Errorf("HandlerFuncName(nil) = %q, want %q", got, "<nil>()")
+	}
+}
