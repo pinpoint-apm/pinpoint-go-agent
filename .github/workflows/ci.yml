@@ -10,13 +10,20 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    # go.mod's floor and the newest toolchain the agent is verified against.
+    # fail-fast is off so a break on one version still reports the other,
+    # which is what tells a version-specific regression from a real one.
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: [ 1.23.x, 1.26.x ]
     steps:
     - uses: actions/checkout@v4
 
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: 1.23.x
+        go-version: ${{ matrix.go-version }}
         # The nested test module has its own dependencies, so the module cache
         # key has to follow both go.sum files.
         cache-dependency-path: |
@@ -44,13 +51,17 @@ jobs:
   plugins:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: [ 1.23.x, 1.26.x ]
     steps:
     - uses: actions/checkout@v4
 
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: 1.23.x
+        go-version: ${{ matrix.go-version }}
         cache-dependency-path: plugin/*/go.sum
 
     # One module at a time, since each plugin has its own go.mod. Only the
@@ -71,3 +82,33 @@ jobs:
           printf 'FAILED: %s\n' "${failed[@]}"
           exit 1
         fi
+
+  # Go 1.26's experimental goroutine leak profile over the integration suite.
+  # It reports goroutines still blocked on a concurrency primitive nothing can
+  # reach after every test's agent has shut down - the shape a worker that
+  # outlived Shutdown has, which runtime.NumGoroutine() comparisons can only
+  # guess at. The check lives in test/it's TestMain and is a no-op in every
+  # build without this GOEXPERIMENT, so it costs the other jobs nothing.
+  #
+  # Its own job rather than a matrix entry on build: the experiment rebuilds
+  # the runtime, so it shares no build cache with the ordinary runs, and it
+  # pins 1.26 because no earlier toolchain has the profile.
+  goroutine-leak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: 1.26.x
+        cache-dependency-path: |
+          go.sum
+          test/it/go.sum
+
+    - name: Integration test with the goroutine leak profile
+      run: go test -v -timeout 15m ./...
+      working-directory: test/it
+      env:
+        GOEXPERIMENT: goroutineleakprofile

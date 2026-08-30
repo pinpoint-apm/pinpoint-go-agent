@@ -33,13 +33,23 @@ const (
 // TestMain removes any PINPOINT_GO_* variable from the developer's environment.
 // The agent's env prefix is fixed, so a stray override would silently replace
 // the deterministic inline configuration every test relies on.
+//
+// Once the suite has run, every test's agent and collector have been shut down
+// by their t.Cleanup, so nothing should still be parked on an agent channel:
+// reportGoroutineLeaks checks that. It only does anything under
+// GOEXPERIMENT=goroutineleakprofile, and only when the suite itself passed -
+// a failing test leaves its own goroutines behind and would just add noise.
 func TestMain(m *testing.M) {
 	for _, kv := range os.Environ() {
 		if k := strings.SplitN(kv, "=", 2)[0]; strings.HasPrefix(k, "PINPOINT_GO_") {
 			os.Unsetenv(k)
 		}
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	if code == 0 {
+		code = reportGoroutineLeaks()
+	}
+	os.Exit(code)
 }
 
 // agentConfig holds the knobs consumed by options(). Tests that need
