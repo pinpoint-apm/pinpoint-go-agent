@@ -239,6 +239,7 @@ func TestNewConfig_ConfigFileYaml(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, _ := NewConfig(tt.args.opts...)
+			defer c.Close()
 			assert.Equal(t, "MyAppName", c.String(CfgAppName), CfgAppName)
 			assert.Equal(t, 1900, c.Int(CfgAppType), CfgAppType)
 			assert.Equal(t, "MyAgentID", c.String(CfgAgentID), CfgAgentID)
@@ -292,6 +293,7 @@ func TestNewConfig_ConfigFileJson(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, _ := NewConfig(tt.args.opts...)
+			defer c.Close()
 			assert.Equal(t, "JsonAppName", c.String(CfgAppName), CfgAppName)
 			assert.Equal(t, 1901, c.Int(CfgAppType), CfgAppType)
 			assert.Equal(t, "JsonAgentID", c.String(CfgAgentID), CfgAgentID)
@@ -345,6 +347,7 @@ func TestNewConfig_ConfigFileProp(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, _ := NewConfig(tt.args.opts...)
+			defer c.Close()
 			assert.Equal(t, "PropAppName", c.String(CfgAppName), CfgAppName)
 			assert.Equal(t, 1902, c.Int(CfgAppType), CfgAppType)
 			assert.Equal(t, "PropAgentID", c.String(CfgAgentID), CfgAgentID)
@@ -409,6 +412,7 @@ func TestNewConfig_ConfigFileProfile(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, _ := NewConfig(tt.args.opts...)
+			defer c.Close()
 			assert.Equal(t, "MyAppName", c.String(CfgAppName), CfgAppName)
 			assert.Equal(t, "MyAgentID", c.String(CfgAgentID), CfgAgentID)
 			assert.Equal(t, "dev.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
@@ -486,6 +490,7 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, _ := NewConfig(tt.args.opts...)
+			defer c.Close()
 			assert.Equal(t, "EnvVarArgTest", c.String(CfgAppName), CfgAppName)
 			assert.Equal(t, 2000, c.Int(CfgAppType), CfgAppType)
 			assert.Equal(t, "envagentid", c.String(CfgAgentID), CfgAgentID)
@@ -603,6 +608,7 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, _ := NewConfig(tt.args.opts...)
+			defer c.Close()
 
 			assert.Equal(t, "CmdLineArgTest", c.String(CfgAppName), CfgAppName)
 			assert.Equal(t, 2100, c.Int(CfgAppType), CfgAppType)

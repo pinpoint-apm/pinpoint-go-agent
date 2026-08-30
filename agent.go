@@ -219,17 +219,29 @@ func NewAgent(config *Config) (Agent, error) {
 	defer globalAgentLock.Unlock()
 
 	if a := GetAgent(); a != NoopAgent() {
+		if config != nil && config != a.Config() {
+			config.Close()
+		}
 		return a, errors.New("agent is already created")
 	}
 	if config == nil {
 		return NoopAgent(), errors.New("configuration is missing")
 	}
+	// A reused Config arrives with its watcher stopped, so restart it and pick
+	// up the dynamic options the file changed in the meantime. Only dynamic
+	// ones: reloadConfig never applies the rest, so a watcher that had stayed
+	// up would not have applied them either.
+	if config.startConfigWatcher() {
+		config.reloadConfig(config.configFileCfg)
+	}
 
 	logger.setup(config)
 	if err := config.checkNameAndID(); err != nil {
+		config.Close()
 		return NoopAgent(), err
 	}
 	if !config.Bool(CfgEnable) {
+		config.Close()
 		return NoopAgent(), nil
 	}
 
@@ -260,8 +272,10 @@ func NewAgent(config *Config) (Agent, error) {
 	agent.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize, hashStringKey)
 	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize, hashApiCacheKey)
 
-	config.AddReloadCallback([]string{CfgLogLevel}, logger.reloadLevel)
-	config.AddReloadCallback([]string{CfgLogOutput, CfgLogMaxSize}, logger.reloadOutput)
+	config.logCallbackOnce.Do(func() {
+		config.AddReloadCallback([]string{CfgLogLevel}, logger.reloadLevel)
+		config.AddReloadCallback([]string{CfgLogOutput, CfgLogMaxSize}, logger.reloadOutput)
+	})
 
 	if !config.offGrpc {
 		agent.connectWg.Add(1)
@@ -354,6 +368,16 @@ func (agent *agent) signalShutdown() {
 	agent.shutdown.Store(true)
 	agent.stopSignal() // ensure the context exists before cancelling it
 	agent.stopCancel()
+
+	// Hand the config file watcher back. Guarded by the same identity check as
+	// the global release below, because a Config outlives the agent it was
+	// passed to: once this agent is no longer the current one, a later NewAgent
+	// may already have restarted the watcher on that same Config, and a stale
+	// second Shutdown must not stop it. An agent that was never published -
+	// a struct literal in a test - owns nothing here either.
+	if agent.config != nil && GetAgent() == Agent(agent) {
+		agent.config.Close()
+	}
 }
 
 // waitTimeout waits for wg and reports whether it completed within timeout.

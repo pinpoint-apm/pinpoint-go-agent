@@ -3,11 +3,13 @@ package pinpoint
 import (
 	"math"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cast"
@@ -210,6 +212,19 @@ type Config struct {
 	cfgMap   map[string]*cfgMapItem
 	callback []reloadCallback
 	snapshot atomic.Pointer[configSnapshot]
+	// logCallbackOnce registers the logger's reload callbacks once per Config.
+	// A Config can back several agents in turn, and NewAgent used to append the
+	// same pair on every one, so a single file change ended up reopening the
+	// log file once per agent this Config had ever served.
+	logCallbackOnce sync.Once
+
+	// watchMu owns the single restartable fsnotify watcher for this Config.
+	watchMu       sync.Mutex
+	watcher       *fsnotify.Watcher
+	watcherDone   chan struct{}
+	watcherClose  *sync.Once
+	configFile    string
+	configFileCfg *viper.Viper
 
 	containerCheck bool
 	useNewLogOpt   bool
@@ -329,6 +344,8 @@ func (config *Config) stagedString(cfgName string) string {
 //
 // configuration keys used in config files are case-insensitive.
 // The generated Config is maintained globally.
+// When a Config with a config file is not passed to NewAgent, the caller should
+// call Close to stop its file watcher.
 //
 // example:
 //
@@ -354,12 +371,9 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	cmdEnvViper.SetEnvPrefix("pinpoint_go")
 	cmdEnvViper.AutomaticEnv()
 
-	// loadConfigFile starts the file watcher, so everything past this point can
-	// run concurrently with a reload and has to hold the lock.
 	cfgFileViper := config.loadConfigFile(cmdEnvViper)
 
 	config.mu.Lock()
-	defer config.mu.Unlock()
 
 	profileViper := config.loadProfile(cmdEnvViper, cfgFileViper)
 	config.loadConfig(cmdEnvViper, cfgFileViper, profileViper)
@@ -400,7 +414,9 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		config.cfgMap[CfgStatBatchCount].value = 6
 	}
 	config.publish()
+	config.mu.Unlock()
 
+	config.startConfigWatcher()
 	return config, nil
 }
 
@@ -480,19 +496,119 @@ func (config *Config) loadConfigFile(cmdEnvViper *viper.Viper) *viper.Viper {
 		if err := cfgFileViper.ReadInConfig(); err != nil {
 			Log("config").Errorf("config file loading error: %v", err)
 		}
-
-		cfgFileViper.OnConfigChange(func(e fsnotify.Event) {
-			config.reloadConfig(cfgFileViper)
-		})
-		// Known limitation: viper exposes no way to stop WatchConfig, so this
-		// fsnotify goroutine and its descriptor live until the process exits -
-		// one per NewConfig call that names a config file, and the watch
-		// outlives the agent's Shutdown. Stopping it means replacing viper's
-		// watcher with an fsnotify watcher this package owns.
-		cfgFileViper.WatchConfig()
+		config.configFile = cfgFile
+		config.configFileCfg = cfgFileViper
 	}
 
 	return cfgFileViper
+}
+
+// Close stops the config file watcher and waits for its goroutine to exit. It
+// is safe to call more than once; a later NewAgent with the same Config starts
+// the watcher again.
+//
+// Close must not be called from a reload callback: callbacks run on the very
+// goroutine Close waits for, so a callback that closes its own Config
+// deadlocks and leaves the watcher lock held.
+func (config *Config) Close() {
+	config.watchMu.Lock()
+	defer config.watchMu.Unlock()
+
+	if config.watcher == nil {
+		return
+	}
+
+	// Closing the watcher releases its descriptor right here; the wait below is
+	// only for the goroutine, which may still be running a reload callback.
+	// Callbacks are caller-supplied (see AddReloadCallback) and Close is on the
+	// Shutdown path, so bound the wait the same way the worker drain is bounded
+	// - a slow callback must not keep the process alive. The abandoned
+	// goroutine reads a watcher that is already closed, so it only has to
+	// finish the callback in flight before returning; it publishes nothing
+	// after the timeout, having published before the callbacks ran.
+	config.watcherClose.Do(func() { _ = config.watcher.Close() })
+	timer := time.NewTimer(shutdownTimeout)
+	select {
+	case <-config.watcherDone:
+	case <-timer.C:
+		Log("config").Warnf("config file watcher shutdown timeout(%v) exceeded, abandon reload in progress", shutdownTimeout)
+	}
+	timer.Stop()
+
+	config.watcher = nil
+	config.watcherDone = nil
+	config.watcherClose = nil
+}
+
+func (config *Config) startConfigWatcher() bool {
+	config.watchMu.Lock()
+	defer config.watchMu.Unlock()
+
+	if config.configFileCfg == nil {
+		return false
+	}
+	if config.watcher != nil {
+		select {
+		case <-config.watcherDone:
+			config.watcher = nil
+			config.watcherDone = nil
+			config.watcherClose = nil
+		default:
+			return false
+		}
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		Log("config").Errorf("config file watcher creation error: %v", err)
+		return false
+	}
+
+	configFile := filepath.Clean(config.configFile)
+	configDir, _ := filepath.Split(configFile)
+	if err := watcher.Add(configDir); err != nil {
+		_ = watcher.Close()
+		Log("config").Errorf("config file watcher start error: %v", err)
+		return false
+	}
+
+	done := make(chan struct{})
+	closeOnce := new(sync.Once)
+	config.watcher = watcher
+	config.watcherDone = done
+	config.watcherClose = closeOnce
+	go config.watchConfigFile(watcher, done, closeOnce, configFile, config.configFileCfg)
+	return true
+}
+
+func (config *Config) watchConfigFile(watcher *fsnotify.Watcher, done chan struct{}, closeOnce *sync.Once, configFile string, cfgFileViper *viper.Viper) {
+	defer close(done)
+	defer closeOnce.Do(func() { _ = watcher.Close() })
+
+	realConfigFile, _ := filepath.EvalSymlinks(configFile)
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+
+			currentConfigFile, _ := filepath.EvalSymlinks(configFile)
+			const writeOrCreateMask = fsnotify.Write | fsnotify.Create
+			if (filepath.Clean(event.Name) == configFile && event.Op&writeOrCreateMask != 0) ||
+				(currentConfigFile != "" && currentConfigFile != realConfigFile) {
+				realConfigFile = currentConfigFile
+				config.reloadConfig(cfgFileViper)
+			} else if filepath.Clean(event.Name) == configFile && event.Op&fsnotify.Remove != 0 {
+				return
+			}
+		case err, ok := <-watcher.Errors:
+			if ok {
+				Log("config").Errorf("config file watcher error: %v", err)
+			}
+			return
+		}
+	}
 }
 
 func (config *Config) loadProfile(cmdEnvViper *viper.Viper, cfgFileViper *viper.Viper) *viper.Viper {
@@ -709,12 +825,13 @@ func (config *Config) AddReloadCallback(optNames []string, callback func()) {
 }
 
 func (config *Config) reloadConfig(cfgFileViper *viper.Viper) {
+	config.mu.Lock()
 	if err := cfgFileViper.ReadInConfig(); err != nil {
+		config.mu.Unlock()
 		Log("config").Errorf("config file reloading error: %v", err)
 		return
 	}
 
-	config.mu.Lock()
 	profileViper := config.loadProfile(viper.New(), cfgFileViper)
 	changed := config.loadDynamicConfig(cfgFileViper, profileViper)
 	config.publish()
