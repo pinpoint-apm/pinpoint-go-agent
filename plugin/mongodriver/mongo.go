@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"go.mongodb.org/mongo-driver/bson"
@@ -30,7 +31,12 @@ type spanKey struct {
 	RequestID    int64
 }
 
-const maxJsonSize = 64 * 1024
+const (
+	maxJsonSize = 64 * 1024
+	// MarshalExtJSON buffers the whole result, so commands whose source BSON already
+	// reaches the limit are skipped instead of converted.
+	maxBsonSize = maxJsonSize
+)
 
 type monitor struct {
 	sync.Mutex
@@ -52,11 +58,11 @@ func (m *monitor) Started(ctx context.Context, evt *event.CommandStartedEvent) {
 	}
 	tracer = pinpoint.NewDatabaseTracer(ctx, "mongodb."+evt.CommandName, dbInfo)
 
+	collection := collectionName(evt)
 	a := tracer.SpanEvent().Annotations()
-	a.AppendString(pinpoint.AnnotationMongoCollectionInfo, collectionName(evt))
-	b, _ := bson.MarshalExtJSON(evt.Command, false, false)
-	if b != nil {
-		a.AppendStringString(pinpoint.AnnotationMongoJasonData, abbreviateJson(b, maxJsonSize), "")
+	a.AppendString(pinpoint.AnnotationMongoCollectionInfo, collection)
+	if command := commandAnnotation(evt, collection); command != "" {
+		a.AppendStringString(pinpoint.AnnotationMongoJasonData, command, "")
 	}
 
 	key := spanKey{
@@ -67,6 +73,18 @@ func (m *monitor) Started(ctx context.Context, evt *event.CommandStartedEvent) {
 	m.Lock()
 	m.spans[key] = tracer
 	m.Unlock()
+}
+
+func commandAnnotation(e *event.CommandStartedEvent, collection string) string {
+	if len(e.Command) > maxBsonSize {
+		return fmt.Sprintf("[MongoDB command omitted: command=%s, collection=%s, bsonSize=%d]", e.CommandName, collection, len(e.Command))
+	}
+
+	b, err := bson.MarshalExtJSON(e.Command, false, false)
+	if err != nil {
+		return ""
+	}
+	return abbreviateJson(b, maxJsonSize)
 }
 
 func collectionName(e *event.CommandStartedEvent) string {
@@ -130,5 +148,16 @@ func abbreviateJson(b []byte, length int) string {
 	if len(b) <= length {
 		return string(b)
 	}
-	return string(b[:length]) + "...(" + fmt.Sprint(length) + ")"
+
+	// Reserve the marker so the annotation stays inside length, and cut back to a
+	// rune start: a proto3 string field rejects invalid UTF-8 and drops the span.
+	marker := "...(" + fmt.Sprint(length) + ")"
+	cut := length - len(marker)
+	if cut < 0 {
+		cut = 0
+	}
+	for cut > 0 && !utf8.RuneStart(b[cut]) {
+		cut--
+	}
+	return string(b[:cut]) + marker
 }
