@@ -95,23 +95,27 @@ func newSpanQueue(capacity int) *spanQueue {
 // under backpressure. A full first-choice shard triggers a scan; overwrite is
 // used only after every shard reports full.
 func (q *spanQueue) enqueue(chunk *spanChunk) bool {
+	// Fast reject only: the shards recheck under their own lock and are the
+	// authority. A stale false here costs one wasted shard scan, never a write.
 	if q.closed.Load() {
 		return false
 	}
 
 	first := rand.IntN(len(q.shards))
-	if q.shards[first].tryEnqueue(chunk) {
+	if q.shards[first].tryEnqueue(chunk, &q.closed) {
 		q.notify()
 		return true
 	}
 	for i := 1; i < len(q.shards); i++ {
 		shard := (first + i) % len(q.shards)
-		if q.shards[shard].tryEnqueue(chunk) {
+		if q.shards[shard].tryEnqueue(chunk, &q.closed) {
 			q.notify()
 			return true
 		}
 	}
-	q.shards[first].enqueueOrOverwrite(chunk)
+	if !q.shards[first].enqueueOrOverwrite(chunk, &q.closed) {
+		return false
+	}
 	q.notify()
 	return true
 }
@@ -149,6 +153,12 @@ func (q *spanQueue) tryDequeue() (*spanChunk, bool) {
 // woken to drain what remains. Safe to call once (guarded by the caller, like
 // the channel close it replaces).
 func (q *spanQueue) close() {
+	// Signalling done immediately cannot strand an accepted write, so this
+	// needs no barrier over the shard locks. tryDequeue reports empty only
+	// after locking every shard, and the consumer's last sweep runs after
+	// <-done, hence after this store: a producer that reaches a shard past
+	// that sweep sees closed under the lock and rejects, and one that got in
+	// first still holds the lock the sweep must take.
 	q.closed.Store(true)
 	close(q.done)
 }
@@ -182,9 +192,9 @@ func (q *spanQueue) length() int {
 	return total
 }
 
-func (s *spanQueueShard) tryEnqueue(chunk *spanChunk) bool {
+func (s *spanQueueShard) tryEnqueue(chunk *spanChunk, closed *atomic.Bool) bool {
 	s.mu.Lock()
-	if s.size == len(s.cells) {
+	if s.size == len(s.cells) || closed.Load() {
 		s.mu.Unlock()
 		return false
 	}
@@ -193,8 +203,12 @@ func (s *spanQueueShard) tryEnqueue(chunk *spanChunk) bool {
 	return true
 }
 
-func (s *spanQueueShard) enqueueOrOverwrite(chunk *spanChunk) {
+func (s *spanQueueShard) enqueueOrOverwrite(chunk *spanChunk, closed *atomic.Bool) bool {
 	s.mu.Lock()
+	if closed.Load() {
+		s.mu.Unlock()
+		return false
+	}
 	if s.size == len(s.cells) {
 		s.cells[s.head] = nil
 		s.head = s.next(s.head)
@@ -206,6 +220,7 @@ func (s *spanQueueShard) enqueueOrOverwrite(chunk *spanChunk) {
 	}
 	s.push(chunk)
 	s.mu.Unlock()
+	return true
 }
 
 func (s *spanQueueShard) tryDequeue() (*spanChunk, bool) {

@@ -390,7 +390,7 @@ func Benchmark_agent_enqueueSpan_saturated(b *testing.B) {
 	chunk := newTestSpanChunk(agent)
 	for i := range agent.spanQueue.shards {
 		shard := &agent.spanQueue.shards[i]
-		for shard.tryEnqueue(chunk) {
+		for shard.tryEnqueue(chunk, &agent.spanQueue.closed) {
 		}
 	}
 

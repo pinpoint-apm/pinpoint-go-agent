@@ -1,6 +1,8 @@
 package pinpoint
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 	"unsafe"
 
@@ -63,4 +65,66 @@ func Test_spanQueue_closeRejectsEnqueueAndReportsDone(t *testing.T) {
 	assert.Equal(t, chunk, got)
 	_, ok = q.dequeue()
 	assert.False(t, ok, "drained closed queue reports done")
+}
+
+// This is the stale-check interleaving split into deterministic steps: a
+// producer observes open, close completes, then the producer reaches its shard.
+// The shard-level recheck must reject the late write.
+func Test_spanQueue_staleOpenCheckCannotEnqueueAfterClose(t *testing.T) {
+	q := newSpanQueue(1)
+	chunk := new(spanChunk)
+
+	assert.False(t, q.closed.Load(), "producer observes the queue open")
+	q.close()
+
+	assert.False(t, q.shards[0].tryEnqueue(chunk, &q.closed), "stale open check must not authorize a write")
+	assert.Zero(t, q.length())
+}
+
+func Test_spanQueue_closeConcurrentProducersDrainsAccepted(t *testing.T) {
+	q := newSpanQueue(256)
+	chunk := new(spanChunk)
+
+	var accepted atomic.Int64
+	var consumed atomic.Int64
+	consumerDone := make(chan struct{})
+	go func() {
+		defer close(consumerDone)
+		for {
+			if _, ok := q.dequeue(); !ok {
+				return
+			}
+			consumed.Add(1)
+		}
+	}()
+
+	const producers = 16
+	start := make(chan struct{})
+	ready := make(chan struct{}, producers)
+	var producerWg sync.WaitGroup
+	producerWg.Add(producers)
+	for i := 0; i < producers; i++ {
+		go func() {
+			defer producerWg.Done()
+			<-start
+			if q.enqueue(chunk) {
+				accepted.Add(1)
+			}
+			ready <- struct{}{}
+			for q.enqueue(chunk) {
+				accepted.Add(1)
+			}
+		}()
+	}
+	close(start)
+	for i := 0; i < producers; i++ {
+		<-ready
+	}
+
+	q.close()
+	producerWg.Wait()
+	<-consumerDone
+
+	assert.Zero(t, q.length(), "consumer must not exit ahead of an accepted enqueue")
+	assert.Equal(t, accepted.Load(), consumed.Load()+q.dropCount(), "accepted == consumed + head-dropped")
 }
