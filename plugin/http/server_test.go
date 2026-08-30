@@ -280,3 +280,147 @@ func TestHandlerFuncName_Nil(t *testing.T) {
 		t.Errorf("HandlerFuncName(nil) = %q, want %q", got, "<nil>()")
 	}
 }
+
+func startAgent(t *testing.T) {
+	t.Helper()
+	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentId("testAgent"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := pinpoint.NewTestAgent(config, t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(agent.Shutdown)
+}
+
+// NewServeMux instruments every handler registered on it, so both registration
+// forms have to keep routing to the right handler and hand it the tracer.
+func TestServeMux_TracesRegisteredHandlers(t *testing.T) {
+	startAgent(t)
+
+	for _, tt := range []struct {
+		name     string
+		register func(*serveMux, string, func(http.ResponseWriter, *http.Request))
+	}{
+		{"Handle", func(m *serveMux, p string, h func(http.ResponseWriter, *http.Request)) {
+			m.Handle(p, http.HandlerFunc(h))
+		}},
+		{"HandleFunc", func(m *serveMux, p string, h func(http.ResponseWriter, *http.Request)) {
+			m.HandleFunc(p, h)
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := NewServeMux()
+			var sampled bool
+			tt.register(mux, "/hello", func(w http.ResponseWriter, r *http.Request) {
+				sampled = pinpoint.TracerFromRequestContext(r).IsSampled()
+				w.WriteHeader(http.StatusTeapot)
+				_, _ = w.Write([]byte("hello"))
+			})
+
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/hello", nil))
+
+			if !sampled {
+				t.Error("handler received an unsampled tracer")
+			}
+			if rec.Code != http.StatusTeapot {
+				t.Errorf("status = %d, want %d", rec.Code, http.StatusTeapot)
+			}
+			if rec.Body.String() != "hello" {
+				t.Errorf("body = %q, want %q", rec.Body.String(), "hello")
+			}
+		})
+	}
+}
+
+// The status the span records comes from the wrapped writer, so a handler that
+// never calls WriteHeader has to leave the default 200 in place and still send
+// its body.
+func TestWrapHandlerFunc_ImplicitStatus(t *testing.T) {
+	startAgent(t)
+
+	h := WrapHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("hello"))
+	})
+
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest(http.MethodGet, "/hello", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if rec.Body.String() != "hello" {
+		t.Errorf("body = %q, want %q", rec.Body.String(), "hello")
+	}
+}
+
+// The wrapper marks the span failed and re-panics; swallowing the panic would
+// turn a crash net/http reports into a silent 200.
+func TestWrapHandler_PanicPropagates(t *testing.T) {
+	startAgent(t)
+
+	h := WrapHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") }))
+
+	defer func() {
+		if recover() == nil {
+			t.Error("the wrapper swallowed the handler panic")
+		}
+	}()
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/boom", nil))
+}
+
+// With no agent running the wrapper must be a straight pass-through.
+func TestWrapHandler_PassesThroughWhenAgentDisabled(t *testing.T) {
+	if pinpoint.GetAgent().Enable() {
+		t.Skip("a global agent is still enabled")
+	}
+
+	called := false
+	h := WrapHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if pinpoint.TracerFromRequestContext(r).IsSampled() {
+			t.Error("a disabled agent produced a sampled tracer")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/hello", nil))
+
+	if !called {
+		t.Fatal("the handler did not run")
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
+// The deprecated wrappers must keep returning the pattern they were given
+// along with an instrumented handler.
+func TestWrapHandleAndWrapHandleFunc(t *testing.T) {
+	startAgent(t)
+
+	pattern, handler := WrapHandle(pinpoint.GetAgent(), "hello", "/hello",
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !pinpoint.TracerFromRequestContext(r).IsSampled() {
+				t.Error("handler received an unsampled tracer")
+			}
+		}))
+	if pattern != "/hello" {
+		t.Errorf("WrapHandle pattern = %q, want %q", pattern, "/hello")
+	}
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/hello", nil))
+
+	pattern, handlerFunc := WrapHandleFunc(pinpoint.GetAgent(), "hello", "/hello",
+		func(w http.ResponseWriter, r *http.Request) {
+			if !pinpoint.TracerFromRequestContext(r).IsSampled() {
+				t.Error("handler received an unsampled tracer")
+			}
+		})
+	if pattern != "/hello" {
+		t.Errorf("WrapHandleFunc pattern = %q, want %q", pattern, "/hello")
+	}
+	handlerFunc(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/hello", nil))
+}
