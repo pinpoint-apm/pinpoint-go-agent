@@ -80,19 +80,14 @@ func dslString(req *http.Request) (string, error) {
 			return dsl, nil
 		}
 	}
-	if req.Body == nil || req.Body == http.NoBody {
+	// Without GetBody there is no copy to read: consuming req.Body would stall a
+	// streaming request until EOF and, on a read error, truncate what is actually
+	// sent. The annotation is not worth that.
+	if req.Body == nil || req.Body == http.NoBody || req.GetBody == nil {
 		return "", nil
 	}
 
-	var (
-		dsl []byte
-		err error
-	)
-	if req.GetBody != nil {
-		dsl, err = getBodyFromCopy(req)
-	} else {
-		dsl, err = getBody(req)
-	}
+	dsl, err := getBodyFromCopy(req)
 	if err != nil {
 		return "", err
 	}
@@ -117,16 +112,6 @@ func getBodyFromCopy(req *http.Request) ([]byte, error) {
 	defer body.Close()
 	// A copy the request itself does not use, so it can be read partially.
 	return io.ReadAll(io.LimitReader(body, maxBodyRead))
-}
-
-// getBody must read the body in full: it is the request's only copy, and it is
-// handed back below for the transport to send. Only the annotation is limited,
-// by the MaxDslLength slice in the caller.
-func getBody(req *http.Request) ([]byte, error) {
-	dsl, err := io.ReadAll(req.Body)
-	req.Body.Close()
-	req.Body = io.NopCloser(bytes.NewReader(dsl))
-	return dsl, err
 }
 
 func unzip(dsl []byte) ([]byte, error) {
