@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -88,6 +89,31 @@ func Test_sqlNormalizer_DefaultSqlNormalizerCases(t *testing.T) {
 			assertNormalize(t, tt.sql, tt.normalized, tt.params)
 		})
 	}
+}
+
+func Test_sqlNormalizer_BoundsLargeResults(t *testing.T) {
+	suffix := "...(" + strconv.Itoa(maxSqlSize) + ")"
+
+	t.Run("unchanged sql", func(t *testing.T) {
+		raw := strings.Repeat("x", maxSqlSize+100)
+		nsql, param := newSqlNormalizer(raw).run()
+		assert.Equal(t, raw[:maxSqlSize]+suffix, nsql)
+		assert.Empty(t, param)
+	})
+
+	t.Run("normalized sql", func(t *testing.T) {
+		prefix := strings.Repeat("x", maxSqlSize+100)
+		nsql, param := newSqlNormalizer(prefix + " = 1").run()
+		assert.Equal(t, prefix[:maxSqlSize]+suffix, nsql)
+		assert.Equal(t, "1", param)
+	})
+
+	t.Run("literal parameter", func(t *testing.T) {
+		literal := strings.Repeat("x", maxSqlSize+100)
+		nsql, param := newSqlNormalizer("select '" + literal + "'").run()
+		assert.Equal(t, "select '0$'", nsql)
+		assert.Equal(t, literal[:maxSqlSize]+suffix, param)
+	})
 }
 
 func Test_sqlNormalizer_NumberState(t *testing.T) {

@@ -250,14 +250,26 @@ func (c *sqlConn) valueToString(values []driver.Value) string {
 }
 
 func writeBindValue(b *bytes.Buffer, index int, value interface{}, numComma int, maxSize int) bool {
-	b.WriteString(fmt.Sprint(value))
-	if index < numComma {
-		b.WriteString(", ")
+	remaining := maxSize + 1 - b.Len()
+	if remaining > 0 {
+		switch v := value.(type) {
+		case string:
+			writeBindString(b, v, remaining)
+		case []byte:
+			// Each byte contributes at least one output byte, so formatting only
+			// this prefix is enough to reproduce the retained fmt.Sprint prefix.
+			if len(v) > remaining {
+				v = v[:remaining]
+			}
+			writeBindString(b, fmt.Sprint(v), remaining)
+		default:
+			writeBindString(b, fmt.Sprint(value), remaining)
+		}
+	}
+	if index < numComma && b.Len() <= maxSize {
+		writeBindString(b, ", ", maxSize+1-b.Len())
 	}
 	if b.Len() > maxSize {
-		// Drop the overflow: a single multi-MB bind value would otherwise be
-		// kept whole in the annotation and could push the span message past
-		// the gRPC send limit.
 		b.Truncate(maxSize)
 		b.WriteString("...(")
 		b.WriteString(fmt.Sprint(maxSize))
@@ -265,6 +277,13 @@ func writeBindValue(b *bytes.Buffer, index int, value interface{}, numComma int,
 		return false
 	}
 	return true
+}
+
+func writeBindString(b *bytes.Buffer, value string, limit int) {
+	if len(value) > limit {
+		value = value[:limit]
+	}
+	b.WriteString(value)
 }
 
 func (c *sqlConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {

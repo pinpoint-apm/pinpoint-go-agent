@@ -129,15 +129,36 @@ func (t *pgxTracer) composeArgs(args []any) string {
 }
 
 func writeArg(b *bytes.Buffer, index int, value any, numComma int, maxSize int) bool {
-	b.WriteString(fmt.Sprint(value))
-	if index < numComma {
-		b.WriteString(", ")
+	remaining := maxSize + 1 - b.Len()
+	if remaining > 0 {
+		switch v := value.(type) {
+		case string:
+			writeArgString(b, v, remaining)
+		case []byte:
+			if len(v) > remaining {
+				v = v[:remaining]
+			}
+			writeArgString(b, fmt.Sprint(v), remaining)
+		default:
+			writeArgString(b, fmt.Sprint(value), remaining)
+		}
+	}
+	if index < numComma && b.Len() <= maxSize {
+		writeArgString(b, ", ", maxSize+1-b.Len())
 	}
 	if b.Len() > maxSize {
+		b.Truncate(maxSize)
 		b.WriteString("...(")
 		b.WriteString(fmt.Sprint(maxSize))
 		b.WriteString(")")
 		return false
 	}
 	return true
+}
+
+func writeArgString(b *bytes.Buffer, value string, limit int) {
+	if len(value) > limit {
+		value = value[:limit]
+	}
+	b.WriteString(value)
 }

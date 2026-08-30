@@ -559,6 +559,8 @@ SQL.TraceBindValue option enables bind value tracing for SQL Driver.
 
 ### SQL.MaxBindValueSize
 SQL.MaxBindValueSize option sets the max length of traced bind value for SQL Driver.
+It also caps the literal parameters extracted by SQL normalization, so a statement
+with a very long literal cannot grow the span annotation without bound.
 
 * --pinpoint-sql-maxbindvaluesize
 * PINPOINT_GO_SQL_MAXBINDVALUESIZE

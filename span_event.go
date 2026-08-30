@@ -135,6 +135,13 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	} else {
 		nsql, param = newSqlNormalizer(sql).run()
 	}
+	// nsql is already bounded by the normalizer; cacheSql/cacheSqlUid bound the
+	// cache key again for any other caller. A limit of 0 means bind value
+	// tracing is off, not that every value should become an "...(0)" marker.
+	if cfg.sqlMaxBindValueSize > 0 {
+		param = abbreviateString(param, cfg.sqlMaxBindValueSize)
+		args = abbreviateString(args, cfg.sqlMaxBindValueSize)
+	}
 
 	if cfg.sqlTraceQueryStat {
 		if id := agent.cacheSqlUid(nsql); id != nil {

@@ -187,6 +187,39 @@ func Test_agent_NewSpanTracerWithReader(t *testing.T) {
 	}
 }
 
+func Test_agent_SQLCachesBoundKeys(t *testing.T) {
+	sql := strings.Repeat("x", maxSqlSize*2)
+	bounded := abbreviateString(sql, maxSqlSize)
+
+	t.Run("sql id", func(t *testing.T) {
+		a := newTestAgent(defaultConfig())
+		id := a.cacheSql(sql)
+
+		cached, ok := a.sqlCache.peek(bounded)
+		assert.True(t, ok)
+		assert.Equal(t, id, cached)
+		_, retainedFullSQL := a.sqlCache.peek(sql)
+		assert.False(t, retainedFullSQL)
+
+		md := (<-a.metaChan).(sqlMeta)
+		assert.Equal(t, bounded, md.sql)
+	})
+
+	t.Run("sql uid", func(t *testing.T) {
+		a := newTestAgent(defaultConfig())
+		uid := a.cacheSqlUid(sql)
+
+		cached, ok := a.sqlUidCache.peek(bounded)
+		assert.True(t, ok)
+		assert.Equal(t, uid, cached)
+		_, retainedFullSQL := a.sqlUidCache.peek(sql)
+		assert.False(t, retainedFullSQL)
+
+		md := (<-a.metaChan).(sqlUidMeta)
+		assert.Equal(t, bounded, md.sql)
+	})
+}
+
 func Test_agent_tryEnqueueMetaReturnsWhenDropRaceLeavesQueueEmpty(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agent.metaChan = make(chan interface{})

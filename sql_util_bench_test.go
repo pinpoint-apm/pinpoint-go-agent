@@ -26,6 +26,8 @@ var benchLongSQL = func() string {
 	return sb.String()
 }()
 
+var benchHugeLiteralSQL = "SELECT '" + strings.Repeat("x", 1<<20) + "'"
+
 func newNormalizeTestAgent() *agent {
 	a := &agent{}
 	a.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize, hashStringKey)
@@ -73,7 +75,7 @@ func TestNormalizeSqlCacheEquivalence(t *testing.T) {
 
 func TestNormalizeSqlCacheBypassesHugeSql(t *testing.T) {
 	huge := strings.Repeat("select * from t where a = 'x' and b = 123 union all ", 2000) + "select 1"
-	if len(huge) <= maxCacheableSqlLength {
+	if len(huge) <= maxSqlSize {
 		t.Fatalf("test sql too short: %d", len(huge))
 	}
 
@@ -84,7 +86,7 @@ func TestNormalizeSqlCacheBypassesHugeSql(t *testing.T) {
 		t.Errorf("bypass path result differs from uncached normalizer")
 	}
 	if _, cached := a.rawSqlCache.peek(huge); cached {
-		t.Errorf("sql longer than %d bytes must not be cached", maxCacheableSqlLength)
+		t.Errorf("sql longer than %d bytes must not be cached", maxSqlSize)
 	}
 }
 
@@ -132,6 +134,9 @@ func benchmarkNormalize(b *testing.B, sql string) {
 // Baseline: the uncached normalizer.
 func BenchmarkSqlNormalizeShort(b *testing.B) { benchmarkNormalize(b, benchShortSQL) }
 func BenchmarkSqlNormalizeLong(b *testing.B)  { benchmarkNormalize(b, benchLongSQL) }
+func BenchmarkSqlNormalizeHugeLiteral(b *testing.B) {
+	benchmarkNormalize(b, benchHugeLiteralSQL)
+}
 
 // Win case: the same statement repeats, every call after the first is a hit.
 func benchmarkNormalizeCachedRepeat(b *testing.B, sql string) {

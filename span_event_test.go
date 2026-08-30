@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,6 +120,57 @@ func Test_spanEvent_SetSQL(t *testing.T) {
 			assert.Equal(t, len(se.annotations.values), int(1), "annotations.len")
 		})
 	}
+}
+
+func Test_spanEvent_SetSQLBoundsAnnotationValues(t *testing.T) {
+	const limit = 32
+	cfg := defaultConfig()
+	cfg.Set(CfgSQLMaxBindValueSize, limit)
+	span := testSpanWithConfig(cfg)
+	se := newSpanEvent(span, "query")
+	literal := strings.Repeat("l", maxSqlSize+100)
+	args := strings.Repeat("a", 1024)
+
+	se.SetSQL("SELECT '"+literal+"'", args)
+
+	assert.Len(t, se.annotations.values, 1)
+	annotation := se.annotations.values[0]
+	assert.Equal(t, literal[:limit]+"...(32)", annotation.s1)
+	assert.Equal(t, args[:limit]+"...(32)", annotation.s2)
+}
+
+// A negative SQL.MaxBindValueSize turns bind value tracing off and clamps the
+// size to 0. Normalized literals are not bind values, so they must survive
+// intact rather than collapse into an "...(0)" marker.
+func Test_spanEvent_SetSQLKeepsParamWhenBindSizeIsZero(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgSQLMaxBindValueSize, -1)
+	se := newSpanEvent(testSpanWithConfig(cfg), "query")
+
+	se.SetSQL("SELECT * FROM t WHERE id = 123", "")
+
+	assert.Len(t, se.annotations.values, 1)
+	assert.Equal(t, "123", se.annotations.values[0].s1)
+	assert.Equal(t, "", se.annotations.values[0].s2)
+}
+
+// SetSQL leaves the size limit to the normalizer and the meta caches, so the
+// published sql meta must stay bounded without SetSQL abbreviating again.
+func Test_spanEvent_SetSQLPublishesBoundedSqlMeta(t *testing.T) {
+	span := defaultTestSpan()
+	se := newSpanEvent(span, "query")
+	sql := "SELECT " + strings.Repeat("x", maxSqlSize*2)
+
+	se.SetSQL(sql, "")
+
+	var md sqlMeta
+	for {
+		if m, ok := (<-span.agent.metaChan).(sqlMeta); ok {
+			md = m
+			break
+		}
+	}
+	assert.Equal(t, abbreviateString(sql, maxSqlSize), md.sql)
 }
 
 // A goroutine span event must carry an api id its own agent registered: ids

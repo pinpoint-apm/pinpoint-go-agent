@@ -8,19 +8,53 @@ import (
 
 type sqlNormalizer struct {
 	r          *bufio.Reader
-	output     *strings.Builder
-	param      *strings.Builder
+	output     *sqlNormalizerBuilder
+	param      *sqlNormalizerBuilder
 	paramIndex int
 	sql        string
 	isChanged  bool
+}
+
+// sqlNormalizerBuilder retains only the prefix used by SQL metadata and
+// annotations. A small overflow sentinel is kept so abbreviateString can
+// preserve the existing "...(limit)" marker. strings.Builder is a field rather
+// than an embedded type: promoted Write/WriteByte methods would bypass the
+// bound without any compile error at the call site.
+type sqlNormalizerBuilder struct {
+	sb strings.Builder
+}
+
+func (b *sqlNormalizerBuilder) Len() int {
+	return b.sb.Len()
+}
+
+func (b *sqlNormalizerBuilder) WriteRune(r rune) {
+	if b.sb.Len() <= maxSqlSize {
+		_, _ = b.sb.WriteRune(r)
+	}
+}
+
+func (b *sqlNormalizerBuilder) WriteString(value string) {
+	remaining := maxSqlSize + 1 - b.sb.Len()
+	if remaining <= 0 {
+		return
+	}
+	if len(value) > remaining {
+		value = value[:remaining]
+	}
+	_, _ = b.sb.WriteString(value)
+}
+
+func (b *sqlNormalizerBuilder) result() string {
+	return abbreviateString(b.sb.String(), maxSqlSize)
 }
 
 func newSqlNormalizer(sql string) *sqlNormalizer {
 	normalizer := sqlNormalizer{}
 
 	normalizer.r = bufio.NewReader(strings.NewReader(sql))
-	normalizer.output = &strings.Builder{}
-	normalizer.param = &strings.Builder{}
+	normalizer.output = &sqlNormalizerBuilder{}
+	normalizer.param = &sqlNormalizerBuilder{}
 	normalizer.paramIndex = 0
 	normalizer.sql = sql
 	normalizer.isChanged = false
@@ -75,12 +109,12 @@ func (s *sqlNormalizer) run() (string, string) {
 
 	if s.isChanged {
 		if s.param.Len() > 0 {
-			return s.output.String(), s.param.String()
+			return s.output.result(), s.param.result()
 		} else {
-			return s.output.String(), ""
+			return s.output.result(), ""
 		}
 	} else {
-		return s.sql, ""
+		return abbreviateString(s.sql, maxSqlSize), ""
 	}
 
 }

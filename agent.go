@@ -780,16 +780,16 @@ func (agent *agent) cacheSql(sql string) int32 {
 		return 0
 	}
 
-	if v, ok := agent.sqlCache.peek(sql); ok {
+	aSql := abbreviateString(sql, maxSqlSize)
+	if v, ok := agent.sqlCache.peek(aSql); ok {
 		return v
 	}
 
 	id := atomic.AddInt32(&agent.sqlIdGen, 1)
-	if v, ok := agent.sqlCache.peekOrAdd(sql, id); ok {
+	if v, ok := agent.sqlCache.peekOrAdd(aSql, id); ok {
 		return v
 	}
 
-	aSql := abbreviateString(sql, maxSqlSize)
 	md := sqlMeta{
 		id:  id,
 		sql: aSql,
@@ -807,18 +807,18 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 		return nil
 	}
 
-	if v, ok := agent.sqlUidCache.peek(sql); ok {
+	aSql := abbreviateString(sql, maxSqlSize)
+	if v, ok := agent.sqlUidCache.peek(aSql); ok {
 		return v
 	}
 
 	hash := murmur3.New128()
-	hash.Write([]byte(sql))
+	hash.Write([]byte(aSql))
 	uid := hash.Sum(nil)
-	if v, ok := agent.sqlUidCache.peekOrAdd(sql, uid); ok {
+	if v, ok := agent.sqlUidCache.peekOrAdd(aSql, uid); ok {
 		return v
 	}
 
-	aSql := abbreviateString(sql, maxSqlSize)
 	md := sqlUidMeta{
 		uid: uid,
 		sql: aSql,
@@ -839,17 +839,12 @@ type normalizedSql struct {
 	param string
 }
 
-// maxCacheableSqlLength bounds the memory one rawSqlCache entry can pin: a
-// statement longer than this is still normalized correctly but bypasses the
-// cache (same 64KB guard as the C++ agent's RawSqlCache).
-const maxCacheableSqlLength = 64 * 1024
-
 // normalizeSql returns the normalized SQL and extracted parameters for sql,
 // memoized by the raw SQL text so repeated statements skip re-parsing. It uses
 // the same sharded metaCache as the id caches above, so a hot statement is a
 // lock-free lookup and stays resident under aged promotion.
 func (agent *agent) normalizeSql(sql string) (string, string) {
-	if len(sql) > maxCacheableSqlLength {
+	if len(sql) > maxSqlSize {
 		return newSqlNormalizer(sql).run()
 	}
 	if n, ok := agent.rawSqlCache.peek(sql); ok {

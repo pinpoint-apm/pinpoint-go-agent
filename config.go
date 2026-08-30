@@ -1066,6 +1066,7 @@ func WithSQLTraceBindValue(trace bool) ConfigOption {
 }
 
 // WithSQLMaxBindValueSize sets the max length of traced bind value for SQL Driver.
+// It also caps the literal parameters extracted by SQL normalization.
 func WithSQLMaxBindValueSize(size int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgSQLMaxBindValueSize].value = size
