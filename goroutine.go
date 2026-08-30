@@ -110,9 +110,17 @@ func newGoroutineDump() *goroutineDump {
 	}
 }
 
-func dumpGoroutine(agent *agent) (dump *goroutineDump) {
+func dumpGoroutine(agent *agent) *goroutineDump {
+	return dumpGoroutineProfile(agent, func(w io.Writer) error {
+		if p := pprof.Lookup("goroutine"); p != nil {
+			return p.WriteTo(w, 2)
+		}
+		return nil
+	})
+}
+
+func dumpGoroutineProfile(agent *agent, write func(io.Writer) error) (dump *goroutineDump) {
 	var b bytes.Buffer
-	buf := bufio.NewWriter(&b)
 
 	defer func() {
 		if e := recover(); e != nil {
@@ -121,11 +129,9 @@ func dumpGoroutine(agent *agent) (dump *goroutineDump) {
 		}
 	}()
 
-	if p := pprof.Lookup("goroutine"); p != nil {
-		if err := p.WriteTo(buf, 2); err != nil {
-			Log("cmd").Errorf("profile goroutine: %v", err)
-			return nil
-		}
+	if err := write(&b); err != nil {
+		Log("cmd").Errorf("profile goroutine: %v", err)
+		return nil
 	}
 
 	dump = parseProfile(&b, agent)
