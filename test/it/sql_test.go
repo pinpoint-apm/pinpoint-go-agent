@@ -247,6 +247,7 @@ func TestTruncatesSqlBindArgsAtConfiguredLimit(t *testing.T) {
 	// "0123456789, abcdefgh" already exceeds the 20 allowed bytes, so the join
 	// stops there and appends the truncation marker.
 	bound := annotation.GetValue().GetBytesStringStringValue().GetStringValue2().GetValue()
+	assert.LessOrEqual(t, len(bound), cfg.sqlMaxBindValueSize)
 	assert.True(t, strings.HasSuffix(bound, "...(20)"), bound)
 	assert.NotContains(t, bound, "xyz")
 }

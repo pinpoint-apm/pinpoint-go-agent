@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -92,7 +93,48 @@ func Test_writeBindValue_TruncatesOversizedValue(t *testing.T) {
 	more := writeBindValue(&b, 0, strings.Repeat("x", 5000), 0, 1024)
 
 	assert.False(t, more)
-	assert.Equal(t, strings.Repeat("x", 1024)+"...(1024)", b.String())
+	assert.Equal(t, strings.Repeat("x", 1015)+"...(1024)", b.String())
+	assert.Len(t, b.String(), 1024)
+}
+
+func Test_writeBindValue_LimitsLargeValues(t *testing.T) {
+	const maxSize = 65
+	tests := []struct {
+		name       string
+		value      interface{}
+		wantPrefix string
+	}{
+		{name: "string", value: strings.Repeat("가", 1<<20), wantPrefix: "가"},
+		{name: "bytes", value: bytes.Repeat([]byte{255}, 1<<20), wantPrefix: "[255 "},
+		{name: "slice", value: make([]int32, 1<<20), wantPrefix: "[0 0 "},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var b bytes.Buffer
+			more := writeBindValue(&b, 0, tt.value, 0, maxSize)
+
+			assert.False(t, more)
+			assert.LessOrEqual(t, b.Len(), maxSize)
+			assert.LessOrEqual(t, b.Cap(), maxSize*2)
+			assert.True(t, strings.HasPrefix(b.String(), tt.wantPrefix), b.String())
+			assert.True(t, strings.HasSuffix(b.String(), "...(65)"), b.String())
+			assert.True(t, utf8.ValidString(b.String()), b.String())
+		})
+	}
+}
+
+func Test_writeBindValue_LimitsMultipleValues(t *testing.T) {
+	values := []interface{}{"0123456789", "abcdefgh", "xyz"}
+	var b bytes.Buffer
+	for i, value := range values {
+		if !writeBindValue(&b, i, value, len(values)-1, 20) {
+			break
+		}
+	}
+
+	assert.Equal(t, "0123456789, a...(20)", b.String())
+	assert.Len(t, b.String(), 20)
 }
 
 func Test_writeBindValue_TruncatesOversizedBytes(t *testing.T) {
@@ -103,12 +145,14 @@ func Test_writeBindValue_TruncatesOversizedBytes(t *testing.T) {
 	more := writeBindValue(&b, 0, value, 0, 1024)
 
 	assert.False(t, more)
-	assert.Equal(t, want[:1024]+"...(1024)", b.String())
+	// The marker is written inside the limit, not past it.
+	assert.Equal(t, want[:1024-len("...(1024)")]+"...(1024)", b.String())
+	assert.Len(t, b.String(), 1024)
 }
 
 // The separator between two values is written under the same limit as the
-// values themselves, so a value landing on the boundary keeps only part of
-// ", " - and a zero limit keeps nothing at all.
+// values themselves, so a value landing on the boundary makes room for the
+// marker instead of growing past the limit - and a zero limit keeps nothing.
 func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -121,7 +165,7 @@ func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 			name:    "separator split by the limit",
 			values:  []interface{}{strings.Repeat("p", 1023), "z"},
 			maxSize: 1024,
-			want:    strings.Repeat("p", 1023) + ",...(1024)",
+			want:    strings.Repeat("p", 1024-len("...(1024)")) + "...(1024)",
 		},
 		{
 			name:     "everything fits",
@@ -134,7 +178,7 @@ func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 			name:    "zero limit",
 			values:  []interface{}{"abc"},
 			maxSize: 0,
-			want:    "...(0)",
+			want:    "",
 		},
 	}
 

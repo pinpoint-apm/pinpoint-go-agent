@@ -6,7 +6,9 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
+	"unicode/utf8"
 )
 
 type DBInfo struct {
@@ -263,40 +265,78 @@ func (c *sqlConn) valueToString(values []driver.Value) string {
 }
 
 func writeBindValue(b *bytes.Buffer, index int, value interface{}, numComma int, maxSize int) bool {
-	remaining := maxSize + 1 - b.Len()
-	if remaining > 0 {
-		switch v := value.(type) {
-		case string:
-			writeBindString(b, v, remaining)
-		case []byte:
-			// Each byte contributes at least one output byte, so formatting only
-			// this prefix is enough to reproduce the retained fmt.Sprint prefix.
-			if len(v) > remaining {
-				v = v[:remaining]
-			}
-			writeBindString(b, fmt.Sprint(v), remaining)
-		default:
-			writeBindString(b, fmt.Sprint(value), remaining)
-		}
-	}
-	if index < numComma && b.Len() <= maxSize {
-		writeBindString(b, ", ", maxSize+1-b.Len())
-	}
-	if b.Len() > maxSize {
-		b.Truncate(maxSize)
-		b.WriteString("...(")
-		b.WriteString(fmt.Sprint(maxSize))
-		b.WriteString(")")
+	if maxSize <= 0 {
 		return false
 	}
-	return true
+
+	complete := writeLimitedBindValue(b, value, maxSize)
+	if complete && index < numComma {
+		complete = writeLimitedString(b, ", ", maxSize)
+	}
+	if !complete {
+		writeBindTruncationMarker(b, maxSize)
+	}
+	return complete
 }
 
-func writeBindString(b *bytes.Buffer, value string, limit int) {
-	if len(value) > limit {
-		value = value[:limit]
+func writeLimitedBindValue(b *bytes.Buffer, value interface{}, maxSize int) bool {
+	if value, ok := value.(string); ok {
+		return writeLimitedString(b, value, maxSize)
 	}
-	b.WriteString(value)
+
+	remaining := maxSize - b.Len()
+	if remaining <= 0 {
+		return false
+	}
+	// fmt.Sprint preserves the established "[1 2 3]" representation. Every
+	// element adds at least one character to it, so no more than remaining
+	// elements can contribute to its prefix.
+	if rv := reflect.ValueOf(value); rv.Kind() == reflect.Slice && rv.Len() > remaining {
+		value = rv.Slice(0, remaining).Interface()
+	}
+	return writeLimitedString(b, fmt.Sprint(value), maxSize)
+}
+
+func writeLimitedString(b *bytes.Buffer, value string, maxSize int) bool {
+	if len(value) == 0 {
+		return b.Len() <= maxSize
+	}
+
+	remaining := maxSize - b.Len()
+	if len(value) <= remaining {
+		b.WriteString(value)
+		return true
+	}
+	if remaining <= 0 {
+		return false
+	}
+
+	for remaining > 0 && !utf8.RuneStart(value[remaining]) {
+		remaining--
+	}
+	b.WriteString(value[:remaining])
+	return false
+}
+
+func writeBindTruncationMarker(b *bytes.Buffer, maxSize int) {
+	marker := "...(" + fmt.Sprint(maxSize) + ")"
+	if len(marker) > maxSize {
+		truncateBindValue(b, maxSize)
+		return
+	}
+
+	truncateBindValue(b, maxSize-len(marker))
+	b.WriteString(marker)
+}
+
+func truncateBindValue(b *bytes.Buffer, maxSize int) {
+	if maxSize >= b.Len() {
+		return
+	}
+	for maxSize > 0 && !utf8.RuneStart(b.Bytes()[maxSize]) {
+		maxSize--
+	}
+	b.Truncate(maxSize)
 }
 
 func (c *sqlConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {

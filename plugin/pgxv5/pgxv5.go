@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"reflect"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
@@ -129,36 +131,76 @@ func (t *pgxTracer) composeArgs(args []any) string {
 }
 
 func writeArg(b *bytes.Buffer, index int, value any, numComma int, maxSize int) bool {
-	remaining := maxSize + 1 - b.Len()
-	if remaining > 0 {
-		switch v := value.(type) {
-		case string:
-			writeArgString(b, v, remaining)
-		case []byte:
-			if len(v) > remaining {
-				v = v[:remaining]
-			}
-			writeArgString(b, fmt.Sprint(v), remaining)
-		default:
-			writeArgString(b, fmt.Sprint(value), remaining)
-		}
-	}
-	if index < numComma && b.Len() <= maxSize {
-		writeArgString(b, ", ", maxSize+1-b.Len())
-	}
-	if b.Len() > maxSize {
-		b.Truncate(maxSize)
-		b.WriteString("...(")
-		b.WriteString(fmt.Sprint(maxSize))
-		b.WriteString(")")
+	if maxSize <= 0 {
 		return false
 	}
-	return true
+
+	complete := writeLimitedArgValue(b, value, maxSize)
+	if complete && index < numComma {
+		complete = writeLimitedString(b, ", ", maxSize)
+	}
+	if !complete {
+		writeArgTruncationMarker(b, maxSize)
+	}
+	return complete
 }
 
-func writeArgString(b *bytes.Buffer, value string, limit int) {
-	if len(value) > limit {
-		value = value[:limit]
+func writeLimitedArgValue(b *bytes.Buffer, value any, maxSize int) bool {
+	if value, ok := value.(string); ok {
+		return writeLimitedString(b, value, maxSize)
 	}
-	b.WriteString(value)
+
+	remaining := maxSize - b.Len()
+	if remaining <= 0 {
+		return false
+	}
+	// fmt.Sprint preserves the established "[1 2 3]" representation. Every
+	// element adds at least one character to it, so no more than remaining
+	// elements can contribute to its prefix.
+	if rv := reflect.ValueOf(value); rv.Kind() == reflect.Slice && rv.Len() > remaining {
+		value = rv.Slice(0, remaining).Interface()
+	}
+	return writeLimitedString(b, fmt.Sprint(value), maxSize)
+}
+
+func writeLimitedString(b *bytes.Buffer, value string, maxSize int) bool {
+	if len(value) == 0 {
+		return b.Len() <= maxSize
+	}
+
+	remaining := maxSize - b.Len()
+	if len(value) <= remaining {
+		b.WriteString(value)
+		return true
+	}
+	if remaining <= 0 {
+		return false
+	}
+
+	for remaining > 0 && !utf8.RuneStart(value[remaining]) {
+		remaining--
+	}
+	b.WriteString(value[:remaining])
+	return false
+}
+
+func writeArgTruncationMarker(b *bytes.Buffer, maxSize int) {
+	marker := "...(" + fmt.Sprint(maxSize) + ")"
+	if len(marker) > maxSize {
+		truncateArg(b, maxSize)
+		return
+	}
+
+	truncateArg(b, maxSize-len(marker))
+	b.WriteString(marker)
+}
+
+func truncateArg(b *bytes.Buffer, maxSize int) {
+	if maxSize >= b.Len() {
+		return
+	}
+	for maxSize > 0 && !utf8.RuneStart(b.Bytes()[maxSize]) {
+		maxSize--
+	}
+	b.Truncate(maxSize)
 }
