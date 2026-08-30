@@ -36,3 +36,38 @@ jobs:
     - name: Integration test
       run: go test -v -timeout 15m ./...
       working-directory: test/it
+
+  # The instrumentation plugins are separate modules with their own
+  # dependencies, so they get their own job: it runs alongside the agent's and
+  # keeps its own module cache, which the agent's dependencies do not
+  # invalidate.
+  plugins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: 1.23.x
+        cache-dependency-path: plugin/*/go.sum
+
+    # One module at a time, since each plugin has its own go.mod. Only the
+    # module's own package is tested: the example directories are standalone
+    # programs that do not build as a single package. Several plugins guard
+    # against data races the agent's tracers are sensitive to, so -race is
+    # part of the contract, not an extra. Every module runs before the step
+    # fails, so one broken plugin does not hide the rest.
+    - name: Plugin test
+      run: |
+        failed=()
+        for dir in plugin/*/; do
+          echo "::group::${dir}"
+          (cd "$dir" && go test -race -v ./) || failed+=("$dir")
+          echo "::endgroup::"
+        done
+        if [ ${#failed[@]} -ne 0 ]; then
+          printf 'FAILED: %s\n' "${failed[@]}"
+          exit 1
+        fi
