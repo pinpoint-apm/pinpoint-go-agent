@@ -180,7 +180,20 @@ func (c *sqlConn) PrepareContext(ctx context.Context, query string) (driver.Stmt
 		return prepare(stmt, err, c, query)
 	}
 
+	// database/sql routes every Prepare here because the wrapper implements
+	// driver.ConnPrepareContext, so its own fallback check never runs; mirror
+	// it (database/sql/ctxutil.go). Without it a canceled or expired context
+	// yields a live statement instead of an error, and that statement stays
+	// open on the connection with no owner to close it.
 	stmt, err := c.Conn.Prepare(query)
+	if err == nil {
+		select {
+		default:
+		case <-ctx.Done():
+			stmt.Close()
+			return nil, ctx.Err()
+		}
+	}
 	return prepare(stmt, err, c, query)
 }
 

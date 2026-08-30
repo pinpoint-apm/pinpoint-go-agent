@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -37,9 +38,23 @@ func (c *checkerDriverConn) CheckNamedValue(nv *driver.NamedValue) error {
 	return nil
 }
 
-type fakeDriverStmt struct{}
+type prepareDriverConn struct {
+	fakeDriverConn
+	stmt      driver.Stmt
+	err       error
+	onPrepare func()
+}
 
-func (s *fakeDriverStmt) Close() error                                    { return nil }
+func (c *prepareDriverConn) Prepare(query string) (driver.Stmt, error) {
+	if c.onPrepare != nil {
+		c.onPrepare()
+	}
+	return c.stmt, c.err
+}
+
+type fakeDriverStmt struct{ closed bool }
+
+func (s *fakeDriverStmt) Close() error                                    { s.closed = true; return nil }
 func (s *fakeDriverStmt) NumInput() int                                   { return -1 }
 func (s *fakeDriverStmt) Exec(args []driver.Value) (driver.Result, error) { return nil, nil }
 func (s *fakeDriverStmt) Query(args []driver.Value) (driver.Rows, error)  { return nil, nil }
@@ -183,6 +198,60 @@ func Test_sqlConn_BeginTxFallbackHonorsOptions(t *testing.T) {
 	cancel()
 	_, err = conn.BeginTx(canceled, driver.TxOptions{})
 	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func Test_sqlConn_PrepareContextFallback(t *testing.T) {
+	t.Run("canceled before Prepare", func(t *testing.T) {
+		stmt := &fakeDriverStmt{}
+		conn := newSqlConn(&prepareDriverConn{stmt: stmt}, DBInfo{})
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		got, err := conn.PrepareContext(ctx, "SELECT 1")
+
+		assert.Nil(t, got)
+		assert.ErrorIs(t, err, context.Canceled)
+		assert.True(t, stmt.closed)
+	})
+
+	t.Run("canceled during Prepare", func(t *testing.T) {
+		stmt := &fakeDriverStmt{}
+		ctx, cancel := context.WithCancel(context.Background())
+		conn := newSqlConn(&prepareDriverConn{stmt: stmt, onPrepare: cancel}, DBInfo{})
+
+		got, err := conn.PrepareContext(ctx, "SELECT 1")
+
+		assert.Nil(t, got)
+		assert.ErrorIs(t, err, context.Canceled)
+		assert.True(t, stmt.closed)
+	})
+
+	t.Run("canceled after Prepare", func(t *testing.T) {
+		stmt := &fakeDriverStmt{}
+		ctx, cancel := context.WithCancel(context.Background())
+		conn := newSqlConn(&prepareDriverConn{stmt: stmt}, DBInfo{})
+
+		got, err := conn.PrepareContext(ctx, "SELECT 1")
+		cancel()
+
+		assert.NoError(t, err)
+		assert.NotNil(t, got)
+		assert.False(t, stmt.closed)
+		assert.NoError(t, got.Close())
+		assert.True(t, stmt.closed)
+	})
+
+	t.Run("Prepare error", func(t *testing.T) {
+		prepareErr := errors.New("prepare failed")
+		conn := newSqlConn(&prepareDriverConn{err: prepareErr}, DBInfo{})
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		got, err := conn.PrepareContext(ctx, "SELECT 1")
+
+		assert.Nil(t, got)
+		assert.ErrorIs(t, err, prepareErr)
+	})
 }
 
 // The wrapper must keep the underlying connection's optional interfaces
