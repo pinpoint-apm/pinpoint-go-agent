@@ -23,7 +23,6 @@
 package pphttp
 
 import (
-	"bufio"
 	"math"
 	"net"
 	"net/http"
@@ -265,8 +264,76 @@ type responseWriter struct {
 	status *int
 }
 
-func WrapResponseWriter(w http.ResponseWriter, status *int) *responseWriter {
-	return &responseWriter{w, status}
+// Go has no conditional interface implementation, so keeping the underlying
+// writer's optional interfaces reachable takes one wrapper type per
+// combination. A single type implementing all three would make type
+// assertions succeed on writers that do not support them, breaking the
+// feature detection handlers rely on: SSE flushing (http.Flusher) and
+// WebSocket upgrades (http.Hijacker). io.ReaderFrom is deliberately left
+// out - preserving it would double the combinations and it only costs the
+// sendfile fast path in io.Copy(w, f); add it here if that ever matters.
+type (
+	responseWriterF struct {
+		*responseWriter
+		http.Flusher
+	}
+	responseWriterH struct {
+		*responseWriter
+		http.Hijacker
+	}
+	responseWriterP struct {
+		*responseWriter
+		http.Pusher
+	}
+	responseWriterFH struct {
+		*responseWriter
+		http.Flusher
+		http.Hijacker
+	}
+	responseWriterFP struct {
+		*responseWriter
+		http.Flusher
+		http.Pusher
+	}
+	responseWriterHP struct {
+		*responseWriter
+		http.Hijacker
+		http.Pusher
+	}
+	responseWriterFHP struct {
+		*responseWriter
+		http.Flusher
+		http.Hijacker
+		http.Pusher
+	}
+)
+
+// WrapResponseWriter records the response status while preserving exactly the
+// optional HTTP interfaces implemented by w.
+func WrapResponseWriter(w http.ResponseWriter, status *int) http.ResponseWriter {
+	rw := &responseWriter{w, status}
+	f, canFlush := w.(http.Flusher)
+	h, canHijack := w.(http.Hijacker)
+	p, canPush := w.(http.Pusher)
+
+	switch {
+	case canFlush && canHijack && canPush:
+		return responseWriterFHP{rw, f, h, p}
+	case canFlush && canHijack:
+		return responseWriterFH{rw, f, h}
+	case canFlush && canPush:
+		return responseWriterFP{rw, f, p}
+	case canHijack && canPush:
+		return responseWriterHP{rw, h, p}
+	case canFlush:
+		return responseWriterF{rw, f}
+	case canHijack:
+		return responseWriterH{rw, h}
+	case canPush:
+		return responseWriterP{rw, p}
+	default:
+		return rw
+	}
 }
 
 func (w *responseWriter) WriteHeader(status int) {
@@ -274,37 +341,9 @@ func (w *responseWriter) WriteHeader(status int) {
 	*w.status = status
 }
 
-// The wrapper hides the underlying writer's optional interfaces from type
-// assertions - embedding the http.ResponseWriter interface promotes only its
-// own three methods - so without the passthroughs below, wrapping a handler
-// breaks WebSocket upgrades (http.Hijacker) and SSE flushing (http.Flusher).
-// Each delegates dynamically and degrades the way http.ResponseController
-// does, with http.ErrNotSupported, when the underlying writer lacks the
-// capability.
-
 // Unwrap lets http.ResponseController reach the underlying writer.
 func (w *responseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
-}
-
-func (w *responseWriter) Flush() {
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if h, ok := w.ResponseWriter.(http.Hijacker); ok {
-		return h.Hijack()
-	}
-	return nil, nil, http.ErrNotSupported
-}
-
-func (w *responseWriter) Push(target string, opts *http.PushOptions) error {
-	if p, ok := w.ResponseWriter.(http.Pusher); ok {
-		return p.Push(target, opts)
-	}
-	return http.ErrNotSupported
 }
 
 type serveMux struct {

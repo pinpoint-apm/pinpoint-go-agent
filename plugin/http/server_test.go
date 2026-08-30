@@ -3,6 +3,7 @@ package pphttp
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -113,43 +114,128 @@ func Test_setProxyHeader(t *testing.T) {
 	}
 }
 
-type hijackableRecorder struct {
-	*httptest.ResponseRecorder
-	hijacked bool
+type optionalResponseWriter struct {
+	flushes int
+	hijacks int
+	pushes  int
 }
 
-func (r *hijackableRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	r.hijacked = true
-	return nil, nil, nil
+func (w *optionalResponseWriter) Flush() {
+	w.flushes++
 }
 
-// The wrapper must keep the underlying writer's optional interfaces reachable:
-// WebSocket upgrades assert http.Hijacker and SSE handlers assert http.Flusher
-// on the writer the handler receives.
+func (w *optionalResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.hijacks++
+	return nil, nil, errOptionalResponseWriter
+}
+
+func (w *optionalResponseWriter) Push(string, *http.PushOptions) error {
+	w.pushes++
+	return errOptionalResponseWriter
+}
+
+var errOptionalResponseWriter = errors.New("optional response writer called")
+
+type (
+	testResponseWriterF struct {
+		http.ResponseWriter
+		http.Flusher
+	}
+	testResponseWriterH struct {
+		http.ResponseWriter
+		http.Hijacker
+	}
+	testResponseWriterP struct {
+		http.ResponseWriter
+		http.Pusher
+	}
+	testResponseWriterFH struct {
+		http.ResponseWriter
+		http.Flusher
+		http.Hijacker
+	}
+	testResponseWriterFP struct {
+		http.ResponseWriter
+		http.Flusher
+		http.Pusher
+	}
+	testResponseWriterHP struct {
+		http.ResponseWriter
+		http.Hijacker
+		http.Pusher
+	}
+	testResponseWriterFHP struct {
+		http.ResponseWriter
+		http.Flusher
+		http.Hijacker
+		http.Pusher
+	}
+)
+
+func responseWriterWithOptionalInterfaces(base http.ResponseWriter, optional *optionalResponseWriter, mask int) http.ResponseWriter {
+	switch mask {
+	case 7:
+		return testResponseWriterFHP{base, optional, optional, optional}
+	case 6:
+		return testResponseWriterHP{base, optional, optional}
+	case 5:
+		return testResponseWriterFP{base, optional, optional}
+	case 4:
+		return testResponseWriterP{base, optional}
+	case 3:
+		return testResponseWriterFH{base, optional, optional}
+	case 2:
+		return testResponseWriterH{base, optional}
+	case 1:
+		return testResponseWriterF{base, optional}
+	default:
+		return struct{ http.ResponseWriter }{base}
+	}
+}
+
 func Test_responseWriter_PreservesOptionalInterfaces(t *testing.T) {
-	status := 0
-	rec := httptest.NewRecorder() // a Flusher, not a Hijacker
-	w := WrapResponseWriter(rec, &status)
+	for mask := 0; mask < 8; mask++ {
+		t.Run(fmt.Sprintf("mask%03b", mask), func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			optional := &optionalResponseWriter{}
+			original := responseWriterWithOptionalInterfaces(recorder, optional, mask)
+			status := 0
+			wrapped := WrapResponseWriter(original, &status)
 
-	if w.Unwrap() != http.ResponseWriter(rec) {
-		t.Errorf("Unwrap() did not return the underlying writer")
-	}
+			flusher, flushes := wrapped.(http.Flusher)
+			hijacker, hijacks := wrapped.(http.Hijacker)
+			pusher, pushes := wrapped.(http.Pusher)
+			if flushes != (mask&1 != 0) || hijacks != (mask&2 != 0) || pushes != (mask&4 != 0) {
+				t.Fatalf("optional interfaces = (Flusher %v, Hijacker %v, Pusher %v)", flushes, hijacks, pushes)
+			}
 
-	http.ResponseWriter(w).(http.Flusher).Flush()
-	if !rec.Flushed {
-		t.Errorf("Flush() was not delegated to the underlying writer")
-	}
+			if flushes {
+				flusher.Flush()
+			}
+			if hijacks {
+				if _, _, err := hijacker.Hijack(); !errors.Is(err, errOptionalResponseWriter) {
+					t.Errorf("Hijack() error = %v, want %v", err, errOptionalResponseWriter)
+				}
+			}
+			if pushes {
+				if err := pusher.Push("/asset", nil); !errors.Is(err, errOptionalResponseWriter) {
+					t.Errorf("Push() error = %v, want %v", err, errOptionalResponseWriter)
+				}
+			}
+			if optional.flushes != mask&1 || optional.hijacks != (mask>>1)&1 || optional.pushes != (mask>>2)&1 {
+				t.Errorf("delegated calls = (Flush %d, Hijack %d, Push %d)", optional.flushes, optional.hijacks, optional.pushes)
+			}
 
-	if _, _, err := w.Hijack(); !errors.Is(err, http.ErrNotSupported) {
-		t.Errorf("Hijack() on a non-hijackable writer = %v, want http.ErrNotSupported", err)
-	}
-	if err := w.Push("/asset", nil); !errors.Is(err, http.ErrNotSupported) {
-		t.Errorf("Push() on a non-pusher writer = %v, want http.ErrNotSupported", err)
-	}
+			wrapped.WriteHeader(http.StatusCreated)
+			if status != http.StatusCreated || recorder.Code != http.StatusCreated {
+				t.Errorf("WriteHeader() status = (%d, %d), want (%d, %d)", status, recorder.Code, http.StatusCreated, http.StatusCreated)
+			}
 
-	h := &hijackableRecorder{ResponseRecorder: httptest.NewRecorder()}
-	if _, _, err := WrapResponseWriter(h, &status).Hijack(); err != nil || !h.hijacked {
-		t.Errorf("Hijack() = %v (delegated: %v), want delegation to the underlying writer", err, h.hijacked)
+			unwrapper, ok := wrapped.(interface{ Unwrap() http.ResponseWriter })
+			if !ok || unwrapper.Unwrap() != original {
+				t.Errorf("Unwrap() did not return the underlying writer")
+			}
+		})
 	}
 }
 
