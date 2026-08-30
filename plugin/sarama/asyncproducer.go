@@ -26,6 +26,9 @@ type asyncProducer struct {
 	successes    chan *sarama.ProducerMessage
 	errors       chan *sarama.ProducerError
 	done         chan struct{}
+	inputDone    chan struct{}
+	ackDone      chan struct{}
+	drainDone    chan struct{}
 	closeOnce    sync.Once
 	ctx          context.Context
 	spans        map[string]pinpoint.Tracer
@@ -34,9 +37,20 @@ type asyncProducer struct {
 
 // InputContext sends a given message with tracer context to the input channel of sarama.AsyncProducer.
 func (p *asyncProducer) InputContext(ctx context.Context, msg *sarama.ProducerMessage) {
+	select {
+	case <-p.done:
+		return
+	default:
+	}
+
 	tracer := pinpoint.FromContext(ctx)
-	newCtx := pinpoint.NewContext(context.Background(), tracer.NewGoroutineTracer())
-	p.inputContext <- &producerMessageContext{msg, newCtx}
+	asyncTracer := tracer.NewGoroutineTracer()
+	newCtx := pinpoint.NewContext(context.Background(), asyncTracer)
+	select {
+	case p.inputContext <- &producerMessageContext{msg, newCtx}:
+	case <-p.done:
+		asyncTracer.EndSpan()
+	}
 }
 
 // Input returns the input channel of sarama.AsyncProducer. For trace, WithContext should be called first.
@@ -52,9 +66,18 @@ func (p *asyncProducer) Errors() <-chan *sarama.ProducerError {
 	return p.errors
 }
 
+// AsyncClose triggers the shutdown and returns without waiting for it, as
+// sarama's own does. Handing the underlying AsyncClose to a goroutine is what
+// keeps that promise: it has to wait for the input forwarder to stop, or sarama
+// would close its input channel under the forwarder's send.
 func (p *asyncProducer) AsyncClose() {
-	p.closeOnce.Do(func() { close(p.done) })
-	p.AsyncProducer.AsyncClose()
+	p.closeOnce.Do(func() {
+		close(p.done)
+		go func() {
+			<-p.inputDone
+			p.AsyncProducer.AsyncClose()
+		}()
+	})
 }
 
 // Close mirrors sarama's own Close - AsyncClose, discard the remaining
@@ -109,17 +132,23 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 		successes:     make(chan *sarama.ProducerMessage),
 		errors:        make(chan *sarama.ProducerError),
 		done:          make(chan struct{}),
+		inputDone:     make(chan struct{}),
+		ackDone:       make(chan struct{}),
+		drainDone:     make(chan struct{}),
 		ctx:           context.Background(),
 		spans:         make(map[string]pinpoint.Tracer),
 	}
 
 	go func() {
-		// The send to producer.Input() races AsyncClose closing that channel.
-		// Raw sarama panics the sender in that misuse case; a panic here would
-		// kill the host application, so drop the message instead.
+		// Keep a closed underlying input from panicking the host application.
+		// AsyncClose waits for this goroutine before closing that input itself.
+		// Nothing receives from the wrapper's inputs once this returns, so hand
+		// them to a drainer before releasing AsyncClose.
 		defer func() {
-			recover()
+			go drainAsyncProducerInput(wrapped)
+			close(wrapped.inputDone)
 		}()
+		defer func() { recover() }()
 
 		for {
 			// The tracer is saved before the send: a broker ack can reach the
@@ -131,11 +160,17 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 			case msgCtx := <-wrapped.inputContext:
 				span := newAsyncProducerTracer(msgCtx.ctx, addrs, msgCtx.msg, config)
 				saveAsyncProducerTracer(config, wrapped, span)
-				producer.Input() <- msgCtx.msg
+				if !sendAsyncProducerMessage(producer.Input(), wrapped.done, msgCtx.msg) {
+					endAsyncProducerTracer(wrapped, msgCtx.msg, sarama.ErrShuttingDown)
+					return
+				}
 			case msg := <-wrapped.input:
 				span := newAsyncProducerTracer(wrapped.ctx, addrs, msg, config)
 				saveAsyncProducerTracer(config, wrapped, span)
-				producer.Input() <- msg
+				if !sendAsyncProducerMessage(producer.Input(), wrapped.done, msg) {
+					endAsyncProducerTracer(wrapped, msg, sarama.ErrShuttingDown)
+					return
+				}
 			}
 		}
 	}()
@@ -144,11 +179,14 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 		// Closed only here, and only after sarama has closed its own pair:
 		// AsyncClose guarantees delivery of every in-flight message on
 		// Successes/Errors before closing them, and the user is entitled to
-		// drain all of it through the wrapper. wrapped.input/inputContext are
-		// never closed - their senders are user goroutines, and closing a
-		// channel under a sender panics the send.
+		// drain all of it through the wrapper. wrapped.inputContext is never
+		// closed - its senders are user goroutines, and closing a
+		// channel under a sender panics the send. wrapped.input is closed
+		// instead by the drainer below, once no legitimate sender is left.
+		defer close(wrapped.ackDone)
 		defer close(wrapped.successes)
 		defer close(wrapped.errors)
+		defer endRemainingAsyncProducerTracers(wrapped)
 
 		successes, errs := producer.Successes(), producer.Errors()
 		for successes != nil || errs != nil {
@@ -172,6 +210,64 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 	}()
 
 	return wrapped
+}
+
+func sendAsyncProducerMessage(input chan<- *sarama.ProducerMessage, done <-chan struct{}, msg *sarama.ProducerMessage) (sent bool) {
+	defer func() {
+		if recover() != nil {
+			sent = false
+		}
+	}()
+
+	select {
+	case input <- msg:
+		return true
+	case <-done:
+		return false
+	}
+}
+
+// drainAsyncProducerInput releases callers that raced AsyncClose on the
+// wrapper's unbuffered inputs. It outlives AsyncClose - which returns as soon
+// as the input forwarder is gone - and stops once the wrapper is fully shut
+// down, sweeping up whoever parked in the meantime.
+//
+// It then closes wrapped.input, so that a send issued after shutdown panics
+// the caller exactly as raw sarama's own closed input does, instead of parking
+// on a channel that nothing will ever receive from again. Racing a send against
+// that close is reported by the race detector, again just as it is for raw
+// sarama - the send is a programming error either way. wrapped.inputContext
+// needs no such close: InputContext gives up on wrapped.done by itself.
+func drainAsyncProducerInput(wrapped *asyncProducer) {
+	defer close(wrapped.drainDone)
+
+	for {
+		select {
+		case msgCtx := <-wrapped.inputContext:
+			pinpoint.FromContext(msgCtx.ctx).EndSpan()
+		case <-wrapped.input:
+		case <-wrapped.ackDone:
+			for sweepAsyncProducerInput(wrapped) {
+			}
+			close(wrapped.input)
+			return
+		}
+	}
+}
+
+// sweepAsyncProducerInput drops one parked message, reporting whether it found
+// one. Both cases of the drainer's select are ready when a sender is parked as
+// ackDone closes, and select would pick between them at random.
+func sweepAsyncProducerInput(wrapped *asyncProducer) bool {
+	select {
+	case msgCtx := <-wrapped.inputContext:
+		pinpoint.FromContext(msgCtx.ctx).EndSpan()
+		return true
+	case <-wrapped.input:
+		return true
+	default:
+		return false
+	}
 }
 
 const HeaderAsyncSpanId = "Pinpoint-AsyncSpanID"
@@ -211,16 +307,32 @@ func endAsyncProducerTracer(wrapped *asyncProducer, msg *sarama.ProducerMessage,
 	headers := &distributedTracingContextWriterProducer{msg}
 	if id := headers.Get(HeaderAsyncSpanId); id != "" {
 		wrapped.spansLock.Lock()
-		defer wrapped.spansLock.Unlock()
+		span, ok := wrapped.spans[id]
+		delete(wrapped.spans, id)
+		wrapped.spansLock.Unlock()
 
-		if span, ok := wrapped.spans[id]; ok {
+		if ok {
 			if err != nil {
 				span.SpanEvent().SetError(err)
 			}
 			span.EndSpanEvent()
 			span.EndSpan()
-
-			delete(wrapped.spans, id)
 		}
+	}
+}
+
+// endRemainingAsyncProducerTracers ends whatever is left once sarama has closed
+// its delivery channels. Those messages never got an ack, so their spans record
+// the shutdown rather than a send that looks like it succeeded.
+func endRemainingAsyncProducerTracers(wrapped *asyncProducer) {
+	wrapped.spansLock.Lock()
+	spans := wrapped.spans
+	wrapped.spans = make(map[string]pinpoint.Tracer)
+	wrapped.spansLock.Unlock()
+
+	for _, span := range spans {
+		span.SpanEvent().SetError(sarama.ErrShuttingDown)
+		span.EndSpanEvent()
+		span.EndSpan()
 	}
 }
