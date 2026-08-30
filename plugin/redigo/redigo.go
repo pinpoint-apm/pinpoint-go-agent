@@ -119,8 +119,13 @@ func makeWrappedConnURL(c redis.Conn, rawurl string) (redis.Conn, error) {
 
 	u, err := url.Parse(rawurl)
 	if err == nil {
-		host, _, err = net.SplitHostPort(u.Host)
-		if err != nil {
+		// A redis URL may omit the port - redigo defaults it to 6379 - so the
+		// split failing is not a dial failure. Keeping SplitHostPort's error
+		// here reported an already-connected DialURL as failed, and the caller
+		// dropped a live connection.
+		if h, _, splitErr := net.SplitHostPort(u.Host); splitErr == nil {
+			host = h
+		} else {
 			host = u.Host
 		}
 		if host == "" {
