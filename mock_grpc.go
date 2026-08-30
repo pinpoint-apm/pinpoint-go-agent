@@ -241,14 +241,16 @@ type mockAtcStream struct {
 	grpc.ClientStream // never called; the agent only uses Send/CloseAndRecv
 	mu                sync.Mutex
 	sends             int
+	responses         []*pb.PCmdActiveThreadCountRes
 	closed            bool
 	sendErr           error
 }
 
-func (s *mockAtcStream) Send(*pb.PCmdActiveThreadCountRes) error {
+func (s *mockAtcStream) Send(response *pb.PCmdActiveThreadCountRes) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sends++
+	s.responses = append(s.responses, response)
 	return s.sendErr
 }
 
@@ -263,6 +265,12 @@ func (s *mockAtcStream) sendCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.sends
+}
+
+func (s *mockAtcStream) sentResponses() []*pb.PCmdActiveThreadCountRes {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*pb.PCmdActiveThreadCountRes(nil), s.responses...)
 }
 
 func (s *mockAtcStream) isClosed() bool {

@@ -1547,7 +1547,7 @@ func (s *cmdStream) recvCommandRequest() (*pb.PCmdRequest, error) {
 }
 
 type activeThreadCountStream struct {
-	agent    *agent
+	streams  *atcStreams
 	stream   pb.ProfilerCommandService_CommandStreamActiveThreadCountClient
 	reqId    int32
 	actCount int32
@@ -1560,8 +1560,8 @@ type activeThreadCountStream struct {
 	stopOnce sync.Once
 }
 
-func newActiveThreadCountStream(agent *agent, reqId int32) *activeThreadCountStream {
-	return &activeThreadCountStream{agent: agent, reqId: reqId, stop: make(chan struct{})}
+func newActiveThreadCountStream(streams *atcStreams, reqId int32) *activeThreadCountStream {
+	return &activeThreadCountStream{streams: streams, reqId: reqId, stop: make(chan struct{})}
 }
 
 // openActiveThreadCountStream opens the gRPC stream for an already registered
@@ -1618,7 +1618,7 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 	}
 
 	now := time.Now()
-	activeThreadCount := s.agent.getActiveSpanCount(now)
+	activeThreadCount := s.streams.activeSpanCount(now)
 	s.actCount++
 
 	gRes = &pb.PCmdActiveThreadCountRes{
@@ -1687,9 +1687,10 @@ func makePActiveThreadDumpList(dump *goroutineDump, limit int, threadName []stri
 			limit = len(dump.goroutines)
 		}
 
+		byHeader := dump.indexByHeader(threadName)
 		selected := make([]*goroutine, 0)
 		for _, tn := range threadName {
-			g := dump.search(tn)
+			g := byHeader[tn]
 			if g != nil {
 				selected = append(selected, g)
 			}

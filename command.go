@@ -27,6 +27,14 @@ type atcStreams struct {
 	agent   *agent
 	mu      sync.Mutex
 	streams map[*activeThreadCountStream]struct{}
+
+	// All streams report the same agent-wide histogram. Keep one immutable
+	// sample for an interval instead of ranging the active-span map once per
+	// stream. The stream registry has a separate lock so a slow range cannot
+	// delay shutdown or a re-issued command.
+	sampleMu     sync.Mutex
+	sampleAt     time.Time
+	sampleCounts []int32
 }
 
 // add registers s and reports whether it may run. Streams are keyed by identity
@@ -76,6 +84,25 @@ func (r *atcStreams) count() int {
 // must hold r.mu.
 func (r *atcStreams) publishCount() {
 	r.agent.atcStreamCount.Store(int32(len(r.streams)))
+}
+
+// activeSpanCount returns one agent-wide sample per reporting interval. The
+// sample is anchored to whichever stream asks first after expiry, so a stream
+// whose send is offset by d reports counts up to d old - bounded by one
+// interval - under its own, current timestamp. That lag is constant per stream
+// and well inside the resolution of the real-time view.
+//
+// The returned slice is never mutated after publication, so concurrent gRPC
+// marshaling by multiple streams may safely share it.
+func (r *atcStreams) activeSpanCount(now time.Time) []int32 {
+	r.sampleMu.Lock()
+	defer r.sampleMu.Unlock()
+
+	if r.sampleAt.IsZero() || now.Before(r.sampleAt) || now.Sub(r.sampleAt) >= activeThreadCountInterval {
+		r.sampleCounts = r.agent.getActiveSpanCount(now)
+		r.sampleAt = now
+	}
+	return r.sampleCounts
 }
 
 type activeSpanInfo struct {
@@ -169,7 +196,7 @@ func (agent *agent) runCommandService() {
 // rejects the request when maxActiveThreadCountStreams are already running.
 // Mirrors the C++ agent's handle_active_thread_count().
 func (agent *agent) handleActiveThreadCount(reqId int32, cmd *cmdStream) {
-	s := newActiveThreadCountStream(agent, reqId)
+	s := newActiveThreadCountStream(&agent.cmdGrpc.atcStreams, reqId)
 
 	// Register before opening the gRPC stream: the cap and the stop of a
 	// same-id predecessor are then decided under a single lock, and a request
@@ -202,6 +229,8 @@ func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
 	}()
 
 	shutdown := agent.stopSignal().Done()
+	timer := time.NewTimer(activeThreadCountInterval)
+	defer timer.Stop()
 	for agent.enable.Load() && !s.stopped() {
 		err := s.sendActiveThreadCount()
 		if err != nil {
@@ -211,6 +240,16 @@ func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
 			return
 		}
 
+		// Preserve the old wait-after-send cadence while reusing one timer for
+		// the lifetime of the stream.
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(activeThreadCountInterval)
+
 		// Returning from inside the select rather than falling through to the
 		// loop condition: shutdown is signalled before agent.enable is cleared,
 		// so a stopped stream that only re-tested enable would spin.
@@ -219,7 +258,7 @@ func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
 			return
 		case <-shutdown:
 			return
-		case <-time.After(activeThreadCountInterval):
+		case <-timer.C:
 		}
 	}
 }

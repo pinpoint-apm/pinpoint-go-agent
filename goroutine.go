@@ -17,8 +17,9 @@ import (
 )
 
 var (
-	goIdOffset uintptr
-	stateMap   map[string]pb.PThreadState
+	goIdOffset      uintptr
+	stateMap        map[string]pb.PThreadState
+	goroutineHeader = regexp.MustCompile(`^goroutine\s+(\d+)\s+\[(.*)\]:$`)
 )
 
 func initGoroutine() {
@@ -94,14 +95,29 @@ func (gd *goroutineDump) add(g *goroutine) {
 	gd.goroutines = append(gd.goroutines, g)
 }
 
-func (gd *goroutineDump) search(s string) *goroutine {
-	for _, g := range gd.goroutines {
-		if g.header == s {
-			return g
-		}
+// indexByHeader indexes only the requested names, keeping the full/light dump
+// parse path unchanged while reducing selection from M scans of A goroutines
+// to one scan plus M lookups.
+func (gd *goroutineDump) indexByHeader(names []string) map[string]*goroutine {
+	index := make(map[string]*goroutine, len(names))
+	for _, name := range names {
+		index[name] = nil
+	}
+	if len(index) == 0 {
+		return index
 	}
 
-	return nil
+	remaining := len(index)
+	for _, g := range gd.goroutines {
+		if selected, requested := index[g.header]; requested && selected == nil {
+			index[g.header] = g
+			remaining--
+			if remaining == 0 {
+				break
+			}
+		}
+	}
+	return index
 }
 
 func newGoroutineDump() *goroutineDump {
@@ -143,13 +159,12 @@ func parseProfile(r io.Reader, agent *agent) *goroutineDump {
 	var g *goroutine
 
 	scanner := bufio.NewScanner(r)
-	re := regexp.MustCompile(`^goroutine\s+(\d+)\s+\[(.*)\]:$`)
 
 	for scanner.Scan() {
 		line := scanner.Text()
 		if g == nil {
-			if match := re.FindAllStringSubmatch(line, 1); match != nil {
-				if g = newGoroutine(match[0][1], match[0][2], line); g != nil {
+			if match := goroutineHeader.FindStringSubmatch(line); match != nil {
+				if g = newGoroutine(match[1], match[2], line); g != nil {
 					if v, ok := agent.realTimeActiveSpan.Load(g.id); ok {
 						g.span = v.(*activeSpanInfo)
 						dump.add(g)
