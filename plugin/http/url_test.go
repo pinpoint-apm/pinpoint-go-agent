@@ -1,6 +1,10 @@
 package pphttp
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 func TestHttpExcludeUrlMatch(t *testing.T) {
 	tests := []struct {
@@ -158,17 +162,19 @@ func TestHttpExcludeUrlMatch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := newHttpExcludeUrl(tt.pattern)
-			if h.kind != tt.kind {
-				t.Errorf("newHttpExcludeUrl(%q).kind = %d, want %d", tt.pattern, h.kind, tt.kind)
+			if kind := newHttpExcludeUrl(tt.pattern).kind; kind != tt.kind {
+				t.Errorf("newHttpExcludeUrl(%q).kind = %d, want %d", tt.pattern, kind, tt.kind)
 			}
+			// Match through the filter so every kind takes the dispatch path a
+			// request takes.
+			f := setupHttpUrlFilter([]string{tt.pattern})
 			for _, url := range tt.match {
-				if !h.match(url) {
+				if !f.isFiltered(url) {
 					t.Errorf("pattern %q should match %q", tt.pattern, url)
 				}
 			}
 			for _, url := range tt.noMatch {
-				if h.match(url) {
+				if f.isFiltered(url) {
 					t.Errorf("pattern %q should not match %q", tt.pattern, url)
 				}
 			}
@@ -179,35 +185,149 @@ func TestHttpExcludeUrlMatch(t *testing.T) {
 // The stack resident DP rows only cover urls up to antScratchLen; longer ones
 // take the heap fallback and must still match.
 func TestHttpExcludeUrlLongUrl(t *testing.T) {
-	h := newHttpExcludeUrl("/a?c/**/x.html")
+	f := setupHttpUrlFilter([]string{"/a?c/**/x.html"})
 
 	long := "/abc"
 	for len(long) < 2*antScratchLen {
 		long += "/segment"
 	}
 
-	if !h.match(long + "/x.html") {
+	if !f.isFiltered(long + "/x.html") {
 		t.Errorf("pattern should match long url of %d bytes", len(long)+7)
 	}
-	if h.match(long + "/x.htm") {
+	if f.isFiltered(long + "/x.htm") {
 		t.Errorf("pattern should not match long url with a different suffix")
 	}
 }
 
 func TestHttpUrlFilterIsFiltered(t *testing.T) {
-	f := &httpUrlFilter{filters: []*httpExcludeUrl{
-		newHttpExcludeUrl("/??/exclude.html"),
-		newHttpExcludeUrl("/static/**"),
-	}}
+	f := setupHttpUrlFilter([]string{
+		"/Exact/한글",
+		"/case-sensitive",
+		"/Exact/한글", // exact duplicates collapse in the lookup map
+		"/??/exclude.html",
+		"/static/**",
+	})
 
-	for _, url := range []string{"/ab/exclude.html", "/static/js/app.js"} {
+	if got := len(f.exact); got != 2 {
+		t.Fatalf("exact filter count = %d, want 2", got)
+	}
+	if got := len(f.prefix); got != 1 {
+		t.Fatalf("prefix filter count = %d, want 1", got)
+	}
+	if got := len(f.ant); got != 1 {
+		t.Fatalf("ant filter count = %d, want 1", got)
+	}
+
+	for _, url := range []string{"/Exact/한글", "/case-sensitive", "/ab/exclude.html", "/static/js/app.js"} {
 		if !f.isFiltered(url) {
 			t.Errorf("isFiltered(%q) = false, want true", url)
 		}
 	}
-	for _, url := range []string{"/exclude.html", "/statics/js/app.js"} {
+	for _, url := range []string{"/exact/한글", "/Case-Sensitive", "/exclude.html", "/statics/js/app.js"} {
 		if f.isFiltered(url) {
 			t.Errorf("isFiltered(%q) = true, want false", url)
 		}
+	}
+}
+
+var benchmarkFiltered bool
+
+func TestHttpUrlFilterReusesLongAntScratch(t *testing.T) {
+	f := setupHttpUrlFilter([]string{
+		"/api/**/one.json",
+		"/api/**/two.json",
+		"/api/**/three.json",
+		"/api/**/four.json",
+		"/api/**/result.json",
+	})
+	url := "/api" + strings.Repeat("/segment", antScratchLen/4) + "/result.json"
+
+	allocs := testing.AllocsPerRun(100, func() {
+		benchmarkFiltered = f.isFiltered(url)
+	})
+	if !benchmarkFiltered {
+		t.Fatal("long URL should match the last Ant pattern")
+	}
+	if allocs > 1 {
+		t.Errorf("isFiltered allocated %.0f times, want at most one shared scratch allocation", allocs)
+	}
+}
+
+func benchmarkHttpUrlFilter(patterns ...string) *httpUrlFilter {
+	return setupHttpUrlFilter(patterns)
+}
+
+func BenchmarkHttpUrlFilterExact(b *testing.B) {
+	patterns := make([]string, 128)
+	for i := range patterns {
+		patterns[i] = fmt.Sprintf("/excluded/%03d", i)
+	}
+	f := benchmarkHttpUrlFilter(patterns...)
+	url := patterns[len(patterns)-1]
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		benchmarkFiltered = f.isFiltered(url)
+	}
+}
+
+func BenchmarkHttpUrlFilterMixed(b *testing.B) {
+	patterns := make([]string, 64, 71)
+	for i := range patterns {
+		patterns[i] = fmt.Sprintf("/excluded/%03d", i)
+	}
+	patterns = append(patterns,
+		"/assets/**",
+		"/temporary/*",
+		"/api/v?/**/one.json",
+		"/api/v?/**/two.json",
+		"/api/v?/**/three.json",
+		"/api/v?/**/four.json",
+		"/api/v?/**/result.json",
+	)
+	f := benchmarkHttpUrlFilter(patterns...)
+	url := "/api/v2/one/two/result.json"
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		benchmarkFiltered = f.isFiltered(url)
+	}
+}
+
+func BenchmarkHttpUrlFilterLongAnt(b *testing.B) {
+	f := benchmarkHttpUrlFilter(
+		"/api/**/one.json",
+		"/api/**/two.json",
+		"/api/**/three.json",
+		"/api/**/four.json",
+		"/api/**/result.json",
+	)
+	url := "/api" + strings.Repeat("/segment", antScratchLen/4) + "/result.json"
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(url)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		benchmarkFiltered = f.isFiltered(url)
+	}
+}
+
+// BenchmarkHttpUrlFilterPrefixOnly pins the cost of a config with no Ant
+// pattern: it must not pay for the Ant scratch buffer.
+func BenchmarkHttpUrlFilterPrefixOnly(b *testing.B) {
+	patterns := make([]string, 8)
+	for i := range patterns {
+		patterns[i] = fmt.Sprintf("/static%d/**", i)
+	}
+	f := benchmarkHttpUrlFilter(patterns...)
+	url := "/api/v2/users/1234/profile"
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		benchmarkFiltered = f.isFiltered(url)
 	}
 }

@@ -41,18 +41,18 @@ type httpExcludeUrl struct {
 	tokens        []patternToken
 }
 
-func (h *httpExcludeUrl) match(urlPath string) bool {
-	switch h.kind {
-	case patternExact:
-		return urlPath == h.pattern
-	case patternPrefix:
-		return strings.HasPrefix(urlPath, h.literalPrefix)
-	case patternSegmentPrefix:
-		return strings.HasPrefix(urlPath, h.literalPrefix) &&
-			!strings.Contains(urlPath[len(h.literalPrefix):], "/")
-	default:
-		return h.antMatch(urlPath)
+// matchPrefix tests the two prefix shaped kinds. Exact patterns live in
+// httpUrlFilter's lookup map and Ant patterns go through antMatch, so neither
+// kind reaches here.
+func (h *httpExcludeUrl) matchPrefix(urlPath string) bool {
+	if !strings.HasPrefix(urlPath, h.literalPrefix) {
+		return false
 	}
+	if h.kind == patternPrefix {
+		return true
+	}
+	// patternSegmentPrefix: the tail after the prefix stays in one segment.
+	return !strings.Contains(urlPath[len(h.literalPrefix):], "/")
 }
 
 func containsWildcard(s string) bool {
@@ -116,24 +116,27 @@ func newHttpExcludeUrl(antPath string) *httpExcludeUrl {
 	return h
 }
 
-// antScratchLen sizes the stack resident DP rows. Longer URLs fall back to the heap.
+// antScratchLen sizes each stack resident DP row. Longer URLs fall back to the heap.
 const antScratchLen = 256
+
+func (h *httpExcludeUrl) antCandidate(urlPath string) bool {
+	return len(urlPath) >= h.minLength && strings.HasPrefix(urlPath, h.literalPrefix)
+}
 
 // antMatch runs a two row suffix DP over the compiled tokens: next[i] holds
 // "the token suffix not yet processed matches urlPath[i:]".
-func (h *httpExcludeUrl) antMatch(urlPath string) bool {
+//
+// scratch must hold at least 2*(len(urlPath)+1) entries, and it arrives dirty:
+// one buffer is reused across every Ant filter of a request. Only next is
+// cleared here, so each case below has to write all of cur[0:len(urlPath)+1].
+// A case that leaves entries untouched would read the previous filter's
+// leftovers as its own DP state.
+func (h *httpExcludeUrl) antMatch(urlPath string, scratch []bool) bool {
 	u := len(urlPath)
-	if u < h.minLength || !strings.HasPrefix(urlPath, h.literalPrefix) {
-		return false
-	}
-
-	var scratch [2 * antScratchLen]bool
-	var cur, next []bool
-	if n := u + 1; n <= antScratchLen {
-		cur, next = scratch[:n], scratch[antScratchLen:antScratchLen+n]
-	} else {
-		cur, next = make([]bool, n), make([]bool, n)
-	}
+	n := u + 1
+	scratch = scratch[:2*n]
+	cur, next := scratch[:n], scratch[n:]
+	clear(next)
 	next[u] = true
 
 	for i := len(h.tokens) - 1; i >= 0; i-- {
@@ -179,20 +182,18 @@ func (h *httpExcludeUrl) antMatch(urlPath string) bool {
 }
 
 type httpUrlFilter struct {
-	filters []*httpExcludeUrl
+	exact  map[string]struct{}
+	prefix []*httpExcludeUrl
+	ant    []*httpExcludeUrl
 }
 
 func newHttpUrlFilter() *httpUrlFilter {
-	return &httpUrlFilter{
-		filters: setupHttpUrlFilter(),
-	}
+	cfgFilters := trimStringSlice(pinpoint.GetConfig().StringSlice(CfgHttpServerExcludeUrl))
+	return setupHttpUrlFilter(cfgFilters)
 }
 
-func setupHttpUrlFilter() []*httpExcludeUrl {
-	var filters []*httpExcludeUrl
-
-	cfgFilters := trimStringSlice(pinpoint.GetConfig().StringSlice(CfgHttpServerExcludeUrl))
-
+func setupHttpUrlFilter(cfgFilters []string) *httpUrlFilter {
+	filter := &httpUrlFilter{}
 	for _, u := range cfgFilters {
 		if u == "" {
 			pinpoint.Log("http").Warnf("%s: empty pattern is ignored", CfgHttpServerExcludeUrl)
@@ -200,15 +201,52 @@ func setupHttpUrlFilter() []*httpExcludeUrl {
 		}
 		h := newHttpExcludeUrl(u)
 		pinpoint.Log("http").Debugf("%s: %s (kind: %d)", CfgHttpServerExcludeUrl, h.pattern, h.kind)
-		filters = append(filters, h)
+		switch h.kind {
+		case patternExact:
+			if filter.exact == nil {
+				filter.exact = make(map[string]struct{})
+			}
+			filter.exact[h.pattern] = struct{}{}
+		case patternAnt:
+			filter.ant = append(filter.ant, h)
+		default:
+			filter.prefix = append(filter.prefix, h)
+		}
 	}
 
-	return filters
+	return filter
 }
 
 func (h *httpUrlFilter) isFiltered(url string) bool {
-	for _, h := range h.filters {
-		if h.match(url) {
+	if _, ok := h.exact[url]; ok {
+		return true
+	}
+	for _, f := range h.prefix {
+		if f.matchPrefix(url) {
+			return true
+		}
+	}
+	// antFiltered zeroes a scratch buffer on entry, so stay out of it entirely
+	// when no Ant pattern is configured.
+	if len(h.ant) == 0 {
+		return false
+	}
+	return h.antFiltered(url)
+}
+
+func (h *httpUrlFilter) antFiltered(url string) bool {
+	// The request owns this buffer; a long URL grows it once and every Ant filter reuses it.
+	var stack [2 * antScratchLen]bool
+	scratch := stack[:]
+
+	for _, f := range h.ant {
+		if !f.antCandidate(url) {
+			continue
+		}
+		if n := 2 * (len(url) + 1); n > len(scratch) {
+			scratch = make([]bool, n)
+		}
+		if f.antMatch(url, scratch) {
 			return true
 		}
 	}
