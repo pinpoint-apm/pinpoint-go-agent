@@ -543,6 +543,10 @@ type spanChunk struct {
 	eventChunk []*spanEvent
 	final      bool
 	keyTime    int64
+	// endPoint is captured when the chunk is cut: the sender serializes
+	// non-final chunks while the span is still live on the request goroutine,
+	// so reading span.endPoint there would race with SetEndPoint.
+	endPoint string
 }
 
 func (span *span) newEventChunk(final bool) *spanChunk {
@@ -552,6 +556,7 @@ func (span *span) newEventChunk(final bool) *spanChunk {
 		eventChunk: span.spanEvents,
 		final:      final,
 		keyTime:    0,
+		endPoint:   span.endPoint,
 	}
 
 	capacity := defaultEventChunkSize

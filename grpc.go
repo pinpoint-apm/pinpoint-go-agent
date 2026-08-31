@@ -1142,7 +1142,7 @@ func (b *spanMessageBuilder) makePSpanChunk(chunk *spanChunk) *pb.PSpanMessage {
 	pchunk.TransactionId = txId
 	pchunk.SpanId = span.spanId
 	pchunk.KeyTime = chunk.keyTime
-	pchunk.EndPoint = span.endPoint
+	pchunk.EndPoint = chunk.endPoint
 	pchunk.SpanEvent = b.makePSpanEventList(chunk)
 	pchunk.ApplicationServiceType = span.agent.appType
 
