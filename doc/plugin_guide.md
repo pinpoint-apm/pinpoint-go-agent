@@ -10,6 +10,7 @@
 | [plugin/fasthttp](/plugin/fasthttp)             | valyala/fasthttp package (https://github.com/valyala/fasthttp)                 |
 | [plugin/fasthttprouter](/plugin/fasthttprouter) | fasthttp/router package (https://github.com/fasthttp/router)                   |
 | [plugin/fiber](/plugin/fiber)                   | gofiber/fiber/v2 package (https://github.com/gofiber/fiber)                    |
+| [plugin/fiberv3](/plugin/fiberv3)               | gofiber/fiber/v3 package (https://github.com/gofiber/fiber)                    |
 | [plugin/gin](/plugin/gin)                       | gin-gonic/gin package (https://github.com/gin-gonic/gin)                       |
 | [plugin/gocql](/plugin/gocql)                   | gocql package (https://github.com/gocql/gocql).                                |
 | [plugin/goelastic](/plugin/goelastic)           | elastic/go-elasticsearch package (https://github.com/elastic/go-elasticsearch) |
