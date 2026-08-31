@@ -21,7 +21,7 @@ import (
 
 const serverName = "Echo HTTP Server"
 
-func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
+func wrap(handler echo.HandlerFunc, funcName func(*echo.Context) string) echo.HandlerFunc {
 	return func(c *echo.Context) error {
 		if !pinpoint.GetAgent().Enable() {
 			return handler(c)
@@ -42,7 +42,7 @@ func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
 				panic(e)
 			}
 		}()
-		defer tracer.NewSpanEvent(funcName).EndSpanEvent()
+		defer tracer.NewSpanEvent(funcName(c)).EndSpanEvent()
 
 		ctx := pinpoint.NewContext(req.Context(), tracer)
 		c.SetRequest(req.WithContext(ctx))
@@ -60,20 +60,31 @@ func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
 	}
 }
 
+// routeName reports the span event name for a request Middleware handles.
+//
+// v5 does not record the handler function name on a route the way v4 did:
+// echo.Add leaves Route.Name empty, RouteInfo falls back to "METHOD:/path",
+// and the handler is deliberately not exposed on RouteInfo because it may
+// already wrap middlewares. A name set explicitly through echo.AddRoute is
+// therefore the only one left to report; without it the name is fixed, as in
+// the gin and fiber plugins. WrapHandler still reports the real function name.
+func routeName(c *echo.Context) string {
+	if ri := c.RouteInfo(); ri.Name != "" && ri.Name != ri.Method+":"+ri.Path {
+		return ri.Name + "()"
+	}
+	return "echo.HandlerFunc()"
+}
+
 // Middleware returns an echo middleware that creates a pinpoint.Tracer that instruments the echo handler function.
 func Middleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		// v5 no longer records the handler function name on a route
-		// (echo.RouteInfo.Name defaults to "METHOD:/path"), so the middleware
-		// cannot name the wrapped handler the way ppechov4 did. Use a fixed
-		// name, as the gin and fiber plugins do. WrapHandler still reports the
-		// real function name.
-		return wrap(next, "echo.HandlerFunc()")
+		return wrap(next, routeName)
 	}
 }
 
 // WrapHandler wraps the given echo handler and adds the pinpoint.Tracer to the request's context.
 // By using the pinpoint.FromContext function, this tracer can be obtained.
 func WrapHandler(handler echo.HandlerFunc) echo.HandlerFunc {
-	return wrap(handler, pphttp.HandlerFuncName(handler))
+	name := pphttp.HandlerFuncName(handler)
+	return wrap(handler, func(*echo.Context) string { return name })
 }

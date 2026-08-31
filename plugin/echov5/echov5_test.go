@@ -238,3 +238,33 @@ func TestMiddleware_ConcurrentRequests(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// v5 does not record the handler function name on a route, so Middleware falls
+// back to a fixed span event name. A name set through echo.AddRoute is the one
+// case it can still report, and routeName has to tell that apart from
+// RouteInfo's "METHOD:/path" default. This also pins that RouteInfo is already
+// populated where the middleware reads it.
+func Test_routeName(t *testing.T) {
+	var got [2]string
+	e := echo.New()
+	e.GET("/plain", func(c *echo.Context) error { got[0] = routeName(c); return nil })
+	if _, err := e.AddRoute(echo.Route{
+		Method:  http.MethodGet,
+		Path:    "/named",
+		Name:    "helloHandler",
+		Handler: func(c *echo.Context) error { got[1] = routeName(c); return nil },
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{"/plain", "/named"} {
+		e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
+	}
+
+	if got[0] != "echo.HandlerFunc()" {
+		t.Errorf("unnamed route: routeName = %q, want %q", got[0], "echo.HandlerFunc()")
+	}
+	if got[1] != "helloHandler()" {
+		t.Errorf("named route: routeName = %q, want %q", got[1], "helloHandler()")
+	}
+}

@@ -27,8 +27,20 @@ e.GET("/hello", ppechov5.WrapHandler(hello))
 ```
 
 echo v5 no longer records the handler function name on a route, so the Middleware
-names every span event `echo.HandlerFunc()`. Use WrapHandler where the real
-handler name matters.
+names span events `echo.HandlerFunc()` by default. Two ways to get a real name:
+
+Use WrapHandler for the routes that matter - it reports the handler's function name.
+
+``` go
+e.GET("/hello", ppechov5.WrapHandler(hello))
+```
+
+Or register the route with a name, which the Middleware reports as-is. This
+covers a whole router without wrapping each handler.
+
+``` go
+e.AddRoute(echo.Route{Method: http.MethodGet, Path: "/hello", Name: "hello", Handler: hello})
+```
 
 For each request, a pinpoint.Tracer is stored in the request context.
 By using the pinpoint.FromContext function, this tracer can be obtained in your handler.
