@@ -7,6 +7,7 @@
 | [plugin/chi](/plugin/chi)                       | go-chi/chi package (https://github.com/go-chi/chi)                             |
 | [plugin/echo](/plugin/echo)                     | labstack/echo package (https://github.com/labstack/echo)                       |
 | [plugin/echov4](/plugin/echov4)                 | labstack/echo/v4 package (https://github.com/labstack/echo)                    |
+| [plugin/echov5](/plugin/echov5)                 | labstack/echo/v5 package (https://github.com/labstack/echo)                    |
 | [plugin/fasthttp](/plugin/fasthttp)             | valyala/fasthttp package (https://github.com/valyala/fasthttp)                 |
 | [plugin/fasthttprouter](/plugin/fasthttprouter) | fasthttp/router package (https://github.com/fasthttp/router)                   |
 | [plugin/fiber](/plugin/fiber)                   | gofiber/fiber/v2 package (https://github.com/gofiber/fiber)                    |
