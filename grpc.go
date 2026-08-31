@@ -655,7 +655,7 @@ func sendStreamWithTimeout(op func() error, cancelStream context.CancelFunc, tim
 		<-callbackDone
 	}
 	if timedOut.Load() {
-		return status.Errorf(codes.DeadlineExceeded, which+" - too slow or blocked")
+		return status.Errorf(codes.DeadlineExceeded, "%s - too slow or blocked", which)
 	}
 	return err
 }
