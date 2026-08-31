@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/spaolacci/murmur3"
@@ -792,11 +793,19 @@ func (agent *agent) cacheError(errorName string) int32 {
 	return id
 }
 
+// abbreviateString truncates str to at most length bytes plus a "...(length)"
+// marker, cutting at a rune boundary: protobuf rejects invalid UTF-8 string
+// fields at marshal time, so a mid-rune cut would fail the whole span or
+// metadata send carrying it.
 func abbreviateString(str string, length int) string {
 	if len(str) <= length {
 		return str
 	}
-	return str[:length] + "...(" + fmt.Sprint(length) + ")"
+	cut := length
+	for cut > 0 && !utf8.RuneStart(str[cut]) {
+		cut--
+	}
+	return str[:cut] + "...(" + fmt.Sprint(length) + ")"
 }
 
 func (agent *agent) cacheSql(sql string) int32 {

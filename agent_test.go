@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/sirupsen/logrus"
@@ -185,6 +186,19 @@ func Test_agent_NewSpanTracerWithReader(t *testing.T) {
 			assert.Equal(t, int64(67890), span.SpanId(), "SpanId")
 		})
 	}
+}
+
+func Test_abbreviateString_RuneSafe(t *testing.T) {
+	assert.Equal(t, "abc", abbreviateString("abc", 5))
+
+	// "가" is 3 bytes; a limit landing mid-rune must back up to the rune
+	// boundary, or protobuf rejects the string at marshal time and the whole
+	// span/metadata send fails.
+	s := strings.Repeat("가", 3)
+	got := abbreviateString(s, 4)
+	assert.Equal(t, "가...(4)", got)
+	assert.True(t, utf8.ValidString(got))
+	assert.Equal(t, "가가...(6)", abbreviateString(s, 6))
 }
 
 func Test_agent_SQLCachesBoundKeys(t *testing.T) {
