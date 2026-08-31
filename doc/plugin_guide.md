@@ -13,6 +13,8 @@
 | [plugin/gin](/plugin/gin)                       | gin-gonic/gin package (https://github.com/gin-gonic/gin)                       |
 | [plugin/gocql](/plugin/gocql)                   | gocql package (https://github.com/gocql/gocql).                                |
 | [plugin/goelastic](/plugin/goelastic)           | elastic/go-elasticsearch package (https://github.com/elastic/go-elasticsearch) |
+| [plugin/goelasticv8](/plugin/goelasticv8)       | elastic/go-elasticsearch/v8 package (https://github.com/elastic/go-elasticsearch) |
+| [plugin/goelasticv9](/plugin/goelasticv9)       | elastic/go-elasticsearch/v9 package (https://github.com/elastic/go-elasticsearch) |
 | [plugin/gohbase](/plugin/gohbase)               | tsuna/gohbase package (https://github.com/tsuna/gohbase).                      |
 | [plugin/gomemcache](/plugin/gomemcache)         | bradfitz/gomemcache package (https://github.com/bradfitz/gomemcache)           |
 | [plugin/goredis](/plugin/goredis)               | go-redis/redis package (https://github.com/go-redis/redis)                     |
