@@ -345,6 +345,10 @@ func (span *span) EndSpanEvent() {
 				se.SetError(err, "panic")
 				span.SetError(err)
 				span.recovered = true
+				// Record the event before re-panicking: it was already popped,
+				// so skipping the append would drop the very event that
+				// captured the panic.
+				span.appendEndedSpanEvent(se)
 				// Re-panic with the original value, not the recorded error:
 				// converting a non-error panic to an error broke every
 				// upstream recover comparing against the value it panicked
@@ -352,19 +356,24 @@ func (span *span) EndSpanEvent() {
 				panic(v)
 			}
 		}
-
-		span.spanEventLock.Lock()
-		defer span.spanEventLock.Unlock()
-
-		span.spanEvents = append(span.spanEvents, se)
-		if len(span.spanEvents) >= span.config().spanEventChunkSize {
-			chunk := span.newEventChunk(false)
-			if !chunk.enqueue() && IsTraceLogLevelEnabled() {
-				Log("span").Tracef("span channel - max capacity reached or closed")
-			}
-		}
+		span.appendEndedSpanEvent(se)
 	} else {
 		Log("span").Warnf("abnormal span - has no event")
+	}
+}
+
+// appendEndedSpanEvent records a completed event, cutting a chunk for the
+// sender once enough have accumulated.
+func (span *span) appendEndedSpanEvent(se *spanEvent) {
+	span.spanEventLock.Lock()
+	defer span.spanEventLock.Unlock()
+
+	span.spanEvents = append(span.spanEvents, se)
+	if len(span.spanEvents) >= span.config().spanEventChunkSize {
+		chunk := span.newEventChunk(false)
+		if !chunk.enqueue() && IsTraceLogLevelEnabled() {
+			Log("span").Tracef("span channel - max capacity reached or closed")
+		}
 	}
 }
 

@@ -587,3 +587,21 @@ func TestSpan_EndSpanEventRepanicsOriginalValue(t *testing.T) {
 
 	assert.Equal(t, "sentinel", got, "original panic value preserved")
 }
+
+// The event that records a panic must still be shipped: EndSpanEvent used to
+// re-panic before appending the popped event, so the crash site's event never
+// reached the collector.
+func TestSpan_EndSpanEventRecordsPanickedEvent(t *testing.T) {
+	span := defaultTestSpan()
+	span.NewSpanEvent("event")
+
+	func() {
+		defer func() { recover() }()
+		defer span.EndSpanEvent()
+		panic("sentinel")
+	}()
+
+	if assert.Len(t, span.spanEvents, 1, "panicked event recorded") {
+		assert.Equal(t, "sentinel", span.spanEvents[0].errorString)
+	}
+}
