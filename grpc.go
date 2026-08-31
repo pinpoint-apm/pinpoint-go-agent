@@ -12,7 +12,6 @@ import (
 	"runtime/debug"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/golang/protobuf/ptypes/wrappers"
@@ -636,6 +635,37 @@ func makePStackTraceElementList(frames []frame) []*pb.PStackTraceElement {
 	return list
 }
 
+// sendWatchdog is a reusable timeout guard for one stream operation, pooled so
+// the per-chunk sends of the legacy span stream do not allocate a timer, a
+// closure and a channel on every call. The armed state (cancel, timedOut) is
+// exchanged with the timer callback under mu, which is what orders a Reset's
+// arming writes before the callback's reads.
+type sendWatchdog struct {
+	mu       sync.Mutex
+	cancel   context.CancelFunc
+	timedOut bool
+	timer    *time.Timer
+	// fired receives exactly one token per expiry, so a caller whose Stop came
+	// too late can wait for the cancel to finish before reporting the timeout.
+	fired chan struct{}
+}
+
+var sendWatchdogPool = sync.Pool{New: func() any {
+	w := &sendWatchdog{fired: make(chan struct{}, 1)}
+	w.timer = time.AfterFunc(time.Duration(math.MaxInt64), w.onTimeout)
+	w.timer.Stop()
+	return w
+}}
+
+func (w *sendWatchdog) onTimeout() {
+	w.mu.Lock()
+	cancel := w.cancel
+	w.timedOut = true
+	w.mu.Unlock()
+	cancel()
+	w.fired <- struct{}{}
+}
+
 // sendStreamWithTimeout runs op on the calling goroutine and cancels the
 // stream if op blocks past timeout. grpc-go unblocks a flow-control-blocked
 // Send/Recv/CloseSend once the stream context is cancelled, so no operation
@@ -643,18 +673,25 @@ func makePStackTraceElementList(frames []frame) []*pb.PStackTraceElement {
 // wait plus TryCancel. Killing the stream on timeout matches the callers: they
 // already close and re-create the stream on any send error.
 func sendStreamWithTimeout(op func() error, cancelStream context.CancelFunc, timeout time.Duration, which string) error {
-	var timedOut atomic.Bool
-	callbackDone := make(chan struct{})
-	t := time.AfterFunc(timeout, func() {
-		defer close(callbackDone)
-		cancelStream()
-		timedOut.Store(true)
-	})
+	w := sendWatchdogPool.Get().(*sendWatchdog)
+	w.mu.Lock()
+	w.cancel = cancelStream
+	w.timedOut = false
+	w.mu.Unlock()
+	w.timer.Reset(timeout)
+
 	err := op()
-	if !t.Stop() {
-		<-callbackDone
+
+	if !w.timer.Stop() {
+		<-w.fired
 	}
-	if timedOut.Load() {
+	w.mu.Lock()
+	timedOut := w.timedOut
+	w.cancel = nil // don't retain the stream while idling in the pool
+	w.mu.Unlock()
+	sendWatchdogPool.Put(w)
+
+	if timedOut {
 		return status.Errorf(codes.DeadlineExceeded, "%s - too slow or blocked", which)
 	}
 	return err
