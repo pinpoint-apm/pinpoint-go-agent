@@ -12,6 +12,7 @@
 | [plugin/fiber](/plugin/fiber)                   | gofiber/fiber/v2 package (https://github.com/gofiber/fiber)                    |
 | [plugin/gin](/plugin/gin)                       | gin-gonic/gin package (https://github.com/gin-gonic/gin)                       |
 | [plugin/gocql](/plugin/gocql)                   | gocql package (https://github.com/gocql/gocql).                                |
+| [plugin/gocqlv2](/plugin/gocqlv2)               | gocql/v2 package (https://github.com/apache/cassandra-gocql-driver)            |
 | [plugin/goelastic](/plugin/goelastic)           | elastic/go-elasticsearch package (https://github.com/elastic/go-elasticsearch) |
 | [plugin/gohbase](/plugin/gohbase)               | tsuna/gohbase package (https://github.com/tsuna/gohbase).                      |
 | [plugin/gomemcache](/plugin/gomemcache)         | bradfitz/gomemcache package (https://github.com/bradfitz/gomemcache)           |
