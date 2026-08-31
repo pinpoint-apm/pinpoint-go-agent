@@ -6,7 +6,6 @@
 //	r := ppfasthttprouter.New()
 //	r.GET("/", Index)
 //	r.GET("/hello/:name", Hello)
-//
 package ppfasthttprouter
 
 import (
