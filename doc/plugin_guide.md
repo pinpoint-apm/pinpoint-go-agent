@@ -36,6 +36,7 @@
 | [plugin/mssql-microsoft](/plugin/mssql-microsoft) | microsoft/go-mssqldb package (https://github.com/microsoft/go-mssqldb)         |
 | [plugin/mysql](/plugin/mysql)                   | go-sql-driver/mysql package (https://github.com/go-sql-driver/mysql)           |
 | [plugin/oracle](/plugin/oracle)                 | sijms/go-ora/v2 package (https://github.com/sijms/go-ora)                      |
+| [plugin/oraclev3](/plugin/oraclev3)             | sijms/go-ora/v3 package (https://github.com/sijms/go-ora)                      |
 | [plugin/pgsql](/plugin/pgsql)                   | lib/pq package (https://github.com/lib/pq)                                     |
 | [plugin/pgxv5](/plugin/pgxv5)                   | jackc/pgx/v5 package (https://github.com/jackc/pgx)                            |
 | [plugin/redigo](/plugin/redigo)                 | gomodule/redigo package (https://github.com/gomodule/redigo)                   |
