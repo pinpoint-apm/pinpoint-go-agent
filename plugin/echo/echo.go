@@ -9,6 +9,12 @@
 // Use WrapHandler to select the handlers you want to track:
 //
 //	e.GET("/hello", ppecho.WrapHandler(hello))
+//
+// echo v3 is end-of-life upstream, and GHSA-vfp3-v2gw-7wfq - an encoded-slash
+// bypass of route-level protection that exposes static files - covers every v3
+// release including the last, v3.3.10. No patched v3 exists. The vulnerable
+// code is not reachable from this package, but an application pinning echo v3
+// inherits it; plugin/echov4 and plugin/echov5 are the upgrade paths.
 package ppecho
 
 import (

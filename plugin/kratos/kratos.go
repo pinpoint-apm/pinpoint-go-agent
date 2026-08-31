@@ -29,6 +29,11 @@
 //
 //	client := pb.NewGreeterHTTPClient(conn)
 //	reply, err := client.SayHello(pinpoint.NewContext(context.Background(), tracer), &pb.HelloRequest{Name: "kratos"})
+//
+// GHSA-jj45-xvq5-rhh9, a confused deputy issue, covers every kratos v2 release
+// through v2.9.2 and has no patched v2. It is not reachable from this package,
+// but an application pinning kratos v2 inherits it; plugin/kratosv3 is the
+// upgrade path.
 package ppkratos
 
 import (

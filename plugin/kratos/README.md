@@ -1,6 +1,15 @@
 # ppkratos
 This package instruments the [go-kratos/kratos/v2](https://github.com/go-kratos/kratos) package.
 
+> **Note**
+> [GHSA-jj45-xvq5-rhh9](https://github.com/advisories/GHSA-jj45-xvq5-rhh9)
+> (medium: a confused deputy issue) covers every kratos v2 release through
+> `v2.9.2`, and there is no patched v2.
+>
+> The vulnerable code is not reachable from this plugin, but the pin is the
+> floor your application inherits. [plugin/kratosv3](/plugin/kratosv3) is the
+> upgrade path.
+
 ## Installation
 
 ```bash
