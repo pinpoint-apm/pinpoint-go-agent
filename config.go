@@ -565,14 +565,16 @@ func (config *Config) watchConfigFile(watcher *fsnotify.Watcher, done chan struc
 				return
 			}
 
+			// A Remove of the config file is deliberately not an exit: the watch
+			// is on the directory, so it stays valid, and unlink+rewrite savers
+			// (editors, deploy tools) emit Remove then Create - returning on the
+			// Remove silently ended dynamic reload for the rest of the process.
 			currentConfigFile, _ := filepath.EvalSymlinks(configFile)
 			const writeOrCreateMask = fsnotify.Write | fsnotify.Create
 			if (filepath.Clean(event.Name) == configFile && event.Op&writeOrCreateMask != 0) ||
 				(currentConfigFile != "" && currentConfigFile != realConfigFile) {
 				realConfigFile = currentConfigFile
 				config.reloadConfig(cfgFileViper)
-			} else if filepath.Clean(event.Name) == configFile && event.Op&fsnotify.Remove != 0 {
-				return
 			}
 		case err, ok := <-watcher.Errors:
 			if ok {

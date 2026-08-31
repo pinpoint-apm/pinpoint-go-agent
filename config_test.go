@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -700,6 +701,25 @@ Span:
 	config.reloadConfig(cfgFileViper)
 	assert.Equal(t, 1, reloadedSlice)
 	assert.Equal(t, 1, reloadedDepth)
+}
+
+// A delete-then-recreate save (unlink+rewrite editors, deploy tools) must not
+// end the watcher: it watches the directory, so it survives the Remove and the
+// following Create still reloads the recreated file.
+func Test_configWatcher_SurvivesFileRemoval(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	assert.NoError(t, os.WriteFile(cfgFile, []byte("Span:\n  MaxCallStackDepth: 12\n"), 0o600))
+
+	config, err := NewConfig(WithAppName("watchApp"), WithConfigFile(cfgFile))
+	assert.NoError(t, err)
+	defer config.Close()
+	assert.Equal(t, 12, config.Int(CfgSpanMaxCallStackDepth))
+
+	assert.NoError(t, os.Remove(cfgFile))
+	assert.NoError(t, os.WriteFile(cfgFile, []byte("Span:\n  MaxCallStackDepth: 24\n"), 0o600))
+
+	assert.Eventually(t, func() bool { return config.Int(CfgSpanMaxCallStackDepth) == 24 },
+		5*time.Second, 10*time.Millisecond, "recreated config file must reload")
 }
 
 func Test_reloadConfig_keepsSamplerWhenSamplingUnchanged(t *testing.T) {
