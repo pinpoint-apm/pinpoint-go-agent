@@ -180,6 +180,10 @@ func initConfig() {
 }
 
 // AddConfig adds a configuration item.
+//
+// Call it only during package initialization (an init function), before any
+// NewConfig call: it writes the unsynchronized package-global registry that
+// NewConfig reads, so a concurrent call at runtime is a data race.
 func AddConfig(cfgName string, valueType int, defaultValue interface{}, dynamic bool) {
 	cfgBaseMap[cfgName] = &cfgMapItem{
 		defaultValue: defaultValue,
