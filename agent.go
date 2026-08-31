@@ -266,11 +266,11 @@ func NewAgent(config *Config) (Agent, error) {
 	}
 	agent.stopSignal()
 
-	agent.errorCache = newMetaCache[string, int32](cacheSize, hashStringKey)
-	agent.sqlCache = newMetaCache[string, int32](cacheSize, hashStringKey)
-	agent.sqlUidCache = newMetaCache[string, []byte](cacheSize, hashStringKey)
-	agent.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize, hashStringKey)
-	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize, hashApiCacheKey)
+	agent.errorCache = newMetaCache[string, int32](cacheSize)
+	agent.sqlCache = newMetaCache[string, int32](cacheSize)
+	agent.sqlUidCache = newMetaCache[string, []byte](cacheSize)
+	agent.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize)
+	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
 
 	config.logCallbackOnce.Do(func() {
 		config.AddReloadCallback([]string{CfgLogLevel}, logger.reloadLevel)
@@ -1094,11 +1094,11 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 		stats:       newAgentStats(),
 		urlStats:    newUrlStats(config),
 	}
-	agent.errorCache = newMetaCache[string, int32](cacheSize, hashStringKey)
-	agent.sqlCache = newMetaCache[string, int32](cacheSize, hashStringKey)
-	agent.sqlUidCache = newMetaCache[string, []byte](cacheSize, hashStringKey)
-	agent.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize, hashStringKey)
-	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize, hashApiCacheKey)
+	agent.errorCache = newMetaCache[string, int32](cacheSize)
+	agent.sqlCache = newMetaCache[string, int32](cacheSize)
+	agent.sqlUidCache = newMetaCache[string, []byte](cacheSize)
+	agent.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize)
+	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
 
 	agent.agentGrpc = newMockAgentGrpc(agent, t)
 	//agent.spanGrpc = newMockSpanGrpc(agent, t)

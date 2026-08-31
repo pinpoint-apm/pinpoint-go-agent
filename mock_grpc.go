@@ -35,11 +35,11 @@ func newTestAgent(config *Config) *agent {
 		},
 	}
 	a.enable.Store(true)
-	a.errorCache = newMetaCache[string, int32](cacheSize, hashStringKey)
-	a.sqlCache = newMetaCache[string, int32](cacheSize, hashStringKey)
-	a.sqlUidCache = newMetaCache[string, []byte](cacheSize, hashStringKey)
-	a.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize, hashStringKey)
-	a.apiCache = newMetaCache[apiCacheKey, int32](cacheSize, hashApiCacheKey)
+	a.errorCache = newMetaCache[string, int32](cacheSize)
+	a.sqlCache = newMetaCache[string, int32](cacheSize)
+	a.sqlUidCache = newMetaCache[string, []byte](cacheSize)
+	a.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize)
+	a.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
 	a.config.offGrpc = true
 
 	return a

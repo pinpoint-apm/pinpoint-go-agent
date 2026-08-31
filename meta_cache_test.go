@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"container/list"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,7 +17,7 @@ func TestMetaCacheShardPadding(t *testing.T) {
 }
 
 func TestMetaCacheBasics(t *testing.T) {
-	c := newMetaCache[string, int32](cacheSize, hashStringKey)
+	c := newMetaCache[string, int32](cacheSize)
 
 	_, ok := c.peek("a")
 	assert.False(t, ok)
@@ -43,7 +44,7 @@ func TestMetaCacheEvictsLeastRecentlyUsed(t *testing.T) {
 	// capacity 16 over 16 shards = 1 entry per shard: two keys in the same
 	// shard evict each other. Find such a pair (the hash seed is random per
 	// process), then check the older key is the one that goes.
-	c := newMetaCache[string, int32](metaCacheShardCount, hashStringKey)
+	c := newMetaCache[string, int32](metaCacheShardCount)
 	first := "key-0"
 	second := ""
 	for i := 1; i < 1000; i++ {
@@ -128,7 +129,7 @@ func TestMetaCacheLruBeatsFifoOnResends(t *testing.T) {
 	fifo := newFifoCache(cacheSize)
 	fifoResends := runMetaWorkload(fifo.peek, fifo.add)
 
-	c := newMetaCache[string, int32](cacheSize, hashStringKey)
+	c := newMetaCache[string, int32](cacheSize)
 	lruResends := runMetaWorkload(
 		func(k string) bool { _, ok := c.peek(k); return ok },
 		func(k string) { c.peekOrAdd(k, 0) },
@@ -142,7 +143,7 @@ func TestMetaCacheLruBeatsFifoOnResends(t *testing.T) {
 func TestMetaCacheConcurrent(t *testing.T) {
 	// Small capacity keeps every shard full, so promotion, eviction, and
 	// removal all race against lock-free peeks under -race.
-	c := newMetaCache[string, int32](64, hashStringKey)
+	c := newMetaCache[string, int32](64)
 	keys := make([]string, 512)
 	for i := range keys {
 		keys[i] = fmt.Sprintf("key-%03d", i)
@@ -167,7 +168,7 @@ func TestMetaCacheConcurrent(t *testing.T) {
 }
 
 func TestMetaCachePeekNoAlloc(t *testing.T) {
-	c := newMetaCache[string, int32](cacheSize, hashStringKey)
+	c := newMetaCache[string, int32](cacheSize)
 	keys := make([]string, 256)
 	for i := range keys {
 		keys[i] = fmt.Sprintf("select * from hot_table_%03d where id = ?", i)
@@ -184,7 +185,7 @@ func TestMetaCachePeekNoAlloc(t *testing.T) {
 // BenchmarkMetaCacheHit measures the contended pure-hit path (cache not
 // full, so no promotion): run with -cpu=1,4,16 to see the sharding effect.
 func BenchmarkMetaCacheHit(b *testing.B) {
-	c := newMetaCache[string, int32](cacheSize, hashStringKey)
+	c := newMetaCache[string, int32](cacheSize)
 	keys := make([]string, 512)
 	for i := range keys {
 		keys[i] = fmt.Sprintf("select * from table_%04d where id = ? and name = ?", i)
@@ -204,7 +205,7 @@ func BenchmarkMetaCacheHit(b *testing.B) {
 // hits with a trickle of new keys (1 in 64), so eviction and aged promotion
 // stay active throughout.
 func BenchmarkMetaCacheMixedSaturated(b *testing.B) {
-	c := newMetaCache[string, int32](cacheSize, hashStringKey)
+	c := newMetaCache[string, int32](cacheSize)
 	hot := make([]string, 256)
 	for i := range hot {
 		hot[i] = fmt.Sprintf("select * from hot_table_%03d where id = ?", i)
@@ -242,4 +243,20 @@ func BenchmarkMetaCacheMixedSaturated(b *testing.B) {
 			i++
 		}
 	})
+}
+
+// BenchmarkMetaCacheShard guards the reason shard hashes with
+// maphash.Comparable rather than maphash.String: the runtime hasher it
+// dispatches to is AES-accelerated, which is what keeps a maxSqlSize key off
+// the microsecond scale on the insert path (#189).
+func BenchmarkMetaCacheShard(b *testing.B) {
+	c := newMetaCache[string, int32](cacheSize)
+	for _, size := range []int{190, 1024, 8 * 1024, maxSqlSize} {
+		key := "select * from t where x in (" + strings.Repeat("9", size) + ")"
+		b.Run(fmt.Sprint(size), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_ = c.shard(key)
+			}
+		})
+	}
 }

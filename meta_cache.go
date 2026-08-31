@@ -23,12 +23,6 @@ const metaCacheShardCount = 16 // power of two; matches the C++ agent
 
 var metaCacheSeed = maphash.MakeSeed()
 
-func hashStringKey(s string) uint64 { return maphash.String(metaCacheSeed, s) }
-
-func hashApiCacheKey(k apiCacheKey) uint64 {
-	return maphash.String(metaCacheSeed, k.descriptor) ^ (uint64(k.apiType) * 0x9e3779b97f4a7c15)
-}
-
 type metaCacheEntry[K comparable, V any] struct {
 	key     K
 	value   V
@@ -57,7 +51,6 @@ type metaCacheShard struct {
 }
 
 type metaCache[K comparable, V any] struct {
-	hash   func(K) uint64
 	m      sync.Map // K -> *metaCacheEntry[K, V]
 	shards [metaCacheShardCount]metaCacheShard
 }
@@ -65,8 +58,8 @@ type metaCache[K comparable, V any] struct {
 // newMetaCache splits capacity evenly across the shards, so a hot shard
 // evicts within its own slice — the same trade-off the C++ agent accepts
 // for removing the shared lock line.
-func newMetaCache[K comparable, V any](capacity int, hash func(K) uint64) *metaCache[K, V] {
-	c := &metaCache[K, V]{hash: hash}
+func newMetaCache[K comparable, V any](capacity int) *metaCache[K, V] {
+	c := &metaCache[K, V]{}
 	perShard := capacity / metaCacheShardCount
 	if perShard < 1 {
 		perShard = 1
@@ -83,8 +76,13 @@ func newMetaCache[K comparable, V any](capacity int, hash func(K) uint64) *metaC
 	return c
 }
 
+// shard picks the lock that serializes inserts of key. maphash.Comparable
+// dispatches to the runtime's own type hasher, the same one a map[K]V would
+// use, which is AES-accelerated for strings; maphash.String is not, and
+// measured 4-6x slower on the SQL-sized keys these caches hold: 590 ns vs
+// 105 ns for 8 KB, 6.5 us vs 1.5 us for maxSqlSize (#189).
 func (c *metaCache[K, V]) shard(key K) *metaCacheShard {
-	return &c.shards[c.hash(key)&(metaCacheShardCount-1)]
+	return &c.shards[maphash.Comparable(metaCacheSeed, key)&(metaCacheShardCount-1)]
 }
 
 // peek returns the cached value. A hit is normally lock-free; only when the

@@ -30,7 +30,7 @@ var benchHugeLiteralSQL = "SELECT '" + strings.Repeat("x", 1<<20) + "'"
 
 func newNormalizeTestAgent() *agent {
 	a := &agent{}
-	a.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize, hashStringKey)
+	a.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize)
 	return a
 }
 
