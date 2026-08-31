@@ -1,0 +1,163 @@
+// Package ppkratosv3 instruments the go-kratos/kratos/v3 package (https://github.com/go-kratos/kratos).
+//
+// This package instruments kratos servers and clients.
+// To instrument a kratos server, use ServerMiddleware.
+//
+//	httpSrv := http.NewServer(
+//		http.Address(":8000"),
+//		http.Middleware(ppkratosv3.ServerMiddleware()),
+//	)
+//
+// The server middleware adds the pinpoint.Tracer to the kratos server handler's context.
+// By using the pinpoint.FromContext function, this tracer can be obtained.
+//
+//	func (s *server) SayHello(ctx context.Context, in *helloworld.HelloRequest) (*helloworld.HelloReply, error) {
+//		tracer := pinpoint.FromContext(ctx)
+//		defer tracer.NewSpanEvent("f1").EndSpanEvent()
+//		...
+//	}
+//
+// To instrument a kratos client, use ClientMiddleware.
+//
+//	conn, err := transhttp.NewClient(
+//		context.Background(),
+//		transhttp.WithMiddleware(ppkratosv3.ClientMiddleware()),
+//		transhttp.WithEndpoint("127.0.0.1:8000"),
+//	)
+//
+// It is necessary to pass the context containing the pinpoint.Tracer to kratos client.
+//
+//	client := pb.NewGreeterHTTPClient(conn)
+//	reply, err := client.SayHello(pinpoint.NewContext(context.Background(), tracer), &pb.HelloRequest{Name: "kratos"})
+package ppkratosv3
+
+import (
+	"bytes"
+	"context"
+	"net"
+	"strings"
+
+	"github.com/go-kratos/kratos/v3/middleware"
+	"github.com/go-kratos/kratos/v3/transport"
+	"github.com/go-kratos/kratos/v3/transport/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"google.golang.org/grpc/peer"
+)
+
+// ServerMiddleware returns a server side middleware ready to instrument
+// and adds the pinpoint.Tracer to the handler's context.
+// By using the pinpoint.FromContext function, this tracer can be obtained.
+func ServerMiddleware() middleware.Middleware {
+	return func(handler middleware.Handler) middleware.Handler {
+		return func(ctx context.Context, req interface{}) (reply interface{}, err error) {
+			if !pinpoint.GetAgent().Enable() {
+				return handler(ctx, req)
+			}
+
+			if tr, ok := transport.FromServerContext(ctx); ok {
+				tracer := pinpoint.GetAgent().NewSpanTracerWithReader("Kratos Server", tr.Operation(), tr.RequestHeader())
+				defer tracer.EndSpan()
+				defer tracer.NewSpanEvent(tr.Operation()).EndSpanEvent()
+
+				span := tracer.Span()
+				if tr.Kind() == transport.KindGRPC {
+					span.SetServiceType(pinpoint.ServiceTypeGrpcServer)
+				}
+				span.SetEndPoint(serverEndpoint(tr.Endpoint()))
+				span.SetRemoteAddress(serverRemoteAddr(ctx))
+
+				ctx = pinpoint.NewContext(ctx, tracer)
+				reply, err = handler(ctx, req)
+				span.SetError(err)
+				return reply, err
+			} else {
+				return handler(ctx, req)
+			}
+		}
+	}
+}
+
+func serverRemoteAddr(ctx context.Context) (addr string) {
+	tr, _ := transport.FromServerContext(ctx)
+
+	switch tr.Kind() {
+	case transport.KindHTTP:
+		if ht, ok := tr.(http.Transporter); ok {
+			addr = ht.Request().RemoteAddr
+		}
+	case transport.KindGRPC:
+		if p, ok := peer.FromContext(ctx); ok {
+			addr = p.Addr.String()
+		}
+	}
+	if addr, _, _ = net.SplitHostPort(addr); addr == "" {
+		addr = "127.0.0.1"
+	}
+	return addr
+}
+
+func serverEndpoint(endpoint string) string {
+	if i := strings.Index(endpoint, "//"); i > -1 {
+		return endpoint[i+2:]
+	} else {
+		return endpoint
+	}
+}
+
+// ClientMiddleware returns a client side middleware ready to instrument.
+func ClientMiddleware() middleware.Middleware {
+	return func(handler middleware.Handler) middleware.Handler {
+		return func(ctx context.Context, req interface{}) (reply interface{}, err error) {
+			if tr, ok := transport.FromClientContext(ctx); ok {
+				tracer := pinpoint.FromContext(ctx)
+				defer tracer.NewSpanEvent(tr.Operation()).EndSpanEvent()
+
+				se := tracer.SpanEvent()
+				if tr.Kind() == transport.KindGRPC {
+					se.SetServiceType(pinpoint.ServiceTypeGrpc)
+				} else {
+					se.SetServiceType(pinpoint.ServiceTypeGoHttpClient)
+				}
+
+				remote := clientRemoteAddr(tr)
+				se.SetDestination(remote)
+				se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, makeUrl(tr, remote))
+
+				tracer.Inject(tr.RequestHeader())
+				reply, err = handler(ctx, req)
+				se.SetError(err, "rpc error")
+				return reply, err
+			} else {
+				return handler(ctx, req)
+			}
+		}
+	}
+}
+
+func clientRemoteAddr(tr transport.Transporter) (addr string) {
+	switch tr.Kind() {
+	case transport.KindHTTP:
+		if ht, ok := tr.(http.Transporter); ok {
+			addr = ht.Request().Host
+		}
+	case transport.KindGRPC:
+		addr = tr.Endpoint()
+	}
+	if addr == "" {
+		addr = "127.0.0.1"
+	}
+	return addr
+}
+
+func makeUrl(tr transport.Transporter, addr string) string {
+	var buf bytes.Buffer
+	switch tr.Kind() {
+	case transport.KindHTTP:
+		buf.WriteString("http://")
+	case transport.KindGRPC:
+		buf.WriteString("grpc://")
+	}
+	buf.WriteString(addr)
+	buf.WriteString(tr.Operation())
+	return buf.String()
+}

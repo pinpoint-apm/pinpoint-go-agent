@@ -29,6 +29,7 @@
 | [plugin/grpc](/plugin/grpc)                     | grpc/grpc-go package (https://github.com/grpc/grpc-go)                         |
 | [plugin/httprouter](/plugin/httprouter)         | julienschmidt/httprouter package (https://github.com/julienschmidt/httprouter) |
 | [plugin/kratos](/plugin/kratos)                 | go-kratos/kratos/v2 package (https://github.com/go-kratos/kratos)              |
+| [plugin/kratosv3](/plugin/kratosv3)             | go-kratos/kratos/v3 package (https://github.com/go-kratos/kratos)              |
 | [plugin/logrus](/plugin/logrus)                 | sirupsen/logrus package (https://github.com/sirupsen/logrus)                   |
 | [plugin/mongodriver](/plugin/mongodriver)       | mongodb/mongo-go-driver package (https://github.com/mongodb/mongo-go-driver)   |
 | [plugin/mongodriverv2](/plugin/mongodriverv2)   | mongodb/mongo-go-driver/v2 package (https://github.com/mongodb/mongo-go-driver) |
