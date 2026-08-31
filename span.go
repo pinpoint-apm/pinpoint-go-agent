@@ -379,13 +379,18 @@ func (span *span) newAsyncSpan() Tracer {
 		asyncSpan.txId = span.txId
 		asyncSpan.spanId = span.spanId
 
+		// Under spanEventLock: NewGoroutineTracer may be called concurrently
+		// from goroutines sharing the parent tracer, and an unsynchronized
+		// update here could hand two async spans the same (asyncId, sequence).
+		span.spanEventLock.Lock()
 		for se.asyncId == noneAsyncId {
 			se.asyncId = span.agent.asyncIdGen.Add(1)
 		}
 		se.asyncSeqGen++
-
 		asyncSpan.asyncId = se.asyncId
 		asyncSpan.asyncSequence = se.asyncSeqGen
+		span.spanEventLock.Unlock()
+
 		asyncSpan.appendSpanEvent(newSpanEventGoroutine(asyncSpan))
 
 		return asyncSpan
