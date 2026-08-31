@@ -9,6 +9,11 @@
 //
 //	ctx := pinpoint.NewContext(context.Background(), tracer)
 //	row := db.QueryRowContext(ctx, "SELECT * FROM BONUS")
+//
+// This plugin cannot be used in the same binary as pporaclev3: go-ora v2 and v3
+// both call sql.Register("oracle", ...) in their own package init, so linking
+// both panics at startup on a duplicate driver name. That is upstream's doing
+// and neither plugin can work around it - pick one go-ora major per binary.
 package pporacle
 
 import (

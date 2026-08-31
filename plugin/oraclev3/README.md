@@ -1,6 +1,19 @@
 # pporaclev3
 This package instruments the [sijms/go-ora/v3](https://github.com/sijms/go-ora) package.
 
+> **Note**
+> This plugin cannot be used in the same binary as [plugin/oracle](/plugin/oracle). go-ora v2
+> and v3 both call `sql.Register("oracle", ...)` in their own package `init`, so
+> linking both panics at startup on a duplicate driver name:
+>
+> ```
+> panic: sql: Register called twice for driver oracle
+> ```
+>
+> This is upstream's doing and neither plugin can work around it - the driver
+> names the plugins themselves register (`oracle-pinpoint`, `oraclev3-pinpoint`)
+> are already distinct. Pick one go-ora major per binary.
+
 ## Installation
 
 ```bash
