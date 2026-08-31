@@ -13,6 +13,11 @@ import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis"
 [![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis)
 
 This package instruments the redis/rueidis calls.
+
+`Do`, `DoMulti`, `DoCache`, `DoMultiCache` and `Receive` are traced.
+`DoStream` and `DoMultiStream` are not: `rueidis.RedisResultStream` cannot be
+wrapped, and the response is read after the call returns, so a span event there
+would time the command write and none of the response.
 Use the NewHook as the rueidis.Hook.
 
 ``` go

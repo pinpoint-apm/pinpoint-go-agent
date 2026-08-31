@@ -8,8 +8,13 @@ import (
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/redis/rueidis"
-	_ "github.com/redis/rueidis/rueidishook"
+	"github.com/redis/rueidis/rueidishook"
 )
+
+// rueidishook.WithHook is the only documented way to use this plugin, and it is
+// the one place *Hook is checked against the interface - nothing in this module
+// asserted it, so a method added upstream broke the example rather than a test.
+var _ rueidishook.Hook = (*Hook)(nil)
 
 type Hook struct {
 	endpoint string
@@ -102,6 +107,25 @@ func (h *Hook) Receive(client rueidis.Client, ctx context.Context, subscribe rue
 
 	}
 	return err
+}
+
+// DoStream and DoMultiStream are pass-through: they satisfy rueidishook.Hook
+// and record nothing.
+//
+// rueidis.RedisResultStream is a struct of unexported fields returned by value,
+// and NewErrorResultStream is its only exported constructor, so this plugin
+// cannot wrap the stream to observe it. The consumer reads the response
+// afterward through HasNext and WriteTo, outside any span event ending with the
+// call here - so a span event would time the command write and the pool
+// acquisition, and attribute none of the response to the command. Reporting
+// that as a redis call would be worse than reporting nothing.
+
+func (h *Hook) DoStream(client rueidis.Client, ctx context.Context, cmd rueidis.Completed) rueidis.RedisResultStream {
+	return client.DoStream(ctx, cmd)
+}
+
+func (h *Hook) DoMultiStream(client rueidis.Client, ctx context.Context, multi ...rueidis.Completed) rueidis.MultiRedisResultStream {
+	return client.DoMultiStream(ctx, multi...)
 }
 
 func (h *Hook) newSpanEvent(ctx context.Context, operation string, commandName func() string) pinpoint.Tracer {
