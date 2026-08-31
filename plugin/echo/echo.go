@@ -10,11 +10,11 @@
 //
 //	e.GET("/hello", ppecho.WrapHandler(hello))
 //
-// echo v3 is end-of-life upstream, and GHSA-vfp3-v2gw-7wfq - an encoded-slash
-// bypass of route-level protection that exposes static files - covers every v3
-// release including the last, v3.3.10. No patched v3 exists. The vulnerable
-// code is not reachable from this package, but an application pinning echo v3
-// inherits it; plugin/echov4 and plugin/echov5 are the upgrade paths.
+// Deprecated: echo v3 is end-of-life upstream and GHSA-vfp3-v2gw-7wfq - an
+// encoded-slash bypass of route-level protection that exposes static files -
+// covers every v3 release including the last, v3.3.10, with no patched v3 to
+// pin. The vulnerable code is not reachable from this package, but an
+// application pinning echo v3 inherits it. Use plugin/echov4 or plugin/echov5.
 package ppecho
 
 import (
@@ -107,6 +107,8 @@ func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
 }
 
 // Middleware returns an echo middleware that creates a pinpoint.Tracer that instruments the echo handler function.
+//
+// Deprecated: see the package documentation. Use plugin/echov4 or plugin/echov5.
 func Middleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return wrap(next, "")
@@ -115,6 +117,8 @@ func Middleware() echo.MiddlewareFunc {
 
 // WrapHandler wraps the given echo handler and adds the pinpoint.Tracer to the request's context.
 // By using the pinpoint.FromContext function, this tracer can be obtained.
+//
+// Deprecated: see the package documentation. Use plugin/echov4 or plugin/echov5.
 func WrapHandler(handler echo.HandlerFunc) echo.HandlerFunc {
 	return wrap(handler, pphttp.HandlerFuncName(handler))
 }

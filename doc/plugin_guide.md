@@ -5,7 +5,7 @@
 | [plugin/http](/plugin/http)                       | Go standard HTTP package                                                          |
 | [plugin/beego](/plugin/beego)                     | beego/beego/v2 package (https://github.com/beego/beego)                           |
 | [plugin/chi](/plugin/chi)                         | go-chi/chi package (https://github.com/go-chi/chi)                                |
-| [plugin/echo](/plugin/echo)                       | labstack/echo package (https://github.com/labstack/echo)                          |
+| [plugin/echo](/plugin/echo)                       | labstack/echo package (https://github.com/labstack/echo) - deprecated             |
 | [plugin/echov4](/plugin/echov4)                   | labstack/echo/v4 package (https://github.com/labstack/echo)                       |
 | [plugin/echov5](/plugin/echov5)                   | labstack/echo/v5 package (https://github.com/labstack/echo)                       |
 | [plugin/fasthttp](/plugin/fasthttp)               | valyala/fasthttp package (https://github.com/valyala/fasthttp)                    |

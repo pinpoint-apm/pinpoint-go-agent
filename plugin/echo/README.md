@@ -1,7 +1,10 @@
-# ppecho
+# ppecho (deprecated)
 This package instruments the [labstack/echo](https://github.com/labstack/echo) package.
 
 > **Warning**
+> **This plugin is deprecated.** Use [plugin/echov4](/plugin/echov4) or
+> [plugin/echov5](/plugin/echov5).
+>
 > echo v3 is end-of-life upstream, and
 > [GHSA-vfp3-v2gw-7wfq](https://github.com/advisories/GHSA-vfp3-v2gw-7wfq)
 > (high: an encoded-slash `%2F` bypass of route-level protection that exposes
@@ -12,8 +15,8 @@ This package instruments the [labstack/echo](https://github.com/labstack/echo) p
 > requests and never serves static files - but the pin is the floor your
 > application inherits, and your application does serve routes.
 >
-> Use [plugin/echov4](/plugin/echov4) or [plugin/echov5](/plugin/echov5)
-> instead. This package remains for applications still on echo v3.
+> It stays in the repository so applications still on echo v3 keep a working
+> pin, and takes no further changes.
 
 ## Installation
 
