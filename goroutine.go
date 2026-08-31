@@ -68,7 +68,7 @@ func (g *goroutine) threadState() pb.PThreadState {
 }
 
 func (g *goroutine) stackTrace() []string {
-	return append(make([]string, 0), g.buf.String())
+	return []string{g.buf.String()}
 }
 
 func newGoroutine(idStr string, state string, line string) *goroutine {
