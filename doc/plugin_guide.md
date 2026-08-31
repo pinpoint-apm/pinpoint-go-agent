@@ -27,6 +27,7 @@
 | [plugin/logrus](/plugin/logrus)                 | sirupsen/logrus package (https://github.com/sirupsen/logrus)                   |
 | [plugin/mongodriver](/plugin/mongodriver)       | mongodb/mongo-go-driver package (https://github.com/mongodb/mongo-go-driver)   |
 | [plugin/mssql](/plugin/mssql)                   | denisenkom/go-mssqldb package (https://github.com/denisenkom/go-mssqldb)       |
+| [plugin/mssql-microsoft](/plugin/mssql-microsoft) | microsoft/go-mssqldb package (https://github.com/microsoft/go-mssqldb)         |
 | [plugin/mysql](/plugin/mysql)                   | go-sql-driver/mysql package (https://github.com/go-sql-driver/mysql)           |
 | [plugin/oracle](/plugin/oracle)                 | sijms/go-ora/v2 package (https://github.com/sijms/go-ora)                      |
 | [plugin/pgsql](/plugin/pgsql)                   | lib/pq package (https://github.com/lib/pq)                                     |
