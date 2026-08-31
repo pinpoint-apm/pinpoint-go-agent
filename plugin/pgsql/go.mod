@@ -3,7 +3,7 @@ module github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql
 go 1.25.0
 
 require (
-	github.com/lib/pq v1.10.5
+	github.com/lib/pq v1.12.3
 	github.com/pinpoint-apm/pinpoint-go-agent v1.4.4
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.4.4
 )

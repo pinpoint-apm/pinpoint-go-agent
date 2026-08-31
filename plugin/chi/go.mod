@@ -3,7 +3,7 @@ module github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi
 go 1.25.0
 
 require (
-	github.com/go-chi/chi/v5 v5.0.7
+	github.com/go-chi/chi/v5 v5.3.2
 	github.com/pinpoint-apm/pinpoint-go-agent v1.4.4
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.4.4
 )

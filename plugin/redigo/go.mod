@@ -3,7 +3,7 @@ module github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo
 go 1.25.0
 
 require (
-	github.com/gomodule/redigo v1.8.9
+	github.com/gomodule/redigo v1.9.3
 	github.com/pinpoint-apm/pinpoint-go-agent v1.4.4
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.4.4
 )
