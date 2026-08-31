@@ -679,7 +679,15 @@ func (agent *agent) sendMetaWorker() {
 		case md = <-agent.metaChan:
 		}
 
-		permit <- struct{}{}
+		// The permit acquisition obeys stop too: with every permit held by a
+		// slow send, a plain send here parks the worker where the stop signal
+		// cannot reach it, and it would dispatch one more send after shutdown
+		// began. The md just pulled is dropped, like the rest of the queue.
+		select {
+		case <-stop:
+			return
+		case permit <- struct{}{}:
+		}
 		inFlight.Add(1)
 		go func(md interface{}) {
 			defer inFlight.Done()

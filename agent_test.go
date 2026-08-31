@@ -487,6 +487,36 @@ func Test_agent_ShutdownDoesNotCloseProducerChannels(t *testing.T) {
 	assert.NotPanics(t, func() { agent.urlStatChan <- &urlStat{} }, "urlStatChan")
 }
 
+// With every permit held by a slow send, the worker parks on the permit
+// acquisition; that wait must obey the stop signal, or the worker dispatches
+// one more send after shutdown began.
+func Test_agent_sendMetaWorkerStopsWhileAllPermitsHeld(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	blocking := &blockingMetaClient{release: make(chan struct{})}
+	agent.agentGrpc = &agentGrpc{metaClient: blocking, agent: agent}
+
+	agent.workerWg.Add(1)
+	go agent.sendMetaWorker()
+
+	for i := 0; i < metaMaxConcurrentRequests; i++ {
+		agent.metaChan <- stringMeta{id: int32(i), funcName: "f"}
+	}
+	assert.Eventually(t, func() bool { return blocking.inFlight() == metaMaxConcurrentRequests },
+		5*time.Second, time.Millisecond, "all permits held")
+
+	// One more item: the worker pulls it and parks on the permit acquisition.
+	agent.metaChan <- stringMeta{id: 99, funcName: "f"}
+	assert.Eventually(t, func() bool { return len(agent.metaChan) == 0 },
+		5*time.Second, time.Millisecond, "worker pulled the extra item")
+
+	agent.signalShutdown()
+	close(blocking.release)
+
+	assert.True(t, waitTimeout(&agent.workerWg, 5*time.Second), "worker exits")
+	_, total := blocking.stats()
+	assert.Equal(t, metaMaxConcurrentRequests, total, "no send dispatched after the stop signal")
+}
+
 // An agent that never finished registration must still release the global, so
 // GetAgent stops handing out the dead agent and NewAgent can be retried.
 func Test_agent_ShutdownReleasesGlobalWhenNeverRegistered(t *testing.T) {
