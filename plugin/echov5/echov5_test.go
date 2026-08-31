@@ -1,6 +1,8 @@
 package ppechov5
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -8,19 +10,36 @@ import (
 
 	"github.com/labstack/echo/v5"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func startAgent(t *testing.T) {
+func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) pinpoint.Agent {
 	t.Helper()
-	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentId("testAgent"))
-	if err != nil {
-		t.Fatal(err)
-	}
+
+	opts = append([]pinpoint.ConfigOption{
+		pinpoint.WithAppName("testApp"),
+		pinpoint.WithAgentId("testAgent"),
+	}, opts...)
+
+	config, err := pinpoint.NewConfig(opts...)
+	require.NoError(t, err)
+
 	agent, err := pinpoint.NewTestAgent(config, t)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(agent.Shutdown)
+
+	return agent
+}
+
+// spanOf reads back what the tracer recorded on its span: the RPC name, the
+// endpoint, the resolved remote address and whether the span failed.
+func spanOf(t *testing.T, tracer pinpoint.Tracer) map[string]interface{} {
+	t.Helper()
+	require.NotNil(t, tracer, "the handler never ran")
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(tracer.JsonString(), &m))
+	return m
 }
 
 // The wrapper reads the status it records through echo.ResolveResponseStatus.
@@ -37,9 +56,7 @@ func TestContextResponseCarriesTheStatus(t *testing.T) {
 
 	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 
-	if status != http.StatusTeapot {
-		t.Errorf("ResolveResponseStatus = %d, want %d", status, http.StatusTeapot)
-	}
+	assert.Equal(t, http.StatusTeapot, status)
 }
 
 // A handler that returns an error must have echo's HTTPErrorHandler run once -
@@ -60,12 +77,8 @@ func TestWrapHandler_RunsErrorHandlerOnce(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/boom", nil))
 
-	if calls != 1 {
-		t.Errorf("HTTPErrorHandler ran %d times, want 1", calls)
-	}
-	if rec.Code != http.StatusTeapot {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusTeapot)
-	}
+	assert.Equal(t, 1, calls, "HTTPErrorHandler ran more than once for one failed request")
+	assert.Equal(t, http.StatusTeapot, rec.Code)
 }
 
 // The middleware sits in front of every route, so it must leave echo's own
@@ -83,12 +96,8 @@ func TestMiddleware_PreservesRouting(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/hello/pinpoint", nil))
 
-	if rec.Code != http.StatusTeapot {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusTeapot)
-	}
-	if want := "hello pinpoint (/hello/:name)"; rec.Body.String() != want {
-		t.Errorf("body = %q, want %q", rec.Body.String(), want)
-	}
+	assert.Equal(t, http.StatusTeapot, rec.Code)
+	assert.Equal(t, "hello pinpoint (/hello/:name)", rec.Body.String())
 }
 
 // The handler reads its tracer out of the request context, so the wrapper has
@@ -106,11 +115,119 @@ func TestMiddleware_PutsSampledTracerInRequestContext(t *testing.T) {
 
 	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 
-	if tracer == nil {
-		t.Fatal("no tracer in the handler's request context")
+	require.NotNil(t, tracer, "no tracer in the handler's request context")
+	assert.True(t, tracer.IsSampled(), "handler received an unsampled tracer")
+	assert.NotEmpty(t, tracer.TransactionId().String())
+}
+
+// The span is what shows up in Pinpoint, so the request attributes it carries
+// have to come from the echo request rather than defaults.
+func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
+	startAgent(t)
+
+	var tracer pinpoint.Tracer
+	e := echo.New()
+	e.Use(Middleware())
+	e.GET("/hello/:name", func(c *echo.Context) error {
+		tracer = pinpoint.TracerFromRequestContext(c.Request())
+		return c.NoContent(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/hello/pinpoint", nil)
+	req.Host = "myhost:8080"
+	req.RemoteAddr = "10.0.0.1:4242"
+	e.ServeHTTP(httptest.NewRecorder(), req)
+
+	span := spanOf(t, tracer)
+	assert.Equal(t, "/hello/pinpoint", span["RpcName"], "the span is named after the request path, not the route pattern")
+	assert.Equal(t, "myhost:8080", span["EndPoint"])
+	assert.Equal(t, "10.0.0.1", span["RemoteAddr"])
+}
+
+// An echo service is usually one hop of a larger call: the tracing headers the
+// caller sent have to put this span in the caller's transaction.
+func TestMiddleware_ContinuesTheCallersTransaction(t *testing.T) {
+	startAgent(t)
+
+	caller := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
+	defer caller.EndSpan()
+	req := httptest.NewRequest(http.MethodGet, "/hello", nil)
+	caller.NewSpanEvent("call")
+	caller.Inject(req.Header)
+	caller.EndSpanEvent()
+
+	var tracer pinpoint.Tracer
+	e := echo.New()
+	e.Use(Middleware())
+	e.GET("/hello", func(c *echo.Context) error {
+		tracer = pinpoint.TracerFromRequestContext(c.Request())
+		return nil
+	})
+
+	e.ServeHTTP(httptest.NewRecorder(), req)
+
+	require.NotNil(t, tracer)
+	assert.Equal(t, caller.TransactionId().String(), tracer.TransactionId().String())
+}
+
+// A handler either returns an error - and echo decides the status - or writes
+// the response itself. The span has to record what the client actually got in
+// both shapes, and fail on the configured error class.
+func TestMiddleware_RecordsTheFinalStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		handler    echo.HandlerFunc
+		wantStatus int
+		wantFail   bool
+	}{
+		{
+			name:       "a handler that writes its own status",
+			handler:    func(c *echo.Context) error { return c.String(http.StatusTeapot, "teapot") },
+			wantStatus: http.StatusTeapot,
+		},
+		{
+			name:       "a handler that writes nothing leaves echo's implicit 200",
+			handler:    func(c *echo.Context) error { return nil },
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "an HTTPError is recorded and its status reported",
+			handler:    func(c *echo.Context) error { return echo.NewHTTPError(http.StatusNotFound, "gone") },
+			wantStatus: http.StatusNotFound,
+			wantFail:   true,
+		},
+		{
+			name:       "a plain error becomes a 500",
+			handler:    func(c *echo.Context) error { return errors.New("boom") },
+			wantStatus: http.StatusInternalServerError,
+			wantFail:   true,
+		},
+		{
+			name:       "a handler that writes a 5xx itself",
+			handler:    func(c *echo.Context) error { return c.String(http.StatusBadGateway, "bad") },
+			wantStatus: http.StatusBadGateway,
+			wantFail:   true,
+		},
 	}
-	if !tracer.IsSampled() {
-		t.Error("handler received an unsampled tracer")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			startAgent(t)
+
+			var tracer pinpoint.Tracer
+			e := echo.New()
+			e.Use(Middleware())
+			e.GET("/", func(c *echo.Context) error {
+				tracer = pinpoint.TracerFromRequestContext(c.Request())
+				return tt.handler(c)
+			})
+
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+			assert.Equal(t, tt.wantStatus, rec.Code)
+			assert.Equal(t, tt.wantFail, spanOf(t, tracer)["Err"] != float64(0))
+		})
 	}
 }
 
@@ -118,22 +235,39 @@ func TestMiddleware_PutsSampledTracerInRequestContext(t *testing.T) {
 func TestWrapHandler_PutsSampledTracerInRequestContext(t *testing.T) {
 	startAgent(t)
 
-	var sampled bool
+	var tracer pinpoint.Tracer
 	e := echo.New()
 	e.GET("/wrapped", WrapHandler(func(c *echo.Context) error {
-		sampled = pinpoint.TracerFromRequestContext(c.Request()).IsSampled()
+		tracer = pinpoint.TracerFromRequestContext(c.Request())
 		return c.NoContent(http.StatusNoContent)
 	}))
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wrapped", nil))
 
-	if !sampled {
-		t.Error("wrapped handler received an unsampled tracer")
-	}
-	if rec.Code != http.StatusNoContent {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusNoContent)
-	}
+	require.NotNil(t, tracer)
+	assert.True(t, tracer.IsSampled(), "wrapped handler received an unsampled tracer")
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Equal(t, "/wrapped", spanOf(t, tracer)["RpcName"])
+}
+
+// An error a wrapped handler returns has to be recorded on the span and still
+// reach echo's error handler.
+func TestWrapHandler_RecordsTheHandlerError(t *testing.T) {
+	startAgent(t)
+
+	var tracer pinpoint.Tracer
+	e := echo.New()
+	e.GET("/boom", WrapHandler(func(c *echo.Context) error {
+		tracer = pinpoint.TracerFromRequestContext(c.Request())
+		return echo.NewHTTPError(http.StatusTeapot, "boom")
+	}))
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/boom", nil))
+
+	assert.Equal(t, http.StatusTeapot, rec.Code)
+	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "the handler error must be recorded on the span")
 }
 
 // The middleware form has to route errors to the HTTPErrorHandler exactly once
@@ -153,12 +287,23 @@ func TestMiddleware_RunsErrorHandlerOnce(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/boom", nil))
 
-	if calls != 1 {
-		t.Errorf("HTTPErrorHandler ran %d times, want 1", calls)
-	}
-	if rec.Code != http.StatusTeapot {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusTeapot)
-	}
+	assert.Equal(t, 1, calls, "HTTPErrorHandler ran more than once for one failed request")
+	assert.Equal(t, http.StatusTeapot, rec.Code)
+}
+
+// A route no handler is registered for is echo's own 404; the middleware still
+// wraps it and must not disturb the response.
+func TestMiddleware_UnmatchedRoute(t *testing.T) {
+	startAgent(t)
+
+	e := echo.New()
+	e.Use(Middleware())
+	e.GET("/hello", func(c *echo.Context) error { return nil })
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/nowhere", nil))
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 // The wrapper marks the span failed and re-panics; swallowing the panic would
@@ -166,16 +311,19 @@ func TestMiddleware_RunsErrorHandlerOnce(t *testing.T) {
 func TestMiddleware_PanicPropagates(t *testing.T) {
 	startAgent(t)
 
+	var tracer pinpoint.Tracer
 	e := echo.New()
 	e.Use(Middleware())
-	e.GET("/boom", func(c *echo.Context) error { panic("boom") })
+	e.GET("/boom", func(c *echo.Context) error {
+		tracer = pinpoint.TracerFromRequestContext(c.Request())
+		panic("boom")
+	})
 
-	defer func() {
-		if recover() == nil {
-			t.Error("the wrapper swallowed the handler panic")
-		}
-	}()
-	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/boom", nil))
+	assert.PanicsWithValue(t, "boom", func() {
+		e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/boom", nil))
+	}, "the wrapper swallowed the handler panic")
+
+	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "a panicking handler must fail the span")
 }
 
 // With no agent running the middleware must be a straight pass-through.
@@ -189,21 +337,34 @@ func TestMiddleware_PassesThroughWhenAgentDisabled(t *testing.T) {
 	e.Use(Middleware())
 	e.GET("/", func(c *echo.Context) error {
 		called = true
-		if pinpoint.TracerFromRequestContext(c.Request()).IsSampled() {
-			t.Error("a disabled agent produced a sampled tracer")
-		}
+		assert.False(t, pinpoint.TracerFromRequestContext(c.Request()).IsSampled(),
+			"a disabled agent produced a sampled tracer")
 		return c.NoContent(http.StatusOK)
 	})
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
-	if !called {
-		t.Fatal("the handler did not run")
+	require.True(t, called, "the handler did not run")
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+// WrapHandler is the other entry point and has to pass through too, error and
+// all.
+func TestWrapHandler_PassesThroughWhenAgentDisabled(t *testing.T) {
+	if pinpoint.GetAgent().Enable() {
+		t.Skip("a global agent is still enabled")
 	}
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", rec.Code)
-	}
+
+	e := echo.New()
+	e.GET("/boom", WrapHandler(func(c *echo.Context) error {
+		return echo.NewHTTPError(http.StatusTeapot, "boom")
+	}))
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/boom", nil))
+
+	assert.Equal(t, http.StatusTeapot, rec.Code, "the handler error must still reach echo's error handler")
 }
 
 // One wrapper closure serves every request, so concurrent requests through the
@@ -224,15 +385,11 @@ func TestMiddleware_ConcurrentRequests(t *testing.T) {
 			for j := 0; j < 25; j++ {
 				rec := httptest.NewRecorder()
 				e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/hello/pinpoint", nil))
-				if rec.Code != http.StatusOK {
-					t.Errorf("status = %d, want 200", rec.Code)
-				}
+				assert.Equal(t, http.StatusOK, rec.Code)
 
 				rec = httptest.NewRecorder()
 				e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/widgets", nil))
-				if rec.Code != http.StatusCreated {
-					t.Errorf("status = %d, want 201", rec.Code)
-				}
+				assert.Equal(t, http.StatusCreated, rec.Code)
 			}
 		}()
 	}
@@ -245,26 +402,32 @@ func TestMiddleware_ConcurrentRequests(t *testing.T) {
 // RouteInfo's "METHOD:/path" default. This also pins that RouteInfo is already
 // populated where the middleware reads it.
 func Test_routeName(t *testing.T) {
-	var got [2]string
+	var got [3]string
 	e := echo.New()
 	e.GET("/plain", func(c *echo.Context) error { got[0] = routeName(c); return nil })
-	if _, err := e.AddRoute(echo.Route{
+	_, err := e.AddRoute(echo.Route{
 		Method:  http.MethodGet,
 		Path:    "/named",
 		Name:    "helloHandler",
 		Handler: func(c *echo.Context) error { got[1] = routeName(c); return nil },
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
+	require.NoError(t, err)
 
-	for _, path := range []string{"/plain", "/named"} {
+	// A route explicitly named after RouteInfo's own default must not be
+	// mistaken for a real name.
+	_, err = e.AddRoute(echo.Route{
+		Method:  http.MethodGet,
+		Path:    "/default-name",
+		Name:    http.MethodGet + ":/default-name",
+		Handler: func(c *echo.Context) error { got[2] = routeName(c); return nil },
+	})
+	require.NoError(t, err)
+
+	for _, path := range []string{"/plain", "/named", "/default-name"} {
 		e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
 	}
 
-	if got[0] != "echo.HandlerFunc()" {
-		t.Errorf("unnamed route: routeName = %q, want %q", got[0], "echo.HandlerFunc()")
-	}
-	if got[1] != "helloHandler()" {
-		t.Errorf("named route: routeName = %q, want %q", got[1], "helloHandler()")
-	}
+	assert.Equal(t, "echo.HandlerFunc()", got[0], "unnamed route")
+	assert.Equal(t, "helloHandler()", got[1], "named route")
+	assert.Equal(t, "echo.HandlerFunc()", got[2], "a route named after RouteInfo's default")
 }

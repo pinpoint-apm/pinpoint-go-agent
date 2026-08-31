@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	hbase "github.com/tsuna/gohbase"
 	"github.com/tsuna/gohbase/hrpc"
 )
@@ -162,35 +164,18 @@ func TestClient_RecordsTheRowKey(t *testing.T) {
 			client, fake := newClient(t)
 			tracer := newRecordingTracer()
 
-			if err := tt.call(client, pinpoint.NewContext(context.Background(), tracer)); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, tt.call(client, pinpoint.NewContext(context.Background(), tracer)))
 
-			if fake.calls != 1 {
-				t.Fatalf("the underlying client was called %d times, want 1", fake.calls)
-			}
-			if len(tracer.events) != 1 {
-				t.Fatalf("recorded %d span events, want 1", len(tracer.events))
-			}
+			require.Equal(t, 1, fake.calls, "the underlying client must be called exactly once")
+			require.Len(t, tracer.events, 1, "one operation must produce exactly one span event")
 			e := tracer.events[0]
-			if e.operation != tt.operation {
-				t.Errorf("operation = %q, want %q", e.operation, tt.operation)
-			}
-			if e.serviceType != pinpoint.ServiceTypeHbaseClient {
-				t.Errorf("service type = %d, want %d", e.serviceType, pinpoint.ServiceTypeHbaseClient)
-			}
-			if e.destination != "HBASE" {
-				t.Errorf("destination = %q, want HBASE", e.destination)
-			}
-			if e.endPoint != "zk1.example:2181" {
-				t.Errorf("endpoint = %q, want %q", e.endPoint, "zk1.example:2181")
-			}
-			if got, want := e.annotations[pinpoint.AnnotationHbaseClientParams], "rowKey: rowkey"; got != want {
-				t.Errorf("params annotation = %q, want %q", got, want)
-			}
-			if !e.ended {
-				t.Error("the span event was left open")
-			}
+			assert.Equal(t, tt.operation, e.operation)
+			assert.Equal(t, int32(pinpoint.ServiceTypeHbaseClient), e.serviceType)
+			assert.Equal(t, "HBASE", e.destination)
+			assert.Equal(t, "zk1.example:2181", e.endPoint, "the ZooKeeper quorum is the endpoint")
+			assert.Equal(t, "rowKey: rowkey", e.annotations[pinpoint.AnnotationHbaseClientParams])
+			assert.NoError(t, e.err, "a successful operation must not fail the span event")
+			assert.True(t, e.ended, "the span event was left open")
 		})
 	}
 }
@@ -202,27 +187,32 @@ func TestClient_Scan(t *testing.T) {
 	tracer := newRecordingTracer()
 
 	s, err := hrpc.NewScanRangeStr(pinpoint.NewContext(context.Background(), tracer), "table", "aaa", "zzz")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	client.Scan(s)
 
-	if fake.calls != 1 {
-		t.Fatalf("the underlying client was called %d times, want 1", fake.calls)
-	}
-	if len(tracer.events) != 1 {
-		t.Fatalf("recorded %d span events, want 1", len(tracer.events))
-	}
+	require.Equal(t, 1, fake.calls, "the underlying client must be called exactly once")
+	require.Len(t, tracer.events, 1)
 	e := tracer.events[0]
-	if e.operation != "hbase.Scan" {
-		t.Errorf("operation = %q, want hbase.Scan", e.operation)
-	}
-	if got, want := e.annotations[pinpoint.AnnotationHbaseClientParams], "startRowKey: aaa, stopRowKey: zzz"; got != want {
-		t.Errorf("params annotation = %q, want %q", got, want)
-	}
-	if !e.ended {
-		t.Error("the span event was left open")
-	}
+	assert.Equal(t, "hbase.Scan", e.operation)
+	assert.Equal(t, int32(pinpoint.ServiceTypeHbaseClient), e.serviceType)
+	assert.Equal(t, "startRowKey: aaa, stopRowKey: zzz", e.annotations[pinpoint.AnnotationHbaseClientParams])
+	assert.True(t, e.ended, "the span event was left open")
+}
+
+// An open-ended scan has no bounds to name, and must still be recorded rather
+// than skipped.
+func TestClient_ScanWithoutARange(t *testing.T) {
+	client, fake := newClient(t)
+	tracer := newRecordingTracer()
+
+	s, err := hrpc.NewScanStr(pinpoint.NewContext(context.Background(), tracer), "table")
+	require.NoError(t, err)
+	client.Scan(s)
+
+	require.Equal(t, 1, fake.calls)
+	require.Len(t, tracer.events, 1)
+	assert.Equal(t, "startRowKey: , stopRowKey: ",
+		tracer.events[0].annotations[pinpoint.AnnotationHbaseClientParams])
 }
 
 // A failed operation has to reach the caller unchanged and be marked on the
@@ -233,14 +223,54 @@ func TestClient_RecordsTheOperationError(t *testing.T) {
 	tracer := newRecordingTracer()
 
 	g, err := hrpc.NewGetStr(pinpoint.NewContext(context.Background(), tracer), "table", "rowkey")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.Get(g); !errors.Is(err, fake.err) {
-		t.Errorf("Get() = %v, want %v", err, fake.err)
-	}
-	if !errors.Is(tracer.events[0].err, fake.err) {
-		t.Errorf("recorded error = %v, want %v", tracer.events[0].err, fake.err)
+	require.NoError(t, err)
+
+	_, err = client.Get(g)
+	assert.ErrorIs(t, err, fake.err, "the operation's error must come back unchanged")
+
+	require.Len(t, tracer.events, 1)
+	assert.ErrorIs(t, tracer.events[0].err, fake.err)
+	assert.True(t, tracer.events[0].ended, "a failed operation must still close its span event")
+}
+
+// Every operation has to mark its own failure, not only Get.
+func TestClient_EveryOperationRecordsItsError(t *testing.T) {
+	want := errors.New("region unavailable")
+
+	for _, tt := range []struct {
+		operation string
+		call      func(*Client, context.Context) error
+	}{
+		{"hbase.Put", func(c *Client, ctx context.Context) error {
+			p, err := hrpc.NewPutStr(ctx, "table", "rowkey", values())
+			require.NoError(t, err)
+			_, err = c.Put(p)
+			return err
+		}},
+		{"hbase.Delete", func(c *Client, ctx context.Context) error {
+			d, err := hrpc.NewDelStr(ctx, "table", "rowkey", values())
+			require.NoError(t, err)
+			_, err = c.Delete(d)
+			return err
+		}},
+		{"hbase.Increment", func(c *Client, ctx context.Context) error {
+			i, err := hrpc.NewIncStr(ctx, "table", "rowkey", values())
+			require.NoError(t, err)
+			_, err = c.Increment(i)
+			return err
+		}},
+	} {
+		t.Run(tt.operation, func(t *testing.T) {
+			client := &Client{Client: &fakeClient{err: want}, host: "zk1.example:2181"}
+			tracer := newRecordingTracer()
+
+			err := tt.call(client, pinpoint.NewContext(context.Background(), tracer))
+
+			assert.ErrorIs(t, err, want)
+			require.Len(t, tracer.events, 1)
+			assert.ErrorIs(t, tracer.events[0].err, want)
+			assert.True(t, tracer.events[0].ended)
+		})
 	}
 }
 
@@ -257,38 +287,43 @@ func TestClient_PassesThroughWithoutASampledTracer(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			client, fake := newClient(t)
+			tracer := newRecordingTracer()
 
 			g, err := hrpc.NewGetStr(tt.ctx, "table", "rowkey")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := client.Get(g); err != nil {
-				t.Fatal(err)
-			}
-			p, err := hrpc.NewPutStr(tt.ctx, "table", "rowkey", values())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := client.Put(p); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
+			_, err = client.Get(g)
+			require.NoError(t, err)
 
-			if fake.calls != 2 {
-				t.Errorf("the underlying client was called %d times, want 2", fake.calls)
-			}
+			p, err := hrpc.NewPutStr(tt.ctx, "table", "rowkey", values())
+			require.NoError(t, err)
+			_, err = client.Put(p)
+			require.NoError(t, err)
+
+			s, err := hrpc.NewScanStr(tt.ctx, "table")
+			require.NoError(t, err)
+			client.Scan(s)
+
+			assert.Equal(t, 3, fake.calls, "every operation must still reach the underlying client")
+			assert.Empty(t, tracer.events, "an untraced operation must not record a span event")
 		})
 	}
 }
 
 func Test_keyString(t *testing.T) {
-	if got, want := keyString([]byte("rowkey")), "rowKey: rowkey"; got != want {
-		t.Errorf("keyString() = %q, want %q", got, want)
-	}
-	if got, want := scanKeyString([]byte("aaa"), []byte("zzz")), "startRowKey: aaa, stopRowKey: zzz"; got != want {
-		t.Errorf("scanKeyString() = %q, want %q", got, want)
-	}
+	assert.Equal(t, "rowKey: rowkey", keyString([]byte("rowkey")))
+	assert.Equal(t, "rowKey: ", keyString(nil))
+	assert.Equal(t, "startRowKey: aaa, stopRowKey: zzz", scanKeyString([]byte("aaa"), []byte("zzz")))
 	// An open-ended scan has empty bounds rather than absent ones.
-	if got, want := scanKeyString(nil, nil), "startRowKey: , stopRowKey: "; got != want {
-		t.Errorf("scanKeyString(nil, nil) = %q, want %q", got, want)
-	}
+	assert.Equal(t, "startRowKey: , stopRowKey: ", scanKeyString(nil, nil))
+	assert.Equal(t, "startRowKey: aaa, stopRowKey: ", scanKeyString([]byte("aaa"), nil))
+}
+
+// NewClient keeps the ZooKeeper quorum it was given, which is what every span
+// event reports as the endpoint.
+func TestNewClient_KeepsTheQuorum(t *testing.T) {
+	c := NewClient("zk1.example:2181,zk2.example:2181")
+	t.Cleanup(c.Close)
+
+	assert.Equal(t, "zk1.example:2181,zk2.example:2181", c.host)
+	assert.Implements(t, (*hbase.Client)(nil), c, "the wrapper must still be a gohbase.Client")
 }

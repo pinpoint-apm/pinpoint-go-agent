@@ -2,13 +2,16 @@ package pporaclev3
 
 import (
 	"database/sql"
-	"reflect"
+	"database/sql/driver"
 	"slices"
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/sijms/go-ora/v3"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+const driverName = "oraclev3-pinpoint"
 
 // The endpoint recorded on every span event comes from here, so the service
 // name in the URL path has to reduce to a bare database name and the authority
@@ -64,12 +67,8 @@ func Test_parseDSN(t *testing.T) {
 			var info pinpoint.DBInfo
 			parseDSN(&info, tt.dsn)
 
-			if info.DBHost != tt.wantHost {
-				t.Errorf("DBHost = %q, want %q", info.DBHost, tt.wantHost)
-			}
-			if info.DBName != tt.wantName {
-				t.Errorf("DBName = %q, want %q", info.DBName, tt.wantName)
-			}
+			assert.Equal(t, tt.wantHost, info.DBHost)
+			assert.Equal(t, tt.wantName, info.DBName)
 		})
 	}
 }
@@ -80,36 +79,46 @@ func Test_parseDSN_InvalidLeavesInfoUntouched(t *testing.T) {
 	info := pinpoint.DBInfo{DBHost: "keep", DBName: "keep"}
 	parseDSN(&info, "oracle://scott:tiger@local\thost:1521/xe")
 
-	if info.DBHost != "keep" || info.DBName != "keep" {
-		t.Errorf("parseDSN() overwrote %q/%q", info.DBHost, info.DBName)
-	}
+	assert.Equal(t, "keep", info.DBHost, "parseDSN overwrote the host")
+	assert.Equal(t, "keep", info.DBName, "parseDSN overwrote the database name")
+}
+
+// parseDSN runs per connection against a copy of the shared DBInfo, and must
+// only fill in the address: overwriting the service types would file that one
+// connection's queries under a different node.
+func Test_parseDSN_LeavesTheServiceTypesAlone(t *testing.T) {
+	info := dbInfo
+	parseDSN(&info, "oracle://scott:tiger@localhost:1521/xe")
+
+	assert.Equal(t, dbInfo.DBType, info.DBType)
+	assert.Equal(t, dbInfo.QueryType, info.QueryType)
+	assert.Equal(t, "localhost", info.DBHost)
 }
 
 // The registered driver has to carry the oracle service types; a wrong type
 // files every query under the wrong node on the server map.
 func TestRegisteredDriverInfo(t *testing.T) {
-	if dbInfo.DBType != pinpoint.ServiceTypeOracle {
-		t.Errorf("DBType = %d, want %d", dbInfo.DBType, pinpoint.ServiceTypeOracle)
-	}
-	if dbInfo.QueryType != pinpoint.ServiceTypeOracleExecuteQuery {
-		t.Errorf("QueryType = %d, want %d", dbInfo.QueryType, pinpoint.ServiceTypeOracleExecuteQuery)
-	}
+	assert.Equal(t, pinpoint.ServiceTypeOracle, dbInfo.DBType)
+	assert.Equal(t, pinpoint.ServiceTypeOracleExecuteQuery, dbInfo.QueryType)
+	assert.NotNil(t, dbInfo.ParseDSN, "without a ParseDSN the wrapper never learns the host or database")
 }
 
-// v3 moved the parameter coder maps into the driver and builds them in
-// NewDriver, and every connection copies them at Open. A zero-value
-// &go_ora.OracleDriver{} -- which is what v2 used and what still compiles --
-// hands every connection nil maps, and that only shows up against a live
-// database. Nothing else in this package would catch the regression.
-func TestDriverIsInitialized(t *testing.T) {
-	if reflect.DeepEqual(oracleDriver, &go_ora.OracleDriver{}) {
-		t.Error("driver is a zero-value OracleDriver; v3 requires go_ora.NewDriver()")
-	}
+// The documented driver name is the only thing an application refers to, so it
+// has to be the name package init actually registered. go-ora v2 and v3 both register
+// "oracle" themselves, so the two plugins cannot share a binary - but their own
+// names still have to differ.
+func TestRegisteredDriverName(t *testing.T) {
+	assert.True(t, slices.Contains(sql.Drivers(), driverName),
+		"%s not registered, got %v", driverName, sql.Drivers())
 }
 
-// The registration name is the whole public API of this package.
-func TestDriverRegistered(t *testing.T) {
-	if !slices.Contains(sql.Drivers(), "oraclev3-pinpoint") {
-		t.Errorf("oraclev3-pinpoint not registered, have %v", sql.Drivers())
-	}
+// Opening through the registered name must hand database/sql the instrumented
+// driver, not the bare one - otherwise nothing is ever traced.
+func TestOpenUsesTheInstrumentedDriver(t *testing.T) {
+	db, err := sql.Open(driverName, "oracle://scott:tiger@localhost:1521/xe")
+	require.NoError(t, err)
+	defer db.Close()
+
+	assert.Implements(t, (*driver.Driver)(nil), db.Driver())
+	assert.NotEqual(t, oracleDriver, db.Driver(), "the bare oracle driver was registered")
 }

@@ -2,6 +2,7 @@ package ppgrpc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -10,22 +11,59 @@ import (
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 )
 
-func startAgent(t *testing.T) {
+func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) pinpoint.Agent {
 	t.Helper()
-	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentId("testAgent"))
-	if err != nil {
-		t.Fatal(err)
-	}
+
+	opts = append([]pinpoint.ConfigOption{
+		pinpoint.WithAppName("testApp"),
+		pinpoint.WithAgentId("testAgent"),
+	}, opts...)
+
+	config, err := pinpoint.NewConfig(opts...)
+	require.NoError(t, err)
+
 	agent, err := pinpoint.NewTestAgent(config, t)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(agent.Shutdown)
+
+	return agent
+}
+
+// spanOf reads back what the tracer recorded on its span: the RPC name, the
+// endpoint, the resolved remote address and whether the span failed.
+func spanOf(t *testing.T, tracer pinpoint.Tracer) map[string]interface{} {
+	t.Helper()
+	require.NotNil(t, tracer, "the handler never ran")
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(tracer.JsonString(), &m))
+	return m
+}
+
+// pinpointHeaders are the distributed tracing headers Inject writes; the callee
+// continues the transaction from them.
+var pinpointHeaders = []string{
+	pinpoint.HeaderTraceId,
+	pinpoint.HeaderSpanId,
+	pinpoint.HeaderParentSpanId,
+	pinpoint.HeaderParentApplicationName,
+}
+
+// lazyConn returns a *grpc.ClientConn that is never dialed: the client
+// interceptors only read cc.Target() off it.
+func lazyConn(t *testing.T, target string) *grpc.ClientConn {
+	t.Helper()
+	cc, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cc.Close() })
+	return cc
 }
 
 // The remote address recorded on a server span comes from the gRPC peer, which
@@ -44,23 +82,18 @@ func Test_remoteAddr(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: tt.addr})
-			if got := remoteAddr(ctx); got != tt.want {
-				t.Errorf("remoteAddr() = %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, remoteAddr(ctx))
 		})
 	}
 
 	// An interceptor can run without a peer - in tests, or over an in-process
 	// transport - and must still produce an address.
-	if got := remoteAddr(context.Background()); got != "127.0.0.1" {
-		t.Errorf("remoteAddr(no peer) = %q, want 127.0.0.1", got)
-	}
+	assert.Equal(t, "127.0.0.1", remoteAddr(context.Background()), "a call with no peer falls back")
 }
 
 func Test_makeUrl(t *testing.T) {
-	if got, want := makeUrl("localhost:8080", "/testapp.Hello/Greet"), "grpc://localhost:8080/testapp.Hello/Greet"; got != want {
-		t.Errorf("makeUrl() = %q, want %q", got, want)
-	}
+	assert.Equal(t, "grpc://localhost:8080/testapp.Hello/Greet",
+		makeUrl("localhost:8080", "/testapp.Hello/Greet"))
 }
 
 // Incoming metadata is absent on an unary call made without any, and gRPC
@@ -73,20 +106,15 @@ func Test_distributedTracingContextReaderMD(t *testing.T) {
 		"multi", "second",
 	)}
 
-	if got := r.Get(pinpoint.HeaderTraceId); got != "txid^1^1" {
-		t.Errorf("Get(%s) = %q, want %q", pinpoint.HeaderTraceId, got, "txid^1^1")
-	}
-	if got := r.Get("multi"); got != "first" {
-		t.Errorf("Get(multi) = %q, want %q", got, "first")
-	}
-	if got := r.Get("absent"); got != "" {
-		t.Errorf("Get(absent) = %q, want empty", got)
-	}
+	assert.Equal(t, "txid^1^1", r.Get(pinpoint.HeaderTraceId))
+	assert.Equal(t, "first", r.Get("multi"), "only the first value of a repeated key is the header")
+	assert.Equal(t, "", r.Get("absent"))
 
 	// metadata.FromIncomingContext returns a nil map when there is none.
-	if got := (distributedTracingContextReaderMD{nil}).Get("any"); got != "" {
-		t.Errorf("Get on nil metadata = %q, want empty", got)
-	}
+	assert.Equal(t, "", (distributedTracingContextReaderMD{nil}).Get("any"))
+
+	// gRPC lowercases metadata keys on the wire, so lookup has to match that.
+	assert.Equal(t, "txid^1^1", r.Get(pinpoint.HeaderTraceId))
 }
 
 // The client interceptor has to publish the tracing headers as outgoing
@@ -105,22 +133,31 @@ func Test_newClientTracer_InjectsMetadata(t *testing.T) {
 	defer spanTracer.EndSpanEvent()
 
 	md, ok := metadata.FromOutgoingContext(newCtx)
-	if !ok {
-		t.Fatal("no outgoing metadata on the returned context")
+	require.True(t, ok, "no outgoing metadata on the returned context")
+	assert.Equal(t, []string{"bearer token"}, md.Get("authorization"),
+		"the application's own metadata must survive")
+	for _, key := range pinpointHeaders {
+		assert.NotEmpty(t, md.Get(key), "outgoing metadata is missing %s", key)
 	}
-	if got := md.Get("authorization"); len(got) != 1 || got[0] != "bearer token" {
-		t.Errorf("application metadata = %q, want [bearer token]", got)
-	}
-	for _, key := range []string{
-		pinpoint.HeaderTraceId,
-		pinpoint.HeaderSpanId,
-		pinpoint.HeaderParentSpanId,
-		pinpoint.HeaderParentApplicationName,
-	} {
-		if len(md.Get(key)) == 0 {
-			t.Errorf("outgoing metadata is missing %s", key)
-		}
-	}
+	assert.Equal(t, tracer.TransactionId().String(), md.Get(pinpoint.HeaderTraceId)[0])
+}
+
+// The caller's own outgoing context must not be written to; only the derived
+// one carries the tracing metadata.
+func Test_newClientTracer_DoesNotModifyTheCallersMetadata(t *testing.T) {
+	startAgent(t)
+
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
+	defer tracer.EndSpan()
+
+	callerMD := metadata.Pairs("authorization", "bearer token")
+	ctx := metadata.NewOutgoingContext(pinpoint.NewContext(context.Background(), tracer), callerMD)
+
+	_, spanTracer := newClientTracer(ctx, "/testapp.Hello/Greet", "localhost:8080")
+	defer spanTracer.EndSpanEvent()
+
+	assert.Empty(t, callerMD.Get(pinpoint.HeaderTraceId),
+		"the metadata the caller built was written to in place")
 }
 
 // recordingTracer captures what the instrumentation records on a span event.
@@ -196,21 +233,13 @@ func Test_newClientTracer_RecordsTheDialTarget(t *testing.T) {
 				pinpoint.NewContext(context.Background(), tracer), "/testapp.Hello/Greet", tt.target)
 			spanTracer.EndSpanEvent()
 
-			if tracer.event.operation != "/testapp.Hello/Greet" {
-				t.Errorf("operation = %q, want %q", tracer.event.operation, "/testapp.Hello/Greet")
-			}
-			if tracer.event.serviceType != pinpoint.ServiceTypeGrpc {
-				t.Errorf("service type = %d, want %d", tracer.event.serviceType, pinpoint.ServiceTypeGrpc)
-			}
-			if tracer.event.destination != tt.want {
-				t.Errorf("destination = %q, want %q", tracer.event.destination, tt.want)
-			}
-			if got, want := tracer.event.annotations[pinpoint.AnnotationHttpUrl], "grpc://"+tt.want+"/testapp.Hello/Greet"; got != want {
-				t.Errorf("url annotation = %q, want %q", got, want)
-			}
-			if !tracer.event.ended {
-				t.Error("the span event was left open")
-			}
+			assert.Equal(t, "/testapp.Hello/Greet", tracer.event.operation,
+				"the span event is named after the gRPC method")
+			assert.Equal(t, int32(pinpoint.ServiceTypeGrpc), tracer.event.serviceType)
+			assert.Equal(t, tt.want, tracer.event.destination)
+			assert.Equal(t, "grpc://"+tt.want+"/testapp.Hello/Greet",
+				tracer.event.annotations[pinpoint.AnnotationHttpUrl])
+			assert.True(t, tracer.event.ended, "the span event was left open")
 		})
 	}
 }
@@ -219,13 +248,14 @@ func Test_newClientTracer_RecordsTheDialTarget(t *testing.T) {
 // as a failure; any other error must be.
 func Test_endSpanEvent(t *testing.T) {
 	for _, tt := range []struct {
-		name string
-		err  error
-		want error
+		name    string
+		err     error
+		wantErr bool
 	}{
-		{"clean end", io.EOF, nil},
-		{"no error", nil, nil},
-		{"rpc failure", errors.New("unavailable"), errors.New("unavailable")},
+		{name: "clean end", err: io.EOF},
+		{name: "no error"},
+		{name: "rpc failure", err: errors.New("unavailable"), wantErr: true},
+		{name: "a wrapped io.EOF is still a failure", err: errWrappingEOF{}, wantErr: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			tracer := newRecordingTracer()
@@ -233,15 +263,18 @@ func Test_endSpanEvent(t *testing.T) {
 
 			endSpanEvent(tracer, tt.err)
 
-			if (tracer.event.err == nil) != (tt.want == nil) {
-				t.Errorf("recorded error = %v, want %v", tracer.event.err, tt.want)
-			}
-			if !tracer.event.ended {
-				t.Error("the span event was left open")
-			}
+			assert.Equal(t, tt.wantErr, tracer.event.err != nil, "recorded error = %v", tracer.event.err)
+			assert.True(t, tracer.event.ended, "the span event was left open")
 		})
 	}
 }
+
+// errWrappingEOF stands for an error that carries io.EOF underneath but is not
+// io.EOF itself; gRPC reports a clean stream end as io.EOF exactly.
+type errWrappingEOF struct{}
+
+func (errWrappingEOF) Error() string { return "wrapped: " + io.EOF.Error() }
+func (errWrappingEOF) Unwrap() error { return io.EOF }
 
 // A context without a span yields a noop tracer, and the interceptor still has
 // to build an outgoing context rather than return the caller's unchanged.
@@ -249,15 +282,13 @@ func Test_newClientTracer_WithNoopTracer(t *testing.T) {
 	newCtx, tracer := newClientTracer(context.Background(), "/testapp.Hello/Greet", "localhost:8080")
 	defer tracer.EndSpanEvent()
 
-	if tracer == nil {
-		t.Fatal("newClientTracer returned no tracer")
-	}
-	if tracer.IsSampled() {
-		t.Error("a context without a span produced a sampled tracer")
-	}
-	if _, ok := metadata.FromOutgoingContext(newCtx); !ok {
-		t.Error("no outgoing metadata on the returned context")
-	}
+	require.NotNil(t, tracer, "newClientTracer returned no tracer")
+	assert.False(t, tracer.IsSampled(), "a context without a span produced a sampled tracer")
+
+	md, ok := metadata.FromOutgoingContext(newCtx)
+	require.True(t, ok, "no outgoing metadata on the returned context")
+	assert.Equal(t, []string{"s0"}, md.Get(pinpoint.HeaderSampled),
+		"an untraced call must tell the callee not to trace either")
 }
 
 type countingTracer struct {
@@ -303,9 +334,7 @@ func TestClientStream_EndsTheSpanEventOnce(t *testing.T) {
 	}
 	wg.Wait()
 
-	if got := atomic.LoadInt32(&tracer.ends); got != 1 {
-		t.Errorf("EndSpanEvent called %d times, want 1", got)
-	}
+	assert.Equal(t, int32(1), atomic.LoadInt32(&tracer.ends), "the span event must be closed exactly once")
 }
 
 // A successful send or receive is not the end of the stream, so it must not
@@ -315,23 +344,103 @@ func TestClientStream_SuccessfulCallsKeepTheSpanEventOpen(t *testing.T) {
 	cs := &clientStream{ClientStream: &fakeClientStream{}, tracer: tracer}
 
 	for i := 0; i < 3; i++ {
-		if err := cs.SendMsg(nil); err != nil {
-			t.Fatalf("SendMsg() = %v", err)
-		}
-		if err := cs.RecvMsg(nil); err != nil {
-			t.Fatalf("RecvMsg() = %v", err)
-		}
+		require.NoError(t, cs.SendMsg(nil))
+		require.NoError(t, cs.RecvMsg(nil))
 	}
-	if got := atomic.LoadInt32(&tracer.ends); got != 0 {
-		t.Fatalf("EndSpanEvent called %d times before the stream ended", got)
-	}
+	require.Zero(t, atomic.LoadInt32(&tracer.ends), "the span event was closed before the stream ended")
 
-	if err := cs.CloseSend(); err != nil {
-		t.Fatalf("CloseSend() = %v", err)
+	require.NoError(t, cs.CloseSend())
+	assert.Equal(t, int32(1), atomic.LoadInt32(&tracer.ends), "CloseSend must close the span event")
+}
+
+// The stream's own error has to reach the caller unchanged, whichever call
+// surfaces it.
+func TestClientStream_ReturnsTheStreamError(t *testing.T) {
+	want := errors.New("unavailable")
+	tracer := newCountingTracer()
+	cs := &clientStream{ClientStream: &fakeClientStream{err: want}, tracer: tracer}
+
+	assert.ErrorIs(t, cs.SendMsg(nil), want)
+	assert.ErrorIs(t, cs.RecvMsg(nil), want)
+	assert.ErrorIs(t, cs.CloseSend(), want)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&tracer.ends), "the span event must be closed exactly once")
+}
+
+// The unary client interceptor is what an application actually installs: it has
+// to hand the invoker a context carrying the tracing metadata and return the
+// invoker's error unchanged.
+func TestUnaryClientInterceptor(t *testing.T) {
+	startAgent(t)
+
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
+	defer tracer.EndSpan()
+
+	want := errors.New("unavailable")
+	var invokedMD metadata.MD
+
+	err := UnaryClientInterceptor()(
+		pinpoint.NewContext(context.Background(), tracer),
+		"/testapp.Hello/Greet", "request", "reply",
+		lazyConn(t, "localhost:8080"),
+		func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, opts ...grpc.CallOption) error {
+			invokedMD, _ = metadata.FromOutgoingContext(ctx)
+			return want
+		})
+
+	assert.ErrorIs(t, err, want, "the invoker's error must come back unchanged")
+	require.NotNil(t, invokedMD, "the invoker was called without outgoing metadata")
+	for _, key := range pinpointHeaders {
+		assert.NotEmpty(t, invokedMD.Get(key), "outgoing metadata is missing %s", key)
 	}
-	if got := atomic.LoadInt32(&tracer.ends); got != 1 {
-		t.Errorf("EndSpanEvent called %d times after CloseSend, want 1", got)
+}
+
+// The stream client interceptor wraps the stream the streamer returned, so the
+// span event stays open until the stream ends.
+func TestStreamClientInterceptor(t *testing.T) {
+	startAgent(t)
+
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
+	defer tracer.EndSpan()
+
+	var invokedMD metadata.MD
+	stream, err := StreamClientInterceptor()(
+		pinpoint.NewContext(context.Background(), tracer),
+		&grpc.StreamDesc{StreamName: "Stream"},
+		lazyConn(t, "localhost:8080"),
+		"/testapp.Hello/Stream",
+		func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+			invokedMD, _ = metadata.FromOutgoingContext(ctx)
+			return &fakeClientStream{}, nil
+		})
+
+	require.NoError(t, err)
+	require.IsType(t, &clientStream{}, stream, "the returned stream must be the instrumented wrapper")
+	for _, key := range pinpointHeaders {
+		assert.NotEmpty(t, invokedMD.Get(key), "outgoing metadata is missing %s", key)
 	}
+	assert.NoError(t, stream.CloseSend())
+}
+
+// A streamer that fails never produces a stream, so the interceptor has to
+// close its own span event and pass the error straight back.
+func TestStreamClientInterceptor_StreamerError(t *testing.T) {
+	startAgent(t)
+
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
+	defer tracer.EndSpan()
+
+	want := errors.New("unavailable")
+	stream, err := StreamClientInterceptor()(
+		pinpoint.NewContext(context.Background(), tracer),
+		&grpc.StreamDesc{StreamName: "Stream"},
+		lazyConn(t, "localhost:8080"),
+		"/testapp.Hello/Stream",
+		func(context.Context, *grpc.StreamDesc, *grpc.ClientConn, string, ...grpc.CallOption) (grpc.ClientStream, error) {
+			return nil, want
+		})
+
+	assert.ErrorIs(t, err, want)
+	assert.Nil(t, stream, "a failed streamer must not yield a stream to wrap")
 }
 
 // The interceptor wraps the handler, so the handler's result - value and error
@@ -340,26 +449,73 @@ func TestUnaryServerInterceptor(t *testing.T) {
 	startAgent(t)
 
 	want := errors.New("handler failed")
-	var sampled bool
+	var tracer pinpoint.Tracer
+
+	ctx := peer.NewContext(context.Background(),
+		&peer.Peer{Addr: &net.TCPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 50051}})
 
 	resp, err := UnaryServerInterceptor()(
-		context.Background(),
+		ctx,
 		"request",
 		&grpc.UnaryServerInfo{FullMethod: "/testapp.Hello/Greet"},
 		func(ctx context.Context, req interface{}) (interface{}, error) {
-			sampled = pinpoint.FromContext(ctx).IsSampled()
+			tracer = pinpoint.FromContext(ctx)
 			return "response", want
 		})
 
-	if !sampled {
-		t.Error("handler received an unsampled tracer")
-	}
-	if resp != "response" {
-		t.Errorf("response = %v, want %q", resp, "response")
-	}
-	if !errors.Is(err, want) {
-		t.Errorf("error = %v, want %v", err, want)
-	}
+	require.NotNil(t, tracer)
+	assert.True(t, tracer.IsSampled(), "handler received an unsampled tracer")
+	assert.Equal(t, "response", resp, "the handler's response must come back unchanged")
+	assert.ErrorIs(t, err, want, "the handler's error must come back unchanged")
+
+	span := spanOf(t, tracer)
+	assert.Equal(t, "/testapp.Hello/Greet", span["RpcName"], "the span is named after the gRPC method")
+	assert.Equal(t, "10.0.0.1", span["RemoteAddr"], "the peer address must be stripped of its port")
+	assert.NotEqual(t, float64(0), span["Err"], "the handler error must fail the span")
+}
+
+// A handler that succeeds must leave the span unfailed.
+func TestUnaryServerInterceptor_SuccessfulHandler(t *testing.T) {
+	startAgent(t)
+
+	var tracer pinpoint.Tracer
+	resp, err := UnaryServerInterceptor()(context.Background(), "request",
+		&grpc.UnaryServerInfo{FullMethod: "/testapp.Hello/Greet"},
+		func(ctx context.Context, req interface{}) (interface{}, error) {
+			tracer = pinpoint.FromContext(ctx)
+			return "response", nil
+		})
+
+	require.NoError(t, err)
+	assert.Equal(t, "response", resp)
+	assert.Equal(t, float64(0), spanOf(t, tracer)["Err"], "a successful handler must not fail the span")
+}
+
+// A gRPC server is usually one hop of a larger call: the tracing metadata the
+// caller sent has to put this span in the caller's transaction.
+func TestUnaryServerInterceptor_ContinuesTheCallersTransaction(t *testing.T) {
+	startAgent(t)
+
+	caller := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
+	defer caller.EndSpan()
+
+	// What the client interceptor would have put on the wire.
+	outgoing, spanTracer := newClientTracer(
+		pinpoint.NewContext(context.Background(), caller), "/testapp.Hello/Greet", "localhost:8080")
+	spanTracer.EndSpanEvent()
+	md, _ := metadata.FromOutgoingContext(outgoing)
+
+	var callee pinpoint.Tracer
+	_, err := UnaryServerInterceptor()(metadata.NewIncomingContext(context.Background(), md), "request",
+		&grpc.UnaryServerInfo{FullMethod: "/testapp.Hello/Greet"},
+		func(ctx context.Context, req interface{}) (interface{}, error) {
+			callee = pinpoint.FromContext(ctx)
+			return nil, nil
+		})
+
+	require.NoError(t, err)
+	require.NotNil(t, callee)
+	assert.Equal(t, caller.TransactionId().String(), callee.TransactionId().String())
 }
 
 type fakeServerStream struct {
@@ -380,29 +536,74 @@ func TestStreamServerInterceptor(t *testing.T) {
 
 	want := errors.New("handler failed")
 	var (
-		sampled  bool
+		tracer   pinpoint.Tracer
 		baseKept interface{}
+		gotSrv   interface{}
 	)
 
+	srv := "the service implementation"
 	err := StreamServerInterceptor()(
-		nil,
+		srv,
 		&fakeServerStream{ctx: base},
 		&grpc.StreamServerInfo{FullMethod: "/testapp.Hello/Stream"},
 		func(srv interface{}, stream grpc.ServerStream) error {
-			sampled = pinpoint.FromContext(stream.Context()).IsSampled()
+			tracer = pinpoint.FromContext(stream.Context())
 			baseKept = stream.Context().Value(ctxKey{})
+			gotSrv = srv
 			return want
 		})
 
-	if !sampled {
-		t.Error("handler received an unsampled tracer")
-	}
-	if baseKept != "from-the-transport" {
-		t.Errorf("transport context value = %v, want %q", baseKept, "from-the-transport")
-	}
-	if !errors.Is(err, want) {
-		t.Errorf("error = %v, want %v", err, want)
-	}
+	require.NotNil(t, tracer)
+	assert.True(t, tracer.IsSampled(), "handler received an unsampled tracer")
+	assert.Equal(t, "from-the-transport", baseKept, "the transport's context values were discarded")
+	assert.Equal(t, srv, gotSrv, "the service implementation must reach the handler unchanged")
+	assert.ErrorIs(t, err, want, "the handler's error must come back unchanged")
+	assert.Equal(t, "/testapp.Hello/Stream", spanOf(t, tracer)["RpcName"])
+	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "the handler error must fail the span")
+}
+
+// The stream interceptor reads its tracing metadata off the stream's context,
+// so it continues the caller's transaction the same way the unary one does.
+func TestStreamServerInterceptor_ContinuesTheCallersTransaction(t *testing.T) {
+	startAgent(t)
+
+	caller := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
+	defer caller.EndSpan()
+
+	outgoing, spanTracer := newClientTracer(
+		pinpoint.NewContext(context.Background(), caller), "/testapp.Hello/Stream", "localhost:8080")
+	spanTracer.EndSpanEvent()
+	md, _ := metadata.FromOutgoingContext(outgoing)
+
+	var callee pinpoint.Tracer
+	err := StreamServerInterceptor()(nil,
+		&fakeServerStream{ctx: metadata.NewIncomingContext(context.Background(), md)},
+		&grpc.StreamServerInfo{FullMethod: "/testapp.Hello/Stream"},
+		func(srv interface{}, stream grpc.ServerStream) error {
+			callee = pinpoint.FromContext(stream.Context())
+			return nil
+		})
+
+	require.NoError(t, err)
+	require.NotNil(t, callee)
+	assert.Equal(t, caller.TransactionId().String(), callee.TransactionId().String())
+}
+
+// A panicking handler must not be swallowed by either server interceptor.
+func TestServerInterceptors_PanicPropagates(t *testing.T) {
+	startAgent(t)
+
+	assert.PanicsWithValue(t, "boom", func() {
+		_, _ = UnaryServerInterceptor()(context.Background(), nil,
+			&grpc.UnaryServerInfo{FullMethod: "/testapp.Hello/Greet"},
+			func(context.Context, interface{}) (interface{}, error) { panic("boom") })
+	})
+
+	assert.PanicsWithValue(t, "boom", func() {
+		_ = StreamServerInterceptor()(nil, &fakeServerStream{ctx: context.Background()},
+			&grpc.StreamServerInfo{FullMethod: "/testapp.Hello/Stream"},
+			func(interface{}, grpc.ServerStream) error { panic("boom") })
+	})
 }
 
 // With no agent running the server interceptors must be straight
@@ -413,31 +614,37 @@ func TestServerInterceptors_PassThroughWhenAgentDisabled(t *testing.T) {
 	}
 
 	called := false
-	if _, err := UnaryServerInterceptor()(context.Background(), nil,
+	_, err := UnaryServerInterceptor()(context.Background(), nil,
 		&grpc.UnaryServerInfo{FullMethod: "/testapp.Hello/Greet"},
 		func(ctx context.Context, req interface{}) (interface{}, error) {
 			called = true
-			if pinpoint.FromContext(ctx).IsSampled() {
-				t.Error("a disabled agent produced a sampled tracer")
-			}
+			assert.False(t, pinpoint.FromContext(ctx).IsSampled(), "a disabled agent produced a sampled tracer")
 			return nil, nil
-		}); err != nil {
-		t.Fatal(err)
-	}
-	if !called {
-		t.Error("the unary handler did not run")
-	}
+		})
+	require.NoError(t, err)
+	assert.True(t, called, "the unary handler did not run")
 
 	called = false
-	if err := StreamServerInterceptor()(nil, &fakeServerStream{ctx: context.Background()},
+	err = StreamServerInterceptor()(nil, &fakeServerStream{ctx: context.Background()},
 		&grpc.StreamServerInfo{FullMethod: "/testapp.Hello/Stream"},
 		func(srv interface{}, stream grpc.ServerStream) error {
 			called = true
+			assert.False(t, pinpoint.FromContext(stream.Context()).IsSampled(),
+				"a disabled agent produced a sampled tracer")
 			return nil
-		}); err != nil {
-		t.Fatal(err)
-	}
-	if !called {
-		t.Error("the stream handler did not run")
-	}
+		})
+	require.NoError(t, err)
+	assert.True(t, called, "the stream handler did not run")
+}
+
+// serverStream must delegate everything but Context to the stream gRPC gave it.
+func Test_serverStream(t *testing.T) {
+	type ctxKey struct{}
+	base := context.WithValue(context.Background(), ctxKey{}, "from-the-transport")
+	wrapped := context.WithValue(base, ctxKey{}, "from-the-interceptor")
+
+	s := &serverStream{ServerStream: &fakeServerStream{ctx: base}, context: wrapped}
+
+	assert.Equal(t, "from-the-interceptor", s.Context().Value(ctxKey{}),
+		"Context must report the interceptor's context, not the transport's")
 }

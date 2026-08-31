@@ -7,7 +7,18 @@ import (
 
 	"github.com/Shopify/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// pinpointHeaders are the distributed tracing headers Inject writes; a consumer
+// continues the transaction from them.
+var pinpointHeaders = []string{
+	pinpoint.HeaderTraceId,
+	pinpoint.HeaderSpanId,
+	pinpoint.HeaderParentSpanId,
+	pinpoint.HeaderParentApplicationName,
+}
 
 type stubSyncProducer struct {
 	sarama.SyncProducer
@@ -100,27 +111,17 @@ func Test_syncProducer_SendMessageContext(t *testing.T) {
 
 	partition, offset, err := p.SendMessageContext(pinpoint.NewContext(context.Background(), tracer), msg)
 
-	if err != nil {
-		t.Fatalf("SendMessageContext() = %v", err)
-	}
-	if partition != 3 || offset != 42 {
-		t.Errorf("SendMessageContext() = %d/%d, want 3/42", partition, offset)
-	}
-	if len(stub.sent) != 1 || stub.sent[0] != msg {
-		t.Fatalf("the underlying producer received %d messages, want the one sent", len(stub.sent))
-	}
+	require.NoError(t, err)
+	assert.Equal(t, int32(3), partition, "the underlying producer's partition must come back unchanged")
+	assert.Equal(t, int64(42), offset, "the underlying producer's offset must come back unchanged")
+	require.Len(t, stub.sent, 1)
+	assert.Same(t, msg, stub.sent[0], "the underlying producer received a different message")
 
 	writer := &distributedTracingContextWriterProducer{msg}
-	for _, key := range []string{
-		pinpoint.HeaderTraceId,
-		pinpoint.HeaderSpanId,
-		pinpoint.HeaderParentSpanId,
-		pinpoint.HeaderParentApplicationName,
-	} {
-		if writer.Get(key) == "" {
-			t.Errorf("the produced message is missing the %s header", key)
-		}
+	for _, key := range pinpointHeaders {
+		assert.NotEmpty(t, writer.Get(key), "the produced message is missing the %s header", key)
 	}
+	assert.Equal(t, tracer.TransactionId().String(), writer.Get(pinpoint.HeaderTraceId))
 }
 
 // The span event names the topic and the broker, which is what puts the
@@ -132,25 +133,13 @@ func Test_newSyncProducerTracer_RecordsTopicAndBroker(t *testing.T) {
 	newSyncProducerTracer(pinpoint.NewContext(context.Background(), tracer),
 		[]string{"broker1:9092", "broker2:9092"}, msg).EndSpanEvent()
 
-	if len(tracer.events) != 1 {
-		t.Fatalf("recorded %d span events, want 1", len(tracer.events))
-	}
+	require.Len(t, tracer.events, 1, "one message must produce exactly one span event")
 	e := tracer.events[0]
-	if e.operation != "sarama.SyncProducer.SendMessage" {
-		t.Errorf("operation = %q, want %q", e.operation, "sarama.SyncProducer.SendMessage")
-	}
-	if e.serviceType != pinpoint.ServiceTypeKafkaClient {
-		t.Errorf("service type = %d, want %d", e.serviceType, pinpoint.ServiceTypeKafkaClient)
-	}
-	if e.destination != "broker1:9092" {
-		t.Errorf("destination = %q, want %q", e.destination, "broker1:9092")
-	}
-	if got := e.annotations[pinpoint.AnnotationKafkaTopic]; got != "widgets" {
-		t.Errorf("topic annotation = %q, want %q", got, "widgets")
-	}
-	if !e.ended {
-		t.Error("the span event was left open")
-	}
+	assert.Equal(t, "sarama.SyncProducer.SendMessage", e.operation)
+	assert.Equal(t, int32(pinpoint.ServiceTypeKafkaClient), e.serviceType)
+	assert.Equal(t, "broker1:9092", e.destination, "the first broker names the destination")
+	assert.Equal(t, "widgets", e.annotations[pinpoint.AnnotationKafkaTopic])
+	assert.True(t, e.ended, "the span event was left open")
 }
 
 // A batch send is one span event per message - each one is a separate record
@@ -163,22 +152,15 @@ func Test_syncProducer_SendMessagesContext(t *testing.T) {
 	msgs := []*sarama.ProducerMessage{{Topic: "widgets"}, {Topic: "gadgets"}}
 	err := p.SendMessagesContext(pinpoint.NewContext(context.Background(), tracer), msgs)
 
-	if !errors.Is(err, stub.err) {
-		t.Errorf("SendMessagesContext() = %v, want %v", err, stub.err)
-	}
-	if len(stub.batches) != 1 || len(stub.batches[0]) != 2 {
-		t.Fatalf("the underlying producer received %d batches, want one of two messages", len(stub.batches))
-	}
-	if len(tracer.events) != 2 {
-		t.Fatalf("recorded %d span events, want 2", len(tracer.events))
-	}
+	assert.ErrorIs(t, err, stub.err, "the batch error must come back unchanged")
+	require.Len(t, stub.batches, 1)
+	assert.Len(t, stub.batches[0], 2, "the whole batch must reach the underlying producer")
+
+	require.Len(t, tracer.events, 2, "each message in a batch is its own record, so its own span event")
 	for i, want := range []string{"widgets", "gadgets"} {
-		if got := tracer.events[i].annotations[pinpoint.AnnotationKafkaTopic]; got != want {
-			t.Errorf("topic annotation %d = %q, want %q", i, got, want)
-		}
-		if !tracer.events[i].ended {
-			t.Errorf("span event %d was left open", i)
-		}
+		assert.Equal(t, want, tracer.events[i].annotations[pinpoint.AnnotationKafkaTopic],
+			"topic annotation %d", i)
+		assert.True(t, tracer.events[i].ended, "span event %d was left open", i)
 	}
 }
 
@@ -191,33 +173,76 @@ func Test_syncProducer_WithContext(t *testing.T) {
 
 	WithContext(pinpoint.NewContext(context.Background(), tracer), p)
 
-	if _, _, err := p.SendMessage(&sarama.ProducerMessage{Topic: "widgets"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := p.SendMessages([]*sarama.ProducerMessage{{Topic: "gadgets"}}); err != nil {
-		t.Fatal(err)
-	}
+	_, _, err := p.SendMessage(&sarama.ProducerMessage{Topic: "widgets"})
+	require.NoError(t, err)
+	require.NoError(t, p.SendMessages([]*sarama.ProducerMessage{{Topic: "gadgets"}}))
 
-	if len(tracer.events) != 2 {
-		t.Fatalf("recorded %d span events, want 2", len(tracer.events))
-	}
+	require.Len(t, tracer.events, 2)
 	for i, want := range []string{"widgets", "gadgets"} {
-		if got := tracer.events[i].annotations[pinpoint.AnnotationKafkaTopic]; got != want {
-			t.Errorf("topic annotation %d = %q, want %q", i, got, want)
-		}
+		assert.Equal(t, want, tracer.events[i].annotations[pinpoint.AnnotationKafkaTopic],
+			"topic annotation %d", i)
+		assert.True(t, tracer.events[i].ended, "span event %d was left open", i)
 	}
 }
 
 // A producer used without any pinpoint context still has to produce; the
 // wrapper records nothing on a noop tracer.
 func Test_syncProducer_WithoutASampledTracer(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		ctx  context.Context
+	}{
+		{"background context", context.Background()},
+		{"noop tracer", pinpoint.NewContext(context.Background(), pinpoint.NoopTracer())},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			stub := &stubSyncProducer{}
+			p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}, ctx: tt.ctx}
+
+			_, _, err := p.SendMessage(&sarama.ProducerMessage{Topic: "widgets"})
+			require.NoError(t, err)
+			require.NoError(t, p.SendMessages([]*sarama.ProducerMessage{{Topic: "gadgets"}}))
+
+			assert.Len(t, stub.sent, 1, "the message must still be produced")
+			assert.Len(t, stub.batches, 1, "the batch must still be produced")
+		})
+	}
+}
+
+// distributedTracingContextWriterProducer is what carries the transaction to
+// the consumer; a key it was never given has no value to report.
+func Test_distributedTracingContextWriterProducer(t *testing.T) {
+	msg := &sarama.ProducerMessage{Topic: "widgets"}
+	w := &distributedTracingContextWriterProducer{msg}
+
+	assert.Equal(t, "", w.Get(pinpoint.HeaderTraceId), "an untouched message carries no header")
+
+	w.Set(pinpoint.HeaderTraceId, "txid^1^1")
+	w.Set(pinpoint.HeaderSpanId, "7")
+
+	assert.Equal(t, "txid^1^1", w.Get(pinpoint.HeaderTraceId))
+	assert.Equal(t, "7", w.Get(pinpoint.HeaderSpanId))
+	assert.Equal(t, "", w.Get("X-Absent"))
+	assert.Len(t, msg.Headers, 2, "each header must be appended to the message once")
+}
+
+// NewSyncProducer reports the broker error rather than handing back a producer
+// that cannot send.
+func TestNewSyncProducer_ReturnsTheBrokerError(t *testing.T) {
+	p, err := NewSyncProducer([]string{"127.0.0.1:1"}, sarama.NewConfig())
+
+	assert.Error(t, err, "a producer for an unreachable broker cannot be created")
+	assert.Nil(t, p, "a failed NewSyncProducer must not yield a producer")
+}
+
+// An empty batch has nothing to record and must still reach the producer.
+func Test_syncProducer_SendMessagesContext_EmptyBatch(t *testing.T) {
+	tracer := newCapturingTracer()
 	stub := &stubSyncProducer{}
 	p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}, ctx: context.Background()}
 
-	if _, _, err := p.SendMessage(&sarama.ProducerMessage{Topic: "widgets"}); err != nil {
-		t.Fatal(err)
-	}
-	if len(stub.sent) != 1 {
-		t.Errorf("the underlying producer received %d messages, want 1", len(stub.sent))
-	}
+	require.NoError(t, p.SendMessagesContext(pinpoint.NewContext(context.Background(), tracer), nil))
+
+	assert.Empty(t, tracer.events, "an empty batch has no message to record")
+	assert.Len(t, stub.batches, 1, "the empty batch must still reach the underlying producer")
 }

@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHttpExcludeUrlMatch(t *testing.T) {
@@ -158,25 +161,53 @@ func TestHttpExcludeUrlMatch(t *testing.T) {
 			match:   []string{"/a/x/b", "/a/x/y/b"},
 			noMatch: []string{"/a/b", "/a/b/c"},
 		},
+		{
+			// A wildcard before the '**' suffix keeps the pattern out of the
+			// prefix fast path; it has to compile to the token matcher.
+			name:    "wildcard before a ** suffix falls back to Ant",
+			pattern: "/a?/**",
+			kind:    patternAnt,
+			match:   []string{"/ab/", "/ab/c/d"},
+			noMatch: []string{"/a/", "/abc/", "/ab"},
+		},
+		{
+			name:    "wildcard before a * suffix falls back to Ant",
+			pattern: "/a?/*",
+			kind:    patternAnt,
+			match:   []string{"/ab/", "/ab/c"},
+			noMatch: []string{"/ab/c/d", "/a/", "/abc/c"},
+		},
+		{
+			// '**' with nothing after it inside the pattern spans segments and
+			// then has to reach the end of the url.
+			name:    "trailing literal after a spanning **",
+			pattern: "/a/**b",
+			kind:    patternAnt,
+			match:   []string{"/a/b", "/a/xb", "/a/x/y/b"},
+			noMatch: []string{"/a/bx", "/a"},
+		},
+		{
+			name:    "? at the very end",
+			pattern: "/a/b?",
+			kind:    patternAnt,
+			match:   []string{"/a/bc", "/a/b한"},
+			noMatch: []string{"/a/b", "/a/bcd", "/a/b/"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if kind := newHttpExcludeUrl(tt.pattern).kind; kind != tt.kind {
-				t.Errorf("newHttpExcludeUrl(%q).kind = %d, want %d", tt.pattern, kind, tt.kind)
-			}
+			assert.Equal(t, tt.kind, newHttpExcludeUrl(tt.pattern).kind,
+				"newHttpExcludeUrl(%q) classified the pattern into the wrong kind", tt.pattern)
+
 			// Match through the filter so every kind takes the dispatch path a
 			// request takes.
 			f := setupHttpUrlFilter([]string{tt.pattern})
 			for _, url := range tt.match {
-				if !f.isFiltered(url) {
-					t.Errorf("pattern %q should match %q", tt.pattern, url)
-				}
+				assert.True(t, f.isFiltered(url), "pattern %q should match %q", tt.pattern, url)
 			}
 			for _, url := range tt.noMatch {
-				if f.isFiltered(url) {
-					t.Errorf("pattern %q should not match %q", tt.pattern, url)
-				}
+				assert.False(t, f.isFiltered(url), "pattern %q should not match %q", tt.pattern, url)
 			}
 		})
 	}
@@ -192,11 +223,38 @@ func TestHttpExcludeUrlLongUrl(t *testing.T) {
 		long += "/segment"
 	}
 
-	if !f.isFiltered(long + "/x.html") {
-		t.Errorf("pattern should match long url of %d bytes", len(long)+7)
+	assert.True(t, f.isFiltered(long+"/x.html"), "pattern should match long url of %d bytes", len(long)+7)
+	assert.False(t, f.isFiltered(long+"/x.htm"), "pattern should not match long url with a different suffix")
+}
+
+// Every Ant filter of one request shares a scratch buffer that arrives dirty,
+// so a pattern must not read the previous pattern's DP state as its own. Each
+// token kind gets a turn at running second.
+func TestHttpUrlFilterSharedScratchIsNotReadAsState(t *testing.T) {
+	second := []string{
+		"/b/x?z",         // tokenQuestion
+		"/b/x*z",         // tokenStar
+		"/b/**z",         // tokenDoubleStar
+		"/b/**/z",        // tokenDoubleStarSlash
+		"/b/xyz?",        // literal run ending in a wildcard
+		"/b/?/**/*.json", // every kind in one pattern
 	}
-	if f.isFiltered(long + "/x.htm") {
-		t.Errorf("pattern should not match long url with a different suffix")
+
+	for _, pattern := range second {
+		t.Run(pattern, func(t *testing.T) {
+			// "/a/**/deep.html" runs first and leaves its rows behind; the
+			// pattern under test must produce the same verdicts either way.
+			shared := setupHttpUrlFilter([]string{"/a/**/deep.html", pattern})
+			alone := setupHttpUrlFilter([]string{pattern})
+
+			for _, url := range []string{
+				"/b/xyz", "/b/xz", "/b/x/z", "/b/z", "/b/a/b/z",
+				"/b/xyz1", "/b/1/x/y.json", "/c/xyz",
+			} {
+				assert.Equal(t, alone.isFiltered(url), shared.isFiltered(url),
+					"%q behaved differently after another Ant pattern ran on the shared scratch", url)
+			}
+		})
 	}
 }
 
@@ -209,24 +267,37 @@ func TestHttpUrlFilterIsFiltered(t *testing.T) {
 		"/static/**",
 	})
 
-	if got := len(f.exact); got != 2 {
-		t.Fatalf("exact filter count = %d, want 2", got)
-	}
-	if got := len(f.prefix); got != 1 {
-		t.Fatalf("prefix filter count = %d, want 1", got)
-	}
-	if got := len(f.ant); got != 1 {
-		t.Fatalf("ant filter count = %d, want 1", got)
-	}
+	require.Len(t, f.exact, 2, "exact filters")
+	require.Len(t, f.prefix, 1, "prefix filters")
+	require.Len(t, f.ant, 1, "ant filters")
 
 	for _, url := range []string{"/Exact/한글", "/case-sensitive", "/ab/exclude.html", "/static/js/app.js"} {
-		if !f.isFiltered(url) {
-			t.Errorf("isFiltered(%q) = false, want true", url)
-		}
+		assert.True(t, f.isFiltered(url), "isFiltered(%q)", url)
 	}
 	for _, url := range []string{"/exact/한글", "/Case-Sensitive", "/exclude.html", "/statics/js/app.js"} {
-		if f.isFiltered(url) {
-			t.Errorf("isFiltered(%q) = true, want false", url)
+		assert.False(t, f.isFiltered(url), "isFiltered(%q)", url)
+	}
+}
+
+// An empty pattern would classify as patternExact and then filter every request
+// whose path is "" — it is dropped at setup instead.
+func TestHttpUrlFilterIgnoresEmptyPatterns(t *testing.T) {
+	f := setupHttpUrlFilter([]string{"", "/keep/**", ""})
+
+	assert.Empty(t, f.exact, "an empty pattern must not become an exact filter")
+	require.Len(t, f.prefix, 1)
+	assert.True(t, f.isFiltered("/keep/x"))
+	assert.False(t, f.isFiltered(""))
+}
+
+// No pattern configured is the default: nothing is ever filtered, and the Ant
+// scratch buffer is never touched.
+func TestHttpUrlFilterWithoutPatterns(t *testing.T) {
+	for _, cfg := range [][]string{nil, {}, {""}} {
+		f := setupHttpUrlFilter(cfg)
+		assert.Empty(t, f.ant)
+		for _, url := range []string{"", "/", "/a/b/c.html"} {
+			assert.False(t, f.isFiltered(url), "isFiltered(%q) with config %q", url, cfg)
 		}
 	}
 }
@@ -246,12 +317,70 @@ func TestHttpUrlFilterReusesLongAntScratch(t *testing.T) {
 	allocs := testing.AllocsPerRun(100, func() {
 		benchmarkFiltered = f.isFiltered(url)
 	})
-	if !benchmarkFiltered {
-		t.Fatal("long URL should match the last Ant pattern")
+	require.True(t, benchmarkFiltered, "long URL should match the last Ant pattern")
+	assert.LessOrEqual(t, allocs, float64(1),
+		"isFiltered allocated %.0f times, want at most one shared scratch allocation", allocs)
+}
+
+// A url that fits the stack rows must not allocate at all, whatever the
+// configured pattern mix.
+func TestHttpUrlFilterShortUrlDoesNotAllocate(t *testing.T) {
+	f := setupHttpUrlFilter([]string{"/exact", "/static/**", "/api/v?/**/*.json"})
+
+	assert.Zero(t, testing.AllocsPerRun(100, func() {
+		benchmarkFiltered = f.isFiltered("/api/v2/users/1/profile.json")
+	}), "matching a short url should stay on the stack rows")
+	require.True(t, benchmarkFiltered)
+}
+
+func TestHttpMethodFilter(t *testing.T) {
+	f := &httpMethodFilter{excludeMethod: trimStringSlice([]string{" put ", "DELETE"})}
+
+	for _, method := range []string{"PUT", "put", "Put", "DELETE", "delete"} {
+		assert.True(t, f.isExcludedMethod(method), "isExcludedMethod(%q) must be case-insensitive", method)
 	}
-	if allocs > 1 {
-		t.Errorf("isFiltered allocated %.0f times, want at most one shared scratch allocation", allocs)
+	for _, method := range []string{"GET", "POST", "PU", "PUTX", ""} {
+		assert.False(t, f.isExcludedMethod(method), "isExcludedMethod(%q)", method)
 	}
+}
+
+func TestHttpMethodFilterWithoutConfig(t *testing.T) {
+	for _, cfg := range [][]string{nil, {}} {
+		f := &httpMethodFilter{excludeMethod: cfg}
+		for _, method := range []string{"GET", "POST", "PUT", ""} {
+			assert.False(t, f.isExcludedMethod(method), "nothing is excluded when no method is configured")
+		}
+	}
+}
+
+// The two filters a request consults are built from the agent config, so the
+// options have to reach them through pinpoint.GetConfig().
+func TestUrlAndMethodFiltersComeFromAgentConfig(t *testing.T) {
+	startAgent(t,
+		WithHttpServerExcludeUrl([]string{" /skip/** ", "/??/exclude.html"}),
+		WithHttpServerExcludeMethod([]string{" put ", "delete"}),
+	)
+
+	urlFilter := newHttpUrlFilter()
+	assert.True(t, urlFilter.isFiltered("/skip/a/b"), "the configured prefix pattern should filter")
+	assert.True(t, urlFilter.isFiltered("/ab/exclude.html"), "the configured Ant pattern should filter")
+	assert.False(t, urlFilter.isFiltered("/keep/a/b"))
+
+	methodFilter := newHttpExcludeMethod()
+	assert.True(t, methodFilter.isExcludedMethod("PUT"), "surrounding whitespace must be trimmed off the config value")
+	assert.True(t, methodFilter.isExcludedMethod("DELETE"))
+	assert.False(t, methodFilter.isExcludedMethod("GET"))
+}
+
+// trimStringSlice must copy: the slice it is handed belongs to the published
+// config snapshot and is shared by every reader.
+func TestTrimStringSlice(t *testing.T) {
+	cfg := []string{" a ", "\tb\n", "c"}
+	trimmed := trimStringSlice(cfg)
+
+	assert.Equal(t, []string{"a", "b", "c"}, trimmed)
+	assert.Equal(t, []string{" a ", "\tb\n", "c"}, cfg, "trimStringSlice wrote through to the config's slice")
+	assert.Empty(t, trimStringSlice(nil))
 }
 
 func benchmarkHttpUrlFilter(patterns ...string) *httpUrlFilter {

@@ -2,13 +2,14 @@ package ppsaramaibm
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/IBM/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type stubAsyncProducer struct {
@@ -83,17 +84,25 @@ func waitForClose(t *testing.T, ch <-chan struct{}, name string) {
 	select {
 	case <-ch:
 	case <-time.After(time.Second):
-		t.Fatalf("timed out waiting for %s", name)
+		require.FailNow(t, "timed out waiting for "+name)
 	}
+}
+
+// requireChannelClosed reads the channel dry and fails if it is still open:
+// after shutdown the wrapper owes the caller a closed channel, not a stall.
+func requireChannelsClosed(t *testing.T, p *asyncProducer) {
+	t.Helper()
+	_, ok := <-p.Successes()
+	assert.False(t, ok, "Successes channel not closed after shutdown")
+	_, ok = <-p.Errors()
+	assert.False(t, ok, "Errors channel not closed after shutdown")
 }
 
 // requireSpanError must follow the tracer's ended signal, which is what orders
 // the wrapper's write against this read.
 func requireSpanError(t *testing.T, tracer *recordingTracer, want error) {
 	t.Helper()
-	if tracer.se.err != want {
-		t.Fatalf("span event error = %v, want %v", tracer.se.err, want)
-	}
+	require.Equal(t, want, tracer.se.err, "the span event recorded the wrong verdict")
 }
 
 func requireSpanCount(t *testing.T, p *asyncProducer, want int) {
@@ -101,9 +110,7 @@ func requireSpanCount(t *testing.T, p *asyncProducer, want int) {
 	p.spansLock.Lock()
 	got := len(p.spans)
 	p.spansLock.Unlock()
-	if got != want {
-		t.Fatalf("stored tracer count = %d, want %d", got, want)
-	}
+	require.Equal(t, want, got, "the wrapper is holding the wrong number of tracers")
 }
 
 // Acknowledgments still in flight when AsyncClose is called must all reach the
@@ -141,12 +148,9 @@ func Test_asyncProducer_AsyncCloseDrainsInFlightAcks(t *testing.T) {
 	for range p.Successes() {
 		got++
 	}
-	if got != len(sent) {
-		t.Errorf("drained %d successes after AsyncClose, want %d", got, len(sent))
-	}
-	if _, ok := <-p.Errors(); ok {
-		t.Errorf("Errors channel not closed after shutdown")
-	}
+	assert.Equal(t, len(sent), got, "every in-flight ack must still reach the caller after AsyncClose")
+	_, ok := <-p.Errors()
+	assert.False(t, ok, "Errors channel not closed after shutdown")
 	for _, tracer := range tracers {
 		waitForClose(t, tracer.ended, "acknowledged tracer")
 		requireSpanError(t, tracer, nil)
@@ -172,9 +176,7 @@ func Test_asyncProducer_InputAckEndsTracer(t *testing.T) {
 			},
 			recv: func(t *testing.T, p *asyncProducer, msg *sarama.ProducerMessage) {
 				t.Helper()
-				if got := <-p.Successes(); got != msg {
-					t.Fatalf("Successes delivered %v, want %v", got, msg)
-				}
+				require.Same(t, msg, <-p.Successes(), "Successes delivered a different message")
 			},
 		},
 		{
@@ -185,9 +187,8 @@ func Test_asyncProducer_InputAckEndsTracer(t *testing.T) {
 			recv: func(t *testing.T, p *asyncProducer, msg *sarama.ProducerMessage) {
 				t.Helper()
 				got := <-p.Errors()
-				if got.Msg != msg || !errors.Is(got.Err, sarama.ErrOutOfBrokers) {
-					t.Fatalf("Errors delivered %v, want %v on %v", got, sarama.ErrOutOfBrokers, msg)
-				}
+				require.Same(t, msg, got.Msg, "Errors delivered a different message")
+				require.ErrorIs(t, got.Err, sarama.ErrOutOfBrokers)
 			},
 			want: sarama.ErrOutOfBrokers,
 		},
@@ -284,12 +285,7 @@ func Test_asyncProducer_AsyncCloseCancelsBlockedInput(t *testing.T) {
 			requireSpanError(t, tracer, sarama.ErrShuttingDown)
 			requireSpanCount(t, p, 0)
 
-			if _, ok := <-p.Successes(); ok {
-				t.Error("Successes channel not closed after shutdown")
-			}
-			if _, ok := <-p.Errors(); ok {
-				t.Error("Errors channel not closed after shutdown")
-			}
+			requireChannelsClosed(t, p)
 		})
 	}
 }
@@ -309,12 +305,7 @@ func Test_asyncProducer_InputContextAfterAsyncCloseReturns(t *testing.T) {
 		close(returned)
 	}()
 	waitForClose(t, returned, "InputContext after AsyncClose")
-	if _, ok := <-p.Successes(); ok {
-		t.Error("Successes channel not closed after shutdown")
-	}
-	if _, ok := <-p.Errors(); ok {
-		t.Error("Errors channel not closed after shutdown")
-	}
+	requireChannelsClosed(t, p)
 }
 
 // A send that begins while AsyncClose is still shutting down must return
@@ -342,12 +333,7 @@ func Test_asyncProducer_AsyncCloseDoesNotBlock(t *testing.T) {
 	p.AsyncClose() // a repeat call must not block on the pending shutdown either
 
 	close(release)
-	if _, ok := <-p.Successes(); ok {
-		t.Error("Successes channel not closed after shutdown")
-	}
-	if _, ok := <-p.Errors(); ok {
-		t.Error("Errors channel not closed after shutdown")
-	}
+	requireChannelsClosed(t, p)
 	waitForClose(t, p.drainDone, "input drainer")
 }
 
@@ -380,12 +366,7 @@ func Test_asyncProducer_InputDuringAsyncCloseReturns(t *testing.T) {
 
 	close(release)
 	waitForClose(t, closeReturned, "AsyncClose")
-	if _, ok := <-p.Successes(); ok {
-		t.Error("Successes channel not closed after shutdown")
-	}
-	if _, ok := <-p.Errors(); ok {
-		t.Error("Errors channel not closed after shutdown")
-	}
+	requireChannelsClosed(t, p)
 	waitForClose(t, p.drainDone, "input drainer")
 }
 
@@ -399,9 +380,7 @@ func Test_asyncProducer_InputAfterShutdownPanics(t *testing.T) {
 		close(stub.errors)
 	}
 	p := wrapAsyncProducer(stub, []string{"broker:9092"}, sarama.NewConfig())
-	if err := p.Close(); err != nil {
-		t.Fatalf("Close() = %v, want nil", err)
-	}
+	require.NoError(t, p.Close())
 	waitForClose(t, p.drainDone, "input drainer")
 
 	panicked := make(chan any, 1)
@@ -411,11 +390,9 @@ func Test_asyncProducer_InputAfterShutdownPanics(t *testing.T) {
 	}()
 	select {
 	case v := <-panicked:
-		if v == nil {
-			t.Fatal("Input after shutdown did not panic")
-		}
+		require.NotNil(t, v, "sending on Input after shutdown did not panic")
 	case <-time.After(time.Second):
-		t.Fatal("Input after shutdown blocked instead of panicking")
+		require.FailNow(t, "Input after shutdown blocked instead of panicking")
 	}
 }
 
@@ -445,12 +422,7 @@ func Test_asyncProducer_UnderlyingInputPanicCleansTracer(t *testing.T) {
 	requireSpanCount(t, p, 0)
 
 	p.AsyncClose()
-	if _, ok := <-p.Successes(); ok {
-		t.Error("Successes channel not closed after shutdown")
-	}
-	if _, ok := <-p.Errors(); ok {
-		t.Error("Errors channel not closed after shutdown")
-	}
+	requireChannelsClosed(t, p)
 }
 
 func Test_asyncProducer_ShutdownEndsRemainingTracer(t *testing.T) {
@@ -471,12 +443,7 @@ func Test_asyncProducer_ShutdownEndsRemainingTracer(t *testing.T) {
 	requireSpanCount(t, p, 1)
 	p.AsyncClose()
 
-	if _, ok := <-p.Successes(); ok {
-		t.Error("Successes channel not closed after shutdown")
-	}
-	if _, ok := <-p.Errors(); ok {
-		t.Error("Errors channel not closed after shutdown")
-	}
+	requireChannelsClosed(t, p)
 	waitForClose(t, tracer.ended, "remaining tracer")
 	requireSpanError(t, tracer, sarama.ErrShuttingDown)
 	requireSpanCount(t, p, 0)
@@ -499,11 +466,9 @@ func Test_asyncProducer_CloseCollectsErrors(t *testing.T) {
 	p := wrapAsyncProducer(stub, []string{"broker:9092"}, config)
 
 	err := p.Close()
+
 	var perrs sarama.ProducerErrors
-	if !errors.As(err, &perrs) {
-		t.Fatalf("Close() = %v, want sarama.ProducerErrors", err)
-	}
-	if len(perrs) != 1 {
-		t.Errorf("Close() collected %d errors, want 1", len(perrs))
-	}
+	require.ErrorAs(t, err, &perrs, "Close must report undelivered messages as sarama.ProducerErrors")
+	require.Len(t, perrs, 1)
+	assert.ErrorIs(t, perrs[0].Err, sarama.ErrOutOfBrokers)
 }

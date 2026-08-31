@@ -8,6 +8,8 @@ import (
 
 	"github.com/gomodule/redigo/redis"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeRedisConn implements only the base redis.Conn interface - no
@@ -44,16 +46,13 @@ func Test_wrappedConn_ConcurrentSendAndReceive(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if _, err := c.Receive(); err != nil {
-			t.Errorf("Receive() = %v", err)
-		}
+		_, err := c.Receive()
+		assert.NoError(t, err)
 	}()
 
 	for i := 0; i < 100; i++ {
 		WithContext(c, context.Background())
-		if err := c.Send("PING"); err != nil {
-			t.Fatalf("Send() = %v", err)
-		}
+		require.NoError(t, c.Send("PING"))
 	}
 	close(fake.recvCh)
 	<-done
@@ -64,18 +63,19 @@ func Test_wrappedConn_ConcurrentSendAndReceive(t *testing.T) {
 func Test_wrappedConn_MissingOptionalInterfaces(t *testing.T) {
 	c := wrapConn(&fakeRedisConn{}, "localhost").(*wrappedConn)
 
-	if _, err := c.DoWithTimeout(0, "PING"); !errors.Is(err, errTimeoutNotSupported) {
-		t.Errorf("DoWithTimeout() = %v, want errTimeoutNotSupported", err)
-	}
-	if _, err := c.ReceiveWithTimeout(0); !errors.Is(err, errTimeoutNotSupported) {
-		t.Errorf("ReceiveWithTimeout() = %v, want errTimeoutNotSupported", err)
-	}
-	if _, err := c.DoContext(context.Background(), "PING"); !errors.Is(err, errContextNotSupported) {
-		t.Errorf("DoContext() = %v, want errContextNotSupported", err)
-	}
-	if _, err := c.ReceiveContext(context.Background()); !errors.Is(err, errContextNotSupported) {
-		t.Errorf("ReceiveContext() = %v, want errContextNotSupported", err)
-	}
+	_, err := c.DoWithTimeout(0, "PING")
+	assert.ErrorIs(t, err, errTimeoutNotSupported)
+	_, err = c.ReceiveWithTimeout(0)
+	assert.ErrorIs(t, err, errTimeoutNotSupported)
+	_, err = c.DoContext(context.Background(), "PING")
+	assert.ErrorIs(t, err, errContextNotSupported)
+	_, err = c.ReceiveContext(context.Background())
+	assert.ErrorIs(t, err, errContextNotSupported)
+
+	// The pass-through methods must reach the base connection either way.
+	assert.NoError(t, c.Close())
+	assert.NoError(t, c.Err())
+	assert.NoError(t, c.Flush())
 }
 
 // capturingTracer records what the wrapper puts on a span event. A real
@@ -186,39 +186,22 @@ func Test_wrappedConn_RecordsEveryOperation(t *testing.T) {
 			c := wrapConn(&fullRedisConn{err: connErr}, "redis1")
 			WithContext(c, pinpoint.NewContext(context.Background(), tracer))
 
-			if err := tt.call(c); !errors.Is(err, connErr) {
-				t.Fatalf("%s = %v, want %v", tt.operation, err, connErr)
-			}
+			assert.ErrorIs(t, tt.call(c), connErr, "the connection's error must come back unchanged")
 
-			if len(tracer.events) != 1 {
-				t.Fatalf("recorded %d span events, want 1", len(tracer.events))
-			}
+			require.Len(t, tracer.events, 1, "one operation must produce exactly one span event")
 			e := tracer.events[0]
-			if e.operation != tt.operation {
-				t.Errorf("operation = %q, want %q", e.operation, tt.operation)
+			assert.Equal(t, tt.operation, e.operation)
+			assert.Equal(t, int32(pinpoint.ServiceTypeRedis), e.serviceType)
+			assert.Equal(t, "REDIS", e.destination)
+			assert.Equal(t, "redis1", e.endPoint)
+			if tt.cmd == "" {
+				assert.NotContains(t, e.annotations, pinpoint.AnnotationArgs0,
+					"an operation with no command must not annotate an empty one")
+			} else {
+				assert.Equal(t, tt.cmd, e.annotations[pinpoint.AnnotationArgs0])
 			}
-			if e.serviceType != pinpoint.ServiceTypeRedis {
-				t.Errorf("service type = %d, want %d", e.serviceType, pinpoint.ServiceTypeRedis)
-			}
-			if e.destination != "REDIS" {
-				t.Errorf("destination = %q, want REDIS", e.destination)
-			}
-			if e.endPoint != "redis1" {
-				t.Errorf("endpoint = %q, want %q", e.endPoint, "redis1")
-			}
-			if got, ok := e.annotations[pinpoint.AnnotationArgs0]; tt.cmd == "" {
-				if ok {
-					t.Errorf("command annotation = %q, want none", got)
-				}
-			} else if got != tt.cmd {
-				t.Errorf("command annotation = %q, want %q", got, tt.cmd)
-			}
-			if !errors.Is(e.err, connErr) {
-				t.Errorf("recorded error = %v, want %v", e.err, connErr)
-			}
-			if !e.ended {
-				t.Error("the span event was left open")
-			}
+			assert.ErrorIs(t, e.err, connErr)
+			assert.True(t, e.ended, "the span event was left open")
 		})
 	}
 }
@@ -243,16 +226,11 @@ func Test_wrappedConn_ContextOperationsUseTheCallContext(t *testing.T) {
 			tracer := newCapturingTracer()
 			c := wrapConn(&fullRedisConn{}, "redis1")
 
-			if err := tt.call(c, pinpoint.NewContext(context.Background(), tracer)); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, tt.call(c, pinpoint.NewContext(context.Background(), tracer)))
 
-			if len(tracer.events) != 1 {
-				t.Fatalf("recorded %d span events, want 1", len(tracer.events))
-			}
-			if got := tracer.events[0].operation; got != tt.operation {
-				t.Errorf("operation = %q, want %q", got, tt.operation)
-			}
+			require.Len(t, tracer.events, 1)
+			assert.Equal(t, tt.operation, tracer.events[0].operation)
+			assert.True(t, tracer.events[0].ended, "the span event was left open")
 		})
 	}
 }
@@ -270,46 +248,42 @@ func Test_wrappedConn_ConcurrentOperationGoesUntraced(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if _, err := c.Receive(); err != nil {
-			t.Errorf("Receive() = %v", err)
-		}
+		_, err := c.Receive()
+		assert.NoError(t, err)
 	}()
 
 	// The connection reaching Receive means its span event is already recorded
 	// and the recording lock is held; the goroutine then parks until recvCh.
 	<-fake.inReceive
 	for i := 0; i < 10; i++ {
-		if err := c.Send("PING"); err != nil {
-			t.Fatalf("Send() = %v", err)
-		}
+		require.NoError(t, c.Send("PING"))
 	}
-	if len(tracer.events) != 1 {
-		t.Errorf("recorded %d span events while one was in flight, want 1", len(tracer.events))
-	}
+	assert.Len(t, tracer.events, 1, "a second operation must go untraced while one is in flight")
 
 	close(fake.recvCh)
 	<-done
 
-	if !tracer.events[0].ended {
-		t.Error("the receive span event was left open")
-	}
-	if tracer.events[0].operation != "redigo.Receive()" {
-		t.Errorf("operation = %q, want %q", tracer.events[0].operation, "redigo.Receive()")
-	}
+	assert.True(t, tracer.events[0].ended, "the receive span event was left open")
+	assert.Equal(t, "redigo.Receive()", tracer.events[0].operation)
 }
 
 // The endpoint is what puts the call on the right node of the server map, and
 // the two Dial families derive it differently: a network address must carry a
 // port, while a URL's authority may leave both parts implicit.
 func Test_makeWrappedConn(t *testing.T) {
-	if _, err := makeWrappedConn(&fakeRedisConn{}, "redis1:6379"); err != nil {
-		t.Errorf("makeWrappedConn() = %v", err)
-	}
+	c, err := makeWrappedConn(&fakeRedisConn{}, "redis1:6379")
+	require.NoError(t, err)
+	assert.Equal(t, "redis1", c.(*wrappedConn).endpoint, "the port is not part of the endpoint")
+
+	ipv6, err := makeWrappedConn(&fakeRedisConn{}, "[::1]:6379")
+	require.NoError(t, err)
+	assert.Equal(t, "::1", ipv6.(*wrappedConn).endpoint)
+
 	// redis.Dial requires host:port, so an address without one is a caller
 	// error and must not produce a connection with a garbled endpoint.
-	if _, err := makeWrappedConn(&fakeRedisConn{}, "redis1"); err == nil {
-		t.Error("makeWrappedConn() accepted an address without a port")
-	}
+	bad, err := makeWrappedConn(&fakeRedisConn{}, "redis1")
+	assert.Error(t, err, "makeWrappedConn accepted an address without a port")
+	assert.Nil(t, bad, "a rejected address must not yield a connection")
 }
 
 func Test_makeWrappedConnURL(t *testing.T) {
@@ -330,12 +304,13 @@ func Test_makeWrappedConnURL(t *testing.T) {
 	} {
 		t.Run(tt.rawurl, func(t *testing.T) {
 			c, err := makeWrappedConnURL(&fakeRedisConn{}, tt.rawurl)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("makeWrappedConnURL() error = %v, want error = %v", err, tt.wantErr)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
 			}
-			if got := c.(*wrappedConn).endpoint; got != tt.want {
-				t.Errorf("endpoint = %q, want %q", got, tt.want)
-			}
+			require.NotNil(t, c, "a connection that is already open must be handed back either way")
+			assert.Equal(t, tt.want, c.(*wrappedConn).endpoint)
 		})
 	}
 }
@@ -344,5 +319,40 @@ func Test_makeWrappedConnURL(t *testing.T) {
 // this package did not wrap has no context to bind, and must be ignored rather
 // than crash the caller.
 func TestWithContext_OnAnUnwrappedConn(t *testing.T) {
-	WithContext(&fakeRedisConn{}, context.Background())
+	assert.NotPanics(t, func() { WithContext(&fakeRedisConn{}, context.Background()) })
+	assert.NotPanics(t, func() { WithContext(nil, context.Background()) })
+}
+
+// The context a connection was given is what every non-context operation
+// records against, so rebinding it has to take effect for the next command.
+func Test_wrappedConn_WithContextRebinds(t *testing.T) {
+	c := wrapConn(&fullRedisConn{}, "redis1")
+
+	first := newCapturingTracer()
+	WithContext(c, pinpoint.NewContext(context.Background(), first))
+	_, err := c.Do("GET", "key")
+	require.NoError(t, err)
+
+	second := newCapturingTracer()
+	WithContext(c, pinpoint.NewContext(context.Background(), second))
+	_, err = c.Do("SET", "key", "value")
+	require.NoError(t, err)
+
+	require.Len(t, first.events, 1, "the first tracer must keep only its own command")
+	require.Len(t, second.events, 1, "the rebound tracer must record the next command")
+	assert.Equal(t, "GET", first.events[0].annotations[pinpoint.AnnotationArgs0])
+	assert.Equal(t, "SET", second.events[0].annotations[pinpoint.AnnotationArgs0])
+}
+
+// A connection used without ever being given a context must still work: the
+// wrapper starts out bound to a background context, which is untraced.
+func Test_wrappedConn_WithoutAContext(t *testing.T) {
+	tracer := newCapturingTracer()
+	c := wrapConn(&fullRedisConn{}, "redis1")
+
+	_, err := c.Do("GET", "key")
+	require.NoError(t, err)
+	require.NoError(t, c.Send("SET", "key", "value"))
+
+	assert.Empty(t, tracer.events, "an untraced connection must not record a span event")
 }

@@ -3,7 +3,11 @@ package pppgxv5
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +15,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+const driverName = "pgxv5-pinpoint"
 
 type argStringer string
 
@@ -31,18 +39,14 @@ func TestWriteArgPreservesFormatting(t *testing.T) {
 
 	var b bytes.Buffer
 	for i, value := range values {
-		if !writeArg(&b, i, value, len(values)-1, 4096) {
-			t.Fatalf("writeArg stopped at value %d", i)
-		}
+		require.True(t, writeArg(&b, i, value, len(values)-1, 4096), "writeArg stopped at value %d", i)
 	}
 
 	want := make([]string, len(values))
 	for i, value := range values {
 		want[i] = fmt.Sprint(value)
 	}
-	if got, want := b.String(), strings.Join(want, ", "); got != want {
-		t.Fatalf("writeArg() = %q, want %q", got, want)
-	}
+	assert.Equal(t, strings.Join(want, ", "), b.String())
 }
 
 func TestWriteArgTruncatesOversizedValues(t *testing.T) {
@@ -56,13 +60,10 @@ func TestWriteArgTruncatesOversizedValues(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			full := fmt.Sprint(test.value)
 			var b bytes.Buffer
-			if writeArg(&b, 0, test.value, 0, 1024) {
-				t.Fatal("writeArg reported more values could be written")
-			}
+			require.False(t, writeArg(&b, 0, test.value, 0, 1024),
+				"writeArg reported more values could be written")
 			// The marker is written inside the limit, not past it.
-			if got, want := b.String(), full[:1024-len("...(1024)")]+"...(1024)"; got != want {
-				t.Fatalf("writeArg() length = %d, want %d", len(got), len(want))
-			}
+			assert.Equal(t, full[:1024-len("...(1024)")]+"...(1024)", b.String())
 		})
 	}
 }
@@ -97,6 +98,12 @@ func TestWriteArgTruncatesAtBoundary(t *testing.T) {
 			maxSize: 0,
 			want:    "",
 		},
+		{
+			name:    "a negative limit keeps nothing either",
+			values:  []any{"abc"},
+			maxSize: -1,
+			want:    "",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var b bytes.Buffer
@@ -106,12 +113,8 @@ func TestWriteArgTruncatesAtBoundary(t *testing.T) {
 					break
 				}
 			}
-			if more != test.wantMore {
-				t.Fatalf("writeArg() more = %v, want %v", more, test.wantMore)
-			}
-			if got := b.String(); got != test.want {
-				t.Fatalf("writeArg() = %q, want %q", got, test.want)
-			}
+			assert.Equal(t, test.wantMore, more, "writeArg reported the wrong continuation")
+			assert.Equal(t, test.want, b.String())
 		})
 	}
 }
@@ -155,24 +158,15 @@ func TestWriteArgLimitsLargeValues(t *testing.T) {
 			var b bytes.Buffer
 			more := writeArg(&b, 0, tt.value, 0, maxSize)
 
-			if more {
-				t.Fatal("writeArg reported that an oversized value fit")
-			}
-			if b.Len() > maxSize {
-				t.Fatalf("result is %d bytes; max is %d", b.Len(), maxSize)
-			}
-			if b.Cap() > maxSize*2 {
-				t.Fatalf("buffer retained %d bytes for a %d-byte limit", b.Cap(), maxSize)
-			}
-			if got := b.String(); !strings.HasPrefix(got, tt.wantPrefix) {
-				t.Fatalf("result %q does not preserve prefix %q", got, tt.wantPrefix)
-			}
-			if got := b.String(); !strings.HasSuffix(got, "...(65)") {
-				t.Fatalf("result %q has no truncation marker", got)
-			}
-			if got := b.String(); !utf8.ValidString(got) {
-				t.Fatalf("result is not valid UTF-8: %q", got)
-			}
+			require.False(t, more, "writeArg reported that an oversized value fit")
+			assert.LessOrEqual(t, b.Len(), maxSize, "the result grew past the limit")
+			assert.LessOrEqual(t, b.Cap(), maxSize*2,
+				"the buffer retained %d bytes for a %d-byte limit", b.Cap(), maxSize)
+			assert.True(t, strings.HasPrefix(b.String(), tt.wantPrefix),
+				"result %q does not preserve prefix %q", b.String(), tt.wantPrefix)
+			assert.True(t, strings.HasSuffix(b.String(), "...(65)"),
+				"result %q has no truncation marker", b.String())
+			assert.True(t, utf8.ValidString(b.String()), "result is not valid UTF-8: %q", b.String())
 		})
 	}
 }
@@ -186,12 +180,8 @@ func TestWriteArgLimitsMultipleValues(t *testing.T) {
 		}
 	}
 
-	if got, want := b.String(), "0123456789, a...(20)"; got != want {
-		t.Fatalf("result = %q; want %q", got, want)
-	}
-	if b.Len() != 20 {
-		t.Fatalf("result is %d bytes; want 20", b.Len())
-	}
+	assert.Equal(t, "0123456789, a...(20)", b.String())
+	assert.Equal(t, 20, b.Len(), "the result must fill the limit exactly, not exceed it")
 }
 
 // recordingTracer captures what the pgx tracer records on a span event. A real
@@ -211,6 +201,7 @@ func (t *recordingTracer) NewSpanEvent(operation string) pinpoint.Tracer {
 	t.events = append(t.events, &recordedEvent{
 		SpanEventRecorder: t.Tracer.SpanEvent(),
 		operation:         operation,
+		annotations:       map[int32]string{},
 	})
 	return t
 }
@@ -221,12 +212,28 @@ func (t *recordingTracer) EndSpanEvent() { t.last().ended = true }
 
 func (t *recordingTracer) last() *recordedEvent { return t.events[len(t.events)-1] }
 
+// open reports the events that were never closed; every callback pair has to
+// leave this empty or the span-event stack of the surrounding request skews.
+func (t *recordingTracer) open() []string {
+	var open []string
+	for _, e := range t.events {
+		if !e.ended {
+			open = append(open, e.operation)
+		}
+	}
+	return open
+}
+
 type recordedEvent struct {
 	pinpoint.SpanEventRecorder
 	operation   string
 	serviceType int32
 	destination string
 	endPoint    string
+	sql         string
+	sqlArgs     string
+	err         error
+	annotations map[int32]string
 	ended       bool
 }
 
@@ -234,18 +241,48 @@ func (e *recordedEvent) SetServiceType(typ int32)    { e.serviceType = typ }
 func (e *recordedEvent) SetDestination(id string)    { e.destination = id }
 func (e *recordedEvent) SetEndPoint(endPoint string) { e.endPoint = endPoint }
 
-func startAgent(t *testing.T) pinpoint.Agent {
+func (e *recordedEvent) SetSQL(sql string, args string) {
+	e.sql, e.sqlArgs = sql, args
+}
+
+func (e *recordedEvent) SetError(err error, _ ...string) { e.err = err }
+
+func (e *recordedEvent) Annotations() pinpoint.Annotation {
+	return recordedAnnotation{Annotation: e.SpanEventRecorder.Annotations(), into: e.annotations}
+}
+
+type recordedAnnotation struct {
+	pinpoint.Annotation
+	into map[int32]string
+}
+
+func (a recordedAnnotation) AppendString(key int32, s string) { a.into[key] = s }
+
+func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) pinpoint.Agent {
 	t.Helper()
-	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentId("testAgent"))
-	if err != nil {
-		t.Fatal(err)
-	}
+
+	opts = append([]pinpoint.ConfigOption{
+		pinpoint.WithAppName("testApp"),
+		pinpoint.WithAgentId("testAgent"),
+	}, opts...)
+
+	config, err := pinpoint.NewConfig(opts...)
+	require.NoError(t, err)
+
 	agent, err := pinpoint.NewTestAgent(config, t)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(agent.Shutdown)
+
 	return agent
+}
+
+func testConfig(t *testing.T) *pgx.ConnConfig {
+	t.Helper()
+	t.Setenv("PGHOST", "")
+	t.Setenv("PGDATABASE", "")
+	config, err := pgx.ParseConfig("postgres://testuser:p123@dbhost:5432/testdb")
+	require.NoError(t, err)
+	return config
 }
 
 // The endpoint recorded on every span event comes from here. pgx resolves a
@@ -278,6 +315,12 @@ func Test_parseDSN(t *testing.T) {
 			wantHost: "/var/run/postgresql",
 			wantName: "testdb",
 		},
+		{
+			name:     "an ipv6 host",
+			dsn:      "postgres://testuser@[::1]:5432/testdb",
+			wantHost: "::1",
+			wantName: "testdb",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("PGHOST", "")
@@ -286,12 +329,8 @@ func Test_parseDSN(t *testing.T) {
 			var info pinpoint.DBInfo
 			parseDSN(&info, tt.dsn)
 
-			if info.DBHost != tt.wantHost {
-				t.Errorf("DBHost = %q, want %q", info.DBHost, tt.wantHost)
-			}
-			if info.DBName != tt.wantName {
-				t.Errorf("DBName = %q, want %q", info.DBName, tt.wantName)
-			}
+			assert.Equal(t, tt.wantHost, info.DBHost)
+			assert.Equal(t, tt.wantName, info.DBName)
 		})
 	}
 }
@@ -299,53 +338,60 @@ func Test_parseDSN(t *testing.T) {
 // An unparsable DSN must leave the driver's shared DBInfo alone rather than
 // half-filling it: sql.Open reports the same error and the connection fails.
 func Test_parseDSN_InvalidLeavesInfoUntouched(t *testing.T) {
-	info := pinpoint.DBInfo{DBHost: "keep", DBName: "keep"}
-	parseDSN(&info, "postgres://dbhost:notaport/testdb")
+	for _, dsn := range []string{
+		"postgres://dbhost:notaport/testdb",
+		"host=dbhost port=notaport",
+	} {
+		info := pinpoint.DBInfo{DBHost: "keep", DBName: "keep"}
+		parseDSN(&info, dsn)
 
-	if info.DBHost != "keep" || info.DBName != "keep" {
-		t.Errorf("parseDSN() overwrote %q/%q", info.DBHost, info.DBName)
+		assert.Equal(t, "keep", info.DBHost, "parseDSN(%q) overwrote the host", dsn)
+		assert.Equal(t, "keep", info.DBName, "parseDSN(%q) overwrote the database name", dsn)
 	}
 }
 
 // The registered driver has to carry the postgres service types; a wrong type
 // files every query under the wrong node on the server map.
 func TestRegisteredDriverInfo(t *testing.T) {
-	if dbInfo.DBType != pinpoint.ServiceTypePgSql {
-		t.Errorf("DBType = %d, want %d", dbInfo.DBType, pinpoint.ServiceTypePgSql)
-	}
-	if dbInfo.QueryType != pinpoint.ServiceTypePgSqlExecuteQuery {
-		t.Errorf("QueryType = %d, want %d", dbInfo.QueryType, pinpoint.ServiceTypePgSqlExecuteQuery)
-	}
+	assert.Equal(t, pinpoint.ServiceTypePgSql, dbInfo.DBType)
+	assert.Equal(t, pinpoint.ServiceTypePgSqlExecuteQuery, dbInfo.QueryType)
+	assert.NotNil(t, dbInfo.ParseDSN, "without a ParseDSN the wrapper never learns the host or database")
+}
+
+// The documented driver name is the only thing an application refers to, so it
+// has to be the name package init actually registered. It is deliberately not
+// plugin/pgsql's "pq-pinpoint": database/sql panics on a duplicate registration
+// if a binary imports both.
+func TestRegisteredDriverName(t *testing.T) {
+	assert.True(t, slices.Contains(sql.Drivers(), driverName),
+		"%s not registered, got %v", driverName, sql.Drivers())
+}
+
+// Opening through the registered name must hand database/sql the instrumented
+// driver, not the bare stdlib one - otherwise nothing is ever traced.
+func TestOpenUsesTheInstrumentedDriver(t *testing.T) {
+	db, err := sql.Open(driverName, "postgres://testuser@dbhost/testdb")
+	require.NoError(t, err)
+	defer db.Close()
+
+	assert.Implements(t, (*driver.Driver)(nil), db.Driver())
+	assert.Implements(t, (*driver.DriverContext)(nil), db.Driver(),
+		"the wrapper must keep the driver's OpenConnector reachable")
 }
 
 // Every pgx callback opens its span event through this one function, so the
 // service type, endpoint and destination it sets are what the whole tracer
 // records.
 func Test_newSpanEvent(t *testing.T) {
-	config, err := pgx.ParseConfig("postgres://testuser:p123@dbhost:5432/testdb")
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	tracer := newRecordingTracer()
-	newSpanEvent(pinpoint.NewContext(context.Background(), tracer), config, "pgx.Query")
+	newSpanEvent(pinpoint.NewContext(context.Background(), tracer), testConfig(t), "pgx.Query")
 
-	if len(tracer.events) != 1 {
-		t.Fatalf("recorded %d span events, want 1", len(tracer.events))
-	}
+	require.Len(t, tracer.events, 1)
 	e := tracer.events[0]
-	if e.operation != "pgx.Query" {
-		t.Errorf("operation = %q, want %q", e.operation, "pgx.Query")
-	}
-	if e.serviceType != pinpoint.ServiceTypePgSqlExecuteQuery {
-		t.Errorf("service type = %d, want %d", e.serviceType, pinpoint.ServiceTypePgSqlExecuteQuery)
-	}
-	if e.endPoint != "dbhost" {
-		t.Errorf("endpoint = %q, want %q", e.endPoint, "dbhost")
-	}
-	if e.destination != "testdb" {
-		t.Errorf("destination = %q, want %q", e.destination, "testdb")
-	}
+	assert.Equal(t, "pgx.Query", e.operation)
+	assert.Equal(t, int32(pinpoint.ServiceTypePgSqlExecuteQuery), e.serviceType)
+	assert.Equal(t, "dbhost", e.endPoint)
+	assert.Equal(t, "testdb", e.destination)
 }
 
 // The tracer is registered on the pool, so its callbacks run for every query
@@ -353,10 +399,7 @@ func Test_newSpanEvent(t *testing.T) {
 // Recording those would unbalance the span-event stack of whatever ran next on
 // that goroutine.
 func Test_newSpanEventIgnoresUnsampledCalls(t *testing.T) {
-	config, err := pgx.ParseConfig("postgres://testuser:p123@dbhost:5432/testdb")
-	if err != nil {
-		t.Fatal(err)
-	}
+	config := testConfig(t)
 
 	for _, tt := range []struct {
 		name string
@@ -367,9 +410,7 @@ func Test_newSpanEventIgnoresUnsampledCalls(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			tracer := newSpanEvent(tt.ctx, config, "pgx.Query")
-			if tracer.IsSampled() {
-				t.Error("an unsampled context produced a sampled tracer")
-			}
+			assert.False(t, tracer.IsSampled(), "an unsampled context produced a sampled tracer")
 		})
 	}
 }
@@ -378,30 +419,103 @@ func Test_newSpanEventIgnoresUnsampledCalls(t *testing.T) {
 // pgx calls the two on the same context, so an unbalanced pair would skew the
 // event stack of the request that opened the connection.
 func TestTraceConnect(t *testing.T) {
-	config, err := pgx.ParseConfig("postgres://testuser:p123@dbhost:5432/testdb")
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	tracer := newRecordingTracer()
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 	pgxT := NewTracer()
 
-	ctx = pgxT.TraceConnectStart(ctx, pgx.TraceConnectStartData{ConnConfig: config})
+	ctx = pgxT.TraceConnectStart(ctx, pgx.TraceConnectStartData{ConnConfig: testConfig(t)})
 	pgxT.TraceConnectEnd(ctx, pgx.TraceConnectEndData{})
 
-	if len(tracer.events) != 1 {
-		t.Fatalf("recorded %d span events, want 1", len(tracer.events))
-	}
+	require.Len(t, tracer.events, 1)
 	e := tracer.events[0]
-	if e.operation != "pgx.Connect" {
-		t.Errorf("operation = %q, want %q", e.operation, "pgx.Connect")
-	}
-	if e.endPoint != "dbhost" {
-		t.Errorf("endpoint = %q, want %q", e.endPoint, "dbhost")
-	}
-	if !e.ended {
-		t.Error("the span event was left open")
+	assert.Equal(t, "pgx.Connect", e.operation)
+	assert.Equal(t, "dbhost", e.endPoint)
+	assert.Empty(t, tracer.open(), "the span event was left open")
+}
+
+// pgx hands each Start callback a live *pgx.Conn to read the connection config
+// off, and there is no way to build one without a server; what those halves
+// record is covered through newSpanEvent and composeArgs. The End halves take
+// the connection but never use it, so the pairing they complete - and the error
+// they record - is testable here.
+func TestTraceQueryEnd(t *testing.T) {
+	tracer := newRecordingTracer()
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+	newSpanEvent(ctx, testConfig(t), "pgx.Query") // what TraceQueryStart opens
+
+	want := errors.New("relation does not exist")
+	NewTracer().TraceQueryEnd(ctx, nil, pgx.TraceQueryEndData{Err: want})
+
+	require.Len(t, tracer.events, 1)
+	assert.Equal(t, want, tracer.events[0].err, "the query error must be recorded on the span event")
+	assert.Empty(t, tracer.open(), "the span event was left open")
+}
+
+// A successful query closes its event with no error recorded.
+func TestTraceQueryEnd_Success(t *testing.T) {
+	tracer := newRecordingTracer()
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+	newSpanEvent(ctx, testConfig(t), "pgx.Query")
+
+	NewTracer().TraceQueryEnd(ctx, nil, pgx.TraceQueryEndData{})
+
+	require.Len(t, tracer.events, 1)
+	assert.NoError(t, tracer.events[0].err)
+	assert.Empty(t, tracer.open())
+}
+
+// The batch-level error goes on the enclosing event, which TraceBatchEnd is
+// the only thing that closes.
+func TestTraceBatchEnd(t *testing.T) {
+	tracer := newRecordingTracer()
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+	newSpanEvent(ctx, testConfig(t), "pgx.Batch") // what TraceBatchStart opens
+
+	want := errors.New("batch aborted")
+	NewTracer().TraceBatchEnd(ctx, nil, pgx.TraceBatchEndData{Err: want})
+
+	require.Len(t, tracer.events, 1)
+	assert.Equal(t, want, tracer.events[0].err)
+	assert.Empty(t, tracer.open(), "the enclosing batch event was left open")
+}
+
+// CopyFrom is one event too, closed with whatever the copy failed with.
+func TestTraceCopyFromEnd(t *testing.T) {
+	tracer := newRecordingTracer()
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+	newSpanEvent(ctx, testConfig(t), "pgx.CopyFrom") // what TraceCopyFromStart opens
+
+	want := errors.New("copy failed")
+	NewTracer().TraceCopyFromEnd(ctx, nil, pgx.TraceCopyFromEndData{Err: want})
+
+	require.Len(t, tracer.events, 1)
+	assert.Equal(t, want, tracer.events[0].err)
+	assert.Empty(t, tracer.open(), "the span event was left open")
+}
+
+// The copy target is what CopyFrom records in place of a SQL statement, so the
+// identifier has to reach the annotation the way pgx sanitizes it.
+func TestCopyFromTargetIsSanitized(t *testing.T) {
+	assert.Equal(t, `"public"."users"`, pgx.Identifier{"public", "users"}.Sanitize())
+}
+
+// Every End callback also runs for queries made outside a span. Closing a span
+// event that was never opened would unwind the surrounding request's stack.
+func TestEndCallbacksIgnoreUnsampledCalls(t *testing.T) {
+	startAgent(t)
+
+	pgxT := NewTracer()
+
+	for _, ctx := range []context.Context{
+		context.Background(),
+		pinpoint.NewContext(context.Background(), pinpoint.NoopTracer()),
+	} {
+		assert.NotPanics(t, func() {
+			pgxT.TraceConnectEnd(ctx, pgx.TraceConnectEndData{})
+			pgxT.TraceQueryEnd(ctx, nil, pgx.TraceQueryEndData{})
+			pgxT.TraceBatchEnd(ctx, nil, pgx.TraceBatchEndData{})
+			pgxT.TraceCopyFromEnd(ctx, nil, pgx.TraceCopyFromEndData{})
+		})
 	}
 }
 
@@ -413,14 +527,10 @@ func TestComposeArgs_HonoursTheBindValueGate(t *testing.T) {
 	pgxT := NewTracer()
 
 	agent.Config().Set(pinpoint.CfgSQLTraceBindValue, true)
-	if got, want := pgxT.composeArgs([]any{"secret", 42}), "secret, 42"; got != want {
-		t.Errorf("composeArgs() = %q, want %q", got, want)
-	}
+	assert.Equal(t, "secret, 42", pgxT.composeArgs([]any{"secret", 42}))
 
 	agent.Config().Set(pinpoint.CfgSQLTraceBindValue, false)
-	if got := pgxT.composeArgs([]any{"secret", 42}); got != "" {
-		t.Errorf("composeArgs() = %q with tracing off, want empty", got)
-	}
+	assert.Empty(t, pgxT.composeArgs([]any{"secret", 42}), "bind values leaked with tracing off")
 }
 
 // A statement with no bind values has nothing to record, whatever the gate says.
@@ -428,9 +538,8 @@ func TestComposeArgs_NoArguments(t *testing.T) {
 	agent := startAgent(t)
 	agent.Config().Set(pinpoint.CfgSQLTraceBindValue, true)
 
-	if got := NewTracer().composeArgs(nil); got != "" {
-		t.Errorf("composeArgs(nil) = %q, want empty", got)
-	}
+	assert.Empty(t, NewTracer().composeArgs(nil))
+	assert.Empty(t, NewTracer().composeArgs([]any{}))
 }
 
 // SQL.MaxBindValueSize bounds what one statement can add to a span, so the
@@ -442,10 +551,6 @@ func TestComposeArgs_HonoursTheSizeLimit(t *testing.T) {
 
 	got := NewTracer().composeArgs([]any{strings.Repeat("x", 1<<10)})
 
-	if len(got) > 32 {
-		t.Errorf("composeArgs() = %d bytes, want at most 32", len(got))
-	}
-	if !strings.HasSuffix(got, "...(32)") {
-		t.Errorf("composeArgs() = %q, want the truncation marker", got)
-	}
+	assert.LessOrEqual(t, len(got), 32, "composeArgs grew past the configured limit")
+	assert.True(t, strings.HasSuffix(got, "...(32)"), "composeArgs() = %q, want the truncation marker", got)
 }

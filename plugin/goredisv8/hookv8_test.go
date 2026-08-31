@@ -3,16 +3,25 @@ package ppgoredisv8
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/go-redis/redis/v8"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const (
+	processOperation  = "go-redis/v8.Process()"
+	pipelineOperation = "go-redis/v8.ProcessPipeline()"
 )
 
 // recordingTracer captures what the hook records on a span event. A real
 // tracer's recorders are write-only, so this stands in for one.
 type recordingTracer struct {
 	pinpoint.Tracer
+	mu     sync.Mutex
 	events []*recordedEvent
 }
 
@@ -23,6 +32,8 @@ func newRecordingTracer() *recordingTracer {
 func (t *recordingTracer) IsSampled() bool { return true }
 
 func (t *recordingTracer) NewSpanEvent(operation string) pinpoint.Tracer {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.events = append(t.events, &recordedEvent{
 		SpanEventRecorder: t.Tracer.SpanEvent(),
 		operation:         operation,
@@ -35,7 +46,11 @@ func (t *recordingTracer) SpanEvent() pinpoint.SpanEventRecorder { return t.last
 
 func (t *recordingTracer) EndSpanEvent() { t.last().ended = true }
 
-func (t *recordingTracer) last() *recordedEvent { return t.events[len(t.events)-1] }
+func (t *recordingTracer) last() *recordedEvent {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.events[len(t.events)-1]
+}
 
 type recordedEvent struct {
 	pinpoint.SpanEventRecorder
@@ -87,18 +102,16 @@ func TestNewHook_Endpoint(t *testing.T) {
 		{"client options", NewHook(&redis.Options{Addr: "redis1:6379"}), "redis1:6379"},
 		{"no client options", NewHook(nil), "unknown"},
 		{"cluster options", NewClusterHook(&redis.ClusterOptions{Addrs: []string{"redis1:6379", "redis2:6379"}}), "redis1:6379,redis2:6379"},
+		{"one cluster address", NewClusterHook(&redis.ClusterOptions{Addrs: []string{"redis1:6379"}}), "redis1:6379"},
+		{"no cluster addresses", NewClusterHook(&redis.ClusterOptions{}), ""},
 		{"no cluster options", NewClusterHook(nil), "unknown"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := tt.hook.BeforeProcess(ctx, cmd("get", nil)); err != nil {
-				t.Fatal(err)
-			}
-			if err := tt.hook.AfterProcess(ctx, cmd("get", nil)); err != nil {
-				t.Fatal(err)
-			}
-			if got := tracer.last().endPoint; got != tt.want {
-				t.Errorf("endpoint = %q, want %q", got, tt.want)
-			}
+			_, err := tt.hook.BeforeProcess(ctx, cmd("get", nil))
+			require.NoError(t, err)
+			require.NoError(t, tt.hook.AfterProcess(ctx, cmd("get", nil)))
+
+			assert.Equal(t, tt.want, tracer.last().endPoint)
 		})
 	}
 }
@@ -112,38 +125,35 @@ func TestHook_Process(t *testing.T) {
 
 	cmdErr := errors.New("WRONGTYPE")
 	got, err := h.BeforeProcess(ctx, cmd("get", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != ctx {
-		t.Error("BeforeProcess replaced the context")
-	}
-	if err := h.AfterProcess(ctx, cmd("get", cmdErr)); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, ctx, got, "BeforeProcess replaced the context")
+	require.NoError(t, h.AfterProcess(ctx, cmd("get", cmdErr)))
 
-	if len(tracer.events) != 1 {
-		t.Fatalf("recorded %d span events, want 1", len(tracer.events))
-	}
+	require.Len(t, tracer.events, 1, "one command must produce exactly one span event")
 	e := tracer.events[0]
-	if e.operation != "go-redis/v8.Process()" {
-		t.Errorf("operation = %q, want %q", e.operation, "go-redis/v8.Process()")
-	}
-	if e.serviceType != pinpoint.ServiceTypeRedis {
-		t.Errorf("service type = %d, want %d", e.serviceType, pinpoint.ServiceTypeRedis)
-	}
-	if e.destination != "REDIS" {
-		t.Errorf("destination = %q, want REDIS", e.destination)
-	}
-	if got := e.annotations[pinpoint.AnnotationArgs0]; got != "get" {
-		t.Errorf("command annotation = %q, want %q", got, "get")
-	}
-	if !errors.Is(e.err, cmdErr) {
-		t.Errorf("recorded error = %v, want %v", e.err, cmdErr)
-	}
-	if !e.ended {
-		t.Error("the span event was left open")
-	}
+	assert.Equal(t, processOperation, e.operation)
+	assert.Equal(t, int32(pinpoint.ServiceTypeRedis), e.serviceType)
+	assert.Equal(t, "REDIS", e.destination)
+	assert.Equal(t, "redis1:6379", e.endPoint)
+	assert.Equal(t, "get", e.annotations[pinpoint.AnnotationArgs0])
+	assert.ErrorIs(t, e.err, cmdErr, "the command's own error must reach the span event")
+	assert.True(t, e.ended, "the span event was left open")
+}
+
+// A command that succeeded records no error, so a later failed one is not
+// mistaken for it.
+func TestHook_ProcessSuccessfulCommand(t *testing.T) {
+	tracer := newRecordingTracer()
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+	h := NewHook(&redis.Options{Addr: "redis1:6379"})
+
+	_, err := h.BeforeProcess(ctx, cmd("get", nil))
+	require.NoError(t, err)
+	require.NoError(t, h.AfterProcess(ctx, cmd("get", nil)))
+
+	require.Len(t, tracer.events, 1)
+	assert.NoError(t, tracer.events[0].err)
+	assert.True(t, tracer.events[0].ended)
 }
 
 // A pipeline is one round trip, so it is one span event listing every command
@@ -154,55 +164,42 @@ func TestHook_ProcessPipeline(t *testing.T) {
 	h := NewHook(&redis.Options{Addr: "redis1:6379"})
 
 	cmdErr := errors.New("WRONGTYPE")
-	cmds := []redis.Cmder{cmd("set", nil), cmd("get", cmdErr), cmd("del", errors.New("later"))}
+	cmds := []redis.Cmder{cmd("set", nil), cmd("get", cmdErr), cmd("del", errors.New("second"))}
 
-	if _, err := h.BeforeProcessPipeline(ctx, cmds); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.AfterProcessPipeline(ctx, cmds); err != nil {
-		t.Fatal(err)
-	}
+	got, err := h.BeforeProcessPipeline(ctx, cmds)
+	require.NoError(t, err)
+	assert.Equal(t, ctx, got, "BeforeProcessPipeline replaced the context")
+	require.NoError(t, h.AfterProcessPipeline(ctx, cmds))
 
-	if len(tracer.events) != 1 {
-		t.Fatalf("recorded %d span events, want 1", len(tracer.events))
-	}
+	require.Len(t, tracer.events, 1, "a pipeline is one round trip, so one span event")
 	e := tracer.events[0]
-	if e.operation != "go-redis/v8.ProcessPipeline()" {
-		t.Errorf("operation = %q, want %q", e.operation, "go-redis/v8.ProcessPipeline()")
-	}
-	if got, want := e.annotations[pinpoint.AnnotationArgs0], "set, get, del"; got != want {
-		t.Errorf("command annotation = %q, want %q", got, want)
-	}
-	if !errors.Is(e.err, cmdErr) {
-		t.Errorf("recorded error = %v, want the first failure %v", e.err, cmdErr)
-	}
-	if !e.ended {
-		t.Error("the span event was left open")
-	}
+	assert.Equal(t, pipelineOperation, e.operation)
+	assert.Equal(t, int32(pinpoint.ServiceTypeRedis), e.serviceType)
+	assert.Equal(t, "set, get, del", e.annotations[pinpoint.AnnotationArgs0])
+	assert.ErrorIs(t, e.err, cmdErr, "the pipeline must be failed by its first failure")
+	assert.True(t, e.ended, "the span event was left open")
 }
 
 func Test_cmdName(t *testing.T) {
-	if got := cmdName(nil); got != "" {
-		t.Errorf("cmdName(nil) = %q, want empty", got)
-	}
-	if got, want := cmdName([]redis.Cmder{cmd("get", nil)}), "get"; got != want {
-		t.Errorf("cmdName() = %q, want %q", got, want)
-	}
-	if got, want := cmdName([]redis.Cmder{cmd("set", nil), cmd("get", nil)}), "set, get"; got != want {
-		t.Errorf("cmdName() = %q, want %q", got, want)
-	}
+	assert.Equal(t, "", cmdName(nil))
+	assert.Equal(t, "", cmdName([]redis.Cmder{}))
+	assert.Equal(t, "get", cmdName([]redis.Cmder{cmd("get", nil)}))
+	assert.Equal(t, "set, get", cmdName([]redis.Cmder{cmd("set", nil), cmd("get", nil)}))
+	assert.Equal(t, "set, get, del",
+		cmdName([]redis.Cmder{cmd("set", nil), cmd("get", nil), cmd("del", nil)}))
 }
 
+// A pipeline fails as a whole on its first failed command; reporting a later
+// one would point at the wrong command in the trace.
 func Test_pipeError(t *testing.T) {
-	if err := pipeError([]redis.Cmder{cmd("set", nil), cmd("get", nil)}); err != nil {
-		t.Errorf("pipeError() = %v, want nil", err)
-	}
+	assert.NoError(t, pipeError(nil))
+	assert.NoError(t, pipeError([]redis.Cmder{cmd("set", nil), cmd("get", nil)}))
 
 	first := errors.New("first")
-	err := pipeError([]redis.Cmder{cmd("set", nil), cmd("get", first), cmd("del", errors.New("second"))})
-	if !errors.Is(err, first) {
-		t.Errorf("pipeError() = %v, want %v", err, first)
-	}
+	assert.ErrorIs(t,
+		pipeError([]redis.Cmder{cmd("set", nil), cmd("get", first), cmd("del", errors.New("second"))}),
+		first)
+	assert.ErrorIs(t, pipeError([]redis.Cmder{cmd("set", first)}), first)
 }
 
 // The hook is registered on the client, so it runs for every command the
@@ -221,22 +218,50 @@ func TestHook_IgnoresUnsampledCommands(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := h.BeforeProcess(tt.ctx, cmd("get", nil))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != tt.ctx {
-				t.Error("BeforeProcess replaced the context")
-			}
-			if err := h.AfterProcess(tt.ctx, cmd("get", nil)); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.ctx, got, "BeforeProcess replaced the context")
+			require.NoError(t, h.AfterProcess(tt.ctx, cmd("get", nil)))
 
-			if _, err := h.BeforeProcessPipeline(tt.ctx, []redis.Cmder{cmd("get", nil)}); err != nil {
-				t.Fatal(err)
-			}
-			if err := h.AfterProcessPipeline(tt.ctx, []redis.Cmder{cmd("get", nil)}); err != nil {
-				t.Fatal(err)
-			}
+			gotPipe, err := h.BeforeProcessPipeline(tt.ctx, []redis.Cmder{cmd("get", nil)})
+			require.NoError(t, err)
+			assert.Equal(t, tt.ctx, gotPipe, "BeforeProcessPipeline replaced the context")
+			require.NoError(t, h.AfterProcessPipeline(tt.ctx, []redis.Cmder{cmd("get", nil)}))
 		})
 	}
+}
+
+// An After without its Before is what a command that started untraced and
+// finished traced would produce; it must not close an event it never opened.
+func TestHook_AfterWithoutBefore(t *testing.T) {
+	h := NewHook(&redis.Options{Addr: "redis1:6379"})
+	ctx := pinpoint.NewContext(context.Background(), pinpoint.NoopTracer())
+
+	assert.NotPanics(t, func() {
+		_ = h.AfterProcess(ctx, cmd("get", nil))
+		_ = h.AfterProcessPipeline(ctx, []redis.Cmder{cmd("get", nil)})
+	})
+}
+
+// One hook serves every connection of a shared client, so concurrent commands
+// through it must stay race-free. Run under -race.
+func TestHook_ConcurrentCommands(t *testing.T) {
+	h := NewHook(&redis.Options{Addr: "redis1:6379"})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Each goroutine carries its own tracer, as each request would.
+			tracer := newRecordingTracer()
+			ctx := pinpoint.NewContext(context.Background(), tracer)
+			for j := 0; j < 25; j++ {
+				_, err := h.BeforeProcess(ctx, cmd("get", nil))
+				assert.NoError(t, err)
+				assert.NoError(t, h.AfterProcess(ctx, cmd("get", nil)))
+			}
+			assert.Len(t, tracer.events, 25)
+		}()
+	}
+	wg.Wait()
 }

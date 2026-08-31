@@ -2,26 +2,15 @@ package pprueidis
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/redis/rueidis"
+	"github.com/redis/rueidis/rueidishook"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-func TestNewSpanEventSkipsCommandForUnsampledTracer(t *testing.T) {
-	called := false
-	tracer := (&Hook{}).newSpanEvent(context.Background(), "test", func() string {
-		called = true
-		return "large command"
-	})
-
-	if tracer.IsSampled() {
-		t.Fatal("background context unexpectedly returned a sampled tracer")
-	}
-	if called {
-		t.Fatal("command was built for an unsampled tracer")
-	}
-}
 
 // recordingTracer captures what the hook records on a span event. A real
 // tracer's recorders are write-only, so this stands in for one.
@@ -57,13 +46,15 @@ type recordedEvent struct {
 	serviceType int32
 	destination string
 	endPoint    string
+	err         error
 	annotations map[int32]string
 	ended       bool
 }
 
-func (e *recordedEvent) SetServiceType(typ int32)    { e.serviceType = typ }
-func (e *recordedEvent) SetDestination(id string)    { e.destination = id }
-func (e *recordedEvent) SetEndPoint(endPoint string) { e.endPoint = endPoint }
+func (e *recordedEvent) SetServiceType(typ int32)        { e.serviceType = typ }
+func (e *recordedEvent) SetDestination(id string)        { e.destination = id }
+func (e *recordedEvent) SetEndPoint(endPoint string)     { e.endPoint = endPoint }
+func (e *recordedEvent) SetError(err error, _ ...string) { e.err = err }
 
 func (e *recordedEvent) Annotations() pinpoint.Annotation {
 	return recordedAnnotation{Annotation: e.SpanEventRecorder.Annotations(), into: e.annotations}
@@ -75,6 +66,39 @@ type recordedAnnotation struct {
 }
 
 func (a recordedAnnotation) AppendString(key int32, s string) { a.into[key] = s }
+
+func testHook() *Hook {
+	return NewHook(rueidis.ClientOption{InitAddress: []string{"redis1:6379"}})
+}
+
+// rueidishook.WithHook is the only documented way to use this plugin, so *Hook
+// has to keep satisfying that interface as rueidis adds methods to it.
+func TestHookSatisfiesTheRueidisInterface(t *testing.T) {
+	assert.Implements(t, (*rueidishook.Hook)(nil), testHook())
+}
+
+// The command name is built for the annotation only; an untraced call must not
+// pay for building it.
+func TestNewSpanEventSkipsCommandForUnsampledTracer(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		ctx  context.Context
+	}{
+		{"background context", context.Background()},
+		{"noop tracer", pinpoint.NewContext(context.Background(), pinpoint.NoopTracer())},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			tracer := testHook().newSpanEvent(tt.ctx, "test", func() string {
+				called = true
+				return "large command"
+			})
+
+			assert.False(t, tracer.IsSampled(), "an unsampled context produced a sampled tracer")
+			assert.False(t, called, "the command was built for an unsampled tracer")
+		})
+	}
+}
 
 // The endpoint is what puts the call on the right node of the server map. The
 // hook is constructed from the same options the client is, and a caller that
@@ -88,14 +112,14 @@ func TestNewHook_Endpoint(t *testing.T) {
 		{"single address", rueidis.ClientOption{InitAddress: []string{"redis1:6379"}}, "redis1:6379"},
 		{"several addresses", rueidis.ClientOption{InitAddress: []string{"redis1:6379", "redis2:6379"}}, "redis1:6379,redis2:6379"},
 		{"no address", rueidis.ClientOption{}, "unknown"},
+		{"an empty address list", rueidis.ClientOption{InitAddress: []string{}}, ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			tracer := newRecordingTracer()
-			NewHook(tt.opts).newSpanEvent(pinpoint.NewContext(context.Background(), tracer), "rueidis.Do()", func() string { return "GET,key" })
+			NewHook(tt.opts).newSpanEvent(pinpoint.NewContext(context.Background(), tracer),
+				"rueidis.Do()", func() string { return "GET,key" })
 
-			if got := tracer.last().endPoint; got != tt.want {
-				t.Errorf("endpoint = %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, tracer.last().endPoint)
 		})
 	}
 }
@@ -105,33 +129,22 @@ func TestNewHook_Endpoint(t *testing.T) {
 // whole plugin records.
 func TestNewSpanEventRecordsTheCommand(t *testing.T) {
 	tracer := newRecordingTracer()
-	h := NewHook(rueidis.ClientOption{InitAddress: []string{"redis1:6379"}})
 
 	built := 0
-	h.newSpanEvent(pinpoint.NewContext(context.Background(), tracer), "rueidis.DoMulti()", func() string {
-		built++
-		return "SET,key,value, GET,key"
-	})
+	testHook().newSpanEvent(pinpoint.NewContext(context.Background(), tracer),
+		"rueidis.DoMulti()", func() string {
+			built++
+			return "SET,key,value, GET,key"
+		})
 
-	if built != 1 {
-		t.Errorf("the command was built %d times, want 1", built)
-	}
-	if len(tracer.events) != 1 {
-		t.Fatalf("recorded %d span events, want 1", len(tracer.events))
-	}
+	assert.Equal(t, 1, built, "the command name must be built exactly once")
+	require.Len(t, tracer.events, 1)
 	e := tracer.events[0]
-	if e.operation != "rueidis.DoMulti()" {
-		t.Errorf("operation = %q, want %q", e.operation, "rueidis.DoMulti()")
-	}
-	if e.serviceType != pinpoint.ServiceTypeRedis {
-		t.Errorf("service type = %d, want %d", e.serviceType, pinpoint.ServiceTypeRedis)
-	}
-	if e.destination != "REDIS" {
-		t.Errorf("destination = %q, want REDIS", e.destination)
-	}
-	if got, want := e.annotations[pinpoint.AnnotationArgs0], "SET,key,value, GET,key"; got != want {
-		t.Errorf("command annotation = %q, want %q", got, want)
-	}
+	assert.Equal(t, "rueidis.DoMulti()", e.operation)
+	assert.Equal(t, int32(pinpoint.ServiceTypeRedis), e.serviceType)
+	assert.Equal(t, "REDIS", e.destination)
+	assert.Equal(t, "redis1:6379", e.endPoint)
+	assert.Equal(t, "SET,key,value, GET,key", e.annotations[pinpoint.AnnotationArgs0])
 }
 
 // An empty command name would annotate the span event with an empty string,
@@ -139,21 +152,38 @@ func TestNewSpanEventRecordsTheCommand(t *testing.T) {
 // not be described.
 func TestNewSpanEventSkipsAnEmptyCommandAnnotation(t *testing.T) {
 	tracer := newRecordingTracer()
-	h := NewHook(rueidis.ClientOption{InitAddress: []string{"redis1:6379"}})
 
-	h.newSpanEvent(pinpoint.NewContext(context.Background(), tracer), "rueidis.Do()", func() string { return "" })
+	testHook().newSpanEvent(pinpoint.NewContext(context.Background(), tracer),
+		"rueidis.Do()", func() string { return "" })
 
-	if _, ok := tracer.last().annotations[pinpoint.AnnotationArgs0]; ok {
-		t.Error("an empty command was recorded as an annotation")
-	}
+	assert.NotContains(t, tracer.last().annotations, pinpoint.AnnotationArgs0,
+		"an empty command was recorded as an annotation")
 }
 
-// An empty batch has no failure to report.
+// A rueidis command can only be built from a live client's own builder, so the
+// two name helpers are exercised on the empty batch each of them can be handed:
+// a batch with nothing in it must annotate nothing rather than a bare
+// separator.
+func Test_cmdNames_EmptyBatch(t *testing.T) {
+	assert.Equal(t, "", cmdCompletedName(nil))
+	assert.Equal(t, "", cmdCompletedName([]rueidis.Completed{}))
+	assert.Equal(t, "", cmdCacheableName(nil))
+	assert.Equal(t, "", cmdCacheableName([]rueidis.CacheableTTL{}))
+}
+
+// A batch fails as a whole on its first failed command; reporting a later one
+// would point at the wrong command in the trace.
 func Test_multiResultError(t *testing.T) {
-	if err := multiResultError(nil); err != nil {
-		t.Errorf("multiResultError(nil) = %v, want nil", err)
-	}
-	if err := multiResultError([]rueidis.RedisResult{}); err != nil {
-		t.Errorf("multiResultError(empty) = %v, want nil", err)
-	}
+	assert.NoError(t, multiResultError(nil), "an empty batch has no failure to report")
+	assert.NoError(t, multiResultError([]rueidis.RedisResult{}))
+
+	first := errors.New("WRONGTYPE")
+	assert.ErrorIs(t, multiResultError([]rueidis.RedisResult{
+		rueidis.NewErrorResult(first),
+		rueidis.NewErrorResult(errors.New("second")),
+	}), first)
+
+	assert.ErrorIs(t, multiResultError([]rueidis.RedisResult{
+		rueidis.NewErrorResult(first),
+	}), first)
 }

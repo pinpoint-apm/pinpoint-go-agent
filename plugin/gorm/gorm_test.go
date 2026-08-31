@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 	"gorm.io/gorm/utils/tests"
 )
@@ -88,9 +90,7 @@ func processorFor(db *gorm.DB, kind string) interface {
 func openDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := Open(tests.DummyDialector{}, &gorm.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return db
 }
 
@@ -102,12 +102,8 @@ func TestOpen_RegistersEveryCallback(t *testing.T) {
 	for _, p := range callbackPairs {
 		t.Run(p.kind, func(t *testing.T) {
 			processor := processorFor(db, p.kind)
-			if processor.Get(p.before) == nil {
-				t.Errorf("%s is not registered", p.before)
-			}
-			if processor.Get(p.after) == nil {
-				t.Errorf("%s is not registered", p.after)
-			}
+			assert.NotNil(t, processor.Get(p.before), "%s is not registered", p.before)
+			assert.NotNil(t, processor.Get(p.after), "%s is not registered", p.after)
 		})
 	}
 }
@@ -129,19 +125,11 @@ func TestCallbacks_RecordOneSpanEventPerStatement(t *testing.T) {
 			processor.Get(p.before)(stmt)
 			processor.Get(p.after)(stmt)
 
-			if len(tracer.events) != 1 {
-				t.Fatalf("recorded %d span events, want 1", len(tracer.events))
-			}
+			require.Len(t, tracer.events, 1, "one statement must produce exactly one span event")
 			e := tracer.events[0]
-			if e.operation != p.operation {
-				t.Errorf("operation = %q, want %q", e.operation, p.operation)
-			}
-			if e.serviceType != pinpoint.ServiceTypeGoFunction {
-				t.Errorf("service type = %d, want %d", e.serviceType, pinpoint.ServiceTypeGoFunction)
-			}
-			if !e.ended {
-				t.Error("the span event was left open")
-			}
+			assert.Equal(t, p.operation, e.operation)
+			assert.Equal(t, int32(pinpoint.ServiceTypeGoFunction), e.serviceType)
+			assert.True(t, e.ended, "the span event was left open")
 		})
 	}
 }
@@ -162,9 +150,8 @@ func TestCallbacks_RecordTheStatementError(t *testing.T) {
 	create.Get("pinpoint:before_create")(stmt)
 	create.Get("pinpoint:after_create")(stmt)
 
-	if !errors.Is(tracer.events[0].err, want) {
-		t.Errorf("recorded error = %v, want %v", tracer.events[0].err, want)
-	}
+	require.Len(t, tracer.events, 1)
+	assert.ErrorIs(t, tracer.events[0].err, want)
 }
 
 // The callbacks are registered on the shared *gorm.DB, so they run for every
@@ -184,8 +171,10 @@ func TestCallbacks_WithoutASampledTracer(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			stmt := &gorm.DB{Statement: &gorm.Statement{Context: tt.ctx}}
-			create.Get("pinpoint:before_create")(stmt)
-			create.Get("pinpoint:after_create")(stmt)
+			assert.NotPanics(t, func() {
+				create.Get("pinpoint:before_create")(stmt)
+				create.Get("pinpoint:after_create")(stmt)
+			}, "an untraced statement must not take the application down")
 		})
 	}
 }
@@ -197,12 +186,70 @@ func TestOpen_ReturnsTheDialectorError(t *testing.T) {
 
 	db, err := Open(failingDialector{err: want}, &gorm.Config{})
 
-	if !errors.Is(err, want) {
-		t.Errorf("Open() = %v, want %v", err, want)
+	assert.ErrorIs(t, err, want, "the dialector's own error must reach the caller")
+	if db != nil {
+		assert.Nil(t, db.Callback().Create().Get("pinpoint:before_create"),
+			"the pinpoint callbacks must not be registered on a failed connection")
 	}
-	if db != nil && db.Error == nil && err == nil {
-		t.Error("Open returned a usable *gorm.DB for a failed dialector")
+}
+
+// The pinpoint callbacks are registered relative to gorm's own hooks, so gorm's
+// callbacks have to still be there and still run: registering against a hook
+// name gorm does not know silently drops the instrumentation.
+func TestOpen_KeepsGormsOwnCallbacks(t *testing.T) {
+	db := openDB(t)
+
+	for _, tt := range []struct {
+		kind string
+		name string
+	}{
+		{"create", "gorm:before_create"},
+		{"create", "gorm:after_create"},
+		{"update", "gorm:before_update"},
+		{"update", "gorm:after_update"},
+		{"delete", "gorm:before_delete"},
+		{"delete", "gorm:after_delete"},
+		{"query", "gorm:query"},
+		{"row", "gorm:row"},
+		{"raw", "gorm:raw"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.NotNil(t, processorFor(db, tt.kind).Get(tt.name),
+				"gorm's own %s callback was lost", tt.name)
+		})
 	}
+}
+
+// Open returns gorm's own *gorm.DB, so everything an application does with it
+// keeps working - WithContext included, which is how the tracer gets in.
+func TestOpen_ReturnsAUsableDB(t *testing.T) {
+	db := openDB(t)
+
+	require.NotNil(t, db)
+	require.NoError(t, db.Error)
+
+	tracer := newRecordingTracer()
+	scoped := db.WithContext(pinpoint.NewContext(context.Background(), tracer))
+	assert.Equal(t, tracer, pinpoint.FromContext(scoped.Statement.Context),
+		"WithContext must carry the tracer through to the statement")
+}
+
+// A statement that succeeded records no error, so a later failed one is not
+// mistaken for it.
+func TestCallbacks_SuccessfulStatement(t *testing.T) {
+	db := openDB(t)
+	tracer := newRecordingTracer()
+
+	stmt := &gorm.DB{Statement: &gorm.Statement{
+		Context: pinpoint.NewContext(context.Background(), tracer),
+	}}
+
+	create := db.Callback().Create()
+	create.Get("pinpoint:before_create")(stmt)
+	create.Get("pinpoint:after_create")(stmt)
+
+	require.Len(t, tracer.events, 1)
+	assert.NoError(t, tracer.events[0].err)
 }
 
 type failingDialector struct {

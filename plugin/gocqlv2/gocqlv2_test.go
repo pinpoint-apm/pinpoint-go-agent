@@ -9,6 +9,8 @@ import (
 
 	"github.com/apache/cassandra-gocql-driver/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // recordingTracer captures what the observer records on a span event. A real
@@ -61,9 +63,7 @@ func (e *recordedEvent) FixDuration(start, end time.Time) { e.start, e.end = sta
 func host(t *testing.T) *gocql.HostInfo {
 	t.Helper()
 	h, err := gocql.NewHostInfoFromAddrPort(net.IPv4(10, 0, 0, 1), 9042)
-	if err != nil {
-		t.Fatalf("NewHostInfoFromAddrPort: %v", err)
-	}
+	require.NoError(t, err)
 	return h
 }
 
@@ -85,34 +85,17 @@ func TestObserveQuery(t *testing.T) {
 		Err:       queryErr,
 	})
 
-	if len(tracer.events) != 1 {
-		t.Fatalf("recorded %d span events, want 1", len(tracer.events))
-	}
+	require.Len(t, tracer.events, 1, "one query must produce exactly one span event")
 	e := tracer.events[0]
-	if e.operation != "cassandra.query" {
-		t.Errorf("operation = %q, want %q", e.operation, "cassandra.query")
-	}
-	if e.serviceType != pinpoint.ServiceTypeCassandraExecuteQuery {
-		t.Errorf("service type = %d, want %d", e.serviceType, pinpoint.ServiceTypeCassandraExecuteQuery)
-	}
-	if e.destination != "testspace" {
-		t.Errorf("destination = %q, want %q", e.destination, "testspace")
-	}
-	if e.endPoint != "10.0.0.1:9042" {
-		t.Errorf("endpoint = %q, want %q", e.endPoint, "10.0.0.1:9042")
-	}
-	if e.sql != "SELECT id, text FROM widgets WHERE id = ?" {
-		t.Errorf("sql = %q", e.sql)
-	}
-	if !errors.Is(e.err, queryErr) {
-		t.Errorf("error = %v, want %v", e.err, queryErr)
-	}
-	if !e.start.Equal(start) || !e.end.Equal(end) {
-		t.Errorf("duration = %v..%v, want %v..%v", e.start, e.end, start, end)
-	}
-	if !e.ended {
-		t.Error("the span event was left open")
-	}
+	assert.Equal(t, "cassandra.query", e.operation)
+	assert.Equal(t, int32(pinpoint.ServiceTypeCassandraExecuteQuery), e.serviceType)
+	assert.Equal(t, "testspace", e.destination, "the keyspace is the destination")
+	assert.Equal(t, "10.0.0.1:9042", e.endPoint, "the coordinator host is the endpoint")
+	assert.Equal(t, "SELECT id, text FROM widgets WHERE id = ?", e.sql)
+	assert.ErrorIs(t, e.err, queryErr)
+	assert.True(t, e.start.Equal(start), "start = %v, want the driver's own %v", e.start, start)
+	assert.True(t, e.end.Equal(end), "end = %v, want the driver's own %v", e.end, end)
+	assert.True(t, e.ended, "the span event was left open")
 }
 
 // A batch is one span event, so every statement in it has to be visible in the
@@ -133,26 +116,17 @@ func TestObserveBatch(t *testing.T) {
 		Host:  host(t),
 	})
 
-	if len(tracer.events) != 1 {
-		t.Fatalf("recorded %d span events, want 1", len(tracer.events))
-	}
+	require.Len(t, tracer.events, 1, "a batch is one round trip, so one span event")
 	e := tracer.events[0]
-	if e.operation != "cassandra.batch" {
-		t.Errorf("operation = %q, want %q", e.operation, "cassandra.batch")
-	}
-	want := "[INSERT INTO widgets (id, text) VALUES (?, ?)][DELETE FROM widgets WHERE id = ?]"
-	if e.sql != want {
-		t.Errorf("sql = %q, want %q", e.sql, want)
-	}
-	if e.destination != "testspace" {
-		t.Errorf("destination = %q, want %q", e.destination, "testspace")
-	}
-	if e.err != nil {
-		t.Errorf("error = %v, want nil", e.err)
-	}
-	if !e.ended {
-		t.Error("the span event was left open")
-	}
+	assert.Equal(t, "cassandra.batch", e.operation)
+	assert.Equal(t, int32(pinpoint.ServiceTypeCassandraExecuteQuery), e.serviceType)
+	assert.Equal(t, "[INSERT INTO widgets (id, text) VALUES (?, ?)][DELETE FROM widgets WHERE id = ?]", e.sql)
+	assert.Equal(t, "testspace", e.destination)
+	assert.Equal(t, "10.0.0.1:9042", e.endPoint)
+	assert.NoError(t, e.err)
+	assert.True(t, e.start.Equal(start), "start = %v, want the driver's own %v", e.start, start)
+	assert.True(t, e.end.Equal(end), "end = %v, want the driver's own %v", e.end, end)
+	assert.True(t, e.ended, "the span event was left open")
 }
 
 // An empty batch still produces one span event, with no statements to record.
@@ -164,12 +138,68 @@ func TestObserveBatch_NoStatements(t *testing.T) {
 		Host:     host(t),
 	})
 
-	if len(tracer.events) != 1 {
-		t.Fatalf("recorded %d span events, want 1", len(tracer.events))
+	require.Len(t, tracer.events, 1)
+	assert.Equal(t, "", tracer.events[0].sql, "an empty batch has no statement to record")
+	assert.True(t, tracer.events[0].ended, "the span event was left open")
+}
+
+// A batch that failed records its error, so the failed round trip is the one
+// that stands out in the trace.
+func TestObserveBatch_Error(t *testing.T) {
+	tracer := newRecordingTracer()
+	want := errors.New("batch failed")
+
+	NewObserver().ObserveBatch(pinpoint.NewContext(context.Background(), tracer), gocql.ObservedBatch{
+		Keyspace:   "testspace",
+		Statements: []string{"INSERT INTO widgets (id) VALUES (?)"},
+		Host:       host(t),
+		Err:        want,
+	})
+
+	require.Len(t, tracer.events, 1)
+	assert.ErrorIs(t, tracer.events[0].err, want)
+}
+
+// A query that succeeded records no error, so a later failed one is not
+// mistaken for it.
+func TestObserveQuery_Success(t *testing.T) {
+	tracer := newRecordingTracer()
+
+	NewObserver().ObserveQuery(pinpoint.NewContext(context.Background(), tracer), gocql.ObservedQuery{
+		Keyspace:  "testspace",
+		Statement: "SELECT 1",
+		Host:      host(t),
+	})
+
+	require.Len(t, tracer.events, 1)
+	assert.NoError(t, tracer.events[0].err)
+	assert.True(t, tracer.events[0].ended)
+}
+
+// One observer serves every query of a shared session, so a second query has
+// to open its own span event rather than reuse the first one's.
+func TestObserver_RecordsEveryQuery(t *testing.T) {
+	tracer := newRecordingTracer()
+	o := NewObserver()
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+
+	o.ObserveQuery(ctx, gocql.ObservedQuery{Statement: "SELECT 1", Host: host(t)})
+	o.ObserveBatch(ctx, gocql.ObservedBatch{Statements: []string{"SELECT 2"}, Host: host(t)})
+	o.ObserveQuery(ctx, gocql.ObservedQuery{Statement: "SELECT 3", Host: host(t)})
+
+	require.Len(t, tracer.events, 3)
+	assert.Equal(t, []string{"cassandra.query", "cassandra.batch", "cassandra.query"},
+		[]string{tracer.events[0].operation, tracer.events[1].operation, tracer.events[2].operation})
+	for _, e := range tracer.events {
+		assert.True(t, e.ended, "%s was left open", e.operation)
 	}
-	if got := tracer.events[0].sql; got != "" {
-		t.Errorf("sql = %q, want empty", got)
-	}
+}
+
+// The same value satisfies both of gocql's observer interfaces, which is how
+// one observer instruments queries and batches alike.
+func TestObserver_SatisfiesBothObserverInterfaces(t *testing.T) {
+	assert.Implements(t, (*gocql.QueryObserver)(nil), NewObserver())
+	assert.Implements(t, (*gocql.BatchObserver)(nil), NewObserver())
 }
 
 // The observer is registered on the cluster, so it runs for every query the
@@ -188,8 +218,10 @@ func TestObserver_IgnoresUnsampledQueries(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			// A nil Host would panic if the observer got as far as recording.
-			o.ObserveQuery(tt.ctx, gocql.ObservedQuery{Statement: "SELECT 1"})
-			o.ObserveBatch(tt.ctx, gocql.ObservedBatch{Statements: []string{"SELECT 1"}})
+			assert.NotPanics(t, func() {
+				o.ObserveQuery(tt.ctx, gocql.ObservedQuery{Statement: "SELECT 1"})
+				o.ObserveBatch(tt.ctx, gocql.ObservedBatch{Statements: []string{"SELECT 1"}})
+			}, "an untraced query must be stepped over, not recorded")
 		})
 	}
 }

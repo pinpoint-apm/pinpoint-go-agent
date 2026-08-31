@@ -8,6 +8,8 @@ import (
 
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // WithContext must hand each request its own copy and keep the shared
@@ -16,9 +18,9 @@ func TestClient_WithContextIsConcurrencySafe(t *testing.T) {
 	mc := NewClient("localhost:1")
 
 	c := mc.WithContext(context.Background())
-	if c == mc {
-		t.Error("WithContext returned the shared wrapper, want a copy")
-	}
+	assert.NotSame(t, mc, c, "WithContext returned the shared wrapper, want a copy")
+	assert.Same(t, mc.Client, c.Client, "the copy must share the underlying memcache client")
+	assert.Equal(t, mc.endpoint, c.endpoint, "the copy must keep the endpoint")
 
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
@@ -127,37 +129,18 @@ func TestClient_RecordsEveryOperation(t *testing.T) {
 
 			err := tt.call(c)
 
-			if err == nil {
-				t.Fatal("the call unexpectedly succeeded against a closed port")
-			}
-			if len(tracer.events) != 1 {
-				t.Fatalf("recorded %d span events, want 1", len(tracer.events))
-			}
+			require.Error(t, err, "the call unexpectedly succeeded against a closed port")
+
+			require.Len(t, tracer.events, 1, "one operation must produce exactly one span event")
 			e := tracer.events[0]
-			if e.operation != tt.operation {
-				t.Errorf("operation = %q, want %q", e.operation, tt.operation)
-			}
-			if e.serviceType != pinpoint.ServiceTypeMemcached {
-				t.Errorf("service type = %d, want %d", e.serviceType, pinpoint.ServiceTypeMemcached)
-			}
-			if e.destination != "MEMCACHED" {
-				t.Errorf("destination = %q, want MEMCACHED", e.destination)
-			}
-			if e.endPoint != "localhost:1" {
-				t.Errorf("endpoint = %q, want %q", e.endPoint, "localhost:1")
-			}
-			if got := e.annotations[pinpoint.AnnotationArgs0]; got != tt.key {
-				t.Errorf("key annotation = %q, want %q", got, tt.key)
-			}
-			if e.err == nil {
-				t.Error("the failure was not recorded on the span event")
-			}
-			if e.end.Before(e.start) {
-				t.Errorf("duration = %v..%v, want a non-negative span", e.start, e.end)
-			}
-			if !e.ended {
-				t.Error("the span event was left open")
-			}
+			assert.Equal(t, tt.operation, e.operation)
+			assert.Equal(t, int32(pinpoint.ServiceTypeMemcached), e.serviceType)
+			assert.Equal(t, "MEMCACHED", e.destination)
+			assert.Equal(t, "localhost:1", e.endPoint)
+			assert.Equal(t, tt.key, e.annotations[pinpoint.AnnotationArgs0], "key annotation")
+			assert.Error(t, e.err, "the failure was not recorded on the span event")
+			assert.False(t, e.end.Before(e.start), "duration = %v..%v, want a non-negative span", e.start, e.end)
+			assert.True(t, e.ended, "the span event was left open")
 		})
 	}
 }
@@ -170,9 +153,19 @@ func TestNewClient_EndpointJoinsEveryServer(t *testing.T) {
 
 	_, _ = c.Get("foo")
 
-	if got, want := tracer.last().endPoint, "127.0.0.1:1,127.0.0.2:1"; got != want {
-		t.Errorf("endpoint = %q, want %q", got, want)
-	}
+	assert.Equal(t, "127.0.0.1:1,127.0.0.2:1", tracer.last().endPoint)
+}
+
+// A client built from no server at all still has to record an endpoint field
+// rather than crash the first call.
+func TestNewClient_WithoutAServer(t *testing.T) {
+	tracer := newRecordingTracer()
+	c := NewClient().WithContext(pinpoint.NewContext(context.Background(), tracer))
+
+	// Ping over an empty server list has nothing to reach and reports success.
+	assert.NoError(t, c.Ping())
+	require.Len(t, tracer.events, 1, "the call must still be traced")
+	assert.Equal(t, "", tracer.last().endPoint)
 }
 
 // The wrapper replaces the application's client, so every operation must still
@@ -180,15 +173,53 @@ func TestNewClient_EndpointJoinsEveryServer(t *testing.T) {
 // span-event stack of whatever runs next on that goroutine unbalances.
 func TestClient_RecordsNothingWithoutASampledTracer(t *testing.T) {
 	// A client never given a context starts on the noop tracer.
-	if _, err := NewClient("localhost:1").Get("foo"); err == nil {
-		t.Fatal("the call unexpectedly succeeded against a closed port")
-	}
+	_, err := NewClient("localhost:1").Get("foo")
+	assert.Error(t, err, "the call unexpectedly succeeded against a closed port")
 
-	c := NewClient("localhost:1").WithContext(context.Background())
-	if _, err := c.Get("foo"); err == nil {
-		t.Fatal("the call unexpectedly succeeded against a closed port")
+	for _, ctx := range []context.Context{
+		context.Background(),
+		pinpoint.NewContext(context.Background(), pinpoint.NoopTracer()),
+	} {
+		c := NewClient("localhost:1").WithContext(ctx)
+		require.False(t, c.currentTracer().IsSampled(), "an untraced context produced a sampled tracer")
+
+		_, err := c.Get("foo")
+		assert.Error(t, err, "the call unexpectedly succeeded against a closed port")
 	}
-	if pinpoint.FromContext(context.Background()).IsSampled() {
-		t.Error("a background context produced a sampled tracer")
-	}
+}
+
+// WithContext also rebinds the shared receiver, so the tracer the next call
+// records against is the one bound last.
+func TestClient_WithContextRebindsTheReceiver(t *testing.T) {
+	mc := NewClient("localhost:1")
+
+	first := newRecordingTracer()
+	mc.WithContext(pinpoint.NewContext(context.Background(), first))
+	_, _ = mc.Get("foo")
+
+	second := newRecordingTracer()
+	mc.WithContext(pinpoint.NewContext(context.Background(), second))
+	_, _ = mc.Get("bar")
+
+	require.Len(t, first.events, 1, "the first tracer must keep only its own call")
+	require.Len(t, second.events, 1, "the rebound tracer must record the next call")
+	assert.Equal(t, "foo", first.events[0].annotations[pinpoint.AnnotationArgs0])
+	assert.Equal(t, "bar", second.events[0].annotations[pinpoint.AnnotationArgs0])
+}
+
+// A copy handed to one request must keep recording on its own tracer even
+// after the shared client is rebound for another.
+func TestClient_CopyKeepsItsOwnTracer(t *testing.T) {
+	mc := NewClient("localhost:1")
+
+	mine := newRecordingTracer()
+	c := mc.WithContext(pinpoint.NewContext(context.Background(), mine))
+
+	// Another request rebinds the shared client.
+	mc.WithContext(pinpoint.NewContext(context.Background(), newRecordingTracer()))
+
+	_, _ = c.Get("foo")
+
+	require.Len(t, mine.events, 1, "the copy recorded on someone else's tracer")
+	assert.Equal(t, "foo", mine.events[0].annotations[pinpoint.AnnotationArgs0])
 }

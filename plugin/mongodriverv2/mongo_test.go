@@ -10,6 +10,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/event"
 )
@@ -22,72 +24,47 @@ func TestCommandAnnotation(t *testing.T) {
 	t.Run("small command keeps extended JSON", func(t *testing.T) {
 		evt := commandStartedEvent(t, "find", "widgets", strings.Repeat("x", 32))
 		want, err := bson.MarshalExtJSON(evt.Command, false, false)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 
-		if got := commandAnnotation(evt, "widgets"); got != string(want) {
-			t.Fatalf("commandAnnotation() = %q, want %q", got, want)
-		}
+		assert.Equal(t, string(want), commandAnnotation(evt, "widgets"))
 	})
 
 	t.Run("expanded extended JSON is abbreviated", func(t *testing.T) {
 		// Control bytes are escaped as \uXXXX, so BSON below the gate still
 		// converts to extended JSON above maxJsonSize.
 		evt := commandStartedEvent(t, "insert", "widgets", strings.Repeat("\x01", 60<<10))
-		if len(evt.Command) > maxBsonSize {
-			t.Fatalf("test command size = %d, want at most %d", len(evt.Command), maxBsonSize)
-		}
+		require.LessOrEqual(t, len(evt.Command), maxBsonSize, "the test command must stay below the BSON gate")
 		b, err := bson.MarshalExtJSON(evt.Command, false, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(b) <= maxJsonSize {
-			t.Fatalf("test extended JSON size = %d, want greater than %d", len(b), maxJsonSize)
-		}
+		require.NoError(t, err)
+		require.Greater(t, len(b), maxJsonSize, "the test command must expand past the JSON limit")
 
 		got := commandAnnotation(evt, "widgets")
-		if !strings.HasSuffix(got, abbreviationMarker) {
-			t.Fatalf("commandAnnotation() = %.80q, want the abbreviation marker", got)
-		}
-		if len(got) > maxJsonSize {
-			t.Fatalf("commandAnnotation() = %d bytes, want at most %d", len(got), maxJsonSize)
-		}
-		if want := string(b[:maxJsonSize-len(abbreviationMarker)]) + abbreviationMarker; got != want {
-			t.Fatalf("commandAnnotation() = %d bytes, want the first %d JSON bytes plus the marker", len(got), len(want)-len(abbreviationMarker))
-		}
+		assert.True(t, strings.HasSuffix(got, abbreviationMarker),
+			"commandAnnotation() = %.80q, want the abbreviation marker", got)
+		assert.LessOrEqual(t, len(got), maxJsonSize, "the annotation grew past the limit")
+		assert.Equal(t, string(b[:maxJsonSize-len(abbreviationMarker)])+abbreviationMarker, got)
 	})
 
 	t.Run("abbreviation keeps valid UTF-8", func(t *testing.T) {
 		// Escaped control bytes push the cut into the multi-byte run that follows.
 		evt := commandStartedEvent(t, "insert", "widgets", strings.Repeat("\x01", 10900)+strings.Repeat("\uac00", 200))
 		b, err := bson.MarshalExtJSON(evt.Command, false, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cut := maxJsonSize - len(abbreviationMarker); utf8.RuneStart(b[cut]) {
-			t.Fatalf("test payload does not straddle the cut at %d", cut)
-		}
+		require.NoError(t, err)
+		cut := maxJsonSize - len(abbreviationMarker)
+		require.False(t, utf8.RuneStart(b[cut]), "the test payload does not straddle the cut at %d", cut)
 
 		got := commandAnnotation(evt, "widgets")
-		if !utf8.ValidString(got) {
-			t.Fatalf("commandAnnotation() is not valid UTF-8 (%d bytes)", len(got))
-		}
-		if !strings.HasSuffix(got, abbreviationMarker) {
-			t.Fatalf("commandAnnotation() = %.80q, want the abbreviation marker", got)
-		}
+		assert.True(t, utf8.ValidString(got), "commandAnnotation() is not valid UTF-8 (%d bytes)", len(got))
+		assert.True(t, strings.HasSuffix(got, abbreviationMarker),
+			"commandAnnotation() = %.80q, want the abbreviation marker", got)
 	})
 
 	t.Run("large command skips extended JSON", func(t *testing.T) {
 		evt := commandStartedEvent(t, "insert", "widgets", strings.Repeat("x", maxBsonSize))
-		if len(evt.Command) <= maxBsonSize {
-			t.Fatalf("test command size = %d, want greater than %d", len(evt.Command), maxBsonSize)
-		}
+		require.Greater(t, len(evt.Command), maxBsonSize, "the test command must exceed the BSON gate")
 
 		want := fmt.Sprintf("[MongoDB command omitted: command=insert, collection=widgets, bsonSize=%d]", len(evt.Command))
-		if got := commandAnnotation(evt, "widgets"); got != want {
-			t.Fatalf("commandAnnotation() = %q, want %q", got, want)
-		}
+		assert.Equal(t, want, commandAnnotation(evt, "widgets"))
 	})
 }
 
@@ -112,9 +89,7 @@ func commandStartedEvent(t testing.TB, name, collection, payload string) *event.
 		{Key: name, Value: collection},
 		{Key: "payload", Value: payload},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return &event.CommandStartedEvent{
 		Command:     command,
 		CommandName: name,
@@ -190,9 +165,7 @@ func Test_getHost(t *testing.T) {
 		{"localhost", "localhost"},
 		{"", ""},
 	} {
-		if got := getHost(tt.connID); got != tt.want {
-			t.Errorf("getHost(%q) = %q, want %q", tt.connID, got, tt.want)
-		}
+		assert.Equal(t, tt.want, getHost(tt.connID), "getHost(%q)", tt.connID)
 	}
 }
 
@@ -200,18 +173,12 @@ func Test_getHost(t *testing.T) {
 // command name. A command that carries no collection - a database-level one -
 // must not report a garbled name.
 func Test_collectionName(t *testing.T) {
-	if got := collectionName(commandStartedEvent(t, "find", "widgets", "x")); got != "widgets" {
-		t.Errorf("collectionName() = %q, want %q", got, "widgets")
-	}
+	assert.Equal(t, "widgets", collectionName(commandStartedEvent(t, "find", "widgets", "x")))
 
 	command, err := bson.Marshal(bson.D{{Key: "ping", Value: 1}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	evt := &event.CommandStartedEvent{Command: command, CommandName: "ping"}
-	if got := collectionName(evt); got != "" {
-		t.Errorf("collectionName(database command) = %q, want empty", got)
-	}
+	assert.Equal(t, "", collectionName(evt), "a database-level command names no collection")
 }
 
 func startedEvent(t *testing.T, connID string, requestID int64, name, collection string) *event.CommandStartedEvent {
@@ -237,37 +204,18 @@ func TestMonitor_StartedAndSucceeded(t *testing.T) {
 		CommandFinishedEvent: event.CommandFinishedEvent{ConnectionID: started.ConnectionID, RequestID: started.RequestID},
 	})
 
-	if len(tracer.events) != 1 {
-		t.Fatalf("recorded %d span events, want 1", len(tracer.events))
-	}
+	require.Len(t, tracer.events, 1, "one command must produce exactly one span event")
 	e := tracer.events[0]
-	if e.operation != "mongodb.find" {
-		t.Errorf("operation = %q, want %q", e.operation, "mongodb.find")
-	}
-	if e.serviceType != pinpoint.ServiceTypeMongoExecuteQuery {
-		t.Errorf("service type = %d, want %d", e.serviceType, pinpoint.ServiceTypeMongoExecuteQuery)
-	}
-	if e.endPoint != "mongo1" {
-		t.Errorf("endpoint = %q, want %q", e.endPoint, "mongo1")
-	}
-	if e.destination != "testdb" {
-		t.Errorf("destination = %q, want %q", e.destination, "testdb")
-	}
-	if got := e.annotations[pinpoint.AnnotationMongoCollectionInfo]; got != "widgets" {
-		t.Errorf("collection annotation = %q, want %q", got, "widgets")
-	}
-	if got := e.annotations[pinpoint.AnnotationMongoJasonData]; got == "" {
-		t.Error("the command was not recorded as an annotation")
-	}
-	if e.err != nil {
-		t.Errorf("recorded error = %v, want nil", e.err)
-	}
-	if !e.ended {
-		t.Error("the span event was left open")
-	}
-	if len(m.spans) != 0 {
-		t.Errorf("%d spans left in the map, want none", len(m.spans))
-	}
+	assert.Equal(t, "mongodb.find", e.operation)
+	assert.Equal(t, int32(pinpoint.ServiceTypeMongoExecuteQuery), e.serviceType)
+	assert.Equal(t, "mongo1", e.endPoint, "the endpoint is the bare host, without the pool index")
+	assert.Equal(t, "testdb", e.destination)
+	assert.Equal(t, "widgets", e.annotations[pinpoint.AnnotationMongoCollectionInfo])
+	assert.NotEmpty(t, e.annotations[pinpoint.AnnotationMongoJasonData],
+		"the command was not recorded as an annotation")
+	assert.NoError(t, e.err)
+	assert.True(t, e.ended, "the span event was left open")
+	assert.Empty(t, m.spans, "the finished command was left in the span map")
 }
 
 // A failed command is the one worth finding in the trace, so the driver's
@@ -284,16 +232,12 @@ func TestMonitor_Failed(t *testing.T) {
 		Failure:              errors.New("E11000 duplicate key error"),
 	})
 
+	require.Len(t, tracer.events, 1)
 	e := tracer.events[0]
-	if e.err == nil || !strings.Contains(e.err.Error(), "duplicate key") {
-		t.Errorf("recorded error = %v, want the driver's failure text", e.err)
-	}
-	if !e.ended {
-		t.Error("the span event was left open")
-	}
-	if len(m.spans) != 0 {
-		t.Errorf("%d spans left in the map, want none", len(m.spans))
-	}
+	require.Error(t, e.err, "the driver's failure was not recorded")
+	assert.Contains(t, e.err.Error(), "duplicate key")
+	assert.True(t, e.ended, "the span event was left open")
+	assert.Empty(t, m.spans, "the failed command was left in the span map")
 }
 
 // The monitor is registered on the client, so it sees commands the driver
@@ -303,13 +247,16 @@ func TestMonitor_Failed(t *testing.T) {
 func TestMonitor_FinishedWithoutAStart(t *testing.T) {
 	m := &monitor{spans: make(map[spanKey]pinpoint.Tracer)}
 
-	m.Succeeded(context.Background(), &event.CommandSucceededEvent{
-		CommandFinishedEvent: event.CommandFinishedEvent{ConnectionID: "mongo1:27017[-3]", RequestID: 42},
-	})
-	m.Failed(context.Background(), &event.CommandFailedEvent{
-		CommandFinishedEvent: event.CommandFinishedEvent{ConnectionID: "mongo1:27017[-3]", RequestID: 42},
-		Failure:              errors.New("boom"),
-	})
+	assert.NotPanics(t, func() {
+		m.Succeeded(context.Background(), &event.CommandSucceededEvent{
+			CommandFinishedEvent: event.CommandFinishedEvent{ConnectionID: "mongo1:27017[-3]", RequestID: 42},
+		})
+		m.Failed(context.Background(), &event.CommandFailedEvent{
+			CommandFinishedEvent: event.CommandFinishedEvent{ConnectionID: "mongo1:27017[-3]", RequestID: 42},
+			Failure:              errors.New("boom"),
+		})
+	}, "finishing a command that was never started must be a no-op")
+	assert.Empty(t, m.spans)
 }
 
 // An unsampled command leaves nothing in the span map, so the matching finish
@@ -320,12 +267,67 @@ func TestMonitor_IgnoresUnsampledCommands(t *testing.T) {
 	started := startedEvent(t, "mongo1:27017[-3]", 42, "find", "widgets")
 	m.Started(context.Background(), started)
 
-	if len(m.spans) != 0 {
-		t.Errorf("%d spans recorded for an unsampled command, want none", len(m.spans))
-	}
-	m.Succeeded(context.Background(), &event.CommandSucceededEvent{
-		CommandFinishedEvent: event.CommandFinishedEvent{ConnectionID: started.ConnectionID, RequestID: started.RequestID},
+	assert.Empty(t, m.spans, "an unsampled command must not be recorded in the span map")
+	assert.NotPanics(t, func() {
+		m.Succeeded(context.Background(), &event.CommandSucceededEvent{
+			CommandFinishedEvent: event.CommandFinishedEvent{ConnectionID: started.ConnectionID, RequestID: started.RequestID},
+		})
 	})
+}
+
+// Two commands in flight on the same connection are told apart by request id;
+// finishing one must not close the other's span event.
+func TestMonitor_InterleavedCommandsOnOneConnection(t *testing.T) {
+	m := &monitor{spans: make(map[spanKey]pinpoint.Tracer)}
+	tracer := newRecordingTracer()
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+
+	first := startedEvent(t, "mongo1:27017[-3]", 1, "find", "widgets")
+	second := startedEvent(t, "mongo1:27017[-3]", 2, "insert", "gadgets")
+	m.Started(ctx, first)
+	m.Started(ctx, second)
+	require.Len(t, m.spans, 2, "two commands in flight must hold two spans")
+
+	m.Succeeded(ctx, &event.CommandSucceededEvent{
+		CommandFinishedEvent: event.CommandFinishedEvent{ConnectionID: second.ConnectionID, RequestID: second.RequestID},
+	})
+	assert.Len(t, m.spans, 1, "finishing one command must leave the other in flight")
+
+	m.Succeeded(ctx, &event.CommandSucceededEvent{
+		CommandFinishedEvent: event.CommandFinishedEvent{ConnectionID: first.ConnectionID, RequestID: first.RequestID},
+	})
+	assert.Empty(t, m.spans)
+
+	require.Len(t, tracer.events, 2)
+	assert.Equal(t, "mongodb.find", tracer.events[0].operation)
+	assert.Equal(t, "mongodb.insert", tracer.events[1].operation)
+}
+
+// NewMonitor is what an application installs on its client options; all three
+// callbacks have to be wired, or commands go untraced or never close.
+func TestNewMonitor(t *testing.T) {
+	m := NewMonitor()
+
+	require.NotNil(t, m)
+	assert.NotNil(t, m.Started, "commands would go untraced")
+	assert.NotNil(t, m.Succeeded, "span events would never close")
+	assert.NotNil(t, m.Failed, "failures would never close their span event")
+}
+
+// abbreviateJson is what keeps a command annotation inside the limit; the
+// boundary cases are where a marker longer than the limit could push it over.
+func Test_abbreviateJson(t *testing.T) {
+	assert.Equal(t, "abc", abbreviateJson([]byte("abc"), 10), "a short value is kept whole")
+	assert.Equal(t, "abc", abbreviateJson([]byte("abc"), 3), "a value exactly at the limit is kept whole")
+
+	got := abbreviateJson([]byte(strings.Repeat("x", 100)), 20)
+	assert.Len(t, got, 20)
+	assert.True(t, strings.HasSuffix(got, "...(20)"), "got %q, want the marker", got)
+
+	// A limit shorter than the marker leaves only the marker.
+	assert.Equal(t, "...(2)", abbreviateJson([]byte("abcdef"), 2))
+	assert.True(t, utf8.ValidString(abbreviateJson([]byte(strings.Repeat("\uac00", 100)), 20)),
+		"the cut must land on a rune start")
 }
 
 // The span map is shared by every connection in the pool, so commands in
@@ -351,14 +353,10 @@ func TestMonitor_ConcurrentCommands(t *testing.T) {
 					},
 				})
 			}
-			if len(tracer.events) != 20 {
-				t.Errorf("connection %d recorded %d span events, want 20", i, len(tracer.events))
-			}
+			assert.Len(t, tracer.events, 20, "connection %d recorded the wrong number of span events", i)
 		}(i)
 	}
 	wg.Wait()
 
-	if len(m.spans) != 0 {
-		t.Errorf("%d spans left in the map, want none", len(m.spans))
-	}
+	assert.Empty(t, m.spans, "spans were left in the map")
 }

@@ -2,11 +2,17 @@ package ppmssqlmicrosoft
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"slices"
 	"testing"
 
+	mssql "github.com/microsoft/go-mssqldb"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+const driverName = "mssql-microsoft-pinpoint"
 
 // The endpoint recorded on every span event comes from here, so both DSN
 // dialects go-mssqldb accepts - ADO keyword pairs and a sqlserver:// URL -
@@ -61,12 +67,8 @@ func Test_parseDSN(t *testing.T) {
 			var info pinpoint.DBInfo
 			parseDSN(&info, tt.dsn)
 
-			if info.DBHost != tt.wantHost {
-				t.Errorf("DBHost = %q, want %q", info.DBHost, tt.wantHost)
-			}
-			if info.DBName != tt.wantName {
-				t.Errorf("DBName = %q, want %q", info.DBName, tt.wantName)
-			}
+			assert.Equal(t, tt.wantHost, info.DBHost)
+			assert.Equal(t, tt.wantName, info.DBName)
 		})
 	}
 }
@@ -81,27 +83,47 @@ func Test_parseDSN_InvalidLeavesInfoUntouched(t *testing.T) {
 		info := pinpoint.DBInfo{DBHost: "keep", DBName: "keep"}
 		parseDSN(&info, dsn)
 
-		if info.DBHost != "keep" || info.DBName != "keep" {
-			t.Errorf("parseDSN(%q) overwrote %q/%q", dsn, info.DBHost, info.DBName)
-		}
+		assert.Equal(t, "keep", info.DBHost, "parseDSN(%q) overwrote the host", dsn)
+		assert.Equal(t, "keep", info.DBName, "parseDSN(%q) overwrote the database name", dsn)
 	}
+}
+
+// parseDSN runs per connection against a copy of the shared DBInfo, and must
+// only fill in the address: overwriting the service types would file that one
+// connection's queries under a different node.
+func Test_parseDSN_LeavesTheServiceTypesAlone(t *testing.T) {
+	info := dbInfo
+	parseDSN(&info, "server=dbhost;database=TestDB")
+
+	assert.Equal(t, dbInfo.DBType, info.DBType)
+	assert.Equal(t, dbInfo.QueryType, info.QueryType)
+	assert.Equal(t, "dbhost", info.DBHost)
 }
 
 // The registered driver has to carry the mssql service types; a wrong type
 // files every query under the wrong node on the server map.
 func TestRegisteredDriverInfo(t *testing.T) {
-	if dbInfo.DBType != pinpoint.ServiceTypeMssql {
-		t.Errorf("DBType = %d, want %d", dbInfo.DBType, pinpoint.ServiceTypeMssql)
-	}
-	if dbInfo.QueryType != pinpoint.ServiceTypeMssqlExecuteQuery {
-		t.Errorf("QueryType = %d, want %d", dbInfo.QueryType, pinpoint.ServiceTypeMssqlExecuteQuery)
-	}
+	assert.Equal(t, pinpoint.ServiceTypeMssql, dbInfo.DBType)
+	assert.Equal(t, pinpoint.ServiceTypeMssqlExecuteQuery, dbInfo.QueryType)
+	assert.NotNil(t, dbInfo.ParseDSN, "without a ParseDSN the wrapper never learns the host or database")
 }
 
-// The name is deliberately not plugin/mssql's "sqlserver-pinpoint": database/sql
-// panics on a duplicate registration if a binary imports both forks.
+// The documented driver name is the only thing an application refers to, so it
+// has to be the name package init actually registered. It is deliberately not
+// plugin/mssql's "sqlserver-pinpoint": database/sql panics on a duplicate
+// registration if a binary imports both forks.
 func TestRegisteredDriverName(t *testing.T) {
-	if !slices.Contains(sql.Drivers(), "mssql-microsoft-pinpoint") {
-		t.Errorf("mssql-microsoft-pinpoint not registered, got %v", sql.Drivers())
-	}
+	assert.True(t, slices.Contains(sql.Drivers(), driverName),
+		"%s not registered, got %v", driverName, sql.Drivers())
+}
+
+// Opening through the registered name must hand database/sql the instrumented
+// driver, not the bare one - otherwise nothing is ever traced.
+func TestOpenUsesTheInstrumentedDriver(t *testing.T) {
+	db, err := sql.Open(driverName, "server=dbhost;database=TestDB")
+	require.NoError(t, err)
+	defer db.Close()
+
+	assert.Implements(t, (*driver.Driver)(nil), db.Driver())
+	assert.NotEqual(t, &mssql.Driver{}, db.Driver(), "the bare mssql driver was registered")
 }

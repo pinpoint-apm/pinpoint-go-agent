@@ -8,6 +8,8 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // An empty or mistyped broker-address value must fall back to Unknown instead
@@ -19,10 +21,10 @@ func Test_newConsumerTracer_EmptyBrokerAddress(t *testing.T) {
 		NewContext(context.Background(), []string{}),
 		context.WithValue(context.Background(), contextKey, "not-a-slice"),
 	} {
-		tracer := newConsumerTracer(ctx, msg)
-		if tracer == nil {
-			t.Fatal("no tracer returned")
-		}
+		var tracer pinpoint.Tracer
+		require.NotPanics(t, func() { tracer = newConsumerTracer(ctx, msg) },
+			"a broker address the plugin cannot read must not kill the consumer")
+		require.NotNil(t, tracer, "no tracer returned")
 		tracer.EndSpan()
 	}
 }
@@ -30,13 +32,10 @@ func Test_newConsumerTracer_EmptyBrokerAddress(t *testing.T) {
 func startAgent(t *testing.T) {
 	t.Helper()
 	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentId("testAgent"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+
 	agent, err := pinpoint.NewTestAgent(config, t)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(agent.Shutdown)
 }
 
@@ -51,25 +50,23 @@ type spanFields struct {
 func readSpan(t *testing.T, tracer pinpoint.Tracer) spanFields {
 	t.Helper()
 	var f spanFields
-	if err := json.Unmarshal(tracer.JsonString(), &f); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, json.Unmarshal(tracer.JsonString(), &f))
 	return f
 }
 
 // The RPC name is the consumer span's title on the Pinpoint screen, and it is
 // what distinguishes one partition's consumption from another's.
 func Test_makeRpcName(t *testing.T) {
-	msg := &sarama.ConsumerMessage{Topic: "widgets", Partition: 3, Offset: 42}
-	if got, want := makeRpcName(msg), "kafka://topic=widgets?partition=3&offset=42"; got != want {
-		t.Errorf("makeRpcName() = %q, want %q", got, want)
-	}
+	assert.Equal(t, "kafka://topic=widgets?partition=3&offset=42",
+		makeRpcName(&sarama.ConsumerMessage{Topic: "widgets", Partition: 3, Offset: 42}))
 
 	// The first message of a fresh partition is offset 0, not an absent one.
-	msg = &sarama.ConsumerMessage{Topic: "widgets"}
-	if got, want := makeRpcName(msg), "kafka://topic=widgets?partition=0&offset=0"; got != want {
-		t.Errorf("makeRpcName() = %q, want %q", got, want)
-	}
+	assert.Equal(t, "kafka://topic=widgets?partition=0&offset=0",
+		makeRpcName(&sarama.ConsumerMessage{Topic: "widgets"}))
+
+	// A topic name is whatever Kafka allowed; it goes in verbatim.
+	assert.Equal(t, "kafka://topic=my.topic-1_x?partition=0&offset=0",
+		makeRpcName(&sarama.ConsumerMessage{Topic: "my.topic-1_x"}))
 }
 
 // Kafka record headers come off the wire as a slice that can hold nil entries,
@@ -83,12 +80,12 @@ func Test_distributedTracingContextReaderConsumer(t *testing.T) {
 		},
 	}}
 
-	if got := r.Get(pinpoint.HeaderTraceId); got != "txid^1^1" {
-		t.Errorf("Get(%s) = %q, want %q", pinpoint.HeaderTraceId, got, "txid^1^1")
-	}
-	if got := r.Get("absent"); got != "" {
-		t.Errorf("Get(absent) = %q, want empty", got)
-	}
+	assert.Equal(t, "txid^1^1", r.Get(pinpoint.HeaderTraceId))
+	assert.Equal(t, "", r.Get("absent"))
+
+	// A message with no headers at all is what an untraced producer sends.
+	bare := &distributedTracingContextReaderConsumer{&sarama.ConsumerMessage{}}
+	assert.Equal(t, "", bare.Get(pinpoint.HeaderTraceId))
 }
 
 // The broker is the consumer span's endpoint on the server map. It can come
@@ -138,15 +135,10 @@ func Test_newConsumerTracer_BrokerAddress(t *testing.T) {
 			got := readSpan(t, tracer)
 			tracer.EndSpan()
 
-			if got.EndPoint != tt.want {
-				t.Errorf("endpoint = %q, want %q", got.EndPoint, tt.want)
-			}
-			if got.RemoteAddr != tt.want {
-				t.Errorf("remote address = %q, want %q", got.RemoteAddr, tt.want)
-			}
-			if want := makeRpcName(tt.msg); got.RpcName != want {
-				t.Errorf("rpc name = %q, want %q", got.RpcName, want)
-			}
+			assert.Equal(t, tt.want, got.EndPoint)
+			assert.Equal(t, tt.want, got.RemoteAddr)
+			assert.Equal(t, makeRpcName(tt.msg), got.RpcName,
+				"the span is named after the topic, partition and offset")
 		})
 	}
 }
@@ -171,9 +163,8 @@ func TestProducerToConsumerContinuesTheTransaction(t *testing.T) {
 	tracer := newConsumerTracer(context.Background(), consumed)
 	defer tracer.EndSpan()
 
-	if got := tracer.TransactionId().String(); got != callerTxId {
-		t.Errorf("consumer transaction id = %q, want the producer's %q", got, callerTxId)
-	}
+	assert.Equal(t, callerTxId, tracer.TransactionId().String(),
+		"the consumer span must continue the producer's transaction")
 }
 
 // ConsumeMessageContext wraps the application's handler, so the handler's
@@ -194,15 +185,45 @@ func TestConsumeMessageContext(t *testing.T) {
 		return want
 	}, NewContext(context.Background(), []string{"broker1:9092"}), msg)
 
-	if !sampled {
-		t.Error("the handler received an unsampled tracer")
-	}
-	if gotMsg != msg {
-		t.Error("the handler received a different message")
-	}
-	if !errors.Is(err, want) {
-		t.Errorf("ConsumeMessageContext() = %v, want %v", err, want)
-	}
+	assert.True(t, sampled, "the handler received an unsampled tracer")
+	assert.Same(t, msg, gotMsg, "the handler received a different message")
+	assert.ErrorIs(t, err, want, "the handler's error must come back unchanged")
+}
+
+// A handler that succeeds must leave the consumer span unfailed.
+func TestConsumeMessageContext_SuccessfulHandler(t *testing.T) {
+	startAgent(t)
+
+	var span spanFields
+	err := ConsumeMessageContext(func(ctx context.Context, m *sarama.ConsumerMessage) error {
+		span = readSpan(t, pinpoint.FromContext(ctx))
+		return nil
+	}, NewContext(context.Background(), []string{"broker1:9092"}), &sarama.ConsumerMessage{Topic: "widgets"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "broker1:9092", span.EndPoint)
+}
+
+// A panicking handler must not be swallowed by the wrapper.
+func TestConsumeMessageContext_PanicPropagates(t *testing.T) {
+	startAgent(t)
+
+	assert.PanicsWithValue(t, "boom", func() {
+		_ = ConsumeMessageContext(func(context.Context, *sarama.ConsumerMessage) error { panic("boom") },
+			context.Background(), &sarama.ConsumerMessage{Topic: "widgets"})
+	})
+}
+
+// NewContext is how an application tells the plugin which brokers it is
+// consuming from; a nil context must not take the consumer down.
+func TestNewContext(t *testing.T) {
+	ctx := NewContext(nil, []string{"broker1:9092"})
+	require.NotNil(t, ctx)
+	assert.Equal(t, []string{"broker1:9092"}, ctx.Value(contextKey))
+
+	nested := NewContext(ctx, []string{"broker2:9092"})
+	assert.Equal(t, []string{"broker2:9092"}, nested.Value(contextKey),
+		"the innermost NewContext wins")
 }
 
 // The deprecated form hands the tracer to the handler on the wrapper rather
@@ -214,21 +235,14 @@ func TestConsumeMessage(t *testing.T) {
 	msg := &sarama.ConsumerMessage{Topic: "widgets"}
 
 	err := ConsumeMessage(func(m *ConsumerMessage) error {
-		if m.ConsumerMessage != msg {
-			t.Error("the handler received a different message")
-		}
-		if m.Tracer() == nil || !m.Tracer().IsSampled() {
-			t.Error("the handler received an unsampled tracer")
-		}
-		if m.SpanTracer() != m.Tracer() {
-			t.Error("SpanTracer and Tracer returned different tracers")
-		}
+		assert.Same(t, msg, m.ConsumerMessage, "the handler received a different message")
+		require.NotNil(t, m.Tracer())
+		assert.True(t, m.Tracer().IsSampled(), "the handler received an unsampled tracer")
+		assert.Equal(t, m.Tracer(), m.SpanTracer(), "SpanTracer and Tracer returned different tracers")
 		return want
 	}, msg)
 
-	if !errors.Is(err, want) {
-		t.Errorf("ConsumeMessage() = %v, want %v", err, want)
-	}
+	assert.ErrorIs(t, err, want, "the handler's error must come back unchanged")
 }
 
 // The deprecated partition-consumer wrapper forwards every message from
@@ -246,16 +260,13 @@ func TestWrapPartitionConsumer(t *testing.T) {
 
 	var offsets []int64
 	for msg := range pc.Messages() {
-		if !msg.Tracer().IsSampled() {
-			t.Error("a forwarded message carries an unsampled tracer")
-		}
+		assert.True(t, msg.Tracer().IsSampled(), "a forwarded message carries an unsampled tracer")
 		offsets = append(offsets, msg.Offset)
 		msg.Tracer().EndSpan()
 	}
 
-	if len(offsets) != 2 || offsets[0] != 1 || offsets[1] != 2 {
-		t.Errorf("forwarded offsets = %v, want [1 2]", offsets)
-	}
+	assert.Equal(t, []int64{1, 2}, offsets,
+		"every message must be forwarded, in order, and the channel closed after the last")
 }
 
 type stubPartitionConsumer struct {
