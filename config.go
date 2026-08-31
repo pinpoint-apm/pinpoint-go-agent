@@ -385,38 +385,6 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	if config.containerCheck {
 		config.cfgMap[CfgIsContainerEnv].value = isContainerEnv()
 	}
-	if config.stagedInt(CfgSpanQueueSize) < 1 {
-		config.cfgMap[CfgSpanQueueSize].value = defaultQueueSize
-	}
-	if config.stagedInt(CfgHttpUrlStatQueueSize) < 1 {
-		config.cfgMap[CfgHttpUrlStatQueueSize].value = defaultQueueSize
-	}
-	if config.stagedInt(CfgSpanBatchSize) < 1 {
-		config.cfgMap[CfgSpanBatchSize].value = defaultSpanBatchSize
-	}
-	if config.stagedInt(CfgSpanBatchFlushInterval) < 1 {
-		config.cfgMap[CfgSpanBatchFlushInterval].value = defaultSpanBatchFlushInterval
-	}
-	if config.stagedInt(CfgSpanBatchCollectDeadline) < 1 {
-		config.cfgMap[CfgSpanBatchCollectDeadline].value = defaultSpanBatchCollectDeadline
-	}
-	if config.stagedInt(CfgSpanBatchMaxConcurrentRequests) < 1 {
-		config.cfgMap[CfgSpanBatchMaxConcurrentRequests].value = defaultSpanBatchMaxConcurrentRequests
-	}
-	if config.stagedInt(CfgCollectorAgentInfoSendRetryInterval) < 1 {
-		config.cfgMap[CfgCollectorAgentInfoSendRetryInterval].value = defaultAgentInfoSendRetryInterval
-	}
-	if config.stagedInt(CfgCollectorAgentInfoMaxTryPerAttempt) < 1 {
-		config.cfgMap[CfgCollectorAgentInfoMaxTryPerAttempt].value = defaultAgentInfoMaxTryPerAttempt
-	}
-	// A non-positive interval panics time.NewTicker and a non-positive batch
-	// count panics the stat worker's batch indexing, killing the host process.
-	if config.stagedInt(CfgStatCollectInterval) < 1 {
-		config.cfgMap[CfgStatCollectInterval].value = 5000
-	}
-	if config.stagedInt(CfgStatBatchCount) < 1 {
-		config.cfgMap[CfgStatBatchCount].value = 6
-	}
 	config.publish()
 	config.mu.Unlock()
 
@@ -725,6 +693,41 @@ func (config *Config) publish() {
 
 	if config.stagedInt(CfgSpanEventChunkSize) < 1 {
 		config.cfgMap[CfgSpanEventChunkSize].value = defaultEventChunkSize
+	}
+
+	// These non-dynamic keys are clamped here, not in NewConfig, because the
+	// exported Set() also republishes: a non-positive Stat.CollectInterval
+	// panics time.NewTicker and a non-positive Stat.BatchCount panics the stat
+	// worker's batch indexing, killing the host process.
+	if config.stagedInt(CfgSpanQueueSize) < 1 {
+		config.cfgMap[CfgSpanQueueSize].value = defaultQueueSize
+	}
+	if config.stagedInt(CfgHttpUrlStatQueueSize) < 1 {
+		config.cfgMap[CfgHttpUrlStatQueueSize].value = defaultQueueSize
+	}
+	if config.stagedInt(CfgSpanBatchSize) < 1 {
+		config.cfgMap[CfgSpanBatchSize].value = defaultSpanBatchSize
+	}
+	if config.stagedInt(CfgSpanBatchFlushInterval) < 1 {
+		config.cfgMap[CfgSpanBatchFlushInterval].value = defaultSpanBatchFlushInterval
+	}
+	if config.stagedInt(CfgSpanBatchCollectDeadline) < 1 {
+		config.cfgMap[CfgSpanBatchCollectDeadline].value = defaultSpanBatchCollectDeadline
+	}
+	if config.stagedInt(CfgSpanBatchMaxConcurrentRequests) < 1 {
+		config.cfgMap[CfgSpanBatchMaxConcurrentRequests].value = defaultSpanBatchMaxConcurrentRequests
+	}
+	if config.stagedInt(CfgCollectorAgentInfoSendRetryInterval) < 1 {
+		config.cfgMap[CfgCollectorAgentInfoSendRetryInterval].value = defaultAgentInfoSendRetryInterval
+	}
+	if config.stagedInt(CfgCollectorAgentInfoMaxTryPerAttempt) < 1 {
+		config.cfgMap[CfgCollectorAgentInfoMaxTryPerAttempt].value = defaultAgentInfoMaxTryPerAttempt
+	}
+	if config.stagedInt(CfgStatCollectInterval) < 1 {
+		config.cfgMap[CfgStatCollectInterval].value = 5000
+	}
+	if config.stagedInt(CfgStatBatchCount) < 1 {
+		config.cfgMap[CfgStatBatchCount].value = 6
 	}
 
 	maxDepth := config.stagedInt(CfgSpanMaxCallStackDepth)

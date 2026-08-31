@@ -742,6 +742,13 @@ func TestNewConfig_ClampStatOptions(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 5000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
 	assert.Equal(t, 6, c.Int(CfgStatBatchCount), CfgStatBatchCount)
+
+	// Set republishes too; unclamped, these values panic the stat worker
+	// (time.NewTicker(0), zero-length batch indexing) and kill the host.
+	c.Set(CfgStatCollectInterval, 0)
+	c.Set(CfgStatBatchCount, -1)
+	assert.Equal(t, 5000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
+	assert.Equal(t, 6, c.Int(CfgStatBatchCount), CfgStatBatchCount)
 }
 
 func TestNewConfig_ClampErrorCallStackDepth(t *testing.T) {
