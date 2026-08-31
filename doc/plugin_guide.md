@@ -26,6 +26,7 @@
 | [plugin/kratos](/plugin/kratos)                 | go-kratos/kratos/v2 package (https://github.com/go-kratos/kratos)              |
 | [plugin/logrus](/plugin/logrus)                 | sirupsen/logrus package (https://github.com/sirupsen/logrus)                   |
 | [plugin/mongodriver](/plugin/mongodriver)       | mongodb/mongo-go-driver package (https://github.com/mongodb/mongo-go-driver)   |
+| [plugin/mongodriverv2](/plugin/mongodriverv2)   | mongodb/mongo-go-driver/v2 package (https://github.com/mongodb/mongo-go-driver) |
 | [plugin/mssql](/plugin/mssql)                   | denisenkom/go-mssqldb package (https://github.com/denisenkom/go-mssqldb)       |
 | [plugin/mysql](/plugin/mysql)                   | go-sql-driver/mysql package (https://github.com/go-sql-driver/mysql)           |
 | [plugin/oracle](/plugin/oracle)                 | sijms/go-ora/v2 package (https://github.com/sijms/go-ora)                      |
