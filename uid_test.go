@@ -1,11 +1,27 @@
 package pinpoint
 
 import (
+	"encoding/base64"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
+
+// decodeUID reverses encodeUID: it decodes a 22-character URL-safe base64
+// string (no padding) back into the original UUID. Production code never
+// decodes an agent UID, so this lives with the tests that verify encodeUID.
+func decodeUID(s string) (uuid.UUID, error) {
+	var u uuid.UUID
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return u, err
+	}
+	if err := u.UnmarshalBinary(b); err != nil {
+		return u, err
+	}
+	return u, nil
+}
 
 // goldenVectors are Java-verified UUID -> base64(22 chars) pairs. They guard
 // byte-for-byte compatibility with the Java agent's Base64Utils.encode(UUID).

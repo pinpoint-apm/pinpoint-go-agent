@@ -23,20 +23,6 @@ func encodeUID(u uuid.UUID) string {
 	return base64.RawURLEncoding.EncodeToString(u[:])
 }
 
-// decodeUID reverses encodeUID: it decodes a 22-character URL-safe base64
-// string (no padding) back into the original UUID.
-func decodeUID(s string) (uuid.UUID, error) {
-	var u uuid.UUID
-	b, err := base64.RawURLEncoding.DecodeString(s)
-	if err != nil {
-		return u, err
-	}
-	if err := u.UnmarshalBinary(b); err != nil {
-		return u, err
-	}
-	return u, nil
-}
-
 // newAgentUID generates a time-based UUID (RFC 9562 version 7: 48-bit Unix
 // epoch milliseconds prefix, version/variant bits set, remaining bits random),
 // matching the Java agent's TimeBasedEpochGenerator.
