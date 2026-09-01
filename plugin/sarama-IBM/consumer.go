@@ -41,10 +41,13 @@
 //
 //	ppsaramaibm.WithContext(pinpoint.NewContext(context.Background(), tracer), producer)
 //	partition, offset, err := producer.SendMessage(msg)
+//
+// The WithContext function() function is not thread-safe, so use the SendMessageContext function() if you have a data trace.
+//
+//	partition, offset, err := producer.SendMessageContext(r.Context(), msg)
 package ppsaramaibm
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"strconv"
@@ -59,8 +62,6 @@ import (
 var errNilConsumerMessage = errors.New("ppsaramaibm: nil sarama.ConsumerMessage")
 
 const contextKey = "ppsaramaibm.broker.address"
-
-var unknownAddr = []string{"Unknown"}
 
 // NewContext returns a new Context that contains the given broker addresses.
 func NewContext(ctx context.Context, addrs []string) context.Context {
@@ -151,41 +152,38 @@ func (m *distributedTracingContextReaderConsumer) Get(key string) string {
 }
 
 func makeRpcName(msg *sarama.ConsumerMessage) string {
-	var buf bytes.Buffer
-
-	buf.WriteString("kafka://")
-	buf.WriteString("topic=" + msg.Topic)
-	buf.WriteString("?partition=" + strconv.Itoa(int(msg.Partition)))
-	buf.WriteString("&offset=" + strconv.Itoa(int(msg.Offset)))
-
-	return buf.String()
+	return "kafka://topic=" + msg.Topic +
+		"?partition=" + strconv.Itoa(int(msg.Partition)) +
+		"&offset=" + strconv.FormatInt(msg.Offset, 10)
 }
 
 func newConsumerTracer(ctx context.Context, msg *sarama.ConsumerMessage) pinpoint.Tracer {
-	var tracer pinpoint.Tracer
-
 	agent := pinpoint.GetAgent()
-	reader := &distributedTracingContextReaderConsumer{msg}
-	tracer = agent.NewSpanTracerWithReader("Sarama Consumer Invocation", makeRpcName(msg), reader)
+	// A disabled agent returns the noop tracer anyway; return it before
+	// building the rpc name it would throw away.
+	if !agent.Enable() {
+		return pinpoint.NoopTracer()
+	}
 
-	brokerAddr := unknownAddr
+	reader := &distributedTracingContextReaderConsumer{msg}
+	tracer := agent.NewSpanTracerWithReader("Sarama Consumer Invocation", makeRpcName(msg), reader)
+
+	// Keep the Unknown fallback for an empty or mistyped context value: a
+	// panic here propagates out of ConsumeClaim and kills the consumer.
+	brokerAddr := "Unknown"
 	if v := ctx.Value(contextKey); v != nil {
-		// Keep the Unknown fallback for an empty or mistyped value: brokerAddr
-		// is indexed below, and a panic here propagates out of ConsumeClaim
-		// and kills the consumer.
 		if addrs, ok := v.([]string); ok && len(addrs) > 0 {
-			brokerAddr = addrs
+			brokerAddr = addrs[0]
 		}
 	} else if host := reader.Get(pinpoint.HeaderHost); host != "" {
-		brokerAddr = make([]string, 1)
-		brokerAddr[0] = host
+		brokerAddr = host
 	}
 
 	span := tracer.Span()
 	span.SetServiceType(pinpoint.ServiceTypeKafkaClient)
-	span.SetRemoteAddress(brokerAddr[0])
-	span.SetAcceptorHost(brokerAddr[0])
-	span.SetEndPoint(brokerAddr[0])
+	span.SetRemoteAddress(brokerAddr)
+	span.SetAcceptorHost(brokerAddr)
+	span.SetEndPoint(brokerAddr)
 
 	a := span.Annotations()
 	a.AppendString(pinpoint.AnnotationKafkaTopic, msg.Topic)

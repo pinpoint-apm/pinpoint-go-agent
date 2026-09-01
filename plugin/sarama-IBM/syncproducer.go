@@ -1,7 +1,9 @@
 package ppsaramaibm
 
 import (
+	"bytes"
 	"context"
+
 	"github.com/IBM/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
@@ -22,18 +24,48 @@ type syncProducer struct {
 
 type distributedTracingContextWriterProducer struct {
 	msg *sarama.ProducerMessage
+	// replaceExisting is set by newProducerHeaderWriter when the message
+	// already carries a pinpoint header - the retry pattern re-sends the same
+	// message object - and Set must then replace in place: Get returns the
+	// first match, so appending a second header would leave the retry's ack
+	// looked up under the stale id - its tracer would sit in the span map
+	// until producer shutdown - and the message would grow one full
+	// trace-header set per attempt.
+	replaceExisting bool
+}
+
+var pinpointHeaderPrefix = []byte("Pinpoint-")
+
+// newProducerHeaderWriter prepares msg for injection: one prefix scan decides
+// whether Set needs its per-key replace scan at all - Inject calls Set ~9
+// times, each a full header scan on a growing slice - and a fresh message has
+// its header slice grown once instead of through the append doublings.
+func newProducerHeaderWriter(msg *sarama.ProducerMessage) *distributedTracingContextWriterProducer {
+	w := &distributedTracingContextWriterProducer{msg: msg}
+	for i := range msg.Headers {
+		if bytes.HasPrefix(msg.Headers[i].Key, pinpointHeaderPrefix) {
+			w.replaceExisting = true
+			break
+		}
+	}
+	if !w.replaceExisting {
+		const injectedHeaders = 10
+		if cap(msg.Headers)-len(msg.Headers) < injectedHeaders {
+			grown := make([]sarama.RecordHeader, len(msg.Headers), len(msg.Headers)+injectedHeaders)
+			copy(grown, msg.Headers)
+			msg.Headers = grown
+		}
+	}
+	return w
 }
 
 func (m *distributedTracingContextWriterProducer) Set(key string, value string) {
-	// Replace an existing header: the retry pattern re-sends the same message
-	// object taken off Errors(), and Get returns the first match, so appending
-	// a second header would leave the retry's ack looked up under the stale id
-	// - its tracer would sit in the span map until producer shutdown - and the
-	// message would grow one full trace-header set per attempt.
-	for i := range m.msg.Headers {
-		if string(m.msg.Headers[i].Key) == key {
-			m.msg.Headers[i].Value = []byte(value)
-			return
+	if m.replaceExisting {
+		for i := range m.msg.Headers {
+			if string(m.msg.Headers[i].Key) == key {
+				m.msg.Headers[i].Value = []byte(value)
+				return
+			}
 		}
 	}
 	m.msg.Headers = append(m.msg.Headers, sarama.RecordHeader{
@@ -53,6 +85,12 @@ func (m *distributedTracingContextWriterProducer) Get(key string) string {
 
 // SendMessageContext produces a given message with tracer context.
 func (p *syncProducer) SendMessageContext(ctx context.Context, msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
+	// A disabled agent traces nothing and injects nothing - not even the
+	// unsampled marker - so the message headers are left untouched.
+	if !pinpoint.GetAgent().Enable() {
+		return p.SyncProducer.SendMessage(msg)
+	}
+
 	defer newSyncProducerTracer(ctx, p.addrs, msg).EndSpanEvent()
 	partition, offset, err = p.SyncProducer.SendMessage(msg)
 	return partition, offset, err
@@ -65,6 +103,10 @@ func (p *syncProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32
 
 // SendMessagesContext produces a given set of messages with tracer context.
 func (p *syncProducer) SendMessagesContext(ctx context.Context, msgs []*sarama.ProducerMessage) error {
+	if !pinpoint.GetAgent().Enable() {
+		return p.SyncProducer.SendMessages(msgs)
+	}
+
 	spans := make([]pinpoint.Tracer, len(msgs))
 	for i, msg := range msgs {
 		spans[i] = newSyncProducerTracer(ctx, p.addrs, msg)
@@ -113,8 +155,7 @@ func newSyncProducerTracer(ctx context.Context, addrs []string, msg *sarama.Prod
 	se.Annotations().AppendString(pinpoint.AnnotationKafkaTopic, msg.Topic)
 	se.SetDestination(addrs[0])
 
-	writer := &distributedTracingContextWriterProducer{msg}
-	tracer.Inject(writer)
+	tracer.Inject(newProducerHeaderWriter(msg))
 
 	return tracer
 }

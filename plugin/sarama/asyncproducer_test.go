@@ -117,6 +117,7 @@ func requireSpanCount(t *testing.T, p *asyncProducer, want int) {
 // user, exactly as raw sarama guarantees, and the wrapper's channels must close
 // afterwards.
 func Test_asyncProducer_AsyncCloseDrainsInFlightAcks(t *testing.T) {
+	startAgent(t)
 	config := sarama.NewConfig()
 	config.Producer.Return.Successes = true
 
@@ -163,6 +164,7 @@ func Test_asyncProducer_AsyncCloseDrainsInFlightAcks(t *testing.T) {
 // are covered: a delivery error has to reach the span, not just the shutdown
 // errors the close tests record.
 func Test_asyncProducer_InputAckEndsTracer(t *testing.T) {
+	startAgent(t)
 	tests := []struct {
 		name string
 		ack  func(*stubAsyncProducer, *sarama.ProducerMessage)
@@ -232,6 +234,7 @@ func Test_asyncProducer_InputAckEndsTracer(t *testing.T) {
 }
 
 func Test_asyncProducer_AsyncCloseCancelsBlockedInput(t *testing.T) {
+	startAgent(t)
 	tests := []struct {
 		name string
 		send func(*asyncProducer, context.Context, *sarama.ProducerMessage)
@@ -397,6 +400,7 @@ func Test_asyncProducer_InputAfterShutdownPanics(t *testing.T) {
 }
 
 func Test_asyncProducer_UnderlyingInputPanicCleansTracer(t *testing.T) {
+	startAgent(t)
 	config := sarama.NewConfig()
 	config.Producer.Return.Successes = true
 
@@ -426,6 +430,7 @@ func Test_asyncProducer_UnderlyingInputPanicCleansTracer(t *testing.T) {
 }
 
 func Test_asyncProducer_ShutdownEndsRemainingTracer(t *testing.T) {
+	startAgent(t)
 	config := sarama.NewConfig()
 	config.Producer.Return.Successes = true
 
@@ -477,6 +482,7 @@ func Test_asyncProducer_CloseCollectsErrors(t *testing.T) {
 // not let it kill the input forwarder - every later message would be consumed
 // and silently dropped by the drainer.
 func Test_asyncProducer_NilConfigStillDeliversMessages(t *testing.T) {
+	startAgent(t)
 	stub := newStubAsyncProducer()
 	p := wrapAsyncProducer(stub, []string{"broker:9092"}, nil)
 
@@ -502,6 +508,7 @@ func Test_asyncProducer_NilConfigStillDeliversMessages(t *testing.T) {
 // second set: Get returns the first match, so a stale appended id would make
 // the retry's ack miss the span map and leak its tracer until shutdown.
 func Test_asyncProducer_RetriedMessageReplacesHeaders(t *testing.T) {
+	startAgent(t)
 	config := sarama.NewConfig()
 	config.Producer.Return.Successes = true
 
@@ -540,6 +547,7 @@ func Test_asyncProducer_RetriedMessageReplacesHeaders(t *testing.T) {
 // must not park tracers in the span map waiting for one: the span ends as the
 // message is handed to sarama.
 func Test_asyncProducer_NoErrorReturnsEndsSpansImmediately(t *testing.T) {
+	startAgent(t)
 	config := sarama.NewConfig()
 	config.Producer.Return.Successes = true
 	config.Producer.Return.Errors = false

@@ -117,7 +117,7 @@ func Test_syncProducer_SendMessageContext(t *testing.T) {
 	require.Len(t, stub.sent, 1)
 	assert.Same(t, msg, stub.sent[0], "the underlying producer received a different message")
 
-	writer := &distributedTracingContextWriterProducer{msg}
+	writer := &distributedTracingContextWriterProducer{msg: msg}
 	for _, key := range pinpointHeaders {
 		assert.NotEmpty(t, writer.Get(key), "the produced message is missing the %s header", key)
 	}
@@ -145,6 +145,7 @@ func Test_newSyncProducerTracer_RecordsTopicAndBroker(t *testing.T) {
 // A batch send is one span event per message - each one is a separate record
 // on a topic - and all of them have to be closed once the batch returns.
 func Test_syncProducer_SendMessagesContext(t *testing.T) {
+	startAgent(t)
 	tracer := newCapturingTracer()
 	stub := &stubSyncProducer{err: errors.New("broker unavailable")}
 	p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}, ctx: context.Background()}
@@ -167,6 +168,7 @@ func Test_syncProducer_SendMessagesContext(t *testing.T) {
 // The deprecated WithContext form has to reach the same instrumentation as
 // SendMessageContext, through the context stored on the producer.
 func Test_syncProducer_WithContext(t *testing.T) {
+	startAgent(t)
 	tracer := newCapturingTracer()
 	stub := &stubSyncProducer{}
 	p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}, ctx: context.Background()}
@@ -213,7 +215,7 @@ func Test_syncProducer_WithoutASampledTracer(t *testing.T) {
 // the consumer; a key it was never given has no value to report.
 func Test_distributedTracingContextWriterProducer(t *testing.T) {
 	msg := &sarama.ProducerMessage{Topic: "widgets"}
-	w := &distributedTracingContextWriterProducer{msg}
+	w := &distributedTracingContextWriterProducer{msg: msg}
 
 	assert.Equal(t, "", w.Get(pinpoint.HeaderTraceId), "an untouched message carries no header")
 
