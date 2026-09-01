@@ -1,7 +1,6 @@
 package pphttp
 
 import (
-	"bytes"
 	"context"
 	"net/http"
 
@@ -24,13 +23,11 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 	tracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeGoHttpClient)
 
 	if tracer.IsSampled() {
-		var b bytes.Buffer
-		b.WriteString(req.Method)
+		url := req.Method
 		if req.URL != nil {
-			b.WriteString(" ")
-			b.WriteString(req.URL.String())
+			url += " " + req.URL.String()
 		}
-		tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHttpUrl, b.String())
+		tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHttpUrl, url)
 
 		a := tracer.SpanEvent().Annotations()
 		RecordClientHttpRequestHeader(a, header{req.Header})

@@ -44,6 +44,10 @@ const CtxKey = "pinpoint"
 // WrapHandler wraps the given http request handler.
 func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.RequestHandler {
 	handlerName := pphttp.HandlerFuncName(handler)
+	urlPattern := ""
+	if len(pattern) > 0 {
+		urlPattern = pattern[0]
+	}
 
 	return func(ctx *fasthttp.RequestCtx) {
 		if !pinpoint.GetAgent().Enable() {
@@ -68,8 +72,8 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 
 		defer tracer.EndSpan()
 		defer func() {
-			if len(pattern) > 0 {
-				pphttp.CollectUrlStat(tracer, pattern[0], method, status)
+			if urlPattern != "" {
+				pphttp.CollectUrlStat(tracer, urlPattern, method, status)
 			}
 			recordResponse(tracer, ctx, status)
 		}()
@@ -82,7 +86,9 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 
 		defer tracer.NewSpanEvent(handlerName).EndSpanEvent()
 
-		ctx.SetUserValue(CtxKey, pinpoint.NewContext(context.Background(), tracer))
+		// Derive from the RequestCtx itself - it is a context.Context - so
+		// deadlines and values fasthttp carries stay visible downstream.
+		ctx.SetUserValue(CtxKey, pinpoint.NewContext(ctx, tracer))
 		handler(ctx)
 		pphttp.RecordHttpHandlerError(tracer, ctx.Err())
 

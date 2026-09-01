@@ -14,7 +14,6 @@ package ppgoredisv9
 
 import (
 	"context"
-	"net"
 	"strconv"
 	"strings"
 
@@ -52,10 +51,10 @@ func NewClusterHook(opts *redis.ClusterOptions) redis.Hook {
 	return &h
 }
 
+// DialHook records nothing, so hand the next hook back untouched instead of
+// adding a frame to every dial.
 func (r *hook) DialHook(hook redis.DialHook) redis.DialHook {
-	return func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return hook(ctx, network, addr)
-	}
+	return hook
 }
 
 func (r *hook) ProcessHook(hook redis.ProcessHook) redis.ProcessHook {

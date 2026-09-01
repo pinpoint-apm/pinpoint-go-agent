@@ -26,6 +26,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/textproto"
 	"reflect"
 	"runtime"
 	"strconv"
@@ -82,6 +83,11 @@ func RecordHttpServerRequestWithReader(tracer pinpoint.Tracer, host string, remo
 
 // headerFirst returns the first value of key, or "" when absent.
 func headerFirst(h Header, key string) string {
+	// The fasthttp-family adapters synthesize a one-element slice per Values
+	// call; take their Get when they have one.
+	if g, ok := h.(interface{ Get(string) string }); ok {
+		return g.Get(key)
+	}
 	if v := h.Values(key); len(v) > 0 {
 		return v[0]
 	}
@@ -107,13 +113,24 @@ func resolveRemoteAddr(h Header, remoteAddr string) string {
 	return remoteAddr
 }
 
+// The proxy header names, pre-canonicalized: none of the wire spellings is in
+// textproto canonical form, so passing them raw made http.Header.Values take
+// the allocating canonicalization slow path on every lookup - twice, for
+// headers that are usually absent. fasthttp's Peek normalizes its argument
+// itself, so the canonical spelling matches there too.
+var (
+	proxyHeaderApache = textproto.CanonicalMIMEHeaderKey("Pinpoint-ProxyApache")
+	proxyHeaderNginx  = textproto.CanonicalMIMEHeaderKey("Pinpoint-ProxyNginx")
+	proxyHeaderApp    = textproto.CanonicalMIMEHeaderKey("Pinpoint-ProxyApp")
+)
+
 func setProxyHeader(a pinpoint.Annotation, h Header) {
 	var receivedTime int64
 	var durationTime, idlePercent, busyPercent int
 	var code int32 = 0
 	var app = ""
 
-	if xff := headerFirst(h, "Pinpoint-ProxyApache"); xff != "" {
+	if xff := headerFirst(h, proxyHeaderApache); xff != "" {
 		parts := strings.Split(xff, " ")
 		for _, str := range parts {
 			k, v, ok := strings.Cut(str, "=")
@@ -132,7 +149,7 @@ func setProxyHeader(a pinpoint.Annotation, h Header) {
 			}
 		}
 		code = 3
-	} else if xff := headerFirst(h, "Pinpoint-ProxyNginx"); xff != "" {
+	} else if xff := headerFirst(h, proxyHeaderNginx); xff != "" {
 		parts := strings.Split(xff, " ")
 		for _, str := range parts {
 			k, v, ok := strings.Cut(str, "=")
@@ -156,7 +173,7 @@ func setProxyHeader(a pinpoint.Annotation, h Header) {
 			}
 		}
 		code = 2
-	} else if xff := headerFirst(h, "Pinpoint-ProxyApp"); xff != "" {
+	} else if xff := headerFirst(h, proxyHeaderApp); xff != "" {
 		parts := strings.Split(xff, " ")
 		for _, str := range parts {
 			k, v, ok := strings.Cut(str, "=")

@@ -74,7 +74,4 @@ func parseDSN(info *pinpoint.DBInfo, dsn string) {
 
 	info.DBHost = host
 	info.DBName = dbname
-
-	//fmt.Println("host= " + host)
-	//fmt.Println("dbname= " + dbname)
 }
