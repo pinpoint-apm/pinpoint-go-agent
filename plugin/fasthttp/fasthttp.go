@@ -175,10 +175,11 @@ func (c cookie) VisitAll(f func(name string, value string)) {
 }
 
 // DoClient instruments outbound requests and add distributed tracing headers.
-func DoClient(doFunc func() error, ctx context.Context, req *fasthttp.Request, res *fasthttp.Response) error {
+func DoClient(doFunc func() error, ctx context.Context, req *fasthttp.Request, res *fasthttp.Response) (err error) {
 	tracer := pinpoint.FromContext(ctx)
 	before(tracer, "fasthttp/Client.Do()", req)
-	err := doFunc()
-	after(tracer, res, err)
+	// Deferred so a panicking doFunc still closes the span event.
+	defer func() { after(tracer, res, err) }()
+	err = doFunc()
 	return err
 }

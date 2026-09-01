@@ -389,3 +389,23 @@ func TestDoClient_WithoutAResponse(t *testing.T) {
 		_ = DoClient(func() error { return nil }, pinpoint.NewContext(context.Background(), tracer), req, nil)
 	})
 }
+
+type endCountingTracer struct {
+	pinpoint.Tracer
+	ends int
+}
+
+func (t *endCountingTracer) NewSpanEvent(string) pinpoint.Tracer { return t }
+func (t *endCountingTracer) EndSpanEvent()                       { t.ends++ }
+
+// A panicking doFunc must still close the span event on its way up.
+func TestDoClient_PanicStillClosesTheSpanEvent(t *testing.T) {
+	tracer := &endCountingTracer{Tracer: pinpoint.NoopTracer()}
+	req := fasthttp.AcquireRequest()
+	defer fasthttp.ReleaseRequest(req)
+
+	assert.PanicsWithValue(t, "boom", func() {
+		_ = DoClient(func() error { panic("boom") }, pinpoint.NewContext(context.Background(), tracer), req, nil)
+	})
+	assert.Equal(t, 1, tracer.ends, "the span event must be closed during panic unwinding")
+}
