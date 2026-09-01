@@ -16,9 +16,12 @@ package ppmongo
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
@@ -38,9 +41,20 @@ const (
 	maxBsonSize = maxJsonSize
 )
 
+// maxPendingSpans bounds the span map. The driver pairs every started event
+// with a finished one, but a pairing that never arrives would otherwise hold
+// its tracer forever; past the cap the oldest-unknown entry is evicted.
+const maxPendingSpans = 4096
+
+var errSpanEvicted = errors.New("ppmongo: too many commands in flight, span evicted before its finished event")
+
 type monitor struct {
 	sync.Mutex
 	spans map[spanKey]pinpoint.Tracer
+
+	// pending mirrors len(spans) so Finished can skip the lock when nothing
+	// is tracked - every unsampled command finishes with a guaranteed miss.
+	pending atomic.Int64
 }
 
 func (m *monitor) Started(ctx context.Context, evt *event.CommandStartedEvent) {
@@ -70,9 +84,25 @@ func (m *monitor) Started(ctx context.Context, evt *event.CommandStartedEvent) {
 		RequestID:    evt.RequestID,
 	}
 
+	var evicted pinpoint.Tracer
 	m.Lock()
+	// ponytail: arbitrary eviction at the cap; per-entry deadlines if evicted
+	// spans ever show up in real traces.
+	if len(m.spans) >= maxPendingSpans {
+		for k, t := range m.spans {
+			delete(m.spans, k)
+			evicted = t
+			break
+		}
+	}
 	m.spans[key] = tracer
+	m.pending.Store(int64(len(m.spans)))
 	m.Unlock()
+
+	if evicted != nil {
+		evicted.SpanEvent().SetError(errSpanEvicted)
+		evicted.EndSpanEvent()
+	}
 }
 
 func commandAnnotation(e *event.CommandStartedEvent, collection string) string {
@@ -102,6 +132,13 @@ func (m *monitor) Failed(ctx context.Context, evt *event.CommandFailedEvent) {
 }
 
 func (m *monitor) Finished(evt *event.CommandFinishedEvent, err error) {
+	// Only sampled commands were inserted in Started; when nothing is in
+	// flight - the whole workload, under a zero-hit sampling rate - skip the
+	// lock instead of serializing every ack on it for a guaranteed miss.
+	if m.pending.Load() == 0 {
+		return
+	}
+
 	key := spanKey{
 		ConnectionID: evt.ConnectionID,
 		RequestID:    evt.RequestID,
@@ -116,6 +153,7 @@ func (m *monitor) Finished(evt *event.CommandFinishedEvent, err error) {
 
 	defer tracer.EndSpanEvent()
 	delete(m.spans, key)
+	m.pending.Store(int64(len(m.spans)))
 	m.Unlock()
 	tracer.SpanEvent().SetError(err)
 }
@@ -151,7 +189,7 @@ func abbreviateJson(b []byte, length int) string {
 
 	// Reserve the marker so the annotation stays inside length, and cut back to a
 	// rune start: a proto3 string field rejects invalid UTF-8 and drops the span.
-	marker := "...(" + fmt.Sprint(length) + ")"
+	marker := "...(" + strconv.Itoa(length) + ")"
 	cut := length - len(marker)
 	if cut < 0 {
 		cut = 0
