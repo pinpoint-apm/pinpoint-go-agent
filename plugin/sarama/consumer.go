@@ -50,11 +50,17 @@ package ppsarama
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strconv"
 
 	"github.com/Shopify/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
+
+// errNilConsumerMessage guards the Consume entry points: a nil message would
+// panic inside the tracer on the consumer goroutine, propagate out of
+// ConsumeClaim and kill the whole consumer-group session.
+var errNilConsumerMessage = errors.New("ppsarama: nil sarama.ConsumerMessage")
 
 const contextKey = "ppsarama.broker.address"
 
@@ -106,6 +112,9 @@ type HandlerFunc func(msg *ConsumerMessage) error
 // and then creates a span that initiates or continues the transaction.
 // ConsumeMessage passes a ConsumerMessage having pinpoint.Tracer to HandlerFunc.
 func ConsumeMessage(handler HandlerFunc, msg *sarama.ConsumerMessage) error {
+	if msg == nil {
+		return errNilConsumerMessage
+	}
 	wrapped := WrapConsumerMessage(msg)
 	defer wrapped.Tracer().EndSpan()
 
@@ -121,6 +130,9 @@ type HandlerContextFunc func(context.Context, *sarama.ConsumerMessage) error
 // and then creates a span that initiates or continues the transaction.
 // ConsumeMessageContext passes a context added pinpoint.Tracer to HandlerContextFunc.
 func ConsumeMessageContext(handler HandlerContextFunc, ctx context.Context, msg *sarama.ConsumerMessage) error {
+	if msg == nil {
+		return errNilConsumerMessage
+	}
 	tracer := newConsumerTracer(ctx, msg)
 	defer tracer.EndSpan()
 

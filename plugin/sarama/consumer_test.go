@@ -304,3 +304,11 @@ func TestWrapPartitionConsumer_CloseUnblocksAbandonedForwarder(t *testing.T) {
 	_, ok := <-pc.Messages()
 	assert.False(t, ok, "the wrapper channel must be closed after Close")
 }
+
+// A nil message must come back as an error, not as a panic that would
+// propagate out of ConsumeClaim and kill the consumer-group session.
+func TestConsumeMessage_NilMessage(t *testing.T) {
+	assert.Error(t, ConsumeMessage(func(*ConsumerMessage) error { return nil }, nil))
+	assert.Error(t, ConsumeMessageContext(func(context.Context, *sarama.ConsumerMessage) error { return nil },
+		context.Background(), nil))
+}
