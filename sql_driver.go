@@ -38,22 +38,18 @@ func NewDatabaseTracer(ctx context.Context, funcName string, info *DBInfo) Trace
 	return tracer
 }
 
-func wrapDriver(drv *sqlDriver) driver.Driver {
-	if _, ok := drv.Driver.(driver.DriverContext); ok {
+// WrapSQLDriver wraps a driver.Driver and instruments SQL query calls.
+func WrapSQLDriver(drv driver.Driver, info DBInfo) driver.Driver {
+	wrapped := &sqlDriver{Driver: drv, dbInfo: info}
+	if _, ok := drv.(driver.DriverContext); ok {
 		return struct {
 			driver.Driver
 			driver.DriverContext
-		}{drv, drv}
-	} else {
-		return struct {
-			driver.Driver
-		}{drv}
+		}{wrapped, wrapped}
 	}
-}
-
-// WrapSQLDriver wraps a driver.Driver and instruments SQL query calls.
-func WrapSQLDriver(drv driver.Driver, info DBInfo) driver.Driver {
-	return wrapDriver(&sqlDriver{Driver: drv, dbInfo: info})
+	return struct {
+		driver.Driver
+	}{wrapped}
 }
 
 type sqlDriver struct {

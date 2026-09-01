@@ -314,7 +314,7 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 		}
 	}
 
-	cfg := span.config()
+	cfg := span.cfg
 	if span.eventSequence.Load() >= cfg.spanMaxEventSequence || span.eventDepth.Load() >= cfg.spanMaxEventDepth {
 		span.eventOverflow.Add(1)
 		if span.eventOverflowLog.CompareAndSwap(false, true) {
@@ -375,7 +375,7 @@ func (span *span) appendEndedSpanEvent(se *spanEvent) {
 	defer span.spanEventLock.Unlock()
 
 	span.spanEvents = append(span.spanEvents, se)
-	if len(span.spanEvents) >= span.config().spanEventChunkSize {
+	if len(span.spanEvents) >= span.cfg.spanEventChunkSize {
 		chunk := span.newEventChunk(false)
 		if !chunk.enqueue() && IsTraceLogLevelEnabled() {
 			Log("span").Tracef("span channel - max capacity reached or closed")
@@ -520,7 +520,7 @@ func (span *span) SetLogging(logInfo int32) {
 }
 
 func (span *span) collectUrlStat(stat *UrlStatEntry) {
-	if span.config().collectUrlStat {
+	if span.cfg.collectUrlStat {
 		if stat.Url == "" {
 			stat.Url = "UNKNOWN_URL"
 		}
@@ -548,10 +548,6 @@ func (span *span) JsonString() []byte {
 	m["Annotations"] = span.annotations.getList()
 	b, _ := json.Marshal(m)
 	return b
-}
-
-func (span *span) config() *configSnapshot {
-	return span.cfg
 }
 
 func (span *span) canAddErrorChain() bool {
