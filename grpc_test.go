@@ -57,7 +57,7 @@ func Test_agentGrpc_sendAgentInfo(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
-			agent.agentGrpc = newMockAgentGrpc(agent, t)
+			agent.agentGrpc = newMockAgentGrpc(agent)
 			b := agent.agentGrpc.registerAgentWithRetry()
 			assert.Equal(t, true, b, "sendAgentInfo")
 		})
@@ -124,7 +124,7 @@ func Test_agentGrpc_sendApiMetadata(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
-			agent.agentGrpc = newMockAgentGrpc(agent, t)
+			agent.agentGrpc = newMockAgentGrpc(agent)
 			b := agent.agentGrpc.sendApiMetadataWithRetry(1, "Asynchronous Invocation", -1, apiTypeInvocation)
 			assert.Equal(t, true, b, "sendApiMetadata")
 		})
@@ -149,7 +149,7 @@ func Test_agentGrpc_sendSqlMetadata(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
-			agent.agentGrpc = newMockAgentGrpc(agent, t)
+			agent.agentGrpc = newMockAgentGrpc(agent)
 			b := agent.agentGrpc.sendSqlMetadataWithRetry(1, "SELECT 1")
 			assert.Equal(t, true, b, "sendSqlMetadata")
 		})
@@ -174,7 +174,7 @@ func Test_agentGrpc_sendStringMetadata(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
-			agent.agentGrpc = newMockAgentGrpc(agent, t)
+			agent.agentGrpc = newMockAgentGrpc(agent)
 			b := agent.agentGrpc.sendStringMetadataWithRetry(1, "string value")
 			assert.Equal(t, true, b, "sendStringMetadata")
 		})
@@ -199,7 +199,7 @@ func Test_pingStream_sendPing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
-			agent.agentGrpc = newMockAgentGrpcPing(agent, t)
+			agent.agentGrpc = newMockAgentGrpcPing(agent)
 			stream := agent.agentGrpc.newPingStreamWithRetry()
 			err := stream.sendPing()
 			assert.NoError(t, err, "sendPing")
@@ -220,7 +220,7 @@ func Test_spanStream_sendSpan(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
-			agent.spanGrpc = newMockSpanGrpc(agent, t)
+			agent.spanGrpc = newMockSpanGrpc(agent)
 			stream := agent.spanGrpc.newSpanStreamWithRetry()
 
 			span := defaultSpan(agent)
@@ -245,7 +245,7 @@ func Test_spanGrpc_sendSpanBatch(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
-			agent.spanGrpc = newMockSpanGrpc(agent, t)
+			agent.spanGrpc = newMockSpanGrpc(agent)
 
 			span := defaultSpan(agent)
 			span.NewSpanEvent("t1")
@@ -404,7 +404,7 @@ func Benchmark_agent_enqueueSpan_saturated(b *testing.B) {
 
 func Test_spanGrpc_collectSpanBatch_stopsAtBatchSize(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
-	spanGrpc := newMockSpanGrpc(agent, t)
+	spanGrpc := newMockSpanGrpc(agent)
 	spanGrpc.batchSize = 2
 	spanGrpc.batchCollectDeadline = time.Second
 
@@ -424,7 +424,7 @@ func Test_spanGrpc_collectSpanBatch_stopsAtBatchSize(t *testing.T) {
 
 func Test_spanGrpc_collectSpanBatch_flushesClosedQueue(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
-	spanGrpc := newMockSpanGrpc(agent, t)
+	spanGrpc := newMockSpanGrpc(agent)
 	spanGrpc.batchSize = 50
 	spanGrpc.batchCollectDeadline = time.Second
 
@@ -453,7 +453,7 @@ func Test_statStream_sendStat(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
-			agent.statGrpc = newMockStatGrpc(agent, t)
+			agent.statGrpc = newMockStatGrpc(agent)
 			stream := agent.statGrpc.newStatStreamWithRetry()
 
 			stats := make([]*inspectorStats, 1)
@@ -482,7 +482,7 @@ func Test_statStream_sendStatRetry(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
-			agent.statGrpc = newRetryMockStatGrpc(agent, t)
+			agent.statGrpc = newRetryMockStatGrpc(agent)
 			stream := agent.statGrpc.newStatStreamWithRetry()
 
 			stats := make([]*inspectorStats, 1)

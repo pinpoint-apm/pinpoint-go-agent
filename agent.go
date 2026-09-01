@@ -1129,9 +1129,9 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 	agent.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize)
 	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
 
-	agent.agentGrpc = newMockAgentGrpc(agent, t)
-	//agent.spanGrpc = newMockSpanGrpc(agent, t)
-	//agent.statGrpc = newMockStatGrpc(agent, t)
+	agent.agentGrpc = newMockAgentGrpc(agent)
+	//agent.spanGrpc = newMockSpanGrpc(agent)
+	//agent.statGrpc = newMockStatGrpc(agent)
 
 	setGlobalAgent(agent)
 	agent.enable.Store(true)
