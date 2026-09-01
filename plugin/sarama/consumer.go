@@ -198,6 +198,19 @@ func (pc *PartitionConsumer) Messages() <-chan *ConsumerMessage {
 	return pc.messages
 }
 
+// Close is deprecated. Close mirrors raw sarama's Close, which drains the
+// message channel: the forwarder may be parked sending a message it already
+// took off sarama's channel to a caller that stopped receiving, and without
+// the drain that goroutine - and the message's never-ended span - would leak
+// for the life of the process.
+func (pc *PartitionConsumer) Close() error {
+	err := pc.PartitionConsumer.Close()
+	for msg := range pc.messages {
+		msg.Tracer().EndSpan()
+	}
+	return err
+}
+
 // WrapPartitionConsumer is deprecated.
 func WrapPartitionConsumer(pc sarama.PartitionConsumer) *PartitionConsumer {
 	return wrapPartitionConsumer(context.Background(), pc)

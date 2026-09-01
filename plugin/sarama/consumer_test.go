@@ -275,3 +275,32 @@ type stubPartitionConsumer struct {
 }
 
 func (s *stubPartitionConsumer) Messages() <-chan *sarama.ConsumerMessage { return s.messages }
+
+func (s *stubPartitionConsumer) Close() error {
+	// Raw sarama's Close delivers what is in flight and closes the channel.
+	close(s.messages)
+	return nil
+}
+
+// A caller that stops receiving and just calls Close - sarama's documented
+// shutdown - must not leave the forwarder parked on the wrapper's unbuffered
+// channel holding a never-ended span.
+func TestWrapPartitionConsumer_CloseUnblocksAbandonedForwarder(t *testing.T) {
+	startAgent(t)
+
+	stub := &stubPartitionConsumer{messages: make(chan *sarama.ConsumerMessage, 2)}
+	stub.messages <- &sarama.ConsumerMessage{Topic: "widgets", Offset: 1}
+	stub.messages <- &sarama.ConsumerMessage{Topic: "widgets", Offset: 2}
+
+	pc := WrapPartitionConsumer(stub)
+
+	msg := <-pc.Messages() // take one message, then abandon the channel
+	msg.Tracer().EndSpan()
+
+	require.NoError(t, pc.Close())
+
+	// Close only returns once its drain saw the wrapper channel closed, i.e.
+	// the forwarder exited; the channel must therefore read as closed here.
+	_, ok := <-pc.Messages()
+	assert.False(t, ok, "the wrapper channel must be closed after Close")
+}
