@@ -9,6 +9,8 @@ import (
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	empty "google.golang.org/protobuf/types/known/emptypb"
 )
@@ -42,10 +44,34 @@ func newTestAgent(config *Config) *agent {
 	return a
 }
 
-type mockAgentGrpcClient struct{}
+// mockAgentGrpcClient answers RequestAgentInfo and records what it was sent.
+// The zero value always succeeds; failures and reject script the collector
+// side of the register-with-retry loop.
+type mockAgentGrpcClient struct {
+	mu       sync.Mutex
+	requests []*pb.PAgentInfo
+	failures int  // leading calls that fail with Unavailable
+	reject   bool // once past failures, answer Success=false
+}
 
 func (agentGrpcClient *mockAgentGrpcClient) RequestAgentInfo(ctx context.Context, agentinfo *pb.PAgentInfo, _ ...grpc.CallOption) (*pb.PResult, error) {
+	agentGrpcClient.mu.Lock()
+	defer agentGrpcClient.mu.Unlock()
+
+	agentGrpcClient.requests = append(agentGrpcClient.requests, agentinfo)
+	if len(agentGrpcClient.requests) <= agentGrpcClient.failures {
+		return nil, status.Errorf(codes.Unavailable, "collector down")
+	}
+	if agentGrpcClient.reject {
+		return &pb.PResult{Success: false, Message: "rejected"}, nil
+	}
 	return &pb.PResult{Success: true, Message: "success"}, nil
+}
+
+func (agentGrpcClient *mockAgentGrpcClient) sentAgentInfo() []*pb.PAgentInfo {
+	agentGrpcClient.mu.Lock()
+	defer agentGrpcClient.mu.Unlock()
+	return append([]*pb.PAgentInfo(nil), agentGrpcClient.requests...)
 }
 
 func (agentGrpcClient *mockAgentGrpcClient) PingSession(ctx context.Context, _ ...grpc.CallOption) (pb.Agent_PingSessionClient, error) {
@@ -60,26 +86,62 @@ func (s *mockPingStream) Send(*pb.PPing) error     { return nil }
 func (s *mockPingStream) Recv() (*pb.PPing, error) { return nil, nil }
 func (s *mockPingStream) CloseSend() error         { return nil }
 
-type mockMetaGrpcClient struct{}
+// mockMetaGrpcClient accepts every metadata request and keeps it, so tests can
+// assert on the payload the agent actually put on the wire.
+type mockMetaGrpcClient struct {
+	mu     sync.Mutex
+	api    []*pb.PApiMetaData
+	str    []*pb.PStringMetaData
+	sql    []*pb.PSqlMetaData
+	sqlUid []*pb.PSqlUidMetaData
+	except []*pb.PExceptionMetaData
+}
 
 func (metaGrpcClient *mockMetaGrpcClient) RequestApiMetaData(ctx context.Context, in *pb.PApiMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
+	metaGrpcClient.mu.Lock()
+	defer metaGrpcClient.mu.Unlock()
+	metaGrpcClient.api = append(metaGrpcClient.api, in)
 	return &pb.PResult{Success: true, Message: "success"}, nil
 }
 
 func (metaGrpcClient *mockMetaGrpcClient) RequestSqlMetaData(ctx context.Context, in *pb.PSqlMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
+	metaGrpcClient.mu.Lock()
+	defer metaGrpcClient.mu.Unlock()
+	metaGrpcClient.sql = append(metaGrpcClient.sql, in)
 	return &pb.PResult{Success: true, Message: "success"}, nil
 }
 
 func (metaGrpcClient *mockMetaGrpcClient) RequestSqlUidMetaData(ctx context.Context, in *pb.PSqlUidMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
+	metaGrpcClient.mu.Lock()
+	defer metaGrpcClient.mu.Unlock()
+	metaGrpcClient.sqlUid = append(metaGrpcClient.sqlUid, in)
 	return nil, nil
 }
 
 func (metaGrpcClient *mockMetaGrpcClient) RequestStringMetaData(ctx context.Context, in *pb.PStringMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
+	metaGrpcClient.mu.Lock()
+	defer metaGrpcClient.mu.Unlock()
+	metaGrpcClient.str = append(metaGrpcClient.str, in)
 	return &pb.PResult{Success: true, Message: "success"}, nil
 }
 
 func (metaGrpcClient *mockMetaGrpcClient) RequestExceptionMetaData(ctx context.Context, in *pb.PExceptionMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
+	metaGrpcClient.mu.Lock()
+	defer metaGrpcClient.mu.Unlock()
+	metaGrpcClient.except = append(metaGrpcClient.except, in)
 	return nil, nil
+}
+
+// sentMeta returns a snapshot of every metadata request received so far.
+func (metaGrpcClient *mockMetaGrpcClient) sentMeta() (api []*pb.PApiMetaData, str []*pb.PStringMetaData,
+	sql []*pb.PSqlMetaData, sqlUid []*pb.PSqlUidMetaData, except []*pb.PExceptionMetaData) {
+	metaGrpcClient.mu.Lock()
+	defer metaGrpcClient.mu.Unlock()
+	return append([]*pb.PApiMetaData(nil), metaGrpcClient.api...),
+		append([]*pb.PStringMetaData(nil), metaGrpcClient.str...),
+		append([]*pb.PSqlMetaData(nil), metaGrpcClient.sql...),
+		append([]*pb.PSqlUidMetaData(nil), metaGrpcClient.sqlUid...),
+		append([]*pb.PExceptionMetaData(nil), metaGrpcClient.except...)
 }
 
 func newMockAgentGrpc(agent *agent) *agentGrpc {
@@ -101,6 +163,9 @@ type mockSpanGrpcClient struct {
 	requests []*pb.PSpanMessageBatch
 	response *pb.PSpanResultBatch
 	err      error
+	// hold, when set, parks every SendSpanBatch until it is closed, which is
+	// how a test keeps a request in flight and its permit held.
+	hold chan struct{}
 }
 
 func (spanGrpcClient *mockSpanGrpcClient) SendSpan(ctx context.Context, _ ...grpc.CallOption) (pb.Span_SendSpanClient, error) {
@@ -113,7 +178,12 @@ func (spanGrpcClient *mockSpanGrpcClient) SendSpanBatch(ctx context.Context, in 
 	// retained pointer would later observe recycled memory.
 	spanGrpcClient.mu.Lock()
 	spanGrpcClient.requests = append(spanGrpcClient.requests, proto.Clone(in).(*pb.PSpanMessageBatch))
+	hold := spanGrpcClient.hold
 	spanGrpcClient.mu.Unlock()
+
+	if hold != nil {
+		<-hold
+	}
 
 	if spanGrpcClient.response != nil || spanGrpcClient.err != nil {
 		return spanGrpcClient.response, spanGrpcClient.err
@@ -247,6 +317,12 @@ func (s *mockCmdStream) Recv() (*pb.PCmdRequest, error) {
 	return nil, io.EOF
 }
 
+func (s *mockCmdStream) sentMessages() []*pb.PCmdMessage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*pb.PCmdMessage(nil), s.sent...)
+}
+
 func (s *mockCmdStream) failMessages() []*pb.PCmdResponse {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -266,6 +342,9 @@ type mockCmdGrpcClient struct {
 	streams                         []*mockAtcStream
 	sendErr                         error
 	openErr                         error
+	echoes                          []*pb.PCmdEchoResponse
+	dumps                           []*pb.PCmdActiveThreadDumpRes
+	lightDumps                      []*pb.PCmdActiveThreadLightDumpRes
 }
 
 func (c *mockCmdGrpcClient) CommandStreamActiveThreadCount(ctx context.Context, opts ...grpc.CallOption) (pb.ProfilerCommandService_CommandStreamActiveThreadCountClient, error) {
@@ -277,6 +356,40 @@ func (c *mockCmdGrpcClient) CommandStreamActiveThreadCount(ctx context.Context, 
 	s := &mockAtcStream{sendErr: c.sendErr}
 	c.streams = append(c.streams, s)
 	return s, nil
+}
+
+func (c *mockCmdGrpcClient) CommandEcho(ctx context.Context, in *pb.PCmdEchoResponse, _ ...grpc.CallOption) (*empty.Empty, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.echoes = append(c.echoes, in)
+	return &empty.Empty{}, nil
+}
+
+func (c *mockCmdGrpcClient) CommandActiveThreadDump(ctx context.Context, in *pb.PCmdActiveThreadDumpRes, _ ...grpc.CallOption) (*empty.Empty, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.dumps = append(c.dumps, in)
+	return &empty.Empty{}, nil
+}
+
+func (c *mockCmdGrpcClient) CommandActiveThreadLightDump(ctx context.Context, in *pb.PCmdActiveThreadLightDumpRes, _ ...grpc.CallOption) (*empty.Empty, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lightDumps = append(c.lightDumps, in)
+	return &empty.Empty{}, nil
+}
+
+func (c *mockCmdGrpcClient) sentEchoes() []*pb.PCmdEchoResponse {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]*pb.PCmdEchoResponse(nil), c.echoes...)
+}
+
+func (c *mockCmdGrpcClient) sentDumps() ([]*pb.PCmdActiveThreadDumpRes, []*pb.PCmdActiveThreadLightDumpRes) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]*pb.PCmdActiveThreadDumpRes(nil), c.dumps...),
+		append([]*pb.PCmdActiveThreadLightDumpRes(nil), c.lightDumps...)
 }
 
 func (c *mockCmdGrpcClient) stream(i int) *mockAtcStream {

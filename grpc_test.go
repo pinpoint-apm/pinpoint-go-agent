@@ -2,8 +2,12 @@ package pinpoint
 
 import (
 	"context"
+	"errors"
 	"math"
+	"net"
+	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,10 +15,12 @@ import (
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -645,10 +651,16 @@ func Test_sendStreamWithTimeout_unresponsiveStreamLeaksNothing(t *testing.T) {
 type failingMetaClient struct {
 	calls int32
 	err   error
+	// failFirst > 0 fails only the leading n calls and then succeeds; the zero
+	// value fails every call.
+	failFirst int32
 }
 
 func (c *failingMetaClient) fail() error {
-	atomic.AddInt32(&c.calls, 1)
+	n := atomic.AddInt32(&c.calls, 1)
+	if c.failFirst > 0 && n > c.failFirst {
+		return nil
+	}
 	return c.err
 }
 
@@ -966,4 +978,564 @@ func Test_makePException_EmptyCallstack(t *testing.T) {
 	assert.NotPanics(t, func() { p = makePException(e) })
 	assert.Equal(t, "unknown", p.ExceptionClassName)
 	assert.Empty(t, p.StackTraceElement)
+}
+
+// --- metadata ---------------------------------------------------------------
+
+// newMockMetaAgentGrpc wires an agent to a metadata client that accepts every
+// request and keeps it, so a test can assert on the payload put on the wire.
+func newMockMetaAgentGrpc(agent *agent) (*agentGrpc, *mockMetaGrpcClient) {
+	meta := &mockMetaGrpcClient{}
+	return &agentGrpc{metaClient: meta, agent: agent}, meta
+}
+
+// Each metadata type must reach the collector with the fields the caller
+// supplied. Mirrors the C++ agent's MetaDataApiTest / MetaDataStringTest /
+// MetaDataSqlUidTest.
+func Test_agentGrpc_sendMetadata_payloads(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agentGrpc, meta := newMockMetaAgentGrpc(agent)
+
+	assert.True(t, agentGrpc.sendApiMetadataWithRetry(7, "test.api", 42, apiTypeInvocation))
+	assert.True(t, agentGrpc.sendStringMetadataWithRetry(8, "test.error"))
+	assert.True(t, agentGrpc.sendSqlMetadataWithRetry(9, "SELECT 1"))
+	assert.True(t, agentGrpc.sendSqlUidMetadataWithRetry([]byte{0xde, 0xad}, "SELECT 2"))
+
+	api, str, sql, sqlUid, _ := meta.sentMeta()
+
+	require.Len(t, api, 1)
+	assert.Equal(t, int32(7), api[0].GetApiId())
+	assert.Equal(t, "test.api", api[0].GetApiInfo())
+	assert.Equal(t, int32(42), api[0].GetLine())
+	assert.EqualValues(t, apiTypeInvocation, api[0].GetType())
+
+	require.Len(t, str, 1)
+	assert.Equal(t, int32(8), str[0].GetStringId())
+	assert.Equal(t, "test.error", str[0].GetStringValue())
+
+	require.Len(t, sql, 1)
+	assert.Equal(t, int32(9), sql[0].GetSqlId())
+	assert.Equal(t, "SELECT 1", sql[0].GetSql())
+
+	require.Len(t, sqlUid, 1)
+	assert.Equal(t, []byte{0xde, 0xad}, sqlUid[0].GetSqlUid())
+	assert.Equal(t, "SELECT 2", sqlUid[0].GetSql())
+}
+
+// Exception metadata carries the transaction that raised it plus one entry per
+// chained error. Mirrors the C++ agent's MetaDataExceptionTest.
+func Test_agentGrpc_sendExceptionMetadata(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agentGrpc, meta := newMockMetaAgentGrpc(agent)
+
+	pcs := make([]uintptr, 8)
+	pcs = pcs[:runtime.Callers(1, pcs)]
+	errorTime := time.Unix(0, 1234*int64(time.Millisecond))
+
+	assert.True(t, agentGrpc.sendExceptionMetadataWithRetry(&exceptionMeta{
+		txId:        TransactionId{AgentId: "testAgent", StartTime: 11, Sequence: 22},
+		spanId:      33,
+		uriTemplate: "/test/uri",
+		exceptions: []*exception{{
+			exceptionId: 44,
+			callstack:   &errorWithCallStack{err: errors.New("boom"), errorTime: errorTime, callstack: pcs},
+		}},
+	}))
+
+	_, _, _, _, except := meta.sentMeta()
+	require.Len(t, except, 1)
+	assert.Equal(t, "testAgent", except[0].GetTransactionId().GetAgentId())
+	assert.Equal(t, int64(11), except[0].GetTransactionId().GetAgentStartTime())
+	assert.Equal(t, int64(22), except[0].GetTransactionId().GetSequence())
+	assert.Equal(t, int64(33), except[0].GetSpanId())
+	assert.Equal(t, "/test/uri", except[0].GetUriTemplate())
+
+	require.Len(t, except[0].GetExceptions(), 1)
+	e := except[0].GetExceptions()[0]
+	assert.Equal(t, int64(44), e.GetExceptionId())
+	assert.Equal(t, "boom", e.GetExceptionMessage())
+	assert.Equal(t, int32(1), e.GetExceptionDepth())
+	assert.Equal(t, int64(1234), e.GetStartTime())
+	require.NotEmpty(t, e.GetStackTraceElement())
+	assert.Equal(t, e.GetStackTraceElement()[0].GetClassName(), e.GetExceptionClassName(),
+		"the class name is the innermost frame's module")
+}
+
+// An exception whose metadata would exceed the write buffer is dropped before
+// encoding, and the ResourceExhausted that reports it is not retryable.
+func Test_agentGrpc_sendExceptionMetadata_oversizedIsSkippedWithoutRetry(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agentGrpc, meta := newMockMetaAgentGrpc(agent)
+	oversized := &exceptionMeta{uriTemplate: strings.Repeat("x", grpcWriteBufferSize)}
+
+	assert.False(t, agentGrpc.sendExceptionMetadataWithRetry(oversized))
+
+	_, _, _, _, except := meta.sentMeta()
+	assert.Empty(t, except, "an oversized message must not reach the collector")
+
+	// The guard reports a non-retryable status, which is what stops retryMeta
+	// from spending the whole attempt budget on a message that can never fit.
+	err := agentGrpc.sendExceptionMetadata(makePExceptionMetaData(oversized))
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	assert.False(t, isRetryableError(err), "an oversized message never becomes sendable by retrying")
+}
+
+// A retryable failure is retried within the attempt budget, and a send that
+// then succeeds keeps its cache entry. Mirrors the C++ agent's
+// GrpcMetadataRetriesFailedResultWithoutEvictingCache.
+func Test_retryMeta_succeedsAfterRetryableFailure(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	failing := &failingMetaClient{
+		err:       status.Errorf(codes.Unavailable, "collector down"),
+		failFirst: metaRetryMaxAttempts - 1,
+	}
+	agentGrpc := &agentGrpc{metaClient: failing, agent: agent}
+
+	assert.True(t, agentGrpc.sendApiMetadataWithRetry(1, "test.api", -1, apiTypeInvocation))
+	assert.Equal(t, int32(metaRetryMaxAttempts), failing.callCount())
+}
+
+func Test_isRetryableError(t *testing.T) {
+	// Only a transport-level failure can succeed on a later attempt; anything
+	// the collector rejected on its merits would be rejected again.
+	assert.True(t, isRetryableError(status.Errorf(codes.Unavailable, "collector down")))
+	assert.True(t, isRetryableError(status.Errorf(codes.DeadlineExceeded, "too slow")))
+	assert.False(t, isRetryableError(status.Errorf(codes.Internal, "bad request")))
+	assert.False(t, isRetryableError(status.Errorf(codes.ResourceExhausted, "too big")))
+	assert.False(t, isRetryableError(errors.New("not a status")))
+	assert.False(t, isRetryableError(nil))
+}
+
+// The sql and sql-uid caches are released the same way the api and string
+// caches are when their metadata never reaches the collector, so the next use
+// re-registers them. Mirrors the C++ agent's
+// GrpcMetadataEvictsSqlCacheAfterRetryExhaustion / ...SqlUidCache...
+func Test_sendMetaWorker_releasesSqlCachesOnFailure(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agentGrpc, failing := newFailingMetaAgentGrpc(agent, status.Errorf(codes.Unavailable, "collector down"))
+	agent.agentGrpc = agentGrpc
+
+	const sql = "SELECT * FROM t WHERE id = 1"
+	sqlCached := func() bool { _, ok := agent.sqlCache.peek(sql); return ok }
+	sqlUidCached := func() bool { _, ok := agent.sqlUidCache.peek(sql); return ok }
+	assert.NotZero(t, agent.cacheSql(sql))
+	assert.NotEmpty(t, agent.cacheSqlUid(sql))
+	assert.True(t, sqlCached())
+	assert.True(t, sqlUidCached())
+
+	agent.workerWg.Add(1)
+	go agent.sendMetaWorker()
+
+	assert.Eventually(t, func() bool {
+		return failing.callCount() == int32(2*metaRetryMaxAttempts)
+	}, 5*time.Second, 5*time.Millisecond, "worker must drain both items, got %d calls", failing.callCount())
+
+	agent.signalShutdown()
+	agent.workerWg.Wait()
+
+	assert.False(t, sqlCached(), "a failed sql metadata send must release its cache entry")
+	assert.False(t, sqlUidCached(), "a failed sql uid metadata send must release its cache entry")
+}
+
+// Every metadata type the agent can queue is dispatched by the worker to its
+// own RPC. Mirrors the C++ agent's GrpcAgentMetaWorkerAllTypesSuccessTest.
+func Test_sendMetaWorker_sendsEveryMetadataType(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agentGrpc, meta := newMockMetaAgentGrpc(agent)
+	agent.agentGrpc = agentGrpc
+
+	agent.metaChan <- apiMeta{id: 1, descriptor: "test.api", apiType: apiTypeInvocation}
+	agent.metaChan <- stringMeta{id: 2, funcName: "test.error"}
+	agent.metaChan <- sqlMeta{id: 3, sql: "SELECT 1"}
+	agent.metaChan <- sqlUidMeta{uid: []byte{1, 2}, sql: "SELECT 2"}
+	agent.metaChan <- exceptionMeta{
+		spanId:     4,
+		exceptions: []*exception{{exceptionId: 5, callstack: &errorWithCallStack{err: errors.New("boom")}}},
+	}
+
+	agent.workerWg.Add(1)
+	go agent.sendMetaWorker()
+
+	assert.Eventually(t, func() bool {
+		api, str, sql, sqlUid, except := meta.sentMeta()
+		return len(api) == 1 && len(str) == 1 && len(sql) == 1 && len(sqlUid) == 1 && len(except) == 1
+	}, 5*time.Second, 5*time.Millisecond, "every queued metadata type must be sent")
+
+	agent.signalShutdown()
+	agent.workerWg.Wait()
+}
+
+// --- agent info -------------------------------------------------------------
+
+// The registration payload describes the running process, and its headers ride
+// along on the same context. Mirrors the C++ agent's
+// GrpcAgentRegisterAgentUsesDefaultServerMetaData.
+func Test_agentGrpc_makeAgentInfo(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agentGrpc := newMockAgentGrpc(agent)
+
+	ctx, info := agentGrpc.makeAgentInfo()
+
+	assert.NotEmpty(t, info.GetHostname())
+	assert.EqualValues(t, os.Getpid(), info.GetPid())
+	assert.Equal(t, Version, info.GetAgentVersion())
+	assert.Equal(t, runtime.Version(), info.GetVmVersion())
+	assert.Equal(t, agent.appType, info.GetServiceType())
+	assert.Equal(t, agent.config.Bool(CfgIsContainerEnv), info.GetContainer())
+
+	meta := info.GetServerMetaData()
+	assert.Equal(t, "Go Application", meta.GetServerInfo())
+	require.Len(t, meta.GetServiceInfo(), 1)
+	assert.Contains(t, meta.GetServiceInfo()[0].GetServiceName(), runtime.GOOS)
+	assert.Contains(t, meta.GetServiceInfo()[0].GetServiceName(), runtime.GOARCH)
+
+	assert.Equal(t, pb.PJvmGcType_JVM_GC_TYPE_CMS, info.GetJvmInfo().GetGcType())
+	assert.Contains(t, info.GetJvmInfo().GetVmVersion(), runtime.Version())
+
+	md, ok := metadata.FromOutgoingContext(ctx)
+	require.True(t, ok, "agent info must carry the agent headers")
+	assert.Equal(t, []string{agent.appName}, md.Get(headerAppName))
+	assert.Equal(t, []string{agent.agentID}, md.Get(headerAgentID))
+}
+
+// A collector that answers Success=false has rejected this agent outright, so
+// registration reports failure instead of retrying forever. Mirrors the C++
+// agent's GrpcAgentRegisterAgentFailureTest.
+func Test_agentGrpc_registerAgentWithRetry_stopsOnRejection(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	client := &mockAgentGrpcClient{reject: true}
+	agentGrpc := &agentGrpc{agentClient: client, agent: agent}
+
+	assert.False(t, agentGrpc.registerAgentWithRetry())
+	assert.Len(t, client.sentAgentInfo(), 1, "a rejected registration must not be retried")
+}
+
+// dialReadyConn returns a channel to an empty in-process gRPC server that is
+// already READY, so the reconnect waits inside the retry loops return at once.
+func dialReadyConn(t *testing.T) *grpc.ClientConn {
+	t.Helper()
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	srv := grpc.NewServer()
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+
+	conn, err := grpc.Dial(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+	require.True(t, waitUntilReady(context.Background(), conn, 5*time.Second, "test"))
+	return conn
+}
+
+// A transport failure is retried until the collector answers. Mirrors the C++
+// agent's GrpcAgentRegisterWithRetryRetriesUntilSuccess.
+func Test_agentGrpc_registerAgentWithRetry_retriesUntilSuccess(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	client := &mockAgentGrpcClient{failures: 2}
+	agentGrpc := &agentGrpc{agentConn: dialReadyConn(t), agentClient: client, agent: agent}
+
+	assert.True(t, agentGrpc.registerAgentWithRetry())
+	assert.Len(t, client.sentAgentInfo(), 3, "registration retries until the collector accepts it")
+}
+
+// --- headers ----------------------------------------------------------------
+
+// Only the ping stream identifies a socket, and it must not pollute the header
+// set every other RPC shares. Mirrors the C++ agent's
+// GrpcMetadataTest.SocketIdNeverInBaseHeaderSet.
+func Test_grpcMetadataContext_socketId(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+
+	base := grpcMetadataContext(agent, -1)
+	md, ok := metadata.FromOutgoingContext(base)
+	require.True(t, ok)
+	assert.Empty(t, md.Get(headerSocketID), "the shared header set carries no socket id")
+	assert.Equal(t, []string{agent.appName}, md.Get(headerAppName))
+
+	// Non-positive socket ids reuse the one context instead of rebuilding it.
+	assert.Equal(t, base, grpcMetadataContext(agent, 0))
+
+	pingMd, ok := metadata.FromOutgoingContext(grpcMetadataContext(agent, 7))
+	require.True(t, ok)
+	assert.Equal(t, []string{"7"}, pingMd.Get(headerSocketID))
+	assert.Equal(t, []string{agent.appName}, pingMd.Get(headerAppName))
+
+	md, _ = metadata.FromOutgoingContext(grpcMetadataContext(agent, -1))
+	assert.Empty(t, md.Get(headerSocketID), "a ping's socket id must not leak into the shared set")
+}
+
+// --- span batch -------------------------------------------------------------
+
+// newBoundedSpanGrpc returns a batch sender with a single permit and a short
+// flush timeout, so permit contention resolves within a test's patience.
+func newBoundedSpanGrpc(agent *agent, client *mockSpanGrpcClient) *spanGrpc {
+	return &spanGrpc{
+		spanClient:              client,
+		agent:                   agent,
+		batchSize:               1,
+		batchFlushTimeout:       10 * time.Millisecond,
+		batchCollectDeadline:    10 * time.Millisecond,
+		maxConcurrentRequests:   1,
+		concurrentRequestPermit: make(chan struct{}, 1),
+	}
+}
+
+// A chunk's wire shape depends on what it is: only a finished synchronous span
+// is a PSpan. Mirrors the C++ agent's GrpcSpanSendBatchSpanVsSpanChunkTest.
+func Test_spanGrpc_sendSpanBatch_spanShapePerChunk(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.spanGrpc = newMockSpanGrpc(agent)
+
+	final := defaultSpan(agent)
+	final.NewSpanEvent("final")
+	partial := defaultSpan(agent)
+	partial.NewSpanEvent("partial")
+	async := defaultSpan(agent)
+	async.asyncId = 11
+	async.asyncSequence = 3
+	async.NewSpanEvent("async")
+
+	agent.spanGrpc.sendSpanBatchAsync([]*spanChunk{
+		final.newEventChunk(true), partial.newEventChunk(false), async.newEventChunk(true),
+	})
+	agent.spanGrpc.awaitInFlightSpanBatch()
+
+	client := agent.spanGrpc.spanClient.(*mockSpanGrpcClient)
+	batch := client.lastRequest().GetSpan()
+	require.Len(t, batch, 3)
+	assert.NotNil(t, batch[0].GetSpan(), "a final synchronous chunk is a PSpan")
+	assert.NotNil(t, batch[1].GetSpanChunk(), "a non-final chunk is a PSpanChunk")
+	assert.NotNil(t, batch[2].GetSpanChunk(), "an async span is a PSpanChunk even when final")
+	assert.Equal(t, int32(11), batch[2].GetSpanChunk().GetLocalAsyncId().GetAsyncId())
+	assert.Equal(t, int32(3), batch[2].GetSpanChunk().GetLocalAsyncId().GetSequence())
+}
+
+// The caller that produced this trace is described on the accept event, service
+// name included. Mirrors the C++ agent's
+// GrpcSpanBatchCarriesParentServiceNameTest.
+func Test_spanGrpc_sendSpanBatch_carriesParentInfo(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.spanGrpc = newMockSpanGrpc(agent)
+
+	span := defaultSpan(agent)
+	span.parentAppName = "ParentApp"
+	span.parentAppType = 1500
+	span.parentServiceName = "parent-service"
+	span.acceptorHost = "acceptor:8080"
+	span.rpcName = "/hello"
+	span.endPoint = "endpoint:8080"
+	span.remoteAddr = "10.0.0.1"
+	span.NewSpanEvent("op")
+
+	agent.spanGrpc.sendSpanBatchAsync([]*spanChunk{span.newEventChunk(true)})
+	agent.spanGrpc.awaitInFlightSpanBatch()
+
+	client := agent.spanGrpc.spanClient.(*mockSpanGrpcClient)
+	batch := client.lastRequest().GetSpan()
+	require.Len(t, batch, 1)
+	accept := batch[0].GetSpan().GetAcceptEvent()
+	assert.Equal(t, "/hello", accept.GetRpc())
+	assert.Equal(t, "endpoint:8080", accept.GetEndPoint())
+	assert.Equal(t, "10.0.0.1", accept.GetRemoteAddr())
+
+	parent := accept.GetParentInfo()
+	assert.Equal(t, "ParentApp", parent.GetParentApplicationName())
+	assert.Equal(t, int32(1500), parent.GetParentApplicationType())
+	assert.Equal(t, "parent-service", parent.GetParentServiceName())
+	assert.Equal(t, "acceptor:8080", parent.GetAcceptorHost())
+}
+
+// A chunk without a span carries nothing to report and must not reach the
+// encoder. Mirrors the C++ agent's GrpcSpanEnqueueDropsNullAndExitingChunksTest.
+func Test_makePSpanMessageBatch_skipsEmptyChunks(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	builder := acquireSpanMessageBuilder()
+	defer releaseSpanMessageBuilder(builder)
+
+	batch := builder.makePSpanMessageBatch([]*spanChunk{nil, {span: nil}, newTestSpanChunk(agent)})
+
+	assert.Len(t, batch.GetSpan(), 1)
+}
+
+// With every permit held by a slow collector, a new batch is dropped rather
+// than parking the sender behind it; completing the in-flight request lets the
+// next one through. Mirrors the C++ agent's
+// GrpcSpanPermitExhaustionDropsBatchTest.
+func Test_spanGrpc_sendSpanBatchAsync_permitExhaustionDropsBatch(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	client := &mockSpanGrpcClient{hold: make(chan struct{})}
+	spanGrpc := newBoundedSpanGrpc(agent, client)
+
+	spanGrpc.sendSpanBatchAsync([]*spanChunk{newTestSpanChunk(agent)})
+	assert.Eventually(t, func() bool { return client.requestCount() == 1 },
+		time.Second, time.Millisecond, "the first batch takes the only permit")
+
+	spanGrpc.sendSpanBatchAsync([]*spanChunk{newTestSpanChunk(agent)})
+	assert.Equal(t, 1, client.requestCount(), "a batch that cannot get a permit is dropped, not queued")
+
+	close(client.hold)
+	spanGrpc.awaitInFlightSpanBatch()
+	spanGrpc.sendSpanBatchAsync([]*spanChunk{newTestSpanChunk(agent)})
+	spanGrpc.awaitInFlightSpanBatch()
+	assert.Equal(t, 2, client.requestCount(), "the released permit lets the next batch through")
+	assert.Empty(t, spanGrpc.concurrentRequestPermit)
+}
+
+// A failed send returns its permit, so a collector outage cannot leak the
+// sender's capacity away. Mirrors the C++ agent's
+// GrpcSpanErrorStatusReleasesPermitTest.
+func Test_spanGrpc_sendSpanBatchAsync_errorReleasesPermit(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	client := &mockSpanGrpcClient{err: status.Errorf(codes.Unavailable, "collector down")}
+	spanGrpc := newBoundedSpanGrpc(agent, client)
+
+	for i := 0; i < 3; i++ {
+		spanGrpc.sendSpanBatchAsync([]*spanChunk{newTestSpanChunk(agent)})
+		spanGrpc.awaitInFlightSpanBatch()
+	}
+
+	assert.Equal(t, 3, client.requestCount(), "a failed send must return its permit")
+	assert.Empty(t, spanGrpc.concurrentRequestPermit)
+}
+
+// A partially rejected batch is a warning, not a sender failure: the permit
+// comes back and later batches still go out. Mirrors the C++ agent's
+// GrpcSpanPartialSuccessHandledTest.
+func Test_spanGrpc_sendSpanBatchAsync_partialSuccessKeepsSending(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	client := &mockSpanGrpcClient{response: &pb.PSpanResultBatch{
+		PartialSuccess: &pb.PPartialSuccess{RejectedSpans: 2, ErrorId: 7, ErrorMessage: "rejected"},
+	}}
+	spanGrpc := newBoundedSpanGrpc(agent, client)
+
+	for i := 0; i < 2; i++ {
+		spanGrpc.sendSpanBatchAsync([]*spanChunk{newTestSpanChunk(agent)})
+		spanGrpc.awaitInFlightSpanBatch()
+	}
+
+	assert.Equal(t, 2, client.requestCount())
+	assert.Empty(t, spanGrpc.concurrentRequestPermit)
+}
+
+func Test_handleSpanBatchResponse_toleratesEveryShape(t *testing.T) {
+	assert.NotPanics(t, func() {
+		handleSpanBatchResponse(nil)
+		handleSpanBatchResponse(&pb.PSpanResultBatch{})
+		handleSpanBatchResponse(&pb.PSpanResultBatch{PartialSuccess: &pb.PPartialSuccess{}})
+		handleSpanBatchResponse(&pb.PSpanResultBatch{PartialSuccess: &pb.PPartialSuccess{ErrorMessage: "warning only"}})
+		handleSpanBatchResponse(&pb.PSpanResultBatch{PartialSuccess: &pb.PPartialSuccess{RejectedSpans: 1}})
+	})
+}
+
+// --- streams the collector never gave us ------------------------------------
+
+// newXxxStreamWithRetry hands back an empty stream once the agent gives up, and
+// every worker keeps calling into it until it notices. Sending must report
+// Unavailable rather than dereferencing a nil stream.
+func Test_streams_nilStreamReportsUnavailable(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+
+	assert.Equal(t, codes.Unavailable, status.Code((&pingStream{}).sendPing()))
+	assert.Equal(t, codes.Unavailable, status.Code((&spanStream{}).sendSpan(newTestSpanChunk(agent))))
+	assert.Equal(t, codes.Unavailable, status.Code((&statStream{}).sendStats(&pb.PStatMessage{})))
+	assert.Equal(t, codes.Unavailable, status.Code((&cmdStream{}).sendCommandMessage()))
+	assert.Equal(t, codes.Unavailable, status.Code((&cmdStream{}).sendFailMessage(1, "rejected")))
+	assert.Equal(t, codes.Unavailable, status.Code((&activeThreadCountStream{}).sendActiveThreadCount()))
+
+	_, err := (&cmdStream{}).recvCommandRequest()
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+
+	assert.NotPanics(t, func() {
+		(&pingStream{}).close()
+		(&spanStream{}).close()
+		(&statStream{}).close()
+		(&cmdStream{}).close()
+		(&activeThreadCountStream{}).close()
+	}, "closing a stream that was never opened is a no-op")
+}
+
+// --- commands ---------------------------------------------------------------
+
+// The handshake tells the collector which commands this agent serves; anything
+// missing here is a command the web UI will never offer.
+func Test_cmdStream_sendCommandMessage_advertisesSupportedCommands(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	cmd, _ := newMockCmdGrpc(agent)
+
+	require.NoError(t, cmd.sendCommandMessage())
+
+	sent := cmd.stream.(*mockCmdStream).sentMessages()
+	require.Len(t, sent, 1)
+	assert.Equal(t, []int32{
+		int32(pb.PCommandType_ECHO),
+		int32(pb.PCommandType_ACTIVE_THREAD_COUNT),
+		int32(pb.PCommandType_ACTIVE_THREAD_DUMP),
+		int32(pb.PCommandType_ACTIVE_THREAD_LIGHT_DUMP),
+	}, sent[0].GetHandshakeMessage().GetSupportCommandServiceKey())
+}
+
+// Mirrors the C++ agent's GrpcCommandWorkerEchoTest.
+func Test_cmdGrpc_sendEcho(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	_, client := newMockCmdGrpc(agent)
+
+	agent.cmdGrpc.sendEcho(9, "hello")
+
+	echoes := client.sentEchoes()
+	require.Len(t, echoes, 1)
+	assert.Equal(t, "hello", echoes[0].GetMessage())
+	assert.Equal(t, int32(9), echoes[0].GetCommonResponse().GetResponseId())
+	assert.Equal(t, int32(0), echoes[0].GetCommonResponse().GetStatus())
+}
+
+func Test_cmdGrpc_sendActiveThreadDump(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	_, client := newMockCmdGrpc(agent)
+
+	dump := newGoroutineDump()
+	for id := int64(1); id <= 2; id++ {
+		dump.add(testGoroutine(id))
+	}
+
+	agent.cmdGrpc.sendActiveThreadDump(1, 0, []string{"goroutine 2"}, nil, dump)
+	agent.cmdGrpc.sendActiveThreadLightDump(2, 0, dump)
+
+	dumps, lightDumps := client.sentDumps()
+
+	require.Len(t, dumps, 1)
+	assert.Equal(t, int32(1), dumps[0].GetCommonResponse().GetResponseId())
+	assert.Equal(t, int32(0), dumps[0].GetCommonResponse().GetStatus())
+	assert.Equal(t, "Go", dumps[0].GetType())
+	assert.Equal(t, runtime.Version(), dumps[0].GetVersion())
+	require.Len(t, dumps[0].GetThreadDump(), 1, "only the requested goroutine is dumped")
+	assert.Equal(t, "goroutine 2", dumps[0].GetThreadDump()[0].GetThreadDump().GetThreadName())
+
+	require.Len(t, lightDumps, 1)
+	assert.Equal(t, int32(2), lightDumps[0].GetCommonResponse().GetResponseId())
+	assert.Equal(t, int32(0), lightDumps[0].GetCommonResponse().GetStatus())
+	assert.Len(t, lightDumps[0].GetThreadDump(), 2, "a light dump reports every goroutine")
+}
+
+// A dump the runtime could not produce is reported as a failed response, not as
+// an empty successful one.
+func Test_cmdGrpc_sendActiveThreadDump_reportsDumpFailure(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	_, client := newMockCmdGrpc(agent)
+
+	agent.cmdGrpc.sendActiveThreadDump(1, 0, nil, nil, nil)
+	agent.cmdGrpc.sendActiveThreadLightDump(2, 0, nil)
+
+	dumps, lightDumps := client.sentDumps()
+	const failMsg = "An error occurred while dumping Goroutine"
+
+	require.Len(t, dumps, 1)
+	assert.Equal(t, int32(-1), dumps[0].GetCommonResponse().GetStatus())
+	assert.Equal(t, failMsg, dumps[0].GetCommonResponse().GetMessage().GetValue())
+	assert.Empty(t, dumps[0].GetThreadDump())
+
+	require.Len(t, lightDumps, 1)
+	assert.Equal(t, int32(-1), lightDumps[0].GetCommonResponse().GetStatus())
+	assert.Equal(t, failMsg, lightDumps[0].GetCommonResponse().GetMessage().GetValue())
+	assert.Empty(t, lightDumps[0].GetThreadDump())
 }
