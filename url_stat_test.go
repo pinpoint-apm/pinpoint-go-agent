@@ -195,10 +195,6 @@ func newUrlStatTestSnapshot(limit int, withMethod bool) (*urlStatSnapshot, time.
 	return newUrlStats(config).newSnapshot(), time.Unix(1700000000, 123000000).UTC()
 }
 
-// testTickClock is the clock every snapshot above buckets with, for tests that
-// need to rebuild a key.
-var testTickClock = newTickClock(urlStatCollectInterval)
-
 func addTestUrlStat(snapshot *urlStatSnapshot, url string, method string, statusErr int, elapsed int64, endTime time.Time) {
 	snapshot.add(&urlStat{
 		entry: &UrlStatEntry{
@@ -214,7 +210,7 @@ func addTestUrlStat(snapshot *urlStatSnapshot, url string, method string, status
 func findEachUrlStat(t *testing.T, snapshot *urlStatSnapshot, url string, endTime time.Time) *eachUrlStat {
 	t.Helper()
 
-	stat, ok := snapshot.urlMap[urlKey{url: url, tick: testTickClock.tick(endTime)}]
+	stat, ok := snapshot.urlMap[urlKey{url: url, tick: endTime.Truncate(urlStatCollectInterval)}]
 	assert.True(t, ok, "url=%s", url)
 	if !ok {
 		return nil
@@ -232,7 +228,7 @@ func histogramCount(histogram *urlStatHistogram) int32 {
 
 func makeExpectedUrlStats(samples []urlStatSample, endTime time.Time) map[string]*expectedUrlStat {
 	expected := make(map[string]*expectedUrlStat)
-	timestamp := testTickClock.tick(endTime).UnixNano() / int64(time.Millisecond)
+	timestamp := endTime.Truncate(urlStatCollectInterval).UnixNano() / int64(time.Millisecond)
 
 	for _, sample := range samples {
 		stat := expected[sample.url]
@@ -246,7 +242,7 @@ func makeExpectedUrlStats(samples []urlStatSample, endTime time.Time) map[string
 		}
 
 		stat.total.add(sample.elapsed)
-		if urlStatStatus(sample.statusErr) == urlStatusFail {
+		if sample.statusErr != 0 {
 			stat.failed.add(sample.elapsed)
 		}
 	}
@@ -296,7 +292,7 @@ func Test_agent_urlStatSnapshot_isPerAgent(t *testing.T) {
 	first, second := newTestAgent(defaultConfig()), newTestAgent(defaultConfig())
 
 	endTime := time.Unix(1700000000, 123000000).UTC()
-	addTestUrlStat(first.urlStats.snapshot, "/only-on-first", "GET", urlStatusSuccess, 100, endTime)
+	addTestUrlStat(first.urlStats.snapshot, "/only-on-first", "GET", 0, 100, endTime)
 
 	assert.Equal(t, 1, first.urlStats.takeSnapshot().count, "first agent")
 	assert.Equal(t, 0, second.urlStats.takeSnapshot().count, "second agent")

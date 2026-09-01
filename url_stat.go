@@ -6,8 +6,6 @@ import (
 )
 
 const (
-	urlStatusSuccess       = 1
-	urlStatusFail          = 2
 	urlStatBucketVersion   = 0
 	urlStatBucketSize      = 8
 	urlStatCollectInterval = 30 * time.Second
@@ -20,24 +18,19 @@ type urlStat struct {
 	statusErr int
 }
 
-// urlStats owns this agent's url statistics: the clock that buckets them and
-// the snapshot its collect worker fills until the send worker takes it. One
-// instance per agent, mirroring the C++ agent's UrlStats class - the clock used
-// to be a package global and the snapshot was reassigned per agent start, so a
-// restart could swap the snapshot out from under the previous agent's worker
-// and mix the two agents' stats.
+// urlStats owns this agent's url statistics: the snapshot its collect worker
+// fills until the send worker takes it. One instance per agent, mirroring the
+// C++ agent's UrlStats class - the snapshot used to be a package global
+// reassigned per agent start, so a restart could swap it out from under the
+// previous agent's worker and mix the two agents' stats.
 type urlStats struct {
 	config   *Config
-	clock    tickClock
 	mu       sync.Mutex
 	snapshot *urlStatSnapshot
 }
 
 func newUrlStats(config *Config) *urlStats {
-	stats := &urlStats{
-		config: config,
-		clock:  newTickClock(urlStatCollectInterval),
-	}
+	stats := &urlStats{config: config}
 	stats.snapshot = stats.newSnapshot()
 	return stats
 }
@@ -46,7 +39,6 @@ func (stats *urlStats) newSnapshot() *urlStatSnapshot {
 	return &urlStatSnapshot{
 		urlMap: make(map[urlKey]*eachUrlStat),
 		config: stats.config.load(),
-		clock:  stats.clock,
 	}
 }
 
@@ -74,7 +66,6 @@ func (stats *urlStats) takeSnapshot() *urlStatSnapshot {
 type urlStatSnapshot struct {
 	urlMap map[urlKey]*eachUrlStat
 	config *configSnapshot
-	clock  tickClock
 	count  int
 }
 
@@ -96,10 +87,6 @@ type urlStatHistogram struct {
 	histogram []int32
 }
 
-type tickClock struct {
-	interval time.Duration
-}
-
 func (snapshot *urlStatSnapshot) add(us *urlStat) {
 	if us.endTime.IsZero() {
 		return
@@ -112,7 +99,7 @@ func (snapshot *urlStatSnapshot) add(us *urlStat) {
 		url = us.entry.Url
 	}
 
-	key := urlKey{url, snapshot.clock.tick(us.endTime)}
+	key := urlKey{url, us.endTime.Truncate(urlStatCollectInterval)}
 
 	e, ok := snapshot.urlMap[key]
 	if !ok {
@@ -125,7 +112,7 @@ func (snapshot *urlStatSnapshot) add(us *urlStat) {
 	}
 
 	e.totalHistogram.add(us.elapsed)
-	if urlStatStatus(us.statusErr) == urlStatusFail {
+	if us.statusErr != 0 {
 		e.failedHistogram.add(us.elapsed)
 	}
 }
@@ -179,21 +166,5 @@ func getBucket(elapsed int64) int {
 		return 6
 	} else {
 		return 7
-	}
-}
-
-func newTickClock(interval time.Duration) tickClock {
-	return tickClock{interval}
-}
-
-func (t tickClock) tick(tm time.Time) time.Time {
-	return tm.Truncate(t.interval)
-}
-
-func urlStatStatus(statusErr int) int {
-	if statusErr == 0 {
-		return urlStatusSuccess
-	} else {
-		return urlStatusFail
 	}
 }
