@@ -46,6 +46,7 @@ func (cs *clientStream) endSpan(err error) {
 	defer cs.mutex.Unlock()
 	if !cs.isFinished {
 		endSpanEvent(cs.tracer, err)
+		cs.tracer.EndSpan()
 		cs.isFinished = true
 	}
 }
@@ -120,6 +121,20 @@ func StreamClientInterceptor() grpc.StreamClientInterceptor {
 			endSpanEvent(tracer, err)
 			return nil, err
 		}
-		return &clientStream{ClientStream: stream, tracer: tracer}, nil
+
+		// The stream outlives this call, and gRPC explicitly allows driving it
+		// from other goroutines (one sending, one receiving), so its lifetime
+		// is traced on its own goroutine tracer. Ending the interceptor's
+		// event from a stream goroutine instead popped whatever event the
+		// application had open on the caller's tracer at that moment and
+		// recorded the stream's error on it.
+		streamTracer := tracer.NewGoroutineTracer()
+		streamTracer.NewSpanEvent(method)
+		if streamTracer.IsSampled() {
+			streamTracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeGrpc)
+		}
+		endSpanEvent(tracer, nil)
+
+		return &clientStream{ClientStream: stream, tracer: streamTracer}, nil
 	}
 }

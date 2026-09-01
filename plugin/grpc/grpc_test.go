@@ -443,6 +443,57 @@ func TestStreamClientInterceptor_StreamerError(t *testing.T) {
 	assert.Nil(t, stream, "a failed streamer must not yield a stream to wrap")
 }
 
+// forkingTracer records event pairing on itself and hands out a child tracer
+// for NewGoroutineTracer, so a test can tell which tracer a span event was
+// ended on.
+type forkingTracer struct {
+	pinpoint.Tracer
+	ends      int32
+	spanEnded bool
+	child     *forkingTracer
+}
+
+func newForkingTracer() *forkingTracer { return &forkingTracer{Tracer: pinpoint.NoopTracer()} }
+
+func (t *forkingTracer) IsSampled() bool                             { return true }
+func (t *forkingTracer) NewSpanEvent(string) pinpoint.Tracer         { return t }
+func (t *forkingTracer) EndSpanEvent()                               { atomic.AddInt32(&t.ends, 1) }
+func (t *forkingTracer) EndSpan()                                    { t.spanEnded = true }
+func (t *forkingTracer) NewGoroutineTracer() pinpoint.Tracer {
+	t.child = newForkingTracer()
+	return t.child
+}
+
+// The stream ends from whatever goroutine happens to drive it, so its lifetime
+// must live on the dedicated goroutine tracer: ending it on the caller's
+// tracer popped whatever event the application had open there at that moment
+// and recorded the stream's error on it.
+func TestStreamClientInterceptor_StreamEndsOnItsOwnTracer(t *testing.T) {
+	caller := newForkingTracer()
+
+	stream, err := StreamClientInterceptor()(
+		pinpoint.NewContext(context.Background(), caller),
+		&grpc.StreamDesc{StreamName: "Stream"},
+		lazyConn(t, "localhost:8080"),
+		"/testapp.Hello/Stream",
+		func(context.Context, *grpc.StreamDesc, *grpc.ClientConn, string, ...grpc.CallOption) (grpc.ClientStream, error) {
+			return &fakeClientStream{err: io.EOF}, nil
+		})
+	require.NoError(t, err)
+
+	assert.Equal(t, int32(1), atomic.LoadInt32(&caller.ends),
+		"the interceptor must close the caller's event before handing the stream out")
+	require.NotNil(t, caller.child, "the stream must run on its own goroutine tracer")
+
+	_ = stream.RecvMsg(nil) // io.EOF: the stream is over
+
+	assert.Equal(t, int32(1), atomic.LoadInt32(&caller.ends),
+		"the stream's end must not touch the caller's tracer")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&caller.child.ends),
+		"the stream's event must end on its own tracer")
+	assert.True(t, caller.child.spanEnded, "the stream's goroutine span must be ended")
+}
+
 // The interceptor wraps the handler, so the handler's result - value and error
 // alike - has to come back untouched, with a sampled tracer in its context.
 func TestUnaryServerInterceptor(t *testing.T) {
