@@ -39,8 +39,8 @@ func buildBenchChunk(a *agent, nEvents int) *spanChunk {
 		se.annotations.AppendIntStringString(AnnotationSqlUid, 1,
 			"SELECT id, name, email FROM users WHERE id = ?", "42")
 		se.endElapsed = 1
-		s.eventDepth++ // keep depths distinct, as real nesting would
-		s.eventSequence++
+		s.eventDepth.Add(1) // keep depths distinct, as real nesting would
+		s.eventSequence.Add(1)
 		s.spanEvents = append(s.spanEvents, se)
 	}
 

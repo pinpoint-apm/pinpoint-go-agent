@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -49,10 +50,16 @@ type span struct {
 	loggingInfo        int32
 	apiId              int32
 
-	eventSequence    int32
-	eventDepth       int32
-	eventOverflow    int
-	eventOverflowLog bool
+	// Atomic: a Tracer instruments a single call stack, but plugins cannot
+	// always keep one on a single goroutine - a gRPC client stream is driven
+	// from whatever goroutines the application chooses, gocql runs observers on
+	// speculative-execution goroutines, pgxpool dials on a background one. The
+	// event stack has its own lock; these counters ride beside it, and atomics
+	// keep such concurrent use a trace-quality problem instead of a data race.
+	eventSequence    atomic.Int32
+	eventDepth       atomic.Int32
+	eventOverflow    atomic.Int32
+	eventOverflowLog atomic.Bool
 	spanEvents       []*spanEvent
 	spanEventLock    sync.Mutex
 
@@ -64,7 +71,7 @@ type span struct {
 	statusErr       int
 	errorFuncId     int32
 	errorString     string
-	recovered       bool
+	recovered       atomic.Bool
 	asyncId         int32
 	asyncSequence   int32
 	goroutineId     int64
@@ -91,7 +98,7 @@ func defaultSpan(agent *agent) *span {
 	span.parentAppName = ""
 	span.parentAppType = 1 //UNKNOWN
 	span.parentServiceName = ""
-	span.eventDepth = 1
+	span.eventDepth.Store(1)
 	span.serviceType = ServiceTypeGoApp
 	span.startTime = time.Now()
 	span.goroutineId = -1
@@ -165,7 +172,7 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 	// there is nothing to record the link on - peek() would hand back an
 	// ancestor event that did not make this call.
 	var se *spanEvent
-	if span.eventOverflow == 0 {
+	if span.eventOverflow.Load() == 0 {
 		if cur, ok := span.eventStack.peek(); ok {
 			se = cur
 		} else {
@@ -308,11 +315,10 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 	}
 
 	cfg := span.config()
-	if span.eventSequence >= cfg.spanMaxEventSequence || span.eventDepth >= cfg.spanMaxEventDepth {
-		span.eventOverflow++
-		if !span.eventOverflowLog {
-			Log("span").Warnf("callStack maximum depth/sequence exceeded. (depth=%d, seq=%d)", span.eventDepth, span.eventSequence)
-			span.eventOverflowLog = true
+	if span.eventSequence.Load() >= cfg.spanMaxEventSequence || span.eventDepth.Load() >= cfg.spanMaxEventDepth {
+		span.eventOverflow.Add(1)
+		if span.eventOverflowLog.CompareAndSwap(false, true) {
+			Log("span").Warnf("callStack maximum depth/sequence exceeded. (depth=%d, seq=%d)", span.eventDepth.Load(), span.eventSequence.Load())
 		}
 	} else {
 		span.appendSpanEvent(newSpanEvent(span, operationName))
@@ -325,18 +331,18 @@ func (span *span) appendSpanEvent(se *spanEvent) {
 	defer span.spanEventLock.Unlock()
 
 	span.eventStack.push(se)
-	span.eventSequence++
-	span.eventDepth++
+	span.eventSequence.Add(1)
+	span.eventDepth.Add(1)
 }
 
 func (span *span) EndSpanEvent() {
-	if span.eventOverflow > 0 {
-		span.eventOverflow--
+	if span.eventOverflow.Load() > 0 {
+		span.eventOverflow.Add(-1)
 		return
 	}
 	if se, ok := span.eventStack.pop(); ok {
 		se.end()
-		if !span.recovered {
+		if !span.recovered.Load() {
 			if v := recover(); v != nil {
 				err, ok := v.(error)
 				if !ok {
@@ -344,7 +350,7 @@ func (span *span) EndSpanEvent() {
 				}
 				se.SetError(err, "panic")
 				span.SetError(err)
-				span.recovered = true
+				span.recovered.Store(true)
 				// Record the event before re-panicking: it was already popped,
 				// so skipping the append would drop the very event that
 				// captured the panic.
@@ -378,7 +384,7 @@ func (span *span) appendEndedSpanEvent(se *spanEvent) {
 }
 
 func (span *span) newAsyncSpan() Tracer {
-	if span.eventOverflow > 0 {
+	if span.eventOverflow.Load() > 0 {
 		return NoopTracer()
 	}
 	if se, ok := span.eventStack.peek(); ok {
@@ -455,7 +461,7 @@ func (span *span) Span() SpanRecorder {
 }
 
 func (span *span) SpanEvent() SpanEventRecorder {
-	if span.eventOverflow > 0 {
+	if span.eventOverflow.Load() > 0 {
 		return &defaultNoopSpanEvent
 	}
 	if se, ok := span.eventStack.peek(); ok {
@@ -470,7 +476,7 @@ func (span *span) IsSampled() bool {
 }
 
 func (span *span) SetError(e error) {
-	if e == nil || span.eventOverflow > 0 {
+	if e == nil || span.eventOverflow.Load() > 0 {
 		return
 	}
 

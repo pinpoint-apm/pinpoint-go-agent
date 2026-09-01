@@ -33,8 +33,8 @@ func defaultSpanEvent(span *span, operationName string) *spanEvent {
 	se.parentSpan = span
 	se.startTime = time.Now().UnixMilli()
 	se.startElapsed = 0
-	se.sequence = span.eventSequence
-	se.depth = span.eventDepth
+	se.sequence = span.eventSequence.Load()
+	se.depth = span.eventDepth.Load()
 	se.operationName = operationName
 	se.endPoint = ""
 	se.asyncId = noneAsyncId
@@ -72,7 +72,7 @@ func newSpanEventGoroutine(span *span) *spanEvent {
 }
 
 func (se *spanEvent) end() {
-	se.parentSpan.eventDepth--
+	se.parentSpan.eventDepth.Add(-1)
 	if !se.isTimeFixed {
 		se.endElapsed = time.Now().UnixMilli() - se.startTime
 	}

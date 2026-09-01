@@ -45,13 +45,13 @@ func Test_spanEvent_end(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			se := newSpanEvent(tt.args.span, tt.args.operationName)
 			tt.args.span.appendSpanEvent(se)
-			assert.Equal(t, se.parentSpan.eventDepth, int32(2), "eventDepth")
+			assert.Equal(t, se.parentSpan.eventDepth.Load(), int32(2), "eventDepth")
 
 			time.Sleep(100 * time.Millisecond)
 			se.end()
 
 			assert.Equal(t, se.operationName, tt.args.operationName, "operationName")
-			assert.Equal(t, se.parentSpan.eventDepth, int32(1), "eventDepth")
+			assert.Equal(t, se.parentSpan.eventDepth.Load(), int32(1), "eventDepth")
 			assert.Greater(t, se.endElapsed, int64(99), "endElapsed")
 		})
 	}

@@ -16,7 +16,7 @@ func Test_defaultSpan(t *testing.T) {
 
 	assert.Equal(t, span.parentSpanId, int64(-1), "parentSpanId")
 	assert.Equal(t, span.parentAppType, 1, "parentAppType")
-	assert.Equal(t, span.eventDepth, int32(1), "eventDepth")
+	assert.Equal(t, span.eventDepth.Load(), int32(1), "eventDepth")
 	assert.Equal(t, span.serviceType, int32(ServiceTypeGoApp), "serviceType")
 	assert.NotNil(t, span.eventStack, "stack")
 }
@@ -185,7 +185,7 @@ func Test_span_Inject_EventOverflow(t *testing.T) {
 			s.spanId = int64(12345)
 			s.txId = TransactionId{AgentId: "t123456", StartTime: int64(12345), Sequence: int64(1)}
 			tt.overflow(s)
-			assert.Equal(t, s.eventOverflow, 1, "eventOverflow")
+			assert.Equal(t, s.eventOverflow.Load(), int32(1), "eventOverflow")
 
 			m := make(map[string]string)
 			s.Inject(&DistributedTracingContextMap{m})
@@ -218,8 +218,8 @@ func Test_span_NewSpanEvent(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			span := defaultTestSpan()
 			span.NewSpanEvent(tt.args.operationName)
-			assert.Equal(t, span.eventSequence, int32(1), "eventSequence")
-			assert.Equal(t, span.eventDepth, int32(2), "eventDepth")
+			assert.Equal(t, span.eventSequence.Load(), int32(1), "eventSequence")
+			assert.Equal(t, span.eventDepth.Load(), int32(2), "eventDepth")
 			assert.Equal(t, span.eventStack.len(), int(1), "stack.len")
 
 			se, exist := span.eventStack.peek()
@@ -252,17 +252,17 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 			s.NewSpanEvent(tt.args.operationName)
 			s.NewSpanEvent(tt.args.operationName)
 
-			assert.Equal(t, s.eventSequence, int32(2), "eventSequence")
-			assert.Equal(t, s.eventDepth, int32(3), "eventDepth")
-			assert.Equal(t, s.eventOverflow, 2, "eventOverflow")
-			assert.Equal(t, s.eventOverflowLog, true, "eventOverflowLog")
+			assert.Equal(t, s.eventSequence.Load(), int32(2), "eventSequence")
+			assert.Equal(t, s.eventDepth.Load(), int32(3), "eventDepth")
+			assert.Equal(t, s.eventOverflow.Load(), int32(2), "eventOverflow")
+			assert.Equal(t, s.eventOverflowLog.Load(), true, "eventOverflowLog")
 
 			s.EndSpanEvent()
-			assert.Equal(t, s.eventOverflow, 1, "eventOverflow")
+			assert.Equal(t, s.eventOverflow.Load(), int32(1), "eventOverflow")
 			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
 
 			s.EndSpanEvent()
-			assert.Equal(t, s.eventOverflow, 0, "eventOverflow")
+			assert.Equal(t, s.eventOverflow.Load(), int32(0), "eventOverflow")
 			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
 
 			s.EndSpanEvent()
@@ -275,13 +275,13 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 			s.NewSpanEvent(tt.args.operationName)
 			s.NewSpanEvent(tt.args.operationName)
 
-			assert.Equal(t, s.eventSequence, int32(4), "eventSequence")
-			assert.Equal(t, s.eventDepth, int32(3), "eventDepth")
-			assert.Equal(t, s.eventOverflow, 2, "eventOverflow")
-			assert.Equal(t, s.eventOverflowLog, true, "eventOverflowLog")
+			assert.Equal(t, s.eventSequence.Load(), int32(4), "eventSequence")
+			assert.Equal(t, s.eventDepth.Load(), int32(3), "eventDepth")
+			assert.Equal(t, s.eventOverflow.Load(), int32(2), "eventOverflow")
+			assert.Equal(t, s.eventOverflowLog.Load(), true, "eventOverflowLog")
 
 			s.EndSpanEvent()
-			assert.Equal(t, s.eventOverflow, 1, "eventOverflow")
+			assert.Equal(t, s.eventOverflow.Load(), int32(1), "eventOverflow")
 			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
 
 			_, ok := s.SpanEvent().(*noopSpanEvent)
@@ -295,7 +295,7 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 			assert.Equal(t, noop.withStats, false, "SpanId")
 
 			s.EndSpanEvent()
-			assert.Equal(t, s.eventOverflow, 0, "eventOverflow")
+			assert.Equal(t, s.eventOverflow.Load(), int32(0), "eventOverflow")
 			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
 
 			_, ok = s.SpanEvent().(*noopSpanEvent)
@@ -344,42 +344,42 @@ func Test_span_NewSpanEventSequenceOverflow(t *testing.T) {
 			span.NewSpanEvent(tt.args.operationName).EndSpanEvent()
 			span.NewSpanEvent(tt.args.operationName)
 			span.NewSpanEvent(tt.args.operationName)
-			assert.Equal(t, span.eventSequence, int32(5), "eventSequence")
-			assert.Equal(t, span.eventOverflow, 0, "eventOverflow")
-			assert.Equal(t, span.eventDepth, int32(3), "eventDepth")
+			assert.Equal(t, span.eventSequence.Load(), int32(5), "eventSequence")
+			assert.Equal(t, span.eventOverflow.Load(), int32(0), "eventOverflow")
+			assert.Equal(t, span.eventDepth.Load(), int32(3), "eventDepth")
 			assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
 
 			span.NewSpanEvent(tt.args.operationName)
-			assert.Equal(t, span.eventSequence, int32(5), "eventSequence")
-			assert.Equal(t, span.eventOverflow, 1, "eventOverflow")
-			assert.Equal(t, span.eventOverflowLog, true, "eventOverflowLog")
-			assert.Equal(t, span.eventDepth, int32(3), "eventDepth")
+			assert.Equal(t, span.eventSequence.Load(), int32(5), "eventSequence")
+			assert.Equal(t, span.eventOverflow.Load(), int32(1), "eventOverflow")
+			assert.Equal(t, span.eventOverflowLog.Load(), true, "eventOverflowLog")
+			assert.Equal(t, span.eventDepth.Load(), int32(3), "eventDepth")
 			assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
 
 			span.NewSpanEvent(tt.args.operationName)
-			assert.Equal(t, span.eventSequence, int32(5), "eventSequence")
-			assert.Equal(t, span.eventOverflow, 2, "eventOverflow")
-			assert.Equal(t, span.eventDepth, int32(3), "eventDepth")
+			assert.Equal(t, span.eventSequence.Load(), int32(5), "eventSequence")
+			assert.Equal(t, span.eventOverflow.Load(), int32(2), "eventOverflow")
+			assert.Equal(t, span.eventDepth.Load(), int32(3), "eventDepth")
 			assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
 
 			span.EndSpanEvent()
-			assert.Equal(t, span.eventOverflow, 1, "eventOverflow")
-			assert.Equal(t, span.eventDepth, int32(3), "eventDepth")
+			assert.Equal(t, span.eventOverflow.Load(), int32(1), "eventOverflow")
+			assert.Equal(t, span.eventDepth.Load(), int32(3), "eventDepth")
 			assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
 
 			span.EndSpanEvent()
-			assert.Equal(t, span.eventOverflow, 0, "eventOverflow")
-			assert.Equal(t, span.eventDepth, int32(3), "eventDepth")
+			assert.Equal(t, span.eventOverflow.Load(), int32(0), "eventOverflow")
+			assert.Equal(t, span.eventDepth.Load(), int32(3), "eventDepth")
 			assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
 
 			span.EndSpanEvent()
-			assert.Equal(t, span.eventOverflow, 0, "eventOverflow")
-			assert.Equal(t, span.eventDepth, int32(2), "eventDepth")
+			assert.Equal(t, span.eventOverflow.Load(), int32(0), "eventOverflow")
+			assert.Equal(t, span.eventDepth.Load(), int32(2), "eventDepth")
 			assert.Equal(t, span.eventStack.len(), 1, "stack.len()")
 
 			span.EndSpanEvent()
-			assert.Equal(t, span.eventOverflow, 0, "eventOverflow")
-			assert.Equal(t, span.eventDepth, int32(1), "eventDepth")
+			assert.Equal(t, span.eventOverflow.Load(), int32(0), "eventOverflow")
+			assert.Equal(t, span.eventDepth.Load(), int32(1), "eventDepth")
 			assert.Equal(t, span.eventStack.len(), 0, "stack.len()")
 		})
 	}
@@ -406,6 +406,29 @@ func Test_span_EndSpan(t *testing.T) {
 			assert.Equal(t, span.eventStack.len(), 0, "stack.len()")
 		})
 	}
+}
+
+// A Tracer instruments a single call stack, but plugins cannot always keep one
+// on a single goroutine - a gRPC client stream, gocql's speculative execution
+// and pgxpool's background dial all pair events from goroutines the library
+// spawns. That misuse may corrupt the trace, but it must never be a data race
+// on the span's counters. Run under -race.
+func Test_span_ConcurrentEventPairingIsRaceFree(t *testing.T) {
+	span := defaultTestSpan()
+
+	var wg sync.WaitGroup
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 500; i++ {
+				span.NewSpanEvent("concurrent")
+				span.EndSpanEvent()
+			}
+		}()
+	}
+	wg.Wait()
+	span.EndSpan()
 }
 
 func Test_span_EndSpanEvent(t *testing.T) {
