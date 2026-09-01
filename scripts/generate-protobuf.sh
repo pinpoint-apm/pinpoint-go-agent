@@ -4,12 +4,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROTO_SRC_DIR="${PROTO_SRC_DIR:-$ROOT_DIR/pinpoint-grpc-idl/proto}"
 OUT_DIR="${OUT_DIR:-$ROOT_DIR/protobuf}"
+MOCK_OUT_DIR="${MOCK_OUT_DIR:-$ROOT_DIR/internal/grpcmock}"
 TOOLS_DIR="${TOOLS_DIR:-$ROOT_DIR/.tools}"
 BIN_DIR="$TOOLS_DIR/bin"
 
 PROTOC_VERSION="${PROTOC_VERSION:-36.1}"
 PROTOC_GEN_GO_VERSION="${PROTOC_GEN_GO_VERSION:-v1.36.11}"
 PROTOC_GEN_GO_GRPC_VERSION="${PROTOC_GEN_GO_GRPC_VERSION:-v1.6.2}"
+PROTOC_GEN_GO_GRPCMOCK_VERSION="${PROTOC_GEN_GO_GRPCMOCK_VERSION:-v1.3.2}"
+MOCK_GO_PACKAGE="${MOCK_GO_PACKAGE:-github.com/pinpoint-apm/pinpoint-go-agent/protobuf;grpcmock}"
 GO_PACKAGE="${GO_PACKAGE:-github.com/pinpoint-apm/pinpoint-go-agent/protobuf;v1}"
 TMP_PROTO_DIR=""
 
@@ -150,11 +153,57 @@ generate() {
 	gofmt -w "$OUT_DIR"/*.pb.go
 }
 
+# generate_mocks emits testify mocks for every generated gRPC client, server and
+# stream. They live in their own package rather than beside the .pb.go files so
+# that testify stays out of the shipped protobuf package: the M options below
+# name the protobuf package as the one to import and "grpcmock" as the package
+# to emit, which is what import_package=true keys off.
+generate_mocks() {
+	local proto_files mock_opts generated_dir f
+
+	proto_files=("$PROTO_SRC_DIR"/v1/*.proto)
+	mock_opts=()
+	for f in "${proto_files[@]}"; do
+		mock_opts+=(--go-grpcmock_opt="Mv1/$(basename "$f")=$MOCK_GO_PACKAGE")
+	done
+
+	generated_dir="$TMP_PROTO_DIR/generated-mocks"
+	mkdir -p "$generated_dir" "$MOCK_OUT_DIR"
+
+	log "generating testify gRPC mocks"
+	protoc \
+		--proto_path="$PROTO_SRC_DIR" \
+		--go-grpcmock_out="$generated_dir" \
+		--go-grpcmock_opt=paths=source_relative \
+		--go-grpcmock_opt=framework=testify \
+		--go-grpcmock_opt=import_package=true \
+		"${mock_opts[@]}" \
+		"${proto_files[@]}"
+
+	[ -d "$generated_dir/v1" ] || die "generated mock directory was not created"
+
+	# protoc-gen-go-grpcmock v1.3.2 qualifies a stream interface with the
+	# package of the method's response message instead of the service's own.
+	# Every client-streaming RPC here answers google.protobuf.Empty, so those
+	# come out as emptypb.Span_SendSpanClient and friends, which do not exist.
+	# (\b is GNU-only, so key off the underscore every stream type carries;
+	# emptypb.Empty, the one legitimate use of that import, has none.)
+	sed -i.bak -E 's/emptypb\.([A-Za-z0-9]+_[A-Za-z0-9_]+)/protobuf.\1/g' \
+		"$generated_dir"/v1/*_grpc_mock.pb.go
+	rm -f "$generated_dir"/v1/*.bak
+
+	find "$MOCK_OUT_DIR" -maxdepth 1 -type f -name '*_grpc_mock.pb.go' -delete
+	cp "$generated_dir"/v1/*_grpc_mock.pb.go "$MOCK_OUT_DIR"/
+	gofmt -w "$MOCK_OUT_DIR"/*.pb.go
+}
+
 export PATH="$BIN_DIR:$PATH"
 trap cleanup EXIT
 
 ensure_protoc
 ensure_go_tool protoc-gen-go google.golang.org/protobuf/cmd/protoc-gen-go "$PROTOC_GEN_GO_VERSION"
 ensure_go_tool protoc-gen-go-grpc google.golang.org/grpc/cmd/protoc-gen-go-grpc "$PROTOC_GEN_GO_GRPC_VERSION"
+ensure_go_tool protoc-gen-go-grpcmock github.com/lovoo/protoc-gen-go-grpcmock/cmd/protoc-gen-go-grpcmock "$PROTOC_GEN_GO_GRPCMOCK_VERSION"
 generate
+generate_mocks
 log "protobuf generation complete"
