@@ -15,7 +15,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"net/http"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
@@ -40,36 +39,7 @@ func routePattern(r *http.Request) string {
 }
 
 func wrap(handler http.Handler, funcName string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !pinpoint.GetAgent().Enable() {
-			handler.ServeHTTP(w, r)
-			return
-		}
-
-		status := http.StatusOK
-		tracer := pphttp.NewHttpServerTracer(r, serverName)
-
-		defer tracer.EndSpan()
-		defer func() {
-			// RoutePattern joins and rewrites the pattern list per call, so
-			// don't pay for it when the stat would be dropped anyway.
-			if pphttp.IsUrlStatEnabled() {
-				pphttp.CollectUrlStat(tracer, routePattern(r), r.Method, status)
-			}
-			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
-		}()
-		defer func() {
-			if e := recover(); e != nil {
-				status = http.StatusInternalServerError
-				panic(e)
-			}
-		}()
-		defer tracer.NewSpanEvent(funcName).EndSpanEvent()
-
-		w = pphttp.WrapResponseWriter(w, &status)
-		r = pinpoint.RequestWithTracerContext(r, tracer)
-		handler.ServeHTTP(w, r)
-	})
+	return pphttp.TraceHandler(handler, serverName, funcName, routePattern)
 }
 
 // WrapHandler wraps the given http handler.

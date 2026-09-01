@@ -15,7 +15,6 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 )
 
@@ -39,40 +38,16 @@ func WrapHandlerFunc(f func(http.ResponseWriter, *http.Request)) func(http.Respo
 	return func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }
 }
 
+// routePattern returns the gorilla/mux path template of r, or "" when there
+// is none - the handler may run outside a mux router.
+func routePattern(r *http.Request) string {
+	if route := mux.CurrentRoute(r); route != nil {
+		path, _ := route.GetPathTemplate()
+		return path
+	}
+	return ""
+}
+
 func wrap(handler http.Handler, funcName string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !pinpoint.GetAgent().Enable() {
-			handler.ServeHTTP(w, r)
-			return
-		}
-
-		status := http.StatusOK
-		tracer := pphttp.NewHttpServerTracer(r, serverName)
-
-		defer tracer.EndSpan()
-		defer func() {
-			// The route lookup walks the request context per call, so don't
-			// pay for it when the stat would be dropped anyway.
-			if pphttp.IsUrlStatEnabled() {
-				path := ""
-				if route := mux.CurrentRoute(r); route != nil {
-					path, _ = route.GetPathTemplate()
-				}
-				pphttp.CollectUrlStat(tracer, path, r.Method, status)
-			}
-			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
-		}()
-		defer func() {
-			if e := recover(); e != nil {
-				status = http.StatusInternalServerError
-				panic(e)
-			}
-		}()
-
-		defer tracer.NewSpanEvent(funcName).EndSpanEvent()
-
-		w = pphttp.WrapResponseWriter(w, &status)
-		r = pinpoint.RequestWithTracerContext(r, tracer)
-		handler.ServeHTTP(w, r)
-	})
+	return pphttp.TraceHandler(handler, serverName, funcName, routePattern)
 }

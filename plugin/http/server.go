@@ -219,8 +219,22 @@ func wrapHandler(pattern string, handler http.Handler, serverName ...string) htt
 	} else {
 		srvName = defaultServerName
 	}
-	funcName := HandlerFuncName(handler)
 
+	var urlPattern func(*http.Request) string
+	if pattern != "" {
+		urlPattern = func(*http.Request) string { return pattern }
+	}
+	return TraceHandler(handler, srvName, HandlerFuncName(handler), urlPattern)
+}
+
+// TraceHandler wraps handler in the standard pinpoint HTTP server trace:
+// span per request, response status and header recording, URL stat
+// collection, and 500-on-panic. It is the single source of the trace
+// sequence for the net/http-shaped framework adapters (chi, gorilla, ...).
+// urlPattern returns the route pattern for URL stats and is called after the
+// handler ran, when the framework has resolved the route; nil disables URL
+// stat collection.
+func TraceHandler(handler http.Handler, serverName, funcName string, urlPattern func(*http.Request) string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !pinpoint.GetAgent().Enable() {
 			handler.ServeHTTP(w, r)
@@ -228,12 +242,14 @@ func wrapHandler(pattern string, handler http.Handler, serverName ...string) htt
 		}
 
 		status := http.StatusOK
-		tracer := NewHttpServerTracer(r, srvName)
+		tracer := NewHttpServerTracer(r, serverName)
 
 		defer tracer.EndSpan()
 		defer func() {
-			if pattern != "" {
-				CollectUrlStat(tracer, pattern, r.Method, status)
+			// Route-pattern lookups can be costly per call, so don't pay for
+			// them when the stat would be dropped anyway.
+			if urlPattern != nil && IsUrlStatEnabled() {
+				CollectUrlStat(tracer, urlPattern(r), r.Method, status)
 			}
 			RecordHttpServerResponse(tracer, status, w.Header())
 		}()

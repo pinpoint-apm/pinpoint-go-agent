@@ -28,31 +28,7 @@ const serverName = "Beego Server"
 // Middleware is deprecated. Use ServerFilterChain.
 func Middleware() func(http.Handler) http.Handler {
 	return func(h http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !pinpoint.GetAgent().Enable() {
-				h.ServeHTTP(w, r)
-				return
-			}
-
-			status := http.StatusOK
-			tracer := pphttp.NewHttpServerTracer(r, serverName)
-
-			defer tracer.EndSpan()
-			defer func() {
-				pphttp.RecordHttpServerResponse(tracer, status, w.Header())
-			}()
-			defer func() {
-				if e := recover(); e != nil {
-					status = http.StatusInternalServerError
-					panic(e)
-				}
-			}()
-			defer tracer.NewSpanEvent("beego/v2.HandlerFunc()").EndSpanEvent()
-
-			w = pphttp.WrapResponseWriter(w, &status)
-			r = pinpoint.RequestWithTracerContext(r, tracer)
-			h.ServeHTTP(w, r)
-		})
+		return pphttp.TraceHandler(h, serverName, "beego/v2.HandlerFunc()", nil)
 	}
 }
 
