@@ -8,8 +8,9 @@
 package ppgocqlv2
 
 import (
-	"bytes"
 	"context"
+	"strconv"
+	"strings"
 
 	"github.com/apache/cassandra-gocql-driver/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
@@ -64,13 +65,27 @@ func (o *Observer) ObserveBatch(ctx context.Context, batch gocql.ObservedBatch) 
 	se.SetDestination(batch.Keyspace)
 	se.FixDuration(batch.Start, batch.End)
 
-	var buffer bytes.Buffer
-	for _, statement := range batch.Statements {
-		buffer.WriteString("[")
-		buffer.WriteString(statement)
-		buffer.WriteString("]")
-	}
-
-	se.SetSQL(buffer.String(), "")
+	se.SetSQL(batchSQL(batch.Statements), "")
 	se.SetError(batch.Err, "batch error")
+}
+
+// maxBatchSQL bounds the batch annotation: gocql puts no limit on the batch
+// size, and SetSQL keeps only a 64KB prefix anyway, so building the whole
+// batch as one string paid O(batch) for a capped result.
+const maxBatchSQL = 64 * 1024
+
+func batchSQL(statements []string) string {
+	var b strings.Builder
+	for i, statement := range statements {
+		if b.Len() > maxBatchSQL {
+			b.WriteString("...(")
+			b.WriteString(strconv.Itoa(len(statements) - i))
+			b.WriteString(" more statements)")
+			break
+		}
+		b.WriteString("[")
+		b.WriteString(statement)
+		b.WriteString("]")
+	}
+	return b.String()
 }

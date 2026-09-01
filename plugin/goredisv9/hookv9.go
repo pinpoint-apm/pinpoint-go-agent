@@ -13,9 +13,9 @@
 package ppgoredisv9
 
 import (
-	"bytes"
 	"context"
 	"net"
+	"strconv"
 	"strings"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
@@ -100,14 +100,23 @@ func (r *hook) newSpanEvent(tracer pinpoint.Tracer, operation string, cmd string
 	return tracer
 }
 
-func cmdName(cmds []redis.Cmder) string {
-	var buf bytes.Buffer
+// maxListedCmds bounds the pipeline annotation: the pipeline size is
+// caller-controlled, so listing every command would grow the span with it.
+const maxListedCmds = 32
 
+func cmdName(cmds []redis.Cmder) string {
+	var b strings.Builder
 	for i, cmd := range cmds {
-		if i != 0 {
-			buf.WriteString(", ")
+		if i == maxListedCmds {
+			b.WriteString(", ...(")
+			b.WriteString(strconv.Itoa(len(cmds) - maxListedCmds))
+			b.WriteString(" more)")
+			break
 		}
-		buf.WriteString(cmd.Name())
+		if i != 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(cmd.Name())
 	}
-	return buf.String()
+	return b.String()
 }

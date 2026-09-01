@@ -13,8 +13,8 @@
 package ppgoredisv7
 
 import (
-	"bytes"
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/go-redis/redis/v7"
@@ -101,16 +101,25 @@ func (r *hook) setSpanEvent(tracer pinpoint.Tracer, cmd string, err error) {
 	se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
 }
 
-func cmdName(cmds []redis.Cmder) string {
-	var buf bytes.Buffer
+// maxListedCmds bounds the pipeline annotation: the pipeline size is
+// caller-controlled, so listing every command would grow the span with it.
+const maxListedCmds = 32
 
+func cmdName(cmds []redis.Cmder) string {
+	var b strings.Builder
 	for i, cmd := range cmds {
-		if i != 0 {
-			buf.WriteString(", ")
+		if i == maxListedCmds {
+			b.WriteString(", ...(")
+			b.WriteString(strconv.Itoa(len(cmds) - maxListedCmds))
+			b.WriteString(" more)")
+			break
 		}
-		buf.WriteString(cmd.Name())
+		if i != 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(cmd.Name())
 	}
-	return buf.String()
+	return b.String()
 }
 
 func pipeError(cmds []redis.Cmder) error {

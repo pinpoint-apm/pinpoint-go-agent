@@ -17,6 +17,7 @@ package ppgomemcache
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -119,9 +120,19 @@ func (c *Client) GetMulti(keys []string) (map[string]*memcache.Item, error) {
 	items, err := c.Client.GetMulti(keys)
 	tracer := c.currentTracer()
 	if tracer.IsSampled() {
-		c.recordMemcacheSpanEvent(tracer, "gomemcache.GetMulti()", strings.Join(keys, ","), start, err)
+		c.recordMemcacheSpanEvent(tracer, "gomemcache.GetMulti()", joinKeys(keys), start, err)
 	}
 	return items, err
+}
+
+// joinKeys caps the annotation: GetMulti has no key-count limit, so listing
+// every key would grow the span with the caller's batch.
+func joinKeys(keys []string) string {
+	const maxListedKeys = 32
+	if len(keys) <= maxListedKeys {
+		return strings.Join(keys, ",")
+	}
+	return strings.Join(keys[:maxListedKeys], ",") + ",...(" + strconv.Itoa(len(keys)-maxListedKeys) + " more)"
 }
 
 func (c *Client) Delete(key string) error {
