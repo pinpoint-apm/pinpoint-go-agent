@@ -32,7 +32,6 @@
 package ppkratosv3
 
 import (
-	"bytes"
 	"context"
 	"net"
 	"strings"
@@ -63,8 +62,12 @@ func ServerMiddleware() middleware.Middleware {
 				if tr.Kind() == transport.KindGRPC {
 					span.SetServiceType(pinpoint.ServiceTypeGrpcServer)
 				}
-				span.SetEndPoint(serverEndpoint(tr.Endpoint()))
-				span.SetRemoteAddress(serverRemoteAddr(ctx))
+				// The endpoint trim and peer-address formatting are discarded
+				// on an unsampled span.
+				if tracer.IsSampled() {
+					span.SetEndPoint(serverEndpoint(tr.Endpoint()))
+					span.SetRemoteAddress(serverRemoteAddr(ctx, tr))
+				}
 
 				ctx = pinpoint.NewContext(ctx, tracer)
 				reply, err = handler(ctx, req)
@@ -77,9 +80,9 @@ func ServerMiddleware() middleware.Middleware {
 	}
 }
 
-func serverRemoteAddr(ctx context.Context) (addr string) {
-	tr, _ := transport.FromServerContext(ctx)
-
+// serverRemoteAddr takes the transporter the caller already has instead of
+// walking the context for it a second time.
+func serverRemoteAddr(ctx context.Context, tr transport.Transporter) (addr string) {
 	switch tr.Kind() {
 	case transport.KindHTTP:
 		if ht, ok := tr.(http.Transporter); ok {
@@ -90,7 +93,12 @@ func serverRemoteAddr(ctx context.Context) (addr string) {
 			addr = p.Addr.String()
 		}
 	}
-	if addr, _, _ = net.SplitHostPort(addr); addr == "" {
+	// Strip the port only when there is one: overwriting with SplitHostPort's
+	// error result turned a bare IP into the 127.0.0.1 fallback.
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		addr = host
+	}
+	if addr == "" {
 		addr = "127.0.0.1"
 	}
 	return addr
@@ -108,24 +116,34 @@ func serverEndpoint(endpoint string) string {
 func ClientMiddleware() middleware.Middleware {
 	return func(handler middleware.Handler) middleware.Handler {
 		return func(ctx context.Context, req interface{}) (reply interface{}, err error) {
+			// A disabled agent traces nothing and injects nothing - not even
+			// the unsampled marker.
+			if !pinpoint.GetAgent().Enable() {
+				return handler(ctx, req)
+			}
+
 			if tr, ok := transport.FromClientContext(ctx); ok {
 				tracer := pinpoint.FromContext(ctx)
 				defer tracer.NewSpanEvent(tr.Operation()).EndSpanEvent()
 
-				se := tracer.SpanEvent()
-				if tr.Kind() == transport.KindGRPC {
-					se.SetServiceType(pinpoint.ServiceTypeGrpc)
-				} else {
-					se.SetServiceType(pinpoint.ServiceTypeGoHttpClient)
-				}
+				// The URL annotation and destination are discarded on an
+				// unsampled span event.
+				if tracer.IsSampled() {
+					se := tracer.SpanEvent()
+					if tr.Kind() == transport.KindGRPC {
+						se.SetServiceType(pinpoint.ServiceTypeGrpc)
+					} else {
+						se.SetServiceType(pinpoint.ServiceTypeGoHttpClient)
+					}
 
-				remote := clientRemoteAddr(tr)
-				se.SetDestination(remote)
-				se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, makeUrl(tr, remote))
+					remote := clientRemoteAddr(tr)
+					se.SetDestination(remote)
+					se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, makeUrl(tr, remote))
+				}
 
 				tracer.Inject(tr.RequestHeader())
 				reply, err = handler(ctx, req)
-				se.SetError(err, "rpc error")
+				tracer.SpanEvent().SetError(err, "rpc error")
 				return reply, err
 			} else {
 				return handler(ctx, req)
@@ -150,14 +168,12 @@ func clientRemoteAddr(tr transport.Transporter) (addr string) {
 }
 
 func makeUrl(tr transport.Transporter, addr string) string {
-	var buf bytes.Buffer
+	scheme := ""
 	switch tr.Kind() {
 	case transport.KindHTTP:
-		buf.WriteString("http://")
+		scheme = "http://"
 	case transport.KindGRPC:
-		buf.WriteString("grpc://")
+		scheme = "grpc://"
 	}
-	buf.WriteString(addr)
-	buf.WriteString(tr.Operation())
-	return buf.String()
+	return scheme + addr + tr.Operation()
 }

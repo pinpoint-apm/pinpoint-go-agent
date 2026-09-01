@@ -137,32 +137,37 @@ func Test_serverEndpoint(t *testing.T) {
 func Test_serverRemoteAddr(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/hello", nil)
 	req.RemoteAddr = "10.0.0.1:54321"
-	httpCtx := transport.NewServerContext(context.Background(),
-		newHttpTransport("http://127.0.0.1:8000", "/helloworld.Greeter/SayHello", req))
-	assert.Equal(t, "10.0.0.1", serverRemoteAddr(httpCtx), "an HTTP peer address is stripped of its port")
+	httpTr := newHttpTransport("http://127.0.0.1:8000", "/helloworld.Greeter/SayHello", req)
+	httpCtx := transport.NewServerContext(context.Background(), httpTr)
+	assert.Equal(t, "10.0.0.1", serverRemoteAddr(httpCtx, httpTr), "an HTTP peer address is stripped of its port")
 
-	grpcCtx := transport.NewServerContext(context.Background(),
-		newGrpcTransport("grpc://127.0.0.1:9000", "/helloworld.Greeter/SayHello"))
+	grpcTr := newGrpcTransport("grpc://127.0.0.1:9000", "/helloworld.Greeter/SayHello")
+	grpcCtx := transport.NewServerContext(context.Background(), grpcTr)
 	grpcCtx = peer.NewContext(grpcCtx, &peer.Peer{Addr: &net.TCPAddr{IP: net.IPv4(10, 0, 0, 2), Port: 54321}})
-	assert.Equal(t, "10.0.0.2", serverRemoteAddr(grpcCtx), "a gRPC peer address comes off the peer")
+	assert.Equal(t, "10.0.0.2", serverRemoteAddr(grpcCtx, grpcTr), "a gRPC peer address comes off the peer")
 
 	// A gRPC call without a peer, and an HTTP request without a remote address,
 	// both leave nothing to split.
-	bare := transport.NewServerContext(context.Background(),
-		newGrpcTransport("grpc://127.0.0.1:9000", "/helloworld.Greeter/SayHello"))
-	assert.Equal(t, "127.0.0.1", serverRemoteAddr(bare), "a gRPC call with no peer falls back")
+	assert.Equal(t, "127.0.0.1", serverRemoteAddr(transport.NewServerContext(context.Background(), grpcTr), grpcTr),
+		"a gRPC call with no peer falls back")
 
 	noAddr := httptest.NewRequest(http.MethodGet, "/hello", nil)
 	noAddr.RemoteAddr = ""
-	assert.Equal(t, "127.0.0.1", serverRemoteAddr(transport.NewServerContext(context.Background(),
-		newHttpTransport("http://127.0.0.1:8000", "/hello", noAddr))),
+	noAddrTr := newHttpTransport("http://127.0.0.1:8000", "/hello", noAddr)
+	assert.Equal(t, "127.0.0.1", serverRemoteAddr(transport.NewServerContext(context.Background(), noAddrTr), noAddrTr),
 		"an HTTP request with no peer address falls back")
 
 	// An IPv6 peer address still splits into a bare host.
 	v6 := httptest.NewRequest(http.MethodGet, "/hello", nil)
 	v6.RemoteAddr = "[2001:db8::1]:54321"
-	assert.Equal(t, "2001:db8::1", serverRemoteAddr(transport.NewServerContext(context.Background(),
-		newHttpTransport("http://127.0.0.1:8000", "/hello", v6))))
+	v6Tr := newHttpTransport("http://127.0.0.1:8000", "/hello", v6)
+	assert.Equal(t, "2001:db8::1", serverRemoteAddr(transport.NewServerContext(context.Background(), v6Tr), v6Tr))
+
+	// A bare IP with no port is kept, not replaced by the fallback.
+	bareIP := httptest.NewRequest(http.MethodGet, "/hello", nil)
+	bareIP.RemoteAddr = "10.0.0.5"
+	bareIPTr := newHttpTransport("http://127.0.0.1:8000", "/hello", bareIP)
+	assert.Equal(t, "10.0.0.5", serverRemoteAddr(transport.NewServerContext(context.Background(), bareIPTr), bareIPTr))
 }
 
 // The destination recorded for a client call is the callee: the Host header for
