@@ -232,3 +232,18 @@ func TestHook_ConcurrentLogging(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// logrus hands hooks a Dup'd entry whose Data is cloned with maps.Clone, which
+// is nil for a hand-built entry that never allocated Data. The hook must not
+// panic on such an entry.
+func TestHook_Fire_NilDataEntry(t *testing.T) {
+	agent := startAgent(t)
+	tracer := agent.NewSpanTracer("test", "/caller")
+	defer tracer.EndSpan()
+
+	entry := &logrus.Entry{Context: pinpoint.NewContext(context.Background(), tracer)}
+	assert.NotPanics(t, func() {
+		require.NoError(t, NewHook().Fire(entry))
+	})
+	assert.Equal(t, tracer.TransactionId().String(), entry.Data[pinpoint.LogTransactionIdKey])
+}

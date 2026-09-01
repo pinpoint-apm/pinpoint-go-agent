@@ -69,6 +69,12 @@ func (h *hook) Fire(entry *logrus.Entry) error {
 	}
 
 	tracer.Span().SetLogging(pinpoint.Logged)
+	if entry.Data == nil {
+		// logrus hands hooks a Dup'd entry whose Data is cloned with
+		// maps.Clone, which returns nil for a hand-built entry that never
+		// allocated Data - writing into it would panic inside the hook.
+		entry.Data = make(logrus.Fields, 2)
+	}
 	entry.Data[pinpoint.LogTransactionIdKey] = tracer.TransactionId().String()
 	entry.Data[pinpoint.LogSpanIdKey] = tracer.SpanId()
 
