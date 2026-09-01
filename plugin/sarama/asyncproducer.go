@@ -125,6 +125,14 @@ func NewAsyncProducer(addrs []string, config *sarama.Config) (AsyncProducer, err
 }
 
 func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sarama.Config) *asyncProducer {
+	if config == nil {
+		// sarama.NewAsyncProducer accepts a nil config and substitutes
+		// NewConfig() itself. Without the same substitution here, the
+		// forwarder's first config read panics, the recover below kills the
+		// forwarder, and every later message is drained and silently dropped.
+		config = sarama.NewConfig()
+	}
+
 	wrapped := &asyncProducer{
 		AsyncProducer: producer,
 		inputContext:  make(chan *producerMessageContext),
@@ -148,7 +156,13 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 			go drainAsyncProducerInput(wrapped)
 			close(wrapped.inputDone)
 		}()
-		defer func() { recover() }()
+		defer func() {
+			// A dead forwarder means every later message is silently dropped
+			// by the drainer, so its death must never be silent itself.
+			if r := recover(); r != nil {
+				pinpoint.Log("sarama").Errorf("async producer input forwarder died: %v", r)
+			}
+		}()
 
 		for {
 			// The tracer is saved before the send: a broker ack can reach the

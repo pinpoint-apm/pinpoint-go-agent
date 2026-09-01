@@ -472,3 +472,27 @@ func Test_asyncProducer_CloseCollectsErrors(t *testing.T) {
 	require.Len(t, perrs, 1)
 	assert.ErrorIs(t, perrs[0].Err, sarama.ErrOutOfBrokers)
 }
+
+// A nil sarama.Config is legal for sarama.NewAsyncProducer, so the wrapper must
+// not let it kill the input forwarder - every later message would be consumed
+// and silently dropped by the drainer.
+func Test_asyncProducer_NilConfigStillDeliversMessages(t *testing.T) {
+	stub := newStubAsyncProducer()
+	p := wrapAsyncProducer(stub, []string{"broker:9092"}, nil)
+
+	tracer := newRecordingTracer("a")
+	msg := &sarama.ProducerMessage{Topic: "topic"}
+	p.InputContext(pinpoint.NewContext(context.Background(), tracer), msg)
+
+	select {
+	case got := <-stub.input:
+		require.Same(t, msg, got, "the wrong message reached the underlying producer")
+	case <-time.After(time.Second):
+		require.FailNow(t, "message never reached the underlying producer")
+	}
+
+	// nil config means Return.Successes=false: the span must be ended
+	// immediately instead of waiting for an ack that will never come.
+	waitForClose(t, tracer.ended, "span end")
+	requireSpanCount(t, p, 0)
+}
