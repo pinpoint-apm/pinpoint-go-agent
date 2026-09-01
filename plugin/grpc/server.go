@@ -34,6 +34,7 @@ package ppgrpc
 import (
 	"context"
 	"net"
+	"strings"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"google.golang.org/grpc"
@@ -50,21 +51,47 @@ func (s *serverStream) Context() context.Context {
 	return s.context
 }
 
+// distributedTracingContextReaderMD reads header values straight off the
+// incoming context: metadata.FromIncomingContext copies the caller's whole MD
+// - a map, a lowered key string and a value slice per header - only to serve
+// the ten point lookups tracing needs.
 type distributedTracingContextReaderMD struct {
-	md metadata.MD
+	ctx context.Context
 }
 
 func (m distributedTracingContextReaderMD) Get(key string) string {
-	v := m.md.Get(key)
-	if len(v) == 0 {
-		return ""
+	if v := metadata.ValueFromIncomingContext(m.ctx, loweredKey(key)); len(v) > 0 {
+		return v[0]
 	}
-	return v[0]
+	return ""
+}
+
+// loweredHeaderKeys pre-lowers the pinpoint header names once: metadata keys
+// are stored lowercase, so a lowered key takes ValueFromIncomingContext's
+// direct map hit, where a mixed-case one costs an allocation or a scan of the
+// whole MD per lookup.
+var loweredHeaderKeys = func() map[string]string {
+	m := make(map[string]string)
+	for _, k := range []string{
+		pinpoint.HeaderTraceId, pinpoint.HeaderSpanId, pinpoint.HeaderParentSpanId,
+		pinpoint.HeaderSampled, pinpoint.HeaderFlags, pinpoint.HeaderParentApplicationName,
+		pinpoint.HeaderParentApplicationType, pinpoint.HeaderParentApplicationNamespace,
+		pinpoint.HeaderParentServiceName, pinpoint.HeaderHost,
+	} {
+		m[k] = strings.ToLower(k)
+	}
+	return m
+}()
+
+func loweredKey(key string) string {
+	if l, ok := loweredHeaderKeys[key]; ok {
+		return l
+	}
+	return strings.ToLower(key)
 }
 
 func startSpan(ctx context.Context, rpcName string) pinpoint.Tracer {
-	md, _ := metadata.FromIncomingContext(ctx) // nil is ok
-	reader := &distributedTracingContextReaderMD{md}
+	reader := distributedTracingContextReaderMD{ctx}
 	tracer := pinpoint.GetAgent().NewSpanTracerWithReader("gRPC Server", rpcName, reader)
 	tracer.Span().SetServiceType(pinpoint.ServiceTypeGrpcServer)
 	// remoteAddr formats the peer address; an unsampled span would discard it.

@@ -100,18 +100,18 @@ func Test_makeUrl(t *testing.T) {
 // stores every key as a list. The reader has to flatten that to the single
 // value the tracing header carries.
 func Test_distributedTracingContextReaderMD(t *testing.T) {
-	r := distributedTracingContextReaderMD{metadata.Pairs(
+	r := distributedTracingContextReaderMD{metadata.NewIncomingContext(context.Background(), metadata.Pairs(
 		pinpoint.HeaderTraceId, "txid^1^1",
 		"multi", "first",
 		"multi", "second",
-	)}
+	))}
 
 	assert.Equal(t, "txid^1^1", r.Get(pinpoint.HeaderTraceId))
 	assert.Equal(t, "first", r.Get("multi"), "only the first value of a repeated key is the header")
 	assert.Equal(t, "", r.Get("absent"))
 
-	// metadata.FromIncomingContext returns a nil map when there is none.
-	assert.Equal(t, "", (distributedTracingContextReaderMD{nil}).Get("any"))
+	// A context with no incoming metadata reads as absent, not a panic.
+	assert.Equal(t, "", (distributedTracingContextReaderMD{context.Background()}).Get("any"))
 
 	// gRPC lowercases metadata keys on the wire, so lookup has to match that.
 	assert.Equal(t, "txid^1^1", r.Get(pinpoint.HeaderTraceId))

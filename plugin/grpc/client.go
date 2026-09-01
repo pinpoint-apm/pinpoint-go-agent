@@ -1,7 +1,6 @@
 package ppgrpc
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"strings"
@@ -51,12 +50,16 @@ func (cs *clientStream) endSpan(err error) {
 	}
 }
 
-type distributedTracingContextWriterMD struct {
-	md metadata.MD
+// kvInjectionWriter collects the injected headers so they go out through one
+// metadata.AppendToOutgoingContext call: merging them into a copy of the
+// caller's MD paid a full map copy per call, plus a lowercase allocation per
+// Set.
+type kvInjectionWriter struct {
+	kv []string
 }
 
-func (m *distributedTracingContextWriterMD) Set(key string, value string) {
-	m.md.Set(key, value)
+func (w *kvInjectionWriter) Set(key string, value string) {
+	w.kv = append(w.kv, key, value)
 }
 
 func newClientTracer(ctx context.Context, method string, target string) (context.Context, pinpoint.Tracer) {
@@ -76,23 +79,20 @@ func newClientTracer(ctx context.Context, method string, target string) (context
 		se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, makeUrl(remote, method))
 	}
 
-	md, ok := metadata.FromOutgoingContext(ctx)
-	if !ok {
-		md = metadata.New(nil)
-	}
-	writer := &distributedTracingContextWriterMD{md}
+	// Appended rather than merged over the caller's MD: a caller that set the
+	// same pinpoint key on its own outgoing context would now send both
+	// values instead of having its value replaced; nothing legitimate does.
+	writer := &kvInjectionWriter{kv: make([]string, 0, 2*9)}
 	tracer.Inject(writer)
-	ctx = metadata.NewOutgoingContext(ctx, writer.md)
+	if len(writer.kv) > 0 {
+		ctx = metadata.AppendToOutgoingContext(ctx, writer.kv...)
+	}
 
 	return ctx, tracer
 }
 
 func makeUrl(remote string, method string) string {
-	var buf bytes.Buffer
-	buf.WriteString("grpc://")
-	buf.WriteString(remote)
-	buf.WriteString(method)
-	return buf.String()
+	return "grpc://" + remote + method
 }
 
 func endSpanEvent(tracer pinpoint.Tracer, err error) {
