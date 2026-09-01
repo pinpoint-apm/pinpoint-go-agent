@@ -42,7 +42,13 @@ func wrap(handler echo.HandlerFunc, funcName func(*echo.Context) string) echo.Ha
 				panic(e)
 			}
 		}()
-		defer tracer.NewSpanEvent(funcName(c)).EndSpanEvent()
+		// An unsampled tracer discards the name; routeName's RouteInfo clones
+		// the route's parameter slice and builds a comparison string per call.
+		spanName := "echo.HandlerFunc()"
+		if tracer.IsSampled() {
+			spanName = funcName(c)
+		}
+		defer tracer.NewSpanEvent(spanName).EndSpanEvent()
 
 		ctx := pinpoint.NewContext(req.Context(), tracer)
 		c.SetRequest(req.WithContext(ctx))

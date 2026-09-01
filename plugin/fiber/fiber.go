@@ -52,9 +52,13 @@ func wrap(f func(c *fiber.Ctx) error, handlerName string) fiber.Handler {
 		// net/http request (fasthttpadaptor.ConvertRequest) materialized the
 		// full header map, parsed the URL and buffered the body per sampled
 		// request, only for values the default noop recorders never read.
-		pphttp.RecordHttpServerRequestWithReader(tracer,
-			string(c.Context().Host()), c.Context().RemoteAddr().String(),
-			fiberRequestHeader{&c.Context().Request.Header}, fiberCookie{&c.Context().Request.Header})
+		// The sampling check keeps the host copy and remote-addr formatting
+		// off the unsampled path; the callee would discard them.
+		if tracer.IsSampled() {
+			pphttp.RecordHttpServerRequestWithReader(tracer,
+				string(c.Context().Host()), c.Context().RemoteAddr().String(),
+				fiberRequestHeader{&c.Context().Request.Header}, fiberCookie{&c.Context().Request.Header})
+		}
 
 		defer tracer.EndSpan()
 		defer func() {

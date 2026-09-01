@@ -67,7 +67,10 @@ func startSpan(ctx context.Context, rpcName string) pinpoint.Tracer {
 	reader := &distributedTracingContextReaderMD{md}
 	tracer := pinpoint.GetAgent().NewSpanTracerWithReader("gRPC Server", rpcName, reader)
 	tracer.Span().SetServiceType(pinpoint.ServiceTypeGrpcServer)
-	tracer.Span().SetRemoteAddress(remoteAddr(ctx))
+	// remoteAddr formats the peer address; an unsampled span would discard it.
+	if tracer.IsSampled() {
+		tracer.Span().SetRemoteAddress(remoteAddr(ctx))
+	}
 
 	return tracer
 }

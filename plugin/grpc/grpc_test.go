@@ -469,6 +469,7 @@ func (t *forkingTracer) NewGoroutineTracer() pinpoint.Tracer {
 // tracer popped whatever event the application had open there at that moment
 // and recorded the stream's error on it.
 func TestStreamClientInterceptor_StreamEndsOnItsOwnTracer(t *testing.T) {
+	startAgent(t)
 	caller := newForkingTracer()
 
 	stream, err := StreamClientInterceptor()(
@@ -496,6 +497,7 @@ func TestStreamClientInterceptor_StreamEndsOnItsOwnTracer(t *testing.T) {
 
 // A panicking invoker must still close the span event on its way up.
 func TestUnaryClientInterceptor_PanicStillClosesTheSpanEvent(t *testing.T) {
+	startAgent(t)
 	caller := newForkingTracer()
 	assert.PanicsWithValue(t, "boom", func() {
 		_ = UnaryClientInterceptor()(

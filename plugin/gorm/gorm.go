@@ -63,14 +63,17 @@ func wrapBefore(operationName string) func(*gorm.DB) {
 }
 
 func before(db *gorm.DB, operationName string) {
-	if tracer := pinpoint.FromContext(db.Statement.Context); tracer != nil {
+	// FromContext never returns nil - it falls back to the noop tracer - so
+	// gate on sampling, which is what actually decides whether anything is
+	// recorded.
+	if tracer := pinpoint.FromContext(db.Statement.Context); tracer.IsSampled() {
 		span := tracer.NewSpanEvent(operationName)
 		span.SpanEvent().SetServiceType(pinpoint.ServiceTypeGoFunction)
 	}
 }
 
 func after(db *gorm.DB) {
-	if tracer := pinpoint.FromContext(db.Statement.Context); tracer != nil {
+	if tracer := pinpoint.FromContext(db.Statement.Context); tracer.IsSampled() {
 		tracer.SpanEvent().SetError(db.Error)
 		tracer.EndSpanEvent()
 	}

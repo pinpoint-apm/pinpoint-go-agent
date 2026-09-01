@@ -59,8 +59,12 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 		// net/http request (fasthttpadaptor.ConvertRequest) materialized the
 		// full header map, parsed the URL and buffered the body per sampled
 		// request, only for values the default noop recorders never read.
-		pphttp.RecordHttpServerRequestWithReader(tracer, string(ctx.Host()), ctx.RemoteAddr().String(),
-			requestHeader, cookie{&ctx.Request.Header})
+		// The sampling check keeps the host copy and remote-addr formatting
+		// off the unsampled path; the callee would discard them.
+		if tracer.IsSampled() {
+			pphttp.RecordHttpServerRequestWithReader(tracer, string(ctx.Host()), ctx.RemoteAddr().String(),
+				requestHeader, cookie{&ctx.Request.Header})
+		}
 
 		defer tracer.EndSpan()
 		defer func() {
@@ -176,6 +180,10 @@ func (c cookie) VisitAll(f func(name string, value string)) {
 
 // DoClient instruments outbound requests and add distributed tracing headers.
 func DoClient(doFunc func() error, ctx context.Context, req *fasthttp.Request, res *fasthttp.Response) (err error) {
+	if !pinpoint.GetAgent().Enable() {
+		return doFunc()
+	}
+
 	tracer := pinpoint.FromContext(ctx)
 	before(tracer, "fasthttp/Client.Do()", req)
 	// Deferred so a panicking doFunc still closes the span event.

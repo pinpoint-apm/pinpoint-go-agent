@@ -400,6 +400,7 @@ func (t *endCountingTracer) EndSpanEvent()                       { t.ends++ }
 
 // A panicking doFunc must still close the span event on its way up.
 func TestDoClient_PanicStillClosesTheSpanEvent(t *testing.T) {
+	startAgent(t)
 	tracer := &endCountingTracer{Tracer: pinpoint.NoopTracer()}
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)

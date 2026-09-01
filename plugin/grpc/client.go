@@ -105,6 +105,10 @@ func endSpanEvent(tracer pinpoint.Tracer, err error) {
 // UnaryClientInterceptor returns a new grpc.UnaryClientInterceptor ready to instrument.
 func UnaryClientInterceptor() grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) (err error) {
+		if !pinpoint.GetAgent().Enable() {
+			return invoker(ctx, method, req, reply, cc, opts...)
+		}
+
 		newCtx, tracer := newClientTracer(ctx, method, cc.Target())
 		// Deferred so a panicking invoker still closes the span event.
 		defer func() { endSpanEvent(tracer, err) }()
@@ -116,6 +120,10 @@ func UnaryClientInterceptor() grpc.UnaryClientInterceptor {
 // StreamClientInterceptor returns a new grpc.StreamClientInterceptor ready to instrument.
 func StreamClientInterceptor() grpc.StreamClientInterceptor {
 	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (_ grpc.ClientStream, err error) {
+		if !pinpoint.GetAgent().Enable() {
+			return streamer(ctx, desc, cc, method, opts...)
+		}
+
 		newCtx, tracer := newClientTracer(ctx, method, cc.Target())
 		// Deferred so a panicking streamer still closes the creation event; on
 		// success it closes the event LIFO-correctly, right before the stream

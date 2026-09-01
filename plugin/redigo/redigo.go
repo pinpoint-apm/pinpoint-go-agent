@@ -40,6 +40,10 @@ var (
 	errContextNotSupported = errors.New("redis: connection does not support ConnWithContext")
 )
 
+// noopEnd is handed back when nothing was recorded, so untraced operations
+// don't allocate a closure per command.
+var noopEnd = func(error) {}
+
 type wrappedConn struct {
 	base     redis.Conn
 	endpoint string
@@ -259,11 +263,17 @@ func (c *wrappedConn) ReceiveContext(ctx context.Context) (r interface{}, err er
 // operation on this connection is already recording, this one proceeds
 // untraced instead.
 func (c *wrappedConn) startSpanEvent(ctx context.Context, operation string, cmd string) func(error) {
-	if !c.opMu.TryLock() {
-		return func(error) {}
+	// An unsampled tracer records nothing: skip the lock and don't allocate
+	// the closure the caller is about to defer.
+	tracer := pinpoint.FromContext(ctx)
+	if !tracer.IsSampled() {
+		return noopEnd
 	}
 
-	tracer := pinpoint.FromContext(ctx)
+	if !c.opMu.TryLock() {
+		return noopEnd
+	}
+
 	tracer.NewSpanEvent(operation)
 
 	se := tracer.SpanEvent()

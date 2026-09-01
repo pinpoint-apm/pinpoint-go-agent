@@ -99,6 +99,12 @@ func (c cookie) VisitAll(f func(name string, value string)) {
 //	req, _ := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer), "GET", url, nil)
 //	pphttp.DoClient(http.DefaultClient.Do, req)
 func DoClient(doFunc func(req *http.Request) (*http.Response, error), req *http.Request) (*http.Response, error) {
+	// A disabled agent traces nothing and injects nothing - not even the
+	// unsampled marker - matching the other pinpoint agents' disabled state.
+	if !pinpoint.GetAgent().Enable() {
+		return doFunc(req)
+	}
+
 	tracer := before(pinpoint.TracerFromRequestContext(req), "http/Client.Do()", req)
 	resp, err := doFunc(req)
 	after(tracer, resp, err)
@@ -154,6 +160,12 @@ func wrapRoundTripper(ctx context.Context, original http.RoundTripper) http.Roun
 }
 
 func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	// A disabled agent traces nothing and injects nothing - not even the
+	// unsampled marker - so skip the request clone and header copy too.
+	if !pinpoint.GetAgent().Enable() {
+		return r.original.RoundTrip(req)
+	}
+
 	var tracer pinpoint.Tracer
 
 	if r.ctx != nil {
