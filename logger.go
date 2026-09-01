@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 
 	"github.com/sirupsen/logrus"
-	prefixed "github.com/x-cray/logrus-prefixed-formatter"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -56,12 +55,11 @@ func (l *logrusLogger) extra() *logrus.Logger {
 
 func newLogger() *logrusLogger {
 	l := logrus.New()
-	formatter := new(prefixed.TextFormatter)
-	formatter.TimestampFormat = "2006-01-02 15:04:05.000000"
-	formatter.FullTimestamp = true
-	formatter.ForceFormatting = true
-	formatter.ForceColors = true
-	l.Formatter = formatter
+	l.Formatter = &logrus.TextFormatter{
+		TimestampFormat: "2006-01-02 15:04:05.000000",
+		FullTimestamp:   true,
+		ForceColors:     true,
+	}
 	return &logrusLogger{defaultLogger: l}
 }
 
