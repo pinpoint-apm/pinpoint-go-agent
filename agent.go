@@ -1129,9 +1129,11 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 	agent.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize)
 	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
 
-	agent.agentGrpc = newMockAgentGrpc(agent)
-	//agent.spanGrpc = newMockSpanGrpc(agent)
-	//agent.statGrpc = newMockStatGrpc(agent)
+	// offGrpc keeps connectGrpcServer - and every worker it starts - from
+	// running, so no caller ever reaches the clients. A bare struct is enough
+	// to keep the field non-nil and keeps the canned mocks out of the shipped
+	// library.
+	agent.agentGrpc = &agentGrpc{agent: agent}
 
 	setGlobalAgent(agent)
 	agent.enable.Store(true)

@@ -199,7 +199,7 @@ func Test_pingStream_sendPing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
-			agent.agentGrpc = newMockAgentGrpcPing(agent)
+			agent.agentGrpc = newMockAgentGrpc(agent)
 			stream := agent.agentGrpc.newPingStreamWithRetry()
 			err := stream.sendPing()
 			assert.NoError(t, err, "sendPing")
