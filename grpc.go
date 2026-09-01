@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/protobuf/ptypes/wrappers"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -26,6 +25,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	wrappers "google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 const (

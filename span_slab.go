@@ -3,8 +3,8 @@ package pinpoint
 import (
 	"sync"
 
-	"github.com/golang/protobuf/ptypes/wrappers"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	wrappers "google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 // slab hands out pointers to zeroed T values carved from one reusable backing

@@ -18,10 +18,10 @@ import (
 	"testing"
 	"time"
 
-	empty "github.com/golang/protobuf/ptypes/empty"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
+	empty "google.golang.org/protobuf/types/known/emptypb"
 )
 
 // buildBenchChunk builds a finished, realistic span chunk: a sampled web
