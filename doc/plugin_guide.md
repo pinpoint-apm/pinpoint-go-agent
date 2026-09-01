@@ -42,5 +42,4 @@
 | [plugin/pgxv5](/plugin/pgxv5)                     | jackc/pgx/v5 package (https://github.com/jackc/pgx)                               |
 | [plugin/redigo](/plugin/redigo)                   | gomodule/redigo package (https://github.com/gomodule/redigo)                      |
 | [plugin/rueidis](/plugin/rueidis)                 | redis/rueidis package (https://github.com/redis/rueidis)                          |
-| [plugin/sarama](/plugin/sarama)                   | Shopify/sarama package (https://github.com/Shopify/sarama)                        |
-| [plugin/sarama-IBM](/plugin/sarama-IBM)           | IBM/sarama package (https://github.com/IBM/sarama)                                |
+| [plugin/sarama-IBM](/plugin/sarama-IBM)           | IBM/sarama package (https://github.com/IBM/sarama); also covers the archived Shopify/sarama — the APIs are identical |
