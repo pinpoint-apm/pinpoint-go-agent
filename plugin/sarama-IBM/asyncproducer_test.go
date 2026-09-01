@@ -535,3 +535,27 @@ func Test_asyncProducer_RetriedMessageReplacesHeaders(t *testing.T) {
 	waitForClose(t, retry.ended, "retry's span end")
 	requireSpanCount(t, p, 0)
 }
+
+// With Return.Errors off a failed message gets no ack at all, so the wrapper
+// must not park tracers in the span map waiting for one: the span ends as the
+// message is handed to sarama.
+func Test_asyncProducer_NoErrorReturnsEndsSpansImmediately(t *testing.T) {
+	config := sarama.NewConfig()
+	config.Producer.Return.Successes = true
+	config.Producer.Return.Errors = false
+
+	stub := newStubAsyncProducer()
+	p := wrapAsyncProducer(stub, []string{"broker:9092"}, config)
+
+	tracer := newRecordingTracer("id-1")
+	msg := &sarama.ProducerMessage{Topic: "topic"}
+	p.InputContext(pinpoint.NewContext(context.Background(), tracer), msg)
+	<-stub.input
+
+	waitForClose(t, tracer.ended, "span end")
+	requireSpanCount(t, p, 0)
+	for _, h := range msg.Headers {
+		assert.NotEqual(t, HeaderAsyncSpanId, string(h.Key),
+			"no async span id header must be added when acks cannot end the tracer")
+	}
+}

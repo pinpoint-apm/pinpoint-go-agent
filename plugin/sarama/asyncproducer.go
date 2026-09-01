@@ -286,6 +286,13 @@ func sweepAsyncProducerInput(wrapped *asyncProducer) bool {
 
 const HeaderAsyncSpanId = "Pinpoint-AsyncSpanID"
 
+// trackAcks reports whether delivery acks can be relied on to end the tracers.
+// Successes alone is not enough: with Return.Errors off, a failed message gets
+// no ack at all, and its tracer would sit in the span map until shutdown.
+func trackAcks(config *sarama.Config) bool {
+	return config.Producer.Return.Successes && config.Producer.Return.Errors
+}
+
 func newAsyncProducerTracer(ctx context.Context, addrs []string, msg *sarama.ProducerMessage, config *sarama.Config) pinpoint.Tracer {
 	tracer := pinpoint.FromContext(ctx)
 
@@ -298,7 +305,7 @@ func newAsyncProducerTracer(ctx context.Context, addrs []string, msg *sarama.Pro
 	writer := &distributedTracingContextWriterProducer{msg}
 	tracer.Inject(writer)
 
-	if config.Producer.Return.Successes && tracer.IsSampled() {
+	if trackAcks(config) && tracer.IsSampled() {
 		writer.Set(HeaderAsyncSpanId, tracer.AsyncSpanId())
 	}
 
@@ -306,7 +313,7 @@ func newAsyncProducerTracer(ctx context.Context, addrs []string, msg *sarama.Pro
 }
 
 func saveAsyncProducerTracer(config *sarama.Config, wrapped *asyncProducer, span pinpoint.Tracer) {
-	if config.Producer.Return.Successes && span.IsSampled() {
+	if trackAcks(config) && span.IsSampled() {
 		wrapped.spansLock.Lock()
 		defer wrapped.spansLock.Unlock()
 
