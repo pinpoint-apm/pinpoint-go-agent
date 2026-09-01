@@ -680,6 +680,7 @@ func backOffUntilReady(agent *agent, grpcConn *grpc.ClientConn, which string) {
 func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc func() bool, which string) bool {
 	for agent.Enable() {
 		if newStreamFunc() {
+			Log("grpc").Infof("success to make %s stream", which)
 			return true
 		}
 		if !agent.config.offGrpc {
@@ -710,7 +711,6 @@ func (agentGrpc *agentGrpc) newPingStream() bool {
 
 func (agentGrpc *agentGrpc) newPingStreamWithRetry() *pingStream {
 	if newStreamWithRetry(agentGrpc.agent, agentGrpc.agentConn, agentGrpc.newPingStream, "ping") {
-		Log("grpc").Infof("success to make ping stream")
 		return agentGrpc.pingStream
 	}
 	return &pingStream{}
@@ -818,7 +818,6 @@ func (spanGrpc *spanGrpc) newSpanStream() bool {
 
 func (spanGrpc *spanGrpc) newSpanStreamWithRetry() *spanStream {
 	if newStreamWithRetry(spanGrpc.agent, spanGrpc.spanConn, spanGrpc.newSpanStream, "span") {
-		Log("grpc").Infof("success to make span stream")
 		return spanGrpc.stream
 	}
 	return &spanStream{}
@@ -1215,7 +1214,6 @@ func (statGrpc *statGrpc) newStatStream() bool {
 
 func (statGrpc *statGrpc) newStatStreamWithRetry() *statStream {
 	if newStreamWithRetry(statGrpc.agent, statGrpc.statConn, statGrpc.newStatStream, "stat") {
-		Log("grpc").Infof("success to make stat stream")
 		return statGrpc.stream
 	}
 	return &statStream{}
@@ -1402,7 +1400,6 @@ func (cmdGrpc *cmdGrpc) newHandleCommandStream() bool {
 
 func (cmdGrpc *cmdGrpc) newCommandStreamWithRetry() *cmdStream {
 	if newStreamWithRetry(cmdGrpc.agent, cmdGrpc.cmdConn, cmdGrpc.newHandleCommandStream, "command") {
-		Log("grpc").Infof("success to make command stream")
 		return cmdGrpc.stream
 	}
 	return &cmdStream{}
