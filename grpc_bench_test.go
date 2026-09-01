@@ -153,11 +153,11 @@ func (s *stubSpanSendClient) CloseAndRecv() (*empty.Empty, error) { return &empt
 
 type stubSpanBatchClient struct{}
 
-func (stubSpanBatchClient) SendSpan(ctx context.Context) (pb.Span_SendSpanClient, error) {
+func (stubSpanBatchClient) SendSpan(ctx context.Context, _ ...grpc.CallOption) (pb.Span_SendSpanClient, error) {
 	panic("not used")
 }
 
-func (stubSpanBatchClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch) (*pb.PSpanResultBatch, error) {
+func (stubSpanBatchClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch, _ ...grpc.CallOption) (*pb.PSpanResultBatch, error) {
 	_, err := proto.Marshal(in)
 	return &pb.PSpanResultBatch{}, err
 }

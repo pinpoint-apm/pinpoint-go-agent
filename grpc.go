@@ -107,62 +107,6 @@ func backOffSleep(attempt int) time.Duration {
 	return time.Duration(dur * (1 - backOffJitter + rand.Float64()*2*backOffJitter))
 }
 
-type agentClient interface {
-	RequestAgentInfo(ctx context.Context, agentInfo *pb.PAgentInfo) (*pb.PResult, error)
-	PingSession(ctx context.Context) (pb.Agent_PingSessionClient, error)
-}
-
-type agentGrpcClient struct {
-	client pb.AgentClient
-}
-
-func (agentGrpcClient *agentGrpcClient) RequestAgentInfo(ctx context.Context, agentInfo *pb.PAgentInfo) (*pb.PResult, error) {
-	result, err := agentGrpcClient.client.RequestAgentInfo(ctx, agentInfo)
-	return result, err
-}
-
-func (agentGrpcClient *agentGrpcClient) PingSession(ctx context.Context) (pb.Agent_PingSessionClient, error) {
-	session, err := agentGrpcClient.client.PingSession(ctx)
-	return session, err
-}
-
-type metaClient interface {
-	RequestApiMetaData(ctx context.Context, in *pb.PApiMetaData) (*pb.PResult, error)
-	RequestSqlMetaData(ctx context.Context, in *pb.PSqlMetaData) (*pb.PResult, error)
-	RequestSqlUidMetaData(ctx context.Context, in *pb.PSqlUidMetaData) (*pb.PResult, error)
-	RequestStringMetaData(ctx context.Context, in *pb.PStringMetaData) (*pb.PResult, error)
-	RequestExceptionMetaData(ctx context.Context, in *pb.PExceptionMetaData) (*pb.PResult, error)
-}
-
-type metaGrpcClient struct {
-	client pb.MetadataClient
-}
-
-func (metaGrpcClient *metaGrpcClient) RequestApiMetaData(ctx context.Context, in *pb.PApiMetaData) (*pb.PResult, error) {
-	result, err := metaGrpcClient.client.RequestApiMetaData(ctx, in)
-	return result, err
-}
-
-func (metaGrpcClient *metaGrpcClient) RequestSqlMetaData(ctx context.Context, in *pb.PSqlMetaData) (*pb.PResult, error) {
-	result, err := metaGrpcClient.client.RequestSqlMetaData(ctx, in)
-	return result, err
-}
-
-func (metaGrpcClient *metaGrpcClient) RequestSqlUidMetaData(ctx context.Context, in *pb.PSqlUidMetaData) (*pb.PResult, error) {
-	result, err := metaGrpcClient.client.RequestSqlUidMetaData(ctx, in)
-	return result, err
-}
-
-func (metaGrpcClient *metaGrpcClient) RequestStringMetaData(ctx context.Context, in *pb.PStringMetaData) (*pb.PResult, error) {
-	result, err := metaGrpcClient.client.RequestStringMetaData(ctx, in)
-	return result, err
-}
-
-func (metaGrpcClient *metaGrpcClient) RequestExceptionMetaData(ctx context.Context, in *pb.PExceptionMetaData) (*pb.PResult, error) {
-	result, err := metaGrpcClient.client.RequestExceptionMetaData(ctx, in)
-	return result, err
-}
-
 const (
 	agentGrpcTimeOut     = 60 * time.Second
 	sendStreamTimeOut    = 5 * time.Second
@@ -262,8 +206,8 @@ func serverAddr(config *Config, portOption string) string {
 
 type agentGrpc struct {
 	agentConn    *grpc.ClientConn
-	agentClient  agentClient
-	metaClient   metaClient
+	agentClient  pb.AgentClient
+	metaClient   pb.MetadataClient
 	pingSocketId int64
 	pingStream   *pingStream
 	agent        *agent
@@ -277,8 +221,8 @@ func newAgentGrpc(agent *agent) (*agentGrpc, error) {
 
 	return &agentGrpc{
 		agentConn:   conn,
-		agentClient: &agentGrpcClient{pb.NewAgentClient(conn)},
-		metaClient:  &metaGrpcClient{pb.NewMetadataClient(conn)},
+		agentClient: pb.NewAgentClient(conn),
+		metaClient:  pb.NewMetadataClient(conn),
 		agent:       agent,
 	}, nil
 }
@@ -810,28 +754,11 @@ func (agentGrpc *agentGrpc) close() {
 	}
 }
 
-type spanClient interface {
-	SendSpan(ctx context.Context) (pb.Span_SendSpanClient, error)
-	SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch) (*pb.PSpanResultBatch, error)
-}
-
-type spanGrpcClient struct {
-	client pb.SpanClient
-}
-
-func (spanGrpcClient *spanGrpcClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch) (*pb.PSpanResultBatch, error) {
-	return spanGrpcClient.client.SendSpanBatch(ctx, in)
-}
-
-func (spanGrpcClient *spanGrpcClient) SendSpan(ctx context.Context) (pb.Span_SendSpanClient, error) {
-	return spanGrpcClient.client.SendSpan(ctx)
-}
-
 // spanGrpc supports both span send transports: the legacy long-lived SendSpan stream
 // and the SendSpanBatch unary sender selected by Span.Batch.Enable.
 type spanGrpc struct {
 	spanConn              *grpc.ClientConn
-	spanClient            spanClient
+	spanClient            pb.SpanClient
 	stream                *spanStream
 	agent                 *agent
 	batchSize             int
@@ -859,7 +786,7 @@ func newSpanGrpc(agent *agent) (*spanGrpc, error) {
 
 	return &spanGrpc{
 		spanConn:                conn,
-		spanClient:              &spanGrpcClient{pb.NewSpanClient(conn)},
+		spanClient:              pb.NewSpanClient(conn),
 		agent:                   agent,
 		batchSize:               agent.config.Int(CfgSpanBatchSize),
 		batchFlushTimeout:       time.Duration(agent.config.Int(CfgSpanBatchFlushInterval)) * time.Millisecond,
@@ -1242,21 +1169,9 @@ func (b *spanMessageBuilder) makePSpanEvent(event *spanEvent) *pb.PSpanEvent {
 	return aSpanEvent
 }
 
-type statClient interface {
-	SendAgentStat(ctx context.Context) (pb.Stat_SendAgentStatClient, error)
-}
-
-type statGrpcClient struct {
-	client pb.StatClient
-}
-
-func (statGrpcClient *statGrpcClient) SendAgentStat(ctx context.Context) (pb.Stat_SendAgentStatClient, error) {
-	return statGrpcClient.client.SendAgentStat(ctx)
-}
-
 type statGrpc struct {
 	statConn   *grpc.ClientConn
-	statClient statClient
+	statClient pb.StatClient
 	stream     *statStream
 	agent      *agent
 }
@@ -1274,7 +1189,7 @@ func newStatGrpc(agent *agent) (*statGrpc, error) {
 
 	return &statGrpc{
 		statConn:   conn,
-		statClient: &statGrpcClient{pb.NewStatClient(conn)},
+		statClient: pb.NewStatClient(conn),
 		agent:      agent,
 	}, nil
 }

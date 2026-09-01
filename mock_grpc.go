@@ -14,11 +14,11 @@ import (
 
 type mockAgentGrpcClient struct{}
 
-func (agentGrpcClient *mockAgentGrpcClient) RequestAgentInfo(ctx context.Context, agentinfo *pb.PAgentInfo) (*pb.PResult, error) {
+func (agentGrpcClient *mockAgentGrpcClient) RequestAgentInfo(ctx context.Context, agentinfo *pb.PAgentInfo, _ ...grpc.CallOption) (*pb.PResult, error) {
 	return &pb.PResult{Success: true, Message: "success"}, nil
 }
 
-func (agentGrpcClient *mockAgentGrpcClient) PingSession(ctx context.Context) (pb.Agent_PingSessionClient, error) {
+func (agentGrpcClient *mockAgentGrpcClient) PingSession(ctx context.Context, _ ...grpc.CallOption) (pb.Agent_PingSessionClient, error) {
 	return &mockPingStream{}, nil
 }
 
@@ -32,23 +32,23 @@ func (s *mockPingStream) CloseSend() error         { return nil }
 
 type mockMetaGrpcClient struct{}
 
-func (metaGrpcClient *mockMetaGrpcClient) RequestApiMetaData(ctx context.Context, in *pb.PApiMetaData) (*pb.PResult, error) {
+func (metaGrpcClient *mockMetaGrpcClient) RequestApiMetaData(ctx context.Context, in *pb.PApiMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
 	return &pb.PResult{Success: true, Message: "success"}, nil
 }
 
-func (metaGrpcClient *mockMetaGrpcClient) RequestSqlMetaData(ctx context.Context, in *pb.PSqlMetaData) (*pb.PResult, error) {
+func (metaGrpcClient *mockMetaGrpcClient) RequestSqlMetaData(ctx context.Context, in *pb.PSqlMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
 	return &pb.PResult{Success: true, Message: "success"}, nil
 }
 
-func (metaGrpcClient *mockMetaGrpcClient) RequestSqlUidMetaData(ctx context.Context, in *pb.PSqlUidMetaData) (*pb.PResult, error) {
+func (metaGrpcClient *mockMetaGrpcClient) RequestSqlUidMetaData(ctx context.Context, in *pb.PSqlUidMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
 	return nil, nil
 }
 
-func (metaGrpcClient *mockMetaGrpcClient) RequestStringMetaData(ctx context.Context, in *pb.PStringMetaData) (*pb.PResult, error) {
+func (metaGrpcClient *mockMetaGrpcClient) RequestStringMetaData(ctx context.Context, in *pb.PStringMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
 	return &pb.PResult{Success: true, Message: "success"}, nil
 }
 
-func (metaGrpcClient *mockMetaGrpcClient) RequestExceptionMetaData(ctx context.Context, in *pb.PExceptionMetaData) (*pb.PResult, error) {
+func (metaGrpcClient *mockMetaGrpcClient) RequestExceptionMetaData(ctx context.Context, in *pb.PExceptionMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
 	return nil, nil
 }
 

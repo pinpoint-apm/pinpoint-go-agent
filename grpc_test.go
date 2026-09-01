@@ -24,7 +24,7 @@ type blockingAgentInfoClient struct {
 	release  chan struct{}
 }
 
-func (c *blockingAgentInfoClient) RequestAgentInfo(ctx context.Context, _ *pb.PAgentInfo) (*pb.PResult, error) {
+func (c *blockingAgentInfoClient) RequestAgentInfo(ctx context.Context, _ *pb.PAgentInfo, _ ...grpc.CallOption) (*pb.PResult, error) {
 	close(c.started)
 	select {
 	case <-ctx.Done():
@@ -35,7 +35,7 @@ func (c *blockingAgentInfoClient) RequestAgentInfo(ctx context.Context, _ *pb.PA
 	}
 }
 
-func (*blockingAgentInfoClient) PingSession(context.Context) (pb.Agent_PingSessionClient, error) {
+func (*blockingAgentInfoClient) PingSession(context.Context, ...grpc.CallOption) (pb.Agent_PingSessionClient, error) {
 	return nil, nil
 }
 
@@ -656,23 +656,23 @@ func (c *failingMetaClient) callCount() int32 {
 	return atomic.LoadInt32(&c.calls)
 }
 
-func (c *failingMetaClient) RequestApiMetaData(context.Context, *pb.PApiMetaData) (*pb.PResult, error) {
+func (c *failingMetaClient) RequestApiMetaData(context.Context, *pb.PApiMetaData, ...grpc.CallOption) (*pb.PResult, error) {
 	return nil, c.fail()
 }
 
-func (c *failingMetaClient) RequestSqlMetaData(context.Context, *pb.PSqlMetaData) (*pb.PResult, error) {
+func (c *failingMetaClient) RequestSqlMetaData(context.Context, *pb.PSqlMetaData, ...grpc.CallOption) (*pb.PResult, error) {
 	return nil, c.fail()
 }
 
-func (c *failingMetaClient) RequestSqlUidMetaData(context.Context, *pb.PSqlUidMetaData) (*pb.PResult, error) {
+func (c *failingMetaClient) RequestSqlUidMetaData(context.Context, *pb.PSqlUidMetaData, ...grpc.CallOption) (*pb.PResult, error) {
 	return nil, c.fail()
 }
 
-func (c *failingMetaClient) RequestStringMetaData(context.Context, *pb.PStringMetaData) (*pb.PResult, error) {
+func (c *failingMetaClient) RequestStringMetaData(context.Context, *pb.PStringMetaData, ...grpc.CallOption) (*pb.PResult, error) {
 	return nil, c.fail()
 }
 
-func (c *failingMetaClient) RequestExceptionMetaData(context.Context, *pb.PExceptionMetaData) (*pb.PResult, error) {
+func (c *failingMetaClient) RequestExceptionMetaData(context.Context, *pb.PExceptionMetaData, ...grpc.CallOption) (*pb.PResult, error) {
 	return nil, c.fail()
 }
 
@@ -781,23 +781,23 @@ func (c *blockingMetaClient) stats() (max, total int) {
 	return c.max, c.total
 }
 
-func (c *blockingMetaClient) RequestApiMetaData(context.Context, *pb.PApiMetaData) (*pb.PResult, error) {
+func (c *blockingMetaClient) RequestApiMetaData(context.Context, *pb.PApiMetaData, ...grpc.CallOption) (*pb.PResult, error) {
 	return nil, c.block()
 }
 
-func (c *blockingMetaClient) RequestSqlMetaData(context.Context, *pb.PSqlMetaData) (*pb.PResult, error) {
+func (c *blockingMetaClient) RequestSqlMetaData(context.Context, *pb.PSqlMetaData, ...grpc.CallOption) (*pb.PResult, error) {
 	return nil, c.block()
 }
 
-func (c *blockingMetaClient) RequestSqlUidMetaData(context.Context, *pb.PSqlUidMetaData) (*pb.PResult, error) {
+func (c *blockingMetaClient) RequestSqlUidMetaData(context.Context, *pb.PSqlUidMetaData, ...grpc.CallOption) (*pb.PResult, error) {
 	return nil, c.block()
 }
 
-func (c *blockingMetaClient) RequestStringMetaData(context.Context, *pb.PStringMetaData) (*pb.PResult, error) {
+func (c *blockingMetaClient) RequestStringMetaData(context.Context, *pb.PStringMetaData, ...grpc.CallOption) (*pb.PResult, error) {
 	return nil, c.block()
 }
 
-func (c *blockingMetaClient) RequestExceptionMetaData(context.Context, *pb.PExceptionMetaData) (*pb.PResult, error) {
+func (c *blockingMetaClient) RequestExceptionMetaData(context.Context, *pb.PExceptionMetaData, ...grpc.CallOption) (*pb.PResult, error) {
 	return nil, c.block()
 }
 
@@ -841,7 +841,7 @@ type countingAgentClient struct {
 	fail  atomic.Bool
 }
 
-func (c *countingAgentClient) RequestAgentInfo(ctx context.Context, agentInfo *pb.PAgentInfo) (*pb.PResult, error) {
+func (c *countingAgentClient) RequestAgentInfo(ctx context.Context, agentInfo *pb.PAgentInfo, _ ...grpc.CallOption) (*pb.PResult, error) {
 	c.calls.Add(1)
 	if c.fail.Load() {
 		return nil, status.Errorf(codes.Unavailable, "collector down")
@@ -849,7 +849,7 @@ func (c *countingAgentClient) RequestAgentInfo(ctx context.Context, agentInfo *p
 	return &pb.PResult{Success: true}, nil
 }
 
-func (c *countingAgentClient) PingSession(ctx context.Context) (pb.Agent_PingSessionClient, error) {
+func (c *countingAgentClient) PingSession(ctx context.Context, _ ...grpc.CallOption) (pb.Agent_PingSessionClient, error) {
 	return nil, status.Errorf(codes.Unimplemented, "not used")
 }
 

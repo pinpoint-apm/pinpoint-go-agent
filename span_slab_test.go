@@ -175,11 +175,11 @@ type retainingSpanBatchClient struct {
 	request *pb.PSpanMessageBatch
 }
 
-func (c *retainingSpanBatchClient) SendSpan(context.Context) (pb.Span_SendSpanClient, error) {
+func (c *retainingSpanBatchClient) SendSpan(context.Context, ...grpc.CallOption) (pb.Span_SendSpanClient, error) {
 	panic("not used")
 }
 
-func (c *retainingSpanBatchClient) SendSpanBatch(_ context.Context, in *pb.PSpanMessageBatch) (*pb.PSpanResultBatch, error) {
+func (c *retainingSpanBatchClient) SendSpanBatch(_ context.Context, in *pb.PSpanMessageBatch, _ ...grpc.CallOption) (*pb.PSpanResultBatch, error) {
 	c.request = in
 	return &pb.PSpanResultBatch{}, nil
 }
@@ -221,11 +221,11 @@ type mixCheckSpanClient struct {
 	received int
 }
 
-func (c *mixCheckSpanClient) SendSpan(ctx context.Context) (pb.Span_SendSpanClient, error) {
+func (c *mixCheckSpanClient) SendSpan(ctx context.Context, _ ...grpc.CallOption) (pb.Span_SendSpanClient, error) {
 	panic("not used")
 }
 
-func (c *mixCheckSpanClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch) (*pb.PSpanResultBatch, error) {
+func (c *mixCheckSpanClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch, _ ...grpc.CallOption) (*pb.PSpanResultBatch, error) {
 	time.Sleep(time.Millisecond)
 	for _, msg := range in.GetSpan() {
 		rpc := msg.GetSpan().GetAcceptEvent().GetRpc()

@@ -63,11 +63,11 @@ type mockSpanGrpcClient struct {
 	err      error
 }
 
-func (spanGrpcClient *mockSpanGrpcClient) SendSpan(ctx context.Context) (pb.Span_SendSpanClient, error) {
+func (spanGrpcClient *mockSpanGrpcClient) SendSpan(ctx context.Context, _ ...grpc.CallOption) (pb.Span_SendSpanClient, error) {
 	return &mockSpanStream{}, nil
 }
 
-func (spanGrpcClient *mockSpanGrpcClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch) (*pb.PSpanResultBatch, error) {
+func (spanGrpcClient *mockSpanGrpcClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch, _ ...grpc.CallOption) (*pb.PSpanResultBatch, error) {
 	// Clone like the real transport, which marshals the request during the
 	// call: the sender recycles the message once SendSpanBatch returns, so a
 	// retained pointer would later observe recycled memory.
@@ -119,7 +119,7 @@ func (s *mockStatStream) CloseAndRecv() (*empty.Empty, error) { return &empty.Em
 
 type mockStaGrpcClient struct{}
 
-func (statGrpcClient *mockStaGrpcClient) SendAgentStat(ctx context.Context) (pb.Stat_SendAgentStatClient, error) {
+func (statGrpcClient *mockStaGrpcClient) SendAgentStat(ctx context.Context, _ ...grpc.CallOption) (pb.Stat_SendAgentStatClient, error) {
 	return &mockStatStream{}, nil
 }
 
@@ -131,7 +131,7 @@ type mockRetryStaGrpcClient struct {
 	retry int
 }
 
-func (statGrpcClient *mockRetryStaGrpcClient) SendAgentStat(ctx context.Context) (pb.Stat_SendAgentStatClient, error) {
+func (statGrpcClient *mockRetryStaGrpcClient) SendAgentStat(ctx context.Context, _ ...grpc.CallOption) (pb.Stat_SendAgentStatClient, error) {
 	if statGrpcClient.retry < 3 {
 		time.Sleep(1 * time.Second)
 		statGrpcClient.retry++
