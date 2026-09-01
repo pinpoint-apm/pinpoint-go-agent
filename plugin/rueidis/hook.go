@@ -1,8 +1,8 @@
 package pprueidis
 
 import (
-	"bytes"
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,7 +35,7 @@ func NewHook(opts rueidis.ClientOption) *Hook {
 
 func (h *Hook) Do(client rueidis.Client, ctx context.Context, cmd rueidis.Completed) (resp rueidis.RedisResult) {
 	tracer := h.newSpanEvent(ctx, "rueidis.Do()", func() string {
-		return strings.Join(cmd.Commands(), ",")
+		return cmdVerb(cmd.Commands())
 	})
 	defer tracer.EndSpanEvent()
 
@@ -65,7 +65,7 @@ func (h *Hook) DoMulti(client rueidis.Client, ctx context.Context, multi ...ruei
 
 func (h *Hook) DoCache(client rueidis.Client, ctx context.Context, cmd rueidis.Cacheable, ttl time.Duration) (resp rueidis.RedisResult) {
 	tracer := h.newSpanEvent(ctx, "rueidis.DoCache()", func() string {
-		return strings.Join(cmd.Commands(), ",")
+		return cmdVerb(cmd.Commands())
 	})
 	defer tracer.EndSpanEvent()
 
@@ -96,7 +96,7 @@ func (h *Hook) DoMultiCache(client rueidis.Client, ctx context.Context, multi ..
 
 func (h *Hook) Receive(client rueidis.Client, ctx context.Context, subscribe rueidis.Completed, fn func(msg rueidis.PubSubMessage)) (err error) {
 	tracer := h.newSpanEvent(ctx, "rueidis.Receive()", func() string {
-		return strings.Join(subscribe.Commands(), ",")
+		return cmdVerb(subscribe.Commands())
 	})
 	defer tracer.EndSpanEvent()
 
@@ -145,28 +145,42 @@ func (h *Hook) newSpanEvent(ctx context.Context, operation string, commandName f
 	return tracer
 }
 
-func cmdCompletedName(cmds []rueidis.Completed) string {
-	var buf bytes.Buffer
-
-	for i, cmd := range cmds {
-		if i != 0 {
-			buf.WriteString(", ")
-		}
-		buf.WriteString(strings.Join(cmd.Commands(), ","))
+// cmdVerb returns only the command verb: Commands() carries the keys and
+// values too, which are unbounded and must not enter the trace.
+func cmdVerb(commands []string) string {
+	if len(commands) == 0 {
+		return ""
 	}
-	return buf.String()
+	return commands[0]
+}
+
+// maxListedCmds bounds the annotation of a multi: rueidis puts no limit on the
+// batch size, so listing every verb would grow with the caller's batch.
+const maxListedCmds = 32
+
+func cmdNames(n int, verb func(i int) string) string {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		if i == maxListedCmds {
+			b.WriteString(", ...(")
+			b.WriteString(strconv.Itoa(n - maxListedCmds))
+			b.WriteString(" more)")
+			break
+		}
+		if i != 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(verb(i))
+	}
+	return b.String()
+}
+
+func cmdCompletedName(cmds []rueidis.Completed) string {
+	return cmdNames(len(cmds), func(i int) string { return cmdVerb(cmds[i].Commands()) })
 }
 
 func cmdCacheableName(cmds []rueidis.CacheableTTL) string {
-	var buf bytes.Buffer
-
-	for i, cmd := range cmds {
-		if i != 0 {
-			buf.WriteString(", ")
-		}
-		buf.WriteString(strings.Join(cmd.Cmd.Commands(), ","))
-	}
-	return buf.String()
+	return cmdNames(len(cmds), func(i int) string { return cmdVerb(cmds[i].Cmd.Commands()) })
 }
 
 func multiResultError(cmds []rueidis.RedisResult) error {

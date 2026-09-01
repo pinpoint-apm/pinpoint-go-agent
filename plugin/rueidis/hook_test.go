@@ -171,6 +171,32 @@ func Test_cmdNames_EmptyBatch(t *testing.T) {
 	assert.Equal(t, "", cmdCacheableName([]rueidis.CacheableTTL{}))
 }
 
+// Commands() carries the full command including keys and values; only the verb
+// may reach the annotation.
+func Test_cmdVerb(t *testing.T) {
+	assert.Equal(t, "", cmdVerb(nil))
+	assert.Equal(t, "", cmdVerb([]string{}))
+	assert.Equal(t, "SET", cmdVerb([]string{"SET", "key", "value"}))
+}
+
+// A multi has no size limit on the rueidis side, so the annotation lists at
+// most maxListedCmds verbs and summarizes the rest.
+func Test_cmdNames_CapsTheListedCommands(t *testing.T) {
+	verb := func(int) string { return "GET" }
+
+	assert.Equal(t, "", cmdNames(0, verb))
+	assert.Equal(t, "GET", cmdNames(1, verb))
+	assert.Equal(t, "GET, GET", cmdNames(2, verb))
+
+	atCap := cmdNames(maxListedCmds, verb)
+	assert.NotContains(t, atCap, "more)", "a batch at the cap must be listed whole")
+
+	over := cmdNames(maxListedCmds+3, verb)
+	assert.Contains(t, over, ", ...(3 more)")
+	assert.Equal(t, len(atCap)+len(", ...(3 more)"), len(over),
+		"commands past the cap must not be listed")
+}
+
 // A batch fails as a whole on its first failed command; reporting a later one
 // would point at the wrong command in the trace.
 func Test_multiResultError(t *testing.T) {
