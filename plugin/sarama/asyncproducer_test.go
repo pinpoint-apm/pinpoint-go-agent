@@ -496,3 +496,42 @@ func Test_asyncProducer_NilConfigStillDeliversMessages(t *testing.T) {
 	waitForClose(t, tracer.ended, "span end")
 	requireSpanCount(t, p, 0)
 }
+
+// The standard retry pattern re-sends the very message object taken off
+// Errors(). The second send must replace the pinpoint headers, not append a
+// second set: Get returns the first match, so a stale appended id would make
+// the retry's ack miss the span map and leak its tracer until shutdown.
+func Test_asyncProducer_RetriedMessageReplacesHeaders(t *testing.T) {
+	config := sarama.NewConfig()
+	config.Producer.Return.Successes = true
+
+	stub := newStubAsyncProducer()
+	p := wrapAsyncProducer(stub, []string{"broker:9092"}, config)
+
+	msg := &sarama.ProducerMessage{Topic: "topic"}
+
+	first := newRecordingTracer("id-1")
+	p.InputContext(pinpoint.NewContext(context.Background(), first), msg)
+	<-stub.input
+	stub.errors <- &sarama.ProducerError{Msg: msg, Err: sarama.ErrOutOfBrokers}
+	<-p.Errors()
+	waitForClose(t, first.ended, "first attempt's span end")
+
+	retry := newRecordingTracer("id-2")
+	p.InputContext(pinpoint.NewContext(context.Background(), retry), msg)
+	<-stub.input
+
+	ids := 0
+	for _, h := range msg.Headers {
+		if string(h.Key) == HeaderAsyncSpanId {
+			ids++
+			assert.Equal(t, "id-2", string(h.Value), "the header must carry the retry's id")
+		}
+	}
+	require.Equal(t, 1, ids, "the retry appended a second async span id header")
+
+	stub.successes <- msg
+	<-p.Successes()
+	waitForClose(t, retry.ended, "retry's span end")
+	requireSpanCount(t, p, 0)
+}

@@ -25,6 +25,17 @@ type distributedTracingContextWriterProducer struct {
 }
 
 func (m *distributedTracingContextWriterProducer) Set(key string, value string) {
+	// Replace an existing header: the retry pattern re-sends the same message
+	// object taken off Errors(), and Get returns the first match, so appending
+	// a second header would leave the retry's ack looked up under the stale id
+	// - its tracer would sit in the span map until producer shutdown - and the
+	// message would grow one full trace-header set per attempt.
+	for i := range m.msg.Headers {
+		if string(m.msg.Headers[i].Key) == key {
+			m.msg.Headers[i].Value = []byte(value)
+			return
+		}
+	}
 	m.msg.Headers = append(m.msg.Headers, sarama.RecordHeader{
 		Key:   []byte(key),
 		Value: []byte(value),
