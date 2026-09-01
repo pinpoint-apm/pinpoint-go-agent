@@ -290,18 +290,7 @@ func dropRealTimeUnSampledActiveSpan(span *noopSpan) {
 func (agent *agent) getActiveSpanCount(now time.Time) []int32 {
 	counts := []int32{0, 0, 0, 0}
 	agent.realTimeActiveSpan.Range(func(k, v interface{}) bool {
-		s := v.(*activeSpanInfo)
-		d := now.Sub(s.startTime).Seconds()
-
-		if d < 1 {
-			counts[0]++
-		} else if d < 3 {
-			counts[1]++
-		} else if d < 5 {
-			counts[2]++
-		} else {
-			counts[3]++
-		}
+		bucketActiveSpan(counts, now, v.(*activeSpanInfo).startTime)
 		return true
 	})
 

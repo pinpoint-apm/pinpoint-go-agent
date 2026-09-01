@@ -187,6 +187,21 @@ func (r *activeSpanRegistry) remove(spanId int64) {
 	s.mu.Unlock()
 }
 
+// bucketActiveSpan increments the [<1s, <3s, <5s, >=5s] bucket in counts for
+// a span started at startTime.
+func bucketActiveSpan(counts []int32, now time.Time, startTime time.Time) {
+	switch d := now.Sub(startTime).Seconds(); {
+	case d < 1:
+		counts[0]++
+	case d < 3:
+		counts[1]++
+	case d < 5:
+		counts[2]++
+	default:
+		counts[3]++
+	}
+}
+
 // count buckets active spans by elapsed time: [<1s, <3s, <5s, >=5s].
 func (r *activeSpanRegistry) count(now time.Time) []int32 {
 	count := []int32{0, 0, 0, 0}
@@ -194,16 +209,7 @@ func (r *activeSpanRegistry) count(now time.Time) []int32 {
 		s := &r.shards[i]
 		s.mu.Lock()
 		for _, startTime := range s.m {
-			d := now.Sub(startTime).Seconds()
-			if d < 1 {
-				count[0]++
-			} else if d < 3 {
-				count[1]++
-			} else if d < 5 {
-				count[2]++
-			} else {
-				count[3]++
-			}
+			bucketActiveSpan(count, now, startTime)
 		}
 		s.mu.Unlock()
 	}
