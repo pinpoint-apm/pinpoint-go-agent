@@ -49,6 +49,12 @@ func (b *sqlNormalizerBuilder) result() string {
 	return abbreviateString(b.sb.String(), maxSqlSize)
 }
 
+// full reports that the builder stopped accepting input: WriteRune and
+// WriteString are both no-ops past this point.
+func (b *sqlNormalizerBuilder) full() bool {
+	return b.sb.Len() > maxSqlSize
+}
+
 func newSqlNormalizer(sql string) *sqlNormalizer {
 	normalizer := sqlNormalizer{}
 
@@ -66,6 +72,14 @@ func (s *sqlNormalizer) run() (string, string) {
 	numberTokenStartEnable := true
 
 	for {
+		// Once the output is full, nothing read past this point can still be
+		// shown, so stop scanning instead of walking the rest of the input -
+		// a multi-megabyte statement otherwise costs O(input) for a 64KB
+		// result. Bind values whose placeholders fell past the cap are
+		// dropped along with the SQL they belong to.
+		if s.output.full() {
+			break
+		}
 		if ch := s.read(); ch == eof {
 			break
 		} else if ch == '/' {
@@ -123,6 +137,9 @@ func (s *sqlNormalizer) consumeSingleLineComment() {
 	var ch rune
 
 	for {
+		if s.output.full() { // the run loop exits right after on the same test
+			break
+		}
 		if ch = s.read(); ch == eof {
 			break
 		}
@@ -139,6 +156,9 @@ func (s *sqlNormalizer) consumeMultiLineComment() {
 	s.output.WriteRune(s.read()) /* cousume '*' */
 
 	for {
+		if s.output.full() { // the run loop exits right after on the same test
+			break
+		}
 		if ch = s.read(); ch == eof {
 			break
 		}
@@ -159,6 +179,10 @@ func (s *sqlNormalizer) consumeCharLiteral() {
 	}
 
 	for {
+		// Nothing can be recorded any more; the run loop exits right after.
+		if s.output.full() && s.param.full() {
+			break
+		}
 		if ch = s.read(); ch == eof {
 			break
 		}
@@ -193,6 +217,10 @@ func (s *sqlNormalizer) consumeNumberLiteral() {
 	s.output.WriteRune('#')
 
 	for {
+		// Nothing can be recorded any more; the run loop exits right after.
+		if s.output.full() && s.param.full() {
+			break
+		}
 		if ch = s.read(); ch == eof {
 			break
 		}

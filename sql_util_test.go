@@ -102,10 +102,20 @@ func Test_sqlNormalizer_BoundsLargeResults(t *testing.T) {
 	})
 
 	t.Run("normalized sql", func(t *testing.T) {
+		prefix := strings.Repeat("x", maxSqlSize/2) + " = 2 " + strings.Repeat("x", maxSqlSize)
+		nsql, param := newSqlNormalizer(prefix + " = 1").run()
+		assert.Equal(t, abbreviateString(strings.Replace(prefix, "= 2", "= 0#", 1), maxSqlSize), nsql)
+		assert.Equal(t, "2", param, "a bind value past the SQL cap must be dropped with its SQL")
+	})
+
+	// The normalizer must not walk input that can no longer change the capped
+	// result: bind values whose placeholders fell past the cap are dropped
+	// along with the SQL they belong to.
+	t.Run("scan stops once the output is full", func(t *testing.T) {
 		prefix := strings.Repeat("x", maxSqlSize+100)
 		nsql, param := newSqlNormalizer(prefix + " = 1").run()
 		assert.Equal(t, prefix[:maxSqlSize]+suffix, nsql)
-		assert.Equal(t, "1", param)
+		assert.Empty(t, param)
 	})
 
 	t.Run("literal parameter", func(t *testing.T) {
