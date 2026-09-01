@@ -688,7 +688,7 @@ func TestRecordHttpHandlerError_NoopTracer(t *testing.T) {
 // A pattern registered on the mux is collected as a URL statistic; WrapHandler
 // has no pattern to report and must not collect one.
 func TestCollectUrlStat(t *testing.T) {
-	startAgent(t, pinpoint.WithHttpUrlStatEnable(true))
+	usePluginConfig(t, pinpoint.WithHttpUrlStatEnable(true))
 
 	var tracer pinpoint.Tracer
 	assert.NotPanics(t, func() {
@@ -703,6 +703,34 @@ func TestCollectUrlStat(t *testing.T) {
 	// AddMetric with a value of the wrong type must be ignored, not fatal.
 	assert.NotPanics(t, func() { tracer.AddMetric(pinpoint.MetricURLStat, "not an entry") })
 	assert.NotPanics(t, func() { CollectUrlStat(pinpoint.NoopTracer(), "/users/", http.MethodGet, 200) })
+}
+
+type metricCountingTracer struct {
+	pinpoint.Tracer
+	metrics int
+}
+
+func (t *metricCountingTracer) AddMetric(string, interface{}) { t.metrics++ }
+
+// URL stats are off by default; CollectUrlStat must not build an entry that
+// every consumer would drop, and IsUrlStatEnabled must let plugins skip their
+// route-pattern lookup for the same reason.
+func TestCollectUrlStat_GatedByUrlStatEnable(t *testing.T) {
+	t.Run("disabled", func(t *testing.T) {
+		usePluginConfig(t)
+		tracer := &metricCountingTracer{Tracer: pinpoint.NoopTracer()}
+		CollectUrlStat(tracer, "/users/", http.MethodGet, 200)
+		assert.False(t, IsUrlStatEnabled())
+		assert.Equal(t, 0, tracer.metrics, "a URL stat was reported while disabled")
+	})
+
+	t.Run("enabled", func(t *testing.T) {
+		usePluginConfig(t, pinpoint.WithHttpUrlStatEnable(true))
+		tracer := &metricCountingTracer{Tracer: pinpoint.NoopTracer()}
+		CollectUrlStat(tracer, "/users/", http.MethodGet, 200)
+		assert.True(t, IsUrlStatEnabled())
+		assert.Equal(t, 1, tracer.metrics, "the URL stat was not reported while enabled")
+	})
 }
 
 // The deprecated wrappers must keep returning the pattern they were given

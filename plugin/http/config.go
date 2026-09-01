@@ -169,6 +169,7 @@ type httpConfig struct {
 	cltResHeader       httpHeaderRecorder
 	cltCookie          httpHeaderRecorder
 	recordHandlerError bool
+	urlStatEnabled     bool
 }
 
 var httpConfigOpts = []string{
@@ -182,6 +183,7 @@ var httpConfigOpts = []string{
 	CfgHttpClientRecordRequestHeader,
 	CfgHttpClientRecordResponseHeader,
 	CfgHttpClientRecordRequestCookie,
+	pinpoint.CfgHttpUrlStatEnable,
 }
 
 var (
@@ -221,7 +223,16 @@ func newHttpConfig() *httpConfig {
 		cltResHeader:       makeHttpHeaderRecorder(CfgHttpClientRecordResponseHeader),
 		cltCookie:          makeHttpHeaderRecorder(CfgHttpClientRecordRequestCookie),
 		recordHandlerError: pinpoint.GetConfig().Bool(CfgHttpServerRecordHandlerError),
+		urlStatEnabled:     pinpoint.GetConfig().Bool(pinpoint.CfgHttpUrlStatEnable),
 	}
+}
+
+// IsUrlStatEnabled reports whether URL statistics collection is enabled.
+// Plugins whose route pattern is expensive to look up (a context walk, a lock,
+// a string build) use it to skip that lookup when CollectUrlStat would drop
+// the entry anyway.
+func IsUrlStatEnabled() bool {
+	return httpCfg().urlStatEnabled
 }
 
 func isExcludedUrl(url string) bool {

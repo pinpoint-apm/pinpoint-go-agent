@@ -386,5 +386,10 @@ func HandlerFuncName(f interface{}) string {
 
 // CollectUrlStat collects HTTP URL statistics.
 func CollectUrlStat(tracer pinpoint.Tracer, url string, method string, status int) {
+	// URL stats are off by default and the consumers drop the entry when
+	// disabled, so don't allocate one per request just to have it discarded.
+	if !httpCfg().urlStatEnabled {
+		return
+	}
 	tracer.AddMetric(pinpoint.MetricURLStat, &pinpoint.UrlStatEntry{Url: url, Method: method, Status: status})
 }

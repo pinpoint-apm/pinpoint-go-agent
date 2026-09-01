@@ -51,7 +51,11 @@ func wrap(handler http.Handler, funcName string) http.Handler {
 
 		defer tracer.EndSpan()
 		defer func() {
-			pphttp.CollectUrlStat(tracer, routePattern(r), r.Method, status)
+			// RoutePattern joins and rewrites the pattern list per call, so
+			// don't pay for it when the stat would be dropped anyway.
+			if pphttp.IsUrlStatEnabled() {
+				pphttp.CollectUrlStat(tracer, routePattern(r), r.Method, status)
+			}
 			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
 		}()
 		defer func() {

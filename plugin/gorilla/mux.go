@@ -51,11 +51,15 @@ func wrap(handler http.Handler, funcName string) http.Handler {
 
 		defer tracer.EndSpan()
 		defer func() {
-			path := ""
-			if route := mux.CurrentRoute(r); route != nil {
-				path, _ = route.GetPathTemplate()
+			// The route lookup walks the request context per call, so don't
+			// pay for it when the stat would be dropped anyway.
+			if pphttp.IsUrlStatEnabled() {
+				path := ""
+				if route := mux.CurrentRoute(r); route != nil {
+					path, _ = route.GetPathTemplate()
+				}
+				pphttp.CollectUrlStat(tracer, path, r.Method, status)
 			}
-			pphttp.CollectUrlStat(tracer, path, r.Method, status)
 			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
 		}()
 		defer func() {
