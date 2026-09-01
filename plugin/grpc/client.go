@@ -104,21 +104,26 @@ func endSpanEvent(tracer pinpoint.Tracer, err error) {
 
 // UnaryClientInterceptor returns a new grpc.UnaryClientInterceptor ready to instrument.
 func UnaryClientInterceptor() grpc.UnaryClientInterceptor {
-	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) (err error) {
 		newCtx, tracer := newClientTracer(ctx, method, cc.Target())
-		err := invoker(newCtx, method, req, reply, cc, opts...)
-		endSpanEvent(tracer, err)
+		// Deferred so a panicking invoker still closes the span event.
+		defer func() { endSpanEvent(tracer, err) }()
+		err = invoker(newCtx, method, req, reply, cc, opts...)
 		return err
 	}
 }
 
 // StreamClientInterceptor returns a new grpc.StreamClientInterceptor ready to instrument.
 func StreamClientInterceptor() grpc.StreamClientInterceptor {
-	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (_ grpc.ClientStream, err error) {
 		newCtx, tracer := newClientTracer(ctx, method, cc.Target())
+		// Deferred so a panicking streamer still closes the creation event; on
+		// success it closes the event LIFO-correctly, right before the stream
+		// is handed out.
+		defer func() { endSpanEvent(tracer, err) }()
+
 		stream, err := streamer(newCtx, desc, cc, method, opts...)
 		if err != nil {
-			endSpanEvent(tracer, err)
 			return nil, err
 		}
 
@@ -133,7 +138,6 @@ func StreamClientInterceptor() grpc.StreamClientInterceptor {
 		if streamTracer.IsSampled() {
 			streamTracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeGrpc)
 		}
-		endSpanEvent(tracer, nil)
 
 		return &clientStream{ClientStream: stream, tracer: streamTracer}, nil
 	}

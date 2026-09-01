@@ -494,6 +494,21 @@ func TestStreamClientInterceptor_StreamEndsOnItsOwnTracer(t *testing.T) {
 	assert.True(t, caller.child.spanEnded, "the stream's goroutine span must be ended")
 }
 
+// A panicking invoker must still close the span event on its way up.
+func TestUnaryClientInterceptor_PanicStillClosesTheSpanEvent(t *testing.T) {
+	caller := newForkingTracer()
+	assert.PanicsWithValue(t, "boom", func() {
+		_ = UnaryClientInterceptor()(
+			pinpoint.NewContext(context.Background(), caller),
+			"/testapp.Hello/Greet", "request", "reply",
+			lazyConn(t, "localhost:8080"),
+			func(context.Context, string, interface{}, interface{}, *grpc.ClientConn, ...grpc.CallOption) error {
+				panic("boom")
+			})
+	})
+	assert.Equal(t, int32(1), atomic.LoadInt32(&caller.ends), "the span event must be closed during panic unwinding")
+}
+
 // The interceptor wraps the handler, so the handler's result - value and error
 // alike - has to come back untouched, with a sampled tracer in its context.
 func TestUnaryServerInterceptor(t *testing.T) {
