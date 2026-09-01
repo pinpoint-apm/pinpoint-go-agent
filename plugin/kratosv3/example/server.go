@@ -1,3 +1,5 @@
+//go:build ignore
+
 // It is modified the source code from kratos example
 // https://github.com/go-kratos/examples/tree/main/helloworld
 
