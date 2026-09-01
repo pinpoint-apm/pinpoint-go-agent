@@ -84,13 +84,17 @@ func WithContext(c redis.Conn, ctx context.Context) {
 	}
 }
 
-func makeWrappedConn(c redis.Conn, address string) (redis.Conn, error) {
+// makeWrappedConn derives the endpoint from the dial address. The split
+// failing is not a dial failure: a unix-socket address has no host:port shape,
+// but redis.Dial has already connected. Returning an error here dropped the
+// live connection unclosed - one leaked fd per dial, steady under a
+// redis.Pool's retries - and made the plugin unusable over unix sockets.
+func makeWrappedConn(c redis.Conn, address string) redis.Conn {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
-		return nil, err
+		host = address
 	}
-
-	return wrapConn(c, host), nil
+	return wrapConn(c, host)
 }
 
 // Dial wraps redis.Dial and returns a new redis.Conn ready to instrument.
@@ -100,7 +104,7 @@ func Dial(network string, address string, options ...redis.DialOption) (redis.Co
 		return nil, err
 	}
 
-	return makeWrappedConn(c, address)
+	return makeWrappedConn(c, address), nil
 }
 
 // DialContext wraps redis.DialContext and returns a new redis.Conn ready to instrument.
@@ -111,7 +115,7 @@ func DialContext(ctx context.Context, network string, address string, options ..
 		return nil, err
 	}
 
-	return makeWrappedConn(c, address)
+	return makeWrappedConn(c, address), nil
 }
 
 func makeWrappedConnURL(c redis.Conn, rawurl string) (redis.Conn, error) {

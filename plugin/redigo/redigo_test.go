@@ -271,19 +271,17 @@ func Test_wrappedConn_ConcurrentOperationGoesUntraced(t *testing.T) {
 // the two Dial families derive it differently: a network address must carry a
 // port, while a URL's authority may leave both parts implicit.
 func Test_makeWrappedConn(t *testing.T) {
-	c, err := makeWrappedConn(&fakeRedisConn{}, "redis1:6379")
-	require.NoError(t, err)
+	c := makeWrappedConn(&fakeRedisConn{}, "redis1:6379")
 	assert.Equal(t, "redis1", c.(*wrappedConn).endpoint, "the port is not part of the endpoint")
 
-	ipv6, err := makeWrappedConn(&fakeRedisConn{}, "[::1]:6379")
-	require.NoError(t, err)
+	ipv6 := makeWrappedConn(&fakeRedisConn{}, "[::1]:6379")
 	assert.Equal(t, "::1", ipv6.(*wrappedConn).endpoint)
 
-	// redis.Dial requires host:port, so an address without one is a caller
-	// error and must not produce a connection with a garbled endpoint.
-	bad, err := makeWrappedConn(&fakeRedisConn{}, "redis1")
-	assert.Error(t, err, "makeWrappedConn accepted an address without a port")
-	assert.Nil(t, bad, "a rejected address must not yield a connection")
+	// A unix-socket address has no host:port shape, but by the time the
+	// endpoint is derived redis.Dial has already connected: the split failing
+	// must wrap the live connection instead of dropping it unclosed.
+	sock := makeWrappedConn(&fakeRedisConn{}, "/var/run/redis.sock")
+	assert.Equal(t, "/var/run/redis.sock", sock.(*wrappedConn).endpoint)
 }
 
 func Test_makeWrappedConnURL(t *testing.T) {
