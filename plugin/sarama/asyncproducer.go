@@ -8,11 +8,6 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
 
-type producerMessageContext struct {
-	msg *sarama.ProducerMessage
-	ctx context.Context
-}
-
 // AsyncProducer wraps the sarama.AsyncProducer and provides additional function InputContext for trace.
 type AsyncProducer interface {
 	sarama.AsyncProducer
@@ -21,7 +16,9 @@ type AsyncProducer interface {
 
 type asyncProducer struct {
 	sarama.AsyncProducer
-	inputContext chan *producerMessageContext
+	addrs        []string
+	config       *sarama.Config
+	inputContext chan *sarama.ProducerMessage
 	input        chan *sarama.ProducerMessage
 	successes    chan *sarama.ProducerMessage
 	errors       chan *sarama.ProducerError
@@ -43,13 +40,15 @@ func (p *asyncProducer) InputContext(ctx context.Context, msg *sarama.ProducerMe
 	default:
 	}
 
-	tracer := pinpoint.FromContext(ctx)
-	asyncTracer := tracer.NewGoroutineTracer()
-	newCtx := pinpoint.NewContext(context.Background(), asyncTracer)
+	// The span is created and saved here, in the caller's goroutine: producer
+	// goroutines are not serialized behind the input forwarder, and the save
+	// still strictly precedes the send, so a broker ack cannot beat it.
+	span := newAsyncProducerTracer(pinpoint.FromContext(ctx).NewGoroutineTracer(), p.addrs, msg, p.config)
+	saveAsyncProducerTracer(p.config, p, span)
 	select {
-	case p.inputContext <- &producerMessageContext{msg, newCtx}:
+	case p.inputContext <- msg:
 	case <-p.done:
-		asyncTracer.EndSpan()
+		endAsyncProducerTracer(p, msg, sarama.ErrShuttingDown)
 	}
 }
 
@@ -133,12 +132,17 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 		config = sarama.NewConfig()
 	}
 
+	// Buffered like sarama's own channels: an unbuffered wrapper channel made
+	// every message a rendezvous with a single goroutine and capped producer
+	// throughput regardless of how many goroutines the application runs.
 	wrapped := &asyncProducer{
 		AsyncProducer: producer,
-		inputContext:  make(chan *producerMessageContext),
-		input:         make(chan *sarama.ProducerMessage),
-		successes:     make(chan *sarama.ProducerMessage),
-		errors:        make(chan *sarama.ProducerError),
+		addrs:         addrs,
+		config:        config,
+		inputContext:  make(chan *sarama.ProducerMessage, config.ChannelBufferSize),
+		input:         make(chan *sarama.ProducerMessage, config.ChannelBufferSize),
+		successes:     make(chan *sarama.ProducerMessage, config.ChannelBufferSize),
+		errors:        make(chan *sarama.ProducerError, config.ChannelBufferSize),
 		done:          make(chan struct{}),
 		inputDone:     make(chan struct{}),
 		ackDone:       make(chan struct{}),
@@ -165,21 +169,21 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 		}()
 
 		for {
-			// The tracer is saved before the send: a broker ack can reach the
-			// forwarder below before a save placed after the send, and the
-			// span would then never be ended.
 			select {
 			case <-wrapped.done:
 				return
-			case msgCtx := <-wrapped.inputContext:
-				span := newAsyncProducerTracer(msgCtx.ctx, addrs, msgCtx.msg, config)
-				saveAsyncProducerTracer(config, wrapped, span)
-				if !sendAsyncProducerMessage(producer.Input(), wrapped.done, msgCtx.msg) {
-					endAsyncProducerTracer(wrapped, msgCtx.msg, sarama.ErrShuttingDown)
+			case msg := <-wrapped.inputContext:
+				// Already traced by InputContext; only the safe send is left.
+				if !sendAsyncProducerMessage(producer.Input(), wrapped.done, msg) {
+					endAsyncProducerTracer(wrapped, msg, sarama.ErrShuttingDown)
 					return
 				}
 			case msg := <-wrapped.input:
-				span := newAsyncProducerTracer(wrapped.ctx, addrs, msg, config)
+				// The deprecated Input path has no per-message context, so its
+				// span is created here. The tracer is saved before the send: a
+				// broker ack can reach the forwarder below before a save placed
+				// after the send, and the span would then never be ended.
+				span := newAsyncProducerTracer(pinpoint.FromContext(wrapped.ctx), addrs, msg, config)
 				saveAsyncProducerTracer(config, wrapped, span)
 				if !sendAsyncProducerMessage(producer.Input(), wrapped.done, msg) {
 					endAsyncProducerTracer(wrapped, msg, sarama.ErrShuttingDown)
@@ -257,8 +261,11 @@ func drainAsyncProducerInput(wrapped *asyncProducer) {
 
 	for {
 		select {
-		case msgCtx := <-wrapped.inputContext:
-			pinpoint.FromContext(msgCtx.ctx).EndSpan()
+		case msg := <-wrapped.inputContext:
+			// InputContext already traced and possibly saved this message's
+			// span; a drained message gets no ack, so end it here. A span not
+			// in the map was already ended at save time.
+			endAsyncProducerTracer(wrapped, msg, sarama.ErrShuttingDown)
 		case <-wrapped.input:
 		case <-wrapped.ackDone:
 			for sweepAsyncProducerInput(wrapped) {
@@ -274,8 +281,8 @@ func drainAsyncProducerInput(wrapped *asyncProducer) {
 // ackDone closes, and select would pick between them at random.
 func sweepAsyncProducerInput(wrapped *asyncProducer) bool {
 	select {
-	case msgCtx := <-wrapped.inputContext:
-		pinpoint.FromContext(msgCtx.ctx).EndSpan()
+	case msg := <-wrapped.inputContext:
+		endAsyncProducerTracer(wrapped, msg, sarama.ErrShuttingDown)
 		return true
 	case <-wrapped.input:
 		return true
@@ -293,9 +300,7 @@ func trackAcks(config *sarama.Config) bool {
 	return config.Producer.Return.Successes && config.Producer.Return.Errors
 }
 
-func newAsyncProducerTracer(ctx context.Context, addrs []string, msg *sarama.ProducerMessage, config *sarama.Config) pinpoint.Tracer {
-	tracer := pinpoint.FromContext(ctx)
-
+func newAsyncProducerTracer(tracer pinpoint.Tracer, addrs []string, msg *sarama.ProducerMessage, config *sarama.Config) pinpoint.Tracer {
 	tracer.NewSpanEvent("sarama.AsyncProducer.SendMessage")
 	se := tracer.SpanEvent()
 	se.SetServiceType(pinpoint.ServiceTypeKafkaClient)
