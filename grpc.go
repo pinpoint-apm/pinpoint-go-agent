@@ -458,7 +458,7 @@ func (agentGrpc *agentGrpc) sendApiMetadata(in *pb.PApiMetaData) error {
 func (agentGrpc *agentGrpc) sendApiMetadataWithRetry(apiId int32, api string, line int, apiType int) bool {
 	apiMeta := pb.PApiMetaData{
 		ApiId:   apiId,
-		ApiInfo: api,
+		ApiInfo: validUTF8(api),
 		Line:    int32(line),
 		Type:    int32(apiType),
 	}
@@ -486,7 +486,7 @@ func (agentGrpc *agentGrpc) sendStringMetadata(in *pb.PStringMetaData) error {
 func (agentGrpc *agentGrpc) sendStringMetadataWithRetry(strId int32, str string) bool {
 	strMeta := pb.PStringMetaData{
 		StringId:    strId,
-		StringValue: str,
+		StringValue: validUTF8(str),
 	}
 
 	if IsLogLevelEnabled(logrus.DebugLevel) {
@@ -513,7 +513,7 @@ func (agentGrpc *agentGrpc) sendSqlMetadata(in *pb.PSqlMetaData) error {
 func (agentGrpc *agentGrpc) sendSqlMetadataWithRetry(sqlId int32, sql string) bool {
 	sqlMeta := pb.PSqlMetaData{
 		SqlId: sqlId,
-		Sql:   sql,
+		Sql:   validUTF8(sql),
 	}
 
 	if IsLogLevelEnabled(logrus.DebugLevel) {
@@ -1134,14 +1134,14 @@ func (b *spanMessageBuilder) makePSpan(chunk *spanChunk) *pb.PSpanMessage {
 	pspan.ServiceType = span.serviceType
 
 	acceptEvent := b.acceptEvents.get()
-	acceptEvent.Rpc = span.rpcName
-	acceptEvent.EndPoint = span.endPoint
-	acceptEvent.RemoteAddr = span.remoteAddr
+	acceptEvent.Rpc = validUTF8(span.rpcName)
+	acceptEvent.EndPoint = validUTF8(span.endPoint)
+	acceptEvent.RemoteAddr = validUTF8(span.remoteAddr)
 	parentInfo := b.parentInfos.get()
-	parentInfo.ParentApplicationName = span.parentAppName
+	parentInfo.ParentApplicationName = validUTF8(span.parentAppName)
 	parentInfo.ParentApplicationType = int32(span.parentAppType)
-	parentInfo.AcceptorHost = span.acceptorHost
-	parentInfo.ParentServiceName = span.parentServiceName
+	parentInfo.AcceptorHost = validUTF8(span.acceptorHost)
+	parentInfo.ParentServiceName = validUTF8(span.parentServiceName)
 	acceptEvent.ParentInfo = parentInfo
 	pspan.AcceptEvent = acceptEvent
 
@@ -1179,7 +1179,7 @@ func (b *spanMessageBuilder) makePSpanChunk(chunk *spanChunk) *pb.PSpanMessage {
 	pchunk.TransactionId = txId
 	pchunk.SpanId = span.spanId
 	pchunk.KeyTime = chunk.keyTime
-	pchunk.EndPoint = chunk.endPoint
+	pchunk.EndPoint = validUTF8(chunk.endPoint)
 	pchunk.SpanEvent = b.makePSpanEventList(chunk)
 	pchunk.ApplicationServiceType = span.agent.appType
 
@@ -1230,8 +1230,8 @@ func (b *spanMessageBuilder) makePSpanEvent(event *spanEvent) *pb.PSpanEvent {
 	if event.destinationId != "" {
 		messageEvent := b.messageEvents.get()
 		messageEvent.NextSpanId = event.nextSpanId
-		messageEvent.EndPoint = event.endPoint
-		messageEvent.DestinationId = event.destinationId
+		messageEvent.EndPoint = validUTF8(event.endPoint)
+		messageEvent.DestinationId = validUTF8(event.destinationId)
 		oneof := b.nextEventOneofs.get()
 		oneof.MessageEvent = messageEvent
 		next := b.nextEvents.get()
@@ -1424,7 +1424,7 @@ func makePEachUriStatList(stat *urlStatSnapshot) []*pb.PEachUriStat {
 
 func makePEachUriStat(e *eachUrlStat) *pb.PEachUriStat {
 	return &pb.PEachUriStat{
-		Uri:             e.url,
+		Uri:             validUTF8(e.url),
 		TotalHistogram:  makePUriHistogram(e.totalHistogram),
 		FailedHistogram: makePUriHistogram(e.failedHistogram),
 		Timestamp:       e.tickTime.UnixNano() / int64(time.Millisecond),

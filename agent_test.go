@@ -12,6 +12,7 @@ import (
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/proto"
 )
 
 func Test_agent_NewAgentError(t *testing.T) {
@@ -199,6 +200,49 @@ func Test_abbreviateString_RuneSafe(t *testing.T) {
 	assert.Equal(t, "가...(4)", got)
 	assert.True(t, utf8.ValidString(got))
 	assert.Equal(t, "가가...(6)", abbreviateString(s, 6))
+}
+
+func Test_validUTF8(t *testing.T) {
+	assert.Equal(t, "abc가", validUTF8("abc가"), "valid strings must pass through unchanged")
+	assert.Equal(t, "a�b", validUTF8("a\xffb"))
+	assert.True(t, utf8.ValidString(validUTF8("rowKey: \x9f\x03\xff")))
+}
+
+// Plugins feed network-origin bytes into span string fields (percent-decoded
+// URL paths, binary row keys, raw query bodies, driver error strings). One
+// invalid UTF-8 string fails proto.Marshal for the whole message, and a failed
+// span stream Send cancels the stream - so the conversion boundary must
+// sanitize every such field.
+func Test_spanMessageBuilder_SanitizesInvalidUTF8(t *testing.T) {
+	a := newTestAgent(defaultConfig())
+	bad := "bad\xff\xfe"
+
+	s := newSampledSpan(a, bad, "/"+bad)
+	s.endPoint = bad
+	s.remoteAddr = bad
+	s.acceptorHost = bad
+	s.parentAppName = bad
+	s.errorString = bad
+	s.annotations.AppendString(AnnotationHttpUrl, bad)
+
+	se := newSpanEvent(s, bad)
+	se.endPoint = bad
+	se.destinationId = bad
+	se.errorString = bad
+	se.annotations.AppendStringString(AnnotationHttpUrl, bad, bad)
+	s.spanEvents = append(s.spanEvents, se)
+
+	chunk := s.newEventChunk(true)
+	builder := acquireSpanMessageBuilder()
+	defer releaseSpanMessageBuilder(builder)
+
+	for name, msg := range map[string]*pb.PSpanMessage{
+		"span":  builder.makePSpan(chunk),
+		"chunk": builder.makePSpanChunk(chunk),
+	} {
+		_, err := proto.Marshal(msg)
+		assert.NoError(t, err, "a %s carrying invalid UTF-8 must still marshal", name)
+	}
 }
 
 func Test_agent_SQLCachesBoundKeys(t *testing.T) {

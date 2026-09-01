@@ -95,7 +95,7 @@ func (v *annotationValue) toProtoInto(b *spanMessageBuilder) *pb.PAnnotation {
 		value.Field = oneof
 	case annotationTypeString:
 		oneof := b.stringOneofs.get()
-		oneof.StringValue = v.s1
+		oneof.StringValue = validUTF8(v.s1)
 		value.Field = oneof
 	case annotationTypeStringString:
 		inner := b.stringStrings.get()

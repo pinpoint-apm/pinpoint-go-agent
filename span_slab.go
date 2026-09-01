@@ -137,7 +137,7 @@ func (b *spanMessageBuilder) reset() {
 
 func (b *spanMessageBuilder) stringValue(s string) *wrappers.StringValue {
 	v := b.stringValues.get()
-	v.Value = s
+	v.Value = validUTF8(s)
 	return v
 }
 

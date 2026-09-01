@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -799,6 +800,17 @@ func (agent *agent) cacheError(errorName string) int32 {
 		Log("agent").Debugf("cache error id: %d, %s", id, errorName)
 	}
 	return id
+}
+
+// validUTF8 replaces invalid UTF-8 sequences in s with the replacement rune.
+// Plugins feed network- and user-origin bytes into string fields (percent-decoded
+// URL paths, query DSLs, binary row keys, driver error strings), and protobuf
+// rejects invalid UTF-8 string fields at marshal time: one bad string would fail
+// the whole span, stat, or metadata message carrying it - and a failed span
+// stream Send cancels the stream. Applied at the protobuf conversion boundary,
+// off the application hot path; returns s unchanged (no copy) when valid.
+func validUTF8(s string) string {
+	return strings.ToValidUTF8(s, string(utf8.RuneError))
 }
 
 // abbreviateString truncates str to at most length bytes plus a "...(length)"
