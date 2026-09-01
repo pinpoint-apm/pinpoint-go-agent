@@ -97,7 +97,11 @@ func (r *hook) setSpanEvent(tracer pinpoint.Tracer, cmd string, err error) {
 	se.SetServiceType(pinpoint.ServiceTypeRedis)
 	se.SetDestination("REDIS")
 	se.SetEndPoint(r.endpoint)
-	se.SetError(err)
+	// A cache miss is a normal outcome, not a failure: redis.Nil must not
+	// mark the span errored (nor walk the stack with Error.TraceCallStack on).
+	if err != redis.Nil {
+		se.SetError(err)
+	}
 	se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
 }
 
@@ -124,8 +128,8 @@ func cmdName(cmds []redis.Cmder) string {
 
 func pipeError(cmds []redis.Cmder) error {
 	for _, cmd := range cmds {
-		err := cmd.Err()
-		if err != nil {
+		// redis.Nil is a miss, not a pipeline failure.
+		if err := cmd.Err(); err != nil && err != redis.Nil {
 			return err
 		}
 	}

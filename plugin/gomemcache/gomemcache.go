@@ -17,6 +17,7 @@ package ppgomemcache
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -82,7 +83,11 @@ func (c *Client) recordMemcacheSpanEvent(tracer pinpoint.Tracer, op string, key 
 	se.SetDestination("MEMCACHED")
 	se.SetEndPoint(c.endpoint)
 	se.Annotations().AppendString(pinpoint.AnnotationArgs0, key)
-	se.SetError(err)
+	// A cache miss is a normal outcome, not a failure: ErrCacheMiss must not
+	// mark the span errored (nor walk the stack with Error.TraceCallStack on).
+	if !errors.Is(err, memcache.ErrCacheMiss) {
+		se.SetError(err)
+	}
 	se.FixDuration(start, time.Now())
 	tracer.EndSpanEvent()
 }

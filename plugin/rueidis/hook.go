@@ -41,8 +41,8 @@ func (h *Hook) Do(client rueidis.Client, ctx context.Context, cmd rueidis.Comple
 
 	resp = client.Do(ctx, cmd)
 
-	if tracer.IsSampled() && resp.Error() != nil {
-		tracer.SpanEvent().SetError(resp.Error())
+	if tracer.IsSampled() {
+		setSpanError(tracer, resp.Error())
 	}
 	return
 }
@@ -71,9 +71,8 @@ func (h *Hook) DoCache(client rueidis.Client, ctx context.Context, cmd rueidis.C
 
 	resp = client.DoCache(ctx, cmd, ttl)
 
-	if tracer.IsSampled() && resp.Error() != nil {
-		tracer.SpanEvent().SetError(resp.Error())
-
+	if tracer.IsSampled() {
+		setSpanError(tracer, resp.Error())
 	}
 	return
 }
@@ -102,9 +101,8 @@ func (h *Hook) Receive(client rueidis.Client, ctx context.Context, subscribe rue
 
 	err = client.Receive(ctx, subscribe, fn)
 
-	if tracer.IsSampled() && err != nil {
-		tracer.SpanEvent().SetError(err)
-
+	if tracer.IsSampled() {
+		setSpanError(tracer, err)
 	}
 	return err
 }
@@ -183,10 +181,19 @@ func cmdCacheableName(cmds []rueidis.CacheableTTL) string {
 	return cmdNames(len(cmds), func(i int) string { return cmdVerb(cmds[i].Cmd.Commands()) })
 }
 
+// setSpanError records err on the span event, except a cache miss: a nil
+// reply is a normal outcome, and recording it marked every miss as a failure
+// (and walked the stack per miss with Error.TraceCallStack on).
+func setSpanError(tracer pinpoint.Tracer, err error) {
+	if err != nil && !rueidis.IsRedisNil(err) {
+		tracer.SpanEvent().SetError(err)
+	}
+}
+
 func multiResultError(cmds []rueidis.RedisResult) error {
 	for _, cmd := range cmds {
-		err := cmd.Error()
-		if err != nil {
+		// A nil reply is a miss, not a batch failure.
+		if err := cmd.Error(); err != nil && !rueidis.IsRedisNil(err) {
 			return err
 		}
 	}

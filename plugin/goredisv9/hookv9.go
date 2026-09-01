@@ -69,7 +69,7 @@ func (r *hook) ProcessHook(hook redis.ProcessHook) redis.ProcessHook {
 
 		defer r.newSpanEvent(tracer, opName, cmd.Name()).EndSpanEvent()
 		err := hook(ctx, cmd)
-		tracer.SpanEvent().SetError(err)
+		setSpanError(tracer, err)
 		return err
 	}
 }
@@ -85,7 +85,7 @@ func (r *hook) ProcessPipelineHook(hook redis.ProcessPipelineHook) redis.Process
 
 		defer r.newSpanEvent(tracer, opName, cmdName(cmds)).EndSpanEvent()
 		err := hook(ctx, cmds)
-		tracer.SpanEvent().SetError(err)
+		setSpanError(tracer, err)
 		return err
 	}
 }
@@ -98,6 +98,15 @@ func (r *hook) newSpanEvent(tracer pinpoint.Tracer, operation string, cmd string
 	se.SetEndPoint(r.endpoint)
 	se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
 	return tracer
+}
+
+// setSpanError records err on the span, except a cache miss: redis.Nil is a
+// normal outcome, and recording it marked every miss as a failure (and walked
+// the stack per miss with Error.TraceCallStack on).
+func setSpanError(tracer pinpoint.Tracer, err error) {
+	if err != nil && err != redis.Nil {
+		tracer.SpanEvent().SetError(err)
+	}
 }
 
 // maxListedCmds bounds the pipeline annotation: the pipeline size is
