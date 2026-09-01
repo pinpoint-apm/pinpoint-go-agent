@@ -1,4 +1,4 @@
-// Package ppgoelasticv8 instruments the elastic/go-elasticsearch/v8 package (https://github.com/elastic/go-elasticsearch).
+// Package ppgoelasticv8 instruments the elastic/go-elasticsearch package (https://github.com/elastic/go-elasticsearch).
 //
 // This package instruments the go-elasticsearch/v8 calls.
 // Use the NewTransport as the elasticsearch.Client's Transport.
@@ -16,6 +16,7 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
+	"unicode/utf8"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
@@ -57,7 +58,13 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		pinpoint.Log("goelasticv8").Errorf("dsl read error: %s", err.Error())
 	}
 	if len(dsl) > MaxDslLength {
-		dsl = dsl[0:MaxDslLength]
+		// Back off to a rune start: a byte-offset cut can split a multi-byte
+		// rune, and a proto3 string field rejects invalid UTF-8.
+		cut := MaxDslLength
+		for cut > 0 && !utf8.RuneStart(dsl[cut]) {
+			cut--
+		}
+		dsl = dsl[0:cut]
 	}
 	se.Annotations().AppendString(pinpoint.AnnotationEsDsl, dsl)
 
@@ -122,5 +129,12 @@ func unzip(dsl []byte) ([]byte, error) {
 	defer r.Close()
 	// Inflating the whole payload would undo the read limit above; the result
 	// feeds the annotation only.
-	return io.ReadAll(io.LimitReader(r, maxBodyRead))
+	out, err := io.ReadAll(io.LimitReader(r, maxBodyRead))
+	// The compressed input was itself cut at maxBodyRead, so running into the
+	// truncated tail is the normal case, not a failure: propagating it logged
+	// an error - and allocated a logrus entry - on every compressed request.
+	if err == io.ErrUnexpectedEOF {
+		err = nil
+	}
+	return out, err
 }
