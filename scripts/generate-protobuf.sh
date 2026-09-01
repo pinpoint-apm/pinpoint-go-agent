@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROTO_SRC_DIR="${PROTO_SRC_DIR:-$ROOT_DIR/pinpoint-grpc-idl/proto}"
 OUT_DIR="${OUT_DIR:-$ROOT_DIR/protobuf}"
-MOCK_OUT_DIR="${MOCK_OUT_DIR:-$ROOT_DIR/internal/grpcmock}"
+MOCK_OUT_DIR="${MOCK_OUT_DIR:-$ROOT_DIR/protobuf/mock}"
 TOOLS_DIR="${TOOLS_DIR:-$ROOT_DIR/.tools}"
 BIN_DIR="$TOOLS_DIR/bin"
 
@@ -13,7 +13,9 @@ PROTOC_GEN_GO_VERSION="${PROTOC_GEN_GO_VERSION:-v1.36.11}"
 PROTOC_GEN_GO_GRPC_VERSION="${PROTOC_GEN_GO_GRPC_VERSION:-v1.6.2}"
 PROTOC_GEN_GO_GRPCMOCK_VERSION="${PROTOC_GEN_GO_GRPCMOCK_VERSION:-v1.3.2}"
 MOCK_GO_PACKAGE="${MOCK_GO_PACKAGE:-github.com/pinpoint-apm/pinpoint-go-agent/protobuf;grpcmock}"
-GO_PACKAGE="${GO_PACKAGE:-github.com/pinpoint-apm/pinpoint-go-agent/protobuf;v1}"
+# Log.proto describes a log-shipping service this agent does not implement;
+# generating it would ship a client and a mock nothing ever calls.
+EXCLUDED_PROTOS="${EXCLUDED_PROTOS:-Log.proto}"
 TMP_PROTO_DIR=""
 
 log() {
@@ -122,13 +124,30 @@ ensure_go_tool() {
 	GOBIN="$BIN_DIR" go install "${module}@${version}"
 }
 
-generate() {
+# collect_proto_sources fills PROTO_FILES with the .proto files to generate,
+# minus EXCLUDED_PROTOS.
+collect_proto_sources() {
 	[ -d "$PROTO_SRC_DIR/v1" ] || die "missing proto source directory: $PROTO_SRC_DIR/v1"
-	mkdir -p "$OUT_DIR"
 
-	local proto_files
-	proto_files=("$PROTO_SRC_DIR"/v1/*.proto)
-	[ -e "${proto_files[0]}" ] || die "no proto files found in $PROTO_SRC_DIR/v1"
+	local f base
+	PROTO_FILES=()
+	for f in "$PROTO_SRC_DIR"/v1/*.proto; do
+		[ -e "$f" ] || continue
+		base="$(basename "$f")"
+		case " $EXCLUDED_PROTOS " in
+			*" $base "*)
+				log "skipping $base"
+				continue
+				;;
+		esac
+		PROTO_FILES+=("$f")
+	done
+
+	[ ${#PROTO_FILES[@]} -gt 0 ] || die "no proto files found in $PROTO_SRC_DIR/v1"
+}
+
+generate() {
+	mkdir -p "$OUT_DIR"
 
 	local generated_dir
 	TMP_PROTO_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pinpoint-proto.XXXXXX")"
@@ -140,11 +159,9 @@ generate() {
 		--proto_path="$PROTO_SRC_DIR" \
 		--go_out="$generated_dir" \
 		--go_opt=paths=source_relative \
-		--go_opt="Mv1/Log.proto=$GO_PACKAGE" \
 		--go-grpc_out="$generated_dir" \
 		--go-grpc_opt=paths=source_relative \
-		--go-grpc_opt="Mv1/Log.proto=$GO_PACKAGE" \
-		"${proto_files[@]}"
+		"${PROTO_FILES[@]}"
 
 	[ -d "$generated_dir/v1" ] || die "generated v1 directory was not created"
 
@@ -154,16 +171,16 @@ generate() {
 }
 
 # generate_mocks emits testify mocks for every generated gRPC client, server and
-# stream. They live in their own package rather than beside the .pb.go files so
-# that testify stays out of the shipped protobuf package: the M options below
-# name the protobuf package as the one to import and "grpcmock" as the package
-# to emit, which is what import_package=true keys off.
+# stream into protobuf/mock, a package of its own so that testify stays out of
+# the protobuf package the agent ships. The M options below name the protobuf
+# package as the one to import and "grpcmock" as the package to emit, which is
+# what import_package=true keys off; the package is named grpcmock rather than
+# mock so that importers can still call the testify package mock.
 generate_mocks() {
-	local proto_files mock_opts generated_dir f
+	local mock_opts generated_dir f
 
-	proto_files=("$PROTO_SRC_DIR"/v1/*.proto)
 	mock_opts=()
-	for f in "${proto_files[@]}"; do
+	for f in "${PROTO_FILES[@]}"; do
 		mock_opts+=(--go-grpcmock_opt="Mv1/$(basename "$f")=$MOCK_GO_PACKAGE")
 	done
 
@@ -178,7 +195,7 @@ generate_mocks() {
 		--go-grpcmock_opt=framework=testify \
 		--go-grpcmock_opt=import_package=true \
 		"${mock_opts[@]}" \
-		"${proto_files[@]}"
+		"${PROTO_FILES[@]}"
 
 	[ -d "$generated_dir/v1" ] || die "generated mock directory was not created"
 
@@ -204,6 +221,7 @@ ensure_protoc
 ensure_go_tool protoc-gen-go google.golang.org/protobuf/cmd/protoc-gen-go "$PROTOC_GEN_GO_VERSION"
 ensure_go_tool protoc-gen-go-grpc google.golang.org/grpc/cmd/protoc-gen-go-grpc "$PROTOC_GEN_GO_GRPC_VERSION"
 ensure_go_tool protoc-gen-go-grpcmock github.com/lovoo/protoc-gen-go-grpcmock/cmd/protoc-gen-go-grpcmock "$PROTOC_GEN_GO_GRPCMOCK_VERSION"
+collect_proto_sources
 generate
 generate_mocks
 log "protobuf generation complete"

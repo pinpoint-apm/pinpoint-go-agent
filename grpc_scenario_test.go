@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent/internal/grpcmock"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	grpcmock "github.com/pinpoint-apm/pinpoint-go-agent/protobuf/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -16,7 +16,7 @@ import (
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
-// The mocks in internal/grpcmock are generated from the same .proto files as
+// The mocks in protobuf/mock are generated from the same .proto files as
 // the clients themselves (protoc-gen-go-grpcmock, testify), so they satisfy the
 // real interfaces and a scenario can script the collector per call -- fail
 // twice, then recover -- instead of hand-rolling a counter per stub.
