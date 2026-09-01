@@ -17,8 +17,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	ppfasthttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	"github.com/valyala/fasthttp"
 )
 
 const serverName = "Fiber Server"
@@ -46,7 +46,7 @@ func wrap(f func(c *fiber.Ctx) error, handlerName string) fiber.Handler {
 			method,
 			string(c.Context().Path()),
 			serverName,
-			fiberRequestHeader{&c.Context().Request.Header},
+			ppfasthttp.RequestHeader{Hdr: &c.Context().Request.Header},
 		)
 		// Record straight from the fasthttp request: converting it to a
 		// net/http request (fasthttpadaptor.ConvertRequest) materialized the
@@ -57,7 +57,7 @@ func wrap(f func(c *fiber.Ctx) error, handlerName string) fiber.Handler {
 		if tracer.IsSampled() {
 			pphttp.RecordHttpServerRequestWithReader(tracer,
 				string(c.Context().Host()), c.Context().RemoteAddr().String(),
-				fiberRequestHeader{&c.Context().Request.Header}, fiberCookie{&c.Context().Request.Header})
+				ppfasthttp.RequestHeader{Hdr: &c.Context().Request.Header}, ppfasthttp.Cookie{Hdr: &c.Context().Request.Header})
 		}
 
 		defer tracer.EndSpan()
@@ -89,50 +89,8 @@ func wrap(f func(c *fiber.Ctx) error, handlerName string) fiber.Handler {
 	}
 }
 
-type fiberRequestHeader struct {
-	header *fasthttp.RequestHeader
-}
-
-func (h fiberRequestHeader) Get(key string) string {
-	return string(h.header.Peek(key))
-}
-
-func (h fiberRequestHeader) Values(key string) []string {
-	return []string{string(h.header.Peek(key))}
-}
-
-func (h fiberRequestHeader) VisitAll(f func(name string, values []string)) {
-	h.header.VisitAll(func(key, value []byte) {
-		f(string(key), []string{string(value)})
-	})
-}
-
-type fiberCookie struct {
-	header *fasthttp.RequestHeader
-}
-
-func (c fiberCookie) VisitAll(f func(name string, value string)) {
-	c.header.VisitAllCookie(func(key, value []byte) {
-		f(string(key), string(value))
-	})
-}
-
-type fiberResponseHeader struct {
-	header *fasthttp.ResponseHeader
-}
-
-func (h fiberResponseHeader) Values(key string) []string {
-	return []string{string(h.header.Peek(key))}
-}
-
-func (h fiberResponseHeader) VisitAll(f func(name string, values []string)) {
-	h.header.VisitAll(func(key, value []byte) {
-		f(string(key), []string{string(value)})
-	})
-}
-
 func recordResponse(tracer pinpoint.Tracer, c *fiber.Ctx, status int) {
-	pphttp.RecordHttpServerResponseWithReader(tracer, status, fiberResponseHeader{&c.Context().Response.Header})
+	pphttp.RecordHttpServerResponseWithReader(tracer, status, ppfasthttp.ResponseHeader{Hdr: &c.Context().Response.Header})
 }
 
 func statusCode(err error) int {

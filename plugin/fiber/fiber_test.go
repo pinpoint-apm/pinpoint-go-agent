@@ -14,7 +14,6 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/valyala/fasthttp"
 )
 
 func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) pinpoint.Agent {
@@ -400,43 +399,4 @@ func TestWrapHandler_PassesThroughWhenAgentDisabled(t *testing.T) {
 	resp := get(t, app, "/boom")
 
 	assert.Equal(t, http.StatusTeapot, resp.StatusCode, "the handler error must still reach fiber's error handler")
-}
-
-// fiber stores headers as bytes in fasthttp's multi-map. These adapters are
-// what the agent reads inbound headers and cookies through, so a mistake here
-// silently drops every recorded value rather than failing loudly.
-func Test_headerAndCookieAdapters(t *testing.T) {
-	var req fasthttp.Request
-	req.Header.Set("X-Trace", "abc")
-	req.Header.Add("X-Multi", "one")
-	req.Header.Add("X-Multi", "two")
-	req.Header.SetCookie("first", "1")
-	req.Header.SetCookie("second", "2")
-
-	h := fiberRequestHeader{&req.Header}
-	assert.Equal(t, "abc", h.Get("x-trace"), "header names are case-insensitive")
-	assert.Equal(t, "", h.Get("X-Absent"))
-	assert.Equal(t, []string{"abc"}, h.Values("X-Trace"))
-	assert.Equal(t, []string{"one"}, h.Values("X-Multi"), "Peek returns the first value only")
-
-	visited := map[string][]string{}
-	h.VisitAll(func(name string, values []string) {
-		visited[name] = append(visited[name], values...)
-	})
-	assert.Equal(t, []string{"abc"}, visited["X-Trace"])
-	assert.Len(t, visited["X-Multi"], 2, "VisitAll must report both values of a repeated header")
-
-	cookies := map[string]string{}
-	fiberCookie{&req.Header}.VisitAll(func(name, value string) { cookies[name] = value })
-	assert.Equal(t, map[string]string{"first": "1", "second": "2"}, cookies)
-
-	var resp fasthttp.Response
-	resp.Header.Set("X-Result", "ok")
-	rh := fiberResponseHeader{&resp.Header}
-	assert.Equal(t, []string{"ok"}, rh.Values("X-Result"))
-	assert.Equal(t, []string{""}, rh.Values("X-Absent"), "an absent response header reads as one empty value")
-
-	resVisited := map[string][]string{}
-	rh.VisitAll(func(name string, values []string) { resVisited[name] = values })
-	assert.Equal(t, []string{"ok"}, resVisited["X-Result"])
 }

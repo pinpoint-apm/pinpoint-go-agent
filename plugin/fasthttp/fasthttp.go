@@ -56,7 +56,7 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 		}
 
 		method := string(ctx.Method())
-		requestHeader := reqHeader{&ctx.Request.Header}
+		requestHeader := RequestHeader{&ctx.Request.Header}
 		status := http.StatusOK
 		tracer := pphttp.NewHttpServerTracerWithReader(method, string(ctx.Path()), serverName, requestHeader)
 		// Record straight from the fasthttp request: converting it to a
@@ -67,7 +67,7 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 		// off the unsampled path; the callee would discard them.
 		if tracer.IsSampled() {
 			pphttp.RecordHttpServerRequestWithReader(tracer, string(ctx.Host()), ctx.RemoteAddr().String(),
-				requestHeader, cookie{&ctx.Request.Header})
+				requestHeader, Cookie{&ctx.Request.Header})
 		}
 
 		defer tracer.EndSpan()
@@ -97,7 +97,7 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 }
 
 func recordResponse(tracer pinpoint.Tracer, c *fasthttp.RequestCtx, status int) {
-	pphttp.RecordHttpServerResponseWithReader(tracer, status, resHeader{&c.Response.Header})
+	pphttp.RecordHttpServerResponseWithReader(tracer, status, ResponseHeader{&c.Response.Header})
 }
 
 type distributedTracingContextWriterMD struct {
@@ -123,8 +123,8 @@ func before(tracer pinpoint.Tracer, operationName string, req *fasthttp.Request)
 
 		a := se.Annotations()
 		a.AppendString(pinpoint.AnnotationHttpUrl, b.String())
-		pphttp.RecordClientHttpRequestHeader(a, reqHeader{&req.Header})
-		pphttp.RecordClientHttpCookie(a, cookie{&req.Header})
+		pphttp.RecordClientHttpRequestHeader(a, RequestHeader{&req.Header})
+		pphttp.RecordClientHttpCookie(a, Cookie{&req.Header})
 	}
 
 	wr := &distributedTracingContextWriterMD{&req.Header}
@@ -137,49 +137,54 @@ func after(tracer pinpoint.Tracer, resp *fasthttp.Response, err error) {
 	if resp != nil && tracer.IsSampled() {
 		a := se.Annotations()
 		a.AppendInt(pinpoint.AnnotationHttpStatusCode, int32(resp.StatusCode()))
-		pphttp.RecordClientHttpResponseHeader(a, resHeader{&resp.Header})
+		pphttp.RecordClientHttpResponseHeader(a, ResponseHeader{&resp.Header})
 	}
 	tracer.EndSpanEvent()
 }
 
-type reqHeader struct {
-	hdr *fasthttp.RequestHeader
+// RequestHeader adapts a *fasthttp.RequestHeader to the pphttp.Header
+// interface. Exported for the fasthttp-family plugins (fiber, fiberv3) so
+// they don't each carry their own copy of the same adapter.
+type RequestHeader struct {
+	Hdr *fasthttp.RequestHeader
 }
 
-func (h reqHeader) Get(key string) string {
-	return string(h.hdr.Peek(key))
+func (h RequestHeader) Get(key string) string {
+	return string(h.Hdr.Peek(key))
 }
 
-func (h reqHeader) Values(key string) []string {
-	return []string{string(h.hdr.Peek(key))}
+func (h RequestHeader) Values(key string) []string {
+	return []string{string(h.Hdr.Peek(key))}
 }
 
-func (h reqHeader) VisitAll(f func(name string, values []string)) {
-	h.hdr.VisitAll(func(key, value []byte) {
+func (h RequestHeader) VisitAll(f func(name string, values []string)) {
+	h.Hdr.VisitAll(func(key, value []byte) {
 		f(string(key), []string{string(value)})
 	})
 }
 
-type resHeader struct {
-	hdr *fasthttp.ResponseHeader
+// ResponseHeader adapts a *fasthttp.ResponseHeader to pphttp.Header.
+type ResponseHeader struct {
+	Hdr *fasthttp.ResponseHeader
 }
 
-func (h resHeader) Values(key string) []string {
-	return []string{string(h.hdr.Peek(key))}
+func (h ResponseHeader) Values(key string) []string {
+	return []string{string(h.Hdr.Peek(key))}
 }
 
-func (h resHeader) VisitAll(f func(name string, values []string)) {
-	h.hdr.VisitAll(func(key, value []byte) {
+func (h ResponseHeader) VisitAll(f func(name string, values []string)) {
+	h.Hdr.VisitAll(func(key, value []byte) {
 		f(string(key), []string{string(value)})
 	})
 }
 
-type cookie struct {
-	hdr *fasthttp.RequestHeader
+// Cookie adapts the cookies of a *fasthttp.RequestHeader to pphttp.Cookie.
+type Cookie struct {
+	Hdr *fasthttp.RequestHeader
 }
 
-func (c cookie) VisitAll(f func(name string, value string)) {
-	c.hdr.VisitAllCookie(func(key, value []byte) {
+func (c Cookie) VisitAll(f func(name string, value string)) {
+	c.Hdr.VisitAllCookie(func(key, value []byte) {
 		f(string(key), string(value))
 	})
 }

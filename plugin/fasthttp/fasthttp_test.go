@@ -78,7 +78,7 @@ func Test_reqHeader(t *testing.T) {
 	ctx.Request.Header.Set("X-Trace", "abc")
 	ctx.Request.Header.Add("X-Multi", "one")
 	ctx.Request.Header.Add("X-Multi", "two")
-	h := reqHeader{&ctx.Request.Header}
+	h := RequestHeader{&ctx.Request.Header}
 
 	assert.Equal(t, "abc", h.Get("X-Trace"))
 	assert.Equal(t, "abc", h.Get("x-trace"), "header names are case-insensitive")
@@ -97,7 +97,7 @@ func Test_reqHeader(t *testing.T) {
 func Test_resHeader(t *testing.T) {
 	ctx := newRequestCtx(http.MethodGet, "http://localhost/hello")
 	ctx.Response.Header.Set("X-Result", "ok")
-	h := resHeader{&ctx.Response.Header}
+	h := ResponseHeader{&ctx.Response.Header}
 
 	assert.Equal(t, []string{"ok"}, h.Values("X-Result"))
 	assert.Equal(t, []string{""}, h.Values("X-Absent"), "an absent response header reads as one empty value")
@@ -115,7 +115,7 @@ func Test_cookie(t *testing.T) {
 	ctx.Request.Header.SetCookie("second", "2")
 
 	got := map[string]string{}
-	cookie{&ctx.Request.Header}.VisitAll(func(name, value string) { got[name] = value })
+	Cookie{&ctx.Request.Header}.VisitAll(func(name, value string) { got[name] = value })
 
 	assert.Equal(t, map[string]string{"first": "1", "second": "2"}, got)
 }
@@ -124,7 +124,7 @@ func Test_cookie(t *testing.T) {
 func Test_cookie_Empty(t *testing.T) {
 	ctx := newRequestCtx(http.MethodGet, "http://localhost/hello")
 
-	cookie{&ctx.Request.Header}.VisitAll(func(string, string) {
+	Cookie{&ctx.Request.Header}.VisitAll(func(string, string) {
 		t.Error("a request without cookies yielded one")
 	})
 }
