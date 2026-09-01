@@ -327,3 +327,20 @@ func TestClientAndServerShareOneTransaction(t *testing.T) {
 	assert.Equal(t, caller.TransactionId().String(), calleeTxID,
 		"the callee's span must join the caller's transaction")
 }
+
+// A hand-built request - not from http.NewRequest - may carry a nil URL and a
+// nil header map. net/http rejects such a request with an error, and the
+// instrumentation must not turn that error into a panic.
+func TestDoClient_HandBuiltRequest(t *testing.T) {
+	agent := startAgent(t)
+	tracer := agent.NewSpanTracer("test", "/caller")
+	defer tracer.EndSpan()
+
+	req := pinpoint.RequestWithTracerContext(&http.Request{Method: "GET"}, tracer)
+	want := errors.New("http: nil Request.URL")
+
+	assert.NotPanics(t, func() {
+		_, err := DoClient(func(*http.Request) (*http.Response, error) { return nil, want }, req)
+		assert.ErrorIs(t, err, want, "the doFunc's own verdict must come back unchanged")
+	})
+}

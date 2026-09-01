@@ -26,8 +26,10 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 	if tracer.IsSampled() {
 		var b bytes.Buffer
 		b.WriteString(req.Method)
-		b.WriteString(" ")
-		b.WriteString(req.URL.String())
+		if req.URL != nil {
+			b.WriteString(" ")
+			b.WriteString(req.URL.String())
+		}
 		tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHttpUrl, b.String())
 
 		a := tracer.SpanEvent().Annotations()
@@ -35,7 +37,12 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 		RecordClientHttpCookie(a, cookie{req})
 	}
 
-	tracer.Inject(req.Header)
+	// A hand-built request (not from http.NewRequest) may carry a nil URL or
+	// a nil header map; net/http rejects such a request with an error, and
+	// the wrapper must not turn that error into a panic.
+	if req.Header != nil {
+		tracer.Inject(req.Header)
+	}
 	return tracer
 }
 
