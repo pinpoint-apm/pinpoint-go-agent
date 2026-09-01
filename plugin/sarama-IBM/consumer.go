@@ -190,7 +190,8 @@ func newConsumerTracer(ctx context.Context, msg *sarama.ConsumerMessage) pinpoin
 	a := span.Annotations()
 	a.AppendString(pinpoint.AnnotationKafkaTopic, msg.Topic)
 	a.AppendInt(pinpoint.AnnotationKafkaPartition, msg.Partition)
-	a.AppendInt(pinpoint.AnnotationKafkaOffset, int32(msg.Offset))
+	// The offset is an int64; casting to int32 truncated it past 2^31.
+	a.AppendLong(pinpoint.AnnotationKafkaOffset, msg.Offset)
 
 	return tracer
 }
