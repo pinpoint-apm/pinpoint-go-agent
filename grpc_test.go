@@ -1706,3 +1706,28 @@ func Test_grpcChannelOptions_dialOptions_flowControlWindow(t *testing.T) {
 	assert.Equal(t, uint32(0), update.StreamID, "window update must target the connection")
 	assert.Equal(t, uint32(window-65535), update.Increment, "connection window")
 }
+
+// deadlineMetaClient records the deadline carried by a metadata request.
+type deadlineMetaClient struct {
+	pb.MetadataClient
+	deadline time.Time
+}
+
+func (c *deadlineMetaClient) RequestApiMetaData(ctx context.Context, _ *pb.PApiMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
+	c.deadline, _ = ctx.Deadline()
+	return &pb.PResult{Success: true}, nil
+}
+
+// Metadata sends must carry the short metaGrpcTimeOut, not agentGrpcTimeOut:
+// a hung collector otherwise pins sendMetaWorker's permits for a minute per
+// attempt while metaChan overflows and evicts cache entries.
+func Test_sendApiMetadata_usesMetaDeadline(t *testing.T) {
+	cfg, _ := NewConfig(WithAppName("TestApp"))
+	agent := newTestAgent(cfg)
+	client := &deadlineMetaClient{}
+	agentGrpc := &agentGrpc{metaClient: client, agent: agent}
+
+	before := time.Now()
+	assert.NoError(t, agentGrpc.sendApiMetadata(&pb.PApiMetaData{ApiId: 1}))
+	assert.WithinDuration(t, before.Add(metaGrpcTimeOut), client.deadline, time.Second)
+}

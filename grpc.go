@@ -108,7 +108,32 @@ func backOffSleep(attempt int) time.Duration {
 }
 
 const (
-	agentGrpcTimeOut     = 60 * time.Second
+	// agentGrpcTimeOut bounds the AgentInfo RPC (boot-time registration and
+	// the periodic refresh). It stays longer than metaGrpcTimeOut on purpose:
+	// AgentInfo is one request from one goroutine with no queue or cache
+	// behind it, so a slow reply only delays that caller -- nothing piles up
+	// and nothing is invalidated. Registration retries with backOffUntilReady
+	// until it succeeds, so a long wait on a hung collector costs boot latency
+	// at most, while a tight deadline would only add spurious re-registrations
+	// of the largest message the agent sends. (The C++ agent uses 5s here too;
+	// matching it is a separate decision from the metadata fix.)
+	agentGrpcTimeOut = 60 * time.Second
+
+	// metaGrpcTimeOut bounds each metadata RPC (api/string/sql/sqlUid/
+	// exception). Unlike AgentInfo these run under sendMetaWorker's
+	// metaMaxConcurrentRequests permits, and a failed send evicts the item's
+	// cache entry so it is re-registered on next use. Under the former 60s
+	// deadline a hung collector pinned every permit for up to
+	// 60s x metaRetryMaxAttempts; metaChan overflowed, tryEnqueueMeta dropped
+	// the oldest queued item (evicting its cache entry as well), and each drop
+	// or timeout re-queued the same metadata -- an amplification loop that
+	// lasted until the collector recovered. 5s matches the C++ agent's
+	// request_timeout for unary RPCs: ample for a healthy collector, short
+	// enough that permits recycle before the queue fills. Kept as a constant
+	// like the C++ agent's value; a Collector.Grpc.* key can be added if a
+	// deployment ever needs to tune it.
+	metaGrpcTimeOut = 5 * time.Second
+
 	sendStreamTimeOut    = 5 * time.Second
 	closeStreamTimeOut   = 1 * time.Second
 	commandStreamTimeOut = 1 * time.Second
@@ -492,7 +517,7 @@ func (agentGrpc *agentGrpc) retryMeta(send func() error) bool {
 }
 
 func (agentGrpc *agentGrpc) sendApiMetadata(in *pb.PApiMetaData) error {
-	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), agentGrpcTimeOut)
+	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), metaGrpcTimeOut)
 	defer cancel()
 
 	_, err := agentGrpc.metaClient.RequestApiMetaData(ctx, in)
@@ -520,7 +545,7 @@ func (agentGrpc *agentGrpc) sendApiMetadataWithRetry(apiId int32, api string, li
 }
 
 func (agentGrpc *agentGrpc) sendStringMetadata(in *pb.PStringMetaData) error {
-	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), agentGrpcTimeOut)
+	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), metaGrpcTimeOut)
 	defer cancel()
 
 	_, err := agentGrpc.metaClient.RequestStringMetaData(ctx, in)
@@ -546,7 +571,7 @@ func (agentGrpc *agentGrpc) sendStringMetadataWithRetry(strId int32, str string)
 }
 
 func (agentGrpc *agentGrpc) sendSqlMetadata(in *pb.PSqlMetaData) error {
-	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), agentGrpcTimeOut)
+	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), metaGrpcTimeOut)
 	defer cancel()
 
 	_, err := agentGrpc.metaClient.RequestSqlMetaData(ctx, in)
@@ -573,7 +598,7 @@ func (agentGrpc *agentGrpc) sendSqlMetadataWithRetry(sqlId int32, sql string) bo
 }
 
 func (agentGrpc *agentGrpc) sendSqlUidMetadata(in *pb.PSqlUidMetaData) error {
-	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), agentGrpcTimeOut)
+	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), metaGrpcTimeOut)
 	defer cancel()
 
 	_, err := agentGrpc.metaClient.RequestSqlUidMetaData(ctx, in)
@@ -615,7 +640,7 @@ func (agentGrpc *agentGrpc) sendExceptionMetadata(in *pb.PExceptionMetaData) err
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), agentGrpcTimeOut)
+	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), metaGrpcTimeOut)
 	defer cancel()
 
 	_, err := agentGrpc.metaClient.RequestExceptionMetaData(ctx, in)
