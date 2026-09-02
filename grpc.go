@@ -153,7 +153,19 @@ func (o grpcChannelOptions) dialOptions(creds credentials.TransportCredentials) 
 	return []grpc.DialOption{
 		grpc.WithKeepaliveParams(o.keepAlive),
 		grpc.WithTransportCredentials(creds),
+		// HTTP/2 has two independent receive windows and a sender is bound by
+		// both: SETTINGS_INITIAL_WINDOW_SIZE caps the bytes in flight on each
+		// stream, and the stream-0 window caps the bytes in flight on the whole
+		// connection. grpc-go exposes them as separate options and leaves the
+		// connection window at its 64KB default when only the stream window is
+		// set, so a 1MB stream window alone lets the collector push at most 64KB
+		// per round trip across every stream. Setting either option also turns
+		// off grpc-go's BDP-based auto-tuning, so the values below are static.
+		// Applying the one FlowControlWindow key to both matches the Java
+		// agent, where NettyChannelBuilder.flowControlWindow sets both windows
+		// and disables auto-tuning as well.
 		grpc.WithInitialWindowSize(o.flowControlWindow),
+		grpc.WithInitialConnWindowSize(o.flowControlWindow),
 		grpc.WithWriteBufferSize(o.writeBufferSize),
 		grpc.WithMaxHeaderListSize(o.maxHeaderListSize),
 		grpc.WithDefaultCallOptions(

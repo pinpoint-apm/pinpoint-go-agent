@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"context"
 	"errors"
+	"io"
 	"math"
 	"net"
 	"os"
@@ -16,6 +17,7 @@ import (
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
@@ -990,7 +992,7 @@ func Test_grpcChannelOptions_defaults(t *testing.T) {
 	assert.Equal(t, 4*1024*1024, o.maxSendMsgSize, "max send message size")
 	assert.Equal(t, 4*1024*1024, o.maxRecvMsgSize, "max receive message size")
 	assert.Equal(t, uint32(8*1024), o.maxHeaderListSize, "max header list size")
-	assert.Len(t, o.dialOptions(insecure.NewCredentials()), 6)
+	assert.Len(t, o.dialOptions(insecure.NewCredentials()), 7)
 }
 
 func Test_grpcChannelOptions_configured(t *testing.T) {
@@ -1634,4 +1636,52 @@ func Test_cmdGrpc_sendActiveThreadDump_reportsDumpFailure(t *testing.T) {
 	assert.Equal(t, int32(-1), lightDumps[0].GetCommonResponse().GetStatus())
 	assert.Equal(t, failMsg, lightDumps[0].GetCommonResponse().GetMessage().GetValue())
 	assert.Empty(t, lightDumps[0].GetThreadDump())
+}
+
+// dialOptions returns opaque grpc.DialOptions, so the flow-control settings
+// can only be checked on the wire. A correctly configured client advertises the
+// window as SETTINGS_INITIAL_WINDOW_SIZE (the per-stream window) and then
+// raises the stream-0 window from the 64KB default to the same value with a
+// WINDOW_UPDATE (the connection window). Without WithInitialConnWindowSize no
+// WINDOW_UPDATE is sent and the connection stays capped at 64KB.
+func Test_grpcChannelOptions_dialOptions_flowControlWindow(t *testing.T) {
+	const window = 1 * 1024 * 1024
+	cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorGrpcFlowControlWindow(window))
+	require.NoError(t, err)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+
+	opts := newGrpcChannelOptions(cfg).dialOptions(insecure.NewCredentials())
+	cc, err := grpc.NewClient("passthrough:///"+ln.Addr().String(), opts...)
+	require.NoError(t, err)
+	defer cc.Close()
+	cc.Connect()
+
+	conn, err := ln.Accept()
+	require.NoError(t, err)
+	defer conn.Close()
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+
+	preface := make([]byte, len(http2.ClientPreface))
+	_, err = io.ReadFull(conn, preface)
+	require.NoError(t, err)
+	require.Equal(t, http2.ClientPreface, string(preface))
+
+	fr := http2.NewFramer(io.Discard, conn)
+	frame, err := fr.ReadFrame()
+	require.NoError(t, err)
+	settings, ok := frame.(*http2.SettingsFrame)
+	require.True(t, ok, "first frame must be SETTINGS, got %T", frame)
+	streamWindow, ok := settings.Value(http2.SettingInitialWindowSize)
+	require.True(t, ok, "SETTINGS must carry INITIAL_WINDOW_SIZE")
+	assert.Equal(t, uint32(window), streamWindow, "stream window")
+
+	frame, err = fr.ReadFrame()
+	require.NoError(t, err)
+	update, ok := frame.(*http2.WindowUpdateFrame)
+	require.True(t, ok, "connection WINDOW_UPDATE must follow SETTINGS, got %T", frame)
+	assert.Equal(t, uint32(0), update.StreamID, "window update must target the connection")
+	assert.Equal(t, uint32(window-65535), update.Increment, "connection window")
 }
