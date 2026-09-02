@@ -193,7 +193,7 @@ func (span *noopSpan) collectUrlStat(stat *UrlStatEntry) {
 
 func (span *noopSpan) AddMetric(metric string, value interface{}) {
 	if metric == MetricURLStat {
-		if entry, ok := value.(*UrlStatEntry); ok {
+		if entry, ok := value.(*UrlStatEntry); ok && entry != nil {
 			span.collectUrlStat(entry)
 		}
 	}

@@ -532,6 +532,22 @@ func TestSpan_AddMetric_IgnoresWrongValueType(t *testing.T) {
 	})
 }
 
+func TestSpan_AddMetric_IgnoresTypedNilURLStat(t *testing.T) {
+	config := defaultConfig()
+	config.Set(CfgHttpUrlStatEnable, true)
+	agent := newTestAgent(config)
+	sampled := defaultSpan(agent)
+	unsampled := &noopSpan{agent: agent, cfg: config.load(), withStats: true}
+	var entry *UrlStatEntry
+
+	assert.NotPanics(t, func() {
+		sampled.AddMetric(MetricURLStat, entry)
+		unsampled.AddMetric(MetricURLStat, entry)
+	})
+	assert.Nil(t, sampled.urlStat)
+	assert.Nil(t, unsampled.urlStat)
+}
+
 func TestSpan_EndSpanTwiceCountsOnce(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	span := defaultSpan(agent)
