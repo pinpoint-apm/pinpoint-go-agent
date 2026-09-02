@@ -145,7 +145,7 @@ func (metaGrpcClient *mockMetaGrpcClient) sentMeta() (api []*pb.PApiMetaData, st
 }
 
 func newMockAgentGrpc(agent *agent) *agentGrpc {
-	return &agentGrpc{nil, &mockAgentGrpcClient{}, &mockMetaGrpcClient{}, -1, nil, agent}
+	return &agentGrpc{agentClient: &mockAgentGrpcClient{}, metaClient: &mockMetaGrpcClient{}, pingSocketId: -1, agent: agent}
 }
 
 // mockSpanStream stands in for the collector side of a span stream.

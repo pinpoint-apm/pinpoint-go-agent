@@ -651,12 +651,17 @@ func Test_sendStreamWithTimeout_unresponsiveStreamLeaksNothing(t *testing.T) {
 type failingMetaClient struct {
 	calls int32
 	err   error
+	mu    sync.Mutex
+	at    []time.Time
 	// failFirst > 0 fails only the leading n calls and then succeeds; the zero
 	// value fails every call.
 	failFirst int32
 }
 
 func (c *failingMetaClient) fail() error {
+	c.mu.Lock()
+	c.at = append(c.at, time.Now())
+	c.mu.Unlock()
 	n := atomic.AddInt32(&c.calls, 1)
 	if c.failFirst > 0 && n > c.failFirst {
 		return nil
@@ -666,6 +671,12 @@ func (c *failingMetaClient) fail() error {
 
 func (c *failingMetaClient) callCount() int32 {
 	return atomic.LoadInt32(&c.calls)
+}
+
+func (c *failingMetaClient) callTimes() []time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]time.Time(nil), c.at...)
 }
 
 func (c *failingMetaClient) RequestApiMetaData(context.Context, *pb.PApiMetaData, ...grpc.CallOption) (*pb.PResult, error) {
@@ -702,6 +713,48 @@ func Test_retryMeta_stopsAtRetryBound(t *testing.T) {
 
 	assert.False(t, ok, "retryable errors must stop at the bound")
 	assert.Equal(t, int32(metaRetryMaxAttempts), failing.callCount())
+}
+
+// A collector that is up but refusing (Unavailable) leaves the channel Ready,
+// so the readiness wait returns at once; the fixed pause must still space the
+// attempts out instead of firing the whole budget back to back.
+func Test_retryMeta_pausesBetweenAttemptsOnReadyChannel(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.config.offGrpc = false
+	conn := dialReadyConn(t)
+	agentGrpc, failing := newFailingMetaAgentGrpc(agent, status.Errorf(codes.Unavailable, "collector overloaded"))
+	agentGrpc.agentConn = conn
+	agentGrpc.retryDelay = 100 * time.Millisecond
+
+	assert.False(t, agentGrpc.sendApiMetadataWithRetry(1, "test.api", -1, apiTypeInvocation))
+
+	at := failing.callTimes()
+	require.Len(t, at, metaRetryMaxAttempts)
+	for i := 1; i < len(at); i++ {
+		assert.GreaterOrEqual(t, at[i].Sub(at[i-1]), agentGrpc.retryDelay, "attempt %d fired without the pause", i+1)
+	}
+	assert.Equal(t, connectivity.Ready, conn.GetState(), "the pause, not a reconnect, spaced the attempts")
+}
+
+// Shutdown must not sit out a pending retry pause.
+func Test_retryMeta_pauseReturnsOnShutdown(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agentGrpc, failing := newFailingMetaAgentGrpc(agent, status.Errorf(codes.Unavailable, "collector overloaded"))
+	agentGrpc.retryDelay = time.Hour
+
+	done := make(chan bool, 1)
+	go func() { done <- agentGrpc.sendApiMetadataWithRetry(1, "test.api", -1, apiTypeInvocation) }()
+	assert.Eventually(t, func() bool { return failing.callCount() == 1 }, time.Second, time.Millisecond)
+
+	agent.signalShutdown()
+
+	select {
+	case ok := <-done:
+		assert.False(t, ok)
+	case <-time.After(time.Second):
+		t.Fatal("retryMeta kept pausing after shutdown")
+	}
+	assert.Equal(t, int32(1), failing.callCount(), "no further attempt after shutdown")
 }
 
 func Test_retryMeta_noRetryOnNonRetryableError(t *testing.T) {

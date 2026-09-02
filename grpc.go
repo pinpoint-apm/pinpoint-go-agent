@@ -211,6 +211,9 @@ type agentGrpc struct {
 	pingSocketId int64
 	pingStream   *pingStream
 	agent        *agent
+	// retryDelay is the pause between metadata retries: metaRetryDelay in
+	// production, shortened by tests.
+	retryDelay time.Duration
 }
 
 func newAgentGrpc(agent *agent) (*agentGrpc, error) {
@@ -224,6 +227,7 @@ func newAgentGrpc(agent *agent) (*agentGrpc, error) {
 		agentClient: pb.NewAgentClient(conn),
 		metaClient:  pb.NewMetadataClient(conn),
 		agent:       agent,
+		retryDelay:  metaRetryDelay,
 	}, nil
 }
 
@@ -436,6 +440,13 @@ func isRetryableError(e error) bool {
 // metadata is dropped.
 const metaRetryMaxAttempts = 3
 
+// metaRetryDelay is the pause between two sends of one metadata item, matching
+// the C++ agent's meta_retry_delay and the Java agent's retryDelayMillis. The
+// readiness wait alone is not enough: a collector that is up but refusing
+// (Unavailable) leaves the channel Ready, so without a pause every attempt in
+// the budget fires back to back against an already overloaded collector.
+const metaRetryDelay = time.Second
+
 // metaMaxConcurrentRequests bounds how many metadata sends sendMetaWorker
 // keeps in flight at once, matching the C++ agent's
 // meta_max_concurrent_requests.
@@ -454,6 +465,13 @@ func (agentGrpc *agentGrpc) retryMeta(send func() error) bool {
 			break
 		}
 
+		// Pause first, then wait for the channel. A Ready channel passes the
+		// readiness wait at once, so the pause is the whole interval; a channel
+		// that is still down after the pause is simply waited on, so the two
+		// never stack a second pause on top of the reconnect wait.
+		if !sleepUnlessStopped(agentGrpc.agent, agentGrpc.retryDelay) {
+			return false
+		}
 		if !agentGrpc.agent.config.offGrpc {
 			backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
 		}
@@ -747,6 +765,19 @@ func backOffUntilReady(agent *agent, grpcConn *grpc.ClientConn, which string) {
 		if waitUntilReady(agent.stopSignal(), grpcConn, backOffSleep(attempt), which) {
 			return
 		}
+	}
+}
+
+// sleepUnlessStopped waits d, returning false as soon as shutdown begins so
+// a pending pause does not delay it.
+func sleepUnlessStopped(agent *agent, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-agent.stopSignal().Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
