@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -916,10 +917,22 @@ func (config *Config) loadDynamicConfig(cfgFileViper *viper.Viper, profileViper 
 func (cb reloadCallback) do(changed map[string]bool) {
 	for _, k := range cb.cfgNames {
 		if changed[k] {
-			cb.callback()
+			cb.invoke()
 			break
 		}
 	}
+}
+
+// invoke isolates a caller-supplied callback from the config watcher. A panic
+// in any goroutine normally terminates the host process; recovering here also
+// lets reloadConfig continue with the remaining callbacks.
+func (cb reloadCallback) invoke() {
+	defer func() {
+		if e := recover(); e != nil {
+			Log("config").Errorf("config reload callback panic (%v): %v\n%s", cb.cfgNames, e, debug.Stack())
+		}
+	}()
+	cb.callback()
 }
 
 func isContainerEnv() bool {

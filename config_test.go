@@ -703,6 +703,31 @@ Span:
 	assert.Equal(t, 1, reloadedDepth)
 }
 
+func Test_reloadConfig_recoversCallbackPanic(t *testing.T) {
+	config, err := NewConfig(WithAppName("reloadApp"))
+	assert.NoError(t, err)
+
+	panickingCalls := 0
+	followingCalls := 0
+	config.AddReloadCallback([]string{CfgSamplingCounterRate}, func() {
+		panickingCalls++
+		panic("callback failure")
+	})
+	config.AddReloadCallback([]string{CfgSamplingCounterRate}, func() {
+		followingCalls++
+	})
+
+	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	assert.NoError(t, os.WriteFile(cfgFile, []byte("Sampling:\n  CounterRate: 2\n"), 0o600))
+	cfgFileViper := viper.New()
+	cfgFileViper.SetConfigFile(cfgFile)
+
+	assert.NotPanics(t, func() { config.reloadConfig(cfgFileViper) })
+	assert.Equal(t, 1, panickingCalls)
+	assert.Equal(t, 1, followingCalls, "a panicking callback must not skip later callbacks")
+	assert.Equal(t, 2, config.Int(CfgSamplingCounterRate))
+}
+
 // A delete-then-recreate save (unlink+rewrite editors, deploy tools) must not
 // end the watcher: it watches the directory, so it survives the Remove and the
 // following Create still reloads the recreated file.
