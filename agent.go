@@ -596,6 +596,7 @@ func (agent *agent) sendPingWorker() {
 	stream := agent.agentGrpc.newPingStreamWithRetry()
 
 	for agent.enable.Load() {
+		stream = renewIfExpired(stream, agent.agentGrpc.newPingStreamWithRetry, "ping")
 		err := stream.sendPing()
 		if err != nil {
 			if err != io.EOF {
@@ -648,6 +649,8 @@ func (agent *agent) sendSpanWorker() {
 			}
 		}
 
+		// A renewal is not an outage: no span is skipped for it.
+		stream = renewIfExpired(stream, agent.spanGrpc.newSpanStreamWithRetry, "span")
 		err := stream.sendSpan(chunk)
 		if err != nil {
 			if err != io.EOF {
@@ -1120,6 +1123,7 @@ func (agent *agent) sendStatsWorker() {
 		case stats = <-agent.statChan:
 		}
 
+		stream = renewIfExpired(stream, agent.statGrpc.newStatStreamWithRetry, "stat")
 		err := stream.sendStats(stats)
 		if err != nil {
 			if err != io.EOF {

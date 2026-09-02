@@ -40,6 +40,10 @@ Collector:
     # trust path with TLS on falls back to the system root CAs.
     SslEnable: false
     TrustCertFilePath: ""
+    # Connection and stream renewal, off by default in the agent (0). Set to
+    # spread long-running agents across a scaled-out collector, e.g. 600000.
+    ConnectionMaxAge: 0 # ms
+    StreamMaxAge: 0 # ms
 
 # --- Logging ---
 Log:

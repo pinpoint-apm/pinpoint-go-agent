@@ -388,6 +388,41 @@ It is ignored unless [Collector.Grpc.SslEnable](#collectorgrpcsslenable) is enab
 * default: ""
 * case-sensitive
 
+### Collector.Grpc.ConnectionMaxAge
+Collector.Grpc.ConnectionMaxAge option sets the max age in milliseconds of a collector connection.
+Once a connection is older than this, the next send opens a replacement connection and switches over
+as soon as the replacement is ready; the old connection is closed only then, so no send fails over the switch.
+If the replacement never becomes ready, the old connection keeps serving.
+Use it when the collector sits behind an L4 load balancer or is scaled out, so that agents already
+connected spread across the collector instances over time instead of staying pinned to the one they first reached.
+The connection is only replaced while traffic flows, and the age is randomized by +/-10% so that agents
+deployed together do not reconnect in lockstep.
+This corresponds to the Java agent's `profiler.transport.grpc.loadbalancer.renew.period.millis`.
+The default 0 keeps a working connection for as long as the agent runs.
+
+* --pinpoint-collector-grpc-connectionmaxage
+* PINPOINT_GO_COLLECTOR_GRPC_CONNECTIONMAXAGE
+* WithCollectorGrpcConnectionMaxAge()
+* int
+* default: 0
+* unit: milliseconds
+
+### Collector.Grpc.StreamMaxAge
+Collector.Grpc.StreamMaxAge option sets the max age in milliseconds of the long-lived ping, span (when
+[Span.Batch.Enable](#spanbatchenable) is off), stat and command streams.
+A stream older than this is closed normally and reopened before the next send, so no span or stat is dropped;
+the command stream, which waits on the collector, is reopened when its age runs out.
+This corresponds to the Java agent's `profiler.transport.grpc.span.sender.rpc.age.max.millis`, and like it the age
+is randomized by +/-10%.
+The default 0 keeps a stream open until it fails.
+
+* --pinpoint-collector-grpc-streammaxage
+* PINPOINT_GO_COLLECTOR_GRPC_STREAMMAXAGE
+* WithCollectorGrpcStreamMaxAge()
+* int
+* default: 0
+* unit: milliseconds
+
 ### Sampling.Type
 Sampling.Type option sets the type of agent sampler.
 Either "COUNTER" or "PERCENT" must be specified.

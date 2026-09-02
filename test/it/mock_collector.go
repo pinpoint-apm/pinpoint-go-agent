@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -129,6 +130,9 @@ type RpcResult struct {
 // request/write the server received.
 type Snapshot struct {
 	RpcResults []RpcResult
+	// Connections lists, in order, the endpoint of every transport connection
+	// the collector accepted, so a test can see the agent rotate connections.
+	Connections []Endpoint
 
 	AgentInfos  []Received[*pb.PAgentInfo]
 	PingStreams []RpcMetadata
@@ -177,6 +181,19 @@ type endpointServer struct {
 	listener net.Listener
 	creds    credentials.TransportCredentials
 	register func(*grpc.Server)
+	onConn   func()
+}
+
+// connStats reports every accepted connection to the owning endpoint.
+type connStats struct{ onConn func() }
+
+func (connStats) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context   { return ctx }
+func (connStats) HandleRPC(context.Context, stats.RPCStats)                         {}
+func (connStats) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context { return ctx }
+func (h connStats) HandleConn(_ context.Context, s stats.ConnStats) {
+	if _, ok := s.(*stats.ConnBegin); ok {
+		h.onConn()
+	}
 }
 
 // MockCollector is an in-process Pinpoint collector used by the integration
@@ -224,6 +241,12 @@ func NewMockCollector() *MockCollector {
 	c.endpoints[EndpointStat] = &endpointServer{register: func(s *grpc.Server) {
 		pb.RegisterStatServer(s, &statService{c: c})
 	}}
+	for i := range c.endpoints {
+		endpoint := Endpoint(i)
+		c.endpoints[i].onConn = func() {
+			c.record(func(s *Snapshot) { s.Connections = append(s.Connections, endpoint) })
+		}
+	}
 	return c
 }
 
@@ -394,6 +417,7 @@ func (c *MockCollector) Snapshot() Snapshot {
 	defer c.mu.Unlock()
 	s := c.snapshot
 	s.RpcResults = append([]RpcResult(nil), c.snapshot.RpcResults...)
+	s.Connections = append([]Endpoint(nil), c.snapshot.Connections...)
 	s.AgentInfos = append([]Received[*pb.PAgentInfo](nil), c.snapshot.AgentInfos...)
 	s.PingStreams = append([]RpcMetadata(nil), c.snapshot.PingStreams...)
 	s.Pings = append([]Received[*pb.PPing](nil), c.snapshot.Pings...)
@@ -442,7 +466,7 @@ func (e *endpointServer) start(port int) error {
 	}
 	e.listener = ln
 	e.port = ln.Addr().(*net.TCPAddr).Port
-	var opts []grpc.ServerOption
+	opts := []grpc.ServerOption{grpc.StatsHandler(connStats{e.onConn})}
 	if e.creds != nil {
 		opts = append(opts, grpc.Creds(e.creds))
 	}

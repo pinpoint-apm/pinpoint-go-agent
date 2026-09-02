@@ -104,7 +104,54 @@ func backOffSleep(attempt int) time.Duration {
 	// Randomize so agents restarted together do not reconnect in lockstep. The
 	// jitter is applied after the clamp, as in the C++ agent, so a capped
 	// interval lands within +/-30% of the ceiling rather than always on it.
-	return time.Duration(dur * (1 - backOffJitter + rand.Float64()*2*backOffJitter))
+	return randomize(time.Duration(dur), backOffJitter)
+}
+
+// randomize returns d scaled by a uniform factor in [1-jitter, 1+jitter], the
+// Go counterpart of the Java agent's IntervalFunction.ofRandomized.
+func randomize(d time.Duration, jitter float64) time.Duration {
+	return time.Duration(float64(d) * (1 - jitter + rand.Float64()*2*jitter))
+}
+
+// streamAgeJitter randomizes every connection and stream max age by +/-10%,
+// as the Java agent does with ofRandomized(maxRpcAgeMillis, 0.1), so agents
+// deployed together do not renew in lockstep.
+const streamAgeJitter = 0.1
+
+// streamAge is embedded in the long-lived streams: expiresAt is set when the
+// stream is opened and zero when Collector.Grpc.StreamMaxAge is off.
+type streamAge struct {
+	expiresAt time.Time
+}
+
+func newStreamAge(agent *agent) streamAge {
+	maxAge := time.Duration(agent.config.Int(CfgCollectorGrpcStreamMaxAge)) * time.Millisecond
+	if maxAge <= 0 {
+		return streamAge{}
+	}
+	return streamAge{expiresAt: time.Now().Add(randomize(maxAge, streamAgeJitter))}
+}
+
+func (a streamAge) expired() bool {
+	return !a.expiresAt.IsZero() && time.Now().After(a.expiresAt)
+}
+
+type expiringStream interface {
+	expired() bool
+	close()
+}
+
+// renewIfExpired closes a stream past its max age and opens its replacement,
+// the Go counterpart of the Java agent's SpanGrpcDataSender.renewStream. A
+// renewal is the normal path, logged at info and kept apart from the error
+// path the workers take when a send fails.
+func renewIfExpired[S expiringStream](stream S, reopen func() S, which string) S {
+	if !stream.expired() {
+		return stream
+	}
+	Log("grpc").Infof("renew %s stream: max age reached", which)
+	stream.close()
+	return reopen()
 }
 
 const (
@@ -146,6 +193,13 @@ const (
 	grpcWriteBufferSize             = 1 * 1024 * 1024
 	grpcMaxMessageSize              = 4 * 1024 * 1024
 	grpcMaxHeaderListSize           = 8 * 1024
+
+	// Connection and stream renewal are off by default, as in the Java agent
+	// (profiler.transport.grpc.loadbalancer.renew.period.millis and
+	// profiler.transport.grpc.span.sender.rpc.age.max.millis default to a
+	// value the agent treats as disabled).
+	grpcConnectionMaxAge = 0 // ms
+	grpcStreamMaxAge     = 0 // ms
 )
 
 // grpcChannelOptions holds the channel options connectCollector applies to
@@ -157,10 +211,12 @@ type grpcChannelOptions struct {
 	maxSendMsgSize    int
 	maxRecvMsgSize    int
 	maxHeaderListSize uint32
+	connectionMaxAge  time.Duration
 }
 
 func newGrpcChannelOptions(config *Config) grpcChannelOptions {
 	return grpcChannelOptions{
+		connectionMaxAge: time.Duration(config.Int(CfgCollectorGrpcConnectionMaxAge)) * time.Millisecond,
 		keepAlive: keepalive.ClientParameters{
 			Time:                time.Duration(config.Int(CfgCollectorGrpcKeepAliveTime)) * time.Millisecond,
 			Timeout:             time.Duration(config.Int(CfgCollectorGrpcKeepAliveTimeout)) * time.Millisecond,
@@ -175,7 +231,7 @@ func newGrpcChannelOptions(config *Config) grpcChannelOptions {
 }
 
 func (o grpcChannelOptions) dialOptions(creds credentials.TransportCredentials) []grpc.DialOption {
-	return []grpc.DialOption{
+	opts := []grpc.DialOption{
 		grpc.WithKeepaliveParams(o.keepAlive),
 		grpc.WithTransportCredentials(creds),
 		// HTTP/2 has two independent receive windows and a sender is bound by
@@ -197,6 +253,12 @@ func (o grpcChannelOptions) dialOptions(creds credentials.TransportCredentials) 
 			grpc.MaxCallSendMsgSize(o.maxSendMsgSize),
 			grpc.MaxCallRecvMsgSize(o.maxRecvMsgSize)),
 	}
+	// Only when enabled: with the option absent the channel keeps grpc-go's
+	// default pick_first policy, so the default configuration is unchanged.
+	if o.connectionMaxAge > 0 {
+		opts = append(opts, grpc.WithDefaultServiceConfig(expiringPickFirstServiceConfig(o.connectionMaxAge)))
+	}
+	return opts
 }
 
 // collectorCredentials mirrors the C++ agent's make_channel_credentials:
@@ -842,6 +904,7 @@ func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc f
 type pingStream struct {
 	stream pb.Agent_PingSessionClient
 	cancel context.CancelFunc
+	streamAge
 }
 
 func (agentGrpc *agentGrpc) newPingStream() bool {
@@ -854,7 +917,7 @@ func (agentGrpc *agentGrpc) newPingStream() bool {
 		return false
 	}
 
-	agentGrpc.pingStream = &pingStream{stream, cancel}
+	agentGrpc.pingStream = &pingStream{stream: stream, cancel: cancel, streamAge: newStreamAge(agentGrpc.agent)}
 	return true
 }
 
@@ -925,6 +988,7 @@ type spanGrpc struct {
 type spanStream struct {
 	stream pb.Span_SendSpanClient
 	cancel context.CancelFunc
+	streamAge
 }
 
 func newSpanGrpc(agent *agent) (*spanGrpc, error) {
@@ -961,7 +1025,7 @@ func (spanGrpc *spanGrpc) newSpanStream() bool {
 		return false
 	}
 
-	spanGrpc.stream = &spanStream{stream, cancel}
+	spanGrpc.stream = &spanStream{stream: stream, cancel: cancel, streamAge: newStreamAge(spanGrpc.agent)}
 	return true
 }
 
@@ -1327,6 +1391,7 @@ type statGrpc struct {
 type statStream struct {
 	stream pb.Stat_SendAgentStatClient
 	cancel context.CancelFunc
+	streamAge
 }
 
 func newStatGrpc(agent *agent) (*statGrpc, error) {
@@ -1357,7 +1422,7 @@ func (statGrpc *statGrpc) newStatStream() bool {
 		return false
 	}
 
-	statGrpc.stream = &statStream{stream, cancel}
+	statGrpc.stream = &statStream{stream: stream, cancel: cancel, streamAge: newStreamAge(statGrpc.agent)}
 	return true
 }
 
@@ -1516,6 +1581,7 @@ type cmdGrpc struct {
 type cmdStream struct {
 	stream pb.ProfilerCommandService_HandleCommandClient
 	cancel context.CancelFunc
+	streamAge
 }
 
 func newCommandGrpc(agent *agent) (*cmdGrpc, error) {
@@ -1535,7 +1601,18 @@ func (cmdGrpc *cmdGrpc) close() {
 }
 
 func (cmdGrpc *cmdGrpc) newHandleCommandStream() bool {
-	ctx, cancel := context.WithCancel(grpcMetadataContext(cmdGrpc.agent, -1))
+	// The command worker sits in Recv waiting for the collector, so unlike the
+	// sending streams it cannot check the age before each operation. The max
+	// age is the stream deadline instead: at expiry Recv returns
+	// DeadlineExceeded and runCommandService reopens the stream.
+	age := newStreamAge(cmdGrpc.agent)
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if age.expiresAt.IsZero() {
+		ctx, cancel = context.WithCancel(grpcMetadataContext(cmdGrpc.agent, -1))
+	} else {
+		ctx, cancel = context.WithDeadline(grpcMetadataContext(cmdGrpc.agent, -1), age.expiresAt)
+	}
 	stream, err := cmdGrpc.cmdClient.HandleCommand(ctx)
 	if err != nil {
 		cancel()
@@ -1543,7 +1620,7 @@ func (cmdGrpc *cmdGrpc) newHandleCommandStream() bool {
 		return false
 	}
 
-	cmdGrpc.stream = &cmdStream{stream, cancel}
+	cmdGrpc.stream = &cmdStream{stream: stream, cancel: cancel, streamAge: age}
 	return true
 }
 

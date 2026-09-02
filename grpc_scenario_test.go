@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -234,4 +235,109 @@ func Test_runCommandService_pacesReconnectsAndStopsPromptly(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("shutdown must interrupt the reconnect back-off instead of waiting it out")
 	}
+}
+
+// Stream renewal is the normal path, not the outage path: the span worker
+// swaps an aged stream for a new one between two sends and delivers both spans,
+// whereas a failed send would have skipped the span that hit the failure.
+func Test_sendSpanWorker_renewsAgedStreamWithoutDroppingSpans(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgCollectorGrpcStreamMaxAge, 1)
+	agent := newTestAgent(cfg)
+
+	var sent counter
+	stream := grpcmock.NewMockSpan_SendSpanClient()
+	stream.OnSend(mock.Anything).Run(sent.count).Return(nil)
+	stream.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
+
+	client := grpcmock.NewMockSpanClient()
+	client.OnSendSpan(mock.Anything).Return(stream, nil)
+	agent.spanGrpc = &spanGrpc{spanClient: client, agent: agent}
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("span", agent.sendSpanWorker)
+
+	require.True(t, agent.spanQueue.enqueue(newTestSpanChunk(agent)))
+	waitFor(t, "the first span to be sent", func() bool { return sent.get() == 1 })
+	time.Sleep(5 * time.Millisecond) // the stream passes its jittered max age
+	require.True(t, agent.spanQueue.enqueue(newTestSpanChunk(agent)))
+	waitFor(t, "the second span to be sent", func() bool { return sent.get() == 2 })
+
+	agent.spanQueue.close()
+	agent.workerWg.Wait()
+
+	client.AssertNumberOfCalls(t, "SendSpan", 2)
+	// One CloseAndRecv for the renewal, one for the worker's final close.
+	stream.AssertNumberOfCalls(t, "CloseAndRecv", 2)
+	assert.EqualValues(t, 2, sent.get(), "no span is dropped over a renewal")
+}
+
+func Test_sendStatsWorker_renewsAgedStream(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgCollectorGrpcStreamMaxAge, 1)
+	agent := newTestAgent(cfg)
+	agent.statChan = make(chan *pb.PStatMessage, 4)
+
+	var sent counter
+	stream := grpcmock.NewMockStat_SendAgentStatClient()
+	stream.OnSend(mock.Anything).Run(sent.count).Return(nil)
+	stream.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
+
+	client := grpcmock.NewMockStatClient()
+	client.OnSendAgentStat(mock.Anything).Return(stream, nil)
+	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("send stats", agent.sendStatsWorker)
+
+	agent.statChan <- makePAgentStatBatch([]*inspectorStats{agent.stats.getStats()})
+	waitFor(t, "the first batch to be sent", func() bool { return sent.get() == 1 })
+	time.Sleep(5 * time.Millisecond)
+	agent.statChan <- makePAgentStatBatch([]*inspectorStats{agent.stats.getStats()})
+	waitFor(t, "the second batch to be sent", func() bool { return sent.get() == 2 })
+
+	agent.signalShutdown()
+	agent.workerWg.Wait()
+
+	client.AssertNumberOfCalls(t, "SendAgentStat", 2)
+	stream.AssertNumberOfCalls(t, "CloseAndRecv", 2)
+}
+
+// The command worker waits in Recv, so its max age is the stream deadline. When
+// it runs out the worker must reopen at once -- a renewal is not a failure, so
+// the reconnect back-off that paces failed streams does not apply.
+func Test_runCommandService_renewsAgedStreamWithoutBackOff(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgCollectorGrpcStreamMaxAge, 20)
+	agent := newTestAgent(cfg)
+
+	// Each HandleCommand hands its context over so that Recv, like the real
+	// stream, returns once the deadline set on that context passes.
+	contexts := make(chan context.Context, 16)
+	stream := grpcmock.NewMockProfilerCommandService_HandleCommandClient()
+	stream.OnSend(mock.Anything).Return(nil)
+	stream.OnRecv().Run(func(mock.Arguments) {
+		ctx := <-contexts
+		<-ctx.Done()
+	}).Return((*pb.PCmdRequest)(nil), context.DeadlineExceeded)
+	stream.On("CloseSend").Return(nil)
+
+	var opened counter
+	client := grpcmock.NewMockProfilerCommandServiceClient()
+	client.OnHandleCommand(mock.Anything).Run(func(args mock.Arguments) {
+		opened.count(args)
+		contexts <- args.Get(0).(context.Context)
+	}).Return(stream, nil)
+	agent.cmdGrpc = &cmdGrpc{cmdClient: client, agent: agent, atcStreams: atcStreams{agent: agent}}
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("command", agent.runCommandService)
+
+	// backOffSleep(0) is at least 2.1s, so three streams inside the 2s waitFor
+	// window can only mean the renewals skipped the back-off.
+	waitFor(t, "the command stream to be renewed twice", func() bool { return opened.get() >= 3 })
+
+	agent.enable.Store(false)
+	agent.signalShutdown()
+	agent.workerWg.Wait()
 }

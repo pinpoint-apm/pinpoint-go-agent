@@ -148,7 +148,12 @@ func (agent *agent) runCommandService() {
 		for agent.enable.Load() {
 			cmdReq, err := stream.recvCommandRequest()
 			if err != nil {
-				if agent.enable.Load() && err != io.EOF {
+				if stream.expired() {
+					// The stream deadline set by newHandleCommandStream: a
+					// renewal, not a failure, so reopen without the pause.
+					Log("cmd").Infof("renew command stream: max age reached")
+					attempt = -1
+				} else if agent.enable.Load() && err != io.EOF {
 					Log("cmd").Warnf("recv command request - %v", err)
 				}
 				break

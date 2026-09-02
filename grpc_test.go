@@ -1731,3 +1731,55 @@ func Test_sendApiMetadata_usesMetaDeadline(t *testing.T) {
 	assert.NoError(t, agentGrpc.sendApiMetadata(&pb.PApiMetaData{ApiId: 1}))
 	assert.WithinDuration(t, before.Add(metaGrpcTimeOut), client.deadline, time.Second)
 }
+
+// Renewal is off unless configured: the defaults are zero, negative values
+// normalize to zero, and no service config (the eighth dial option) is added,
+// so the channel keeps grpc-go's default pick_first policy.
+func Test_config_grpcRenewalDisabledByDefault(t *testing.T) {
+	cfg, err := NewConfig(WithAppName("TestApp"))
+	require.NoError(t, err)
+	assert.Equal(t, 0, cfg.Int(CfgCollectorGrpcConnectionMaxAge))
+	assert.Equal(t, 0, cfg.Int(CfgCollectorGrpcStreamMaxAge))
+	assert.Zero(t, newGrpcChannelOptions(cfg).connectionMaxAge)
+	assert.Len(t, newGrpcChannelOptions(cfg).dialOptions(insecure.NewCredentials()), 7)
+
+	cfg, err = NewConfig(WithAppName("TestApp"),
+		WithCollectorGrpcConnectionMaxAge(-1), WithCollectorGrpcStreamMaxAge(-1))
+	require.NoError(t, err)
+	assert.Equal(t, 0, cfg.Int(CfgCollectorGrpcConnectionMaxAge))
+	assert.Equal(t, 0, cfg.Int(CfgCollectorGrpcStreamMaxAge))
+
+	agent := newTestAgent(cfg)
+	assert.False(t, newStreamAge(agent).expired())
+	assert.True(t, newStreamAge(agent).expiresAt.IsZero(), "a disabled max age never expires a stream")
+}
+
+func Test_grpcChannelOptions_connectionMaxAgeSelectsExpiringPolicy(t *testing.T) {
+	cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorGrpcConnectionMaxAge(600000))
+	require.NoError(t, err)
+
+	o := newGrpcChannelOptions(cfg)
+	assert.Equal(t, 10*time.Minute, o.connectionMaxAge)
+	assert.Len(t, o.dialOptions(insecure.NewCredentials()), 8, "the default service config selecting the policy")
+}
+
+func Test_streamAge_expiresWithinJitter(t *testing.T) {
+	cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorGrpcStreamMaxAge(1000))
+	require.NoError(t, err)
+	agent := newTestAgent(cfg)
+
+	before := time.Now()
+	age := newStreamAge(agent)
+	assert.False(t, age.expired())
+	assert.WithinRange(t, age.expiresAt, before.Add(900*time.Millisecond), time.Now().Add(1100*time.Millisecond))
+
+	assert.True(t, streamAge{expiresAt: before}.expired())
+}
+
+func Test_randomize_staysWithinJitter(t *testing.T) {
+	for i := 0; i < 1000; i++ {
+		got := randomize(time.Second, streamAgeJitter)
+		assert.GreaterOrEqual(t, got, 900*time.Millisecond)
+		assert.LessOrEqual(t, got, 1100*time.Millisecond)
+	}
+}

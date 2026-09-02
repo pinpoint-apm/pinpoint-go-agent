@@ -44,6 +44,12 @@ const (
 	CfgCollectorGrpcMaxHeaderListSize           = "Collector.Grpc.MaxHeaderListSize"
 	CfgCollectorGrpcSslEnable                   = "Collector.Grpc.SslEnable"
 	CfgCollectorGrpcTrustCertFilePath           = "Collector.Grpc.TrustCertFilePath"
+	// Connection and stream renewal, ported from the Java agent:
+	//   ConnectionMaxAge <-> profiler.transport.grpc.loadbalancer.renew.period.millis
+	//   StreamMaxAge     <-> profiler.transport.grpc.span.sender.rpc.age.max.millis
+	// Both in milliseconds; 0 (the default) disables the renewal.
+	CfgCollectorGrpcConnectionMaxAge = "Collector.Grpc.ConnectionMaxAge"
+	CfgCollectorGrpcStreamMaxAge     = "Collector.Grpc.StreamMaxAge"
 
 	CfgLogLevelOld                    = "LogLevel"
 	CfgLogLevel                       = "Log.Level"
@@ -138,6 +144,8 @@ func initConfig() {
 	AddConfig(CfgCollectorGrpcMaxHeaderListSize, CfgInt, grpcMaxHeaderListSize, false)
 	AddConfig(CfgCollectorGrpcSslEnable, CfgBool, false, false)
 	AddConfig(CfgCollectorGrpcTrustCertFilePath, CfgString, "", false)
+	AddConfig(CfgCollectorGrpcConnectionMaxAge, CfgInt, grpcConnectionMaxAge, false)
+	AddConfig(CfgCollectorGrpcStreamMaxAge, CfgInt, grpcStreamMaxAge, false)
 	AddConfig(CfgLogLevelOld, CfgString, "info", true)
 	AddConfig(CfgLogLevel, CfgString, "info", true)
 	AddConfig(CfgLogOutput, CfgString, "stderr", true)
@@ -725,6 +733,13 @@ func (config *Config) publish() {
 	if config.stagedInt(CfgCollectorAgentInfoMaxTryPerAttempt) < 1 {
 		config.cfgMap[CfgCollectorAgentInfoMaxTryPerAttempt].value = defaultAgentInfoMaxTryPerAttempt
 	}
+	// A negative max age means the same as the default: renewal off.
+	if config.stagedInt(CfgCollectorGrpcConnectionMaxAge) < 0 {
+		config.cfgMap[CfgCollectorGrpcConnectionMaxAge].value = grpcConnectionMaxAge
+	}
+	if config.stagedInt(CfgCollectorGrpcStreamMaxAge) < 0 {
+		config.cfgMap[CfgCollectorGrpcStreamMaxAge].value = grpcStreamMaxAge
+	}
 	if config.stagedInt(CfgStatCollectInterval) < 1 {
 		config.cfgMap[CfgStatCollectInterval].value = 5000
 	}
@@ -1087,6 +1102,27 @@ func WithCollectorGrpcSslEnable(enable bool) ConfigOption {
 func WithCollectorGrpcTrustCertFilePath(path string) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgCollectorGrpcTrustCertFilePath].value = path
+	}
+}
+
+// WithCollectorGrpcConnectionMaxAge sets the max age in milliseconds of a
+// collector connection. Once a connection is older than this, the next send
+// opens a replacement and switches over as soon as it is ready, so agents
+// behind a load balancer spread across collector instances over time.
+// 0 (the default) never replaces a working connection.
+func WithCollectorGrpcConnectionMaxAge(ms int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorGrpcConnectionMaxAge].value = ms
+	}
+}
+
+// WithCollectorGrpcStreamMaxAge sets the max age in milliseconds of the
+// long-lived ping, span, stat and command streams. A stream older than this is
+// closed normally and reopened by its worker. 0 (the default) keeps a stream
+// open until it fails.
+func WithCollectorGrpcStreamMaxAge(ms int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorGrpcStreamMaxAge].value = ms
 	}
 }
 

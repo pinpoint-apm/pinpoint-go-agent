@@ -74,6 +74,10 @@ type agentConfig struct {
 
 	grpcSslEnable         bool
 	grpcTrustCertFilePath string
+	// Connection and stream renewal, in milliseconds. Zero keeps both off,
+	// which is the agent default.
+	grpcConnectionMaxAge int
+	grpcStreamMaxAge     int
 
 	spanQueueSize                  int
 	spanBatchSize                  int
@@ -180,6 +184,8 @@ func (c *agentConfig) options(mc *MockCollector) []pinpoint.ConfigOption {
 		pinpoint.WithCollectorAgentInfoMaxTryPerAttempt(c.agentInfoMaxTryPerAttempt),
 		pinpoint.WithCollectorGrpcSslEnable(c.grpcSslEnable),
 		pinpoint.WithCollectorGrpcTrustCertFilePath(c.grpcTrustCertFilePath),
+		pinpoint.WithCollectorGrpcConnectionMaxAge(c.grpcConnectionMaxAge),
+		pinpoint.WithCollectorGrpcStreamMaxAge(c.grpcStreamMaxAge),
 
 		pinpoint.WithSamplingType(c.samplingType),
 		pinpoint.WithSamplingCounterRate(c.samplingCounterRate),
