@@ -276,8 +276,8 @@ func NewAgent(config *Config) (Agent, error) {
 	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
 
 	config.logCallbackOnce.Do(func() {
-		config.AddReloadCallback([]string{CfgLogLevel}, logger.reloadLevel)
-		config.AddReloadCallback([]string{CfgLogOutput, CfgLogMaxSize}, logger.reloadOutput)
+		config.AddReloadCallback([]string{CfgLogLevel}, func() { logger.reloadLevel(config) })
+		config.AddReloadCallback([]string{CfgLogOutput, CfgLogMaxSize}, func() { logger.reloadOutput(config) })
 	})
 
 	if !config.offGrpc {

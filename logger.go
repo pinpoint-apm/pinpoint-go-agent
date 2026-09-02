@@ -1,8 +1,10 @@
 package pinpoint
 
 import (
+	"io"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/sirupsen/logrus"
@@ -45,7 +47,8 @@ func SetExtraLogger(lgr *logrus.Logger) {
 type logrusLogger struct {
 	defaultLogger *logrus.Logger
 	extraLogger   atomic.Pointer[logrus.Logger]
-	fileLogger    *lumberjack.Logger
+	outputMu      sync.Mutex
+	fileLogger    io.WriteCloser
 	config        *Config
 }
 
@@ -79,41 +82,62 @@ func (l *logrusLogger) setLevel(level string) {
 }
 
 func (l *logrusLogger) setOutput(out string, maxSize int) {
+	l.outputMu.Lock()
+	defer l.outputMu.Unlock()
+	l.setOutputLocked(out, maxSize)
+}
+
+func (l *logrusLogger) setOutputLocked(out string, maxSize int) {
 	Log("config").Infof("log output: %s", out)
 
+	var output io.Writer
+	var fileLogger io.WriteCloser
 	if strings.EqualFold(out, "stdout") {
-		l.defaultLogger.SetOutput(os.Stdout)
+		output = os.Stdout
 	} else if strings.EqualFold(out, "stderr") {
-		l.defaultLogger.SetOutput(os.Stderr)
+		output = os.Stderr
 	} else {
-		l.fileLogger = &lumberjack.Logger{
+		fileLogger = &lumberjack.Logger{
 			Filename:   out,
 			MaxSize:    maxSize,
 			MaxBackups: 1,
 			MaxAge:     30,
 			Compress:   false,
 		}
-		l.defaultLogger.SetOutput(l.fileLogger)
+		output = fileLogger
+	}
+
+	previous := l.fileLogger
+	l.defaultLogger.SetOutput(output)
+	l.fileLogger = fileLogger
+	if previous != nil {
+		_ = previous.Close()
 	}
 }
 
 func (l *logrusLogger) setup(config *Config) {
-	l.setLevel(config.String(CfgLogLevel))
-	l.setOutput(config.String(CfgLogOutput), config.Int(CfgLogMaxSize))
+	l.outputMu.Lock()
+	defer l.outputMu.Unlock()
+
 	l.config = config
+	l.setLevel(config.String(CfgLogLevel))
+	l.setOutputLocked(config.String(CfgLogOutput), config.Int(CfgLogMaxSize))
 }
 
-func (l *logrusLogger) reloadLevel() {
-	l.setLevel(l.config.String(CfgLogLevel))
-}
-
-func (l *logrusLogger) reloadOutput() {
-	if l.fileLogger != nil {
-		defer func(f *lumberjack.Logger) {
-			f.Close()
-		}(l.fileLogger)
+func (l *logrusLogger) reloadLevel(config *Config) {
+	l.outputMu.Lock()
+	defer l.outputMu.Unlock()
+	if l.config == config {
+		l.setLevel(config.String(CfgLogLevel))
 	}
-	l.setOutput(l.config.String(CfgLogOutput), l.config.Int(CfgLogMaxSize))
+}
+
+func (l *logrusLogger) reloadOutput(config *Config) {
+	l.outputMu.Lock()
+	defer l.outputMu.Unlock()
+	if l.config == config {
+		l.setOutputLocked(config.String(CfgLogOutput), config.Int(CfgLogMaxSize))
+	}
 }
 
 func (l *logrusLogger) newEntry(src string) *logEntry {
