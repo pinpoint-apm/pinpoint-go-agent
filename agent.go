@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -309,23 +310,72 @@ func (agent *agent) connectGrpcServer() {
 
 	agent.enable.Store(true)
 	agent.workerWg.Add(8)
-	go agent.sendPingWorker()
+	go agent.superviseWorker("ping", agent.sendPingWorker)
 	if agent.config.Bool(CfgSpanBatchEnable) {
-		go agent.sendSpanBatchWorker()
+		go agent.superviseWorker("span batch", agent.sendSpanBatchWorker)
 	} else {
-		go agent.sendSpanWorker()
+		go agent.superviseWorker("span", agent.sendSpanWorker)
 	}
-	go agent.runCommandService()
-	go agent.sendMetaWorker()
-	go agent.collectAgentStatWorker()
-	go agent.collectUrlStatWorker()
-	go agent.sendUrlStatWorker()
-	go agent.sendStatsWorker()
+	go agent.superviseWorker("command", agent.runCommandService)
+	go agent.superviseWorker("meta", agent.sendMetaWorker)
+	go agent.superviseWorker("collect agent stat", agent.collectAgentStatWorker)
+	go agent.superviseWorker("collect uri stat", agent.collectUrlStatWorker)
+	go agent.superviseWorker("send uri stat", agent.sendUrlStatWorker)
+	go agent.superviseWorker("send stats", agent.sendStatsWorker)
 
 	if interval := time.Duration(agent.config.Int(CfgCollectorAgentInfoRefreshInterval)) * time.Millisecond; interval > 0 {
 		agent.workerWg.Add(1)
-		go agent.refreshAgentInfoWorker(interval)
+		go agent.superviseWorker("agent info refresh", func() { agent.refreshAgentInfoWorker(interval) })
 	}
+}
+
+// workerRestartDelay paces the restart of a worker whose body panicked, so a
+// deterministic bug cannot spin the supervisor hot. A variable so tests can
+// shorten it.
+var workerRestartDelay = 1 * time.Second
+
+// superviseWorker runs body as one of the agent's worker goroutines and owns
+// its workerWg slot, releasing it once on the final exit. A panic in body is
+// recovered - the agent must never take the host process down - and the
+// worker is restarted after workerRestartDelay, unless the agent is stopping,
+// in which case the panic ends the worker like a normal return would. Mirrors
+// the C++ agent's superviseWorker.
+func (agent *agent) superviseWorker(name string, body func()) {
+	defer agent.workerWg.Done()
+
+	stop := agent.stopSignal().Done()
+	for {
+		if recoverPanic(name, body) {
+			return
+		}
+		if !agent.enable.Load() {
+			return
+		}
+		timer := time.NewTimer(workerRestartDelay)
+		select {
+		case <-stop:
+			timer.Stop()
+			Log("agent").Infof("%s goroutine stopping, not restarted", name)
+			return
+		case <-timer.C:
+		}
+		if !agent.enable.Load() {
+			return
+		}
+		Log("agent").Warnf("restart %s goroutine", name)
+	}
+}
+
+// recoverPanic calls body and reports whether it returned normally. A panic
+// is recovered and logged with its stack instead of unwinding the goroutine.
+func recoverPanic(name string, body func()) (completed bool) {
+	defer func() {
+		if e := recover(); e != nil {
+			Log("agent").Errorf("%s goroutine panic: %v\n%s", name, e, debug.Stack())
+		}
+	}()
+	body()
+	return true
 }
 
 // refreshAgentInfoWorker re-sends AgentInfo every refresh interval, mirroring
@@ -333,7 +383,6 @@ func (agent *agent) connectGrpcServer() {
 // the next interval and never affects the agent's enabled state.
 func (agent *agent) refreshAgentInfoWorker(interval time.Duration) {
 	Log("agent").Infof("start agent info refresh goroutine")
-	defer agent.workerWg.Done()
 
 	retryInterval := time.Duration(agent.config.Int(CfgCollectorAgentInfoSendRetryInterval)) * time.Millisecond
 	maxTry := agent.config.Int(CfgCollectorAgentInfoMaxTryPerAttempt)
@@ -540,7 +589,6 @@ func (agent *agent) Config() *Config {
 
 func (agent *agent) sendPingWorker() {
 	Log("agent").Infof("start ping goroutine")
-	defer agent.workerWg.Done()
 
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
@@ -573,7 +621,6 @@ func (agent *agent) sendPingWorker() {
 
 func (agent *agent) sendSpanWorker() {
 	Log("agent").Infof("start span goroutine")
-	defer agent.workerWg.Done()
 
 	var (
 		skipOldSpan  = bool(false)
@@ -621,7 +668,6 @@ func (agent *agent) sendSpanWorker() {
 
 func (agent *agent) sendSpanBatchWorker() {
 	Log("agent").Infof("start span batch goroutine")
-	defer agent.workerWg.Done()
 
 	// Drain span chunks into unary SendSpanBatch requests.
 	// The first chunk starts a batch, collectSpanBatch opportunistically gathers more chunks,
@@ -654,7 +700,6 @@ func (agent *agent) enqueueSpan(span *spanChunk) bool {
 
 func (agent *agent) sendMetaWorker() {
 	Log("agent").Infof("start meta goroutine")
-	defer agent.workerWg.Done()
 
 	// Metadata sends are pipelined: registration has no ordering requirement
 	// (the collector accepts duplicates and metadata arriving after its
@@ -694,9 +739,11 @@ func (agent *agent) sendMetaWorker() {
 			defer inFlight.Done()
 			defer func() { <-permit }()
 
-			if !agent.sendMetadata(md) {
-				agent.deleteMetaCache(md)
-			}
+			recoverPanic("meta send", func() {
+				if !agent.sendMetadata(md) {
+					agent.deleteMetaCache(md)
+				}
+			})
 		}(md)
 	}
 }
@@ -1004,7 +1051,6 @@ func (agent *agent) reportUrlStatDrops(n int64) {
 
 func (agent *agent) collectUrlStatWorker() {
 	Log("agent").Infof("start collect uri stat goroutine")
-	defer agent.workerWg.Done()
 
 	stop := agent.stopSignal().Done()
 
@@ -1023,7 +1069,6 @@ func (agent *agent) collectUrlStatWorker() {
 
 func (agent *agent) sendUrlStatWorker() {
 	Log("agent").Infof("start send uri stat goroutine")
-	defer agent.workerWg.Done()
 
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -1060,7 +1105,6 @@ func (agent *agent) enqueueStat(stat *pb.PStatMessage) bool {
 
 func (agent *agent) sendStatsWorker() {
 	Log("agent").Infof("start send stats goroutine")
-	defer agent.workerWg.Done()
 
 	stream := agent.statGrpc.newStatStreamWithRetry()
 	defer func() { stream.close() }()

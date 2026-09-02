@@ -62,7 +62,7 @@ func Test_sendPingWorker_replacesStreamTheCollectorBroke(t *testing.T) {
 	agent.agentGrpc = &agentGrpc{agentClient: client, agent: agent}
 
 	agent.workerWg.Add(1)
-	go agent.sendPingWorker()
+	go agent.superviseWorker("ping", agent.sendPingWorker)
 	waitFor(t, "the broken ping stream to be replaced", func() bool { return opened.get() == 2 })
 
 	agent.signalShutdown()
@@ -117,7 +117,7 @@ func Test_sendSpanWorker_reopensStreamAndDropsSpansStaleFromTheOutage(t *testing
 	agent.spanQueue.close()
 
 	agent.workerWg.Add(1)
-	go agent.sendSpanWorker()
+	go agent.superviseWorker("span", agent.sendSpanWorker)
 	agent.workerWg.Wait()
 
 	broken.AssertNumberOfCalls(t, "Send", 1)
@@ -159,7 +159,7 @@ func Test_sendSpanBatchWorker_resumesAfterCollectorOutage(t *testing.T) {
 	agent.spanQueue.close()
 
 	agent.workerWg.Add(1)
-	go agent.sendSpanBatchWorker()
+	go agent.superviseWorker("span batch", agent.sendSpanBatchWorker)
 	agent.workerWg.Wait()
 
 	client.AssertNumberOfCalls(t, "SendSpanBatch", 4)
@@ -191,7 +191,7 @@ func Test_sendStatsWorker_reopensStreamAfterSendErrorAndResumes(t *testing.T) {
 	agent.statChan <- makePAgentStatBatch([]*inspectorStats{agent.stats.getStats()})
 
 	agent.workerWg.Add(1)
-	go agent.sendStatsWorker()
+	go agent.superviseWorker("send stats", agent.sendStatsWorker)
 	waitFor(t, "the replacement stat stream to carry a batch", func() bool { return stats.get() > 0 })
 
 	agent.signalShutdown()
@@ -218,7 +218,7 @@ func Test_runCommandService_pacesReconnectsAndStopsPromptly(t *testing.T) {
 	agent.cmdGrpc = &cmdGrpc{cmdClient: client, agent: agent, atcStreams: atcStreams{agent: agent}}
 
 	agent.workerWg.Add(1)
-	go agent.runCommandService()
+	go agent.superviseWorker("command", agent.runCommandService)
 
 	// The first attempt runs at once; the second waits out backOffSleep(0),
 	// which is at least 2.1s. A hot loop would show up here as a large count.

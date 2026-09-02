@@ -114,7 +114,6 @@ type activeSpanInfo struct {
 
 func (agent *agent) runCommandService() {
 	Log("cmd").Infof("start command goroutine")
-	defer agent.workerWg.Done()
 
 	stop := agent.stopSignal().Done()
 

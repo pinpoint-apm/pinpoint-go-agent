@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -351,7 +352,7 @@ func Test_agent_ShutdownAfterPingWorkerExited(t *testing.T) {
 
 	agent.enable.Store(false)
 	agent.workerWg.Add(1)
-	go agent.sendPingWorker()
+	go agent.superviseWorker("ping", agent.sendPingWorker)
 	if !waitTimeout(&agent.workerWg, time.Second) {
 		t.Fatal("ping worker did not exit")
 	}
@@ -519,8 +520,8 @@ func Test_agent_ShutdownDoesNotCloseProducerChannels(t *testing.T) {
 	agent.urlStatChan = make(chan *urlStat, 1)
 
 	agent.workerWg.Add(2)
-	go agent.sendMetaWorker()
-	go agent.collectUrlStatWorker()
+	go agent.superviseWorker("meta", agent.sendMetaWorker)
+	go agent.superviseWorker("collect uri stat", agent.collectUrlStatWorker)
 
 	start := time.Now()
 	agent.Shutdown()
@@ -540,7 +541,7 @@ func Test_agent_sendMetaWorkerStopsWhileAllPermitsHeld(t *testing.T) {
 	agent.agentGrpc = &agentGrpc{metaClient: blocking, agent: agent}
 
 	agent.workerWg.Add(1)
-	go agent.sendMetaWorker()
+	go agent.superviseWorker("meta", agent.sendMetaWorker)
 
 	for i := 0; i < metaMaxConcurrentRequests; i++ {
 		agent.metaChan <- stringMeta{id: int32(i), funcName: "f"}
@@ -627,4 +628,80 @@ func Test_agent_MetaCacheDropsEntryWhenQueueIsFull(t *testing.T) {
 	second := a.cacheError("boom")
 	assert.NotZero(t, first, "id minted")
 	assert.NotEqual(t, first, second, "dropped metadata is re-registered with a new id")
+}
+
+// shortWorkerRestartDelay shortens the supervisor's restart pacing for the
+// duration of a test.
+func shortWorkerRestartDelay(t *testing.T) {
+	prev := workerRestartDelay
+	workerRestartDelay = 10 * time.Millisecond
+	t.Cleanup(func() { workerRestartDelay = prev })
+}
+
+// An agent bug must not take the host process down: a worker body that panics
+// is recovered and the worker is restarted after the delay, then stops
+// normally on the shutdown signal.
+func Test_agent_superviseWorkerRecoversAndRestarts(t *testing.T) {
+	shortWorkerRestartDelay(t)
+	agent := newTestAgent(defaultConfig())
+	stop := agent.stopSignal().Done()
+
+	var runs atomic.Int32
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("test", func() {
+		if runs.Add(1) == 1 {
+			panic("worker bug")
+		}
+		<-stop
+	})
+
+	assert.Eventually(t, func() bool { return runs.Load() == 2 },
+		5*time.Second, time.Millisecond, "worker must be restarted after the panic")
+
+	agent.signalShutdown()
+	assert.True(t, waitTimeout(&agent.workerWg, 5*time.Second), "worker exits on the stop signal")
+	assert.EqualValues(t, 2, runs.Load(), "a normal return is not restarted")
+}
+
+// A panic while the agent is stopping ends the worker like a normal return:
+// no restart, whether shutdown is seen through the stop signal or the enable
+// flag.
+func Test_agent_superviseWorkerDoesNotRestartWhileStopping(t *testing.T) {
+	for name, stopping := range map[string]func(*agent){
+		"stop signal": func(a *agent) { a.signalShutdown() },
+		"disabled":    func(a *agent) { a.enable.Store(false) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			shortWorkerRestartDelay(t)
+			agent := newTestAgent(defaultConfig())
+
+			var runs atomic.Int32
+			agent.workerWg.Add(1)
+			go agent.superviseWorker("test", func() {
+				runs.Add(1)
+				stopping(agent)
+				panic("worker bug during shutdown")
+			})
+
+			assert.True(t, waitTimeout(&agent.workerWg, 5*time.Second), "a panic while stopping must end the worker")
+			assert.EqualValues(t, 1, runs.Load(), "worker must not be restarted while stopping")
+		})
+	}
+}
+
+// A panic inside a metadata send must not escape the per-item goroutine: the
+// worker keeps running and still exits cleanly on shutdown.
+func Test_agent_sendMetaWorkerSurvivesPanicInSend(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.agentGrpc = nil // every send dereferences it: nil pointer panic
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("meta", agent.sendMetaWorker)
+
+	agent.metaChan <- stringMeta{id: 1, funcName: "f"}
+	assert.Eventually(t, func() bool { return len(agent.metaChan) == 0 },
+		5*time.Second, time.Millisecond, "worker pulled the item")
+
+	agent.signalShutdown()
+	assert.True(t, waitTimeout(&agent.workerWg, 5*time.Second), "worker exits after the recovered send panic")
 }

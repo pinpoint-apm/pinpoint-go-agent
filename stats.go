@@ -335,7 +335,6 @@ func calcResponseAvg(accResponseTime int64, requestCount int64) int64 {
 
 func (agent *agent) collectAgentStatWorker() {
 	Log("stats").Infof("start collect agent stat goroutine")
-	defer agent.workerWg.Done()
 
 	agent.stats.init()
 

@@ -733,7 +733,7 @@ func Test_sendMetaWorker_movesOnAndReleasesCache(t *testing.T) {
 	assert.True(t, errCached())
 
 	agent.workerWg.Add(1)
-	go agent.sendMetaWorker()
+	go agent.superviseWorker("meta", agent.sendMetaWorker)
 
 	// both queued items exhaust their retry budget: the worker was not wedged
 	// by the first one
@@ -828,7 +828,7 @@ func Test_sendMetaWorker_pipelinesUpToConcurrencyLimit(t *testing.T) {
 	}
 
 	agent.workerWg.Add(1)
-	go agent.sendMetaWorker()
+	go agent.superviseWorker("meta", agent.sendMetaWorker)
 
 	assert.Eventually(t, func() bool {
 		return blocking.inFlight() == metaMaxConcurrentRequests
@@ -908,7 +908,7 @@ func Test_agent_refreshAgentInfoWorker_honorsInterval(t *testing.T) {
 	agent.agentGrpc = &agentGrpc{agentClient: client, agent: agent}
 
 	agent.workerWg.Add(1)
-	go agent.refreshAgentInfoWorker(20 * time.Millisecond)
+	go agent.superviseWorker("agent info refresh", func() { agent.refreshAgentInfoWorker(20 * time.Millisecond) })
 
 	deadline := time.Now().Add(3 * time.Second)
 	for client.calls.Load() < 2 && time.Now().Before(deadline) {
@@ -1124,7 +1124,7 @@ func Test_sendMetaWorker_releasesSqlCachesOnFailure(t *testing.T) {
 	assert.True(t, sqlUidCached())
 
 	agent.workerWg.Add(1)
-	go agent.sendMetaWorker()
+	go agent.superviseWorker("meta", agent.sendMetaWorker)
 
 	assert.Eventually(t, func() bool {
 		return failing.callCount() == int32(2*metaRetryMaxAttempts)
@@ -1154,7 +1154,7 @@ func Test_sendMetaWorker_sendsEveryMetadataType(t *testing.T) {
 	}
 
 	agent.workerWg.Add(1)
-	go agent.sendMetaWorker()
+	go agent.superviseWorker("meta", agent.sendMetaWorker)
 
 	assert.Eventually(t, func() bool {
 		api, str, sql, sqlUid, except := meta.sentMeta()
