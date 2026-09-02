@@ -319,6 +319,9 @@ type agentGrpc struct {
 	// retryDelay is the pause between metadata retries: metaRetryDelay in
 	// production, shortened by tests.
 	retryDelay time.Duration
+	// registerRetryDelay overrides registration backoff in tests. Production
+	// uses the jittered exponential backOffSleep sequence.
+	registerRetryDelay time.Duration
 }
 
 func newAgentGrpc(agent *agent) (*agentGrpc, error) {
@@ -487,7 +490,7 @@ func (agentGrpc *agentGrpc) sendAgentInfo(ctx context.Context, agentInfo *pb.PAg
 func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 	ctx, agentInfo := agentGrpc.makeAgentInfo()
 
-	for lookups := 0; !agentGrpc.agent.shutdown.Load(); {
+	for lookups, attempt := 0, 0; !agentGrpc.agent.shutdown.Load(); attempt++ {
 		if res, err := agentGrpc.sendAgentInfo(ctx, agentInfo); err == nil {
 			if res.Success {
 				Log("agent").Infof("success to register agent")
@@ -498,6 +501,13 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 			}
 		}
 
+		retryDelay := agentGrpc.registerRetryDelay
+		if retryDelay <= 0 {
+			retryDelay = backOffSleep(attempt)
+		}
+		if !sleepUnlessStopped(agentGrpc.agent, retryDelay) {
+			return false
+		}
 		backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
 		if agentInfo.Ip == "" && lookups < maxIPLookups {
 			lookups++

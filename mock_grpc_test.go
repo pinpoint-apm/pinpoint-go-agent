@@ -50,6 +50,7 @@ func newTestAgent(config *Config) *agent {
 type mockAgentGrpcClient struct {
 	mu       sync.Mutex
 	requests []*pb.PAgentInfo
+	callAt   []time.Time
 	failures int  // leading calls that fail with Unavailable
 	reject   bool // once past failures, answer Success=false
 }
@@ -59,6 +60,7 @@ func (agentGrpcClient *mockAgentGrpcClient) RequestAgentInfo(ctx context.Context
 	defer agentGrpcClient.mu.Unlock()
 
 	agentGrpcClient.requests = append(agentGrpcClient.requests, agentinfo)
+	agentGrpcClient.callAt = append(agentGrpcClient.callAt, time.Now())
 	if len(agentGrpcClient.requests) <= agentGrpcClient.failures {
 		return nil, status.Errorf(codes.Unavailable, "collector down")
 	}
@@ -72,6 +74,12 @@ func (agentGrpcClient *mockAgentGrpcClient) sentAgentInfo() []*pb.PAgentInfo {
 	agentGrpcClient.mu.Lock()
 	defer agentGrpcClient.mu.Unlock()
 	return append([]*pb.PAgentInfo(nil), agentGrpcClient.requests...)
+}
+
+func (agentGrpcClient *mockAgentGrpcClient) callTimes() []time.Time {
+	agentGrpcClient.mu.Lock()
+	defer agentGrpcClient.mu.Unlock()
+	return append([]time.Time(nil), agentGrpcClient.callAt...)
 }
 
 func (agentGrpcClient *mockAgentGrpcClient) PingSession(ctx context.Context, _ ...grpc.CallOption) (pb.Agent_PingSessionClient, error) {

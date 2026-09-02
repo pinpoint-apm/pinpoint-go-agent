@@ -1352,10 +1352,22 @@ func dialReadyConn(t *testing.T) *grpc.ClientConn {
 func Test_agentGrpc_registerAgentWithRetry_retriesUntilSuccess(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	client := &mockAgentGrpcClient{failures: 2}
-	agentGrpc := &agentGrpc{agentConn: dialReadyConn(t), agentClient: client, agent: agent}
+	agentGrpc := &agentGrpc{
+		agentConn:          dialReadyConn(t),
+		agentClient:        client,
+		agent:              agent,
+		registerRetryDelay: 100 * time.Millisecond,
+	}
 
 	assert.True(t, agentGrpc.registerAgentWithRetry())
 	assert.Len(t, client.sentAgentInfo(), 3, "registration retries until the collector accepts it")
+	callAt := client.callTimes()
+	for i := 1; i < len(callAt); i++ {
+		assert.GreaterOrEqual(t, callAt[i].Sub(callAt[i-1]), agentGrpc.registerRetryDelay,
+			"attempt %d fired without the pause", i+1)
+	}
+	assert.Equal(t, connectivity.Ready, agentGrpc.agentConn.GetState(),
+		"the pause, not a reconnect, spaced the attempts")
 }
 
 // --- headers ----------------------------------------------------------------
