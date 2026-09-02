@@ -164,7 +164,7 @@ type Annotation interface {
 	// AppendIntStringString records an integer value and two string values to annotation.
 	AppendIntStringString(key int32, i int32, s1 string, s2 string)
 
-	// AppendBytesStringString records an array of byte and two string values to annotation.
+	// AppendBytesStringString records a copy of an array of byte and two string values to annotation.
 	AppendBytesStringString(key int32, b []byte, s1 string, s2 string)
 
 	// AppendLongIntIntByteByteString records a long integer value, two integer value, two byte value and a string value to annotation.
