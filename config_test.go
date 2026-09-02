@@ -774,10 +774,24 @@ func TestNewConfig_ClampStatOptions(t *testing.T) {
 func TestNewConfig_ClampErrorCallStackDepth(t *testing.T) {
 	c, err := NewConfig(WithAppName("TestApp"), WithErrorCallStackDepth(0))
 	assert.NoError(t, err)
-	assert.Equal(t, 32, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
+	assert.Equal(t, defaultErrorCallStackDepth, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 
-	// Dynamic option, so the clamp must also hold on the publish path a
+	// Dynamic option, so both bounds must also hold on the publish path a
 	// reload or Set goes through.
 	c.Set(CfgErrorCallStackDepth, -4)
-	assert.Equal(t, 32, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
+	assert.Equal(t, defaultErrorCallStackDepth, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
+
+	c.Set(CfgErrorCallStackDepth, math.MaxInt)
+	assert.Equal(t, maxErrorCallStackDepth, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
+
+	c, err = NewConfig(WithAppName("TestApp"), WithErrorCallStackDepth(math.MaxInt))
+	assert.NoError(t, err)
+	assert.Equal(t, maxErrorCallStackDepth, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
+
+	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	assert.NoError(t, os.WriteFile(cfgFile, []byte("Error:\n  CallStackDepth: 999999999\n"), 0o600))
+	cfgFileViper := viper.New()
+	cfgFileViper.SetConfigFile(cfgFile)
+	c.reloadConfig(cfgFileViper)
+	assert.Equal(t, maxErrorCallStackDepth, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 }

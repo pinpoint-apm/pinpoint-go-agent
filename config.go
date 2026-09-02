@@ -96,6 +96,13 @@ const (
 	cfgIdPattern        = "[a-zA-Z0-9\\._\\-]+"
 	samplingTypeCounter = "COUNTER"
 	samplingTypePercent = "PERCENT"
+
+	defaultErrorCallStackDepth = 32
+	// Bound the per-error runtime.Callers allocation. This option is dynamic
+	// and can come from a config file, so an accidental huge value must not turn
+	// one instrumented error into an allocation spike or an integer-overflow
+	// panic in make([]uintptr, depth+3).
+	maxErrorCallStackDepth = 1024
 )
 
 // Config value type
@@ -181,7 +188,7 @@ func initConfig() {
 	AddConfig(CfgHttpUrlStatQueueSize, CfgInt, defaultQueueSize, false)
 	AddConfig(CfgHttpUrlStatWithMethod, CfgBool, false, true)
 	AddConfig(CfgErrorTraceCallStack, CfgBool, false, true)
-	AddConfig(CfgErrorCallStackDepth, CfgInt, 32, true)
+	AddConfig(CfgErrorCallStackDepth, CfgInt, defaultErrorCallStackDepth, true)
 	AddConfig(CfgUIDVersion, CfgString, "v3", false)
 	AddConfig(CfgServiceName, CfgString, "", false)
 	AddConfig(CfgApiKey, CfgString, "", false)
@@ -767,12 +774,16 @@ func (config *Config) publish() {
 		config.cfgMap[CfgLogMaxSize].value = 10
 	}
 
-	// Dynamic key, so it must be clamped here rather than in NewConfig: a
-	// reload could inject a value that makes traceCallStack's
-	// make([]uintptr, depth+3) panic on the request goroutine.
-	if config.stagedInt(CfgErrorCallStackDepth) < 1 {
-		config.cfgMap[CfgErrorCallStackDepth].value = 32
+	// Dynamic key, so both bounds must be enforced on every publish: a reload
+	// can otherwise inject a value that makes traceCallStack's allocation panic
+	// or exhaust the process memory on an application request goroutine.
+	errorDepth := config.stagedInt(CfgErrorCallStackDepth)
+	if errorDepth < 1 {
+		errorDepth = defaultErrorCallStackDepth
+	} else if errorDepth > maxErrorCallStackDepth {
+		errorDepth = maxErrorCallStackDepth
 	}
+	config.cfgMap[CfgErrorCallStackDepth].value = errorDepth
 
 	values := make(map[string]interface{}, len(config.cfgMap))
 	for k, v := range config.cfgMap {

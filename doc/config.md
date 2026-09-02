@@ -702,6 +702,7 @@ Error.CallStackDepth option sets the max depth of callstack to be dumped.
 * WithErrorCallStackDepth()
 * type: int
 * default: 32
+* max: 1024
 * dynamic
 
 ### IsContainerEnv
