@@ -1198,6 +1198,49 @@ func Test_agentGrpc_makeAgentInfo(t *testing.T) {
 	assert.Equal(t, []string{agent.agentID}, md.Get(headerAgentID))
 }
 
+// --- local IP ---------------------------------------------------------------
+
+// Everything below runs without network access: it only inspects local
+// interfaces and the loopback route.
+
+func Test_firstUnicastIP(t *testing.T) {
+	ipNet := func(s string) net.Addr { return &net.IPNet{IP: net.ParseIP(s)} }
+
+	assert.Equal(t, "", firstUnicastIP(nil))
+	assert.Equal(t, "", firstUnicastIP([]net.Addr{ipNet("127.0.0.1"), ipNet("fe80::1"), ipNet("0.0.0.0")}),
+		"loopback, link-local and unspecified addresses never identify a host")
+	assert.Equal(t, "10.0.0.5", firstUnicastIP([]net.Addr{ipNet("fe80::1"), ipNet("2001:db8::1"), ipNet("10.0.0.5")}),
+		"IPv4 wins over a routable IPv6 address listed before it")
+	assert.Equal(t, "2001:db8::1", firstUnicastIP([]net.Addr{ipNet("fe80::1"), ipNet("2001:db8::1")}),
+		"a routable IPv6 address is used when there is no IPv4")
+	assert.Equal(t, "", firstUnicastIP([]net.Addr{&net.TCPAddr{IP: net.ParseIP("10.0.0.5")}}),
+		"only interface (IPNet) addresses are considered")
+}
+
+func Test_firstInterfaceIP(t *testing.T) {
+	// A host may legitimately have only a loopback interface, so the value is
+	// only checked when there is one.
+	if ip := firstInterfaceIP(); ip != "" {
+		parsed := net.ParseIP(ip)
+		require.NotNil(t, parsed, "must be a bare IP, not a CIDR")
+		assert.False(t, parsed.IsLoopback())
+		assert.False(t, parsed.IsLinkLocalUnicast())
+	}
+}
+
+func Test_routeSourceIP(t *testing.T) {
+	assert.Equal(t, "", routeSourceIP("127.0.0.1:9991"), "a loopback collector must not hide the host address")
+	assert.Equal(t, "", routeSourceIP("not an address"))
+}
+
+func Test_localIP_neverLoopback(t *testing.T) {
+	for _, collector := range []string{"localhost:9991", "127.0.0.1:9991", "[::1]:9991"} {
+		if ip := localIP(collector); ip != "" {
+			assert.False(t, net.ParseIP(ip).IsLoopback(), "collector %s", collector)
+		}
+	}
+}
+
 // A collector that answers Success=false has rejected this agent outright, so
 // registration reports failure instead of retrying forever. Mirrors the C++
 // agent's GrpcAgentRegisterAgentFailureTest.

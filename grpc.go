@@ -234,17 +234,89 @@ func getHostName() string {
 	return "unknown host"
 }
 
-func getOutboundIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+// localIP returns the address this host uses to reach the collector.
+//
+// It first asks the kernel which source address it would route toward the
+// collector (or, if the collector is a hostname, toward the public internet).
+// That is a route lookup, not a network round trip, so it is instant and works
+// with egress blocked; on a multi-NIC host it is the only way to pick the
+// interface that actually faces the collector. It fails only when no route
+// exists at all (closed network without a default gateway, isolated container
+// network), in which case the first up, non-loopback interface address is used
+// instead. The empty string means the host has no usable address right now.
+func localIP(collectorAddr string) string {
+	// Only probe the collector itself when it is an IP literal: a hostname
+	// would go through DNS, which can hang in exactly the closed networks this
+	// fallback exists for.
+	if host, _, err := net.SplitHostPort(collectorAddr); err == nil && net.ParseIP(host) != nil {
+		if ip := routeSourceIP(collectorAddr); ip != "" {
+			return ip
+		}
+	}
+	if ip := routeSourceIP("8.8.8.8:80"); ip != "" {
+		return ip
+	}
+	return firstInterfaceIP()
+}
+
+// routeSourceIP returns the local address the kernel picks for addr. Dialing
+// UDP sends nothing; connect(2) only consults the routing table. Loopback is
+// not reported: with a local relay as the collector it would hide the host.
+func routeSourceIP(addr string) string {
+	conn, err := net.Dial("udp", addr)
 	if err != nil {
 		return ""
 	}
 	defer conn.Close()
 
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-
-	return localAddr.IP.String()
+	if ip := conn.LocalAddr().(*net.UDPAddr).IP; !ip.IsLoopback() {
+		return ip.String()
+	}
+	return ""
 }
+
+func firstInterfaceIP() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if addrs, err := iface.Addrs(); err == nil {
+			if ip := firstUnicastIP(addrs); ip != "" {
+				return ip
+			}
+		}
+	}
+	return ""
+}
+
+// firstUnicastIP picks the first routable address, preferring IPv4 since
+// interfaces usually list a link-local IPv6 address before anything else.
+func firstUnicastIP(addrs []net.Addr) string {
+	v6 := ""
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok || ipNet.IP.IsLoopback() || ipNet.IP.IsLinkLocalUnicast() || ipNet.IP.IsUnspecified() {
+			continue
+		}
+		if ipNet.IP.To4() != nil {
+			return ipNet.IP.String()
+		}
+		if v6 == "" {
+			v6 = ipNet.IP.String()
+		}
+	}
+	return v6
+}
+
+// maxIPLookups bounds how often a still-empty IP is looked up again while
+// registration keeps failing. Each retry is at least backOffInitialInterval
+// apart, so this covers well over a minute for a NIC that is still coming up
+// at boot; after that the lookup would not start succeeding on its own.
+const maxIPLookups = 10
 
 func makeGoLibraryInfo() *pb.PServiceInfo {
 	libs := make([]string, 0)
@@ -263,7 +335,7 @@ func makeGoLibraryInfo() *pb.PServiceInfo {
 func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 	agentInfo := &pb.PAgentInfo{
 		Hostname:     getHostName(),
-		Ip:           getOutboundIP(),
+		Ip:           localIP(serverAddr(agentGrpc.agent.config, CfgCollectorAgentPort)),
 		ServiceType:  agentGrpc.agent.appType,
 		Pid:          int32(os.Getpid()),
 		AgentVersion: Version,
@@ -306,7 +378,7 @@ func (agentGrpc *agentGrpc) sendAgentInfo(ctx context.Context, agentInfo *pb.PAg
 func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 	ctx, agentInfo := agentGrpc.makeAgentInfo()
 
-	for !agentGrpc.agent.shutdown.Load() {
+	for lookups := 0; !agentGrpc.agent.shutdown.Load(); {
 		if res, err := agentGrpc.sendAgentInfo(ctx, agentInfo); err == nil {
 			if res.Success {
 				Log("agent").Infof("success to register agent")
@@ -318,8 +390,9 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 		}
 
 		backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
-		if agentInfo.Ip == "" {
-			agentInfo.Ip = getOutboundIP()
+		if agentInfo.Ip == "" && lookups < maxIPLookups {
+			lookups++
+			agentInfo.Ip = localIP(serverAddr(agentGrpc.agent.config, CfgCollectorAgentPort))
 		}
 	}
 	return false
