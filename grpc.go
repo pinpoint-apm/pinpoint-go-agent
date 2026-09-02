@@ -185,7 +185,11 @@ const (
 	closeStreamTimeOut   = 1 * time.Second
 	commandStreamTimeOut = 1 * time.Second
 
-	// Defaults for the Collector.Grpc.* config keys, matching the C++ agent.
+	// Defaults for the Collector.Grpc.* config keys. Keepalive and message size
+	// match the C++ and Java agents; flowControlWindow, writeBufferSize and
+	// maxHeaderListSize follow the Java agent (ClientOption.java), which pins a
+	// static 1MiB window with auto flow control off. The C++ agent leaves these
+	// at the gRPC C-core defaults (BDP auto-tuned window).
 	grpcKeepAliveTime               = 30000 // ms
 	grpcKeepAliveTimeout            = 60000 // ms
 	grpcKeepAlivePermitWithoutCalls = false
