@@ -19,7 +19,7 @@
 //
 // To instrument a gRPC client, use UnaryClientInterceptor and StreamClientInterceptor.
 //
-//	conn, err := grpc.Dial(
+//	conn, err := grpc.NewClient(
 //	    "localhost:8080",
 //	    grpc.WithUnaryInterceptor(ppgrpc.UnaryClientInterceptor()),
 //	    grpc.WithStreamInterceptor(ppgrpc.StreamClientInterceptor()),

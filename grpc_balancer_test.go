@@ -297,7 +297,7 @@ func Test_expiringPickFirst_rotatesConnectionsWithoutFailingRpcs(t *testing.T) {
 	go srv.Serve(lis)
 	defer srv.Stop()
 
-	conn, err := grpc.Dial(lis.Addr().String(),
+	conn, err := grpc.NewClient(lis.Addr().String(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultServiceConfig(expiringPickFirstServiceConfig(50*time.Millisecond)))
 	require.NoError(t, err)
@@ -329,7 +329,7 @@ func Test_expiringPickFirst_notSelectedByDefault(t *testing.T) {
 
 	cfg, err := NewConfig(WithAppName("TestApp"))
 	require.NoError(t, err)
-	conn, err := grpc.Dial(lis.Addr().String(), newGrpcChannelOptions(cfg).dialOptions(insecure.NewCredentials())...)
+	conn, err := grpc.NewClient(lis.Addr().String(), newGrpcChannelOptions(cfg).dialOptions(insecure.NewCredentials())...)
 	require.NoError(t, err)
 	defer conn.Close()
 

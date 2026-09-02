@@ -506,7 +506,7 @@ func Test_backOffUntilReady_abortsOnShutdown(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	// Port 1 has no listener, so this connection never becomes ready and the
 	// back-off loop keeps waiting until it is told to stop.
-	conn, err := grpc.Dial("127.0.0.1:1", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient("127.0.0.1:1", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	assert.NoError(t, err)
 	defer conn.Close()
 
@@ -553,8 +553,8 @@ func Test_backOffSleep_rampsGentlyToCeiling(t *testing.T) {
 }
 
 func Test_waitUntilReady_connectsIdleChannel(t *testing.T) {
-	// NewClient, not Dial: it leaves the channel IDLE instead of connecting
-	// eagerly, which is the state this path exists for.
+	// A NewClient channel starts IDLE, as every collector connection now does,
+	// and stays there until told to connect: the state this path exists for.
 	conn, err := grpc.NewClient("127.0.0.1:1", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	assert.NoError(t, err)
 	defer conn.Close()
@@ -1340,7 +1340,7 @@ func dialReadyConn(t *testing.T) *grpc.ClientConn {
 	go srv.Serve(lis)
 	t.Cleanup(srv.Stop)
 
-	conn, err := grpc.Dial(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	t.Cleanup(func() { conn.Close() })
 	require.True(t, waitUntilReady(context.Background(), conn, 5*time.Second, "test"))

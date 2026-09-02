@@ -292,7 +292,13 @@ func connectCollector(config *Config, portOption string) (*grpc.ClientConn, erro
 	opts := newGrpcChannelOptions(config).dialOptions(creds)
 	addr := serverAddr(config, portOption)
 	Log("grpc").Infof("connect to collector: %s (ssl: %v)", addr, config.Bool(CfgCollectorGrpcSslEnable))
-	conn, err := grpc.Dial(addr, opts...)
+	// NewClient defaults to the dns resolver, which hands one resolved address
+	// list to the channel and refreshes it only on failure. The passthrough
+	// scheme keeps grpc.Dial's behavior: the dialer resolves the collector host
+	// for every new connection, so a replacement connection (see
+	// Collector.Grpc.ConnectionMaxAge) sees the current DNS records. The
+	// channel starts idle; the first RPC or waitUntilReady connects it.
+	conn, err := grpc.NewClient("passthrough:///"+addr, opts...)
 	if err != nil {
 		Log("grpc").Errorf("connect to collector - %s, %v", addr, err)
 	}

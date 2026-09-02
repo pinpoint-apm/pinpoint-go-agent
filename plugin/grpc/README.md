@@ -84,7 +84,7 @@ func main() {
 To instrument a gRPC client, use UnaryClientInterceptor and StreamClientInterceptor.
 
 ``` go
-conn, err := grpc.Dial(
+conn, err := grpc.NewClient(
     "localhost:8080",
     grpc.WithUnaryInterceptor(ppgrpc.UnaryClientInterceptor()),
     grpc.WithStreamInterceptor(ppgrpc.StreamClientInterceptor()),
@@ -124,7 +124,7 @@ func streamCallUnaryReturn(ctx context.Context, client testapp.HelloClient) {
 }
 
 func doGrpc(w http.ResponseWriter, r *http.Request) {
-    conn, err := grpc.Dial(
+    conn, err := grpc.NewClient(
         "localhost:8080",
         grpc.WithInsecure(),
         grpc.WithUnaryInterceptor(ppgrpc.UnaryClientInterceptor()),
