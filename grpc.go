@@ -600,9 +600,17 @@ func (agentGrpc *agentGrpc) sendSqlUidMetadataWithRetry(sqlUid []byte, sql strin
 }
 
 func (agentGrpc *agentGrpc) sendExceptionMetadata(in *pb.PExceptionMetaData) error {
-	// size check before proto buffer encoding to ensure grpc stability
-	if proto.Size(in) >= grpcWriteBufferSize {
-		err := status.Errorf(codes.ResourceExhausted, "gRPC message exceeds maximum size: %d", grpcWriteBufferSize)
+	// Drop a message the channel would reject anyway, before encoding it.
+	// The bound is the configured Collector.Grpc.MaxSendMessageSize, the same
+	// value connectCollector passes to grpc.MaxCallSendMsgSize. No margin is
+	// needed: grpc-go compares the serialized message body alone against that
+	// limit (payloadLen > maxSendMessageSize), and the collector's inbound
+	// limit likewise counts only the message body. The 5-byte length prefix
+	// and HTTP/2 framing/headers are outside both checks, and proto.Size is
+	// exactly the serialized body length when no compressor is configured.
+	maxSize := agentGrpc.agent.config.Int(CfgCollectorGrpcMaxSendMessageSize)
+	if size := proto.Size(in); size > maxSize {
+		err := status.Errorf(codes.ResourceExhausted, "gRPC message exceeds maximum size: %d > %d", size, maxSize)
 		Log("grpc").Warnf("skip exception metadata - %v", err)
 		return err
 	}

@@ -1116,20 +1116,41 @@ func Test_agentGrpc_sendExceptionMetadata(t *testing.T) {
 		"the class name is the innermost frame's module")
 }
 
-// An exception whose metadata would exceed the write buffer is dropped before
-// encoding, and the ResourceExhausted that reports it is not retryable.
+// The size guard follows the configured Collector.Grpc.MaxSendMessageSize,
+// not the write buffer size: a message under the limit is sent, one over it is
+// dropped before encoding, and lowering the limit lowers the guard.
+func Test_agentGrpc_sendExceptionMetadata_sizeGuardFollowsConfiguredLimit(t *testing.T) {
+	// A message that fits the 4MB send limit but exceeds the 1MB write buffer
+	// must be sent; the two limits are unrelated.
+	agent := newTestAgent(defaultConfig())
+	agentGrpc, meta := newMockMetaAgentGrpc(agent)
+	assert.True(t, agentGrpc.sendExceptionMetadataWithRetry(&exceptionMeta{uriTemplate: strings.Repeat("x", 2*grpcWriteBufferSize)}))
+	_, _, _, _, except := meta.sentMeta()
+	assert.Len(t, except, 1, "a message under MaxSendMessageSize is sent")
+
+	// Lowering the limit in config lowers the guard.
+	cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorGrpcMaxSendMessageSize(64*1024))
+	require.NoError(t, err)
+	agent = newTestAgent(cfg)
+	agentGrpc, meta = newMockMetaAgentGrpc(agent)
+
+	assert.True(t, agentGrpc.sendExceptionMetadataWithRetry(&exceptionMeta{uriTemplate: strings.Repeat("x", 32*1024)}))
+	assert.False(t, agentGrpc.sendExceptionMetadataWithRetry(&exceptionMeta{uriTemplate: strings.Repeat("x", 64*1024)}))
+	_, _, _, _, except = meta.sentMeta()
+	assert.Len(t, except, 1, "only the message under the configured limit reaches the collector")
+}
+
+// An oversized exception is reported as ResourceExhausted, which retryMeta does
+// not retry, so a message that can never fit is dropped after a single attempt.
 func Test_agentGrpc_sendExceptionMetadata_oversizedIsSkippedWithoutRetry(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agentGrpc, meta := newMockMetaAgentGrpc(agent)
-	oversized := &exceptionMeta{uriTemplate: strings.Repeat("x", grpcWriteBufferSize)}
+	oversized := &exceptionMeta{uriTemplate: strings.Repeat("x", grpcMaxMessageSize)}
 
 	assert.False(t, agentGrpc.sendExceptionMetadataWithRetry(oversized))
-
 	_, _, _, _, except := meta.sentMeta()
 	assert.Empty(t, except, "an oversized message must not reach the collector")
 
-	// The guard reports a non-retryable status, which is what stops retryMeta
-	// from spending the whole attempt budget on a message that can never fit.
 	err := agentGrpc.sendExceptionMetadata(makePExceptionMetaData(oversized))
 	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
 	assert.False(t, isRetryableError(err), "an oversized message never becomes sendable by retrying")
