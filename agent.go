@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -969,9 +970,7 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 		return v
 	}
 
-	hash := murmur3.New128()
-	hash.Write([]byte(aSql))
-	uid := hash.Sum(nil)
+	uid := sqlUid(aSql)
 	if v, ok := agent.sqlUidCache.peekOrAdd(aSql, uid); ok {
 		return v
 	}
@@ -985,6 +984,19 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 	if IsDebugLogLevelEnabled() {
 		Log("agent").Debugf("cache sql uid: %#v, %s", uid, aSql)
 	}
+	return uid
+}
+
+// sqlUid hashes a normalized SQL with murmur3 x64 128 (seed 0) and lays out
+// h1 then h2 little-endian, byte-for-byte what the Java agent's Guava
+// Hashing.murmur3_128().hashBytes(sql.getBytes(UTF_8)).asBytes() and the C++
+// agent's MurmurHash3_x64_128 produce. spaolacci/murmur3's Sum() writes the
+// two words big-endian, which yielded a different UID for the same SQL.
+func sqlUid(sql string) []byte {
+	h1, h2 := murmur3.Sum128([]byte(sql))
+	uid := make([]byte, 16)
+	binary.LittleEndian.PutUint64(uid[0:8], h1)
+	binary.LittleEndian.PutUint64(uid[8:16], h2)
 	return uid
 }
 

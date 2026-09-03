@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync"
@@ -914,4 +915,23 @@ func Test_agent_enqueueStatCountsEveryDroppedRecord(t *testing.T) {
 	assert.EqualValues(t, enqueued-queued, agent.statDrops.dropped.Load(),
 		"every record the collector will never see must be counted once")
 	assert.Positive(t, queued, "test must leave the queue full")
+}
+
+func Test_sqlUid_MatchesJavaGuavaMurmur3_128(t *testing.T) {
+	// Golden values were computed with Guava 33.6.0 Hashing.murmur3_128().hashBytes(sql.getBytes(UTF_8)).asBytes()
+	// (h1, h2 little-endian), which the Java and C++ agents write to PSqlUidMetaData.
+	tests := []struct {
+		name string
+		sql  string
+		hex  string
+	}{
+		{"normalized sql", "select * from t where a = 0#", "d54242c8a741d4cc7bae4fa28d0c1ef1"},
+		{"empty", "", "00000000000000000000000000000000"},
+		{"multibyte", "select * from 테이블 where 이름 = 0#", "1bedb2a46cf838f0366394c28a886411"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.hex, hex.EncodeToString(sqlUid(tt.sql)))
+		})
+	}
 }

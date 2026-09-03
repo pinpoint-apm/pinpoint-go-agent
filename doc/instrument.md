@@ -311,7 +311,7 @@ se.Annotations().AppendInt(pinpoint.AnnotationHttpStatusCode, resp.StatusCode)
 | `AnnotationArgs0` | -1 | first argument of the traced call (string) |
 | `AnnotationApi` | 12 | API description string |
 | `AnnotationSqlId` | 20 | SQL id / normalized statement metadata |
-| `AnnotationSqlUid` | 25 | SQL uid metadata |
+| `AnnotationSqlUid` | 25 | SQL uid metadata (murmur3 x64 128 of the normalized SQL, h1 then h2 little-endian, identical to the Java and C++ agents) |
 | `AnnotationHttpUrl` | 40 | request URL |
 | `AnnotationHttpParam` | 41 | query string |
 | `AnnotationHttpCookie` | 45 | recorded cookies |
