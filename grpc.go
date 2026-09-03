@@ -598,11 +598,33 @@ func (agentGrpc *agentGrpc) retryMeta(send func() error) bool {
 	return false
 }
 
+// metaResult turns a collector rejection (PResult.Success=false) into an error
+// so the caller stops treating the send as delivered. The code is
+// FailedPrecondition, deliberately outside isRetryableError's list: a
+// rejection is a semantic verdict on the payload (schema mismatch and the
+// like), so re-sending the same bytes twice more is pure load on the
+// collector. retryMeta therefore leaves the attempt loop at once and returns
+// false, and sendMetaWorker drops the cache entry so the next use registers a
+// fresh id -- instead of every later span referencing an id the collector
+// never accepted. The Java agent (RetryResponseStreamObserver.onNext ->
+// retryScheduler.isSuccess) and the C++ agent (GrpcMetadata::process_completed
+// checking call->reply.success()) do retry a rejection; Go failing fast here
+// is an intended divergence.
+func metaResult(res *pb.PResult, err error) error {
+	if err != nil {
+		return err
+	}
+	if !res.GetSuccess() {
+		return status.Errorf(codes.FailedPrecondition, "collector rejected metadata: %s", res.GetMessage())
+	}
+	return nil
+}
+
 func (agentGrpc *agentGrpc) sendApiMetadata(in *pb.PApiMetaData) error {
 	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), metaGrpcTimeOut)
 	defer cancel()
 
-	_, err := agentGrpc.metaClient.RequestApiMetaData(ctx, in)
+	err := metaResult(agentGrpc.metaClient.RequestApiMetaData(ctx, in))
 	if err != nil {
 		Log("grpc").Errorf("send api metadata - %v", err)
 	}
@@ -630,7 +652,7 @@ func (agentGrpc *agentGrpc) sendStringMetadata(in *pb.PStringMetaData) error {
 	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), metaGrpcTimeOut)
 	defer cancel()
 
-	_, err := agentGrpc.metaClient.RequestStringMetaData(ctx, in)
+	err := metaResult(agentGrpc.metaClient.RequestStringMetaData(ctx, in))
 	if err != nil {
 		Log("grpc").Errorf("send string metadata - %v", err)
 	}
@@ -656,7 +678,7 @@ func (agentGrpc *agentGrpc) sendSqlMetadata(in *pb.PSqlMetaData) error {
 	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), metaGrpcTimeOut)
 	defer cancel()
 
-	_, err := agentGrpc.metaClient.RequestSqlMetaData(ctx, in)
+	err := metaResult(agentGrpc.metaClient.RequestSqlMetaData(ctx, in))
 	if err != nil {
 		Log("grpc").Errorf("send sql metadata - %v", err)
 	}
@@ -683,7 +705,7 @@ func (agentGrpc *agentGrpc) sendSqlUidMetadata(in *pb.PSqlUidMetaData) error {
 	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), metaGrpcTimeOut)
 	defer cancel()
 
-	_, err := agentGrpc.metaClient.RequestSqlUidMetaData(ctx, in)
+	err := metaResult(agentGrpc.metaClient.RequestSqlUidMetaData(ctx, in))
 	if err != nil {
 		Log("grpc").Errorf("send sql uid metadata - %v", err)
 	}
@@ -725,7 +747,7 @@ func (agentGrpc *agentGrpc) sendExceptionMetadata(in *pb.PExceptionMetaData) err
 	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), metaGrpcTimeOut)
 	defer cancel()
 
-	_, err := agentGrpc.metaClient.RequestExceptionMetaData(ctx, in)
+	err := metaResult(agentGrpc.metaClient.RequestExceptionMetaData(ctx, in))
 	if err != nil {
 		Log("grpc").Errorf("send exception metadata - %v", err)
 	}
@@ -740,6 +762,9 @@ func (agentGrpc *agentGrpc) sendExceptionMetadataWithRetry(exception *exceptionM
 		Log("grpc").Debugf("exception metadata: %s", exceptMeta.String())
 	}
 
+	// Unlike the other metadata types, a failure here releases nothing:
+	// exception metadata is never cached (deleteMetaCache is a no-op for
+	// exceptionMeta), so there is no stale id to invalidate.
 	return agentGrpc.retryMeta(func() error {
 		return agentGrpc.sendExceptionMetadata(exceptMeta)
 	})

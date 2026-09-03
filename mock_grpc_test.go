@@ -123,7 +123,7 @@ func (metaGrpcClient *mockMetaGrpcClient) RequestSqlUidMetaData(ctx context.Cont
 	metaGrpcClient.mu.Lock()
 	defer metaGrpcClient.mu.Unlock()
 	metaGrpcClient.sqlUid = append(metaGrpcClient.sqlUid, in)
-	return nil, nil
+	return &pb.PResult{Success: true, Message: "success"}, nil
 }
 
 func (metaGrpcClient *mockMetaGrpcClient) RequestStringMetaData(ctx context.Context, in *pb.PStringMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
@@ -137,7 +137,7 @@ func (metaGrpcClient *mockMetaGrpcClient) RequestExceptionMetaData(ctx context.C
 	metaGrpcClient.mu.Lock()
 	defer metaGrpcClient.mu.Unlock()
 	metaGrpcClient.except = append(metaGrpcClient.except, in)
-	return nil, nil
+	return &pb.PResult{Success: true, Message: "success"}, nil
 }
 
 // sentMeta returns a snapshot of every metadata request received so far.

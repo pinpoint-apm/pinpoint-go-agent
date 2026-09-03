@@ -671,6 +671,15 @@ func (c *failingMetaClient) fail() error {
 	return c.err
 }
 
+// result mirrors a real client: an accepted request answers with
+// PResult.Success=true, which the send path now requires.
+func (c *failingMetaClient) result() (*pb.PResult, error) {
+	if err := c.fail(); err != nil {
+		return nil, err
+	}
+	return &pb.PResult{Success: true}, nil
+}
+
 func (c *failingMetaClient) callCount() int32 {
 	return atomic.LoadInt32(&c.calls)
 }
@@ -682,23 +691,23 @@ func (c *failingMetaClient) callTimes() []time.Time {
 }
 
 func (c *failingMetaClient) RequestApiMetaData(context.Context, *pb.PApiMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return nil, c.fail()
+	return c.result()
 }
 
 func (c *failingMetaClient) RequestSqlMetaData(context.Context, *pb.PSqlMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return nil, c.fail()
+	return c.result()
 }
 
 func (c *failingMetaClient) RequestSqlUidMetaData(context.Context, *pb.PSqlUidMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return nil, c.fail()
+	return c.result()
 }
 
 func (c *failingMetaClient) RequestStringMetaData(context.Context, *pb.PStringMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return nil, c.fail()
+	return c.result()
 }
 
 func (c *failingMetaClient) RequestExceptionMetaData(context.Context, *pb.PExceptionMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return nil, c.fail()
+	return c.result()
 }
 
 func newFailingMetaAgentGrpc(agent *agent, err error) (*agentGrpc, *failingMetaClient) {
@@ -819,7 +828,7 @@ type blockingMetaClient struct {
 	release chan struct{}
 }
 
-func (c *blockingMetaClient) block() error {
+func (c *blockingMetaClient) block() (*pb.PResult, error) {
 	c.mu.Lock()
 	c.current++
 	c.total++
@@ -833,7 +842,7 @@ func (c *blockingMetaClient) block() error {
 	c.mu.Lock()
 	c.current--
 	c.mu.Unlock()
-	return nil
+	return &pb.PResult{Success: true}, nil
 }
 
 func (c *blockingMetaClient) inFlight() int {
@@ -849,23 +858,23 @@ func (c *blockingMetaClient) stats() (max, total int) {
 }
 
 func (c *blockingMetaClient) RequestApiMetaData(context.Context, *pb.PApiMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return nil, c.block()
+	return c.block()
 }
 
 func (c *blockingMetaClient) RequestSqlMetaData(context.Context, *pb.PSqlMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return nil, c.block()
+	return c.block()
 }
 
 func (c *blockingMetaClient) RequestSqlUidMetaData(context.Context, *pb.PSqlUidMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return nil, c.block()
+	return c.block()
 }
 
 func (c *blockingMetaClient) RequestStringMetaData(context.Context, *pb.PStringMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return nil, c.block()
+	return c.block()
 }
 
 func (c *blockingMetaClient) RequestExceptionMetaData(context.Context, *pb.PExceptionMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return nil, c.block()
+	return c.block()
 }
 
 // While earlier sends are still waiting on the collector, the worker must keep
@@ -1794,4 +1803,87 @@ func Test_randomize_staysWithinJitter(t *testing.T) {
 		assert.GreaterOrEqual(t, got, 900*time.Millisecond)
 		assert.LessOrEqual(t, got, 1100*time.Millisecond)
 	}
+}
+
+// --- collector rejection ----------------------------------------------------
+
+// rejectingMetaClient answers every metadata request with PResult.Success=false,
+// the way a collector refuses a payload it will not store.
+type rejectingMetaClient struct {
+	calls int32
+}
+
+func (c *rejectingMetaClient) reject() (*pb.PResult, error) {
+	atomic.AddInt32(&c.calls, 1)
+	return &pb.PResult{Success: false, Message: "unsupported metadata"}, nil
+}
+
+func (c *rejectingMetaClient) callCount() int32 {
+	return atomic.LoadInt32(&c.calls)
+}
+
+func (c *rejectingMetaClient) RequestApiMetaData(context.Context, *pb.PApiMetaData, ...grpc.CallOption) (*pb.PResult, error) {
+	return c.reject()
+}
+
+func (c *rejectingMetaClient) RequestSqlMetaData(context.Context, *pb.PSqlMetaData, ...grpc.CallOption) (*pb.PResult, error) {
+	return c.reject()
+}
+
+func (c *rejectingMetaClient) RequestSqlUidMetaData(context.Context, *pb.PSqlUidMetaData, ...grpc.CallOption) (*pb.PResult, error) {
+	return c.reject()
+}
+
+func (c *rejectingMetaClient) RequestStringMetaData(context.Context, *pb.PStringMetaData, ...grpc.CallOption) (*pb.PResult, error) {
+	return c.reject()
+}
+
+func (c *rejectingMetaClient) RequestExceptionMetaData(context.Context, *pb.PExceptionMetaData, ...grpc.CallOption) (*pb.PResult, error) {
+	return c.reject()
+}
+
+// A rejection is a verdict on the payload, not a transport hiccup: the send
+// fails, and it fails without burning the retry budget on the same bytes.
+func Test_retryMeta_noRetryOnCollectorRejection(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	rejecting := &rejectingMetaClient{}
+	agentGrpc := &agentGrpc{metaClient: rejecting, agent: agent}
+
+	err := agentGrpc.sendApiMetadata(&pb.PApiMetaData{ApiId: 1, ApiInfo: "test.api"})
+	require.Error(t, err)
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+	assert.Contains(t, err.Error(), "unsupported metadata", "the collector's reason must reach the log")
+
+	assert.False(t, agentGrpc.sendStringMetadataWithRetry(1, "test.error"))
+	assert.Equal(t, int32(2), rejecting.callCount(), "a rejection must not be retried")
+}
+
+// A rejected id was already handed to the spans referencing it, so its cache
+// entry must go, exactly as it does when the send never lands.
+func Test_sendMetaWorker_releasesCacheOnCollectorRejection(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	rejecting := &rejectingMetaClient{}
+	agent.agentGrpc = &agentGrpc{metaClient: rejecting, agent: agent}
+
+	apiKey := apiCacheKey{"test.api", apiTypeInvocation}
+	apiCached := func() bool { _, ok := agent.apiCache.peek(apiKey); return ok }
+	assert.NotZero(t, agent.cacheSpanApi(apiKey.descriptor, apiKey.apiType))
+	assert.True(t, apiCached())
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("meta", agent.sendMetaWorker)
+
+	assert.Eventually(t, func() bool {
+		return rejecting.callCount() == 1
+	}, 5*time.Second, 5*time.Millisecond, "the rejected item must be sent exactly once")
+
+	agent.signalShutdown()
+	agent.workerWg.Wait()
+
+	assert.False(t, apiCached(), "a rejected metadata send must release its cache entry")
+
+	// ...so the next use re-registers the metadata and queues it again
+	assert.NotZero(t, agent.cacheSpanApi(apiKey.descriptor, apiKey.apiType))
+	assert.True(t, apiCached())
+	assert.Equal(t, 1, len(agent.metaChan))
 }
