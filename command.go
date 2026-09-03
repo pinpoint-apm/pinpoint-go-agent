@@ -218,7 +218,10 @@ func (agent *agent) handleActiveThreadCount(reqId int32, cmd *cmdStream) {
 		return
 	}
 
-	go agent.sendActiveThreadCount(s)
+	// Recovered like every other agent goroutine: a panic here must not take
+	// the host process down. The deferred cleanup inside still runs, so the
+	// stream is closed and its slot released either way.
+	go recoverPanic("active thread count", func() { agent.sendActiveThreadCount(s) })
 }
 
 func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {

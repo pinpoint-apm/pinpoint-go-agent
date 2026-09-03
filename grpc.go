@@ -1207,15 +1207,20 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 		defer spanGrpc.releaseSpanBatchPermit()
 		defer releaseSpanMessageBuilder(builder)
 
-		ctx, cancel := context.WithTimeout(grpcMetadataContext(spanGrpc.agent, -1), sendStreamTimeOut)
-		defer cancel()
+		// Recovered like every other agent goroutine: a panic here must not
+		// take the host process down, and the defers above still release the
+		// permit and the builder.
+		recoverPanic("span batch send", func() {
+			ctx, cancel := context.WithTimeout(grpcMetadataContext(spanGrpc.agent, -1), sendStreamTimeOut)
+			defer cancel()
 
-		response, err := spanGrpc.spanClient.SendSpanBatch(ctx, spanMessageBatch)
-		if err != nil {
-			Log("grpc").Infof("SendSpanBatch failed - %v", err)
-			return
-		}
-		handleSpanBatchResponse(response)
+			response, err := spanGrpc.spanClient.SendSpanBatch(ctx, spanMessageBatch)
+			if err != nil {
+				Log("grpc").Infof("SendSpanBatch failed - %v", err)
+				return
+			}
+			handleSpanBatchResponse(response)
+		})
 	}()
 }
 
