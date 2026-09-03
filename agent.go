@@ -44,12 +44,10 @@ type agent struct {
 	urlStatChan chan *urlStat
 	statChan    chan *pb.PStatMessage
 
-	// urlStatDrops is the cumulative count of url stat records lost to a full
-	// queue, updated from the request path. urlStatDropReportAt is the unix
-	// nano before which the overflow warning stays silent; it starts at zero
-	// so the first drop always reports.
-	urlStatDrops        atomic.Int64
-	urlStatDropReportAt atomic.Int64
+	// urlStatDrops counts url stat records lost to a full queue, metaDrops the
+	// metadata items lost the same way; both rate-limit their overflow warning.
+	urlStatDrops dropReporter
+	metaDrops    dropReporter
 
 	errorCache  *metaCache[string, int32]
 	errorIdGen  int32
@@ -154,9 +152,9 @@ type exception struct {
 const (
 	cacheSize        = 1024
 	defaultQueueSize = 1024
-	// urlStatDropReportInterval bounds how often a saturated url stat queue
-	// may warn, matching the C++ QueueDropReporter::kDefaultReportInterval.
-	urlStatDropReportInterval = 60 * time.Second
+	// dropReportInterval bounds how often a saturated queue may warn,
+	// matching the C++ QueueDropReporter::kDefaultReportInterval.
+	dropReportInterval = 60 * time.Second
 
 	defaultSpanBatchSize                  = 50
 	defaultSpanBatchFlushInterval         = 1000
@@ -728,6 +726,10 @@ func (agent *agent) sendMetaWorker() {
 		case md = <-agent.metaChan:
 		}
 
+		// Reported here rather than from the producers: enqueueMeta runs on
+		// the request path and only bumps a counter.
+		agent.metaDrops.report("meta", cap(agent.metaChan))
+
 		// The permit acquisition obeys stop too: with every permit held by a
 		// slow send, a plain send here parks the worker where the stop signal
 		// cannot reach it, and it would dispatch one more send after shutdown
@@ -804,6 +806,13 @@ func (agent *agent) enqueueMeta(md interface{}) {
 	}
 }
 
+// tryEnqueueMeta queues md, head-dropping the oldest item when the queue is
+// full: the slot the eviction frees is handed to md rather than left for the
+// next producer, so an overflow costs exactly one item - and one cache entry -
+// instead of two. Head-drop rather than the C++ agent's drop-the-newest
+// because it is what this agent's span queue already does (a full shard
+// overwrites its oldest cell), and metadata the collector has not seen yet is
+// worth more than metadata whose spans may already have gone out.
 func (agent *agent) tryEnqueueMeta(md interface{}) bool {
 	if !agent.enable.Load() {
 		return false
@@ -819,8 +828,20 @@ func (agent *agent) tryEnqueueMeta(md interface{}) bool {
 	select {
 	case dropped := <-agent.metaChan:
 		agent.deleteMetaCache(dropped)
+		agent.metaDrops.record(1)
+	default:
+		// The consumer drained one meanwhile, so nothing had to be evicted.
+	}
+
+	select {
+	case agent.metaChan <- md:
+		return true
 	default:
 	}
+
+	// Another producer took the freed slot: md is the item lost this time and
+	// the caller drops its cache entry.
+	agent.metaDrops.record(1)
 	return false
 }
 
@@ -1031,25 +1052,47 @@ func (agent *agent) enqueueUrlStat(stat *urlStat) bool {
 		dropped++
 	default:
 	}
-	agent.reportUrlStatDrops(dropped)
+	agent.urlStatDrops.record(dropped)
+	agent.urlStatDrops.report("url stat", cap(agent.urlStatChan))
 	return false
 }
 
-// reportUrlStatDrops adds n to the cumulative drop count and logs the running
-// total at most once per urlStatDropReportInterval. WARN so the data loss is
-// visible at the default log level, rate-limited so a saturated queue cannot
-// log once per dropped request from the request path. Mirrors the C++ agent's
-// QueueDropReporter::record().
-func (agent *agent) reportUrlStatDrops(n int64) {
-	total := agent.urlStatDrops.Add(n)
+// dropReporter counts records lost to a full queue and rate-limits the
+// overflow warning, mirroring the C++ agent's QueueDropReporter.
+type dropReporter struct {
+	// dropped is the running total of lost records, reported the total the
+	// last warning carried, and reportAt the unix nano before which the next
+	// warning stays silent; it starts at zero so the first drop reports.
+	dropped  atomic.Int64
+	reported atomic.Int64
+	reportAt atomic.Int64
+}
 
-	now := time.Now().UnixNano()
-	next := agent.urlStatDropReportAt.Load()
-	if now < next || !agent.urlStatDropReportAt.CompareAndSwap(next, now+int64(urlStatDropReportInterval)) {
+// record counts n drops and nothing else - no clock read, no logging - so it
+// is cheap enough for a producer hot path. The warning is left to report,
+// which a consumer calls.
+func (r *dropReporter) record(n int64) {
+	r.dropped.Add(n)
+}
+
+// report logs the running total at most once per dropReportInterval, and only
+// when drops have accumulated since the last warning. WARN so the data loss is
+// visible at the default log level, rate-limited so a saturated queue cannot
+// log once per dropped record.
+func (r *dropReporter) report(queue string, queueSize int) {
+	total := r.dropped.Load()
+	if total == r.reported.Load() {
 		return
 	}
-	Log("agent").Warnf("url stat queue overflow: %d dropped in total (max queue size %d)",
-		total, cap(agent.urlStatChan))
+
+	now := time.Now().UnixNano()
+	next := r.reportAt.Load()
+	if now < next || !r.reportAt.CompareAndSwap(next, now+int64(dropReportInterval)) {
+		return
+	}
+	r.reported.Store(total)
+	Log("agent").Warnf("%s queue overflow: %d dropped in total (max queue size %d)",
+		queue, total, queueSize)
 }
 
 func (agent *agent) collectUrlStatWorker() {

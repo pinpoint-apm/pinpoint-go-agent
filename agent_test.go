@@ -448,7 +448,7 @@ func Test_agent_enqueueUrlStatCountsEveryDroppedRecord(t *testing.T) {
 	// Nothing drained the queue while it filled, so every record that is not
 	// still sitting in it was dropped - both the rejected enqueues and the
 	// oldest entries evicted to make room for them.
-	assert.Equal(t, int64(enqueued-queued), agent.urlStatDrops.Load(),
+	assert.Equal(t, int64(enqueued-queued), agent.urlStatDrops.dropped.Load(),
 		"drop counter must account for every record that never reached the consumer")
 }
 
@@ -477,7 +477,7 @@ func Test_agent_enqueueUrlStatCountsDropsFromConcurrentProducers(t *testing.T) {
 		queued++
 	}
 
-	assert.Equal(t, int64(producers*perProducer-queued), agent.urlStatDrops.Load())
+	assert.Equal(t, int64(producers*perProducer-queued), agent.urlStatDrops.dropped.Load())
 }
 
 func Test_agent_enqueueUrlStatRateLimitsOverflowWarning(t *testing.T) {
@@ -493,18 +493,18 @@ func Test_agent_enqueueUrlStatRateLimitsOverflowWarning(t *testing.T) {
 		agent.enqueueUrlStat(&urlStat{})
 	}
 
-	assert.Greater(t, agent.urlStatDrops.Load(), int64(1), "test did not saturate the queue")
+	assert.Greater(t, agent.urlStatDrops.dropped.Load(), int64(1), "test did not saturate the queue")
 	assert.Equal(t, 1, strings.Count(buf.String(), "url stat queue overflow"),
 		"a saturated queue must warn once per report interval, not once per dropped record")
 
 	// The next drop after the report interval elapses warns again, carrying the
 	// running total rather than restarting the count.
-	agent.urlStatDropReportAt.Store(0)
+	agent.urlStatDrops.reportAt.Store(0)
 	agent.enqueueUrlStat(&urlStat{})
 
 	assert.Equal(t, 2, strings.Count(buf.String(), "url stat queue overflow"))
 	assert.Contains(t, buf.String(), fmt.Sprintf("%d dropped in total (max queue size %d)",
-		agent.urlStatDrops.Load(), queueSize))
+		agent.urlStatDrops.dropped.Load(), queueSize))
 }
 
 // Shutdown must not close the channels its producers send on. The producers
@@ -612,22 +612,159 @@ func Test_agent_GetAgentIsRaceFreeAgainstShutdown(t *testing.T) {
 
 // A metadata item dropped by a full queue must not stay cached: its id was
 // already handed to spans, so the entry has to be re-registered rather than
-// left pointing at an id the collector never received.
+// left pointing at an id the collector never received. The queue head-drops,
+// so the item that loses its cache entry is the oldest queued one, not the
+// newcomer that took its slot.
 func Test_agent_MetaCacheDropsEntryWhenQueueIsFull(t *testing.T) {
 	a := newTestAgent(defaultConfig())
+	a.metaChan = make(chan interface{}, 2)
 
-	for full := false; !full; {
-		select {
-		case a.metaChan <- stringMeta{}:
-		default:
-			full = true
-		}
-	}
+	oldest := a.cacheError("oldest")
+	a.cacheError("filler")
 
 	first := a.cacheError("boom")
 	second := a.cacheError("boom")
 	assert.NotZero(t, first, "id minted")
-	assert.NotEqual(t, first, second, "dropped metadata is re-registered with a new id")
+	assert.Equal(t, first, second, "the item that made it into the queue stays cached")
+	assert.NotEqual(t, oldest, a.cacheError("oldest"),
+		"the head-dropped item is re-registered with a new id")
+}
+
+// One overflow must cost exactly one cache entry, and the slot the eviction
+// frees must go to the item that caused the overflow. The old code evicted the
+// oldest item and then failed the enqueue anyway: two entries invalidated per
+// overflow, double the re-registration traffic, and the freed slot left for
+// whichever producer came next.
+func Test_agent_MetaOverflowInvalidatesOneCacheEntryPerOverflow(t *testing.T) {
+	const queueSize = 4
+
+	a := newTestAgent(defaultConfig())
+	a.metaChan = make(chan interface{}, queueSize)
+
+	names := make([]string, queueSize)
+	for i := range names {
+		names[i] = fmt.Sprintf("error-%d", i)
+		a.cacheError(names[i])
+	}
+	assert.Len(t, a.metaChan, queueSize, "test must fill the queue")
+
+	a.cacheError("newcomer")
+
+	lost := 0
+	for _, name := range names {
+		if _, ok := a.errorCache.peek(name); !ok {
+			lost++
+		}
+	}
+	assert.Equal(t, 1, lost, "one overflow must invalidate exactly one queued entry")
+	assert.EqualValues(t, 1, a.metaDrops.dropped.Load())
+	_, cached := a.errorCache.peek("newcomer")
+	assert.True(t, cached, "the item that caused the overflow takes the freed slot")
+	assert.Len(t, a.metaChan, queueSize, "the freed slot is reused, not left empty")
+}
+
+// The same invariant over a long run: every item that never reached the
+// consumer lost its cache entry, and nothing else did.
+func Test_agent_MetaOverflowInvalidatesOneCacheEntryPerDrop(t *testing.T) {
+	const queueSize, enqueued = 4, 100
+
+	a := newTestAgent(defaultConfig())
+	a.metaChan = make(chan interface{}, queueSize)
+
+	for i := 0; i < enqueued; i++ {
+		a.cacheError(fmt.Sprintf("error-%d", i))
+	}
+	assert.Len(t, a.metaChan, queueSize, "head-drop keeps the queue full")
+
+	close(a.metaChan)
+	queued := 0
+	for range a.metaChan {
+		queued++
+	}
+
+	// Nothing drained the queue while it filled, so every item that is not
+	// still sitting in it was dropped - and every dropped item lost its cache
+	// entry, no more and no less.
+	assert.Equal(t, int64(enqueued-queued), a.metaDrops.dropped.Load(),
+		"one drop per item that never reached the consumer")
+
+	cached := 0
+	for i := 0; i < enqueued; i++ {
+		if _, ok := a.errorCache.peek(fmt.Sprintf("error-%d", i)); ok {
+			cached++
+		}
+	}
+	assert.Equal(t, queued, cached,
+		"cache invalidations must match drops 1:1, not double-count them")
+}
+
+// Concurrent producers must not lose more cache entries than items: whichever
+// producer wins the freed slot, the loser drops exactly its own item.
+func Test_agent_MetaOverflowCountsDropsFromConcurrentProducers(t *testing.T) {
+	const producers, perProducer = 8, 250
+
+	a := newTestAgent(defaultConfig())
+	a.metaChan = make(chan interface{}, 4)
+
+	var wg sync.WaitGroup
+	for i := 0; i < producers; i++ {
+		wg.Add(1)
+		go func(p int) {
+			defer wg.Done()
+			for j := 0; j < perProducer; j++ {
+				a.cacheError(fmt.Sprintf("error-%d-%d", p, j))
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	close(a.metaChan)
+	queued := 0
+	for range a.metaChan {
+		queued++
+	}
+
+	assert.Equal(t, int64(producers*perProducer-queued), a.metaDrops.dropped.Load())
+
+	cached := 0
+	for p := 0; p < producers; p++ {
+		for j := 0; j < perProducer; j++ {
+			if _, ok := a.errorCache.peek(fmt.Sprintf("error-%d-%d", p, j)); ok {
+				cached++
+			}
+		}
+	}
+	assert.Equal(t, queued, cached, "one cache invalidation per dropped item")
+}
+
+// The overflow warning is rate-limited and comes from the consumer, so a
+// saturated queue costs the request path a counter bump and nothing else.
+func Test_agent_MetaOverflowRateLimitsWarning(t *testing.T) {
+	const queueSize, enqueued = 4, 100
+
+	a := newTestAgent(defaultConfig())
+	a.metaChan = make(chan interface{}, queueSize)
+
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	for i := 0; i < enqueued; i++ {
+		a.cacheError(fmt.Sprintf("error-%d", i))
+	}
+	assert.Greater(t, a.metaDrops.dropped.Load(), int64(1), "test did not saturate the queue")
+	assert.Empty(t, buf.String(), "the producer path must not log")
+
+	a.metaDrops.report("meta", queueSize)
+	a.metaDrops.report("meta", queueSize)
+	assert.Equal(t, 1, strings.Count(buf.String(), "meta queue overflow"),
+		"a saturated queue must warn once per report interval, not once per drop")
+	assert.Contains(t, buf.String(), fmt.Sprintf("%d dropped in total (max queue size %d)",
+		a.metaDrops.dropped.Load(), queueSize))
+
+	// Once the interval elapses, a report with no new drops stays silent.
+	a.metaDrops.reportAt.Store(0)
+	a.metaDrops.report("meta", queueSize)
+	assert.Equal(t, 1, strings.Count(buf.String(), "meta queue overflow"))
 }
 
 // shortWorkerRestartDelay shortens the supervisor's restart pacing for the

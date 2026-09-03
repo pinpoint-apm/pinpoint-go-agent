@@ -171,10 +171,10 @@ const (
 	// metaMaxConcurrentRequests permits, and a failed send evicts the item's
 	// cache entry so it is re-registered on next use. Under the former 60s
 	// deadline a hung collector pinned every permit for up to
-	// 60s x metaRetryMaxAttempts; metaChan overflowed, tryEnqueueMeta dropped
-	// the oldest queued item (evicting its cache entry as well), and each drop
-	// or timeout re-queued the same metadata -- an amplification loop that
-	// lasted until the collector recovered. 5s matches the C++ agent's
+	// 60s x metaRetryMaxAttempts; metaChan overflowed, tryEnqueueMeta
+	// head-dropped a queued item (evicting its cache entry), and each drop or
+	// timeout re-queued the same metadata -- an amplification loop that lasted
+	// until the collector recovered. 5s matches the C++ agent's
 	// request_timeout for unary RPCs: ample for a healthy collector, short
 	// enough that permits recycle before the queue fills. Kept as a constant
 	// like the C++ agent's value; a Collector.Grpc.* key can be added if a
