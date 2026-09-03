@@ -27,18 +27,21 @@ import (
 // nil, so any method the policy is not expected to call panics loudly.
 type fakeBalancerCC struct {
 	balancer.ClientConn
-	mu       sync.Mutex
-	subConns []*fakeSubConn
-	states   []balancer.State
+	mu         sync.Mutex
+	subConns   []*fakeSubConn
+	states     []balancer.State
+	resolveNow atomic.Int32
 }
 
-func (cc *fakeBalancerCC) NewSubConn(_ []resolver.Address, opts balancer.NewSubConnOptions) (balancer.SubConn, error) {
+func (cc *fakeBalancerCC) NewSubConn(addrs []resolver.Address, opts balancer.NewSubConnOptions) (balancer.SubConn, error) {
 	cc.mu.Lock()
 	defer cc.mu.Unlock()
-	sc := &fakeSubConn{listener: opts.StateListener}
+	sc := &fakeSubConn{listener: opts.StateListener, addrs: addrs}
 	cc.subConns = append(cc.subConns, sc)
 	return sc, nil
 }
+
+func (cc *fakeBalancerCC) ResolveNow(resolver.ResolveNowOptions) { cc.resolveNow.Add(1) }
 
 func (cc *fakeBalancerCC) UpdateState(s balancer.State) {
 	cc.mu.Lock()
@@ -75,6 +78,7 @@ func (cc *fakeBalancerCC) pick() (balancer.SubConn, error) {
 type fakeSubConn struct {
 	balancer.SubConn
 	listener  func(balancer.SubConnState)
+	addrs     []resolver.Address
 	connects  atomic.Int32
 	shutdowns atomic.Int32
 }
@@ -341,6 +345,92 @@ func Test_expiringPickFirst_notSelectedByDefault(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	assert.EqualValues(t, 1, counter.conns.Load())
+}
+
+// A changed address list reaches the SubConns already open: the READY one
+// keeps serving the old address until a successor on the new list is READY
+// (make-before-break), while the SubConns carrying no traffic are dropped.
+func Test_expiringPickFirst_appliesChangedAddresses(t *testing.T) {
+	b, cc := newExpiringPickFirst(t, 0)
+	cc.subConn(0).setState(connectivity.Ready)
+	old := cc.subConn(0)
+
+	require.NoError(t, b.UpdateClientConnState(balancer.ClientConnState{
+		ResolverState: resolver.State{Addresses: []resolver.Address{{Addr: "collector-2:9991"}}},
+	}))
+	require.Equal(t, 2, cc.count(), "the new address list opens a SubConn on it")
+	successor := cc.subConn(1)
+	assert.Equal(t, []resolver.Address{{Addr: "collector-2:9991"}}, successor.addrs)
+	assert.Same(t, old, must(cc.pick()), "the old SubConn serves until the successor is READY")
+	assert.EqualValues(t, 0, old.shutdowns.Load())
+
+	successor.setState(connectivity.Ready)
+	assert.Same(t, successor, must(cc.pick()), "the new address takes over")
+	assert.EqualValues(t, 1, old.shutdowns.Load())
+}
+
+// A SubConn that is only connecting or has failed carries no traffic, so it is
+// shut down and replaced by one on the new addresses instead of being left to
+// finish dialing an address that is gone.
+func Test_expiringPickFirst_replacesNonServingSubConnsOnAddressChange(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state connectivity.State
+	}{
+		{"connecting", connectivity.Connecting},
+		{"failure", connectivity.TransientFailure},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, cc := newExpiringPickFirst(t, 0)
+			cc.subConn(0).setState(tc.state)
+
+			require.NoError(t, b.UpdateClientConnState(balancer.ClientConnState{
+				ResolverState: resolver.State{Addresses: []resolver.Address{{Addr: "collector-2:9991"}}},
+			}))
+			assert.EqualValues(t, 1, cc.subConn(0).shutdowns.Load(), "the stale attempt is dropped")
+			require.Equal(t, 2, cc.count())
+			assert.Equal(t, []resolver.Address{{Addr: "collector-2:9991"}}, cc.subConn(1).addrs)
+			assert.Equal(t, connectivity.Connecting, cc.state().ConnectivityState)
+		})
+	}
+}
+
+// A resolver repeating the list it already reported must not disturb the
+// connection.
+func Test_expiringPickFirst_ignoresUnchangedAddresses(t *testing.T) {
+	b, cc := newExpiringPickFirst(t, 0)
+	cc.subConn(0).setState(connectivity.Ready)
+
+	for i := 0; i < 10; i++ {
+		require.NoError(t, b.UpdateClientConnState(balancer.ClientConnState{
+			ResolverState: resolver.State{Addresses: []resolver.Address{{Addr: "collector:9991"}}},
+		}))
+	}
+	// The same list as Endpoints rather than Addresses is still the same list.
+	require.NoError(t, b.UpdateClientConnState(balancer.ClientConnState{
+		ResolverState: resolver.State{Endpoints: []resolver.Endpoint{{Addresses: []resolver.Address{{Addr: "collector:9991"}}}}},
+	}))
+
+	assert.Equal(t, 1, cc.count(), "an unchanged list opens no SubConn")
+	assert.EqualValues(t, 1, cc.subConn(0).connects.Load())
+	assert.EqualValues(t, 0, cc.subConn(0).shutdowns.Load())
+	assert.Same(t, cc.subConn(0), must(cc.pick()))
+}
+
+// The Java agent's refreshNameResolution: a failed or dropped connection asks
+// for a fresh resolution, so a collector that moved is found again.
+func Test_expiringPickFirst_requestsResolutionOnFailureAndIdle(t *testing.T) {
+	_, cc := newExpiringPickFirst(t, 0)
+	sc := cc.subConn(0)
+
+	sc.setState(connectivity.Connecting)
+	require.EqualValues(t, 0, cc.resolveNow.Load(), "connecting alone is no reason to re-resolve")
+
+	sc.setState(connectivity.TransientFailure)
+	assert.EqualValues(t, 1, cc.resolveNow.Load(), "TRANSIENT_FAILURE re-resolves")
+
+	sc.setState(connectivity.Idle) // grpc-go returns a failed SubConn to IDLE after its back-off
+	assert.EqualValues(t, 2, cc.resolveNow.Load(), "IDLE re-resolves")
 }
 
 func must(sc balancer.SubConn, err error) balancer.SubConn {

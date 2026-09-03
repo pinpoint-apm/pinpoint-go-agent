@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -112,15 +113,43 @@ func (b *expiringPickFirst) UpdateClientConnState(state balancer.ClientConnState
 		return balancer.ErrBadResolverState
 	}
 
-	// Existing SubConns keep their addresses: the passthrough resolver never
-	// re-resolves, and a successor picks the new list up anyway.
-	first := b.addrs == nil
-	b.addrs = addrs
-	if first {
-		b.createSubConnLocked()
-		b.updateBalancingStateLocked()
+	// A resolver that re-resolves repeats the same list far more often than it
+	// changes it, so the SubConns are left alone unless the list really
+	// changed. Order counts: it is the order one SubConn dials the addresses
+	// in.
+	if slices.EqualFunc(b.addrs, addrs, resolver.Address.Equal) {
+		return nil
 	}
+	b.addrs = addrs
+	b.readdressLocked()
 	return nil
+}
+
+// readdressLocked opens the new address list, moving the SubConns already
+// created onto it.
+//
+// balancer.SubConn.UpdateAddresses would apply the list in place, and that is
+// what the Java agent's updateAddresses() does, but in grpc-go v1.82.1 the
+// method is deprecated as "this method will be removed. Create new SubConns
+// for new addresses instead." (balancer/subconn.go), so the list is applied by
+// creating a SubConn on it - which is the make-before-break path this policy
+// already runs for a max age rotation: the READY SubConn keeps serving until
+// the successor reports READY, and onSubConnState then shuts it down. A
+// CONNECTING or TRANSIENT_FAILURE SubConn carries no traffic and is dialing
+// addresses that may be gone, so it is shut down at once, which is also what
+// frees the CONNECTING slot the successor needs.
+func (b *expiringPickFirst) readdressLocked() {
+	for _, slot := range []**expiringSubConn{&b.connecting, &b.failure} {
+		if sd := *slot; sd != nil {
+			sd.sc.Shutdown()
+			// Cleared here instead of on the SHUTDOWN callback, which arrives
+			// after the successor needs the slot.
+			*slot = nil
+			Log("grpc").Infof("%s: %v is shutdown by an address change", expiringPickFirstName, sd.sc)
+		}
+	}
+	b.createSubConnLocked()
+	b.updateBalancingStateLocked()
 }
 
 func (b *expiringPickFirst) ResolverError(err error) {
@@ -210,6 +239,13 @@ func (b *expiringPickFirst) onSubConnState(sd *expiringSubConn, state balancer.S
 	}
 	if b.failure == sd {
 		b.failure = nil
+	}
+
+	if state.ConnectivityState == connectivity.TransientFailure || state.ConnectivityState == connectivity.Idle {
+		// The Java agent's refreshNameResolution: a connection that failed or
+		// dropped may be pointing at a backend that is gone, so a fresh
+		// resolution is requested before reconnecting.
+		b.cc.ResolveNow(resolver.ResolveNowOptions{})
 	}
 
 	switch state.ConnectivityState {
