@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -135,8 +136,31 @@ func Test_spanEvent_SetSQLBoundsAnnotationValues(t *testing.T) {
 
 	assert.Len(t, se.annotations.values, 1)
 	annotation := se.annotations.values[0]
-	assert.Equal(t, literal[:limit]+"...(32)", annotation.s1)
+	// param is bounded by the normalizer's maxSqlSize, not by the bind limit
+	assert.True(t, strings.HasPrefix(annotation.s1, literal[:limit+1]))
+	assert.LessOrEqual(t, len(annotation.s1), maxSqlSize+len("...(65536)"))
 	assert.Equal(t, args[:limit]+"...(32)", annotation.s2)
+}
+
+// The server rebuilds the raw SQL by splitting param on ',' and indexing into
+// it, so param must never be cut by SQL.MaxBindValueSize; only args is.
+func Test_spanEvent_SetSQLKeepsParamOfLargeInList(t *testing.T) {
+	const limit = 32
+	cfg := defaultConfig()
+	cfg.Set(CfgSQLMaxBindValueSize, limit)
+	se := newSpanEvent(testSpanWithConfig(cfg), "query")
+	nums := make([]string, 2000)
+	for i := range nums {
+		nums[i] = strconv.Itoa(i + 1)
+	}
+	param := strings.Join(nums, ",")
+	args := strings.Repeat("a", 1024)
+
+	se.SetSQL("SELECT * FROM t WHERE id IN ("+param+")", args)
+
+	assert.Len(t, se.annotations.values, 1)
+	assert.Equal(t, param, se.annotations.values[0].s1)
+	assert.Equal(t, args[:limit]+"...(32)", se.annotations.values[0].s2)
 }
 
 // A negative SQL.MaxBindValueSize turns bind value tracing off and clamps the

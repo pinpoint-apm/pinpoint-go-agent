@@ -136,10 +136,14 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 		nsql, param = newSqlNormalizer(sql).run()
 	}
 	// nsql is already bounded by the normalizer; cacheSql/cacheSqlUid bound the
-	// cache key again for any other caller. A limit of 0 means bind value
-	// tracing is off, not that every value should become an "...(0)" marker.
+	// cache key again for any other caller. param is never abbreviated: the
+	// server splits it on ',' to fill the <idx>#/<idx>$ placeholders of nsql,
+	// so a cut param leaves placeholders exposed. Its size is already capped by
+	// maxSqlSize because the normalizer stops emitting parameters once nsql is
+	// full (see sqlNormalizerBuilder). MaxBindValueSize applies to bind values
+	// only, as in the Java agent; a limit of 0 means bind value tracing is off,
+	// not that every value should become an "...(0)" marker.
 	if cfg.sqlMaxBindValueSize > 0 {
-		param = abbreviateString(param, cfg.sqlMaxBindValueSize)
 		args = abbreviateString(args, cfg.sqlMaxBindValueSize)
 	}
 
