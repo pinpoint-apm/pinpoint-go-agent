@@ -254,7 +254,32 @@ func (stats *agentStats) cpuLoad() (float64, float64) {
 		sysCpu = percent[0]
 	}
 
-	return procCpu / 100, sysCpu / 100
+	return normalizeCpuLoad(procCpu, sysCpu, runtime.NumCPU())
+}
+
+// normalizeCpuLoad turns gopsutil percentages into the 0..1 loads the
+// collector expects (matching the Java agent's jvmCpuLoad/systemCpuLoad).
+// process.Percent is not divided by the core count, so a process saturating
+// four cores reads 400; cpu.Percent(0, false) is already the whole-machine
+// average. Both are clamped so a negative or NaN reading never leaves range.
+//
+// numCPU is runtime.NumCPU(), which under a cgroup CPU quota can exceed the
+// cores the process may actually use; honoring the quota is out of scope.
+func normalizeCpuLoad(procPercent, sysPercent float64, numCPU int) (float64, float64) {
+	if numCPU < 1 {
+		numCPU = 1
+	}
+	return clampUnit(procPercent / 100 / float64(numCPU)), clampUnit(sysPercent / 100)
+}
+
+func clampUnit(v float64) float64 {
+	if v != v || v < 0 { // NaN or negative
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
 }
 
 // getStats samples the agent and reports the measured collection interval in

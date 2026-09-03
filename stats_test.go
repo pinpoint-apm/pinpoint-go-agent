@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"math"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -163,4 +164,29 @@ func Test_getStatsIntervalIsMeasuredMilliseconds(t *testing.T) {
 func Test_getStatsFirstCollectUsesConfiguredInterval(t *testing.T) {
 	stats := &agentStats{}
 	assert.Equal(t, int64(5000), stats.getStats(5000).interval)
+}
+
+func Test_normalizeCpuLoad(t *testing.T) {
+	nan := math.NaN()
+	tests := []struct {
+		name         string
+		proc, sys    float64
+		numCPU       int
+		wantP, wantS float64
+	}{
+		{"four cores saturated", 400, 100, 4, 1.0, 1.0},
+		{"half a core of four", 50, 50, 4, 0.125, 0.5},
+		{"over range clamps", 900, 150, 4, 1.0, 1.0},
+		{"negative clamps", -10, -1, 4, 0, 0},
+		{"nan clamps", nan, nan, 4, 0, 0},
+		{"zero cpus treated as one", 50, 50, 0, 0.5, 0.5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, s := normalizeCpuLoad(tt.proc, tt.sys, tt.numCPU)
+			if p != tt.wantP || s != tt.wantS {
+				t.Errorf("got (%v, %v), want (%v, %v)", p, s, tt.wantP, tt.wantS)
+			}
+		})
+	}
 }
