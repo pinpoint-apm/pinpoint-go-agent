@@ -1054,8 +1054,13 @@ func newSpanGrpc(agent *agent) (*spanGrpc, error) {
 	}, nil
 }
 
+// close releases the connection without waiting for in-flight batches: the
+// batch worker awaits them itself on exit, and Shutdown only reaches this
+// after that worker finished or was abandoned at shutdownTimeout. Waiting here
+// too ran inFlight.Wait concurrently with the abandoned worker's inFlight.Add,
+// which sync.WaitGroup forbids and punishes with a panic on the waiting
+// goroutine, outside recoverPanic.
 func (spanGrpc *spanGrpc) close() {
-	spanGrpc.awaitInFlightSpanBatch()
 	if spanGrpc.spanConn != nil {
 		spanGrpc.spanConn.Close()
 	}
