@@ -31,11 +31,13 @@ These packages help you to make instruments with simple source code modification
 Refer the [Plugin User Guide](doc/plugin_guide.md) for more information.
 
 ## Documents
-* [Quick Start](doc/quick_start.md)
-* [Configuration](doc/config.md)
-* [Plugin User Guide](doc/plugin_guide.md)
-* [Custom Instrumentation](doc/instrument.md)
-* [Troubleshooting](doc/troubleshooting.md)
+* [Quick Start](doc/quick_start.md) - install, configure and verify your first trace
+* [Configuration](doc/config.md) - every option, plus examples and a symptom index
+* [Plugin User Guide](doc/plugin_guide.md) - the supported frameworks, drivers and clients
+* [Custom Instrumentation](doc/instrument.md) - trace what no plugin covers
+* [Tracer, Span, and Annotation Contracts](doc/api_contracts.md) - the API rules to keep
+* [Troubleshooting](doc/troubleshooting.md) - when the trace does not show up
+* [Development Guide](doc/development.md) - build, test and extend the agent itself
 
 ## Contributing
 

@@ -901,3 +901,258 @@ Http.UrlStat.WithMethod option adds http method as prefix to url string key.
 * type: bool
 * default: false
 * dynamic
+
+---
+
+## Dynamic Configuration Reference
+
+Options marked **dynamic** above are re-read when the config file changes,
+with no application restart. The rest are read once at agent startup.
+
+Two things make a reload not happen, and both are easy to miss:
+
+* Reloading is driven by a **file watcher**, so it only works if the process
+  was given a config file (`ConfigFile`). Command flags and environment
+  variables are read once at startup and never re-read.
+* Precedence still applies. An option also set by a command flag or an
+  environment variable keeps that value; editing the file will not change it.
+
+### Reloadable options
+
+| Group | Options |
+|---|---|
+| Sampling | `Sampling.Type`, `Sampling.CounterRate`, `Sampling.PercentRate`, `Sampling.NewThroughput`, `Sampling.ContinueThroughput` |
+| Span limits | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence` |
+| SQL | `SQL.TraceBindValue`, `SQL.MaxBindValueSize`, `SQL.TraceCommit`, `SQL.TraceRollback`, `SQL.TraceQueryStat`, `SQL.EnableRawSqlCache` |
+| Logging | `Log.Level`, `Log.Output`, `Log.MaxSize` |
+| Errors | `Error.TraceCallStack`, `Error.CallStackDepth` |
+| HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError` |
+| HTTP client | `Http.Client.RecordRequestHeader`, `Http.Client.RecordResponseHeader`, `Http.Client.RecordRequestCookie` |
+| URL statistics | `Http.UrlStat.Enable`, `Http.UrlStat.LimitSize`, `Http.UrlStat.WithMethod` |
+
+### Restart-only options
+
+Identity (`ApplicationName`, `AgentId`, `AgentName`, `Uid.Version`,
+`ServiceName`, `ApiKey`, `ApplicationType`), everything under `Collector.*`,
+the span transport (`Span.QueueSize`, `Span.Batch.*`, `Span.EventChunkSize`),
+`Stat.*`, `Http.UrlStat.QueueSize`, `IsContainerEnv`, `ConfigFile`,
+`ActiveProfile` and `Enable`.
+
+`Enable` deserves a note: it cannot be reloaded, but `Agent.Shutdown()` stops a
+running agent and `NewAgent()` starts a new one, both without a restart. See
+[Troubleshooting](troubleshooting.md#stopping-and-resuming-the-agent).
+
+A reload rebuilds the components derived from the changed options — the
+sampler, the logger, the HTTP filters — behind an immutable snapshot, so an
+in-flight request never sees a half-applied change. Watch for `src=config`
+lines on save; a parse error leaves the previous values in place.
+
+---
+
+## Configuration Examples
+
+### Development
+
+Trace everything, log verbosely, and record the detail you want while writing
+instrumentation.
+
+```yaml
+applicationName: "MyApp-Dev"
+agentId: "dev-agent-1"
+
+collector:
+  host: "localhost"
+
+sampling:
+  type: "COUNTER"
+  counterRate: 1          # 100%
+
+log:
+  level: "debug"          # also enables the shared-tracer check
+  output: "stderr"
+
+sql:
+  traceBindValue: true
+  traceCommit: true
+  traceRollback: true
+
+error:
+  traceCallStack: true
+  callStackDepth: 32
+
+http:
+  urlStat:
+    enable: true
+    withMethod: true
+  server:
+    recordRequestHeader: ["HEADERS-ALL"]
+    recordResponseHeader: ["HEADERS-ALL"]
+```
+
+Keep `log.level: debug` for at least one run of any new instrumentation: the
+API-contract checks that catch a tracer shared across goroutines only run at
+`debug` and `trace`.
+
+### Production
+
+Sample a fraction, cap the peak, and log only what you would act on.
+
+```yaml
+applicationName: "MyApp"
+# agentId omitted: generated per process, which is what you want when
+# instances are ephemeral. Set agentName for a stable label instead.
+agentName: "myapp-prod"
+
+collector:
+  host: "pinpoint-collector.internal"
+  grpc:
+    sslEnable: true
+    trustCertFilePath: "/etc/ssl/certs/pinpoint-ca.pem"
+
+sampling:
+  type: "COUNTER"
+  counterRate: 10         # 10%
+  newThroughput: 100      # cap new transactions at 100/s
+  continueThroughput: 200
+
+log:
+  level: "info"
+  output: "/var/log/myapp/pinpoint.log"
+  maxSize: 10
+
+sql:
+  traceBindValue: false   # bind values may contain personal data
+
+error:
+  traceCallStack: false   # the most expensive per-error work
+
+http:
+  urlStat:
+    enable: true          # collected even for unsampled requests
+    limitSize: 1024
+  server:
+    excludeUrl: ["/health", "/metrics", "/favicon.ico"]
+    excludeMethod: ["OPTIONS"]
+```
+
+`Http.UrlStat.Enable` is the reason a 10% sampling rate is not a 10% view:
+per-URL throughput and latency are aggregated for every request, sampled or
+not.
+
+### Containers
+
+```yaml
+applicationName: "MyApp"
+# agentId unset -> generated per container
+agentName: "myapp"
+collector:
+  host: "pinpoint-collector.monitoring.svc.cluster.local"
+log:
+  output: "stdout"        # let the platform collect it
+sampling:
+  type: "COUNTER"
+  counterRate: 10
+```
+
+In a container the environment is usually the natural source, and it overrides
+the config file:
+
+```bash
+PINPOINT_GO_APPLICATIONNAME=MyApp
+PINPOINT_GO_AGENTNAME=myapp
+PINPOINT_GO_COLLECTOR_HOST=pinpoint-collector.monitoring.svc.cluster.local
+PINPOINT_GO_SAMPLING_COUNTERRATE=10
+PINPOINT_GO_LOG_OUTPUT=stdout
+```
+
+Do not pin `AgentId` in a container image: every replica would report as the
+same agent. Leave it unset — the agent generates one per process — and use
+`AgentName` for the human-readable label. `IsContainerEnv` is detected
+automatically; set it only if the detection is wrong.
+
+If you want reloadable options in a container, you still need a config file:
+mount one from a ConfigMap and point `ConfigFile` at it. Editing the ConfigMap
+then changes the sampling rate or log level on running pods.
+
+### Profiles
+
+One file, several environments, selected at startup by `ActiveProfile`:
+
+```bash
+./myapp --pinpoint-configfile=pinpoint-config.yaml --pinpoint-activeprofile=real
+```
+
+See [ActiveProfile](#activeprofile) for the file layout.
+
+---
+
+## Best Practices
+
+**Security**
+
+* Never commit an `ApiKey`. Pass it through the environment; the startup config
+  dump prints it as `****`.
+* Turn `SQL.TraceBindValue` off wherever query parameters can carry personal
+  data. It is on by default because it is the single most useful thing in a
+  slow-query trace, which is exactly why it needs a deliberate decision.
+* Record headers by name, not `HEADERS-ALL`, in production —
+  `Authorization`, `Cookie` and `Set-Cookie` all land in the trace otherwise.
+* Use TLS to the collector (`Collector.Grpc.SslEnable`). Leave
+  `Collector.Grpc.TrustCertFilePath` empty only for a publicly-signed
+  certificate; a private CA needs the path.
+
+**High traffic**
+
+* Sample rather than throttle after the fact: raise `Sampling.CounterRate` and
+  set `Sampling.NewThroughput` so a spike cannot become a collector incident.
+* Exclude the URLs that are noise — health checks, metrics endpoints, static
+  assets — with `Http.Server.ExcludeUrl`. They are the bulk of the requests and
+  none of the insight.
+* Keep `Error.TraceCallStack` off; it is the costliest per-error work.
+* For a very high span rate, try `Span.Batch.Enable`, which replaces the
+  long-lived stream with batched unary sends.
+* Leave `Log.Level` at `info` or `warn`. Debug logging adds per-event work.
+
+**Getting it right**
+
+* Read the startup config dump. It is the resolved configuration after all five
+  sources are merged, and it settles most "why is this not taking effect"
+  questions in one line.
+* Prefer one config file plus environment overrides. Spreading the same option
+  across flags, environment and file is how precedence surprises happen.
+* Always pass the routed URL pattern, not the resolved path, so
+  `Http.UrlStat.LimitSize` bounds something meaningful.
+
+---
+
+## Symptom → Key Index
+
+| Symptom | Options to look at |
+|---|---|
+| Agent will not start | `ApplicationName`, `AgentId`, `Uid.Version`, `Enable` |
+| Nothing appears in the UI | `Collector.Host`, `Collector.AgentPort`, `Sampling.CounterRate`, `Enable` |
+| Cannot connect / not registered | `Collector.Host`, the three ports, `Collector.Grpc.SslEnable`, `Collector.Grpc.TrustCertFilePath` |
+| Too many traces / collector overloaded | `Sampling.CounterRate`, `Sampling.NewThroughput`, `Sampling.ContinueThroughput`, `Http.Server.ExcludeUrl` |
+| Traces truncated mid-request | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence` |
+| Spans dropped under load | `Span.QueueSize`, `Span.Batch.Enable`, `Span.BatchSize` |
+| Agent using too much memory | `Span.QueueSize`, `Http.UrlStat.LimitSize`, `SQL.MaxBindValueSize`, `SQL.EnableRawSqlCache` |
+| Agent using too much CPU | `Sampling.CounterRate`, `Log.Level`, `Error.TraceCallStack` |
+| No SQL detail in query spans | `SQL.TraceBindValue`, `SQL.TraceQueryStat`, `SQL.TraceCommit`, `SQL.TraceRollback` |
+| Sensitive data visible in traces | `SQL.TraceBindValue`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordRequestCookie` |
+| Health checks flooding the URL list | `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod` |
+| No per-URL statistics | `Http.UrlStat.Enable`, `Http.UrlStat.LimitSize`, `Http.UrlStat.WithMethod` |
+| Wrong requests marked as errors | `Http.Server.StatusCodeErrors`, `Http.Server.RecordHandlerError` |
+| No error stack traces | `Error.TraceCallStack`, `Error.CallStackDepth` |
+| Agent logs too quiet / too loud | `Log.Level`, `Log.Output`, `Log.MaxSize` |
+| Config change has no effect | `ConfigFile`, `ActiveProfile`, and the [reloadable list](#reloadable-options) |
+| Every replica reports as one agent | `AgentId` (leave unset), `AgentName` |
+
+---
+
+## Related Documentation
+
+* [Quick Start](quick_start.md)
+* [Custom Instrumentation](instrument.md)
+* [Tracer, Span, and Annotation Contracts](api_contracts.md)
+* [Plugin User Guide](plugin_guide.md)
+* [Troubleshooting](troubleshooting.md)

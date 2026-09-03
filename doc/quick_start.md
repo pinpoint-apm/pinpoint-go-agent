@@ -1,5 +1,20 @@
 # Quick Start
 
+Pinpoint Go Agent enables you to monitor Go applications using Pinpoint. This
+guide takes you from `go get` to a traced request in the Pinpoint UI.
+
+## Prerequisites
+
+* **Go 1.25+**
+* A running **Pinpoint 2.4.0+** collector, and its host address. Three ports
+  must be reachable from your application: 9991 (agent), 9993 (span) and
+  9992 (stat).
+* Linux, macOS or Windows.
+
+Go compiles to native machine code, so — unlike the Java agent — there is
+nothing to attach at startup. Instrumentation is a source change, which is why
+this guide is about code and not about a launcher.
+
 ## Install
 ### Go get
 ```
@@ -216,3 +231,123 @@ and a function that imports a tracer from the context, respectively.
 NewContext(ctx context.Context, tracer Tracer) context.Context 
 FromContext(ctx context.Context) Tracer
 ```
+
+## Configure the Agent
+
+The example above configures the agent in code, which is the shortest way to a
+first trace. For anything beyond that, a config file or the environment is
+better — both work without recompiling, and a config file additionally lets you
+change some options on a running process.
+
+```yaml
+# pinpoint-config.yaml
+applicationName: "MyAppName"
+collector:
+  host: "collector.myhost.com"
+sampling:
+  type: "COUNTER"
+  counterRate: 1
+log:
+  level: "info"
+```
+
+```go
+cfg, _ := pinpoint.NewConfig(
+    pinpoint.WithConfigFile("/etc/myapp/pinpoint-config.yaml"),
+)
+```
+
+```bash
+PINPOINT_GO_APPLICATIONNAME=MyAppName \
+PINPOINT_GO_COLLECTOR_HOST=collector.myhost.com \
+./myapp
+```
+
+Sources are merged in this precedence order, each overriding the one below:
+command flag, environment variable, config file, config function, default. See
+[Configuration](config.md) for every option, and the
+[examples](config.md#configuration-examples) for development, production and
+container setups.
+
+## Verify
+
+Start your application and watch its **stderr** — that is where the agent logs
+by default:
+
+```text
+INFO[...] new pinpoint agent          module=pinpoint src=agent
+INFO[...] connect to collector: collector.myhost.com:9991 (ssl: false)  module=pinpoint src=grpc
+INFO[...] success to register agent   module=pinpoint src=agent
+```
+
+`success to register agent` means the collector accepted this agent. Then send
+a request through an instrumented handler:
+
+```bash
+curl http://localhost:8000/
+```
+
+and find your `ApplicationName` in the Pinpoint UI's application list. The
+transaction should appear within a few seconds.
+
+Two things to get right from the start:
+
+```go
+agent, err := pinpoint.NewAgent(cfg)
+if err != nil {
+    log.Printf("pinpoint agent start failed: %v", err)  // always check this
+}
+defer agent.Shutdown()                                  // flush before exit
+```
+
+`NewAgent()` returns a **no-op agent plus an error** when the configuration is
+invalid — the application then runs perfectly and reports nothing, so the error
+is your only signal. And because spans are sent by a separate goroutine, a
+process that exits immediately can drop whatever is still queued;
+`defer agent.Shutdown()` is what flushes it.
+
+## Runnable examples
+
+The [example](/example) directory has complete programs you can build and run:
+
+| File | Shows |
+|---|---|
+| [http_server.go](/example/http_server.go) | instrumented HTTP server and client |
+| [async.go](/example/async.go) | goroutine tracing and distributed tracing |
+| [custom.go](/example/custom.go) | hand-written spans and span events |
+| [stand_alone.go](/example/stand_alone.go) | a non-HTTP program, plus SQL and gorm |
+
+```bash
+cd example
+PINPOINT_GO_COLLECTOR_HOST=collector.myhost.com go run http_server.go
+```
+
+Every plugin directory also carries its own `README.md` and `example/`.
+
+## Next Steps
+
+* [Plugin User Guide](plugin_guide.md) — find the plugin for your framework,
+  database, cache or queue.
+* [Custom Instrumentation](instrument.md) — trace what no plugin covers.
+* [Tracer, Span, and Annotation Contracts](api_contracts.md) — the rules the
+  API expects you to keep. Short, and worth reading before you write the
+  second instrument.
+* [Configuration](config.md) — every option, plus sampling and privacy
+  settings for production.
+* [Troubleshooting](troubleshooting.md) — when the trace does not show up.
+
+## Troubleshooting
+
+| Symptom | First thing to check |
+|---|---|
+| No `new pinpoint agent` line | `ApplicationName` is required; check the error from `NewAgent()` |
+| No `success to register agent` | collector host and all three ports; TLS settings |
+| Agent registered, but nothing in the UI | is anything actually instrumented? Go traces nothing by default |
+| Nothing in the UI, sampling suspected | set `Sampling.CounterRate` to 1 while diagnosing |
+| Short-lived program reports nothing | add `defer agent.Shutdown()` |
+| Only the first hop appears | the client must be wrapped, and the request must carry the tracer's context |
+
+Run once with `PINPOINT_GO_LOG_LEVEL=debug` before digging further: the agent
+prints its fully resolved configuration at startup, and reports API misuse
+(`src=span` warnings) that is silent at the default level. See
+[Troubleshooting](troubleshooting.md) for the full guide.
