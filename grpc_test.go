@@ -1318,6 +1318,21 @@ func Test_routeSourceIP(t *testing.T) {
 	assert.Equal(t, "", routeSourceIP("not an address"))
 }
 
+// An IPv6 collector host must come back bracketed: unbracketed, neither the
+// gRPC target nor localIP's SplitHostPort can tell the host from the port.
+func Test_serverAddr_bracketsIPv6Host(t *testing.T) {
+	for _, host := range []string{"collector.host", "10.0.0.1", "::1", "2001:db8::1"} {
+		cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorHost(host), WithCollectorAgentPort(9991))
+		require.NoError(t, err)
+
+		addr := serverAddr(cfg, CfgCollectorAgentPort)
+		gotHost, gotPort, err := net.SplitHostPort(addr)
+		require.NoError(t, err, "addr %s", addr)
+		assert.Equal(t, host, gotHost)
+		assert.Equal(t, "9991", gotPort)
+	}
+}
+
 func Test_localIP_neverLoopback(t *testing.T) {
 	for _, collector := range []string{"localhost:9991", "127.0.0.1:9991", "[::1]:9991"} {
 		if ip := localIP(collector); ip != "" {

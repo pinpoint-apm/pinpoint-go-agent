@@ -309,8 +309,11 @@ func connectCollector(config *Config, portOption string) (*grpc.ClientConn, erro
 	return conn, err
 }
 
+// serverAddr joins the collector host and port. JoinHostPort rather than
+// "%s:%d": an IPv6 literal host needs the brackets, without which neither the
+// gRPC target nor localIP's SplitHostPort parses.
 func serverAddr(config *Config, portOption string) string {
-	return fmt.Sprintf("%s:%d", config.String(CfgCollectorHost), config.Int(portOption))
+	return net.JoinHostPort(config.String(CfgCollectorHost), strconv.Itoa(config.Int(portOption)))
 }
 
 type agentGrpc struct {

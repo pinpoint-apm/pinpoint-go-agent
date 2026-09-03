@@ -482,3 +482,39 @@ func Test_spanWorkers_warnAboutSaturatedQueue(t *testing.T) {
 		})
 	}
 }
+
+// Shutdown clears enable before it closes the span queue, so the drain runs on
+// a disabled agent, where a reconnect can never succeed. The worker must stop
+// there instead of walking the rest of the queue: every later send fails with
+// "span stream is nil", delivering nothing and logging one error per chunk.
+func Test_sendSpanWorker_stopsWhenReconnectGivesUp(t *testing.T) {
+	const queued = 5
+
+	agent := newTestAgent(defaultConfig())
+	agent.spanQueue = newSpanQueue(8) // one shard: FIFO is deterministic
+
+	broken := grpcmock.NewMockSpan_SendSpanClient()
+	broken.OnSend(mock.Anything).Return(collectorDown())
+	broken.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
+
+	client := grpcmock.NewMockSpanClient()
+	client.OnSendSpan(mock.Anything).Return(broken, nil)
+	agent.spanGrpc = &spanGrpc{spanClient: client, agent: agent}
+
+	for i := 0; i < queued; i++ {
+		span := defaultSpan(agent)
+		span.spanId = int64(i + 1)
+		require.True(t, agent.spanQueue.enqueue(span.newEventChunk(true)))
+	}
+
+	// The shutdown order: the agent is disabled first, then the queue closed.
+	agent.enable.Store(false)
+	agent.spanQueue.close()
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("span", agent.sendSpanWorker)
+	agent.workerWg.Wait()
+
+	assert.Equal(t, queued-1, agent.spanQueue.length(),
+		"the drain must end at the first chunk a dead stream refuses, not walk the queue")
+}

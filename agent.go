@@ -649,6 +649,14 @@ func (agent *agent) sendSpanWorker() {
 
 			stream.close()
 			stream = agent.spanGrpc.newSpanStreamWithRetry()
+			if stream.stream == nil {
+				// The reconnect gave up, which newStreamWithRetry only does
+				// once the agent is disabled - the drain this loop is running.
+				// Every later send would fail with "span stream is nil", so
+				// carrying on only logs one error per chunk still queued
+				// without delivering any of them.
+				break
+			}
 
 			// Nothing queued is discarded here. A reconnect used to arm a
 			// filter that skipped every span whose startTime predated the
