@@ -76,10 +76,8 @@ type agentStats struct {
 	shards     [statShardCount]statShard
 	activeSpan activeSpanRegistry
 
-	// The previous sample's memory counters and timestamp, which the next
-	// sample turns into GC deltas and a collection interval. Only the agent's
-	// single stat worker touches them.
-	lastMemStat     runtime.MemStats
+	// The previous sample's timestamp, which the next sample turns into a
+	// collection interval. Only the agent's single stat worker touches it.
 	lastCollectTime time.Time
 }
 
@@ -103,7 +101,6 @@ func (stats *agentStats) init() {
 	}
 
 	stats.reset()
-	runtime.ReadMemStats(&stats.lastMemStat)
 	stats.lastCollectTime = time.Now()
 }
 
@@ -278,8 +275,12 @@ func (stats *agentStats) getStats() *inspectorStats {
 		heapMax:      int64(memStat.HeapSys),
 		nonHeapUsed:  int64(memStat.StackInuse),
 		nonHeapMax:   int64(memStat.StackSys),
-		gcNum:        int64(memStat.NumGC - stats.lastMemStat.NumGC),
-		gcTime:       int64(memStat.PauseTotalNs-stats.lastMemStat.PauseTotalNs) / int64(time.Millisecond),
+		// Cumulative since process start, like the Java agent's
+		// GarbageCollectorMXBean counts: the web's inspector-definition-for-agent.yml
+		// runs gcOldCount/gcOldTime through its "delta" post-processor, so
+		// sending per-interval deltas would be differentiated twice.
+		gcNum:        int64(memStat.NumGC),
+		gcTime:       int64(memStat.PauseTotalNs / uint64(time.Millisecond)),
 		numOpenFD:    int64(stats.numFD()),
 		numThreads:   int64(stats.numThreads()),
 		responseAvg:  calcResponseAvg(counters.accResponseTime, counters.requestCount),
@@ -293,7 +294,6 @@ func (stats *agentStats) getStats() *inspectorStats {
 		activeSpan:   stats.activeSpan.count(now),
 	}
 
-	stats.lastMemStat = memStat
 	stats.lastCollectTime = now
 
 	return &inspector

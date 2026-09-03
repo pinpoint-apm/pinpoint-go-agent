@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -132,6 +133,17 @@ func Test_calcResponseAvgReturnsZeroWithoutRequests(t *testing.T) {
 
 // Test_activeSpanShardIsCacheLinePadded guards the false-sharing fix: the shards
 // must stay a whole cache line apart, not packed several to a line.
+func Test_getStatsReportsCumulativeGcCounters(t *testing.T) {
+	stats := newAgentStats()
+
+	first := stats.getStats()
+	runtime.GC()
+	second := stats.getStats()
+
+	assert.Greater(t, second.gcNum, first.gcNum, "gcNum is cumulative, so a GC between samples must raise it")
+	assert.GreaterOrEqual(t, second.gcTime, first.gcTime, "gcTime is cumulative and never decreases")
+}
+
 func Test_activeSpanShardIsCacheLinePadded(t *testing.T) {
 	if got := unsafe.Sizeof(activeSpanShard{}); got%cacheLinePadSize != 0 {
 		t.Errorf("activeSpanShard is %d bytes, not a multiple of the %d-byte shard stride: shards share a cache line", got, cacheLinePadSize)
