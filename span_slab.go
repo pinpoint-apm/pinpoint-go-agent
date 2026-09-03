@@ -141,15 +141,39 @@ func (b *spanMessageBuilder) stringValue(s string) *wrappers.StringValue {
 	return v
 }
 
-var spanMessageBuilderPool = sync.Pool{New: func() any { return &spanMessageBuilder{} }}
+// Builders are kept on a fixed free list first and in a sync.Pool only as
+// overflow. sync.Pool alone is emptied every second GC cycle, and a builder
+// rebuilt from zero regrows all of its slabs by doubling: measured on the
+// 50-span batch benchmark, that regrowth was ~70KB and 14 allocations per
+// batch, more than the marshal itself. The batch sender bounds its live
+// builders by Span.BatchMaxConcurrentRequests (default 10) plus the one the
+// worker is filling, so a free list of that order holds the steady state.
+//
+// ponytail: fixed capacity; size it from config if the default permit count
+// is raised well past it.
+const spanMessageBuilderFreeListSize = 16
+
+var (
+	spanMessageBuilderFreeList = make(chan *spanMessageBuilder, spanMessageBuilderFreeListSize)
+	spanMessageBuilderPool     = sync.Pool{New: func() any { return &spanMessageBuilder{} }}
+)
 
 func acquireSpanMessageBuilder() *spanMessageBuilder {
-	return spanMessageBuilderPool.Get().(*spanMessageBuilder)
+	select {
+	case b := <-spanMessageBuilderFreeList:
+		return b
+	default:
+		return spanMessageBuilderPool.Get().(*spanMessageBuilder)
+	}
 }
 
 // releaseSpanMessageBuilder recycles every message the builder produced.
 // Call only after the collector send completed (see the type comment).
 func releaseSpanMessageBuilder(b *spanMessageBuilder) {
 	b.reset()
-	spanMessageBuilderPool.Put(b)
+	select {
+	case spanMessageBuilderFreeList <- b:
+	default:
+		spanMessageBuilderPool.Put(b)
+	}
 }
