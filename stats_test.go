@@ -138,9 +138,9 @@ func Test_calcResponseAvgReturnsZeroWithoutRequests(t *testing.T) {
 func Test_getStatsReportsCumulativeGcCounters(t *testing.T) {
 	stats := newAgentStats()
 
-	first := stats.getStats()
+	first := stats.getStats(5000)
 	runtime.GC()
-	second := stats.getStats()
+	second := stats.getStats(5000)
 
 	assert.Greater(t, second.gcNum, first.gcNum, "gcNum is cumulative, so a GC between samples must raise it")
 	assert.GreaterOrEqual(t, second.gcTime, first.gcTime, "gcTime is cumulative and never decreases")
