@@ -626,11 +626,6 @@ func (agent *agent) sendPingWorker() {
 func (agent *agent) sendSpanWorker() {
 	Log("agent").Infof("start span goroutine")
 
-	var (
-		skipOldSpan  = bool(false)
-		skipBaseTime time.Time
-	)
-
 	stream := agent.spanGrpc.newSpanStreamWithRetry()
 	for {
 		// Break on a drained queue only, not on the disabled flag: shutdown
@@ -645,15 +640,6 @@ func (agent *agent) sendSpanWorker() {
 		}
 		agent.reportSpanDrops()
 
-		if skipOldSpan {
-			if chunk.span.startTime.Before(skipBaseTime) {
-				continue //skip old span
-			} else {
-				skipOldSpan = false
-			}
-		}
-
-		// A renewal is not an outage: no span is skipped for it.
 		stream = renewIfExpired(stream, agent.spanGrpc.newSpanStreamWithRetry, "span")
 		err := stream.sendSpan(chunk)
 		if err != nil {
@@ -664,8 +650,28 @@ func (agent *agent) sendSpanWorker() {
 			stream.close()
 			stream = agent.spanGrpc.newSpanStreamWithRetry()
 
-			skipOldSpan = true
-			skipBaseTime = time.Now().Add(-time.Second * 1)
+			// Nothing queued is discarded here. A reconnect used to arm a
+			// filter that skipped every span whose startTime predated the
+			// failure by more than a second, so the outage backlog could not
+			// occupy the fresh stream ahead of live traffic. That backlog was
+			// the real problem when the queue rejected the incoming span and
+			// evicted a queued one on overflow: live spans were lost while
+			// stale ones waited to be sent. spanQueue's head-drop inverted
+			// that - the incoming span is always accepted and the oldest
+			// queued chunk is what goes - so the queue now holds the newest
+			// `capacity` chunks and keeps discarding the backlog by itself
+			// while the drain proceeds. Skipping on top of that dropped spans
+			// twice: startTime is the span's start, not its enqueue time, and
+			// non-final chunks are cut while the span is still live, so any
+			// request slower than the one-second window lost its chunks even
+			// though they were enqueued after the failure - the slow traces
+			// an outage most needs. It also read the queue as FIFO, latching
+			// off at the first recent chunk; spanQueue sweeps 32 shards in
+			// unspecified order at the default capacity, so it released early
+			// and passed an arbitrary share of the backlog anyway. Java's
+			// SpanGrpcDataSender and the C++ GrpcSpan have no such policy,
+			// and neither does sendSpanBatchWorker; a failed send now costs
+			// one reconnect and no spans on every span path.
 		}
 	}
 

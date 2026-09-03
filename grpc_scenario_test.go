@@ -79,10 +79,12 @@ func Test_sendPingWorker_replacesStreamTheCollectorBroke(t *testing.T) {
 	healthy.AssertNumberOfCalls(t, "CloseSend", 1)
 }
 
-// After a failed send the span worker reopens the stream and skips whatever was
-// queued before the outage: those spans are already a second stale, and
-// replaying them would delay the live traffic behind them.
-func Test_sendSpanWorker_reopensStreamAndDropsSpansStaleFromTheOutage(t *testing.T) {
+// A failed send costs one reconnect and no spans: everything already queued
+// still goes out on the replacement stream. The worker used to arm a filter
+// that skipped spans whose startTime predated the failure, which is why this
+// asserts the whole queue arrives - see the reconnect path in sendSpanWorker
+// for why that policy was removed.
+func Test_sendSpanWorker_reopensStreamAndResendsNothingLost(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agent.spanQueue = newSpanQueue(4) // one shard: FIFO is deterministic
 
@@ -109,7 +111,9 @@ func Test_sendSpanWorker_reopensStreamAndDropsSpansStaleFromTheOutage(t *testing
 	agent.spanGrpc = &spanGrpc{spanClient: client, agent: agent}
 
 	// The queue is filled and closed up front, so the worker drains exactly
-	// these three and exits: no timing to wait on.
+	// these three and exits: no timing to wait on. Span 2 is a slow request -
+	// it started before the failure but its chunk is queued live, and the old
+	// policy discarded exactly this span.
 	for i, startTime := range []time.Time{
 		time.Now(), time.Now().Add(-time.Hour), time.Now(),
 	} {
@@ -128,8 +132,57 @@ func Test_sendSpanWorker_reopensStreamAndDropsSpansStaleFromTheOutage(t *testing
 	client.AssertNumberOfCalls(t, "SendSpan", 2)
 	mu.Lock()
 	defer mu.Unlock()
-	assert.Equal(t, []int64{3}, sent,
-		"span 1 failed, span 2 predates the outage and is skipped, span 3 resumes on the new stream")
+	assert.Equal(t, []int64{2, 3}, sent,
+		"span 1 failed with the stream; 2 and 3 must both survive the reconnect")
+}
+
+// The same guarantee at the default capacity, where the queue sweeps 32 shards
+// in unspecified order: a reconnect must not turn dequeue order into a
+// data-loss lottery, which is what the removed startTime filter did.
+func Test_sendSpanWorker_reconnectLosesNothingAcrossShards(t *testing.T) {
+	const queued = 200
+
+	agent := newTestAgent(defaultConfig())
+	agent.spanQueue = newSpanQueue(1024) // default: 32 shards
+
+	var mu sync.Mutex
+	var sent int
+	healthy := grpcmock.NewMockSpan_SendSpanClient()
+	healthy.OnSend(mock.Anything).Run(func(mock.Arguments) {
+		mu.Lock()
+		sent++
+		mu.Unlock()
+	}).Return(nil)
+	healthy.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
+
+	broken := grpcmock.NewMockSpan_SendSpanClient()
+	broken.OnSend(mock.Anything).Return(collectorDown())
+	broken.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
+
+	client := grpcmock.NewMockSpanClient()
+	client.OnSendSpan(mock.Anything).Return(broken, nil).Once()
+	client.OnSendSpan(mock.Anything).Return(healthy, nil)
+	agent.spanGrpc = &spanGrpc{spanClient: client, agent: agent}
+
+	// Every span predates the failure by an hour: under the old policy these
+	// were exactly the spans meant to be skipped, and shard order decided how
+	// many actually were.
+	for i := 0; i < queued; i++ {
+		span := defaultSpan(agent)
+		span.startTime = time.Now().Add(-time.Hour)
+		require.True(t, agent.spanQueue.enqueue(span.newEventChunk(true)))
+	}
+	agent.spanQueue.close()
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("span", agent.sendSpanWorker)
+	agent.workerWg.Wait()
+
+	assert.Zero(t, agent.spanQueue.dropCount(), "the queue was never saturated")
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, queued-1, sent,
+		"only the span that rode the broken stream is lost, regardless of shard order")
 }
 
 // A collector outage must not wedge the batch sender: the failed batches give
