@@ -51,8 +51,8 @@ type mockAgentGrpcClient struct {
 	mu       sync.Mutex
 	requests []*pb.PAgentInfo
 	callAt   []time.Time
-	failures int  // leading calls that fail with Unavailable
-	reject   bool // once past failures, answer Success=false
+	failures int // leading calls that fail with Unavailable
+	rejects  int // calls past failures that answer Success=false
 }
 
 func (agentGrpcClient *mockAgentGrpcClient) RequestAgentInfo(ctx context.Context, agentinfo *pb.PAgentInfo, _ ...grpc.CallOption) (*pb.PResult, error) {
@@ -64,7 +64,7 @@ func (agentGrpcClient *mockAgentGrpcClient) RequestAgentInfo(ctx context.Context
 	if len(agentGrpcClient.requests) <= agentGrpcClient.failures {
 		return nil, status.Errorf(codes.Unavailable, "collector down")
 	}
-	if agentGrpcClient.reject {
+	if len(agentGrpcClient.requests) <= agentGrpcClient.failures+agentGrpcClient.rejects {
 		return &pb.PResult{Success: false, Message: "rejected"}, nil
 	}
 	return &pb.PResult{Success: true, Message: "success"}, nil

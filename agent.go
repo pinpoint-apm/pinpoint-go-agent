@@ -291,6 +291,21 @@ func NewAgent(config *Config) (Agent, error) {
 func (agent *agent) connectGrpcServer() {
 	var err error
 	defer agent.connectWg.Done()
+	// A connect that fails for a reason other than Shutdown (bad address, TLS
+	// setup) would otherwise leave a never-enabled agent as the global, so
+	// GetAgent hands out a dead agent and NewAgent cannot retry. Release it,
+	// identity-guarded as in Shutdown.
+	defer func() {
+		if agent.enable.Load() || agent.shutdown.Load() {
+			return
+		}
+		Log("agent").Errorf("failed to connect to collector, agent disabled: %v", err)
+		globalAgentLock.Lock()
+		if GetAgent() == Agent(agent) {
+			setGlobalAgent(NoopAgent())
+		}
+		globalAgentLock.Unlock()
+	}()
 
 	if agent.agentGrpc, err = newAgentGrpc(agent); err != nil {
 		return

@@ -295,8 +295,15 @@ nc -vz your-collector-host 9991
   `(ssl: true)`. An empty `Collector.Grpc.TrustCertFilePath` falls back to the
   system root CAs, which is what you want for a publicly-signed certificate
   and not what you want for a private CA.
-* Registration retries with backoff, so a collector that comes up later is
-  picked up without an application restart.
+* Registration retries with backoff until it succeeds or the agent shuts down,
+  so a collector that comes up later is picked up without an application
+  restart. A collector that answers the registration with `success=false`
+  (still initializing, briefly refusing) is retried the same way and logs
+  `register agent - <message>, retrying`; it is never treated as permanent.
+* If the connection cannot even be set up (bad TLS material, unparsable
+  address) the agent logs `failed to connect to collector, agent disabled` and
+  releases itself, so `GetAgent()` returns the no-op agent and `NewAgent` can be
+  called again after fixing the configuration.
 * Check the collector's own logs. A version mismatch is rejected there, not
   here: the agent requires Pinpoint 2.4.0+.
 

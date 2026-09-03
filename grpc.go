@@ -502,10 +502,11 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 			if res.Success {
 				Log("agent").Infof("success to register agent")
 				return true
-			} else {
-				Log("agent").Errorf("register agent - %s", res.Message)
-				break
 			}
+			// Success=false is retried like a transport error, as the Java agent
+			// does: the collector answers it while initializing or briefly
+			// refusing, and giving up would leave this process dead until restart.
+			Log("agent").Warnf("register agent - %s, retrying", res.Message)
 		}
 
 		retryDelay := agentGrpc.registerRetryDelay

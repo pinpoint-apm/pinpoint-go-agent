@@ -1341,16 +1341,60 @@ func Test_localIP_neverLoopback(t *testing.T) {
 	}
 }
 
-// A collector that answers Success=false has rejected this agent outright, so
-// registration reports failure instead of retrying forever. Mirrors the C++
-// agent's GrpcAgentRegisterAgentFailureTest.
-func Test_agentGrpc_registerAgentWithRetry_stopsOnRejection(t *testing.T) {
+// A collector that answers Success=false (initializing, briefly refusing) is
+// retried with the same backoff as a transport failure, as the Java agent does,
+// instead of leaving the agent permanently disabled.
+func Test_agentGrpc_registerAgentWithRetry_retriesOnRejection(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
-	client := &mockAgentGrpcClient{reject: true}
-	agentGrpc := &agentGrpc{agentClient: client, agent: agent}
+	client := &mockAgentGrpcClient{rejects: 2}
+	agentGrpc := &agentGrpc{
+		agentConn:          dialReadyConn(t),
+		agentClient:        client,
+		agent:              agent,
+		registerRetryDelay: 10 * time.Millisecond,
+	}
 
-	assert.False(t, agentGrpc.registerAgentWithRetry())
-	assert.Len(t, client.sentAgentInfo(), 1, "a rejected registration must not be retried")
+	assert.True(t, agentGrpc.registerAgentWithRetry())
+	assert.Len(t, client.sentAgentInfo(), 3, "a rejected registration is retried until accepted")
+}
+
+// Shutdown ends the loop at once even while the collector keeps rejecting.
+func Test_agentGrpc_registerAgentWithRetry_rejectionStopsOnShutdown(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.enable.Store(false)
+	client := &mockAgentGrpcClient{rejects: 1 << 30}
+	agentGrpc := &agentGrpc{
+		agentConn:          dialReadyConn(t),
+		agentClient:        client,
+		agent:              agent,
+		registerRetryDelay: time.Hour,
+	}
+
+	done := make(chan bool, 1)
+	go func() { done <- agentGrpc.registerAgentWithRetry() }()
+	require.Eventually(t, func() bool { return len(client.sentAgentInfo()) == 1 }, time.Second, time.Millisecond)
+	agent.Shutdown()
+	select {
+	case ok := <-done:
+		assert.False(t, ok)
+	case <-time.After(time.Second):
+		t.Fatal("registration kept retrying past shutdown")
+	}
+	assert.Len(t, client.sentAgentInfo(), 1)
+}
+
+// A connect that fails outside Shutdown must not leave the dead agent as the
+// global: GetAgent falls back to Noop and NewAgent can be called again.
+func Test_connectGrpcServer_failureReleasesGlobalAgent(t *testing.T) {
+	cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorGrpcSslEnable(true), WithCollectorGrpcTrustCertFilePath("/nonexistent/ca.pem"))
+	require.NoError(t, err)
+	a, err := NewAgent(cfg)
+	require.NoError(t, err)
+	defer a.Shutdown()
+
+	a.(*agent).connectWg.Wait()
+	assert.False(t, a.Enable())
+	assert.Equal(t, NoopAgent(), GetAgent(), "a dead agent must not stay global")
 }
 
 // dialReadyConn returns a channel to an empty in-process gRPC server that is
