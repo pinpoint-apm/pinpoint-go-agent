@@ -223,8 +223,10 @@ framework plugins do this for you where the framework exposes the pattern.
 ## 9. Error Recording
 
 * `SpanRecorder.SetError(err)` marks the transaction failed.
-  `SpanEventRecorder.SetError(err, errorName...)` marks one event failed; the
-  optional name groups errors in the UI and is subject to rule 8.
+  `SpanEventRecorder.SetError(err, errorName...)` marks one event failed **and
+  the transaction with it** (`PSpan.err`, the URL stat failed histogram and the
+  scatter failure point), as the Java agent does; the optional name groups
+  errors in the UI and is subject to rule 8.
 * A `nil` error is ignored by both, so the common
   `tracer.SpanEvent().SetError(err)` after a call needs no guard.
 * `SetFailure()` marks failure without an error message — the right call for an

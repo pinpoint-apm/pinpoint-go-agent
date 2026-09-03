@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_newSpanEvent(t *testing.T) {
@@ -246,4 +247,42 @@ func Test_span_getExceptionChainId_isPerAgent(t *testing.T) {
 			assert.Equal(t, int64(2), next, "second chain id")
 		})
 	}
+}
+
+func Test_spanEvent_SetErrorFailsTransaction(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgHttpUrlStatEnable, true)
+	agent := newTestAgent(cfg)
+	agent.urlStatChan = make(chan *urlStat, 1)
+	span := newSampledSpan(agent, "op", "/rpc")
+	span.collectUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+
+	span.NewSpanEvent("query")
+	span.SpanEvent().SetError(errors.New("db error"))
+	span.EndSpanEvent()
+	assert.Equal(t, 1, span.err)
+	assert.Equal(t, 0, span.statusErr, "statusErr stays reserved for SetFailure")
+
+	span.EndSpan()
+
+	chunk, ok := agent.spanQueue.tryDequeue()
+	require.True(t, ok)
+	builder := acquireSpanMessageBuilder()
+	defer releaseSpanMessageBuilder(builder)
+	assert.Equal(t, int32(1), builder.makePSpan(chunk).GetSpan().GetErr())
+
+	select {
+	case stat := <-agent.urlStatChan:
+		snapshot, endTime := newUrlStatTestSnapshot(10, false)
+		stat.endTime = endTime
+		snapshot.add(stat)
+		each := findEachUrlStat(t, snapshot, "/users/{id}", endTime)
+		assert.Equal(t, int32(1), histogramCount(each.failedHistogram))
+	default:
+		t.Fatal("url stat not enqueued")
+	}
+
+	// A recorder retained past EndSpan must not touch the finished span.
+	chunk.eventChunk[0].SetError(errors.New("late"))
+	assert.Equal(t, "db error", chunk.eventChunk[0].errorString)
 }

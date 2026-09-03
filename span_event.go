@@ -87,7 +87,9 @@ func (se *spanEvent) generateNextSpanId() int64 {
 }
 
 func (se *spanEvent) SetError(e error, errorName ...string) {
-	if e == nil {
+	// After EndSpan the span is on its way to the sender goroutine; a
+	// retained recorder must not write into it (see doc/api_contracts.md 5).
+	if e == nil || se.parentSpan.finished {
 		return
 	}
 
@@ -101,6 +103,9 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 	id := se.agent().cacheError(errName)
 	se.errorFuncId = id
 	se.errorString = e.Error()
+	// As in the Java agent, an error on any event fails the transaction:
+	// PSpan.err, the URL stat failed histogram and the scatter failure point.
+	se.parentSpan.err = 1
 
 	cfg := se.config()
 	if cfg.errorTraceCallStack && se.parentSpan.canAddErrorChain() {

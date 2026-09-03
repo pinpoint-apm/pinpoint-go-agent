@@ -346,8 +346,9 @@ themselves sensitive.
 ## Error reporting
 
 Marking a failure takes one call. `SpanRecorder.SetError()` fails the whole
-transaction; `SpanEventRecorder.SetError()` fails one event, with an optional
-error name that groups errors in the UI:
+transaction; `SpanEventRecorder.SetError()` fails one event and, as in the Java
+agent, the transaction it belongs to, with an optional error name that groups
+errors in the UI:
 
 ```go
 resp, err := client.Do(req)

@@ -158,7 +158,8 @@ func (span *span) EndSpan() {
 	}
 
 	if span.urlStat != nil {
-		span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed, statusErr: span.statusErr})
+		// Failed on an error status or on any recorded error (Java: status = errorCode == 0).
+		span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed, statusErr: span.statusErr | span.err})
 	}
 }
 
