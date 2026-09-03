@@ -1,7 +1,10 @@
 package pinpoint
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -340,4 +343,89 @@ func Test_runCommandService_renewsAgedStreamWithoutBackOff(t *testing.T) {
 	agent.enable.Store(false)
 	agent.signalShutdown()
 	agent.workerWg.Wait()
+}
+
+// A collector outage saturates the span queue, and the loss has to be visible
+// in the log rather than only in dropCount(): the producers just bump their
+// shard counter, so it is the worker that has to warn. Both span workers are
+// covered because each polls from its own cycle.
+func Test_spanWorkers_warnAboutSaturatedQueue(t *testing.T) {
+	const queueCap, enqueued = 4, 6
+
+	// The queue is filled and closed up front, so each worker drains exactly
+	// queueCap chunks and exits - several report calls, one warning.
+	fill := func(agent *agent) {
+		for i := 0; i < enqueued; i++ {
+			require.True(t, agent.spanQueue.enqueue(newTestSpanChunk(agent)))
+		}
+		require.EqualValues(t, enqueued-queueCap, agent.spanQueue.dropCount(),
+			"test must overflow the queue")
+		agent.spanQueue.close()
+	}
+
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T) (*agent, func())
+	}{
+		{
+			name: "stream",
+			setup: func(t *testing.T) (*agent, func()) {
+				agent := newTestAgent(defaultConfig())
+				agent.spanQueue = newSpanQueue(queueCap)
+
+				stream := grpcmock.NewMockSpan_SendSpanClient()
+				stream.OnSend(mock.Anything).Return(nil)
+				stream.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
+				client := grpcmock.NewMockSpanClient()
+				client.OnSendSpan(mock.Anything).Return(stream, nil)
+				agent.spanGrpc = &spanGrpc{spanClient: client, agent: agent}
+
+				return agent, agent.sendSpanWorker
+			},
+		},
+		{
+			name: "batch",
+			setup: func(t *testing.T) (*agent, func()) {
+				cfg := defaultConfig()
+				cfg.Set(CfgSpanBatchEnable, true)
+				agent := newTestAgent(cfg)
+				agent.spanQueue = newSpanQueue(queueCap)
+
+				client := grpcmock.NewMockSpanClient()
+				client.OnSendSpanBatch(mock.Anything, mock.Anything).
+					Return(&pb.PSpanResultBatch{}, nil)
+				agent.spanGrpc = &spanGrpc{
+					spanClient:              client,
+					agent:                   agent,
+					batchSize:               1, // one cycle per chunk, so the poll repeats
+					batchFlushTimeout:       time.Second,
+					batchCollectDeadline:    time.Millisecond,
+					maxConcurrentRequests:   2,
+					concurrentRequestPermit: make(chan struct{}, 2),
+				}
+
+				return agent, agent.sendSpanBatchWorker
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agent, worker := tc.setup(t)
+
+			var buf bytes.Buffer
+			defer captureWarnLog(&buf)()
+
+			fill(agent)
+			assert.Empty(t, buf.String(), "the producer path must not log")
+
+			agent.workerWg.Add(1)
+			go agent.superviseWorker(tc.name, worker)
+			agent.workerWg.Wait()
+
+			assert.Equal(t, 1, strings.Count(buf.String(), "span queue overflow"),
+				"the worker must warn once per report interval, not once per cycle")
+			assert.Contains(t, buf.String(),
+				fmt.Sprintf("%d dropped in total (oldest overwritten, max queue size %d)",
+					enqueued-queueCap, queueCap))
+		})
+	}
 }

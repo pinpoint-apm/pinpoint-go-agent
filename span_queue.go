@@ -31,6 +31,9 @@ const (
 type spanQueue struct {
 	shards []spanQueueShard
 
+	// capacity is the configured global bound, kept for the overflow warning.
+	capacity int
+
 	// wake carries at most one token; enqueue tops it up and the consumer
 	// sweeps every shard per token, so coalesced wake-ups lose nothing.
 	wake   chan struct{}
@@ -49,7 +52,9 @@ type spanQueueShardInternal struct {
 	cells []*spanChunk
 	head  int
 	size  int
-	drops int64
+	// drops is atomic only so the consumer's periodic dropCount() poll can
+	// read it without taking every shard lock; writes stay inside the lock.
+	drops atomic.Int64
 }
 
 // spanQueueShard gives every shard its own cache line, same reasoning and
@@ -74,9 +79,10 @@ func newSpanQueue(capacity int) *spanQueue {
 	}
 
 	q := &spanQueue{
-		shards: make([]spanQueueShard, shardCount),
-		wake:   make(chan struct{}, 1),
-		done:   make(chan struct{}),
+		shards:   make([]spanQueueShard, shardCount),
+		capacity: capacity,
+		wake:     make(chan struct{}, 1),
+		done:     make(chan struct{}),
 	}
 	base := capacity / shardCount
 	extra := capacity % shardCount
@@ -170,13 +176,13 @@ func (q *spanQueue) notify() {
 	}
 }
 
+// dropCount is the running total of head-dropped chunks. Lock-free: the
+// consumer polls it every cycle, and taking every shard lock for that would
+// put the reporting cost back on the producers.
 func (q *spanQueue) dropCount() int64 {
 	var total int64
 	for i := range q.shards {
-		s := &q.shards[i]
-		s.mu.Lock()
-		total += s.drops
-		s.mu.Unlock()
+		total += q.shards[i].drops.Load()
 	}
 	return total
 }
@@ -213,7 +219,7 @@ func (s *spanQueueShard) enqueueOrOverwrite(chunk *spanChunk, closed *atomic.Boo
 		s.cells[s.head] = nil
 		s.head = s.next(s.head)
 		s.size--
-		s.drops++
+		s.drops.Add(1)
 		if IsDebugLogLevelEnabled() {
 			Log("agent").Debugf("discard oldest span, shard size:%d", s.size)
 		}

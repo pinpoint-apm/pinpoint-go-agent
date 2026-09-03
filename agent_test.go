@@ -503,8 +503,9 @@ func Test_agent_enqueueUrlStatRateLimitsOverflowWarning(t *testing.T) {
 	agent.enqueueUrlStat(&urlStat{})
 
 	assert.Equal(t, 2, strings.Count(buf.String(), "url stat queue overflow"))
-	assert.Contains(t, buf.String(), fmt.Sprintf("%d dropped in total (max queue size %d)",
-		agent.urlStatDrops.dropped.Load(), queueSize))
+	assert.Contains(t, buf.String(),
+		fmt.Sprintf("%d dropped in total (oldest overwritten, max queue size %d)",
+			agent.urlStatDrops.dropped.Load(), queueSize))
 }
 
 // Shutdown must not close the channels its producers send on. The producers
@@ -758,8 +759,9 @@ func Test_agent_MetaOverflowRateLimitsWarning(t *testing.T) {
 	a.metaDrops.report("meta", queueSize)
 	assert.Equal(t, 1, strings.Count(buf.String(), "meta queue overflow"),
 		"a saturated queue must warn once per report interval, not once per drop")
-	assert.Contains(t, buf.String(), fmt.Sprintf("%d dropped in total (max queue size %d)",
-		a.metaDrops.dropped.Load(), queueSize))
+	assert.Contains(t, buf.String(),
+		fmt.Sprintf("%d dropped in total (oldest overwritten, max queue size %d)",
+			a.metaDrops.dropped.Load(), queueSize))
 
 	// Once the interval elapses, a report with no new drops stays silent.
 	a.metaDrops.reportAt.Store(0)
@@ -841,4 +843,75 @@ func Test_agent_sendMetaWorkerSurvivesPanicInSend(t *testing.T) {
 
 	agent.signalShutdown()
 	assert.True(t, waitTimeout(&agent.workerWg, 5*time.Second), "worker exits after the recovered send panic")
+}
+
+// shortDropReportInterval shortens the overflow warning's rate limit for the
+// duration of a test.
+func shortDropReportInterval(t *testing.T, d time.Duration) {
+	prev := dropReportInterval
+	dropReportInterval = d
+	t.Cleanup(func() { dropReportInterval = prev })
+}
+
+// The reporter's whole job is the rate limit: repeated reports inside one
+// interval collapse to a single warning, a report with nothing new to say
+// stays silent, and the total it carries keeps accumulating across intervals
+// rather than restarting.
+func Test_dropReporter_rateLimitsAndAccumulates(t *testing.T) {
+	shortDropReportInterval(t, time.Hour) // only the explicit reportAt resets advance time
+
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	var r dropReporter
+
+	// Nothing dropped yet: no warning, and no interval consumed either.
+	r.report("test", 8)
+	assert.Empty(t, buf.String(), "a reporter with no drops must stay silent")
+
+	r.record(3)
+	for i := 0; i < 10; i++ {
+		r.report("test", 8)
+	}
+	assert.Equal(t, 1, strings.Count(buf.String(), "test queue overflow"),
+		"repeated reports inside one interval must warn once")
+	assert.Contains(t, buf.String(), "3 dropped in total (oldest overwritten, max queue size 8)")
+
+	// Interval elapsed but no new drops: still silent.
+	r.reportAt.Store(0)
+	r.report("test", 8)
+	assert.Equal(t, 1, strings.Count(buf.String(), "test queue overflow"),
+		"an elapsed interval with no new drops must not warn")
+
+	// New drops after the interval carry the running total, not a fresh count.
+	r.record(4)
+	r.report("test", 8)
+	assert.Equal(t, 2, strings.Count(buf.String(), "test queue overflow"))
+	assert.Contains(t, buf.String(), "7 dropped in total (oldest overwritten, max queue size 8)")
+	assert.EqualValues(t, 7, r.dropped.Load(), "the total must never be reset by a report")
+}
+
+// enqueueStat counts what a full queue costs: the rejected snapshot plus the
+// queued one evicted to make room for the next.
+func Test_agent_enqueueStatCountsEveryDroppedRecord(t *testing.T) {
+	const queueSize, enqueued = 4, 100
+
+	agent := newTestAgent(defaultConfig())
+	agent.statChan = make(chan *pb.PStatMessage, queueSize)
+
+	for i := 0; i < enqueued; i++ {
+		agent.enqueueStat(&pb.PStatMessage{})
+	}
+	close(agent.statChan)
+	queued := 0
+	for range agent.statChan {
+		queued++
+	}
+
+	// Nothing drained the queue while it filled, so every record that is not
+	// still sitting in it was lost: the ones rejected outright and the ones
+	// evicted on top of them.
+	assert.EqualValues(t, enqueued-queued, agent.statDrops.dropped.Load(),
+		"every record the collector will never see must be counted once")
+	assert.Positive(t, queued, "test must leave the queue full")
 }

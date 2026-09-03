@@ -44,10 +44,13 @@ type agent struct {
 	urlStatChan chan *urlStat
 	statChan    chan *pb.PStatMessage
 
-	// urlStatDrops counts url stat records lost to a full queue, metaDrops the
-	// metadata items lost the same way; both rate-limit their overflow warning.
+	// One reporter per bounded queue: each counts the records that queue lost
+	// to overflow and rate-limits its overflow warning. spanDrops reports the
+	// span queue's own per-shard counters rather than counting itself.
 	urlStatDrops dropReporter
 	metaDrops    dropReporter
+	statDrops    dropReporter
+	spanDrops    dropReporter
 
 	errorCache  *metaCache[string, int32]
 	errorIdGen  int32
@@ -152,9 +155,6 @@ type exception struct {
 const (
 	cacheSize        = 1024
 	defaultQueueSize = 1024
-	// dropReportInterval bounds how often a saturated queue may warn,
-	// matching the C++ QueueDropReporter::kDefaultReportInterval.
-	dropReportInterval = 60 * time.Second
 
 	defaultSpanBatchSize                  = 50
 	defaultSpanBatchFlushInterval         = 1000
@@ -326,6 +326,11 @@ func (agent *agent) connectGrpcServer() {
 		go agent.superviseWorker("agent info refresh", func() { agent.refreshAgentInfoWorker(interval) })
 	}
 }
+
+// dropReportInterval bounds how often a saturated queue may warn, matching
+// the C++ QueueDropReporter::kDefaultReportInterval. A variable so tests can
+// shorten it.
+var dropReportInterval = 60 * time.Second
 
 // workerRestartDelay paces the restart of a worker whose body panicked, so a
 // deterministic bug cannot spin the supervisor hot. A variable so tests can
@@ -638,6 +643,7 @@ func (agent *agent) sendSpanWorker() {
 		if !ok {
 			break
 		}
+		agent.reportSpanDrops()
 
 		if skipOldSpan {
 			if chunk.span.startTime.Before(skipBaseTime) {
@@ -678,6 +684,9 @@ func (agent *agent) sendSpanBatchWorker() {
 		if !ok {
 			break
 		}
+		// No timer of its own: collectSpanBatch's collect deadline already
+		// bounds how long a cycle can take, so the poll stays regular.
+		agent.reportSpanDrops()
 
 		batch, closed := agent.spanGrpc.collectSpanBatch(chunk, agent.spanQueue)
 		agent.spanGrpc.sendSpanBatchAsync(batch)
@@ -690,6 +699,13 @@ func (agent *agent) sendSpanBatchWorker() {
 	// before the worker exits so queued spans get the same best-effort flush.
 	agent.spanGrpc.awaitInFlightSpanBatch()
 	Log("agent").Infof("end span batch goroutine")
+}
+
+// reportSpanDrops warns about spans lost to a saturated span queue. Called by
+// whichever span worker is running, once per cycle: producers only bump their
+// shard's counter, so the clock read and the logging land on the consumer.
+func (agent *agent) reportSpanDrops() {
+	agent.spanDrops.reportTotal(agent.spanQueue.dropCount(), "span", agent.spanQueue.capacity)
 }
 
 func (agent *agent) enqueueSpan(span *spanChunk) bool {
@@ -1080,7 +1096,12 @@ func (r *dropReporter) record(n int64) {
 // visible at the default log level, rate-limited so a saturated queue cannot
 // log once per dropped record.
 func (r *dropReporter) report(queue string, queueSize int) {
-	total := r.dropped.Load()
+	r.reportTotal(r.dropped.Load(), queue, queueSize)
+}
+
+// reportTotal is report for a queue that keeps its own drop counter: total is
+// that queue's running total, so the reporter contributes only the rate limit.
+func (r *dropReporter) reportTotal(total int64, queue string, queueSize int) {
 	if total == r.reported.Load() {
 		return
 	}
@@ -1091,7 +1112,8 @@ func (r *dropReporter) report(queue string, queueSize int) {
 		return
 	}
 	r.reported.Store(total)
-	Log("agent").Warnf("%s queue overflow: %d dropped in total (max queue size %d)",
+	Log("agent").Warnf(
+		"%s queue overflow: %d dropped in total (oldest overwritten, max queue size %d)",
 		queue, total, queueSize)
 }
 
@@ -1142,10 +1164,16 @@ func (agent *agent) enqueueStat(stat *pb.PStatMessage) bool {
 		break
 	}
 
+	// The queue is full: stat is rejected, and the oldest queued record is
+	// evicted on top of it to leave room for the next enqueue. Both are
+	// records the collector will never see, so both are counted.
+	dropped := int64(1)
 	select {
 	case <-agent.statChan:
+		dropped++
 	default:
 	}
+	agent.statDrops.record(dropped)
 	return false
 }
 
@@ -1165,6 +1193,7 @@ func (agent *agent) sendStatsWorker() {
 			return
 		case stats = <-agent.statChan:
 		}
+		agent.statDrops.report("stat", cap(agent.statChan))
 
 		stream = renewIfExpired(stream, agent.statGrpc.newStatStreamWithRetry, "stat")
 		err := stream.sendStats(stats)
