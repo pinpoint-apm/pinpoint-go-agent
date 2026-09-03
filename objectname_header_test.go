@@ -109,6 +109,7 @@ func TestSpanExtract_ServiceName(t *testing.T) {
 func TestSpanInjectExtract_ServiceNameRoundTrip(t *testing.T) {
 	sender := defaultTestSpan()
 	sender.agent.serviceName = "ServiceA"
+	sender.txId = sender.agent.generateTransactionId()
 	sender.NewSpanEvent("op")
 
 	carrier := map[string]string{}

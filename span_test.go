@@ -76,38 +76,84 @@ func Test_span_Extract(t *testing.T) {
 }
 
 func Test_span_Extract_malformedTraceId(t *testing.T) {
-	// A malformed or hostile Pinpoint-TraceID must not panic; the span falls
-	// back to a freshly generated transaction id.
+	// A malformed or hostile Pinpoint-TraceID must not panic. The span starts
+	// a brand new transaction and ignores every other Pinpoint header, so no
+	// orphan "root" span pointing at a foreign parent reaches the collector.
 	cases := []string{
-		"",                // empty -> new transaction
 		"no-separator",    // missing both separators (would index s[1] before)
 		"agent^123",       // missing sequence separator (would index s[2] before)
 		"agent^bad^worse", // non-numeric time/sequence
+		"a^b^c^d",         // too many fields
 	}
 	for _, tid := range cases {
 		t.Run(tid, func(t *testing.T) {
 			span := defaultTestSpan()
-			reader := &DistributedTracingContextMap{m: map[string]string{HeaderTraceId: tid}}
+			reader := &DistributedTracingContextMap{m: map[string]string{
+				HeaderTraceId:               tid,
+				HeaderSpanId:                "67890",
+				HeaderParentSpanId:          "123",
+				HeaderParentApplicationName: "upstream",
+				HeaderHost:                  "upstream:8080",
+			}}
 
 			assert.NotPanics(t, func() { span.Extract(reader) }, "Extract must not panic")
-			assert.NotEmpty(t, span.txId.AgentId, "a transaction id is always assigned")
+			assert.Equal(t, span.agent.agentID, span.txId.AgentId, "a new local transaction id is assigned")
+			assert.Equal(t, int64(-1), span.parentSpanId, "root span")
+			assert.NotEqual(t, int64(67890), span.spanId, "span id header must be ignored")
+			assert.NotEqual(t, int64(0), span.spanId, "span id is generated")
+			assert.Empty(t, span.parentAppName, "parent app header must be ignored")
+			assert.Empty(t, span.acceptorHost, "host header must be ignored")
 		})
 	}
 }
 
-func Test_splitTransactionId(t *testing.T) {
-	agentId, startTime, sequence, ok := splitTransactionId("t123456^12345^1")
-	assert.True(t, ok)
-	assert.Equal(t, "t123456", agentId)
-	assert.Equal(t, int64(12345), startTime)
-	assert.Equal(t, int64(1), sequence)
+func Test_span_Extract_malformedSpanIds(t *testing.T) {
+	span := defaultTestSpan()
+	span.Extract(&DistributedTracingContextMap{m: map[string]string{
+		HeaderTraceId:      "t123456^12345^1",
+		HeaderSpanId:       "abc",
+		HeaderParentSpanId: "0x10",
+	}})
 
-	_, _, _, ok = splitTransactionId("")
-	assert.False(t, ok, "empty")
-	_, _, _, ok = splitTransactionId("abc")
-	assert.False(t, ok, "no separator")
-	_, _, _, ok = splitTransactionId("abc^1")
-	assert.False(t, ok, "one separator")
+	assert.Equal(t, "t123456", span.txId.AgentId, "valid trace id is kept")
+	assert.NotEqual(t, int64(0), span.spanId, "span id is generated on parse failure")
+	assert.Equal(t, int64(-1), span.parentSpanId, "parent span id falls back to root")
+}
+
+func Test_splitTransactionId(t *testing.T) {
+	tests := []struct {
+		tid       string
+		ok        bool
+		agentId   string
+		startTime int64
+		sequence  int64
+	}{
+		{"t123456^12345^1", true, "t123456", 12345, 1},
+		{"abcdefghijklmnopqrstuvwx^1^2", true, "abcdefghijklmnopqrstuvwx", 1, 2}, // 24-char agentId
+		{"a^9223372036854775807^0", true, "a", math.MaxInt64, 0},
+		{"", false, "", 0, 0},
+		{"abc", false, "", 0, 0},
+		{"abc^1", false, "", 0, 0},
+		{"a^b^c^d", false, "", 0, 0},
+		{"agent^abc^1", false, "", 0, 0},
+		{"agent^1^abc", false, "", 0, 0},
+		{"agent^-1^1", false, "", 0, 0},
+		{"agent^^1", false, "", 0, 0},
+		{"agent^1^", false, "", 0, 0},
+		{"^1^2", false, "", 0, 0},
+		{"abcdefghijklmnopqrstuvwxy^1^2", false, "", 0, 0}, // 25-char agentId
+		{"a^9223372036854775808^0", false, "", 0, 0},       // overflows int64
+		{"a^123456789012345678901^0", false, "", 0, 0},     // 21 digits
+	}
+	for _, tt := range tests {
+		t.Run(tt.tid, func(t *testing.T) {
+			agentId, startTime, sequence, ok := splitTransactionId(tt.tid)
+			assert.Equal(t, tt.ok, ok)
+			assert.Equal(t, tt.agentId, agentId)
+			assert.Equal(t, tt.startTime, startTime)
+			assert.Equal(t, tt.sequence, sequence)
+		})
+	}
 }
 
 // Test_TransactionId_String pins the hand-rolled formatter to the "%s^%d^%d" it

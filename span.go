@@ -224,10 +224,18 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		span.txId.StartTime = startTime
 		span.txId.Sequence = sequence
 	} else {
-		if tid != "" {
-			Log("span").Warnf("malformed trace id header: %q", tid)
-		}
 		span.txId = span.agent.generateTransactionId()
+		if tid != "" {
+			// A malformed trace id means the other Pinpoint headers cannot be
+			// trusted either: adopting their span/parent ids would record a
+			// root span pointing at a parent that does not exist. Start a
+			// fresh transaction and ignore every other Pinpoint header.
+			Log("span").Warnf("malformed trace id header %q: ignoring pinpoint headers, starting a new transaction", tid)
+			span.spanId = generateSpanId()
+			span.parentSpanId = -1
+			addSampledActiveSpan(span)
+			return
+		}
 	}
 
 	spanid := reader.Get(HeaderSpanId)
@@ -235,14 +243,24 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		// bitSize 64, not 0: span ids are int64 and 0 means platform int, so
 		// a 32-bit build failed to parse an upstream node's id and silently
 		// left the span id at zero, breaking the distributed trace.
-		span.spanId, _ = strconv.ParseInt(spanid, 10, 64)
+		if v, err := strconv.ParseInt(spanid, 10, 64); err == nil {
+			span.spanId = v
+		} else {
+			Log("span").Warnf("malformed span id header %q: generating a new span id", spanid)
+			span.spanId = generateSpanId()
+		}
 	} else {
 		span.spanId = generateSpanId()
 	}
 
 	pspanid := reader.Get(HeaderParentSpanId)
 	if pspanid != "" {
-		span.parentSpanId, _ = strconv.ParseInt(pspanid, 10, 64)
+		if v, err := strconv.ParseInt(pspanid, 10, 64); err == nil {
+			span.parentSpanId = v
+		} else {
+			Log("span").Warnf("malformed parent span id header %q: treating span as root", pspanid)
+			span.parentSpanId = -1
+		}
 	}
 
 	flag := reader.Get(HeaderFlags)
@@ -278,29 +296,49 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 	}
 }
 
+const (
+	maxTraceIdAgentIdLength = 24
+	maxTraceIdNumberLength  = 20
+)
+
 // splitTransactionId parses an "agentId^startTime^sequence" trace id header
 // without allocating (no strings.Split slice) and without risking an
-// index-out-of-range panic on a malformed or hostile header. ok is false when
-// the structure is missing the two separators, in which case the caller starts
-// a new transaction. Numeric parse errors in the time/sequence fields are
-// tolerated (left as 0), matching the previous behavior.
+// index-out-of-range panic on a malformed or hostile header. It is as strict
+// as the Java and C++ agents: exactly three fields, agentId of 1..24 bytes,
+// startTime/sequence of 1..20 decimal digits that fit in an int64. ok is false
+// otherwise, and the caller starts a new transaction.
 func splitTransactionId(tid string) (agentId string, startTime int64, sequence int64, ok bool) {
-	if tid == "" {
-		return "", 0, 0, false
-	}
 	i := strings.IndexByte(tid, '^')
-	if i < 0 {
+	if i < 1 || i > maxTraceIdAgentIdLength {
 		return "", 0, 0, false
 	}
 	rest := tid[i+1:]
 	j := strings.IndexByte(rest, '^')
-	if j < 0 {
+	if j < 0 || strings.IndexByte(rest[j+1:], '^') >= 0 {
 		return "", 0, 0, false
 	}
-	agentId = tid[:i]
-	startTime, _ = strconv.ParseInt(rest[:j], 10, 64)
-	sequence, _ = strconv.ParseInt(rest[j+1:], 10, 64)
-	return agentId, startTime, sequence, true
+	if startTime, ok = parseTraceIdNumber(rest[:j]); !ok {
+		return "", 0, 0, false
+	}
+	if sequence, ok = parseTraceIdNumber(rest[j+1:]); !ok {
+		return "", 0, 0, false
+	}
+	return tid[:i], startTime, sequence, true
+}
+
+// parseTraceIdNumber accepts only 1..20 ASCII digits (no sign, no space) that
+// fit in an int64.
+func parseTraceIdNumber(s string) (int64, bool) {
+	if len(s) == 0 || len(s) > maxTraceIdNumberLength {
+		return 0, false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, false
+		}
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	return v, err == nil
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {

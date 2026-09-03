@@ -41,6 +41,9 @@ const defaultServerName = "HTTP Server"
 // The tracer extracts the pinpoint header from the http request header,
 // and then creates a span that initiates or continues the transaction.
 func NewHttpServerTracer(req *http.Request, operation string) (tracer pinpoint.Tracer) {
+	if pinpoint.TracerFromRequestContext(req).IsSampled() {
+		pinpoint.Log("http").Debugf("request context already carries a sampled tracer (%s): is the pinpoint middleware installed twice?", req.URL.Path)
+	}
 	tracer = NewHttpServerTracerWithReader(req.Method, req.URL.Path, operation, req.Header)
 	RecordHttpServerRequest(tracer, req)
 	return tracer
