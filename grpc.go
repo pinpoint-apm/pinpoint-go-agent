@@ -1141,13 +1141,22 @@ func (spanGrpc *spanGrpc) collectSpanBatch(first *spanChunk, queue *spanQueue) (
 	batch := make([]*spanChunk, 0, spanGrpc.batchSize)
 	batch = append(batch, first)
 
-	timer := time.NewTimer(spanGrpc.batchCollectDeadline)
-	defer timer.Stop()
+	// The deadline timer is armed only once the queue runs dry: a batch that
+	// fills straight from the queue never waits, so it never needs one.
+	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
 
 	for len(batch) < spanGrpc.batchSize {
 		if chunk, ok := queue.tryDequeue(); ok {
 			batch = append(batch, chunk)
 			continue
+		}
+		if timer == nil {
+			timer = time.NewTimer(spanGrpc.batchCollectDeadline)
 		}
 		select {
 		case <-queue.wake:
@@ -1234,6 +1243,13 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 // acquireSpanBatchPermit waits up to the configured flush timeout for an async batch request slot.
 // The buffered channel acts like the semaphore: its capacity is maxConcurrentRequests.
 func (spanGrpc *spanGrpc) acquireSpanBatchPermit() bool {
+	// A free permit is the normal case; take it without allocating a timer.
+	select {
+	case spanGrpc.concurrentRequestPermit <- struct{}{}:
+		return true
+	default:
+	}
+
 	timer := time.NewTimer(spanGrpc.batchFlushTimeout)
 	defer timer.Stop()
 

@@ -56,6 +56,9 @@ func (cs *clientStream) endSpan(err error) {
 // Set.
 type kvInjectionWriter struct {
 	kv []string
+	// buf backs kv so the writer and its slice are one allocation; the ten
+	// pinpoint headers fit, and a larger set simply grows kv onto the heap.
+	buf [2 * 10]string
 }
 
 func (w *kvInjectionWriter) Set(key string, value string) {
@@ -82,7 +85,8 @@ func newClientTracer(ctx context.Context, method string, target string) (context
 	// Appended rather than merged over the caller's MD: a caller that set the
 	// same pinpoint key on its own outgoing context would now send both
 	// values instead of having its value replaced; nothing legitimate does.
-	writer := &kvInjectionWriter{kv: make([]string, 0, 2*9)}
+	writer := &kvInjectionWriter{}
+	writer.kv = writer.buf[:0]
 	tracer.Inject(writer)
 	if len(writer.kv) > 0 {
 		ctx = metadata.AppendToOutgoingContext(ctx, writer.kv...)
