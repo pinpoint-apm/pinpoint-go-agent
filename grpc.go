@@ -1175,8 +1175,12 @@ func (spanGrpc *spanGrpc) collectSpanBatch(first *spanChunk, queue *spanQueue) (
 // blocking the worker forever behind slow in-flight requests; completed calls always release their permit.
 func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 	if !spanGrpc.acquireSpanBatchPermit() {
+		// Counted with the queue's head-drops: these spans are lost the same
+		// way, and reportSpanDrops would otherwise under-report the loss.
+		spanGrpc.agent.spanDrops.record(int64(len(chunks)))
 		Log("grpc").Infof(
-			"SendSpanBatch skipped: no available permits within %s concurrentRequests:%d/%d",
+			"SendSpanBatch skipped: %d spans dropped, no available permits within %s concurrentRequests:%d/%d",
+			len(chunks),
 			spanGrpc.batchFlushTimeout.String(),
 			len(spanGrpc.concurrentRequestPermit),
 			spanGrpc.maxConcurrentRequests,

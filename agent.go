@@ -45,8 +45,9 @@ type agent struct {
 	statChan    chan *pb.PStatMessage
 
 	// One reporter per bounded queue: each counts the records that queue lost
-	// to overflow and rate-limits its overflow warning. spanDrops reports the
-	// span queue's own per-shard counters rather than counting itself.
+	// to overflow and rate-limits its overflow warning. spanDrops counts only
+	// the batches the sender skipped for want of a permit; the span queue's
+	// head-drops live in its per-shard counters and are added at report time.
 	urlStatDrops dropReporter
 	metaDrops    dropReporter
 	statDrops    dropReporter
@@ -715,11 +716,13 @@ func (agent *agent) sendSpanBatchWorker() {
 	Log("agent").Infof("end span batch goroutine")
 }
 
-// reportSpanDrops warns about spans lost to a saturated span queue. Called by
-// whichever span worker is running, once per cycle: producers only bump their
-// shard's counter, so the clock read and the logging land on the consumer.
+// reportSpanDrops warns about spans lost to a saturated span queue or skipped
+// by the batch sender. Called by whichever span worker is running, once per
+// cycle: producers only bump their shard's counter, so the clock read and the
+// logging land on the consumer.
 func (agent *agent) reportSpanDrops() {
-	agent.spanDrops.reportTotal(agent.spanQueue.dropCount(), "span", agent.spanQueue.capacity)
+	total := agent.spanQueue.dropCount() + agent.spanDrops.dropped.Load()
+	agent.spanDrops.reportTotal(total, "span", agent.spanQueue.capacity)
 }
 
 func (agent *agent) enqueueSpan(span *spanChunk) bool {

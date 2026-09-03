@@ -1902,3 +1902,18 @@ func Test_sendMetaWorker_releasesCacheOnCollectorRejection(t *testing.T) {
 	assert.True(t, apiCached())
 	assert.Equal(t, 1, len(agent.metaChan))
 }
+
+// A batch skipped for want of a permit is data loss like a queue head-drop, so
+// its spans are counted where reportSpanDrops looks.
+func Test_spanGrpc_sendSpanBatch_skipCountsDrops(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	spanGrpc := newBoundedSpanGrpc(agent, nil)
+	spanGrpc.concurrentRequestPermit <- struct{}{} // the single permit is taken
+
+	spanGrpc.sendSpanBatchAsync([]*spanChunk{
+		defaultSpan(agent).newEventChunk(true), defaultSpan(agent).newEventChunk(true),
+	})
+
+	assert.Equal(t, int64(2), agent.spanDrops.dropped.Load())
+	assert.Len(t, spanGrpc.concurrentRequestPermit, 1, "a skipped batch releases no permit")
+}
