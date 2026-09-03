@@ -316,10 +316,11 @@ The [example](/example) directory has complete programs you can build and run:
 | [async.go](/example/async/async.go) | goroutine tracing and distributed tracing |
 | [custom.go](/example/custom/custom.go) | hand-written spans and span events |
 | [stand_alone.go](/example/stand_alone/stand_alone.go) | a non-HTTP program, plus SQL and gorm |
+| [distributed/](/example/distributed) | two apps in one trace: proxy → server → MySQL |
 
 ```bash
 cd example
-PINPOINT_GO_COLLECTOR_HOST=collector.myhost.com go run http_server.go
+PINPOINT_GO_COLLECTOR_HOST=collector.myhost.com go run ./http_server
 ```
 
 Every plugin directory also carries its own `README.md` and `example/`.
