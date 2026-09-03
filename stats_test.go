@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/stretchr/testify/assert"
@@ -148,4 +149,18 @@ func Test_activeSpanShardIsCacheLinePadded(t *testing.T) {
 	if got := unsafe.Sizeof(activeSpanShard{}); got%cacheLinePadSize != 0 {
 		t.Errorf("activeSpanShard is %d bytes, not a multiple of the %d-byte shard stride: shards share a cache line", got, cacheLinePadSize)
 	}
+}
+
+func Test_getStatsIntervalIsMeasuredMilliseconds(t *testing.T) {
+	stats := newAgentStats()
+	stats.lastCollectTime = time.Now().Add(-4990 * time.Millisecond)
+
+	interval := stats.getStats(5000).interval
+	assert.GreaterOrEqual(t, interval, int64(4990))
+	assert.Less(t, interval, int64(5000), "must not truncate to whole seconds")
+}
+
+func Test_getStatsFirstCollectUsesConfiguredInterval(t *testing.T) {
+	stats := &agentStats{}
+	assert.Equal(t, int64(5000), stats.getStats(5000).interval)
 }

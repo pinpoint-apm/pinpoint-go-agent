@@ -257,18 +257,26 @@ func (stats *agentStats) cpuLoad() (float64, float64) {
 	return procCpu / 100, sysCpu / 100
 }
 
-func (stats *agentStats) getStats() *inspectorStats {
+// getStats samples the agent and reports the measured collection interval in
+// milliseconds, which the collector divides into the counts to derive TPS.
+// Truncating to whole seconds first (4.99s -> 4000ms) inflated TPS by up to
+// 25%. Before the first sample there is no previous timestamp, so the
+// configured interval (ms) stands in.
+func (stats *agentStats) getStats(configInterval int64) *inspectorStats {
 	now := time.Now()
 	procCpu, sysCpu := stats.cpuLoad()
 	counters := stats.drainCounters()
 
 	var memStat runtime.MemStats
 	runtime.ReadMemStats(&memStat)
-	elapsed := now.Sub(stats.lastCollectTime).Seconds()
+	interval := configInterval
+	if !stats.lastCollectTime.IsZero() {
+		interval = now.Sub(stats.lastCollectTime).Milliseconds()
+	}
 
 	inspector := inspectorStats{
 		sampleTime:   now,
-		interval:     int64(elapsed) * 1000,
+		interval:     interval,
 		cpuProcLoad:  procCpu,
 		cpuSysLoad:   sysCpu,
 		heapUsed:     int64(memStat.HeapInuse),
@@ -338,8 +346,8 @@ func (agent *agent) collectAgentStatWorker() {
 
 	agent.stats.init()
 
-	interval := time.Duration(agent.config.Int(CfgStatCollectInterval)) * time.Millisecond
-	ticker := time.NewTicker(interval)
+	cfgInterval := int64(agent.config.Int(CfgStatCollectInterval))
+	ticker := time.NewTicker(time.Duration(cfgInterval) * time.Millisecond)
 	defer ticker.Stop()
 	stop := agent.stopSignal().Done()
 
@@ -353,7 +361,7 @@ func (agent *agent) collectAgentStatWorker() {
 			Log("stats").Infof("end collect agent stat goroutine")
 			return
 		case <-ticker.C:
-			collected[batch] = agent.stats.getStats()
+			collected[batch] = agent.stats.getStats(cfgInterval)
 			batch++
 
 			if batch == cfgBatchCount {
