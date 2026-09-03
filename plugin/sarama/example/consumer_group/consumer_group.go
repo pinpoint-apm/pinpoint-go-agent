@@ -1,5 +1,3 @@
-//go:build ignore
-
 package main
 
 import (
@@ -8,9 +6,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/IBM/sarama"
+	"github.com/Shopify/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM"
+	ppsarama "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
 )
 
 type exampleConsumerGroupHandler struct {
@@ -21,7 +19,7 @@ func (exampleConsumerGroupHandler) Cleanup(_ sarama.ConsumerGroupSession) error 
 func (h exampleConsumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	ctx := sess.Context()
 	for msg := range claim.Messages() {
-		_ = ppsaramaibm.ConsumeMessageContext(process, ctx, msg)
+		_ = ppsarama.ConsumeMessageContext(process, ctx, msg)
 		sess.MarkMessage(msg, "")
 	}
 	return nil
@@ -68,8 +66,8 @@ func main() {
 	}()
 
 	// Iterate over consumer sessions.
-	ctx := ppsaramaibm.NewContext(context.Background(), broker)
-	topics := []string{"go-sarama-test", "go-kafka-test"}
+	ctx := ppsarama.NewContext(context.Background(), broker)
+	topics := []string{"go-sarama-test"}
 	handler := exampleConsumerGroupHandler{}
 
 	for {

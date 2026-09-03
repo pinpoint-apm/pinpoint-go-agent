@@ -133,10 +133,10 @@ func externalRequest(tracer pinpoint.Tracer) int {
 }
 ```
 
-[Full Example](/example/custom.go)
+[Full Example](/example/custom/custom.go)
 
 The screenshot below is a pinpoint web screen showing the results of the above example.
-It can be seen that the call stack of the [next node](/example/async.go) that receives the http request is displayed as one transaction.
+It can be seen that the call stack of the [next node](/example/async/async.go) that receives the http request is displayed as one transaction.
 
 ![span](inject.png) 
 

@@ -78,7 +78,7 @@ func main() {
 }
 
 ```
-[Full Example Source](/plugin/grpc/example/server.go)
+[Full Example Source](/plugin/grpc/example/server/server.go)
 
 ### client
 To instrument a gRPC client, use UnaryClientInterceptor and StreamClientInterceptor.
@@ -137,4 +137,4 @@ func doGrpc(w http.ResponseWriter, r *http.Request) {
     streamCallUnaryReturn(ctx, client)
 }
 ```
-[Full Example Source](/plugin/grpc/example/client.go)
+[Full Example Source](/plugin/grpc/example/client/client.go)

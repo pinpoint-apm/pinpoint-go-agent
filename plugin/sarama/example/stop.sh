@@ -16,7 +16,7 @@ pkill -f "producer" 2>/dev/null || true
 pkill -f "asyncproducer" 2>/dev/null || true
 pkill -f "consumer" 2>/dev/null || true
 pkill -f "consumer_group" 2>/dev/null || true
-rm -f producer asyncproducer
+rm -rf bin
 echo -e "${GREEN}✓ Go applications stopped${NC}"
 
 # Stop and remove Kafka container

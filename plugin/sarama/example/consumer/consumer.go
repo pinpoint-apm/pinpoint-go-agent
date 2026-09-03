@@ -1,5 +1,3 @@
-//go:build ignore
-
 package main
 
 import (
@@ -11,10 +9,10 @@ import (
 	"os"
 	"sync"
 
-	"github.com/IBM/sarama"
+	"github.com/Shopify/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppsarama "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
 )
 
 func outGoingRequest(ctx context.Context) string {
@@ -63,14 +61,14 @@ func subscribe() {
 	initialOffset := sarama.OffsetNewest
 
 	var wg sync.WaitGroup
-	ctx := ppsaramaibm.NewContext(context.Background(), broker)
+	ctx := ppsarama.NewContext(context.Background(), broker)
 
 	for _, partition := range partitionList {
 		pc, _ := consumer.ConsumePartition(topic, partition, initialOffset)
 
 		go func(pc sarama.PartitionConsumer) {
 			for msg := range pc.Messages() {
-				ppsaramaibm.ConsumeMessageContext(processMessage, ctx, msg)
+				ppsarama.ConsumeMessageContext(processMessage, ctx, msg)
 			}
 			wg.Done()
 		}(pc)

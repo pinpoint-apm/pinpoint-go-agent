@@ -93,7 +93,7 @@ func main() {
     subscribe()
 }
 ```
-[Full Example Source](/plugin/sarama-IBM/example/consumer.go)
+[Full Example Source](/plugin/sarama-IBM/example/consumer/consumer.go)
 
 ### Producer
 #### SyncProducer
@@ -149,7 +149,7 @@ func main() {
 }
 
 ```
-[Full Example Source](/plugin/sarama-IBM/example/producer.go)
+[Full Example Source](/plugin/sarama-IBM/example/producer/producer.go)
 
 #### AsyncProducer
 To instrument a Kafka async producer, use NewAsyncProducer.
@@ -215,4 +215,4 @@ func main() {
 }
 
 ```
-[Full Example Source](/plugin/sarama-IBM/example/asyncproducer.go)
+[Full Example Source](/plugin/sarama-IBM/example/asyncproducer/asyncproducer.go)

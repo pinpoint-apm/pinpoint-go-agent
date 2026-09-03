@@ -29,6 +29,7 @@ jobs:
         cache-dependency-path: |
           go.sum
           test/it/go.sum
+          example/go.sum
 
     - name: Build
       run: go build -v
@@ -43,6 +44,13 @@ jobs:
     - name: Integration test
       run: go test -v -timeout 15m ./...
       working-directory: test/it
+
+    # The examples are a separate module with one main per subdirectory and no
+    # tests, so building them is the whole check - it catches an example left
+    # behind by an API change, which nothing else here would.
+    - name: Build examples
+      run: go build -v ./...
+      working-directory: example
 
   # The instrumentation plugins are separate modules with their own
   # dependencies, so they get their own job: it runs alongside the agent's and
@@ -64,18 +72,19 @@ jobs:
         go-version: ${{ matrix.go-version }}
         cache-dependency-path: plugin/*/go.sum
 
-    # One module at a time, since each plugin has its own go.mod. Only the
-    # module's own package is tested: the example directories are standalone
-    # programs that do not build as a single package. Several plugins guard
-    # against data races the agent's tracers are sensitive to, so -race is
-    # part of the contract, not an extra. Every module runs before the step
-    # fails, so one broken plugin does not hide the rest.
-    - name: Plugin test
+    # One module at a time, since each plugin has its own go.mod. go build
+    # ./... covers the example directories - standalone programs, one main per
+    # subdirectory, with no tests - while go test stays on the module's own
+    # package, the only one that has any. Several plugins guard against data
+    # races the agent's tracers are sensitive to, so -race is part of the
+    # contract, not an extra. Every module runs before the step fails, so one
+    # broken plugin does not hide the rest.
+    - name: Plugin build and test
       run: |
         failed=()
         for dir in plugin/*/; do
           echo "::group::${dir}"
-          (cd "$dir" && go test -race -v ./) || failed+=("$dir")
+          (cd "$dir" && go build ./... && go test -race -v ./) || failed+=("$dir")
           echo "::endgroup::"
         done
         if [ ${#failed[@]} -ne 0 ]; then

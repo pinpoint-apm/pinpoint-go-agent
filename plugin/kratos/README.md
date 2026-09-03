@@ -80,7 +80,7 @@ func main() {
 }
 
 ```
-[Full Example Source](/plugin/kratos/example/server.go)
+[Full Example Source](/plugin/kratos/example/server/server.go)
 
 ### client
 To instrument a kratos client, use ClientMiddleware.
@@ -119,4 +119,4 @@ func callHTTP(w http.ResponseWriter, r *http.Request) {
     ...
 }
 ```
-[Full Example Source](/plugin/kratos/example/client.go)
+[Full Example Source](/plugin/kratos/example/client/client.go)

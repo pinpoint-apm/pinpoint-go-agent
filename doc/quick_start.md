@@ -312,10 +312,10 @@ The [example](/example) directory has complete programs you can build and run:
 
 | File | Shows |
 |---|---|
-| [http_server.go](/example/http_server.go) | instrumented HTTP server and client |
-| [async.go](/example/async.go) | goroutine tracing and distributed tracing |
-| [custom.go](/example/custom.go) | hand-written spans and span events |
-| [stand_alone.go](/example/stand_alone.go) | a non-HTTP program, plus SQL and gorm |
+| [http_server.go](/example/http_server/http_server.go) | instrumented HTTP server and client |
+| [async.go](/example/async/async.go) | goroutine tracing and distributed tracing |
+| [custom.go](/example/custom/custom.go) | hand-written spans and span events |
+| [stand_alone.go](/example/stand_alone/stand_alone.go) | a non-HTTP program, plus SQL and gorm |
 
 ```bash
 cd example

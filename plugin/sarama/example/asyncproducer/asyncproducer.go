@@ -1,21 +1,20 @@
-//go:build ignore
-
 package main
 
 import (
 	"context"
-	"github.com/IBM/sarama"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"sync"
+
+	"github.com/Shopify/sarama"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppsarama "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
 )
 
-var asyncProducer ppsaramaibm.AsyncProducer
+var asyncProducer ppsarama.AsyncProducer
 
 func prepareAsyncMessage(topic, message string) *sarama.ProducerMessage {
 	msg := &sarama.ProducerMessage{
@@ -54,7 +53,7 @@ func main() {
 		pinpoint.WithAppName("GoKafkaAsyncProducer"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 		pinpoint.WithSamplingType("percent"),
-		pinpoint.WithSamplingPercentRate(10),
+		//pinpoint.WithSamplingPercentRate(10),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)
@@ -70,7 +69,7 @@ func main() {
 	config.Version = sarama.V2_3_0_0
 
 	var broker = []string{"localhost:9092"}
-	asyncProducer, err = ppsaramaibm.NewAsyncProducer(broker, config)
+	asyncProducer, err = ppsarama.NewAsyncProducer(broker, config)
 	if err != nil {
 		log.Fatalf("Could not create producer: %v ", err)
 	}
@@ -79,14 +78,18 @@ func main() {
 	go func() {
 		for {
 			select {
-			case success := <-asyncProducer.Successes():
-				log.Printf("Message sent to partition %d at offset %d\n", success.Partition, success.Offset)
-			case err := <-asyncProducer.Errors():
-				log.Printf("Failed to send message: %v", err)
+			case success, ok := <-asyncProducer.Successes():
+				if ok {
+					log.Printf("Message sent to partition %d at offset %d\n", success.Partition, success.Offset)
+				}
+			case err, ok := <-asyncProducer.Errors():
+				if ok {
+					log.Printf("Failed to send message: %v", err)
+				}
 			}
 		}
 	}()
 
 	http.HandleFunc("/save_async", pphttp.WrapHandlerFunc(saveAsync))
-	log.Fatal(http.ListenAndServe(":8081", nil))
+	log.Fatal(http.ListenAndServe(":9024", nil))
 }

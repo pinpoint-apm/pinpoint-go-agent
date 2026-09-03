@@ -147,21 +147,21 @@ echo -e "\n${YELLOW}[7/7] Building and running Go applications...${NC}"
 
 # Build producer
 echo "Building producer..."
-go build -o producer producer.go
+go build -o bin/producer ./producer
 
 # Build async producer
 echo "Building asyncproducer..."
-go build -o asyncproducer asyncproducer.go
+go build -o bin/asyncproducer ./asyncproducer
 
 # Run producer in background
 echo "Starting Producer on http://localhost:$PRODUCER_PORT"
-./producer &
+./bin/producer &
 PRODUCER_PID=$!
 sleep 2
 
 # Run async producer in background
 echo "Starting Async Producer on http://localhost:$ASYNC_PRODUCER_PORT"
-./asyncproducer &
+./bin/asyncproducer &
 ASYNC_PRODUCER_PID=$!
 sleep 2
 
@@ -194,10 +194,10 @@ echo "  curl http://localhost:$PRODUCER_PORT/save"
 echo "  curl http://localhost:$ASYNC_PRODUCER_PORT/save_async"
 echo ""
 echo "Run consumer (in another terminal):"
-echo "  cd $SCRIPT_DIR && go run consumer.go"
+echo "  cd $SCRIPT_DIR && go run ./consumer"
 echo ""
 echo "Run consumer_group (in another terminal):"
-echo "  cd $SCRIPT_DIR && go run consumer_group.go"
+echo "  cd $SCRIPT_DIR && go run ./consumer_group"
 echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop everything${NC}"
 echo ""
