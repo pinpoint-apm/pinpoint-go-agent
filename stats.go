@@ -78,6 +78,8 @@ type agentStats struct {
 
 	// The previous sample's timestamp, which the next sample turns into a
 	// collection interval. Only the agent's single stat worker touches it.
+	// init primes it, so a constructed agentStats never carries the zero time
+	// into a measurement.
 	lastCollectTime time.Time
 }
 
@@ -285,19 +287,16 @@ func clampUnit(v float64) float64 {
 // getStats samples the agent and reports the measured collection interval in
 // milliseconds, which the collector divides into the counts to derive TPS.
 // Truncating to whole seconds first (4.99s -> 4000ms) inflated TPS by up to
-// 25%. Before the first sample there is no previous timestamp, so the
-// configured interval (ms) stands in.
-func (stats *agentStats) getStats(configInterval int64) *inspectorStats {
+// 25%. The first sample measures from init, which the stat worker calls just
+// before its ticker starts, so it needs no configured value to stand in.
+func (stats *agentStats) getStats() *inspectorStats {
 	now := time.Now()
 	procCpu, sysCpu := stats.cpuLoad()
 	counters := stats.drainCounters()
 
 	var memStat runtime.MemStats
 	runtime.ReadMemStats(&memStat)
-	interval := configInterval
-	if !stats.lastCollectTime.IsZero() {
-		interval = now.Sub(stats.lastCollectTime).Milliseconds()
-	}
+	interval := now.Sub(stats.lastCollectTime).Milliseconds()
 
 	inspector := inspectorStats{
 		sampleTime:   now,
@@ -386,7 +385,7 @@ func (agent *agent) collectAgentStatWorker() {
 			Log("stats").Infof("end collect agent stat goroutine")
 			return
 		case <-ticker.C:
-			collected[batch] = agent.stats.getStats(cfgInterval)
+			collected[batch] = agent.stats.getStats()
 			batch++
 
 			if batch == cfgBatchCount {
