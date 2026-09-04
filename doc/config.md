@@ -260,17 +260,19 @@ Collector.StatPort option sets the stat port of Pinpoint collector.
 ### Collector.AgentInfo.RefreshInterval
 Collector.AgentInfo.RefreshInterval option sets the cycle for re-sending the agent information to the collector.
 If it is 0 or less, the agent information is sent only once at agent startup.
+The default matches the Java and C++ agents (24 hours).
 
 * --pinpoint-collector-agentinfo-refreshinterval
 * PINPOINT_GO_COLLECTOR_AGENTINFO_REFRESHINTERVAL
 * WithCollectorAgentInfoRefreshInterval()
 * type: int
-* default: 0 (disabled)
+* default: 86400000 (24 hours)
 * unit: milliseconds
 
 ### Collector.AgentInfo.SendRetryInterval
 Collector.AgentInfo.SendRetryInterval option sets the wait between agent information send retries within one refresh cycle.
-It has no effect unless Collector.AgentInfo.RefreshInterval is set.
+It applies to the periodic refresh only; the initial send at agent startup retries with the gRPC connection back-off instead.
+It has no effect if Collector.AgentInfo.RefreshInterval is 0.
 
 * --pinpoint-collector-agentinfo-sendretryinterval
 * PINPOINT_GO_COLLECTOR_AGENTINFO_SENDRETRYINTERVAL
@@ -281,7 +283,7 @@ It has no effect unless Collector.AgentInfo.RefreshInterval is set.
 
 ### Collector.AgentInfo.MaxTryPerAttempt
 Collector.AgentInfo.MaxTryPerAttempt option sets the max number of agent information sends per refresh cycle.
-It has no effect unless Collector.AgentInfo.RefreshInterval is set.
+It has no effect if Collector.AgentInfo.RefreshInterval is 0.
 
 * --pinpoint-collector-agentinfo-maxtryperattempt
 * PINPOINT_GO_COLLECTOR_AGENTINFO_MAXTRYPERATTEMPT

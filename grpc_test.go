@@ -929,11 +929,31 @@ func (c *countingAgentClient) PingSession(ctx context.Context, _ ...grpc.CallOpt
 	return nil, status.Errorf(codes.Unimplemented, "not used")
 }
 
-func Test_config_agentInfoRefreshDisabledByDefault(t *testing.T) {
+func Test_config_agentInfoRefreshDefaults(t *testing.T) {
 	cfg, _ := NewConfig(WithAppName("TestApp"))
-	assert.Equal(t, 0, cfg.Int(CfgCollectorAgentInfoRefreshInterval))
+	assert.Equal(t, 24*60*60*1000, cfg.Int(CfgCollectorAgentInfoRefreshInterval))
 	assert.Equal(t, defaultAgentInfoSendRetryInterval, cfg.Int(CfgCollectorAgentInfoSendRetryInterval))
 	assert.Equal(t, defaultAgentInfoMaxTryPerAttempt, cfg.Int(CfgCollectorAgentInfoMaxTryPerAttempt))
+}
+
+// The refresh worker is gated on agentInfoRefreshInterval() > 0: it must run
+// under the default config and stay off when the interval is explicitly 0.
+func Test_agent_agentInfoRefreshInterval(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []ConfigOption
+		want time.Duration
+	}{
+		{"default starts refresh", nil, 24 * time.Hour},
+		{"zero disables refresh", []ConfigOption{WithCollectorAgentInfoRefreshInterval(0)}, 0},
+		{"custom interval", []ConfigOption{WithCollectorAgentInfoRefreshInterval(20)}, 20 * time.Millisecond},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, _ := NewConfig(append([]ConfigOption{WithAppName("TestApp")}, tt.opts...)...)
+			assert.Equal(t, tt.want, newTestAgent(cfg).agentInfoRefreshInterval())
+		})
+	}
 }
 
 func Test_agentGrpc_refreshAgentInfo_stopsAtMaxTry(t *testing.T) {

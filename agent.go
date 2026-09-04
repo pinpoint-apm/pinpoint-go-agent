@@ -163,9 +163,10 @@ const (
 	defaultSpanBatchCollectDeadline       = 500
 	defaultSpanBatchMaxConcurrentRequests = 10
 
-	// AgentInfo refresh, matching the C++ agent's Collector.AgentInfo defaults
-	// except the interval: 0 keeps the refresh off, preserving the historical
-	// Go behavior of sending AgentInfo only once at startup.
+	// AgentInfo refresh, matching the Java (AgentInfoSender) and C++ agents'
+	// Collector.AgentInfo defaults: re-send every 24h so a collector that lost
+	// the agent meta recovers it. 0 turns the refresh off.
+	defaultAgentInfoRefreshInterval   = 24 * 60 * 60 * 1000
 	defaultAgentInfoSendRetryInterval = 3000
 	defaultAgentInfoMaxTryPerAttempt  = 3
 
@@ -338,7 +339,7 @@ func (agent *agent) connectGrpcServer() {
 	go agent.superviseWorker("send uri stat", agent.sendUrlStatWorker)
 	go agent.superviseWorker("send stats", agent.sendStatsWorker)
 
-	if interval := time.Duration(agent.config.Int(CfgCollectorAgentInfoRefreshInterval)) * time.Millisecond; interval > 0 {
+	if interval := agent.agentInfoRefreshInterval(); interval > 0 {
 		agent.workerWg.Add(1)
 		go agent.superviseWorker("agent info refresh", func() { agent.refreshAgentInfoWorker(interval) })
 	}
@@ -396,6 +397,12 @@ func recoverPanic(name string, body func()) (completed bool) {
 	}()
 	body()
 	return true
+}
+
+// agentInfoRefreshInterval returns the configured AgentInfo refresh cycle;
+// 0 or less means the refresh worker is not started.
+func (agent *agent) agentInfoRefreshInterval() time.Duration {
+	return time.Duration(agent.config.Int(CfgCollectorAgentInfoRefreshInterval)) * time.Millisecond
 }
 
 // refreshAgentInfoWorker re-sends AgentInfo every refresh interval, mirroring

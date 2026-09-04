@@ -276,8 +276,8 @@ func TestRetriesPeriodicAgentInfoResendAfterFailure(t *testing.T) {
 	assert.True(t, agent.Enable())
 }
 
-// The refresh interval defaults to zero, which keeps the periodic re-sender off
-// and preserves the historical behavior of registering exactly once.
+// The fixture sets the refresh interval to zero, which keeps the periodic
+// re-sender off and registers exactly once (the library default is 24h).
 func TestSendsAgentInfoOnceWhenRefreshDisabled(t *testing.T) {
 	cfg := defaultAgentConfig()
 	require.Zero(t, cfg.agentInfoRefreshInterval)

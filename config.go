@@ -158,7 +158,7 @@ func initConfig() {
 	AddConfig(CfgCollectorAgentPort, CfgInt, 9991, false)
 	AddConfig(CfgCollectorSpanPort, CfgInt, 9993, false)
 	AddConfig(CfgCollectorStatPort, CfgInt, 9992, false)
-	AddConfig(CfgCollectorAgentInfoRefreshInterval, CfgInt, 0, false)
+	AddConfig(CfgCollectorAgentInfoRefreshInterval, CfgInt, defaultAgentInfoRefreshInterval, false)
 	AddConfig(CfgCollectorAgentInfoSendRetryInterval, CfgInt, defaultAgentInfoSendRetryInterval, false)
 	AddConfig(CfgCollectorAgentInfoMaxTryPerAttempt, CfgInt, defaultAgentInfoMaxTryPerAttempt, false)
 	AddConfig(CfgCollectorGrpcKeepAliveTime, CfgInt, grpcKeepAliveTime, false)
@@ -1071,7 +1071,8 @@ func WithCollectorStatPort(port int) ConfigOption {
 }
 
 // WithCollectorAgentInfoRefreshInterval sets the cycle for re-sending the agent information
-// to the collector, in milliseconds. If 0 or less, it is sent only once at startup.
+// to the collector, in milliseconds. Defaults to 24 hours; if 0 or less, it is sent only
+// once at startup.
 func WithCollectorAgentInfoRefreshInterval(interval int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgCollectorAgentInfoRefreshInterval].value = interval
@@ -1079,7 +1080,8 @@ func WithCollectorAgentInfoRefreshInterval(interval int) ConfigOption {
 }
 
 // WithCollectorAgentInfoSendRetryInterval sets the wait between agent information send retries
-// within one refresh cycle, in milliseconds.
+// within one refresh cycle, in milliseconds. It applies to the periodic refresh only; the
+// initial send at startup retries with the connection back-off instead.
 func WithCollectorAgentInfoSendRetryInterval(interval int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgCollectorAgentInfoSendRetryInterval].value = interval

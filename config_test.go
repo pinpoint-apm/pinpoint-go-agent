@@ -72,6 +72,7 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, 1024, c.Int(CfgHttpUrlStatQueueSize), CfgHttpUrlStatQueueSize)
 			assert.Equal(t, false, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
 			assert.Equal(t, 32, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
+			assert.Equal(t, 24*60*60*1000, c.Int(CfgCollectorAgentInfoRefreshInterval), CfgCollectorAgentInfoRefreshInterval)
 		})
 	}
 }
