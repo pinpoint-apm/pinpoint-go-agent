@@ -2,6 +2,8 @@ package pinpoint
 
 import (
 	"errors"
+	"fmt"
+	"io/fs"
 	"strconv"
 	"strings"
 	"testing"
@@ -309,4 +311,55 @@ func Test_spanEvent_SetErrorFailsTransaction(t *testing.T) {
 	// A recorder retained past EndSpan must not touch the finished span.
 	chunk.eventChunk[0].SetError(errors.New("late"))
 	assert.Equal(t, "db error", chunk.eventChunk[0].errorString)
+}
+
+// Error.IgnoreErrors: a matched error keeps its exception info but does not
+// fail the span (Java profiler.ignore-error-handler).
+func Test_SetError_IgnoreErrors(t *testing.T) {
+	newConfig := func(rules ...string) *Config {
+		c, err := NewConfig(WithAppName("ignoreErrApp"), WithErrorIgnoreErrors(rules...))
+		assert.NoError(t, err)
+		return c
+	}
+	notFound := errors.New("user not found")
+
+	tests := []struct {
+		name    string
+		rules   []string
+		err     error
+		errName string
+		ignored bool
+	}{
+		{"type and message", []string{"*errors.errorString:not found"}, notFound, "", true},
+		{"wrapped error unwrapped", []string{"*errors.errorString:not found"}, fmt.Errorf("get user: %w", notFound), "", true},
+		{"message mismatch", []string{"*errors.errorString:timeout"}, notFound, "", false},
+		{"type mismatch", []string{"*fs.PathError:not found"}, notFound, "", false},
+		{"type only", []string{"*fs.PathError"}, &fs.PathError{Op: "open", Path: "x", Err: fs.ErrNotExist}, "", true},
+		{"message only", []string{":not found"}, notFound, "", true},
+		{"errorName as type", []string{"panic"}, notFound, "panic", true},
+		{"no rules", nil, notFound, "", false},
+		{"empty entries", []string{"", " : "}, notFound, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			span := testSpanWithConfig(newConfig(tt.rules...))
+			se := newSpanEvent(span, "t1")
+			if tt.errName != "" {
+				se.SetError(tt.err, tt.errName)
+			} else {
+				se.SetError(tt.err)
+			}
+			assert.Equal(t, int32(1), se.errorFuncId, "errorFuncId")
+			assert.Equal(t, tt.err.Error(), se.errorString, "errorString")
+			assert.Equal(t, !tt.ignored, span.err == 1, "span.err from event")
+
+			// span.SetError records under the error type name.
+			if tt.errName == "" {
+				span = testSpanWithConfig(newConfig(tt.rules...))
+				span.SetError(tt.err)
+				assert.Equal(t, tt.err.Error(), span.errorString, "span.errorString")
+				assert.Equal(t, !tt.ignored, span.err == 1, "span.err")
+			}
+		})
+	}
 }

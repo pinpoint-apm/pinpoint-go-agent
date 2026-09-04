@@ -118,11 +118,15 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 	id := se.agent().cacheError(errName)
 	se.errorFuncId = id
 	se.errorString = abbreviateString(e.Error(), maxErrorMessageSize)
-	// As in the Java agent, an error on any event fails the transaction:
-	// PSpan.err, the URL stat failed histogram and the scatter failure point.
-	se.parentSpan.err = 1
 
 	cfg := se.config()
+	// As in the Java agent, an error on any event fails the transaction:
+	// PSpan.err, the URL stat failed histogram and the scatter failure point.
+	// An error matching Error.IgnoreErrors (IgnoreErrorHandler) keeps its
+	// exception info but skips that failure marking.
+	if !cfg.ignoreError(e, errName) {
+		se.parentSpan.err = 1
+	}
 	if cfg.errorTraceCallStack && se.parentSpan.canAddErrorChain() {
 		se.exceptionId = se.parentSpan.traceCallStack(e, errName, cfg.errorCallStackDepth, time.UnixMilli(se.startTime))
 		se.Annotations().AppendLong(AnnotationExceptionChainId, se.exceptionId)

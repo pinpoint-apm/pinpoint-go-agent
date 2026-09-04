@@ -522,10 +522,15 @@ func (span *span) SetError(e error) {
 		return
 	}
 
-	id := span.agent.cacheError(errorTypeName(e))
+	errName := errorTypeName(e)
+	id := span.agent.cacheError(errName)
 	span.errorFuncId = id
 	span.errorString = abbreviateString(e.Error(), maxErrorMessageSize)
-	span.err = 1
+	// Java IgnoreErrorHandler: a matched error keeps its exception info but
+	// does not fail the span.
+	if !span.cfg.ignoreError(e, errName) {
+		span.err = 1
+	}
 }
 
 func (span *span) SetFailure() {

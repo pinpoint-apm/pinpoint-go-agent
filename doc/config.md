@@ -716,6 +716,32 @@ Error.CallStackDepth option sets the max depth of callstack to be dumped.
 * max: 1024
 * dynamic
 
+### Error.IgnoreErrors
+Error.IgnoreErrors option lists errors that are recorded as exception info (error function id and message)
+but do not mark the span as failed (`err` stays 0, and the URL statistics count the request as a success).
+Each entry is `<type>:<message substring>`; either part may be empty, and both must match the same error.
+`<type>` is the Go type string of the error (`reflect.TypeOf(err).String()`, e.g. `*errors.errorString`,
+`*fs.PathError`) or the error name passed to `SpanEventRecorder.SetError` (e.g. `panic`).
+The error and every error it wraps (the `errors.Unwrap` chain) are checked.
+
+This corresponds to the Java agent's `profiler.ignore-error-handler.<name>.class-name`,
+`profiler.ignore-error-handler.<name>.exception-message.contains` and `profiler.ignore-error-handler.<name>.nested=true`.
+
+* --pinpoint-error-ignoreerrors
+* PINPOINT_GO_ERROR_IGNOREERRORS
+* WithErrorIgnoreErrors()
+* type: string slice
+* default: none
+* dynamic
+
+Example (yaml):
+```
+Error:
+  IgnoreErrors:
+    - "*errors.errorString:not found"
+    - "*context.deadlineExceededError"
+```
+
 ### IsContainerEnv
 IsContainerEnv option sets whether the application is running in a container environment or not.
 If this is not set, the agent automatically checks it.
@@ -937,7 +963,7 @@ Two things make a reload not happen, and both are easy to miss:
 | Span limits | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence` |
 | SQL | `SQL.TraceBindValue`, `SQL.MaxBindValueSize`, `SQL.TraceCommit`, `SQL.TraceRollback`, `SQL.TraceQueryStat`, `SQL.EnableRawSqlCache` |
 | Logging | `Log.Level`, `Log.Output`, `Log.MaxSize` |
-| Errors | `Error.TraceCallStack`, `Error.CallStackDepth` |
+| Errors | `Error.TraceCallStack`, `Error.CallStackDepth`, `Error.IgnoreErrors` |
 | HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError` |
 | HTTP client | `Http.Client.RecordRequestHeader`, `Http.Client.RecordResponseHeader`, `Http.Client.RecordRequestCookie` |
 | URL statistics | `Http.UrlStat.Enable`, `Http.UrlStat.LimitSize`, `Http.UrlStat.WithMethod` |

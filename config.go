@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -88,6 +89,7 @@ const (
 	CfgHttpUrlStatWithMethod          = "Http.UrlStat.WithMethod"
 	CfgErrorTraceCallStack            = "Error.TraceCallStack"
 	CfgErrorCallStackDepth            = "Error.CallStackDepth"
+	CfgErrorIgnoreErrors              = "Error.IgnoreErrors"
 	CfgUIDVersion                     = "Uid.Version"
 	CfgServiceName                    = "ServiceName"
 	CfgApiKey                         = "ApiKey"
@@ -209,6 +211,7 @@ func initConfig() {
 	AddConfig(CfgHttpUrlStatWithMethod, CfgBool, false, true)
 	AddConfig(CfgErrorTraceCallStack, CfgBool, false, true)
 	AddConfig(CfgErrorCallStackDepth, CfgInt, defaultErrorCallStackDepth, true)
+	AddConfig(CfgErrorIgnoreErrors, CfgStringSlice, []string{}, true)
 	AddConfig(CfgUIDVersion, CfgString, "v3", false)
 	AddConfig(CfgServiceName, CfgString, "", false)
 	AddConfig(CfgApiKey, CfgString, "", false)
@@ -279,20 +282,64 @@ type configSnapshot struct {
 	values  map[string]interface{}
 	sampler traceSampler
 
-	collectUrlStat       bool  // CfgHttpUrlStatEnable
-	urlStatLimitSize     int   // CfgHttpUrlStatLimitSize
-	urlStatWithMethod    bool  // CfgHttpUrlStatWithMethod
-	sqlTraceBindValue    bool  // CfgSQLTraceBindValue
-	sqlMaxBindValueSize  int   // CfgSQLMaxBindValueSize
-	sqlTraceCommit       bool  // CfgSQLTraceCommit
-	sqlTraceRollback     bool  // CfgSQLTraceRollback
-	sqlTraceQueryStat    bool  // CfgSQLTraceQueryStat
-	sqlEnableRawSqlCache bool  // CfgSQLEnableRawSqlCache
-	spanEventChunkSize   int   // CfgSpanEventChunkSize
-	spanMaxEventDepth    int32 // CfgSpanMaxCallStackDepth
-	spanMaxEventSequence int32 // CfgSpanMaxCallStackSequence
-	errorTraceCallStack  bool  // CfgErrorTraceCallStack
-	errorCallStackDepth  int   // CfgErrorCallStackDepth
+	collectUrlStat       bool              // CfgHttpUrlStatEnable
+	urlStatLimitSize     int               // CfgHttpUrlStatLimitSize
+	urlStatWithMethod    bool              // CfgHttpUrlStatWithMethod
+	sqlTraceBindValue    bool              // CfgSQLTraceBindValue
+	sqlMaxBindValueSize  int               // CfgSQLMaxBindValueSize
+	sqlTraceCommit       bool              // CfgSQLTraceCommit
+	sqlTraceRollback     bool              // CfgSQLTraceRollback
+	sqlTraceQueryStat    bool              // CfgSQLTraceQueryStat
+	sqlEnableRawSqlCache bool              // CfgSQLEnableRawSqlCache
+	spanEventChunkSize   int               // CfgSpanEventChunkSize
+	spanMaxEventDepth    int32             // CfgSpanMaxCallStackDepth
+	spanMaxEventSequence int32             // CfgSpanMaxCallStackSequence
+	errorTraceCallStack  bool              // CfgErrorTraceCallStack
+	errorCallStackDepth  int               // CfgErrorCallStackDepth
+	errorIgnoreRules     []ignoreErrorRule // CfgErrorIgnoreErrors
+}
+
+// ignoreErrorRule is one parsed Error.IgnoreErrors entry, "<type>:<message>";
+// an empty type or message matches anything. It is the Go counterpart of the
+// Java agent's profiler.ignore-error-handler.<name>.class-name /
+// .exception-message.contains descriptor pair.
+type ignoreErrorRule struct {
+	typeName        string
+	messageContains string
+}
+
+func parseIgnoreErrorRules(entries []string) []ignoreErrorRule {
+	rules := make([]ignoreErrorRule, 0, len(entries))
+	for _, e := range entries {
+		typ, msg, _ := strings.Cut(e, ":")
+		typ, msg = strings.TrimSpace(typ), strings.TrimSpace(msg)
+		if typ == "" && msg == "" {
+			continue
+		}
+		rules = append(rules, ignoreErrorRule{typeName: typ, messageContains: msg})
+	}
+	return rules
+}
+
+// ignoreError reports whether err, or any error it wraps (the errors.Unwrap
+// chain, as the Java NestedErrorHandler walks getCause), matches an
+// Error.IgnoreErrors rule. Such an error is still recorded as exception info
+// but does not mark the span as failed. The type part matches the dynamic type
+// string (reflect.TypeOf(err).String()) or the errorName given to SetError.
+func (snapshot *configSnapshot) ignoreError(err error, errName string) bool {
+	if len(snapshot.errorIgnoreRules) == 0 {
+		return false
+	}
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		typ, msg := reflect.TypeOf(e).String(), e.Error()
+		for _, r := range snapshot.errorIgnoreRules {
+			if (r.typeName == "" || r.typeName == typ || r.typeName == errName) &&
+				(r.messageContains == "" || strings.Contains(msg, r.messageContains)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // emptyConfigSnapshot stands in for a Config that was built by hand instead of
@@ -840,6 +887,7 @@ func (config *Config) publish() {
 		spanMaxEventSequence: cast.ToInt32(values[CfgSpanMaxCallStackSequence]),
 		errorTraceCallStack:  cast.ToBool(values[CfgErrorTraceCallStack]),
 		errorCallStackDepth:  cast.ToInt(values[CfgErrorCallStackDepth]),
+		errorIgnoreRules:     parseIgnoreErrorRules(cast.ToStringSlice(values[CfgErrorIgnoreErrors])),
 	}
 	snapshot.sampler = newTraceSampler(config.load(), values)
 
@@ -1429,6 +1477,15 @@ func WithHttpUrlStatWithMethod(withMethod bool) ConfigOption {
 func WithErrorTraceCallStack(trace bool) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgErrorTraceCallStack].value = trace
+	}
+}
+
+// WithErrorIgnoreErrors sets the errors that are recorded as exception info but
+// do not mark the span as failed. Each entry is "<type>:<message substring>";
+// either part may be empty.
+func WithErrorIgnoreErrors(rules ...string) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgErrorIgnoreErrors].value = rules
 	}
 }
 
