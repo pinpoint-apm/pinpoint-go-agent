@@ -299,14 +299,14 @@ func (stats *agentStats) getStats() *inspectorStats {
 	interval := now.Sub(stats.lastCollectTime).Milliseconds()
 
 	inspector := inspectorStats{
-		sampleTime:   now,
-		interval:     interval,
-		cpuProcLoad:  procCpu,
-		cpuSysLoad:   sysCpu,
-		heapUsed:     int64(memStat.HeapInuse),
-		heapMax:      int64(memStat.HeapSys),
-		nonHeapUsed:  int64(memStat.StackInuse),
-		nonHeapMax:   int64(memStat.StackSys),
+		sampleTime:  now,
+		interval:    interval,
+		cpuProcLoad: procCpu,
+		cpuSysLoad:  sysCpu,
+		heapUsed:    int64(memStat.HeapInuse),
+		heapMax:     int64(memStat.HeapSys),
+		nonHeapUsed: int64(memStat.StackInuse),
+		nonHeapMax:  int64(memStat.StackSys),
 		// Cumulative since process start, like the Java agent's
 		// GarbageCollectorMXBean counts: the web's inspector-definition-for-agent.yml
 		// runs gcOldCount/gcOldTime through its "delta" post-processor, so
