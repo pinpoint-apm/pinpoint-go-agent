@@ -1981,3 +1981,32 @@ func Test_spanGrpc_sendSpanBatch_skipCountsDrops(t *testing.T) {
 	assert.Equal(t, int64(2), agent.spanDrops.dropped.Load())
 	assert.Len(t, spanGrpc.concurrentRequestPermit, 1, "a skipped batch releases no permit")
 }
+
+// The AnnotationApi fallback is built on the builder, not appended to the
+// span's annotations: serializing twice used to duplicate it.
+func TestSpanMessageBuilder_AnnotationApiFallbackIsBuilderLocal(t *testing.T) {
+	span := defaultTestSpan()
+	span.operationName = "op"
+	span.apiId = 0
+	span.NewSpanEvent("event")
+	se := span.SpanEvent().(*spanEvent)
+	se.apiId = 0
+	span.EndSpanEvent()
+	span.EndSpan()
+	chunk, ok := span.agent.spanQueue.tryDequeue()
+	if !assert.True(t, ok) {
+		return
+	}
+
+	for i := 0; i < 2; i++ {
+		msg := (&spanMessageBuilder{}).makePSpanMessage(chunk).GetSpan()
+		if assert.Len(t, msg.Annotation, 1) {
+			assert.Equal(t, "op", msg.Annotation[0].GetValue().GetStringValue())
+		}
+		if assert.Len(t, msg.SpanEvent[0].Annotation, 1) {
+			assert.Equal(t, "event", msg.SpanEvent[0].Annotation[0].GetValue().GetStringValue())
+		}
+	}
+	assert.Empty(t, span.annotations.values)
+	assert.Empty(t, se.annotations.values)
+}

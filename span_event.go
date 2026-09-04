@@ -25,6 +25,10 @@ type spanEvent struct {
 	apiId         int32
 	isTimeFixed   bool
 	exceptionId   int64
+	// finished is set by end(). From then on the event may sit in a chunk the
+	// sender goroutine is serializing, so every public setter becomes a no-op
+	// instead of racing with makePSpanEvent.
+	finished atomic.Bool
 }
 
 func defaultSpanEvent(span *span, operationName string) *spanEvent {
@@ -79,6 +83,17 @@ func (se *spanEvent) end() {
 	if IsTraceLogLevelEnabled() {
 		Log("span").Tracef("endSpanEvent: %s", se.operationName)
 	}
+	se.finished.Store(true)
+}
+
+// warnIfFinished reports whether the event has ended; a setter called after
+// EndSpanEvent is dropped, mirroring the C++ agent's warnIfFinished.
+func (se *spanEvent) warnIfFinished(setter string) bool {
+	if !se.finished.Load() {
+		return false
+	}
+	Log("span").Debugf("abnormal span event - %s called after EndSpanEvent: %s", setter, se.operationName)
+	return true
 }
 
 func (se *spanEvent) generateNextSpanId() int64 {
@@ -89,7 +104,7 @@ func (se *spanEvent) generateNextSpanId() int64 {
 func (se *spanEvent) SetError(e error, errorName ...string) {
 	// After EndSpan the span is on its way to the sender goroutine; a
 	// retained recorder must not write into it (see doc/api_contracts.md 5).
-	if e == nil || se.parentSpan.finished {
+	if e == nil || se.warnIfFinished("SetError") || se.parentSpan.finished.Load() {
 		return
 	}
 
@@ -115,19 +130,28 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 }
 
 func (se *spanEvent) SetServiceType(typ int32) {
+	if se.warnIfFinished("SetServiceType") {
+		return
+	}
 	se.serviceType = typ
 }
 
 func (se *spanEvent) SetDestination(id string) {
+	if se.warnIfFinished("SetDestination") {
+		return
+	}
 	se.destinationId = id
 }
 
 func (se *spanEvent) SetEndPoint(endPoint string) {
+	if se.warnIfFinished("SetEndPoint") {
+		return
+	}
 	se.endPoint = endPoint
 }
 
 func (se *spanEvent) SetSQL(sql string, args string) {
-	if sql == "" {
+	if sql == "" || se.warnIfFinished("SetSQL") {
 		return
 	}
 
@@ -164,10 +188,16 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 }
 
 func (se *spanEvent) Annotations() Annotation {
+	if se.warnIfFinished("Annotations") {
+		return &noopAnnotation{}
+	}
 	return &se.annotations
 }
 
 func (se *spanEvent) FixDuration(start time.Time, end time.Time) {
+	if se.warnIfFinished("FixDuration") {
+		return
+	}
 	se.startTime = start.UnixMilli()
 	se.endElapsed = end.UnixMilli() - se.startTime
 	se.isTimeFixed = true

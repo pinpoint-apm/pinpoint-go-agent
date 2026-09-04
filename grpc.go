@@ -1334,9 +1334,6 @@ func (b *spanMessageBuilder) makePSpanMessage(chunk *spanChunk) *pb.PSpanMessage
 
 func (b *spanMessageBuilder) makePSpan(chunk *spanChunk) *pb.PSpanMessage {
 	span := chunk.span
-	if span.apiId == 0 && span.operationName != "" {
-		span.annotations.AppendString(AnnotationApi, span.operationName)
-	}
 
 	pspan := b.spans.get()
 	pspan.Version = 1
@@ -1363,7 +1360,7 @@ func (b *spanMessageBuilder) makePSpan(chunk *spanChunk) *pb.PSpanMessage {
 	acceptEvent.ParentInfo = parentInfo
 	pspan.AcceptEvent = acceptEvent
 
-	pspan.Annotation = span.annotations.getListInto(b)
+	pspan.Annotation = b.annotationsWithApi(&span.annotations, span.apiId, span.operationName)
 	pspan.ApiId = span.apiId
 	pspan.Flag = int32(span.flags)
 	pspan.SpanEvent = b.makePSpanEventList(chunk)
@@ -1423,18 +1420,34 @@ func (b *spanMessageBuilder) makePSpanEventList(chunk *spanChunk) []*pb.PSpanEve
 	return spanEventList
 }
 
-func (b *spanMessageBuilder) makePSpanEvent(event *spanEvent) *pb.PSpanEvent {
-	if event.apiId == 0 && event.operationName != "" {
-		event.annotations.AppendString(AnnotationApi, event.operationName)
+// annotationsWithApi materializes a's list, appending an AnnotationApi
+// fallback when no api id was cached. The fallback lives only in the builder
+// output: mutating the span's own annotation here would race with the
+// application goroutine and duplicate the entry on a re-serialization.
+func (b *spanMessageBuilder) annotationsWithApi(a *annotation, apiId int32, operationName string) []*pb.PAnnotation {
+	if apiId != 0 || operationName == "" {
+		return a.getListInto(b)
 	}
+	a.annotationLock.Lock()
+	defer a.annotationLock.Unlock()
 
+	list := b.annotationLists.take(len(a.values) + 1)
+	for i := range a.values {
+		list[i] = a.values[i].toProtoInto(b)
+	}
+	api := annotationValue{key: AnnotationApi, typ: annotationTypeString, s1: operationName}
+	list[len(a.values)] = api.toProtoInto(b)
+	return list
+}
+
+func (b *spanMessageBuilder) makePSpanEvent(event *spanEvent) *pb.PSpanEvent {
 	aSpanEvent := b.events.get()
 	aSpanEvent.Sequence = event.sequence
 	aSpanEvent.Depth = event.depth
 	aSpanEvent.StartElapsed = int32(event.startElapsed)
 	aSpanEvent.EndElapsed = int32(event.endElapsed)
 	aSpanEvent.ServiceType = event.serviceType
-	aSpanEvent.Annotation = event.annotations.getListInto(b)
+	aSpanEvent.Annotation = b.annotationsWithApi(&event.annotations, event.apiId, event.operationName)
 	aSpanEvent.ApiId = event.apiId
 	aSpanEvent.AsyncEvent = event.asyncId
 

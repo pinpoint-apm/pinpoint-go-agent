@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sync"
@@ -726,5 +727,90 @@ func TestSpan_EndSpanEventRecordsPanickedEvent(t *testing.T) {
 
 	if assert.Len(t, span.spanEvents, 1, "panicked event recorded") {
 		assert.Equal(t, "sentinel", span.spanEvents[0].errorString)
+		assert.True(t, span.spanEvents[0].finished.Load(), "recorded before end() marked it finished")
 	}
+}
+
+// Setters on a pointer kept past EndSpanEvent are dropped: the event may
+// already be in a chunk the sender goroutine is serializing.
+func TestSpanEvent_SettersAfterEndAreNoops(t *testing.T) {
+	span := defaultTestSpan()
+	span.NewSpanEvent("event")
+	se := span.SpanEvent().(*spanEvent)
+	span.EndSpanEvent()
+
+	se.SetError(errors.New("late"))
+	se.SetServiceType(ServiceTypeMysql)
+	se.SetDestination("db")
+	se.SetEndPoint("host:1")
+	se.SetSQL("select 1", "")
+	se.Annotations().AppendString(AnnotationApi, "late")
+
+	assert.True(t, se.finished.Load())
+	assert.Equal(t, "", se.errorString)
+	assert.Equal(t, int32(ServiceTypeGoFunction), se.serviceType)
+	assert.Equal(t, "", se.destinationId)
+	assert.Equal(t, "", se.endPoint)
+	assert.Empty(t, se.annotations.values)
+	_, noop := se.Annotations().(*noopAnnotation)
+	assert.True(t, noop, "Annotations after end is a no-op collector")
+}
+
+// Run under -race: late setters race with the sender serializing the chunk.
+func TestSpanEvent_LateSetterConcurrentWithSenderIsRaceFree(t *testing.T) {
+	span := defaultTestSpan()
+	span.operationName = "op"
+	span.apiId = 0 // exercise the builder-local AnnotationApi fallback
+	span.NewSpanEvent("event")
+	se := span.SpanEvent().(*spanEvent)
+	se.apiId = 0
+	span.EndSpanEvent()
+	span.EndSpan()
+
+	chunk, ok := span.agent.spanQueue.tryDequeue()
+	if !assert.True(t, ok) {
+		return
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			se.SetError(errors.New("late"))
+			se.SetEndPoint("host")
+			se.SetDestination("db")
+			se.SetServiceType(ServiceTypeMysql)
+			se.Annotations().AppendString(AnnotationApi, "late")
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		b := &spanMessageBuilder{}
+		for i := 0; i < 100; i++ {
+			b.makePSpanMessage(chunk)
+		}
+	}()
+	wg.Wait()
+
+	assert.Empty(t, se.annotations.values, "fallback not written back to the event")
+	assert.Empty(t, span.annotations.values, "fallback not written back to the span")
+}
+
+// Concurrent EndSpan calls enqueue exactly one final chunk.
+func TestSpan_ConcurrentEndSpanEnqueuesOneChunk(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	span := defaultSpan(agent)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			span.EndSpan()
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, 1, agent.spanQueue.length())
 }

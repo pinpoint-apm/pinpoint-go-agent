@@ -79,7 +79,7 @@ type span struct {
 	urlStat         *UrlStatEntry
 	errorChains     []*exception
 	errorChainsLock sync.Mutex
-	finished        bool
+	finished        atomic.Bool
 }
 
 func generateSpanId() int64 {
@@ -123,11 +123,10 @@ func newSampledSpan(agent *agent, operation string, rpcName string) *span {
 func (span *span) EndSpan() {
 	// A second EndSpan would double-count the response time, re-enqueue the
 	// url stat and send a second final chunk with the same span id.
-	if span.finished {
+	if !span.finished.CompareAndSwap(false, true) {
 		Log("span").Warnf("abnormal span - EndSpan already called")
 		return
 	}
-	span.finished = true
 
 	endTime := time.Now()
 	span.elapsed = endTime.UnixMilli() - span.startTime.UnixMilli()
@@ -380,16 +379,17 @@ func (span *span) EndSpanEvent() {
 		return
 	}
 	if se, ok := span.eventStack.pop(); ok {
-		se.end()
 		if !span.recovered.Load() {
 			if v := recover(); v != nil {
 				err, ok := v.(error)
 				if !ok {
 					err = errors.New(fmt.Sprint(v))
 				}
+				// SetError before end(): a finished event drops setters.
 				se.SetError(err, "panic")
 				span.SetError(err)
 				span.recovered.Store(true)
+				se.end()
 				// Record the event before re-panicking: it was already popped,
 				// so skipping the append would drop the very event that
 				// captured the panic.
@@ -401,6 +401,7 @@ func (span *span) EndSpanEvent() {
 				panic(v)
 			}
 		}
+		se.end()
 		span.appendEndedSpanEvent(se)
 	} else {
 		Log("span").Warnf("abnormal span - has no event")
@@ -517,7 +518,7 @@ func (span *span) IsSampled() bool {
 func (span *span) SetError(e error) {
 	// A call stack overflow only blocks span events; the span level error is
 	// still recorded, as the Java agent's DefaultSpanRecorder.recordException does.
-	if e == nil || span.finished {
+	if e == nil || span.finished.Load() {
 		return
 	}
 
