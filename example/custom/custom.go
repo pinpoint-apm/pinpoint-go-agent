@@ -12,6 +12,9 @@ import (
 
 func externalRequest(tracer pinpoint.Tracer) int {
 	req, err := http.NewRequest("GET", "http://localhost:9000/async_wrapper", nil)
+	if err != nil {
+		return http.StatusInternalServerError
+	}
 	client := &http.Client{}
 
 	tracer.NewSpanEvent("externalRequest")
@@ -25,9 +28,15 @@ func externalRequest(tracer pinpoint.Tracer) int {
 	tracer.Inject(req.Header)
 
 	resp, err := client.Do(req)
+	// Record the verdict first, then bail out: on a failed request resp is nil,
+	// and deferring resp.Body.Close() before the check panicked the example
+	// whenever the downstream server was not up.
+	se.SetError(err)
+	if err != nil {
+		return http.StatusServiceUnavailable
+	}
 	defer resp.Body.Close()
 
-	tracer.SpanEvent().SetError(err)
 	return resp.StatusCode
 }
 

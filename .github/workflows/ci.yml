@@ -34,22 +34,25 @@ jobs:
     - name: Build
       run: go build -v
 
+    # -race for the same reason the plugin job uses it: the agent's own workers,
+    # span queue, config snapshot and metadata caches are all concurrent, and
+    # a race there is exactly the class of bug this suite exists to catch.
     - name: Test
-      run: go test -v
+      run: go test -race -v
 
     # The mock-collector integration suite is a nested module (it depends on
     # plugin/http) and needs no collector or network access, so it runs here
     # alongside the unit tests. The live end-to-end suite in test/e2e is not
     # registered: it needs a dev collector.
     - name: Integration test
-      run: go test -v -timeout 15m ./...
+      run: go test -race -v -timeout 15m ./...
       working-directory: test/it
 
     # The examples are a separate module with one main per subdirectory and no
     # tests, so building them is the whole check - it catches an example left
     # behind by an API change, which nothing else here would.
     - name: Build examples
-      run: go build -v ./...
+      run: go build -v ./... && go vet ./...
       working-directory: example
 
   # The instrumentation plugins are separate modules with their own
