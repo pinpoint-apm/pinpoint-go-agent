@@ -103,6 +103,30 @@ func Test_spanEvent_SetError(t *testing.T) {
 	}
 }
 
+func Test_SetError_AbbreviatesMessage(t *testing.T) {
+	long := strings.Repeat("e", 300)
+	tests := []struct {
+		name string
+		msg  string
+		want string
+	}{
+		{"short kept", "short", "short"},
+		{"long abbreviated", long, strings.Repeat("e", maxErrorMessageSize) + "...(256)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sp := defaultTestSpan()
+			sp.agent = newTestAgent(defaultConfig())
+			sp.SetError(errors.New(tt.msg))
+			assert.Equal(t, tt.want, sp.errorString, "span errorString")
+
+			se := newSpanEvent(sp, "t1")
+			se.SetError(errors.New(tt.msg))
+			assert.Equal(t, tt.want, se.errorString, "spanEvent errorString")
+		})
+	}
+}
+
 func Test_spanEvent_SetSQL(t *testing.T) {
 	type args struct {
 		span          *span

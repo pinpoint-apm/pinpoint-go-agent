@@ -117,7 +117,7 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 
 	id := se.agent().cacheError(errName)
 	se.errorFuncId = id
-	se.errorString = e.Error()
+	se.errorString = abbreviateString(e.Error(), maxErrorMessageSize)
 	// As in the Java agent, an error on any event fails the transaction:
 	// PSpan.err, the URL stat failed histogram and the scatter failure point.
 	se.parentSpan.err = 1

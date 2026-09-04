@@ -524,7 +524,7 @@ func (span *span) SetError(e error) {
 
 	id := span.agent.cacheError("error")
 	span.errorFuncId = id
-	span.errorString = e.Error()
+	span.errorString = abbreviateString(e.Error(), maxErrorMessageSize)
 	span.err = 1
 }
 

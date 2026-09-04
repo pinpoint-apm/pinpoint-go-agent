@@ -175,6 +175,9 @@ const (
 	shutdownTimeout = 3 * time.Second
 
 	maxSqlSize = 64 * 1024
+	// maxErrorMessageSize matches the Java agent, which abbreviates exception
+	// messages to 256 chars before recording them on a span or span event.
+	maxErrorMessageSize = 256
 )
 
 // globalAgent is an atomic.Value rather than a plain interface variable:
