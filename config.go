@@ -104,6 +104,13 @@ const (
 	// one instrumented error into an allocation spike or an integer-overflow
 	// panic in make([]uintptr, depth+3).
 	maxErrorCallStackDepth = 1024
+
+	// Upper bounds for the queue sizes and stat collection settings, matching
+	// the C++ agent. See publish.
+	maxQueueSize           = 65536
+	minStatCollectInterval = 1000
+	maxStatCollectInterval = 60000
+	maxStatBatchCount      = 100
 )
 
 // Config value type
@@ -690,6 +697,19 @@ var samplingOpts = []string{
 	CfgSamplingNewThroughput, CfgSamplingContinueThroughput,
 }
 
+// clampInt clamps the staged value of an int key into [min, max], logging a
+// warning when the configured value was out of range.
+func (config *Config) clampInt(name string, min, max int) {
+	v := config.stagedInt(name)
+	if v < min {
+		Log("config").Warnf("%s = %d is out of range [%d, %d], using %d", name, v, min, max, min)
+		config.cfgMap[name].value = min
+	} else if v > max {
+		Log("config").Warnf("%s = %d is out of range [%d, %d], using %d", name, v, min, max, max)
+		config.cfgMap[name].value = max
+	}
+}
+
 // publish normalizes the staged cfgMap values and installs the result as a new
 // snapshot with a single atomic store. Everything derived from the config is
 // built here so that one store makes the whole generation visible at once.
@@ -716,13 +736,14 @@ func (config *Config) publish() {
 	// These non-dynamic keys are clamped here, not in NewConfig, because the
 	// exported Set() also republishes: a non-positive Stat.CollectInterval
 	// panics time.NewTicker and a non-positive Stat.BatchCount panics the stat
-	// worker's batch indexing, killing the host process.
-	if config.stagedInt(CfgSpanQueueSize) < 1 {
-		config.cfgMap[CfgSpanQueueSize].value = defaultQueueSize
-	}
-	if config.stagedInt(CfgHttpUrlStatQueueSize) < 1 {
-		config.cfgMap[CfgHttpUrlStatQueueSize].value = defaultQueueSize
-	}
+	// worker's batch indexing, killing the host process. The upper bounds stop
+	// a typo (queue 1e9) from allocating a huge channel buffer or stalling
+	// the stat collector; like the C++ agent, out-of-range values are clamped
+	// to the nearest bound.
+	config.clampInt(CfgSpanQueueSize, 1, maxQueueSize)
+	config.clampInt(CfgHttpUrlStatQueueSize, 1, maxQueueSize)
+	config.clampInt(CfgStatCollectInterval, minStatCollectInterval, maxStatCollectInterval)
+	config.clampInt(CfgStatBatchCount, 1, maxStatBatchCount)
 	if config.stagedInt(CfgSpanBatchSize) < 1 {
 		config.cfgMap[CfgSpanBatchSize].value = defaultSpanBatchSize
 	}
@@ -748,13 +769,6 @@ func (config *Config) publish() {
 	if config.stagedInt(CfgCollectorGrpcStreamMaxAge) < 0 {
 		config.cfgMap[CfgCollectorGrpcStreamMaxAge].value = grpcStreamMaxAge
 	}
-	if config.stagedInt(CfgStatCollectInterval) < 1 {
-		config.cfgMap[CfgStatCollectInterval].value = 5000
-	}
-	if config.stagedInt(CfgStatBatchCount) < 1 {
-		config.cfgMap[CfgStatBatchCount].value = 6
-	}
-
 	maxDepth := config.stagedInt(CfgSpanMaxCallStackDepth)
 	if maxDepth == -1 {
 		maxDepth = math.MaxInt32
