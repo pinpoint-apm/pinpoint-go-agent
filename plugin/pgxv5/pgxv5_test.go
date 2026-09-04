@@ -500,9 +500,19 @@ func TestTraceCopyFromEnd(t *testing.T) {
 }
 
 // The copy target is what CopyFrom records in place of a SQL statement, so the
-// identifier has to reach the annotation the way pgx sanitizes it.
+// identifier has to reach the annotation the way pgx sanitizes it. Asserting
+// pgx.Identifier.Sanitize on its own tested pgx, not the plugin.
 func TestCopyFromTargetIsSanitized(t *testing.T) {
-	assert.Equal(t, `"public"."users"`, pgx.Identifier{"public", "users"}.Sanitize())
+	tracer := newRecordingTracer()
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+
+	recordCopyFromTarget(newSpanEvent(ctx, testConfig(t), "pgx.CopyFrom"),
+		pgx.Identifier{"public", "users"})
+
+	require.Len(t, tracer.events, 1)
+	assert.Equal(t, `"public"."users"`,
+		tracer.events[0].annotations[pinpoint.AnnotationArgs0],
+		"the sanitized copy target belongs in the Args0 annotation")
 }
 
 // Every End callback also runs for queries made outside a span. Closing a span

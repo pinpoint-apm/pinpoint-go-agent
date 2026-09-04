@@ -125,5 +125,9 @@ func TestOpenUsesTheInstrumentedDriver(t *testing.T) {
 	defer db.Close()
 
 	assert.Implements(t, (*driver.Driver)(nil), db.Driver())
-	assert.NotEqual(t, &mssql.Driver{}, db.Driver(), "the bare mssql driver was registered")
+	// A type assertion, not a comparison against a constructed driver value:
+	// that only catches a bare driver registered in exactly the same form, and
+	// passed for every other one.
+	_, bare := db.Driver().(*mssql.Driver)
+	assert.False(t, bare, "the bare mssql driver was registered, so nothing is traced")
 }

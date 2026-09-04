@@ -345,12 +345,19 @@ func Test_wrappedConn_WithContextRebinds(t *testing.T) {
 // A connection used without ever being given a context must still work: the
 // wrapper starts out bound to a background context, which is untraced.
 func Test_wrappedConn_WithoutAContext(t *testing.T) {
-	tracer := newCapturingTracer()
-	c := wrapConn(&fullRedisConn{}, "redis1")
+	c := wrapConn(&fullRedisConn{}, "redis1").(*wrappedConn)
 
 	_, err := c.Do("GET", "key")
 	require.NoError(t, err)
 	require.NoError(t, c.Send("SET", "key", "value"))
 
-	assert.Empty(t, tracer.events, "an untraced connection must not record a span event")
+	// A capturing tracer the connection was never given cannot observe
+	// anything, so asserting on one said nothing. What the untraced path owes
+	// the caller is that startSpanEvent opens no event and takes no lock, and
+	// the background context it starts out on is what makes that so.
+	assert.Equal(t, context.Background(), c.ctx, "the wrapper starts out untraced")
+	end := c.startSpanEvent(c.ctx, "redigo.Conn.Do()", "GET")
+	assert.True(t, c.opMu.TryLock(), "an untraced operation must not hold the span event lock")
+	c.opMu.Unlock()
+	assert.NotPanics(t, func() { end(nil) }, "the untraced end must be a no-op")
 }

@@ -198,7 +198,15 @@ func TestOpenUsesTheInstrumentedDriver(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	assert.NotEqual(t, mysql.MySQLDriver{}, db.Driver(), "the bare mysql driver was registered")
+	// A type switch over both forms, not a comparison against a constructed
+	// driver value: that only catches a bare driver registered in exactly the
+	// same form. The plugin registers MySQLDriver by value, and sql.Open hands
+	// it to OpenConnector, whose connector reports the driver as a pointer, so
+	// asserting either form alone passed with the bare driver registered.
+	switch db.Driver().(type) {
+	case mysql.MySQLDriver, *mysql.MySQLDriver:
+		assert.Fail(t, "the bare mysql driver was registered, so nothing is traced")
+	}
 	assert.Implements(t, (*driver.DriverContext)(nil), db.Driver(),
 		"the wrapper must keep the driver's OpenConnector reachable, or database/sql re-parses the dsn per connection")
 }

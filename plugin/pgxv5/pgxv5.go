@@ -82,12 +82,17 @@ func (t *pgxTracer) TraceBatchEnd(ctx context.Context, _ *pgx.Conn, data pgx.Tra
 }
 
 func (t *pgxTracer) TraceCopyFromStart(ctx context.Context, c *pgx.Conn, data pgx.TraceCopyFromStartData) context.Context {
-	if tracer := newSpanEvent(ctx, c.Config(), "pgx.CopyFrom"); tracer.IsSampled() {
-		se := tracer.SpanEvent()
-		se.Annotations().AppendString(pinpoint.AnnotationArgs0, data.TableName.Sanitize())
-	}
-
+	recordCopyFromTarget(newSpanEvent(ctx, c.Config(), "pgx.CopyFrom"), data.TableName)
 	return ctx
+}
+
+// recordCopyFromTarget annotates the copy target, which CopyFrom records in
+// place of a SQL statement. Separate from the callback because pgx hands that
+// a live *pgx.Conn, which no test can build; this is what a test can reach.
+func recordCopyFromTarget(tracer pinpoint.Tracer, target pgx.Identifier) {
+	if tracer.IsSampled() {
+		tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationArgs0, target.Sanitize())
+	}
 }
 
 func (t *pgxTracer) TraceCopyFromEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceCopyFromEndData) {

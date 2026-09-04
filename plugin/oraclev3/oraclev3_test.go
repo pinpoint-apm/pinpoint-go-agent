@@ -120,5 +120,8 @@ func TestOpenUsesTheInstrumentedDriver(t *testing.T) {
 	defer db.Close()
 
 	assert.Implements(t, (*driver.Driver)(nil), db.Driver())
-	assert.NotEqual(t, oracleDriver, db.Driver(), "the bare oracle driver was registered")
+	// A type assertion, not a comparison against a constructed driver value:
+	// that only catches a bare driver registered in exactly the same form, and
+	// passed for every other one.
+	assert.NotSame(t, oracleDriver, db.Driver(), "the bare oracle driver was registered, so nothing is traced")
 }
