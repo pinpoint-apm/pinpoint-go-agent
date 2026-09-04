@@ -38,6 +38,7 @@ Refer the [Plugin User Guide](doc/plugin_guide.md) for more information.
 * [Tracer, Span, and Annotation Contracts](doc/api_contracts.md) - the API rules to keep
 * [Troubleshooting](doc/troubleshooting.md) - when the trace does not show up
 * [Development Guide](doc/development.md) - build, test and extend the agent itself
+* [Java Agent Feature Parity Decisions](doc/java_parity.md) - which Java-only features are ported, and why
 
 ## Contributing
 

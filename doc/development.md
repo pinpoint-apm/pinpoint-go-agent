@@ -231,3 +231,4 @@ Contributor License Agreement, and should not break the build or any test.
 * [Plugin User Guide](plugin_guide.md)
 * [Configuration](config.md)
 * [Troubleshooting](troubleshooting.md)
+* [Java Agent Feature Parity Decisions](java_parity.md)
