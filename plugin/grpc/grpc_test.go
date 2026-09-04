@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/stretchr/testify/assert"
@@ -303,12 +304,27 @@ func (t *countingTracer) EndSpanEvent() { atomic.AddInt32(&t.ends, 1) }
 type fakeClientStream struct {
 	grpc.ClientStream
 	err error
+	// ctx stands in for the stream context gRPC cancels when a stream
+	// terminates, which is what ends an abandoned stream's span.
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+func newFakeClientStream(t *testing.T, err error) *fakeClientStream {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	return &fakeClientStream{err: err, ctx: ctx, cancel: cancel}
 }
 
 func (s *fakeClientStream) SendMsg(interface{}) error { return s.err }
 func (s *fakeClientStream) RecvMsg(interface{}) error { return s.err }
 func (s *fakeClientStream) CloseSend() error          { return s.err }
-func (s *fakeClientStream) Context() context.Context  { return context.Background() }
+func (s *fakeClientStream) Context() context.Context {
+	if s.ctx != nil {
+		return s.ctx
+	}
+	return context.Background()
+}
 
 // A gRPC stream is legally used from two goroutines at once - one sending, one
 // receiving - and either side can be the one that sees the stream end. The
@@ -448,8 +464,10 @@ func TestStreamClientInterceptor_StreamerError(t *testing.T) {
 // ended on.
 type forkingTracer struct {
 	pinpoint.Tracer
-	ends      int32
-	spanEnded bool
+	ends int32
+	// spanEnded is atomic: a stream abandoned by its context ends the span on
+	// the interceptor's watcher goroutine, which a test reads concurrently.
+	spanEnded atomic.Bool
 	child     *forkingTracer
 }
 
@@ -458,7 +476,7 @@ func newForkingTracer() *forkingTracer { return &forkingTracer{Tracer: pinpoint.
 func (t *forkingTracer) IsSampled() bool                     { return true }
 func (t *forkingTracer) NewSpanEvent(string) pinpoint.Tracer { return t }
 func (t *forkingTracer) EndSpanEvent()                       { atomic.AddInt32(&t.ends, 1) }
-func (t *forkingTracer) EndSpan()                            { t.spanEnded = true }
+func (t *forkingTracer) EndSpan()                            { t.spanEnded.Store(true) }
 func (t *forkingTracer) NewGoroutineTracer() pinpoint.Tracer {
 	t.child = newForkingTracer()
 	return t.child
@@ -478,7 +496,7 @@ func TestStreamClientInterceptor_StreamEndsOnItsOwnTracer(t *testing.T) {
 		lazyConn(t, "localhost:8080"),
 		"/testapp.Hello/Stream",
 		func(context.Context, *grpc.StreamDesc, *grpc.ClientConn, string, ...grpc.CallOption) (grpc.ClientStream, error) {
-			return &fakeClientStream{err: io.EOF}, nil
+			return newFakeClientStream(t, io.EOF), nil
 		})
 	require.NoError(t, err)
 
@@ -492,7 +510,7 @@ func TestStreamClientInterceptor_StreamEndsOnItsOwnTracer(t *testing.T) {
 		"the stream's end must not touch the caller's tracer")
 	assert.Equal(t, int32(1), atomic.LoadInt32(&caller.child.ends),
 		"the stream's event must end on its own tracer")
-	assert.True(t, caller.child.spanEnded, "the stream's goroutine span must be ended")
+	assert.True(t, caller.child.spanEnded.Load(), "the stream's goroutine span must be ended")
 }
 
 // A panicking invoker must still close the span event on its way up.
@@ -715,4 +733,33 @@ func Test_serverStream(t *testing.T) {
 
 	assert.Equal(t, "from-the-interceptor", s.Context().Value(ctxKey{}),
 		"Context must report the interceptor's context, not the transport's")
+}
+
+// A stream the caller abandons - no further Recv, no CloseSend, just a
+// cancelled context - used to leave its goroutine span unended, so the whole
+// async span never reached the collector. gRPC cancels the stream context on
+// every termination path, which is what ends it now.
+func TestStreamClientInterceptor_AbandonedStreamEndsItsSpan(t *testing.T) {
+	startAgent(t)
+	caller := newForkingTracer()
+
+	fake := newFakeClientStream(t, nil)
+	_, err := StreamClientInterceptor()(
+		pinpoint.NewContext(context.Background(), caller),
+		&grpc.StreamDesc{StreamName: "Stream"},
+		lazyConn(t, "localhost:8080"),
+		"/testapp.Hello/Stream",
+		func(context.Context, *grpc.StreamDesc, *grpc.ClientConn, string, ...grpc.CallOption) (grpc.ClientStream, error) {
+			return fake, nil
+		})
+	require.NoError(t, err)
+	require.NotNil(t, caller.child, "the stream must run on its own goroutine tracer")
+	require.False(t, caller.child.spanEnded.Load(), "the stream is still live")
+
+	fake.cancel()
+
+	assert.Eventually(t, func() bool { return caller.child.spanEnded.Load() },
+		time.Second, time.Millisecond, "an abandoned stream must end its own span")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&caller.ends),
+		"ending it must not touch the caller's tracer")
 }

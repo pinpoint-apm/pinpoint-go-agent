@@ -151,6 +151,18 @@ func StreamClientInterceptor() grpc.StreamClientInterceptor {
 			streamTracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeGrpc)
 		}
 
-		return &clientStream{ClientStream: stream, tracer: streamTracer}, nil
+		cs := &clientStream{ClientStream: stream, tracer: streamTracer}
+
+		// A stream the caller abandons - its context cancelled, or a deadline
+		// reached - makes no further Recv or CloseSend, so nothing ended its
+		// span and the whole async span was lost. gRPC cancels the stream's
+		// context on every termination path, and endSpan is idempotent, so
+		// this only does the work the methods above did not already do.
+		go func() {
+			<-stream.Context().Done()
+			cs.endSpan(stream.Context().Err())
+		}()
+
+		return cs, nil
 	}
 }
