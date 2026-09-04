@@ -156,10 +156,21 @@ IDL changes:
 
 The script downloads pinned versions of `protoc`, `protoc-gen-go`,
 `protoc-gen-go-grpc` and the gRPC mock generator into `.tools/`, so it does not
-depend on what happens to be installed. Sources come from
-`pinpoint-grpc-idl/proto`; `Log.proto` is excluded on purpose — it describes a
-log-shipping service this agent does not implement, and generating it would
-ship a client and a mock nothing calls.
+depend on what happens to be installed: each one has to report the pinned
+version before it is used, and a copy elsewhere on `PATH` is not taken. That
+matters because every generator stamps its own version into the files it
+writes, so an older one rewrites the whole tree along with the header saying
+which version wrote it.
+
+Sources come from the `pinpoint-grpc-idl` submodule, so run
+`git submodule update --init` first. `Log.proto` is excluded on purpose — it
+describes a log-shipping service this agent does not implement, and generating
+it would ship a client and a mock nothing calls.
+
+The `testify` line in the mock headers is the version the mock generator itself
+was built against, read out of its build info. It is not the version this
+module requires, which only has to be new enough to compile what the generator
+wrote.
 
 ## Adding a plugin
 

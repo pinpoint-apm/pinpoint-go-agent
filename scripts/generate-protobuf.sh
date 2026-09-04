@@ -81,8 +81,8 @@ protoc_platform() {
 }
 
 ensure_protoc() {
-	if have protoc; then
-		log "using protoc: $(command -v protoc)"
+	if have protoc && tool_reports protoc "$PROTOC_VERSION"; then
+		log "using protoc: $(command -v protoc) ($PROTOC_VERSION)"
 		return
 	fi
 
@@ -107,13 +107,43 @@ ensure_protoc() {
 	log "using protoc: $BIN_DIR/protoc"
 }
 
+# tool_reports asks a plugin for its version and reports whether it is the one
+# wanted. protoc-gen-go-grpc and protoc print theirs without the leading v, so
+# both spellings count.
+tool_reports() {
+	local bin="$1"
+	local want="$2"
+	local got
+
+	got="$("$bin" --version 2>&1 || true)"
+	case " $got " in
+		*" $want "* | *" ${want#v} "*)
+			return 0
+			;;
+	esac
+	return 1
+}
+
+# ensure_go_tool puts the pinned plugin in BIN_DIR and makes sure that is the
+# one that runs. It deliberately does not take whatever copy happens to be on
+# PATH: every plugin stamps its own version into the files it writes, and an
+# older one silently rewrites the whole generated tree along with the header
+# that says which version wrote it. A BIN_DIR copy already reporting the pinned
+# version is reused, so a warm .tools costs nothing.
+#
+# The optional fourth argument is passed to go install as -ldflags. go install
+# accepts build flags alongside a version suffix, which is how a tool that keeps
+# its version in a variable - protoc-gen-go-grpcmock, whose default is "dev" -
+# gets told what it is.
 ensure_go_tool() {
 	local bin_name="$1"
 	local module="$2"
 	local version="$3"
+	local ldflags="${4:-}"
+	local bin="$BIN_DIR/$bin_name"
 
-	if have "$bin_name"; then
-		log "using $bin_name: $(command -v "$bin_name")"
+	if [ -x "$bin" ] && tool_reports "$bin" "$version"; then
+		log "using $bin_name: $bin ($version)"
 		return
 	fi
 
@@ -121,7 +151,15 @@ ensure_go_tool() {
 
 	log "installing $bin_name $version"
 	mkdir -p "$BIN_DIR"
-	GOBIN="$BIN_DIR" go install "${module}@${version}"
+	if [ -n "$ldflags" ]; then
+		GOBIN="$BIN_DIR" go install -ldflags "$ldflags" "${module}@${version}"
+	else
+		GOBIN="$BIN_DIR" go install "${module}@${version}"
+	fi
+
+	tool_reports "$bin" "$version" ||
+		die "$bin_name reports \"$("$bin" --version 2>&1)\", want $version"
+	log "using $bin_name: $bin ($version)"
 }
 
 # collect_proto_sources fills PROTO_FILES with the .proto files to generate,
@@ -172,7 +210,10 @@ generate() {
 
 # generate_mocks emits testify mocks for every generated gRPC client, server and
 # stream into protobuf/mock, a package of its own so that testify stays out of
-# the protobuf package the agent ships. The M options below name the protobuf
+# the protobuf package the agent ships. The testify version each header records
+# is the one the generator itself was built against, read out of its build info
+# - not the one this module requires, which only has to be new enough to
+# compile what the generator wrote. The M options below name the protobuf
 # package as the one to import and "grpcmock" as the package to emit, which is
 # what import_package=true keys off; the package is named grpcmock rather than
 # mock so that importers can still call the testify package mock.
@@ -220,7 +261,8 @@ trap cleanup EXIT
 ensure_protoc
 ensure_go_tool protoc-gen-go google.golang.org/protobuf/cmd/protoc-gen-go "$PROTOC_GEN_GO_VERSION"
 ensure_go_tool protoc-gen-go-grpc google.golang.org/grpc/cmd/protoc-gen-go-grpc "$PROTOC_GEN_GO_GRPC_VERSION"
-ensure_go_tool protoc-gen-go-grpcmock github.com/lovoo/protoc-gen-go-grpcmock/cmd/protoc-gen-go-grpcmock "$PROTOC_GEN_GO_GRPCMOCK_VERSION"
+ensure_go_tool protoc-gen-go-grpcmock github.com/lovoo/protoc-gen-go-grpcmock/cmd/protoc-gen-go-grpcmock \
+	"$PROTOC_GEN_GO_GRPCMOCK_VERSION" "-X main.version=$PROTOC_GEN_GO_GRPCMOCK_VERSION"
 collect_proto_sources
 generate
 generate_mocks
