@@ -455,10 +455,10 @@ type forkingTracer struct {
 
 func newForkingTracer() *forkingTracer { return &forkingTracer{Tracer: pinpoint.NoopTracer()} }
 
-func (t *forkingTracer) IsSampled() bool                             { return true }
-func (t *forkingTracer) NewSpanEvent(string) pinpoint.Tracer         { return t }
-func (t *forkingTracer) EndSpanEvent()                               { atomic.AddInt32(&t.ends, 1) }
-func (t *forkingTracer) EndSpan()                                    { t.spanEnded = true }
+func (t *forkingTracer) IsSampled() bool                     { return true }
+func (t *forkingTracer) NewSpanEvent(string) pinpoint.Tracer { return t }
+func (t *forkingTracer) EndSpanEvent()                       { atomic.AddInt32(&t.ends, 1) }
+func (t *forkingTracer) EndSpan()                            { t.spanEnded = true }
 func (t *forkingTracer) NewGoroutineTracer() pinpoint.Tracer {
 	t.child = newForkingTracer()
 	return t.child
