@@ -113,9 +113,15 @@ Pairing `NewSpanEvent` and `EndSpanEvent` in one `defer` statement makes
 mis-nesting hard to write, and is why the examples in this documentation are
 written that way.
 
-**What happens on misuse:** events left open when `EndSpan()` runs are
-discarded and the agent warns `abnormal span - has unclosed event`. An extra
-`EndSpanEvent()` on an empty stack pops nothing.
+**What happens on misuse:** events left open when `EndSpan()` runs are ended by
+`EndSpan()` itself and still sent with the span; the agent warns
+`abnormal span - N unclosed event(s) ended by EndSpan`. Their end time is when
+`EndSpan()` ran, not when the work actually finished, so their durations are
+wrong — but they are kept, because their sequence numbers were already handed
+out and a span whose event sequence has holes makes the collector rebuild the
+call tree against parents that never arrive. This follows the C++ agent; the
+Java agent instead drops the whole span. An extra `EndSpanEvent()` on an empty
+stack pops nothing.
 
 ## 5. Recorders Are Views, Not Owned Objects
 

@@ -104,7 +104,7 @@ func defaultSpan(agent *agent) *span {
 	span.goroutineId = -1
 	span.asyncId = noneAsyncId
 	span.eventStack = newStack()
-	span.spanEvents = make([]*spanEvent, 0, defaultEventChunkSize)
+	span.spanEvents = make([]*spanEvent, 0, span.cfg.spanEventChunkSize)
 	span.errorChains = make([]*exception, 0)
 
 	return &span
@@ -138,9 +138,15 @@ func (span *span) EndSpan() {
 		span.agent.stats.collectResponseTime(span.elapsed)
 	}
 
-	if span.eventStack.len() > 0 {
-		span.eventStack.empty()
-		Log("span").Warnf("abnormal span - has unclosed event")
+	// Unbalanced end: the leftover events are ended and still recorded, as the
+	// C++ agent does. Their sequence numbers were already handed out, so
+	// dropping them would send a span whose event sequence has holes and the
+	// collector would rebuild the call tree against the missing parents.
+	if leftover := span.eventStack.endAll(); len(leftover) > 0 {
+		Log("span").Warnf("abnormal span - %d unclosed event(s) ended by EndSpan", len(leftover))
+		for _, se := range leftover {
+			span.appendEndedSpanEvent(se)
+		}
 	}
 
 	span.spanEventLock.Lock()
@@ -626,7 +632,7 @@ func (span *span) newEventChunk(final bool) *spanChunk {
 		endPoint:   span.endPoint,
 	}
 
-	capacity := defaultEventChunkSize
+	capacity := span.cfg.spanEventChunkSize
 	if final {
 		capacity = 0
 	}
@@ -722,14 +728,22 @@ func (s *stack) peek() (*spanEvent, bool) {
 	return nil, false
 }
 
-func (s *stack) empty() {
+// endAll ends every still-open event, most-recent first to preserve the
+// original LIFO close order, and returns them so the caller can still record
+// them. Returns nil when the stack is empty.
+func (s *stack) endAll() []*spanEvent {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	// end most-recent first to preserve the original LIFO close order
+	if len(s.buf) == 0 {
+		return nil
+	}
+	ended := make([]*spanEvent, 0, len(s.buf))
 	for i := len(s.buf) - 1; i >= 0; i-- {
 		s.buf[i].end()
+		ended = append(ended, s.buf[i])
 		s.buf[i] = nil
 	}
 	s.buf = s.buf[:0]
+	return ended
 }

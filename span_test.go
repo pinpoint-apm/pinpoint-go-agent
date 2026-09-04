@@ -842,3 +842,30 @@ func TestSpan_ConcurrentEndSpanEnqueuesOneChunk(t *testing.T) {
 
 	assert.Equal(t, 1, agent.spanQueue.length())
 }
+
+// Unbalanced end: events left open are ended and still sent, so the converted
+// PSpan keeps every sequence number that was handed out.
+func TestSpan_UnclosedEventsAreEndedAndSent(t *testing.T) {
+	span := defaultTestSpan()
+	span.operationName = "op"
+	span.NewSpanEvent("outer")
+	span.NewSpanEvent("inner")
+	span.EndSpan() // both events left open
+
+	chunk, ok := span.agent.spanQueue.tryDequeue()
+	if !assert.True(t, ok, "final chunk enqueued") {
+		return
+	}
+
+	pspan := (&spanMessageBuilder{}).makePSpanMessage(chunk).GetSpan()
+	if !assert.NotNil(t, pspan, "final chunk converts to a PSpan") {
+		return
+	}
+
+	seqs := make([]int32, 0, len(pspan.SpanEvent))
+	for _, pse := range pspan.SpanEvent {
+		seqs = append(seqs, pse.Sequence)
+	}
+	assert.Equal(t, []int32{0, 1}, seqs, "no sequence hole")
+	assert.Equal(t, 0, span.eventStack.len(), "stack.len()")
+}
