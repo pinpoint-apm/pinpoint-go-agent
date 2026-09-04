@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,18 +14,17 @@ import (
 // recorders were published as one immutable value, the reload callback
 // reassigned ten plain package globals that every request read.
 func TestHttpConfigReloadRace(t *testing.T) {
-	config, err := pinpoint.NewConfig(
-		pinpoint.WithAppName("raceApp"),
+	// usePluginConfig, not a bare NewTestAgent: it shuts the agent down and
+	// restores curHttpConfig afterwards. Left registered, this test's agent
+	// and its filters stayed published and leaked into every later test that
+	// starts an agent of its own.
+	usePluginConfig(t,
 		WithHttpServerExcludeUrl([]string{"/skip/*", "/**/*.do"}),
 		WithHttpServerExcludeMethod([]string{"put", "delete"}),
 		WithHttpServerStatusCodeError([]string{"5xx", "302"}),
 		WithHttpServerRecordRequestHeader([]string{"foo", "bar"}),
 		WithHttpServerRecordRespondHeader([]string{"HEADERS-ALL"}),
 	)
-	require.NoError(t, err)
-
-	_, err = pinpoint.NewTestAgent(config, t)
-	require.NoError(t, err)
 
 	done := make(chan struct{})
 	stopped := func() bool {

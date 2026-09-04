@@ -187,6 +187,10 @@ func TestOpenUsesTheInstrumentedDriver(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	assert.NotSame(t, &pq.Driver{}, db.Driver(), "the bare pq driver was registered")
+	// A type assertion, not NotSame against a fresh &pq.Driver{}: that pointer
+	// is newly allocated and never identical to anything, so the check passed
+	// even with the bare driver registered.
+	_, bare := db.Driver().(*pq.Driver)
+	assert.False(t, bare, "the bare pq driver was registered, so nothing is traced")
 	assert.Implements(t, (*driver.Driver)(nil), db.Driver())
 }

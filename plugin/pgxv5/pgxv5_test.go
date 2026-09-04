@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -374,6 +375,11 @@ func TestOpenUsesTheInstrumentedDriver(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
+	// *stdlib.Driver satisfies both interfaces on its own, so the Implements
+	// checks alone passed with the bare driver registered. The type assertion
+	// is what rules that out.
+	_, bare := db.Driver().(*stdlib.Driver)
+	assert.False(t, bare, "the bare stdlib driver was registered, so nothing is traced")
 	assert.Implements(t, (*driver.Driver)(nil), db.Driver())
 	assert.Implements(t, (*driver.DriverContext)(nil), db.Driver(),
 		"the wrapper must keep the driver's OpenConnector reachable")

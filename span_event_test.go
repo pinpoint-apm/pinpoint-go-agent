@@ -372,9 +372,11 @@ func Test_spanEvent_SetErrorRateLimitsExceptionChain(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgErrorTraceCallStack, true)
 	cfg.Set(CfgErrorNewThroughput, 1)
-	span := testSpanWithConfig(cfg)
 
-	// The subtests share the span, so the burst is exhausted in order.
+	// Each subtest gets its own span so that span.err has to be set by its own
+	// SetError instead of being read back from the previous subtest. The
+	// limiter lives in the shared config snapshot, which newTestAgent does not
+	// republish, so the burst is still exhausted in order.
 	tests := []struct {
 		name    string
 		sampled bool
@@ -384,6 +386,7 @@ func Test_spanEvent_SetErrorRateLimitsExceptionChain(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			span := testSpanWithConfig(cfg)
 			se := newSpanEvent(span, "query")
 			se.SetError(errors.New(tt.name))
 

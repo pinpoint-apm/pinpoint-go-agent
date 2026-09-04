@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/stretchr/testify/require"
 )
 
 // TestConfigReloadRace drives a config reload concurrently with the reads a
@@ -60,9 +61,16 @@ Http:
 		t.Fatal(err)
 	}
 	agent := newTestAgent(config)
-	// sqlConn reads the live config through the global agent, which newTestAgent
-	// registered above with this very Config.
+	// sqlConn reads the live config through the global agent, so this agent has
+	// to be the global one while the test runs. newTestAgent does not register
+	// it, and without this the sqlConn read below went to the Noop agent's
+	// config and never touched the one being reloaded.
+	previousAgent := GetAgent()
+	setGlobalAgent(agent)
+	t.Cleanup(func() { setGlobalAgent(previousAgent) })
 	conn := &sqlConn{}
+	require.Same(t, config.load(), conn.cfg(),
+		"the sqlConn has to read the config this test reloads, or its read races nothing")
 
 	cfgFileViper := viper.New()
 	cfgFileViper.SetConfigFile(cfgFile)
