@@ -33,7 +33,10 @@ func (s *rateSampler) isSampled() bool {
 	if s.rate == 0 {
 		return false
 	}
-	samplingCount := atomic.AddUint64(&s.counter, 1)
+	// The pre-increment value decides, like Java's CountingSampler doing a
+	// getAndIncrement: the first request of the process is sampled and the
+	// rate-th one after it, not the rate-th request.
+	samplingCount := atomic.AddUint64(&s.counter, 1) - 1
 	isSampled := samplingCount % s.rate
 	return isSampled == 0
 }
@@ -113,10 +116,11 @@ func newThroughputLimitTraceSampler(base sampler, newTps int, continueTps int) *
 		contLimiter *rate.Limiter
 	)
 
-	// The burst is the tps itself, not 1: the Java and C++ agents refill a
-	// fixed window with tps tokens every second, so a burst of tps requests
-	// arriving at once is sampled in full. A burst of 1 would spread the same
-	// tps into one sample per 1/tps seconds and drop most of a bursty load.
+	// The burst is the tps itself, not 1: Java's RateLimitTraceSampler uses a
+	// Guava RateLimiter, a token bucket equivalent to x/time/rate that holds up
+	// to one second of permits, so a burst of tps requests arriving at once is
+	// sampled in full. A burst of 1 would spread the same tps into one sample
+	// per 1/tps seconds and drop most of a bursty load.
 	if newTps > 0 {
 		newLimiter = rate.NewLimiter(per(newTps, time.Second), newTps)
 	}

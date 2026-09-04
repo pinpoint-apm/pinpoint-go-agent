@@ -21,8 +21,9 @@ func Test_rateSampler_isSampled(t *testing.T) {
 		want   bool
 	}{
 		{"1", fields{1, 0}, true},
-		{"2", fields{10, 0}, false},
-		{"3", fields{10, 9}, true},
+		{"2", fields{10, 0}, true},
+		{"3", fields{10, 9}, false},
+		{"4", fields{10, 10}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -35,6 +36,18 @@ func Test_rateSampler_isSampled(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The first request of a fresh sampler is sampled, like Java's CountingSampler,
+// and the rate-th one after it - not the rate-th request.
+func Test_rateSampler_samplesFirstRequest(t *testing.T) {
+	s := newRateSampler(10)
+
+	assert.True(t, s.isSampled(), "request 1")
+	for i := 2; i <= 10; i++ {
+		assert.False(t, s.isSampled(), "request %d", i)
+	}
+	assert.True(t, s.isSampled(), "request 11")
 }
 
 func Test_percentSampler_isSampled(t *testing.T) {
@@ -77,7 +90,7 @@ func Test_basicTraceSampler_isNewSampled(t *testing.T) {
 		want   bool
 	}{
 		{"1", fields{newRateSampler(1)}, true},
-		{"2", fields{newRateSampler(10)}, false},
+		{"2", fields{&rateSampler{rate: 10, counter: 1}}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -125,7 +138,7 @@ func Test_throughputLimitTraceSampler_isNewSampled(t *testing.T) {
 		want   bool
 	}{
 		{"1", fields{newThroughputLimitTraceSampler(newRateSampler(1), 10, 10)}, true},
-		{"2", fields{newThroughputLimitTraceSampler(newRateSampler(10), 10, 10)}, false},
+		{"2", fields{newThroughputLimitTraceSampler(&rateSampler{rate: 10, counter: 1}, 10, 10)}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -249,7 +262,7 @@ func Test_throughputLimitTraceSampler_burst(t *testing.T) {
 	stats := newAgentStats()
 
 	// a burst of tps requests arriving at once is sampled in full: the limiter
-	// starts with tps tokens, like the fixed window of the Java and C++ agents.
+	// starts with tps tokens, like the Guava RateLimiter of the Java agent.
 	assert.Equal(t, tps, countConcurrent(tps, func() bool { return s.isNewSampled(stats) }), "new burst")
 	assert.Equal(t, tps, countConcurrent(tps, func() bool { return s.isContinueSampled(stats) }), "continue burst")
 

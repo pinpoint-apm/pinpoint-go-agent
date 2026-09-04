@@ -49,15 +49,15 @@ func TestReloadsConfigFileAndAppliesNewSamplingRate(t *testing.T) {
 		return agent.Config().Int(pinpoint.CfgSamplingCounterRate) == 2
 	}, waitTimeout), "the config-file watcher never applied the new sampling rate")
 
-	// The reloaded sampler admits every second new trace, and everything else
-	// keeps tracing.
-	expected := []bool{false, true, false, true}
+	// The reloaded sampler starts a fresh count, so it admits its first new
+	// trace and every second one after that, and everything else keeps tracing.
+	expected := []bool{true, false, true, false}
 	sampled := driveSamplingPattern(t, agent, "reload.probe", "/reloaded/after/", expected, nil)
 	require.NotEmpty(t, sampled)
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool {
 		return findSpanByRpc(s, "/reloaded/before") != nil &&
-			findSpanByRpc(s, "/reloaded/after/1") != nil
+			findSpanByRpc(s, "/reloaded/after/0") != nil
 	}, waitTimeout))
 
 	s := mc.Snapshot()

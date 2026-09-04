@@ -119,7 +119,9 @@ func TestAppliesCounterAndParentSamplingAndReportsDecisions(t *testing.T) {
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return agentStatCount(s) >= 1 }, waitTimeout))
 	baseline := agentStatCount(mc.Snapshot())
 
-	expected := []bool{false, false, true, false, false, true}
+	// The counter sampler admits the first new trace and then one in every
+	// CounterRate after it.
+	expected := []bool{true, false, false, true, false, false}
 	sampledTraceID := driveSamplingPattern(t, agent, "sampling.counter", "/sampling/counter/", expected, nil)
 	require.NotEmpty(t, sampledTraceID)
 

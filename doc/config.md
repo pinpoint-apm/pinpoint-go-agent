@@ -456,6 +456,10 @@ Sample 1/rate. In other words, if the rate is 1, then it will be 100% and if it 
 
 ### Sampling.PercentRate
 Sampling.PercentRate option sets the sampling rate for a 'percent sampler'.
+A rate under the supported minimum is clamped up to 0.01, so a rate of 0 samples
+0.01% rather than nothing. This differs from the Java agent, which turns a rate
+of 0 or less into a sampler that never samples. To sample no new transaction,
+set `Sampling.Type` to "COUNTER" and `Sampling.CounterRate` to 0.
 
 * --pinpoint-sampling-percentrate
 * PINPOINT_GO_SAMPLING_PERCENTRATE
