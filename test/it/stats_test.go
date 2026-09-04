@@ -18,8 +18,7 @@ import (
 const urlStatFlushInterval = 30 * time.Second
 
 func TestStreamsAgentStatistics(t *testing.T) {
-	// A one-second interval, matching production: getStats truncates the
-	// measured interval to whole seconds, so a shorter tick reports 0.
+	// The configuration floor, and so the shortest tick this test can wait on.
 	cfg := defaultAgentConfig()
 	cfg.statCollectInterval = 1000
 	mc, agent := startStack(t, cfg)
@@ -53,7 +52,9 @@ func TestStreamsAgentStatistics(t *testing.T) {
 	stat := sampledNewAgentStat(s)
 	require.NotNil(t, stat)
 	assert.Greater(t, stat.GetTimestamp(), int64(0))
-	assert.Equal(t, int64(1000), stat.GetCollectInterval())
+	// The reported interval is the wall clock measured between ticks, not the
+	// configured value, so a ticker that fires late reports a few ms over.
+	assert.InDelta(t, 1000, stat.GetCollectInterval(), 100)
 	require.NotNil(t, stat.GetResponseTime())
 	require.NotNil(t, stat.GetTotalThread())
 	assert.Greater(t, stat.GetTotalThread().GetTotalThreadCount(), int64(0))
