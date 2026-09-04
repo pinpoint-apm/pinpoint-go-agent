@@ -171,9 +171,10 @@ func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
 }
 
 // Go's EndSpan finalizes a span whose events were left open by the
-// application: the unclosed events are ended and discarded, and only the
-// properly closed events reach the collector. The span itself is still
-// delivered exactly once for the closed events.
+// application: the unclosed events are ended at EndSpan and sent with the
+// span, as the C++ agent does. Dropping them would leave holes in the
+// sequence and break the collector's call tree. The span itself is still
+// delivered exactly once.
 func TestFinalizesSpanWithUnclosedEvents(t *testing.T) {
 	mc, agent := startStack(t, defaultAgentConfig())
 
@@ -193,14 +194,16 @@ func TestFinalizesSpanWithUnclosedEvents(t *testing.T) {
 	tracer.EndSpan()
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool {
-		return countSpansByRpc(s, "/span-lifecycle") == 1 && len(eventsForSpan(s, spanID)) >= 1
+		return countSpansByRpc(s, "/span-lifecycle") == 1 && len(eventsForSpan(s, spanID)) >= 2
 	}, waitTimeout))
 
 	s := mc.Snapshot()
 	assert.Equal(t, 1, countSpansByRpc(s, "/span-lifecycle"))
 	events := eventsForSpan(s, spanID)
-	require.Len(t, events, 1)
+	require.Len(t, events, 2)
 	assert.Equal(t, int32(pinpoint.ServiceTypeGoFunction), events[0].GetServiceType())
+	assert.Equal(t, int32(pinpoint.ServiceTypeRedis), events[1].GetServiceType(),
+		"an event left open at EndSpan is ended and sent, not dropped")
 }
 
 func TestPreservesNestedEventSequenceAndDepth(t *testing.T) {
