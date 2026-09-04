@@ -282,6 +282,42 @@ func Test_span_getExceptionChainId_isPerAgent(t *testing.T) {
 	}
 }
 
+// A chain the Error.NewThroughput limiter denies carries no exception id and no
+// EXCEPTION_CHAIN_ID annotation, as Java's DISABLED sampling state records
+// neither. The span is still marked failed either way.
+func Test_spanEvent_SetErrorRateLimitsExceptionChain(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgErrorTraceCallStack, true)
+	cfg.Set(CfgErrorNewThroughput, 1)
+	span := testSpanWithConfig(cfg)
+
+	// The subtests share the span, so the burst is exhausted in order.
+	tests := []struct {
+		name    string
+		sampled bool
+	}{
+		{"first error is sampled", true},
+		{"second error is denied", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			se := newSpanEvent(span, "query")
+			se.SetError(errors.New(tt.name))
+
+			assert.Equal(t, 1, span.err, "span failure marking")
+			if tt.sampled {
+				assert.NotZero(t, se.exceptionId, "exceptionId")
+				require.Len(t, se.annotations.values, 1)
+				assert.Equal(t, int32(AnnotationExceptionChainId), se.annotations.values[0].key)
+				assert.Equal(t, se.exceptionId, se.annotations.values[0].l)
+			} else {
+				assert.Zero(t, se.exceptionId, "exceptionId")
+				assert.Empty(t, se.annotations.values, "annotations")
+			}
+		})
+	}
+}
+
 func Test_spanEvent_SetErrorFailsTransaction(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgHttpUrlStatEnable, true)

@@ -738,6 +738,25 @@ Error.CallStackDepth option sets the max depth of callstack to be dumped.
 * max: 1024
 * dynamic
 
+### Error.NewThroughput
+Error.NewThroughput option sets the max number of new exception chains recorded per second,
+so that a burst of errors cannot crowd the exception metadata out of the agent's metadata queue.
+An error whose chain is already recorded is a continuation and is never limited.
+0 or less means unlimited.
+
+When the limit is hit, the error loses its call stack and its `EXCEPTION_CHAIN_ID` annotation.
+Everything else is unaffected: the span is still marked failed, and the error function id and
+message are still recorded.
+
+This corresponds to the Java agent's `profiler.exceptiontrace.new.throughput`.
+
+* --pinpoint-error-newthroughput
+* PINPOINT_GO_ERROR_NEWTHROUGHPUT
+* WithErrorNewThroughput()
+* type: int
+* default: 1000
+* dynamic
+
 ### Error.IgnoreErrors
 Error.IgnoreErrors option lists errors that are recorded as exception info (error function id and message)
 but do not mark the span as failed (`err` stays 0, and the URL statistics count the request as a success).
@@ -985,7 +1004,7 @@ Two things make a reload not happen, and both are easy to miss:
 | Span limits | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence` |
 | SQL | `SQL.TraceBindValue`, `SQL.MaxBindValueSize`, `SQL.TraceCommit`, `SQL.TraceRollback`, `SQL.TraceQueryStat`, `SQL.EnableRawSqlCache`, `SQL.CacheLengthLimit` |
 | Logging | `Log.Level`, `Log.Output`, `Log.MaxSize` |
-| Errors | `Error.TraceCallStack`, `Error.CallStackDepth`, `Error.IgnoreErrors` |
+| Errors | `Error.TraceCallStack`, `Error.CallStackDepth`, `Error.NewThroughput`, `Error.IgnoreErrors` |
 | HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError` |
 | HTTP client | `Http.Client.RecordRequestHeader`, `Http.Client.RecordResponseHeader`, `Http.Client.RecordRequestCookie` |
 | URL statistics | `Http.UrlStat.Enable`, `Http.UrlStat.LimitSize`, `Http.UrlStat.WithMethod` |

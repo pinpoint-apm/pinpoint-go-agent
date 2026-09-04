@@ -129,8 +129,13 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 		se.parentSpan.err = 1
 	}
 	if cfg.errorTraceCallStack && se.parentSpan.canAddErrorChain() {
-		se.exceptionId = se.parentSpan.traceCallStack(e, errName, cfg.errorCallStackDepth, time.UnixMilli(se.startTime))
-		se.Annotations().AppendLong(AnnotationExceptionChainId, se.exceptionId)
+		// A chain the Error.NewThroughput limiter denied is not on the wire, so
+		// it gets no annotation either - Java's DISABLED sampling state skips
+		// the EXCEPTION_CHAIN_ID annotation the same way.
+		if eid := se.parentSpan.traceCallStack(e, errName, cfg.errorCallStackDepth, time.UnixMilli(se.startTime)); eid != noExceptionChainId {
+			se.exceptionId = eid
+			se.Annotations().AppendLong(AnnotationExceptionChainId, eid)
+		}
 	}
 }
 

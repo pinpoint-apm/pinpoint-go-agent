@@ -768,6 +768,25 @@ func Test_reloadConfig_keepsSamplerWhenSamplingUnchanged(t *testing.T) {
 	assert.NotSame(t, sampler, config.load().sampler, "sampling change did not rebuild the sampler")
 }
 
+func Test_reloadConfig_keepsExceptionLimiterWhenThroughputUnchanged(t *testing.T) {
+	config, err := NewConfig(WithAppName("reloadApp"), WithErrorNewThroughput(10))
+	assert.NoError(t, err)
+
+	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	assert.NoError(t, os.WriteFile(cfgFile, []byte("Span:\n  MaxCallStackDepth: 12\n"), 0o600))
+	cfgFileViper := viper.New()
+	cfgFileViper.SetConfigFile(cfgFile)
+
+	limiter := config.load().newExceptionLimiter
+	assert.NotNil(t, limiter)
+	config.reloadConfig(cfgFileViper)
+	assert.Same(t, limiter, config.load().newExceptionLimiter, "unrelated reload rebuilt the limiter")
+
+	assert.NoError(t, os.WriteFile(cfgFile, []byte("Error:\n  NewThroughput: 20\n"), 0o600))
+	config.reloadConfig(cfgFileViper)
+	assert.NotSame(t, limiter, config.load().newExceptionLimiter, "throughput change did not rebuild the limiter")
+}
+
 func TestNewConfig_HttpUrlStatQueueSizeIsIndependentOfSpanQueueSize(t *testing.T) {
 	c, err := NewConfig(WithAppName("TestApp"), WithSpanQueueSize(8192))
 	assert.NoError(t, err)

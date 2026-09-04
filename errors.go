@@ -123,6 +123,12 @@ func (span *span) findError(err error) *exception {
 // hang the request goroutine inside SetError.
 const maxCauserDepth = 64
 
+// noExceptionChainId is returned instead of a chain id when the rate limiter
+// denies a new chain. Real ids come from exceptionIdGen.Add(1) and so start at
+// 1, as Java's ExceptionChainSampler.INITIAL_EXCEPTION_ID does: 0 cannot
+// collide with one.
+const noExceptionChainId = 0
+
 func (span *span) getExceptionChainId(err error) (int64, bool) {
 	if ec := span.findError(err); ec != nil {
 		return ec.exceptionId, false
@@ -135,6 +141,13 @@ func (span *span) getExceptionChainId(err error) (int64, bool) {
 		}
 	}
 
+	// Only a new chain is rate limited, like Java's DefaultExceptionRecorder
+	// asking ExceptionChainSampler.isNewSampled() just for a new id: a denied
+	// request yields the DISABLED state, recording nothing. The id is minted
+	// after the permit is granted, so a denial does not burn one.
+	if l := span.cfg.newExceptionLimiter; l != nil && !l.Allow() {
+		return noExceptionChainId, false
+	}
 	return span.agent.exceptionIdGen.Add(1), true
 }
 
@@ -166,7 +179,8 @@ func (span *span) addCauserCallStack(err error, eid int64, errorTime time.Time) 
 
 // traceCallStack records err (depth 0) and its cause chain on the span.
 // className is the name given to SetError, or "" to use the error's type
-// name; errorTime is the start time of the span event that failed.
+// name; errorTime is the start time of the span event that failed. It returns
+// the chain id, or noExceptionChainId when the rate limiter denied a new chain.
 func (span *span) traceCallStack(err error, className string, depth int, errorTime time.Time) int64 {
 	span.errorChainsLock.Lock()
 	defer span.errorChainsLock.Unlock()

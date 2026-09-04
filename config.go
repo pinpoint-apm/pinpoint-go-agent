@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cast"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"golang.org/x/time/rate"
 )
 
 // Config option keys
@@ -91,6 +92,7 @@ const (
 	CfgErrorTraceCallStack            = "Error.TraceCallStack"
 	CfgErrorCallStackDepth            = "Error.CallStackDepth"
 	CfgErrorIgnoreErrors              = "Error.IgnoreErrors"
+	CfgErrorNewThroughput             = "Error.NewThroughput"
 	CfgUIDVersion                     = "Uid.Version"
 	CfgServiceName                    = "ServiceName"
 	CfgApiKey                         = "ApiKey"
@@ -102,6 +104,9 @@ const (
 	samplingTypePercent = "PERCENT"
 
 	defaultErrorCallStackDepth = 32
+	// New exception chains a second, like the Java agent's
+	// profiler.exceptiontrace.new.throughput default.
+	defaultErrorNewThroughput = 1000
 	// Bound the per-error runtime.Callers allocation. This option is dynamic
 	// and can come from a config file, so an accidental huge value must not turn
 	// one instrumented error into an allocation spike or an integer-overflow
@@ -218,6 +223,7 @@ func initConfig() {
 	AddConfig(CfgErrorTraceCallStack, CfgBool, false, true)
 	AddConfig(CfgErrorCallStackDepth, CfgInt, defaultErrorCallStackDepth, true)
 	AddConfig(CfgErrorIgnoreErrors, CfgStringSlice, []string{}, true)
+	AddConfig(CfgErrorNewThroughput, CfgInt, defaultErrorNewThroughput, true)
 	AddConfig(CfgUIDVersion, CfgString, "v3", false)
 	AddConfig(CfgServiceName, CfgString, "", false)
 	AddConfig(CfgApiKey, CfgString, "", false)
@@ -287,6 +293,10 @@ type Config struct {
 type configSnapshot struct {
 	values  map[string]interface{}
 	sampler traceSampler
+	// newExceptionLimiter caps how many new exception chains a second are
+	// recorded, the counterpart of the Java agent's ExceptionChainSampler.
+	// nil means unlimited.
+	newExceptionLimiter *rate.Limiter
 
 	collectUrlStat       bool              // CfgHttpUrlStatEnable
 	urlStatLimitSize     int               // CfgHttpUrlStatLimitSize
@@ -904,6 +914,7 @@ func (config *Config) publish() {
 		errorIgnoreRules:     parseIgnoreErrorRules(cast.ToStringSlice(values[CfgErrorIgnoreErrors])),
 	}
 	snapshot.sampler = newTraceSampler(config.load(), values)
+	snapshot.newExceptionLimiter = newExceptionLimiter(config.load(), values)
 
 	config.snapshot.Store(snapshot)
 }
@@ -929,6 +940,26 @@ func newTraceSampler(prev *configSnapshot, values map[string]interface{}) traceS
 		return newThroughputLimitTraceSampler(baseSampler, newTps, continueTps)
 	}
 	return newBasicTraceSampler(baseSampler)
+}
+
+// newExceptionLimiter builds the rate limiter on new exception chain ids, the
+// counterpart of the Java agent's ExceptionChainSampler; a throughput of 0 or
+// less means unlimited. Like newTraceSampler it carries the previous limiter
+// over when the option did not change, so an unrelated reload does not refill
+// the token bucket.
+func newExceptionLimiter(prev *configSnapshot, values map[string]interface{}) *rate.Limiter {
+	if prev != nil && sameValues(prev.values, values, []string{CfgErrorNewThroughput}) {
+		return prev.newExceptionLimiter
+	}
+
+	tps := cast.ToInt(values[CfgErrorNewThroughput])
+	if tps <= 0 {
+		return nil
+	}
+	// The burst is the tps itself, for the reason newThroughputLimitTraceSampler
+	// documents: Java builds this limiter from a Guava RateLimiter, which holds
+	// up to one second of permits.
+	return rate.NewLimiter(per(tps, time.Second), tps)
 }
 
 // sameValues compares config values with DeepEqual: a value can be a slice
@@ -1515,6 +1546,14 @@ func WithErrorIgnoreErrors(rules ...string) ConfigOption {
 func WithErrorCallStackDepth(depth int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgErrorCallStackDepth].value = depth
+	}
+}
+
+// WithErrorNewThroughput sets the maximum number of new exception chains
+// recorded per second. 0 or less means unlimited.
+func WithErrorNewThroughput(tps int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgErrorNewThroughput].value = tps
 	}
 }
 

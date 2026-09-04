@@ -128,6 +128,77 @@ func TestSpan_TraceCallStackUsesGivenClassName(t *testing.T) {
 	assert.Equal(t, "MyError", span.errorChains[0].className)
 }
 
+// Error.NewThroughput limits new exception chains, like the Java agent's
+// ExceptionChainSampler; 0 or less means unlimited. The burst is one second of
+// permits, so the first tps chains are recorded and the rest denied without
+// waiting for a refill.
+func TestSpan_TraceCallStackLimitsNewChains(t *testing.T) {
+	tests := []struct {
+		name       string
+		throughput int
+		recorded   int
+	}{
+		{"unlimited", 0, 3},
+		{"negative is unlimited", -1, 3},
+		{"limited to the burst", 2, 2},
+		{"limited to one", 1, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := defaultConfig()
+			cfg.Set(CfgErrorNewThroughput, tt.throughput)
+			span := testSpanWithConfig(cfg)
+
+			ids := make([]int64, 0, 3)
+			for i := 0; i < 3; i++ {
+				ids = append(ids, span.traceCallStack(fmt.Errorf("boom %d", i), "", 32, time.Now()))
+			}
+
+			assert.Len(t, span.errorChains, tt.recorded, "recorded chains")
+			for i, id := range ids {
+				if i < tt.recorded {
+					assert.NotEqual(t, int64(noExceptionChainId), id, "chain id %d", i)
+				} else {
+					assert.Equal(t, int64(noExceptionChainId), id, "denied chain id %d", i)
+				}
+			}
+		})
+	}
+}
+
+// A denied chain records nothing at all - not the error, not its causes - and
+// does not burn an id, as Java asks isNewSampled() before nextErrorId().
+func TestSpan_TraceCallStackDeniedRecordsNothing(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgErrorNewThroughput, 1)
+	span := testSpanWithConfig(cfg)
+
+	require.NotEqual(t, int64(noExceptionChainId), span.traceCallStack(errors.New("first"), "", 32, time.Now()))
+	require.Len(t, span.errorChains, 1)
+
+	denied := span.traceCallStack(fmt.Errorf("outer: %w", errors.New("inner")), "", 32, time.Now())
+	assert.Equal(t, int64(noExceptionChainId), denied, "denied chain id")
+	assert.Len(t, span.errorChains, 1, "denied chain recorded on the span")
+	assert.Equal(t, int64(1), span.agent.exceptionIdGen.Load(), "denied chain burned an id")
+}
+
+// Only a new chain asks the limiter: an error already recorded on the span, or
+// one whose cause is, keeps reporting its id after the burst is exhausted.
+func TestSpan_TraceCallStackContinuesChainWhenLimiterExhausted(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgErrorNewThroughput, 1)
+	span := testSpanWithConfig(cfg)
+
+	inner := errors.New("inner")
+	outer := fmt.Errorf("outer: %w", inner)
+	eid := span.traceCallStack(outer, "", 32, time.Now())
+	require.NotEqual(t, int64(noExceptionChainId), eid)
+	require.Len(t, span.errorChains, 2, "error and its cause")
+
+	assert.Equal(t, eid, span.traceCallStack(outer, "", 32, time.Now()), "same error")
+	assert.Equal(t, eid, span.traceCallStack(fmt.Errorf("again: %w", inner), "", 32, time.Now()), "recorded cause")
+}
+
 func Test_splitName_NoDot(t *testing.T) {
 	module, fn := splitName("main")
 	assert.Equal(t, "unknown", module, "module name")
