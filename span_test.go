@@ -676,6 +676,44 @@ func TestSpan_EndSpanEventRepanicsOriginalValue(t *testing.T) {
 // The event that records a panic must still be shipped: EndSpanEvent used to
 // re-panic before appending the popped event, so the crash site's event never
 // reached the collector.
+// A call stack overflow blocks span events only; span.SetError must still
+// record the transaction failure and its exception info on the PSpan.
+func TestSpan_SetErrorDuringEventOverflow(t *testing.T) {
+	config := defaultConfig()
+	config.Set(CfgSpanMaxCallStackDepth, 1) // clamped to minEventDepth
+	agent := newTestAgent(config)
+	agent.spanGrpc = newMockSpanGrpc(agent)
+
+	span := defaultSpan(agent)
+	for span.eventOverflow.Load() == 0 {
+		span.NewSpanEvent("t")
+	}
+	span.SetError(fmt.Errorf("boom"))
+
+	agent.spanGrpc.sendSpanBatchAsync([]*spanChunk{span.newEventChunk(true)})
+	agent.spanGrpc.awaitInFlightSpanBatch()
+
+	client := agent.spanGrpc.spanClient.(*mockSpanGrpcClient)
+	batch := client.lastRequest().GetSpan()
+	if !assert.Len(t, batch, 1) {
+		return
+	}
+	pspan := batch[0].GetSpan()
+	assert.Equal(t, int32(1), pspan.GetErr(), "Err")
+	if assert.NotNil(t, pspan.GetExceptionInfo(), "ExceptionInfo") {
+		assert.Equal(t, "boom", pspan.GetExceptionInfo().GetStringValue().GetValue())
+	}
+}
+
+func TestSpan_SetErrorAfterEndSpanIsNoop(t *testing.T) {
+	span := defaultSpan(newTestAgent(defaultConfig()))
+	span.EndSpan()
+	span.SetError(fmt.Errorf("late"))
+
+	assert.Equal(t, 0, span.err, "err")
+	assert.Equal(t, "", span.errorString, "errorString")
+}
+
 func TestSpan_EndSpanEventRecordsPanickedEvent(t *testing.T) {
 	span := defaultTestSpan()
 	span.NewSpanEvent("event")

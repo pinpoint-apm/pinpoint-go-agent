@@ -515,7 +515,9 @@ func (span *span) IsSampled() bool {
 }
 
 func (span *span) SetError(e error) {
-	if e == nil || span.eventOverflow.Load() > 0 {
+	// A call stack overflow only blocks span events; the span level error is
+	// still recorded, as the Java agent's DefaultSpanRecorder.recordException does.
+	if e == nil || span.finished {
 		return
 	}
 
