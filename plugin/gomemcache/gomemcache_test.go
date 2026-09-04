@@ -2,6 +2,7 @@ package ppgomemcache
 
 import (
 	"context"
+	"net"
 	"sync"
 	"testing"
 	"time"
@@ -124,8 +125,8 @@ func TestClient_RecordsEveryOperation(t *testing.T) {
 	} {
 		t.Run(tt.operation, func(t *testing.T) {
 			tracer := newRecordingTracer()
-			// Port 1 is closed, so every call fails immediately.
-			c := NewClient("localhost:1").WithContext(pinpoint.NewContext(context.Background(), tracer))
+			addr := closedAddr(t)
+			c := NewClient(addr).WithContext(pinpoint.NewContext(context.Background(), tracer))
 
 			err := tt.call(c)
 
@@ -136,7 +137,7 @@ func TestClient_RecordsEveryOperation(t *testing.T) {
 			assert.Equal(t, tt.operation, e.operation)
 			assert.Equal(t, int32(pinpoint.ServiceTypeMemcached), e.serviceType)
 			assert.Equal(t, "MEMCACHED", e.destination)
-			assert.Equal(t, "localhost:1", e.endPoint)
+			assert.Equal(t, addr, e.endPoint)
 			assert.Equal(t, tt.key, e.annotations[pinpoint.AnnotationArgs0], "key annotation")
 			assert.Error(t, e.err, "the failure was not recorded on the span event")
 			assert.False(t, e.end.Before(e.start), "duration = %v..%v, want a non-negative span", e.start, e.end)
@@ -172,15 +173,16 @@ func TestNewClient_WithoutAServer(t *testing.T) {
 // run when there is no span to record it on - and must record nothing, or the
 // span-event stack of whatever runs next on that goroutine unbalances.
 func TestClient_RecordsNothingWithoutASampledTracer(t *testing.T) {
+	addr := closedAddr(t)
 	// A client never given a context starts on the noop tracer.
-	_, err := NewClient("localhost:1").Get("foo")
+	_, err := NewClient(addr).Get("foo")
 	assert.Error(t, err, "the call unexpectedly succeeded against a closed port")
 
 	for _, ctx := range []context.Context{
 		context.Background(),
 		pinpoint.NewContext(context.Background(), pinpoint.NoopTracer()),
 	} {
-		c := NewClient("localhost:1").WithContext(ctx)
+		c := NewClient(addr).WithContext(ctx)
 		require.False(t, c.currentTracer().IsSampled(), "an untraced context produced a sampled tracer")
 
 		_, err := c.Get("foo")
@@ -222,4 +224,17 @@ func TestClient_CopyKeepsItsOwnTracer(t *testing.T) {
 
 	require.Len(t, mine.events, 1, "the copy recorded on someone else's tracer")
 	assert.Equal(t, "foo", mine.events[0].annotations[pinpoint.AnnotationArgs0])
+}
+
+// closedAddr returns a loopback address with nothing listening on it: the port
+// is bound and released, so a connection is refused right away. A hard-coded
+// port like :1 only works while nothing serves it and while the sandbox
+// allows the dial at all, which is not something a test should rest on.
+func closedAddr(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := l.Addr().String()
+	require.NoError(t, l.Close())
+	return addr
 }

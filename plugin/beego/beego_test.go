@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -321,7 +322,7 @@ func TestDoRequest(t *testing.T) {
 
 	// No server is listening, so the request fails - what matters is that the
 	// headers were injected before the attempt and the error came back.
-	req := httplib.Get("http://127.0.0.1:1/hello")
+	req := httplib.Get("http://" + closedAddr(t) + "/hello")
 	_, err := DoRequest(tracer, req)
 	assert.Error(t, err, "an unreachable host must surface its error")
 
@@ -335,6 +336,19 @@ func TestDoRequest_WithNilTracer(t *testing.T) {
 	startAgent(t)
 
 	assert.NotPanics(t, func() {
-		_, _ = DoRequest(nil, httplib.Get("http://127.0.0.1:1/hello"))
+		_, _ = DoRequest(nil, httplib.Get("http://"+closedAddr(t)+"/hello"))
 	})
+}
+
+// closedAddr returns a loopback address with nothing listening on it: the port
+// is bound and released, so a connection is refused right away. A hard-coded
+// port like :1 only works while nothing serves it and while the sandbox
+// allows the dial at all, which is not something a test should rest on.
+func closedAddr(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := l.Addr().String()
+	require.NoError(t, l.Close())
+	return addr
 }

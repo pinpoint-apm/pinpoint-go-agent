@@ -296,9 +296,18 @@ func Test_runCommandService_pacesReconnectsAndStopsPromptly(t *testing.T) {
 // Stream renewal is the normal path, not the outage path: the span worker
 // swaps an aged stream for a new one between two sends and delivers both spans,
 // whereas a failed send would have skipped the span that hit the failure.
+// streamMaxAgeForTest is the Collector.Grpc.StreamMaxAge the two renewal
+// scenarios below run with. It has to be long enough that the first send
+// cannot outlive it: the worker opens the stream and then re-checks the age
+// before every send, so a 1 ms age turned any scheduling hiccup before the
+// first send into an extra renewal, and a count of three where these tests
+// assert two. Jitter is +/-10% and the sleeps are twice this, so both sides
+// keep a wide margin.
+const streamMaxAgeForTest = 50
+
 func Test_sendSpanWorker_renewsAgedStreamWithoutDroppingSpans(t *testing.T) {
 	cfg := defaultConfig()
-	cfg.Set(CfgCollectorGrpcStreamMaxAge, 1)
+	cfg.Set(CfgCollectorGrpcStreamMaxAge, streamMaxAgeForTest)
 	agent := newTestAgent(cfg)
 
 	var sent counter
@@ -315,7 +324,7 @@ func Test_sendSpanWorker_renewsAgedStreamWithoutDroppingSpans(t *testing.T) {
 
 	require.True(t, agent.spanQueue.enqueue(newTestSpanChunk(agent)))
 	waitFor(t, "the first span to be sent", func() bool { return sent.get() == 1 })
-	time.Sleep(5 * time.Millisecond) // the stream passes its jittered max age
+	time.Sleep(2 * streamMaxAgeForTest * time.Millisecond) // past the jittered max age
 	require.True(t, agent.spanQueue.enqueue(newTestSpanChunk(agent)))
 	waitFor(t, "the second span to be sent", func() bool { return sent.get() == 2 })
 
@@ -330,7 +339,7 @@ func Test_sendSpanWorker_renewsAgedStreamWithoutDroppingSpans(t *testing.T) {
 
 func Test_sendStatsWorker_renewsAgedStream(t *testing.T) {
 	cfg := defaultConfig()
-	cfg.Set(CfgCollectorGrpcStreamMaxAge, 1)
+	cfg.Set(CfgCollectorGrpcStreamMaxAge, streamMaxAgeForTest)
 	agent := newTestAgent(cfg)
 	agent.statChan = make(chan *pb.PStatMessage, 4)
 
@@ -348,7 +357,7 @@ func Test_sendStatsWorker_renewsAgedStream(t *testing.T) {
 
 	agent.statChan <- makePAgentStatBatch([]*inspectorStats{agent.stats.getStats()})
 	waitFor(t, "the first batch to be sent", func() bool { return sent.get() == 1 })
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(2 * streamMaxAgeForTest * time.Millisecond)
 	agent.statChan <- makePAgentStatBatch([]*inspectorStats{agent.stats.getStats()})
 	waitFor(t, "the second batch to be sent", func() bool { return sent.get() == 2 })
 

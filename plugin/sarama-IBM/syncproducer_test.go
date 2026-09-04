@@ -3,6 +3,7 @@ package ppsaramaibm
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 
 	"github.com/IBM/sarama"
@@ -231,7 +232,12 @@ func Test_distributedTracingContextWriterProducer(t *testing.T) {
 // NewSyncProducer reports the broker error rather than handing back a producer
 // that cannot send.
 func TestNewSyncProducer_ReturnsTheBrokerError(t *testing.T) {
-	p, err := NewSyncProducer([]string{"127.0.0.1:1"}, sarama.NewConfig())
+	// No metadata retries: the default policy spends seconds backing off
+	// against a broker that is never coming up.
+	config := sarama.NewConfig()
+	config.Metadata.Retry.Max = 0
+
+	p, err := NewSyncProducer([]string{closedAddr(t)}, config)
 
 	assert.Error(t, err, "a producer for an unreachable broker cannot be created")
 	assert.Nil(t, p, "a failed NewSyncProducer must not yield a producer")
@@ -247,4 +253,17 @@ func Test_syncProducer_SendMessagesContext_EmptyBatch(t *testing.T) {
 
 	assert.Empty(t, tracer.events, "an empty batch has no message to record")
 	assert.Len(t, stub.batches, 1, "the empty batch must still reach the underlying producer")
+}
+
+// closedAddr returns a loopback address with nothing listening on it: the port
+// is bound and released, so a connection is refused right away. A hard-coded
+// port like :1 only works while nothing serves it and while the sandbox
+// allows the dial at all, which is not something a test should rest on.
+func closedAddr(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := l.Addr().String()
+	require.NoError(t, l.Close())
+	return addr
 }
