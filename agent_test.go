@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -416,7 +415,7 @@ func Test_agent_ShutdownNoStartupDelay(t *testing.T) {
 	start := time.Now()
 	a.Shutdown()
 
-	assert.Less(t, time.Since(start), time.Second, "no unconditional sleep")
+	assert.Less(t, time.Since(start), connectGraceTimeout, "no unconditional sleep")
 }
 
 // captureWarnLog redirects the agent log to buf until the returned func is called.
@@ -935,40 +934,4 @@ func Test_sqlUid_MatchesJavaGuavaMurmur3_128(t *testing.T) {
 			assert.Equal(t, tt.hex, hex.EncodeToString(sqlUid(tt.sql)))
 		})
 	}
-}
-
-// Registration is not a precondition for tracing: like the Java agent, the
-// span worker runs while registerAgentWorker is still retrying AgentInfo, so
-// a collector whose agent port is unreachable still receives spans.
-func Test_agent_sendsSpansWhileRegistrationKeepsFailing(t *testing.T) {
-	cfg := defaultConfig()
-	cfg.Set(CfgSpanBatchEnable, true)
-	agent := newTestAgent(cfg)
-
-	agentClient := &mockAgentGrpcClient{failures: math.MaxInt}
-	agent.agentGrpc = &agentGrpc{
-		agentConn:          dialReadyConn(t),
-		agentClient:        agentClient,
-		agent:              agent,
-		registerRetryDelay: 10 * time.Millisecond,
-	}
-	agent.spanGrpc = newMockSpanGrpc(agent)
-	agent.spanGrpc.batchSize = 1
-	agent.spanGrpc.batchCollectDeadline = time.Millisecond
-	spanClient := agent.spanGrpc.spanClient.(*mockSpanGrpcClient)
-
-	agent.workerWg.Add(2)
-	go agent.superviseWorker("agent register", agent.registerAgentWorker)
-	go agent.superviseWorker("span batch", agent.sendSpanBatchWorker)
-
-	assert.True(t, agent.spanQueue.enqueue(newTestSpanChunk(agent)))
-	waitFor(t, "a span batch to reach the collector", func() bool { return spanClient.requestCount() > 0 })
-	waitFor(t, "registration to be retried", func() bool { return len(agentClient.sentAgentInfo()) > 1 })
-
-	agent.signalShutdown()
-	agent.spanQueue.close()
-	agent.workerWg.Wait()
-
-	assert.True(t, agent.Enable(), "the agent is enabled before it is registered")
-	assert.Greater(t, spanClient.requestCount(), 0)
 }

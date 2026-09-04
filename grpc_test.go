@@ -103,7 +103,7 @@ func Test_agentGrpc_registerAgentWithRetry_cancelsRequestOnShutdown(t *testing.T
 
 	select {
 	case <-client.canceled:
-	case <-time.After(3 * time.Second):
+	case <-time.After(connectGraceTimeout + 2*time.Second):
 		t.Fatal("shutdown did not cancel RequestAgentInfo")
 	}
 

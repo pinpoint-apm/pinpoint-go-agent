@@ -25,16 +25,11 @@ Lines look like this (logrus text format, with the source module tagged):
 ```text
 INFO[2026-09-03 11:36:00.000000] new pinpoint agent          module=pinpoint src=agent
 INFO[2026-09-03 11:36:00.010000] connect to collector: my-collector:9991 (ssl: false)  module=pinpoint src=grpc
-INFO[2026-09-03 11:36:00.011000] start ping goroutine        module=pinpoint src=agent
-INFO[2026-09-03 11:36:00.011000] start span goroutine        module=pinpoint src=agent
-INFO[2026-09-03 11:36:00.011000] start send stats goroutine  module=pinpoint src=agent
 INFO[2026-09-03 11:36:00.120000] success to register agent   module=pinpoint src=agent
+INFO[2026-09-03 11:36:00.121000] start ping goroutine        module=pinpoint src=agent
+INFO[2026-09-03 11:36:00.121000] start span goroutine        module=pinpoint src=agent
+INFO[2026-09-03 11:36:00.121000] start send stats goroutine  module=pinpoint src=agent
 ```
-
-The workers start as soon as the channels are created; tracing does not wait
-for registration. `success to register agent` may arrive later (or keep being
-retried in the background if the collector's agent port is unreachable) while
-spans and stats are already being sent.
 
 Three lines tell you almost everything:
 
