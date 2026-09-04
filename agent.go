@@ -173,9 +173,6 @@ const (
 	// shutdownTimeout bounds how long Shutdown waits for the worker goroutines
 	// to drain their queues before abandoning them.
 	shutdownTimeout = 3 * time.Second
-	// connectGraceTimeout bounds how long Shutdown waits for an in-progress
-	// agent registration, in case Shutdown was called too early.
-	connectGraceTimeout = 1 * time.Second
 
 	maxSqlSize = 64 * 1024
 )
@@ -289,6 +286,11 @@ func NewAgent(config *Config) (Agent, error) {
 	return agent, nil
 }
 
+// connectGrpcServer opens the collector channels and starts the workers at
+// once; the agent is enabled before it is registered. Like the Java agent,
+// span/stat/meta sending does not wait for AgentInfo registration - that is
+// retried by registerAgentWorker in the background, so a collector whose
+// agent port is unreachable at boot still receives spans.
 func (agent *agent) connectGrpcServer() {
 	var err error
 	defer agent.connectWg.Done()
@@ -311,9 +313,6 @@ func (agent *agent) connectGrpcServer() {
 	if agent.agentGrpc, err = newAgentGrpc(agent); err != nil {
 		return
 	}
-	if !agent.agentGrpc.registerAgentWithRetry() {
-		return
-	}
 	if agent.spanGrpc, err = newSpanGrpc(agent); err != nil {
 		return
 	}
@@ -325,7 +324,8 @@ func (agent *agent) connectGrpcServer() {
 	}
 
 	agent.enable.Store(true)
-	agent.workerWg.Add(8)
+	agent.workerWg.Add(9)
+	go agent.superviseWorker("agent register", agent.registerAgentWorker)
 	go agent.superviseWorker("ping", agent.sendPingWorker)
 	if agent.config.Bool(CfgSpanBatchEnable) {
 		go agent.superviseWorker("span batch", agent.sendSpanBatchWorker)
@@ -338,10 +338,18 @@ func (agent *agent) connectGrpcServer() {
 	go agent.superviseWorker("collect uri stat", agent.collectUrlStatWorker)
 	go agent.superviseWorker("send uri stat", agent.sendUrlStatWorker)
 	go agent.superviseWorker("send stats", agent.sendStatsWorker)
+}
 
+// registerAgentWorker registers the agent with the collector, retrying until
+// it succeeds or the agent shuts down, then keeps the AgentInfo fresh. A
+// rejected registration (Success=false) ends the worker; the agent stays
+// enabled and keeps sending.
+func (agent *agent) registerAgentWorker() {
+	if !agent.agentGrpc.registerAgentWithRetry() {
+		return
+	}
 	if interval := agent.agentInfoRefreshInterval(); interval > 0 {
-		agent.workerWg.Add(1)
-		go agent.superviseWorker("agent info refresh", func() { agent.refreshAgentInfoWorker(interval) })
+		agent.refreshAgentInfoWorker(interval)
 	}
 }
 
@@ -478,22 +486,19 @@ func waitTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {
 }
 
 func (agent *agent) Shutdown() {
-	// Give an in-progress registration a moment to finish, in case shutdown was
-	// called too early. A registered agent has already released connectWg, so
-	// the normal shutdown path pays nothing here.
-	waitTimeout(&agent.connectWg, connectGraceTimeout)
-
 	agent.signalShutdown()
 	Log("agent").Infof("shutdown pinpoint agent")
 
-	// wait for the grpc connection to be completed
+	// Wait for connectGrpcServer to finish creating the channels. It only
+	// dials (lazily) and starts goroutines, so this returns at once; an
+	// in-progress registration runs under workerWg and is cancelled by
+	// signalShutdown above.
 	agent.connectWg.Wait()
 
 	// Close whatever connections connectGrpcServer managed to create, on every
-	// path: grpc dials lazily, so an agent whose registration never finished
-	// (collector down at boot) still holds a live agent connection, and the
-	// never-enabled early return below would leak it once per failed
-	// NewAgent/Shutdown retry cycle. Deferred so the enabled path keeps its
+	// path: a channel that failed to open leaves the agent never enabled, and
+	// the early return below would leak the ones already opened once per
+	// failed NewAgent/Shutdown retry cycle. Deferred so the enabled path keeps its
 	// order - workers drain first, connections close last. The closes are
 	// nil-checked and idempotent, so a second Shutdown is harmless. Reading
 	// the fields is safe: connectGrpcServer wrote them before connectWg.Done.
@@ -513,7 +518,7 @@ func (agent *agent) Shutdown() {
 	}()
 
 	// Release the global on every path, before the enable guard below. An agent
-	// whose registration never finished was never enabled, and leaving
+	// whose channels failed to open was never enabled, and leaving
 	// globalAgent pointing at it would keep GetAgent returning a dead agent and
 	// make every later NewAgent fail with "agent is already created", so a
 	// process could never retry after a failed startup. Guarded by identity so
