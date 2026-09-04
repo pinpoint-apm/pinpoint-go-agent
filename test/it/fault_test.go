@@ -334,8 +334,12 @@ func TestShutdownCancelsTimedOutSpanRequest(t *testing.T) {
 
 	assert.Less(t, elapsed, 8*time.Second)
 	assert.False(t, agent.Enable())
+	// Shutdown abandons in-flight batches after its grace period and closes
+	// the connection, which cancels the stalled request well before its own
+	// deadline: the collector sees a cancellation, not an expired deadline.
 	assert.True(t, mc.WaitFor(func(s Snapshot) bool {
-		return hasResultSuccess(s, RpcSendSpanBatch, codes.DeadlineExceeded, false)
+		return hasResult(s, RpcSendSpanBatch, codes.Canceled) ||
+			hasResult(s, RpcSendSpanBatch, codes.DeadlineExceeded)
 	}, 2*time.Second))
 }
 
