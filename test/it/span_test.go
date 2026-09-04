@@ -271,12 +271,14 @@ func TestKeepsTraceContextWhenEventLimitsOverflow(t *testing.T) {
 	traceID := tracer.TransactionId().String()
 	spanID := tracer.SpanId()
 
-	real := tracer.NewSpanEvent("depth.level1")
-	real.SpanEvent().SetDestination("depth-destination")
+	// MaxCallStackDepth is 2, so both of these levels are recorded: the limit is
+	// the deepest level kept, not the first one dropped.
+	tracer.NewSpanEvent("depth.level1").SpanEvent().SetDestination("depth-destination")
+	tracer.NewSpanEvent("depth.level2").SpanEvent().SetDestination("depth-destination2")
 
-	// MaxCallStackDepth is 2, so this nested event overflows and records
-	// nothing. An async span cannot be forked from an overflowed event either.
-	overflowed := tracer.NewSpanEvent("depth.level2.discarded")
+	// The third level overflows and records nothing. An async span cannot be
+	// forked from an overflowed event either.
+	overflowed := tracer.NewSpanEvent("depth.level3.discarded")
 	overflowed.SpanEvent().SetDestination("discarded-destination")
 	assert.False(t, tracer.NewGoroutineTracer().IsSampled())
 
@@ -297,6 +299,7 @@ func TestKeepsTraceContextWhenEventLimitsOverflow(t *testing.T) {
 	// Ending the overflowed placeholder must not desync the event stack.
 	tracer.EndSpanEvent()
 	tracer.EndSpanEvent()
+	tracer.EndSpanEvent()
 	tracer.EndSpan()
 
 	// MaxCallStackSequence is 4: a fifth event on one span is discarded even
@@ -314,14 +317,16 @@ func TestKeepsTraceContextWhenEventLimitsOverflow(t *testing.T) {
 		return findSpanByRpc(s, "/overflow-depth") != nil &&
 			findSpanByRpc(s, "/overflow-continued") != nil &&
 			findSpanByRpc(s, "/overflow-sequence") != nil &&
-			len(eventsForSpan(s, spanID)) >= 1 &&
+			len(eventsForSpan(s, spanID)) >= 2 &&
 			len(eventsForSpan(s, seqSpanID)) >= 4
 	}, waitTimeout))
 
 	s := mc.Snapshot()
 	depthEvents := eventsForSpan(s, spanID)
-	require.Len(t, depthEvents, 1)
+	require.Len(t, depthEvents, 2)
+	sort.Slice(depthEvents, func(i, j int) bool { return depthEvents[i].GetSequence() < depthEvents[j].GetSequence() })
 	assert.Equal(t, "depth-destination", depthEvents[0].GetNextEvent().GetMessageEvent().GetDestinationId())
+	assert.Equal(t, "depth-destination2", depthEvents[1].GetNextEvent().GetMessageEvent().GetDestinationId())
 	assert.Len(t, eventsForSpan(s, seqSpanID), 4)
 }
 

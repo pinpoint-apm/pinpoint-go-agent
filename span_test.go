@@ -213,8 +213,9 @@ func Test_span_Inject_EventOverflow(t *testing.T) {
 		overflow func(s *span)
 	}{
 		{"depth overflow - ancestor event left on the stack", CfgSpanMaxCallStackDepth, minEventDepth, func(s *span) {
-			s.NewSpanEvent("t1")
-			s.NewSpanEvent("t2")
+			for i := 0; i <= minEventDepth; i++ {
+				s.NewSpanEvent("t1")
+			}
 		}},
 		{"sequence overflow - empty stack", CfgSpanMaxCallStackSequence, minEventSequence, func(s *span) {
 			for i := 0; i < minEventSequence; i++ {
@@ -294,24 +295,25 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 			config.Set(CfgSpanMaxCallStackDepth, 3)
 			s := testSpanWithConfig(config)
 
+			// depth == max is still recorded, so 3 levels fit and only the
+			// 4th overflows.
 			s.NewSpanEvent(tt.args.operationName)
 			s.NewSpanEvent(tt.args.operationName)
 			s.NewSpanEvent(tt.args.operationName)
 			s.NewSpanEvent(tt.args.operationName)
 
-			assert.Equal(t, s.eventSequence.Load(), int32(2), "eventSequence")
-			assert.Equal(t, s.eventDepth.Load(), int32(3), "eventDepth")
-			assert.Equal(t, s.eventOverflow.Load(), int32(2), "eventOverflow")
-			assert.Equal(t, s.eventOverflowLog.Load(), true, "eventOverflowLog")
-
-			s.EndSpanEvent()
+			assert.Equal(t, s.eventSequence.Load(), int32(3), "eventSequence")
+			assert.Equal(t, s.eventDepth.Load(), int32(4), "eventDepth")
 			assert.Equal(t, s.eventOverflow.Load(), int32(1), "eventOverflow")
-			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
+			assert.Equal(t, s.eventOverflowLog.Load(), true, "eventOverflowLog")
+			assert.Equal(t, s.eventStack.len(), 3, "stack.len()")
 
 			s.EndSpanEvent()
 			assert.Equal(t, s.eventOverflow.Load(), int32(0), "eventOverflow")
-			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
+			assert.Equal(t, s.eventStack.len(), 3, "stack.len()")
 
+			s.EndSpanEvent()
+			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
 			s.EndSpanEvent()
 			assert.Equal(t, s.eventStack.len(), 1, "stack.len()")
 			s.EndSpanEvent()
@@ -322,14 +324,11 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 			s.NewSpanEvent(tt.args.operationName)
 			s.NewSpanEvent(tt.args.operationName)
 
-			assert.Equal(t, s.eventSequence.Load(), int32(4), "eventSequence")
-			assert.Equal(t, s.eventDepth.Load(), int32(3), "eventDepth")
-			assert.Equal(t, s.eventOverflow.Load(), int32(2), "eventOverflow")
-			assert.Equal(t, s.eventOverflowLog.Load(), true, "eventOverflowLog")
-
-			s.EndSpanEvent()
+			assert.Equal(t, s.eventSequence.Load(), int32(6), "eventSequence")
+			assert.Equal(t, s.eventDepth.Load(), int32(4), "eventDepth")
 			assert.Equal(t, s.eventOverflow.Load(), int32(1), "eventOverflow")
-			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
+			assert.Equal(t, s.eventOverflowLog.Load(), true, "eventOverflowLog")
+			assert.Equal(t, s.eventStack.len(), 3, "stack.len()")
 
 			_, ok := s.SpanEvent().(*noopSpanEvent)
 			assert.Equal(t, ok, true, "noopSpanEvent")
@@ -343,15 +342,15 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 
 			s.EndSpanEvent()
 			assert.Equal(t, s.eventOverflow.Load(), int32(0), "eventOverflow")
-			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
+			assert.Equal(t, s.eventStack.len(), 3, "stack.len()")
 
 			_, ok = s.SpanEvent().(*noopSpanEvent)
 			assert.Equal(t, ok, false, "noopSpanEvent")
 
 			se, ok := s.SpanEvent().(*spanEvent)
 			assert.Equal(t, ok, true, "spanEvent")
-			assert.Equal(t, se.depth, int32(2), "depth")
-			assert.Equal(t, se.sequence, int32(3), "sequence")
+			assert.Equal(t, se.depth, int32(3), "depth")
+			assert.Equal(t, se.sequence, int32(5), "sequence")
 
 			tracer = s.NewGoroutineTracer()
 			ss, ok := tracer.(*span)
@@ -361,10 +360,39 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 			tracer.EndSpan()
 
 			s.EndSpanEvent()
+			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
+			s.EndSpanEvent()
 			assert.Equal(t, s.eventStack.len(), 1, "stack.len()")
 			s.EndSpanEvent()
 			assert.Equal(t, s.eventStack.len(), 0, "stack.len()")
 		})
+	}
+}
+
+// Span.MaxCallStackDepth is the deepest level still recorded, not the first one
+// dropped: Java's DefaultCallStack overflows at maxDepth < index, and Go used to
+// cut one level short of that.
+func Test_span_NewSpanEventDepthBoundary(t *testing.T) {
+	config := defaultConfig()
+	config.Set(CfgSpanMaxCallStackDepth, 3)
+	s := testSpanWithConfig(config)
+
+	for i := 0; i < 3; i++ {
+		s.NewSpanEvent("t")
+		assert.Equal(t, int32(0), s.eventOverflow.Load(), "level %d fits", i+1)
+	}
+
+	s.NewSpanEvent("t")
+	assert.Equal(t, int32(1), s.eventOverflow.Load(), "the 4th level overflows")
+
+	for i := 0; i < 4; i++ {
+		s.EndSpanEvent()
+	}
+	// popped deepest first, so the recorded depths run 3, 2, 1
+	if assert.Len(t, s.spanEvents, 3, "recorded events") {
+		for i, se := range s.spanEvents {
+			assert.Equal(t, int32(3-i), se.depth, "depth")
+		}
 	}
 }
 
