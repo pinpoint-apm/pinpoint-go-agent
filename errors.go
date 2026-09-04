@@ -108,9 +108,21 @@ func splitName(fullName string) (string, string) {
 	return fullName[:lastIdx], fullName[lastIdx+1:]
 }
 
+// sameError reports whether a and b are the same error value. Comparing two
+// interfaces with == panics when both hold the same uncomparable dynamic type
+// - a slice-, map- or func-based error such as validator.ValidationErrors -
+// and this runs on the request goroutine for any error handed to SetError, so
+// such a pair is reported as distinct instead of taken to the comparison.
+func sameError(a, b error) bool {
+	if ta := reflect.TypeOf(a); ta != reflect.TypeOf(b) || (ta != nil && !ta.Comparable()) {
+		return false
+	}
+	return a == b
+}
+
 func (span *span) findError(err error) *exception {
 	for _, chain := range span.errorChains {
-		if chain.callstack.err == err {
+		if sameError(chain.callstack.err, err) {
 			return chain
 		}
 	}

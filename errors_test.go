@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -207,4 +208,47 @@ func Test_splitName_NoDot(t *testing.T) {
 	module, fn = splitName("pkg.Func")
 	assert.Equal(t, "pkg", module, "module name")
 	assert.Equal(t, "Func", fn, "func name")
+}
+
+// uncomparableError is the shape of a common user error type - Go's own
+// errors.Join value and validator.ValidationErrors are both slices - whose
+// dynamic type cannot be compared with ==.
+type uncomparableError []string
+
+func (e uncomparableError) Error() string { return strings.Join(e, ",") }
+
+// Recording two errors of the same uncomparable type on one span used to
+// panic on the request goroutine inside findError.
+func TestSpan_TraceCallStackUncomparableErrorType(t *testing.T) {
+	span := defaultSpan(newTestAgent(defaultConfig()))
+
+	first := span.traceCallStack(uncomparableError{"a"}, "", 32, time.Now())
+	second := span.traceCallStack(uncomparableError{"b"}, "", 32, time.Now())
+
+	assert.NotZero(t, first, "first exception id")
+	assert.NotZero(t, second, "second exception id")
+	assert.NotEqual(t, first, second, "two distinct errors get their own chain")
+	require.Len(t, span.errorChains, 2)
+	assert.Equal(t, "pinpoint.uncomparableError", span.errorChains[0].className)
+}
+
+func Test_sameError(t *testing.T) {
+	comparable := errors.New("x")
+	tests := []struct {
+		name string
+		a, b error
+		want bool
+	}{
+		{"identical comparable", comparable, comparable, true},
+		{"distinct comparable", comparable, errors.New("x"), false},
+		{"both nil", nil, nil, true},
+		{"one nil", comparable, nil, false},
+		{"different types", comparable, uncomparableError{"a"}, false},
+		{"same uncomparable type", uncomparableError{"a"}, uncomparableError{"a"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, sameError(tt.a, tt.b))
+		})
+	}
 }
