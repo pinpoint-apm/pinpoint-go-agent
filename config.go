@@ -84,6 +84,7 @@ const (
 	CfgSQLTraceQueryStat              = "SQL.TraceQueryStat"
 	CfgSQLEnableRawSqlCache           = "SQL.EnableRawSqlCache"
 	CfgSQLCacheLengthLimit            = "SQL.CacheLengthLimit"
+	CfgSQLErrorCount                  = "SQL.ErrorCount"
 	CfgEnable                         = "Enable"
 	CfgHttpUrlStatEnable              = "Http.UrlStat.Enable"
 	CfgHttpUrlStatLimitSize           = "Http.UrlStat.LimitSize"
@@ -116,6 +117,11 @@ const (
 	// SQL at or above this many bytes bypasses the SQL metadata caches, as in
 	// the Java agent (profiler.jdbc.sqlcachelengthlimit, UidCache.bypassLength).
 	defaultSqlCacheLengthLimit = 2048
+
+	// A span running this many queries is marked failed, as in the Java agent
+	// (profiler.sql.error.count, DefaultSqlCountService). Java's separate
+	// profiler.sql.error.enable collapses into a limit of 0 here.
+	defaultSqlErrorCount = 100
 
 	// Upper bounds for the queue sizes and stat collection settings, matching
 	// the C++ agent. See publish.
@@ -215,6 +221,7 @@ func initConfig() {
 	AddConfig(CfgSQLTraceQueryStat, CfgBool, false, true)
 	AddConfig(CfgSQLEnableRawSqlCache, CfgBool, true, true)
 	AddConfig(CfgSQLCacheLengthLimit, CfgInt, defaultSqlCacheLengthLimit, true)
+	AddConfig(CfgSQLErrorCount, CfgInt, defaultSqlErrorCount, true)
 	AddConfig(CfgEnable, CfgBool, true, false)
 	AddConfig(CfgHttpUrlStatEnable, CfgBool, false, true)
 	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1024, true)
@@ -308,6 +315,7 @@ type configSnapshot struct {
 	sqlTraceQueryStat    bool              // CfgSQLTraceQueryStat
 	sqlEnableRawSqlCache bool              // CfgSQLEnableRawSqlCache
 	sqlCacheLengthLimit  int               // CfgSQLCacheLengthLimit
+	sqlErrorCount        int               // CfgSQLErrorCount
 	spanEventChunkSize   int               // CfgSpanEventChunkSize
 	spanMaxEventDepth    int32             // CfgSpanMaxCallStackDepth
 	spanMaxEventSequence int32             // CfgSpanMaxCallStackSequence
@@ -906,6 +914,7 @@ func (config *Config) publish() {
 		sqlTraceQueryStat:    cast.ToBool(values[CfgSQLTraceQueryStat]),
 		sqlEnableRawSqlCache: cast.ToBool(values[CfgSQLEnableRawSqlCache]),
 		sqlCacheLengthLimit:  cast.ToInt(values[CfgSQLCacheLengthLimit]),
+		sqlErrorCount:        cast.ToInt(values[CfgSQLErrorCount]),
 		spanEventChunkSize:   cast.ToInt(values[CfgSpanEventChunkSize]),
 		spanMaxEventDepth:    cast.ToInt32(values[CfgSpanMaxCallStackDepth]),
 		spanMaxEventSequence: cast.ToInt32(values[CfgSpanMaxCallStackSequence]),
@@ -1417,6 +1426,14 @@ func WithSQLEnableRawSqlCache(enable bool) ConfigOption {
 func WithSQLCacheLengthLimit(limit int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgSQLCacheLengthLimit].value = limit
+	}
+}
+
+// WithSQLErrorCount sets how many SQL executions mark a span failed. A value of
+// 0 or less turns the count off.
+func WithSQLErrorCount(count int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgSQLErrorCount].value = count
 	}
 }
 

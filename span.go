@@ -62,8 +62,12 @@ type span struct {
 	eventDepth       atomic.Int32
 	eventOverflow    atomic.Int32
 	eventOverflowLog atomic.Bool
-	spanEvents       []*spanEvent
-	spanEventLock    sync.Mutex
+	// sqlCount counts the executed queries behind SQL.ErrorCount, and is
+	// atomic for the same reason: a plugin may run them from several
+	// goroutines of one call stack.
+	sqlCount      atomic.Int32
+	spanEvents    []*spanEvent
+	spanEventLock sync.Mutex
 
 	startTime       time.Time
 	elapsed         int64

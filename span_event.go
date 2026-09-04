@@ -168,6 +168,17 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	agent := se.agent()
 	cfg := se.config()
 
+	// As in the Java agent's DefaultSqlCountService, a span that executes
+	// SQL.ErrorCount queries is marked failed - an N+1 loop is a trace the
+	// server should show as an error. Java skips a transaction whose error code
+	// is already set, so the count never re-marks a recorded error; a finished
+	// span is skipped for the same reason SetError does (doc/api_contracts.md 5).
+	if cfg.sqlErrorCount > 0 && se.parentSpan.err == 0 && !se.parentSpan.finished.Load() {
+		if int(se.parentSpan.sqlCount.Add(1)) >= cfg.sqlErrorCount {
+			se.parentSpan.err = 1
+		}
+	}
+
 	var nsql, param string
 	if cfg.sqlEnableRawSqlCache {
 		nsql, param = agent.normalizeSql(sql)

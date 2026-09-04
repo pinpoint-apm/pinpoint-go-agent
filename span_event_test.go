@@ -231,6 +231,89 @@ func Test_spanEvent_SetSQLPublishesBoundedSqlMeta(t *testing.T) {
 	assert.Equal(t, abbreviateString(sql, maxSqlSize), md.sql)
 }
 
+// SQL.ErrorCount ports the Java agent's DefaultSqlCountService: a span that
+// executes the configured number of queries is marked failed, so an N+1 loop
+// shows up as an error instead of just a slow trace.
+func Test_spanEvent_SetSQLCountMarksFailedSpan(t *testing.T) {
+	tests := []struct {
+		name      string
+		limit     int
+		sql       string
+		queries   int
+		finished  bool
+		wantErr   int
+		wantCount int32
+	}{
+		{"disabled", 0, "SELECT 1", 5, false, 0, 0},
+		{"below limit", 3, "SELECT 1", 2, false, 0, 2},
+		{"at limit", 3, "SELECT 1", 3, false, 1, 3},
+		{"above limit", 3, "SELECT 1", 5, false, 1, 3},
+		{"negative limit", -1, "SELECT 1", 5, false, 0, 0},
+		// commit and rollback events reach SetSQL with no sql at all
+		{"empty sql", 3, "", 5, false, 0, 0},
+		// the span is already on its way to the sender goroutine
+		{"finished span", 3, "SELECT 1", 5, true, 0, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := defaultConfig()
+			cfg.Set(CfgSQLErrorCount, tt.limit)
+			sp := testSpanWithConfig(cfg)
+			sp.finished.Store(tt.finished)
+
+			for i := 0; i < tt.queries; i++ {
+				newSpanEvent(sp, "query").SetSQL(tt.sql, "")
+			}
+
+			assert.Equal(t, tt.wantErr, sp.err, "span err")
+			assert.Equal(t, tt.wantCount, sp.sqlCount.Load(), "sqlCount")
+		})
+	}
+}
+
+// Java returns before incrementing when the transaction already has an error
+// code, so a failed span never counts and the count never resumes.
+func Test_spanEvent_SetSQLCountSkipsFailedSpan(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgSQLErrorCount, 3)
+	sp := testSpanWithConfig(cfg)
+
+	newSpanEvent(sp, "query").SetSQL("SELECT 1", "")
+	assert.Equal(t, int32(1), sp.sqlCount.Load(), "sqlCount")
+
+	newSpanEvent(sp, "query").SetError(errors.New("TEST_ERROR"))
+	require.Equal(t, 1, sp.err, "span err")
+
+	for i := 0; i < 5; i++ {
+		newSpanEvent(sp, "query").SetSQL("SELECT 1", "")
+	}
+	assert.Equal(t, int32(1), sp.sqlCount.Load(), "sqlCount of a failed span")
+}
+
+// SQL.ErrorCount is dynamic, but a span keeps the snapshot it was born with:
+// the new limit applies to the spans started after the reload.
+func Test_spanEvent_SetSQLCountReloadsDynamically(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgSQLErrorCount, 2)
+	agent := newTestAgent(cfg)
+
+	pinned := defaultSpan(agent)
+	newSpanEvent(pinned, "query").SetSQL("SELECT 1", "")
+	require.Equal(t, 0, pinned.err, "span err below the limit")
+
+	cfg.Set(CfgSQLErrorCount, 0)
+
+	newSpanEvent(pinned, "query").SetSQL("SELECT 1", "")
+	assert.Equal(t, 1, pinned.err, "a live span must keep its pinned limit")
+
+	reloaded := defaultSpan(agent)
+	for i := 0; i < 5; i++ {
+		newSpanEvent(reloaded, "query").SetSQL("SELECT 1", "")
+	}
+	assert.Equal(t, 0, reloaded.err, "span err after the count was disabled")
+	assert.Equal(t, int32(0), reloaded.sqlCount.Load(), "sqlCount")
+}
+
 // A goroutine span event must carry an api id its own agent registered: ids
 // come from the per-agent apiIdGen, so a process-global cache would make the
 // second agent (Shutdown() + NewAgent()) reuse an id it never published.
