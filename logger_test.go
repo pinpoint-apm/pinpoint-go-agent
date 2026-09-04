@@ -1,6 +1,9 @@
 package pinpoint
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -103,4 +106,24 @@ func Test_SetExtraLoggerIsRaceFree(t *testing.T) {
 		SetExtraLogger(logrus.New())
 	}
 	wg.Wait()
+}
+
+func Test_FileOutputHasNoAnsiColors(t *testing.T) {
+	l := newLogger()
+	path := filepath.Join(t.TempDir(), "pinpoint.log")
+	l.setOutput(path, 10)
+	defer l.fileLogger.Close()
+
+	l.newEntry("test").Infof("hello")
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "\x1b[") {
+		t.Errorf("file log contains ANSI escape: %q", b)
+	}
+	if !strings.Contains(string(b), "hello") {
+		t.Errorf("file log missing message: %q", b)
+	}
 }

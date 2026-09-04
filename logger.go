@@ -61,7 +61,8 @@ func newLogger() *logrusLogger {
 	l.Formatter = &logrus.TextFormatter{
 		TimestampFormat: "2006-01-02 15:04:05.000000",
 		FullTimestamp:   true,
-		ForceColors:     true,
+		// No ForceColors: logrus colors only when the output is a terminal, so a
+		// file output (lumberjack) never gets ANSI escapes written into it.
 	}
 	return &logrusLogger{defaultLogger: l}
 }
