@@ -434,3 +434,35 @@ func Test_handlerName_FallsBackForAnUnknownRoute(t *testing.T) {
 	}, "a route missing from the once-built name map must fall back, not fail")
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 }
+
+// wrap resolves the span event name into a local, never into its captured
+// parameter. echo re-applies Middleware() per request, so a memoized name only
+// escapes when one wrapped handler is registered on more than one route - but
+// a closure that rewrites its own parameter is also a plain data race between
+// concurrent requests, which is what this test pins under -race.
+func Test_wrap_ResolvesTheNamePerRequest(t *testing.T) {
+	startAgent(t)
+
+	e := echo.New()
+	shared := wrap(func(c echo.Context) error { return c.NoContent(http.StatusNoContent) }, "")
+	e.GET("/first", shared)
+	e.GET("/second", shared)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			path := "/first"
+			if i%2 == 1 {
+				path = "/second"
+			}
+			for j := 0; j < 25; j++ {
+				rec := httptest.NewRecorder()
+				e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+				assert.Equal(t, http.StatusNoContent, rec.Code)
+			}
+		}(i)
+	}
+	wg.Wait()
+}

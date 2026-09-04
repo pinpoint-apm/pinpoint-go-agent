@@ -76,10 +76,15 @@ func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
 			}
 		}()
 
-		if funcName == "" {
-			funcName = handlerName(c, req)
+		// A local, never the captured parameter: Middleware passes "" once and
+		// the closure serves every request, so writing the resolved name back
+		// pinned the first request's handler name onto every later route and
+		// raced between concurrent requests.
+		name := funcName
+		if name == "" {
+			name = handlerName(c, req)
 		}
-		defer tracer.NewSpanEvent(funcName).EndSpanEvent()
+		defer tracer.NewSpanEvent(name).EndSpanEvent()
 
 		ctx := pinpoint.NewContext(req.Context(), tracer)
 		c.SetRequest(req.WithContext(ctx))
