@@ -228,7 +228,7 @@ framework plugins do this for you where the framework exposes the pattern.
 
 ## 9. Error Recording
 
-* `SpanRecorder.SetError(err)` marks the transaction failed.
+* `SpanRecorder.SetError(err, errorName...)` marks the transaction failed.
   `SpanEventRecorder.SetError(err, errorName...)` marks one event failed **and
   the transaction with it** (`PSpan.err`, the URL stat failed histogram and the
   scatter failure point), as the Java agent does; the optional name groups
@@ -237,17 +237,20 @@ framework plugins do this for you where the framework exposes the pattern.
   `tracer.SpanEvent().SetError(err)` after a call needs no guard.
 * `SetFailure()` marks failure without an error message — the right call for an
   HTTP status that counts as an error but carries no Go `error`.
-* Call-stack capture (`Error.TraceCallStack`) works on errors that carry their
-  own stack, i.e. those implementing `StackTrace() errors.StackTrace` such as
-  `github.com/pkg/errors` errors. A plain `errors.New` error has no stack to
-  record, and the option only costs the depth check for it.
+* Call-stack capture (`Error.TraceCallStack`) prefers the stack the error
+  carries itself, i.e. errors implementing `StackTrace() errors.StackTrace`
+  such as `github.com/pkg/errors` errors. An error without one — a plain
+  `errors.New` — is recorded with exactly `Error.CallStackDepth` frames
+  captured at the `SetError` call site.
 * `Cause()` and `Unwrap()` (`fmt.Errorf("%w")`) chains are walked to build
   the exception chain, bounded at 64 links so a self-referential or cyclic
-  user error cannot hang the request goroutine. As in the Java agent, every
-  link is sent under one exception id with `exceptionDepth` 0 for the recorded
-  error and 1..n down the chain, `exceptionClassName` set to the `SetError`
-  name or the error's Go type name (e.g. `errors.withStack`), and `startTime`
-  set to the failed span event's start time.
+  user error cannot hang the request goroutine. A multi-unwrap error
+  (`errors.Join`, `Unwrap() []error`) contributes its **first element only**:
+  the chain is a single line of causes, as Java's `getCause()` is. As in the
+  Java agent, every link is sent under one exception id with `exceptionDepth`
+  0 for the recorded error and 1..n down the chain, `exceptionClassName` set
+  to the `SetError` name or the error's Go type name (e.g. `errors.withStack`),
+  and `startTime` set to the failed span event's start time.
 
 ## 10. No-op and Unsampled Tracers Are Deliberately Silent
 

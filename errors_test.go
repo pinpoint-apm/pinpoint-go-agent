@@ -64,6 +64,62 @@ func TestSpan_TraceCallStackChainDepthAndClassName(t *testing.T) {
 	}
 }
 
+// errors.Join and any other Unwrap() []error error contribute their first
+// element only: the exception chain is a single line of causes.
+func TestSpan_TraceCallStackJoinedErrorFollowsFirstCause(t *testing.T) {
+	first, second := errors.New("first"), errors.New("second")
+	span := defaultSpan(newTestAgent(defaultConfig()))
+	span.traceCallStack(errors.Join(first, second), "", 32, time.Now())
+
+	require.Len(t, span.errorChains, 2)
+	assert.Same(t, first, span.errorChains[1].callstack.err, "first element recorded")
+}
+
+// deepCall calls fn n frames below its caller, so the captured stack always
+// has more frames available than the configured depth.
+func deepCall(n int, fn func()) {
+	if n == 0 {
+		fn()
+		return
+	}
+	deepCall(n-1, fn)
+}
+
+// An error without a stack of its own is captured with exactly
+// Error.CallStackDepth frames - the buffer must not be padded with the frames
+// runtime.Callers skips.
+func TestSpan_TraceCallStackCollectsConfiguredDepth(t *testing.T) {
+	for _, depth := range []int{1, 5, 32} {
+		t.Run(fmt.Sprintf("depth %d", depth), func(t *testing.T) {
+			span := defaultSpan(newTestAgent(defaultConfig()))
+			deepCall(depth+8, func() {
+				span.traceCallStack(errors.New("boom"), "", depth, time.Now())
+			})
+
+			require.Len(t, span.errorChains, 1)
+			assert.Len(t, span.errorChains[0].callstack.callstack, depth, "frames captured")
+		})
+	}
+}
+
+// setErrorFrame stands in for SetError, the frame traceCallStack is called
+// from: the recorded stack must start at its caller, with no agent frame in it.
+//
+//go:noinline
+func setErrorFrame(span *span, err error) {
+	span.traceCallStack(err, "", 8, time.Now())
+}
+
+func TestSpan_TraceCallStackSkipsAgentFrames(t *testing.T) {
+	span := defaultSpan(newTestAgent(defaultConfig()))
+	setErrorFrame(span, errors.New("boom"))
+
+	require.Len(t, span.errorChains, 1)
+	frames := span.errorChains[0].callstack.stackTrace()
+	require.NotEmpty(t, frames)
+	assert.Equal(t, "TestSpan_TraceCallStackSkipsAgentFrames", frames[0].funcName)
+}
+
 // A name passed to SetError wins over the type name for the recorded error.
 func TestSpan_TraceCallStackUsesGivenClassName(t *testing.T) {
 	span := defaultSpan(newTestAgent(defaultConfig()))

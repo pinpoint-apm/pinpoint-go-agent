@@ -542,7 +542,7 @@ func (span *span) IsSampled() bool {
 	return true
 }
 
-func (span *span) SetError(e error) {
+func (span *span) SetError(e error, errorName ...string) {
 	// A call stack overflow only blocks span events; the span level error is
 	// still recorded, as the Java agent's DefaultSpanRecorder.recordException does.
 	if e == nil || span.finished.Load() {
@@ -550,6 +550,9 @@ func (span *span) SetError(e error) {
 	}
 
 	errName := errorTypeName(e)
+	if len(errorName) > 0 {
+		errName = errorName[0]
+	}
 	id := span.agent.cacheError(errName)
 	span.errorFuncId = id
 	span.errorString = abbreviateString(e.Error(), maxErrorMessageSize)

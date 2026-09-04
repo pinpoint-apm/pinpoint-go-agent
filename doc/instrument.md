@@ -351,13 +351,14 @@ themselves sensitive.
 
 Marking a failure takes one call. `SpanRecorder.SetError()` fails the whole
 transaction; `SpanEventRecorder.SetError()` fails one event and, as in the Java
-agent, the transaction it belongs to, with an optional error name that groups
-errors in the UI:
+agent, the transaction it belongs to. Both take the same optional error name,
+which groups errors in the UI and defaults to the error's Go type name:
 
 ```go
 resp, err := client.Do(req)
 tracer.SpanEvent().SetError(err)                       // no nil check needed
 tracer.SpanEvent().SetError(err, "UpstreamCallError")  // named group
+tracer.Span().SetError(err, "UpstreamCallError")       // same on the span
 ```
 
 A `nil` error is ignored, so the unguarded form above is correct. For a failure
@@ -377,11 +378,14 @@ if err != nil {
 }
 ```
 
-A plain `errors.New` error has no stack to record, and costs nothing extra when
-the option is on. `Cause()` and `Unwrap()` (`fmt.Errorf("%w")`) chains are
-followed to build the exception chain shown in the UI, bounded at 64 links;
-each link is reported with its depth (0 = the error passed to `SetError`) and
-its Go type name as the exception class name.
+An error that carries no stack — a plain `errors.New` — is recorded with
+exactly `Error.CallStackDepth` frames captured at the `SetError` call site.
+`Cause()` and `Unwrap()` (`fmt.Errorf("%w")`) chains are followed to build the
+exception chain shown in the UI, bounded at 64 links; each link is reported
+with its depth (0 = the error passed to `SetError`) and its Go type name as the
+exception class name. A multi-unwrap error (`errors.Join`, `Unwrap() []error`)
+contributes its first element only — the chain is a single line of causes, and
+the remaining branches are dropped.
 
 Stack capture and symbolization is the most expensive thing the agent does per
 error, which is why it is off by default. Turn it on when you are diagnosing,

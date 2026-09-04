@@ -40,11 +40,22 @@ func errorTypeName(err error) string {
 
 // nextCause steps one link down an error chain, preferring pkg/errors'
 // Cause() and falling back to the standard Unwrap() (fmt.Errorf %w).
+// A multi-unwrap error (errors.Join, Unwrap() []error) contributes only its
+// first element: the Pinpoint exception chain is a single line of causes, as
+// Java's Throwable.getCause() is, and has no way to report a tree.
 func nextCause(err error) error {
 	if c, ok := err.(causer); ok {
 		return c.Cause()
 	}
-	return errors.Unwrap(err)
+	if cause := errors.Unwrap(err); cause != nil {
+		return cause
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		if errs := joined.Unwrap(); len(errs) > 0 {
+			return errs[0]
+		}
+	}
+	return nil
 }
 
 // errorCallStack is the stack the error carries itself, nil when it has none.
@@ -164,7 +175,9 @@ func (span *span) traceCallStack(err error, className string, depth int, errorTi
 	if newId {
 		callstack := errorCallStack(err)
 		if callstack == nil {
-			pcs := make([]uintptr, depth+3)
+			// skip runtime.Callers, traceCallStack and SetError so the stack
+			// starts at the caller of SetError: exactly depth frames, no more.
+			pcs := make([]uintptr, depth)
 			n := runtime.Callers(3, pcs)
 			callstack = pcs[0:n]
 		}

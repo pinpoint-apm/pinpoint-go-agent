@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -801,6 +802,26 @@ func TestSpan_SetErrorDuringEventOverflow(t *testing.T) {
 	assert.Equal(t, int32(1), pspan.GetErr(), "Err")
 	if assert.NotNil(t, pspan.GetExceptionInfo(), "ExceptionInfo") {
 		assert.Equal(t, "boom", pspan.GetExceptionInfo().GetStringValue().GetValue())
+	}
+}
+
+// span.SetError takes the same optional error name as spanEvent.SetError, so
+// both recorders group errors in the UI the same way.
+func TestSpan_SetErrorName(t *testing.T) {
+	tests := []struct {
+		name      string
+		errorName []string
+		want      string
+	}{
+		{"defaults to the Go type name", nil, "errors.errorString"},
+		{"given name wins", []string{"MyError"}, "MyError"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			span := defaultTestSpan()
+			span.SetError(io.EOF, tt.errorName...)
+			assert.Equal(t, span.agent.cacheError(tt.want), span.errorFuncId, "errorFuncId")
+		})
 	}
 }
 

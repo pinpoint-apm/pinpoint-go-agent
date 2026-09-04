@@ -98,7 +98,9 @@ type SpanRecorder interface {
 	SetServiceType(typ int32)
 
 	// SetError Record an error and indicate that operation has failed.
-	SetError(e error)
+	// The optional errorName names the error group in the UI, defaulting to
+	// the error's Go type name.
+	SetError(e error, errorName ...string)
 
 	// SetFailure indicate that operation has failed.
 	SetFailure()

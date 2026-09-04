@@ -141,7 +141,7 @@ func (span *noopSpan) SpanEvent() SpanEventRecorder {
 	return &span.noopSe
 }
 
-func (span *noopSpan) SetError(e error) {}
+func (span *noopSpan) SetError(e error, errorName ...string) {}
 
 func (span *noopSpan) SetFailure() {
 	// Write only on per-request unsampled spans. The defaultNoopSpan singleton
