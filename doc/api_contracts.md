@@ -235,9 +235,13 @@ framework plugins do this for you where the framework exposes the pattern.
   own stack, i.e. those implementing `StackTrace() errors.StackTrace` such as
   `github.com/pkg/errors` errors. A plain `errors.New` error has no stack to
   record, and the option only costs the depth check for it.
-* `Cause()` chains are walked to build the exception chain, bounded at 64
-  links so a self-referential or cyclic user error cannot hang the request
-  goroutine.
+* `Cause()` and `Unwrap()` (`fmt.Errorf("%w")`) chains are walked to build
+  the exception chain, bounded at 64 links so a self-referential or cyclic
+  user error cannot hang the request goroutine. As in the Java agent, every
+  link is sent under one exception id with `exceptionDepth` 0 for the recorded
+  error and 1..n down the chain, `exceptionClassName` set to the `SetError`
+  name or the error's Go type name (e.g. `errors.withStack`), and `startTime`
+  set to the failed span event's start time.
 
 ## 10. No-op and Unsampled Tracers Are Deliberately Silent
 

@@ -151,6 +151,8 @@ type exceptionMeta struct {
 
 type exception struct {
 	exceptionId int64
+	depth       int32  // 0 for the recorded error, 1..n down its cause chain
+	className   string // SetError name or the error's Go type name
 	callstack   *errorWithCallStack
 }
 

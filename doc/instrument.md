@@ -374,8 +374,10 @@ if err != nil {
 ```
 
 A plain `errors.New` error has no stack to record, and costs nothing extra when
-the option is on. `Cause()` chains are followed to build the exception chain
-shown in the UI, bounded at 64 links.
+the option is on. `Cause()` and `Unwrap()` (`fmt.Errorf("%w")`) chains are
+followed to build the exception chain shown in the UI, bounded at 64 links;
+each link is reported with its depth (0 = the error passed to `SetError`) and
+its Go type name as the exception class name.
 
 Stack capture and symbolization is the most expensive thing the agent does per
 error, which is why it is off by default. Turn it on when you are diagnosing,

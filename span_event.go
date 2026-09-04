@@ -112,7 +112,7 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 	if len(errorName) > 0 {
 		errName = errorName[0]
 	} else {
-		errName = "error"
+		errName = errorTypeName(e)
 	}
 
 	id := se.agent().cacheError(errName)
@@ -124,7 +124,7 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 
 	cfg := se.config()
 	if cfg.errorTraceCallStack && se.parentSpan.canAddErrorChain() {
-		se.exceptionId = se.parentSpan.traceCallStack(e, cfg.errorCallStackDepth)
+		se.exceptionId = se.parentSpan.traceCallStack(e, errName, cfg.errorCallStackDepth, time.UnixMilli(se.startTime))
 		se.Annotations().AppendLong(AnnotationExceptionChainId, se.exceptionId)
 	}
 }

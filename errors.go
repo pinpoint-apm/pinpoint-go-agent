@@ -1,6 +1,8 @@
 package pinpoint
 
 import (
+	"errors"
+	"reflect"
 	"runtime"
 	"strings"
 	"time"
@@ -21,6 +23,37 @@ type errorWithCallStack struct {
 	err       error
 	errorTime time.Time
 	callstack []uintptr
+}
+
+// errorTypeName is the Go counterpart of Java's exception class name: the
+// error's dynamic type with any pointer stripped, e.g. "errors.withStack".
+func errorTypeName(err error) string {
+	t := reflect.TypeOf(err)
+	if t == nil {
+		return "error"
+	}
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	return t.String()
+}
+
+// nextCause steps one link down an error chain, preferring pkg/errors'
+// Cause() and falling back to the standard Unwrap() (fmt.Errorf %w).
+func nextCause(err error) error {
+	if c, ok := err.(causer); ok {
+		return c.Cause()
+	}
+	return errors.Unwrap(err)
+}
+
+// errorCallStack is the stack the error carries itself, nil when it has none.
+func errorCallStack(err error) []uintptr {
+	if pkgErr, ok := err.(pkgErrorStackTracer); ok {
+		st := pkgErr.StackTrace()
+		return *(*[]uintptr)(unsafe.Pointer(&st))
+	}
+	return nil
 }
 
 func (e *errorWithCallStack) stackTrace() []frame {
@@ -80,81 +113,75 @@ func (span *span) findError(err error) *exception {
 const maxCauserDepth = 64
 
 func (span *span) getExceptionChainId(err error) (int64, bool) {
-	if _, ok := err.(pkgErrorStackTracer); ok {
-		if ec := span.findError(err); ec != nil {
-			return ec.exceptionId, false
-		}
+	if ec := span.findError(err); ec != nil {
+		return ec.exceptionId, false
+	}
 
-		for e, depth := err, 0; e != nil && depth < maxCauserDepth; depth++ {
-			if c, ok := e.(causer); ok {
-				e = c.Cause()
-				if ec := span.findError(e); ec != nil {
-					return ec.exceptionId, true
-				}
-			} else {
-				break
-			}
+	for e, depth := err, 0; e != nil && depth < maxCauserDepth; depth++ {
+		e = nextCause(e)
+		if ec := span.findError(e); ec != nil {
+			return ec.exceptionId, true
 		}
 	}
 
 	return span.agent.exceptionIdGen.Add(1), true
 }
 
-func (span *span) addCauserCallStack(err error, eid int64) {
-	for e, depth := err, 0; e != nil && depth < maxCauserDepth; depth++ {
-		c, ok := e.(causer)
-		if !ok {
+// addCauserCallStack records the causes of err under the same exception id,
+// numbered depth 1..n in chain order like Java's ExceptionWrapperFactory
+// (err itself is depth 0). A cause already recorded on this span ends the
+// walk: its own chain is on the wire already.
+func (span *span) addCauserCallStack(err error, eid int64, errorTime time.Time) {
+	e := err
+	for depth := 1; depth < maxCauserDepth; depth++ {
+		if e = nextCause(e); e == nil {
 			break
 		}
-		if !span.canAddErrorChain() {
+		if !span.canAddErrorChain() || span.findError(e) != nil {
 			break
 		}
-
-		e = c.Cause()
-		if t := span.findError(e); t == nil {
-			if pkgErr, ok := e.(pkgErrorStackTracer); ok {
-				st := pkgErr.StackTrace()
-				chain := &exception{
-					callstack: &errorWithCallStack{
-						err:       e,
-						errorTime: time.Now(),
-						callstack: *(*[]uintptr)(unsafe.Pointer(&st)),
-					},
-					exceptionId: eid,
-				}
-				span.errorChains = append(span.errorChains, chain)
-			}
-		}
+		span.errorChains = append(span.errorChains, &exception{
+			callstack: &errorWithCallStack{
+				err:       e,
+				errorTime: errorTime,
+				callstack: errorCallStack(e),
+			},
+			exceptionId: eid,
+			depth:       int32(depth),
+			className:   errorTypeName(e),
+		})
 	}
 }
 
-func (span *span) traceCallStack(err error, depth int) int64 {
-	var callstack []uintptr
-
+// traceCallStack records err (depth 0) and its cause chain on the span.
+// className is the name given to SetError, or "" to use the error's type
+// name; errorTime is the start time of the span event that failed.
+func (span *span) traceCallStack(err error, className string, depth int, errorTime time.Time) int64 {
 	span.errorChainsLock.Lock()
 	defer span.errorChainsLock.Unlock()
 
 	eid, newId := span.getExceptionChainId(err)
 	if newId {
-		if pkgErr, ok := err.(pkgErrorStackTracer); ok {
-			span.addCauserCallStack(err, eid)
-			st := pkgErr.StackTrace()
-			callstack = *(*[]uintptr)(unsafe.Pointer(&st))
-		} else {
+		callstack := errorCallStack(err)
+		if callstack == nil {
 			pcs := make([]uintptr, depth+3)
 			n := runtime.Callers(3, pcs)
 			callstack = pcs[0:n]
 		}
+		if className == "" {
+			className = errorTypeName(err)
+		}
 
-		chain := &exception{
+		span.errorChains = append(span.errorChains, &exception{
 			callstack: &errorWithCallStack{
 				err:       err,
-				errorTime: time.Now(),
+				errorTime: errorTime,
 				callstack: callstack,
 			},
 			exceptionId: eid,
-		}
-		span.errorChains = append(span.errorChains, chain)
+			className:   className,
+		})
+		span.addCauserCallStack(err, eid, errorTime)
 	}
 	return eid
 }

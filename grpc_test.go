@@ -1056,11 +1056,12 @@ func Test_makePException_EmptyCallstack(t *testing.T) {
 			errorTime: time.Now(),
 		},
 		exceptionId: 1,
+		className:   "status.Error",
 	}
 
 	var p *pb.PException
 	assert.NotPanics(t, func() { p = makePException(e) })
-	assert.Equal(t, "unknown", p.ExceptionClassName)
+	assert.Equal(t, "status.Error", p.ExceptionClassName)
 	assert.Empty(t, p.StackTraceElement)
 }
 
@@ -1122,6 +1123,8 @@ func Test_agentGrpc_sendExceptionMetadata(t *testing.T) {
 		uriTemplate: "/test/uri",
 		exceptions: []*exception{{
 			exceptionId: 44,
+			depth:       1,
+			className:   "errors.errorString",
 			callstack:   &errorWithCallStack{err: errors.New("boom"), errorTime: errorTime, callstack: pcs},
 		}},
 	}))
@@ -1140,9 +1143,8 @@ func Test_agentGrpc_sendExceptionMetadata(t *testing.T) {
 	assert.Equal(t, "boom", e.GetExceptionMessage())
 	assert.Equal(t, int32(1), e.GetExceptionDepth())
 	assert.Equal(t, int64(1234), e.GetStartTime())
+	assert.Equal(t, "errors.errorString", e.GetExceptionClassName())
 	require.NotEmpty(t, e.GetStackTraceElement())
-	assert.Equal(t, e.GetStackTraceElement()[0].GetClassName(), e.GetExceptionClassName(),
-		"the class name is the innermost frame's module")
 }
 
 // The size guard follows the configured Collector.Grpc.MaxSendMessageSize,
