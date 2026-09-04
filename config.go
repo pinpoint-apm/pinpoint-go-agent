@@ -129,7 +129,19 @@ type cfgMapItem struct {
 	cmdKey       string
 	envKey       string
 	dynamic      bool
+	source       int
 }
+
+// Where a config value came from, in ascending precedence. A reload only
+// restages keys whose source is at or below cfgSrcProfile.
+const (
+	cfgSrcDefault = iota // default or ConfigOption
+	cfgSrcFile
+	cfgSrcProfile
+	cfgSrcEnv
+	cfgSrcCmd
+	cfgSrcAPI
+)
 
 var (
 	cfgBaseMap map[string]*cfgMapItem
@@ -306,12 +318,18 @@ func GetConfig() *Config {
 }
 
 // Set stores the specified configuration item value.
+// A value set here survives config file reloads. Setting a non-dynamic option
+// updates the stored value only; the agent applies it after a restart.
 func (config *Config) Set(cfgName string, value interface{}) {
 	config.mu.Lock()
 	defer config.mu.Unlock()
 
 	if v, ok := config.cfgMap[cfgName]; ok {
+		if !v.dynamic {
+			Log("config").Warnf("config %s is not dynamic: the new value takes effect after restart", cfgName)
+		}
 		v.value = value
+		v.source = cfgSrcAPI
 		config.publish()
 	}
 }
@@ -643,18 +661,18 @@ func (config *Config) loadConfig(cmdEnvViper *viper.Viper, cfgFileViper *viper.V
 	for _, k := range sortKeys {
 		v := config.cfgMap[k]
 		if cmdEnvViper.IsSet(v.cmdKey) {
-			config.setFinalValue(k, v, cmdEnvViper.Get(v.cmdKey))
+			config.setFinalValue(k, v, cmdEnvViper.Get(v.cmdKey), cfgSrcCmd)
 		} else if cmdEnvViper.IsSet(v.envKey) {
-			config.setFinalValue(k, v, cmdEnvViper.Get(v.envKey))
+			config.setFinalValue(k, v, cmdEnvViper.Get(v.envKey), cfgSrcEnv)
 		} else if profileViper.IsSet(k) {
-			config.setFinalValue(k, v, profileViper.Get(k))
+			config.setFinalValue(k, v, profileViper.Get(k), cfgSrcProfile)
 		} else if cfgFileViper.IsSet(k) {
-			config.setFinalValue(k, v, cfgFileViper.Get(k))
+			config.setFinalValue(k, v, cfgFileViper.Get(k), cfgSrcFile)
 		}
 	}
 }
 
-func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value interface{}) {
+func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value interface{}, source int) {
 	if item.valueType == CfgStringSlice {
 		if s, ok := value.(string); ok {
 			value = strings.Split(s, ",")
@@ -662,6 +680,7 @@ func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value inte
 	}
 
 	item.value = value
+	item.source = source
 	if cfgName == CfgIsContainerEnv {
 		config.containerCheck = false
 	} else if cfgName == CfgLogLevel {
@@ -912,12 +931,16 @@ func (config *Config) loadDynamicConfig(cfgFileViper *viper.Viper, profileViper 
 		if !v.dynamic {
 			continue
 		}
+		if v.source > cfgSrcProfile {
+			Log("config").Debugf("config %s keeps its command line, environment or Set() value across reload", k)
+			continue
+		}
 
 		oldValue := v.value
 		if profileViper.IsSet(k) {
-			config.setFinalValue(k, v, profileViper.Get(k))
+			config.setFinalValue(k, v, profileViper.Get(k), cfgSrcProfile)
 		} else if cfgFileViper.IsSet(k) {
-			config.setFinalValue(k, v, cfgFileViper.Get(k))
+			config.setFinalValue(k, v, cfgFileViper.Get(k), cfgSrcFile)
 		} else {
 			continue
 		}

@@ -87,6 +87,29 @@ func TestConfigWatcherReloadAndClose(t *testing.T) {
 	require.Equal(t, 2, config.Int(CfgSamplingCounterRate), "closed watcher still reloaded the file")
 }
 
+func TestConfigWatcherReloadKeepsEnvValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	write := func(rate int, percent float64) {
+		if err := os.WriteFile(path, []byte(fmt.Sprintf("Sampling:\n  CounterRate: %d\n  PercentRate: %g\n", rate, percent)), 0o600); err != nil {
+			t.Error(err)
+		}
+	}
+	write(1, 10)
+	t.Setenv("PINPOINT_GO_SAMPLING_COUNTERRATE", "7")
+
+	config, err := NewConfig(WithAppName("watcher-env"), WithConfigFile(path))
+	require.NoError(t, err)
+	requireWatcher(t, config)
+	t.Cleanup(config.Close)
+	require.Equal(t, 7, config.Int(CfgSamplingCounterRate))
+
+	write(2, 20)
+	require.Eventually(t, func() bool {
+		return config.Float(CfgSamplingPercentRate) == 20
+	}, 2*time.Second, 10*time.Millisecond, "file-only value was not reloaded")
+	require.Equal(t, 7, config.Int(CfgSamplingCounterRate), "env value was overwritten by the config file")
+}
+
 func TestConfigWatcherDoesNotAccumulateAcrossAgentLifecycles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	writeConfigRate(t, path, 1)

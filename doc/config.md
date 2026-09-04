@@ -19,6 +19,11 @@ the value set in the environment variable is finally used.
 Pinpoint Go Agent supports the ability to have your application live read a config file while running.
 Configuration options marked with the **dynamic** can be changed at runtime when you change the config file.
 
+A reload keeps the initial precedence: an option given by command line flag or environment variable is not
+overwritten by the config file, and neither is a value set through `Config.Set()`.
+Only options whose current value came from the config file, a profile, a config function or the default are updated.
+`Config.Set()` on a non-dynamic option stores the value and logs a warning; the agent applies it after a restart.
+
 ## Configuration Option
 The titles below are used as configuration keys in config file.
 In the description of each config option below, the list is shown in the order command flag, environment variable,
