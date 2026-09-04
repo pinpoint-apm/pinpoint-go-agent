@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/valyala/fasthttp"
@@ -85,6 +86,9 @@ func Test_reqHeader(t *testing.T) {
 	assert.Equal(t, "", h.Get("X-Absent"))
 	assert.Equal(t, []string{"abc"}, h.Values("X-Trace"))
 	assert.Equal(t, []string{"one"}, h.Values("X-Multi"), "Peek returns the first value only")
+	assert.Nil(t, h.Values("X-Absent"),
+		"an absent header must read as absent, not as one empty value: the recorder "+
+			"takes a non-empty slice for present and would annotate it on every request")
 
 	visited := map[string][]string{}
 	h.VisitAll(func(name string, values []string) {
@@ -100,7 +104,7 @@ func Test_resHeader(t *testing.T) {
 	h := ResponseHeader{&ctx.Response.Header}
 
 	assert.Equal(t, []string{"ok"}, h.Values("X-Result"))
-	assert.Equal(t, []string{""}, h.Values("X-Absent"), "an absent response header reads as one empty value")
+	assert.Nil(t, h.Values("X-Absent"), "an absent response header must read as absent")
 
 	visited := map[string][]string{}
 	h.VisitAll(func(name string, values []string) { visited[name] = values })
@@ -109,6 +113,27 @@ func Test_resHeader(t *testing.T) {
 
 // Cookies live in the Cookie request header; the adapter has to split them
 // into pairs so the cookie recorder sees names, not one blob.
+// A header the configuration asks for but the client did not send must not be
+// annotated. The recorder decides on Values returning a non-empty slice, so an
+// adapter that answered []string{""} for every absent header put an empty
+// annotation on every sampled request.
+func TestWrapHandler_DoesNotRecordAbsentRequestHeaders(t *testing.T) {
+	startAgent(t, pphttp.WithHttpServerRecordRequestHeader([]string{"X-Present", "X-Absent"}))
+
+	var tracer pinpoint.Tracer
+	h := WrapHandler(func(ctx *fasthttp.RequestCtx) { tracer = tracerOf(t, ctx) }, "/hello")
+
+	ctx := newRequestCtx(http.MethodGet, "http://localhost/hello")
+	ctx.Request.Header.Set("X-Present", "here")
+	h(ctx)
+
+	annotations := spanOf(t, tracer)["Annotations"]
+	encoded, err := json.Marshal(annotations)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), "X-Present")
+	assert.NotContains(t, string(encoded), "X-Absent")
+}
+
 func Test_cookie(t *testing.T) {
 	ctx := newRequestCtx(http.MethodGet, "http://localhost/hello")
 	ctx.Request.Header.SetCookie("first", "1")

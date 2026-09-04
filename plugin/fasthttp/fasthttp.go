@@ -153,8 +153,15 @@ func (h RequestHeader) Get(key string) string {
 	return string(h.Hdr.Peek(key))
 }
 
+// Values reports a header the request does not carry as absent, the way
+// net/http's Header.Values does. Returning a one-element slice holding the
+// empty string instead made every configured-but-missing header look present
+// to the recorder, which annotated it with an empty value on every request.
 func (h RequestHeader) Values(key string) []string {
-	return []string{string(h.Hdr.Peek(key))}
+	if v := h.Hdr.Peek(key); v != nil {
+		return []string{string(v)}
+	}
+	return nil
 }
 
 func (h RequestHeader) VisitAll(f func(name string, values []string)) {
@@ -168,8 +175,12 @@ type ResponseHeader struct {
 	Hdr *fasthttp.ResponseHeader
 }
 
+// Values reports an absent header as absent, as RequestHeader.Values does.
 func (h ResponseHeader) Values(key string) []string {
-	return []string{string(h.Hdr.Peek(key))}
+	if v := h.Hdr.Peek(key); v != nil {
+		return []string{string(v)}
+	}
+	return nil
 }
 
 func (h ResponseHeader) VisitAll(f func(name string, values []string)) {
