@@ -82,6 +82,7 @@ const (
 	CfgSQLTraceRollback               = "SQL.TraceRollback"
 	CfgSQLTraceQueryStat              = "SQL.TraceQueryStat"
 	CfgSQLEnableRawSqlCache           = "SQL.EnableRawSqlCache"
+	CfgSQLCacheLengthLimit            = "SQL.CacheLengthLimit"
 	CfgEnable                         = "Enable"
 	CfgHttpUrlStatEnable              = "Http.UrlStat.Enable"
 	CfgHttpUrlStatLimitSize           = "Http.UrlStat.LimitSize"
@@ -106,6 +107,10 @@ const (
 	// one instrumented error into an allocation spike or an integer-overflow
 	// panic in make([]uintptr, depth+3).
 	maxErrorCallStackDepth = 1024
+
+	// SQL at or above this many bytes bypasses the SQL metadata caches, as in
+	// the Java agent (profiler.jdbc.sqlcachelengthlimit, UidCache.bypassLength).
+	defaultSqlCacheLengthLimit = 2048
 
 	// Upper bounds for the queue sizes and stat collection settings, matching
 	// the C++ agent. See publish.
@@ -204,6 +209,7 @@ func initConfig() {
 	AddConfig(CfgSQLTraceRollback, CfgBool, true, true)
 	AddConfig(CfgSQLTraceQueryStat, CfgBool, false, true)
 	AddConfig(CfgSQLEnableRawSqlCache, CfgBool, true, true)
+	AddConfig(CfgSQLCacheLengthLimit, CfgInt, defaultSqlCacheLengthLimit, true)
 	AddConfig(CfgEnable, CfgBool, true, false)
 	AddConfig(CfgHttpUrlStatEnable, CfgBool, false, true)
 	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1024, true)
@@ -291,6 +297,7 @@ type configSnapshot struct {
 	sqlTraceRollback     bool              // CfgSQLTraceRollback
 	sqlTraceQueryStat    bool              // CfgSQLTraceQueryStat
 	sqlEnableRawSqlCache bool              // CfgSQLEnableRawSqlCache
+	sqlCacheLengthLimit  int               // CfgSQLCacheLengthLimit
 	spanEventChunkSize   int               // CfgSpanEventChunkSize
 	spanMaxEventDepth    int32             // CfgSpanMaxCallStackDepth
 	spanMaxEventSequence int32             // CfgSpanMaxCallStackSequence
@@ -795,6 +802,12 @@ func (config *Config) publish() {
 		config.cfgMap[CfgSQLMaxBindValueSize].value = 0
 	}
 
+	// Dynamic key. A negative limit turns the bypass off and caches every SQL,
+	// the same escape hatch as the Java agent's bypassLength of -1.
+	if config.stagedInt(CfgSQLCacheLengthLimit) < 0 {
+		config.cfgMap[CfgSQLCacheLengthLimit].value = math.MaxInt32
+	}
+
 	if config.stagedInt(CfgSpanEventChunkSize) < 1 {
 		config.cfgMap[CfgSpanEventChunkSize].value = defaultEventChunkSize
 	}
@@ -882,6 +895,7 @@ func (config *Config) publish() {
 		sqlTraceRollback:     cast.ToBool(values[CfgSQLTraceRollback]),
 		sqlTraceQueryStat:    cast.ToBool(values[CfgSQLTraceQueryStat]),
 		sqlEnableRawSqlCache: cast.ToBool(values[CfgSQLEnableRawSqlCache]),
+		sqlCacheLengthLimit:  cast.ToInt(values[CfgSQLCacheLengthLimit]),
 		spanEventChunkSize:   cast.ToInt(values[CfgSpanEventChunkSize]),
 		spanMaxEventDepth:    cast.ToInt32(values[CfgSpanMaxCallStackDepth]),
 		spanMaxEventSequence: cast.ToInt32(values[CfgSpanMaxCallStackSequence]),
@@ -1364,6 +1378,14 @@ func WithSQLTraceRollback(trace bool) ConfigOption {
 func WithSQLEnableRawSqlCache(enable bool) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgSQLEnableRawSqlCache].value = enable
+	}
+}
+
+// WithSQLCacheLengthLimit sets the max length in bytes of a SQL kept in the SQL
+// metadata caches. A negative value caches every SQL.
+func WithSQLCacheLengthLimit(limit int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgSQLCacheLengthLimit].value = limit
 	}
 }
 

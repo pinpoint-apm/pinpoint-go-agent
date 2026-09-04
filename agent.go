@@ -962,19 +962,34 @@ func abbreviateString(str string, length int) string {
 	return str[:cut] + "...(" + fmt.Sprint(len(str)) + ")"
 }
 
+// sqlCacheable reports whether a SQL key is short enough to keep in the SQL
+// metadata caches. Anything longer bypasses them and re-sends its metadata on
+// every use, so a handful of huge generated statements cannot pin megabytes of
+// cache for the life of the process. This mirrors the Java agent's UidCache
+// bypassLength (profiler.jdbc.sqlcachelengthlimit); the limit is in bytes here,
+// not UTF-16 chars.
+func (agent *agent) sqlCacheable(sql string) bool {
+	return len(sql) < agent.config.load().sqlCacheLengthLimit
+}
+
 func (agent *agent) cacheSql(sql string) int32 {
 	if !agent.enable.Load() {
 		return 0
 	}
 
 	aSql := abbreviateString(sql, maxSqlSize)
-	if v, ok := agent.sqlCache.peek(aSql); ok {
-		return v
+	cacheable := agent.sqlCacheable(aSql)
+	if cacheable {
+		if v, ok := agent.sqlCache.peek(aSql); ok {
+			return v
+		}
 	}
 
 	id := atomic.AddInt32(&agent.sqlIdGen, 1)
-	if v, ok := agent.sqlCache.peekOrAdd(aSql, id); ok {
-		return v
+	if cacheable {
+		if v, ok := agent.sqlCache.peekOrAdd(aSql, id); ok {
+			return v
+		}
 	}
 
 	md := sqlMeta{
@@ -1000,13 +1015,18 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 	// multi-megabyte statement out of the LRU; two statements sharing a 64KB
 	// prefix and the same total length then share one entry.
 	aSql := abbreviateString(sql, maxSqlSize)
-	if v, ok := agent.sqlUidCache.peek(aSql); ok {
-		return v
+	cacheable := agent.sqlCacheable(aSql)
+	if cacheable {
+		if v, ok := agent.sqlUidCache.peek(aSql); ok {
+			return v
+		}
 	}
 
 	uid := sqlUid(sql)
-	if v, ok := agent.sqlUidCache.peekOrAdd(aSql, uid); ok {
-		return v
+	if cacheable {
+		if v, ok := agent.sqlUidCache.peekOrAdd(aSql, uid); ok {
+			return v
+		}
 	}
 
 	md := sqlUidMeta{

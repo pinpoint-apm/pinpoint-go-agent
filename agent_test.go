@@ -248,12 +248,20 @@ func Test_spanMessageBuilder_SanitizesInvalidUTF8(t *testing.T) {
 	}
 }
 
+// noSqlCacheBypassConfig turns SQL.CacheLengthLimit off, so a SQL of any length
+// is cached.
+func noSqlCacheBypassConfig() *Config {
+	cfg := defaultConfig()
+	cfg.Set(CfgSQLCacheLengthLimit, -1)
+	return cfg
+}
+
 func Test_agent_SQLCachesBoundKeys(t *testing.T) {
 	sql := strings.Repeat("x", maxSqlSize*2)
 	bounded := abbreviateString(sql, maxSqlSize)
 
 	t.Run("sql id", func(t *testing.T) {
-		a := newTestAgent(defaultConfig())
+		a := newTestAgent(noSqlCacheBypassConfig())
 		id := a.cacheSql(sql)
 
 		cached, ok := a.sqlCache.peek(bounded)
@@ -267,7 +275,7 @@ func Test_agent_SQLCachesBoundKeys(t *testing.T) {
 	})
 
 	t.Run("sql uid", func(t *testing.T) {
-		a := newTestAgent(defaultConfig())
+		a := newTestAgent(noSqlCacheBypassConfig())
 		uid := a.cacheSqlUid(sql)
 
 		cached, ok := a.sqlUidCache.peek(bounded)
@@ -278,6 +286,36 @@ func Test_agent_SQLCachesBoundKeys(t *testing.T) {
 
 		md := (<-a.metaChan).(sqlUidMeta)
 		assert.Equal(t, bounded, md.sql)
+	})
+}
+
+// A SQL at or above SQL.CacheLengthLimit is never cached: it re-registers and
+// re-sends its metadata on every use, as the Java agent's UidCache does past
+// bypassLength. Caching them instead lets a few huge generated statements hold
+// the cache - and their bytes - for the life of the process.
+func Test_agent_SQLCachesBypassKeysOverLengthLimit(t *testing.T) {
+	sql := strings.Repeat("x", 3000)
+
+	t.Run("sql id", func(t *testing.T) {
+		a := newTestAgent(defaultConfig())
+		first := a.cacheSql(sql)
+		second := a.cacheSql(sql)
+
+		_, cached := a.sqlCache.peek(sql)
+		assert.False(t, cached, "a sql over the length limit must not be cached")
+		assert.NotEqual(t, first, second, "a bypassed sql gets a fresh id every time")
+		assert.Len(t, a.metaChan, 2, "metadata must be enqueued on every use")
+	})
+
+	t.Run("sql uid", func(t *testing.T) {
+		a := newTestAgent(defaultConfig())
+		first := a.cacheSqlUid(sql)
+		second := a.cacheSqlUid(sql)
+
+		_, cached := a.sqlUidCache.peek(sql)
+		assert.False(t, cached, "a sql over the length limit must not be cached")
+		assert.Equal(t, first, second, "the uid hashes the sql, so it is stable")
+		assert.Len(t, a.metaChan, 2, "metadata must be enqueued on every use")
 	})
 }
 
