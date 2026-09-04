@@ -14,6 +14,7 @@ import (
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -317,6 +318,20 @@ func Test_agent_SQLCachesBypassKeysOverLengthLimit(t *testing.T) {
 		assert.Equal(t, first, second, "the uid hashes the sql, so it is stable")
 		assert.Len(t, a.metaChan, 2, "metadata must be enqueued on every use")
 	})
+
+	// The normalization memo holds the raw text as key and the normalized text
+	// as value, so it pins the most memory per entry of the three.
+	t.Run("normalized sql", func(t *testing.T) {
+		a := newTestAgent(defaultConfig())
+		a.normalizeSql(sql)
+		_, cached := a.rawSqlCache.peek(sql)
+		assert.False(t, cached, "a sql over the length limit must not be memoized")
+
+		withinLimit := "select * from t where id = 1"
+		a.normalizeSql(withinLimit)
+		_, cached = a.rawSqlCache.peek(withinLimit)
+		assert.True(t, cached, "a sql within the limit is still memoized")
+	})
 }
 
 func Test_agent_tryEnqueueMetaReturnsWhenDropRaceLeavesQueueEmpty(t *testing.T) {
@@ -438,6 +453,46 @@ func Test_agent_ShutdownDeadline(t *testing.T) {
 
 	assert.GreaterOrEqual(t, elapsed, shutdownTimeout, "waits for the deadline")
 	assert.Less(t, elapsed, shutdownTimeout+2*time.Second, "gives up at the deadline")
+}
+
+// A concurrent second Shutdown used to return at the enable check and run its
+// deferred connection close while the first call was still draining spans. The
+// teardown is serialized now, so the second call waits for it instead.
+func Test_agent_ShutdownIsSerialized(t *testing.T) {
+	c, _ := NewConfig(WithAppName("test"), WithAgentId("testagent"))
+	c.offGrpc = true
+	a, _ := NewAgent(c)
+	agent := a.(*agent)
+	agent.enable.Store(true)
+
+	stuck := make(chan struct{})
+	defer close(stuck)
+	agent.workerWg.Add(1)
+	go func() {
+		defer agent.workerWg.Done()
+		<-stuck
+	}()
+
+	start := time.Now()
+	second := make(chan time.Duration, 1)
+	go func() {
+		// Late enough that the first call is already inside its bounded drain.
+		time.Sleep(50 * time.Millisecond)
+		a.Shutdown()
+		second <- time.Since(start)
+	}()
+
+	a.Shutdown()
+	require.GreaterOrEqual(t, time.Since(start), shutdownTimeout,
+		"the first call drains to its deadline")
+
+	select {
+	case elapsed := <-second:
+		assert.GreaterOrEqual(t, elapsed, shutdownTimeout,
+			"a concurrent Shutdown must wait for the teardown, not return into it")
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "the concurrent Shutdown never returned")
+	}
 }
 
 // The normal path must not pay the startup grace delay.
