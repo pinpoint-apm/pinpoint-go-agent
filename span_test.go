@@ -236,6 +236,39 @@ func Test_span_Inject(t *testing.T) {
 	}
 }
 
+// endPoint (the address actually contacted) and destinationId (the logical node
+// label) are independent, as in Java: Inject fills in only an endPoint the
+// plugin left unset, and never overwrites one it recorded.
+func Test_span_Inject_EndPoint(t *testing.T) {
+	tests := []struct {
+		name          string
+		endPoint      string
+		destinationId string
+		want          string
+	}{
+		{"a recorded endPoint survives", "a", "my-cluster", "a"},
+		{"an unset endPoint falls back to the destination", "", "my-cluster", "my-cluster"},
+		{"nothing recorded stays empty", "", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			span := defaultTestSpan()
+			se := span.NewSpanEvent("t").SpanEvent()
+			se.SetEndPoint(tt.endPoint)
+			se.SetDestination(tt.destinationId)
+
+			span.Inject(&DistributedTracingContextMap{make(map[string]string)})
+
+			cur, ok := span.eventStack.peek()
+			if assert.True(t, ok, "event stack") {
+				assert.Equal(t, tt.want, cur.endPoint, "endPoint")
+				assert.Equal(t, tt.destinationId, cur.destinationId, "destinationId")
+			}
+		})
+	}
+}
+
 func Test_span_Inject_EventOverflow(t *testing.T) {
 	// Overflow limits profiling detail; it is not a sampling decision. The
 	// trace context must still be written or the downstream starts a new
@@ -283,7 +316,7 @@ func Test_span_Inject_EventOverflow(t *testing.T) {
 			// the dropped event carries no link back, and an ancestor event
 			// must not be credited with a call it did not make
 			if se, ok := s.eventStack.peek(); ok {
-				assert.Equal(t, se.nextSpanId, int64(0), "ancestor event nextSpanId")
+				assert.Equal(t, se.nextSpanId, int64(noneSpanId), "ancestor event nextSpanId")
 			}
 		})
 	}

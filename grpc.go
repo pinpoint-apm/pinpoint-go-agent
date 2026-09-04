@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -1344,8 +1345,11 @@ func (b *spanMessageBuilder) makePSpan(chunk *spanChunk) *pb.PSpanMessage {
 
 	acceptEvent := b.acceptEvents.get()
 	acceptEvent.Rpc = validUTF8(span.rpcName)
-	acceptEvent.EndPoint = validUTF8(span.endPoint)
-	acceptEvent.RemoteAddr = validUTF8(span.remoteAddr)
+	// Java (SpanMessageMapper.toAcceptEvent) defaults both to "UNKNOWN": an
+	// empty string leaves the web UI with a blank inbound node instead of one
+	// labelled unknown.
+	acceptEvent.EndPoint = validUTF8(cmp.Or(span.endPoint, unknownAddress))
+	acceptEvent.RemoteAddr = validUTF8(cmp.Or(span.remoteAddr, unknownAddress))
 	parentInfo := b.parentInfos.get()
 	parentInfo.ParentApplicationName = validUTF8(span.parentAppName)
 	parentInfo.ParentApplicationType = int32(span.parentAppType)
@@ -1454,7 +1458,12 @@ func (b *spanMessageBuilder) makePSpanEvent(event *spanEvent) *pb.PSpanEvent {
 
 	if event.destinationId != "" {
 		messageEvent := b.messageEvents.get()
-		messageEvent.NextSpanId = event.nextSpanId
+		// Only an event that actually injected a trace context has a next span
+		// id. Sending 0 for the rest (Java leaves the field unset) links the
+		// call to a span id no node will ever report.
+		if event.nextSpanId != noneSpanId {
+			messageEvent.NextSpanId = event.nextSpanId
+		}
 		messageEvent.EndPoint = validUTF8(event.endPoint)
 		messageEvent.DestinationId = validUTF8(event.destinationId)
 		oneof := b.nextEventOneofs.get()

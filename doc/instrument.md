@@ -56,6 +56,10 @@ func doHandle(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
+A span that records neither **SpanRecorder.SetEndPoint()** nor
+**SpanRecorder.SetRemoteAddress()** is sent with `"UNKNOWN"` in both, as the
+Java agent does, so the inbound node is labelled rather than blank in the UI.
+
 You can instrument a single call stack of application and makes the result a single span using Tracer interface.
 **Tracer.EndSpan()** must be called to complete a span and deliver it to the collector.
 
@@ -466,7 +470,10 @@ func fetch(ctx context.Context, key string) (string, error) {
 ```
 
 `SetDestination()` is the node label on the server map, so keep it stable
-(a cluster or logical database name), not per-connection.
+(a cluster or logical database name), not per-connection. `SetEndPoint()` is
+independent of it: `Inject()` copies the destination into the end point only
+when the event has none, so an end point you recorded is what the collector
+receives.
 
 ## Instrument an HTTP server by hand
 

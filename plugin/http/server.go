@@ -31,6 +31,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
@@ -127,6 +128,9 @@ var (
 	proxyHeaderApp    = textproto.CanonicalMIMEHeaderKey("Pinpoint-ProxyApp")
 )
 
+// proxyAppMaxLength matches the Java agent's ProxyRequestAnnotationFactory.
+const proxyAppMaxLength = 32
+
 func setProxyHeader(a pinpoint.Annotation, h Header) {
 	var receivedTime int64
 	var durationTime, idlePercent, busyPercent int
@@ -190,6 +194,13 @@ func setProxyHeader(a pinpoint.Annotation, h Header) {
 			}
 		}
 		code = 1
+	}
+
+	// Java caps it at ProxyRequestAnnotationFactory.APP_MAX_LENGTH. The cut is
+	// on a rune boundary: the header is untrusted input, and protobuf rejects
+	// the whole span message carrying an invalid UTF-8 string.
+	if utf8.RuneCountInString(app) > proxyAppMaxLength {
+		app = string([]rune(app)[:proxyAppMaxLength])
 	}
 
 	if code > 0 {

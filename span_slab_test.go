@@ -133,6 +133,31 @@ func Test_spanMessageBuilder_errorNextEventAndAsyncChunk(t *testing.T) {
 	}
 }
 
+// What the collector gets for the addresses a span never recorded: "UNKNOWN"
+// on the accept event (Java's SpanMessageMapper.toAcceptEvent defaults), and no
+// next span id on a message event whose caller never injected a trace context.
+func Test_spanMessageBuilder_unknownAddressAndUnsetNextSpanId(t *testing.T) {
+	a := newTestAgent(defaultConfig())
+
+	s := newSampledSpan(a, "op", "/rpc")
+	se := newSpanEvent(s, "client-call")
+	se.destinationId = "db-1"
+	s.spanEvents = append(s.spanEvents, se)
+	chunk := s.newEventChunk(true)
+	chunk.optimizeSpanEvents()
+
+	builder := acquireSpanMessageBuilder()
+	defer releaseSpanMessageBuilder(builder)
+
+	span := builder.makePSpanMessage(chunk).GetSpan()
+	assert.Equal(t, unknownAddress, span.GetAcceptEvent().GetEndPoint(), "endPoint")
+	assert.Equal(t, unknownAddress, span.GetAcceptEvent().GetRemoteAddr(), "remoteAddr")
+
+	me := span.GetSpanEvent()[0].GetNextEvent().GetMessageEvent()
+	assert.Equal(t, "db-1", me.GetDestinationId())
+	assert.Zero(t, me.GetNextSpanId(), "nextSpanId must stay unset")
+}
+
 // The stream sender's contract: the message is marshaled by Send before the
 // builder is released. Bytes captured at "Send" time must stay intact after
 // the builder is recycled for later spans.

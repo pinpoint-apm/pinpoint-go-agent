@@ -41,6 +41,7 @@ func defaultSpanEvent(span *span, operationName string) *spanEvent {
 	se.depth = span.eventDepth.Load()
 	se.operationName = operationName
 	se.endPoint = ""
+	se.nextSpanId = noneSpanId
 	se.asyncId = noneAsyncId
 	se.asyncSeqGen = 0
 	se.serviceType = ServiceTypeGoFunction

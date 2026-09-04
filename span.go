@@ -20,6 +20,8 @@ const (
 	apiTypeWebRequest      = 100
 	apiTypeInvocation      = 200
 	noneAsyncId            = 0
+	noneSpanId             = -1
+	unknownAddress         = "UNKNOWN"
 	minEventDepth          = 2
 	minEventSequence       = 4
 	defaultEventDepth      = 64
@@ -224,7 +226,10 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 
 	destinationId := ""
 	if se != nil {
-		se.endPoint = se.destinationId
+		// endPoint (address actually contacted) and destinationId (logical node
+		// label) are independent in Java: only fill in the endPoint the plugin
+		// left unset, never overwrite the one it recorded.
+		se.endPoint = cmp.Or(se.endPoint, se.destinationId)
 		destinationId = se.destinationId
 		writer.Set(HeaderHost, destinationId)
 	}

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
@@ -101,6 +102,10 @@ func Test_setProxyHeader(t *testing.T) {
 			want: proxyValues{called: true, code: 1}},
 		{name: "app time is not divided by 1000", header: "Pinpoint-ProxyApp", value: "t=1500968753503",
 			want: proxyValues{called: true, code: 1, receivedTime: 1500968753503}},
+		{name: "app over the length cap", header: "Pinpoint-ProxyApp", value: "app=" + strings.Repeat("a", 40),
+			want: proxyValues{called: true, code: 1, app: strings.Repeat("a", proxyAppMaxLength)}},
+		{name: "app cap cuts on a rune boundary", header: "Pinpoint-ProxyApp", value: "app=" + strings.Repeat("가", 40),
+			want: proxyValues{called: true, code: 1, app: strings.Repeat("가", proxyAppMaxLength)}},
 	}
 
 	for _, tt := range tests {
