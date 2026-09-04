@@ -79,6 +79,12 @@ func Test_spanEvent_generateNextSpanId(t *testing.T) {
 			assert.Equal(t, se.operationName, tt.args.operationName, "operationName")
 			assert.Equal(t, se.nextSpanId, id, "nextSpanId")
 			assert.NotEqual(t, se.nextSpanId, int64(0), "nextSpanId")
+
+			// the event path must avoid the parent span's ids as well
+			se.parentSpan.spanId = 10
+			se.parentSpan.parentSpanId = 20
+			stubSpanIdGenerator(t, 10, 20, -1, 30)
+			assert.Equal(t, int64(30), se.generateNextSpanId(), "nextSpanId on collision")
 		})
 	}
 }

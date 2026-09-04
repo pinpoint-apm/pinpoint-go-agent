@@ -97,7 +97,7 @@ func (se *spanEvent) warnIfFinished(setter string) bool {
 }
 
 func (se *spanEvent) generateNextSpanId() int64 {
-	se.nextSpanId = generateSpanId()
+	se.nextSpanId = nextSpanId(se.parentSpan.spanId, se.parentSpan.parentSpanId)
 	return se.nextSpanId
 }
 

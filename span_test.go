@@ -172,6 +172,43 @@ func Test_TransactionId_String(t *testing.T) {
 	}
 }
 
+// stubSpanIdGenerator hands out ids in order and restores the real generator
+// when the test ends.
+func stubSpanIdGenerator(t *testing.T, ids ...int64) {
+	orig := generateSpanId
+	generateSpanId = func() int64 {
+		id := ids[0]
+		ids = ids[1:]
+		return id
+	}
+	t.Cleanup(func() {
+		assert.Empty(t, ids, "unused stub ids")
+		generateSpanId = orig
+	})
+}
+
+func Test_nextSpanId(t *testing.T) {
+	tests := []struct {
+		name         string
+		spanId       int64
+		parentSpanId int64
+		generated    []int64
+		want         int64
+	}{
+		{"no collision", 10, 20, []int64{30}, 30},
+		{"collides with spanId", 10, 20, []int64{10, 30}, 30},
+		{"collides with parentSpanId", 10, 20, []int64{20, 30}, 30},
+		{"collides with the null id", 10, 20, []int64{-1, 30}, 30},
+		{"collides more than once", 10, 20, []int64{10, -1, 20, 30}, 30},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stubSpanIdGenerator(t, tt.generated...)
+			assert.Equal(t, tt.want, nextSpanId(tt.spanId, tt.parentSpanId), "nextSpanId")
+		})
+	}
+}
+
 func Test_span_Inject(t *testing.T) {
 	type args struct {
 		writer DistributedTracingContextWriter

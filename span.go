@@ -82,8 +82,20 @@ type span struct {
 	finished        atomic.Bool
 }
 
-func generateSpanId() int64 {
-	return rand.Int63()
+// generateSpanId is a var so tests can force a collision; production always
+// draws from rand.
+var generateSpanId = rand.Int63
+
+// nextSpanId draws the id handed to the next node. Java's SpanId.nextSpanID
+// guarantees it differs from this span's own id and from its parent's, and is
+// never the -1 NULL marker; rand.Int63 makes a collision a 2^-63 event and -1
+// impossible, but the downstream link is wrong when it does happen.
+func nextSpanId(spanId int64, parentSpanId int64) int64 {
+	for {
+		if id := generateSpanId(); id != spanId && id != parentSpanId && id != -1 {
+			return id
+		}
+	}
 }
 
 // defaultSpan pins the agent's current config snapshot along with the agent
@@ -191,7 +203,7 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 	// Overflowed: the next span id is generated but not recorded, so the
 	// downstream still joins this transaction under this span as its parent.
 	// Only the caller-side event->span link is lost, along with the event.
-	nextSpanId := generateSpanId()
+	nextSpanId := nextSpanId(span.spanId, span.parentSpanId)
 	if se != nil {
 		nextSpanId = se.generateNextSpanId()
 	}
