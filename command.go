@@ -135,65 +135,73 @@ func (agent *agent) runCommandService() {
 			}
 		}
 
-		stream := agent.cmdGrpc.newCommandStreamWithRetry()
-		err := stream.sendCommandMessage()
-		if err != nil {
-			if err != io.EOF {
-				Log("cmd").Errorf("send command message - %v", err)
-			}
-			stream.close()
-			continue
-		}
-
-		for agent.enable.Load() {
-			cmdReq, err := stream.recvCommandRequest()
-			if err != nil {
-				if stream.expired() {
-					// The stream deadline set by newHandleCommandStream: a
-					// renewal, not a failure, so reopen without the pause.
-					Log("cmd").Infof("renew command stream: max age reached")
-					attempt = -1
-				} else if agent.enable.Load() && err != io.EOF {
-					Log("cmd").Warnf("recv command request - %v", err)
-				}
-				break
-			}
-			attempt = 0 // the stream is healthy; restart the back-off
-
-			reqId := cmdReq.GetRequestId()
-			Log("cmd").Infof("command request: %v, %v", cmdReq, reqId)
-
-			switch cmdReq.Command.(type) {
-			case *pb.PCmdRequest_CommandEcho:
-				msg := cmdReq.GetCommandEcho().GetMessage()
-				agent.cmdGrpc.sendEcho(reqId, msg)
-				break
-			case *pb.PCmdRequest_CommandActiveThreadCount:
-				agent.handleActiveThreadCount(reqId, stream)
-				break
-			case *pb.PCmdRequest_CommandActiveThreadDump:
-				if c := cmdReq.GetCommandActiveThreadDump(); c != nil {
-					limit := c.GetLimit()
-					threadName := c.GetThreadName()
-					localId := c.GetLocalTraceId()
-					agent.cmdGrpc.sendActiveThreadDump(reqId, limit, threadName, localId, dumpGoroutine(agent))
-				}
-				break
-			case *pb.PCmdRequest_CommandActiveThreadLightDump:
-				if c := cmdReq.GetCommandActiveThreadLightDump(); c != nil {
-					agent.cmdGrpc.sendActiveThreadLightDump(reqId, c.GetLimit(), dumpGoroutine(agent))
-				}
-				break
-			case nil:
-			default:
-				break
-			}
-		}
-
-		stream.close()
+		attempt = agent.serveCommandStream(attempt)
 	}
 
 	Log("cmd").Infof("end command goroutine")
+}
+
+// serveCommandStream opens one command stream, handshakes and then serves
+// requests on it until it fails or the agent stops. It returns the back-off
+// attempt counter the caller carries into the next stream: -1 for a renewal
+// that should reopen without a pause, 0 for a stream that was healthy, and the
+// given value unchanged when the handshake itself failed.
+//
+// The close is deferred, so a panic in a command handler closes the stream
+// too: superviseWorker restarts the worker body, and the abandoned stream
+// would otherwise stay open on the collector until the connection is renewed,
+// with the restarted body free to pile another on top of it.
+func (agent *agent) serveCommandStream(attempt int) int {
+	stream := agent.cmdGrpc.newCommandStreamWithRetry()
+	defer stream.close()
+
+	if err := stream.sendCommandMessage(); err != nil {
+		if err != io.EOF {
+			Log("cmd").Errorf("send command message - %v", err)
+		}
+		return attempt
+	}
+
+	for agent.enable.Load() {
+		cmdReq, err := stream.recvCommandRequest()
+		if err != nil {
+			if stream.expired() {
+				// The stream deadline set by newHandleCommandStream: a
+				// renewal, not a failure, so reopen without the pause.
+				Log("cmd").Infof("renew command stream: max age reached")
+				attempt = -1
+			} else if agent.enable.Load() && err != io.EOF {
+				Log("cmd").Warnf("recv command request - %v", err)
+			}
+			break
+		}
+		attempt = 0 // the stream is healthy; restart the back-off
+
+		reqId := cmdReq.GetRequestId()
+		Log("cmd").Infof("command request: %v, %v", cmdReq, reqId)
+		switch cmdReq.Command.(type) {
+		case *pb.PCmdRequest_CommandEcho:
+			msg := cmdReq.GetCommandEcho().GetMessage()
+			agent.cmdGrpc.sendEcho(reqId, msg)
+		case *pb.PCmdRequest_CommandActiveThreadCount:
+			agent.handleActiveThreadCount(reqId, stream)
+		case *pb.PCmdRequest_CommandActiveThreadDump:
+			if c := cmdReq.GetCommandActiveThreadDump(); c != nil {
+				limit := c.GetLimit()
+				threadName := c.GetThreadName()
+				localId := c.GetLocalTraceId()
+				agent.cmdGrpc.sendActiveThreadDump(reqId, limit, threadName, localId, dumpGoroutine(agent))
+			}
+		case *pb.PCmdRequest_CommandActiveThreadLightDump:
+			if c := cmdReq.GetCommandActiveThreadLightDump(); c != nil {
+				agent.cmdGrpc.sendActiveThreadLightDump(reqId, c.GetLimit(), dumpGoroutine(agent))
+			}
+		case nil:
+		default:
+		}
+	}
+
+	return attempt
 }
 
 // handleActiveThreadCount starts an active thread count stream for reqId, or

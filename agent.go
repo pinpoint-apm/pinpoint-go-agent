@@ -100,6 +100,11 @@ type agent struct {
 	enable    atomic.Bool
 	shutdown  atomic.Bool
 
+	// shutdownOnce serializes the teardown. Without it a concurrent second
+	// Shutdown returned at the enable check below and ran its deferred
+	// connection close while the first call was still draining spans.
+	shutdownOnce sync.Once
+
 	// stopCtx is cancelled when shutdown begins. The shutdown flag above is
 	// only polled, so it cannot wake a goroutine already blocked in a wait;
 	// the context can. NewAgent creates it before starting goroutines, while
@@ -482,7 +487,14 @@ func waitTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {
 	}
 }
 
+// Shutdown stops the agent. Repeated and concurrent calls are safe: the
+// teardown runs once, and a later caller waits for it rather than closing the
+// collector connections underneath the first call's span drain.
 func (agent *agent) Shutdown() {
+	agent.shutdownOnce.Do(agent.shutdownAgent)
+}
+
+func (agent *agent) shutdownAgent() {
 	// Give an in-progress registration a moment to finish, in case shutdown was
 	// called too early. A registered agent has already released connectWg, so
 	// the normal shutdown path pays nothing here.
@@ -499,9 +511,10 @@ func (agent *agent) Shutdown() {
 	// (collector down at boot) still holds a live agent connection, and the
 	// never-enabled early return below would leak it once per failed
 	// NewAgent/Shutdown retry cycle. Deferred so the enabled path keeps its
-	// order - workers drain first, connections close last. The closes are
-	// nil-checked and idempotent, so a second Shutdown is harmless. Reading
-	// the fields is safe: connectGrpcServer wrote them before connectWg.Done.
+	// order - workers drain first, connections close last. shutdownOnce keeps
+	// a concurrent Shutdown from reaching this defer while the drain below is
+	// still running. Reading the fields is safe: connectGrpcServer wrote them
+	// before connectWg.Done.
 	defer func() {
 		if agent.agentGrpc != nil {
 			agent.agentGrpc.close()
@@ -529,11 +542,9 @@ func (agent *agent) Shutdown() {
 	}
 	globalAgentLock.Unlock()
 
-	// CompareAndSwap, not Load-then-Store: two concurrent Shutdown calls could
-	// both pass a plain check and both reach the teardown below, panicking on
-	// the second close of spanQueue's already-closed done channel. Only the
-	// swap winner proceeds. A never-enabled agent stops here: it has no
-	// workers, queues or streams to tear down.
+	// A never-enabled agent stops here: it has no workers, queues or streams
+	// to tear down. shutdownOnce already rules out a second caller reaching
+	// this, so the swap only has to report whether the agent ever ran.
 	if !agent.enable.CompareAndSwap(true, false) {
 		return
 	}
@@ -626,6 +637,11 @@ func (agent *agent) sendPingWorker() {
 	defer ticker.Stop()
 	stop := agent.stopSignal().Done()
 	stream := agent.agentGrpc.newPingStreamWithRetry()
+	// Deferred through a closure so that it closes whichever stream the loop
+	// ended up holding, on every exit: a panicked body that superviseWorker
+	// restarts, and the enable flag going false between iterations, both used
+	// to leave the stream open on the collector.
+	defer func() { stream.close() }()
 
 	for agent.enable.Load() {
 		stream = renewIfExpired(stream, agent.agentGrpc.newPingStreamWithRetry, "ping")
@@ -642,7 +658,6 @@ func (agent *agent) sendPingWorker() {
 		select {
 		case <-stop:
 			Log("agent").Infof("end ping goroutine")
-			stream.close()
 			return
 		case t := <-ticker.C:
 			if IsDebugLogLevelEnabled() {
@@ -656,6 +671,11 @@ func (agent *agent) sendSpanWorker() {
 	Log("agent").Infof("start span goroutine")
 
 	stream := agent.spanGrpc.newSpanStreamWithRetry()
+	// Deferred for the same reason as the ping worker's: a panic recovered by
+	// superviseWorker would otherwise leak this stream and let the restarted
+	// body open another on top of it.
+	defer func() { stream.close() }()
+
 	for {
 		// Break on a drained queue only, not on the disabled flag: shutdown
 		// clears enable before it closes the queue, so also breaking here
@@ -712,7 +732,6 @@ func (agent *agent) sendSpanWorker() {
 		}
 	}
 
-	stream.close()
 	Log("agent").Infof("end span goroutine")
 }
 
@@ -1067,7 +1086,10 @@ type normalizedSql struct {
 // the same sharded metaCache as the id caches above, so a hot statement is a
 // lock-free lookup and stays resident under aged promotion.
 func (agent *agent) normalizeSql(sql string) (string, string) {
-	if len(sql) > maxSqlSize {
+	// SQL.CacheLengthLimit applies here as it does to the metadata caches: the
+	// raw text is both key and value, so one statement past the limit pinned
+	// twice its size per entry, which is the memory the limit exists to cap.
+	if len(sql) > maxSqlSize || !agent.sqlCacheable(sql) {
 		return newSqlNormalizer(sql).run()
 	}
 	if n, ok := agent.rawSqlCache.peek(sql); ok {
