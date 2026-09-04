@@ -945,8 +945,10 @@ func validUTF8(s string) string {
 	return strings.ToValidUTF8(s, string(utf8.RuneError))
 }
 
-// abbreviateString truncates str to at most length bytes plus a "...(length)"
-// marker, cutting at a rune boundary: protobuf rejects invalid UTF-8 string
+// abbreviateString truncates str to at most length bytes plus a "...(original
+// length)" marker, byte-for-byte what the Java agent's StringUtils.abbreviate
+// writes - the limit is already known to every reader, the original size is
+// not. The cut lands on a rune boundary: protobuf rejects invalid UTF-8 string
 // fields at marshal time, so a mid-rune cut would fail the whole span or
 // metadata send carrying it.
 func abbreviateString(str string, length int) string {
@@ -957,7 +959,7 @@ func abbreviateString(str string, length int) string {
 	for cut > 0 && !utf8.RuneStart(str[cut]) {
 		cut--
 	}
-	return str[:cut] + "...(" + fmt.Sprint(length) + ")"
+	return str[:cut] + "...(" + fmt.Sprint(len(str)) + ")"
 }
 
 func (agent *agent) cacheSql(sql string) int32 {
@@ -992,12 +994,17 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 		return nil
 	}
 
+	// Java hashes the whole normalized SQL and abbreviates only the text it
+	// publishes (SqlCacheService), so the UID of a statement past the cap must
+	// not depend on the abbreviation. The cache key stays abbreviated to keep a
+	// multi-megabyte statement out of the LRU; two statements sharing a 64KB
+	// prefix and the same total length then share one entry.
 	aSql := abbreviateString(sql, maxSqlSize)
 	if v, ok := agent.sqlUidCache.peek(aSql); ok {
 		return v
 	}
 
-	uid := sqlUid(aSql)
+	uid := sqlUid(sql)
 	if v, ok := agent.sqlUidCache.peekOrAdd(aSql, uid); ok {
 		return v
 	}

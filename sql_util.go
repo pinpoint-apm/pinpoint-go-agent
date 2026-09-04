@@ -8,59 +8,17 @@ import (
 
 type sqlNormalizer struct {
 	r          *bufio.Reader
-	output     *sqlNormalizerBuilder
-	param      *sqlNormalizerBuilder
+	output     strings.Builder
+	param      strings.Builder
 	paramIndex int
 	sql        string
 	isChanged  bool
-}
-
-// sqlNormalizerBuilder retains only the prefix used by SQL metadata and
-// annotations. A small overflow sentinel is kept so abbreviateString can
-// preserve the existing "...(limit)" marker. strings.Builder is a field rather
-// than an embedded type: promoted Write/WriteByte methods would bypass the
-// bound without any compile error at the call site.
-type sqlNormalizerBuilder struct {
-	sb strings.Builder
-}
-
-func (b *sqlNormalizerBuilder) Len() int {
-	return b.sb.Len()
-}
-
-func (b *sqlNormalizerBuilder) WriteRune(r rune) {
-	if b.sb.Len() <= maxSqlSize {
-		_, _ = b.sb.WriteRune(r)
-	}
-}
-
-func (b *sqlNormalizerBuilder) WriteString(value string) {
-	remaining := maxSqlSize + 1 - b.sb.Len()
-	if remaining <= 0 {
-		return
-	}
-	if len(value) > remaining {
-		value = value[:remaining]
-	}
-	_, _ = b.sb.WriteString(value)
-}
-
-func (b *sqlNormalizerBuilder) result() string {
-	return abbreviateString(b.sb.String(), maxSqlSize)
-}
-
-// full reports that the builder stopped accepting input: WriteRune and
-// WriteString are both no-ops past this point.
-func (b *sqlNormalizerBuilder) full() bool {
-	return b.sb.Len() > maxSqlSize
 }
 
 func newSqlNormalizer(sql string) *sqlNormalizer {
 	normalizer := sqlNormalizer{}
 
 	normalizer.r = bufio.NewReader(strings.NewReader(sql))
-	normalizer.output = &sqlNormalizerBuilder{}
-	normalizer.param = &sqlNormalizerBuilder{}
 	normalizer.paramIndex = 0
 	normalizer.sql = sql
 	normalizer.isChanged = false
@@ -68,18 +26,16 @@ func newSqlNormalizer(sql string) *sqlNormalizer {
 	return &normalizer
 }
 
+// run normalizes the whole statement, as the Java agent's DefaultSqlNormalizer
+// does. The 64KB cap belongs to the metadata text alone (see cacheSql and
+// cacheSqlUid): a statement past the cap must still hash to the UID Java
+// computes from the full normalized SQL, and param must stay whole because the
+// server splits it on ',' to refill the <idx>#/<idx>$ placeholders - a cut
+// param leaves placeholders exposed.
 func (s *sqlNormalizer) run() (string, string) {
 	numberTokenStartEnable := true
 
 	for {
-		// Once the output is full, nothing read past this point can still be
-		// shown, so stop scanning instead of walking the rest of the input -
-		// a multi-megabyte statement otherwise costs O(input) for a 64KB
-		// result. Bind values whose placeholders fell past the cap are
-		// dropped along with the SQL they belong to.
-		if s.output.full() {
-			break
-		}
 		if ch := s.read(); ch == eof {
 			break
 		} else if ch == '/' {
@@ -123,12 +79,12 @@ func (s *sqlNormalizer) run() (string, string) {
 
 	if s.isChanged {
 		if s.param.Len() > 0 {
-			return s.output.result(), s.param.result()
+			return s.output.String(), s.param.String()
 		} else {
-			return s.output.result(), ""
+			return s.output.String(), ""
 		}
 	} else {
-		return abbreviateString(s.sql, maxSqlSize), ""
+		return s.sql, ""
 	}
 
 }
@@ -137,9 +93,6 @@ func (s *sqlNormalizer) consumeSingleLineComment() {
 	var ch rune
 
 	for {
-		if s.output.full() { // the run loop exits right after on the same test
-			break
-		}
 		if ch = s.read(); ch == eof {
 			break
 		}
@@ -156,9 +109,6 @@ func (s *sqlNormalizer) consumeMultiLineComment() {
 	s.output.WriteRune(s.read()) /* cousume '*' */
 
 	for {
-		if s.output.full() { // the run loop exits right after on the same test
-			break
-		}
 		if ch = s.read(); ch == eof {
 			break
 		}
@@ -179,10 +129,6 @@ func (s *sqlNormalizer) consumeCharLiteral() {
 	}
 
 	for {
-		// Nothing can be recorded any more; the run loop exits right after.
-		if s.output.full() && s.param.full() {
-			break
-		}
 		if ch = s.read(); ch == eof {
 			break
 		}
@@ -217,10 +163,6 @@ func (s *sqlNormalizer) consumeNumberLiteral() {
 	s.output.WriteRune('#')
 
 	for {
-		// Nothing can be recorded any more; the run loop exits right after.
-		if s.output.full() && s.param.full() {
-			break
-		}
 		if ch = s.read(); ch == eof {
 			break
 		}

@@ -610,7 +610,8 @@ SQL.TraceBindValue option enables bind value tracing for SQL Driver.
 SQL.MaxBindValueSize option sets the max length of traced bind value for SQL Driver.
 It applies to bind values only. The parameters extracted by SQL normalization are
 never truncated, because the server splits them on `,` to restore the original
-statement; their size is bounded by the 64KB SQL limit instead.
+statement. Only the SQL text published as metadata is truncated, at 64KB, and it
+carries a `...(original length)` marker as in the Java agent.
 
 * --pinpoint-sql-maxbindvaluesize
 * PINPOINT_GO_SQL_MAXBINDVALUESIZE

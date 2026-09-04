@@ -119,7 +119,8 @@ func Test_SetError_AbbreviatesMessage(t *testing.T) {
 		want string
 	}{
 		{"short kept", "short", "short"},
-		{"long abbreviated", long, strings.Repeat("e", maxErrorMessageSize) + "...(256)"},
+		// Java's StringUtils.abbreviate(message, 256) marks the original size.
+		{"long abbreviated", long, strings.Repeat("e", maxErrorMessageSize) + "...(300)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -169,10 +170,10 @@ func Test_spanEvent_SetSQLBoundsAnnotationValues(t *testing.T) {
 
 	assert.Len(t, se.annotations.values, 1)
 	annotation := se.annotations.values[0]
-	// param is bounded by the normalizer's maxSqlSize, not by the bind limit
-	assert.True(t, strings.HasPrefix(annotation.s1, literal[:limit+1]))
-	assert.LessOrEqual(t, len(annotation.s1), maxSqlSize+len("...(65536)"))
-	assert.Equal(t, args[:limit]+"...(32)", annotation.s2)
+	// Only the bind values are bounded: the normalized literal is a parameter
+	// the server needs whole, and Java abbreviates neither.
+	assert.Equal(t, literal, annotation.s1)
+	assert.Equal(t, args[:limit]+"...(1024)", annotation.s2)
 }
 
 // The server rebuilds the raw SQL by splitting param on ',' and indexing into
@@ -193,7 +194,7 @@ func Test_spanEvent_SetSQLKeepsParamOfLargeInList(t *testing.T) {
 
 	assert.Len(t, se.annotations.values, 1)
 	assert.Equal(t, param, se.annotations.values[0].s1)
-	assert.Equal(t, args[:limit]+"...(32)", se.annotations.values[0].s2)
+	assert.Equal(t, args[:limit]+"...(1024)", se.annotations.values[0].s2)
 }
 
 // A negative SQL.MaxBindValueSize turns bind value tracing off and clamps the

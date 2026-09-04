@@ -196,12 +196,13 @@ func Test_abbreviateString_RuneSafe(t *testing.T) {
 
 	// "가" is 3 bytes; a limit landing mid-rune must back up to the rune
 	// boundary, or protobuf rejects the string at marshal time and the whole
-	// span/metadata send fails.
+	// span/metadata send fails. The marker reports the original size, as
+	// Java's StringUtils.abbreviate does, not the limit it was cut to.
 	s := strings.Repeat("가", 3)
 	got := abbreviateString(s, 4)
-	assert.Equal(t, "가...(4)", got)
+	assert.Equal(t, "가...(9)", got)
 	assert.True(t, utf8.ValidString(got))
-	assert.Equal(t, "가가...(6)", abbreviateString(s, 6))
+	assert.Equal(t, "가가...(9)", abbreviateString(s, 6))
 }
 
 func Test_validUTF8(t *testing.T) {

@@ -91,39 +91,66 @@ func Test_sqlNormalizer_DefaultSqlNormalizerCases(t *testing.T) {
 	}
 }
 
-func Test_sqlNormalizer_BoundsLargeResults(t *testing.T) {
-	suffix := "...(" + strconv.Itoa(maxSqlSize) + ")"
-
+// Java's DefaultSqlNormalizer normalizes the whole statement and leaves the
+// 64KB cap to SqlCacheService, which abbreviates only the text it publishes. A
+// normalizer that stopped at the cap would drop every bind value behind it and
+// hand the UID a truncated string.
+func Test_sqlNormalizer_NormalizesPastTheMetadataCap(t *testing.T) {
 	t.Run("unchanged sql", func(t *testing.T) {
 		raw := strings.Repeat("x", maxSqlSize+100)
 		nsql, param := newSqlNormalizer(raw).run()
-		assert.Equal(t, raw[:maxSqlSize]+suffix, nsql)
+		assert.True(t, raw == nsql, "the whole sql must be returned untruncated")
 		assert.Empty(t, param)
 	})
 
 	t.Run("normalized sql", func(t *testing.T) {
 		prefix := strings.Repeat("x", maxSqlSize/2) + " = 2 " + strings.Repeat("x", maxSqlSize)
 		nsql, param := newSqlNormalizer(prefix + " = 1").run()
-		assert.Equal(t, abbreviateString(strings.Replace(prefix, "= 2", "= 0#", 1), maxSqlSize), nsql)
-		assert.Equal(t, "2", param, "a bind value past the SQL cap must be dropped with its SQL")
-	})
-
-	// The normalizer must not walk input that can no longer change the capped
-	// result: bind values whose placeholders fell past the cap are dropped
-	// along with the SQL they belong to.
-	t.Run("scan stops once the output is full", func(t *testing.T) {
-		prefix := strings.Repeat("x", maxSqlSize+100)
-		nsql, param := newSqlNormalizer(prefix + " = 1").run()
-		assert.Equal(t, prefix[:maxSqlSize]+suffix, nsql)
-		assert.Empty(t, param)
+		want := strings.Replace(prefix, "= 2", "= 0#", 1) + " = 1#"
+		assert.True(t, want == nsql, "sql past the cap must still be normalized")
+		assert.Equal(t, "2,1", param, "a bind value past the cap must still be reported")
 	})
 
 	t.Run("literal parameter", func(t *testing.T) {
 		literal := strings.Repeat("x", maxSqlSize+100)
 		nsql, param := newSqlNormalizer("select '" + literal + "'").run()
 		assert.Equal(t, "select '0$'", nsql)
-		assert.Equal(t, literal[:maxSqlSize]+suffix, param)
+		assert.True(t, literal == param, "the server refills placeholders from param, so it must stay whole")
 	})
+}
+
+// Acceptance case for a statement well past the 64KB cap. Java hashes the full
+// normalized SQL - DefaultCachingSqlNormalizer keys the cache with it and
+// UidGenerator hashes that key - and publishes only an abbreviated copy marked
+// with the original length (SqlCacheService, StringUtils.abbreviate).
+func Test_sqlNormalizer_JavaEquivalence_SqlPastTheCap(t *testing.T) {
+	const size = 70000
+	head := "select * from t where a = 1 and b = '"
+	literal := strings.Repeat("x", size-len(head)-len("'"))
+	sql := head + literal + "'"
+	if len(sql) != size {
+		t.Fatalf("test sql is %d bytes, want %d", len(sql), size)
+	}
+
+	nsql, param := newSqlNormalizer(sql).run()
+	assert.Equal(t, "select * from t where a = 0# and b = '1$'", nsql)
+	assert.True(t, "1,"+literal == param, "every bind value must survive normalization")
+
+	// Nothing to normalize away, so the metadata is what gets abbreviated.
+	plain := strings.Repeat("x", size)
+	nsql, param = newSqlNormalizer(plain).run()
+	assert.Len(t, nsql, size)
+	assert.Empty(t, param)
+
+	a := newTestAgent(defaultConfig())
+	uid := a.cacheSqlUid(nsql)
+	assert.Equal(t, sqlUid(nsql), uid, "the uid must hash the untruncated normalized sql")
+	assert.NotEqual(t, sqlUid(abbreviateString(nsql, maxSqlSize)), uid)
+
+	md := (<-a.metaChan).(sqlUidMeta)
+	assert.True(t, plain[:maxSqlSize]+"...("+strconv.Itoa(size)+")" == md.sql,
+		"published sql must be abbreviated with the original length")
+	assert.Equal(t, uid, md.uid)
 }
 
 func Test_sqlNormalizer_NumberState(t *testing.T) {
