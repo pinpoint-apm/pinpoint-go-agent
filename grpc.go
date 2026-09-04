@@ -1193,36 +1193,41 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 		return
 	}
 
-	builder := acquireSpanMessageBuilder()
-	spanMessageBatch := builder.makePSpanMessageBatch(chunks)
-	if len(spanMessageBatch.GetSpan()) == 0 {
-		releaseSpanMessageBuilder(builder)
-		spanGrpc.releaseSpanBatchPermit()
-		return
-	}
-
-	if IsLogLevelEnabled(logrus.DebugLevel) {
-		Log("grpc").Debugf("SendSpanBatch size=%d messageSize=%d", len(spanMessageBatch.GetSpan()), proto.Size(spanMessageBatch))
-	}
-	if IsLogLevelEnabled(logrus.TraceLevel) {
-		Log("grpc").Tracef("PSpanMessageBatch: %s", spanMessageBatch.String())
-	}
-
-	if grpc.EnableTracing {
-		// Completed unary traces can also retain their request.
-		spanMessageBatch = proto.Clone(spanMessageBatch).(*pb.PSpanMessageBatch)
-	}
-
 	spanGrpc.inFlight.Add(1)
 	go func() {
 		defer spanGrpc.inFlight.Done()
 		defer spanGrpc.releaseSpanBatchPermit()
+
+		// The message is built here rather than on the worker so that the
+		// defers above cover the build too. A panic in makePSpanMessageBatch
+		// on the worker was recovered by superviseWorker, which restarted the
+		// worker but could not return this permit: maxConcurrentRequests such
+		// panics left every later batch waiting out the flush timeout and
+		// being dropped for the life of the agent.
+		builder := acquireSpanMessageBuilder()
 		defer releaseSpanMessageBuilder(builder)
 
 		// Recovered like every other agent goroutine: a panic here must not
 		// take the host process down, and the defers above still release the
 		// permit and the builder.
 		recoverPanic("span batch send", func() {
+			spanMessageBatch := builder.makePSpanMessageBatch(chunks)
+			if len(spanMessageBatch.GetSpan()) == 0 {
+				return
+			}
+
+			if IsLogLevelEnabled(logrus.DebugLevel) {
+				Log("grpc").Debugf("SendSpanBatch size=%d messageSize=%d", len(spanMessageBatch.GetSpan()), proto.Size(spanMessageBatch))
+			}
+			if IsLogLevelEnabled(logrus.TraceLevel) {
+				Log("grpc").Tracef("PSpanMessageBatch: %s", spanMessageBatch.String())
+			}
+
+			if grpc.EnableTracing {
+				// Completed unary traces can also retain their request.
+				spanMessageBatch = proto.Clone(spanMessageBatch).(*pb.PSpanMessageBatch)
+			}
+
 			ctx, cancel := context.WithTimeout(grpcMetadataContext(spanGrpc.agent, -1), sendStreamTimeOut)
 			defer cancel()
 

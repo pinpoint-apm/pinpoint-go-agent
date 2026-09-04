@@ -275,6 +275,10 @@ func Test_spanGrpc_sendSpanBatchEmptyReleasesPermit(t *testing.T) {
 	}
 
 	spanGrpc.sendSpanBatchAsync(nil)
+	// The message is built on the sender goroutine, so the release of a
+	// permit taken for a batch that turns out empty is observable only once
+	// that goroutine is done.
+	spanGrpc.awaitInFlightSpanBatch()
 
 	assert.Empty(t, spanGrpc.concurrentRequestPermit)
 }
@@ -1618,6 +1622,32 @@ func Test_spanGrpc_sendSpanBatchAsync_errorReleasesPermit(t *testing.T) {
 
 	assert.Equal(t, 3, client.requestCount(), "a failed send must return its permit")
 	assert.Empty(t, spanGrpc.concurrentRequestPermit)
+}
+
+// A panic while the batch message is built must return the permit too. The
+// build used to run on the worker, where superviseWorker recovered the panic
+// and restarted the worker but could not return the permit, so
+// maxConcurrentRequests such panics dropped every later batch for good.
+func Test_spanGrpc_sendSpanBatchAsync_buildPanicReleasesPermit(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	client := &mockSpanGrpcClient{}
+	spanGrpc := newBoundedSpanGrpc(agent, client)
+
+	// A nil event is dereferenced by makePSpanEvent, so the build panics
+	// before any request reaches the collector.
+	corrupt := newTestSpanChunk(agent)
+	corrupt.eventChunk = []*spanEvent{nil}
+
+	for i := 0; i < 3; i++ {
+		spanGrpc.sendSpanBatchAsync([]*spanChunk{corrupt})
+		spanGrpc.awaitInFlightSpanBatch()
+	}
+	require.Empty(t, spanGrpc.concurrentRequestPermit, "a panicking build returns its permit")
+	assert.Zero(t, client.requestCount(), "no batch reached the collector")
+
+	spanGrpc.sendSpanBatchAsync([]*spanChunk{newTestSpanChunk(agent)})
+	spanGrpc.awaitInFlightSpanBatch()
+	assert.Equal(t, 1, client.requestCount(), "the sender still works after the panics")
 }
 
 // A partially rejected batch is a warning, not a sender failure: the permit
