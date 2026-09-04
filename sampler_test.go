@@ -61,11 +61,11 @@ func Test_percentSampler_isSampled(t *testing.T) {
 		want   bool
 	}{
 		{"1", fields{100, 0}, true},
-		{"2", fields{50, 0}, false},
-		{"3", fields{50, 5000}, true},
-		{"4", fields{1, 0}, false},
-		{"5", fields{1, 9900}, true},
-		{"6", fields{1, 10000}, false},
+		{"2", fields{50, 0}, true},
+		{"3", fields{50, 5000}, false},
+		{"4", fields{1, 0}, true},
+		{"5", fields{1, 9900}, false},
+		{"6", fields{1, 10000}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -77,6 +77,22 @@ func Test_percentSampler_isSampled(t *testing.T) {
 				t.Errorf("rateSampler.isSampled() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// The admission window is (0, rate] like Java's PercentRateSampler, so at 50%
+// the odd requests are sampled - starting with the first - not the even ones.
+// A rate of 100% is clamped to the max and always samples, the case Java gives
+// to TrueSampler.
+func Test_percentSampler_samplesFirstRequest(t *testing.T) {
+	half := newPercentSampler(50)
+	for i := 1; i <= 4; i++ {
+		assert.Equal(t, i%2 == 1, half.isSampled(), "50%% request %d", i)
+	}
+
+	full := newPercentSampler(100)
+	for i := 1; i <= 3; i++ {
+		assert.True(t, full.isSampled(), "100%% request %d", i)
 	}
 }
 

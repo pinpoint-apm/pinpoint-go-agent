@@ -65,9 +65,17 @@ func (s *percentSampler) isSampled() bool {
 	if s.rate == 0 {
 		return false
 	}
+	// A rate of 100% is clamped to the max, where the remainder below is always
+	// 0; Java hands that case to TrueSampler instead of PercentRateSampler.
+	if s.rate >= samplingMaxPercentRate {
+		return true
+	}
+	// The admission window is (0, rate], like Java's PercentRateSampler: the
+	// first request of the process lands on a remainder of exactly rate and is
+	// sampled, where a [0, rate) window samples the second one instead.
 	samplingCount := atomic.AddUint64(&s.counter, s.rate)
 	r := samplingCount % samplingMaxPercentRate
-	return r < s.rate
+	return r > 0 && r <= s.rate
 }
 
 // traceSampler takes the agentStats to count into as an argument rather than

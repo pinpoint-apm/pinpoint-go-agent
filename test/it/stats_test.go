@@ -167,8 +167,8 @@ func TestAppliesPercentSamplingPattern(t *testing.T) {
 	baseline := agentStatCount(mc.Snapshot())
 
 	// The percent sampler accumulates the rate (50% == 5000/10000) per request,
-	// so admission alternates deterministically: skip, sample, skip, sample.
-	expected := []bool{false, true, false, true}
+	// so admission alternates deterministically: sample, skip, sample, skip.
+	expected := []bool{true, false, true, false}
 	driveSamplingPattern(t, agent, "sampling.percent", "/sampling/percent/", expected, nil)
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool {
