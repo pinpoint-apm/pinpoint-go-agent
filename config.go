@@ -1048,6 +1048,14 @@ func (config *Config) loadDynamicConfig(cfgFileViper *viper.Viper, profileViper 
 		}
 		if !reflect.DeepEqual(oldValue, v.value) {
 			changed[k] = true
+			// setFinalValue mirrors the deprecated LogLevel key onto Log.Level,
+			// and the logger's reload callback is registered on the new name.
+			// A file that still uses the old one has to report both, or the
+			// snapshot picks the new level up while the logger keeps the one
+			// it started with.
+			if k == CfgLogLevelOld && !config.useNewLogOpt {
+				changed[CfgLogLevel] = true
+			}
 		}
 	}
 	return changed

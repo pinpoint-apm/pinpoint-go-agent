@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewConfig_DefaultValue(t *testing.T) {
@@ -704,6 +705,32 @@ Span:
 	config.reloadConfig(cfgFileViper)
 	assert.Equal(t, 1, reloadedSlice)
 	assert.Equal(t, 1, reloadedDepth)
+}
+
+// A config file that still uses the deprecated LogLevel key must fire the
+// Log.Level callback the logger is registered on. setFinalValue mirrors the old
+// key onto the new one, but only the old name was reported as changed, so the
+// snapshot picked the new level up while the logger kept the one it started
+// with.
+func Test_reloadConfig_deprecatedLogLevelFiresTheLogLevelCallback(t *testing.T) {
+	config, err := NewConfig(WithAppName("reloadApp"))
+	require.NoError(t, err)
+
+	var reloadedLevel int
+	config.AddReloadCallback([]string{CfgLogLevel}, func() { reloadedLevel++ })
+
+	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	require.NoError(t, os.WriteFile(cfgFile, []byte("LogLevel: debug\n"), 0o600))
+	cfgFileViper := viper.New()
+	cfgFileViper.SetConfigFile(cfgFile)
+	config.reloadConfig(cfgFileViper)
+
+	assert.Equal(t, "debug", config.String(CfgLogLevel), "the new key mirrors the old one")
+	assert.Equal(t, 1, reloadedLevel, "the logger's callback must fire for the old key too")
+
+	// A second reload of the same file changes nothing, so nothing fires.
+	config.reloadConfig(cfgFileViper)
+	assert.Equal(t, 1, reloadedLevel)
 }
 
 func Test_reloadConfig_recoversCallbackPanic(t *testing.T) {
