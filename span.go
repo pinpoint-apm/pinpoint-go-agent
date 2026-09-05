@@ -110,7 +110,7 @@ type span struct {
 	recovered       atomic.Bool
 	asyncId         int32
 	asyncSequence   int32
-	goroutineId     int64
+	goroutineId     atomic.Int64
 	eventStack      *stack
 	urlStat         *UrlStatEntry
 	errorChains     []*exception
@@ -149,7 +149,7 @@ func defaultSpan(agent *agent) *span {
 	span.eventDepth.Store(1)
 	span.serviceType = ServiceTypeGoApp
 	span.startTime = time.Now()
-	span.goroutineId = -1
+	span.goroutineId.Store(-1)
 	span.asyncId = noneAsyncId
 	span.eventStack = newStack()
 	span.spanEvents = make([]*spanEvent, 0, span.cfg.spanEventChunkSize)
@@ -461,9 +461,8 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 	// debug level, the log level decided the shape of the trace. Detection
 	// needs the runtime.g offset (goroutine.go); without it there is none.
 	if goIdOffset > 0 {
-		if span.goroutineId < 0 {
-			span.goroutineId = goIdFromG()
-		} else if span.goroutineId != goIdFromG() {
+		gid := goIdFromG()
+		if !span.goroutineId.CompareAndSwap(-1, gid) && span.goroutineId.Load() != gid {
 			sharedGoroutineLog.warnf("span is shared by more than one goroutine: %s", operationName)
 		}
 	}
