@@ -432,7 +432,13 @@ The default 0 keeps a stream open until it fails.
 
 ### Sampling.Type
 Sampling.Type option sets the type of agent sampler.
-Either "COUNTER" or "PERCENT" must be specified.
+Either "COUNTER" or "PERCENT" must be specified. "COUNTING", the Java agent's
+name for the counter sampler, is accepted as an alias of "COUNTER".
+
+An unrecognized type falls back to "COUNTER" and keeps
+[Sampling.CounterRate](#samplingcounterrate) as configured, so a typo does not
+turn sampling off; the warning it logs names the type and the rate that were
+applied.
 
 * --pinpoint-sampling-type
 * PINPOINT_GO_SAMPLING_TYPE
@@ -670,8 +676,9 @@ SQL.CacheLengthLimit option sets the max length of a SQL statement kept in the S
 metadata caches. A statement at or above this length bypasses the cache: it is
 registered again and its metadata is sent to the collector on every execution,
 so a few huge generated statements cannot hold the cache - and their bytes - for
-the life of the process. A negative value caches every statement regardless of
-length.
+the life of the process. A limit of 0 caches nothing. A limit of exactly -1
+caches every statement regardless of length; any other negative value is treated
+as a typo and recovers the default, with a warning.
 
 The limit applies to the SQL-UID cache and to the raw SQL cache
 ([SQL.EnableRawSqlCache](#sqlenablerawsqlcache)), whose keys are hashes and
@@ -697,9 +704,9 @@ This corresponds to the Java agent's `profiler.jdbc.sqlcachelengthlimit`.
 SQL.ErrorCount option sets how many SQL executions mark a span as failed, so an
 N+1 query loop shows up as an error instead of merely a slow trace. A marked span
 is drawn as a failure point in the scatter chart and counted in the failed
-histogram of the URL statistics. A value of 0 or less turns the count off, and a
-span that has already failed is never counted, so the mark cannot replace an
-error that is already recorded.
+histogram of the URL statistics. A value of 0 turns the count off and a negative
+value means the same, warned and published as 0. A span that has already failed
+is never counted, so the mark cannot replace an error that is already recorded.
 This corresponds to the Java agent's `profiler.sql.error.count` and
 `profiler.sql.error.enable`, which collapse into this single option.
 Unlike Java, which counts on the shared transaction state, the count is per span:
@@ -803,7 +810,7 @@ Error.CallStackDepth option sets the max depth of callstack to be dumped.
 Error.NewThroughput option sets the max number of new exception chains recorded per second,
 so that a burst of errors cannot crowd the exception metadata out of the agent's metadata queue.
 An error whose chain is already recorded is a continuation and is never limited.
-0 or less means unlimited.
+0 means unlimited, and a negative value means the same, warned and published as 0.
 
 When the limit is hit, the error loses its call stack and its `EXCEPTION_CHAIN_ID` annotation.
 Everything else is unaffected: the span is still marked failed, and the error function id and

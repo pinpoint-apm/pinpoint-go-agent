@@ -105,6 +105,10 @@ const (
 	cfgIdPattern        = "[a-zA-Z0-9\\._\\-]+"
 	samplingTypeCounter = "COUNTER"
 	samplingTypePercent = "PERCENT"
+	// The Java agent's SamplerType names the counter sampler COUNTING, so a
+	// config copied from a Java agent must not take the fallback path. Its
+	// percent sampler is named PERCENT already and needs no alias.
+	samplingTypeCounting = "COUNTING"
 
 	defaultErrorCallStackDepth = 32
 	// defaultErrorMaxChainDepth keeps the walk the agent has always done. Java
@@ -812,16 +816,44 @@ func (config *Config) defaultIfOutOfRange(name string, min, max int) {
 	}
 }
 
+// zeroIfNegative normalizes a negative value to 0 on options where 0 already
+// carries the meaning: the feature off, or a throughput unlimited. A negative
+// value has always behaved like 0 here, so storing 0 keeps the published value
+// equal to the effective one and the warning makes the coercion visible - the
+// C++ agent reads a negative value as "use the default" instead, which turns
+// the feature on.
+func (config *Config) zeroIfNegative(name string) {
+	if v := config.stagedInt(name); v < 0 {
+		Log("config").Warnf("%s = %d is negative, using 0", name, v)
+		config.cfgMap[name].value = 0
+	}
+}
+
 // publish normalizes the staged cfgMap values and installs the result as a new
 // snapshot with a single atomic store. Everything derived from the config is
 // built here so that one store makes the whole generation visible at once.
 // The caller must hold config.mu.
 func (config *Config) publish() {
+	// The normalized type is stored, not just used here: newTraceSampler and
+	// the rest compare the published value against samplingTypeCounter, so
+	// uppercasing a local copy alone would route "counter" - and the COUNTING
+	// alias - to the percent sampler.
 	sampleType := strings.ToUpper(strings.TrimSpace(config.stagedString(CfgSamplingType)))
-	if sampleType != samplingTypeCounter && sampleType != samplingTypePercent {
-		config.cfgMap[CfgSamplingType].value = samplingTypeCounter
-		config.cfgMap[CfgSamplingCounterRate].value = 0
+	if sampleType == samplingTypeCounting {
+		sampleType = samplingTypeCounter
 	}
+	if sampleType != samplingTypeCounter && sampleType != samplingTypePercent {
+		// Only the type falls back, never the rate. Overwriting the rate with 0
+		// made rateSampler drop every trace, so a typo in this dynamic key -
+		// including on a reload - switched tracing off with nothing in the log
+		// to say so. Java's SamplerType keeps the configured rate too, whose
+		// default of 1 samples everything.
+		Log("config").Warnf("%s = %q is not supported, using %s with %s = %d",
+			CfgSamplingType, config.stagedString(CfgSamplingType), samplingTypeCounter,
+			CfgSamplingCounterRate, config.stagedInt(CfgSamplingCounterRate))
+		sampleType = samplingTypeCounter
+	}
+	config.cfgMap[CfgSamplingType].value = sampleType
 
 	maxBind := config.stagedInt(CfgSQLMaxBindValueSize)
 	if maxBind > 1024 {
@@ -831,11 +863,18 @@ func (config *Config) publish() {
 		config.cfgMap[CfgSQLMaxBindValueSize].value = 0
 	}
 
-	// Dynamic key. A negative limit turns the bypass off and caches every SQL,
-	// the same escape hatch as the Java agent's bypassLength of -1.
-	if config.stagedInt(CfgSQLCacheLengthLimit) < 0 {
+	// Dynamic key. Only -1 turns the bypass off and caches every SQL, the same
+	// escape hatch as the Java agent's bypassLength of -1 and the only unlimited
+	// value the C++ agent accepts. Any other negative value is a typo and
+	// recovers the default, the rule Span.MaxCallStackDepth already follows.
+	if limit := config.stagedInt(CfgSQLCacheLengthLimit); limit == -1 {
 		config.cfgMap[CfgSQLCacheLengthLimit].value = math.MaxInt32
+	} else if limit < 0 {
+		Log("config").Warnf("%s = %d is out of range, using default %d (only -1 means unlimited)",
+			CfgSQLCacheLengthLimit, limit, defaultSqlCacheLengthLimit)
+		config.cfgMap[CfgSQLCacheLengthLimit].value = defaultSqlCacheLengthLimit
 	}
+	config.zeroIfNegative(CfgSQLErrorCount)
 
 	if config.stagedInt(CfgSpanEventChunkSize) < 1 {
 		config.cfgMap[CfgSpanEventChunkSize].value = defaultEventChunkSize
@@ -916,6 +955,7 @@ func (config *Config) publish() {
 		chainDepth = defaultErrorMaxChainDepth
 	}
 	config.cfgMap[CfgErrorMaxChainDepth].value = chainDepth
+	config.zeroIfNegative(CfgErrorNewThroughput)
 
 	values := make(map[string]interface{}, len(config.cfgMap))
 	for k, v := range config.cfgMap {

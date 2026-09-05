@@ -144,7 +144,7 @@ func TestNewConfig_WithFunc(t *testing.T) {
 			assert.Equal(t, "error", c.String(CfgLogLevel), CfgLogLevel)
 			assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
 			assert.Equal(t, 100, c.Int(CfgLogMaxSize), CfgLogMaxSize)
-			assert.Equal(t, "percent", c.String(CfgSamplingType), CfgSamplingType)
+			assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
 			assert.Equal(t, 200, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
 			assert.Equal(t, float64(90), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
 			assert.Equal(t, 20, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
@@ -253,7 +253,7 @@ func TestNewConfig_ConfigFileYaml(t *testing.T) {
 			assert.Equal(t, 9001, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
 			assert.Equal(t, 9002, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
 			assert.Equal(t, "debug", c.String(CfgLogLevel), CfgLogLevel)
-			assert.Equal(t, "PERCENT", c.String(CfgSamplingType), CfgSamplingType)
+			assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
 			assert.Equal(t, 20, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
 			assert.Equal(t, 0.1, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
 			assert.Equal(t, 50, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
@@ -307,7 +307,7 @@ func TestNewConfig_ConfigFileJson(t *testing.T) {
 			assert.Equal(t, 9001, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
 			assert.Equal(t, 9002, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
 			assert.Equal(t, "debug", c.String(CfgLogLevel), CfgLogLevel)
-			assert.Equal(t, "percent", c.String(CfgSamplingType), CfgSamplingType)
+			assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
 			assert.Equal(t, 20, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
 			assert.Equal(t, 5.5, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
 			assert.Equal(t, 50, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
@@ -361,7 +361,7 @@ func TestNewConfig_ConfigFileProp(t *testing.T) {
 			assert.Equal(t, 7001, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
 			assert.Equal(t, 7002, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
 			assert.Equal(t, "debug", c.String(CfgLogLevel), CfgLogLevel)
-			assert.Equal(t, "percent", c.String(CfgSamplingType), CfgSamplingType)
+			assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
 			assert.Equal(t, 20, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
 			assert.Equal(t, 5.5, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
 			assert.Equal(t, 50, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
@@ -421,7 +421,7 @@ func TestNewConfig_ConfigFileProfile(t *testing.T) {
 			assert.Equal(t, "MyAppName", c.String(CfgAppName), CfgAppName)
 			assert.Equal(t, "MyAgentID", c.String(CfgAgentID), CfgAgentID)
 			assert.Equal(t, "dev.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
-			assert.Equal(t, "COUNTER", c.String(CfgSamplingType), CfgSamplingType)
+			assert.Equal(t, samplingTypeCounter, c.String(CfgSamplingType), CfgSamplingType)
 			assert.Equal(t, 1, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
 			assert.Equal(t, 0.1, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
 			assert.Equal(t, 50, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
@@ -507,7 +507,7 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 			assert.Equal(t, "trace", c.String(CfgLogLevel), CfgLogLevel)
 			assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
 			assert.Equal(t, 50, c.Int(CfgLogMaxSize), CfgLogMaxSize)
-			assert.Equal(t, "Percent", c.String(CfgSamplingType), CfgSamplingType)
+			assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
 			assert.Equal(t, 100, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
 			assert.Equal(t, float64(120), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
 			assert.Equal(t, 100, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
@@ -626,7 +626,7 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 			assert.Equal(t, "error", c.String(CfgLogLevel), CfgLogLevel)
 			assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
 			assert.Equal(t, 20, c.Int(CfgLogMaxSize), CfgLogMaxSize)
-			assert.Equal(t, "percent", c.String(CfgSamplingType), CfgSamplingType)
+			assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
 			assert.Equal(t, 10, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
 			assert.Equal(t, 0.0001, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
 			assert.Equal(t, 500, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
@@ -901,4 +901,61 @@ func TestNewConfig_ClampErrorCallStackDepth(t *testing.T) {
 	cfgFileViper.SetConfigFile(cfgFile)
 	c.reloadConfig(cfgFileViper)
 	assert.Equal(t, maxErrorCallStackDepth, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
+}
+
+// A bad Sampling.Type must cost the type only. Overwriting Sampling.CounterRate
+// with 0 made rateSampler drop every trace, so a typo switched tracing off.
+func TestNewConfig_SamplingTypeFallbackKeepsRate(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	c, err := NewConfig(WithAppName("TestApp"), WithSamplingType("bogus"), WithSamplingCounterRate(5))
+	assert.NoError(t, err)
+	defer c.Close()
+	assert.Equal(t, samplingTypeCounter, c.String(CfgSamplingType), CfgSamplingType)
+	assert.Equal(t, 5, c.Int(CfgSamplingCounterRate), "the fallback wiped the rate")
+	assert.True(t, c.load().sampler.isNewSampled(newAgentStats()), "the fallback stopped sampling")
+	assert.Contains(t, buf.String(), samplingTypeCounter, "the warning hides the applied type")
+	assert.Contains(t, buf.String(), "Sampling.CounterRate = 5", "the warning hides the applied rate")
+
+	// Dynamic key: a typo arriving by reload must not wipe the rate either.
+	c.Set(CfgSamplingType, "nonsense")
+	assert.Equal(t, samplingTypeCounter, c.String(CfgSamplingType), CfgSamplingType)
+	assert.Equal(t, 5, c.Int(CfgSamplingCounterRate), "the reload fallback wiped the rate")
+}
+
+// The type is stored normalized, so a lowercase or Java-named type reaches the
+// sampler it asks for instead of falling through to the percent sampler.
+func TestNewConfig_SamplingTypeAliases(t *testing.T) {
+	for _, given := range []string{"counter", " Counting ", samplingTypeCounting} {
+		c, err := NewConfig(WithAppName("TestApp"), WithSamplingType(given), WithSamplingCounterRate(100))
+		assert.NoError(t, err)
+		assert.Equal(t, samplingTypeCounter, c.String(CfgSamplingType), given)
+		_, isRate := c.load().sampler.(*basicTraceSampler).baseSampler.(*rateSampler)
+		assert.True(t, isRate, "%q did not build a counter sampler", given)
+		c.Close()
+	}
+}
+
+// Negative values are not an "enable with the default" sentinel: 0 already means
+// off (unlimited, for a throughput) and a negative value means the same, warned.
+// SQL.CacheLengthLimit keeps -1 alone as its documented unlimited escape hatch.
+func TestNewConfig_NegativeValuesOfNewKeys(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	c, err := NewConfig(WithAppName("TestApp"), WithSQLErrorCount(-1), WithErrorNewThroughput(-1),
+		WithSQLCacheLengthLimit(-5))
+	assert.NoError(t, err)
+	defer c.Close()
+	assert.Equal(t, 0, c.Int(CfgSQLErrorCount), CfgSQLErrorCount)
+	assert.Equal(t, 0, c.Int(CfgErrorNewThroughput), CfgErrorNewThroughput)
+	assert.Nil(t, c.load().newExceptionLimiter, "a negative throughput must mean unlimited, not a limiter")
+	assert.Equal(t, defaultSqlCacheLengthLimit, c.Int(CfgSQLCacheLengthLimit), CfgSQLCacheLengthLimit)
+	assert.Contains(t, buf.String(), "SQL.ErrorCount = -1 is negative")
+	assert.Contains(t, buf.String(), "Error.NewThroughput = -1 is negative")
+	assert.Contains(t, buf.String(), "SQL.CacheLengthLimit = -5 is out of range")
+
+	c.Set(CfgSQLCacheLengthLimit, -1)
+	assert.Equal(t, math.MaxInt32, c.Int(CfgSQLCacheLengthLimit), "-1 must stay unlimited")
 }
