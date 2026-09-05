@@ -52,9 +52,11 @@ func Test_span_Extract(t *testing.T) {
 	}
 
 	m := map[string]string{
-		HeaderTraceId:      "t123456^12345^1",
-		HeaderSpanId:       "67890",
-		HeaderParentSpanId: "123",
+		HeaderTraceId:               "t123456^12345^1",
+		HeaderSpanId:                "67890",
+		HeaderParentSpanId:          "123",
+		HeaderParentApplicationName: "upstream",
+		HeaderHost:                  "upstream:8080",
 	}
 
 	tests := []struct {
@@ -73,6 +75,8 @@ func Test_span_Extract(t *testing.T) {
 			assert.Equal(t, span.txId.Sequence, int64(1), "Sequence")
 			assert.Equal(t, span.spanId, int64(67890), "spanId")
 			assert.Equal(t, span.parentSpanId, int64(123), "parentSpanId")
+			assert.Equal(t, "upstream", span.parentAppName, "parentAppName")
+			assert.Equal(t, "upstream:8080", span.acceptorHost, "acceptorHost")
 		})
 	}
 }
@@ -105,6 +109,64 @@ func Test_span_Extract_malformedTraceId(t *testing.T) {
 			assert.NotEqual(t, int64(0), span.spanId, "span id is generated")
 			assert.Empty(t, span.parentAppName, "parent app header must be ignored")
 			assert.Empty(t, span.acceptorHost, "host header must be ignored")
+		})
+	}
+}
+
+// countActiveSpans totals the registry across shards: addSampledActiveSpan is
+// keyed by span id, so a span registered under a stale id would show up as a
+// second entry, and a path that forgot to register shows up as none.
+func countActiveSpans(agent *agent) int {
+	n := 0
+	for i := range agent.stats.activeSpan.shards {
+		s := &agent.stats.activeSpan.shards[i]
+		s.mu.Lock()
+		n += len(s.m)
+		s.mu.Unlock()
+	}
+	return n
+}
+
+func Test_span_Extract_noTraceId(t *testing.T) {
+	// No Pinpoint-TraceID means this request starts a new transaction, so the
+	// upstream span/parent headers belong to a trace this span is not part of
+	// and must not be adopted - otherwise the collector gets a non-root span
+	// whose parent does not exist in the transaction.
+	span := defaultTestSpan()
+	reader := &DistributedTracingContextMap{m: map[string]string{
+		HeaderSpanId:                "67890",
+		HeaderParentSpanId:          "123",
+		HeaderParentApplicationName: "upstream",
+		HeaderParentApplicationType: "1010",
+		HeaderParentServiceName:     "upstream-service",
+		HeaderHost:                  "upstream:8080",
+	}}
+
+	span.Extract(reader)
+
+	assert.Equal(t, span.agent.agentID, span.txId.AgentId, "a new local transaction id is assigned")
+	assert.Equal(t, int64(-1), span.parentSpanId, "root span")
+	assert.NotEqual(t, int64(67890), span.spanId, "span id header must be ignored")
+	assert.NotEqual(t, int64(0), span.spanId, "span id is generated")
+	assert.Empty(t, span.parentAppName, "parent app header must be ignored")
+	assert.Equal(t, 1, span.parentAppType, "parent app type header must be ignored")
+	assert.Empty(t, span.parentServiceName, "parent service name header must be ignored")
+	assert.Empty(t, span.acceptorHost, "host header must be ignored")
+	assert.Equal(t, 1, countActiveSpans(span.agent), "registered as active exactly once")
+}
+
+func Test_span_Extract_registersActiveSpanOnce(t *testing.T) {
+	for _, tid := range []string{"t123456^12345^1", "malformed", ""} {
+		t.Run(tid, func(t *testing.T) {
+			span := defaultTestSpan()
+			span.Extract(&DistributedTracingContextMap{m: map[string]string{
+				HeaderTraceId: tid,
+				HeaderSpanId:  "67890",
+			}})
+
+			assert.Equal(t, 1, countActiveSpans(span.agent), "active span registered once")
+			dropSampledActiveSpan(span)
+			assert.Equal(t, 0, countActiveSpans(span.agent), "registered under the final span id")
 		})
 	}
 }

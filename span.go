@@ -245,23 +245,34 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 
 func (span *span) Extract(reader DistributedTracingContextReader) {
 	tid := reader.Get(HeaderTraceId)
+	continued := true
 	if agentId, startTime, sequence, ok := splitTransactionId(tid); ok {
 		span.txId.AgentId = agentId
 		span.txId.StartTime = startTime
 		span.txId.Sequence = sequence
 	} else {
 		span.txId = span.agent.generateTransactionId()
+		continued = false
 		if tid != "" {
-			// A malformed trace id means the other Pinpoint headers cannot be
-			// trusted either: adopting their span/parent ids would record a
-			// root span pointing at a parent that does not exist. Start a
-			// fresh transaction and ignore every other Pinpoint header.
 			Log("span").Warnf("malformed trace id header %q: ignoring pinpoint headers, starting a new transaction", tid)
-			span.spanId = generateSpanId()
-			span.parentSpanId = -1
-			addSampledActiveSpan(span)
-			return
 		}
+	}
+
+	// No usable trace id means this span starts a new transaction, so the
+	// remaining Pinpoint headers describe a trace it is not part of: adopting
+	// their span/parent ids would record a non-root span pointing at a parent
+	// that does not exist in this transaction. Java does the same - a request
+	// without Pinpoint-TraceID gets a new trace whose parentSpanId is NULL.
+	// A missing trace id is the normal case (every entry request); only a
+	// malformed one is worth the warning above.
+	if !continued {
+		span.spanId = generateSpanId()
+		span.parentSpanId = -1
+		addSampledActiveSpan(span)
+		if IsTraceLogLevelEnabled() {
+			Log("span").Tracef("span extract: new transaction %s, %d", span.txId, span.spanId)
+		}
+		return
 	}
 
 	spanid := reader.Get(HeaderSpanId)

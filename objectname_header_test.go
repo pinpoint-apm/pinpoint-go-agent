@@ -100,6 +100,9 @@ func TestSpanInject_NoServiceName_OmitsHeader(t *testing.T) {
 func TestSpanExtract_ServiceName(t *testing.T) {
 	span := defaultTestSpan()
 	reader := &DistributedTracingContextMap{m: map[string]string{
+		// Needs a trace id: without one this is a new transaction and every
+		// other Pinpoint header is ignored on purpose.
+		HeaderTraceId:           "t123456^12345^1",
 		HeaderParentServiceName: "UpstreamService",
 	}}
 	span.Extract(reader)
