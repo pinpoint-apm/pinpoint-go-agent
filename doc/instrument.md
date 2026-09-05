@@ -335,8 +335,20 @@ Custom keys are plain `int32` values. They are transmitted as-is, but only
 render with a label if the key is registered in the Pinpoint web's annotation
 key list; otherwise the UI shows the bare number.
 
-Annotate before the span or event ends, and prefer an annotation over a
-variable operation name — see
+Annotate before the span or event ends. Afterwards `Annotations()` returns a
+no-op collector, and a handle kept from before the end is sealed, so the late
+annotation is dropped either way. Holding one handle for several appends is
+the normal idiom — just do not let it outlive its event:
+
+```go
+a := tracer.SpanEvent().Annotations()
+a.AppendString(pinpoint.AnnotationKafkaTopic, msg.Topic)
+a.AppendLong(pinpoint.AnnotationKafkaOffset, msg.Offset)
+tracer.EndSpanEvent()
+a.AppendInt(pinpoint.AnnotationKafkaPartition, msg.Partition) // sealed; dropped
+```
+
+Prefer an annotation over a variable operation name — see
 [the contracts](api_contracts.md#7-annotation-rules).
 
 ### What not to record

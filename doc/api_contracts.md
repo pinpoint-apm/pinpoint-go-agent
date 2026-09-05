@@ -96,6 +96,16 @@ For goroutine tracers the same rule applies to each tracer separately —
 `WrapGoroutine()` is the exception, because the wrapper calls `EndSpan()` when
 the wrapped function returns. Do not call it yourself on a wrapped tracer.
 
+**What happens on misuse:** the late call is dropped, not applied. Every span
+recorder setter — `SetError`, `SetFailure`, `SetServiceType`, `SetRpcName`,
+`SetRemoteAddress`, `SetEndPoint`, `SetAcceptorHost`, `SetLogging`,
+`Annotations` and `AddMetric` — returns without writing once `EndSpan()` has
+run, and warns `abnormal span - <setter> called after EndSpan` at debug level;
+the span event setters do the same after `EndSpanEvent()`. Dropping is not
+just tidiness: the final chunk is already on its way to the sender goroutine,
+so the write could not be sent, and applying it would race the sender reading
+the same field.
+
 ## 4. End Span Events in Nesting (LIFO) Order
 
 The event stack is a stack. `EndSpanEvent()` pops the innermost event, so
@@ -134,7 +144,7 @@ event that is already on its way to the collector.
 // DON'T: the handle outlives the event it points at
 se := tracer.SpanEvent()
 tracer.EndSpanEvent()
-se.SetError(err)               // too late; may land on nothing
+se.SetError(err)               // too late; dropped
 ```
 
 ```go
@@ -145,11 +155,25 @@ tracer.SpanEvent().SetError(err)
 tracer.EndSpanEvent()
 ```
 
-The same holds for `Annotation` handles from `Annotations()`.
+The same holds for `Annotation` handles from `Annotations()`. A handle taken
+while the span or event was live keeps pointing at the real collector, so it
+cannot be turned into a no-op after the fact the way `Annotations()` itself is
+— instead the collector is **sealed** when its owner ends, and every later
+`Append*` on the retained handle is dropped.
+
+```go
+// DON'T: the handle outlives the event it points at
+a := tracer.SpanEvent().Annotations()
+tracer.EndSpanEvent()
+a.AppendString(key, value)     // sealed; dropped
+```
 
 **What happens on misuse:** with no active event, `SpanEvent()` warns
 `abnormal span - has no event` and returns a no-op recorder, so calls on it are
-silently dropped rather than crashing.
+silently dropped rather than crashing. A retained handle used past the end
+warns `abnormal span - annotation <key> appended after end` at debug level.
+The span is sealed at the very end of `EndSpan()`, after its final chunk is
+enqueued and its URL stat read, so nothing recorded on time is lost.
 
 ## 6. Event Depth and Count Limits (Overflow)
 
@@ -201,7 +225,9 @@ loop rather than one per iteration.
   `Append*` method takes values.
 * Annotations are recorded on whatever the recorder points at — the span, or
   the innermost active event. Rule 5 applies.
-* Annotate before the span or event ends. Rule 3 applies.
+* Annotate before the span or event ends. Rule 3 applies: after the end,
+  `Annotations()` returns a no-op collector and a handle taken before it is
+  sealed, so the late annotation is dropped either way.
 
 ## 8. Keep Operation and Error Names Low-Cardinality
 
