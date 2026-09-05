@@ -1,17 +1,25 @@
 package pinpoint
 
 import (
-	"bufio"
 	"strconv"
 	"strings"
 )
 
+// sqlNormalizer walks the statement one byte at a time, indexing the string
+// directly the way the Java agent's ParserContext walks it with charAt.
+//
+// Bytes, not runes: every decision the parser makes is on an ASCII character,
+// and Java's isNumberTokenStart is itself an ASCII-only test, so the bytes of a
+// multibyte character all fall through to the same branch a whole rune would.
+// Decoding buys nothing and costs fidelity - an invalid UTF-8 byte would decode
+// to U+FFFD and be written back as three different bytes, rewriting a statement
+// the collector is supposed to receive verbatim.
 type sqlNormalizer struct {
-	r          *bufio.Reader
+	sql        string
+	pos        int
 	output     strings.Builder
 	param      strings.Builder
 	paramIndex int
-	sql        string
 	isChanged  bool
 	// removeComments drops comments from the output instead of copying them,
 	// as the Java agent does by default (profiler.jdbc.removecomments).
@@ -19,15 +27,7 @@ type sqlNormalizer struct {
 }
 
 func newSqlNormalizer(sql string, removeComments bool) *sqlNormalizer {
-	normalizer := sqlNormalizer{}
-
-	normalizer.r = bufio.NewReader(strings.NewReader(sql))
-	normalizer.paramIndex = 0
-	normalizer.sql = sql
-	normalizer.isChanged = false
-	normalizer.removeComments = removeComments
-
-	return &normalizer
+	return &sqlNormalizer{sql: sql, removeComments: removeComments}
 }
 
 // run normalizes the whole statement, as the Java agent's DefaultSqlNormalizer
@@ -39,10 +39,11 @@ func newSqlNormalizer(sql string, removeComments bool) *sqlNormalizer {
 func (s *sqlNormalizer) run() (string, string) {
 	numberTokenStartEnable := true
 
-	for {
-		if ch := s.read(); ch == eof {
-			break
-		} else if ch == '/' {
+	for s.pos < len(s.sql) {
+		ch := s.sql[s.pos]
+		s.pos++
+
+		if ch == '/' {
 			// The comment markers are decided before ch is written: under
 			// removeComments the marker itself must not reach the output.
 			// Neither branch touches numberTokenStartEnable, as in Java - a
@@ -52,29 +53,31 @@ func (s *sqlNormalizer) run() (string, string) {
 			} else if s.lookahead('*') {
 				s.consumeMultiLineComment(ch)
 			} else {
-				s.output.WriteRune(ch)
+				s.output.WriteByte(ch)
 				numberTokenStartEnable = true
 			}
 		} else if ch == '-' {
 			if s.lookahead('-') {
 				s.consumeSingleLineComment(ch)
 			} else {
-				s.output.WriteRune(ch)
+				s.output.WriteByte(ch)
 				numberTokenStartEnable = true
 			}
 		} else if ch == '\'' {
-			s.output.WriteRune(ch)
+			s.output.WriteByte(ch)
 			if s.lookahead('\'') {
-				s.output.WriteRune(s.read())
+				// An empty literal is copied through as it stands: Java neither
+				// records a parameter for it nor marks the statement changed.
+				s.output.WriteByte('\'')
+				s.pos++
 			} else {
 				s.consumeCharLiteral()
 			}
 		} else if isDigit(ch) {
 			if numberTokenStartEnable {
-				s.unread()
-				s.consumeNumberLiteral()
+				s.consumeNumberLiteral(ch)
 			} else {
-				s.output.WriteRune(ch)
+				s.output.WriteByte(ch)
 			}
 		} else if ch == '$' {
 			// Java turns the flag off only for a positional placeholder
@@ -85,13 +88,16 @@ func (s *sqlNormalizer) run() (string, string) {
 			if s.lookaheadDigit() {
 				numberTokenStartEnable = false
 			}
-			s.output.WriteRune(ch)
+			s.output.WriteByte(ch)
 		} else if isLetter(ch) || ch == '.' || ch == '_' || ch == '@' || ch == ':' {
 			numberTokenStartEnable = false
-			s.output.WriteRune(ch)
+			s.output.WriteByte(ch)
 		} else {
+			// Whitespace, operators and separators land here, and so does every
+			// byte of a multibyte character - Java's isNumberTokenStart says the
+			// same of a non-ASCII char, so "테이블1" yields "테이블0#" on both.
 			numberTokenStartEnable = true
-			s.output.WriteRune(ch)
+			s.output.WriteByte(ch)
 		}
 	}
 
@@ -111,23 +117,20 @@ func (s *sqlNormalizer) run() (string, string) {
 // character of the marker, already read but not yet written. The terminating
 // newline is part of the comment, as in the Java agent - ParserContext reads it
 // with "\n" as the end token - so removal leaves nothing at all in its place.
-func (s *sqlNormalizer) consumeSingleLineComment(lead rune) {
-	var ch rune
-
+func (s *sqlNormalizer) consumeSingleLineComment(lead byte) {
 	if s.removeComments {
 		// A statement whose only change is a dropped comment still has to
 		// return the normalized text, not the original (Java's parameter.touch).
 		s.isChanged = true
 	} else {
-		s.output.WriteRune(lead)
+		s.output.WriteByte(lead)
 	}
 
-	for {
-		if ch = s.read(); ch == eof {
-			break
-		}
+	for s.pos < len(s.sql) {
+		ch := s.sql[s.pos]
+		s.pos++
 		if !s.removeComments {
-			s.output.WriteRune(ch)
+			s.output.WriteByte(ch)
 		}
 		if ch == '\n' {
 			break
@@ -137,124 +140,103 @@ func (s *sqlNormalizer) consumeSingleLineComment(lead rune) {
 
 // consumeMultiLineComment consumes a /* */ comment. lead is the '/', already
 // read but not yet written.
-func (s *sqlNormalizer) consumeMultiLineComment(lead rune) {
-	var ch rune
-	prev := eof
-
+func (s *sqlNormalizer) consumeMultiLineComment(lead byte) {
 	if s.removeComments {
 		s.isChanged = true
-		s.read() /* consume '*' */
 	} else {
-		s.output.WriteRune(lead)
-		s.output.WriteRune(s.read()) /* cousume '*' */
+		s.output.WriteByte(lead)
+		s.output.WriteByte('*')
 	}
+	s.pos++ /* consume '*' */
 
-	for {
-		if ch = s.read(); ch == eof {
-			break
-		}
+	// The '*' of the opening marker cannot close the comment: Java searches for
+	// "*/" from behind it, so "/*/" runs to the end of the statement.
+	prevStar := false
+	for s.pos < len(s.sql) {
+		ch := s.sql[s.pos]
+		s.pos++
 		if !s.removeComments {
-			s.output.WriteRune(ch)
+			s.output.WriteByte(ch)
 		}
-		if prev == '*' && ch == '/' {
+		if prevStar && ch == '/' {
 			break
 		}
-		prev = ch
+		prevStar = ch == '*'
 	}
 }
 
+// consumeCharLiteral consumes a '...' literal, first being the opening quote,
+// already written. An unterminated literal emits no placeholder, as in Java,
+// but its content is still reported as a parameter.
 func (s *sqlNormalizer) consumeCharLiteral() {
-	var ch rune
-
 	s.isChanged = true
 	if s.param.Len() > 0 {
-		s.param.WriteRune(',')
+		s.param.WriteByte(',')
 	}
 
-	for {
-		if ch = s.read(); ch == eof {
-			break
-		}
+	for s.pos < len(s.sql) {
+		ch := s.sql[s.pos]
+		s.pos++
 
 		if ch == ',' {
-			s.param.WriteRune(ch)
+			// The server splits param on ',', so a comma inside a literal is
+			// doubled (Java's ParameterBuilder.appendSeparatorCheck).
+			s.param.WriteByte(ch)
 		} else if ch == '\'' {
 			if s.lookahead('\'') {
-				s.param.WriteRune(s.read())
+				s.param.WriteByte('\'')
+				s.pos++
 			} else {
 				s.output.WriteString(strconv.Itoa(s.paramIndex))
 				s.paramIndex++
-				s.output.WriteRune('$')
-				s.output.WriteRune('\'')
+				s.output.WriteByte('$')
+				s.output.WriteByte('\'')
 				break
 			}
 		}
 
-		s.param.WriteRune(ch)
+		s.param.WriteByte(ch)
 	}
 }
 
-func (s *sqlNormalizer) consumeNumberLiteral() {
-	var ch rune
-
+// consumeNumberLiteral consumes a numeric literal, first being its leading
+// digit, already read but not yet written.
+func (s *sqlNormalizer) consumeNumberLiteral(first byte) {
 	s.isChanged = true
 	if s.param.Len() > 0 {
-		s.param.WriteRune(',')
+		s.param.WriteByte(',')
 	}
 	s.output.WriteString(strconv.Itoa(s.paramIndex))
 	s.paramIndex++
-	s.output.WriteRune('#')
+	s.output.WriteByte('#')
+	s.param.WriteByte(first)
 
-	for {
-		if ch = s.read(); ch == eof {
+	for s.pos < len(s.sql) {
+		ch := s.sql[s.pos]
+		if !isDigit(ch) && ch != '.' && ch != 'E' && ch != 'e' {
 			break
 		}
-
-		if isDigit(ch) || ch == '.' || ch == 'E' || ch == 'e' {
-			s.param.WriteRune(ch)
-		} else {
-			s.unread()
-			break
-		}
+		s.param.WriteByte(ch)
+		s.pos++
 	}
 }
 
-func (s *sqlNormalizer) read() rune {
-	ch, _, err := s.r.ReadRune()
-	if err != nil {
-		return eof
-	}
-	return ch
+// lookahead reports whether the next byte is expected, without consuming it.
+func (s *sqlNormalizer) lookahead(expected byte) bool {
+	return s.pos < len(s.sql) && s.sql[s.pos] == expected
 }
 
-func (s *sqlNormalizer) unread() {
-	_ = s.r.UnreadRune()
-}
-
-func (s *sqlNormalizer) lookahead(expected rune) bool {
-	ch, _, err := s.r.ReadRune()
-	_ = s.r.UnreadRune()
-	if err != nil {
-		return false
-	}
-	return ch == expected
-}
-
-// lookaheadDigit reports whether the next character is a digit, without
-// consuming it. End of input is not a digit, as in Java, whose lookAhead1
-// returns NEXT_TOKEN_NOT_EXIST there.
+// lookaheadDigit reports whether the next byte is a digit, without consuming
+// it. End of input is not a digit, as in Java, whose lookAhead1 returns
+// NEXT_TOKEN_NOT_EXIST there.
 func (s *sqlNormalizer) lookaheadDigit() bool {
-	ch, _, err := s.r.ReadRune()
-	_ = s.r.UnreadRune()
-	return err == nil && isDigit(ch)
+	return s.pos < len(s.sql) && isDigit(s.sql[s.pos])
 }
 
-func isLetter(ch rune) bool {
+func isLetter(ch byte) bool {
 	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
 }
 
-func isDigit(ch rune) bool {
+func isDigit(ch byte) bool {
 	return ch >= '0' && ch <= '9'
 }
-
-var eof = rune(0)

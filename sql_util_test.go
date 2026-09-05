@@ -487,3 +487,53 @@ func TestNormalizeDollarNumberTokenStart(t *testing.T) {
 		assert.Equal(t, "1", params)
 	})
 }
+
+// TestNormalizeByteFidelity pins the parser to bytes. The statement reaches the
+// collector as the application wrote it, so a byte the parser does not act on
+// has to come back out unchanged - including a byte that is not valid UTF-8 and
+// a NUL, neither of which ends the statement.
+func TestNormalizeByteFidelity(t *testing.T) {
+	tests := []struct {
+		name       string
+		sql        string
+		normalized string
+		params     string
+	}{
+		{
+			name:       "invalid utf-8 passes through",
+			sql:        "select \xffcol from t where a = 1",
+			normalized: "select \xffcol from t where a = 0#",
+			params:     "1",
+		},
+		{
+			name:       "invalid utf-8 inside a literal",
+			sql:        "select * from t where a = '\xff\xfe'",
+			normalized: "select * from t where a = '0$'",
+			params:     "\xff\xfe",
+		},
+		{
+			name:       "nul does not end the statement",
+			sql:        "select 'a' \x00 and b = 1",
+			normalized: "select '0$' \x00 and b = 1#",
+			params:     "a,1",
+		},
+		{
+			name:       "nul does not start a number token either",
+			sql:        "select a\x001 from t",
+			normalized: "select a\x000# from t",
+			params:     "1",
+		},
+		{
+			name:       "multibyte utf-8 is not a letter, as in java",
+			sql:        "select 테이블1 from t",
+			normalized: "select 테이블0# from t",
+			params:     "1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertNormalize(t, tt.sql, tt.normalized, tt.params)
+		})
+	}
+}
