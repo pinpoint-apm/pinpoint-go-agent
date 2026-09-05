@@ -143,6 +143,34 @@ func Test_newClientTracer_InjectsMetadata(t *testing.T) {
 	assert.Equal(t, tracer.TransactionId().String(), md.Get(pinpoint.HeaderTraceId)[0])
 }
 
+// Pinpoint metadata the caller's outgoing context already carries - an outer
+// instrumented layer, an interceptor registered twice, or inbound metadata a
+// gateway forwards - marks the call as nested: no span event and no header, as
+// Java's isNested does. Appending left two values per key on the wire, and the
+// receiver's Get took the first.
+func Test_newClientTracer_NestedCallIsNotTraced(t *testing.T) {
+	startAgent(t)
+
+	for _, marker := range []string{pinpoint.HeaderTraceId, pinpoint.HeaderSampled} {
+		tracer := pinpoint.GetAgent().NewSpanTracer("test", "/gateway")
+		outer := metadata.Pairs("authorization", "bearer token", marker, "outer")
+		ctx := metadata.NewOutgoingContext(pinpoint.NewContext(context.Background(), tracer), outer)
+
+		newCtx, spanTracer := newClientTracer(ctx, "/testapp.Hello/Greet", "localhost:8080")
+		assert.False(t, spanTracer.IsSampled(), "%s: a nested call records no span event", marker)
+		spanTracer.EndSpanEvent()
+
+		md, ok := metadata.FromOutgoingContext(newCtx)
+		require.True(t, ok)
+		assert.Equal(t, outer, md, "%s: the outer context travels alone", marker)
+		assert.Equal(t, []string{"outer"}, md.Get(marker))
+
+		tracer.NewSpanEvent("still open")
+		tracer.EndSpanEvent()
+		tracer.EndSpan()
+	}
+}
+
 // The caller's own outgoing context must not be written to; only the derived
 // one carries the tracing metadata.
 func Test_newClientTracer_DoesNotModifyTheCallersMetadata(t *testing.T) {

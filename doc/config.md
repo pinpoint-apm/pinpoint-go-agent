@@ -718,6 +718,24 @@ This corresponds to the Java agent's `profiler.jdbc.sqlcachelengthlimit`.
 * unit: bytes
 * dynamic
 
+### SQL.CacheExpireHours
+SQL.CacheExpireHours option sets how long a SQL UID stays in the SQL-UID cache
+before the statement is registered with the collector again. The collector keeps
+SQL UID metadata for a limited time (180 days by default), so in a process that
+runs longer than that a cached UID could outlive its row and the web UI would
+show an empty SQL for it until the agent restarted. Zero or a negative value
+never expires an entry. The SQL-ID, API and error caches have no expiry, as in
+the Java agent.
+
+This corresponds to the Java agent's `profiler.jdbc.sqlcacheexpirehours`.
+
+* --pinpoint-sql-cacheexpirehours
+* PINPOINT_GO_SQL_CACHEEXPIREHOURS
+* WithSQLCacheExpireHours()
+* type: int
+* default: 168
+* unit: hours
+
 ### SQL.ErrorCount
 SQL.ErrorCount option sets how many SQL executions mark a span as failed, so an
 N+1 query loop shows up as an error instead of merely a slow trace. A marked span
@@ -1105,7 +1123,7 @@ Two things make a reload not happen, and both are easy to miss:
 |---|---|
 | Sampling | `Sampling.Type`, `Sampling.CounterRate`, `Sampling.PercentRate`, `Sampling.NewThroughput`, `Sampling.ContinueThroughput` |
 | Span limits | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence` |
-| SQL | `SQL.TraceBindValue`, `SQL.MaxBindValueSize`, `SQL.TraceCommit`, `SQL.TraceRollback`, `SQL.TraceQueryStat`, `SQL.EnableRawSqlCache`, `SQL.CacheLengthLimit`, `SQL.ErrorCount` |
+| SQL | `SQL.TraceBindValue`, `SQL.MaxBindValueSize`, `SQL.TraceCommit`, `SQL.TraceRollback`, `SQL.TraceQueryStat`, `SQL.EnableRawSqlCache`, `SQL.CacheLengthLimit`, `SQL.CacheExpireHours`, `SQL.ErrorCount` |
 | Logging | `Log.Level`, `Log.Output`, `Log.MaxSize` |
 | Errors | `Error.TraceCallStack`, `Error.CallStackDepth`, `Error.NewThroughput`, `Error.MaxChainDepth`, `Error.IgnoreErrors` |
 | HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError` |

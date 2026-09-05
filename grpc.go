@@ -1403,12 +1403,17 @@ func (b *spanMessageBuilder) makePSpan(chunk *spanChunk) *pb.PSpanMessage {
 	// labelled unknown.
 	acceptEvent.EndPoint = validUTF8(cmp.Or(span.endPoint, unknownAddress))
 	acceptEvent.RemoteAddr = validUTF8(cmp.Or(span.remoteAddr, unknownAddress))
-	parentInfo := b.parentInfos.get()
-	parentInfo.ParentApplicationName = validUTF8(span.parentAppName)
-	parentInfo.ParentApplicationType = int32(span.parentAppType)
-	parentInfo.AcceptorHost = validUTF8(span.acceptorHost)
-	parentInfo.ParentServiceName = validUTF8(span.parentServiceName)
-	acceptEvent.ParentInfo = parentInfo
+	// A root span has no parent to describe, so it carries no PParentInfo at
+	// all, as the Java and C++ agents send it; an unconditional one reported
+	// ParentApplicationType 1 (UNKNOWN) for a parent that does not exist.
+	if span.parentAppName != "" {
+		parentInfo := b.parentInfos.get()
+		parentInfo.ParentApplicationName = validUTF8(span.parentAppName)
+		parentInfo.ParentApplicationType = int32(span.parentAppType)
+		parentInfo.AcceptorHost = validUTF8(span.acceptorHost)
+		parentInfo.ParentServiceName = validUTF8(span.parentServiceName)
+		acceptEvent.ParentInfo = parentInfo
+	}
 	pspan.AcceptEvent = acceptEvent
 
 	pspan.Annotation = b.annotationsWithApi(&span.annotations, span.apiId, span.operationName)

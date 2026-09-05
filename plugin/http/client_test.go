@@ -403,3 +403,33 @@ func TestWrapClient_UnsampledRequestStillSendsS0(t *testing.T) {
 	assert.Equal(t, map[string]string{pinpoint.HeaderSampled: "s0"}, pinpointHeaders(t, rt.sent.Header),
 		"an unsampled transaction must still tell the callee not to trace")
 }
+
+// A request that already carries a Pinpoint context - a client wrapped twice,
+// or a proxy forwarding its inbound headers - is nested: the outer context is
+// left as it is and no span event is recorded, as Java's isNested does.
+func TestWrapClient_NestedRequestIsNotTraced(t *testing.T) {
+	startAgent(t)
+
+	for _, marker := range []string{pinpoint.HeaderTraceId, pinpoint.HeaderSampled} {
+		tracer := serverTracer(t)
+		rt := &recordingTransport{}
+		client := WrapClient(&http.Client{Transport: rt})
+
+		req, err := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer),
+			http.MethodGet, "http://example.com/callee", nil)
+		require.NoError(t, err)
+		req.Header.Set(marker, "outer")
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+
+		require.NotNil(t, rt.sent)
+		assert.Len(t, pinpointHeaders(t, rt.sent.Header), 1, "%s: the outer context travels alone", marker)
+		assert.Equal(t, []string{"outer"}, rt.sent.Header.Values(marker))
+
+		// The caller's own event was not popped by the nested call's after().
+		tracer.NewSpanEvent("still open")
+		tracer.EndSpanEvent()
+	}
+}

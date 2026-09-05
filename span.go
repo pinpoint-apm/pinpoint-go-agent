@@ -172,7 +172,7 @@ func (span *span) EndSpan() {
 	// A second EndSpan would double-count the response time, re-enqueue the
 	// url stat and send a second final chunk with the same span id.
 	if !span.finished.CompareAndSwap(false, true) {
-		Log("span").Warnf("abnormal span - EndSpan already called")
+		endSpanTwiceLog.warnf("abnormal span - EndSpan already called: %s", span.operationName)
 		return
 	}
 
@@ -191,7 +191,7 @@ func (span *span) EndSpan() {
 	// dropping them would send a span whose event sequence has holes and the
 	// collector would rebuild the call tree against the missing parents.
 	if leftover := span.eventStack.endAll(); len(leftover) > 0 {
-		Log("span").Warnf("abnormal span - %d unclosed event(s) ended by EndSpan", len(leftover))
+		unclosedEventLog.warnf("abnormal span - %d unclosed event(s) ended by EndSpan: %s", len(leftover), span.operationName)
 		for _, se := range leftover {
 			span.appendEndedSpanEvent(se)
 		}
@@ -247,7 +247,7 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 		if cur, ok := span.eventStack.peek(); ok {
 			se = cur
 		} else {
-			Log("span").Warnf("abnormal span - has no event")
+			noEventLog.warnf("abnormal span - has no event: %s", span.operationName)
 		}
 	}
 
@@ -319,7 +319,7 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		span.txId = span.agent.generateTransactionId()
 		continued = false
 		if tid != "" {
-			Log("span").Warnf("malformed trace id header %q: ignoring pinpoint headers, starting a new transaction", tid)
+			malformedTraceIdLog.warnf("malformed trace id header %q: ignoring pinpoint headers, starting a new transaction", tid)
 		}
 	}
 
@@ -348,7 +348,7 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		if v, err := strconv.ParseInt(spanid, 10, 64); err == nil {
 			span.spanId = v
 		} else {
-			Log("span").Warnf("malformed span id header %q: generating a new span id", spanid)
+			malformedSpanIdLog.warnf("malformed span id header %q: generating a new span id", spanid)
 			span.spanId = generateSpanId()
 		}
 	} else {
@@ -360,7 +360,7 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		if v, err := strconv.ParseInt(pspanid, 10, 64); err == nil {
 			span.parentSpanId = v
 		} else {
-			Log("span").Warnf("malformed parent span id header %q: treating span as root", pspanid)
+			malformedParentSpanIdLog.warnf("malformed parent span id header %q: treating span as root", pspanid)
 			span.parentSpanId = -1
 		}
 	}
@@ -375,9 +375,13 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		span.parentAppName = pappname
 	}
 
+	// A malformed value keeps the UNKNOWN default (1), as the C++ agent does;
+	// the discarded Atoi result wrote 0, a type neither agent defines.
 	papptype := reader.Get(HeaderParentApplicationType)
 	if papptype != "" {
-		span.parentAppType, _ = strconv.Atoi(papptype)
+		if v, err := strconv.Atoi(papptype); err == nil {
+			span.parentAppType = v
+		}
 	}
 
 	pservicename := reader.Get(HeaderParentServiceName)
@@ -451,14 +455,16 @@ func splitTransactionId(tid string) (agentId string, startTime int64, sequence i
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
-	if IsDebugLogLevelEnabled() {
-		if goIdOffset > 0 {
-			if span.goroutineId < 0 {
-				span.goroutineId = goIdFromG()
-			} else if span.goroutineId != goIdFromG() {
-				Log("span").Warnf("span is shared by more than two goroutines.")
-				return span
-			}
+	// Goroutine-sharing detection is diagnostic only: the event is recorded
+	// either way. Returning early here skipped the push, so the caller's paired
+	// EndSpanEvent popped the parent's event - and since the check ran only at
+	// debug level, the log level decided the shape of the trace. Detection
+	// needs the runtime.g offset (goroutine.go); without it there is none.
+	if goIdOffset > 0 {
+		if span.goroutineId < 0 {
+			span.goroutineId = goIdFromG()
+		} else if span.goroutineId != goIdFromG() {
+			sharedGoroutineLog.warnf("span is shared by more than one goroutine: %s", operationName)
 		}
 	}
 
@@ -522,7 +528,7 @@ func (span *span) EndSpanEvent() {
 		se.end()
 		span.appendEndedSpanEvent(se)
 	} else {
-		Log("span").Warnf("abnormal span - has no event")
+		noEventLog.warnf("abnormal span - has no event: %s", span.operationName)
 	}
 }
 
@@ -568,7 +574,7 @@ func (span *span) newAsyncSpan() Tracer {
 
 		return asyncSpan
 	} else {
-		Log("span").Warnf("abnormal span - has no event")
+		noEventLog.warnf("abnormal span - has no event: %s", span.operationName)
 		return NoopTracer()
 	}
 }
@@ -625,7 +631,7 @@ func (span *span) SpanEvent() SpanEventRecorder {
 	if se, ok := span.eventStack.peek(); ok {
 		return se
 	}
-	Log("span").Warnf("abnormal span - has no event")
+	noEventLog.warnf("abnormal span - has no event: %s", span.operationName)
 	return &defaultNoopSpanEvent
 }
 

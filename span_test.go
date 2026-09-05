@@ -1,16 +1,19 @@
 package pinpoint
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -1251,5 +1254,72 @@ func BenchmarkValidateID(b *testing.B) {
 		if !validateID(id, agentIDMaxLen) {
 			b.Fatal("must validate")
 		}
+	}
+}
+
+// A parent application type that does not parse keeps the UNKNOWN default,
+// as in the C++ agent; the discarded Atoi result used to leave 0.
+func Test_span_Extract_malformedParentAppTypeKeepsDefault(t *testing.T) {
+	span := defaultTestSpan()
+	span.Extract(&DistributedTracingContextMap{m: map[string]string{
+		HeaderTraceId:               "t123456^12345^1",
+		HeaderSpanId:                "67890",
+		HeaderParentApplicationName: "upstream",
+		HeaderParentApplicationType: "not-a-number",
+	}})
+
+	assert.Equal(t, "upstream", span.parentAppName)
+	assert.Equal(t, 1, span.parentAppType, "malformed type keeps the default")
+}
+
+// The warning for a peer-controlled malformed header is throttled per call
+// site: a peer sending a thousand bad headers gets one line per interval, and
+// the next line says how many were held back.
+func Test_span_Extract_malformedHeaderWarningIsThrottled(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+	malformedTraceIdLog = logThrottle{}
+
+	for i := 0; i < 1000; i++ {
+		span := defaultTestSpan()
+		span.Extract(&DistributedTracingContextMap{m: map[string]string{HeaderTraceId: "not^a^traceid"}})
+		dropSampledActiveSpan(span)
+	}
+	assert.Equal(t, 1, strings.Count(buf.String(), "malformed trace id header"), buf.String())
+
+	malformedTraceIdLog.next.Store(0) // the interval elapses
+	span := defaultTestSpan()
+	span.Extract(&DistributedTracingContextMap{m: map[string]string{HeaderTraceId: "not^a^traceid"}})
+	dropSampledActiveSpan(span)
+	assert.Equal(t, 2, strings.Count(buf.String(), "malformed trace id header"))
+	assert.Contains(t, buf.String(), "(999 similar warning(s) suppressed)")
+}
+
+// Goroutine-sharing detection must not change the call stack: an event
+// started from another goroutine is still recorded, and the shape of the
+// trace is the same whether or not debug logging is on.
+func Test_span_NewSpanEvent_sharedGoroutineKeepsTheCallStack(t *testing.T) {
+	for _, level := range []logrus.Level{logrus.WarnLevel, logrus.DebugLevel} {
+		var buf bytes.Buffer
+		restore := captureLogAt(&buf, level)
+		sharedGoroutineLog = logThrottle{}
+
+		span := defaultTestSpan()
+		span.NewSpanEvent("parent")
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			span.NewSpanEvent("from another goroutine")
+			span.EndSpanEvent()
+		}()
+		<-done
+		span.EndSpanEvent()
+
+		assert.Equal(t, int32(2), span.eventSequence.Load(), "both events recorded at level %s", level)
+		assert.Equal(t, int32(1), span.eventDepth.Load(), "stack balanced at level %s", level)
+		if goIdOffset > 0 {
+			assert.Contains(t, buf.String(), "shared by more than one goroutine", "detection runs at level %s", level)
+		}
+		restore()
 	}
 }

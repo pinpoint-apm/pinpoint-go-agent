@@ -5,6 +5,7 @@ import (
 	"hash/maphash"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 )
 
@@ -30,6 +31,7 @@ type metaCacheEntry[K comparable, V any] struct {
 	shard   *metaCacheShard
 	// Shard opSeq at insert / last promotion. Reads are lock-free.
 	lastPromoted atomic.Uint64
+	insertedAt   time.Time // set only when the cache has a ttl
 }
 
 type metaCacheShardInternal struct {
@@ -53,13 +55,22 @@ type metaCacheShard struct {
 type metaCache[K comparable, V any] struct {
 	m      sync.Map // K -> *metaCacheEntry[K, V]
 	shards [metaCacheShardCount]metaCacheShard
+	// ttl > 0 expires an entry that long after its insert: peek drops it and
+	// reports a miss, so the next lookup re-registers the metadata. Only the
+	// SQL UID cache sets one (SQL.CacheExpireHours): the collector's
+	// SqlUidMetaData rows have a 180-day TTL, and a UID whose row lapsed
+	// while the entry stayed cached showed an empty SQL in the web UI until
+	// the process restarted. The id caches keep entries for the process
+	// lifetime, as the Java agent's do.
+	ttl time.Duration
+	now func() time.Time // time.Now, replaced by tests
 }
 
 // newMetaCache splits capacity evenly across the shards, so a hot shard
 // evicts within its own slice — the same trade-off the C++ agent accepts
 // for removing the shared lock line.
 func newMetaCache[K comparable, V any](capacity int) *metaCache[K, V] {
-	c := &metaCache[K, V]{}
+	c := &metaCache[K, V]{now: time.Now}
 	perShard := capacity / metaCacheShardCount
 	if perShard < 1 {
 		perShard = 1
@@ -95,6 +106,11 @@ func (c *metaCache[K, V]) peek(key K) (V, bool) {
 		return zero, false
 	}
 	e := raw.(*metaCacheEntry[K, V])
+	if c.ttl > 0 && c.now().Sub(e.insertedAt) >= c.ttl {
+		c.removeEntry(e)
+		var zero V
+		return zero, false
+	}
 	s := e.shard
 	v := e.value
 	if s.size.Load() < int64(s.cap) {
@@ -136,6 +152,9 @@ func (c *metaCache[K, V]) peekOrAdd(key K, value V) (V, bool) {
 	}
 	opSeq := s.opSeq.Add(1)
 	e := &metaCacheEntry[K, V]{key: key, value: value, shard: s}
+	if c.ttl > 0 {
+		e.insertedAt = c.now()
+	}
 	e.lastPromoted.Store(opSeq)
 	e.element = s.order.PushFront(e)
 	c.m.Store(key, e)
@@ -151,13 +170,24 @@ func (c *metaCache[K, V]) peekOrAdd(key K, value V) (V, bool) {
 }
 
 // remove deletes the entry so the key misses next time; sendMetaWorker uses
-// this to retry metadata whose send failed.
-func (c *metaCache[K, V]) remove(key K) {
-	s := c.shard(key)
-	s.mu.Lock()
+// this to retry metadata whose send failed. isExpected sees the cached value
+// and rejects an entry that is not the one the caller means: the key may have
+// been evicted and re-inserted since, and that entry's metadata was sent.
+func (c *metaCache[K, V]) remove(key K, isExpected func(V) bool) {
 	if raw, ok := c.m.Load(key); ok {
-		e := raw.(*metaCacheEntry[K, V])
-		c.m.Delete(key)
+		if e := raw.(*metaCacheEntry[K, V]); isExpected(e.value) {
+			c.removeEntry(e)
+		}
+	}
+}
+
+// removeEntry deletes exactly e, not whatever the key maps to by the time the
+// shard lock is taken.
+func (c *metaCache[K, V]) removeEntry(e *metaCacheEntry[K, V]) {
+	s := e.shard
+	s.mu.Lock()
+	if raw, ok := c.m.Load(e.key); ok && raw.(*metaCacheEntry[K, V]) == e {
+		c.m.Delete(e.key)
 		s.order.Remove(e.element)
 		s.size.Add(-1)
 	}

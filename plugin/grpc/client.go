@@ -51,8 +51,7 @@ func (cs *clientStream) endSpan(err error) {
 }
 
 // kvInjectionWriter collects the injected headers so they go out through one
-// metadata.AppendToOutgoingContext call: merging them into a copy of the
-// caller's MD paid a full map copy per call, plus a lowercase allocation per
+// metadata.AppendToOutgoingContext call rather than a lowercase allocation per
 // Set.
 type kvInjectionWriter struct {
 	kv []string
@@ -66,6 +65,9 @@ func (w *kvInjectionWriter) Set(key string, value string) {
 }
 
 func newClientTracer(ctx context.Context, method string, target string) (context.Context, pinpoint.Tracer) {
+	if isNested(ctx) {
+		return ctx, pinpoint.NoopTracer()
+	}
 	tracer := pinpoint.FromContext(ctx).NewSpanEvent(method)
 	if tracer.IsSampled() {
 		se := tracer.SpanEvent()
@@ -82,9 +84,6 @@ func newClientTracer(ctx context.Context, method string, target string) (context
 		se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, makeUrl(remote, method))
 	}
 
-	// Appended rather than merged over the caller's MD: a caller that set the
-	// same pinpoint key on its own outgoing context would now send both
-	// values instead of having its value replaced; nothing legitimate does.
 	writer := &kvInjectionWriter{}
 	writer.kv = writer.buf[:0]
 	tracer.Inject(writer)
@@ -93,6 +92,26 @@ func newClientTracer(ctx context.Context, method string, target string) (context
 	}
 
 	return ctx, tracer
+}
+
+// isNested reports whether the caller's outgoing metadata already carries a
+// Pinpoint trace context - an outer instrumented layer, an interceptor
+// registered twice, or a gateway forwarding its inbound metadata with
+// metadata.NewOutgoingContext. Java's DefaultRequestTraceWriter.isNested then
+// records no span event and writes no header, so the context already present
+// travels alone; appending a second value left the receiver's Get reading the
+// first, stale, one. Keys are checked as Java does, by the presence of
+// Pinpoint-TraceID or Pinpoint-Sampled.
+//
+// FromOutgoingContext copies the caller's MD: a cost per call that only exists
+// when the caller set metadata of its own.
+func isNested(ctx context.Context) bool {
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if !ok {
+		return false
+	}
+	return len(md[loweredHeaderKeys[pinpoint.HeaderTraceId]]) > 0 ||
+		len(md[loweredHeaderKeys[pinpoint.HeaderSampled]]) > 0
 }
 
 func makeUrl(remote string, method string) string {

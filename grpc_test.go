@@ -1737,6 +1737,27 @@ func Test_spanGrpc_sendSpanBatch_carriesParentInfo(t *testing.T) {
 	assert.Equal(t, "acceptor:8080", parent.GetAcceptorHost())
 }
 
+// A root span has no parent to describe, so it carries no PParentInfo, as the
+// Java and C++ agents send it; the unconditional one reported an UNKNOWN
+// parent type for a parent that does not exist.
+func Test_spanGrpc_sendSpanBatch_rootSpanHasNoParentInfo(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.spanGrpc = newMockSpanGrpc(agent)
+
+	span := defaultSpan(agent)
+	span.rpcName = "/root"
+	span.acceptorHost = "set-by-hand:8080"
+	span.NewSpanEvent("op")
+
+	agent.spanGrpc.sendSpanBatchAsync([]*spanChunk{span.newEventChunk(true)})
+	agent.spanGrpc.awaitInFlightSpanBatch()
+
+	client := agent.spanGrpc.spanClient.(*mockSpanGrpcClient)
+	batch := client.lastRequest().GetSpan()
+	require.Len(t, batch, 1)
+	assert.Nil(t, batch[0].GetSpan().GetAcceptEvent().GetParentInfo())
+}
+
 // A chunk without a span carries nothing to report and must not reach the
 // encoder. Mirrors the C++ agent's GrpcSpanEnqueueDropsNullAndExitingChunksTest.
 func Test_makePSpanMessageBatch_skipsEmptyChunks(t *testing.T) {

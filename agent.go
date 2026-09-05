@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -296,6 +297,7 @@ func NewAgent(config *Config) (Agent, error) {
 	agent.errorCache = newMetaCache[string, int32](cacheSize)
 	agent.sqlCache = newMetaCache[string, int32](cacheSize)
 	agent.sqlUidCache = newMetaCache[string, []byte](cacheSize)
+	agent.sqlUidCache.ttl = time.Duration(config.Int(CfgSQLCacheExpireHours)) * time.Hour
 	agent.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize)
 	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
 
@@ -891,23 +893,23 @@ func (agent *agent) sendMetadata(md interface{}) bool {
 	return false
 }
 
+// deleteMetaCache drops the cache entry whose metadata md failed to reach the
+// collector. The entry is matched on its value as well as its key: between the
+// failed send and this call the key may have been evicted and re-registered
+// under a new id whose metadata did go out, and removing that entry would
+// re-issue the id a third time for nothing.
 func (agent *agent) deleteMetaCache(md interface{}) {
-	switch md.(type) {
+	switch md := md.(type) {
 	case apiMeta:
-		api := md.(apiMeta)
-		agent.apiCache.remove(apiCacheKey{api.descriptor, api.apiType})
-		break
+		agent.apiCache.remove(apiCacheKey{md.descriptor, md.apiType}, func(id int32) bool { return id == md.id })
 	case stringMeta:
-		agent.errorCache.remove(md.(stringMeta).funcName)
-		break
+		agent.errorCache.remove(md.funcName, func(id int32) bool { return id == md.id })
 	case sqlMeta:
-		agent.sqlCache.remove(md.(sqlMeta).key)
-		break
+		agent.sqlCache.remove(md.key, func(id int32) bool { return id == md.id })
 	case sqlUidMeta:
-		agent.sqlUidCache.remove(md.(sqlUidMeta).key)
-		break
-	case exceptionMeta:
-		break
+		// A re-registered UID is the same hash, so this only guards a key
+		// that changed hands to a different statement's entry.
+		agent.sqlUidCache.remove(md.key, func(uid []byte) bool { return bytes.Equal(uid, md.uid) })
 	}
 }
 
@@ -1317,6 +1319,36 @@ func (r *dropReporter) reportTotal(total int64, queue string, queueSize int) {
 		queue, total, queueSize)
 }
 
+// logThrottle rate-limits one warning site to a message per dropReportInterval,
+// counting what it held back in between. For warnings a peer or the
+// application can trigger once per request - a malformed header, an
+// unbalanced span - where an unthrottled WARN is a log-flooding lever that
+// anyone able to send a request can pull; the C++ agent's LOG_WARN_THROTTLED
+// covers the same sites.
+type logThrottle struct {
+	next       atomic.Int64 // unix nano before which the site stays silent
+	suppressed atomic.Int64
+}
+
+var (
+	malformedTraceIdLog, malformedSpanIdLog, malformedParentSpanIdLog logThrottle
+	endSpanTwiceLog, unclosedEventLog, noEventLog, sharedGoroutineLog logThrottle
+)
+
+func (t *logThrottle) warnf(format string, args ...interface{}) {
+	now := time.Now().UnixNano()
+	next := t.next.Load()
+	if now < next || !t.next.CompareAndSwap(next, now+int64(dropReportInterval)) {
+		t.suppressed.Add(1)
+		return
+	}
+	if n := t.suppressed.Swap(0); n > 0 {
+		format += " (%d similar warning(s) suppressed)"
+		args = append(args, n)
+	}
+	Log("span").Warnf(format, args...)
+}
+
 func (agent *agent) collectUrlStatWorker() {
 	Log("agent").Infof("start collect uri stat goroutine")
 
@@ -1450,6 +1482,7 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 	agent.errorCache = newMetaCache[string, int32](cacheSize)
 	agent.sqlCache = newMetaCache[string, int32](cacheSize)
 	agent.sqlUidCache = newMetaCache[string, []byte](cacheSize)
+	agent.sqlUidCache.ttl = time.Duration(config.Int(CfgSQLCacheExpireHours)) * time.Hour
 	agent.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize)
 	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
 

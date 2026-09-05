@@ -113,7 +113,9 @@ func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
 	assert.Equal(t, itAgentID, rootWire.GetTransactionId().GetAgentId())
 	assert.Equal(t, "192.0.2.10", rootWire.GetAcceptEvent().GetRemoteAddr())
 	assert.Equal(t, "orders.internal:8443", rootWire.GetAcceptEvent().GetEndPoint())
-	assert.Equal(t, "api.example.test", rootWire.GetAcceptEvent().GetParentInfo().GetAcceptorHost())
+	// A root span describes no parent: PParentInfo is omitted, as the Java and
+	// C++ agents send it, and the acceptor host set on it goes nowhere.
+	assert.Nil(t, rootWire.GetAcceptEvent().GetParentInfo())
 	assert.Equal(t, int32(1), rootWire.GetErr())
 	assert.Equal(t, int32(pinpoint.Logged), rootWire.GetLoggingTransactionInfo())
 	require.NotNil(t, rootWire.GetExceptionInfo())
@@ -144,6 +146,10 @@ func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
 	assert.Equal(t, rootWire.GetTransactionId().GetAgentStartTime(), continuedWire.GetTransactionId().GetAgentStartTime())
 	assert.Equal(t, rootWire.GetTransactionId().GetSequence(), continuedWire.GetTransactionId().GetSequence())
 	assert.Equal(t, rootSpanID, continuedWire.GetParentSpanId())
+	continuedParent := continuedWire.GetAcceptEvent().GetParentInfo()
+	require.NotNil(t, continuedParent)
+	assert.Equal(t, itAppName, continuedParent.GetParentApplicationName())
+	assert.Equal(t, "mysql-primary", continuedParent.GetAcceptorHost())
 
 	events := eventsForSpan(s, rootSpanID)
 	dbEvent := findEventByServiceType(events, pinpoint.ServiceTypeMysqlExecuteQuery)

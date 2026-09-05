@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/stretchr/testify/assert"
@@ -35,9 +36,53 @@ func TestMetaCacheBasics(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, int32(1), prev)
 
-	c.remove("a")
+	c.remove("a", func(v int32) bool { return v == 1 })
 	_, ok = c.peek("a")
 	assert.False(t, ok)
+}
+
+// A failed send removes the entry that published its id, not whatever the key
+// maps to by then: an entry re-inserted under a new id had its metadata sent.
+func TestMetaCacheRemoveKeepsAnUnexpectedValue(t *testing.T) {
+	c := newMetaCache[string, int32](cacheSize)
+	c.peekOrAdd("a", 2)
+
+	c.remove("a", func(v int32) bool { return v == 1 })
+	v, ok := c.peek("a")
+	assert.True(t, ok, "an entry with a different value is not the one that failed")
+	assert.Equal(t, int32(2), v)
+	assert.Equal(t, int64(1), c.shard("a").size.Load())
+}
+
+// An entry older than the ttl reads as a miss and is dropped, so the next
+// peekOrAdd inserts afresh and the caller re-registers the metadata.
+func TestMetaCacheExpiresAfterTtl(t *testing.T) {
+	c := newMetaCache[string, int32](cacheSize)
+	c.ttl = 168 * time.Hour
+	now := time.Unix(1_700_000_000, 0)
+	c.now = func() time.Time { return now }
+
+	c.peekOrAdd("a", 1)
+	now = now.Add(c.ttl - time.Nanosecond)
+	v, ok := c.peek("a")
+	assert.True(t, ok, "still fresh just before the ttl")
+	assert.Equal(t, int32(1), v)
+
+	now = now.Add(time.Nanosecond)
+	_, ok = c.peek("a")
+	assert.False(t, ok, "expired at the ttl")
+	assert.Equal(t, int64(0), c.shard("a").size.Load(), "the expired entry is removed, not left to age out")
+
+	_, ok = c.peekOrAdd("a", 2)
+	assert.False(t, ok, "the key is free for re-registration")
+	v, _ = c.peek("a")
+	assert.Equal(t, int32(2), v)
+
+	// No ttl: the same age is not an expiry.
+	c.ttl = 0
+	now = now.Add(1000 * time.Hour)
+	_, ok = c.peek("a")
+	assert.True(t, ok)
 }
 
 func TestMetaCacheEvictsLeastRecentlyUsed(t *testing.T) {
@@ -159,7 +204,7 @@ func TestMetaCacheConcurrent(t *testing.T) {
 					c.peekOrAdd(k, int32(i))
 				}
 				if i&255 == 0 {
-					c.remove(k)
+					c.remove(k, func(int32) bool { return true })
 				}
 			}
 		}(g)

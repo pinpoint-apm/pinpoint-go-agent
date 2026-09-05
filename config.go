@@ -85,6 +85,7 @@ const (
 	CfgSQLTraceQueryStat              = "SQL.TraceQueryStat"
 	CfgSQLEnableRawSqlCache           = "SQL.EnableRawSqlCache"
 	CfgSQLCacheLengthLimit            = "SQL.CacheLengthLimit"
+	CfgSQLCacheExpireHours            = "SQL.CacheExpireHours"
 	CfgSQLErrorCount                  = "SQL.ErrorCount"
 	CfgSQLRemoveComments              = "SQL.RemoveComments"
 	CfgEnable                         = "Enable"
@@ -128,6 +129,9 @@ const (
 	// SQL at or above this many bytes bypasses the SQL metadata caches, as in
 	// the Java agent (profiler.jdbc.sqlcachelengthlimit, UidCache.bypassLength).
 	defaultSqlCacheLengthLimit = 2048
+	// defaultSqlCacheExpireHours matches the Java agent's
+	// profiler.jdbc.sqlcacheexpirehours (SimpleCacheFactory, 7 days).
+	defaultSqlCacheExpireHours = 168
 
 	// A span running this many queries is marked failed, as in the Java agent
 	// (profiler.sql.error.count, DefaultSqlCountService). Java's separate
@@ -233,6 +237,7 @@ func initConfig() {
 	AddConfig(CfgSQLTraceQueryStat, CfgBool, false, true)
 	AddConfig(CfgSQLEnableRawSqlCache, CfgBool, true, true)
 	AddConfig(CfgSQLCacheLengthLimit, CfgInt, defaultSqlCacheLengthLimit, true)
+	AddConfig(CfgSQLCacheExpireHours, CfgInt, defaultSqlCacheExpireHours, false)
 	AddConfig(CfgSQLErrorCount, CfgInt, defaultSqlErrorCount, true)
 	AddConfig(CfgSQLRemoveComments, CfgBool, true, false)
 	AddConfig(CfgEnable, CfgBool, true, false)
@@ -1501,6 +1506,15 @@ func WithSQLEnableRawSqlCache(enable bool) ConfigOption {
 func WithSQLCacheLengthLimit(limit int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgSQLCacheLengthLimit].value = limit
+	}
+}
+
+// WithSQLCacheExpireHours sets how many hours a SQL UID stays cached before
+// its metadata is registered with the collector again. Zero or negative never
+// expires an entry.
+func WithSQLCacheExpireHours(hours int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgSQLCacheExpireHours].value = hours
 	}
 }
 
