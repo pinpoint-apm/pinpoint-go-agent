@@ -199,17 +199,25 @@ func Test_splitTransactionId(t *testing.T) {
 		{"", false, "", 0, 0},
 		{"abc", false, "", 0, 0},
 		{"abc^1", false, "", 0, 0},
-		{"a^b^c^d", false, "", 0, 0},
 		{"agent^abc^1", false, "", 0, 0},
 		{"agent^1^abc", false, "", 0, 0},
-		{"agent^-1^1", false, "", 0, 0},
 		{"agent^^1", false, "", 0, 0},
 		{"agent^1^", false, "", 0, 0},
 		{"^1^2", false, "", 0, 0},
 		{"abcdefghijklmnopqrstuvwxy^1^2", false, "", 0, 0}, // 25-char agentId
 		{"a^9223372036854775808^0", false, "", 0, 0},       // overflows int64
-		{"a^123456789012345678901^0", false, "", 0, 0},     // 21 digits
-		{"a^+1^2", false, "", 0, 0},                        // Long.parseLong takes '+', we do not
+		{"a^123456789012345678901^0", false, "", 0, 0},     // 21 digits: overflows, as Long.parseLong does
+		// Numeric fields follow Long.parseLong, so a sign, leading zeros and a
+		// fourth field are all accepted the way the Java agent accepts them.
+		{"agent^-1^1", true, "agent", -1, 1},           // negative start time
+		{"a^+1^-2", true, "a", 1, -2},                  // '+' prefix, negative sequence
+		{"a^000000000000000000001^2", true, "a", 1, 2}, // 21 chars, leading zeros, fits int64
+		{"a^1^2^3", true, "a", 1, 2},                   // 4th field ignored, not rejected
+		{"a^1^2^", true, "a", 1, 2},                    // trailing delimiter after sequence
+		{"a^b^c^d", false, "", 0, 0},                   // still rejected: 'b' is not a number
+		{"a^ 1^2", false, "", 0, 0},                    // no whitespace, as Long.parseLong
+		{"a^1^0x10", false, "", 0, 0},                  // base 10 only
+		{"a^1^1_0", false, "", 0, 0},                   // no underscore separators
 		// The agent id is re-emitted in outbound Pinpoint-TraceID headers and
 		// reported to the collector, so it is held to the id charset instead
 		// of being echoed as received.

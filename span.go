@@ -333,27 +333,33 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 	}
 }
 
-const maxTraceIdNumberLength = 20
-
 // splitTransactionId parses an "agentId^startTime^sequence" trace id header
 // without allocating (no strings.Split slice) and without risking an
-// index-out-of-range panic on a malformed or hostile header: exactly three
-// fields, an agent id accepted by validateID, and startTime/sequence of 1..20
-// decimal digits that fit in an int64. ok is false otherwise, and the caller
-// starts a new transaction.
+// index-out-of-range panic on a malformed or hostile header. ok is false when
+// the header cannot be parsed, and the caller starts a new transaction.
 //
-// The agent id is held to the same rule as the agent's own ids rather than
-// taken as-is, because it does not stay inside this process: Inject writes it
-// back out in the Pinpoint-TraceID of every downstream request and it is
-// reported to the collector as PTransactionId.AgentId. An unchecked header
-// value would carry whatever an upstream caller put there - control bytes, a
-// CRLF, an over-long id - into both.
+// Accept/reject matches Java TransactionIdUtils.parseTransactionId:
 //
-// Deliberately stricter than Java's Long.parseLong on the numeric fields: a
-// leading '+' or '-' and 21+ digits are rejected rather than parsed or
-// wrapped. No agent emits those (a start time is a millisecond clock and a
-// sequence a counter from 0), and the fallback for a rejected header is a new
-// transaction, which is the safe direction.
+//   - The agent id is checked with IdValidateUtils' character class, as Java
+//     does before taking the substring. This matters here beyond agreeing with
+//     Java: the id does not stay inside the process. Inject writes it back out
+//     in the Pinpoint-TraceID of every downstream request and it is reported
+//     to the collector as PTransactionId.AgentId, so an unchecked header would
+//     carry whatever an upstream caller put there - control bytes, a CRLF -
+//     into both.
+//   - startTime and sequence go through strconv.ParseInt, which accepts what
+//     Long.parseLong accepts: a leading '+' or '-', leading zeros, and any
+//     length that still fits an int64. An empty field, a non-digit, or a value
+//     that overflows int64 is rejected, as Long.parseLong's NumberFormatException
+//     rejects it.
+//   - A fourth field is ignored rather than rejected: Java ends the sequence at
+//     the next delimiter and never looks past it, so "a^1^2^3" is the
+//     transaction "a^1^2" to both agents.
+//
+// Two deliberate gaps, both unreachable from an agent-emitted header: the agent
+// id is additionally held to agentIDMaxLen, which Java checks when it registers
+// an agent but not when it parses this header, and Long.parseLong also accepts
+// non-ASCII Unicode decimal digits (Character.digit), which ParseInt does not.
 func splitTransactionId(tid string) (agentId string, startTime int64, sequence int64, ok bool) {
 	i := strings.IndexByte(tid, '^')
 	// validateID subsumes the empty (i == 0) and over-long agent id cases.
@@ -362,31 +368,22 @@ func splitTransactionId(tid string) (agentId string, startTime int64, sequence i
 	}
 	rest := tid[i+1:]
 	j := strings.IndexByte(rest, '^')
-	if j < 0 || strings.IndexByte(rest[j+1:], '^') >= 0 {
+	if j < 0 {
 		return "", 0, 0, false
 	}
-	if startTime, ok = parseTraceIdNumber(rest[:j]); !ok {
+	startTime, err := strconv.ParseInt(rest[:j], 10, 64)
+	if err != nil {
 		return "", 0, 0, false
 	}
-	if sequence, ok = parseTraceIdNumber(rest[j+1:]); !ok {
+	seq := rest[j+1:]
+	if k := strings.IndexByte(seq, '^'); k >= 0 {
+		seq = seq[:k]
+	}
+	sequence, err = strconv.ParseInt(seq, 10, 64)
+	if err != nil {
 		return "", 0, 0, false
 	}
 	return tid[:i], startTime, sequence, true
-}
-
-// parseTraceIdNumber accepts only 1..20 ASCII digits (no sign, no space) that
-// fit in an int64.
-func parseTraceIdNumber(s string) (int64, bool) {
-	if len(s) == 0 || len(s) > maxTraceIdNumberLength {
-		return 0, false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return 0, false
-		}
-	}
-	v, err := strconv.ParseInt(s, 10, 64)
-	return v, err == nil
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
