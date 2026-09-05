@@ -186,6 +186,11 @@ func (span *span) EndSpan() {
 		// Failed on an error status or on any recorded error (Java: status = errorCode == 0).
 		span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed, statusErr: int(span.statusErr.Load() | span.err.Load())})
 	}
+
+	// Last: the final chunk is enqueued and the url stat read, so nothing this
+	// span still owns is written from here on. Seals the Annotation handles
+	// taken before the end, which bypass the check in Annotations().
+	span.annotations.seal()
 }
 
 // warnIfFinished reports whether the span has ended; a setter called after
@@ -667,6 +672,13 @@ func (span *span) collectUrlStat(stat *UrlStatEntry) {
 }
 
 func (span *span) AddMetric(metric string, value interface{}) {
+	// collectUrlStat is reached only from here, and EndSpan reads span.urlStat
+	// after enqueueing the final chunk: a late write both races that read and
+	// sets a stat nothing enqueues.
+	if span.warnIfFinished("AddMetric") {
+		return
+	}
+
 	if metric == MetricURLStat {
 		if entry, ok := value.(*UrlStatEntry); ok && entry != nil {
 			span.collectUrlStat(entry)

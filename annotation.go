@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"bytes"
 	"sync"
+	"sync/atomic"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 )
@@ -16,6 +17,11 @@ import (
 type annotation struct {
 	values         []annotationValue
 	annotationLock sync.Mutex
+	// sealed is set when the owning span or span event ends. Annotations()
+	// hands out a pointer to this struct, so a handle taken before the end
+	// outlives the finished check there; the collector itself has to refuse
+	// the late append.
+	sealed atomic.Bool
 }
 
 type annotationValueType uint8
@@ -46,9 +52,24 @@ type annotationValue struct {
 }
 
 func (a *annotation) append(v annotationValue) {
+	// A late append is not a memory race - annotationLock covers that - but
+	// whether it is sent depends on when the sender goroutine gets to the
+	// chunk, and a plugin holding the handle would grow a finished span's
+	// slice for as long as it keeps using it (doc/api_contracts.md 3).
+	if a.sealed.Load() {
+		Log("span").Debugf("abnormal span - annotation %d appended after end", v.key)
+		return
+	}
+
 	a.annotationLock.Lock()
 	a.values = append(a.values, v)
 	a.annotationLock.Unlock()
+}
+
+// seal drops every later append. The owner calls it once its final chunk is
+// on its way to the sender, so nothing appended from here on could be sent.
+func (a *annotation) seal() {
+	a.sealed.Store(true)
 }
 
 func (a *annotation) AppendInt(key int32, i int32) {

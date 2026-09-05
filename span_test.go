@@ -1033,6 +1033,95 @@ func TestSpanEvent_LateSetterConcurrentWithSenderIsRaceFree(t *testing.T) {
 	assert.Empty(t, span.annotations.values, "fallback not written back to the span")
 }
 
+// An Annotation handle taken before the end outlives the finished check in
+// Annotations(), so the collector is sealed at EndSpan/EndSpanEvent: whether a
+// late append rode along on the chunk otherwise depended on when the sender
+// goroutine got to it.
+func TestSpan_AnnotationHandleHeldPastEndIsSealed(t *testing.T) {
+	span := defaultTestSpan()
+	spanA := span.Annotations()
+	span.NewSpanEvent("event")
+	eventA := span.SpanEvent().Annotations()
+
+	spanA.AppendString(AnnotationHttpUrl, "/rpc")
+	eventA.AppendString(AnnotationArgs0, "arg")
+
+	span.EndSpanEvent()
+	eventA.AppendString(AnnotationArgs0, "late")
+	assert.Len(t, span.spanEvents[0].annotations.values, 1, "event annotations")
+
+	span.EndSpan()
+	spanA.AppendString(AnnotationHttpUrl, "late")
+	assert.Len(t, span.annotations.values, 1, "span annotations")
+}
+
+// EndSpan reads span.urlStat after enqueueing the final chunk, so a late
+// AddMetric would race that read for a stat nothing enqueues.
+func TestSpan_AddMetricAfterEndSpanIsNoop(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgHttpUrlStatEnable, true)
+	agent := newTestAgent(cfg)
+	agent.urlStatChan = make(chan *urlStat, 1)
+	span := newSampledSpan(agent, "op", "/rpc")
+
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	span.EndSpan()
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/late", Method: "POST"})
+
+	assert.Equal(t, "/users/{id}", span.urlStat.Url, "urlStat")
+}
+
+// Run under -race: the span level counterpart of the span event test above -
+// late setters race with the sender serializing the final chunk.
+func TestSpan_LateSetterConcurrentWithSenderIsRaceFree(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgHttpUrlStatEnable, true)
+	agent := newTestAgent(cfg)
+	agent.urlStatChan = make(chan *urlStat, 1)
+	span := newSampledSpan(agent, "op", "/rpc")
+	span.apiId = 0 // exercise the builder-local AnnotationApi fallback
+	// Taken while the span is live: the handle survives EndSpan.
+	a := span.Annotations()
+	span.EndSpan()
+
+	chunk, ok := agent.spanQueue.tryDequeue()
+	if !assert.True(t, ok) {
+		return
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			span.SetError(errors.New("late"))
+			span.SetFailure()
+			span.SetServiceType(ServiceTypeGoHttpClient)
+			span.SetRpcName("late")
+			span.SetRemoteAddress("late")
+			span.SetEndPoint("late")
+			span.SetAcceptorHost("late")
+			span.SetLogging(2)
+			span.Annotations().AppendString(AnnotationHttpUrl, "late")
+			span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/late", Method: "POST"})
+			a.AppendString(AnnotationHttpUrl, "late") // handle taken before the end
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		b := &spanMessageBuilder{}
+		for i := 0; i < 100; i++ {
+			b.makePSpanMessage(chunk)
+		}
+	}()
+	wg.Wait()
+
+	assert.Equal(t, "/rpc", span.rpcName, "rpcName")
+	assert.Equal(t, int32(0), span.err.Load(), "err")
+	assert.Empty(t, span.annotations.values, "no late annotation, and no fallback written back")
+	assert.Nil(t, span.urlStat, "urlStat")
+}
+
 // Concurrent EndSpan calls enqueue exactly one final chunk.
 func TestSpan_ConcurrentEndSpanEnqueuesOneChunk(t *testing.T) {
 	agent := newTestAgent(defaultConfig())

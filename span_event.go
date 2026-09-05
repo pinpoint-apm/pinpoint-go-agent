@@ -85,6 +85,9 @@ func (se *spanEvent) end() {
 		Log("span").Tracef("endSpanEvent: %s", se.operationName)
 	}
 	se.finished.Store(true)
+	// After finished: an Annotation handle taken before the end bypasses the
+	// check in Annotations(), so the collector is sealed too.
+	se.annotations.seal()
 }
 
 // warnIfFinished reports whether the event has ended; a setter called after
