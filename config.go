@@ -1430,7 +1430,9 @@ func WithSQLEnableRawSqlCache(enable bool) ConfigOption {
 }
 
 // WithSQLCacheLengthLimit sets the max length in bytes of a SQL kept in the SQL
-// metadata caches. A negative value caches every SQL.
+// UID cache and the raw SQL cache. The SQL-ID cache is exempt - its ids come
+// from a sequence, so bypassing it would issue a new id per execution. A
+// negative value caches every SQL.
 func WithSQLCacheLengthLimit(limit int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgSQLCacheLengthLimit].value = limit

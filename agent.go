@@ -55,13 +55,13 @@ type agent struct {
 	spanDrops    dropReporter
 
 	errorCache  *metaCache[string, int32]
-	errorIdGen  int32
+	errorIdGen  idGen
 	sqlCache    *metaCache[string, int32]
-	sqlIdGen    int32
+	sqlIdGen    idGen
 	sqlUidCache *metaCache[string, []byte]
 	rawSqlCache *metaCache[string, normalizedSql]
 	apiCache    *metaCache[apiCacheKey, int32]
-	apiIdGen    int32
+	apiIdGen    idGen
 
 	// asyncIdGen numbers this agent's async chunks. Like the ids above it is
 	// reported with the agent's own transaction ids, so it restarts per agent.
@@ -925,6 +925,36 @@ func (agent *agent) tryEnqueueMeta(md interface{}) bool {
 	return false
 }
 
+// idGen is an agent-local metadata id sequence. The collector keys its API,
+// string and SQL metadata by these int32 ids, so once the sequence wraps past
+// math.MaxInt32 its next lap recycles ids that already name other entries, and
+// the spans carrying them would point at another entry's text. next refuses to
+// issue anything past the wrap instead.
+type idGen struct {
+	id int32
+	// wrapped latches the wrap: without it the sequence would climb back
+	// through the negatives and start handing out colliding ids again. Its CAS
+	// also keeps the warning to one line per process.
+	wrapped atomic.Bool
+}
+
+// next returns the next id in the sequence, or 0 once it has wrapped - the same
+// 0 the caches return while the agent is disabled, which every consumer already
+// reads as "no metadata". kind names the sequence in the overflow warning.
+func (g *idGen) next(kind string) int32 {
+	if g.wrapped.Load() {
+		return 0
+	}
+	id := atomic.AddInt32(&g.id, 1)
+	if id > 0 {
+		return id
+	}
+	if g.wrapped.CompareAndSwap(false, true) {
+		Log("agent").Warnf("%s id generator overflowed; no further %s metadata is recorded", kind, kind)
+	}
+	return 0
+}
+
 func (agent *agent) cacheError(errorName string) int32 {
 	if !agent.enable.Load() {
 		return 0
@@ -934,7 +964,10 @@ func (agent *agent) cacheError(errorName string) int32 {
 		return v
 	}
 
-	id := atomic.AddInt32(&agent.errorIdGen, 1)
+	id := agent.errorIdGen.next("error")
+	if id == 0 {
+		return 0
+	}
 	if v, ok := agent.errorCache.peekOrAdd(errorName, id); ok {
 		return v
 	}
@@ -982,11 +1015,18 @@ func abbreviateString(str string, length int) string {
 }
 
 // sqlCacheable reports whether a SQL key is short enough to keep in the SQL
-// metadata caches. Anything longer bypasses them and re-sends its metadata on
-// every use, so a handful of huge generated statements cannot pin megabytes of
-// cache for the life of the process. This mirrors the Java agent's UidCache
-// bypassLength (profiler.jdbc.sqlcachelengthlimit); the limit is in bytes here,
-// not UTF-16 chars.
+// metadata caches keyed by a hash of the statement. Anything longer bypasses
+// them and re-sends its metadata on every use, so a handful of huge generated
+// statements cannot pin megabytes of cache for the life of the process. This
+// mirrors the Java agent's UidCache bypassLength
+// (profiler.jdbc.sqlcachelengthlimit); the limit is in bytes here, not UTF-16
+// chars.
+//
+// Deliberately not applied to sqlCache: its ids come from a sequence, so a
+// bypassed statement would burn a fresh id - and a fresh sqlMeta - on every
+// single use, and the same query would show up in the UI as a new entry per
+// execution. Java bypasses only the UID cache for the same reason:
+// SimpleCacheFactory.newSqlCache() builds the id cache with no length check.
 func (agent *agent) sqlCacheable(sql string) bool {
 	return len(sql) < agent.config.load().sqlCacheLengthLimit
 }
@@ -997,18 +1037,17 @@ func (agent *agent) cacheSql(sql string) int32 {
 	}
 
 	aSql := abbreviateString(sql, maxSqlSize)
-	cacheable := agent.sqlCacheable(aSql)
-	if cacheable {
-		if v, ok := agent.sqlCache.peek(aSql); ok {
-			return v
-		}
+	if v, ok := agent.sqlCache.peek(aSql); ok {
+		return v
 	}
 
-	id := atomic.AddInt32(&agent.sqlIdGen, 1)
-	if cacheable {
-		if v, ok := agent.sqlCache.peekOrAdd(aSql, id); ok {
-			return v
-		}
+	// A wrapped sequence records no SQL: SetSQL skips a zero id.
+	id := agent.sqlIdGen.next("sql")
+	if id == 0 {
+		return 0
+	}
+	if v, ok := agent.sqlCache.peekOrAdd(aSql, id); ok {
+		return v
 	}
 
 	md := sqlMeta{
@@ -1111,7 +1150,10 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 		return v
 	}
 
-	id := atomic.AddInt32(&agent.apiIdGen, 1)
+	id := agent.apiIdGen.next("api")
+	if id == 0 {
+		return 0
+	}
 	if v, ok := agent.apiCache.peekOrAdd(key, id); ok {
 		return v
 	}

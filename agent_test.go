@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -262,7 +263,7 @@ func Test_agent_SQLCachesBoundKeys(t *testing.T) {
 	bounded := abbreviateString(sql, maxSqlSize)
 
 	t.Run("sql id", func(t *testing.T) {
-		a := newTestAgent(noSqlCacheBypassConfig())
+		a := newTestAgent(defaultConfig())
 		id := a.cacheSql(sql)
 
 		cached, ok := a.sqlCache.peek(bounded)
@@ -290,23 +291,13 @@ func Test_agent_SQLCachesBoundKeys(t *testing.T) {
 	})
 }
 
-// A SQL at or above SQL.CacheLengthLimit is never cached: it re-registers and
-// re-sends its metadata on every use, as the Java agent's UidCache does past
+// A SQL at or above SQL.CacheLengthLimit is not cached by the hash-keyed caches:
+// it re-sends its metadata on every use, as the Java agent's UidCache does past
 // bypassLength. Caching them instead lets a few huge generated statements hold
-// the cache - and their bytes - for the life of the process.
+// the cache - and their bytes - for the life of the process. The SQL-ID cache is
+// exempt; see Test_agent_SQLIdCacheIgnoresLengthLimit.
 func Test_agent_SQLCachesBypassKeysOverLengthLimit(t *testing.T) {
 	sql := strings.Repeat("x", 3000)
-
-	t.Run("sql id", func(t *testing.T) {
-		a := newTestAgent(defaultConfig())
-		first := a.cacheSql(sql)
-		second := a.cacheSql(sql)
-
-		_, cached := a.sqlCache.peek(sql)
-		assert.False(t, cached, "a sql over the length limit must not be cached")
-		assert.NotEqual(t, first, second, "a bypassed sql gets a fresh id every time")
-		assert.Len(t, a.metaChan, 2, "metadata must be enqueued on every use")
-	})
 
 	t.Run("sql uid", func(t *testing.T) {
 		a := newTestAgent(defaultConfig())
@@ -332,6 +323,75 @@ func Test_agent_SQLCachesBypassKeysOverLengthLimit(t *testing.T) {
 		_, cached = a.rawSqlCache.peek(withinLimit)
 		assert.True(t, cached, "a sql within the limit is still memoized")
 	})
+}
+
+// The SQL-ID cache is exempt from SQL.CacheLengthLimit: its ids come from an
+// agent-local sequence, so a bypassed statement would burn a fresh id - and a
+// fresh sqlMeta - on every execution, and the same query would show up in the UI
+// once per execution. Java exempts its id cache for the same reason.
+func Test_agent_SQLIdCacheIgnoresLengthLimit(t *testing.T) {
+	sql := strings.Repeat("x", 3000)
+
+	for _, limit := range []int{2048, 0, -1} {
+		t.Run(fmt.Sprintf("limit %d", limit), func(t *testing.T) {
+			cfg := defaultConfig()
+			cfg.Set(CfgSQLCacheLengthLimit, limit)
+			a := newTestAgent(cfg)
+
+			first := a.cacheSql(sql)
+			second := a.cacheSql(sql)
+
+			assert.Equal(t, first, second, "the same sql must keep its id")
+			assert.Equal(t, int32(1), atomic.LoadInt32(&a.sqlIdGen.id), "only one id may be issued")
+			assert.Len(t, a.metaChan, 1, "metadata must be enqueued once")
+		})
+	}
+}
+
+// Past math.MaxInt32 a sequence wraps negative, and the ids the next lap hands
+// out collide with the entries already registered under them. The collector
+// keys its metadata by these ids, so a wrapped one is dropped, not published.
+func Test_agent_MetadataCachesDropOverflowedIds(t *testing.T) {
+	tests := []struct {
+		name  string
+		gen   func(*agent) *idGen
+		cache func(*agent) int32
+	}{
+		{"sql", func(a *agent) *idGen { return &a.sqlIdGen },
+			func(a *agent) int32 { return a.cacheSql("select 1") }},
+		{"error", func(a *agent) *idGen { return &a.errorIdGen },
+			func(a *agent) int32 { return a.cacheError("boom") }},
+		{"api", func(a *agent) *idGen { return &a.apiIdGen },
+			func(a *agent) int32 { return a.cacheSpanApi("op", apiTypeDefault) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := newTestAgent(defaultConfig())
+			gen := tt.gen(a)
+			gen.id = math.MaxInt32
+
+			assert.Zero(t, tt.cache(a), "an overflowed id must not be recorded")
+			assert.Empty(t, a.metaChan, "no metadata may be enqueued for a dropped id")
+
+			// The wrap latches: left unlatched the sequence climbs back through
+			// the negatives and starts reissuing ids that already name entries.
+			assert.True(t, gen.wrapped.Load(), "the wrap must latch")
+			gen.id = 0
+			assert.Zero(t, tt.cache(a), "a latched sequence must not resume")
+		})
+	}
+}
+
+// A sequence that has not wrapped is untouched by the guard.
+func Test_idGen_next(t *testing.T) {
+	var g idGen
+	assert.Equal(t, int32(1), g.next("test"))
+	assert.Equal(t, int32(2), g.next("test"))
+
+	g.id = math.MaxInt32
+	assert.Zero(t, g.next("test"), "a wrapped sequence issues nothing")
+	assert.Zero(t, g.next("test"), "and stays wrapped")
 }
 
 func Test_agent_tryEnqueueMetaReturnsWhenDropRaceLeavesQueueEmpty(t *testing.T) {

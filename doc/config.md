@@ -672,6 +672,17 @@ registered again and its metadata is sent to the collector on every execution,
 so a few huge generated statements cannot hold the cache - and their bytes - for
 the life of the process. A negative value caches every statement regardless of
 length.
+
+The limit applies to the SQL-UID cache and to the raw SQL cache
+([SQL.EnableRawSqlCache](#sqlenablerawsqlcache)), whose keys are hashes and
+whose values do not depend on being cached. It does **not** apply to the SQL-ID
+cache, which is used when the collector does not support SQL UIDs. Those ids
+come from an agent-local sequence, so bypassing the cache would issue a fresh id
+- and send a fresh metadata message - on every execution of the statement, and
+the same query would appear in the UI as a separate entry per execution. The
+Java agent draws the same line: its bypass lives only in `UidCache`, while the
+id cache built by `SimpleCacheFactory.newSqlCache()` has no length check.
+
 This corresponds to the Java agent's `profiler.jdbc.sqlcachelengthlimit`.
 
 * --pinpoint-sql-cachelengthlimit
