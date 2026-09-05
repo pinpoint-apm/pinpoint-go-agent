@@ -258,6 +258,62 @@ func Test_sendStatsWorker_reopensStreamAfterSendErrorAndResumes(t *testing.T) {
 	client.AssertNumberOfCalls(t, "SendAgentStat", 2)
 }
 
+// superviseWorker recovers a panicked worker body and runs it again, so the
+// stream the panicked body was holding has to be closed on that path too:
+// nothing else closes it, the collector kept it open, and the restarted body
+// was free to open another on top of it. Each worker owns its stream through a
+// defer for exactly this case.
+func Test_workers_closeTheirStreamOnThePanicPath(t *testing.T) {
+	t.Run("ping", func(t *testing.T) {
+		agent := newTestAgent(defaultConfig())
+
+		stream := grpcmock.NewMockAgent_PingSessionClient()
+		stream.OnSend(mock.Anything).Run(func(mock.Arguments) { panic("ping send exploded") }).Return(nil)
+		stream.On("CloseSend").Return(nil)
+
+		client := grpcmock.NewMockAgentClient()
+		client.OnPingSession(mock.Anything).Return(stream, nil)
+		agent.agentGrpc = &agentGrpc{agentClient: client, agent: agent}
+
+		assert.Panics(t, agent.sendPingWorker)
+		stream.AssertNumberOfCalls(t, "CloseSend", 1)
+	})
+
+	t.Run("span", func(t *testing.T) {
+		agent := newTestAgent(defaultConfig())
+
+		stream := grpcmock.NewMockSpan_SendSpanClient()
+		stream.OnSend(mock.Anything).Run(func(mock.Arguments) { panic("span send exploded") }).Return(nil)
+		stream.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
+
+		client := grpcmock.NewMockSpanClient()
+		client.OnSendSpan(mock.Anything).Return(stream, nil)
+		agent.spanGrpc = &spanGrpc{spanClient: client, agent: agent}
+
+		require.True(t, agent.spanQueue.enqueue(newTestSpanChunk(agent)))
+		assert.Panics(t, agent.sendSpanWorker)
+		stream.AssertNumberOfCalls(t, "CloseAndRecv", 1)
+	})
+
+	t.Run("command", func(t *testing.T) {
+		agent := newTestAgent(defaultConfig())
+
+		// The command worker's stream outlives a whole loop of handler calls,
+		// so its close sits in serveCommandStream - the scope the panic unwinds.
+		stream := grpcmock.NewMockProfilerCommandService_HandleCommandClient()
+		stream.OnSend(mock.Anything).Return(nil)
+		stream.OnRecv().Run(func(mock.Arguments) { panic("command handler exploded") }).Return(nil, nil)
+		stream.On("CloseSend").Return(nil)
+
+		client := grpcmock.NewMockProfilerCommandServiceClient()
+		client.OnHandleCommand(mock.Anything).Return(stream, nil)
+		agent.cmdGrpc = &cmdGrpc{cmdClient: client, agent: agent, atcStreams: atcStreams{agent: agent}}
+
+		assert.Panics(t, func() { agent.serveCommandStream(0) })
+		stream.AssertNumberOfCalls(t, "CloseSend", 1)
+	})
+}
+
 // A collector that accepts the command stream and then immediately rejects the
 // handshake leaves the channel READY, so the reconnect back-off is the only
 // thing keeping this loop from opening streams continuously inside the host

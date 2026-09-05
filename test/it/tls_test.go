@@ -139,9 +139,13 @@ func TestRefusesUnreadableTrustCertificate(t *testing.T) {
 	assert.False(t, waitUntil(func() bool { return agent.Enable() }, 2*time.Second))
 	assert.Empty(t, mc.Snapshot().AgentInfos)
 
-	// The agent that never got a channel is still the installed global one, and
-	// hands out inert tracers; shutting it down has to release it so the host
-	// can build another once the configuration is fixed.
+	// A connect that can never succeed releases the global agent itself, without
+	// waiting for the application to call Shutdown: GetAgent stops handing out
+	// the dead agent, and NewAgent can be retried once the path is fixed. The
+	// handle the caller still holds keeps serving inert tracers, and shutting it
+	// down afterwards stays safe and leaves the release in place.
+	assert.Equal(t, pinpoint.NoopAgent(), pinpoint.GetAgent(),
+		"a dead agent must not stay global until Shutdown")
 	requireNoopTracer(t, agent.NewSpanTracer("tls.misconfigured", "/tls-misconfigured"))
 	agent.Shutdown()
 	assert.Equal(t, pinpoint.NoopAgent(), pinpoint.GetAgent())

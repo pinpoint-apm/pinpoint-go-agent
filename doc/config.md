@@ -270,9 +270,10 @@ The default matches the Java and C++ agents (24 hours).
 * unit: milliseconds
 
 ### Collector.AgentInfo.SendRetryInterval
-Collector.AgentInfo.SendRetryInterval option sets the wait between agent information send retries within one refresh cycle.
-It applies to the periodic refresh only; the initial send at agent startup retries with the gRPC connection back-off instead.
-It has no effect if Collector.AgentInfo.RefreshInterval is 0.
+Collector.AgentInfo.SendRetryInterval option sets the wait between agent information send retries.
+It paces two loops: the registration retry at agent startup, which repeats until the collector accepts the AgentInfo, and the retries within one periodic refresh cycle.
+The wait is randomized by +/-30% so agents restarted together do not retry in lockstep, and it does not escalate - a collector that keeps rejecting the registration is polled at this interval for as long as the process runs.
+Only the refresh use has no effect if Collector.AgentInfo.RefreshInterval is 0.
 
 * --pinpoint-collector-agentinfo-sendretryinterval
 * PINPOINT_GO_COLLECTOR_AGENTINFO_SENDRETRYINTERVAL

@@ -180,9 +180,6 @@ const (
 	// shutdownTimeout bounds how long Shutdown waits for the worker goroutines
 	// to drain their queues before abandoning them.
 	shutdownTimeout = 3 * time.Second
-	// connectGraceTimeout bounds how long Shutdown waits for an in-progress
-	// agent registration, in case Shutdown was called too early.
-	connectGraceTimeout = 1 * time.Second
 
 	maxSqlSize = 64 * 1024
 	// maxErrorMessageSize matches the Java agent, which abbreviates exception
@@ -540,11 +537,11 @@ func (agent *agent) Shutdown() {
 }
 
 func (agent *agent) shutdownAgent() {
-	// Give an in-progress registration a moment to finish, in case shutdown was
-	// called too early. A registered agent has already released connectWg, so
-	// the normal shutdown path pays nothing here.
-	waitTimeout(&agent.connectWg, connectGraceTimeout)
-
+	// Signal before waiting on connectWg, never after: registration retries for
+	// as long as the collector is unreachable, so a wait that runs first pays
+	// its whole timeout during exactly the outage it was meant to survive. The
+	// signal is what ends that loop - it cancels the in-flight RequestAgentInfo
+	// and the back-off pause - which makes the wait below short on every path.
 	agent.signalShutdown()
 	Log("agent").Infof("shutdown pinpoint agent")
 

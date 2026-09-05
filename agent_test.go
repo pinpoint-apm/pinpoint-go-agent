@@ -555,7 +555,7 @@ func Test_agent_ShutdownIsSerialized(t *testing.T) {
 	}
 }
 
-// The normal path must not pay the startup grace delay.
+// Shutdown must never sleep on the way out.
 func Test_agent_ShutdownNoStartupDelay(t *testing.T) {
 	opts := []ConfigOption{
 		WithAppName("test"),
@@ -569,14 +569,46 @@ func Test_agent_ShutdownNoStartupDelay(t *testing.T) {
 	start := time.Now()
 	a.Shutdown()
 
-	assert.Less(t, time.Since(start), connectGraceTimeout, "no unconditional sleep")
+	assert.Less(t, time.Since(start), time.Second, "no unconditional sleep")
+}
+
+// A collector outage keeps registration retrying for as long as the outage
+// lasts, so Shutdown must signal before it waits on connectWg - a wait that
+// runs first pays its whole timeout during exactly the outage it was meant to
+// survive.
+func Test_agent_ShutdownDoesNotWaitOutRetryingRegistration(t *testing.T) {
+	a := newTestAgent(defaultConfig())
+	a.enable.Store(false)
+	client := &mockAgentGrpcClient{failures: 1 << 30}
+	agentGrpc := &agentGrpc{
+		agentConn:          dialReadyConn(t),
+		agentClient:        client,
+		agent:              a,
+		registerRetryDelay: time.Hour,
+	}
+
+	a.connectWg.Add(1)
+	go func() {
+		defer a.connectWg.Done()
+		agentGrpc.registerAgentWithRetry()
+	}()
+	require.Eventually(t, func() bool { return len(client.sentAgentInfo()) == 1 }, time.Second, time.Millisecond)
+
+	start := time.Now()
+	a.Shutdown()
+	assert.Less(t, time.Since(start), 500*time.Millisecond, "Shutdown sat through the registration retry")
 }
 
 // captureWarnLog redirects the agent log to buf until the returned func is called.
 func captureWarnLog(buf *bytes.Buffer) func() {
+	return captureLogAt(buf, logrus.WarnLevel)
+}
+
+// captureLogAt is captureWarnLog at an arbitrary level, for lines below Warn.
+func captureLogAt(buf *bytes.Buffer, level logrus.Level) func() {
 	prevOut, prevLevel := logger.defaultLogger.Out, logger.defaultLogger.GetLevel()
 	logger.defaultLogger.SetOutput(buf)
-	logger.defaultLogger.SetLevel(logrus.WarnLevel)
+	logger.defaultLogger.SetLevel(level)
 	return func() {
 		logger.defaultLogger.SetOutput(prevOut)
 		logger.defaultLogger.SetLevel(prevLevel)

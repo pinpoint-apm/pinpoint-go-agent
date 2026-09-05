@@ -186,22 +186,48 @@ func TestRetriesAgentRegistrationAfterInitialFailure(t *testing.T) {
 	assert.True(t, agent.Enable())
 }
 
-// A registration the collector answers with PResult.success=false is a
-// permanent rejection, not a transport error: the agent must stop retrying and
-// stay disabled rather than loop forever against a collector that refuses it.
-func TestStopsRegistrationAfterApplicationRejection(t *testing.T) {
+// A registration the collector answers with PResult.success=false is retried
+// like a transport error rather than treated as permanent: a collector answers
+// that way while it is initializing or briefly refusing, and giving up would
+// leave the process untraced until someone restarts it.
+func TestRetriesAgentRegistrationAfterApplicationRejection(t *testing.T) {
+	// startStack blocks until registration succeeded, so by now the rejected
+	// first attempt and its retry are both on record.
+	mc, agent := startStack(t, defaultAgentConfig(), func(mc *MockCollector) {
+		mc.RejectNext(RpcAgentInfo, "collector rejected this agent")
+	})
+
+	results := resultsFor(mc.Snapshot(), RpcAgentInfo)
+	require.GreaterOrEqual(t, len(results), 2)
+	assert.Equal(t, codes.OK, results[0].Code, "the collector answered; it just said no")
+	assert.False(t, results[0].Success)
+	assert.Equal(t, codes.OK, results[1].Code)
+	assert.True(t, results[1].Success)
+	assert.True(t, agent.Enable())
+}
+
+// Retrying is not the same as running: for as long as the collector keeps
+// rejecting, the agent must stay disabled and open no stream. Registration is
+// the precondition for tracing here (see doc/java_parity.md), and an agent that
+// reported itself enabled while stuck in this loop would look healthy while
+// reporting nothing.
+func TestStaysDisabledWhileRegistrationIsRejected(t *testing.T) {
+	cfg := defaultAgentConfig()
+	// Slow enough that the rejections below cover the assertions comfortably.
+	cfg.agentInfoSendRetryInterval = 300
+
 	mc := startCollector(t)
-	mc.RejectNext(RpcAgentInfo, "collector rejected this agent")
-	agent := startAgent(t, mc, defaultAgentConfig())
+	for i := 0; i < 3; i++ {
+		mc.RejectNext(RpcAgentInfo, "collector rejected this agent")
+	}
+	agent := startAgent(t, mc, cfg)
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool {
-		return hasResultSuccess(s, RpcAgentInfo, codes.OK, false)
-	}, waitTimeout))
+		return len(resultsFor(s, RpcAgentInfo)) >= 2
+	}, waitTimeout), "the rejected registration was not retried")
 
-	assert.False(t, waitUntil(func() bool { return agent.Enable() }, 500*time.Millisecond),
-		"a rejected registration must not enable the agent")
+	assert.False(t, agent.Enable(), "a rejected registration must not enable the agent")
 	s := mc.Snapshot()
-	assert.Len(t, resultsFor(s, RpcAgentInfo), 1)
 	assert.Empty(t, s.PingStreams)
 	assert.Empty(t, s.StatStreams)
 	assert.Empty(t, s.CommandStreams)

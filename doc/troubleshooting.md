@@ -31,6 +31,26 @@ INFO[2026-09-03 11:36:00.121000] start span goroutine        module=pinpoint src
 INFO[2026-09-03 11:36:00.121000] start send stats goroutine  module=pinpoint src=agent
 ```
 
+The workers start only after `success to register agent` — registration is the
+precondition for tracing here. Until the collector accepts the AgentInfo,
+`NewSpan()` returns a no-op span and no stats are collected, so a blocked agent
+port (9991) alone is enough to make a fully instrumented application report
+nothing at all. The retry never gives up, so a collector that comes up later is
+picked up without an application restart, and every 30 seconds of waiting the
+agent repeats what that wait costs:
+
+```text
+INFO[2026-09-03 11:36:30.010000] still waiting for agent registration after 30000ms (collector unreachable or the send failed): tracing stays disabled (NewSpan is a noop and no stats are collected) until the collector accepts AgentInfo  module=pinpoint src=agent
+```
+
+The parenthesis separates the two cases: `collector unreachable or the send
+failed` is a connectivity problem, while `collector rejected the registration,
+likely permanent` means the collector answered and said no — that one usually
+waits forever unless the configuration changes. The Java agent traces whether or
+not registration has succeeded; this agent deliberately does not, and
+[Java Agent Feature Parity Decisions](java_parity.md#registration-before-tracing--declined)
+records why.
+
 Three lines tell you almost everything:
 
 | Line | Means |
@@ -295,11 +315,17 @@ nc -vz your-collector-host 9991
   `(ssl: true)`. An empty `Collector.Grpc.TrustCertFilePath` falls back to the
   system root CAs, which is what you want for a publicly-signed certificate
   and not what you want for a private CA.
-* Registration retries with backoff until it succeeds or the agent shuts down,
-  so a collector that comes up later is picked up without an application
-  restart. A collector that answers the registration with `success=false`
-  (still initializing, briefly refusing) is retried the same way and logs
-  `register agent - <message>, retrying`; it is never treated as permanent.
+* Registration retries every `Collector.AgentInfo.SendRetryInterval` (3s by
+  default, randomized +/-30%) until it succeeds or the agent shuts down, so a
+  collector that comes up later is picked up without an application restart.
+  While the collector is unreachable the wait for the connection to come back
+  paces the loop instead, backing off to 30s. A collector that answers the
+  registration with `success=false` (still initializing, briefly refusing) is
+  retried the same way and logs `register agent - <message>, retrying`; it is
+  never treated as permanent.
+  Every 30 seconds of that wait the agent also logs `still waiting for agent
+  registration after <n>ms`, which names the consequence the per-attempt lines
+  leave out: no spans and no stats until registration succeeds.
 * If the connection cannot even be set up (bad TLS material, unparsable
   address) the agent logs `failed to connect to collector, agent disabled` and
   releases itself, so `GetAgent()` returns the no-op agent and `NewAgent` can be

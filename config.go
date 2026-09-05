@@ -1251,9 +1251,9 @@ func WithCollectorAgentInfoRefreshInterval(interval int) ConfigOption {
 	}
 }
 
-// WithCollectorAgentInfoSendRetryInterval sets the wait between agent information send retries
-// within one refresh cycle, in milliseconds. It applies to the periodic refresh only; the
-// initial send at startup retries with the connection back-off instead.
+// WithCollectorAgentInfoSendRetryInterval sets the wait between agent information send
+// retries, in milliseconds. It paces both the registration retry at startup and the
+// retries within one refresh cycle.
 func WithCollectorAgentInfoSendRetryInterval(interval int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgCollectorAgentInfoSendRetryInterval].value = interval

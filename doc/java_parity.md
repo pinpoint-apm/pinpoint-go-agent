@@ -17,6 +17,7 @@ is simply not written yet does not belong here.
 | Feature | Java reference | Decision |
 |---|---|---|
 | Per-URL sampler | `UrlTraceSampler`, `UrlSamplerConfig`, `TraceSamplerProvider` | **Declined** — see [below](#per-url-sampler--declined) |
+| Tracing before agent registration | `AgentInfoSender`, `DefaultApplicationContext.start()` | **Declined** — see [below](#registration-before-tracing--declined) |
 | SQL count per transaction | `DefaultSqlCountService` | **Adopted** — `SQL.ErrorCount` |
 | SQL comment removal | `DefaultSqlNormalizer`, `DefaultJdbcOption` | **Adopted** — `SQL.RemoveComments` |
 | Exception chain rate limiter | `ExceptionChainSampler` | **Adopted** — `Error.NewThroughput` |
@@ -155,3 +156,53 @@ reason, or the Ant matcher moves into the core module for another reason. At
 that point the sampler itself is small: `traceSampler` is already an interface
 with two implementations, and `NewSpanTracerWithReader` already has the path in
 hand.
+
+---
+
+## Registration before tracing — declined
+
+**Java.** `DefaultApplicationContext.start()` calls `AgentInfoSender.start()`,
+which only *schedules* the AgentInfo send (`Integer.MAX_VALUE` retries, spaced
+`profiler.agentInfo.send.retry.interval`) and returns. Nothing gates the trace
+path on the result: the `TraceContext` the interceptors use is already live, so
+a span created before the collector ever accepted the AgentInfo is sampled,
+recorded and sent, and the collector reconciles it when the metadata arrives.
+
+**Go.** `connectGrpcServer` (`agent.go`) calls `registerAgentWithRetry` and only
+then stores `enable`, opens the span/stat/command streams and starts the send
+workers. Until registration succeeds `NewSpan` returns a no-op span, no stats
+are collected and `Enable()` reports false.
+
+**Decision: not ported.** Three reasons:
+
+1. **Registration is the only place the connection's failures surface.** gRPC
+   dials lazily, so a certificate this agent cannot verify, a plaintext
+   fallback against a TLS collector and an application-level rejection are all
+   invisible until the first RPC — and that first RPC is the registration. An
+   attempt to start the workers first (`b0cf45c`) was reverted (`34ced4e`)
+   because it broke seven integration tests that pin exactly this: every one of
+   those failures left the agent reporting itself enabled, which turns a
+   misconfiguration into a silently untraced process instead of a logged one.
+2. **The C++ agent made the same call.** `GrpcAgent::registerAgentWithRetry`
+   blocks `init_grpc_workers`, so both non-Java agents treat registration as
+   the precondition. Changing Go alone would leave three agents with three
+   different startup contracts.
+3. **What the divergence actually costs is narrow.** Registration retries for
+   as long as the process runs, so a collector that comes up later is picked up
+   without a restart; only the spans created during the outage are lost, and
+   Java loses those too whenever the collector is fully down. The behaviours
+   differ only when the *agent* port alone is unreachable while the span port
+   is fine.
+
+**Mitigation.** The wait is explained rather than silent:
+`registerAgentWithRetry` logs `still waiting for agent registration after
+<n>ms (...): tracing stays disabled (NewSpan is a noop and no stats are
+collected)` every `registrationWaitLogInterval` (30s), matching the C++ agent's
+line word for word so one troubleshooting page covers both. See
+[Troubleshooting](troubleshooting.md#verifying-agent-startup).
+
+**Revisit if** those lazy-dial failures can be surfaced without registering —
+a blocking dial, or a health probe before `enable` is stored. At that point the
+workers could start first and the integration tests would still see a disabled
+agent on a bad certificate, which is the only thing that made the first attempt
+fail.

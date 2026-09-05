@@ -293,6 +293,10 @@ func TestKeepsTraceContextWhenEventLimitsOverflow(t *testing.T) {
 	assert.Equal(t, traceID, outbound[pinpoint.HeaderTraceId])
 	assert.Equal(t, strconv.FormatInt(spanID, 10), outbound[pinpoint.HeaderParentSpanId])
 	require.True(t, outbound.has(pinpoint.HeaderSpanId))
+	// The destination the overflowed event recorded is part of that context:
+	// Pinpoint-Host is where the downstream takes acceptorHost, endPoint and
+	// remoteAddr from, so without it an overflowed hop names no node at all.
+	assert.Equal(t, "discarded-destination", outbound[pinpoint.HeaderHost])
 
 	continued := agent.NewSpanTracerWithReader("overflow.continued", "/overflow-continued", outbound)
 	require.True(t, continued.IsSampled())
@@ -325,6 +329,14 @@ func TestKeepsTraceContextWhenEventLimitsOverflow(t *testing.T) {
 	}, waitTimeout))
 
 	s := mc.Snapshot()
+	// End to end: the overflowed caller's destination reached the downstream
+	// span, which is what Pinpoint-Host exists to carry.
+	continuedWire := findSpanByRpc(s, "/overflow-continued")
+	require.NotNil(t, continuedWire)
+	continuedParent := continuedWire.GetAcceptEvent().GetParentInfo()
+	require.NotNil(t, continuedParent)
+	assert.Equal(t, "discarded-destination", continuedParent.GetAcceptorHost())
+
 	depthEvents := eventsForSpan(s, spanID)
 	require.Len(t, depthEvents, 2)
 	sort.Slice(depthEvents, func(i, j int) bool { return depthEvents[i].GetSequence() < depthEvents[j].GetSequence() })

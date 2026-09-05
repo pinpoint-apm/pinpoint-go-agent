@@ -327,8 +327,8 @@ type agentGrpc struct {
 	// retryDelay is the pause between metadata retries: metaRetryDelay in
 	// production, shortened by tests.
 	retryDelay time.Duration
-	// registerRetryDelay overrides registration backoff in tests. Production
-	// uses the jittered exponential backOffSleep sequence.
+	// registerRetryDelay overrides the registration pause in tests. Production
+	// uses registerRetryInterval, the configured Collector.AgentInfo.SendRetryInterval.
 	registerRetryDelay time.Duration
 }
 
@@ -432,12 +432,6 @@ func firstUnicastIP(addrs []net.Addr) string {
 	return v6
 }
 
-// maxIPLookups bounds how often a still-empty IP is looked up again while
-// registration keeps failing. Each retry is at least backOffInitialInterval
-// apart, so this covers well over a minute for a NIC that is still coming up
-// at boot; after that the lookup would not start succeeding on its own.
-const maxIPLookups = 10
-
 func makeGoLibraryInfo() *pb.PServiceInfo {
 	libs := make([]string, 0)
 	if bi, ok := debug.ReadBuildInfo(); ok {
@@ -495,11 +489,63 @@ func (agentGrpc *agentGrpc) sendAgentInfo(ctx context.Context, agentInfo *pb.PAg
 	return result, err
 }
 
-func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
-	ctx, agentInfo := agentGrpc.makeAgentInfo()
+// registrationWaitLogInterval paces the line that says why tracing is off while
+// registration keeps retrying, matching the C++ agent's GrpcClientTuning
+// registration_wait_log_interval. A variable so tests can shorten it.
+var registrationWaitLogInterval = 30 * time.Second
 
-	for lookups, attempt := 0, 0; !agentGrpc.agent.shutdown.Load(); attempt++ {
-		if res, err := agentGrpc.sendAgentInfo(ctx, agentInfo); err == nil {
+// registerRetryInterval is the pause between boot registration attempts:
+// Collector.AgentInfo.SendRetryInterval, the same key the C++ agent reads in
+// registerAgentWithRetry, randomized +/-30% so agents restarted together do not
+// retry in lockstep. Non-escalating, as there too - a rejecting collector is
+// polled at the interval the operator configured, and the connection readiness
+// wait that follows each attempt is what backs off during an outage.
+func registerRetryInterval(config *Config) time.Duration {
+	interval := time.Duration(config.Int(CfgCollectorAgentInfoSendRetryInterval)) * time.Millisecond
+	if interval <= 0 {
+		// NewConfig floors this at 1ms, but Config.Set bypasses that, and this
+		// loop is unbounded: a zero pause would poll the collector flat out.
+		interval = defaultAgentInfoSendRetryInterval * time.Millisecond
+	}
+	return randomize(interval, backOffJitter)
+}
+
+func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
+	// Tracing is off for the whole wait - NewSpan is a noop and nothing is
+	// collected - and the per-attempt failure lines say nothing about that
+	// consequence, so they read as a plain connectivity problem. Report the
+	// consequence periodically, as the C++ agent does, so an operator watching
+	// a silent agent - one whose agent port alone is blocked, say - can tell
+	// this wait apart from a healthy agent nobody instrumented.
+	started := time.Now()
+	nextLog := started.Add(registrationWaitLogInterval)
+	rejected := false
+
+	for !agentGrpc.agent.shutdown.Load() {
+		if now := time.Now(); !now.Before(nextLog) {
+			reason := "collector unreachable or the send failed"
+			if rejected {
+				reason = "collector rejected the registration, likely permanent"
+			}
+			Log("agent").Infof("still waiting for agent registration after %dms (%s): tracing stays disabled "+
+				"(NewSpan is a noop and no stats are collected) until the collector accepts AgentInfo",
+				now.Sub(started).Milliseconds(), reason)
+			nextLog = now.Add(registrationWaitLogInterval)
+		}
+
+		// Rebuilt every attempt, as the Java agent (AgentInfoSendTask calls
+		// createAgentInfo per run) and the C++ agent (registerAgent calls
+		// build_agent_info per attempt) do: an outage outlives the values in
+		// here. The IP is the usual one - a NIC still coming up at boot leaves
+		// it empty - but the hostname and the server metadata can move too, and
+		// whatever this loop happened to capture first is what the collector
+		// would carry until the next refresh cycle. Nothing in here does I/O
+		// beyond a local route lookup and an interface scan, and attempts are
+		// at least backOffInitialInterval apart, so the repeat is free.
+		ctx, agentInfo := agentGrpc.makeAgentInfo()
+
+		res, err := agentGrpc.sendAgentInfo(ctx, agentInfo)
+		if err == nil {
 			if res.Success {
 				Log("agent").Infof("success to register agent")
 				return true
@@ -509,19 +555,19 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 			// refusing, and giving up would leave this process dead until restart.
 			Log("agent").Warnf("register agent - %s, retrying", res.Message)
 		}
+		// A transport that worked and a collector that said no are different
+		// stories for the waiting operator: only the second one is likely to
+		// stay broken until the config changes.
+		rejected = err == nil
 
 		retryDelay := agentGrpc.registerRetryDelay
 		if retryDelay <= 0 {
-			retryDelay = backOffSleep(attempt)
+			retryDelay = registerRetryInterval(agentGrpc.agent.config)
 		}
 		if !sleepUnlessStopped(agentGrpc.agent, retryDelay) {
 			return false
 		}
 		backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
-		if agentInfo.Ip == "" && lookups < maxIPLookups {
-			lookups++
-			agentInfo.Ip = localIP(serverAddr(agentGrpc.agent.config, CfgCollectorAgentPort))
-		}
 	}
 	return false
 }

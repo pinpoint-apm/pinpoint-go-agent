@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
@@ -104,7 +106,7 @@ func Test_agentGrpc_registerAgentWithRetry_cancelsRequestOnShutdown(t *testing.T
 
 	select {
 	case <-client.canceled:
-	case <-time.After(connectGraceTimeout + 2*time.Second):
+	case <-time.After(3 * time.Second):
 		t.Fatal("shutdown did not cancel RequestAgentInfo")
 	}
 
@@ -1419,6 +1421,106 @@ func Test_agentGrpc_registerAgentWithRetry_rejectionStopsOnShutdown(t *testing.T
 		t.Fatal("registration kept retrying past shutdown")
 	}
 	assert.Len(t, client.sentAgentInfo(), 1)
+}
+
+// The boot retry is paced by Collector.AgentInfo.SendRetryInterval, the same
+// key the C++ agent reads in registerAgentWithRetry - not by the connection
+// back-off, which an operator cannot tune and which escalates to 30s.
+func Test_agentGrpc_registerAgentWithRetry_usesConfiguredRetryInterval(t *testing.T) {
+	defer captureWarnLog(&bytes.Buffer{})()
+
+	cfg := defaultConfig()
+	cfg.Set(CfgCollectorAgentInfoSendRetryInterval, 120)
+	client := &mockAgentGrpcClient{rejects: 2}
+	agentGrpc := &agentGrpc{ // registerRetryDelay unset: this is the production pause
+		agentConn:   dialReadyConn(t),
+		agentClient: client,
+		agent:       newTestAgent(cfg),
+	}
+
+	require.True(t, agentGrpc.registerAgentWithRetry())
+	callAt := client.callTimes()
+	require.Len(t, callAt, 3)
+	for i := 1; i < len(callAt); i++ {
+		gap := callAt[i].Sub(callAt[i-1])
+		assert.GreaterOrEqual(t, gap, 84*time.Millisecond, "attempt %d fired inside the configured interval", i+1)
+		assert.Less(t, gap, time.Second, "attempt %d waited the connection back-off, not the configured interval", i+1)
+	}
+}
+
+// The AgentInfo is rebuilt on every attempt, as in the Java agent
+// (AgentInfoSendTask calls createAgentInfo per run) and the C++ agent
+// (registerAgent calls build_agent_info per attempt). An outage outlives the
+// values in it - a NIC that comes up late, a hostname that moves, a reloaded
+// option - and whatever the loop captured first is otherwise what the
+// collector carries until the next refresh cycle.
+func Test_agentGrpc_registerAgentWithRetry_rebuildsAgentInfoPerAttempt(t *testing.T) {
+	defer captureWarnLog(&bytes.Buffer{})()
+
+	cfg := defaultConfig()
+	a := newTestAgent(cfg)
+	a.enable.Store(false)
+	client := &mockAgentGrpcClient{failures: 1 << 30}
+	agentGrpc := &agentGrpc{
+		agentConn:          dialReadyConn(t),
+		agentClient:        client,
+		agent:              a,
+		registerRetryDelay: 20 * time.Millisecond,
+	}
+
+	go agentGrpc.registerAgentWithRetry()
+	defer a.Shutdown()
+
+	require.Eventually(t, func() bool { return len(client.sentAgentInfo()) > 0 }, time.Second, time.Millisecond)
+	require.False(t, client.sentAgentInfo()[0].Container, "the first attempt reports the config as it was")
+
+	cfg.Set(CfgIsContainerEnv, true)
+	require.Eventually(t, func() bool {
+		sent := client.sentAgentInfo()
+		return len(sent) > 1 && sent[len(sent)-1].Container
+	}, 2*time.Second, 5*time.Millisecond, "a change during the outage never reached the AgentInfo")
+}
+
+// The per-attempt failure lines say nothing about the consequence: until the
+// collector accepts the AgentInfo there are no spans and no stats at all. The
+// wait line is what connects the two, so it must appear while the retry runs,
+// name which of the two failures it is, and stop the moment registration
+// succeeds. Mirrors the C++ agent's registration_wait_log_interval line.
+func Test_agentGrpc_registerAgentWithRetry_saysWhyTracingIsOff(t *testing.T) {
+	prev := registrationWaitLogInterval
+	registrationWaitLogInterval = 10 * time.Millisecond
+	defer func() { registrationWaitLogInterval = prev }()
+
+	var buf bytes.Buffer
+	defer captureLogAt(&buf, logrus.InfoLevel)()
+
+	register := func(client *mockAgentGrpcClient) bool {
+		buf.Reset()
+		agentGrpc := &agentGrpc{
+			agentConn:          dialReadyConn(t),
+			agentClient:        client,
+			agent:              newTestAgent(defaultConfig()),
+			registerRetryDelay: 20 * time.Millisecond,
+		}
+		return agentGrpc.registerAgentWithRetry()
+	}
+
+	require.True(t, register(&mockAgentGrpcClient{failures: 2}))
+	out := buf.String()
+	assert.Contains(t, out, "still waiting for agent registration")
+	assert.Contains(t, out, "NewSpan is a noop and no stats are collected")
+	assert.Contains(t, out, "collector unreachable or the send failed")
+	assert.Less(t, strings.LastIndex(out, "still waiting for agent registration"),
+		strings.Index(out, "success to register agent"),
+		"the wait line must stop once the collector accepts")
+
+	require.True(t, register(&mockAgentGrpcClient{rejects: 2}))
+	assert.Contains(t, buf.String(), "collector rejected the registration, likely permanent",
+		"a collector that answered is a different story than one that never did")
+
+	require.True(t, register(&mockAgentGrpcClient{}))
+	assert.NotContains(t, buf.String(), "still waiting for agent registration",
+		"a registration that succeeds at once must not log the wait")
 }
 
 // A connect that fails outside Shutdown must not leave the dead agent as the
