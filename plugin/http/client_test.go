@@ -161,10 +161,11 @@ func TestWrapClientWithContext(t *testing.T) {
 		"the tracer from the client's context should have been used")
 }
 
-// Without a tracer anywhere the request must still go through, carrying the
-// "not sampled" marker and nothing else: the callee has to know not to start a
-// transaction of its own rather than treating the call as an untraced entry
-// point.
+// Without a tracer anywhere the request must still go through - and carry no
+// pinpoint header. There is no transaction to propagate, so the callee is an
+// entry point free to start one of its own; "s0" would instead order it not to
+// trace. See TestWrapClient_UnsampledRequestStillSendsS0 for the case that
+// does have a decision to pass on.
 func TestWrapClient_WithoutATracer(t *testing.T) {
 	startAgent(t)
 
@@ -176,11 +177,12 @@ func TestWrapClient_WithoutATracer(t *testing.T) {
 	defer resp.Body.Close()
 
 	require.NotNil(t, rt.sent, "the request must still be sent")
-	assert.Equal(t, map[string]string{"Pinpoint-Sampled": "s0"}, pinpointHeaders(t, rt.sent.Header))
+	assert.Empty(t, pinpointHeaders(t, rt.sent.Header),
+		"a call with no transaction behind it must not tell the callee to skip tracing")
 
 	callee := NewHttpServerTracerWithReader(http.MethodGet, "/callee", "HTTP Server", rt.sent.Header)
 	defer callee.EndSpan()
-	assert.False(t, callee.IsSampled(), "the callee must honour the not-sampled marker")
+	assert.True(t, callee.IsSampled(), "the callee must be free to start its own transaction")
 }
 
 // A transport error is the caller's to handle; the wrapper records it and
@@ -219,6 +221,8 @@ func TestDoClient(t *testing.T) {
 	assert.NotEmpty(t, pinpointHeaders(t, req.Header), "DoClient injects into the request it is given")
 }
 
+// As with WrapClient: no tracer means no transaction, so the call carries no
+// pinpoint header rather than a "do not trace" order.
 func TestDoClient_WithoutATracer(t *testing.T) {
 	startAgent(t)
 
@@ -230,8 +234,8 @@ func TestDoClient_WithoutATracer(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	assert.Equal(t, map[string]string{"Pinpoint-Sampled": "s0"}, pinpointHeaders(t, req.Header),
-		"an untraced call carries only the not-sampled marker")
+	assert.Empty(t, pinpointHeaders(t, req.Header),
+		"an untraced call carries no marker at all")
 }
 
 func TestDoClient_Error(t *testing.T) {
@@ -343,4 +347,59 @@ func TestDoClient_HandBuiltRequest(t *testing.T) {
 		_, err := DoClient(func(*http.Request) (*http.Response, error) { return nil, want }, req)
 		assert.ErrorIs(t, err, want, "the doFunc's own verdict must come back unchanged")
 	})
+}
+
+// An excluded URL is not traced at all: there is no transaction behind the
+// handler, so its outgoing calls must carry no pinpoint header. Sending "s0"
+// here would order every downstream service to stop tracing - health checks
+// and batch jobs would blind the services they call.
+func TestWrapClient_ExcludedUrlHandlerSendsNoTracingHeader(t *testing.T) {
+	usePluginConfig(t, WithHttpServerExcludeUrl([]string{"/health"}))
+
+	tracer := NewHttpServerTracerWithReader(http.MethodGet, "/health", "HTTP Server", http.Header{})
+	defer tracer.EndSpan()
+	require.False(t, tracer.IsSampled(), "an excluded URL produced a sampled tracer")
+
+	rt := &recordingTransport{}
+	client := WrapClient(&http.Client{Transport: rt})
+
+	req, err := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer),
+		http.MethodGet, "http://example.com/callee", nil)
+	require.NoError(t, err)
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.NotNil(t, rt.sent, "the wrapped transport was never called")
+	assert.Empty(t, pinpointHeaders(t, rt.sent.Header),
+		"an excluded URL has no transaction to propagate, least of all a request not to trace")
+}
+
+// The other half of the contract: a request that lost the sampling decision is
+// a real transaction, so its outgoing calls keep sending "s0" and the callee
+// does not sample the transaction back into existence.
+func TestWrapClient_UnsampledRequestStillSendsS0(t *testing.T) {
+	startAgent(t)
+
+	inbound := http.Header{}
+	inbound.Set(pinpoint.HeaderSampled, "s0")
+	tracer := NewHttpServerTracerWithReader(http.MethodGet, "/hello", "HTTP Server", inbound)
+	defer tracer.EndSpan()
+	require.False(t, tracer.IsSampled(), "an inbound s0 produced a sampled tracer")
+
+	rt := &recordingTransport{}
+	client := WrapClient(&http.Client{Transport: rt})
+
+	req, err := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer),
+		http.MethodGet, "http://example.com/callee", nil)
+	require.NoError(t, err)
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.NotNil(t, rt.sent, "the wrapped transport was never called")
+	assert.Equal(t, map[string]string{pinpoint.HeaderSampled: "s0"}, pinpointHeaders(t, rt.sent.Header),
+		"an unsampled transaction must still tell the callee not to trace")
 }

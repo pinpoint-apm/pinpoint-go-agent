@@ -51,6 +51,7 @@ type noopSpan struct {
 	rpcName     string
 	goroutineId int64
 	withStats   bool
+	unsampled   bool
 	urlStat     *UrlStatEntry
 	statusErr   int
 
@@ -58,6 +59,10 @@ type noopSpan struct {
 	annotations noopAnnotation
 }
 
+// defaultNoopSpan is a shared singleton: it stands for "there is no trace at
+// all" (agent disabled, excluded URL, no tracer in the context), so it carries
+// no per-request state and every field stays at its zero value. Read its
+// fields freely; writing one is a data race across concurrent requests.
 var defaultNoopSpan = noopSpan{}
 
 // NoopTracer returns a Tracer that doesn't collect tracing data.
@@ -65,6 +70,10 @@ func NoopTracer() Tracer {
 	return &defaultNoopSpan
 }
 
+// newUnSampledSpan returns the span for a real request that lost the sampling
+// decision. Unlike the noop singleton it stands for an actual transaction, so
+// it collects response-time and URL statistics (withStats) and propagates the
+// decision downstream (unsampled); see Inject.
 func newUnSampledSpan(agent *agent, rpcName string) *noopSpan {
 	span := noopSpan{}
 	span.agent = agent
@@ -73,6 +82,7 @@ func newUnSampledSpan(agent *agent, rpcName string) *noopSpan {
 	span.startTime = time.Now()
 	span.rpcName = rpcName
 	span.withStats = true
+	span.unsampled = true
 
 	addUnSampledActiveSpan(&span)
 
@@ -96,12 +106,15 @@ func (span *noopSpan) NewSpanEvent(operationName string) Tracer {
 	return span
 }
 
+// The child carries the parent's unsampled marker so calls made from an async
+// goroutine still tell the callee not to trace, but never withStats: the
+// statistics belong to the request's own span, which alone must end them.
 func (span *noopSpan) NewAsyncSpan() Tracer {
-	return &noopSpan{}
+	return &noopSpan{unsampled: span.unsampled}
 }
 
 func (span *noopSpan) NewGoroutineTracer() Tracer {
-	return &noopSpan{}
+	return &noopSpan{unsampled: span.unsampled}
 }
 
 func (span *noopSpan) WrapGoroutine(goroutineName string, goroutine func(context.Context), ctx context.Context) func() {
@@ -163,8 +176,14 @@ func (span *noopSpan) SetEndPoint(endPoint string) {}
 
 func (span *noopSpan) SetAcceptorHost(host string) {}
 
+// Inject propagates the sampling decision only when there is a decision to
+// propagate. An unsampled span is a real transaction that lost sampling, so it
+// sends "s0" to keep the callee from sampling the transaction back into
+// existence. The noop singleton has no transaction behind it - an excluded
+// URL, a batch job, a context with no tracer - and writes nothing, leaving the
+// callee free to start a transaction of its own.
 func (span *noopSpan) Inject(writer DistributedTracingContextWriter) {
-	if writer != nil {
+	if writer != nil && span.unsampled {
 		writer.Set(HeaderSampled, "s0")
 	}
 }

@@ -277,8 +277,12 @@ type errWrappingEOF struct{}
 func (errWrappingEOF) Error() string { return "wrapped: " + io.EOF.Error() }
 func (errWrappingEOF) Unwrap() error { return io.EOF }
 
-// A context without a span yields a noop tracer, and the interceptor still has
-// to build an outgoing context rather than return the caller's unchanged.
+// A context without a span yields a noop tracer: there is no transaction to
+// propagate, so the call must carry no sampling header at all. Sending "s0"
+// here would order the callee not to trace - the bug that made every call out
+// of an excluded URL handler or a batch job silently untraceable downstream.
+// Only a span for a real request that lost sampling may send "s0"; see
+// Test_newClientTracer_WithUnsampledSpan.
 func Test_newClientTracer_WithNoopTracer(t *testing.T) {
 	newCtx, tracer := newClientTracer(context.Background(), "/testapp.Hello/Greet", "localhost:8080")
 	defer tracer.EndSpanEvent()
@@ -287,9 +291,45 @@ func Test_newClientTracer_WithNoopTracer(t *testing.T) {
 	assert.False(t, tracer.IsSampled(), "a context without a span produced a sampled tracer")
 
 	md, ok := metadata.FromOutgoingContext(newCtx)
+	if ok {
+		assert.Empty(t, md.Get(pinpoint.HeaderSampled),
+			"a call with no transaction behind it must not tell the callee to skip tracing")
+	}
+}
+
+// unsampledTracer returns the tracer for a real request that arrived already
+// sampled out - an inbound "s0" - which is the only state allowed to send "s0"
+// onward.
+func unsampledTracer(t *testing.T) pinpoint.Tracer {
+	t.Helper()
+	startAgent(t)
+
+	inbound := metadata.NewIncomingContext(context.Background(),
+		metadata.Pairs(pinpoint.HeaderSampled, "s0"))
+	tracer := pinpoint.GetAgent().NewSpanTracerWithReader("caller", "/caller",
+		distributedTracingContextReaderMD{inbound})
+	require.False(t, tracer.IsSampled(), "an inbound s0 produced a sampled tracer")
+
+	return tracer
+}
+
+// The other half of the contract: a request that was sampled out is a real
+// transaction, so its outgoing calls keep telling the callee not to sample the
+// transaction back into existence.
+func Test_newClientTracer_WithUnsampledSpan(t *testing.T) {
+	unsampled := unsampledTracer(t)
+	defer unsampled.EndSpan()
+
+	ctx := pinpoint.NewContext(context.Background(), unsampled)
+	newCtx, tracer := newClientTracer(ctx, "/testapp.Hello/Greet", "localhost:8080")
+	defer tracer.EndSpanEvent()
+
+	assert.False(t, tracer.IsSampled(), "an unsampled span produced a sampled tracer")
+
+	md, ok := metadata.FromOutgoingContext(newCtx)
 	require.True(t, ok, "no outgoing metadata on the returned context")
 	assert.Equal(t, []string{"s0"}, md.Get(pinpoint.HeaderSampled),
-		"an untraced call must tell the callee not to trace either")
+		"an unsampled transaction must still tell the callee not to trace")
 }
 
 type countingTracer struct {

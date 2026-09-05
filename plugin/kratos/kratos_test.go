@@ -408,7 +408,9 @@ func TestClientMiddleware_WithoutAClientTransport(t *testing.T) {
 }
 
 // A caller whose context never had a span hands the middleware a noop tracer;
-// it must record nothing and still make the call.
+// it must record nothing, still make the call, and send no sampling header -
+// there is no transaction behind it, so the callee stays free to start one.
+// Only a request that lost sampling may send "s0".
 func TestClientMiddleware_WithNoopTracer(t *testing.T) {
 	startAgent(t)
 
@@ -423,6 +425,6 @@ func TestClientMiddleware_WithNoopTracer(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, called, "the call did not go through")
-	assert.Equal(t, "s0", tr.reqHeader.Get(pinpoint.HeaderSampled),
-		"an untraced call must tell the callee not to trace either")
+	assert.Empty(t, tr.reqHeader.Get(pinpoint.HeaderSampled),
+		"a call with no transaction behind it must not tell the callee to skip tracing")
 }

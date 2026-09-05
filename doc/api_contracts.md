@@ -280,15 +280,19 @@ framework plugins do this for you where the framework exposes the pattern.
 
 ## 10. No-op and Unsampled Tracers Are Deliberately Silent
 
-Three situations hand back a tracer that records nothing:
+Several situations hand back a tracer that records nothing. They are **not
+interchangeable**: an *unsampled span* stands for a real transaction that lost
+the sampling decision, while a *no-op tracer* stands for no transaction at all.
 
-| Situation | Result |
-|---|---|
-| the transaction was not sampled | unsampled span; `IsSampled()` is false |
-| no tracer in the context | `FromContext()` returns `NoopTracer()` |
-| agent disabled, not yet created, or startup failed | `GetAgent()` returns `NoopAgent()`, whose tracers are no-ops |
+| Situation | Result | Kind |
+|---|---|---|
+| the transaction was not sampled | unsampled span; `IsSampled()` is false | unsampled |
+| an inbound request arrived with `Pinpoint-Sampled: s0` | unsampled span | unsampled |
+| the URL or method is excluded from tracking | `NoopTracer()` | no-op |
+| no tracer in the context | `FromContext()` returns `NoopTracer()` | no-op |
+| agent disabled, not yet created, or startup failed | `GetAgent()` returns `NoopAgent()`, whose tracers are no-ops | no-op |
 
-Every method on these is safe to call and does nothing, which is the point:
+Every method on both is safe to call and does nothing, which is the point:
 instrumentation code needs no `nil` checks and no sampling branches.
 
 ```go
@@ -297,15 +301,42 @@ tracer := pinpoint.FromContext(ctx)
 defer tracer.NewSpanEvent("query").EndSpanEvent()
 ```
 
-Two consequences worth knowing:
+### The two kinds differ on `Inject()`
 
-* An unsampled span still propagates the sampling decision on `Inject()`, so
-  the downstream node does not sample the transaction back into existence.
-* URL statistics are still collected for unsampled spans, which is why
-  `Http.UrlStat.Enable` gives useful numbers at low sampling rates.
+`Pinpoint-Sampled: s0` is an instruction to the callee: *do not trace this
+transaction*. Only a tracer that stands for a transaction may issue it.
+
+| Kind | `Inject()` writes | Why |
+|---|---|---|
+| unsampled span | `Pinpoint-Sampled: s0` | the decision not to sample this transaction is real and must hold for the whole call tree, or the downstream node samples it back into existence |
+| no-op tracer | **nothing** | there is no transaction and no decision; the callee is an entry point and stays free to start its own |
+
+A call out of an excluded-URL handler, a batch job, or any code path whose
+context never carried a tracer therefore looks to the callee exactly like a
+call from an uninstrumented client, which is what it is. Suppressing tracing
+across those services instead would be silent and hard to diagnose.
+
+This matches Java, where `s0` is written only for a real trace created by
+`disableSampling()`; with no trace object the interceptor returns before
+writing any header.
+
+An async or goroutine tracer forked from an unsampled span inherits the
+unsampled marker, so calls made from that goroutine keep propagating `s0`. One
+forked from a no-op tracer stays a no-op.
+
+### Statistics
+
+Response times and URL statistics are collected for unsampled spans, which is
+why `Http.UrlStat.Enable` gives useful numbers at low sampling rates. No-op
+tracers collect nothing, so an excluded URL is absent from these statistics as
+well as from traces.
+
+The no-op tracer is a **process-wide singleton**. Its methods only ever read
+its fields; anything that writes per-request state must be gated on the span
+being a per-request one, or concurrent handlers race.
 
 `IsSampled()` exists for the rare case where the instrumentation itself is
-expensive — serializing a payload to annotate, for example. Use it to skip that
+expensive - serializing a payload to annotate, for example. Use it to skip that
 work, not to decide whether to trace.
 
 ## 11. Context Carries a Tracer, Not a Span
