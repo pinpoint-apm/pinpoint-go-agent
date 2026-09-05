@@ -63,15 +63,16 @@ func TestWriteArgTruncatesOversizedValues(t *testing.T) {
 			var b bytes.Buffer
 			require.False(t, writeArg(&b, 0, test.value, 0, 1024),
 				"writeArg reported more values could be written")
-			// The marker is written inside the limit, not past it.
-			assert.Equal(t, full[:1024-len("...(1024)")]+"...(1024)", b.String())
+			// The marker counts the bind values and lands past the limit, as
+			// it does in Java.
+			assert.Equal(t, full[:1024]+"...(1)", b.String())
 		})
 	}
 }
 
-// The separator between two values is written under the same limit as the
-// values themselves, so a value landing on the boundary makes room for the
-// marker instead of growing past the limit - and a zero limit keeps nothing.
+// The separator between two values is written whole or not at all, so a value
+// landing on the boundary ends the output on a value boundary instead of
+// leaving a lone ',' behind - and a zero limit keeps nothing, marker included.
 func TestWriteArgTruncatesAtBoundary(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -84,7 +85,7 @@ func TestWriteArgTruncatesAtBoundary(t *testing.T) {
 			name:    "separator split by the limit",
 			values:  []any{strings.Repeat("p", 1023), "z"},
 			maxSize: 1024,
-			want:    strings.Repeat("p", 1024-len("...(1024)")) + "...(1024)",
+			want:    strings.Repeat("p", 1023) + "...(2)",
 		},
 		{
 			name:     "everything fits",
@@ -92,6 +93,20 @@ func TestWriteArgTruncatesAtBoundary(t *testing.T) {
 			maxSize:  1024,
 			want:     strings.Repeat("p", 1020) + ", z",
 			wantMore: true,
+		},
+		{
+			name:    "two of three values dropped",
+			values:  []any{"0123456789", "b", "c"},
+			maxSize: 10,
+			want:    "0123456789...(3)",
+		},
+		{
+			// The marker counts the bind values, so it fits no limit at all -
+			// appending it past the limit is what keeps the truncation visible.
+			name:    "limit shorter than the marker",
+			values:  []any{"a", "b", "c"},
+			maxSize: 2,
+			want:    "a...(3)",
 		},
 		{
 			name:    "zero limit",
@@ -160,12 +175,12 @@ func TestWriteArgLimitsLargeValues(t *testing.T) {
 			more := writeArg(&b, 0, tt.value, 0, maxSize)
 
 			require.False(t, more, "writeArg reported that an oversized value fit")
-			assert.LessOrEqual(t, b.Len(), maxSize, "the result grew past the limit")
+			assert.LessOrEqual(t, b.Len(), maxSize+len("...(1)"), "the result grew past the limit")
 			assert.LessOrEqual(t, b.Cap(), maxSize*2,
 				"the buffer retained %d bytes for a %d-byte limit", b.Cap(), maxSize)
 			assert.True(t, strings.HasPrefix(b.String(), tt.wantPrefix),
 				"result %q does not preserve prefix %q", b.String(), tt.wantPrefix)
-			assert.True(t, strings.HasSuffix(b.String(), "...(65)"),
+			assert.True(t, strings.HasSuffix(b.String(), "...(1)"),
 				"result %q has no truncation marker", b.String())
 			assert.True(t, utf8.ValidString(b.String()), "result is not valid UTF-8: %q", b.String())
 		})
@@ -181,8 +196,7 @@ func TestWriteArgLimitsMultipleValues(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, "0123456789, a...(20)", b.String())
-	assert.Equal(t, 20, b.Len(), "the result must fill the limit exactly, not exceed it")
+	assert.Equal(t, "0123456789, abcdefgh...(3)", b.String())
 }
 
 // recordingTracer captures what the pgx tracer records on a span event. A real
@@ -559,7 +573,8 @@ func TestComposeArgs_NoArguments(t *testing.T) {
 }
 
 // SQL.MaxBindValueSize bounds what one statement can add to a span, so the
-// composed arguments must respect it end to end, not only inside writeArg.
+// composed arguments must respect it end to end, not only inside writeArg - up
+// to the truncation marker, which Java appends past the limit.
 func TestComposeArgs_HonoursTheSizeLimit(t *testing.T) {
 	agent := startAgent(t)
 	agent.Config().Set(pinpoint.CfgSQLTraceBindValue, true)
@@ -567,6 +582,6 @@ func TestComposeArgs_HonoursTheSizeLimit(t *testing.T) {
 
 	got := NewTracer().composeArgs([]any{strings.Repeat("x", 1<<10)})
 
-	assert.LessOrEqual(t, len(got), 32, "composeArgs grew past the configured limit")
-	assert.True(t, strings.HasSuffix(got, "...(32)"), "composeArgs() = %q, want the truncation marker", got)
+	assert.LessOrEqual(t, len(got), 32+len("...(1)"), "composeArgs grew past the configured limit")
+	assert.True(t, strings.HasSuffix(got, "...(1)"), "composeArgs() = %q, want the truncation marker", got)
 }

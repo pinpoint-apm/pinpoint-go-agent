@@ -172,9 +172,10 @@ func Test_spanEvent_SetSQLBoundsAnnotationValues(t *testing.T) {
 	assert.Len(t, se.annotations.values, 1)
 	annotation := se.annotations.values[0]
 	// Only the bind values are bounded: the normalized literal is a parameter
-	// the server needs whole, and Java abbreviates neither.
+	// the server needs whole, and Java abbreviates neither. The allowance over
+	// the limit is the room the bind value writers get for their own marker.
 	assert.Equal(t, literal, annotation.s1)
-	assert.Equal(t, args[:limit]+"...(1024)", annotation.s2)
+	assert.Equal(t, args[:limit+maxBindValueMarkerSize]+"...(1024)", annotation.s2)
 }
 
 // The server rebuilds the raw SQL by splitting param on ',' and indexing into
@@ -195,7 +196,7 @@ func Test_spanEvent_SetSQLKeepsParamOfLargeInList(t *testing.T) {
 
 	assert.Len(t, se.annotations.values, 1)
 	assert.Equal(t, param, se.annotations.values[0].s1)
-	assert.Equal(t, args[:limit]+"...(1024)", se.annotations.values[0].s2)
+	assert.Equal(t, args[:limit+maxBindValueMarkerSize]+"...(1024)", se.annotations.values[0].s2)
 }
 
 // A negative SQL.MaxBindValueSize turns bind value tracing off and clamps the

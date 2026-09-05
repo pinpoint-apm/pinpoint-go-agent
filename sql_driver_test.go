@@ -93,8 +93,7 @@ func Test_writeBindValue_TruncatesOversizedValue(t *testing.T) {
 	more := writeBindValue(&b, 0, strings.Repeat("x", 5000), 0, 1024)
 
 	assert.False(t, more)
-	assert.Equal(t, strings.Repeat("x", 1015)+"...(1024)", b.String())
-	assert.Len(t, b.String(), 1024)
+	assert.Equal(t, strings.Repeat("x", 1024)+"...(1)", b.String())
 }
 
 func Test_writeBindValue_LimitsLargeValues(t *testing.T) {
@@ -115,10 +114,10 @@ func Test_writeBindValue_LimitsLargeValues(t *testing.T) {
 			more := writeBindValue(&b, 0, tt.value, 0, maxSize)
 
 			assert.False(t, more)
-			assert.LessOrEqual(t, b.Len(), maxSize)
+			assert.LessOrEqual(t, b.Len(), maxSize+len("...(1)"))
 			assert.LessOrEqual(t, b.Cap(), maxSize*2)
 			assert.True(t, strings.HasPrefix(b.String(), tt.wantPrefix), b.String())
-			assert.True(t, strings.HasSuffix(b.String(), "...(65)"), b.String())
+			assert.True(t, strings.HasSuffix(b.String(), "...(1)"), b.String())
 			assert.True(t, utf8.ValidString(b.String()), b.String())
 		})
 	}
@@ -133,8 +132,7 @@ func Test_writeBindValue_LimitsMultipleValues(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, "0123456789, a...(20)", b.String())
-	assert.Len(t, b.String(), 20)
+	assert.Equal(t, "0123456789, abcdefgh...(3)", b.String())
 }
 
 func Test_writeBindValue_TruncatesOversizedBytes(t *testing.T) {
@@ -145,14 +143,13 @@ func Test_writeBindValue_TruncatesOversizedBytes(t *testing.T) {
 	more := writeBindValue(&b, 0, value, 0, 1024)
 
 	assert.False(t, more)
-	// The marker is written inside the limit, not past it.
-	assert.Equal(t, want[:1024-len("...(1024)")]+"...(1024)", b.String())
-	assert.Len(t, b.String(), 1024)
+	// The marker lands past the limit, as it does in Java.
+	assert.Equal(t, want[:1024]+"...(1)", b.String())
 }
 
-// The separator between two values is written under the same limit as the
-// values themselves, so a value landing on the boundary makes room for the
-// marker instead of growing past the limit - and a zero limit keeps nothing.
+// The separator between two values is written whole or not at all, so a value
+// landing on the boundary ends the output on a value boundary instead of
+// leaving a lone ',' behind - and a zero limit keeps nothing, marker included.
 func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -165,7 +162,7 @@ func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 			name:    "separator split by the limit",
 			values:  []interface{}{strings.Repeat("p", 1023), "z"},
 			maxSize: 1024,
-			want:    strings.Repeat("p", 1024-len("...(1024)")) + "...(1024)",
+			want:    strings.Repeat("p", 1023) + "...(2)",
 		},
 		{
 			name:     "everything fits",
@@ -173,6 +170,20 @@ func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 			maxSize:  1024,
 			want:     strings.Repeat("p", 1020) + ", z",
 			wantMore: true,
+		},
+		{
+			name:    "two of three values dropped",
+			values:  []interface{}{"0123456789", "b", "c"},
+			maxSize: 10,
+			want:    "0123456789...(3)",
+		},
+		{
+			// The marker counts the bind values, so it fits no limit at all -
+			// appending it past the limit is what keeps the truncation visible.
+			name:    "limit shorter than the marker",
+			values:  []interface{}{"a", "b", "c"},
+			maxSize: 2,
+			want:    "a...(3)",
 		},
 		{
 			name:    "zero limit",

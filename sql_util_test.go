@@ -393,6 +393,24 @@ func Test_sqlNormalizer_PostgresPositionalParameter(t *testing.T) {
 			normalized: "'0$'",
 			params:     "$''123",
 		},
+		// Neither a comment nor a string literal is a number token boundary, so
+		// the flag '$' left alone still reaches the digit and the literal is
+		// still extracted. Forcing the flag off at every '$' swallowed these.
+		{
+			sql:        "SELECT $/*c*/1 FROM t",
+			normalized: "SELECT $/*c*/0# FROM t",
+			params:     "1",
+		},
+		{
+			sql:        "= $//c\n1",
+			normalized: "= $//c\n0#",
+			params:     "1",
+		},
+		{
+			sql:        "= $'x'1",
+			normalized: "= $'0$'1#",
+			params:     "x,1",
+		},
 	}
 
 	for _, tt := range tests {

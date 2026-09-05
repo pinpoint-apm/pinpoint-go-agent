@@ -137,14 +137,21 @@ type stringMeta struct {
 	funcName string
 }
 
+// sqlMeta and sqlUidMeta carry both the text to publish and the key that
+// cached the id: sql is abbreviated to maxSqlSize for the collector, key is the
+// untruncated statement the cache is keyed on. They differ for any statement
+// past the cap, and deleteMetaCache needs the key - dropping the wrong entry
+// would leave every later span pointing at an id the collector never received.
 type sqlMeta struct {
 	id  int32
 	sql string
+	key string
 }
 
 type sqlUidMeta struct {
 	uid []byte
 	sql string
+	key string
 }
 
 type exceptionMeta struct {
@@ -190,6 +197,10 @@ const (
 	// default. A cause chain carries one message per link, and a driver error
 	// quoting a whole statement is easily megabytes on its own.
 	maxExceptionMessageSize = 2048
+	// maxBindValueMarkerSize bounds the "...(count)" marker the bind value
+	// writers append past SQL.MaxBindValueSize; 20 digits holds any count a
+	// slice length can reach.
+	maxBindValueMarkerSize = len("...(") + 20 + len(")")
 )
 
 // globalAgent is an atomic.Value rather than a plain interface variable:
@@ -890,10 +901,10 @@ func (agent *agent) deleteMetaCache(md interface{}) {
 		agent.errorCache.remove(md.(stringMeta).funcName)
 		break
 	case sqlMeta:
-		agent.sqlCache.remove(md.(sqlMeta).sql)
+		agent.sqlCache.remove(md.(sqlMeta).key)
 		break
 	case sqlUidMeta:
-		agent.sqlUidCache.remove(md.(sqlUidMeta).sql)
+		agent.sqlUidCache.remove(md.(sqlUidMeta).key)
 		break
 	case exceptionMeta:
 		break
@@ -1053,6 +1064,9 @@ func abbreviateString(str string, length int) string {
 // single use, and the same query would show up in the UI as a new entry per
 // execution. Java bypasses only the UID cache for the same reason:
 // SimpleCacheFactory.newSqlCache() builds the id cache with no length check.
+// That exemption is what caps the id cache at cacheSize statements of whatever
+// length the application generates, since the key is the untruncated text; the
+// UID cache is bounded by the limit instead.
 func (agent *agent) sqlCacheable(sql string) bool {
 	return len(sql) < agent.config.load().sqlCacheLengthLimit
 }
@@ -1062,8 +1076,11 @@ func (agent *agent) cacheSql(sql string) int32 {
 		return 0
 	}
 
-	aSql := abbreviateString(sql, maxSqlSize)
-	if v, ok := agent.sqlCache.peek(aSql); ok {
+	// Keyed on the untruncated statement, as Java's DefaultCachingSqlNormalizer
+	// is: an abbreviated key keeps no more than a 64KB prefix and the total
+	// length, so two statements agreeing on both would share one id and the
+	// second would never publish its own metadata.
+	if v, ok := agent.sqlCache.peek(sql); ok {
 		return v
 	}
 
@@ -1072,13 +1089,15 @@ func (agent *agent) cacheSql(sql string) int32 {
 	if id == 0 {
 		return 0
 	}
-	if v, ok := agent.sqlCache.peekOrAdd(aSql, id); ok {
+	if v, ok := agent.sqlCache.peekOrAdd(sql, id); ok {
 		return v
 	}
 
+	aSql := abbreviateString(sql, maxSqlSize)
 	md := sqlMeta{
 		id:  id,
 		sql: aSql,
+		key: sql,
 	}
 	agent.enqueueMeta(md)
 
@@ -1093,29 +1112,34 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 		return nil
 	}
 
-	// Java hashes the whole normalized SQL and abbreviates only the text it
-	// publishes (SqlCacheService), so the UID of a statement past the cap must
-	// not depend on the abbreviation. The cache key stays abbreviated to keep a
-	// multi-megabyte statement out of the LRU; two statements sharing a 64KB
-	// prefix and the same total length then share one entry.
-	aSql := abbreviateString(sql, maxSqlSize)
-	cacheable := agent.sqlCacheable(aSql)
+	// Java hashes the whole normalized SQL and keys its cache on the same
+	// untruncated text (DefaultCachingSqlNormalizer), abbreviating only what it
+	// publishes (SqlCacheService) - so both the UID and the key come from sql
+	// here. An abbreviated key keeps no more than a 64KB prefix and the total
+	// length, and two statements agreeing on both would share one entry: the
+	// second would answer with the first's UID and never publish its own
+	// metadata. Nothing longer than the cache length limit reaches the LRU
+	// either way, since sqlCacheable now measures that same untruncated text,
+	// as Java's UidCache bypassLength does.
+	cacheable := agent.sqlCacheable(sql)
 	if cacheable {
-		if v, ok := agent.sqlUidCache.peek(aSql); ok {
+		if v, ok := agent.sqlUidCache.peek(sql); ok {
 			return v
 		}
 	}
 
 	uid := sqlUid(sql)
 	if cacheable {
-		if v, ok := agent.sqlUidCache.peekOrAdd(aSql, uid); ok {
+		if v, ok := agent.sqlUidCache.peekOrAdd(sql, uid); ok {
 			return v
 		}
 	}
 
+	aSql := abbreviateString(sql, maxSqlSize)
 	md := sqlUidMeta{
 		uid: uid,
 		sql: aSql,
+		key: sql,
 	}
 	agent.enqueueMeta(md)
 

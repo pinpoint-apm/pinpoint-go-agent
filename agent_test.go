@@ -258,36 +258,57 @@ func noSqlCacheBypassConfig() *Config {
 	return cfg
 }
 
-func Test_agent_SQLCachesBoundKeys(t *testing.T) {
-	sql := strings.Repeat("x", maxSqlSize*2)
-	bounded := abbreviateString(sql, maxSqlSize)
+// Both SQL metadata caches key on the untruncated statement, as Java's
+// DefaultCachingSqlNormalizer does, and publish text abbreviated to maxSqlSize.
+// An abbreviated key keeps no more than a 64KB prefix and the total length, so
+// two statements agreeing on both would share one entry: the second would
+// answer with the first's id and never publish its own metadata. The two texts
+// differ past the cap, so the meta has to carry the key as well - that is what
+// deleteMetaCache removes by when the metadata queue drops the record.
+func Test_agent_SQLCachesKeyTheWholeStatement(t *testing.T) {
+	prefix := strings.Repeat("x", maxSqlSize)
+	first, second := prefix+"select 1", prefix+"select 2"
+	bounded := abbreviateString(first, maxSqlSize)
+	require.Equal(t, bounded, abbreviateString(second, maxSqlSize), "the abbreviation is the collision")
 
 	t.Run("sql id", func(t *testing.T) {
 		a := newTestAgent(defaultConfig())
-		id := a.cacheSql(sql)
+		firstID, secondID := a.cacheSql(first), a.cacheSql(second)
 
-		cached, ok := a.sqlCache.peek(bounded)
-		assert.True(t, ok)
-		assert.Equal(t, id, cached)
-		_, retainedFullSQL := a.sqlCache.peek(sql)
-		assert.False(t, retainedFullSQL)
+		assert.NotEqual(t, firstID, secondID, "each statement needs its own id")
+		cached, ok := a.sqlCache.peek(second)
+		assert.True(t, ok, "the whole statement is the key")
+		assert.Equal(t, secondID, cached)
+		_, abbreviated := a.sqlCache.peek(bounded)
+		assert.False(t, abbreviated)
 
+		assert.Len(t, a.metaChan, 2, "each statement publishes its own metadata")
 		md := (<-a.metaChan).(sqlMeta)
-		assert.Equal(t, bounded, md.sql)
+		assert.Equal(t, bounded, md.sql, "the published text stays capped")
+
+		a.deleteMetaCache(md)
+		_, stillCached := a.sqlCache.peek(first)
+		assert.False(t, stillCached, "a dropped meta must drop the entry that published its id")
 	})
 
 	t.Run("sql uid", func(t *testing.T) {
 		a := newTestAgent(noSqlCacheBypassConfig())
-		uid := a.cacheSqlUid(sql)
+		firstUid, secondUid := a.cacheSqlUid(first), a.cacheSqlUid(second)
 
-		cached, ok := a.sqlUidCache.peek(bounded)
-		assert.True(t, ok)
-		assert.Equal(t, uid, cached)
-		_, retainedFullSQL := a.sqlUidCache.peek(sql)
-		assert.False(t, retainedFullSQL)
+		assert.NotEqual(t, firstUid, secondUid, "the uid hashes the whole statement")
+		cached, ok := a.sqlUidCache.peek(second)
+		assert.True(t, ok, "the whole statement is the key")
+		assert.Equal(t, secondUid, cached)
+		_, abbreviated := a.sqlUidCache.peek(bounded)
+		assert.False(t, abbreviated)
 
+		assert.Len(t, a.metaChan, 2, "each statement publishes its own metadata")
 		md := (<-a.metaChan).(sqlUidMeta)
-		assert.Equal(t, bounded, md.sql)
+		assert.Equal(t, bounded, md.sql, "the published text stays capped")
+
+		a.deleteMetaCache(md)
+		_, stillCached := a.sqlUidCache.peek(first)
+		assert.False(t, stillCached, "a dropped meta must drop the entry that published its uid")
 	})
 }
 

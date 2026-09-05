@@ -195,8 +195,14 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	// leaves placeholders exposed. MaxBindValueSize applies to bind values
 	// only, as in the Java agent; a limit of 0 means bind value tracing is off,
 	// not that every value should become an "...(0)" marker.
+	//
+	// The allowance is what the bind value writers append past the limit - the
+	// Java agent puts its "...(count)" marker there too. Without it this would
+	// cut their marker back off and replace it with its own, reporting the
+	// bytes dropped instead of the bind values. SetSQL is public, so the bound
+	// stays for a caller that composes args itself and bounds nothing.
 	if cfg.sqlMaxBindValueSize > 0 {
-		args = abbreviateString(args, cfg.sqlMaxBindValueSize)
+		args = abbreviateString(args, cfg.sqlMaxBindValueSize+maxBindValueMarkerSize)
 	}
 
 	if cfg.sqlTraceQueryStat {

@@ -244,11 +244,12 @@ func TestTruncatesSqlBindArgsAtConfiguredLimit(t *testing.T) {
 	require.Len(t, events, 1)
 	annotation := findAnnotation(events[0].GetAnnotation(), pinpoint.AnnotationSqlUid)
 	require.NotNil(t, annotation)
-	// "0123456789, abcdefgh" already exceeds the 20 allowed bytes, so the join
-	// stops there and appends the truncation marker.
+	// "0123456789, abcdefgh" already fills the 20 allowed bytes, so the join
+	// stops there and appends the marker - the number of bind values, written
+	// past the limit as the Java agent writes it.
 	bound := annotation.GetValue().GetBytesStringStringValue().GetStringValue2().GetValue()
-	assert.LessOrEqual(t, len(bound), cfg.sqlMaxBindValueSize)
-	assert.True(t, strings.HasSuffix(bound, "...(20)"), bound)
+	assert.Equal(t, "0123456789, abcdefgh...(3)", bound)
+	assert.True(t, strings.HasSuffix(bound, "...(3)"), bound)
 	assert.NotContains(t, bound, "xyz")
 }
 

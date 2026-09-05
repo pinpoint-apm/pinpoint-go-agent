@@ -142,10 +142,15 @@ func writeArg(b *bytes.Buffer, index int, value any, numComma int, maxSize int) 
 
 	complete := writeLimitedArgValue(b, value, maxSize)
 	if complete && index < numComma {
-		complete = writeLimitedString(b, ", ", maxSize)
+		// The separator goes in whole or not at all: a lone ',' left where the
+		// limit fell reads as an empty bind value, and the cut belongs on a
+		// value boundary.
+		if complete = b.Len()+len(", ") <= maxSize; complete {
+			b.WriteString(", ")
+		}
 	}
 	if !complete {
-		writeArgTruncationMarker(b, maxSize)
+		writeArgTruncationMarker(b, numComma+1)
 	}
 	return complete
 }
@@ -189,23 +194,13 @@ func writeLimitedString(b *bytes.Buffer, value string, maxSize int) bool {
 	return false
 }
 
-func writeArgTruncationMarker(b *bytes.Buffer, maxSize int) {
-	marker := "...(" + fmt.Sprint(maxSize) + ")"
-	if len(marker) > maxSize {
-		truncateArg(b, maxSize)
-		return
-	}
-
-	truncateArg(b, maxSize-len(marker))
-	b.WriteString(marker)
-}
-
-func truncateArg(b *bytes.Buffer, maxSize int) {
-	if maxSize >= b.Len() {
-		return
-	}
-	for maxSize > 0 && !utf8.RuneStart(b.Bytes()[maxSize]) {
-		maxSize--
-	}
-	b.Truncate(maxSize)
+// writeArgTruncationMarker appends the marker the Java agent's
+// BindValueUtils.appendLength writes: numValues is how many bind values the
+// statement had, not the byte limit - the limit is already known to every
+// reader, the count that went missing is not. It lands past the limit, as it
+// does in Java, rather than cutting back over what is already written: making
+// room inside a limit shorter than the marker would drop the marker itself and
+// leave the truncation with no trace at all.
+func writeArgTruncationMarker(b *bytes.Buffer, numValues int) {
+	b.WriteString("...(" + fmt.Sprint(numValues) + ")")
 }
