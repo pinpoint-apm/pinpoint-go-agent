@@ -204,9 +204,11 @@ func Test_splitTransactionId(t *testing.T) {
 		{"agent^^1", false, "", 0, 0},
 		{"agent^1^", false, "", 0, 0},
 		{"^1^2", false, "", 0, 0},
-		{"abcdefghijklmnopqrstuvwxy^1^2", false, "", 0, 0}, // 25-char agentId
-		{"a^9223372036854775808^0", false, "", 0, 0},       // overflows int64
-		{"a^123456789012345678901^0", false, "", 0, 0},     // 21 digits: overflows, as Long.parseLong does
+		// No length bound on the agent id here: Java checks it when an agent
+		// registers, not when it parses this header.
+		{"abcdefghijklmnopqrstuvwxy^1^2", true, "abcdefghijklmnopqrstuvwxy", 1, 2}, // 25 chars
+		{"a^9223372036854775808^0", false, "", 0, 0},                               // overflows int64
+		{"a^123456789012345678901^0", false, "", 0, 0},                             // 21 digits: overflows, as Long.parseLong does
 		// Numeric fields follow Long.parseLong, so a sign, leading zeros and a
 		// fourth field are all accepted the way the Java agent accepts them.
 		{"agent^-1^1", true, "agent", -1, 1},           // negative start time

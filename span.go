@@ -338,32 +338,31 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 // index-out-of-range panic on a malformed or hostile header. ok is false when
 // the header cannot be parsed, and the caller starts a new transaction.
 //
-// Accept/reject matches Java TransactionIdUtils.parseTransactionId:
+// Accept/reject follows Java TransactionIdUtils.parseTransactionId:
 //
-//   - The agent id is checked with IdValidateUtils' character class, as Java
-//     does before taking the substring. This matters here beyond agreeing with
-//     Java: the id does not stay inside the process. Inject writes it back out
-//     in the Pinpoint-TraceID of every downstream request and it is reported
-//     to the collector as PTransactionId.AgentId, so an unchecked header would
-//     carry whatever an upstream caller put there - control bytes, a CRLF -
-//     into both.
+//   - The agent id is held to IdValidateUtils' character class and nothing
+//     else - no length bound, which Java applies when an agent registers but
+//     not when it parses this header. The charset half is what protects the
+//     rest: the id does not stay inside this process, since Inject writes it
+//     back out in the Pinpoint-TraceID of every downstream request and it is
+//     reported to the collector as PTransactionId.AgentId, so a header that
+//     could carry control bytes or a CRLF would carry them into both.
 //   - startTime and sequence go through strconv.ParseInt, which accepts what
 //     Long.parseLong accepts: a leading '+' or '-', leading zeros, and any
 //     length that still fits an int64. An empty field, a non-digit, or a value
-//     that overflows int64 is rejected, as Long.parseLong's NumberFormatException
-//     rejects it.
-//   - A fourth field is ignored rather than rejected: Java ends the sequence at
-//     the next delimiter and never looks past it, so "a^1^2^3" is the
+//     that overflows int64 is rejected, as NumberFormatException rejects it.
+//   - A fourth field is ignored rather than rejected: Java ends the sequence
+//     at the next delimiter and never looks past it, so "a^1^2^3" is the
 //     transaction "a^1^2" to both agents.
 //
-// Two deliberate gaps, both unreachable from an agent-emitted header: the agent
-// id is additionally held to agentIDMaxLen, which Java checks when it registers
-// an agent but not when it parses this header, and Long.parseLong also accepts
-// non-ASCII Unicode decimal digits (Character.digit), which ParseInt does not.
+// One deliberate gap, unreachable from an agent-emitted header: Long.parseLong
+// also accepts non-ASCII Unicode decimal digits (Character.digit), ParseInt
+// does not.
 func splitTransactionId(tid string) (agentId string, startTime int64, sequence int64, ok bool) {
 	i := strings.IndexByte(tid, '^')
-	// validateID subsumes the empty (i == 0) and over-long agent id cases.
-	if i < 0 || !validateID(tid[:i], agentIDMaxLen) {
+	// i < 1 rejects both a missing delimiter and an empty agent id; isIDChars
+	// is validateID without the length bound.
+	if i < 1 || !isIDChars(tid[:i]) {
 		return "", 0, 0, false
 	}
 	rest := tid[i+1:]
