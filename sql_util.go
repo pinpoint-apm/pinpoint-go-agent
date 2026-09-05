@@ -76,7 +76,17 @@ func (s *sqlNormalizer) run() (string, string) {
 			} else {
 				s.output.WriteRune(ch)
 			}
-		} else if isLetter(ch) || ch == '.' || ch == '_' || ch == '@' || ch == ':' || ch == '$' {
+		} else if ch == '$' {
+			// Java turns the flag off only for a positional placeholder
+			// ($1, $2, ...); a '$' followed by anything else leaves it as it
+			// was. Forcing it off here would swallow a literal that Java still
+			// extracts, e.g. "$'x'1" - neither a string literal nor a comment
+			// touches the flag on the way to the digit.
+			if s.lookaheadDigit() {
+				numberTokenStartEnable = false
+			}
+			s.output.WriteRune(ch)
+		} else if isLetter(ch) || ch == '.' || ch == '_' || ch == '@' || ch == ':' {
 			numberTokenStartEnable = false
 			s.output.WriteRune(ch)
 		} else {
@@ -228,6 +238,15 @@ func (s *sqlNormalizer) lookahead(expected rune) bool {
 		return false
 	}
 	return ch == expected
+}
+
+// lookaheadDigit reports whether the next character is a digit, without
+// consuming it. End of input is not a digit, as in Java, whose lookAhead1
+// returns NEXT_TOKEN_NOT_EXIST there.
+func (s *sqlNormalizer) lookaheadDigit() bool {
+	ch, _, err := s.r.ReadRune()
+	_ = s.r.UnreadRune()
+	return err == nil && isDigit(ch)
 }
 
 func isLetter(ch rune) bool {

@@ -445,3 +445,45 @@ func TestNormalizeRemoveComments(t *testing.T) {
 		})
 	}
 }
+
+// TestNormalizeDollarNumberTokenStart pins the '$' rule to Java's
+// ParserContext: only a positional placeholder ($1, $2, ...) turns the
+// number-token-start flag off. A '$' before anything else leaves the flag
+// alone, and neither a string literal nor a comment touches it on the way to
+// the next digit, so the digit is still extracted.
+func TestNormalizeDollarNumberTokenStart(t *testing.T) {
+	tests := []struct {
+		sql        string
+		normalized string
+		params     string
+	}{
+		// $ before a digit: the placeholder is kept whole.
+		{"$1", "$1", ""},
+		{"where id = $122309 and no = 122309", "where id = $122309 and no = 0#", "122309"},
+		// $ before anything else does not turn the flag off, and a string
+		// literal on the way to the digit does not turn it back on either.
+		{"$'x'1", "$'0$'1#", "x,1"},
+		{"$$'x'1", "$$'0$'1#", "x,1"},
+		// A '$' that follows an identifier character keeps the flag off, so a
+		// digit after it stays part of the identifier (Oracle's V$SESSION1).
+		{"V$SESSION1", "V$SESSION1", ""},
+		{"a$1", "a$1", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(displayName(tt.sql), func(t *testing.T) {
+			assertNormalize(t, tt.sql, tt.normalized, tt.params)
+		})
+	}
+
+	// A comment does not touch the flag either, in both comment modes.
+	t.Run("comment", func(t *testing.T) {
+		nsql, params := newSqlNormalizer("$/*c*/1", true).run()
+		assert.Equal(t, "$0#", nsql)
+		assert.Equal(t, "1", params)
+
+		nsql, params = newSqlNormalizer("$/*c*/1", false).run()
+		assert.Equal(t, "$/*c*/0#", nsql)
+		assert.Equal(t, "1", params)
+	})
+}
