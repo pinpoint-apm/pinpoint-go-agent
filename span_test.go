@@ -317,6 +317,45 @@ func Test_span_Inject(t *testing.T) {
 
 			span.Inject(tt.args.writer)
 			assert.Equal(t, m[HeaderTraceId], span.txId.String(), "headerTraceId")
+
+			// The normal path still carries every header it always has.
+			for _, h := range []string{HeaderTraceId, HeaderSpanId, HeaderParentSpanId,
+				HeaderFlags, HeaderParentApplicationName, HeaderParentApplicationType} {
+				assert.Contains(t, m, h, h)
+			}
+			// A namespace this agent does not have is not sent as "": a Java
+			// receiver with profiler.cluster.namespace set rejects the empty
+			// value and starts a new trace instead of continuing this one.
+			assert.NotContains(t, m, HeaderParentApplicationNamespace, HeaderParentApplicationNamespace)
+		})
+	}
+}
+
+// Pinpoint-Host names the node being called; with nothing to name it is left
+// out rather than sent empty, as Java's DefaultRequestTraceWriter does.
+func Test_span_Inject_Host(t *testing.T) {
+	tests := []struct {
+		name          string
+		destinationId string
+		want          bool
+	}{
+		{"a recorded destination is sent", "my-cluster", true},
+		{"an empty destination is omitted", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			span := defaultTestSpan()
+			span.NewSpanEvent("t").SpanEvent().SetDestination(tt.destinationId)
+
+			m := make(map[string]string)
+			span.Inject(&DistributedTracingContextMap{m})
+
+			if tt.want {
+				assert.Equal(t, tt.destinationId, m[HeaderHost], HeaderHost)
+			} else {
+				assert.NotContains(t, m, HeaderHost, HeaderHost)
+			}
 		})
 	}
 }
@@ -403,6 +442,21 @@ func Test_span_Inject_EventOverflow(t *testing.T) {
 			if se, ok := s.eventStack.peek(); ok {
 				assert.Equal(t, se.nextSpanId, int64(noneSpanId), "ancestor event nextSpanId")
 			}
+
+			// The overflowed event is dropped, but the destination it recorded
+			// is not: without Pinpoint-Host the downstream cannot fill in
+			// acceptorHost, endPoint or remoteAddr.
+			assert.NotContains(t, m, HeaderHost, "no destination recorded")
+
+			s.SpanEvent().SetDestination("my-cluster")
+			m2 := make(map[string]string)
+			s.Inject(&DistributedTracingContextMap{m2})
+			assert.Equal(t, "my-cluster", m2[HeaderHost], HeaderHost)
+
+			// and it belongs to this overflow only
+			s.EndSpanEvent()
+			assert.Equal(t, int32(0), s.eventOverflow.Load(), "eventOverflow")
+			assert.Empty(t, s.overflowSe.destination(), "destination cleared")
 		})
 	}
 }
@@ -485,8 +539,12 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 			assert.Equal(t, s.eventOverflowLog.Load(), true, "eventOverflowLog")
 			assert.Equal(t, s.eventStack.len(), 3, "stack.len()")
 
-			_, ok := s.SpanEvent().(*noopSpanEvent)
-			assert.Equal(t, ok, true, "noopSpanEvent")
+			// Overflowed events record nothing, except the destination the
+			// span keeps for Inject's Pinpoint-Host.
+			ose, ok := s.SpanEvent().(*overflowSpanEvent)
+			assert.Equal(t, ok, true, "overflowSpanEvent")
+			ose.SetDestination("my-cluster")
+			assert.Equal(t, "my-cluster", s.overflowSe.destination(), "destination")
 
 			tracer := s.NewGoroutineTracer()
 			noop, ok := tracer.(*noopSpan)

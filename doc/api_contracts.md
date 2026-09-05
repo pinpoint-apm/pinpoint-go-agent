@@ -193,13 +193,16 @@ overflow:
 * `NewSpanEvent()` records nothing; it only counts the nesting so that the
   matching `EndSpanEvent()` unwinds correctly.
 * `SpanEvent()` returns a no-op recorder, so annotations, SQL and errors on the
-  overflowed events are dropped.
+  overflowed events are dropped. `SetDestination()` is the one exception: the
+  value is kept for `Inject()` (see below) and nothing else.
 * `SpanRecorder.SetError()` is ignored.
 * `NewGoroutineTracer()` returns `NoopTracer()`.
-* `Inject()` **still writes** the distributed tracing headers. Overflow limits
-  profiling detail; it is not a sampling decision. Dropping the headers would
-  make the downstream node start a fresh transaction and cut the call chain, so
-  the transaction stays intact and only the caller-side event link is lost.
+* `Inject()` **still writes** the distributed tracing headers, `Pinpoint-Host`
+  included. Overflow limits profiling detail; it is not a sampling decision.
+  Dropping the headers would make the downstream node start a fresh
+  transaction and cut the call chain, and dropping `Pinpoint-Host` would leave
+  it unable to fill in `acceptorHost`, `endPoint` and `remoteAddr`. The
+  transaction stays intact and only the caller-side event link is lost.
 
 The span itself, its own annotations, and every event recorded before the
 overflow are sent normally. The agent logs
@@ -323,6 +326,34 @@ writing any header.
 An async or goroutine tracer forked from an unsampled span inherits the
 unsampled marker, so calls made from that goroutine keep propagating `s0`. One
 forked from a no-op tracer stays a no-op.
+
+### `Inject()` omits a header it has no value for
+
+The header set is not fixed. `Inject()` writes a header only when it has
+something to put in it, matching Java's `DefaultRequestTraceWriter`, which
+normalizes an empty value to `NOT_SET` and writes nothing:
+
+| Header | Written when |
+|---|---|
+| `Pinpoint-TraceID`, `-SpanID`, `-pSpanID`, `-Flags`, `-pAppName`, `-pAppType` | always, on a sampled span |
+| `Pinpoint-Sampled` | only by an unsampled span (`s0`) |
+| `Pinpoint-pServiceName` | `Span.ServiceName` is set (v4 collectors) |
+| `Pinpoint-Host` | a destination was recorded on the event, or - while overflowed - on the span |
+| `Pinpoint-pAppNamespace` | never; this agent has no namespace to send |
+
+An empty value is not a neutral one. A Java receiver configured with
+`profiler.cluster.namespace` accepts a missing `Pinpoint-pAppNamespace` for
+backward compatibility but rejects an empty one, and answers the mismatch by
+starting a **new trace** - which cuts the call chain at the Go->Java hop.
+
+A `DistributedTracingContextWriter` must therefore not assume every header
+arrives on every call. Writers that append (`metadata.AppendToOutgoingContext`
+in the gRPC plugin) or that write into a fresh carrier need no care. A writer
+handed a carrier that may already hold headers from an earlier injection must
+**clear the `Pinpoint-` keys first**: overwriting only what it is given leaves
+the omitted ones behind to be read as this injection's own. The sarama
+producer writer does this, because the retry pattern re-sends the same
+message object.
 
 ### Statistics
 

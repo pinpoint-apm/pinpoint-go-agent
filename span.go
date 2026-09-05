@@ -31,6 +31,31 @@ const (
 	maxErrorChainEntry     = 10
 )
 
+// overflowSpanEvent is the recorder handed out while the call stack has
+// overflowed. It drops everything a real event would record except the
+// destination, which Inject still writes as Pinpoint-Host: overflow is a
+// profiling limit, not a reason to hide the caller from the node it calls.
+// The C++ agent's DisabledSpanEvent keeps the destination for the same reason.
+//
+// Atomic for the reason the counters beside it are (see span): a plugin may
+// record the destination from another goroutine of the same call stack.
+type overflowSpanEvent struct {
+	noopSpanEvent
+	destinationId atomic.Value // string
+}
+
+func (se *overflowSpanEvent) SetDestination(id string) {
+	se.destinationId.Store(id)
+}
+
+// destination reports the last destination recorded during this overflow.
+// Nesting is not tracked: a plugin records the destination and injects in the
+// same breath, so the last one seen is the call being made.
+func (se *overflowSpanEvent) destination() string {
+	id, _ := se.destinationId.Load().(string)
+	return id
+}
+
 type span struct {
 	agent *agent
 	// cfg is pinned when the span is created and kept for its whole life, so a
@@ -62,6 +87,9 @@ type span struct {
 	eventDepth       atomic.Int32
 	eventOverflow    atomic.Int32
 	eventOverflowLog atomic.Bool
+	// overflowSe stands in for the dropped events while the span is
+	// overflowed, keeping the one thing Inject still needs from them.
+	overflowSe overflowSpanEvent
 	// sqlCount counts the executed queries behind SQL.ErrorCount, and is
 	// atomic for the same reason: a plugin may run them from several
 	// goroutines of one call stack.
@@ -238,7 +266,14 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 	writer.Set(HeaderFlags, strconv.Itoa(span.flags))
 	writer.Set(HeaderParentApplicationName, span.agent.appName)
 	writer.Set(HeaderParentApplicationType, strconv.Itoa(int(span.agent.appType)))
-	writer.Set(HeaderParentApplicationNamespace, "")
+
+	// This agent has no namespace to send, so the header is omitted rather
+	// than sent empty. A Java receiver configured with
+	// profiler.cluster.namespace compares the header against its own value:
+	// null is accepted for backward compatibility, "" is not, so an empty
+	// header makes RequestTraceReader start a new trace instead of continuing
+	// this one and cuts the chain at the Go->Java hop. Java's sender does the
+	// same, normalizing an empty namespace to NOT_SET and writing no header.
 
 	// Propagate this agent's serviceName so downstream records it as the
 	// parent serviceName. Only set when present (v4), matching the Java
@@ -254,6 +289,17 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 		// left unset, never overwrite the one it recorded.
 		se.endPoint = cmp.Or(se.endPoint, se.destinationId)
 		destinationId = se.destinationId
+	} else {
+		// Overflowed: the event was dropped, but the destination it recorded
+		// was kept for exactly this - the downstream fills acceptorHost,
+		// endPoint and remoteAddr from this header (see Extract) and has no
+		// other source for them.
+		destinationId = span.overflowSe.destination()
+	}
+	// Written only when there is a host to name, as Java's
+	// DefaultRequestTraceWriter does: an empty value carries no less
+	// information than a missing header and risks being read as a real host.
+	if destinationId != "" {
 		writer.Set(HeaderHost, destinationId)
 	}
 
@@ -443,7 +489,11 @@ func (span *span) appendSpanEvent(se *spanEvent) {
 
 func (span *span) EndSpanEvent() {
 	if span.eventOverflow.Load() > 0 {
-		span.eventOverflow.Add(-1)
+		// Cleared once the stack is back within its limits so a later
+		// overflow cannot inject the destination of this one.
+		if span.eventOverflow.Add(-1) == 0 {
+			span.overflowSe.destinationId.Store("")
+		}
 		return
 	}
 	if se, ok := span.eventStack.pop(); ok {
@@ -570,7 +620,7 @@ func (span *span) Span() SpanRecorder {
 
 func (span *span) SpanEvent() SpanEventRecorder {
 	if span.eventOverflow.Load() > 0 {
-		return &defaultNoopSpanEvent
+		return &span.overflowSe
 	}
 	if se, ok := span.eventStack.peek(); ok {
 		return se

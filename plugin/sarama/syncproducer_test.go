@@ -21,6 +21,36 @@ var pinpointHeaders = []string{
 	pinpoint.HeaderParentApplicationName,
 }
 
+// A re-sent message must carry exactly one set of pinpoint headers, and only
+// this injection's. Leftovers from the previous send are removed rather than
+// overwritten: Inject writes no header for a value it does not have, so an
+// overwrite would leave the stale one behind (here Pinpoint-Host, whose event
+// recorded no destination) to be read as this send's own.
+func Test_newProducerHeaderWriter_DropsHeadersFromAPreviousInjection(t *testing.T) {
+	msg := &sarama.ProducerMessage{
+		Headers: []sarama.RecordHeader{
+			{Key: []byte("x-app"), Value: []byte("keep-me")},
+			{Key: []byte(pinpoint.HeaderTraceId), Value: []byte("stale^1^1")},
+			{Key: []byte(pinpoint.HeaderHost), Value: []byte("broker-of-the-first-attempt")},
+			{Key: []byte(HeaderAsyncSpanId), Value: []byte("stale^1^1")},
+		},
+	}
+
+	w := newProducerHeaderWriter(msg)
+	w.Set(pinpoint.HeaderTraceId, "fresh^2^2")
+
+	keys := make([]string, 0, len(msg.Headers))
+	for _, h := range msg.Headers {
+		keys = append(keys, string(h.Key))
+	}
+	assert.Equal(t, []string{"x-app", pinpoint.HeaderTraceId}, keys,
+		"only the caller's own headers and this injection's survive")
+	assert.Equal(t, "keep-me", w.Get("x-app"), "a non-pinpoint header is untouched")
+	assert.Equal(t, "fresh^2^2", w.Get(pinpoint.HeaderTraceId), "Get finds one match, the fresh one")
+	assert.Empty(t, w.Get(pinpoint.HeaderHost), "a header this injection omits does not survive")
+	assert.Empty(t, w.Get(HeaderAsyncSpanId), "the previous attempt's ack id is gone")
+}
+
 type stubSyncProducer struct {
 	sarama.SyncProducer
 	sent    []*sarama.ProducerMessage

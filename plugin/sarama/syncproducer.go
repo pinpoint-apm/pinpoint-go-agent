@@ -3,6 +3,7 @@ package ppsarama
 import (
 	"bytes"
 	"context"
+	"slices"
 
 	"github.com/Shopify/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
@@ -24,50 +25,36 @@ type syncProducer struct {
 
 type distributedTracingContextWriterProducer struct {
 	msg *sarama.ProducerMessage
-	// replaceExisting is set by newProducerHeaderWriter when the message
-	// already carries a pinpoint header - the retry pattern re-sends the same
-	// message object - and Set must then replace in place: Get returns the
-	// first match, so appending a second header would leave the retry's ack
-	// looked up under the stale id - its tracer would sit in the span map
-	// until producer shutdown - and the message would grow one full
-	// trace-header set per attempt.
-	replaceExisting bool
 }
 
 var pinpointHeaderPrefix = []byte("Pinpoint-")
 
-// newProducerHeaderWriter prepares msg for injection: one prefix scan decides
-// whether Set needs its per-key replace scan at all - Inject calls Set ~9
-// times, each a full header scan on a growing slice - and a fresh message has
-// its header slice grown once instead of through the append doublings.
+// newProducerHeaderWriter prepares msg for injection by removing the headers a
+// previous injection left, so Set is a plain append and the header slice is
+// grown once instead of through the append doublings.
+//
+// The retry pattern re-sends the same message object, and the leftovers cannot
+// simply be appended beside: Get returns the first match, so the retry's ack
+// would be looked up under the stale async id - its tracer sitting in the span
+// map until producer shutdown - and the message would grow one full
+// trace-header set per attempt. Overwriting them in place is not enough
+// either, because Inject writes no header for a value it does not have: a
+// stale Pinpoint-Host would then survive as this injection's own, naming a
+// destination this send never contacted.
 func newProducerHeaderWriter(msg *sarama.ProducerMessage) *distributedTracingContextWriterProducer {
-	w := &distributedTracingContextWriterProducer{msg: msg}
-	for i := range msg.Headers {
-		if bytes.HasPrefix(msg.Headers[i].Key, pinpointHeaderPrefix) {
-			w.replaceExisting = true
-			break
-		}
+	msg.Headers = slices.DeleteFunc(msg.Headers, func(h sarama.RecordHeader) bool {
+		return bytes.HasPrefix(h.Key, pinpointHeaderPrefix)
+	})
+	const injectedHeaders = 10
+	if cap(msg.Headers)-len(msg.Headers) < injectedHeaders {
+		grown := make([]sarama.RecordHeader, len(msg.Headers), len(msg.Headers)+injectedHeaders)
+		copy(grown, msg.Headers)
+		msg.Headers = grown
 	}
-	if !w.replaceExisting {
-		const injectedHeaders = 10
-		if cap(msg.Headers)-len(msg.Headers) < injectedHeaders {
-			grown := make([]sarama.RecordHeader, len(msg.Headers), len(msg.Headers)+injectedHeaders)
-			copy(grown, msg.Headers)
-			msg.Headers = grown
-		}
-	}
-	return w
+	return &distributedTracingContextWriterProducer{msg: msg}
 }
 
 func (m *distributedTracingContextWriterProducer) Set(key string, value string) {
-	if m.replaceExisting {
-		for i := range m.msg.Headers {
-			if string(m.msg.Headers[i].Key) == key {
-				m.msg.Headers[i].Value = []byte(value)
-				return
-			}
-		}
-	}
 	m.msg.Headers = append(m.msg.Headers, sarama.RecordHeader{
 		Key:   []byte(key),
 		Value: []byte(value),
