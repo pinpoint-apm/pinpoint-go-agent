@@ -188,6 +188,18 @@ func (span *span) EndSpan() {
 	}
 }
 
+// warnIfFinished reports whether the span has ended; a setter called after
+// EndSpan is dropped, the way spanEvent.warnIfFinished drops one called after
+// EndSpanEvent. The final chunk is already on its way to the sender goroutine,
+// so nothing written here would be sent (doc/api_contracts.md 3).
+func (span *span) warnIfFinished(setter string) bool {
+	if !span.finished.Load() {
+		return false
+	}
+	Log("span").Debugf("abnormal span - %s called after EndSpan: %s", setter, span.operationName)
+	return true
+}
+
 func (span *span) Inject(writer DistributedTracingContextWriter) {
 	// The trace context is written even when the span has overflowed
 	// (spanMaxEventDepth/spanMaxEventSequence exceeded). Overflow limits
@@ -569,7 +581,7 @@ func (span *span) IsSampled() bool {
 func (span *span) SetError(e error, errorName ...string) {
 	// A call stack overflow only blocks span events; the span level error is
 	// still recorded, as the Java agent's DefaultSpanRecorder.recordException does.
-	if e == nil || span.finished.Load() {
+	if e == nil || span.warnIfFinished("SetError") {
 		return
 	}
 
@@ -588,35 +600,59 @@ func (span *span) SetError(e error, errorName ...string) {
 }
 
 func (span *span) SetFailure() {
+	if span.warnIfFinished("SetFailure") {
+		return
+	}
 	span.err.Store(1)
 	span.statusErr.Store(1)
 }
 
 func (span *span) SetServiceType(typ int32) {
+	if span.warnIfFinished("SetServiceType") {
+		return
+	}
 	span.serviceType = typ
 }
 
 func (span *span) SetRpcName(rpc string) {
+	if span.warnIfFinished("SetRpcName") {
+		return
+	}
 	span.rpcName = rpc
 }
 
 func (span *span) SetRemoteAddress(remoteAddress string) {
+	if span.warnIfFinished("SetRemoteAddress") {
+		return
+	}
 	span.remoteAddr = remoteAddress
 }
 
 func (span *span) SetEndPoint(endPoint string) {
+	if span.warnIfFinished("SetEndPoint") {
+		return
+	}
 	span.endPoint = endPoint
 }
 
 func (span *span) SetAcceptorHost(host string) {
+	if span.warnIfFinished("SetAcceptorHost") {
+		return
+	}
 	span.acceptorHost = host
 }
 
 func (span *span) Annotations() Annotation {
+	if span.warnIfFinished("Annotations") {
+		return &noopAnnotation{}
+	}
 	return &span.annotations
 }
 
 func (span *span) SetLogging(logInfo int32) {
+	if span.warnIfFinished("SetLogging") {
+		return
+	}
 	span.loggingInfo = logInfo
 }
 

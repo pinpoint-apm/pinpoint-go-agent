@@ -918,6 +918,39 @@ func TestSpan_SetErrorAfterEndSpanIsNoop(t *testing.T) {
 	assert.Equal(t, "", span.errorString, "errorString")
 }
 
+// doc/api_contracts.md 3: nothing recorded after EndSpan is sent, so the span
+// level setters drop the write the way the span event ones do.
+func TestSpan_SettersAfterEndSpanAreNoop(t *testing.T) {
+	span := defaultSpan(newTestAgent(defaultConfig()))
+	span.SetServiceType(ServiceTypeGoFunction)
+	span.SetRpcName("/rpc")
+	span.SetRemoteAddress("10.0.0.1")
+	span.SetEndPoint("host:8080")
+	span.SetAcceptorHost("acceptor")
+	span.SetLogging(1)
+	span.Annotations().AppendString(AnnotationHttpUrl, "/rpc")
+	span.EndSpan()
+
+	span.SetServiceType(ServiceTypeGoHttpClient)
+	span.SetRpcName("late")
+	span.SetRemoteAddress("late")
+	span.SetEndPoint("late")
+	span.SetAcceptorHost("late")
+	span.SetLogging(2)
+	span.SetFailure()
+	span.Annotations().AppendString(AnnotationHttpUrl, "late")
+
+	assert.Equal(t, int32(ServiceTypeGoFunction), span.serviceType, "serviceType")
+	assert.Equal(t, "/rpc", span.rpcName, "rpcName")
+	assert.Equal(t, "10.0.0.1", span.remoteAddr, "remoteAddr")
+	assert.Equal(t, "host:8080", span.endPoint, "endPoint")
+	assert.Equal(t, "acceptor", span.acceptorHost, "acceptorHost")
+	assert.Equal(t, int32(1), span.loggingInfo, "loggingInfo")
+	assert.Equal(t, int32(0), span.err.Load(), "err")
+	assert.Equal(t, int32(0), span.statusErr.Load(), "statusErr")
+	assert.Len(t, span.annotations.getList(), 1, "annotations")
+}
+
 func TestSpan_EndSpanEventRecordsPanickedEvent(t *testing.T) {
 	span := defaultTestSpan()
 	span.NewSpanEvent("event")
