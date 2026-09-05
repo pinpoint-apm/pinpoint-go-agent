@@ -18,6 +18,7 @@ is simply not written yet does not belong here.
 |---|---|---|
 | Per-URL sampler | `UrlTraceSampler`, `UrlSamplerConfig`, `TraceSamplerProvider` | **Declined** — see [below](#per-url-sampler--declined) |
 | SQL count per transaction | `DefaultSqlCountService` | **Adopted** — `SQL.ErrorCount` |
+| SQL comment removal | `DefaultSqlNormalizer`, `DefaultJdbcOption` | **Adopted** — `SQL.RemoveComments` |
 | Exception chain rate limiter | `ExceptionChainSampler` | **Adopted** — `Error.NewThroughput` |
 
 ---
@@ -51,6 +52,41 @@ The cost is small: `golang.org/x/time/rate` is already a dependency of
 **Option.** `Error.NewThroughput`, default 1000 (Java's default), `0` for
 unlimited. Named after `Sampling.NewThroughput`, which limits the same way for
 the same reason. See [Configuration](config.md#errornewthroughput).
+
+---
+
+## SQL comment removal — adopted
+
+**Java.** `DefaultJdbcOption` initializes `removeComments = true` and binds it to
+`profiler.jdbc.removecomments`. That key appears nowhere else in the pinpoint
+repository and is absent from the distributed `pinpoint.config`, and
+`ValueAnnotationProcessor` keeps the field initializer when a placeholder does
+not resolve — so the effective default is `true`.
+`SqlMetadataServiceProvider` passes it down through `DefaultCachingSqlNormalizer`
+to `new DefaultSqlNormalizer(removeComments)`; the no-argument constructor that
+defaults to `false` is only reached from the web and test paths.
+`ParserContext` drops a `--` or `//` comment together with its terminating
+newline, puts nothing in the removed comment's place, and does not treat the
+comment as a number token boundary.
+
+**Go before this change.** The normalizer always copied comments into the
+output, with no option to do otherwise. Every statement carrying an Oracle hint
+or an ORM-injected `/* trace:... */` tag therefore normalized to different text
+than Java produced, and so landed on a different SQL id and a different SQL UID.
+A service split across Go and Java reported one query as two.
+
+**Why adopt.** The normalized text is what the collector keys a query on. Parity
+here is not cosmetic — without it the two agents cannot agree on what a query
+*is*. The change is a writer branch in the two comment consumers.
+
+**Option.** `SQL.RemoveComments`, default `true` (Java's effective default).
+Startup-only, because the normalized text is the SQL id cache key and the SQL
+UID hash input. See [Configuration](config.md#sqlremovecomments).
+
+**Upgrade note.** This is on by default, matching Java. SQL ids and UIDs change
+for every statement that contains a comment, so such a query appears in the UI
+as a new entry from the upgrade onward. Set `SQL.RemoveComments` to `false` to
+keep the previous text.
 
 ---
 

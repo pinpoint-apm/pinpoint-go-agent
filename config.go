@@ -85,6 +85,7 @@ const (
 	CfgSQLEnableRawSqlCache           = "SQL.EnableRawSqlCache"
 	CfgSQLCacheLengthLimit            = "SQL.CacheLengthLimit"
 	CfgSQLErrorCount                  = "SQL.ErrorCount"
+	CfgSQLRemoveComments              = "SQL.RemoveComments"
 	CfgEnable                         = "Enable"
 	CfgHttpUrlStatEnable              = "Http.UrlStat.Enable"
 	CfgHttpUrlStatLimitSize           = "Http.UrlStat.LimitSize"
@@ -222,6 +223,7 @@ func initConfig() {
 	AddConfig(CfgSQLEnableRawSqlCache, CfgBool, true, true)
 	AddConfig(CfgSQLCacheLengthLimit, CfgInt, defaultSqlCacheLengthLimit, true)
 	AddConfig(CfgSQLErrorCount, CfgInt, defaultSqlErrorCount, true)
+	AddConfig(CfgSQLRemoveComments, CfgBool, true, false)
 	AddConfig(CfgEnable, CfgBool, true, false)
 	AddConfig(CfgHttpUrlStatEnable, CfgBool, false, true)
 	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1024, true)
@@ -316,6 +318,7 @@ type configSnapshot struct {
 	sqlEnableRawSqlCache bool              // CfgSQLEnableRawSqlCache
 	sqlCacheLengthLimit  int               // CfgSQLCacheLengthLimit
 	sqlErrorCount        int               // CfgSQLErrorCount
+	sqlRemoveComments    bool              // CfgSQLRemoveComments
 	spanEventChunkSize   int               // CfgSpanEventChunkSize
 	spanMaxEventDepth    int32             // CfgSpanMaxCallStackDepth
 	spanMaxEventSequence int32             // CfgSpanMaxCallStackSequence
@@ -915,6 +918,7 @@ func (config *Config) publish() {
 		sqlEnableRawSqlCache: cast.ToBool(values[CfgSQLEnableRawSqlCache]),
 		sqlCacheLengthLimit:  cast.ToInt(values[CfgSQLCacheLengthLimit]),
 		sqlErrorCount:        cast.ToInt(values[CfgSQLErrorCount]),
+		sqlRemoveComments:    cast.ToBool(values[CfgSQLRemoveComments]),
 		spanEventChunkSize:   cast.ToInt(values[CfgSpanEventChunkSize]),
 		spanMaxEventDepth:    cast.ToInt32(values[CfgSpanMaxCallStackDepth]),
 		spanMaxEventSequence: cast.ToInt32(values[CfgSpanMaxCallStackSequence]),
@@ -1436,6 +1440,16 @@ func WithSQLEnableRawSqlCache(enable bool) ConfigOption {
 func WithSQLCacheLengthLimit(limit int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgSQLCacheLengthLimit].value = limit
+	}
+}
+
+// WithSQLRemoveComments drops comments from normalized SQL instead of copying
+// them, matching the Java agent's profiler.jdbc.removecomments default. It is
+// startup-only: the normalized text is the SQL id cache key and the UID hash
+// input, so changing it at runtime would split one statement across two ids.
+func WithSQLRemoveComments(remove bool) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgSQLRemoveComments].value = remove
 	}
 }
 

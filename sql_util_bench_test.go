@@ -64,8 +64,9 @@ func TestNormalizeSqlCacheEquivalence(t *testing.T) {
 	}
 
 	a := newNormalizeTestAgent()
+	removeComments := a.config.load().sqlRemoveComments
 	for _, sql := range corpus {
-		wantSql, wantParam := newSqlNormalizer(sql).run()
+		wantSql, wantParam := newSqlNormalizer(sql, removeComments).run()
 		for _, path := range []string{"miss", "hit"} {
 			gotSql, gotParam := a.normalizeSql(sql)
 			if gotSql != wantSql || gotParam != wantParam {
@@ -83,7 +84,7 @@ func TestNormalizeSqlCacheBypassesHugeSql(t *testing.T) {
 	}
 
 	a := newNormalizeTestAgent()
-	wantSql, wantParam := newSqlNormalizer(huge).run()
+	wantSql, wantParam := newSqlNormalizer(huge, a.config.load().sqlRemoveComments).run()
 	gotSql, gotParam := a.normalizeSql(huge)
 	if gotSql != wantSql || gotParam != wantParam {
 		t.Errorf("bypass path result differs from uncached normalizer")
@@ -98,13 +99,13 @@ func TestNormalizeSqlCacheBypassesHugeSql(t *testing.T) {
 // their own query — no mixing of cached values across keys.
 func TestNormalizeSqlCacheConcurrent(t *testing.T) {
 	queries := uniqueSQLs("select * from t where a = 1 and s = 'v'", cacheSize+200)
+	a := newNormalizeTestAgent()
 	expected := make([]normalizedSql, len(queries))
 	for i, q := range queries {
-		nsql, param := newSqlNormalizer(q).run()
+		nsql, param := newSqlNormalizer(q, a.config.load().sqlRemoveComments).run()
 		expected[i] = normalizedSql{sql: nsql, param: param}
 	}
 
-	a := newNormalizeTestAgent()
 	var wg sync.WaitGroup
 	for g := 0; g < 8; g++ {
 		wg.Add(1)
@@ -129,7 +130,7 @@ func benchmarkNormalize(b *testing.B, sql string) {
 	b.SetBytes(int64(len(sql)))
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		nsql, param := newSqlNormalizer(sql).run()
+		nsql, param := newSqlNormalizer(sql, true).run()
 		_, _ = nsql, param
 	}
 }
@@ -205,7 +206,7 @@ func benchmarkNormalizeUniqueNoCache(b *testing.B, base string, n int) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		nsql, param := newSqlNormalizer(queries[i%len(queries)]).run()
+		nsql, param := newSqlNormalizer(queries[i%len(queries)], true).run()
 		_, _ = nsql, param
 	}
 }

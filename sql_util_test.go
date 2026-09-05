@@ -98,14 +98,14 @@ func Test_sqlNormalizer_DefaultSqlNormalizerCases(t *testing.T) {
 func Test_sqlNormalizer_NormalizesPastTheMetadataCap(t *testing.T) {
 	t.Run("unchanged sql", func(t *testing.T) {
 		raw := strings.Repeat("x", maxSqlSize+100)
-		nsql, param := newSqlNormalizer(raw).run()
+		nsql, param := newSqlNormalizer(raw, false).run()
 		assert.True(t, raw == nsql, "the whole sql must be returned untruncated")
 		assert.Empty(t, param)
 	})
 
 	t.Run("normalized sql", func(t *testing.T) {
 		prefix := strings.Repeat("x", maxSqlSize/2) + " = 2 " + strings.Repeat("x", maxSqlSize)
-		nsql, param := newSqlNormalizer(prefix + " = 1").run()
+		nsql, param := newSqlNormalizer(prefix+" = 1", false).run()
 		want := strings.Replace(prefix, "= 2", "= 0#", 1) + " = 1#"
 		assert.True(t, want == nsql, "sql past the cap must still be normalized")
 		assert.Equal(t, "2,1", param, "a bind value past the cap must still be reported")
@@ -113,7 +113,7 @@ func Test_sqlNormalizer_NormalizesPastTheMetadataCap(t *testing.T) {
 
 	t.Run("literal parameter", func(t *testing.T) {
 		literal := strings.Repeat("x", maxSqlSize+100)
-		nsql, param := newSqlNormalizer("select '" + literal + "'").run()
+		nsql, param := newSqlNormalizer("select '"+literal+"'", false).run()
 		assert.Equal(t, "select '0$'", nsql)
 		assert.True(t, literal == param, "the server refills placeholders from param, so it must stay whole")
 	})
@@ -132,13 +132,13 @@ func Test_sqlNormalizer_JavaEquivalence_SqlPastTheCap(t *testing.T) {
 		t.Fatalf("test sql is %d bytes, want %d", len(sql), size)
 	}
 
-	nsql, param := newSqlNormalizer(sql).run()
+	nsql, param := newSqlNormalizer(sql, false).run()
 	assert.Equal(t, "select * from t where a = 0# and b = '1$'", nsql)
 	assert.True(t, "1,"+literal == param, "every bind value must survive normalization")
 
 	// Nothing to normalize away, so the metadata is what gets abbreviated.
 	plain := strings.Repeat("x", size)
-	nsql, param = newSqlNormalizer(plain).run()
+	nsql, param = newSqlNormalizer(plain, false).run()
 	assert.Len(t, nsql, size)
 	assert.Empty(t, param)
 
@@ -405,11 +405,43 @@ func Test_sqlNormalizer_PostgresPositionalParameter(t *testing.T) {
 func assertNormalize(t *testing.T, sql, normalized, params string) {
 	t.Helper()
 
-	actualNormalized, actualParams := newSqlNormalizer(sql).run()
+	actualNormalized, actualParams := newSqlNormalizer(sql, false).run()
 	assert.Equal(t, normalized, actualNormalized, "normalized sql")
 	assert.Equal(t, params, actualParams, "params")
 }
 
 func displayName(sql string) string {
 	return strings.ReplaceAll(sql, "\n", "\\n")
+}
+
+// TestNormalizeRemoveComments covers SQL.RemoveComments, the Java agent's
+// default (profiler.jdbc.removecomments). Java puts nothing in the comment's
+// place, leaves the number-token-start flag alone, and swallows the newline
+// that ends a line comment.
+func TestNormalizeRemoveComments(t *testing.T) {
+	tests := []struct {
+		sql        string
+		normalized string
+		params     string
+	}{
+		{"SELECT /*+ INDEX(t idx) */ * FROM t WHERE id = 10", "SELECT  * FROM t WHERE id = 0#", "10"},
+		{"SELECT * FROM t -- c\nWHERE id = 1", "SELECT * FROM t WHERE id = 0#", "1"},
+		// The comment is not a number token boundary, so 1 stays a literal.
+		{"SELECT/*c*/1", "SELECT1", ""},
+		// A line comment at eof needs no terminating newline.
+		{"SELECT 1 -- trailing", "SELECT 0# ", "1"},
+		// Nothing but a comment: the normalized text, not the original.
+		{"/* only */", "", ""},
+		{"-- only", "", ""},
+		// A '/' or '-' that starts no comment is still copied.
+		{"SELECT 6/2, 1-1 FROM t", "SELECT 0#/1#, 2#-3# FROM t", "6,2,1,1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(displayName(tt.sql), func(t *testing.T) {
+			nsql, params := newSqlNormalizer(tt.sql, true).run()
+			assert.Equal(t, tt.normalized, nsql, "normalized sql")
+			assert.Equal(t, tt.params, params, "params")
+		})
+	}
 }

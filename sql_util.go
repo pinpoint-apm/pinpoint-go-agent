@@ -13,15 +13,19 @@ type sqlNormalizer struct {
 	paramIndex int
 	sql        string
 	isChanged  bool
+	// removeComments drops comments from the output instead of copying them,
+	// as the Java agent does by default (profiler.jdbc.removecomments).
+	removeComments bool
 }
 
-func newSqlNormalizer(sql string) *sqlNormalizer {
+func newSqlNormalizer(sql string, removeComments bool) *sqlNormalizer {
 	normalizer := sqlNormalizer{}
 
 	normalizer.r = bufio.NewReader(strings.NewReader(sql))
 	normalizer.paramIndex = 0
 	normalizer.sql = sql
 	normalizer.isChanged = false
+	normalizer.removeComments = removeComments
 
 	return &normalizer
 }
@@ -39,19 +43,23 @@ func (s *sqlNormalizer) run() (string, string) {
 		if ch := s.read(); ch == eof {
 			break
 		} else if ch == '/' {
-			s.output.WriteRune(ch)
+			// The comment markers are decided before ch is written: under
+			// removeComments the marker itself must not reach the output.
+			// Neither branch touches numberTokenStartEnable, as in Java - a
+			// comment is not a number token boundary either way.
 			if s.lookahead('/') {
-				s.consumeSingleLineComment()
+				s.consumeSingleLineComment(ch)
 			} else if s.lookahead('*') {
-				s.consumeMultiLineComment()
+				s.consumeMultiLineComment(ch)
 			} else {
+				s.output.WriteRune(ch)
 				numberTokenStartEnable = true
 			}
 		} else if ch == '-' {
-			s.output.WriteRune(ch)
 			if s.lookahead('-') {
-				s.consumeSingleLineComment()
+				s.consumeSingleLineComment(ch)
 			} else {
+				s.output.WriteRune(ch)
 				numberTokenStartEnable = true
 			}
 		} else if ch == '\'' {
@@ -89,30 +97,55 @@ func (s *sqlNormalizer) run() (string, string) {
 
 }
 
-func (s *sqlNormalizer) consumeSingleLineComment() {
+// consumeSingleLineComment consumes a // or -- comment. lead is the first
+// character of the marker, already read but not yet written. The terminating
+// newline is part of the comment, as in the Java agent - ParserContext reads it
+// with "\n" as the end token - so removal leaves nothing at all in its place.
+func (s *sqlNormalizer) consumeSingleLineComment(lead rune) {
 	var ch rune
+
+	if s.removeComments {
+		// A statement whose only change is a dropped comment still has to
+		// return the normalized text, not the original (Java's parameter.touch).
+		s.isChanged = true
+	} else {
+		s.output.WriteRune(lead)
+	}
 
 	for {
 		if ch = s.read(); ch == eof {
 			break
 		}
-		s.output.WriteRune(ch)
+		if !s.removeComments {
+			s.output.WriteRune(ch)
+		}
 		if ch == '\n' {
 			break
 		}
 	}
 }
 
-func (s *sqlNormalizer) consumeMultiLineComment() {
+// consumeMultiLineComment consumes a /* */ comment. lead is the '/', already
+// read but not yet written.
+func (s *sqlNormalizer) consumeMultiLineComment(lead rune) {
 	var ch rune
 	prev := eof
-	s.output.WriteRune(s.read()) /* cousume '*' */
+
+	if s.removeComments {
+		s.isChanged = true
+		s.read() /* consume '*' */
+	} else {
+		s.output.WriteRune(lead)
+		s.output.WriteRune(s.read()) /* cousume '*' */
+	}
 
 	for {
 		if ch = s.read(); ch == eof {
 			break
 		}
-		s.output.WriteRune(ch)
+		if !s.removeComments {
+			s.output.WriteRune(ch)
+		}
 		if prev == '*' && ch == '/' {
 			break
 		}

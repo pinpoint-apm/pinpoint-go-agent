@@ -1128,13 +1128,16 @@ func (agent *agent) normalizeSql(sql string) (string, string) {
 	// SQL.CacheLengthLimit applies here as it does to the metadata caches: the
 	// raw text is both key and value, so one statement past the limit pinned
 	// twice its size per entry, which is the memory the limit exists to cap.
+	// SQL.RemoveComments is startup-only, so entries already in the cache stay
+	// consistent with the value read here.
+	removeComments := agent.config.load().sqlRemoveComments
 	if len(sql) > maxSqlSize || !agent.sqlCacheable(sql) {
-		return newSqlNormalizer(sql).run()
+		return newSqlNormalizer(sql, removeComments).run()
 	}
 	if n, ok := agent.rawSqlCache.peek(sql); ok {
 		return n.sql, n.param
 	}
-	nsql, param := newSqlNormalizer(sql).run()
+	nsql, param := newSqlNormalizer(sql, removeComments).run()
 	agent.rawSqlCache.peekOrAdd(sql, normalizedSql{sql: nsql, param: param})
 	return nsql, param
 }

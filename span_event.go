@@ -183,7 +183,7 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	if cfg.sqlEnableRawSqlCache {
 		nsql, param = agent.normalizeSql(sql)
 	} else {
-		nsql, param = newSqlNormalizer(sql).run()
+		nsql, param = newSqlNormalizer(sql, cfg.sqlRemoveComments).run()
 	}
 	// nsql is the whole normalized SQL, as in the Java agent: cacheSql and
 	// cacheSqlUid abbreviate the text they publish, and the UID hashes the
