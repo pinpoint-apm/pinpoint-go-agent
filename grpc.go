@@ -1367,7 +1367,7 @@ func (b *spanMessageBuilder) makePSpan(chunk *spanChunk) *pb.PSpanMessage {
 	pspan.ApiId = span.apiId
 	pspan.Flag = int32(span.flags)
 	pspan.SpanEvent = b.makePSpanEventList(chunk)
-	pspan.Err = int32(span.err)
+	pspan.Err = span.err.Load()
 	pspan.ApplicationServiceType = span.agent.appType
 	pspan.LoggingTransactionInfo = span.loggingInfo
 

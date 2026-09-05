@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -241,7 +242,7 @@ func Test_spanEvent_SetSQLCountMarksFailedSpan(t *testing.T) {
 		sql       string
 		queries   int
 		finished  bool
-		wantErr   int
+		wantErr   int32
 		wantCount int32
 	}{
 		{"disabled", 0, "SELECT 1", 5, false, 0, 0},
@@ -265,7 +266,7 @@ func Test_spanEvent_SetSQLCountMarksFailedSpan(t *testing.T) {
 				newSpanEvent(sp, "query").SetSQL(tt.sql, "")
 			}
 
-			assert.Equal(t, tt.wantErr, sp.err, "span err")
+			assert.Equal(t, tt.wantErr, sp.err.Load(), "span err")
 			assert.Equal(t, tt.wantCount, sp.sqlCount.Load(), "sqlCount")
 		})
 	}
@@ -282,7 +283,7 @@ func Test_spanEvent_SetSQLCountSkipsFailedSpan(t *testing.T) {
 	assert.Equal(t, int32(1), sp.sqlCount.Load(), "sqlCount")
 
 	newSpanEvent(sp, "query").SetError(errors.New("TEST_ERROR"))
-	require.Equal(t, 1, sp.err, "span err")
+	require.Equal(t, int32(1), sp.err.Load(), "span err")
 
 	for i := 0; i < 5; i++ {
 		newSpanEvent(sp, "query").SetSQL("SELECT 1", "")
@@ -299,18 +300,18 @@ func Test_spanEvent_SetSQLCountReloadsDynamically(t *testing.T) {
 
 	pinned := defaultSpan(agent)
 	newSpanEvent(pinned, "query").SetSQL("SELECT 1", "")
-	require.Equal(t, 0, pinned.err, "span err below the limit")
+	require.Equal(t, int32(0), pinned.err.Load(), "span err below the limit")
 
 	cfg.Set(CfgSQLErrorCount, 0)
 
 	newSpanEvent(pinned, "query").SetSQL("SELECT 1", "")
-	assert.Equal(t, 1, pinned.err, "a live span must keep its pinned limit")
+	assert.Equal(t, int32(1), pinned.err.Load(), "a live span must keep its pinned limit")
 
 	reloaded := defaultSpan(agent)
 	for i := 0; i < 5; i++ {
 		newSpanEvent(reloaded, "query").SetSQL("SELECT 1", "")
 	}
-	assert.Equal(t, 0, reloaded.err, "span err after the count was disabled")
+	assert.Equal(t, int32(0), reloaded.err.Load(), "span err after the count was disabled")
 	assert.Equal(t, int32(0), reloaded.sqlCount.Load(), "sqlCount")
 }
 
@@ -390,7 +391,7 @@ func Test_spanEvent_SetErrorRateLimitsExceptionChain(t *testing.T) {
 			se := newSpanEvent(span, "query")
 			se.SetError(errors.New(tt.name))
 
-			assert.Equal(t, 1, span.err, "span failure marking")
+			assert.Equal(t, int32(1), span.err.Load(), "span failure marking")
 			if tt.sampled {
 				assert.NotZero(t, se.exceptionId, "exceptionId")
 				require.Len(t, se.annotations.values, 1)
@@ -415,8 +416,8 @@ func Test_spanEvent_SetErrorFailsTransaction(t *testing.T) {
 	span.NewSpanEvent("query")
 	span.SpanEvent().SetError(errors.New("db error"))
 	span.EndSpanEvent()
-	assert.Equal(t, 1, span.err)
-	assert.Equal(t, 0, span.statusErr, "statusErr stays reserved for SetFailure")
+	assert.Equal(t, int32(1), span.err.Load())
+	assert.Equal(t, int32(0), span.statusErr.Load(), "statusErr stays reserved for SetFailure")
 
 	span.EndSpan()
 
@@ -480,15 +481,52 @@ func Test_SetError_IgnoreErrors(t *testing.T) {
 			}
 			assert.Equal(t, int32(1), se.errorFuncId, "errorFuncId")
 			assert.Equal(t, tt.err.Error(), se.errorString, "errorString")
-			assert.Equal(t, !tt.ignored, span.err == 1, "span.err from event")
+			assert.Equal(t, !tt.ignored, span.err.Load() == 1, "span.err from event")
 
 			// span.SetError records under the error type name.
 			if tt.errName == "" {
 				span = testSpanWithConfig(newConfig(tt.rules...))
 				span.SetError(tt.err)
 				assert.Equal(t, tt.err.Error(), span.errorString, "span.errorString")
-				assert.Equal(t, !tt.ignored, span.err == 1, "span.err")
+				assert.Equal(t, !tt.ignored, span.err.Load() == 1, "span.err")
 			}
 		})
 	}
+}
+
+// Run under -race: a plugin marks the span failed from another goroutine of the
+// call stack while the sender serializes a chunk the event buffer already
+// flushed - the write path this file's setters share with span.err.
+func TestSpanEvent_ErrSetterConcurrentWithSenderIsRaceFree(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgSQLErrorCount, 1)
+	span := testSpanWithConfig(cfg)
+
+	span.NewSpanEvent("event")
+	span.EndSpanEvent()
+	span.spanEventLock.Lock()
+	chunk := span.newEventChunk(false) // what an event buffer overflow flushes
+	span.spanEventLock.Unlock()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			span.NewSpanEvent("query")
+			span.SpanEvent().SetSQL("SELECT 1", "")
+			span.SpanEvent().SetError(errors.New("late"))
+			span.EndSpanEvent()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		b := &spanMessageBuilder{}
+		for i := 0; i < 100; i++ {
+			b.makePSpan(chunk)
+		}
+	}()
+	wg.Wait()
+
+	assert.Equal(t, int32(1), span.err.Load(), "span marked failed")
 }

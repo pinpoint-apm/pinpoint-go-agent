@@ -161,12 +161,12 @@ func Test_spanStatusErrIsSetOnlyBySetFailure(t *testing.T) {
 	span := defaultSpan(newTestAgent(defaultConfig()))
 
 	span.SetError(errors.New("application error"))
-	assert.Equal(t, 1, span.err)
-	assert.Equal(t, 0, span.statusErr)
+	assert.Equal(t, int32(1), span.err.Load())
+	assert.Equal(t, int32(0), span.statusErr.Load())
 
 	span.SetFailure()
-	assert.Equal(t, 1, span.err)
-	assert.Equal(t, 1, span.statusErr)
+	assert.Equal(t, int32(1), span.err.Load())
+	assert.Equal(t, int32(1), span.statusErr.Load())
 }
 
 type urlStatSample struct {

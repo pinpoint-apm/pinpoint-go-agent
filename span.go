@@ -69,12 +69,14 @@ type span struct {
 	spanEvents    []*spanEvent
 	spanEventLock sync.Mutex
 
-	startTime       time.Time
-	elapsed         int64
-	operationName   string
-	flags           int
-	err             int
-	statusErr       int
+	startTime     time.Time
+	elapsed       int64
+	operationName string
+	flags         int
+	// err/statusErr are atomic for the reason above: an event setter run from
+	// another goroutine of the call stack races the sender reading them.
+	err             atomic.Int32
+	statusErr       atomic.Int32
 	errorFuncId     int32
 	errorString     string
 	recovered       atomic.Bool
@@ -182,7 +184,7 @@ func (span *span) EndSpan() {
 
 	if span.urlStat != nil {
 		// Failed on an error status or on any recorded error (Java: status = errorCode == 0).
-		span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed, statusErr: span.statusErr | span.err})
+		span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed, statusErr: int(span.statusErr.Load() | span.err.Load())})
 	}
 }
 
@@ -581,13 +583,13 @@ func (span *span) SetError(e error, errorName ...string) {
 	// Java IgnoreErrorHandler: a matched error keeps its exception info but
 	// does not fail the span.
 	if !span.cfg.ignoreError(e, errName) {
-		span.err = 1
+		span.err.Store(1)
 	}
 }
 
 func (span *span) SetFailure() {
-	span.err = 1
-	span.statusErr = 1
+	span.err.Store(1)
+	span.statusErr.Store(1)
 }
 
 func (span *span) SetServiceType(typ int32) {
@@ -643,7 +645,7 @@ func (span *span) JsonString() []byte {
 	m["RpcName"] = span.rpcName
 	m["EndPoint"] = span.endPoint
 	m["RemoteAddr"] = span.remoteAddr
-	m["Err"] = span.err
+	m["Err"] = span.err.Load()
 	m["Annotations"] = span.annotations.getList()
 	b, _ := json.Marshal(m)
 	return b

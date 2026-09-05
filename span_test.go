@@ -914,7 +914,7 @@ func TestSpan_SetErrorAfterEndSpanIsNoop(t *testing.T) {
 	span.EndSpan()
 	span.SetError(fmt.Errorf("late"))
 
-	assert.Equal(t, 0, span.err, "err")
+	assert.Equal(t, int32(0), span.err.Load(), "err")
 	assert.Equal(t, "", span.errorString, "errorString")
 }
 
