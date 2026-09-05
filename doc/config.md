@@ -497,7 +497,7 @@ Span.QueueSize option sets the size of agent's span queue for gRPC.
 * WithSpanQueueSize()
 * type: int
 * default: 1024
-* range: 1 ~ 65536 (out-of-range values are clamped to the nearest bound with a warning log)
+* range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
 
 ### Span.Batch.Enable
 Span.Batch.Enable option enables SendSpanBatch unary requests instead of the long-lived SendSpan stream.
@@ -584,7 +584,7 @@ Stat.CollectInterval option sets the statistics collection cycle for the agent.
 * type: int
 * default: 5000
 * unit: milliseconds
-* range: 1000 ~ 60000 (out-of-range values are clamped to the nearest bound with a warning log)
+* range: 1000 ~ 60000 (an out-of-range value falls back to the default with a warning log)
 
 ### Stat.BatchCount
 Stat.BatchCount option sets batch delivery units for collected statistics.
@@ -594,7 +594,7 @@ Stat.BatchCount option sets batch delivery units for collected statistics.
 * WithStatBatchCount()
 * type: int
 * default: 6
-* range: 1 ~ 100 (out-of-range values are clamped to the nearest bound with a warning log)
+* range: 1 ~ 100 (an out-of-range value falls back to the default with a warning log)
 
 ### SQL.TraceBindValue
 SQL.TraceBindValue option enables bind value tracing for SQL Driver.
@@ -1030,7 +1030,7 @@ carrying the cumulative number of dropped records.
 * WithHttpUrlStatQueueSize()
 * type: int
 * default: 1024
-* range: 1 ~ 65536 (out-of-range values are clamped to the nearest bound with a warning log)
+* range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
 
 ### Http.UrlStat.WithMethod
 Http.UrlStat.WithMethod option adds http method as prefix to url string key.

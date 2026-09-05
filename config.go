@@ -791,16 +791,17 @@ var samplingOpts = []string{
 	CfgSamplingNewThroughput, CfgSamplingContinueThroughput,
 }
 
-// clampInt clamps the staged value of an int key into [min, max], logging a
-// warning when the configured value was out of range.
-func (config *Config) clampInt(name string, min, max int) {
+// defaultIfOutOfRange restores the key's registered default when the staged
+// value falls outside [min, max], logging a warning. Recovering with the
+// default is what the Java and C++ agents do; clamping to the nearest bound
+// would turn a typo like Span.QueueSize: 0 into a queue of 1 and drop
+// virtually every span.
+func (config *Config) defaultIfOutOfRange(name string, min, max int) {
 	v := config.stagedInt(name)
-	if v < min {
-		Log("config").Warnf("%s = %d is out of range [%d, %d], using %d", name, v, min, max, min)
-		config.cfgMap[name].value = min
-	} else if v > max {
-		Log("config").Warnf("%s = %d is out of range [%d, %d], using %d", name, v, min, max, max)
-		config.cfgMap[name].value = max
+	if v < min || v > max {
+		def := config.cfgMap[name].defaultValue
+		Log("config").Warnf("%s = %d is out of range [%d, %d], using default %v", name, v, min, max, def)
+		config.cfgMap[name].value = def
 	}
 }
 
@@ -833,17 +834,17 @@ func (config *Config) publish() {
 		config.cfgMap[CfgSpanEventChunkSize].value = defaultEventChunkSize
 	}
 
-	// These non-dynamic keys are clamped here, not in NewConfig, because the
-	// exported Set() also republishes: a non-positive Stat.CollectInterval
+	// These non-dynamic keys are range checked here, not in NewConfig, because
+	// the exported Set() also republishes: a non-positive Stat.CollectInterval
 	// panics time.NewTicker and a non-positive Stat.BatchCount panics the stat
 	// worker's batch indexing, killing the host process. The upper bounds stop
-	// a typo (queue 1e9) from allocating a huge channel buffer or stalling
-	// the stat collector; like the C++ agent, out-of-range values are clamped
-	// to the nearest bound.
-	config.clampInt(CfgSpanQueueSize, 1, maxQueueSize)
-	config.clampInt(CfgHttpUrlStatQueueSize, 1, maxQueueSize)
-	config.clampInt(CfgStatCollectInterval, minStatCollectInterval, maxStatCollectInterval)
-	config.clampInt(CfgStatBatchCount, 1, maxStatBatchCount)
+	// a typo (queue 1e9) from allocating a huge channel buffer or stalling the
+	// stat collector. An out-of-range value falls back to the default, the same
+	// recovery the Java and C++ agents perform.
+	config.defaultIfOutOfRange(CfgSpanQueueSize, 1, maxQueueSize)
+	config.defaultIfOutOfRange(CfgHttpUrlStatQueueSize, 1, maxQueueSize)
+	config.defaultIfOutOfRange(CfgStatCollectInterval, minStatCollectInterval, maxStatCollectInterval)
+	config.defaultIfOutOfRange(CfgStatBatchCount, 1, maxStatBatchCount)
 	if config.stagedInt(CfgSpanBatchSize) < 1 {
 		config.cfgMap[CfgSpanBatchSize].value = defaultSpanBatchSize
 	}

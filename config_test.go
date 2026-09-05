@@ -366,7 +366,7 @@ func TestNewConfig_ConfigFileProp(t *testing.T) {
 			assert.Equal(t, 5.5, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
 			assert.Equal(t, 50, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
 			assert.Equal(t, 60, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
-			assert.Equal(t, 1, c.Int(CfgSpanQueueSize), CfgSpanQueueSize) // span.queueSize=-1 clamped to the lower bound
+			assert.Equal(t, defaultQueueSize, c.Int(CfgSpanQueueSize), CfgSpanQueueSize) // span.queueSize=-1 falls back to the default
 			assert.Equal(t, 20, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
 			assert.Equal(t, 2, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
 			assert.Equal(t, 4, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
@@ -826,25 +826,27 @@ func TestNewConfig_HttpUrlStatQueueSizeIsIndependentOfSpanQueueSize(t *testing.T
 	assert.Equal(t, defaultQueueSize, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
 }
 
-// Out-of-range queue sizes and stat settings are clamped to the nearest bound
-// (C++ agent behavior) with a warning. Unclamped, a non-positive value panics
-// the stat worker (time.NewTicker(0), zero-length batch indexing) and a huge
-// one allocates a giant channel buffer or stalls the stat collector.
-func TestNewConfig_ClampQueueSizeAndStatOptions(t *testing.T) {
+// Out-of-range queue sizes and stat settings fall back to the default (Java and
+// C++ agent behavior) with a warning. Left as configured, a non-positive value
+// panics the stat worker (time.NewTicker(0), zero-length batch indexing) and a
+// huge one allocates a giant channel buffer or stalls the stat collector.
+func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
 	tests := []struct {
 		name  string
 		value int
 		want  int
 	}{
-		{CfgSpanQueueSize, 0, 1},
-		{CfgSpanQueueSize, 1e9, maxQueueSize},
-		{CfgHttpUrlStatQueueSize, -1, 1},
-		{CfgHttpUrlStatQueueSize, maxQueueSize + 1, maxQueueSize},
-		{CfgStatCollectInterval, 0, minStatCollectInterval},
-		{CfgStatCollectInterval, 999, minStatCollectInterval},
-		{CfgStatCollectInterval, 60001, maxStatCollectInterval},
-		{CfgStatBatchCount, -1, 1},
-		{CfgStatBatchCount, 101, maxStatBatchCount},
+		{CfgSpanQueueSize, 0, defaultQueueSize},
+		{CfgSpanQueueSize, -1, defaultQueueSize},
+		{CfgSpanQueueSize, 1e9, defaultQueueSize},
+		{CfgHttpUrlStatQueueSize, -1, defaultQueueSize},
+		{CfgHttpUrlStatQueueSize, maxQueueSize + 1, defaultQueueSize},
+		{CfgStatCollectInterval, 0, 5000},
+		{CfgStatCollectInterval, 100, 5000},
+		{CfgStatCollectInterval, 999, 5000},
+		{CfgStatCollectInterval, 60001, 5000},
+		{CfgStatBatchCount, -1, 6},
+		{CfgStatBatchCount, 101, 6},
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%s=%d", tt.name, tt.value), func(t *testing.T) {
