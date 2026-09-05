@@ -188,6 +188,11 @@ const (
 	// maxErrorMessageSize matches the Java agent, which abbreviates exception
 	// messages to 256 chars before recording them on a span or span event.
 	maxErrorMessageSize = 256
+	// maxExceptionMessageSize bounds the message of one exception metadata
+	// entry, matching the Java agent's profiler.exceptiontrace.errormessage.max
+	// default. A cause chain carries one message per link, and a driver error
+	// quoting a whole statement is easily megabytes on its own.
+	maxExceptionMessageSize = 2048
 )
 
 // globalAgent is an atomic.Value rather than a plain interface variable:

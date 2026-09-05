@@ -818,6 +818,23 @@ This corresponds to the Java agent's `profiler.exceptiontrace.new.throughput`.
 * default: 1000
 * dynamic
 
+### Error.MaxChainDepth
+Error.MaxChainDepth option sets how many links of an error's cause chain are recorded,
+the error itself included. `Cause()` and `Unwrap()` are followed link by link until the
+limit is reached; the links beyond it are not sent as exception metadata.
+
+The chain comes from an arbitrary user error implementation, so the walk is bounded at 64
+links whatever this option asks for: 0 or less, and anything above 64, mean that ceiling.
+Java's `profiler.exceptiontrace.max.depth` corresponds, but defaults to 5.
+
+* --pinpoint-error-maxchaindepth
+* PINPOINT_GO_ERROR_MAXCHAINDEPTH
+* WithErrorMaxChainDepth()
+* type: int
+* default: 64
+* max: 64
+* dynamic
+
 ### Error.IgnoreErrors
 Error.IgnoreErrors option lists errors that are recorded as exception info (error function id and message)
 but do not mark the span as failed (`err` stays 0, and the URL statistics count the request as a success).
@@ -1065,7 +1082,7 @@ Two things make a reload not happen, and both are easy to miss:
 | Span limits | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence` |
 | SQL | `SQL.TraceBindValue`, `SQL.MaxBindValueSize`, `SQL.TraceCommit`, `SQL.TraceRollback`, `SQL.TraceQueryStat`, `SQL.EnableRawSqlCache`, `SQL.CacheLengthLimit`, `SQL.ErrorCount` |
 | Logging | `Log.Level`, `Log.Output`, `Log.MaxSize` |
-| Errors | `Error.TraceCallStack`, `Error.CallStackDepth`, `Error.NewThroughput`, `Error.IgnoreErrors` |
+| Errors | `Error.TraceCallStack`, `Error.CallStackDepth`, `Error.NewThroughput`, `Error.MaxChainDepth`, `Error.IgnoreErrors` |
 | HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError` |
 | HTTP client | `Http.Client.RecordRequestHeader`, `Http.Client.RecordResponseHeader`, `Http.Client.RecordRequestCookie` |
 | URL statistics | `Http.UrlStat.Enable`, `Http.UrlStat.LimitSize`, `Http.UrlStat.WithMethod` |

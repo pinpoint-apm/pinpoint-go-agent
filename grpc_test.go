@@ -1070,6 +1070,17 @@ func Test_makePException_EmptyCallstack(t *testing.T) {
 	assert.Empty(t, p.StackTraceElement)
 }
 
+// One link of a cause chain can carry a whole SQL statement. The message is
+// abbreviated the way the span's own error string is, so a deep chain of
+// driver errors cannot grow the metadata message without bound.
+func Test_makePException_AbbreviatesMessage(t *testing.T) {
+	msg := strings.Repeat("e", 3*1024)
+	p := makePException(&exception{
+		callstack: &errorWithCallStack{err: errors.New(msg), errorTime: time.Now()},
+	})
+	assert.Equal(t, strings.Repeat("e", maxExceptionMessageSize)+"...(3072)", p.ExceptionMessage)
+}
+
 // --- metadata ---------------------------------------------------------------
 
 // newMockMetaAgentGrpc wires an agent to a metadata client that accepts every

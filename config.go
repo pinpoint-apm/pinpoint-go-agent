@@ -95,6 +95,7 @@ const (
 	CfgErrorCallStackDepth            = "Error.CallStackDepth"
 	CfgErrorIgnoreErrors              = "Error.IgnoreErrors"
 	CfgErrorNewThroughput             = "Error.NewThroughput"
+	CfgErrorMaxChainDepth             = "Error.MaxChainDepth"
 	CfgUIDVersion                     = "Uid.Version"
 	CfgServiceName                    = "ServiceName"
 	CfgApiKey                         = "ApiKey"
@@ -106,6 +107,10 @@ const (
 	samplingTypePercent = "PERCENT"
 
 	defaultErrorCallStackDepth = 32
+	// defaultErrorMaxChainDepth keeps the walk the agent has always done. Java
+	// stops at 5 (profiler.exceptiontrace.max.depth); lowering this would drop
+	// links applications already see, so it stays a knob, not a new default.
+	defaultErrorMaxChainDepth = maxCauserDepth
 	// New exception chains a second, like the Java agent's
 	// profiler.exceptiontrace.new.throughput default.
 	defaultErrorNewThroughput = 1000
@@ -233,6 +238,7 @@ func initConfig() {
 	AddConfig(CfgErrorCallStackDepth, CfgInt, defaultErrorCallStackDepth, true)
 	AddConfig(CfgErrorIgnoreErrors, CfgStringSlice, []string{}, true)
 	AddConfig(CfgErrorNewThroughput, CfgInt, defaultErrorNewThroughput, true)
+	AddConfig(CfgErrorMaxChainDepth, CfgInt, defaultErrorMaxChainDepth, true)
 	AddConfig(CfgUIDVersion, CfgString, "v3", false)
 	AddConfig(CfgServiceName, CfgString, "", false)
 	AddConfig(CfgApiKey, CfgString, "", false)
@@ -325,6 +331,7 @@ type configSnapshot struct {
 	errorTraceCallStack  bool              // CfgErrorTraceCallStack
 	errorCallStackDepth  int               // CfgErrorCallStackDepth
 	errorIgnoreRules     []ignoreErrorRule // CfgErrorIgnoreErrors
+	errorMaxChainDepth   int               // CfgErrorMaxChainDepth
 }
 
 // ignoreErrorRule is one parsed Error.IgnoreErrors entry, "<type>:<message>";
@@ -901,6 +908,15 @@ func (config *Config) publish() {
 	}
 	config.cfgMap[CfgErrorCallStackDepth].value = errorDepth
 
+	// 0 or less is Java's "unlimited", which here is the cycle ceiling: the
+	// cause walk runs on a request goroutine over an arbitrary user Cause()
+	// implementation and must stay bounded whatever the config asks for.
+	chainDepth := config.stagedInt(CfgErrorMaxChainDepth)
+	if chainDepth < 1 || chainDepth > maxCauserDepth {
+		chainDepth = defaultErrorMaxChainDepth
+	}
+	config.cfgMap[CfgErrorMaxChainDepth].value = chainDepth
+
 	values := make(map[string]interface{}, len(config.cfgMap))
 	for k, v := range config.cfgMap {
 		values[k] = v.value
@@ -926,6 +942,7 @@ func (config *Config) publish() {
 		errorTraceCallStack:  cast.ToBool(values[CfgErrorTraceCallStack]),
 		errorCallStackDepth:  cast.ToInt(values[CfgErrorCallStackDepth]),
 		errorIgnoreRules:     parseIgnoreErrorRules(cast.ToStringSlice(values[CfgErrorIgnoreErrors])),
+		errorMaxChainDepth:   cast.ToInt(values[CfgErrorMaxChainDepth]),
 	}
 	snapshot.sampler = newTraceSampler(config.load(), values)
 	snapshot.newExceptionLimiter = newExceptionLimiter(config.load(), values)
@@ -1588,6 +1605,15 @@ func WithErrorIgnoreErrors(rules ...string) ConfigOption {
 func WithErrorCallStackDepth(depth int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgErrorCallStackDepth].value = depth
+	}
+}
+
+// WithErrorMaxChainDepth sets how many links of an error's cause chain are
+// recorded, the error itself included. 0 or less, and anything above 64, mean
+// the 64-link ceiling.
+func WithErrorMaxChainDepth(depth int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgErrorMaxChainDepth].value = depth
 	}
 }
 

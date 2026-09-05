@@ -800,7 +800,7 @@ func makePException(e *exception) *pb.PException {
 	frames := e.callstack.stackTrace()
 	return &pb.PException{
 		ExceptionClassName: e.className,
-		ExceptionMessage:   e.callstack.err.Error(),
+		ExceptionMessage:   abbreviateString(e.callstack.err.Error(), maxExceptionMessageSize),
 		StartTime:          e.callstack.errorTime.UnixNano() / int64(time.Millisecond),
 		ExceptionId:        e.exceptionId,
 		ExceptionDepth:     e.depth,

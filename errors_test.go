@@ -198,6 +198,64 @@ func TestSpan_TraceCallStackContinuesChainWhenLimiterExhausted(t *testing.T) {
 
 	assert.Equal(t, eid, span.traceCallStack(outer, "", 32, time.Now()), "same error")
 	assert.Equal(t, eid, span.traceCallStack(fmt.Errorf("again: %w", inner), "", 32, time.Now()), "recorded cause")
+
+	require.Len(t, span.errorChains, 3, "error, its cause and the joined wrapper")
+	assert.ElementsMatch(t, []int32{0, 1, 2}, chainDepths(span), "unique depth per entry")
+}
+
+func chainDepths(span *span) []int32 {
+	depths := make([]int32, 0, len(span.errorChains))
+	for _, ec := range span.errorChains {
+		depths = append(depths, ec.depth)
+	}
+	return depths
+}
+
+// An error recorded after one of its causes joins that chain, and the chain is
+// renumbered so the outermost error is depth 0 - the numbering it would have
+// got had it been recorded first. Two entries at depth 0 leave the collector
+// no way to order the chain.
+func TestSpan_TraceCallStackRenumbersJoinedChain(t *testing.T) {
+	span := defaultSpan(newTestAgent(defaultConfig()))
+
+	// An inner span event fails first, then an outer one fails with the error
+	// wrapped twice on the way out.
+	inner := errors.New("inner")
+	eid := span.traceCallStack(inner, "", 32, time.Now())
+	require.Len(t, span.errorChains, 1)
+
+	mid := fmt.Errorf("mid: %w", inner)
+	outer := fmt.Errorf("outer: %w", mid)
+	assert.Equal(t, eid, span.traceCallStack(outer, "", 32, time.Now()), "joined chain id")
+
+	require.Len(t, span.errorChains, 3)
+	assert.Equal(t, []int32{2, 0, 1}, chainDepths(span), "outermost error at depth 0")
+	assert.Same(t, inner, span.errorChains[0].callstack.err, "depth 2")
+	assert.Same(t, outer, span.errorChains[1].callstack.err, "depth 0")
+	assert.Same(t, mid, span.errorChains[2].callstack.err, "depth 1")
+}
+
+// Error.MaxChainDepth counts the links recorded, the error itself included.
+func TestSpan_TraceCallStackMaxChainDepth(t *testing.T) {
+	for _, depth := range []int{1, 3, 0} {
+		t.Run(fmt.Sprintf("depth %d", depth), func(t *testing.T) {
+			cfg := defaultConfig()
+			cfg.Set(CfgErrorMaxChainDepth, depth)
+			span := testSpanWithConfig(cfg)
+
+			err := error(errors.New("root"))
+			for i := 0; i < 8; i++ {
+				err = fmt.Errorf("wrap %d: %w", i, err)
+			}
+			span.traceCallStack(err, "", 32, time.Now())
+
+			want := depth
+			if depth < 1 {
+				want = 9 // 0 is unlimited: every link of this chain
+			}
+			assert.Len(t, span.errorChains, want, "links recorded")
+		})
+	}
 }
 
 func Test_splitName_NoDot(t *testing.T) {

@@ -129,10 +129,11 @@ func (span *span) findError(err error) *exception {
 	return nil
 }
 
-// maxCauserDepth bounds how far the Cause() chain of a user error is walked.
-// The chain comes from an arbitrary user implementation: one whose Cause()
-// returns the error itself, or cycles back to an ancestor, would otherwise
-// hang the request goroutine inside SetError.
+// maxCauserDepth is the hard ceiling on how far the Cause() chain of a user
+// error is walked, whatever Error.MaxChainDepth asks for. The chain comes from
+// an arbitrary user implementation: one whose Cause() returns the error
+// itself, or cycles back to an ancestor, would otherwise hang the request
+// goroutine inside SetError.
 const maxCauserDepth = 64
 
 // noExceptionChainId is returned instead of a chain id when the rate limiter
@@ -146,7 +147,7 @@ func (span *span) getExceptionChainId(err error) (int64, bool) {
 		return ec.exceptionId, false
 	}
 
-	for e, depth := err, 0; e != nil && depth < maxCauserDepth; depth++ {
+	for e, depth := err, 0; e != nil && depth < span.cfg.errorMaxChainDepth; depth++ {
 		e = nextCause(e)
 		if ec := span.findError(e); ec != nil {
 			return ec.exceptionId, true
@@ -169,7 +170,7 @@ func (span *span) getExceptionChainId(err error) (int64, bool) {
 // walk: its own chain is on the wire already.
 func (span *span) addCauserCallStack(err error, eid int64, errorTime time.Time) {
 	e := err
-	for depth := 1; depth < maxCauserDepth; depth++ {
+	for depth := 1; depth < span.cfg.errorMaxChainDepth; depth++ {
 		if e = nextCause(e); e == nil {
 			break
 		}
@@ -211,6 +212,7 @@ func (span *span) traceCallStack(err error, className string, depth int, errorTi
 			className = errorTypeName(err)
 		}
 
+		existing := len(span.errorChains)
 		span.errorChains = append(span.errorChains, &exception{
 			callstack: &errorWithCallStack{
 				err:       err,
@@ -221,6 +223,20 @@ func (span *span) traceCallStack(err error, className string, depth int, errorTi
 			className:   className,
 		})
 		span.addCauserCallStack(err, eid, errorTime)
+
+		// getExceptionChainId hands back an existing id when err is a new
+		// wrapper around a cause already on this chain. Those entries are now
+		// below the links just appended, so they shift down by that many: the
+		// outermost error keeps depth 0, as Java's ExceptionWrapperFactory
+		// numbers a chain it wraps, and no two entries share a depth - a
+		// second depth 0 leaves the collector no way to order the chain.
+		// A genuinely new id matches nothing here, so the loop is a no-op.
+		added := int32(len(span.errorChains) - existing)
+		for _, ec := range span.errorChains[:existing] {
+			if ec.exceptionId == eid {
+				ec.depth += added
+			}
+		}
 	}
 	return eid
 }
