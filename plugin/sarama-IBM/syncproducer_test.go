@@ -21,34 +21,38 @@ var pinpointHeaders = []string{
 	pinpoint.HeaderParentApplicationName,
 }
 
-// A re-sent message must carry exactly one set of pinpoint headers, and only
-// this injection's. Leftovers from the previous send are removed rather than
-// overwritten: Inject writes no header for a value it does not have, so an
-// overwrite would leave the stale one behind (here Pinpoint-Host, whose event
-// recorded no destination) to be read as this send's own.
-func Test_newProducerHeaderWriter_DropsHeadersFromAPreviousInjection(t *testing.T) {
+// A message that already carries a Pinpoint context - an outer instrumented
+// layer, or the retry pattern re-sending the message object a previous send
+// injected - is nested, as the http plugin and Java's isNested define it: no
+// span event is recorded and no header is written, so the message keeps
+// exactly the one set of headers it arrived with.
+func Test_newSyncProducerTracer_NestedMessageIsNotTraced(t *testing.T) {
 	msg := &sarama.ProducerMessage{
+		Topic: "topic",
 		Headers: []sarama.RecordHeader{
 			{Key: []byte("x-app"), Value: []byte("keep-me")},
-			{Key: []byte(pinpoint.HeaderTraceId), Value: []byte("stale^1^1")},
+			{Key: []byte(pinpoint.HeaderTraceId), Value: []byte("first^1^1")},
 			{Key: []byte(pinpoint.HeaderHost), Value: []byte("broker-of-the-first-attempt")},
-			{Key: []byte(HeaderAsyncSpanId), Value: []byte("stale^1^1")},
 		},
 	}
+	before := append([]sarama.RecordHeader(nil), msg.Headers...)
 
-	w := newProducerHeaderWriter(msg)
-	w.Set(pinpoint.HeaderTraceId, "fresh^2^2")
+	tracer := newSyncProducerTracer(context.Background(), []string{"broker:9092"}, msg)
+	tracer.EndSpanEvent()
 
-	keys := make([]string, 0, len(msg.Headers))
-	for _, h := range msg.Headers {
-		keys = append(keys, string(h.Key))
+	assert.Equal(t, before, msg.Headers, "a nested message's headers are left untouched")
+	assert.False(t, tracer.IsSampled(), "a nested message gets a noop tracer")
+}
+
+func Test_isNested(t *testing.T) {
+	hdr := func(k string) []sarama.RecordHeader {
+		return []sarama.RecordHeader{{Key: []byte(k), Value: []byte("v")}}
 	}
-	assert.Equal(t, []string{"x-app", pinpoint.HeaderTraceId}, keys,
-		"only the caller's own headers and this injection's survive")
-	assert.Equal(t, "keep-me", w.Get("x-app"), "a non-pinpoint header is untouched")
-	assert.Equal(t, "fresh^2^2", w.Get(pinpoint.HeaderTraceId), "Get finds one match, the fresh one")
-	assert.Empty(t, w.Get(pinpoint.HeaderHost), "a header this injection omits does not survive")
-	assert.Empty(t, w.Get(HeaderAsyncSpanId), "the previous attempt's ack id is gone")
+	assert.False(t, isNested(&sarama.ProducerMessage{}))
+	assert.False(t, isNested(&sarama.ProducerMessage{Headers: hdr("x-app")}))
+	assert.True(t, isNested(&sarama.ProducerMessage{Headers: hdr(pinpoint.HeaderTraceId)}))
+	assert.True(t, isNested(&sarama.ProducerMessage{Headers: hdr(pinpoint.HeaderSampled)}), "an unsampled context is a context too")
+	assert.True(t, isNested(&sarama.ProducerMessage{Headers: hdr(HeaderAsyncSpanId)}), "a previous async injection's ack id")
 }
 
 type stubSyncProducer struct {

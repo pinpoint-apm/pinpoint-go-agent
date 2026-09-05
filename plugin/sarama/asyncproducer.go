@@ -41,8 +41,9 @@ func (p *asyncProducer) InputContext(ctx context.Context, msg *sarama.ProducerMe
 	}
 
 	// A disabled agent traces nothing and injects nothing - not even the
-	// unsampled marker - so the message headers are left untouched.
-	if !pinpoint.GetAgent().Enable() {
+	// unsampled marker - so the message headers are left untouched. A nested
+	// message (isNested) is sent as it is for the same reason.
+	if !pinpoint.GetAgent().Enable() || isNested(msg) {
 		select {
 		case p.inputContext <- msg:
 		case <-p.done:
@@ -267,7 +268,7 @@ func (p *asyncProducer) takeInput() (*sarama.ProducerMessage, bool, bool) {
 // injects nothing, as InputContext. A message the shutdown cancels has its
 // span ended here, and false says the forwarder is done.
 func (p *asyncProducer) forward(msg *sarama.ProducerMessage, traced bool) bool {
-	if !traced && pinpoint.GetAgent().Enable() {
+	if !traced && pinpoint.GetAgent().Enable() && !isNested(msg) {
 		span, id := newAsyncProducerTracer(pinpoint.FromContext(p.ctx), p.addrs, msg, p.config)
 		saveAsyncProducerTracer(p, span, id)
 	}

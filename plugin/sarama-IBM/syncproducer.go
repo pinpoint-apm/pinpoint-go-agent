@@ -1,9 +1,7 @@
 package ppsaramaibm
 
 import (
-	"bytes"
 	"context"
-	"slices"
 
 	"github.com/IBM/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent"
@@ -27,24 +25,24 @@ type distributedTracingContextWriterProducer struct {
 	msg *sarama.ProducerMessage
 }
 
-var pinpointHeaderPrefix = []byte("Pinpoint-")
+// isNested reports whether msg already carries a Pinpoint trace context - an
+// outer instrumented layer, or the retry pattern re-sending the message object
+// a previous send injected. Like the http plugin and Java's
+// DefaultRequestTraceWriter.isNested, the producer then records no span event
+// and writes no header: the context already present travels alone. The async
+// producer's own ack id counts too: it is written by no one but a previous
+// injection of this plugin.
+func isNested(msg *sarama.ProducerMessage) bool {
+	w := distributedTracingContextWriterProducer{msg: msg}
+	return w.Get(pinpoint.HeaderTraceId) != "" || w.Get(pinpoint.HeaderSampled) != "" ||
+		w.Get(HeaderAsyncSpanId) != ""
+}
 
-// newProducerHeaderWriter prepares msg for injection by removing the headers a
-// previous injection left, so Set is a plain append and the header slice is
-// grown once instead of through the append doublings.
-//
-// The retry pattern re-sends the same message object, and the leftovers cannot
-// simply be appended beside: Get returns the first match, so the retry's ack
-// would be looked up under the stale async id - its tracer sitting in the span
-// map until producer shutdown - and the message would grow one full
-// trace-header set per attempt. Overwriting them in place is not enough
-// either, because Inject writes no header for a value it does not have: a
-// stale Pinpoint-Host would then survive as this injection's own, naming a
-// destination this send never contacted.
+// newProducerHeaderWriter prepares msg for injection: the header slice is grown
+// once for the injected set instead of through the append doublings. The
+// caller has already ruled out a nested message (isNested), so Set is a plain
+// append onto headers that carry no Pinpoint context yet.
 func newProducerHeaderWriter(msg *sarama.ProducerMessage) *distributedTracingContextWriterProducer {
-	msg.Headers = slices.DeleteFunc(msg.Headers, func(h sarama.RecordHeader) bool {
-		return bytes.HasPrefix(h.Key, pinpointHeaderPrefix)
-	})
 	const injectedHeaders = 10
 	if cap(msg.Headers)-len(msg.Headers) < injectedHeaders {
 		grown := make([]sarama.RecordHeader, len(msg.Headers), len(msg.Headers)+injectedHeaders)
@@ -134,6 +132,9 @@ func NewSyncProducer(addrs []string, config *sarama.Config) (SyncProducer, error
 }
 
 func newSyncProducerTracer(ctx context.Context, addrs []string, msg *sarama.ProducerMessage) pinpoint.Tracer {
+	if isNested(msg) {
+		return pinpoint.NoopTracer()
+	}
 	tracer := pinpoint.FromContext(ctx)
 
 	tracer.NewSpanEvent("sarama.SyncProducer.SendMessage")

@@ -504,10 +504,11 @@ func Test_asyncProducer_NilConfigStillDeliversMessages(t *testing.T) {
 }
 
 // The standard retry pattern re-sends the very message object taken off
-// Errors(). The second send must replace the pinpoint headers, not append a
-// second set: Get returns the first match, so a stale appended id would make
-// the retry's ack miss the span map and leak its tracer until shutdown.
-func Test_asyncProducer_RetriedMessageReplacesHeaders(t *testing.T) {
+// Errors(), headers and all. It arrives carrying the first attempt's Pinpoint
+// context, so the retry is nested: no span event, no new headers, and the
+// retry's ack matches nothing in the span map, which the first attempt's error
+// ack already cleared.
+func Test_asyncProducer_RetriedMessageIsNested(t *testing.T) {
 	startAgent(t)
 	config := sarama.NewConfig()
 	config.Producer.Return.Successes = true
@@ -523,23 +524,22 @@ func Test_asyncProducer_RetriedMessageReplacesHeaders(t *testing.T) {
 	stub.errors <- &sarama.ProducerError{Msg: msg, Err: sarama.ErrOutOfBrokers}
 	<-p.Errors()
 	waitForClose(t, first.ended, "first attempt's span end")
+	before := append([]sarama.RecordHeader(nil), msg.Headers...)
 
 	retry := newRecordingTracer("id-2")
 	p.InputContext(pinpoint.NewContext(context.Background(), retry), msg)
 	<-stub.input
 
-	ids := 0
-	for _, h := range msg.Headers {
-		if string(h.Key) == HeaderAsyncSpanId {
-			ids++
-			assert.Equal(t, "id-2", string(h.Value), "the header must carry the retry's id")
-		}
-	}
-	require.Equal(t, 1, ids, "the retry appended a second async span id header")
+	assert.Equal(t, before, msg.Headers, "the retry neither appends nor replaces headers")
+	requireSpanCount(t, p, 0)
 
 	stub.successes <- msg
 	<-p.Successes()
-	waitForClose(t, retry.ended, "retry's span end")
+	select {
+	case <-retry.ended:
+		t.Fatal("the retry recorded a span it should not have")
+	default:
+	}
 	requireSpanCount(t, p, 0)
 }
 
