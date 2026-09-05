@@ -303,7 +303,12 @@ nc -vz your-collector-host 9991
 * If the connection cannot even be set up (bad TLS material, unparsable
   address) the agent logs `failed to connect to collector, agent disabled` and
   releases itself, so `GetAgent()` returns the no-op agent and `NewAgent` can be
-  called again after fixing the configuration.
+  called again after fixing the configuration. Releasing itself also hands back
+  the config file watcher and closes whatever collector connections it had
+  already opened, so a retry starts clean. Still call `Shutdown()` on the handle
+  the failed `NewAgent` returned before retrying if you kept it: it is the
+  supported way to finish with an agent, and it is safe here - the teardown runs
+  once and repeats are no-ops.
 * Check the collector's own logs. A version mismatch is rejected there, not
   here: the agent requires Pinpoint 2.4.0+.
 

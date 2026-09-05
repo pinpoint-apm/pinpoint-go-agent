@@ -7,6 +7,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -1421,6 +1422,58 @@ func Test_connectGrpcServer_failureReleasesGlobalAgent(t *testing.T) {
 	a.(*agent).connectWg.Wait()
 	assert.False(t, a.Enable())
 	assert.Equal(t, NoopAgent(), GetAgent(), "a dead agent must not stay global")
+}
+
+// Releasing the global makes Shutdown's identity-guarded Config.Close a no-op,
+// and that Close is the only path that stops the config file watcher - so the
+// release itself has to hand the watcher back, or every failed startup leaks a
+// goroutine and an inotify watch for the life of the process.
+func Test_connectGrpcServer_failureClosesConfigWatcher(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	writeConfigRate(t, path, 1)
+
+	cfg, err := NewConfig(WithAppName("TestApp"), WithConfigFile(path),
+		WithCollectorGrpcSslEnable(true), WithCollectorGrpcTrustCertFilePath("/nonexistent/ca.pem"))
+	require.NoError(t, err)
+	// NewConfig starts the watcher, so the channel is captured before the
+	// connect goroutine can close it - no race with the assertion below.
+	done := requireWatcher(t, cfg)
+
+	a, err := NewAgent(cfg)
+	require.NoError(t, err)
+
+	// Close waits for the watcher goroutine before connectWg is released, so
+	// this needs no settling window.
+	a.(*agent).connectWg.Wait()
+	require.Equal(t, NoopAgent(), GetAgent(), "a dead agent must not stay global")
+	requireWatcherDone(t, done)
+	require.Nil(t, configWatcherDone(cfg), "watcher was not handed back by the release")
+
+	// The user still owns the handle, and Shutdown - twice - must stay safe now
+	// that the watcher is already gone.
+	a.Shutdown()
+	a.Shutdown()
+	requireWatcherDone(t, done)
+}
+
+// closeGrpc runs from two places - the connect failure's release defer and
+// Shutdown - and either may find a partly built set, or run second on the same
+// connections.
+func Test_agent_closeGrpc(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	require.NotPanics(t, agent.closeGrpc, "a connect that failed on the first dial leaves every field nil")
+
+	conns := []*grpc.ClientConn{dialReadyConn(t), dialReadyConn(t), dialReadyConn(t), dialReadyConn(t)}
+	agent.agentGrpc = &agentGrpc{agentConn: conns[0]}
+	agent.spanGrpc = &spanGrpc{spanConn: conns[1]}
+	agent.statGrpc = &statGrpc{statConn: conns[2]}
+	agent.cmdGrpc = &cmdGrpc{cmdConn: conns[3]}
+
+	agent.closeGrpc()
+	agent.closeGrpc() // the release defer closes, then Shutdown closes again
+	for i, conn := range conns {
+		assert.Equal(t, connectivity.Shutdown, conn.GetState(), "connection %d was left open", i)
+	}
 }
 
 // dialReadyConn returns a channel to an empty in-process gRPC server that is

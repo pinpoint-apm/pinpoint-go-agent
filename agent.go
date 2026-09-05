@@ -299,6 +299,27 @@ func NewAgent(config *Config) (Agent, error) {
 	return agent, nil
 }
 
+// closeGrpc closes whatever connections connectGrpcServer managed to create.
+// Both callers reach it only after connectGrpcServer has stopped touching the
+// fields - the release defer runs on that goroutine, and Shutdown gets here
+// past connectWg.Wait - so the reads need no synchronisation. Each close is a
+// grpc.ClientConn.Close, which is idempotent, so the two paths may overlap on
+// the same connection.
+func (agent *agent) closeGrpc() {
+	if agent.agentGrpc != nil {
+		agent.agentGrpc.close()
+	}
+	if agent.spanGrpc != nil {
+		agent.spanGrpc.close()
+	}
+	if agent.statGrpc != nil {
+		agent.statGrpc.close()
+	}
+	if agent.cmdGrpc != nil {
+		agent.cmdGrpc.close()
+	}
+}
+
 func (agent *agent) connectGrpcServer() {
 	var err error
 	defer agent.connectWg.Done()
@@ -313,6 +334,25 @@ func (agent *agent) connectGrpcServer() {
 		Log("agent").Errorf("failed to connect to collector, agent disabled: %v", err)
 		globalAgentLock.Lock()
 		if GetAgent() == Agent(agent) {
+			// Hand the config file watcher back here, before dropping the
+			// global. Shutdown's Close is guarded by the same identity check,
+			// so once this agent is no longer the global that guard fails and
+			// Config.Close - the only path that stops the watcher goroutine -
+			// never runs, leaking the goroutine and its inotify watch for the
+			// life of the process. Closing while still holding the global (and
+			// the lock) is what makes it safe: no NewAgent can have restarted
+			// the watcher on this Config yet, which is exactly the case the
+			// guard in signalShutdown exists to protect. Close is idempotent,
+			// so the user's later Shutdown is a no-op here.
+			if agent.config != nil {
+				agent.config.Close()
+			}
+			// Same reasoning for the collector connections: grpc dials lazily,
+			// so a registration that never finished still holds a live agent
+			// connection, and releasing the global lets the caller drop the
+			// handle without ever calling Shutdown. Free them here rather than
+			// leaking one set per failed NewAgent retry.
+			agent.closeGrpc()
 			setGlobalAgent(NoopAgent())
 		}
 		globalAgentLock.Unlock()
@@ -506,29 +546,13 @@ func (agent *agent) shutdownAgent() {
 	// wait for the grpc connection to be completed
 	agent.connectWg.Wait()
 
-	// Close whatever connections connectGrpcServer managed to create, on every
-	// path: grpc dials lazily, so an agent whose registration never finished
-	// (collector down at boot) still holds a live agent connection, and the
-	// never-enabled early return below would leak it once per failed
-	// NewAgent/Shutdown retry cycle. Deferred so the enabled path keeps its
-	// order - workers drain first, connections close last. shutdownOnce keeps
-	// a concurrent Shutdown from reaching this defer while the drain below is
-	// still running. Reading the fields is safe: connectGrpcServer wrote them
-	// before connectWg.Done.
-	defer func() {
-		if agent.agentGrpc != nil {
-			agent.agentGrpc.close()
-		}
-		if agent.spanGrpc != nil {
-			agent.spanGrpc.close()
-		}
-		if agent.statGrpc != nil {
-			agent.statGrpc.close()
-		}
-		if agent.cmdGrpc != nil {
-			agent.cmdGrpc.close()
-		}
-	}()
+	// Close the collector connections on every path, including the
+	// never-enabled early return below. Deferred so the enabled path keeps its
+	// order - workers drain first, connections close last - and shutdownOnce
+	// keeps a concurrent Shutdown from reaching it while the drain is still
+	// running. A connect failure already closed them from its own release
+	// defer; this is the second, idempotent close.
+	defer agent.closeGrpc()
 
 	// Release the global on every path, before the enable guard below. An agent
 	// whose registration never finished was never enabled, and leaving
