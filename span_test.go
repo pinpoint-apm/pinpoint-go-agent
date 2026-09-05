@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"regexp"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -208,6 +209,17 @@ func Test_splitTransactionId(t *testing.T) {
 		{"abcdefghijklmnopqrstuvwxy^1^2", false, "", 0, 0}, // 25-char agentId
 		{"a^9223372036854775808^0", false, "", 0, 0},       // overflows int64
 		{"a^123456789012345678901^0", false, "", 0, 0},     // 21 digits
+		{"a^+1^2", false, "", 0, 0},                        // Long.parseLong takes '+', we do not
+		// The agent id is re-emitted in outbound Pinpoint-TraceID headers and
+		// reported to the collector, so it is held to the id charset instead
+		// of being echoed as received.
+		{"AZm7kQ2vRtYpLxNc0dHgUw^1^2", true, "AZm7kQ2vRtYpLxNc0dHgUw", 1, 2}, // v4 base64url agent id
+		{"agent.host-1_x^1^2", true, "agent.host-1_x", 1, 2},                 // '.', '-', '_' allowed
+		{"bad agent^1^2", false, "", 0, 0},                                   // space
+		{"bad\r\nagent^1^2", false, "", 0, 0},                                // CRLF: header injection on inject
+		{"bad\x00agent^1^2", false, "", 0, 0},                                // NUL
+		{"agent/../x^1^2", false, "", 0, 0},                                  // '/'
+		{"에이전트^1^2", false, "", 0, 0},                                        // non-ASCII
 	}
 	for _, tt := range tests {
 		t.Run(tt.tid, func(t *testing.T) {
@@ -1021,4 +1033,33 @@ func TestSpan_UnclosedEventsAreEndedAndSent(t *testing.T) {
 	}
 	assert.Equal(t, []int32{0, 1}, seqs, "no sequence hole")
 	assert.Equal(t, 0, span.eventStack.len(), "stack.len()")
+}
+
+// Test_isIDChars pins the byte loop to the regexp it replaced: identical
+// verdicts for every one- and two-byte string, so the character class did not
+// drift when idPattern was dropped.
+func Test_isIDChars(t *testing.T) {
+	re := regexp.MustCompile("^[a-zA-Z0-9._\\-]+$")
+	check := func(s string) {
+		t.Helper()
+		assert.Equal(t, re.MatchString(s), len(s) > 0 && isIDChars(s), "%q", s)
+	}
+	for a := 0; a < 256; a++ {
+		check(string([]byte{byte(a)}))
+		for b := 0; b < 256; b++ {
+			check(string([]byte{byte(a), byte(b)}))
+		}
+	}
+	for _, s := range []string{"", "한글", "é", "a\x00b", "a\r\nb", "ok-id_1.2", "a b", "a^b", "\xff\xfe"} {
+		check(s)
+	}
+}
+
+func BenchmarkValidateID(b *testing.B) {
+	const id = "AZm7kQ2vRtYpLxNc0dHgUw" // v4 agent id shape: base64url of a UUID
+	for i := 0; i < b.N; i++ {
+		if !validateID(id, agentIDMaxLen) {
+			b.Fatal("must validate")
+		}
+	}
 }

@@ -333,20 +333,31 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 	}
 }
 
-const (
-	maxTraceIdAgentIdLength = 24
-	maxTraceIdNumberLength  = 20
-)
+const maxTraceIdNumberLength = 20
 
 // splitTransactionId parses an "agentId^startTime^sequence" trace id header
 // without allocating (no strings.Split slice) and without risking an
-// index-out-of-range panic on a malformed or hostile header. It is as strict
-// as the Java and C++ agents: exactly three fields, agentId of 1..24 bytes,
-// startTime/sequence of 1..20 decimal digits that fit in an int64. ok is false
-// otherwise, and the caller starts a new transaction.
+// index-out-of-range panic on a malformed or hostile header: exactly three
+// fields, an agent id accepted by validateID, and startTime/sequence of 1..20
+// decimal digits that fit in an int64. ok is false otherwise, and the caller
+// starts a new transaction.
+//
+// The agent id is held to the same rule as the agent's own ids rather than
+// taken as-is, because it does not stay inside this process: Inject writes it
+// back out in the Pinpoint-TraceID of every downstream request and it is
+// reported to the collector as PTransactionId.AgentId. An unchecked header
+// value would carry whatever an upstream caller put there - control bytes, a
+// CRLF, an over-long id - into both.
+//
+// Deliberately stricter than Java's Long.parseLong on the numeric fields: a
+// leading '+' or '-' and 21+ digits are rejected rather than parsed or
+// wrapped. No agent emits those (a start time is a millisecond clock and a
+// sequence a counter from 0), and the fallback for a rejected header is a new
+// transaction, which is the safe direction.
 func splitTransactionId(tid string) (agentId string, startTime int64, sequence int64, ok bool) {
 	i := strings.IndexByte(tid, '^')
-	if i < 1 || i > maxTraceIdAgentIdLength {
+	// validateID subsumes the empty (i == 0) and over-long agent id cases.
+	if i < 0 || !validateID(tid[:i], agentIDMaxLen) {
 		return "", 0, 0, false
 	}
 	rest := tid[i+1:]

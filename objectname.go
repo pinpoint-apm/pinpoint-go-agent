@@ -2,7 +2,6 @@ package pinpoint
 
 import (
 	"errors"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -36,9 +35,24 @@ const (
 	protocolVersionV4 = 400
 )
 
-// idPattern is the allowed-character rule for ids: [a-zA-Z0-9], '.', '-', '_'.
-// Identical to Java IdValidateUtils.ID_PATTERN_VALUE.
-var idPattern = regexp.MustCompile("^[a-zA-Z0-9._\\-]+$")
+// isIDChars reports whether every byte of s is an allowed id character:
+// [a-zA-Z0-9], '.', '-', '_'. Same character class as Java
+// IdValidateUtils.ID_PATTERN_VALUE. A byte loop rather than a regexp because
+// splitTransactionId validates the agent id of every inbound trace id header:
+// the equivalent `^[a-zA-Z0-9._\-]+$` match costs ~316ns against ~18ns here
+// (see BenchmarkValidateID). Every allowed character is single-byte ASCII, so
+// any byte of a multi-byte rune fails, as it did under the regexp.
+func isIDChars(s string) bool {
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			c == '.', c == '-', c == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
 
 // validateID reports whether value is a non-empty id within maxLen UTF-8 bytes
 // and contains only allowed characters. Equivalent to IdValidateUtils.validateId.
@@ -46,7 +60,7 @@ func validateID(value string, maxLen int) bool {
 	if len(value) == 0 || len(value) > maxLen {
 		return false
 	}
-	return idPattern.MatchString(value)
+	return isIDChars(value)
 }
 
 // parseNameVersion parses the configured version string (case-insensitive).
