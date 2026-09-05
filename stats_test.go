@@ -185,3 +185,47 @@ func Test_normalizeCpuLoad(t *testing.T) {
 		})
 	}
 }
+
+// The bucket boundaries are inclusive on the upper side and compared in whole
+// milliseconds, matching the Java agent's NORMAL schema (slots 1000/3000/5000,
+// elapsedTime <= slotTime). An exact boundary is the case float seconds got
+// wrong.
+func Test_bucketActiveSpanBoundariesAreInclusiveMilliseconds(t *testing.T) {
+	now := time.Now()
+
+	for _, tc := range []struct {
+		elapsed time.Duration
+		bucket  int
+	}{
+		{0, 0},
+		{999 * time.Millisecond, 0},
+		{1000 * time.Millisecond, 0}, // exactly 1s belongs to the first slot
+		{1001 * time.Millisecond, 1},
+		{3000 * time.Millisecond, 1},
+		{3001 * time.Millisecond, 2},
+		{5000 * time.Millisecond, 2},
+		{5001 * time.Millisecond, 3},
+		{time.Hour, 3},
+	} {
+		counts := []int32{0, 0, 0, 0}
+		bucketActiveSpan(counts, now, now.Add(-tc.elapsed))
+
+		want := []int32{0, 0, 0, 0}
+		want[tc.bucket] = 1
+		assert.Equal(t, want, counts, "%v elapsed belongs in bucket %d", tc.elapsed, tc.bucket)
+	}
+}
+
+// A reading that could not be taken must not look like a measured zero, which
+// the inspector charts as fact.
+func Test_numFDAndNumThreadsReportUncollectedAsMinusOne(t *testing.T) {
+	stats := newAgentStats()
+	stats.proc = nil
+
+	assert.EqualValues(t, uncollectedUsage, stats.numFD())
+	assert.EqualValues(t, uncollectedUsage, stats.numThreads())
+
+	snapshot := stats.getStats()
+	assert.EqualValues(t, uncollectedUsage, snapshot.numOpenFD)
+	assert.EqualValues(t, uncollectedUsage, snapshot.numThreads)
+}

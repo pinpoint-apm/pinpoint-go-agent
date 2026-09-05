@@ -603,6 +603,21 @@ Stat.BatchCount option sets batch delivery units for collected statistics.
 * default: 6
 * range: 1 ~ 100 (an out-of-range value falls back to the default with a warning log)
 
+### Stat.QueueSize
+Stat.QueueSize option sets the size of the agent's stat queue for gRPC.
+This queue buffers the collected agent stat and URL stat messages waiting to be
+sent to the collector; it is independent of Span.QueueSize, which the stat queue
+used to share.
+When the queue is full the oldest message is overwritten, and the agent logs a
+rate-limited warning carrying the cumulative number of dropped messages.
+
+* --pinpoint-stat-queuesize
+* PINPOINT_GO_STAT_QUEUESIZE
+* WithStatQueueSize()
+* type: int
+* default: 1024
+* range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
+
 ### SQL.TraceBindValue
 SQL.TraceBindValue option enables bind value tracing for SQL Driver.
 

@@ -21,6 +21,43 @@ is simply not written yet does not belong here.
 | SQL count per transaction | `DefaultSqlCountService` | **Adopted** — `SQL.ErrorCount` |
 | SQL comment removal | `DefaultSqlNormalizer`, `DefaultJdbcOption` | **Adopted** — `SQL.RemoveComments` |
 | Exception chain rate limiter | `ExceptionChainSampler` | **Adopted** — `Error.NewThroughput` |
+| GC type and counts | `JvmGcType`, `GarbageCollectorMXBean` | **Diverges** — see [below](#gc-type-and-counts--diverges) |
+
+---
+
+## GC type and counts — diverges
+
+**Java.** `PJvmInfo.gcType` in the AgentInfo and `PJvmGc.type` in every agent
+stat both name the collector actually in use (`JvmGcType` is resolved from the
+running `GarbageCollectorMXBean`), and `jvmGcOldCount` / `jvmGcOldTime` are the
+*old generation* bean's `getCollectionCount()` and `getCollectionTime()`.
+
+**Go.** There is no equivalent of any of the three. The runtime GC is a
+concurrent, non-generational mark-sweep, so:
+
+* **Type** is `JVM_GC_TYPE_UNKNOWN` in both messages, matching the C++ agent.
+  Both used to say `JVM_GC_TYPE_CMS`, which was simply false — no consumer
+  renders the stat field today (it is absent from
+  `inspector-definition-for-agent.yml`), but a future one would have read a
+  fabricated collector name, and the AgentInfo copy is what the agent's own
+  detail view would show.
+* **`jvmGcOldCount`** carries `runtime.MemStats.NumGC`, the count of *complete*
+  cycles. Go has no generations, so there is no old-gen subset to report; the
+  number covers everything Java would have split across young and old beans.
+* **`jvmGcOldTime`** carries `runtime.MemStats.PauseTotalNs` in milliseconds,
+  which is stop-the-world time only. Concurrent mark and sweep run alongside
+  the application and are not included, whereas the JVM bean's
+  `getCollectionTime()` counts the whole collection.
+
+Both counters are cumulative since process start, like the JVM beans, and the
+web's `delta` post-processor differentiates them correctly. The consequence is
+only of scale: under comparable load a Go agent's GC time reads far lower than
+a Java agent's, because it is measuring a smaller thing. Compare a Go agent
+against other Go agents, not against a Java one.
+
+**Revisit if** the collector gains a runtime-neutral GC type, or the inspector
+gains a separate concurrent-GC series. Neither would change the numbers, only
+how they are labelled.
 
 ---
 

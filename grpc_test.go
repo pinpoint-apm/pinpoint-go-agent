@@ -1314,7 +1314,7 @@ func Test_agentGrpc_makeAgentInfo(t *testing.T) {
 	assert.Contains(t, meta.GetServiceInfo()[0].GetServiceName(), runtime.GOOS)
 	assert.Contains(t, meta.GetServiceInfo()[0].GetServiceName(), runtime.GOARCH)
 
-	assert.Equal(t, pb.PJvmGcType_JVM_GC_TYPE_CMS, info.GetJvmInfo().GetGcType())
+	assert.Equal(t, pb.PJvmGcType_JVM_GC_TYPE_UNKNOWN, info.GetJvmInfo().GetGcType())
 	assert.Contains(t, info.GetJvmInfo().GetVmVersion(), runtime.Version())
 
 	md, ok := metadata.FromOutgoingContext(ctx)

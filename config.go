@@ -74,6 +74,7 @@ const (
 	CfgSpanMaxCallStackSequence       = "Span.MaxCallStackSequence"
 	CfgStatCollectInterval            = "Stat.CollectInterval"
 	CfgStatBatchCount                 = "Stat.BatchCount"
+	CfgStatQueueSize                  = "Stat.QueueSize"
 	CfgIsContainerEnv                 = "IsContainerEnv"
 	CfgConfigFile                     = "ConfigFile"
 	CfgActiveProfile                  = "ActiveProfile"
@@ -221,6 +222,7 @@ func initConfig() {
 	AddConfig(CfgSpanMaxCallStackSequence, CfgInt, defaultEventSequence, true)
 	AddConfig(CfgStatCollectInterval, CfgInt, 5000, false)
 	AddConfig(CfgStatBatchCount, CfgInt, 6, false)
+	AddConfig(CfgStatQueueSize, CfgInt, defaultQueueSize, false)
 	AddConfig(CfgIsContainerEnv, CfgBool, false, false)
 	AddConfig(CfgConfigFile, CfgString, "", false)
 	AddConfig(CfgActiveProfile, CfgString, "", false)
@@ -891,6 +893,7 @@ func (config *Config) publish() {
 	config.defaultIfOutOfRange(CfgHttpUrlStatQueueSize, 1, maxQueueSize)
 	config.defaultIfOutOfRange(CfgStatCollectInterval, minStatCollectInterval, maxStatCollectInterval)
 	config.defaultIfOutOfRange(CfgStatBatchCount, 1, maxStatBatchCount)
+	config.defaultIfOutOfRange(CfgStatQueueSize, 1, maxQueueSize)
 	if config.stagedInt(CfgSpanBatchSize) < 1 {
 		config.cfgMap[CfgSpanBatchSize].value = defaultSpanBatchSize
 	}
@@ -1600,6 +1603,14 @@ func WithSpanMaxCallStackSequence(seq int) ConfigOption {
 func WithHttpUrlStatEnable(enable bool) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgHttpUrlStatEnable].value = enable
+	}
+}
+
+// WithStatQueueSize sets the size of the queue buffering agent stat messages
+// waiting to be sent to the collector.
+func WithStatQueueSize(size int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgStatQueueSize].value = size
 	}
 }
 

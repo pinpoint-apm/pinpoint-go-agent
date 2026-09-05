@@ -186,22 +186,28 @@ func (r *activeSpanRegistry) remove(spanId int64) {
 	s.mu.Unlock()
 }
 
-// bucketActiveSpan increments the [<1s, <3s, <5s, >=5s] bucket in counts for
+// bucketActiveSpan increments the [<=1s, <=3s, <=5s, >5s] bucket in counts for
 // a span started at startTime.
+//
+// Millisecond integers with an inclusive upper bound, matching the Java agent's
+// NORMAL schema (BaseHistogramSchema: slots 1000/3000/5000ms, compared with
+// elapsedTime <= slotTime). Comparing float seconds put a span at exactly
+// 1000ms in the second bucket, and left the boundary at the mercy of float
+// rounding.
 func bucketActiveSpan(counts []int32, now time.Time, startTime time.Time) {
-	switch d := now.Sub(startTime).Seconds(); {
-	case d < 1:
+	switch d := now.Sub(startTime).Milliseconds(); {
+	case d <= 1000:
 		counts[0]++
-	case d < 3:
+	case d <= 3000:
 		counts[1]++
-	case d < 5:
+	case d <= 5000:
 		counts[2]++
 	default:
 		counts[3]++
 	}
 }
 
-// count buckets active spans by elapsed time: [<1s, <3s, <5s, >=5s].
+// count buckets active spans by elapsed time: [<=1s, <=3s, <=5s, >5s].
 func (r *activeSpanRegistry) count(now time.Time) []int32 {
 	count := []int32{0, 0, 0, 0}
 	for i := range r.shards {
@@ -227,20 +233,29 @@ type statsCounterSnapshot struct {
 	skipCont        int64
 }
 
+// uncollectedUsage is what numFD and numThreads report when the reading is
+// unavailable - no process handle, or a failed read. Zero is a plausible
+// measurement the inspector charts as fact, so it cannot mean "unknown"; -1 is
+// the Java agent's UNCOLLECTED_USAGE (FileDescriptorMetric) and the sentinel
+// the C++ agent sends for both fields.
+const uncollectedUsage = -1
+
 func (stats *agentStats) numFD() int32 {
 	if stats.proc != nil {
-		n, _ := stats.proc.NumFDs()
-		return n
+		if n, err := stats.proc.NumFDs(); err == nil {
+			return n
+		}
 	}
-	return 0
+	return uncollectedUsage
 }
 
 func (stats *agentStats) numThreads() int32 {
 	if stats.proc != nil {
-		n, _ := stats.proc.NumThreads()
-		return n
+		if n, err := stats.proc.NumThreads(); err == nil {
+			return n
+		}
 	}
-	return 0
+	return uncollectedUsage
 }
 
 func (stats *agentStats) cpuLoad() (float64, float64) {

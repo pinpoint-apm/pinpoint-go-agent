@@ -107,9 +107,14 @@ func TestReportsResponseTimeAndRuntimeStatistics(t *testing.T) {
 	require.NotNil(t, runtime.GetGc())
 	assert.Greater(t, runtime.GetGc().GetJvmMemoryHeapUsed(), int64(0))
 	assert.GreaterOrEqual(t, runtime.GetGc().GetJvmMemoryHeapMax(), int64(0))
-	// gopsutil reports no file-descriptor count on some platforms (darwin),
-	// so only the field's presence is asserted.
-	assert.GreaterOrEqual(t, runtime.GetFileDescriptor().GetOpenFileDescriptorCount(), int64(0))
+	// gopsutil reports no file-descriptor count on some platforms (darwin).
+	// An uncollected reading must go out as -1, the Java agent's
+	// UNCOLLECTED_USAGE - never as 0, which the inspector charts as a real
+	// measurement of zero open descriptors.
+	require.NotNil(t, runtime.GetFileDescriptor())
+	if fd := runtime.GetFileDescriptor().GetOpenFileDescriptorCount(); fd != -1 {
+		assert.Greater(t, fd, int64(0), "a collected fd count is positive; an uncollected one is -1")
+	}
 }
 
 func TestAppliesCounterAndParentSamplingAndReportsDecisions(t *testing.T) {

@@ -57,6 +57,7 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, defaultEventChunkSize, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
 			assert.Equal(t, defaultEventDepth, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
 			assert.Equal(t, defaultEventSequence, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
+			assert.Equal(t, defaultQueueSize, c.Int(CfgStatQueueSize), CfgStatQueueSize)
 			assert.Equal(t, 5000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
 			assert.Equal(t, 6, c.Int(CfgStatBatchCount), CfgStatBatchCount)
 			assert.Equal(t, false, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
@@ -958,4 +959,19 @@ func TestNewConfig_NegativeValuesOfNewKeys(t *testing.T) {
 
 	c.Set(CfgSQLCacheLengthLimit, -1)
 	assert.Equal(t, math.MaxInt32, c.Int(CfgSQLCacheLengthLimit), "-1 must stay unlimited")
+}
+
+// The stat queue was sized from Span.QueueSize, so shrinking the span queue
+// silently shrank the stat queue with it.
+func Test_StatQueueSizeIsIndependentOfSpanQueueSize(t *testing.T) {
+	c, err := NewConfig(WithSpanQueueSize(16))
+	require.NoError(t, err)
+
+	assert.Equal(t, 16, c.Int(CfgSpanQueueSize))
+	assert.Equal(t, defaultQueueSize, c.Int(CfgStatQueueSize), "Span.QueueSize must not move the stat queue")
+
+	a, err := NewTestAgent(c, t)
+	require.NoError(t, err)
+	defer a.Shutdown()
+	assert.Equal(t, defaultQueueSize, cap(a.(*agent).statChan), "statChan must be sized from Stat.QueueSize")
 }

@@ -464,7 +464,9 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 		JvmInfo: &pb.PJvmInfo{
 			Version:   0,
 			VmVersion: fmt.Sprintf("%s(%d)", runtime.Version(), goIdOffset),
-			GcType:    pb.PJvmGcType_JVM_GC_TYPE_CMS,
+			// Same reason as PJvmGc.type in makePAgentStat: Go's GC is none of
+			// the JVM collectors. See doc/java_parity.md.
+			GcType: pb.PJvmGcType_JVM_GC_TYPE_UNKNOWN,
 		},
 		Container: agentGrpc.agent.config.Bool(CfgIsContainerEnv),
 	}
@@ -1630,7 +1632,13 @@ func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
 		Timestamp:       stat.sampleTime.UnixNano() / int64(time.Millisecond),
 		CollectInterval: stat.interval,
 		Gc: &pb.PJvmGc{
-			Type:                 pb.PJvmGcType_JVM_GC_TYPE_CMS,
+			// Go's GC is none of the JVM collectors; UNKNOWN is what the C++
+			// agent sends for the same reason. The counts below are Go's own:
+			// NumGC counts whole cycles (Go has no generations) and
+			// PauseTotalNs sums stop-the-world time only, so both read lower
+			// than the Java old-gen equivalents under the same load. See
+			// doc/java_parity.md.
+			Type:                 pb.PJvmGcType_JVM_GC_TYPE_UNKNOWN,
 			JvmMemoryHeapUsed:    stat.heapUsed,
 			JvmMemoryHeapMax:     stat.heapMax,
 			JvmMemoryNonHeapUsed: stat.nonHeapUsed,

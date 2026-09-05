@@ -286,7 +286,7 @@ func NewAgent(config *Config) (Agent, error) {
 		spanQueue:   newSpanQueue(config.Int(CfgSpanQueueSize)),
 		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),
 		urlStatChan: make(chan *urlStat, config.Int(CfgHttpUrlStatQueueSize)),
-		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),
+		statChan:    make(chan *pb.PStatMessage, config.Int(CfgStatQueueSize)),
 		config:      config,
 		stats:       newAgentStats(),
 		urlStats:    newUrlStats(config),
@@ -1374,6 +1374,11 @@ func (agent *agent) enqueueStat(stat *pb.PStatMessage) bool {
 	default:
 	}
 	agent.statDrops.record(dropped)
+	// Reported here rather than in sendStatsWorker: the worker only reaches its
+	// report after pulling from the queue, so a collector outage parks it in
+	// newStatStreamWithRetry and silences the warning for exactly the stretch
+	// where the drops happen. Same policy as enqueueUrlStat.
+	agent.statDrops.report("stat", cap(agent.statChan))
 	return false
 }
 
@@ -1393,7 +1398,6 @@ func (agent *agent) sendStatsWorker() {
 			return
 		case stats = <-agent.statChan:
 		}
-		agent.statDrops.report("stat", cap(agent.statChan))
 
 		stream = renewIfExpired(stream, agent.statGrpc.newStatStreamWithRetry, "stat")
 		err := stream.sendStats(stats)
@@ -1438,7 +1442,7 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 		spanQueue:   newSpanQueue(config.Int(CfgSpanQueueSize)),
 		metaChan:    make(chan interface{}, config.Int(CfgSpanQueueSize)),
 		urlStatChan: make(chan *urlStat, config.Int(CfgHttpUrlStatQueueSize)),
-		statChan:    make(chan *pb.PStatMessage, config.Int(CfgSpanQueueSize)),
+		statChan:    make(chan *pb.PStatMessage, config.Int(CfgStatQueueSize)),
 		config:      config,
 		stats:       newAgentStats(),
 		urlStats:    newUrlStats(config),

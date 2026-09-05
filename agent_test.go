@@ -1124,6 +1124,30 @@ func Test_agent_enqueueStatCountsEveryDroppedRecord(t *testing.T) {
 	assert.Positive(t, queued, "test must leave the queue full")
 }
 
+// The warning has to come from the producer. sendStatsWorker used to report it
+// after pulling from the queue, so a collector outage - which parks the worker
+// in newStatStreamWithRetry - silenced the warning for exactly the stretch in
+// which the queue overflows. Nothing consumes statChan here, which is that
+// outage.
+func Test_agent_enqueueStatWarnsWithoutAConsumer(t *testing.T) {
+	const queueSize, enqueued = 4, 100
+
+	agent := newTestAgent(defaultConfig())
+	agent.statChan = make(chan *pb.PStatMessage, queueSize)
+
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	for i := 0; i < enqueued; i++ {
+		agent.enqueueStat(&pb.PStatMessage{})
+	}
+
+	assert.Greater(t, agent.statDrops.dropped.Load(), int64(1), "test did not saturate the queue")
+	assert.Equal(t, 1, strings.Count(buf.String(), "stat queue overflow"),
+		"a saturated queue must warn once per report interval, not once per dropped record")
+	assert.Contains(t, buf.String(), fmt.Sprintf("max queue size %d", queueSize))
+}
+
 func Test_sqlUid_MatchesJavaGuavaMurmur3_128(t *testing.T) {
 	// Golden values were computed with Guava 33.6.0 Hashing.murmur3_128().hashBytes(sql.getBytes(UTF_8)).asBytes()
 	// (h1, h2 little-endian), which the Java and C++ agents write to PSqlUidMetaData.
