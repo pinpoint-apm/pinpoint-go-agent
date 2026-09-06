@@ -582,8 +582,9 @@ func (span *span) EndSpanEvent() {
 	}
 	// recover only stops the panic when called by the deferred function
 	// itself, so it must stay in this frame and cannot move into
-	// endSpanEvent. It is taken only when the pop below would record it;
-	// otherwise the panic is left to run its course untouched.
+	// endSpanEvent. This guard and the overflow loop in endSpanEvent read
+	// eventOverflow at different moments, so a value taken here can still
+	// end up on the overflow path - both paths must re-panic it.
 	var recovered interface{}
 	if span.eventOverflow.Load() == 0 && !span.recovered.Load() {
 		recovered = recover()
@@ -607,6 +608,12 @@ func (span *span) endSpanEvent(recovered interface{}) {
 			// overflow cannot inject the destination of this one.
 			if pending == 1 {
 				span.overflowSe.destinationId.Store("")
+			}
+			// The guard in EndSpanEvent read eventOverflow before recover();
+			// a placeholder raised in between lands here holding a panic that
+			// nothing else will re-raise. Never swallow it.
+			if recovered != nil {
+				panic(recovered)
 			}
 			return
 		}

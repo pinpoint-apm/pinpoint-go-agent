@@ -1669,3 +1669,21 @@ func TestSpan_ExtractAfterEndSpanIsNoop(t *testing.T) {
 	assert.Equal(t, endPoint, span.endPoint, "endPoint unchanged")
 	assert.Equal(t, active, countActiveSpans(span.agent), "no re-registration after EndSpan")
 }
+
+// EndSpanEvent reads eventOverflow before recover(), and endSpanEvent reads it
+// again in the CAS loop. A placeholder raised between the two reads sends an
+// already-captured panic down the overflow path, where it used to be dropped.
+func TestSpan_EndSpanEventOverflowRepanicsRecovered(t *testing.T) {
+	span := defaultTestSpan()
+	span.eventOverflow.Store(1)
+
+	var got interface{}
+	func() {
+		defer func() { got = recover() }()
+		span.endSpanEvent("sentinel")
+	}()
+
+	assert.Equal(t, "sentinel", got, "captured panic re-raised, not swallowed")
+	assert.Equal(t, int32(0), span.eventOverflow.Load(), "placeholder still consumed")
+	assert.Equal(t, "", span.overflowSe.destinationId.Load(), "destinationId cleared")
+}
