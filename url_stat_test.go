@@ -1,9 +1,14 @@
 package pinpoint
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/sirupsen/logrus"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/stretchr/testify/assert"
@@ -299,4 +304,69 @@ func Test_agent_urlStatSnapshot_isPerAgent(t *testing.T) {
 
 	// taking the snapshot leaves the agent a fresh one to keep filling
 	assert.Equal(t, 0, first.urlStats.snapshot.count, "first agent after take")
+}
+
+// At the limit a new url pattern is dropped, and the drop is not silent: an
+// operator looking for a missing url in the dashboard has to find the reason in
+// the log at the default level. Aggregating an url already in the snapshot is
+// not a drop and must stay quiet.
+func Test_urlStatSnapshotWarnsWhenAPatternIsDroppedAtTheLimit(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureLogAt(&buf, logrus.InfoLevel)() // the default level, not Warn
+	urlStatLimitLog = logThrottle{src: "url stat"}
+
+	snapshot, endTime := newUrlStatTestSnapshot(2, false)
+	addTestUrlStat(snapshot, "/kept1", "", 0, 10, endTime)
+	addTestUrlStat(snapshot, "/kept2", "", 0, 10, endTime)
+	addTestUrlStat(snapshot, "/kept1", "", 0, 20, endTime)
+	assert.Empty(t, buf.String(), "no drop, no warning")
+
+	addTestUrlStat(snapshot, "/dropped", "", 0, 30, endTime)
+
+	assert.Len(t, snapshot.urlMap, 2)
+	assert.Equal(t, 2, snapshot.count)
+	findEachUrlStat(t, snapshot, "/kept1", endTime)
+	findEachUrlStat(t, snapshot, "/kept2", endTime)
+	assert.Contains(t, buf.String(), "url stat limit reached")
+	assert.Contains(t, buf.String(), `/dropped`)
+	assert.Contains(t, buf.String(), "max 2 distinct urls")
+}
+
+// The limit is reached once and then held for as long as the traffic keeps
+// bringing new patterns, so the warning must not log once per dropped request.
+func Test_urlStatSnapshotThrottlesTheDropWarning(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureLogAt(&buf, logrus.InfoLevel)()
+	urlStatLimitLog = logThrottle{src: "url stat"}
+
+	snapshot, endTime := newUrlStatTestSnapshot(1, false)
+	addTestUrlStat(snapshot, "/kept", "", 0, 10, endTime)
+	for i := 0; i < 1000; i++ {
+		addTestUrlStat(snapshot, fmt.Sprintf("/dropped%d", i), "", 0, 10, endTime)
+	}
+	assert.Equal(t, 1, strings.Count(buf.String(), "url stat limit reached"), buf.String())
+
+	urlStatLimitLog.next.Store(0) // the interval elapses
+	addTestUrlStat(snapshot, "/dropped-later", "", 0, 10, endTime)
+
+	assert.Equal(t, 2, strings.Count(buf.String(), "url stat limit reached"))
+	assert.Contains(t, buf.String(), "(999 similar warning(s) suppressed)")
+	assert.Len(t, snapshot.urlMap, 1)
+}
+
+// A limit of 0 or less makes snapshot.count >= limit true before the first url,
+// dropping every url stat entry. It has to recover the default instead.
+func Test_configHttpUrlStatLimitSizeOutOfRangeRecoversTheDefault(t *testing.T) {
+	for _, limit := range []int{0, -1, maxQueueSize + 1} {
+		var buf bytes.Buffer
+		restore := captureLogAt(&buf, logrus.InfoLevel)
+
+		config := defaultConfig()
+		config.Set(CfgHttpUrlStatLimitSize, limit)
+
+		assert.Equal(t, 1024, config.Int(CfgHttpUrlStatLimitSize), "limit=%d", limit)
+		assert.Contains(t, buf.String(), "Http.UrlStat.LimitSize", "limit=%d", limit)
+		assert.Contains(t, buf.String(), "is out of range [1, 65536]", "limit=%d", limit)
+		restore()
+	}
 }

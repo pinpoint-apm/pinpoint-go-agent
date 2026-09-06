@@ -1090,12 +1090,16 @@ The HTTP URL statistics feature is supported from Pinpoint version 2.5.0.
 
 ### Http.UrlStat.LimitSize
 Http.UrlStat.LimitSize option sets the limit size of the URLs to be collected.
+It caps the number of distinct URLs kept in one snapshot. Once the limit is reached,
+URLs already in the snapshot keep being aggregated but every further new URL is dropped,
+and the agent logs a rate-limited warning carrying the number of warnings it suppressed.
 
 * --pinpoint-http-urlstat-limitsize
 * PINPOINT_GO_HTTP_URLSTAT_LIMITSIZE
 * WithHttpUrlStatLimitSize()
 * type: int
 * default: 1024
+* range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
 * dynamic
 
 ### Http.UrlStat.QueueSize

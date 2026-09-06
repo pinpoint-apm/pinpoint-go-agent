@@ -87,6 +87,14 @@ type urlStatHistogram struct {
 	histogram []int32
 }
 
+// urlStatLimitLog reports the dropped url patterns. At the limit every request
+// carrying a new pattern reaches this site, so the warning is rate-limited and
+// carries the count it held back - the C++ agent's QueueDropReporter reports
+// the same way. It repeats rather than latching after one line (the way the
+// span event overflow does): the limit being reached is a standing condition
+// an operator has to size the limit for, not a one-off event.
+var urlStatLimitLog = logThrottle{src: "url stat"}
+
 func (snapshot *urlStatSnapshot) add(us *urlStat) {
 	if us.endTime.IsZero() {
 		return
@@ -104,6 +112,9 @@ func (snapshot *urlStatSnapshot) add(us *urlStat) {
 	e, ok := snapshot.urlMap[key]
 	if !ok {
 		if snapshot.count >= snapshot.config.urlStatLimitSize {
+			urlStatLimitLog.warnf(
+				"url stat limit reached: dropping %q and every other new url pattern (max %d distinct urls per snapshot)",
+				url, snapshot.config.urlStatLimitSize)
 			return
 		}
 		e = newEachUrlStat(url, key.tick)

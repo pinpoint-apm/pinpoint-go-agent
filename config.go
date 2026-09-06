@@ -892,6 +892,16 @@ func (config *Config) publish() {
 		config.cfgMap[CfgSpanEventChunkSize].value = defaultEventChunkSize
 	}
 
+	// Dynamic key, and unlike the queues below a bad value here is silent data
+	// loss rather than a panic: with a limit of 0 or less, snapshot.count is
+	// already at it before the first url, so every url stat entry is dropped.
+	// Java rejects the same value outright (AgentUriStatData asserts capacity
+	// > 0). The upper bound is maxQueueSize, the typo guard the queues use -
+	// the map grows lazily so a large limit costs nothing up front, but a map
+	// of that many distinct urls is a runaway pattern set, not a capacity
+	// anyone configures.
+	config.defaultIfOutOfRange(CfgHttpUrlStatLimitSize, 1, maxQueueSize)
+
 	// These non-dynamic keys are range checked here, not in NewConfig, because
 	// the exported Set() also republishes: a non-positive Stat.CollectInterval
 	// panics time.NewTicker and a non-positive Stat.BatchCount panics the stat

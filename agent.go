@@ -1346,6 +1346,9 @@ func (r *dropReporter) reportTotal(total int64, queue string, queueSize int) {
 // anyone able to send a request can pull; the C++ agent's LOG_WARN_THROTTLED
 // covers the same sites.
 type logThrottle struct {
+	// src names the log source. The empty value logs under "span", where every
+	// site but the url stat limit one lives.
+	src        string
 	next       atomic.Int64 // unix nano before which the site stays silent
 	suppressed atomic.Int64
 }
@@ -1367,7 +1370,11 @@ func (t *logThrottle) warnf(format string, args ...interface{}) {
 		format += " (%d similar warning(s) suppressed)"
 		args = append(args, n)
 	}
-	Log("span").Warnf(format, args...)
+	src := t.src
+	if src == "" {
+		src = "span"
+	}
+	Log(src).Warnf(format, args...)
 }
 
 func (agent *agent) collectUrlStatWorker() {
