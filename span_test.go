@@ -1442,3 +1442,65 @@ func Test_spanEvent_end_Idempotent(t *testing.T) {
 	se.end()
 	assert.Equal(t, int32(1), s.eventDepth.Load(), "eventDepth")
 }
+
+// An error recorded on a span event past the call stack limit still fails the
+// transaction: Java's DefaultTrace.traceBlockBegin0 hands out a real recorder
+// during overflow and its recordException marks the trace root; the C++
+// DisabledSpanEvent::SetError does the same. Nothing is recorded on the event.
+func TestOverflowSpanEvent_SetErrorMarksSpanFailed(t *testing.T) {
+	tests := []struct {
+		name    string
+		rules   []string
+		wantErr int32
+	}{
+		{"fails the span", nil, 1},
+		{"Error.IgnoreErrors keeps the span ok", []string{"*errors.errorString:boom"}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := NewConfig(WithAppName("overflowErrApp"), WithErrorIgnoreErrors(tt.rules...))
+			assert.NoError(t, err)
+			cfg.Set(CfgSpanMaxCallStackDepth, 1) // clamped to minEventDepth
+			cfg.Set(CfgHttpUrlStatEnable, true)
+			agent := newTestAgent(cfg)
+			agent.urlStatChan = make(chan *urlStat, 1)
+			span := newSampledSpan(agent, "op", "/rpc")
+			span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+			for span.eventOverflow.Load() == 0 {
+				span.NewSpanEvent("t")
+			}
+
+			se := span.SpanEvent()
+			_, ok := se.(*overflowSpanEvent)
+			assert.True(t, ok, "overflowSpanEvent")
+			se.SetError(errors.New("boom"))
+			span.EndSpan()
+
+			assert.Equal(t, tt.wantErr, span.err.Load(), "span.err")
+			stat := <-agent.urlStatChan
+			assert.Equal(t, int(tt.wantErr), stat.statusErr, "urlStat.statusErr")
+			// Nothing lands on the overflowed event or the span's own error fields.
+			assert.Equal(t, int32(0), span.errorFuncId, "span.errorFuncId")
+			assert.Equal(t, "", span.errorString, "span.errorString")
+			assert.Empty(t, span.errorChains, "errorChains")
+			for _, ev := range span.spanEvents {
+				assert.Equal(t, int32(0), ev.errorFuncId, "event errorFuncId")
+				assert.Empty(t, ev.annotations.values, "event annotations")
+			}
+		})
+	}
+}
+
+// After EndSpan the overflow recorder drops the write like every other setter.
+func TestOverflowSpanEvent_SetErrorAfterEndSpanIsNoop(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgSpanMaxCallStackDepth, 1)
+	span := testSpanWithConfig(cfg)
+	for span.eventOverflow.Load() == 0 {
+		span.NewSpanEvent("t")
+	}
+	se := span.SpanEvent()
+	span.EndSpan()
+	se.SetError(errors.New("late"))
+	assert.Equal(t, int32(0), span.err.Load(), "err")
+}

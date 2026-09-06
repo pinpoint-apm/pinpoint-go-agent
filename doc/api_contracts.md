@@ -202,7 +202,12 @@ overflow:
 * `SpanEvent()` returns a no-op recorder, so annotations, SQL and errors on the
   overflowed events are dropped. `SetDestination()` is the one exception: the
   value is kept for `Inject()` (see below) and nothing else.
-* `SpanRecorder.SetError()` is ignored.
+* `SpanEventRecorder.SetError()` records nothing on the event - no exception
+  info, no annotation, no exception chain - but still marks the span failed
+  (`PSpan.err`, URL stat, scatter), subject to `Error.IgnoreErrors` as usual.
+  Overflow is a profiling limit, not a verdict on the transaction.
+* `SpanRecorder.SetError()` is unaffected: the span level error is recorded as
+  normal.
 * `NewGoroutineTracer()` returns `NoopTracer()`.
 * `Inject()` **still writes** the distributed tracing headers, `Pinpoint-Host`
   included. Overflow limits profiling detail; it is not a sampling decision.

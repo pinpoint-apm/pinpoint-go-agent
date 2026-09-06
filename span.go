@@ -41,11 +41,33 @@ const (
 // record the destination from another goroutine of the same call stack.
 type overflowSpanEvent struct {
 	noopSpanEvent
+	parent        *span
 	destinationId atomic.Value // string
 }
 
 func (se *overflowSpanEvent) SetDestination(id string) {
 	se.destinationId.Store(id)
+}
+
+// SetError records nothing on the dropped event - no error string, no
+// annotation, no exception chain - but the failure still reaches the span, so
+// the transaction is not reported as a success because it failed past the
+// profiling depth limit. Java's DefaultTrace.traceBlockBegin0 hands out a real
+// recorder during overflow and its recordException marks the trace root; the
+// C++ agent's DisabledSpanEvent::SetError does the same with markSpanError.
+// The Error.IgnoreErrors filter applies exactly as on a recorded event.
+func (se *overflowSpanEvent) SetError(e error, errorName ...string) {
+	span := se.parent
+	if e == nil || span.finished.Load() {
+		return
+	}
+	errName := errorTypeName(e)
+	if len(errorName) > 0 {
+		errName = errorName[0]
+	}
+	if !span.cfg.ignoreError(e, errName) {
+		span.err.Store(1)
+	}
 }
 
 // destination reports the last destination recorded during this overflow.
@@ -154,6 +176,7 @@ func defaultSpan(agent *agent) *span {
 	span.eventStack = newStack()
 	span.spanEvents = make([]*spanEvent, 0, span.cfg.spanEventChunkSize)
 	span.errorChains = make([]*exception, 0)
+	span.overflowSe.parent = &span
 
 	return &span
 }
