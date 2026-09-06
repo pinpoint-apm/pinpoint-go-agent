@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	pkgError "github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/time/rate"
@@ -465,4 +467,25 @@ func TestSpanEvent_SetErrorRecordsMaxChainDepthLinks(t *testing.T) {
 	newSpanEvent(span, "third").SetError(errors.New("and another"))
 	assert.Len(t, span.errorChains, 20, "entry beyond the cap recorded")
 	assert.True(t, span.errorChainDropLog.Load(), "drop not logged")
+}
+
+// The drop must be visible at the default log level (info) - the comment on
+// errorChainDropLog claims parity with eventOverflowLog, which warns. Captured
+// on the global logger Log("span") actually writes to, not a local instance.
+func TestSpanEvent_SetErrorLogsDropAtDefaultLevel(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureLogAt(&buf, logrus.InfoLevel)()
+
+	cfg := defaultConfig()
+	cfg.Set(CfgErrorTraceCallStack, true)
+	cfg.Set(CfgErrorMaxChainDepth, 1)
+	span := testSpanWithConfig(cfg)
+
+	for i := 0; i < minErrorChainEntry+2; i++ {
+		newSpanEvent(span, "event").SetError(fmt.Errorf("boom %d", i))
+	}
+	require.True(t, span.errorChainDropLog.Load(), "the cap was never reached")
+
+	assert.Contains(t, buf.String(), "exception entry limit reached", "the drop was silent at the default level")
+	assert.Equal(t, 1, strings.Count(buf.String(), "exception entry limit reached"), "logged more than once a span")
 }

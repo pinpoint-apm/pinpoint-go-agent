@@ -914,7 +914,7 @@ func (span *span) canAddErrorChain() bool {
 		return true
 	}
 	if span.errorChainDropLog.CompareAndSwap(false, true) {
-		Log("span").Debugf("exception entry limit reached, dropping further error chain links (entries=%d)", len(span.errorChains))
+		Log("span").Warnf("exception entry limit reached, dropping further error chain links (entries=%d)", len(span.errorChains))
 	}
 	return false
 }
