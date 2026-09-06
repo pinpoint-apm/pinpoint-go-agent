@@ -402,10 +402,17 @@ func Test_agent_SQLCachesBypassKeysOverLengthLimit(t *testing.T) {
 		assert.Empty(t, md.key, "and carries no key, so the queue item stays bounded")
 		assert.LessOrEqual(t, len(md.sql), maxSqlSize)
 
-		// deleteMetaCache on an uncached item must leave other entries alone.
+		// deleteMetaCache must not reach the cache at all for a bypassed item.
+		// An entry sitting at exactly the key and uid the item carries is what
+		// an unguarded remove would delete - remove is a no-op for a missing
+		// key, so evicting by md.key alone passes without the md.cached guard.
+		_, existed := a.sqlUidCache.peekOrAdd(md.key, md.uid)
+		require.False(t, existed, "the planted entry is the only one at that key")
 		small := "select 1"
 		a.cacheSqlUid(small)
 		a.deleteMetaCache(md)
+		_, stillPlanted := a.sqlUidCache.peek(md.key)
+		assert.True(t, stillPlanted, "a bypassed statement must not touch the cache")
 		_, stillCached := a.sqlUidCache.peek(small)
 		assert.True(t, stillCached, "an uncached statement must not evict anything")
 	})

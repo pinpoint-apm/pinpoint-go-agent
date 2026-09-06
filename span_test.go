@@ -15,6 +15,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_defaultSpan(t *testing.T) {
@@ -1505,7 +1506,14 @@ func TestOverflowSpanEvent_SetErrorMarksSpanFailed(t *testing.T) {
 			assert.Equal(t, int32(0), span.errorFuncId, "span.errorFuncId")
 			assert.Equal(t, "", span.errorString, "span.errorString")
 			assert.Empty(t, span.errorChains, "errorChains")
-			for _, ev := range span.spanEvents {
+			// The events have to be read off the enqueued chunk, which is what
+			// goes on the wire: newEventChunk hands span.spanEvents to the
+			// final chunk and leaves an empty slice behind, so ranging over
+			// span.spanEvents here would assert on nothing.
+			chunk, ok := agent.spanQueue.tryDequeue()
+			require.True(t, ok, "final chunk enqueued")
+			require.NotEmpty(t, chunk.eventChunk, "the events must be asserted on, not an emptied slice")
+			for _, ev := range chunk.eventChunk {
 				assert.Equal(t, int32(0), ev.errorFuncId, "event errorFuncId")
 				assert.Empty(t, ev.annotations.values, "event annotations")
 			}
