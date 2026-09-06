@@ -193,6 +193,50 @@ func Test_agent_NewSpanTracerWithReader(t *testing.T) {
 	}
 }
 
+// An unparseable trace id must go through the new-trace sampler: Extract
+// starts a new root transaction for it, and the continue sampler is
+// unconditionally true, so a peer could otherwise defeat the sampling rate
+// with any garbage Pinpoint-TraceID.
+func Test_agent_NewSpanTracerWithReader_samplerByParseability(t *testing.T) {
+	c, _ := NewConfig(
+		WithAppName("test"),
+		WithAgentId("testagent"),
+		WithSamplingType("COUNTER"),
+		WithSamplingCounterRate(100),
+	)
+	c.offGrpc = true
+	a, _ := NewAgent(c)
+	agent := a.(*agent)
+	agent.enable.Store(true)
+	defer a.Shutdown()
+
+	run := func(tid string) (sampled int) {
+		for i := 0; i < 100; i++ {
+			m := map[string]string{HeaderSpanId: "67890", HeaderParentSpanId: "123"}
+			if tid != "" {
+				m[HeaderTraceId] = tid
+			}
+			tr := agent.NewSpanTracerWithReader("test", "/", &DistributedTracingContextMap{m})
+			if tr.IsSampled() {
+				sampled++
+			}
+			tr.EndSpan()
+		}
+		return
+	}
+
+	assert.Equal(t, 1, run("garbage"), "malformed tid: new sampler at 1%")
+	assert.Equal(t, 1, run(""), "empty tid: new sampler at 1%")
+	assert.Equal(t, 100, run("t123456^12345^1"), "valid tid: continue sampler, always sampled")
+
+	cs := agent.stats.readCounters()
+	assert.Equal(t, int64(2), cs.sampleNew, "sampleNew")
+	assert.Equal(t, int64(198), cs.unSampleNew, "unSampleNew")
+	assert.Equal(t, int64(100), cs.sampleCont, "sampleCont")
+	assert.Equal(t, int64(0), cs.unSampleCont, "unSampleCont")
+	assert.Equal(t, int64(300), cs.sampleNew+cs.unSampleNew+cs.sampleCont+cs.unSampleCont+cs.skipNew+cs.skipCont, "total")
+}
+
 func Test_abbreviateString_RuneSafe(t *testing.T) {
 	assert.Equal(t, "abc", abbreviateString("abc", 5))
 

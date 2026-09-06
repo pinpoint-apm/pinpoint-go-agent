@@ -20,7 +20,9 @@ func (stats *agentStats) readCounters() statsCounterSnapshot {
 		s := &stats.shards[i]
 		c.sampleNew += atomic.LoadInt64(&s.sampleNew)
 		c.skipNew += atomic.LoadInt64(&s.skipNew)
+		c.unSampleNew += atomic.LoadInt64(&s.unSampleNew)
 		c.sampleCont += atomic.LoadInt64(&s.sampleCont)
+		c.unSampleCont += atomic.LoadInt64(&s.unSampleCont)
 		c.skipCont += atomic.LoadInt64(&s.skipCont)
 	}
 	return c
