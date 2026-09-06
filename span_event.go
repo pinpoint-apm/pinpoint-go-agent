@@ -132,7 +132,7 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 	// An error matching Error.IgnoreErrors (IgnoreErrorHandler) keeps its
 	// exception info but skips that failure marking.
 	if !cfg.ignoreError(e, errName) {
-		se.parentSpan.err.Store(1)
+		se.parentSpan.root().err.Store(1)
 	}
 	if cfg.errorTraceCallStack && se.parentSpan.canAddErrorChain() {
 		// A chain the Error.NewThroughput limiter denied is not on the wire, so
@@ -179,9 +179,12 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	// server should show as an error. Java skips a transaction whose error code
 	// is already set, so the count never re-marks a recorded error; a finished
 	// span is skipped for the same reason SetError does (doc/api_contracts.md 5).
-	if cfg.sqlErrorCount > 0 && se.parentSpan.err.Load() == 0 && !se.parentSpan.finished.Load() {
-		if int(se.parentSpan.sqlCount.Add(1)) >= cfg.sqlErrorCount {
-			se.parentSpan.err.Store(1)
+	// Count and flag on the trace root, so queries spread over async spans
+	// add up as in the C++ agent's traceRootData().
+	root := se.parentSpan.root()
+	if cfg.sqlErrorCount > 0 && root.err.Load() == 0 && !se.parentSpan.finished.Load() {
+		if int(root.sqlCount.Add(1)) >= cfg.sqlErrorCount {
+			root.err.Store(1)
 		}
 	}
 

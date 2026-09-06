@@ -274,6 +274,16 @@ framework plugins do this for you where the framework exposes the pattern.
   the transaction with it** (`PSpan.err`, the URL stat failed histogram and the
   scatter failure point), as the Java agent does; the optional name groups
   errors in the UI and is subject to rule 8.
+* An error recorded on a goroutine or async tracer (`SetError`, `SetFailure`,
+  an event `SetError`, the `SQL.ErrorCount` limit) fails the **root** span:
+  an async span goes out as a `PSpanChunk`, which has no `err` field, so the
+  flag is stored on the root the way Java's `ChildTrace` shares its parent's
+  `TraceRoot`. Only the flag moves; the error message and exception chain stay
+  on the tracer that recorded them. This differs from Java in one respect:
+  Java holds the root's span back until its last async child has ended, while
+  this agent sends the root's final chunk at the root's own `EndSpan()`, so a
+  child that fails **after** the root ended is not reflected in `PSpan.err`
+  or the URL stat.
 * A `nil` error is ignored by both, so the common
   `tracer.SpanEvent().SetError(err)` after a call needs no guard.
 * `SetFailure()` marks failure without an error message — the right call for an

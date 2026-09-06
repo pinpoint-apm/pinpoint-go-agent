@@ -66,7 +66,7 @@ func (se *overflowSpanEvent) SetError(e error, errorName ...string) {
 		errName = errorName[0]
 	}
 	if !span.cfg.ignoreError(e, errName) {
-		span.err.Store(1)
+		span.root().err.Store(1)
 	}
 }
 
@@ -138,6 +138,22 @@ type span struct {
 	errorChains     []*exception
 	errorChainsLock sync.Mutex
 	finished        atomic.Bool
+	// traceRoot is the span whose PSpan carries the failure flag, nil when this
+	// span is the root itself. An async span is serialized as a PSpanChunk,
+	// which has no err field, so its failure must land on the root - Java's
+	// ChildTrace shares its parent's TraceRoot for the same reason
+	// (SpanMessageMapper maps span.traceRoot.shared.errorCode to err), and the
+	// C++ agent keeps a trace_root_data_ pointer. Only the flags travel here;
+	// the error string and exception chain stay on the recording span.
+	traceRoot *span
+}
+
+// root returns the span carrying the trace-wide failure flags.
+func (span *span) root() *span {
+	if span.traceRoot != nil {
+		return span.traceRoot
+	}
+	return span
 }
 
 // generateSpanId is a var so tests can force a collision; production always
@@ -235,7 +251,10 @@ func (span *span) EndSpan() {
 
 	if span.urlStat != nil {
 		// Failed on an error status or on any recorded error (Java: status = errorCode == 0).
-		span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed, statusErr: int(span.statusErr.Load() | span.err.Load())})
+		// Read from the root: an async worker that failed before this end
+		// marked it there. One that ends later is not seen (see newAsyncSpan).
+		root := span.root()
+		span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed, statusErr: int(root.statusErr.Load() | root.err.Load())})
 	}
 
 	// Last: the final chunk is enqueued and the url stat read, so nothing this
@@ -628,6 +647,16 @@ func (span *span) newAsyncSpan() Tracer {
 		asyncSpan.cfg = span.cfg // an async span continues under its parent's snapshot
 		asyncSpan.txId = span.txId
 		asyncSpan.spanId = span.spanId
+		// Always the first root, even for an async span forked from an async
+		// span (C++: trace_root_data_ ? trace_root_data_ : data_). Known limit:
+		// the root's final chunk is sent at its own EndSpan, so an error recorded
+		// by a child that ends after the root is never on the wire. Java defers
+		// the root store until the last child ends (SpanAsyncStateListener);
+		// that is a separate design item, not done here.
+		asyncSpan.traceRoot = span.traceRoot
+		if asyncSpan.traceRoot == nil {
+			asyncSpan.traceRoot = span
+		}
 
 		// Under spanEventLock: NewGoroutineTracer may be called concurrently
 		// from goroutines sharing the parent tracer, and an unsynchronized
@@ -727,7 +756,7 @@ func (span *span) SetError(e error, errorName ...string) {
 	// Java IgnoreErrorHandler: a matched error keeps its exception info but
 	// does not fail the span.
 	if !span.cfg.ignoreError(e, errName) {
-		span.err.Store(1)
+		span.root().err.Store(1)
 	}
 }
 
@@ -735,8 +764,9 @@ func (span *span) SetFailure() {
 	if span.warnIfFinished("SetFailure") {
 		return
 	}
-	span.err.Store(1)
-	span.statusErr.Store(1)
+	root := span.root()
+	root.err.Store(1)
+	root.statusErr.Store(1)
 }
 
 func (span *span) SetServiceType(typ int32) {

@@ -1504,3 +1504,116 @@ func TestOverflowSpanEvent_SetErrorAfterEndSpanIsNoop(t *testing.T) {
 	se.SetError(errors.New("late"))
 	assert.Equal(t, int32(0), span.err.Load(), "err")
 }
+
+// An async span is serialized as a PSpanChunk, which has no err field, so a
+// failure recorded on it must reach the root span's PSpan.err and URL stat -
+// Java's ChildTrace shares the parent's TraceRoot and the wire err is the
+// root's (SpanMessageMapper: span.traceRoot.shared.errorCode -> err).
+func TestSpan_AsyncErrorFailsTheTraceRoot(t *testing.T) {
+	tests := []struct {
+		name   string
+		record func(async Tracer)
+	}{
+		{"span SetError", func(a Tracer) { a.Span().SetError(errors.New("boom")) }},
+		{"span SetFailure", func(a Tracer) { a.Span().SetFailure() }},
+		{"span event SetError", func(a Tracer) { a.NewSpanEvent("work").SpanEvent().SetError(errors.New("boom")); a.EndSpanEvent() }},
+		{"nested async span event SetError", func(a Tracer) {
+			a.NewSpanEvent("work")
+			nested := a.NewGoroutineTracer()
+			nested.NewSpanEvent("deep").SpanEvent().SetError(errors.New("boom"))
+			nested.EndSpanEvent()
+			nested.EndSpan()
+			a.EndSpanEvent()
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := NewConfig(WithAppName("asyncErrApp"))
+			assert.NoError(t, err)
+			cfg.Set(CfgHttpUrlStatEnable, true)
+			agent := newTestAgent(cfg)
+			agent.urlStatChan = make(chan *urlStat, 1)
+			root := newSampledSpan(agent, "op", "/rpc")
+			root.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+			root.NewSpanEvent("fork")
+
+			async := root.NewGoroutineTracer()
+			tt.record(async)
+			async.EndSpan()
+			for {
+				// drain the async chunks; the root's final chunk is enqueued last
+				if _, ok := agent.spanQueue.tryDequeue(); !ok {
+					break
+				}
+			}
+
+			root.EndSpanEvent()
+			root.EndSpan()
+
+			chunk, ok := agent.spanQueue.tryDequeue()
+			if !assert.True(t, ok, "root final chunk") {
+				return
+			}
+			pspan := (&spanMessageBuilder{}).makePSpanMessage(chunk).GetSpan()
+			assert.NotNil(t, pspan, "root chunk converts to a PSpan")
+			assert.Equal(t, int32(1), pspan.Err, "PSpan.err")
+			assert.Equal(t, 1, (<-agent.urlStatChan).statusErr, "urlStat.statusErr")
+			// Only the flag travels; the message stays on the recording span.
+			assert.Equal(t, "", root.errorString, "root.errorString")
+		})
+	}
+}
+
+// Known limit: the root's final chunk is sent at its own EndSpan, so a child
+// that fails after the root has ended is not reflected. Java defers the root
+// store until the last child ends; this agent does not (yet).
+func TestSpan_AsyncErrorAfterRootEndIsNotReported(t *testing.T) {
+	cfg, err := NewConfig(WithAppName("asyncLateErrApp"))
+	assert.NoError(t, err)
+	cfg.Set(CfgHttpUrlStatEnable, true)
+	agent := newTestAgent(cfg)
+	agent.urlStatChan = make(chan *urlStat, 1)
+	root := newSampledSpan(agent, "op", "/rpc")
+	root.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	root.NewSpanEvent("fork")
+	async := root.NewGoroutineTracer()
+	root.EndSpanEvent()
+	root.EndSpan()
+
+	chunk, ok := agent.spanQueue.tryDequeue()
+	if !assert.True(t, ok, "root final chunk") {
+		return
+	}
+
+	// The sender serializes the chunk; whatever it reads then is on the wire.
+	pspan := (&spanMessageBuilder{}).makePSpanMessage(chunk).GetSpan()
+	if !assert.NotNil(t, pspan) {
+		return
+	}
+
+	async.Span().SetError(errors.New("late"))
+	async.EndSpan()
+
+	assert.Equal(t, int32(0), pspan.Err, "PSpan.err was read before the late failure")
+	assert.Equal(t, 0, (<-agent.urlStatChan).statusErr, "urlStat.statusErr")
+	assert.Equal(t, int32(1), root.err.Load(), "the flag lands on the root, only too late")
+}
+
+// SQL.ErrorCount adds up across the async spans of one trace and flags the root.
+func TestSpan_AsyncSQLCountFailsTheTraceRoot(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgSQLErrorCount, 3)
+	root := testSpanWithConfig(cfg)
+	root.NewSpanEvent("fork")
+	async := root.NewGoroutineTracer().(*span)
+
+	newSpanEvent(root, "query").SetSQL("SELECT 1", "")
+	newSpanEvent(async, "query").SetSQL("SELECT 1", "")
+	assert.Equal(t, int32(0), root.err.Load(), "below limit")
+	newSpanEvent(async, "query").SetSQL("SELECT 1", "")
+
+	assert.Equal(t, int32(3), root.sqlCount.Load(), "root sqlCount")
+	assert.Equal(t, int32(0), async.sqlCount.Load(), "async sqlCount")
+	assert.Equal(t, int32(1), root.err.Load(), "root err")
+	assert.Equal(t, int32(0), async.err.Load(), "async err")
+}
