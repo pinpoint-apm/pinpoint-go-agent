@@ -373,6 +373,19 @@ func Test_agent_SQLCachesBypassKeysOverLengthLimit(t *testing.T) {
 		assert.False(t, cached, "a sql over the length limit must not be cached")
 		assert.Equal(t, first, second, "the uid hashes the sql, so it is stable")
 		assert.Len(t, a.metaChan, 2, "metadata must be enqueued on every use")
+
+		// Nothing was cached, so the item carries no key to evict by and its
+		// size is bounded by the published text alone.
+		md := (<-a.metaChan).(sqlUidMeta)
+		assert.Empty(t, md.key, "a bypassed statement has no entry to evict")
+		assert.LessOrEqual(t, len(md.sql), maxSqlSize)
+
+		// deleteMetaCache on a keyless item must leave other entries alone.
+		small := "select 1"
+		a.cacheSqlUid(small)
+		a.deleteMetaCache(md)
+		_, stillCached := a.sqlUidCache.peek(small)
+		assert.True(t, stillCached, "an empty key must not evict anything")
 	})
 
 	// The normalization memo holds the raw text as key and the normalized text

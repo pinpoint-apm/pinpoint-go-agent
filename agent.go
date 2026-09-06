@@ -911,6 +911,10 @@ func (agent *agent) deleteMetaCache(md interface{}) {
 	case sqlMeta:
 		agent.sqlCache.remove(md.key, func(id int32) bool { return id == md.id })
 	case sqlUidMeta:
+		// An empty key is a statement that bypassed the cache: nothing to drop.
+		if md.key == "" {
+			return
+		}
 		// A re-registered UID is the same hash, so this only guards a key
 		// that changed hands to a different statement's entry.
 		agent.sqlUidCache.remove(md.key, func(uid []byte) bool { return bytes.Equal(uid, md.uid) })
@@ -1141,11 +1145,15 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 		}
 	}
 
+	// A bypassed statement was never cached, so a failed send has no entry to
+	// evict and the key is dead weight: every execution queues one item, and
+	// the untruncated text is unbounded (normalization has no input cap, and
+	// literal-heavy SQL normalizes larger than it came in). Java bounds the
+	// same item at 64KB by abbreviating before it enqueues (SqlCacheService).
 	aSql := abbreviateString(sql, maxSqlSize)
-	md := sqlUidMeta{
-		uid: uid,
-		sql: aSql,
-		key: sql,
+	md := sqlUidMeta{uid: uid, sql: aSql}
+	if cacheable {
+		md.key = sql
 	}
 	agent.enqueueMeta(md)
 
