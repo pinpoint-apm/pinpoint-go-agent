@@ -749,10 +749,14 @@ histogram of the URL statistics. A value of 0 turns the count off and a negative
 value means the same, warned and published as 0. A span that has already failed
 is never counted, so the mark cannot replace an error that is already recorded.
 This corresponds to the Java agent's `profiler.sql.error.count` and
-`profiler.sql.error.enable`, which collapse into this single option.
-Unlike Java, which counts on the shared transaction state, the count is per span:
-a goroutine tracer starts its own span, so an async chunk counts separately, the
-same way SetError marks the chunk it is called on.
+`profiler.sql.error.enable`, which collapse into this single option. Java never
+range-checks its count (DefaultSqlCountService.java:15-25 uses the configured
+limit as given), so `enable=true` with a count of 0 or less marks the very first
+query as failed; that literal reading is deliberately not reproduced, because in
+the merged option 0 is already taken by `enable=false`, leaving "off" as the only
+consistent meaning a non-positive threshold can have here.
+Like Java, the count lives on the trace root, so queries spread over async spans
+add up (WrappedSpanEventRecorder.java:112, DefaultSqlCountService.java:16,21).
 
 * --pinpoint-sql-errorcount
 * PINPOINT_GO_SQL_ERRORCOUNT

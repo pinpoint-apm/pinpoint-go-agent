@@ -251,6 +251,10 @@ func Test_spanEvent_SetSQLCountMarksFailedSpan(t *testing.T) {
 		{"at limit", 3, "SELECT 1", 3, false, 1, 3},
 		{"above limit", 3, "SELECT 1", 5, false, 1, 3},
 		{"negative limit", -1, "SELECT 1", 5, false, 0, 0},
+		// 1 is the smallest threshold that still counts: the first query marks.
+		// Java reaches the same point with a non-positive count, which this
+		// option cannot express because 0 means off (doc/config.md SQL.ErrorCount).
+		{"limit one", 1, "SELECT 1", 2, false, 1, 1},
 		// commit and rollback events reach SetSQL with no sql at all
 		{"empty sql", 3, "", 5, false, 0, 0},
 		// the span is already on its way to the sender goroutine
