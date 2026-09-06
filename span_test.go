@@ -402,7 +402,8 @@ func Test_span_Inject_EventOverflow(t *testing.T) {
 	// trace and the call chain is cut here.
 	// The limits are the smallest publishable ones: applyDynamicConfig clamps
 	// MaxCallStackDepth to minEventDepth and MaxCallStackSequence to
-	// minEventSequence, so the event counts below are what it takes to overflow.
+	// minEventSequence, so the event counts below are what it takes to overflow
+	// (depth records max+1 levels, as Java does).
 	tests := []struct {
 		name     string
 		limitOpt string
@@ -410,7 +411,7 @@ func Test_span_Inject_EventOverflow(t *testing.T) {
 		overflow func(s *span)
 	}{
 		{"depth overflow - ancestor event left on the stack", CfgSpanMaxCallStackDepth, minEventDepth, func(s *span) {
-			for i := 0; i <= minEventDepth; i++ {
+			for i := 0; i <= minEventDepth+1; i++ {
 				s.NewSpanEvent("t1")
 			}
 		}},
@@ -507,23 +508,26 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 			config.Set(CfgSpanMaxCallStackDepth, 3)
 			s := testSpanWithConfig(config)
 
-			// depth == max is still recorded, so 3 levels fit and only the
-			// 4th overflows.
+			// Java records max+1 levels (push checks the pre-push count), so
+			// 4 levels fit and only the 5th overflows.
+			s.NewSpanEvent(tt.args.operationName)
 			s.NewSpanEvent(tt.args.operationName)
 			s.NewSpanEvent(tt.args.operationName)
 			s.NewSpanEvent(tt.args.operationName)
 			s.NewSpanEvent(tt.args.operationName)
 
-			assert.Equal(t, s.eventSequence.Load(), int32(3), "eventSequence")
-			assert.Equal(t, s.eventDepth.Load(), int32(4), "eventDepth")
+			assert.Equal(t, s.eventSequence.Load(), int32(4), "eventSequence")
+			assert.Equal(t, s.eventDepth.Load(), int32(5), "eventDepth")
 			assert.Equal(t, s.eventOverflow.Load(), int32(1), "eventOverflow")
 			assert.Equal(t, s.eventOverflowLog.Load(), true, "eventOverflowLog")
-			assert.Equal(t, s.eventStack.len(), 3, "stack.len()")
+			assert.Equal(t, s.eventStack.len(), 4, "stack.len()")
 
 			s.EndSpanEvent()
 			assert.Equal(t, s.eventOverflow.Load(), int32(0), "eventOverflow")
-			assert.Equal(t, s.eventStack.len(), 3, "stack.len()")
+			assert.Equal(t, s.eventStack.len(), 4, "stack.len()")
 
+			s.EndSpanEvent()
+			assert.Equal(t, s.eventStack.len(), 3, "stack.len()")
 			s.EndSpanEvent()
 			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
 			s.EndSpanEvent()
@@ -535,12 +539,13 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 			s.NewSpanEvent(tt.args.operationName)
 			s.NewSpanEvent(tt.args.operationName)
 			s.NewSpanEvent(tt.args.operationName)
+			s.NewSpanEvent(tt.args.operationName)
 
-			assert.Equal(t, s.eventSequence.Load(), int32(6), "eventSequence")
-			assert.Equal(t, s.eventDepth.Load(), int32(4), "eventDepth")
+			assert.Equal(t, s.eventSequence.Load(), int32(8), "eventSequence")
+			assert.Equal(t, s.eventDepth.Load(), int32(5), "eventDepth")
 			assert.Equal(t, s.eventOverflow.Load(), int32(1), "eventOverflow")
 			assert.Equal(t, s.eventOverflowLog.Load(), true, "eventOverflowLog")
-			assert.Equal(t, s.eventStack.len(), 3, "stack.len()")
+			assert.Equal(t, s.eventStack.len(), 4, "stack.len()")
 
 			// Overflowed events record nothing, except the destination the
 			// span keeps for Inject's Pinpoint-Host.
@@ -558,15 +563,15 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 
 			s.EndSpanEvent()
 			assert.Equal(t, s.eventOverflow.Load(), int32(0), "eventOverflow")
-			assert.Equal(t, s.eventStack.len(), 3, "stack.len()")
+			assert.Equal(t, s.eventStack.len(), 4, "stack.len()")
 
 			_, ok = s.SpanEvent().(*noopSpanEvent)
 			assert.Equal(t, ok, false, "noopSpanEvent")
 
 			se, ok := s.SpanEvent().(*spanEvent)
 			assert.Equal(t, ok, true, "spanEvent")
-			assert.Equal(t, se.depth, int32(3), "depth")
-			assert.Equal(t, se.sequence, int32(5), "sequence")
+			assert.Equal(t, se.depth, int32(4), "depth")
+			assert.Equal(t, se.sequence, int32(7), "sequence")
 
 			tracer = s.NewGoroutineTracer()
 			ss, ok := tracer.(*span)
@@ -575,6 +580,8 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 			assert.Equal(t, ss.isAsyncSpan(), true, "isAsyncSpan")
 			tracer.EndSpan()
 
+			s.EndSpanEvent()
+			assert.Equal(t, s.eventStack.len(), 3, "stack.len()")
 			s.EndSpanEvent()
 			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
 			s.EndSpanEvent()
@@ -585,31 +592,46 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 	}
 }
 
-// Span.MaxCallStackDepth is the deepest level still recorded, not the first one
-// dropped: Java's DefaultCallStack overflows at maxDepth < index, and Go used to
-// cut one level short of that.
+// Span.MaxCallStackDepth allows max+1 nesting levels, as Java does: in
+// DefaultCallStack.push, isDepthOverflow checks maxDepth < index where index is
+// the pre-push element count, so with maxDepth=3 the 4th push (index=3) is
+// still recorded at depth 4 (CallStackTest). Go used to stop at depth max.
 func Test_span_NewSpanEventDepthBoundary(t *testing.T) {
-	config := defaultConfig()
-	config.Set(CfgSpanMaxCallStackDepth, 3)
-	s := testSpanWithConfig(config)
+	for _, max := range []int{minEventDepth, 3} {
+		t.Run(fmt.Sprintf("max=%d", max), func(t *testing.T) {
+			config := defaultConfig()
+			config.Set(CfgSpanMaxCallStackDepth, max)
+			s := testSpanWithConfig(config)
 
-	for i := 0; i < 3; i++ {
-		s.NewSpanEvent("t")
-		assert.Equal(t, int32(0), s.eventOverflow.Load(), "level %d fits", i+1)
+			for i := 0; i <= max; i++ {
+				s.NewSpanEvent("t")
+				assert.Equal(t, int32(0), s.eventOverflow.Load(), "level %d fits", i+1)
+			}
+
+			s.NewSpanEvent("t")
+			assert.Equal(t, int32(1), s.eventOverflow.Load(), "level %d overflows", max+2)
+
+			for i := 0; i < max+2; i++ {
+				s.EndSpanEvent()
+			}
+			// popped deepest first, so the recorded depths run max+1 .. 1
+			if assert.Len(t, s.spanEvents, max+1, "recorded events") {
+				for i, se := range s.spanEvents {
+					assert.Equal(t, int32(max+1-i), se.depth, "depth")
+				}
+			}
+		})
 	}
 
-	s.NewSpanEvent("t")
-	assert.Equal(t, int32(1), s.eventOverflow.Load(), "the 4th level overflows")
-
-	for i := 0; i < 4; i++ {
-		s.EndSpanEvent()
-	}
-	// popped deepest first, so the recorded depths run 3, 2, 1
-	if assert.Len(t, s.spanEvents, 3, "recorded events") {
-		for i, se := range s.spanEvents {
-			assert.Equal(t, int32(3-i), se.depth, "depth")
+	t.Run("unlimited", func(t *testing.T) {
+		config := defaultConfig()
+		config.Set(CfgSpanMaxCallStackDepth, -1)
+		s := testSpanWithConfig(config)
+		for i := 0; i < 200; i++ {
+			s.NewSpanEvent("t")
 		}
-	}
+		assert.Equal(t, int32(0), s.eventOverflow.Load(), "no depth overflow")
+	})
 }
 
 func Test_span_NewSpanEventSequenceOverflow(t *testing.T) {
@@ -1385,13 +1407,13 @@ func TestSpan_AsyncEndSpanKeepsItsEvent(t *testing.T) {
 	assert.Len(t, chunk.eventChunk, 2, "work event and the async goroutine event")
 }
 
-// overflowedSpan returns a span at max depth 3 holding three live events and
-// one overflow placeholder.
+// overflowedSpan returns a span at max depth 3 holding four live events (max+1
+// levels are recorded) and one overflow placeholder.
 func overflowedSpan() *span {
 	config := defaultConfig()
 	config.Set(CfgSpanMaxCallStackDepth, 3)
 	s := testSpanWithConfig(config)
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 5; i++ {
 		s.NewSpanEvent("t")
 	}
 	s.overflowSe.SetDestination("my-cluster")
@@ -1422,7 +1444,7 @@ func Test_span_EndSpanEvent_OverflowNeverGoesNegative(t *testing.T) {
 	s.EndSpanEvent()
 	assert.Equal(t, int32(0), s.eventOverflow.Load(), "eventOverflow")
 	assert.Equal(t, "", s.overflowSe.destination(), "destination cleared")
-	assert.Equal(t, 3, s.eventStack.len(), "stack.len()")
+	assert.Equal(t, 4, s.eventStack.len(), "stack.len()")
 
 	// A new overflow must land on 1, not 0: its end below then consumes the
 	// placeholder instead of popping the live ancestor.
@@ -1430,8 +1452,8 @@ func Test_span_EndSpanEvent_OverflowNeverGoesNegative(t *testing.T) {
 	assert.Equal(t, int32(1), s.eventOverflow.Load(), "eventOverflow")
 	s.EndSpanEvent()
 	assert.Equal(t, int32(0), s.eventOverflow.Load(), "eventOverflow")
-	assert.Equal(t, 3, s.eventStack.len(), "stack.len()")
-	assert.Equal(t, int32(4), s.eventDepth.Load(), "eventDepth")
+	assert.Equal(t, 4, s.eventStack.len(), "stack.len()")
+	assert.Equal(t, int32(5), s.eventDepth.Load(), "eventDepth")
 }
 
 func Test_spanEvent_end_Idempotent(t *testing.T) {

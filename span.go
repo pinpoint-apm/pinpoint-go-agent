@@ -530,10 +530,15 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 
 	cfg := span.cfg
 	// eventDepth holds the depth the new event would be recorded at (it starts
-	// at 1), so depth == max is still the last allowed level - Java's
-	// DefaultCallStack overflows at maxDepth < index. Sequence keeps >=,
-	// mirroring Java's maxSequence <= sequence.
-	if span.eventSequence.Load() >= cfg.spanMaxEventSequence || span.eventDepth.Load() > cfg.spanMaxEventDepth {
+	// at 1), so eventDepth-1 is the number of events already open. That is
+	// Java's DefaultCallStack.push index: the pre-push element count, checked
+	// by isDepthOverflow as maxDepth < index, then incremented and stored as
+	// the event's depth. With maxDepth=3 the 4th push (index=3) is still
+	// recorded at depth 4, so the deepest recorded level is maxDepth+1.
+	// Written as eventDepth-1 rather than max+1 because -1 (unlimited) is
+	// stored as MaxInt32. Sequence keeps >=, mirroring Java's
+	// maxSequence <= sequence.
+	if span.eventSequence.Load() >= cfg.spanMaxEventSequence || span.eventDepth.Load()-1 > cfg.spanMaxEventDepth {
 		span.eventOverflow.Add(1)
 		if span.eventOverflowLog.CompareAndSwap(false, true) {
 			Log("span").Warnf("callStack maximum depth/sequence exceeded. (depth=%d, seq=%d)", span.eventDepth.Load(), span.eventSequence.Load())

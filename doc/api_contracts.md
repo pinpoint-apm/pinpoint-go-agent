@@ -188,7 +188,7 @@ Two limits bound the size of a single span:
 
 | Limit | Option | Default | Meaning |
 |---|---|---|---|
-| depth | `Span.MaxCallStackDepth` | 64 | max nesting of concurrently open events |
+| depth | `Span.MaxCallStackDepth` | 64 | max nesting of concurrently open events; one level deeper than the value is still recorded (65 at the default), as in Java's `DefaultCallStack` |
 | sequence | `Span.MaxCallStackSequence` | 5000 | max total events in one span |
 
 Both accept `-1` for unlimited; minimums are 2 and 4 respectively. Both are

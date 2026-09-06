@@ -564,6 +564,7 @@ Span.EventChunkSize option sets the size of span event chunk for gRPC.
 
 ### Span.MaxCallStackDepth
 Span.MaxCallStackDepth option sets the max callstack depth of a span, if -1 is unlimited and min is 2.
+Events nested one level deeper than this value are still recorded and the next level overflows, matching Java's `DefaultCallStack` (with the default 64, up to 65 levels are recorded).
 
 * --pinpoint-span-maxcallstackdepth
 * PINPOINT_GO_SPAN_MAXCALLSTACKDEPTH
