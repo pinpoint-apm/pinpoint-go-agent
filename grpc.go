@@ -347,7 +347,7 @@ func newAgentGrpc(agent *agent) (*agentGrpc, error) {
 	}, nil
 }
 
-func getHostName() string {
+var getHostName = func() string {
 	if hostName, err := os.Hostname(); err == nil {
 		return hostName
 	}
@@ -588,9 +588,19 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 // a failed refresh is simply left for the next refresh cycle, mirroring the
 // C++ agent's send_agent_info_with_retries.
 func (agentGrpc *agentGrpc) refreshAgentInfo(maxTry int, retryInterval time.Duration) bool {
-	ctx, agentInfo := agentGrpc.makeAgentInfo()
-
 	for try := 0; try < maxTry && !agentGrpc.agent.shutdown.Load(); try++ {
+		// Rebuilt per attempt for the same reason registerAgentWithRetry does
+		// it, and as the Java agent (AgentInfoSender.java:176, createAgentInfo
+		// per AgentInfoSendTask run) and the C++ agent (grpc.cpp:1819,
+		// build_agent_info per send_agent_info_once) do: attempts are
+		// retryInterval apart, so the host name, IP or server metadata can move
+		// between them, and this refresh is what corrects the collector's copy.
+		// Cheap to repeat - a local route lookup and an interface scan - and
+		// maxTry bounds how often. The context is rebuilt with it: it carries
+		// the agent headers over the agent-lifetime stop signal and no deadline
+		// of its own, so per-attempt and per-call are the same context here.
+		ctx, agentInfo := agentGrpc.makeAgentInfo()
+
 		if res, err := agentGrpc.sendAgentInfo(ctx, agentInfo); err == nil && res.Success {
 			Log("agent").Infof("success to refresh agent info")
 			return true

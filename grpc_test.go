@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -920,14 +921,26 @@ func Test_sendMetaWorker_pipelinesUpToConcurrencyLimit(t *testing.T) {
 	assert.Equal(t, metaMaxConcurrentRequests, max, "in-flight sends must not exceed the limit")
 }
 
-// countingAgentClient counts RequestAgentInfo calls and fails them on demand.
+// countingAgentClient counts RequestAgentInfo calls, records the host name each
+// send carried, and fails them on demand.
 type countingAgentClient struct {
 	calls atomic.Int32
 	fail  atomic.Bool
+	mu    sync.Mutex
+	hosts []string
+}
+
+func (c *countingAgentClient) sentHosts() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.hosts...)
 }
 
 func (c *countingAgentClient) RequestAgentInfo(ctx context.Context, agentInfo *pb.PAgentInfo, _ ...grpc.CallOption) (*pb.PResult, error) {
 	c.calls.Add(1)
+	c.mu.Lock()
+	c.hosts = append(c.hosts, agentInfo.GetHostname())
+	c.mu.Unlock()
 	if c.fail.Load() {
 		return nil, status.Errorf(codes.Unavailable, "collector down")
 	}
@@ -988,6 +1001,27 @@ func Test_agentGrpc_refreshAgentInfo_stopsOnSuccess(t *testing.T) {
 
 	assert.True(t, ok)
 	assert.EqualValues(t, 1, client.calls.Load())
+}
+
+// A refresh retry must carry a freshly built payload, not the snapshot the
+// first attempt happened to capture: attempts are retryInterval apart, and this
+// send is what corrects the collector's copy of a host name or IP that moved.
+// Same rule registerAgentWithRetry follows, and the Java (AgentInfoSender.java:176)
+// and C++ (grpc.cpp:1819) agents with it.
+func Test_agentGrpc_refreshAgentInfo_rebuildsInfoPerAttempt(t *testing.T) {
+	saved := getHostName
+	defer func() { getHostName = saved }()
+	var n atomic.Int32
+	getHostName = func() string { return "host-" + strconv.Itoa(int(n.Add(1))) }
+
+	cfg, _ := NewConfig(WithAppName("TestApp"))
+	client := &countingAgentClient{}
+	client.fail.Store(true)
+	agentGrpc := &agentGrpc{agentClient: client, agent: newTestAgent(cfg)}
+
+	assert.False(t, agentGrpc.refreshAgentInfo(3, time.Millisecond))
+	assert.Equal(t, []string{"host-1", "host-2", "host-3"}, client.sentHosts(),
+		"every attempt must send the host name read at that attempt")
 }
 
 func Test_agent_refreshAgentInfoWorker_honorsInterval(t *testing.T) {
