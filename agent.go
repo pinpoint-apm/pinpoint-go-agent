@@ -149,10 +149,19 @@ type sqlMeta struct {
 	key string
 }
 
+// cached records whether the statement is in the UID cache. It cannot be
+// inferred from key: key is left empty for a bypassed statement to keep the
+// untruncated text off the queue, but a statement whose normalization is empty
+// ("/* hint */" under Sql.RemoveComments) is cached under an empty key too -
+// sqlCacheable admits it (agent.go:1080) and the normalizer returns it as it
+// stands (sql_util.go:39). Reading the empty key as "bypassed" left that entry
+// cached after a failed send, pointing every later span at a UID the collector
+// never received.
 type sqlUidMeta struct {
-	uid []byte
-	sql string
-	key string
+	uid    []byte
+	sql    string
+	key    string
+	cached bool
 }
 
 type exceptionMeta struct {
@@ -911,8 +920,8 @@ func (agent *agent) deleteMetaCache(md interface{}) {
 	case sqlMeta:
 		agent.sqlCache.remove(md.key, func(id int32) bool { return id == md.id })
 	case sqlUidMeta:
-		// An empty key is a statement that bypassed the cache: nothing to drop.
-		if md.key == "" {
+		// A statement that bypassed the cache has nothing to drop.
+		if !md.cached {
 			return
 		}
 		// A re-registered UID is the same hash, so this only guards a key
@@ -1151,7 +1160,7 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 	// literal-heavy SQL normalizes larger than it came in). Java bounds the
 	// same item at 64KB by abbreviating before it enqueues (SqlCacheService).
 	aSql := abbreviateString(sql, maxSqlSize)
-	md := sqlUidMeta{uid: uid, sql: aSql}
+	md := sqlUidMeta{uid: uid, sql: aSql, cached: cacheable}
 	if cacheable {
 		md.key = sql
 	}

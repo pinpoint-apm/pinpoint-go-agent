@@ -356,6 +356,27 @@ func Test_agent_SQLCachesKeyTheWholeStatement(t *testing.T) {
 	})
 }
 
+// Cache membership is a flag on the meta, not the shape of its key. A SQL whose
+// normalization is empty ("/* hint */" under Sql.RemoveComments) is cached
+// under an empty key, so reading the empty key as "bypassed" skipped the
+// eviction and left a UID cached that the collector never received.
+func Test_agent_SQLUidCacheEvictsEmptyNormalizedStatement(t *testing.T) {
+	nsql, _ := newSqlNormalizer("/* hint */", true).run()
+	require.Empty(t, nsql, "the normalization of a lone comment is empty")
+
+	a := newTestAgent(defaultConfig())
+	require.NotNil(t, a.cacheSqlUid(nsql))
+	_, cached := a.sqlUidCache.peek(nsql)
+	require.True(t, cached, "an empty key is short enough to cache")
+
+	md := (<-a.metaChan).(sqlUidMeta)
+	assert.True(t, md.cached, "a cached statement must say so")
+
+	a.deleteMetaCache(md)
+	_, stillCached := a.sqlUidCache.peek(nsql)
+	assert.False(t, stillCached, "a dropped meta must drop the entry that published its uid")
+}
+
 // A SQL at or above SQL.CacheLengthLimit is not cached by the hash-keyed caches:
 // it re-sends its metadata on every use, as the Java agent's UidCache does past
 // bypassLength. Caching them instead lets a few huge generated statements hold
@@ -377,15 +398,16 @@ func Test_agent_SQLCachesBypassKeysOverLengthLimit(t *testing.T) {
 		// Nothing was cached, so the item carries no key to evict by and its
 		// size is bounded by the published text alone.
 		md := (<-a.metaChan).(sqlUidMeta)
-		assert.Empty(t, md.key, "a bypassed statement has no entry to evict")
+		assert.False(t, md.cached, "a bypassed statement has no entry to evict")
+		assert.Empty(t, md.key, "and carries no key, so the queue item stays bounded")
 		assert.LessOrEqual(t, len(md.sql), maxSqlSize)
 
-		// deleteMetaCache on a keyless item must leave other entries alone.
+		// deleteMetaCache on an uncached item must leave other entries alone.
 		small := "select 1"
 		a.cacheSqlUid(small)
 		a.deleteMetaCache(md)
 		_, stillCached := a.sqlUidCache.peek(small)
-		assert.True(t, stillCached, "an empty key must not evict anything")
+		assert.True(t, stillCached, "an uncached statement must not evict anything")
 	})
 
 	// The normalization memo holds the raw text as key and the normalized text
