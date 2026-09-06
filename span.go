@@ -680,9 +680,18 @@ func (span *span) newAsyncSpan() Tracer {
 		// Always the first root, even for an async span forked from an async
 		// span (C++: trace_root_data_ ? trace_root_data_ : data_). Known limit:
 		// the root's final chunk is sent at its own EndSpan, so an error recorded
-		// by a child that ends after the root is never on the wire. Java defers
-		// the root store until the last child ends (SpanAsyncStateListener);
-		// that is a separate design item, not done here.
+		// by a child that ends after the root is never on the wire. Java's
+		// ordinary trace has the same limit: DefaultTrace.close()
+		// (DefaultTrace.java:181-199) calls logSpan(), storing the PSpan right
+		// at the root's close, and that is what every normal entry point builds
+		// (DefaultBaseTraceFactory.java:86,102,114 -> newDefaultTrace() at :191).
+		// The deferred store lives only on the AsyncDefaultTrace path, whose
+		// close() awaits the last child via SpanAsyncStateListener
+		// (AsyncDefaultTrace.java:24-31); its entry points are
+		// DefaultBaseTraceFactory.java:148,161, marked
+		// @InterfaceAudience.LimitedPrivate("vert.x"). So this is the same
+		// design as Java, not a parity gap -- deferring the root store would go
+		// beyond Java, not catch up to it.
 		asyncSpan.traceRoot = span.traceRoot
 		if asyncSpan.traceRoot == nil {
 			asyncSpan.traceRoot = span

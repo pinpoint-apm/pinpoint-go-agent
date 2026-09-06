@@ -279,11 +279,18 @@ framework plugins do this for you where the framework exposes the pattern.
   an async span goes out as a `PSpanChunk`, which has no `err` field, so the
   flag is stored on the root the way Java's `ChildTrace` shares its parent's
   `TraceRoot`. Only the flag moves; the error message and exception chain stay
-  on the tracer that recorded them. This differs from Java in one respect:
-  Java holds the root's span back until its last async child has ended, while
-  this agent sends the root's final chunk at the root's own `EndSpan()`, so a
-  child that fails **after** the root ended is not reflected in `PSpan.err`
-  or the URL stat.
+  on the tracer that recorded them. The root's final chunk goes out at the
+  root's own `EndSpan()`, so a child that fails **after** the root ended is not
+  reflected in `PSpan.err` or the URL stat. Java's ordinary trace behaves the
+  same way: `DefaultTrace.close()` (`DefaultTrace.java:181-199`) calls
+  `logSpan()` and stores the `PSpan` at the root's close, and that is what
+  every normal entry point builds (`DefaultBaseTraceFactory.java:86,102,114`
+  → `newDefaultTrace()` at `:191`). Java's deferred store exists only on the
+  `AsyncDefaultTrace` path, whose `close()` awaits the last child through
+  `SpanAsyncStateListener` (`AsyncDefaultTrace.java:24-31`); its entry points
+  are `DefaultBaseTraceFactory.java:148,161`, both marked
+  `@InterfaceAudience.LimitedPrivate("vert.x")`. Deferring the root store here
+  would therefore be an extension past Java, not a parity fix.
 * A `nil` error is ignored by both, so the common
   `tracer.SpanEvent().SetError(err)` after a call needs no guard.
 * `SetFailure()` marks failure without an error message — the right call for an
