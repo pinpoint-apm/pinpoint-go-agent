@@ -397,26 +397,25 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		return
 	}
 	tid := reader.Get(HeaderTraceId)
-	continued := true
-	if agentId, startTime, sequence, ok := splitTransactionId(tid); ok {
-		span.txId.AgentId = agentId
-		span.txId.StartTime = startTime
-		span.txId.Sequence = sequence
+	txId, continued := continueHeaders(reader)
+	if continued {
+		span.txId = txId
 	} else {
 		span.txId = span.agent.generateTransactionId()
-		continued = false
+		// Only a trace id that was sent and could not be parsed is worth a
+		// warning; an entry request carrying no Pinpoint headers is normal, and
+		// so is a peer that sent a trace id without the two span id headers.
 		if tid != "" {
-			malformedTraceIdLog.warnf("malformed trace id header %q: ignoring pinpoint headers, starting a new transaction", tid)
+			if _, _, _, ok := splitTransactionId(tid); !ok {
+				malformedTraceIdLog.warnf("malformed trace id header %q: ignoring pinpoint headers, starting a new transaction", tid)
+			}
 		}
 	}
 
-	// No usable trace id means this span starts a new transaction, so the
-	// remaining Pinpoint headers describe a trace it is not part of: adopting
-	// their span/parent ids would record a non-root span pointing at a parent
-	// that does not exist in this transaction. Java does the same - a request
-	// without Pinpoint-TraceID gets a new trace whose parentSpanId is NULL.
-	// A missing trace id is the normal case (every entry request); only a
-	// malformed one is worth the warning above.
+	// Headers that do not describe a hop this span can attach to mean it starts
+	// a new transaction, so the remaining Pinpoint headers describe a trace it
+	// is not part of: adopting their span/parent ids would record a non-root
+	// span pointing at a parent that does not exist in this transaction.
 	if !continued {
 		span.spanId = generateSpanId()
 		span.parentSpanId = -1
@@ -487,6 +486,36 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 	if IsTraceLogLevelEnabled() {
 		Log("span").Tracef("span extract: %s, %s, %s, %s, %s, %s", tid, spanid, pappname, pspanid, papptype, host)
 	}
+}
+
+// continueHeaders reports whether the inbound headers describe a hop this span
+// can attach to, and returns the transaction id to continue when they do.
+//
+// Java requires all three headers - a trace id plus both span id headers -
+// before it builds a ContinueTraceHeader (DefaultTraceHeaderReader.java:54-70);
+// any one of them missing returns NewTraceHeader. A trace id on its own names a
+// transaction but not a position in it, so continuing on it alone records a
+// non-root span whose parent is in no trace, and burns a continue-sampler slot
+// (isContinueSampled is unconditionally true) for a hop that does not exist.
+//
+// The two span id headers are checked for presence only, as Java does: a value
+// that will not parse still describes a hop, and Java keeps it as SpanId.NULL
+// via NumberUtils.parseLong (SpanId.java:27). Pinpoint-Flags is not part of the
+// decision - Java defaults it to 0 (DefaultTraceHeaderReader.java:71-72).
+//
+// The trace id, unlike the span ids, must parse: an unparseable one leaves no
+// transaction to continue, and Go starts a new one rather than throwing as Java
+// does (TransactionIdUtils.java:84-90). See doc/java_parity.md.
+//
+// Both the sampler choice (NewSpanTracerWithReader) and the context extraction
+// (Extract) call this, so the two cannot disagree about which trace a request
+// belongs to.
+func continueHeaders(reader DistributedTracingContextReader) (TransactionId, bool) {
+	agentId, startTime, sequence, ok := splitTransactionId(reader.Get(HeaderTraceId))
+	if !ok || reader.Get(HeaderSpanId) == "" || reader.Get(HeaderParentSpanId) == "" {
+		return TransactionId{}, false
+	}
+	return TransactionId{agentId, startTime, sequence}, true
 }
 
 // splitTransactionId parses an "agentId^startTime^sequence" trace id header

@@ -117,6 +117,17 @@ func TestReportsResponseTimeAndRuntimeStatistics(t *testing.T) {
 	}
 }
 
+// continueCarrier builds the headers an upstream hop actually sends. All three
+// are required to continue a trace, as in Java (DefaultTraceHeaderReader.java:54-70);
+// a trace id on its own starts a new transaction and takes the new-trace sampler.
+func continueCarrier(traceID string) mapCarrier {
+	return mapCarrier{
+		pinpoint.HeaderTraceId:      traceID,
+		pinpoint.HeaderSpanId:       "67890",
+		pinpoint.HeaderParentSpanId: "123",
+	}
+}
+
 func TestAppliesCounterAndParentSamplingAndReportsDecisions(t *testing.T) {
 	cfg := defaultAgentConfig()
 	cfg.samplingCounterRate = 3
@@ -131,9 +142,7 @@ func TestAppliesCounterAndParentSamplingAndReportsDecisions(t *testing.T) {
 	sampledTraceID := driveSamplingPattern(t, agent, "sampling.counter", "/sampling/counter/", expected, nil)
 	require.NotEmpty(t, sampledTraceID)
 
-	continued := agent.NewSpanTracerWithReader("sampling.continued", "/sampling/continued", mapCarrier{
-		pinpoint.HeaderTraceId: sampledTraceID,
-	})
+	continued := agent.NewSpanTracerWithReader("sampling.continued", "/sampling/continued", continueCarrier(sampledTraceID))
 	assert.True(t, continued.IsSampled())
 	continued.EndSpan()
 
@@ -202,9 +211,8 @@ func TestSamplesOnlyContinuedTracesWhenCounterRateIsZero(t *testing.T) {
 
 	driveSamplingPattern(t, agent, "sampling.zero", "/sampling/zero/", []bool{false, false, false}, nil)
 
-	continued := agent.NewSpanTracerWithReader("sampling.zero.continued", "/sampling/zero/continued", mapCarrier{
-		pinpoint.HeaderTraceId: "java-agent-7^1700000000000^99",
-	})
+	continued := agent.NewSpanTracerWithReader("sampling.zero.continued", "/sampling/zero/continued",
+		continueCarrier("java-agent-7^1700000000000^99"))
 	assert.True(t, continued.IsSampled())
 	continued.EndSpan()
 
@@ -241,7 +249,7 @@ func TestEnforcesNewAndContinuationThroughputLimits(t *testing.T) {
 
 	expectedCont := []bool{true, false, false}
 	driveSamplingPattern(t, agent, "sampling.throughput.continued", "/sampling/throughput/continued/",
-		expectedCont, mapCarrier{pinpoint.HeaderTraceId: parentTraceID})
+		expectedCont, continueCarrier(parentTraceID))
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool {
 		totals := transactionTotalsAfter(s, baseline)

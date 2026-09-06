@@ -1252,3 +1252,109 @@ func Test_sqlUid_MatchesJavaGuavaMurmur3_128(t *testing.T) {
 		})
 	}
 }
+
+// Java continues a trace only when the trace id and both span id headers are
+// all present (DefaultTraceHeaderReader.java:54-70). Each row asserts the three
+// things that must move together: which sampler ran, whether the parent span id
+// was adopted, and whether the transaction id was inherited or generated.
+//
+// Rows 2-4 failed before this table's change: a trace id on its own took the
+// continue sampler and left parentSpanId at its default with no parent node in
+// the trace.
+//
+// The C++ agent runs the same input list; keep the two tables identical.
+func Test_agent_continueHeaders_table(t *testing.T) {
+	const validTid = "t123456^12345^1"
+
+	tests := []struct {
+		name      string
+		headers   map[string]string
+		continued bool
+	}{
+		{"tid+spanid+pspanid", map[string]string{HeaderTraceId: validTid, HeaderSpanId: "67890", HeaderParentSpanId: "123"}, true},
+		{"tid+pspanid, no spanid", map[string]string{HeaderTraceId: validTid, HeaderParentSpanId: "123"}, false},
+		{"tid+spanid, no pspanid", map[string]string{HeaderTraceId: validTid, HeaderSpanId: "67890"}, false},
+		{"tid only", map[string]string{HeaderTraceId: validTid}, false},
+		{"no tid", map[string]string{HeaderSpanId: "67890", HeaderParentSpanId: "123"}, false},
+		{"blank tid", map[string]string{HeaderTraceId: "", HeaderSpanId: "67890", HeaderParentSpanId: "123"}, false},
+		{"malformed tid", map[string]string{HeaderTraceId: "garbage", HeaderSpanId: "67890", HeaderParentSpanId: "123"}, false},
+		{"malformed spanid", map[string]string{HeaderTraceId: validTid, HeaderSpanId: "garbage", HeaderParentSpanId: "123"}, true},
+	}
+
+	// Counter rate 1 samples every new trace, so a span exists to inspect on
+	// every row and the stat counters alone say which sampler ran.
+	c, _ := NewConfig(
+		WithAppName("test"),
+		WithAgentId("testagent"),
+		WithSamplingType("COUNTER"),
+		WithSamplingCounterRate(1),
+	)
+	c.offGrpc = true
+	a, _ := NewAgent(c)
+	agent := a.(*agent)
+	agent.enable.Store(true)
+	defer a.Shutdown()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := agent.stats.readCounters()
+			reader := &DistributedTracingContextMap{m: tt.headers}
+
+			_, continued := continueHeaders(reader)
+			assert.Equal(t, tt.continued, continued, "continueHeaders")
+
+			tr := agent.NewSpanTracerWithReader("test", "/", reader)
+			s, ok := tr.(*span)
+			assert.True(t, ok, "sampled span")
+			defer tr.EndSpan()
+
+			after := agent.stats.readCounters()
+			// (a) which sampler ran
+			contSampler := after.sampleCont > before.sampleCont
+			newSampler := after.sampleNew > before.sampleNew
+			// (b) parent adopted, or root
+			adoptedParent := s.parentSpanId != -1
+			// (c) transaction id inherited, or generated here
+			inheritedTxId := s.txId.AgentId == "t123456"
+
+			assert.Equal(t, tt.continued, contSampler, "continue sampler")
+			assert.Equal(t, !tt.continued, newSampler, "new sampler")
+			assert.Equal(t, tt.continued, adoptedParent, "parent span id adopted")
+			assert.Equal(t, tt.continued, inheritedTxId, "transaction id inherited")
+
+			// The invariant this change exists for: the sampler choice and the
+			// context extraction never disagree about which trace this is.
+			assert.Equal(t, contSampler, adoptedParent && inheritedTxId,
+				"sampler choice and extracted context disagree")
+
+			if tt.continued {
+				assert.Equal(t, int64(123), s.parentSpanId, "parent span id")
+				assert.NotEqual(t, int64(0), s.spanId, "span id")
+			} else {
+				assert.Equal(t, "testagent", s.txId.AgentId, "generated transaction id")
+			}
+		})
+	}
+}
+
+// The headers Inject writes must be readable as a continued trace by the other
+// side - proof that Inject really emits all three headers the new check needs.
+func Test_agent_continueHeaders_roundTrip(t *testing.T) {
+	c, _ := NewConfig(WithAppName("test"), WithAgentId("testagent"))
+	c.offGrpc = true
+	a, _ := NewAgent(c)
+	agent := a.(*agent)
+	agent.enable.Store(true)
+	defer a.Shutdown()
+
+	caller := agent.NewSpanTracer("test", "/")
+	caller.NewSpanEvent("call")
+	m := map[string]string{}
+	caller.Inject(&DistributedTracingContextMap{m})
+	caller.EndSpanEvent()
+	caller.EndSpan()
+
+	txId, continued := continueHeaders(&DistributedTracingContextMap{m})
+	assert.True(t, continued, "injected headers must continue the trace: %v", m)
+	assert.Equal(t, caller.TransactionId(), txId, "transaction id")
+}

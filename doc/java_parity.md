@@ -24,6 +24,10 @@ is simply not written yet does not belong here.
 | Percent sampling rate of zero | `PercentSamplerFactory.createSampler` | **Adopted** — see [below](#percent-rate-of-zero--adopted) |
 | GC type and counts | `JvmGcType`, `GarbageCollectorMXBean` | **Diverges** — see [below](#gc-type-and-counts--diverges) |
 | Exception chain during overflow | `AbstractRecorder.recordException`, `DefaultExceptionRecorder` | **Diverges** — see [below](#exception-chain-during-overflow--diverges) |
+| Inbound trace continuation | `DefaultTraceHeaderReader.read`, `RequestTraceReader` | **Adopted** — see [below](#inbound-trace-continuation--adopted) |
+| Malformed inbound `Pinpoint-SpanID` | `DefaultTraceHeaderReader`, `NumberUtils.parseLong` | **Diverges** — see [below](#malformed-inbound-span-id--diverges) |
+| Malformed inbound `Pinpoint-TraceID` | `DefaultTraceContext.createTraceId`, `TransactionIdUtils.parseTransactionId` | **Diverges** — see [below](#malformed-inbound-trace-id--diverges) |
+| Order of the inbound header checks | `DefaultTraceHeaderReader.read` | **Same as Java** — `Pinpoint-Sampled: s0` is answered before the trace id and span id headers are looked at (`DefaultTraceHeaderReader.java:47-51`), so a peer that turned tracing off is obeyed even when its other headers are missing or broken |
 | Span queue overflow policy | `SpanBatchGrpcDataSender` | **Same as Java** — a full send queue drops the oldest entry, as Java's default BATCH sender does (`queue.poll()` in `SpanBatchGrpcDataSender`); rejecting the newest is STREAM-mode-only behaviour, so head-drop is not a deviation |
 
 ---
@@ -237,6 +241,86 @@ nothing is worth saying out loud. An explicit `0` is deliberate and stays quiet.
 **Upgrade note — breaking.** `Sampling.PercentRate: 0`, and any positive rate
 below `0.01`, now stops trace collection completely; it used to sample 0.01%. A
 deployment that relied on that floor must set `0.01` explicitly.
+
+---
+
+## Malformed inbound span id — diverges
+
+**Java.** `DefaultTraceHeaderReader` (`DefaultTraceHeaderReader.java:64-70`)
+runs both span id headers through `NumberUtils.parseLong(str, SpanId.NULL)`, so
+a value that will not parse becomes `SpanId.NULL` — `-1` (`SpanId.java:27`) —
+and the span is recorded with that id.
+
+**Go.** A present-but-unparseable `Pinpoint-SpanID` gets a **freshly generated
+span id** (`span.go`, `Extract`), with a throttled warning naming the header.
+`Pinpoint-pSpanID` does follow Java and falls back to `-1`, which is a real
+value there: it means "this span is a root".
+
+**Why.** A span id is the node's own identity in the trace; a parent span id is
+a pointer to another node. Leaving every unparseable span id at `-1` gives every
+such request the *same* identity, and the collector cannot tell them apart from
+each other or from a genuine root — the whole set collapses onto one node in the
+call tree. A generated id keeps them distinct and the surrounding trace intact;
+only the link to this one hop is lost, which is the information the broken
+header actually destroyed. The C++ agent makes the same choice, for the same
+reason.
+
+Note that this only covers a header whose **value** is broken. A header that is
+**absent** is a different case: the request then does not continue a trace at
+all — see [api_contracts.md](api_contracts.md).
+
+---
+
+## Malformed inbound trace id — diverges
+
+**Java.** `DefaultTraceHeaderReader` (`DefaultTraceHeaderReader.java:55`) tests
+`transactionId == null` and nothing else, so a present-but-unparseable value —
+including an **empty string** — takes the continue path. The parse happens later,
+in `DefaultTraceContext.createTraceId` (`DefaultTraceContext.java:227-231`) ->
+`TransactionIdUtils.parseTransactionId`, which **throws**
+`IllegalArgumentException("agentIndex not found:")` on a value with no `^`
+separator (`TransactionIdUtils.java:84-90`).
+
+**Go.** `continueHeaders` requires the trace id to parse. A blank or malformed
+value is treated as no trace id at all: the request starts a new transaction,
+with a throttled warning for a non-empty one.
+
+**Why.** An exception on the request path is a worse answer than a new trace to
+a header this agent did not write and cannot fix. The request is still served
+and still traced; only its link to a trace that could not be identified is lost.
+Sending it through the *continue* sampler instead would be worse still —
+`isContinueSampled()` is unconditionally true, so any garbage `Pinpoint-TraceID`
+would bypass the configured sampling rate.
+
+---
+
+## Inbound trace continuation — adopted
+
+**Java.** `DefaultTraceHeaderReader.read` (`DefaultTraceHeaderReader.java:44-76`)
+returns `ContinueTraceHeader` only when `Pinpoint-TraceID`, `Pinpoint-pSpanID`
+and `Pinpoint-SpanID` are all present; any one missing returns
+`NewTraceHeader`. `RequestTraceReader` (`RequestTraceReader.java:57-83`) turns
+that one verdict into both the trace object (`continueTraceObject` vs
+`newTraceObject`) and the sampler that is asked.
+
+**Go before this change.** A parseable `Pinpoint-TraceID` alone was enough. A
+peer that sent only the trace id got a continued trace: a non-root span pointing
+at a parent that exists in no trace, or a default parent span id under a trace
+with no node above it — and a continue-sampler slot spent on that hop.
+
+**Now.** `continueHeaders` (`span.go`) requires all three, and both the sampler
+choice (`agent.go`, `NewSpanTracerWithReader`) and `Extract` call it, so the two
+cannot disagree about which trace a request belongs to. The check for the two
+span id headers is presence-only, matching Java; `Pinpoint-Flags` is not part of
+the decision and still defaults to `0`.
+
+**Upgrade note — breaking.** A peer that sends only `Pinpoint-TraceID` now
+starts a **new transaction** where it used to continue one. Calls from such a
+peer appear **broken in two** in the distributed trace view; no data is lost,
+but one trace becomes two. Fix it at the source: have the peer send
+`Pinpoint-SpanID` and `Pinpoint-pSpanID` as well. This agent's `Inject()`
+already writes all three, as does the C++ agent's `InjectContext`, so only
+hand-rolled clients and header-stripping proxies are affected.
 
 ---
 

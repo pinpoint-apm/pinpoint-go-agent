@@ -390,6 +390,48 @@ the omitted ones behind to be read as this injection's own. The sarama
 producer writer does this, because the retry pattern re-sends the same
 message object.
 
+### An inbound request continues a trace only with all three headers
+
+`Extract()` treats a request as a continuation of an existing trace only when
+**all three** of these are present:
+
+| Header | Requirement |
+|---|---|
+| `Pinpoint-TraceID` | present **and parseable** as `agentId^startTime^sequence` |
+| `Pinpoint-SpanID` | present (any value) |
+| `Pinpoint-pSpanID` | present (any value) |
+
+Anything else starts a **new transaction**: a fresh transaction id, a fresh span
+id, `parentSpanId = -1`, and none of the other inbound `Pinpoint-` headers read.
+
+This is Java's decision, taken in the same order
+(`DefaultTraceHeaderReader.read`, `DefaultTraceHeaderReader.java:44-76`):
+
+1. `Pinpoint-Sampled: s0` -> tracing disabled for this request, before anything
+   else is looked at (`DefaultTraceHeaderReader.java:47-51`)
+2. no `Pinpoint-TraceID` -> new trace
+3. no `Pinpoint-pSpanID` -> new trace
+4. no `Pinpoint-SpanID` -> new trace
+5. otherwise -> continue, with `Pinpoint-Flags` defaulting to `0` when absent
+   (`DefaultTraceHeaderReader.java:71-72`)
+
+A trace id on its own names a transaction but not a position inside it.
+Continuing on it alone records a non-root span whose parent is in no trace, and
+spends a continue-sampler slot - `isContinueSampled()` is unconditionally true -
+on a hop that does not exist. Header-stripping proxies, gateways and hand-rolled
+clients produce exactly that shape.
+
+The two span id headers are checked for **presence only**, as Java does: a value
+that will not parse still describes a hop, and Java keeps it as `SpanId.NULL`
+(`SpanId.java:27`) via `NumberUtils.parseLong`. Where this agent parses one of
+them differently from Java, see [java_parity.md](java_parity.md).
+
+The same decision drives **both** the sampler choice (`NewSpanTracerWithReader`)
+and the context extraction (`Extract`), through one function, `continueHeaders`.
+They must not be able to disagree: a request routed through the continue sampler
+but extracted as a new transaction lets a peer bypass the configured sampling
+rate.
+
 ### Statistics
 
 Response times and URL statistics are collected for unsampled spans, which is

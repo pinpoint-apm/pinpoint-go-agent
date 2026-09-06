@@ -644,13 +644,12 @@ func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string, re
 	}
 
 	sampler := agent.config.load().sampler
-	// isContinueSampled is unconditionally true, so it must only be picked
-	// for a trace id Extract will actually continue. An unparseable id makes
-	// Extract start a new root transaction; routing it through the continue
-	// sampler let a peer bypass the sampling rate with any garbage header.
-	// Extract parses the id again; that is cheaper than widening its signature.
-	tid := reader.Get(HeaderTraceId)
-	if _, _, _, continued := splitTransactionId(tid); !continued {
+	// isContinueSampled is unconditionally true, so it must only be picked for
+	// headers Extract will actually continue. continueHeaders is the single
+	// definition of that; splitting it in two let a peer bypass the sampling
+	// rate with headers Extract then started a new transaction for. Extract
+	// calls it again; that is cheaper than widening its signature.
+	if _, continued := continueHeaders(reader); !continued {
 		return agent.samplingSpan(func() bool { return sampler.isNewSampled(agent.stats) }, operation, rpcName, reader)
 	}
 	return agent.samplingSpan(func() bool { return sampler.isContinueSampled(agent.stats) }, operation, rpcName, reader)

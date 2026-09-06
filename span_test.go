@@ -1287,6 +1287,7 @@ func Test_span_Extract_malformedParentAppTypeKeepsDefault(t *testing.T) {
 	span.Extract(&DistributedTracingContextMap{m: map[string]string{
 		HeaderTraceId:               "t123456^12345^1",
 		HeaderSpanId:                "67890",
+		HeaderParentSpanId:          "123",
 		HeaderParentApplicationName: "upstream",
 		HeaderParentApplicationType: "not-a-number",
 	}})
