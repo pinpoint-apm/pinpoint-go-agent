@@ -108,13 +108,26 @@ func Test_SetExtraLoggerIsRaceFree(t *testing.T) {
 	wg.Wait()
 }
 
+// logrus' TextFormatter decides "is the output a terminal?" once, on its
+// first Format call, and latches the answer. Anything logged through the global
+// logger before setOutput switches to a file (NewConfig warnings, the "log
+// output" line itself) latches it against the original stderr. Simulate the
+// terminal latch with ForceColors, then switch to a file.
 func Test_FileOutputHasNoAnsiColors(t *testing.T) {
-	l := newLogger()
-	path := filepath.Join(t.TempDir(), "pinpoint.log")
-	l.setOutput(path, 10)
-	defer l.fileLogger.Close()
+	oldFormatter := logger.defaultLogger.Formatter
+	oldOutput := logger.defaultLogger.Out
+	t.Cleanup(func() {
+		logger.setOutput("stderr", 10)
+		logger.defaultLogger.Formatter = oldFormatter
+		logger.defaultLogger.SetOutput(oldOutput)
+	})
 
-	l.newEntry("test").Infof("hello")
+	logger.defaultLogger.Formatter = &logrus.TextFormatter{ForceColors: true}
+	Log("test").Infof("latch")
+
+	path := filepath.Join(t.TempDir(), "pinpoint.log")
+	logger.setOutput(path, 10)
+	Log("test").Infof("hello")
 
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -125,5 +138,39 @@ func Test_FileOutputHasNoAnsiColors(t *testing.T) {
 	}
 	if !strings.Contains(string(b), "hello") {
 		t.Errorf("file log missing message: %q", b)
+	}
+	if !strings.Contains(string(b), "log output: "+path) {
+		t.Errorf("file log missing the output-switch line: %q", b)
+	}
+}
+
+// Reloading Log.Output back and forth must give each destination its own
+// formatter decision: colors on a forced-color terminal, none in the file.
+func Test_OutputSwitchReformatsEachTime(t *testing.T) {
+	oldFormatter := logger.defaultLogger.Formatter
+	oldOutput := logger.defaultLogger.Out
+	t.Cleanup(func() {
+		logger.setOutput("stderr", 10)
+		logger.defaultLogger.Formatter = oldFormatter
+		logger.defaultLogger.SetOutput(oldOutput)
+	})
+
+	dir := t.TempDir()
+	for i := 0; i < 2; i++ {
+		logger.defaultLogger.Formatter = &logrus.TextFormatter{ForceColors: true}
+		Log("test").Infof("colored")
+
+		path := filepath.Join(dir, "pinpoint.log")
+		logger.setOutput(path, 10)
+		Log("test").Infof("plain")
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "\x1b[") {
+			t.Fatalf("round %d: file log contains ANSI escape: %q", i, b)
+		}
+		logger.setOutput("stdout", 10)
+		os.Remove(path)
 	}
 }

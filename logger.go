@@ -58,13 +58,20 @@ func (l *logrusLogger) extra() *logrus.Logger {
 
 func newLogger() *logrusLogger {
 	l := logrus.New()
-	l.Formatter = &logrus.TextFormatter{
+	l.Formatter = newTextFormatter()
+	return &logrusLogger{defaultLogger: l}
+}
+
+// newTextFormatter returns a fresh formatter. logrus' TextFormatter decides
+// whether its output is a terminal once, on the first Format call, and latches
+// the answer in terminalInitOnce. Every output switch therefore installs a new
+// formatter so the decision is re-made against the new writer: colors on a
+// terminal, none in a lumberjack file.
+func newTextFormatter() logrus.Formatter {
+	return &logrus.TextFormatter{
 		TimestampFormat: "2006-01-02 15:04:05.000000",
 		FullTimestamp:   true,
-		// No ForceColors: logrus colors only when the output is a terminal, so a
-		// file output (lumberjack) never gets ANSI escapes written into it.
 	}
-	return &logrusLogger{defaultLogger: l}
 }
 
 func (l *logrusLogger) setLevel(level string) {
@@ -74,12 +81,9 @@ func (l *logrusLogger) setLevel(level string) {
 		lvl = logrus.InfoLevel
 	}
 
+	// No SetReportCaller: every line goes through logEntry.log, so logrus would
+	// always report logger.go as the caller. The src field names the source.
 	l.defaultLogger.SetLevel(lvl)
-	reportCaller := false
-	if lvl > logrus.InfoLevel {
-		reportCaller = true
-	}
-	l.defaultLogger.SetReportCaller(reportCaller)
 }
 
 func (l *logrusLogger) setOutput(out string, maxSize int) {
@@ -89,8 +93,6 @@ func (l *logrusLogger) setOutput(out string, maxSize int) {
 }
 
 func (l *logrusLogger) setOutputLocked(out string, maxSize int) {
-	Log("config").Infof("log output: %s", out)
-
 	var output io.Writer
 	var fileLogger io.WriteCloser
 	if strings.EqualFold(out, "stdout") {
@@ -110,10 +112,12 @@ func (l *logrusLogger) setOutputLocked(out string, maxSize int) {
 
 	previous := l.fileLogger
 	l.defaultLogger.SetOutput(output)
+	l.defaultLogger.SetFormatter(newTextFormatter())
 	l.fileLogger = fileLogger
 	if previous != nil {
 		_ = previous.Close()
 	}
+	l.newEntry("config").Infof("log output: %s", out)
 }
 
 func (l *logrusLogger) setup(config *Config) {

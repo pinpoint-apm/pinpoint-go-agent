@@ -288,8 +288,8 @@ A call chain that shows as separate transactions instead of one:
   divisor (`counterRate: 10` is 10%) or set `Sampling.NewThroughput` to cap
   transactions per second under load.
 * **Debug logging.** `debug`/`trace` levels add per-event work (including the
-  goroutine-id read behind the shared-tracer check) and enable caller
-  reporting. Never leave them on in production.
+  goroutine-id read behind the shared-tracer check). Never leave them on in
+  production.
 * **`Error.TraceCallStack`.** Call-stack capture and symbolization is the
   costliest thing the agent does per error. It is off by default; keep
   `Error.CallStackDepth` modest when you turn it on.
