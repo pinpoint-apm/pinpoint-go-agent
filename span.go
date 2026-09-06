@@ -31,8 +31,13 @@ const (
 	// minErrorChainEntry is the floor on the exception entries a span keeps.
 	// canAddErrorChain raises it to Error.MaxChainDepth so a single chain can
 	// always be recorded in full: a lower bound would drop links the option
-	// promised, and neither Java's BufferedExceptionStorage (a flush size, not
-	// a cap) nor C++ (100 entries a span) drops chain links at all.
+	// promised, and that alone is the reason for the floor. A per-span cap is
+	// the right shape for it - the C++ agent caps the same way, at 100 entries
+	// a span (kMaxBufferedExceptions, src/span.h:666), and latches the chain
+	// off once a link is dropped (src/span_event.cpp:376-383), as this agent
+	// does. Java has no cap: its BufferedExceptionStorage size is a flush
+	// threshold, draining the buffer to the sender on overflow rather than
+	// dropping links (BufferedExceptionStorage.java:56-58).
 	minErrorChainEntry = 10
 )
 

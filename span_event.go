@@ -179,8 +179,12 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	// server should show as an error. Java skips a transaction whose error code
 	// is already set, so the count never re-marks a recorded error; a finished
 	// span is skipped for the same reason SetError does (doc/api_contracts.md 5).
-	// Count and flag on the trace root, so queries spread over async spans
-	// add up as in the C++ agent's traceRootData().
+	// Count and flag on the trace root, so queries spread over async spans add
+	// up, which is what Java does: recordSqlCount is handed the trace root's
+	// Shared (WrappedSpanEventRecorder.java:112) and the counter lives there
+	// (DefaultSqlCountService.java:16,21). The C++ agent deliberately differs
+	// here, counting per span so an async child has its own sql_count_
+	// (src/span.h:644-646); it is not the reference for this placement.
 	root := se.parentSpan.root()
 	if cfg.sqlErrorCount > 0 && root.err.Load() == 0 && !se.parentSpan.finished.Load() {
 		if int(root.sqlCount.Add(1)) >= cfg.sqlErrorCount {

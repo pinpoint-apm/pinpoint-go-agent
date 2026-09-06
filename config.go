@@ -814,7 +814,9 @@ var samplingOpts = []string{
 // value falls outside [min, max], logging a warning. Recovering with the
 // default is what the C++ agent does (in_range in src/config.cpp); the Java
 // agent is not a reference here, as it does no range checking in its config
-// classes and uses the value as-is. Clamping to the nearest bound would turn
+// classes - what validation it has sits with the code consuming the value
+// instead, e.g. DefaultAgentStatMonitor.java:106-114 restoring the default
+// collection interval. Clamping to the nearest bound would turn
 // a typo like Span.QueueSize: 0 into a queue of 1 and drop virtually every
 // span.
 func (config *Config) defaultIfOutOfRange(name string, min, max int) {
