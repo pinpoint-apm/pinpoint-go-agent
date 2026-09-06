@@ -199,9 +199,11 @@ overflow:
 
 * `NewSpanEvent()` records nothing; it only counts the nesting so that the
   matching `EndSpanEvent()` unwinds correctly.
-* `SpanEvent()` returns a no-op recorder, so annotations, SQL and errors on the
-  overflowed events are dropped. `SetDestination()` is the one exception: the
-  value is kept for `Inject()` (see below) and nothing else.
+* `SpanEvent()` returns a no-op recorder, so annotations and SQL on the
+  overflowed events are dropped; an error is not recorded on the event either,
+  but it still marks the span failed (see the next bullet).
+  `SetDestination()` is the one exception: the value is kept for `Inject()`
+  (see below) and nothing else.
 * `SpanEventRecorder.SetError()` records nothing on the event - no exception
   info, no annotation, no exception chain - but still marks the span failed
   (`PSpan.err`, URL stat, scatter), subject to `Error.IgnoreErrors` as usual.

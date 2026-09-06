@@ -1147,7 +1147,9 @@ Two things make a reload not happen, and both are easy to miss:
 
 Identity (`ApplicationName`, `AgentId`, `AgentName`, `Uid.Version`,
 `ServiceName`, `ApiKey`, `ApplicationType`), everything under `Collector.*`,
-the span transport (`Span.QueueSize`, `Span.Batch.*`), `Stat.*`,
+the span transport (`Span.QueueSize`, `Span.Batch.Enable`, `Span.BatchSize`,
+`Span.BatchFlushInterval`, `Span.BatchCollectDeadline`,
+`Span.BatchMaxConcurrentRequests`), `Stat.*`,
 `Http.UrlStat.QueueSize`, `IsContainerEnv`, `ConfigFile`, `ActiveProfile`,
 `SQL.RemoveComments`, `SQL.CacheExpireHours` and `Enable`.
 
