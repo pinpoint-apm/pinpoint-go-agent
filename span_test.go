@@ -1323,3 +1323,64 @@ func Test_span_NewSpanEvent_sharedGoroutineKeepsTheCallStack(t *testing.T) {
 		restore()
 	}
 }
+
+// After EndSpan the final PSpan is already queued. A late event pair must not
+// cut a non-final chunk behind it (protocol violation once spanEventChunkSize
+// of them accumulate), must not advance eventSequence past the range the
+// PSpan declared, and must not register API metadata no span carries.
+func TestSpan_LifecycleStopsAtEndSpan(t *testing.T) {
+	span := defaultTestSpan()
+	span.NewSpanEvent("t").EndSpanEvent()
+	span.EndSpan()
+
+	queued := span.agent.spanQueue.length()
+	seq := span.eventSequence.Load()
+	metas := len(span.agent.metaChan)
+
+	for i := 0; i < 25; i++ {
+		span.NewSpanEvent("late").EndSpanEvent()
+	}
+	assert.Equal(t, queued, span.agent.spanQueue.length(), "no chunk after the final one")
+	assert.Equal(t, seq, span.eventSequence.Load(), "eventSequence frozen")
+	assert.Equal(t, metas, len(span.agent.metaChan), "no api meta for dropped events")
+	assert.Equal(t, 0, span.eventStack.len(), "nothing pushed")
+
+	m := map[string]string{}
+	span.Inject(&DistributedTracingContextMap{m})
+	assert.Empty(t, m, "Inject writes no headers after EndSpan")
+
+	assert.Equal(t, NoopTracer(), span.NewGoroutineTracer(), "async span after EndSpan is noop")
+	assert.Equal(t, NoopTracer(), span.NewAsyncSpan(), "async span after EndSpan is noop")
+}
+
+// Regression: EndSpan sets finished and then ends the leftover unclosed events
+// through the same path. They must still land in the final chunk.
+func TestSpan_EndSpanKeepsLeftoverEventsInFinalChunk(t *testing.T) {
+	span := defaultTestSpan()
+	for _, n := range []string{"a", "b", "c"} {
+		span.NewSpanEvent(n)
+	}
+	span.EndSpan()
+
+	chunk, ok := span.agent.spanQueue.tryDequeue()
+	assert.True(t, ok, "final chunk enqueued")
+	assert.True(t, chunk.final, "final")
+	assert.Len(t, chunk.eventChunk, 3, "leftover events recorded")
+	_, more := span.agent.spanQueue.tryDequeue()
+	assert.False(t, more, "exactly one chunk")
+}
+
+// The async span's own goroutine event is ended by EndSpan after finished is
+// set; it must not be dropped by the EndSpanEvent guard.
+func TestSpan_AsyncEndSpanKeepsItsEvent(t *testing.T) {
+	parent := defaultTestSpan()
+	parent.NewSpanEvent("t")
+	async := parent.NewGoroutineTracer().(*span)
+	async.NewSpanEvent("work").EndSpanEvent()
+	async.EndSpan()
+
+	chunk, ok := async.agent.spanQueue.tryDequeue()
+	assert.True(t, ok, "final chunk enqueued")
+	assert.True(t, chunk.final, "final")
+	assert.Len(t, chunk.eventChunk, 2, "work event and the async goroutine event")
+}

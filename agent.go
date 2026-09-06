@@ -1333,6 +1333,7 @@ type logThrottle struct {
 var (
 	malformedTraceIdLog, malformedSpanIdLog, malformedParentSpanIdLog logThrottle
 	endSpanTwiceLog, unclosedEventLog, noEventLog, sharedGoroutineLog logThrottle
+	afterEndSpanLog                                                   logThrottle
 )
 
 func (t *logThrottle) warnf(format string, args ...interface{}) {

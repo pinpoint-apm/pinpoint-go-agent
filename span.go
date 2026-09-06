@@ -180,7 +180,7 @@ func (span *span) EndSpan() {
 	span.elapsed = endTime.UnixMilli() - span.startTime.UnixMilli()
 
 	if span.isAsyncSpan() {
-		span.EndSpanEvent() //async span event
+		span.endSpanEvent(nil) //async span event
 	} else {
 		dropSampledActiveSpan(span)
 		span.agent.stats.collectResponseTime(span.elapsed)
@@ -233,7 +233,23 @@ func (span *span) warnIfFinished(setter string) bool {
 	return true
 }
 
+// warnAfterEndSpan reports whether the span has ended; a lifecycle call after
+// EndSpan (NewSpanEvent, EndSpanEvent, Inject, NewAsyncSpan) is dropped. The
+// final PSpan is already sent, so an event made now could only leak out as a
+// non-final PSpanChunk behind it, or advance eventSequence past the range the
+// PSpan declared. Throttled: a misinstrumented host hits this once per request.
+func (span *span) warnAfterEndSpan(call string) bool {
+	if !span.finished.Load() {
+		return false
+	}
+	afterEndSpanLog.warnf("abnormal span - %s called after EndSpan: %s", call, span.operationName)
+	return true
+}
+
 func (span *span) Inject(writer DistributedTracingContextWriter) {
+	if span.warnAfterEndSpan("Inject") {
+		return
+	}
 	// The trace context is written even when the span has overflowed
 	// (spanMaxEventDepth/spanMaxEventSequence exceeded). Overflow limits
 	// profiling detail; it is not a sampling decision. Skipping the headers
@@ -455,6 +471,9 @@ func splitTransactionId(tid string) (agentId string, startTime int64, sequence i
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
+	if span.warnAfterEndSpan("NewSpanEvent") {
+		return span
+	}
 	// Goroutine-sharing detection is diagnostic only: the event is recorded
 	// either way. Returning early here skipped the push, so the caller's paired
 	// EndSpanEvent popped the parent's event - and since the check ran only at
@@ -493,6 +512,24 @@ func (span *span) appendSpanEvent(se *spanEvent) {
 }
 
 func (span *span) EndSpanEvent() {
+	if span.warnAfterEndSpan("EndSpanEvent") {
+		return
+	}
+	// recover only stops the panic when called by the deferred function
+	// itself, so it must stay in this frame and cannot move into
+	// endSpanEvent. It is taken only when the pop below would record it;
+	// otherwise the panic is left to run its course untouched.
+	var recovered interface{}
+	if span.eventOverflow.Load() == 0 && !span.recovered.Load() {
+		recovered = recover()
+	}
+	span.endSpanEvent(recovered)
+}
+
+// endSpanEvent is the unguarded body: EndSpan sets finished first and then
+// ends the async span's own event through this path. recovered is the panic
+// value EndSpanEvent caught, or nil.
+func (span *span) endSpanEvent(recovered interface{}) {
 	if span.eventOverflow.Load() > 0 {
 		// Cleared once the stack is back within its limits so a later
 		// overflow cannot inject the destination of this one.
@@ -502,32 +539,33 @@ func (span *span) EndSpanEvent() {
 		return
 	}
 	if se, ok := span.eventStack.pop(); ok {
-		if !span.recovered.Load() {
-			if v := recover(); v != nil {
-				err, ok := v.(error)
-				if !ok {
-					err = errors.New(fmt.Sprint(v))
-				}
-				// SetError before end(): a finished event drops setters.
-				se.SetError(err, "panic")
-				span.SetError(err)
-				span.recovered.Store(true)
-				se.end()
-				// Record the event before re-panicking: it was already popped,
-				// so skipping the append would drop the very event that
-				// captured the panic.
-				span.appendEndedSpanEvent(se)
-				// Re-panic with the original value, not the recorded error:
-				// converting a non-error panic to an error broke every
-				// upstream recover comparing against the value it panicked
-				// with (a sentinel string, a custom type).
-				panic(v)
+		if v := recovered; v != nil {
+			err, ok := v.(error)
+			if !ok {
+				err = errors.New(fmt.Sprint(v))
 			}
+			// SetError before end(): a finished event drops setters.
+			se.SetError(err, "panic")
+			span.SetError(err)
+			span.recovered.Store(true)
+			se.end()
+			// Record the event before re-panicking: it was already popped,
+			// so skipping the append would drop the very event that
+			// captured the panic.
+			span.appendEndedSpanEvent(se)
+			// Re-panic with the original value, not the recorded error:
+			// converting a non-error panic to an error broke every
+			// upstream recover comparing against the value it panicked
+			// with (a sentinel string, a custom type).
+			panic(v)
 		}
 		se.end()
 		span.appendEndedSpanEvent(se)
 	} else {
 		noEventLog.warnf("abnormal span - has no event: %s", span.operationName)
+		if recovered != nil {
+			panic(recovered)
+		}
 	}
 }
 
@@ -537,8 +575,11 @@ func (span *span) appendEndedSpanEvent(se *spanEvent) {
 	span.spanEventLock.Lock()
 	defer span.spanEventLock.Unlock()
 
+	// Always appended: EndSpan records the leftover unclosed events through
+	// here after setting finished, and they must reach the final chunk. Only
+	// the non-final chunk cut is withheld once the span has ended.
 	span.spanEvents = append(span.spanEvents, se)
-	if len(span.spanEvents) >= span.cfg.spanEventChunkSize {
+	if !span.finished.Load() && len(span.spanEvents) >= span.cfg.spanEventChunkSize {
 		chunk := span.newEventChunk(false)
 		if !chunk.enqueue() && IsTraceLogLevelEnabled() {
 			Log("span").Tracef("span channel - max capacity reached or closed")
@@ -547,7 +588,7 @@ func (span *span) appendEndedSpanEvent(se *spanEvent) {
 }
 
 func (span *span) newAsyncSpan() Tracer {
-	if span.eventOverflow.Load() > 0 {
+	if span.warnAfterEndSpan("NewAsyncSpan") || span.eventOverflow.Load() > 0 {
 		return NoopTracer()
 	}
 	if se, ok := span.eventStack.peek(); ok {

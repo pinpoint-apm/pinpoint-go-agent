@@ -101,10 +101,17 @@ recorder setter — `SetError`, `SetFailure`, `SetServiceType`, `SetRpcName`,
 `SetRemoteAddress`, `SetEndPoint`, `SetAcceptorHost`, `SetLogging`,
 `Annotations` and `AddMetric` — returns without writing once `EndSpan()` has
 run, and warns `abnormal span - <setter> called after EndSpan` at debug level;
-the span event setters do the same after `EndSpanEvent()`. Dropping is not
-just tidiness: the final chunk is already on its way to the sender goroutine,
-so the write could not be sent, and applying it would race the sender reading
-the same field.
+the span event setters do the same after `EndSpanEvent()`. The lifecycle
+calls — `NewSpanEvent`, `EndSpanEvent`, `Inject`, `NewAsyncSpan`,
+`NewGoroutineTracer` and `WrapGoroutine` — are dropped too: `NewSpanEvent`
+returns the tracer without recording an event, `Inject` writes no headers and
+the async constructors return a no-op tracer, with a throttled warning
+`abnormal span - <call> called after EndSpan`. Dropping is not just tidiness:
+the final chunk is already on its way to the sender goroutine, so the write
+could not be sent, and applying it would race the sender reading the same
+field. An event created after the end would be worse still: once twenty of
+them accumulated the agent would send a non-final chunk behind the final one,
+which the collector protocol forbids.
 
 ## 4. End Span Events in Nesting (LIFO) Order
 
