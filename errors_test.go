@@ -10,6 +10,7 @@ import (
 	pkgError "github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/time/rate"
 )
 
 // selfCausingError is the shape a buggy user error type can take: its Cause()
@@ -370,4 +371,28 @@ func Test_sameError(t *testing.T) {
 			assert.Equal(t, tt.want, sameError(tt.a, tt.b))
 		})
 	}
+}
+
+// A chain the limiter refused stays refused on the span: a later error whose
+// cause chain reaches the refused head is Java's CONTINUED state, which reuses
+// the stored DISABLED state without asking the sampler again. The limiter is
+// swapped for one holding a permit after the refusal, so a continuation that
+// asked it would be admitted; an unrelated new chain still is.
+func TestSpan_TraceCallStackRefusedChainDoesNotReaskLimiter(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgErrorNewThroughput, 1)
+	span := testSpanWithConfig(cfg)
+
+	require.NotEqual(t, int64(noExceptionChainId), span.traceCallStack(errors.New("first"), "", 32, time.Now()))
+	refused := errors.New("refused")
+	require.Equal(t, int64(noExceptionChainId), span.traceCallStack(refused, "", 32, time.Now()))
+
+	refilled := *span.cfg
+	refilled.newExceptionLimiter = rate.NewLimiter(1, 1)
+	span.cfg = &refilled
+
+	assert.Equal(t, int64(noExceptionChainId), span.traceCallStack(fmt.Errorf("outer: %w", refused), "", 32, time.Now()), "continuation of the refused chain asked the limiter")
+	assert.Equal(t, int64(noExceptionChainId), span.traceCallStack(refused, "", 32, time.Now()), "refused head itself asked the limiter")
+	assert.NotEqual(t, int64(noExceptionChainId), span.traceCallStack(errors.New("unrelated"), "", 32, time.Now()), "an unrelated new chain is still asked")
+	assert.Len(t, span.errorChains, 2, "first and unrelated only")
 }

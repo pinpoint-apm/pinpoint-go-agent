@@ -153,11 +153,23 @@ func (span *span) getExceptionChainId(err error) (int64, bool) {
 	// alone. A hit on an inner link - a sentinel like io.EOF wrapped again
 	// from another call site - is not a join: the recorded head is not a
 	// cause of err, so shifting it below err would misorder the chain.
+	//
+	// A chain the limiter refused is sticky the same way: err or a cause of it
+	// being the refused head is Java's CONTINUED state, which reuses the stored
+	// DISABLED state rather than asking the sampler again. Without this, every
+	// later link of a refused chain recorded from another span event is charged
+	// as a new chain, and under an error burst those refusals crowd out chains
+	// that Java would have admitted.
+	refused := span.refusedChainHead != nil && sameError(err, span.refusedChainHead)
 	for e, depth := err, 0; e != nil && depth < span.cfg.errorMaxChainDepth; depth++ {
 		e = nextCause(e)
 		if ec := span.findError(e); ec != nil && ec.depth == 0 {
 			return ec.exceptionId, true
 		}
+		refused = refused || (span.refusedChainHead != nil && sameError(e, span.refusedChainHead))
+	}
+	if refused {
+		return noExceptionChainId, false
 	}
 
 	// Only a new chain is rate limited, like Java's DefaultExceptionRecorder
@@ -165,6 +177,7 @@ func (span *span) getExceptionChainId(err error) (int64, bool) {
 	// request yields the DISABLED state, recording nothing. The id is minted
 	// after the permit is granted, so a denial does not burn one.
 	if l := span.cfg.newExceptionLimiter; l != nil && !l.Allow() {
+		span.refusedChainHead = err
 		return noExceptionChainId, false
 	}
 	return span.agent.exceptionIdGen.Add(1), true

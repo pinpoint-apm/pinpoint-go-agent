@@ -137,7 +137,14 @@ type span struct {
 	urlStat         *UrlStatEntry
 	errorChains     []*exception
 	errorChainsLock sync.Mutex
-	finished        atomic.Bool
+	// refusedChainHead is the head of the last new chain the Error.NewThroughput
+	// limiter refused. Java keeps the refused throwable in ExceptionContext with
+	// the DISABLED state, so a later throwable that continues it reuses that
+	// state instead of asking the sampler again; the refused error is not in
+	// errorChains, so findError cannot stand in for that. Guarded by
+	// errorChainsLock like errorChains.
+	refusedChainHead error
+	finished         atomic.Bool
 	// traceRoot is the span whose PSpan carries the failure flag, nil when this
 	// span is the root itself. An async span is serialized as a PSpanChunk,
 	// which has no err field, so its failure must land on the root - Java's
