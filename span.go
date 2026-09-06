@@ -382,6 +382,9 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 }
 
 func (span *span) Extract(reader DistributedTracingContextReader) {
+	if span.warnAfterEndSpan("Extract") {
+		return
+	}
 	tid := reader.Get(HeaderTraceId)
 	continued := true
 	if agentId, startTime, sequence, ok := splitTransactionId(tid); ok {

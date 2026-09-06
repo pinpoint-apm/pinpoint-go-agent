@@ -1639,3 +1639,33 @@ func TestSpan_AsyncSQLCountFailsTheTraceRoot(t *testing.T) {
 	assert.Equal(t, int32(1), root.err.Load(), "root err")
 	assert.Equal(t, int32(0), async.err.Load(), "async err")
 }
+
+// Extract writes txId, spanId, endPoint and friends non-atomically and
+// registers the span as active. After EndSpan the sender is serializing that
+// span and the registry entry is already dropped, so a late Extract both
+// races the fields and leaks the span back into the registry.
+func TestSpan_ExtractAfterEndSpanIsNoop(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+	afterEndSpanLog = logThrottle{}
+
+	span := defaultTestSpan()
+	span.Extract(&DistributedTracingContextMap{map[string]string{}})
+	txId, spanId, endPoint := span.txId, span.spanId, span.endPoint
+	span.EndSpan()
+	active := countActiveSpans(span.agent)
+
+	span.Extract(&DistributedTracingContextMap{map[string]string{
+		HeaderTraceId:               "agent^1^2",
+		HeaderSpanId:                "67890",
+		HeaderParentSpanId:          "12345",
+		HeaderParentApplicationName: "parent",
+		HeaderHost:                  "host:8080",
+	}})
+
+	assert.Contains(t, buf.String(), "Extract called after EndSpan")
+	assert.Equal(t, txId, span.txId, "txId unchanged")
+	assert.Equal(t, spanId, span.spanId, "spanId unchanged")
+	assert.Equal(t, endPoint, span.endPoint, "endPoint unchanged")
+	assert.Equal(t, active, countActiveSpans(span.agent), "no re-registration after EndSpan")
+}
