@@ -22,6 +22,7 @@ is simply not written yet does not belong here.
 | SQL comment removal | `DefaultSqlNormalizer`, `DefaultJdbcOption` | **Adopted** — `SQL.RemoveComments` |
 | Exception chain rate limiter | `ExceptionChainSampler` | **Adopted** — `Error.NewThroughput` |
 | GC type and counts | `JvmGcType`, `GarbageCollectorMXBean` | **Diverges** — see [below](#gc-type-and-counts--diverges) |
+| Exception chain during overflow | `AbstractRecorder.recordException`, `DefaultExceptionRecorder` | **Diverges** — see [below](#exception-chain-during-overflow--diverges) |
 | Span queue overflow policy | `SpanBatchGrpcDataSender` | **Same as Java** — a full send queue drops the oldest entry, as Java's default BATCH sender does (`queue.poll()` in `SpanBatchGrpcDataSender`); rejecting the newest is STREAM-mode-only behaviour, so head-drop is not a deviation |
 
 ---
@@ -59,6 +60,45 @@ against other Go agents, not against a Java one.
 **Revisit if** the collector gains a runtime-neutral GC type, or the inspector
 gains a separate concurrent-GC series. Neither would change the numbers, only
 how they are labelled.
+
+---
+
+## Exception chain during overflow — diverges
+
+**What differs.** When `SetError` is called after the call stack has
+overflowed, Java still records the throwable's exception chain; this agent only
+raises the transaction's failure flag and keeps no record of the exception
+itself.
+
+**Java.** `AbstractRecorder.recordException`
+(`AbstractRecorder.java:62-64`) calls `recordDetailedException` *before*
+anything else, and `WrappedSpanEventRecorder.recordDetailedException`
+(`WrappedSpanEventRecorder.java:169-171`) forwards it to
+`DefaultExceptionRecorder.recordException`
+(`DefaultExceptionRecorder.java:73-83`), which pushes the throwable onto the
+per-trace `ExceptionContext` and flushes it on `close()`. During overflow
+`DefaultCallStack.newInstance` hands back a `DisableSpanEvent` that
+`traceBlockEnd` discards, so what is lost is only what was written *onto that
+event* — the `EXCEPTION_CHAIN_ID` annotation and the `setExceptionInfo` class
+id and message. The chain leaves by the `ExceptionContext` path, which does not
+go through the span event at all, and `recordError(ErrorCategory.EXCEPTION)`
+marks the trace root as it would anywhere else.
+
+**This agent.** `overflowSpanEvent.SetError` (`span.go:69-81`) applies the
+`Error.IgnoreErrors` filter and, if the error survives it, stores
+`span.root().err`. No exception info, no annotation, no chain entry. The C++
+agent's `DisabledSpanEvent::SetError` follows the same policy.
+
+**Decision: deliberate simplification.** Overflow is a profiling depth limit,
+not a judgement about the transaction, so the failure flag stays — but omitting
+the detailed record past the depth limit is the consistent reading of that
+limit. Exception chains are also the expensive kind of record: every entry
+carries a full string call stack, and overflow is by definition the situation
+where events are arriving faster than the agent chose to keep them.
+
+**Revisit if** a real investigation is reported where this divergence got in
+the way — a failure whose only exception detail was raised past the depth
+limit.
 
 ---
 
