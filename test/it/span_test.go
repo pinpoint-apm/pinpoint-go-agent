@@ -280,14 +280,16 @@ func TestKeepsTraceContextWhenEventLimitsOverflow(t *testing.T) {
 	traceID := tracer.TransactionId().String()
 	spanID := tracer.SpanId()
 
-	// MaxCallStackDepth is 2, so both of these levels are recorded: the limit is
-	// the deepest level kept, not the first one dropped.
+	// MaxCallStackDepth is 2, but one level deeper than the value is still
+	// recorded (Java's DefaultCallStack checks the pre-push count), so all
+	// three of these levels are kept.
 	tracer.NewSpanEvent("depth.level1").SpanEvent().SetDestination("depth-destination")
 	tracer.NewSpanEvent("depth.level2").SpanEvent().SetDestination("depth-destination2")
+	tracer.NewSpanEvent("depth.level3").SpanEvent().SetDestination("depth-destination3")
 
-	// The third level overflows and records nothing. An async span cannot be
+	// The fourth level overflows and records nothing. An async span cannot be
 	// forked from an overflowed event either.
-	overflowed := tracer.NewSpanEvent("depth.level3.discarded")
+	overflowed := tracer.NewSpanEvent("depth.level4.discarded")
 	overflowed.SpanEvent().SetDestination("discarded-destination")
 	assert.False(t, tracer.NewGoroutineTracer().IsSampled())
 
@@ -313,6 +315,7 @@ func TestKeepsTraceContextWhenEventLimitsOverflow(t *testing.T) {
 	tracer.EndSpanEvent()
 	tracer.EndSpanEvent()
 	tracer.EndSpanEvent()
+	tracer.EndSpanEvent()
 	tracer.EndSpan()
 
 	// MaxCallStackSequence is 4: a fifth event on one span is discarded even
@@ -330,7 +333,7 @@ func TestKeepsTraceContextWhenEventLimitsOverflow(t *testing.T) {
 		return findSpanByRpc(s, "/overflow-depth") != nil &&
 			findSpanByRpc(s, "/overflow-continued") != nil &&
 			findSpanByRpc(s, "/overflow-sequence") != nil &&
-			len(eventsForSpan(s, spanID)) >= 2 &&
+			len(eventsForSpan(s, spanID)) >= 3 &&
 			len(eventsForSpan(s, seqSpanID)) >= 4
 	}, waitTimeout))
 
@@ -344,10 +347,12 @@ func TestKeepsTraceContextWhenEventLimitsOverflow(t *testing.T) {
 	assert.Equal(t, "discarded-destination", continuedParent.GetAcceptorHost())
 
 	depthEvents := eventsForSpan(s, spanID)
-	require.Len(t, depthEvents, 2)
+	require.Len(t, depthEvents, 3)
 	sort.Slice(depthEvents, func(i, j int) bool { return depthEvents[i].GetSequence() < depthEvents[j].GetSequence() })
 	assert.Equal(t, "depth-destination", depthEvents[0].GetNextEvent().GetMessageEvent().GetDestinationId())
 	assert.Equal(t, "depth-destination2", depthEvents[1].GetNextEvent().GetMessageEvent().GetDestinationId())
+	assert.Equal(t, "depth-destination3", depthEvents[2].GetNextEvent().GetMessageEvent().GetDestinationId())
+	assert.Equal(t, int32(3), depthEvents[2].GetDepth())
 	assert.Len(t, eventsForSpan(s, seqSpanID), 4)
 }
 
