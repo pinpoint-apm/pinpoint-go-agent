@@ -397,6 +397,52 @@ func TestSpan_TraceCallStackRefusedChainDoesNotReaskLimiter(t *testing.T) {
 	assert.Len(t, span.errorChains, 2, "first and unrelated only")
 }
 
+// Two chains refused back to back must both stay latched. With a single slot
+// the older head is overwritten, and the rest of that chain's links are then
+// charged as brand new chains - under a burst those crowd out chains Java
+// would have admitted.
+func TestSpan_TraceCallStackKeepsEveryRefusedChainHead(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgErrorNewThroughput, 0)
+	span := testSpanWithConfig(cfg)
+	span.cfg.newExceptionLimiter = rate.NewLimiter(0, 0) // refuses everything
+
+	first := errors.New("first")
+	second := errors.New("second")
+	require.Equal(t, int64(noExceptionChainId), span.traceCallStack(first, "", 32, time.Now()))
+	require.Equal(t, int64(noExceptionChainId), span.traceCallStack(second, "", 32, time.Now()))
+
+	// A permit is available again: only a chain that forgot its refusal asks
+	// for it, and getting one proves the latch was lost.
+	span.cfg.newExceptionLimiter = rate.NewLimiter(rate.Inf, 1)
+
+	assert.Equal(t, int64(noExceptionChainId), span.traceCallStack(fmt.Errorf("more: %w", first), "", 32, time.Now()), "the first refused chain was recharged as a new chain")
+	assert.Equal(t, int64(noExceptionChainId), span.traceCallStack(fmt.Errorf("more: %w", second), "", 32, time.Now()), "the second refused chain was recharged as a new chain")
+	assert.Empty(t, span.errorChains, "a refused chain recorded entries")
+}
+
+// The latch cannot grow without bound: past maxRefusedChainHeads the oldest
+// head is evicted, and only that head loses its refusal.
+func TestSpan_TraceCallStackRefusedChainHeadsAreBounded(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgErrorNewThroughput, 0)
+	span := testSpanWithConfig(cfg)
+	span.cfg.newExceptionLimiter = rate.NewLimiter(0, 0)
+
+	refused := make([]error, maxRefusedChainHeads+1)
+	for i := range refused {
+		refused[i] = fmt.Errorf("refused %d", i)
+		require.Equal(t, int64(noExceptionChainId), span.traceCallStack(refused[i], "", 32, time.Now()))
+	}
+	assert.Len(t, span.refusedChainHeads, maxRefusedChainHeads, "the latch grew past its bound")
+
+	span.cfg.newExceptionLimiter = rate.NewLimiter(rate.Inf, 1)
+	assert.NotEqual(t, int64(noExceptionChainId), span.traceCallStack(refused[0], "", 32, time.Now()), "the evicted head kept its refusal")
+	for _, err := range refused[1:] {
+		assert.Equal(t, int64(noExceptionChainId), span.traceCallStack(err, "", 32, time.Now()), "a head still in the ring lost its refusal")
+	}
+}
+
 // The per-span entry cap follows Error.MaxChainDepth, so a chain as long as the
 // option allows is recorded in full; the cap floors at minErrorChainEntry.
 // The cap is checked where SetError records, so this goes through a span event.

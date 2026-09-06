@@ -147,13 +147,19 @@ type span struct {
 	urlStat         *UrlStatEntry
 	errorChains     []*exception
 	errorChainsLock sync.Mutex
-	// refusedChainHead is the head of the last new chain the Error.NewThroughput
-	// limiter refused. Java keeps the refused throwable in ExceptionContext with
-	// the DISABLED state, so a later throwable that continues it reuses that
-	// state instead of asking the sampler again; the refused error is not in
-	// errorChains, so findError cannot stand in for that. Guarded by
-	// errorChainsLock like errorChains.
-	refusedChainHead error
+	// refusedChainHeads holds the heads of the new chains the
+	// Error.NewThroughput limiter refused, most recent last. Java keeps the
+	// refused throwable in ExceptionContext with the DISABLED state, so a later
+	// throwable that continues it reuses that state instead of asking the
+	// sampler again; the refused error is not in errorChains, so findError
+	// cannot stand in for that. A single slot would lose the older head as soon
+	// as a second chain is refused, and the first chain's remaining links would
+	// then be charged as a new chain each - exactly what the latch exists to
+	// prevent. Ring buffer of maxRefusedChainHeads, oldest evicted: a burst is
+	// unbounded, and remembering every refused head would grow without limit.
+	// Guarded by errorChainsLock like errorChains.
+	refusedChainHeads []error
+	refusedChainNext  int
 	// errorChainDropLog makes the entry cap log once a span, like
 	// eventOverflowLog, so a dropped exception entry is never silent.
 	errorChainDropLog atomic.Bool

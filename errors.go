@@ -160,13 +160,13 @@ func (span *span) getExceptionChainId(err error) (int64, bool) {
 	// later link of a refused chain recorded from another span event is charged
 	// as a new chain, and under an error burst those refusals crowd out chains
 	// that Java would have admitted.
-	refused := span.refusedChainHead != nil && sameError(err, span.refusedChainHead)
+	refused := span.isRefusedChainHead(err)
 	for e, depth := err, 0; e != nil && depth < span.cfg.errorMaxChainDepth; depth++ {
 		e = nextCause(e)
 		if ec := span.findError(e); ec != nil && ec.depth == 0 {
 			return ec.exceptionId, true
 		}
-		refused = refused || (span.refusedChainHead != nil && sameError(e, span.refusedChainHead))
+		refused = refused || span.isRefusedChainHead(e)
 	}
 	if refused {
 		return noExceptionChainId, false
@@ -177,10 +177,45 @@ func (span *span) getExceptionChainId(err error) (int64, bool) {
 	// request yields the DISABLED state, recording nothing. The id is minted
 	// after the permit is granted, so a denial does not burn one.
 	if l := span.cfg.newExceptionLimiter; l != nil && !l.Allow() {
-		span.refusedChainHead = err
+		span.addRefusedChainHead(err)
 		return noExceptionChainId, false
 	}
 	return span.agent.exceptionIdGen.Add(1), true
+}
+
+// maxRefusedChainHeads is how many refused chain heads a span remembers. A
+// burst refuses chains without bound, so the latch has to forget some; 8 is
+// the same order as minErrorChainEntry (10), the number of exception entries a
+// span keeps at all - a chain whose head fell out of the ring has almost
+// certainly lost its recorded links to the entry cap too.
+const maxRefusedChainHeads = 8
+
+// isRefusedChainHead reports whether err is one of the heads the limiter
+// refused. Caller holds errorChainsLock.
+func (span *span) isRefusedChainHead(err error) bool {
+	if err == nil {
+		return false
+	}
+	for _, head := range span.refusedChainHeads {
+		if sameError(err, head) {
+			return true
+		}
+	}
+	return false
+}
+
+// addRefusedChainHead latches err as a refused head, evicting the oldest once
+// the ring is full. Caller holds errorChainsLock.
+func (span *span) addRefusedChainHead(err error) {
+	if span.isRefusedChainHead(err) {
+		return
+	}
+	if len(span.refusedChainHeads) < maxRefusedChainHeads {
+		span.refusedChainHeads = append(span.refusedChainHeads, err)
+		return
+	}
+	span.refusedChainHeads[span.refusedChainNext] = err
+	span.refusedChainNext = (span.refusedChainNext + 1) % maxRefusedChainHeads
 }
 
 // addCauserCallStack records the causes of err under the same exception id,
