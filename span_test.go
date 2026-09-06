@@ -1384,3 +1384,61 @@ func TestSpan_AsyncEndSpanKeepsItsEvent(t *testing.T) {
 	assert.True(t, chunk.final, "final")
 	assert.Len(t, chunk.eventChunk, 2, "work event and the async goroutine event")
 }
+
+// overflowedSpan returns a span at max depth 3 holding three live events and
+// one overflow placeholder.
+func overflowedSpan() *span {
+	config := defaultConfig()
+	config.Set(CfgSpanMaxCallStackDepth, 3)
+	s := testSpanWithConfig(config)
+	for i := 0; i < 4; i++ {
+		s.NewSpanEvent("t")
+	}
+	s.overflowSe.SetDestination("my-cluster")
+	return s
+}
+
+func Test_span_EndSpanEvent_ConcurrentOverflowFloorsAtZero(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		s := overflowedSpan()
+		var wg sync.WaitGroup
+		for g := 0; g < 2; g++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				s.EndSpanEvent()
+			}()
+		}
+		wg.Wait()
+		assert.GreaterOrEqual(t, s.eventOverflow.Load(), int32(0), "eventOverflow")
+		assert.Equal(t, "", s.overflowSe.destination(), "destination cleared")
+	}
+}
+
+func Test_span_EndSpanEvent_OverflowNeverGoesNegative(t *testing.T) {
+	s := overflowedSpan()
+	assert.Equal(t, int32(1), s.eventOverflow.Load(), "eventOverflow")
+
+	s.EndSpanEvent()
+	assert.Equal(t, int32(0), s.eventOverflow.Load(), "eventOverflow")
+	assert.Equal(t, "", s.overflowSe.destination(), "destination cleared")
+	assert.Equal(t, 3, s.eventStack.len(), "stack.len()")
+
+	// A new overflow must land on 1, not 0: its end below then consumes the
+	// placeholder instead of popping the live ancestor.
+	s.NewSpanEvent("t")
+	assert.Equal(t, int32(1), s.eventOverflow.Load(), "eventOverflow")
+	s.EndSpanEvent()
+	assert.Equal(t, int32(0), s.eventOverflow.Load(), "eventOverflow")
+	assert.Equal(t, 3, s.eventStack.len(), "stack.len()")
+	assert.Equal(t, int32(4), s.eventDepth.Load(), "eventDepth")
+}
+
+func Test_spanEvent_end_Idempotent(t *testing.T) {
+	s := testSpanWithConfig(defaultConfig())
+	s.NewSpanEvent("t")
+	se, _ := s.eventStack.pop()
+	se.end()
+	se.end()
+	assert.Equal(t, int32(1), s.eventDepth.Load(), "eventDepth")
+}

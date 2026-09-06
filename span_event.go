@@ -77,6 +77,10 @@ func newSpanEventGoroutine(span *span) *spanEvent {
 }
 
 func (se *spanEvent) end() {
+	// Idempotent: a second end would decrement eventDepth below the stack.
+	if se.finished.Swap(true) {
+		return
+	}
 	se.parentSpan.eventDepth.Add(-1)
 	if !se.isTimeFixed {
 		se.endElapsed = time.Now().UnixMilli() - se.startTime
@@ -84,7 +88,6 @@ func (se *spanEvent) end() {
 	if IsTraceLogLevelEnabled() {
 		Log("span").Tracef("endSpanEvent: %s", se.operationName)
 	}
-	se.finished.Store(true)
 	// After finished: an Annotation handle taken before the end bypasses the
 	// check in Annotations(), so the collector is sealed too.
 	se.annotations.seal()

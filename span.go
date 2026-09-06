@@ -530,13 +530,21 @@ func (span *span) EndSpanEvent() {
 // ends the async span's own event through this path. recovered is the panic
 // value EndSpanEvent caught, or nil.
 func (span *span) endSpanEvent(recovered interface{}) {
-	if span.eventOverflow.Load() > 0 {
-		// Cleared once the stack is back within its limits so a later
-		// overflow cannot inject the destination of this one.
-		if span.eventOverflow.Add(-1) == 0 {
-			span.overflowSe.destinationId.Store("")
+	// Consume one overflow placeholder with a CAS floor at zero, as the C++
+	// agent's SpanData::endDisabledSpanEvent does: a check-then-Add lets two
+	// concurrent ends of the same placeholder drive the counter to -1, after
+	// which the next real overflow only brings it back to 0 and its end pops
+	// a live ancestor off the stack. Overflowed events are never on the
+	// stack, so an end that consumed one must not fall through to the pop.
+	for pending := span.eventOverflow.Load(); pending > 0; pending = span.eventOverflow.Load() {
+		if span.eventOverflow.CompareAndSwap(pending, pending-1) {
+			// Cleared once the stack is back within its limits so a later
+			// overflow cannot inject the destination of this one.
+			if pending == 1 {
+				span.overflowSe.destinationId.Store("")
+			}
+			return
 		}
-		return
 	}
 	if se, ok := span.eventStack.pop(); ok {
 		if v := recovered; v != nil {
