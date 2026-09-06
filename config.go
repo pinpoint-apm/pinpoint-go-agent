@@ -1,7 +1,6 @@
 package pinpoint
 
 import (
-	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -367,16 +366,18 @@ func parseIgnoreErrorRules(entries []string) []ignoreErrorRule {
 	return rules
 }
 
-// ignoreError reports whether err, or any error it wraps (the errors.Unwrap
-// chain, as the Java NestedErrorHandler walks getCause), matches an
-// Error.IgnoreErrors rule. Such an error is still recorded as exception info
+// ignoreError reports whether err, or any error it wraps (the nextCause chain,
+// Cause() before Unwrap(), as the Java NestedErrorHandler walks getCause),
+// matches an Error.IgnoreErrors rule. The walk stops after maxCauserDepth
+// links: the chain comes from a user error whose Unwrap() may return itself or
+// an ancestor, and this runs on the request goroutine inside SetError. Such an error is still recorded as exception info
 // but does not mark the span as failed. The type part matches the dynamic type
 // string (reflect.TypeOf(err).String()) or the errorName given to SetError.
 func (snapshot *configSnapshot) ignoreError(err error, errName string) bool {
 	if len(snapshot.errorIgnoreRules) == 0 {
 		return false
 	}
-	for e := err; e != nil; e = errors.Unwrap(e) {
+	for e, depth := err, 0; e != nil && depth < maxCauserDepth; e, depth = nextCause(e), depth+1 {
 		typ, msg := reflect.TypeOf(e).String(), e.Error()
 		for _, r := range snapshot.errorIgnoreRules {
 			if (r.typeName == "" || r.typeName == typ || r.typeName == errName) &&

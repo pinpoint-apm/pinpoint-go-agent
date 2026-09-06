@@ -884,7 +884,8 @@ but do not mark the span as failed (`err` stays 0, and the URL statistics count 
 Each entry is `<type>:<message substring>`; either part may be empty, and both must match the same error.
 `<type>` is the Go type string of the error (`reflect.TypeOf(err).String()`, e.g. `*errors.errorString`,
 `*fs.PathError`) or the error name passed to `SpanEventRecorder.SetError` (e.g. `panic`).
-The error and every error it wraps (the `errors.Unwrap` chain) are checked.
+The error and every error it wraps are checked, following `Cause()` first and falling back to `Unwrap()`
+(the same chain the exception recorder walks), up to 64 links deep.
 
 This corresponds to the Java agent's `profiler.ignore-error-handler.<name>.class-name`,
 `profiler.ignore-error-handler.<name>.exception-message.contains` and `profiler.ignore-error-handler.<name>.nested=true`.

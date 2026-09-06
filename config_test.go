@@ -975,3 +975,68 @@ func Test_StatQueueSizeIsIndependentOfSpanQueueSize(t *testing.T) {
 	defer a.Shutdown()
 	assert.Equal(t, defaultQueueSize, cap(a.(*agent).statChan), "statChan must be sized from Stat.QueueSize")
 }
+
+// selfWrapErr is a user error whose Unwrap() returns itself: an unbounded
+// cause walk over it never reaches nil.
+type selfWrapErr struct{ msg string }
+
+func (e *selfWrapErr) Error() string { return e.msg }
+func (e *selfWrapErr) Unwrap() error { return e }
+
+// cycleErr wraps another error; two of them pointing at each other form the
+// cycle A -> B -> A.
+type cycleErr struct {
+	msg  string
+	next error
+}
+
+func (e *cycleErr) Error() string { return e.msg }
+func (e *cycleErr) Unwrap() error { return e.next }
+
+// causeOnlyErr implements only pkg/errors' Cause(), not Unwrap().
+type causeOnlyErr struct {
+	msg   string
+	cause error
+}
+
+func (e *causeOnlyErr) Error() string { return e.msg }
+func (e *causeOnlyErr) Cause() error  { return e.cause }
+
+// ignoreError walks a user-supplied chain on the request goroutine, so the walk
+// is capped at maxCauserDepth (see errors.go) whatever Unwrap() returns.
+func Test_ignoreError_BoundedCauseWalk(t *testing.T) {
+	c, err := NewConfig(WithAppName("ignoreErrApp"), WithErrorIgnoreErrors("*pinpoint.nomatch:"))
+	require.NoError(t, err)
+	snapshot := c.load()
+
+	a := &cycleErr{msg: "a"}
+	b := &cycleErr{msg: "b", next: a}
+	a.next = b
+
+	for name, e := range map[string]error{
+		"self":  &selfWrapErr{msg: "self"},
+		"cycle": a,
+	} {
+		t.Run(name, func(t *testing.T) {
+			done := make(chan bool, 1)
+			go func() { done <- snapshot.ignoreError(e, "") }()
+			select {
+			case ignored := <-done:
+				assert.False(t, ignored)
+			case <-time.After(5 * time.Second):
+				t.Fatal("ignoreError did not return: cause walk is unbounded")
+			}
+		})
+	}
+}
+
+// A nested error reachable only through Cause() is matched, as the exception
+// recorder walks the same chain.
+func Test_ignoreError_CauseOnlyChain(t *testing.T) {
+	c, err := NewConfig(WithAppName("ignoreErrApp"), WithErrorIgnoreErrors(":inner boom"))
+	require.NoError(t, err)
+	snapshot := c.load()
+
+	assert.True(t, snapshot.ignoreError(&causeOnlyErr{msg: "outer", cause: fmt.Errorf("inner boom")}, ""))
+	assert.False(t, snapshot.ignoreError(&causeOnlyErr{msg: "outer", cause: fmt.Errorf("other")}, ""))
+}
