@@ -561,6 +561,7 @@ Span.EventChunkSize option sets the size of span event chunk for gRPC.
 * WithSpanEventChunkSize()
 * type: int
 * default: 20
+* dynamic
 
 ### Span.MaxCallStackDepth
 Span.MaxCallStackDepth option sets the max callstack depth of a span, if -1 is unlimited and min is 2.
@@ -1130,8 +1131,8 @@ Two things make a reload not happen, and both are easy to miss:
 | Group | Options |
 |---|---|
 | Sampling | `Sampling.Type`, `Sampling.CounterRate`, `Sampling.PercentRate`, `Sampling.NewThroughput`, `Sampling.ContinueThroughput` |
-| Span limits | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence` |
-| SQL | `SQL.TraceBindValue`, `SQL.MaxBindValueSize`, `SQL.TraceCommit`, `SQL.TraceRollback`, `SQL.TraceQueryStat`, `SQL.EnableRawSqlCache`, `SQL.CacheLengthLimit`, `SQL.CacheExpireHours`, `SQL.ErrorCount` |
+| Span limits | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence`, `Span.EventChunkSize` |
+| SQL | `SQL.TraceBindValue`, `SQL.MaxBindValueSize`, `SQL.TraceCommit`, `SQL.TraceRollback`, `SQL.TraceQueryStat`, `SQL.EnableRawSqlCache`, `SQL.CacheLengthLimit`, `SQL.ErrorCount` |
 | Logging | `Log.Level`, `Log.Output`, `Log.MaxSize` |
 | Errors | `Error.TraceCallStack`, `Error.CallStackDepth`, `Error.NewThroughput`, `Error.MaxChainDepth`, `Error.IgnoreErrors` |
 | HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError` |
@@ -1142,9 +1143,12 @@ Two things make a reload not happen, and both are easy to miss:
 
 Identity (`ApplicationName`, `AgentId`, `AgentName`, `Uid.Version`,
 `ServiceName`, `ApiKey`, `ApplicationType`), everything under `Collector.*`,
-the span transport (`Span.QueueSize`, `Span.Batch.*`, `Span.EventChunkSize`),
-`Stat.*`, `Http.UrlStat.QueueSize`, `IsContainerEnv`, `ConfigFile`,
-`ActiveProfile`, `SQL.RemoveComments` and `Enable`.
+the span transport (`Span.QueueSize`, `Span.Batch.*`), `Stat.*`,
+`Http.UrlStat.QueueSize`, `IsContainerEnv`, `ConfigFile`, `ActiveProfile`,
+`SQL.RemoveComments`, `SQL.CacheExpireHours` and `Enable`.
+
+`SQL.CacheExpireHours` is read once when the agent builds its SQL UID cache
+(`NewAgent`); the C++ agent treats it as fixed for the same reason.
 
 `SQL.RemoveComments` is restart-only for a reason of its own: the normalized SQL
 is the SQL id cache key and the SQL UID hash input, so a mid-process change would

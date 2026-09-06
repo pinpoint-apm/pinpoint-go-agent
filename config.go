@@ -812,9 +812,11 @@ var samplingOpts = []string{
 
 // defaultIfOutOfRange restores the key's registered default when the staged
 // value falls outside [min, max], logging a warning. Recovering with the
-// default is what the Java and C++ agents do; clamping to the nearest bound
-// would turn a typo like Span.QueueSize: 0 into a queue of 1 and drop
-// virtually every span.
+// default is what the C++ agent does (in_range in src/config.cpp); the Java
+// agent is not a reference here, as it does no range checking in its config
+// classes and uses the value as-is. Clamping to the nearest bound would turn
+// a typo like Span.QueueSize: 0 into a queue of 1 and drop virtually every
+// span.
 func (config *Config) defaultIfOutOfRange(name string, min, max int) {
 	v := config.stagedInt(name)
 	if v < min || v > max {
@@ -894,7 +896,8 @@ func (config *Config) publish() {
 	// worker's batch indexing, killing the host process. The upper bounds stop
 	// a typo (queue 1e9) from allocating a huge channel buffer or stalling the
 	// stat collector. An out-of-range value falls back to the default, the same
-	// recovery the Java and C++ agents perform.
+	// recovery the C++ agent performs (the Java agent does no range checking at
+	// the config layer, so it is not a reference here).
 	config.defaultIfOutOfRange(CfgSpanQueueSize, 1, maxQueueSize)
 	config.defaultIfOutOfRange(CfgHttpUrlStatQueueSize, 1, maxQueueSize)
 	config.defaultIfOutOfRange(CfgStatCollectInterval, minStatCollectInterval, maxStatCollectInterval)
