@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -301,4 +302,56 @@ func Test_throughputLimitTraceSampler_hugeThroughput(t *testing.T) {
 
 	assert.Equal(t, 1000, countConcurrent(1000, func() bool { return s.isNewSampled(stats) }), "new")
 	assert.Equal(t, 1000, countConcurrent(1000, func() bool { return s.isContinueSampled(stats) }), "continue")
+}
+
+// The Java mapping table, ported input for input. Java truncates the
+// configured rate to hundredths of a percent and then picks one of three
+// samplers (PercentSamplerFactory.java:40-48,56-58): <= 0 never samples
+// (FalseSampler), >= 10000 always samples (TrueSampler), anything between
+// runs PercentRateSampler. Here the same three cases fall out of the
+// truncation in newPercentSampler plus the two guards in isSampled.
+func Test_percentSampler_javaMapping(t *testing.T) {
+	tests := []struct {
+		percent float64
+		rate    uint64 // truncated internal rate
+		sampled int    // out of 1000 calls
+	}{
+		{-1, 0, 0},      // Java: (long)(-1*100) = -100 -> FalseSampler
+		{0, 0, 0},       // Java: 0 -> FalseSampler
+		{0.005, 0, 0},   // Java: (long)0.5 = 0 -> FalseSampler
+		{0.01, 1, 1},    // Java: 1 -> PercentRateSampler, 0.01%
+		{50, 5000, 500}, // Java: 5000 -> PercentRateSampler, 50%
+		{100, 10000, 1000},
+		// Java truncates 150 to 15000 and hands it to TrueSampler; the clamp
+		// to 100 lands on 10000, which isSampled treats as always-sample too.
+		{150, 10000, 1000},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%g", tt.percent), func(t *testing.T) {
+			s := newPercentSampler(tt.percent)
+			assert.Equal(t, tt.rate, s.rate, "truncated rate")
+
+			sampled := 0
+			for i := 0; i < 1000; i++ {
+				if s.isSampled() {
+					sampled++
+				}
+			}
+			assert.Equal(t, tt.sampled, sampled, "sampled out of 1000")
+		})
+	}
+}
+
+// The minimum rate still works after dropping the clamp that used to raise
+// every sub-0.01 value to it: exactly one of 10,000 requests.
+func Test_percentSampler_minimumRate(t *testing.T) {
+	s := newPercentSampler(0.01)
+
+	sampled := 0
+	for i := 0; i < 10000; i++ {
+		if s.isSampled() {
+			sampled++
+		}
+	}
+	assert.Equal(t, 1, sampled)
 }

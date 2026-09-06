@@ -21,6 +21,7 @@ is simply not written yet does not belong here.
 | SQL count per transaction | `DefaultSqlCountService` | **Adopted** — `SQL.ErrorCount` |
 | SQL comment removal | `DefaultSqlNormalizer`, `DefaultJdbcOption` | **Adopted** — `SQL.RemoveComments` |
 | Exception chain rate limiter | `ExceptionChainSampler` | **Adopted** — `Error.NewThroughput` |
+| Percent sampling rate of zero | `PercentSamplerFactory.createSampler` | **Adopted** — see [below](#percent-rate-of-zero--adopted) |
 | GC type and counts | `JvmGcType`, `GarbageCollectorMXBean` | **Diverges** — see [below](#gc-type-and-counts--diverges) |
 | Exception chain during overflow | `AbstractRecorder.recordException`, `DefaultExceptionRecorder` | **Diverges** — see [below](#exception-chain-during-overflow--diverges) |
 | Span queue overflow policy | `SpanBatchGrpcDataSender` | **Same as Java** — a full send queue drops the oldest entry, as Java's default BATCH sender does (`queue.poll()` in `SpanBatchGrpcDataSender`); rejecting the newest is STREAM-mode-only behaviour, so head-drop is not a deviation |
@@ -196,6 +197,46 @@ Java's two options collapse into one here, because Go has no
 100 or more statements and did not previously fail will now be marked failed —
 visible in the scatter chart and in the URL statistics' failed histogram. Set
 `SQL.ErrorCount` to `0` to keep the previous behaviour.
+
+---
+
+## Percent rate of zero — adopted
+
+**Java.** `PercentSamplerFactory.parseSamplingRate`
+(`PercentSamplerFactory.java:56-58`) truncates the configured rate to
+hundredths of a percent — `(long)(rate * 100)` — and `createSampler`
+(`PercentSamplerFactory.java:40-48`) picks one of three samplers from the
+truncated value: `<= 0` gives `FalseSampler` (never sample), `>= 10000` gives
+`TrueSampler` (always sample), anything between gives `PercentRateSampler`.
+`PercentRateSampler` itself rejects both ends in its constructor
+(`PercentRateSampler.java:38-41`), because the factory never sends them there.
+
+| Configured | `(long)(v*100)` | Java |
+|---|---|---|
+| `-1` | -100 | never |
+| `0` | 0 | never |
+| `0.005` | 0 | never |
+| `0.01` | 1 | 0.01% |
+| `50` | 5000 | 50% |
+| `100` | 10000 | always |
+| `150` | 15000 | always |
+
+**Go before this change.** `newPercentSampler` raised every non-negative rate
+below `0.01` — including exactly `0` — up to `0.01`, so the configured "off"
+still sampled one transaction in ten thousand. The `rate == 0` guard in
+`isSampled` was unreachable dead code.
+
+**Now.** The clamp is gone; only `< 0 -> 0` and `> 100 -> 100` remain. The
+truncation in `newPercentSampler` is Java's `parseSamplingRate`, and the two
+guards in `isSampled` — `rate == 0` and `rate >= 10000` — are its `FalseSampler`
+and `TrueSampler`. All three branches were already there, zero just could not
+reach them. A positive rate below `0.01` logs a warning on the way to "never
+sample": Java does that silently, but a rate that looks enabled and collects
+nothing is worth saying out loud. An explicit `0` is deliberate and stays quiet.
+
+**Upgrade note — breaking.** `Sampling.PercentRate: 0`, and any positive rate
+below `0.01`, now stops trace collection completely; it used to sample 0.01%. A
+deployment that relied on that floor must set `0.01` explicitly.
 
 ---
 

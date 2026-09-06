@@ -796,6 +796,39 @@ func Test_reloadConfig_keepsSamplerWhenSamplingUnchanged(t *testing.T) {
 	assert.NotSame(t, sampler, config.load().sampler, "sampling change did not rebuild the sampler")
 }
 
+// A percent rate reloaded to 0 stops sampling new transactions entirely, and
+// reloading it back restores the previous behaviour.
+func Test_reloadConfig_percentRateZeroStopsSampling(t *testing.T) {
+	config, err := NewConfig(WithAppName("reloadApp"), WithSamplingType("PERCENT"), WithSamplingPercentRate(50))
+	assert.NoError(t, err)
+
+	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	cfgFileViper := viper.New()
+	cfgFileViper.SetConfigFile(cfgFile)
+
+	sampledOf := func(n int) int {
+		sampler := config.load().sampler
+		stats := newAgentStats()
+		sampled := 0
+		for i := 0; i < n; i++ {
+			if sampler.isNewSampled(stats) {
+				sampled++
+			}
+		}
+		return sampled
+	}
+	reload := func(percent string) {
+		assert.NoError(t, os.WriteFile(cfgFile, []byte("Sampling:\n  Type: PERCENT\n  PercentRate: "+percent+"\n"), 0o600))
+		config.reloadConfig(cfgFileViper)
+	}
+
+	assert.Equal(t, 50, sampledOf(100), "50%")
+	reload("0")
+	assert.Equal(t, 0, sampledOf(100), "0%")
+	reload("50")
+	assert.Equal(t, 50, sampledOf(100), "back to 50%")
+}
+
 func Test_reloadConfig_keepsExceptionLimiterWhenThroughputUnchanged(t *testing.T) {
 	config, err := NewConfig(WithAppName("reloadApp"), WithErrorNewThroughput(10))
 	assert.NoError(t, err)

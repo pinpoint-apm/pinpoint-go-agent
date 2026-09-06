@@ -414,7 +414,7 @@ There are two samplers, chosen by `Sampling.Type`:
 | Type | Option | Meaning |
 |---|---|---|
 | `COUNTER` | `Sampling.CounterRate` | sample 1 in N. `1` is 100%, `100` is 1%, `0` is off |
-| `PERCENT` | `Sampling.PercentRate` | sample N% (0.01 – 100) |
+| `PERCENT` | `Sampling.PercentRate` | sample N% (0.01 – 100). `0`, or anything below `0.01`, is off |
 
 On top of either, two optional throughput limits cap how many transactions per
 second are sampled, which is what protects a collector under a traffic spike:

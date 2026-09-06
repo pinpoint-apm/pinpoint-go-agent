@@ -49,10 +49,14 @@ type percentSampler struct {
 func newPercentSampler(percent float64) *percentSampler {
 	if percent < 0 {
 		percent = 0
-	} else if percent < 0.01 {
-		percent = 0.01
 	} else if percent > 100 {
 		percent = 100
+	} else if percent > 0 && percent < 0.01 {
+		// Truncated to a rate of 0 below, i.e. never sampled - the same thing
+		// Java does, silently. Warn anyway: a positive rate that collects
+		// nothing reads as a typo, where an explicit 0 is a deliberate off
+		// switch and stays quiet. The C++ agent warns here for the same reason.
+		Log("config").Warnf("sampling percent rate %v is below the minimum 0.01, no new transaction is sampled", percent)
 	}
 
 	return &percentSampler{
