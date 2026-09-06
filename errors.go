@@ -147,9 +147,15 @@ func (span *span) getExceptionChainId(err error) (int64, bool) {
 		return ec.exceptionId, false
 	}
 
+	// A cause already recorded joins its chain only when it is that chain's
+	// head (depth 0), as Java's ExceptionRecordingState.stateOf compares the
+	// new throwable's cause chain with the previously recorded throwable
+	// alone. A hit on an inner link - a sentinel like io.EOF wrapped again
+	// from another call site - is not a join: the recorded head is not a
+	// cause of err, so shifting it below err would misorder the chain.
 	for e, depth := err, 0; e != nil && depth < span.cfg.errorMaxChainDepth; depth++ {
 		e = nextCause(e)
-		if ec := span.findError(e); ec != nil {
+		if ec := span.findError(e); ec != nil && ec.depth == 0 {
 			return ec.exceptionId, true
 		}
 	}
@@ -225,8 +231,9 @@ func (span *span) traceCallStack(err error, className string, depth int, errorTi
 		span.addCauserCallStack(err, eid, errorTime)
 
 		// getExceptionChainId hands back an existing id when err is a new
-		// wrapper around a cause already on this chain. Those entries are now
-		// below the links just appended, so they shift down by that many: the
+		// wrapper around the head of a chain already recorded. Every entry of
+		// that chain is now below the links just appended, so they shift down
+		// by that many: the
 		// outermost error keeps depth 0, as Java's ExceptionWrapperFactory
 		// numbers a chain it wraps, and no two entries share a depth - a
 		// second depth 0 leaves the collector no way to order the chain.

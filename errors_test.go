@@ -61,6 +61,7 @@ func TestSpan_TraceCallStackChainDepthAndClassName(t *testing.T) {
 				assert.Equal(t, start, ec.callstack.errorTime, "start time")
 			}
 			assert.Same(t, inner, span.errorChains[len(span.errorChains)-1].callstack.err)
+			assertChainDepthsContiguous(t, span)
 		})
 	}
 }
@@ -74,6 +75,7 @@ func TestSpan_TraceCallStackJoinedErrorFollowsFirstCause(t *testing.T) {
 
 	require.Len(t, span.errorChains, 2)
 	assert.Same(t, first, span.errorChains[1].callstack.err, "first element recorded")
+	assertChainDepthsContiguous(t, span)
 }
 
 // deepCall calls fn n frames below its caller, so the captured stack always
@@ -197,10 +199,11 @@ func TestSpan_TraceCallStackContinuesChainWhenLimiterExhausted(t *testing.T) {
 	require.Len(t, span.errorChains, 2, "error and its cause")
 
 	assert.Equal(t, eid, span.traceCallStack(outer, "", 32, time.Now()), "same error")
-	assert.Equal(t, eid, span.traceCallStack(fmt.Errorf("again: %w", inner), "", 32, time.Now()), "recorded cause")
+	assert.Equal(t, eid, span.traceCallStack(fmt.Errorf("again: %w", outer), "", 32, time.Now()), "recorded head")
 
 	require.Len(t, span.errorChains, 3, "error, its cause and the joined wrapper")
 	assert.ElementsMatch(t, []int32{0, 1, 2}, chainDepths(span), "unique depth per entry")
+	assertChainDepthsContiguous(t, span)
 }
 
 func chainDepths(span *span) []int32 {
@@ -209,6 +212,62 @@ func chainDepths(span *span) []int32 {
 		depths = append(depths, ec.depth)
 	}
 	return depths
+}
+
+// assertChainDepthsContiguous asserts the chain invariant: within one
+// exception id the depths are 0..n-1 with no duplicate.
+func assertChainDepthsContiguous(t *testing.T, span *span) {
+	t.Helper()
+	byId := map[int64][]int32{}
+	for _, ec := range span.errorChains {
+		byId[ec.exceptionId] = append(byId[ec.exceptionId], ec.depth)
+	}
+	for eid, depths := range byId {
+		want := make([]int32, len(depths))
+		for i := range want {
+			want[i] = int32(i)
+		}
+		assert.ElementsMatch(t, want, depths, "exception id %d: depths 0..n-1, no duplicates", eid)
+	}
+}
+
+// Wrapping a cause that is not the head of its chain - a sentinel wrapped
+// again at another call site - starts a new chain, as Java's
+// ExceptionRecordingState.stateOf only joins when the previously recorded
+// throwable is in the new one's cause chain. Joining the old chain would put
+// its head below the new error although it is not a cause of it.
+func TestSpan_TraceCallStackWrappedInnerCauseStartsNewChain(t *testing.T) {
+	span := defaultSpan(newTestAgent(defaultConfig()))
+
+	base := errors.New("base")
+	db := fmt.Errorf("db: %w", base)
+	cache := fmt.Errorf("cache: %w", base)
+	eid1 := span.traceCallStack(db, "", 32, time.Now())
+	eid2 := span.traceCallStack(cache, "", 32, time.Now())
+
+	assert.NotEqual(t, eid1, eid2, "distinct chains")
+	require.Len(t, span.errorChains, 3, "db, base, cache: base is not recorded twice")
+	assert.Equal(t, []int32{0, 1, 0}, chainDepths(span))
+	assert.Equal(t, eid1, span.errorChains[0].exceptionId)
+	assert.Equal(t, eid1, span.errorChains[1].exceptionId)
+	assert.Equal(t, eid2, span.errorChains[2].exceptionId)
+	assertChainDepthsContiguous(t, span)
+}
+
+// A chain joined one link at a time stays one chain in cause order.
+func TestSpan_TraceCallStackJoinsThreeLevels(t *testing.T) {
+	span := defaultSpan(newTestAgent(defaultConfig()))
+
+	c := errors.New("c")
+	b := fmt.Errorf("b: %w", c)
+	a := fmt.Errorf("a: %w", b)
+	eid := span.traceCallStack(c, "", 32, time.Now())
+	assert.Equal(t, eid, span.traceCallStack(b, "", 32, time.Now()))
+	assert.Equal(t, eid, span.traceCallStack(a, "", 32, time.Now()))
+
+	require.Len(t, span.errorChains, 3)
+	assert.Equal(t, []int32{2, 1, 0}, chainDepths(span), "c, b, a in record order")
+	assertChainDepthsContiguous(t, span)
 }
 
 // An error recorded after one of its causes joins that chain, and the chain is
@@ -233,6 +292,7 @@ func TestSpan_TraceCallStackRenumbersJoinedChain(t *testing.T) {
 	assert.Same(t, inner, span.errorChains[0].callstack.err, "depth 2")
 	assert.Same(t, outer, span.errorChains[1].callstack.err, "depth 0")
 	assert.Same(t, mid, span.errorChains[2].callstack.err, "depth 1")
+	assertChainDepthsContiguous(t, span)
 }
 
 // Error.MaxChainDepth counts the links recorded, the error itself included.
@@ -254,6 +314,7 @@ func TestSpan_TraceCallStackMaxChainDepth(t *testing.T) {
 				want = 9 // 0 is unlimited: every link of this chain
 			}
 			assert.Len(t, span.errorChains, want, "links recorded")
+			assertChainDepthsContiguous(t, span)
 		})
 	}
 }
