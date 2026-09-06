@@ -22,6 +22,7 @@ is simply not written yet does not belong here.
 | SQL comment removal | `DefaultSqlNormalizer`, `DefaultJdbcOption` | **Adopted** — `SQL.RemoveComments` |
 | Exception chain rate limiter | `ExceptionChainSampler` | **Adopted** — `Error.NewThroughput` |
 | Percent sampling rate of zero | `PercentSamplerFactory.createSampler` | **Adopted** — see [below](#percent-rate-of-zero--adopted) |
+| URL statistics send unit | `UriStatCollectingJob`, `AsyncQueueingUriStatStorage` | **Adopted** — see [below](#url-statistics-send-unit--adopted) |
 | GC type and counts | `JvmGcType`, `GarbageCollectorMXBean` | **Diverges** — see [below](#gc-type-and-counts--diverges) |
 | Exception chain during overflow | `AbstractRecorder.recordException`, `DefaultExceptionRecorder` | **Diverges** — see [below](#exception-chain-during-overflow--diverges) |
 | Inbound trace continuation | `DefaultTraceHeaderReader.read`, `RequestTraceReader` | **Adopted** — see [below](#inbound-trace-continuation--adopted) |
@@ -241,6 +242,43 @@ nothing is worth saying out loud. An explicit `0` is deliberate and stays quiet.
 **Upgrade note — breaking.** `Sampling.PercentRate: 0`, and any positive rate
 below `0.01`, now stops trace collection completely; it used to sample 0.01%. A
 deployment that relied on that floor must set `0.01` explicitly.
+
+---
+
+## URL statistics send unit — adopted
+
+**Java.** `UriStatCollectingJob.run` (`UriStatCollectingJob.java:49-61`) polls
+`uriStatStorage` and stops at the first `null` — so it sends nothing at all
+when nothing has been collected. What it polls is a completed-only queue:
+`AsyncQueueingUriStatStorage.poll` delegates to `pollCompletedData`, which
+returns `snapshotQueue.poll()` (`AsyncQueueingUriStatStorage.java:82-83,188-189`).
+The tick still being collected is held by `snapshotManager` until
+`checkAndFlushOldData` (`AsyncQueueingUriStatStorage.java:162-165`) moves it
+onto that queue at a tick boundary. Completed → queue → send; the tick in
+progress never leaves.
+
+**Go before this change.** `takeSnapshot` swapped out the whole snapshot on
+every send, tick in progress included, and `sendUrlStatWorker` sent the result
+unconditionally. The tick interval (30s) and the send interval are free-running
+against each other, so a tick was routinely cut wherever the send timer landed
+and shipped as two `PAgentUriStat` messages. The collector aggregates by
+`(uri, tick)` so the counts still add up, but the per-tick `max` and the average
+implied by `total`/count are computed per message — a split tick reported those
+for each half instead of for the tick. An agent serving no traffic still sent an
+empty message every 30 seconds.
+
+**Now.** `urlStats` keeps the tick in progress separate from a queue of closed
+ticks, the way the C++ agent's `UrlStats::addLocked` does
+(`src/url_stat.cpp:100-121`): the first entry of a strictly newer tick closes
+the current one onto the queue. `takeSnapshot(false)` drains only that queue,
+`flushUrlStat` skips the send when the result is empty, and the queue is capped
+at 4 closed ticks — matching Java's `snapshotQueue` capacity — dropping the
+oldest with a rate-limited warning when the stat stream is not draining.
+
+`Shutdown` calls `flushUrlStat(true)`, which takes the tick in progress as well:
+nothing will ever arrive to close it, and shipping it partial beats losing it.
+This is the one place a partial tick is sent, and it is why the tick boundary
+can be driven purely by entry arrival with no timer to cut a trailing tick.
 
 ---
 

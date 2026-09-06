@@ -559,6 +559,16 @@ func (agent *agent) Shutdown() {
 }
 
 func (agent *agent) shutdownAgent() {
+	// Flush the url stat tick in progress before anything is signalled. Both
+	// url stat workers and sendStatsWorker stop on stopCtx, so a flush issued
+	// after the signal would race the consumer that has to carry it: enqueueing
+	// here leaves sendStatsWorker still parked on statChan, which is what
+	// actually gets the last tick out. Skipped for an agent that never enabled -
+	// it has no workers and no stat queue.
+	if agent.enable.Load() {
+		agent.flushUrlStat(true)
+	}
+
 	// Signal before waiting on connectWg, never after: registration retries for
 	// as long as the collector is unreachable, so a wait that runs first pays
 	// its whole timeout during exactly the outage it was meant to survive. The
@@ -1408,12 +1418,29 @@ func (agent *agent) sendUrlStatWorker() {
 			Log("agent").Infof("end send uri stat goroutine")
 			return
 		case <-ticker.C:
-			if agent.config.load().collectUrlStat {
-				snapshot := agent.urlStats.takeSnapshot()
-				agent.enqueueStat(makePAgentUriStat(snapshot))
-			}
+			agent.flushUrlStat(false)
 		}
 	}
+}
+
+// flushUrlStat sends the url stat ticks closed so far, if any. includeInProgress
+// takes the tick still being collected too and is set only on the shutdown path,
+// where no later send will ever close it.
+//
+// Nothing is sent when there is nothing to send. Java's UriStatCollectingJob
+// breaks out of its poll loop on an empty queue rather than sending an empty
+// message (UriStatCollectingJob.java:49-61); an idle agent costs the collector
+// nothing.
+func (agent *agent) flushUrlStat(includeInProgress bool) {
+	if !agent.config.load().collectUrlStat {
+		return
+	}
+
+	snapshot := agent.urlStats.takeSnapshot(includeInProgress)
+	if snapshot.isEmpty() {
+		return
+	}
+	agent.enqueueStat(makePAgentUriStat(snapshot))
 }
 
 func (agent *agent) enqueueStat(stat *pb.PStatMessage) bool {

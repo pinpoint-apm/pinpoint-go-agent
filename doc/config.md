@@ -1081,6 +1081,19 @@ If this is set as false, the agent doesn't collect HTTP URL statistics.
 Pinpoint Go Agent collects response times, successes and failures for all http requests regardless of sampling.
 The HTTP URL statistics feature is supported from Pinpoint version 2.5.0.
 
+Statistics are aggregated into 30 second ticks, and **only a completed tick is sent**:
+a tick is closed by the first request belonging to a newer one, and the send timer
+carries whatever has been closed since the last send. The send timer and the tick
+boundary are not aligned, so sending the tick still being collected would split one
+tick across two consecutive messages and report a per-message max and average instead
+of a per-tick one. Java's `UriStatCollectingJob` drains a queue only completed data
+enters, for the same reason. **When nothing has been collected, no message is sent** -
+an idle agent produces no URL statistics traffic at all. The tick still open when the
+agent shuts down is flushed on the way out, so a clean stop does not lose it.
+
+At most 4 completed ticks (two minutes) are retained while the stat stream is down.
+Beyond that the oldest tick is dropped and the agent logs a rate-limited warning.
+
 * --pinpoint-http-urlstat-enable
 * PINPOINT_GO_HTTP_URLSTAT_ENABLE
 * WithHttpUrlStatEnable()
@@ -1090,8 +1103,8 @@ The HTTP URL statistics feature is supported from Pinpoint version 2.5.0.
 
 ### Http.UrlStat.LimitSize
 Http.UrlStat.LimitSize option sets the limit size of the URLs to be collected.
-It caps the number of distinct URLs kept in one snapshot. Once the limit is reached,
-URLs already in the snapshot keep being aggregated but every further new URL is dropped,
+It caps the number of distinct URLs kept in one tick. Once the limit is reached,
+URLs already in the tick keep being aggregated but every further new URL is dropped,
 and the agent logs a rate-limited warning carrying the number of warnings it suppressed.
 
 * --pinpoint-http-urlstat-limitsize
@@ -1105,7 +1118,7 @@ and the agent logs a rate-limited warning carrying the number of warnings it sup
 ### Http.UrlStat.QueueSize
 Http.UrlStat.QueueSize option sets the size of the agent's URL statistics queue.
 This queue buffers the per-request URL records waiting to be aggregated into a snapshot,
-unlike Http.UrlStat.LimitSize which caps the number of distinct URLs kept in one snapshot.
+unlike Http.UrlStat.LimitSize which caps the number of distinct URLs kept in one tick.
 When the queue is full the records are dropped, and the agent logs a rate-limited warning
 carrying the cumulative number of dropped records.
 

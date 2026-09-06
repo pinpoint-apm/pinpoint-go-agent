@@ -299,8 +299,8 @@ func Test_agent_urlStatSnapshot_isPerAgent(t *testing.T) {
 	endTime := time.Unix(1700000000, 123000000).UTC()
 	addTestUrlStat(first.urlStats.snapshot, "/only-on-first", "GET", 0, 100, endTime)
 
-	assert.Equal(t, 1, first.urlStats.takeSnapshot().count, "first agent")
-	assert.Equal(t, 0, second.urlStats.takeSnapshot().count, "second agent")
+	assert.Equal(t, 1, first.urlStats.takeSnapshot(true).count, "first agent")
+	assert.Equal(t, 0, second.urlStats.takeSnapshot(true).count, "second agent")
 
 	// taking the snapshot leaves the agent a fresh one to keep filling
 	assert.Equal(t, 0, first.urlStats.snapshot.count, "first agent after take")
@@ -369,4 +369,187 @@ func Test_configHttpUrlStatLimitSizeOutOfRangeRecoversTheDefault(t *testing.T) {
 		assert.Contains(t, buf.String(), "is out of range [1, 65536]", "limit=%d", limit)
 		restore()
 	}
+}
+
+// Only a closed tick is sent. The send interval is not aligned with the tick
+// interval, so a send that took the tick in progress would put part of one
+// (uri, tick) key in one message and the rest in the next - the collector
+// stores the second write over the first instead of merging, so the counts of
+// the first part are simply lost. Two sends inside one tick must therefore
+// produce no message at all, and the tick must go out whole once it closes.
+func Test_urlStatSendsOneTickInOneMessage(t *testing.T) {
+	agent, stats := newUrlStatSendTestAgent(t)
+	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+
+	agent.urlStats.add(newTestUrlStat("/a", 10, tick))
+	agent.flushUrlStat(false)
+	agent.urlStats.add(newTestUrlStat("/a", 20, tick.Add(time.Second)))
+	agent.flushUrlStat(false)
+
+	assert.Empty(t, stats(), "the tick is still open; nothing may go out yet")
+
+	// A newer tick closes it, and the next send carries it whole.
+	agent.urlStats.add(newTestUrlStat("/a", 30, tick.Add(urlStatCollectInterval)))
+	agent.flushUrlStat(false)
+
+	sent := stats()
+	assert.Len(t, sent, 1)
+	each := eachUriStatsByUri(t, sent[0])
+	assert.Len(t, each, 1)
+	assert.Equal(t, int64(30), each["/a"].GetTotalHistogram().GetTotal(), "both requests of the tick")
+	assert.Equal(t, int64(20), each["/a"].GetTotalHistogram().GetMax())
+	assert.Equal(t, tick.UnixMilli(), each["/a"].GetTimestamp())
+}
+
+// No traffic, no message. Java's UriStatCollectingJob leaves its poll loop on
+// an empty queue rather than sending an empty PAgentUriStat.
+func Test_urlStatSendsNothingWithoutTraffic(t *testing.T) {
+	agent, stats := newUrlStatSendTestAgent(t)
+
+	agent.flushUrlStat(false)
+	agent.flushUrlStat(false)
+
+	assert.Empty(t, stats())
+}
+
+// The boundary case the split regression above is the other half of: a tick
+// closed just before the send goes out entirely in that send, and the tick that
+// closed it stays behind.
+func Test_urlStatSendsAClosedTickAndKeepsTheOpenOne(t *testing.T) {
+	agent, stats := newUrlStatSendTestAgent(t)
+	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+
+	agent.urlStats.add(newTestUrlStat("/closed", 10, tick))
+	agent.urlStats.add(newTestUrlStat("/open", 20, tick.Add(urlStatCollectInterval)))
+	agent.flushUrlStat(false)
+
+	sent := stats()
+	assert.Len(t, sent, 1)
+	each := eachUriStatsByUri(t, sent[0])
+	assert.Len(t, each, 1, "only the closed tick")
+	assert.Contains(t, each, "/closed")
+	assert.Equal(t, tick.UnixMilli(), each["/closed"].GetTimestamp())
+
+	assert.Len(t, agent.urlStats.snapshot.urlMap, 1, "the open tick keeps collecting")
+}
+
+// The tick in progress at shutdown has no later send to close it. Flushing it
+// on the way out is the only thing standing between a clean stop and losing up
+// to a full tick interval of traffic.
+func Test_urlStatShutdownFlushesTheTickInProgress(t *testing.T) {
+	agent, stats := newUrlStatSendTestAgent(t)
+	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+
+	agent.urlStats.add(newTestUrlStat("/closed", 10, tick))
+	agent.urlStats.add(newTestUrlStat("/in-progress", 20, tick.Add(urlStatCollectInterval)))
+	agent.flushUrlStat(false)
+	assert.Len(t, stats(), 1)
+
+	agent.flushUrlStat(true)
+
+	sent := stats()
+	assert.Len(t, sent, 1)
+	each := eachUriStatsByUri(t, sent[0])
+	assert.Len(t, each, 1)
+	assert.Contains(t, each, "/in-progress")
+}
+
+// A stats stream that never drains must not let the completed queue grow
+// without bound. The oldest tick is dropped first, and the drop is reported
+// once per throttle window rather than once per closed tick.
+func Test_urlStatCompletedQueueDropsTheOldestTickAtTheCap(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureLogAt(&buf, logrus.InfoLevel)()
+	urlStatSnapshotDropLog = logThrottle{src: "url stat"}
+
+	stats := newUrlStats(defaultConfig())
+	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+
+	// maxCompletedUrlStatSnapshots+2 closed ticks, plus the one left open.
+	for i := 0; i <= maxCompletedUrlStatSnapshots+2; i++ {
+		stats.add(newTestUrlStat(fmt.Sprintf("/tick%d", i), 10, tick.Add(time.Duration(i)*urlStatCollectInterval)))
+	}
+
+	assert.Len(t, stats.completed, maxCompletedUrlStatSnapshots)
+	// Two ticks were evicted, one line reported them: the throttle carries the
+	// second one over to whatever line the next window grants.
+	assert.Equal(t, 1, strings.Count(buf.String(), "url stat snapshot queue overflow"), buf.String())
+
+	// Six ticks closed, the four newest survive: /tick0 and /tick1 are gone.
+	snapshot := stats.takeSnapshot(false)
+	assert.Len(t, snapshot.urlMap, maxCompletedUrlStatSnapshots)
+	for i := 0; i <= maxCompletedUrlStatSnapshots+2; i++ {
+		key := urlKey{url: fmt.Sprintf("/tick%d", i), tick: tick.Add(time.Duration(i) * urlStatCollectInterval)}
+		if i < 2 {
+			assert.NotContains(t, snapshot.urlMap, key, "oldest closed ticks are dropped first")
+		} else if i <= maxCompletedUrlStatSnapshots+1 {
+			assert.Contains(t, snapshot.urlMap, key)
+		} else {
+			assert.Contains(t, stats.snapshot.urlMap, key, "the last tick is still open")
+		}
+	}
+}
+
+// A straggler for an already-closed tick lands in the open snapshot under its
+// own tick key, so both halves reach the same send and merge folds them back
+// into one entry rather than dropping either.
+func Test_urlStatMergeFoldsAStragglerBackIntoItsTick(t *testing.T) {
+	stats := newUrlStats(defaultConfig())
+	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+
+	stats.add(newTestUrlStat("/a", 10, tick))
+	stats.add(newTestUrlStat("/a", 20, tick.Add(urlStatCollectInterval))) // closes the tick
+	stats.add(newTestUrlStat("/a", 30, tick.Add(time.Second)))            // straggler for the closed tick
+
+	snapshot := stats.takeSnapshot(true)
+	folded, ok := snapshot.urlMap[urlKey{url: "/a", tick: tick}]
+	assert.True(t, ok)
+	assert.Equal(t, int64(40), folded.totalHistogram.total)
+	assert.Equal(t, int64(30), folded.totalHistogram.max)
+	assert.Equal(t, int32(2), histogramCount(folded.totalHistogram))
+}
+
+func newTestUrlStat(url string, elapsed int64, endTime time.Time) *urlStat {
+	return &urlStat{
+		entry:   &UrlStatEntry{Url: url},
+		endTime: endTime,
+		elapsed: elapsed,
+	}
+}
+
+// newUrlStatSendTestAgent returns an agent whose stat queue is readable, and a
+// function draining whatever url stat messages have been enqueued since the
+// previous call.
+func newUrlStatSendTestAgent(t *testing.T) (*agent, func() []*pb.PAgentUriStat) {
+	t.Helper()
+
+	config := defaultConfig()
+	config.Set(CfgHttpUrlStatEnable, true)
+
+	a := newTestAgent(config)
+	a.statChan = make(chan *pb.PStatMessage, 16)
+
+	return a, func() []*pb.PAgentUriStat {
+		var sent []*pb.PAgentUriStat
+		for {
+			select {
+			case msg := <-a.statChan:
+				sent = append(sent, msg.GetAgentUriStat())
+			default:
+				return sent
+			}
+		}
+	}
+}
+
+func eachUriStatsByUri(t *testing.T, stat *pb.PAgentUriStat) map[string]*pb.PEachUriStat {
+	t.Helper()
+
+	byUri := make(map[string]*pb.PEachUriStat)
+	for _, each := range stat.GetEachUriStat() {
+		_, dup := byUri[each.GetUri()]
+		assert.False(t, dup, "uri=%s", each.GetUri())
+		byUri[each.GetUri()] = each
+	}
+	return byUri
 }
