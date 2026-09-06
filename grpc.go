@@ -436,7 +436,7 @@ func makeGoLibraryInfo() *pb.PServiceInfo {
 	libs := make([]string, 0)
 	if bi, ok := debug.ReadBuildInfo(); ok {
 		for _, dep := range bi.Deps {
-			libs = append(libs, dep.Path+" ("+dep.Version+")")
+			libs = append(libs, validUTF8(dep.Path+" ("+dep.Version+")"))
 		}
 	}
 
@@ -447,9 +447,18 @@ func makeGoLibraryInfo() *pb.PServiceInfo {
 }
 
 func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
+	// Registration carries the only strings on this path the agent does not
+	// produce itself - raw argv and a host name - and a PAgentInfo the collector
+	// rejects for invalid UTF-8 is a permanent failure: the same bytes are sent
+	// on every retry, and an unregistered agent has no traces stored at all.
+	vmArgs := make([]string, 0, len(os.Args)-1)
+	for _, arg := range os.Args[1:] {
+		vmArgs = append(vmArgs, validUTF8(arg))
+	}
+
 	agentInfo := &pb.PAgentInfo{
-		Hostname:     getHostName(),
-		Ip:           localIP(serverAddr(agentGrpc.agent.config, CfgCollectorAgentPort)),
+		Hostname:     validUTF8(getHostName()),
+		Ip:           validUTF8(localIP(serverAddr(agentGrpc.agent.config, CfgCollectorAgentPort))),
 		ServiceType:  agentGrpc.agent.appType,
 		Pid:          int32(os.Getpid()),
 		AgentVersion: Version,
@@ -457,7 +466,7 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 
 		ServerMetaData: &pb.PServerMetaData{
 			ServerInfo:  "Go Application",
-			VmArg:       os.Args[1:],
+			VmArg:       vmArgs,
 			ServiceInfo: []*pb.PServiceInfo{makeGoLibraryInfo()},
 		},
 

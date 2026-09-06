@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/sirupsen/logrus"
@@ -27,6 +28,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 type blockingAgentInfoClient struct {
@@ -1321,6 +1323,43 @@ func Test_agentGrpc_makeAgentInfo(t *testing.T) {
 	require.True(t, ok, "agent info must carry the agent headers")
 	assert.Equal(t, []string{agent.appName}, md.Get(headerAppName))
 	assert.Equal(t, []string{agent.agentID}, md.Get(headerAgentID))
+}
+
+// vmArg is raw argv - bytes the process was started with, not something the
+// agent produced - so it can hold anything the shell allows. A PAgentInfo the
+// collector rejects for invalid UTF-8 fails registration permanently (retries
+// resend the same bytes), and an agent that never registers stores no traces.
+func Test_agentGrpc_makeAgentInfo_SanitizesInvalidUTF8(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agentGrpc := newMockAgentGrpc(agent)
+
+	saved := os.Args
+	defer func() { os.Args = saved }()
+	os.Args = []string{"app", "--name=caf\xe9", "\x80", "--path=/tmp/\xff"}
+
+	_, info := agentGrpc.makeAgentInfo()
+
+	for _, arg := range info.GetServerMetaData().GetVmArg() {
+		assert.True(t, utf8.ValidString(arg), "vmArg must be valid UTF-8: %q", arg)
+	}
+	_, err := proto.Marshal(info)
+	require.NoError(t, err, "registration message must marshal")
+}
+
+// The counterpart: sanitizing must not mangle legitimate non-ASCII argv.
+func Test_agentGrpc_makeAgentInfo_KeepsValidUTF8(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agentGrpc := newMockAgentGrpc(agent)
+
+	args := []string{"--name=\ud55c\uae00", "--emoji=\U0001f680", "--cjk=\u6f22\u5b57"}
+	saved := os.Args
+	defer func() { os.Args = saved }()
+	os.Args = append([]string{"app"}, args...)
+
+	_, info := agentGrpc.makeAgentInfo()
+
+	assert.Equal(t, args, info.GetServerMetaData().GetVmArg())
+	assert.True(t, utf8.ValidString(info.GetHostname()))
 }
 
 // --- local IP ---------------------------------------------------------------
