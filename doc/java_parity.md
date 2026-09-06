@@ -73,7 +73,7 @@ already-sampled chain is free.
 **Go before this change.** `span.traceCallStack` (`errors.go`) minted a chain id
 from `agent.exceptionIdGen` unconditionally, and `EndSpan` enqueued one
 `exceptionMeta` per failed span. The per-span chain list is capped at
-`maxErrorChainEntry` (10), but nothing capped the *rate*.
+`Error.MaxChainDepth` entries (at least 10), but nothing capped the *rate*.
 
 **Why adopt.** The metadata channel is bounded and head-drops on overflow
 (`agent.tryEnqueueMeta`), so the failure mode is not unbounded memory — it is

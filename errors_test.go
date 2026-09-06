@@ -396,3 +396,27 @@ func TestSpan_TraceCallStackRefusedChainDoesNotReaskLimiter(t *testing.T) {
 	assert.NotEqual(t, int64(noExceptionChainId), span.traceCallStack(errors.New("unrelated"), "", 32, time.Now()), "an unrelated new chain is still asked")
 	assert.Len(t, span.errorChains, 2, "first and unrelated only")
 }
+
+// The per-span entry cap follows Error.MaxChainDepth, so a chain as long as the
+// option allows is recorded in full; the cap floors at minErrorChainEntry.
+// The cap is checked where SetError records, so this goes through a span event.
+func TestSpanEvent_SetErrorRecordsMaxChainDepthLinks(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgErrorTraceCallStack, true)
+	cfg.Set(CfgErrorMaxChainDepth, 20)
+	span := testSpanWithConfig(cfg)
+	require.Equal(t, 20, span.cfg.errorMaxChainDepth)
+
+	err := errors.New("root")
+	for i := 1; i < 25; i++ {
+		err = fmt.Errorf("link %d: %w", i, err)
+	}
+	newSpanEvent(span, "first").SetError(err)
+	assert.Len(t, span.errorChains, 20, "links recorded")
+	assert.False(t, span.errorChainDropLog.Load(), "cap reached before the chain limit")
+
+	newSpanEvent(span, "second").SetError(errors.New("one more"))
+	newSpanEvent(span, "third").SetError(errors.New("and another"))
+	assert.Len(t, span.errorChains, 20, "entry beyond the cap recorded")
+	assert.True(t, span.errorChainDropLog.Load(), "drop not logged")
+}

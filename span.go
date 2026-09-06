@@ -28,7 +28,12 @@ const (
 	defaultEventSequence   = 5000
 	defaultEventChunkSize  = 20
 	defaultEventStackDepth = 8
-	maxErrorChainEntry     = 10
+	// minErrorChainEntry is the floor on the exception entries a span keeps.
+	// canAddErrorChain raises it to Error.MaxChainDepth so a single chain can
+	// always be recorded in full: a lower bound would drop links the option
+	// promised, and neither Java's BufferedExceptionStorage (a flush size, not
+	// a cap) nor C++ (100 entries a span) drops chain links at all.
+	minErrorChainEntry = 10
 )
 
 // overflowSpanEvent is the recorder handed out while the call stack has
@@ -144,7 +149,10 @@ type span struct {
 	// errorChains, so findError cannot stand in for that. Guarded by
 	// errorChainsLock like errorChains.
 	refusedChainHead error
-	finished         atomic.Bool
+	// errorChainDropLog makes the entry cap log once a span, like
+	// eventOverflowLog, so a dropped exception entry is never silent.
+	errorChainDropLog atomic.Bool
+	finished          atomic.Bool
 	// traceRoot is the span whose PSpan carries the failure flag, nil when this
 	// span is the root itself. An async span is serialized as a PSpanChunk,
 	// which has no err field, so its failure must land on the root - Java's
@@ -869,7 +877,16 @@ func (span *span) JsonString() []byte {
 }
 
 func (span *span) canAddErrorChain() bool {
-	return span.errorChains != nil && len(span.errorChains) < maxErrorChainEntry
+	if span.errorChains == nil {
+		return false
+	}
+	if len(span.errorChains) < max(minErrorChainEntry, span.cfg.errorMaxChainDepth) {
+		return true
+	}
+	if span.errorChainDropLog.CompareAndSwap(false, true) {
+		Log("span").Debugf("exception entry limit reached, dropping further error chain links (entries=%d)", len(span.errorChains))
+	}
+	return false
 }
 
 type spanChunk struct {

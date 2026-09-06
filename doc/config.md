@@ -871,6 +871,10 @@ The chain comes from an arbitrary user error implementation, so the walk is boun
 links whatever this option asks for: 0 or less, and anything above 64, mean that ceiling.
 Java's `profiler.exceptiontrace.max.depth` corresponds, but defaults to 5.
 
+The same value also bounds the exception entries recorded on one span across all of its
+error chains (at least 10), so one chain is always recorded in full; entries beyond the
+bound are dropped with a debug log, once per span.
+
 * --pinpoint-error-maxchaindepth
 * PINPOINT_GO_ERROR_MAXCHAINDEPTH
 * WithErrorMaxChainDepth()
