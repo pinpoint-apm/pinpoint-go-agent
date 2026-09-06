@@ -134,3 +134,85 @@ func Test_noopSpan_SetError_ConcurrentWithEndSpan(t *testing.T) {
 	require.Len(t, a.urlStatChan, 1)
 	assert.Contains(t, []int{0, 1}, (<-a.urlStatChan).statusErr)
 }
+
+// doc/api_contracts.md promises that an error recorded on an async or
+// goroutine tracer fails the root, and Java keeps that promise on the
+// unsampled path too: continueDisableAsyncContextTraceObject hands the child
+// the parent's LocalTraceRoot, so DisableSpanRecorder writes the failure into
+// the shared root. The child keeps no statistics of its own, so without the
+// link the failure would vanish.
+func Test_noopSpan_AsyncChild_FailsRootUrlStat(t *testing.T) {
+	tests := []struct {
+		name  string
+		child func(*noopSpan) Tracer
+		call  func(Tracer)
+	}{
+		{"async child SetError", (*noopSpan).NewAsyncSpan, func(tr Tracer) { tr.Span().SetError(errors.New("boom")) }},
+		{"async child SetFailure", (*noopSpan).NewAsyncSpan, func(tr Tracer) { tr.Span().SetFailure() }},
+		{"goroutine child SetError", (*noopSpan).NewGoroutineTracer, func(tr Tracer) { tr.Span().SetError(errors.New("boom")) }},
+		{"grandchild SetError", func(s *noopSpan) Tracer {
+			return s.NewGoroutineTracer().NewAsyncSpan()
+		}, func(tr Tracer) { tr.Span().SetError(errors.New("boom")) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := NewConfig(WithAppName("unsampledAsyncApp"), WithHttpUrlStatEnable(true))
+			require.NoError(t, err)
+			a := newTestAgent(c)
+			a.urlStatChan = make(chan *urlStat, 1)
+
+			root := newUnSampledSpan(a, "/test")
+			root.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"})
+
+			child := tt.child(root)
+			tt.call(child)
+			// The child never ends the root's statistics (withStats singleton).
+			child.EndSpan()
+			require.Empty(t, a.urlStatChan, "the child ended the root's statistics")
+
+			root.EndSpan()
+			assert.Equal(t, 1, (<-a.urlStatChan).statusErr, "the child's failure did not reach the root")
+		})
+	}
+}
+
+// Error.IgnoreErrors must apply to a child exactly as it does to the root -
+// the child carries no config of its own, so it reads the root's.
+func Test_noopSpan_AsyncChild_IgnoreErrors(t *testing.T) {
+	c, err := NewConfig(WithAppName("unsampledAsyncIgnoreApp"), WithHttpUrlStatEnable(true),
+		WithErrorIgnoreErrors("*errors.errorString:boom"))
+	require.NoError(t, err)
+	a := newTestAgent(c)
+	a.urlStatChan = make(chan *urlStat, 1)
+
+	root := newUnSampledSpan(a, "/test")
+	root.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"})
+	root.NewAsyncSpan().Span().SetError(errors.New("boom"))
+	root.EndSpan()
+
+	assert.Zero(t, (<-a.urlStatChan).statusErr, "an ignored error failed the root")
+}
+
+// An async child of the singleton resolves to the singleton, which every
+// tracer-less request shares: it must stay read-only. Run with -race.
+func Test_noopSpan_AsyncChild_SingletonUntouched(t *testing.T) {
+	require.Zero(t, defaultNoopSpan.statusErr.Load(), "the singleton starts at its zero value")
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				child := NoopTracer().NewAsyncSpan()
+				child.Span().SetFailure()
+				child.Span().SetError(errors.New("boom"))
+				child.EndSpan()
+			}
+		}()
+	}
+	wg.Wait()
+
+	assert.Zero(t, defaultNoopSpan.statusErr.Load(), "the singleton was written to")
+}

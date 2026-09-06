@@ -290,7 +290,11 @@ framework plugins do this for you where the framework exposes the pattern.
   `SpanAsyncStateListener` (`AsyncDefaultTrace.java:24-31`); its entry points
   are `DefaultBaseTraceFactory.java:148,161`, both marked
   `@InterfaceAudience.LimitedPrivate("vert.x")`. Deferring the root store here
-  would therefore be an extension past Java, not a parity fix.
+  would therefore be an extension past Java, not a parity fix. An **unsampled**
+  transaction follows the same rule: its async children carry a link to the
+  root, so the failure lands on the root's URL stat, as Java's
+  `continueDisableAsyncContextTraceObject` hands the child the parent's
+  `LocalTraceRoot` (`DefaultBaseTraceFactory.java:139-145`).
 * A `nil` error is ignored by both, so the common
   `tracer.SpanEvent().SetError(err)` after a call needs no guard.
 * `SetFailure()` marks failure without an error message — the right call for an

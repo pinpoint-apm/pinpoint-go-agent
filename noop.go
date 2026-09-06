@@ -55,6 +55,13 @@ type noopSpan struct {
 	unsampled   bool
 	urlStat     *UrlStatEntry
 	statusErr   atomic.Int32
+	// traceRoot is the unsampled span holding the statistics, nil when this
+	// span is the root itself. An unsampled async child keeps no statistics of
+	// its own, so a failure it records must land on the root - Java's
+	// continueDisableAsyncContextTraceObject hands the child the parent's
+	// LocalTraceRoot for the same reason (DefaultBaseTraceFactory.java:139-145),
+	// and DisableSpanRecorder writes the failure into traceRoot.getShared().
+	traceRoot *noopSpan
 
 	noopSe      noopSpanEvent
 	annotations noopAnnotation
@@ -65,6 +72,14 @@ type noopSpan struct {
 // no per-request state and every field stays at its zero value. Read its
 // fields freely; writing one is a data race across concurrent requests.
 var defaultNoopSpan = noopSpan{}
+
+// root returns the unsampled span carrying the request's statistics.
+func (span *noopSpan) root() *noopSpan {
+	if span.traceRoot != nil {
+		return span.traceRoot
+	}
+	return span
+}
 
 // NoopTracer returns a Tracer that doesn't collect tracing data.
 func NoopTracer() Tracer {
@@ -109,14 +124,15 @@ func (span *noopSpan) NewSpanEvent(operationName string) Tracer {
 }
 
 // The child carries the parent's unsampled marker so calls made from an async
-// goroutine still tell the callee not to trace, but never withStats: the
-// statistics belong to the request's own span, which alone must end them.
+// goroutine still tell the callee not to trace, and a link to the root so a
+// failure it records reaches the request's statistics - but never withStats:
+// the statistics belong to the request's own span, which alone must end them.
 func (span *noopSpan) NewAsyncSpan() Tracer {
-	return &noopSpan{unsampled: span.unsampled}
+	return &noopSpan{unsampled: span.unsampled, traceRoot: span.root()}
 }
 
 func (span *noopSpan) NewGoroutineTracer() Tracer {
-	return &noopSpan{unsampled: span.unsampled}
+	return &noopSpan{unsampled: span.unsampled, traceRoot: span.root()}
 }
 
 func (span *noopSpan) WrapGoroutine(goroutineName string, goroutine func(context.Context), ctx context.Context) func() {
@@ -163,15 +179,16 @@ func (span *noopSpan) SpanEvent() SpanEventRecorder {
 // an excluded error would fail the URL stat of unsampled requests while
 // sparing sampled ones.
 func (span *noopSpan) SetError(e error, errorName ...string) {
-	if e == nil || !span.withStats.Load() {
+	root := span.root()
+	if e == nil || !root.withStats.Load() {
 		return // see SetFailure for why the singleton is never written
 	}
 	errName := errorTypeName(e)
 	if len(errorName) > 0 {
 		errName = errorName[0]
 	}
-	if !span.cfg.ignoreError(e, errName) {
-		span.statusErr.Store(1)
+	if !root.cfg.ignoreError(e, errName) {
+		root.statusErr.Store(1)
 	}
 }
 
@@ -179,9 +196,11 @@ func (span *noopSpan) SetFailure() {
 	// Write only on per-request unsampled spans. The defaultNoopSpan singleton
 	// is shared by every tracer-less request, so writing its field here is a
 	// data race between concurrent handlers (e.g. two 5xx responses) - and its
-	// statusErr is never read anyway.
-	if span.withStats.Load() {
-		span.statusErr.Store(1)
+	// statusErr is never read anyway. An async child of the singleton resolves
+	// to the singleton here, so that guard covers it too.
+	root := span.root()
+	if root.withStats.Load() {
+		root.statusErr.Store(1)
 	}
 }
 
