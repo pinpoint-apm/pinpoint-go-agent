@@ -554,7 +554,7 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 			assert.Equal(t, ok, true, "noopSpan")
 			assert.Equal(t, noop.IsSampled(), false, "IsSampled")
 			assert.Equal(t, noop.SpanId(), int64(0), "SpanId")
-			assert.Equal(t, noop.withStats, false, "SpanId")
+			assert.False(t, noop.withStats.Load(), "SpanId")
 
 			s.EndSpanEvent()
 			assert.Equal(t, s.eventOverflow.Load(), int32(0), "eventOverflow")
@@ -828,7 +828,7 @@ func TestSpan_AddMetric_IgnoresTypedNilURLStat(t *testing.T) {
 	config.Set(CfgHttpUrlStatEnable, true)
 	agent := newTestAgent(config)
 	sampled := defaultSpan(agent)
-	unsampled := &noopSpan{agent: agent, cfg: config.load(), withStats: true}
+	unsampled := newUnSampledSpan(agent, "/test")
 	var entry *UrlStatEntry
 
 	assert.NotPanics(t, func() {
@@ -858,7 +858,7 @@ func TestNoopSpan_EndSpanTwiceCountsOnce(t *testing.T) {
 	span := newUnSampledSpan(agent, "/")
 
 	span.SetFailure()
-	assert.Equal(t, 1, span.statusErr, "unsampled span still records failure")
+	assert.Equal(t, int32(1), span.statusErr.Load(), "unsampled span still records failure")
 
 	span.EndSpan()
 	span.EndSpan()
@@ -884,7 +884,7 @@ func TestNoopSpan_SharedSingletonSetFailureIsRaceFree(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	assert.Equal(t, 0, defaultNoopSpan.statusErr, "singleton untouched")
+	assert.Zero(t, defaultNoopSpan.statusErr.Load(), "singleton untouched")
 }
 
 // Span ids are int64: bitSize 0 (platform int) dropped an upstream node's id

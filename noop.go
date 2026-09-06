@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -50,10 +51,10 @@ type noopSpan struct {
 	startTime   time.Time
 	rpcName     string
 	goroutineId int64
-	withStats   bool
+	withStats   atomic.Bool
 	unsampled   bool
 	urlStat     *UrlStatEntry
-	statusErr   int
+	statusErr   atomic.Int32
 
 	noopSe      noopSpanEvent
 	annotations noopAnnotation
@@ -81,7 +82,7 @@ func newUnSampledSpan(agent *agent, rpcName string) *noopSpan {
 	span.spanId = generateSpanId()
 	span.startTime = time.Now()
 	span.rpcName = rpcName
-	span.withStats = true
+	span.withStats.Store(true)
 	span.unsampled = true
 
 	addUnSampledActiveSpan(&span)
@@ -90,14 +91,15 @@ func newUnSampledSpan(agent *agent, rpcName string) *noopSpan {
 }
 
 func (span *noopSpan) EndSpan() {
-	if span.withStats {
-		span.withStats = false // a second EndSpan must not double-count
+	// A second EndSpan must not double-count; the swap also orders EndSpan
+	// against SetError/SetFailure racing from other goroutines.
+	if span.withStats.CompareAndSwap(true, false) {
 		dropUnSampledActiveSpan(span)
 		endTime := time.Now()
 		elapsed := endTime.UnixMilli() - span.startTime.UnixMilli()
 		span.agent.stats.collectResponseTime(elapsed)
 		if span.urlStat != nil {
-			span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: elapsed, statusErr: span.statusErr})
+			span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: elapsed, statusErr: int(span.statusErr.Load())})
 		}
 	}
 }
@@ -154,15 +156,32 @@ func (span *noopSpan) SpanEvent() SpanEventRecorder {
 	return &span.noopSe
 }
 
-func (span *noopSpan) SetError(e error, errorName ...string) {}
+// SetError fails the URL stat of an unsampled request, as the Java agent's
+// DisableSpanRecorder.recordException marks the span level (the span event
+// level, DisableSpanEventRecorder, stays a no-op). Only the failure flag is
+// kept: the span itself is never sent. Error.IgnoreErrors applies here too, or
+// an excluded error would fail the URL stat of unsampled requests while
+// sparing sampled ones.
+func (span *noopSpan) SetError(e error, errorName ...string) {
+	if e == nil || !span.withStats.Load() {
+		return // see SetFailure for why the singleton is never written
+	}
+	errName := errorTypeName(e)
+	if len(errorName) > 0 {
+		errName = errorName[0]
+	}
+	if !span.cfg.ignoreError(e, errName) {
+		span.statusErr.Store(1)
+	}
+}
 
 func (span *noopSpan) SetFailure() {
 	// Write only on per-request unsampled spans. The defaultNoopSpan singleton
 	// is shared by every tracer-less request, so writing its field here is a
 	// data race between concurrent handlers (e.g. two 5xx responses) - and its
 	// statusErr is never read anyway.
-	if span.withStats {
-		span.statusErr = 1
+	if span.withStats.Load() {
+		span.statusErr.Store(1)
 	}
 }
 
@@ -201,7 +220,7 @@ func (span *noopSpan) IsSampled() bool {
 }
 
 func (span *noopSpan) collectUrlStat(stat *UrlStatEntry) {
-	if span.withStats && span.cfg.collectUrlStat {
+	if span.withStats.Load() && span.cfg.collectUrlStat {
 		if stat.Url == "" {
 			stat.Url = "UNKNOWN_URL"
 		}

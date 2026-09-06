@@ -276,7 +276,7 @@ func RecordClientHttpCookie(annotation pinpoint.Annotation, cookie Cookie) {
 
 // RecordHttpHandlerError records error returned by http handler.
 func RecordHttpHandlerError(tracer pinpoint.Tracer, err error) {
-	if tracer.IsSampled() && httpCfg().recordHandlerError {
+	if httpCfg().recordHandlerError {
 		tracer.Span().SetError(err)
 	}
 }
