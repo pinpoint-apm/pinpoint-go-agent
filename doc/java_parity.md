@@ -30,6 +30,7 @@ is simply not written yet does not belong here.
 | Malformed inbound `Pinpoint-TraceID` | `DefaultTraceContext.createTraceId`, `TransactionIdUtils.parseTransactionId` | **Diverges** — see [below](#malformed-inbound-trace-id--diverges) |
 | Order of the inbound header checks | `DefaultTraceHeaderReader.read` | **Same as Java** — `Pinpoint-Sampled: s0` is answered before the trace id and span id headers are looked at (`DefaultTraceHeaderReader.java:47-51`), so a peer that turned tracing off is obeyed even when its other headers are missing or broken |
 | Span queue overflow policy | `SpanBatchGrpcDataSender` | **Same as Java** — a full send queue drops the oldest entry, as Java's default BATCH sender does (`queue.poll()` in `SpanBatchGrpcDataSender`); rejecting the newest is STREAM-mode-only behaviour, so head-drop is not a deviation |
+| Locked parity invariants (11 groups) | `ParserContext`, `DefaultCallStack`, `GrpcSpanProcessorV2`, `Header`, `CountingSampler`, `UriStatHistogramBucket`, `BaseHistogramSchema`, `DefaultTransactionCounter`, `StringUtils`, `ClientOption` | **Verified identical** — see [below](#locked-parity-invariants--verified-identical) |
 
 ---
 
@@ -455,3 +456,75 @@ a blocking dial, or a health probe before `enable` is stored. At that point the
 workers could start first and the integration tests would still see a disabled
 agent on a bad certificate, which is the only thing that made the first attempt
 fail.
+
+---
+
+## Locked parity invariants — verified identical
+
+Everything else in this file records a place where the three agents deliberately
+differ. This section is the opposite list: values and algorithms that a
+cross-agent review verified to be **identical** in the Java agent, the C++ agent
+and the Go agent, and that are now pinned by an assertion suite in each port so
+they cannot drift back apart unnoticed.
+
+The suites are `test/test_java_parity_lock.cpp` (C++) and
+`java_parity_lock_test.go` (Go). They are organised into the same eleven groups,
+in the same order, as the table below. Where an older suite already covered a
+group, the lock file cross-references it instead of duplicating it — the table's
+"locked by" column names whichever file holds the assertions.
+
+**Changing a locked value is a three-agent change.** If one of these assertions
+fails, either the change is wrong, or all three implementations, this table and
+both suites move in the same pull request. A locked value that has to differ
+stops being locked: delete its row here, delete the assertion, and add a
+divergence entry above saying why.
+
+| # | Group | Java reference | What is locked | Locked by (C++) | Locked by (Go) |
+|---|---|---|---|---|---|
+| 1 | SQL normalization state machine | `commons-profiler` `sql/ParserContext.parse`, `DefaultSqlNormalizer` | `<n>#` / `<n>$` substitution drawing from **one shared index counter**; `,,` escaping of a comma inside a literal; `''` consuming no index; an unterminated literal emitting no placeholder; `#` not being a comment; `/*/`; `$`+digit staying an identifier; whitespace preserved; normalization not idempotent | `test_sql.cpp` (`SqlTest.JavaParityGoldenCases`, ported `JavaDefault*`) · `test_java_parity_lock.cpp` (`SqlNormalizer*`) | `sql_util_test.go` · `java_parity_lock_test.go` (`…SqlNormalizerGoldenCases`, `…SqlNormalizerSharedIndexCounter`, `…SqlNormalizerIsNotIdempotent`, `…SqlNormalizerWhitespaceIsNotNormalized`, `…SqlNormalizerRemoveComments`) |
+| 2 | span event depth / sequence numbering | `DefaultCallStack.isOverflow`, `DefaultInstrumentConfig`, `pinpoint-root.config` | depth 64 / sequence 5000 / event chunk 20; deepest recorded level is `maxDepth + 1`; exactly `maxSequence` events recorded; `-1` means unlimited | `…SpanEventLimitDefaults`, `…SpanEventOverflowBoundaries` | `…SpanEventLimitDefaults`, `…SpanEventLimitFloors`, `…SpanEventOverflowDecision` |
+| 3 | span chunk serialization | `context/compress/GrpcSpanProcessorV2` | `keyTime` — final chunk keys off the span's start time, a non-final chunk off its first event; `startElapsed` is the delta to the previous event (to `keyTime` for the first); the chunk is sorted by sequence before serialization; a non-final chunk carries the `endPoint` it was cut with | `test_span.cpp` (`SpanChunkOptimizeMultipleEventsTest`, `SpanChunkOptimizeNonFinalKeyTimeTest`, `SpanChunkEndPointSnapshotTest`) | `…ChunkKeyTimeAndStartElapsed`, `…ChunkSortsBySequence`, `…ChunkSnapshotsEndPoint` |
+| 4 | async id / span id sentinels | `DefaultAsyncIdGenerator`, `bootstrap/context/SpanId.NULL` | async id `0` and span id `-1` are reserved for "absent"; a drawn id is redrawn until it is not the sentinel | `…AsyncIdSentinel` | `…Sentinels`, `…GeneratedSpanIdIsNeverTheSentinel` |
+| 5 | propagation headers and transaction id | `Header`, `TransactionIdUtils`, `sampler/SamplingFlagUtils`, `AnnotationKey` | all ten `Pinpoint-*` header names; `agentId^startTime^sequence`; the agent-id character class; the parser stopping at the third delimiter; only the exact string `"s0"` disabling sampling; the annotation keys the agent emits (12 / 20 / 25 / 40 / 46 / 300 / −52) | `…PropagationHeaderNames`, `…AnnotationKeys`, `…TransactionIdFormat`, `…TransactionIdParsing`, `…SampledHeaderEncoding` | `…PropagationHeaderNames`, `…AnnotationKeys`, `…TransactionIdFormat`, `…TransactionIdParsing`, `…SampledHeaderEncoding` |
+| 6 | sampling formulas | `sampler/CountingSampler`, `PercentRateSampler`, `PercentSamplerFactory` | counting tests the **pre-increment** value, so the first request of the process is sampled and every rate-th one after it; the percent admission window is `(0, rate]`; the percentage is multiplied by 100 and truncated; rate 0 / 1 / 100 are the False- and TrueSampler cases; a negative rate is clamped, never promoted to unsigned | `…CountingSamplerPhase`, `…CountingSamplerEdgeRates`, `…PercentSamplerWindow`, `…PercentSamplerEdgeRates` | `…CountingSamplerPhase`, `…CountingSamplerEdgeRates`, `…PercentSamplerWindow`, `…PercentSamplerRateTruncation` |
+| 7 | URI histogram layout | `common/trace/UriStatHistogramBucket.Layout`, `AsyncQueueingUriStatStorage`, `URITemplate.NULL_URI` | the eight bucket bounds (100 / 300 / 500 / 1000 / 3000 / 5000 / 8000 / ∞); `bucketVersion = 0`; a 30s tick aligned to the epoch boundary; at most four completed snapshots; an all-zero histogram travels as an empty message while a single 0 ms sample does not; the no-URI stand-in key `/NULL` | `…UrlStatHistogramBuckets`, `…UrlStatWindow`, `…UrlStatUnknownKey`, `…UrlStatEmptyHistogram` | `…UrlStatHistogramBuckets`, `…UrlStatWindow`, `…UrlStatEmptyHistogram`, `…UrlStatUnknownKey` (skipped — see below) |
+| 8 | active trace histogram layout | `common/trace/BaseHistogramSchema` NORMAL schema | the four slots at 1000 / 3000 / 5000 ms with an **inclusive** upper bound, so a span at exactly 1000 ms is still "fast" | `…ActiveTraceHistogram` | `…ActiveTraceHistogram` |
+| 9 | transaction counters | `context/id/DefaultTransactionCounter` | all six counters (sampled/unsampled/skipped × new/continuation) exist and drain independently, and a drain resets them | `test_stat.cpp` (`SamplingCountersTest`, `AllCountersMixedIncrementTest`, `CollectResetsCountersBetweenCallsTest`) | `…TransactionCounters` |
+| 10 | message truncation format | `StringUtils.abbreviate`, `AbstractRecorder.recordException` | a value within the cap is returned verbatim; a longer one keeps its first *n* bytes and gains a `...(original length)` suffix; the caps 256 (span / span event error) and 65536 (SQL metadata text); the cut lands on a UTF-8 boundary so the result stays valid for protobuf | `…TruncationFormat`, `…TruncationCutsOnAUtf8Boundary`, `…MessageLimits` | `…TruncationFormat`, `…TruncationCutsOnARuneBoundary`, `…MessageLimits` |
+| 11 | gRPC channel constants | `grpc/.../client/config/ClientOption`, `GrpcTransportConfig`, `AgentInfoSender`, `pinpoint-root.config` | collector ports 9991 / 9992 / 9993; keepalive 30s / 60s without permit-without-stream; 4 MiB max message; connection and stream renewal off; AgentInfo refresh 24h with 3 tries per attempt; span batch 20 / 1000 ms / 500 ms / 10 concurrent; stat 5000 ms × 6; SQL cache limit 2048, expiry 168h, bind value 1024, error count 100 | `…CollectorPortDefaults`, `…GrpcChannelDefaults`, `…AgentInfoSchedule`, `…SpanBatchDefaults`, `…StatCollectionDefaults`, `…SqlCacheDefaults` | `…CollectorPortDefaults`, `…GrpcChannelDefaults`, `…ReconnectBackoff`, `…AgentInfoSchedule` |
+
+### Deliberately not locked
+
+These sit next to locked values and look like they belong in the table. They do
+not, because the agents knowingly differ; each has its own entry above or in
+`doc/config.md`.
+
+- **AgentInfo send retry interval** — 3000 ms in both ports against Java's
+  effective 300000 ms (`profiler.agentInfo.send.retry.interval`). Registration
+  gates tracing in both ports, so it has to retry far more often. The 24h
+  refresh and the 3 tries per attempt *are* locked; the retry interval is
+  asserted at its port value with a comment pointing here.
+- **Span batch size** — 20 in Java's shipped config and in the C++ agent, 50 in
+  the Go agent.
+- **Flow-control window, write buffer, max header list size** — Java pins them
+  (`ClientOption`) and the Go agent follows; the C++ agent leaves them at the
+  gRPC C-core defaults so the BDP estimator can tune the window.
+- **Stat collect interval** — the locked 5000 ms is Java's *code* default
+  (`DefaultMonitorConfig`); Java's release profile ships 10000 ms.
+- **URL statistics send cadence** — Java polls on the stat scheduler (5–10s),
+  both ports use a dedicated 30s timer.
+
+### Skipped assertions
+
+Two Go assertions are written but skipped, each naming the gap it waits on. They
+are the fastest way to see whether a fix landed: delete the `t.Skip` line.
+
+- `Test_javaParityLock_ChunkDepthCompression` — gap **S4**. Java
+  (`GrpcSpanProcessorV2`) and the C++ agent seed the previous depth on the first
+  event of a chunk; the Go agent does not, so the second event of every chunk is
+  compared against 0 and never compressed. The wire bytes differ, the meaning
+  does not.
+- `Test_javaParityLock_UrlStatUnknownKey` — gap **U2**. Java's
+  `URITemplate.NULL_URI` is `/NULL` and the C++ agent copies it verbatim; the Go
+  agent writes `UNKNOWN_URL`, so a mixed deployment splits its "no URI recorded"
+  traffic across two server-side keys.
