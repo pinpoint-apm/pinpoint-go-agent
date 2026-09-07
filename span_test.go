@@ -86,6 +86,50 @@ func Test_span_Extract(t *testing.T) {
 	}
 }
 
+// Without a Pinpoint-Host header the acceptor host falls back to the endPoint
+// the server plugin sets afterwards, as Java's ServerRequestRecorder falls
+// back to requestAdaptor.getAcceptorHost().
+func Test_span_Extract_acceptorHostFallback(t *testing.T) {
+	m := map[string]string{
+		HeaderTraceId:               "t123456^12345^1",
+		HeaderSpanId:                "67890",
+		HeaderParentSpanId:          "123",
+		HeaderParentApplicationName: "upstream",
+	}
+
+	span := defaultTestSpan()
+	span.Extract(&DistributedTracingContextMap{m})
+	assert.Empty(t, span.acceptorHost, "no header, no endPoint yet")
+
+	span.SetEndPoint("localhost:8080")
+	assert.Equal(t, "localhost:8080", span.acceptorHost, "acceptorHost falls back to the endPoint")
+	assert.Equal(t, "localhost:8080", span.endPoint, "endPoint")
+
+	span.SetEndPoint("other:9090")
+	assert.Equal(t, "localhost:8080", span.acceptorHost, "the fallback is applied once")
+
+	span.SetAcceptorHost("explicit:1")
+	assert.Equal(t, "explicit:1", span.acceptorHost, "SetAcceptorHost still wins")
+}
+
+// A Pinpoint-Host header is kept over the endPoint set later.
+func Test_span_Extract_acceptorHostHeaderWins(t *testing.T) {
+	m := map[string]string{
+		HeaderTraceId:               "t123456^12345^1",
+		HeaderSpanId:                "67890",
+		HeaderParentSpanId:          "123",
+		HeaderParentApplicationName: "upstream",
+		HeaderHost:                  "upstream:8080",
+	}
+
+	span := defaultTestSpan()
+	span.Extract(&DistributedTracingContextMap{m})
+	span.SetEndPoint("localhost:8080")
+
+	assert.Equal(t, "upstream:8080", span.acceptorHost, "acceptorHost")
+	assert.Equal(t, "localhost:8080", span.endPoint, "endPoint")
+}
+
 func Test_span_Extract_malformedTraceId(t *testing.T) {
 	// A malformed or hostile Pinpoint-TraceID must not panic. The span starts
 	// a brand new transaction and ignores every other Pinpoint header, so no

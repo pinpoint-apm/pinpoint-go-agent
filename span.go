@@ -964,6 +964,15 @@ func (span *span) SetEndPoint(endPoint string) {
 		return
 	}
 	span.endPoint = endPoint
+	// Java's ServerRequestRecorder.recordParentInfo falls back to
+	// requestAdaptor.getAcceptorHost() - the address the request arrived on,
+	// which is this endPoint - when the caller sent no Pinpoint-Host header.
+	// Extract cannot do that itself: the server plugins set the endPoint only
+	// after it ran, so the fallback is applied here and an explicit header or
+	// SetAcceptorHost still wins.
+	if span.acceptorHost == "" {
+		span.acceptorHost = endPoint
+	}
 }
 
 func (span *span) SetAcceptorHost(host string) {

@@ -1,6 +1,7 @@
 package pphttp
 
 import (
+	"net/textproto"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,7 @@ const (
 	CfgHttpServerRecordResponseHeader = "Http.Server.RecordResponseHeader"
 	CfgHttpServerRecordRequestCookie  = "Http.Server.RecordRequestCookie"
 	CfgHttpServerRecordHandlerError   = "Http.Server.RecordHandlerError"
+	CfgHttpServerProxyUserHeaderNames = "Http.Server.ProxyUserHeaderNames"
 	CfgHttpClientRecordRequestHeader  = "Http.Client.RecordRequestHeader"
 	CfgHttpClientRecordResponseHeader = "Http.Client.RecordResponseHeader"
 	CfgHttpClientRecordRequestCookie  = "Http.Client.RecordRequestCookie"
@@ -29,6 +31,7 @@ func init() {
 	pinpoint.AddConfig(CfgHttpServerRecordResponseHeader, pinpoint.CfgStringSlice, []string{}, true)
 	pinpoint.AddConfig(CfgHttpServerRecordRequestCookie, pinpoint.CfgStringSlice, []string{}, true)
 	pinpoint.AddConfig(CfgHttpServerRecordHandlerError, pinpoint.CfgBool, true, true)
+	pinpoint.AddConfig(CfgHttpServerProxyUserHeaderNames, pinpoint.CfgStringSlice, []string{}, true)
 	pinpoint.AddConfig(CfgHttpClientRecordRequestHeader, pinpoint.CfgStringSlice, []string{}, true)
 	pinpoint.AddConfig(CfgHttpClientRecordResponseHeader, pinpoint.CfgStringSlice, []string{}, true)
 	pinpoint.AddConfig(CfgHttpClientRecordRequestCookie, pinpoint.CfgStringSlice, []string{}, true)
@@ -113,6 +116,18 @@ func WithHttpServerRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
 	}
 }
 
+// WithHttpServerProxyUserHeaderNames sets the request headers a user-defined
+// proxy writes its receive time into ("t=<epoch millis>"). Each one present on
+// a request is recorded as a proxy annotation of type USER (4), with the header
+// name as the app, like the Java agent's profiler.proxy.user.header.names.
+//
+//	pphttp.WithHttpServerProxyUserHeaderNames([]string{"X-Proxy-Time"})
+func WithHttpServerProxyUserHeaderNames(names []string) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(CfgHttpServerProxyUserHeaderNames, names)
+	}
+}
+
 // WithHttpClientRecordRequestHeader sets HTTP request headers to be logged on the client side.
 // If sets to HEADERS-ALL, it records all request headers.
 //
@@ -170,6 +185,8 @@ type httpConfig struct {
 	cltCookie          httpHeaderRecorder
 	recordHandlerError bool
 	urlStatEnabled     bool
+	// Pre-canonicalized proxy user header names; see proxyHeaderApache.
+	srvProxyUserHeaders []string
 }
 
 var httpConfigOpts = []string{
@@ -180,6 +197,7 @@ var httpConfigOpts = []string{
 	CfgHttpServerRecordResponseHeader,
 	CfgHttpServerRecordRequestCookie,
 	CfgHttpServerRecordHandlerError,
+	CfgHttpServerProxyUserHeaderNames,
 	CfgHttpClientRecordRequestHeader,
 	CfgHttpClientRecordResponseHeader,
 	CfgHttpClientRecordRequestCookie,
@@ -213,18 +231,33 @@ func httpCfg() *httpConfig {
 
 func newHttpConfig() *httpConfig {
 	return &httpConfig{
-		srvUrl:             newHttpUrlFilter(),
-		srvMethod:          newHttpExcludeMethod(),
-		srvStatus:          newHttpStatusError(),
-		srvReqHeader:       makeHttpHeaderRecorder(CfgHttpServerRecordRequestHeader),
-		srvResHeader:       makeHttpHeaderRecorder(CfgHttpServerRecordResponseHeader),
-		srvCookie:          makeHttpHeaderRecorder(CfgHttpServerRecordRequestCookie),
-		cltReqHeader:       makeHttpHeaderRecorder(CfgHttpClientRecordRequestHeader),
-		cltResHeader:       makeHttpHeaderRecorder(CfgHttpClientRecordResponseHeader),
-		cltCookie:          makeHttpHeaderRecorder(CfgHttpClientRecordRequestCookie),
-		recordHandlerError: pinpoint.GetConfig().Bool(CfgHttpServerRecordHandlerError),
-		urlStatEnabled:     pinpoint.GetConfig().Bool(pinpoint.CfgHttpUrlStatEnable),
+		srvUrl:              newHttpUrlFilter(),
+		srvMethod:           newHttpExcludeMethod(),
+		srvStatus:           newHttpStatusError(),
+		srvReqHeader:        makeHttpHeaderRecorder(CfgHttpServerRecordRequestHeader),
+		srvResHeader:        makeHttpHeaderRecorder(CfgHttpServerRecordResponseHeader),
+		srvCookie:           makeHttpHeaderRecorder(CfgHttpServerRecordRequestCookie),
+		cltReqHeader:        makeHttpHeaderRecorder(CfgHttpClientRecordRequestHeader),
+		cltResHeader:        makeHttpHeaderRecorder(CfgHttpClientRecordResponseHeader),
+		cltCookie:           makeHttpHeaderRecorder(CfgHttpClientRecordRequestCookie),
+		recordHandlerError:  pinpoint.GetConfig().Bool(CfgHttpServerRecordHandlerError),
+		urlStatEnabled:      pinpoint.GetConfig().Bool(pinpoint.CfgHttpUrlStatEnable),
+		srvProxyUserHeaders: makeProxyUserHeaderNames(pinpoint.GetConfig().StringSlice(CfgHttpServerProxyUserHeaderNames)),
 	}
+}
+
+func makeProxyUserHeaderNames(cfg []string) []string {
+	var names []string
+	for _, name := range trimStringSlice(cfg) {
+		if name != "" {
+			names = append(names, textproto.CanonicalMIMEHeaderKey(name))
+		}
+	}
+	return names
+}
+
+func proxyUserHeaderNames() []string {
+	return httpCfg().srvProxyUserHeaders
 }
 
 // IsUrlStatEnabled reports whether URL statistics collection is enabled.

@@ -28,6 +28,8 @@ is simply not written yet does not belong here.
 | Exception chain during overflow | `AbstractRecorder.recordException`, `DefaultExceptionRecorder` | **Diverges** — see [below](#exception-chain-during-overflow--diverges) |
 | Span event sequence reservation | `DefaultCallStack.push` | **Aligned with C++** — see [below](#span-event-sequence-reservation--aligned-with-c) |
 | Inbound trace continuation | `DefaultTraceHeaderReader.read`, `RequestTraceReader` | **Adopted** — see [below](#inbound-trace-continuation--adopted) |
+| Proxy request headers | `DefaultProxyRequestRecorder`, `ApacheRequestParser`, `NginxRequestParser`, `AppRequestParser`, `UserRequestParser` | **Adopted** — see [below](#proxy-request-headers--adopted) |
+| Acceptor host fallback | `ServerRequestRecorder.recordParentInfo` | **Adopted** — see [below](#acceptor-host-fallback--adopted) |
 | Malformed inbound `Pinpoint-SpanID` | `DefaultTraceHeaderReader`, `NumberUtils.parseLong` | **Diverges** — see [below](#malformed-inbound-span-id--diverges) |
 | Malformed inbound `Pinpoint-TraceID` | `DefaultTraceContext.createTraceId`, `TransactionIdUtils.parseTransactionId` | **Diverges** — see [below](#malformed-inbound-trace-id--diverges) |
 | Order of the inbound header checks | `DefaultTraceHeaderReader.read` | **Same as Java** — `Pinpoint-Sampled: s0` is answered before the trace id and span id headers are looked at (`DefaultTraceHeaderReader.java:47-51`), so a peer that turned tracing off is obeyed even when its other headers are missing or broken |
@@ -483,6 +485,72 @@ but one trace becomes two. Fix it at the source: have the peer send
 `Pinpoint-SpanID` and `Pinpoint-pSpanID` as well. This agent's `Inject()`
 already writes all three, as does the C++ agent's `InjectContext`, so only
 hand-rolled clients and header-stripping proxies are affected.
+
+---
+
+## Proxy request headers — adopted
+
+**Java.** `DefaultProxyRequestRecorder.record` runs every registered parser
+over the request - `ApacheRequestParser` (`Pinpoint-ProxyApache`, type 3),
+`NginxRequestParser` (`Pinpoint-ProxyNginx`, type 2), `AppRequestParser`
+(`Pinpoint-ProxyApp`, type 1) and `UserRequestParser` (type 4, one instance
+per header named in `profiler.proxy.user.header.names`, recording the header
+name as the app) - and records a `PROXY_HTTP_HEADER` annotation for each result
+whose `isValid()` holds. Every parser sets `valid` to false when `t=` is
+missing or not positive. `NginxRequestParser.toReceivedTimeMillis` and
+`toDurationTimeMicros` accept nginx's `$msec` / `$request_time` only in the
+`sec.mmm` shape - a decimal point followed by exactly three digits - and yield
+0 for anything else, including a value with no decimal point; the duration is
+reported in microseconds. `AppRequestParser` runs the `app=` token through
+`IdValidateUtils.validateId(app, 30)` and discards the header on failure.
+
+**Go before this change.** `setProxyHeader` (`plugin/http/server.go`) was an
+`if / else if` chain, so a request that crossed both an Apache and an nginx
+proxy recorded only the Apache hop. There was no user parser and no
+`Pinpoint-ProxyUser` support. nginx `D=` went through `strconv.Atoi`, which
+fails on `0.123`, so the nginx proxy delay was always 0; nginx `t=` was a
+`float64 * 1000`, which accepted values without a decimal point and could
+round the millisecond. Nothing gated on `t=`: a header carrying only `D=`
+recorded an annotation with `receivedTime` 0, drawn at the epoch. `app=` was
+truncated to 32 runes and never checked for its character class.
+
+**Now.** The four header kinds are independent `if`s, each appending its own
+annotation. `Http.Server.ProxyUserHeaderNames` (the Java
+`profiler.proxy.user.header.names` equivalent) names the user headers; each
+one present is recorded as type 4 with the header name as the app. A header
+whose `t=` is missing or not positive is dropped whole, so no annotation is
+recorded for it. nginx `t=` and `D=` are read as `sec.mmm` digits into an
+integer, exactly as Java does (`0.123` → 123000 µs; `0.1`, `123` and `0.1234`
+→ 0). `app=` must pass `IsValidId(app, 30)` - the `[a-zA-Z0-9._-]` class and
+at most 30 bytes - or the header is discarded. Apache `t=` (microseconds → ms)
+and `D=` (microseconds) are unchanged.
+
+**Upgrade note.** Requests behind more than one proxy now show every hop.
+Proxy headers without a valid `t=`, an nginx `t=` without three decimals, and
+an `app=` longer than 30 characters or outside the id character class are no
+longer recorded at all, where they used to produce a zero or truncated
+annotation. The C++ agent's `setProxyHeader` in `src/http.cpp` gets the same
+treatment and the same configuration key.
+
+---
+
+## Acceptor host fallback — adopted
+
+**Java.** `ServerRequestRecorder.recordParentInfo` records the
+`Pinpoint-Host` header as the acceptor host and, when the header is absent,
+falls back to `requestAdaptor.getAcceptorHost()` - the host the request
+arrived on, which is also what it records as the end point.
+
+**Go before this change.** `Extract` (`span.go`) set `acceptorHost` only when
+the header was present. A continued trace whose caller did not send
+`Pinpoint-Host` (a hand-rolled client, a header-stripping proxy) was sent with
+an empty `acceptorHost` in its `PParentInfo`.
+
+**Now.** `Extract` runs before the server plugins know the request host, so
+the fallback lives in `SetEndPoint`: it fills `acceptorHost` with the end point
+when nothing set it first. A `Pinpoint-Host` header and an explicit
+`SetAcceptorHost` still win. Root spans are unaffected; they carry no
+`PParentInfo` at all.
 
 ---
 

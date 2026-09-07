@@ -63,6 +63,14 @@ func validateID(value string, maxLen int) bool {
 	return isIDChars(value)
 }
 
+// IsValidId reports whether value is a non-empty id of at most maxLen bytes
+// drawn from the id character class [a-zA-Z0-9._-], as Java
+// IdValidateUtils.validateId does. Plugins use it for ids that arrive on the
+// wire, such as the app= token of the Pinpoint-ProxyApp header.
+func IsValidId(value string, maxLen int) bool {
+	return validateID(value, maxLen)
+}
+
 // parseNameVersion parses the configured version string (case-insensitive).
 // Unknown or empty values fall back to v3, matching the Java agent default.
 func parseNameVersion(version string) nameVersion {

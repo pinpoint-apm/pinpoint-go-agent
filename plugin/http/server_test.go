@@ -17,7 +17,6 @@ import (
 )
 
 type proxyValues struct {
-	called       bool
 	key          int32
 	receivedTime int64
 	code         int32
@@ -27,13 +26,14 @@ type proxyValues struct {
 	app          string
 }
 
-// proxyAnnotation captures the single proxy header annotation setProxyHeader records.
+// proxyAnnotation captures every proxy header annotation setProxyHeader records,
+// in order.
 type proxyAnnotation struct {
-	got proxyValues
+	got []proxyValues
 }
 
 func (a *proxyAnnotation) AppendLongIntIntByteByteString(key int32, l int64, i1 int32, i2 int32, b1 int32, b2 int32, s string) {
-	a.got = proxyValues{true, key, l, i1, i2, b1, b2, s}
+	a.got = append(a.got, proxyValues{key, l, i1, i2, b1, b2, s})
 }
 
 func (a *proxyAnnotation) AppendInt(int32, int32)                                {}
@@ -48,64 +48,81 @@ func Test_setProxyHeader(t *testing.T) {
 		name   string
 		header string
 		value  string
-		want   proxyValues
+		want   *proxyValues // nil: no annotation
 	}{
 		{name: "no proxy header"},
 
 		{name: "apache", header: "Pinpoint-ProxyApache", value: "t=1500968753503 D=125 i=51 b=48",
-			want: proxyValues{called: true, code: 3, receivedTime: 1500968753, duration: 125, idle: 51, busy: 48}},
-		{name: "apache bare token", header: "Pinpoint-ProxyApache", value: "t",
-			want: proxyValues{called: true, code: 3}},
-		{name: "apache bare token before valid ones", header: "Pinpoint-ProxyApache", value: "t D=125 junk i=51 b",
-			want: proxyValues{called: true, code: 3, duration: 125, idle: 51}},
-		{name: "apache empty values", header: "Pinpoint-ProxyApache", value: "t= D= i= b=",
-			want: proxyValues{called: true, code: 3}},
+			want: &proxyValues{code: 3, receivedTime: 1500968753, duration: 125, idle: 51, busy: 48}},
+		{name: "apache bare token before valid ones", header: "Pinpoint-ProxyApache", value: "t=1500968753503 D junk i=51 b",
+			want: &proxyValues{code: 3, receivedTime: 1500968753, idle: 51}},
 		{name: "apache extra spaces", header: "Pinpoint-ProxyApache", value: "  t=1500968753503   D=125  ",
-			want: proxyValues{called: true, code: 3, receivedTime: 1500968753, duration: 125}},
-		{name: "apache unparsable numbers", header: "Pinpoint-ProxyApache", value: "t=abc D=x i=y b=z",
-			want: proxyValues{called: true, code: 3}},
-		{name: "apache repeated keys keep the last", header: "Pinpoint-ProxyApache", value: "D=1 D=2",
-			want: proxyValues{called: true, code: 3, duration: 2}},
+			want: &proxyValues{code: 3, receivedTime: 1500968753, duration: 125}},
+		{name: "apache unparsable numbers", header: "Pinpoint-ProxyApache", value: "t=1500968753503 D=x i=y b=z",
+			want: &proxyValues{code: 3, receivedTime: 1500968753}},
+		{name: "apache repeated keys keep the last", header: "Pinpoint-ProxyApache", value: "t=1500968753503 D=1 D=2",
+			want: &proxyValues{code: 3, receivedTime: 1500968753, duration: 2}},
+		// t= is the validity gate, as in Java's ApacheRequestParser.
+		{name: "apache missing t", header: "Pinpoint-ProxyApache", value: "D=125 i=51 b=48"},
+		{name: "apache bare token", header: "Pinpoint-ProxyApache", value: "t"},
+		{name: "apache empty values", header: "Pinpoint-ProxyApache", value: "t= D= i= b="},
+		{name: "apache t=0", header: "Pinpoint-ProxyApache", value: "t=0 D=125"},
+		{name: "apache negative t", header: "Pinpoint-ProxyApache", value: "t=-1 D=125"},
+		{name: "apache unparsable t", header: "Pinpoint-ProxyApache", value: "t=abc D=125"},
+		// Apache's t= is in microseconds; anything under a millisecond rounds to 0.
+		{name: "apache t under a millisecond", header: "Pinpoint-ProxyApache", value: "t=999"},
 
-		{name: "nginx", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=0.000",
-			want: proxyValues{called: true, code: 2, receivedTime: 1504164327484}},
-		{name: "nginx bare token", header: "Pinpoint-ProxyNginx", value: "t",
-			want: proxyValues{called: true, code: 2}},
-		{name: "nginx bare token before valid one", header: "Pinpoint-ProxyNginx", value: "t D=7",
-			want: proxyValues{called: true, code: 2, duration: 7}},
-		{name: "nginx empty values", header: "Pinpoint-ProxyNginx", value: "t= D=",
-			want: proxyValues{called: true, code: 2}},
-		{name: "nginx NaN", header: "Pinpoint-ProxyNginx", value: "t=NaN",
-			want: proxyValues{called: true, code: 2}},
-		{name: "nginx +Inf", header: "Pinpoint-ProxyNginx", value: "t=Inf",
-			want: proxyValues{called: true, code: 2}},
-		{name: "nginx -Inf", header: "Pinpoint-ProxyNginx", value: "t=-Inf",
-			want: proxyValues{called: true, code: 2}},
-		{name: "nginx overflow", header: "Pinpoint-ProxyNginx", value: "t=1e400",
-			want: proxyValues{called: true, code: 2}},
-		{name: "nginx negative overflow", header: "Pinpoint-ProxyNginx", value: "t=-1e400",
-			want: proxyValues{called: true, code: 2}},
-		{name: "nginx out of int64 range", header: "Pinpoint-ProxyNginx", value: "t=1e300",
-			want: proxyValues{called: true, code: 2}},
-		{name: "nginx unparsable", header: "Pinpoint-ProxyNginx", value: "t=abc",
-			want: proxyValues{called: true, code: 2}},
-		{name: "nginx negative time", header: "Pinpoint-ProxyNginx", value: "t=-1.5",
-			want: proxyValues{called: true, code: 2, receivedTime: -1500}},
+		// nginx t= and D= are seconds with exactly three decimals; D= is
+		// reported in microseconds, as Java's toDurationTimeMicros does.
+		{name: "nginx", header: "Pinpoint-ProxyNginx", value: "t=1504230492.763 D=0.123",
+			want: &proxyValues{code: 2, receivedTime: 1504230492763, duration: 123000}},
+		{name: "nginx zero duration", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=0.000",
+			want: &proxyValues{code: 2, receivedTime: 1504164327484}},
+		{name: "nginx multi-second duration", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=12.345",
+			want: &proxyValues{code: 2, receivedTime: 1504164327484, duration: 12345000}},
+		{name: "nginx D with two decimals", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=0.1",
+			want: &proxyValues{code: 2, receivedTime: 1504164327484}},
+		{name: "nginx D without a decimal point", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=123",
+			want: &proxyValues{code: 2, receivedTime: 1504164327484}},
+		{name: "nginx D with four decimals", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=0.1234",
+			want: &proxyValues{code: 2, receivedTime: 1504164327484}},
+		{name: "nginx D unparsable", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=a.bcd",
+			want: &proxyValues{code: 2, receivedTime: 1504164327484}},
+		{name: "nginx bare token before valid one", header: "Pinpoint-ProxyNginx", value: "D t=1504164327.484",
+			want: &proxyValues{code: 2, receivedTime: 1504164327484}},
+		{name: "nginx t without a decimal point", header: "Pinpoint-ProxyNginx", value: "t=1504164327 D=0.123"},
+		{name: "nginx t with two decimals", header: "Pinpoint-ProxyNginx", value: "t=1504164327.48 D=0.123"},
+		{name: "nginx missing t", header: "Pinpoint-ProxyNginx", value: "D=0.123"},
+		{name: "nginx bare token", header: "Pinpoint-ProxyNginx", value: "t"},
+		{name: "nginx empty values", header: "Pinpoint-ProxyNginx", value: "t= D="},
+		{name: "nginx t=0", header: "Pinpoint-ProxyNginx", value: "t=0.000 D=0.123"},
+		{name: "nginx negative t", header: "Pinpoint-ProxyNginx", value: "t=-1.500"},
+		{name: "nginx NaN", header: "Pinpoint-ProxyNginx", value: "t=NaN"},
+		{name: "nginx Inf", header: "Pinpoint-ProxyNginx", value: "t=Inf"},
+		{name: "nginx exponent", header: "Pinpoint-ProxyNginx", value: "t=1e400"},
+		{name: "nginx overflow", header: "Pinpoint-ProxyNginx", value: "t=99999999999999999999.999"},
+		{name: "nginx unparsable", header: "Pinpoint-ProxyNginx", value: "t=abc"},
 
 		{name: "app", header: "Pinpoint-ProxyApp", value: "t=1500968753503 app=foo-bar",
-			want: proxyValues{called: true, code: 1, receivedTime: 1500968753503, app: "foo-bar"}},
-		{name: "app bare token", header: "Pinpoint-ProxyApp", value: "app",
-			want: proxyValues{called: true, code: 1}},
-		{name: "app bare token before valid one", header: "Pinpoint-ProxyApp", value: "app t=1500968753503",
-			want: proxyValues{called: true, code: 1, receivedTime: 1500968753503}},
-		{name: "app empty values", header: "Pinpoint-ProxyApp", value: "t= app=",
-			want: proxyValues{called: true, code: 1}},
+			want: &proxyValues{code: 1, receivedTime: 1500968753503, app: "foo-bar"}},
 		{name: "app time is not divided by 1000", header: "Pinpoint-ProxyApp", value: "t=1500968753503",
-			want: proxyValues{called: true, code: 1, receivedTime: 1500968753503}},
-		{name: "app over the length cap", header: "Pinpoint-ProxyApp", value: "app=" + strings.Repeat("a", 40),
-			want: proxyValues{called: true, code: 1, app: strings.Repeat("a", proxyAppMaxLength)}},
-		{name: "app cap cuts on a rune boundary", header: "Pinpoint-ProxyApp", value: "app=" + strings.Repeat("가", 40),
-			want: proxyValues{called: true, code: 1, app: strings.Repeat("가", proxyAppMaxLength)}},
+			want: &proxyValues{code: 1, receivedTime: 1500968753503}},
+		{name: "app bare token before valid one", header: "Pinpoint-ProxyApp", value: "app t=1500968753503",
+			want: &proxyValues{code: 1, receivedTime: 1500968753503}},
+		{name: "app at the length cap", header: "Pinpoint-ProxyApp", value: "t=1500968753503 app=" + strings.Repeat("a", proxyAppMaxLength),
+			want: &proxyValues{code: 1, receivedTime: 1500968753503, app: strings.Repeat("a", proxyAppMaxLength)}},
+		{name: "app id characters", header: "Pinpoint-ProxyApp", value: "t=1500968753503 app=Foo.bar-1_2",
+			want: &proxyValues{code: 1, receivedTime: 1500968753503, app: "Foo.bar-1_2"}},
+		// An app= that fails IdValidateUtils.validateId(app, 30) discards the header.
+		{name: "app over the length cap", header: "Pinpoint-ProxyApp", value: "t=1500968753503 app=" + strings.Repeat("a", proxyAppMaxLength+1)},
+		{name: "app with a disallowed character", header: "Pinpoint-ProxyApp", value: "t=1500968753503 app=foo/bar"},
+		{name: "app with a non-ASCII rune", header: "Pinpoint-ProxyApp", value: "t=1500968753503 app=가"},
+		{name: "app empty", header: "Pinpoint-ProxyApp", value: "t=1500968753503 app="},
+		{name: "app missing t", header: "Pinpoint-ProxyApp", value: "app=foo"},
+		{name: "app bare token", header: "Pinpoint-ProxyApp", value: "app"},
+		{name: "app empty values", header: "Pinpoint-ProxyApp", value: "t= app="},
+		{name: "app t=0", header: "Pinpoint-ProxyApp", value: "t=0 app=foo"},
+		{name: "app negative t", header: "Pinpoint-ProxyApp", value: "t=-1 app=foo"},
 	}
 
 	for _, tt := range tests {
@@ -115,32 +132,105 @@ func Test_setProxyHeader(t *testing.T) {
 				req.Header.Set(tt.header, tt.value)
 			}
 
-			want := tt.want
-			if want.called {
-				want.key = pinpoint.AnnotationHttpProxyHeader
+			a := &proxyAnnotation{}
+			setProxyHeader(a, header{req.Header})
+
+			if tt.want == nil {
+				assert.Empty(t, a.got, "%s: %q must not be recorded", tt.header, tt.value)
+				return
+			}
+			want := *tt.want
+			want.key = pinpoint.AnnotationHttpProxyHeader
+			assert.Equal(t, []proxyValues{want}, a.got, "%s: %q", tt.header, tt.value)
+		})
+	}
+}
+
+// Every proxy header present is recorded, as Java's DefaultProxyRequestRecorder
+// runs every parser: a request that crossed two proxies carries two annotations.
+func Test_setProxyHeader_EveryHeader(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Pinpoint-ProxyApache", "t=1500968753503000 D=125")
+	req.Header.Set("Pinpoint-ProxyNginx", "t=1504164327.484 D=0.007")
+	req.Header.Set("Pinpoint-ProxyApp", "t=1500968753503 app=foo")
+
+	a := &proxyAnnotation{}
+	setProxyHeader(a, header{req.Header})
+
+	key := int32(pinpoint.AnnotationHttpProxyHeader)
+	assert.Equal(t, []proxyValues{
+		{key: key, code: 3, receivedTime: 1500968753503, duration: 125},
+		{key: key, code: 2, receivedTime: 1504164327484, duration: 7000},
+		{key: key, code: 1, receivedTime: 1500968753503, app: "foo"},
+	}, a.got)
+}
+
+// An invalid header is dropped on its own; the others are still recorded.
+func Test_setProxyHeader_EveryHeader_oneInvalid(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Pinpoint-ProxyApache", "D=125")
+	req.Header.Set("Pinpoint-ProxyNginx", "t=1504164327.484 D=0.007")
+
+	a := &proxyAnnotation{}
+	setProxyHeader(a, header{req.Header})
+
+	assert.Equal(t, []proxyValues{
+		{key: int32(pinpoint.AnnotationHttpProxyHeader), code: 2, receivedTime: 1504164327484, duration: 7000},
+	}, a.got)
+}
+
+func Test_setProxyHeader_User(t *testing.T) {
+	usePluginConfig(t, WithHttpServerProxyUserHeaderNames([]string{" x-proxy-time ", "", "X-Other-Proxy"}))
+
+	tests := []struct {
+		name    string
+		headers map[string]string
+		want    []proxyValues
+	}{
+		{name: "user header", headers: map[string]string{"X-Proxy-Time": "t=1500968753503"},
+			want: []proxyValues{{code: 4, receivedTime: 1500968753503, app: "X-Proxy-Time"}}},
+		{name: "extra tokens are ignored", headers: map[string]string{"X-Proxy-Time": "app=foo t=1500968753503 D=3"},
+			want: []proxyValues{{code: 4, receivedTime: 1500968753503, app: "X-Proxy-Time"}}},
+		{name: "every configured header", headers: map[string]string{"X-Proxy-Time": "t=1", "X-Other-Proxy": "t=2"},
+			want: []proxyValues{{code: 4, receivedTime: 1, app: "X-Proxy-Time"}, {code: 4, receivedTime: 2, app: "X-Other-Proxy"}}},
+		{name: "alongside a standard header", headers: map[string]string{"Pinpoint-ProxyApp": "t=5 app=foo", "X-Proxy-Time": "t=1"},
+			want: []proxyValues{{code: 1, receivedTime: 5, app: "foo"}, {code: 4, receivedTime: 1, app: "X-Proxy-Time"}}},
+		{name: "missing t", headers: map[string]string{"X-Proxy-Time": "1500968753503"}},
+		{name: "t=0", headers: map[string]string{"X-Proxy-Time": "t=0"}},
+		{name: "negative t", headers: map[string]string{"X-Proxy-Time": "t=-1"}},
+		{name: "unconfigured header", headers: map[string]string{"X-Unknown-Proxy": "t=1500968753503"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			for i := range tt.want {
+				tt.want[i].key = pinpoint.AnnotationHttpProxyHeader
 			}
 
 			a := &proxyAnnotation{}
 			setProxyHeader(a, header{req.Header})
 
-			assert.Equal(t, want, a.got, "%s: %q", tt.header, tt.value)
+			if tt.want == nil {
+				assert.Empty(t, a.got)
+			} else {
+				assert.Equal(t, tt.want, a.got)
+			}
 		})
 	}
 }
 
-// The three proxy headers are checked in order, so a request carrying more than
-// one must report the first that matched and only that one.
-func Test_setProxyHeader_Precedence(t *testing.T) {
+func Test_setProxyHeader_User_unconfigured(t *testing.T) {
+	usePluginConfig(t)
+
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("Pinpoint-ProxyApache", "t=1500968753503")
-	req.Header.Set("Pinpoint-ProxyNginx", "t=1504164327.484")
-	req.Header.Set("Pinpoint-ProxyApp", "t=1 app=foo")
+	req.Header.Set("X-Proxy-Time", "t=1500968753503")
 
 	a := &proxyAnnotation{}
 	setProxyHeader(a, header{req.Header})
-
-	assert.Equal(t, int32(3), a.got.code, "Apache wins over Nginx and App")
-	assert.Empty(t, a.got.app, "the App header must not be read once Apache matched")
+	assert.Empty(t, a.got, "no user header names configured")
 }
 
 func Test_headerFirst(t *testing.T) {

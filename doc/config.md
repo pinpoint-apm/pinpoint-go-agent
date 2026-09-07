@@ -1140,6 +1140,21 @@ Http.Server.RecordHandlerError sets whether to record the error returned by http
 * default: true
 * dynamic
 
+### Http.Server.ProxyUserHeaderNames
+Http.Server.ProxyUserHeaderNames lists the request headers a user-defined proxy writes its receive time into,
+in the form `t=<epoch milliseconds>`. Each configured header present on a request is recorded as a proxy
+annotation of type USER (code 4) with the header name as its app, the same as the Java agent's
+`profiler.proxy.user.header.names`. A header whose `t=` is missing or not positive is not recorded.
+The standard `Pinpoint-ProxyApache`, `Pinpoint-ProxyNginx` and `Pinpoint-ProxyApp` headers are always recorded
+and need no configuration.
+
+* --pinpoint-http-server-proxyuserheadernames
+* PINPOINT_GO_HTTP_SERVER_PROXYUSERHEADERNAMES
+* WithHttpServerProxyUserHeaderNames()
+* type: string slice
+* default: empty
+* dynamic
+
 ### Http.Client.RecordRequestHeader
 Http.Client.RecordRequestHeader option sets HTTP request headers to be logged on the client side.
 If sets to "HEADERS-ALL", it records all request headers.
@@ -1265,7 +1280,7 @@ Two things make a reload not happen, and both are easy to miss:
 | SQL | `SQL.TraceBindValue`, `SQL.MaxBindValueSize`, `SQL.TraceCommit`, `SQL.TraceRollback`, `SQL.TraceQueryStat`, `SQL.EnableRawSqlCache`, `SQL.CacheLengthLimit`, `SQL.ErrorCount` |
 | Logging | `Log.Level` (and its deprecated alias `LogLevel`), `Log.Output`, `Log.MaxSize` |
 | Errors | `Error.TraceCallStack`, `Error.CallStackDepth`, `Error.NewThroughput`, `Error.MaxChainDepth` |
-| HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError` |
+| HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError`, `Http.Server.ProxyUserHeaderNames` |
 | HTTP client | `Http.Client.RecordRequestHeader`, `Http.Client.RecordResponseHeader`, `Http.Client.RecordRequestCookie` |
 | URL statistics | `Http.UrlStat.Enable`, `Http.UrlStat.LimitSize`, `Http.UrlStat.WithMethod` |
 

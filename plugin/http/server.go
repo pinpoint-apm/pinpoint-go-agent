@@ -23,7 +23,6 @@
 package pphttp
 
 import (
-	"math"
 	"net"
 	"net/http"
 	"net/textproto"
@@ -31,7 +30,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 )
@@ -128,85 +126,164 @@ var (
 	proxyHeaderApp    = textproto.CanonicalMIMEHeaderKey("Pinpoint-ProxyApp")
 )
 
-// proxyAppMaxLength matches the Java agent's ProxyRequestAnnotationFactory.
-const proxyAppMaxLength = 32
+// Proxy request types, matching the Java agent's ProxyRequestType codes.
+const (
+	proxyTypeApp    int32 = 1
+	proxyTypeNginx  int32 = 2
+	proxyTypeApache int32 = 3
+	proxyTypeUser   int32 = 4
+)
 
+// proxyAppMaxLength is the length bound Java's AppRequestParser gives
+// IdValidateUtils.validateId for the app= token.
+const proxyAppMaxLength = 30
+
+// proxyRequest is one parsed proxy header. valid mirrors Java's
+// ProxyRequestHeader.isValid(): DefaultProxyRequestRecorder records a header
+// only when its parser marked it valid.
+type proxyRequest struct {
+	valid        bool
+	receivedTime int64
+	durationTime int32
+	idlePercent  int32
+	busyPercent  int32
+	app          string
+}
+
+// setProxyHeader records one proxy annotation per proxy header the request
+// carries. Java's DefaultProxyRequestRecorder runs every parser - Apache,
+// Nginx, App and the configured user headers - and records each valid result,
+// so a request that passed through more than one proxy gets one annotation per
+// hop rather than only the first match.
 func setProxyHeader(a pinpoint.Annotation, h Header) {
-	var receivedTime int64
-	var durationTime, idlePercent, busyPercent int
-	var code int32 = 0
-	var app = ""
-
-	if xff := headerFirst(h, proxyHeaderApache); xff != "" {
-		parts := strings.Split(xff, " ")
-		for _, str := range parts {
-			k, v, ok := strings.Cut(str, "=")
-			if !ok {
-				continue
-			}
-			if k == "t" {
-				receivedTime, _ = strconv.ParseInt(v, 10, 64)
-				receivedTime = receivedTime / 1000
-			} else if k == "D" {
-				durationTime, _ = strconv.Atoi(v)
-			} else if k == "i" {
-				idlePercent, _ = strconv.Atoi(v)
-			} else if k == "b" {
-				busyPercent, _ = strconv.Atoi(v)
-			}
-		}
-		code = 3
-	} else if xff := headerFirst(h, proxyHeaderNginx); xff != "" {
-		parts := strings.Split(xff, " ")
-		for _, str := range parts {
-			k, v, ok := strings.Cut(str, "=")
-			if !ok {
-				continue
-			}
-			if k == "t" {
-				tmp, _ := strconv.ParseFloat(v, 64)
-				tmp = tmp * 1000
-				// Reject non-finite or out-of-range products before the cast:
-				// the header is untrusted input and converting such a float64
-				// to int64 yields an implementation-defined value. NaN fails
-				// both comparisons; ±Inf fails one. The upper bound uses '<'
-				// because float64(math.MaxInt64) rounds up to 2^63, which is
-				// not representable as int64.
-				if tmp >= float64(math.MinInt64) && tmp < float64(math.MaxInt64) {
-					receivedTime = int64(tmp)
-				}
-			} else if k == "D" {
-				durationTime, _ = strconv.Atoi(v)
-			}
-		}
-		code = 2
-	} else if xff := headerFirst(h, proxyHeaderApp); xff != "" {
-		parts := strings.Split(xff, " ")
-		for _, str := range parts {
-			k, v, ok := strings.Cut(str, "=")
-			if !ok {
-				continue
-			}
-			if k == "t" {
-				receivedTime, _ = strconv.ParseInt(v, 10, 64)
-			} else if k == "app" {
-				app = v
-			}
-		}
-		code = 1
+	if v := headerFirst(h, proxyHeaderApache); v != "" {
+		appendProxyHeader(a, proxyTypeApache, parseProxyApache(v))
 	}
-
-	// Java caps it at ProxyRequestAnnotationFactory.APP_MAX_LENGTH. The cut is
-	// on a rune boundary: the header is untrusted input, and protobuf rejects
-	// the whole span message carrying an invalid UTF-8 string.
-	if utf8.RuneCountInString(app) > proxyAppMaxLength {
-		app = string([]rune(app)[:proxyAppMaxLength])
+	if v := headerFirst(h, proxyHeaderNginx); v != "" {
+		appendProxyHeader(a, proxyTypeNginx, parseProxyNginx(v))
 	}
-
-	if code > 0 {
-		a.AppendLongIntIntByteByteString(pinpoint.AnnotationHttpProxyHeader, receivedTime, code, int32(durationTime),
-			int32(idlePercent), int32(busyPercent), app)
+	if v := headerFirst(h, proxyHeaderApp); v != "" {
+		appendProxyHeader(a, proxyTypeApp, parseProxyApp(v))
 	}
+	for _, name := range proxyUserHeaderNames() {
+		if v := headerFirst(h, name); v != "" {
+			appendProxyHeader(a, proxyTypeUser, parseProxyUser(name, v))
+		}
+	}
+}
+
+func appendProxyHeader(a pinpoint.Annotation, code int32, p proxyRequest) {
+	// A header whose receive time is missing or not positive is discarded
+	// whole, as every Java parser does with setValid(false): a receivedTime
+	// of 0 would draw the proxy hop at the epoch in the timeline.
+	if !p.valid || p.receivedTime <= 0 {
+		return
+	}
+	a.AppendLongIntIntByteByteString(pinpoint.AnnotationHttpProxyHeader, p.receivedTime, code, p.durationTime,
+		p.idlePercent, p.busyPercent, p.app)
+}
+
+// proxyTokens calls fn with the key and value of every "k=v" token of value;
+// tokens without '=' are skipped.
+func proxyTokens(value string, fn func(k, v string)) {
+	for _, tok := range strings.Split(value, " ") {
+		if k, v, ok := strings.Cut(tok, "="); ok {
+			fn(k, v)
+		}
+	}
+}
+
+// parseProxyApache reads "t=<epoch micros> D=<micros> i=<idle%> b=<busy%>",
+// as Java's ApacheRequestParser does.
+func parseProxyApache(value string) proxyRequest {
+	p := proxyRequest{valid: true}
+	proxyTokens(value, func(k, v string) {
+		switch k {
+		case "t":
+			t, _ := strconv.ParseInt(v, 10, 64)
+			p.receivedTime = t / 1000
+		case "D":
+			p.durationTime = atoi32(v)
+		case "i":
+			p.idlePercent = atoi32(v)
+		case "b":
+			p.busyPercent = atoi32(v)
+		}
+	})
+	return p
+}
+
+// parseProxyNginx reads "t=<sec.mmm> D=<sec.mmm>": nginx's $msec and
+// $request_time are seconds with exactly three decimals. Java's
+// NginxRequestParser (toReceivedTimeMillis / toDurationTimeMicros) checks
+// that shape and treats anything else, including a value with no decimal
+// point, as 0. Reading the digits around the point as an integer keeps the
+// millisecond exact where a float multiply could round it.
+func parseProxyNginx(value string) proxyRequest {
+	p := proxyRequest{valid: true}
+	proxyTokens(value, func(k, v string) {
+		switch k {
+		case "t":
+			p.receivedTime = nginxMillis(v)
+		case "D":
+			// Seconds with millisecond precision, reported in microseconds.
+			p.durationTime = int32(nginxMillis(v) * 1000)
+		}
+	})
+	return p
+}
+
+// nginxMillis converts a "sec.mmm" value to an integer count of milliseconds;
+// a value without a decimal point, or with other than three digits after it,
+// is malformed and yields 0.
+func nginxMillis(v string) int64 {
+	dot := strings.LastIndexByte(v, '.')
+	if dot == -1 || len(v)-dot != 4 {
+		return 0
+	}
+	n, err := strconv.ParseInt(v[:dot]+v[dot+1:], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// parseProxyApp reads "t=<epoch millis> app=<id>", as Java's AppRequestParser
+// does. An app= token that is not a valid id - the [a-zA-Z0-9._-] character
+// class, at most proxyAppMaxLength bytes - discards the header.
+func parseProxyApp(value string) proxyRequest {
+	p := proxyRequest{valid: true}
+	proxyTokens(value, func(k, v string) {
+		switch k {
+		case "t":
+			p.receivedTime, _ = strconv.ParseInt(v, 10, 64)
+		case "app":
+			if !pinpoint.IsValidId(v, proxyAppMaxLength) {
+				p.valid = false
+				return
+			}
+			p.app = v
+		}
+	})
+	return p
+}
+
+// parseProxyUser reads "t=<epoch millis>" from a header named by
+// Http.Server.ProxyUserHeaderNames; the header name is recorded as the app,
+// as Java's UserRequestParser does.
+func parseProxyUser(name, value string) proxyRequest {
+	p := proxyRequest{valid: true, app: name}
+	proxyTokens(value, func(k, v string) {
+		if k == "t" {
+			p.receivedTime, _ = strconv.ParseInt(v, 10, 64)
+		}
+	})
+	return p
+}
+
+func atoi32(v string) int32 {
+	n, _ := strconv.ParseInt(v, 10, 32)
+	return int32(n)
 }
 
 // RecordHttpServerResponse records http status and response header to span.

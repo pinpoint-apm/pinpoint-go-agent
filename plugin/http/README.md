@@ -75,6 +75,7 @@ But, WrapHandler and WrapHandlerFunc function doesn't support URL Statistics fea
 * [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
 * [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
 * [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
+* [Http.Server.ProxyUserHeaderNames](/doc/config.md#Http.Server.ProxyUserHeaderNames)
 * [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
 * [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)
 
