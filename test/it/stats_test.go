@@ -12,9 +12,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// urlStatFlushInterval is the agent's hard-coded URL-statistics send interval.
-// There is no configuration knob for it, so the URL-stat tests have to wait
-// for a real tick.
+// urlStatFlushInterval is the agent's hard-coded URL-statistics send interval,
+// which is also the width of the tick the statistics are bucketed into. There
+// is no configuration knob for either, so the URL-stat test has to wait for
+// real ones.
+//
+// A tick goes out on the first send after its window ends, and the two are not
+// aligned: the send timer starts with the agent, the tick boundary sits on
+// absolute time. A burst can therefore need one interval for its tick to end
+// and another for the next send to come round, so the wait below budgets for
+// two. It costs nothing when the first send carries it, which is almost every
+// run - WaitFor returns as soon as the data lands.
 const urlStatFlushInterval = 30 * time.Second
 
 func TestStreamsAgentStatistics(t *testing.T) {
@@ -305,7 +313,7 @@ func TestAggregatesUrlStatisticsIncludingFailuresAndUnsampledSpans(t *testing.T)
 	require.True(t, mc.WaitFor(func(s Snapshot) bool {
 		return uriStatTotalsFor(s, aggregated).totalCount >= 2 &&
 			hasUriStat(s, "GET /unsampled/{id}")
-	}, urlStatFlushInterval+waitTimeout))
+	}, 2*urlStatFlushInterval+waitTimeout))
 
 	s := mc.Snapshot()
 	totals := uriStatTotalsFor(s, aggregated)

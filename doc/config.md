@@ -1081,15 +1081,19 @@ If this is set as false, the agent doesn't collect HTTP URL statistics.
 Pinpoint Go Agent collects response times, successes and failures for all http requests regardless of sampling.
 The HTTP URL statistics feature is supported from Pinpoint version 2.5.0.
 
-Statistics are aggregated into 30 second ticks, and **only a completed tick is sent**:
-a tick is closed by the first request belonging to a newer one, and the send timer
-carries whatever has been closed since the last send. The send timer and the tick
-boundary are not aligned, so sending the tick still being collected would split one
-tick across two consecutive messages and report a per-message max and average instead
+Statistics are aggregated into 30 second ticks, and **only a tick that is over is
+sent**: a tick is closed by the first request belonging to a newer one, or - when
+traffic stops and no such request arrives - by its own 30 second window elapsing.
+The send timer then carries whatever is over at that point. The send timer and the
+tick boundary are not aligned, so sending a tick still inside its window would split
+it across two consecutive messages and report a per-message max and average instead
 of a per-tick one. Java's `UriStatCollectingJob` drains a queue only completed data
 enters, for the same reason. **When nothing has been collected, no message is sent** -
 an idle agent produces no URL statistics traffic at all. The tick still open when the
 agent shuts down is flushed on the way out, so a clean stop does not lose it.
+
+A tick therefore reaches the collector on the first send after its window ends -
+up to one send interval later.
 
 At most 4 completed ticks (two minutes) are retained while the stat stream is down.
 Beyond that the oldest tick is dropped and the agent logs a rate-limited warning.

@@ -1423,9 +1423,10 @@ func (agent *agent) sendUrlStatWorker() {
 	}
 }
 
-// flushUrlStat sends the url stat ticks closed so far, if any. includeInProgress
-// takes the tick still being collected too and is set only on the shutdown path,
-// where no later send will ever close it.
+// flushUrlStat sends the url stat ticks that are over, if any: the ones closed
+// by later traffic, plus the tick in progress once its window has elapsed.
+// includeInProgress takes the tick in progress whatever its window and is set
+// only on the shutdown path, where no later send will ever come for it.
 //
 // Nothing is sent when there is nothing to send. Java's UriStatCollectingJob
 // breaks out of its poll loop on an empty queue rather than sending an empty

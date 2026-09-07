@@ -31,19 +31,26 @@ const maxCompletedUrlStatSnapshots = 4
 // cause fires first silence the other for a whole window.
 var urlStatSnapshotDropLog = logThrottle{src: "url stat"}
 
+// urlStatNow is the clock urlStats reads to tell whether the tick in progress
+// is past its window. A variable so tests can place the boundary where they
+// need it instead of waiting on the wall clock.
+var urlStatNow = time.Now
+
 // urlStats owns this agent's url statistics: the tick its collect worker is
 // filling, plus the ticks already closed and waiting for a send. One instance
 // per agent, mirroring the C++ agent's UrlStats class - the snapshot used to be
 // a package global reassigned per agent start, so a restart could swap it out
 // from under the previous agent's worker and mix the two agents' stats.
 //
-// Only closed ticks are sent. The send interval is not aligned with the tick
-// interval, so a send that took the tick in progress would split one tick's
-// counts across two consecutive messages - the collector stores each part
-// under the same (uri, tick) key, and the second write is not a merge. Java
-// has the same split for the same reason and avoids it the same way, by
-// polling a queue that only completed data enters
-// (AsyncQueueingUriStatStorage.java:188-189).
+// A tick is sent only once it is over, which happens in one of two ways: the
+// arrival of an entry belonging to a newer tick closes it, or - when traffic
+// stops and no such entry ever arrives - its own window elapses on the clock.
+// The send interval is not aligned with the tick interval, so a send that took
+// a tick still inside its window would split that tick's counts across two
+// consecutive messages - the collector stores each part under the same
+// (uri, tick) key, and the second write is not a merge. Java has the same split
+// for the same reason and avoids it the same way, by polling a queue that only
+// completed data enters (AsyncQueueingUriStatStorage.java:188-189).
 type urlStats struct {
 	config *Config
 	mu     sync.Mutex
@@ -76,10 +83,13 @@ func (stats *urlStats) add(us *urlStat) {
 	defer stats.mu.Unlock()
 
 	// Tick boundary: the first entry of a newer tick closes the one in
-	// progress. Entry arrival drives this rather than a timer - entries carry
-	// an end time of about "now", so the cut lands on the boundary anyway, and
-	// a tick with no traffic has nothing to cut. Same structure as the C++
-	// agent's UrlStats::addLocked (src/url_stat.cpp:100-121).
+	// progress. Entries carry an end time of about "now", so the cut lands on
+	// the boundary anyway. Same structure as the C++ agent's
+	// UrlStats::addLocked (src/url_stat.cpp:100-121).
+	//
+	// This is the cut of an agent under traffic, and it cannot be the only one:
+	// the last tick of a burst has no newer entry coming to close it. Once its
+	// window is over takeSnapshot closes it instead.
 	//
 	// Strictly newer only: a straggler for an already-closed tick must not cut
 	// again. It lands in the current snapshot under its own tick key, which is
@@ -98,22 +108,30 @@ func (stats *urlStats) add(us *urlStat) {
 	stats.snapshot.add(us)
 }
 
-// takeSnapshot collects the closed ticks into one snapshot to send, leaving the
-// tick in progress to keep filling. includeInProgress takes that one too and is
-// set only on the shutdown path (agent.shutdownAgent): a tick nothing will ever
-// close again would otherwise be stranded here, losing up to a full tick
-// interval of traffic on every clean stop.
+// takeSnapshot collects the ticks that are over into one snapshot to send: the
+// ones urlStats.add has already closed, plus the tick in progress once its own
+// window has elapsed. Taking that last one is not the split the arrival cut
+// exists to avoid - the window is past, so no entry that can still legitimately
+// join the tick is coming - and without it nothing would ever close the last
+// tick of a burst, since add is the only other thing that closes one and an
+// agent whose traffic has stopped never reaches it again.
+//
+// includeInProgress takes the tick in progress whatever its window, and is set
+// only on the shutdown path (agent.shutdownAgent): a tick cut short by the stop
+// would otherwise be stranded here, losing up to a full tick interval of
+// traffic on every clean stop.
 func (stats *urlStats) takeSnapshot(includeInProgress bool) *urlStatSnapshot {
 	// The replacement is built before the lock is taken: allocating the map
 	// and loading the config snapshot has nothing to do with the handover, and
 	// doing it under the lock would stall the request-path adds for it.
 	fresh := stats.newSnapshot()
+	now := urlStatNow()
 
 	stats.mu.Lock()
 	defer stats.mu.Unlock()
 
 	taken := fresh
-	if includeInProgress {
+	if includeInProgress || stats.tickIsOverLocked(now) {
 		taken, stats.snapshot = stats.snapshot, fresh
 	}
 	// Every retained tick goes out in one message: PAgentUriStat carries a
@@ -125,6 +143,14 @@ func (stats *urlStats) takeSnapshot(includeInProgress bool) *urlStatSnapshot {
 	}
 	stats.completed = nil
 	return taken
+}
+
+// tickIsOverLocked reports whether the tick in progress holds anything and the
+// window it belongs to has already passed. snapshot.tick is the newest tick key
+// in there, so a straggler filed under an older key cannot hold the snapshot
+// open past its own window. Callers hold stats.mu.
+func (stats *urlStats) tickIsOverLocked(now time.Time) bool {
+	return !stats.snapshot.isEmpty() && now.After(stats.snapshot.tick.Add(urlStatCollectInterval))
 }
 
 type urlStatSnapshot struct {

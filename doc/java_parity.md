@@ -270,15 +270,23 @@ empty message every 30 seconds.
 **Now.** `urlStats` keeps the tick in progress separate from a queue of closed
 ticks, the way the C++ agent's `UrlStats::addLocked` does
 (`src/url_stat.cpp:100-121`): the first entry of a strictly newer tick closes
-the current one onto the queue. `takeSnapshot(false)` drains only that queue,
+the current one onto the queue. `takeSnapshot(false)` drains that queue,
 `flushUrlStat` skips the send when the result is empty, and the queue is capped
 at 4 closed ticks — matching Java's `snapshotQueue` capacity — dropping the
 oldest with a rate-limited warning when the stat stream is not draining.
 
-`Shutdown` calls `flushUrlStat(true)`, which takes the tick in progress as well:
-nothing will ever arrive to close it, and shipping it partial beats losing it.
-This is the one place a partial tick is sent, and it is why the tick boundary
-can be driven purely by entry arrival with no timer to cut a trailing tick.
+Entry arrival cannot be the only thing that closes a tick, because the last tick
+of a burst has no newer entry coming. Java does not depend on one either: what
+moves its tick onto the queue is `checkAndFlushOldData`
+(`AsyncQueueingUriStatStorage.java:162-165`), reached at a tick boundary rather
+than on a store. So `takeSnapshot(false)` also takes the tick in progress once
+its own window has elapsed — the window is past, so nothing that can still
+legitimately join the tick is coming, and taking it then is not the split the
+arrival cut exists to avoid.
+
+`Shutdown` calls `flushUrlStat(true)`, which takes the tick in progress whatever
+its window: the stop cuts it short and no later send is coming, and shipping it
+partial beats losing it. That is the one place a partial tick is sent.
 
 ---
 

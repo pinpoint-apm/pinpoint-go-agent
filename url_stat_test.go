@@ -12,6 +12,7 @@ import (
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_urlStatBucketLayoutFromJavaAgent(t *testing.T) {
@@ -380,6 +381,9 @@ func Test_configHttpUrlStatLimitSizeOutOfRangeRecoversTheDefault(t *testing.T) {
 func Test_urlStatSendsOneTickInOneMessage(t *testing.T) {
 	agent, stats := newUrlStatSendTestAgent(t)
 	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+	// Both sends below happen while the clock is still inside the tick's own
+	// window, so the newer entry at the end is the only thing that can close it.
+	setNow := fixUrlStatClock(t, tick.Add(time.Second))
 
 	agent.urlStats.add(newTestUrlStat("/a", 10, tick))
 	agent.flushUrlStat(false)
@@ -390,6 +394,7 @@ func Test_urlStatSendsOneTickInOneMessage(t *testing.T) {
 
 	// A newer tick closes it, and the next send carries it whole.
 	agent.urlStats.add(newTestUrlStat("/a", 30, tick.Add(urlStatCollectInterval)))
+	setNow(tick.Add(urlStatCollectInterval + time.Second))
 	agent.flushUrlStat(false)
 
 	sent := stats()
@@ -418,6 +423,9 @@ func Test_urlStatSendsNothingWithoutTraffic(t *testing.T) {
 func Test_urlStatSendsAClosedTickAndKeepsTheOpenOne(t *testing.T) {
 	agent, stats := newUrlStatSendTestAgent(t)
 	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+	// The clock sits inside the second tick's window: the first tick is over,
+	// the second one is not.
+	fixUrlStatClock(t, tick.Add(urlStatCollectInterval+time.Second))
 
 	agent.urlStats.add(newTestUrlStat("/closed", 10, tick))
 	agent.urlStats.add(newTestUrlStat("/open", 20, tick.Add(urlStatCollectInterval)))
@@ -439,6 +447,8 @@ func Test_urlStatSendsAClosedTickAndKeepsTheOpenOne(t *testing.T) {
 func Test_urlStatShutdownFlushesTheTickInProgress(t *testing.T) {
 	agent, stats := newUrlStatSendTestAgent(t)
 	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+	// Inside the second tick's window, so only the shutdown flush can take it.
+	fixUrlStatClock(t, tick.Add(urlStatCollectInterval+time.Second))
 
 	agent.urlStats.add(newTestUrlStat("/closed", 10, tick))
 	agent.urlStats.add(newTestUrlStat("/in-progress", 20, tick.Add(urlStatCollectInterval)))
@@ -464,6 +474,8 @@ func Test_urlStatCompletedQueueDropsTheOldestTickAtTheCap(t *testing.T) {
 
 	stats := newUrlStats(defaultConfig())
 	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+	// Inside the last tick's window, so the take below drains the queue only.
+	fixUrlStatClock(t, tick.Add(time.Duration(maxCompletedUrlStatSnapshots+2)*urlStatCollectInterval+time.Second))
 
 	// maxCompletedUrlStatSnapshots+2 closed ticks, plus the one left open.
 	for i := 0; i <= maxCompletedUrlStatSnapshots+2; i++ {
@@ -507,6 +519,53 @@ func Test_urlStatMergeFoldsAStragglerBackIntoItsTick(t *testing.T) {
 	assert.Equal(t, int64(40), folded.totalHistogram.total)
 	assert.Equal(t, int64(30), folded.totalHistogram.max)
 	assert.Equal(t, int32(2), histogramCount(folded.totalHistogram))
+}
+
+// The last tick of a burst has no newer entry coming to close it, so its own
+// window elapsing has to be enough. Without that an agent whose traffic stopped
+// holds its final tick until shutdown - and if traffic ever resumes, ships it
+// stamped with the long-past tick it was collected in, backfilling a bucket the
+// collector has already moved on from.
+func Test_urlStatSendsTheLastTickOfABurstOnceItsWindowIsOver(t *testing.T) {
+	agent, stats := newUrlStatSendTestAgent(t)
+	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+	setNow := fixUrlStatClock(t, tick.Add(time.Second))
+
+	agent.urlStats.add(newTestUrlStat("/a", 10, tick))
+
+	agent.flushUrlStat(false)
+	assert.Empty(t, stats(), "still inside the tick's window")
+
+	// The window is over: nothing that can still belong to this tick is coming,
+	// so taking it now is not a split.
+	setNow(tick.Add(urlStatCollectInterval + time.Second))
+	agent.flushUrlStat(false)
+
+	sent := stats()
+	require.Len(t, sent, 1)
+	each := eachUriStatsByUri(t, sent[0])
+	assert.Len(t, each, 1)
+	assert.Equal(t, int64(10), each["/a"].GetTotalHistogram().GetTotal())
+	assert.Equal(t, tick.UnixMilli(), each["/a"].GetTimestamp())
+
+	// Taken, not copied: a later send must not report the same tick again.
+	agent.flushUrlStat(false)
+	assert.Empty(t, stats())
+}
+
+// fixUrlStatClock pins the clock urlStats reads and returns a setter that moves
+// it, so a test can place the tick window boundary where it needs it instead of
+// racing the wall clock. A plain variable is enough - these tests drive the
+// agent from the one goroutine.
+func fixUrlStatClock(t *testing.T, at time.Time) func(time.Time) {
+	t.Helper()
+
+	prev := urlStatNow
+	now := at
+	urlStatNow = func() time.Time { return now }
+	t.Cleanup(func() { urlStatNow = prev })
+
+	return func(to time.Time) { now = to }
 }
 
 func newTestUrlStat(url string, elapsed int64, endTime time.Time) *urlStat {
