@@ -110,7 +110,7 @@ func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
 	rootWire := findSpanByRpc(s, "/orders/42")
 	require.NotNil(t, rootWire)
 	assert.Equal(t, rootSpanID, rootWire.GetSpanId())
-	assert.Equal(t, itAgentID, rootWire.GetTransactionId().GetAgentId())
+	assert.Equal(t, registeredAgentID(t, mc), rootWire.GetTransactionId().GetAgentId())
 	assert.Equal(t, "192.0.2.10", rootWire.GetAcceptEvent().GetRemoteAddr())
 	assert.Equal(t, "orders.internal:8443", rootWire.GetAcceptEvent().GetEndPoint())
 	// A root span describes no parent: PParentInfo is omitted, as the Java and
@@ -374,7 +374,7 @@ func TestStartsNewTransactionOnMalformedContextAndAdoptsForeignContext(t *testin
 			pinpoint.HeaderTraceId: tid,
 		})
 		require.True(t, tracer.IsSampled(), tid)
-		assert.Equal(t, itAgentID, tracer.TransactionId().AgentId, tid)
+		assert.Equal(t, registeredAgentID(t, mc), tracer.TransactionId().AgentId, tid)
 		assert.NotEqual(t, tid, tracer.TransactionId().String(), tid)
 		tracer.EndSpan()
 	}

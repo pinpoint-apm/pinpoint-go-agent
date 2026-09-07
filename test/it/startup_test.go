@@ -140,7 +140,7 @@ func TestServesNoopTracersDuringOutageAndEnablesTracingAfterRecovery(t *testing.
 	recovered := agent.NewSpanTracer("startup.outage.recovered", "/startup-outage-recovered")
 	require.True(t, recovered.IsSampled())
 	assert.NotEqual(t, int64(0), recovered.SpanId())
-	assert.Equal(t, itAgentID, recovered.TransactionId().AgentId)
+	assert.Equal(t, registeredAgentID(t, mc), recovered.TransactionId().AgentId)
 	recovered.EndSpan()
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool {

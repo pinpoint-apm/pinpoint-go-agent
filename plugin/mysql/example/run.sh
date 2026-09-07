@@ -88,7 +88,7 @@ if [ ! -f "$PINPOINT_CONFIG" ]; then
     cat > "$PINPOINT_CONFIG" << 'EOF'
 enable: true
 applicationName: GoMySQLTest
-agentId: GoMySQLTestId
+agentName: GoMySQLTestId
 collector:
   host: localhost
   agentPort: 9991

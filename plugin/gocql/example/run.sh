@@ -133,7 +133,7 @@ if [ ! -f "$PINPOINT_CONFIG" ]; then
     cat > "$PINPOINT_CONFIG" << 'EOF'
 enable: true
 applicationName: GoCassandraTest
-agentId: GoCassandraTestAgent
+agentName: GoCassandraTestAgent
 collector:
   host: localhost
   agentPort: 9991

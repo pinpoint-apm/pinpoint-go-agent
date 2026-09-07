@@ -111,7 +111,7 @@ if [ ! -f "$PINPOINT_CONFIG" ]; then
     cat > "$PINPOINT_CONFIG" << 'EOF'
 enable: true
 applicationName: GoRedisTest
-agentId: GoRedisTestAgent
+agentName: GoRedisTestAgent
 collector:
   host: localhost
   agentPort: 9991

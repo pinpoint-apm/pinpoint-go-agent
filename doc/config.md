@@ -92,7 +92,6 @@ The example below shows that config file and profile are set by command flag.
 ```json
 {
   "applicationName": "JsonAppName",
-  "agentId": "JsonAgentID",
   "loglevel": "debug",
   "profile": {
     "dev": {
@@ -139,22 +138,15 @@ ApplicationType option sets the application type.
 * default: 1800 (ServiceTypeGoApp)
 
 ### AgentId
-AgentId option set id to distinguish agent.
-We recommend that you enable hostname to be included.
-For Uid.Version v1 and v3, the maximum length of AgentId is 24 bytes.
-If agent id is not set, has invalid characters, or the maximum length is exceeded, an id is automatically generated.
-For Uid.Version v4 this option is ignored: the agent id is always generated at startup.
+The agent id is not configurable. Every process generates its own id at startup
+(base64url of a UUIDv7, 22 bytes) for all Uid.Version values, so each instance is
+always distinct in the collector. Use [AgentName](#agentname) for a stable,
+human-readable label.
 See [Identity Versions](#identity-versions).
-
-* --pinpoint-agentid
-* PINPOINT_GO_AGENTID
-* WithAgentId()
-* string
-* case-sensitive
 
 ### AgentName
 AgentName option sets the agent name.
-If this option is not set, the resolved AgentId is used as AgentName.
+If this option is not set, the generated AgentId is used as AgentName.
 The maximum length is 255 bytes for Uid.Version v1 and v3, and 254 bytes for v4.
 See [Identity Versions](#identity-versions).
 
@@ -187,7 +179,7 @@ Use v1 or v3; the v4 details below are documented for when server-side support s
 | | v1 | v3 (default) | v4 |
 |---|---|---|---|
 | ApplicationName | **required**, max 24 bytes | **required**, max 254 bytes | **required**, max 254 bytes |
-| AgentId | optional, max 24 bytes; auto-generated when unset or invalid | same as v1 | not configurable, always auto-generated |
+| AgentId | not configurable, always auto-generated | same as v1 | same as v1 |
 | AgentName | optional, max 255 bytes; falls back to AgentId | same as v1 | optional, max 254 bytes; falls back to AgentId |
 | ServiceName | not used | not used | **required**, max 254 bytes |
 | ApiKey | not used | not used | **required**, non-empty (no length or character check) |
@@ -1321,7 +1313,7 @@ instrumentation.
 
 ```yaml
 applicationName: "MyApp-Dev"
-agentId: "dev-agent-1"
+agentName: "dev-agent-1"
 
 collector:
   host: "localhost"
@@ -1362,7 +1354,7 @@ Sample a fraction, cap the peak, and log only what you would act on.
 
 ```yaml
 applicationName: "MyApp"
-# agentId omitted: generated per process, which is what you want when
+# The agent id is generated per process, which is what you want when
 # instances are ephemeral. Set agentName for a stable label instead.
 agentName: "myapp-prod"
 
@@ -1406,7 +1398,7 @@ not.
 
 ```yaml
 applicationName: "MyApp"
-# agentId unset -> generated per container
+# the agent id is generated per container
 agentName: "myapp"
 collector:
   host: "pinpoint-collector.monitoring.svc.cluster.local"
@@ -1428,9 +1420,8 @@ PINPOINT_GO_SAMPLING_COUNTERRATE=10
 PINPOINT_GO_LOG_OUTPUT=stdout
 ```
 
-Do not pin `AgentId` in a container image: every replica would report as the
-same agent. Leave it unset — the agent generates one per process — and use
-`AgentName` for the human-readable label. `IsContainerEnv` is detected
+The agent id cannot be pinned: the agent generates one per process, so every
+replica is distinct. Use `AgentName` for the human-readable label. `IsContainerEnv` is detected
 automatically; set it only if the detection is wrong.
 
 If you want reloadable options in a container, you still need a config file:
@@ -1492,7 +1483,7 @@ See [ActiveProfile](#activeprofile) for the file layout.
 
 | Symptom | Options to look at |
 |---|---|
-| Agent will not start | `ApplicationName`, `AgentId`, `Uid.Version`, `Enable` |
+| Agent will not start | `ApplicationName`, `Uid.Version`, `Enable` |
 | Nothing appears in the UI | `Collector.Host`, `Collector.AgentPort`, `Sampling.CounterRate`, `Enable` |
 | Cannot connect / not registered | `Collector.Host`, the three ports, `Collector.Grpc.SslEnable`, `Collector.Grpc.TrustCertFilePath` |
 | Too many traces / collector overloaded | `Sampling.CounterRate`, `Sampling.NewThroughput`, `Sampling.ContinueThroughput`, `Http.Server.ExcludeUrl` |
@@ -1508,7 +1499,6 @@ See [ActiveProfile](#activeprofile) for the file layout.
 | No error stack traces | `Error.TraceCallStack`, `Error.CallStackDepth` |
 | Agent logs too quiet / too loud | `Log.Level`, `Log.Output`, `Log.MaxSize` |
 | Config change has no effect | `ConfigFile`, `ActiveProfile`, and the [reloadable list](#reloadable-options) |
-| Every replica reports as one agent | `AgentId` (leave unset), `AgentName` |
 
 ---
 

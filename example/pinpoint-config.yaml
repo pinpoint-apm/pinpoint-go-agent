@@ -2,7 +2,7 @@
 
 applicationname: "MyAppName"
 applicationtype: 1900
-agentid: "MyAgentID"
+agentname: "MyAgentName"
 collector:
   host: "my.collector.host"
   agentport: 9000

@@ -31,7 +31,7 @@ func Test_newConsumerTracer_EmptyBrokerAddress(t *testing.T) {
 
 func startAgent(t *testing.T) {
 	t.Helper()
-	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentId("testAgent"))
+	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentName("testAgent"))
 	require.NoError(t, err)
 
 	agent, err := pinpoint.NewTestAgent(config, t)

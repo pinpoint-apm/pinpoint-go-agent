@@ -20,7 +20,6 @@ const (
 	longTimeout = 20 * time.Second
 
 	itAppName   = "go-agent-it"
-	itAgentID   = "go-it-agent-id"
 	itAgentName = "go-it-agent-name"
 	itAppType   = int32(pinpoint.ServiceTypeGoApp)
 
@@ -166,7 +165,6 @@ func defaultAgentConfig() *agentConfig {
 func (c *agentConfig) options(mc *MockCollector) []pinpoint.ConfigOption {
 	return []pinpoint.ConfigOption{
 		pinpoint.WithAppName(itAppName),
-		pinpoint.WithAgentId(itAgentID),
 		pinpoint.WithAgentName(itAgentName),
 		pinpoint.WithAppType(itAppType),
 		pinpoint.WithUidVersion(c.uidVersion),
@@ -584,13 +582,28 @@ func hasEchoResponse(s Snapshot, responseID int32) bool {
 	return false
 }
 
+// generatedAgentIDLen is the length of the agent id the agent always mints for
+// itself: base64url of a UUIDv7 without padding. The id is not configurable.
+const generatedAgentIDLen = 22
+
+// registeredAgentID returns the generated agent id the collector saw on the
+// first AgentInfo registration.
+func registeredAgentID(t *testing.T, mc *MockCollector) string {
+	t.Helper()
+	s := mc.Snapshot()
+	require.NotEmpty(t, s.AgentInfos)
+	id := s.AgentInfos[0].Metadata.ValueOr("agentid", "")
+	require.Len(t, id, generatedAgentIDLen)
+	return id
+}
+
 // expectCommonMetadata asserts the agent identity headers every collector
 // channel must carry. Only the ping and active-thread-count streams add a
 // socket id.
 func expectCommonMetadata(t *testing.T, md RpcMetadata, expectSocketID bool) {
 	t.Helper()
 	assert.Equal(t, itAppName, md.ValueOr("applicationname", ""))
-	assert.Equal(t, itAgentID, md.ValueOr("agentid", ""))
+	assert.Len(t, md.ValueOr("agentid", ""), generatedAgentIDLen)
 	assert.Equal(t, itAgentName, md.ValueOr("agentname", ""))
 	assert.Equal(t, fmt.Sprint(itAppType), md.ValueOr("servicetype", ""))
 	assert.Equal(t, "100", md.ValueOr("protocol.version", ""))

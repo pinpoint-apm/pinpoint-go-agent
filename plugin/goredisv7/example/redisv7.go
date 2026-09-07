@@ -68,7 +68,7 @@ func redisv7Cluster(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoRedisv7Test"),
-		pinpoint.WithAgentId("GoRedisv7TestAgent"),
+		pinpoint.WithAgentName("GoRedisv7TestAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

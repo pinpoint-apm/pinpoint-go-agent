@@ -15,7 +15,7 @@ import (
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoBeegoTest"),
-		pinpoint.WithAgentId("GoBeegoTestAgent"),
+		pinpoint.WithAgentName("GoBeegoTestAgent"),
 		pinpoint.WithHttpUrlStatEnable(true),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}

@@ -37,7 +37,7 @@ func process(ctx context.Context, msg *sarama.ConsumerMessage) error {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoKafkaConsumerGroup"),
-		pinpoint.WithAgentId("GoKafkaConsumerGroupAgent"),
+		pinpoint.WithAgentName("GoKafkaConsumerGroupAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

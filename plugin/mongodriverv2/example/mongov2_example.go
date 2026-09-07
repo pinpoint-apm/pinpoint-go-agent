@@ -38,7 +38,7 @@ func mongodb(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoMongoV2Test"),
-		pinpoint.WithAgentId("GoMongoV2TestAgent"),
+		pinpoint.WithAgentName("GoMongoV2TestAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

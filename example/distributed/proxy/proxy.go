@@ -69,7 +69,7 @@ func members(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoProxyExample"),
-		pinpoint.WithAgentId("GoProxyExampleAgent"),
+		pinpoint.WithAgentName("GoProxyExampleAgent"),
 		pinpoint.WithCollectorHost(envOr("PINPOINT_GO_COLLECTOR_HOST", "localhost")),
 		// Record only the User-Agent request header on the span (see doc/config.md).
 		pphttp.WithHttpServerRecordRequestHeader([]string{"User-Agent"}),

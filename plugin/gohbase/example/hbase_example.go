@@ -46,7 +46,7 @@ func doHbase(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoHbaseTest"),
-		pinpoint.WithAgentId("GoHbaseTestAgent"),
+		pinpoint.WithAgentName("GoHbaseTestAgent"),
 		pinpoint.WithCollectorHost("localhost"),
 		pinpoint.WithLogLevel("debug"),
 	}

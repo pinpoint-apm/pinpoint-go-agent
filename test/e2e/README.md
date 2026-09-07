@@ -43,7 +43,7 @@ collector an explicit runtime setting. For a TLS collector, set
 or export `PINPOINT_GO_COLLECTOR_GRPC_SSLENABLE=true` and
 `PINPOINT_GO_COLLECTOR_GRPC_TRUSTCERTFILEPATH=/path/to/ca.pem` for the run. An
 empty trust path with TLS on falls back to the system root CAs. Each process gets a unique
-`PINPOINT_GO_AGENTNAME`/`PINPOINT_GO_AGENTID`, so concurrent runs are
+`PINPOINT_GO_AGENTNAME` (the agent id itself is always generated), so concurrent runs are
 distinguishable under the stable applications `go-e2e-http-upstream`,
 `go-e2e-http-downstream` and `go-e2e-grpc-downstream`.
 

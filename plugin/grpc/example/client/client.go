@@ -132,7 +132,7 @@ func doGrpc(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("TestGrpcClient"),
-		pinpoint.WithAgentId("TestGrpcClientAgent"),
+		pinpoint.WithAgentName("TestGrpcClientAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

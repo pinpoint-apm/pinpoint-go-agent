@@ -22,7 +22,7 @@ func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) pinpoint.Agent {
 
 	opts = append([]pinpoint.ConfigOption{
 		pinpoint.WithAppName("testApp"),
-		pinpoint.WithAgentId("testAgent"),
+		pinpoint.WithAgentName("testAgent"),
 	}, opts...)
 
 	config, err := pinpoint.NewConfig(opts...)

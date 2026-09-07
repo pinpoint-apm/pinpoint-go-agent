@@ -71,7 +71,7 @@ func main() {
 
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoChiTest"),
-		pinpoint.WithAgentId("GoChiTestAgent"),
+		pinpoint.WithAgentName("GoChiTestAgent"),
 		pinpoint.WithHttpUrlStatEnable(true),
 		//pinpoint.WithSamplingCounterRate(10),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),

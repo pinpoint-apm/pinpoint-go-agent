@@ -47,7 +47,7 @@ func save(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoKafkaProducer"),
-		pinpoint.WithAgentId("GoKafkaProducerAgent"),
+		pinpoint.WithAgentName("GoKafkaProducerAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

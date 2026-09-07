@@ -61,7 +61,7 @@ func main() {
 
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoHttpTest"),
-		pinpoint.WithAgentId("GoHttpAgent"),
+		pinpoint.WithAgentName("GoHttpAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 
 		pphttp.WithHttpServerStatusCodeError([]string{"5xx", "4xx"}),

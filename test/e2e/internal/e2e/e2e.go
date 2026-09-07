@@ -46,7 +46,6 @@ func CollectorHost() string {
 func ConfigureAgentEnvironment(application, agentName string) {
 	SetDefaultEnv("PINPOINT_GO_APPLICATIONNAME", application)
 	SetDefaultEnv("PINPOINT_GO_AGENTNAME", agentName)
-	SetDefaultEnv("PINPOINT_GO_AGENTID", agentName)
 	SetDefaultEnv("PINPOINT_GO_HTTP_URLSTAT_ENABLE", "true")
 	SetDefaultEnv("PINPOINT_GO_SQL_TRACEQUERYSTAT", "true")
 	SetDefaultEnv("PINPOINT_GO_SQL_TRACEBINDVALUE", "true")

@@ -195,14 +195,14 @@ application is untraced.
 | Cause | Check |
 |---|---|
 | `ApplicationName` not set | it is required; without it the agent cannot start |
-| Name/ID too long or has invalid characters | `ApplicationName`, `AgentId`, `AgentName` must match `[a-zA-Z0-9\._\-]+`; length limits depend on [Uid.Version](config.md#uidversion) |
+| Name/ID too long or has invalid characters | `ApplicationName`, `AgentName` must match `[a-zA-Z0-9\._\-]+`; length limits depend on [Uid.Version](config.md#uidversion) |
 | `Enable=false` left in a config file or the environment | the resolved config dump shows `Enable = false` |
 | `Uid.Version` is `v4` | v4 is not accepted by any released collector yet; use `v1` or `v3` |
 | A second `NewAgent()` call | returns `agent is already created`; the first agent is still the live one |
 | Config file not found or unparseable | look for `src=config` errors; the path is resolved as given, relative to the working directory |
 
-An oversized or malformed `AgentId` is *not* fatal on its own — the agent
-generates one instead. An invalid `ApplicationName` is.
+The agent id is never configured; the agent always generates its own. An
+invalid `ApplicationName` is fatal.
 
 ### No Data in the Pinpoint UI
 

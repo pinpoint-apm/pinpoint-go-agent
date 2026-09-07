@@ -120,7 +120,7 @@ func asyncWithWrapper(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoAsyncExample"),
-		pinpoint.WithAgentId("GoAsyncExampleAgent"),
+		pinpoint.WithAgentName("GoAsyncExampleAgent"),
 		//pinpoint.WithLogLevel("debug"),
 		//pinpoint.WithLogOutput(os.Getenv("HOME") + "/tmp/pinpoint.log"),
 		//pinpoint.WithSamplingCounterRate(100),

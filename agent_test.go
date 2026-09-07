@@ -41,7 +41,6 @@ func Test_agent_NewAgent(t *testing.T) {
 
 	opts := []ConfigOption{
 		WithAppName("test"),
-		WithAgentId("testagent"),
 	}
 	c, _ := NewConfig(opts...)
 	c.offGrpc = true
@@ -59,14 +58,14 @@ func Test_agent_NewAgent(t *testing.T) {
 			agent := a.(*agent)
 			assert.NoError(t, err, "NewAgent")
 			assert.Equal(t, "test", agent.appName, "ApplicationName")
-			assert.Equal(t, "testagent", agent.agentID, "AgentID")
+			assert.Len(t, agent.agentID, uidBase64Len, "AgentID")
 			assert.Equal(t, int32(ServiceTypeGoApp), agent.appType, "ApplicationType")
 			assert.Greater(t, agent.startTime, int64(0), "StartTime")
 			assert.Equal(t, GetAgent(), a, "global agent")
 
 			agent.startTime = 12345
 			agent.enable.Store(true)
-			assert.Equal(t, "testagent^12345^1", agent.generateTransactionId().String(), "generateTransactionId")
+			assert.Equal(t, agent.agentID+"^12345^1", agent.generateTransactionId().String(), "generateTransactionId")
 
 			a.Shutdown()
 			assert.Equal(t, NoopAgent(), GetAgent(), "global agent")
@@ -85,7 +84,6 @@ func Test_agent_GlobalAgent(t *testing.T) {
 
 	opts := []ConfigOption{
 		WithAppName("testGlobal"),
-		WithAgentId("testGlobalAgent"),
 	}
 	c, _ := NewConfig(opts...)
 	c.offGrpc = true
@@ -119,7 +117,6 @@ func Test_agent_NewSpanTracer(t *testing.T) {
 
 	opts := []ConfigOption{
 		WithAppName("test"),
-		WithAgentId("testagent"),
 	}
 	c, _ := NewConfig(opts...)
 	c.offGrpc = true
@@ -136,11 +133,11 @@ func Test_agent_NewSpanTracer(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			agent := tt.args.agent
-			span := agent.NewSpanTracer("test", "/")
+			ag := tt.args.agent
+			span := ag.NewSpanTracer("test", "/")
 
 			txid := span.TransactionId()
-			assert.Equal(t, "testagent", txid.AgentId, "AgentId")
+			assert.Equal(t, agent.agentID, txid.AgentId, "AgentId")
 			assert.Greater(t, txid.StartTime, int64(0), "StartTime")
 			assert.Greater(t, txid.Sequence, int64(0), "Sequence")
 
@@ -158,7 +155,6 @@ func Test_agent_NewSpanTracerWithReader(t *testing.T) {
 
 	opts := []ConfigOption{
 		WithAppName("test"),
-		WithAgentId("testagent"),
 	}
 	c, _ := NewConfig(opts...)
 	c.offGrpc = true
@@ -200,7 +196,6 @@ func Test_agent_NewSpanTracerWithReader(t *testing.T) {
 func Test_agent_NewSpanTracerWithReader_samplerByParseability(t *testing.T) {
 	c, _ := NewConfig(
 		WithAppName("test"),
-		WithAgentId("testagent"),
 		WithSamplingType("COUNTER"),
 		WithSamplingCounterRate(100),
 	)
@@ -598,7 +593,6 @@ func Test_agent_ShutdownAfterPingWorkerExited(t *testing.T) {
 func Test_agent_ShutdownDeadline(t *testing.T) {
 	opts := []ConfigOption{
 		WithAppName("test"),
-		WithAgentId("testagent"),
 	}
 	c, _ := NewConfig(opts...)
 	c.offGrpc = true
@@ -626,7 +620,7 @@ func Test_agent_ShutdownDeadline(t *testing.T) {
 // deferred connection close while the first call was still draining spans. The
 // teardown is serialized now, so the second call waits for it instead.
 func Test_agent_ShutdownIsSerialized(t *testing.T) {
-	c, _ := NewConfig(WithAppName("test"), WithAgentId("testagent"))
+	c, _ := NewConfig(WithAppName("test"))
 	c.offGrpc = true
 	a, _ := NewAgent(c)
 	agent := a.(*agent)
@@ -666,7 +660,6 @@ func Test_agent_ShutdownIsSerialized(t *testing.T) {
 func Test_agent_ShutdownNoStartupDelay(t *testing.T) {
 	opts := []ConfigOption{
 		WithAppName("test"),
-		WithAgentId("testagent"),
 	}
 	c, _ := NewConfig(opts...)
 	c.offGrpc = true
@@ -862,7 +855,6 @@ func Test_agent_sendMetaWorkerStopsWhileAllPermitsHeld(t *testing.T) {
 func Test_agent_ShutdownReleasesGlobalWhenNeverRegistered(t *testing.T) {
 	opts := []ConfigOption{
 		WithAppName("test"),
-		WithAgentId("testagent"),
 	}
 	c, _ := NewConfig(opts...)
 	c.offGrpc = true
@@ -884,7 +876,7 @@ func Test_agent_ShutdownReleasesGlobalWhenNeverRegistered(t *testing.T) {
 }
 
 func Test_agent_GetAgentIsRaceFreeAgainstShutdown(t *testing.T) {
-	c, _ := NewConfig(WithAppName("test"), WithAgentId("testagent"))
+	c, _ := NewConfig(WithAppName("test"))
 	c.offGrpc = true
 	a, err := NewAgent(c)
 	assert.NoError(t, err, "new agent")
@@ -1285,7 +1277,6 @@ func Test_agent_continueHeaders_table(t *testing.T) {
 	// every row and the stat counters alone say which sampler ran.
 	c, _ := NewConfig(
 		WithAppName("test"),
-		WithAgentId("testagent"),
 		WithSamplingType("COUNTER"),
 		WithSamplingCounterRate(1),
 	)
@@ -1331,7 +1322,7 @@ func Test_agent_continueHeaders_table(t *testing.T) {
 				assert.Equal(t, int64(123), s.parentSpanId, "parent span id")
 				assert.NotEqual(t, int64(0), s.spanId, "span id")
 			} else {
-				assert.Equal(t, "testagent", s.txId.AgentId, "generated transaction id")
+				assert.Equal(t, agent.agentID, s.txId.AgentId, "generated transaction id")
 			}
 		})
 	}
@@ -1340,7 +1331,7 @@ func Test_agent_continueHeaders_table(t *testing.T) {
 // The headers Inject writes must be readable as a continued trace by the other
 // side - proof that Inject really emits all three headers the new check needs.
 func Test_agent_continueHeaders_roundTrip(t *testing.T) {
-	c, _ := NewConfig(WithAppName("test"), WithAgentId("testagent"))
+	c, _ := NewConfig(WithAppName("test"))
 	c.offGrpc = true
 	a, _ := NewAgent(c)
 	agent := a.(*agent)

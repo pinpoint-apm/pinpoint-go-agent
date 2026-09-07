@@ -74,7 +74,7 @@ func run() {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoSaAppTest"),
-		pinpoint.WithAgentId("GoSaAppTestId"),
+		pinpoint.WithAgentName("GoSaAppTestId"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

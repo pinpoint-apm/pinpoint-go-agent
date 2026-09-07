@@ -70,7 +70,6 @@ func tlsTestConfig(t *testing.T, port int, opts ...ConfigOption) *Config {
 	t.Helper()
 	c, err := NewConfig(append([]ConfigOption{
 		WithAppName("test"),
-		WithAgentId("testagent"),
 		WithCollectorHost("127.0.0.1"),
 		WithCollectorAgentPort(port),
 	}, opts...)...)

@@ -39,7 +39,7 @@ For more information on config option, refer the [Configuration](config.md) docu
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("Your Application Name"),
-		pinpoint.WithAgentId("Agent Id"),
+		pinpoint.WithAgentName("Agent Id"),
 		pinpoint.WithCollectorHost("pinpoint's collector host"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
@@ -87,7 +87,7 @@ func index(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("TraceWebRequest"),
-		pinpoint.WithAgentId("TraceWebRequestAgent"),
+		pinpoint.WithAgentName("TraceWebRequestAgent"),
 		pinpoint.WithCollectorHost("localhost"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

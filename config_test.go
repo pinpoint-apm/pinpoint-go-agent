@@ -34,7 +34,6 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			c, _ := NewConfig(tt.args.opts...)
 			assert.Equal(t, "TestApp", c.String(CfgAppName), CfgAppName)
 			assert.Equal(t, ServiceTypeGoApp, c.Int(CfgAppType), CfgAppType)
-			assert.Empty(t, c.String(CfgAgentID), CfgAgentID)
 			assert.Empty(t, c.String(CfgAgentName), CfgAgentName)
 			assert.Equal(t, "localhost", c.String(CfgCollectorHost), CfgCollectorHost)
 			assert.Equal(t, 9991, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
@@ -87,7 +86,6 @@ func TestNewConfig_WithFunc(t *testing.T) {
 	opts := []ConfigOption{
 		WithAppName("TestApp"),
 		WithAppType(1234),
-		WithAgentId("TestAgent"),
 		WithAgentName("TestAgentName"),
 		WithCollectorHost("func.collector.host"),
 		WithCollectorAgentPort(7777),
@@ -136,7 +134,6 @@ func TestNewConfig_WithFunc(t *testing.T) {
 			c, _ := NewConfig(tt.args.opts...)
 			assert.Equal(t, "TestApp", c.String(CfgAppName), CfgAppName)
 			assert.Equal(t, 1234, c.Int(CfgAppType), CfgAppType)
-			assert.Equal(t, "TestAgent", c.String(CfgAgentID), CfgAgentID)
 			assert.Equal(t, "TestAgentName", c.String(CfgAgentName), CfgAgentName)
 			assert.Equal(t, "func.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
 			assert.Equal(t, 7777, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
@@ -181,9 +178,7 @@ func TestNewConfig_AppNameMissing(t *testing.T) {
 		opts []ConfigOption
 	}
 
-	opts := []ConfigOption{
-		WithAgentId("TestAgent"),
-	}
+	opts := []ConfigOption{}
 
 	tests := []struct {
 		name string
@@ -220,7 +215,6 @@ func TestNewConfig_GenerateAgentId(t *testing.T) {
 			c, _ := NewConfig(tt.args.opts...)
 			c.checkNameAndID()
 			assert.Equal(t, c.String(CfgAppName), "TestApp", CfgAppName)
-			assert.NotNil(t, c.String(CfgAgentID), CfgAgentID)
 		})
 	}
 }
@@ -232,7 +226,6 @@ func TestNewConfig_ConfigFileYaml(t *testing.T) {
 
 	opts := []ConfigOption{
 		WithAppName("TestApp"),
-		WithAgentId("TestAgent"),
 		WithConfigFile("example/pinpoint-config.yaml"),
 	}
 
@@ -248,7 +241,6 @@ func TestNewConfig_ConfigFileYaml(t *testing.T) {
 			defer c.Close()
 			assert.Equal(t, "MyAppName", c.String(CfgAppName), CfgAppName)
 			assert.Equal(t, 1900, c.Int(CfgAppType), CfgAppType)
-			assert.Equal(t, "MyAgentID", c.String(CfgAgentID), CfgAgentID)
 			assert.Equal(t, "my.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
 			assert.Equal(t, 9000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
 			assert.Equal(t, 9001, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
@@ -286,7 +278,6 @@ func TestNewConfig_ConfigFileJson(t *testing.T) {
 
 	opts := []ConfigOption{
 		WithAppName("TestApp"),
-		WithAgentId("TestAgent"),
 		WithConfigFile("example/pinpoint-config.json"),
 	}
 
@@ -302,7 +293,6 @@ func TestNewConfig_ConfigFileJson(t *testing.T) {
 			defer c.Close()
 			assert.Equal(t, "JsonAppName", c.String(CfgAppName), CfgAppName)
 			assert.Equal(t, 1901, c.Int(CfgAppType), CfgAppType)
-			assert.Equal(t, "JsonAgentID", c.String(CfgAgentID), CfgAgentID)
 			assert.Equal(t, "real.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
 			assert.Equal(t, 9000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
 			assert.Equal(t, 9001, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
@@ -340,7 +330,6 @@ func TestNewConfig_ConfigFileProp(t *testing.T) {
 
 	opts := []ConfigOption{
 		WithAppName("TestApp"),
-		WithAgentId("TestAgent"),
 		WithConfigFile("example/pinpoint-config.prop"),
 	}
 
@@ -356,7 +345,6 @@ func TestNewConfig_ConfigFileProp(t *testing.T) {
 			defer c.Close()
 			assert.Equal(t, "PropAppName", c.String(CfgAppName), CfgAppName)
 			assert.Equal(t, 1902, c.Int(CfgAppType), CfgAppType)
-			assert.Equal(t, "PropAgentID", c.String(CfgAgentID), CfgAgentID)
 			assert.Equal(t, "real.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
 			assert.Equal(t, 7000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
 			assert.Equal(t, 7001, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
@@ -394,7 +382,6 @@ func TestNewConfig_ConfigFileProfile(t *testing.T) {
 
 	opts := []ConfigOption{
 		WithAppName("TestApp"),
-		WithAgentId("TestAgent"),
 		WithConfigFile("example/test-config.yaml"),
 		WithActiveProfile("real"),
 	}
@@ -420,7 +407,6 @@ func TestNewConfig_ConfigFileProfile(t *testing.T) {
 			c, _ := NewConfig(tt.args.opts...)
 			defer c.Close()
 			assert.Equal(t, "MyAppName", c.String(CfgAppName), CfgAppName)
-			assert.Equal(t, "MyAgentID", c.String(CfgAgentID), CfgAgentID)
 			assert.Equal(t, "dev.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
 			assert.Equal(t, samplingTypeCounter, c.String(CfgSamplingType), CfgSamplingType)
 			assert.Equal(t, 1, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
@@ -441,7 +427,6 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 
 	opts := []ConfigOption{
 		WithAppName("TestApp"),
-		WithAgentId("TestAgent"),
 		WithConfigFile("example/test.yaml"),
 	}
 
@@ -455,7 +440,6 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 	t.Setenv("PINPOINT_GO_ACTIVEPROFILE", "dev")
 	t.Setenv("PINPOINT_GO_APPLICATIONNAME", "EnvVarArgTest")
 	t.Setenv("PINPOINT_GO_APPLICATIONTYPE", "2000")
-	t.Setenv("PINPOINT_GO_AGENTID", "envagentid")
 	t.Setenv("PINPOINT_GO_AGENTNAME", "envagentname")
 	t.Setenv("PINPOINT_GO_COLLECTOR_HOST", "env.collector.host")
 	t.Setenv("PINPOINT_GO_COLLECTOR_AGENTPORT", "8000")
@@ -499,7 +483,6 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 			defer c.Close()
 			assert.Equal(t, "EnvVarArgTest", c.String(CfgAppName), CfgAppName)
 			assert.Equal(t, 2000, c.Int(CfgAppType), CfgAppType)
-			assert.Equal(t, "envagentid", c.String(CfgAgentID), CfgAgentID)
 			assert.Equal(t, "envagentname", c.String(CfgAgentName), CfgAgentName)
 			assert.Equal(t, "env.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
 			assert.Equal(t, 8000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
@@ -548,7 +531,6 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 
 	opts := []ConfigOption{
 		WithAppName("TestApp"),
-		WithAgentId("TestAgent"),
 		WithConfigFile("example/test-config.yaml"),
 	}
 
@@ -568,7 +550,6 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 		"--app-arg2=2",
 		"--pinpoint-applicationname=CmdLineArgTest",
 		"--pinpoint-applicationtype=2100",
-		"--pinpoint-agentid=cmdAgentID",
 		"--pinpoint-agentname=cmdAgentName",
 		"-app-arg3",
 		"--pinpoint-collector-host=cmd.collector.host",
@@ -618,7 +599,6 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 
 			assert.Equal(t, "CmdLineArgTest", c.String(CfgAppName), CfgAppName)
 			assert.Equal(t, 2100, c.Int(CfgAppType), CfgAppType)
-			assert.Equal(t, "cmdAgentID", c.String(CfgAgentID), CfgAgentID)
 			assert.Equal(t, "cmdAgentName", c.String(CfgAgentName), CfgAgentName)
 			assert.Equal(t, "cmd.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
 			assert.Equal(t, 7000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)

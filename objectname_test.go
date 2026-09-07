@@ -33,11 +33,11 @@ func newCfg(t *testing.T, opts ...ConfigOption) *Config {
 }
 
 func TestResolveObjectName_V3_Default(t *testing.T) {
-	c := newCfg(t, WithAppName("MyApp"), WithAgentId("my-agent"), WithAgentName("my-name"))
+	c := newCfg(t, WithAppName("MyApp"), WithAgentName("my-name"))
 	o, err := resolveObjectName(c)
 	assert.NoError(t, err)
 	assert.Equal(t, nameV3, o.version)
-	assert.Equal(t, "my-agent", o.agentID)
+	assert.Len(t, o.agentID, uidBase64Len)
 	assert.Equal(t, "my-name", o.agentName)
 	assert.Equal(t, "MyApp", o.applicationName)
 	assert.Empty(t, o.serviceName)
@@ -45,15 +45,8 @@ func TestResolveObjectName_V3_Default(t *testing.T) {
 	assert.Equal(t, protocolVersionV1, o.protocolVersion())
 }
 
-func TestResolveObjectName_AgentNameFallsBackToAgentId(t *testing.T) {
-	c := newCfg(t, WithAppName("MyApp"), WithAgentId("my-agent"))
-	o, err := resolveObjectName(c)
-	assert.NoError(t, err)
-	assert.Equal(t, "my-agent", o.agentName)
-}
-
 func TestResolveObjectName_AutoGenAgentId(t *testing.T) {
-	c := newCfg(t, WithAppName("MyApp")) // no agent id
+	c := newCfg(t, WithAppName("MyApp"))
 	o, err := resolveObjectName(c)
 	assert.NoError(t, err)
 	assert.Len(t, o.agentID, uidBase64Len)  // base64(UUIDv7)
@@ -61,7 +54,7 @@ func TestResolveObjectName_AutoGenAgentId(t *testing.T) {
 }
 
 func TestResolveObjectName_AppNameRequired(t *testing.T) {
-	c := newCfg(t, WithAgentId("my-agent")) // no app name
+	c := newCfg(t) // no app name
 	_, err := resolveObjectName(c)
 	assert.Error(t, err)
 }
@@ -104,16 +97,14 @@ func TestResolveObjectName_V4_Success(t *testing.T) {
 		WithAppName("MyApp"),
 		WithServiceName("MyService"),
 		WithApiKey("secret-key"),
-		WithAgentId("ignored-input"),
 	)
 	o, err := resolveObjectName(c)
 	assert.NoError(t, err)
 	assert.Equal(t, nameV4, o.version)
 	assert.True(t, o.isV4())
 	assert.Equal(t, protocolVersionV4, o.protocolVersion())
-	// agentId is always generated, input ignored.
+	// agentId is always generated.
 	assert.Len(t, o.agentID, uidBase64Len)
-	assert.NotEqual(t, "ignored-input", o.agentID)
 	assert.Equal(t, encodeUID(o.agentUID), o.agentID)
 	// agentName falls back to base64(agentId UUID) when not provided.
 	assert.Equal(t, o.agentID, o.agentName)

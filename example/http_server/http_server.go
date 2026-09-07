@@ -67,7 +67,7 @@ func (h *handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("testGoAgent"),
-		pinpoint.WithAgentId("testGoAgentId"),
+		pinpoint.WithAgentName("testGoAgentName"),
 		pinpoint.WithCollectorHost("localhost"),
 	}
 	c, _ := pinpoint.NewConfig(opts...)

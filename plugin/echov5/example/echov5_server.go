@@ -33,7 +33,7 @@ func sleep() {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoEchov5Test"),
-		pinpoint.WithAgentId("GoEchov5TestAgent"),
+		pinpoint.WithAgentName("GoEchov5TestAgent"),
 		pinpoint.WithHttpUrlStatEnable(true),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}

@@ -80,7 +80,7 @@ func subscribe() {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoKafkaConsumer"),
-		pinpoint.WithAgentId("GoKafkaConsumerAgent"),
+		pinpoint.WithAgentName("GoKafkaConsumerAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

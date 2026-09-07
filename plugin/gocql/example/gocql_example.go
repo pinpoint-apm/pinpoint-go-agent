@@ -53,7 +53,7 @@ func doCassandra(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoCassandraTest"),
-		pinpoint.WithAgentId("GoCassandraTestAgent"),
+		pinpoint.WithAgentName("GoCassandraTestAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

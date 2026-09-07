@@ -18,7 +18,7 @@ import (
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoFastHttpTest"),
-		pinpoint.WithAgentId("GoFastHttpTestAgent"),
+		pinpoint.WithAgentName("GoFastHttpTestAgent"),
 		pinpoint.WithHttpUrlStatEnable(true),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 		pphttp.WithHttpClientRecordRequestHeader([]string{"HEADERS-ALL"}),

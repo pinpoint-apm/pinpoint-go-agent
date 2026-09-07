@@ -68,7 +68,7 @@ func doMemcache(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoMemcacheTest"),
-		pinpoint.WithAgentId("GoMemcacheTestAgent"),
+		pinpoint.WithAgentName("GoMemcacheTestAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

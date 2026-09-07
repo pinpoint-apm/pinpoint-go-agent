@@ -52,7 +52,7 @@ func redigo_test(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoRedigoTest"),
-		pinpoint.WithAgentId("GoRedigoTestAgent"),
+		pinpoint.WithAgentName("GoRedigoTestAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

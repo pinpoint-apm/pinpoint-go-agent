@@ -1698,9 +1698,13 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 		if err := config.checkNameAndID(); err != nil {
 			// Tests may omit required identity fields; fall back to a default
 			// v3 identity so the header builder has a non-nil object name.
+			agentID := ""
+			if uid, err := newAgentUID(); err == nil {
+				agentID = encodeUID(uid)
+			}
 			config.objName = &objectName{
 				version:         nameV3,
-				agentID:         config.String(CfgAgentID),
+				agentID:         agentID,
 				agentName:       config.String(CfgAgentName),
 				applicationName: config.String(CfgAppName),
 			}

@@ -132,7 +132,7 @@ func setup() {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoDbServerExample"),
-		pinpoint.WithAgentId("GoDbServerExampleAgent"),
+		pinpoint.WithAgentName("GoDbServerExampleAgent"),
 		pinpoint.WithCollectorHost(envOr("PINPOINT_GO_COLLECTOR_HOST", "localhost")),
 		// Record only the User-Agent request header on the span (see doc/config.md).
 		pphttp.WithHttpServerRecordRequestHeader([]string{"User-Agent"}),

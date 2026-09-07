@@ -87,7 +87,7 @@ func parseNameVersion(version string) nameVersion {
 // objectName holds the resolved agent self-identification.
 type objectName struct {
 	version         nameVersion
-	agentID         string    // base64(UUID) for v4, otherwise user/auto value
+	agentID         string    // always auto-generated base64(UUIDv7)
 	agentName       string    // always non-empty after resolution
 	applicationName string    // required
 	serviceName     string    // v4 only; "" for v1/v3
@@ -147,16 +147,13 @@ func resolveObjectName(config *Config) (*objectName, error) {
 // resolveV1V3 produces an ObjectNameV1-style identity (shared by v1 and v3,
 // differing only in the applicationName length limit).
 func resolveV1V3(config *Config, version nameVersion, appNameMax int) (*objectName, error) {
-	// agentId: use the validated input, else auto-generate base64(UUIDv7).
-	agentID := config.String(CfgAgentID)
-	if !validateID(agentID, agentIDMaxLen) {
-		uid, err := newAgentUID()
-		if err != nil {
-			return nil, errors.New("failed to generate AgentID: " + err.Error())
-		}
-		agentID = encodeUID(uid)
-		Log("config").Infof("auto-generated AgentID: %v", agentID)
+	// agentId: always a freshly generated base64(UUIDv7); not user-configurable.
+	uid, err := newAgentUID()
+	if err != nil {
+		return nil, errors.New("failed to generate AgentID: " + err.Error())
 	}
+	agentID := encodeUID(uid)
+	Log("config").Infof("auto-generated AgentID: %v", agentID)
 
 	// applicationName: required.
 	appName := config.String(CfgAppName)

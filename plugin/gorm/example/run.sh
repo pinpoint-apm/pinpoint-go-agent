@@ -97,7 +97,7 @@ if [ ! -f "$PINPOINT_CONFIG" ]; then
     cat > "$PINPOINT_CONFIG" << 'EOF'
 enable: true
 applicationName: GoGormTest
-agentId: GoGormTestAgent
+agentName: GoGormTestAgent
 collector:
   host: localhost
   agentPort: 9991

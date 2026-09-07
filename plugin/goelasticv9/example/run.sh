@@ -99,7 +99,7 @@ if [ ! -f "$PINPOINT_CONFIG" ]; then
     cat > "$PINPOINT_CONFIG" << 'EOF'
 enable: true
 applicationName: GoElasticv9Test
-agentId: GoElasticv9TestAgent
+agentName: GoElasticv9TestAgent
 collector:
   host: localhost
   agentPort: 9991

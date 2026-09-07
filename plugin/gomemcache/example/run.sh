@@ -94,7 +94,7 @@ if [ ! -f "$PINPOINT_CONFIG" ]; then
     cat > "$PINPOINT_CONFIG" << 'EOF'
 enable: true
 applicationName: GoMemcacheTest
-agentId: GoMemcacheTestAgent
+agentName: GoMemcacheTestAgent
 collector:
   host: localhost
   agentPort: 9991

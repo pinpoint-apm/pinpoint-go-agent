@@ -96,7 +96,7 @@ if [ ! -f "$PINPOINT_CONFIG" ]; then
     cat > "$PINPOINT_CONFIG" << 'EOF'
 enable: true
 applicationName: GoMongoV2Test
-agentId: GoMongoV2TestAgent
+agentName: GoMongoV2TestAgent
 collector:
   host: localhost
   agentPort: 9991

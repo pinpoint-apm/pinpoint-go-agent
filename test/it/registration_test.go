@@ -87,10 +87,10 @@ func TestSendsV4IdentityAcrossGrpcAndTracePropagation(t *testing.T) {
 	}, waitTimeout))
 
 	s := mc.Snapshot()
-	// v4 always mints its own 22-byte agent id, so the configured AgentID is
-	// replaced; every channel must then carry that same generated id.
+	// The agent always mints its own 22-byte agent id; every channel must
+	// carry that same generated id.
 	agentID := s.AgentInfos[0].Metadata.ValueOr("agentid", "")
-	require.Len(t, agentID, 22)
+	require.Len(t, agentID, generatedAgentIDLen)
 	startTime := s.AgentInfos[0].Metadata.ValueOr("starttime", "")
 	require.NotEmpty(t, startTime)
 
@@ -242,7 +242,6 @@ func TestStaysDisabledWhileRegistrationIsRejected(t *testing.T) {
 func TestCreatesNoopAgentWhenDisabledByConfig(t *testing.T) {
 	config, err := pinpoint.NewConfig(
 		pinpoint.WithAppName("noop-agent-it"),
-		pinpoint.WithAgentId("noop-agent-it"),
 		pinpoint.WithEnable(false),
 	)
 	require.NoError(t, err)

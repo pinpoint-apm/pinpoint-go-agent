@@ -117,7 +117,6 @@ func TestConfigWatcherDoesNotAccumulateAcrossAgentLifecycles(t *testing.T) {
 	// Warm up logger and runtime state before taking the descriptor baseline.
 	warmConfig, err := NewConfig(
 		WithAppName("watcher-warmup"),
-		WithAgentId("watcher-warmup"),
 		WithConfigFile(path),
 	)
 	require.NoError(t, err)
@@ -132,7 +131,6 @@ func TestConfigWatcherDoesNotAccumulateAcrossAgentLifecycles(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		config, err := NewConfig(
 			WithAppName("watcher-lifecycle"),
-			WithAgentId(fmt.Sprintf("watcher-%d", i)),
 			WithConfigFile(path),
 		)
 		require.NoError(t, err)
@@ -168,7 +166,6 @@ func TestConfigWatcherRestartsWhenConfigIsReused(t *testing.T) {
 
 	config, err := NewConfig(
 		WithAppName("watcher-reuse"),
-		WithAgentId("watcher-reuse"),
 		WithConfigFile(path),
 	)
 	require.NoError(t, err)
@@ -224,7 +221,6 @@ func TestNewAgentFailureStopsWatcherAndConfigCanBeRetried(t *testing.T) {
 	requireWatcherDone(t, failedDone)
 
 	config.Set(CfgAppName, "watcher-retry")
-	config.Set(CfgAgentID, "watcher-retry")
 	config.offGrpc = true
 	agent, err := NewAgent(config)
 	require.NoError(t, err)
@@ -259,7 +255,6 @@ func TestRejectedConfigWatcherStopsWithoutAffectingRunningAgent(t *testing.T) {
 	newConfig := func(id string) *Config {
 		config, err := NewConfig(
 			WithAppName("watcher-reject"),
-			WithAgentId(id),
 			WithConfigFile(path),
 		)
 		require.NoError(t, err)
@@ -305,7 +300,6 @@ func TestConfigWatcherReloadShutdownRace(t *testing.T) {
 
 	config, err := NewConfig(
 		WithAppName("watcher-race"),
-		WithAgentId("watcher-race"),
 		WithConfigFile(path),
 	)
 	require.NoError(t, err)

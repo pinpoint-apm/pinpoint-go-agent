@@ -1,7 +1,7 @@
 {
   "applicationName": "JsonAppName",
   "applicationtype": 1901,
-  "agentid": "JsonAgentID",
+  "agentname": "JsonAgentName",
   "collector": {
     "host": "json.collector.host",
     "agentPort": 9000,

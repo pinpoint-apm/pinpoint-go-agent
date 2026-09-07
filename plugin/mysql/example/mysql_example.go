@@ -145,7 +145,7 @@ func tx(ctx context.Context, db *sql.DB) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoMySQLTest"),
-		pinpoint.WithAgentId("GoMySQLTestId"),
+		pinpoint.WithAgentName("GoMySQLTestId"),
 		//pinpoint.WithSamplingType("PERCENT"),
 		//pinpoint.WithSamplingPercentRate(10),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),

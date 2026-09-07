@@ -36,7 +36,7 @@ func redisPipeIncr(pipe redis.Pipeliner) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoRedisTest"),
-		pinpoint.WithAgentId("GoRedisTestAgent"),
+		pinpoint.WithAgentName("GoRedisTestAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

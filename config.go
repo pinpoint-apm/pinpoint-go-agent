@@ -24,7 +24,6 @@ import (
 const (
 	CfgAppName                             = "ApplicationName"
 	CfgAppType                             = "ApplicationType"
-	CfgAgentID                             = "AgentID"
 	CfgAgentName                           = "AgentName"
 	CfgCollectorHost                       = "Collector.Host"
 	CfgCollectorAgentPort                  = "Collector.AgentPort"
@@ -187,7 +186,6 @@ func initConfig() {
 
 	AddConfig(CfgAppName, CfgString, "", false)
 	AddConfig(CfgAppType, CfgInt, ServiceTypeGoApp, false)
-	AddConfig(CfgAgentID, CfgString, "", false)
 	AddConfig(CfgAgentName, CfgString, "", false)
 	AddConfig(CfgCollectorHost, CfgString, "localhost", false)
 	AddConfig(CfgCollectorAgentPort, CfgInt, 9991, false)
@@ -997,7 +995,6 @@ func (config *Config) checkNameAndID() error {
 	defer config.mu.Unlock()
 
 	config.objName = objName
-	config.cfgMap[CfgAgentID].value = objName.agentID
 	config.cfgMap[CfgAgentName].value = objName.agentName
 	config.cfgMap[CfgServiceName].value = objName.serviceName
 	config.publish()
@@ -1393,13 +1390,6 @@ func WithAppName(name string) ConfigOption {
 func WithAppType(typ int32) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgAppType].value = typ
-	}
-}
-
-// WithAgentId sets the agent ID.
-func WithAgentId(id string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgAgentID].value = id
 	}
 }
 

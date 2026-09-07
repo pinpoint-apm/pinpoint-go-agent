@@ -313,7 +313,7 @@ func txStdSql(ctx context.Context, db *sql.DB) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoPgxv5Test"),
-		pinpoint.WithAgentId("GoPgxv5TestId"),
+		pinpoint.WithAgentName("GoPgxv5TestId"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 		pinpoint.WithLogLevel("debug"),
 	}

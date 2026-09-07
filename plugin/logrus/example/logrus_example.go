@@ -44,7 +44,7 @@ func hook(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoLogrusTest"),
-		pinpoint.WithAgentId("GoLogrusTestAgent"),
+		pinpoint.WithAgentName("GoLogrusTestAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
