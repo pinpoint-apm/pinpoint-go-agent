@@ -625,49 +625,72 @@ func isRetryableError(e error) bool {
 }
 
 // metaRetryMaxAttempts bounds sends of one metadata item, matching the C++
-// agent's meta_retry_max_attempts. All metadata is sent serially from the
-// single sendMetaWorker goroutine; without a bound, one item facing a slow
-// collector occupies the worker forever while metaChan overflows and new
-// metadata is dropped.
+// agent's meta_retry_max_attempts. Once the budget is spent the item's cache
+// entry is released so its next use registers it again; without a bound a
+// metadata item facing a dead collector would circulate through the retry
+// schedule forever.
 const metaRetryMaxAttempts = 3
 
 // metaRetryDelay is the pause between two sends of one metadata item, matching
-// the C++ agent's meta_retry_delay and the Java agent's retryDelayMillis. The
-// readiness wait alone is not enough: a collector that is up but refusing
-// (Unavailable) leaves the channel Ready, so without a pause every attempt in
-// the budget fires back to back against an already overloaded collector.
+// the C++ agent's meta_retry_delay and the Java agent's retryDelayMillis. It is
+// also how long a rejected item's cache entry stays in place before it is
+// released (see metaVerdictOf). A collector that is up but refusing
+// (Unavailable) answers at once, so without a pause every attempt in the
+// budget would fire back to back against an already overloaded collector.
 const metaRetryDelay = time.Second
+
+// metaRetryQueueSize caps the retry schedule, matching the C++ agent's
+// meta_retry_queue_size. The schedule is budgeted separately from metaChan on
+// purpose: while a collector outage lasts, every failed send comes back as a
+// retry, and a shared budget lets those retries fill the queue and starve new
+// metadata. New metadata dropped on overflow releases its cache entry, which
+// makes the next span register the same item again -- a drop-feeds-inflow
+// amplification loop that runs until the collector recovers. Two bounds keep
+// the retry pressure off the new-metadata queue; the Java agent gets the same
+// separation from its HashedWheelTimer, which never queues a retry at all.
+const metaRetryQueueSize = 1000
 
 // metaMaxConcurrentRequests bounds how many metadata sends sendMetaWorker
 // keeps in flight at once, matching the C++ agent's
 // meta_max_concurrent_requests.
 const metaMaxConcurrentRequests = 4
 
-// retryMeta reports failure once the attempt budget is exhausted so that
-// sendMetaWorker releases the item's cache entry and the metadata is
-// re-registered on its next use.
-func (agentGrpc *agentGrpc) retryMeta(send func() error) bool {
-	for attempt := 1; agentGrpc.agent.Enable(); attempt++ {
-		err := send()
-		if err == nil {
-			return true
-		}
-		if !isRetryableError(err) || attempt >= metaRetryMaxAttempts {
-			break
-		}
+// metaVerdict is what becomes of a metadata item after one send attempt.
+type metaVerdict int
 
-		// Pause first, then wait for the channel. A Ready channel passes the
-		// readiness wait at once, so the pause is the whole interval; a channel
-		// that is still down after the pause is simply waited on, so the two
-		// never stack a second pause on top of the reconnect wait.
-		if !sleepUnlessStopped(agentGrpc.agent, agentGrpc.retryDelay) {
-			return false
-		}
-		if !agentGrpc.agent.config.offGrpc {
-			backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
-		}
+const (
+	// metaDelivered: the collector accepted the item.
+	metaDelivered metaVerdict = iota
+	// metaRetryLater: a transport failure with attempt budget left. The item
+	// goes to the retry schedule; the cache entry stays.
+	metaRetryLater
+	// metaGiveUp: the attempt budget is spent. The cache entry is released at
+	// once so the next use registers the item again.
+	metaGiveUp
+	// metaRejected: a failure a retry cannot change. The cache entry is
+	// released after one metaRetryDelay rather than at once: the release is
+	// what makes the next span miss the cache and re-send, so an immediate
+	// one turned a rejecting collector into a re-send per span, bounded only
+	// by the in-flight permits. Parking it makes the recovery probe periodic,
+	// as the C++ agent's schedule_cache_release does.
+	metaRejected
+)
+
+// metaVerdictOf classifies the error of a metadata send. attempts counts the
+// sends made so far, this one included. The send itself never waits: a retry
+// is a new send from the retry schedule, so no goroutine sits on a permit
+// while the collector is down, and no in-flight slot is pinned by the wait.
+func metaVerdictOf(err error, attempts int) metaVerdict {
+	switch {
+	case err == nil:
+		return metaDelivered
+	case !isRetryableError(err):
+		return metaRejected
+	case attempts >= metaRetryMaxAttempts:
+		return metaGiveUp
+	default:
+		return metaRetryLater
 	}
-	return false
 }
 
 // metaResult turns a collector rejection (PResult.Success=false) into an error
@@ -675,13 +698,13 @@ func (agentGrpc *agentGrpc) retryMeta(send func() error) bool {
 // FailedPrecondition, deliberately outside isRetryableError's list: a
 // rejection is a semantic verdict on the payload (schema mismatch and the
 // like), so re-sending the same bytes twice more is pure load on the
-// collector. retryMeta therefore leaves the attempt loop at once and returns
-// false, and sendMetaWorker drops the cache entry so the next use registers a
+// collector. metaVerdictOf therefore never retries it, and sendMetaWorker
+// releases the cache entry after one delay so the next use registers a
 // fresh id -- instead of every later span referencing an id the collector
-// never accepted. The Java agent (RetryResponseStreamObserver.onNext ->
-// retryScheduler.isSuccess) and the C++ agent (GrpcMetadata::process_completed
-// checking call->reply.success()) do retry a rejection; Go failing fast here
-// is an intended divergence.
+// never accepted. Only the Java agent (RetryResponseStreamObserver.onNext ->
+// retryScheduler.isSuccess) retries a rejection; the C++ agent
+// (GrpcMetadata::process_completed) drops it and delays the cache release,
+// and Go does the same (metaRejected). See doc/java_parity.md.
 func metaResult(res *pb.PResult, err error) error {
 	if err != nil {
 		return err
@@ -703,7 +726,7 @@ func (agentGrpc *agentGrpc) sendApiMetadata(in *pb.PApiMetaData) error {
 	return err
 }
 
-func (agentGrpc *agentGrpc) sendApiMetadataWithRetry(apiId int32, api string, line int, apiType int) bool {
+func (agentGrpc *agentGrpc) sendApiMetadataOnce(apiId int32, api string, line int, apiType int) error {
 	apiMeta := pb.PApiMetaData{
 		ApiId:   apiId,
 		ApiInfo: validUTF8(api),
@@ -715,9 +738,7 @@ func (agentGrpc *agentGrpc) sendApiMetadataWithRetry(apiId int32, api string, li
 		Log("grpc").Debugf("api metadata: %s", apiMeta.String())
 	}
 
-	return agentGrpc.retryMeta(func() error {
-		return agentGrpc.sendApiMetadata(&apiMeta)
-	})
+	return agentGrpc.sendApiMetadata(&apiMeta)
 }
 
 func (agentGrpc *agentGrpc) sendStringMetadata(in *pb.PStringMetaData) error {
@@ -731,7 +752,7 @@ func (agentGrpc *agentGrpc) sendStringMetadata(in *pb.PStringMetaData) error {
 	return err
 }
 
-func (agentGrpc *agentGrpc) sendStringMetadataWithRetry(strId int32, str string) bool {
+func (agentGrpc *agentGrpc) sendStringMetadataOnce(strId int32, str string) error {
 	strMeta := pb.PStringMetaData{
 		StringId:    strId,
 		StringValue: validUTF8(str),
@@ -741,9 +762,7 @@ func (agentGrpc *agentGrpc) sendStringMetadataWithRetry(strId int32, str string)
 		Log("grpc").Debugf("string metadata: %s", strMeta.String())
 	}
 
-	return agentGrpc.retryMeta(func() error {
-		return agentGrpc.sendStringMetadata(&strMeta)
-	})
+	return agentGrpc.sendStringMetadata(&strMeta)
 }
 
 func (agentGrpc *agentGrpc) sendSqlMetadata(in *pb.PSqlMetaData) error {
@@ -758,7 +777,7 @@ func (agentGrpc *agentGrpc) sendSqlMetadata(in *pb.PSqlMetaData) error {
 	return err
 }
 
-func (agentGrpc *agentGrpc) sendSqlMetadataWithRetry(sqlId int32, sql string) bool {
+func (agentGrpc *agentGrpc) sendSqlMetadataOnce(sqlId int32, sql string) error {
 	sqlMeta := pb.PSqlMetaData{
 		SqlId: sqlId,
 		Sql:   validUTF8(sql),
@@ -768,9 +787,7 @@ func (agentGrpc *agentGrpc) sendSqlMetadataWithRetry(sqlId int32, sql string) bo
 		Log("grpc").Debugf("sql metadata: %s", sqlMeta.String())
 	}
 
-	return agentGrpc.retryMeta(func() error {
-		return agentGrpc.sendSqlMetadata(&sqlMeta)
-	})
+	return agentGrpc.sendSqlMetadata(&sqlMeta)
 }
 
 func (agentGrpc *agentGrpc) sendSqlUidMetadata(in *pb.PSqlUidMetaData) error {
@@ -785,7 +802,7 @@ func (agentGrpc *agentGrpc) sendSqlUidMetadata(in *pb.PSqlUidMetaData) error {
 	return err
 }
 
-func (agentGrpc *agentGrpc) sendSqlUidMetadataWithRetry(sqlUid []byte, sql string) bool {
+func (agentGrpc *agentGrpc) sendSqlUidMetadataOnce(sqlUid []byte, sql string) error {
 	sqlUidMeta := pb.PSqlUidMetaData{
 		SqlUid: sqlUid,
 		Sql:    sql,
@@ -795,9 +812,7 @@ func (agentGrpc *agentGrpc) sendSqlUidMetadataWithRetry(sqlUid []byte, sql strin
 		Log("grpc").Debugf("sql uid metadata: %s", sqlUidMeta.String())
 	}
 
-	return agentGrpc.retryMeta(func() error {
-		return agentGrpc.sendSqlUidMetadata(&sqlUidMeta)
-	})
+	return agentGrpc.sendSqlUidMetadata(&sqlUidMeta)
 }
 
 func (agentGrpc *agentGrpc) sendExceptionMetadata(in *pb.PExceptionMetaData) error {
@@ -827,7 +842,7 @@ func (agentGrpc *agentGrpc) sendExceptionMetadata(in *pb.PExceptionMetaData) err
 	return err
 }
 
-func (agentGrpc *agentGrpc) sendExceptionMetadataWithRetry(exception *exceptionMeta) bool {
+func (agentGrpc *agentGrpc) sendExceptionMetadataOnce(exception *exceptionMeta) error {
 	exceptMeta := makePExceptionMetaData(exception)
 
 	if IsLogLevelEnabled(logrus.DebugLevel) {
@@ -837,9 +852,7 @@ func (agentGrpc *agentGrpc) sendExceptionMetadataWithRetry(exception *exceptionM
 	// Unlike the other metadata types, a failure here releases nothing:
 	// exception metadata is never cached (deleteMetaCache is a no-op for
 	// exceptionMeta), so there is no stale id to invalidate.
-	return agentGrpc.retryMeta(func() error {
-		return agentGrpc.sendExceptionMetadata(exceptMeta)
-	})
+	return agentGrpc.sendExceptionMetadata(exceptMeta)
 }
 
 func makePExceptionMetaData(e *exceptionMeta) *pb.PExceptionMetaData {

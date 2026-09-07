@@ -55,6 +55,11 @@ type agent struct {
 	statDrops    dropReporter
 	spanDrops    dropReporter
 
+	// metaRetry holds metadata sends waiting out a retry delay, and rejected
+	// items waiting out their cache release, budgeted apart from metaChan.
+	metaRetry      metaRetryQueue
+	metaRetryDrops dropReporter
+
 	errorCache  *metaCache[string, int32]
 	errorIdGen  idGen
 	sqlCache    *metaCache[string, int32]
@@ -858,61 +863,232 @@ func (agent *agent) sendMetaWorker() {
 	}()
 
 	stop := agent.stopSignal().Done()
+	retry := &agent.metaRetry
+	retry.init(metaRetryQueueSize)
 
 	for agent.enable.Load() {
-		var md interface{}
+		// New metadata first, as the C++ worker takes its queue before its
+		// retry schedule: a retry is a second try at an id whose spans went
+		// out a delay ago, a new item is an id whose spans are going out now.
+		var item pendingMeta
 		select {
 		case <-stop:
 			return
-		case md = <-agent.metaChan:
+		case md := <-agent.metaChan:
+			item = pendingMeta{md: md}
+		default:
+			// Nothing to send until a new item, a due retry or a retry
+			// scheduled while the queue was empty (wake) arrives. The timer
+			// is armed per wait: a retry is only ever appended behind the
+			// head, so the head's due time is fixed until it is popped.
+			var due <-chan time.Time
+			var timer *time.Timer
+			if wait, ok := retry.headWait(time.Now()); ok {
+				timer = time.NewTimer(wait)
+				due = timer.C
+			}
+			var popped, stopped bool
+			select {
+			case <-stop:
+				stopped = true
+			case md := <-agent.metaChan:
+				item, popped = pendingMeta{md: md}, true
+			case <-retry.wake:
+			case <-due:
+				item, popped = retry.popDue(time.Now())
+			}
+			if timer != nil {
+				timer.Stop()
+			}
+			if stopped {
+				return
+			}
+			if !popped {
+				continue
+			}
 		}
 
-		// Reported here rather than from the producers: enqueueMeta runs on
-		// the request path and only bumps a counter.
+		// Reported here rather than from the producers: enqueueMeta and the
+		// send goroutines only bump a counter.
 		agent.metaDrops.report("meta", cap(agent.metaChan))
+		agent.metaRetryDrops.report("meta retry", retry.capacity)
+
+		// A parked release needs no permit: it is the drop the rejection
+		// earned, delayed by one retry interval (metaRejected).
+		if item.releaseOnly {
+			agent.deleteMetaCache(item.md)
+			continue
+		}
 
 		// The permit acquisition obeys stop too: with every permit held by a
 		// slow send, a plain send here parks the worker where the stop signal
 		// cannot reach it, and it would dispatch one more send after shutdown
-		// began. The md just pulled is dropped, like the rest of the queue.
+		// began. The item just pulled is dropped, like the rest of the queue.
 		select {
 		case <-stop:
 			return
 		case permit <- struct{}{}:
 		}
 		inFlight.Add(1)
-		go func(md interface{}) {
+		go func(item pendingMeta) {
 			defer inFlight.Done()
 			defer func() { <-permit }()
 
 			recoverPanic("meta send", func() {
-				if !agent.sendMetadata(md) {
-					agent.deleteMetaCache(md)
-				}
+				agent.sendMetadataOnce(item)
 			})
-		}(md)
+		}(item)
 	}
 }
 
-func (agent *agent) sendMetadata(md interface{}) bool {
-	switch md.(type) {
-	case apiMeta:
-		api := md.(apiMeta)
-		return agent.agentGrpc.sendApiMetadataWithRetry(api.id, api.descriptor, -1, api.apiType)
-	case stringMeta:
-		str := md.(stringMeta)
-		return agent.agentGrpc.sendStringMetadataWithRetry(str.id, str.funcName)
-	case sqlMeta:
-		sql := md.(sqlMeta)
-		return agent.agentGrpc.sendSqlMetadataWithRetry(sql.id, sql.sql)
-	case sqlUidMeta:
-		sql := md.(sqlUidMeta)
-		return agent.agentGrpc.sendSqlUidMetadataWithRetry(sql.uid, sql.sql)
-	case exceptionMeta:
-		em := md.(exceptionMeta)
-		return agent.agentGrpc.sendExceptionMetadataWithRetry(&em)
+// sendMetadataOnce makes one send of item and hands it on according to the
+// verdict. The permit is held for the send alone: a retry waits in
+// agent.metaRetry, not here, so a collector outage cannot pin the in-flight
+// slots and stall sendMetaWorker on the permit while metaChan overflows.
+func (agent *agent) sendMetadataOnce(item pendingMeta) {
+	attempts := item.attempts + 1
+	err := agent.sendMetadata(item.md)
+	switch metaVerdictOf(err, attempts) {
+	case metaDelivered:
+	case metaRetryLater:
+		agent.scheduleMetaRetry(pendingMeta{md: item.md, attempts: attempts})
+	case metaGiveUp:
+		agent.deleteMetaCache(item.md)
+	case metaRejected:
+		// Exception metadata is never cached, so there is nothing to park.
+		if _, ok := item.md.(exceptionMeta); ok {
+			return
+		}
+		agent.scheduleMetaRetry(pendingMeta{md: item.md, releaseOnly: true})
 	}
-	return false
+}
+
+// scheduleMetaRetry parks item for one retry delay. The evicted item, if the
+// schedule was full, has its cache entry released here: the same policy the
+// metaChan overflow applies, so a full schedule costs exactly one cache entry
+// and the id is registered again on its next use.
+func (agent *agent) scheduleMetaRetry(item pendingMeta) {
+	if agent.shutdown.Load() {
+		return
+	}
+	item.dueAt = time.Now().Add(agent.agentGrpc.retryDelay)
+	if evicted, ok := agent.metaRetry.push(item); ok {
+		agent.deleteMetaCache(evicted.md)
+		agent.metaRetryDrops.record(1)
+	}
+}
+
+// sendMetadata makes one send of md and returns its error.
+func (agent *agent) sendMetadata(md interface{}) error {
+	switch md := md.(type) {
+	case apiMeta:
+		return agent.agentGrpc.sendApiMetadataOnce(md.id, md.descriptor, -1, md.apiType)
+	case stringMeta:
+		return agent.agentGrpc.sendStringMetadataOnce(md.id, md.funcName)
+	case sqlMeta:
+		return agent.agentGrpc.sendSqlMetadataOnce(md.id, md.sql)
+	case sqlUidMeta:
+		return agent.agentGrpc.sendSqlUidMetadataOnce(md.uid, md.sql)
+	case exceptionMeta:
+		return agent.agentGrpc.sendExceptionMetadataOnce(&md)
+	}
+	return fmt.Errorf("unknown metadata type %T", md)
+}
+
+// pendingMeta is a metadata item on the retry schedule.
+type pendingMeta struct {
+	md interface{}
+	// attempts counts the sends made so far.
+	attempts int
+	dueAt    time.Time
+	// releaseOnly parks a rejected item: when it comes due only its cache
+	// entry is released, nothing is sent (metaRejected).
+	releaseOnly bool
+}
+
+// metaRetryQueue is the time-ordered retry schedule, the Go counterpart of the
+// C++ agent's retry_queue. Every entry waits the same fixed delay, so a push
+// is always due last and a slice kept in push order is kept in due order.
+// The schedule has its own bound, separate from metaChan's (see
+// metaRetryQueueSize), and a full one head-drops: the incoming item is the
+// last one due, so dropping it would freeze the schedule on whatever entered
+// first and deny every later failure a retry; dropping the oldest keeps the
+// freshest failures, whose spans the collector is still receiving, and keeps
+// the schedule moving under a sustained outage.
+type metaRetryQueue struct {
+	mu       sync.Mutex
+	items    []pendingMeta
+	capacity int
+	// wake tells sendMetaWorker a retry was scheduled while it waited with
+	// an empty schedule, so it re-arms its timer. Buffered so a push never
+	// blocks on a worker that is busy elsewhere.
+	wake chan struct{}
+}
+
+// init sets the bound and creates the wake channel once; a capacity set
+// before it (by a test) is kept.
+func (q *metaRetryQueue) init(capacity int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.capacity <= 0 {
+		q.capacity = capacity
+	}
+	if q.wake == nil {
+		q.wake = make(chan struct{}, 1)
+	}
+}
+
+// push appends item, evicting and returning the oldest entry when the
+// schedule is full. The caller releases the evicted item's cache entry
+// outside the lock: the caches have locks of their own, and nesting them
+// under this one would put the request path behind the retry schedule.
+func (q *metaRetryQueue) push(item pendingMeta) (evicted pendingMeta, ok bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.capacity > 0 && len(q.items) >= q.capacity {
+		evicted, ok = q.items[0], true
+		q.items[0] = pendingMeta{}
+		q.items = q.items[1:]
+	}
+	q.items = append(q.items, item)
+	if q.wake != nil {
+		select {
+		case q.wake <- struct{}{}:
+		default:
+		}
+	}
+	return evicted, ok
+}
+
+// headWait returns how long until the oldest entry is due, or false when the
+// schedule is empty.
+func (q *metaRetryQueue) headWait(now time.Time) (time.Duration, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.items) == 0 {
+		return 0, false
+	}
+	return q.items[0].dueAt.Sub(now), true
+}
+
+// popDue removes and returns the oldest entry if it is due.
+func (q *metaRetryQueue) popDue(now time.Time) (pendingMeta, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.items) == 0 || q.items[0].dueAt.After(now) {
+		return pendingMeta{}, false
+	}
+	item := q.items[0]
+	q.items[0] = pendingMeta{}
+	q.items = q.items[1:]
+	return item, true
+}
+
+// length reports how many entries are scheduled.
+func (q *metaRetryQueue) length() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.items)
 }
 
 // deleteMetaCache drops the cache entry whose metadata md failed to reach the

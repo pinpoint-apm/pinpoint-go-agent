@@ -583,3 +583,78 @@ func Test_sendSpanWorker_stopsWhenReconnectGivesUp(t *testing.T) {
 	assert.Equal(t, queued-1, agent.spanQueue.length(),
 		"the drain must end at the first chunk a dead stream refuses, not walk the queue")
 }
+
+// A collector outage must not turn metadata drops into metadata inflow. The
+// old retry waited for the channel inside the goroutine holding the permit, so
+// four failed sends pinned every permit, the worker parked on the permit
+// acquisition, metaChan overflowed, the head-drop released the dropped item's
+// cache entry, and the next span registered the same item again. Now a failed
+// send parks in the retry schedule and hands its permit back at once, so with
+// the collector down for the whole test:
+//
+//	(a) the worker never stalls -- every item queued reaches the collector once,
+//	(b) new metadata is not starved by the retries piling up, since the
+//	    schedule has its own budget and metaChan drops nothing,
+//	(c) only the items the full schedule evicted lose their cache entry; the
+//	    parked ones stay registered.
+func Test_sendMetaWorker_outageDoesNotAmplifyThroughCacheRelease(t *testing.T) {
+	const retryCap = 8
+	const items = 3 * retryCap
+
+	agent := newTestAgent(defaultConfig())
+	agent.metaRetry.capacity = retryCap
+
+	var sent counter
+	client := grpcmock.NewMockMetadataClient()
+	client.OnRequestApiMetaData(mock.Anything, mock.Anything).Run(sent.count).Return((*pb.PResult)(nil), collectorDown())
+	// The delay is never reached, so nothing is re-sent and nothing exhausts
+	// its budget: the only cache releases left are the schedule's evictions.
+	agent.agentGrpc = &agentGrpc{metaClient: client, agent: agent, retryDelay: time.Hour}
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("meta", agent.sendMetaWorker)
+
+	descriptor := func(i int) string { return fmt.Sprintf("test.api.%d", i) }
+	late := descriptor(items)
+	cached := func(i int) bool {
+		_, ok := agent.apiCache.peek(apiCacheKey{descriptor(i), apiTypeInvocation})
+		return ok
+	}
+	for i := 0; i < items; i++ {
+		require.NotZero(t, agent.cacheSpanApi(descriptor(i), apiTypeInvocation))
+	}
+
+	// (a) and (b): three schedules' worth of failures, each sent exactly once.
+	assert.Eventually(t, func() bool { return sent.get() == items }, 5*time.Second, time.Millisecond,
+		"every queued item must be attempted while the collector is down, got %d", sent.get())
+	assert.Eventually(t, func() bool { return len(agent.metaChan) == 0 }, time.Second, time.Millisecond)
+	assert.Zero(t, agent.metaDrops.dropped.Load(), "the retries must not overflow metaChan")
+
+	// A registration arriving mid-outage is still sent at once.
+	require.NotZero(t, agent.cacheSpanApi(late, apiTypeInvocation))
+	assert.Eventually(t, func() bool { return sent.get() == items+1 }, 5*time.Second, time.Millisecond,
+		"new metadata must not wait behind the retries")
+
+	// (c): the schedule holds retryCap items; every other one was evicted and
+	// released, and nothing that is still parked has lost its entry.
+	assert.Equal(t, retryCap, agent.metaRetry.length())
+	assert.EqualValues(t, items+1-retryCap, agent.metaRetryDrops.dropped.Load())
+	released := 0
+	for i := 0; i <= items; i++ { // the late registration is items
+		if !cached(i) {
+			released++
+		}
+	}
+	assert.Equal(t, items+1-retryCap, released, "only the evicted items release their cache entry")
+	agent.metaRetry.mu.Lock()
+	for _, parked := range agent.metaRetry.items {
+		api := parked.md.(apiMeta)
+		_, ok := agent.apiCache.peek(apiCacheKey{api.descriptor, api.apiType})
+		assert.True(t, ok, "%s is parked for retry and must stay registered", api.descriptor)
+	}
+	agent.metaRetry.mu.Unlock()
+
+	agent.signalShutdown()
+	assert.True(t, waitTimeout(&agent.workerWg, time.Second), "the worker must not wait out the retry delay")
+	assert.EqualValues(t, items+1, sent.get(), "no send after the stop signal")
+}

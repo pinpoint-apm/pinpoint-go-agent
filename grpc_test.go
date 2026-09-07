@@ -139,8 +139,8 @@ func Test_agentGrpc_sendApiMetadata(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
 			agent.agentGrpc = newMockAgentGrpc(agent)
-			b := agent.agentGrpc.sendApiMetadataWithRetry(1, "Asynchronous Invocation", -1, apiTypeInvocation)
-			assert.Equal(t, true, b, "sendApiMetadata")
+			err := agent.agentGrpc.sendApiMetadataOnce(1, "Asynchronous Invocation", -1, apiTypeInvocation)
+			assert.NoError(t, err, "sendApiMetadata")
 		})
 	}
 }
@@ -164,8 +164,8 @@ func Test_agentGrpc_sendSqlMetadata(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
 			agent.agentGrpc = newMockAgentGrpc(agent)
-			b := agent.agentGrpc.sendSqlMetadataWithRetry(1, "SELECT 1")
-			assert.Equal(t, true, b, "sendSqlMetadata")
+			err := agent.agentGrpc.sendSqlMetadataOnce(1, "SELECT 1")
+			assert.NoError(t, err, "sendSqlMetadata")
 		})
 	}
 }
@@ -189,8 +189,8 @@ func Test_agentGrpc_sendStringMetadata(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := tt.args.agent
 			agent.agentGrpc = newMockAgentGrpc(agent)
-			b := agent.agentGrpc.sendStringMetadataWithRetry(1, "string value")
-			assert.Equal(t, true, b, "sendStringMetadata")
+			err := agent.agentGrpc.sendStringMetadataOnce(1, "string value")
+			assert.NoError(t, err, "sendStringMetadata")
 		})
 	}
 }
@@ -725,68 +725,101 @@ func newFailingMetaAgentGrpc(agent *agent, err error) (*agentGrpc, *failingMetaC
 	return &agentGrpc{metaClient: failing, agent: agent}, failing
 }
 
-func Test_retryMeta_stopsAtRetryBound(t *testing.T) {
-	cfg, _ := NewConfig(WithAppName("TestApp"))
-	agent := newTestAgent(cfg)
-	agentGrpc, failing := newFailingMetaAgentGrpc(agent, status.Errorf(codes.Unavailable, "collector down"))
-
-	ok := agentGrpc.sendApiMetadataWithRetry(1, "test.api", -1, apiTypeInvocation)
-
-	assert.False(t, ok, "retryable errors must stop at the bound")
-	assert.Equal(t, int32(metaRetryMaxAttempts), failing.callCount())
+// One send is one attempt: the classifier hands a transport failure back to
+// the retry schedule while budget remains and gives the item up at the bound.
+func Test_metaVerdictOf_stopsAtRetryBound(t *testing.T) {
+	down := status.Errorf(codes.Unavailable, "collector down")
+	for attempts := 1; attempts < metaRetryMaxAttempts; attempts++ {
+		assert.Equal(t, metaRetryLater, metaVerdictOf(down, attempts), "attempt %d has budget left", attempts)
+	}
+	assert.Equal(t, metaGiveUp, metaVerdictOf(down, metaRetryMaxAttempts))
+	assert.Equal(t, metaDelivered, metaVerdictOf(nil, 1))
 }
 
-// A collector that is up but refusing (Unavailable) leaves the channel Ready,
-// so the readiness wait returns at once; the fixed pause must still space the
-// attempts out instead of firing the whole budget back to back.
-func Test_retryMeta_pausesBetweenAttemptsOnReadyChannel(t *testing.T) {
+// A failing item is re-sent from the schedule, so the worker sends it exactly
+// metaRetryMaxAttempts times and its cache entry is gone once the budget is.
+func Test_sendMetaWorker_retriesUpToTheBound(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
-	agent.config.offGrpc = false
-	conn := dialReadyConn(t)
-	agentGrpc, failing := newFailingMetaAgentGrpc(agent, status.Errorf(codes.Unavailable, "collector overloaded"))
-	agentGrpc.agentConn = conn
-	agentGrpc.retryDelay = 100 * time.Millisecond
+	agentGrpc, failing := newFailingMetaAgentGrpc(agent, status.Errorf(codes.Unavailable, "collector down"))
+	agent.agentGrpc = agentGrpc
 
-	assert.False(t, agentGrpc.sendApiMetadataWithRetry(1, "test.api", -1, apiTypeInvocation))
+	apiKey := apiCacheKey{"test.api", apiTypeInvocation}
+	apiCached := func() bool { _, ok := agent.apiCache.peek(apiKey); return ok }
+	assert.NotZero(t, agent.cacheSpanApi(apiKey.descriptor, apiKey.apiType))
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("meta", agent.sendMetaWorker)
+
+	assert.Eventually(t, func() bool { return !apiCached() }, 5*time.Second, time.Millisecond,
+		"the cache entry goes once the budget is spent")
+	assert.Equal(t, int32(metaRetryMaxAttempts), failing.callCount(), "retryable errors must stop at the bound")
+
+	agent.signalShutdown()
+	agent.workerWg.Wait()
+	assert.Equal(t, int32(metaRetryMaxAttempts), failing.callCount(), "no send past the bound")
+}
+
+// A collector that is up but refusing (Unavailable) answers at once, so the
+// retry delay is the only thing spacing the attempts out: they must not fire
+// back to back against an already overloaded collector.
+func Test_sendMetaWorker_pausesBetweenAttempts(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agentGrpc, failing := newFailingMetaAgentGrpc(agent, status.Errorf(codes.Unavailable, "collector overloaded"))
+	agentGrpc.retryDelay = 100 * time.Millisecond
+	agent.agentGrpc = agentGrpc
+	agent.metaChan <- apiMeta{id: 1, descriptor: "test.api", apiType: apiTypeInvocation}
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("meta", agent.sendMetaWorker)
+	assert.Eventually(t, func() bool { return failing.callCount() == metaRetryMaxAttempts },
+		5*time.Second, time.Millisecond)
+	agent.signalShutdown()
+	agent.workerWg.Wait()
 
 	at := failing.callTimes()
 	require.Len(t, at, metaRetryMaxAttempts)
 	for i := 1; i < len(at); i++ {
 		assert.GreaterOrEqual(t, at[i].Sub(at[i-1]), agentGrpc.retryDelay, "attempt %d fired without the pause", i+1)
 	}
-	assert.Equal(t, connectivity.Ready, conn.GetState(), "the pause, not a reconnect, spaced the attempts")
 }
 
-// Shutdown must not sit out a pending retry pause.
-func Test_retryMeta_pauseReturnsOnShutdown(t *testing.T) {
+// The retry wait lives in the schedule, not in a goroutine: while an item
+// waits out its delay no permit is held, and shutdown does not sit the delay
+// out either.
+func Test_sendMetaWorker_retryWaitHoldsNoPermitAndStopsPromptly(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agentGrpc, failing := newFailingMetaAgentGrpc(agent, status.Errorf(codes.Unavailable, "collector overloaded"))
 	agentGrpc.retryDelay = time.Hour
+	agent.agentGrpc = agentGrpc
 
-	done := make(chan bool, 1)
-	go func() { done <- agentGrpc.sendApiMetadataWithRetry(1, "test.api", -1, apiTypeInvocation) }()
-	assert.Eventually(t, func() bool { return failing.callCount() == 1 }, time.Second, time.Millisecond)
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("meta", agent.sendMetaWorker)
+
+	// More items than permits: every one is sent once and parked. With the
+	// wait inside the send, the permits would be gone after the fourth.
+	const items = 3 * metaMaxConcurrentRequests
+	for i := 0; i < items; i++ {
+		agent.metaChan <- stringMeta{id: int32(i), funcName: "f"}
+	}
+	assert.Eventually(t, func() bool { return failing.callCount() == items }, 5*time.Second, time.Millisecond,
+		"every item is attempted once while the earlier ones wait out their retry")
+	assert.Eventually(t, func() bool { return agent.metaRetry.length() == items }, time.Second, time.Millisecond)
 
 	agent.signalShutdown()
-
-	select {
-	case ok := <-done:
-		assert.False(t, ok)
-	case <-time.After(time.Second):
-		t.Fatal("retryMeta kept pausing after shutdown")
-	}
-	assert.Equal(t, int32(1), failing.callCount(), "no further attempt after shutdown")
+	assert.True(t, waitTimeout(&agent.workerWg, time.Second), "the worker must not wait out the retry delay")
+	assert.Equal(t, int32(items), failing.callCount(), "no further attempt after shutdown")
 }
 
-func Test_retryMeta_noRetryOnNonRetryableError(t *testing.T) {
+func Test_metaVerdictOf_noRetryOnNonRetryableError(t *testing.T) {
 	cfg, _ := NewConfig(WithAppName("TestApp"))
 	agent := newTestAgent(cfg)
 	agentGrpc, failing := newFailingMetaAgentGrpc(agent, status.Errorf(codes.Internal, "bad request"))
 
-	ok := agentGrpc.sendStringMetadataWithRetry(1, "test.error")
+	err := agentGrpc.sendStringMetadataOnce(1, "test.error")
 
-	assert.False(t, ok)
-	assert.Equal(t, int32(1), failing.callCount(), "non-retryable errors must not retry")
+	assert.Error(t, err)
+	assert.Equal(t, metaRejected, metaVerdictOf(err, 1), "non-retryable errors must not retry")
+	assert.Equal(t, int32(1), failing.callCount())
 }
 
 // A collector that keeps failing must not wedge the metadata worker: each item
@@ -1135,10 +1168,10 @@ func Test_agentGrpc_sendMetadata_payloads(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agentGrpc, meta := newMockMetaAgentGrpc(agent)
 
-	assert.True(t, agentGrpc.sendApiMetadataWithRetry(7, "test.api", 42, apiTypeInvocation))
-	assert.True(t, agentGrpc.sendStringMetadataWithRetry(8, "test.error"))
-	assert.True(t, agentGrpc.sendSqlMetadataWithRetry(9, "SELECT 1"))
-	assert.True(t, agentGrpc.sendSqlUidMetadataWithRetry([]byte{0xde, 0xad}, "SELECT 2"))
+	assert.NoError(t, agentGrpc.sendApiMetadataOnce(7, "test.api", 42, apiTypeInvocation))
+	assert.NoError(t, agentGrpc.sendStringMetadataOnce(8, "test.error"))
+	assert.NoError(t, agentGrpc.sendSqlMetadataOnce(9, "SELECT 1"))
+	assert.NoError(t, agentGrpc.sendSqlUidMetadataOnce([]byte{0xde, 0xad}, "SELECT 2"))
 
 	api, str, sql, sqlUid, _ := meta.sentMeta()
 
@@ -1171,7 +1204,7 @@ func Test_agentGrpc_sendExceptionMetadata(t *testing.T) {
 	pcs = pcs[:runtime.Callers(1, pcs)]
 	errorTime := time.Unix(0, 1234*int64(time.Millisecond))
 
-	assert.True(t, agentGrpc.sendExceptionMetadataWithRetry(&exceptionMeta{
+	assert.NoError(t, agentGrpc.sendExceptionMetadataOnce(&exceptionMeta{
 		txId:        TransactionId{AgentId: "testAgent", StartTime: 11, Sequence: 22},
 		spanId:      33,
 		uriTemplate: "/test/uri",
@@ -1209,7 +1242,7 @@ func Test_agentGrpc_sendExceptionMetadata_sizeGuardFollowsConfiguredLimit(t *tes
 	// must be sent; the two limits are unrelated.
 	agent := newTestAgent(defaultConfig())
 	agentGrpc, meta := newMockMetaAgentGrpc(agent)
-	assert.True(t, agentGrpc.sendExceptionMetadataWithRetry(&exceptionMeta{uriTemplate: strings.Repeat("x", 2*grpcWriteBufferSize)}))
+	assert.NoError(t, agentGrpc.sendExceptionMetadataOnce(&exceptionMeta{uriTemplate: strings.Repeat("x", 2*grpcWriteBufferSize)}))
 	_, _, _, _, except := meta.sentMeta()
 	assert.Len(t, except, 1, "a message under MaxSendMessageSize is sent")
 
@@ -1219,20 +1252,20 @@ func Test_agentGrpc_sendExceptionMetadata_sizeGuardFollowsConfiguredLimit(t *tes
 	agent = newTestAgent(cfg)
 	agentGrpc, meta = newMockMetaAgentGrpc(agent)
 
-	assert.True(t, agentGrpc.sendExceptionMetadataWithRetry(&exceptionMeta{uriTemplate: strings.Repeat("x", 32*1024)}))
-	assert.False(t, agentGrpc.sendExceptionMetadataWithRetry(&exceptionMeta{uriTemplate: strings.Repeat("x", 64*1024)}))
+	assert.NoError(t, agentGrpc.sendExceptionMetadataOnce(&exceptionMeta{uriTemplate: strings.Repeat("x", 32*1024)}))
+	assert.Error(t, agentGrpc.sendExceptionMetadataOnce(&exceptionMeta{uriTemplate: strings.Repeat("x", 64*1024)}))
 	_, _, _, _, except = meta.sentMeta()
 	assert.Len(t, except, 1, "only the message under the configured limit reaches the collector")
 }
 
-// An oversized exception is reported as ResourceExhausted, which retryMeta does
+// An oversized exception is reported as ResourceExhausted, which metaVerdictOf does
 // not retry, so a message that can never fit is dropped after a single attempt.
 func Test_agentGrpc_sendExceptionMetadata_oversizedIsSkippedWithoutRetry(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agentGrpc, meta := newMockMetaAgentGrpc(agent)
 	oversized := &exceptionMeta{uriTemplate: strings.Repeat("x", grpcMaxMessageSize)}
 
-	assert.False(t, agentGrpc.sendExceptionMetadataWithRetry(oversized))
+	assert.Error(t, agentGrpc.sendExceptionMetadataOnce(oversized))
 	_, _, _, _, except := meta.sentMeta()
 	assert.Empty(t, except, "an oversized message must not reach the collector")
 
@@ -1244,16 +1277,27 @@ func Test_agentGrpc_sendExceptionMetadata_oversizedIsSkippedWithoutRetry(t *test
 // A retryable failure is retried within the attempt budget, and a send that
 // then succeeds keeps its cache entry. Mirrors the C++ agent's
 // GrpcMetadataRetriesFailedResultWithoutEvictingCache.
-func Test_retryMeta_succeedsAfterRetryableFailure(t *testing.T) {
+func Test_sendMetaWorker_succeedsAfterRetryableFailure(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	failing := &failingMetaClient{
 		err:       status.Errorf(codes.Unavailable, "collector down"),
 		failFirst: metaRetryMaxAttempts - 1,
 	}
-	agentGrpc := &agentGrpc{metaClient: failing, agent: agent}
+	agent.agentGrpc = &agentGrpc{metaClient: failing, agent: agent}
 
-	assert.True(t, agentGrpc.sendApiMetadataWithRetry(1, "test.api", -1, apiTypeInvocation))
-	assert.Equal(t, int32(metaRetryMaxAttempts), failing.callCount())
+	apiKey := apiCacheKey{"test.api", apiTypeInvocation}
+	apiCached := func() bool { _, ok := agent.apiCache.peek(apiKey); return ok }
+	assert.NotZero(t, agent.cacheSpanApi(apiKey.descriptor, apiKey.apiType))
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("meta", agent.sendMetaWorker)
+	assert.Eventually(t, func() bool { return failing.callCount() == metaRetryMaxAttempts },
+		5*time.Second, time.Millisecond, "the last attempt in the budget succeeds")
+	agent.signalShutdown()
+	agent.workerWg.Wait()
+
+	assert.True(t, apiCached(), "a send that succeeded on retry keeps its cache entry")
+	assert.Equal(t, 0, agent.metaRetry.length())
 }
 
 func Test_isRetryableError(t *testing.T) {
@@ -2215,7 +2259,7 @@ func (c *rejectingMetaClient) RequestExceptionMetaData(context.Context, *pb.PExc
 
 // A rejection is a verdict on the payload, not a transport hiccup: the send
 // fails, and it fails without burning the retry budget on the same bytes.
-func Test_retryMeta_noRetryOnCollectorRejection(t *testing.T) {
+func Test_metaVerdictOf_noRetryOnCollectorRejection(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	rejecting := &rejectingMetaClient{}
 	agentGrpc := &agentGrpc{metaClient: rejecting, agent: agent}
@@ -2225,16 +2269,20 @@ func Test_retryMeta_noRetryOnCollectorRejection(t *testing.T) {
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 	assert.Contains(t, err.Error(), "unsupported metadata", "the collector's reason must reach the log")
 
-	assert.False(t, agentGrpc.sendStringMetadataWithRetry(1, "test.error"))
-	assert.Equal(t, int32(2), rejecting.callCount(), "a rejection must not be retried")
+	err = agentGrpc.sendStringMetadataOnce(1, "test.error")
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+	assert.Equal(t, metaRejected, metaVerdictOf(err, 1), "a rejection must not be retried")
+	assert.Equal(t, int32(2), rejecting.callCount())
 }
 
 // A rejected id was already handed to the spans referencing it, so its cache
-// entry must go, exactly as it does when the send never lands.
+// entry must go, as it does when the send never lands -- but one retry delay
+// later, not at once: an immediate release lets the very next span register
+// the id again and meet the same rejection, one round trip per span.
 func Test_sendMetaWorker_releasesCacheOnCollectorRejection(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	rejecting := &rejectingMetaClient{}
-	agent.agentGrpc = &agentGrpc{metaClient: rejecting, agent: agent}
+	agent.agentGrpc = &agentGrpc{metaClient: rejecting, agent: agent, retryDelay: 200 * time.Millisecond}
 
 	apiKey := apiCacheKey{"test.api", apiTypeInvocation}
 	apiCached := func() bool { _, ok := agent.apiCache.peek(apiKey); return ok }
@@ -2247,11 +2295,15 @@ func Test_sendMetaWorker_releasesCacheOnCollectorRejection(t *testing.T) {
 	assert.Eventually(t, func() bool {
 		return rejecting.callCount() == 1
 	}, 5*time.Second, 5*time.Millisecond, "the rejected item must be sent exactly once")
+	assert.True(t, apiCached(), "the release waits out one retry delay")
+	assert.Equal(t, 1, agent.metaRetry.length(), "the rejected item is parked, not re-sent")
+
+	assert.Eventually(t, func() bool { return !apiCached() }, 5*time.Second, 5*time.Millisecond,
+		"a rejected metadata send must release its cache entry once the delay is up")
+	assert.Equal(t, int32(1), rejecting.callCount(), "a parked release sends nothing")
 
 	agent.signalShutdown()
 	agent.workerWg.Wait()
-
-	assert.False(t, apiCached(), "a rejected metadata send must release its cache entry")
 
 	// ...so the next use re-registers the metadata and queues it again
 	assert.NotZero(t, agent.cacheSpanApi(apiKey.descriptor, apiKey.apiType))

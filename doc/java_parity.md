@@ -34,6 +34,7 @@ is simply not written yet does not belong here.
 | Malformed inbound `Pinpoint-TraceID` | `DefaultTraceContext.createTraceId`, `TransactionIdUtils.parseTransactionId` | **Diverges** — see [below](#malformed-inbound-trace-id--diverges) |
 | Order of the inbound header checks | `DefaultTraceHeaderReader.read` | **Same as Java** — `Pinpoint-Sampled: s0` is answered before the trace id and span id headers are looked at (`DefaultTraceHeaderReader.java:47-51`), so a peer that turned tracing off is obeyed even when its other headers are missing or broken |
 | Malformed config value | `DefaultProfilerConfig.readInt` / `NumberUtils.parseInteger`, `ValueAnnotationProcessor` | **Aligned with C++** — a value that does not convert to its option's type is warned about and the option keeps its current value (`get_yaml<T>` in the C++ agent's `src/config.cpp`), where Java is split between a silent default fallback in `readInt`/`readLong` and a startup failure on an `@Value` injection |
+| Retrying a rejected metadata send | `MetadataGrpcDataSender`, `RetryResponseStreamObserver` | **Diverges (aligned with C++)** — see [below](#retrying-a-rejected-metadata-send--diverges) |
 | Span queue overflow policy | `SpanBatchGrpcDataSender` | **Same as Java** — a full send queue drops the oldest entry, as Java's default BATCH sender does (`queue.poll()` in `SpanBatchGrpcDataSender`); rejecting the newest is STREAM-mode-only behaviour, so head-drop is not a deviation |
 | Locked parity invariants (11 groups) | `ParserContext`, `DefaultCallStack`, `GrpcSpanProcessorV2`, `Header`, `CountingSampler`, `UriStatHistogramBucket`, `BaseHistogramSchema`, `DefaultTransactionCounter`, `StringUtils`, `ClientOption` | **Verified identical** — see [below](#locked-parity-invariants--verified-identical) |
 
@@ -639,6 +640,67 @@ a blocking dial, or a health probe before `enable` is stored. At that point the
 workers could start first and the integration tests would still see a disabled
 agent on a bad certificate, which is the only thing that made the first attempt
 fail.
+
+---
+
+## Retrying a rejected metadata send — diverges
+
+**Java.** `MetadataGrpcDataSender` sends each metadata item as a unary RPC and
+hands every failure to `RetryResponseStreamObserver`. `onNext` treats a reply
+with `PResult.success=false` exactly like a transport error: the send is
+rescheduled on a `HashedWheelTimer` (`retryDelayMillis`, up to `maxAttempts`).
+No thread waits for the retry, and there is no cap on how many sends are in
+flight or waiting. Nothing is cached on the agent side for the retry to
+invalidate, so a permanently rejecting collector costs Java one RPC per attempt
+per item and nothing else.
+
+**C++.** `GrpcMetadata::process_completed` (`src/grpc.cpp`) does *not* retry a
+rejection. It is dropped like a non-retryable status, and the item's cache
+entry is released through `schedule_cache_release`: parked in the time-ordered
+`retry_queue` for one `meta_retry_delay` and released when it comes due. The
+delay is the point — releasing inline made the very next span miss the cache,
+register the same id and meet the same rejection, one round trip per span.
+Transport failures go to the same `retry_queue`, which has its own bound
+(`meta_retry_queue_size`, 1000) separate from the new-metadata queue and
+head-drops when full; a retry never holds a permit while it waits.
+
+**Go.** Same as C++. `metaResult` (`grpc.go`) turns `PResult.success=false`
+into a `FailedPrecondition` error, which `metaVerdictOf` classifies as
+`metaRejected`: no retry, and `sendMetaWorker` parks the item in
+`agent.metaRetry` (`agent.go`) as a release-only entry, dropping the cache
+entry one `metaRetryDelay` (1s) later. A transport failure with budget left
+(`metaRetryLater`) parks in the same schedule and is re-sent from there; the
+send goroutine returns its in-flight permit as soon as the attempt ends. The
+schedule is bounded by `metaRetryQueueSize` (1000), separate from `metaChan`,
+and a full schedule evicts its oldest entry and releases that entry's cache
+slot — the same policy `tryEnqueueMeta` applies to `metaChan`. Exhausting the
+attempt budget (`metaGiveUp`) releases the entry at once, as the C++ agent's
+`retry_or_drop` does.
+
+**Why diverge from Java.** A rejection is a verdict on the payload — the
+collector read the bytes and said no — so resending the same bytes is load on
+the collector for the same answer. Both ports drop it. The delayed release keeps
+Java's recovery path (a later span registers the id again and sends a *new*
+request, the only thing that can produce a different answer) while capping the
+probe rate at one per delay per id.
+
+**Why the schedule has its own budget.** The Go agent used to retry inside the
+goroutine holding one of the `metaMaxConcurrentRequests` permits, waiting in
+`backOffUntilReady` for the channel to recover. Under an outage four failed
+sends pinned every permit, `sendMetaWorker` parked on the permit acquisition,
+`metaChan` overflowed, its head-drop released the dropped item's cache entry,
+and the next span registered the same item again — a drop-feeds-inflow loop
+that lasted as long as the outage. Java never has this problem because its
+timer holds no thread and its sender has no queue bound; the C++ agent avoids
+it with two bounds (the `meta_retry_queue_size` comment in `src/grpc.h`
+records the same loop). Two bounds is the Go answer as well.
+
+**Locked by** `Test_sendMetaWorker_outageDoesNotAmplifyThroughCacheRelease`
+(`grpc_scenario_test.go`): with the collector Unavailable throughout, every
+queued item is attempted once, new metadata is not starved by the parked
+retries, `metaChan` drops nothing, and only the entries the full schedule
+evicted lose their cache slot. `Test_sendMetaWorker_releasesCacheOnCollectorRejection`
+(`grpc_test.go`) locks the delayed release.
 
 ---
 
