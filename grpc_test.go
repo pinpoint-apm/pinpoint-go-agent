@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,8 +20,10 @@ import (
 	"unicode/utf8"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	grpcmock "github.com/pinpoint-apm/pinpoint-go-agent/protobuf/mock"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
 	"google.golang.org/grpc"
@@ -1994,7 +1997,6 @@ func Test_streams_nilStreamReportsUnavailable(t *testing.T) {
 	assert.Equal(t, codes.Unavailable, status.Code((&pingStream{}).sendPing()))
 	assert.Equal(t, codes.Unavailable, status.Code((&spanStream{}).sendSpan(newTestSpanChunk(agent))))
 	assert.Equal(t, codes.Unavailable, status.Code((&statStream{}).sendStats(&pb.PStatMessage{})))
-	assert.Equal(t, codes.Unavailable, status.Code((&cmdStream{}).sendCommandMessage()))
 	assert.Equal(t, codes.Unavailable, status.Code((&cmdStream{}).sendFailMessage(1, "rejected")))
 	assert.Equal(t, codes.Unavailable, status.Code((&activeThreadCountStream{}).sendActiveThreadCount()))
 
@@ -2012,22 +2014,60 @@ func Test_streams_nilStreamReportsUnavailable(t *testing.T) {
 
 // --- commands ---------------------------------------------------------------
 
-// The handshake tells the collector which commands this agent serves; anything
-// missing here is a command the web UI will never offer.
-func Test_cmdStream_sendCommandMessage_advertisesSupportedCommands(t *testing.T) {
-	agent := newTestAgent(defaultConfig())
-	cmd, _ := newMockCmdGrpc(agent)
+// The supportcommandcode header tells the collector which commands this agent
+// serves; anything missing here is a command the web UI will never offer. The
+// collector splits the value on ";" and both reference agents send the codes
+// in ascending order.
+func Test_supportCommandCodeHeader_format(t *testing.T) {
+	assert.Equal(t, "710;730;740;750", supportCommandCodeHeader())
 
-	require.NoError(t, cmd.sendCommandMessage())
-
-	sent := cmd.stream.(*mockCmdStream).sentMessages()
-	require.Len(t, sent, 1)
+	assert.True(t, slices.IsSorted(supportedCommandCodes), "codes must be advertised in ascending order")
 	assert.Equal(t, []int32{
 		int32(pb.PCommandType_ECHO),
 		int32(pb.PCommandType_ACTIVE_THREAD_COUNT),
 		int32(pb.PCommandType_ACTIVE_THREAD_DUMP),
 		int32(pb.PCommandType_ACTIVE_THREAD_LIGHT_DUMP),
-	}, sent[0].GetHandshakeMessage().GetSupportCommandServiceKey())
+	}, supportedCommandCodes)
+}
+
+// The V2 command stream is registered from its headers alone, so the context
+// handed to HandleCommandV2 must carry the agent headers plus the support code
+// list -- and nothing else may carry it, since the collector's V1 handler drops
+// a stream that does.
+func Test_commandMetadataContext_carriesSupportCommandCode(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+
+	md, ok := metadata.FromOutgoingContext(commandMetadataContext(agent))
+	require.True(t, ok)
+	assert.Equal(t, []string{"710;730;740;750"}, md.Get(headerSupportCommandCode))
+
+	base, _ := metadata.FromOutgoingContext(grpcMetadataContext(agent, -1))
+	assert.Empty(t, base.Get(headerSupportCommandCode), "only the command stream advertises support codes")
+	for k, v := range base {
+		assert.Equal(t, v, md.Get(k), "agent header %q", k)
+	}
+	assert.Len(t, md, len(base)+1)
+}
+
+// The stream itself is opened over HandleCommandV2 with that context; the
+// deprecated HandleCommand is never called.
+func Test_cmdGrpc_newHandleCommandStream_usesV2WithHeader(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+
+	stream := grpcmock.NewMockProfilerCommandService_HandleCommandV2Client()
+	var got metadata.MD
+	client := grpcmock.NewMockProfilerCommandServiceClient()
+	client.OnHandleCommandV2(mock.Anything).Run(func(args mock.Arguments) {
+		got, _ = metadata.FromOutgoingContext(args.Get(0).(context.Context))
+	}).Return(stream, nil)
+	agent.cmdGrpc = &cmdGrpc{cmdClient: client, agent: agent, atcStreams: atcStreams{agent: agent}}
+
+	require.True(t, agent.cmdGrpc.newHandleCommandStream())
+	agent.cmdGrpc.stream.cancel()
+
+	client.AssertNumberOfCalls(t, "HandleCommandV2", 1)
+	client.AssertNotCalled(t, "HandleCommand", mock.Anything)
+	assert.Equal(t, []string{"710;730;740;750"}, got.Get(headerSupportCommandCode))
 }
 
 // Mirrors the C++ agent's GrpcCommandWorkerEchoTest.

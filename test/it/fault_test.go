@@ -236,12 +236,12 @@ func TestReconnectsAfterEndpointAndCommandStreamFailures(t *testing.T) {
 	// Closing the listening socket drops every live Agent/Metadata/Command
 	// connection; the same port then comes back.
 	mc.StopEndpoint(EndpointAgent)
-	mc.FailNext(RpcHandleCommand, codes.Unavailable, "command stream rejected after reconnect")
+	mc.FailNext(RpcHandleCommandV2, codes.Unavailable, "command stream rejected after reconnect")
 	require.NoError(t, mc.StartEndpoint(EndpointAgent))
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool {
 		return len(s.CommandStreams) >= before+2 &&
-			hasResultSuccess(s, RpcHandleCommand, codes.Unavailable, false)
+			hasResultSuccess(s, RpcHandleCommandV2, codes.Unavailable, false)
 	}, longTimeout))
 
 	mc.SendEchoCommand(303, "after-reconnect")

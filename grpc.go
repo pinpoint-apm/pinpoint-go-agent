@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,7 +40,44 @@ const (
 	headerProtocolVersion = "protocol.version"
 	headerServiceName     = "servicename"
 	headerApiKey          = "apikey"
+
+	// headerSupportCommandCode carries the command codes this agent serves on
+	// the HandleCommandV2 stream. grpc-go lower-cases metadata keys, so the
+	// Java collector's "supportCommandCode" key is spelled in lower case here.
+	headerSupportCommandCode = "supportcommandcode"
 )
+
+// supportedCommandCodes lists the commands serveCommandStream dispatches, in
+// ascending order: the collector parses the header as a list, and the Java and
+// C++ agents both advertise their codes sorted. Keep this in sync with the
+// switch in serveCommandStream.
+var supportedCommandCodes = []int32{
+	int32(pb.PCommandType_ECHO),
+	int32(pb.PCommandType_ACTIVE_THREAD_COUNT),
+	int32(pb.PCommandType_ACTIVE_THREAD_DUMP),
+	int32(pb.PCommandType_ACTIVE_THREAD_LIGHT_DUMP),
+}
+
+// supportCommandCodeHeader renders supportedCommandCodes the way the collector
+// parses the supportcommandcode header: ";"-separated, matching the Java
+// SupportCommandCodeClientInterceptor and the C++ support_command_code_header().
+func supportCommandCodeHeader() string {
+	codes := make([]string, len(supportedCommandCodes))
+	for i, c := range supportedCommandCodes {
+		codes[i] = strconv.Itoa(int(c))
+	}
+	return strings.Join(codes, ";")
+}
+
+// commandMetadataContext is grpcMetadataContext plus the supportcommandcode
+// header the HandleCommandV2 stream requires. The header replaces the V1
+// handshake message: the collector registers the connection from it as soon as
+// the stream opens, and rejects a V2 stream that lacks it.
+func commandMetadataContext(agent *agent) context.Context {
+	m := agentHeaderMap(agent)
+	m[headerSupportCommandCode] = supportCommandCodeHeader()
+	return metadata.NewOutgoingContext(context.Background(), metadata.New(m))
+}
 
 func grpcMetadataContext(agent *agent, socketId int64) context.Context {
 	// The common case (socketId <= 0) carries only immutable agent headers, so
@@ -1770,7 +1808,7 @@ type cmdGrpc struct {
 }
 
 type cmdStream struct {
-	stream pb.ProfilerCommandService_HandleCommandClient
+	stream pb.ProfilerCommandService_HandleCommandV2Client
 	cancel context.CancelFunc
 	streamAge
 }
@@ -1800,11 +1838,14 @@ func (cmdGrpc *cmdGrpc) newHandleCommandStream() bool {
 	var ctx context.Context
 	var cancel context.CancelFunc
 	if age.expiresAt.IsZero() {
-		ctx, cancel = context.WithCancel(grpcMetadataContext(cmdGrpc.agent, -1))
+		ctx, cancel = context.WithCancel(commandMetadataContext(cmdGrpc.agent))
 	} else {
-		ctx, cancel = context.WithDeadline(grpcMetadataContext(cmdGrpc.agent, -1), age.expiresAt)
+		ctx, cancel = context.WithDeadline(commandMetadataContext(cmdGrpc.agent), age.expiresAt)
 	}
-	stream, err := cmdGrpc.cmdClient.HandleCommand(ctx)
+	// HandleCommandV2, like the Java and C++ agents: HandleCommand is deprecated
+	// in the IDL and the collector's V1 handler drops a stream that carries the
+	// supportcommandcode header, so the RPC and the header go together.
+	stream, err := cmdGrpc.cmdClient.HandleCommandV2(ctx)
 	if err != nil {
 		cancel()
 		Log("grpc").Errorf("make command stream - %v", err)
@@ -1831,38 +1872,6 @@ func (s *cmdStream) close() {
 	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, s.cancel, closeStreamTimeOut, "cmd stream.CloseSend()")
 	s.stream = nil
 	Log("grpc").Infof("close command stream")
-}
-
-func (s *cmdStream) sendCommandMessage() error {
-	var gCmd *pb.PCmdMessage
-
-	if s.stream == nil {
-		return status.Errorf(codes.Unavailable, "command stream is nil")
-	}
-
-	sKeys := make([]int32, 0, 4)
-	sKeys = append(sKeys, int32(pb.PCommandType_ECHO))
-	sKeys = append(sKeys, int32(pb.PCommandType_ACTIVE_THREAD_COUNT))
-	sKeys = append(sKeys, int32(pb.PCommandType_ACTIVE_THREAD_DUMP))
-	sKeys = append(sKeys, int32(pb.PCommandType_ACTIVE_THREAD_LIGHT_DUMP))
-
-	gCmd = &pb.PCmdMessage{
-		Message: &pb.PCmdMessage_HandshakeMessage{
-			HandshakeMessage: &pb.PCmdServiceHandshake{
-				SupportCommandServiceKey: sKeys,
-			},
-		},
-	}
-
-	if IsLogLevelEnabled(logrus.DebugLevel) {
-		Log("grpc").Debugf("PCmdMessage: %s", gCmd.String())
-	}
-
-	err := sendStreamWithTimeout(func() error { return s.stream.Send(gCmd) }, s.cancel, sendStreamTimeOut, "cmd stream.Send()")
-	if err != nil {
-		s.cancel()
-	}
-	return err
 }
 
 // sendFailMessage rejects a command on the command stream itself, which is the

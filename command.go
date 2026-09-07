@@ -123,8 +123,8 @@ func (agent *agent) runCommandService() {
 			// back-off only waits while the connection is not ready, so a
 			// collector whose channel is READY but whose command stream fails
 			// immediately (unimplemented, instant close) would otherwise spin
-			// this loop hot, opening streams and sending handshakes
-			// continuously inside the host application.
+			// this loop hot, opening streams continuously inside the host
+			// application.
 			t := time.NewTimer(backOffSleep(attempt - 1))
 			select {
 			case <-stop:
@@ -141,11 +141,13 @@ func (agent *agent) runCommandService() {
 	Log("cmd").Infof("end command goroutine")
 }
 
-// serveCommandStream opens one command stream, handshakes and then serves
-// requests on it until it fails or the agent stops. It returns the back-off
-// attempt counter the caller carries into the next stream: -1 for a renewal
-// that should reopen without a pause, 0 for a stream that was healthy, and the
-// given value unchanged when the handshake itself failed.
+// serveCommandStream opens one command stream and serves requests on it until
+// it fails or the agent stops. There is no handshake: the supportcommandcode
+// header on the HandleCommandV2 stream carries the supported codes, so opening
+// the stream is what registers the connection with the collector. It returns
+// the back-off attempt counter the caller carries into the next stream: -1 for
+// a renewal that should reopen without a pause, 0 for a stream that was
+// healthy, and the given value unchanged when no request was ever received.
 //
 // The close is deferred, so a panic in a command handler closes the stream
 // too: superviseWorker restarts the worker body, and the abandoned stream
@@ -155,10 +157,8 @@ func (agent *agent) serveCommandStream(attempt int) int {
 	stream := agent.cmdGrpc.newCommandStreamWithRetry()
 	defer stream.close()
 
-	if err := stream.sendCommandMessage(); err != nil {
-		if err != io.EOF {
-			Log("cmd").Errorf("send command message - %v", err)
-		}
+	if stream.stream == nil {
+		// newStreamWithRetry gave up, which only happens on shutdown.
 		return attempt
 	}
 

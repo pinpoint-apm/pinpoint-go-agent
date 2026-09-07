@@ -300,13 +300,12 @@ func Test_workers_closeTheirStreamOnThePanicPath(t *testing.T) {
 
 		// The command worker's stream outlives a whole loop of handler calls,
 		// so its close sits in serveCommandStream - the scope the panic unwinds.
-		stream := grpcmock.NewMockProfilerCommandService_HandleCommandClient()
-		stream.OnSend(mock.Anything).Return(nil)
+		stream := grpcmock.NewMockProfilerCommandService_HandleCommandV2Client()
 		stream.OnRecv().Run(func(mock.Arguments) { panic("command handler exploded") }).Return(nil, nil)
 		stream.On("CloseSend").Return(nil)
 
 		client := grpcmock.NewMockProfilerCommandServiceClient()
-		client.OnHandleCommand(mock.Anything).Return(stream, nil)
+		client.OnHandleCommandV2(mock.Anything).Return(stream, nil)
 		agent.cmdGrpc = &cmdGrpc{cmdClient: client, agent: agent, atcStreams: atcStreams{agent: agent}}
 
 		assert.Panics(t, func() { agent.serveCommandStream(0) })
@@ -314,20 +313,20 @@ func Test_workers_closeTheirStreamOnThePanicPath(t *testing.T) {
 	})
 }
 
-// A collector that accepts the command stream and then immediately rejects the
-// handshake leaves the channel READY, so the reconnect back-off is the only
-// thing keeping this loop from opening streams continuously inside the host
-// application -- and a shutdown must not have to wait it out.
+// A collector that accepts the command stream and then immediately closes it
+// leaves the channel READY, so the reconnect back-off is the only thing keeping
+// this loop from opening streams continuously inside the host application --
+// and a shutdown must not have to wait it out.
 func Test_runCommandService_pacesReconnectsAndStopsPromptly(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 
-	stream := grpcmock.NewMockProfilerCommandService_HandleCommandClient()
-	stream.OnSend(mock.Anything).Return(collectorDown())
+	stream := grpcmock.NewMockProfilerCommandService_HandleCommandV2Client()
+	stream.OnRecv().Return((*pb.PCmdRequest)(nil), collectorDown())
 	stream.On("CloseSend").Return(nil)
 
 	var opened counter
 	client := grpcmock.NewMockProfilerCommandServiceClient()
-	client.OnHandleCommand(mock.Anything).Run(opened.count).Return(stream, nil)
+	client.OnHandleCommandV2(mock.Anything).Run(opened.count).Return(stream, nil)
 	agent.cmdGrpc = &cmdGrpc{cmdClient: client, agent: agent, atcStreams: atcStreams{agent: agent}}
 
 	agent.workerWg.Add(1)
@@ -336,7 +335,7 @@ func Test_runCommandService_pacesReconnectsAndStopsPromptly(t *testing.T) {
 	// The first attempt runs at once; the second waits out backOffSleep(0),
 	// which is at least 2.1s. A hot loop would show up here as a large count.
 	time.Sleep(300 * time.Millisecond)
-	assert.EqualValues(t, 1, opened.get(), "a rejected handshake must not be retried hot")
+	assert.EqualValues(t, 1, opened.get(), "a rejected stream must not be retried hot")
 
 	stopped := make(chan struct{})
 	go func() { agent.workerWg.Wait(); close(stopped) }()
@@ -432,11 +431,10 @@ func Test_runCommandService_renewsAgedStreamWithoutBackOff(t *testing.T) {
 	cfg.Set(CfgCollectorGrpcStreamMaxAge, 20)
 	agent := newTestAgent(cfg)
 
-	// Each HandleCommand hands its context over so that Recv, like the real
+	// Each HandleCommandV2 hands its context over so that Recv, like the real
 	// stream, returns once the deadline set on that context passes.
 	contexts := make(chan context.Context, 16)
-	stream := grpcmock.NewMockProfilerCommandService_HandleCommandClient()
-	stream.OnSend(mock.Anything).Return(nil)
+	stream := grpcmock.NewMockProfilerCommandService_HandleCommandV2Client()
 	stream.OnRecv().Run(func(mock.Arguments) {
 		ctx := <-contexts
 		<-ctx.Done()
@@ -445,7 +443,7 @@ func Test_runCommandService_renewsAgedStreamWithoutBackOff(t *testing.T) {
 
 	var opened counter
 	client := grpcmock.NewMockProfilerCommandServiceClient()
-	client.OnHandleCommand(mock.Anything).Run(func(args mock.Arguments) {
+	client.OnHandleCommandV2(mock.Anything).Run(func(args mock.Arguments) {
 		opened.count(args)
 		contexts <- args.Get(0).(context.Context)
 	}).Return(stream, nil)

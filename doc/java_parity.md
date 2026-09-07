@@ -36,6 +36,7 @@ is simply not written yet does not belong here.
 | Malformed config value | `DefaultProfilerConfig.readInt` / `NumberUtils.parseInteger`, `ValueAnnotationProcessor` | **Aligned with C++** — a value that does not convert to its option's type is warned about and the option keeps its current value (`get_yaml<T>` in the C++ agent's `src/config.cpp`), where Java is split between a silent default fallback in `readInt`/`readLong` and a startup failure on an `@Value` injection |
 | Retrying a rejected metadata send | `MetadataGrpcDataSender`, `RetryResponseStreamObserver` | **Diverges (aligned with C++)** — see [below](#retrying-a-rejected-metadata-send--diverges) |
 | Span queue overflow policy | `SpanBatchGrpcDataSender` | **Same as Java** — a full send queue drops the oldest entry, as Java's default BATCH sender does (`queue.poll()` in `SpanBatchGrpcDataSender`); rejecting the newest is STREAM-mode-only behaviour, so head-drop is not a deviation |
+| Command channel RPC | `GrpcCommandService`, `SupportCommandCodeClientInterceptor`, `Header.SUPPORT_COMMAND_CODE` | **Aligned** — see [below](#command-channel-rpc--aligned) |
 | Locked parity invariants (11 groups) | `ParserContext`, `DefaultCallStack`, `GrpcSpanProcessorV2`, `Header`, `CountingSampler`, `UriStatHistogramBucket`, `BaseHistogramSchema`, `DefaultTransactionCounter`, `StringUtils`, `ClientOption` | **Verified identical** — see [below](#locked-parity-invariants--verified-identical) |
 
 ---
@@ -701,6 +702,46 @@ queued item is attempted once, new metadata is not starved by the parked
 retries, `metaChan` drops nothing, and only the entries the full schedule
 evicted lose their cache slot. `Test_sendMetaWorker_releasesCacheOnCollectorRejection`
 (`grpc_test.go`) locks the delayed release.
+
+---
+
+## Command channel RPC — aligned
+
+**Java.** `GrpcCommandService` (`profiler/receiver/grpc`) opens the command
+stream with `ProfilerCommandServiceStub.handleCommandV2`. The commands the agent
+serves travel as gRPC metadata, not as a message: `SupportCommandCodeClientInterceptor`
+joins the codes with `Header.SUPPORT_COMMAND_CODE_DELIMITER` (`;`) into the
+`supportCommandCode` header, and the collector's `handleCommandV2` registers the
+connection from that header as soon as the stream is ready. The IDL marks
+`HandleCommand` as `deprecated = true` (`proto/v1/Service.proto`), and the
+collector's V1 handler **disconnects** a stream that carries the header.
+
+**C++.** The same: `HandleCommandV2` with `support_command_code_header()`
+(`src/grpc.cpp`), `kSupportedCommandCodes` kept in ascending order.
+
+**This agent.** `newHandleCommandStream` (`grpc.go`) calls `HandleCommandV2`
+on a context from `commandMetadataContext`, which is the usual agent header
+set plus `supportcommandcode` — the key is lower case because grpc-go
+lower-cases metadata keys, which is how the Java `Metadata.Key` reads it off
+the wire anyway. The value is `supportedCommandCodes` joined with `;` in
+ascending order: `710;730;740;750`, i.e. ECHO, ACTIVE_THREAD_COUNT,
+ACTIVE_THREAD_DUMP and ACTIVE_THREAD_LIGHT_DUMP, the four commands
+`serveCommandStream` (`command.go`) dispatches. No `PCmdServiceHandshake` is
+sent and there is no V1 fallback: the RPC and the header were switched
+together, because a V1 stream with the header is dropped and a V2 stream
+without it is rejected with `INVALID_ARGUMENT`.
+
+Registration therefore no longer depends on a first `Send` succeeding —
+opening the stream is the registration. `serveCommandStream` goes straight to
+`Recv` and a stream the collector closes at once is paced by the reconnect
+back-off exactly as a failed handshake used to be.
+
+**Locked by** `Test_supportCommandCodeHeader_format`,
+`Test_commandMetadataContext_carriesSupportCommandCode` and
+`Test_cmdGrpc_newHandleCommandStream_usesV2WithHeader` (`grpc_test.go`), and
+end to end by `TestRegistersAgentAndMaintainsPingAndCommandStreams`
+(`test/it/registration_test.go`), which reads the header off the mock
+collector's V2 stream.
 
 ---
 

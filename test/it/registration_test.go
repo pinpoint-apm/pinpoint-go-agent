@@ -43,6 +43,10 @@ func TestRegistersAgentAndMaintainsPingAndCommandStreams(t *testing.T) {
 	expectCommonMetadata(t, s.PingStreams[0], true)
 	require.NotEmpty(t, s.CommandStreams)
 	expectCommonMetadata(t, s.CommandStreams[0], false)
+	// HandleCommandV2 registers the connection from this header alone: the
+	// supported codes, ";"-separated and ascending, with no handshake message.
+	assert.Equal(t, "710;730;740;750", s.CommandStreams[0].ValueOr("supportcommandcode", ""))
+	assert.False(t, s.AgentInfos[0].Metadata.Has("supportcommandcode"), "only the command stream carries the header")
 	assert.True(t, agent.Enable())
 }
 
