@@ -26,7 +26,6 @@ func slabTestChunk(a *agent, seed int, nEvents int) *spanChunk {
 		se := newSpanEvent(s, fmt.Sprintf("event-%d", seed))
 		se.annotations.AppendStringString(AnnotationApi, fmt.Sprintf("e-%d", seed), fmt.Sprintf("e2-%d", seed))
 		se.endElapsed = 1
-		s.eventSequence.Add(1)
 		s.spanEvents = append(s.spanEvents, se)
 	}
 

@@ -25,6 +25,7 @@ is simply not written yet does not belong here.
 | URL statistics send unit | `UriStatCollectingJob`, `AsyncQueueingUriStatStorage` | **Adopted** — see [below](#url-statistics-send-unit--adopted) |
 | GC type and counts | `JvmGcType`, `GarbageCollectorMXBean` | **Diverges** — see [below](#gc-type-and-counts--diverges) |
 | Exception chain during overflow | `AbstractRecorder.recordException`, `DefaultExceptionRecorder` | **Diverges** — see [below](#exception-chain-during-overflow--diverges) |
+| Span event sequence reservation | `DefaultCallStack.push` | **Aligned with C++** — see [below](#span-event-sequence-reservation--aligned-with-c) |
 | Inbound trace continuation | `DefaultTraceHeaderReader.read`, `RequestTraceReader` | **Adopted** — see [below](#inbound-trace-continuation--adopted) |
 | Malformed inbound `Pinpoint-SpanID` | `DefaultTraceHeaderReader`, `NumberUtils.parseLong` | **Diverges** — see [below](#malformed-inbound-span-id--diverges) |
 | Malformed inbound `Pinpoint-TraceID` | `DefaultTraceContext.createTraceId`, `TransactionIdUtils.parseTransactionId` | **Diverges** — see [below](#malformed-inbound-trace-id--diverges) |
@@ -107,6 +108,47 @@ where events are arriving faster than the agent chose to keep them.
 **Revisit if** a real investigation is reported where this divergence got in
 the way — a failure whose only exception detail was raised past the depth
 limit.
+
+---
+
+## Span event sequence reservation — aligned with C++
+
+**What is the same.** Every span event carries a `sequence` no other event of
+that span carries. What differs is how the three ports get there: Java relies
+on a single-threaded contract, the two ports make the counter itself atomic.
+
+**Java.** `DefaultCallStack` is not synchronized and does not need to be. A
+`Trace` belongs to one thread, so `push` can do `element.setSequence(sequence++)`
+and set the depth from its own element count, both inside `push`, and the
+numbering is trivially unique. An async trace gets a `CallStack` of its own.
+
+**This agent.** A span here may legitimately be driven from several goroutines
+of one call stack — a gRPC client stream runs on whatever goroutines the
+application picks, `gocql` runs observers on speculative-execution goroutines,
+`pgxpool` dials on a background one — so the contract Java leans on does not
+hold and `span.reserveEventPosition` (`span.go`) claims the pair with
+`eventSequence.Add(1)` and `eventDepth.Add(1)`, one atomic step each. The C++
+agent's `Span::nextEventSequenceAndDepth` (`src/span.h`) is the same two
+`fetch_add`s. `newSpanEvent` records what the reservation returned; nothing
+reads the live counters to number an event.
+
+Two details follow from the reservation being the numbering:
+
+- The overflow decision is made on the reserved pair rather than on a load
+  taken before the push, so it judges the position the event will actually
+  carry. The predicate is unchanged (group 2 of the locked invariants). A
+  refused event gives its depth back — `span.releaseEventPosition`, the
+  equivalent of the C++ `finish()` decrementing the depth of an event it did
+  not keep — because no `spanEvent` exists to release it in `end()`, and gives
+  its sequence back too while it is still the last one handed out.
+- `optimizeSpanEvents` sorts with `slices.SortStableFunc`. The chunk's depth
+  compression and `startElapsed` deltas each read the event next to them, so
+  should a tie ever appear the order they see is the order the events were
+  recorded in rather than one that varies run to run.
+
+**Locked by** `Test_span_NewSpanEvent_ConcurrentSequencesAreUnique`
+(`span_test.go`): events opened and closed from many goroutines of one span
+come out holding `0..N-1` with no number handed out twice.
 
 ---
 

@@ -1439,6 +1439,48 @@ func Test_span_EndSpanEvent_ConcurrentOverflowFloorsAtZero(t *testing.T) {
 	}
 }
 
+// A span may be driven from several goroutines of one call stack, which this
+// agent allows on purpose. The (sequence, depth) pair is reserved atomically,
+// so however those calls interleave every recorded event carries a sequence of
+// its own: a duplicate PSpanEvent.sequence is not a blurred call tree, it is
+// one the collector cannot rebuild. Limits and chunk size are raised past the
+// event count so nothing is refused for overflow and everything lands in the
+// final chunk.
+func Test_span_NewSpanEvent_ConcurrentSequencesAreUnique(t *testing.T) {
+	const events = 200
+
+	config := defaultConfig()
+	config.Set(CfgSpanMaxCallStackDepth, events+1)
+	config.Set(CfgSpanMaxCallStackSequence, events+1)
+	config.Set(CfgSpanEventChunkSize, events+1)
+	s := testSpanWithConfig(config)
+
+	var wg sync.WaitGroup
+	for i := 0; i < events; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.NewSpanEvent("concurrent")
+			s.EndSpanEvent()
+		}()
+	}
+	wg.Wait()
+
+	require.Equal(t, int32(0), s.eventOverflow.Load(), "no event refused")
+	require.Equal(t, int32(1), s.eventDepth.Load(), "stack balanced")
+	require.Equal(t, 0, s.eventStack.len(), "stack drained")
+	require.Len(t, s.spanEvents, events, "every event recorded")
+
+	seen := make(map[int32]bool, events)
+	for _, se := range s.spanEvents {
+		assert.False(t, seen[se.sequence], "sequence %d handed out twice", se.sequence)
+		seen[se.sequence] = true
+	}
+	for want := int32(0); want < events; want++ {
+		assert.True(t, seen[want], "sequence %d missing", want)
+	}
+}
+
 func Test_span_EndSpanEvent_OverflowNeverGoesNegative(t *testing.T) {
 	s := overflowedSpan()
 	assert.Equal(t, int32(1), s.eventOverflow.Load(), "eventOverflow")

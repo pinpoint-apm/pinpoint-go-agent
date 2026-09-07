@@ -31,14 +31,18 @@ type spanEvent struct {
 	finished atomic.Bool
 }
 
-func defaultSpanEvent(span *span, operationName string) *spanEvent {
+// defaultSpanEvent builds an event at the position sequence/depth, which the
+// caller must have claimed with span.reserveEventPosition. The pair is never
+// read off the span here: loading the counters and letting the push increment
+// them afterwards is what let two concurrent events share a sequence.
+func defaultSpanEvent(span *span, operationName string, sequence int32, depth int32) *spanEvent {
 	se := spanEvent{}
 
 	se.parentSpan = span
 	se.startTime = time.Now().UnixMilli()
 	se.startElapsed = 0
-	se.sequence = span.eventSequence.Load()
-	se.depth = span.eventDepth.Load()
+	se.sequence = sequence
+	se.depth = depth
 	se.operationName = operationName
 	se.endPoint = ""
 	se.nextSpanId = noneSpanId
@@ -55,14 +59,19 @@ func defaultSpanEvent(span *span, operationName string) *spanEvent {
 }
 
 func newSpanEvent(span *span, operationName string) *spanEvent {
-	se := defaultSpanEvent(span, operationName)
+	sequence, depth := span.reserveEventPosition()
+	se := defaultSpanEvent(span, operationName, sequence, depth)
 	se.apiId = span.agent.cacheSpanApi(operationName, apiTypeDefault)
 
 	return se
 }
 
 func newSpanEventGoroutine(span *span) *spanEvent {
-	se := defaultSpanEvent(span, "")
+	// Reserved like any other event, and never refused: newAsyncSpan builds
+	// the span it passes here, so the reservation is the span's first, (0, 1),
+	// which no call stack limit can be below.
+	sequence, depth := span.reserveEventPosition()
+	se := defaultSpanEvent(span, "", sequence, depth)
 
 	//Asynchronous Invocation
 	apiId := atomic.LoadInt32(&span.agent.asyncApiId)

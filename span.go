@@ -587,33 +587,79 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 	}
 
 	cfg := span.cfg
-	// eventDepth holds the depth the new event would be recorded at (it starts
-	// at 1), so eventDepth-1 is the number of events already open. That is
+	// Judged on the position the event has already reserved, not on a load
+	// taken before it: the reservation is atomic, so the pair examined here is
+	// the pair this event will carry, and no concurrent reservation can move
+	// the counters under the decision the way it could between a Load and the
+	// Add that used to follow it.
+	//
+	// se.depth is the depth the new event would be recorded at (eventDepth
+	// starts at 1), so se.depth-1 is the number of events already open. That is
 	// Java's DefaultCallStack.push index: the pre-push element count, checked
 	// by isDepthOverflow as maxDepth < index, then incremented and stored as
 	// the event's depth. With maxDepth=3 the 4th push (index=3) is still
 	// recorded at depth 4, so the deepest recorded level is maxDepth+1.
-	// Written as eventDepth-1 rather than max+1 because -1 (unlimited) is
+	// Written as se.depth-1 rather than max+1 because -1 (unlimited) is
 	// stored as MaxInt32. Sequence keeps >=, mirroring Java's
 	// maxSequence <= sequence.
-	if span.eventSequence.Load() >= cfg.spanMaxEventSequence || span.eventDepth.Load()-1 > cfg.spanMaxEventDepth {
+	se := newSpanEvent(span, operationName)
+	if se.sequence >= cfg.spanMaxEventSequence || se.depth-1 > cfg.spanMaxEventDepth {
+		span.releaseEventPosition(se.sequence)
 		span.eventOverflow.Add(1)
 		if span.eventOverflowLog.CompareAndSwap(false, true) {
-			Log("span").Warnf("callStack maximum depth/sequence exceeded. (depth=%d, seq=%d)", span.eventDepth.Load(), span.eventSequence.Load())
+			Log("span").Warnf("callStack maximum depth/sequence exceeded. (depth=%d, seq=%d)", se.depth, se.sequence)
 		}
 	} else {
-		span.appendSpanEvent(newSpanEvent(span, operationName))
+		span.appendSpanEvent(se)
 	}
 	return span
+}
+
+// reserveEventPosition claims the (sequence, depth) pair the next event will be
+// recorded at, each counter in one atomic step. eventDepth starts at 1, so a
+// span's first event gets (0, 1). This is the C++ agent's
+// Span::nextEventSequenceAndDepth; Java gets the same invariant from a
+// single-threaded contract instead, DefaultCallStack.push doing sequence++
+// inside push.
+//
+// It has to be atomic because a span here may be used from several goroutines
+// of one call stack (see the note on eventSequence). Reading the two counters
+// and incrementing them afterwards handed two concurrent NewSpanEvent calls the
+// same sequence and the same depth, and a span carrying a duplicate
+// PSpanEvent.sequence breaks the collector's call tree rebuild - not the
+// trace-quality problem those atomics are there to keep it at.
+//
+// The caller owns what it claimed: an event that is pushed gives its depth back
+// in spanEvent.end(), one the overflow check refuses gives the position back
+// through releaseEventPosition.
+func (span *span) reserveEventPosition() (sequence, depth int32) {
+	return span.eventSequence.Add(1) - 1, span.eventDepth.Add(1) - 1
+}
+
+// releaseEventPosition gives back a position the overflow check refused, the
+// way the C++ agent's finish() gives back the depth of an event it did not
+// keep.
+//
+// The depth always goes back: no event was pushed, so nothing would ever
+// decrement it and the call stack would read as overflowed for the rest of the
+// span. The sequence goes back only while it is still the last one handed out,
+// which is what keeps eventSequence frozen at its limit for the single call
+// stack a Tracer normally instruments; when another goroutine has already
+// reserved past it the CAS fails and the number is simply spent. Rolling it
+// back unconditionally would hand that number to a second event, and sequence
+// uniqueness is worth more than the gap a refused event leaves behind anyway.
+func (span *span) releaseEventPosition(sequence int32) {
+	span.eventDepth.Add(-1)
+	span.eventSequence.CompareAndSwap(sequence+1, sequence)
 }
 
 func (span *span) appendSpanEvent(se *spanEvent) {
 	span.spanEventLock.Lock()
 	defer span.spanEventLock.Unlock()
 
+	// Push only: the counters were advanced by the reserveEventPosition the
+	// event was built with.
 	span.eventStack.push(se)
-	span.eventSequence.Add(1)
-	span.eventDepth.Add(1)
 }
 
 func (span *span) EndSpanEvent() {
@@ -990,10 +1036,13 @@ func (chunk *spanChunk) optimizeSpanEvents() {
 		return
 	}
 
-	// slices.SortFunc, not sort.Slice: this runs on the request goroutine per
-	// chunk, and sort.Slice builds a reflect-based swapper for the slice on
-	// every call.
-	slices.SortFunc(chunk.eventChunk, func(a, b *spanEvent) int {
+	// slices.SortStableFunc, not sort.Slice: this runs on the request goroutine
+	// per chunk, and sort.Slice builds a reflect-based swapper for the slice on
+	// every call. Stable, so that should two events ever share a sequence after
+	// all, the order this hands to the depth compression and the startElapsed
+	// deltas below - both of which read the event next to them - is the order
+	// they were recorded in, not one that varies run to run.
+	slices.SortStableFunc(chunk.eventChunk, func(a, b *spanEvent) int {
 		return cmp.Compare(a.sequence, b.sequence)
 	})
 	if chunk.final {
