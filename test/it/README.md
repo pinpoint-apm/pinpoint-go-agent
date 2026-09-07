@@ -56,7 +56,8 @@ their collector wire representation:
   recorded request/response headers and cookies, HTTP status handling, client
   endpoint serialization, the wrapped-handler path, and proxy
   address/header handling for the Apache, Nginx and App proxy headers
-  (priority order, out-of-range timestamp rejection)
+  (one annotation per hop, and a header whose `t=` is missing or malformed
+  dropped whole)
 - profiler commands over the real bidirectional stream: echo, active-thread
   count, the light-dump-then-targeted-dump flow a collector uses to drill into
   one in-flight request, and the concurrent-stream cap that refuses further

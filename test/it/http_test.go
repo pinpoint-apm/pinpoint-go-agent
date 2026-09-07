@@ -45,7 +45,7 @@ func TestHttpHelpersPopulateServerAndClientWireData(t *testing.T) {
 
 	req := serverRequest(t, http.MethodGet, "/http-helper", map[string]string{
 		"X-Forwarded-For":     "203.0.113.7, 10.0.0.1",
-		"Pinpoint-ProxyNginx": "t=1710000000.125 D=37",
+		"Pinpoint-ProxyNginx": "t=1710000000.125 D=0.037",
 		"x-request-id":        "server-request-1",
 		"Cookie":              "session_id=server-session-2",
 	})
@@ -95,7 +95,8 @@ func TestHttpHelpersPopulateServerAndClientWireData(t *testing.T) {
 	proxyValue := proxy.GetValue().GetLongIntIntByteByteStringValue()
 	assert.Equal(t, int64(1710000000125), proxyValue.GetLongValue())
 	assert.Equal(t, int32(2), proxyValue.GetIntValue1())
-	assert.Equal(t, int32(37), proxyValue.GetIntValue2())
+	// nginx reports $request_time in seconds; the annotation carries microseconds.
+	assert.Equal(t, int32(37000), proxyValue.GetIntValue2())
 
 	assert.True(t, hasStringPairAnnotation(wire.GetAnnotation(),
 		pinpoint.AnnotationHttpRequestHeader, "x-request-id", "server-request-1"))
@@ -158,7 +159,7 @@ func TestParsesApacheProxyHeaderAndRealIpFallback(t *testing.T) {
 	assert.Equal(t, int32(12), value.GetByteValue2())
 }
 
-func TestRecordsAppProxyHeaderAndGuardsNginxTimestampRange(t *testing.T) {
+func TestRecordsEveryProxyHopAndDropsMalformedNginxTime(t *testing.T) {
 	mc, _ := startStack(t, defaultAgentConfig())
 
 	trace := func(rpc, operation string, headers map[string]string) {
@@ -169,47 +170,59 @@ func TestRecordsAppProxyHeaderAndGuardsNginxTimestampRange(t *testing.T) {
 	trace("/proxy-app", "http.proxy.app", map[string]string{
 		"Pinpoint-ProxyApp": "t=1712345678123 app=edge-proxy",
 	})
-	// 1e300 * 1000 does not fit into int64: the untrusted timestamp must be
-	// rejected before the cast, while the annotation itself is still recorded.
+	// nginx t= is read only in the sec.mmm shape, so this untrusted exponent
+	// yields 0 - and a proxy header without a positive t= is dropped whole
+	// rather than recorded as a hop at the epoch.
 	trace("/proxy-nginx-range", "http.proxy.nginx.range", map[string]string{
 		"Pinpoint-ProxyNginx": "t=1e300 D=25",
 	})
-	// When several proxy headers are present, Apache wins over Nginx and App.
-	trace("/proxy-priority", "http.proxy.priority", map[string]string{
+	// Every proxy header present gets its own annotation, so a request behind
+	// two proxies shows both hops. The nginx t= here has two decimals, so only
+	// the Apache and App hops survive.
+	trace("/proxy-multi", "http.proxy.multi", map[string]string{
 		"Pinpoint-ProxyApache": "t=1710000002000000 D=9",
 		"Pinpoint-ProxyNginx":  "t=1710000003.5",
-		"Pinpoint-ProxyApp":    "t=1710000004000 app=ignored",
+		"Pinpoint-ProxyApp":    "t=1710000004000 app=edge-app",
 	})
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool {
 		return findSpanByRpc(s, "/proxy-app") != nil &&
 			findSpanByRpc(s, "/proxy-nginx-range") != nil &&
-			findSpanByRpc(s, "/proxy-priority") != nil
+			findSpanByRpc(s, "/proxy-multi") != nil
 	}, waitTimeout))
 
 	s := mc.Snapshot()
-	proxyOf := func(rpc string) *pb.PLongIntIntByteByteStringValue {
+	// Every proxy annotation of a span, in the order the recorder appends
+	// them: Apache, Nginx, App, then the configured user headers.
+	proxiesOf := func(rpc string) []*pb.PLongIntIntByteByteStringValue {
 		wire := findSpanByRpc(s, rpc)
 		require.NotNil(t, wire, rpc)
-		annotation := findAnnotation(wire.GetAnnotation(), pinpoint.AnnotationHttpProxyHeader)
-		require.NotNil(t, annotation, rpc)
-		return annotation.GetValue().GetLongIntIntByteByteStringValue()
+		var values []*pb.PLongIntIntByteByteStringValue
+		for _, a := range wire.GetAnnotation() {
+			if a.GetKey() == pinpoint.AnnotationHttpProxyHeader {
+				values = append(values, a.GetValue().GetLongIntIntByteByteStringValue())
+			}
+		}
+		return values
 	}
 
-	app := proxyOf("/proxy-app")
-	assert.Equal(t, int64(1712345678123), app.GetLongValue())
-	assert.Equal(t, int32(1), app.GetIntValue1())
-	assert.Equal(t, "edge-proxy", app.GetStringValue().GetValue())
+	app := proxiesOf("/proxy-app")
+	require.Len(t, app, 1)
+	assert.Equal(t, int64(1712345678123), app[0].GetLongValue())
+	assert.Equal(t, int32(1), app[0].GetIntValue1())
+	assert.Equal(t, "edge-proxy", app[0].GetStringValue().GetValue())
 
-	nginx := proxyOf("/proxy-nginx-range")
-	assert.Equal(t, int64(0), nginx.GetLongValue())
-	assert.Equal(t, int32(2), nginx.GetIntValue1())
-	assert.Equal(t, int32(25), nginx.GetIntValue2())
+	assert.Empty(t, proxiesOf("/proxy-nginx-range"),
+		"an nginx t= outside the sec.mmm shape must leave no proxy annotation")
 
-	priority := proxyOf("/proxy-priority")
-	assert.Equal(t, int64(1710000002000), priority.GetLongValue())
-	assert.Equal(t, int32(3), priority.GetIntValue1())
-	assert.Equal(t, int32(9), priority.GetIntValue2())
+	hops := proxiesOf("/proxy-multi")
+	require.Len(t, hops, 2, "the Apache and App hops are recorded, the malformed nginx one is not")
+	assert.Equal(t, int64(1710000002000), hops[0].GetLongValue())
+	assert.Equal(t, int32(3), hops[0].GetIntValue1())
+	assert.Equal(t, int32(9), hops[0].GetIntValue2())
+	assert.Equal(t, int64(1710000004000), hops[1].GetLongValue())
+	assert.Equal(t, int32(1), hops[1].GetIntValue1())
+	assert.Equal(t, "edge-app", hops[1].GetStringValue().GetValue())
 }
 
 // A filtered request gets the plain noop tracer, whose span id is 0. An
