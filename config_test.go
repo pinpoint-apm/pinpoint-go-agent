@@ -1047,12 +1047,12 @@ func TestNewConfig_MalformedValueKeepsCurrentValue(t *testing.T) {
 			// comma separated string excepted, which is how a list is spelled
 			// in an environment variable.
 			name:     "string slice option given a scalar",
-			body:     "Error:\n  IgnoreErrors: 42\n",
-			cfgName:  CfgErrorIgnoreErrors,
+			body:     "Span:\n  IgnoreErrors: 42\n",
+			cfgName:  CfgSpanIgnoreErrors,
 			raw:      "42",
 			typeName: "string slice",
 			check: func(t *testing.T, c *Config) {
-				assert.Empty(t, c.StringSlice(CfgErrorIgnoreErrors))
+				assert.Empty(t, c.StringSlice(CfgSpanIgnoreErrors))
 				assert.Empty(t, c.load().errorIgnoreRules)
 			},
 		},
@@ -1170,7 +1170,7 @@ func TestNewConfig_StoresTheRegisteredType(t *testing.T) {
 	assert.IsType(t, int(0), values[CfgSamplingCounterRate], CfgSamplingCounterRate)
 	assert.IsType(t, false, values[CfgSQLTraceCommit], CfgSQLTraceCommit)
 	assert.IsType(t, "", values[CfgLogLevel], CfgLogLevel)
-	assert.IsType(t, []string{}, values[CfgErrorIgnoreErrors], CfgErrorIgnoreErrors)
+	assert.IsType(t, []string{}, values[CfgSpanIgnoreErrors], CfgSpanIgnoreErrors)
 
 	var reloaded int
 	c.AddReloadCallback([]string{CfgSamplingPercentRate}, func() { reloaded++ })
@@ -1224,7 +1224,7 @@ func (e *causeOnlyErr) Cause() error  { return e.cause }
 // ignoreError walks a user-supplied chain on the request goroutine, so the walk
 // is capped at maxCauserDepth (see errors.go) whatever Unwrap() returns.
 func Test_ignoreError_BoundedCauseWalk(t *testing.T) {
-	c, err := NewConfig(WithAppName("ignoreErrApp"), WithErrorIgnoreErrors("*pinpoint.nomatch:"))
+	c, err := NewConfig(WithAppName("ignoreErrApp"), WithSpanIgnoreErrors("*pinpoint.nomatch:"))
 	require.NoError(t, err)
 	snapshot := c.load()
 
@@ -1252,10 +1252,134 @@ func Test_ignoreError_BoundedCauseWalk(t *testing.T) {
 // A nested error reachable only through Cause() is matched, as the exception
 // recorder walks the same chain.
 func Test_ignoreError_CauseOnlyChain(t *testing.T) {
-	c, err := NewConfig(WithAppName("ignoreErrApp"), WithErrorIgnoreErrors(":inner boom"))
+	c, err := NewConfig(WithAppName("ignoreErrApp"), WithSpanIgnoreErrors(":inner boom"))
 	require.NoError(t, err)
 	snapshot := c.load()
 
 	assert.True(t, snapshot.ignoreError(&causeOnlyErr{msg: "outer", cause: fmt.Errorf("inner boom")}, ""))
 	assert.False(t, snapshot.ignoreError(&causeOnlyErr{msg: "outer", cause: fmt.Errorf("other")}, ""))
+}
+
+// Java's ConfigurableErrorRecorderFactory.getEnabledTypes: an unset
+// profiler.error.mark enables every category, so the default mask must too -
+// this agent used to mark a flat 1, which is Java's profiler.error.enable=false
+// path (SimpleErrorRecorder).
+func TestNewConfig_ErrorMarkDefaultsToEveryCategory(t *testing.T) {
+	c, err := NewConfig(WithAppName("errorMarkApp"))
+	require.NoError(t, err)
+	defer c.Close()
+
+	assert.Empty(t, c.StringSlice(CfgSpanErrorMark), CfgSpanErrorMark)
+	assert.Empty(t, c.StringSlice(CfgSpanErrorMarkExclude), CfgSpanErrorMarkExclude)
+	assert.Equal(t, allErrorCategories, c.load().errorMarkMask)
+	assert.Equal(t, ErrorCategory(15), allErrorCategories, "unknown|exception|http-status|sql")
+}
+
+// The bit values are a wire contract with the collector and the other agents.
+func TestErrorCategory_BitValuesMatchJava(t *testing.T) {
+	assert.Equal(t, ErrorCategory(1), ErrorCategoryUnknown, "Java ErrorCategory.UNKNOWN")
+	assert.Equal(t, ErrorCategory(2), ErrorCategoryException, "Java ErrorCategory.EXCEPTION")
+	assert.Equal(t, ErrorCategory(4), ErrorCategoryHttpStatus, "Java ErrorCategory.HTTP_STATUS")
+	assert.Equal(t, ErrorCategory(8), ErrorCategorySql, "Java ErrorCategory.SQL")
+}
+
+func TestNewConfig_ErrorMarkAndExclude(t *testing.T) {
+	tests := []struct {
+		name     string
+		mark     []string
+		exclude  []string
+		wantMask ErrorCategory
+	}{
+		{
+			"mark selects the listed causes",
+			[]string{"exception", "sql"}, nil,
+			ErrorCategoryUnknown | ErrorCategoryException | ErrorCategorySql,
+		},
+		{
+			// Category names are matched case-insensitively, as Java lowercases
+			// each entry before the switch.
+			"exclude removes from every cause",
+			nil, []string{"Http-Status"},
+			ErrorCategoryUnknown | ErrorCategoryException | ErrorCategorySql,
+		},
+		{
+			// Java's mark.removeAll(exclude).
+			"exclude wins over mark",
+			[]string{"exception", "http-status", "sql"}, []string{"sql"},
+			ErrorCategoryUnknown | ErrorCategoryException | ErrorCategoryHttpStatus,
+		},
+		{
+			// The unknown cause has no spelling and survives every exclusion:
+			// excluding it would mean "never fail a transaction", which is not
+			// what the keys are for.
+			"the unknown cause is always marked",
+			[]string{"exception"}, []string{"exception", "unknown"},
+			ErrorCategoryUnknown,
+		},
+		{
+			// One comma-separated string is how Java spells the list, and how a
+			// config file or an environment variable spells a string slice here.
+			"a single comma separated entry",
+			[]string{"exception, sql"}, nil,
+			ErrorCategoryUnknown | ErrorCategoryException | ErrorCategorySql,
+		},
+		{
+			// An empty entry is skipped silently, as Java's case "" does.
+			"empty entries are skipped",
+			[]string{""}, []string{" "},
+			ErrorCategoryUnknown,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := NewConfig(WithAppName("errorMarkApp"),
+				WithSpanErrorMark(tt.mark...), WithSpanErrorMarkExclude(tt.exclude...))
+			require.NoError(t, err)
+			defer c.Close()
+
+			assert.Equal(t, tt.wantMask, c.load().errorMarkMask)
+		})
+	}
+}
+
+// An unrecognised name is warned about and ignored - it must not silently
+// widen the mask back to every cause, which is what treating the whole list as
+// unparseable would do.
+func TestNewConfig_ErrorMarkWarnsOnAnUnknownCategory(t *testing.T) {
+	var buf bytes.Buffer
+	restore := captureWarnLog(&buf)
+
+	c, err := NewConfig(WithAppName("errorMarkApp"), WithSpanErrorMark("exception", "typo-here"))
+	require.NoError(t, err)
+	defer c.Close()
+	mask := c.load().errorMarkMask
+	restore()
+
+	assert.Equal(t, ErrorCategoryUnknown|ErrorCategoryException, mask)
+	assert.Contains(t, buf.String(), "typo-here")
+}
+
+// A snapshot built by hand instead of by NewConfig has no mask at all; every
+// cause must still be marked, which is Java's default.
+func Test_marksError_ZeroMaskReadsAsEveryCategory(t *testing.T) {
+	snapshot := &configSnapshot{}
+
+	for _, category := range []ErrorCategory{ErrorCategoryUnknown, ErrorCategoryException,
+		ErrorCategoryHttpStatus, ErrorCategorySql} {
+		assert.True(t, snapshot.marksError(category), category)
+	}
+	assert.True(t, emptyConfigSnapshot.marksError(ErrorCategoryException))
+}
+
+// The environment spelling is Java's verbatim - one comma-separated string -
+// which is also how a config file spells a string slice on one line.
+func TestNewConfig_ErrorMarkFromEnv(t *testing.T) {
+	t.Setenv("PINPOINT_GO_SPAN_ERRORMARK", "exception, sql")
+	t.Setenv("PINPOINT_GO_SPAN_ERRORMARKEXCLUDE", "sql")
+
+	c, err := NewConfig(WithAppName("errorMarkApp"))
+	require.NoError(t, err)
+	defer c.Close()
+
+	assert.Equal(t, ErrorCategoryUnknown|ErrorCategoryException, c.load().errorMarkMask)
 }

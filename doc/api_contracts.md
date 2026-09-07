@@ -206,7 +206,8 @@ overflow:
   (see below) and nothing else.
 * `SpanEventRecorder.SetError()` records nothing on the event - no exception
   info, no annotation, no exception chain - but still marks the span failed
-  (`PSpan.err`, URL stat, scatter), subject to `Error.IgnoreErrors` as usual.
+  under the exception cause (`PSpan.err`, URL stat, scatter), subject to
+  `Span.IgnoreErrors` as usual.
   Overflow is a profiling limit, not a verdict on the transaction.
 * `SpanRecorder.SetError()` is unaffected: the span level error is recorded as
   normal.
@@ -276,6 +277,17 @@ framework plugins do this for you where the framework exposes the pattern.
   the transaction with it** (`PSpan.err`, the URL stat failed histogram and the
   scatter failure point), as the Java agent does; the optional name groups
   errors in the UI and is subject to rule 8.
+* `PSpan.err` is a **bitmask of causes**, not a flag: `ErrorCategoryUnknown`
+  (1), `ErrorCategoryException` (2), `ErrorCategoryHttpStatus` (4) and
+  `ErrorCategorySql` (8), OR-ed together as the Java agent's
+  `Shared.maskErrorCode` accumulates them, so a request that threw and
+  returned 5xx reports 6. Both `SetError` forms record the exception cause, a
+  status in `Http.Server.StatusCodeErrors` records the http-status cause and
+  the `SQL.ErrorCount` limit records the sql cause. Read a failure as
+  `err != 0`, never `err == 1`. `Span.ErrorMark` and `Span.ErrorMarkExclude` decide
+  which causes are allowed to fail a transaction at all; a disabled cause
+  records nothing in `err`, in the URL statistics or in the scatter chart,
+  while its annotation, exception info and SQL counting are unaffected.
 * An error recorded on a goroutine or async tracer (`SetError`, `SetFailure`,
   an event `SetError`, the `SQL.ErrorCount` limit) fails the **root** span:
   an async span goes out as a `PSpanChunk`, which has no `err` field, so the
@@ -299,8 +311,10 @@ framework plugins do this for you where the framework exposes the pattern.
   `LocalTraceRoot` (`DefaultBaseTraceFactory.java:139-145`).
 * A `nil` error is ignored by both, so the common
   `tracer.SpanEvent().SetError(err)` after a call needs no guard.
-* `SetFailure()` marks failure without an error message — the right call for an
-  HTTP status that counts as an error but carries no Go `error`.
+* `SetFailure(category...)` marks failure without an error message — the right
+  call for an HTTP status that counts as an error but carries no Go `error`.
+  The optional category is the cause recorded in `PSpan.err`, defaulting to
+  `ErrorCategoryUnknown`; only the first one given is used.
 * Call-stack capture (`Error.TraceCallStack`) prefers the stack the error
   carries itself, i.e. errors implementing `StackTrace() errors.StackTrace`
   such as `github.com/pkg/errors` errors. An error without one — a plain

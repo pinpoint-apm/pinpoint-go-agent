@@ -167,11 +167,13 @@ func Test_spanStatusErrIsSetOnlyBySetFailure(t *testing.T) {
 	span := defaultSpan(newTestAgent(defaultConfig()))
 
 	span.SetError(errors.New("application error"))
-	assert.Equal(t, int32(1), span.err.Load())
+	assert.Equal(t, int32(ErrorCategoryException), span.err.Load())
 	assert.Equal(t, int32(0), span.statusErr.Load())
 
+	// SetFailure names no category, so it adds ErrorCategoryUnknown to the
+	// exception bit already in the mask.
 	span.SetFailure()
-	assert.Equal(t, int32(1), span.err.Load())
+	assert.Equal(t, int32(ErrorCategoryException|ErrorCategoryUnknown), span.err.Load())
 	assert.Equal(t, int32(1), span.statusErr.Load())
 }
 

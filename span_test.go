@@ -967,7 +967,7 @@ func TestSpan_SetErrorDuringEventOverflow(t *testing.T) {
 		return
 	}
 	pspan := batch[0].GetSpan()
-	assert.Equal(t, int32(1), pspan.GetErr(), "Err")
+	assert.Equal(t, int32(ErrorCategoryException), pspan.GetErr(), "Err")
 	if assert.NotNil(t, pspan.GetExceptionInfo(), "ExceptionInfo") {
 		assert.Equal(t, "boom", pspan.GetExceptionInfo().GetStringValue().GetValue())
 	}
@@ -1519,12 +1519,12 @@ func TestOverflowSpanEvent_SetErrorMarksSpanFailed(t *testing.T) {
 		rules   []string
 		wantErr int32
 	}{
-		{"fails the span", nil, 1},
-		{"Error.IgnoreErrors keeps the span ok", []string{"*errors.errorString:boom"}, 0},
+		{"fails the span", nil, int32(ErrorCategoryException)},
+		{"Span.IgnoreErrors keeps the span ok", []string{"*errors.errorString:boom"}, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := NewConfig(WithAppName("overflowErrApp"), WithErrorIgnoreErrors(tt.rules...))
+			cfg, err := NewConfig(WithAppName("overflowErrApp"), WithSpanIgnoreErrors(tt.rules...))
 			assert.NoError(t, err)
 			cfg.Set(CfgSpanMaxCallStackDepth, 1) // clamped to minEventDepth
 			cfg.Set(CfgHttpUrlStatEnable, true)
@@ -1584,13 +1584,20 @@ func TestOverflowSpanEvent_SetErrorAfterEndSpanIsNoop(t *testing.T) {
 // root's (SpanMessageMapper: span.traceRoot.shared.errorCode -> err).
 func TestSpan_AsyncErrorFailsTheTraceRoot(t *testing.T) {
 	tests := []struct {
-		name   string
-		record func(async Tracer)
+		name string
+		// wantErr is the category the recorded failure carries: an error is an
+		// exception wherever it was recorded, and a SetFailure that names no
+		// category is the unknown cause.
+		wantErr int32
+		record  func(async Tracer)
 	}{
-		{"span SetError", func(a Tracer) { a.Span().SetError(errors.New("boom")) }},
-		{"span SetFailure", func(a Tracer) { a.Span().SetFailure() }},
-		{"span event SetError", func(a Tracer) { a.NewSpanEvent("work").SpanEvent().SetError(errors.New("boom")); a.EndSpanEvent() }},
-		{"nested async span event SetError", func(a Tracer) {
+		{"span SetError", int32(ErrorCategoryException), func(a Tracer) { a.Span().SetError(errors.New("boom")) }},
+		{"span SetFailure", int32(ErrorCategoryUnknown), func(a Tracer) { a.Span().SetFailure() }},
+		{"span event SetError", int32(ErrorCategoryException), func(a Tracer) {
+			a.NewSpanEvent("work").SpanEvent().SetError(errors.New("boom"))
+			a.EndSpanEvent()
+		}},
+		{"nested async span event SetError", int32(ErrorCategoryException), func(a Tracer) {
 			a.NewSpanEvent("work")
 			nested := a.NewGoroutineTracer()
 			nested.NewSpanEvent("deep").SpanEvent().SetError(errors.New("boom"))
@@ -1629,8 +1636,8 @@ func TestSpan_AsyncErrorFailsTheTraceRoot(t *testing.T) {
 			}
 			pspan := (&spanMessageBuilder{}).makePSpanMessage(chunk).GetSpan()
 			assert.NotNil(t, pspan, "root chunk converts to a PSpan")
-			assert.Equal(t, int32(1), pspan.Err, "PSpan.err")
-			assert.Equal(t, 1, (<-agent.urlStatChan).statusErr, "urlStat.statusErr")
+			assert.Equal(t, tt.wantErr, pspan.Err, "PSpan.err")
+			assert.Equal(t, int(tt.wantErr), (<-agent.urlStatChan).statusErr, "urlStat.statusErr")
 			// Only the flag travels; the message stays on the recording span.
 			assert.Equal(t, "", root.errorString, "root.errorString")
 		})
@@ -1669,7 +1676,7 @@ func TestSpan_AsyncErrorAfterRootEndIsNotReported(t *testing.T) {
 
 	assert.Equal(t, int32(0), pspan.Err, "PSpan.err was read before the late failure")
 	assert.Equal(t, 0, (<-agent.urlStatChan).statusErr, "urlStat.statusErr")
-	assert.Equal(t, int32(1), root.err.Load(), "the flag lands on the root, only too late")
+	assert.Equal(t, int32(ErrorCategoryException), root.err.Load(), "the flag lands on the root, only too late")
 }
 
 // SQL.ErrorCount adds up across the async spans of one trace and flags the root.
@@ -1687,7 +1694,7 @@ func TestSpan_AsyncSQLCountFailsTheTraceRoot(t *testing.T) {
 
 	assert.Equal(t, int32(3), root.sqlCount.Load(), "root sqlCount")
 	assert.Equal(t, int32(0), async.sqlCount.Load(), "async sqlCount")
-	assert.Equal(t, int32(1), root.err.Load(), "root err")
+	assert.Equal(t, int32(ErrorCategorySql), root.err.Load(), "root err")
 	assert.Equal(t, int32(0), async.err.Load(), "async err")
 }
 
@@ -1737,4 +1744,115 @@ func TestSpan_EndSpanEventOverflowRepanicsRecovered(t *testing.T) {
 	assert.Equal(t, "sentinel", got, "captured panic re-raised, not swallowed")
 	assert.Equal(t, int32(0), span.eventOverflow.Load(), "placeholder still consumed")
 	assert.Equal(t, "", span.overflowSe.destinationId.Load(), "destinationId cleared")
+}
+
+// ========== Error category (PSpan.err) ==========
+
+// PSpan.err is a bitmask of ErrorCategory, not a boolean: the collector reads
+// it to tell what failed the transaction. Java's default recorder is the
+// ConfigurableErrorRecorder (profiler.error.enable defaults to true), which ORs
+// errorCategory.getBitMask() into the shared error code; the flat 1 this agent
+// used to send comes only from SimpleErrorRecorder, i.e.
+// profiler.error.enable=false.
+func TestSpan_ErrorCategoryPerCause(t *testing.T) {
+	boom := errors.New("boom")
+
+	tests := []struct {
+		name    string
+		record  func(s *span)
+		wantErr int32
+	}{
+		{"an exception", func(s *span) { s.SetError(boom) },
+			int32(ErrorCategoryException)},
+		{"an exception on a span event", func(s *span) { newSpanEvent(s, "query").SetError(boom) },
+			int32(ErrorCategoryException)},
+		{"a failing http status", func(s *span) { s.SetFailure(ErrorCategoryHttpStatus) },
+			int32(ErrorCategoryHttpStatus)},
+		{"a failure whose cause is not named", func(s *span) { s.SetFailure() },
+			int32(ErrorCategoryUnknown)},
+		// The point of a mask over a flag: a request that threw and returned
+		// 5xx reports both causes, in either recording order.
+		{"an exception and a failing status", func(s *span) {
+			s.SetError(boom)
+			s.SetFailure(ErrorCategoryHttpStatus)
+		}, int32(ErrorCategoryException | ErrorCategoryHttpStatus)},
+		{"a failing status and an exception", func(s *span) {
+			s.SetFailure(ErrorCategoryHttpStatus)
+			s.SetError(boom)
+		}, int32(ErrorCategoryHttpStatus | ErrorCategoryException)},
+		// Re-marking a cause must neither double-count nor clear anything: err
+		// is an idempotent OR, as Java's maskErrorCode is.
+		{"the same causes twice", func(s *span) {
+			s.SetFailure(ErrorCategoryHttpStatus)
+			s.SetError(boom)
+			s.SetFailure(ErrorCategoryHttpStatus)
+			s.SetError(errors.New("again"))
+		}, int32(ErrorCategoryHttpStatus | ErrorCategoryException)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			span := defaultTestSpan()
+			tt.record(span)
+			assert.Equal(t, tt.wantErr, span.err.Load(), "span.err")
+		})
+	}
+}
+
+// Span.ErrorMarkExclude: a category outside the enabled set masks nothing at
+// all, so "a 5xx is not a transaction failure" becomes expressible without
+// giving up exception marking - Java applies the same test inside
+// ConfigurableErrorRecorder.recordError. The status annotation the plugin
+// records is untouched; only the verdict is dropped.
+func TestSpan_ErrorMarkExcludeLeavesAFailingStatusUnmarked(t *testing.T) {
+	cfg, err := NewConfig(WithAppName("markExcludeApp"), WithSpanErrorMarkExclude("http-status"))
+	require.NoError(t, err)
+	defer cfg.Close()
+	cfg.Set(CfgHttpUrlStatEnable, true)
+	agent := newTestAgent(cfg)
+	agent.urlStatChan = make(chan *urlStat, 1)
+	span := newSampledSpan(agent, "op", "/rpc")
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+
+	span.SetFailure(ErrorCategoryHttpStatus)
+	assert.Equal(t, int32(0), span.err.Load(), "an excluded cause must not fail the transaction")
+	// The URL statistics failure flag is driven by the same verdict, or the
+	// scatter chart and the URL failed histogram would disagree about the same
+	// request.
+	assert.Equal(t, int32(0), span.statusErr.Load(), "statusErr")
+
+	span.EndSpan()
+	assert.Equal(t, 0, (<-agent.urlStatChan).statusErr, "urlStat.statusErr")
+}
+
+// Excluding one cause must not disarm the others.
+func TestSpan_ErrorMarkExcludeStillMarksTheOtherCauses(t *testing.T) {
+	cfg, err := NewConfig(WithAppName("markExcludeApp"), WithSpanErrorMarkExclude("http-status"))
+	require.NoError(t, err)
+	defer cfg.Close()
+	span := testSpanWithConfig(cfg)
+
+	span.SetFailure(ErrorCategoryHttpStatus)
+	span.SetError(errors.New("boom"))
+
+	assert.Equal(t, int32(ErrorCategoryException), span.err.Load(), "only the excluded cause is dropped")
+}
+
+// An unsampled request feeds the same URL statistics, so an excluded cause has
+// to leave it a success there too - otherwise the URL failed histogram would
+// depend on the sampling decision.
+func TestNoopSpan_ErrorMarkExcludeKeepsTheUnsampledRequestSuccessful(t *testing.T) {
+	cfg, err := NewConfig(WithAppName("markExcludeApp"),
+		WithSpanErrorMarkExclude("http-status", "exception"))
+	require.NoError(t, err)
+	defer cfg.Close()
+	span := newUnSampledSpan(newTestAgent(cfg), "/rpc")
+	defer span.EndSpan()
+
+	span.SetFailure(ErrorCategoryHttpStatus)
+	span.SetError(errors.New("boom"))
+	assert.Equal(t, int32(0), span.statusErr.Load(), "both causes are excluded")
+
+	// The unknown cause is never excluded, so it still fails the request.
+	span.SetFailure()
+	assert.Equal(t, int32(1), span.statusErr.Load(), "statusErr")
 }

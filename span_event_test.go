@@ -248,13 +248,13 @@ func Test_spanEvent_SetSQLCountMarksFailedSpan(t *testing.T) {
 	}{
 		{"disabled", 0, "SELECT 1", 5, false, 0, 0},
 		{"below limit", 3, "SELECT 1", 2, false, 0, 2},
-		{"at limit", 3, "SELECT 1", 3, false, 1, 3},
-		{"above limit", 3, "SELECT 1", 5, false, 1, 3},
+		{"at limit", 3, "SELECT 1", 3, false, int32(ErrorCategorySql), 3},
+		{"above limit", 3, "SELECT 1", 5, false, int32(ErrorCategorySql), 3},
 		{"negative limit", -1, "SELECT 1", 5, false, 0, 0},
 		// 1 is the smallest threshold that still counts: the first query marks.
 		// Java reaches the same point with a non-positive count, which this
 		// option cannot express because 0 means off (doc/config.md SQL.ErrorCount).
-		{"limit one", 1, "SELECT 1", 2, false, 1, 1},
+		{"limit one", 1, "SELECT 1", 2, false, int32(ErrorCategorySql), 1},
 		// commit and rollback events reach SetSQL with no sql at all
 		{"empty sql", 3, "", 5, false, 0, 0},
 		// the span is already on its way to the sender goroutine
@@ -288,7 +288,7 @@ func Test_spanEvent_SetSQLCountSkipsFailedSpan(t *testing.T) {
 	assert.Equal(t, int32(1), sp.sqlCount.Load(), "sqlCount")
 
 	newSpanEvent(sp, "query").SetError(errors.New("TEST_ERROR"))
-	require.Equal(t, int32(1), sp.err.Load(), "span err")
+	require.Equal(t, int32(ErrorCategoryException), sp.err.Load(), "span err")
 
 	for i := 0; i < 5; i++ {
 		newSpanEvent(sp, "query").SetSQL("SELECT 1", "")
@@ -310,7 +310,7 @@ func Test_spanEvent_SetSQLCountReloadsDynamically(t *testing.T) {
 	cfg.Set(CfgSQLErrorCount, 0)
 
 	newSpanEvent(pinned, "query").SetSQL("SELECT 1", "")
-	assert.Equal(t, int32(1), pinned.err.Load(), "a live span must keep its pinned limit")
+	assert.Equal(t, int32(ErrorCategorySql), pinned.err.Load(), "a live span must keep its pinned limit")
 
 	reloaded := defaultSpan(agent)
 	for i := 0; i < 5; i++ {
@@ -396,7 +396,7 @@ func Test_spanEvent_SetErrorRateLimitsExceptionChain(t *testing.T) {
 			se := newSpanEvent(span, "query")
 			se.SetError(errors.New(tt.name))
 
-			assert.Equal(t, int32(1), span.err.Load(), "span failure marking")
+			assert.Equal(t, int32(ErrorCategoryException), span.err.Load(), "span failure marking")
 			if tt.sampled {
 				assert.NotZero(t, se.exceptionId, "exceptionId")
 				require.Len(t, se.annotations.values, 1)
@@ -421,7 +421,7 @@ func Test_spanEvent_SetErrorFailsTransaction(t *testing.T) {
 	span.NewSpanEvent("query")
 	span.SpanEvent().SetError(errors.New("db error"))
 	span.EndSpanEvent()
-	assert.Equal(t, int32(1), span.err.Load())
+	assert.Equal(t, int32(ErrorCategoryException), span.err.Load())
 	assert.Equal(t, int32(0), span.statusErr.Load(), "statusErr stays reserved for SetFailure")
 
 	span.EndSpan()
@@ -430,7 +430,7 @@ func Test_spanEvent_SetErrorFailsTransaction(t *testing.T) {
 	require.True(t, ok)
 	builder := acquireSpanMessageBuilder()
 	defer releaseSpanMessageBuilder(builder)
-	assert.Equal(t, int32(1), builder.makePSpan(chunk).GetSpan().GetErr())
+	assert.Equal(t, int32(ErrorCategoryException), builder.makePSpan(chunk).GetSpan().GetErr())
 
 	select {
 	case stat := <-agent.urlStatChan:
@@ -448,11 +448,11 @@ func Test_spanEvent_SetErrorFailsTransaction(t *testing.T) {
 	assert.Equal(t, "db error", chunk.eventChunk[0].errorString)
 }
 
-// Error.IgnoreErrors: a matched error keeps its exception info but does not
+// Span.IgnoreErrors: a matched error keeps its exception info but does not
 // fail the span (Java profiler.ignore-error-handler).
 func Test_SetError_IgnoreErrors(t *testing.T) {
 	newConfig := func(rules ...string) *Config {
-		c, err := NewConfig(WithAppName("ignoreErrApp"), WithErrorIgnoreErrors(rules...))
+		c, err := NewConfig(WithAppName("ignoreErrApp"), WithSpanIgnoreErrors(rules...))
 		assert.NoError(t, err)
 		return c
 	}
@@ -486,14 +486,14 @@ func Test_SetError_IgnoreErrors(t *testing.T) {
 			}
 			assert.Equal(t, int32(1), se.errorFuncId, "errorFuncId")
 			assert.Equal(t, tt.err.Error(), se.errorString, "errorString")
-			assert.Equal(t, !tt.ignored, span.err.Load() == 1, "span.err from event")
+			assert.Equal(t, !tt.ignored, span.err.Load() == int32(ErrorCategoryException), "span.err from event")
 
 			// span.SetError records under the error type name.
 			if tt.errName == "" {
 				span = testSpanWithConfig(newConfig(tt.rules...))
 				span.SetError(tt.err)
 				assert.Equal(t, tt.err.Error(), span.errorString, "span.errorString")
-				assert.Equal(t, !tt.ignored, span.err.Load() == 1, "span.err")
+				assert.Equal(t, !tt.ignored, span.err.Load() == int32(ErrorCategoryException), "span.err")
 			}
 		})
 	}
@@ -533,5 +533,30 @@ func TestSpanEvent_ErrSetterConcurrentWithSenderIsRaceFree(t *testing.T) {
 	}()
 	wg.Wait()
 
-	assert.Equal(t, int32(1), span.err.Load(), "span marked failed")
+	// The first query reaches the limit of 1 and every event records an error,
+	// so both causes are OR-ed into the mask.
+	assert.Equal(t, int32(ErrorCategorySql|ErrorCategoryException), span.err.Load(), "span marked failed")
+}
+
+// Span.ErrorMarkExclude drops the verdict, not the counting: Java applies the
+// enabled-category filter inside the recorder, downstream of
+// DefaultSqlCountService, so an operator who does not want an N+1 pattern to
+// fail a transaction can drop that one cause and keep every other failure.
+func Test_spanEvent_SetSQLCountExcludedCategoryLeavesTheTransactionClean(t *testing.T) {
+	cfg, err := NewConfig(WithAppName("sqlMarkExcludeApp"), WithSpanErrorMarkExclude("sql"))
+	require.NoError(t, err)
+	defer cfg.Close()
+	cfg.Set(CfgSQLErrorCount, 2)
+	sp := testSpanWithConfig(cfg)
+
+	for i := 0; i < 20; i++ {
+		newSpanEvent(sp, "query").SetSQL("SELECT 1", "")
+	}
+
+	assert.Equal(t, int32(0), sp.err.Load(), "an excluded sql cause must not fail the transaction")
+	assert.Equal(t, int32(20), sp.sqlCount.Load(), "the statements are still counted")
+
+	// An exception is a different cause, and still fails the transaction.
+	newSpanEvent(sp, "query").SetError(errors.New("TEST_ERROR"))
+	assert.Equal(t, int32(ErrorCategoryException), sp.err.Load(), "span err")
 }

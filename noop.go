@@ -175,9 +175,11 @@ func (span *noopSpan) SpanEvent() SpanEventRecorder {
 // SetError fails the URL stat of an unsampled request, as the Java agent's
 // DisableSpanRecorder.recordException marks the span level (the span event
 // level, DisableSpanEventRecorder, stays a no-op). Only the failure flag is
-// kept: the span itself is never sent. Error.IgnoreErrors applies here too, or
+// kept: the span itself is never sent. Span.IgnoreErrors applies here too, or
 // an excluded error would fail the URL stat of unsampled requests while
-// sparing sampled ones.
+// sparing sampled ones, and Span.ErrorMark / Span.ErrorMarkExclude apply for
+// the same reason - the category is ErrorCategoryException, as on a sampled
+// span.
 func (span *noopSpan) SetError(e error, errorName ...string) {
 	root := span.root()
 	if e == nil || !root.withStats.Load() {
@@ -187,19 +189,24 @@ func (span *noopSpan) SetError(e error, errorName ...string) {
 	if len(errorName) > 0 {
 		errName = errorName[0]
 	}
-	if !root.cfg.ignoreError(e, errName) {
+	if !root.cfg.ignoreError(e, errName) && root.cfg.marksError(ErrorCategoryException) {
 		root.statusErr.Store(1)
 	}
 }
 
-func (span *noopSpan) SetFailure() {
+// SetFailure fails the URL stat of an unsampled request under the category its
+// caller names, ErrorCategoryUnknown when it names none. A category
+// Span.ErrorMark or Span.ErrorMarkExclude disabled leaves the request a
+// success, as it does on a sampled span: the two paths feed the same URL
+// statistics.
+func (span *noopSpan) SetFailure(category ...ErrorCategory) {
 	// Write only on per-request unsampled spans. The defaultNoopSpan singleton
 	// is shared by every tracer-less request, so writing its field here is a
 	// data race between concurrent handlers (e.g. two 5xx responses) - and its
 	// statusErr is never read anyway. An async child of the singleton resolves
 	// to the singleton here, so that guard covers it too.
 	root := span.root()
-	if root.withStats.Load() {
+	if root.withStats.Load() && root.cfg.marksError(firstErrorCategory(category)) {
 		root.statusErr.Store(1)
 	}
 }

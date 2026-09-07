@@ -92,6 +92,40 @@ type Tracer interface {
 	AsyncSpanId() string
 }
 
+// ErrorCategory is the cause that failed a transaction, carried as one bit of
+// PSpan.err. The bit values are a wire contract, not an internal detail: the
+// collector reads them to tell an exception apart from a failing HTTP status,
+// so they must keep matching the Java agent's common/trace/ErrorCategory and
+// must never be renumbered.
+//
+// PSpan.err is the OR of every category recorded on the transaction, as Java's
+// Shared.maskErrorCode accumulates them (DefaultShared.java:69-72), so a
+// request that threw and returned 5xx reports both causes. Span.ErrorMark and
+// Span.ErrorMarkExclude decide which categories are allowed to fail a
+// transaction at all.
+type ErrorCategory int32
+
+const (
+	// ErrorCategoryUnknown is a failure with no cause attached: what
+	// SetFailure records when its caller names no category, and what an agent
+	// that does not classify at all reports (the Java agent's
+	// SimpleErrorRecorder, used when profiler.error.enable=false). It is
+	// always enabled, whatever Span.ErrorMark and Span.ErrorMarkExclude say.
+	ErrorCategoryUnknown ErrorCategory = 1 << 0
+
+	// ErrorCategoryException is an error recorded through SetError, on the
+	// span or on any of its events.
+	ErrorCategoryException ErrorCategory = 1 << 1
+
+	// ErrorCategoryHttpStatus is a response status the operator counts as a
+	// failure (Http.Server.StatusCodeErrors).
+	ErrorCategoryHttpStatus ErrorCategory = 1 << 2
+
+	// ErrorCategorySql is the SQL.ErrorCount limit: a transaction that ran
+	// that many statements.
+	ErrorCategorySql ErrorCategory = 1 << 3
+)
+
 // SpanRecorder records the collected data in the fields of Span.
 type SpanRecorder interface {
 	// SetServiceType sets the type of service.
@@ -103,7 +137,9 @@ type SpanRecorder interface {
 	SetError(e error, errorName ...string)
 
 	// SetFailure indicate that operation has failed.
-	SetFailure()
+	// The optional category names the cause reported in PSpan.err, defaulting
+	// to ErrorCategoryUnknown; only the first one given is used.
+	SetFailure(category ...ErrorCategory)
 
 	// SetRpcName sets the name of RPC.
 	// This value is displayed as the path of the span on the pinpoint web screen.

@@ -554,14 +554,19 @@ func TestRecordHttpServerResponse(t *testing.T) {
 	usePluginConfig(t, WithHttpServerStatusCodeError([]string{"5xx", "302"}))
 
 	tests := []struct {
-		status      string
-		code        int
-		wantFailure bool
+		status string
+		code   int
+		// wantErr is the whole PSpan.err mask: an error class is recorded under
+		// the http-status category, as Java's HttpStatusCodeRecorder records
+		// ErrorCategory.HTTP_STATUS, and nothing else fails the span here.
+		wantErr int
 	}{
 		{status: "200 is not an error", code: http.StatusOK},
 		{status: "404 is not configured as an error", code: http.StatusNotFound},
-		{status: "500 falls in the configured 5xx class", code: http.StatusInternalServerError, wantFailure: true},
-		{status: "302 is configured on its own", code: http.StatusFound, wantFailure: true},
+		{status: "500 falls in the configured 5xx class", code: http.StatusInternalServerError,
+			wantErr: int(pinpoint.ErrorCategoryHttpStatus)},
+		{status: "302 is configured on its own", code: http.StatusFound,
+			wantErr: int(pinpoint.ErrorCategoryHttpStatus)},
 		{status: "301 is not 302", code: http.StatusMovedPermanently},
 	}
 
@@ -576,12 +581,34 @@ func TestRecordHttpServerResponse(t *testing.T) {
 
 			require.NotNil(t, tracer)
 			span := spanOf(t, tracer)
-			assert.Equal(t, tt.wantFailure, span.Err != 0,
-				"status %d should%s fail the span", tt.code, map[bool]string{true: "", false: " not"}[tt.wantFailure])
+			assert.Equal(t, tt.wantErr, span.Err,
+				"status %d should%s fail the span", tt.code, map[bool]string{true: "", false: " not"}[tt.wantErr != 0])
 			assert.Contains(t, span.annotationInts(pinpoint.AnnotationHttpStatusCode), tt.code,
 				"the status code must be annotated on the span")
 		})
 	}
+}
+
+// Span.ErrorMarkExclude drops one cause of failure and nothing else: a 5xx is
+// still annotated and still classified as an error class here, it just does
+// not turn the transaction red. Java expresses the same thing with
+// profiler.error.mark.exclude.
+func TestRecordHttpServerResponse_ErrorMarkExcludeKeepsA5xxSuccessful(t *testing.T) {
+	usePluginConfig(t, WithHttpServerStatusCodeError([]string{"5xx"}),
+		pinpoint.WithSpanErrorMarkExclude("http-status"))
+
+	var tracer pinpoint.Tracer
+	h := WrapHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tracer = pinpoint.TracerFromRequestContext(r)
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	h(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+
+	require.NotNil(t, tracer)
+	span := spanOf(t, tracer)
+	assert.Equal(t, 0, span.Err, "an excluded cause must not fail the span")
+	assert.Contains(t, span.annotationInts(pinpoint.AnnotationHttpStatusCode),
+		http.StatusInternalServerError, "the status code is still annotated")
 }
 
 // A recorded response header is read off the writer the handler wrote to, so

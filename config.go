@@ -72,6 +72,9 @@ const (
 	CfgSpanEventChunkSize             = "Span.EventChunkSize"
 	CfgSpanMaxCallStackDepth          = "Span.MaxCallStackDepth"
 	CfgSpanMaxCallStackSequence       = "Span.MaxCallStackSequence"
+	CfgSpanIgnoreErrors               = "Span.IgnoreErrors"
+	CfgSpanErrorMark                  = "Span.ErrorMark"
+	CfgSpanErrorMarkExclude           = "Span.ErrorMarkExclude"
 	CfgStatCollectInterval            = "Stat.CollectInterval"
 	CfgStatBatchCount                 = "Stat.BatchCount"
 	CfgStatQueueSize                  = "Stat.QueueSize"
@@ -95,7 +98,6 @@ const (
 	CfgHttpUrlStatWithMethod          = "Http.UrlStat.WithMethod"
 	CfgErrorTraceCallStack            = "Error.TraceCallStack"
 	CfgErrorCallStackDepth            = "Error.CallStackDepth"
-	CfgErrorIgnoreErrors              = "Error.IgnoreErrors"
 	CfgErrorNewThroughput             = "Error.NewThroughput"
 	CfgErrorMaxChainDepth             = "Error.MaxChainDepth"
 	CfgUIDVersion                     = "Uid.Version"
@@ -224,6 +226,9 @@ func initConfig() {
 	AddConfig(CfgSpanEventChunkSize, CfgInt, defaultEventChunkSize, true)
 	AddConfig(CfgSpanMaxCallStackDepth, CfgInt, defaultEventDepth, true)
 	AddConfig(CfgSpanMaxCallStackSequence, CfgInt, defaultEventSequence, true)
+	AddConfig(CfgSpanIgnoreErrors, CfgStringSlice, []string{}, true)
+	AddConfig(CfgSpanErrorMark, CfgStringSlice, []string{}, true)
+	AddConfig(CfgSpanErrorMarkExclude, CfgStringSlice, []string{}, true)
 	AddConfig(CfgStatCollectInterval, CfgInt, 5000, false)
 	AddConfig(CfgStatBatchCount, CfgInt, 6, false)
 	AddConfig(CfgStatQueueSize, CfgInt, defaultQueueSize, false)
@@ -247,7 +252,6 @@ func initConfig() {
 	AddConfig(CfgHttpUrlStatWithMethod, CfgBool, false, true)
 	AddConfig(CfgErrorTraceCallStack, CfgBool, false, true)
 	AddConfig(CfgErrorCallStackDepth, CfgInt, defaultErrorCallStackDepth, true)
-	AddConfig(CfgErrorIgnoreErrors, CfgStringSlice, []string{}, true)
 	AddConfig(CfgErrorNewThroughput, CfgInt, defaultErrorNewThroughput, true)
 	AddConfig(CfgErrorMaxChainDepth, CfgInt, defaultErrorMaxChainDepth, true)
 	AddConfig(CfgUIDVersion, CfgString, "v3", false)
@@ -341,11 +345,19 @@ type configSnapshot struct {
 	spanMaxEventSequence int32             // CfgSpanMaxCallStackSequence
 	errorTraceCallStack  bool              // CfgErrorTraceCallStack
 	errorCallStackDepth  int               // CfgErrorCallStackDepth
-	errorIgnoreRules     []ignoreErrorRule // CfgErrorIgnoreErrors
+	errorIgnoreRules     []ignoreErrorRule // CfgSpanIgnoreErrors
 	errorMaxChainDepth   int               // CfgErrorMaxChainDepth
+	// errorMarkMask is the set of ErrorCategory bits allowed to fail a
+	// transaction, resolved from CfgSpanErrorMark and
+	// CfgSpanErrorMarkExclude. Zero means "unset" and reads as every
+	// category: a resolved mask always carries ErrorCategoryUnknown, so zero
+	// can only come from a snapshot built by hand instead of by NewConfig
+	// (emptyConfigSnapshot, tests), and every category is what Java's unset
+	// profiler.error.mark gives.
+	errorMarkMask ErrorCategory // CfgSpanErrorMark, CfgSpanErrorMarkExclude
 }
 
-// ignoreErrorRule is one parsed Error.IgnoreErrors entry, "<type>:<message>";
+// ignoreErrorRule is one parsed Span.IgnoreErrors entry, "<type>:<message>";
 // an empty type or message matches anything. It is the Go counterpart of the
 // Java agent's profiler.ignore-error-handler.<name>.class-name /
 // .exception-message.contains descriptor pair.
@@ -367,9 +379,85 @@ func parseIgnoreErrorRules(entries []string) []ignoreErrorRule {
 	return rules
 }
 
+// allErrorCategories is every cause a transaction can fail on, which is what
+// an unset Span.ErrorMark enables - Java's EnumSet.allOf(ErrorCategory.class)
+// fallback in ConfigurableErrorRecorderFactory.getEnabledTypes.
+const allErrorCategories = ErrorCategoryUnknown | ErrorCategoryException |
+	ErrorCategoryHttpStatus | ErrorCategorySql
+
+// errorCategoryBit maps one Span.ErrorMark / Span.ErrorMarkExclude entry to
+// its bit, 0 for an unrecognised one. The spellings are Java's
+// (ConfigurableErrorRecorderFactory.toCategorySet), matched
+// case-insensitively. ErrorCategoryUnknown has no spelling on purpose: it is
+// never selectable, because it is always on.
+func errorCategoryBit(token string) ErrorCategory {
+	switch strings.ToLower(token) {
+	case "exception":
+		return ErrorCategoryException
+	case "http-status":
+		return ErrorCategoryHttpStatus
+	case "sql":
+		return ErrorCategorySql
+	}
+	return 0
+}
+
+// toErrorCategoryMask folds a category list into a mask. Each entry is split
+// on commas as well, so Java's single comma-separated string works verbatim
+// in a config file list too. An empty entry is skipped silently (Java's
+// case ""); anything else unrecognised is a typo worth naming, since it
+// silently widens or narrows which errors fail a transaction.
+func toErrorCategoryMask(entries []string, cfgName string) ErrorCategory {
+	var mask ErrorCategory
+	for _, entry := range entries {
+		for _, token := range strings.Split(entry, ",") {
+			token = strings.TrimSpace(token)
+			if token == "" {
+				continue
+			}
+			if bit := errorCategoryBit(token); bit != 0 {
+				mask |= bit
+			} else {
+				Log("config").Warnf("%s = %q is not a valid error category, ignoring it", cfgName, token)
+			}
+		}
+	}
+	return mask
+}
+
+// parseErrorMarkMask resolves Span.ErrorMark and Span.ErrorMarkExclude into
+// the mask of categories allowed to fail a transaction, the Go counterpart of
+// Java's ConfigurableErrorRecorderFactory.getEnabledTypes. An empty mark
+// enables every category, the way Java's unset profiler.error.mark does, and
+// the exclude list is then removed from it.
+func parseErrorMarkMask(mark []string, exclude []string) ErrorCategory {
+	marked := allErrorCategories
+	if len(mark) > 0 {
+		marked = toErrorCategoryMask(mark, CfgSpanErrorMark)
+	}
+	excluded := toErrorCategoryMask(exclude, CfgSpanErrorMarkExclude)
+	// ErrorCategoryUnknown survives every exclusion, exactly as Java re-adds
+	// it after removing the excluded ones (getEnabledTypes). It is the
+	// category of a failure whose cause was not classified, so excluding it
+	// would amount to "never fail a transaction" - which is not what either
+	// key is for.
+	return (marked &^ excluded) | ErrorCategoryUnknown
+}
+
+// marksError reports whether category is allowed to fail a transaction, i.e.
+// whether Span.ErrorMark and Span.ErrorMarkExclude left it enabled. Java
+// applies the same test inside ConfigurableErrorRecorder.recordError, so an
+// excluded category records nothing at all - not even ErrorCategoryUnknown.
+func (snapshot *configSnapshot) marksError(category ErrorCategory) bool {
+	if snapshot.errorMarkMask == 0 {
+		return true // unset, see the field comment
+	}
+	return snapshot.errorMarkMask&category != 0
+}
+
 // ignoreError reports whether err, or any error it wraps (the nextCause chain,
 // Cause() before Unwrap(), as the Java NestedErrorHandler walks getCause),
-// matches an Error.IgnoreErrors rule. The walk stops after maxCauserDepth
+// matches a Span.IgnoreErrors rule. The walk stops after maxCauserDepth
 // links: the chain comes from a user error whose Unwrap() may return itself or
 // an ancestor, and this runs on the request goroutine inside SetError. Such an error is still recorded as exception info
 // but does not mark the span as failed. The type part matches the dynamic type
@@ -1116,8 +1204,10 @@ func (config *Config) publish() {
 		spanMaxEventSequence: cast.ToInt32(values[CfgSpanMaxCallStackSequence]),
 		errorTraceCallStack:  cast.ToBool(values[CfgErrorTraceCallStack]),
 		errorCallStackDepth:  cast.ToInt(values[CfgErrorCallStackDepth]),
-		errorIgnoreRules:     parseIgnoreErrorRules(cast.ToStringSlice(values[CfgErrorIgnoreErrors])),
+		errorIgnoreRules:     parseIgnoreErrorRules(cast.ToStringSlice(values[CfgSpanIgnoreErrors])),
 		errorMaxChainDepth:   cast.ToInt(values[CfgErrorMaxChainDepth]),
+		errorMarkMask: parseErrorMarkMask(cast.ToStringSlice(values[CfgSpanErrorMark]),
+			cast.ToStringSlice(values[CfgSpanErrorMarkExclude])),
 	}
 	snapshot.sampler = newTraceSampler(config.load(), values)
 	snapshot.newExceptionLimiter = newExceptionLimiter(config.load(), values)
@@ -1740,6 +1830,35 @@ func WithSpanMaxCallStackSequence(seq int) ConfigOption {
 	}
 }
 
+// WithSpanIgnoreErrors sets the errors that are recorded as exception info but
+// do not mark the span as failed. Each entry is "<type>:<message substring>";
+// either part may be empty.
+func WithSpanIgnoreErrors(rules ...string) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgSpanIgnoreErrors].value = rules
+	}
+}
+
+// WithSpanErrorMark sets which error causes are allowed to fail a transaction.
+// Each entry is one of "exception", "http-status" and "sql", or several of
+// them comma separated; no entries at all means every cause. The unknown
+// cause - a failure recorded with no category, as SetFailure does - is always
+// marked, whatever this option and WithSpanErrorMarkExclude say.
+func WithSpanErrorMark(categories ...string) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgSpanErrorMark].value = categories
+	}
+}
+
+// WithSpanErrorMarkExclude sets the error causes that must not fail a
+// transaction, removed from whatever WithSpanErrorMark allows. The entries are
+// spelled as in WithSpanErrorMark.
+func WithSpanErrorMarkExclude(categories ...string) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgSpanErrorMarkExclude].value = categories
+	}
+}
+
 // WithHttpUrlStatEnable enables the agent collects the HTTP URL statistics.
 func WithHttpUrlStatEnable(enable bool) ConfigOption {
 	return func(c *Config) {
@@ -1781,15 +1900,6 @@ func WithHttpUrlStatWithMethod(withMethod bool) ConfigOption {
 func WithErrorTraceCallStack(trace bool) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgErrorTraceCallStack].value = trace
-	}
-}
-
-// WithErrorIgnoreErrors sets the errors that are recorded as exception info but
-// do not mark the span as failed. Each entry is "<type>:<message substring>";
-// either part may be empty.
-func WithErrorIgnoreErrors(rules ...string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgErrorIgnoreErrors].value = rules
 	}
 }
 

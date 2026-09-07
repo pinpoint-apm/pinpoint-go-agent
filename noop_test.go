@@ -67,7 +67,7 @@ func Test_noopSpan_Inject_SingletonNotMutated(t *testing.T) {
 
 // An unsampled span is a real transaction, so a recorded error must fail its
 // URL stat as Java's DisableSpanRecorder.recordException does; otherwise the
-// failure rate of low-sampled traffic is biased toward zero. Error.IgnoreErrors
+// failure rate of low-sampled traffic is biased toward zero. Span.IgnoreErrors
 // applies as on the sampled path.
 func Test_noopSpan_SetError_FailsUrlStat(t *testing.T) {
 	tests := []struct {
@@ -86,7 +86,7 @@ func Test_noopSpan_SetError_FailsUrlStat(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c, err := NewConfig(WithAppName("unsampledErrApp"), WithHttpUrlStatEnable(true), WithErrorIgnoreErrors(tt.rules...))
+			c, err := NewConfig(WithAppName("unsampledErrApp"), WithHttpUrlStatEnable(true), WithSpanIgnoreErrors(tt.rules...))
 			require.NoError(t, err)
 			a := newTestAgent(c)
 			a.urlStatChan = make(chan *urlStat, 1)
@@ -177,11 +177,11 @@ func Test_noopSpan_AsyncChild_FailsRootUrlStat(t *testing.T) {
 	}
 }
 
-// Error.IgnoreErrors must apply to a child exactly as it does to the root -
+// Span.IgnoreErrors must apply to a child exactly as it does to the root -
 // the child carries no config of its own, so it reads the root's.
 func Test_noopSpan_AsyncChild_IgnoreErrors(t *testing.T) {
 	c, err := NewConfig(WithAppName("unsampledAsyncIgnoreApp"), WithHttpUrlStatEnable(true),
-		WithErrorIgnoreErrors("*errors.errorString:boom"))
+		WithSpanIgnoreErrors("*errors.errorString:boom"))
 	require.NoError(t, err)
 	a := newTestAgent(c)
 	a.urlStatChan = make(chan *urlStat, 1)

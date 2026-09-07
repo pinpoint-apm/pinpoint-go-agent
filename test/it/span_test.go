@@ -116,7 +116,9 @@ func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
 	// A root span describes no parent: PParentInfo is omitted, as the Java and
 	// C++ agents send it, and the acceptor host set on it goes nowhere.
 	assert.Nil(t, rootWire.GetAcceptEvent().GetParentInfo())
-	assert.Equal(t, int32(1), rootWire.GetErr())
+	// The transaction failed on a recorded error, so PSpan.err carries the
+	// exception category and nothing else.
+	assert.Equal(t, int32(pinpoint.ErrorCategoryException), rootWire.GetErr())
 	assert.Equal(t, int32(pinpoint.Logged), rootWire.GetLoggingTransactionInfo())
 	require.NotNil(t, rootWire.GetExceptionInfo())
 	assert.Equal(t, "upstream unavailable", rootWire.GetExceptionInfo().GetStringValue().GetValue())

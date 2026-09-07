@@ -63,9 +63,10 @@ func (se *overflowSpanEvent) SetDestination(id string) {
 // annotation, no exception chain - but the failure still reaches the span, so
 // the transaction is not reported as a success because it failed past the
 // profiling depth limit. Java's DefaultTrace.traceBlockBegin0 hands out a real
-// recorder during overflow and its recordException marks the trace root; the
-// C++ agent's DisabledSpanEvent::SetError does the same with markSpanError.
-// The Error.IgnoreErrors filter applies exactly as on a recorded event.
+// recorder during overflow and its recordException marks the trace root with
+// ErrorCategory.EXCEPTION like any other event; the C++ agent's
+// DisabledSpanEvent::SetError does the same with markSpanError.
+// The Span.IgnoreErrors filter applies exactly as on a recorded event.
 func (se *overflowSpanEvent) SetError(e error, errorName ...string) {
 	span := se.parent
 	if e == nil || span.finished.Load() {
@@ -76,7 +77,7 @@ func (se *overflowSpanEvent) SetError(e error, errorName ...string) {
 		errName = errorName[0]
 	}
 	if !span.cfg.ignoreError(e, errName) {
-		span.root().err.Store(1)
+		span.markSpanError(ErrorCategoryException)
 	}
 }
 
@@ -134,7 +135,11 @@ type span struct {
 	operationName string
 	flags         int
 	// err/statusErr are atomic for the reason above: an event setter run from
-	// another goroutine of the call stack races the sender reading them.
+	// another goroutine of the call stack races the sender reading them. err
+	// accumulates its ErrorCategory bits with an atomic OR (markSpanError),
+	// which needs nothing more than that - the mask carries no other state
+	// with it - and is the operation Java masks its error code with
+	// (DefaultShared.maskErrorCode: getAndUpdate(x -> x | mask)).
 	err             atomic.Int32
 	statusErr       atomic.Int32
 	errorFuncId     int32
@@ -164,7 +169,7 @@ type span struct {
 	// eventOverflowLog, so a dropped exception entry is never silent.
 	errorChainDropLog atomic.Bool
 	finished          atomic.Bool
-	// traceRoot is the span whose PSpan carries the failure flag, nil when this
+	// traceRoot is the span whose PSpan carries the error mask, nil when this
 	// span is the root itself. An async span is serialized as a PSpanChunk,
 	// which has no err field, so its failure must land on the root - Java's
 	// ChildTrace shares its parent's TraceRoot for the same reason
@@ -174,12 +179,45 @@ type span struct {
 	traceRoot *span
 }
 
-// root returns the span carrying the trace-wide failure flags.
+// root returns the span carrying the trace-wide error mask and failure flag.
 func (span *span) root() *span {
 	if span.traceRoot != nil {
 		return span.traceRoot
 	}
 	return span
+}
+
+// firstErrorCategory picks the category a SetFailure call named, defaulting to
+// ErrorCategoryUnknown - a failure with no cause attached, which is what
+// Java's SimpleErrorRecorder reports for every error it records.
+func firstErrorCategory(category []ErrorCategory) ErrorCategory {
+	if len(category) > 0 {
+		return category[0]
+	}
+	return ErrorCategoryUnknown
+}
+
+// markSpanError ORs one ErrorCategory bit into the root's error mask and
+// reports whether the category was marked at all. It is the single point that
+// writes span.err: the span level SetError, an event's SetError, a failing
+// HTTP status and the SQL.ErrorCount limit all route here, each with its own
+// cause, so a transaction that failed for several reasons reports all of them
+// - Java ORs every recorded error into the shared error code the same way
+// (Shared.maskErrorCode, DefaultShared.java:69-72).
+//
+// A category the operator removed with Span.ErrorMark or
+// Span.ErrorMarkExclude marks nothing at all, not even
+// ErrorCategoryUnknown, which is what Java's
+// ConfigurableErrorRecorder.recordError does: the mask is applied only when
+// the category is in the enabled set. The false return says exactly that, so
+// a caller with more than the mask to write (SetFailure and its URL stat
+// flag) can drop the whole verdict.
+func (span *span) markSpanError(category ErrorCategory) bool {
+	if !span.cfg.marksError(category) {
+		return false
+	}
+	span.root().err.Or(int32(category))
+	return true
 }
 
 // generateSpanId is a var so tests can force a collision; production always
@@ -881,17 +919,23 @@ func (span *span) SetError(e error, errorName ...string) {
 	// Java IgnoreErrorHandler: a matched error keeps its exception info but
 	// does not fail the span.
 	if !span.cfg.ignoreError(e, errName) {
-		span.root().err.Store(1)
+		span.markSpanError(ErrorCategoryException)
 	}
 }
 
-func (span *span) SetFailure() {
+// SetFailure marks the transaction failed under the category its caller names,
+// ErrorCategoryUnknown when it names none. A category Span.ErrorMark or
+// Span.ErrorMarkExclude disabled marks neither the error mask nor the URL
+// statistics flag: the two must agree about the same request, or the scatter
+// chart would show a failure the URL failed histogram does not have.
+func (span *span) SetFailure(category ...ErrorCategory) {
 	if span.warnIfFinished("SetFailure") {
 		return
 	}
-	root := span.root()
-	root.err.Store(1)
-	root.statusErr.Store(1)
+	if !span.markSpanError(firstErrorCategory(category)) {
+		return
+	}
+	span.root().statusErr.Store(1)
 }
 
 func (span *span) SetServiceType(typ int32) {

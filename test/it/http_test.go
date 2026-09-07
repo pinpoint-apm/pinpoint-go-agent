@@ -87,7 +87,8 @@ func TestHttpHelpersPopulateServerAndClientWireData(t *testing.T) {
 	// X-Forwarded-For's first entry wins over the socket address.
 	assert.Equal(t, "203.0.113.7", wire.GetAcceptEvent().GetRemoteAddr())
 	assert.Equal(t, "frontend.example.test:443", wire.GetAcceptEvent().GetEndPoint())
-	assert.Equal(t, int32(1), wire.GetErr(), "a 5xx response is a failed request")
+	assert.Equal(t, int32(pinpoint.ErrorCategoryHttpStatus), wire.GetErr(),
+		"a 5xx response is a failed request, under the http-status category")
 
 	proxy := findAnnotation(wire.GetAnnotation(), pinpoint.AnnotationHttpProxyHeader)
 	require.NotNil(t, proxy)

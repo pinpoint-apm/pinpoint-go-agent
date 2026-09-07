@@ -608,6 +608,107 @@ Span.MaxCallStackDepth option sets the max callstack sequence of a span, if -1 i
 * default: 5000
 * dynamic
 
+### Span.IgnoreErrors
+Span.IgnoreErrors option lists errors that are recorded as exception info (error function id and message)
+but do not mark the span as failed (`err` stays 0, and the URL statistics count the request as a success).
+Each entry is `<type>:<message substring>`; either part may be empty, and both must match the same error.
+`<type>` is the Go type string of the error (`reflect.TypeOf(err).String()`, e.g. `*errors.errorString`,
+`*fs.PathError`) or the error name passed to `SpanEventRecorder.SetError` (e.g. `panic`).
+The error and every error it wraps are checked, following `Cause()` first and falling back to `Unwrap()`
+(the same chain the exception recorder walks), up to 64 links deep.
+
+This corresponds to the Java agent's `profiler.ignore-error-handler.<name>.class-name`,
+`profiler.ignore-error-handler.<name>.exception-message.contains` and `profiler.ignore-error-handler.<name>.nested=true`.
+
+* --pinpoint-span-ignoreerrors
+* PINPOINT_GO_SPAN_IGNOREERRORS
+* WithSpanIgnoreErrors()
+* type: string slice
+* default: none
+* dynamic
+
+Example (yaml):
+```
+Span:
+  IgnoreErrors:
+    - "*errors.errorString:not found"
+    - "*context.deadlineExceededError"
+```
+
+### Span.ErrorMark
+Span.ErrorMark option lists the error causes that are allowed to fail a transaction. Every
+failure the agent records carries a cause, and the `err` field of a span is the OR of the
+causes recorded on that transaction: `1` unknown, `2` exception, `4` http-status, `8` sql.
+The server reads those bits to tell *why* a transaction failed, so a request that both
+threw and returned 5xx reports `6`.
+
+Each entry is one of `exception`, `http-status` and `sql`, matched case-insensitively; a
+single entry may hold several of them comma separated. No entries at all - the default -
+means every cause, which is what Java's unset `profiler.error.mark` means. An unrecognised
+name is warned about and ignored, so a typo narrows nothing.
+
+The unknown cause (`1`) is not nameable and is always marked: it is what
+`SpanRecorder.SetFailure()` records when its caller names no cause, and excluding it would
+amount to "never fail a transaction".
+
+| Cause | Recorded by |
+|---|---|
+| `exception` | `SpanRecorder.SetError` and `SpanEventRecorder.SetError`, wherever they are called - a plugin, a SQL driver error, a recovered panic |
+| `http-status` | a response status listed in `Http.Server.StatusCodeErrors` |
+| `sql` | the `SQL.ErrorCount` limit on one transaction |
+| `unknown` | `SpanRecorder.SetFailure()` called with no cause |
+
+This corresponds to the Java agent's `profiler.error.mark`.
+
+* --pinpoint-span-errormark
+* PINPOINT_GO_SPAN_ERRORMARK
+* WithSpanErrorMark()
+* type: string slice
+* default: none, which means every cause
+* case-insensitive
+* dynamic
+
+Example (yaml):
+```
+Span:
+  ErrorMark:
+    - exception
+    - sql
+```
+
+### Span.ErrorMarkExclude
+Span.ErrorMarkExclude option lists the error causes that must **not** fail a transaction,
+removed from whatever `Span.ErrorMark` allows (Java's `mark.removeAll(exclude)`, so an
+exclusion wins over an inclusion). Entries are spelled as in `Span.ErrorMark`, and the unknown
+cause cannot be excluded. `Span.ErrorMarkExclude: http-status` is how to say "a 5xx is not a
+transaction failure" while keeping exceptions and the SQL count.
+
+An excluded cause is dropped from the verdict and from nothing else: the HTTP status
+annotation is still recorded, the exception info and its chain are still recorded, and the
+SQL statements are still counted. What changes is `err`, the failure point in the scatter
+chart and the failed histogram of the URL statistics - the three move together, so they
+never disagree about the same request.
+
+`Span.IgnoreErrors` excludes individual errors by type and message; this option excludes a
+whole cause, however it was recorded.
+
+This corresponds to the Java agent's `profiler.error.mark.exclude`.
+
+* --pinpoint-span-errormarkexclude
+* PINPOINT_GO_SPAN_ERRORMARKEXCLUDE
+* WithSpanErrorMarkExclude()
+* type: string slice
+* default: none
+* case-insensitive
+* dynamic
+
+Example (yaml):
+```
+Span:
+  ErrorMarkExclude:
+    - http-status
+```
+
 ### Stat.CollectInterval
 Stat.CollectInterval option sets the statistics collection cycle for the agent.
 
@@ -778,6 +879,9 @@ the merged option 0 is already taken by `enable=false`, leaving "off" as the onl
 consistent meaning a non-positive threshold can have here.
 Like Java, the count lives on the trace root, so queries spread over async spans
 add up (WrappedSpanEventRecorder.java:112, DefaultSqlCountService.java:16,21).
+The failure is recorded under the `sql` cause, so `Span.ErrorMarkExclude: sql` keeps
+the counting without the verdict - see
+[Span.ErrorMarkExclude](#spanerrormarkexclude).
 
 * --pinpoint-sql-errorcount
 * PINPOINT_GO_SQL_ERRORCOUNT
@@ -917,33 +1021,6 @@ bound are dropped with a debug log, once per span.
 * default: 64
 * max: 64
 * dynamic
-
-### Error.IgnoreErrors
-Error.IgnoreErrors option lists errors that are recorded as exception info (error function id and message)
-but do not mark the span as failed (`err` stays 0, and the URL statistics count the request as a success).
-Each entry is `<type>:<message substring>`; either part may be empty, and both must match the same error.
-`<type>` is the Go type string of the error (`reflect.TypeOf(err).String()`, e.g. `*errors.errorString`,
-`*fs.PathError`) or the error name passed to `SpanEventRecorder.SetError` (e.g. `panic`).
-The error and every error it wraps are checked, following `Cause()` first and falling back to `Unwrap()`
-(the same chain the exception recorder walks), up to 64 links deep.
-
-This corresponds to the Java agent's `profiler.ignore-error-handler.<name>.class-name`,
-`profiler.ignore-error-handler.<name>.exception-message.contains` and `profiler.ignore-error-handler.<name>.nested=true`.
-
-* --pinpoint-error-ignoreerrors
-* PINPOINT_GO_ERROR_IGNOREERRORS
-* WithErrorIgnoreErrors()
-* type: string slice
-* default: none
-* dynamic
-
-Example (yaml):
-```
-Error:
-  IgnoreErrors:
-    - "*errors.errorString:not found"
-    - "*context.deadlineExceededError"
-```
 
 ### IsContainerEnv
 IsContainerEnv option sets whether the application is running in a container environment or not.
@@ -1184,10 +1261,10 @@ Two things make a reload not happen, and both are easy to miss:
 | Group | Options |
 |---|---|
 | Sampling | `Sampling.Type`, `Sampling.CounterRate`, `Sampling.PercentRate`, `Sampling.NewThroughput`, `Sampling.ContinueThroughput` |
-| Span limits | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence`, `Span.EventChunkSize` |
+| Span limits and error marking | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence`, `Span.EventChunkSize`, `Span.IgnoreErrors`, `Span.ErrorMark`, `Span.ErrorMarkExclude` |
 | SQL | `SQL.TraceBindValue`, `SQL.MaxBindValueSize`, `SQL.TraceCommit`, `SQL.TraceRollback`, `SQL.TraceQueryStat`, `SQL.EnableRawSqlCache`, `SQL.CacheLengthLimit`, `SQL.ErrorCount` |
 | Logging | `Log.Level` (and its deprecated alias `LogLevel`), `Log.Output`, `Log.MaxSize` |
-| Errors | `Error.TraceCallStack`, `Error.CallStackDepth`, `Error.NewThroughput`, `Error.MaxChainDepth`, `Error.IgnoreErrors` |
+| Errors | `Error.TraceCallStack`, `Error.CallStackDepth`, `Error.NewThroughput`, `Error.MaxChainDepth` |
 | HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError` |
 | HTTP client | `Http.Client.RecordRequestHeader`, `Http.Client.RecordResponseHeader`, `Http.Client.RecordRequestCookie` |
 | URL statistics | `Http.UrlStat.Enable`, `Http.UrlStat.LimitSize`, `Http.UrlStat.WithMethod` |
@@ -1412,7 +1489,7 @@ See [ActiveProfile](#activeprofile) for the file layout.
 | Sensitive data visible in traces | `SQL.TraceBindValue`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordRequestCookie` |
 | Health checks flooding the URL list | `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod` |
 | No per-URL statistics | `Http.UrlStat.Enable`, `Http.UrlStat.LimitSize`, `Http.UrlStat.WithMethod` |
-| Wrong requests marked as errors | `Http.Server.StatusCodeErrors`, `Http.Server.RecordHandlerError` |
+| Wrong requests marked as errors | `Http.Server.StatusCodeErrors`, `Http.Server.RecordHandlerError`, `Span.ErrorMark`, `Span.ErrorMarkExclude`, `Span.IgnoreErrors` |
 | No error stack traces | `Error.TraceCallStack`, `Error.CallStackDepth` |
 | Agent logs too quiet / too loud | `Log.Level`, `Log.Output`, `Log.MaxSize` |
 | Config change has no effect | `ConfigFile`, `ActiveProfile`, and the [reloadable list](#reloadable-options) |

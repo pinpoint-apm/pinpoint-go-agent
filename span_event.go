@@ -138,10 +138,12 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 	cfg := se.config()
 	// As in the Java agent, an error on any event fails the transaction:
 	// PSpan.err, the URL stat failed histogram and the scatter failure point.
-	// An error matching Error.IgnoreErrors (IgnoreErrorHandler) keeps its
-	// exception info but skips that failure marking.
+	// The cause is ErrorCategoryException wherever the error was recorded, as
+	// Java's AbstractRecorder.recordException reports EXCEPTION from every
+	// recorder. An error matching Span.IgnoreErrors (IgnoreErrorHandler)
+	// keeps its exception info but skips that failure marking.
 	if !cfg.ignoreError(e, errName) {
-		se.parentSpan.root().err.Store(1)
+		se.parentSpan.markSpanError(ErrorCategoryException)
 	}
 	if cfg.errorTraceCallStack && se.parentSpan.canAddErrorChain() {
 		// A chain the Error.NewThroughput limiter denied is not on the wire, so
@@ -194,10 +196,14 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	// (DefaultSqlCountService.java:16,21). The C++ agent deliberately differs
 	// here, counting per span so an async child has its own sql_count_
 	// (src/span.h:644-646); it is not the reference for this placement.
+	// The cause is ErrorCategorySql, so an operator who does not want an N+1
+	// pattern to fail the transaction can drop just that one with
+	// Span.ErrorMarkExclude and keep the counting - Java applies the same filter
+	// inside the recorder, downstream of DefaultSqlCountService.
 	root := se.parentSpan.root()
 	if cfg.sqlErrorCount > 0 && root.err.Load() == 0 && !se.parentSpan.finished.Load() {
 		if int(root.sqlCount.Add(1)) >= cfg.sqlErrorCount {
-			root.err.Store(1)
+			se.parentSpan.markSpanError(ErrorCategorySql)
 		}
 	}
 

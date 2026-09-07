@@ -375,7 +375,10 @@ tracer.Span().SetError(err, "UpstreamCallError")       // same on the span
 
 A `nil` error is ignored, so the unguarded form above is correct. For a failure
 that carries no Go `error` — an HTTP status that counts as an error, say — use
-`SpanRecorder.SetFailure()`.
+`SpanRecorder.SetFailure()`. It takes an optional cause reported in the span's
+`err` field (`pinpoint.ErrorCategoryHttpStatus`, for instance); with none given
+the cause is `pinpoint.ErrorCategoryUnknown`. See
+[Span.ErrorMark](config.md#spanerrormark) for what the causes are for.
 
 ### Call stacks
 

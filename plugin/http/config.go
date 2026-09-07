@@ -245,7 +245,12 @@ func isExcludedMethod(method string) bool {
 
 func recordServerHttpStatus(span pinpoint.SpanRecorder, status int) {
 	if httpCfg().srvStatus.isError(status) {
-		span.SetFailure()
+		// The cause is the status code, as Java's HttpStatusCodeRecorder
+		// records ErrorCategory.HTTP_STATUS: an operator who does not want a
+		// 5xx to count as a transaction failure drops that one cause with
+		// Span.ErrorMarkExclude and keeps every other kind of failure. The
+		// annotation below is recorded either way.
+		span.SetFailure(pinpoint.ErrorCategoryHttpStatus)
 	}
 	span.Annotations().AppendInt(pinpoint.AnnotationHttpStatusCode, int32(status))
 }

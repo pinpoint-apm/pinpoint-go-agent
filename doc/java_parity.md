@@ -19,6 +19,7 @@ is simply not written yet does not belong here.
 | Per-URL sampler | `UrlTraceSampler`, `UrlSamplerConfig`, `TraceSamplerProvider` | **Declined** — see [below](#per-url-sampler--declined) |
 | Tracing before agent registration | `AgentInfoSender`, `DefaultApplicationContext.start()` | **Declined** — see [below](#registration-before-tracing--declined) |
 | SQL count per transaction | `DefaultSqlCountService` | **Adopted** — `SQL.ErrorCount` |
+| Error cause categories in `err` | `ErrorCategory`, `ConfigurableErrorRecorder`, `ConfigurableErrorRecorderFactory` | **Adopted** — `Span.ErrorMark` / `Span.ErrorMarkExclude` |
 | SQL comment removal | `DefaultSqlNormalizer`, `DefaultJdbcOption` | **Adopted** — `SQL.RemoveComments` |
 | Exception chain rate limiter | `ExceptionChainSampler` | **Adopted** — `Error.NewThroughput` |
 | Percent sampling rate of zero | `PercentSamplerFactory.createSampler` | **Adopted** — see [below](#percent-rate-of-zero--adopted) |
@@ -93,10 +94,11 @@ id and message. The chain leaves by the `ExceptionContext` path, which does not
 go through the span event at all, and `recordError(ErrorCategory.EXCEPTION)`
 marks the trace root as it would anywhere else.
 
-**This agent.** `overflowSpanEvent.SetError` (`span.go:69-81`) applies the
-`Error.IgnoreErrors` filter and, if the error survives it, stores
-`span.root().err`. No exception info, no annotation, no chain entry. The C++
-agent's `DisabledSpanEvent::SetError` follows the same policy.
+**This agent.** `overflowSpanEvent.SetError` applies the `Span.IgnoreErrors`
+filter and, if the error survives it, marks the root's `err` with the
+exception cause, exactly as a recorded event would. No exception info, no
+annotation, no chain entry. The C++ agent's `DisabledSpanEvent::SetError`
+follows the same policy.
 
 **Decision: deliberate simplification.** Overflow is a profiling depth limit,
 not a judgement about the transaction, so the failure flag stays — but omitting
@@ -238,14 +240,83 @@ new: `span.err` is what the Java agent's masked error code turns into on the
 wire.
 
 **Option.** `SQL.ErrorCount`, default 100 (Java's default), `0` to disable.
-Java's two options collapse into one here, because Go has no
-`ErrorCategory` bitmask to configure. See
-[Configuration](config.md#sqlerrorcount).
+Java's two options collapse into one here: `profiler.sql.error.enable` has no
+counterpart, because `0` already means off. The count marks the transaction
+under the `sql` cause, so `Span.ErrorMarkExclude: sql` keeps the counting without
+the verdict — see [Error cause categories](#error-cause-categories--adopted).
+See [Configuration](config.md#sqlerrorcount).
 
 **Upgrade note.** This is on by default, matching Java. A transaction that runs
 100 or more statements and did not previously fail will now be marked failed —
 visible in the scatter chart and in the URL statistics' failed histogram. Set
 `SQL.ErrorCount` to `0` to keep the previous behaviour.
+
+---
+
+## Error cause categories — adopted
+
+**Java.** `err` on the wire is a bitmask of causes, not a flag.
+`ErrorCategory` (`commons/.../trace/ErrorCategory.java`) defines
+`UNKNOWN = 1 << 0`, `EXCEPTION = 1 << 1`, `HTTP_STATUS = 1 << 2` and
+`SQL = 1 << 3`, and `ConfigurableErrorRecorder.recordError` ORs the recorded
+category into the transaction's error code
+(`traceRoot.getShared().maskErrorCode(errorCategory.getBitMask())`, an atomic
+`x | mask` in `DefaultShared.java:69-72`). Which categories are allowed to
+fail a transaction is configurable:
+`ConfigurableErrorRecorderFactory.getEnabledTypes` reads
+`profiler.error.mark` (unset means every category) and
+`profiler.error.mark.exclude`, removes the second from the first and re-adds
+`UNKNOWN`, and `recordError` then masks nothing for a category outside that
+set. This is the **default** path — `profiler.error.enable` defaults to `true`
+(`ErrorRecorderConfig.java`), so `ApplicationContextModuleFactory` loads the
+`ConfigurableErrorRecorderModule`. The flat `maskErrorCode(1)` of
+`SimpleErrorRecorder` is only reached with `profiler.error.enable=false`.
+The recording sites are `AbstractRecorder.recordException` → `EXCEPTION`,
+`HttpStatusCodeRecorder.record` → `HTTP_STATUS` and
+`DefaultSqlCountService.recordSqlCount` → `SQL`.
+
+**Go before this change.** Every failure stored a flat `1`, whatever caused
+it — Java's `profiler.error.enable=false` behaviour, which is not Java's
+default. The server could tell that a transaction had failed but not why, and
+neither `profiler.error.mark` nor `profiler.error.mark.exclude` had any
+counterpart, so a policy as ordinary as "a 5xx is not a transaction failure"
+could not be expressed at all.
+
+**Why adopt.** The bit values are a wire contract the collector already reads,
+and sending `1` for a 5xx is not a smaller version of the contract but a
+different statement about the transaction. The change is small where it
+matters: `span.err` was already atomic, so accumulating causes is an atomic OR
+(`atomic.Int32.Or`, the same operation as Java's `getAndUpdate(x -> x | mask)`),
+and the four sites that used to store the flat flag now funnel through a single
+`markSpanError`.
+
+**This agent.** `ErrorCategory` is exported with Java's four bit values;
+`span.markSpanError(category)` is the single point that writes `span.err`, ORs
+the category into the **trace root** (rule 9 of
+[API contracts](api_contracts.md#9-error-recording)) and skips a category the
+operator disabled. The causes follow Java's recording sites: `SetError` on a
+span or an event — including an overflowed event, a recovered panic and a SQL
+driver error — is `exception`, a status in `Http.Server.StatusCodeErrors` is
+`http-status`, the `SQL.ErrorCount` limit is `sql`, and a bare `SetFailure()`
+is `unknown`. An excluded cause drops the verdict only: the annotation, the
+exception info and the SQL counting all stay, and `err`, the scatter failure
+point and the URL statistics failed histogram move together — including on
+unsampled requests, whose URL statistics come from the same options.
+
+**Option.** `Span.ErrorMark` and `Span.ErrorMarkExclude`, both unset by default, which
+enables every cause as Java's unset `profiler.error.mark` does. See
+[Configuration](config.md#spanerrormark).
+
+**Upgrade note.** `err` values change for every failed transaction: a
+transaction that failed on an exception now reports `2` rather than `1`, a
+5xx reports `4`, the SQL count reports `8`, and a transaction with several
+causes reports their OR. Anything reading `err == 1` should read `err != 0`
+instead — which is what the server already does: the scatter chart compares
+against `EXCEPTION_NONE` (`Dot.getStatus()`), and the transaction view resolves
+the bits into the causes it displays (`ErrorCategoryResolver.resolve`, which
+masks `UNKNOWN` out of that display). There is no option that restores
+the flat `1`; Java has one (`profiler.error.enable=false`) and this agent
+deliberately does not port the non-default path.
 
 ---
 
