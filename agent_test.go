@@ -1358,3 +1358,32 @@ func Test_agent_continueHeaders_roundTrip(t *testing.T) {
 	assert.True(t, continued, "injected headers must continue the trace: %v", m)
 	assert.Equal(t, caller.TransactionId(), txId, "transaction id")
 }
+
+// The normalized text is what both caches key on and what every queued meta
+// carries in key, so it is bounded here too: literal-heavy SQL normalizes
+// larger than it came in, and a key past maxSqlNormalizeLength is refused
+// rather than admitted to the cache or metaChan.
+func Test_agent_SQLCachesRefuseAKeyPastTheNormalizationCap(t *testing.T) {
+	within := strings.Repeat("x", maxSqlNormalizeLength)
+	past := within + "x"
+
+	t.Run("sql id", func(t *testing.T) {
+		a := newTestAgent(defaultConfig())
+		assert.Equal(t, int32(0), a.cacheSql(past), "no id for a key past the cap")
+		_, cached := a.sqlCache.peek(past)
+		assert.False(t, cached)
+		assert.Empty(t, a.metaChan, "nothing queued for a refused key")
+
+		assert.NotEqual(t, int32(0), a.cacheSql(within), "a key at the cap is admitted")
+	})
+
+	t.Run("sql uid", func(t *testing.T) {
+		a := newTestAgent(noSqlCacheBypassConfig())
+		assert.Nil(t, a.cacheSqlUid(past), "no uid for a key past the cap")
+		_, cached := a.sqlUidCache.peek(past)
+		assert.False(t, cached)
+		assert.Empty(t, a.metaChan, "nothing queued for a refused key")
+
+		assert.Equal(t, sqlUid(within), a.cacheSqlUid(within), "a key at the cap is admitted")
+	})
+}

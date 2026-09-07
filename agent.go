@@ -1284,6 +1284,14 @@ func (agent *agent) cacheSql(sql string) int32 {
 	// is: an abbreviated key keeps no more than a 64KB prefix and the total
 	// length, so two statements agreeing on both would share one id and the
 	// second would never publish its own metadata.
+	//
+	// Bounded by maxSqlNormalizeLength: SetSQL drops a raw statement past it,
+	// but literal-heavy SQL normalizes larger than it came in, so the key is
+	// checked here as well - a key past the cap is refused (no id, so SetSQL
+	// records no annotation) rather than admitted to the cache and metaChan.
+	if !sqlNormalizable(sql) {
+		return 0
+	}
 	if v, ok := agent.sqlCache.peek(sql); ok {
 		return v
 	}
@@ -1324,7 +1332,11 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 	// second would answer with the first's UID and never publish its own
 	// metadata. Nothing longer than the cache length limit reaches the LRU
 	// either way, since sqlCacheable now measures that same untruncated text,
-	// as Java's UidCache bypassLength does.
+	// as Java's UidCache bypassLength does. Nothing longer than
+	// maxSqlNormalizeLength gets a UID at all (see cacheSql).
+	if !sqlNormalizable(sql) {
+		return nil
+	}
 	cacheable := agent.sqlCacheable(sql)
 	if cacheable {
 		if v, ok := agent.sqlUidCache.peek(sql); ok {

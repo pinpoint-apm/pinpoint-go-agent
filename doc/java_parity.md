@@ -21,6 +21,7 @@ is simply not written yet does not belong here.
 | SQL count per transaction | `DefaultSqlCountService` | **Adopted** — `SQL.ErrorCount` |
 | Error cause categories in `err` | `ErrorCategory`, `ConfigurableErrorRecorder`, `ConfigurableErrorRecorderFactory` | **Adopted** — `Span.ErrorMark` / `Span.ErrorMarkExclude` |
 | SQL comment removal | `DefaultSqlNormalizer`, `DefaultJdbcOption` | **Adopted** — `SQL.RemoveComments` |
+| SQL normalization input cap | `SqlCacheService`, `profiler.jdbc.maxsqllength`; C++ `kMaxNormalizedSqlLength` | **Aligned with C++ (value), drop policy** — see [below](#sql-normalization-input-cap--aligned-with-c-value-drop-policy) |
 | Exception chain rate limiter | `ExceptionChainSampler` | **Adopted** — `Error.NewThroughput` |
 | Percent sampling rate of zero | `PercentSamplerFactory.createSampler` | **Adopted** — see [below](#percent-rate-of-zero--adopted) |
 | URL statistics send unit | `UriStatCollectingJob`, `AsyncQueueingUriStatStorage` | **Adopted** — see [below](#url-statistics-send-unit--adopted) |
@@ -222,6 +223,50 @@ UID hash input. See [Configuration](config.md#sqlremovecomments).
 for every statement that contains a comment, so such a query appears in the UI
 as a new entry from the upgrade onward. Set `SQL.RemoveComments` to `false` to
 keep the previous text.
+
+---
+
+## SQL normalization input cap — aligned with C++ (value), drop policy
+
+**Java.** `SqlCacheService` abbreviates the SQL text it publishes to
+`profiler.jdbc.maxsqllength` (65536) *at cache time*, so no queued metadata item
+carries more than 64KB of text. The cache *key* is the untruncated normalized
+SQL (`DefaultCachingSqlNormalizer`), and normalization itself has no input cap.
+Java's memory is bounded elsewhere: `UidCache` bypasses statements past
+`profiler.jdbc.sqlcachelengthlimit`, and the id cache is a fixed-size LRU.
+
+**C++.** `src/sql.cpp` cuts the normalization *input* at
+`kMaxNormalizedSqlLength` (1 MiB, `src/sql.h`) and normalizes the rest; the
+comment there calls it a "hard memory cap only, not the metadata cap". Cutting
+inside a string literal drops the literal's closing quote, so the placeholder is
+lost and the normalized text — hence the SQL id and SQL UID — differs from what
+Java computes for the same statement (gap **N1** of the cross-agent review).
+
+**Go before this change.** No input cap at all (gap **C1**). The 64KB
+`maxSqlSize` bounded only the published text, as in Java, while the untruncated
+normalized SQL was the key of `sqlCache`, `sqlUidCache` and `rawSqlCache` and
+the `key` field of every queued `sqlMeta` / `sqlUidMeta`. One huge generated
+statement broke the memory bound of every one of those.
+
+**Decision.** `maxSqlNormalizeLength` = 1 MiB, the C++ value. A statement longer
+than that is **dropped whole**: not counted toward `SQL.ErrorCount`, not
+normalized, no SQL annotation, no metadata queued. `cacheSql` and `cacheSqlUid`
+refuse a normalized key past the cap as well, since literal-heavy SQL normalizes
+larger than it came in. The cut-and-normalize alternative was rejected because a
+cut inside a literal makes the id / UID diverge from every other agent; dropping
+never does — an over-cap statement simply has no SQL anywhere, which is also the
+only outcome the server can aggregate consistently. There is no cut, so no
+UTF-8 boundary is involved: a multibyte character straddling the cap puts the
+statement past it.
+
+The cap is deliberately far above `maxSqlSize`. The two are different things
+and `Test_sqlNormalizer_NormalizesPastTheMetadataCap` locks the distinction: a
+statement between 64KB and 1 MiB is still normalized whole and hashed to the UID
+Java computes, and only its published text is abbreviated.
+
+**Cross-agent contract.** The C++ agent's fix for gap N1 must use the same value
+(1 MiB) and the same drop policy, so that an over-cap statement produces no SQL
+id / UID in either agent rather than a different one in each.
 
 ---
 

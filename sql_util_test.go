@@ -4,8 +4,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_sqlNormalizer_DefaultSqlNormalizerCases(t *testing.T) {
@@ -554,4 +556,73 @@ func TestNormalizeByteFidelity(t *testing.T) {
 			assertNormalize(t, tt.sql, tt.normalized, tt.params)
 		})
 	}
+}
+
+// maxSqlNormalizeLength is a hard memory cap on the raw input, distinct from
+// the 64KB metadata cap above: a statement at the cap is normalized whole, one
+// byte past it is not normalized at all. There is no cut - and so no partial
+// character to worry about - a multibyte character straddling the cap puts
+// the whole statement past it.
+func Test_sqlNormalizer_DropsInputPastTheNormalizationCap(t *testing.T) {
+	assert.Equal(t, 1<<20, maxSqlNormalizeLength, "matches the C++ agent's kMaxNormalizedSqlLength")
+	assert.Greater(t, maxSqlNormalizeLength, maxSqlSize, "the memory cap sits above the metadata cap")
+
+	head := "select 1 from t where a = '"
+	tail := "'"
+	body := func(size int) string {
+		return head + strings.Repeat("x", size-len(head)-len(tail)) + tail
+	}
+	const want = "select 0# from t where a = '1$'"
+
+	t.Run("one byte before the cap", func(t *testing.T) {
+		raw := body(maxSqlNormalizeLength - 1)
+		require.Len(t, raw, maxSqlNormalizeLength-1)
+		assert.True(t, sqlNormalizable(raw))
+		nsql, param := newSqlNormalizer(raw, false).run()
+		assert.Equal(t, want, nsql)
+		assert.Equal(t, "1,"+raw[len(head):len(raw)-len(tail)], param)
+	})
+
+	t.Run("exactly the cap", func(t *testing.T) {
+		raw := body(maxSqlNormalizeLength)
+		require.Len(t, raw, maxSqlNormalizeLength)
+		assert.True(t, sqlNormalizable(raw))
+		nsql, param := newSqlNormalizer(raw, false).run()
+		assert.Equal(t, want, nsql)
+		assert.Equal(t, "1,"+raw[len(head):len(raw)-len(tail)], param)
+	})
+
+	t.Run("one byte past the cap", func(t *testing.T) {
+		raw := body(maxSqlNormalizeLength + 1)
+		require.Len(t, raw, maxSqlNormalizeLength+1)
+		assert.False(t, sqlNormalizable(raw))
+		nsql, param := newSqlNormalizer(raw, false).run()
+		assert.Empty(t, nsql, "a statement past the cap is not normalized")
+		assert.Empty(t, param)
+	})
+
+	t.Run("multibyte character straddling the cap", func(t *testing.T) {
+		// The literal ends with a three-byte character whose first byte is the
+		// last byte within the cap: cutting there would leave invalid UTF-8,
+		// dropping leaves nothing to cut.
+		const ch = "한" // 3 bytes
+		raw := head + strings.Repeat("x", maxSqlNormalizeLength-len(head)-1) + ch + tail
+		require.Greater(t, len(raw), maxSqlNormalizeLength)
+		require.True(t, utf8.RuneStart(raw[maxSqlNormalizeLength-1]))
+		require.False(t, utf8.RuneStart(raw[maxSqlNormalizeLength]))
+		assert.False(t, sqlNormalizable(raw))
+		nsql, param := newSqlNormalizer(raw, false).run()
+		assert.Empty(t, nsql)
+		assert.Empty(t, param)
+	})
+
+	t.Run("multibyte character ending exactly at the cap", func(t *testing.T) {
+		const ch = "한" // 3 bytes
+		raw := head + strings.Repeat("x", maxSqlNormalizeLength-len(head)-len(tail)-len(ch)) + ch + tail
+		require.Len(t, raw, maxSqlNormalizeLength)
+		assert.True(t, sqlNormalizable(raw))
+		nsql, _ := newSqlNormalizer(raw, false).run()
+		assert.Equal(t, want, nsql)
+		assert.True(t, utf8.ValidString(nsql))
+	})
 }

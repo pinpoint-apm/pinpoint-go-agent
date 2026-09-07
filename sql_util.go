@@ -26,6 +26,31 @@ type sqlNormalizer struct {
 	removeComments bool
 }
 
+// maxSqlNormalizeLength is the hard memory cap on SQL normalization, in bytes:
+// a statement longer than this is not normalized at all (see sqlNormalizable).
+// It is not the metadata cap - maxSqlSize (64KB) bounds only the text cacheSql
+// and cacheSqlUid publish, and a statement between the two is still normalized
+// whole, as Java does. Without this cap the normalized text, which is the key
+// of sqlCache / sqlUidCache / rawSqlCache and the key field of every queued
+// sqlMeta / sqlUidMeta, had no bound at all, so one huge generated statement
+// broke the memory guarantee of every one of those.
+//
+// The value matches the C++ agent's kMaxNormalizedSqlLength (src/sql.h). The
+// policy differs on purpose: C++ cuts the input at the cap and normalizes the
+// rest, which loses the placeholder when the cut lands inside a literal and so
+// yields a SQL id / UID no other agent computes (gap N1 of the cross-agent
+// review). Dropping the statement instead never diverges - an over-cap
+// statement records no SQL annotation anywhere. The C++ agent is to adopt the
+// same value and the same drop policy (see doc/java_parity.md).
+const maxSqlNormalizeLength = 1 << 20
+
+// sqlNormalizable reports whether sql is within maxSqlNormalizeLength. It
+// measures the raw input, so no cut is involved and a multibyte character
+// straddling the cap simply puts the statement past it.
+func sqlNormalizable(sql string) bool {
+	return len(sql) <= maxSqlNormalizeLength
+}
+
 func newSqlNormalizer(sql string, removeComments bool) *sqlNormalizer {
 	return &sqlNormalizer{sql: sql, removeComments: removeComments}
 }
@@ -36,7 +61,15 @@ func newSqlNormalizer(sql string, removeComments bool) *sqlNormalizer {
 // computes from the full normalized SQL, and param must stay whole because the
 // server splits it on ',' to refill the <idx>#/<idx>$ placeholders - a cut
 // param leaves placeholders exposed.
+//
+// A statement past maxSqlNormalizeLength is not walked at all and comes back
+// empty. SetSQL checks sqlNormalizable first and drops such a statement before
+// it gets here; this guard keeps the cap in force for any other caller.
 func (s *sqlNormalizer) run() (string, string) {
+	if !sqlNormalizable(s.sql) {
+		return "", ""
+	}
+
 	numberTokenStartEnable := true
 
 	for s.pos < len(s.sql) {

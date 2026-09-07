@@ -185,6 +185,17 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	agent := se.agent()
 	cfg := se.config()
 
+	// A statement past the normalization cap is dropped whole - not counted,
+	// not normalized, not annotated. Cutting it and normalizing the rest, as
+	// the C++ agent does today, yields a SQL id / UID no other agent computes
+	// when the cut lands inside a literal; see maxSqlNormalizeLength.
+	if !sqlNormalizable(sql) {
+		if IsDebugLogLevelEnabled() {
+			Log("span").Debugf("SetSQL: statement of %d bytes past the normalization cap dropped", len(sql))
+		}
+		return
+	}
+
 	// As in the Java agent's DefaultSqlCountService, a span that executes
 	// SQL.ErrorCount queries is marked failed - an N+1 loop is a trace the
 	// server should show as an error. Java skips a transaction whose error code

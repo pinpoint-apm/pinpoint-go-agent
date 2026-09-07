@@ -560,3 +560,31 @@ func Test_spanEvent_SetSQLCountExcludedCategoryLeavesTheTransactionClean(t *test
 	newSpanEvent(sp, "query").SetError(errors.New("TEST_ERROR"))
 	assert.Equal(t, int32(ErrorCategoryException), sp.err.Load(), "span err")
 }
+
+// A statement past maxSqlNormalizeLength is dropped whole: not normalized, not
+// annotated, no metadata queued, and not counted toward SQL.ErrorCount. The
+// alternative - cut and normalize the rest, as the C++ agent does - yields a
+// SQL id / UID no other agent computes when the cut lands inside a literal.
+func Test_spanEvent_SetSQLDropsAStatementPastTheNormalizationCap(t *testing.T) {
+	for _, queryStat := range []bool{false, true} {
+		t.Run(fmt.Sprintf("TraceQueryStat=%v", queryStat), func(t *testing.T) {
+			cfg := defaultConfig()
+			cfg.Set(CfgSQLTraceQueryStat, queryStat)
+			cfg.Set(CfgSQLErrorCount, 1)
+			span := testSpanWithConfig(cfg)
+			se := newSpanEvent(span, "query")
+
+			se.SetSQL("select '"+strings.Repeat("x", maxSqlNormalizeLength)+"'", "")
+
+			assert.Empty(t, se.annotations.values, "no SQL annotation")
+			for len(span.agent.metaChan) > 0 {
+				switch md := (<-span.agent.metaChan).(type) {
+				case sqlMeta, sqlUidMeta:
+					t.Errorf("SQL metadata queued: %T", md)
+				}
+			}
+			assert.Equal(t, int32(0), span.sqlCount.Load(), "not counted")
+			assert.Equal(t, int32(0), span.err.Load(), "the span stays clean")
+		})
+	}
+}

@@ -26,7 +26,9 @@ var benchLongSQL = func() string {
 	return sb.String()
 }()
 
-var benchHugeLiteralSQL = "SELECT '" + strings.Repeat("x", 1<<20) + "'"
+// Kept just within maxSqlNormalizeLength: a statement past it is dropped
+// before normalization, which is not what this input is meant to measure.
+var benchHugeLiteralSQL = "SELECT '" + strings.Repeat("x", maxSqlNormalizeLength-16) + "'"
 
 func newNormalizeTestAgent() *agent {
 	// A real config, not a nil one: normalizeSql reads SQL.CacheLengthLimit off
