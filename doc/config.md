@@ -24,6 +24,25 @@ overwritten by the config file, and neither is a value set through `Config.Set()
 Only options whose current value came from the config file, a profile, a config function or the default are updated.
 `Config.Set()` on a non-dynamic option stores the value and logs a warning; the agent applies it after a restart.
 
+### Malformed Values
+A value that cannot be converted to the type its option is declared with is rejected: the agent logs
+
+```
+<option> = <value> is not a valid <type>, keeping <current value>
+```
+
+and the option keeps the value it already had - at startup the config function value or the default,
+on a reload the value currently in effect. A lower precedence source is not consulted as a fallback.
+This holds for every source: the config file, a profile, an environment variable, a command line flag,
+a config function and `Config.Set()`. So `Sampling.CounterRate: abc` leaves the rate as it was instead
+of turning it into 0, which would have stopped sampling every transaction with nothing in the log.
+
+A comma separated string is still accepted where a list is expected (`a,b,c`), because that is how an
+environment variable spells one, but a bare scalar is not: a list has to be written as a list.
+
+A value of the right type but outside the option's range is a separate check, described with the option
+below; those recover the option's default rather than keeping the previous value.
+
 ## Configuration Option
 The titles below are used as configuration keys in config file.
 In the description of each config option below, the list is shown in the order command flag, environment variable,
@@ -469,7 +488,9 @@ rate below `0.01` (e.g. `0.005`) all turn percent sampling off. This is what the
 Java agent does (`PercentSamplerFactory.java:40-48,56-58`: `<= 0` becomes
 `FalseSampler`); a rate below `0.01` also logs a warning, because a positive
 rate that samples nothing is more often a typo than an intent. A rate of `100`
-or above always samples, Java's `TrueSampler`.
+or above always samples, Java's `TrueSampler`; a rate above `100` is clamped to
+it with a warning, because a rate over the documented maximum reads as a misuse
+of the option rather than an intent.
 
 * --pinpoint-sampling-percentrate
 * PINPOINT_GO_SAMPLING_PERCENTRATE

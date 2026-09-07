@@ -994,6 +994,192 @@ func TestNewConfig_NegativeValuesOfNewKeys(t *testing.T) {
 	assert.Equal(t, math.MaxInt32, c.Int(CfgSQLCacheLengthLimit), "-1 must stay unlimited")
 }
 
+// A value that does not convert to its option's registered type is dropped
+// with a warning and the option keeps what it already had, the policy the C++
+// agent's get_yaml<T> follows. The raw viper value used to be staged as it
+// came, and the lenient cast in the accessors then turned it into a zero:
+// Sampling.CounterRate: abc left rateSampler with a rate of 0, which samples
+// no transaction at all, and the log said nothing about it.
+func TestNewConfig_MalformedValueKeepsCurrentValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		cfgName  string
+		raw      string
+		typeName string
+		check    func(t *testing.T, c *Config)
+	}{
+		{
+			name:     "int option given a string",
+			body:     "Sampling:\n  CounterRate: abc\n",
+			cfgName:  CfgSamplingCounterRate,
+			raw:      "abc",
+			typeName: "int",
+			check: func(t *testing.T, c *Config) {
+				assert.Equal(t, 1, c.Int(CfgSamplingCounterRate))
+				assert.True(t, c.load().sampler.isNewSampled(newAgentStats()),
+					"a typo in the rate turned sampling off")
+			},
+		},
+		{
+			name:     "bool option given a non-bool string",
+			body:     "SQL:\n  TraceCommit: maybe\n",
+			cfgName:  CfgSQLTraceCommit,
+			raw:      "maybe",
+			typeName: "bool",
+			check: func(t *testing.T, c *Config) {
+				assert.Equal(t, true, c.Bool(CfgSQLTraceCommit))
+			},
+		},
+		{
+			name:     "float option given a string",
+			body:     "Sampling:\n  PercentRate: xyz\n",
+			cfgName:  CfgSamplingPercentRate,
+			raw:      "xyz",
+			typeName: "float",
+			check: func(t *testing.T, c *Config) {
+				assert.Equal(t, float64(100), c.Float(CfgSamplingPercentRate))
+			},
+		},
+		{
+			// cast.ToStringSliceE would wrap a scalar into a one-element slice,
+			// so convertCfgValue rejects anything that is not a sequence - a
+			// comma separated string excepted, which is how a list is spelled
+			// in an environment variable.
+			name:     "string slice option given a scalar",
+			body:     "Error:\n  IgnoreErrors: 42\n",
+			cfgName:  CfgErrorIgnoreErrors,
+			raw:      "42",
+			typeName: "string slice",
+			check: func(t *testing.T, c *Config) {
+				assert.Empty(t, c.StringSlice(CfgErrorIgnoreErrors))
+				assert.Empty(t, c.load().errorIgnoreRules)
+			},
+		},
+		{
+			name:     "string option given a mapping",
+			body:     "Log:\n  Level:\n    a: b\n",
+			cfgName:  CfgLogLevel,
+			raw:      "map[a:b]",
+			typeName: "string",
+			check: func(t *testing.T, c *Config) {
+				assert.Equal(t, "info", c.String(CfgLogLevel))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			defer captureWarnLog(&buf)()
+
+			cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+			require.NoError(t, os.WriteFile(cfgFile, []byte(tt.body), 0o600))
+
+			c, err := NewConfig(WithAppName("TestApp"), WithConfigFile(cfgFile))
+			require.NoError(t, err)
+			defer c.Close()
+
+			tt.check(t, c)
+			assert.Contains(t, buf.String(),
+				fmt.Sprintf("%s = %s is not a valid %s, keeping ", tt.cfgName, tt.raw, tt.typeName))
+		})
+	}
+}
+
+// The same policy has to hold for every source the value can arrive from, not
+// just the config file: an environment variable is always a string, so it is
+// the source a wrong type is most likely to come from.
+func TestNewConfig_MalformedEnvVarKeepsCurrentValue(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	t.Setenv("PINPOINT_GO_SAMPLING_COUNTERRATE", "one")
+	t.Setenv("PINPOINT_GO_SAMPLING_PERCENTRATE", "half")
+	t.Setenv("PINPOINT_GO_SQL_TRACEROLLBACK", "sure")
+
+	c, err := NewConfig(WithAppName("TestApp"), WithSamplingCounterRate(7))
+	require.NoError(t, err)
+	defer c.Close()
+
+	assert.Equal(t, 7, c.Int(CfgSamplingCounterRate), "the config function value was overwritten by a bad env var")
+	assert.Equal(t, float64(100), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
+	assert.Equal(t, true, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
+	assert.Contains(t, buf.String(), "Sampling.CounterRate = one is not a valid int, keeping 7")
+	assert.Contains(t, buf.String(), "Sampling.PercentRate = half is not a valid float, keeping 100")
+	assert.Contains(t, buf.String(), "SQL.TraceRollback = sure is not a valid bool, keeping true")
+}
+
+// Set() is the only entry point that takes an interface{} from the caller, so
+// it needs the same guard as the config file and environment variable paths.
+func Test_SetMalformedValueKeepsCurrentValue(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	c, err := NewConfig(WithAppName("TestApp"), WithSamplingCounterRate(7))
+	require.NoError(t, err)
+	defer c.Close()
+
+	c.Set(CfgSamplingCounterRate, "abc")
+	assert.Equal(t, 7, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
+	assert.Contains(t, buf.String(), "Sampling.CounterRate = abc is not a valid int, keeping 7")
+
+	// A good value still goes through, converted to the registered type.
+	c.Set(CfgSamplingCounterRate, "9")
+	assert.Equal(t, 9, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
+}
+
+// A malformed value arriving by reload must not report the option as changed
+// either: the value did not change, so no reload callback has anything to do.
+func Test_reloadConfig_malformedValueKeepsCurrentValue(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	c, err := NewConfig(WithAppName("reloadApp"))
+	require.NoError(t, err)
+	defer c.Close()
+
+	var reloaded int
+	c.AddReloadCallback([]string{CfgSamplingCounterRate}, func() { reloaded++ })
+
+	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	require.NoError(t, os.WriteFile(cfgFile, []byte("Sampling:\n  CounterRate: abc\n"), 0o600))
+	cfgFileViper := viper.New()
+	cfgFileViper.SetConfigFile(cfgFile)
+	c.reloadConfig(cfgFileViper)
+
+	assert.Equal(t, 1, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
+	assert.Equal(t, 0, reloaded, "a rejected value fired the reload callback")
+	assert.Contains(t, buf.String(), "Sampling.CounterRate = abc is not a valid int, keeping 1")
+}
+
+// A converted value is stored with its registered type, so the reload change
+// detection compares like with like: an int 100 staged as the default of a
+// float option used to differ from the float64 the config file yields and
+// reported a change of a value that had not changed.
+func TestNewConfig_StoresTheRegisteredType(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	require.NoError(t, os.WriteFile(cfgFile, []byte("Sampling:\n  Type: PERCENT\n  PercentRate: 100\n"), 0o600))
+
+	c, err := NewConfig(WithAppName("TestApp"), WithConfigFile(cfgFile))
+	require.NoError(t, err)
+	defer c.Close()
+
+	values := c.load().values
+	assert.IsType(t, float64(0), values[CfgSamplingPercentRate], CfgSamplingPercentRate)
+	assert.IsType(t, int(0), values[CfgSamplingCounterRate], CfgSamplingCounterRate)
+	assert.IsType(t, false, values[CfgSQLTraceCommit], CfgSQLTraceCommit)
+	assert.IsType(t, "", values[CfgLogLevel], CfgLogLevel)
+	assert.IsType(t, []string{}, values[CfgErrorIgnoreErrors], CfgErrorIgnoreErrors)
+
+	var reloaded int
+	c.AddReloadCallback([]string{CfgSamplingPercentRate}, func() { reloaded++ })
+	cfgFileViper := viper.New()
+	cfgFileViper.SetConfigFile(cfgFile)
+	c.reloadConfig(cfgFileViper)
+	assert.Equal(t, 0, reloaded, "an unchanged rate was reported as changed")
+}
+
 // The stat queue was sized from Span.QueueSize, so shrinking the span queue
 // silently shrank the stat queue with it.
 func Test_StatQueueSizeIsIndependentOfSpanQueueSize(t *testing.T) {

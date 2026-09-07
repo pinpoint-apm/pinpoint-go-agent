@@ -50,6 +50,12 @@ func newPercentSampler(percent float64) *percentSampler {
 	if percent < 0 {
 		percent = 0
 	} else if percent > 100 {
+		// Clamped, but not silently: 100 is the documented maximum, so a rate
+		// above it is a misread of the option (a per-mille or a 1/rate counter
+		// value) rather than a request to sample more than everything. The C++
+		// agent warns here for the same reason; Java hands anything at or
+		// above the maximum to TrueSampler without a word.
+		Log("config").Warnf("sampling percent rate %v is above the maximum 100, every new transaction is sampled", percent)
 		percent = 100
 	} else if percent > 0 && percent < 0.01 {
 		// Truncated to a rate of 0 below, i.e. never sampled - the same thing

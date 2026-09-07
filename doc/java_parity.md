@@ -29,6 +29,7 @@ is simply not written yet does not belong here.
 | Malformed inbound `Pinpoint-SpanID` | `DefaultTraceHeaderReader`, `NumberUtils.parseLong` | **Diverges** — see [below](#malformed-inbound-span-id--diverges) |
 | Malformed inbound `Pinpoint-TraceID` | `DefaultTraceContext.createTraceId`, `TransactionIdUtils.parseTransactionId` | **Diverges** — see [below](#malformed-inbound-trace-id--diverges) |
 | Order of the inbound header checks | `DefaultTraceHeaderReader.read` | **Same as Java** — `Pinpoint-Sampled: s0` is answered before the trace id and span id headers are looked at (`DefaultTraceHeaderReader.java:47-51`), so a peer that turned tracing off is obeyed even when its other headers are missing or broken |
+| Malformed config value | `DefaultProfilerConfig.readInt` / `NumberUtils.parseInteger`, `ValueAnnotationProcessor` | **Aligned with C++** — a value that does not convert to its option's type is warned about and the option keeps its current value (`get_yaml<T>` in the C++ agent's `src/config.cpp`), where Java is split between a silent default fallback in `readInt`/`readLong` and a startup failure on an `@Value` injection |
 | Span queue overflow policy | `SpanBatchGrpcDataSender` | **Same as Java** — a full send queue drops the oldest entry, as Java's default BATCH sender does (`queue.poll()` in `SpanBatchGrpcDataSender`); rejecting the newest is STREAM-mode-only behaviour, so head-drop is not a deviation |
 | Locked parity invariants (11 groups) | `ParserContext`, `DefaultCallStack`, `GrpcSpanProcessorV2`, `Header`, `CountingSampler`, `UriStatHistogramBucket`, `BaseHistogramSchema`, `DefaultTransactionCounter`, `StringUtils`, `ClientOption` | **Verified identical** — see [below](#locked-parity-invariants--verified-identical) |
 
@@ -232,7 +233,8 @@ below `0.01` — including exactly `0` — up to `0.01`, so the configured "off"
 still sampled one transaction in ten thousand. The `rate == 0` guard in
 `isSampled` was unreachable dead code.
 
-**Now.** The clamp is gone; only `< 0 -> 0` and `> 100 -> 100` remain. The
+**Now.** The clamp is gone; only `< 0 -> 0` and `> 100 -> 100` remain, the
+latter warned about as the C++ agent does. The
 truncation in `newPercentSampler` is Java's `parseSamplingRate`, and the two
 guards in `isSampled` — `rate == 0` and `rate >= 10000` — are its `FalseSampler`
 and `TrueSampler`. All three branches were already there, zero just could not

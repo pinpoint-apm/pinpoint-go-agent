@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -414,15 +415,23 @@ func GetConfig() *Config {
 // Set stores the specified configuration item value.
 // A value set here survives config file reloads. Setting a non-dynamic option
 // updates the stored value only; the agent applies it after a restart.
+// A value that does not convert to the option's type is rejected with a
+// warning and the option keeps the value it already had.
 func (config *Config) Set(cfgName string, value interface{}) {
 	config.mu.Lock()
 	defer config.mu.Unlock()
 
 	if v, ok := config.cfgMap[cfgName]; ok {
+		converted, err := convertCfgValue(v.valueType, value)
+		if err != nil {
+			Log("config").Warnf("%s = %v is not a valid %s, keeping %v",
+				cfgName, value, cfgTypeName(v.valueType), v.value)
+			return
+		}
 		if !v.dynamic {
 			Log("config").Warnf("config %s is not dynamic: the new value takes effect after restart", cfgName)
 		}
-		v.value = value
+		v.value = converted
 		v.source = cfgSrcAPI
 		config.publish()
 	}
@@ -499,6 +508,9 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		for _, fn := range opts {
 			fn(config)
 		}
+		config.mu.Lock()
+		config.normalizeCfgValues()
+		config.mu.Unlock()
 	}
 
 	cmdEnvViper := viper.New()
@@ -548,6 +560,7 @@ func defaultConfig() *Config {
 
 	config.mu.Lock()
 	defer config.mu.Unlock()
+	config.normalizeCfgValues()
 	config.publish()
 
 	return config
@@ -766,12 +779,79 @@ func (config *Config) loadConfig(cmdEnvViper *viper.Viper, cfgFileViper *viper.V
 	}
 }
 
-func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value interface{}, source int) {
-	if item.valueType == CfgStringSlice {
-		if s, ok := value.(string); ok {
-			value = strings.Split(s, ",")
-		}
+// cfgTypeName names a value type for the log lines below.
+func cfgTypeName(valueType int) string {
+	switch valueType {
+	case CfgInt:
+		return "int"
+	case CfgFloat:
+		return "float"
+	case CfgBool:
+		return "bool"
+	case CfgStringSlice:
+		return "string slice"
+	default:
+		return "string"
 	}
+}
+
+// convertCfgValue coerces a raw config value to the type its option was
+// registered with, using the strict cast.To*E variants. The lenient cast.To*
+// the accessors call turns anything it cannot parse into the zero value
+// instead, so before this a typo like Sampling.CounterRate: "abc" became a rate
+// of 0 - rateSampler.isSampled then returns false for every transaction, which
+// is tracing switched off with nothing in the log to say so.
+func convertCfgValue(valueType int, value interface{}) (interface{}, error) {
+	switch valueType {
+	case CfgInt:
+		return cast.ToIntE(value)
+	case CfgFloat:
+		return cast.ToFloat64E(value)
+	case CfgBool:
+		return cast.ToBoolE(value)
+	case CfgStringSlice:
+		// A plain string is how a config file or an environment variable
+		// spells a list, comma separated.
+		if str, ok := value.(string); ok {
+			return strings.Split(str, ","), nil
+		}
+		// cast.ToStringSliceE turns any other single value it can stringify
+		// into a one-element slice, so a bare scalar where a list belongs -
+		// a list written without its dashes, say - would pass as a one-entry
+		// list instead of being reported. Only an actual sequence converts.
+		if k := reflect.ValueOf(value).Kind(); k != reflect.Slice && k != reflect.Array {
+			return nil, fmt.Errorf("unable to cast %#v of type %T to []string", value, value)
+		}
+		return cast.ToStringSliceE(value)
+	default:
+		return cast.ToStringE(value)
+	}
+}
+
+// setFinalValue stages a value coming from a config file, a profile, an
+// environment variable or a command line flag.
+//
+// A value that does not convert to the option's registered type is dropped
+// with a warning and the option keeps what it already had, which is what the
+// C++ agent does (get_yaml<T> in src/config.cpp logs "Failed to read ... Using
+// default value" and leaves the current value alone). Java is not the
+// reference here because it is not consistent with itself: readInt/readLong in
+// DefaultProfilerConfig fall back to the default silently through
+// NumberUtils.parseInteger, while an @Value injection wraps the parse failure
+// in a RuntimeException and fails startup.
+//
+// The converted value is what gets stored, never the raw one, so an option
+// holds its declared type whatever source it came from. That is what keeps the
+// accessors off the silent zero-conversion path and what makes the DeepEqual
+// in loadDynamicConfig compare like with like across a reload.
+func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value interface{}, source int) {
+	converted, err := convertCfgValue(item.valueType, value)
+	if err != nil {
+		Log("config").Warnf("%s = %v is not a valid %s, keeping %v",
+			cfgName, value, cfgTypeName(item.valueType), item.value)
+		return
+	}
+	value = converted
 
 	item.value = value
 	item.source = source
@@ -781,6 +861,37 @@ func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value inte
 		config.useNewLogOpt = true
 	} else if cfgName == CfgLogLevelOld && !config.useNewLogOpt {
 		config.cfgMap[CfgLogLevel].value = value
+	}
+}
+
+// normalizeCfgValues converts the staged values that were written into the
+// cfgMap directly - the registered defaults and whatever the ConfigOption
+// functions stored - to their registered type, so that every source reaches
+// publish with the same representation of an option. Without it a default of
+// int 100 on a float option, or the float32 WithSamplingPercentRate stores,
+// would differ from the float64 a config file yields and report a reload as a
+// change of a value that did not change.
+//
+// A value that does not convert falls back to the registered default: these
+// come from the agent's own code, not from a user's config, so a failure here
+// is a caller bug rather than a typo, but it must not leave a wrong-typed
+// value staged either. The caller must hold config.mu.
+func (config *Config) normalizeCfgValues() {
+	sortKeys := make([]string, 0, len(config.cfgMap))
+	for k := range config.cfgMap {
+		sortKeys = append(sortKeys, k)
+	}
+	sort.Strings(sortKeys)
+
+	for _, k := range sortKeys {
+		v := config.cfgMap[k]
+		converted, err := convertCfgValue(v.valueType, v.value)
+		if err != nil {
+			Log("config").Warnf("%s = %v is not a valid %s, keeping %v",
+				k, v.value, cfgTypeName(v.valueType), v.defaultValue)
+			converted, _ = convertCfgValue(v.valueType, v.defaultValue)
+		}
+		v.value = converted
 	}
 }
 

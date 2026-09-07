@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"sync"
@@ -340,6 +341,23 @@ func Test_percentSampler_javaMapping(t *testing.T) {
 			assert.Equal(t, tt.sampled, sampled, "sampled out of 1000")
 		})
 	}
+}
+
+// The clamp to 100 is warned about, the same silence the sampling type and the
+// out-of-range queue sizes were taken out of: a rate above the documented
+// maximum is a misread of the option, not a request to sample everything. A
+// rate inside the range stays quiet.
+func Test_percentSampler_aboveMaximumWarns(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	s := newPercentSampler(1000)
+	assert.Equal(t, uint64(10000), s.rate, "the clamp to 100 stopped working")
+	assert.Contains(t, buf.String(), "sampling percent rate 1000 is above the maximum 100")
+
+	buf.Reset()
+	newPercentSampler(100)
+	assert.Empty(t, buf.String(), "a rate at the maximum must not warn")
 }
 
 // The minimum rate still works after dropping the clamp that used to raise
