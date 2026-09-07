@@ -999,7 +999,7 @@ func (span *span) SetLogging(logInfo int32) {
 func (span *span) collectUrlStat(stat *UrlStatEntry) {
 	if span.cfg.collectUrlStat {
 		if stat.Url == "" {
-			stat.Url = "UNKNOWN_URL"
+			stat.Url = urlStatUnknown
 		}
 
 		span.urlStat = stat

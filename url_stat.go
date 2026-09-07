@@ -11,6 +11,12 @@ const (
 	urlStatCollectInterval = 30 * time.Second
 )
 
+// urlStatUnknown is the stand-in URI recorded when a span collects URL stats
+// without a URI template. It mirrors Java's URITemplate.NULL_URI and the C++
+// agent's URL_STAT_UNKNOWN (src/url_stat.h) so a mixed deployment aggregates
+// its "no URI recorded" traffic under one server-side key.
+const urlStatUnknown = "/NULL"
+
 type urlStat struct {
 	entry     *UrlStatEntry
 	endTime   time.Time

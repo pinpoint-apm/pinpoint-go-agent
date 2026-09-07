@@ -705,19 +705,25 @@ func Test_javaParityLock_UrlStatEmptyHistogram(t *testing.T) {
 }
 
 // Test_javaParityLock_UrlStatUnknownKey locks the stand-in URL used when a span
-// records URL stats without a URI template.
-//
-// SKIPPED - gap U2 of the 4th cross-agent review. Java uses
-// URITemplate.NULL_URI ("/NULL") and the C++ agent copies it verbatim
-// (URL_STAT_UNKNOWN, src/url_stat.h); this agent writes "UNKNOWN_URL"
-// (span.go, noop.go), so a mixed deployment splits its "no URI recorded"
-// traffic across two server-side keys. Remove the Skip with the fix.
+// records URL stats without a URI template against Java's URITemplate.NULL_URI
+// ("/NULL"), which the C++ agent copies verbatim (URL_STAT_UNKNOWN,
+// src/url_stat.h). Both the sampled and the unsampled span paths are exercised.
 func Test_javaParityLock_UrlStatUnknownKey(t *testing.T) {
-	t.Skip("gap U2: this agent uses \"UNKNOWN_URL\" where Java and C++ use \"/NULL\"")
-
 	const javaNullUri = "/NULL"
-	stat := UrlStatEntry{}
-	assert.Equal(t, javaNullUri, stat.Url)
+	assert.Equal(t, javaNullUri, urlStatUnknown)
+
+	cfg := defaultConfig()
+	cfg.Set(CfgHttpUrlStatEnable, true)
+	agent := newTestAgent(cfg)
+	agent.urlStatChan = make(chan *urlStat, 1)
+
+	span := newSampledSpan(agent, "op", "/rpc")
+	span.collectUrlStat(&UrlStatEntry{Method: "GET"})
+	assert.Equal(t, javaNullUri, span.urlStat.Url)
+
+	unsampled := newUnSampledSpan(agent, "/rpc")
+	unsampled.collectUrlStat(&UrlStatEntry{Method: "GET"})
+	assert.Equal(t, javaNullUri, unsampled.urlStat.Url)
 }
 
 // ===========================================================================

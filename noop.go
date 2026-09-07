@@ -248,7 +248,7 @@ func (span *noopSpan) IsSampled() bool {
 func (span *noopSpan) collectUrlStat(stat *UrlStatEntry) {
 	if span.withStats.Load() && span.cfg.collectUrlStat {
 		if stat.Url == "" {
-			stat.Url = "UNKNOWN_URL"
+			stat.Url = urlStatUnknown
 		}
 
 		span.urlStat = stat
