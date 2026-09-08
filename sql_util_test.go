@@ -626,3 +626,29 @@ func Test_sqlNormalizer_DropsInputPastTheNormalizationCap(t *testing.T) {
 		assert.True(t, utf8.ValidString(nsql))
 	})
 }
+
+// A statement with nothing to normalize used to be copied byte by byte into a
+// growing builder and then thrown away in favor of the input. The output is now
+// materialized only at the first change, so the common placeholder-only shape
+// costs no allocation, and a changed statement pays one Grow-sized copy.
+func Test_sqlNormalizer_LazyOutput(t *testing.T) {
+	unchanged := "SELECT a.id, a.name FROM accounts a WHERE a.id = ? AND a.status = ? ORDER BY a.created_at DESC LIMIT ?"
+	allocs := testing.AllocsPerRun(100, func() {
+		sql, param := newSqlNormalizer(unchanged, false).run()
+		if sql != unchanged || param != "" {
+			t.Fatalf("unchanged statement rewritten: %q %q", sql, param)
+		}
+	})
+	assert.Equal(t, 0.0, allocs, "a statement with no literals must not allocate")
+
+	// The unchanged prefix is copied exactly once, at the first change, and
+	// every byte after it goes through the materialized output.
+	sql, param := newSqlNormalizer("SELECT /* c */ x FROM t WHERE a = 'v' AND b = 12 -- tail\n AND c = ?", true).run()
+	assert.Equal(t, "SELECT  x FROM t WHERE a = '0$' AND b = 1#  AND c = ?", sql)
+	assert.Equal(t, "v,12", param)
+
+	// A change that arrives after a verbatim comment keeps the comment.
+	sql, param = newSqlNormalizer("/* c */ SELECT 1", false).run()
+	assert.Equal(t, "/* c */ SELECT 0#", sql)
+	assert.Equal(t, "1", param)
+}

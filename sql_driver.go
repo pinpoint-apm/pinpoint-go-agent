@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"time"
 	"unicode/utf8"
 )
@@ -289,6 +290,30 @@ func writeLimitedBindValue(b *bytes.Buffer, value interface{}, maxSize int) bool
 	if remaining <= 0 {
 		return false
 	}
+
+	// driver.Value is a closed set (int64, float64, bool, []byte, string,
+	// time.Time, nil), so the common cases are formatted straight into the
+	// buffer with no reflection and no intermediate string. Each branch writes
+	// byte for byte what fmt.Sprint writes for the same value: %v formats a
+	// float64 as strconv's shortest 'g', prints a time.Time through its String
+	// method, and a nil interface as "<nil>". Anything a driver's
+	// NamedValueChecker let through unconverted takes the fmt path below.
+	var scratch [64]byte
+	switch v := value.(type) {
+	case nil:
+		return writeLimitedString(b, "<nil>", maxSize)
+	case int64:
+		return writeLimitedBytes(b, strconv.AppendInt(scratch[:0], v, 10), maxSize)
+	case float64:
+		return writeLimitedBytes(b, strconv.AppendFloat(scratch[:0], v, 'g', -1, 64), maxSize)
+	case bool:
+		return writeLimitedBytes(b, strconv.AppendBool(scratch[:0], v), maxSize)
+	case time.Time:
+		return writeLimitedString(b, v.String(), maxSize)
+	case []byte:
+		return writeLimitedByteSlice(b, v, remaining, maxSize)
+	}
+
 	// fmt.Sprint preserves the established "[1 2 3]" representation. Every
 	// element adds at least one character to it, so no more than remaining
 	// elements can contribute to its prefix.
@@ -296,6 +321,42 @@ func writeLimitedBindValue(b *bytes.Buffer, value interface{}, maxSize int) bool
 		value = rv.Slice(0, remaining).Interface()
 	}
 	return writeLimitedString(b, fmt.Sprint(value), maxSize)
+}
+
+// writeLimitedByteSlice writes v as fmt.Sprint does ("[1 2 3]") without
+// building a string of the whole slice: elements are formatted into a scratch
+// buffer only until it holds more than remaining bytes, since anything past
+// that is cut anyway, and the buffer is then written under the same limit
+// check the fmt path applies to its string.
+func writeLimitedByteSlice(b *bytes.Buffer, v []byte, remaining int, maxSize int) bool {
+	var scratch [128]byte
+	buf := append(scratch[:0], '[')
+	for i, e := range v {
+		if len(buf) > remaining {
+			break
+		}
+		if i > 0 {
+			buf = append(buf, ' ')
+		}
+		buf = strconv.AppendUint(buf, uint64(e), 10)
+	}
+	buf = append(buf, ']')
+	return writeLimitedBytes(b, buf, maxSize)
+}
+
+// writeLimitedBytes is writeLimitedString for a formatted scratch buffer.
+// Every value formatted into it is ASCII, so the cut needs no rune boundary.
+func writeLimitedBytes(b *bytes.Buffer, value []byte, maxSize int) bool {
+	remaining := maxSize - b.Len()
+	if len(value) <= remaining {
+		b.Write(value)
+		return true
+	}
+	if remaining <= 0 {
+		return false
+	}
+	b.Write(value[:remaining])
+	return false
 }
 
 func writeLimitedString(b *bytes.Buffer, value string, maxSize int) bool {
@@ -327,7 +388,7 @@ func writeLimitedString(b *bytes.Buffer, value string, maxSize int) bool {
 // room inside a limit shorter than the marker would drop the marker itself and
 // leave the truncation with no trace at all.
 func writeBindTruncationMarker(b *bytes.Buffer, numValues int) {
-	b.WriteString("...(" + fmt.Sprint(numValues) + ")")
+	b.WriteString("...(" + strconv.Itoa(numValues) + ")")
 }
 
 func (c *sqlConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {

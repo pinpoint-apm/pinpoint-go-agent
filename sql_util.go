@@ -14,13 +14,22 @@ import (
 // Decoding buys nothing and costs fidelity - an invalid UTF-8 byte would decode
 // to U+FFFD and be written back as three different bytes, rewriting a statement
 // the collector is supposed to receive verbatim.
+//
+// The output is materialized lazily. Until the first byte that differs from the
+// input (a removed comment, a literal turned into a placeholder), the output is
+// by definition sql[:pos], so nothing is written: emit drops the byte and
+// materialize copies the prefix in one Grow-sized write when a change arrives.
+// A statement with no literals - the common shape of placeholder-based Go SQL -
+// therefore allocates nothing and is returned as it came in; before, its whole
+// text was copied byte by byte through a growing builder and then discarded.
 type sqlNormalizer struct {
-	sql        string
-	pos        int
-	output     strings.Builder
-	param      strings.Builder
-	paramIndex int
-	isChanged  bool
+	sql          string
+	pos          int
+	output       strings.Builder
+	materialized bool
+	param        strings.Builder
+	paramIndex   int
+	isChanged    bool
 	// removeComments drops comments from the output instead of copying them,
 	// as the Java agent does by default (profiler.jdbc.removecomments).
 	removeComments bool
@@ -86,22 +95,22 @@ func (s *sqlNormalizer) run() (string, string) {
 			} else if s.lookahead('*') {
 				s.consumeMultiLineComment(ch)
 			} else {
-				s.output.WriteByte(ch)
+				s.emit(ch)
 				numberTokenStartEnable = true
 			}
 		} else if ch == '-' {
 			if s.lookahead('-') {
 				s.consumeSingleLineComment(ch)
 			} else {
-				s.output.WriteByte(ch)
+				s.emit(ch)
 				numberTokenStartEnable = true
 			}
 		} else if ch == '\'' {
-			s.output.WriteByte(ch)
+			s.emit(ch)
 			if s.lookahead('\'') {
 				// An empty literal is copied through as it stands: Java neither
 				// records a parameter for it nor marks the statement changed.
-				s.output.WriteByte('\'')
+				s.emit('\'')
 				s.pos++
 			} else {
 				s.consumeCharLiteral()
@@ -110,7 +119,7 @@ func (s *sqlNormalizer) run() (string, string) {
 			if numberTokenStartEnable {
 				s.consumeNumberLiteral(ch)
 			} else {
-				s.output.WriteByte(ch)
+				s.emit(ch)
 			}
 		} else if ch == '$' {
 			// Java turns the flag off only for a positional placeholder
@@ -121,16 +130,16 @@ func (s *sqlNormalizer) run() (string, string) {
 			if s.lookaheadDigit() {
 				numberTokenStartEnable = false
 			}
-			s.output.WriteByte(ch)
+			s.emit(ch)
 		} else if isLetter(ch) || ch == '.' || ch == '_' || ch == '@' || ch == ':' {
 			numberTokenStartEnable = false
-			s.output.WriteByte(ch)
+			s.emit(ch)
 		} else {
 			// Whitespace, operators and separators land here, and so does every
 			// byte of a multibyte character - Java's isNumberTokenStart says the
 			// same of a non-ASCII char, so "테이블1" yields "테이블0#" on both.
 			numberTokenStartEnable = true
-			s.output.WriteByte(ch)
+			s.emit(ch)
 		}
 	}
 
@@ -146,6 +155,37 @@ func (s *sqlNormalizer) run() (string, string) {
 
 }
 
+// emit writes ch to the output once it is materialized. Before that the byte
+// is already accounted for: it sits in sql ahead of pos, and materialize copies
+// it with the rest of the unchanged prefix.
+func (s *sqlNormalizer) emit(ch byte) {
+	if s.materialized {
+		s.output.WriteByte(ch)
+	}
+}
+
+// materialize starts the output at the first change, copying the unchanged
+// prefix sql[:upto] in one write. upto is where the changed bytes begin, which
+// is pos minus whatever the caller read but has not emitted (the lead byte of
+// a comment marker or a number literal); every caller also marks isChanged, so
+// run returns the output exactly when it was materialized.
+func (s *sqlNormalizer) materialize(upto int) {
+	if s.materialized {
+		return
+	}
+	s.materialized = true
+	s.output.Grow(len(s.sql))
+	s.output.WriteString(s.sql[:upto])
+}
+
+// writeParamIndex appends the placeholder number without the string
+// strconv.Itoa would allocate past its small-integer cache.
+func (s *sqlNormalizer) writeParamIndex() {
+	var buf [20]byte
+	s.output.Write(strconv.AppendInt(buf[:0], int64(s.paramIndex), 10))
+	s.paramIndex++
+}
+
 // consumeSingleLineComment consumes a // or -- comment. lead is the first
 // character of the marker, already read but not yet written. The terminating
 // newline is part of the comment, as in the Java agent - ParserContext reads it
@@ -155,15 +195,16 @@ func (s *sqlNormalizer) consumeSingleLineComment(lead byte) {
 		// A statement whose only change is a dropped comment still has to
 		// return the normalized text, not the original (Java's parameter.touch).
 		s.isChanged = true
+		s.materialize(s.pos - 1) // lead is read, not written
 	} else {
-		s.output.WriteByte(lead)
+		s.emit(lead)
 	}
 
 	for s.pos < len(s.sql) {
 		ch := s.sql[s.pos]
 		s.pos++
 		if !s.removeComments {
-			s.output.WriteByte(ch)
+			s.emit(ch)
 		}
 		if ch == '\n' {
 			break
@@ -176,9 +217,10 @@ func (s *sqlNormalizer) consumeSingleLineComment(lead byte) {
 func (s *sqlNormalizer) consumeMultiLineComment(lead byte) {
 	if s.removeComments {
 		s.isChanged = true
+		s.materialize(s.pos - 1) // lead is read, not written
 	} else {
-		s.output.WriteByte(lead)
-		s.output.WriteByte('*')
+		s.emit(lead)
+		s.emit('*')
 	}
 	s.pos++ /* consume '*' */
 
@@ -189,7 +231,7 @@ func (s *sqlNormalizer) consumeMultiLineComment(lead byte) {
 		ch := s.sql[s.pos]
 		s.pos++
 		if !s.removeComments {
-			s.output.WriteByte(ch)
+			s.emit(ch)
 		}
 		if prevStar && ch == '/' {
 			break
@@ -203,6 +245,7 @@ func (s *sqlNormalizer) consumeMultiLineComment(lead byte) {
 // but its content is still reported as a parameter.
 func (s *sqlNormalizer) consumeCharLiteral() {
 	s.isChanged = true
+	s.materialize(s.pos) // the opening quote is already accounted for
 	if s.param.Len() > 0 {
 		s.param.WriteByte(',')
 	}
@@ -220,8 +263,7 @@ func (s *sqlNormalizer) consumeCharLiteral() {
 				s.param.WriteByte('\'')
 				s.pos++
 			} else {
-				s.output.WriteString(strconv.Itoa(s.paramIndex))
-				s.paramIndex++
+				s.writeParamIndex()
 				s.output.WriteByte('$')
 				s.output.WriteByte('\'')
 				break
@@ -236,11 +278,11 @@ func (s *sqlNormalizer) consumeCharLiteral() {
 // digit, already read but not yet written.
 func (s *sqlNormalizer) consumeNumberLiteral(first byte) {
 	s.isChanged = true
+	s.materialize(s.pos - 1) // first is read, not written
 	if s.param.Len() > 0 {
 		s.param.WriteByte(',')
 	}
-	s.output.WriteString(strconv.Itoa(s.paramIndex))
-	s.paramIndex++
+	s.writeParamIndex()
 	s.output.WriteByte('#')
 	s.param.WriteByte(first)
 

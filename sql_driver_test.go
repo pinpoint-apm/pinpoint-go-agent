@@ -353,3 +353,20 @@ func Test_sqlConn_UsesLiveConfig(t *testing.T) {
 	c.Set(CfgSQLMaxBindValueSize, 9)
 	assert.Equal(t, 9, conn.cfg().sqlMaxBindValueSize, "connection sees the reload")
 }
+
+// The closed set of driver.Value types is formatted straight into the buffer:
+// no reflection, no fmt.Sprint string per value. Test_writeBindValue_PreservesFormatting
+// pins the output; this pins the cost.
+func Test_writeBindValue_DriverValuesDoNotAllocate(t *testing.T) {
+	values := []interface{}{nil, int64(-42), float64(1.25), true, []byte{0, 1, 127, 255}, "text"}
+	var b bytes.Buffer
+	b.Grow(1024)
+	allocs := testing.AllocsPerRun(100, func() {
+		b.Reset()
+		for i, value := range values {
+			writeBindValue(&b, i, value, len(values)-1, 1024)
+		}
+	})
+	assert.Equal(t, 0.0, allocs)
+	assert.Equal(t, "<nil>, -42, 1.25, true, [0 1 127 255], text", b.String())
+}
