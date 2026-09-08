@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"slices"
 	"sync"
 	"time"
 )
@@ -67,6 +68,9 @@ type urlStats struct {
 	// stream has piled up.
 	snapshot  *urlStatSnapshot
 	completed []*urlStatSnapshot
+	// Ticks handed to the sender (or evicted) cannot be reopened: a later
+	// partial write would replace their existing collector-side counts.
+	retiredThrough time.Time
 }
 
 func newUrlStats(config *Config) *urlStats {
@@ -83,10 +87,29 @@ func (stats *urlStats) newSnapshot() *urlStatSnapshot {
 }
 
 func (stats *urlStats) add(us *urlStat) {
+	if us.endTime.IsZero() {
+		return
+	}
 	tick := us.endTime.Truncate(urlStatCollectInterval)
 
 	stats.mu.Lock()
 	defer stats.mu.Unlock()
+	if !stats.retiredThrough.IsZero() && !tick.After(stats.retiredThrough) {
+		urlStatLateLog.warnf("dropping late url stat for retired tick %s", tick)
+		return
+	}
+	for _, completed := range stats.completed {
+		if tick.Equal(completed.tick) {
+			completed.add(us)
+			return
+		}
+	}
+	if !stats.snapshot.isEmpty() && tick.Before(stats.snapshot.tick) {
+		late := stats.newSnapshot()
+		late.add(us)
+		stats.completeLocked(late)
+		return
+	}
 
 	// Tick boundary: the first entry of a newer tick closes the one in
 	// progress. Entries carry an end time of about "now", so the cut lands on
@@ -97,30 +120,38 @@ func (stats *urlStats) add(us *urlStat) {
 	// the last tick of a burst has no newer entry coming to close it. Once its
 	// window is over takeSnapshot closes it instead.
 	//
-	// Strictly newer only: a straggler for an already-closed tick must not cut
-	// again. It lands in the current snapshot under its own tick key, which is
-	// what the server aggregates by, and merge folds it back together on send.
+	// Stragglers were routed to their own completed tick above, so every
+	// snapshot contains exactly one tick, including during ordinary sends.
 	if len(stats.snapshot.urlMap) > 0 && tick.After(stats.snapshot.tick) {
-		if len(stats.completed) >= maxCompletedUrlStatSnapshots {
-			stats.completed = stats.completed[1:]
-			urlStatSnapshotDropLog.warnf(
-				"url stat snapshot queue overflow: dropping the oldest completed tick (max %d completed ticks); the stats stream is not draining",
-				maxCompletedUrlStatSnapshots)
-		}
-		stats.completed = append(stats.completed, stats.snapshot)
+		stats.completeLocked(stats.snapshot)
 		stats.snapshot = stats.newSnapshot()
 	}
 
 	stats.snapshot.add(us)
 }
 
+var urlStatLateLog = logThrottle{src: "url stat"}
+
+// Caller holds mu. Sort the small queue because a previously unseen older
+// tick may arrive after the current tick. Eviction still drops the oldest.
+func (stats *urlStats) completeLocked(snapshot *urlStatSnapshot) {
+	stats.completed = append(stats.completed, snapshot)
+	slices.SortFunc(stats.completed, func(a, b *urlStatSnapshot) int { return a.tick.Compare(b.tick) })
+	if len(stats.completed) > maxCompletedUrlStatSnapshots {
+		stats.retiredThrough = stats.completed[0].tick
+		stats.completed[0] = nil
+		stats.completed = stats.completed[1:]
+		urlStatSnapshotDropLog.warnf(
+			"url stat snapshot queue overflow: dropping the oldest completed tick (max %d completed ticks); the stats stream is not draining",
+			maxCompletedUrlStatSnapshots)
+	}
+}
+
 // takeSnapshot collects the ticks that are over into one snapshot to send: the
 // ones urlStats.add has already closed, plus the tick in progress once its own
-// window has elapsed. Taking that last one is not the split the arrival cut
-// exists to avoid - the window is past, so no entry that can still legitimately
-// join the tick is coming - and without it nothing would ever close the last
-// tick of a burst, since add is the only other thing that closes one and an
-// agent whose traffic has stopped never reaches it again.
+// window has elapsed. This also closes the final tick when traffic stops.
+// Entries arriving after the handover are dropped by add: sending them later
+// under the same tick would replace the counts already handed to the sender.
 //
 // includeInProgress takes the tick in progress whatever its window, and is set
 // only on the shutdown path (agent.shutdownAgent): a tick cut short by the stop
@@ -148,13 +179,14 @@ func (stats *urlStats) takeSnapshot(includeInProgress bool) *urlStatSnapshot {
 		taken.merge(completed)
 	}
 	stats.completed = nil
+	if !taken.isEmpty() && taken.tick.After(stats.retiredThrough) {
+		stats.retiredThrough = taken.tick
+	}
 	return taken
 }
 
 // tickIsOverLocked reports whether the tick in progress holds anything and the
-// window it belongs to has already passed. snapshot.tick is the newest tick key
-// in there, so a straggler filed under an older key cannot hold the snapshot
-// open past its own window. Callers hold stats.mu.
+// window it belongs to has already passed. Callers hold stats.mu.
 func (stats *urlStats) tickIsOverLocked(now time.Time) bool {
 	return !stats.snapshot.isEmpty() && now.After(stats.snapshot.tick.Add(urlStatCollectInterval))
 }

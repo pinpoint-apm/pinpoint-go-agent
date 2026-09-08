@@ -422,7 +422,7 @@ func TestClientStream_EndsTheSpanEventOnce(t *testing.T) {
 }
 
 // A successful send or receive is not the end of the stream, so it must not
-// close the span event; only an error or CloseSend does.
+// close the span event, including a successful half-close.
 func TestClientStream_SuccessfulCallsKeepTheSpanEventOpen(t *testing.T) {
 	tracer := newCountingTracer()
 	cs := &clientStream{ClientStream: &fakeClientStream{}, tracer: tracer}
@@ -434,7 +434,7 @@ func TestClientStream_SuccessfulCallsKeepTheSpanEventOpen(t *testing.T) {
 	require.Zero(t, atomic.LoadInt32(&tracer.ends), "the span event was closed before the stream ended")
 
 	require.NoError(t, cs.CloseSend())
-	assert.Equal(t, int32(1), atomic.LoadInt32(&tracer.ends), "CloseSend must close the span event")
+	assert.Zero(t, atomic.LoadInt32(&tracer.ends), "CloseSend must keep receiving open")
 }
 
 // The stream's own error has to reach the caller unchanged, whichever call
@@ -503,6 +503,7 @@ func TestStreamClientInterceptor(t *testing.T) {
 		assert.NotEmpty(t, invokedMD.Get(key), "outgoing metadata is missing %s", key)
 	}
 	assert.NoError(t, stream.CloseSend())
+	stream.(*clientStream).endSpan(nil)
 }
 
 // A streamer that fails never produces a stream, so the interceptor has to
@@ -812,12 +813,14 @@ func TestStreamClientInterceptor_AbandonedStreamEndsItsSpan(t *testing.T) {
 	caller := newForkingTracer()
 
 	fake := newFakeClientStream(t, nil)
+	var finish func(error)
 	_, err := StreamClientInterceptor()(
 		pinpoint.NewContext(context.Background(), caller),
 		&grpc.StreamDesc{StreamName: "Stream"},
 		lazyConn(t, "localhost:8080"),
 		"/testapp.Hello/Stream",
-		func(context.Context, *grpc.StreamDesc, *grpc.ClientConn, string, ...grpc.CallOption) (grpc.ClientStream, error) {
+		func(_ context.Context, _ *grpc.StreamDesc, _ *grpc.ClientConn, _ string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+			finish = streamFinishCallback(t, opts)
 			return fake, nil
 		})
 	require.NoError(t, err)
@@ -825,6 +828,7 @@ func TestStreamClientInterceptor_AbandonedStreamEndsItsSpan(t *testing.T) {
 	require.False(t, caller.child.spanEnded.Load(), "the stream is still live")
 
 	fake.cancel()
+	finish(context.Canceled)
 
 	assert.Eventually(t, func() bool { return caller.child.spanEnded.Load() },
 		time.Second, time.Millisecond, "an abandoned stream must end its own span")

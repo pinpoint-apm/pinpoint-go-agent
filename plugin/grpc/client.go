@@ -20,7 +20,7 @@ type clientStream struct {
 
 func (cs *clientStream) SendMsg(m interface{}) error {
 	err := cs.ClientStream.SendMsg(m)
-	if err != nil {
+	if err != nil && err != io.EOF {
 		cs.endSpan(err)
 	}
 	return err
@@ -36,7 +36,10 @@ func (cs *clientStream) RecvMsg(m interface{}) error {
 
 func (cs *clientStream) CloseSend() error {
 	err := cs.ClientStream.CloseSend()
-	cs.endSpan(err)
+	// Closing the send direction still allows responses and a final status.
+	if err != nil {
+		cs.endSpan(err)
+	}
 	return err
 }
 
@@ -153,11 +156,6 @@ func StreamClientInterceptor() grpc.StreamClientInterceptor {
 		// is handed out.
 		defer func() { endSpanEvent(tracer, err) }()
 
-		stream, err := streamer(newCtx, desc, cc, method, opts...)
-		if err != nil {
-			return nil, err
-		}
-
 		// The stream outlives this call, and gRPC explicitly allows driving it
 		// from other goroutines (one sending, one receiving), so its lifetime
 		// is traced on its own goroutine tracer. Ending the interceptor's
@@ -170,18 +168,23 @@ func StreamClientInterceptor() grpc.StreamClientInterceptor {
 			streamTracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeGrpc)
 		}
 
-		cs := &clientStream{ClientStream: stream, tracer: streamTracer}
-
-		// A stream the caller abandons - its context cancelled, or a deadline
-		// reached - makes no further Recv or CloseSend, so nothing ended its
-		// span and the whole async span was lost. gRPC cancels the stream's
-		// context on every termination path, and endSpan is idempotent, so
-		// this only does the work the methods above did not already do.
-		go func() {
-			<-stream.Context().Done()
-			cs.endSpan(stream.Context().Err())
+		cs := &clientStream{tracer: streamTracer}
+		// Initialize the tracer before calling the streamer: OnFinish may run
+		// before the stream is returned. It reports the actual RPC status, whereas
+		// the stream context is canceled on success too. It also ends abandoned
+		// streams without a goroutine waiting on Context().Done().
+		opts = append(opts, grpc.OnFinish(cs.endSpan))
+		var stream grpc.ClientStream
+		defer func() {
+			if stream == nil {
+				cs.endSpan(err)
+			}
 		}()
-
+		stream, err = streamer(newCtx, desc, cc, method, opts...)
+		if err != nil {
+			return nil, err
+		}
+		cs.ClientStream = stream
 		return cs, nil
 	}
 }

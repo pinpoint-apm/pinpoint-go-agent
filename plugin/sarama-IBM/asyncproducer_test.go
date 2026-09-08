@@ -233,7 +233,7 @@ func Test_asyncProducer_InputAckEndsTracer(t *testing.T) {
 	}
 }
 
-func Test_asyncProducer_AsyncCloseCancelsBlockedInput(t *testing.T) {
+func Test_asyncProducer_AsyncCloseDeliversBlockedInput(t *testing.T) {
 	startAgent(t)
 	tests := []struct {
 		name string
@@ -259,9 +259,11 @@ func Test_asyncProducer_AsyncCloseCancelsBlockedInput(t *testing.T) {
 			config := sarama.NewConfig()
 			config.Producer.Return.Successes = true
 
+			msg := &sarama.ProducerMessage{Topic: "topic"}
 			stub := newStubAsyncProducer()
 			stub.input = make(chan *sarama.ProducerMessage)
 			stub.onClose = func() {
+				stub.successes <- msg
 				close(stub.successes)
 				close(stub.errors)
 			}
@@ -271,7 +273,7 @@ func Test_asyncProducer_AsyncCloseCancelsBlockedInput(t *testing.T) {
 
 			inputReturned := make(chan struct{})
 			go func() {
-				tt.send(p, ctx, &sarama.ProducerMessage{Topic: "topic"})
+				tt.send(p, ctx, msg)
 				close(inputReturned)
 			}()
 			waitForClose(t, stub.inputSeen, "blocked underlying input")
@@ -284,10 +286,21 @@ func Test_asyncProducer_AsyncCloseCancelsBlockedInput(t *testing.T) {
 				close(closeReturned)
 			}()
 			waitForClose(t, closeReturned, "AsyncClose")
-			waitForClose(t, tracer.ended, "cancelled tracer")
-			requireSpanError(t, tracer, sarama.ErrShuttingDown)
+			select {
+			case got := <-stub.input:
+				require.Same(t, msg, got)
+			case <-p.inputDone:
+				t.Fatal("shutdown dropped the accepted message")
+			case <-time.After(time.Second):
+				t.Fatal("accepted message was not delivered")
+			}
+			// The underlying shutdown hook publishes the delivery result
+			// only after the forwarder has handed over the message.
+			waitForClose(t, tracer.ended, "acknowledged tracer")
+			requireSpanError(t, tracer, nil)
 			requireSpanCount(t, p, 0)
 
+			require.Same(t, msg, <-p.Successes())
 			requireChannelsClosed(t, p)
 		})
 	}
@@ -664,17 +677,44 @@ func Test_asyncProducer_takeInput(t *testing.T) {
 	assert.False(t, isTraced, "the deprecated Input path arrives untraced")
 }
 
-// A send sarama still has room for must not be abandoned to a shutdown signal
-// that is already closed; only a send with nowhere to go waits for it.
-func Test_sendAsyncProducerMessage_roomBeatsShutdown(t *testing.T) {
-	done := make(chan struct{})
-	close(done)
+// A closed underlying input cannot panic the host process.
+func Test_sendAsyncProducerMessage_closedInput(t *testing.T) {
+	input := make(chan *sarama.ProducerMessage)
+	close(input)
+	assert.False(t, sendAsyncProducerMessage(input, &sarama.ProducerMessage{}))
+}
 
-	msg := &sarama.ProducerMessage{Topic: "topic"}
-	input := make(chan *sarama.ProducerMessage, 1)
-	require.True(t, sendAsyncProducerMessage(input, done, msg))
-	assert.Same(t, msg, <-input)
-
-	assert.False(t, sendAsyncProducerMessage(make(chan *sarama.ProducerMessage), done, msg),
-		"a send with no room left gives up on the shutdown signal")
+// Close must flush buffered messages through an underlying producer that only
+// resumes receiving after shutdown has started.
+func Test_asyncProducer_CloseDrainsBufferedMessagesThroughBackpressure(t *testing.T) {
+	stub := newStubAsyncProducer()
+	stub.input = make(chan *sarama.ProducerMessage)
+	stub.onClose = func() { close(stub.successes); close(stub.errors) }
+	p := wrapAsyncProducer(stub, []string{"broker:9092"}, sarama.NewConfig())
+	const count = 32
+	messages := make([]*sarama.ProducerMessage, count)
+	for i := range messages {
+		messages[i] = &sarama.ProducerMessage{Topic: "topic"}
+		p.InputContext(context.Background(), messages[i])
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- p.Close() }()
+	waitForClose(t, p.done, "shutdown signal")
+	for _, want := range messages {
+		select {
+		case got := <-stub.input:
+			require.Same(t, want, got)
+		case <-closed:
+			t.Fatal("Close returned before delivering all accepted messages")
+		case <-time.After(time.Second):
+			t.Fatal("accepted message was not delivered")
+		}
+	}
+	select {
+	case err := <-closed:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Close did not finish after delivery")
+	}
+	waitForClose(t, p.drainDone, "input drainer")
 }

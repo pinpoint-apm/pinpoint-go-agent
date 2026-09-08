@@ -197,7 +197,13 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 			if !ok {
 				select {
 				case <-wrapped.done:
-					return
+					// A send may have completed after takeInput's empty
+					// check but before shutdown. Recheck before exiting,
+					// since select can choose done over that queued message.
+					msg, traced, ok = wrapped.takeInput()
+					if !ok {
+						return
+					}
 				case m := <-wrapped.inputContext:
 					msg, traced = m, true
 				case m := <-wrapped.input:
@@ -265,48 +271,36 @@ func (p *asyncProducer) takeInput() (*sarama.ProducerMessage, bool, bool) {
 // deprecated Input path left it untraced: the tracer is saved before the send,
 // because a broker ack can reach the ack loop before a save placed after the
 // send, and the span would then never be ended. A disabled agent traces and
-// injects nothing, as InputContext. A message the shutdown cancels has its
-// span ended here, and false says the forwarder is done.
+// injects nothing, as InputContext. A closed underlying input ends the message
+// span here, and false says the forwarder is done.
 func (p *asyncProducer) forward(msg *sarama.ProducerMessage, traced bool) bool {
 	if !traced && pinpoint.GetAgent().Enable() && !isNested(msg) {
 		span, id := newAsyncProducerTracer(pinpoint.FromContext(p.ctx), p.addrs, msg, p.config)
 		saveAsyncProducerTracer(p, span, id)
 	}
-	if !sendAsyncProducerMessage(p.AsyncProducer.Input(), p.done, msg) {
+	if !sendAsyncProducerMessage(p.AsyncProducer.Input(), msg) {
 		endAsyncProducerTracer(p, msg, sarama.ErrShuttingDown)
 		return false
 	}
 	return true
 }
 
-func sendAsyncProducerMessage(input chan<- *sarama.ProducerMessage, done <-chan struct{}, msg *sarama.ProducerMessage) (sent bool) {
+func sendAsyncProducerMessage(input chan<- *sarama.ProducerMessage, msg *sarama.ProducerMessage) (sent bool) {
 	defer func() {
 		if recover() != nil {
 			sent = false
 		}
 	}()
-
-	// Room in sarama's input wins over the shutdown signal, for the same
-	// reason the forwarder prefers a buffered message: both are ready during
-	// shutdown, and a plain select would abandon a message sarama could still
-	// take. Only a send with nowhere to go waits for the signal.
-	select {
-	case input <- msg:
-		return true
-	default:
-	}
-
-	select {
-	case input <- msg:
-		return true
-	case <-done:
-		return false
-	}
+	// This message was accepted before shutdown. AsyncClose waits for the
+	// forwarder before closing sarama's input, so backpressure must be allowed
+	// to clear even after the wrapper stops accepting new messages.
+	input <- msg
+	return true
 }
 
 // drainAsyncProducerInput discards what reaches the wrapper's inputs after the
 // forwarder has drained them and gone - a message pushed once the shutdown was
-// already under way, or one left behind when sarama's input had no room. It
+// already under way, or one left behind when sarama's input was closed unexpectedly. It
 // outlives AsyncClose - which returns as soon as the input forwarder is gone -
 // and stops once the wrapper is fully shut down, sweeping up whoever parked in
 // the meantime.

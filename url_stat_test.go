@@ -504,23 +504,48 @@ func Test_urlStatCompletedQueueDropsTheOldestTickAtTheCap(t *testing.T) {
 	}
 }
 
-// A straggler for an already-closed tick lands in the open snapshot under its
-// own tick key, so both halves reach the same send and merge folds them back
-// into one entry rather than dropping either.
+// A straggler joins its completed tick before an ordinary periodic send,
+// even while the next tick is still open.
 func Test_urlStatMergeFoldsAStragglerBackIntoItsTick(t *testing.T) {
 	stats := newUrlStats(defaultConfig())
 	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+	setNow := fixUrlStatClock(t, tick.Add(urlStatCollectInterval+time.Second))
 
 	stats.add(newTestUrlStat("/a", 10, tick))
 	stats.add(newTestUrlStat("/a", 20, tick.Add(urlStatCollectInterval))) // closes the tick
 	stats.add(newTestUrlStat("/a", 30, tick.Add(time.Second)))            // straggler for the closed tick
 
-	snapshot := stats.takeSnapshot(true)
+	snapshot := stats.takeSnapshot(false)
 	folded, ok := snapshot.urlMap[urlKey{url: "/a", tick: tick}]
 	assert.True(t, ok)
 	assert.Equal(t, int64(40), folded.totalHistogram.total)
 	assert.Equal(t, int64(30), folded.totalHistogram.max)
 	assert.Equal(t, int32(2), histogramCount(folded.totalHistogram))
+	setNow(tick.Add(2*urlStatCollectInterval + time.Second))
+	next := stats.takeSnapshot(false)
+	assert.NotContains(t, next.urlMap, urlKey{url: "/a", tick: tick}, "a tick must never be sent twice")
+}
+
+func Test_urlStatDropsEntriesAfterTheirTickWasSent(t *testing.T) {
+	stats := newUrlStats(defaultConfig())
+	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+	fixUrlStatClock(t, tick.Add(urlStatCollectInterval+time.Second))
+	stats.add(newTestUrlStat("/a", 10, tick))
+	require.False(t, stats.takeSnapshot(false).isEmpty())
+	stats.add(newTestUrlStat("/a", 30, tick.Add(time.Second)))
+	assert.True(t, stats.takeSnapshot(true).isEmpty(), "late entries must not overwrite an already sent tick")
+}
+
+func Test_urlStatAcceptsPreviouslyUnseenOlderTick(t *testing.T) {
+	stats := newUrlStats(defaultConfig())
+	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+	fixUrlStatClock(t, tick.Add(urlStatCollectInterval+time.Second))
+	stats.add(newTestUrlStat("/a", 20, tick.Add(urlStatCollectInterval)))
+	stats.add(newTestUrlStat("/a", 10, tick))
+	sent := stats.takeSnapshot(false)
+	require.Len(t, sent.urlMap, 1)
+	assert.Equal(t, int64(10), sent.urlMap[urlKey{url: "/a", tick: tick}].totalHistogram.total)
+	assert.Equal(t, int64(20), stats.snapshot.urlMap[urlKey{url: "/a", tick: tick.Add(urlStatCollectInterval)}].totalHistogram.total)
 }
 
 // The last tick of a burst has no newer entry coming to close it, so its own
