@@ -128,3 +128,74 @@ func Test_spanQueue_closeConcurrentProducersDrainsAccepted(t *testing.T) {
 	assert.Zero(t, q.length(), "consumer must not exit ahead of an accepted enqueue")
 	assert.Equal(t, accepted.Load(), consumed.Load()+q.dropCount(), "accepted == consumed + head-dropped")
 }
+
+// Test_spanQueue_saturationHintBoundsTheScan pins the hint's life cycle: a
+// scan that finds every shard full sets it, the next enqueue overwrites without
+// re-scanning, and the first enqueue that finds room clears it. Capacity and
+// drop accounting are unchanged throughout.
+func Test_spanQueue_saturationHintBoundsTheScan(t *testing.T) {
+	const capacity = 1024
+	q := newSpanQueue(capacity)
+	agent := newTestAgent(defaultConfig())
+	chunk := newTestSpanChunk(agent)
+
+	for i := 0; i < capacity; i++ {
+		assert.True(t, q.enqueue(chunk))
+	}
+	assert.False(t, q.saturated.Load(), "filling to capacity finds room every time")
+
+	assert.True(t, q.enqueue(chunk))
+	assert.True(t, q.saturated.Load(), "a scan that finds no room sets the hint")
+	assert.Equal(t, capacity, q.length())
+	assert.Equal(t, int64(1), q.dropCount())
+
+	// Saturated: every enqueue still lands and still costs exactly one drop.
+	for i := 0; i < capacity; i++ {
+		assert.True(t, q.enqueue(chunk))
+	}
+	assert.True(t, q.saturated.Load())
+	assert.Equal(t, capacity, q.length(), "the queue stays bounded while saturated")
+	assert.Equal(t, int64(1+capacity), q.dropCount(), "one drop per saturated enqueue")
+
+	// The consumer drains everything; the hint is stale until a producer
+	// finds room, which the very next enqueue does.
+	for {
+		if _, ok := q.tryDequeue(); !ok {
+			break
+		}
+	}
+	assert.True(t, q.saturated.Load(), "dequeue does not touch the hint")
+	assert.True(t, q.enqueue(chunk))
+	assert.False(t, q.saturated.Load(), "an enqueue that finds room clears the hint")
+	assert.Equal(t, 1, q.length())
+	assert.Equal(t, int64(1+capacity), q.dropCount(), "no drop once there is room")
+}
+
+// Benchmark_spanQueue_enqueueSaturated is the outage path: every shard full,
+// every enqueue a head-drop. Compare against Benchmark_spanQueue_enqueueDequeue
+// for the cost the saturation hint keeps the request path from paying.
+func Benchmark_spanQueue_enqueueSaturated(b *testing.B) {
+	q := newSpanQueue(1024)
+	chunk := &spanChunk{}
+	for i := 0; i < 1024; i++ {
+		q.enqueue(chunk)
+	}
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			q.enqueue(chunk)
+		}
+	})
+}
+
+func Benchmark_spanQueue_enqueueDequeue(b *testing.B) {
+	q := newSpanQueue(1024)
+	chunk := &spanChunk{}
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			q.enqueue(chunk)
+			q.tryDequeue()
+		}
+	})
+}
