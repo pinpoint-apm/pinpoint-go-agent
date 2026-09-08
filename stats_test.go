@@ -231,3 +231,29 @@ func Test_numFDAndNumThreadsReportUncollectedAsMinusOne(t *testing.T) {
 	assert.EqualValues(t, uncollectedUsage, snapshot.numOpenFD)
 	assert.EqualValues(t, uncollectedUsage, snapshot.numThreads)
 }
+
+// readMemStats replaced runtime.ReadMemStats (a stop-the-world per sample) with
+// runtime/metrics. The fields it derives must stay the documented equivalents
+// of the MemStats fields they replaced, within the drift of two separate reads.
+func Test_readMemStatsMatchesRuntimeMemStats(t *testing.T) {
+	stats := newAgentStats()
+	// Settle allocation so the two reads see the same heap.
+	runtime.GC()
+
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	got := stats.readMemStats()
+
+	within := func(name string, got, want uint64) {
+		t.Helper()
+		// Background allocation between the reads moves the numbers a little.
+		tolerance := max(want/10, 1<<20)
+		assert.InDelta(t, float64(want), float64(got), float64(tolerance), name)
+	}
+	within("heapInuse", got.heapInuse, ms.HeapInuse)
+	within("heapSys", got.heapSys, ms.HeapSys)
+	within("stackInuse", got.stackInuse, ms.StackInuse)
+	within("stackSys", got.stackSys, ms.StackSys)
+	assert.Equal(t, uint64(ms.NumGC), got.numGC, "numGC")
+	assert.Greater(t, got.numGC, uint64(0))
+}

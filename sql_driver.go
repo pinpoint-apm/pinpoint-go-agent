@@ -224,9 +224,11 @@ func (c *sqlConn) newSqlSpanEventNoSql(ctx context.Context, operation string, st
 }
 
 func setSqlSpanEvent(tracer Tracer, start time.Time, err error, sql string, args string) {
-	tracer.SpanEvent().SetSQL(sql, args)
-	tracer.SpanEvent().SetError(err, "SQL error")
-	tracer.SpanEvent().FixDuration(start, time.Now())
+	// One lookup: each SpanEvent() call takes the event stack lock.
+	se := tracer.SpanEvent()
+	se.SetSQL(sql, args)
+	se.SetError(err, "SQL error")
+	se.FixDuration(start, time.Now())
 }
 
 func (c *sqlConn) namedValueToString(named []driver.NamedValue) string {

@@ -1051,14 +1051,30 @@ func sleepUnlessStopped(agent *agent, d time.Duration) bool {
 }
 
 func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc func() bool, which string) bool {
+	readyFailures := 0
 	for agent.Enable() {
 		if newStreamFunc() {
 			Log("grpc").Infof("success to make %s stream", which)
 			return true
 		}
-		if !agent.config.offGrpc {
-			backOffUntilReady(agent, grpcConn, which)
+		if agent.config.offGrpc {
+			continue
 		}
+		// backOffUntilReady returns at once on a Ready connection, so a stream
+		// that keeps failing to open while the transport is up (a GOAWAY the
+		// state has not caught up with, a collector refusing the RPC) retried
+		// flat out, logging one error per turn. Pace those attempts with the
+		// reconnect back-off instead; a connection that is not Ready still
+		// waits for readiness as before, and resets the pacing.
+		if grpcConn.GetState() == connectivity.Ready {
+			if !sleepUnlessStopped(agent, backOffSleep(readyFailures)) {
+				return false
+			}
+			readyFailures++
+			continue
+		}
+		readyFailures = 0
+		backOffUntilReady(agent, grpcConn, which)
 	}
 	return false
 }

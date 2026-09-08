@@ -227,9 +227,24 @@ func (snapshot *urlStatSnapshot) merge(other *urlStatSnapshot) {
 	}
 }
 
+// urlKey identifies a snapshot entry. method is kept apart from url rather
+// than joined into it: the key is built for every request the collect worker
+// receives, and "METHOD url" was a string allocation per request under
+// Http.UrlStat.WithMethod even for a hit on an existing entry. The joined
+// display text is built once, in newEachUrlStat, for a new key only.
 type urlKey struct {
-	url  string
-	tick time.Time
+	method string
+	url    string
+	tick   time.Time
+}
+
+// displayUrl is the pattern as it is reported: "METHOD url" when method is
+// set, url alone otherwise.
+func (k urlKey) displayUrl() string {
+	if k.method == "" {
+		return k.url
+	}
+	return k.method + " " + k.url
 }
 
 type eachUrlStat struct {
@@ -258,24 +273,20 @@ func (snapshot *urlStatSnapshot) add(us *urlStat) {
 		return
 	}
 
-	var url string
-	if snapshot.config.urlStatWithMethod && us.entry.Method != "" {
-		url = us.entry.Method + " " + us.entry.Url
-	} else {
-		url = us.entry.Url
+	key := urlKey{url: us.entry.Url, tick: us.endTime.Truncate(urlStatCollectInterval)}
+	if snapshot.config.urlStatWithMethod {
+		key.method = us.entry.Method
 	}
-
-	key := urlKey{url, us.endTime.Truncate(urlStatCollectInterval)}
 
 	e, ok := snapshot.urlMap[key]
 	if !ok {
 		if snapshot.count >= snapshot.config.urlStatLimitSize {
 			urlStatLimitLog.warnf(
 				"url stat limit reached: dropping %q and every other new url pattern (max %d distinct urls per snapshot)",
-				url, snapshot.config.urlStatLimitSize)
+				key.displayUrl(), snapshot.config.urlStatLimitSize)
 			return
 		}
-		e = newEachUrlStat(url, key.tick)
+		e = newEachUrlStat(key.displayUrl(), key.tick)
 		snapshot.urlMap[key] = e
 		snapshot.count++
 	}

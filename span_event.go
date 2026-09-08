@@ -247,7 +247,7 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 
 	if cfg.sqlTraceQueryStat {
 		if id := agent.cacheSqlUid(nsql); id != nil {
-			se.annotations.AppendBytesStringString(AnnotationSqlUid, id, param, args)
+			se.annotations.appendOwnedBytesStringString(AnnotationSqlUid, id, param, args)
 		}
 	} else {
 		if id := agent.cacheSql(nsql); id != 0 {

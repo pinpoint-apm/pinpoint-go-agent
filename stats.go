@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"os"
 	"runtime"
+	"runtime/metrics"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -81,10 +82,90 @@ type agentStats struct {
 	// init primes it, so a constructed agentStats never carries the zero time
 	// into a measurement.
 	lastCollectTime time.Time
+
+	// memSamples is the runtime/metrics read that replaced runtime.ReadMemStats,
+	// which stops the world on every call - a periodic latency blip in every
+	// goroutine of the host, once per Stat.CollectInterval, for numbers that
+	// runtime/metrics reads without a pause. The slice is built once and
+	// reused; only the stat worker reads it. Order matches memSample*.
+	memSamples []metrics.Sample
+}
+
+// Indexes into agentStats.memSamples.
+const (
+	memSampleHeapObjects  = iota // /memory/classes/heap/objects:bytes
+	memSampleHeapUnused          // /memory/classes/heap/unused:bytes
+	memSampleHeapReleased        // /memory/classes/heap/released:bytes
+	memSampleHeapFree            // /memory/classes/heap/free:bytes
+	memSampleHeapStacks          // /memory/classes/heap/stacks:bytes
+	memSampleOsStacks            // /memory/classes/os-stacks:bytes
+	memSampleGcCycles            // /gc/cycles/total:gc-cycles
+	memSampleGcPauseCpu          // /cpu/classes/gc/pause:cpu-seconds
+	memSampleCount
+)
+
+func newMemSamples() []metrics.Sample {
+	names := [memSampleCount]string{
+		memSampleHeapObjects:  "/memory/classes/heap/objects:bytes",
+		memSampleHeapUnused:   "/memory/classes/heap/unused:bytes",
+		memSampleHeapReleased: "/memory/classes/heap/released:bytes",
+		memSampleHeapFree:     "/memory/classes/heap/free:bytes",
+		memSampleHeapStacks:   "/memory/classes/heap/stacks:bytes",
+		memSampleOsStacks:     "/memory/classes/os-stacks:bytes",
+		memSampleGcCycles:     "/gc/cycles/total:gc-cycles",
+		memSampleGcPauseCpu:   "/cpu/classes/gc/pause:cpu-seconds",
+	}
+	samples := make([]metrics.Sample, len(names))
+	for i, name := range names {
+		samples[i].Name = name
+	}
+	return samples
+}
+
+// memStats is the subset of runtime.MemStats the agent reports, read through
+// runtime/metrics. Each field is the documented equivalent of the MemStats
+// field it replaces (see the runtime/metrics package doc): HeapInuse is
+// objects+unused, HeapSys adds released+free, StackInuse is heap/stacks and
+// StackSys adds os-stacks. NumGC is /gc/cycles/total.
+//
+// PauseTotalNs has no exact counterpart: /gc/pauses:seconds is a histogram.
+// /cpu/classes/gc/pause:cpu-seconds is the pause wall time multiplied by
+// GOMAXPROCS at the time of each pause, so dividing by the current GOMAXPROCS
+// recovers the wall time exactly while GOMAXPROCS is constant, which it is in
+// practice; a change mid-run skews the pauses before it by the ratio.
+type memStats struct {
+	heapInuse, heapSys, stackInuse, stackSys uint64
+	numGC                                    uint64
+	pauseTotalNs                             uint64
+}
+
+func (stats *agentStats) readMemStats() memStats {
+	s := stats.memSamples
+	metrics.Read(s)
+	u := func(i int) uint64 {
+		if s[i].Value.Kind() == metrics.KindUint64 {
+			return s[i].Value.Uint64()
+		}
+		return 0
+	}
+	var pauseNs uint64
+	if s[memSampleGcPauseCpu].Value.Kind() == metrics.KindFloat64 {
+		pauseNs = uint64(s[memSampleGcPauseCpu].Value.Float64() / float64(runtime.GOMAXPROCS(0)) * float64(time.Second))
+	}
+	heapInuse := u(memSampleHeapObjects) + u(memSampleHeapUnused)
+	stackInuse := u(memSampleHeapStacks)
+	return memStats{
+		heapInuse:    heapInuse,
+		heapSys:      heapInuse + u(memSampleHeapReleased) + u(memSampleHeapFree),
+		stackInuse:   stackInuse,
+		stackSys:     stackInuse + u(memSampleOsStacks),
+		numGC:        u(memSampleGcCycles),
+		pauseTotalNs: pauseNs,
+	}
 }
 
 func newAgentStats() *agentStats {
-	stats := &agentStats{proc: newProcHandle()}
+	stats := &agentStats{proc: newProcHandle(), memSamples: newMemSamples()}
 	stats.activeSpan.init()
 	stats.init()
 	return stats
@@ -309,8 +390,7 @@ func (stats *agentStats) getStats() *inspectorStats {
 	procCpu, sysCpu := stats.cpuLoad()
 	counters := stats.drainCounters()
 
-	var memStat runtime.MemStats
-	runtime.ReadMemStats(&memStat)
+	memStat := stats.readMemStats()
 	interval := now.Sub(stats.lastCollectTime).Milliseconds()
 
 	inspector := inspectorStats{
@@ -318,16 +398,16 @@ func (stats *agentStats) getStats() *inspectorStats {
 		interval:    interval,
 		cpuProcLoad: procCpu,
 		cpuSysLoad:  sysCpu,
-		heapUsed:    int64(memStat.HeapInuse),
-		heapMax:     int64(memStat.HeapSys),
-		nonHeapUsed: int64(memStat.StackInuse),
-		nonHeapMax:  int64(memStat.StackSys),
+		heapUsed:    int64(memStat.heapInuse),
+		heapMax:     int64(memStat.heapSys),
+		nonHeapUsed: int64(memStat.stackInuse),
+		nonHeapMax:  int64(memStat.stackSys),
 		// Cumulative since process start, like the Java agent's
 		// GarbageCollectorMXBean counts: the web's inspector-definition-for-agent.yml
 		// runs gcOldCount/gcOldTime through its "delta" post-processor, so
 		// sending per-interval deltas would be differentiated twice.
-		gcNum:        int64(memStat.NumGC),
-		gcTime:       int64(memStat.PauseTotalNs / uint64(time.Millisecond)),
+		gcNum:        int64(memStat.numGC),
+		gcTime:       int64(memStat.pauseTotalNs / uint64(time.Millisecond)),
 		numOpenFD:    int64(stats.numFD()),
 		numThreads:   int64(stats.numThreads()),
 		responseAvg:  calcResponseAvg(counters.accResponseTime, counters.requestCount),

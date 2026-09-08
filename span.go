@@ -140,14 +140,19 @@ type span struct {
 	// which needs nothing more than that - the mask carries no other state
 	// with it - and is the operation Java masks its error code with
 	// (DefaultShared.maskErrorCode: getAndUpdate(x -> x | mask)).
-	err             atomic.Int32
-	statusErr       atomic.Int32
-	errorFuncId     int32
-	errorString     string
-	recovered       atomic.Bool
-	asyncId         int32
-	asyncSequence   int32
-	goroutineId     atomic.Int64
+	err           atomic.Int32
+	statusErr     atomic.Int32
+	errorFuncId   int32
+	errorString   string
+	recovered     atomic.Bool
+	asyncId       int32
+	asyncSequence int32
+	goroutineId   atomic.Int64
+	// realTimeTracked records that addRealTimeSampledActiveSpan stored this
+	// span in agent.realTimeActiveSpan, so EndSpan deletes only what was
+	// stored: the store is gated by atcStreamCount at start, and a viewer that
+	// attached or left in between makes the count at end time no guide.
+	realTimeTracked atomic.Bool
 	eventStack      *stack
 	urlStat         *UrlStatEntry
 	errorChains     []*exception

@@ -218,12 +218,16 @@ func addTestUrlStat(snapshot *urlStatSnapshot, url string, method string, status
 func findEachUrlStat(t *testing.T, snapshot *urlStatSnapshot, url string, endTime time.Time) *eachUrlStat {
 	t.Helper()
 
-	stat, ok := snapshot.urlMap[urlKey{url: url, tick: endTime.Truncate(urlStatCollectInterval)}]
-	assert.True(t, ok, "url=%s", url)
-	if !ok {
-		return nil
+	// url is the reported pattern ("METHOD url" under WithMethod), which is
+	// what the entry carries; the key holds method and url apart.
+	tick := endTime.Truncate(urlStatCollectInterval)
+	for key, stat := range snapshot.urlMap {
+		if key.tick.Equal(tick) && stat.url == url {
+			return stat
+		}
 	}
-	return stat
+	assert.Fail(t, "url stat not found", "url=%s", url)
+	return nil
 }
 
 func histogramCount(histogram *urlStatHistogram) int32 {
@@ -638,4 +642,33 @@ func eachUriStatsByUri(t *testing.T, stat *pb.PAgentUriStat) map[string]*pb.PEac
 		byUri[each.GetUri()] = each
 	}
 	return byUri
+}
+
+// The snapshot key keeps method and url apart so a hit on an existing entry
+// allocates nothing; the joined "METHOD url" text is built once per new entry
+// and is what the entry reports.
+func Test_urlStatSnapshot_MethodKeyBuildsDisplayOnce(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgHttpUrlStatWithMethod, true)
+	snapshot := newUrlStats(cfg).newSnapshot()
+	endTime := time.Now()
+
+	entry := &UrlStatEntry{Url: "/orders/{id}", Method: "GET"}
+	snapshot.add(&urlStat{entry: entry, endTime: endTime, elapsed: 10})
+	allocs := testing.AllocsPerRun(100, func() {
+		snapshot.add(&urlStat{entry: entry, endTime: endTime, elapsed: 10})
+	})
+	assert.Equal(t, 0.0, allocs, "a hit on an existing url must not allocate")
+
+	tick := endTime.Truncate(urlStatCollectInterval)
+	stat, ok := snapshot.urlMap[urlKey{method: "GET", url: "/orders/{id}", tick: tick}]
+	assert.True(t, ok)
+	assert.Equal(t, "GET /orders/{id}", stat.url)
+	// AllocsPerRun runs the body once to warm up plus 100 measured runs: 102
+	// adds of 10 ms in total.
+	assert.Equal(t, int64(1020), stat.totalHistogram.total)
+
+	// Same url, other method: a distinct entry.
+	snapshot.add(&urlStat{entry: &UrlStatEntry{Url: "/orders/{id}", Method: "POST"}, endTime: endTime, elapsed: 10})
+	assert.Equal(t, 2, snapshot.count)
 }

@@ -465,12 +465,29 @@ func (snapshot *configSnapshot) ignoreError(err error, errName string) bool {
 		return false
 	}
 	for e, depth := err, 0; e != nil && depth < maxCauserDepth; e, depth = nextCause(e), depth+1 {
-		typ, msg := reflect.TypeOf(e).String(), e.Error()
+		// Computed on first use, per link: Error() on a wrapped chain allocates
+		// and is O(depth) itself, and a rule matching on type alone, or on the
+		// SetError name, never needs the message at all.
+		var typ, msg string
+		var haveTyp, haveMsg bool
 		for _, r := range snapshot.errorIgnoreRules {
-			if (r.typeName == "" || r.typeName == typ || r.typeName == errName) &&
-				(r.messageContains == "" || strings.Contains(msg, r.messageContains)) {
-				return true
+			if r.typeName != "" && r.typeName != errName {
+				if !haveTyp {
+					typ, haveTyp = reflect.TypeOf(e).String(), true
+				}
+				if r.typeName != typ {
+					continue
+				}
 			}
+			if r.messageContains != "" {
+				if !haveMsg {
+					msg, haveMsg = e.Error(), true
+				}
+				if !strings.Contains(msg, r.messageContains) {
+					continue
+				}
+			}
+			return true
 		}
 	}
 	return false

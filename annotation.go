@@ -96,6 +96,15 @@ func (a *annotation) AppendBytesStringString(key int32, bs []byte, s1 string, s2
 	a.append(annotationValue{key: key, typ: annotationTypeBytesStringString, bytes: bytes.Clone(bs), s1: s1, s2: s2})
 }
 
+// appendOwnedBytesStringString is AppendBytesStringString for a slice the
+// caller guarantees is never written again, so it is recorded without the
+// defensive copy the public method makes for plugin-owned buffers. SetSQL
+// hands it the UID from cacheSqlUid, which is immutable once cached, and a
+// 16-byte allocation per traced query otherwise bought nothing.
+func (a *annotation) appendOwnedBytesStringString(key int32, bs []byte, s1 string, s2 string) {
+	a.append(annotationValue{key: key, typ: annotationTypeBytesStringString, bytes: bs, s1: s1, s2: s2})
+}
+
 func (a *annotation) AppendLongIntIntByteByteString(key int32, l int64, i1 int32, i2 int32, b1 int32, b2 int32, s string) {
 	a.append(annotationValue{key: key, typ: annotationTypeLongIntIntByteByteString, l: l, i1: i1, i2: i2, b1: b1, b2: b2, s1: s})
 }

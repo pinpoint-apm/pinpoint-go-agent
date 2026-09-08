@@ -51,10 +51,13 @@ type noopSpan struct {
 	startTime   time.Time
 	rpcName     string
 	goroutineId int64
-	withStats   atomic.Bool
-	unsampled   bool
-	urlStat     *UrlStatEntry
-	statusErr   atomic.Int32
+	// realTimeTracked: see span.realTimeTracked. Plain like goroutineId, which
+	// the same start/end pair writes and reads.
+	realTimeTracked bool
+	withStats       atomic.Bool
+	unsampled       bool
+	urlStat         *UrlStatEntry
+	statusErr       atomic.Int32
 	// traceRoot is the unsampled span holding the statistics, nil when this
 	// span is the root itself. An unsampled async child keeps no statistics of
 	// its own, so a failure it records must land on the root - Java's

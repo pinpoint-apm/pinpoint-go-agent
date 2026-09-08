@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1252,7 +1253,7 @@ func abbreviateString(str string, length int) string {
 	for cut > 0 && !utf8.RuneStart(str[cut]) {
 		cut--
 	}
-	return str[:cut] + "...(" + fmt.Sprint(len(str)) + ")"
+	return str[:cut] + "...(" + strconv.Itoa(len(str)) + ")"
 }
 
 // sqlCacheable reports whether a SQL key is short enough to keep in the SQL

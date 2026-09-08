@@ -233,3 +233,40 @@ func BenchmarkActiveThreadCountSampling(b *testing.B) {
 }
 
 var benchmarkActiveThreadCount []int32
+
+// EndSpan deletes the real-time active span entry only when the start stored
+// one, judged by the span's own flag rather than the viewer count at end time:
+// a viewer that attached in between must not cost a lookup, and one that left
+// in between must not leave the entry behind.
+func Test_realTimeActiveSpan_DropFollowsWhatAddStored(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+
+	// No viewer at start: nothing stored, nothing tracked.
+	untracked := defaultSpan(agent)
+	addRealTimeSampledActiveSpan(untracked)
+	assert.False(t, untracked.realTimeTracked.Load())
+	agent.atcStreamCount.Store(1) // a viewer attaches before the end
+	dropRealTimeSampledActiveSpan(untracked)
+
+	// Viewer at start: stored and tracked; the viewer leaves before the end,
+	// and the entry still goes.
+	tracked := defaultSpan(agent)
+	addRealTimeSampledActiveSpan(tracked)
+	assert.True(t, tracked.realTimeTracked.Load())
+	_, stored := agent.realTimeActiveSpan.Load(tracked.goroutineId.Load())
+	assert.True(t, stored)
+	agent.atcStreamCount.Store(0)
+	dropRealTimeSampledActiveSpan(tracked)
+	_, stored = agent.realTimeActiveSpan.Load(tracked.goroutineId.Load())
+	assert.False(t, stored, "the entry add stored must be removed whatever the viewer count at end")
+
+	// The unsampled span follows the same rule.
+	agent.atcStreamCount.Store(1)
+	noop := &noopSpan{agent: agent, startTime: time.Now()}
+	addRealTimeUnSampledActiveSpan(noop)
+	assert.True(t, noop.realTimeTracked)
+	agent.atcStreamCount.Store(0)
+	dropRealTimeUnSampledActiveSpan(noop)
+	_, stored = agent.realTimeActiveSpan.Load(noop.goroutineId)
+	assert.False(t, stored)
+}
