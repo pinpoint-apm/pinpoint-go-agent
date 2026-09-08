@@ -539,6 +539,10 @@ func mdOf(ctx context.Context) RpcMetadata {
 	return RpcMetadata{md: md.Copy()}
 }
 
+// deadlineSlack is how far ahead of the server-side deadline a client
+// cancellation is still attributed to the client's expired deadline.
+const deadlineSlack = 200 * time.Millisecond
+
 func clone[T proto.Message](m T) T {
 	return proto.Clone(m).(T)
 }
@@ -549,10 +553,17 @@ func clone[T proto.Message](m T) T {
 // A server context reports Canceled for the RST_STREAM a client sends when its
 // deadline expires, so an expired deadline is reported as DeadlineExceeded --
 // the code the client itself observed.
+//
+// The server-side deadline is not the client's: grpc-go sends the remaining
+// time in the grpc-timeout header (rounded up) and the server re-anchors it on
+// receipt, so it trails the client's deadline by the header transit time. The
+// client's RST_STREAM can therefore arrive while the server deadline still has
+// a few milliseconds left. A cancellation that close to the deadline is the
+// client's timeout, not a caller cancellation.
 func (c *MockCollector) waitForCancel(ctx context.Context, outageCh <-chan struct{}) codes.Code {
 	select {
 	case <-ctx.Done():
-		if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= deadlineSlack {
 			return codes.DeadlineExceeded
 		}
 		return status.FromContextError(ctx.Err()).Code()
