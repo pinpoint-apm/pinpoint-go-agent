@@ -305,3 +305,39 @@ func BenchmarkMetaCacheShard(b *testing.B) {
 		})
 	}
 }
+
+// A full shard whose working set exceeds ageThreshold used to promote on every
+// hit: promotions advanced the shard clock, so each hit found every other entry
+// aged past the threshold and took the lock. Hits alone must never advance the
+// clock; only inserts do.
+func TestMetaCacheHitsWithoutInsertsDoNotAdvanceClock(t *testing.T) {
+	c := newMetaCache[string, int32](cacheSize)
+	s := c.shard("k0")
+
+	// Fill s past capacity through keys that hash to it, so it is full and
+	// every entry is a promotion candidate once aged.
+	keys := make([]string, 0, s.cap)
+	for i := 0; len(keys) < s.cap; i++ {
+		k := fmt.Sprintf("k%d", i)
+		if c.shard(k) == s {
+			c.peekOrAdd(k, int32(i))
+			keys = append(keys, k)
+		}
+	}
+	assert.Equal(t, int64(s.cap), s.size.Load())
+	before := s.opSeq.Load()
+
+	// Rotate over more keys than ageThreshold, several times over.
+	for round := 0; round < 4; round++ {
+		for _, k := range keys {
+			_, ok := c.peek(k)
+			assert.True(t, ok)
+		}
+	}
+
+	assert.Equal(t, before, s.opSeq.Load(), "a hit must not advance the shard clock")
+	// The oldest entry (first inserted, threshold-aged) is promoted at most
+	// once for the whole rotation: its lastPromoted is the current clock.
+	e, _ := c.m.Load(keys[0])
+	assert.Equal(t, before, e.(*metaCacheEntry[string, int32]).lastPromoted.Load())
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -488,4 +489,34 @@ func TestSpanEvent_SetErrorLogsDropAtDefaultLevel(t *testing.T) {
 
 	assert.Contains(t, buf.String(), "exception entry limit reached", "the drop was silent at the default level")
 	assert.Equal(t, 1, strings.Count(buf.String(), "exception entry limit reached"), "logged more than once a span")
+}
+
+// The entry cap used to be read off errorChains without errorChainsLock from
+// spanEvent.SetError while traceCallStack appended under it. Two goroutines of
+// one call stack recording errors concurrently must neither race nor exceed
+// the cap.
+func TestSpanEvent_ConcurrentSetErrorRespectsChainCapWithoutRace(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgErrorTraceCallStack, true)
+	span := testSpanWithConfig(cfg)
+	limit := max(minErrorChainEntry, span.cfg.errorMaxChainDepth)
+
+	var wg sync.WaitGroup
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				se := newSpanEvent(span, "op")
+				se.SetError(fmt.Errorf("err %d-%d", g, i))
+				se.end()
+			}
+		}(g)
+	}
+	wg.Wait()
+
+	span.errorChainsLock.Lock()
+	defer span.errorChainsLock.Unlock()
+	assert.LessOrEqual(t, len(span.errorChains), limit, "the entry cap must hold under concurrent SetError")
+	assert.Equal(t, limit, len(span.errorChains), "distinct errors fill the cap exactly")
 }

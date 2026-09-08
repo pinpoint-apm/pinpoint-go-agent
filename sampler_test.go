@@ -373,3 +373,13 @@ func Test_percentSampler_minimumRate(t *testing.T) {
 	}
 	assert.Equal(t, 1, sampled)
 }
+
+// Rate 1 samples everything without touching the shared counter: the answer is
+// known in advance, and the RMW was one contended cache line per request.
+func TestRateSamplerRateOneSkipsCounter(t *testing.T) {
+	s := newRateSampler(1)
+	for i := 0; i < 100; i++ {
+		assert.True(t, s.isSampled(), "request %d", i)
+	}
+	assert.Equal(t, uint64(0), atomic.LoadUint64(&s.counter), "rate 1 must not spend the counter")
+}

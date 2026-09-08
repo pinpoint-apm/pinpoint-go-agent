@@ -1034,6 +1034,9 @@ func (span *span) JsonString() []byte {
 	return b
 }
 
+// canAddErrorChain reports whether another exception entry fits. Callers hold
+// errorChainsLock: it reads errorChains, which traceCallStack appends to under
+// that lock.
 func (span *span) canAddErrorChain() bool {
 	if span.errorChains == nil {
 		return false

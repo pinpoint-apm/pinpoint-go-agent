@@ -39,8 +39,15 @@ type metaCacheShardInternal struct {
 	order        *list.List // front = most recently used
 	cap          int
 	ageThreshold uint64
-	opSeq        atomic.Uint64 // counts inserts and promotions; entry age = opSeq - lastPromoted
-	size         atomic.Int64
+	// opSeq counts inserts only; entry age = opSeq - lastPromoted. A
+	// promotion reads the clock but does not advance it: when promotions
+	// counted too, a working set larger than ageThreshold aged every other
+	// entry past the threshold on each hit, so once the shard was full every
+	// hit took the lock and moved its entry - with no insert in sight to make
+	// the LRU order matter. Counting inserts alone bounds promotions to one
+	// per ageThreshold inserts and keeps a shard with no inserts lock-free.
+	opSeq atomic.Uint64
+	size  atomic.Int64
 }
 
 // metaCacheShard is padded to cacheLinePadSize for the same reason as
@@ -130,7 +137,7 @@ func (c *metaCache[K, V]) peek(key K) (V, bool) {
 		opSeq = s.opSeq.Load()
 		if s.size.Load() >= int64(s.cap) && opSeq-lastPromoted >= s.ageThreshold {
 			s.order.MoveToFront(e.element)
-			e.lastPromoted.Store(s.opSeq.Add(1))
+			e.lastPromoted.Store(s.opSeq.Load())
 		}
 	}
 	s.mu.Unlock()

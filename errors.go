@@ -252,6 +252,14 @@ func (span *span) traceCallStack(err error, className string, depth int, errorTi
 	span.errorChainsLock.Lock()
 	defer span.errorChainsLock.Unlock()
 
+	// Under the lock, so the cap is judged against the entries actually
+	// recorded: an unlocked pre-check let two concurrent SetError calls both
+	// pass and exceed it. Before getExceptionChainId, so a refused chain does
+	// not spend a Error.NewThroughput permit either.
+	if !span.canAddErrorChain() {
+		return noExceptionChainId
+	}
+
 	eid, newId := span.getExceptionChainId(err)
 	if newId {
 		callstack := errorCallStack(err)

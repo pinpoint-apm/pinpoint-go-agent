@@ -145,10 +145,14 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 	if !cfg.ignoreError(e, errName) {
 		se.parentSpan.markSpanError(ErrorCategoryException)
 	}
-	if cfg.errorTraceCallStack && se.parentSpan.canAddErrorChain() {
-		// A chain the Error.NewThroughput limiter denied is not on the wire, so
-		// it gets no annotation either - Java's DISABLED sampling state skips
-		// the EXCEPTION_CHAIN_ID annotation the same way.
+	// The entry cap (canAddErrorChain) is checked inside traceCallStack, under
+	// errorChainsLock: read here it raced the locked append of a concurrent
+	// SetError on another goroutine of the same call stack.
+	if cfg.errorTraceCallStack {
+		// A chain the Error.NewThroughput limiter denied, or one refused by the
+		// entry cap, is not on the wire, so it gets no annotation either -
+		// Java's DISABLED sampling state skips the EXCEPTION_CHAIN_ID
+		// annotation the same way.
 		if eid := se.parentSpan.traceCallStack(e, errName, cfg.errorCallStackDepth, time.UnixMilli(se.startTime)); eid != noExceptionChainId {
 			se.exceptionId = eid
 			se.Annotations().AppendLong(AnnotationExceptionChainId, eid)

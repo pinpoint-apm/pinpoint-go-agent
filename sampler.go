@@ -33,6 +33,12 @@ func (s *rateSampler) isSampled() bool {
 	if s.rate == 0 {
 		return false
 	}
+	// Rate 1 (the default) samples every transaction, so the counter below
+	// would only add one contended process-wide RMW per request for a result
+	// that is always true. Java hands this case to TrueSampler the same way.
+	if s.rate == 1 {
+		return true
+	}
 	// The pre-increment value decides, like Java's CountingSampler doing a
 	// getAndIncrement: the first request of the process is sampled and the
 	// rate-th one after it, not the rate-th request.
