@@ -307,37 +307,70 @@ func BenchmarkMetaCacheShard(b *testing.B) {
 }
 
 // A full shard whose working set exceeds ageThreshold used to promote on every
-// hit: promotions advanced the shard clock, so each hit found every other entry
-// aged past the threshold and took the lock. Hits alone must never advance the
-// clock; only inserts do.
-func TestMetaCacheHitsWithoutInsertsDoNotAdvanceClock(t *testing.T) {
+// hit: each promotion aged every other entry past the threshold, so each hit
+// took the lock. A hit promotes only once an insert has happened since the
+// entry was last promoted; until then the shard's order is never consulted.
+func TestMetaCacheHitsWithoutInsertsDoNotPromote(t *testing.T) {
 	c := newMetaCache[string, int32](cacheSize)
 	s := c.shard("k0")
 
-	// Fill s past capacity through keys that hash to it, so it is full and
+	// Fill s to capacity through keys that hash to it, so it is full and
 	// every entry is a promotion candidate once aged.
 	keys := make([]string, 0, s.cap)
-	for i := 0; len(keys) < s.cap; i++ {
-		k := fmt.Sprintf("k%d", i)
+	next := 0 // first key number the fill did not try
+	for ; len(keys) < s.cap; next++ {
+		k := fmt.Sprintf("k%d", next)
 		if c.shard(k) == s {
-			c.peekOrAdd(k, int32(i))
+			c.peekOrAdd(k, int32(next))
 			keys = append(keys, k)
 		}
 	}
 	assert.Equal(t, int64(s.cap), s.size.Load())
-	before := s.opSeq.Load()
+	entry := func(k string) *metaCacheEntry[string, int32] {
+		raw, _ := c.m.Load(k)
+		return raw.(*metaCacheEntry[string, int32])
+	}
+	// The fill itself was a run of inserts, so the first rotation may promote
+	// each aged entry once; that settles the order for the insert-free stretch.
+	for _, k := range keys {
+		c.peek(k)
+	}
+	oldest := entry(keys[0])
+	before, oldestMark := s.opSeq.Load(), oldest.lastPromoted.Load()
 
-	// Rotate over more keys than ageThreshold, several times over.
+	// Rotate over more keys than ageThreshold, several times over: the entries
+	// age past the threshold again and again, yet nothing was inserted.
 	for round := 0; round < 4; round++ {
 		for _, k := range keys {
 			_, ok := c.peek(k)
 			assert.True(t, ok)
 		}
 	}
+	assert.Equal(t, before, s.opSeq.Load(), "hits without an insert must not promote")
+	assert.Equal(t, oldestMark, oldest.lastPromoted.Load())
 
-	assert.Equal(t, before, s.opSeq.Load(), "a hit must not advance the shard clock")
-	// The oldest entry (first inserted, threshold-aged) is promoted at most
-	// once for the whole rotation: its lastPromoted is the current clock.
-	e, _ := c.m.Load(keys[0])
-	assert.Equal(t, before, e.(*metaCacheEntry[string, int32]).lastPromoted.Load())
+	// One insert re-arms promotion: the next hit on an aged entry promotes it
+	// exactly once, and the hits after that are lock-free again.
+	extra := ""
+	for i := next; ; i++ { // past every key the fill tried, so this is a real insert
+		if k := fmt.Sprintf("k%d", i); c.shard(k) == s {
+			extra = k
+			break
+		}
+	}
+	c.peekOrAdd(extra, 0)
+	// The settling rotation promoted the entries in key order, so keys[1] sits
+	// near the back, well past the threshold, and survives the one eviction.
+	assert.Equal(t, int64(s.cap), s.size.Load(), "the insert evicts exactly one entry")
+	_, ok := c.m.Load(keys[1])
+	assert.True(t, ok)
+	survivor := entry(keys[1])
+	mark := survivor.lastPromoted.Load()
+	c.peek(keys[1])
+	promoted := survivor.lastPromoted.Load()
+	assert.Greater(t, promoted, mark, "an aged entry is promoted once an insert happened")
+	for i := 0; i < 8; i++ {
+		c.peek(keys[1])
+	}
+	assert.Equal(t, promoted, survivor.lastPromoted.Load(), "promoted once per insert, not per hit")
 }

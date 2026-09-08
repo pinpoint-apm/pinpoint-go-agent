@@ -31,7 +31,10 @@ type metaCacheEntry[K comparable, V any] struct {
 	shard   *metaCacheShard
 	// Shard opSeq at insert / last promotion. Reads are lock-free.
 	lastPromoted atomic.Uint64
-	insertedAt   time.Time // set only when the cache has a ttl
+	// Shard insertSeq at insert / last promotion: a promotion is skipped while
+	// it is still current, see metaCacheShardInternal.insertSeq.
+	promotedInsertSeq atomic.Uint64
+	insertedAt        time.Time // set only when the cache has a ttl
 }
 
 type metaCacheShardInternal struct {
@@ -39,15 +42,28 @@ type metaCacheShardInternal struct {
 	order        *list.List // front = most recently used
 	cap          int
 	ageThreshold uint64
-	// opSeq counts inserts only; entry age = opSeq - lastPromoted. A
-	// promotion reads the clock but does not advance it: when promotions
-	// counted too, a working set larger than ageThreshold aged every other
-	// entry past the threshold on each hit, so once the shard was full every
-	// hit took the lock and moved its entry - with no insert in sight to make
-	// the LRU order matter. Counting inserts alone bounds promotions to one
-	// per ageThreshold inserts and keeps a shard with no inserts lock-free.
+	// opSeq counts inserts and promotions; entry age = opSeq - lastPromoted.
+	// Both count because both move an entry back: an insert goes to the
+	// front, and so does a promoted entry, pushing everything behind it one
+	// position further from the front. Age therefore bounds an entry's
+	// distance from the front, and an entry promoted at ageThreshold (cap/2)
+	// is always caught in the front half. Counting inserts alone broke that
+	// bound - hot entries were evicted from under a threshold that no longer
+	// measured position - and the resend advantage over FIFO fell from
+	// 11-20x to 3-7x on the churn workload in meta_cache_test.
 	opSeq atomic.Uint64
-	size  atomic.Int64
+	// insertSeq counts inserts alone. A hit whose entry has aged past the
+	// threshold still skips the promotion while no insert has happened since
+	// the entry was last promoted: only an insert can evict, so until one
+	// arrives the order is not consulted, and promoting would only take the
+	// lock. Without this, a working set larger than ageThreshold in a full
+	// shard made every hit a promotion - each promotion aged the rest past
+	// the threshold - and the "lock-free hit" path was never taken again.
+	// The order is stale only over such an insert-free stretch; the first
+	// insert is followed by one promotion per aged hot entry, and the bound
+	// above holds again from there.
+	insertSeq atomic.Uint64
+	size      atomic.Int64
 }
 
 // metaCacheShard is padded to cacheLinePadSize for the same reason as
@@ -123,9 +139,7 @@ func (c *metaCache[K, V]) peek(key K) (V, bool) {
 	if s.size.Load() < int64(s.cap) {
 		return v, true
 	}
-	lastPromoted := e.lastPromoted.Load()
-	opSeq := s.opSeq.Load()
-	if opSeq-lastPromoted < s.ageThreshold {
+	if !s.promotionDue(e.lastPromoted.Load(), e.promotedInsertSeq.Load()) {
 		return v, true
 	}
 
@@ -133,15 +147,22 @@ func (c *metaCache[K, V]) peek(key K) (V, bool) {
 	// Re-resolve and re-check: another goroutine may have promoted, evicted,
 	// or removed the entry while this goroutine waited for the lock.
 	if raw, ok := c.m.Load(key); ok && raw.(*metaCacheEntry[K, V]) == e {
-		lastPromoted = e.lastPromoted.Load()
-		opSeq = s.opSeq.Load()
-		if s.size.Load() >= int64(s.cap) && opSeq-lastPromoted >= s.ageThreshold {
+		if s.size.Load() >= int64(s.cap) && s.promotionDue(e.lastPromoted.Load(), e.promotedInsertSeq.Load()) {
 			s.order.MoveToFront(e.element)
-			e.lastPromoted.Store(s.opSeq.Load())
+			e.lastPromoted.Store(s.opSeq.Add(1))
+			e.promotedInsertSeq.Store(s.insertSeq.Load())
 		}
 	}
 	s.mu.Unlock()
 	return v, true
+}
+
+// promotionDue reports whether a hit on an entry with the given marks should
+// move it to the front: it has aged past the threshold, and at least one insert
+// has happened since it was last promoted (see insertSeq). Lock-free; the
+// caller re-checks under the shard lock before moving anything.
+func (s *metaCacheShardInternal) promotionDue(lastPromoted, promotedInsertSeq uint64) bool {
+	return s.opSeq.Load()-lastPromoted >= s.ageThreshold && s.insertSeq.Load() != promotedInsertSeq
 }
 
 // peekOrAdd inserts the value unless the key is already present, evicting the
@@ -158,11 +179,13 @@ func (c *metaCache[K, V]) peekOrAdd(key K, value V) (V, bool) {
 		return v, true
 	}
 	opSeq := s.opSeq.Add(1)
+	insertSeq := s.insertSeq.Add(1)
 	e := &metaCacheEntry[K, V]{key: key, value: value, shard: s}
 	if c.ttl > 0 {
 		e.insertedAt = c.now()
 	}
 	e.lastPromoted.Store(opSeq)
+	e.promotedInsertSeq.Store(insertSeq)
 	e.element = s.order.PushFront(e)
 	c.m.Store(key, e)
 	if s.size.Add(1) > int64(s.cap) {
