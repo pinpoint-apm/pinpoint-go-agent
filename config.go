@@ -86,6 +86,7 @@ const (
 	CfgSQLTraceRollback               = "SQL.TraceRollback"
 	CfgSQLTraceQueryStat              = "SQL.TraceQueryStat"
 	CfgSQLEnableRawSqlCache           = "SQL.EnableRawSqlCache"
+	CfgSQLCacheSize                   = "SQL.CacheSize"
 	CfgSQLCacheLengthLimit            = "SQL.CacheLengthLimit"
 	CfgSQLCacheExpireHours            = "SQL.CacheExpireHours"
 	CfgSQLErrorCount                  = "SQL.ErrorCount"
@@ -126,6 +127,14 @@ const (
 	// one instrumented error into an allocation spike or an integer-overflow
 	// panic in make([]uintptr, depth+3).
 	maxErrorCallStackDepth = 1024
+
+	// Entries per SQL metadata cache (id, uid and raw), as in the Java agent
+	// (profiler.jdbc.sqlcachesize, SimpleCacheFactory). Java sizes only its
+	// SQL caches by that key; the api and error caches keep cacheSize.
+	defaultSqlCacheSize = 1024
+	// The upper bound keeps a typo from committing gigabytes at startup: each
+	// of the three caches is bounded by this x SQL.CacheLengthLimit.
+	maxSqlCacheSize = 65536
 
 	// SQL at or above this many bytes bypasses the SQL metadata caches, as in
 	// the Java agent (profiler.jdbc.sqlcachelengthlimit, UidCache.bypassLength).
@@ -239,6 +248,7 @@ func initConfig() {
 	AddConfig(CfgSQLTraceRollback, CfgBool, true, true)
 	AddConfig(CfgSQLTraceQueryStat, CfgBool, false, true)
 	AddConfig(CfgSQLEnableRawSqlCache, CfgBool, true, true)
+	AddConfig(CfgSQLCacheSize, CfgInt, defaultSqlCacheSize, false)
 	AddConfig(CfgSQLCacheLengthLimit, CfgInt, defaultSqlCacheLengthLimit, true)
 	AddConfig(CfgSQLCacheExpireHours, CfgInt, defaultSqlCacheExpireHours, false)
 	AddConfig(CfgSQLErrorCount, CfgInt, defaultSqlErrorCount, true)
@@ -1125,6 +1135,9 @@ func (config *Config) publish() {
 	// the config layer, so it is not a reference here).
 	config.defaultIfOutOfRange(CfgSpanQueueSize, 1, maxQueueSize)
 	config.defaultIfOutOfRange(CfgHttpUrlStatQueueSize, 1, maxQueueSize)
+	// Non-dynamic: the SQL caches are built once in NewAgent, and resizing
+	// them mid-run would orphan ids that in-flight spans already reference.
+	config.defaultIfOutOfRange(CfgSQLCacheSize, 1, maxSqlCacheSize)
 	config.defaultIfOutOfRange(CfgStatCollectInterval, minStatCollectInterval, maxStatCollectInterval)
 	config.defaultIfOutOfRange(CfgStatBatchCount, 1, maxStatBatchCount)
 	config.defaultIfOutOfRange(CfgStatQueueSize, 1, maxQueueSize)
@@ -1720,6 +1733,16 @@ func WithSQLTraceRollback(trace bool) ConfigOption {
 func WithSQLEnableRawSqlCache(enable bool) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgSQLEnableRawSqlCache].value = enable
+	}
+}
+
+// WithSQLCacheSize sets how many statements each SQL metadata cache (SQL-ID,
+// SQL-UID and raw SQL) holds. Raise it for applications running more distinct
+// statements than the default, which otherwise evict and re-register SQL
+// metadata continuously. Read once at agent startup.
+func WithSQLCacheSize(size int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgSQLCacheSize].value = size
 	}
 }
 

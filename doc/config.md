@@ -812,6 +812,34 @@ pays a small cache-miss overhead.
 * default: true
 * dynamic
 
+### SQL.CacheSize
+SQL.CacheSize option sets how many statements each of the three SQL metadata
+caches holds: the SQL-ID cache, the SQL-UID cache and the raw SQL cache
+([SQL.EnableRawSqlCache](#sqlenablerawsqlcache)). Once a cache is full the least
+recently used statement is evicted; its next execution registers it again under
+a fresh id (or re-sends its UID metadata) and re-normalizes the raw text, so an
+application running more distinct statements than this churns metadata traffic
+and can leave spans referencing ids the collector never resolved. Raise it for
+high-cardinality SQL; the worst-case memory is roughly entries x
+[SQL.CacheLengthLimit](#sqlcachelengthlimit) per cache. The valid range is 1 to
+65536; a value outside it is logged and the default is used.
+
+The option applies to the SQL caches only. The API and error caches keep their
+fixed 1024 entries, as in the Java agent, whose `profiler.jdbc.sqlcachesize`
+sizes `SimpleCacheFactory.newSqlCache()` / `newSqlUidCache()` while
+`newSimpleCache()` keeps its own default. It is read once when the agent builds
+its caches (`NewAgent`): resizing them while spans are in flight would orphan
+the ids those spans already carry.
+
+This corresponds to the Java agent's `profiler.jdbc.sqlcachesize`. The C++
+agent exposes the same setting as `Sql.CacheSize`.
+
+* --pinpoint-sql-cachesize
+* PINPOINT_GO_SQL_CACHESIZE
+* WithSQLCacheSize()
+* type: int
+* default: 1024
+
 ### SQL.CacheLengthLimit
 SQL.CacheLengthLimit option sets the max length of a SQL statement kept in the SQL
 metadata caches. A statement at or above this length bypasses the cache: it is
@@ -1292,10 +1320,11 @@ the span transport (`Span.QueueSize`, `Span.Batch.Enable`, `Span.BatchSize`,
 `Span.BatchFlushInterval`, `Span.BatchCollectDeadline`,
 `Span.BatchMaxConcurrentRequests`), `Stat.*`,
 `Http.UrlStat.QueueSize`, `IsContainerEnv`, `ConfigFile`, `ActiveProfile`,
-`SQL.RemoveComments`, `SQL.CacheExpireHours` and `Enable`.
+`SQL.RemoveComments`, `SQL.CacheSize`, `SQL.CacheExpireHours` and `Enable`.
 
-`SQL.CacheExpireHours` is read once when the agent builds its SQL UID cache
-(`NewAgent`); the C++ agent treats it as fixed for the same reason.
+`SQL.CacheSize` and `SQL.CacheExpireHours` are read once when the agent builds
+its SQL caches (`NewAgent`); the C++ agent treats them as fixed for the same
+reason.
 
 `SQL.RemoveComments` is restart-only for a reason of its own: the normalized SQL
 is the SQL id cache key and the SQL UID hash input, so a mid-process change would
@@ -1497,7 +1526,8 @@ See [ActiveProfile](#activeprofile) for the file layout.
 | Too many traces / collector overloaded | `Sampling.CounterRate`, `Sampling.NewThroughput`, `Sampling.ContinueThroughput`, `Http.Server.ExcludeUrl` |
 | Traces truncated mid-request | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence` |
 | Spans dropped under load | `Span.QueueSize`, `Span.Batch.Enable`, `Span.BatchSize` |
-| Agent using too much memory | `Span.QueueSize`, `Http.UrlStat.LimitSize`, `SQL.MaxBindValueSize`, `SQL.EnableRawSqlCache`, `SQL.CacheLengthLimit` |
+| Agent using too much memory | `Span.QueueSize`, `Http.UrlStat.LimitSize`, `SQL.MaxBindValueSize`, `SQL.EnableRawSqlCache`, `SQL.CacheSize`, `SQL.CacheLengthLimit` |
+| SQL metadata re-sent constantly / spans show unresolved SQL ids | Raise `SQL.CacheSize` above the number of distinct statements the application runs |
 | Agent using too much CPU | `Sampling.CounterRate`, `Log.Level`, `Error.TraceCallStack` |
 | No SQL detail in query spans | `SQL.TraceBindValue`, `SQL.TraceQueryStat`, `SQL.TraceCommit`, `SQL.TraceRollback` |
 | Sensitive data visible in traces | `SQL.TraceBindValue`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordRequestCookie` |

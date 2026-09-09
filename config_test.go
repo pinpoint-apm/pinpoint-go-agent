@@ -974,6 +974,34 @@ func TestNewConfig_NegativeValuesOfNewKeys(t *testing.T) {
 	assert.Equal(t, math.MaxInt32, c.Int(CfgSQLCacheLengthLimit), "-1 must stay unlimited")
 }
 
+// SQL.CacheSize defaults to Java's 1024, is read from the option, and recovers
+// the default with a warning outside [1, maxSqlCacheSize]: 0 or a negative
+// would leave the SQL caches with no usable capacity and the upper bound keeps
+// a typo from committing gigabytes at startup.
+func TestNewConfig_SQLCacheSize(t *testing.T) {
+	c, err := NewConfig(WithAppName("TestApp"))
+	assert.NoError(t, err)
+	assert.Equal(t, defaultSqlCacheSize, c.Int(CfgSQLCacheSize), "default")
+	assert.Equal(t, 1024, defaultSqlCacheSize, "Java profiler.jdbc.sqlcachesize")
+	c.Close()
+
+	c, err = NewConfig(WithAppName("TestApp"), WithSQLCacheSize(4096))
+	assert.NoError(t, err)
+	assert.Equal(t, 4096, c.Int(CfgSQLCacheSize), "a valid value is kept")
+	c.Close()
+
+	for _, bad := range []int{0, -1, maxSqlCacheSize + 1} {
+		var buf bytes.Buffer
+		restore := captureWarnLog(&buf)
+		c, err = NewConfig(WithAppName("TestApp"), WithSQLCacheSize(bad))
+		assert.NoError(t, err)
+		assert.Equal(t, defaultSqlCacheSize, c.Int(CfgSQLCacheSize), "out of range %d", bad)
+		assert.Contains(t, buf.String(), "SQL.CacheSize = "+fmt.Sprint(bad)+" is out of range")
+		c.Close()
+		restore()
+	}
+}
+
 // A value that does not convert to its option's registered type is dropped
 // with a warning and the option keeps what it already had, the policy the C++
 // agent's get_yaml<T> follows. The raw viper value used to be staged as it

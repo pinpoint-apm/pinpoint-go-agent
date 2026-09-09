@@ -185,6 +185,8 @@ type exception struct {
 }
 
 const (
+	// Capacity of the api and error metadata caches. The SQL caches take
+	// theirs from SQL.CacheSize.
 	cacheSize        = 1024
 	defaultQueueSize = 1024
 
@@ -309,11 +311,16 @@ func NewAgent(config *Config) (Agent, error) {
 	}
 	agent.stopSignal()
 
+	// SQL.CacheSize sizes the three SQL caches only, as the Java agent's
+	// profiler.jdbc.sqlcachesize does; the api and error caches keep
+	// cacheSize, like Java's SimpleCacheFactory.newSimpleCache(). NewConfig
+	// has already confined the value to [1, maxSqlCacheSize].
+	sqlCacheSize := config.Int(CfgSQLCacheSize)
 	agent.errorCache = newMetaCache[string, int32](cacheSize)
-	agent.sqlCache = newMetaCache[string, int32](cacheSize)
-	agent.sqlUidCache = newMetaCache[string, []byte](cacheSize)
+	agent.sqlCache = newMetaCache[string, int32](sqlCacheSize)
+	agent.sqlUidCache = newMetaCache[string, []byte](sqlCacheSize)
 	agent.sqlUidCache.ttl = time.Duration(config.Int(CfgSQLCacheExpireHours)) * time.Hour
-	agent.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize)
+	agent.rawSqlCache = newMetaCache[string, normalizedSql](sqlCacheSize)
 	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
 
 	config.logCallbackOnce.Do(func() {
@@ -1740,11 +1747,16 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 		stats:       newAgentStats(),
 		urlStats:    newUrlStats(config),
 	}
+	// SQL.CacheSize sizes the three SQL caches only, as the Java agent's
+	// profiler.jdbc.sqlcachesize does; the api and error caches keep
+	// cacheSize, like Java's SimpleCacheFactory.newSimpleCache(). NewConfig
+	// has already confined the value to [1, maxSqlCacheSize].
+	sqlCacheSize := config.Int(CfgSQLCacheSize)
 	agent.errorCache = newMetaCache[string, int32](cacheSize)
-	agent.sqlCache = newMetaCache[string, int32](cacheSize)
-	agent.sqlUidCache = newMetaCache[string, []byte](cacheSize)
+	agent.sqlCache = newMetaCache[string, int32](sqlCacheSize)
+	agent.sqlUidCache = newMetaCache[string, []byte](sqlCacheSize)
 	agent.sqlUidCache.ttl = time.Duration(config.Int(CfgSQLCacheExpireHours)) * time.Hour
-	agent.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize)
+	agent.rawSqlCache = newMetaCache[string, normalizedSql](sqlCacheSize)
 	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
 
 	// offGrpc keeps connectGrpcServer - and every worker it starts - from

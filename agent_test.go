@@ -289,6 +289,24 @@ func Test_spanMessageBuilder_SanitizesInvalidUTF8(t *testing.T) {
 	}
 }
 
+// SQL.CacheSize must be the capacity the agent gives its SQL caches, and only
+// those: the api and error caches keep the fixed default.
+func TestNewAgent_SQLCacheSizeSizesOnlyTheSqlCaches(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgSQLCacheSize, 64)
+	a := newTestAgent(cfg)
+
+	for name, c := range map[string]*metaCacheShard{
+		"sqlCache":    &a.sqlCache.shards[0],
+		"sqlUidCache": &a.sqlUidCache.shards[0],
+		"rawSqlCache": &a.rawSqlCache.shards[0],
+	} {
+		assert.Equal(t, 64/metaCacheShardCount, c.cap, "%s takes SQL.CacheSize", name)
+	}
+	assert.Equal(t, cacheSize/metaCacheShardCount, a.apiCache.shards[0].cap, "apiCache keeps cacheSize")
+	assert.Equal(t, cacheSize/metaCacheShardCount, a.errorCache.shards[0].cap, "errorCache keeps cacheSize")
+}
+
 // noSqlCacheBypassConfig turns SQL.CacheLengthLimit off, so a SQL of any length
 // is cached.
 func noSqlCacheBypassConfig() *Config {
