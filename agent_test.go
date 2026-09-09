@@ -1259,6 +1259,95 @@ func Test_agent_ShutdownDrainsWorkerTableWithinDeadline(t *testing.T) {
 	}
 }
 
+// shortShutdownTimeout shortens Shutdown's worker drain deadline for the
+// duration of a test.
+func shortShutdownTimeout(t *testing.T) {
+	prev := shutdownTimeout
+	shutdownTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { shutdownTimeout = prev })
+}
+
+// stuckWorkers is stubWorkers with the named workers parked on release
+// instead of the stop signal, so they outlive the shutdown deadline.
+func stuckWorkers(agent *agent, table []worker, started *atomic.Int32, release chan struct{}, stuck ...string) []worker {
+	stubs := stubWorkers(agent, table, started)
+	for i := range stubs {
+		for _, name := range stuck {
+			if stubs[i].name == name {
+				stubs[i].body = func() {
+					started.Add(1)
+					<-release
+				}
+			}
+		}
+	}
+	return stubs
+}
+
+// A Shutdown that overruns its deadline must name the workers still running:
+// a WaitGroup alone cannot say which - or even how many - are left, and the
+// names are the only lead for investigating a slow shutdown.
+func Test_agent_ShutdownTimeoutNamesRunningWorkers(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		stuck []string
+	}{
+		{"one worker", []string{"send stats"}},
+		{"agent info refresh", []string{"agent info refresh"}},
+		{"two workers", []string{"ping", "agent info refresh"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			shortShutdownTimeout(t)
+			agent := newTestAgent(workerTableConfig(true, 1000))
+			agent.config.offGrpc = false
+			release := make(chan struct{})
+			defer close(release)
+
+			var started atomic.Int32
+			table := agent.workerTable()
+			agent.startWorkers(stuckWorkers(agent, table, &started, release, tc.stuck...))
+			require.Eventually(t, func() bool { return int(started.Load()) == len(activeWorkerNames(table)) },
+				time.Second, time.Millisecond)
+
+			var buf bytes.Buffer
+			restore := captureWarnLog(&buf)
+			agent.Shutdown()
+			restore()
+
+			require.Contains(t, buf.String(), "shutdown timeout", "the deadline must have been exceeded")
+			for _, name := range tc.stuck {
+				assert.Contains(t, buf.String(), name, "the stuck worker must be named")
+			}
+			// Exactly the stuck workers, none of the ones that exited in time.
+			// logrus quotes the message: ... workers: a, b" module=pinpoint ...
+			const marker = "abandon in-flight workers: "
+			rest := buf.String()[strings.Index(buf.String(), marker)+len(marker):]
+			listed := rest[:strings.IndexByte(rest, '"')]
+			assert.ElementsMatch(t, tc.stuck, strings.Split(listed, ", "))
+		})
+	}
+}
+
+// A Shutdown that drains inside its deadline logs nothing about workers.
+func Test_agent_ShutdownInTimeLogsNoWorkerNames(t *testing.T) {
+	agent := newTestAgent(workerTableConfig(true, 1000))
+	agent.config.offGrpc = false
+	var started atomic.Int32
+	table := agent.workerTable()
+	agent.startWorkers(stubWorkers(agent, table, &started))
+	require.Eventually(t, func() bool { return int(started.Load()) == len(activeWorkerNames(table)) },
+		time.Second, time.Millisecond)
+
+	var buf bytes.Buffer
+	restore := captureWarnLog(&buf)
+	agent.Shutdown()
+	restore()
+
+	assert.NotContains(t, buf.String(), "shutdown timeout")
+	assert.NotContains(t, buf.String(), "in-flight workers")
+	assert.Empty(t, agent.runningWorkerNames(), "every started worker has released its flag")
+}
+
 // A panic inside a metadata send must not escape the per-item goroutine: the
 // worker keeps running and still exits cleanly on shutdown.
 func Test_agent_sendMetaWorkerSurvivesPanicInSend(t *testing.T) {

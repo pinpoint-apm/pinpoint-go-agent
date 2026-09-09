@@ -983,10 +983,21 @@ is a constraint on the teardown, not on the spawn. Folding them into a second
 table would have widened this change past the worker start/stop code for no
 correctness gain.
 
+**Deadline overrun.** Java's `close()` joins each component by name, so a
+stuck one is visible in a thread dump. A `WaitGroup` reports nothing — not even
+how many goroutines remain — so `startWorkers` also allocates one atomic
+running flag per started worker (`workerStates`), which `superviseWorker` sets
+on entry and clears with a deferred store on its final exit. When
+`waitTimeout` misses `shutdownTimeout`, the warning names them:
+`shutdown timeout(3s) exceeded, abandon in-flight workers: send stats, agent
+info refresh`. The in-time path logs nothing extra; the cost is two atomic
+stores per worker lifetime and a linear scan of an under-ten-entry slice, so
+there is no lock.
+
 **Revisit if** a worker ever needs to start outside `connectGrpcServer` (a
 lazily started worker, or one restarted by a config reload): the table's
 invariant is that every `Add` precedes `connectWg.Done`, and such a worker
-would need its own accounting.
+would need its own accounting and its own running flag.
 
 ---
 

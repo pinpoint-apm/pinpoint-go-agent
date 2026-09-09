@@ -107,6 +107,12 @@ type agent struct {
 	enable    atomic.Bool
 	shutdown  atomic.Bool
 
+	// workerStates holds one running flag per worker startWorkers started,
+	// so a Shutdown that overruns its deadline can name the workers still in
+	// flight - a WaitGroup cannot say even how many remain. Written once by
+	// startWorkers before any worker goroutine exists; the flags are atomic.
+	workerStates []*workerState
+
 	// shutdownOnce serializes the teardown. Without it a concurrent second
 	// Shutdown returned at the enable check below and ran its deferred
 	// connection close while the first call was still draining spans.
@@ -201,10 +207,6 @@ const (
 	defaultAgentInfoRefreshInterval   = 24 * 60 * 60 * 1000
 	defaultAgentInfoSendRetryInterval = 3000
 	defaultAgentInfoMaxTryPerAttempt  = 3
-
-	// shutdownTimeout bounds how long Shutdown waits for the worker goroutines
-	// to drain their queues before abandoning them.
-	shutdownTimeout = 3 * time.Second
 
 	maxSqlSize = 64 * 1024
 	// maxErrorMessageSize matches the Java agent, which abbreviates exception
@@ -474,6 +476,17 @@ func (agent *agent) workerTable() []worker {
 // superviseWorker owns the slot from then on and releases it with its
 // deferred Done.
 func (agent *agent) startWorkers(workers []worker) {
+	// Allocate the state slice to its final size before the first go
+	// statement: superviseWorker reads the slice header from its goroutine,
+	// and shutdownAgent reads it after connectWg.Wait, so it must not change
+	// once a worker exists.
+	var states []*workerState
+	for _, w := range workers {
+		if w.when() {
+			states = append(states, &workerState{name: w.name})
+		}
+	}
+	agent.workerStates = states
 	for _, w := range workers {
 		if !w.when() {
 			continue
@@ -482,6 +495,42 @@ func (agent *agent) startWorkers(workers []worker) {
 		go agent.superviseWorker(w.name, w.body)
 	}
 }
+
+// workerState is the observable liveness of one started worker: running is
+// set on the supervisor's entry and cleared on its final exit.
+type workerState struct {
+	name    string
+	running atomic.Bool
+}
+
+// workerStateOf finds the state slot of a started worker by name, or nil for a
+// worker the table did not start - tests drive superviseWorker directly with
+// names that have no slot. A linear scan: the table is under ten entries and
+// each worker looks itself up twice in its lifetime.
+func (agent *agent) workerStateOf(name string) *workerState {
+	for _, st := range agent.workerStates {
+		if st.name == name {
+			return st
+		}
+	}
+	return nil
+}
+
+// runningWorkerNames lists the started workers whose supervisor has not exited.
+func (agent *agent) runningWorkerNames() []string {
+	var names []string
+	for _, st := range agent.workerStates {
+		if st.running.Load() {
+			names = append(names, st.name)
+		}
+	}
+	return names
+}
+
+// shutdownTimeout bounds how long Shutdown waits for the worker goroutines to
+// drain their queues before abandoning them. A variable so tests can shorten
+// it.
+var shutdownTimeout = 3 * time.Second
 
 // dropReportInterval bounds how often a saturated queue may warn, matching
 // the C++ QueueDropReporter::kDefaultReportInterval. A variable so tests can
@@ -501,6 +550,10 @@ var workerRestartDelay = 1 * time.Second
 // the C++ agent's superviseWorker.
 func (agent *agent) superviseWorker(name string, body func()) {
 	defer agent.workerWg.Done()
+	if st := agent.workerStateOf(name); st != nil {
+		st.running.Store(true)
+		defer st.running.Store(false)
+	}
 
 	stop := agent.stopSignal().Done()
 	for {
@@ -699,8 +752,11 @@ func (agent *agent) shutdownAgent() {
 	// startWorkers counted into workerWg - one Add per go statement, all done
 	// before connectWg.Wait above returned - so this wait cannot be left short
 	// or over-counted by a worker added elsewhere.
+	// On the overrun, name the workers still running so the deadline can be
+	// investigated; the in-time path logs nothing extra.
 	if !waitTimeout(&agent.workerWg, shutdownTimeout) {
-		Log("agent").Warnf("shutdown timeout(%v) exceeded, abandon in-flight workers", shutdownTimeout)
+		Log("agent").Warnf("shutdown timeout(%v) exceeded, abandon in-flight workers: %s",
+			shutdownTimeout, strings.Join(agent.runningWorkerNames(), ", "))
 	}
 }
 
