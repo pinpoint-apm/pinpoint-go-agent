@@ -422,6 +422,40 @@ nc -vz your-collector-host 9991
 * Check the collector's own logs. A version mismatch is rejected there, not
   here: the agent requires Pinpoint 2.4.0+.
 
+### Collector Connection Dropped and Recovered
+
+**Symptoms:** a gap in spans or stats that closed by itself; you need to know
+when the connection was lost and when it came back.
+
+The transport logs each collector channel (`agent`, `span`, `stat`, `command`)
+under `src=grpc`. The lines below are worded the same in the C++ agent, so this
+entry applies to both.
+
+* `<channel> connection state <from> -> <to>` (INFO) is an **observed** state
+  change while the agent waited for the channel. `GetState` is a sampled read,
+  not a stream of states: what happened between two samples is not seen, so
+  `from` and `to` are consecutive samples, not necessarily consecutive states.
+  A `-> READY` line is the moment the channel recovered.
+* The lines are rate limited to one per channel per minute so a flapping
+  collector cannot flood the log. A line that closes a quiet window carries
+  `(<n> transitions since the last state line)`; the first recovery to `READY`
+  in a window is always logged and marked `(other transitions are folded into
+  the next state line)`. Within a window only that one recovery is shown; a
+  channel that flaps several times a minute logs the first one and counts the
+  rest.
+* `<channel> connection ready again after <d>; lifetime: not ready <n> times,
+  <d> waiting for READY in total, <n> rotations` (INFO) closes an outage with
+  the running totals - the log-only stand-in for Java's Channelz reporters.
+  `rotations` counts `Collector.Grpc.ConnectionMaxAge` rotations over every
+  channel of the process, so the same value appears on each channel's line. A
+  first connect is not an outage and gets no summary. This line is rate
+  limited like the state lines.
+* `<channel> connection not ready (state <s>): waited <d> so far` (WARN) is a
+  wait that ran out with the channel still down; it repeats at most once per
+  channel per minute while the outage lasts. WARN because data is not being
+  sent meanwhile: the per-attempt `wait <channel> connection ready` INFO line
+  (unchanged) says an attempt started, this one says the outage is ongoing.
+
 ### Configuration Changes Not Taking Effect
 
 * Only options marked **dynamic** reload from the config file; see the

@@ -1001,14 +1001,168 @@ func sendStreamWithTimeout(op func() error, cancelStream context.CancelFunc, tim
 	return err
 }
 
+// channelStateLog is the diagnostic record of one collector channel's
+// readiness, keyed by the `which` label the wait loops pass: the throttles
+// for its log lines and the lifetime counters the recovery summary prints.
+// Package level, like the other logThrottle sites, because backOffUntilReady
+// calls waitUntilReady once per attempt and the throttle window must span
+// those calls or a dead collector logs a state line per attempt.
+//
+// It is the log-only stand-in for what Java has in two places: the
+// ConnectivityStateMonitor of AbstractGrpcDataSender (transition lines) and
+// the Channelz reporters under sender/grpc/metric (counters). Nothing is
+// added to PAgentStat.
+type channelStateLog struct {
+	mu sync.Mutex
+	// unreadySince is when the channel was last observed leaving READY (or
+	// first observed not READY); zero while READY.
+	unreadySince time.Time
+	everReady    bool // READY was observed at least once
+	lostReady    bool // READY was observed, then lost, and not yet regained
+	// recoveryLogged is set once a recovery line stood in the current throttle
+	// window, so a flapping channel gets one unthrottled recovery per window
+	// rather than one per flap.
+	recoveryLogged bool
+	lostCount      int64         // lifetime: times READY was observed lost
+	unreadyTotal   time.Duration // lifetime: time spent waiting for READY
+
+	// transitions throttles the state lines, outages the recovery summary and
+	// notReady the WARN a wait that timed out leaves; each on its own window
+	// so one kind cannot starve another.
+	transitions, outages, notReady logThrottle
+}
+
+var (
+	channelStateLogsMu sync.Mutex
+	// channelStateLogs is one record per channel label. Per channel rather
+	// than shared: the four channels flap together when the collector goes,
+	// and a shared window would let the agent channel's lines hide the span
+	// channel's first recovery.
+	channelStateLogs = map[string]*channelStateLog{}
+)
+
+func channelStateLogFor(which string) *channelStateLog {
+	channelStateLogsMu.Lock()
+	defer channelStateLogsMu.Unlock()
+	l := channelStateLogs[which]
+	if l == nil {
+		l = &channelStateLog{
+			transitions: logThrottle{src: "grpc"},
+			outages:     logThrottle{src: "grpc"},
+			notReady:    logThrottle{src: "grpc"},
+		}
+		channelStateLogs[which] = l
+	}
+	return l
+}
+
+// observeNotReady records that a wait found the channel in state, which is
+// not READY. Counted as a loss only once per outage: the wait loops re-enter
+// with the same outage in progress on every back-off attempt.
+func (l *channelStateLog) observeNotReady() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.unreadySince.IsZero() {
+		l.unreadySince = time.Now()
+	}
+	if l.everReady && !l.lostReady {
+		l.lostReady = true
+		l.lostCount++
+	}
+}
+
+// logTransition logs an observed state change of the channel as one line,
+// throttled to a line per dropReportInterval with the count of lines it held
+// back, except for the line the outage is diagnosed from: the first READY of
+// the channel, and the first recovery to READY within a throttle window, are
+// always logged.
+//
+// "Observed": GetState is a sampled read, not a stream of states. Transitions
+// that happen between two WaitForStateChange returns are never seen, so from
+// and to are consecutive samples, not necessarily consecutive states (Java's
+// notifyWhenStateChanged reports the same way). The wording matches the C++
+// agent's log_channel_state_change so doc/troubleshooting.md can be shared.
+func (l *channelStateLog) logTransition(which string, from, to connectivity.State) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	recovery := to == connectivity.Ready && l.lostReady
+	firstReady := to == connectivity.Ready && !l.everReady
+	if to == connectivity.Ready {
+		l.everReady = true
+	}
+	if held, ok := l.transitions.acquire(); ok {
+		// This line opens a throttle window; a recovery it reports counts as
+		// that window's, and the next one starts clean.
+		l.recoveryLogged = recovery
+		if held > 1 {
+			Log("grpc").Infof("%s connection state %s -> %s (%d transitions since the last state line)",
+				which, from.String(), to.String(), held)
+		} else {
+			Log("grpc").Infof("%s connection state %s -> %s", which, from.String(), to.String())
+		}
+		return
+	}
+	if firstReady || (recovery && !l.recoveryLogged) {
+		l.recoveryLogged = l.recoveryLogged || recovery
+		Log("grpc").Infof("%s connection state %s -> %s (other transitions are folded into the next state line)",
+			which, from.String(), to.String())
+	}
+}
+
+// logReady closes the outage, if there was one, and logs its summary with
+// the lifetime counters: the Channelz stand-in. The recovery instant itself
+// is the "-> READY" state line; this one is throttled like the state lines,
+// so a flapping channel gets one summary per interval carrying the totals.
+func (l *channelStateLog) logReady(which string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.everReady = true
+	if l.unreadySince.IsZero() {
+		return
+	}
+	outage := time.Since(l.unreadySince)
+	l.unreadySince = time.Time{}
+	if !l.lostReady {
+		return // the first connect, not a recovery
+	}
+	l.lostReady = false
+	l.unreadyTotal += outage
+	if _, ok := l.outages.acquire(); ok {
+		Log("grpc").Infof("%s connection ready again after %s; lifetime: not ready %d times, %s waiting for READY in total, %d rotations",
+			which, outage.Round(time.Millisecond).String(), l.lostCount,
+			l.unreadyTotal.Round(time.Millisecond).String(), channelRotations.Load())
+	}
+}
+
+// logNotReady is the WARN for a wait that ran out without READY. WARN rather
+// than the INFO of the entry line because by now data is not being sent; one
+// line per dropReportInterval per channel, since backOffUntilReady times out
+// once per attempt for as long as the collector is down.
+func (l *channelStateLog) logNotReady(which string, state connectivity.State) {
+	l.mu.Lock()
+	waited := time.Since(l.unreadySince)
+	l.mu.Unlock()
+	l.notReady.warnf("%s connection not ready (state %s): waited %s so far",
+		which, state.String(), waited.Round(time.Millisecond).String())
+}
+
 // waitUntilReady waits up to timeout for the connection to become ready. The
 // wait is bound to ctx as well, so cancelling ctx aborts it immediately.
+//
+// Every observed state change is logged through channelStateLog, so the
+// moment of recovery (-> READY) is on record; see logTransition for what
+// "observed" means here.
 func waitUntilReady(ctx context.Context, grpcConn *grpc.ClientConn, timeout time.Duration, which string) bool {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	state := grpcConn.GetState()
 	Log("grpc").Infof("wait %s connection ready - state: %s, timeout: %s", which, state.String(), timeout.String())
+
+	stateLog := channelStateLogFor(which)
+	if state != connectivity.Ready {
+		stateLog.observeNotReady()
+	}
 
 	for state != connectivity.Ready {
 		// An IDLE channel never leaves that state on its own, so waiting on it
@@ -1018,11 +1172,18 @@ func waitUntilReady(ctx context.Context, grpcConn *grpc.ClientConn, timeout time
 			grpcConn.Connect()
 		}
 		if !grpcConn.WaitForStateChange(ctx, state) {
+			if ctx.Err() == context.DeadlineExceeded {
+				stateLog.logNotReady(which, grpcConn.GetState())
+			}
 			return false
 		}
-		state = grpcConn.GetState()
+		if next := grpcConn.GetState(); next != state {
+			stateLog.logTransition(which, state, next)
+			state = next
+		}
 	}
 
+	stateLog.logReady(which)
 	return true
 }
 

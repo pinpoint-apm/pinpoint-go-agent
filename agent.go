@@ -1565,14 +1565,24 @@ var (
 	afterEndSpanLog                                                   logThrottle
 )
 
-func (t *logThrottle) warnf(format string, args ...interface{}) {
+// acquire reports whether the site may log now and, if so, how many calls it
+// held back since it last did. A refused call is counted as held back.
+func (t *logThrottle) acquire() (held int64, ok bool) {
 	now := time.Now().UnixNano()
 	next := t.next.Load()
 	if now < next || !t.next.CompareAndSwap(next, now+int64(dropReportInterval)) {
 		t.suppressed.Add(1)
+		return 0, false
+	}
+	return t.suppressed.Swap(0), true
+}
+
+func (t *logThrottle) warnf(format string, args ...interface{}) {
+	n, ok := t.acquire()
+	if !ok {
 		return
 	}
-	if n := t.suppressed.Swap(0); n > 0 {
+	if n > 0 {
 		format += " (%d similar warning(s) suppressed)"
 		args = append(args, n)
 	}

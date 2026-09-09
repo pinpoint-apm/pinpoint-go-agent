@@ -323,8 +323,15 @@ func (b *expiringPickFirst) requestSuccessor(sd *expiringSubConn) {
 		return
 	}
 	Log("grpc").Infof("%s: %v reached its max age, creating a successor", expiringPickFirstName, sd.sc)
+	channelRotations.Add(1)
 	b.createSubConnLocked()
 }
+
+// channelRotations counts the max age rotations started, over every collector
+// channel of the process. It is read by the outage summary waitUntilReady logs
+// on recovery; there is no per-channel count because a balancer does not know
+// which channel it serves.
+var channelRotations atomic.Int64
 
 // expiringPicker returns one fixed result. Pick reads nothing the balancer
 // mutates: sd's fields are immutable or atomic.

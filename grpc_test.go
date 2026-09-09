@@ -579,6 +579,167 @@ func Test_waitUntilReady_connectsIdleChannel(t *testing.T) {
 	assert.NotEqual(t, connectivity.Idle, conn.GetState())
 }
 
+// restartableServer is an empty gRPC server that can be stopped and brought
+// back on the same address, to walk a channel through an outage and back.
+type restartableServer struct {
+	t    *testing.T
+	addr string
+	srv  *grpc.Server
+}
+
+func startRestartableServer(t *testing.T) *restartableServer {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	s := &restartableServer{t: t, addr: lis.Addr().String()}
+	s.serve(lis)
+	return s
+}
+
+func (s *restartableServer) serve(lis net.Listener) {
+	s.srv = grpc.NewServer()
+	go s.srv.Serve(lis)
+	s.t.Cleanup(s.srv.Stop)
+}
+
+func (s *restartableServer) stop() { s.srv.Stop() }
+
+func (s *restartableServer) start() {
+	s.t.Helper()
+	lis, err := net.Listen("tcp", s.addr)
+	require.NoError(s.t, err)
+	s.serve(lis)
+}
+
+// dialRestartable is a READY channel to s, waited on under the given label.
+func dialRestartable(t *testing.T, s *restartableServer, which string) *grpc.ClientConn {
+	t.Helper()
+	conn, err := grpc.NewClient(s.addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+	require.True(t, waitUntilReady(context.Background(), conn, 5*time.Second, which))
+	return conn
+}
+
+// freshChannelStateLog starts the test from a channel label with no history:
+// the record is package level on purpose (it must outlive the back-off
+// attempts), so a repeated run would otherwise inherit the previous run's
+// throttle window and counters.
+func freshChannelStateLog(t *testing.T, which string) {
+	reset := func() {
+		channelStateLogsMu.Lock()
+		delete(channelStateLogs, which)
+		channelStateLogsMu.Unlock()
+	}
+	reset()
+	t.Cleanup(reset)
+}
+
+// waitNotReady blocks until conn has noticed the server is gone.
+func waitNotReady(t *testing.T, conn *grpc.ClientConn) {
+	t.Helper()
+	require.Eventually(t, func() bool { return conn.GetState() != connectivity.Ready },
+		5*time.Second, time.Millisecond, "channel never noticed the server stop")
+}
+
+// The moment the channel comes back is the one line the outage cannot be
+// reconstructed without: it must be logged as a "-> READY" transition and
+// closed with the outage summary, whether the wait found the channel in
+// TRANSIENT_FAILURE or in CONNECTING. Java logs the same transition from
+// AbstractGrpcDataSender's ConnectivityStateMonitor.
+func Test_waitUntilReady_logsRecoveryToReady(t *testing.T) {
+	const which = "recovery-test"
+	freshChannelStateLog(t, which)
+	shortDropReportInterval(t, time.Hour)
+	var buf bytes.Buffer
+	defer captureLogAt(&buf, logrus.InfoLevel)()
+
+	srv := startRestartableServer(t)
+	conn := dialRestartable(t, srv, which)
+
+	srv.stop()
+	waitNotReady(t, conn)
+	// A wait that runs out against a dead collector drives the channel into
+	// TRANSIENT_FAILURE and must say so at WARN: data is not being sent.
+	buf.Reset()
+	assert.False(t, waitUntilReady(context.Background(), conn, 300*time.Millisecond, which))
+	assert.Contains(t, buf.String(), which+" connection not ready (state ")
+	assert.Contains(t, buf.String(), "waited ")
+	assert.Contains(t, buf.String(), "level=warning")
+
+	srv.start()
+	buf.Reset()
+	require.True(t, waitUntilReady(context.Background(), conn, 5*time.Second, which))
+	out := buf.String()
+	assert.Contains(t, out, which+" connection state ", "the observed transitions are logged")
+	assert.Contains(t, out, "-> READY", "the recovery transition is logged")
+	assert.Contains(t, out, which+" connection ready again after ", "the outage is summarized on recovery")
+	assert.Contains(t, out, "lifetime: not ready 1 times", "the loss counter is part of the summary")
+	// The rotation count is process-wide, so other tests may have moved it.
+	assert.Regexp(t, `waiting for READY in total, \d+ rotations`, out)
+}
+
+// A flapping channel must not turn the transition lines into a flood: inside
+// one throttle window the lines collapse, but the first recovery to READY is
+// always logged, since that is the line the outage is diagnosed from.
+func Test_waitUntilReady_throttlesFlappingButKeepsFirstRecovery(t *testing.T) {
+	const which = "flap-test"
+	freshChannelStateLog(t, which)
+	shortDropReportInterval(t, time.Hour)
+	var buf bytes.Buffer
+	defer captureLogAt(&buf, logrus.InfoLevel)()
+
+	srv := startRestartableServer(t)
+	conn := dialRestartable(t, srv, which)
+	buf.Reset()
+
+	const flaps = 3
+	for i := 0; i < flaps; i++ {
+		srv.stop()
+		waitNotReady(t, conn)
+		srv.start()
+		require.True(t, waitUntilReady(context.Background(), conn, 5*time.Second, which), "flap %d", i)
+	}
+
+	out := buf.String()
+	assert.Equal(t, 1, strings.Count(out, "-> READY"),
+		"the first recovery is always logged, the later ones in the same window are held back")
+	assert.Equal(t, 1, strings.Count(out, which+" connection ready again after "),
+		"one outage summary per window")
+	assert.Equal(t, flaps, strings.Count(out, "wait "+which+" connection ready"),
+		"the entry line is untouched")
+}
+
+// backOffUntilReady calls waitUntilReady once per attempt for as long as the
+// collector is down. The throttle lives outside the call, so the second and
+// later attempts within a window add nothing to the log: one state line and
+// one WARN, not one of each per attempt. The three direct calls below are what
+// the back-off loop does per attempt, without its multi-second intervals.
+func Test_waitUntilReady_throttlePersistsAcrossAttempts(t *testing.T) {
+	const which = "attempts-test"
+	freshChannelStateLog(t, which)
+	shortDropReportInterval(t, time.Hour)
+	var buf bytes.Buffer
+	defer captureLogAt(&buf, logrus.InfoLevel)()
+
+	// Port 1 has no listener: every attempt goes IDLE -> CONNECTING ->
+	// TRANSIENT_FAILURE and runs out.
+	conn, err := grpc.NewClient("127.0.0.1:1", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	for attempt := 0; attempt < 3; attempt++ {
+		assert.False(t, waitUntilReady(context.Background(), conn, 300*time.Millisecond, which), "attempt %d", attempt)
+	}
+
+	out := buf.String()
+	assert.Equal(t, 1, strings.Count(out, which+" connection state "),
+		"state lines from later attempts fall into the same throttle window")
+	assert.Equal(t, 1, strings.Count(out, which+" connection not ready (state "),
+		"the not-ready WARN is rate limited across attempts")
+	assert.Equal(t, 3, strings.Count(out, "wait "+which+" connection ready"))
+}
+
 func Test_sendStreamWithTimeout_passesThroughResult(t *testing.T) {
 	assert.NoError(t, sendStreamWithTimeout(func() error { return nil }, func() {}, time.Second, "test"))
 
