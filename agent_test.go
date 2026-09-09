@@ -1136,6 +1136,129 @@ func Test_agent_superviseWorkerDoesNotRestartWhileStopping(t *testing.T) {
 	}
 }
 
+// workerTableCases are the configuration combinations that select different
+// rows of the worker table: span vs span batch, and whether the agent info
+// refresh worker runs.
+var workerTableCases = []struct {
+	name            string
+	spanBatch       bool
+	refreshInterval int
+	want            []string
+}{
+	{"batch on, refresh on", true, 1000, []string{"ping", "span batch", "command", "meta", "collect agent stat", "collect uri stat", "send uri stat", "send stats", "agent info refresh"}},
+	{"batch on, refresh off", true, 0, []string{"ping", "span batch", "command", "meta", "collect agent stat", "collect uri stat", "send uri stat", "send stats"}},
+	{"batch off, refresh on", false, 1000, []string{"ping", "span", "command", "meta", "collect agent stat", "collect uri stat", "send uri stat", "send stats", "agent info refresh"}},
+	{"batch off, refresh off", false, 0, []string{"ping", "span", "command", "meta", "collect agent stat", "collect uri stat", "send uri stat", "send stats"}},
+}
+
+// workerTableConfig builds a config selecting one worker table case.
+func workerTableConfig(spanBatch bool, refreshInterval int) *Config {
+	cfg := defaultConfig()
+	cfg.Set(CfgSpanBatchEnable, spanBatch)
+	cfg.Set(CfgCollectorAgentInfoRefreshInterval, refreshInterval)
+	return cfg
+}
+
+// activeWorkerNames evaluates the table's predicates the way startWorkers does.
+func activeWorkerNames(table []worker) []string {
+	var names []string
+	for _, w := range table {
+		if w.when() {
+			names = append(names, w.name)
+		}
+	}
+	return names
+}
+
+// stubWorkers keeps the table's names and predicates but replaces every body
+// with one that parks on the stop signal and records that it ran, so the
+// spawn loop can be exercised without a collector.
+func stubWorkers(agent *agent, table []worker, started *atomic.Int32) []worker {
+	stop := agent.stopSignal().Done()
+	stubs := make([]worker, len(table))
+	for i, w := range table {
+		stubs[i] = worker{name: w.name, when: w.when, body: func() {
+			started.Add(1)
+			<-stop
+		}}
+	}
+	return stubs
+}
+
+// The table's predicates must reproduce exactly the worker set the old
+// hand-written go statements produced, under every configuration that selects
+// different rows: span and span batch are mutually exclusive, and agent info
+// refresh runs only for a positive interval. Names are the log contract, so
+// they are pinned by value and must be unique.
+func Test_agent_workerTableSelectsWorkersByConfig(t *testing.T) {
+	for _, tc := range workerTableCases {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := newTestAgent(workerTableConfig(tc.spanBatch, tc.refreshInterval))
+			table := agent.workerTable()
+
+			assert.Equal(t, tc.want, activeWorkerNames(table))
+
+			seen := map[string]bool{}
+			for _, w := range table {
+				assert.False(t, seen[w.name], "duplicate worker name %q", w.name)
+				seen[w.name] = true
+				assert.NotNil(t, w.body, "%s has no body", w.name)
+				assert.NotNil(t, w.when, "%s has no predicate", w.name)
+			}
+		})
+	}
+}
+
+// startWorkers must start exactly one goroutine per active table entry, and
+// count exactly that many into workerWg: the drain then completes as soon as
+// the workers exit. An Add that drifted from the go statements would either
+// leave the wait unsatisfied (too large) or panic the WaitGroup (too small).
+func Test_agent_startWorkersCountMatchesTable(t *testing.T) {
+	for _, tc := range workerTableCases {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := newTestAgent(workerTableConfig(tc.spanBatch, tc.refreshInterval))
+			var started atomic.Int32
+			table := agent.workerTable()
+			agent.startWorkers(stubWorkers(agent, table, &started))
+
+			want := int32(len(activeWorkerNames(table)))
+			require.Eventually(t, func() bool { return started.Load() == want },
+				time.Second, time.Millisecond, "every active worker must start")
+			// The counter is at the target and every body is parked on the stop
+			// signal, so an over-counted Add is the only way this wait fails.
+			assert.False(t, waitTimeout(&agent.workerWg, 50*time.Millisecond),
+				"workers are still running before the signal")
+
+			agent.signalShutdown()
+			assert.True(t, waitTimeout(&agent.workerWg, shutdownTimeout),
+				"workerWg must drain once every started worker exits")
+			assert.Equal(t, want, started.Load(), "no worker started twice")
+		})
+	}
+}
+
+// Shutdown of an agent running the full worker set, under each configuration,
+// must finish inside shutdownTimeout - the direct symptom of a workerWg count
+// that exceeds the goroutines is a Shutdown that always waits out its deadline.
+func Test_agent_ShutdownDrainsWorkerTableWithinDeadline(t *testing.T) {
+	for _, tc := range workerTableCases {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := newTestAgent(workerTableConfig(tc.spanBatch, tc.refreshInterval))
+			agent.config.offGrpc = false
+			var started atomic.Int32
+			table := agent.workerTable()
+			agent.startWorkers(stubWorkers(agent, table, &started))
+			require.Eventually(t, func() bool { return int(started.Load()) == len(activeWorkerNames(table)) },
+				time.Second, time.Millisecond)
+
+			start := time.Now()
+			agent.Shutdown()
+			assert.Less(t, time.Since(start), shutdownTimeout, "Shutdown waited out the deadline")
+			assert.True(t, waitTimeout(&agent.workerWg, time.Second), "every worker slot released")
+		})
+	}
+}
+
 // A panic inside a metadata send must not escape the per-item goroutine: the
 // worker keeps running and still exits cleanly on shutdown.
 func Test_agent_sendMetaWorkerSurvivesPanicInSend(t *testing.T) {

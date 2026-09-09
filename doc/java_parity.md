@@ -49,6 +49,7 @@ one place that compares. The C++ agent keeps the same file at
 | Command channel RPC | `GrpcCommandService`, `SupportCommandCodeClientInterceptor`, `Header.SUPPORT_COMMAND_CODE` | **Aligned** — see [below](#command-channel-rpc--aligned) |
 | Active trace registry cap | `DefaultActiveTraceRepository`, `DEFAULT_MAX_ACTIVE_TRACE_SIZE` (Caffeine `maximumSize`) | **Adopted, per shard** — see [below](#active-span-registry-cap--adopted-per-shard) |
 | Automatic shutdown at process exit | `ShutdownHookRegister`, `DefaultAgent.close()` | **Diverges** — see [below](#automatic-shutdown-at-process-exit--diverges) |
+| Worker lifecycle | `GrpcModuleLifeCycle`, `DefaultApplicationContext.start()/close()` | **Diverges (structure), same contract** — see [below](#worker-lifecycle--diverges-in-structure-same-contract) |
 | gRPC channel arguments (flow control, write buffer, header list, connection renewal, idle timeout) | `ClientOption`, `DefaultChannelFactory.setupClientOption` | **Idle timeout disabled as in Java (value differs); the rest follow Java** — see [below](#grpc-channel-arguments--idle-timeout-disabled-as-in-java-the-rest-follow-java) |
 | URI template recorded twice on one span | `DefaultShared.setUriTemplate`, `DefaultSpanRecorder.recordUriTemplate` | **Same as Java** — see [below](#uri-template-is-first-wins--same-as-java) |
 | Locked parity invariants (11 groups) | `ParserContext`, `DefaultCallStack`, `GrpcSpanProcessorV2`, `Header`, `CountingSampler`, `UriStatHistogramBucket`, `BaseHistogramSchema`, `DefaultTransactionCounter`, `StringUtils`, `ClientOption` | **Verified identical** — see [below](#locked-parity-invariants--verified-identical) |
@@ -925,6 +926,67 @@ but not `os.Exit`; C++ covers `exit()` but not signals.
 **Revisit if** Go gains a runtime exit hook, or the collector starts inferring
 an agent's end from the loss of its ping stream, which would remove the
 "still alive in the UI" half of the loss.
+
+---
+
+## Worker lifecycle — diverges in structure, same contract
+
+**Java.** `GrpcModuleLifeCycle` (`agent-module/profiler`, `context/module/`)
+holds the collector-facing components — the agent/metadata/span/stat data
+senders, the `ChannelFactory` instances, the executors and the command
+service — as `Provider` fields, and `DefaultApplicationContext.start()` and
+`close()` walk them in a fixed order. Every sender is a class with its own
+thread or executor, and `close()` calls each one by name; there is no worker
+count anywhere because there is nothing to count — the JVM's shutdown
+hook (see [above](#automatic-shutdown-at-process-exit--diverges)) runs
+`close()` and each component owns its own thread's join.
+
+**Go.** The equivalent of that lifecycle is a set of goroutines under one
+`sync.WaitGroup`. `connectGrpcServer` (`agent.go`) starts them once
+registration has succeeded; `shutdownAgent` waits for them with a bounded
+`waitTimeout(&agent.workerWg, shutdownTimeout)`. The workers are declared in
+**one table**, `workerTable()`, whose entries carry the worker's name, its body
+and a `when` predicate:
+
+| Worker | `when` |
+|---|---|
+| `ping`, `command`, `meta`, `collect agent stat`, `collect uri stat`, `send uri stat`, `send stats` | always |
+| `span batch` | `Span.Batch.Enable` is true |
+| `span` | `Span.Batch.Enable` is false |
+| `agent info refresh` | `Collector.AgentInfo.RefreshInterval` > 0 |
+
+`startWorkers` iterates the table, increments `workerWg` by one immediately
+before each `go superviseWorker(name, body)`, and `superviseWorker` releases
+that slot with a deferred `Done` on its final exit. The count therefore matches
+the goroutines by construction. Before the table, `connectGrpcServer` called
+`workerWg.Add(8)` with a hand-counted literal followed by a list of `go`
+statements and two branches — a normal change that added or made a worker
+conditional could silently leave every `Shutdown` waiting out its whole
+deadline (`Add` too large) or panic the `WaitGroup` (`Add` too small), and the
+compiler catches neither. The C++ agent has the same list maintained by hand in
+six places.
+
+The `Add` stays on the `connectGrpcServer` goroutine rather than moving into
+`superviseWorker`: `shutdownAgent` waits on `connectWg` before it waits on
+`workerWg`, which is what guarantees every `Add` has happened before the `Wait`
+begins. The names are unchanged — `doc/troubleshooting.md` and the
+`start/restart <name> goroutine` log lines are keyed by them — and
+`superviseWorker` (panic recovery, `workerRestartDelay`, the stop-signal and
+`enable` checks, the restart log) is untouched.
+
+The collector connections (`agentGrpc`, `spanGrpc`, `statGrpc`, `cmdGrpc`) are
+**not** part of the table. They are Java's `ChannelFactory`/sender pairs, not
+its threads: nothing counts them, they are closed by `closeGrpc` under a nil
+guard on every path including a failed connect, and their close order in
+`shutdownAgent` (`cmdGrpc` first, to end the command stream's listening state)
+is a constraint on the teardown, not on the spawn. Folding them into a second
+table would have widened this change past the worker start/stop code for no
+correctness gain.
+
+**Revisit if** a worker ever needs to start outside `connectGrpcServer` (a
+lazily started worker, or one restarted by a config reload): the table's
+invariant is that every `Add` precedes `connectWg.Done`, and such a worker
+would need its own accounting.
 
 ---
 

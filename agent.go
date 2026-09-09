@@ -412,23 +412,74 @@ func (agent *agent) connectGrpcServer() {
 	}
 
 	agent.enable.Store(true)
-	agent.workerWg.Add(8)
-	go agent.superviseWorker("ping", agent.sendPingWorker)
-	if agent.config.Bool(CfgSpanBatchEnable) {
-		go agent.superviseWorker("span batch", agent.sendSpanBatchWorker)
-	} else {
-		go agent.superviseWorker("span", agent.sendSpanWorker)
-	}
-	go agent.superviseWorker("command", agent.runCommandService)
-	go agent.superviseWorker("meta", agent.sendMetaWorker)
-	go agent.superviseWorker("collect agent stat", agent.collectAgentStatWorker)
-	go agent.superviseWorker("collect uri stat", agent.collectUrlStatWorker)
-	go agent.superviseWorker("send uri stat", agent.sendUrlStatWorker)
-	go agent.superviseWorker("send stats", agent.sendStatsWorker)
+	agent.startWorkers(agent.workerTable())
+}
 
-	if interval := agent.agentInfoRefreshInterval(); interval > 0 {
+// worker declares one of the agent's worker goroutines: the name the
+// supervisor logs it under, the body it runs, and the condition under which
+// this agent starts it. The names are part of the log contract - the
+// troubleshooting guide reads the "start <name> goroutine" and "restart <name>
+// goroutine" lines by these values - so they must not change.
+type worker struct {
+	name string
+	body func()
+	when func() bool
+}
+
+// always is the when predicate of a worker every enabled agent runs.
+func always() bool { return true }
+
+// workerTable is the one place the agent's workers are declared. Every worker
+// that connectGrpcServer used to start with its own go statement is an entry
+// here, with the conditions that used to be if/else branches around those
+// statements expressed as the entry's when predicate: span and span batch are
+// mutually exclusive on CfgSpanBatchEnable, and agent info refresh runs only
+// for a positive refresh interval. The connection fields (agentGrpc, spanGrpc,
+// statGrpc, cmdGrpc) are deliberately not a table: they are a different kind
+// of thing, closed by closeGrpc under a nil guard rather than supervised, and
+// nothing counts them. The hand-counted number this table replaces was the
+// workerWg.Add that the spawn loop in startWorkers now derives from the table.
+func (agent *agent) workerTable() []worker {
+	spanBatch := agent.config.Bool(CfgSpanBatchEnable)
+	refreshInterval := agent.agentInfoRefreshInterval()
+	return []worker{
+		{name: "ping", body: agent.sendPingWorker, when: always},
+		{name: "span batch", body: agent.sendSpanBatchWorker, when: func() bool { return spanBatch }},
+		{name: "span", body: agent.sendSpanWorker, when: func() bool { return !spanBatch }},
+		{name: "command", body: agent.runCommandService, when: always},
+		{name: "meta", body: agent.sendMetaWorker, when: always},
+		{name: "collect agent stat", body: agent.collectAgentStatWorker, when: always},
+		{name: "collect uri stat", body: agent.collectUrlStatWorker, when: always},
+		{name: "send uri stat", body: agent.sendUrlStatWorker, when: always},
+		{name: "send stats", body: agent.sendStatsWorker, when: always},
+		{
+			name: "agent info refresh",
+			body: func() { agent.refreshAgentInfoWorker(refreshInterval) },
+			when: func() bool { return refreshInterval > 0 },
+		},
+	}
+}
+
+// startWorkers starts every worker whose when predicate holds, one supervised
+// goroutine each. workerWg is incremented per worker, right before its go
+// statement, so the count matches the goroutines by construction - a hand
+// counted Add that drifted from the go statements either made every Shutdown
+// wait out its full deadline (too large) or panicked the WaitGroup (too small),
+// and neither was caught by the compiler.
+//
+// The Add must stay here, on the connectGrpcServer goroutine, and not move
+// into superviseWorker: shutdownAgent reaches its workerWg wait only after
+// connectWg.Wait, which is what guarantees every Add has happened before the
+// Wait. An Add inside the spawned goroutine would race that Wait.
+// superviseWorker owns the slot from then on and releases it with its
+// deferred Done.
+func (agent *agent) startWorkers(workers []worker) {
+	for _, w := range workers {
+		if !w.when() {
+			continue
+		}
 		agent.workerWg.Add(1)
-		go agent.superviseWorker("agent info refresh", func() { agent.refreshAgentInfoWorker(interval) })
+		go agent.superviseWorker(w.name, w.body)
 	}
 }
 
@@ -620,6 +671,12 @@ func (agent *agent) shutdownAgent() {
 		return
 	}
 
+	// The teardown below is ordered against the workers that workerTable
+	// declares: the url stat flush above fed sendStatsWorker, spanQueue.close
+	// wakes the span or span batch worker, and the cmdGrpc close ends the
+	// command worker's listening stream. Those orderings are explained at
+	// each step; the list of workers they apply to lives in workerTable.
+	//
 	// spanQueue.close() signals; it does not close the channel producers use.
 	// The three chans below get the same treatment - deliberately never closed.
 	// Their producers (request-path goroutines for url stat and meta, ticker
@@ -637,7 +694,11 @@ func (agent *agent) shutdownAgent() {
 	}
 
 	// Bound the drain: a collector outage must not keep the process alive.
-	// Abandoned workers are unblocked by the connection close below.
+	// Abandoned workers are unblocked by the connection close below. The
+	// workers being waited for are the ones workerTable declared and
+	// startWorkers counted into workerWg - one Add per go statement, all done
+	// before connectWg.Wait above returned - so this wait cannot be left short
+	// or over-counted by a worker added elsewhere.
 	if !waitTimeout(&agent.workerWg, shutdownTimeout) {
 		Log("agent").Warnf("shutdown timeout(%v) exceeded, abandon in-flight workers", shutdownTimeout)
 	}
