@@ -10,6 +10,13 @@ that were declined — what would make us revisit.
 Add an entry when a Java feature is deliberately *not* ported. A feature that
 is simply not written yet does not belong here.
 
+**Cross-agent facts live here and nowhere else.** Statements of the form "Java
+does X, C++ does Y, this agent does Z" go stale the moment one of the three
+changes, and a stale one in a code comment is invisible until it misleads a
+reviewer. Code comments state what *this* agent does and why; this file is the
+one place that compares. The C++ agent keeps the same file at
+`doc/java_parity.md` under the same rule, so the two read side by side.
+
 ---
 
 ## Summary
@@ -42,6 +49,7 @@ is simply not written yet does not belong here.
 | Command channel RPC | `GrpcCommandService`, `SupportCommandCodeClientInterceptor`, `Header.SUPPORT_COMMAND_CODE` | **Aligned** — see [below](#command-channel-rpc--aligned) |
 | Active trace registry cap | `DefaultActiveTraceRepository`, `DEFAULT_MAX_ACTIVE_TRACE_SIZE` (Caffeine `maximumSize`) | **Adopted, per shard** — see [below](#active-span-registry-cap--adopted-per-shard) |
 | Automatic shutdown at process exit | `ShutdownHookRegister`, `DefaultAgent.close()` | **Diverges** — see [below](#automatic-shutdown-at-process-exit--diverges) |
+| gRPC channel arguments (flow control, write buffer, header list, connection renewal, idle timeout) | `ClientOption`, `DefaultChannelFactory.setupClientOption` | **Idle timeout disabled as in Java (value differs); the rest follow Java** — see [below](#grpc-channel-arguments--idle-timeout-disabled-as-in-java-the-rest-follow-java) |
 | Locked parity invariants (11 groups) | `ParserContext`, `DefaultCallStack`, `GrpcSpanProcessorV2`, `Header`, `CountingSampler`, `UriStatHistogramBucket`, `BaseHistogramSchema`, `DefaultTransactionCounter`, `StringUtils`, `ClientOption` | **Verified identical** — see [below](#locked-parity-invariants--verified-identical) |
 
 ---
@@ -919,6 +927,66 @@ an agent's end from the loss of its ping stream, which would remove the
 
 ---
 
+## gRPC channel arguments — idle timeout disabled as in Java, the rest follow Java
+
+Keepalive and the message-size limits are locked (group 11 below). The other
+channel arguments `ClientOption` carries are compared here, knob by knob. The
+HTTP/2 and grpc-go mechanics behind each choice (the two receive windows, why
+BDP auto-tuning turns off, what the idle manager counts as activity) are
+documented in `grpc.go` above `dialOptions`; this section holds only what the
+other two agents do.
+
+**Java.** `DefaultChannelFactory.setupClientOption` applies `ClientOption` to a
+`NettyChannelBuilder`: `flowControlWindow(1 MiB)`, which sets both HTTP/2
+receive windows and turns Netty's auto-tuning off; `maxInboundMetadataSize(8
+KB)`; `WRITE_BUFFER_WATER_MARK` low / high (16 / 32 MiB); and
+`idleTimeout(idleTimeoutMillis)` where `ClientOption.IDLE_TIMEOUT_MILLIS_DISABLE`
+is 30 days. The constant is named as a disable sentinel and nothing in the
+agent overrides it. Connection renewal
+(`profiler.transport.grpc.loadbalancer.renew.period.millis`) is off by default.
+
+**C++.** `make_channel_arguments` (`src/grpc.cpp`) leaves flow control, header
+list size and write buffer at the gRPC C-core defaults so the BDP estimator can
+size the window. It sets `GRPC_ARG_CLIENT_IDLE_TIMEOUT_MS` to `INT_MAX`, the
+C-core "unlimited" value, because the C-core default is 30 minutes;
+`Collector.Grpc.IdleTimeoutMs` (default 0 = disabled, minimum 1000 when set)
+re-enables it.
+
+**This agent.**
+
+| Knob | Java | C++ (gRPC C-core) | Go (grpc-go v1.82.1) | Decision |
+|---|---|---|---|---|
+| Flow control window | fixed 1 MiB, auto-tuning off | unset: BDP probing on | fixed 1 MiB on both windows, BDP estimator off (`Collector.Grpc.FlowControlWindow`) | follows Java |
+| Write buffer | Netty watermarks 16 / 32 MiB | unset: the C-core knob is a no-op without `GRPC_WRITE_BUFFER_HINT` | 1 MiB transport write buffer (`Collector.Grpc.WriteBufferSize`) | follows Java's intent; the knobs are not the same mechanism, so the value is not locked |
+| Max header list size | 8 KB inbound | unset: default is already 8 KB soft / 16 KB hard | 8 KB inbound (`Collector.Grpc.MaxHeaderListSize`) | follows Java |
+| Connection renewal | `loadbalancer.renew.period.millis`, off by default | `Collector.Grpc.ChannelMaxAgeMs`, off by default | `Collector.Grpc.ConnectionMaxAge`, off by default | same as Java, locked (group 11) |
+| Idle timeout | 30 days (disabled) | `INT_MAX` (disabled) by default; `Collector.Grpc.IdleTimeoutMs` re-enables | `WithIdleTimeout(0)` (disabled) by default; `Collector.Grpc.IdleTimeout` re-enables | **disabled, as in Java**; the value is not locked |
+
+All three agents disable the idle timeout. grpc-go's unset default is 30
+minutes (`dialoptions.go` `defaultDialOptions`, v1.82.1), and `WithIdleTimeout`
+documents zero as the disable value, so this agent passes 0 rather than
+Java's 30 days: the decision is shared, the sentinel is runtime-specific. The
+decision is not locked in `Test_javaParityLock_GrpcChannelDefaults` because
+the three values differ (30 days / `INT_MAX` / 0); the C++ agent locks its
+decision the same way, by its own value.
+
+Why the default matters more here than in Java: this agent's channels are
+quiet by nature (stat every 5 s on a long-lived stream, agent info every 24 h,
+spans only with traffic), and in `Span.Batch.Enable` mode the span channel
+carries unary RPCs only, so an application with no traffic reaches the
+30-minute default on that channel. The trade-off considered and rejected: an
+idle reconnect resolves DNS again through the `passthrough` scheme and would
+pick up a moved collector, but `Collector.Grpc.ConnectionMaxAge` already
+provides that while traffic flows and without dropping the keepalive pings in
+between, so the DNS argument did not outweigh the lost keepalive. Disabling
+idling does not by itself keep pings flowing on a connection with no open
+stream, because `Collector.Grpc.KeepAlivePermitWithoutCalls` defaults to
+false; that policy is unchanged and out of scope for this decision.
+
+**Revisit if** Java stops disabling the idle timeout, or if grpc-go changes
+its default or the meaning of zero — then the row moves into group 11 or gets
+its own divergence entry.
+
 ## Locked parity invariants — verified identical
 
 Everything else in this file records a place where the three agents deliberately
@@ -966,9 +1034,12 @@ not, because the agents knowingly differ; each has its own entry above or in
   asserted at its port value with a comment pointing here.
 - **Span batch size** — 20 in Java's shipped config and in the C++ agent, 50 in
   the Go agent.
-- **Flow-control window, write buffer, max header list size** — Java pins them
-  (`ClientOption`) and the Go agent follows; the C++ agent leaves them at the
-  gRPC C-core defaults so the BDP estimator can tune the window.
+- **Flow-control window, write buffer, max header list size, idle timeout** —
+  Java pins the first three (`ClientOption`) and the Go agent follows; the C++
+  agent leaves them at the gRPC C-core defaults so the BDP estimator can tune
+  the window. The idle timeout is disabled in all three, but by three different
+  values (30 days / `INT_MAX` / 0), so the decision is shared and the value is
+  not — see [gRPC channel arguments](#grpc-channel-arguments--idle-timeout-disabled-as-in-java-the-rest-follow-java).
 - **Stat collect interval** — the locked 5000 ms is Java's *code* default
   (`DefaultMonitorConfig`); Java's release profile ships 10000 ms.
 - **URL statistics send cadence** — not a constant of its own in any of the

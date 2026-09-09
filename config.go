@@ -52,6 +52,10 @@ const (
 	// Both in milliseconds; 0 (the default) disables the renewal.
 	CfgCollectorGrpcConnectionMaxAge = "Collector.Grpc.ConnectionMaxAge"
 	CfgCollectorGrpcStreamMaxAge     = "Collector.Grpc.StreamMaxAge"
+	// Channel idle timeout in milliseconds; 0 (the default) disables idling,
+	// as the Java agent's ClientOption.idleTimeoutMillis effectively does. The
+	// C++ agent's key is Collector.Grpc.IdleTimeoutMs.
+	CfgCollectorGrpcIdleTimeout = "Collector.Grpc.IdleTimeout"
 
 	CfgLogLevelOld                    = "LogLevel"
 	CfgLogLevel                       = "Log.Level"
@@ -215,6 +219,7 @@ func initConfig() {
 	AddConfig(CfgCollectorGrpcTrustCertFilePath, CfgString, "", false)
 	AddConfig(CfgCollectorGrpcConnectionMaxAge, CfgInt, grpcConnectionMaxAge, false)
 	AddConfig(CfgCollectorGrpcStreamMaxAge, CfgInt, grpcStreamMaxAge, false)
+	AddConfig(CfgCollectorGrpcIdleTimeout, CfgInt, grpcIdleTimeout, false)
 	AddConfig(CfgLogLevelOld, CfgString, "info", true)
 	AddConfig(CfgLogLevel, CfgString, "info", true)
 	AddConfig(CfgLogOutput, CfgString, "stderr", true)
@@ -1166,6 +1171,10 @@ func (config *Config) publish() {
 	if config.stagedInt(CfgCollectorGrpcStreamMaxAge) < 0 {
 		config.cfgMap[CfgCollectorGrpcStreamMaxAge].value = grpcStreamMaxAge
 	}
+	// A negative idle timeout means the same as the default: idling off.
+	if config.stagedInt(CfgCollectorGrpcIdleTimeout) < 0 {
+		config.cfgMap[CfgCollectorGrpcIdleTimeout].value = grpcIdleTimeout
+	}
 	maxDepth := config.stagedInt(CfgSpanMaxCallStackDepth)
 	if maxDepth == -1 {
 		maxDepth = math.MaxInt32
@@ -1603,6 +1612,16 @@ func WithCollectorGrpcConnectionMaxAge(ms int) ConfigOption {
 func WithCollectorGrpcStreamMaxAge(ms int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgCollectorGrpcStreamMaxAge].value = ms
+	}
+}
+
+// WithCollectorGrpcIdleTimeout sets how long in milliseconds a collector
+// connection may go without an RPC before gRPC closes it and puts the channel
+// into IDLE, which also stops its keepalive pings; the next send reconnects.
+// 0 (the default) disables idling so a quiet channel keeps its connection.
+func WithCollectorGrpcIdleTimeout(ms int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorGrpcIdleTimeout].value = ms
 	}
 }
 

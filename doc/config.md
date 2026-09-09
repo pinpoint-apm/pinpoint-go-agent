@@ -442,6 +442,27 @@ The default 0 keeps a stream open until it fails.
 * default: 0
 * unit: milliseconds
 
+### Collector.Grpc.IdleTimeout
+Collector.Grpc.IdleTimeout option sets how long in milliseconds a collector connection may go without an RPC
+before gRPC closes it and puts the channel into IDLE. An idle channel also stops its keepalive pings, so a
+firewall or L4 load balancer on the path can drop the connection unnoticed, and the next send pays a reconnect
+and possibly a backoff wait.
+The default 0 disables idling: a quiet channel keeps its connection for as long as the agent runs.
+Without this option grpc-go (v1.82.1) would apply its own default of 30 minutes, which an application with no
+traffic reaches on the span channel in [Span.Batch.Enable](#spanbatchenable) mode.
+Note that with [Collector.Grpc.KeepAlivePermitWithoutCalls](#collectorgrpckeepalivepermitwithoutcalls) at its
+default false, a connection with no open stream sends no keepalive pings even when idling is disabled.
+A negative value is treated as 0.
+This corresponds to the Java agent's `ClientOption.idleTimeoutMillis`, which is set to 30 days (in effect
+disabled), and to the C++ agent's `Collector.Grpc.IdleTimeoutMs`.
+
+* --pinpoint-collector-grpc-idletimeout
+* PINPOINT_GO_COLLECTOR_GRPC_IDLETIMEOUT
+* WithCollectorGrpcIdleTimeout()
+* int
+* default: 0
+* unit: milliseconds
+
 ### Sampling.Type
 Sampling.Type option sets the type of agent sampler.
 Either "COUNTER" or "PERCENT" must be specified. "COUNTING", the Java agent's

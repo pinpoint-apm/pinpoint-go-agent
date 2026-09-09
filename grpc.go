@@ -224,11 +224,9 @@ const (
 	closeStreamTimeOut   = 1 * time.Second
 	commandStreamTimeOut = 1 * time.Second
 
-	// Defaults for the Collector.Grpc.* config keys. Keepalive and message size
-	// match the C++ and Java agents; flowControlWindow, writeBufferSize and
-	// maxHeaderListSize follow the Java agent (ClientOption.java), which pins a
-	// static 1MiB window with auto flow control off. The C++ agent leaves these
-	// at the gRPC C-core defaults (BDP auto-tuned window).
+	// Defaults for the Collector.Grpc.* config keys. doc/java_parity.md ("gRPC
+	// channel arguments") compares each with the Java and C++ agents; the
+	// comments here only say what this agent does and why.
 	grpcKeepAliveTime               = 30000 // ms
 	grpcKeepAliveTimeout            = 60000 // ms
 	grpcKeepAlivePermitWithoutCalls = false
@@ -236,6 +234,11 @@ const (
 	grpcWriteBufferSize             = 1 * 1024 * 1024
 	grpcMaxMessageSize              = 4 * 1024 * 1024
 	grpcMaxHeaderListSize           = 8 * 1024
+	// grpc-go v1.82.1 puts a channel into IDLE after 30 minutes without an RPC
+	// (dialoptions.go defaultDialOptions: idleTimeout 30 * time.Minute) and
+	// documents WithIdleTimeout(0) as the way to disable idling. 0 here is
+	// that disable value, and it is the default: see dialOptions.
+	grpcIdleTimeout = 0 // ms
 
 	// Connection and stream renewal are off by default, as in the Java agent
 	// (profiler.transport.grpc.loadbalancer.renew.period.millis and
@@ -255,11 +258,13 @@ type grpcChannelOptions struct {
 	maxRecvMsgSize    int
 	maxHeaderListSize uint32
 	connectionMaxAge  time.Duration
+	idleTimeout       time.Duration
 }
 
 func newGrpcChannelOptions(config *Config) grpcChannelOptions {
 	return grpcChannelOptions{
 		connectionMaxAge: time.Duration(config.Int(CfgCollectorGrpcConnectionMaxAge)) * time.Millisecond,
+		idleTimeout:      time.Duration(config.Int(CfgCollectorGrpcIdleTimeout)) * time.Millisecond,
 		keepAlive: keepalive.ClientParameters{
 			Time:                time.Duration(config.Int(CfgCollectorGrpcKeepAliveTime)) * time.Millisecond,
 			Timeout:             time.Duration(config.Int(CfgCollectorGrpcKeepAliveTimeout)) * time.Millisecond,
@@ -285,9 +290,7 @@ func (o grpcChannelOptions) dialOptions(creds credentials.TransportCredentials) 
 		// set, so a 1MB stream window alone lets the collector push at most 64KB
 		// per round trip across every stream. Setting either option also turns
 		// off grpc-go's BDP-based auto-tuning, so the values below are static.
-		// Applying the one FlowControlWindow key to both matches the Java
-		// agent, where NettyChannelBuilder.flowControlWindow sets both windows
-		// and disables auto-tuning as well.
+		// The one FlowControlWindow key is applied to both windows.
 		grpc.WithInitialWindowSize(o.flowControlWindow),
 		grpc.WithInitialConnWindowSize(o.flowControlWindow),
 		grpc.WithWriteBufferSize(o.writeBufferSize),
@@ -295,6 +298,34 @@ func (o grpcChannelOptions) dialOptions(creds credentials.TransportCredentials) 
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallSendMsgSize(o.maxSendMsgSize),
 			grpc.MaxCallRecvMsgSize(o.maxRecvMsgSize)),
+		// Idle timeout, disabled by default (Collector.Grpc.IdleTimeout = 0).
+		// Without this option grpc-go v1.82.1 uses 30 minutes (dialoptions.go
+		// defaultDialOptions; WithIdleTimeout's doc: "A default timeout of 30
+		// minutes will be used if this dial option is not set at dial time and
+		// idleness can be disabled by passing a timeout of zero"). When the
+		// timer fires the channel drops its transport and goes IDLE, so the
+		// next send pays a reconnect, backOffUntilReady may wait out a backoff,
+		// and the keepalive pings stop with the transport, which lets a
+		// firewall or L4 balancer forget the connection unnoticed. The idle
+		// manager counts an open stream as an ongoing RPC (stream.go
+		// OnCallBegin/OnCallEnd), so the agent channel (ping and command
+		// streams) and the stat channel (stat stream) rarely qualify; the span
+		// channel in Span.Batch.Enable mode sends unary SendSpanBatch RPCs and
+		// goes quiet whenever the application has no traffic, which is exactly
+		// where the 30-minute default would bite.
+		//
+		// Two things this does not change. Keepalive pings only run while a
+		// stream is open unless PermitWithoutStream is set (default false), so
+		// a unary-only channel with no traffic sends no pings even with idling
+		// off; keeping the transport up still spares the reconnect and the
+		// backoff. And a replacement connection resolves the collector host
+		// again (passthrough scheme, see connectCollector), so an idle
+		// reconnect would pick up a DNS change; Collector.Grpc.ConnectionMaxAge
+		// already provides that on purpose, while traffic flows, without
+		// tearing the transport down first. ConnectionMaxAge and the idle
+		// timeout are independent: renewal acts only on a channel that is
+		// sending, idling only on one that is not.
+		grpc.WithIdleTimeout(o.idleTimeout),
 	}
 	// Only when enabled: with the option absent the channel keeps grpc-go's
 	// default pick_first policy, so the default configuration is unchanged.

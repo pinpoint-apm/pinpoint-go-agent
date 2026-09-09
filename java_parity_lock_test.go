@@ -841,7 +841,11 @@ func Test_javaParityLock_CollectorPortDefaults(t *testing.T) {
 // Test_javaParityLock_GrpcChannelDefaults locks the channel options that were
 // verified equal across the three agents. flowControlWindow, writeBufferSize
 // and maxHeaderListSize follow Java's ClientOption; the C++ agent leaves those
-// three at the C-core defaults, which doc/java_parity.md records.
+// three at the C-core defaults, which doc/java_parity.md records. The idle
+// timeout is deliberately not locked: all three agents disable idling, but
+// Java's disable value is 30 days and this agent's is grpc-go's 0, so only the
+// decision is shared, not the value (doc/java_parity.md, "gRPC channel
+// arguments").
 func Test_javaParityLock_GrpcChannelDefaults(t *testing.T) {
 	assert.Equal(t, 30_000, grpcKeepAliveTime, "Java ClientOption keepAliveTime")
 	assert.Equal(t, 60_000, grpcKeepAliveTimeout, "Java ClientOption keepAliveTimeout")

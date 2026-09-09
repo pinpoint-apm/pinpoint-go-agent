@@ -892,6 +892,39 @@ func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
 	assert.NotContains(t, buf.String(), "out of range")
 }
 
+// Collector.Grpc.IdleTimeout defaults to 0, which is grpc-go's documented
+// "idling disabled" value (WithIdleTimeout, v1.82.1; the unset default would be
+// 30 minutes). A negative value normalizes to the default like the other
+// Collector.Grpc.*MaxAge keys; a positive value is kept and re-enables idling.
+func TestNewConfig_CollectorGrpcIdleTimeout(t *testing.T) {
+	c, err := NewConfig(WithAppName("TestApp"))
+	require.NoError(t, err)
+	assert.Equal(t, CfgInt, c.cfgMap[CfgCollectorGrpcIdleTimeout].valueType, "type")
+	assert.Equal(t, 0, c.Int(CfgCollectorGrpcIdleTimeout), "default")
+	assert.Equal(t, 0, grpcIdleTimeout, "0 disables idling in grpc-go")
+
+	tests := []struct {
+		name  string
+		value int
+		want  int
+	}{
+		{"positive is kept", 600000, 600000},
+		{"zero disables", 0, 0},
+		{"negative normalizes to the default", -1, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := NewConfig(WithAppName("TestApp"), WithCollectorGrpcIdleTimeout(tt.value))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, c.Int(CfgCollectorGrpcIdleTimeout))
+
+			// Set normalizes too.
+			c.Set(CfgCollectorGrpcIdleTimeout, tt.value)
+			assert.Equal(t, tt.want, c.Int(CfgCollectorGrpcIdleTimeout))
+		})
+	}
+}
+
 func TestNewConfig_ClampErrorCallStackDepth(t *testing.T) {
 	c, err := NewConfig(WithAppName("TestApp"), WithErrorCallStackDepth(0))
 	assert.NoError(t, err)
