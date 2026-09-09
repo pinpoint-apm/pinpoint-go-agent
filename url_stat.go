@@ -71,12 +71,24 @@ type urlStats struct {
 	// Ticks handed to the sender (or evicted) cannot be reopened: a later
 	// partial write would replace their existing collector-side counts.
 	retiredThrough time.Time
+	// completedWake is signalled (without blocking, capacity 1) each time a
+	// tick lands on completed, so sendUrlStatWorker sends it at once instead
+	// of on its next timer tick. A tick that is over has nothing left to
+	// join it, so sending it now is not the split the arrival cut avoids.
+	completedWake chan struct{}
 }
 
 func newUrlStats(config *Config) *urlStats {
-	stats := &urlStats{config: config}
+	stats := &urlStats{config: config, completedWake: make(chan struct{}, 1)}
 	stats.snapshot = stats.newSnapshot()
 	return stats
+}
+
+// completedTick is readable once a tick has been closed onto the completed
+// queue since the previous read. Several closes coalesce into one wakeup;
+// takeSnapshot drains the whole queue anyway.
+func (stats *urlStats) completedTick() <-chan struct{} {
+	return stats.completedWake
 }
 
 func (stats *urlStats) newSnapshot() *urlStatSnapshot {
@@ -144,6 +156,10 @@ func (stats *urlStats) completeLocked(snapshot *urlStatSnapshot) {
 		urlStatSnapshotDropLog.warnf(
 			"url stat snapshot queue overflow: dropping the oldest completed tick (max %d completed ticks); the stats stream is not draining",
 			maxCompletedUrlStatSnapshots)
+	}
+	select {
+	case stats.completedWake <- struct{}{}:
+	default: // a wakeup is already pending
 	}
 }
 

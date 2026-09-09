@@ -1597,15 +1597,27 @@ func (agent *agent) collectUrlStatWorker() {
 func (agent *agent) sendUrlStatWorker() {
 	Log("agent").Infof("start send uri stat goroutine")
 
-	ticker := time.NewTicker(30 * time.Second)
+	// A completed tick is sent as soon as urlStats closes it (completedTick);
+	// the ticker is only the ceiling on the trailing tick of an agent whose
+	// traffic stopped, which nothing arrives to close and takeSnapshot closes
+	// on the clock instead. It follows Stat.CollectInterval the way Java's
+	// UriStatCollectingJob rides the agent stat scheduler
+	// (profiler.jvm.stat.collect.interval), rather than a second 30s timer of
+	// its own - the same policy as the C++ agent's UrlStats send worker.
+	// Read once: Stat.CollectInterval is not reloadable.
+	interval := time.Duration(agent.config.Int(CfgStatCollectInterval)) * time.Millisecond
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	stop := agent.stopSignal().Done()
+	completed := agent.urlStats.completedTick()
 
 	for agent.enable.Load() {
 		select {
 		case <-stop:
 			Log("agent").Infof("end send uri stat goroutine")
 			return
+		case <-completed:
+			agent.flushUrlStat(false)
 		case <-ticker.C:
 			agent.flushUrlStat(false)
 		}

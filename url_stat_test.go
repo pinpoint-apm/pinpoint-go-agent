@@ -412,6 +412,83 @@ func Test_urlStatSendsOneTickInOneMessage(t *testing.T) {
 	assert.Equal(t, tick.UnixMilli(), each["/a"].GetTimestamp())
 }
 
+// A tick is sent when it is closed, not on the next tick of the send timer:
+// Java's UriStatCollectingJob runs on the 5-10s stat scheduler, and a tick
+// that is over has nothing left to wait for. The timer here is far longer
+// than the test, so only the wakeup can deliver the message.
+func Test_urlStatSendWorkerWakesOnACompletedTick(t *testing.T) {
+	config := defaultConfig()
+	config.Set(CfgHttpUrlStatEnable, true)
+	config.Set(CfgStatCollectInterval, maxStatCollectInterval)
+	agent := newTestAgent(config)
+	agent.statChan = make(chan *pb.PStatMessage, 16)
+
+	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+	fixUrlStatClock(t, tick.Add(time.Second))
+
+	agent.enable.Store(true)
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("send uri stat", agent.sendUrlStatWorker)
+
+	agent.urlStats.add(newTestUrlStat("/a", 10, tick))
+	time.Sleep(50 * time.Millisecond)
+	assert.Empty(t, agent.statChan, "an open tick is not a reason to send")
+
+	agent.urlStats.add(newTestUrlStat("/a", 20, tick.Add(urlStatCollectInterval))) // closes the tick
+	var sent *pb.PStatMessage
+	select {
+	case sent = <-agent.statChan:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the closed tick must be sent at once, not after Stat.CollectInterval")
+	}
+	each := eachUriStatsByUri(t, sent.GetAgentUriStat())
+	assert.Len(t, each, 1)
+	assert.Equal(t, int64(10), each["/a"].GetTotalHistogram().GetTotal(), "the closed tick only")
+
+	// The wakeup ended one wait, not the worker: a later close wakes it again.
+	agent.urlStats.add(newTestUrlStat("/a", 30, tick.Add(2*urlStatCollectInterval)))
+	select {
+	case sent = <-agent.statChan:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the worker must keep serving completed ticks")
+	}
+	assert.Equal(t, int64(20), eachUriStatsByUri(t, sent.GetAgentUriStat())["/a"].GetTotalHistogram().GetTotal())
+
+	agent.signalShutdown()
+	assert.True(t, waitTimeout(&agent.workerWg, 5*time.Second), "worker exits on the stop signal")
+}
+
+// The send worker's timer follows Stat.CollectInterval, not a 30s constant of
+// its own.
+func Test_urlStatSendWorkerTimerFollowsStatCollectInterval(t *testing.T) {
+	config := defaultConfig()
+	config.Set(CfgHttpUrlStatEnable, true)
+	config.Set(CfgStatCollectInterval, minStatCollectInterval)
+	agent := newTestAgent(config)
+	agent.statChan = make(chan *pb.PStatMessage, 16)
+
+	// The tick in progress is past its window, so only the clock close in
+	// takeSnapshot - reached from the timer - can send it: no newer entry
+	// arrives to cut it and wake the worker.
+	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+	fixUrlStatClock(t, tick.Add(urlStatCollectInterval+time.Second))
+	agent.urlStats.add(newTestUrlStat("/a", 10, tick))
+
+	agent.enable.Store(true)
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("send uri stat", agent.sendUrlStatWorker)
+
+	select {
+	case sent := <-agent.statChan:
+		assert.Len(t, eachUriStatsByUri(t, sent.GetAgentUriStat()), 1)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the trailing tick must be sent within Stat.CollectInterval (1s here), not 30s")
+	}
+
+	agent.signalShutdown()
+	assert.True(t, waitTimeout(&agent.workerWg, 5*time.Second), "worker exits on the stop signal")
+}
+
 // No traffic, no message. Java's UriStatCollectingJob leaves its poll loop on
 // an empty queue rather than sending an empty PAgentUriStat.
 func Test_urlStatSendsNothingWithoutTraffic(t *testing.T) {

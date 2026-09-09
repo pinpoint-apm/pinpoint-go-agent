@@ -453,6 +453,26 @@ arrival cut exists to avoid.
 its window: the stop cuts it short and no later send is coming, and shipping it
 partial beats losing it. That is the one place a partial tick is sent.
 
+**Send cadence.** `UriStatCollectingJob` has no timer of its own — it is a job
+on the agent stat scheduler, so it polls the completed queue every
+`profiler.jvm.stat.collect.interval` (5000 ms in code, 10000 ms in the release
+profile), and `AsyncQueueingUriStatStorage`'s 2s queue-poll timeout closes a
+trailing tick soon after its window ends. `sendUrlStatWorker` used to run a
+fixed 30s ticker that was the only thing sending, so a tick closed at its
+boundary waited up to 30s, and a trailing tick up to 30s to close plus the send.
+Now `completeLocked` — the one place a tick lands on the completed queue —
+signals a capacity-1 channel that the worker selects on beside its ticker, so a
+completed tick is sent at once, and the ticker follows `Stat.CollectInterval`
+rather than a second 30s constant. No separate key was added (the C++ agent
+made the same choice and records the reasoning in its `doc/java_parity.md`,
+"URL statistics send cadence"): with the wakeup in place the interval is not a
+send cadence but the bound on closing the last tick of a quiet agent, and there
+is no case for tuning that apart from the agent stat cadence — which is Java's
+structure exactly. Java's 2s close is not matched separately: Java still sends
+that tick on its next 5–10s scheduler run, while here close and send are one
+event bounded by `Stat.CollectInterval` (5s default), so the defaults are equal
+or better and a longer interval is the operator's choice for agent stats too.
+
 ---
 
 ## Malformed inbound span id — diverges
@@ -842,8 +862,11 @@ not, because the agents knowingly differ; each has its own entry above or in
   gRPC C-core defaults so the BDP estimator can tune the window.
 - **Stat collect interval** — the locked 5000 ms is Java's *code* default
   (`DefaultMonitorConfig`); Java's release profile ships 10000 ms.
-- **URL statistics send cadence** — Java polls on the stat scheduler (5–10s),
-  both ports use a dedicated 30s timer.
+- **URL statistics send cadence** — not a constant of its own in any of the
+  three. Java polls on the stat scheduler (5–10s); both ports now send a
+  completed tick the moment it is closed and time their trailing-tick close by
+  the stat collect interval (`Stat.CollectInterval` here, `Stat.BatchInterval`
+  in C++) — see [URL statistics send unit](#url-statistics-send-unit--adopted).
 
 ### Skipped assertions
 

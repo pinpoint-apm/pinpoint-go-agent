@@ -703,6 +703,10 @@ Span:
 
 ### Stat.CollectInterval
 Stat.CollectInterval option sets the statistics collection cycle for the agent.
+It is also the timer of the URL statistics send worker (see
+[Http.UrlStat.Enable](#httpurlstatenable)): a completed URL stat tick is sent
+immediately, and this interval bounds how late the last tick is closed once
+traffic stops.
 
 * --pinpoint-stat-collectinterval
 * PINPOINT_GO_STAT_COLLECTINTERVAL
@@ -1197,8 +1201,12 @@ enters, for the same reason. **When nothing has been collected, no message is se
 an idle agent produces no URL statistics traffic at all. The tick still open when the
 agent shuts down is flushed on the way out, so a clean stop does not lose it.
 
-A tick therefore reaches the collector on the first send after its window ends -
-up to one send interval later.
+A completed tick is sent as soon as it is closed, not on the next timer expiry.
+The send timer has no option of its own: it follows `Stat.CollectInterval`
+(default 5 seconds), the way Java's `UriStatCollectingJob` runs on the agent stat
+scheduler, so under traffic a tick leaves within milliseconds of its boundary
+and, once traffic stops, the last tick is closed and sent within one
+`Stat.CollectInterval`.
 
 At most 4 completed ticks (two minutes) are retained while the stat stream is down.
 Beyond that the oldest tick is dropped and the agent logs a rate-limited warning.
