@@ -50,6 +50,7 @@ one place that compares. The C++ agent keeps the same file at
 | Active trace registry cap | `DefaultActiveTraceRepository`, `DEFAULT_MAX_ACTIVE_TRACE_SIZE` (Caffeine `maximumSize`) | **Adopted, per shard** — see [below](#active-span-registry-cap--adopted-per-shard) |
 | Automatic shutdown at process exit | `ShutdownHookRegister`, `DefaultAgent.close()` | **Diverges** — see [below](#automatic-shutdown-at-process-exit--diverges) |
 | gRPC channel arguments (flow control, write buffer, header list, connection renewal, idle timeout) | `ClientOption`, `DefaultChannelFactory.setupClientOption` | **Idle timeout disabled as in Java (value differs); the rest follow Java** — see [below](#grpc-channel-arguments--idle-timeout-disabled-as-in-java-the-rest-follow-java) |
+| URI template recorded twice on one span | `DefaultShared.setUriTemplate`, `DefaultSpanRecorder.recordUriTemplate` | **Same as Java** — see [below](#uri-template-is-first-wins--same-as-java) |
 | Locked parity invariants (11 groups) | `ParserContext`, `DefaultCallStack`, `GrpcSpanProcessorV2`, `Header`, `CountingSampler`, `UriStatHistogramBucket`, `BaseHistogramSchema`, `DefaultTransactionCounter`, `StringUtils`, `ClientOption` | **Verified identical** — see [below](#locked-parity-invariants--verified-identical) |
 
 ---
@@ -986,6 +987,44 @@ false; that policy is unchanged and out of scope for this decision.
 **Revisit if** Java stops disabling the idle timeout, or if grpc-go changes
 its default or the meaning of zero — then the row moves into group 11 or gets
 its own divergence entry.
+
+## URI template is first-wins — same as Java
+
+**Java.** `DefaultShared.setUriTemplate(uriTemplate)` is an atomic
+`null -> value` compare-and-set: the first recorder to name the URI template
+owns it, and later plain calls are ignored. `setUriTemplate(uriTemplate, true)`
+(the `force` overload `DefaultSpanRecorder.recordUriTemplate` exposes) is a
+plain set for the host that has to replace an early guess with the route it
+eventually matched. The HTTP method and status code travel separately
+(`setHttpMethod`, `HttpStatusCodeRecorder`) and are plain last-wins setters.
+
+**This agent.** `span.collectUrlStat` and `noopSpan.collectUrlStat` used to
+assign `span.urlStat = stat`, so the last `AddMetric(MetricURLStat, ...)` won
+and a framework's matched route could be replaced by a later, less precise
+layer. Both now go through `mergeUrlStat` and follow Java: once the span holds
+a real `Url`, a later call keeps it and refreshes only `Method` and `Status`.
+The `urlStatUnknown` stand-in written for an empty `Url` is Java's `null`, not a
+value, so a later real `Url` still fills it in. `MetricURLStatForce` is the
+`force = true` overload — a new metric key rather than a field on
+`UrlStatEntry`, so the exported struct and existing callers are untouched. The
+`Http.UrlStat.Enable` gate, the `warnIfFinished("AddMetric")` early return and
+the unsampled span's `withStats` gate are unchanged.
+
+The scope is the `Url` only, on purpose. One entry carries
+`(Url, Method, Status)` behind a single pointer, so the alternative was making
+the whole entry first-wins. That would have frozen the status code at whatever
+the first caller passed — typically `0`, because the framework records the
+route before the response exists — and departed from Java, where the status
+code is the last recorder's. Keeping the `Url` first-wins and the rest
+last-wins reproduces Java's per-field semantics inside the existing structure.
+As a consequence the span no longer keeps the caller's pointer or writes the
+stand-in into the caller's struct: the entry is copied on every call.
+
+**C++.** The same policy, adopted first: `SpanImpl::recordUrlStat` keeps a
+non-empty pattern and refreshes the method and status code, and `ForceUrlStat()`
+/ `pt_span_force_url_stat()` is the force overload.
+
+---
 
 ## Locked parity invariants — verified identical
 

@@ -718,11 +718,11 @@ func Test_javaParityLock_UrlStatUnknownKey(t *testing.T) {
 	agent.urlStatChan = make(chan *urlStat, 1)
 
 	span := newSampledSpan(agent, "op", "/rpc")
-	span.collectUrlStat(&UrlStatEntry{Method: "GET"})
+	span.collectUrlStat(&UrlStatEntry{Method: "GET"}, false)
 	assert.Equal(t, javaNullUri, span.urlStat.Url)
 
 	unsampled := newUnSampledSpan(agent, "/rpc")
-	unsampled.collectUrlStat(&UrlStatEntry{Method: "GET"})
+	unsampled.collectUrlStat(&UrlStatEntry{Method: "GET"}, false)
 	assert.Equal(t, javaNullUri, unsampled.urlStat.Url)
 }
 

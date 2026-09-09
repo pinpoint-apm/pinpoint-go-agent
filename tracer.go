@@ -330,5 +330,15 @@ const (
 	LogSpanIdKey        = "PspanId"
 	Logged              = 1
 	NotLogged           = 0
-	MetricURLStat       = "URLStat"
+	// MetricURLStat records the span's URL statistics entry (*UrlStatEntry).
+	// The Url is first-wins, as Java's Shared.setUriTemplate (a null -> value
+	// CAS): once a span holds a real Url, later calls keep it and refresh only
+	// the Method and Status. An empty Url counts as "not recorded yet".
+	MetricURLStat = "URLStat"
+	// MetricURLStatForce is MetricURLStat with Java's setUriTemplate(value,
+	// force = true) semantics: the Url recorded before is replaced. For a host
+	// that has to correct an early, less precise guess with the route it
+	// eventually matched. A separate key rather than a field on UrlStatEntry
+	// so existing callers and the exported struct are untouched.
+	MetricURLStatForce = "URLStatForce"
 )

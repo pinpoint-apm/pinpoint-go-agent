@@ -416,7 +416,7 @@ func Test_spanEvent_SetErrorFailsTransaction(t *testing.T) {
 	agent := newTestAgent(cfg)
 	agent.urlStatChan = make(chan *urlStat, 1)
 	span := newSampledSpan(agent, "op", "/rpc")
-	span.collectUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	span.collectUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"}, false)
 
 	span.NewSpanEvent("query")
 	span.SpanEvent().SetError(errors.New("db error"))

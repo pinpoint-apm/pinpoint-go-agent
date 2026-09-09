@@ -248,20 +248,19 @@ func (span *noopSpan) IsSampled() bool {
 	return false
 }
 
-func (span *noopSpan) collectUrlStat(stat *UrlStatEntry) {
+// collectUrlStat follows the same first-wins policy as span.collectUrlStat
+// (see mergeUrlStat); withStats keeps the process-wide singleton from being
+// written to.
+func (span *noopSpan) collectUrlStat(stat *UrlStatEntry, force bool) {
 	if span.withStats.Load() && span.cfg.collectUrlStat {
-		if stat.Url == "" {
-			stat.Url = urlStatUnknown
-		}
-
-		span.urlStat = stat
+		span.urlStat = mergeUrlStat(span.urlStat, stat, force)
 	}
 }
 
 func (span *noopSpan) AddMetric(metric string, value interface{}) {
-	if metric == MetricURLStat {
+	if metric == MetricURLStat || metric == MetricURLStatForce {
 		if entry, ok := value.(*UrlStatEntry); ok && entry != nil {
-			span.collectUrlStat(entry)
+			span.collectUrlStat(entry, metric == MetricURLStatForce)
 		}
 	}
 }

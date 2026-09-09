@@ -552,6 +552,16 @@ pphttp.CollectUrlStat(tracer, "/users/{id}", r.Method, status)
 Passing the resolved path instead would create one entry per id and exhaust
 `Http.UrlStat.LimitSize`.
 
+The URL is first-wins, as in the Java agent: once a span holds a non-empty URL,
+later `AddMetric(pinpoint.MetricURLStat, ...)` calls keep it and refresh only
+the method and status code. To replace a URL deliberately (for example, to
+correct an early guess with the route that was eventually matched), record with
+`pinpoint.MetricURLStatForce`:
+
+```go
+tracer.AddMetric(pinpoint.MetricURLStatForce, &pinpoint.UrlStatEntry{Url: "/users/{id}", Method: r.Method, Status: status})
+```
+
 ## Service types
 
 `SetServiceType()` decides how a span or event renders in the UI. The commonly

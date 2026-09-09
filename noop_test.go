@@ -92,7 +92,7 @@ func Test_noopSpan_SetError_FailsUrlStat(t *testing.T) {
 			a.urlStatChan = make(chan *urlStat, 1)
 
 			span := newUnSampledSpan(a, "/test")
-			span.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"})
+			span.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"}, false)
 			span.SetError(tt.err, tt.errName...)
 			span.EndSpan()
 
@@ -113,6 +113,42 @@ func Test_noopSpan_SetError_SingletonUntouched(t *testing.T) {
 	assert.Nil(t, defaultNoopSpan.urlStat)
 }
 
+// The unsampled span follows span.collectUrlStat's policy: Url first-wins,
+// Method and Status last-wins, the urlStatUnknown stand-in does not claim the
+// slot, MetricURLStatForce replaces the Url, and the caller's entry is copied.
+func Test_noopSpan_AddMetric_URLStatIsFirstWinsOnUrl(t *testing.T) {
+	c, err := NewConfig(WithAppName("unsampledUrlStatApp"), WithHttpUrlStatEnable(true))
+	require.NoError(t, err)
+	span := newUnSampledSpan(newTestAgent(c), "/test")
+
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Method: "GET"})
+	assert.Equal(t, urlStatUnknown, span.urlStat.Url)
+
+	first := &UrlStatEntry{Url: "/users/{id}", Method: "GET"}
+	span.AddMetric(MetricURLStat, first)
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/42", Method: "POST", Status: 500})
+	assert.Equal(t, "/users/{id}", span.urlStat.Url, "first real Url is kept")
+	assert.Equal(t, "POST", span.urlStat.Method, "Method is last-wins")
+	assert.Equal(t, 500, span.urlStat.Status, "Status is last-wins")
+	assert.NotSame(t, first, span.urlStat, "caller's entry is copied")
+
+	span.AddMetric(MetricURLStatForce, &UrlStatEntry{Url: "/forced", Method: "GET", Status: 200})
+	assert.Equal(t, "/forced", span.urlStat.Url, "force replaces the Url")
+}
+
+// The singleton stays untouched (withStats gate) and a disabled gate records
+// nothing, force or not.
+func Test_noopSpan_AddMetric_URLStatGates(t *testing.T) {
+	NoopTracer().AddMetric(MetricURLStat, &UrlStatEntry{Url: "/singleton", Method: "GET"})
+	NoopTracer().AddMetric(MetricURLStatForce, &UrlStatEntry{Url: "/singleton", Method: "GET"})
+	assert.Nil(t, defaultNoopSpan.urlStat)
+
+	span := newUnSampledSpan(newTestAgent(defaultConfig()), "/test")
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	span.AddMetric(MetricURLStatForce, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	assert.Nil(t, span.urlStat)
+}
+
 // SetError and SetFailure may come from other goroutines while EndSpan reads
 // statusErr. Run with -race.
 func Test_noopSpan_SetError_ConcurrentWithEndSpan(t *testing.T) {
@@ -122,7 +158,7 @@ func Test_noopSpan_SetError_ConcurrentWithEndSpan(t *testing.T) {
 	a.urlStatChan = make(chan *urlStat, 1)
 
 	span := newUnSampledSpan(a, "/test")
-	span.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"})
+	span.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"}, false)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -163,7 +199,7 @@ func Test_noopSpan_AsyncChild_FailsRootUrlStat(t *testing.T) {
 			a.urlStatChan = make(chan *urlStat, 1)
 
 			root := newUnSampledSpan(a, "/test")
-			root.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"})
+			root.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"}, false)
 
 			child := tt.child(root)
 			tt.call(child)
@@ -187,7 +223,7 @@ func Test_noopSpan_AsyncChild_IgnoreErrors(t *testing.T) {
 	a.urlStatChan = make(chan *urlStat, 1)
 
 	root := newUnSampledSpan(a, "/test")
-	root.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"})
+	root.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"}, false)
 	root.NewAsyncSpan().Span().SetError(errors.New("boom"))
 	root.EndSpan()
 

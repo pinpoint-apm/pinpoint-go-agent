@@ -453,6 +453,15 @@ why `Http.UrlStat.Enable` gives useful numbers at low sampling rates. No-op
 tracers collect nothing, so an excluded URL is absent from these statistics as
 well as from traces.
 
+`AddMetric(MetricURLStat, *UrlStatEntry)` may be called more than once on a
+span. The `Url` is **first-wins**, as Java's `Shared.setUriTemplate`: once the
+span holds a non-empty `Url`, later calls keep it and refresh only `Method` and
+`Status`. An empty `Url` does not claim the slot, so a later real one still
+fills it. `AddMetric(MetricURLStatForce, *UrlStatEntry)` replaces the `Url`
+(Java's `setUriTemplate(value, force = true)`). The entry is copied; the span
+neither keeps the caller's pointer nor writes into it. See
+[java_parity.md](java_parity.md#uri-template-is-first-wins--same-as-java).
+
 The no-op tracer is a **process-wide singleton**. Its methods only ever read
 its fields; anything that writes per-request state must be gated on the span
 being a per-request one, or concurrent handlers race.

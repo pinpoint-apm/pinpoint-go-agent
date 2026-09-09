@@ -1001,14 +1001,40 @@ func (span *span) SetLogging(logInfo int32) {
 	span.loggingInfo = logInfo
 }
 
-func (span *span) collectUrlStat(stat *UrlStatEntry) {
+func (span *span) collectUrlStat(stat *UrlStatEntry, force bool) {
 	if span.cfg.collectUrlStat {
-		if stat.Url == "" {
-			stat.Url = urlStatUnknown
-		}
-
-		span.urlStat = stat
+		span.urlStat = mergeUrlStat(span.urlStat, stat, force)
 	}
+}
+
+// mergeUrlStat applies a recorded entry to the one a span already holds and
+// returns the entry to keep. Shared by span and noopSpan so both paths follow
+// one policy, the one the C++ agent's SpanImpl::recordUrlStat adopted (gap U6):
+//
+// The Url is first-wins, like Java, where DefaultShared.setUriTemplate is a
+// null -> value CAS while setHttpMethod and HttpStatusCodeRecorder are plain
+// setters the last caller owns. A framework that recorded the matched route
+// first must not have it replaced by a later, less precise layer; the status
+// code, though, is legitimately final only once the response exists, so
+// making the whole entry first-wins would freeze it at the first caller's
+// value (typically 0). Merging per field reproduces Java's semantics inside
+// the single-pointer layout. The urlStatUnknown stand-in is Java's null, not a
+// value: a later real Url still fills it in. force is Java's
+// setUriTemplate(value, true).
+//
+// The caller's entry is copied, never stored or written to: the old code
+// wrote urlStatUnknown into the caller's struct and kept the pointer, so a
+// caller reusing or mutating its entry after AddMetric would have changed the
+// stat under the span.
+func mergeUrlStat(current, stat *UrlStatEntry, force bool) *UrlStatEntry {
+	entry := *stat
+	if entry.Url == "" {
+		entry.Url = urlStatUnknown
+	}
+	if current != nil && !force && current.Url != urlStatUnknown {
+		entry.Url = current.Url
+	}
+	return &entry
 }
 
 func (span *span) AddMetric(metric string, value interface{}) {
@@ -1019,11 +1045,11 @@ func (span *span) AddMetric(metric string, value interface{}) {
 		return
 	}
 
-	if metric == MetricURLStat {
+	if metric == MetricURLStat || metric == MetricURLStatForce {
 		if entry, ok := value.(*UrlStatEntry); ok && entry != nil {
-			span.collectUrlStat(entry)
+			span.collectUrlStat(entry, metric == MetricURLStatForce)
 		} else {
-			Log("span").Warnf("AddMetric: value for %s must be *UrlStatEntry", MetricURLStat)
+			Log("span").Warnf("AddMetric: value for %s must be *UrlStatEntry", metric)
 		}
 	}
 }

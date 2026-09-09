@@ -906,6 +906,81 @@ func TestSpan_AddMetric_IgnoresTypedNilURLStat(t *testing.T) {
 	assert.Nil(t, unsampled.urlStat)
 }
 
+// The Url is first-wins, as Java's Shared.setUriTemplate (null -> value CAS);
+// the Method and Status are the last caller's, as Java's plain setters. The
+// C++ agent's SpanImpl::recordUrlStat follows the same policy (gap U6).
+func TestSpan_AddMetric_URLStatIsFirstWinsOnUrl(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgHttpUrlStatEnable, true)
+	span := newSampledSpan(newTestAgent(cfg), "op", "/rpc")
+
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/api/v1/users/{id}", Method: "GET", Status: 0})
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/api/v1/users/42", Method: "POST", Status: 500})
+
+	assert.Equal(t, "/api/v1/users/{id}", span.urlStat.Url, "first Url is kept")
+	assert.Equal(t, "POST", span.urlStat.Method, "Method is last-wins")
+	assert.Equal(t, 500, span.urlStat.Status, "Status is last-wins")
+}
+
+// MetricURLStatForce is Java's setUriTemplate(value, force = true).
+func TestSpan_AddMetric_URLStatForceReplacesUrl(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgHttpUrlStatEnable, true)
+	span := newSampledSpan(newTestAgent(cfg), "op", "/rpc")
+
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/guess", Method: "GET"})
+	span.AddMetric(MetricURLStatForce, &UrlStatEntry{Url: "/users/{id}", Method: "GET", Status: 200})
+	assert.Equal(t, "/users/{id}", span.urlStat.Url, "force replaces the Url")
+	assert.Equal(t, 200, span.urlStat.Status)
+
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/later", Method: "GET", Status: 404})
+	assert.Equal(t, "/users/{id}", span.urlStat.Url, "a forced Url is still first-wins afterwards")
+	assert.Equal(t, 404, span.urlStat.Status)
+}
+
+// The urlStatUnknown stand-in is Java's null, not a recorded value: a first
+// call without a Url does not claim the slot, so a later real Url fills it.
+func TestSpan_AddMetric_URLStatUnknownDoesNotClaimUrl(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgHttpUrlStatEnable, true)
+	span := newSampledSpan(newTestAgent(cfg), "op", "/rpc")
+
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Method: "GET"})
+	assert.Equal(t, urlStatUnknown, span.urlStat.Url)
+
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET", Status: 200})
+	assert.Equal(t, "/users/{id}", span.urlStat.Url, "a real Url replaces the stand-in")
+
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Method: "GET", Status: 500})
+	assert.Equal(t, "/users/{id}", span.urlStat.Url, "an empty Url does not clear a recorded one")
+	assert.Equal(t, 500, span.urlStat.Status)
+}
+
+// The caller's entry is copied: the span neither keeps the pointer nor writes
+// the urlStatUnknown stand-in back into it.
+func TestSpan_AddMetric_URLStatDoesNotAliasCallerEntry(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgHttpUrlStatEnable, true)
+	span := newSampledSpan(newTestAgent(cfg), "op", "/rpc")
+
+	entry := &UrlStatEntry{Method: "GET"}
+	span.AddMetric(MetricURLStat, entry)
+	assert.Equal(t, "", entry.Url, "caller's entry untouched")
+	assert.NotSame(t, entry, span.urlStat)
+
+	entry.Url = "/mutated-after"
+	assert.Equal(t, urlStatUnknown, span.urlStat.Url)
+}
+
+// With Http.UrlStat.Enable off nothing is recorded, force or not.
+func TestSpan_AddMetric_URLStatDisabledRecordsNothing(t *testing.T) {
+	span := newSampledSpan(newTestAgent(defaultConfig()), "op", "/rpc")
+
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	span.AddMetric(MetricURLStatForce, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	assert.Nil(t, span.urlStat)
+}
+
 func TestSpan_EndSpanTwiceCountsOnce(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	span := defaultSpan(agent)
