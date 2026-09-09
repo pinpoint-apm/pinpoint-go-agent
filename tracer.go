@@ -43,6 +43,14 @@ type Agent interface {
 
 	// Shutdown stops all related goroutines managing this agent.
 	// After Shutdown is called, the agent will never collect tracing data again.
+	//
+	// Shutdown is the only path that sends the last data out. If it never
+	// runs - the process is killed by a signal such as SIGTERM, or exits via
+	// os.Exit, neither of which runs deferred functions - the spans still in
+	// the span queue are never sent, and the collector never learns the
+	// agent's end time, so the web UI keeps listing the agent as alive.
+	// ShutdownOnSignal is the opt-in way to run it on a signal; nothing can
+	// run it on os.Exit.
 	Shutdown()
 }
 

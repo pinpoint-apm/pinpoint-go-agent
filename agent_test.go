@@ -5,9 +5,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"os"
+	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -1395,4 +1399,146 @@ func Test_agent_SQLCachesRefuseAKeyPastTheNormalizationCap(t *testing.T) {
 
 		assert.Equal(t, sqlUid(within), a.cacheSqlUid(within), "a key at the cap is admitted")
 	})
+}
+
+// shutdownCounter is an Agent whose Shutdown only counts its calls, so the
+// signal tests can observe the call without a collector.
+type shutdownCounter struct {
+	Agent
+	calls atomic.Int32
+}
+
+func (a *shutdownCounter) Shutdown() { a.calls.Add(1) }
+
+// replaceRaiseSignal swaps the re-raise for a recorder. The tests deliver
+// SIGUSR1, whose default disposition terminates the process: a real re-raise
+// after signal.Stop would kill the test binary.
+func replaceRaiseSignal(t *testing.T) *[]os.Signal {
+	t.Helper()
+	var mu sync.Mutex
+	raised := &[]os.Signal{}
+	orig := raiseSignal
+	raiseSignal = func(sig os.Signal) error {
+		mu.Lock()
+		defer mu.Unlock()
+		*raised = append(*raised, sig)
+		return nil
+	}
+	t.Cleanup(func() { raiseSignal = orig })
+	return raised
+}
+
+// A watched signal must run Shutdown and then be re-raised, so the process
+// still dies of it with the usual 128+signum status once the agent is down.
+func Test_ShutdownOnSignal_ShutsDownAndReRaises(t *testing.T) {
+	raised := replaceRaiseSignal(t)
+	a := &shutdownCounter{Agent: NoopAgent()}
+
+	stop := ShutdownOnSignal(a, syscall.SIGUSR1)
+	require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGUSR1))
+
+	assert.Eventually(t, func() bool { return a.calls.Load() == 1 },
+		5*time.Second, time.Millisecond, "Shutdown called on the signal")
+	stop() // returns once the watcher goroutine has exited
+	assert.Equal(t, []os.Signal{syscall.SIGUSR1}, *raised, "the signal is re-raised after Shutdown")
+}
+
+// After the returned stop, a later signal must not reach Shutdown, and the
+// watcher goroutine must be gone. The test keeps its own Notify on SIGUSR1 so
+// signal.Stop does not restore the default disposition, which would kill the
+// process; it also shows stop leaves the host's channel untouched.
+func Test_ShutdownOnSignal_StopEndsTheWatch(t *testing.T) {
+	raised := replaceRaiseSignal(t)
+	host := make(chan os.Signal, 1)
+	signal.Notify(host, syscall.SIGUSR1)
+	defer signal.Stop(host)
+
+	a := &shutdownCounter{Agent: NoopAgent()}
+	before := runtime.NumGoroutine()
+	stop := ShutdownOnSignal(a, syscall.SIGUSR1)
+	stop()
+	stop() // idempotent
+	// stop waited on the watcher's exit channel, so only the goroutine's own
+	// final return can still be outstanding. Polled by hand: assert.Eventually
+	// runs its condition on a goroutine of its own, which would skew the count.
+	deadline := time.Now().Add(5 * time.Second)
+	for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	assert.LessOrEqual(t, runtime.NumGoroutine(), before, "the watcher goroutine exits on stop")
+
+	require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGUSR1))
+	select {
+	case <-host:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the host's own channel must still receive the signal")
+	}
+	assert.Zero(t, a.calls.Load(), "no Shutdown after stop")
+	assert.Empty(t, *raised, "nothing re-raised after stop")
+}
+
+// Signal handling is opt-in: an agent that is created, used and shut down
+// without ShutdownOnSignal must never call signal.Notify, because Notify
+// changes the process-wide disposition of the signals it is given.
+func Test_agent_DefaultNeverCallsSignalNotify(t *testing.T) {
+	var notifies atomic.Int32
+	orig := signalNotify
+	signalNotify = func(chan<- os.Signal, ...os.Signal) { notifies.Add(1) }
+	defer func() { signalNotify = orig }()
+
+	c, _ := NewConfig(WithAppName("test"))
+	c.offGrpc = true
+	a, err := NewAgent(c)
+	require.NoError(t, err, "new agent")
+	a.NewSpanTracer("op", "/rpc").EndSpan()
+	a.Shutdown()
+
+	assert.Zero(t, notifies.Load(), "signal.Notify must not be called unless ShutdownOnSignal is used")
+
+	// And the opt-in is what calls it, with exactly the signals given.
+	stop := ShutdownOnSignal(a, syscall.SIGUSR1)
+	stop()
+	assert.Equal(t, int32(1), notifies.Load(), "ShutdownOnSignal is the only caller")
+}
+
+// The signal path and the host's own deferred Shutdown may both run; the
+// teardown is serialized by shutdownOnce, so the second call is a no-op.
+func Test_agent_ShutdownTwiceViaSignalAndCall(t *testing.T) {
+	replaceRaiseSignal(t)
+	c, _ := NewConfig(WithAppName("test"))
+	c.offGrpc = true
+	a, err := NewAgent(c)
+	require.NoError(t, err, "new agent")
+
+	stop := ShutdownOnSignal(a, syscall.SIGUSR1)
+	require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGUSR1))
+	assert.NotPanics(t, a.Shutdown, "explicit Shutdown concurrent with the signal path")
+	stop()
+	assert.NotPanics(t, a.Shutdown, "a third call after both is still safe")
+	assert.Equal(t, NoopAgent(), GetAgent(), "global agent released exactly once")
+}
+
+// Shutdown must send what is still queued: this is the loss ShutdownOnSignal
+// exists to prevent, and the reason the docs insist on calling Shutdown.
+func Test_agent_ShutdownSendsQueuedSpans(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.spanGrpc = newMockSpanGrpc(agent)
+	client := agent.spanGrpc.spanClient.(*mockSpanGrpcClient)
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("span batch", agent.sendSpanBatchWorker)
+
+	const spans = 3
+	for i := 0; i < spans; i++ {
+		span := defaultSpan(agent)
+		span.spanId = int64(i + 1)
+		require.True(t, agent.enqueueSpan(span.newEventChunk(true)))
+	}
+	agent.Shutdown()
+
+	sent := 0
+	for _, req := range client.requests {
+		sent += len(req.GetSpan())
+	}
+	assert.Equal(t, spans, sent, "every span queued before Shutdown reaches the collector")
 }

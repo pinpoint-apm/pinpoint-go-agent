@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- New `pinpoint.ShutdownOnSignal(agent, sigs...) (stop func())` calls
+  `Shutdown()` when the process receives one of the given signals (`SIGTERM`
+  and `SIGINT` by default), then restores the default signal handling and
+  re-raises the signal so the process still exits with `128+signum`. It is
+  opt-in and off by default: the agent never calls `signal.Notify` on its
+  own. Without it, a `defer agent.Shutdown()` does not run on `SIGTERM` - the
+  signal every container orchestrator sends on a rollout - and the spans still
+  queued are lost while the UI keeps listing the agent as alive. `os.Exit`
+  cannot be covered by any means; see `doc/troubleshooting.md`. The C++ agent
+  takes the same opt-in policy with a different mechanism (`std::atexit`, no
+  signal handler); see `doc/java_parity.md`.
 - The active span registry behind the active-request histogram is now bounded
   at 10240 entries (320 per shard), the Java agent's `DefaultActiveTraceRepository`
   maximum. A span that is never ended used to leave its entry behind forever;

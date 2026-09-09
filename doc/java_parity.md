@@ -41,6 +41,7 @@ is simply not written yet does not belong here.
 | Span queue overflow policy | `SpanBatchGrpcDataSender` | **Same as Java** — a full send queue drops the oldest entry, as Java's default BATCH sender does (`queue.poll()` in `SpanBatchGrpcDataSender`); rejecting the newest is STREAM-mode-only behaviour, so head-drop is not a deviation |
 | Command channel RPC | `GrpcCommandService`, `SupportCommandCodeClientInterceptor`, `Header.SUPPORT_COMMAND_CODE` | **Aligned** — see [below](#command-channel-rpc--aligned) |
 | Active trace registry cap | `DefaultActiveTraceRepository`, `DEFAULT_MAX_ACTIVE_TRACE_SIZE` (Caffeine `maximumSize`) | **Adopted, per shard** — see [below](#active-span-registry-cap--adopted-per-shard) |
+| Automatic shutdown at process exit | `ShutdownHookRegister`, `DefaultAgent.close()` | **Diverges** — see [below](#automatic-shutdown-at-process-exit--diverges) |
 | Locked parity invariants (11 groups) | `ParserContext`, `DefaultCallStack`, `GrpcSpanProcessorV2`, `Header`, `CountingSampler`, `UriStatHistogramBucket`, `BaseHistogramSchema`, `DefaultTransactionCounter`, `StringUtils`, `ClientOption` | **Verified identical** — see [below](#locked-parity-invariants--verified-identical) |
 
 ---
@@ -863,6 +864,58 @@ unlinking one would race the owner. It counts registrations and logs the same
 rate-limited WARN past 10240 (`AgentStats::kActiveSpanWarnThreshold`), without
 a cap — a leaked node there is memory the span already owns, so the leak is the
 span's, not the registry's.
+
+---
+
+## Automatic shutdown at process exit — diverges
+
+**Java.** `ShutdownHookRegister` installs a JVM shutdown hook that calls
+`DefaultAgent.close()`, so the agent flushes its queues and reports its end
+time however the JVM stops — a normal return, `System.exit`, or `SIGTERM`
+(which the JVM turns into an orderly shutdown). A Java user never has to think
+about it.
+
+**Go.** There is no equivalent, and none is installed by default. `Shutdown()`
+is the only path that sends the queued spans and the agent's end time, and it
+runs only when called. The user's `defer agent.Shutdown()` covers a normal
+return from `main()`; a signal with its default handling and `os.Exit` both
+skip deferred functions, so a Kubernetes rollout — a `SIGTERM` — loses the
+last spans of every pod unless the host arranges otherwise.
+
+The agent offers `ShutdownOnSignal(agent, sigs...) (stop func())` as an
+**opt-in, off by default** replacement: it calls `Shutdown()` on the given
+signals (`SIGTERM` and `SIGINT` when none are given), restores the default
+disposition with `signal.Stop` and re-raises the signal so the process still
+exits with `128+signum`, and returns a function that removes the watcher. It
+never calls `os.Exit`. Making it a `ConfigOption` was considered and rejected:
+the config surface is also fed by files and environment variables, and
+`signal.Notify` is process-wide state — it disables the default handling of
+every signal it is given, so a value in a config file could silently change
+how the whole program reacts to `SIGTERM`, collide with the host's own handler,
+or (if the signal were consumed and not re-raised) leave a process that
+ignores `SIGTERM` until `SIGKILL`. Signal ownership belongs to the host, so the
+host has to call the helper in code. A host with its own handler should call
+`Shutdown()` from it instead of using the helper.
+
+`os.Exit` cannot be covered by any means: Go has no `atexit` and no runtime
+exit hook. That limit is documented in `doc/troubleshooting.md`.
+
+**C++.** The C++ agent (`pinpoint-cpp-agent-claude`) has the same gap and
+reached the same conclusion — off by default, opt-in — with a different
+mechanism and a different reason. Its opt-in is a `std::atexit` registration
+flag on `AgentOptions` plus an RAII guard, and it installs no signal handler at
+all, because the work a shutdown does (joining threads, tearing down gRPC) is
+not async-signal-safe. Its reason for defaulting off is the embedded-library
+contract described at `global_agent()` in its `src/agent.cpp`: joining threads
+and tearing down gRPC during static destruction is not safe. Go has neither
+problem — a goroutine reading from a `signal.Notify` channel is ordinary code,
+and there is no static destruction — but has the signal-ownership problem
+instead. Same policy, different grounds and different means: Go covers signals
+but not `os.Exit`; C++ covers `exit()` but not signals.
+
+**Revisit if** Go gains a runtime exit hook, or the collector starts inferring
+an agent's end from the loss of its ping stream, which would remove the
+"still alive in the UI" half of the loss.
 
 ---
 

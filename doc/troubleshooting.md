@@ -181,7 +181,9 @@ Two things to know about this pattern:
   error — you must `Shutdown()` first.
 * Call `defer agent.Shutdown()` in `main()` for normal exits. Spans are sent by
   a separate goroutine, so a process that exits immediately after the last
-  request can drop the spans still in the queue.
+  request can drop the spans still in the queue. A `defer` does not run when
+  the process is killed by a signal or calls `os.Exit()`; see
+  [Spans Missing at Shutdown or on a Rollout](#spans-missing-at-shutdown-or-on-a-rollout).
 
 ---
 
@@ -222,7 +224,89 @@ Work down this list; it is ordered by how often each turns out to be the cause.
 5. **Time skew.** Pinpoint indexes spans by timestamp. A host clock minutes off
    puts your traces outside the window you are looking at.
 6. **Process exited too early.** Short-lived programs need
-   `defer agent.Shutdown()`; see above.
+   `defer agent.Shutdown()`; see above. Only the last spans before a restart
+   missing? See [Spans Missing at Shutdown or on a Rollout](#spans-missing-at-shutdown-or-on-a-rollout).
+
+### Spans Missing at Shutdown or on a Rollout
+
+**Symptoms:** the last requests before a deploy, scale-down or restart never
+appear; the UI keeps listing an agent instance as alive long after its process
+is gone; everything else is traced normally.
+
+**Cause.** `Shutdown()` is the only path that sends what is still in the span
+queue and reports the agent's end time to the collector. It runs only when
+something calls it. `defer agent.Shutdown()` runs on a normal return from
+`main()` and nowhere else:
+
+* A **signal** with its default handling — `SIGTERM` from Kubernetes, Docker,
+  systemd or `kill`, `SIGINT` from Ctrl-C — terminates the process at once. No
+  deferred function runs. In a Kubernetes deployment this happens on every
+  rollout, so the spans of the last few seconds of each pod are lost every
+  time.
+* **`os.Exit()`** (and `log.Fatal*`, which calls it) also skips every deferred
+  function.
+
+Java does not have this problem: the Java agent registers a JVM shutdown hook
+(`ShutdownHookRegister`) that closes the agent automatically. Go has no
+`atexit` and no runtime shutdown hook, so this agent cannot do the same on its
+own, and it deliberately does not install a signal handler by default — see
+below for why.
+
+**Fix, option 1 — opt in to the agent's signal watcher.** If your program does
+not handle signals itself, let the agent do it:
+
+```go
+agent, err := pinpoint.NewAgent(cfg)
+if err != nil {
+    log.Printf("pinpoint agent start failed: %v", err)
+}
+defer agent.Shutdown()
+stop := pinpoint.ShutdownOnSignal(agent) // SIGTERM and SIGINT; pass others to change
+defer stop()
+```
+
+On one of the signals the watcher calls `Shutdown()`, which drains the queue
+for at most three seconds, then restores the default signal handling with
+`signal.Stop` and re-raises the same signal. The process still dies of the
+signal, with the same `128+signum` exit status it would have had, so
+orchestrators and shell scripts see nothing different. The agent never calls
+`os.Exit`. The returned `stop` function removes the watcher and ends its
+goroutine; call it when the agent is no longer wanted. It is safe alongside
+`defer agent.Shutdown()`: `Shutdown()` is idempotent.
+
+This is **off by default**, and must stay opt-in, because `signal.Notify`
+changes process-wide state: it disables the default handling of every signal
+it names. A library that did that silently would collide with a host that
+already handles the same signals, and — if it consumed a `SIGTERM` without
+re-raising it — would turn the program into one that ignores `SIGTERM` until
+the orchestrator escalates to `SIGKILL`, at which point nothing runs at all.
+
+**Fix, option 2 — handle the signal yourself.** If the program already has a
+signal handler, just call `Shutdown()` from it; do not also use
+`ShutdownOnSignal`, or the two will compete for the same signals:
+
+```go
+ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+defer stop()
+
+srv := &http.Server{Addr: ":8000"}
+go srv.ListenAndServe()
+
+<-ctx.Done()                    // SIGTERM or Ctrl-C
+srv.Shutdown(context.Background()) // finish in-flight requests first ...
+agent.Shutdown()                   // ... then flush their spans
+```
+
+This is the better shape for an HTTP server: the server drains first, so the
+spans of the requests that were in flight when the signal arrived are enqueued
+before the agent flushes.
+
+**What cannot be fixed: `os.Exit`.** Go has no `atexit`, so no library can run
+anything when a program calls `os.Exit()` — directly, through `log.Fatal*`, or
+through a framework that exits on error. If you opted in to `ShutdownOnSignal`
+and still lose spans, look for an `os.Exit` on the exit path and call
+`agent.Shutdown()` before it. The same applies to a `panic` that is not
+recovered and to `SIGKILL`, which no process can observe.
 
 ### Traces Are Incomplete or Look Wrong
 

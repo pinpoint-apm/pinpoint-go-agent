@@ -306,6 +306,25 @@ is your only signal. And because spans are sent by a separate goroutine, a
 process that exits immediately can drop whatever is still queued;
 `defer agent.Shutdown()` is what flushes it.
 
+That `defer` only runs on a normal return from `main()`. It does **not** run
+when the process is killed by a signal — and `SIGTERM` is exactly what
+Kubernetes, Docker and systemd send on every rollout, scale-down or stop — nor
+on `os.Exit()`. In both cases the spans still queued are lost and the collector
+never learns the agent stopped, so the UI keeps listing it as alive. If your
+program does not already handle its own signals, opt in with
+`pinpoint.ShutdownOnSignal`, which runs `Shutdown()` on `SIGTERM`/`SIGINT` and
+then re-raises the signal so the process still exits the way it would have:
+
+```go
+defer agent.Shutdown()
+defer pinpoint.ShutdownOnSignal(agent)()  // off unless you call it
+```
+
+If your program already has its own `signal.Notify`, call `agent.Shutdown()`
+from that handler instead. See
+[Troubleshooting](troubleshooting.md#spans-missing-at-shutdown-or-on-a-rollout)
+for the details and the `os.Exit` limitation.
+
 ## Runnable examples
 
 The [example](/example) directory has complete programs you can build and run:
@@ -346,6 +365,7 @@ Every plugin directory also carries its own `README.md` and `example/`.
 | Agent registered, but nothing in the UI | is anything actually instrumented? Go traces nothing by default |
 | Nothing in the UI, sampling suspected | set `Sampling.CounterRate` to 1 while diagnosing |
 | Short-lived program reports nothing | add `defer agent.Shutdown()` |
+| Last spans before a rollout / `SIGTERM` are missing | a `defer` does not run on a signal; see [Troubleshooting](troubleshooting.md#spans-missing-at-shutdown-or-on-a-rollout) |
 | Only the first hop appears | the client must be wrapped, and the request must carry the tracer's context |
 
 Run once with `PINPOINT_GO_LOG_LEVEL=debug` before digging further: the agent
