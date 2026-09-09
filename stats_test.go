@@ -12,6 +12,7 @@ import (
 	"unsafe"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -155,6 +156,121 @@ func Test_activeSpanShardIsCacheLinePadded(t *testing.T) {
 	if got := unsafe.Sizeof(activeSpanShard{}); got%cacheLinePadSize != 0 {
 		t.Errorf("activeSpanShard is %d bytes, not a multiple of the %d-byte shard stride: shards share a cache line", got, cacheLinePadSize)
 	}
+}
+
+func Test_activeSpanRegistrySizeTracksStoreAndRemove(t *testing.T) {
+	var r activeSpanRegistry
+	r.init()
+	now := time.Now()
+	assert.Equal(t, 0, r.size())
+
+	for id := int64(1); id <= 100; id++ {
+		r.store(id, now)
+	}
+	assert.Equal(t, 100, r.size())
+	r.store(7, now) // re-storing a registered id is not a second entry
+	assert.Equal(t, 100, r.size())
+
+	r.remove(7)
+	r.remove(7) // removing a missing id is harmless
+	assert.Equal(t, 99, r.size())
+	// A span that is never ended stays registered: the cap, not garbage
+	// collection, is what bounds a leak.
+	counts := r.count(now.Add(time.Second))
+	assert.EqualValues(t, 99, counts[0]+counts[1]+counts[2]+counts[3])
+
+	for id := int64(1); id <= 100; id++ {
+		r.remove(id)
+	}
+	assert.Equal(t, 0, r.size())
+}
+
+// Java's DefaultActiveTraceRepository evicts past maximumSize=10240. Here the
+// cap is applied per shard, so the registry as a whole holds the Java figure
+// when span ids spread evenly, and never more.
+func Test_activeSpanRegistryIsBoundedAtTheJavaMaximum(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureLogAt(&buf, logrus.InfoLevel)()
+	activeSpanEvictLog = logThrottle{src: "stats"}
+
+	var r activeSpanRegistry
+	r.init()
+	now := time.Now()
+	// Consecutive ids land on consecutive shards, so the first 10240 fill
+	// every shard to exactly its share without evicting.
+	for id := int64(0); id < activeSpanMaxSize; id++ {
+		r.store(id, now)
+	}
+	assert.Equal(t, activeSpanMaxSize, r.size())
+	assert.Empty(t, buf.String(), "at the cap nothing is evicted yet")
+
+	for id := int64(activeSpanMaxSize); id < activeSpanMaxSize+1000; id++ {
+		r.store(id, now)
+	}
+	assert.Equal(t, activeSpanMaxSize, r.size(), "leaked spans must not grow the registry past the cap")
+	counts := r.count(now)
+	assert.EqualValues(t, activeSpanMaxSize, counts[0]+counts[1]+counts[2]+counts[3])
+	assert.EqualValues(t, 1000, r.evicted.Load())
+}
+
+// Eviction makes room for the new span rather than refusing it: the newest
+// registration is always present afterwards, and ending an evicted span later
+// is a harmless remove.
+func Test_activeSpanRegistryEvictsAnExistingEntryForTheNewSpan(t *testing.T) {
+	defer captureLogAt(&bytes.Buffer{}, logrus.InfoLevel)()
+	activeSpanEvictLog = logThrottle{src: "stats"}
+
+	var r activeSpanRegistry
+	r.init()
+	now := time.Now()
+	shard := r.shard(0)
+	// Ids that are multiples of the shard count all hash to shard 0.
+	for i := 0; i < activeSpanShardMaxSize; i++ {
+		r.store(int64(i*activeSpanShardCount), now)
+	}
+	assert.Len(t, shard.m, activeSpanShardMaxSize)
+
+	newest := int64(activeSpanShardMaxSize * activeSpanShardCount)
+	r.store(newest, now)
+	assert.Len(t, shard.m, activeSpanShardMaxSize)
+	_, present := shard.m[newest]
+	assert.True(t, present, "the span being registered must survive its own eviction")
+
+	var victim int64 = -1
+	for i := 0; i < activeSpanShardMaxSize; i++ {
+		id := int64(i * activeSpanShardCount)
+		if _, ok := shard.m[id]; !ok {
+			victim = id
+		}
+	}
+	assert.NotEqual(t, int64(-1), victim, "exactly one earlier entry was evicted")
+	r.remove(victim)
+	assert.Len(t, shard.m, activeSpanShardMaxSize, "ending an evicted span changes nothing")
+}
+
+// The eviction warning names the size and the cap so the operator can suspect a
+// missing EndSpan, and is throttled: a leaking application evicts on every new
+// span.
+func Test_activeSpanRegistryEvictionWarningIsThrottled(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureLogAt(&buf, logrus.InfoLevel)()
+	activeSpanEvictLog = logThrottle{src: "stats"}
+
+	var r activeSpanRegistry
+	r.init()
+	now := time.Now()
+	for id := int64(0); id < activeSpanMaxSize+500; id++ {
+		r.store(id, now)
+	}
+	assert.Equal(t, 1, strings.Count(buf.String(), "active span registry full"), buf.String())
+	assert.Contains(t, buf.String(), "10240 spans, max 10240")
+	assert.Contains(t, buf.String(), "may not be ended")
+
+	activeSpanEvictLog.next.Store(0) // the interval elapses
+	r.store(activeSpanMaxSize+500, now)
+	assert.Equal(t, 2, strings.Count(buf.String(), "active span registry full"))
+	assert.Contains(t, buf.String(), "(499 similar warning(s) suppressed)")
+	assert.Contains(t, buf.String(), "501 evicted in total")
 }
 
 func Test_getStatsIntervalIsMeasuredMilliseconds(t *testing.T) {

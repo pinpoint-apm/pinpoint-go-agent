@@ -241,9 +241,31 @@ func (stats *agentStats) shard() *statShard {
 // store/delete churn from serializing on a single lock.
 const activeSpanShardCount = 32 // must be a power of two
 
+// activeSpanMaxSize bounds the registry the way Java's
+// DefaultActiveTraceRepository does (Caffeine maximumSize, DEFAULT_MAX_ACTIVE_TRACE_SIZE
+// = 1024 * 10). Without it a span that is never ended - an instrumentation bug
+// in the application, or a plugin's missing EndSpan on an error path - leaves
+// its entry behind forever, and since the entries are real map values the
+// registry grows without bound. The bound is applied per shard
+// (activeSpanMaxSize / activeSpanShardCount): span ids are random, so the
+// shards fill evenly and the total stays at the Java figure without a
+// registry-wide lock or counter on the store path. Not configurable, as in
+// Java: a registry this full is never legitimate load.
+const activeSpanMaxSize = 10240
+
+const activeSpanShardMaxSize = activeSpanMaxSize / activeSpanShardCount
+
 type activeSpanRegistry struct {
 	shards [activeSpanShardCount]activeSpanShard
+	// evicted counts entries evicted over the registry's lifetime; the
+	// throttled warning reports it so an operator can tell a one-off burst
+	// from a steady leak.
+	evicted atomic.Int64
 }
+
+// activeSpanEvictLog throttles the eviction warning: a leaking application
+// evicts once per new span, and one line per request is a log flood.
+var activeSpanEvictLog = logThrottle{src: "stats"}
 
 // cacheLinePadSize is the stride the shards are spaced at. 128 and not 64:
 // arm64 uses 128-byte lines (hw.cachelinesize is 128 on Apple silicon) and x86
@@ -283,8 +305,42 @@ func (r *activeSpanRegistry) shard(spanId int64) *activeSpanShard {
 func (r *activeSpanRegistry) store(spanId int64, startTime time.Time) {
 	s := r.shard(spanId)
 	s.mu.Lock()
+	evicted := false
+	if _, present := s.m[spanId]; !present && len(s.m) >= activeSpanShardMaxSize {
+		// Full: make room by dropping one existing entry, as Caffeine evicts on
+		// insert. Which one is up to Go's randomized map iteration - the same
+		// "arbitrary victim" Java's approximate policy amounts to for a stream
+		// of one-shot keys - and the victim's later remove is a harmless
+		// delete of a missing key. Refusing the new span instead would freeze
+		// the histogram on the leaked entries and hide every live request.
+		for victim := range s.m {
+			delete(s.m, victim)
+			break
+		}
+		evicted = true
+	}
 	s.m[spanId] = startTime
 	s.mu.Unlock()
+	if evicted {
+		total := r.evicted.Add(1)
+		activeSpanEvictLog.warnf("active span registry full (%d spans, max %d): evicted an entry, "+
+			"%d evicted in total; spans may not be ended (missing EndSpan on an error path)",
+			r.size(), activeSpanMaxSize, total)
+	}
+}
+
+// size is the number of registered spans, summed over the shards one lock at a
+// time; concurrent store/remove may already have moved it. Off the hot path:
+// the eviction report and tests.
+func (r *activeSpanRegistry) size() int {
+	n := 0
+	for i := range r.shards {
+		s := &r.shards[i]
+		s.mu.Lock()
+		n += len(s.m)
+		s.mu.Unlock()
+	}
+	return n
 }
 
 func (r *activeSpanRegistry) remove(spanId int64) {

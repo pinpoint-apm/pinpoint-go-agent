@@ -40,6 +40,7 @@ is simply not written yet does not belong here.
 | Retrying a rejected metadata send | `MetadataGrpcDataSender`, `RetryResponseStreamObserver` | **Diverges (aligned with C++)** — see [below](#retrying-a-rejected-metadata-send--diverges) |
 | Span queue overflow policy | `SpanBatchGrpcDataSender` | **Same as Java** — a full send queue drops the oldest entry, as Java's default BATCH sender does (`queue.poll()` in `SpanBatchGrpcDataSender`); rejecting the newest is STREAM-mode-only behaviour, so head-drop is not a deviation |
 | Command channel RPC | `GrpcCommandService`, `SupportCommandCodeClientInterceptor`, `Header.SUPPORT_COMMAND_CODE` | **Aligned** — see [below](#command-channel-rpc--aligned) |
+| Active trace registry cap | `DefaultActiveTraceRepository`, `DEFAULT_MAX_ACTIVE_TRACE_SIZE` (Caffeine `maximumSize`) | **Adopted, per shard** — see [below](#active-span-registry-cap--adopted-per-shard) |
 | Locked parity invariants (11 groups) | `ParserContext`, `DefaultCallStack`, `GrpcSpanProcessorV2`, `Header`, `CountingSampler`, `UriStatHistogramBucket`, `BaseHistogramSchema`, `DefaultTransactionCounter`, `StringUtils`, `ClientOption` | **Verified identical** — see [below](#locked-parity-invariants--verified-identical) |
 
 ---
@@ -829,6 +830,39 @@ back-off exactly as a failed handshake used to be.
 end to end by `TestRegistersAgentAndMaintainsPingAndCommandStreams`
 (`test/it/registration_test.go`), which reads the header off the mock
 collector's V2 stream.
+
+---
+
+## Active span registry cap — adopted, per shard
+
+**Java.** `DefaultActiveTraceRepository` keeps in-flight traces in a Caffeine
+cache built with `maximumSize(DEFAULT_MAX_ACTIVE_TRACE_SIZE)` (`1024 * 10`).
+When instrumentation forgets to end a trace the cache evicts entries instead of
+growing, so an instrumentation bug costs histogram accuracy, not memory. The
+size is a constant, not a configuration option.
+
+**This agent.** `activeSpanRegistry` (`stats.go`) is 32 shards of
+`map[int64]time.Time`, so a span that is never ended leaves a real entry
+behind. `activeSpanMaxSize` (10240) is applied per shard as
+`activeSpanShardMaxSize` (320): span ids are random, so the shards fill evenly
+and the registry as a whole holds the Java figure, without a registry-wide lock
+or counter on the store path. A `store` into a full shard first deletes one
+existing entry — the one Go's randomized map iteration yields first, the same
+arbitrary victim Java's approximate policy amounts to for a stream of one-shot
+keys — so the span being registered is always present afterwards, and the
+victim's later `remove` is a harmless delete of a missing key. Refusing the new
+span instead would freeze the histogram on the leaked entries and hide every
+live request. Each eviction is reported through a throttled WARN
+(`activeSpanEvictLog`, the `logThrottle` the malformed-header sites use) naming
+the registry size, the cap and the lifetime eviction count, so the operator can
+suspect a missing `EndSpan`. Not configurable, as in Java.
+
+**C++.** The C++ agent cannot evict: its registrations are intrusive nodes
+owned by the span and merely linked into a shard list, so the registry
+unlinking one would race the owner. It counts registrations and logs the same
+rate-limited WARN past 10240 (`AgentStats::kActiveSpanWarnThreshold`), without
+a cap — a leaked node there is memory the span already owns, so the leak is the
+span's, not the registry's.
 
 ---
 
