@@ -1,14 +1,17 @@
 package pinpoint
 
 import (
+	"bytes"
 	"math"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 	"unsafe"
 
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -256,4 +259,112 @@ func Test_readMemStatsMatchesRuntimeMemStats(t *testing.T) {
 	within("stackSys", got.stackSys, ms.StackSys)
 	assert.Equal(t, uint64(ms.NumGC), got.numGC, "numGC")
 	assert.Greater(t, got.numGC, uint64(0))
+}
+
+// fastStatConfig builds a config with a sub-second collect interval, which
+// publish rejects (Stat.CollectInterval is range-checked to >= 1 s), so worker
+// tests can tick in milliseconds. The published snapshot is patched after the
+// range check; nothing reloads it during these tests.
+func fastStatConfig(collectIntervalMs, batchCount int) *Config {
+	c := defaultConfig()
+	c.Set(CfgStatBatchCount, batchCount)
+	c.load().values[CfgStatCollectInterval] = collectIntervalMs
+	return c
+}
+
+// A getStats panic used to escape the collect loop and restart the worker,
+// which rebuilt collected/batch and threw away the partial batch (up to
+// batch_count-1 snapshots). It now costs exactly that tick's snapshot, as in
+// Java's CollectJob.run(): the cursor stays put, the next tick fills the same
+// slot, and the failure is reported through a throttled WARN.
+func Test_collectAgentStatWorker_failedCollectionSkipsOnlyThatSnapshot(t *testing.T) {
+	config := fastStatConfig(10, 100) // never completes within the test
+	agent := newTestAgent(config)
+	agent.statChan = make(chan *pb.PStatMessage, 1)
+
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("collect agent stat", agent.collectAgentStatWorker)
+
+	// Two good snapshots first, so a wrongly reset cursor is distinguishable
+	// from one that was simply not advanced.
+	assert.Eventually(t, func() bool { return agent.stats.batch.Load() >= 2 },
+		5*time.Second, time.Millisecond, "the worker never collected")
+	agent.stats.failCollects.Store(1)
+	assert.Eventually(t, func() bool { return agent.stats.failCollects.Load() == 0 },
+		5*time.Second, time.Millisecond, "the injected failure was never hit")
+	// Read well inside the 10 ms until the next tick: a reset would show 0.
+	assert.GreaterOrEqual(t, agent.stats.batch.Load(), int32(2), "a collection failure must not reset the partial batch")
+	assert.Eventually(t, func() bool { return agent.stats.batch.Load() >= 3 },
+		5*time.Second, time.Millisecond, "the loop must continue collecting after a failed tick")
+
+	agent.Shutdown()
+
+	logged := buf.String()
+	assert.Contains(t, logged, "agent stat collection failed", "a skipped snapshot must be reported")
+	assert.NotContains(t, logged, "goroutine panic", "the collect loop must not have been restarted")
+	assert.NotContains(t, logged, "restart collect agent stat", "the collect loop must not have been restarted")
+}
+
+// Two failures inside one report interval yield one WARN line that counts
+// what it suppressed, like the other throttled warning sites.
+func Test_collectAgentStatWorker_collectionFailureWarningIsThrottled(t *testing.T) {
+	config := fastStatConfig(5, 100)
+	agent := newTestAgent(config)
+	agent.statChan = make(chan *pb.PStatMessage, 1)
+	agent.stats.failCollects.Store(3)
+
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("collect agent stat", agent.collectAgentStatWorker)
+	assert.Eventually(t, func() bool { return agent.stats.failCollects.Load() == 0 && agent.stats.batch.Load() >= 1 },
+		5*time.Second, time.Millisecond, "collection must resume after the failures")
+	agent.Shutdown()
+
+	assert.Equal(t, 1, strings.Count(buf.String(), "agent stat collection failed"),
+		"the warning must be throttled to one line per interval; got: %s", buf.String())
+	assert.EqualValues(t, 2, agent.stats.collectFailures.suppressed.Load(),
+		"the suppressed failures must be counted for the next report")
+}
+
+// A supervisor restart (a panic outside the collect call) keeps the partial
+// batch: the worker re-takes only the CPU/time baseline. The restart is
+// driven by a second worker run on the same stats, which is what
+// superviseWorker does after a panic.
+func Test_collectAgentStatWorker_restartKeepsPartialBatchAndRetakesBaseline(t *testing.T) {
+	config := fastStatConfig(10, 100)
+	agent := newTestAgent(config)
+	agent.statChan = make(chan *pb.PStatMessage, 1)
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("collect agent stat", agent.collectAgentStatWorker)
+	assert.Eventually(t, func() bool { return agent.stats.batch.Load() >= 2 },
+		5*time.Second, time.Millisecond, "the worker never collected")
+	agent.Shutdown()
+	kept := agent.stats.batch.Load()
+	assert.GreaterOrEqual(t, kept, int32(2))
+	before := agent.stats.lastCollectTime
+
+	// Second run on the same stats, as superviseWorker's restart does.
+	time.Sleep(30 * time.Millisecond)
+	agent.enable.Store(true)
+	agent.shutdown.Store(false)
+	agent.stopOnce = sync.Once{}
+	agent.stopCtx, agent.stopCancel = nil, nil
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("collect agent stat", agent.collectAgentStatWorker)
+	assert.Eventually(t, func() bool { return agent.stats.batch.Load() >= kept+1 },
+		5*time.Second, time.Millisecond, "the restarted worker must continue the batch")
+	agent.Shutdown()
+
+	assert.True(t, agent.stats.lastCollectTime.After(before), "the time baseline must be re-taken on restart")
+	assert.GreaterOrEqual(t, agent.stats.batch.Load(), kept+1, "the partial batch must survive the restart")
+	// The first sample after the restart measures from the restart, not
+	// across the gap since the last sample of the previous run.
+	first := agent.stats.collected[kept]
+	assert.Less(t, first.interval, int64(30), "the restart gap must not be reported as the interval")
 }

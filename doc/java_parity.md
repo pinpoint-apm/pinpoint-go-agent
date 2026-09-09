@@ -26,6 +26,7 @@ is simply not written yet does not belong here.
 | Exception chain rate limiter | `ExceptionChainSampler` | **Adopted** — `Error.NewThroughput` |
 | Percent sampling rate of zero | `PercentSamplerFactory.createSampler` | **Adopted** — see [below](#percent-rate-of-zero--adopted) |
 | URL statistics send unit | `UriStatCollectingJob`, `AsyncQueueingUriStatStorage` | **Adopted** — see [below](#url-statistics-send-unit--adopted) |
+| Agent stat collection failure | `CollectJob.run()`, `StatMonitorJob.run()` | **Same as Java for the sample, exceeds Java for the scheduler** — see [below](#agent-stat-collection-failure-loses-one-sample--same-as-java) |
 | GC type and counts | `JvmGcType`, `GarbageCollectorMXBean` | **Diverges** — see [below](#gc-type-and-counts--diverges) |
 | Exception chain during overflow | `AbstractRecorder.recordException`, `DefaultExceptionRecorder` | **Diverges** — see [below](#exception-chain-during-overflow--diverges) |
 | Span event sequence reservation | `DefaultCallStack.push` | **Aligned with C++** — see [below](#span-event-sequence-reservation--aligned-with-c) |
@@ -42,6 +43,26 @@ is simply not written yet does not belong here.
 | Locked parity invariants (11 groups) | `ParserContext`, `DefaultCallStack`, `GrpcSpanProcessorV2`, `Header`, `CountingSampler`, `UriStatHistogramBucket`, `BaseHistogramSchema`, `DefaultTransactionCounter`, `StringUtils`, `ClientOption` | **Verified identical** — see [below](#locked-parity-invariants--verified-identical) |
 
 ---
+
+## Agent stat collection failure loses one sample — same as Java
+
+**Java.** `CollectJob.run()` wraps the collection of one agent-stat snapshot in
+`try/catch (Exception)`: a failure logs at WARN, skips that one snapshot, and
+leaves the batch and the scheduler untouched. `StatMonitorJob.run()` then runs
+its sub-jobs unprotected, so an exception escaping *there* cancels the
+`scheduleAtFixedRate` task for the life of the process.
+
+**This agent.** `collectAgentStatWorker` (`stats.go`) samples through
+`agentStats.collect`, which recovers a panic in `getStats` the way `CollectJob`
+catches: the panic costs exactly that tick's snapshot, the batch cursor is not
+advanced, and the next tick fills the same slot. Failures are reported through a
+throttled WARN (`collectFailures`, the `logThrottle` the malformed-header sites
+use) rather than swallowed. `superviseWorker` stays as the backstop for a panic
+outside that call, and that restart keeps the partial batch too: `collected` and
+`batch` live on `agentStats`, and a restarted worker re-takes only the CPU/time
+baseline (`resetBaseline`) while the first run cold-initializes (`init`). That is
+the liveness edge this agent keeps over Java's `StatMonitorJob`. The C++ agent
+applies the same policy (`AgentStats::runAgentStatsWorker`).
 
 ## GC type and counts — diverges
 

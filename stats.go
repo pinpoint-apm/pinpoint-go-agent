@@ -83,6 +83,21 @@ type agentStats struct {
 	// into a measurement.
 	lastCollectTime time.Time
 
+	// The batch under construction. Owned by the stat worker, and kept on the
+	// agent rather than in collectAgentStatWorker's frame so that a supervisor
+	// restart of the worker resumes the partial batch instead of discarding
+	// the snapshots gathered before the panic. workerStarted tells a restart
+	// from the first run (see collectAgentStatWorker).
+	// batch is atomic only so tests can watch the cursor from another
+	// goroutine; the worker is its sole writer.
+	collected     []*inspectorStats
+	batch         atomic.Int32
+	workerStarted bool
+	// collectFailures throttles the WARN for a collection that panicked.
+	collectFailures logThrottle
+	// Test seam: number of upcoming getStats calls that panic.
+	failCollects atomic.Int32
+
 	// memSamples is the runtime/metrics read that replaced runtime.ReadMemStats,
 	// which stops the world on every call - a periodic latency blip in every
 	// goroutine of the host, once per Stat.CollectInterval, for numbers that
@@ -166,6 +181,7 @@ func (stats *agentStats) readMemStats() memStats {
 
 func newAgentStats() *agentStats {
 	stats := &agentStats{proc: newProcHandle(), memSamples: newMemSamples()}
+	stats.collectFailures.src = "stats"
 	stats.activeSpan.init()
 	stats.init()
 	return stats
@@ -173,9 +189,21 @@ func newAgentStats() *agentStats {
 
 // init primes the CPU and memory baselines and clears the counters so the
 // first collection interval measures a real period. Mirrors the C++ agent's
-// AgentStats::initAgentStats: the stat worker calls it again when it starts,
+// AgentStats::initAgentStats: the stat worker calls it on its first run,
 // which can be seconds after the agent was created.
 func (stats *agentStats) init() {
+	stats.resetBaseline()
+	stats.reset()
+	stats.batch.Store(0)
+}
+
+// resetBaseline re-takes only the CPU and collect-time baseline, leaving the
+// request counters and the partial batch untouched. The stat worker calls it
+// when the supervisor restarts it: the first sample after a restart must not
+// report the restart gap as load or interval, yet the snapshots gathered
+// before the restart stay in the batch. Mirrors the C++ agent's
+// AgentStats::resetCollectionBaseline.
+func (stats *agentStats) resetBaseline() {
 	// The system-wide CPU baseline lives in a gopsutil package global, so it
 	// is the one piece of this state that cannot move onto the agent.
 	cpu.Percent(0, false)
@@ -183,7 +211,6 @@ func (stats *agentStats) init() {
 		stats.proc.Percent(0)
 	}
 
-	stats.reset()
 	stats.lastCollectTime = time.Now()
 }
 
@@ -386,6 +413,11 @@ func clampUnit(v float64) float64 {
 // 25%. The first sample measures from init, which the stat worker calls just
 // before its ticker starts, so it needs no configured value to stand in.
 func (stats *agentStats) getStats() *inspectorStats {
+	if stats.failCollects.Load() > 0 {
+		stats.failCollects.Add(-1)
+		panic("injected getStats failure")
+	}
+
 	now := time.Now()
 	procCpu, sysCpu := stats.cpuLoad()
 	counters := stats.drainCounters()
@@ -463,16 +495,29 @@ func calcResponseAvg(accResponseTime int64, requestCount int64) int64 {
 func (agent *agent) collectAgentStatWorker() {
 	Log("stats").Infof("start collect agent stat goroutine")
 
-	agent.stats.init()
+	stats := agent.stats
+	cfgBatchCount := agent.config.Int(CfgStatBatchCount)
+
+	// First run: cold-initialize everything. A later run is a supervisor
+	// restart after a panic escaped the loop below: only the CPU/time
+	// baseline is re-taken, so the first sample after the restart does not
+	// report the restart gap as load, while the snapshots already in the
+	// partial batch are kept rather than thrown away with the run.
+	if stats.workerStarted {
+		stats.resetBaseline()
+	} else {
+		stats.workerStarted = true
+		stats.init()
+	}
+	if len(stats.collected) != cfgBatchCount {
+		stats.collected = make([]*inspectorStats, cfgBatchCount)
+		stats.batch.Store(0)
+	}
 
 	cfgInterval := int64(agent.config.Int(CfgStatCollectInterval))
 	ticker := time.NewTicker(time.Duration(cfgInterval) * time.Millisecond)
 	defer ticker.Stop()
 	stop := agent.stopSignal().Done()
-
-	cfgBatchCount := agent.config.Int(CfgStatBatchCount)
-	collected := make([]*inspectorStats, cfgBatchCount)
-	batch := 0
 
 	for agent.enable.Load() {
 		select {
@@ -480,15 +525,40 @@ func (agent *agent) collectAgentStatWorker() {
 			Log("stats").Infof("end collect agent stat goroutine")
 			return
 		case <-ticker.C:
-			collected[batch] = agent.stats.getStats()
-			batch++
+			// First line of defense, as Java's CollectJob.run(): a failed
+			// collection costs this one snapshot, not the partial batch.
+			// The batch cursor is left alone, so the next tick fills the
+			// same slot. superviseWorker remains the backstop for anything
+			// that panics outside this call.
+			if snapshot := stats.collect(); snapshot != nil {
+				stats.collected[stats.batch.Load()] = snapshot
+				stats.batch.Add(1)
+			}
 
-			if batch == cfgBatchCount {
-				agent.enqueueStat(makePAgentStatBatch(collected))
-				batch = 0
+			if int(stats.batch.Load()) == cfgBatchCount {
+				// Reset before the send: the batch is complete, so a panic
+				// in the enqueue (and the restart it causes) must not
+				// leave the cursor at cfgBatchCount.
+				batch := stats.collected
+				stats.batch.Store(0)
+				agent.enqueueStat(makePAgentStatBatch(batch))
 			}
 		}
 	}
+}
+
+// collect is getStats with a per-collection recover: a panic while sampling
+// (a transient /proc read failure, a gopsutil error path) is logged through a
+// throttled WARN and reported as a nil snapshot, so the caller skips the
+// sample and keeps collecting.
+func (stats *agentStats) collect() (snapshot *inspectorStats) {
+	defer func() {
+		if e := recover(); e != nil {
+			snapshot = nil
+			stats.collectFailures.warnf("agent stat collection failed, snapshot skipped: %v", e)
+		}
+	}()
+	return stats.getStats()
 }
 
 func (stats *agentStats) collectResponseTime(resTime int64) {
