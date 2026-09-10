@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
@@ -140,67 +141,84 @@ func writeArg(b *bytes.Buffer, index int, value any, numComma int, maxSize int) 
 		return false
 	}
 
-	complete := writeLimitedArgValue(b, value, maxSize)
-	if complete && index < numComma {
-		// The separator goes in whole or not at all: a lone ',' left where the
-		// limit fell reads as an empty bind value, and the cut belongs on a
-		// value boundary.
-		if complete = b.Len()+len(", ") <= maxSize; complete {
-			b.WriteString(", ")
-		}
+	// The separator is written before the value that follows it, never after
+	// the one before it, so it precedes whatever comes next: the next value,
+	// or the count marker standing in for the values left out. This mirrors
+	// the agent's own driver wrapper, which follows Java's
+	// BindValueUtils.bindValueToString.
+	if index > 0 {
+		b.WriteString(", ")
 	}
-	if !complete {
-		writeArgTruncationMarker(b, numComma+1)
+	if b.Len() >= maxSize {
+		writeArgCountMarker(b, numComma+1)
+		return false
 	}
-	return complete
+	writeAbbreviatedArg(b, value, maxSize)
+	return true
 }
 
-func writeLimitedArgValue(b *bytes.Buffer, value any, maxSize int) bool {
+// writeAbbreviatedArg writes one argument abbreviated to maxSize.
+//
+// maxSize is the budget for the whole list, but it is spent per value: the
+// value that finds any of it left writes up to maxSize of itself, so the list
+// can reach roughly twice maxSize plus the markers. It is the value's own
+// head, not the list's total, that a reader needs to recognize which argument
+// this was, and the agent reserves the same room for the result.
+func writeAbbreviatedArg(b *bytes.Buffer, value any, maxSize int) {
 	if value, ok := value.(string); ok {
-		return writeLimitedString(b, value, maxSize)
+		writeAbbreviated(b, value, len(value), maxSize)
+		return
 	}
 
-	remaining := maxSize - b.Len()
-	if remaining <= 0 {
-		return false
-	}
 	// fmt.Sprint preserves the established "[1 2 3]" representation. Every
-	// element adds at least one character to it, so no more than remaining
-	// elements can contribute to its prefix.
-	if rv := reflect.ValueOf(value); rv.Kind() == reflect.Slice && rv.Len() > remaining {
-		value = rv.Slice(0, remaining).Interface()
+	// element adds at least one character to it, so no more than maxSize
+	// elements can contribute to its prefix: slicing the rest away keeps a
+	// million-element array parameter from being built whole to keep a
+	// kilobyte. The length marker survives that slicing because an array
+	// reports its element count, not the width of its rendering - as Java's
+	// ArrayUtils.abbreviate reports a byte[] bind value.
+	if rv := reflect.ValueOf(value); rv.Kind() == reflect.Slice {
+		elems := rv.Len()
+		if elems > maxSize {
+			value = rv.Slice(0, maxSize).Interface()
+		}
+		writeAbbreviated(b, fmt.Sprint(value), elems, maxSize)
+		return
 	}
-	return writeLimitedString(b, fmt.Sprint(value), maxSize)
+	s := fmt.Sprint(value)
+	writeAbbreviated(b, s, len(s), maxSize)
 }
 
-func writeLimitedString(b *bytes.Buffer, value string, maxSize int) bool {
-	if len(value) == 0 {
-		return b.Len() <= maxSize
-	}
-
-	remaining := maxSize - b.Len()
-	if len(value) <= remaining {
+// writeAbbreviated writes value cut to maxSize, marking the cut with valueLen -
+// the length of the value itself, which is not always the length of the text
+// being cut: an array reports how many elements it holds. The cut lands on a
+// rune boundary: protobuf rejects invalid UTF-8 string fields at marshal time,
+// so a mid-rune cut would fail the whole span carrying the annotation.
+func writeAbbreviated(b *bytes.Buffer, value string, valueLen int, maxSize int) {
+	if len(value) <= maxSize {
 		b.WriteString(value)
-		return true
+		return
 	}
-	if remaining <= 0 {
-		return false
+	cut := maxSize
+	for cut > 0 && !utf8.RuneStart(value[cut]) {
+		cut--
 	}
-
-	for remaining > 0 && !utf8.RuneStart(value[remaining]) {
-		remaining--
-	}
-	b.WriteString(value[:remaining])
-	return false
+	b.WriteString(value[:cut])
+	writeArgLengthMarker(b, valueLen)
 }
 
-// writeArgTruncationMarker appends the marker the Java agent's
-// BindValueUtils.appendLength writes: numValues is how many bind values the
-// statement had, not the byte limit - the limit is already known to every
-// reader, the count that went missing is not. It lands past the limit, as it
-// does in Java, rather than cutting back over what is already written: making
-// room inside a limit shorter than the marker would drop the marker itself and
-// leave the truncation with no trace at all.
-func writeArgTruncationMarker(b *bytes.Buffer, numValues int) {
-	b.WriteString("...(" + fmt.Sprint(numValues) + ")")
+// The two markers report two different events, and both can appear in one
+// list: a value abbreviated with the last of the budget is followed by the
+// count marker on the next round. writeArgLengthMarker says one value was cut
+// and how long it was; writeArgCountMarker says the list itself ended early
+// and how many arguments the statement had. Both land past the limit rather
+// than cutting back over what is written: making room inside a limit shorter
+// than the marker would drop the marker itself and leave the truncation with
+// no trace at all.
+func writeArgLengthMarker(b *bytes.Buffer, valueLen int) {
+	b.WriteString("...(" + strconv.Itoa(valueLen) + ")")
+}
+
+func writeArgCountMarker(b *bytes.Buffer, numValues int) {
+	b.WriteString("...(" + strconv.Itoa(numValues) + ")")
 }

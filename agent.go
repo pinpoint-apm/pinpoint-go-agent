@@ -223,11 +223,22 @@ const (
 	// default. A cause chain carries one message per link, and a driver error
 	// quoting a whole statement is easily megabytes on its own.
 	maxExceptionMessageSize = 2048
-	// maxBindValueMarkerSize bounds the "...(count)" marker the bind value
-	// writers append past SQL.MaxBindValueSize; 20 digits holds any count a
-	// slice length can reach.
+	// maxBindValueMarkerSize bounds either "...(n)" marker the bind value
+	// writers append past SQL.MaxBindValueSize - the length of the value that
+	// was cut, or the number of values the list left out; 20 digits holds any
+	// count or length an int can reach.
 	maxBindValueMarkerSize = len("...(") + 20 + len(")")
 )
+
+// maxBindValueAnnotationSize is the widest bind value list the driver writers
+// can produce for a limit of maxSize. The limit is a budget checked between
+// values, so a value that finds one byte of it left still writes maxSize of
+// itself plus its length marker, and the separator and the count marker can
+// follow that. SetSQL bounds args by this and not by the limit itself, or it
+// would cut a bind value list the driver composed exactly as intended.
+func maxBindValueAnnotationSize(maxSize int) int {
+	return 2*maxSize + 2*maxBindValueMarkerSize + len(", ")
+}
 
 // globalAgent is an atomic.Value rather than a plain interface variable:
 // plugins call GetAgent on every request while NewAgent and Shutdown swap the

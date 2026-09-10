@@ -61,18 +61,19 @@ func TestWriteArgTruncatesOversizedValues(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			full := fmt.Sprint(test.value)
 			var b bytes.Buffer
-			require.False(t, writeArg(&b, 0, test.value, 0, 1024),
-				"writeArg reported more values could be written")
-			// The marker counts the bind values and lands past the limit, as
-			// it does in Java.
-			assert.Equal(t, full[:1024]+"...(1)", b.String())
+			require.True(t, writeArg(&b, 0, test.value, 0, 1024),
+				"writeArg ended the list on a value it only abbreviated")
+			// The marker reports the value's own length and lands past the
+			// limit, as it does in Java: bytes for a string, elements for an
+			// array.
+			assert.Equal(t, full[:1024]+"...(5000)", b.String())
 		})
 	}
 }
 
-// The separator between two values is written whole or not at all, so a value
-// landing on the boundary ends the output on a value boundary instead of
-// leaving a lone ',' behind - and a zero limit keeps nothing, marker included.
+// The separator precedes whatever comes next, so a list cut short ends with it
+// in front of the count marker, as Java's BindValueUtils leaves it - and a zero
+// limit keeps nothing, marker included.
 func TestWriteArgTruncatesAtBoundary(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -82,10 +83,10 @@ func TestWriteArgTruncatesAtBoundary(t *testing.T) {
 		wantMore bool
 	}{
 		{
-			name:    "separator split by the limit",
+			name:    "budget spent by the first value",
 			values:  []any{strings.Repeat("p", 1023), "z"},
 			maxSize: 1024,
-			want:    strings.Repeat("p", 1023) + "...(2)",
+			want:    strings.Repeat("p", 1023) + ", ...(2)",
 		},
 		{
 			name:     "everything fits",
@@ -98,7 +99,7 @@ func TestWriteArgTruncatesAtBoundary(t *testing.T) {
 			name:    "two of three values dropped",
 			values:  []any{"0123456789", "b", "c"},
 			maxSize: 10,
-			want:    "0123456789...(3)",
+			want:    "0123456789, ...(3)",
 		},
 		{
 			// The marker counts the bind values, so it fits no limit at all -
@@ -106,7 +107,7 @@ func TestWriteArgTruncatesAtBoundary(t *testing.T) {
 			name:    "limit shorter than the marker",
 			values:  []any{"a", "b", "c"},
 			maxSize: 2,
-			want:    "a...(3)",
+			want:    "a, ...(3)",
 		},
 		{
 			name:    "zero limit",
@@ -163,10 +164,14 @@ func TestWriteArgLimitsLargeValues(t *testing.T) {
 		name       string
 		value      any
 		wantPrefix string
+		wantSuffix string
 	}{
-		{name: "string", value: strings.Repeat("가", 1<<20), wantPrefix: "가"},
-		{name: "bytes", value: bytes.Repeat([]byte{255}, 1<<20), wantPrefix: "[255 "},
-		{name: "slice", value: make([]int32, 1<<20), wantPrefix: "[0 0 "},
+		// A string reports its length in bytes, an array the number of
+		// elements it holds - the value's own length either way, as Java's
+		// StringUtils.abbreviate and ArrayUtils.abbreviate report it.
+		{name: "string", value: strings.Repeat("가", 1<<20), wantPrefix: "가", wantSuffix: "...(3145728)"},
+		{name: "bytes", value: bytes.Repeat([]byte{255}, 1<<20), wantPrefix: "[255 ", wantSuffix: "...(1048576)"},
+		{name: "slice", value: make([]int32, 1<<20), wantPrefix: "[0 0 ", wantSuffix: "...(1048576)"},
 	}
 
 	for _, tt := range tests {
@@ -174,13 +179,13 @@ func TestWriteArgLimitsLargeValues(t *testing.T) {
 			var b bytes.Buffer
 			more := writeArg(&b, 0, tt.value, 0, maxSize)
 
-			require.False(t, more, "writeArg reported that an oversized value fit")
-			assert.LessOrEqual(t, b.Len(), maxSize+len("...(1)"), "the result grew past the limit")
+			require.True(t, more, "writeArg ended the list on a value it only abbreviated")
+			assert.LessOrEqual(t, b.Len(), maxSize+len(tt.wantSuffix), "the result grew past the limit")
 			assert.LessOrEqual(t, b.Cap(), maxSize*2,
 				"the buffer retained %d bytes for a %d-byte limit", b.Cap(), maxSize)
 			assert.True(t, strings.HasPrefix(b.String(), tt.wantPrefix),
 				"result %q does not preserve prefix %q", b.String(), tt.wantPrefix)
-			assert.True(t, strings.HasSuffix(b.String(), "...(1)"),
+			assert.True(t, strings.HasSuffix(b.String(), tt.wantSuffix),
 				"result %q has no truncation marker", b.String())
 			assert.True(t, utf8.ValidString(b.String()), "result is not valid UTF-8: %q", b.String())
 		})
@@ -196,7 +201,9 @@ func TestWriteArgLimitsMultipleValues(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, "0123456789, abcdefgh...(3)", b.String())
+	// The budget is spent between values, so "abcdefgh" goes in whole even
+	// though it lands on the limit; the round after it finds nothing left.
+	assert.Equal(t, "0123456789, abcdefgh, ...(3)", b.String())
 }
 
 // recordingTracer captures what the pgx tracer records on a span event. A real
@@ -582,6 +589,6 @@ func TestComposeArgs_HonoursTheSizeLimit(t *testing.T) {
 
 	got := NewTracer().composeArgs([]any{strings.Repeat("x", 1<<10)})
 
-	assert.LessOrEqual(t, len(got), 32+len("...(1)"), "composeArgs grew past the configured limit")
-	assert.True(t, strings.HasSuffix(got, "...(1)"), "composeArgs() = %q, want the truncation marker", got)
+	assert.LessOrEqual(t, len(got), 32+len("...(1024)"), "composeArgs grew past the configured limit")
+	assert.True(t, strings.HasSuffix(got, "...(1024)"), "composeArgs() = %q, want the truncation marker", got)
 }

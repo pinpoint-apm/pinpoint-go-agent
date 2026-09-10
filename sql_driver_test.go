@@ -88,12 +88,16 @@ func Test_writeBindValue_PreservesFormatting(t *testing.T) {
 	assert.Equal(t, strings.Join(want, ", "), b.String())
 }
 
+// A value too big for the budget keeps its head, as Java's
+// StringUtils.appendAbbreviate does, and the marker reports how long that
+// value was - the byte count a reader is actually after. The list itself is
+// not cut short here: it has no further value to write.
 func Test_writeBindValue_TruncatesOversizedValue(t *testing.T) {
 	var b bytes.Buffer
 	more := writeBindValue(&b, 0, strings.Repeat("x", 5000), 0, 1024)
 
-	assert.False(t, more)
-	assert.Equal(t, strings.Repeat("x", 1024)+"...(1)", b.String())
+	assert.True(t, more)
+	assert.Equal(t, strings.Repeat("x", 1024)+"...(5000)", b.String())
 }
 
 func Test_writeBindValue_LimitsLargeValues(t *testing.T) {
@@ -102,10 +106,14 @@ func Test_writeBindValue_LimitsLargeValues(t *testing.T) {
 		name       string
 		value      interface{}
 		wantPrefix string
+		wantSuffix string
 	}{
-		{name: "string", value: strings.Repeat("가", 1<<20), wantPrefix: "가"},
-		{name: "bytes", value: bytes.Repeat([]byte{255}, 1<<20), wantPrefix: "[255 "},
-		{name: "slice", value: make([]int32, 1<<20), wantPrefix: "[0 0 "},
+		// A string reports its length in bytes, an array the number of
+		// elements it holds - the value's own length either way, as Java's
+		// StringUtils.abbreviate and ArrayUtils.abbreviate report it.
+		{name: "string", value: strings.Repeat("가", 1<<20), wantPrefix: "가", wantSuffix: "...(3145728)"},
+		{name: "bytes", value: bytes.Repeat([]byte{255}, 1<<20), wantPrefix: "[255 ", wantSuffix: "...(1048576)"},
+		{name: "slice", value: make([]int32, 1<<20), wantPrefix: "[0 0 ", wantSuffix: "...(1048576)"},
 	}
 
 	for _, tt := range tests {
@@ -113,11 +121,11 @@ func Test_writeBindValue_LimitsLargeValues(t *testing.T) {
 			var b bytes.Buffer
 			more := writeBindValue(&b, 0, tt.value, 0, maxSize)
 
-			assert.False(t, more)
-			assert.LessOrEqual(t, b.Len(), maxSize+len("...(1)"))
+			assert.True(t, more)
+			assert.LessOrEqual(t, b.Len(), maxSize+maxBindValueMarkerSize)
 			assert.LessOrEqual(t, b.Cap(), maxSize*2)
 			assert.True(t, strings.HasPrefix(b.String(), tt.wantPrefix), b.String())
-			assert.True(t, strings.HasSuffix(b.String(), "...(1)"), b.String())
+			assert.True(t, strings.HasSuffix(b.String(), tt.wantSuffix), b.String())
 			assert.True(t, utf8.ValidString(b.String()), b.String())
 		})
 	}
@@ -132,7 +140,9 @@ func Test_writeBindValue_LimitsMultipleValues(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, "0123456789, abcdefgh...(3)", b.String())
+	// The budget is spent between values, so "abcdefgh" goes in whole even
+	// though it lands on the limit; the round after it finds nothing left.
+	assert.Equal(t, "0123456789, abcdefgh, ...(3)", b.String())
 }
 
 func Test_writeBindValue_TruncatesOversizedBytes(t *testing.T) {
@@ -142,14 +152,16 @@ func Test_writeBindValue_TruncatesOversizedBytes(t *testing.T) {
 	var b bytes.Buffer
 	more := writeBindValue(&b, 0, value, 0, 1024)
 
-	assert.False(t, more)
-	// The marker lands past the limit, as it does in Java.
-	assert.Equal(t, want[:1024]+"...(1)", b.String())
+	assert.True(t, more)
+	// The marker lands past the limit, as it does in Java, and counts the
+	// bytes of the slice rather than the characters of its rendering - what
+	// Java's ArrayUtils.abbreviate reports for a byte[] bind value.
+	assert.Equal(t, want[:1024]+"...(5000)", b.String())
 }
 
-// The separator between two values is written whole or not at all, so a value
-// landing on the boundary ends the output on a value boundary instead of
-// leaving a lone ',' behind - and a zero limit keeps nothing, marker included.
+// The separator precedes whatever comes next, so a list cut short ends with it
+// in front of the count marker, as Java's BindValueUtils leaves it - and a zero
+// limit keeps nothing, marker included.
 func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -159,10 +171,10 @@ func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 		wantMore bool
 	}{
 		{
-			name:    "separator split by the limit",
+			name:    "budget spent by the first value",
 			values:  []interface{}{strings.Repeat("p", 1023), "z"},
 			maxSize: 1024,
-			want:    strings.Repeat("p", 1023) + "...(2)",
+			want:    strings.Repeat("p", 1023) + ", ...(2)",
 		},
 		{
 			name:     "everything fits",
@@ -175,7 +187,7 @@ func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 			name:    "two of three values dropped",
 			values:  []interface{}{"0123456789", "b", "c"},
 			maxSize: 10,
-			want:    "0123456789...(3)",
+			want:    "0123456789, ...(3)",
 		},
 		{
 			// The marker counts the bind values, so it fits no limit at all -
@@ -183,7 +195,7 @@ func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 			name:    "limit shorter than the marker",
 			values:  []interface{}{"a", "b", "c"},
 			maxSize: 2,
-			want:    "a...(3)",
+			want:    "a, ...(3)",
 		},
 		{
 			name:    "zero limit",
@@ -203,6 +215,40 @@ func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 				}
 			}
 			assert.Equal(t, tt.wantMore, more)
+			assert.Equal(t, tt.want, b.String())
+		})
+	}
+}
+
+// The golden cases the C++ agent asserts verbatim in
+// SpanEventTest.SetSqlQueryStopsTracingBindValueAtConfiguredLimit and
+// SetSqlQueryAbbreviatesBindValueLikeJava, which were taken from Java's
+// BindValueUtils.bindValueToString. They are here rather than in
+// java_parity_lock_test.go because that suite mirrors the C++ lock suite group
+// for group, and the C++ agent keeps these with its span event tests.
+func Test_writeBindValue_MatchesJavaBindValueJoin(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		values  []interface{}
+		maxSize int
+		want    string
+	}{
+		{name: "at the limit", values: []interface{}{"1234"}, maxSize: 4, want: "1234"},
+		{name: "one byte over", values: []interface{}{"12345"}, maxSize: 4, want: "1234...(5)"},
+		{name: "far over the budget", values: []interface{}{strings.Repeat("v", 20)}, maxSize: 4, want: "vvvv...(20)"},
+		{name: "a value that fits, then one that does not", values: []interface{}{"1", strings.Repeat("z", 11)}, maxSize: 4, want: "1, zzzz...(11)"},
+		{name: "tail dropped after a value that fit", values: []interface{}{"1234", "5"}, maxSize: 4, want: "1234, ...(2)"},
+		{name: "both markers in one list", values: []interface{}{"12345", strings.Repeat("z", 11)}, maxSize: 10, want: "12345, " + strings.Repeat("z", 10) + "...(11)"},
+		{name: "a CLOB at the default limit", values: []interface{}{strings.Repeat("v", 2000)}, maxSize: 1024, want: strings.Repeat("v", 1024) + "...(2000)"},
+		{name: "tracing off", values: []interface{}{"1234"}, maxSize: 0, want: ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var b bytes.Buffer
+			for i, v := range tt.values {
+				if !writeBindValue(&b, i, v, len(tt.values)-1, tt.maxSize) {
+					break
+				}
+			}
 			assert.Equal(t, tt.want, b.String())
 		})
 	}

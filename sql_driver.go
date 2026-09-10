@@ -268,29 +268,36 @@ func writeBindValue(b *bytes.Buffer, index int, value interface{}, numComma int,
 		return false
 	}
 
-	complete := writeLimitedBindValue(b, value, maxSize)
-	if complete && index < numComma {
-		// The separator goes in whole or not at all: a lone ',' left where the
-		// limit fell reads as an empty bind value, and the cut belongs on a
-		// value boundary.
-		if complete = b.Len()+len(", ") <= maxSize; complete {
-			b.WriteString(", ")
-		}
+	// The separator is written before the value that follows it, never after
+	// the one before it, so it precedes whatever comes next: the next value,
+	// or the count marker standing in for the values left out. This is the
+	// order Java's BindValueUtils.bindValueToString ends up in, which appends
+	// it after every value but the last and then tests the budget.
+	if index > 0 {
+		b.WriteString(", ")
 	}
-	if !complete {
-		writeBindTruncationMarker(b, numComma+1)
+	if b.Len() >= maxSize {
+		writeBindCountMarker(b, numComma+1)
+		return false
 	}
-	return complete
+	writeAbbreviatedBindValue(b, value, maxSize)
+	return true
 }
 
-func writeLimitedBindValue(b *bytes.Buffer, value interface{}, maxSize int) bool {
+// writeAbbreviatedBindValue writes one bind value abbreviated to maxSize.
+//
+// maxSize is the budget for the whole list, but it is spent per value: the
+// value that finds any of it left writes up to maxSize of itself, so the list
+// can reach roughly twice maxSize plus the markers. Cutting each value at what
+// is left of the budget instead would bound the buffer more tightly but put
+// the cut of every value after the first somewhere Java does not have it - and
+// it is the value's own head, not the list's total, that a reader needs to
+// recognize which bind value this was. maxBindValueAnnotationSize is what the
+// span side reserves for the result.
+func writeAbbreviatedBindValue(b *bytes.Buffer, value interface{}, maxSize int) {
 	if value, ok := value.(string); ok {
-		return writeLimitedString(b, value, maxSize)
-	}
-
-	remaining := maxSize - b.Len()
-	if remaining <= 0 {
-		return false
+		writeAbbreviated(b, value, len(value), maxSize)
+		return
 	}
 
 	// driver.Value is a closed set (int64, float64, bool, []byte, string,
@@ -303,38 +310,56 @@ func writeLimitedBindValue(b *bytes.Buffer, value interface{}, maxSize int) bool
 	var scratch [64]byte
 	switch v := value.(type) {
 	case nil:
-		return writeLimitedString(b, "<nil>", maxSize)
+		writeAbbreviated(b, "<nil>", len("<nil>"), maxSize)
+		return
 	case int64:
-		return writeLimitedBytes(b, strconv.AppendInt(scratch[:0], v, 10), maxSize)
+		writeAbbreviatedBytes(b, strconv.AppendInt(scratch[:0], v, 10), maxSize)
+		return
 	case float64:
-		return writeLimitedBytes(b, strconv.AppendFloat(scratch[:0], v, 'g', -1, 64), maxSize)
+		writeAbbreviatedBytes(b, strconv.AppendFloat(scratch[:0], v, 'g', -1, 64), maxSize)
+		return
 	case bool:
-		return writeLimitedBytes(b, strconv.AppendBool(scratch[:0], v), maxSize)
+		writeAbbreviatedBytes(b, strconv.AppendBool(scratch[:0], v), maxSize)
+		return
 	case time.Time:
-		return writeLimitedString(b, v.String(), maxSize)
+		s := v.String()
+		writeAbbreviated(b, s, len(s), maxSize)
+		return
 	case []byte:
-		return writeLimitedByteSlice(b, v, remaining, maxSize)
+		writeAbbreviatedByteSlice(b, v, maxSize)
+		return
 	}
 
 	// fmt.Sprint preserves the established "[1 2 3]" representation. Every
-	// element adds at least one character to it, so no more than remaining
-	// elements can contribute to its prefix.
-	if rv := reflect.ValueOf(value); rv.Kind() == reflect.Slice && rv.Len() > remaining {
-		value = rv.Slice(0, remaining).Interface()
+	// element adds at least one character to it, so no more than maxSize
+	// elements can contribute to its prefix: slicing the rest away keeps a
+	// million-element argument from being built whole to keep a kilobyte. The
+	// length marker survives that slicing because an array reports its element
+	// count, not the width of its rendering.
+	if rv := reflect.ValueOf(value); rv.Kind() == reflect.Slice {
+		elems := rv.Len()
+		if elems > maxSize {
+			value = rv.Slice(0, maxSize).Interface()
+		}
+		writeAbbreviated(b, fmt.Sprint(value), elems, maxSize)
+		return
 	}
-	return writeLimitedString(b, fmt.Sprint(value), maxSize)
+	s := fmt.Sprint(value)
+	writeAbbreviated(b, s, len(s), maxSize)
 }
 
-// writeLimitedByteSlice writes v as fmt.Sprint does ("[1 2 3]") without
+// writeAbbreviatedByteSlice writes v as fmt.Sprint does ("[1 2 3]") without
 // building a string of the whole slice: elements are formatted into a scratch
-// buffer only until it holds more than remaining bytes, since anything past
-// that is cut anyway, and the buffer is then written under the same limit
-// check the fmt path applies to its string.
-func writeLimitedByteSlice(b *bytes.Buffer, v []byte, remaining int, maxSize int) bool {
+// buffer only until it holds more than maxSize bytes, since anything past that
+// is cut anyway. The cut is marked with the number of bytes in the slice, as
+// Java's ArrayUtils.abbreviate marks a byte[] bind value - its size is the
+// fact a reader wants, and counting the characters of its decimal rendering
+// would mean walking every element the cut exists to avoid formatting.
+func writeAbbreviatedByteSlice(b *bytes.Buffer, v []byte, maxSize int) {
 	var scratch [128]byte
 	buf := append(scratch[:0], '[')
 	for i, e := range v {
-		if len(buf) > remaining {
+		if len(buf) > maxSize {
 			break
 		}
 		if i > 0 {
@@ -343,53 +368,66 @@ func writeLimitedByteSlice(b *bytes.Buffer, v []byte, remaining int, maxSize int
 		buf = strconv.AppendUint(buf, uint64(e), 10)
 	}
 	buf = append(buf, ']')
-	return writeLimitedBytes(b, buf, maxSize)
+	// The loop stops only past maxSize, so a buf within it is the whole
+	// rendering and needs no marker at all.
+	if len(buf) <= maxSize {
+		b.Write(buf)
+		return
+	}
+	b.Write(buf[:maxSize])
+	writeBindLengthMarker(b, len(v))
 }
 
-// writeLimitedBytes is writeLimitedString for a formatted scratch buffer.
-// Every value formatted into it is ASCII, so the cut needs no rune boundary.
-func writeLimitedBytes(b *bytes.Buffer, value []byte, maxSize int) bool {
-	remaining := maxSize - b.Len()
-	if len(value) <= remaining {
+// writeAbbreviatedBytes is writeAbbreviated for a value formatted into a
+// scratch buffer: the buffer holds the whole value, and every byte of it is
+// ASCII, so the cut needs no rune boundary.
+func writeAbbreviatedBytes(b *bytes.Buffer, value []byte, maxSize int) {
+	if len(value) <= maxSize {
 		b.Write(value)
-		return true
+		return
 	}
-	if remaining <= 0 {
-		return false
-	}
-	b.Write(value[:remaining])
-	return false
+	b.Write(value[:maxSize])
+	writeBindLengthMarker(b, len(value))
 }
 
-func writeLimitedString(b *bytes.Buffer, value string, maxSize int) bool {
-	if len(value) == 0 {
-		return b.Len() <= maxSize
-	}
-
-	remaining := maxSize - b.Len()
-	if len(value) <= remaining {
+// writeAbbreviated writes value cut to maxSize, marking the cut with valueLen -
+// the length of the value itself, which is not always the length of the text
+// being cut: an array reports how many elements it holds. This is the
+// appending form of abbreviateString, as Java's StringUtils.appendAbbreviate
+// is of StringUtils.abbreviate. The cut lands on a rune boundary: protobuf
+// rejects invalid UTF-8 string fields at marshal time, so a mid-rune cut would
+// fail the whole span carrying the annotation.
+func writeAbbreviated(b *bytes.Buffer, value string, valueLen int, maxSize int) {
+	if len(value) <= maxSize {
 		b.WriteString(value)
-		return true
+		return
 	}
-	if remaining <= 0 {
-		return false
+	cut := maxSize
+	for cut > 0 && !utf8.RuneStart(value[cut]) {
+		cut--
 	}
-
-	for remaining > 0 && !utf8.RuneStart(value[remaining]) {
-		remaining--
-	}
-	b.WriteString(value[:remaining])
-	return false
+	b.WriteString(value[:cut])
+	writeBindLengthMarker(b, valueLen)
 }
 
-// writeBindTruncationMarker appends the marker the Java agent's
-// BindValueUtils.appendLength writes: numValues is how many bind values the
-// statement had, not the byte limit - the limit is already known to every
-// reader, the count that went missing is not. It lands past the limit, as it
-// does in Java, rather than cutting back over what is already written: making
-// room inside a limit shorter than the marker would drop the marker itself and
-// leave the truncation with no trace at all.
-func writeBindTruncationMarker(b *bytes.Buffer, numValues int) {
+// The two markers report two different events, and both can appear in one
+// list: a value abbreviated with the last of the budget is followed by the
+// count marker on the next round.
+//
+// writeBindLengthMarker says one value was cut and how long it was, the marker
+// Java's StringUtils.appendAbbreviate writes. writeBindCountMarker says the
+// list itself ended early and how many values the statement had, the marker
+// Java's BindValueUtils.appendLength writes; the count is what a reader cannot
+// otherwise recover, since the limit is already known.
+//
+// Both land past the limit rather than cutting back over what is written:
+// making room inside a limit shorter than the marker would drop the marker
+// itself and leave the truncation with no trace at all.
+func writeBindLengthMarker(b *bytes.Buffer, valueLen int) {
+	b.WriteString("...(" + strconv.Itoa(valueLen) + ")")
+}
+
+func writeBindCountMarker(b *bytes.Buffer, numValues int) {
 	b.WriteString("...(" + strconv.Itoa(numValues) + ")")
 }
 

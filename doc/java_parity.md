@@ -31,6 +31,7 @@ one place that compares. The C++ agent keeps the same file at
 | SQL comment removal | `DefaultSqlNormalizer`, `DefaultJdbcOption` | **Adopted** — `SQL.RemoveComments` |
 | SQL cache size | `SimpleCacheFactory`, `profiler.jdbc.sqlcachesize` | **Adopted** — `SQL.CacheSize` sizes the SQL-ID, SQL-UID and raw SQL caches only; the api and error caches keep their fixed 1024, as Java's `newSimpleCache()` does. The C++ agent's key is `Sql.CacheSize`. |
 | SQL normalization input cap | `SqlCacheService`, `profiler.jdbc.maxsqllength`; C++ `kMaxNormalizedSqlLength` | **Aligned with C++ (value), drop policy** — see [below](#sql-normalization-input-cap--aligned-with-c-value-drop-policy) |
+| Bind value truncation markers | `BindValueUtils.bindValueToString`, `StringUtils.appendAbbreviate`, `ArrayUtils.abbreviate` | **Adopted** — see [below](#bind-value-truncation-markers--adopted) |
 | Exception chain rate limiter | `ExceptionChainSampler` | **Adopted** — `Error.NewThroughput` |
 | Percent sampling rate of zero | `PercentSamplerFactory.createSampler` | **Adopted** — see [below](#percent-rate-of-zero--adopted) |
 | URL statistics send unit | `UriStatCollectingJob`, `AsyncQueueingUriStatStorage` | **Adopted** — see [below](#url-statistics-send-unit--adopted) |
@@ -306,6 +307,65 @@ Java computes, and only its published text is abbreviated.
 **Cross-agent contract.** The C++ agent's fix for gap N1 must use the same value
 (1 MiB) and the same drop policy, so that an over-cap statement produces no SQL
 id / UID in either agent rather than a different one in each.
+
+---
+
+## Bind value truncation markers — adopted
+
+**Java.** `BindValueUtils.bindValueToString` joins the bind values of one
+statement with `", "` under a budget (`profiler.jdbc.maxsqlbindvaluesize`) and
+writes **two different markers**:
+
+```java
+for (int i = 0; i < length; i++) {
+    if (sb.length() >= limit) { appendLength(sb, length); break; }   // "...(value count)"
+    StringUtils.appendAbbreviate(sb, bindValue, limit);              // "...(this value's length)"
+    if (i < end) sb.append(", ");
+}
+```
+
+`appendAbbreviate` compares one value against the **whole** limit, not against
+what is left of it, so the limit is a budget checked *between* values rather
+than a cap on the output: the value that finds any budget left writes up to
+`limit` bytes of itself plus its own length marker, and the round after it
+closes the list with the count marker. Both markers can therefore appear in one
+list — `"12345, zzzzzzzzzz...(11)"` at a limit of 10 — and the separator, being
+appended after every value but the last, ends up in front of the count marker:
+`"1234, ...(2)"`. The number is the value's own length: bytes for a string
+(`StringUtils.abbreviate`), elements for a `byte[]` (`ArrayUtils.abbreviate`,
+which counts `bytes.length` and not the width of its decimal rendering).
+
+**C++.** `joinSqlBindValues` (`src/span_event.cpp`) reproduces both markers and
+the budget-between-values rule; `SpanEventTest.SetSqlQueryStopsTracingBindValueAtConfiguredLimit`
+and `SetSqlQueryAbbreviatesBindValueLikeJava` assert the golden values.
+
+**Go.** Same, in `writeBindValue` / `writeAbbreviatedBindValue`
+(`sql_driver.go`) and in the pgx v5 plugin's `writeArg`
+(`plugin/pgxv5/pgxv5.go`), which composes bind values itself. The golden cases
+the C++ suite asserts are locked byte for byte by
+`Test_writeBindValue_MatchesJavaBindValueJoin`. Go used to write the count
+marker for both events and to cut each value at what was left of the budget, so
+a 5000-byte CLOB at the default limit read `"...(1)"` — the number of values,
+where a reader wants the size of the value — and every value after the first was
+cut somewhere Java does not cut it.
+
+They are kept with the SQL driver tests rather than in
+`java_parity_lock_test.go`: that suite mirrors the C++ lock suite group for
+group, and the C++ agent keeps these cases with its span event tests.
+
+**Where Go has to decide for itself.** Java's bind values are already strings by
+the time they reach `BindValueUtils`; Go renders `driver.Value` itself. A value
+whose rendering is not the value — a `[]byte` or any other slice, which
+`fmt.Sprint` renders as `[1 2 3]` — reports its element count, the same choice
+Java's `ArrayUtils.abbreviate` makes, and is cut on the rendering's byte length,
+which is what actually bounds the annotation. Measuring the rendering instead
+would mean formatting every element of a value the cut exists to avoid
+formatting whole.
+
+The budget-between-values rule means the annotation can reach roughly twice
+`SQL.MaxBindValueSize` plus the markers; `maxBindValueAnnotationSize` is that
+worst case, and `SetSQL` reserves exactly it before applying its own bound, so
+a bind value list the driver composed as intended is never cut a second time.
 
 ---
 
