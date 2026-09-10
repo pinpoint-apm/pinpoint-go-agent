@@ -231,11 +231,20 @@ Use `SendMessageContext` rather than `WithContext` + `SendMessage`:
 
 | Plugin package | Instrumented package | Entry point |
 |---|---|---|
+| [plugin/slog](/plugin/slog) | [log/slog](https://pkg.go.dev/log/slog) | `NewHandler`, `NewAttrs` |
 | [plugin/logrus](/plugin/logrus) | [sirupsen/logrus](https://github.com/sirupsen/logrus) | `NewHook`, `NewField`, `WithField`, `NewEntry`, `NewLoggerEntry` |
 
-This one collects nothing on its own. It stamps the transaction and span id
-onto your log lines, which is what lets the Pinpoint UI jump from a span to the
+These collect nothing on their own. They stamp the transaction and span id onto
+your log lines, which is what lets the Pinpoint UI jump from a span to the
 matching log entry:
+
+```go
+logger := slog.New(ppslog.NewHandler(slog.NewJSONHandler(os.Stdout, nil)))
+logger.ErrorContext(ctx, "something failed")
+
+// or per-call, where the tracer is at hand
+logger.LogAttrs(ctx, slog.LevelError, "something failed", ppslog.NewAttrs(tracer)...)
+```
 
 ```go
 logger.AddHook(pplogrus.NewHook())
@@ -243,6 +252,14 @@ logger.AddHook(pplogrus.NewHook())
 // or per-entry
 logger.WithFields(pplogrus.WithField(tracer)).Error("something failed")
 ```
+
+The slog handler reads the tracer from the context the log call is given, so use
+the `*Context` methods of `slog.Logger`; a plain `logger.Error` passes
+`context.Background()` and gets no ids. Attributes and groups the application
+added are kept, and the ids stay at the top level under `WithGroup`.
+
+Another logging library needs no plugin: build the two fields yourself, as
+described in [Correlating your logs](instrument.md#correlating-your-logs).
 
 ---
 

@@ -590,8 +590,8 @@ useful constants:
 
 `LogTransactionIdKey` (`PtxId`) and `LogSpanIdKey` (`PspanId`) are the field
 names Pinpoint looks for when linking a span to your application logs. The
-[logrus plugin](plugin_guide.md#logging-integration) sets them for you; with
-any other logging library, add them yourself and call
+[slog and logrus plugins](plugin_guide.md#logging-integration) set them for
+you; with any other logging library, add them yourself and call
 `tracer.Span().SetLogging(pinpoint.Logged)` so the UI knows a log line exists
 for the span.
 

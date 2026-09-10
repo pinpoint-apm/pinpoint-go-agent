@@ -53,6 +53,7 @@ one place that compares. The C++ agent keeps the same file at
 | Unknown `Log.Level` value | `DefaultProfilerConfig` reads the level, but the Java agent's own log level is set by its log4j2 configuration, which has no runtime reload of this kind | **Aligned with C++** — an unknown level, at startup or on a reload, is logged at error and the level in effect is kept (`Logger::setLogLevel` in the C++ agent's `src/logging.cpp`). It used to reset the logger to info, so a typo in a reloaded file raised the log volume on a host that had lowered it. `fatal` and `panic`, which logrus would parse, are rejected as well since neither agent has them and both would silence warn and error |
 | Logging during configuration load | Java's agent log is log4j2, configured from its own file before the profiler config is read | **Aligned with C++ (two passes), diverges (stderr window)** — `Log.Output`/`Log.Level` are applied from the command line and environment before the config file is read, and again once it is, so the load's own warnings reach the configured output as they do in the C++ agent's `make_config`. The C++ agent installs its sink before parsing anything; here a flag parse error, a `ConfigOption` type error and - when the file alone names the output - the config file read error still go to stderr. The window is documented in `doc/troubleshooting.md` |
 | Agent log rotation | log4j2 `RollingFile` in the agent's `log4j2-agent.xml`: 100m per file, 5 backups, 7 days | **Aligned with C++ (key), diverges (defaults)** — `Log.MaxSize` (10 MB) and `Log.MaxBackups` (1, the C++ agent's `Log.MaxBackups` and `LOG_MAX_BACKUPS` default) bound the agent log to `MaxSize x (MaxBackups+1)` = 20 MB; Java's rolling policy allows about 600 MB. Deliberately not raised to Java's: the Java agent owns a JVM and its log directory, this one is a library inside an application whose operator did not ask for hundreds of MB of agent logs. Rotated files also expire after 30 days (Java: 7) and are not compressed; neither has a key because the C++ agent exposes none, and a Go-only key would be one more setting the ports disagree on. Both retention knobs are dynamic |
+| Log correlation with the application's log | `Log4jLoggingTransactionInfo`, `Log4j2LoggingTransactionInfo`, `LogbackLoggingTransactionInfo`, `profiler.{log4j,log4j2,logback}.logging.transactioninfo` | **Diverges (opt-in adapters)** — see [below](#log-correlation-with-the-applications-log--diverges)
 | Retrying a rejected metadata send | `MetadataGrpcDataSender`, `RetryResponseStreamObserver` | **Diverges (aligned with C++)** — see [below](#retrying-a-rejected-metadata-send--diverges) |
 | Span queue overflow policy | `SpanBatchGrpcDataSender` | **Same as Java** — a full send queue drops the oldest entry, as Java's default BATCH sender does (`queue.poll()` in `SpanBatchGrpcDataSender`); rejecting the newest is STREAM-mode-only behaviour, so head-drop is not a deviation |
 | Stat queue overflow policy | `GrpcDataSender` (`StatGrpcDataSender`), `AsyncQueueingExecutor` | **Diverges (head-drop)** — see [below](#stat-queue-overflow-policy--diverges) |
@@ -1463,6 +1464,54 @@ stand-in into the caller's struct: the entry is copied on every call.
 **C++.** The same policy, adopted first: `SpanImpl::recordUrlStat` keeps a
 non-empty pattern and refreshes the method and status code, and `ForceUrlStat()`
 / `pt_span_force_url_stat()` is the force overload.
+
+---
+
+## Log correlation with the application's log — diverges
+
+**Java.** With `profiler.log4j2.logging.transactioninfo=true` (and the log4j and
+logback equivalents) the agent instruments the logging library itself: it puts
+`PtxId` and `PspanId` into the MDC around every traced call, and it rewrites the
+configured log pattern so the two values appear in the output without the
+application editing its pattern. Nothing in the application changes.
+
+**This agent.** Opt-in adapters, one per logging library, under `plugin/`:
+`plugin/slog` (`NewHandler`, `NewAttrs`) and `plugin/logrus` (`NewHook`,
+`NewField` and friends). The application wraps its handler or registers the hook
+once; from then on the two keys are added to every record whose context carries
+a sampled tracer, and `SetLogging(Logged)` marks the span so the web UI knows a
+log line exists for it. The keys and the mark are the same ones Java writes, so
+the UI side is identical.
+
+The difference is bytecode instrumentation, not policy. Java can reach into a
+logging library the application already configured; Go cannot, so the injection
+point has to be something the application installs. `slog.Handler` and
+`logrus.Hook` are those points, and both are context-aware, which is why the
+adapters need no call-site change beyond passing the context the application
+already has.
+
+**Pattern replacement is not ported and has no Go counterpart.** A log4j2
+pattern is a configured string the agent can rewrite; neither `log/slog` nor
+logrus has an equivalent — the output shape is a `Handler` or a `Formatter`,
+that is, code. Wrapping the handler *is* the Go form of the same idea: the
+adapter adds the attributes and the application's own handler decides how they
+are rendered. There is nothing left to rewrite.
+
+`log/slog` was adapted first because it is the standard library and costs no
+dependency. zap and zerolog are not adapted yet, deliberately: each is a
+separate module with its own dependency, each has its own extension point
+(`zapcore.Core` for zap, a `zerolog.Hook` for zerolog), and neither is served by
+the slog adapter — zap's `slog` bridge covers only applications that already log
+through `slog`. They are worth adding on demand rather than up front, and the
+public keys make a hand-written injection a few lines in the meantime, as
+[Correlating your logs](instrument.md#correlating-your-logs) describes.
+
+**C++.** No counterpart at all, and not for a configuration reason: the C++
+agent exposes no way to read a span's transaction id and span id, so an
+application cannot write them into its own log even by hand. A public API
+returning them as strings (`Span::GetTransactionId()` / `GetSpanId()`) is the
+minimum that would make log correlation possible there. That is separate work in
+that agent, not a decision recorded here.
 
 ---
 
