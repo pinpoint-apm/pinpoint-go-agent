@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cast"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -1128,6 +1129,25 @@ func (config *Config) publish() {
 		sampleType = samplingTypeCounter
 	}
 	config.cfgMap[CfgSamplingType].value = sampleType
+
+	// Only the documented levels pass. logrus.ParseLevel also accepts fatal
+	// and panic, which would silence warn and error while looking like a
+	// valid setting. An unknown level keeps the level already published, or
+	// the default on the first publish - never info regardless of what was
+	// set, which is what the logger used to do. Logged at Error, not Warn,
+	// because the level being kept may well be error: at Warn the one line
+	// explaining the rejected value would be the one line the operator cannot
+	// see.
+	level := config.stagedString(CfgLogLevel)
+	if lvl, err := logrus.ParseLevel(level); err != nil || lvl < logrus.ErrorLevel {
+		current, ok := config.load().values[CfgLogLevel]
+		if !ok {
+			current = config.cfgMap[CfgLogLevel].defaultValue
+		}
+		Log("config").Errorf("%s = %q is not one of trace, debug, info, warn or error, keeping %v",
+			CfgLogLevel, level, current)
+		config.cfgMap[CfgLogLevel].value = current
+	}
 
 	// Both branches warn: the clamp used to be silent, so a config file asking
 	// for 4096 ran at 1024 with nothing to say why, and a negative value turned

@@ -75,10 +75,15 @@ func newTextFormatter() logrus.Formatter {
 }
 
 func (l *logrusLogger) setLevel(level string) {
+	// An unknown level keeps the current one, as the C++ agent does
+	// (Logger::setLogLevel in src/logging.cpp). Resetting to info instead
+	// turned a typo in a reloaded config file into more log output on a host
+	// that had just lowered the level to get less. publish already rejects
+	// such a value, so this is the guard for a caller that bypasses Config.
 	lvl, err := logrus.ParseLevel(level)
 	if err != nil {
-		Log("config").Errorf("invalid log level: %s", level)
-		lvl = logrus.InfoLevel
+		Log("config").Errorf("invalid log level: %s, keeping the current level", level)
+		return
 	}
 
 	// No SetReportCaller: every line goes through logEntry.log, so logrus would

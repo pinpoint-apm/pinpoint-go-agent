@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -718,6 +719,42 @@ func Test_reloadConfig_deprecatedLogLevelFiresTheLogLevelCallback(t *testing.T) 
 	// A second reload of the same file changes nothing, so nothing fires.
 	config.reloadConfig(cfgFileViper)
 	assert.Equal(t, 1, reloadedLevel)
+}
+
+// A typo in a reloaded Log.Level used to reset the logger to info. An operator
+// who lowered the level to error to get less output got more of it instead,
+// with one line to say why. The level - published and applied - stays put, for
+// the deprecated LogLevel alias as well.
+func Test_reloadConfig_unknownLogLevelKeepsCurrentLevel(t *testing.T) {
+	oldLevel := logger.defaultLogger.GetLevel()
+	t.Cleanup(func() { logger.defaultLogger.SetLevel(oldLevel) })
+
+	config, err := NewConfig(WithAppName("reloadApp"), WithLogLevel("error"))
+	require.NoError(t, err)
+	logger.setup(config)
+	config.AddReloadCallback([]string{CfgLogLevel}, func() { logger.reloadLevel(config) })
+	require.Equal(t, logrus.ErrorLevel, logger.defaultLogger.GetLevel())
+
+	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	cfgFileViper := viper.New()
+	cfgFileViper.SetConfigFile(cfgFile)
+	// The alias goes first: it is ignored once Log.Level has come from a file.
+	for _, body := range []string{"LogLevel: fatal\n", "Log:\n  Level: eror\n"} {
+		var buf bytes.Buffer
+		restore := captureLogAt(&buf, logrus.ErrorLevel)
+		require.NoError(t, os.WriteFile(cfgFile, []byte(body), 0o600))
+		config.reloadConfig(cfgFileViper)
+		restore()
+
+		assert.Equal(t, "error", config.String(CfgLogLevel), body)
+		assert.Equal(t, logrus.ErrorLevel, logger.defaultLogger.GetLevel(), body)
+		assert.Contains(t, buf.String(), "keeping error", body)
+	}
+
+	// A valid level still reloads.
+	require.NoError(t, os.WriteFile(cfgFile, []byte("Log:\n  Level: debug\n"), 0o600))
+	config.reloadConfig(cfgFileViper)
+	assert.Equal(t, logrus.DebugLevel, logger.defaultLogger.GetLevel())
 }
 
 func Test_reloadConfig_recoversCallbackPanic(t *testing.T) {
