@@ -1476,19 +1476,29 @@ configured log pattern so the two values appear in the output without the
 application editing its pattern. Nothing in the application changes.
 
 **This agent.** Opt-in adapters, one per logging library, under `plugin/`:
-`plugin/slog` (`NewHandler`, `NewAttrs`) and `plugin/logrus` (`NewHook`,
-`NewField` and friends). The application wraps its handler or registers the hook
-once; from then on the two keys are added to every record whose context carries
-a sampled tracer, and `SetLogging(Logged)` marks the span so the web UI knows a
-log line exists for it. The keys and the mark are the same ones Java writes, so
-the UI side is identical.
+`plugin/slog` (`NewHandler`, `NewAttrs`), `plugin/logrus` (`NewHook`, `NewField`
+and friends) and `plugin/zap` (`NewField`, `NewLogger`). The application wraps
+its handler, registers the hook or derives its logger once; from then on the two
+keys are added to the log line, and `SetLogging(Logged)` marks the span so the
+web UI knows a log line exists for it. The keys and the mark are the same ones
+Java writes, so the UI side is identical.
 
 The difference is bytecode instrumentation, not policy. Java can reach into a
 logging library the application already configured; Go cannot, so the injection
 point has to be something the application installs. `slog.Handler` and
-`logrus.Hook` are those points, and both are context-aware, which is why the
-adapters need no call-site change beyond passing the context the application
+`logrus.Hook` are those points, and both are context-aware, which is why those
+two adapters need no call-site change beyond passing the context the application
 already has.
+
+**zap has no automatic form, and that is the library's constraint, not a
+decision.** `zapcore.Core.Write` receives a `zapcore.Entry` and its fields, and
+no `context.Context` reaches it anywhere on the path — so a wrapped `Core` has
+nothing to read a tracer from. The ids are therefore attached where the tracer
+is known: `NewField(tracer)` for a single call, or `NewLogger(logger, tracer)`
+for a logger derived once per request. This is the same shape as logrus's
+`NewField`/`NewLoggerEntry`, which is why it is not a separate design. zap's
+`Sugar()` is reached from an instrumented `*zap.Logger` rather than instrumented
+itself, since a `*zap.SugaredLogger` carries no fields of its own.
 
 **Pattern replacement is not ported and has no Go counterpart.** A log4j2
 pattern is a configured string the agent can rewrite; neither `log/slog` nor
@@ -1498,12 +1508,12 @@ adapter adds the attributes and the application's own handler decides how they
 are rendered. There is nothing left to rewrite.
 
 `log/slog` was adapted first because it is the standard library and costs no
-dependency. zap and zerolog are not adapted yet, deliberately: each is a
-separate module with its own dependency, each has its own extension point
-(`zapcore.Core` for zap, a `zerolog.Hook` for zerolog), and neither is served by
-the slog adapter — zap's `slog` bridge covers only applications that already log
-through `slog`. They are worth adding on demand rather than up front, and the
-public keys make a hand-written injection a few lines in the meantime, as
+dependency; zap followed as the most widely used third-party logger, in its own
+module so that applications not using it pay nothing. zerolog is not adapted
+yet, pending demand rather than difficulty: a `zerolog.Hook` would have an
+automatic form, since `Event.GetCtx()` returns the context of an event started
+through `log.Ctx` or `Event.Ctx`. The public keys make a hand-written injection
+a few lines in the meantime, as
 [Correlating your logs](instrument.md#correlating-your-logs) describes.
 
 **C++.** No counterpart at all, and not for a configuration reason: the C++

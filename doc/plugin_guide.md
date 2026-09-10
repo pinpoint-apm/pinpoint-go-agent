@@ -233,6 +233,7 @@ Use `SendMessageContext` rather than `WithContext` + `SendMessage`:
 |---|---|---|
 | [plugin/slog](/plugin/slog) | [log/slog](https://pkg.go.dev/log/slog) | `NewHandler`, `NewAttrs` |
 | [plugin/logrus](/plugin/logrus) | [sirupsen/logrus](https://github.com/sirupsen/logrus) | `NewHook`, `NewField`, `WithField`, `NewEntry`, `NewLoggerEntry` |
+| [plugin/zap](/plugin/zap) | [uber-go/zap](https://github.com/uber-go/zap) | `NewField`, `NewLogger` |
 
 These collect nothing on their own. They stamp the transaction and span id onto
 your log lines, which is what lets the Pinpoint UI jump from a span to the
@@ -253,10 +254,22 @@ logger.AddHook(pplogrus.NewHook())
 logger.WithFields(pplogrus.WithField(tracer)).Error("something failed")
 ```
 
+```go
+logger.Error("something failed", ppzap.NewField(tracer)...)
+
+// or once per request
+logger := ppzap.NewLogger(zap.L(), tracer)
+```
+
 The slog handler reads the tracer from the context the log call is given, so use
 the `*Context` methods of `slog.Logger`; a plain `logger.Error` passes
 `context.Background()` and gets no ids. Attributes and groups the application
 added are kept, and the ids stay at the top level under `WithGroup`.
+
+zap has no automatic form: it passes no `context.Context` to `zapcore.Core`, so
+there is nothing for a wrapper to read and the span has to be named where the
+logger is derived. A `*zap.SugaredLogger` is derived from an instrumented
+`*zap.Logger` — `ppzap.NewLogger(logger, tracer).Sugar()`.
 
 Another logging library needs no plugin: build the two fields yourself, as
 described in [Correlating your logs](instrument.md#correlating-your-logs).
