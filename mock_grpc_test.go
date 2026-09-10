@@ -35,6 +35,7 @@ func newTestAgent(config *Config) *agent {
 	}
 	a.enable.Store(true)
 	sqlCacheSize := config.Int(CfgSQLCacheSize)
+	a.sqlCacheLengthLimit = config.Int(CfgSQLCacheLengthLimit)
 	a.errorCache = newMetaCache[string, int32](cacheSize)
 	a.sqlCache = newMetaCache[string, int32](sqlCacheSize)
 	a.sqlUidCache = newMetaCache[string, []byte](sqlCacheSize)

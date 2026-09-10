@@ -70,6 +70,11 @@ type agent struct {
 	apiCache    *metaCache[apiCacheKey, int32]
 	apiIdGen    idGen
 
+	// sqlCacheLengthLimit is SQL.CacheLengthLimit read once in NewAgent, like
+	// SQL.CacheSize: the key is fixed, so a reload can neither leave over-limit
+	// entries in the caches nor turn a cached statement into one re-sent per use.
+	sqlCacheLengthLimit int
+
 	// asyncIdGen numbers this agent's async chunks. Like the ids above it is
 	// reported with the agent's own transaction ids, so it restarts per agent.
 	asyncIdGen atomic.Int32
@@ -335,6 +340,7 @@ func NewAgent(config *Config) (Agent, error) {
 	// cacheSize, like Java's SimpleCacheFactory.newSimpleCache(). NewConfig
 	// has already confined the value to [1, maxSqlCacheSize].
 	sqlCacheSize := config.Int(CfgSQLCacheSize)
+	agent.sqlCacheLengthLimit = config.Int(CfgSQLCacheLengthLimit)
 	agent.errorCache = newMetaCache[string, int32](cacheSize)
 	agent.sqlCache = newMetaCache[string, int32](sqlCacheSize)
 	agent.sqlUidCache = newMetaCache[string, []byte](sqlCacheSize)
@@ -1457,7 +1463,7 @@ func abbreviateString(str string, length int) string {
 // length the application generates, since the key is the untruncated text; the
 // UID cache is bounded by the limit instead.
 func (agent *agent) sqlCacheable(sql string) bool {
-	return len(sql) < agent.config.load().sqlCacheLengthLimit
+	return len(sql) < agent.sqlCacheLengthLimit
 }
 
 func (agent *agent) cacheSql(sql string) int32 {
@@ -1984,6 +1990,7 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 	// cacheSize, like Java's SimpleCacheFactory.newSimpleCache(). NewConfig
 	// has already confined the value to [1, maxSqlCacheSize].
 	sqlCacheSize := config.Int(CfgSQLCacheSize)
+	agent.sqlCacheLengthLimit = config.Int(CfgSQLCacheLengthLimit)
 	agent.errorCache = newMetaCache[string, int32](cacheSize)
 	agent.sqlCache = newMetaCache[string, int32](sqlCacheSize)
 	agent.sqlUidCache = newMetaCache[string, []byte](sqlCacheSize)

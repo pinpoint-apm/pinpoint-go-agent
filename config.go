@@ -297,7 +297,7 @@ func initConfig() {
 	AddConfig(CfgSQLTraceQueryStat, CfgBool, false, true)
 	AddConfig(CfgSQLEnableRawSqlCache, CfgBool, true, true)
 	AddConfig(CfgSQLCacheSize, CfgInt, defaultSqlCacheSize, false)
-	AddConfig(CfgSQLCacheLengthLimit, CfgInt, defaultSqlCacheLengthLimit, true)
+	AddConfig(CfgSQLCacheLengthLimit, CfgInt, defaultSqlCacheLengthLimit, false)
 	AddConfig(CfgSQLCacheExpireHours, CfgInt, defaultSqlCacheExpireHours, false)
 	AddConfig(CfgSQLErrorCount, CfgInt, defaultSqlErrorCount, true)
 	AddConfig(CfgSQLRemoveComments, CfgBool, true, false)
@@ -399,7 +399,6 @@ type configSnapshot struct {
 	sqlTraceRollback     bool              // CfgSQLTraceRollback
 	sqlTraceQueryStat    bool              // CfgSQLTraceQueryStat
 	sqlEnableRawSqlCache bool              // CfgSQLEnableRawSqlCache
-	sqlCacheLengthLimit  int               // CfgSQLCacheLengthLimit
 	sqlErrorCount        int               // CfgSQLErrorCount
 	sqlRemoveComments    bool              // CfgSQLRemoveComments
 	spanEventChunkSize   int               // CfgSpanEventChunkSize
@@ -1218,9 +1217,10 @@ func (config *Config) publish() {
 		config.cfgMap[CfgSQLMaxBindValueSize].value = 0
 	}
 
-	// Dynamic key. Only -1 turns the bypass off and caches every SQL, the same
-	// escape hatch as the Java agent's bypassLength of -1 and the only unlimited
-	// value the C++ agent accepts. Any other negative value is a typo and
+	// Fixed key, read once in NewAgent like SQL.CacheSize; the C++ agent treats
+	// it as fixed too. Only -1 turns the bypass off and caches every SQL, the
+	// same escape hatch as the Java agent's bypassLength of -1 and the only
+	// unlimited value the C++ agent accepts. Any other negative value is a typo and
 	// recovers the default, the rule Span.MaxCallStackDepth already follows.
 	if limit := config.stagedInt(CfgSQLCacheLengthLimit); limit == -1 {
 		config.cfgMap[CfgSQLCacheLengthLimit].value = math.MaxInt32
@@ -1365,7 +1365,6 @@ func (config *Config) publish() {
 		sqlTraceRollback:     cast.ToBool(values[CfgSQLTraceRollback]),
 		sqlTraceQueryStat:    cast.ToBool(values[CfgSQLTraceQueryStat]),
 		sqlEnableRawSqlCache: cast.ToBool(values[CfgSQLEnableRawSqlCache]),
-		sqlCacheLengthLimit:  cast.ToInt(values[CfgSQLCacheLengthLimit]),
 		sqlErrorCount:        cast.ToInt(values[CfgSQLErrorCount]),
 		sqlRemoveComments:    cast.ToBool(values[CfgSQLRemoveComments]),
 		spanEventChunkSize:   cast.ToInt(values[CfgSpanEventChunkSize]),

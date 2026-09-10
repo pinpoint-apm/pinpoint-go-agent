@@ -449,6 +449,33 @@ func Test_agent_SQLCachesBypassKeysOverLengthLimit(t *testing.T) {
 	})
 }
 
+// SQL.CacheLengthLimit is fixed, read once in NewAgent like SQL.CacheSize.
+// Lowering it after construction must change nothing: the entries already
+// cached stay, and a statement within the limit the agent was built with keeps
+// hitting the cache instead of re-sending its metadata on every use.
+func Test_agent_SQLCacheLengthLimitIsFixedAtConstruction(t *testing.T) {
+	sql := strings.Repeat("x", 1000)
+	cfg := defaultConfig()
+	a := newTestAgent(cfg)
+	assert.Equal(t, defaultSqlCacheLengthLimit, a.sqlCacheLengthLimit)
+
+	a.cacheSqlUid(sql)
+	a.normalizeSql(sql)
+	require.Len(t, a.metaChan, 1)
+
+	cfg.Set(CfgSQLCacheLengthLimit, 10)
+	assert.Equal(t, 10, cfg.Int(CfgSQLCacheLengthLimit), "the config itself still publishes the value")
+	assert.True(t, a.sqlCacheable(sql), "the agent keeps the limit it was built with")
+
+	a.cacheSqlUid(sql)
+	a.normalizeSql(sql)
+	assert.Len(t, a.metaChan, 1, "a cached statement must not be re-sent after a runtime Set")
+	_, cached := a.sqlUidCache.peek(sql)
+	assert.True(t, cached)
+	_, cached = a.rawSqlCache.peek(sql)
+	assert.True(t, cached)
+}
+
 // The SQL-ID cache is exempt from SQL.CacheLengthLimit: its ids come from an
 // agent-local sequence, so a bypassed statement would burn a fresh id - and a
 // fresh sqlMeta - on every execution, and the same query would show up in the UI

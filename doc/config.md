@@ -913,7 +913,6 @@ This corresponds to the Java agent's `profiler.jdbc.sqlcachelengthlimit`.
 * type: int
 * default: 2048
 * unit: bytes
-* dynamic
 
 ### SQL.CacheExpireHours
 SQL.CacheExpireHours option sets how long a SQL UID stays in the SQL-UID cache
@@ -1400,7 +1399,7 @@ Two things make a reload not happen, and both are easy to miss:
 |---|---|
 | Sampling | `Sampling.Type`, `Sampling.CounterRate`, `Sampling.PercentRate`, `Sampling.NewThroughput`, `Sampling.ContinueThroughput` |
 | Span limits and error marking | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence`, `Span.EventChunkSize`, `Span.IgnoreErrors`, `Span.ErrorMark`, `Span.ErrorMarkExclude` |
-| SQL | `SQL.TraceBindValue`, `SQL.MaxBindValueSize`, `SQL.TraceCommit`, `SQL.TraceRollback`, `SQL.TraceQueryStat`, `SQL.EnableRawSqlCache`, `SQL.CacheLengthLimit`, `SQL.ErrorCount` |
+| SQL | `SQL.TraceBindValue`, `SQL.MaxBindValueSize`, `SQL.TraceCommit`, `SQL.TraceRollback`, `SQL.TraceQueryStat`, `SQL.EnableRawSqlCache`, `SQL.ErrorCount` |
 | Logging | `Log.Level` (and its deprecated alias `LogLevel`), `Log.Output`, `Log.MaxSize`, `Log.MaxBackups` |
 | Errors | `Error.TraceCallStack`, `Error.CallStackDepth`, `Error.NewThroughput`, `Error.MaxChainDepth` |
 | HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError`, `Http.Server.ProxyUserHeaderNames` |
@@ -1415,11 +1414,14 @@ the span transport (`Span.QueueSize`, `Span.Batch.Enable`, `Span.BatchSize`,
 `Span.BatchFlushInterval`, `Span.BatchCollectDeadline`,
 `Span.BatchMaxConcurrentRequests`), `Stat.*`,
 `Http.UrlStat.QueueSize`, `IsContainerEnv`, `ConfigFile`, `ActiveProfile`,
-`SQL.RemoveComments`, `SQL.CacheSize`, `SQL.CacheExpireHours` and `Enable`.
+`SQL.RemoveComments`, `SQL.CacheSize`, `SQL.CacheLengthLimit`,
+`SQL.CacheExpireHours` and `Enable`.
 
-`SQL.CacheSize` and `SQL.CacheExpireHours` are read once when the agent builds
-its SQL caches (`NewAgent`); the C++ agent treats them as fixed for the same
-reason.
+`SQL.CacheSize`, `SQL.CacheLengthLimit` and `SQL.CacheExpireHours` are read once
+when the agent builds its SQL caches (`NewAgent`); the C++ agent treats them as
+fixed for the same reason. Lowering `SQL.CacheLengthLimit` at runtime would leave
+the longer statements already cached in place and turn every statement now past
+the limit into one re-registered on each execution.
 
 `SQL.RemoveComments` is restart-only for a reason of its own: the normalized SQL
 is the SQL id cache key and the SQL UID hash input, so a mid-process change would

@@ -31,10 +31,8 @@ var benchLongSQL = func() string {
 var benchHugeLiteralSQL = "SELECT '" + strings.Repeat("x", maxSqlNormalizeLength-16) + "'"
 
 func newNormalizeTestAgent() *agent {
-	// A real config, not a nil one: normalizeSql reads SQL.CacheLengthLimit off
-	// the published snapshot to decide whether to memoize at all, so the
-	// benchmarks have to pay for that read the way production does.
-	a := &agent{config: defaultConfig()}
+	cfg := defaultConfig()
+	a := &agent{config: cfg, sqlCacheLengthLimit: cfg.Int(CfgSQLCacheLengthLimit)}
 	a.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize)
 	return a
 }
