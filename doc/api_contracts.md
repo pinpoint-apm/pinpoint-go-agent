@@ -81,7 +81,7 @@ returns `NoopTracer()`. The goroutine runs correctly and records nothing.
 final chunk and its URL statistics. Nothing recorded after it is sent.
 
 ```go
-tracer := agent.NewSpanTracerWithReader("HTTP Server", r.URL.Path, r.Header)
+tracer := agent.NewSpanTracerWithReader("HTTP Server", r.URL.Path, pinpoint.HttpHeaderReader(r.Header))
 defer tracer.EndSpan()          // exactly once, on every path
 
 span := tracer.Span()
@@ -448,8 +448,8 @@ message object.
 | Header | Requirement |
 |---|---|
 | `Pinpoint-TraceID` | present **and parseable** as `agentId^startTime^sequence` |
-| `Pinpoint-SpanID` | present (any value) |
-| `Pinpoint-pSpanID` | present (any value) |
+| `Pinpoint-SpanID` | present (any value, including an empty one) |
+| `Pinpoint-pSpanID` | present (any value, including an empty one) |
 
 Anything else starts a **new transaction**: a fresh transaction id, a fresh span
 id, `parentSpanId = -1`, and none of the other inbound `Pinpoint-` headers read.
@@ -475,6 +475,60 @@ The two span id headers are checked for **presence only**, as Java does: a value
 that will not parse still describes a hop, and Java keeps it as `SpanId.NULL`
 (`SpanId.java:27`) via `NumberUtils.parseLong`. Where this agent parses one of
 them differently from Java, see [java_parity.md](java_parity.md).
+
+A header **present with an empty value** is present. Java tests the header for
+`null` alone (`DefaultTraceHeaderReader.java:55`) and the C++ agent decides on
+`has_value()`, so both continue the trace across a proxy that blanks
+`Pinpoint-SpanID` rather than dropping it.
+
+The carrier answers that question. `DistributedTracingContextReader.Get` returns
+**`(string, bool)`**: the value, and whether the carrier holds the key at all.
+A header held with an empty value is `("", true)` and continues the trace; one
+the carrier does not hold is `("", false)` and starts a new transaction.
+
+| Carrier | Presence from |
+|---|---|
+| `net/http.Header`, via `pinpoint.HttpHeaderReader` | the header map |
+| gRPC metadata (`plugin/grpc`) | `metadata.ValueFromIncomingContext` |
+| fasthttp request header, via `ppfasthttp.HeaderReader` | `RequestHeader.PeekAll` |
+| sarama record headers (`plugin/sarama`, `plugin/sarama-IBM`) | the header slice |
+| kratos `transport.Header` (`plugin/kratos`, `plugin/kratosv3`) | **nothing** - value only |
+| `noopDistributedTracingContextReader` | **nothing** - every key absent |
+
+A carrier over a source that hands out a value and nothing else - kratos's
+`transport.Header` is the one in this repo - reports what it has as present and
+an empty value as absent (`v, v != ""`). Such a request starts a new
+transaction, exactly as it did before `Get` reported presence. Presence can only
+come from a source that has it.
+
+`Pinpoint-TraceID` does not follow this: it must **parse**, so a blank trace id
+starts a new transaction even from a carrier that reports it as present. It
+names no transaction to continue - see
+[java_parity.md](java_parity.md#malformed-inbound-trace-id--diverges).
+
+#### Implementing a carrier
+
+`Get` returning `(string, bool)` is a **breaking change**: a carrier written
+against the old `Get(key string) string` no longer satisfies
+`DistributedTracingContextReader` and fails to compile. Two shapes to update to:
+
+```go
+// A source that can report presence.
+func (c myCarrier) Get(key string) (string, bool) {
+    v, ok := c.header[key]
+    return v, ok
+}
+
+// A source that hands out a value only: the pre-existing reading.
+func (c myCarrier) Get(key string) (string, bool) {
+    v := c.header.Get(key)
+    return v, v != ""
+}
+```
+
+`net/http.Header` is not a carrier itself any more - a stdlib type cannot carry
+the second result - so wrap it in `pinpoint.HttpHeaderReader(req.Header)`. The
+http plugin's `NewHttpServerTracer` already does.
 
 The same decision drives **both** the sampler choice (`NewSpanTracerWithReader`)
 and the context extraction (`Extract`), through one function, `continueHeaders`.

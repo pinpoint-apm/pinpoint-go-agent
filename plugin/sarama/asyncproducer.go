@@ -391,7 +391,7 @@ func saveAsyncProducerTracer(wrapped *asyncProducer, span pinpoint.Tracer, id st
 
 func endAsyncProducerTracer(wrapped *asyncProducer, msg *sarama.ProducerMessage, err error) {
 	headers := &distributedTracingContextWriterProducer{msg: msg}
-	if id := headers.Get(HeaderAsyncSpanId); id != "" {
+	if id, _ := headers.Get(HeaderAsyncSpanId); id != "" {
 		wrapped.spansLock.Lock()
 		span, ok := wrapped.spans[id]
 		delete(wrapped.spans, id)

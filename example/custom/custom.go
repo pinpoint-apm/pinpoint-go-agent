@@ -41,7 +41,7 @@ func externalRequest(tracer pinpoint.Tracer) int {
 }
 
 func doHandle(w http.ResponseWriter, r *http.Request) {
-	tracer := pinpoint.GetAgent().NewSpanTracerWithReader("HTTP Server", r.URL.Path, r.Header)
+	tracer := pinpoint.GetAgent().NewSpanTracerWithReader("HTTP Server", r.URL.Path, pinpoint.HttpHeaderReader(r.Header))
 	defer tracer.EndSpan()
 
 	span := tracer.Span()

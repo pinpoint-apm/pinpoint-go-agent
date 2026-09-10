@@ -48,7 +48,7 @@ The following is an example of creating a span from http server request handler:
 
 ``` go
 func doHandle(w http.ResponseWriter, r *http.Request) {
-    tracer = pinpoint.GetAgent().NewSpanTracerWithReader("HTTP Server", r.URL.Path, r.Header)
+    tracer = pinpoint.GetAgent().NewSpanTracerWithReader("HTTP Server", r.URL.Path, pinpoint.HttpHeaderReader(r.Header))
     defer tracer.EndSpan()
 
     span := tracer.Span()
@@ -75,7 +75,7 @@ The SpanEventRecorder and Annotation interface allow trace data to be recorded i
 
 ``` go
 func doHandle(w http.ResponseWriter, r *http.Request) {
-    tracer := pinpoint.GetAgent().NewSpanTracerWithReader("HTTP Server", r.URL.Path, r.Header)
+    tracer := pinpoint.GetAgent().NewSpanTracerWithReader("HTTP Server", r.URL.Path, pinpoint.HttpHeaderReader(r.Header))
     defer tracer.EndSpan()
 
     span := tracer.Span()
@@ -105,6 +105,9 @@ Most of these data are sent from the previous node, usually packed in the reques
 Pinpoint Go Agent provides two functions below to read and write these data.
 
 * **Tracer.Extract**(reader DistributedTracingContextReader) extracts distributed tracing headers from the reader.
+  The reader's **Get**(key) returns the header value and whether the carrier holds the key at all;
+  a header carried with an empty value is reported as present and continues the trace.
+  A `net/http.Header` is wrapped with **pinpoint.HttpHeaderReader**() to be used as a reader.
 * **Tracer.Inject**(writer DistributedTracingContextWriter) injects distributed tracing headers to the writer.
 
 Using **Agent.NewSpanTracerWithReader()**, you can create a span that continues the transaction started from previous node.

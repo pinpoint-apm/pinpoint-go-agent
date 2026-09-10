@@ -59,11 +59,13 @@ type distributedTracingContextReaderMD struct {
 	ctx context.Context
 }
 
-func (m distributedTracingContextReaderMD) Get(key string) string {
+// Get reports a metadata key carried with an empty value as present: the trace
+// continues across a hop whose Pinpoint-SpanID was blanked rather than dropped.
+func (m distributedTracingContextReaderMD) Get(key string) (string, bool) {
 	if v := metadata.ValueFromIncomingContext(m.ctx, loweredKey(key)); len(v) > 0 {
-		return v[0]
+		return v[0], true
 	}
-	return ""
+	return "", false
 }
 
 // loweredHeaderKeys pre-lowers the pinpoint header names once: metadata keys

@@ -43,7 +43,7 @@ one place that compares. The C++ agent keeps the same file at
 | Exception chain during overflow | `AbstractRecorder.recordException`, `DefaultExceptionRecorder` | **Diverges** — see [below](#exception-chain-during-overflow--diverges) |
 | Span event sequence reservation | `DefaultCallStack.push` | **Aligned with C++** — see [below](#span-event-sequence-reservation--aligned-with-c) |
 | Ending a span event other than the innermost one | `DefaultTrace.traceBlockEnd(int stackId)`; C++ `Span::endSpanEvent(SpanEvent*)` | **Diverges (opt-in target)** — see [below](#ending-a-span-event-other-than-the-innermost-one--diverges) |
-| Inbound trace continuation | `DefaultTraceHeaderReader.read`, `RequestTraceReader` | **Adopted** — see [below](#inbound-trace-continuation--adopted) |
+| Inbound trace continuation | `DefaultTraceHeaderReader.read`, `RequestTraceReader` | **Adopted**, incl. blank span id headers where the carrier can report them — see [below](#inbound-trace-continuation--adopted) |
 | Proxy request headers | `DefaultProxyRequestRecorder`, `ApacheRequestParser`, `NginxRequestParser`, `AppRequestParser`, `UserRequestParser` | **Adopted** — see [below](#proxy-request-headers--adopted) |
 | Acceptor host fallback | `ServerRequestRecorder.recordParentInfo` | **Adopted** — see [below](#acceptor-host-fallback--adopted) |
 | Malformed inbound `Pinpoint-SpanID` | `DefaultTraceHeaderReader`, `NumberUtils.parseLong` | **Diverges** — see [below](#malformed-inbound-span-id--diverges) |
@@ -830,6 +830,41 @@ choice (`agent.go`, `NewSpanTracerWithReader`) and `Extract` call it, so the two
 cannot disagree about which trace a request belongs to. The check for the two
 span id headers is presence-only, matching Java; `Pinpoint-Flags` is not part of
 the decision and still defaults to `0`.
+
+**Blank span id headers — converged on Java and C++.** Java tests the header for
+`null` alone (`DefaultTraceHeaderReader.java:55`) and the C++ agent decides on
+`has_value()`, so a header **present with an empty value** continues the trace
+in both. Go read it as absent, because
+`DistributedTracingContextReader.Get` returns `""` for either, and split the
+trace at any proxy or gateway that blanks a header instead of dropping it — the
+same deployment then behaved one way through a Go agent and another through a
+Java or C++ one, with nothing in the trace to point at the proxy.
+
+`continueHeaders` now asks the carrier, through a
+`DistributedTracingContextReader.Get` that returns `(string, bool)` — the value,
+and whether the carrier holds the key at all. A blank header a carrier reports
+as present continues the trace, matching Java and C++. The carriers in this repo
+that hold the information report it: `net/http.Header` (through
+`pinpoint.HttpHeaderReader`, since a stdlib type cannot carry the second
+result), the gRPC metadata reader, `ppfasthttp.HeaderReader`, and the sarama
+consumer and producer record-header readers.
+
+**A carrier without the information keeps the old behavior.** Over a source that
+hands out a value and nothing else — kratos's `transport.Header`, and the noop
+carrier that holds nothing at all — the carrier reports an empty value as absent
+(`v, v != ""`) and the request starts a new transaction, exactly as before.
+Convergence therefore reaches the carriers that can tell absent from blank, and
+nothing that could not is asked to.
+
+**Upgrade note — breaking.** `Get` gained a second result, so a
+`DistributedTracingContextReader` implemented outside this repo no longer
+compiles until it returns `(string, bool)`, and `net/http.Header` is no longer a
+carrier on its own — wrap it in `pinpoint.HttpHeaderReader`. See
+[api_contracts.md](api_contracts.md#implementing-a-carrier) for both shapes.
+
+`Pinpoint-TraceID` is unaffected: it must parse, so a blank trace id starts a
+new transaction even from a carrier that reports it present — see [malformed
+inbound trace id](#malformed-inbound-trace-id--diverges).
 
 **Upgrade note — breaking.** A peer that sends only `Pinpoint-TraceID` now
 starts a **new transaction** where it used to continue one. Calls from such a

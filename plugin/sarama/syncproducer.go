@@ -34,8 +34,14 @@ type distributedTracingContextWriterProducer struct {
 // injection of this plugin.
 func isNested(msg *sarama.ProducerMessage) bool {
 	w := distributedTracingContextWriterProducer{msg: msg}
-	return w.Get(pinpoint.HeaderTraceId) != "" || w.Get(pinpoint.HeaderSampled) != "" ||
-		w.Get(HeaderAsyncSpanId) != ""
+	// Presence, not a non-empty value: a header this plugin injected is a
+	// context already present even if the value it carries is empty.
+	for _, key := range []string{pinpoint.HeaderTraceId, pinpoint.HeaderSampled, HeaderAsyncSpanId} {
+		if _, ok := w.Get(key); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // newProducerHeaderWriter prepares msg for injection: the header slice is grown
@@ -59,13 +65,15 @@ func (m *distributedTracingContextWriterProducer) Set(key string, value string) 
 	})
 }
 
-func (m *distributedTracingContextWriterProducer) Get(key string) string {
+// Get reports a record header written with an empty value as present, as the
+// consumer reader does: the same message headers are read back here.
+func (m *distributedTracingContextWriterProducer) Get(key string) (string, bool) {
 	for _, h := range m.msg.Headers {
 		if string(h.Key) == key {
-			return string(h.Value)
+			return string(h.Value), true
 		}
 	}
-	return ""
+	return "", false
 }
 
 // SendMessageContext produces a given message with tracer context.

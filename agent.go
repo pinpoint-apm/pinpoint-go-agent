@@ -843,7 +843,7 @@ func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string, re
 		return NoopTracer()
 	}
 
-	sampled := reader.Get(HeaderSampled)
+	sampled, _ := reader.Get(HeaderSampled)
 	if sampled == "s0" {
 		agent.stats.incrUnSampleCont()
 		return newUnSampledSpan(agent, rpcName)

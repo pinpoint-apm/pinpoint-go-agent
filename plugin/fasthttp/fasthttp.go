@@ -58,7 +58,8 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 		method := string(ctx.Method())
 		requestHeader := RequestHeader{&ctx.Request.Header}
 		status := http.StatusOK
-		tracer := pphttp.NewHttpServerTracerWithReader(method, string(ctx.Path()), serverName, requestHeader)
+		tracer := pphttp.NewHttpServerTracerWithReader(method, string(ctx.Path()), serverName,
+			HeaderReader{&ctx.Request.Header})
 		// Record straight from the fasthttp request: converting it to a
 		// net/http request (fasthttpadaptor.ConvertRequest) materialized the
 		// full header map, parsed the URL and buffered the body per sampled
@@ -151,6 +152,32 @@ type RequestHeader struct {
 
 func (h RequestHeader) Get(key string) string {
 	return string(h.Hdr.Peek(key))
+}
+
+// HeaderReader adapts a *fasthttp.RequestHeader to the tracing carrier
+// pinpoint.DistributedTracingContextReader, whose Get reports whether the
+// header was carried at all. RequestHeader above keeps its plain Get: the
+// pphttp recorder reads it through an interface{ Get(string) string }
+// assertion, which a two-result Get would silently stop matching.
+type HeaderReader struct {
+	Hdr *fasthttp.RequestHeader
+}
+
+// Get reports a header carried with an empty value as present, so a hop whose
+// Pinpoint-SpanID a proxy blanked instead of dropping still continues the
+// trace.
+//
+// Presence has to come from PeekAll, not from Peek: fasthttp stores a value
+// set to "" as an empty slice or as a nil one depending on whether the
+// header's slot was reused, so a nil check on Peek reports the same header as
+// present on one request and absent on the next. PeekAll returns one entry per
+// stored header either way. It allocates that slice; the tracing context asks
+// on the header decision this exists to get right.
+func (h HeaderReader) Get(key string) (string, bool) {
+	if v := h.Hdr.PeekAll(key); len(v) > 0 {
+		return string(v[0]), true
+	}
+	return "", false
 }
 
 // Values reports a header the request does not carry as absent, the way

@@ -899,17 +899,47 @@ func TestNewHttpServerTracer_ContinuesTheCallersTransaction(t *testing.T) {
 		"the server span must join the caller's transaction")
 }
 
+// A proxy that blanks Pinpoint-SpanID instead of dropping it must not split the
+// trace: net/http.Header keeps the header in its map, so the agent can tell it
+// from an absent one and continues the caller's transaction. This is the path
+// req.Header takes, and the one a blanking gateway actually breaks.
+func TestNewHttpServerTracer_BlankSpanIdHeaderContinuesTheTrace(t *testing.T) {
+	usePluginConfig(t)
+
+	caller := pinpoint.GetAgent().NewSpanTracer("HTTP Server", "/caller")
+	caller.NewSpanEvent("call")
+	outgoing := httptest.NewRequest(http.MethodGet, "/callee", nil)
+	caller.Inject(outgoing.Header)
+	caller.EndSpanEvent()
+	defer caller.EndSpan()
+
+	outgoing.Header.Set(pinpoint.HeaderSpanId, "")
+	server := NewHttpServerTracer(outgoing, "HTTP Server")
+	defer server.EndSpan()
+
+	require.True(t, server.IsSampled())
+	assert.Equal(t, caller.TransactionId().String(), server.TransactionId().String(),
+		"a blanked span id header must not start a new transaction")
+
+	// Dropped, not blanked, is the case that does start a new transaction.
+	outgoing.Header.Del(pinpoint.HeaderSpanId)
+	dropped := NewHttpServerTracer(outgoing, "HTTP Server")
+	defer dropped.EndSpan()
+	assert.NotEqual(t, caller.TransactionId().String(), dropped.TransactionId().String(),
+		"an absent span id header starts a new transaction")
+}
+
 // NewHttpServerTracerWithReader is the entry point adapters without a
 // net/http request use; the sampling decision must match the request-based one.
 func TestNewHttpServerTracerWithReader(t *testing.T) {
 	usePluginConfig(t, WithHttpServerExcludeUrl([]string{"/health"}))
 
-	traced := NewHttpServerTracerWithReader(http.MethodGet, "/api", "HTTP Server", http.Header{})
+	traced := NewHttpServerTracerWithReader(http.MethodGet, "/api", "HTTP Server", pinpoint.HttpHeaderReader(http.Header{}))
 	defer traced.EndSpan()
 	assert.True(t, traced.IsSampled())
 	assert.Equal(t, "/api", spanOf(t, traced).RpcName)
 
-	excluded := NewHttpServerTracerWithReader(http.MethodGet, "/health", "HTTP Server", http.Header{})
+	excluded := NewHttpServerTracerWithReader(http.MethodGet, "/health", "HTTP Server", pinpoint.HttpHeaderReader(http.Header{}))
 	defer excluded.EndSpan()
 	assert.False(t, excluded.IsSampled(), "an excluded url must produce a noop tracer")
 }

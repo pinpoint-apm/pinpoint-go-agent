@@ -59,7 +59,8 @@ func ServerMiddleware() middleware.Middleware {
 			}
 
 			if tr, ok := transport.FromServerContext(ctx); ok {
-				tracer := pinpoint.GetAgent().NewSpanTracerWithReader("Kratos Server", tr.Operation(), tr.RequestHeader())
+				tracer := pinpoint.GetAgent().NewSpanTracerWithReader("Kratos Server", tr.Operation(),
+					headerReader{tr.RequestHeader()})
 				defer tracer.EndSpan()
 				defer tracer.NewSpanEvent(tr.Operation()).EndSpanEvent()
 
@@ -181,4 +182,19 @@ func makeUrl(tr transport.Transporter, addr string) string {
 		scheme = "grpc://"
 	}
 	return scheme + addr + tr.Operation()
+}
+
+// headerReader adapts a kratos transport.Header to the tracing carrier.
+// transport.Header hands out a value and nothing else, so a header carried
+// with an empty value cannot be told from one that is absent: it reads as
+// absent, and such a request starts a new transaction. That is what this
+// plugin did before the carrier reported presence, and only the transport can
+// close the gap.
+type headerReader struct {
+	hdr transport.Header
+}
+
+func (r headerReader) Get(key string) (string, bool) {
+	v := r.hdr.Get(key)
+	return v, v != ""
 }

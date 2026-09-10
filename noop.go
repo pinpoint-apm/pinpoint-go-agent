@@ -311,6 +311,8 @@ func (a *noopAnnotation) AppendLongIntIntByteByteString(key int32, l int64, i1 i
 
 type noopDistributedTracingContextReader struct{}
 
-func (r *noopDistributedTracingContextReader) Get(key string) string {
-	return ""
+// Get reports every key as absent: the noop carrier stands in for a request
+// that arrived with no headers at all.
+func (r *noopDistributedTracingContextReader) Get(key string) (string, bool) {
+	return "", false
 }

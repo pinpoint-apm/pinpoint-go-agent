@@ -452,7 +452,7 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 	if span.warnAfterEndSpan("Extract") {
 		return
 	}
-	tid := reader.Get(HeaderTraceId)
+	tid, _ := reader.Get(HeaderTraceId)
 	txId, continued := continueHeaders(reader)
 	if continued {
 		span.txId = txId
@@ -482,7 +482,7 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		return
 	}
 
-	spanid := reader.Get(HeaderSpanId)
+	spanid, _ := reader.Get(HeaderSpanId)
 	if spanid != "" {
 		// bitSize 64, not 0: span ids are int64 and 0 means platform int, so
 		// a 32-bit build failed to parse an upstream node's id and silently
@@ -497,7 +497,7 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		span.spanId = generateSpanId()
 	}
 
-	pspanid := reader.Get(HeaderParentSpanId)
+	pspanid, _ := reader.Get(HeaderParentSpanId)
 	if pspanid != "" {
 		if v, err := strconv.ParseInt(pspanid, 10, 64); err == nil {
 			span.parentSpanId = v
@@ -507,31 +507,31 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		}
 	}
 
-	flag := reader.Get(HeaderFlags)
+	flag, _ := reader.Get(HeaderFlags)
 	if flag != "" {
 		span.flags, _ = strconv.Atoi(flag)
 	}
 
-	pappname := reader.Get(HeaderParentApplicationName)
+	pappname, _ := reader.Get(HeaderParentApplicationName)
 	if pappname != "" {
 		span.parentAppName = pappname
 	}
 
 	// A malformed value keeps the UNKNOWN default (1), as the C++ agent does;
 	// the discarded Atoi result wrote 0, a type neither agent defines.
-	papptype := reader.Get(HeaderParentApplicationType)
+	papptype, _ := reader.Get(HeaderParentApplicationType)
 	if papptype != "" {
 		if v, err := strconv.Atoi(papptype); err == nil {
 			span.parentAppType = v
 		}
 	}
 
-	pservicename := reader.Get(HeaderParentServiceName)
+	pservicename, _ := reader.Get(HeaderParentServiceName)
 	if pservicename != "" {
 		span.parentServiceName = pservicename
 	}
 
-	host := reader.Get(HeaderHost)
+	host, _ := reader.Get(HeaderHost)
 	if host != "" {
 		span.acceptorHost = host
 		span.endPoint = host
@@ -556,19 +556,38 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 //
 // The two span id headers are checked for presence only, as Java does: a value
 // that will not parse still describes a hop, and Java keeps it as SpanId.NULL
-// via NumberUtils.parseLong (SpanId.java:27). Pinpoint-Flags is not part of the
-// decision - Java defaults it to 0 (DefaultTraceHeaderReader.java:71-72).
+// via NumberUtils.parseLong (SpanId.java:27). A header present with an empty
+// value is present: Java tests the header for null alone
+// (DefaultTraceHeaderReader.java:55), so it continues on a blank span id,
+// and the C++ agent does the same through has_value(). Pinpoint-Flags is not
+// part of the decision - Java defaults it to 0
+// (DefaultTraceHeaderReader.java:71-72).
+//
+// Presence is the carrier's answer, the second result of Get: a carrier over a
+// source that cannot tell a blank header from an absent one reports the blank
+// one as absent, and the request starts a new transaction as it did before Get
+// reported presence.
 //
 // The trace id, unlike the span ids, must parse: an unparseable one leaves no
 // transaction to continue, and Go starts a new one rather than throwing as Java
-// does (TransactionIdUtils.java:84-90). See doc/java_parity.md.
+// does (TransactionIdUtils.java:84-90). A blank trace id therefore does not
+// continue even from a carrier that can report it as present - it names no
+// transaction - which is the same divergence, not a second one.
+// See doc/java_parity.md.
 //
 // Both the sampler choice (NewSpanTracerWithReader) and the context extraction
 // (Extract) call this, so the two cannot disagree about which trace a request
 // belongs to.
 func continueHeaders(reader DistributedTracingContextReader) (TransactionId, bool) {
-	agentId, startTime, sequence, ok := splitTransactionId(reader.Get(HeaderTraceId))
-	if !ok || reader.Get(HeaderSpanId) == "" || reader.Get(HeaderParentSpanId) == "" {
+	tid, _ := reader.Get(HeaderTraceId)
+	agentId, startTime, sequence, ok := splitTransactionId(tid)
+	if !ok {
+		return TransactionId{}, false
+	}
+	if _, ok := reader.Get(HeaderSpanId); !ok {
+		return TransactionId{}, false
+	}
+	if _, ok := reader.Get(HeaderParentSpanId); !ok {
 		return TransactionId{}, false
 	}
 	return TransactionId{agentId, startTime, sequence}, true

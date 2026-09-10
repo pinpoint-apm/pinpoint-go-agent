@@ -32,12 +32,28 @@ type DistributedTracingContextMap struct {
 	m map[string]string
 }
 
-func (r *DistributedTracingContextMap) Get(key string) string {
-	return r.m[key]
+// Get reports a key held with an empty value as present - the blank header a
+// proxy sends - which is what the carrier interface asks of a source that can
+// tell the two apart.
+func (r *DistributedTracingContextMap) Get(key string) (string, bool) {
+	v, ok := r.m[key]
+	return v, ok
 }
 
 func (r *DistributedTracingContextMap) Set(key string, val string) {
 	r.m[key] = val
+}
+
+// valueOnlyCarrier stands for a carrier over a source that hands out a value
+// and nothing else - a kratos transport.Header, a plugin adapter written
+// against a framework that only has a value getter. It reports what it has as
+// present and an empty value as absent, which is how every carrier read before
+// Get reported presence.
+type valueOnlyCarrier map[string]string
+
+func (c valueOnlyCarrier) Get(key string) (string, bool) {
+	v := c[key]
+	return v, v != ""
 }
 
 func defaultTestSpan() *span {

@@ -43,7 +43,8 @@ func NewHttpServerTracer(req *http.Request, operation string) (tracer pinpoint.T
 	if pinpoint.TracerFromRequestContext(req).IsSampled() {
 		pinpoint.Log("http").Debugf("request context already carries a sampled tracer (%s): is the pinpoint middleware installed twice?", req.URL.Path)
 	}
-	tracer = NewHttpServerTracerWithReader(req.Method, req.URL.Path, operation, req.Header)
+	tracer = NewHttpServerTracerWithReader(req.Method, req.URL.Path, operation,
+		pinpoint.HttpHeaderReader(req.Header))
 	RecordHttpServerRequest(tracer, req)
 	return tracer
 }

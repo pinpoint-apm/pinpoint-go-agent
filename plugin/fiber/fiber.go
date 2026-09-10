@@ -46,7 +46,7 @@ func wrap(f func(c *fiber.Ctx) error, handlerName string) fiber.Handler {
 			method,
 			string(c.Context().Path()),
 			serverName,
-			ppfasthttp.RequestHeader{Hdr: &c.Context().Request.Header},
+			ppfasthttp.HeaderReader{Hdr: &c.Context().Request.Header},
 		)
 		// Record straight from the fasthttp request: converting it to a
 		// net/http request (fasthttpadaptor.ConvertRequest) materialized the

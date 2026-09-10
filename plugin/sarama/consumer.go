@@ -148,13 +148,16 @@ type distributedTracingContextReaderConsumer struct {
 	msg *sarama.ConsumerMessage
 }
 
-func (m *distributedTracingContextReaderConsumer) Get(key string) string {
+// Get reports a record header carried with an empty value as present: a
+// producer that wrote a blank Pinpoint-SpanID still describes a hop, and the
+// trace continues through it.
+func (m *distributedTracingContextReaderConsumer) Get(key string) (string, bool) {
 	for _, h := range m.msg.Headers {
 		if h != nil && string(h.Key) == key {
-			return string(h.Value)
+			return string(h.Value), true
 		}
 	}
-	return ""
+	return "", false
 }
 
 func makeRpcName(msg *sarama.ConsumerMessage) string {
@@ -181,7 +184,7 @@ func newConsumerTracer(ctx context.Context, msg *sarama.ConsumerMessage) pinpoin
 		if addrs, ok := v.([]string); ok && len(addrs) > 0 {
 			brokerAddr = addrs[0]
 		}
-	} else if host := reader.Get(pinpoint.HeaderHost); host != "" {
+	} else if host, _ := reader.Get(pinpoint.HeaderHost); host != "" {
 		brokerAddr = host
 	}
 

@@ -80,12 +80,25 @@ func Test_distributedTracingContextReaderConsumer(t *testing.T) {
 		},
 	}}
 
-	assert.Equal(t, "txid^1^1", r.Get(pinpoint.HeaderTraceId))
-	assert.Equal(t, "", r.Get("absent"))
+	v, ok := r.Get(pinpoint.HeaderTraceId)
+	assert.True(t, ok)
+	assert.Equal(t, "txid^1^1", v)
+	_, ok = r.Get("absent")
+	assert.False(t, ok)
 
 	// A message with no headers at all is what an untraced producer sends.
 	bare := &distributedTracingContextReaderConsumer{&sarama.ConsumerMessage{}}
-	assert.Equal(t, "", bare.Get(pinpoint.HeaderTraceId))
+	_, ok = bare.Get(pinpoint.HeaderTraceId)
+	assert.False(t, ok, "a message with no headers carries nothing")
+
+	// A header carried with an empty value is present: the trace continues
+	// through a producer or proxy that blanked it instead of dropping it.
+	blank := &distributedTracingContextReaderConsumer{&sarama.ConsumerMessage{
+		Headers: []*sarama.RecordHeader{{Key: []byte(pinpoint.HeaderSpanId)}},
+	}}
+	v, ok = blank.Get(pinpoint.HeaderSpanId)
+	assert.True(t, ok, "a header with an empty value is present")
+	assert.Equal(t, "", v)
 }
 
 // The broker is the consumer span's endpoint on the server map. It can come

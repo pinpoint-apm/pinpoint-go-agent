@@ -19,6 +19,8 @@ package pinpoint
 
 import (
 	"context"
+	"net/http"
+	"net/textproto"
 	"strconv"
 	"strings"
 	"time"
@@ -219,8 +221,42 @@ type Annotation interface {
 
 // DistributedTracingContextReader reads distributed tracing headers from carrier.
 type DistributedTracingContextReader interface {
-	// Get returns the value of a given key from carrier.
-	Get(key string) string
+	// Get returns the value of a given key from carrier, and whether the
+	// carrier holds the key at all.
+	//
+	// The two are separate answers: a header held with an empty value returns
+	// ("", true), and one the carrier does not hold returns ("", false). Trace
+	// continuation depends on the difference - a proxy that blanks
+	// Pinpoint-SpanID instead of dropping it still describes a hop, and the
+	// trace must not split there. A carrier over a source that cannot tell the
+	// two apart reports a value it has as present and an empty one as absent
+	// (v, v != ""), which is how this agent read every carrier before Get
+	// reported presence. See doc/api_contracts.md.
+	Get(key string) (string, bool)
+}
+
+// HttpHeaderReader adapts a net/http.Header to
+// DistributedTracingContextReader. A stdlib type cannot carry the two-result
+// Get the interface asks for, and net/http.Header is what a server hands over
+// as the inbound carrier, so wrap it here:
+//
+//	tracer := pinpoint.GetAgent().NewSpanTracerWithReader(
+//		"HTTP Server", req.URL.Path, pinpoint.HttpHeaderReader(req.Header))
+//
+// The http plugin does this for you (NewHttpServerTracer). Presence comes from
+// the header map, so a header the client sent empty is reported as present.
+func HttpHeaderReader(h http.Header) DistributedTracingContextReader {
+	return httpHeaderReader(h)
+}
+
+type httpHeaderReader http.Header
+
+func (r httpHeaderReader) Get(key string) (string, bool) {
+	// Keys are stored canonicalized, as net/http.Header.Get looks them up.
+	if v := r[textproto.CanonicalMIMEHeaderKey(key)]; len(v) > 0 {
+		return v[0], true
+	}
+	return "", false
 }
 
 // DistributedTracingContextWriter writes distributed tracing headers to carrier.

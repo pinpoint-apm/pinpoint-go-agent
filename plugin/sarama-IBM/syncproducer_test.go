@@ -154,9 +154,12 @@ func Test_syncProducer_SendMessageContext(t *testing.T) {
 
 	writer := &distributedTracingContextWriterProducer{msg: msg}
 	for _, key := range pinpointHeaders {
-		assert.NotEmpty(t, writer.Get(key), "the produced message is missing the %s header", key)
+		v, ok := writer.Get(key)
+		assert.True(t, ok, "the produced message is missing the %s header", key)
+		assert.NotEmpty(t, v, "the %s header is empty", key)
 	}
-	assert.Equal(t, tracer.TransactionId().String(), writer.Get(pinpoint.HeaderTraceId))
+	tid, _ := writer.Get(pinpoint.HeaderTraceId)
+	assert.Equal(t, tracer.TransactionId().String(), tid)
 }
 
 // The span event names the topic and the broker, which is what puts the
@@ -252,15 +255,28 @@ func Test_distributedTracingContextWriterProducer(t *testing.T) {
 	msg := &sarama.ProducerMessage{Topic: "widgets"}
 	w := &distributedTracingContextWriterProducer{msg: msg}
 
-	assert.Equal(t, "", w.Get(pinpoint.HeaderTraceId), "an untouched message carries no header")
+	_, ok := w.Get(pinpoint.HeaderTraceId)
+	assert.False(t, ok, "an untouched message carries no header")
 
 	w.Set(pinpoint.HeaderTraceId, "txid^1^1")
 	w.Set(pinpoint.HeaderSpanId, "7")
 
-	assert.Equal(t, "txid^1^1", w.Get(pinpoint.HeaderTraceId))
-	assert.Equal(t, "7", w.Get(pinpoint.HeaderSpanId))
-	assert.Equal(t, "", w.Get("X-Absent"))
+	v, ok := w.Get(pinpoint.HeaderTraceId)
+	assert.True(t, ok)
+	assert.Equal(t, "txid^1^1", v)
+	v, ok = w.Get(pinpoint.HeaderSpanId)
+	assert.True(t, ok)
+	assert.Equal(t, "7", v)
+	_, ok = w.Get("X-Absent")
+	assert.False(t, ok)
 	assert.Len(t, msg.Headers, 2, "each header must be appended to the message once")
+
+	// A header written with an empty value is present, unlike one never
+	// written - the value alone reports both as "".
+	w.Set(pinpoint.HeaderParentSpanId, "")
+	v, ok = w.Get(pinpoint.HeaderParentSpanId)
+	assert.True(t, ok, "a header written with an empty value is present")
+	assert.Equal(t, "", v)
 }
 
 // NewSyncProducer reports the broker error rather than handing back a producer

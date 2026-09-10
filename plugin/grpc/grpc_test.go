@@ -97,6 +97,9 @@ func Test_makeUrl(t *testing.T) {
 		makeUrl("localhost:8080", "/testapp.Hello/Greet"))
 }
 
+// value drops the presence result, for assertions about the value alone.
+func value(v string, _ bool) string { return v }
+
 // Incoming metadata is absent on an unary call made without any, and gRPC
 // stores every key as a list. The reader has to flatten that to the single
 // value the tracing header carries.
@@ -107,15 +110,33 @@ func Test_distributedTracingContextReaderMD(t *testing.T) {
 		"multi", "second",
 	))}
 
-	assert.Equal(t, "txid^1^1", r.Get(pinpoint.HeaderTraceId))
-	assert.Equal(t, "first", r.Get("multi"), "only the first value of a repeated key is the header")
-	assert.Equal(t, "", r.Get("absent"))
+	assert.Equal(t, "txid^1^1", value(r.Get(pinpoint.HeaderTraceId)))
+	assert.Equal(t, "first", value(r.Get("multi")), "only the first value of a repeated key is the header")
+	assert.Equal(t, "", value(r.Get("absent")))
 
 	// A context with no incoming metadata reads as absent, not a panic.
-	assert.Equal(t, "", (distributedTracingContextReaderMD{context.Background()}).Get("any"))
+	assert.Equal(t, "", value((distributedTracingContextReaderMD{context.Background()}).Get("any")))
 
 	// gRPC lowercases metadata keys on the wire, so lookup has to match that.
-	assert.Equal(t, "txid^1^1", r.Get(pinpoint.HeaderTraceId))
+	assert.Equal(t, "txid^1^1", value(r.Get(pinpoint.HeaderTraceId)))
+}
+
+// A metadata key carried with an empty value is present, and the trace
+// continues through it - the value alone cannot say so.
+func Test_distributedTracingContextReaderMD_Presence(t *testing.T) {
+	r := distributedTracingContextReaderMD{metadata.NewIncomingContext(context.Background(), metadata.Pairs(
+		pinpoint.HeaderSpanId, "",
+	))}
+
+	v, ok := r.Get(pinpoint.HeaderSpanId)
+	assert.True(t, ok, "a key carried with an empty value is present")
+	assert.Equal(t, "", v)
+
+	_, ok = r.Get("absent")
+	assert.False(t, ok)
+
+	_, ok = (distributedTracingContextReaderMD{context.Background()}).Get("any")
+	assert.False(t, ok, "no incoming metadata at all")
 }
 
 // The client interceptor has to publish the tracing headers as outgoing

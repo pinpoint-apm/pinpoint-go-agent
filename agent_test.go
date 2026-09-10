@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -1593,6 +1594,9 @@ func Test_agent_continueHeaders_table(t *testing.T) {
 		{"blank tid", map[string]string{HeaderTraceId: "", HeaderSpanId: "67890", HeaderParentSpanId: "123"}, false},
 		{"malformed tid", map[string]string{HeaderTraceId: "garbage", HeaderSpanId: "67890", HeaderParentSpanId: "123"}, false},
 		{"malformed spanid", map[string]string{HeaderTraceId: validTid, HeaderSpanId: "garbage", HeaderParentSpanId: "123"}, true},
+		// A proxy that blanks a header instead of dropping it still describes
+		// the hop, and Java continues on it; the trace must not split here.
+		{"blank spanid", map[string]string{HeaderTraceId: validTid, HeaderSpanId: "", HeaderParentSpanId: "123"}, true},
 	}
 
 	// Counter rate 1 samples every new trace, so a span exists to inspect on
@@ -1648,6 +1652,70 @@ func Test_agent_continueHeaders_table(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A blank Pinpoint-pSpanID continues the trace like a blank Pinpoint-SpanID:
+// the transaction is inherited. The span stays a root, because an unparseable
+// parent span id is SpanId.NULL in Java too - the same path a malformed one
+// takes (Test_span_Extract_malformedSpanIds), which the shared table cannot
+// express since it asserts an adopted parent for every continued row.
+func Test_agent_continueHeaders_blankParentSpanId(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	reader := &DistributedTracingContextMap{m: map[string]string{
+		HeaderTraceId:      "t123456^12345^1",
+		HeaderSpanId:       "67890",
+		HeaderParentSpanId: "",
+	}}
+
+	txId, continued := continueHeaders(reader)
+	assert.True(t, continued, "blank parent span id still describes a hop")
+	assert.Equal(t, "t123456", txId.AgentId, "transaction id inherited")
+
+	span := defaultSpan(agent)
+	span.Extract(reader)
+	assert.Equal(t, "t123456", span.txId.AgentId, "extracted transaction id")
+	assert.Equal(t, int64(-1), span.parentSpanId, "unparseable parent span id stays root")
+}
+
+// A carrier over a source with no presence information reports a blank header
+// as absent, and the request starts a new transaction - the reading every
+// carrier had before Get reported presence.
+func Test_agent_continueHeaders_valueOnlyCarrier(t *testing.T) {
+	blank := map[string]string{
+		HeaderTraceId:      "t123456^12345^1",
+		HeaderSpanId:       "",
+		HeaderParentSpanId: "123",
+	}
+
+	_, continued := continueHeaders(valueOnlyCarrier(blank))
+	assert.False(t, continued, "a value-only carrier cannot tell blank from absent")
+
+	_, continued = continueHeaders(&DistributedTracingContextMap{m: blank})
+	assert.True(t, continued, "the same headers continue from a carrier that can")
+}
+
+// net/http.Header is what an http server holds the inbound headers in, and
+// HttpHeaderReader is how it reaches the agent - a stdlib type cannot carry the
+// interface's two-result Get. Its map keeps a blanked header, which is the
+// header shape a proxy breaks the trace with.
+func Test_agent_continueHeaders_httpHeaderReader(t *testing.T) {
+	h := http.Header{}
+	h.Set(HeaderTraceId, "t123456^12345^1")
+	h.Set(HeaderParentSpanId, "123")
+
+	_, continued := continueHeaders(HttpHeaderReader(h))
+	assert.False(t, continued, "no span id header at all: new transaction")
+
+	h.Set(HeaderSpanId, "")
+	txId, continued := continueHeaders(HttpHeaderReader(h))
+	assert.True(t, continued, "blank span id header is still a hop")
+	assert.Equal(t, "t123456", txId.AgentId, "transaction id inherited")
+
+	// Header names reach the carrier in the case the caller wrote them, not
+	// the canonical case the map stores.
+	v, ok := HttpHeaderReader(h).Get(HeaderParentSpanId)
+	assert.True(t, ok, "a canonicalized key must still be found")
+	assert.Equal(t, "123", v)
 }
 
 // The headers Inject writes must be readable as a continued trace by the other

@@ -283,9 +283,11 @@ func waitUntil(predicate func() bool, timeout time.Duration) bool {
 // mapCarrier is a distributed-tracing carrier backed by a plain map.
 type mapCarrier map[string]string
 
-func (m mapCarrier) Get(key string) string { return m[key] }
-func (m mapCarrier) Set(key, value string) { m[key] = value }
-func (m mapCarrier) has(key string) bool   { _, ok := m[key]; return ok }
+// Get reports a key held with an empty value as present, as a real header
+// carrier does: the map is the only place the test can express that.
+func (m mapCarrier) Get(key string) (string, bool) { v, ok := m[key]; return v, ok }
+func (m mapCarrier) Set(key, value string)         { m[key] = value }
+func (m mapCarrier) has(key string) bool           { _, ok := m[key]; return ok }
 
 // handleInstrumentedRequest is the host application's "business logic": a fake
 // request handler that must produce its result no matter what state the agent

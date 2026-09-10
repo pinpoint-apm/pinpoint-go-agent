@@ -86,7 +86,7 @@ func TestWrapClient_InjectsTracingHeaders(t *testing.T) {
 	assert.NotEmpty(t, pinpointHeaders(t, rt.sent.Header), "no pinpoint header reached the callee")
 
 	// The callee's tracer must land in the caller's transaction.
-	callee := NewHttpServerTracerWithReader(http.MethodGet, "/callee", "HTTP Server", rt.sent.Header)
+	callee := NewHttpServerTracerWithReader(http.MethodGet, "/callee", "HTTP Server", pinpoint.HttpHeaderReader(rt.sent.Header))
 	defer callee.EndSpan()
 	assert.Equal(t, tracer.TransactionId().String(), callee.TransactionId().String())
 }
@@ -180,7 +180,7 @@ func TestWrapClient_WithoutATracer(t *testing.T) {
 	assert.Empty(t, pinpointHeaders(t, rt.sent.Header),
 		"a call with no transaction behind it must not tell the callee to skip tracing")
 
-	callee := NewHttpServerTracerWithReader(http.MethodGet, "/callee", "HTTP Server", rt.sent.Header)
+	callee := NewHttpServerTracerWithReader(http.MethodGet, "/callee", "HTTP Server", pinpoint.HttpHeaderReader(rt.sent.Header))
 	defer callee.EndSpan()
 	assert.True(t, callee.IsSampled(), "the callee must be free to start its own transaction")
 }
@@ -356,7 +356,7 @@ func TestDoClient_HandBuiltRequest(t *testing.T) {
 func TestWrapClient_ExcludedUrlHandlerSendsNoTracingHeader(t *testing.T) {
 	usePluginConfig(t, WithHttpServerExcludeUrl([]string{"/health"}))
 
-	tracer := NewHttpServerTracerWithReader(http.MethodGet, "/health", "HTTP Server", http.Header{})
+	tracer := NewHttpServerTracerWithReader(http.MethodGet, "/health", "HTTP Server", pinpoint.HttpHeaderReader(http.Header{}))
 	defer tracer.EndSpan()
 	require.False(t, tracer.IsSampled(), "an excluded URL produced a sampled tracer")
 
@@ -384,7 +384,7 @@ func TestWrapClient_UnsampledRequestStillSendsS0(t *testing.T) {
 
 	inbound := http.Header{}
 	inbound.Set(pinpoint.HeaderSampled, "s0")
-	tracer := NewHttpServerTracerWithReader(http.MethodGet, "/hello", "HTTP Server", inbound)
+	tracer := NewHttpServerTracerWithReader(http.MethodGet, "/hello", "HTTP Server", pinpoint.HttpHeaderReader(inbound))
 	defer tracer.EndSpan()
 	require.False(t, tracer.IsSampled(), "an inbound s0 produced a sampled tracer")
 

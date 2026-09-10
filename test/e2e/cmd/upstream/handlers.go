@@ -396,6 +396,6 @@ func onReady(w http.ResponseWriter, r *http.Request) {
 // where the endpoint injects a context it then inspects itself.
 type headerCarrier map[string]string
 
-func (h headerCarrier) Get(key string) string { return h[key] }
-func (h headerCarrier) Set(key, value string) { h[key] = value }
-func (h headerCarrier) has(key string) bool   { _, ok := h[key]; return ok }
+func (h headerCarrier) Get(key string) (string, bool) { v, ok := h[key]; return v, ok }
+func (h headerCarrier) Set(key, value string)         { h[key] = value }
+func (h headerCarrier) has(key string) bool           { _, ok := h[key]; return ok }

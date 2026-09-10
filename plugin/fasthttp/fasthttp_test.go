@@ -98,6 +98,31 @@ func Test_reqHeader(t *testing.T) {
 	assert.Len(t, visited["X-Multi"], 2, "VisitAll must report both values of a repeated header")
 }
 
+// HeaderReader is the tracing carrier: a header sent with an empty value is
+// present, so the trace continues through a hop whose Pinpoint-SpanID a proxy
+// blanked instead of dropping. RequestHeader.Get cannot say that, which is why
+// the carrier is its own type.
+func Test_headerReader(t *testing.T) {
+	ctx := newRequestCtx(http.MethodGet, "http://localhost/hello")
+	ctx.Request.Header.Set("X-Trace", "abc")
+	ctx.Request.Header.Set(pinpoint.HeaderSpanId, "")
+	r := HeaderReader{&ctx.Request.Header}
+
+	v, ok := r.Get("X-Trace")
+	assert.True(t, ok)
+	assert.Equal(t, "abc", v)
+
+	v, ok = r.Get(pinpoint.HeaderSpanId)
+	assert.True(t, ok, "a header sent with an empty value is present")
+	assert.Equal(t, "", v)
+
+	_, ok = r.Get("X-Absent")
+	assert.False(t, ok, "an absent header is absent")
+
+	_, ok = r.Get("x-trace")
+	assert.True(t, ok, "header names are case-insensitive")
+}
+
 func Test_resHeader(t *testing.T) {
 	ctx := newRequestCtx(http.MethodGet, "http://localhost/hello")
 	ctx.Response.Header.Set("X-Result", "ok")
