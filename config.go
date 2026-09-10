@@ -146,6 +146,9 @@ const (
 	// defaultSqlCacheExpireHours matches the Java agent's
 	// profiler.jdbc.sqlcacheexpirehours (SimpleCacheFactory, 7 days).
 	defaultSqlCacheExpireHours = 168
+	// 100 years. An expiry this long is already "never" in practice, and the
+	// bound keeps hours * time.Hour from overflowing the Duration.
+	maxSqlCacheExpireHours = 24 * 365 * 100
 
 	// A span running this many queries is marked failed, as in the Java agent
 	// (profiler.sql.error.count, DefaultSqlCountService). Java's separate
@@ -1115,6 +1118,14 @@ func (config *Config) publish() {
 		config.cfgMap[CfgSQLCacheLengthLimit].value = defaultSqlCacheLengthLimit
 	}
 	config.zeroIfNegative(CfgSQLErrorCount)
+	// 0 stays 0 and never expires an entry, so the range starts there. A
+	// negative value used to reach the ttl > 0 gate in metaCache and disable
+	// expiry just like 0, which silently costs a restart to recover from once
+	// the collector's SqlUidMetaData row lapses under a still-cached UID.
+	// Recovering the default is what the C++ agent does for this key, and it
+	// keeps 0 as the only way to ask for no expiry - a negative value is a typo,
+	// not a request.
+	config.defaultIfOutOfRange(CfgSQLCacheExpireHours, 0, maxSqlCacheExpireHours)
 
 	if config.stagedInt(CfgSpanEventChunkSize) < 1 {
 		config.cfgMap[CfgSpanEventChunkSize].value = defaultEventChunkSize
@@ -1776,8 +1787,8 @@ func WithSQLCacheLengthLimit(limit int) ConfigOption {
 }
 
 // WithSQLCacheExpireHours sets how many hours a SQL UID stays cached before
-// its metadata is registered with the collector again. Zero or negative never
-// expires an entry.
+// its metadata is registered with the collector again. Zero never expires an
+// entry; a negative value is out of range and recovers the default.
 func WithSQLCacheExpireHours(hours int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgSQLCacheExpireHours].value = hours

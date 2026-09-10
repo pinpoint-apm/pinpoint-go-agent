@@ -895,8 +895,9 @@ SQL.CacheExpireHours option sets how long a SQL UID stays in the SQL-UID cache
 before the statement is registered with the collector again. The collector keeps
 SQL UID metadata for a limited time (180 days by default), so in a process that
 runs longer than that a cached UID could outlive its row and the web UI would
-show an empty SQL for it until the agent restarted. Zero or a negative value
-never expires an entry. The SQL-ID, API and error caches have no expiry, as in
+show an empty SQL for it until the agent restarted. Zero never expires an entry;
+a negative value is a typo rather than a request for that, so it recovers the
+default with a warning, as do values above 876000 (100 years). The SQL-ID, API and error caches have no expiry, as in
 the Java agent.
 
 This corresponds to the Java agent's `profiler.jdbc.sqlcacheexpirehours`.

@@ -1007,6 +1007,32 @@ func TestNewConfig_NegativeValuesOfNewKeys(t *testing.T) {
 	assert.Equal(t, math.MaxInt32, c.Int(CfgSQLCacheLengthLimit), "-1 must stay unlimited")
 }
 
+// A negative SQL.CacheExpireHours reached metaCache's ttl > 0 gate and turned
+// expiry off as if it were 0, so a lapsed collector row left an empty SQL in
+// the web UI until a restart. It now recovers the default with a warning, while
+// 0 keeps meaning "never expires".
+func TestNewConfig_SQLCacheExpireHours(t *testing.T) {
+	var buf bytes.Buffer
+	restore := captureWarnLog(&buf)
+	c, err := NewConfig(WithAppName("TestApp"), WithSQLCacheExpireHours(-1))
+	assert.NoError(t, err)
+	assert.Equal(t, defaultSqlCacheExpireHours, c.Int(CfgSQLCacheExpireHours), "negative recovers the default")
+	assert.Contains(t, buf.String(), "SQL.CacheExpireHours = -1 is out of range")
+	c.Close()
+	restore()
+
+	for _, ok := range []int{0, 1} {
+		buf.Reset()
+		restore = captureWarnLog(&buf)
+		c, err = NewConfig(WithAppName("TestApp"), WithSQLCacheExpireHours(ok))
+		assert.NoError(t, err)
+		assert.Equal(t, ok, c.Int(CfgSQLCacheExpireHours), "%d is kept", ok)
+		assert.NotContains(t, buf.String(), CfgSQLCacheExpireHours)
+		c.Close()
+		restore()
+	}
+}
+
 // SQL.CacheSize defaults to Java's 1024, is read from the option, and recovers
 // the default with a warning outside [1, maxSqlCacheSize]: 0 or a negative
 // would leave the SQL caches with no usable capacity and the upper bound keeps
