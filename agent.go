@@ -104,8 +104,14 @@ type agent struct {
 	config    *Config
 	connectWg sync.WaitGroup
 	workerWg  sync.WaitGroup
-	enable    atomic.Bool
-	shutdown  atomic.Bool
+
+	// enable is the lifecycle phase (see lifecycle.go): registering, running,
+	// stopping, stopped or failed, in one atomic value where two bools used to
+	// encode the same phases by combination. It moves only through
+	// transitionTo, and is read only through the named predicates. The field
+	// keeps its old name: tests pin it, and its Load still answers "may the
+	// request path record", which is what the enable bool always meant.
+	enable lifecycle
 
 	// workerStates holds one running flag per worker startWorkers started,
 	// so a Shutdown that overruns its deadline can name the workers still in
@@ -114,12 +120,12 @@ type agent struct {
 	workerStates []*workerState
 
 	// shutdownOnce serializes the teardown. Without it a concurrent second
-	// Shutdown returned at the enable check below and ran its deferred
+	// Shutdown returned at the phase check below and ran its deferred
 	// connection close while the first call was still draining spans.
 	shutdownOnce sync.Once
 
-	// stopCtx is cancelled when shutdown begins. The shutdown flag above is
-	// only polled, so it cannot wake a goroutine already blocked in a wait;
+	// stopCtx is cancelled when shutdown begins. The phase above is only
+	// polled, so it cannot wake a goroutine already blocked in a wait;
 	// the context can. NewAgent creates it before starting goroutines, while
 	// stopOnce also supports agents built as struct literals in tests.
 	stopOnce   sync.Once
@@ -367,7 +373,11 @@ func (agent *agent) connectGrpcServer() {
 	// GetAgent hands out a dead agent and NewAgent cannot retry. Release it,
 	// identity-guarded as in Shutdown.
 	defer func() {
-		if agent.enable.Load() || agent.shutdown.Load() {
+		// Registration that succeeded, or a Shutdown that got here first, has
+		// moved the phase on; only a connect that failed is still registering.
+		// The transition is a CAS, so a Shutdown racing this defer wins or
+		// loses cleanly and the loser leaves the release to the winner.
+		if agent.enable.current() != phaseRegistering || !agent.enable.transitionTo(phaseFailed) {
 			return
 		}
 		Log("agent").Errorf("failed to connect to collector, agent disabled: %v", err)
@@ -413,7 +423,12 @@ func (agent *agent) connectGrpcServer() {
 		return
 	}
 
-	agent.enable.Store(true)
+	// A Shutdown that completed while registration was finishing has moved the
+	// phase to stopped; workers started now would only find it so and exit,
+	// and the closed connections are already released by that Shutdown.
+	if !agent.enable.transitionTo(phaseRunning) {
+		return
+	}
 	agent.startWorkers(agent.workerTable())
 }
 
@@ -563,7 +578,7 @@ func (agent *agent) superviseWorker(name string, body func()) {
 		if recoverPanic(name, body) {
 			return
 		}
-		if !agent.enable.Load() {
+		if !agent.workerContinues() {
 			return
 		}
 		timer := time.NewTimer(workerRestartDelay)
@@ -574,7 +589,7 @@ func (agent *agent) superviseWorker(name string, body func()) {
 			return
 		case <-timer.C:
 		}
-		if !agent.enable.Load() {
+		if !agent.workerContinues() {
 			return
 		}
 		Log("agent").Warnf("restart %s goroutine", name)
@@ -637,7 +652,13 @@ func (agent *agent) stopSignal() context.Context {
 // signalShutdown marks the agent as shutting down and unblocks the waits that
 // are already in progress.
 func (agent *agent) signalShutdown() {
-	agent.shutdown.Store(true)
+	// A running agent enters stopping, where the request path still records
+	// and the workers still drain until shutdownAgent moves it to stopped. An
+	// agent that never ran - still registering, or failed - has nothing to
+	// drain and goes straight to stopped, as the shutdown flag alone did.
+	if !agent.enable.transitionTo(phaseStopping) {
+		agent.enable.transitionTo(phaseStopped)
+	}
 	agent.stopSignal() // ensure the context exists before cancelling it
 	agent.stopCancel()
 
@@ -707,8 +728,8 @@ func (agent *agent) shutdownAgent() {
 	// here puts the tick in statChan before sendStatsWorker can see the stop,
 	// and that worker drains the queue once when the stop arrives, which is
 	// what actually gets the last tick out. Skipped for an agent that never
-	// enabled - it has no workers and no stat queue.
-	if agent.enable.Load() {
+	// ran - it has no workers and no stat queue.
+	if agent.tracingEnabled() {
 		agent.flushUrlStat(true)
 	}
 
@@ -731,7 +752,7 @@ func (agent *agent) shutdownAgent() {
 	// defer; this is the second, idempotent close.
 	defer agent.closeGrpc()
 
-	// Release the global on every path, before the enable guard below. An agent
+	// Release the global on every path, before the phase guard below. An agent
 	// whose registration never finished was never enabled, and leaving
 	// globalAgent pointing at it would keep GetAgent returning a dead agent and
 	// make every later NewAgent fail with "agent is already created", so a
@@ -744,11 +765,13 @@ func (agent *agent) shutdownAgent() {
 	globalAgentLock.Unlock()
 
 	// A never-enabled agent stops here: it has no workers, queues or streams
-	// to tear down. shutdownOnce already rules out a second caller reaching
-	// this, so the swap only has to report whether the agent ever ran.
-	if !agent.enable.CompareAndSwap(true, false) {
+	// to tear down. signalShutdown above put it straight into stopped, so only
+	// an agent that ran is still stopping; shutdownOnce already rules out a
+	// second caller reaching this.
+	if agent.enable.current() != phaseStopping {
 		return
 	}
+	agent.enable.transitionTo(phaseStopped)
 
 	// The teardown below is ordered against the workers that workerTable
 	// declares: the url stat flush above fed sendStatsWorker, spanQueue.close
@@ -789,7 +812,7 @@ func (agent *agent) shutdownAgent() {
 func (agent *agent) NewSpanTracer(operation string, rpcName string) Tracer {
 	var tracer Tracer
 
-	if agent.enable.Load() {
+	if agent.tracingEnabled() {
 		reader := &noopDistributedTracingContextReader{}
 		tracer = agent.NewSpanTracerWithReader(operation, rpcName, reader)
 	} else {
@@ -799,7 +822,7 @@ func (agent *agent) NewSpanTracer(operation string, rpcName string) Tracer {
 }
 
 func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
-	if !agent.enable.Load() || reader == nil {
+	if !agent.tracingEnabled() || reader == nil {
 		return NoopTracer()
 	}
 
@@ -840,7 +863,7 @@ func (agent *agent) generateTransactionId() TransactionId {
 }
 
 func (agent *agent) Enable() bool {
-	return agent.enable.Load()
+	return agent.tracingEnabled()
 }
 
 func (agent *agent) Config() *Config {
@@ -856,11 +879,11 @@ func (agent *agent) sendPingWorker() {
 	stream := agent.agentGrpc.newPingStreamWithRetry()
 	// Deferred through a closure so that it closes whichever stream the loop
 	// ended up holding, on every exit: a panicked body that superviseWorker
-	// restarts, and the enable flag going false between iterations, both used
+	// restarts, and the phase reaching stopped between iterations, both used
 	// to leave the stream open on the collector.
 	defer func() { stream.close() }()
 
-	for agent.enable.Load() {
+	for agent.workerContinues() {
 		stream = renewIfExpired(stream, agent.agentGrpc.newPingStreamWithRetry, "ping")
 		err := stream.sendPing()
 		if err != nil {
@@ -990,7 +1013,7 @@ func (agent *agent) reportSpanDrops() {
 }
 
 func (agent *agent) enqueueSpan(span *spanChunk) bool {
-	if !agent.enable.Load() {
+	if !agent.tracingEnabled() {
 		return false
 	}
 	return agent.spanQueue.enqueue(span)
@@ -1017,7 +1040,7 @@ func (agent *agent) sendMetaWorker() {
 	retry := &agent.metaRetry
 	retry.init(metaRetryQueueSize)
 
-	for agent.enable.Load() {
+	for agent.workerContinues() {
 		// New metadata first, as the C++ worker takes its queue before its
 		// retry schedule: a retry is a second try at an id whose spans went
 		// out a delay ago, a new item is an id whose spans are going out now.
@@ -1119,7 +1142,7 @@ func (agent *agent) sendMetadataOnce(item pendingMeta) {
 // metaChan overflow applies, so a full schedule costs exactly one cache entry
 // and the id is registered again on its next use.
 func (agent *agent) scheduleMetaRetry(item pendingMeta) {
-	if agent.shutdown.Load() {
+	if agent.stopping() {
 		return
 	}
 	item.dueAt = time.Now().Add(agent.agentGrpc.retryDelay)
@@ -1286,7 +1309,7 @@ func (agent *agent) enqueueMeta(md interface{}) {
 // overwrites its oldest cell), and metadata the collector has not seen yet is
 // worth more than metadata whose spans may already have gone out.
 func (agent *agent) tryEnqueueMeta(md interface{}) bool {
-	if !agent.enable.Load() {
+	if !agent.tracingEnabled() {
 		return false
 	}
 
@@ -1348,7 +1371,7 @@ func (g *idGen) next(kind string) int32 {
 }
 
 func (agent *agent) cacheError(errorName string) int32 {
-	if !agent.enable.Load() {
+	if !agent.tracingEnabled() {
 		return 0
 	}
 
@@ -1427,7 +1450,7 @@ func (agent *agent) sqlCacheable(sql string) bool {
 }
 
 func (agent *agent) cacheSql(sql string) int32 {
-	if !agent.enable.Load() {
+	if !agent.tracingEnabled() {
 		return 0
 	}
 
@@ -1471,7 +1494,7 @@ func (agent *agent) cacheSql(sql string) int32 {
 }
 
 func (agent *agent) cacheSqlUid(sql string) []byte {
-	if !agent.enable.Load() {
+	if !agent.tracingEnabled() {
 		return nil
 	}
 
@@ -1564,7 +1587,7 @@ func (agent *agent) normalizeSql(sql string) (string, string) {
 }
 
 func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
-	if !agent.enable.Load() {
+	if !agent.tracingEnabled() {
 		return 0
 	}
 
@@ -1596,7 +1619,7 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 }
 
 func (agent *agent) enqueueExceptionMeta(span *span) {
-	if !agent.enable.Load() || !span.cfg.errorTraceCallStack {
+	if !agent.tracingEnabled() || !span.cfg.errorTraceCallStack {
 		return
 	}
 
@@ -1618,7 +1641,7 @@ func (agent *agent) enqueueExceptionMeta(span *span) {
 }
 
 func (agent *agent) enqueueUrlStat(stat *urlStat) bool {
-	if !agent.enable.Load() {
+	if !agent.tracingEnabled() {
 		return false
 	}
 
@@ -1741,7 +1764,7 @@ func (agent *agent) collectUrlStatWorker() {
 
 	stop := agent.stopSignal().Done()
 
-	for agent.enable.Load() {
+	for agent.workerContinues() {
 		select {
 		case <-stop:
 			Log("agent").Infof("end collect uri stat goroutine")
@@ -1771,7 +1794,7 @@ func (agent *agent) sendUrlStatWorker() {
 	stop := agent.stopSignal().Done()
 	completed := agent.urlStats.completedTick()
 
-	for agent.enable.Load() {
+	for agent.workerContinues() {
 		select {
 		case <-stop:
 			Log("agent").Infof("end send uri stat goroutine")
@@ -1839,7 +1862,7 @@ func (agent *agent) sendStatsWorker() {
 
 	stop := agent.stopSignal().Done()
 
-	for agent.enable.Load() {
+	for agent.workerContinues() {
 		var stats *pb.PStatMessage
 		select {
 		case <-stop:
@@ -1938,7 +1961,7 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 	agent.agentGrpc = &agentGrpc{agent: agent}
 
 	setGlobalAgent(agent)
-	agent.enable.Store(true)
+	agent.enable.transitionTo(phaseRunning)
 
 	return agent, nil
 }

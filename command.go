@@ -117,7 +117,7 @@ func (agent *agent) runCommandService() {
 
 	stop := agent.stopSignal().Done()
 
-	for attempt := 0; agent.enable.Load(); attempt++ {
+	for attempt := 0; agent.workerContinues(); attempt++ {
 		if attempt > 0 {
 			// Pace consecutive stream failures. newCommandStreamWithRetry's
 			// back-off only waits while the connection is not ready, so a
@@ -162,7 +162,7 @@ func (agent *agent) serveCommandStream(attempt int) int {
 		return attempt
 	}
 
-	for agent.enable.Load() {
+	for agent.workerContinues() {
 		cmdReq, err := stream.recvCommandRequest()
 		if err != nil {
 			if stream.expired() {
@@ -170,7 +170,7 @@ func (agent *agent) serveCommandStream(attempt int) int {
 				// renewal, not a failure, so reopen without the pause.
 				Log("cmd").Infof("renew command stream: max age reached")
 				attempt = -1
-			} else if agent.enable.Load() && err != io.EOF {
+			} else if agent.workerContinues() && err != io.EOF {
 				Log("cmd").Warnf("recv command request - %v", err)
 			}
 			break
@@ -246,7 +246,7 @@ func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
 	shutdown := agent.stopSignal().Done()
 	timer := time.NewTimer(activeThreadCountInterval)
 	defer timer.Stop()
-	for agent.enable.Load() && !s.stopped() {
+	for agent.workerContinues() && !s.stopped() {
 		err := s.sendActiveThreadCount()
 		if err != nil {
 			if err != io.EOF {
@@ -266,8 +266,9 @@ func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
 		timer.Reset(activeThreadCountInterval)
 
 		// Returning from inside the select rather than falling through to the
-		// loop condition: shutdown is signalled before agent.enable is cleared,
-		// so a stopped stream that only re-tested enable would spin.
+		// loop condition: the phase is stopping, not stopped, until the drain
+		// ends, so a stopped stream that only re-tested workerContinues would
+		// spin.
 		select {
 		case <-s.stop:
 			return

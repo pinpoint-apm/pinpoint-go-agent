@@ -601,7 +601,7 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 	nextLog := started.Add(registrationWaitLogInterval)
 	rejected := false
 
-	for !agentGrpc.agent.shutdown.Load() {
+	for !agentGrpc.agent.stopping() {
 		if now := time.Now(); !now.Before(nextLog) {
 			reason := "collector unreachable or the send failed"
 			if rejected {
@@ -657,7 +657,7 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 // a failed refresh is simply left for the next refresh cycle, mirroring the
 // C++ agent's send_agent_info_with_retries.
 func (agentGrpc *agentGrpc) refreshAgentInfo(maxTry int, retryInterval time.Duration) bool {
-	for try := 0; try < maxTry && !agentGrpc.agent.shutdown.Load(); try++ {
+	for try := 0; try < maxTry && !agentGrpc.agent.stopping(); try++ {
 		// Rebuilt per attempt for the same reason registerAgentWithRetry does
 		// it, and as the Java agent (AgentInfoSender.java:176, createAgentInfo
 		// per AgentInfoSendTask run) and the C++ agent (grpc.cpp:1819,
@@ -1222,7 +1222,7 @@ func waitUntilReady(ctx context.Context, grpcConn *grpc.ClientConn, timeout time
 // between attempts. It returns as soon as shutdown begins, so a pending
 // back-off interval does not delay it.
 func backOffUntilReady(agent *agent, grpcConn *grpc.ClientConn, which string) {
-	for attempt := 0; !agent.shutdown.Load(); attempt++ {
+	for attempt := 0; !agent.stopping(); attempt++ {
 		if waitUntilReady(agent.stopSignal(), grpcConn, backOffSleep(attempt), which) {
 			return
 		}

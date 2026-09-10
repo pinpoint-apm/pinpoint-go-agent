@@ -575,7 +575,7 @@ func (agent *agent) collectAgentStatWorker() {
 	defer ticker.Stop()
 	stop := agent.stopSignal().Done()
 
-	for agent.enable.Load() {
+	for agent.workerContinues() {
 		select {
 		case <-stop:
 			Log("stats").Infof("end collect agent stat goroutine")

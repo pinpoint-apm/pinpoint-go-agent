@@ -50,6 +50,7 @@ one place that compares. The C++ agent keeps the same file at
 | Active trace registry cap | `DefaultActiveTraceRepository`, `DEFAULT_MAX_ACTIVE_TRACE_SIZE` (Caffeine `maximumSize`) | **Adopted, per shard** — see [below](#active-span-registry-cap--adopted-per-shard) |
 | Automatic shutdown at process exit | `ShutdownHookRegister`, `DefaultAgent.close()` | **Diverges** — see [below](#automatic-shutdown-at-process-exit--diverges) |
 | Worker lifecycle | `GrpcModuleLifeCycle`, `DefaultApplicationContext.start()/close()` | **Diverges (structure), same contract** — see [below](#worker-lifecycle--diverges-in-structure-same-contract) |
+| Agent lifecycle phase | `DefaultAgent.start()/close()`; C++ `started_`/`shutting_down_`/`init_failed_` under `lifecycle_mutex_` | **Aligned with C++ (phases), diverges (one atomic, no mutex)** — see [below](#agent-lifecycle-phase--aligned-with-c-phases-one-atomic-instead-of-a-mutex) |
 | gRPC channel arguments (flow control, write buffer, header list, connection renewal, idle timeout) | `ClientOption`, `DefaultChannelFactory.setupClientOption` | **Idle timeout disabled as in Java (value differs); the rest follow Java** — see [below](#grpc-channel-arguments--idle-timeout-disabled-as-in-java-the-rest-follow-java) |
 | URI template recorded twice on one span | `DefaultShared.setUriTemplate`, `DefaultSpanRecorder.recordUriTemplate` | **Same as Java** — see [below](#uri-template-is-first-wins--same-as-java) |
 | Locked parity invariants (11 groups) | `ParserContext`, `DefaultCallStack`, `GrpcSpanProcessorV2`, `Header`, `CountingSampler`, `UriStatHistogramBucket`, `BaseHistogramSchema`, `DefaultTransactionCounter`, `StringUtils`, `ClientOption` | **Verified identical** — see [below](#locked-parity-invariants--verified-identical) |
@@ -1003,6 +1004,59 @@ there is no lock.
 lazily started worker, or one restarted by a config reload): the table's
 invariant is that every `Add` precedes `connectWg.Done`, and such a worker
 would need its own accounting and its own running flag.
+
+---
+
+## Agent lifecycle phase — aligned with C++ (phases), one atomic instead of a mutex
+
+**Java.** `DefaultAgent` has no lifecycle state of its own: `start()` and
+`close()` walk the components in order, and each component keeps whatever
+flag it needs. There is nothing an operator can read to tell "still
+registering" from "closed" except the log.
+
+**C++.** `agent.h` keeps three atomics - `started_`, `shutting_down_` (never
+cleared) and `init_failed_` - and a `lifecycle_mutex_` that `Start()` and
+`do_shutdown()` take so a torn-down agent cannot be revived and a shutdown
+racing a still-running `Start()` sees a consistent trio. `isExiting()` and
+`initFailed()` expose two of the three.
+
+**Go.** One value, `lifecycle` in `lifecycle.go`: an atomic `agentPhase` in
+`registering`, `running`, `stopping`, `stopped` or `failed`. Before it the
+same phases were the four combinations of two bools (`enable`, `shutdown`),
+set from three places and read at some thirty, with "registering" only
+expressible as `!enable && !shutdown`.
+
+| C++ | Go phase |
+|---|---|
+| `!started_ && !init_failed_` | `registering` |
+| `started_` | `running` |
+| `shutting_down_` with workers still draining | `stopping` |
+| `shutting_down_`, teardown done | `stopped` |
+| `init_failed_` | `failed` |
+
+The phase moves only through `transitionTo`, which applies a fixed forward
+table (`validTransitions`) by CAS and refuses, with a warning, anything else -
+this is what the C++ mutex buys for `Start()`-after-shutdown, without a lock.
+The atomic rather than a mutex-guarded enum: `tracingEnabled` is read by
+`NewSpanTracer` and every cache and enqueue on the request path, and by every
+worker loop iteration; a mutex there would be a lock per span. Readers use
+three named predicates - `tracingEnabled` (request path; also `Enable()`),
+`workerContinues` (worker loops), `stopping` (registration and reconnect
+loops) - each reproducing exactly the bool it replaced, including that the
+request path still records during `stopping`, since the drain is meant to send
+what it produces until the phase reaches `stopped`.
+
+`failed` is kept as its own phase, as `init_failed_` is: `connectGrpcServer`'s
+release defer already special-cased it (and it is the phase an operator has to
+tell apart from `registering` - one is fixed by waiting, the other by fixing
+the configuration). Every transition is logged at Info, so the phase history
+of an agent that "does not send" is in the log; no method was added to the
+`Agent` interface, since adding one breaks every external implementer.
+
+The other lifecycle mechanisms are unchanged and deliberately not folded in:
+`stopCtx` wakes goroutines blocked in a wait (a polled phase cannot),
+`shutdownOnce`/`stopOnce` serialize, the two `WaitGroup`s join, and
+`workerStates` names the workers still running at a deadline overrun.
 
 ---
 

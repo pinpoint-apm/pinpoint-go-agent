@@ -468,7 +468,6 @@ func Test_collectAgentStatWorker_restartKeepsPartialBatchAndRetakesBaseline(t *t
 	// Second run on the same stats, as superviseWorker's restart does.
 	time.Sleep(30 * time.Millisecond)
 	agent.enable.Store(true)
-	agent.shutdown.Store(false)
 	agent.stopOnce = sync.Once{}
 	agent.stopCtx, agent.stopCancel = nil, nil
 	agent.workerWg.Add(1)
