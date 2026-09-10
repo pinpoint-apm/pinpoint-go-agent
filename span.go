@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"slices"
 	"strconv"
 	"strings"
@@ -225,14 +225,26 @@ func (span *span) markSpanError(category ErrorCategory) bool {
 	return true
 }
 
-// generateSpanId is a var so tests can force a collision; production always
-// draws from rand.
-var generateSpanId = rand.Int63
+// generateSpanId draws a span id from the whole int64 range, the value space
+// Java's SpanId uses. math/rand/v2 is already this package's generator (see
+// span_queue.go) and its Int64 is documented as non-negative, so the full
+// range comes from Uint64 reinterpreted as int64. The NULL sentinel is
+// redrawn here, not at the call sites, so every id handed out is usable.
+//
+// It is a var so tests can force a collision; production always draws from rand.
+var generateSpanId = func() int64 {
+	for {
+		if id := int64(rand.Uint64()); id != noneSpanId {
+			return id
+		}
+	}
+}
 
 // nextSpanId draws the id handed to the next node. Java's SpanId.nextSpanID
 // guarantees it differs from this span's own id and from its parent's, and is
-// never the -1 NULL marker; rand.Int63 makes a collision a 2^-63 event and -1
-// impossible, but the downstream link is wrong when it does happen.
+// never the -1 NULL marker; generateSpanId already rules out the sentinel, but
+// the guard also covers the generators tests substitute, and a collision with
+// either id is a 2^-63 event whose downstream link is wrong when it happens.
 func nextSpanId(spanId int64, parentSpanId int64) int64 {
 	for {
 		if id := generateSpanId(); id != spanId && id != parentSpanId && id != -1 {

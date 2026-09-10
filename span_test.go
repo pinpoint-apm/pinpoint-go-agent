@@ -1044,6 +1044,31 @@ func TestSpan_ExtractParsesFullRangeSpanId(t *testing.T) {
 	assert.Equal(t, int64(-9007199254740993), span.parentSpanId, "parentSpanId")
 }
 
+// The generation side of the same range: Java's SpanId spans all of int64, so
+// generateSpanId must draw negative ids too, and a negative id has to survive
+// the round trip out through Inject and back in through Extract.
+func TestSpan_GeneratedSpanIdCoversFullInt64Range(t *testing.T) {
+	negative := false
+	for i := 0; i < 10_000 && !negative; i++ {
+		negative = generateSpanId() < 0
+	}
+	assert.True(t, negative, "generateSpanId draws negative ids")
+
+	// Two ids: the span's own, and the one Inject draws for the next node.
+	stubSpanIdGenerator(t, math.MinInt64, math.MaxInt64)
+	span := defaultSpan(newTestAgent(defaultConfig()))
+	span.Extract(&DistributedTracingContextMap{m: map[string]string{}})
+	assert.Equal(t, int64(math.MinInt64), span.spanId, "generated spanId")
+
+	m := make(map[string]string)
+	span.Inject(&DistributedTracingContextMap{m})
+
+	next := defaultSpan(newTestAgent(defaultConfig()))
+	next.Extract(&DistributedTracingContextMap{m: m})
+	assert.Equal(t, int64(math.MaxInt64), next.spanId, "spanId after round trip")
+	assert.Equal(t, int64(math.MinInt64), next.parentSpanId, "parentSpanId after round trip")
+}
+
 // EndSpanEvent records a panic and re-panics; the value an upstream recover
 // sees must be the original one, or sentinel comparisons stop matching.
 func TestSpan_EndSpanEventRepanicsOriginalValue(t *testing.T) {
