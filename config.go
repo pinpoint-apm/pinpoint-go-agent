@@ -88,6 +88,7 @@ const (
 	CfgStatBatchCount                 = "Stat.BatchCount"
 	CfgStatQueueSize                  = "Stat.QueueSize"
 	CfgIsContainerEnv                 = "IsContainerEnv"
+	CfgServerInfo                     = "ServerInfo"
 	CfgConfigFile                     = "ConfigFile"
 	CfgActiveProfile                  = "ActiveProfile"
 	CfgSQLTraceBindValue              = "SQL.TraceBindValue"
@@ -286,6 +287,7 @@ func initConfig() {
 	AddConfig(CfgStatBatchCount, CfgInt, 6, false)
 	AddConfig(CfgStatQueueSize, CfgInt, defaultQueueSize, false)
 	AddConfig(CfgIsContainerEnv, CfgBool, false, false)
+	AddConfig(CfgServerInfo, CfgString, "", false)
 	AddConfig(CfgConfigFile, CfgString, "", false)
 	AddConfig(CfgActiveProfile, CfgString, "", false)
 	AddConfig(CfgSQLTraceBindValue, CfgBool, true, true)
@@ -355,6 +357,12 @@ type Config struct {
 	// same pair on every one, so a single file change ended up reopening the
 	// log file once per agent this Config had ever served.
 	logCallbackOnce sync.Once
+
+	// serviceInfo holds the host's PServerMetaData.serviceInfo entries, set by
+	// WithServiceInfo. It is not a cfgMap item: a list of named lists has no
+	// spelling in a config file, a flag or an environment variable, and the
+	// C++ agent takes the same values through AgentOptions.libs only.
+	serviceInfo []serviceInfo
 
 	// watchMu owns the single restartable fsnotify watcher for this Config.
 	watchMu       sync.Mutex
@@ -1842,6 +1850,30 @@ func WithStatCollectInterval(interval int) ConfigOption {
 func WithStatBatchCount(count int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgStatBatchCount].value = count
+	}
+}
+
+// WithServerInfo sets PServerMetaData.serverInfo, the server description shown
+// by the Pinpoint UI. Empty keeps the default "Go Application".
+func WithServerInfo(info string) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgServerInfo].value = info
+	}
+}
+
+// serviceInfo is one host-supplied PServerMetaData.serviceInfo entry.
+type serviceInfo struct {
+	name string
+	libs []string
+}
+
+// WithServiceInfo appends a PServerMetaData.serviceInfo entry: a named group of
+// libraries, connectors or listening ports the host wants shown beside the
+// Go build info the agent reports on its own. Call it once per group; the
+// entries are sent in call order after the agent's own entry.
+func WithServiceInfo(name string, libs ...string) ConfigOption {
+	return func(c *Config) {
+		c.serviceInfo = append(c.serviceInfo, serviceInfo{name: name, libs: append([]string(nil), libs...)})
 	}
 }
 

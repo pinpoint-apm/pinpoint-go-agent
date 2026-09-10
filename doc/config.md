@@ -1121,6 +1121,26 @@ bound are dropped with a debug log, once per span.
 * max: 64
 * dynamic
 
+### ServerInfo
+ServerInfo option sets the server description sent in the agent information
+(`PServerMetaData.serverInfo`) and shown on the server information view of the
+Pinpoint UI. If it is not set, "Go Application" is sent. The C++ agent has no
+config key for this value; it takes it through `AgentOptions.server_info` only.
+
+The value is read at startup and sent with every agent information send, so a
+change to it reaches the collector with the next `Collector.AgentInfo.RefreshInterval`
+cycle at the earliest, not on the change itself.
+
+The other server metadata, the service information list, is a list of named
+lists and has no config file spelling. It is set with `WithServiceInfo()`; see
+[API Contracts](api_contracts.md#13-server-metadata).
+
+* --pinpoint-serverinfo
+* PINPOINT_GO_SERVERINFO
+* WithServerInfo()
+* type: string
+* default: "" (sends "Go Application")
+
 ### IsContainerEnv
 IsContainerEnv option sets whether the application is running in a container environment or not.
 If this is not set, the agent automatically checks it.

@@ -1607,6 +1607,64 @@ func Test_agentGrpc_makeAgentInfo_KeepsValidUTF8(t *testing.T) {
 	assert.True(t, utf8.ValidString(info.GetHostname()))
 }
 
+// WithServerInfo replaces the default; WithServiceInfo entries follow the
+// agent's own Go build entry in call order instead of replacing it.
+func Test_agentGrpc_makeAgentInfo_HostServerMetaData(t *testing.T) {
+	cfg, err := NewConfig(WithAppName("TestApp"),
+		WithServerInfo("nginx/1.25"),
+		WithServiceInfo("Connectors", "http-8080", "grpc-9090"),
+		WithServiceInfo("Empty group"))
+	require.NoError(t, err)
+	agentGrpc := newMockAgentGrpc(newTestAgent(cfg))
+
+	_, info := agentGrpc.makeAgentInfo()
+	meta := info.GetServerMetaData()
+
+	assert.Equal(t, "nginx/1.25", meta.GetServerInfo())
+	require.Len(t, meta.GetServiceInfo(), 3)
+	assert.Contains(t, meta.GetServiceInfo()[0].GetServiceName(), runtime.GOOS)
+	assert.Equal(t, "Connectors", meta.GetServiceInfo()[1].GetServiceName())
+	assert.Equal(t, []string{"http-8080", "grpc-9090"}, meta.GetServiceInfo()[1].GetServiceLib())
+	assert.Equal(t, "Empty group", meta.GetServiceInfo()[2].GetServiceName())
+	assert.Empty(t, meta.GetServiceInfo()[2].GetServiceLib())
+}
+
+// An empty ServerInfo is "not set", not an empty server description.
+func Test_agentGrpc_makeAgentInfo_EmptyServerInfoKeepsDefault(t *testing.T) {
+	cfg, err := NewConfig(WithAppName("TestApp"), WithServerInfo(""))
+	require.NoError(t, err)
+	agentGrpc := newMockAgentGrpc(newTestAgent(cfg))
+
+	_, info := agentGrpc.makeAgentInfo()
+
+	assert.Equal(t, "Go Application", info.GetServerMetaData().GetServerInfo())
+	assert.Len(t, info.GetServerMetaData().GetServiceInfo(), 1)
+}
+
+// Host-supplied metadata is sanitized like argv: one bad byte would make the
+// collector reject every registration attempt.
+func Test_agentGrpc_makeAgentInfo_SanitizesHostServerMetaData(t *testing.T) {
+	cfg, err := NewConfig(WithAppName("TestApp"),
+		WithServerInfo("caf\xe9"),
+		WithServiceInfo("libs\x80", "a\xff", "ok"))
+	require.NoError(t, err)
+	agentGrpc := newMockAgentGrpc(newTestAgent(cfg))
+
+	_, info := agentGrpc.makeAgentInfo()
+	meta := info.GetServerMetaData()
+
+	assert.True(t, utf8.ValidString(meta.GetServerInfo()), "serverInfo must be valid UTF-8: %q", meta.GetServerInfo())
+	for _, si := range meta.GetServiceInfo() {
+		assert.True(t, utf8.ValidString(si.GetServiceName()), "serviceName must be valid UTF-8: %q", si.GetServiceName())
+		for _, lib := range si.GetServiceLib() {
+			assert.True(t, utf8.ValidString(lib), "serviceLib must be valid UTF-8: %q", lib)
+		}
+	}
+	assert.Equal(t, "ok", meta.GetServiceInfo()[1].GetServiceLib()[1])
+	_, err = proto.Marshal(info)
+	require.NoError(t, err, "registration message must marshal")
+}
+
 // --- local IP ---------------------------------------------------------------
 
 // Everything below runs without network access: it only inspects local

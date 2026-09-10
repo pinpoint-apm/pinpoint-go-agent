@@ -515,15 +515,39 @@ func makeGoLibraryInfo() *pb.PServiceInfo {
 	}
 }
 
-func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
-	// Registration carries the only strings on this path the agent does not
-	// produce itself - raw argv and a host name - and a PAgentInfo the collector
-	// rejects for invalid UTF-8 is a permanent failure: the same bytes are sent
-	// on every retry, and an unregistered agent has no traces stored at all.
+// makeServerMetaData builds PServerMetaData: the configured ServerInfo (or the
+// default), argv, and the agent's own Go build entry followed by the host's
+// WithServiceInfo entries. Host strings are sanitized like argv: the collector
+// rejects a PAgentInfo with invalid UTF-8 and the same bytes would be re-sent
+// on every retry.
+func makeServerMetaData(config *Config) *pb.PServerMetaData {
 	vmArgs := make([]string, 0, len(os.Args)-1)
 	for _, arg := range os.Args[1:] {
 		vmArgs = append(vmArgs, validUTF8(arg))
 	}
+
+	services := []*pb.PServiceInfo{makeGoLibraryInfo()}
+	for _, si := range config.serviceInfo {
+		libs := make([]string, 0, len(si.libs))
+		for _, lib := range si.libs {
+			libs = append(libs, validUTF8(lib))
+		}
+		services = append(services, &pb.PServiceInfo{ServiceName: validUTF8(si.name), ServiceLib: libs})
+	}
+
+	return &pb.PServerMetaData{
+		ServerInfo:  validUTF8(cmp.Or(config.String(CfgServerInfo), "Go Application")),
+		VmArg:       vmArgs,
+		ServiceInfo: services,
+	}
+}
+
+func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
+	// Registration carries the only strings on this path the agent does not
+	// produce itself - raw argv, a host name and the server metadata - and a
+	// PAgentInfo the collector rejects for invalid UTF-8 is a permanent failure:
+	// the same bytes are sent on every retry, and an unregistered agent has no
+	// traces stored at all.
 
 	agentInfo := &pb.PAgentInfo{
 		Hostname:     validUTF8(getHostName()),
@@ -533,11 +557,7 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 		AgentVersion: Version,
 		VmVersion:    runtime.Version(),
 
-		ServerMetaData: &pb.PServerMetaData{
-			ServerInfo:  "Go Application",
-			VmArg:       vmArgs,
-			ServiceInfo: []*pb.PServiceInfo{makeGoLibraryInfo()},
-		},
+		ServerMetaData: makeServerMetaData(agentGrpc.agent.config),
 
 		JvmInfo: &pb.PJvmInfo{
 			Version:   0,

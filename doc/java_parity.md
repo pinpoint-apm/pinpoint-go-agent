@@ -25,6 +25,7 @@ one place that compares. The C++ agent keeps the same file at
 |---|---|---|
 | Per-URL sampler | `UrlTraceSampler`, `UrlSamplerConfig`, `TraceSamplerProvider` | **Declined** — see [below](#per-url-sampler--declined) |
 | Tracing before agent registration | `AgentInfoSender`, `DefaultApplicationContext.start()` | **Declined** — see [below](#registration-before-tracing--declined) |
+| Server metadata injection | `ServerMetaDataRegistryService`, `OnChangeListener`; C++ `AgentOptions.server_info/libs` | **Aligned with C++ (injection at startup), declined (change listener)** — see [below](#server-metadata-injection--aligned-with-c) |
 | SQL count per transaction | `DefaultSqlCountService` | **Adopted** — `SQL.ErrorCount` |
 | Empty SQL statement | `DefaultSqlMetaDataService.wrapSqlResult`, `WrappedSpanEventRecorder.recordSqlParsingResult` | **Diverges** — see [below](#empty-sql-statement--diverges) |
 | Error cause categories in `err` | `ErrorCategory`, `ConfigurableErrorRecorder`, `ConfigurableErrorRecorderFactory` | **Adopted** — `Span.ErrorMark` / `Span.ErrorMarkExclude` |
@@ -162,6 +163,35 @@ the way — a failure whose only exception detail was raised past the depth
 limit.
 
 ---
+
+## Server metadata injection — aligned with C++
+
+**Java.** `DefaultServerMetaDataRegistryService` holds the server info, the
+connector list and the service infos. Plugins register them as a container
+starts, and each change fires `OnChangeListener`, on which `AgentInfoSender`
+calls `refresh()` and re-sends the AgentInfo at once.
+
+**C++.** `AgentOptions.server_info`, `.args` and `.libs` are copied into the
+gRPC agent at creation (`setServerMetaData`). There is no config key and no
+change path; the default is `"C/C++ Application"`. `libs` become one
+`PServiceInfo` named `"Libraries"`, and the agent always adds its own
+`"Pinpoint Agent"` entry carrying its config.
+
+**This agent.** `ServerInfo` (config key, flag, env, `WithServerInfo()`) and
+`WithServiceInfo(name, libs...)` set the values at startup, as the C++ options
+do. The agent's own entry - Go runtime and build module list - is kept first
+and host entries are appended, mirroring the C++ agent's always-present
+`"Pinpoint Agent"` entry. Argv is not overridable; it is `os.Args[1:]`.
+
+The `OnChangeListener` path is **not** ported: there is no call that triggers
+an AgentInfo send, so a change to the metadata is picked up by the next
+`Collector.AgentInfo.RefreshInterval` cycle (24 h by default) and never when the
+refresh is off. `refreshAgentInfo` already rebuilds the message on every
+attempt, so no further plumbing is needed when the cycle comes. Declined
+because the Java listener exists for containers whose connectors appear after
+the agent starts; a Go application passes its metadata to `NewConfig()` and
+has no later change to announce. An immediate refresh would also need a rate
+limit against a host calling it in a loop, a cost with no caller yet.
 
 ## Span event sequence reservation — aligned with C++
 

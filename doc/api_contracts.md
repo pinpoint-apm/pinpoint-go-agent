@@ -540,6 +540,24 @@ ctx := pinpoint.NewContext(context.Background(), tracer.NewGoroutineTracer())
   That is what makes `pinpoint.GetAgent().NewSpanTracer(...)` safe in library
   code that cannot know whether the application started an agent.
 
+## 13. Server Metadata
+
+* `WithServerInfo(info)` sets `PServerMetaData.serverInfo`, the same value as
+  the `ServerInfo` config key. Empty means "not set" and sends the default
+  `"Go Application"`.
+* `WithServiceInfo(name, libs...)` **appends** one `PServiceInfo` entry. Call it
+  once per group. The agent's own entry — the Go runtime and the build's module
+  list — is always sent first; host entries follow in call order. There is no
+  way to drop the agent's entry.
+* Both are **startup-only**. The values are re-read on every agent information
+  send, but there is no call that triggers a send: a change reaches the
+  collector with the next `Collector.AgentInfo.RefreshInterval` cycle (24 hours
+  by default) or never, when the refresh is disabled. See
+  [Java Parity](java_parity.md#server-metadata-injection--aligned-with-c).
+* Host strings are sanitized to valid UTF-8 like every other string the agent
+  sends; a value with invalid bytes is sent with those bytes replaced, not
+  rejected.
+
 ---
 
 ## Related Documentation
