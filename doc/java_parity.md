@@ -46,6 +46,7 @@ one place that compares. The C++ agent keeps the same file at
 | Malformed config value | `DefaultProfilerConfig.readInt` / `NumberUtils.parseInteger`, `ValueAnnotationProcessor` | **Aligned with C++** — a value that does not convert to its option's type is warned about and the option keeps its current value (`get_yaml<T>` in the C++ agent's `src/config.cpp`), where Java is split between a silent default fallback in `readInt`/`readLong` and a startup failure on an `@Value` injection |
 | Retrying a rejected metadata send | `MetadataGrpcDataSender`, `RetryResponseStreamObserver` | **Diverges (aligned with C++)** — see [below](#retrying-a-rejected-metadata-send--diverges) |
 | Span queue overflow policy | `SpanBatchGrpcDataSender` | **Same as Java** — a full send queue drops the oldest entry, as Java's default BATCH sender does (`queue.poll()` in `SpanBatchGrpcDataSender`); rejecting the newest is STREAM-mode-only behaviour, so head-drop is not a deviation |
+| Stat queue overflow policy | `GrpcDataSender` (`StatGrpcDataSender`), `AsyncQueueingExecutor` | **Diverges (head-drop)** — see [below](#stat-queue-overflow-policy--diverges) |
 | Command channel RPC | `GrpcCommandService`, `SupportCommandCodeClientInterceptor`, `Header.SUPPORT_COMMAND_CODE` | **Aligned** — see [below](#command-channel-rpc--aligned) |
 | Active trace registry cap | `DefaultActiveTraceRepository`, `DEFAULT_MAX_ACTIVE_TRACE_SIZE` (Caffeine `maximumSize`) | **Adopted, per shard** — see [below](#active-span-registry-cap--adopted-per-shard) |
 | Automatic shutdown at process exit | `ShutdownHookRegister`, `DefaultAgent.close()` | **Diverges** — see [below](#automatic-shutdown-at-process-exit--diverges) |
@@ -809,6 +810,39 @@ evicted lose their cache slot. `Test_sendMetaWorker_releasesCacheOnCollectorReje
 (`grpc_test.go`) locks the delayed release.
 
 ---
+
+## Stat queue overflow policy — diverges
+
+**Java.** `StatGrpcDataSender` hands each `PStatMessage` to an
+`AsyncQueueingExecutor` whose bounded `LinkedBlockingQueue` rejects the
+*newest* item when full (`offer()` fails, the item is counted and dropped);
+what is already queued is never touched.
+
+**C++.** The stat queue does not drop at all: `GrpcAgentStats` pushes onto a
+bounded queue and a full queue blocks the producer.
+
+**Go.** `enqueueStat` (`agent.go`) head-drops: a full `statChan` gives up its
+oldest record and the freed slot goes to the new one, the same policy
+`tryEnqueueMeta` applies to `metaChan` and the span queue applies to its
+shards. An overflow costs exactly one record, as in Java; which record differs.
+The eviction and the re-insert both use non-blocking selects, so a consumer
+draining concurrently or a producer racing for the freed slot costs nothing
+extra — the racing producer's loss is the new record, still one per overflow.
+The drop is counted and reported at the enqueue site because the stat worker
+is parked in `newStatStreamWithRetry` during a collector outage, exactly when
+the drops happen.
+
+**Why diverge.** Agent stat is a time series the collector plots by timestamp:
+under a collector outage the oldest queued batch is the one that will be
+stalest when the stream recovers, and the newest is the one a dashboard is
+waiting on. Java's drop-newest is the default of its executor, not a decision
+about stat data. Blocking as C++ does is not an option here because
+`enqueueStat` runs on the stat collector's tick, and stalling it would stall
+the url stat tick queued through the same call.
+
+**Locked by** `Test_agent_enqueueStatOverflowLosesExactlyOneRecord`,
+`Test_agent_enqueueStatCountsEveryDroppedRecord` and
+`Test_agent_enqueueStatReturnsWhenDropRaceLeavesQueueEmpty` (`agent_test.go`).
 
 ## Command channel RPC — aligned
 

@@ -540,6 +540,9 @@ func Test_agent_enqueueUrlStatReturnsWhenDropRaceLeavesQueueEmpty(t *testing.T) 
 	assert.False(t, result)
 }
 
+// An unbuffered statChan makes every send and receive miss: the eviction and
+// the re-insert after it must both fall through to their default cases rather
+// than block the producer.
 func Test_agent_enqueueStatReturnsWhenDropRaceLeavesQueueEmpty(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agent.statChan = make(chan *pb.PStatMessage)
@@ -549,6 +552,7 @@ func Test_agent_enqueueStatReturnsWhenDropRaceLeavesQueueEmpty(t *testing.T) {
 	})
 
 	assert.False(t, result)
+	assert.EqualValues(t, 1, agent.statDrops.dropped.Load(), "the rejected record is the one lost")
 }
 
 func callBoolWithTimeout(t *testing.T, name string, fn func() bool) bool {
@@ -1429,11 +1433,36 @@ func Test_agent_enqueueStatCountsEveryDroppedRecord(t *testing.T) {
 	}
 
 	// Nothing drained the queue while it filled, so every record that is not
-	// still sitting in it was lost: the ones rejected outright and the ones
-	// evicted on top of them.
+	// still sitting in it was lost: the oldest one evicted by each overflow.
 	assert.EqualValues(t, enqueued-queued, agent.statDrops.dropped.Load(),
 		"every record the collector will never see must be counted once")
-	assert.Positive(t, queued, "test must leave the queue full")
+	assert.Equal(t, queueSize, queued, "test must leave the queue full")
+}
+
+// Each overflow head-drops the oldest record and queues the new one, so a full
+// queue costs exactly one record per enqueue and holds the newest records.
+func Test_agent_enqueueStatOverflowLosesExactlyOneRecord(t *testing.T) {
+	const queueSize, enqueued = 4, 100
+
+	agent := newTestAgent(defaultConfig())
+	agent.statChan = make(chan *pb.PStatMessage, queueSize)
+	defer captureWarnLog(&bytes.Buffer{})()
+
+	stats := make([]*pb.PStatMessage, enqueued)
+	for i := range stats {
+		stats[i] = &pb.PStatMessage{}
+		assert.True(t, agent.enqueueStat(stats[i]), "a head-drop must make room for the new record")
+	}
+
+	assert.EqualValues(t, enqueued-queueSize, agent.statDrops.dropped.Load(),
+		"one record lost per overflow")
+	close(agent.statChan)
+	i := enqueued - queueSize
+	for stat := range agent.statChan {
+		assert.Same(t, stats[i], stat, "the newest records survive")
+		i++
+	}
+	assert.Equal(t, enqueued, i)
 }
 
 // The warning has to come from the producer. sendStatsWorker used to report it
@@ -1454,7 +1483,7 @@ func Test_agent_enqueueStatWarnsWithoutAConsumer(t *testing.T) {
 		agent.enqueueStat(&pb.PStatMessage{})
 	}
 
-	assert.Greater(t, agent.statDrops.dropped.Load(), int64(1), "test did not saturate the queue")
+	assert.EqualValues(t, enqueued-queueSize, agent.statDrops.dropped.Load(), "test did not saturate the queue")
 	assert.Equal(t, 1, strings.Count(buf.String(), "stat queue overflow"),
 		"a saturated queue must warn once per report interval, not once per dropped record")
 	assert.Contains(t, buf.String(), fmt.Sprintf("max queue size %d", queueSize))

@@ -1836,14 +1836,28 @@ func (agent *agent) enqueueStat(stat *pb.PStatMessage) bool {
 		break
 	}
 
-	// The queue is full: stat is rejected, and the oldest queued record is
-	// evicted on top of it to leave room for the next enqueue. Both are
-	// records the collector will never see, so both are counted.
-	dropped := int64(1)
+	// The queue is full: head-drop the oldest record and hand its slot to stat,
+	// the same policy as tryEnqueueMeta. An overflow costs exactly one record
+	// either way - the evicted one, or stat itself when another producer takes
+	// the freed slot first - and stat is a time series, so the newest sample
+	// is the one worth keeping.
+	dropped := int64(0)
 	select {
 	case <-agent.statChan:
 		dropped++
 	default:
+		// The consumer drained one meanwhile, so nothing had to be evicted.
+	}
+	queued := false
+	select {
+	case agent.statChan <- stat:
+		queued = true
+	default:
+		// Another producer took the freed slot: stat is the record lost.
+		dropped++
+	}
+	if dropped == 0 {
+		return true
 	}
 	agent.statDrops.record(dropped)
 	// Reported here rather than in sendStatsWorker: the worker only reaches its
@@ -1851,7 +1865,7 @@ func (agent *agent) enqueueStat(stat *pb.PStatMessage) bool {
 	// newStatStreamWithRetry and silences the warning for exactly the stretch
 	// where the drops happen. Same policy as enqueueUrlStat.
 	agent.statDrops.report("stat", cap(agent.statChan))
-	return false
+	return queued
 }
 
 func (agent *agent) sendStatsWorker() {
