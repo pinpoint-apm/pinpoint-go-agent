@@ -279,13 +279,17 @@ func Test_throughputLimitTraceSampler_burst(t *testing.T) {
 	s := newThroughputLimitTraceSampler(newRateSampler(1), tps, tps)
 	stats := newAgentStats()
 
-	// a burst of tps requests arriving at once is sampled in full: the limiter
-	// starts with tps tokens, like the Guava RateLimiter of the Java agent.
-	assert.Equal(t, tps, countConcurrent(tps, func() bool { return s.isNewSampled(stats) }), "new burst")
-	assert.Equal(t, tps, countConcurrent(tps, func() bool { return s.isContinueSampled(stats) }), "continue burst")
+	// A fresh limiter starts empty, so a burst of tps requests arriving at once
+	// yields exactly one sample. This used to assert tps: the bucket started
+	// full, on the belief that the Guava RateLimiter of the Java agent does.
+	// It does not - SmoothBursty.doSetRate sets storedPermits to 0 in its
+	// initial state, and the C++ agent's test_limiter.cpp locks the same
+	// first-call-then-pace behaviour. See newTokenBucket.
+	assert.Equal(t, 1, countConcurrent(tps, func() bool { return s.isNewSampled(stats) }), "new burst")
+	assert.Equal(t, 1, countConcurrent(tps, func() bool { return s.isContinueSampled(stats) }), "continue burst")
 
-	// the burst does not raise the average: the tokens are spent now, so a
-	// second of sustained load past the empty bucket yields about tps samples.
+	// a second of sustained load against the empty bucket yields about tps
+	// samples: the pacing, not the initial state, sets the average.
 	sampled := 0
 	for deadline := time.Now().Add(1 * time.Second); time.Now().Before(deadline); {
 		if s.isNewSampled(stats) {
@@ -293,11 +297,20 @@ func Test_throughputLimitTraceSampler_burst(t *testing.T) {
 		}
 	}
 	assert.InDelta(t, tps, sampled, tps/10, "new average")
+
+	// the steady-state capacity is still one second of permits: after an idle
+	// second a burst of 2*tps is sampled up to tps (plus what trickles in
+	// while the burst runs).
+	time.Sleep(1100 * time.Millisecond)
+	burst := countConcurrent(2*tps, func() bool { return s.isNewSampled(stats) })
+	assert.GreaterOrEqual(t, burst, tps, "idle burst")
+	assert.Less(t, burst, tps+tps/10, "idle burst")
 }
 
 func Test_throughputLimitTraceSampler_hugeThroughput(t *testing.T) {
 	// a tps beyond one event per nanosecond makes per() an infinite rate: the
-	// burst of tps must neither overflow the limiter nor throttle anything.
+	// burst of tps must neither overflow the limiter nor throttle anything,
+	// and the drain that empties a fresh bucket must not apply either.
 	s := newThroughputLimitTraceSampler(newRateSampler(1), math.MaxInt32, math.MaxInt32)
 	stats := newAgentStats()
 

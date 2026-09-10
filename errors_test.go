@@ -136,9 +136,21 @@ func TestSpan_TraceCallStackUsesGivenClassName(t *testing.T) {
 }
 
 // Error.NewThroughput limits new exception chains, like the Java agent's
-// ExceptionChainSampler; 0 or less means unlimited. The burst is one second of
-// permits, so the first tps chains are recorded and the rest denied without
-// waiting for a refill.
+// ExceptionChainSampler; 0 or less means unlimited. The bucket starts empty
+// (see newTokenBucket), so a fresh agent records the first chain and denies the
+// rest of a burst whatever the throughput, until idle time has refilled it.
+// This used to expect the first tps chains to pass on the belief that the
+// bucket started full.
+// unlimitedNewChainsConfig is defaultConfig without the Error.NewThroughput
+// limiter, for tests that record several new chains at once on a fresh agent
+// and are about something other than the limiter: a fresh bucket admits only
+// the first chain of a burst.
+func unlimitedNewChainsConfig() *Config {
+	cfg := defaultConfig()
+	cfg.Set(CfgErrorNewThroughput, 0)
+	return cfg
+}
+
 func TestSpan_TraceCallStackLimitsNewChains(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -147,7 +159,7 @@ func TestSpan_TraceCallStackLimitsNewChains(t *testing.T) {
 	}{
 		{"unlimited", 0, 3},
 		{"negative is unlimited", -1, 3},
-		{"limited to the burst", 2, 2},
+		{"limited: a fresh bucket admits one", 2, 1},
 		{"limited to one", 1, 1},
 	}
 	for _, tt := range tests {
@@ -241,7 +253,7 @@ func assertChainDepthsContiguous(t *testing.T, span *span) {
 // throwable is in the new one's cause chain. Joining the old chain would put
 // its head below the new error although it is not a cause of it.
 func TestSpan_TraceCallStackWrappedInnerCauseStartsNewChain(t *testing.T) {
-	span := defaultSpan(newTestAgent(defaultConfig()))
+	span := testSpanWithConfig(unlimitedNewChainsConfig())
 
 	base := errors.New("base")
 	db := fmt.Errorf("db: %w", base)
@@ -343,7 +355,7 @@ func (e uncomparableError) Error() string { return strings.Join(e, ",") }
 // Recording two errors of the same uncomparable type on one span used to
 // panic on the request goroutine inside findError.
 func TestSpan_TraceCallStackUncomparableErrorType(t *testing.T) {
-	span := defaultSpan(newTestAgent(defaultConfig()))
+	span := testSpanWithConfig(unlimitedNewChainsConfig())
 
 	first := span.traceCallStack(uncomparableError{"a"}, "", 32, time.Now())
 	second := span.traceCallStack(uncomparableError{"b"}, "", 32, time.Now())
@@ -477,7 +489,7 @@ func TestSpanEvent_SetErrorLogsDropAtDefaultLevel(t *testing.T) {
 	var buf bytes.Buffer
 	defer captureLogAt(&buf, logrus.InfoLevel)()
 
-	cfg := defaultConfig()
+	cfg := unlimitedNewChainsConfig()
 	cfg.Set(CfgErrorTraceCallStack, true)
 	cfg.Set(CfgErrorMaxChainDepth, 1)
 	span := testSpanWithConfig(cfg)
@@ -496,7 +508,7 @@ func TestSpanEvent_SetErrorLogsDropAtDefaultLevel(t *testing.T) {
 // one call stack recording errors concurrently must neither race nor exceed
 // the cap.
 func TestSpanEvent_ConcurrentSetErrorRespectsChainCapWithoutRace(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := unlimitedNewChainsConfig()
 	cfg.Set(CfgErrorTraceCallStack, true)
 	span := testSpanWithConfig(cfg)
 	limit := max(minErrorChainEntry, span.cfg.errorMaxChainDepth)

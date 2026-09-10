@@ -140,16 +140,11 @@ func newThroughputLimitTraceSampler(base sampler, newTps int, continueTps int) *
 		contLimiter *rate.Limiter
 	)
 
-	// The burst is the tps itself, not 1: Java's RateLimitTraceSampler uses a
-	// Guava RateLimiter, a token bucket equivalent to x/time/rate that holds up
-	// to one second of permits, so a burst of tps requests arriving at once is
-	// sampled in full. A burst of 1 would spread the same tps into one sample
-	// per 1/tps seconds and drop most of a bursty load.
 	if newTps > 0 {
-		newLimiter = rate.NewLimiter(per(newTps, time.Second), newTps)
+		newLimiter = newTokenBucket(newTps)
 	}
 	if continueTps > 0 {
-		contLimiter = rate.NewLimiter(per(continueTps, time.Second), continueTps)
+		contLimiter = newTokenBucket(continueTps)
 	}
 	return &throughputLimitTraceSampler{
 		baseSampler:           base,
@@ -160,6 +155,37 @@ func newThroughputLimitTraceSampler(base sampler, newTps int, continueTps int) *
 
 func per(throughput int, d time.Duration) rate.Limit {
 	return rate.Every(d / time.Duration(throughput))
+}
+
+// newTokenBucket builds the limiter behind every per-second throughput option,
+// shaped like the Guava RateLimiter.create(tps) the Java agent uses (a
+// SmoothBursty with one second of burst) and the C++ agent's RateLimiter:
+//
+//   - steady-state capacity is one second of permits, so a burst of tps
+//     requests after an idle second is sampled in full. A burst of 1 would
+//     spread the same tps into one sample per 1/tps seconds and drop most of a
+//     bursty load;
+//   - the bucket starts empty, not full. SmoothBursty.doSetRate sets
+//     storedPermits to 0 in its initial state, so a fresh limiter admits its
+//     first caller (Guava lets it borrow against the next interval) and paces
+//     everyone after it at tps until idle time has refilled the bucket. Go's
+//     rate.NewLimiter starts full instead, so the tokens above the first are
+//     drained here at creation, which also starts the refill clock now like
+//     Guava's setRate does.
+//
+// A limiter is rebuilt on every sampling reload (newTraceSampler,
+// newExceptionLimiter), so each reload starts from an empty bucket the same
+// way Java's does when TraceSamplerProvider rebuilds its RateLimiters. The
+// callers keep the previous limiter when the option did not change, which is
+// why an unrelated reload does not restart the pacing.
+//
+// AllowN rather than SetTokensAt: the latter does not exist in the x/time
+// version go.mod pins. On an unlimited rate (tps above one per nanosecond, see
+// per) AllowN is a no-op, which is the intended result.
+func newTokenBucket(tps int) *rate.Limiter {
+	l := rate.NewLimiter(per(tps, time.Second), tps)
+	l.AllowN(time.Now(), tps-1)
+	return l
 }
 
 func (s *throughputLimitTraceSampler) isNewSampled(stats *agentStats) bool {

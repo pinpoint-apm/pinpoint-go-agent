@@ -1440,7 +1440,7 @@ and the Go agent, and that are now pinned by an assertion suite in each port so
 they cannot drift back apart unnoticed.
 
 The suites are `test/test_java_parity_lock.cpp` (C++) and
-`java_parity_lock_test.go` (Go). They are organised into the same eleven groups,
+`java_parity_lock_test.go` (Go). They are organised into the same twelve groups,
 in the same order, as the table below. Where an older suite already covered a
 group, the lock file cross-references it instead of duplicating it — the table's
 "locked by" column names whichever file holds the assertions.
@@ -1464,6 +1464,7 @@ divergence entry above saying why.
 | 9 | transaction counters | `context/id/DefaultTransactionCounter` | all six counters (sampled/unsampled/skipped × new/continuation) exist and drain independently, and a drain resets them | `test_stat.cpp` (`SamplingCountersTest`, `AllCountersMixedIncrementTest`, `CollectResetsCountersBetweenCallsTest`) | `…TransactionCounters` |
 | 10 | message truncation format | `StringUtils.abbreviate`, `AbstractRecorder.recordException` | a value within the cap is returned verbatim; a longer one keeps its first *n* bytes and gains a `...(original length)` suffix; the caps 256 (span / span event error) and 65536 (SQL metadata text); the cut lands on a UTF-8 boundary so the result stays valid for protobuf | `…TruncationFormat`, `…TruncationCutsOnAUtf8Boundary`, `…MessageLimits` | `…TruncationFormat`, `…TruncationCutsOnARuneBoundary`, `…MessageLimits` |
 | 11 | gRPC channel constants | `grpc/.../client/config/ClientOption`, `GrpcTransportConfig`, `AgentInfoSender`, `pinpoint-root.config` | collector ports 9991 / 9992 / 9993; keepalive 30s / 60s without permit-without-stream; 4 MiB max message; connection and stream renewal off; AgentInfo refresh 24h with 3 tries per attempt; span batch 20 / 1000 ms / 500 ms / 10 concurrent; stat 5000 ms × 6; SQL cache limit 2048, expiry 168h, bind value 1024, error count 100 | `…CollectorPortDefaults`, `…GrpcChannelDefaults`, `…AgentInfoSchedule`, `…SpanBatchDefaults`, `…StatCollectionDefaults`, `…SqlCacheDefaults` | `…CollectorPortDefaults`, `…GrpcChannelDefaults`, `…ReconnectBackoff`, `…AgentInfoSchedule` |
+| 12 | throughput limiter shape | `RateLimiter.create(double)` → Guava `SmoothBursty` (`maxBurstSeconds = 1.0`), used by `RateLimitTraceSampler` and `ExceptionChainSampler` | the bucket **starts empty** (`storedPermits = 0` in `SmoothBursty.doSetRate`'s initial state): a fresh limiter admits exactly one caller and paces the rest at tps, and a reload that rebuilds the sampler starts empty again; steady-state capacity is exactly one second of permits, however long the idle | `test_limiter.cpp` (`FirstCallPassesThenPacesAtTps`, `IdleBurstIsCappedAtTps`, `LongIdleDoesNotAccumulate`) | `…ThroughputLimiterInitialState`, `…ThroughputLimiterCapacity` |
 
 ### Deliberately not locked
 

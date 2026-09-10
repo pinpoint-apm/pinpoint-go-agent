@@ -643,6 +643,43 @@ func Test_javaParityLock_PercentSamplerRateTruncation(t *testing.T) {
 	}
 }
 
+// Test_javaParityLock_ThroughputLimiterInitialState locks the shape of the
+// bucket behind every per-second throughput option (Sampling.NewThroughput,
+// Sampling.ContinueThroughput, Error.NewThroughput). Java's RateLimiter.create
+// builds a Guava SmoothBursty whose initial storedPermits is 0: a fresh limiter
+// admits its first caller and paces the next ones at tps. The C++ agent locks
+// the same in test_limiter.cpp (FirstCallPassesThenPacesAtTps). Times are
+// injected through AllowN so the test is exact and sleep-free.
+func Test_javaParityLock_ThroughputLimiterInitialState(t *testing.T) {
+	const tps = 10 // one token per 100ms
+	l := newTokenBucket(tps)
+	now := time.Now()
+
+	assert.True(t, l.AllowN(now, 1), "the first call passes")
+	assert.False(t, l.AllowN(now, 1), "no token is due yet")
+	assert.False(t, l.AllowN(now.Add(50*time.Millisecond), 1), "half an interval is not a token")
+	assert.True(t, l.AllowN(now.Add(100*time.Millisecond), 1), "one interval elapsed, one token due")
+	assert.False(t, l.AllowN(now.Add(100*time.Millisecond), 1))
+}
+
+// Test_javaParityLock_ThroughputLimiterCapacity locks the steady-state
+// capacity at one second of permits, the maxBurstSeconds of RateLimiter.create:
+// an idle bucket refills to exactly tps and no further, however long the idle.
+// C++: test_limiter.cpp (IdleBurstIsCappedAtTps, LongIdleDoesNotAccumulate).
+func Test_javaParityLock_ThroughputLimiterCapacity(t *testing.T) {
+	const tps = 10
+	l := newTokenBucket(tps)
+	idle := time.Now().Add(10 * time.Second)
+
+	admitted := 0
+	for i := 0; i < 2*tps; i++ {
+		if l.AllowN(idle, 1) {
+			admitted++
+		}
+	}
+	assert.Equal(t, tps, admitted, "an idle bucket holds exactly one second of permits")
+}
+
 // ===========================================================================
 // Group 7 - URI histogram layout
 // ===========================================================================

@@ -1420,10 +1420,9 @@ func newExceptionLimiter(prev *configSnapshot, values map[string]interface{}) *r
 	if tps <= 0 {
 		return nil
 	}
-	// The burst is the tps itself, for the reason newThroughputLimitTraceSampler
-	// documents: Java builds this limiter from a Guava RateLimiter, which holds
-	// up to one second of permits.
-	return rate.NewLimiter(per(tps, time.Second), tps)
+	// Java builds this limiter from a Guava RateLimiter too; newTokenBucket
+	// documents the shape it copies.
+	return newTokenBucket(tps)
 }
 
 // sameValues compares config values with DeepEqual: a value can be a slice

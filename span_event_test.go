@@ -421,7 +421,7 @@ func Test_newSpanEventGoroutine_apiIdIsPerAgent(t *testing.T) {
 func Test_span_getExceptionChainId_isPerAgent(t *testing.T) {
 	for _, name := range []string{"first agent", "second agent"} {
 		t.Run(name, func(t *testing.T) {
-			s := defaultTestSpan()
+			s := testSpanWithConfig(unlimitedNewChainsConfig())
 
 			id, isNew := s.getExceptionChainId(errors.New("boom"))
 			assert.Equal(t, int64(1), id, "first chain id")
