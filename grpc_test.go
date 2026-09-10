@@ -2373,7 +2373,7 @@ func Test_grpcChannelOptions_dialOptions_flowControlWindow(t *testing.T) {
 	defer ln.Close()
 
 	opts := newGrpcChannelOptions(cfg).dialOptions(insecure.NewCredentials())
-	cc, err := grpc.NewClient("passthrough:///"+ln.Addr().String(), opts...)
+	cc, err := grpc.NewClient(collectorTarget(cfg, ln.Addr().String()), opts...)
 	require.NoError(t, err)
 	defer cc.Close()
 	cc.Connect()
@@ -2615,4 +2615,47 @@ func TestSpanMessageBuilder_AnnotationApiFallbackIsBuilderLocal(t *testing.T) {
 	}
 	assert.Empty(t, span.annotations.values)
 	assert.Empty(t, se.annotations.values)
+}
+
+// The dns resolver, unlike passthrough, parses the target itself, so every
+// host shape the agent can be pointed at has to reach a listener through it:
+// an IPv4 literal, a bracketed IPv6 literal (resolved with no lookup at all),
+// and the default localhost (a name, resolved through /etc/hosts).
+func Test_collectorTarget_dnsResolverDialsEveryHostShape(t *testing.T) {
+	for _, host := range []string{"127.0.0.1", "::1", "localhost"} {
+		lis, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+		if err != nil {
+			t.Logf("host %s unavailable: %v", host, err)
+			continue
+		}
+		srv := grpc.NewServer()
+		go srv.Serve(lis)
+
+		_, port, err := net.SplitHostPort(lis.Addr().String())
+		require.NoError(t, err)
+		portNum, err := strconv.Atoi(port)
+		require.NoError(t, err)
+		cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorHost(host), WithCollectorAgentPort(portNum))
+		require.NoError(t, err)
+
+		assert.Equal(t, "dns:///"+net.JoinHostPort(host, port), collectorTarget(cfg, serverAddr(cfg, CfgCollectorAgentPort)))
+
+		conn, err := connectCollector(cfg, CfgCollectorAgentPort)
+		require.NoError(t, err, "host %s", host)
+		assert.True(t, waitUntilReady(context.Background(), conn, 5*time.Second, "target-test"), "host %s", host)
+		conn.Close()
+		srv.Stop()
+	}
+}
+
+// The rollback lever: only the scheme changes, and the address the channel is
+// given stays the bare host:port localIP probes.
+func Test_collectorTarget_passthroughRollback(t *testing.T) {
+	cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorHost("::1"),
+		WithCollectorAgentPort(9991), WithCollectorGrpcDnsResolverEnable(false))
+	require.NoError(t, err)
+
+	addr := serverAddr(cfg, CfgCollectorAgentPort)
+	assert.Equal(t, "[::1]:9991", addr)
+	assert.Equal(t, "passthrough:///[::1]:9991", collectorTarget(cfg, addr))
 }

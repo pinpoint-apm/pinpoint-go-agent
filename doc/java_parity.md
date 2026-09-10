@@ -1437,7 +1437,19 @@ re-enables it.
 | Write buffer | Netty watermarks 16 / 32 MiB | unset: the C-core knob is a no-op without `GRPC_WRITE_BUFFER_HINT` | 1 MiB transport write buffer (`Collector.Grpc.WriteBufferSize`) | follows Java's intent; the knobs are not the same mechanism, so the value is not locked |
 | Max header list size | 8 KB inbound | unset: default is already 8 KB soft / 16 KB hard | 8 KB inbound (`Collector.Grpc.MaxHeaderListSize`) | follows Java |
 | Connection renewal | `loadbalancer.renew.period.millis`, off by default | `Collector.Grpc.ChannelMaxAgeMs`, off by default | `Collector.Grpc.ConnectionMaxAge`, off by default | same as Java, locked (group 11) |
+| Name resolution | `NameResolverProvider` on the managed channel: the collector host resolves to every address, re-resolved on failure | the C-core `dns` resolver, the channel default | `dns:///` target (`Collector.Grpc.DnsResolverEnable`, default true) | follows Java; the resolver is not locked |
 | Idle timeout | 30 days (disabled) | `INT_MAX` (disabled) by default; `Collector.Grpc.IdleTimeoutMs` re-enables | `WithIdleTimeout(0)` (disabled) by default; `Collector.Grpc.IdleTimeout` re-enables | **disabled, as in Java**; the value is not locked |
+
+Name resolution follows Java for the reason the ported balancer needs: Java's
+`SubconnectionExpiringLoadBalancer` is written against a resolver that hands
+the channel the whole address list and can be asked to resolve again
+(`refreshNameResolution`), and `grpc_balancer.go` ports both halves. The
+`passthrough` scheme this agent used before gave the channel a one-element
+list and no resolver to re-ask, so a multi-A-record collector host could
+neither be spread across nor failed over to, whatever the renewal period.
+`Collector.Grpc.DnsResolverEnable=false` restores that older behavior as a
+rollback lever only. The scheme lives at the dial site, not in `serverAddr`,
+whose bare `host:port` is also what `localIP` probes for `PAgentInfo.Ip`.
 
 All three agents disable the idle timeout. grpc-go's unset default is 30
 minutes (`dialoptions.go` `defaultDialOptions`, v1.82.1), and `WithIdleTimeout`
@@ -1452,8 +1464,8 @@ quiet by nature (stat every 5 s on a long-lived stream, agent info every 24 h,
 spans only with traffic), and in `Span.Batch.Enable` mode the span channel
 carries unary RPCs only, so an application with no traffic reaches the
 30-minute default on that channel. The trade-off considered and rejected: an
-idle reconnect resolves DNS again through the `passthrough` scheme and would
-pick up a moved collector, but `Collector.Grpc.ConnectionMaxAge` already
+idle reconnect re-resolves the collector host (the `dns` resolver, see the row
+above) and would pick up a moved collector, but `Collector.Grpc.ConnectionMaxAge` already
 provides that while traffic flows and without dropping the keepalive pings in
 between, so the DNS argument did not outweigh the lost keepalive. Disabling
 idling does not by itself keep pings flowing on a connection with no open

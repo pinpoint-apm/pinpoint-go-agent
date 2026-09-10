@@ -318,9 +318,9 @@ func (o grpcChannelOptions) dialOptions(creds credentials.TransportCredentials) 
 		// stream is open unless PermitWithoutStream is set (default false), so
 		// a unary-only channel with no traffic sends no pings even with idling
 		// off; keeping the transport up still spares the reconnect and the
-		// backoff. And a replacement connection resolves the collector host
-		// again (passthrough scheme, see connectCollector), so an idle
-		// reconnect would pick up a DNS change; Collector.Grpc.ConnectionMaxAge
+		// backoff. And a channel that leaves idle re-resolves the collector
+		// host (dns resolver, see collectorTarget), so an idle reconnect would
+		// pick up a DNS change; Collector.Grpc.ConnectionMaxAge
 		// already provides that on purpose, while traffic flows, without
 		// tearing the transport down first. ConnectionMaxAge and the idle
 		// timeout are independent: renewal acts only on a channel that is
@@ -365,18 +365,47 @@ func connectCollector(config *Config, portOption string) (*grpc.ClientConn, erro
 
 	opts := newGrpcChannelOptions(config).dialOptions(creds)
 	addr := serverAddr(config, portOption)
-	Log("grpc").Infof("connect to collector: %s (ssl: %v)", addr, config.Bool(CfgCollectorGrpcSslEnable))
-	// NewClient defaults to the dns resolver, which hands one resolved address
-	// list to the channel and refreshes it only on failure. The passthrough
-	// scheme keeps grpc.Dial's behavior: the dialer resolves the collector host
-	// for every new connection, so a replacement connection (see
-	// Collector.Grpc.ConnectionMaxAge) sees the current DNS records. The
-	// channel starts idle; the first RPC or waitUntilReady connects it.
-	conn, err := grpc.NewClient("passthrough:///"+addr, opts...)
+	target := collectorTarget(config, addr)
+	Log("grpc").Infof("connect to collector: %s (ssl: %v)", target, config.Bool(CfgCollectorGrpcSslEnable))
+	// The channel starts idle; the first RPC or waitUntilReady connects it.
+	conn, err := grpc.NewClient(target, opts...)
 	if err != nil {
-		Log("grpc").Errorf("connect to collector - %s, %v", addr, err)
+		Log("grpc").Errorf("connect to collector - %s, %v", target, err)
 	}
 	return conn, err
+}
+
+// collectorTarget turns the collector address into a gRPC target by naming the
+// resolver explicitly. The scheme belongs here and not in serverAddr, whose
+// bare host:port is also what localIP probes.
+//
+// dns is the default. It resolves the collector host into the channel's address
+// list and keeps re-resolving, which is what the ported
+// SubconnectionExpiringLoadBalancer (grpc_balancer.go) is written against: with
+// several A records the picked SubConn holds them all, so a rotation or a
+// failure moves to another collector instance, and its ResolveNow on failure
+// and its address-change readdressing both act on a resolver that can answer.
+// The dns resolver also re-resolves at most every 30s
+// (internal/resolver/dns.MinResolutionInterval), so a very short
+// Collector.Grpc.ConnectionMaxAge rotates faster than the records refresh -
+// see doc/config.md.
+//
+// passthrough is the pre-dns-resolver behavior, kept only as a rollback lever
+// (Collector.Grpc.DnsResolverEnable=false). It hands the target to the dialer
+// untouched: the dialer resolves the host for every new connection, so a
+// replacement connection still sees current DNS records, but the channel holds
+// a one-element address list, which leaves the balancer no address to move to
+// and its ResolveNow nothing to re-resolve.
+//
+// An IP literal (including a bracketed IPv6 one) or a name in /etc/hosts, such
+// as the default localhost, is handled by the dns resolver itself: a literal
+// resolves once with no lookup at all, and a name goes through the same
+// stdlib resolution that honors /etc/hosts.
+func collectorTarget(config *Config, addr string) string {
+	if !config.Bool(CfgCollectorGrpcDnsResolverEnable) {
+		return "passthrough:///" + addr
+	}
+	return "dns:///" + addr
 }
 
 // serverAddr joins the collector host and port. JoinHostPort rather than

@@ -57,6 +57,10 @@ const (
 	// as the Java agent's ClientOption.idleTimeoutMillis effectively does. The
 	// C++ agent's key is Collector.Grpc.IdleTimeoutMs.
 	CfgCollectorGrpcIdleTimeout = "Collector.Grpc.IdleTimeout"
+	// Collector.Grpc.DnsResolverEnable picks the gRPC name resolver for the
+	// collector target: the default dns resolver, or the legacy passthrough
+	// scheme. Only a rollback lever - see connectCollector in grpc.go.
+	CfgCollectorGrpcDnsResolverEnable = "Collector.Grpc.DnsResolverEnable"
 	// Collector.Grpc.SenderQueueSize sizes the metadata queue (metaChan), as
 	// the C++ agent's key of the same name does. The retry schedule has its own
 	// fixed bound (metaRetryQueueSize in grpc.go), not this one.
@@ -260,6 +264,7 @@ func initConfig() {
 	AddConfig(CfgCollectorGrpcConnectionMaxAge, CfgInt, grpcConnectionMaxAge, false)
 	AddConfig(CfgCollectorGrpcStreamMaxAge, CfgInt, grpcStreamMaxAge, false)
 	AddConfig(CfgCollectorGrpcIdleTimeout, CfgInt, grpcIdleTimeout, false)
+	AddConfig(CfgCollectorGrpcDnsResolverEnable, CfgBool, true, false)
 	AddConfig(CfgCollectorGrpcSenderQueueSize, CfgInt, defaultMetaQueueSize, false)
 	AddConfig(CfgLogLevelOld, CfgString, "info", true)
 	AddConfig(CfgLogLevel, CfgString, "info", true)
@@ -1733,6 +1738,18 @@ func WithCollectorGrpcTrustCertFilePath(path string) ConfigOption {
 func WithCollectorGrpcConnectionMaxAge(ms int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgCollectorGrpcConnectionMaxAge].value = ms
+	}
+}
+
+// WithCollectorGrpcDnsResolverEnable selects the gRPC name resolver used for
+// the collector target. The default true uses the dns resolver, which keeps
+// every address a collector hostname resolves to and re-resolves it. false
+// falls back to the passthrough scheme, which hands the target to the dialer
+// as-is: one address at a time, no re-resolution. Keep it true unless the dns
+// resolver has to be rolled back without a redeploy.
+func WithCollectorGrpcDnsResolverEnable(enable bool) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorGrpcDnsResolverEnable].value = enable
 	}
 }
 

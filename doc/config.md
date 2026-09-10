@@ -425,12 +425,37 @@ deployed together do not reconnect in lockstep.
 This corresponds to the Java agent's `profiler.transport.grpc.loadbalancer.renew.period.millis`.
 The default 0 keeps a working connection for as long as the agent runs.
 
+Spreading across instances needs the `dns` resolver
+([Collector.Grpc.DnsResolverEnable](#collectorgrpcdnsresolverenable), the default), which supplies the
+addresses a replacement connection can pick from. That resolver re-resolves at most once every 30
+seconds, so a ConnectionMaxAge shorter than that rotates connections faster than the address list
+refreshes: the rotations are still make-before-break and still spread over the addresses already
+resolved, they just cannot see a record change sooner than the resolver does. Renewal periods are
+minutes in practice, where this does not arise.
+
 * --pinpoint-collector-grpc-connectionmaxage
 * PINPOINT_GO_COLLECTOR_GRPC_CONNECTIONMAXAGE
 * WithCollectorGrpcConnectionMaxAge()
 * int
 * default: 0
 * unit: milliseconds
+
+### Collector.Grpc.DnsResolverEnable
+Collector.Grpc.DnsResolverEnable option selects the gRPC name resolver used for the collector target.
+The default true uses the `dns` resolver: the collector host is resolved into the channel's address list,
+so a host with several A records gives the agent every collector instance to pick from and to fail over to,
+and the list is re-resolved as the records change. An IP literal, or a name in `/etc/hosts` such as the
+default `localhost`, works unchanged.
+false falls back to the legacy `passthrough` scheme, which hands the address to the dialer untouched:
+the host is resolved once per new connection, so the channel only ever holds a single address and
+[Collector.Grpc.ConnectionMaxAge](#collectorgrpcconnectionmaxage) cannot spread connections across
+instances. Set it to false only to roll the `dns` resolver back without a redeploy.
+
+* --pinpoint-collector-grpc-dnsresolverenable
+* PINPOINT_GO_COLLECTOR_GRPC_DNSRESOLVERENABLE
+* WithCollectorGrpcDnsResolverEnable()
+* bool
+* default: true
 
 ### Collector.Grpc.StreamMaxAge
 Collector.Grpc.StreamMaxAge option sets the max age in milliseconds of the long-lived ping, span (when

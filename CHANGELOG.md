@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Default behavior change.** The collector channel now uses the gRPC `dns`
+  resolver (`dns:///host:port`) instead of the `passthrough` scheme. A collector
+  host with several A records is resolved into the channel's full address list,
+  so the agent gains client-side spreading across collector instances and
+  failover to another address, and the list is re-resolved as records change;
+  `passthrough` gave the channel a single address, which left the
+  `Collector.Grpc.ConnectionMaxAge` load balancing policy (ported from Java's
+  `SubconnectionExpiringLoadBalancer`) nothing to spread over and its
+  re-resolution request nothing to re-resolve. IP literals (IPv4 and IPv6) and
+  names in `/etc/hosts`, including the default `localhost`, are unchanged, as is
+  TLS verification, which keeps deriving the server name from the channel
+  authority - the collector hostname. The new `Collector.Grpc.DnsResolverEnable`
+  (default true) restores the `passthrough` scheme when set to false, as a
+  rollback lever that needs no redeploy.
 - New `pinpoint.ShutdownOnSignal(agent, sigs...) (stop func())` calls
   `Shutdown()` when the process receives one of the given signals (`SIGTERM`
   and `SIGINT` by default), then restores the default signal handling and
