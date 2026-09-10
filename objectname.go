@@ -144,6 +144,23 @@ func resolveObjectName(config *Config) (*objectName, error) {
 	}
 }
 
+// resolveAgentName returns the configured agent name, or agentID when it is
+// unset or invalid. agentName is a display label, not a required value, so an
+// invalid one falls back rather than aborting startup, as the Java agent's
+// ObjectNameResolverV1 does; unlike the C++ agent the fallback is warned about,
+// so a typo does not stay invisible.
+func resolveAgentName(config *Config, agentID string, maxLen int) string {
+	agentName := config.String(CfgAgentName)
+	if validateID(agentName, maxLen) {
+		return agentName
+	}
+	if agentName != "" {
+		Log("config").Warnf("%s = %q must match %s within %d bytes, using AgentID %q instead",
+			CfgAgentName, agentName, cfgIdPattern, maxLen, agentID)
+	}
+	return agentID
+}
+
 // resolveV1V3 produces an ObjectNameV1-style identity (shared by v1 and v3,
 // differing only in the applicationName length limit).
 func resolveV1V3(config *Config, version nameVersion, appNameMax int) (*objectName, error) {
@@ -163,14 +180,7 @@ func resolveV1V3(config *Config, version nameVersion, appNameMax int) (*objectNa
 	}
 
 	// agentName: optional, falls back to agentId.
-	agentName := config.String(CfgAgentName)
-	if !validateID(agentName, agentNameMaxLen) {
-		if agentName != "" {
-			return nil, errors.New("agent name must match " + cfgIdPattern +
-				" within " + strconv.Itoa(agentNameMaxLen) + " bytes")
-		}
-		agentName = agentID
-	}
+	agentName := resolveAgentName(config, agentID, agentNameMaxLen)
 
 	return &objectName{
 		version:         version,
@@ -190,14 +200,7 @@ func resolveV4(config *Config) (*objectName, error) {
 	agentID := encodeUID(uid)
 
 	// agentName: optional, falls back to base64(agentId UUID).
-	agentName := config.String(CfgAgentName)
-	if !validateID(agentName, agentNameMaxLenV4) {
-		if agentName != "" {
-			return nil, errors.New("agent name must match " + cfgIdPattern +
-				" within " + strconv.Itoa(agentNameMaxLenV4) + " bytes")
-		}
-		agentName = agentID
-	}
+	agentName := resolveAgentName(config, agentID, agentNameMaxLenV4)
 
 	// applicationName: required.
 	appName := config.String(CfgAppName)

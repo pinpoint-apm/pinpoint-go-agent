@@ -147,7 +147,12 @@ See [Identity Versions](#identity-versions).
 ### AgentName
 AgentName option sets the agent name.
 If this option is not set, the generated AgentId is used as AgentName.
-The maximum length is 255 bytes for Uid.Version v1 and v3, and 254 bytes for v4.
+The maximum length is 255 bytes for Uid.Version v1 and v3, and 254 bytes for v4,
+and it must match `[a-zA-Z0-9\._\-]+`.
+A value that is too long or has invalid characters does not stop the agent:
+it is logged at warn and the generated AgentId is used instead,
+as the Java and C++ agents do.
+Check the agent log for that warning if the agent shows up under an AgentId you did not expect.
 See [Identity Versions](#identity-versions).
 
 * --pinpoint-agentname
@@ -180,7 +185,7 @@ Use v1 or v3; the v4 details below are documented for when server-side support s
 |---|---|---|---|
 | ApplicationName | **required**, max 24 bytes | **required**, max 254 bytes | **required**, max 254 bytes |
 | AgentId | not configurable, always auto-generated | same as v1 | same as v1 |
-| AgentName | optional, max 255 bytes; falls back to AgentId | same as v1 | optional, max 254 bytes; falls back to AgentId |
+| AgentName | optional, max 255 bytes; falls back to AgentId when unset or invalid | same as v1 | optional, max 254 bytes; falls back to AgentId when unset or invalid |
 | ServiceName | not used | not used | **required**, max 254 bytes |
 | ApiKey | not used | not used | **required**, non-empty (no length or character check) |
 | gRPC `protocol.version` header | 100 | 100 | 400 |
@@ -197,6 +202,7 @@ v1 and v3 are identical on the wire, both sending `protocol.version=100`;
 they differ only in the ApplicationName length limit.
 A missing or invalid required value aborts agent startup:
 NewAgent returns a no-op agent and an error.
+AgentName is not required, so an invalid one warns and falls back to AgentId instead of aborting.
 
 The `socketid` header is not listed above because it is not part of the identity headers;
 it is added by the ping stream for every version.

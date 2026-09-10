@@ -35,6 +35,7 @@ one place that compares. The C++ agent keeps the same file at
 | Bind value truncation markers | `BindValueUtils.bindValueToString`, `StringUtils.appendAbbreviate`, `ArrayUtils.abbreviate` | **Adopted** — see [below](#bind-value-truncation-markers--adopted) |
 | `SetSQL` bounds a caller-composed bind value list | `WrappedSpanEventRecorder.recordSqlParsingResult` (bounds nothing) | **Diverges** — see [below](#setsql-bounds-a-caller-composed-bind-value-list--diverges) |
 | Exception chain rate limiter | `ExceptionChainSampler` | **Adopted** — `Error.NewThroughput` |
+| Invalid `AgentName` | `ObjectNameResolverV1`, `IdValidateUtils.validateId`; C++ `object_name.cpp` | **Aligned with Java and C++ (fallback), diverges (warns)** — see [below](#invalid-agentname-falls-back-to-the-agentid--aligned-with-java-and-c) |
 | Percent sampling rate of zero | `PercentSamplerFactory.createSampler` | **Adopted** — see [below](#percent-rate-of-zero--adopted) |
 | URL statistics send unit | `UriStatCollectingJob`, `AsyncQueueingUriStatStorage` | **Adopted** — see [below](#url-statistics-send-unit--adopted) |
 | Agent stat collection failure | `CollectJob.run()`, `StatMonitorJob.run()` | **Same as Java for the sample, exceeds Java for the scheduler** — see [below](#agent-stat-collection-failure-loses-one-sample--same-as-java) |
@@ -611,6 +612,40 @@ the bits into the causes it displays (`ErrorCategoryResolver.resolve`, which
 masks `UNKNOWN` out of that display). There is no option that restores
 the flat `1`; Java has one (`profiler.error.enable=false`) and this agent
 deliberately does not port the non-default path.
+
+---
+
+## Invalid `AgentName` falls back to the agentId — aligned with Java and C++
+
+**Java.** `ObjectNameResolverV1.resolve` walks the identity chain (system
+property, environment variable, then the auto-generated id) and validates each
+candidate with `IdValidateUtils.validateId`. A candidate that fails validation
+is not an error: the resolver logs it and moves to the next source, ending at
+the generated agentId. Agent startup never fails on `agentName`.
+
+**C++.** `object_name.cpp` validates the configured agent name and silently
+substitutes the agentId when it does not pass. No log line.
+
+**Go before this change.** An `AgentName` that was set but invalid returned an
+error from `resolveV1V3`/`resolveV4`, which `checkNameAndID` propagated out of
+`NewAgent`. All three agents disagreed, and Go was the only one that refused to
+start. Worse, `NewAgent` returns `(NoopAgent(), err)`: a host that does not
+check the error — the exact mistake `doc/quick_start.md` warns about — keeps
+running and reports nothing. The strictness bought a silent outage, not a loud
+failure. `agentName` is a display label with a defined fallback for the empty
+case, so there is nothing to be strict about.
+
+**Now.** `resolveAgentName` is shared by both resolvers (the limits differ:
+255 bytes for v1/v3, 254 for v4) and falls back to the generated agentId when
+the configured name is empty or invalid, so the "falls back to agentId" comment
+is finally true. An invalid non-empty name logs one warning naming the
+offending value; an unset name stays quiet, as before. The warning is the one
+deliberate difference from C++ — a silent substitution means a typo in
+`AgentName` is never discovered, and the agent shows up in the UI under a
+random id that changes on every restart.
+
+The required values are unchanged: `ApplicationName` for every version, plus
+`ServiceName` and `ApiKey` for v4, still abort startup.
 
 ---
 

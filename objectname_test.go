@@ -1,9 +1,11 @@
 package pinpoint
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -151,4 +153,61 @@ func TestValidateID_ByteLength(t *testing.T) {
 	assert.True(t, validateID("ab", 2))
 	assert.False(t, validateID("abc", 2))
 	assert.False(t, validateID("", 5))
+}
+
+// An invalid non-empty agentName falls back to the agentId with a warning,
+// rather than aborting startup, for both v1/v3 and v4.
+func TestResolveObjectName_InvalidAgentNameFallsBack(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		opts    []ConfigOption
+	}{
+		{"v3", nil},
+		{"v4", []ConfigOption{WithServiceName("MyService"), WithApiKey("key")}},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			for _, agentName := range []string{"bad name!", strings.Repeat("a", 256)} {
+				var buf bytes.Buffer
+				restore := captureLogAt(&buf, logrus.WarnLevel)
+				o, err := resolveObjectName(newCfg(t, append([]ConfigOption{
+					WithUidVersion(tc.version),
+					WithAppName("MyApp"),
+					WithAgentName(agentName),
+				}, tc.opts...)...))
+				restore()
+
+				assert.NoError(t, err, "invalid agentName must not abort startup")
+				assert.Equal(t, o.agentID, o.agentName, "agentName falls back to agentId")
+				assert.Contains(t, buf.String(), CfgAgentName, "the fallback is warned about")
+				assert.Equal(t, 1, strings.Count(buf.String(), "\n"), "exactly one warning")
+			}
+		})
+	}
+}
+
+// Regression: an empty agentName falls back silently, a valid one is kept, and
+// either way the value reaches the gRPC headers.
+func TestResolveObjectName_AgentNameHeader(t *testing.T) {
+	for _, version := range []string{"v1", "v3", "v4"} {
+		t.Run(version, func(t *testing.T) {
+			opts := []ConfigOption{WithUidVersion(version), WithAppName("MyApp")}
+			if version == "v4" {
+				opts = append(opts, WithServiceName("MyService"), WithApiKey("key"))
+			}
+
+			var buf bytes.Buffer
+			restore := captureLogAt(&buf, logrus.WarnLevel)
+			o, err := resolveObjectName(newCfg(t, opts...))
+			restore()
+			assert.NoError(t, err)
+			assert.Equal(t, o.agentID, o.agentName, "empty agentName falls back to agentId")
+			assert.Empty(t, buf.String(), "an unset agentName is not warned about")
+			assert.Equal(t, o.agentID, agentHeaderMap(agentWith(o))[headerAgentName])
+
+			o, err = resolveObjectName(newCfg(t, append(opts, WithAgentName("my-name"))...))
+			assert.NoError(t, err)
+			assert.Equal(t, "my-name", o.agentName, "a valid agentName is kept")
+			assert.Equal(t, "my-name", agentHeaderMap(agentWith(o))[headerAgentName])
+		})
+	}
 }
