@@ -195,15 +195,10 @@ func renewIfExpired[S expiringStream](stream S, reopen func() S, which string) S
 
 const (
 	// agentGrpcTimeOut bounds the AgentInfo RPC (boot-time registration and
-	// the periodic refresh). It stays longer than metaGrpcTimeOut on purpose:
-	// AgentInfo is one request from one goroutine with no queue or cache
-	// behind it, so a slow reply only delays that caller -- nothing piles up
-	// and nothing is invalidated. Registration retries with backOffUntilReady
-	// until it succeeds, so a long wait on a hung collector costs boot latency
-	// at most, while a tight deadline would only add spurious re-registrations
-	// of the largest message the agent sends. (The C++ agent uses 5s here too;
-	// matching it is a separate decision from the metadata fix.)
-	agentGrpcTimeOut = 60 * time.Second
+	// the periodic refresh), matching the C++ agent's 5s. Registration retries
+	// with backOffUntilReady until it succeeds, so a hung collector costs a
+	// short wait and a retry instead of a minute of boot latency.
+	agentGrpcTimeOut = 5 * time.Second
 
 	// metaGrpcTimeOut bounds each metadata RPC (api/string/sql/sqlUid/
 	// exception). Unlike AgentInfo these run under sendMetaWorker's
