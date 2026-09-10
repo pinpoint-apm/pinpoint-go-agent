@@ -251,6 +251,18 @@ loop rather than one per iteration.
   `database/sql` wrapper relies on this for `Begin`, `Commit` and `Rollback`
   events, which reach `SetSQL` with no statement. See
   [Java parity](java_parity.md#empty-sql-statement--diverges).
+* `SpanEventRecorder.SetSQL(sql, args)` bounds `args`, and only `args`. A
+  caller that composes the bind value list itself gets it cut to roughly twice
+  `SQL.MaxBindValueSize` — the room the agent's own driver wrappers need for
+  the values they abbreviate and for their markers — with an
+  `...(original byte length of args)` marker on the cut. The number is the
+  length of the string passed in, not a bind value count and not one value's
+  length, so it does not mean what the `...(n)` markers inside a list composed
+  by the `database/sql` or pgx wrapper mean; those lists are within the bound
+  by construction and are never cut here. `sql` itself is bounded elsewhere
+  (`SQL.CacheLengthLimit`, the normalization cap), and the normalized
+  parameters are never cut. See
+  [Java parity](java_parity.md#setsql-bounds-a-caller-composed-bind-value-list--diverges).
 
 ## 8. Keep Operation and Error Names Low-Cardinality
 

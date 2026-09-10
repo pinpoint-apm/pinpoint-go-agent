@@ -32,6 +32,7 @@ one place that compares. The C++ agent keeps the same file at
 | SQL cache size | `SimpleCacheFactory`, `profiler.jdbc.sqlcachesize` | **Adopted** — `SQL.CacheSize` sizes the SQL-ID, SQL-UID and raw SQL caches only; the api and error caches keep their fixed 1024, as Java's `newSimpleCache()` does. The C++ agent's key is `Sql.CacheSize`. |
 | SQL normalization input cap | `SqlCacheService`, `profiler.jdbc.maxsqllength`; C++ `kMaxNormalizedSqlLength` | **Aligned with C++ (value), drop policy** — see [below](#sql-normalization-input-cap--aligned-with-c-value-drop-policy) |
 | Bind value truncation markers | `BindValueUtils.bindValueToString`, `StringUtils.appendAbbreviate`, `ArrayUtils.abbreviate` | **Adopted** — see [below](#bind-value-truncation-markers--adopted) |
+| `SetSQL` bounds a caller-composed bind value list | `WrappedSpanEventRecorder.recordSqlParsingResult` (bounds nothing) | **Diverges** — see [below](#setsql-bounds-a-caller-composed-bind-value-list--diverges) |
 | Exception chain rate limiter | `ExceptionChainSampler` | **Adopted** — `Error.NewThroughput` |
 | Percent sampling rate of zero | `PercentSamplerFactory.createSampler` | **Adopted** — see [below](#percent-rate-of-zero--adopted) |
 | URL statistics send unit | `UriStatCollectingJob`, `AsyncQueueingUriStatStorage` | **Adopted** — see [below](#url-statistics-send-unit--adopted) |
@@ -364,8 +365,54 @@ formatting whole.
 
 The budget-between-values rule means the annotation can reach roughly twice
 `SQL.MaxBindValueSize` plus the markers; `maxBindValueAnnotationSize` is that
-worst case, and `SetSQL` reserves exactly it before applying its own bound, so
-a bind value list the driver composed as intended is never cut a second time.
+worst case, and `SetSQL` reserves exactly it before applying its own bound (see
+[below](#setsql-bounds-a-caller-composed-bind-value-list--diverges)).
+
+---
+
+## `SetSQL` bounds a caller-composed bind value list — diverges
+
+**Java.** `SpanEventRecorder.recordSqlParsingResult(parsingResult, bindValue)`
+records the bind value string as it is given. The bound lives in the JDBC
+interceptors, which build the string through `BindValueUtils` under
+`profiler.jdbc.maxsqlbindvaluesize`; a plugin that hands the recorder its own
+string is not bounded at all.
+
+**Go.** `SetSQL` bounds `args` to `maxBindValueAnnotationSize` —
+`2 × SQL.MaxBindValueSize` plus the two markers and a separator, the widest
+list the bind value writers can produce — and marks a cut with
+`abbreviateString`, whose number is the byte length of the whole `args` string.
+
+**Why diverge.** `SetSQL` is public. The bind value annotation rides on the
+span itself, and the span send path has no size guard: a span past
+`Collector.Grpc.MaxSendMessageSize` is rejected by grpc-go at `Send` and lost
+whole, bind values and all. A caller composing its own list — a plugin for a
+driver the agent does not wrap — would otherwise put an unbounded string there.
+
+**The cost of the divergence.** That marker is a third `...(n)` in a string
+that can already carry two, and its number means neither of the other two: not
+a bind value count, not one value's length, but the length of the args string
+the caller passed. It is reachable only through a direct `SetSQL` call: a list
+composed by the `database/sql` wrapper or the pgx v5 plugin fits inside the
+allowance by construction, which
+`Test_spanEvent_SetSQLLeavesDriverBindValuesAlone` pins.
+
+**Why not converge.** Two shapes were considered and dropped. Re-marking the
+cut with a value count means parsing `args` back into values on a path that
+just received them as one string, and the count would still be wrong for a
+caller whose separator is not `", "`. Cutting silently and reporting the
+truncation somewhere else — a second annotation, a rate-limited log — trades a
+confusing number for an invisible cut, which is worse: the string is what the
+UI shows. The behaviour is documented instead, in
+[api_contracts.md](api_contracts.md#7-annotation-rules).
+
+**Ceiling.** `SQL.MaxBindValueSize` is capped at `maxSqlBindValueSize`
+(`grpcMaxMessageSize / 16`, 256 KiB), so the bound is at most ~512 KiB. That
+ceiling was set assuming one annotation per span event could reach the limit;
+since the budget is spent between values, it can reach twice it, so the
+headroom it leaves is half of what its comment describes — 8 span events
+carrying bind values at the limit inside one 4 MiB message, not 16. Still far
+past any real configuration, and unchanged by this entry.
 
 ---
 

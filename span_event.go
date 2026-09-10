@@ -225,10 +225,19 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	// not that every value should become an "...(0)" marker.
 	//
 	// The allowance is what the bind value writers can spend past the limit,
-	// markers included (maxBindValueAnnotationSize). Without it this would cut
-	// their markers back off and replace it with its own, reporting the bytes
-	// dropped instead of the bind values. SetSQL is public, so the bound stays
-	// for a caller that composes args itself and bounds nothing.
+	// markers included (maxBindValueAnnotationSize), so a list either driver
+	// composed passes through untouched - Test_spanEvent_SetSQLLeavesDriverBindValuesAlone
+	// pins that. What is left is the public API: SetSQL takes args from any
+	// caller, including one that composes them itself and bounds nothing, and
+	// the annotation rides on the span, which is dropped whole if it outgrows
+	// the send message size. Such a caller gets abbreviateString's marker,
+	// which reports the byte length of the args string it passed - a third
+	// number in a string that already carries two, and one Java has no
+	// equivalent of, since its own recorder API bounds nothing here. Kept for
+	// the bound, documented rather than reshaped: parsing args back into
+	// values to re-mark them costs more than the case is worth, and dropping
+	// the marker would leave a silently cut annotation.
+	// See doc/java_parity.md and doc/api_contracts.md 7.
 	if cfg.sqlMaxBindValueSize > 0 {
 		args = abbreviateString(args, maxBindValueAnnotationSize(cfg.sqlMaxBindValueSize))
 	}

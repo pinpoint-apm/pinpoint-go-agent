@@ -267,10 +267,9 @@ func splitOutputParams(params string) []string {
 }
 
 // scanPlaceholderIndices returns the placeholder indices of a normalized
-// statement in the order they appear, and reports whether every one of them
-// parsed. `<n>#` marks a number and `<n>$` a character literal; both draw from
-// one shared counter, which is what makes the server able to refill them from
-// a single comma-separated param string.
+// statement in the order they appear. `<n>#` marks a number and `<n>$` a
+// character literal; both draw from one shared counter, which is what makes
+// the server able to refill them from a single comma-separated param string.
 func scanPlaceholderIndices(normalized string) []int {
 	var digits strings.Builder
 	out := []int{}

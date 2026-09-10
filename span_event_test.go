@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -198,6 +199,39 @@ func Test_spanEvent_SetSQLKeepsParamOfLargeInList(t *testing.T) {
 	assert.Len(t, se.annotations.values, 1)
 	assert.Equal(t, param, se.annotations.values[0].s1)
 	assert.Equal(t, args[:maxBindValueAnnotationSize(limit)]+"...(1024)", se.annotations.values[0].s2)
+}
+
+// SetSQL's own bound exists for a caller that composes args itself; a list the
+// driver wrappers composed must reach the annotation untouched, markers and
+// all. The allowance is the only thing standing between them, so the widest
+// list the writers can produce is the case that tests it: a value that leaves
+// one byte of budget, a value far past it, and a third value to close the list
+// with the count marker.
+func Test_spanEvent_SetSQLLeavesDriverBindValuesAlone(t *testing.T) {
+	const limit = 32
+	cfg := defaultConfig()
+	cfg.Set(CfgSQLMaxBindValueSize, limit)
+	se := newSpanEvent(testSpanWithConfig(cfg), "query")
+
+	values := []interface{}{
+		strings.Repeat("a", limit-len(", ")-1),
+		strings.Repeat("b", 100*limit),
+		"c",
+	}
+	var b bytes.Buffer
+	for i, v := range values {
+		if !writeBindValue(&b, i, v, len(values)-1, limit) {
+			break
+		}
+	}
+	args := b.String()
+	require.Greater(t, len(args), limit, "the composed list must exceed the limit to be worth testing")
+	require.LessOrEqual(t, len(args), maxBindValueAnnotationSize(limit))
+
+	se.SetSQL("SELECT * FROM t WHERE a = ? AND b = ? AND c = ?", args)
+
+	assert.Len(t, se.annotations.values, 1)
+	assert.Equal(t, args, se.annotations.values[0].s2)
 }
 
 // A negative SQL.MaxBindValueSize turns bind value tracing off and clamps the
