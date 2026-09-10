@@ -17,10 +17,8 @@ func TestContext_MissingTracerIsNoop(t *testing.T) {
 	assert.Equal(t, NoopTracer(), FromContext(nil), "nil context")
 }
 
-// The key used to be the untyped string constant "pinpoint.spanTracer", so any
-// package storing anything under that string shadowed the tracer and FromContext
-// silently returned NoopTracer - the span vanished with nothing logged. The key
-// type is private now, so the collision cannot be constructed from outside.
+// The private key type prevents external context values from shadowing the
+// tracer.
 func TestContext_ForeignStringKeyDoesNotShadowTheTracer(t *testing.T) {
 	tracer := defaultTestSpan()
 	ctx := NewContext(context.Background(), tracer)

@@ -25,7 +25,6 @@ type errorWithCallStack struct {
 	callstack []uintptr
 }
 
-// errorTypeName is the Go counterpart of Java's exception class name: the
 // error's dynamic type with any pointer stripped, e.g. "errors.withStack".
 func errorTypeName(err error) string {
 	t := reflect.TypeOf(err)
@@ -41,8 +40,8 @@ func errorTypeName(err error) string {
 // nextCause steps one link down an error chain, preferring pkg/errors'
 // Cause() and falling back to the standard Unwrap() (fmt.Errorf %w).
 // A multi-unwrap error (errors.Join, Unwrap() []error) contributes only its
-// first element: the Pinpoint exception chain is a single line of causes, as
-// Java's Throwable.getCause() is, and has no way to report a tree.
+// first element: the Pinpoint exception chain is a single line of causes and
+// cannot represent a tree.
 func nextCause(err error) error {
 	if c, ok := err.(causer); ok {
 		return c.Cause()
@@ -137,9 +136,7 @@ func (span *span) findError(err error) *exception {
 const maxCauserDepth = 64
 
 // noExceptionChainId is returned instead of a chain id when the rate limiter
-// denies a new chain. Real ids come from exceptionIdGen.Add(1) and so start at
-// 1, as Java's ExceptionChainSampler.INITIAL_EXCEPTION_ID does: 0 cannot
-// collide with one.
+// denies a new chain. Real ids start at 1, so 0 cannot collide with one.
 const noExceptionChainId = 0
 
 func (span *span) getExceptionChainId(err error) (int64, bool) {
@@ -148,18 +145,15 @@ func (span *span) getExceptionChainId(err error) (int64, bool) {
 	}
 
 	// A cause already recorded joins its chain only when it is that chain's
-	// head (depth 0), as Java's ExceptionRecordingState.stateOf compares the
-	// new throwable's cause chain with the previously recorded throwable
-	// alone. A hit on an inner link - a sentinel like io.EOF wrapped again
+	// head (depth 0). The new throwable's cause chain is compared with the
+	// previously recorded throwable alone. A hit on an inner link - a sentinel like io.EOF wrapped again
 	// from another call site - is not a join: the recorded head is not a
 	// cause of err, so shifting it below err would misorder the chain.
 	//
-	// A chain the limiter refused is sticky the same way: err or a cause of it
-	// being the refused head is Java's CONTINUED state, which reuses the stored
-	// DISABLED state rather than asking the sampler again. Without this, every
+	// A chain the limiter refused is sticky: err or a cause of it being the
+	// refused head reuses the stored disabled state rather than asking the sampler again. Without this, every
 	// later link of a refused chain recorded from another span event is charged
-	// as a new chain, and under an error burst those refusals crowd out chains
-	// that Java would have admitted.
+	// as a new chain, and under an error burst those refusals crowd out other chains.
 	refused := span.isRefusedChainHead(err)
 	for e, depth := err, 0; e != nil && depth < span.cfg.errorMaxChainDepth; depth++ {
 		e = nextCause(e)
@@ -172,8 +166,7 @@ func (span *span) getExceptionChainId(err error) (int64, bool) {
 		return noExceptionChainId, false
 	}
 
-	// Only a new chain is rate limited, like Java's DefaultExceptionRecorder
-	// asking ExceptionChainSampler.isNewSampled() just for a new id: a denied
+	// Only a new chain is rate limited. A denied
 	// request yields the DISABLED state, recording nothing. The id is minted
 	// after the permit is granted, so a denial does not burn one.
 	if l := span.cfg.newExceptionLimiter; l != nil && !l.Allow() {
@@ -219,7 +212,6 @@ func (span *span) addRefusedChainHead(err error) {
 }
 
 // addCauserCallStack records the causes of err under the same exception id,
-// numbered depth 1..n in chain order like Java's ExceptionWrapperFactory
 // (err itself is depth 0). A cause already recorded on this span ends the
 // walk: its own chain is on the wire already.
 func (span *span) addCauserCallStack(err error, eid int64, errorTime time.Time) {
@@ -289,9 +281,7 @@ func (span *span) traceCallStack(err error, className string, depth int, errorTi
 		// getExceptionChainId hands back an existing id when err is a new
 		// wrapper around the head of a chain already recorded. Every entry of
 		// that chain is now below the links just appended, so they shift down
-		// by that many: the
-		// outermost error keeps depth 0, as Java's ExceptionWrapperFactory
-		// numbers a chain it wraps, and no two entries share a depth - a
+		// by that many. The outermost error keeps depth 0, and no two entries share a depth - a
 		// second depth 0 leaves the collector no way to order the chain.
 		// A genuinely new id matches nothing here, so the loop is a no-op.
 		added := int32(len(span.errorChains) - existing)

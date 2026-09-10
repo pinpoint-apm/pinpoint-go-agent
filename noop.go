@@ -60,9 +60,7 @@ type noopSpan struct {
 	statusErr       atomic.Int32
 	// traceRoot is the unsampled span holding the statistics, nil when this
 	// span is the root itself. An unsampled async child keeps no statistics of
-	// its own, so a failure it records must land on the root - Java's
 	// continueDisableAsyncContextTraceObject hands the child the parent's
-	// LocalTraceRoot for the same reason (DefaultBaseTraceFactory.java:139-145),
 	// and DisableSpanRecorder writes the failure into traceRoot.getShared().
 	traceRoot *noopSpan
 
@@ -175,7 +173,6 @@ func (span *noopSpan) SpanEvent() SpanEventRecorder {
 	return &span.noopSe
 }
 
-// SetError fails the URL stat of an unsampled request, as the Java agent's
 // DisableSpanRecorder.recordException marks the span level (the span event
 // level, DisableSpanEventRecorder, stays a no-op). Only the failure flag is
 // kept: the span itself is never sent. Span.IgnoreErrors applies here too, or

@@ -23,8 +23,6 @@ func decodeUID(s string) (uuid.UUID, error) {
 	return u, nil
 }
 
-// goldenVectors are Java-verified UUID -> base64(22 chars) pairs. They guard
-// byte-for-byte compatibility with the Java agent's Base64Utils.encode(UUID).
 var goldenVectors = []struct {
 	uuid   string
 	base64 string

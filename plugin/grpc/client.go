@@ -100,10 +100,8 @@ func newClientTracer(ctx context.Context, method string, target string) (context
 // isNested reports whether the caller's outgoing metadata already carries a
 // Pinpoint trace context - an outer instrumented layer, an interceptor
 // registered twice, or a gateway forwarding its inbound metadata with
-// metadata.NewOutgoingContext. Java's DefaultRequestTraceWriter.isNested then
 // records no span event and writes no header, so the context already present
 // travels alone; appending a second value left the receiver's Get reading the
-// first, stale, one. Keys are checked as Java does, by the presence of
 // Pinpoint-TraceID or Pinpoint-Sampled.
 //
 // FromOutgoingContext copies the caller's MD: a cost per call that only exists

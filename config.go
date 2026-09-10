@@ -34,7 +34,6 @@ const (
 	CfgCollectorAgentInfoSendRetryInterval = "Collector.AgentInfo.SendRetryInterval"
 	CfgCollectorAgentInfoMaxTryPerAttempt  = "Collector.AgentInfo.MaxTryPerAttempt"
 
-	// Collector.Grpc.* mirrors the C++ agent's channel option keys; time values
 	// are in milliseconds without a "Ms" suffix, following the convention of
 	// the other millisecond keys (Stat.CollectInterval, Span.BatchFlushInterval).
 	CfgCollectorGrpcKeepAliveTime               = "Collector.Grpc.KeepAliveTime"
@@ -47,22 +46,18 @@ const (
 	CfgCollectorGrpcMaxHeaderListSize           = "Collector.Grpc.MaxHeaderListSize"
 	CfgCollectorGrpcSslEnable                   = "Collector.Grpc.SslEnable"
 	CfgCollectorGrpcTrustCertFilePath           = "Collector.Grpc.TrustCertFilePath"
-	// Connection and stream renewal, ported from the Java agent:
 	//   ConnectionMaxAge <-> profiler.transport.grpc.loadbalancer.renew.period.millis
 	//   StreamMaxAge     <-> profiler.transport.grpc.span.sender.rpc.age.max.millis
 	// Both in milliseconds; 0 (the default) disables the renewal.
 	CfgCollectorGrpcConnectionMaxAge = "Collector.Grpc.ConnectionMaxAge"
 	CfgCollectorGrpcStreamMaxAge     = "Collector.Grpc.StreamMaxAge"
 	// Channel idle timeout in milliseconds; 0 (the default) disables idling,
-	// as the Java agent's ClientOption.idleTimeoutMillis effectively does. The
-	// C++ agent's key is Collector.Grpc.IdleTimeoutMs.
 	CfgCollectorGrpcIdleTimeout = "Collector.Grpc.IdleTimeout"
 	// Collector.Grpc.DnsResolverEnable picks the gRPC name resolver for the
 	// collector target: the default dns resolver, or the legacy passthrough
 	// scheme. Only a rollback lever - see connectCollector in grpc.go.
 	CfgCollectorGrpcDnsResolverEnable = "Collector.Grpc.DnsResolverEnable"
 	// Collector.Grpc.SenderQueueSize sizes the metadata queue (metaChan), as
-	// the C++ agent's key of the same name does. The retry schedule has its own
 	// fixed bound (metaRetryQueueSize in grpc.go), not this one.
 	CfgCollectorGrpcSenderQueueSize = "Collector.Grpc.SenderQueueSize"
 
@@ -124,21 +119,16 @@ const (
 	cfgIdPattern        = "[a-zA-Z0-9\\._\\-]+"
 	samplingTypeCounter = "COUNTER"
 	samplingTypePercent = "PERCENT"
-	// The Java agent's SamplerType names the counter sampler COUNTING, so a
-	// config copied from a Java agent must not take the fallback path. Its
 	// percent sampler is named PERCENT already and needs no alias.
 	samplingTypeCounting = "COUNTING"
 
 	defaultErrorCallStackDepth = 32
 	// defaultLogMaxBackups is what the agent kept before the key existed and
-	// the C++ agent's LOG_MAX_BACKUPS. The Java agent keeps 5 for 7 days; as
 	// a library this agent keeps the smaller footprint (Log.MaxSize x 2).
 	defaultLogMaxBackups = 1
-	// defaultErrorMaxChainDepth keeps the walk the agent has always done. Java
 	// stops at 5 (profiler.exceptiontrace.max.depth); lowering this would drop
 	// links applications already see, so it stays a knob, not a new default.
 	defaultErrorMaxChainDepth = maxCauserDepth
-	// New exception chains a second, like the Java agent's
 	// profiler.exceptiontrace.new.throughput default.
 	defaultErrorNewThroughput = 1000
 	// Bound the per-error runtime.Callers allocation. This option is dynamic
@@ -147,23 +137,17 @@ const (
 	// panic in make([]uintptr, depth+3).
 	maxErrorCallStackDepth = 1024
 
-	// Entries per SQL metadata cache (id, uid and raw), as in the Java agent
-	// (profiler.jdbc.sqlcachesize, SimpleCacheFactory). Java sizes only its
 	// SQL caches by that key; the api and error caches keep cacheSize.
 	defaultSqlCacheSize = 1024
 	// The upper bound keeps a typo from committing gigabytes at startup: each
 	// of the three caches is bounded by this x SQL.CacheLengthLimit.
 	maxSqlCacheSize = 65536
 
-	// The traced bind value length, matching the Java agent
 	// (profiler.jdbc.maxsqlbindvaluesize, DefaultJdbcOption). It bounds the
 	// whole bind value list of one SQL span event, not each value.
 	defaultSqlMaxBindValueSize = 1024
-	// The ceiling on SQL.MaxBindValueSize, which used to be the default itself:
-	// anything above 1024 was silently pulled back down, so raising the option
-	// to read longer bind values did nothing. Neither the Java
-	// (DefaultJdbcOption) nor the C++ (config.cpp) agent bounds the key at all,
-	// and a user who asks for longer values should get them.
+	// The ceiling on SQL.MaxBindValueSize. Values above the default remain
+	// available up to this bound.
 	//
 	// Not unbounded, though. Bind values ride on the span itself, one
 	// annotation per SQL span event, and the span send path - unlike the
@@ -175,32 +159,25 @@ const (
 	// past any real "let me see the long bind value" need.
 	maxSqlBindValueSize = grpcMaxMessageSize / 16
 
-	// SQL at or above this many bytes bypasses the SQL metadata caches, as in
-	// the Java agent (profiler.jdbc.sqlcachelengthlimit, UidCache.bypassLength).
+	// SQL at or above this many bytes bypasses the SQL metadata caches.
 	defaultSqlCacheLengthLimit = 2048
-	// defaultSqlCacheExpireHours matches the Java agent's
 	// profiler.jdbc.sqlcacheexpirehours (SimpleCacheFactory, 7 days).
 	defaultSqlCacheExpireHours = 168
 	// 100 years. An expiry this long is already "never" in practice, and the
 	// bound keeps hours * time.Hour from overflowing the Duration.
 	maxSqlCacheExpireHours = 24 * 365 * 100
 
-	// A span running this many queries is marked failed, as in the Java agent
-	// (profiler.sql.error.count, DefaultSqlCountService). Java's separate
 	// profiler.sql.error.enable collapses into a limit of 0 here.
 	defaultSqlErrorCount = 100
 
-	// Upper bounds for the queue sizes and stat collection settings, matching
-	// the C++ agent. See publish.
+	// Upper bounds for queue sizes and stat collection settings.
 	maxQueueSize           = 65536
 	minStatCollectInterval = 1000
 	maxStatCollectInterval = 60000
 	maxStatBatchCount      = 100
 
-	// defaultMetaQueueSize is the Java agent's
 	// profiler.transport.grpc.metadata.sender.executor.queue.size default
 	// (GrpcTransportConfig.DEFAULT_METADATA_SENDER_EXECUTOR_QUEUE_SIZE) and
-	// the C++ agent's Collector.Grpc.SenderQueueSize default.
 	defaultMetaQueueSize = 1000
 )
 
@@ -358,15 +335,11 @@ type Config struct {
 	callback []reloadCallback
 	snapshot atomic.Pointer[configSnapshot]
 	// logCallbackOnce registers the logger's reload callbacks once per Config.
-	// A Config can back several agents in turn, and NewAgent used to append the
-	// same pair on every one, so a single file change ended up reopening the
-	// log file once per agent this Config had ever served.
 	logCallbackOnce sync.Once
 
 	// serviceInfo holds the host's PServerMetaData.serviceInfo entries, set by
 	// WithServiceInfo. It is not a cfgMap item: a list of named lists has no
 	// spelling in a config file, a flag or an environment variable, and the
-	// C++ agent takes the same values through AgentOptions.libs only.
 	serviceInfo []serviceInfo
 
 	// watchMu owns the single restartable fsnotify watcher for this Config.
@@ -391,7 +364,6 @@ type configSnapshot struct {
 	values  map[string]interface{}
 	sampler traceSampler
 	// newExceptionLimiter caps how many new exception chains a second are
-	// recorded, the counterpart of the Java agent's ExceptionChainSampler.
 	// nil means unlimited.
 	newExceptionLimiter *rate.Limiter
 
@@ -418,14 +390,12 @@ type configSnapshot struct {
 	// CfgSpanErrorMarkExclude. Zero means "unset" and reads as every
 	// category: a resolved mask always carries ErrorCategoryUnknown, so zero
 	// can only come from a snapshot built by hand instead of by NewConfig
-	// (emptyConfigSnapshot, tests), and every category is what Java's unset
 	// profiler.error.mark gives.
 	errorMarkMask ErrorCategory // CfgSpanErrorMark, CfgSpanErrorMarkExclude
 }
 
 // ignoreErrorRule is one parsed Span.IgnoreErrors entry, "<type>:<message>";
 // an empty type or message matches anything. It is the Go counterpart of the
-// Java agent's profiler.ignore-error-handler.<name>.class-name /
 // .exception-message.contains descriptor pair.
 type ignoreErrorRule struct {
 	typeName        string
@@ -446,13 +416,11 @@ func parseIgnoreErrorRules(entries []string) []ignoreErrorRule {
 }
 
 // allErrorCategories is every cause a transaction can fail on, which is what
-// an unset Span.ErrorMark enables - Java's EnumSet.allOf(ErrorCategory.class)
 // fallback in ConfigurableErrorRecorderFactory.getEnabledTypes.
 const allErrorCategories = ErrorCategoryUnknown | ErrorCategoryException |
 	ErrorCategoryHttpStatus | ErrorCategorySql
 
 // errorCategoryBit maps one Span.ErrorMark / Span.ErrorMarkExclude entry to
-// its bit, 0 for an unrecognised one. The spellings are Java's
 // (ConfigurableErrorRecorderFactory.toCategorySet), matched
 // case-insensitively. ErrorCategoryUnknown has no spelling on purpose: it is
 // never selectable, because it is always on.
@@ -469,8 +437,6 @@ func errorCategoryBit(token string) ErrorCategory {
 }
 
 // toErrorCategoryMask folds a category list into a mask. Each entry is split
-// on commas as well, so Java's single comma-separated string works verbatim
-// in a config file list too. An empty entry is skipped silently (Java's
 // case ""); anything else unrecognised is a typo worth naming, since it
 // silently widens or narrows which errors fail a transaction.
 func toErrorCategoryMask(entries []string, cfgName string) ErrorCategory {
@@ -492,17 +458,14 @@ func toErrorCategoryMask(entries []string, cfgName string) ErrorCategory {
 }
 
 // parseErrorMarkMask resolves Span.ErrorMark and Span.ErrorMarkExclude into
-// the mask of categories allowed to fail a transaction, the Go counterpart of
-// Java's ConfigurableErrorRecorderFactory.getEnabledTypes. An empty mark
-// enables every category, the way Java's unset profiler.error.mark does, and
-// the exclude list is then removed from it.
+// the mask of categories allowed to fail a transaction. The exclude list is
+// removed from that mask.
 func parseErrorMarkMask(mark []string, exclude []string) ErrorCategory {
 	marked := allErrorCategories
 	if len(mark) > 0 {
 		marked = toErrorCategoryMask(mark, CfgSpanErrorMark)
 	}
 	excluded := toErrorCategoryMask(exclude, CfgSpanErrorMarkExclude)
-	// ErrorCategoryUnknown survives every exclusion, exactly as Java re-adds
 	// it after removing the excluded ones (getEnabledTypes). It is the
 	// category of a failure whose cause was not classified, so excluding it
 	// would amount to "never fail a transaction" - which is not what either
@@ -511,7 +474,6 @@ func parseErrorMarkMask(mark []string, exclude []string) ErrorCategory {
 }
 
 // marksError reports whether category is allowed to fail a transaction, i.e.
-// whether Span.ErrorMark and Span.ErrorMarkExclude left it enabled. Java
 // applies the same test inside ConfigurableErrorRecorder.recordError, so an
 // excluded category records nothing at all - not even ErrorCategoryUnknown.
 func (snapshot *configSnapshot) marksError(category ErrorCategory) bool {
@@ -522,7 +484,6 @@ func (snapshot *configSnapshot) marksError(category ErrorCategory) bool {
 }
 
 // ignoreError reports whether err, or any error it wraps (the nextCause chain,
-// Cause() before Unwrap(), as the Java NestedErrorHandler walks getCause),
 // matches a Span.IgnoreErrors rule. The walk stops after maxCauserDepth
 // links: the chain comes from a user error whose Unwrap() may return itself or
 // an ancestor, and this runs on the request goroutine inside SetError. Such an error is still recorded as exception info
@@ -718,7 +679,6 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 // wrong type, an unsupported Sampling.Type - reach the configured output. The
 // values come from the config file themselves, so this runs twice: with the
 // command line and environment alone, then again once the file and profile
-// are read (the C++ agent applies its sink before parsing and its level from
 // inside make_config). Nothing is staged here and type errors are left for
 // loadConfig to report; a value that does not convert is applied as the zero
 // value and corrected by the next pass or by setup.
@@ -1007,10 +967,9 @@ func cfgTypeName(valueType int) string {
 
 // convertCfgValue coerces a raw config value to the type its option was
 // registered with, using the strict cast.To*E variants. The lenient cast.To*
-// the accessors call turns anything it cannot parse into the zero value
-// instead, so before this a typo like Sampling.CounterRate: "abc" became a rate
-// of 0 - rateSampler.isSampled then returns false for every transaction, which
-// is tracing switched off with nothing in the log to say so.
+// the accessors call turns anything it cannot parse into the zero value.
+// Strict conversion keeps an invalid sampling rate from silently disabling
+// tracing.
 func convertCfgValue(valueType int, value interface{}) (interface{}, error) {
 	switch valueType {
 	case CfgInt:
@@ -1042,13 +1001,7 @@ func convertCfgValue(valueType int, value interface{}) (interface{}, error) {
 // environment variable or a command line flag.
 //
 // A value that does not convert to the option's registered type is dropped
-// with a warning and the option keeps what it already had, which is what the
-// C++ agent does (get_yaml<T> in src/config.cpp logs "Failed to read ... Using
-// default value" and leaves the current value alone). Java is not the
-// reference here because it is not consistent with itself: readInt/readLong in
-// DefaultProfilerConfig fall back to the default silently through
-// NumberUtils.parseInteger, while an @Value injection wraps the parse failure
-// in a RuntimeException and fails startup.
+// with a warning and the option keeps what it already had.
 //
 // The converted value is what gets stored, never the raw one, so an option
 // holds its declared type whatever source it came from. That is what keeps the
@@ -1131,12 +1084,8 @@ var samplingOpts = []string{
 }
 
 // defaultIfOutOfRange restores the key's registered default when the staged
-// value falls outside [min, max], logging a warning. Recovering with the
-// default is what the C++ agent does (in_range in src/config.cpp); the Java
-// agent is not a reference here, as it does no range checking in its config
-// classes - what validation it has sits with the code consuming the value
-// instead, e.g. DefaultAgentStatMonitor.java:106-114 restoring the default
-// collection interval. Clamping to the nearest bound would turn
+// value falls outside [min, max], logging a warning. Clamping to the nearest
+// bound would turn
 // a typo like Span.QueueSize: 0 into a queue of 1 and drop virtually every
 // span.
 func (config *Config) defaultIfOutOfRange(name string, min, max int) {
@@ -1152,7 +1101,6 @@ func (config *Config) defaultIfOutOfRange(name string, min, max int) {
 // carries the meaning: the feature off, or a throughput unlimited. A negative
 // value has always behaved like 0 here, so storing 0 keeps the published value
 // equal to the effective one and the warning makes the coercion visible - the
-// C++ agent reads a negative value as "use the default" instead, which turns
 // the feature on.
 func (config *Config) zeroIfNegative(name string) {
 	if v := config.stagedInt(name); v < 0 {
@@ -1178,7 +1126,6 @@ func (config *Config) publish() {
 		// Only the type falls back, never the rate. Overwriting the rate with 0
 		// made rateSampler drop every trace, so a typo in this dynamic key -
 		// including on a reload - switched tracing off with nothing in the log
-		// to say so. Java's SamplerType keeps the configured rate too, whose
 		// default of 1 samples everything.
 		Log("config").Warnf("%s = %q is not supported, using %s with %s = %d",
 			CfgSamplingType, config.stagedString(CfgSamplingType), samplingTypeCounter,
@@ -1190,8 +1137,7 @@ func (config *Config) publish() {
 	// Only the documented levels pass. logrus.ParseLevel also accepts fatal
 	// and panic, which would silence warn and error while looking like a
 	// valid setting. An unknown level keeps the level already published, or
-	// the default on the first publish - never info regardless of what was
-	// set, which is what the logger used to do. Logged at Error, not Warn,
+	// the default on the first publish. Logged at Error, not Warn,
 	// because the level being kept may well be error: at Warn the one line
 	// explaining the rejected value would be the one line the operator cannot
 	// see.
@@ -1206,10 +1152,8 @@ func (config *Config) publish() {
 		config.cfgMap[CfgLogLevel].value = current
 	}
 
-	// Both branches warn: the clamp used to be silent, so a config file asking
-	// for 4096 ran at 1024 with nothing to say why, and a negative value turned
-	// SQL.TraceBindValue off as a side effect - bind value tracing gone
-	// entirely, not just shortened.
+	// Both branches warn so an invalid value cannot silently change bind-value
+	// recording.
 	maxBind := config.stagedInt(CfgSQLMaxBindValueSize)
 	if maxBind > maxSqlBindValueSize {
 		Log("config").Warnf("%s = %d is out of range, using %d",
@@ -1222,10 +1166,7 @@ func (config *Config) publish() {
 		config.cfgMap[CfgSQLMaxBindValueSize].value = 0
 	}
 
-	// Fixed key, read once in NewAgent like SQL.CacheSize; the C++ agent treats
 	// it as fixed too. Only -1 turns the bypass off and caches every SQL, the
-	// same escape hatch as the Java agent's bypassLength of -1 and the only
-	// unlimited value the C++ agent accepts. Any other negative value is a typo and
 	// recovers the default, the rule Span.MaxCallStackDepth already follows.
 	if limit := config.stagedInt(CfgSQLCacheLengthLimit); limit == -1 {
 		config.cfgMap[CfgSQLCacheLengthLimit].value = math.MaxInt32
@@ -1235,13 +1176,8 @@ func (config *Config) publish() {
 		config.cfgMap[CfgSQLCacheLengthLimit].value = defaultSqlCacheLengthLimit
 	}
 	config.zeroIfNegative(CfgSQLErrorCount)
-	// 0 stays 0 and never expires an entry, so the range starts there. A
-	// negative value used to reach the ttl > 0 gate in metaCache and disable
-	// expiry just like 0, which silently costs a restart to recover from once
-	// the collector's SqlUidMetaData row lapses under a still-cached UID.
-	// Recovering the default is what the C++ agent does for this key, and it
-	// keeps 0 as the only way to ask for no expiry - a negative value is a typo,
-	// not a request.
+	// 0 stays 0 and never expires an entry, so the range starts there. Negative
+	// values are invalid rather than another spelling of no expiry.
 	config.defaultIfOutOfRange(CfgSQLCacheExpireHours, 0, maxSqlCacheExpireHours)
 
 	if config.stagedInt(CfgSpanEventChunkSize) < 1 {
@@ -1251,7 +1187,6 @@ func (config *Config) publish() {
 	// Dynamic key, and unlike the queues below a bad value here is silent data
 	// loss rather than a panic: with a limit of 0 or less, snapshot.count is
 	// already at it before the first url, so every url stat entry is dropped.
-	// Java rejects the same value outright (AgentUriStatData asserts capacity
 	// > 0). The upper bound is maxQueueSize, the typo guard the queues use -
 	// the map grows lazily so a large limit costs nothing up front, but a map
 	// of that many distinct urls is a runaway pattern set, not a capacity
@@ -1264,7 +1199,6 @@ func (config *Config) publish() {
 	// worker's batch indexing, killing the host process. The upper bounds stop
 	// a typo (queue 1e9) from allocating a huge channel buffer or stalling the
 	// stat collector. An out-of-range value falls back to the default, the same
-	// recovery the C++ agent performs (the Java agent does no range checking at
 	// the config layer, so it is not a reference here).
 	config.defaultIfOutOfRange(CfgSpanQueueSize, 1, maxQueueSize)
 	config.defaultIfOutOfRange(CfgHttpUrlStatQueueSize, 1, maxQueueSize)
@@ -1323,9 +1257,7 @@ func (config *Config) publish() {
 	if config.stagedInt(CfgLogMaxSize) < 1 {
 		config.cfgMap[CfgLogMaxSize].value = 10
 	}
-	// Dynamic key. At least one backup, as the C++ agent's at_least on
 	// Log.MaxBackups: 0 means "keep every backup" to lumberjack but "keep none"
-	// to a reader who knows the C++ agent, and the lumberjack reading can fill
 	// the disk. Rotation with no history is Log.MaxSize alone.
 	if backups := config.stagedInt(CfgLogMaxBackups); backups < 1 {
 		Log("config").Warnf("%s = %d is out of range, using default %d",
@@ -1344,7 +1276,6 @@ func (config *Config) publish() {
 	}
 	config.cfgMap[CfgErrorCallStackDepth].value = errorDepth
 
-	// 0 or less is Java's "unlimited", which here is the cycle ceiling: the
 	// cause walk runs on a request goroutine over an arbitrary user Cause()
 	// implementation and must stay bounded whatever the config asks for.
 	chainDepth := config.stagedInt(CfgErrorMaxChainDepth)
@@ -1412,7 +1343,6 @@ func newTraceSampler(prev *configSnapshot, values map[string]interface{}) traceS
 }
 
 // newExceptionLimiter builds the rate limiter on new exception chain ids, the
-// counterpart of the Java agent's ExceptionChainSampler; a throughput of 0 or
 // less means unlimited. Like newTraceSampler it carries the previous limiter
 // over when the option did not change, so an unrelated reload does not refill
 // the token bucket.
@@ -1425,7 +1355,6 @@ func newExceptionLimiter(prev *configSnapshot, values map[string]interface{}) *r
 	if tps <= 0 {
 		return nil
 	}
-	// Java builds this limiter from a Guava RateLimiter too; newTokenBucket
 	// documents the shape it copies.
 	return newTokenBucket(tps)
 }
@@ -1974,7 +1903,6 @@ func WithSQLCacheExpireHours(hours int) ConfigOption {
 }
 
 // WithSQLRemoveComments drops comments from normalized SQL instead of copying
-// them, matching the Java agent's profiler.jdbc.removecomments default. It is
 // startup-only: the normalized text is the SQL id cache key and the UID hash
 // input, so changing it at runtime would split one statement across two ids.
 func WithSQLRemoveComments(remove bool) ConfigOption {

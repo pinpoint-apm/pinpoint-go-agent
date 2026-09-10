@@ -103,7 +103,6 @@ func Test_span_Extract(t *testing.T) {
 }
 
 // Without a Pinpoint-Host header the acceptor host falls back to the endPoint
-// the server plugin sets afterwards, as Java's ServerRequestRecorder falls
 // back to requestAdaptor.getAcceptorHost().
 func Test_span_Extract_acceptorHostFallback(t *testing.T) {
 	m := map[string]string{
@@ -268,13 +267,11 @@ func Test_splitTransactionId(t *testing.T) {
 		{"agent^^1", false, "", 0, 0},
 		{"agent^1^", false, "", 0, 0},
 		{"^1^2", false, "", 0, 0},
-		// No length bound on the agent id here: Java checks it when an agent
 		// registers, not when it parses this header.
 		{"abcdefghijklmnopqrstuvwxy^1^2", true, "abcdefghijklmnopqrstuvwxy", 1, 2}, // 25 chars
 		{"a^9223372036854775808^0", false, "", 0, 0},                               // overflows int64
 		{"a^123456789012345678901^0", false, "", 0, 0},                             // 21 digits: overflows, as Long.parseLong does
 		// Numeric fields follow Long.parseLong, so a sign, leading zeros and a
-		// fourth field are all accepted the way the Java agent accepts them.
 		{"agent^-1^1", true, "agent", -1, 1},           // negative start time
 		{"a^+1^-2", true, "a", 1, -2},                  // '+' prefix, negative sequence
 		{"a^000000000000000000001^2", true, "a", 1, 2}, // 21 chars, leading zeros, fits int64
@@ -387,7 +384,6 @@ func Test_span_Inject(t *testing.T) {
 				HeaderFlags, HeaderParentApplicationName, HeaderParentApplicationType} {
 				assert.Contains(t, m, h, h)
 			}
-			// A namespace this agent does not have is not sent as "": a Java
 			// receiver with profiler.cluster.namespace set rejects the empty
 			// value and starts a new trace instead of continuing this one.
 			assert.NotContains(t, m, HeaderParentApplicationNamespace, HeaderParentApplicationNamespace)
@@ -396,7 +392,6 @@ func Test_span_Inject(t *testing.T) {
 }
 
 // Pinpoint-Host names the node being called; with nothing to name it is left
-// out rather than sent empty, as Java's DefaultRequestTraceWriter does.
 func Test_span_Inject_Host(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -425,7 +420,6 @@ func Test_span_Inject_Host(t *testing.T) {
 }
 
 // endPoint (the address actually contacted) and destinationId (the logical node
-// label) are independent, as in Java: Inject fills in only an endPoint the
 // plugin left unset, and never overwrites one it recorded.
 func Test_span_Inject_EndPoint(t *testing.T) {
 	tests := []struct {
@@ -464,7 +458,6 @@ func Test_span_Inject_EventOverflow(t *testing.T) {
 	// The limits are the smallest publishable ones: applyDynamicConfig clamps
 	// MaxCallStackDepth to minEventDepth and MaxCallStackSequence to
 	// minEventSequence, so the event counts below are what it takes to overflow
-	// (depth records max+1 levels, as Java does).
 	tests := []struct {
 		name     string
 		limitOpt string
@@ -569,7 +562,6 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 			config.Set(CfgSpanMaxCallStackDepth, 3)
 			s := testSpanWithConfig(config)
 
-			// Java records max+1 levels (push checks the pre-push count), so
 			// 4 levels fit and only the 5th overflows.
 			s.NewSpanEvent(tt.args.operationName)
 			s.NewSpanEvent(tt.args.operationName)
@@ -653,10 +645,9 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 	}
 }
 
-// Span.MaxCallStackDepth allows max+1 nesting levels, as Java does: in
 // DefaultCallStack.push, isDepthOverflow checks maxDepth < index where index is
 // the pre-push element count, so with maxDepth=3 the 4th push (index=3) is
-// still recorded at depth 4 (CallStackTest). Go used to stop at depth max.
+// still recorded at depth 4 (CallStackTest).
 func Test_span_NewSpanEventDepthBoundary(t *testing.T) {
 	for _, max := range []int{minEventDepth, 3} {
 		t.Run(fmt.Sprintf("max=%d", max), func(t *testing.T) {
@@ -922,9 +913,6 @@ func TestSpan_AddMetric_IgnoresTypedNilURLStat(t *testing.T) {
 	assert.Nil(t, unsampled.urlStat)
 }
 
-// The Url is first-wins, as Java's Shared.setUriTemplate (null -> value CAS);
-// the Method and Status are the last caller's, as Java's plain setters. The
-// C++ agent's SpanImpl::recordUrlStat follows the same policy (gap U6).
 func TestSpan_AddMetric_URLStatIsFirstWinsOnUrl(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgHttpUrlStatEnable, true)
@@ -938,7 +926,6 @@ func TestSpan_AddMetric_URLStatIsFirstWinsOnUrl(t *testing.T) {
 	assert.Equal(t, 500, span.urlStat.Status, "Status is last-wins")
 }
 
-// MetricURLStatForce is Java's setUriTemplate(value, force = true).
 func TestSpan_AddMetric_URLStatForceReplacesUrl(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgHttpUrlStatEnable, true)
@@ -954,7 +941,6 @@ func TestSpan_AddMetric_URLStatForceReplacesUrl(t *testing.T) {
 	assert.Equal(t, 404, span.urlStat.Status)
 }
 
-// The urlStatUnknown stand-in is Java's null, not a recorded value: a first
 // call without a Url does not claim the slot, so a later real Url fills it.
 func TestSpan_AddMetric_URLStatUnknownDoesNotClaimUrl(t *testing.T) {
 	cfg := defaultConfig()
@@ -1060,7 +1046,6 @@ func TestSpan_ExtractParsesFullRangeSpanId(t *testing.T) {
 	assert.Equal(t, int64(-9007199254740993), span.parentSpanId, "parentSpanId")
 }
 
-// The generation side of the same range: Java's SpanId spans all of int64, so
 // generateSpanId must draw negative ids too, and a negative id has to survive
 // the round trip out through Inject and back in through Extract.
 func TestSpan_GeneratedSpanIdCoversFullInt64Range(t *testing.T) {
@@ -1101,9 +1086,7 @@ func TestSpan_EndSpanEventRepanicsOriginalValue(t *testing.T) {
 	assert.Equal(t, "sentinel", got, "original panic value preserved")
 }
 
-// The event that records a panic must still be shipped: EndSpanEvent used to
-// re-panic before appending the popped event, so the crash site's event never
-// reached the collector.
+// The event that records a panic is shipped before the panic is re-raised.
 // A call stack overflow blocks span events only; span.SetError must still
 // record the transaction failure and its exception info on the PSpan.
 func TestSpan_SetErrorDuringEventOverflow(t *testing.T) {
@@ -1441,7 +1424,6 @@ func BenchmarkValidateID(b *testing.B) {
 }
 
 // A parent application type that does not parse keeps the UNKNOWN default,
-// as in the C++ agent; the discarded Atoi result used to leave 0.
 func Test_span_Extract_malformedParentAppTypeKeepsDefault(t *testing.T) {
 	span := defaultTestSpan()
 	span.Extract(&DistributedTracingContextMap{m: map[string]string{
@@ -1670,8 +1652,6 @@ func Test_spanEvent_end_Idempotent(t *testing.T) {
 }
 
 // An error recorded on a span event past the call stack limit still fails the
-// transaction: Java's DefaultTrace.traceBlockBegin0 hands out a real recorder
-// during overflow and its recordException marks the trace root; the C++
 // DisabledSpanEvent::SetError does the same. Nothing is recorded on the event.
 func TestOverflowSpanEvent_SetErrorMarksSpanFailed(t *testing.T) {
 	tests := []struct {
@@ -1740,7 +1720,6 @@ func TestOverflowSpanEvent_SetErrorAfterEndSpanIsNoop(t *testing.T) {
 
 // An async span is serialized as a PSpanChunk, which has no err field, so a
 // failure recorded on it must reach the root span's PSpan.err and URL stat -
-// Java's ChildTrace shares the parent's TraceRoot and the wire err is the
 // root's (SpanMessageMapper: span.traceRoot.shared.errorCode -> err).
 func TestSpan_AsyncErrorFailsTheTraceRoot(t *testing.T) {
 	tests := []struct {
@@ -1805,7 +1784,6 @@ func TestSpan_AsyncErrorFailsTheTraceRoot(t *testing.T) {
 }
 
 // Known limit: the root's final chunk is sent at its own EndSpan, so a child
-// that fails after the root has ended is not reflected. Java defers the root
 // store until the last child ends; this agent does not (yet).
 func TestSpan_AsyncErrorAfterRootEndIsNotReported(t *testing.T) {
 	cfg, err := NewConfig(WithAppName("asyncLateErrApp"))
@@ -1890,7 +1868,7 @@ func TestSpan_ExtractAfterEndSpanIsNoop(t *testing.T) {
 
 // EndSpanEvent reads eventOverflow before recover(), and endSpanEvent reads it
 // again in the CAS loop. A placeholder raised between the two reads sends an
-// already-captured panic down the overflow path, where it used to be dropped.
+// already-captured panic down the overflow path, where it is re-raised.
 func TestSpan_EndSpanEventOverflowRepanicsRecovered(t *testing.T) {
 	span := defaultTestSpan()
 	span.eventOverflow.Store(1)
@@ -1909,11 +1887,9 @@ func TestSpan_EndSpanEventOverflowRepanicsRecovered(t *testing.T) {
 // ========== Error category (PSpan.err) ==========
 
 // PSpan.err is a bitmask of ErrorCategory, not a boolean: the collector reads
-// it to tell what failed the transaction. Java's default recorder is the
 // ConfigurableErrorRecorder (profiler.error.enable defaults to true), which ORs
-// errorCategory.getBitMask() into the shared error code; the flat 1 this agent
-// used to send comes only from SimpleErrorRecorder, i.e.
-// profiler.error.enable=false.
+// errorCategory.getBitMask() into the shared error code. A flat 1 means an
+// unclassified failure.
 func TestSpan_ErrorCategoryPerCause(t *testing.T) {
 	boom := errors.New("boom")
 
@@ -1941,7 +1917,6 @@ func TestSpan_ErrorCategoryPerCause(t *testing.T) {
 			s.SetError(boom)
 		}, int32(ErrorCategoryHttpStatus | ErrorCategoryException)},
 		// Re-marking a cause must neither double-count nor clear anything: err
-		// is an idempotent OR, as Java's maskErrorCode is.
 		{"the same causes twice", func(s *span) {
 			s.SetFailure(ErrorCategoryHttpStatus)
 			s.SetError(boom)
@@ -1960,7 +1935,6 @@ func TestSpan_ErrorCategoryPerCause(t *testing.T) {
 
 // Span.ErrorMarkExclude: a category outside the enabled set masks nothing at
 // all, so "a 5xx is not a transaction failure" becomes expressible without
-// giving up exception marking - Java applies the same test inside
 // ConfigurableErrorRecorder.recordError. The status annotation the plugin
 // records is untouched; only the verdict is dropped.
 func TestSpan_ErrorMarkExcludeLeavesAFailingStatusUnmarked(t *testing.T) {
@@ -2020,7 +1994,6 @@ func TestNoopSpan_ErrorMarkExcludeKeepsTheUnsampledRequestSuccessful(t *testing.
 // Ending an event other than the innermost one is the mis-nesting the plain
 // EndSpanEvent cannot see: the stack is not empty, so noEventLog stays quiet
 // and the wrong event silently takes the end time. With a target the agent
-// still ends the innermost event, as Java's traceBlockEnd does on a stackId
 // mismatch, but warns and dumps the stack.
 func Test_span_EndSpanEventOf_MisnestedEndWarns(t *testing.T) {
 	var buf bytes.Buffer

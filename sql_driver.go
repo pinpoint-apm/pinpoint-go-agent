@@ -271,7 +271,6 @@ func writeBindValue(b *bytes.Buffer, index int, value interface{}, numComma int,
 	// The separator is written before the value that follows it, never after
 	// the one before it, so it precedes whatever comes next: the next value,
 	// or the count marker standing in for the values left out. This is the
-	// order Java's BindValueUtils.bindValueToString ends up in, which appends
 	// it after every value but the last and then tests the budget.
 	if index > 0 {
 		b.WriteString(", ")
@@ -290,7 +289,6 @@ func writeBindValue(b *bytes.Buffer, index int, value interface{}, numComma int,
 // value that finds any of it left writes up to maxSize of itself, so the list
 // can reach roughly twice maxSize plus the markers. Cutting each value at what
 // is left of the budget instead would bound the buffer more tightly but put
-// the cut of every value after the first somewhere Java does not have it - and
 // it is the value's own head, not the list's total, that a reader needs to
 // recognize which bind value this was. maxBindValueAnnotationSize is what the
 // span side reserves for the result.
@@ -352,7 +350,6 @@ func writeAbbreviatedBindValue(b *bytes.Buffer, value interface{}, maxSize int) 
 // building a string of the whole slice: elements are formatted into a scratch
 // buffer only until it holds more than maxSize bytes, since anything past that
 // is cut anyway. The cut is marked with the number of bytes in the slice, as
-// Java's ArrayUtils.abbreviate marks a byte[] bind value - its size is the
 // fact a reader wants, and counting the characters of its decimal rendering
 // would mean walking every element the cut exists to avoid formatting.
 func writeAbbreviatedByteSlice(b *bytes.Buffer, v []byte, maxSize int) {
@@ -393,7 +390,6 @@ func writeAbbreviatedBytes(b *bytes.Buffer, value []byte, maxSize int) {
 // writeAbbreviated writes value cut to maxSize, marking the cut with valueLen -
 // the length of the value itself, which is not always the length of the text
 // being cut: an array reports how many elements it holds. This is the
-// appending form of abbreviateString, as Java's StringUtils.appendAbbreviate
 // is of StringUtils.abbreviate. The cut lands on a rune boundary: protobuf
 // rejects invalid UTF-8 string fields at marshal time, so a mid-rune cut would
 // fail the whole span carrying the annotation.
@@ -415,9 +411,7 @@ func writeAbbreviated(b *bytes.Buffer, value string, valueLen int, maxSize int) 
 // count marker on the next round.
 //
 // writeBindLengthMarker says one value was cut and how long it was, the marker
-// Java's StringUtils.appendAbbreviate writes. writeBindCountMarker says the
 // list itself ended early and how many values the statement had, the marker
-// Java's BindValueUtils.appendLength writes; the count is what a reader cannot
 // otherwise recover, since the limit is already known.
 //
 // Both land past the limit rather than cutting back over what is written:

@@ -180,8 +180,7 @@ func Test_OutputSwitchReformatsEachTime(t *testing.T) {
 	}
 }
 
-// logEntry.log used to swap the shared entry's Logger to the extra logger and
-// leave it there, so every call after the first skipped the default logger.
+// Reusing an entry must continue writing to both the default and extra loggers.
 func Test_ReusedEntryWritesToBothLoggers(t *testing.T) {
 	oldOutput := logger.defaultLogger.Out
 	oldLevel := logger.defaultLogger.GetLevel()

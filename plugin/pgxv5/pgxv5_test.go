@@ -64,7 +64,6 @@ func TestWriteArgTruncatesOversizedValues(t *testing.T) {
 			require.True(t, writeArg(&b, 0, test.value, 0, 1024),
 				"writeArg ended the list on a value it only abbreviated")
 			// The marker reports the value's own length and lands past the
-			// limit, as it does in Java: bytes for a string, elements for an
 			// array.
 			assert.Equal(t, full[:1024]+"...(5000)", b.String())
 		})
@@ -72,7 +71,6 @@ func TestWriteArgTruncatesOversizedValues(t *testing.T) {
 }
 
 // The separator precedes whatever comes next, so a list cut short ends with it
-// in front of the count marker, as Java's BindValueUtils leaves it - and a zero
 // limit keeps nothing, marker included.
 func TestWriteArgTruncatesAtBoundary(t *testing.T) {
 	for _, test := range []struct {
@@ -167,7 +165,6 @@ func TestWriteArgLimitsLargeValues(t *testing.T) {
 		wantSuffix string
 	}{
 		// A string reports its length in bytes, an array the number of
-		// elements it holds - the value's own length either way, as Java's
 		// StringUtils.abbreviate and ArrayUtils.abbreviate report it.
 		{name: "string", value: strings.Repeat("가", 1<<20), wantPrefix: "가", wantSuffix: "...(3145728)"},
 		{name: "bytes", value: bytes.Repeat([]byte{255}, 1<<20), wantPrefix: "[255 ", wantSuffix: "...(1048576)"},
@@ -581,7 +578,6 @@ func TestComposeArgs_NoArguments(t *testing.T) {
 
 // SQL.MaxBindValueSize bounds what one statement can add to a span, so the
 // composed arguments must respect it end to end, not only inside writeArg - up
-// to the truncation marker, which Java appends past the limit.
 func TestComposeArgs_HonoursTheSizeLimit(t *testing.T) {
 	agent := startAgent(t)
 	agent.Config().Set(pinpoint.CfgSQLTraceBindValue, true)

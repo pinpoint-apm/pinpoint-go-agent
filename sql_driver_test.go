@@ -88,7 +88,6 @@ func Test_writeBindValue_PreservesFormatting(t *testing.T) {
 	assert.Equal(t, strings.Join(want, ", "), b.String())
 }
 
-// A value too big for the budget keeps its head, as Java's
 // StringUtils.appendAbbreviate does, and the marker reports how long that
 // value was - the byte count a reader is actually after. The list itself is
 // not cut short here: it has no further value to write.
@@ -109,7 +108,6 @@ func Test_writeBindValue_LimitsLargeValues(t *testing.T) {
 		wantSuffix string
 	}{
 		// A string reports its length in bytes, an array the number of
-		// elements it holds - the value's own length either way, as Java's
 		// StringUtils.abbreviate and ArrayUtils.abbreviate report it.
 		{name: "string", value: strings.Repeat("가", 1<<20), wantPrefix: "가", wantSuffix: "...(3145728)"},
 		{name: "bytes", value: bytes.Repeat([]byte{255}, 1<<20), wantPrefix: "[255 ", wantSuffix: "...(1048576)"},
@@ -153,14 +151,11 @@ func Test_writeBindValue_TruncatesOversizedBytes(t *testing.T) {
 	more := writeBindValue(&b, 0, value, 0, 1024)
 
 	assert.True(t, more)
-	// The marker lands past the limit, as it does in Java, and counts the
 	// bytes of the slice rather than the characters of its rendering - what
-	// Java's ArrayUtils.abbreviate reports for a byte[] bind value.
 	assert.Equal(t, want[:1024]+"...(5000)", b.String())
 }
 
 // The separator precedes whatever comes next, so a list cut short ends with it
-// in front of the count marker, as Java's BindValueUtils leaves it - and a zero
 // limit keeps nothing, marker included.
 func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 	tests := []struct {
@@ -220,12 +215,8 @@ func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 	}
 }
 
-// The golden cases the C++ agent asserts verbatim in
 // SpanEventTest.SetSqlQueryStopsTracingBindValueAtConfiguredLimit and
-// SetSqlQueryAbbreviatesBindValueLikeJava, which were taken from Java's
 // BindValueUtils.bindValueToString. They are here rather than in
-// java_parity_lock_test.go because that suite mirrors the C++ lock suite group
-// for group, and the C++ agent keeps these with its span event tests.
 func Test_writeBindValue_MatchesJavaBindValueJoin(t *testing.T) {
 	for _, tt := range []struct {
 		name    string

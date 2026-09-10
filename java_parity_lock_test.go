@@ -16,16 +16,12 @@
 
 // Locked parity invariants.
 //
-// Every assertion in this file is a value or an algorithm that the Java agent
-// (agent-module/profiler), the C++ agent and this agent were verified to agree
 // on. They are locked here so a later change has to state its intent instead
 // of drifting one agent away from the other two: a failure means either the
 // change is wrong, or all three implementations and doc/java_parity.md move
 // together.
 //
-// The C++ agent keeps the same suite at test/test_java_parity_lock.cpp, group
 // for group, and doc/java_parity.md ("Locked parity invariants") is the table
-// that ties both to the Java reference. Add a group here only when the same
 // group exists there.
 //
 // Groups:
@@ -55,9 +51,7 @@ import (
 // Group 1 - SQL normalization state machine
 // ===========================================================================
 
-// javaParitySqlCase is one golden case. The expectations are the Java agent's
 // (commons-profiler ParserContext.parse via DefaultSqlNormalizer's no-arg
-// constructor, i.e. removeComments=false) and are asserted verbatim by the C++
 // agent's SqlTest.JavaParityGoldenCases.
 type javaParitySqlCase struct {
 	name       string
@@ -67,7 +61,6 @@ type javaParitySqlCase struct {
 	// paramsUnsplittable marks a case whose param string cannot be split back
 	// into one entry per placeholder: an unterminated literal writes its
 	// content into param without emitting a placeholder, so the counts do not
-	// line up. Java has the same quirk; only the placeholder-index invariant
 	// below is skipped, never the byte-for-byte expectation.
 	paramsUnsplittable bool
 }
@@ -224,7 +217,6 @@ func Test_javaParityLock_SqlNormalizerWhitespaceIsNotNormalized(t *testing.T) {
 }
 
 // Test_javaParityLock_SqlNormalizerRemoveComments locks the agent default
-// (SQL.RemoveComments=true, Java's profiler.jdbc.removecomments): comments are
 // dropped rather than copied, and a statement that is nothing but a comment
 // normalizes to the empty string.
 func Test_javaParityLock_SqlNormalizerRemoveComments(t *testing.T) {
@@ -239,8 +231,6 @@ func Test_javaParityLock_SqlNormalizerRemoveComments(t *testing.T) {
 
 // splitOutputParams is the agent-side counterpart of the server's
 // OutputParameterParser: it splits param on ',' and un-escapes the doubled
-// ',,' that a literal containing a comma produces. The C++ agent keeps the
-// same helper in test/test_sql.cpp.
 func splitOutputParams(params string) []string {
 	if params == "" {
 		return nil
@@ -319,7 +309,6 @@ func Test_javaParityLock_SqlNormalizerSharedIndexCounter(t *testing.T) {
 // Group 2 - span event depth / sequence numbering
 // ===========================================================================
 
-// Test_javaParityLock_SpanEventLimitDefaults locks the call stack limits. Java:
 // profiler.callstack.max.depth=64, profiler.callstack.max.sequence=5000,
 // profiler.io.buffering.buffersize=20 (DefaultInstrumentConfig, pinpoint-root.config).
 func Test_javaParityLock_SpanEventLimitDefaults(t *testing.T) {
@@ -329,7 +318,6 @@ func Test_javaParityLock_SpanEventLimitDefaults(t *testing.T) {
 }
 
 // Test_javaParityLock_SpanEventLimitFloors locks the floors this agent and the
-// C++ agent add on top of Java (Java has no floor). They exist so a
 // misconfigured limit cannot make the call stack unusable; the values must stay
 // equal between the two ports.
 func Test_javaParityLock_SpanEventLimitFloors(t *testing.T) {
@@ -338,7 +326,6 @@ func Test_javaParityLock_SpanEventLimitFloors(t *testing.T) {
 }
 
 // javaOverflowDecision is the overflow predicate all three agents implement.
-// Java: DefaultCallStack.isOverflow, `maxDepth < index || maxSequence <= sequence`
 // where index is the number of elements already on the stack. This agent stores
 // the depth the next event would take (index+1), hence depth-1.
 func javaOverflowDecision(sequence, depth, maxSequence, maxDepth int32) bool {
@@ -371,7 +358,6 @@ func parityEvent(sequence, depth int32, startTime int64) *spanEvent {
 }
 
 // Test_javaParityLock_ChunkKeyTimeAndStartElapsed locks the two values the
-// collector uses to rebuild absolute event times. Java: GrpcSpanProcessorV2 -
 // the final chunk keys off the span's start time, a non-final chunk off its
 // first event, and every startElapsed is the delta to the previous event
 // (to keyTime for the first).
@@ -406,8 +392,6 @@ func Test_javaParityLock_ChunkKeyTimeAndStartElapsed(t *testing.T) {
 }
 
 // Test_javaParityLock_ChunkSortsBySequence locks that a chunk is ordered by
-// sequence before it is serialized. Java sorts with SEQUENCE_COMPARATOR; the
-// C++ agent keeps the order on insert. The delta encoding above is only
 // correct on a sorted chunk.
 func Test_javaParityLock_ChunkSortsBySequence(t *testing.T) {
 	chunk := &spanChunk{
@@ -460,7 +444,6 @@ func Test_javaParityLock_ChunkDepthCompression(t *testing.T) {
 // Group 4 - async id / sequence and span id sentinels
 // ===========================================================================
 
-// Test_javaParityLock_Sentinels locks the reserved values. Java: SpanId.NULL
 // is -1 and an async id of 0 means "no async context"; both agents skip these
 // when they draw an id, so a drawn value can never be mistaken for "absent".
 func Test_javaParityLock_Sentinels(t *testing.T) {
@@ -469,7 +452,6 @@ func Test_javaParityLock_Sentinels(t *testing.T) {
 }
 
 // Test_javaParityLock_GeneratedSpanIdIsNeverTheSentinel locks that a drawn span
-// id is never SpanId.NULL. Java redraws in the same situation
 // (SpanId.nextSpanID).
 func Test_javaParityLock_GeneratedSpanIdIsNeverTheSentinel(t *testing.T) {
 	for i := 0; i < 10_000; i++ {
@@ -482,7 +464,6 @@ func Test_javaParityLock_GeneratedSpanIdIsNeverTheSentinel(t *testing.T) {
 // ===========================================================================
 
 // Test_javaParityLock_PropagationHeaderNames locks all ten header names against
-// Java's Header enum (commons). A rename on one side silently breaks tracing
 // across a process boundary, with no error anywhere.
 func Test_javaParityLock_PropagationHeaderNames(t *testing.T) {
 	assert.Equal(t, "Pinpoint-TraceID", HeaderTraceId)
@@ -510,7 +491,6 @@ func Test_javaParityLock_AnnotationKeys(t *testing.T) {
 }
 
 // Test_javaParityLock_TransactionIdFormat locks the wire format
-// `agentId^startTime^sequence` (Java TransactionIdUtils) and the round trip
 // through the parser.
 func Test_javaParityLock_TransactionIdFormat(t *testing.T) {
 	tid := TransactionId{AgentId: "test-agent", StartTime: 1_600_000_000_000, Sequence: 42}
@@ -524,7 +504,6 @@ func Test_javaParityLock_TransactionIdFormat(t *testing.T) {
 }
 
 // Test_javaParityLock_TransactionIdParsing locks the parser's accept/reject set.
-// Java validates the agent id character class (IdValidateUtils) and stops at the
 // third delimiter, so "a^1^2^3" is the transaction "a^1^2" to all three agents.
 func Test_javaParityLock_TransactionIdParsing(t *testing.T) {
 	tests := []struct {
@@ -554,7 +533,6 @@ func Test_javaParityLock_TransactionIdParsing(t *testing.T) {
 }
 
 // Test_javaParityLock_SampledHeaderEncoding locks that only the exact string
-// "s0" turns sampling off. Java: SamplingFlagUtils.isSamplingFlag - anything
 // else, "s1" or an absent header included, is sampled.
 func Test_javaParityLock_SampledHeaderEncoding(t *testing.T) {
 	const samplingFlagFalse = "s0"
@@ -570,7 +548,6 @@ func Test_javaParityLock_SampledHeaderEncoding(t *testing.T) {
 // ===========================================================================
 
 // Test_javaParityLock_CountingSamplerPhase locks the counting sampler's phase.
-// Java CountingSampler tests the pre-increment value, so the first request of
 // the process is sampled and every rate-th one after it - not the rate-th
 // request.
 func Test_javaParityLock_CountingSamplerPhase(t *testing.T) {
@@ -585,7 +562,6 @@ func Test_javaParityLock_CountingSamplerPhase(t *testing.T) {
 	assert.Equal(t, []int{1, 4, 7, 10}, sampled, "the first call and every 3rd after it")
 }
 
-// Test_javaParityLock_CountingSamplerEdgeRates locks the rates Java hands to
 // TrueSampler and FalseSampler instead of CountingSampler.
 func Test_javaParityLock_CountingSamplerEdgeRates(t *testing.T) {
 	always := newRateSampler(1)
@@ -604,7 +580,6 @@ func Test_javaParityLock_CountingSamplerEdgeRates(t *testing.T) {
 	}
 }
 
-// Test_javaParityLock_PercentSamplerWindow locks the admission window. Java
 // PercentRateSampler adds the rate to a counter and samples on a remainder in
 // (0, rate] - the first request lands on exactly rate and is sampled, where a
 // [0, rate) window would sample the second one instead.
@@ -620,7 +595,6 @@ func Test_javaParityLock_PercentSamplerWindow(t *testing.T) {
 	assert.Equal(t, []int{1, 101}, sampled, "one per hundred, starting at the first call")
 }
 
-// Test_javaParityLock_PercentSamplerRateTruncation locks the truncation Java
 // does in PercentSamplerFactory: the percentage is multiplied by 100 and
 // truncated, so anything under 0.01 collects nothing.
 func Test_javaParityLock_PercentSamplerRateTruncation(t *testing.T) {
@@ -645,10 +619,7 @@ func Test_javaParityLock_PercentSamplerRateTruncation(t *testing.T) {
 
 // Test_javaParityLock_ThroughputLimiterInitialState locks the shape of the
 // bucket behind every per-second throughput option (Sampling.NewThroughput,
-// Sampling.ContinueThroughput, Error.NewThroughput). Java's RateLimiter.create
 // builds a Guava SmoothBursty whose initial storedPermits is 0: a fresh limiter
-// admits its first caller and paces the next ones at tps. The C++ agent locks
-// the same in test_limiter.cpp (FirstCallPassesThenPacesAtTps). Times are
 // injected through AllowN so the test is exact and sleep-free.
 func Test_javaParityLock_ThroughputLimiterInitialState(t *testing.T) {
 	const tps = 10 // one token per 100ms
@@ -665,7 +636,6 @@ func Test_javaParityLock_ThroughputLimiterInitialState(t *testing.T) {
 // Test_javaParityLock_ThroughputLimiterCapacity locks the steady-state
 // capacity at one second of permits, the maxBurstSeconds of RateLimiter.create:
 // an idle bucket refills to exactly tps and no further, however long the idle.
-// C++: test_limiter.cpp (IdleBurstIsCappedAtTps, LongIdleDoesNotAccumulate).
 func Test_javaParityLock_ThroughputLimiterCapacity(t *testing.T) {
 	const tps = 10
 	l := newTokenBucket(tps)
@@ -685,7 +655,6 @@ func Test_javaParityLock_ThroughputLimiterCapacity(t *testing.T) {
 // ===========================================================================
 
 // Test_javaParityLock_UrlStatHistogramBuckets locks the eight bucket bounds
-// against Java's UriStatHistogramBucket.Layout. The collector stores the counts
 // positionally, so a shifted boundary silently rewrites history.
 func Test_javaParityLock_UrlStatHistogramBuckets(t *testing.T) {
 	assert.Equal(t, 8, urlStatBucketSize)
@@ -710,7 +679,6 @@ func Test_javaParityLock_UrlStatHistogramBuckets(t *testing.T) {
 }
 
 // Test_javaParityLock_UrlStatWindow locks the tick size and the completed-queue
-// cap. Java: AsyncQueueingUriStatStorage buckets on a 30s TickClock and keeps
 // four snapshots.
 func Test_javaParityLock_UrlStatWindow(t *testing.T) {
 	assert.Equal(t, 30*time.Second, urlStatCollectInterval, "Java TickClock interval")
@@ -718,7 +686,6 @@ func Test_javaParityLock_UrlStatWindow(t *testing.T) {
 }
 
 // Test_javaParityLock_UrlStatEmptyHistogram locks that an all-zero histogram
-// reports empty, which is what keeps an empty PUriHistogram off the wire. Java
 // decides on a count field; both ports decide on the bucket sum, so a single
 // 0ms sample must still count as non-empty.
 func Test_javaParityLock_UrlStatEmptyHistogram(t *testing.T) {
@@ -732,8 +699,6 @@ func Test_javaParityLock_UrlStatEmptyHistogram(t *testing.T) {
 }
 
 // Test_javaParityLock_UrlStatUnknownKey locks the stand-in URL used when a span
-// records URL stats without a URI template against Java's URITemplate.NULL_URI
-// ("/NULL"), which the C++ agent copies verbatim (URL_STAT_UNKNOWN,
 // src/url_stat.h). Both the sampled and the unsampled span paths are exercised.
 func Test_javaParityLock_UrlStatUnknownKey(t *testing.T) {
 	const javaNullUri = "/NULL"
@@ -758,7 +723,6 @@ func Test_javaParityLock_UrlStatUnknownKey(t *testing.T) {
 // ===========================================================================
 
 // Test_javaParityLock_ActiveTraceHistogram locks the four active-trace slots
-// against Java's NORMAL histogram schema (BaseHistogramSchema: 1000/3000/5000ms
 // with an inclusive upper bound, so a span at exactly 1000ms is still "fast").
 func Test_javaParityLock_ActiveTraceHistogram(t *testing.T) {
 	now := time.UnixMilli(100_000)
@@ -786,7 +750,6 @@ func Test_javaParityLock_ActiveTraceHistogram(t *testing.T) {
 // Group 9 - transaction counters
 // ===========================================================================
 
-// Test_javaParityLock_TransactionCounters locks that all six counters Java's
 // DefaultTransactionCounter reports exist here and drain independently. A
 // missing one shows up as a flat line in the Inspector, not as an error.
 func Test_javaParityLock_TransactionCounters(t *testing.T) {
@@ -823,7 +786,6 @@ func Test_javaParityLock_TransactionCounters(t *testing.T) {
 // Group 10 - message truncation format
 // ===========================================================================
 
-// Test_javaParityLock_TruncationFormat locks the abbreviation Java's
 // StringUtils.abbreviate writes: the value cut to the limit followed by
 // "...(original length)". The web tier shows the marker as-is, so the format is
 // part of the contract.
@@ -834,7 +796,6 @@ func Test_javaParityLock_TruncationFormat(t *testing.T) {
 }
 
 // Test_javaParityLock_TruncationCutsOnARuneBoundary locks the UTF-8 guard both
-// ports add on top of Java: protobuf rejects invalid UTF-8 at marshal time, so
 // a mid-rune cut would fail the whole span or metadata send carrying it.
 func Test_javaParityLock_TruncationCutsOnARuneBoundary(t *testing.T) {
 	// "가" is three bytes; a limit of 4 lands inside the second rune.
@@ -843,7 +804,6 @@ func Test_javaParityLock_TruncationCutsOnARuneBoundary(t *testing.T) {
 	assert.Equal(t, "가...(9)", got)
 }
 
-// Test_javaParityLock_MessageLimits locks the two message limits. Java:
 // AbstractRecorder abbreviates an exception message to 256 chars before
 // recording it on a span or span event, and
 // profiler.exceptiontrace.errormessage.max defaults to 2048 for one exception
@@ -867,10 +827,8 @@ func Test_javaParityLock_CollectorPortDefaults(t *testing.T) {
 
 // Test_javaParityLock_GrpcChannelDefaults locks the channel options that were
 // verified equal across the three agents. flowControlWindow, writeBufferSize
-// and maxHeaderListSize follow Java's ClientOption; the C++ agent leaves those
 // three at the C-core defaults, which doc/java_parity.md records. The idle
 // timeout is deliberately not locked: all three agents disable idling, but
-// Java's disable value is 30 days and this agent's is grpc-go's 0, so only the
 // decision is shared, not the value (doc/java_parity.md, "gRPC channel
 // arguments").
 func Test_javaParityLock_GrpcChannelDefaults(t *testing.T) {
@@ -909,7 +867,6 @@ func Test_javaParityLock_ReconnectBackoff(t *testing.T) {
 }
 
 // Test_javaParityLock_AgentInfoSchedule locks the AgentInfo refresh cadence.
-// The retry interval deliberately differs from Java's effective 300000ms
 // (profiler.agentInfo.send.retry.interval): registration gates tracing in both
 // ports, so it has to retry far more often. doc/java_parity.md records that.
 func Test_javaParityLock_AgentInfoSchedule(t *testing.T) {

@@ -6,10 +6,8 @@ import (
 )
 
 // sqlNormalizer walks the statement one byte at a time, indexing the string
-// directly the way the Java agent's ParserContext walks it with charAt.
 //
 // Bytes, not runes: every decision the parser makes is on an ASCII character,
-// and Java's isNumberTokenStart is itself an ASCII-only test, so the bytes of a
 // multibyte character all fall through to the same branch a whole rune would.
 // Decoding buys nothing and costs fidelity - an invalid UTF-8 byte would decode
 // to U+FFFD and be written back as three different bytes, rewriting a statement
@@ -31,7 +29,6 @@ type sqlNormalizer struct {
 	paramIndex   int
 	isChanged    bool
 	// removeComments drops comments from the output instead of copying them,
-	// as the Java agent does by default (profiler.jdbc.removecomments).
 	removeComments bool
 }
 
@@ -39,17 +36,13 @@ type sqlNormalizer struct {
 // a statement longer than this is not normalized at all (see sqlNormalizable).
 // It is not the metadata cap - maxSqlSize (64KB) bounds only the text cacheSql
 // and cacheSqlUid publish, and a statement between the two is still normalized
-// whole, as Java does. Without this cap the normalized text, which is the key
 // of sqlCache / sqlUidCache / rawSqlCache and the key field of every queued
 // sqlMeta / sqlUidMeta, had no bound at all, so one huge generated statement
 // broke the memory guarantee of every one of those.
 //
-// The value matches the C++ agent's kMaxNormalizedSqlLength (src/sql.h). The
-// policy differs on purpose: C++ cuts the input at the cap and normalizes the
 // rest, which loses the placeholder when the cut lands inside a literal and so
 // yields a SQL id / UID no other agent computes (gap N1 of the cross-agent
 // review). Dropping the statement instead never diverges - an over-cap
-// statement records no SQL annotation anywhere. The C++ agent is to adopt the
 // same value and the same drop policy (see doc/java_parity.md).
 const maxSqlNormalizeLength = 1 << 20
 
@@ -64,9 +57,7 @@ func newSqlNormalizer(sql string, removeComments bool) *sqlNormalizer {
 	return &sqlNormalizer{sql: sql, removeComments: removeComments}
 }
 
-// run normalizes the whole statement, as the Java agent's DefaultSqlNormalizer
 // does. The 64KB cap belongs to the metadata text alone (see cacheSql and
-// cacheSqlUid): a statement past the cap must still hash to the UID Java
 // computes from the full normalized SQL, and param must stay whole because the
 // server splits it on ',' to refill the <idx>#/<idx>$ placeholders - a cut
 // param leaves placeholders exposed.
@@ -88,7 +79,6 @@ func (s *sqlNormalizer) run() (string, string) {
 		if ch == '/' {
 			// The comment markers are decided before ch is written: under
 			// removeComments the marker itself must not reach the output.
-			// Neither branch touches numberTokenStartEnable, as in Java - a
 			// comment is not a number token boundary either way.
 			if s.lookahead('/') {
 				s.consumeSingleLineComment(ch)
@@ -108,7 +98,6 @@ func (s *sqlNormalizer) run() (string, string) {
 		} else if ch == '\'' {
 			s.emit(ch)
 			if s.lookahead('\'') {
-				// An empty literal is copied through as it stands: Java neither
 				// records a parameter for it nor marks the statement changed.
 				s.emit('\'')
 				s.pos++
@@ -122,9 +111,7 @@ func (s *sqlNormalizer) run() (string, string) {
 				s.emit(ch)
 			}
 		} else if ch == '$' {
-			// Java turns the flag off only for a positional placeholder
 			// ($1, $2, ...); a '$' followed by anything else leaves it as it
-			// was. Forcing it off here would swallow a literal that Java still
 			// extracts, e.g. "$'x'1" - neither a string literal nor a comment
 			// touches the flag on the way to the digit.
 			if s.lookaheadDigit() {
@@ -136,7 +123,6 @@ func (s *sqlNormalizer) run() (string, string) {
 			s.emit(ch)
 		} else {
 			// Whitespace, operators and separators land here, and so does every
-			// byte of a multibyte character - Java's isNumberTokenStart says the
 			// same of a non-ASCII char, so "테이블1" yields "테이블0#" on both.
 			numberTokenStartEnable = true
 			s.emit(ch)
@@ -188,12 +174,10 @@ func (s *sqlNormalizer) writeParamIndex() {
 
 // consumeSingleLineComment consumes a // or -- comment. lead is the first
 // character of the marker, already read but not yet written. The terminating
-// newline is part of the comment, as in the Java agent - ParserContext reads it
 // with "\n" as the end token - so removal leaves nothing at all in its place.
 func (s *sqlNormalizer) consumeSingleLineComment(lead byte) {
 	if s.removeComments {
 		// A statement whose only change is a dropped comment still has to
-		// return the normalized text, not the original (Java's parameter.touch).
 		s.isChanged = true
 		s.materialize(s.pos - 1) // lead is read, not written
 	} else {
@@ -224,7 +208,6 @@ func (s *sqlNormalizer) consumeMultiLineComment(lead byte) {
 	}
 	s.pos++ /* consume '*' */
 
-	// The '*' of the opening marker cannot close the comment: Java searches for
 	// "*/" from behind it, so "/*/" runs to the end of the statement.
 	prevStar := false
 	for s.pos < len(s.sql) {
@@ -241,7 +224,6 @@ func (s *sqlNormalizer) consumeMultiLineComment(lead byte) {
 }
 
 // consumeCharLiteral consumes a '...' literal, first being the opening quote,
-// already written. An unterminated literal emits no placeholder, as in Java,
 // but its content is still reported as a parameter.
 func (s *sqlNormalizer) consumeCharLiteral() {
 	s.isChanged = true
@@ -256,7 +238,6 @@ func (s *sqlNormalizer) consumeCharLiteral() {
 
 		if ch == ',' {
 			// The server splits param on ',', so a comma inside a literal is
-			// doubled (Java's ParameterBuilder.appendSeparatorCheck).
 			s.param.WriteByte(ch)
 		} else if ch == '\'' {
 			if s.lookahead('\'') {
@@ -302,7 +283,6 @@ func (s *sqlNormalizer) lookahead(expected byte) bool {
 }
 
 // lookaheadDigit reports whether the next byte is a digit, without consuming
-// it. End of input is not a digit, as in Java, whose lookAhead1 returns
 // NEXT_TOKEN_NOT_EXIST there.
 func (s *sqlNormalizer) lookaheadDigit() bool {
 	return s.pos < len(s.sql) && isDigit(s.sql[s.pos])

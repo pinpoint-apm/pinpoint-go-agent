@@ -406,7 +406,6 @@ func TestWrapClient_UnsampledRequestStillSendsS0(t *testing.T) {
 
 // A request that already carries a Pinpoint context - a client wrapped twice,
 // or a proxy forwarding its inbound headers - is nested: the outer context is
-// left as it is and no span event is recorded, as Java's isNested does.
 func TestWrapClient_NestedRequestIsNotTraced(t *testing.T) {
 	startAgent(t)
 

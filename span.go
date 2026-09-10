@@ -33,8 +33,7 @@ const (
 	// canAddErrorChain raises it to Error.MaxChainDepth so a single chain can
 	// always be recorded in full: a lower bound would drop links the option
 	// promised, and that alone is the reason for the floor. The cap is
-	// therefore derived from the option's own clamp ceiling, not chosen -
-	// see doc/java_parity.md for how the reference agents bound this.
+	// therefore derived from the option's own clamp ceiling, not chosen.
 	minErrorChainEntry = 10
 )
 
@@ -42,7 +41,6 @@ const (
 // overflowed. It drops everything a real event would record except the
 // destination, which Inject still writes as Pinpoint-Host: overflow is a
 // profiling limit, not a reason to hide the caller from the node it calls.
-// The C++ agent's DisabledSpanEvent keeps the destination for the same reason.
 //
 // Atomic for the reason the counters beside it are (see span): a plugin may
 // record the destination from another goroutine of the same call stack.
@@ -59,9 +57,7 @@ func (se *overflowSpanEvent) SetDestination(id string) {
 // SetError records nothing on the dropped event - no error string, no
 // annotation, no exception chain - but the failure still reaches the span, so
 // the transaction is not reported as a success because it failed past the
-// profiling depth limit. Java's DefaultTrace.traceBlockBegin0 hands out a real
 // recorder during overflow and its recordException marks the trace root with
-// ErrorCategory.EXCEPTION like any other event; the C++ agent's
 // DisabledSpanEvent::SetError does the same with markSpanError.
 // The Span.IgnoreErrors filter applies exactly as on a recorded event.
 func (se *overflowSpanEvent) SetError(e error, errorName ...string) {
@@ -135,7 +131,6 @@ type span struct {
 	// another goroutine of the call stack races the sender reading them. err
 	// accumulates its ErrorCategory bits with an atomic OR (markSpanError),
 	// which needs nothing more than that - the mask carries no other state
-	// with it - and is the operation Java masks its error code with
 	// (DefaultShared.maskErrorCode: getAndUpdate(x -> x | mask)).
 	err           atomic.Int32
 	statusErr     atomic.Int32
@@ -155,7 +150,6 @@ type span struct {
 	errorChains     []*exception
 	errorChainsLock sync.Mutex
 	// refusedChainHeads holds the heads of the new chains the
-	// Error.NewThroughput limiter refused, most recent last. Java keeps the
 	// refused throwable in ExceptionContext with the DISABLED state, so a later
 	// throwable that continues it reuses that state instead of asking the
 	// sampler again; the refused error is not in errorChains, so findError
@@ -179,10 +173,8 @@ type span struct {
 	finished       atomic.Bool
 	// traceRoot is the span whose PSpan carries the error mask, nil when this
 	// span is the root itself. An async span is serialized as a PSpanChunk,
-	// which has no err field, so its failure must land on the root - Java's
 	// ChildTrace shares its parent's TraceRoot for the same reason
 	// (SpanMessageMapper maps span.traceRoot.shared.errorCode to err), and the
-	// C++ agent keeps a trace_root_data_ pointer. Only the flags travel here;
 	// the error string and exception chain stay on the recording span.
 	traceRoot *span
 }
@@ -197,7 +189,6 @@ func (span *span) root() *span {
 
 // firstErrorCategory picks the category a SetFailure call named, defaulting to
 // ErrorCategoryUnknown - a failure with no cause attached, which is what
-// Java's SimpleErrorRecorder reports for every error it records.
 func firstErrorCategory(category []ErrorCategory) ErrorCategory {
 	if len(category) > 0 {
 		return category[0]
@@ -210,12 +201,9 @@ func firstErrorCategory(category []ErrorCategory) ErrorCategory {
 // writes span.err: the span level SetError, an event's SetError, a failing
 // HTTP status and the SQL.ErrorCount limit all route here, each with its own
 // cause, so a transaction that failed for several reasons reports all of them
-// - Java ORs every recorded error into the shared error code the same way
-// (Shared.maskErrorCode, DefaultShared.java:69-72).
 //
 // A category the operator removed with Span.ErrorMark or
 // Span.ErrorMarkExclude marks nothing at all, not even
-// ErrorCategoryUnknown, which is what Java's
 // ConfigurableErrorRecorder.recordError does: the mask is applied only when
 // the category is in the enabled set. The false return says exactly that, so
 // a caller with more than the mask to write (SetFailure and its URL stat
@@ -229,7 +217,6 @@ func (span *span) markSpanError(category ErrorCategory) bool {
 }
 
 // generateSpanId draws a span id from the whole int64 range, the value space
-// Java's SpanId uses. math/rand/v2 is already this package's generator (see
 // span_queue.go) and its Int64 is documented as non-negative, so the full
 // range comes from Uint64 reinterpreted as int64. The NULL sentinel is
 // redrawn here, not at the call sites, so every id handed out is usable.
@@ -243,7 +230,6 @@ var generateSpanId = func() int64 {
 	}
 }
 
-// nextSpanId draws the id handed to the next node. Java's SpanId.nextSpanID
 // guarantees it differs from this span's own id and from its parent's, and is
 // never the -1 NULL marker; generateSpanId already rules out the sentinel, but
 // the guard also covers the generators tests substitute, and a collision with
@@ -309,9 +295,8 @@ func (span *span) EndSpan() {
 		span.agent.stats.collectResponseTime(span.elapsed)
 	}
 
-	// Unbalanced end: the leftover events are ended and still recorded, as the
-	// C++ agent does. Their sequence numbers were already handed out, so
-	// dropping them would send a span whose event sequence has holes and the
+	// Unbalanced end: leftover events are ended and still recorded. Dropping
+	// them would send a span whose event sequence has holes and the
 	// collector would rebuild the call tree against the missing parents.
 	if leftover := span.eventStack.endAll(); len(leftover) > 0 {
 		unclosedEventLog.warnf("abnormal span - %d unclosed event(s) ended by EndSpan: %s", len(leftover), span.operationName)
@@ -338,7 +323,6 @@ func (span *span) EndSpan() {
 	}
 
 	if span.urlStat != nil {
-		// Failed on an error status or on any recorded error (Java: status = errorCode == 0).
 		// Read from the root: an async worker that failed before this end
 		// marked it there. One that ends later is not seen (see newAsyncSpan).
 		root := span.root()
@@ -414,16 +398,12 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 	writer.Set(HeaderParentApplicationType, strconv.Itoa(int(span.agent.appType)))
 
 	// This agent has no namespace to send, so the header is omitted rather
-	// than sent empty. A Java receiver configured with
 	// profiler.cluster.namespace compares the header against its own value:
 	// null is accepted for backward compatibility, "" is not, so an empty
-	// header makes RequestTraceReader start a new trace instead of continuing
-	// this one and cuts the chain at the Go->Java hop. Java's sender does the
-	// same, normalizing an empty namespace to NOT_SET and writing no header.
+	// header makes RequestTraceReader start a new trace instead of continuing.
+	// Empty namespaces are normalized to NOT_SET and omitted.
 
-	// Propagate this agent's serviceName so downstream records it as the
-	// parent serviceName. Only set when present (v4), matching the Java
-	// agent's "serviceName != NOT_SET" guard; v1/v3 emit no such header.
+	// Propagate this agent's serviceName when present; v1/v3 emit no such header.
 	if span.agent.serviceName != "" {
 		writer.Set(HeaderParentServiceName, span.agent.serviceName)
 	}
@@ -431,7 +411,6 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 	destinationId := ""
 	if se != nil {
 		// endPoint (address actually contacted) and destinationId (logical node
-		// label) are independent in Java: only fill in the endPoint the plugin
 		// left unset, never overwrite the one it recorded.
 		se.endPoint = cmp.Or(se.endPoint, se.destinationId)
 		destinationId = se.destinationId
@@ -442,7 +421,6 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 		// other source for them.
 		destinationId = span.overflowSe.destination()
 	}
-	// Written only when there is a host to name, as Java's
 	// DefaultRequestTraceWriter does: an empty value carries no less
 	// information than a missing header and risks being read as a real host.
 	if destinationId != "" {
@@ -523,7 +501,6 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		span.parentAppName = pappname
 	}
 
-	// A malformed value keeps the UNKNOWN default (1), as the C++ agent does;
 	// the discarded Atoi result wrote 0, a type neither agent defines.
 	papptype, _ := reader.Get(HeaderParentApplicationType)
 	if papptype != "" {
@@ -553,21 +530,10 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 // continueHeaders reports whether the inbound headers describe a hop this span
 // can attach to, and returns the transaction id to continue when they do.
 //
-// Java requires all three headers - a trace id plus both span id headers -
-// before it builds a ContinueTraceHeader (DefaultTraceHeaderReader.java:54-70);
 // any one of them missing returns NewTraceHeader. A trace id on its own names a
 // transaction but not a position in it, so continuing on it alone records a
 // non-root span whose parent is in no trace, and burns a continue-sampler slot
 // (isContinueSampled is unconditionally true) for a hop that does not exist.
-//
-// The two span id headers are checked for presence only, as Java does: a value
-// that will not parse still describes a hop, and Java keeps it as SpanId.NULL
-// via NumberUtils.parseLong (SpanId.java:27). A header present with an empty
-// value is present: Java tests the header for null alone
-// (DefaultTraceHeaderReader.java:55), so it continues on a blank span id,
-// and the C++ agent does the same through has_value(). Pinpoint-Flags is not
-// part of the decision - Java defaults it to 0
-// (DefaultTraceHeaderReader.java:71-72).
 //
 // Presence is the carrier's answer, the second result of Get: a carrier over a
 // source that cannot tell a blank header from an absent one reports the blank
@@ -575,8 +541,6 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 // reported presence.
 //
 // The trace id, unlike the span ids, must parse: an unparseable one leaves no
-// transaction to continue, and Go starts a new one rather than throwing as Java
-// does (TransactionIdUtils.java:84-90). A blank trace id therefore does not
 // continue even from a carrier that can report it as present - it names no
 // transaction - which is the same divergence, not a second one.
 // See doc/java_parity.md.
@@ -604,10 +568,7 @@ func continueHeaders(reader DistributedTracingContextReader) (TransactionId, boo
 // index-out-of-range panic on a malformed or hostile header. ok is false when
 // the header cannot be parsed, and the caller starts a new transaction.
 //
-// Accept/reject follows Java TransactionIdUtils.parseTransactionId:
-//
 //   - The agent id is held to IdValidateUtils' character class and nothing
-//     else - no length bound, which Java applies when an agent registers but
 //     not when it parses this header. The charset half is what protects the
 //     rest: the id does not stay inside this process, since Inject writes it
 //     back out in the Pinpoint-TraceID of every downstream request and it is
@@ -617,7 +578,6 @@ func continueHeaders(reader DistributedTracingContextReader) (TransactionId, boo
 //     Long.parseLong accepts: a leading '+' or '-', leading zeros, and any
 //     length that still fits an int64. An empty field, a non-digit, or a value
 //     that overflows int64 is rejected, as NumberFormatException rejects it.
-//   - A fourth field is ignored rather than rejected: Java ends the sequence
 //     at the next delimiter and never looks past it, so "a^1^2^3" is the
 //     transaction "a^1^2" to both agents.
 //
@@ -671,17 +631,14 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 	// Judged on the position the event has already reserved, not on a load
 	// taken before it: the reservation is atomic, so the pair examined here is
 	// the pair this event will carry, and no concurrent reservation can move
-	// the counters under the decision the way it could between a Load and the
-	// Add that used to follow it.
+	// the counters under the decision.
 	//
 	// se.depth is the depth the new event would be recorded at (eventDepth
 	// starts at 1), so se.depth-1 is the number of events already open. That is
-	// Java's DefaultCallStack.push index: the pre-push element count, checked
 	// by isDepthOverflow as maxDepth < index, then incremented and stored as
 	// the event's depth. With maxDepth=3 the 4th push (index=3) is still
 	// recorded at depth 4, so the deepest recorded level is maxDepth+1.
 	// Written as se.depth-1 rather than max+1 because -1 (unlimited) is
-	// stored as MaxInt32. Sequence keeps >=, mirroring Java's
 	// maxSequence <= sequence.
 	se := newSpanEvent(span, operationName)
 	if se.sequence >= cfg.spanMaxEventSequence || se.depth-1 > cfg.spanMaxEventDepth {
@@ -698,8 +655,6 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 
 // reserveEventPosition claims the (sequence, depth) pair the next event will be
 // recorded at, each counter in one atomic step. eventDepth starts at 1, so a
-// span's first event gets (0, 1). This is the C++ agent's
-// Span::nextEventSequenceAndDepth; Java gets the same invariant from a
 // single-threaded contract instead, DefaultCallStack.push doing sequence++
 // inside push.
 //
@@ -718,7 +673,6 @@ func (span *span) reserveEventPosition() (sequence, depth int32) {
 }
 
 // releaseEventPosition gives back a position the overflow check refused, the
-// way the C++ agent's finish() gives back the depth of an event it did not
 // keep.
 //
 // The depth always goes back: no event was pushed, so nothing would ever
@@ -764,13 +718,10 @@ func (span *span) EndSpanEvent() {
 // recorder the caller obtained from tracer.SpanEvent() for the event it meant
 // to end. EndSpanEvent takes no target, so a missing or doubled call ends the
 // wrong event with nobody's end time and nothing in the log; this is the
-// Java agent's traceBlockEnd(stackId) check, for callers that hold the
 // recorder anyway. A function rather than a Tracer method because Tracer is
 // implemented outside this module (every plugin test has a mock) and a new
 // interface method would break them.
 //
-// On a mismatch the innermost event is still the one ended, as in Java: the
-// C++ agent's unwinding to the target is not ported because EndSpan already
 // ends whatever is left open and warns through unclosedEventLog. Deferred
 // directly, it records a panic on the ended event and re-panics like
 // EndSpanEvent. A tracer that is not this agent's span falls back to its own
@@ -798,7 +749,6 @@ func EndSpanEventOf(tracer Tracer, se SpanEventRecorder) {
 // value EndSpanEvent caught, or nil. want is the event the caller meant to
 // end, or nil when the caller did not say (EndSpanEvent).
 func (span *span) endSpanEvent(recovered interface{}, want SpanEventRecorder) {
-	// Consume one overflow placeholder with a CAS floor at zero, as the C++
 	// agent's SpanData::endDisabledSpanEvent does: a check-then-Add lets two
 	// concurrent ends of the same placeholder drive the counter to -1, after
 	// which the next real overflow only brings it back to 0 and its end pops
@@ -855,7 +805,6 @@ func (span *span) endSpanEvent(recovered interface{}, want SpanEventRecorder) {
 }
 
 // warnMisnestedEnd logs that ended is not the event the caller asked for.
-// Java dumps the stack on every mismatch; debug.Stack() is expensive and the
 // site fires once per request, so the dump rides on the throttle and is
 // taken once per dropReportInterval, never for a suppressed call.
 func (span *span) warnMisnestedEnd(ended *spanEvent, want SpanEventRecorder) {
@@ -904,20 +853,12 @@ func (span *span) newAsyncSpan() Tracer {
 		asyncSpan.txId = span.txId
 		asyncSpan.spanId = span.spanId
 		// Always the first root, even for an async span forked from an async
-		// span (C++: trace_root_data_ ? trace_root_data_ : data_). Known limit:
 		// the root's final chunk is sent at its own EndSpan, so an error recorded
-		// by a child that ends after the root is never on the wire. Java's
 		// ordinary trace has the same limit: DefaultTrace.close()
-		// (DefaultTrace.java:181-199) calls logSpan(), storing the PSpan right
 		// at the root's close, and that is what every normal entry point builds
-		// (DefaultBaseTraceFactory.java:86,102,114 -> newDefaultTrace() at :191).
 		// The deferred store lives only on the AsyncDefaultTrace path, whose
 		// close() awaits the last child via SpanAsyncStateListener
-		// (AsyncDefaultTrace.java:24-31); its entry points are
-		// DefaultBaseTraceFactory.java:148,161, marked
 		// @InterfaceAudience.LimitedPrivate("vert.x"). So this is the same
-		// design as Java, not a parity gap -- deferring the root store would go
-		// beyond Java, not catch up to it.
 		asyncSpan.traceRoot = span.traceRoot
 		if asyncSpan.traceRoot == nil {
 			asyncSpan.traceRoot = span
@@ -1006,7 +947,6 @@ func (span *span) IsSampled() bool {
 
 func (span *span) SetError(e error, errorName ...string) {
 	// A call stack overflow only blocks span events; the span level error is
-	// still recorded, as the Java agent's DefaultSpanRecorder.recordException does.
 	if e == nil || span.warnIfFinished("SetError") {
 		return
 	}
@@ -1018,7 +958,6 @@ func (span *span) SetError(e error, errorName ...string) {
 	id := span.agent.cacheError(errName)
 	span.errorFuncId = id
 	span.errorString = abbreviateString(e.Error(), maxErrorMessageSize)
-	// Java IgnoreErrorHandler: a matched error keeps its exception info but
 	// does not fail the span.
 	if !span.cfg.ignoreError(e, errName) {
 		span.markSpanError(ErrorCategoryException)
@@ -1066,7 +1005,6 @@ func (span *span) SetEndPoint(endPoint string) {
 		return
 	}
 	span.endPoint = endPoint
-	// Java's ServerRequestRecorder.recordParentInfo falls back to
 	// requestAdaptor.getAcceptorHost() - the address the request arrived on,
 	// which is this endPoint - when the caller sent no Pinpoint-Host header.
 	// Extract cannot do that itself: the server plugins set the endPoint only
@@ -1106,23 +1044,16 @@ func (span *span) collectUrlStat(stat *UrlStatEntry, force bool) {
 
 // mergeUrlStat applies a recorded entry to the one a span already holds and
 // returns the entry to keep. Shared by span and noopSpan so both paths follow
-// one policy, the one the C++ agent's SpanImpl::recordUrlStat adopted (gap U6):
 //
-// The Url is first-wins, like Java, where DefaultShared.setUriTemplate is a
 // null -> value CAS while setHttpMethod and HttpStatusCodeRecorder are plain
 // setters the last caller owns. A framework that recorded the matched route
 // first must not have it replaced by a later, less precise layer; the status
 // code, though, is legitimately final only once the response exists, so
 // making the whole entry first-wins would freeze it at the first caller's
-// value (typically 0). Merging per field reproduces Java's semantics inside
-// the single-pointer layout. The urlStatUnknown stand-in is Java's null, not a
-// value: a later real Url still fills it in. force is Java's
 // setUriTemplate(value, true).
 //
-// The caller's entry is copied, never stored or written to: the old code
-// wrote urlStatUnknown into the caller's struct and kept the pointer, so a
-// caller reusing or mutating its entry after AddMetric would have changed the
-// stat under the span.
+// The caller's entry is copied, never stored or written to, so later caller
+// mutation cannot change the span's statistic.
 func mergeUrlStat(current, stat *UrlStatEntry, force bool) *UrlStatEntry {
 	entry := *stat
 	if entry.Url == "" {
@@ -1240,7 +1171,6 @@ func (chunk *spanChunk) optimizeSpanEvents() {
 		if i == 0 {
 			se.startElapsed = se.startTime - chunk.keyTime
 			// Seed the compression baseline with the first event's own depth,
-			// as Java (GrpcSpanProcessorV2) and the C++ agent do. The first
 			// event still carries its real depth; compression starts at i == 1.
 			prevDepth = se.depth
 		} else {

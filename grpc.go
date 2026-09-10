@@ -43,13 +43,10 @@ const (
 
 	// headerSupportCommandCode carries the command codes this agent serves on
 	// the HandleCommandV2 stream. grpc-go lower-cases metadata keys, so the
-	// Java collector's "supportCommandCode" key is spelled in lower case here.
 	headerSupportCommandCode = "supportcommandcode"
 )
 
 // supportedCommandCodes lists the commands serveCommandStream dispatches, in
-// ascending order: the collector parses the header as a list, and the Java and
-// C++ agents both advertise their codes sorted. Keep this in sync with the
 // switch in serveCommandStream.
 var supportedCommandCodes = []int32{
 	int32(pb.PCommandType_ECHO),
@@ -59,8 +56,6 @@ var supportedCommandCodes = []int32{
 }
 
 // supportCommandCodeHeader renders supportedCommandCodes the way the collector
-// parses the supportcommandcode header: ";"-separated, matching the Java
-// SupportCommandCodeClientInterceptor and the C++ support_command_code_header().
 func supportCommandCodeHeader() string {
 	codes := make([]string, len(supportedCommandCodes))
 	for i, c := range supportedCommandCodes {
@@ -93,7 +88,6 @@ func grpcMetadataContext(agent *agent, socketId int64) context.Context {
 }
 
 func agentHeaderMap(agent *agent) map[string]string {
-	// Headers branch on the ObjectName version, mirroring the Java agent's
 	// ClientHeaderFactoryV1 (v1/v3, protocol.version=100) and
 	// ClientHeaderFactoryV4 (v4, protocol.version=400).
 	m := map[string]string{
@@ -124,7 +118,6 @@ func (agent *agent) baseOutgoingContext() context.Context {
 }
 
 const (
-	// Reconnect back-off, matching the C++ agent's GrpcClientTuning: a gentle
 	// x1.2 ramp from 3s to a 30s ceiling, randomized +/-30%.
 	backOffInitialInterval = 3 * time.Second
 	backOffMultiplier      = 1.2
@@ -141,19 +134,16 @@ func backOffSleep(attempt int) time.Duration {
 	}
 
 	// Randomize so agents restarted together do not reconnect in lockstep. The
-	// jitter is applied after the clamp, as in the C++ agent, so a capped
 	// interval lands within +/-30% of the ceiling rather than always on it.
 	return randomize(time.Duration(dur), backOffJitter)
 }
 
 // randomize returns d scaled by a uniform factor in [1-jitter, 1+jitter], the
-// Go counterpart of the Java agent's IntervalFunction.ofRandomized.
 func randomize(d time.Duration, jitter float64) time.Duration {
 	return time.Duration(float64(d) * (1 - jitter + rand.Float64()*2*jitter))
 }
 
 // streamAgeJitter randomizes every connection and stream max age by +/-10%,
-// as the Java agent does with ofRandomized(maxRpcAgeMillis, 0.1), so agents
 // deployed together do not renew in lockstep.
 const streamAgeJitter = 0.1
 
@@ -181,7 +171,6 @@ type expiringStream interface {
 }
 
 // renewIfExpired closes a stream past its max age and opens its replacement,
-// the Go counterpart of the Java agent's SpanGrpcDataSender.renewStream. A
 // renewal is the normal path, logged at info and kept apart from the error
 // path the workers take when a send fails.
 func renewIfExpired[S expiringStream](stream S, reopen func() S, which string) S {
@@ -195,7 +184,6 @@ func renewIfExpired[S expiringStream](stream S, reopen func() S, which string) S
 
 const (
 	// agentGrpcTimeOut bounds the AgentInfo RPC (boot-time registration and
-	// the periodic refresh), matching the C++ agent's 5s. Registration retries
 	// with backOffUntilReady until it succeeds, so a hung collector costs a
 	// short wait and a retry instead of a minute of boot latency.
 	agentGrpcTimeOut = 5 * time.Second
@@ -208,10 +196,8 @@ const (
 	// 60s x metaRetryMaxAttempts; metaChan overflowed, tryEnqueueMeta
 	// head-dropped a queued item (evicting its cache entry), and each drop or
 	// timeout re-queued the same metadata -- an amplification loop that lasted
-	// until the collector recovered. 5s matches the C++ agent's
 	// request_timeout for unary RPCs: ample for a healthy collector, short
 	// enough that permits recycle before the queue fills. Kept as a constant
-	// like the C++ agent's value; a Collector.Grpc.* key can be added if a
 	// deployment ever needs to tune it.
 	metaGrpcTimeOut = 5 * time.Second
 
@@ -220,7 +206,6 @@ const (
 	commandStreamTimeOut = 1 * time.Second
 
 	// Defaults for the Collector.Grpc.* config keys. doc/java_parity.md ("gRPC
-	// channel arguments") compares each with the Java and C++ agents; the
 	// comments here only say what this agent does and why.
 	grpcKeepAliveTime               = 30000 // ms
 	grpcKeepAliveTimeout            = 60000 // ms
@@ -235,7 +220,6 @@ const (
 	// that disable value, and it is the default: see dialOptions.
 	grpcIdleTimeout = 0 // ms
 
-	// Connection and stream renewal are off by default, as in the Java agent
 	// (profiler.transport.grpc.loadbalancer.renew.period.millis and
 	// profiler.transport.grpc.span.sender.rpc.age.max.millis default to a
 	// value the agent treats as disabled).
@@ -330,7 +314,6 @@ func (o grpcChannelOptions) dialOptions(creds credentials.TransportCredentials) 
 	return opts
 }
 
-// collectorCredentials mirrors the C++ agent's make_channel_credentials:
 // TLS disabled is insecure, a configured trust cert path is the trust root,
 // and an empty path with TLS enabled falls back to the system root CAs. An
 // unreadable or invalid cert is an error, never a silent insecure downgrade.
@@ -375,8 +358,8 @@ func connectCollector(config *Config, portOption string) (*grpc.ClientConn, erro
 // bare host:port is also what localIP probes.
 //
 // dns is the default. It resolves the collector host into the channel's address
-// list and keeps re-resolving, which is what the ported
-// SubconnectionExpiringLoadBalancer (grpc_balancer.go) is written against: with
+// list and keeps re-resolving. SubconnectionExpiringLoadBalancer
+// (grpc_balancer.go) relies on this: with
 // several A records the picked SubConn holds them all, so a rotation or a
 // failure moves to another collector instance, and its ResolveNow on failure
 // and its address-change readdressing both act on a resolver that can answer.
@@ -614,12 +597,10 @@ func (agentGrpc *agentGrpc) sendAgentInfo(ctx context.Context, agentInfo *pb.PAg
 }
 
 // registrationWaitLogInterval paces the line that says why tracing is off while
-// registration keeps retrying, matching the C++ agent's GrpcClientTuning
 // registration_wait_log_interval. A variable so tests can shorten it.
 var registrationWaitLogInterval = 30 * time.Second
 
 // registerRetryInterval is the pause between boot registration attempts:
-// Collector.AgentInfo.SendRetryInterval, the same key the C++ agent reads in
 // registerAgentWithRetry, randomized +/-30% so agents restarted together do not
 // retry in lockstep. Non-escalating, as there too - a rejecting collector is
 // polled at the interval the operator configured, and the connection readiness
@@ -638,7 +619,6 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 	// Tracing is off for the whole wait - NewSpan is a noop and nothing is
 	// collected - and the per-attempt failure lines say nothing about that
 	// consequence, so they read as a plain connectivity problem. Report the
-	// consequence periodically, as the C++ agent does, so an operator watching
 	// a silent agent - one whose agent port alone is blocked, say - can tell
 	// this wait apart from a healthy agent nobody instrumented.
 	started := time.Now()
@@ -657,8 +637,6 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 			nextLog = now.Add(registrationWaitLogInterval)
 		}
 
-		// Rebuilt every attempt, as the Java agent (AgentInfoSendTask calls
-		// createAgentInfo per run) and the C++ agent (registerAgent calls
 		// build_agent_info per attempt) do: an outage outlives the values in
 		// here. The IP is the usual one - a NIC still coming up at boot leaves
 		// it empty - but the hostname and the server metadata can move too, and
@@ -674,7 +652,6 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 				Log("agent").Infof("success to register agent")
 				return true
 			}
-			// Success=false is retried like a transport error, as the Java agent
 			// does: the collector answers it while initializing or briefly
 			// refusing, and giving up would leave this process dead until restart.
 			Log("agent").Warnf("register agent - %s, retrying", res.Message)
@@ -699,12 +676,9 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 // refreshAgentInfo re-sends AgentInfo once, trying up to maxTry sends spaced
 // retryInterval apart. Unlike boot-time registration it never loops forever:
 // a failed refresh is simply left for the next refresh cycle, mirroring the
-// C++ agent's send_agent_info_with_retries.
 func (agentGrpc *agentGrpc) refreshAgentInfo(maxTry int, retryInterval time.Duration) bool {
 	for try := 0; try < maxTry && !agentGrpc.agent.stopping(); try++ {
 		// Rebuilt per attempt for the same reason registerAgentWithRetry does
-		// it, and as the Java agent (AgentInfoSender.java:176, createAgentInfo
-		// per AgentInfoSendTask run) and the C++ agent (grpc.cpp:1819,
 		// build_agent_info per send_agent_info_once) do: attempts are
 		// retryInterval apart, so the host name, IP or server metadata can move
 		// between them, and this refresh is what corrects the collector's copy.
@@ -737,34 +711,29 @@ func isRetryableError(e error) bool {
 	return code == codes.Unavailable || code == codes.DeadlineExceeded
 }
 
-// metaRetryMaxAttempts bounds sends of one metadata item, matching the C++
 // agent's meta_retry_max_attempts. Once the budget is spent the item's cache
 // entry is released so its next use registers it again; without a bound a
 // metadata item facing a dead collector would circulate through the retry
 // schedule forever.
 const metaRetryMaxAttempts = 3
 
-// metaRetryDelay is the pause between two sends of one metadata item, matching
-// the C++ agent's meta_retry_delay and the Java agent's retryDelayMillis. It is
+// metaRetryDelay is the pause between two sends of one metadata item. It is
 // also how long a rejected item's cache entry stays in place before it is
 // released (see metaVerdictOf). A collector that is up but refusing
 // (Unavailable) answers at once, so without a pause every attempt in the
 // budget would fire back to back against an already overloaded collector.
 const metaRetryDelay = time.Second
 
-// metaRetryQueueSize caps the retry schedule, matching the C++ agent's
 // meta_retry_queue_size. The schedule is budgeted separately from metaChan on
 // purpose: while a collector outage lasts, every failed send comes back as a
 // retry, and a shared budget lets those retries fill the queue and starve new
 // metadata. New metadata dropped on overflow releases its cache entry, which
 // makes the next span register the same item again -- a drop-feeds-inflow
 // amplification loop that runs until the collector recovers. Two bounds keep
-// the retry pressure off the new-metadata queue; the Java agent gets the same
 // separation from its HashedWheelTimer, which never queues a retry at all.
 const metaRetryQueueSize = 1000
 
 // metaMaxConcurrentRequests bounds how many metadata sends sendMetaWorker
-// keeps in flight at once, matching the C++ agent's
 // meta_max_concurrent_requests.
 const metaMaxConcurrentRequests = 4
 
@@ -785,7 +754,6 @@ const (
 	// what makes the next span miss the cache and re-send, so an immediate
 	// one turned a rejecting collector into a re-send per span, bounded only
 	// by the in-flight permits. Parking it makes the recovery probe periodic,
-	// as the C++ agent's schedule_cache_release does.
 	metaRejected
 )
 
@@ -814,8 +782,6 @@ func metaVerdictOf(err error, attempts int) metaVerdict {
 // collector. metaVerdictOf therefore never retries it, and sendMetaWorker
 // releases the cache entry after one delay so the next use registers a
 // fresh id -- instead of every later span referencing an id the collector
-// never accepted. Only the Java agent (RetryResponseStreamObserver.onNext ->
-// retryScheduler.isSuccess) retries a rejection; the C++ agent
 // (GrpcMetadata::process_completed) drops it and delays the cache release,
 // and Go does the same (metaRejected). See doc/java_parity.md.
 func metaResult(res *pb.PResult, err error) error {
@@ -1048,7 +1014,6 @@ func (w *sendWatchdog) onTimeout() {
 // sendStreamWithTimeout runs op on the calling goroutine and cancels the
 // stream if op blocks past timeout. grpc-go unblocks a flow-control-blocked
 // Send/Recv/CloseSend once the stream context is cancelled, so no operation
-// goroutine is spawned or abandoned — the Go analog of the C++ agent's bounded
 // wait plus TryCancel. Killing the stream on timeout matches the callers: they
 // already close and re-create the stream on any send error.
 func sendStreamWithTimeout(op func() error, cancelStream context.CancelFunc, timeout time.Duration, which string) error {
@@ -1083,7 +1048,6 @@ func sendStreamWithTimeout(op func() error, cancelStream context.CancelFunc, tim
 // calls waitUntilReady once per attempt and the throttle window must span
 // those calls or a dead collector logs a state line per attempt.
 //
-// It is the log-only stand-in for what Java has in two places: the
 // ConnectivityStateMonitor of AbstractGrpcDataSender (transition lines) and
 // the Channelz reporters under sender/grpc/metric (counters). Nothing is
 // added to PAgentStat.
@@ -1154,8 +1118,6 @@ func (l *channelStateLog) observeNotReady() {
 //
 // "Observed": GetState is a sampled read, not a stream of states. Transitions
 // that happen between two WaitForStateChange returns are never seen, so from
-// and to are consecutive samples, not necessarily consecutive states (Java's
-// notifyWhenStateChanged reports the same way). The wording matches the C++
 // agent's log_channel_state_change so doc/troubleshooting.md can be shared.
 func (l *channelStateLog) logTransition(which string, from, to connectivity.State) {
 	l.mu.Lock()
@@ -1241,8 +1203,7 @@ func waitUntilReady(ctx context.Context, grpcConn *grpc.ClientConn, timeout time
 
 	for state != connectivity.Ready {
 		// An IDLE channel never leaves that state on its own, so waiting on it
-		// would burn the whole interval; ask it to connect instead, mirroring
-		// the C++ agent's GetState(try_to_connect=true).
+		// would burn the whole interval; ask it to connect instead.
 		if state == connectivity.Idle {
 			grpcConn.Connect()
 		}
@@ -1720,13 +1681,11 @@ func (b *spanMessageBuilder) makePSpan(chunk *spanChunk) *pb.PSpanMessage {
 
 	acceptEvent := b.acceptEvents.get()
 	acceptEvent.Rpc = validUTF8(span.rpcName)
-	// Java (SpanMessageMapper.toAcceptEvent) defaults both to "UNKNOWN": an
 	// empty string leaves the web UI with a blank inbound node instead of one
 	// labelled unknown.
 	acceptEvent.EndPoint = validUTF8(cmp.Or(span.endPoint, unknownAddress))
 	acceptEvent.RemoteAddr = validUTF8(cmp.Or(span.remoteAddr, unknownAddress))
 	// A root span has no parent to describe, so it carries no PParentInfo at
-	// all, as the Java and C++ agents send it; an unconditional one reported
 	// ParentApplicationType 1 (UNKNOWN) for a parent that does not exist.
 	if span.parentAppName != "" {
 		parentInfo := b.parentInfos.get()
@@ -1839,7 +1798,6 @@ func (b *spanMessageBuilder) makePSpanEvent(event *spanEvent) *pb.PSpanEvent {
 	if event.destinationId != "" {
 		messageEvent := b.messageEvents.get()
 		// Only an event that actually injected a trace context has a next span
-		// id. Sending 0 for the rest (Java leaves the field unset) links the
 		// call to a span id no node will ever report.
 		if event.nextSpanId != noneSpanId {
 			messageEvent.NextSpanId = event.nextSpanId
@@ -1959,11 +1917,9 @@ func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
 		Timestamp:       stat.sampleTime.UnixNano() / int64(time.Millisecond),
 		CollectInterval: stat.interval,
 		Gc: &pb.PJvmGc{
-			// Go's GC is none of the JVM collectors; UNKNOWN is what the C++
 			// agent sends for the same reason. The counts below are Go's own:
 			// NumGC counts whole cycles (Go has no generations) and
 			// PauseTotalNs sums stop-the-world time only, so both read lower
-			// than the Java old-gen equivalents under the same load. See
 			// doc/java_parity.md.
 			Type:                 pb.PJvmGcType_JVM_GC_TYPE_UNKNOWN,
 			JvmMemoryHeapUsed:    stat.heapUsed,
@@ -2094,7 +2050,6 @@ func (cmdGrpc *cmdGrpc) newHandleCommandStream() bool {
 	} else {
 		ctx, cancel = context.WithDeadline(commandMetadataContext(cmdGrpc.agent), age.expiresAt)
 	}
-	// HandleCommandV2, like the Java and C++ agents: HandleCommand is deprecated
 	// in the IDL and the collector's V1 handler drops a stream that carries the
 	// supportcommandcode header, so the RPC and the header go together.
 	stream, err := cmdGrpc.cmdClient.HandleCommandV2(ctx)
@@ -2128,7 +2083,6 @@ func (s *cmdStream) close() {
 
 // sendFailMessage rejects a command on the command stream itself, which is the
 // only channel the protocol offers for a request the agent will not serve:
-// PCmdMessage.failMessage. Matches the C++ agent's write_fail_message(), which
 // sets the request id and a reason and leaves status at its default.
 func (s *cmdStream) sendFailMessage(reqId int32, msg string) error {
 	if s.stream == nil {

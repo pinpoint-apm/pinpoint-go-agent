@@ -1,6 +1,5 @@
 // Package it provides an in-process Pinpoint collector and the integration
 // tests that drive a real agent against it. It is the Go counterpart of the
-// C++ agent's test/it suite.
 package it
 
 import (

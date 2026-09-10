@@ -127,7 +127,6 @@ var (
 	proxyHeaderApp    = textproto.CanonicalMIMEHeaderKey("Pinpoint-ProxyApp")
 )
 
-// Proxy request types, matching the Java agent's ProxyRequestType codes.
 const (
 	proxyTypeApp    int32 = 1
 	proxyTypeNginx  int32 = 2
@@ -135,11 +134,9 @@ const (
 	proxyTypeUser   int32 = 4
 )
 
-// proxyAppMaxLength is the length bound Java's AppRequestParser gives
 // IdValidateUtils.validateId for the app= token.
 const proxyAppMaxLength = 30
 
-// proxyRequest is one parsed proxy header. valid mirrors Java's
 // ProxyRequestHeader.isValid(): DefaultProxyRequestRecorder records a header
 // only when its parser marked it valid.
 type proxyRequest struct {
@@ -152,7 +149,6 @@ type proxyRequest struct {
 }
 
 // setProxyHeader records one proxy annotation per proxy header the request
-// carries. Java's DefaultProxyRequestRecorder runs every parser - Apache,
 // Nginx, App and the configured user headers - and records each valid result,
 // so a request that passed through more than one proxy gets one annotation per
 // hop rather than only the first match.
@@ -175,7 +171,6 @@ func setProxyHeader(a pinpoint.Annotation, h Header) {
 
 func appendProxyHeader(a pinpoint.Annotation, code int32, p proxyRequest) {
 	// A header whose receive time is missing or not positive is discarded
-	// whole, as every Java parser does with setValid(false): a receivedTime
 	// of 0 would draw the proxy hop at the epoch in the timeline.
 	if !p.valid || p.receivedTime <= 0 {
 		return
@@ -195,7 +190,6 @@ func proxyTokens(value string, fn func(k, v string)) {
 }
 
 // parseProxyApache reads "t=<epoch micros> D=<micros> i=<idle%> b=<busy%>",
-// as Java's ApacheRequestParser does.
 func parseProxyApache(value string) proxyRequest {
 	p := proxyRequest{valid: true}
 	proxyTokens(value, func(k, v string) {
@@ -215,7 +209,6 @@ func parseProxyApache(value string) proxyRequest {
 }
 
 // parseProxyNginx reads "t=<sec.mmm> D=<sec.mmm>": nginx's $msec and
-// $request_time are seconds with exactly three decimals. Java's
 // NginxRequestParser (toReceivedTimeMillis / toDurationTimeMicros) checks
 // that shape and treats anything else, including a value with no decimal
 // point, as 0. Reading the digits around the point as an integer keeps the
@@ -249,7 +242,6 @@ func nginxMillis(v string) int64 {
 	return n
 }
 
-// parseProxyApp reads "t=<epoch millis> app=<id>", as Java's AppRequestParser
 // does. An app= token that is not a valid id - the [a-zA-Z0-9._-] character
 // class, at most proxyAppMaxLength bytes - discards the header.
 func parseProxyApp(value string) proxyRequest {
@@ -271,7 +263,6 @@ func parseProxyApp(value string) proxyRequest {
 
 // parseProxyUser reads "t=<epoch millis>" from a header named by
 // Http.Server.ProxyUserHeaderNames; the header name is recorded as the app,
-// as Java's UserRequestParser does.
 func parseProxyUser(name, value string) proxyRequest {
 	p := proxyRequest{valid: true, app: name}
 	proxyTokens(value, func(k, v string) {

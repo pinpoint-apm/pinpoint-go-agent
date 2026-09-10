@@ -5,7 +5,6 @@ import "sync/atomic"
 // agentPhase is the agent's lifecycle phase. It replaces the enable and
 // shutdown bools, whose four combinations were these phases in disguise:
 // registering was "neither set", running "enable only", stopping "both",
-// stopped "shutdown only". Mirrors the C++ agent's started_/shutting_down_/
 // init_failed_ trio (agent.h), collapsed into one value so the phases are
 // mutually exclusive by construction and can be told apart from outside.
 type agentPhase int32
@@ -21,7 +20,6 @@ const (
 	// bad address, TLS setup). Kept apart from registering because the two
 	// need different responses from an operator - wait, or fix the config -
 	// and from the code: connectGrpcServer's release defer runs only here.
-	// The C++ agent keeps it as init_failed_ for the same reason.
 	phaseFailed
 )
 
@@ -43,7 +41,6 @@ func (p agentPhase) String() string {
 
 // validTransitions lists, per source phase, the phases it may move to. Every
 // edge is forward: nothing returns to registering or running, so a torn-down
-// agent cannot be revived, which is what the C++ lifecycle_mutex_ guards.
 var validTransitions = map[agentPhase][]agentPhase{
 	phaseRegistering: {phaseRunning, phaseFailed, phaseStopped},
 	phaseRunning:     {phaseStopping},
@@ -53,7 +50,6 @@ var validTransitions = map[agentPhase][]agentPhase{
 
 // lifecycle holds the phase as one atomic integer rather than a mutex-guarded
 // enum: tracingEnabled is read on the request path (NewSpanTracer, every
-// cache and enqueue) and by every worker loop iteration, where the C++
 // agent's lifecycle_mutex_ would be a lock per span. Transitions are a CAS,
 // so two writers racing for the same edge see exactly one win.
 type lifecycle struct {

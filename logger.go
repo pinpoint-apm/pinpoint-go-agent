@@ -78,8 +78,6 @@ func newTextFormatter() logrus.Formatter {
 }
 
 func (l *logrusLogger) setLevel(level string) {
-	// An unknown level keeps the current one, as the C++ agent does
-	// (Logger::setLogLevel in src/logging.cpp). Resetting to info instead
 	// turned a typo in a reloaded config file into more log output on a host
 	// that had just lowered the level to get less. publish already rejects
 	// such a value, so this is the guard for a caller that bypasses Config.
@@ -103,7 +101,6 @@ func (l *logrusLogger) setOutput(out string, maxSize, maxBackups int) {
 func (l *logrusLogger) setOutputLocked(out string, maxSize, maxBackups int) {
 	// The output is applied up to three times on the way to a running agent
 	// (twice while NewConfig loads, once by setup); an unchanged one is not
-	// reopened, as in the C++ agent's apply_log_config.
 	if out == l.out && maxSize == l.maxSize && maxBackups == l.maxBackups {
 		return
 	}
@@ -118,7 +115,6 @@ func (l *logrusLogger) setOutputLocked(out string, maxSize, maxBackups int) {
 			Filename:   out,
 			MaxSize:    maxSize,
 			MaxBackups: maxBackups,
-			// Not exposed: the C++ agent has no age or compression setting
 			// (Log.MaxBackups is its only retention key), so a Go-only key
 			// would be one more thing the ports disagree on. MaxBackups
 			// already bounds the disk footprint to MaxSize x (MaxBackups+1).

@@ -144,7 +144,6 @@ func writeArg(b *bytes.Buffer, index int, value any, numComma int, maxSize int) 
 	// The separator is written before the value that follows it, never after
 	// the one before it, so it precedes whatever comes next: the next value,
 	// or the count marker standing in for the values left out. This mirrors
-	// the agent's own driver wrapper, which follows Java's
 	// BindValueUtils.bindValueToString.
 	if index > 0 {
 		b.WriteString(", ")
@@ -175,7 +174,6 @@ func writeAbbreviatedArg(b *bytes.Buffer, value any, maxSize int) {
 	// elements can contribute to its prefix: slicing the rest away keeps a
 	// million-element array parameter from being built whole to keep a
 	// kilobyte. The length marker survives that slicing because an array
-	// reports its element count, not the width of its rendering - as Java's
 	// ArrayUtils.abbreviate reports a byte[] bind value.
 	if rv := reflect.ValueOf(value); rv.Kind() == reflect.Slice {
 		elems := rv.Len()

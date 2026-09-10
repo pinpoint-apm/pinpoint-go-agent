@@ -147,7 +147,6 @@ func TestObjectName_String_MasksApiKey(t *testing.T) {
 }
 
 func TestValidateID_ByteLength(t *testing.T) {
-	// A 2-byte UTF-8 char counts as 2 bytes (matching Java UTF-8 byte length).
 	assert.False(t, validateID("é", 1), "multibyte char exceeds 1-byte limit")
 	// Also rejected by pattern, but the length check is what we assert here.
 	assert.True(t, validateID("ab", 2))

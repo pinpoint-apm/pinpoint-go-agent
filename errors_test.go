@@ -39,7 +39,6 @@ func TestSpan_TraceCallStackBoundsCauserCycle(t *testing.T) {
 }
 
 // Each link of an error chain is recorded under one exception id with its
-// 0-based depth and Go type name, as Java numbers a Throwable cause chain.
 func TestSpan_TraceCallStackChainDepthAndClassName(t *testing.T) {
 	inner := errors.New("inner")
 	tests := []struct {
@@ -135,12 +134,9 @@ func TestSpan_TraceCallStackUsesGivenClassName(t *testing.T) {
 	assert.Equal(t, "MyError", span.errorChains[0].className)
 }
 
-// Error.NewThroughput limits new exception chains, like the Java agent's
 // ExceptionChainSampler; 0 or less means unlimited. The bucket starts empty
 // (see newTokenBucket), so a fresh agent records the first chain and denies the
 // rest of a burst whatever the throughput, until idle time has refilled it.
-// This used to expect the first tps chains to pass on the belief that the
-// bucket started full.
 // unlimitedNewChainsConfig is defaultConfig without the Error.NewThroughput
 // limiter, for tests that record several new chains at once on a fresh agent
 // and are about something other than the limiter: a fresh bucket admits only
@@ -186,7 +182,6 @@ func TestSpan_TraceCallStackLimitsNewChains(t *testing.T) {
 }
 
 // A denied chain records nothing at all - not the error, not its causes - and
-// does not burn an id, as Java asks isNewSampled() before nextErrorId().
 func TestSpan_TraceCallStackDeniedRecordsNothing(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgErrorNewThroughput, 1)
@@ -248,7 +243,6 @@ func assertChainDepthsContiguous(t *testing.T, span *span) {
 }
 
 // Wrapping a cause that is not the head of its chain - a sentinel wrapped
-// again at another call site - starts a new chain, as Java's
 // ExceptionRecordingState.stateOf only joins when the previously recorded
 // throwable is in the new one's cause chain. Joining the old chain would put
 // its head below the new error although it is not a cause of it.
@@ -352,8 +346,7 @@ type uncomparableError []string
 
 func (e uncomparableError) Error() string { return strings.Join(e, ",") }
 
-// Recording two errors of the same uncomparable type on one span used to
-// panic on the request goroutine inside findError.
+// Recording errors with an uncomparable dynamic type must not panic.
 func TestSpan_TraceCallStackUncomparableErrorType(t *testing.T) {
 	span := testSpanWithConfig(unlimitedNewChainsConfig())
 
@@ -389,7 +382,6 @@ func Test_sameError(t *testing.T) {
 }
 
 // A chain the limiter refused stays refused on the span: a later error whose
-// cause chain reaches the refused head is Java's CONTINUED state, which reuses
 // the stored DISABLED state without asking the sampler again. The limiter is
 // swapped for one holding a permit after the refusal, so a continuation that
 // asked it would be admitted; an unrelated new chain still is.
@@ -414,7 +406,6 @@ func TestSpan_TraceCallStackRefusedChainDoesNotReaskLimiter(t *testing.T) {
 
 // Two chains refused back to back must both stay latched. With a single slot
 // the older head is overwritten, and the rest of that chain's links are then
-// charged as brand new chains - under a burst those crowd out chains Java
 // would have admitted.
 func TestSpan_TraceCallStackKeepsEveryRefusedChainHead(t *testing.T) {
 	cfg := defaultConfig()
@@ -528,10 +519,7 @@ func TestSpanEvent_SetErrorCountsDroppedChainEntries(t *testing.T) {
 	assert.Contains(t, buf.String(), fmt.Sprintf("dropped %d error chain link(s)", over), "the drop total was never reported")
 }
 
-// The entry cap used to be read off errorChains without errorChainsLock from
-// spanEvent.SetError while traceCallStack appended under it. Two goroutines of
-// one call stack recording errors concurrently must neither race nor exceed
-// the cap.
+// Concurrent errors on one call stack neither race nor exceed the entry cap.
 func TestSpanEvent_ConcurrentSetErrorRespectsChainCapWithoutRace(t *testing.T) {
 	cfg := unlimitedNewChainsConfig()
 	cfg.Set(CfgErrorTraceCallStack, true)

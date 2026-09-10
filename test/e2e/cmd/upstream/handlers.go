@@ -21,7 +21,6 @@ var (
 	startTime      = time.Now()
 )
 
-// track counts a request for /stats, mirroring the C++ server's RequestTracker.
 func track() func() {
 	totalRequests.Add(1)
 	activeRequests.Add(1)

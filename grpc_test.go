@@ -574,8 +574,7 @@ func Test_waitUntilReady_connectsIdleChannel(t *testing.T) {
 
 	assert.Equal(t, connectivity.Idle, conn.GetState())
 	assert.False(t, waitUntilReady(context.Background(), conn, 200*time.Millisecond, "test"))
-	// An IDLE channel used to sit there for the whole interval; it must now
-	// have been asked to connect.
+	// waitUntilReady asks an IDLE channel to connect.
 	assert.NotEqual(t, connectivity.Idle, conn.GetState())
 }
 
@@ -645,7 +644,6 @@ func waitNotReady(t *testing.T, conn *grpc.ClientConn) {
 // The moment the channel comes back is the one line the outage cannot be
 // reconstructed without: it must be logged as a "-> READY" transition and
 // closed with the outage summary, whether the wait found the channel in
-// TRANSIENT_FAILURE or in CONNECTING. Java logs the same transition from
 // AbstractGrpcDataSender's ConnectivityStateMonitor.
 func Test_waitUntilReady_logsRecoveryToReady(t *testing.T) {
 	const which = "recovery-test"
@@ -1203,8 +1201,6 @@ func Test_agentGrpc_refreshAgentInfo_stopsOnSuccess(t *testing.T) {
 // A refresh retry must carry a freshly built payload, not the snapshot the
 // first attempt happened to capture: attempts are retryInterval apart, and this
 // send is what corrects the collector's copy of a host name or IP that moved.
-// Same rule registerAgentWithRetry follows, and the Java (AgentInfoSender.java:176)
-// and C++ (grpc.cpp:1819) agents with it.
 func Test_agentGrpc_refreshAgentInfo_rebuildsInfoPerAttempt(t *testing.T) {
 	saved := getHostName
 	defer func() { getHostName = saved }()
@@ -1247,7 +1243,6 @@ func Test_agent_refreshAgentInfoWorker_honorsInterval(t *testing.T) {
 // With no Collector.Grpc.* keys set, the channel options must equal the
 // values that were hard-coded before they became configurable, except for
 // PermitWithoutStream, which was deliberately flipped to false to match the
-// C++ agent.
 func Test_grpcChannelOptions_defaults(t *testing.T) {
 	cfg, err := NewConfig(WithAppName("TestApp"))
 	assert.NoError(t, err)
@@ -1329,7 +1324,6 @@ func newMockMetaAgentGrpc(agent *agent) (*agentGrpc, *mockMetaGrpcClient) {
 }
 
 // Each metadata type must reach the collector with the fields the caller
-// supplied. Mirrors the C++ agent's MetaDataApiTest / MetaDataStringTest /
 // MetaDataSqlUidTest.
 func Test_agentGrpc_sendMetadata_payloads(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
@@ -1362,7 +1356,6 @@ func Test_agentGrpc_sendMetadata_payloads(t *testing.T) {
 }
 
 // Exception metadata carries the transaction that raised it plus one entry per
-// chained error. Mirrors the C++ agent's MetaDataExceptionTest.
 func Test_agentGrpc_sendExceptionMetadata(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agentGrpc, meta := newMockMetaAgentGrpc(agent)
@@ -1442,7 +1435,6 @@ func Test_agentGrpc_sendExceptionMetadata_oversizedIsSkippedWithoutRetry(t *test
 }
 
 // A retryable failure is retried within the attempt budget, and a send that
-// then succeeds keeps its cache entry. Mirrors the C++ agent's
 // GrpcMetadataRetriesFailedResultWithoutEvictingCache.
 func Test_sendMetaWorker_succeedsAfterRetryableFailure(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
@@ -1480,7 +1472,6 @@ func Test_isRetryableError(t *testing.T) {
 
 // The sql and sql-uid caches are released the same way the api and string
 // caches are when their metadata never reaches the collector, so the next use
-// re-registers them. Mirrors the C++ agent's
 // GrpcMetadataEvictsSqlCacheAfterRetryExhaustion / ...SqlUidCache...
 func Test_sendMetaWorker_releasesSqlCachesOnFailure(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
@@ -1510,7 +1501,6 @@ func Test_sendMetaWorker_releasesSqlCachesOnFailure(t *testing.T) {
 }
 
 // Every metadata type the agent can queue is dispatched by the worker to its
-// own RPC. Mirrors the C++ agent's GrpcAgentMetaWorkerAllTypesSuccessTest.
 func Test_sendMetaWorker_sendsEveryMetadataType(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agentGrpc, meta := newMockMetaAgentGrpc(agent)
@@ -1540,7 +1530,6 @@ func Test_sendMetaWorker_sendsEveryMetadataType(t *testing.T) {
 // --- agent info -------------------------------------------------------------
 
 // The registration payload describes the running process, and its headers ride
-// along on the same context. Mirrors the C++ agent's
 // GrpcAgentRegisterAgentUsesDefaultServerMetaData.
 func Test_agentGrpc_makeAgentInfo(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
@@ -1724,7 +1713,6 @@ func Test_localIP_neverLoopback(t *testing.T) {
 }
 
 // A collector that answers Success=false (initializing, briefly refusing) is
-// retried with the same backoff as a transport failure, as the Java agent does,
 // instead of leaving the agent permanently disabled.
 func Test_agentGrpc_registerAgentWithRetry_retriesOnRejection(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
@@ -1766,7 +1754,6 @@ func Test_agentGrpc_registerAgentWithRetry_rejectionStopsOnShutdown(t *testing.T
 }
 
 // The boot retry is paced by Collector.AgentInfo.SendRetryInterval, the same
-// key the C++ agent reads in registerAgentWithRetry - not by the connection
 // back-off, which an operator cannot tune and which escalates to 30s.
 func Test_agentGrpc_registerAgentWithRetry_usesConfiguredRetryInterval(t *testing.T) {
 	defer captureWarnLog(&bytes.Buffer{})()
@@ -1790,8 +1777,6 @@ func Test_agentGrpc_registerAgentWithRetry_usesConfiguredRetryInterval(t *testin
 	}
 }
 
-// The AgentInfo is rebuilt on every attempt, as in the Java agent
-// (AgentInfoSendTask calls createAgentInfo per run) and the C++ agent
 // (registerAgent calls build_agent_info per attempt). An outage outlives the
 // values in it - a NIC that comes up late, a hostname that moves, a reloaded
 // option - and whatever the loop captured first is otherwise what the
@@ -1827,7 +1812,6 @@ func Test_agentGrpc_registerAgentWithRetry_rebuildsAgentInfoPerAttempt(t *testin
 // collector accepts the AgentInfo there are no spans and no stats at all. The
 // wait line is what connects the two, so it must appear while the retry runs,
 // name which of the two failures it is, and stop the moment registration
-// succeeds. Mirrors the C++ agent's registration_wait_log_interval line.
 func Test_agentGrpc_registerAgentWithRetry_saysWhyTracingIsOff(t *testing.T) {
 	prev := registrationWaitLogInterval
 	registrationWaitLogInterval = 10 * time.Millisecond
@@ -1949,7 +1933,6 @@ func dialReadyConn(t *testing.T) *grpc.ClientConn {
 	return conn
 }
 
-// A transport failure is retried until the collector answers. Mirrors the C++
 // agent's GrpcAgentRegisterWithRetryRetriesUntilSuccess.
 func Test_agentGrpc_registerAgentWithRetry_retriesUntilSuccess(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
@@ -1975,7 +1958,6 @@ func Test_agentGrpc_registerAgentWithRetry_retriesUntilSuccess(t *testing.T) {
 // --- headers ----------------------------------------------------------------
 
 // Only the ping stream identifies a socket, and it must not pollute the header
-// set every other RPC shares. Mirrors the C++ agent's
 // GrpcMetadataTest.SocketIdNeverInBaseHeaderSet.
 func Test_grpcMetadataContext_socketId(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
@@ -2015,7 +1997,6 @@ func newBoundedSpanGrpc(agent *agent, client *mockSpanGrpcClient) *spanGrpc {
 }
 
 // A chunk's wire shape depends on what it is: only a finished synchronous span
-// is a PSpan. Mirrors the C++ agent's GrpcSpanSendBatchSpanVsSpanChunkTest.
 func Test_spanGrpc_sendSpanBatch_spanShapePerChunk(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agent.spanGrpc = newMockSpanGrpc(agent)
@@ -2045,7 +2026,6 @@ func Test_spanGrpc_sendSpanBatch_spanShapePerChunk(t *testing.T) {
 }
 
 // The caller that produced this trace is described on the accept event, service
-// name included. Mirrors the C++ agent's
 // GrpcSpanBatchCarriesParentServiceNameTest.
 func Test_spanGrpc_sendSpanBatch_carriesParentInfo(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
@@ -2079,9 +2059,7 @@ func Test_spanGrpc_sendSpanBatch_carriesParentInfo(t *testing.T) {
 	assert.Equal(t, "acceptor:8080", parent.GetAcceptorHost())
 }
 
-// A root span has no parent to describe, so it carries no PParentInfo, as the
-// Java and C++ agents send it; the unconditional one reported an UNKNOWN
-// parent type for a parent that does not exist.
+// A root span has no parent to describe, so it carries no PParentInfo.
 func Test_spanGrpc_sendSpanBatch_rootSpanHasNoParentInfo(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agent.spanGrpc = newMockSpanGrpc(agent)
@@ -2101,7 +2079,6 @@ func Test_spanGrpc_sendSpanBatch_rootSpanHasNoParentInfo(t *testing.T) {
 }
 
 // A chunk without a span carries nothing to report and must not reach the
-// encoder. Mirrors the C++ agent's GrpcSpanEnqueueDropsNullAndExitingChunksTest.
 func Test_makePSpanMessageBatch_skipsEmptyChunks(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	builder := acquireSpanMessageBuilder()
@@ -2114,7 +2091,6 @@ func Test_makePSpanMessageBatch_skipsEmptyChunks(t *testing.T) {
 
 // With every permit held by a slow collector, a new batch is dropped rather
 // than parking the sender behind it; completing the in-flight request lets the
-// next one through. Mirrors the C++ agent's
 // GrpcSpanPermitExhaustionDropsBatchTest.
 func Test_spanGrpc_sendSpanBatchAsync_permitExhaustionDropsBatch(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
@@ -2137,7 +2113,6 @@ func Test_spanGrpc_sendSpanBatchAsync_permitExhaustionDropsBatch(t *testing.T) {
 }
 
 // A failed send returns its permit, so a collector outage cannot leak the
-// sender's capacity away. Mirrors the C++ agent's
 // GrpcSpanErrorStatusReleasesPermitTest.
 func Test_spanGrpc_sendSpanBatchAsync_errorReleasesPermit(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
@@ -2153,10 +2128,7 @@ func Test_spanGrpc_sendSpanBatchAsync_errorReleasesPermit(t *testing.T) {
 	assert.Empty(t, spanGrpc.concurrentRequestPermit)
 }
 
-// A panic while the batch message is built must return the permit too. The
-// build used to run on the worker, where superviseWorker recovered the panic
-// and restarted the worker but could not return the permit, so
-// maxConcurrentRequests such panics dropped every later batch for good.
+// A panic while building a batch message returns its permit.
 func Test_spanGrpc_sendSpanBatchAsync_buildPanicReleasesPermit(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	client := &mockSpanGrpcClient{}
@@ -2180,7 +2152,6 @@ func Test_spanGrpc_sendSpanBatchAsync_buildPanicReleasesPermit(t *testing.T) {
 }
 
 // A partially rejected batch is a warning, not a sender failure: the permit
-// comes back and later batches still go out. Mirrors the C++ agent's
 // GrpcSpanPartialSuccessHandledTest.
 func Test_spanGrpc_sendSpanBatchAsync_partialSuccessKeepsSending(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
@@ -2292,7 +2263,6 @@ func Test_cmdGrpc_newHandleCommandStream_usesV2WithHeader(t *testing.T) {
 	assert.Equal(t, []string{"710;730;740;750"}, got.Get(headerSupportCommandCode))
 }
 
-// Mirrors the C++ agent's GrpcCommandWorkerEchoTest.
 func Test_cmdGrpc_sendEcho(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	_, client := newMockCmdGrpc(agent)
@@ -2588,8 +2558,7 @@ func Test_spanGrpc_sendSpanBatch_skipCountsDrops(t *testing.T) {
 	assert.Len(t, spanGrpc.concurrentRequestPermit, 1, "a skipped batch releases no permit")
 }
 
-// The AnnotationApi fallback is built on the builder, not appended to the
-// span's annotations: serializing twice used to duplicate it.
+// The AnnotationApi fallback stays on the builder, not the span's annotations.
 func TestSpanMessageBuilder_AnnotationApiFallbackIsBuilderLocal(t *testing.T) {
 	span := defaultTestSpan()
 	span.operationName = "op"

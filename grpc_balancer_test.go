@@ -417,7 +417,6 @@ func Test_expiringPickFirst_ignoresUnchangedAddresses(t *testing.T) {
 	assert.Same(t, cc.subConn(0), must(cc.pick()))
 }
 
-// The Java agent's refreshNameResolution: a failed or dropped connection asks
 // for a fresh resolution, so a collector that moved is found again.
 func Test_expiringPickFirst_requestsResolutionOnFailureAndIdle(t *testing.T) {
 	_, cc := newExpiringPickFirst(t, 0)

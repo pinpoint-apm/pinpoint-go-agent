@@ -62,7 +62,6 @@ func Test_setProxyHeader(t *testing.T) {
 			want: &proxyValues{code: 3, receivedTime: 1500968753}},
 		{name: "apache repeated keys keep the last", header: "Pinpoint-ProxyApache", value: "t=1500968753503 D=1 D=2",
 			want: &proxyValues{code: 3, receivedTime: 1500968753, duration: 2}},
-		// t= is the validity gate, as in Java's ApacheRequestParser.
 		{name: "apache missing t", header: "Pinpoint-ProxyApache", value: "D=125 i=51 b=48"},
 		{name: "apache bare token", header: "Pinpoint-ProxyApache", value: "t"},
 		{name: "apache empty values", header: "Pinpoint-ProxyApache", value: "t= D= i= b="},
@@ -73,7 +72,6 @@ func Test_setProxyHeader(t *testing.T) {
 		{name: "apache t under a millisecond", header: "Pinpoint-ProxyApache", value: "t=999"},
 
 		// nginx t= and D= are seconds with exactly three decimals; D= is
-		// reported in microseconds, as Java's toDurationTimeMicros does.
 		{name: "nginx", header: "Pinpoint-ProxyNginx", value: "t=1504230492.763 D=0.123",
 			want: &proxyValues{code: 2, receivedTime: 1504230492763, duration: 123000}},
 		{name: "nginx zero duration", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=0.000",
@@ -146,7 +144,6 @@ func Test_setProxyHeader(t *testing.T) {
 	}
 }
 
-// Every proxy header present is recorded, as Java's DefaultProxyRequestRecorder
 // runs every parser: a request that crossed two proxies carries two annotations.
 func Test_setProxyHeader_EveryHeader(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -647,7 +644,6 @@ func TestRecordHttpServerResponse(t *testing.T) {
 		status string
 		code   int
 		// wantErr is the whole PSpan.err mask: an error class is recorded under
-		// the http-status category, as Java's HttpStatusCodeRecorder records
 		// ErrorCategory.HTTP_STATUS, and nothing else fails the span here.
 		wantErr int
 	}{
@@ -681,7 +677,6 @@ func TestRecordHttpServerResponse(t *testing.T) {
 
 // Span.ErrorMarkExclude drops one cause of failure and nothing else: a 5xx is
 // still annotated and still classified as an error class here, it just does
-// not turn the transaction red. Java expresses the same thing with
 // profiler.error.mark.exclude.
 func TestRecordHttpServerResponse_ErrorMarkExcludeKeepsA5xxSuccessful(t *testing.T) {
 	usePluginConfig(t, WithHttpServerStatusCodeError([]string{"5xx"}),

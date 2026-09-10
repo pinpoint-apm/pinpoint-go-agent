@@ -15,12 +15,10 @@ import (
 // degenerated to insertion order (FIFO): a hot SQL was evicted before a
 // cold-but-recent one, re-issuing its id and re-sending its metadata to the
 // collector. This cache shards the key space and restores real LRU ordering
-// with aged promotion, mirroring the C++ agent's ShardedLruCache (src/cache.h):
 // sync.Map keeps steady-state hits lock-free, while an aged entry only takes
 // the shard lock when it needs to move to the front. Promoting on every hit
-// would serialize all hits behind the lock (C++ measured 75 ns vs 1,333 ns
 // per hot-set hit at 16 threads).
-const metaCacheShardCount = 16 // power of two; matches the C++ agent
+const metaCacheShardCount = 16 // power of two
 
 var metaCacheSeed = maphash.MakeSeed()
 
@@ -84,13 +82,11 @@ type metaCache[K comparable, V any] struct {
 	// SqlUidMetaData rows have a 180-day TTL, and a UID whose row lapsed
 	// while the entry stayed cached showed an empty SQL in the web UI until
 	// the process restarted. The id caches keep entries for the process
-	// lifetime, as the Java agent's do.
 	ttl time.Duration
 	now func() time.Time // time.Now, replaced by tests
 }
 
 // newMetaCache splits capacity evenly across the shards, so a hot shard
-// evicts within its own slice — the same trade-off the C++ agent accepts
 // for removing the shared lock line.
 func newMetaCache[K comparable, V any](capacity int) *metaCache[K, V] {
 	c := &metaCache[K, V]{now: time.Now}

@@ -80,10 +80,7 @@ func Test_sendPingWorker_replacesStreamTheCollectorBroke(t *testing.T) {
 }
 
 // A failed send costs one reconnect and no spans: everything already queued
-// still goes out on the replacement stream. The worker used to arm a filter
-// that skipped spans whose startTime predated the failure, which is why this
-// asserts the whole queue arrives - see the reconnect path in sendSpanWorker
-// for why that policy was removed.
+// still goes out on the replacement stream.
 func Test_sendSpanWorker_reopensStreamAndResendsNothingLost(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agent.spanQueue = newSpanQueue(4) // one shard: FIFO is deterministic

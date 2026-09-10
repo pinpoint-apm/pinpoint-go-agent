@@ -53,7 +53,6 @@ func (s *ptrSlab[T]) reset() {
 }
 
 // spanMessageBuilder builds PSpanMessage graphs out of reusable slabs — the Go
-// stand-in for the C++ agent's per-call protobuf Arena (grpc.cpp SendSpanBatch:
 // build on the arena, send, arena_.Reset()).
 //
 // Ownership: every message a build method returns lives on the builder's slabs

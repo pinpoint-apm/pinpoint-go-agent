@@ -167,7 +167,6 @@ func Test_newClientTracer_InjectsMetadata(t *testing.T) {
 // Pinpoint metadata the caller's outgoing context already carries - an outer
 // instrumented layer, an interceptor registered twice, or inbound metadata a
 // gateway forwards - marks the call as nested: no span event and no header, as
-// Java's isNested does. Appending left two values per key on the wire, and the
 // receiver's Get took the first.
 func Test_newClientTracer_NestedCallIsNotTraced(t *testing.T) {
 	startAgent(t)
@@ -825,10 +824,8 @@ func Test_serverStream(t *testing.T) {
 		"Context must report the interceptor's context, not the transport's")
 }
 
-// A stream the caller abandons - no further Recv, no CloseSend, just a
-// cancelled context - used to leave its goroutine span unended, so the whole
-// async span never reached the collector. gRPC cancels the stream context on
-// every termination path, which is what ends it now.
+// A cancelled stream context ends the goroutine span, even when the caller
+// abandons the stream without Recv or CloseSend.
 func TestStreamClientInterceptor_AbandonedStreamEndsItsSpan(t *testing.T) {
 	startAgent(t)
 	caller := newForkingTracer()

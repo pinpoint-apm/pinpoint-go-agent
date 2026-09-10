@@ -18,7 +18,6 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 	}
 	// Nested in an outer instrumented layer - a client wrapped twice, or a
 	// proxy forwarding its inbound headers - that already wrote the context:
-	// no span event and no header, as Java's DefaultRequestTraceWriter.isNested
 	// does. The returned noop tracer keeps after() from ending the caller's
 	// open event.
 	if req.Header.Get(pinpoint.HeaderTraceId) != "" || req.Header.Get(pinpoint.HeaderSampled) != "" {

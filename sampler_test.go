@@ -41,7 +41,6 @@ func Test_rateSampler_isSampled(t *testing.T) {
 	}
 }
 
-// The first request of a fresh sampler is sampled, like Java's CountingSampler,
 // and the rate-th one after it - not the rate-th request.
 func Test_rateSampler_samplesFirstRequest(t *testing.T) {
 	s := newRateSampler(10)
@@ -83,9 +82,7 @@ func Test_percentSampler_isSampled(t *testing.T) {
 	}
 }
 
-// The admission window is (0, rate] like Java's PercentRateSampler, so at 50%
 // the odd requests are sampled - starting with the first - not the even ones.
-// A rate of 100% is clamped to the max and always samples, the case Java gives
 // to TrueSampler.
 func Test_percentSampler_samplesFirstRequest(t *testing.T) {
 	half := newPercentSampler(50)
@@ -281,11 +278,7 @@ func Test_throughputLimitTraceSampler_burst(t *testing.T) {
 	stats := newAgentStats()
 
 	// A fresh limiter starts empty, so a burst of tps requests arriving at once
-	// yields exactly one sample. This used to assert tps: the bucket started
-	// full, on the belief that the Guava RateLimiter of the Java agent does.
-	// It does not - SmoothBursty.doSetRate sets storedPermits to 0 in its
-	// initial state, and the C++ agent's test_limiter.cpp locks the same
-	// first-call-then-pace behaviour. See newTokenBucket.
+	// yields exactly one sample. See newTokenBucket.
 	assert.Equal(t, 1, countConcurrent(tps, func() bool { return s.isNewSampled(stats) }), "new burst")
 	assert.Equal(t, 1, countConcurrent(tps, func() bool { return s.isContinueSampled(stats) }), "continue burst")
 
@@ -319,9 +312,7 @@ func Test_throughputLimitTraceSampler_hugeThroughput(t *testing.T) {
 	assert.Equal(t, 1000, countConcurrent(1000, func() bool { return s.isContinueSampled(stats) }), "continue")
 }
 
-// The Java mapping table, ported input for input. Java truncates the
 // configured rate to hundredths of a percent and then picks one of three
-// samplers (PercentSamplerFactory.java:40-48,56-58): <= 0 never samples
 // (FalseSampler), >= 10000 always samples (TrueSampler), anything between
 // runs PercentRateSampler. Here the same three cases fall out of the
 // truncation in newPercentSampler plus the two guards in isSampled.
@@ -331,13 +322,12 @@ func Test_percentSampler_javaMapping(t *testing.T) {
 		rate    uint64 // truncated internal rate
 		sampled int    // out of 1000 calls
 	}{
-		{-1, 0, 0},      // Java: (long)(-1*100) = -100 -> FalseSampler
-		{0, 0, 0},       // Java: 0 -> FalseSampler
-		{0.005, 0, 0},   // Java: (long)0.5 = 0 -> FalseSampler
-		{0.01, 1, 1},    // Java: 1 -> PercentRateSampler, 0.01%
-		{50, 5000, 500}, // Java: 5000 -> PercentRateSampler, 50%
+		{-1, 0, 0},
+		{0, 0, 0},
+		{0.005, 0, 0},
+		{0.01, 1, 1},
+		{50, 5000, 500},
 		{100, 10000, 1000},
-		// Java truncates 150 to 15000 and hands it to TrueSampler; the clamp
 		// to 100 lands on 10000, which isSampled treats as always-sample too.
 		{150, 10000, 1000},
 	}
@@ -405,8 +395,7 @@ func Test_percentSampler_negativeWarns(t *testing.T) {
 	assert.Empty(t, buf.String(), "an explicit 0 must not warn")
 }
 
-// The minimum rate still works after dropping the clamp that used to raise
-// every sub-0.01 value to it: exactly one of 10,000 requests.
+// The minimum rate samples exactly one of 10,000 requests.
 func Test_percentSampler_minimumRate(t *testing.T) {
 	s := newPercentSampler(0.01)
 

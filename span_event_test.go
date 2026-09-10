@@ -121,7 +121,6 @@ func Test_SetError_AbbreviatesMessage(t *testing.T) {
 		want string
 	}{
 		{"short kept", "short", "short"},
-		// Java's StringUtils.abbreviate(message, 256) marks the original size.
 		{"long abbreviated", long, strings.Repeat("e", maxErrorMessageSize) + "...(300)"},
 	}
 	for _, tt := range tests {
@@ -173,7 +172,6 @@ func Test_spanEvent_SetSQLBoundsAnnotationValues(t *testing.T) {
 	assert.Len(t, se.annotations.values, 1)
 	annotation := se.annotations.values[0]
 	// Only the bind values are bounded: the normalized literal is a parameter
-	// the server needs whole, and Java abbreviates neither. The allowance over
 	// the limit is the room the bind value writers get for the values they
 	// abbreviate and for their own markers.
 	assert.Equal(t, literal, annotation.s1)
@@ -268,7 +266,6 @@ func Test_spanEvent_SetSQLPublishesBoundedSqlMeta(t *testing.T) {
 	assert.Equal(t, abbreviateString(sql, maxSqlSize), md.sql)
 }
 
-// SQL.ErrorCount ports the Java agent's DefaultSqlCountService: a span that
 // executes the configured number of queries is marked failed, so an N+1 loop
 // shows up as an error instead of just a slow trace.
 func Test_spanEvent_SetSQLCountMarksFailedSpan(t *testing.T) {
@@ -287,7 +284,6 @@ func Test_spanEvent_SetSQLCountMarksFailedSpan(t *testing.T) {
 		{"above limit", 3, "SELECT 1", 5, false, int32(ErrorCategorySql), 3},
 		{"negative limit", -1, "SELECT 1", 5, false, 0, 0},
 		// 1 is the smallest threshold that still counts: the first query marks.
-		// Java reaches the same point with a non-positive count, which this
 		// option cannot express because 0 means off (doc/config.md SQL.ErrorCount).
 		{"limit one", 1, "SELECT 1", 2, false, int32(ErrorCategorySql), 1},
 		// commit and rollback events reach SetSQL with no sql at all
@@ -312,7 +308,6 @@ func Test_spanEvent_SetSQLCountMarksFailedSpan(t *testing.T) {
 	}
 }
 
-// Java counts after the annotation (WrappedSpanEventRecorder.recordSqlInfo),
 // so a statement whose metadata registration fails leaves no annotation and no
 // count: a span is never marked for SQL the UI cannot show.
 func Test_spanEvent_SetSQLCountSkipsUnregisteredStatement(t *testing.T) {
@@ -339,7 +334,6 @@ func Test_spanEvent_SetSQLCountSkipsUnregisteredStatement(t *testing.T) {
 	}
 }
 
-// Java returns before incrementing when the transaction already has an error
 // code, so a failed span never counts and the count never resumes.
 func Test_spanEvent_SetSQLCountSkipsFailedSpan(t *testing.T) {
 	cfg := defaultConfig()
@@ -434,7 +428,6 @@ func Test_span_getExceptionChainId_isPerAgent(t *testing.T) {
 }
 
 // A chain the Error.NewThroughput limiter denies carries no exception id and no
-// EXCEPTION_CHAIN_ID annotation, as Java's DISABLED sampling state records
 // neither. The span is still marked failed either way.
 func Test_spanEvent_SetErrorRateLimitsExceptionChain(t *testing.T) {
 	cfg := defaultConfig()
@@ -511,7 +504,6 @@ func Test_spanEvent_SetErrorFailsTransaction(t *testing.T) {
 }
 
 // Span.IgnoreErrors: a matched error keeps its exception info but does not
-// fail the span (Java profiler.ignore-error-handler).
 func Test_SetError_IgnoreErrors(t *testing.T) {
 	newConfig := func(rules ...string) *Config {
 		c, err := NewConfig(WithAppName("ignoreErrApp"), WithSpanIgnoreErrors(rules...))
@@ -600,7 +592,6 @@ func TestSpanEvent_ErrSetterConcurrentWithSenderIsRaceFree(t *testing.T) {
 	assert.Equal(t, int32(ErrorCategorySql|ErrorCategoryException), span.err.Load(), "span marked failed")
 }
 
-// Span.ErrorMarkExclude drops the verdict, not the counting: Java applies the
 // enabled-category filter inside the recorder, downstream of
 // DefaultSqlCountService, so an operator who does not want an N+1 pattern to
 // fail a transaction can drop that one cause and keep every other failure.
@@ -625,7 +616,6 @@ func Test_spanEvent_SetSQLCountExcludedCategoryLeavesTheTransactionClean(t *test
 
 // A statement past maxSqlNormalizeLength is dropped whole: not normalized, not
 // annotated, no metadata queued, and not counted toward SQL.ErrorCount. The
-// alternative - cut and normalize the rest, as the C++ agent does - yields a
 // SQL id / UID no other agent computes when the cut lands inside a literal.
 func Test_spanEvent_SetSQLDropsAStatementPastTheNormalizationCap(t *testing.T) {
 	for _, queryStat := range []bool{false, true} {

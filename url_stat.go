@@ -13,7 +13,6 @@ const (
 )
 
 // urlStatUnknown is the stand-in URI recorded when a span collects URL stats
-// without a URI template. It mirrors Java's URITemplate.NULL_URI and the C++
 // agent's URL_STAT_UNKNOWN (src/url_stat.h) so a mixed deployment aggregates
 // its "no URI recorded" traffic under one server-side key.
 const urlStatUnknown = "/NULL"
@@ -26,8 +25,6 @@ type urlStat struct {
 }
 
 // maxCompletedUrlStatSnapshots caps the completed queue. Four ticks is two
-// minutes at the default 30s interval, matching the C++ agent's
-// kMaxCompletedSnapshots (src/url_stat.h) and Java's AsyncQueueingUriStatStorage
 // snapshotQueue capacity. Bounded because a stats stream that never recovers
 // would otherwise grow the queue without limit; the oldest tick is the one
 // worth losing first.
@@ -43,11 +40,9 @@ var urlStatSnapshotDropLog = logThrottle{src: "url stat"}
 // need it instead of waiting on the wall clock.
 var urlStatNow = time.Now
 
-// urlStats owns this agent's url statistics: the tick its collect worker is
-// filling, plus the ticks already closed and waiting for a send. One instance
-// per agent, mirroring the C++ agent's UrlStats class - the snapshot used to be
-// a package global reassigned per agent start, so a restart could swap it out
-// from under the previous agent's worker and mix the two agents' stats.
+// urlStats owns one agent's URL statistics: the tick its collect worker is
+// filling, plus the ticks already closed and waiting for a send. Keeping this
+// state per agent prevents a restart from mixing workers or snapshots.
 //
 // A tick is sent only once it is over, which happens in one of two ways: the
 // arrival of an entry belonging to a newer tick closes it, or - when traffic
@@ -55,9 +50,7 @@ var urlStatNow = time.Now
 // The send interval is not aligned with the tick interval, so a send that took
 // a tick still inside its window would split that tick's counts across two
 // consecutive messages - the collector stores each part under the same
-// (uri, tick) key, and the second write is not a merge. Java has the same split
 // for the same reason and avoids it the same way, by polling a queue that only
-// completed data enters (AsyncQueueingUriStatStorage.java:188-189).
 type urlStats struct {
 	config *Config
 	mu     sync.Mutex
@@ -125,8 +118,6 @@ func (stats *urlStats) add(us *urlStat) {
 
 	// Tick boundary: the first entry of a newer tick closes the one in
 	// progress. Entries carry an end time of about "now", so the cut lands on
-	// the boundary anyway. Same structure as the C++ agent's
-	// UrlStats::addLocked (src/url_stat.cpp:100-121).
 	//
 	// This is the cut of an agent under traffic, and it cannot be the only one:
 	// the last tick of a burst has no newer entry coming to close it. Once its
@@ -278,7 +269,6 @@ type urlStatHistogram struct {
 
 // urlStatLimitLog reports the dropped url patterns. At the limit every request
 // carrying a new pattern reaches this site, so the warning is rate-limited and
-// carries the count it held back - the C++ agent's QueueDropReporter reports
 // the same way. It repeats rather than latching after one line (the way the
 // span event overflow does): the limit being reached is a standing condition
 // an operator has to size the limit for, not a one-off event.

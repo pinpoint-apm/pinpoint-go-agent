@@ -103,7 +103,6 @@ func (se *spanEvent) end() {
 }
 
 // warnIfFinished reports whether the event has ended; a setter called after
-// EndSpanEvent is dropped, mirroring the C++ agent's warnIfFinished.
 func (se *spanEvent) warnIfFinished(setter string) bool {
 	if !se.finished.Load() {
 		return false
@@ -136,10 +135,8 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 	se.errorString = abbreviateString(e.Error(), maxErrorMessageSize)
 
 	cfg := se.config()
-	// As in the Java agent, an error on any event fails the transaction:
 	// PSpan.err, the URL stat failed histogram and the scatter failure point.
 	// The cause is ErrorCategoryException wherever the error was recorded, as
-	// Java's AbstractRecorder.recordException reports EXCEPTION from every
 	// recorder. An error matching Span.IgnoreErrors (IgnoreErrorHandler)
 	// keeps its exception info but skips that failure marking.
 	if !cfg.ignoreError(e, errName) {
@@ -151,7 +148,6 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 	if cfg.errorTraceCallStack {
 		// A chain the Error.NewThroughput limiter denied, or one refused by the
 		// entry cap, is not on the wire, so it gets no annotation either -
-		// Java's DISABLED sampling state skips the EXCEPTION_CHAIN_ID
 		// annotation the same way.
 		if eid := se.parentSpan.traceCallStack(e, errName, cfg.errorCallStackDepth, time.UnixMilli(se.startTime)); eid != noExceptionChainId {
 			se.exceptionId = eid
@@ -186,7 +182,6 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	// metadata. The sql/driver wrapper routes Begin, BeginTx, Commit and
 	// Rollback through setSqlSpanEvent with sql == "" (newSqlSpanEventNoSql),
 	// so this guard is what keeps a transaction boundary from carrying an
-	// empty SQL annotation and from counting toward SQL.ErrorCount. Java
 	// diverges deliberately elsewhere: DefaultSqlMetaDataService caches and
 	// annotates "" (only null is refused, wrapSqlResult), but its commit and
 	// rollback interceptors never call recordSqlInfo, so "" reaches its SQL
@@ -201,7 +196,6 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 
 	// A statement past the normalization cap is dropped whole - not counted,
 	// not normalized, not annotated. Cutting it and normalizing the rest, as
-	// the C++ agent does today, yields a SQL id / UID no other agent computes
 	// when the cut lands inside a literal; see maxSqlNormalizeLength.
 	if !sqlNormalizable(sql) {
 		if IsDebugLogLevelEnabled() {
@@ -216,12 +210,10 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	} else {
 		nsql, param = newSqlNormalizer(sql, cfg.sqlRemoveComments).run()
 	}
-	// nsql is the whole normalized SQL, as in the Java agent: cacheSql and
 	// cacheSqlUid abbreviate the text they publish, and the UID hashes the
 	// untruncated SQL. param is never abbreviated either - the server splits it
 	// on ',' to fill the <idx>#/<idx>$ placeholders of nsql, so a cut param
 	// leaves placeholders exposed. MaxBindValueSize applies to bind values
-	// only, as in the Java agent; a limit of 0 means bind value tracing is off,
 	// not that every value should become an "...(0)" marker.
 	//
 	// The allowance is what the bind value writers can spend past the limit,
@@ -232,7 +224,6 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	// the annotation rides on the span, which is dropped whole if it outgrows
 	// the send message size. Such a caller gets abbreviateString's marker,
 	// which reports the byte length of the args string it passed - a third
-	// number in a string that already carries two, and one Java has no
 	// equivalent of, since its own recorder API bounds nothing here. Kept for
 	// the bound, documented rather than reshaped: parsing args back into
 	// values to re-mark them costs more than the case is worth, and dropping
@@ -256,30 +247,22 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 		se.annotations.AppendIntStringString(AnnotationSqlId, id, param, args)
 	}
 
-	// As in the Java agent's DefaultSqlCountService, a span that executes
 	// SQL.ErrorCount queries is marked failed - an N+1 loop is a trace the
-	// server should show as an error. Java skips a transaction whose error code
 	// is already set, so the count never re-marks a recorded error; a finished
 	// span is skipped for the same reason SetError does (doc/api_contracts.md 5).
 	// Count and flag on the trace root, so queries spread over async spans add
-	// up, which is what Java does: recordSqlCount is handed the trace root's
-	// Shared (WrappedSpanEventRecorder.java:112) and the counter lives there
-	// (DefaultSqlCountService.java:16,21). The C++ agent deliberately differs
 	// here, counting per span so an async child has its own sql_count_
 	// (src/span.h:644-646); it is not the reference for this placement.
 	// The cause is ErrorCategorySql, so an operator who does not want an N+1
 	// pattern to fail the transaction can drop just that one with
-	// Span.ErrorMarkExclude and keep the counting - Java applies the same filter
 	// inside the recorder, downstream of DefaultSqlCountService.
 	//
-	// The count runs after the annotation, as in Java
 	// (WrappedSpanEventRecorder.recordSqlInfo: recordSqlParsingResult, then
 	// recordSqlCount): a statement whose metadata registration failed - cache
 	// refused the key, id generator wrapped, agent not running - leaves no
 	// annotation and is not counted either, so a span is never marked for
 	// queries the UI cannot show.
 	//
-	// Java also counts only when the event's service type isExecuteQueryType(),
 	// so its prepareStatement() path annotates without counting. No such gate
 	// here, on purpose: this agent has no service type registry, only the
 	// ServiceType*ExecuteQuery constants in tracer.go, and a hard-coded list of

@@ -16,7 +16,6 @@ import (
 
 // expiringPickFirstName is the load balancing policy that rotates the collector
 // connection while traffic flows, selected by connectCollector only when
-// Collector.Grpc.ConnectionMaxAge is set. It is the Go port of the Java agent's
 // SubconnectionExpiringLoadBalancer (policy name and behavior alike).
 //
 // pick_first keeps one connection for the life of the channel, so an agent
@@ -82,7 +81,6 @@ type expiringPickFirst struct {
 }
 
 // expiringSubConn is one SubConn with the data the picker reads without the
-// balancer lock: expiresAt is fixed at creation and successor is the Java
 // PickProgress CAS, so exactly one pick per SubConn requests a successor.
 type expiringSubConn struct {
 	sc        balancer.SubConn
@@ -100,7 +98,6 @@ func (b *expiringPickFirst) UpdateClientConnState(state balancer.ClientConnState
 
 	// Endpoints supersede Addresses; the channel wraps Addresses into
 	// Endpoints as well, so flatten whichever is present into one SubConn's
-	// address list, like the Java agent's EquivalentAddressGroup list.
 	var addrs []resolver.Address
 	for _, endpoint := range state.ResolverState.Endpoints {
 		addrs = append(addrs, endpoint.Addresses...)
@@ -129,7 +126,6 @@ func (b *expiringPickFirst) UpdateClientConnState(state balancer.ClientConnState
 // created onto it.
 //
 // balancer.SubConn.UpdateAddresses would apply the list in place, and that is
-// what the Java agent's updateAddresses() does, but in grpc-go v1.82.1 the
 // method is deprecated as "this method will be removed. Create new SubConns
 // for new addresses instead." (balancer/subconn.go), so the list is applied by
 // creating a SubConn on it - which is the make-before-break path this policy
@@ -159,7 +155,6 @@ func (b *expiringPickFirst) ResolverError(err error) {
 }
 
 // resolverErrorLocked reports the error only while nothing is READY: unlike
-// the Java agent's clear(), a working connection is never torn down over a
 // name resolution problem.
 func (b *expiringPickFirst) resolverErrorLocked(err error) {
 	if b.closed || b.ready != nil {
@@ -197,7 +192,6 @@ func (b *expiringPickFirst) Close() {
 }
 
 // createSubConnLocked opens a new SubConn into the CONNECTING slot. With the
-// slot taken it does nothing: the Java agent creates the SubConn and shuts it
 // down on the conflict, which ends the same way.
 func (b *expiringPickFirst) createSubConnLocked() {
 	if b.closed || b.connecting != nil || len(b.addrs) == 0 {
@@ -223,7 +217,6 @@ func (b *expiringPickFirst) createSubConnLocked() {
 }
 
 // onSubConnState is the StateListener: it moves sd to the slot of its new
-// state, resolving a taken slot the way the Java agent's moveTo does.
 func (b *expiringPickFirst) onSubConnState(sd *expiringSubConn, state balancer.SubConnState) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -242,7 +235,6 @@ func (b *expiringPickFirst) onSubConnState(sd *expiringSubConn, state balancer.S
 	}
 
 	if state.ConnectivityState == connectivity.TransientFailure || state.ConnectivityState == connectivity.Idle {
-		// The Java agent's refreshNameResolution: a connection that failed or
 		// dropped may be pointing at a backend that is gone, so a fresh
 		// resolution is requested before reconnecting.
 		b.cc.ResolveNow(resolver.ResolveNowOptions{})
@@ -311,7 +303,6 @@ func (b *expiringPickFirst) updateBalancingStateLocked() {
 	}
 }
 
-// requestSuccessor runs on its own goroutine, the stand-in for the Java
 // agent's SynchronizationContext: Pick must not block, and creating a SubConn
 // takes the balancer lock and the channel's own locks.
 func (b *expiringPickFirst) requestSuccessor(sd *expiringSubConn) {

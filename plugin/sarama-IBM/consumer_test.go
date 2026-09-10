@@ -239,10 +239,8 @@ func TestNewContext(t *testing.T) {
 		"the innermost NewContext wins")
 }
 
-// The key used to be the untyped string constant "ppsaramaibm.broker.address", so any package
-// storing anything under that string shadowed the broker addresses and the
-// consumer span fell back to "Unknown". The key type is private now, so the
-// collision cannot be constructed from outside.
+// The private key type prevents external context values from shadowing broker
+// addresses.
 func TestNewContext_ForeignStringKeyDoesNotShadowTheAddresses(t *testing.T) {
 	ctx := NewContext(context.Background(), []string{"broker1:9092"})
 	ctx = context.WithValue(ctx, "ppsaramaibm.broker.address", "not a slice") //nolint:staticcheck // the point of the test

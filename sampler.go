@@ -21,11 +21,9 @@ type rateSampler struct {
 
 func newRateSampler(rate int) *rateSampler {
 	if rate < 0 {
-		// A negative rate has always meant 0, never sampled - Java's
-		// CountingSamplerFactory treats it as FalseSampler too. Warn on the way
-		// there: turning tracing off with an explicit 0 is a deliberate switch
-		// and stays quiet, a negative value reads as a typo. The C++ agent logs
-		// it too, at info (config.cpp). This runs whenever the sampler is
+		// A negative rate disables sampling. Warn because an explicit 0 is the
+		// deliberate switch.
+		// This runs whenever the sampler is
 		// (re)built, so a reload with the same typo warns again; publish does
 		// not check the rates, which would double the line for a change that
 		// rebuilds the sampler.
@@ -44,11 +42,9 @@ func (s *rateSampler) isSampled() bool {
 	}
 	// Rate 1 (the default) samples every transaction, so the counter below
 	// would only add one contended process-wide RMW per request for a result
-	// that is always true. Java hands this case to TrueSampler the same way.
 	if s.rate == 1 {
 		return true
 	}
-	// The pre-increment value decides, like Java's CountingSampler doing a
 	// getAndIncrement: the first request of the process is sampled and the
 	// rate-th one after it, not the rate-th request.
 	samplingCount := atomic.AddUint64(&s.counter, 1) - 1
@@ -63,23 +59,18 @@ type percentSampler struct {
 
 func newPercentSampler(percent float64) *percentSampler {
 	if percent < 0 {
-		// Never sampled, like Java's FalseSampler; warned for the reason
 		// newRateSampler gives. An explicit 0 stays quiet.
 		Log("config").Warnf("sampling percent rate %v is negative, no new transaction is sampled", percent)
 		percent = 0
 	} else if percent > 100 {
 		// Clamped, but not silently: 100 is the documented maximum, so a rate
 		// above it is a misread of the option (a per-mille or a 1/rate counter
-		// value) rather than a request to sample more than everything. The C++
-		// agent warns here for the same reason; Java hands anything at or
 		// above the maximum to TrueSampler without a word.
 		Log("config").Warnf("sampling percent rate %v is above the maximum 100, every new transaction is sampled", percent)
 		percent = 100
 	} else if percent > 0 && percent < 0.01 {
 		// Truncated to a rate of 0 below, i.e. never sampled - the same thing
-		// Java does, silently. Warn anyway: a positive rate that collects
 		// nothing reads as a typo, where an explicit 0 is a deliberate off
-		// switch and stays quiet. The C++ agent warns here for the same reason.
 		Log("config").Warnf("sampling percent rate %v is below the minimum 0.01, no new transaction is sampled", percent)
 	}
 
@@ -94,11 +85,9 @@ func (s *percentSampler) isSampled() bool {
 		return false
 	}
 	// A rate of 100% is clamped to the max, where the remainder below is always
-	// 0; Java hands that case to TrueSampler instead of PercentRateSampler.
 	if s.rate >= samplingMaxPercentRate {
 		return true
 	}
-	// The admission window is (0, rate], like Java's PercentRateSampler: the
 	// first request of the process lands on a remainder of exactly rate and is
 	// sampled, where a [0, rate) window samples the second one instead.
 	samplingCount := atomic.AddUint64(&s.counter, s.rate)
@@ -108,7 +97,6 @@ func (s *percentSampler) isSampled() bool {
 
 // traceSampler takes the agentStats to count into as an argument rather than
 // holding one: the sampler is built by Config, which outlives - and is created
-// before - any agent. The C++ agent's TraceSampler holds an AgentService and
 // asks it for getAgentStats() per decision, which is the same thing.
 type traceSampler interface {
 	isNewSampled(stats *agentStats) bool
@@ -170,8 +158,6 @@ func per(throughput int, d time.Duration) rate.Limit {
 }
 
 // newTokenBucket builds the limiter behind every per-second throughput option,
-// shaped like the Guava RateLimiter.create(tps) the Java agent uses (a
-// SmoothBursty with one second of burst) and the C++ agent's RateLimiter:
 //
 //   - steady-state capacity is one second of permits, so a burst of tps
 //     requests after an idle second is sampled in full. A burst of 1 would
@@ -187,7 +173,6 @@ func per(throughput int, d time.Duration) rate.Limit {
 //
 // A limiter is rebuilt on every sampling reload (newTraceSampler,
 // newExceptionLimiter), so each reload starts from an empty bucket the same
-// way Java's does when TraceSamplerProvider rebuilds its RateLimiters. The
 // callers keep the previous limiter when the option did not change, which is
 // why an unrelated reload does not restart the pacing.
 //

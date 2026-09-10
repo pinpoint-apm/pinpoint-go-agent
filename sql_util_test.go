@@ -93,7 +93,6 @@ func Test_sqlNormalizer_DefaultSqlNormalizerCases(t *testing.T) {
 	}
 }
 
-// Java's DefaultSqlNormalizer normalizes the whole statement and leaves the
 // 64KB cap to SqlCacheService, which abbreviates only the text it publishes. A
 // normalizer that stopped at the cap would drop every bind value behind it and
 // hand the UID a truncated string.
@@ -121,7 +120,6 @@ func Test_sqlNormalizer_NormalizesPastTheMetadataCap(t *testing.T) {
 	})
 }
 
-// Acceptance case for a statement well past the 64KB cap. Java hashes the full
 // normalized SQL - DefaultCachingSqlNormalizer keys the cache with it and
 // UidGenerator hashes that key - and publishes only an abbreviated copy marked
 // with the original length (SqlCacheService, StringUtils.abbreviate).
@@ -434,8 +432,6 @@ func displayName(sql string) string {
 	return strings.ReplaceAll(sql, "\n", "\\n")
 }
 
-// TestNormalizeRemoveComments covers SQL.RemoveComments, the Java agent's
-// default (profiler.jdbc.removecomments). Java puts nothing in the comment's
 // place, leaves the number-token-start flag alone, and swallows the newline
 // that ends a line comment.
 func TestNormalizeRemoveComments(t *testing.T) {
@@ -466,7 +462,6 @@ func TestNormalizeRemoveComments(t *testing.T) {
 	}
 }
 
-// TestNormalizeDollarNumberTokenStart pins the '$' rule to Java's
 // ParserContext: only a positional placeholder ($1, $2, ...) turns the
 // number-token-start flag off. A '$' before anything else leaves the flag
 // alone, and neither a string literal nor a comment touches it on the way to
@@ -627,10 +622,8 @@ func Test_sqlNormalizer_DropsInputPastTheNormalizationCap(t *testing.T) {
 	})
 }
 
-// A statement with nothing to normalize used to be copied byte by byte into a
-// growing builder and then thrown away in favor of the input. The output is now
-// materialized only at the first change, so the common placeholder-only shape
-// costs no allocation, and a changed statement pays one Grow-sized copy.
+// Output is materialized only at the first change, so an unchanged statement
+// does not allocate and a changed statement pays one Grow-sized copy.
 func Test_sqlNormalizer_LazyOutput(t *testing.T) {
 	unchanged := "SELECT a.id, a.name FROM accounts a WHERE a.id = ? AND a.status = ? ORDER BY a.created_at DESC LIMIT ?"
 	allocs := testing.AllocsPerRun(100, func() {

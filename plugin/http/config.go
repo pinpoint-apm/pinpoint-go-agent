@@ -119,7 +119,6 @@ func WithHttpServerRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
 // WithHttpServerProxyUserHeaderNames sets the request headers a user-defined
 // proxy writes its receive time into ("t=<epoch millis>"). Each one present on
 // a request is recorded as a proxy annotation of type USER (4), with the header
-// name as the app, like the Java agent's profiler.proxy.user.header.names.
 //
 //	pphttp.WithHttpServerProxyUserHeaderNames([]string{"X-Proxy-Time"})
 func WithHttpServerProxyUserHeaderNames(names []string) pinpoint.ConfigOption {
@@ -278,7 +277,6 @@ func isExcludedMethod(method string) bool {
 
 func recordServerHttpStatus(span pinpoint.SpanRecorder, status int) {
 	if httpCfg().srvStatus.isError(status) {
-		// The cause is the status code, as Java's HttpStatusCodeRecorder
 		// records ErrorCategory.HTTP_STATUS: an operator who does not want a
 		// 5xx to count as a transaction failure drops that one cause with
 		// Span.ErrorMarkExclude and keeps every other kind of failure. The

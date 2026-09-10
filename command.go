@@ -12,7 +12,6 @@ const (
 	// at once. Every ACTIVE_THREAD_COUNT command costs a goroutine and a gRPC
 	// stream, and the web UI re-requests one whenever a user opens the
 	// real-time view, so without a cap a re-request loop grows both without
-	// bound. Deliberately a constant, not a config key: the C++ agent keeps the
 	// same value as a tuning constant, and 10 concurrent real-time viewers of a
 	// single agent is already well past what the UI produces.
 	maxActiveThreadCountStreams = 10
@@ -206,7 +205,6 @@ func (agent *agent) serveCommandStream(attempt int) int {
 
 // handleActiveThreadCount starts an active thread count stream for reqId, or
 // rejects the request when maxActiveThreadCountStreams are already running.
-// Mirrors the C++ agent's handle_active_thread_count().
 func (agent *agent) handleActiveThreadCount(reqId int32, cmd *cmdStream) {
 	s := newActiveThreadCountStream(&agent.cmdGrpc.atcStreams, reqId)
 

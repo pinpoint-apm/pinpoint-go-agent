@@ -2,7 +2,6 @@
 //
 // This package enables you to monitor Go applications using Pinpoint.
 // Go applications must be instrumented manually at the source code level,
-// because Go is a compiled language and does not have a virtual machine like Java.
 // Developers can instrument Go applications using the APIs provided in this package.
 // It has support for instrumenting Go’s built-in http package, database/sql drivers
 // and plug-ins for popular frameworks and toolkits (like Gin and gRPC, ...).
@@ -105,11 +104,8 @@ type Tracer interface {
 // ErrorCategory is the cause that failed a transaction, carried as one bit of
 // PSpan.err. The bit values are a wire contract, not an internal detail: the
 // collector reads them to tell an exception apart from a failing HTTP status,
-// so they must keep matching the Java agent's common/trace/ErrorCategory and
 // must never be renumbered.
 //
-// PSpan.err is the OR of every category recorded on the transaction, as Java's
-// Shared.maskErrorCode accumulates them (DefaultShared.java:69-72), so a
 // request that threw and returned 5xx reports both causes. Span.ErrorMark and
 // Span.ErrorMarkExclude decide which categories are allowed to fail a
 // transaction at all.
@@ -118,7 +114,6 @@ type ErrorCategory int32
 const (
 	// ErrorCategoryUnknown is a failure with no cause attached: what
 	// SetFailure records when its caller names no category, and what an agent
-	// that does not classify at all reports (the Java agent's
 	// SimpleErrorRecorder, used when profiler.error.enable=false). It is
 	// always enabled, whatever Span.ErrorMark and Span.ErrorMarkExclude say.
 	ErrorCategoryUnknown ErrorCategory = 1 << 0
@@ -367,11 +362,9 @@ const (
 	Logged              = 1
 	NotLogged           = 0
 	// MetricURLStat records the span's URL statistics entry (*UrlStatEntry).
-	// The Url is first-wins, as Java's Shared.setUriTemplate (a null -> value
 	// CAS): once a span holds a real Url, later calls keep it and refresh only
 	// the Method and Status. An empty Url counts as "not recorded yet".
 	MetricURLStat = "URLStat"
-	// MetricURLStatForce is MetricURLStat with Java's setUriTemplate(value,
 	// force = true) semantics: the Url recorded before is replaced. For a host
 	// that has to correct an early, less precise guess with the route it
 	// eventually matched. A separate key rather than a field on UrlStatEntry

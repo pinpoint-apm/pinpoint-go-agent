@@ -131,7 +131,7 @@ func TestHttpExcludeUrlMatch(t *testing.T) {
 			noMatch: []string{"/ab", "/c$d", "/aXbc$dXeXfg", "/a(b)|c$d\\e.fg"},
 		},
 		{
-			// Compiling this as a regexp fails; the filter used to vanish silently.
+			// Invalid regexp metacharacters are matched literally.
 			name:    "unbalanced regexp metacharacters still filter",
 			pattern: "/foo(*",
 			kind:    patternSegmentPrefix,

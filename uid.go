@@ -14,9 +14,7 @@ const uidBase64Len = 22
 // significant bits first, big-endian, then the least significant bits) and
 // encodes it with RFC 4648 §5 URL-and-filename-safe base64 without padding.
 //
-// This is byte-for-byte compatible with the Java agent's
 // Base64Utils.encode(UUID): google/uuid stores the UUID in the same RFC 4122
-// network byte order that Java produces via BytesUtils.writeLong(msb)/writeLong(lsb).
 // The result is always exactly 22 characters.
 func encodeUID(u uuid.UUID) string {
 	// u is a [16]byte already in big-endian network order.
@@ -25,7 +23,6 @@ func encodeUID(u uuid.UUID) string {
 
 // newAgentUID generates a time-based UUID (RFC 9562 version 7: 48-bit Unix
 // epoch milliseconds prefix, version/variant bits set, remaining bits random),
-// matching the Java agent's TimeBasedEpochGenerator.
 func newAgentUID() (uuid.UUID, error) {
 	return uuid.NewV7()
 }

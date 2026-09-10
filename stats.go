@@ -44,7 +44,7 @@ type inspectorStats struct {
 // goroutines' requests rarely touch. Go offers no relaxed atomics, so the
 // full-barrier cost of AddInt64 remains — only the cross-core traffic goes
 // away (measured on an M1 Pro: 67→2.1 ns/op at -cpu=4, 158→1.0 at -cpu=16).
-const statShardCount = 16 // power of two; matches the C++ agent's ResponseTimeShard count
+const statShardCount = 16 // power of two
 
 // statShard is padded to 128 bytes so two shards never share a cache line
 // regardless of the array's base alignment (Go has no alignas).
@@ -64,7 +64,6 @@ type statShard struct {
 // agentStats owns everything the agent stat collector reads: the per-request
 // counters, the registry of in-flight spans, the process handle and the
 // previous sample's baselines. One instance per agent, reached from the request
-// path through span.agent, mirroring the C++ agent's AgentStats class. As
 // package globals these had to be built once for the process lifetime and
 // never rebuilt, because a restart would otherwise re-prime or swap them while
 // a previous agent's abandoned stat worker and its still-in-flight spans were
@@ -188,7 +187,6 @@ func newAgentStats() *agentStats {
 }
 
 // init primes the CPU and memory baselines and clears the counters so the
-// first collection interval measures a real period. Mirrors the C++ agent's
 // AgentStats::initAgentStats: the stat worker calls it on its first run,
 // which can be seconds after the agent was created.
 func (stats *agentStats) init() {
@@ -201,7 +199,6 @@ func (stats *agentStats) init() {
 // request counters and the partial batch untouched. The stat worker calls it
 // when the supervisor restarts it: the first sample after a restart must not
 // report the restart gap as load or interval, yet the snapshots gathered
-// before the restart stay in the batch. Mirrors the C++ agent's
 // AgentStats::resetCollectionBaseline.
 func (stats *agentStats) resetBaseline() {
 	// The system-wide CPU baseline lives in a gopsutil package global, so it
@@ -241,16 +238,13 @@ func (stats *agentStats) shard() *statShard {
 // store/delete churn from serializing on a single lock.
 const activeSpanShardCount = 32 // must be a power of two
 
-// activeSpanMaxSize bounds the registry the way Java's
-// DefaultActiveTraceRepository does (Caffeine maximumSize, DEFAULT_MAX_ACTIVE_TRACE_SIZE
-// = 1024 * 10). Without it a span that is never ended - an instrumentation bug
+// activeSpanMaxSize bounds the active-span registry. Without it a span that is
+// never ended - an instrumentation bug
 // in the application, or a plugin's missing EndSpan on an error path - leaves
 // its entry behind forever, and since the entries are real map values the
 // registry grows without bound. The bound is applied per shard
 // (activeSpanMaxSize / activeSpanShardCount): span ids are random, so the
-// shards fill evenly and the total stays at the Java figure without a
-// registry-wide lock or counter on the store path. Not configurable, as in
-// Java: a registry this full is never legitimate load.
+// shards fill evenly without a registry-wide lock or counter on the store path.
 const activeSpanMaxSize = 10240
 
 const activeSpanShardMaxSize = activeSpanMaxSize / activeSpanShardCount
@@ -309,7 +303,6 @@ func (r *activeSpanRegistry) store(spanId int64, startTime time.Time) {
 	if _, present := s.m[spanId]; !present && len(s.m) >= activeSpanShardMaxSize {
 		// Full: make room by dropping one existing entry, as Caffeine evicts on
 		// insert. Which one is up to Go's randomized map iteration - the same
-		// "arbitrary victim" Java's approximate policy amounts to for a stream
 		// of one-shot keys - and the victim's later remove is a harmless
 		// delete of a missing key. Refusing the new span instead would freeze
 		// the histogram on the leaked entries and hide every live request.
@@ -353,7 +346,6 @@ func (r *activeSpanRegistry) remove(spanId int64) {
 // bucketActiveSpan increments the [<=1s, <=3s, <=5s, >5s] bucket in counts for
 // a span started at startTime.
 //
-// Millisecond integers with an inclusive upper bound, matching the Java agent's
 // NORMAL schema (BaseHistogramSchema: slots 1000/3000/5000ms, compared with
 // elapsedTime <= slotTime). Comparing float seconds put a span at exactly
 // 1000ms in the second bucket, and left the boundary at the mercy of float
@@ -400,8 +392,6 @@ type statsCounterSnapshot struct {
 // uncollectedUsage is what numFD and numThreads report when the reading is
 // unavailable - no process handle, or a failed read. Zero is a plausible
 // measurement the inspector charts as fact, so it cannot mean "unknown"; -1 is
-// the Java agent's UNCOLLECTED_USAGE (FileDescriptorMetric) and the sentinel
-// the C++ agent sends for both fields.
 const uncollectedUsage = -1
 
 func (stats *agentStats) numFD() int32 {
@@ -439,7 +429,6 @@ func (stats *agentStats) cpuLoad() (float64, float64) {
 }
 
 // normalizeCpuLoad turns gopsutil percentages into the 0..1 loads the
-// collector expects (matching the Java agent's jvmCpuLoad/systemCpuLoad).
 // process.Percent is not divided by the core count, so a process saturating
 // four cores reads 400; cpu.Percent(0, false) is already the whole-machine
 // average. Both are clamped so a negative or NaN reading never leaves range.
@@ -490,7 +479,6 @@ func (stats *agentStats) getStats() *inspectorStats {
 		heapMax:     int64(memStat.heapSys),
 		nonHeapUsed: int64(memStat.stackInuse),
 		nonHeapMax:  int64(memStat.stackSys),
-		// Cumulative since process start, like the Java agent's
 		// GarbageCollectorMXBean counts: the web's inspector-definition-for-agent.yml
 		// runs gcOldCount/gcOldTime through its "delta" post-processor, so
 		// sending per-interval deltas would be differentiated twice.
@@ -581,7 +569,6 @@ func (agent *agent) collectAgentStatWorker() {
 			Log("stats").Infof("end collect agent stat goroutine")
 			return
 		case <-ticker.C:
-			// First line of defense, as Java's CollectJob.run(): a failed
 			// collection costs this one snapshot, not the partial batch.
 			// The batch cursor is left alone, so the next tick fills the
 			// same slot. superviseWorker remains the backstop for anything

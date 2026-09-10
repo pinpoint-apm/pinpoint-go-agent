@@ -306,10 +306,8 @@ func BenchmarkMetaCacheShard(b *testing.B) {
 	}
 }
 
-// A full shard whose working set exceeds ageThreshold used to promote on every
-// hit: each promotion aged every other entry past the threshold, so each hit
-// took the lock. A hit promotes only once an insert has happened since the
-// entry was last promoted; until then the shard's order is never consulted.
+// A hit promotes only after an insert since its previous promotion; otherwise
+// it avoids the shard lock and leaves the order untouched.
 func TestMetaCacheHitsWithoutInsertsDoNotPromote(t *testing.T) {
 	c := newMetaCache[string, int32](cacheSize)
 	s := c.shard("k0")

@@ -601,11 +601,7 @@ func (t *gatedTracer) NewSpanEvent(string) pinpoint.Tracer {
 	return t
 }
 
-// Every message the wrapper accepted before the shutdown must still reach
-// sarama. The wrapper's inputs are buffered, so a plain select sees both the
-// shutdown signal and a buffered message and picks at random: the forwarder
-// used to return on the signal and leave the buffer to the drainer, which
-// discards it, so Close reported success having delivered almost nothing.
+// Every message accepted before shutdown reaches sarama.
 func Test_asyncProducer_ShutdownForwardsAcceptedMessages(t *testing.T) {
 	startAgent(t)
 	config := sarama.NewConfig()

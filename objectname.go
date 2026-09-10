@@ -9,7 +9,6 @@ import (
 )
 
 // nameVersion selects the agent self-identification (ObjectName) scheme,
-// mirroring the Java agent's pinpoint.modules.uid.version property.
 type nameVersion int
 
 const (
@@ -18,7 +17,6 @@ const (
 	nameV4
 )
 
-// ID length limits (UTF-8 byte length), matching Java PinpointConstants.
 const (
 	agentIDMaxLen     = 24  // AGENT_ID_MAX_LEN
 	agentNameMaxLen   = 255 // AGENT_NAME_MAX_LEN
@@ -28,7 +26,6 @@ const (
 	agentNameMaxLenV4 = 254 // AGENT_NAME_MAX_LEN_V4
 )
 
-// Protocol versions sent on the gRPC protocol.version header, matching Java
 // ProtocolVersion (V1 = 1_00, V4 = 4_00).
 const (
 	protocolVersionV1 = 100
@@ -36,7 +33,6 @@ const (
 )
 
 // isIDChars reports whether every byte of s is an allowed id character:
-// [a-zA-Z0-9], '.', '-', '_'. Same character class as Java
 // IdValidateUtils.ID_PATTERN_VALUE. A byte loop rather than a regexp because
 // splitTransactionId validates the agent id of every inbound trace id header:
 // the equivalent `^[a-zA-Z0-9._\-]+$` match costs ~316ns against ~18ns here
@@ -64,7 +60,6 @@ func validateID(value string, maxLen int) bool {
 }
 
 // IsValidId reports whether value is a non-empty id of at most maxLen bytes
-// drawn from the id character class [a-zA-Z0-9._-], as Java
 // IdValidateUtils.validateId does. Plugins use it for ids that arrive on the
 // wire, such as the app= token of the Pinpoint-ProxyApp header.
 func IsValidId(value string, maxLen int) bool {
@@ -72,7 +67,6 @@ func IsValidId(value string, maxLen int) bool {
 }
 
 // parseNameVersion parses the configured version string (case-insensitive).
-// Unknown or empty values fall back to v3, matching the Java agent default.
 func parseNameVersion(version string) nameVersion {
 	switch strings.ToLower(strings.TrimSpace(version)) {
 	case "v1":
@@ -146,8 +140,6 @@ func resolveObjectName(config *Config) (*objectName, error) {
 
 // resolveAgentName returns the configured agent name, or agentID when it is
 // unset or invalid. agentName is a display label, not a required value, so an
-// invalid one falls back rather than aborting startup, as the Java agent's
-// ObjectNameResolverV1 does; unlike the C++ agent the fallback is warned about,
 // so a typo does not stay invisible.
 func resolveAgentName(config *Config, agentID string, maxLen int) string {
 	agentName := config.String(CfgAgentName)

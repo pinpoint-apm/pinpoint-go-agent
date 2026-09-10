@@ -416,7 +416,6 @@ func Test_urlStatSendsOneTickInOneMessage(t *testing.T) {
 }
 
 // A tick is sent when it is closed, not on the next tick of the send timer:
-// Java's UriStatCollectingJob runs on the 5-10s stat scheduler, and a tick
 // that is over has nothing left to wait for. The timer here is far longer
 // than the test, so only the wakeup can deliver the message.
 func Test_urlStatSendWorkerWakesOnACompletedTick(t *testing.T) {
@@ -492,7 +491,6 @@ func Test_urlStatSendWorkerTimerFollowsStatCollectInterval(t *testing.T) {
 	assert.True(t, waitTimeout(&agent.workerWg, 5*time.Second), "worker exits on the stop signal")
 }
 
-// No traffic, no message. Java's UriStatCollectingJob leaves its poll loop on
 // an empty queue rather than sending an empty PAgentUriStat.
 func Test_urlStatSendsNothingWithoutTraffic(t *testing.T) {
 	agent, stats := newUrlStatSendTestAgent(t)

@@ -23,7 +23,6 @@ var pinpointHeaders = []string{
 
 // A message that already carries a Pinpoint context - an outer instrumented
 // layer, or the retry pattern re-sending the message object a previous send
-// injected - is nested, as the http plugin and Java's isNested define it: no
 // span event is recorded and no header is written, so the message keeps
 // exactly the one set of headers it arrived with.
 func Test_newSyncProducerTracer_NestedMessageIsNotTraced(t *testing.T) {

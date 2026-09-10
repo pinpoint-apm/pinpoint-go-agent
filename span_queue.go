@@ -21,7 +21,6 @@ const (
 // cache line) rather than a sticky per-goroutine home shard: Go has no stable
 // cheap goroutine identity, and non-sticky placement also lets a single busy
 // producer spread over every shard, so the whole capacity is used without the
-// C++ agent's quota-borrowing machinery. Head-drop on a full shard happens in
 // the same critical section as the enqueue, so a drop is always paired with
 // exactly one successful enqueue.
 //

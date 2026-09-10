@@ -243,7 +243,6 @@ func Test_abbreviateString_RuneSafe(t *testing.T) {
 	// "가" is 3 bytes; a limit landing mid-rune must back up to the rune
 	// boundary, or protobuf rejects the string at marshal time and the whole
 	// span/metadata send fails. The marker reports the original size, as
-	// Java's StringUtils.abbreviate does, not the limit it was cut to.
 	s := strings.Repeat("가", 3)
 	got := abbreviateString(s, 4)
 	assert.Equal(t, "가...(9)", got)
@@ -320,7 +319,6 @@ func noSqlCacheBypassConfig() *Config {
 	return cfg
 }
 
-// Both SQL metadata caches key on the untruncated statement, as Java's
 // DefaultCachingSqlNormalizer does, and publish text abbreviated to maxSqlSize.
 // An abbreviated key keeps no more than a 64KB prefix and the total length, so
 // two statements agreeing on both would share one entry: the second would
@@ -396,7 +394,6 @@ func Test_agent_SQLUidCacheEvictsEmptyNormalizedStatement(t *testing.T) {
 }
 
 // A SQL at or above SQL.CacheLengthLimit is not cached by the hash-keyed caches:
-// it re-sends its metadata on every use, as the Java agent's UidCache does past
 // bypassLength. Caching them instead lets a few huge generated statements hold
 // the cache - and their bytes - for the life of the process. The SQL-ID cache is
 // exempt; see Test_agent_SQLIdCacheIgnoresLengthLimit.
@@ -480,7 +477,6 @@ func Test_agent_SQLCacheLengthLimitIsFixedAtConstruction(t *testing.T) {
 // The SQL-ID cache is exempt from SQL.CacheLengthLimit: its ids come from an
 // agent-local sequence, so a bypassed statement would burn a fresh id - and a
 // fresh sqlMeta - on every execution, and the same query would show up in the UI
-// once per execution. Java exempts its id cache for the same reason.
 func Test_agent_SQLIdCacheIgnoresLengthLimit(t *testing.T) {
 	sql := strings.Repeat("x", 3000)
 
@@ -678,9 +674,7 @@ func Test_agent_ShutdownDeadline(t *testing.T) {
 	assert.Less(t, elapsed, shutdownTimeout+2*time.Second, "gives up at the deadline")
 }
 
-// A concurrent second Shutdown used to return at the enable check and run its
-// deferred connection close while the first call was still draining spans. The
-// teardown is serialized now, so the second call waits for it instead.
+// Shutdown is serialized, so a concurrent second call waits for the first.
 func Test_agent_ShutdownIsSerialized(t *testing.T) {
 	c, _ := NewConfig(WithAppName("test"))
 	c.offGrpc = true
@@ -885,9 +879,8 @@ func Test_agent_enqueueUrlStatRateLimitsOverflowWarning(t *testing.T) {
 // (request-path goroutines for meta and url stat, ticker workers for stat)
 // only check enable before sending, so a close races them into a "send on
 // closed channel" panic - a raw send models a producer that passed that check
-// just before Shutdown flipped it. Shutdown must still stop the consumers,
-// which used to ride on the close, so it has to return well inside its own
-// worker deadline rather than timing out on workers stuck in a receive.
+// just before Shutdown flipped it. Shutdown still stops consumers without
+// closing producer channels.
 func Test_agent_ShutdownDoesNotCloseProducerChannels(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agent.statChan = make(chan *pb.PStatMessage, 1)
@@ -1003,11 +996,8 @@ func Test_agent_MetaCacheDropsEntryWhenQueueIsFull(t *testing.T) {
 		"the head-dropped item is re-registered with a new id")
 }
 
-// One overflow must cost exactly one cache entry, and the slot the eviction
-// frees must go to the item that caused the overflow. The old code evicted the
-// oldest item and then failed the enqueue anyway: two entries invalidated per
-// overflow, double the re-registration traffic, and the freed slot left for
-// whichever producer came next.
+// One overflow costs exactly one cache entry, and its freed slot belongs to
+// the incoming item.
 func Test_agent_MetaOverflowInvalidatesOneCacheEntryPerOverflow(t *testing.T) {
 	const queueSize = 4
 
@@ -1525,11 +1515,7 @@ func Test_agent_enqueueStatOverflowLosesExactlyOneRecord(t *testing.T) {
 	assert.Equal(t, enqueued, i)
 }
 
-// The warning has to come from the producer. sendStatsWorker used to report it
-// after pulling from the queue, so a collector outage - which parks the worker
-// in newStatStreamWithRetry - silenced the warning for exactly the stretch in
-// which the queue overflows. Nothing consumes statChan here, which is that
-// outage.
+// The producer reports queue overflow even while the collector is unavailable.
 func Test_agent_enqueueStatWarnsWithoutAConsumer(t *testing.T) {
 	const queueSize, enqueued = 4, 100
 
@@ -1551,7 +1537,6 @@ func Test_agent_enqueueStatWarnsWithoutAConsumer(t *testing.T) {
 
 func Test_sqlUid_MatchesJavaGuavaMurmur3_128(t *testing.T) {
 	// Golden values were computed with Guava 33.6.0 Hashing.murmur3_128().hashBytes(sql.getBytes(UTF_8)).asBytes()
-	// (h1, h2 little-endian), which the Java and C++ agents write to PSqlUidMetaData.
 	tests := []struct {
 		name string
 		sql  string
@@ -1568,16 +1553,12 @@ func Test_sqlUid_MatchesJavaGuavaMurmur3_128(t *testing.T) {
 	}
 }
 
-// Java continues a trace only when the trace id and both span id headers are
-// all present (DefaultTraceHeaderReader.java:54-70). Each row asserts the three
 // things that must move together: which sampler ran, whether the parent span id
 // was adopted, and whether the transaction id was inherited or generated.
 //
 // Rows 2-4 failed before this table's change: a trace id on its own took the
 // continue sampler and left parentSpanId at its default with no parent node in
 // the trace.
-//
-// The C++ agent runs the same input list; keep the two tables identical.
 func Test_agent_continueHeaders_table(t *testing.T) {
 	const validTid = "t123456^12345^1"
 
@@ -1595,7 +1576,6 @@ func Test_agent_continueHeaders_table(t *testing.T) {
 		{"malformed tid", map[string]string{HeaderTraceId: "garbage", HeaderSpanId: "67890", HeaderParentSpanId: "123"}, false},
 		{"malformed spanid", map[string]string{HeaderTraceId: validTid, HeaderSpanId: "garbage", HeaderParentSpanId: "123"}, true},
 		// A proxy that blanks a header instead of dropping it still describes
-		// the hop, and Java continues on it; the trace must not split here.
 		{"blank spanid", map[string]string{HeaderTraceId: validTid, HeaderSpanId: "", HeaderParentSpanId: "123"}, true},
 	}
 
@@ -1656,7 +1636,6 @@ func Test_agent_continueHeaders_table(t *testing.T) {
 
 // A blank Pinpoint-pSpanID continues the trace like a blank Pinpoint-SpanID:
 // the transaction is inherited. The span stays a root, because an unparseable
-// parent span id is SpanId.NULL in Java too - the same path a malformed one
 // takes (Test_span_Extract_malformedSpanIds), which the shared table cannot
 // express since it asserts an adopted parent for every continued row.
 func Test_agent_continueHeaders_blankParentSpanId(t *testing.T) {
@@ -1910,10 +1889,7 @@ func Test_agent_ShutdownSendsQueuedSpans(t *testing.T) {
 	assert.Equal(t, spans, sent, "every span queued before Shutdown reaches the collector")
 }
 
-// A Shutdown that overruns its deadline abandons the stuck worker on purpose,
-// and that worker's goroutine is the only one it may leave behind. The wait
-// itself used to park a helper goroutine on workerWg.Wait that outlived the
-// deadline too, so a host cycling NewAgent/Shutdown leaked one per overrun.
+// A Shutdown that overruns its deadline leaves only the stuck worker behind.
 func Test_agent_ShutdownTimeoutLeavesOnlyTheStuckWorker(t *testing.T) {
 	shortShutdownTimeout(t)
 	release := make(chan struct{})

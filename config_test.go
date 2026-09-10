@@ -728,10 +728,8 @@ func Test_reloadConfig_deprecatedLogLevelFiresTheLogLevelCallback(t *testing.T) 
 	assert.Equal(t, 1, reloadedLevel)
 }
 
-// A typo in a reloaded Log.Level used to reset the logger to info. An operator
-// who lowered the level to error to get less output got more of it instead,
-// with one line to say why. The level - published and applied - stays put, for
-// the deprecated LogLevel alias as well.
+// An invalid reloaded Log.Level keeps the published level, including through
+// the deprecated LogLevel alias.
 func Test_reloadConfig_unknownLogLevelKeepsCurrentLevel(t *testing.T) {
 	oldLevel := logger.defaultLogger.GetLevel()
 	t.Cleanup(func() { logger.defaultLogger.SetLevel(oldLevel) })
@@ -890,8 +888,6 @@ func TestNewConfig_HttpUrlStatQueueSizeIsIndependentOfSpanQueueSize(t *testing.T
 	assert.Equal(t, defaultQueueSize, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
 }
 
-// Out-of-range queue sizes and stat settings fall back to the default (Java and
-// C++ agent behavior) with a warning. Left as configured, a non-positive value
 // panics the stat worker (time.NewTicker(0), zero-length batch indexing) and a
 // huge one allocates a giant channel buffer or stalls the stat collector.
 func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
@@ -1005,8 +1001,6 @@ func TestNewConfig_ClampErrorCallStackDepth(t *testing.T) {
 	assert.Equal(t, maxErrorCallStackDepth, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 }
 
-// SQL.MaxBindValueSize is no longer pulled back down to its default: the Java
-// and C++ agents accept any value, and only the ceiling that keeps one span
 // event's bind values from filling a whole gRPC message applies. Both clamps
 // warn - a silent one leaves the config file saying 4096 while the agent runs
 // at 1024.
@@ -1056,7 +1050,6 @@ func TestNewConfig_SamplingTypeFallbackKeepsRate(t *testing.T) {
 	assert.Equal(t, 5, c.Int(CfgSamplingCounterRate), "the reload fallback wiped the rate")
 }
 
-// The type is stored normalized, so a lowercase or Java-named type reaches the
 // sampler it asks for instead of falling through to the percent sampler.
 func TestNewConfig_SamplingTypeAliases(t *testing.T) {
 	for _, given := range []string{"counter", " Counting ", samplingTypeCounting} {
@@ -1118,7 +1111,6 @@ func TestNewConfig_SQLCacheExpireHours(t *testing.T) {
 	}
 }
 
-// SQL.CacheSize defaults to Java's 1024, is read from the option, and recovers
 // the default with a warning outside [1, maxSqlCacheSize]: 0 or a negative
 // would leave the SQL caches with no usable capacity and the upper bound keeps
 // a typo from committing gigabytes at startup.
@@ -1147,11 +1139,7 @@ func TestNewConfig_SQLCacheSize(t *testing.T) {
 }
 
 // A value that does not convert to its option's registered type is dropped
-// with a warning and the option keeps what it already had, the policy the C++
-// agent's get_yaml<T> follows. The raw viper value used to be staged as it
-// came, and the lenient cast in the accessors then turned it into a zero:
-// Sampling.CounterRate: abc left rateSampler with a rate of 0, which samples
-// no transaction at all, and the log said nothing about it.
+// with a warning, so malformed input cannot silently become a zero value.
 func TestNewConfig_MalformedValueKeepsCurrentValue(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1239,9 +1227,8 @@ func TestNewConfig_MalformedValueKeepsCurrentValue(t *testing.T) {
 	}
 }
 
-// The logger used to be set up only once NewConfig had returned, so every
-// warning the load emitted went to stderr whatever Log.Output said - and those
-// are the lines that explain why an agent sends nothing.
+// Load warnings use the configured log output, including an output named in
+// the configuration file itself.
 func TestNewConfig_LoadWarningsReachTheConfiguredLogFile(t *testing.T) {
 	t.Cleanup(func() { logger.setOutput("stderr", 10, 1) })
 
@@ -1344,10 +1331,8 @@ func Test_reloadConfig_malformedValueKeepsCurrentValue(t *testing.T) {
 	assert.Contains(t, buf.String(), "Sampling.CounterRate = abc is not a valid int, keeping 1")
 }
 
-// A converted value is stored with its registered type, so the reload change
-// detection compares like with like: an int 100 staged as the default of a
-// float option used to differ from the float64 the config file yields and
-// reported a change of a value that had not changed.
+// Converted values use their registered type so reload change detection
+// compares like with like.
 func TestNewConfig_StoresTheRegisteredType(t *testing.T) {
 	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	require.NoError(t, os.WriteFile(cfgFile, []byte("Sampling:\n  Type: PERCENT\n  PercentRate: 100\n"), 0o600))
@@ -1467,9 +1452,7 @@ func Test_ignoreError_CauseOnlyChain(t *testing.T) {
 	assert.False(t, snapshot.ignoreError(&causeOnlyErr{msg: "outer", cause: fmt.Errorf("other")}, ""))
 }
 
-// Java's ConfigurableErrorRecorderFactory.getEnabledTypes: an unset
 // profiler.error.mark enables every category, so the default mask must too -
-// this agent used to mark a flat 1, which is Java's profiler.error.enable=false
 // path (SimpleErrorRecorder).
 func TestNewConfig_ErrorMarkDefaultsToEveryCategory(t *testing.T) {
 	c, err := NewConfig(WithAppName("errorMarkApp"))
@@ -1503,14 +1486,12 @@ func TestNewConfig_ErrorMarkAndExclude(t *testing.T) {
 			ErrorCategoryUnknown | ErrorCategoryException | ErrorCategorySql,
 		},
 		{
-			// Category names are matched case-insensitively, as Java lowercases
 			// each entry before the switch.
 			"exclude removes from every cause",
 			nil, []string{"Http-Status"},
 			ErrorCategoryUnknown | ErrorCategoryException | ErrorCategorySql,
 		},
 		{
-			// Java's mark.removeAll(exclude).
 			"exclude wins over mark",
 			[]string{"exception", "http-status", "sql"}, []string{"sql"},
 			ErrorCategoryUnknown | ErrorCategoryException | ErrorCategoryHttpStatus,
@@ -1524,14 +1505,12 @@ func TestNewConfig_ErrorMarkAndExclude(t *testing.T) {
 			ErrorCategoryUnknown,
 		},
 		{
-			// One comma-separated string is how Java spells the list, and how a
 			// config file or an environment variable spells a string slice here.
 			"a single comma separated entry",
 			[]string{"exception, sql"}, nil,
 			ErrorCategoryUnknown | ErrorCategoryException | ErrorCategorySql,
 		},
 		{
-			// An empty entry is skipped silently, as Java's case "" does.
 			"empty entries are skipped",
 			[]string{""}, []string{" "},
 			ErrorCategoryUnknown,
@@ -1567,7 +1546,6 @@ func TestNewConfig_ErrorMarkWarnsOnAnUnknownCategory(t *testing.T) {
 }
 
 // A snapshot built by hand instead of by NewConfig has no mask at all; every
-// cause must still be marked, which is Java's default.
 func Test_marksError_ZeroMaskReadsAsEveryCategory(t *testing.T) {
 	snapshot := &configSnapshot{}
 
@@ -1578,7 +1556,6 @@ func Test_marksError_ZeroMaskReadsAsEveryCategory(t *testing.T) {
 	assert.True(t, emptyConfigSnapshot.marksError(ErrorCategoryException))
 }
 
-// The environment spelling is Java's verbatim - one comma-separated string -
 // which is also how a config file spells a string slice on one line.
 func TestNewConfig_ErrorMarkFromEnv(t *testing.T) {
 	t.Setenv("PINPOINT_GO_SPAN_ERRORMARK", "exception, sql")

@@ -113,8 +113,6 @@ func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
 	assert.Equal(t, registeredAgentID(t, mc), rootWire.GetTransactionId().GetAgentId())
 	assert.Equal(t, "192.0.2.10", rootWire.GetAcceptEvent().GetRemoteAddr())
 	assert.Equal(t, "orders.internal:8443", rootWire.GetAcceptEvent().GetEndPoint())
-	// A root span describes no parent: PParentInfo is omitted, as the Java and
-	// C++ agents send it, and the acceptor host set on it goes nowhere.
 	assert.Nil(t, rootWire.GetAcceptEvent().GetParentInfo())
 	// The transaction failed on a recorded error, so PSpan.err carries the
 	// exception category and nothing else.
@@ -180,7 +178,6 @@ func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
 
 // Go's EndSpan finalizes a span whose events were left open by the
 // application: the unclosed events are ended at EndSpan and sent with the
-// span, as the C++ agent does. Dropping them would leave holes in the
 // sequence and break the collector's call tree. The span itself is still
 // delivered exactly once.
 func TestFinalizesSpanWithUnclosedEvents(t *testing.T) {
@@ -283,7 +280,6 @@ func TestKeepsTraceContextWhenEventLimitsOverflow(t *testing.T) {
 	spanID := tracer.SpanId()
 
 	// MaxCallStackDepth is 2, but one level deeper than the value is still
-	// recorded (Java's DefaultCallStack checks the pre-push count), so all
 	// three of these levels are kept.
 	tracer.NewSpanEvent("depth.level1").SpanEvent().SetDestination("depth-destination")
 	tracer.NewSpanEvent("depth.level2").SpanEvent().SetDestination("depth-destination2")

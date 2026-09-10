@@ -185,8 +185,6 @@ func Test_activeSpanRegistrySizeTracksStoreAndRemove(t *testing.T) {
 	assert.Equal(t, 0, r.size())
 }
 
-// Java's DefaultActiveTraceRepository evicts past maximumSize=10240. Here the
-// cap is applied per shard, so the registry as a whole holds the Java figure
 // when span ids spread evenly, and never more.
 func Test_activeSpanRegistryIsBoundedAtTheJavaMaximum(t *testing.T) {
 	var buf bytes.Buffer
@@ -308,7 +306,6 @@ func Test_normalizeCpuLoad(t *testing.T) {
 }
 
 // The bucket boundaries are inclusive on the upper side and compared in whole
-// milliseconds, matching the Java agent's NORMAL schema (slots 1000/3000/5000,
 // elapsedTime <= slotTime). An exact boundary is the case float seconds got
 // wrong.
 func Test_bucketActiveSpanBoundariesAreInclusiveMilliseconds(t *testing.T) {
@@ -388,11 +385,9 @@ func fastStatConfig(collectIntervalMs, batchCount int) *Config {
 	return c
 }
 
-// A getStats panic used to escape the collect loop and restart the worker,
-// which rebuilt collected/batch and threw away the partial batch (up to
-// batch_count-1 snapshots). It now costs exactly that tick's snapshot, as in
-// Java's CollectJob.run(): the cursor stays put, the next tick fills the same
-// slot, and the failure is reported through a throttled WARN.
+// A getStats panic costs exactly that tick's snapshot: the cursor stays put,
+// the next tick fills the same slot, and the failure is reported through a
+// throttled WARN.
 func Test_collectAgentStatWorker_failedCollectionSkipsOnlyThatSnapshot(t *testing.T) {
 	config := fastStatConfig(10, 100) // never completes within the test
 	agent := newTestAgent(config)

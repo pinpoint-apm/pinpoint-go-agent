@@ -30,7 +30,6 @@ func Test_spanQueue_shardCapacitySumsToCapacity(t *testing.T) {
 }
 
 // Test_spanQueue_singleProducerUsesFullCapacity is the scenario that motivated
-// the C++ agent's quota borrowing: consumer stalled, one producer. Non-sticky
 // shard placement must retain the full configured capacity, not one shard's
 // slice of it.
 func Test_spanQueue_singleProducerUsesFullCapacity(t *testing.T) {

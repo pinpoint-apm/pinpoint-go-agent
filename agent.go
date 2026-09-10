@@ -99,10 +99,8 @@ type agent struct {
 	realTimeActiveSpan sync.Map
 	atcStreamCount     atomic.Int32
 
-	// stats and urlStats hold this agent's statistics (see agentStats and
-	// urlStats). Per-agent, not package-global: a restart used to re-prime or
-	// swap the counters and the url snapshot while the previous agent's
-	// abandoned workers and still-in-flight spans were reading them.
+	// stats and urlStats are per-agent so restarts cannot mix workers or
+	// in-flight spans with another agent's counters or URL snapshots.
 	stats    *agentStats
 	urlStats *urlStats
 
@@ -111,8 +109,7 @@ type agent struct {
 	workerWg  sync.WaitGroup
 
 	// enable is the lifecycle phase (see lifecycle.go): registering, running,
-	// stopping, stopped or failed, in one atomic value where two bools used to
-	// encode the same phases by combination. It moves only through
+	// stopping, stopped or failed. It moves only through
 	// transitionTo, and is read only through the named predicates. The field
 	// keeps its old name: tests pin it, and its Load still answers "may the
 	// request path record", which is what the enable bool always meant.
@@ -212,7 +209,6 @@ const (
 	defaultSpanBatchCollectDeadline       = 500
 	defaultSpanBatchMaxConcurrentRequests = 10
 
-	// AgentInfo refresh, matching the Java (AgentInfoSender) and C++ agents'
 	// Collector.AgentInfo defaults: re-send every 24h so a collector that lost
 	// the agent meta recovers it. 0 turns the refresh off.
 	defaultAgentInfoRefreshInterval   = 24 * 60 * 60 * 1000
@@ -220,11 +216,9 @@ const (
 	defaultAgentInfoMaxTryPerAttempt  = 3
 
 	maxSqlSize = 64 * 1024
-	// maxErrorMessageSize matches the Java agent, which abbreviates exception
 	// messages to 256 chars before recording them on a span or span event.
 	maxErrorMessageSize = 256
 	// maxExceptionMessageSize bounds the message of one exception metadata
-	// entry, matching the Java agent's profiler.exceptiontrace.errormessage.max
 	// default. A cause chain carries one message per link, and a driver error
 	// quoting a whole statement is easily megabytes on its own.
 	maxExceptionMessageSize = 2048
@@ -335,9 +329,7 @@ func NewAgent(config *Config) (Agent, error) {
 	}
 	agent.stopSignal()
 
-	// SQL.CacheSize sizes the three SQL caches only, as the Java agent's
 	// profiler.jdbc.sqlcachesize does; the api and error caches keep
-	// cacheSize, like Java's SimpleCacheFactory.newSimpleCache(). NewConfig
 	// has already confined the value to [1, maxSqlCacheSize].
 	sqlCacheSize := config.Int(CfgSQLCacheSize)
 	agent.sqlCacheLengthLimit = config.Int(CfgSQLCacheLengthLimit)
@@ -463,10 +455,8 @@ type worker struct {
 // always is the when predicate of a worker every enabled agent runs.
 func always() bool { return true }
 
-// workerTable is the one place the agent's workers are declared. Every worker
-// that connectGrpcServer used to start with its own go statement is an entry
-// here, with the conditions that used to be if/else branches around those
-// statements expressed as the entry's when predicate: span and span batch are
+// workerTable is the one place the agent's workers are declared. Each entry
+// carries its start condition: span and span batch are
 // mutually exclusive on CfgSpanBatchEnable, and agent info refresh runs only
 // for a positive refresh interval. The connection fields (agentGrpc, spanGrpc,
 // statGrpc, cmdGrpc) are deliberately not a table: they are a different kind
@@ -566,8 +556,7 @@ func (agent *agent) runningWorkerNames() []string {
 // it.
 var shutdownTimeout = 3 * time.Second
 
-// dropReportInterval bounds how often a saturated queue may warn, matching
-// the C++ QueueDropReporter::kDefaultReportInterval. A variable so tests can
+// dropReportInterval bounds how often a saturated queue may warn. Tests may
 // shorten it.
 var dropReportInterval = 60 * time.Second
 
@@ -580,8 +569,7 @@ var workerRestartDelay = 1 * time.Second
 // its workerWg slot, releasing it once on the final exit. A panic in body is
 // recovered - the agent must never take the host process down - and the
 // worker is restarted after workerRestartDelay, unless the agent is stopping,
-// in which case the panic ends the worker like a normal return would. Mirrors
-// the C++ agent's superviseWorker.
+// in which case the panic ends the worker like a normal return would.
 func (agent *agent) superviseWorker(name string, body func()) {
 	defer agent.workerWg.Done()
 	if st := agent.workerStateOf(name); st != nil {
@@ -631,9 +619,8 @@ func (agent *agent) agentInfoRefreshInterval() time.Duration {
 	return time.Duration(agent.config.Int(CfgCollectorAgentInfoRefreshInterval)) * time.Millisecond
 }
 
-// refreshAgentInfoWorker re-sends AgentInfo every refresh interval, mirroring
-// the C++ agent's AgentInfo scheduler. Best-effort: a failed cycle waits for
-// the next interval and never affects the agent's enabled state.
+// refreshAgentInfoWorker re-sends AgentInfo every refresh interval. A failed
+// cycle waits for the next interval and never affects the agent's enabled state.
 func (agent *agent) refreshAgentInfoWorker(interval time.Duration) {
 	Log("agent").Infof("start agent info refresh goroutine")
 
@@ -964,26 +951,15 @@ func (agent *agent) sendSpanWorker() {
 				break
 			}
 
-			// Nothing queued is discarded here. A reconnect used to arm a
-			// filter that skipped every span whose startTime predated the
-			// failure by more than a second, so the outage backlog could not
-			// occupy the fresh stream ahead of live traffic. That backlog was
-			// the real problem when the queue rejected the incoming span and
-			// evicted a queued one on overflow: live spans were lost while
-			// stale ones waited to be sent. spanQueue's head-drop inverted
-			// that - the incoming span is always accepted and the oldest
-			// queued chunk is what goes - so the queue now holds the newest
-			// `capacity` chunks and keeps discarding the backlog by itself
-			// while the drain proceeds. Skipping on top of that dropped spans
-			// twice: startTime is the span's start, not its enqueue time, and
+			// Leave queued spans to spanQueue's head-drop policy: it retains the
+			// newest chunks during an outage. A second age-based filter would drop
+			// spans twice because startTime is the span's start, not enqueue time.
 			// non-final chunks are cut while the span is still live, so any
 			// request slower than the one-second window lost its chunks even
 			// though they were enqueued after the failure - the slow traces
 			// an outage most needs. It also read the queue as FIFO, latching
 			// off at the first recent chunk; spanQueue sweeps 32 shards in
 			// unspecified order at the default capacity, so it released early
-			// and passed an arbitrary share of the backlog anyway. Java's
-			// SpanGrpcDataSender and the C++ GrpcSpan have no such policy,
 			// and neither does sendSpanBatchWorker; a failed send now costs
 			// one reconnect and no spans on every span path.
 		}
@@ -1058,7 +1034,6 @@ func (agent *agent) sendMetaWorker() {
 	retry.init(metaRetryQueueSize)
 
 	for agent.workerContinues() {
-		// New metadata first, as the C++ worker takes its queue before its
 		// retry schedule: a retry is a second try at an id whose spans went
 		// out a delay ago, a new item is an id whose spans are going out now.
 		var item pendingMeta
@@ -1198,7 +1173,6 @@ type pendingMeta struct {
 }
 
 // metaRetryQueue is the time-ordered retry schedule, the Go counterpart of the
-// C++ agent's retry_queue. Every entry waits the same fixed delay, so a push
 // is always due last and a slice kept in push order is kept in due order.
 // The schedule has its own bound, separate from metaChan's (see
 // metaRetryQueueSize), and a full one head-drops: the incoming item is the
@@ -1321,7 +1295,6 @@ func (agent *agent) enqueueMeta(md interface{}) {
 // tryEnqueueMeta queues md, head-dropping the oldest item when the queue is
 // full: the slot the eviction frees is handed to md rather than left for the
 // next producer, so an overflow costs exactly one item - and one cache entry -
-// instead of two. Head-drop rather than the C++ agent's drop-the-newest
 // because it is what this agent's span queue already does (a full shard
 // overwrites its oldest cell), and metadata the collector has not seen yet is
 // worth more than metadata whose spans may already have gone out.
@@ -1430,7 +1403,6 @@ func validUTF8(s string) string {
 }
 
 // abbreviateString truncates str to at most length bytes plus a "...(original
-// length)" marker, byte-for-byte what the Java agent's StringUtils.abbreviate
 // writes - the limit is already known to every reader, the original size is
 // not. The cut lands on a rune boundary: protobuf rejects invalid UTF-8 string
 // fields at marshal time, so a mid-rune cut would fail the whole span or
@@ -1450,14 +1422,12 @@ func abbreviateString(str string, length int) string {
 // metadata caches keyed by a hash of the statement. Anything longer bypasses
 // them and re-sends its metadata on every use, so a handful of huge generated
 // statements cannot pin megabytes of cache for the life of the process. This
-// mirrors the Java agent's UidCache bypassLength
 // (profiler.jdbc.sqlcachelengthlimit); the limit is in bytes here, not UTF-16
 // chars.
 //
 // Deliberately not applied to sqlCache: its ids come from a sequence, so a
 // bypassed statement would burn a fresh id - and a fresh sqlMeta - on every
 // single use, and the same query would show up in the UI as a new entry per
-// execution. Java bypasses only the UID cache for the same reason:
 // SimpleCacheFactory.newSqlCache() builds the id cache with no length check.
 // That exemption is what caps the id cache at cacheSize statements of whatever
 // length the application generates, since the key is the untruncated text; the
@@ -1471,7 +1441,6 @@ func (agent *agent) cacheSql(sql string) int32 {
 		return 0
 	}
 
-	// Keyed on the untruncated statement, as Java's DefaultCachingSqlNormalizer
 	// is: an abbreviated key keeps no more than a 64KB prefix and the total
 	// length, so two statements agreeing on both would share one id and the
 	// second would never publish its own metadata.
@@ -1515,7 +1484,6 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 		return nil
 	}
 
-	// Java hashes the whole normalized SQL and keys its cache on the same
 	// untruncated text (DefaultCachingSqlNormalizer), abbreviating only what it
 	// publishes (SqlCacheService) - so both the UID and the key come from sql
 	// here. An abbreviated key keeps no more than a 64KB prefix and the total
@@ -1523,7 +1491,6 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 	// second would answer with the first's UID and never publish its own
 	// metadata. Nothing longer than the cache length limit reaches the LRU
 	// either way, since sqlCacheable now measures that same untruncated text,
-	// as Java's UidCache bypassLength does. Nothing longer than
 	// maxSqlNormalizeLength gets a UID at all (see cacheSql).
 	if !sqlNormalizable(sql) {
 		return nil
@@ -1545,7 +1512,6 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 	// A bypassed statement was never cached, so a failed send has no entry to
 	// evict and the key is dead weight: every execution queues one item, and
 	// the untruncated text is unbounded (normalization has no input cap, and
-	// literal-heavy SQL normalizes larger than it came in). Java bounds the
 	// same item at 64KB by abbreviating before it enqueues (SqlCacheService).
 	aSql := abbreviateString(sql, maxSqlSize)
 	md := sqlUidMeta{uid: uid, sql: aSql, cached: cacheable}
@@ -1561,8 +1527,6 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 }
 
 // sqlUid hashes a normalized SQL with murmur3 x64 128 (seed 0) and lays out
-// h1 then h2 little-endian, byte-for-byte what the Java agent's Guava
-// Hashing.murmur3_128().hashBytes(sql.getBytes(UTF_8)).asBytes() and the C++
 // agent's MurmurHash3_x64_128 produce. spaolacci/murmur3's Sum() writes the
 // two words big-endian, which yielded a different UID for the same SQL.
 func sqlUid(sql string) []byte {
@@ -1697,7 +1661,6 @@ func (agent *agent) enqueueUrlStat(stat *urlStat) bool {
 }
 
 // dropReporter counts records lost to a full queue and rate-limits the
-// overflow warning, mirroring the C++ agent's QueueDropReporter.
 type dropReporter struct {
 	// dropped is the running total of lost records, reported the total the
 	// last warning carried, and reportAt the unix nano before which the next
@@ -1744,7 +1707,6 @@ func (r *dropReporter) reportTotal(total int64, queue string, queueSize int) {
 // counting what it held back in between. For warnings a peer or the
 // application can trigger once per request - a malformed header, an
 // unbalanced span - where an unthrottled WARN is a log-flooding lever that
-// anyone able to send a request can pull; the C++ agent's LOG_WARN_THROTTLED
 // covers the same sites.
 type logThrottle struct {
 	// src names the log source. The empty value logs under "span", where every
@@ -1812,10 +1774,8 @@ func (agent *agent) sendUrlStatWorker() {
 	// A completed tick is sent as soon as urlStats closes it (completedTick);
 	// the ticker is only the ceiling on the trailing tick of an agent whose
 	// traffic stopped, which nothing arrives to close and takeSnapshot closes
-	// on the clock instead. It follows Stat.CollectInterval the way Java's
 	// UriStatCollectingJob rides the agent stat scheduler
 	// (profiler.jvm.stat.collect.interval), rather than a second 30s timer of
-	// its own - the same policy as the C++ agent's UrlStats send worker.
 	// Read once: Stat.CollectInterval is not reloadable.
 	interval := time.Duration(agent.config.Int(CfgStatCollectInterval)) * time.Millisecond
 	ticker := time.NewTicker(interval)
@@ -1841,9 +1801,7 @@ func (agent *agent) sendUrlStatWorker() {
 // includeInProgress takes the tick in progress whatever its window and is set
 // only on the shutdown path, where no later send will ever come for it.
 //
-// Nothing is sent when there is nothing to send. Java's UriStatCollectingJob
 // breaks out of its poll loop on an empty queue rather than sending an empty
-// message (UriStatCollectingJob.java:49-61); an idle agent costs the collector
 // nothing.
 func (agent *agent) flushUrlStat(includeInProgress bool) {
 	if !agent.config.load().collectUrlStat {
@@ -1985,9 +1943,7 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 		stats:       newAgentStats(),
 		urlStats:    newUrlStats(config),
 	}
-	// SQL.CacheSize sizes the three SQL caches only, as the Java agent's
 	// profiler.jdbc.sqlcachesize does; the api and error caches keep
-	// cacheSize, like Java's SimpleCacheFactory.newSimpleCache(). NewConfig
 	// has already confined the value to [1, maxSqlCacheSize].
 	sqlCacheSize := config.Int(CfgSQLCacheSize)
 	agent.sqlCacheLengthLimit = config.Int(CfgSQLCacheLengthLimit)

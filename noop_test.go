@@ -66,7 +66,6 @@ func Test_noopSpan_Inject_SingletonNotMutated(t *testing.T) {
 }
 
 // An unsampled span is a real transaction, so a recorded error must fail its
-// URL stat as Java's DisableSpanRecorder.recordException does; otherwise the
 // failure rate of low-sampled traffic is biased toward zero. Span.IgnoreErrors
 // applies as on the sampled path.
 func Test_noopSpan_SetError_FailsUrlStat(t *testing.T) {
@@ -172,7 +171,6 @@ func Test_noopSpan_SetError_ConcurrentWithEndSpan(t *testing.T) {
 }
 
 // doc/api_contracts.md promises that an error recorded on an async or
-// goroutine tracer fails the root, and Java keeps that promise on the
 // unsampled path too: continueDisableAsyncContextTraceObject hands the child
 // the parent's LocalTraceRoot, so DisableSpanRecorder writes the failure into
 // the shared root. The child keeps no statistics of its own, so without the
