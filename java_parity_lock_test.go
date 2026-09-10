@@ -444,16 +444,7 @@ func Test_javaParityLock_ChunkSnapshotsEndPoint(t *testing.T) {
 // Test_javaParityLock_ChunkDepthCompression is the depth half of
 // GrpcSpanProcessorV2: an event at the same depth as its predecessor is sent
 // with depth 0, which the collector reads as "same as previous".
-//
-// SKIPPED - gap S4 of the 4th cross-agent review. optimizeSpanEvents does not
-// seed prevDepth on the i==0 branch (span.go), so the second event of every
-// chunk is compared against 0 and never compressed. Java (GrpcSpanProcessorV2)
-// and the C++ agent (SpanChunk::optimizeSpanEvents) both seed it. The wire
-// bytes differ; the meaning does not, because a non-zero depth is a valid
-// explicit depth. Remove the Skip with the fix.
 func Test_javaParityLock_ChunkDepthCompression(t *testing.T) {
-	t.Skip("gap S4: prevDepth is not seeded at i==0, so the second event of a chunk is never compressed")
-
 	chunk := &spanChunk{
 		span:       &span{startTime: time.UnixMilli(1_000)},
 		eventChunk: []*spanEvent{parityEvent(0, 2, 1_100), parityEvent(1, 2, 1_200), parityEvent(2, 3, 1_300)},

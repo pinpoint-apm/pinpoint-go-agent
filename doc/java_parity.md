@@ -1159,14 +1159,3 @@ not, because the agents knowingly differ; each has its own entry above or in
   completed tick the moment it is closed and time their trailing-tick close by
   the stat collect interval (`Stat.CollectInterval` here, `Stat.BatchInterval`
   in C++) — see [URL statistics send unit](#url-statistics-send-unit--adopted).
-
-### Skipped assertions
-
-One Go assertion is written but skipped, naming the gap it waits on. It is the
-fastest way to see whether a fix landed: delete the `t.Skip` line.
-
-- `Test_javaParityLock_ChunkDepthCompression` — gap **S4**. Java
-  (`GrpcSpanProcessorV2`) and the C++ agent seed the previous depth on the first
-  event of a chunk; the Go agent does not, so the second event of every chunk is
-  compared against 0 and never compressed. The wire bytes differ, the meaning
-  does not.

@@ -1141,6 +1141,10 @@ func (chunk *spanChunk) optimizeSpanEvents() {
 	for i, se := range chunk.eventChunk {
 		if i == 0 {
 			se.startElapsed = se.startTime - chunk.keyTime
+			// Seed the compression baseline with the first event's own depth,
+			// as Java (GrpcSpanProcessorV2) and the C++ agent do. The first
+			// event still carries its real depth; compression starts at i == 1.
+			prevDepth = se.depth
 		} else {
 			se.startElapsed = se.startTime - prevSe.startTime
 			curDepth := se.depth
