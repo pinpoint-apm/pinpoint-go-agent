@@ -56,6 +56,10 @@ const (
 	// as the Java agent's ClientOption.idleTimeoutMillis effectively does. The
 	// C++ agent's key is Collector.Grpc.IdleTimeoutMs.
 	CfgCollectorGrpcIdleTimeout = "Collector.Grpc.IdleTimeout"
+	// Collector.Grpc.SenderQueueSize sizes the metadata queue (metaChan), as
+	// the C++ agent's key of the same name does. The retry schedule has its own
+	// fixed bound (metaRetryQueueSize in grpc.go), not this one.
+	CfgCollectorGrpcSenderQueueSize = "Collector.Grpc.SenderQueueSize"
 
 	CfgLogLevelOld                    = "LogLevel"
 	CfgLogLevel                       = "Log.Level"
@@ -181,6 +185,12 @@ const (
 	minStatCollectInterval = 1000
 	maxStatCollectInterval = 60000
 	maxStatBatchCount      = 100
+
+	// defaultMetaQueueSize is the Java agent's
+	// profiler.transport.grpc.metadata.sender.executor.queue.size default
+	// (GrpcTransportConfig.DEFAULT_METADATA_SENDER_EXECUTOR_QUEUE_SIZE) and
+	// the C++ agent's Collector.Grpc.SenderQueueSize default.
+	defaultMetaQueueSize = 1000
 )
 
 // Config value type
@@ -243,6 +253,7 @@ func initConfig() {
 	AddConfig(CfgCollectorGrpcConnectionMaxAge, CfgInt, grpcConnectionMaxAge, false)
 	AddConfig(CfgCollectorGrpcStreamMaxAge, CfgInt, grpcStreamMaxAge, false)
 	AddConfig(CfgCollectorGrpcIdleTimeout, CfgInt, grpcIdleTimeout, false)
+	AddConfig(CfgCollectorGrpcSenderQueueSize, CfgInt, defaultMetaQueueSize, false)
 	AddConfig(CfgLogLevelOld, CfgString, "info", true)
 	AddConfig(CfgLogLevel, CfgString, "info", true)
 	AddConfig(CfgLogOutput, CfgString, "stderr", true)
@@ -1185,6 +1196,7 @@ func (config *Config) publish() {
 	config.defaultIfOutOfRange(CfgStatCollectInterval, minStatCollectInterval, maxStatCollectInterval)
 	config.defaultIfOutOfRange(CfgStatBatchCount, 1, maxStatBatchCount)
 	config.defaultIfOutOfRange(CfgStatQueueSize, 1, maxQueueSize)
+	config.defaultIfOutOfRange(CfgCollectorGrpcSenderQueueSize, 1, maxQueueSize)
 	if config.stagedInt(CfgSpanBatchSize) < 1 {
 		config.cfgMap[CfgSpanBatchSize].value = defaultSpanBatchSize
 	}
@@ -1661,6 +1673,14 @@ func WithCollectorGrpcStreamMaxAge(ms int) ConfigOption {
 func WithCollectorGrpcIdleTimeout(ms int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgCollectorGrpcIdleTimeout].value = ms
+	}
+}
+
+// WithCollectorGrpcSenderQueueSize sets the size of the queue buffering
+// metadata (API, string, SQL, exception) waiting to be sent to the collector.
+func WithCollectorGrpcSenderQueueSize(size int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgCollectorGrpcSenderQueueSize].value = size
 	}
 }
 

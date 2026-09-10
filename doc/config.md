@@ -463,6 +463,23 @@ disabled), and to the C++ agent's `Collector.Grpc.IdleTimeoutMs`.
 * default: 0
 * unit: milliseconds
 
+### Collector.Grpc.SenderQueueSize
+Collector.Grpc.SenderQueueSize option sets the size of the agent's metadata queue: the API, string, SQL and
+exception metadata registered by spans and waiting to be sent to the collector.
+It used to share [Span.QueueSize](#spanqueuesize). When the queue is full the oldest item is overwritten and
+its cache entry released so a later span registers it again, and the agent logs a rate-limited warning
+carrying the cumulative number of dropped items.
+The retry schedule for failed metadata sends has its own fixed bound of 1000 and is not affected.
+The default matches the Java agent's `profiler.transport.grpc.metadata.sender.executor.queue.size` and the
+C++ agent's key of the same name.
+
+* --pinpoint-collector-grpc-senderqueuesize
+* PINPOINT_GO_COLLECTOR_GRPC_SENDERQUEUESIZE
+* WithCollectorGrpcSenderQueueSize()
+* type: int
+* default: 1000
+* range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
+
 ### Sampling.Type
 Sampling.Type option sets the type of agent sampler.
 Either "COUNTER" or "PERCENT" must be specified. "COUNTING", the Java agent's
@@ -535,6 +552,8 @@ Sampling.ContinueThroughput option sets the cont TPS for a 'throughput sampler'.
 
 ### Span.QueueSize
 Span.QueueSize option sets the size of agent's span queue for gRPC.
+It sizes the span queue only; the metadata queue is sized by
+[Collector.Grpc.SenderQueueSize](#collectorgrpcsenderqueuesize) and the stat queue by [Stat.QueueSize](#statqueuesize).
 
 * --pinpoint-span-queuesize
 * PINPOINT_GO_SPAN_QUEUESIZE
@@ -1036,7 +1055,8 @@ Error.CallStackDepth option sets the max depth of callstack to be dumped.
 
 ### Error.NewThroughput
 Error.NewThroughput option sets the max number of new exception chains recorded per second,
-so that a burst of errors cannot crowd the exception metadata out of the agent's metadata queue.
+so that a burst of errors cannot crowd the exception metadata out of the agent's metadata queue
+([Collector.Grpc.SenderQueueSize](#collectorgrpcsenderqueuesize)).
 An error whose chain is already recorded is a continuation and is never limited.
 0 means unlimited, and a negative value means the same, warned and published as 0.
 
@@ -1554,7 +1574,7 @@ See [ActiveProfile](#activeprofile) for the file layout.
 | Too many traces / collector overloaded | `Sampling.CounterRate`, `Sampling.NewThroughput`, `Sampling.ContinueThroughput`, `Http.Server.ExcludeUrl` |
 | Traces truncated mid-request | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence` |
 | Spans dropped under load | `Span.QueueSize`, `Span.Batch.Enable`, `Span.BatchSize` |
-| Agent using too much memory | `Span.QueueSize`, `Http.UrlStat.LimitSize`, `SQL.MaxBindValueSize`, `SQL.EnableRawSqlCache`, `SQL.CacheSize`, `SQL.CacheLengthLimit` |
+| Agent using too much memory | `Span.QueueSize`, `Collector.Grpc.SenderQueueSize`, `Http.UrlStat.LimitSize`, `SQL.MaxBindValueSize`, `SQL.EnableRawSqlCache`, `SQL.CacheSize`, `SQL.CacheLengthLimit` |
 | SQL metadata re-sent constantly / spans show unresolved SQL ids | Raise `SQL.CacheSize` above the number of distinct statements the application runs |
 | Agent using too much CPU | `Sampling.CounterRate`, `Log.Level`, `Error.TraceCallStack` |
 | No SQL detail in query spans | `SQL.TraceBindValue`, `SQL.TraceQueryStat`, `SQL.TraceCommit`, `SQL.TraceRollback` |

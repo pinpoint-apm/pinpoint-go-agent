@@ -58,6 +58,7 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, defaultEventDepth, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
 			assert.Equal(t, defaultEventSequence, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
 			assert.Equal(t, defaultQueueSize, c.Int(CfgStatQueueSize), CfgStatQueueSize)
+			assert.Equal(t, defaultMetaQueueSize, c.Int(CfgCollectorGrpcSenderQueueSize), CfgCollectorGrpcSenderQueueSize)
 			assert.Equal(t, 5000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
 			assert.Equal(t, 6, c.Int(CfgStatBatchCount), CfgStatBatchCount)
 			assert.Equal(t, false, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
@@ -452,6 +453,7 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 	t.Setenv("PINPOINT_GO_SAMPLING_NEWTHROUGHPUT", "100")
 	t.Setenv("PINPOINT_GO_SAMPLING_CONTINUETHROUGHPUT", "200")
 	t.Setenv("PINPOINT_GO_SPAN_QUEUESIZE", "1000")
+	t.Setenv("PINPOINT_GO_COLLECTOR_GRPC_SENDERQUEUESIZE", "700")
 	t.Setenv("PINPOINT_GO_SPAN_BATCH_ENABLE", "true")
 	t.Setenv("PINPOINT_GO_SPAN_BATCHSIZE", "40")
 	t.Setenv("PINPOINT_GO_SPAN_BATCHFLUSHINTERVAL", "1500")
@@ -498,6 +500,7 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 			assert.Equal(t, 100, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
 			assert.Equal(t, 200, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
 			assert.Equal(t, 1000, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+			assert.Equal(t, 700, c.Int(CfgCollectorGrpcSenderQueueSize), CfgCollectorGrpcSenderQueueSize)
 			assert.Equal(t, true, c.Bool(CfgSpanBatchEnable), CfgSpanBatchEnable)
 			assert.Equal(t, 40, c.Int(CfgSpanBatchSize), CfgSpanBatchSize)
 			assert.Equal(t, 1500, c.Int(CfgSpanBatchFlushInterval), CfgSpanBatchFlushInterval)
@@ -563,6 +566,7 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 		"--pinpoint-sampling-newthroughput=500",
 		"--pinpoint-sampling-continuethroughput=600",
 		"--pinpoint-span-queuesize=10",
+		"--pinpoint-collector-grpc-senderqueuesize=20",
 		"--pinpoint-span-batch-enable=true",
 		"--pinpoint-span-batchsize=30",
 		"--pinpoint-span-batchflushinterval=2500",
@@ -614,6 +618,7 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 			assert.Equal(t, 500, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
 			assert.Equal(t, 600, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
 			assert.Equal(t, 10, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+			assert.Equal(t, 20, c.Int(CfgCollectorGrpcSenderQueueSize), CfgCollectorGrpcSenderQueueSize)
 			assert.Equal(t, true, c.Bool(CfgSpanBatchEnable), CfgSpanBatchEnable)
 			assert.Equal(t, 30, c.Int(CfgSpanBatchSize), CfgSpanBatchSize)
 			assert.Equal(t, 2500, c.Int(CfgSpanBatchFlushInterval), CfgSpanBatchFlushInterval)
@@ -856,6 +861,8 @@ func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
 		{CfgSpanQueueSize, 1e9, defaultQueueSize},
 		{CfgHttpUrlStatQueueSize, -1, defaultQueueSize},
 		{CfgHttpUrlStatQueueSize, maxQueueSize + 1, defaultQueueSize},
+		{CfgCollectorGrpcSenderQueueSize, 0, defaultMetaQueueSize},
+		{CfgCollectorGrpcSenderQueueSize, maxQueueSize + 1, defaultMetaQueueSize},
 		{CfgStatCollectInterval, 0, 5000},
 		{CfgStatCollectInterval, 100, 5000},
 		{CfgStatCollectInterval, 999, 5000},
@@ -1291,6 +1298,21 @@ func Test_StatQueueSizeIsIndependentOfSpanQueueSize(t *testing.T) {
 	require.NoError(t, err)
 	defer a.Shutdown()
 	assert.Equal(t, defaultQueueSize, cap(a.(*agent).statChan), "statChan must be sized from Stat.QueueSize")
+}
+
+// The metadata queue was sized from Span.QueueSize, so tuning the span queue
+// silently resized the metadata queue with it.
+func Test_MetaQueueSizeIsIndependentOfSpanQueueSize(t *testing.T) {
+	c, err := NewConfig(WithSpanQueueSize(16), WithCollectorGrpcSenderQueueSize(32))
+	require.NoError(t, err)
+
+	assert.Equal(t, 16, c.Int(CfgSpanQueueSize))
+	assert.Equal(t, 32, c.Int(CfgCollectorGrpcSenderQueueSize))
+
+	a, err := NewTestAgent(c, t)
+	require.NoError(t, err)
+	defer a.Shutdown()
+	assert.Equal(t, 32, cap(a.(*agent).metaChan), "metaChan must be sized from Collector.Grpc.SenderQueueSize")
 }
 
 // selfWrapErr is a user error whose Unwrap() returns itself: an unbounded
