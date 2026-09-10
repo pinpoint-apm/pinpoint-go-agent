@@ -5,7 +5,13 @@ import (
 	"net/http"
 )
 
-const contextKey = "pinpoint.spanTracer"
+// contextKeyType makes the tracer's context key unforgeable outside this
+// package: an untyped string constant is a key any other package can produce
+// by accident, and a collision on it would send FromContext down its !ok
+// branch and drop the whole span with nothing logged (staticcheck SA1029).
+type contextKeyType struct{}
+
+var contextKey = contextKeyType{}
 
 // NewContext returns a new Context that contains the given Tracer.
 func NewContext(ctx context.Context, tracer Tracer) context.Context {
