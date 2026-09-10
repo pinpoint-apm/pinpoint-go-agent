@@ -45,12 +45,14 @@ f := tracer.WrapGoroutine("worker", func(ctx context.Context) { work(ctx) }, ctx
 go f()
 ```
 
-**What happens on misuse:** at `Log.Level` `debug` or `trace` the agent records
-the goroutine id of the first `NewSpanEvent()` call and warns
-`span is shared by more than two goroutines` on a call from a different
-goroutine, skipping the event. At `info` and above the check is off — it costs
-a goroutine-id read per event — so a shared tracer degrades silently in
-production. Run a new instrumentation once at `debug` before shipping it.
+**What happens on misuse:** the agent records the goroutine id of the first
+`NewSpanEvent()` call and, on a call from a different goroutine, warns
+`span is shared by more than one goroutine` (throttled) and **still records the
+event**, so the shape of the trace does not depend on whether the check ran.
+The check runs at every log level; it is gated only on the goroutine id being
+readable, an offset into the runtime's `g` struct resolved at startup
+(`goIdOffset > 0` in `span.go`). When that resolution fails there is no
+detection and a shared tracer degrades silently.
 
 ## 2. A Goroutine Tracer Needs an Active Span Event
 
@@ -138,7 +140,24 @@ wrong — but they are kept, because their sequence numbers were already handed
 out and a span whose event sequence has holes makes the collector rebuild the
 call tree against parents that never arrive. This follows the C++ agent; the
 Java agent instead drops the whole span. An extra `EndSpanEvent()` on an empty
-stack pops nothing.
+stack pops nothing and warns `abnormal span - has no event`.
+
+A mis-nested `EndSpanEvent()` — one meant for `outer` while `inner` is still
+open — is **not detected**: the call takes no target, so the agent ends `inner`
+with `outer`'s end time and the stack is one event deeper than the caller
+thinks. The next `EndSpanEvent()` ends `outer` and the trace looks plausible
+with the durations shifted by one event. If you hold the recorder of the event
+you are ending, use `pinpoint.EndSpanEventOf(tracer, se)` instead: it ends the
+innermost event exactly like `EndSpanEvent()`, but when that event is not `se`
+it warns `abnormal span - EndSpanEventOf ended <inner> instead of <outer>` with
+a stack dump (throttled, one dump per interval). It does not unwind to `se`;
+whatever is left open is ended by `EndSpan()` as above.
+
+```go
+tracer.NewSpanEvent("outer")
+se := tracer.SpanEvent()
+defer pinpoint.EndSpanEventOf(tracer, se)
+```
 
 ## 5. Recorders Are Views, Not Owned Objects
 

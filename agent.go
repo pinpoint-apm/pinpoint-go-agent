@@ -1751,7 +1751,7 @@ type logThrottle struct {
 var (
 	malformedTraceIdLog, malformedSpanIdLog, malformedParentSpanIdLog logThrottle
 	endSpanTwiceLog, unclosedEventLog, noEventLog, sharedGoroutineLog logThrottle
-	afterEndSpanLog                                                   logThrottle
+	afterEndSpanLog, misnestedEventLog                                logThrottle
 )
 
 // acquire reports whether the site may log now and, if so, how many calls it

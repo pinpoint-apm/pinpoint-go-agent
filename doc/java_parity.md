@@ -40,6 +40,7 @@ one place that compares. The C++ agent keeps the same file at
 | GC type and counts | `JvmGcType`, `GarbageCollectorMXBean` | **Diverges** — see [below](#gc-type-and-counts--diverges) |
 | Exception chain during overflow | `AbstractRecorder.recordException`, `DefaultExceptionRecorder` | **Diverges** — see [below](#exception-chain-during-overflow--diverges) |
 | Span event sequence reservation | `DefaultCallStack.push` | **Aligned with C++** — see [below](#span-event-sequence-reservation--aligned-with-c) |
+| Ending a span event other than the innermost one | `DefaultTrace.traceBlockEnd(int stackId)`; C++ `Span::endSpanEvent(SpanEvent*)` | **Diverges (opt-in target)** — see [below](#ending-a-span-event-other-than-the-innermost-one--diverges) |
 | Inbound trace continuation | `DefaultTraceHeaderReader.read`, `RequestTraceReader` | **Adopted** — see [below](#inbound-trace-continuation--adopted) |
 | Proxy request headers | `DefaultProxyRequestRecorder`, `ApacheRequestParser`, `NginxRequestParser`, `AppRequestParser`, `UserRequestParser` | **Adopted** — see [below](#proxy-request-headers--adopted) |
 | Acceptor host fallback | `ServerRequestRecorder.recordParentInfo` | **Adopted** — see [below](#acceptor-host-fallback--adopted) |
@@ -200,6 +201,39 @@ Two details follow from the reservation being the numbering:
 **Locked by** `Test_span_NewSpanEvent_ConcurrentSequencesAreUnique`
 (`span_test.go`): events opened and closed from many goroutines of one span
 come out holding `0..N-1` with no number handed out twice.
+
+---
+
+## Ending a span event other than the innermost one — diverges
+
+**Java.** Every `traceBlockBegin(stackId)` stamps its `SpanEvent` and
+`traceBlockEnd(stackId)` compares the stamp of the top of the call stack with
+the one the caller passes. On a mismatch it warns and dumps the stack
+(`DefaultTrace.traceBlockEnd`), then closes the top anyway. Detection needs the
+caller to name the event it is ending.
+
+**C++.** `Span::endSpanEvent(SpanEvent*)` takes the event itself, unwinds the
+stack to it and explicitly finishes every event in between (`src/span.cpp`), so
+a skipped end is repaired at the next one.
+
+**This agent.** `Tracer.EndSpanEvent()` has no argument, so the plain call
+cannot detect the mismatch: the pop is a pure LIFO and `noEventLog` fires only
+on an empty stack. Java's check is offered as an opt-in through the package
+function `EndSpanEventOf(tracer, se)` (`span.go`) rather than a new `Tracer`
+method, because `Tracer` is implemented by the mock tracers of every plugin
+test and by callers outside this module, and a new interface method would
+break them. The recorder from `Tracer.SpanEvent()` is the identity, as the
+pointer is in C++; when the popped event is not `se` the agent warns
+`abnormal span - EndSpanEventOf ended <ended> instead of <wanted>` through
+`misnestedEventLog` and includes `runtime/debug.Stack()` only on the call the
+throttle lets through, since the site can fire once per request and the dump
+is the expensive part. The C++ unwinding is not ported: `EndSpan` already ends
+whatever is left open, keeps those events in the final chunk and warns through
+`unclosedEventLog`, which is the safety net a target-driven unwind would
+duplicate. Like Java, the innermost event is the one ended.
+
+**Locked by** `Test_span_EndSpanEventOf_MisnestedEndWarns` and
+`Test_span_EndSpanEventOf_RepanicsOriginalValue` (`span_test.go`).
 
 ---
 

@@ -1882,7 +1882,7 @@ func TestSpan_EndSpanEventOverflowRepanicsRecovered(t *testing.T) {
 	var got interface{}
 	func() {
 		defer func() { got = recover() }()
-		span.endSpanEvent("sentinel")
+		span.endSpanEvent("sentinel", nil)
 	}()
 
 	assert.Equal(t, "sentinel", got, "captured panic re-raised, not swallowed")
@@ -1999,4 +1999,59 @@ func TestNoopSpan_ErrorMarkExcludeKeepsTheUnsampledRequestSuccessful(t *testing.
 	// The unknown cause is never excluded, so it still fails the request.
 	span.SetFailure()
 	assert.Equal(t, int32(1), span.statusErr.Load(), "statusErr")
+}
+
+// Ending an event other than the innermost one is the mis-nesting the plain
+// EndSpanEvent cannot see: the stack is not empty, so noEventLog stays quiet
+// and the wrong event silently takes the end time. With a target the agent
+// still ends the innermost event, as Java's traceBlockEnd does on a stackId
+// mismatch, but warns and dumps the stack.
+func Test_span_EndSpanEventOf_MisnestedEndWarns(t *testing.T) {
+	var buf bytes.Buffer
+	restore := captureLogAt(&buf, logrus.WarnLevel)
+	defer restore()
+	misnestedEventLog = logThrottle{}
+
+	span := defaultTestSpan()
+	span.NewSpanEvent("A")
+	a := span.SpanEvent()
+	span.NewSpanEvent("B")
+
+	EndSpanEventOf(span, a) // wants A, ends B
+	assert.Contains(t, buf.String(), "ended B instead of A")
+	assert.Equal(t, 1, strings.Count(buf.String(), "[running]"), "stack dump on the first fire")
+	assert.Equal(t, 1, span.eventStack.len())
+
+	span.NewSpanEvent("C")
+	EndSpanEventOf(span, a) // throttled: no second dump
+	assert.Equal(t, 1, strings.Count(buf.String(), "[running]"))
+
+	buf.Reset()
+	EndSpanEventOf(span, a) // the right one: silent
+	assert.Empty(t, buf.String())
+	assert.Equal(t, 0, span.eventStack.len())
+
+	// A tracer that is not a span falls back to its own EndSpanEvent.
+	EndSpanEventOf(NoopTracer(), a)
+	assert.Empty(t, buf.String())
+}
+
+// The targeted end is deferred like EndSpanEvent, so it must record the panic
+// on the ended event and re-panic with the original value.
+func Test_span_EndSpanEventOf_RepanicsOriginalValue(t *testing.T) {
+	span := defaultTestSpan()
+	span.NewSpanEvent("A")
+	a := span.SpanEvent()
+
+	func() {
+		defer func() { assert.Equal(t, "boom", recover()) }()
+		func() {
+			defer EndSpanEventOf(span, a)
+			panic("boom")
+		}()
+	}()
+	assert.Equal(t, 0, span.eventStack.len())
+	assert.True(t, span.recovered.Load())
+	assert.Equal(t, 1, len(span.spanEvents))
+	assert.Equal(t, "boom", span.spanEvents[0].errorString)
 }

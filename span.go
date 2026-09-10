@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -300,7 +301,7 @@ func (span *span) EndSpan() {
 	span.elapsed = endTime.UnixMilli() - span.startTime.UnixMilli()
 
 	if span.isAsyncSpan() {
-		span.endSpanEvent(nil) //async span event
+		span.endSpanEvent(nil, nil) //async span event
 	} else {
 		dropSampledActiveSpan(span)
 		span.agent.stats.collectResponseTime(span.elapsed)
@@ -730,13 +731,48 @@ func (span *span) EndSpanEvent() {
 	if span.eventOverflow.Load() == 0 && !span.recovered.Load() {
 		recovered = recover()
 	}
-	span.endSpanEvent(recovered)
+	span.endSpanEvent(recovered, nil)
+}
+
+// EndSpanEventOf ends the innermost span event of tracer, exactly as
+// tracer.EndSpanEvent() does, and warns when that event is not se - the
+// recorder the caller obtained from tracer.SpanEvent() for the event it meant
+// to end. EndSpanEvent takes no target, so a missing or doubled call ends the
+// wrong event with nobody's end time and nothing in the log; this is the
+// Java agent's traceBlockEnd(stackId) check, for callers that hold the
+// recorder anyway. A function rather than a Tracer method because Tracer is
+// implemented outside this module (every plugin test has a mock) and a new
+// interface method would break them.
+//
+// On a mismatch the innermost event is still the one ended, as in Java: the
+// C++ agent's unwinding to the target is not ported because EndSpan already
+// ends whatever is left open and warns through unclosedEventLog. Deferred
+// directly, it records a panic on the ended event and re-panics like
+// EndSpanEvent. A tracer that is not this agent's span falls back to its own
+// EndSpanEvent, which cannot recover a panic from this frame.
+func EndSpanEventOf(tracer Tracer, se SpanEventRecorder) {
+	span, ok := tracer.(*span)
+	if !ok {
+		tracer.EndSpanEvent()
+		return
+	}
+	if span.warnAfterEndSpan("EndSpanEvent") {
+		return
+	}
+	// Same guard as EndSpanEvent: recover must be called by the deferred
+	// function itself, so the body cannot be shared.
+	var recovered interface{}
+	if span.eventOverflow.Load() == 0 && !span.recovered.Load() {
+		recovered = recover()
+	}
+	span.endSpanEvent(recovered, se)
 }
 
 // endSpanEvent is the unguarded body: EndSpan sets finished first and then
 // ends the async span's own event through this path. recovered is the panic
-// value EndSpanEvent caught, or nil.
-func (span *span) endSpanEvent(recovered interface{}) {
+// value EndSpanEvent caught, or nil. want is the event the caller meant to
+// end, or nil when the caller did not say (EndSpanEvent).
+func (span *span) endSpanEvent(recovered interface{}, want SpanEventRecorder) {
 	// Consume one overflow placeholder with a CAS floor at zero, as the C++
 	// agent's SpanData::endDisabledSpanEvent does: a check-then-Add lets two
 	// concurrent ends of the same placeholder drive the counter to -1, after
@@ -760,6 +796,9 @@ func (span *span) endSpanEvent(recovered interface{}) {
 		}
 	}
 	if se, ok := span.eventStack.pop(); ok {
+		if want != nil && SpanEventRecorder(se) != want {
+			span.warnMisnestedEnd(se, want)
+		}
 		if v := recovered; v != nil {
 			err, ok := v.(error)
 			if !ok {
@@ -788,6 +827,27 @@ func (span *span) endSpanEvent(recovered interface{}) {
 			panic(recovered)
 		}
 	}
+}
+
+// warnMisnestedEnd logs that ended is not the event the caller asked for.
+// Java dumps the stack on every mismatch; debug.Stack() is expensive and the
+// site fires once per request, so the dump rides on the throttle and is
+// taken once per dropReportInterval, never for a suppressed call.
+func (span *span) warnMisnestedEnd(ended *spanEvent, want SpanEventRecorder) {
+	held, ok := misnestedEventLog.acquire()
+	if !ok {
+		return
+	}
+	wanted := "<not a span event>"
+	if w, ok := want.(*spanEvent); ok {
+		wanted = w.operationName
+	}
+	suppressed := ""
+	if held > 0 {
+		suppressed = fmt.Sprintf(" (%d similar warning(s) suppressed)", held)
+	}
+	Log("span").Warnf("abnormal span - EndSpanEventOf ended %s instead of %s: %s%s\n%s",
+		ended.operationName, wanted, span.operationName, suppressed, debug.Stack())
 }
 
 // appendEndedSpanEvent records a completed event, cutting a chunk for the
