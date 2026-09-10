@@ -1141,7 +1141,8 @@ Java's `profiler.exceptiontrace.max.depth` corresponds, but defaults to 5.
 
 The same value also bounds the exception entries recorded on one span across all of its
 error chains (at least 10), so one chain is always recorded in full; entries beyond the
-bound are dropped with a debug log, once per span.
+bound are dropped. The first drop is warned about once per span, and the span logs how
+many entries it dropped in total when it ends.
 
 * --pinpoint-error-maxchaindepth
 * PINPOINT_GO_ERROR_MAXCHAINDEPTH

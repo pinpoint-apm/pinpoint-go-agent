@@ -32,13 +32,9 @@ const (
 	// minErrorChainEntry is the floor on the exception entries a span keeps.
 	// canAddErrorChain raises it to Error.MaxChainDepth so a single chain can
 	// always be recorded in full: a lower bound would drop links the option
-	// promised, and that alone is the reason for the floor. A per-span cap is
-	// the right shape for it - the C++ agent caps the same way, at 100 entries
-	// a span (kMaxBufferedExceptions, src/span.h:666), and latches the chain
-	// off once a link is dropped (src/span_event.cpp:376-383), as this agent
-	// does. Java has no cap: its BufferedExceptionStorage size is a flush
-	// threshold, draining the buffer to the sender on overflow rather than
-	// dropping links (BufferedExceptionStorage.java:56-58).
+	// promised, and that alone is the reason for the floor. The cap is
+	// therefore derived from the option's own clamp ceiling, not chosen -
+	// see doc/java_parity.md for how the reference agents bound this.
 	minErrorChainEntry = 10
 )
 
@@ -174,7 +170,13 @@ type span struct {
 	// errorChainDropLog makes the entry cap log once a span, like
 	// eventOverflowLog, so a dropped exception entry is never silent.
 	errorChainDropLog atomic.Bool
-	finished          atomic.Bool
+	// errorChainDrop counts every entry the cap refused, like eventOverflow.
+	// errorChainDropLog latches after the first one, so without this the log
+	// says a span hit the cap but not by how much - and a retry loop that
+	// dropped a handful of links reads exactly like one that dropped
+	// thousands. Reported once at the end, where the total is known.
+	errorChainDrop atomic.Int32
+	finished       atomic.Bool
 	// traceRoot is the span whose PSpan carries the error mask, nil when this
 	// span is the root itself. An async span is serialized as a PSpanChunk,
 	// which has no err field, so its failure must land on the root - Java's
@@ -329,6 +331,10 @@ func (span *span) EndSpan() {
 		}
 	} else if IsTraceLogLevelEnabled() {
 		Log("span").Tracef("span channel - max capacity reached or closed")
+	}
+
+	if dropped := span.errorChainDrop.Load(); dropped > 0 {
+		Log("span").Warnf("exception entry limit dropped %d error chain link(s): %s", dropped, span.operationName)
 	}
 
 	if span.urlStat != nil {
@@ -1166,6 +1172,7 @@ func (span *span) canAddErrorChain() bool {
 	if len(span.errorChains) < max(minErrorChainEntry, span.cfg.errorMaxChainDepth) {
 		return true
 	}
+	span.errorChainDrop.Add(1)
 	if span.errorChainDropLog.CompareAndSwap(false, true) {
 		Log("span").Warnf("exception entry limit reached, dropping further error chain links (entries=%d)", len(span.errorChains))
 	}

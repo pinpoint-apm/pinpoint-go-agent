@@ -35,6 +35,7 @@ one place that compares. The C++ agent keeps the same file at
 | Bind value truncation markers | `BindValueUtils.bindValueToString`, `StringUtils.appendAbbreviate`, `ArrayUtils.abbreviate` | **Adopted** — see [below](#bind-value-truncation-markers--adopted) |
 | `SetSQL` bounds a caller-composed bind value list | `WrappedSpanEventRecorder.recordSqlParsingResult` (bounds nothing) | **Diverges** — see [below](#setsql-bounds-a-caller-composed-bind-value-list--diverges) |
 | Exception chain rate limiter | `ExceptionChainSampler` | **Adopted** — `Error.NewThroughput` |
+| Exception entries recorded on one span | `BufferedExceptionStorage`, `profiler.exceptiontrace.buffersize`; C++ `kMaxBufferedExceptions` | **Diverges (64, drop)** — see [below](#exception-entries-per-span--diverges-value-and-drop-policy) |
 | Invalid `AgentName` | `ObjectNameResolverV1`, `IdValidateUtils.validateId`; C++ `object_name.cpp` | **Aligned with Java and C++ (fallback), diverges (warns)** — see [below](#invalid-agentname-falls-back-to-the-agentid--aligned-with-java-and-c) |
 | Percent sampling rate of zero | `PercentSamplerFactory.createSampler` | **Adopted** — see [below](#percent-rate-of-zero--adopted) |
 | URL statistics send unit | `UriStatCollectingJob`, `AsyncQueueingUriStatStorage` | **Adopted** — see [below](#url-statistics-send-unit--adopted) |
@@ -298,6 +299,56 @@ The cost is small: `golang.org/x/time/rate` is already a dependency of
 **Option.** `Error.NewThroughput`, default 1000 (Java's default), `0` for
 unlimited. Named after `Sampling.NewThroughput`, which limits the same way for
 the same reason. See [Configuration](config.md#errornewthroughput).
+
+---
+
+## Exception entries per span — diverges (value and drop policy)
+
+**Java.** No cap. `BufferedExceptionStorage` treats
+`profiler.exceptiontrace.buffersize` as a *flush threshold*: when the buffer
+fills, `BufferedExceptionStorage.java:56-58` drains it to the sender and goes
+on accepting. A span that raises thousands of exception links records all of
+them, in several sends.
+
+**C++.** `kMaxBufferedExceptions` (`src/span.h:666`) caps one span at **100**
+entries and latches the chain off once a link is dropped
+(`src/span_event.cpp:376-383`).
+
+**This agent.** `canAddErrorChain` (`span.go`) caps one span at
+`max(minErrorChainEntry, Error.MaxChainDepth)` entries and drops past that, as
+the C++ agent does. `Error.MaxChainDepth` is clamped to `[1, 64]`
+(`maxCauserDepth`), so the cap runs from **10** (the floor, at `MaxChainDepth`
+1) to **64**, and 64 is both the default and the value that cannot be exceeded
+by configuration. `Error.NewThroughput` is not charged for a dropped entry:
+`traceCallStack` returns before `getExceptionChainId`, so a refused chain
+spends no permit.
+
+**Decision: keep 64, do not raise to the C++ 100.** The two ports therefore cut
+an exception chain at different entry counts, and the same application
+instrumented with both shows the difference on a long-lived span with a retry
+loop. Accepted, because 64 is not an independent constant here — it is
+`Error.MaxChainDepth`'s clamp ceiling, and the cap is *derived* from the
+option so that one chain of the configured depth is always recorded in full.
+That invariant is what the floor of 10 exists for as well. Raising the cap to
+100 while the option still clamps at 64 would leave 36 entries reachable only
+by additional chains and make the number arbitrary; raising the clamp to 100
+instead means walking 100 links of a user error's `Unwrap()` chain, which is
+the bound `maxCauserDepth` deliberately sets against a cyclic or generated
+chain, and it would also change what `Error.MaxChainDepth` accepts. Neither
+buys anything for a 36-entry difference in how much of an already-degenerate
+span is kept.
+
+**Decision: do not port the flush.** Draining to the sender mid-span needs a
+path that sends exception metadata before the span ends; today
+`EndSpan` enqueues one `exceptionMeta` for the whole span, and the collector
+sees the chain as part of a finished span. That is a separate design, not a
+constant. The two ports already agree on dropping, so the divergence is Java
+against both — and the entries lost are the tail of a span that has already
+recorded 64 of them, which is the case exception details matter least.
+
+**Revisit if** the collector grows a partial-send path for exception metadata
+(then the flush becomes cheap and the cap can go), or a cross-port
+investigation is reported where the 64/100 difference actually misled someone.
 
 ---
 

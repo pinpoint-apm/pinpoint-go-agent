@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A span that drops exception entries at the `Error.MaxChainDepth` entry limit
+  now logs how many it dropped when it ends. The existing warning latches after
+  the first drop, so it said a span hit the limit but not by how much, and a
+  retry loop that lost a handful of chain links read exactly like one that lost
+  thousands. The limit itself is unchanged (10 to 64 entries a span, derived
+  from `Error.MaxChainDepth`'s own clamp ceiling); `doc/java_parity.md` now
+  records why it is not raised to the C++ agent's 100 and why Java's
+  buffer flush is not ported.
 - **Default behavior change.** The collector channel now uses the gRPC `dns`
   resolver (`dns:///host:port`) instead of the `passthrough` scheme. A collector
   host with several A records is resolved into the channel's full address list,

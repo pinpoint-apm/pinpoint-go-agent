@@ -503,6 +503,31 @@ func TestSpanEvent_SetErrorLogsDropAtDefaultLevel(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(buf.String(), "exception entry limit reached"), "logged more than once a span")
 }
 
+// errorChainDropLog latches, so the count of dropped entries is the only
+// measure of how far past the cap a span went. EndSpan reports the total.
+func TestSpanEvent_SetErrorCountsDroppedChainEntries(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureLogAt(&buf, logrus.InfoLevel)()
+
+	cfg := unlimitedNewChainsConfig()
+	cfg.Set(CfgErrorTraceCallStack, true)
+	cfg.Set(CfgErrorMaxChainDepth, 1)
+	span := testSpanWithConfig(cfg)
+	limit := max(minErrorChainEntry, span.cfg.errorMaxChainDepth)
+
+	const over = 3
+	for i := 0; i < limit+over; i++ {
+		se := newSpanEvent(span, "event")
+		se.SetError(fmt.Errorf("boom %d", i))
+		se.end()
+	}
+	require.Len(t, span.errorChains, limit, "the cap was never reached")
+	assert.Equal(t, int32(over), span.errorChainDrop.Load(), "dropped entries counted")
+
+	span.EndSpan()
+	assert.Contains(t, buf.String(), fmt.Sprintf("dropped %d error chain link(s)", over), "the drop total was never reported")
+}
+
 // The entry cap used to be read off errorChains without errorChainsLock from
 // spanEvent.SetError while traceCallStack appended under it. Two goroutines of
 // one call stack recording errors concurrently must neither race nor exceed
