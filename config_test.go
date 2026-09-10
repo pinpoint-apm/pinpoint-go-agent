@@ -1229,6 +1229,45 @@ func TestNewConfig_MalformedValueKeepsCurrentValue(t *testing.T) {
 	}
 }
 
+// The logger used to be set up only once NewConfig had returned, so every
+// warning the load emitted went to stderr whatever Log.Output said - and those
+// are the lines that explain why an agent sends nothing.
+func TestNewConfig_LoadWarningsReachTheConfiguredLogFile(t *testing.T) {
+	t.Cleanup(func() { logger.setOutput("stderr", 10) })
+
+	t.Run("output from the config file", func(t *testing.T) {
+		logFile := filepath.Join(t.TempDir(), "pinpoint.log")
+		cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+		body := fmt.Sprintf("Log:\n  Output: %s\nSampling:\n  Type: bogus\n  CounterRate: abc\n", logFile)
+		require.NoError(t, os.WriteFile(cfgFile, []byte(body), 0o600))
+
+		c, err := NewConfig(WithAppName("TestApp"), WithConfigFile(cfgFile))
+		require.NoError(t, err)
+		defer c.Close()
+
+		b, err := os.ReadFile(logFile)
+		require.NoError(t, err)
+		assert.Contains(t, string(b), "Sampling.CounterRate = abc is not a valid int")
+		// logrus quotes a msg that contains quotes and escapes the inner ones.
+		assert.Contains(t, string(b), `Sampling.Type = \"bogus\" is not supported`)
+	})
+
+	// With the output given by the environment, even an unreadable config
+	// file is reported in the file.
+	t.Run("output from the environment", func(t *testing.T) {
+		logFile := filepath.Join(t.TempDir(), "pinpoint.log")
+		t.Setenv("PINPOINT_GO_LOG_OUTPUT", logFile)
+
+		c, err := NewConfig(WithAppName("TestApp"), WithConfigFile(filepath.Join(t.TempDir(), "missing.yaml")))
+		require.NoError(t, err)
+		defer c.Close()
+
+		b, err := os.ReadFile(logFile)
+		require.NoError(t, err)
+		assert.Contains(t, string(b), "config file loading error")
+	})
+}
+
 // The same policy has to hold for every source the value can arrive from, not
 // just the config file: an environment variable is always a string, so it is
 // the source a wrong type is most likely to come from.

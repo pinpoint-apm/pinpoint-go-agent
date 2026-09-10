@@ -735,14 +735,16 @@ func captureWarnLog(buf *bytes.Buffer) func() {
 }
 
 // captureLogAt is captureWarnLog at an arbitrary level, for lines below Warn.
+// It captures through the extra logger: NewConfig applies Log.Output and
+// Log.Level to the default logger while it loads, which would undo a redirect
+// of that logger under the test. The extra logger gets every line regardless.
 func captureLogAt(buf *bytes.Buffer, level logrus.Level) func() {
-	prevOut, prevLevel := logger.defaultLogger.Out, logger.defaultLogger.GetLevel()
-	logger.defaultLogger.SetOutput(buf)
-	logger.defaultLogger.SetLevel(level)
-	return func() {
-		logger.defaultLogger.SetOutput(prevOut)
-		logger.defaultLogger.SetLevel(prevLevel)
-	}
+	prev := logger.extra()
+	capture := logrus.New()
+	capture.SetOutput(buf)
+	capture.SetLevel(level)
+	SetExtraLogger(capture)
+	return func() { logger.extraLogger.Store(prev) }
 }
 
 func Test_agent_enqueueUrlStatCountsEveryDroppedRecord(t *testing.T) {

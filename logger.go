@@ -49,6 +49,8 @@ type logrusLogger struct {
 	extraLogger   atomic.Pointer[logrus.Logger]
 	outputMu      sync.Mutex
 	fileLogger    io.WriteCloser
+	out           string
+	maxSize       int
 	config        *Config
 }
 
@@ -98,6 +100,12 @@ func (l *logrusLogger) setOutput(out string, maxSize int) {
 }
 
 func (l *logrusLogger) setOutputLocked(out string, maxSize int) {
+	// The output is applied up to three times on the way to a running agent
+	// (twice while NewConfig loads, once by setup); an unchanged one is not
+	// reopened, as in the C++ agent's apply_log_config.
+	if out == l.out && maxSize == l.maxSize {
+		return
+	}
 	var output io.Writer
 	var fileLogger io.WriteCloser
 	if strings.EqualFold(out, "stdout") {
@@ -119,10 +127,27 @@ func (l *logrusLogger) setOutputLocked(out string, maxSize int) {
 	l.defaultLogger.SetOutput(output)
 	l.defaultLogger.SetFormatter(newTextFormatter())
 	l.fileLogger = fileLogger
+	l.out, l.maxSize = out, maxSize
 	if previous != nil {
 		_ = previous.Close()
 	}
 	l.newEntry("config").Infof("log output: %s", out)
+}
+
+// apply installs the logging options of a Config that is still being loaded,
+// so the rest of the load reports where the operator asked rather than on
+// stderr. It does not bind the logger to that Config: setup does, once the
+// Config is final, and the reload callbacks act only for the bound Config. A
+// Config built while an agent runs may never become an agent's, so the
+// running agent keeps its logging.
+func (l *logrusLogger) apply(level, out string, maxSize int) {
+	if GetAgent() != NoopAgent() {
+		return
+	}
+	l.outputMu.Lock()
+	defer l.outputMu.Unlock()
+	l.setLevel(level)
+	l.setOutputLocked(out, maxSize)
 }
 
 func (l *logrusLogger) setup(config *Config) {

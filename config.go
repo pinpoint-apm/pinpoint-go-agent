@@ -669,17 +669,19 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	cmdEnvViper := viper.New()
 	flagSet := config.newFlagSet()
 	if err := flagSet.Parse(filterCmdArgs()); err != nil {
-		Log("config").Errorf("commad line config loading error: %v", err)
+		Log("config").Errorf("command line config loading error: %v", err)
 	}
 	cmdEnvViper.BindPFlags(flagSet)
 	cmdEnvViper.SetEnvPrefix("pinpoint_go")
 	cmdEnvViper.AutomaticEnv()
+	config.applyLogging(cmdEnvViper, viper.New(), viper.New())
 
 	cfgFileViper := config.loadConfigFile(cmdEnvViper)
 
 	config.mu.Lock()
 
 	profileViper := config.loadProfile(cmdEnvViper, cfgFileViper)
+	config.applyLogging(cmdEnvViper, profileViper, cfgFileViper)
 	config.loadConfig(cmdEnvViper, cfgFileViper, profileViper)
 
 	if config.containerCheck {
@@ -690,6 +692,42 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 
 	config.startConfigWatcher()
 	return config, nil
+}
+
+// applyLogging resolves Log.Level, Log.Output and Log.MaxSize from the sources
+// read so far, in loadConfig's precedence, and hands them to the logger before
+// the rest of the load, so that the warnings the load emits - a value of the
+// wrong type, an unsupported Sampling.Type - reach the configured output. The
+// values come from the config file themselves, so this runs twice: with the
+// command line and environment alone, then again once the file and profile
+// are read (the C++ agent applies its sink before parsing and its level from
+// inside make_config). Nothing is staged here and type errors are left for
+// loadConfig to report; a value that does not convert is applied as the zero
+// value and corrected by the next pass or by setup.
+func (config *Config) applyLogging(cmdEnvViper, profileViper, cfgFileViper *viper.Viper) {
+	resolve := func(name string) (interface{}, bool) {
+		v := config.cfgMap[name]
+		switch {
+		case cmdEnvViper.IsSet(v.cmdKey):
+			return cmdEnvViper.Get(v.cmdKey), true
+		case cmdEnvViper.IsSet(v.envKey):
+			return cmdEnvViper.Get(v.envKey), true
+		case profileViper.IsSet(name):
+			return profileViper.Get(name), true
+		case cfgFileViper.IsSet(name):
+			return cfgFileViper.Get(name), true
+		}
+		return v.value, false
+	}
+	level, set := resolve(CfgLogLevel)
+	if !set {
+		if old, ok := resolve(CfgLogLevelOld); ok {
+			level = old
+		}
+	}
+	out, _ := resolve(CfgLogOutput)
+	maxSize, _ := resolve(CfgLogMaxSize)
+	logger.apply(cast.ToString(level), cast.ToString(out), cast.ToInt(maxSize))
 }
 
 func defaultConfig() *Config {

@@ -91,6 +91,25 @@ deliberate opt-out, not a failure.
 at `Log.MaxSize` MB. Both are [dynamic](config.md#dynamic-configuration), so
 you can turn debug logging on in a running process by editing the config file.
 
+`Log.Output` and `Log.Level` are applied while the configuration is still being
+loaded, in two passes: first from the command line and environment, then again
+once the config file and profile have been read. The warnings the load itself
+emits - a value of the wrong type, an unsupported `Sampling.Type`, an out of
+range `SQL.CacheLengthLimit` - therefore reach the file you configured. Not
+everything can: what is logged before the value that names the file has been
+read goes to stderr regardless. That is
+
+* a command line flag that fails to parse (`command line config loading error`)
+  and a `ConfigOption` value of the wrong type, both of which precede any
+  logging configuration;
+* `config file loading error` and `config file doesn't have the profile`, when
+  `Log.Output` is set only in that config file - set it with
+  `PINPOINT_GO_LOG_OUTPUT` or `--pinpoint-log-output` and these go to the file
+  too.
+
+A `NewConfig` call made while another agent is already running leaves that
+agent's logging alone; its load messages go to the running agent's output.
+
 To fold the agent's logs into your application's existing logrus setup, install
 an extra logger — every agent log line is then also written there, with the
 `module=pinpoint` and `src=` fields attached:
