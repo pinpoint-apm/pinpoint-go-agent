@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -948,6 +949,36 @@ func TestNewConfig_ClampErrorCallStackDepth(t *testing.T) {
 	cfgFileViper.SetConfigFile(cfgFile)
 	c.reloadConfig(cfgFileViper)
 	assert.Equal(t, maxErrorCallStackDepth, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
+}
+
+// SQL.MaxBindValueSize is no longer pulled back down to its default: the Java
+// and C++ agents accept any value, and only the ceiling that keeps one span
+// event's bind values from filling a whole gRPC message applies. Both clamps
+// warn - a silent one leaves the config file saying 4096 while the agent runs
+// at 1024.
+func TestNewConfig_ClampSqlMaxBindValueSize(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	c, err := NewConfig(WithAppName("TestApp"), WithSQLMaxBindValueSize(4096))
+	assert.NoError(t, err)
+	defer c.Close()
+	assert.Equal(t, 4096, c.Int(CfgSQLMaxBindValueSize), "a value above the default is no longer clamped")
+	assert.Empty(t, buf.String(), "nothing was clamped, so nothing to warn about")
+
+	// Dynamic key, so the ceiling must hold on the publish path a Set or a
+	// reload goes through too.
+	c.Set(CfgSQLMaxBindValueSize, maxSqlBindValueSize+1)
+	assert.Equal(t, maxSqlBindValueSize, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
+	assert.Equal(t, 1, strings.Count(buf.String(), "\n"), "one warning line")
+	assert.Contains(t, buf.String(), CfgSQLMaxBindValueSize)
+
+	buf.Reset()
+	c.Set(CfgSQLMaxBindValueSize, -1)
+	assert.Equal(t, 0, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
+	assert.False(t, c.Bool(CfgSQLTraceBindValue), "a negative size turns bind value tracing off")
+	assert.Equal(t, 1, strings.Count(buf.String(), "\n"), "one warning line")
+	assert.Contains(t, buf.String(), CfgSQLTraceBindValue, "the warning hides that tracing was turned off")
 }
 
 // A bad Sampling.Type must cost the type only. Overwriting Sampling.CounterRate

@@ -781,11 +781,17 @@ because the server splits them on `,` to restore the original statement. Only
 the SQL text published as metadata is truncated, at 64KB, and it carries a
 `...(original length)` marker as in the Java agent.
 
+A negative value turns bind value tracing off entirely - the size becomes 0 and
+`SQL.TraceBindValue` is set to false - and logs a warning.
+
 * --pinpoint-sql-maxbindvaluesize
 * PINPOINT_GO_SQL_MAXBINDVALUESIZE
 * WithSQLMaxBindValueSize()
 * type: int
 * default: 1024
+* range: 0 ~ 262144 (a larger value is clamped with a warning log; the ceiling
+  is a sixteenth of the 4MB gRPC message limit, so one span event's bind values
+  cannot fill a whole span message)
 * unit: bytes
 * dynamic
 

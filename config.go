@@ -140,6 +140,26 @@ const (
 	// of the three caches is bounded by this x SQL.CacheLengthLimit.
 	maxSqlCacheSize = 65536
 
+	// The traced bind value length, matching the Java agent
+	// (profiler.jdbc.maxsqlbindvaluesize, DefaultJdbcOption). It bounds the
+	// whole bind value list of one SQL span event, not each value.
+	defaultSqlMaxBindValueSize = 1024
+	// The ceiling on SQL.MaxBindValueSize, which used to be the default itself:
+	// anything above 1024 was silently pulled back down, so raising the option
+	// to read longer bind values did nothing. Neither the Java
+	// (DefaultJdbcOption) nor the C++ (config.cpp) agent bounds the key at all,
+	// and a user who asks for longer values should get them.
+	//
+	// Not unbounded, though. Bind values ride on the span itself, one
+	// annotation per SQL span event, and the span send path - unlike the
+	// metadata one, see sendExceptionMetadata - has no size guard: a span whose
+	// serialized size passes Collector.Grpc.MaxSendMessageSize is rejected by
+	// grpc-go at Send, and the whole span is lost, not just its bind values.
+	// A sixteenth of the 4MiB default message size still leaves room for 16
+	// span events carrying bind values at the limit, and is 256x the default -
+	// past any real "let me see the long bind value" need.
+	maxSqlBindValueSize = grpcMaxMessageSize / 16
+
 	// SQL at or above this many bytes bypasses the SQL metadata caches, as in
 	// the Java agent (profiler.jdbc.sqlcachelengthlimit, UidCache.bypassLength).
 	defaultSqlCacheLengthLimit = 2048
@@ -251,7 +271,7 @@ func initConfig() {
 	AddConfig(CfgConfigFile, CfgString, "", false)
 	AddConfig(CfgActiveProfile, CfgString, "", false)
 	AddConfig(CfgSQLTraceBindValue, CfgBool, true, true)
-	AddConfig(CfgSQLMaxBindValueSize, CfgInt, 1024, true)
+	AddConfig(CfgSQLMaxBindValueSize, CfgInt, defaultSqlMaxBindValueSize, true)
 	AddConfig(CfgSQLTraceCommit, CfgBool, true, true)
 	AddConfig(CfgSQLTraceRollback, CfgBool, true, true)
 	AddConfig(CfgSQLTraceQueryStat, CfgBool, false, true)
@@ -1098,10 +1118,18 @@ func (config *Config) publish() {
 	}
 	config.cfgMap[CfgSamplingType].value = sampleType
 
+	// Both branches warn: the clamp used to be silent, so a config file asking
+	// for 4096 ran at 1024 with nothing to say why, and a negative value turned
+	// SQL.TraceBindValue off as a side effect - bind value tracing gone
+	// entirely, not just shortened.
 	maxBind := config.stagedInt(CfgSQLMaxBindValueSize)
-	if maxBind > 1024 {
-		config.cfgMap[CfgSQLMaxBindValueSize].value = 1024
+	if maxBind > maxSqlBindValueSize {
+		Log("config").Warnf("%s = %d is out of range, using %d",
+			CfgSQLMaxBindValueSize, maxBind, maxSqlBindValueSize)
+		config.cfgMap[CfgSQLMaxBindValueSize].value = maxSqlBindValueSize
 	} else if maxBind < 0 {
+		Log("config").Warnf("%s = %d is negative, using 0 and turning %s off",
+			CfgSQLMaxBindValueSize, maxBind, CfgSQLTraceBindValue)
 		config.cfgMap[CfgSQLTraceBindValue].value = false
 		config.cfgMap[CfgSQLMaxBindValueSize].value = 0
 	}
