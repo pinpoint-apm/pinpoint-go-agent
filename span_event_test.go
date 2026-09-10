@@ -277,6 +277,33 @@ func Test_spanEvent_SetSQLCountMarksFailedSpan(t *testing.T) {
 	}
 }
 
+// Java counts after the annotation (WrappedSpanEventRecorder.recordSqlInfo),
+// so a statement whose metadata registration fails leaves no annotation and no
+// count: a span is never marked for SQL the UI cannot show.
+func Test_spanEvent_SetSQLCountSkipsUnregisteredStatement(t *testing.T) {
+	for _, queryStat := range []bool{false, true} {
+		t.Run(fmt.Sprintf("TraceQueryStat=%v", queryStat), func(t *testing.T) {
+			cfg := defaultConfig()
+			cfg.Set(CfgSQLTraceQueryStat, queryStat)
+			cfg.Set(CfgSQLErrorCount, 1)
+			sp := testSpanWithConfig(cfg)
+			// A wrapped id generator refuses every SQL id; a stopped agent
+			// refuses both an id and a UID.
+			sp.agent.sqlIdGen.wrapped.Store(true)
+			if queryStat {
+				sp.agent.enable.Store(false)
+			}
+
+			se := newSpanEvent(sp, "query")
+			se.SetSQL("SELECT 1", "")
+
+			assert.Empty(t, se.annotations.values, "no SQL annotation")
+			assert.Equal(t, int32(0), sp.sqlCount.Load(), "not counted")
+			assert.Equal(t, int32(0), sp.err.Load(), "the span stays clean")
+		})
+	}
+}
+
 // Java returns before incrementing when the transaction already has an error
 // code, so a failed span never counts and the count never resumes.
 func Test_spanEvent_SetSQLCountSkipsFailedSpan(t *testing.T) {

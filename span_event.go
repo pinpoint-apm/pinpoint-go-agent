@@ -200,28 +200,6 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 		return
 	}
 
-	// As in the Java agent's DefaultSqlCountService, a span that executes
-	// SQL.ErrorCount queries is marked failed - an N+1 loop is a trace the
-	// server should show as an error. Java skips a transaction whose error code
-	// is already set, so the count never re-marks a recorded error; a finished
-	// span is skipped for the same reason SetError does (doc/api_contracts.md 5).
-	// Count and flag on the trace root, so queries spread over async spans add
-	// up, which is what Java does: recordSqlCount is handed the trace root's
-	// Shared (WrappedSpanEventRecorder.java:112) and the counter lives there
-	// (DefaultSqlCountService.java:16,21). The C++ agent deliberately differs
-	// here, counting per span so an async child has its own sql_count_
-	// (src/span.h:644-646); it is not the reference for this placement.
-	// The cause is ErrorCategorySql, so an operator who does not want an N+1
-	// pattern to fail the transaction can drop just that one with
-	// Span.ErrorMarkExclude and keep the counting - Java applies the same filter
-	// inside the recorder, downstream of DefaultSqlCountService.
-	root := se.parentSpan.root()
-	if cfg.sqlErrorCount > 0 && root.err.Load() == 0 && !se.parentSpan.finished.Load() {
-		if int(root.sqlCount.Add(1)) >= cfg.sqlErrorCount {
-			se.parentSpan.markSpanError(ErrorCategorySql)
-		}
-	}
-
 	var nsql, param string
 	if cfg.sqlEnableRawSqlCache {
 		nsql, param = agent.normalizeSql(sql)
@@ -246,12 +224,57 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	}
 
 	if cfg.sqlTraceQueryStat {
-		if id := agent.cacheSqlUid(nsql); id != nil {
-			se.annotations.appendOwnedBytesStringString(AnnotationSqlUid, id, param, args)
+		id := agent.cacheSqlUid(nsql)
+		if id == nil {
+			return
 		}
+		se.annotations.appendOwnedBytesStringString(AnnotationSqlUid, id, param, args)
 	} else {
-		if id := agent.cacheSql(nsql); id != 0 {
-			se.annotations.AppendIntStringString(AnnotationSqlId, id, param, args)
+		id := agent.cacheSql(nsql)
+		if id == 0 {
+			return
+		}
+		se.annotations.AppendIntStringString(AnnotationSqlId, id, param, args)
+	}
+
+	// As in the Java agent's DefaultSqlCountService, a span that executes
+	// SQL.ErrorCount queries is marked failed - an N+1 loop is a trace the
+	// server should show as an error. Java skips a transaction whose error code
+	// is already set, so the count never re-marks a recorded error; a finished
+	// span is skipped for the same reason SetError does (doc/api_contracts.md 5).
+	// Count and flag on the trace root, so queries spread over async spans add
+	// up, which is what Java does: recordSqlCount is handed the trace root's
+	// Shared (WrappedSpanEventRecorder.java:112) and the counter lives there
+	// (DefaultSqlCountService.java:16,21). The C++ agent deliberately differs
+	// here, counting per span so an async child has its own sql_count_
+	// (src/span.h:644-646); it is not the reference for this placement.
+	// The cause is ErrorCategorySql, so an operator who does not want an N+1
+	// pattern to fail the transaction can drop just that one with
+	// Span.ErrorMarkExclude and keep the counting - Java applies the same filter
+	// inside the recorder, downstream of DefaultSqlCountService.
+	//
+	// The count runs after the annotation, as in Java
+	// (WrappedSpanEventRecorder.recordSqlInfo: recordSqlParsingResult, then
+	// recordSqlCount): a statement whose metadata registration failed - cache
+	// refused the key, id generator wrapped, agent not running - leaves no
+	// annotation and is not counted either, so a span is never marked for
+	// queries the UI cannot show.
+	//
+	// Java also counts only when the event's service type isExecuteQueryType(),
+	// so its prepareStatement() path annotates without counting. No such gate
+	// here, on purpose: this agent has no service type registry, only the
+	// ServiceType*ExecuteQuery constants in tracer.go, and a hard-coded list of
+	// those would silently turn N+1 detection off for a driver plugin using a
+	// database type outside it. SetServiceType is also a separate public call
+	// with no enforced order against SetSQL - every caller in this repository
+	// happens to set the type first (NewDatabaseTracer, the gocql and pgxv5
+	// plugins), but a gate that depends on that convention misfires the moment a
+	// third-party plugin breaks it. Nothing in this repository calls SetSQL from
+	// a prepare path, so nothing is over-counted today.
+	root := se.parentSpan.root()
+	if cfg.sqlErrorCount > 0 && root.err.Load() == 0 && !se.parentSpan.finished.Load() {
+		if int(root.sqlCount.Add(1)) >= cfg.sqlErrorCount {
+			se.parentSpan.markSpanError(ErrorCategorySql)
 		}
 	}
 }
