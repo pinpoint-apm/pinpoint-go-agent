@@ -678,10 +678,11 @@ func (agent *agent) Shutdown() {
 func (agent *agent) shutdownAgent() {
 	// Flush the url stat tick in progress before anything is signalled. Both
 	// url stat workers and sendStatsWorker stop on stopCtx, so a flush issued
-	// after the signal would race the consumer that has to carry it: enqueueing
-	// here leaves sendStatsWorker still parked on statChan, which is what
-	// actually gets the last tick out. Skipped for an agent that never enabled -
-	// it has no workers and no stat queue.
+	// after the signal could land on a queue nobody reads any more: enqueueing
+	// here puts the tick in statChan before sendStatsWorker can see the stop,
+	// and that worker drains the queue once when the stop arrives, which is
+	// what actually gets the last tick out. Skipped for an agent that never
+	// enabled - it has no workers and no stat queue.
 	if agent.enable.Load() {
 		agent.flushUrlStat(true)
 	}
@@ -1817,26 +1818,45 @@ func (agent *agent) sendStatsWorker() {
 		var stats *pb.PStatMessage
 		select {
 		case <-stop:
-			Log("agent").Infof("end send stats goroutine")
-			return
+			// Drain what is already queued before leaving: shutdownAgent
+			// enqueues the last url stat tick and then cancels stopCtx, so
+			// both cases are ready together here, and a select picks between
+			// ready cases at random. One pass over the queue, no waiting - a
+			// record enqueued after this returns is dropped with the channel,
+			// as the teardown comment in shutdownAgent says.
+			for {
+				select {
+				case stats = <-agent.statChan:
+					stream = agent.sendStatsOrReopen(stream, stats)
+				default:
+					Log("agent").Infof("end send stats goroutine")
+					return
+				}
+			}
 		case stats = <-agent.statChan:
 		}
 
-		stream = renewIfExpired(stream, agent.statGrpc.newStatStreamWithRetry, "stat")
-		err := stream.sendStats(stats)
-		if err != nil {
-			if err != io.EOF {
-				Log("stats").Errorf("send stats - %v", err)
-			}
-
-			stream.close()
-			stream = agent.statGrpc.newStatStreamWithRetry()
-		}
+		stream = agent.sendStatsOrReopen(stream, stats)
 	}
 
 	Log("agent").Infof("end send stats goroutine")
 }
 
+// sendStatsOrReopen sends stats on stream and returns the stream to keep
+// using: the same one, or its replacement when the send broke it.
+func (agent *agent) sendStatsOrReopen(stream *statStream, stats *pb.PStatMessage) *statStream {
+	stream = renewIfExpired(stream, agent.statGrpc.newStatStreamWithRetry, "stat")
+	err := stream.sendStats(stats)
+	if err != nil {
+		if err != io.EOF {
+			Log("stats").Errorf("send stats - %v", err)
+		}
+
+		stream.close()
+		stream = agent.statGrpc.newStatStreamWithRetry()
+	}
+	return stream
+}
 func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 	config.offGrpc = true
 	logger.setup(config)

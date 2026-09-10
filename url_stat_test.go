@@ -11,8 +11,11 @@ import (
 	"github.com/sirupsen/logrus"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	grpcmock "github.com/pinpoint-apm/pinpoint-go-agent/protobuf/mock"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func Test_urlStatBucketLayoutFromJavaAgent(t *testing.T) {
@@ -545,6 +548,37 @@ func Test_urlStatShutdownFlushesTheTickInProgress(t *testing.T) {
 	each := eachUriStatsByUri(t, sent[0])
 	assert.Len(t, each, 1)
 	assert.Contains(t, each, "/in-progress")
+}
+
+// The shutdown flush is only worth anything if sendStatsWorker carries it:
+// shutdownAgent enqueues the tick in progress and then cancels stopCtx, so the
+// worker sees a queued tick and a closed stop at the same time. A select that
+// picked between them at random dropped the tick half the time.
+func Test_urlStatShutdownSendsTheQueuedTickAfterStop(t *testing.T) {
+	agent, _ := newUrlStatSendTestAgent(t)
+	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+	fixUrlStatClock(t, tick.Add(time.Second))
+	agent.urlStats.add(newTestUrlStat("/in-progress", 20, tick))
+
+	var sent counter
+	stream := grpcmock.NewMockStat_SendAgentStatClient()
+	stream.OnSend(mock.Anything).Run(sent.count).Return(nil)
+	stream.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
+	client := grpcmock.NewMockStatClient()
+	client.OnSendAgentStat(mock.Anything).Return(stream, nil)
+	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
+
+	// shutdownAgent's order: flush first, signal second, both before the
+	// worker gets to look.
+	agent.flushUrlStat(true)
+	agent.signalShutdown()
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("send stats", agent.sendStatsWorker)
+	require.True(t, waitTimeout(&agent.workerWg, time.Second), "send stats worker did not stop")
+
+	assert.Equal(t, int32(1), sent.get(), "the queued tick must be sent before the worker stops")
+	assert.Empty(t, agent.statChan)
 }
 
 // A stats stream that never drains must not let the completed queue grow

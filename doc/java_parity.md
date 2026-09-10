@@ -485,7 +485,12 @@ arrival cut exists to avoid.
 
 `Shutdown` calls `flushUrlStat(true)`, which takes the tick in progress whatever
 its window: the stop cuts it short and no later send is coming, and shipping it
-partial beats losing it. That is the one place a partial tick is sent.
+partial beats losing it. That is the one place a partial tick is sent. The send
+is deterministic, as it is in Java, where the scheduler runs the final
+`UriStatCollectingJob` batch before the executor stops: `Shutdown` enqueues the
+tick and then cancels the stop context, and `sendStatsWorker` drains whatever
+the queue holds once the stop arrives instead of selecting between the two at
+random - a plain two-way select dropped the last tick half the time.
 
 **Send cadence.** `UriStatCollectingJob` has no timer of its own — it is a job
 on the agent stat scheduler, so it polls the completed queue every
