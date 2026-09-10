@@ -612,6 +612,14 @@ func Test_agent_ShutdownAfterPingWorkerExited(t *testing.T) {
 }
 
 // A worker stuck on an unreachable collector must not hold Shutdown forever.
+// startTestWorker spawns body as a supervised worker the way startWorkers
+// does, state slot included, so shutdownAgent waits for it.
+func startTestWorker(agent *agent, name string, body func()) {
+	agent.workerStates = append(agent.workerStates, &workerState{name: name, done: make(chan struct{})})
+	agent.workerWg.Add(1)
+	go agent.superviseWorker(name, body)
+}
+
 func Test_agent_ShutdownDeadline(t *testing.T) {
 	opts := []ConfigOption{
 		WithAppName("test"),
@@ -624,11 +632,7 @@ func Test_agent_ShutdownDeadline(t *testing.T) {
 
 	stuck := make(chan struct{})
 	defer close(stuck)
-	agent.workerWg.Add(1)
-	go func() {
-		defer agent.workerWg.Done()
-		<-stuck
-	}()
+	startTestWorker(agent, "stuck", func() { <-stuck })
 
 	start := time.Now()
 	a.Shutdown()
@@ -650,11 +654,7 @@ func Test_agent_ShutdownIsSerialized(t *testing.T) {
 
 	stuck := make(chan struct{})
 	defer close(stuck)
-	agent.workerWg.Add(1)
-	go func() {
-		defer agent.workerWg.Done()
-		<-stuck
-	}()
+	startTestWorker(agent, "stuck", func() { <-stuck })
 
 	start := time.Now()
 	second := make(chan time.Duration, 1)
@@ -1737,8 +1737,7 @@ func Test_agent_ShutdownSendsQueuedSpans(t *testing.T) {
 	agent.spanGrpc = newMockSpanGrpc(agent)
 	client := agent.spanGrpc.spanClient.(*mockSpanGrpcClient)
 
-	agent.workerWg.Add(1)
-	go agent.superviseWorker("span batch", agent.sendSpanBatchWorker)
+	startTestWorker(agent, "span batch", agent.sendSpanBatchWorker)
 
 	const spans = 3
 	for i := 0; i < spans; i++ {
@@ -1753,4 +1752,39 @@ func Test_agent_ShutdownSendsQueuedSpans(t *testing.T) {
 		sent += len(req.GetSpan())
 	}
 	assert.Equal(t, spans, sent, "every span queued before Shutdown reaches the collector")
+}
+
+// A Shutdown that overruns its deadline abandons the stuck worker on purpose,
+// and that worker's goroutine is the only one it may leave behind. The wait
+// itself used to park a helper goroutine on workerWg.Wait that outlived the
+// deadline too, so a host cycling NewAgent/Shutdown leaked one per overrun.
+func Test_agent_ShutdownTimeoutLeavesOnlyTheStuckWorker(t *testing.T) {
+	shortShutdownTimeout(t)
+	release := make(chan struct{})
+	var agents []*agent
+
+	runtime.GC()
+	before := runtime.NumGoroutine()
+	const cycles = 8
+	for i := 0; i < cycles; i++ {
+		agent := newTestAgent(workerTableConfig(true, 1000))
+		agent.config.offGrpc = false
+		var started atomic.Int32
+		table := agent.workerTable()
+		agent.startWorkers(stuckWorkers(agent, table, &started, release, "send stats"))
+		require.Eventually(t, func() bool { return int(started.Load()) == len(activeWorkerNames(table)) },
+			time.Second, time.Millisecond)
+		agent.Shutdown()
+		agents = append(agents, agent)
+	}
+	// One abandoned worker per cycle is the intended residue; anything on top
+	// of that is the wait leaking. Slack for goroutines the runtime or logger
+	// may be spinning up or down around the measurement.
+	after := runtime.NumGoroutine()
+	assert.LessOrEqual(t, after-before, cycles+2, "goroutines grew per overrun beyond the stuck worker")
+
+	close(release)
+	for _, agent := range agents {
+		require.True(t, waitTimeout(&agent.workerWg, time.Second), "stuck worker did not exit on release")
+	}
 }

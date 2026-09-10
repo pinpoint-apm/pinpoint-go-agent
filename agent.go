@@ -469,12 +469,12 @@ func (agent *agent) workerTable() []worker {
 // wait out its full deadline (too large) or panicked the WaitGroup (too small),
 // and neither was caught by the compiler.
 //
-// The Add must stay here, on the connectGrpcServer goroutine, and not move
-// into superviseWorker: shutdownAgent reaches its workerWg wait only after
-// connectWg.Wait, which is what guarantees every Add has happened before the
-// Wait. An Add inside the spawned goroutine would race that Wait.
-// superviseWorker owns the slot from then on and releases it with its
-// deferred Done.
+// The Add, and the state slice below, must stay here, on the connectGrpcServer
+// goroutine, and not move into superviseWorker: shutdownAgent reaches its
+// worker wait only after connectWg.Wait, which is what guarantees every slot
+// exists before the wait. A slot made inside the spawned goroutine would race
+// that wait. superviseWorker owns the slot from then on and releases it with
+// its deferred Done and close.
 func (agent *agent) startWorkers(workers []worker) {
 	// Allocate the state slice to its final size before the first go
 	// statement: superviseWorker reads the slice header from its goroutine,
@@ -483,7 +483,7 @@ func (agent *agent) startWorkers(workers []worker) {
 	var states []*workerState
 	for _, w := range workers {
 		if w.when() {
-			states = append(states, &workerState{name: w.name})
+			states = append(states, &workerState{name: w.name, done: make(chan struct{})})
 		}
 	}
 	agent.workerStates = states
@@ -497,10 +497,12 @@ func (agent *agent) startWorkers(workers []worker) {
 }
 
 // workerState is the observable liveness of one started worker: running is
-// set on the supervisor's entry and cleared on its final exit.
+// set on the supervisor's entry and cleared on its final exit, and done is
+// closed on that exit so shutdownAgent can wait for it without a goroutine.
 type workerState struct {
 	name    string
 	running atomic.Bool
+	done    chan struct{}
 }
 
 // workerStateOf finds the state slot of a started worker by name, or nil for a
@@ -552,6 +554,7 @@ func (agent *agent) superviseWorker(name string, body func()) {
 	defer agent.workerWg.Done()
 	if st := agent.workerStateOf(name); st != nil {
 		st.running.Store(true)
+		defer close(st.done)
 		defer st.running.Store(false)
 	}
 
@@ -649,7 +652,29 @@ func (agent *agent) signalShutdown() {
 	}
 }
 
+// waitWorkers waits for every worker startWorkers started to exit and reports
+// whether they all did within timeout. It waits on the per-worker done
+// channels under one timer rather than on workerWg: wg.Wait cannot be
+// cancelled, so a goroutine parked on it for a deadline that then passes is
+// leaked for as long as the abandoned worker lives, once per NewAgent/Shutdown
+// cycle that overruns. This leaves nothing behind.
+func (agent *agent) waitWorkers(timeout time.Duration) bool {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for _, st := range agent.workerStates {
+		select {
+		case <-st.done:
+		case <-timer.C:
+			return false
+		}
+	}
+	return true
+}
+
 // waitTimeout waits for wg and reports whether it completed within timeout.
+// A test helper: the goroutine it parks on wg.Wait outlives a timeout, which
+// is why shutdownAgent uses waitWorkers instead.
 func waitTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {
 	done := make(chan struct{})
 	go func() {
@@ -750,12 +775,12 @@ func (agent *agent) shutdownAgent() {
 	// Bound the drain: a collector outage must not keep the process alive.
 	// Abandoned workers are unblocked by the connection close below. The
 	// workers being waited for are the ones workerTable declared and
-	// startWorkers counted into workerWg - one Add per go statement, all done
+	// startWorkers gave a state slot - one per go statement, all in place
 	// before connectWg.Wait above returned - so this wait cannot be left short
 	// or over-counted by a worker added elsewhere.
 	// On the overrun, name the workers still running so the deadline can be
 	// investigated; the in-time path logs nothing extra.
-	if !waitTimeout(&agent.workerWg, shutdownTimeout) {
+	if !agent.waitWorkers(shutdownTimeout) {
 		Log("agent").Warnf("shutdown timeout(%v) exceeded, abandon in-flight workers: %s",
 			shutdownTimeout, strings.Join(agent.runningWorkerNames(), ", "))
 	}
