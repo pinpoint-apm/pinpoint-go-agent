@@ -157,30 +157,35 @@ type logEntry struct {
 	extraLogger *logrus.Logger
 }
 
-func (l *logEntry) log(logFunc func(string, ...interface{}), format string, args ...interface{}) {
-	logFunc(format, args...)
+// log writes the line to the default logger and, when one is installed, to the
+// extra logger as well. The extra write goes through a copy of the entry: the
+// entry may be reused for later calls, so its Logger must keep pointing at the
+// default logger.
+func (l *logEntry) log(level logrus.Level, format string, args ...interface{}) {
+	l.entry.Logf(level, format, args...)
 	if l.extraLogger != nil {
-		l.entry.Logger = l.extraLogger
-		logFunc(format, args...)
+		extra := l.entry.Dup()
+		extra.Logger = l.extraLogger
+		extra.Logf(level, format, args...)
 	}
 }
 
 func (l *logEntry) Errorf(format string, args ...interface{}) {
-	l.log(l.entry.Errorf, format, args...)
+	l.log(logrus.ErrorLevel, format, args...)
 }
 
 func (l *logEntry) Warnf(format string, args ...interface{}) {
-	l.log(l.entry.Warnf, format, args...)
+	l.log(logrus.WarnLevel, format, args...)
 }
 
 func (l *logEntry) Infof(format string, args ...interface{}) {
-	l.log(l.entry.Infof, format, args...)
+	l.log(logrus.InfoLevel, format, args...)
 }
 
 func (l *logEntry) Debugf(format string, args ...interface{}) {
-	l.log(l.entry.Debugf, format, args...)
+	l.log(logrus.DebugLevel, format, args...)
 }
 
 func (l *logEntry) Tracef(format string, args ...interface{}) {
-	l.log(l.entry.Tracef, format, args...)
+	l.log(logrus.TraceLevel, format, args...)
 }

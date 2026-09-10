@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -172,5 +173,44 @@ func Test_OutputSwitchReformatsEachTime(t *testing.T) {
 		}
 		logger.setOutput("stdout", 10)
 		os.Remove(path)
+	}
+}
+
+// logEntry.log used to swap the shared entry's Logger to the extra logger and
+// leave it there, so every call after the first skipped the default logger.
+func Test_ReusedEntryWritesToBothLoggers(t *testing.T) {
+	oldOutput := logger.defaultLogger.Out
+	oldLevel := logger.defaultLogger.GetLevel()
+	oldExtraLogger := logger.extra()
+	t.Cleanup(func() {
+		logger.defaultLogger.SetOutput(oldOutput)
+		logger.defaultLogger.SetLevel(oldLevel)
+		logger.extraLogger.Store(oldExtraLogger)
+	})
+
+	var defaultOut, extraOut bytes.Buffer
+	logger.defaultLogger.SetOutput(&defaultOut)
+	logger.defaultLogger.SetLevel(logrus.InfoLevel)
+
+	extraLogger := logrus.New()
+	extraLogger.SetOutput(&extraOut)
+	extraLogger.SetLevel(logrus.InfoLevel)
+	SetExtraLogger(extraLogger)
+
+	e := Log("test")
+	e.Infof("first")
+	e.Warnf("second")
+
+	for _, out := range []struct {
+		name string
+		buf  *bytes.Buffer
+	}{{"default", &defaultOut}, {"extra", &extraOut}} {
+		s := out.buf.String()
+		if !strings.Contains(s, "first") || !strings.Contains(s, "second") {
+			t.Errorf("%s logger missing lines: %q", out.name, s)
+		}
+		if !strings.Contains(s, "src=test") {
+			t.Errorf("%s logger missing fields: %q", out.name, s)
+		}
 	}
 }
