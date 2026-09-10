@@ -44,6 +44,7 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, "info", c.String(CfgLogLevel), CfgLogLevel)
 			assert.Equal(t, "stderr", c.String(CfgLogOutput), CfgLogOutput)
 			assert.Equal(t, 10, c.Int(CfgLogMaxSize), CfgLogMaxSize)
+			assert.Equal(t, 1, c.Int(CfgLogMaxBackups), CfgLogMaxBackups)
 			assert.Equal(t, samplingTypeCounter, c.String(CfgSamplingType), CfgSamplingType)
 			assert.Equal(t, 1, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
 			assert.Equal(t, float64(100), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
@@ -97,6 +98,7 @@ func TestNewConfig_WithFunc(t *testing.T) {
 		WithLogLevel("error"),
 		WithLogOutput("stdout"),
 		WithLogMaxSize(100),
+		WithLogMaxBackups(5),
 		WithSamplingType("percent"),
 		WithSamplingPercentRate(90),
 		WithSamplingCounterRate(200),
@@ -145,6 +147,7 @@ func TestNewConfig_WithFunc(t *testing.T) {
 			assert.Equal(t, "error", c.String(CfgLogLevel), CfgLogLevel)
 			assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
 			assert.Equal(t, 100, c.Int(CfgLogMaxSize), CfgLogMaxSize)
+			assert.Equal(t, 5, c.Int(CfgLogMaxBackups), CfgLogMaxBackups)
 			assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
 			assert.Equal(t, 200, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
 			assert.Equal(t, float64(90), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
@@ -468,6 +471,7 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 	t.Setenv("PINPOINT_GO_LOG_LEVEL", "trace")
 	t.Setenv("PINPOINT_GO_LOG_OUTPUT", "stdout")
 	t.Setenv("PINPOINT_GO_LOG_MAXSIZE", "50")
+	t.Setenv("PINPOINT_GO_LOG_MAXBACKUPS", "4")
 	t.Setenv("PINPOINT_GO_ISCONTAINERENV", "false")
 	t.Setenv("PINPOINT_GO_SQL_TRACEBINDVALUE", "true")
 	t.Setenv("PINPOINT_GO_SQL_MAXBINDVALUESIZE", "100")
@@ -495,6 +499,7 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 			assert.Equal(t, "trace", c.String(CfgLogLevel), CfgLogLevel)
 			assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
 			assert.Equal(t, 50, c.Int(CfgLogMaxSize), CfgLogMaxSize)
+			assert.Equal(t, 4, c.Int(CfgLogMaxBackups), CfgLogMaxBackups)
 			assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
 			assert.Equal(t, 100, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
 			assert.Equal(t, float64(120), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
@@ -581,6 +586,7 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 		"--pinpoint-log-level=error",
 		"--pinpoint-log-output=stdout",
 		"--pinpoint-log-maxsize=20",
+		"--pinpoint-log-maxbackups=3",
 		"-app-arg4",
 		"--pinpoint-iscontainerenv=true",
 		"--pinpoint-sql-tracebindvalue=false",
@@ -613,6 +619,7 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 			assert.Equal(t, "error", c.String(CfgLogLevel), CfgLogLevel)
 			assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
 			assert.Equal(t, 20, c.Int(CfgLogMaxSize), CfgLogMaxSize)
+			assert.Equal(t, 3, c.Int(CfgLogMaxBackups), CfgLogMaxBackups)
 			assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
 			assert.Equal(t, 10, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
 			assert.Equal(t, 0.0001, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
@@ -906,6 +913,9 @@ func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
 		{CfgStatCollectInterval, 60001, 5000},
 		{CfgStatBatchCount, -1, 6},
 		{CfgStatBatchCount, 101, 6},
+		// 0 is "unlimited" to lumberjack; refused so the disk stays bounded.
+		{CfgLogMaxBackups, 0, defaultLogMaxBackups},
+		{CfgLogMaxBackups, -1, defaultLogMaxBackups},
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%s=%d", tt.name, tt.value), func(t *testing.T) {
@@ -1233,7 +1243,7 @@ func TestNewConfig_MalformedValueKeepsCurrentValue(t *testing.T) {
 // warning the load emitted went to stderr whatever Log.Output said - and those
 // are the lines that explain why an agent sends nothing.
 func TestNewConfig_LoadWarningsReachTheConfiguredLogFile(t *testing.T) {
-	t.Cleanup(func() { logger.setOutput("stderr", 10) })
+	t.Cleanup(func() { logger.setOutput("stderr", 10, 1) })
 
 	t.Run("output from the config file", func(t *testing.T) {
 		logFile := filepath.Join(t.TempDir(), "pinpoint.log")
@@ -1351,6 +1361,7 @@ func TestNewConfig_StoresTheRegisteredType(t *testing.T) {
 	assert.IsType(t, int(0), values[CfgSamplingCounterRate], CfgSamplingCounterRate)
 	assert.IsType(t, false, values[CfgSQLTraceCommit], CfgSQLTraceCommit)
 	assert.IsType(t, "", values[CfgLogLevel], CfgLogLevel)
+	assert.IsType(t, int(0), values[CfgLogMaxBackups], CfgLogMaxBackups)
 	assert.IsType(t, []string{}, values[CfgSpanIgnoreErrors], CfgSpanIgnoreErrors)
 
 	var reloaded int

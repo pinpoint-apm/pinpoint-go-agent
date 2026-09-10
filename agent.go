@@ -344,7 +344,7 @@ func NewAgent(config *Config) (Agent, error) {
 
 	config.logCallbackOnce.Do(func() {
 		config.AddReloadCallback([]string{CfgLogLevel}, func() { logger.reloadLevel(config) })
-		config.AddReloadCallback([]string{CfgLogOutput, CfgLogMaxSize}, func() { logger.reloadOutput(config) })
+		config.AddReloadCallback([]string{CfgLogOutput, CfgLogMaxSize, CfgLogMaxBackups}, func() { logger.reloadOutput(config) })
 	})
 
 	if !config.offGrpc {

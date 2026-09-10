@@ -88,7 +88,8 @@ deliberate opt-out, not a failure.
 ### Routing the agent's own logs
 
 `Log.Output` accepts `stderr`, `stdout` or a file path; a file path is rotated
-at `Log.MaxSize` MB. Both are [dynamic](config.md#dynamic-configuration), so
+at `Log.MaxSize` MB and `Log.MaxBackups` rotated files are kept. All three are
+[dynamic](config.md#dynamic-configuration), so
 you can turn debug logging on in a running process by editing the config file.
 
 `Log.Output` and `Log.Level` are applied while the configuration is still being

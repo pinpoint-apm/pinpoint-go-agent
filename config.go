@@ -66,6 +66,7 @@ const (
 	CfgLogLevel                       = "Log.Level"
 	CfgLogOutput                      = "Log.Output"
 	CfgLogMaxSize                     = "Log.MaxSize"
+	CfgLogMaxBackups                  = "Log.MaxBackups"
 	CfgSamplingType                   = "Sampling.Type"
 	CfgSamplingCounterRate            = "Sampling.CounterRate"
 	CfgSamplingPercentRate            = "Sampling.PercentRate"
@@ -124,6 +125,10 @@ const (
 	samplingTypeCounting = "COUNTING"
 
 	defaultErrorCallStackDepth = 32
+	// defaultLogMaxBackups is what the agent kept before the key existed and
+	// the C++ agent's LOG_MAX_BACKUPS. The Java agent keeps 5 for 7 days; as
+	// a library this agent keeps the smaller footprint (Log.MaxSize x 2).
+	defaultLogMaxBackups = 1
 	// defaultErrorMaxChainDepth keeps the walk the agent has always done. Java
 	// stops at 5 (profiler.exceptiontrace.max.depth); lowering this would drop
 	// links applications already see, so it stays a knob, not a new default.
@@ -259,6 +264,7 @@ func initConfig() {
 	AddConfig(CfgLogLevel, CfgString, "info", true)
 	AddConfig(CfgLogOutput, CfgString, "stderr", true)
 	AddConfig(CfgLogMaxSize, CfgInt, 10, true)
+	AddConfig(CfgLogMaxBackups, CfgInt, defaultLogMaxBackups, true)
 	AddConfig(CfgSamplingType, CfgString, samplingTypeCounter, true)
 	AddConfig(CfgSamplingCounterRate, CfgInt, 1, true)
 	AddConfig(CfgSamplingPercentRate, CfgFloat, 100, true)
@@ -694,7 +700,7 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	return config, nil
 }
 
-// applyLogging resolves Log.Level, Log.Output and Log.MaxSize from the sources
+// applyLogging resolves Log.Level, Log.Output, Log.MaxSize and Log.MaxBackups from the sources
 // read so far, in loadConfig's precedence, and hands them to the logger before
 // the rest of the load, so that the warnings the load emits - a value of the
 // wrong type, an unsupported Sampling.Type - reach the configured output. The
@@ -727,7 +733,8 @@ func (config *Config) applyLogging(cmdEnvViper, profileViper, cfgFileViper *vipe
 	}
 	out, _ := resolve(CfgLogOutput)
 	maxSize, _ := resolve(CfgLogMaxSize)
-	logger.apply(cast.ToString(level), cast.ToString(out), cast.ToInt(maxSize))
+	maxBackups, _ := resolve(CfgLogMaxBackups)
+	logger.apply(cast.ToString(level), cast.ToString(out), cast.ToInt(maxSize), cast.ToInt(maxBackups))
 }
 
 func defaultConfig() *Config {
@@ -1303,6 +1310,15 @@ func (config *Config) publish() {
 	if config.stagedInt(CfgLogMaxSize) < 1 {
 		config.cfgMap[CfgLogMaxSize].value = 10
 	}
+	// Dynamic key. At least one backup, as the C++ agent's at_least on
+	// Log.MaxBackups: 0 means "keep every backup" to lumberjack but "keep none"
+	// to a reader who knows the C++ agent, and the lumberjack reading can fill
+	// the disk. Rotation with no history is Log.MaxSize alone.
+	if backups := config.stagedInt(CfgLogMaxBackups); backups < 1 {
+		Log("config").Warnf("%s = %d is out of range, using default %d",
+			CfgLogMaxBackups, backups, defaultLogMaxBackups)
+		config.cfgMap[CfgLogMaxBackups].value = defaultLogMaxBackups
+	}
 
 	// Dynamic key, so both bounds must be enforced on every publish: a reload
 	// can otherwise inject a value that makes traceCallStack's allocation panic
@@ -1760,6 +1776,15 @@ func WithLogOutput(output string) ConfigOption {
 func WithLogMaxSize(size int) ConfigOption {
 	return func(c *Config) {
 		c.cfgMap[CfgLogMaxSize].value = size
+	}
+}
+
+// WithLogMaxBackups sets the number of rotated log files kept beside the
+// current one. Together with WithLogMaxSize it bounds the disk the agent log
+// takes to MaxSize x (MaxBackups+1) MB.
+func WithLogMaxBackups(backups int) ConfigOption {
+	return func(c *Config) {
+		c.cfgMap[CfgLogMaxBackups].value = backups
 	}
 }
 

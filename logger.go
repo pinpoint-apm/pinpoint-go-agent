@@ -51,6 +51,7 @@ type logrusLogger struct {
 	fileLogger    io.WriteCloser
 	out           string
 	maxSize       int
+	maxBackups    int
 	config        *Config
 }
 
@@ -93,17 +94,17 @@ func (l *logrusLogger) setLevel(level string) {
 	l.defaultLogger.SetLevel(lvl)
 }
 
-func (l *logrusLogger) setOutput(out string, maxSize int) {
+func (l *logrusLogger) setOutput(out string, maxSize, maxBackups int) {
 	l.outputMu.Lock()
 	defer l.outputMu.Unlock()
-	l.setOutputLocked(out, maxSize)
+	l.setOutputLocked(out, maxSize, maxBackups)
 }
 
-func (l *logrusLogger) setOutputLocked(out string, maxSize int) {
+func (l *logrusLogger) setOutputLocked(out string, maxSize, maxBackups int) {
 	// The output is applied up to three times on the way to a running agent
 	// (twice while NewConfig loads, once by setup); an unchanged one is not
 	// reopened, as in the C++ agent's apply_log_config.
-	if out == l.out && maxSize == l.maxSize {
+	if out == l.out && maxSize == l.maxSize && maxBackups == l.maxBackups {
 		return
 	}
 	var output io.Writer
@@ -116,9 +117,13 @@ func (l *logrusLogger) setOutputLocked(out string, maxSize int) {
 		fileLogger = &lumberjack.Logger{
 			Filename:   out,
 			MaxSize:    maxSize,
-			MaxBackups: 1,
-			MaxAge:     30,
-			Compress:   false,
+			MaxBackups: maxBackups,
+			// Not exposed: the C++ agent has no age or compression setting
+			// (Log.MaxBackups is its only retention key), so a Go-only key
+			// would be one more thing the ports disagree on. MaxBackups
+			// already bounds the disk footprint to MaxSize x (MaxBackups+1).
+			MaxAge:   30,
+			Compress: false,
 		}
 		output = fileLogger
 	}
@@ -127,7 +132,7 @@ func (l *logrusLogger) setOutputLocked(out string, maxSize int) {
 	l.defaultLogger.SetOutput(output)
 	l.defaultLogger.SetFormatter(newTextFormatter())
 	l.fileLogger = fileLogger
-	l.out, l.maxSize = out, maxSize
+	l.out, l.maxSize, l.maxBackups = out, maxSize, maxBackups
 	if previous != nil {
 		_ = previous.Close()
 	}
@@ -140,14 +145,14 @@ func (l *logrusLogger) setOutputLocked(out string, maxSize int) {
 // Config is final, and the reload callbacks act only for the bound Config. A
 // Config built while an agent runs may never become an agent's, so the
 // running agent keeps its logging.
-func (l *logrusLogger) apply(level, out string, maxSize int) {
+func (l *logrusLogger) apply(level, out string, maxSize, maxBackups int) {
 	if GetAgent() != NoopAgent() {
 		return
 	}
 	l.outputMu.Lock()
 	defer l.outputMu.Unlock()
 	l.setLevel(level)
-	l.setOutputLocked(out, maxSize)
+	l.setOutputLocked(out, maxSize, maxBackups)
 }
 
 func (l *logrusLogger) setup(config *Config) {
@@ -156,7 +161,7 @@ func (l *logrusLogger) setup(config *Config) {
 
 	l.config = config
 	l.setLevel(config.String(CfgLogLevel))
-	l.setOutputLocked(config.String(CfgLogOutput), config.Int(CfgLogMaxSize))
+	l.setOutputLocked(config.String(CfgLogOutput), config.Int(CfgLogMaxSize), config.Int(CfgLogMaxBackups))
 }
 
 func (l *logrusLogger) reloadLevel(config *Config) {
@@ -171,7 +176,7 @@ func (l *logrusLogger) reloadOutput(config *Config) {
 	l.outputMu.Lock()
 	defer l.outputMu.Unlock()
 	if l.config == config {
-		l.setOutputLocked(config.String(CfgLogOutput), config.Int(CfgLogMaxSize))
+		l.setOutputLocked(config.String(CfgLogOutput), config.Int(CfgLogMaxSize), config.Int(CfgLogMaxBackups))
 	}
 }
 

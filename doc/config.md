@@ -1028,12 +1028,35 @@ output is a terminal; a file never receives ANSI escapes. Log lines carry
 
 ### Log.MaxSize
 Log.MaxSize option sets the max size of log file. The unit of value is MB.
+When the file reaches this size it is rotated; `Log.MaxBackups` says how many
+rotated files are kept, so the agent log takes at most
+`Log.MaxSize x (Log.MaxBackups + 1)` MB of disk (20 MB with the defaults).
+A value below 1 recovers the default.
 
 * --pinpoint-log-maxsize
 * PINPOINT_GO_LOG_MAXSIZE
 * WithLogMaxSize()
 * type: int
 * default: 10
+* dynamic
+
+### Log.MaxBackups
+Log.MaxBackups option sets the number of rotated log files kept beside the
+current one. The key and its default are those of the C++ agent. Rotated files
+older than 30 days are removed as well, and they are not compressed; neither
+is configurable, because the C++ agent has no such setting and a Go-only key
+would leave the two agents' config files disagreeing.
+
+A value below 1, including 0, is out of range and recovers the default with a
+warning: to the rotation library 0 means "keep every backup", which can fill
+the disk, while a reader of the C++ agent would take it as "keep none".
+Rotation with no history is `Log.MaxSize` alone.
+
+* --pinpoint-log-maxbackups
+* PINPOINT_GO_LOG_MAXBACKUPS
+* WithLogMaxBackups()
+* type: int
+* default: 1
 * dynamic
 
 ### Error.TraceCallStack
@@ -1358,7 +1381,7 @@ Two things make a reload not happen, and both are easy to miss:
 | Sampling | `Sampling.Type`, `Sampling.CounterRate`, `Sampling.PercentRate`, `Sampling.NewThroughput`, `Sampling.ContinueThroughput` |
 | Span limits and error marking | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence`, `Span.EventChunkSize`, `Span.IgnoreErrors`, `Span.ErrorMark`, `Span.ErrorMarkExclude` |
 | SQL | `SQL.TraceBindValue`, `SQL.MaxBindValueSize`, `SQL.TraceCommit`, `SQL.TraceRollback`, `SQL.TraceQueryStat`, `SQL.EnableRawSqlCache`, `SQL.CacheLengthLimit`, `SQL.ErrorCount` |
-| Logging | `Log.Level` (and its deprecated alias `LogLevel`), `Log.Output`, `Log.MaxSize` |
+| Logging | `Log.Level` (and its deprecated alias `LogLevel`), `Log.Output`, `Log.MaxSize`, `Log.MaxBackups` |
 | Errors | `Error.TraceCallStack`, `Error.CallStackDepth`, `Error.NewThroughput`, `Error.MaxChainDepth` |
 | HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError`, `Http.Server.ProxyUserHeaderNames` |
 | HTTP client | `Http.Client.RecordRequestHeader`, `Http.Client.RecordResponseHeader`, `Http.Client.RecordRequestCookie` |

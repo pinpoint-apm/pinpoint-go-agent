@@ -2,13 +2,17 @@ package pinpoint
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 type trackingWriteCloser struct {
@@ -30,7 +34,7 @@ func Test_SetOutputClosesPreviousFileLogger(t *testing.T) {
 	l.defaultLogger.SetOutput(previous)
 	l.fileLogger = previous
 
-	l.setOutput("stderr", 10)
+	l.setOutput("stderr", 10, 1)
 
 	if !previous.closed {
 		t.Fatal("previous file logger was not closed")
@@ -118,7 +122,7 @@ func Test_FileOutputHasNoAnsiColors(t *testing.T) {
 	oldFormatter := logger.defaultLogger.Formatter
 	oldOutput := logger.defaultLogger.Out
 	t.Cleanup(func() {
-		logger.setOutput("stderr", 10)
+		logger.setOutput("stderr", 10, 1)
 		logger.defaultLogger.Formatter = oldFormatter
 		logger.defaultLogger.SetOutput(oldOutput)
 	})
@@ -127,7 +131,7 @@ func Test_FileOutputHasNoAnsiColors(t *testing.T) {
 	Log("test").Infof("latch")
 
 	path := filepath.Join(t.TempDir(), "pinpoint.log")
-	logger.setOutput(path, 10)
+	logger.setOutput(path, 10, 1)
 	Log("test").Infof("hello")
 
 	b, err := os.ReadFile(path)
@@ -151,7 +155,7 @@ func Test_OutputSwitchReformatsEachTime(t *testing.T) {
 	oldFormatter := logger.defaultLogger.Formatter
 	oldOutput := logger.defaultLogger.Out
 	t.Cleanup(func() {
-		logger.setOutput("stderr", 10)
+		logger.setOutput("stderr", 10, 1)
 		logger.defaultLogger.Formatter = oldFormatter
 		logger.defaultLogger.SetOutput(oldOutput)
 	})
@@ -162,7 +166,7 @@ func Test_OutputSwitchReformatsEachTime(t *testing.T) {
 		Log("test").Infof("colored")
 
 		path := filepath.Join(dir, "pinpoint.log")
-		logger.setOutput(path, 10)
+		logger.setOutput(path, 10, 1)
 		Log("test").Infof("plain")
 		b, err := os.ReadFile(path)
 		if err != nil {
@@ -171,7 +175,7 @@ func Test_OutputSwitchReformatsEachTime(t *testing.T) {
 		if strings.Contains(string(b), "\x1b[") {
 			t.Fatalf("round %d: file log contains ANSI escape: %q", i, b)
 		}
-		logger.setOutput("stdout", 10)
+		logger.setOutput("stdout", 10, 1)
 		os.Remove(path)
 	}
 }
@@ -213,4 +217,46 @@ func Test_ReusedEntryWritesToBothLoggers(t *testing.T) {
 			t.Errorf("%s logger missing fields: %q", out.name, s)
 		}
 	}
+}
+
+// Log.MaxBackups is dynamic: a reload must reach the lumberjack logger, which
+// only happens when the key is in the AddReloadCallback list in NewAgent.
+func Test_ReloadAppliesLogMaxBackups(t *testing.T) {
+	oldOutput := logger.defaultLogger.Out
+	t.Cleanup(func() {
+		logger.setOutput("stderr", 10, 1)
+		logger.defaultLogger.SetOutput(oldOutput)
+	})
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "pinpoint.log")
+	cfgPath := filepath.Join(dir, "pinpoint-config.yaml")
+	write := func(backups int) {
+		body := fmt.Sprintf("Log:\n  Output: %s\n  MaxBackups: %d\n", logPath, backups)
+		require.NoError(t, os.WriteFile(cfgPath, []byte(body), 0o600))
+	}
+	write(2)
+
+	config, err := NewConfig(WithAppName("log-reload"), WithConfigFile(cfgPath))
+	require.NoError(t, err)
+	config.offGrpc = true
+	a, err := NewAgent(config)
+	require.NoError(t, err)
+	t.Cleanup(a.Shutdown)
+	requireWatcher(t, config)
+
+	backups := func() int {
+		logger.outputMu.Lock()
+		defer logger.outputMu.Unlock()
+		lj, ok := logger.fileLogger.(*lumberjack.Logger)
+		if !ok {
+			return -1
+		}
+		return lj.MaxBackups
+	}
+	require.Equal(t, 2, backups())
+
+	write(3)
+	require.Eventually(t, func() bool { return backups() == 3 },
+		2*time.Second, 10*time.Millisecond, "Log.MaxBackups reload did not reach the file logger")
 }
