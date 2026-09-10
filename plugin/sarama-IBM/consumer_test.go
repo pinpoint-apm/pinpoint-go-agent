@@ -226,6 +226,17 @@ func TestNewContext(t *testing.T) {
 		"the innermost NewContext wins")
 }
 
+// The key used to be the untyped string constant "ppsaramaibm.broker.address", so any package
+// storing anything under that string shadowed the broker addresses and the
+// consumer span fell back to "Unknown". The key type is private now, so the
+// collision cannot be constructed from outside.
+func TestNewContext_ForeignStringKeyDoesNotShadowTheAddresses(t *testing.T) {
+	ctx := NewContext(context.Background(), []string{"broker1:9092"})
+	ctx = context.WithValue(ctx, "ppsaramaibm.broker.address", "not a slice") //nolint:staticcheck // the point of the test
+
+	assert.Equal(t, []string{"broker1:9092"}, ctx.Value(contextKey))
+}
+
 // The deprecated form hands the tracer to the handler on the wrapper rather
 // than in a context; it still has to work.
 func TestConsumeMessage(t *testing.T) {

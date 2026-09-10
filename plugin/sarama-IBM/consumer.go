@@ -61,7 +61,13 @@ import (
 // ConsumeClaim and kill the whole consumer-group session.
 var errNilConsumerMessage = errors.New("ppsaramaibm: nil sarama.ConsumerMessage")
 
-const contextKey = "ppsaramaibm.broker.address"
+// contextKeyType makes the broker-address key unforgeable outside this
+// package: an untyped string constant is a key any other package can
+// produce by accident, and a collision on it costs the consumer span its
+// broker address (staticcheck SA1029).
+type contextKeyType struct{}
+
+var contextKey = contextKeyType{}
 
 // NewContext returns a new Context that contains the given broker addresses.
 func NewContext(ctx context.Context, addrs []string) context.Context {
