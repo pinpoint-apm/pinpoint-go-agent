@@ -17,10 +17,11 @@ import (
 // recordingTransport captures the request the wrapped client actually put on
 // the wire, and answers with a canned response or error.
 type recordingTransport struct {
-	sent   *http.Request
-	status int
-	header http.Header
-	err    error
+	sent       *http.Request
+	status     int
+	header     http.Header
+	err        error
+	idleClosed bool
 }
 
 func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -42,6 +43,16 @@ func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, erro
 		Body:       io.NopCloser(strings.NewReader("")),
 		Request:    req,
 	}, nil
+}
+
+func (rt *recordingTransport) CloseIdleConnections() {
+	rt.idleClosed = true
+}
+
+func TestWrapClient_ClosesUnderlyingIdleConnections(t *testing.T) {
+	rt := &recordingTransport{}
+	WrapClient(&http.Client{Transport: rt}).CloseIdleConnections()
+	assert.True(t, rt.idleClosed)
 }
 
 // pinpointHeaders are the distributed tracing headers Inject writes; a callee

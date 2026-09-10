@@ -255,6 +255,49 @@ func Test_sendStatsWorker_reopensStreamAfterSendErrorAndResumes(t *testing.T) {
 	client.AssertNumberOfCalls(t, "SendAgentStat", 2)
 }
 
+func Test_sendStatsWorker_drainsLastUrlStatDuringShutdown(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgHttpUrlStatEnable, true)
+	agent := newTestAgent(cfg)
+	agent.statChan = make(chan *pb.PStatMessage, 4)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var sent counter
+	stream := grpcmock.NewMockStat_SendAgentStatClient()
+	stream.OnSend(mock.Anything).Run(func(mock.Arguments) {
+		if sent.n.Add(1) == 1 {
+			close(entered)
+			<-release
+		}
+	}).Return(nil)
+	stream.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
+	client := grpcmock.NewMockStatClient()
+	client.OnSendAgentStat(mock.Anything).Return(stream, nil)
+	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
+
+	agent.statChan <- &pb.PStatMessage{}
+	agent.startWorkers([]worker{{name: "send stats", body: agent.sendStatsWorker, when: always}})
+	<-entered
+	agent.urlStats.add(&urlStat{
+		entry:   &UrlStatEntry{Url: "/shutdown", Status: 200},
+		endTime: time.Now(),
+		elapsed: 1,
+	})
+
+	done := make(chan struct{})
+	go func() {
+		agent.Shutdown()
+		close(done)
+	}()
+	<-agent.spanQueue.done
+	close(release)
+	<-done
+
+	assert.EqualValues(t, 2, sent.get(), "the final URL stat is drained before shutdown returns")
+	assert.Empty(t, agent.statChan)
+}
+
 // superviseWorker recovers a panicked worker body and runs it again, so the
 // stream the panicked body was holding has to be closed on that path too:
 // nothing else closes it, the collector kept it open, and the restarted body

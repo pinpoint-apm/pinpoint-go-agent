@@ -377,7 +377,8 @@ func WrapHandleFunc(agent pinpoint.Agent, handlerName string, pattern string, ha
 
 type responseWriter struct {
 	http.ResponseWriter
-	status *int
+	status      *int
+	wroteHeader bool
 }
 
 // Go has no conditional interface implementation, so keeping the underlying
@@ -427,7 +428,7 @@ type (
 // WrapResponseWriter records the response status while preserving exactly the
 // optional HTTP interfaces implemented by w.
 func WrapResponseWriter(w http.ResponseWriter, status *int) http.ResponseWriter {
-	rw := &responseWriter{w, status}
+	rw := &responseWriter{ResponseWriter: w, status: status}
 	f, canFlush := w.(http.Flusher)
 	h, canHijack := w.(http.Hijacker)
 	p, canPush := w.(http.Pusher)
@@ -453,9 +454,36 @@ func WrapResponseWriter(w http.ResponseWriter, status *int) http.ResponseWriter 
 }
 
 func (w *responseWriter) WriteHeader(status int) {
+	if w.wroteHeader {
+		w.ResponseWriter.WriteHeader(status)
+		return
+	}
 	w.ResponseWriter.WriteHeader(status)
+	if status >= 100 && status <= 199 && status != http.StatusSwitchingProtocols {
+		return
+	}
+	w.wroteHeader = true
 	*w.status = status
 }
+
+func (w *responseWriter) Write(p []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *responseWriter) flush(f http.Flusher) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	f.Flush()
+}
+
+func (w responseWriterF) Flush()   { w.responseWriter.flush(w.Flusher) }
+func (w responseWriterFH) Flush()  { w.responseWriter.flush(w.Flusher) }
+func (w responseWriterFP) Flush()  { w.responseWriter.flush(w.Flusher) }
+func (w responseWriterFHP) Flush() { w.responseWriter.flush(w.Flusher) }
 
 // Unwrap lets http.ResponseController reach the underlying writer.
 func (w *responseWriter) Unwrap() http.ResponseWriter {

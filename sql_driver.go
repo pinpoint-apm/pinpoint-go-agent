@@ -438,6 +438,11 @@ func (c *sqlConn) ExecContext(ctx context.Context, query string, args []driver.N
 		return result, err
 	}
 
+	e, ok := c.Conn.(driver.Execer)
+	if !ok {
+		return nil, driver.ErrSkip
+	}
+
 	// sourced: database/sql/cxtutil.go
 	dargs, err := namedValueToValue(args)
 	if err != nil {
@@ -449,16 +454,12 @@ func (c *sqlConn) ExecContext(ctx context.Context, query string, args []driver.N
 		return nil, ctx.Err()
 	}
 
-	if e, ok := c.Conn.(driver.Execer); ok {
-		result, err := e.Exec(query, dargs)
-		if err != driver.ErrSkip {
-			c.newSqlSpanEventWithValue(ctx, "ConnExec", start, err, query, dargs)
-		}
-
-		return result, err
+	result, err := e.Exec(query, dargs)
+	if err != driver.ErrSkip {
+		c.newSqlSpanEventWithValue(ctx, "ConnExec", start, err, query, dargs)
 	}
 
-	return nil, driver.ErrSkip
+	return result, err
 }
 
 func (c *sqlConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
@@ -473,6 +474,11 @@ func (c *sqlConn) QueryContext(ctx context.Context, query string, args []driver.
 		return rows, err
 	}
 
+	q, ok := c.Conn.(driver.Queryer)
+	if !ok {
+		return nil, driver.ErrSkip
+	}
+
 	// sourced: database/sql/cxtutil.go
 	dargs, err := namedValueToValue(args)
 	if err != nil {
@@ -484,16 +490,12 @@ func (c *sqlConn) QueryContext(ctx context.Context, query string, args []driver.
 		return nil, ctx.Err()
 	}
 
-	if q, ok := c.Conn.(driver.Queryer); ok {
-		rows, err := q.Query(query, dargs)
-		if err != driver.ErrSkip {
-			c.newSqlSpanEventWithValue(ctx, "ConnQuery", start, err, query, dargs)
-		}
-
-		return rows, err
+	rows, err := q.Query(query, dargs)
+	if err != driver.ErrSkip {
+		c.newSqlSpanEventWithValue(ctx, "ConnQuery", start, err, query, dargs)
 	}
 
-	return nil, driver.ErrSkip
+	return rows, err
 }
 
 func (c *sqlConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {

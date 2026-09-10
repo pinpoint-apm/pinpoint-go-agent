@@ -371,6 +371,16 @@ func Test_sqlConn_OptionalInterfacePassthrough(t *testing.T) {
 		stmt.ColumnConverter(0), "no ColumnConverter: default converter")
 }
 
+func Test_sqlConn_DirectExecutionFallbackPreservesNamedArguments(t *testing.T) {
+	conn := newSqlConn(&fakeDriverConn{}, DBInfo{})
+	args := []driver.NamedValue{{Name: "id", Value: 1}}
+
+	_, err := conn.ExecContext(context.Background(), "SELECT :id", args)
+	assert.ErrorIs(t, err, driver.ErrSkip)
+	_, err = conn.QueryContext(context.Background(), "SELECT :id", args)
+	assert.ErrorIs(t, err, driver.ErrSkip)
+}
+
 // A connection must read the live config, not the one captured when it was
 // opened: connections opened before NewAgent otherwise kept the noop agent's
 // config forever, so no setting and no reload ever reached them.

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,9 +16,7 @@ import (
 // reassigned ten plain package globals that every request read.
 func TestHttpConfigReloadRace(t *testing.T) {
 	// usePluginConfig, not a bare NewTestAgent: it shuts the agent down and
-	// restores curHttpConfig afterwards. Left registered, this test's agent
-	// and its filters stayed published and leaked into every later test that
-	// starts an agent of its own.
+	// initializes the derived config used below.
 	usePluginConfig(t,
 		WithHttpServerExcludeUrl([]string{"/skip/*", "/**/*.do"}),
 		WithHttpServerExcludeMethod([]string{"put", "delete"}),
@@ -100,4 +99,24 @@ func TestHttpConfigReloadIsAtomic(t *testing.T) {
 	// The value the first reader took keeps answering from its own generation.
 	assert.True(t, before.srvUrl.isFiltered("/skip/a"), "a published config must be immutable once handed out")
 	assert.True(t, before.srvStatus.isError(404))
+}
+
+func TestHttpConfigFollowsAgentRestart(t *testing.T) {
+	first := startAgent(t,
+		WithHttpServerExcludeUrl([]string{"/old"}),
+		pinpoint.WithHttpUrlStatEnable(false),
+	)
+	require.True(t, isExcludedUrl("/old"))
+	config := first.Config()
+	first.Shutdown()
+
+	config.Set(CfgHttpServerExcludeUrl, []string{"/new"})
+	config.Set(pinpoint.CfgHttpUrlStatEnable, true)
+	second, err := pinpoint.NewTestAgent(config, t)
+	require.NoError(t, err)
+	t.Cleanup(second.Shutdown)
+
+	assert.False(t, isExcludedUrl("/old"))
+	assert.True(t, isExcludedUrl("/new"))
+	assert.True(t, IsUrlStatEnabled())
 }

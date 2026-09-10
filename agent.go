@@ -1863,7 +1863,7 @@ func (agent *agent) sendStatsWorker() {
 
 	stop := agent.stopSignal().Done()
 
-	for agent.workerContinues() {
+	for {
 		var stats *pb.PStatMessage
 		select {
 		case <-stop:

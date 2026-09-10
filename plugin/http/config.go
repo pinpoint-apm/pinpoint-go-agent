@@ -204,13 +204,16 @@ var httpConfigOpts = []string{
 }
 
 var (
-	onceHttpConfig sync.Once
-	curHttpConfig  atomic.Pointer[httpConfig]
+	httpConfigMu     sync.Mutex
+	curHttpConfig    atomic.Pointer[httpConfig]
+	httpConfigSource atomic.Pointer[httpConfigOwner]
 )
 
-// httpCfg returns the published config. The first call builds it - the agent
-// config does not exist yet at package init time - and registers the reload
-// callback that republishes it.
+type httpConfigOwner struct{ agent pinpoint.Agent }
+
+// httpCfg returns the config derived from the current agent. A new agent gets
+// its own derived value and reload callback, so restarting in the same process
+// cannot retain the previous agent's filters and recorders.
 //
 // ponytail: this store and the agent's config snapshot are two separate
 // publications, so a reload lands in two steps. Nothing couples them (each is
@@ -219,29 +222,46 @@ var (
 // assertion on every request. Revisit if a derived value ever has to agree with
 // an agent option within the same generation.
 func httpCfg() *httpConfig {
-	onceHttpConfig.Do(func() {
-		curHttpConfig.Store(newHttpConfig())
-		pinpoint.GetConfig().AddReloadCallback(httpConfigOpts, func() {
-			curHttpConfig.Store(newHttpConfig())
+	agent := pinpoint.GetAgent()
+	if source := httpConfigSource.Load(); source != nil && source.agent == agent {
+		return curHttpConfig.Load()
+	}
+
+	httpConfigMu.Lock()
+	defer httpConfigMu.Unlock()
+	if source := httpConfigSource.Load(); source == nil || source.agent != agent {
+		config := agent.Config()
+		curHttpConfig.Store(newHttpConfigFor(config))
+		httpConfigSource.Store(&httpConfigOwner{agent: agent})
+		config.AddReloadCallback(httpConfigOpts, func() {
+			httpConfigMu.Lock()
+			defer httpConfigMu.Unlock()
+			if source := httpConfigSource.Load(); source != nil && source.agent == agent {
+				curHttpConfig.Store(newHttpConfigFor(config))
+			}
 		})
-	})
+	}
 	return curHttpConfig.Load()
 }
 
 func newHttpConfig() *httpConfig {
+	return newHttpConfigFor(pinpoint.GetConfig())
+}
+
+func newHttpConfigFor(config *pinpoint.Config) *httpConfig {
 	return &httpConfig{
-		srvUrl:              newHttpUrlFilter(),
-		srvMethod:           newHttpExcludeMethod(),
-		srvStatus:           newHttpStatusError(),
-		srvReqHeader:        makeHttpHeaderRecorder(CfgHttpServerRecordRequestHeader),
-		srvResHeader:        makeHttpHeaderRecorder(CfgHttpServerRecordResponseHeader),
-		srvCookie:           makeHttpHeaderRecorder(CfgHttpServerRecordRequestCookie),
-		cltReqHeader:        makeHttpHeaderRecorder(CfgHttpClientRecordRequestHeader),
-		cltResHeader:        makeHttpHeaderRecorder(CfgHttpClientRecordResponseHeader),
-		cltCookie:           makeHttpHeaderRecorder(CfgHttpClientRecordRequestCookie),
-		recordHandlerError:  pinpoint.GetConfig().Bool(CfgHttpServerRecordHandlerError),
-		urlStatEnabled:      pinpoint.GetConfig().Bool(pinpoint.CfgHttpUrlStatEnable),
-		srvProxyUserHeaders: makeProxyUserHeaderNames(pinpoint.GetConfig().StringSlice(CfgHttpServerProxyUserHeaderNames)),
+		srvUrl:              setupHttpUrlFilter(trimStringSlice(config.StringSlice(CfgHttpServerExcludeUrl))),
+		srvMethod:           &httpMethodFilter{excludeMethod: trimStringSlice(config.StringSlice(CfgHttpServerExcludeMethod))},
+		srvStatus:           parseHttpStatusErrors(config.StringSlice(CfgHttpServerStatusCodeErrors)),
+		srvReqHeader:        makeHttpHeaderRecorderFor(config, CfgHttpServerRecordRequestHeader),
+		srvResHeader:        makeHttpHeaderRecorderFor(config, CfgHttpServerRecordResponseHeader),
+		srvCookie:           makeHttpHeaderRecorderFor(config, CfgHttpServerRecordRequestCookie),
+		cltReqHeader:        makeHttpHeaderRecorderFor(config, CfgHttpClientRecordRequestHeader),
+		cltResHeader:        makeHttpHeaderRecorderFor(config, CfgHttpClientRecordResponseHeader),
+		cltCookie:           makeHttpHeaderRecorderFor(config, CfgHttpClientRecordRequestCookie),
+		recordHandlerError:  config.Bool(CfgHttpServerRecordHandlerError),
+		urlStatEnabled:      config.Bool(pinpoint.CfgHttpUrlStatEnable),
+		srvProxyUserHeaders: makeProxyUserHeaderNames(config.StringSlice(CfgHttpServerProxyUserHeaderNames)),
 	}
 }
 
@@ -318,7 +338,11 @@ func RecordHttpHandlerError(tracer pinpoint.Tracer, err error) {
 }
 
 func makeHttpHeaderRecorder(cfgName string) httpHeaderRecorder {
-	cfg := trimStringSlice(pinpoint.GetConfig().StringSlice(cfgName))
+	return makeHttpHeaderRecorderFor(pinpoint.GetConfig(), cfgName)
+}
+
+func makeHttpHeaderRecorderFor(config *pinpoint.Config, cfgName string) httpHeaderRecorder {
+	cfg := trimStringSlice(config.StringSlice(cfgName))
 
 	if len(cfg) == 0 {
 		return newNoopHttpHeaderRecorder()

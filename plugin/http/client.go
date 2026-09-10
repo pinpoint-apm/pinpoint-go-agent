@@ -121,6 +121,12 @@ type roundTripper struct {
 	ctx      context.Context
 }
 
+func (r *roundTripper) CloseIdleConnections() {
+	if c, ok := r.original.(interface{ CloseIdleConnections() }); ok {
+		c.CloseIdleConnections()
+	}
+}
+
 // WrapClient returns a new *http.Client ready to instrument.
 // It is necessary to pass the context containing the pinpoint.Tracer to the http.Request.
 //

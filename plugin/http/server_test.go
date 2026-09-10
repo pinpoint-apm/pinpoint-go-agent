@@ -433,8 +433,12 @@ func Test_responseWriter_PreservesOptionalInterfaces(t *testing.T) {
 			assert.Equal(t, (mask>>2)&1, optional.pushes, "delegated Push calls")
 
 			wrapped.WriteHeader(http.StatusCreated)
-			assert.Equal(t, http.StatusCreated, status, "the wrapper must publish the status it saw")
-			assert.Equal(t, http.StatusCreated, recorder.Code, "the status must still reach the original writer")
+			wantStatus := http.StatusCreated
+			if flushes {
+				wantStatus = http.StatusOK
+			}
+			assert.Equal(t, wantStatus, status, "the wrapper must publish the status sent by the original writer")
+			assert.Equal(t, wantStatus, recorder.Code, "the status must still reach the original writer")
 
 			unwrapper, ok := wrapped.(interface{ Unwrap() http.ResponseWriter })
 			require.True(t, ok, "http.ResponseController needs Unwrap")
@@ -443,8 +447,7 @@ func Test_responseWriter_PreservesOptionalInterfaces(t *testing.T) {
 	}
 }
 
-// The status pointer follows the last WriteHeader, and a plain Write leaves the
-// implicit 200 the handler never set.
+// The status pointer follows the first final response status, as net/http does.
 func Test_responseWriter_StatusTracking(t *testing.T) {
 	t.Run("write without WriteHeader", func(t *testing.T) {
 		rec := httptest.NewRecorder()
@@ -458,14 +461,28 @@ func Test_responseWriter_StatusTracking(t *testing.T) {
 		assert.Equal(t, "hello", rec.Body.String())
 	})
 
-	t.Run("last WriteHeader wins", func(t *testing.T) {
+	t.Run("first final WriteHeader wins", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		status := http.StatusOK
 		wrapped := WrapResponseWriter(rec, &status)
 
 		wrapped.WriteHeader(http.StatusTeapot)
-		wrapped.WriteHeader(http.StatusBadGateway) // net/http ignores this; the pointer still follows
-		assert.Equal(t, http.StatusBadGateway, status)
+		wrapped.WriteHeader(http.StatusBadGateway)
+		assert.Equal(t, http.StatusTeapot, status)
+		assert.Equal(t, http.StatusTeapot, rec.Code)
+	})
+
+	t.Run("Write commits an implicit 200", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		status := 0
+		wrapped := WrapResponseWriter(rec, &status)
+
+		_, err := wrapped.Write([]byte("hello"))
+		require.NoError(t, err)
+		wrapped.WriteHeader(http.StatusInternalServerError)
+
+		assert.Equal(t, http.StatusOK, status)
+		assert.Equal(t, http.StatusOK, rec.Code)
 	})
 
 	t.Run("headers set through the wrapper reach the original", func(t *testing.T) {

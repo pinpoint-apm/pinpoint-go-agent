@@ -28,18 +28,12 @@ func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) pinpoint.Agent {
 	return agent
 }
 
-// usePluginConfig starts an agent with the given options and republishes the
-// plugin's derived config from them. httpCfg() builds that config once per
-// process, so a test that changes an option has to publish the rebuild itself.
+// usePluginConfig starts an agent with the given options and initializes the
+// plugin's derived config from it.
 func usePluginConfig(t *testing.T, opts ...pinpoint.ConfigOption) pinpoint.Agent {
 	t.Helper()
 
 	agent := startAgent(t, opts...)
-
-	httpCfg() // trip the sync.Once first, or it would overwrite the store below
-	previous := curHttpConfig.Load()
-	curHttpConfig.Store(newHttpConfig())
-	t.Cleanup(func() { curHttpConfig.Store(previous) })
-
+	httpCfg()
 	return agent
 }
