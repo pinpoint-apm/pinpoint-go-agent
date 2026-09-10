@@ -21,6 +21,15 @@ type rateSampler struct {
 
 func newRateSampler(rate int) *rateSampler {
 	if rate < 0 {
+		// A negative rate has always meant 0, never sampled - Java's
+		// CountingSamplerFactory treats it as FalseSampler too. Warn on the way
+		// there: turning tracing off with an explicit 0 is a deliberate switch
+		// and stays quiet, a negative value reads as a typo. The C++ agent logs
+		// it too, at info (config.cpp). This runs whenever the sampler is
+		// (re)built, so a reload with the same typo warns again; publish does
+		// not check the rates, which would double the line for a change that
+		// rebuilds the sampler.
+		Log("config").Warnf("sampling counter rate %d is negative, no new transaction is sampled", rate)
 		rate = 0
 	}
 	return &rateSampler{
@@ -54,6 +63,9 @@ type percentSampler struct {
 
 func newPercentSampler(percent float64) *percentSampler {
 	if percent < 0 {
+		// Never sampled, like Java's FalseSampler; warned for the reason
+		// newRateSampler gives. An explicit 0 stays quiet.
+		Log("config").Warnf("sampling percent rate %v is negative, no new transaction is sampled", percent)
 		percent = 0
 	} else if percent > 100 {
 		// Clamped, but not silently: 100 is the documented maximum, so a rate

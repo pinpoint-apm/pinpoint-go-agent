@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -371,6 +372,37 @@ func Test_percentSampler_aboveMaximumWarns(t *testing.T) {
 	buf.Reset()
 	newPercentSampler(100)
 	assert.Empty(t, buf.String(), "a rate at the maximum must not warn")
+}
+
+// A negative rate turns sampling off like 0 does, but 0 is a deliberate switch
+// and a negative value a typo: the coercion is logged, once, and the value
+// semantics are unchanged (see the javaParityLock tests on edge rates).
+func Test_rateSampler_negativeWarns(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	s := newRateSampler(-1)
+	assert.Equal(t, uint64(0), s.rate)
+	assert.False(t, s.isSampled())
+	assert.Equal(t, 1, strings.Count(buf.String(), "sampling counter rate -1 is negative, no new transaction is sampled"))
+
+	buf.Reset()
+	newRateSampler(0)
+	assert.Empty(t, buf.String(), "an explicit 0 must not warn")
+}
+
+func Test_percentSampler_negativeWarns(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	s := newPercentSampler(-1)
+	assert.Equal(t, uint64(0), s.rate)
+	assert.False(t, s.isSampled())
+	assert.Equal(t, 1, strings.Count(buf.String(), "sampling percent rate -1 is negative, no new transaction is sampled"))
+
+	buf.Reset()
+	newPercentSampler(0)
+	assert.Empty(t, buf.String(), "an explicit 0 must not warn")
 }
 
 // The minimum rate still works after dropping the clamp that used to raise
