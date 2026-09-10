@@ -246,6 +246,11 @@ loop rather than one per iteration.
 * Annotate before the span or event ends. Rule 3 applies: after the end,
   `Annotations()` returns a no-op collector and a handle taken before it is
   sealed, so the late annotation is dropped either way.
+* `SpanEventRecorder.SetSQL("", args)` is ignored: an empty statement records
+  no SQL annotation and does not count toward `SQL.ErrorCount`. The
+  `database/sql` wrapper relies on this for `Begin`, `Commit` and `Rollback`
+  events, which reach `SetSQL` with no statement. See
+  [Java parity](java_parity.md#empty-sql-statement--diverges).
 
 ## 8. Keep Operation and Error Names Low-Cardinality
 

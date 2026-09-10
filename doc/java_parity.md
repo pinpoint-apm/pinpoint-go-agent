@@ -26,6 +26,7 @@ one place that compares. The C++ agent keeps the same file at
 | Per-URL sampler | `UrlTraceSampler`, `UrlSamplerConfig`, `TraceSamplerProvider` | **Declined** — see [below](#per-url-sampler--declined) |
 | Tracing before agent registration | `AgentInfoSender`, `DefaultApplicationContext.start()` | **Declined** — see [below](#registration-before-tracing--declined) |
 | SQL count per transaction | `DefaultSqlCountService` | **Adopted** — `SQL.ErrorCount` |
+| Empty SQL statement | `DefaultSqlMetaDataService.wrapSqlResult`, `WrappedSpanEventRecorder.recordSqlParsingResult` | **Diverges** — see [below](#empty-sql-statement--diverges) |
 | Error cause categories in `err` | `ErrorCategory`, `ConfigurableErrorRecorder`, `ConfigurableErrorRecorderFactory` | **Adopted** — `Span.ErrorMark` / `Span.ErrorMarkExclude` |
 | SQL comment removal | `DefaultSqlNormalizer`, `DefaultJdbcOption` | **Adopted** — `SQL.RemoveComments` |
 | SQL cache size | `SimpleCacheFactory`, `profiler.jdbc.sqlcachesize` | **Adopted** — `SQL.CacheSize` sizes the SQL-ID, SQL-UID and raw SQL caches only; the api and error caches keep their fixed 1024, as Java's `newSimpleCache()` does. The C++ agent's key is `Sql.CacheSize`. |
@@ -305,6 +306,38 @@ Java computes, and only its published text is abbreviated.
 **Cross-agent contract.** The C++ agent's fix for gap N1 must use the same value
 (1 MiB) and the same drop policy, so that an over-cap statement produces no SQL
 id / UID in either agent rather than a different one in each.
+
+---
+
+## Empty SQL statement — diverges
+
+**Java.** `DefaultSqlMetaDataService.wrapSqlResult` refuses only `null`; an
+empty string becomes a regular `DefaultParsingResult("")` that is cached, sent
+as SQL metadata and annotated, and `WrappedSpanEventRecorder.recordSqlParsingResult`
+counts it toward `profiler.sql.error.count` like any other statement. Nothing in
+Java's JDBC instrumentation passes `""` there, though: `TransactionCommitInterceptor`
+and `TransactionRollbackInterceptor` record the service type and the exception
+only and never call `recordSqlInfo`.
+
+**C++.** `SpanEventImpl::SetSqlQuery` has no empty-string check either; `""`
+goes through the normalizer like any other statement.
+
+**Go.** `SetSQL("", args)` returns before doing anything: no cap check, no SQL
+count, no normalization, no bind value truncation, no `AnnotationSqlUid` /
+`AnnotationSqlId`. A trace carries no sign that the call happened.
+
+**Why diverge.** The `database/sql` wrapper has a call path Java does not.
+`Begin`, `BeginTx`, `Commit` and `Rollback` are recorded through the same
+`setSqlSpanEvent` helper as a query, with an empty statement
+(`newSqlSpanEventNoSql` in `sql_driver.go`), so the guard is what keeps a
+transaction boundary event free of an empty SQL annotation and out of the
+`SQL.ErrorCount` tally. Converging fully with Java — cache, annotate and count
+`""` — would attach an empty SQL id / UID to every transaction boundary and make
+the N+1 threshold fire on transaction count rather than on statement count.
+Rewriting the wrapper so that transaction boundaries never call `SetSQL`
+would remove the need for the guard, but `SetSQL` is a public API and a
+third-party plugin can pass `""` just as easily, so the guard would stay
+anyway; the divergence is documented instead.
 
 ---
 

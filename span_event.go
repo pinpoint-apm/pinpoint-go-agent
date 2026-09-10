@@ -182,6 +182,16 @@ func (se *spanEvent) SetEndPoint(endPoint string) {
 }
 
 func (se *spanEvent) SetSQL(sql string, args string) {
+	// An empty statement records nothing: no annotation, no SQL count, no
+	// metadata. The sql/driver wrapper routes Begin, BeginTx, Commit and
+	// Rollback through setSqlSpanEvent with sql == "" (newSqlSpanEventNoSql),
+	// so this guard is what keeps a transaction boundary from carrying an
+	// empty SQL annotation and from counting toward SQL.ErrorCount. Java
+	// diverges deliberately elsewhere: DefaultSqlMetaDataService caches and
+	// annotates "" (only null is refused, wrapSqlResult), but its commit and
+	// rollback interceptors never call recordSqlInfo, so "" reaches its SQL
+	// path only from a caller that passes it on purpose. See
+	// doc/java_parity.md, "Empty SQL statement".
 	if sql == "" || se.warnIfFinished("SetSQL") {
 		return
 	}
