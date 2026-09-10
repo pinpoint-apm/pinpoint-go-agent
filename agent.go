@@ -1652,19 +1652,31 @@ func (agent *agent) enqueueUrlStat(stat *urlStat) bool {
 		break
 	}
 
-	// The queue is full: stat is rejected, and the oldest queued record is
-	// evicted on top of it to leave room for the next enqueue (unless the
-	// consumer already drained one meanwhile). Both are records the snapshot
-	// will never see, so both are counted.
-	dropped := int64(1)
+	// The queue is full: head-drop the oldest record and hand its slot to stat,
+	// the same policy as enqueueStat and tryEnqueueMeta. An overflow costs
+	// exactly one record - the evicted one, or stat itself when another
+	// producer takes the freed slot first.
+	dropped := int64(0)
 	select {
 	case <-agent.urlStatChan:
 		dropped++
 	default:
+		// The consumer drained one meanwhile, so nothing had to be evicted.
+	}
+	queued := false
+	select {
+	case agent.urlStatChan <- stat:
+		queued = true
+	default:
+		// Another producer took the freed slot: stat is the record lost.
+		dropped++
+	}
+	if dropped == 0 {
+		return true
 	}
 	agent.urlStatDrops.record(dropped)
 	agent.urlStatDrops.report("url stat", cap(agent.urlStatChan))
-	return false
+	return queued
 }
 
 // dropReporter counts records lost to a full queue and rate-limits the

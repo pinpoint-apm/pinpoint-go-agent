@@ -529,6 +529,9 @@ func Test_agent_tryEnqueueMetaReturnsWhenDropRaceLeavesQueueEmpty(t *testing.T) 
 	assert.False(t, result)
 }
 
+// An unbuffered urlStatChan makes every send and receive miss: the eviction
+// and the re-insert after it must both fall through to their default cases
+// rather than block the request path.
 func Test_agent_enqueueUrlStatReturnsWhenDropRaceLeavesQueueEmpty(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agent.urlStatChan = make(chan *urlStat)
@@ -538,6 +541,7 @@ func Test_agent_enqueueUrlStatReturnsWhenDropRaceLeavesQueueEmpty(t *testing.T) 
 	})
 
 	assert.False(t, result)
+	assert.EqualValues(t, 1, agent.urlStatDrops.dropped.Load(), "the rejected record is the one lost")
 }
 
 // An unbuffered statChan makes every send and receive miss: the eviction and
@@ -759,10 +763,36 @@ func Test_agent_enqueueUrlStatCountsEveryDroppedRecord(t *testing.T) {
 	}
 
 	// Nothing drained the queue while it filled, so every record that is not
-	// still sitting in it was dropped - both the rejected enqueues and the
-	// oldest entries evicted to make room for them.
+	// still sitting in it was dropped: the oldest one evicted by each overflow.
 	assert.Equal(t, int64(enqueued-queued), agent.urlStatDrops.dropped.Load(),
 		"drop counter must account for every record that never reached the consumer")
+	assert.Equal(t, queueSize, queued, "test must leave the queue full")
+}
+
+// Each overflow head-drops the oldest record and queues the new one, so a full
+// queue costs exactly one record per enqueue and holds the newest records.
+func Test_agent_enqueueUrlStatOverflowLosesExactlyOneRecord(t *testing.T) {
+	const queueSize, enqueued = 4, 100
+
+	agent := newTestAgent(defaultConfig())
+	agent.urlStatChan = make(chan *urlStat, queueSize)
+	defer captureWarnLog(&bytes.Buffer{})()
+
+	stats := make([]*urlStat, enqueued)
+	for i := range stats {
+		stats[i] = &urlStat{}
+		assert.True(t, agent.enqueueUrlStat(stats[i]), "a head-drop must make room for the new record")
+	}
+
+	assert.EqualValues(t, enqueued-queueSize, agent.urlStatDrops.dropped.Load(),
+		"one record lost per overflow")
+	close(agent.urlStatChan)
+	i := enqueued - queueSize
+	for stat := range agent.urlStatChan {
+		assert.Same(t, stats[i], stat, "the newest records survive")
+		i++
+	}
+	assert.Equal(t, enqueued, i)
 }
 
 func Test_agent_enqueueUrlStatCountsDropsFromConcurrentProducers(t *testing.T) {
@@ -806,7 +836,7 @@ func Test_agent_enqueueUrlStatRateLimitsOverflowWarning(t *testing.T) {
 		agent.enqueueUrlStat(&urlStat{})
 	}
 
-	assert.Greater(t, agent.urlStatDrops.dropped.Load(), int64(1), "test did not saturate the queue")
+	assert.EqualValues(t, enqueued-queueSize, agent.urlStatDrops.dropped.Load(), "test did not saturate the queue")
 	assert.Equal(t, 1, strings.Count(buf.String(), "url stat queue overflow"),
 		"a saturated queue must warn once per report interval, not once per dropped record")
 

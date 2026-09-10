@@ -47,6 +47,7 @@ one place that compares. The C++ agent keeps the same file at
 | Retrying a rejected metadata send | `MetadataGrpcDataSender`, `RetryResponseStreamObserver` | **Diverges (aligned with C++)** — see [below](#retrying-a-rejected-metadata-send--diverges) |
 | Span queue overflow policy | `SpanBatchGrpcDataSender` | **Same as Java** — a full send queue drops the oldest entry, as Java's default BATCH sender does (`queue.poll()` in `SpanBatchGrpcDataSender`); rejecting the newest is STREAM-mode-only behaviour, so head-drop is not a deviation |
 | Stat queue overflow policy | `GrpcDataSender` (`StatGrpcDataSender`), `AsyncQueueingExecutor` | **Diverges (head-drop)** — see [below](#stat-queue-overflow-policy--diverges) |
+| URL stat input queue overflow policy | `AsyncQueueingUriStatStorage`, `AsyncQueueingExecutor` | **Diverges (head-drop)** — see [below](#url-stat-input-queue-overflow-policy--diverges) |
 | Command channel RPC | `GrpcCommandService`, `SupportCommandCodeClientInterceptor`, `Header.SUPPORT_COMMAND_CODE` | **Aligned** — see [below](#command-channel-rpc--aligned) |
 | Active trace registry cap | `DefaultActiveTraceRepository`, `DEFAULT_MAX_ACTIVE_TRACE_SIZE` (Caffeine `maximumSize`) | **Adopted, per shard** — see [below](#active-span-registry-cap--adopted-per-shard) |
 | Automatic shutdown at process exit | `ShutdownHookRegister`, `DefaultAgent.close()` | **Diverges** — see [below](#automatic-shutdown-at-process-exit--diverges) |
@@ -843,6 +844,36 @@ the url stat tick queued through the same call.
 **Locked by** `Test_agent_enqueueStatOverflowLosesExactlyOneRecord`,
 `Test_agent_enqueueStatCountsEveryDroppedRecord` and
 `Test_agent_enqueueStatReturnsWhenDropRaceLeavesQueueEmpty` (`agent_test.go`).
+
+## URL stat input queue overflow policy — diverges
+
+**Java.** `AsyncQueueingUriStatStorage` stores each finished request's URL
+record through an `AsyncQueueingExecutor`, whose bounded queue rejects the
+*newest* record when full and leaves the queued ones alone.
+
+**C++.** `UrlStat` (`src/url_stat.cpp`) does the same: a full per-thread queue
+drops the record being added.
+
+**Go.** `enqueueUrlStat` (`agent.go`) head-drops, exactly as `enqueueStat`
+does — see [above](#stat-queue-overflow-policy--diverges) for the shape and
+the race handling. This is the *input* queue between the request path and the
+aggregator; the completed-tick queue that feeds the stat sender keeps its own
+oldest-tick drop (`Test_urlStatCompletedQueueDropsTheOldestTickAtTheCap`), and
+the per-snapshot pattern cap (`Http.UrlStat.LimitSize`) is a third, separate
+bound.
+
+**Why diverge.** Two queues in one agent with opposite overflow policies would
+be a puzzle for whoever reads the drop warning; the stat queue head-drops, and
+the two share `dropReporter` and its "oldest overwritten" wording. The loss is
+one record per overflow, as in Java and C++; only which record differs, and for
+a histogram sampled every tick the newest request is the one that still
+belongs to the tick about to be sent.
+
+**Locked by** `Test_agent_enqueueUrlStatOverflowLosesExactlyOneRecord`,
+`Test_agent_enqueueUrlStatCountsEveryDroppedRecord`,
+`Test_agent_enqueueUrlStatCountsDropsFromConcurrentProducers` and
+`Test_agent_enqueueUrlStatReturnsWhenDropRaceLeavesQueueEmpty`
+(`agent_test.go`).
 
 ## Command channel RPC — aligned
 
