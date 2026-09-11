@@ -645,6 +645,33 @@ func Test_javaParityLock_SampledHeaderEncoding(t *testing.T) {
 	}
 }
 
+// Test_javaParityLock_ParentAppTypeDefaultsToUndefined locks the parent
+// application type recorded when Pinpoint-pAppName arrives without a
+// parseable Pinpoint-pAppType: -1, ServiceType.UNDEFINED, which
+// ServerRequestRecorder.recordParentInfo produces through
+// NumberUtils.parseShort(type, ServiceType.UNDEFINED.getCode()). Both ports
+// used to default to 1 (UNKNOWN), a real service type the server map drew as
+// a node of that type.
+func Test_javaParityLock_ParentAppTypeDefaultsToUndefined(t *testing.T) {
+	assert.Equal(t, -1, defaultTestSpan().parentAppType, "a fresh span")
+
+	for _, typ := range []string{"", "abc"} {
+		span := defaultTestSpan()
+		m := map[string]string{
+			HeaderTraceId:               "t123456^12345^1",
+			HeaderSpanId:                "67890",
+			HeaderParentSpanId:          "123",
+			HeaderParentApplicationName: "upstream",
+		}
+		if typ != "" {
+			m[HeaderParentApplicationType] = typ
+		}
+		span.Extract(&DistributedTracingContextMap{m})
+		assert.Equal(t, "upstream", span.parentAppName)
+		assert.Equal(t, -1, span.parentAppType, "pAppType %q", typ)
+	}
+}
+
 // ===========================================================================
 // Group 6 - sampling formulas
 // ===========================================================================

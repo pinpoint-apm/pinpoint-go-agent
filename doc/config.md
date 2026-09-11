@@ -1290,11 +1290,25 @@ Http.Server.RecordHandlerError sets whether to record the error returned by http
 * default: true
 * dynamic
 
+### Http.Server.ProxyHeaderEnable
+Http.Server.ProxyHeaderEnable turns the recording of proxy request headers on or off: `Pinpoint-ProxyApache`,
+`Pinpoint-ProxyNginx`, `Pinpoint-ProxyApp` and the headers named by `Http.Server.ProxyUserHeaderNames`.
+It is the Java agent's `profiler.proxy.http.header.enable`.
+
+* --pinpoint-http-server-proxyheaderenable
+* PINPOINT_GO_HTTP_SERVER_PROXYHEADERENABLE
+* WithHttpServerProxyHeaderEnable()
+* type: bool
+* default: true
+* dynamic
+
 ### Http.Server.ProxyUserHeaderNames
-Http.Server.ProxyUserHeaderNames lists the request headers a user-defined proxy writes its receive time into,
-in the form `t=<epoch milliseconds>`. Each configured header present on a request is recorded as a proxy
-annotation of type USER (code 4) with the header name as its app, the same as the Java agent's
-`profiler.proxy.user.header.names`. A header whose `t=` is missing or not positive is not recorded.
+Http.Server.ProxyUserHeaderNames lists the request headers a user-defined proxy writes its receive time into.
+Each configured header present on a request is recorded as a proxy annotation of type USER (code 4) with the
+header name as its app, the same as the Java agent's `profiler.proxy.user.header.names`. The header may have been
+written by any of the three proxies, so the format of `t=` and `D=` is inferred from the value as the Java
+`UserRequestParser` does: an apache microsecond epoch, an nginx `sec.mmm` or an application's millisecond epoch.
+A header whose `t=` is missing or not positive is not recorded.
 The standard `Pinpoint-ProxyApache`, `Pinpoint-ProxyNginx` and `Pinpoint-ProxyApp` headers are always recorded
 and need no configuration.
 

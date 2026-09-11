@@ -23,7 +23,7 @@ func Test_defaultSpan(t *testing.T) {
 	span := defaultSpan(newTestAgent(defaultConfig()))
 
 	assert.Equal(t, span.parentSpanId, int64(-1), "parentSpanId")
-	assert.Equal(t, span.parentAppType, 1, "parentAppType")
+	assert.Equal(t, span.parentAppType, -1, "parentAppType is UNDEFINED until a header names one")
 	assert.Equal(t, span.eventDepth.Load(), int32(1), "eventDepth")
 	assert.Equal(t, span.serviceType, int32(ServiceTypeGoApp), "serviceType")
 	assert.NotNil(t, span.eventStack, "stack")
@@ -214,7 +214,7 @@ func Test_span_Extract_noTraceId(t *testing.T) {
 	assert.NotEqual(t, int64(67890), span.spanId, "span id header must be ignored")
 	assert.NotEqual(t, int64(0), span.spanId, "span id is generated")
 	assert.Empty(t, span.parentAppName, "parent app header must be ignored")
-	assert.Equal(t, 1, span.parentAppType, "parent app type header must be ignored")
+	assert.Equal(t, -1, span.parentAppType, "parent app type header must be ignored")
 	assert.Empty(t, span.parentServiceName, "parent service name header must be ignored")
 	assert.Empty(t, span.acceptorHost, "host header must be ignored")
 	assert.Equal(t, 1, countActiveSpans(span.agent), "registered as active exactly once")
@@ -1436,7 +1436,7 @@ func Test_span_Extract_malformedParentAppTypeKeepsDefault(t *testing.T) {
 	}})
 
 	assert.Equal(t, "upstream", span.parentAppName)
-	assert.Equal(t, 1, span.parentAppType, "malformed type keeps the default")
+	assert.Equal(t, -1, span.parentAppType, "malformed type keeps the UNDEFINED default, as Java's parseShort(type, UNDEFINED) does")
 }
 
 // The warning for a peer-controlled malformed header is throttled per call

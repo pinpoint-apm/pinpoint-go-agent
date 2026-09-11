@@ -1687,8 +1687,10 @@ func (b *spanMessageBuilder) makePSpan(chunk *spanChunk) *pb.PSpanMessage {
 	// labelled unknown.
 	acceptEvent.EndPoint = validUTF8(cmp.Or(span.endPoint, unknownAddress))
 	acceptEvent.RemoteAddr = validUTF8(cmp.Or(span.remoteAddr, unknownAddress))
-	// A root span has no parent to describe, so it carries no PParentInfo at
-	// ParentApplicationType 1 (UNKNOWN) for a parent that does not exist.
+	// A root span has no parent to describe, so it carries no PParentInfo
+	// naming an empty parent (ServerRequestRecorder records parent info only
+	// when Pinpoint-pAppName is present). ParentApplicationType is -1
+	// (UNDEFINED) when the name came without a parseable type, as in Java.
 	if span.parentAppName != "" {
 		parentInfo := b.parentInfos.get()
 		parentInfo.ParentApplicationName = validUTF8(span.parentAppName)

@@ -55,13 +55,13 @@ func Test_setProxyHeader(t *testing.T) {
 		{name: "apache", header: "Pinpoint-ProxyApache", value: "t=1500968753503 D=125 i=51 b=48",
 			want: &proxyValues{code: 3, receivedTime: 1500968753, duration: 125, idle: 51, busy: 48}},
 		{name: "apache bare token before valid ones", header: "Pinpoint-ProxyApache", value: "t=1500968753503 D junk i=51 b",
-			want: &proxyValues{code: 3, receivedTime: 1500968753, idle: 51}},
+			want: &proxyValues{code: 3, receivedTime: 1500968753, idle: 51, duration: -1, busy: -1}},
 		{name: "apache extra spaces", header: "Pinpoint-ProxyApache", value: "  t=1500968753503   D=125  ",
-			want: &proxyValues{code: 3, receivedTime: 1500968753, duration: 125}},
+			want: &proxyValues{code: 3, receivedTime: 1500968753, duration: 125, idle: -1, busy: -1}},
 		{name: "apache unparsable numbers", header: "Pinpoint-ProxyApache", value: "t=1500968753503 D=x i=y b=z",
-			want: &proxyValues{code: 3, receivedTime: 1500968753}},
+			want: &proxyValues{code: 3, receivedTime: 1500968753, duration: -1, idle: -1, busy: -1}},
 		{name: "apache repeated keys keep the last", header: "Pinpoint-ProxyApache", value: "t=1500968753503 D=1 D=2",
-			want: &proxyValues{code: 3, receivedTime: 1500968753, duration: 2}},
+			want: &proxyValues{code: 3, receivedTime: 1500968753, duration: 2, idle: -1, busy: -1}},
 		{name: "apache missing t", header: "Pinpoint-ProxyApache", value: "D=125 i=51 b=48"},
 		{name: "apache bare token", header: "Pinpoint-ProxyApache", value: "t"},
 		{name: "apache empty values", header: "Pinpoint-ProxyApache", value: "t= D= i= b="},
@@ -73,21 +73,21 @@ func Test_setProxyHeader(t *testing.T) {
 
 		// nginx t= and D= are seconds with exactly three decimals; D= is
 		{name: "nginx", header: "Pinpoint-ProxyNginx", value: "t=1504230492.763 D=0.123",
-			want: &proxyValues{code: 2, receivedTime: 1504230492763, duration: 123000}},
+			want: &proxyValues{code: 2, receivedTime: 1504230492763, duration: 123000, idle: -1, busy: -1}},
 		{name: "nginx zero duration", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=0.000",
-			want: &proxyValues{code: 2, receivedTime: 1504164327484}},
+			want: &proxyValues{code: 2, receivedTime: 1504164327484, duration: -1, idle: -1, busy: -1}},
 		{name: "nginx multi-second duration", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=12.345",
-			want: &proxyValues{code: 2, receivedTime: 1504164327484, duration: 12345000}},
+			want: &proxyValues{code: 2, receivedTime: 1504164327484, duration: 12345000, idle: -1, busy: -1}},
 		{name: "nginx D with two decimals", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=0.1",
-			want: &proxyValues{code: 2, receivedTime: 1504164327484}},
+			want: &proxyValues{code: 2, receivedTime: 1504164327484, duration: -1, idle: -1, busy: -1}},
 		{name: "nginx D without a decimal point", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=123",
-			want: &proxyValues{code: 2, receivedTime: 1504164327484}},
+			want: &proxyValues{code: 2, receivedTime: 1504164327484, duration: -1, idle: -1, busy: -1}},
 		{name: "nginx D with four decimals", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=0.1234",
-			want: &proxyValues{code: 2, receivedTime: 1504164327484}},
+			want: &proxyValues{code: 2, receivedTime: 1504164327484, duration: -1, idle: -1, busy: -1}},
 		{name: "nginx D unparsable", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=a.bcd",
-			want: &proxyValues{code: 2, receivedTime: 1504164327484}},
+			want: &proxyValues{code: 2, receivedTime: 1504164327484, duration: -1, idle: -1, busy: -1}},
 		{name: "nginx bare token before valid one", header: "Pinpoint-ProxyNginx", value: "D t=1504164327.484",
-			want: &proxyValues{code: 2, receivedTime: 1504164327484}},
+			want: &proxyValues{code: 2, receivedTime: 1504164327484, duration: -1, idle: -1, busy: -1}},
 		{name: "nginx t without a decimal point", header: "Pinpoint-ProxyNginx", value: "t=1504164327 D=0.123"},
 		{name: "nginx t with two decimals", header: "Pinpoint-ProxyNginx", value: "t=1504164327.48 D=0.123"},
 		{name: "nginx missing t", header: "Pinpoint-ProxyNginx", value: "D=0.123"},
@@ -102,15 +102,15 @@ func Test_setProxyHeader(t *testing.T) {
 		{name: "nginx unparsable", header: "Pinpoint-ProxyNginx", value: "t=abc"},
 
 		{name: "app", header: "Pinpoint-ProxyApp", value: "t=1500968753503 app=foo-bar",
-			want: &proxyValues{code: 1, receivedTime: 1500968753503, app: "foo-bar"}},
+			want: &proxyValues{code: 1, receivedTime: 1500968753503, app: "foo-bar", duration: -1, idle: -1, busy: -1}},
 		{name: "app time is not divided by 1000", header: "Pinpoint-ProxyApp", value: "t=1500968753503",
-			want: &proxyValues{code: 1, receivedTime: 1500968753503}},
+			want: &proxyValues{code: 1, receivedTime: 1500968753503, duration: -1, idle: -1, busy: -1}},
 		{name: "app bare token before valid one", header: "Pinpoint-ProxyApp", value: "app t=1500968753503",
-			want: &proxyValues{code: 1, receivedTime: 1500968753503}},
+			want: &proxyValues{code: 1, receivedTime: 1500968753503, duration: -1, idle: -1, busy: -1}},
 		{name: "app at the length cap", header: "Pinpoint-ProxyApp", value: "t=1500968753503 app=" + strings.Repeat("a", proxyAppMaxLength),
-			want: &proxyValues{code: 1, receivedTime: 1500968753503, app: strings.Repeat("a", proxyAppMaxLength)}},
+			want: &proxyValues{code: 1, receivedTime: 1500968753503, app: strings.Repeat("a", proxyAppMaxLength), duration: -1, idle: -1, busy: -1}},
 		{name: "app id characters", header: "Pinpoint-ProxyApp", value: "t=1500968753503 app=Foo.bar-1_2",
-			want: &proxyValues{code: 1, receivedTime: 1500968753503, app: "Foo.bar-1_2"}},
+			want: &proxyValues{code: 1, receivedTime: 1500968753503, app: "Foo.bar-1_2", duration: -1, idle: -1, busy: -1}},
 		// An app= that fails IdValidateUtils.validateId(app, 30) discards the header.
 		{name: "app over the length cap", header: "Pinpoint-ProxyApp", value: "t=1500968753503 app=" + strings.Repeat("a", proxyAppMaxLength+1)},
 		{name: "app with a disallowed character", header: "Pinpoint-ProxyApp", value: "t=1500968753503 app=foo/bar"},
@@ -156,9 +156,9 @@ func Test_setProxyHeader_EveryHeader(t *testing.T) {
 
 	key := int32(pinpoint.AnnotationHttpProxyHeader)
 	assert.Equal(t, []proxyValues{
-		{key: key, code: 3, receivedTime: 1500968753503, duration: 125},
-		{key: key, code: 2, receivedTime: 1504164327484, duration: 7000},
-		{key: key, code: 1, receivedTime: 1500968753503, app: "foo"},
+		{key: key, code: 3, receivedTime: 1500968753503, duration: 125, idle: -1, busy: -1},
+		{key: key, code: 2, receivedTime: 1504164327484, duration: 7000, idle: -1, busy: -1},
+		{key: key, code: 1, receivedTime: 1500968753503, app: "foo", duration: -1, idle: -1, busy: -1},
 	}, a.got)
 }
 
@@ -172,7 +172,7 @@ func Test_setProxyHeader_EveryHeader_oneInvalid(t *testing.T) {
 	setProxyHeader(a, header{req.Header})
 
 	assert.Equal(t, []proxyValues{
-		{key: int32(pinpoint.AnnotationHttpProxyHeader), code: 2, receivedTime: 1504164327484, duration: 7000},
+		{key: int32(pinpoint.AnnotationHttpProxyHeader), code: 2, receivedTime: 1504164327484, duration: 7000, idle: -1, busy: -1},
 	}, a.got)
 }
 
@@ -185,24 +185,24 @@ func Test_setProxyHeader_User(t *testing.T) {
 		want    []proxyValues
 	}{
 		{name: "user header", headers: map[string]string{"X-Proxy-Time": "t=1500968753503"},
-			want: []proxyValues{{code: 4, receivedTime: 1500968753503, app: "X-Proxy-Time"}}},
+			want: []proxyValues{{code: 4, receivedTime: 1500968753503, app: "X-Proxy-Time", duration: -1, idle: -1, busy: -1}}},
 		{name: "extra tokens are ignored", headers: map[string]string{"X-Proxy-Time": "app=foo t=1500968753503 D=3"},
-			want: []proxyValues{{code: 4, receivedTime: 1500968753503, duration: 3, app: "X-Proxy-Time"}}},
+			want: []proxyValues{{code: 4, receivedTime: 1500968753503, duration: 3, app: "X-Proxy-Time", idle: -1, busy: -1}}},
 		{name: "every configured header", headers: map[string]string{"X-Proxy-Time": "t=1000000000001", "X-Other-Proxy": "t=1000000000002"},
-			want: []proxyValues{{code: 4, receivedTime: 1000000000001, app: "X-Proxy-Time"}, {code: 4, receivedTime: 1000000000002, app: "X-Other-Proxy"}}},
+			want: []proxyValues{{code: 4, receivedTime: 1000000000001, app: "X-Proxy-Time", duration: -1, idle: -1, busy: -1}, {code: 4, receivedTime: 1000000000002, app: "X-Other-Proxy", duration: -1, idle: -1, busy: -1}}},
 		{name: "alongside a standard header", headers: map[string]string{"Pinpoint-ProxyApp": "t=5 app=foo", "X-Proxy-Time": "t=1000000000001"},
-			want: []proxyValues{{code: 1, receivedTime: 5, app: "foo"}, {code: 4, receivedTime: 1000000000001, app: "X-Proxy-Time"}}},
+			want: []proxyValues{{code: 1, receivedTime: 5, app: "foo", duration: -1, idle: -1, busy: -1}, {code: 4, receivedTime: 1000000000001, app: "X-Proxy-Time", duration: -1, idle: -1, busy: -1}}},
 		// UserRequestParser infers the writer from the value's shape.
 		{name: "apache shape: micros, D micros", headers: map[string]string{"X-Proxy-Time": "t=1504230492763123 D=1500"},
-			want: []proxyValues{{code: 4, receivedTime: 1504230492763, duration: 1500, app: "X-Proxy-Time"}}},
+			want: []proxyValues{{code: 4, receivedTime: 1504230492763, duration: 1500, app: "X-Proxy-Time", idle: -1, busy: -1}}},
 		{name: "nginx shape: sec.mmm, D sec.mmm", headers: map[string]string{"X-Proxy-Time": "t=1504230492.763 D=0.123"},
-			want: []proxyValues{{code: 4, receivedTime: 1504230492763, duration: 123000, app: "X-Proxy-Time"}}},
+			want: []proxyValues{{code: 4, receivedTime: 1504230492763, duration: 123000, app: "X-Proxy-Time", idle: -1, busy: -1}}},
 		{name: "app shape: millis", headers: map[string]string{"X-Proxy-Time": "t=1504230492763 D=42"},
-			want: []proxyValues{{code: 4, receivedTime: 1504230492763, duration: 42, app: "X-Proxy-Time"}}},
+			want: []proxyValues{{code: 4, receivedTime: 1504230492763, duration: 42, app: "X-Proxy-Time", idle: -1, busy: -1}}},
 		{name: "shorter than a millis epoch", headers: map[string]string{"X-Proxy-Time": "t=150423049276"}},
 		{name: "nginx dot too early", headers: map[string]string{"X-Proxy-Time": "t=15042304.9276"}},
 		{name: "negative D unset", headers: map[string]string{"X-Proxy-Time": "t=1504230492763 D=-5"},
-			want: []proxyValues{{code: 4, receivedTime: 1504230492763, app: "X-Proxy-Time"}}},
+			want: []proxyValues{{code: 4, receivedTime: 1504230492763, app: "X-Proxy-Time", duration: -1, idle: -1, busy: -1}}},
 		{name: "missing t", headers: map[string]string{"X-Proxy-Time": "1500968753503"}},
 		{name: "t=0", headers: map[string]string{"X-Proxy-Time": "t=0"}},
 		{name: "negative t", headers: map[string]string{"X-Proxy-Time": "t=-1"}},

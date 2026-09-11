@@ -82,7 +82,9 @@ func RecordHttpServerRequestWithReader(tracer pinpoint.Tracer, host string, remo
 	a := span.Annotations()
 	recordServerHttpRequestHeader(a, h)
 	recordServerHttpCookie(a, c)
-	setProxyHeader(a, h)
+	if proxyHeaderEnabled() {
+		setProxyHeader(a, h)
+	}
 }
 
 // headerFirst returns the first value of key, or "" when absent.
@@ -139,7 +141,10 @@ const (
 const proxyAppMaxLength = 30
 
 // ProxyRequestHeader.isValid(): DefaultProxyRequestRecorder records a header
-// only when its parser marked it valid.
+// only when its parser marked it valid. The optional fields start at -1, the
+// ProxyRequestHeaderBuilder defaults, so an absent or refused D=, i= or b=
+// goes on the wire as -1 - the value the web UI reads as "not reported" -
+// rather than as a 0 it cannot tell from a measured zero.
 type proxyRequest struct {
 	valid        bool
 	receivedTime int64
@@ -190,11 +195,19 @@ func proxyTokens(value string, fn func(k, v string)) {
 	}
 }
 
+// proxyUnset is the wire value of an optional proxy field that was absent or
+// refused (ProxyRequestHeaderBuilder's defaults).
+const proxyUnset int32 = -1
+
+func newProxyRequest(app string) proxyRequest {
+	return proxyRequest{valid: true, app: app, durationTime: proxyUnset, idlePercent: proxyUnset, busyPercent: proxyUnset}
+}
+
 // parseProxyApache reads "t=<epoch micros> D=<micros> i=<idle%> b=<busy%>",
 // the way ApacheRequestParser does: a duration that is not positive is left
 // unset, and a percent outside [0, 100] is left unset.
 func parseProxyApache(value string) proxyRequest {
-	p := proxyRequest{valid: true}
+	p := newProxyRequest("")
 	proxyTokens(value, func(k, v string) {
 		switch k {
 		case "t":
@@ -216,7 +229,7 @@ func parseProxyApache(value string) proxyRequest {
 // point, as 0. Reading the digits around the point as an integer keeps the
 // millisecond exact where a float multiply could round it.
 func parseProxyNginx(value string) proxyRequest {
-	p := proxyRequest{valid: true}
+	p := newProxyRequest("")
 	proxyTokens(value, func(k, v string) {
 		switch k {
 		case "t":
@@ -245,13 +258,12 @@ func nginxMillis(v string) int64 {
 
 // nginxDurationMicros converts a "sec.mmm" duration to microseconds. Not
 // positive is unset, as NginxRequestParser's `> 0` guard leaves it; the wire
-// field is an int32, so a product out of its range is reported as no
-// duration rather than a wrapped one (the C++ agent's
-// parseProxyNginxDurationMicros does the same).
+// field is an int32, so a product out of its range is reported as unset
+// rather than as a wrapped one.
 func nginxDurationMicros(v string) int32 {
 	ms := nginxMillis(v)
 	if ms <= 0 || ms > math.MaxInt32/1000 {
-		return 0
+		return proxyUnset
 	}
 	return int32(ms * 1000)
 }
@@ -271,7 +283,7 @@ func proxyDigits(v string) int64 {
 func proxyMicros(v string) int32 {
 	n, err := strconv.ParseInt(v, 10, 32)
 	if err != nil || n <= 0 {
-		return 0
+		return proxyUnset
 	}
 	return int32(n)
 }
@@ -280,7 +292,7 @@ func proxyMicros(v string) int32 {
 func proxyPercent(v string) int32 {
 	n, err := strconv.ParseInt(v, 10, 32)
 	if err != nil || n < 0 || n > 100 {
-		return 0
+		return proxyUnset
 	}
 	return int32(n)
 }
@@ -288,7 +300,7 @@ func proxyPercent(v string) int32 {
 // does. An app= token that is not a valid id - the [a-zA-Z0-9._-] character
 // class, at most proxyAppMaxLength bytes - discards the header.
 func parseProxyApp(value string) proxyRequest {
-	p := proxyRequest{valid: true}
+	p := newProxyRequest("")
 	proxyTokens(value, func(k, v string) {
 		switch k {
 		case "t":
@@ -310,7 +322,7 @@ func parseProxyApp(value string) proxyRequest {
 // UserRequestParser infers the format from the value's shape, and so does
 // this (userReceivedTimeMillis / userDurationMicros).
 func parseProxyUser(name, value string) proxyRequest {
-	p := proxyRequest{valid: true, app: name}
+	p := newProxyRequest(name)
 	proxyTokens(value, func(k, v string) {
 		switch k {
 		case "t":

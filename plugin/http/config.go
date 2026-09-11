@@ -18,6 +18,7 @@ const (
 	CfgHttpServerRecordRequestCookie  = "Http.Server.RecordRequestCookie"
 	CfgHttpServerRecordHandlerError   = "Http.Server.RecordHandlerError"
 	CfgHttpServerProxyUserHeaderNames = "Http.Server.ProxyUserHeaderNames"
+	CfgHttpServerProxyHeaderEnable    = "Http.Server.ProxyHeaderEnable"
 	CfgHttpClientRecordRequestHeader  = "Http.Client.RecordRequestHeader"
 	CfgHttpClientRecordResponseHeader = "Http.Client.RecordResponseHeader"
 	CfgHttpClientRecordRequestCookie  = "Http.Client.RecordRequestCookie"
@@ -32,6 +33,7 @@ func init() {
 	pinpoint.AddConfig(CfgHttpServerRecordRequestCookie, pinpoint.CfgStringSlice, []string{}, true)
 	pinpoint.AddConfig(CfgHttpServerRecordHandlerError, pinpoint.CfgBool, true, true)
 	pinpoint.AddConfig(CfgHttpServerProxyUserHeaderNames, pinpoint.CfgStringSlice, []string{}, true)
+	pinpoint.AddConfig(CfgHttpServerProxyHeaderEnable, pinpoint.CfgBool, true, true)
 	pinpoint.AddConfig(CfgHttpClientRecordRequestHeader, pinpoint.CfgStringSlice, []string{}, true)
 	pinpoint.AddConfig(CfgHttpClientRecordResponseHeader, pinpoint.CfgStringSlice, []string{}, true)
 	pinpoint.AddConfig(CfgHttpClientRecordRequestCookie, pinpoint.CfgStringSlice, []string{}, true)
@@ -116,6 +118,15 @@ func WithHttpServerRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
 	}
 }
 
+// WithHttpServerProxyHeaderEnable turns the recording of proxy request headers
+// (Pinpoint-ProxyApache, -ProxyNginx, -ProxyApp and the configured user
+// headers) on or off; the Java agent's profiler.proxy.http.header.enable.
+func WithHttpServerProxyHeaderEnable(enable bool) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(CfgHttpServerProxyHeaderEnable, enable)
+	}
+}
+
 // WithHttpServerProxyUserHeaderNames sets the request headers a user-defined
 // proxy writes its receive time into ("t=<epoch millis>"). Each one present on
 // a request is recorded as a proxy annotation of type USER (4), with the header
@@ -186,6 +197,7 @@ type httpConfig struct {
 	urlStatEnabled     bool
 	// Pre-canonicalized proxy user header names; see proxyHeaderApache.
 	srvProxyUserHeaders []string
+	srvProxyHeader      bool
 }
 
 var httpConfigOpts = []string{
@@ -197,6 +209,7 @@ var httpConfigOpts = []string{
 	CfgHttpServerRecordRequestCookie,
 	CfgHttpServerRecordHandlerError,
 	CfgHttpServerProxyUserHeaderNames,
+	CfgHttpServerProxyHeaderEnable,
 	CfgHttpClientRecordRequestHeader,
 	CfgHttpClientRecordResponseHeader,
 	CfgHttpClientRecordRequestCookie,
@@ -262,6 +275,7 @@ func newHttpConfigFor(config *pinpoint.Config) *httpConfig {
 		recordHandlerError:  config.Bool(CfgHttpServerRecordHandlerError),
 		urlStatEnabled:      config.Bool(pinpoint.CfgHttpUrlStatEnable),
 		srvProxyUserHeaders: makeProxyUserHeaderNames(config.StringSlice(CfgHttpServerProxyUserHeaderNames)),
+		srvProxyHeader:      config.Bool(CfgHttpServerProxyHeaderEnable),
 	}
 }
 
@@ -277,6 +291,10 @@ func makeProxyUserHeaderNames(cfg []string) []string {
 
 func proxyUserHeaderNames() []string {
 	return httpCfg().srvProxyUserHeaders
+}
+
+func proxyHeaderEnabled() bool {
+	return httpCfg().srvProxyHeader
 }
 
 // IsUrlStatEnabled reports whether URL statistics collection is enabled.

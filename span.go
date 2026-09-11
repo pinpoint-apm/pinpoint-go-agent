@@ -252,7 +252,11 @@ func defaultSpan(agent *agent) *span {
 	span.cfg = agent.config.load()
 	span.parentSpanId = -1
 	span.parentAppName = ""
-	span.parentAppType = 1 //UNKNOWN
+	// -1 is ServiceType.UNDEFINED, the value Java records when the
+	// Pinpoint-pAppType header is absent or unparseable
+	// (ServerRequestRecorder: parseShort(type, UNDEFINED)). Sent only next to
+	// a parent application name (see makePSpan).
+	span.parentAppType = -1
 	span.parentServiceName = ""
 	span.eventDepth.Store(1)
 	span.serviceType = ServiceTypeGoApp
@@ -500,18 +504,17 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		return
 	}
 
+	// A continued trace names this hop's span id; a blank value is as broken
+	// as an unparseable one and is warned about the same way (the C++
+	// agent's "unparseable Pinpoint-SpanID header, generating a new span
+	// id"). bitSize 64, not 0: span ids are int64 and 0 means platform int,
+	// so a 32-bit build failed to parse an upstream node's id and silently
+	// left the span id at zero, breaking the distributed trace.
 	spanid, _ := reader.Get(HeaderSpanId)
-	if spanid != "" {
-		// bitSize 64, not 0: span ids are int64 and 0 means platform int, so
-		// a 32-bit build failed to parse an upstream node's id and silently
-		// left the span id at zero, breaking the distributed trace.
-		if v, err := strconv.ParseInt(spanid, 10, 64); err == nil {
-			span.spanId = v
-		} else {
-			malformedSpanIdLog.warnf("malformed span id header %q: generating a new span id", spanid)
-			span.spanId = generateSpanId()
-		}
+	if v, err := strconv.ParseInt(spanid, 10, 64); err == nil {
+		span.spanId = v
 	} else {
+		malformedSpanIdLog.warnf("malformed span id header %q: generating a new span id", spanid)
 		span.spanId = generateSpanId()
 	}
 
