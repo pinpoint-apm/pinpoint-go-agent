@@ -30,11 +30,7 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 	tracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeGoHttpClient)
 
 	if tracer.IsSampled() {
-		url := req.Method
-		if req.URL != nil {
-			url += " " + req.URL.String()
-		}
-		tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHttpUrl, url)
+		tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHttpUrl, ClientUrl(req.Method, req.URL))
 
 		a := tracer.SpanEvent().Annotations()
 		RecordClientHttpRequestHeader(a, header{req.Header})

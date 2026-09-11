@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Breaking
+
+- **The HTTP client URL annotation strips the query by default.** `pphttp`
+  and `ppfasthttp` record `HTTP.URL` up to the `?` unless the new
+  `Http.Client.RecordUrlQuery` (default `false`) is on, matching the C++ agent;
+  Java's `profiler.<plugin>.param` defaults on. Query strings carry tokens and
+  ids. Endpoint and destination are unchanged.
+
+### Added
+
+- **Request parameter recording, opt-in.** `pphttp.RecordHttpServerRequestWithQuery`
+  (used by `RecordHttpServerRequest`, so every net/http based plugin gets it)
+  records the query string as annotation 41 (`HTTP.PARAM`) in Java's
+  `HttpServletParameterExtractor` format when `Http.Server.RecordRequestParam`
+  is on (default `false`; Java defaults on). `pphttp.FormatRequestParams` is
+  exported for adapters that hold the query outside a net/http request.
+
 - `Http.UrlStat.LimitSize` now defaults to `1000`, Java's
   `profiler.uri.stat.completed.data.limit.size`, instead of `1024`; the C++
   agent made the same move, so the two ports and Java drop a tick's excess

@@ -1319,6 +1319,28 @@ and need no configuration.
 * default: empty
 * dynamic
 
+### Http.Server.RecordRequestParam
+Http.Server.RecordRequestParam turns the recording of the request query string on or off. When on, the query
+string of a sampled request is recorded as annotation 41 (`HTTP.PARAM`) in the Java agent's
+`HttpServletParameterExtractor` format: `k=v&k=v`, percent-decoded, each key and value cut to 64 characters
+and the whole string to 512, with `...` marking every cut. It is the Java agent's
+`profiler.server.tracerequestparam`. **Java defaults this to on; the Go agent defaults it to off** because
+query strings routinely carry tokens, session ids and user ids. The C++ agent has the same key with the same
+default.
+
+* --pinpoint-http-server-recordrequestparam
+* PINPOINT_GO_HTTP_SERVER_RECORDREQUESTPARAM
+* WithHttpServerRecordRequestParam()
+* type: bool
+* default: false
+* dynamic
+
+``` yaml
+Http:
+  Server:
+    RecordRequestParam: true
+```
+
 ### Http.Client.RecordRequestHeader
 Http.Client.RecordRequestHeader option sets HTTP request headers to be logged on the client side.
 If sets to "HEADERS-ALL", it records all request headers.
@@ -1351,6 +1373,26 @@ If sets to "HEADERS-ALL", it records all request headers.
 * type: string slice
 * case-insensitive
 * dynamic
+
+### Http.Client.RecordUrlQuery
+Http.Client.RecordUrlQuery sets whether the client URL annotation (`HTTP.URL`, `GET http://host/path`) keeps
+its query string. By default the URL is recorded up to the `?`; the fragment, endpoint and destination are
+unaffected. It is the Java agent's `profiler.<plugin>.param` (`InterceptorUtils.getHttpUrl`). **Java defaults
+this to on; the Go agent defaults it to off** because query strings routinely carry tokens, session ids and
+user ids. The C++ agent has the same key with the same default.
+
+* --pinpoint-http-client-recordurlquery
+* PINPOINT_GO_HTTP_CLIENT_RECORDURLQUERY
+* WithHttpClientRecordUrlQuery()
+* type: bool
+* default: false
+* dynamic
+
+``` yaml
+Http:
+  Client:
+    RecordUrlQuery: true
+```
 
 ### Http.UrlStat.Enable
 Http.UrlStat.Enable option enables the agent's HTTP URL statistics feature.
@@ -1448,8 +1490,8 @@ Two things make a reload not happen, and both are easy to miss:
 | SQL | `SQL.TraceBindValue`, `SQL.MaxBindValueSize`, `SQL.TraceCommit`, `SQL.TraceRollback`, `SQL.TraceQueryStat`, `SQL.EnableRawSqlCache`, `SQL.ErrorCount` |
 | Logging | `Log.Level` (and its deprecated alias `LogLevel`), `Log.Output`, `Log.MaxSize`, `Log.MaxBackups` |
 | Errors | `Error.TraceCallStack`, `Error.CallStackDepth`, `Error.NewThroughput`, `Error.MaxChainDepth` |
-| HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError`, `Http.Server.ProxyUserHeaderNames` |
-| HTTP client | `Http.Client.RecordRequestHeader`, `Http.Client.RecordResponseHeader`, `Http.Client.RecordRequestCookie` |
+| HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError`, `Http.Server.ProxyUserHeaderNames`, `Http.Server.ProxyHeaderEnable`, `Http.Server.RecordRequestParam` |
+| HTTP client | `Http.Client.RecordRequestHeader`, `Http.Client.RecordResponseHeader`, `Http.Client.RecordRequestCookie`, `Http.Client.RecordUrlQuery` |
 | URL statistics | `Http.UrlStat.Enable`, `Http.UrlStat.LimitSize`, `Http.UrlStat.WithMethod` |
 
 ### Restart-only options

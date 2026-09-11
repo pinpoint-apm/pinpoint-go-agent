@@ -1004,3 +1004,46 @@ func spanOf(t *testing.T, tracer pinpoint.Tracer) spanJson {
 	require.NoError(t, json.Unmarshal(tracer.JsonString(), &s))
 	return s
 }
+
+// annotationStrings returns every string annotated under key.
+func (s spanJson) annotationStrings(key int32) []string {
+	var values []string
+	for _, a := range s.Annotations {
+		m, ok := a.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if k, ok := m["key"].(float64); !ok || int32(k) != key {
+			continue
+		}
+		value, _ := m["value"].(map[string]interface{})
+		field, _ := value["Field"].(map[string]interface{})
+		if str, ok := field["StringValue"].(string); ok {
+			values = append(values, str)
+		}
+	}
+	return values
+}
+
+func TestRecordHttpServerRequest_Query(t *testing.T) {
+	tests := []struct {
+		name   string
+		record bool
+		url    string
+		want   []string
+	}{
+		{"off by default", false, "/p?a=1&b=x%20y&empty=", nil},
+		{"on", true, "/p?a=1&b=x%20y&empty=", []string{"a=1&b=x y&empty="}},
+		{"on, no query", true, "/p", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			usePluginConfig(t, WithHttpServerRecordRequestParam(tt.record))
+			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
+			tracer := NewHttpServerTracer(req, "test")
+			defer tracer.EndSpan()
+
+			assert.Equal(t, tt.want, spanOf(t, tracer).annotationStrings(pinpoint.AnnotationHttpParam))
+		})
+	}
+}

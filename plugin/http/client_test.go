@@ -443,3 +443,24 @@ func TestWrapClient_NestedRequestIsNotTraced(t *testing.T) {
 		tracer.EndSpanEvent()
 	}
 }
+
+func TestBefore_RecordsTheUrlWithoutItsQueryByDefault(t *testing.T) {
+	for _, tt := range []struct {
+		record bool
+		want   string
+	}{
+		{false, "GET https://h/p"},
+		{true, "GET https://h/p?token=x"},
+	} {
+		usePluginConfig(t, WithHttpClientRecordUrlQuery(tt.record))
+		tracer := &annotationTracer{pinpoint.GetAgent().NewSpanTracer("test", "/caller"), newStringAnnotation()}
+		req, err := http.NewRequest(http.MethodGet, "https://h/p?token=x", nil)
+		require.NoError(t, err)
+
+		got := before(tracer, "http/Client.Do()", req)
+		got.EndSpanEvent()
+		tracer.EndSpan()
+
+		assert.Equal(t, []string{tt.want}, tracer.a.strs[pinpoint.AnnotationHttpUrl])
+	}
+}

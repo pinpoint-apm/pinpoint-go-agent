@@ -460,3 +460,61 @@ func TestDoClient_PanicStillClosesTheSpanEvent(t *testing.T) {
 	})
 	assert.Equal(t, 1, tracer.ends, "the span event must be closed during panic unwinding")
 }
+
+type urlAnnotation struct {
+	pinpoint.Annotation
+	urls []string
+}
+
+func (a *urlAnnotation) AppendString(key int32, s string) {
+	if key == pinpoint.AnnotationHttpUrl {
+		a.urls = append(a.urls, s)
+	}
+}
+
+type urlTracer struct {
+	pinpoint.Tracer
+	a *urlAnnotation
+}
+
+type urlSpanEvent struct {
+	pinpoint.SpanEventRecorder
+	a *urlAnnotation
+}
+
+func (t *urlTracer) SpanEvent() pinpoint.SpanEventRecorder {
+	return &urlSpanEvent{t.Tracer.SpanEvent(), t.a}
+}
+func (se *urlSpanEvent) Annotations() pinpoint.Annotation {
+	if se.a.Annotation == nil {
+		se.a.Annotation = se.SpanEventRecorder.Annotations()
+	}
+	return se.a
+}
+
+// The client URL annotation shares pphttp's rule: no query unless
+// Http.Client.RecordUrlQuery is on.
+func TestDoClient_StripsTheUrlQuery(t *testing.T) {
+	for _, tt := range []struct {
+		record bool
+		want   string
+	}{
+		{false, "GET http://localhost:9090/hello"},
+		{true, "GET http://localhost:9090/hello?token=x"},
+	} {
+		startAgent(t, pphttp.WithHttpClientRecordUrlQuery(tt.record))
+		tracer := &urlTracer{pinpoint.GetAgent().NewSpanTracer("test", "/caller"), &urlAnnotation{}}
+
+		req := fasthttp.AcquireRequest()
+		req.SetRequestURI("http://localhost:9090/hello?token=x")
+		req.Header.SetMethod(http.MethodGet)
+		res := fasthttp.AcquireResponse()
+
+		require.NoError(t, DoClient(func() error { return nil }, pinpoint.NewContext(context.Background(), tracer), req, res))
+		tracer.EndSpan()
+		fasthttp.ReleaseRequest(req)
+		fasthttp.ReleaseResponse(res)
+
+		assert.Equal(t, []string{tt.want}, tracer.a.urls)
+	}
+}

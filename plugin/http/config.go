@@ -19,9 +19,11 @@ const (
 	CfgHttpServerRecordHandlerError   = "Http.Server.RecordHandlerError"
 	CfgHttpServerProxyUserHeaderNames = "Http.Server.ProxyUserHeaderNames"
 	CfgHttpServerProxyHeaderEnable    = "Http.Server.ProxyHeaderEnable"
+	CfgHttpServerRecordRequestParam   = "Http.Server.RecordRequestParam"
 	CfgHttpClientRecordRequestHeader  = "Http.Client.RecordRequestHeader"
 	CfgHttpClientRecordResponseHeader = "Http.Client.RecordResponseHeader"
 	CfgHttpClientRecordRequestCookie  = "Http.Client.RecordRequestCookie"
+	CfgHttpClientRecordUrlQuery       = "Http.Client.RecordUrlQuery"
 )
 
 func init() {
@@ -34,9 +36,11 @@ func init() {
 	pinpoint.AddConfig(CfgHttpServerRecordHandlerError, pinpoint.CfgBool, true, true)
 	pinpoint.AddConfig(CfgHttpServerProxyUserHeaderNames, pinpoint.CfgStringSlice, []string{}, true)
 	pinpoint.AddConfig(CfgHttpServerProxyHeaderEnable, pinpoint.CfgBool, true, true)
+	pinpoint.AddConfig(CfgHttpServerRecordRequestParam, pinpoint.CfgBool, false, true)
 	pinpoint.AddConfig(CfgHttpClientRecordRequestHeader, pinpoint.CfgStringSlice, []string{}, true)
 	pinpoint.AddConfig(CfgHttpClientRecordResponseHeader, pinpoint.CfgStringSlice, []string{}, true)
 	pinpoint.AddConfig(CfgHttpClientRecordRequestCookie, pinpoint.CfgStringSlice, []string{}, true)
+	pinpoint.AddConfig(CfgHttpClientRecordUrlQuery, pinpoint.CfgBool, false, true)
 }
 
 // WithHttpServerStatusCodeError sets HTTP status code with request failure.
@@ -127,6 +131,17 @@ func WithHttpServerProxyHeaderEnable(enable bool) pinpoint.ConfigOption {
 	}
 }
 
+// WithHttpServerRecordRequestParam turns the recording of the request query
+// string (annotation 41, Java's profiler.server.tracerequestparam) on or off.
+// Off by default: query strings carry tokens and ids.
+//
+//	pphttp.WithHttpServerRecordRequestParam(true)
+func WithHttpServerRecordRequestParam(record bool) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(CfgHttpServerRecordRequestParam, record)
+	}
+}
+
 // WithHttpServerProxyUserHeaderNames sets the request headers a user-defined
 // proxy writes its receive time into ("t=<epoch millis>"). Each one present on
 // a request is recorded as a proxy annotation of type USER (4), with the header
@@ -180,6 +195,16 @@ func WithHttpClientRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
 	}
 }
 
+// WithHttpClientRecordUrlQuery sets whether the client URL annotation keeps
+// its query string. Off by default: the URL is recorded up to the "?".
+//
+//	pphttp.WithHttpClientRecordUrlQuery(true)
+func WithHttpClientRecordUrlQuery(record bool) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(CfgHttpClientRecordUrlQuery, record)
+	}
+}
+
 // httpConfig bundles every component derived from this plugin's options. A
 // reload rebuilds it whole and publishes it with a single atomic store, so a
 // request never sees a partially initialized filter or recorder.
@@ -198,6 +223,8 @@ type httpConfig struct {
 	// Pre-canonicalized proxy user header names; see proxyHeaderApache.
 	srvProxyUserHeaders []string
 	srvProxyHeader      bool
+	srvRequestParam     bool
+	cltUrlQuery         bool
 }
 
 var httpConfigOpts = []string{
@@ -210,9 +237,11 @@ var httpConfigOpts = []string{
 	CfgHttpServerRecordHandlerError,
 	CfgHttpServerProxyUserHeaderNames,
 	CfgHttpServerProxyHeaderEnable,
+	CfgHttpServerRecordRequestParam,
 	CfgHttpClientRecordRequestHeader,
 	CfgHttpClientRecordResponseHeader,
 	CfgHttpClientRecordRequestCookie,
+	CfgHttpClientRecordUrlQuery,
 	pinpoint.CfgHttpUrlStatEnable,
 }
 
@@ -276,6 +305,8 @@ func newHttpConfigFor(config *pinpoint.Config) *httpConfig {
 		urlStatEnabled:      config.Bool(pinpoint.CfgHttpUrlStatEnable),
 		srvProxyUserHeaders: makeProxyUserHeaderNames(config.StringSlice(CfgHttpServerProxyUserHeaderNames)),
 		srvProxyHeader:      config.Bool(CfgHttpServerProxyHeaderEnable),
+		srvRequestParam:     config.Bool(CfgHttpServerRecordRequestParam),
+		cltUrlQuery:         config.Bool(CfgHttpClientRecordUrlQuery),
 	}
 }
 

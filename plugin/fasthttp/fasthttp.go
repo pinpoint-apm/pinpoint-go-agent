@@ -29,7 +29,6 @@
 package ppfasthttp
 
 import (
-	"bytes"
 	"context"
 	"net/http"
 
@@ -117,13 +116,8 @@ func before(tracer pinpoint.Tracer, operationName string, req *fasthttp.Request)
 	se.SetServiceType(pinpoint.ServiceTypeGoHttpClient)
 
 	if tracer.IsSampled() {
-		var b bytes.Buffer
-		b.WriteString(string(req.Header.Method()))
-		b.WriteString(" ")
-		b.WriteString(req.URI().String())
-
 		a := se.Annotations()
-		a.AppendString(pinpoint.AnnotationHttpUrl, b.String())
+		a.AppendString(pinpoint.AnnotationHttpUrl, pphttp.ClientUrlString(string(req.Header.Method()), req.URI().String()))
 		pphttp.RecordClientHttpRequestHeader(a, RequestHeader{&req.Header})
 		pphttp.RecordClientHttpCookie(a, Cookie{&req.Header})
 	}

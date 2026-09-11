@@ -27,6 +27,7 @@ import (
 	"net"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"reflect"
 	"runtime"
 	"strconv"
@@ -62,7 +63,7 @@ func NewHttpServerTracerWithReader(method, path, operation string, reader pinpoi
 
 // RecordHttpServerRequest records sampled request attributes on tracer.
 func RecordHttpServerRequest(tracer pinpoint.Tracer, req *http.Request) {
-	RecordHttpServerRequestWithReader(tracer, req.Host, req.RemoteAddr, header{req.Header}, cookie{req})
+	RecordHttpServerRequestWithQuery(tracer, req.Host, req.RemoteAddr, header{req.Header}, cookie{req}, req.URL.RawQuery)
 }
 
 // RecordHttpServerRequestWithReader records sampled request attributes from
@@ -85,6 +86,101 @@ func RecordHttpServerRequestWithReader(tracer pinpoint.Tracer, host string, remo
 	if proxyHeaderEnabled() {
 		setProxyHeader(a, h)
 	}
+}
+
+// RecordHttpServerRequestWithQuery is RecordHttpServerRequestWithReader plus
+// the raw query string, recorded as annotation 41 in Java's
+// HttpServletParameterExtractor format when Http.Server.RecordRequestParam is
+// on (default off: query strings carry tokens and ids).
+func RecordHttpServerRequestWithQuery(tracer pinpoint.Tracer, host string, remoteAddr string, h Header, c Cookie, rawQuery string) {
+	RecordHttpServerRequestWithReader(tracer, host, remoteAddr, h, c)
+	if !tracer.IsSampled() || !httpCfg().srvRequestParam || rawQuery == "" {
+		return
+	}
+	tracer.Span().Annotations().AppendString(pinpoint.AnnotationHttpParam, FormatRequestParams(rawQuery))
+}
+
+// Java's HttpServletParameterExtractor limits.
+const (
+	requestParamEntryLimit = 64
+	requestParamTotalLimit = 512
+)
+
+// FormatRequestParams renders a raw query string the way Java's
+// HttpServletParameterExtractor does: "k=v&k=v", percent-decoded ("+" is a
+// space; an undecodable token is kept verbatim), each key and value cut to 64
+// characters and the whole string to 512, with "..." marking every cut.
+// Exported for the adapters that do not go through RecordHttpServerRequest.
+func FormatRequestParams(rawQuery string) string {
+	cut := func(s string) string {
+		if len(s) > requestParamEntryLimit {
+			return s[:requestParamEntryLimit] + "..."
+		}
+		return s
+	}
+	unescape := func(s string) string {
+		if v, err := url.QueryUnescape(s); err == nil {
+			return v
+		}
+		return s
+	}
+
+	var b strings.Builder
+	for rest := rawQuery; rest != ""; {
+		var item string
+		item, rest, _ = strings.Cut(rest, "&")
+		if item == "" {
+			continue
+		}
+		k, v, _ := strings.Cut(item, "=")
+		entry := cut(unescape(k)) + "=" + cut(unescape(v))
+		sep := 0
+		if b.Len() > 0 {
+			sep = 1
+		}
+		if b.Len()+sep+len(entry) > requestParamTotalLimit {
+			if sep == 1 {
+				b.WriteByte('&')
+			}
+			b.WriteString("...")
+			break
+		}
+		if sep == 1 {
+			b.WriteByte('&')
+		}
+		b.WriteString(entry)
+	}
+	return b.String()
+}
+
+// ClientUrl builds the client AnnotationHttpUrl value, "METHOD url". The
+// query string is dropped unless Http.Client.RecordUrlQuery is on; the
+// fragment is kept. A nil URL yields the bare method.
+func ClientUrl(method string, u *url.URL) string {
+	if u == nil {
+		return method
+	}
+	if !httpCfg().cltUrlQuery && (u.RawQuery != "" || u.ForceQuery) {
+		c := *u
+		c.RawQuery, c.ForceQuery = "", false
+		u = &c
+	}
+	return method + " " + u.String()
+}
+
+// ClientUrlString is ClientUrl for adapters that hold the URL as a string
+// (fasthttp): the same rule, applied by cutting at the first "?" and keeping
+// a trailing "#fragment".
+func ClientUrlString(method, rawUrl string) string {
+	if !httpCfg().cltUrlQuery {
+		if base, rest, ok := strings.Cut(rawUrl, "?"); ok {
+			rawUrl = base
+			if i := strings.IndexByte(rest, '#'); i >= 0 {
+				rawUrl += rest[i:]
+			}
+		}
+	}
+	return method + " " + rawUrl
 }
 
 // headerFirst returns the first value of key, or "" when absent.

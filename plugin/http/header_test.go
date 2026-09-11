@@ -224,3 +224,33 @@ func TestCookieAdapter(t *testing.T) {
 	empty := requestWithCookies(t)
 	empty.VisitAll(func(string, string) { t.Error("a request without cookies yielded one") })
 }
+
+// stringAnnotation also keeps the single string annotations (HTTP.URL,
+// HTTP.PARAM) the plain recorder ignores.
+type stringAnnotation struct {
+	*recordingAnnotation
+	strs map[int32][]string
+}
+
+func newStringAnnotation() *stringAnnotation {
+	return &stringAnnotation{recordingAnnotation: newRecordingAnnotation(), strs: map[int32][]string{}}
+}
+
+func (a *stringAnnotation) AppendString(key int32, s string) { a.strs[key] = append(a.strs[key], s) }
+
+// annotationTracer hands before() a span event whose annotations are captured.
+type annotationTracer struct {
+	pinpoint.Tracer
+	a *stringAnnotation
+}
+
+type annotationSpanEvent struct {
+	pinpoint.SpanEventRecorder
+	a *stringAnnotation
+}
+
+func (t *annotationTracer) SpanEvent() pinpoint.SpanEventRecorder {
+	return &annotationSpanEvent{t.Tracer.SpanEvent(), t.a}
+}
+
+func (se *annotationSpanEvent) Annotations() pinpoint.Annotation { return se.a }
