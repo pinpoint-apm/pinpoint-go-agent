@@ -16,16 +16,10 @@
 
 // Locked parity invariants.
 //
-// This is the plugin/http half of the agent's parity lock suite. The four
-// proxy request parsers live in this package, which imports the agent
-// package, so the group that covers them cannot sit in
-// java_parity_lock_test.go (package pinpoint) without an import cycle. The
-// group keeps its number and its title on both sides, and the C++ agent
-// mirrors it as group 14 of test/test_java_parity_lock.cpp.
-//
-// Everything said in the header of java_parity_lock_test.go applies here: a
-// failure means either the change is wrong, or all three implementations and
-// doc/java_parity.md move together.
+// This is the plugin/http half of the parity lock suite. The proxy parsers
+// live in this package, which imports pinpoint, so the group cannot be tested
+// from package pinpoint without an import cycle. Rationale lives in
+// doc/java_parity.md.
 //
 // Groups:
 //  14  proxy request header pipeline
@@ -68,11 +62,7 @@ func parityProxyRequest(headers map[string]string) []proxyValues {
 // parsers - apache, nginx, app and the configured user headers - run on every
 // request and record independently (plugin/http/server.go:155-170), so a
 // request that crossed two proxies produces two annotations rather than only
-// the hop nearest the agent. Java does the same: DefaultProxyRequestRecorder
-// .record (DefaultProxyRequestRecorder.java:52-53) loops over every
-// registered parser and parseHeaderAndRecord records one annotation per valid
-// header. A first-match if/else chain would report one hop and silently drop
-// the rest of the chain.
+// the nearest hop.
 func Test_javaParityLock_ProxyParsersRunIndependently(t *testing.T) {
 	usePluginConfig(t, WithHttpServerProxyUserHeaderNames([]string{"X-Proxy-Time"}))
 
@@ -94,10 +84,7 @@ func Test_javaParityLock_ProxyParsersRunIndependently(t *testing.T) {
 
 // Test_javaParityLock_ProxyHeaderNeedsAPositiveReceivedTime locks that every
 // parser is gated on a positive received time (plugin/http/server.go:172-181):
-// no t=, t=0 or a t= that does not parse records nothing at all. Java reaches
-// the same place from the other side - each parser calls setValid(false) and
-// DefaultProxyRequestRecorder (DefaultProxyRequestRecorder.java:71) records
-// only a header whose isValid() holds.
+// no t=, t=0, or an unparseable t= records no annotation.
 //
 // An annotation with a received time of 0 is worse than no annotation: the
 // web UI charts the proxy-to-agent gap from that field, and 0 draws the hop
@@ -135,20 +122,11 @@ func Test_javaParityLock_ProxyHeaderNeedsAPositiveReceivedTime(t *testing.T) {
 // Test_javaParityLock_ProxyNginxTimestampsAreExactThreeDecimals locks the
 // nginx time format: t= ($msec) and D= ($request_time) are seconds with
 // exactly three decimals, and both are converted with integer arithmetic
-// (nginxMillis, plugin/http/server.go:233-243). Java does it the same way -
-// NginxRequestParser.toReceivedTimeMillis / toDurationTimeMicros
-// (NginxRequestParser.java:74-110) reject a value whose
-// `length - millisPosition != 4` and convert by deleting the '.' and parsing
-// the result, never by scaling a double.
+// (nginxMillis, plugin/http/server.go:233-243).
 //
 // That is what makes the value exact: 1504230492.763 has no binary
 // representation, so parsing it as a float and multiplying by 1000 lands on
 // 1504230492762.99 and truncates a millisecond away.
-//
-// (Not locked, and noted for the cross-agent review: a negative nginx D= is
-// recorded here as a negative duration, where Java's
-// `durationTimeMicroseconds > 0` guard leaves the duration unset. The
-// received time is gated in both; the duration is not gated here.)
 func Test_javaParityLock_ProxyNginxTimestampsAreExactThreeDecimals(t *testing.T) {
 	usePluginConfig(t)
 
@@ -201,9 +179,7 @@ func Test_javaParityLock_ProxyNginxTimestampsAreExactThreeDecimals(t *testing.T)
 // 10 or later is nginx's sec.mmm; anything else is an app's milliseconds.
 // toDurationTimeMicros reads D= the same way - a '.' means fractional
 // seconds, otherwise a microsecond count - and, like every parser, applies
-// it only when positive. userReceivedTimeMillis / userDurationMicros
-// (plugin/http/server.go) and the C++ agent's parseProxyUserReceivedTimeMillis
-// / parseProxyUserDurationMicros (src/http.cpp) are the same function.
+// it only when positive.
 //
 // Reading t= as plain milliseconds would put an apache hop 47,000 years out
 // and drop an nginx hop whole, since "1504230492.763" does not parse.
@@ -242,14 +218,9 @@ func Test_javaParityLock_ProxyUserHeaderInfersItsWriter(t *testing.T) {
 
 // Test_javaParityLock_ProxyDurationAndPercentAreGated locks the value gates
 // the standard parsers share with UserRequestParser: every parser applies D=
-// only when positive (ApacheRequestParser / NginxRequestParser / AppRequestParser
-// `durationTimeMicroseconds > 0`), the nginx product is reported as unset
-// rather than a wrapped int32 (C++ parseProxyNginxDurationMicros; Java's
-// parseInteger fails first on such input), and the apache i=/b= are applied
-// only inside [0, 100] (ApacheRequestParser). An unset field goes on the wire
-// as -1, ProxyRequestHeaderBuilder's default, which the web UI reads as "not
-// reported"; the percent is a peer-controlled byte, out of range it is unset,
-// not truncated.
+// only when positive; an overflowed nginx value is unset rather than wrapped;
+// and apache i=/b= apply only inside [0, 100]. An unset field goes on the wire
+// as -1, and an out-of-range percent is unset rather than truncated.
 func Test_javaParityLock_ProxyDurationAndPercentAreGated(t *testing.T) {
 	usePluginConfig(t)
 

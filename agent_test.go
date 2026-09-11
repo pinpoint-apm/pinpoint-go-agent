@@ -1002,9 +1002,8 @@ func Test_agent_GetAgentIsRaceFreeAgainstShutdown(t *testing.T) {
 // A metadata item dropped by a full queue must not stay cached: its id was
 // already handed to spans, so the entry has to be re-registered rather than
 // left pointing at an id the collector never received. The queue refuses the
-// newcomer (Java GrpcDataSender.send, C++ GrpcMetadata::enqueueMeta), so the
-// item that loses its cache entry is the one just registered; the queued ones
-// keep theirs.
+// newcomer, so the item that loses its cache entry is the one just registered;
+// queued items keep theirs.
 func Test_agent_MetaCacheDropsEntryWhenQueueIsFull(t *testing.T) {
 	a := newTestAgent(defaultConfig())
 	a.metaChan = make(chan interface{}, 2)

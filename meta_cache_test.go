@@ -394,9 +394,7 @@ func TestMetaCacheRemoveValue(t *testing.T) {
 }
 
 // The shard split keeps the configured total: the remainder goes to the first
-// shards and the shard count is clamped to the capacity, as the C++ agent's
-// ShardedLruCache does. A floor division made SQL.CacheSize=1000 hold 992 and
-// =10 hold 16 (one per shard, 160% of the setting).
+// shards and the shard count is clamped to the capacity.
 func TestMetaCacheCapacityIsSplitExactly(t *testing.T) {
 	for _, tc := range []struct{ capacity, shards int }{{1024, 16}, {1000, 16}, {10, 10}, {1, 1}, {17, 16}} {
 		c := newMetaCache[string, int32](tc.capacity)

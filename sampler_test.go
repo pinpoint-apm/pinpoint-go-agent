@@ -365,8 +365,7 @@ func Test_percentSampler_aboveMaximumWarns(t *testing.T) {
 }
 
 // A negative rate turns sampling off like 0 does, but 0 is a deliberate switch
-// and a negative value a typo: the coercion is logged, once, and the value
-// semantics are unchanged (see the javaParityLock tests on edge rates).
+// and a negative value a typo: the coercion is logged once.
 func Test_rateSampler_negativeWarns(t *testing.T) {
 	var buf bytes.Buffer
 	defer captureWarnLog(&buf)()

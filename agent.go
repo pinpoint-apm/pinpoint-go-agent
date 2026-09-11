@@ -164,11 +164,9 @@ type stringMeta struct {
 // past the cap, and deleteMetaCache needs the key - dropping the wrong entry
 // would leave every later span pointing at an id the collector never received.
 // sqlMeta carries no cache key: the id cache is keyed by the untruncated
-// normalized statement (up to maxSqlNormalizeLength, as in Java, where
-// SimpleCacheFactory.newSqlCache has no length check), and a queued copy of
-// that text would hold up to metaChan x 1 MiB through a collector outage.
-// The C++ agent's StringMeta carries a hash of the key for the same reason.
-// deleteMetaCache finds the entry by its id instead.
+// normalized statement. Keeping that key in queued metadata could retain up
+// to metaChan x 1 MiB during a collector outage, so deleteMetaCache removes
+// the cache entry by id instead.
 type sqlMeta struct {
 	id  int32
 	sql string
@@ -740,10 +738,8 @@ func (agent *agent) shutdownAgent() {
 	// ran - it has no workers and no stat queue.
 	// Aggregate what the request path queued and collectUrlStatWorker has
 	// not consumed yet, so the flush below sees it; the worker drains the
-	// same way when it stops (Java's AsyncQueueingExecutor.stop() falls
-	// through to flushQueue(); the C++ agent's runAddUrlStatsWorker ends
-	// with a final drain). urlStats.add is locked, so the two drains can run
-	// side by side.
+	// same way when it stops. urlStats.add is locked, so the two drains can
+	// run side by side.
 	if agent.tracingEnabled() {
 		agent.drainUrlStatChan()
 		agent.flushUrlStat(true)
@@ -1338,10 +1334,8 @@ func (agent *agent) enqueueMeta(md interface{}) {
 	}
 }
 
-// tryEnqueueMeta queues md, refusing it when the queue is full - Java's
-// GrpcDataSender.send (queue.offer fails, the item is dropped) and the C++
-// agent's GrpcMetadata::enqueueMeta. Deliberately the opposite of the span
-// queue's head-drop: metadata has no recency value, and what differs between
+// tryEnqueueMeta queues md, refusing a new item when the queue is full.
+// Unlike a span, metadata has no recency value, and what differs between
 // the oldest and the newest item is how many spans already reference the id.
 // The producer registers the id in the cache before enqueueing, so the item
 // at the head has been reused by every span that hit its entry while the

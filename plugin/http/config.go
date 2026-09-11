@@ -120,7 +120,7 @@ func WithHttpServerRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
 
 // WithHttpServerProxyHeaderEnable turns the recording of proxy request headers
 // (Pinpoint-ProxyApache, -ProxyNginx, -ProxyApp and the configured user
-// headers) on or off; the Java agent's profiler.proxy.http.header.enable.
+// headers) on or off.
 func WithHttpServerProxyHeaderEnable(enable bool) pinpoint.ConfigOption {
 	return func(c *pinpoint.Config) {
 		c.Set(CfgHttpServerProxyHeaderEnable, enable)

@@ -305,8 +305,7 @@ func (tid TransactionId) String() string {
 // Status is informational: the failed histogram follows the span's failure
 // mark, which the HTTP plugin sets from Http.Server.StatusCodeErrors before it
 // records the entry, so a plugin that records an entry directly marks an error
-// status with SetFailure(ErrorCategoryHttpStatus) itself. (The Java agent's
-// storage takes a boolean decided by the recorder the same way.)
+// status with SetFailure(ErrorCategoryHttpStatus) itself.
 type UrlStatEntry struct {
 	Url    string
 	Method string

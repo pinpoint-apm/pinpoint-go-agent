@@ -14,15 +14,8 @@
  * limitations under the License.
  */
 
-// Locked parity invariants.
-//
-// on. They are locked here so a later change has to state its intent instead
-// of drifting one agent away from the other two: a failure means either the
-// change is wrong, or all three implementations and doc/java_parity.md move
-// together.
-//
-// for group, and doc/java_parity.md ("Locked parity invariants") is the table
-// group exists there.
+// Locked invariants. Cross-repository rationale and references live in
+// doc/java_parity.md; this file records only the Go behaviour under test.
 //
 // Groups:
 //   1  SQL normalization state machine
@@ -40,7 +33,7 @@
 //  13  queue overflow policy
 //  14  proxy request header pipeline    (parsers: plugin/http/java_parity_lock_test.go)
 //  15  logging level policy
-//  16  shutdown contract                (port consensus, no Java counterpart)
+//  16  shutdown contract
 
 package pinpoint
 
@@ -59,8 +52,7 @@ import (
 // Group 1 - SQL normalization state machine
 // ===========================================================================
 
-// (commons-profiler ParserContext.parse via DefaultSqlNormalizer's no-arg
-// agent's SqlTest.JavaParityGoldenCases.
+// javaParitySqlCases covers the normalized SQL and parameter wire format.
 type javaParitySqlCase struct {
 	name       string
 	sql        string
@@ -205,9 +197,7 @@ func Test_javaParityLock_SqlNormalizerGoldenCases(t *testing.T) {
 }
 
 // Test_javaParityLock_SqlNormalizerIsNotIdempotent locks that normalizing an
-// already-normalized statement changes it again: `0#` becomes `0##`. All three
-// agents behave this way, and a "fix" that made it idempotent would change
-// every SQL id for statements the agent happens to see twice.
+// already-normalized statement changes it again: `0#` becomes `0##`.
 func Test_javaParityLock_SqlNormalizerIsNotIdempotent(t *testing.T) {
 	once, _ := newSqlNormalizer(`select 1`, false).run()
 	assert.Equal(t, `select 0#`, once)
@@ -217,8 +207,8 @@ func Test_javaParityLock_SqlNormalizerIsNotIdempotent(t *testing.T) {
 }
 
 // Test_javaParityLock_SqlNormalizerWhitespaceIsNotNormalized locks that runs of
-// whitespace survive verbatim - none of the three agents collapse them, so two
-// statements differing only in spacing are two SQL ids.
+// whitespace survives verbatim, so statements differing only in spacing have
+// different SQL IDs.
 func Test_javaParityLock_SqlNormalizerWhitespaceIsNotNormalized(t *testing.T) {
 	normalized, _ := newSqlNormalizer("select   *\n\tfrom  t", false).run()
 	assert.Equal(t, "select   *\n\tfrom  t", normalized)
@@ -292,8 +282,7 @@ func scanPlaceholderIndices(normalized string) []int {
 // Test_javaParityLock_SqlNormalizerSharedIndexCounter locks the invariant the
 // server depends on: placeholders are numbered 0..n-1 from one counter shared
 // by numbers and literals, and there are exactly as many of them as there are
-// params. This is the property that breaks first if either agent starts
-// counting numbers and literals separately.
+// params.
 func Test_javaParityLock_SqlNormalizerSharedIndexCounter(t *testing.T) {
 	for _, tc := range javaParitySqlCases() {
 		if tc.paramsUnsplittable {
@@ -314,23 +303,17 @@ func Test_javaParityLock_SqlNormalizerSharedIndexCounter(t *testing.T) {
 }
 
 // Test_javaParityLock_SqlNormalizerInputCapDropsTheWholeStatement locks the
-// one deliberate divergence from Java in this group. A statement longer than
-// maxSqlNormalizeLength (1 << 20, sql_util.go:47) is dropped whole: run()
-// comes back with an empty normalized text and an empty param string, never
-// with a cut. Java has no input cap at all - commons-profiler's
-// DefaultSqlNormalizer walks a statement of any length - so the cap is a
-// two-port addition, and the C++ agent carries the identical constant
-// (kMaxNormalizedSqlLength) and the identical drop policy. What is locked
-// here is the value and the policy being shared: a cut loses the placeholder
-// whenever it lands inside a literal, and yields a SQL id / UID no other
-// agent computes.
+// input limit. A statement longer than maxSqlNormalizeLength (1 << 20,
+// sql_util.go:47) is dropped whole: run() returns empty normalized text and
+// parameters, never a cut. A cut can leave a literal without its placeholder
+// and produce a different SQL ID or UID.
 //
 // The boundary cases - one byte either side of the cap, a multibyte
 // character straddling it - belong to
 // Test_sqlNormalizer_DropsInputPastTheNormalizationCap in sql_util_test.go
 // and are not repeated here.
 func Test_javaParityLock_SqlNormalizerInputCapDropsTheWholeStatement(t *testing.T) {
-	assert.Equal(t, 1<<20, maxSqlNormalizeLength, "C++ kMaxNormalizedSqlLength")
+	assert.Equal(t, 1<<20, maxSqlNormalizeLength)
 	assert.Greater(t, maxSqlNormalizeLength, maxSqlSize, "the memory cap sits above the metadata cap")
 
 	// A literal that runs past the cap: precisely the shape where a cut would
@@ -362,17 +345,15 @@ func Test_javaParityLock_SpanEventLimitDefaults(t *testing.T) {
 	assert.Equal(t, 20, defaultEventChunkSize, "Java profiler.io.buffering.buffersize")
 }
 
-// Test_javaParityLock_SpanEventLimitFloors locks the floors this agent and the
-// misconfigured limit cannot make the call stack unusable; the values must stay
-// equal between the two ports.
+// Test_javaParityLock_SpanEventLimitFloors locks floors so a misconfigured
+// limit cannot make the call stack unusable.
 func Test_javaParityLock_SpanEventLimitFloors(t *testing.T) {
 	assert.Equal(t, 2, minEventDepth, "C++ defaults MIN_SPAN_MAX_EVENT_DEPTH")
 	assert.Equal(t, 4, minEventSequence, "C++ defaults MIN_SPAN_MAX_EVENT_SEQUENCE")
 }
 
-// javaOverflowDecision is the overflow predicate all three agents implement.
-// where index is the number of elements already on the stack. This agent stores
-// the depth the next event would take (index+1), hence depth-1.
+// javaOverflowDecision is the overflow predicate. depth is the next event's
+// depth (index+1), hence depth-1.
 func javaOverflowDecision(sequence, depth, maxSequence, maxDepth int32) bool {
 	return sequence >= maxSequence || depth-1 > maxDepth
 }
@@ -409,14 +390,10 @@ func assertContiguousRange(t *testing.T, got []int32, base int32, what string) {
 	}
 }
 
-// Test_javaParityLock_SpanEventPositionIsReservedAtomically locks the pair
-// reservation both ports added and Java does not have. Java relies on a
-// single-thread call-stack contract instead - DefaultCallStack.push does
-// sequence++ inside push - while this agent and the C++ agent hand the
-// (sequence, depth) pair out of one atomic step (span.reserveEventPosition,
-// span.go:671), because a span here may legitimately be driven from several
-// goroutines of one call stack and a duplicate PSpanEvent.sequence is not a
-// blurred call tree, it is one the collector cannot rebuild.
+// Test_javaParityLock_SpanEventPositionIsReservedAtomically locks atomic
+// (sequence, depth) reservations. A span may be driven from several
+// goroutines, and duplicate PSpanEvent sequences cannot be reconstructed by
+// the collector.
 //
 // Test_span_NewSpanEvent_ConcurrentSequencesAreUnique (span_test.go) already
 // locks the sequence half through NewSpanEvent. The complementary property
@@ -547,8 +524,7 @@ func Test_javaParityLock_ChunkDepthCompression(t *testing.T) {
 // Group 4 - async id / sequence and span id sentinels
 // ===========================================================================
 
-// is -1 and an async id of 0 means "no async context"; both agents skip these
-// when they draw an id, so a drawn value can never be mistaken for "absent".
+// Span ID -1 and async ID 0 mean "absent", so generated IDs must skip them.
 func Test_javaParityLock_Sentinels(t *testing.T) {
 	assert.Equal(t, int64(-1), int64(noneSpanId), "Java SpanId.NULL")
 	assert.Equal(t, int32(0), int32(noneAsyncId), "Java: asyncId 0 means no async context")
@@ -607,7 +583,7 @@ func Test_javaParityLock_TransactionIdFormat(t *testing.T) {
 }
 
 // Test_javaParityLock_TransactionIdParsing locks the parser's accept/reject set.
-// third delimiter, so "a^1^2^3" is the transaction "a^1^2" to all three agents.
+// third delimiter, so "a^1^2^3" is parsed as transaction "a^1^2".
 func Test_javaParityLock_TransactionIdParsing(t *testing.T) {
 	tests := []struct {
 		tid string
@@ -812,12 +788,8 @@ func Test_javaParityLock_UrlStatHistogramBuckets(t *testing.T) {
 	}
 }
 
-// Test_javaParityLock_UrlStatWindow locks the tick size and the number of
-// closed ticks retained while the stat stream is down. Java's
-// AsyncQueueingUriStatStorage.addCompletedData checks
-// `snapshotQueue.size() > SNAPSHOT_LIMIT` (4) BEFORE offering, so the queue
-// holds five; an earlier version of this test attributed a capacity of 4 to
-// Java, which was the ports' own constant, not Java's.
+// Test_javaParityLock_UrlStatWindow locks the tick size and the five closed
+// ticks retained while the stat stream is down.
 func Test_javaParityLock_UrlStatWindow(t *testing.T) {
 	assert.Equal(t, 30*time.Second, urlStatCollectInterval, "Java TickClock interval")
 	assert.Equal(t, 5, maxCompletedUrlStatSnapshots, "Java snapshotQueue effective capacity (SNAPSHOT_LIMIT 4, checked before offer) / C++ kMaxCompletedSnapshots")
@@ -856,25 +828,9 @@ func Test_javaParityLock_UrlStatUnknownKey(t *testing.T) {
 	assert.Equal(t, javaNullUri, unsampled.urlStat.Url)
 }
 
-// Test_javaParityLock_UrlStatTemplateIsFirstWriteWins locks the merge rule of
-// mergeUrlStat (span.go:1057-1066): the URL template is first-write-wins with
-// an explicit force override - MetricURLStat keeps the template already
-// recorded, MetricURLStatForce replaces it - while the method and the status
-// code are last-write-wins.
-//
-// The template half is Java's DefaultShared.setUriTemplate
-// (DefaultShared.java:139-160): a null -> value compareAndSet, with the force
-// overload setting unconditionally. A framework that recorded the matched
-// route first must not have it replaced by a later, less precise layer. The
-// status code half matches too - DefaultShared.setStatusCode
-// (DefaultShared.java:128-131) is a plain setter, and a status is legitimately
-// final only once the response exists.
-//
-// The method half is a port decision, not Java parity, and is locked here as
-// such: DefaultShared.setHttpMethods (DefaultShared.java:168-177) is a
-// compareAndSet like the template, so Java is first-wins on the method where
-// both ports are last-wins. Recorded rather than asserted against Java so the
-// next review does not read the Java citation as covering it.
+// Test_javaParityLock_UrlStatTemplateIsFirstWriteWins locks the merge rule:
+// MetricURLStat keeps the first URL template, MetricURLStatForce replaces it,
+// and method and status are last-write-wins.
 func Test_javaParityLock_UrlStatTemplateIsFirstWriteWins(t *testing.T) {
 	assert.Equal(t, "URLStat", MetricURLStat, "the metric name plugins record under")
 	assert.Equal(t, "URLStatForce", MetricURLStatForce, "and the force variant")
@@ -907,12 +863,8 @@ func Test_javaParityLock_UrlStatTemplateIsFirstWriteWins(t *testing.T) {
 }
 
 // Test_javaParityLock_UrlStatWithoutAnEndTimeIsSkipped locks that an entry
-// whose end time was never set is skipped entirely (url_stat.go:95-97), not
-// keyed under tick 0: a zero tick would collect every such entry into one
-// bucket at the epoch, and the web tier would draw it. Java does the same in
-// AgentUriStatData.add (AgentUriStatData.java:56-64) - an endTime of 0 is
-// logged and not added, and the URIKey is built from clock.tick(endTime) only
-// after that check.
+// whose end time was never set is skipped entirely, not keyed under tick 0.
+// A zero tick would collect every such entry into one epoch bucket.
 func Test_javaParityLock_UrlStatWithoutAnEndTimeIsSkipped(t *testing.T) {
 	stats := newUrlStats(defaultConfig())
 
@@ -1080,23 +1032,9 @@ func Test_javaParityLock_AgentInfoSchedule(t *testing.T) {
 	assert.Equal(t, 3000, defaultAgentInfoSendRetryInterval, "matches the C++ agent, not Java's effective 300000ms - see doc/java_parity.md")
 }
 
-// Test_javaParityLock_SqlCacheLengthLimitAppliesToTheUidCacheOnly locks the
-// asymmetry two consecutive cross-agent reviews have raised as a false
-// positive: the SQL cache length limit bounds the UID cache and never the id
-// cache, in all three agents.
-//
-// Java: UidCache.put (UidCache.java:17-23) bypasses the cache for a key at or
-// past its bypassLength and hands back a freshly computed UID, while the id
-// cache SimpleCacheFactory.newSqlCache builds (SimpleCacheFactory.java:42-44)
-// is a plain SimpleCache with no length check at all. The reason is not
-// tidiness: an id comes from a sequence, so a bypassed statement would burn a
-// new id - and a new sqlMeta - on every single execution, and the same query
-// would show up in the web tier as a fresh entry per use. A UID is a hash of
-// the text, so bypassing costs only the re-send.
-//
-// Asserted as behaviour rather than as a constant: sqlCacheable
-// (agent.go:1435) is applied in cacheSqlUid (agent.go:1498) and normalizeSql
-// (agent.go:1559), and deliberately not in cacheSql.
+// Test_javaParityLock_SqlCacheLengthLimitAppliesToTheUidCacheOnly locks that
+// the length limit bypasses only the UID cache. The ID cache remains stable:
+// bypassing it would allocate a new ID and metadata entry on every execution.
 func Test_javaParityLock_SqlCacheLengthLimitAppliesToTheUidCacheOnly(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agent.sqlCacheLengthLimit = 32
@@ -1138,8 +1076,7 @@ func Test_javaParityLock_SqlCacheLengthLimitAppliesToTheUidCacheOnly(t *testing.
 // PSpan.err (tracer.go:112-131). They are a wire contract, not an internal
 // detail: the collector and the web tier tell an exception apart from a
 // failing HTTP status by the bit, so renumbering one silently rewrites what
-// the UI says every affected transaction failed of. Java declares the same
-// four in ErrorCategory (ErrorCategory.java:19-23).
+// the UI says every affected transaction failed of.
 func Test_javaParityLock_ErrorCategoryBits(t *testing.T) {
 	assert.Equal(t, ErrorCategory(1<<0), ErrorCategoryUnknown, "Java ErrorCategory.UNKNOWN")
 	assert.Equal(t, ErrorCategory(1<<1), ErrorCategoryException, "Java ErrorCategory.EXCEPTION")
@@ -1150,14 +1087,10 @@ func Test_javaParityLock_ErrorCategoryBits(t *testing.T) {
 
 // Test_javaParityLock_ErrorMarkMaskResolution locks how Span.ErrorMark and
 // Span.ErrorMarkExclude resolve into the mask of categories allowed to fail a
-// transaction (parseErrorMarkMask, config.go:463-473), against Java
-// ConfigurableErrorRecorderFactory.getEnabledTypes
-// (ConfigurableErrorRecorderFactory.java:28-61): an unset mark enables every
-// category, exclude is subtracted from it, and UNKNOWN is added back last
-// whatever the two lists say. Tokens are trimmed and lower-cased before
-// matching exception / http-status / sql, and an unrecognised token is warned
-// about and ignored rather than failing the parse - Java's
-// `default: logger.warn(...)` arm.
+// transaction (parseErrorMarkMask, config.go:463-473). An unset mark enables
+// every category, exclude is subtracted from it, and UNKNOWN is added back
+// last. Tokens are trimmed and lower-cased; an unrecognised token is warned
+// about and ignored.
 func Test_javaParityLock_ErrorMarkMaskResolution(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1207,10 +1140,8 @@ func Test_javaParityLock_ErrorMarkMaskResolution(t *testing.T) {
 // Test_javaParityLock_ExcludedCategoryRecordsNothing locks the recorder half:
 // a category the operator removed records nothing at all - not the category
 // bit, and not an ErrorCategoryUnknown fallback either. markSpanError
-// (span.go:211-217) is the single point that writes span.err and it applies
-// the mask there, exactly as Java's ConfigurableErrorRecorder.recordError
-// (ConfigurableErrorRecorder.java:20-24) masks the error code only when the
-// category is in the enabled set, with no else branch.
+// (span.go:211-217) is the single point that writes span.err and applies the
+// mask only when the category is enabled.
 func Test_javaParityLock_ExcludedCategoryRecordsNothing(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgSpanErrorMarkExclude, []string{"exception"})
@@ -1236,31 +1167,8 @@ func Test_javaParityLock_ExcludedCategoryRecordsNothing(t *testing.T) {
 // Group 13 - queue overflow policy
 // ===========================================================================
 
-// Test_javaParityLock_SpanQueueHeadDrops locks the overflow policy of the span
-// queue: a full queue discards its OLDEST chunk and counts the drop, so what
-// survives a collector outage is the most recent traces.
-//
-// That matches Java's DEFAULT span sender, verified in the Java tree rather
-// than assumed:
-//
-//   - agent-module/agent/src/main/resources/pinpoint-root.config:135 ships
-//     profiler.transport.grpc.span.sender.type=BATCH (the release profile
-//     repeats it, profiles/release/pinpoint.config:25), so
-//     SpanBatchGrpcDataSender is what a stock Java agent runs;
-//   - SpanBatchGrpcDataSender.send (SpanBatchGrpcDataSender.java:95-111)
-//     offers, and on a full queue polls the head away - logging "discard
-//     oldest message" - before re-offering the new one.
-//
-// An earlier cross-agent review cited GrpcDataSender.send
-// (GrpcDataSender.java:56-68) instead and called this a divergence. That is
-// the STREAM sender's base class: it tail-drops ("reject message") and is
-// reached only when sender.type is set to STREAM. The citation has been wrong
-// five times; it is recorded here so a sixth review checks it against the
-// config default above before raising it again.
-//
-// span_queue_test.go covers the queue itself - shard capacity, the saturation
-// hint, close and drain. What is locked here is the policy: which end is
-// dropped, and that the drop is observable.
+// Test_javaParityLock_SpanQueueHeadDrops locks the queue policy: a full queue
+// drops and counts its oldest chunk, preserving the most recent traces.
 func Test_javaParityLock_SpanQueueHeadDrops(t *testing.T) {
 	// A capacity below spanQueueMinShardCap gives a single shard, so the ring
 	// is strictly FIFO and the surviving set is exact rather than the
@@ -1293,45 +1201,13 @@ func Test_javaParityLock_SpanQueueHeadDrops(t *testing.T) {
 // Group 14 - proxy request header pipeline
 // ===========================================================================
 
-// The four proxy request parsers (apache, nginx, app, user) live in package
-// plugin/http, which imports this package: a test in package pinpoint cannot
-// reach them without an import cycle, and nothing there is worth moving to
-// make it reachable. The parser half of this group therefore lives in
-// plugin/http/java_parity_lock_test.go, under the same group number and
-// title, and locks:
-//
-//   - all four parsers run independently, so a request that crossed two
-//     proxies records two annotations rather than only the hop nearest the
-//     agent (Java DefaultProxyRequestRecorder.java:52-53);
-//   - each is gated on a positive received time, so t=0, a missing t= or one
-//     that does not parse records nothing at all (Java
-//     DefaultProxyRequestRecorder.java:71, via ProxyRequestHeader.isValid);
-//   - nginx t= and D= accept only sec.mmm - exactly three decimals - and are
-//     computed with integer arithmetic, never a float multiply (Java
-//     NginxRequestParser.java:74-110).
-//
-// What is reachable from here is the parent half of the same pipeline.
+// The proxy parsers live in plugin/http, which imports this package, so their
+// group-14 tests live in plugin/http/java_parity_lock_test.go. This package
+// covers the parent-info half of the pipeline.
 
-// Test_javaParityLock_ParentInfoRequiresAParentAppName locks that a PSpan
-// carries a PParentInfo only when parentAppName is non-empty
-// (grpc.go:1690-1697) - the same guard Java puts on the whole parent block:
-// ServerRequestRecorder.record calls recordParentInfo only for a non-root span
-// (ServerRequestRecorder.java:76), and recordParentInfo records nothing when
-// the Pinpoint-pAppName header is absent (ServerRequestRecorder.java:82-83).
-//
-// This is the invariant that stops the acceptor-host fallback both ports
-// recently added from inventing a parent node. The fallback fills in the
-// acceptor host when the peer sent no Pinpoint-Host, and it sits inside the
-// parent-app-name check on both sides - Java's getAcceptorHost call is within
-// the same if - so a span carrying an acceptor host but no parent application
-// never ships a PParentInfo naming an empty application, which the server map
-// would draw as an unnamed caller node.
-//
-// Locked at the message builder rather than at a sender, because that is the
-// single point both the span and the span batch path go through;
-// Test_spanGrpc_sendSpanBatch_carriesParentInfo and
-// Test_spanGrpc_sendSpanBatch_rootSpanHasNoParentInfo (grpc_test.go) cover
-// the sender path.
+// Test_javaParityLock_ParentInfoRequiresAParentAppName locks that PParentInfo
+// is emitted only when parentAppName is non-empty. An acceptor host alone must
+// not create an unnamed parent node.
 func Test_javaParityLock_ParentInfoRequiresAParentAppName(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 
@@ -1363,18 +1239,9 @@ func Test_javaParityLock_ParentInfoRequiresAParentAppName(t *testing.T) {
 // Group 15 - logging level policy
 // ===========================================================================
 
-// Test_javaParityLock_UnsupportedLogLevelKeepsTheCurrentLevel locks a
-// TWO-PORT CONSENSUS, not Java parity: Java's level comes from a log4j2
-// configuration file, which fails or falls back on its own terms and has no
-// notion of "keep what is running". Both ports decided that an unsupported
-// level string leaves the current level exactly where it was and says so in
-// the log (logger.go:84-88), because silently ignoring a typo looks like a
-// successful change, and on a config reload it would leave an operator
-// debugging at the old level with no line explaining why.
-//
-// warn and warning are both accepted: the agent writes "warning" on its own
-// lines, and refusing the spelling every other logger uses would hit exactly
-// that reload path.
+// Test_javaParityLock_UnsupportedLogLevelKeepsTheCurrentLevel locks that an
+// unsupported level leaves the current level unchanged and logs the error.
+// Both "warn" and "warning" are accepted.
 func Test_javaParityLock_UnsupportedLogLevelKeepsTheCurrentLevel(t *testing.T) {
 	l := newLogger()
 
@@ -1429,11 +1296,7 @@ func Test_javaParityLock_ConfigRejectsAnUnsupportedLogLevel(t *testing.T) {
 }
 
 // Test_javaParityLock_LogRotationDefaults locks the rotation defaults and the
-// floor under Log.MaxBackups. Also a two-port consensus: Java rotates through
-// log4j2 policies, not through agent config keys. 0 backups reads as "keep
-// none" to one reader and "keep every backup" to another - it is what
-// lumberjack means by it - so a value below 1 is restored to the default of 1
-// rather than honoured.
+// floor under Log.MaxBackups. A value below 1 is restored to the default of 1.
 func Test_javaParityLock_LogRotationDefaults(t *testing.T) {
 	t.Cleanup(func() { logger.setLevel("info") })
 
@@ -1455,16 +1318,8 @@ func Test_javaParityLock_LogRotationDefaults(t *testing.T) {
 }
 
 // ===========================================================================
-// Group 16 - shutdown contract (port consensus, no Java counterpart)
+// Group 16 - shutdown contract
 // ===========================================================================
-
-// This group locks a PORT CONSENSUS, not Java parity. The Java agent has no
-// equivalent of any of it: shutdown there is per-component - each DataSender
-// releases its own executor, GrpcDataSender.release (GrpcDataSender.java:71-76)
-// awaiting three seconds for that executor alone - with no wall-clock bound on
-// the teardown as a whole and no report of what was still running when it gave
-// up. The Go and C++ agents both bound it and both name the stragglers, so the
-// contract is theirs to keep in step.
 
 // Test_javaParityLock_ShutdownDeadline locks the bound on the blocking phase
 // of shutdown (shutdownTimeout, agent.go:557). Past it the workers are
@@ -1582,24 +1437,12 @@ func Test_javaParityLock_WorkerTableIsTheSingleSourceOfTruth(t *testing.T) {
 }
 
 // ===========================================================================
-// Group 17 - metadata retry budget and rejection policy (port consensus)
+// Group 17 - metadata retry budget and rejection policy
 // ===========================================================================
 
-// The retry BUDGET is Java's: MetadataGrpcDataSender retries a failed send up
-// to profiler.transport.grpc.metadata.sender.retry.max.count (3) times,
-// retry.delay.millis (1000) apart, and queues new metadata on an executor
-// queue of metadata.sender.executor.queue.size (1000) entries. Both ports keep
-// the same three numbers, and both bound the retry schedule separately at the
-// size of the new-metadata queue (Java's HashedWheelTimer is unbounded).
-//
-// The rejection POLICY is a port consensus that diverges from Java: a reply
-// with PResult.success=false is NOT retried (RetryResponseStreamObserver
-// retries it like a transport failure). The item is dropped and its cache
-// entry released after one retry delay (metaRejected in metaVerdictOf, the
-// release-only entry in agent.metaRetry). Rationale in doc/java_parity.md
-// ("Retrying a rejected metadata send"). The behaviour itself is pinned by the
-// metaVerdictOf and sendMetadataOnce tests; the C++ suite mirrors both halves
-// as its group 17 (MetadataRetryBudget).
+// A failed metadata send has three attempts, a one-second delay, and a
+// 1000-entry queue. A rejected result is not retried; its cache entry is
+// released after one retry delay.
 func Test_javaParityLock_MetadataRetryBudget(t *testing.T) {
 	assert.Equal(t, 3, metaRetryMaxAttempts, "Java profiler.transport.grpc.metadata.sender.retry.max.count")
 	assert.Equal(t, time.Second, metaRetryDelay, "Java profiler.transport.grpc.metadata.sender.retry.delay.millis")

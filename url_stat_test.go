@@ -783,10 +783,8 @@ func Test_urlStatSnapshot_MethodKeyBuildsDisplayOnce(t *testing.T) {
 }
 
 // Records still queued in urlStatChan when shutdown begins are aggregated
-// before the final flush, so the last tick carries them. Java's
-// AsyncQueueingExecutor.stop() falls through to flushQueue(); the C++ agent's
-// runAddUrlStatsWorker ends with a final drain. Here the shutdown path drains
-// the channel itself before taking the snapshot.
+// before the final flush, so the last tick carries them. The shutdown path
+// drains the channel before taking the snapshot.
 func Test_urlStatShutdownDrainsTheCollectQueue(t *testing.T) {
 	agent, stats := newUrlStatSendTestAgent(t)
 	agent.urlStatChan = make(chan *urlStat, 8)
@@ -831,7 +829,7 @@ func Test_urlStatCollectWorkerDrainsOnStop(t *testing.T) {
 }
 
 // A negative elapsed - a wall clock stepped back between start and end - must
-// not shrink the totals: clamped to 0 at the sink as the C++ agent does.
+// not shrink the totals, so the sink clamps it to 0.
 func Test_urlStatHistogramClampsNegativeElapsed(t *testing.T) {
 	hg := newStatHistogram()
 	hg.add(50)

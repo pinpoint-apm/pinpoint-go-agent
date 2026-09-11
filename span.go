@@ -252,10 +252,8 @@ func defaultSpan(agent *agent) *span {
 	span.cfg = agent.config.load()
 	span.parentSpanId = -1
 	span.parentAppName = ""
-	// -1 is ServiceType.UNDEFINED, the value Java records when the
-	// Pinpoint-pAppType header is absent or unparseable
-	// (ServerRequestRecorder: parseShort(type, UNDEFINED)). Sent only next to
-	// a parent application name (see makePSpan).
+	// -1 is ServiceType.UNDEFINED when Pinpoint-pAppType is absent or
+	// unparseable. It is sent only next to a parent application name.
 	span.parentAppType = -1
 	span.parentServiceName = ""
 	span.eventDepth.Store(1)
@@ -308,8 +306,7 @@ func (span *span) EndSpan() {
 	// EndSpan - so it is ended here with the rest rather than by popping the
 	// top first: with a child still open that pop ended the child in the
 	// root's place and then counted the root as the unclosed one. Only what
-	// exceeds the expected count is a missed EndSpanEvent (the C++ agent's
-	// expected_open in SpanImpl::EndSpan).
+	// exceeds the expected count is a missed EndSpanEvent.
 	leftover := span.eventStack.endAll()
 	expectedOpen := 0
 	if span.isAsyncSpan() {
@@ -1083,17 +1080,11 @@ func (span *span) collectUrlStat(stat *UrlStatEntry, force bool) {
 }
 
 // mergeUrlStat applies a recorded entry to the one a span already holds and
-// returns the entry to keep. Shared by span and noopSpan so both paths follow
-//
-// null -> value CAS. Only the status code matches that reading: setStatusCode
-// (DefaultShared.java:128-131) is a plain setter the last caller owns, but
-// setHttpMethods (:168-177) is the same CAS as setUriTemplate, so keeping the
-// method last-wins is a deliberate divergence from Java shared with the C++
-// agent (doc/java_parity.md). A framework that recorded the matched route
-// first must not have it replaced by a later, less precise layer; the status
-// code, though, is legitimately final only once the response exists, so
-// making the whole entry first-wins would freeze it at the first caller's
-// setUriTemplate(value, true).
+// returns the entry to keep. Shared by span and noopSpan so both paths use the
+// same merge rule: the URL is first-write-wins unless force is set, while the
+// method and status come from the most recent entry. A matched route must not
+// be replaced by a later, less precise URL, but response fields may arrive
+// later.
 //
 // The caller's entry is copied, never stored or written to, so later caller
 // mutation cannot change the span's statistic.

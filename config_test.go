@@ -907,7 +907,7 @@ func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
 		{CfgStatCollectInterval, 100, 5000},
 		{CfgStatCollectInterval, 999, 5000},
 		{CfgStatCollectInterval, 10001, 5000},
-		// The old maximum, over Java's DefaultAgentStatMonitor cap of 10000.
+		// A value above the supported maximum falls back to the default.
 		{CfgStatCollectInterval, 60000, 5000},
 		{CfgStatBatchCount, -1, 6},
 		{CfgStatBatchCount, 101, 6},

@@ -114,10 +114,8 @@ func Test_lifecycle_TransitionIsExclusive(t *testing.T) {
 }
 
 // From the shutdown signal on, the request path is refused while the workers
-// drain: a new request gets a noop tracer and a span chunk is not queued. The
-// C++ agent blocks the same way from the first line of do_shutdown; Java has
-// no equivalent phase. Recording through the drain let the request path race
-// the teardown - what it produced after the final flush had no send left.
+// drain: a new request gets a noop tracer and a span chunk is not queued.
+// Recording through the drain could race teardown after the final flush.
 func Test_lifecycle_StoppingRefusesTheRequestPath(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	require.Equal(t, phaseRunning, agent.enable.current())

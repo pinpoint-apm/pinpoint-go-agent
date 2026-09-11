@@ -2125,9 +2125,9 @@ func Test_span_EndSpan_ConcurrentSetError(t *testing.T) {
 
 // An async span's own event is legitimately open at EndSpan. Popping the top
 // first ended a still-open child in the root's place and then reported the
-// root as the unclosed one; now everything left is ended together and only
-// what exceeds the one expected open event is reported, the C++ agent's
-// expected_open. Both events still land in the final chunk.
+// root as the unclosed one. Everything left is ended together, and only what
+// exceeds the one expected open event is reported. Both events land in the
+// final chunk.
 func TestSpan_AsyncEndSpanCountsOnlyTheRealLeftovers(t *testing.T) {
 	var buf bytes.Buffer
 	restore := captureLogAt(&buf, logrus.WarnLevel)

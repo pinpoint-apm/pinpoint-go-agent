@@ -91,8 +91,7 @@ type metaCache[K comparable, V any] struct {
 
 // newMetaCache splits capacity across the shards so the total stays capacity:
 // the remainder goes to the first shards and the shard count is clamped to
-// the capacity, as the C++ agent's ShardedLruCache does. A floor division
-// alone made SQL.CacheSize=1000 hold 992 and =10 hold 16.
+// the capacity.
 func newMetaCache[K comparable, V any](capacity int) *metaCache[K, V] {
 	c := &metaCache[K, V]{now: time.Now}
 	capacity = max(capacity, 1)

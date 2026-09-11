@@ -173,8 +173,7 @@ const (
 	// Upper bounds for queue sizes and stat collection settings.
 	maxQueueSize           = 65536
 	minStatCollectInterval = 1000
-	// Java's DefaultAgentStatMonitor: MIN 1000, MAX 10 * 1000, anything
-	// outside falls back to the 5000 default. 60000 used to be accepted here.
+	// A collection interval outside this range falls back to the 5000 ms default.
 	maxStatCollectInterval = 10000
 	maxStatBatchCount      = 100
 
@@ -247,7 +246,7 @@ func initConfig() {
 	AddConfig(CfgCollectorGrpcSenderQueueSize, CfgInt, defaultMetaQueueSize, false)
 	AddConfig(CfgLogLevelOld, CfgString, "info", true)
 	AddConfig(CfgLogLevel, CfgString, "info", true)
-	AddConfig(CfgLogOutput, CfgString, "stdout", true) // the C++ agent's default
+	AddConfig(CfgLogOutput, CfgString, "stdout", true)
 	AddConfig(CfgLogMaxSize, CfgInt, 10, true)
 	AddConfig(CfgLogMaxBackups, CfgInt, defaultLogMaxBackups, true)
 	AddConfig(CfgSamplingType, CfgString, samplingTypeCounter, true)
@@ -287,7 +286,6 @@ func initConfig() {
 	AddConfig(CfgSQLRemoveComments, CfgBool, true, false)
 	AddConfig(CfgEnable, CfgBool, true, false)
 	AddConfig(CfgHttpUrlStatEnable, CfgBool, false, true)
-	// Java's profiler.uri.stat.completed.data.limit.size (DefaultMonitorConfig).
 	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1000, true)
 	AddConfig(CfgHttpUrlStatQueueSize, CfgInt, defaultQueueSize, false)
 	AddConfig(CfgHttpUrlStatWithMethod, CfgBool, false, true)

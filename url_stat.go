@@ -29,10 +29,7 @@ type urlStat struct {
 // would otherwise grow the queue without limit; the oldest tick is the one
 // worth losing first.
 // maxCompletedUrlStatSnapshots is the number of closed ticks kept while the
-// stat stream is not draining. Java's AsyncQueueingUriStatStorage
-// .addCompletedData compares snapshotQueue.size() > SNAPSHOT_LIMIT (4) before
-// offering, so it retains five; the C++ agent's kMaxCompletedSnapshots is the
-// same five.
+// stat stream is not draining.
 const maxCompletedUrlStatSnapshots = 5
 
 // urlStatSnapshotDropLog reports completed ticks evicted at the queue cap. Its

@@ -93,8 +93,7 @@ func allowedTransition(from, to agentPhase) bool {
 
 // tracingEnabled reports whether the request path may record: create spans,
 // register metadata, queue spans and url stats. True while running only. It
-// turns false the moment shutdown is signalled, as the C++ agent's isExiting
-// gate does from the first line of do_shutdown: a request that arrives while
+// turns false as soon as shutdown is signalled: a request that arrives while
 // the workers drain gets a noop tracer, and a span still open at the signal
 // has its final chunk refused, so the drain sends what was queued before the
 // signal and nothing produced after it. It used to stay true through
