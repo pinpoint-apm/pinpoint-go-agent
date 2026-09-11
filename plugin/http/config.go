@@ -20,6 +20,8 @@ const (
 	CfgHttpServerProxyUserHeaderNames = "Http.Server.ProxyUserHeaderNames"
 	CfgHttpServerProxyHeaderEnable    = "Http.Server.ProxyHeaderEnable"
 	CfgHttpServerRecordRequestParam   = "Http.Server.RecordRequestParam"
+	CfgHttpServerRealIpHeader         = "Http.Server.RealIpHeader"
+	CfgHttpServerRealIpEmptyValue     = "Http.Server.RealIpEmptyValue"
 	CfgHttpClientRecordRequestHeader  = "Http.Client.RecordRequestHeader"
 	CfgHttpClientRecordResponseHeader = "Http.Client.RecordResponseHeader"
 	CfgHttpClientRecordRequestCookie  = "Http.Client.RecordRequestCookie"
@@ -37,6 +39,8 @@ func init() {
 	pinpoint.AddConfig(CfgHttpServerProxyUserHeaderNames, pinpoint.CfgStringSlice, []string{}, true)
 	pinpoint.AddConfig(CfgHttpServerProxyHeaderEnable, pinpoint.CfgBool, true, true)
 	pinpoint.AddConfig(CfgHttpServerRecordRequestParam, pinpoint.CfgBool, false, true)
+	pinpoint.AddConfig(CfgHttpServerRealIpHeader, pinpoint.CfgStringSlice, []string{"X-Forwarded-For", "X-Real-Ip"}, true)
+	pinpoint.AddConfig(CfgHttpServerRealIpEmptyValue, pinpoint.CfgString, "", true)
 	pinpoint.AddConfig(CfgHttpClientRecordRequestHeader, pinpoint.CfgStringSlice, []string{}, true)
 	pinpoint.AddConfig(CfgHttpClientRecordResponseHeader, pinpoint.CfgStringSlice, []string{}, true)
 	pinpoint.AddConfig(CfgHttpClientRecordRequestCookie, pinpoint.CfgStringSlice, []string{}, true)
@@ -142,6 +146,28 @@ func WithHttpServerRecordRequestParam(record bool) pinpoint.ConfigOption {
 	}
 }
 
+// WithHttpServerRealIpHeader sets the ordered request headers the client
+// address is resolved from (Java's profiler.server.realipheader). A header
+// named "Forwarded" is parsed for its for= token; any other header gives its
+// first comma-separated hop. An empty list trusts no header and records the
+// socket address.
+//
+//	pphttp.WithHttpServerRealIpHeader([]string{"CF-Connecting-IP", "X-Forwarded-For"})
+func WithHttpServerRealIpHeader(names []string) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(CfgHttpServerRealIpHeader, names)
+	}
+}
+
+// WithHttpServerRealIpEmptyValue sets the header value that counts as absent
+// when resolving the client address, compared case-insensitively (Java's
+// profiler.server.realipemptyvalue, typically "unknown").
+func WithHttpServerRealIpEmptyValue(value string) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(CfgHttpServerRealIpEmptyValue, value)
+	}
+}
+
 // WithHttpServerProxyUserHeaderNames sets the request headers a user-defined
 // proxy writes its receive time into ("t=<epoch millis>"). Each one present on
 // a request is recorded as a proxy annotation of type USER (4), with the header
@@ -225,6 +251,14 @@ type httpConfig struct {
 	srvProxyHeader      bool
 	srvRequestParam     bool
 	cltUrlQuery         bool
+	srvRealIpHeaders    []realIpHeader
+	srvRealIpEmptyValue string
+}
+
+// realIpHeader is one entry of Http.Server.RealIpHeader, canonicalized once.
+type realIpHeader struct {
+	name      string
+	forwarded bool // RFC 7239 Forwarded: parse the for= token
 }
 
 var httpConfigOpts = []string{
@@ -238,6 +272,8 @@ var httpConfigOpts = []string{
 	CfgHttpServerProxyUserHeaderNames,
 	CfgHttpServerProxyHeaderEnable,
 	CfgHttpServerRecordRequestParam,
+	CfgHttpServerRealIpHeader,
+	CfgHttpServerRealIpEmptyValue,
 	CfgHttpClientRecordRequestHeader,
 	CfgHttpClientRecordResponseHeader,
 	CfgHttpClientRecordRequestCookie,
@@ -307,7 +343,19 @@ func newHttpConfigFor(config *pinpoint.Config) *httpConfig {
 		srvProxyHeader:      config.Bool(CfgHttpServerProxyHeaderEnable),
 		srvRequestParam:     config.Bool(CfgHttpServerRecordRequestParam),
 		cltUrlQuery:         config.Bool(CfgHttpClientRecordUrlQuery),
+		srvRealIpHeaders:    makeRealIpHeaders(config.StringSlice(CfgHttpServerRealIpHeader)),
+		srvRealIpEmptyValue: config.String(CfgHttpServerRealIpEmptyValue),
 	}
+}
+
+var forwardedHeader = textproto.CanonicalMIMEHeaderKey("Forwarded")
+
+func makeRealIpHeaders(cfg []string) []realIpHeader {
+	var headers []realIpHeader
+	for _, name := range makeProxyUserHeaderNames(cfg) {
+		headers = append(headers, realIpHeader{name: name, forwarded: name == forwardedHeader})
+	}
+	return headers
 }
 
 func makeProxyUserHeaderNames(cfg []string) []string {

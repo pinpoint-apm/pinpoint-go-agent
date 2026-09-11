@@ -69,8 +69,8 @@ func RecordHttpServerRequest(tracer pinpoint.Tracer, req *http.Request) {
 // RecordHttpServerRequestWithReader records sampled request attributes from
 // framework-native request data. Adapters without a net/http request (fasthttp,
 // fiber) use this instead of materializing one just to have it read here.
-// remoteAddr is the transport-level peer address; X-Forwarded-For and
-// X-Real-Ip override it, exactly as in RecordHttpServerRequest.
+// remoteAddr is the transport-level peer address; the headers listed in
+// Http.Server.RealIpHeader override it, exactly as in RecordHttpServerRequest.
 func RecordHttpServerRequestWithReader(tracer pinpoint.Tracer, host string, remoteAddr string, h Header, c Cookie) {
 	if !tracer.IsSampled() {
 		return
@@ -78,7 +78,8 @@ func RecordHttpServerRequestWithReader(tracer pinpoint.Tracer, host string, remo
 
 	span := tracer.Span()
 	span.SetEndPoint(host)
-	span.SetRemoteAddress(resolveRemoteAddr(h, remoteAddr))
+	cfg := httpCfg()
+	span.SetRemoteAddress(resolveRemoteAddr(h, remoteAddr, cfg.srvRealIpHeaders, cfg.srvRealIpEmptyValue))
 
 	a := span.Annotations()
 	recordServerHttpRequestHeader(a, h)
@@ -196,15 +197,25 @@ func headerFirst(h Header, key string) string {
 	return ""
 }
 
-func resolveRemoteAddr(h Header, remoteAddr string) string {
-	if xff := headerFirst(h, "X-Forwarded-For"); xff != "" {
-		first, _, _ := strings.Cut(xff, ",")
-		return strings.TrimSpace(first)
-	}
-
-	if xff := headerFirst(h, "X-Real-Ip"); xff != "" {
-		first, _, _ := strings.Cut(xff, ",")
-		return strings.TrimSpace(first)
+// resolveRemoteAddr is Java's RealIpHeaderResolver: the first configured
+// header whose value yields an address wins; a value equal to emptyValue
+// (case-insensitive, when configured) is skipped. Without one the socket
+// address is returned with its port stripped.
+func resolveRemoteAddr(h Header, remoteAddr string, headers []realIpHeader, emptyValue string) string {
+	for _, rh := range headers {
+		value := headerFirst(h, rh.name)
+		if value == "" {
+			continue
+		}
+		first, _, _ := strings.Cut(value, ",")
+		candidate := strings.TrimSpace(first)
+		if rh.forwarded {
+			candidate = forwardedFor(candidate)
+		}
+		if candidate == "" || (emptyValue != "" && strings.EqualFold(candidate, emptyValue)) {
+			continue
+		}
+		return candidate
 	}
 
 	addr, _, err := net.SplitHostPort(remoteAddr)
@@ -213,6 +224,27 @@ func resolveRemoteAddr(h Header, remoteAddr string) string {
 	}
 
 	return remoteAddr
+}
+
+// forwardedFor extracts the for= value of one RFC 7239 Forwarded element,
+// Java's (?i:for)="?([^;,"]+)"? with a trailing :port removed when the last
+// ':' follows the last ']' ("[::1]:80" -> "[::1]"; RFC 7239 brackets IPv6).
+// Returns "" when the element has no for= token.
+func forwardedFor(element string) string {
+	for rest := element; rest != ""; {
+		var pair string
+		pair, rest, _ = strings.Cut(rest, ";")
+		k, v, ok := strings.Cut(pair, "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(k), "for") {
+			continue
+		}
+		v = strings.Trim(strings.TrimSpace(v), `"`)
+		if i := strings.LastIndexByte(v, ':'); i > strings.LastIndexByte(v, ']') {
+			v = v[:i]
+		}
+		return v
+	}
+	return ""
 }
 
 // The proxy header names, pre-canonicalized: none of the wire spellings is in

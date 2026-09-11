@@ -518,3 +518,19 @@ func TestDoClient_StripsTheUrlQuery(t *testing.T) {
 		assert.Equal(t, []string{tt.want}, tracer.a.urls)
 	}
 }
+
+// The fasthttp header adapter takes the Get path of the resolver, so a
+// custom real-IP header must resolve through it too.
+func TestWrapHandler_ResolvesACustomRealIpHeader(t *testing.T) {
+	startAgent(t, pphttp.WithHttpServerRealIpHeader([]string{"CF-Connecting-IP"}))
+	ctx := newRequestCtx(http.MethodGet, "http://example.com/p")
+	ctx.Request.Header.Set("CF-Connecting-IP", "1.1.1.1")
+	ctx.Request.Header.Set("X-Forwarded-For", "2.2.2.2")
+
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/p")
+	defer tracer.EndSpan()
+	pphttp.RecordHttpServerRequestWithReader(tracer, "example.com", ctx.RemoteAddr().String(),
+		RequestHeader{&ctx.Request.Header}, Cookie{&ctx.Request.Header})
+
+	assert.Equal(t, "1.1.1.1", spanOf(t, tracer)["RemoteAddr"])
+}

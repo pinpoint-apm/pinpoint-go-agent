@@ -12,6 +12,12 @@
 
 ### Added
 
+- **Configurable real-IP headers.** `Http.Server.RealIpHeader` (ordered list,
+  default `["X-Forwarded-For", "X-Real-Ip"]` = today's behaviour, `[]` trusts
+  none) and `Http.Server.RealIpEmptyValue` port Java's `RealIpHeaderResolver`:
+  a `Forwarded` header is parsed for its `for=` token, other headers give
+  their first hop, a value equal to the empty value is skipped. Both
+  reloadable.
 - **Request parameter recording, opt-in.** `pphttp.RecordHttpServerRequestWithQuery`
   (used by `RecordHttpServerRequest`, so every net/http based plugin gets it)
   records the query string as annotation 41 (`HTTP.PARAM`) in Java's

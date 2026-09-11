@@ -8,8 +8,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"github.com/stretchr/testify/assert"
@@ -329,7 +332,7 @@ func Test_resolveRemoteAddr(t *testing.T) {
 			for k, v := range tt.headers {
 				h.Set(k, v)
 			}
-			assert.Equal(t, tt.want, resolveRemoteAddr(header{h}, tt.remoteAddr))
+			assert.Equal(t, tt.want, resolveRemoteAddr(header{h}, tt.remoteAddr, defaultRealIpHeaders, ""))
 		})
 	}
 }
@@ -1046,4 +1049,115 @@ func TestRecordHttpServerRequest_Query(t *testing.T) {
 			assert.Equal(t, tt.want, spanOf(t, tracer).annotationStrings(pinpoint.AnnotationHttpParam))
 		})
 	}
+}
+
+var defaultRealIpHeaders = makeRealIpHeaders([]string{"X-Forwarded-For", "X-Real-Ip"})
+
+func Test_resolveRemoteAddr_Configured(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        []string
+		emptyValue string
+		headers    map[string]string
+		want       string
+	}{
+		{name: "custom order picks CF-Connecting-IP over a present XFF",
+			cfg:     []string{"CF-Connecting-IP", "X-Forwarded-For"},
+			headers: map[string]string{"CF-Connecting-IP": "1.1.1.1", "X-Forwarded-For": "2.2.2.2"}, want: "1.1.1.1"},
+		{name: "an empty list trusts no header",
+			cfg: []string{}, headers: map[string]string{"X-Forwarded-For": "2.2.2.2"}, want: "10.0.0.1"},
+		{name: "the empty value skips a header and falls to the next",
+			cfg: []string{"X-Forwarded-For", "X-Real-Ip"}, emptyValue: "unknown",
+			headers: map[string]string{"X-Forwarded-For": "Unknown, 3.3.3.3", "X-Real-Ip": "4.4.4.4"}, want: "4.4.4.4"},
+		{name: "Forwarded: first element's for=",
+			cfg:     []string{"Forwarded"},
+			headers: map[string]string{"Forwarded": "for=1.2.3.4;proto=https, for=10.0.0.1"}, want: "1.2.3.4"},
+		{name: "Forwarded: quoted bracketed IPv6 keeps its brackets, loses its port",
+			cfg:     []string{"Forwarded"},
+			headers: map[string]string{"Forwarded": `for="[2001:db8::1]:4711"`}, want: "[2001:db8::1]"},
+		{name: "Forwarded: For= is case-insensitive and the port is stripped",
+			cfg:     []string{"Forwarded"},
+			headers: map[string]string{"Forwarded": "For=192.0.2.60:8080"}, want: "192.0.2.60"},
+		{name: "Forwarded without for= is skipped",
+			cfg:     []string{"Forwarded"},
+			headers: map[string]string{"Forwarded": "proto=https"}, want: "10.0.0.1"},
+		{name: "a lowercase forwarded config name is still parsed as Forwarded",
+			cfg:     []string{"forwarded"},
+			headers: map[string]string{"Forwarded": "for=1.2.3.4"}, want: "1.2.3.4"},
+		{name: "Forwarded without for= falls to X-Real-Ip",
+			cfg:     []string{"Forwarded", "X-Real-Ip"},
+			headers: map[string]string{"Forwarded": "proto=https", "X-Real-Ip": "4.4.4.4"}, want: "4.4.4.4"},
+		{name: "malformed Forwarded values never panic",
+			cfg:     []string{"Forwarded", "X-Real-Ip"},
+			headers: map[string]string{"Forwarded": `;;for=;for="";=;,`, "X-Real-Ip": "4.4.4.4"}, want: "4.4.4.4"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := http.Header{}
+			for k, v := range tt.headers {
+				h.Set(k, v)
+			}
+			got := resolveRemoteAddr(header{h}, "10.0.0.1:54321", makeRealIpHeaders(tt.cfg), tt.emptyValue)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func Test_forwardedFor(t *testing.T) {
+	assert.Equal(t, "", forwardedFor(""))
+	assert.Equal(t, "", forwardedFor("for"))
+	// RFC 7239 requires brackets around IPv6; a bare one is cut at its last
+	// ':' exactly as Java's RealIpHeaderResolver cuts it.
+	assert.Equal(t, ":", forwardedFor("for=::1"))
+	assert.Equal(t, "[::1]", forwardedFor("for=[::1]:80"))
+	assert.Equal(t, "_hidden", forwardedFor(" by=proxy ; FOR = _hidden "))
+}
+
+// A reload changing the header list reaches the next recorded request.
+func TestRecordHttpServerRequest_RealIpHeaderFollowsReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	write := func(body string) { require.NoError(t, os.WriteFile(path, []byte(body), 0o600)) }
+	write("Http:\n  Server:\n    RealIpHeader: [X-Forwarded-For]\n")
+	usePluginConfig(t, pinpoint.WithConfigFile(path))
+
+	record := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/p", nil)
+		req.RemoteAddr = "10.0.0.1:54321"
+		req.Header.Set("X-Forwarded-For", "2.2.2.2")
+		req.Header.Set("CF-Connecting-IP", "1.1.1.1")
+		tracer := NewHttpServerTracer(req, "test")
+		defer tracer.EndSpan()
+		return spanOf(t, tracer).RemoteAddr
+	}
+	require.Equal(t, "2.2.2.2", record())
+
+	write("Http:\n  Server:\n    RealIpHeader: [CF-Connecting-IP]\n")
+	require.Eventually(t, func() bool { return record() == "1.1.1.1" }, 3*time.Second, 10*time.Millisecond)
+
+	write("Http:\n  Server:\n    RealIpHeader: []\n")
+	require.Eventually(t, func() bool { return record() == "10.0.0.1" }, 3*time.Second, 10*time.Millisecond)
+}
+
+func TestRealIpOptions(t *testing.T) {
+	usePluginConfig(t)
+	cfg := httpCfg()
+	assert.Equal(t, defaultRealIpHeaders, cfg.srvRealIpHeaders)
+	assert.Equal(t, "", cfg.srvRealIpEmptyValue)
+
+	usePluginConfig(t, WithHttpServerRealIpHeader([]string{" cf-connecting-ip ", "", "forwarded"}), WithHttpServerRealIpEmptyValue("unknown"))
+	cfg = httpCfg()
+	assert.Equal(t, []realIpHeader{{"Cf-Connecting-Ip", false}, {"Forwarded", true}}, cfg.srvRealIpHeaders)
+	assert.Equal(t, "unknown", cfg.srvRealIpEmptyValue)
+
+	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("Http:\n  Server:\n    RealIpHeader: []\n"), 0o600))
+	t.Setenv("PINPOINT_GO_HTTP_SERVER_REALIPEMPTYVALUE", "none")
+	usePluginConfig(t, pinpoint.WithConfigFile(path))
+	cfg = httpCfg()
+	assert.Empty(t, cfg.srvRealIpHeaders, "[] parses to empty")
+	assert.Equal(t, "none", cfg.srvRealIpEmptyValue)
+
+	t.Setenv("PINPOINT_GO_HTTP_SERVER_REALIPHEADER", "True-Client-IP,X-Real-Ip")
+	usePluginConfig(t)
+	assert.Equal(t, []realIpHeader{{"True-Client-Ip", false}, {"X-Real-Ip", false}}, httpCfg().srvRealIpHeaders)
 }

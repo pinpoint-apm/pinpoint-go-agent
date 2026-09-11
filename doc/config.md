@@ -1319,6 +1319,42 @@ and need no configuration.
 * default: empty
 * dynamic
 
+### Http.Server.RealIpHeader
+Http.Server.RealIpHeader lists, in order, the request headers the client address (`RemoteAddr`) is taken from.
+The first header present whose value yields an address wins. A header named `Forwarded` (RFC 7239) is parsed
+for its `for=` token, with a trailing `:port` removed; every other header contributes its first comma-separated
+hop. When no header yields an address the socket address is recorded, port stripped. It is the Java agent's
+`profiler.server.realipheader` (`RealIpHeaderResolver`).
+
+**Java trusts no header by default (`realipheader` is empty); this agent keeps `X-Forwarded-For` then
+`X-Real-Ip`** so existing deployments record the same address as before. Set an empty list to trust none, or
+list your edge's header first (`CF-Connecting-IP`, `True-Client-IP`, `Forwarded`).
+
+* --pinpoint-http-server-realipheader
+* PINPOINT_GO_HTTP_SERVER_REALIPHEADER
+* WithHttpServerRealIpHeader()
+* type: string slice
+* default: X-Forwarded-For, X-Real-Ip
+* dynamic
+
+``` yaml
+Http:
+  Server:
+    RealIpHeader: [CF-Connecting-IP, X-Forwarded-For]
+```
+
+### Http.Server.RealIpEmptyValue
+Http.Server.RealIpEmptyValue is the header value that counts as absent when resolving the client address.
+A candidate equal to it (case-insensitive, typically `unknown`) is skipped and the next header is tried.
+It is the Java agent's `profiler.server.realipemptyvalue`.
+
+* --pinpoint-http-server-realipemptyvalue
+* PINPOINT_GO_HTTP_SERVER_REALIPEMPTYVALUE
+* WithHttpServerRealIpEmptyValue()
+* type: string
+* default: empty
+* dynamic
+
 ### Http.Server.RecordRequestParam
 Http.Server.RecordRequestParam turns the recording of the request query string on or off. When on, the query
 string of a sampled request is recorded as annotation 41 (`HTTP.PARAM`) in the Java agent's
@@ -1490,7 +1526,7 @@ Two things make a reload not happen, and both are easy to miss:
 | SQL | `SQL.TraceBindValue`, `SQL.MaxBindValueSize`, `SQL.TraceCommit`, `SQL.TraceRollback`, `SQL.TraceQueryStat`, `SQL.EnableRawSqlCache`, `SQL.ErrorCount` |
 | Logging | `Log.Level` (and its deprecated alias `LogLevel`), `Log.Output`, `Log.MaxSize`, `Log.MaxBackups` |
 | Errors | `Error.TraceCallStack`, `Error.CallStackDepth`, `Error.NewThroughput`, `Error.MaxChainDepth` |
-| HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError`, `Http.Server.ProxyUserHeaderNames`, `Http.Server.ProxyHeaderEnable`, `Http.Server.RecordRequestParam` |
+| HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError`, `Http.Server.ProxyUserHeaderNames`, `Http.Server.ProxyHeaderEnable`, `Http.Server.RecordRequestParam`, `Http.Server.RealIpHeader`, `Http.Server.RealIpEmptyValue` |
 | HTTP client | `Http.Client.RecordRequestHeader`, `Http.Client.RecordResponseHeader`, `Http.Client.RecordRequestCookie`, `Http.Client.RecordUrlQuery` |
 | URL statistics | `Http.UrlStat.Enable`, `Http.UrlStat.LimitSize`, `Http.UrlStat.WithMethod` |
 
