@@ -1599,7 +1599,9 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 	return id
 }
 
-func (agent *agent) enqueueExceptionMeta(span *span) {
+// enqueueExceptionMeta sends chains, taken from span under errorChainsLock by
+// EndSpan; span is read for its identity only.
+func (agent *agent) enqueueExceptionMeta(span *span, chains []*exception) {
 	if !agent.tracingEnabled() || !span.cfg.errorTraceCallStack {
 		return
 	}
@@ -1607,7 +1609,7 @@ func (agent *agent) enqueueExceptionMeta(span *span) {
 	md := exceptionMeta{
 		txId:       span.txId,
 		spanId:     span.spanId,
-		exceptions: span.errorChains,
+		exceptions: chains,
 	}
 	if span.urlStat != nil {
 		md.uriTemplate = span.urlStat.Url

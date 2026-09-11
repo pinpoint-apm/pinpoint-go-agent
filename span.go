@@ -308,11 +308,19 @@ func (span *span) EndSpan() {
 	span.spanEventLock.Lock()
 	defer span.spanEventLock.Unlock()
 
+	// Take the chains under their own lock: a SetError on another goroutine
+	// that passed the finished check is appending under errorChainsLock, and
+	// nil-ing the field outside it races that append. After the swap
+	// canAddErrorChain sees nil and refuses further links.
+	span.errorChainsLock.Lock()
+	chains := span.errorChains
+	span.errorChains = nil
+	span.errorChainsLock.Unlock()
+
 	chunk := span.newEventChunk(true)
 	if chunk.enqueue() {
-		if span.errorChains != nil && len(span.errorChains) > 0 {
-			span.agent.enqueueExceptionMeta(span)
-			span.errorChains = nil
+		if len(chains) > 0 {
+			span.agent.enqueueExceptionMeta(span, chains)
 		}
 	} else if IsTraceLogLevelEnabled() {
 		Log("span").Tracef("span channel - max capacity reached or closed")
@@ -387,8 +395,27 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 	// downstream still joins this transaction under this span as its parent.
 	// Only the caller-side event->span link is lost, along with the event.
 	nextSpanId := nextSpanId(span.spanId, span.parentSpanId)
+	destinationId := ""
 	if se != nil {
-		nextSpanId = se.generateNextSpanId()
+		// Another goroutine of this call stack (see the type comment) may end
+		// the peeked event right after the peek; once appended to a chunk the
+		// sender reads it, and writing nextSpanId or endPoint into it then is
+		// a data race. The check and the writes sit under spanEventLock, which
+		// appendEndedSpanEvent takes after end() sets finished: either the
+		// event is seen finished here and the link is dropped, falling back to
+		// the span-level id like the overflow path, or the writes land before
+		// the append hands the event to the sender.
+		span.spanEventLock.Lock()
+		if se.warnIfFinished("Inject") {
+			se = nil
+		} else {
+			nextSpanId = se.generateNextSpanId()
+			// endPoint (address actually contacted) and destinationId (logical node
+			// left unset, never overwrite the one it recorded.
+			se.endPoint = cmp.Or(se.endPoint, se.destinationId)
+			destinationId = se.destinationId
+		}
+		span.spanEventLock.Unlock()
 	}
 	writer.Set(HeaderSpanId, strconv.FormatInt(nextSpanId, 10))
 
@@ -408,13 +435,7 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 		writer.Set(HeaderParentServiceName, span.agent.serviceName)
 	}
 
-	destinationId := ""
-	if se != nil {
-		// endPoint (address actually contacted) and destinationId (logical node
-		// left unset, never overwrite the one it recorded.
-		se.endPoint = cmp.Or(se.endPoint, se.destinationId)
-		destinationId = se.destinationId
-	} else {
+	if se == nil {
 		// Overflowed: the event was dropped, but the destination it recorded
 		// was kept for exactly this - the downstream fills acceptorHost,
 		// endPoint and remoteAddr from this header (see Extract) and has no

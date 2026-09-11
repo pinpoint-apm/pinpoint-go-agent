@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2043,4 +2044,81 @@ func Test_span_EndSpanEventOf_RepanicsOriginalValue(t *testing.T) {
 	assert.True(t, span.recovered.Load())
 	assert.Equal(t, 1, len(span.spanEvents))
 	assert.Equal(t, "boom", span.spanEvents[0].errorString)
+}
+
+// Inject on one goroutine while another ends the peeked event: once ended the
+// event is appended to a chunk and read by the sender, so Inject must not
+// write nextSpanId/endPoint into it. Under -race the reader here stands in for
+// the sender goroutine. The header carries either the event's id or the
+// span-level fallback, never a torn one.
+func Test_span_Inject_ConcurrentEndSpanEvent(t *testing.T) {
+	for i := 0; i < 300; i++ {
+		s := defaultTestSpan()
+		s.NewSpanEvent("t")
+		se, _ := s.eventStack.peek()
+		se.SetDestination("dest")
+
+		m := make(map[string]string)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			s.Inject(&DistributedTracingContextMap{m})
+		}()
+		var seenNext int64
+		var seenEndPoint string
+		go func() {
+			defer wg.Done()
+			s.EndSpanEvent()
+			seenNext, seenEndPoint = se.nextSpanId, se.endPoint // the sender's read
+		}()
+		wg.Wait()
+
+		got, err := strconv.ParseInt(m[HeaderSpanId], 10, 64)
+		assert.NoError(t, err)
+		if se.nextSpanId != noneSpanId {
+			assert.Equal(t, se.nextSpanId, got, "linked: header carries the event's next span id")
+			assert.Equal(t, "dest", se.endPoint)
+		} else {
+			assert.NotEqual(t, int64(0), got, "unlinked: span-level fallback id")
+		}
+		_, _ = seenNext, seenEndPoint
+	}
+}
+
+// SetError on other goroutines while EndSpan takes the error chains: the
+// append runs under errorChainsLock, so the take must too. Chains recorded
+// before the end are handed to the exception meta intact, and a chain that
+// lost the race is dropped whole rather than appended to a slice being sent.
+func Test_span_EndSpan_ConcurrentSetError(t *testing.T) {
+	config := defaultConfig()
+	config.Set(CfgErrorTraceCallStack, true)
+	for i := 0; i < 300; i++ {
+		s := testSpanWithConfig(config)
+		events := make([]*spanEvent, 4)
+		for g := range events {
+			s.NewSpanEvent("t")
+			events[g], _ = s.eventStack.peek()
+		}
+
+		var wg sync.WaitGroup
+		for g, se := range events {
+			wg.Add(1)
+			go func(g int, se *spanEvent) {
+				defer wg.Done()
+				se.SetError(fmt.Errorf("boom %d", g))
+			}(g, se)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.EndSpan()
+		}()
+		wg.Wait()
+
+		s.errorChainsLock.Lock()
+		assert.Nil(t, s.errorChains, "taken by EndSpan")
+		s.errorChainsLock.Unlock()
+		assert.False(t, s.canAddErrorChain(), "no further chains after EndSpan")
+	}
 }
