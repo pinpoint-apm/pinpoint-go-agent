@@ -1045,8 +1045,11 @@ func (span *span) collectUrlStat(stat *UrlStatEntry, force bool) {
 // mergeUrlStat applies a recorded entry to the one a span already holds and
 // returns the entry to keep. Shared by span and noopSpan so both paths follow
 //
-// null -> value CAS while setHttpMethod and HttpStatusCodeRecorder are plain
-// setters the last caller owns. A framework that recorded the matched route
+// null -> value CAS. Only the status code matches that reading: setStatusCode
+// (DefaultShared.java:128-131) is a plain setter the last caller owns, but
+// setHttpMethods (:168-177) is the same CAS as setUriTemplate, so keeping the
+// method last-wins is a deliberate divergence from Java shared with the C++
+// agent (doc/java_parity.md). A framework that recorded the matched route
 // first must not have it replaced by a later, less precise layer; the status
 // code, though, is legitimately final only once the response exists, so
 // making the whole entry first-wins would freeze it at the first caller's
