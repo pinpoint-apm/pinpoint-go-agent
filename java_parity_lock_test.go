@@ -45,6 +45,7 @@
 package pinpoint
 
 import (
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
 	"strings"
 	"sync"
 	"testing"
@@ -1578,4 +1579,34 @@ func Test_javaParityLock_WorkerTableIsTheSingleSourceOfTruth(t *testing.T) {
 				"every started worker releases the workerWg slot startWorkers added for it")
 		}
 	}
+}
+
+// ===========================================================================
+// Group 17 - metadata retry budget and rejection policy (port consensus)
+// ===========================================================================
+
+// The retry BUDGET is Java's: MetadataGrpcDataSender retries a failed send up
+// to profiler.transport.grpc.metadata.sender.retry.max.count (3) times,
+// retry.delay.millis (1000) apart, and queues new metadata on an executor
+// queue of metadata.sender.executor.queue.size (1000) entries. Both ports keep
+// the same three numbers, and both bound the retry schedule separately at the
+// size of the new-metadata queue (Java's HashedWheelTimer is unbounded).
+//
+// The rejection POLICY is a port consensus that diverges from Java: a reply
+// with PResult.success=false is NOT retried (RetryResponseStreamObserver
+// retries it like a transport failure). The item is dropped and its cache
+// entry released after one retry delay (metaRejected in metaVerdictOf, the
+// release-only entry in agent.metaRetry). Rationale in doc/java_parity.md
+// ("Retrying a rejected metadata send"). The behaviour itself is pinned by the
+// metaVerdictOf and sendMetadataOnce tests; the C++ suite mirrors both halves
+// as its group 17 (MetadataRetryBudget).
+func Test_javaParityLock_MetadataRetryBudget(t *testing.T) {
+	assert.Equal(t, 3, metaRetryMaxAttempts, "Java profiler.transport.grpc.metadata.sender.retry.max.count")
+	assert.Equal(t, time.Second, metaRetryDelay, "Java profiler.transport.grpc.metadata.sender.retry.delay.millis")
+	assert.Equal(t, 1000, metaRetryQueueSize,
+		"port consensus: the retry schedule is bounded like the new-metadata queue (Java metadata.sender.executor.queue.size)")
+	assert.Equal(t, 1000, defaultMetaQueueSize, "Java profiler.transport.grpc.metadata.sender.executor.queue.size")
+	rejected := metaResult(&pb.PResult{Success: false, Message: "no"}, nil)
+	assert.Equal(t, metaRejected, metaVerdictOf(rejected, 1),
+		"port consensus: a PResult.success=false reply is not retried")
 }

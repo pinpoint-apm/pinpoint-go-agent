@@ -73,7 +73,7 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, false, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
 			assert.Equal(t, true, c.Bool(CfgEnable), CfgEnable)
 			assert.Equal(t, false, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
-			assert.Equal(t, 1024, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
+			assert.Equal(t, 1000, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
 			assert.Equal(t, 1024, c.Int(CfgHttpUrlStatQueueSize), CfgHttpUrlStatQueueSize)
 			assert.Equal(t, false, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
 			assert.Equal(t, 32, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
@@ -906,7 +906,9 @@ func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
 		{CfgStatCollectInterval, 0, 5000},
 		{CfgStatCollectInterval, 100, 5000},
 		{CfgStatCollectInterval, 999, 5000},
-		{CfgStatCollectInterval, 60001, 5000},
+		{CfgStatCollectInterval, 10001, 5000},
+		// The old maximum, over Java's DefaultAgentStatMonitor cap of 10000.
+		{CfgStatCollectInterval, 60000, 5000},
 		{CfgStatBatchCount, -1, 6},
 		{CfgStatBatchCount, 101, 6},
 		// 0 is "unlimited" to lumberjack; refused so the disk stays bounded.
@@ -935,10 +937,10 @@ func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
 	// In-range values pass through silently.
 	var buf bytes.Buffer
 	defer captureWarnLog(&buf)()
-	c, err := NewConfig(WithAppName("TestApp"), WithSpanQueueSize(maxQueueSize), WithStatCollectInterval(60000), WithStatBatchCount(100))
+	c, err := NewConfig(WithAppName("TestApp"), WithSpanQueueSize(maxQueueSize), WithStatCollectInterval(10000), WithStatBatchCount(100))
 	assert.NoError(t, err)
 	assert.Equal(t, maxQueueSize, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
-	assert.Equal(t, 60000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
+	assert.Equal(t, 10000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
 	assert.Equal(t, 100, c.Int(CfgStatBatchCount), CfgStatBatchCount)
 	assert.NotContains(t, buf.String(), "out of range")
 }

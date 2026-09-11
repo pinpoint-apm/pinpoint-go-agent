@@ -374,7 +374,7 @@ func Test_configHttpUrlStatLimitSizeOutOfRangeRecoversTheDefault(t *testing.T) {
 		config := defaultConfig()
 		config.Set(CfgHttpUrlStatLimitSize, limit)
 
-		assert.Equal(t, 1024, config.Int(CfgHttpUrlStatLimitSize), "limit=%d", limit)
+		assert.Equal(t, 1000, config.Int(CfgHttpUrlStatLimitSize), "limit=%d", limit)
 		assert.Contains(t, buf.String(), "Http.UrlStat.LimitSize", "limit=%d", limit)
 		assert.Contains(t, buf.String(), "is out of range [1, 65536]", "limit=%d", limit)
 		restore()

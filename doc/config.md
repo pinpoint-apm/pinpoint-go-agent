@@ -785,7 +785,7 @@ traffic stops.
 * type: int
 * default: 5000
 * unit: milliseconds
-* range: 1000 ~ 60000 (an out-of-range value falls back to the default with a warning log)
+* range: 1000 ~ 10000 (Java's `DefaultAgentStatMonitor` bounds; an out-of-range value falls back to the default with a warning log)
 
 ### Stat.BatchCount
 Stat.BatchCount option sets batch delivery units for collected statistics.
@@ -1396,7 +1396,7 @@ and the agent logs a rate-limited warning carrying the number of warnings it sup
 * PINPOINT_GO_HTTP_URLSTAT_LIMITSIZE
 * WithHttpUrlStatLimitSize()
 * type: int
-* default: 1024
+* default: 1000 (Java's `profiler.uri.stat.completed.data.limit.size`)
 * range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
 * dynamic
 

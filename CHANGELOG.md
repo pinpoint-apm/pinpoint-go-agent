@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- `Http.UrlStat.LimitSize` now defaults to `1000`, Java's
+  `profiler.uri.stat.completed.data.limit.size`, instead of `1024`; the C++
+  agent made the same move, so the two ports and Java drop a tick's excess
+  URIs at the same point. `Http.UrlStat.QueueSize` stays `1024` (see
+  `doc/java_parity.md`).
+- `Stat.CollectInterval` is capped at `10000` ms, Java's
+  `DefaultAgentStatMonitor` maximum, instead of `60000`; a larger value falls
+  back to the default as before. A six-minute stat batch is no longer
+  reachable by misconfiguration.
+- The metadata retry budget and rejection policy are locked as parity group
+  17 (`Test_javaParityLock_MetadataRetryBudget`), mirrored in the C++ suite:
+  both ports drop a `PResult.success=false` reply where Java retries it, so
+  a change in either port is now a deliberate joint change.
+
 - A span that drops exception entries at the `Error.MaxChainDepth` entry limit
   now logs how many it dropped when it ends. The existing warning latches after
   the first drop, so it said a span hit the limit but not by how much, and a

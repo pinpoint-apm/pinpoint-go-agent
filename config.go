@@ -173,7 +173,9 @@ const (
 	// Upper bounds for queue sizes and stat collection settings.
 	maxQueueSize           = 65536
 	minStatCollectInterval = 1000
-	maxStatCollectInterval = 60000
+	// Java's DefaultAgentStatMonitor: MIN 1000, MAX 10 * 1000, anything
+	// outside falls back to the 5000 default. 60000 used to be accepted here.
+	maxStatCollectInterval = 10000
 	maxStatBatchCount      = 100
 
 	// profiler.transport.grpc.metadata.sender.executor.queue.size default
@@ -285,7 +287,8 @@ func initConfig() {
 	AddConfig(CfgSQLRemoveComments, CfgBool, true, false)
 	AddConfig(CfgEnable, CfgBool, true, false)
 	AddConfig(CfgHttpUrlStatEnable, CfgBool, false, true)
-	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1024, true)
+	// Java's profiler.uri.stat.completed.data.limit.size (DefaultMonitorConfig).
+	AddConfig(CfgHttpUrlStatLimitSize, CfgInt, 1000, true)
 	AddConfig(CfgHttpUrlStatQueueSize, CfgInt, defaultQueueSize, false)
 	AddConfig(CfgHttpUrlStatWithMethod, CfgBool, false, true)
 	AddConfig(CfgErrorTraceCallStack, CfgBool, false, true)
