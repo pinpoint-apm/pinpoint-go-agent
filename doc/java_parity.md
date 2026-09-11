@@ -978,24 +978,29 @@ recorded for it. nginx `t=` and `D=` are read as `sec.mmm` digits into an
 integer, exactly as Java does (`0.123` → 123000 µs; `0.1`, `123` and `0.1234`
 → 0). `app=` must pass `IsValidId(app, 30)` - the `[a-zA-Z0-9._-]` class and
 at most 30 bytes - or the header is discarded. Apache `t=` (microseconds → ms)
-and `D=` (microseconds) are unchanged. The pipeline is locked as group 14 of
-the invariants below, the parser half in
-`plugin/http/java_parity_lock_test.go`.
+and `D=` (microseconds) are unchanged.
 
-**One divergence remains, found while locking this: the nginx `D=` is not
-gated on being positive.** Java applies the duration only inside
-`if (durationTimeMicroseconds > 0)` (`NginxRequestParser.parseHeader`), so a
-negative `$request_time` leaves the duration unset. The C++ agent reaches the
-same outcome by a different route: its `parseProxyDigits` (`src/http.cpp`)
-accepts `[0-9]` only, so `D=-0.123` fails the format check and
-`parseProxyNginxDurationMicros` returns 0. Here `nginxMillis`
-(`plugin/http/server.go`) parses the value with `strconv.ParseInt`, which
-takes the sign, so `D=-0.123` is recorded as `-123000` µs and reaches the
-annotation. Java and C++ agree; this agent is the odd one out. Not locked in
-group 14 for that reason — the received-time gate is locked on all three, the
-duration gate is not. Small in practice (nginx's `$request_time` is never
-negative in a sane configuration), but it is a real difference and a
-peer-controlled header is exactly where a nonsense value arrives.
+The user parser follows `UserRequestParser.toReceivedTimeMillis` /
+`toDurationTimeMicros` (`userReceivedTimeMillis` / `userDurationMicros` in
+`plugin/http/server.go`; `parseProxyUserReceivedTimeMillis` /
+`parseProxyUserDurationMicros` in the C++ agent's `src/http.cpp`): a
+configured header may have been written by any of the three proxies, so the
+format is inferred from the value's shape - fewer than 13 characters is
+rejected, 16 or more is apache's microseconds (the last three digits dropped
+before parsing), a `.` at index 10 or later is nginx's `sec.mmm`, anything
+else is an app's milliseconds; `D=` with a `.` is fractional seconds,
+otherwise a microsecond count. Before this change the Go parser read `t=` as
+plain milliseconds only and ignored `D=`: an apache value landed 47,000 years
+out, an nginx value failed to parse and dropped the hop, and every user-type
+annotation carried a proxy delay of 0.
+
+Every parser applies `D=` only when positive, as Java's
+`durationTimeMicroseconds > 0` guard does; the nginx product is reported as no
+duration when it would not fit the int32 wire field, where Java's
+`parseInteger` fails first and the C++ agent bounds it the same way; and the
+apache `i=` / `b=` percents are applied only inside `[0, 100]`
+(`ApacheRequestParser`). The pipeline is locked as group 14 of the invariants
+below, the parser half in `plugin/http/java_parity_lock_test.go`.
 
 **Upgrade note.** Requests behind more than one proxy now show every hop.
 Proxy headers without a valid `t=`, an nginx `t=` without three decimals, and

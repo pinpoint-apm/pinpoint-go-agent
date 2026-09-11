@@ -191,3 +191,82 @@ func Test_javaParityLock_ProxyNginxTimestampsAreExactThreeDecimals(t *testing.T)
 		}
 	}
 }
+
+// Test_javaParityLock_ProxyUserHeaderInfersItsWriter locks the user proxy
+// parser. A header named in Http.Server.ProxyUserHeaderNames may have been
+// written by any of the three proxies, so UserRequestParser.toReceivedTimeMillis
+// infers the format from the value's shape: fewer than 13 characters is not a
+// millisecond epoch and is rejected; 16 or more is apache's microseconds,
+// converted by dropping the last three digits before parsing; a '.' at index
+// 10 or later is nginx's sec.mmm; anything else is an app's milliseconds.
+// toDurationTimeMicros reads D= the same way - a '.' means fractional
+// seconds, otherwise a microsecond count - and, like every parser, applies
+// it only when positive. userReceivedTimeMillis / userDurationMicros
+// (plugin/http/server.go) and the C++ agent's parseProxyUserReceivedTimeMillis
+// / parseProxyUserDurationMicros (src/http.cpp) are the same function.
+//
+// Reading t= as plain milliseconds would put an apache hop 47,000 years out
+// and drop an nginx hop whole, since "1504230492.763" does not parse.
+func Test_javaParityLock_ProxyUserHeaderInfersItsWriter(t *testing.T) {
+	usePluginConfig(t, WithHttpServerProxyUserHeaderNames([]string{"X-Proxy-Time"}))
+
+	for _, tc := range []struct {
+		name         string
+		value        string
+		receivedTime int64
+		duration     int32
+	}{
+		{"apache micros", "t=1504230492763123 D=1500", 1504230492763, 1500},
+		{"nginx sec.mmm", "t=1504230492.763 D=0.123", 1504230492763, 123000},
+		{"app millis", "t=1504230492763 D=42", 1504230492763, 42},
+		{"D not positive is unset", "t=1504230492763 D=-5", 1504230492763, 0},
+		{"nginx D not positive is unset", "t=1504230492763 D=-0.123", 1504230492763, 0},
+		{"D beyond int32 is unset", "t=1504230492763 D=3000000.000", 1504230492763, 0},
+	} {
+		got := parityProxyRequest(map[string]string{"X-Proxy-Time": tc.value})
+		if assert.Len(t, got, 1, "%s: %q", tc.name, tc.value) {
+			assert.Equal(t, tc.receivedTime, got[0].receivedTime, "%s: received time", tc.name)
+			assert.Equal(t, tc.duration, got[0].duration, "%s: duration", tc.name)
+			assert.Equal(t, "X-Proxy-Time", got[0].app, "the header name is the app")
+		}
+	}
+
+	// A t= whose shape fits none of the three writers leaves no received
+	// time, so the header is discarded whole.
+	for _, bad := range []string{"150423049276", "15042304.9276", "1504230492.76", "abc"} {
+		assert.Empty(t, parityProxyRequest(map[string]string{"X-Proxy-Time": "t=" + bad}),
+			"t=%s fits no proxy's format", bad)
+	}
+}
+
+// Test_javaParityLock_ProxyDurationAndPercentAreGated locks the value gates
+// the standard parsers share with UserRequestParser: every parser applies D=
+// only when positive (ApacheRequestParser / NginxRequestParser / AppRequestParser
+// `durationTimeMicroseconds > 0`), the nginx product is reported as no
+// duration rather than a wrapped int32 (C++ parseProxyNginxDurationMicros;
+// Java's parseInteger fails first on such input), and the apache i=/b= are
+// applied only inside [0, 100] (ApacheRequestParser). The percent is a
+// peer-controlled byte on the wire; out of range it is unset, not truncated.
+func Test_javaParityLock_ProxyDurationAndPercentAreGated(t *testing.T) {
+	usePluginConfig(t)
+
+	nginx := parityProxyRequest(map[string]string{"Pinpoint-ProxyNginx": "t=1504230492.763 D=-0.123"})
+	require.Len(t, nginx, 1)
+	assert.Zero(t, nginx[0].duration, "negative nginx D= is unset")
+
+	nginx = parityProxyRequest(map[string]string{"Pinpoint-ProxyNginx": "t=1504230492.763 D=3000000.000"})
+	require.Len(t, nginx, 1)
+	assert.Zero(t, nginx[0].duration, "nginx D= past int32/1000 is unset, not wrapped")
+
+	apache := parityProxyRequest(map[string]string{"Pinpoint-ProxyApache": "t=1504230492763123 D=-7 i=101 b=-1"})
+	require.Len(t, apache, 1)
+	assert.Zero(t, apache[0].duration, "negative apache D= is unset")
+	assert.Zero(t, apache[0].idle, "i= above 100 is unset")
+	assert.Zero(t, apache[0].busy, "b= below 0 is unset")
+
+	apache = parityProxyRequest(map[string]string{"Pinpoint-ProxyApache": "t=1504230492763123 D=7 i=0 b=100"})
+	require.Len(t, apache, 1)
+	assert.Equal(t, int32(7), apache[0].duration)
+	assert.Equal(t, int32(0), apache[0].idle)
+	assert.Equal(t, int32(100), apache[0].busy)
+}

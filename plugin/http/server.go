@@ -23,6 +23,7 @@
 package pphttp
 
 import (
+	"math"
 	"net"
 	"net/http"
 	"net/textproto"
@@ -190,19 +191,20 @@ func proxyTokens(value string, fn func(k, v string)) {
 }
 
 // parseProxyApache reads "t=<epoch micros> D=<micros> i=<idle%> b=<busy%>",
+// the way ApacheRequestParser does: a duration that is not positive is left
+// unset, and a percent outside [0, 100] is left unset.
 func parseProxyApache(value string) proxyRequest {
 	p := proxyRequest{valid: true}
 	proxyTokens(value, func(k, v string) {
 		switch k {
 		case "t":
-			t, _ := strconv.ParseInt(v, 10, 64)
-			p.receivedTime = t / 1000
+			p.receivedTime = proxyDigits(v) / 1000
 		case "D":
-			p.durationTime = atoi32(v)
+			p.durationTime = proxyMicros(v)
 		case "i":
-			p.idlePercent = atoi32(v)
+			p.idlePercent = proxyPercent(v)
 		case "b":
-			p.busyPercent = atoi32(v)
+			p.busyPercent = proxyPercent(v)
 		}
 	})
 	return p
@@ -220,8 +222,7 @@ func parseProxyNginx(value string) proxyRequest {
 		case "t":
 			p.receivedTime = nginxMillis(v)
 		case "D":
-			// Seconds with millisecond precision, reported in microseconds.
-			p.durationTime = int32(nginxMillis(v) * 1000)
+			p.durationTime = nginxDurationMicros(v)
 		}
 	})
 	return p
@@ -242,6 +243,48 @@ func nginxMillis(v string) int64 {
 	return n
 }
 
+// nginxDurationMicros converts a "sec.mmm" duration to microseconds. Not
+// positive is unset, as NginxRequestParser's `> 0` guard leaves it; the wire
+// field is an int32, so a product out of its range is reported as no
+// duration rather than a wrapped one (the C++ agent's
+// parseProxyNginxDurationMicros does the same).
+func nginxDurationMicros(v string) int32 {
+	ms := nginxMillis(v)
+	if ms <= 0 || ms > math.MaxInt32/1000 {
+		return 0
+	}
+	return int32(ms * 1000)
+}
+
+// proxyDigits parses a decimal integer, 0 when it does not parse or does not
+// fit int64 - NumberUtils.parseLong(value, 0).
+func proxyDigits(v string) int64 {
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// proxyMicros reads a plain microsecond count; not positive or beyond int32
+// is unset.
+func proxyMicros(v string) int32 {
+	n, err := strconv.ParseInt(v, 10, 32)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return int32(n)
+}
+
+// proxyPercent reads an apache idle/busy percent; outside [0, 100] is unset.
+func proxyPercent(v string) int32 {
+	n, err := strconv.ParseInt(v, 10, 32)
+	if err != nil || n < 0 || n > 100 {
+		return 0
+	}
+	return int32(n)
+}
+
 // does. An app= token that is not a valid id - the [a-zA-Z0-9._-] character
 // class, at most proxyAppMaxLength bytes - discards the header.
 func parseProxyApp(value string) proxyRequest {
@@ -249,7 +292,7 @@ func parseProxyApp(value string) proxyRequest {
 	proxyTokens(value, func(k, v string) {
 		switch k {
 		case "t":
-			p.receivedTime, _ = strconv.ParseInt(v, 10, 64)
+			p.receivedTime = proxyDigits(v)
 		case "app":
 			if !pinpoint.IsValidId(v, proxyAppMaxLength) {
 				p.valid = false
@@ -261,21 +304,53 @@ func parseProxyApp(value string) proxyRequest {
 	return p
 }
 
-// parseProxyUser reads "t=<epoch millis>" from a header named by
-// Http.Server.ProxyUserHeaderNames; the header name is recorded as the app,
+// parseProxyUser reads "t=... D=..." from a header named by
+// Http.Server.ProxyUserHeaderNames; the header name is recorded as the app.
+// A user header may have been written by any of the three proxies, so
+// UserRequestParser infers the format from the value's shape, and so does
+// this (userReceivedTimeMillis / userDurationMicros).
 func parseProxyUser(name, value string) proxyRequest {
 	p := proxyRequest{valid: true, app: name}
 	proxyTokens(value, func(k, v string) {
-		if k == "t" {
-			p.receivedTime, _ = strconv.ParseInt(v, 10, 64)
+		switch k {
+		case "t":
+			p.receivedTime = userReceivedTimeMillis(v)
+		case "D":
+			p.durationTime = userDurationMicros(v)
 		}
 	})
 	return p
 }
 
-func atoi32(v string) int32 {
-	n, _ := strconv.ParseInt(v, 10, 32)
-	return int32(n)
+// userReceivedTimeMillis is UserRequestParser.toReceivedTimeMillis: shorter
+// than a millisecond epoch (13 digits) is rejected; 16 or more digits is
+// apache's microseconds, converted by dropping the last three digits before
+// parsing so the value cannot overflow first; a '.' at index 10 or later is
+// nginx's sec.mmm; anything else is an app's milliseconds.
+func userReceivedTimeMillis(v string) int64 {
+	n := len(v)
+	if n < 13 {
+		return 0
+	}
+	if n >= 16 {
+		return proxyDigits(v[:n-3])
+	}
+	if dot := strings.LastIndexByte(v, '.'); dot != -1 {
+		if dot < 10 {
+			return 0
+		}
+		return nginxMillis(v)
+	}
+	return proxyDigits(v)
+}
+
+// userDurationMicros is UserRequestParser.toDurationTimeMicros: a value with
+// a '.' is nginx's fractional seconds, anything else a microsecond count.
+func userDurationMicros(v string) int32 {
+	if strings.IndexByte(v, '.') != -1 {
+		return nginxDurationMicros(v)
+	}
+	return proxyMicros(v)
 }
 
 // RecordHttpServerResponse records http status and response header to span.
