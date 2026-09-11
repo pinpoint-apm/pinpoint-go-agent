@@ -95,7 +95,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
-	defer agent.Shutdown()
+	defer agent.Shutdown()                   // normal return from main
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM/SIGINT: a defer alone does not run on a signal
 
 	http.HandleFunc("/", pphttp.WrapHandlerFunc(index))
 	...
@@ -321,7 +322,10 @@ defer pinpoint.ShutdownOnSignal(agent)()  // off unless you call it
 ```
 
 If your program already has its own `signal.Notify`, call `agent.Shutdown()`
-from that handler instead. See
+from that handler instead. Nothing covers `os.Exit`: Go has no `atexit`, so a
+program that exits that way must call `agent.Shutdown()` first. (The C++ agent
+is the mirror image - its opt-in hook is `std::atexit`, which covers `exit()`
+but not a signal.) See
 [Troubleshooting](troubleshooting.md#spans-missing-at-shutdown-or-on-a-rollout)
 for the details and the `os.Exit` limitation.
 
