@@ -469,7 +469,11 @@ func Test_collectAgentStatWorker_restartKeepsPartialBatchAndRetakesBaseline(t *t
 	go agent.superviseWorker("collect agent stat", agent.collectAgentStatWorker)
 	assert.Eventually(t, func() bool { return agent.stats.batch.Load() >= kept+1 },
 		5*time.Second, time.Millisecond, "the restarted worker must continue the batch")
-	agent.Shutdown()
+	// Not Shutdown(): shutdownOnce already ran, so a second call is a no-op
+	// and the worker would outlive the asserts below (a -race report on
+	// lastCollectTime). Stop the worker the way the signal does and wait.
+	agent.signalShutdown()
+	assert.True(t, waitTimeout(&agent.workerWg, 5*time.Second), "the restarted worker did not stop")
 
 	assert.True(t, agent.stats.lastCollectTime.After(before), "the time baseline must be re-taken on restart")
 	assert.GreaterOrEqual(t, agent.stats.batch.Load(), kept+1, "the partial batch must survive the restart")
