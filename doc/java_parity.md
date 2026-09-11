@@ -808,6 +808,15 @@ tick and then cancels the stop context, and `sendStatsWorker` drains whatever
 the queue holds once the stop arrives instead of selecting between the two at
 random - a plain two-way select dropped the last tick half the time.
 
+The flush is preceded by a drain of `urlStatChan`: records the request path
+queued that `collectUrlStatWorker` had not consumed yet are aggregated first,
+so the final tick carries them - Java's `AsyncQueueingExecutor.stop()` falls
+through to `flushQueue()` for the same reason, and the C++ agent's
+`runAddUrlStatsWorker` ends with a final drain. The worker drains the same way
+when the stop signal reaches it. Records that arrive after the flush have no
+send left to carry them; `shutdownAgent` counts them into the url stat drop
+counter and warns, rather than losing them in silence.
+
 **Send cadence.** `UriStatCollectingJob` has no timer of its own — it is a job
 on the agent stat scheduler, so it polls the completed queue every
 `profiler.jvm.stat.collect.interval` (5000 ms in code, 10000 ms in the release

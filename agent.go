@@ -738,7 +738,14 @@ func (agent *agent) shutdownAgent() {
 	// and that worker drains the queue once when the stop arrives, which is
 	// what actually gets the last tick out. Skipped for an agent that never
 	// ran - it has no workers and no stat queue.
+	// Aggregate what the request path queued and collectUrlStatWorker has
+	// not consumed yet, so the flush below sees it; the worker drains the
+	// same way when it stops (Java's AsyncQueueingExecutor.stop() falls
+	// through to flushQueue(); the C++ agent's runAddUrlStatsWorker ends
+	// with a final drain). urlStats.add is locked, so the two drains can run
+	// side by side.
 	if agent.tracingEnabled() {
+		agent.drainUrlStatChan()
 		agent.flushUrlStat(true)
 	}
 
@@ -815,6 +822,35 @@ func (agent *agent) shutdownAgent() {
 	if !agent.waitWorkers(shutdownTimeout) {
 		Log("agent").Warnf("shutdown timeout(%v) exceeded, abandon in-flight workers: %s",
 			shutdownTimeout, strings.Join(agent.runningWorkerNames(), ", "))
+	}
+
+	// Url stat records that arrived after the final flush above - still in
+	// the channel, or aggregated by the worker's own stop drain - have no
+	// send left to carry them. Counted rather than lost in silence.
+	if agent.urlStatChan != nil {
+		late := agent.drainUrlStatChan()
+		if snapshot := agent.urlStats.takeSnapshot(true); !snapshot.isEmpty() {
+			late += snapshot.count
+		}
+		if late > 0 {
+			agent.urlStatDrops.record(int64(late))
+			Log("agent").Warnf("%d url stat record(s) arrived after the shutdown flush and are lost", late)
+		}
+	}
+}
+
+// drainUrlStatChan aggregates every record queued so far without blocking and
+// reports how many it took.
+func (agent *agent) drainUrlStatChan() int {
+	n := 0
+	for {
+		select {
+		case uri := <-agent.urlStatChan:
+			agent.urlStats.add(uri)
+			n++
+		default:
+			return n
+		}
 	}
 }
 
@@ -1749,6 +1785,9 @@ func (agent *agent) collectUrlStatWorker() {
 	for agent.workerContinues() {
 		select {
 		case <-stop:
+			// Final drain, so a record that was queued before the stop is
+			// aggregated rather than left in the channel.
+			agent.drainUrlStatChan()
 			Log("agent").Infof("end collect uri stat goroutine")
 			return
 		case uri := <-agent.urlStatChan:

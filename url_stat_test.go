@@ -781,3 +781,51 @@ func Test_urlStatSnapshot_MethodKeyBuildsDisplayOnce(t *testing.T) {
 	snapshot.add(&urlStat{entry: &UrlStatEntry{Url: "/orders/{id}", Method: "POST"}, endTime: endTime, elapsed: 10})
 	assert.Equal(t, 2, snapshot.count)
 }
+
+// Records still queued in urlStatChan when shutdown begins are aggregated
+// before the final flush, so the last tick carries them. Java's
+// AsyncQueueingExecutor.stop() falls through to flushQueue(); the C++ agent's
+// runAddUrlStatsWorker ends with a final drain. Here the shutdown path drains
+// the channel itself before taking the snapshot.
+func Test_urlStatShutdownDrainsTheCollectQueue(t *testing.T) {
+	agent, stats := newUrlStatSendTestAgent(t)
+	agent.urlStatChan = make(chan *urlStat, 8)
+	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+	fixUrlStatClock(t, tick.Add(time.Second))
+
+	for _, uri := range []string{"/a", "/b", "/c"} {
+		agent.urlStatChan <- newTestUrlStat(uri, 10, tick)
+	}
+
+	// shutdownAgent's order: drain, flush, signal.
+	assert.Equal(t, 3, agent.drainUrlStatChan())
+	agent.flushUrlStat(true)
+
+	sent := stats()
+	require.Len(t, sent, 1)
+	each := eachUriStatsByUri(t, sent[0])
+	assert.Len(t, each, 3, "every queued record reaches the final tick")
+	assert.Empty(t, agent.urlStatChan)
+}
+
+// The collect worker drains the queue when the stop signal arrives instead of
+// returning with records still in it.
+func Test_urlStatCollectWorkerDrainsOnStop(t *testing.T) {
+	agent, _ := newUrlStatSendTestAgent(t)
+	agent.urlStatChan = make(chan *urlStat, 8)
+	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+	fixUrlStatClock(t, tick.Add(time.Second))
+
+	for _, uri := range []string{"/a", "/b"} {
+		agent.urlStatChan <- newTestUrlStat(uri, 10, tick)
+	}
+	agent.signalShutdown()
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("collect uri stat", agent.collectUrlStatWorker)
+	require.True(t, waitTimeout(&agent.workerWg, time.Second), "collect worker did not stop")
+
+	assert.Empty(t, agent.urlStatChan, "drained on stop")
+	snapshot := agent.urlStats.takeSnapshot(true)
+	assert.Equal(t, 2, snapshot.count, "the drained records are aggregated")
+}
