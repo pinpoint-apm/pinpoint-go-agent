@@ -219,3 +219,17 @@ func (c *metaCache[K, V]) removeEntry(e *metaCacheEntry[K, V]) {
 	}
 	s.mu.Unlock()
 }
+
+// removeValue deletes the entry whose value isExpected accepts, for a caller
+// that holds the value but not the key (see sqlMeta). A full scan, but only
+// the metadata drop paths take it, and a cache holds at most its capacity.
+func (c *metaCache[K, V]) removeValue(isExpected func(V) bool) {
+	c.m.Range(func(_, raw any) bool {
+		e := raw.(*metaCacheEntry[K, V])
+		if isExpected(e.value) {
+			c.removeEntry(e)
+			return false
+		}
+		return true
+	})
+}

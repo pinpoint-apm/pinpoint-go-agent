@@ -64,6 +64,8 @@ the Java reference tree and for this repository's own sources.
 | Retrying a rejected metadata send | `MetadataGrpcDataSender`, `RetryResponseStreamObserver` | **Diverges (aligned with C++)** — see [below](#retrying-a-rejected-metadata-send--diverges) |
 | Span queue overflow policy | `SpanBatchGrpcDataSender` | **Same as Java** — a full send queue drops the oldest entry, as Java's default BATCH sender does (`queue.poll()` in `SpanBatchGrpcDataSender`); rejecting the newest is STREAM-mode-only behaviour, so head-drop is not a deviation |
 | Stat queue overflow policy | `GrpcDataSender` (`StatGrpcDataSender`), `AsyncQueueingExecutor` | **Diverges (head-drop)** — see [below](#stat-queue-overflow-policy--diverges) |
+| Metadata queue overflow policy | `GrpcDataSender.send` (`MetadataGrpcDataSender`) | **Same as Java** — a full `metaChan` refuses the newcomer and its cache entry is released (`agent.tryEnqueueMeta`), as `queue.offer` failing does in Java and `GrpcMetadata::enqueueMeta` does in the C++ agent. It used to head-drop like the span queue; metadata has no recency value, and the head of a stalled queue is the id most spans already reference, so head-drop evicted exactly the entry whose loss orphans the most spans. The retry schedule keeps evicting its oldest, as the C++ agent's `retry_queue` does |
+| Queued SQL id metadata | `SqlMetaDataService`, `SimpleCacheFactory.newSqlCache` | **Aligned with C++** — `sqlMeta` carries the abbreviated text and the id only; the id cache is keyed by the untruncated normalized statement (no length check, as in Java's `newSqlCache`), and a queued copy of that key held up to `Collector.Grpc.SenderQueueSize` x 1 MiB through an outage. The C++ agent's `StringMeta` carries a hash of the key; here `deleteMetaCache` finds the entry by id (`metaCache.removeValue`). The UID meta carries its key, which `SQL.CacheLengthLimit` already bounds |
 | Metadata queue size | `GrpcTransportConfig`, `profiler.transport.grpc.metadata.sender.executor.queue.size` (1000) | **Adopted** — `Collector.Grpc.SenderQueueSize`, the C++ agent's key for the same queue, default 1000 as in both. The metadata queue used to borrow `Span.QueueSize`. The retry schedule keeps its own bound (`metaRetryQueueSize`, see [below](#retrying-a-rejected-metadata-send--diverges)) |
 | URL stat input queue overflow policy | `AsyncQueueingUriStatStorage`, `AsyncQueueingExecutor` | **Diverges (head-drop)** — see [below](#url-stat-input-queue-overflow-policy--diverges) |
 | Command channel RPC | `GrpcCommandService`, `SupportCommandCodeClientInterceptor`, `Header.SUPPORT_COMMAND_CODE` | **Aligned** — see [below](#command-channel-rpc--aligned) |
@@ -290,7 +292,7 @@ from `agent.exceptionIdGen` unconditionally, and `EndSpan` enqueued one
 `exceptionMeta` per failed span. The per-span chain list is capped at
 `Error.MaxChainDepth` entries (at least 10), but nothing capped the *rate*.
 
-**Why adopt.** The metadata channel is bounded and head-drops on overflow
+**Why adopt.** The metadata channel is bounded and refuses new items on overflow
 (`agent.tryEnqueueMeta`), so the failure mode is not unbounded memory — it is
 worse than that. Under an error burst, exception metadata crowds out the API,
 string and SQL metadata queued on the same channel, and a dropped API id makes
@@ -1149,7 +1151,8 @@ entry one `metaRetryDelay` (1s) later. A transport failure with budget left
 send goroutine returns its in-flight permit as soon as the attempt ends. The
 schedule is bounded by `metaRetryQueueSize` (1000), separate from `metaChan`,
 and a full schedule evicts its oldest entry and releases that entry's cache
-slot — the same policy `tryEnqueueMeta` applies to `metaChan`. Exhausting the
+slot, as the C++ agent's `retry_queue` does (`metaChan` itself refuses the
+newcomer, see the table). Exhausting the
 attempt budget (`metaGiveUp`) releases the entry at once, as the C++ agent's
 `retry_or_drop` does.
 
@@ -1164,7 +1167,7 @@ probe rate at one per delay per id.
 goroutine holding one of the `metaMaxConcurrentRequests` permits, waiting in
 `backOffUntilReady` for the channel to recover. Under an outage four failed
 sends pinned every permit, `sendMetaWorker` parked on the permit acquisition,
-`metaChan` overflowed, its head-drop released the dropped item's cache entry,
+`metaChan` overflowed, the overflow released the refused item's cache entry,
 and the next span registered the same item again — a drop-feeds-inflow loop
 that lasted as long as the outage. Java never has this problem because its
 timer holds no thread and its sender has no queue bound; the C++ agent avoids

@@ -323,8 +323,9 @@ func noSqlCacheBypassConfig() *Config {
 // An abbreviated key keeps no more than a 64KB prefix and the total length, so
 // two statements agreeing on both would share one entry: the second would
 // answer with the first's id and never publish its own metadata. The two texts
-// differ past the cap, so the meta has to carry the key as well - that is what
-// deleteMetaCache removes by when the metadata queue drops the record.
+// differ past the cap, so the id meta cannot carry an abbreviated key and
+// carries none: deleteMetaCache removes by id. The uid meta carries the key,
+// which sqlCacheable already bounds.
 func Test_agent_SQLCachesKeyTheWholeStatement(t *testing.T) {
 	prefix := strings.Repeat("x", maxSqlSize)
 	first, second := prefix+"select 1", prefix+"select 2"
@@ -370,6 +371,28 @@ func Test_agent_SQLCachesKeyTheWholeStatement(t *testing.T) {
 		_, stillCached := a.sqlUidCache.peek(first)
 		assert.False(t, stillCached, "a dropped meta must drop the entry that published its uid")
 	})
+}
+
+// A queued sql id meta holds no more than maxSqlSize of text. The id cache is
+// keyed by the untruncated normalized statement, up to maxSqlNormalizeLength
+// (1 MiB), and a queued copy of that key would have made the metadata queue
+// hold up to its capacity x 1 MiB through a collector outage. The drop path
+// still finds the entry, by id.
+func Test_agent_QueuedSqlIdMetaHoldsNoUntruncatedKey(t *testing.T) {
+	huge := "select " + strings.Repeat("x", maxSqlNormalizeLength-8)
+	require.Less(t, len(huge), maxSqlNormalizeLength)
+
+	a := newTestAgent(defaultConfig())
+	id := a.cacheSql(huge)
+	require.NotZero(t, id)
+
+	md := (<-a.metaChan).(sqlMeta)
+	assert.LessOrEqual(t, len(md.sql), maxSqlSize+16, "the published text is abbreviated")
+	assert.Equal(t, id, md.id)
+
+	a.deleteMetaCache(md)
+	_, still := a.sqlCache.peek(huge)
+	assert.False(t, still, "a dropped meta still evicts the entry that published its id")
 }
 
 // Cache membership is a flag on the meta, not the shape of its key. A SQL whose
@@ -978,9 +1001,10 @@ func Test_agent_GetAgentIsRaceFreeAgainstShutdown(t *testing.T) {
 
 // A metadata item dropped by a full queue must not stay cached: its id was
 // already handed to spans, so the entry has to be re-registered rather than
-// left pointing at an id the collector never received. The queue head-drops,
-// so the item that loses its cache entry is the oldest queued one, not the
-// newcomer that took its slot.
+// left pointing at an id the collector never received. The queue refuses the
+// newcomer (Java GrpcDataSender.send, C++ GrpcMetadata::enqueueMeta), so the
+// item that loses its cache entry is the one just registered; the queued ones
+// keep theirs.
 func Test_agent_MetaCacheDropsEntryWhenQueueIsFull(t *testing.T) {
 	a := newTestAgent(defaultConfig())
 	a.metaChan = make(chan interface{}, 2)
@@ -991,13 +1015,14 @@ func Test_agent_MetaCacheDropsEntryWhenQueueIsFull(t *testing.T) {
 	first := a.cacheError("boom")
 	second := a.cacheError("boom")
 	assert.NotZero(t, first, "id minted")
-	assert.Equal(t, first, second, "the item that made it into the queue stays cached")
-	assert.NotEqual(t, oldest, a.cacheError("oldest"),
-		"the head-dropped item is re-registered with a new id")
+	assert.NotEqual(t, first, second, "the refused item is re-registered with a new id")
+	assert.Equal(t, oldest, a.cacheError("oldest"),
+		"the queued item stays cached")
 }
 
-// One overflow costs exactly one cache entry, and its freed slot belongs to
-// the incoming item.
+// One overflow costs exactly one cache entry: the newcomer's. The head of the
+// queue has been reused by every span that hit its entry while the pipeline
+// stalled, so evicting it would orphan the most-referenced id.
 func Test_agent_MetaOverflowInvalidatesOneCacheEntryPerOverflow(t *testing.T) {
 	const queueSize = 4
 
@@ -1013,17 +1038,14 @@ func Test_agent_MetaOverflowInvalidatesOneCacheEntryPerOverflow(t *testing.T) {
 
 	a.cacheError("newcomer")
 
-	lost := 0
 	for _, name := range names {
-		if _, ok := a.errorCache.peek(name); !ok {
-			lost++
-		}
+		_, ok := a.errorCache.peek(name)
+		assert.True(t, ok, "%s: a queued item keeps its cache entry", name)
 	}
-	assert.Equal(t, 1, lost, "one overflow must invalidate exactly one queued entry")
 	assert.EqualValues(t, 1, a.metaDrops.dropped.Load())
 	_, cached := a.errorCache.peek("newcomer")
-	assert.True(t, cached, "the item that caused the overflow takes the freed slot")
-	assert.Len(t, a.metaChan, queueSize, "the freed slot is reused, not left empty")
+	assert.False(t, cached, "the refused newcomer loses its entry and is re-registered next time")
+	assert.Len(t, a.metaChan, queueSize, "the queue is untouched")
 }
 
 // The same invariant over a long run: every item that never reached the
@@ -1037,7 +1059,7 @@ func Test_agent_MetaOverflowInvalidatesOneCacheEntryPerDrop(t *testing.T) {
 	for i := 0; i < enqueued; i++ {
 		a.cacheError(fmt.Sprintf("error-%d", i))
 	}
-	assert.Len(t, a.metaChan, queueSize, "head-drop keeps the queue full")
+	assert.Len(t, a.metaChan, queueSize, "the queue stays full")
 
 	close(a.metaChan)
 	queued := 0

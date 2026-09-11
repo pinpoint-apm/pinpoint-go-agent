@@ -163,10 +163,15 @@ type stringMeta struct {
 // untruncated statement the cache is keyed on. They differ for any statement
 // past the cap, and deleteMetaCache needs the key - dropping the wrong entry
 // would leave every later span pointing at an id the collector never received.
+// sqlMeta carries no cache key: the id cache is keyed by the untruncated
+// normalized statement (up to maxSqlNormalizeLength, as in Java, where
+// SimpleCacheFactory.newSqlCache has no length check), and a queued copy of
+// that text would hold up to metaChan x 1 MiB through a collector outage.
+// The C++ agent's StringMeta carries a hash of the key for the same reason.
+// deleteMetaCache finds the entry by its id instead.
 type sqlMeta struct {
 	id  int32
 	sql string
-	key string
 }
 
 // cached records whether the statement is in the UID cache. It cannot be
@@ -1268,7 +1273,9 @@ func (agent *agent) deleteMetaCache(md interface{}) {
 	case stringMeta:
 		agent.errorCache.remove(md.funcName, func(id int32) bool { return id == md.id })
 	case sqlMeta:
-		agent.sqlCache.remove(md.key, func(id int32) bool { return id == md.id })
+		// By id: the meta has no key (see sqlMeta). Ids are unique per
+		// sequence, so the scan finds at most the entry that published it.
+		agent.sqlCache.removeValue(func(id int32) bool { return id == md.id })
 	case sqlUidMeta:
 		// A statement that bypassed the cache has nothing to drop.
 		if !md.cached {
@@ -1292,12 +1299,16 @@ func (agent *agent) enqueueMeta(md interface{}) {
 	}
 }
 
-// tryEnqueueMeta queues md, head-dropping the oldest item when the queue is
-// full: the slot the eviction frees is handed to md rather than left for the
-// next producer, so an overflow costs exactly one item - and one cache entry -
-// because it is what this agent's span queue already does (a full shard
-// overwrites its oldest cell), and metadata the collector has not seen yet is
-// worth more than metadata whose spans may already have gone out.
+// tryEnqueueMeta queues md, refusing it when the queue is full - Java's
+// GrpcDataSender.send (queue.offer fails, the item is dropped) and the C++
+// agent's GrpcMetadata::enqueueMeta. Deliberately the opposite of the span
+// queue's head-drop: metadata has no recency value, and what differs between
+// the oldest and the newest item is how many spans already reference the id.
+// The producer registers the id in the cache before enqueueing, so the item
+// at the head has been reused by every span that hit its entry while the
+// pipeline stalled; dropping it (and releasing its entry, which the caller
+// does) orphans all of them, while the newcomer is referenced by the one span
+// that created it.
 func (agent *agent) tryEnqueueMeta(md interface{}) bool {
 	if !agent.tracingEnabled() {
 		return false
@@ -1307,27 +1318,9 @@ func (agent *agent) tryEnqueueMeta(md interface{}) bool {
 	case agent.metaChan <- md:
 		return true
 	default:
-		break
-	}
-
-	select {
-	case dropped := <-agent.metaChan:
-		agent.deleteMetaCache(dropped)
 		agent.metaDrops.record(1)
-	default:
-		// The consumer drained one meanwhile, so nothing had to be evicted.
+		return false
 	}
-
-	select {
-	case agent.metaChan <- md:
-		return true
-	default:
-	}
-
-	// Another producer took the freed slot: md is the item lost this time and
-	// the caller drops its cache entry.
-	agent.metaDrops.record(1)
-	return false
 }
 
 // idGen is an agent-local metadata id sequence. The collector keys its API,
@@ -1466,11 +1459,7 @@ func (agent *agent) cacheSql(sql string) int32 {
 	}
 
 	aSql := abbreviateString(sql, maxSqlSize)
-	md := sqlMeta{
-		id:  id,
-		sql: aSql,
-		key: sql,
-	}
+	md := sqlMeta{id: id, sql: aSql}
 	agent.enqueueMeta(md)
 
 	if IsDebugLogLevelEnabled() {

@@ -372,3 +372,23 @@ func TestMetaCacheHitsWithoutInsertsDoNotPromote(t *testing.T) {
 	}
 	assert.Equal(t, promoted, survivor.lastPromoted.Load(), "promoted once per insert, not per hit")
 }
+
+// removeValue finds an entry by its value for a caller that no longer holds
+// the key (sqlMeta), and, like remove, leaves an entry whose value is not the
+// one the caller means.
+func TestMetaCacheRemoveValue(t *testing.T) {
+	c := newMetaCache[string, int32](64)
+	c.peekOrAdd("a", 1)
+	c.peekOrAdd("b", 2)
+
+	c.removeValue(func(v int32) bool { return v == 1 })
+	_, ok := c.peek("a")
+	assert.False(t, ok, "the entry holding the value is removed")
+	v, ok := c.peek("b")
+	assert.True(t, ok, "other entries stay")
+	assert.Equal(t, int32(2), v)
+
+	c.removeValue(func(v int32) bool { return v == 99 })
+	_, ok = c.peek("b")
+	assert.True(t, ok, "no match, nothing removed")
+}
