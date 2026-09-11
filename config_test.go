@@ -1567,3 +1567,52 @@ func TestNewConfig_ErrorMarkFromEnv(t *testing.T) {
 
 	assert.Equal(t, ErrorCategoryUnknown|ErrorCategoryException, c.load().errorMarkMask)
 }
+
+// A ConfigOption is a startup default whichever way it writes its value. The
+// plugin options go through Set(), which stamps the source a Set() after
+// startup gets, and that source is what a reload skips: an option given as a
+// config function was never overridden by the file while the core options,
+// which assign the staging map directly, were. Both are the default source
+// after NewConfig; only a Set() made afterwards keeps its value across a
+// reload, as doc/config.md says.
+func Test_NewConfig_optionsThroughSetAreOverriddenByTheFile(t *testing.T) {
+	viaSet := func(c *Config) { c.Set(CfgSpanMaxCallStackDepth, 5) }
+	config, err := NewConfig(WithAppName("reloadApp"), viaSet, WithSamplingRate(3))
+	require.NoError(t, err)
+	require.Equal(t, 5, config.Int(CfgSpanMaxCallStackDepth))
+	config.Set(CfgSamplingCounterRate, 7)
+
+	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	body := `
+Span:
+  MaxCallStackDepth: 12
+Sampling:
+  CounterRate: 9
+`
+	require.NoError(t, os.WriteFile(cfgFile, []byte(body), 0o600))
+	cfgFileViper := viper.New()
+	cfgFileViper.SetConfigFile(cfgFile)
+	config.reloadConfig(cfgFileViper)
+
+	assert.Equal(t, 12, config.Int(CfgSpanMaxCallStackDepth), "an option given through Set() is a default the file overrides")
+	assert.Equal(t, 7, config.Int(CfgSamplingCounterRate), "a Set() after NewConfig keeps its precedence")
+}
+
+// The noop agent's Config is a process singleton no watcher reloads, and the
+// global agent falls back to it after Shutdown. A plugin that re-binds its
+// reload callback to the global agent on every NewAgent/Shutdown cycle grew
+// its callback list without bound; the static Config keeps none.
+func Test_NoopAgentConfig_keepsNoReloadCallbacks(t *testing.T) {
+	config := NoopAgent().Config()
+	before := len(config.callback)
+	for i := 0; i < 3; i++ {
+		config.AddReloadCallback([]string{CfgSpanMaxCallStackDepth}, func() {})
+	}
+	assert.Equal(t, before, len(config.callback))
+
+	regular, err := NewConfig(WithAppName("cb"))
+	require.NoError(t, err)
+	n := len(regular.callback)
+	regular.AddReloadCallback([]string{CfgSpanMaxCallStackDepth}, func() {})
+	assert.Equal(t, n+1, len(regular.callback), "a reloadable Config keeps its callbacks")
+}

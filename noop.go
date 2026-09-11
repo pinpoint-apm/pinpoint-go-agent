@@ -18,6 +18,7 @@ var defaultNoopAgent = &noopAgent{}
 // package variable initialization happens before any init function.
 func initNoopAgent() {
 	defaultNoopAgent.config = defaultConfig()
+	defaultNoopAgent.config.static = true
 }
 
 // NoopAgent returns a Agent that doesn't collect tracing data.

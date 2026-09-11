@@ -334,6 +334,12 @@ type Config struct {
 	cfgMap   map[string]*cfgMapItem
 	callback []reloadCallback
 	snapshot atomic.Pointer[configSnapshot]
+	// static marks a Config that no watcher ever reloads - the noop agent's,
+	// a process singleton that the global agent falls back to after Shutdown.
+	// AddReloadCallback on it appends a callback that never runs, and a
+	// plugin re-binding to the global agent after every NewAgent/Shutdown
+	// cycle grew that list without bound. Such a Config keeps none.
+	static bool
 	// logCallbackOnce registers the logger's reload callbacks once per Config.
 	logCallbackOnce sync.Once
 
@@ -641,6 +647,17 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 			fn(config)
 		}
 		config.mu.Lock()
+		// A ConfigOption is a startup default, whichever way it wrote its
+		// value: the core options assign cfgMap directly, the plugin options
+		// go through Set(), which stamps cfgSrcAPI and would make the file
+		// unable to override them on a reload while an identical-looking
+		// core option is overridden. Both end here as cfgSrcDefault; a Set()
+		// after NewConfig keeps its precedence.
+		for _, v := range config.cfgMap {
+			if v.source == cfgSrcAPI {
+				v.source = cfgSrcDefault
+			}
+		}
 		config.normalizeCfgValues()
 		config.mu.Unlock()
 	}
@@ -1380,6 +1397,9 @@ func (config *Config) AddReloadCallback(optNames []string, callback func()) {
 	config.mu.Lock()
 	defer config.mu.Unlock()
 
+	if config.static {
+		return
+	}
 	config.callback = append(config.callback, reloadCallback{optNames, callback})
 }
 
