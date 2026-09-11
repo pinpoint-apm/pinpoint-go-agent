@@ -1249,7 +1249,9 @@ func sleepUnlessStopped(agent *agent, d time.Duration) bool {
 
 func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc func() bool, which string) bool {
 	readyFailures := 0
-	for agent.Enable() {
+	// workerContinues, not Enable: a stream is (re)opened by a worker, and
+	// the stat worker still sends the final url stat tick while stopping.
+	for agent.workerContinues() {
 		if newStreamFunc() {
 			Log("grpc").Infof("success to make %s stream", which)
 			return true

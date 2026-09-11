@@ -1504,9 +1504,21 @@ The atomic rather than a mutex-guarded enum: `tracingEnabled` is read by
 worker loop iteration; a mutex there would be a lock per span. Readers use
 three named predicates - `tracingEnabled` (request path; also `Enable()`),
 `workerContinues` (worker loops), `stopping` (registration and reconnect
-loops) - each reproducing exactly the bool it replaced, including that the
-request path still records during `stopping`, since the drain is meant to send
-what it produces until the phase reaches `stopped`.
+loops).
+
+**Request path during `stopping` - aligned with C++.** `tracingEnabled` is
+true while `running` only: from the shutdown signal on, a new request gets a
+noop tracer, a span chunk is refused, and no metadata or url stat is queued,
+while `workerContinues` keeps the workers draining what was queued before the
+signal. The C++ agent blocks the same way from the first line of
+`do_shutdown` (`isExiting()` is checked by `enqueueMeta`, `enqueueUrlStats`
+and span creation); Java has no phase between running and stopped, so there
+is no Java behaviour to match. The request path used to record through
+`stopping`, so the drain raced a producer that never stopped: whatever it
+produced after the final url stat flush and the span queue close had no send
+left to carry it. The cost of blocking is the final chunk of a span still
+open at the signal, which the C++ agent loses too; `ShutdownOnSignal` and an
+orderly server drain before `Shutdown` keep that window small.
 
 `failed` is kept as its own phase, as `init_failed_` is: `connectGrpcServer`'s
 release defer already special-cased it (and it is the phase an operator has to

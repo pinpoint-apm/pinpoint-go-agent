@@ -14,8 +14,7 @@ import (
 // tests do so through the former enable bool's API: Store(true) is a running
 // agent, Store(false) one that never registered, Load the request-path gate.
 func (l *lifecycle) Load() bool {
-	p := l.current()
-	return p == phaseRunning || p == phaseStopping
+	return l.current() == phaseRunning
 }
 
 func (l *lifecycle) Store(enabled bool) {
@@ -48,7 +47,8 @@ func Test_lifecycle_PhasesAreDistinguishable(t *testing.T) {
 
 	agent.signalShutdown()
 	assert.Equal(t, phaseStopping, agent.enable.current(), "signalled, not yet drained")
-	assert.True(t, agent.tracingEnabled(), "the drain still accepts what the request path produces")
+	assert.False(t, agent.tracingEnabled(), "the request path is refused from the signal on, as the C++ isExiting gate does")
+	assert.True(t, agent.workerContinues(), "the workers keep draining what was queued before the signal")
 	assert.True(t, agent.stopping())
 
 	agent.Shutdown()
@@ -111,4 +111,26 @@ func Test_lifecycle_TransitionIsExclusive(t *testing.T) {
 	assert.True(t, l.transitionTo(phaseStopping))
 	assert.False(t, l.transitionTo(phaseStopping))
 	assert.Equal(t, phaseStopping, l.current())
+}
+
+// From the shutdown signal on, the request path is refused while the workers
+// drain: a new request gets a noop tracer and a span chunk is not queued. The
+// C++ agent blocks the same way from the first line of do_shutdown; Java has
+// no equivalent phase. Recording through the drain let the request path race
+// the teardown - what it produced after the final flush had no send left.
+func Test_lifecycle_StoppingRefusesTheRequestPath(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	require.Equal(t, phaseRunning, agent.enable.current())
+
+	tracer := agent.NewSpanTracer("op", "/rpc")
+	require.True(t, tracer.IsSampled(), "running: sampled")
+
+	agent.signalShutdown()
+	require.Equal(t, phaseStopping, agent.enable.current())
+
+	assert.False(t, agent.NewSpanTracer("op", "/rpc").IsSampled(), "stopping: noop tracer")
+	assert.False(t, agent.enqueueSpan(&spanChunk{}), "stopping: chunk refused")
+	assert.Zero(t, agent.cacheError("boom"), "stopping: no metadata registered")
+	assert.False(t, agent.enqueueUrlStat(&urlStat{}), "stopping: no url stat queued")
+	assert.False(t, agent.Enable())
 }

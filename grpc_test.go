@@ -1017,7 +1017,10 @@ func Test_sendMetaWorker_movesOnAndReleasesCache(t *testing.T) {
 	assert.False(t, apiCached())
 	assert.False(t, errCached())
 
-	// ...so the next use re-registers and re-enqueues the metadata
+	// ...so the next use re-registers and re-enqueues the metadata. The
+	// request path is refused while stopping, so the phase is put back to
+	// running through the test seam for that check.
+	agent.enable.Store(true)
 	assert.NotZero(t, agent.cacheSpanApi(apiKey.descriptor, apiKey.apiType))
 	assert.True(t, apiCached())
 	assert.Equal(t, 1, len(agent.metaChan))
@@ -2537,7 +2540,10 @@ func Test_sendMetaWorker_releasesCacheOnCollectorRejection(t *testing.T) {
 	agent.signalShutdown()
 	agent.workerWg.Wait()
 
-	// ...so the next use re-registers the metadata and queues it again
+	// ...so the next use re-registers the metadata and queues it again. The
+	// request path is refused while stopping, so the phase is put back to
+	// running through the test seam for that check.
+	agent.enable.Store(true)
 	assert.NotZero(t, agent.cacheSpanApi(apiKey.descriptor, apiKey.apiType))
 	assert.True(t, apiCached())
 	assert.Equal(t, 1, len(agent.metaChan))

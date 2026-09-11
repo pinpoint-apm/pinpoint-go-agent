@@ -92,22 +92,26 @@ func allowedTransition(from, to agentPhase) bool {
 // is a behaviour change and belongs in its own commit.
 
 // tracingEnabled reports whether the request path may record: create spans,
-// register metadata, queue spans and url stats. True while running and
-// still true while stopping - the teardown drains what the request path
-// produced up to the moment the phase reaches stopped, exactly as the enable
-// flag stayed set until shutdownAgent's CompareAndSwap. Enable() exposes it.
+// register metadata, queue spans and url stats. True while running only. It
+// turns false the moment shutdown is signalled, as the C++ agent's isExiting
+// gate does from the first line of do_shutdown: a request that arrives while
+// the workers drain gets a noop tracer, and a span still open at the signal
+// has its final chunk refused, so the drain sends what was queued before the
+// signal and nothing produced after it. It used to stay true through
+// stopping, which let the drain race a request path that kept producing
+// (see doc/java_parity.md, "Lifecycle phases"). Enable() exposes it.
 func (agent *agent) tracingEnabled() bool {
-	p := agent.enable.current()
-	return p == phaseRunning || p == phaseStopping
+	return agent.enable.current() == phaseRunning
 }
 
-// workerContinues is the worker loop condition: the same phases as
-// tracingEnabled, kept apart because the question differs. A worker keeps
-// polling through the stopping phase; the stop signal, not this predicate,
-// is what wakes it out of a blocked wait, and the phase turning to stopped
-// is what ends a loop that fell through the select.
+// workerContinues is the worker loop condition: running or stopping. A
+// worker keeps polling through the stopping phase to drain what the request
+// path queued before the signal; the stop signal, not this predicate, is what
+// wakes it out of a blocked wait, and the phase turning to stopped is what
+// ends a loop that fell through the select.
 func (agent *agent) workerContinues() bool {
-	return agent.tracingEnabled()
+	p := agent.enable.current()
+	return p == phaseRunning || p == phaseStopping
 }
 
 // stopping reports whether shutdown has begun - the former shutdown flag,
