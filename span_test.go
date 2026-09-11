@@ -2122,3 +2122,34 @@ func Test_span_EndSpan_ConcurrentSetError(t *testing.T) {
 		assert.False(t, s.canAddErrorChain(), "no further chains after EndSpan")
 	}
 }
+
+// An async span's own event is legitimately open at EndSpan. Popping the top
+// first ended a still-open child in the root's place and then reported the
+// root as the unclosed one; now everything left is ended together and only
+// what exceeds the one expected open event is reported, the C++ agent's
+// expected_open. Both events still land in the final chunk.
+func TestSpan_AsyncEndSpanCountsOnlyTheRealLeftovers(t *testing.T) {
+	var buf bytes.Buffer
+	restore := captureLogAt(&buf, logrus.WarnLevel)
+	defer restore()
+
+	unclosedEventLog = logThrottle{}
+	parent := defaultTestSpan()
+	parent.NewSpanEvent("t")
+	async := parent.NewGoroutineTracer().(*span)
+	async.NewSpanEvent("child-left-open")
+	async.EndSpan()
+
+	assert.Contains(t, buf.String(), "1 unclosed event(s)", "the child, not the async root")
+	chunk, ok := async.agent.spanQueue.tryDequeue()
+	require.True(t, ok)
+	assert.Len(t, chunk.eventChunk, 2, "child and the async event")
+
+	// A balanced async span reports nothing.
+	buf.Reset()
+	unclosedEventLog = logThrottle{}
+	balanced := parent.NewGoroutineTracer().(*span)
+	balanced.NewSpanEvent("work").EndSpanEvent()
+	balanced.EndSpan()
+	assert.NotContains(t, buf.String(), "unclosed event")
+}

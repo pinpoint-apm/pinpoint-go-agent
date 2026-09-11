@@ -392,3 +392,62 @@ func TestMetaCacheRemoveValue(t *testing.T) {
 	_, ok = c.peek("b")
 	assert.True(t, ok, "no match, nothing removed")
 }
+
+// The shard split keeps the configured total: the remainder goes to the first
+// shards and the shard count is clamped to the capacity, as the C++ agent's
+// ShardedLruCache does. A floor division made SQL.CacheSize=1000 hold 992 and
+// =10 hold 16 (one per shard, 160% of the setting).
+func TestMetaCacheCapacityIsSplitExactly(t *testing.T) {
+	for _, tc := range []struct{ capacity, shards int }{{1024, 16}, {1000, 16}, {10, 10}, {1, 1}, {17, 16}} {
+		c := newMetaCache[string, int32](tc.capacity)
+		total := 0
+		for i := range c.shards {
+			total += c.shards[i].cap
+		}
+		assert.Equal(t, tc.capacity, total, "capacity %d: total", tc.capacity)
+		assert.EqualValues(t, tc.shards, c.shardCount, "capacity %d: shards in use", tc.capacity)
+		for i := range c.shards {
+			if i < tc.shards {
+				assert.GreaterOrEqual(t, c.shards[i].cap, 1, "capacity %d: shard %d in use", tc.capacity, i)
+			} else {
+				assert.Zero(t, c.shards[i].cap, "capacity %d: shard %d unused", tc.capacity, i)
+			}
+		}
+	}
+
+	// Every key lands on a shard in use.
+	c := newMetaCache[string, int32](10)
+	for i := 0; i < 200; i++ {
+		key := string(rune('a'+i%26)) + string(rune(i))
+		c.peekOrAdd(key, int32(i))
+		v, ok := c.peek(key)
+		assert.True(t, ok, "%q must be cached", key)
+		assert.Equal(t, int32(i), v)
+	}
+}
+
+// peekOrAdd honours the TTL as peek does: an expired entry is a miss that the
+// new value replaces. The invariant used to hold only because cacheSqlUid
+// peeks first; a caller that only peekOrAdds, or a TTL that lapses between the
+// two calls, got the stale UID back and the re-publication the TTL exists for
+// was suppressed.
+func TestMetaCachePeekOrAddExpiresLikePeek(t *testing.T) {
+	c := newMetaCache[string, int32](cacheSize)
+	c.ttl = time.Hour
+	now := time.Unix(1_700_000_000, 0)
+	c.now = func() time.Time { return now }
+
+	c.peekOrAdd("a", 1)
+	now = now.Add(c.ttl - time.Nanosecond)
+	v, ok := c.peekOrAdd("a", 2)
+	assert.True(t, ok, "fresh: the existing value wins")
+	assert.Equal(t, int32(1), v)
+
+	now = now.Add(time.Nanosecond)
+	_, ok = c.peekOrAdd("a", 3)
+	assert.False(t, ok, "expired: a miss, replaced by the new value")
+	v, ok = c.peek("a")
+	assert.True(t, ok)
+	assert.Equal(t, int32(3), v)
+	assert.Equal(t, int64(1), c.shard("a").size.Load(), "replaced in place, not double counted")
+}

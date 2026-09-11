@@ -288,9 +288,7 @@ func (span *span) EndSpan() {
 	endTime := time.Now()
 	span.elapsed = endTime.UnixMilli() - span.startTime.UnixMilli()
 
-	if span.isAsyncSpan() {
-		span.endSpanEvent(nil, nil) //async span event
-	} else {
+	if !span.isAsyncSpan() {
 		dropSampledActiveSpan(span)
 		span.agent.stats.collectResponseTime(span.elapsed)
 	}
@@ -298,11 +296,26 @@ func (span *span) EndSpan() {
 	// Unbalanced end: leftover events are ended and still recorded. Dropping
 	// them would send a span whose event sequence has holes and the
 	// collector would rebuild the call tree against the missing parents.
-	if leftover := span.eventStack.endAll(); len(leftover) > 0 {
-		unclosedEventLog.warnf("abnormal span - %d unclosed event(s) ended by EndSpan: %s", len(leftover), span.operationName)
-		for _, se := range leftover {
-			span.appendEndedSpanEvent(se)
+	//
+	// An async span legitimately holds one - its own event, open until this
+	// EndSpan - so it is ended here with the rest rather than by popping the
+	// top first: with a child still open that pop ended the child in the
+	// root's place and then counted the root as the unclosed one. Only what
+	// exceeds the expected count is a missed EndSpanEvent (the C++ agent's
+	// expected_open in SpanImpl::EndSpan).
+	leftover := span.eventStack.endAll()
+	expectedOpen := 0
+	if span.isAsyncSpan() {
+		expectedOpen = 1
+		if len(leftover) == 0 {
+			noEventLog.warnf("abnormal async span - has no event: %s", span.operationName)
 		}
+	}
+	if unclosed := len(leftover) - expectedOpen; unclosed > 0 {
+		unclosedEventLog.warnf("abnormal span - %d unclosed event(s) ended by EndSpan: %s", unclosed, span.operationName)
+	}
+	for _, se := range leftover {
+		span.appendEndedSpanEvent(se)
 	}
 
 	span.spanEventLock.Lock()

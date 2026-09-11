@@ -76,6 +76,9 @@ type metaCacheShard struct {
 type metaCache[K comparable, V any] struct {
 	m      sync.Map // K -> *metaCacheEntry[K, V]
 	shards [metaCacheShardCount]metaCacheShard
+	// shardCount is the number of shards in use: metaCacheShardCount, or the
+	// capacity when that is smaller, so no shard has a capacity of 0.
+	shardCount uint64
 	// ttl > 0 expires an entry that long after its insert: peek drops it and
 	// reports a miss, so the next lookup re-registers the metadata. Only the
 	// SQL UID cache sets one (SQL.CacheExpireHours): the collector's
@@ -86,17 +89,25 @@ type metaCache[K comparable, V any] struct {
 	now func() time.Time // time.Now, replaced by tests
 }
 
-// newMetaCache splits capacity evenly across the shards, so a hot shard
-// for removing the shared lock line.
+// newMetaCache splits capacity across the shards so the total stays capacity:
+// the remainder goes to the first shards and the shard count is clamped to
+// the capacity, as the C++ agent's ShardedLruCache does. A floor division
+// alone made SQL.CacheSize=1000 hold 992 and =10 hold 16.
 func newMetaCache[K comparable, V any](capacity int) *metaCache[K, V] {
 	c := &metaCache[K, V]{now: time.Now}
-	perShard := capacity / metaCacheShardCount
-	if perShard < 1 {
-		perShard = 1
-	}
+	capacity = max(capacity, 1)
+	c.shardCount = uint64(min(capacity, metaCacheShardCount))
+	base, remainder := capacity/int(c.shardCount), capacity%int(c.shardCount)
 	for i := range c.shards {
 		s := &c.shards[i]
 		s.order = list.New()
+		perShard := base
+		if i < remainder {
+			perShard++
+		}
+		if i >= int(c.shardCount) {
+			perShard = 0 // never selected by shard()
+		}
 		s.cap = perShard
 		s.ageThreshold = uint64(perShard / 2)
 		if s.ageThreshold < 1 {
@@ -112,7 +123,7 @@ func newMetaCache[K comparable, V any](capacity int) *metaCache[K, V] {
 // measured 4-6x slower on the SQL-sized keys these caches hold: 590 ns vs
 // 105 ns for 8 KB, 6.5 us vs 1.5 us for maxSqlSize (#189).
 func (c *metaCache[K, V]) shard(key K) *metaCacheShard {
-	return &c.shards[maphash.Comparable(metaCacheSeed, key)&(metaCacheShardCount-1)]
+	return &c.shards[maphash.Comparable(metaCacheSeed, key)%c.shardCount]
 }
 
 // peek returns the cached value. A hit is normally lock-free; only when the
@@ -165,14 +176,22 @@ func (s *metaCacheShardInternal) promotionDue(lastPromoted, promotedInsertSeq ui
 // least recently used entry if the shard is over capacity. It returns the
 // existing value and true when another goroutine won the insert race, so
 // callers keep a single id per key (the loser's freshly generated id is
-// discarded, same as with golang-lru's PeekOrAdd).
+// discarded, same as with golang-lru's PeekOrAdd). An expired entry is a
+// miss here as it is in peek: it is replaced by value, so the TTL holds for
+// a caller that never peeked first.
 func (c *metaCache[K, V]) peekOrAdd(key K, value V) (V, bool) {
 	s := c.shard(key)
 	s.mu.Lock()
 	if raw, ok := c.m.Load(key); ok {
-		v := raw.(*metaCacheEntry[K, V]).value
-		s.mu.Unlock()
-		return v, true
+		e := raw.(*metaCacheEntry[K, V])
+		if c.ttl == 0 || c.now().Sub(e.insertedAt) < c.ttl {
+			v := e.value
+			s.mu.Unlock()
+			return v, true
+		}
+		c.m.Delete(e.key)
+		s.order.Remove(e.element)
+		s.size.Add(-1)
 	}
 	opSeq := s.opSeq.Add(1)
 	insertSeq := s.insertSeq.Add(1)
