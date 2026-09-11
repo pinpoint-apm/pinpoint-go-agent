@@ -290,7 +290,10 @@ func (span *span) EndSpan() {
 	}
 
 	endTime := time.Now()
-	span.elapsed = endTime.UnixMilli() - span.startTime.UnixMilli()
+	// Wall clock: an NTP step between start and end makes this negative,
+	// which would shrink the response-time and url stat totals. Clamped like
+	// the C++ SpanData::setEndTime.
+	span.elapsed = max(endTime.UnixMilli()-span.startTime.UnixMilli(), 0)
 
 	if !span.isAsyncSpan() {
 		dropSampledActiveSpan(span)

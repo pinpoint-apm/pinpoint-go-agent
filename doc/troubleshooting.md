@@ -10,7 +10,7 @@ traces, see [Tracer, Span, and Annotation Contracts](api_contracts.md).
 ## Verifying Agent Startup
 
 The agent writes its own operational logs (config, gRPC, goroutines, ...) to
-**stderr** by default. Startup is the fastest thing to check, and it is worth
+**stdout** by default (the C++ agent's default too; before this release it was stderr). Startup is the fastest thing to check, and it is worth
 checking first — a missing trace is far more often a missing agent than a
 missing instrument.
 

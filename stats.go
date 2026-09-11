@@ -468,7 +468,11 @@ func (stats *agentStats) getStats() *inspectorStats {
 	counters := stats.drainCounters()
 
 	memStat := stats.readMemStats()
-	interval := now.Sub(stats.lastCollectTime).Milliseconds()
+	// At least 1ms: this is wall time, and an NTP step between two
+	// collections makes the gap 0 or negative, which goes on the wire as the
+	// window the counters cover and the collector divides by it (the C++
+	// GrpcStats::collect clamps the same way).
+	interval := max(now.Sub(stats.lastCollectTime).Milliseconds(), 1)
 
 	inspector := inspectorStats{
 		sampleTime:  now,

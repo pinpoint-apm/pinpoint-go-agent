@@ -280,6 +280,16 @@ func Test_getStatsIntervalIsMeasuredMilliseconds(t *testing.T) {
 	assert.Less(t, interval, int64(5000), "must not truncate to whole seconds")
 }
 
+// A clock step between two collections makes the wall-clock gap 0 or negative;
+// the collector divides counts by it, so it is clamped to 1ms as the C++
+// GrpcStats::collect does.
+func Test_getStatsIntervalIsClampedToOneMillisecond(t *testing.T) {
+	stats := newAgentStats()
+	stats.lastCollectTime = time.Now().Add(time.Hour) // the clock went backwards
+
+	assert.Equal(t, int64(1), stats.getStats().interval)
+}
+
 func Test_normalizeCpuLoad(t *testing.T) {
 	nan := math.NaN()
 	tests := []struct {

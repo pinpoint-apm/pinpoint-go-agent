@@ -829,3 +829,14 @@ func Test_urlStatCollectWorkerDrainsOnStop(t *testing.T) {
 	snapshot := agent.urlStats.takeSnapshot(true)
 	assert.Equal(t, 2, snapshot.count, "the drained records are aggregated")
 }
+
+// A negative elapsed - a wall clock stepped back between start and end - must
+// not shrink the totals: clamped to 0 at the sink as the C++ agent does.
+func Test_urlStatHistogramClampsNegativeElapsed(t *testing.T) {
+	hg := newStatHistogram()
+	hg.add(50)
+	hg.add(-30)
+	assert.Equal(t, int64(50), hg.total, "a negative sample adds nothing")
+	assert.Equal(t, int64(50), hg.max)
+	assert.Equal(t, int32(2), hg.histogram[0], "the negative sample lands in the fastest bucket")
+}

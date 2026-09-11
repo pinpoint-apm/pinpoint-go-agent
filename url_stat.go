@@ -28,7 +28,12 @@ type urlStat struct {
 // snapshotQueue capacity. Bounded because a stats stream that never recovers
 // would otherwise grow the queue without limit; the oldest tick is the one
 // worth losing first.
-const maxCompletedUrlStatSnapshots = 4
+// maxCompletedUrlStatSnapshots is the number of closed ticks kept while the
+// stat stream is not draining. Java's AsyncQueueingUriStatStorage
+// .addCompletedData compares snapshotQueue.size() > SNAPSHOT_LIMIT (4) before
+// offering, so it retains five; the C++ agent's kMaxCompletedSnapshots is the
+// same five.
+const maxCompletedUrlStatSnapshots = 5
 
 // urlStatSnapshotDropLog reports completed ticks evicted at the queue cap. Its
 // own throttle, not urlStatLimitLog's: sharing one would let whichever drop
@@ -326,6 +331,10 @@ func newStatHistogram() *urlStatHistogram {
 }
 
 func (hg *urlStatHistogram) add(elapsed int64) {
+	// Wall-clock elapsed can go negative across an NTP step; unclamped it
+	// would decrement total and skew the average (the C++ UrlStatHistogram
+	// ::add clamps the same way, at the sink, whatever the producer did).
+	elapsed = max(elapsed, 0)
 	hg.total += elapsed
 	if hg.max < elapsed {
 		hg.max = elapsed

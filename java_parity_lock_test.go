@@ -811,11 +811,15 @@ func Test_javaParityLock_UrlStatHistogramBuckets(t *testing.T) {
 	}
 }
 
-// Test_javaParityLock_UrlStatWindow locks the tick size and the completed-queue
-// four snapshots.
+// Test_javaParityLock_UrlStatWindow locks the tick size and the number of
+// closed ticks retained while the stat stream is down. Java's
+// AsyncQueueingUriStatStorage.addCompletedData checks
+// `snapshotQueue.size() > SNAPSHOT_LIMIT` (4) BEFORE offering, so the queue
+// holds five; an earlier version of this test attributed a capacity of 4 to
+// Java, which was the ports' own constant, not Java's.
 func Test_javaParityLock_UrlStatWindow(t *testing.T) {
 	assert.Equal(t, 30*time.Second, urlStatCollectInterval, "Java TickClock interval")
-	assert.Equal(t, 4, maxCompletedUrlStatSnapshots, "Java snapshotQueue capacity / C++ kMaxCompletedSnapshots")
+	assert.Equal(t, 5, maxCompletedUrlStatSnapshots, "Java snapshotQueue effective capacity (SNAPSHOT_LIMIT 4, checked before offer) / C++ kMaxCompletedSnapshots")
 }
 
 // Test_javaParityLock_UrlStatEmptyHistogram locks that an all-zero histogram

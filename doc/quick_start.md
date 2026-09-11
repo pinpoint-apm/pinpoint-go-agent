@@ -272,7 +272,7 @@ container setups.
 
 ## Verify
 
-Start your application and watch its **stderr** — that is where the agent logs
+Start your application and watch its **stdout** — that is where the agent logs
 by default:
 
 ```text

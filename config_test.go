@@ -42,7 +42,7 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, 9993, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
 			assert.Equal(t, 9992, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
 			assert.Equal(t, "info", c.String(CfgLogLevel), CfgLogLevel)
-			assert.Equal(t, "stderr", c.String(CfgLogOutput), CfgLogOutput)
+			assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
 			assert.Equal(t, 10, c.Int(CfgLogMaxSize), CfgLogMaxSize)
 			assert.Equal(t, 1, c.Int(CfgLogMaxBackups), CfgLogMaxBackups)
 			assert.Equal(t, samplingTypeCounter, c.String(CfgSamplingType), CfgSamplingType)

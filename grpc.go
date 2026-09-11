@@ -1566,7 +1566,10 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 
 			response, err := spanGrpc.spanClient.SendSpanBatch(ctx, spanMessageBatch)
 			if err != nil {
-				Log("grpc").Infof("SendSpanBatch failed - %v", err)
+				// Lost like a head-drop or a permit skip, and counted with
+				// them, so reportSpanDrops covers every cause.
+				spanGrpc.agent.spanDrops.record(int64(len(chunks)))
+				Log("grpc").Infof("SendSpanBatch failed - %d spans dropped: %v", len(chunks), err)
 				return
 			}
 			handleSpanBatchResponse(response)

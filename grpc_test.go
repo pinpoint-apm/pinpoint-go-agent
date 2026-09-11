@@ -2129,6 +2129,7 @@ func Test_spanGrpc_sendSpanBatchAsync_errorReleasesPermit(t *testing.T) {
 
 	assert.Equal(t, 3, client.requestCount(), "a failed send must return its permit")
 	assert.Empty(t, spanGrpc.concurrentRequestPermit)
+	assert.EqualValues(t, 3, agent.spanDrops.dropped.Load(), "the spans a failed RPC lost are counted like every other span loss")
 }
 
 // A panic while building a batch message returns its permit.

@@ -1052,7 +1052,7 @@ output is a terminal; a file never receives ANSI escapes. Log lines carry
 * PINPOINT_GO_LOG_OUTPUT
 * WithLogOutput()
 * type: string
-* default: "stderr"
+* default: "stdout" (the C++ agent's default; it used to be "stderr")
 * case-insensitive
 * dynamic
 
@@ -1073,9 +1073,9 @@ A value below 1 recovers the default.
 ### Log.MaxBackups
 Log.MaxBackups option sets the number of rotated log files kept beside the
 current one. The key and its default are those of the C++ agent. Rotated files
-older than 30 days are removed as well, and they are not compressed; neither
-is configurable, because the C++ agent has no such setting and a Go-only key
-would leave the two agents' config files disagreeing.
+are kept until this many exist, whatever their age, and are not compressed;
+neither is configurable, because the C++ agent has no such setting and a Go-only
+key would leave the two agents' config files disagreeing.
 
 A value below 1, including 0, is out of range and recovers the default with a
 warning: to the rotation library 0 means "keep every backup", which can fill

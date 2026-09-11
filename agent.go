@@ -977,6 +977,9 @@ func (agent *agent) sendSpanWorker() {
 		stream = renewIfExpired(stream, agent.spanGrpc.newSpanStreamWithRetry, "span")
 		err := stream.sendSpan(chunk)
 		if err != nil {
+			// The chunk is not re-sent (see below); counted with the other
+			// span losses so reportSpanDrops covers this cause too.
+			agent.spanDrops.record(1)
 			if err != io.EOF {
 				Log("agent").Errorf("send span - %v", err)
 			}

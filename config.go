@@ -245,7 +245,7 @@ func initConfig() {
 	AddConfig(CfgCollectorGrpcSenderQueueSize, CfgInt, defaultMetaQueueSize, false)
 	AddConfig(CfgLogLevelOld, CfgString, "info", true)
 	AddConfig(CfgLogLevel, CfgString, "info", true)
-	AddConfig(CfgLogOutput, CfgString, "stderr", true)
+	AddConfig(CfgLogOutput, CfgString, "stdout", true) // the C++ agent's default
 	AddConfig(CfgLogMaxSize, CfgInt, 10, true)
 	AddConfig(CfgLogMaxBackups, CfgInt, defaultLogMaxBackups, true)
 	AddConfig(CfgSamplingType, CfgString, samplingTypeCounter, true)
