@@ -22,7 +22,7 @@ go get github.com/pinpoint-apm/pinpoint-go-agent
 
 ## Getting Started
 
-Refer [Quick Start](doc/quick_start.md) for simple test run of Pinpoint Go Agent.
+Refer [Getting Started](doc/getting_started.md) for simple test run of Pinpoint Go Agent.
 
 ## Plug-ins
 Pinpoint Go Agent provides support for instrumenting Go’s built-in http package, database/sql drivers
@@ -31,7 +31,7 @@ These packages help you to make instruments with simple source code modification
 Refer the [Plugin User Guide](doc/plugin_guide.md) for more information.
 
 ## Documents
-* [Quick Start](doc/quick_start.md) - install, configure and verify your first trace
+* [Getting Started](doc/getting_started.md) - install, configure and verify your first trace
 * [Configuration](doc/config.md) - every option, plus examples and a symptom index
 * [Plugin User Guide](doc/plugin_guide.md) - the supported frameworks, drivers and clients
 * [Custom Instrumentation](doc/instrument.md) - trace what no plugin covers

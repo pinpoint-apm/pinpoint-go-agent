@@ -507,7 +507,7 @@ Report bugs and ask questions on the
 
 ## Related Documentation
 
-* [Quick Start](quick_start.md)
+* [Getting Started](getting_started.md)
 * [Configuration](config.md)
 * [Custom Instrumentation](instrument.md)
 * [Tracer, Span, and Annotation Contracts](api_contracts.md)

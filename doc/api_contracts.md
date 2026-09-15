@@ -578,7 +578,7 @@ ctx := pinpoint.NewContext(context.Background(), tracer.NewGoroutineTracer())
 
 ## Related Documentation
 
-* [Quick Start](quick_start.md)
+* [Getting Started](getting_started.md)
 * [Custom Instrumentation](instrument.md)
 * [Configuration](config.md)
 * [Plugin User Guide](plugin_guide.md)

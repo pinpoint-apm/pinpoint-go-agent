@@ -1,7 +1,7 @@
 # Development Guide
 
 How to build, test and extend the agent itself. If you only want to instrument
-an application, start with [Quick Start](quick_start.md) instead.
+an application, start with [Getting Started](getting_started.md) instead.
 
 ## Prerequisites
 
@@ -445,7 +445,7 @@ Contributor License Agreement, and should not break the build or any test.
 
 ## Related Documentation
 
-* [Quick Start](quick_start.md)
+* [Getting Started](getting_started.md)
 * [Custom Instrumentation](instrument.md)
 * [Tracer, Span, and Annotation Contracts](api_contracts.md)
 * [Plugin User Guide](plugin_guide.md)

@@ -622,7 +622,7 @@ Before shipping a hand-written instrument:
 
 ## Related Documentation
 
-* [Quick Start](quick_start.md)
+* [Getting Started](getting_started.md)
 * [Tracer, Span, and Annotation Contracts](api_contracts.md)
 * [Plugin User Guide](plugin_guide.md)
 * [Configuration](config.md)

@@ -1,4 +1,4 @@
-# Quick Start
+# Getting Started
 
 Pinpoint Go Agent enables you to monitor Go applications using Pinpoint. This
 guide takes you from `go get` to a traced request in the Pinpoint UI.
