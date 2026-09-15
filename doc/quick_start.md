@@ -11,9 +11,9 @@ guide takes you from `go get` to a traced request in the Pinpoint UI.
   9992 (stat).
 * Linux, macOS or Windows.
 
-Go compiles to native machine code, so — unlike the Java agent — there is
-nothing to attach at startup. Instrumentation is a source change, which is why
-this guide is about code and not about a launcher.
+Go compiles to native machine code, so there is nothing to attach at startup.
+Instrumentation is a source change, which is why this guide is about code and
+not about a launcher.
 
 ## Install
 ### Go get
@@ -323,9 +323,7 @@ defer pinpoint.ShutdownOnSignal(agent)()  // off unless you call it
 
 If your program already has its own `signal.Notify`, call `agent.Shutdown()`
 from that handler instead. Nothing covers `os.Exit`: Go has no `atexit`, so a
-program that exits that way must call `agent.Shutdown()` first. (The C++ agent
-is the mirror image - its opt-in hook is `std::atexit`, which covers `exit()`
-but not a signal.) See
+program that exits that way must call `agent.Shutdown()` first. See
 [Troubleshooting](troubleshooting.md#spans-missing-at-shutdown-or-on-a-rollout)
 for the details and the `os.Exit` limitation.
 

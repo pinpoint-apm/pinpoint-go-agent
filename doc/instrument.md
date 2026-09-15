@@ -57,8 +57,8 @@ func doHandle(w http.ResponseWriter, r *http.Request) {
 ```
 
 A span that records neither **SpanRecorder.SetEndPoint()** nor
-**SpanRecorder.SetRemoteAddress()** is sent with `"UNKNOWN"` in both, as the
-Java agent does, so the inbound node is labelled rather than blank in the UI.
+**SpanRecorder.SetRemoteAddress()** is sent with `"UNKNOWN"` in both, so the
+inbound node is labelled rather than blank in the UI.
 
 You can instrument a single call stack of application and makes the result a single span using Tracer interface.
 **Tracer.EndSpan()** must be called to complete a span and deliver it to the collector.
@@ -318,7 +318,7 @@ se.Annotations().AppendInt(pinpoint.AnnotationHttpStatusCode, resp.StatusCode)
 | `AnnotationArgs0` | -1 | first argument of the traced call (string) |
 | `AnnotationApi` | 12 | API description string |
 | `AnnotationSqlId` | 20 | SQL id / normalized statement metadata |
-| `AnnotationSqlUid` | 25 | SQL uid metadata (murmur3 x64 128 of the normalized SQL, h1 then h2 little-endian, identical to the Java and C++ agents) |
+| `AnnotationSqlUid` | 25 | SQL uid metadata (murmur3 x64 128 of the normalized SQL, h1 then h2 little-endian) |
 | `AnnotationHttpUrl` | 40 | request URL |
 | `AnnotationHttpParam` | 41 | query string |
 | `AnnotationHttpCookie` | 45 | recorded cookies |
@@ -365,8 +365,8 @@ themselves sensitive.
 ## Error reporting
 
 Marking a failure takes one call. `SpanRecorder.SetError()` fails the whole
-transaction; `SpanEventRecorder.SetError()` fails one event and, as in the Java
-agent, the transaction it belongs to. Both take the same optional error name,
+transaction; `SpanEventRecorder.SetError()` fails one event and the
+transaction it belongs to. Both take the same optional error name,
 which groups errors in the UI and defaults to the error's Go type name:
 
 ```go
@@ -555,7 +555,7 @@ pphttp.CollectUrlStat(tracer, "/users/{id}", r.Method, status)
 Passing the resolved path instead would create one entry per id and exhaust
 `Http.UrlStat.LimitSize`.
 
-The URL is first-wins, as in the Java agent: once a span holds a non-empty URL,
+The URL is first-wins: once a span holds a non-empty URL,
 later `AddMetric(pinpoint.MetricURLStat, ...)` calls keep it and refresh only
 the method and status code. To replace a URL deliberately (for example, to
 correct an early guess with the route that was eventually matched), record with
@@ -615,7 +615,8 @@ Before shipping a hand-written instrument:
 - [ ] Remote calls set service type, destination and endpoint.
 - [ ] No credentials or personal data in annotations.
 - [ ] Verified once with `PINPOINT_GO_LOG_LEVEL=debug`, with no `src=span`
-      warnings — the shared-tracer check only runs at that level.
+      warnings — the `called after EndSpan` ones are logged only at that
+      level.
 
 ---
 

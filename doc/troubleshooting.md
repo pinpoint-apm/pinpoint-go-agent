@@ -10,7 +10,7 @@ traces, see [Tracer, Span, and Annotation Contracts](api_contracts.md).
 ## Verifying Agent Startup
 
 The agent writes its own operational logs (config, gRPC, goroutines, ...) to
-**stdout** by default (the C++ agent's default too; before this release it was stderr). Startup is the fastest thing to check, and it is worth
+**stdout** by default (before this release it was stderr). Startup is the fastest thing to check, and it is worth
 checking first — a missing trace is far more often a missing agent than a
 missing instrument.
 
@@ -46,10 +46,9 @@ INFO[2026-09-03 11:36:30.010000] still waiting for agent registration after 3000
 The parenthesis separates the two cases: `collector unreachable or the send
 failed` is a connectivity problem, while `collector rejected the registration,
 likely permanent` means the collector answered and said no — that one usually
-waits forever unless the configuration changes. The Java agent traces whether or
-not registration has succeeded; this agent deliberately does not, and
-[Java Agent Feature Parity Decisions](java_parity.md#registration-before-tracing--declined)
-records why.
+waits forever unless the configuration changes. Tracing does not start until
+registration succeeds, which is why a blocked agent port shows up as "no data at
+all" rather than as partial data.
 
 Three lines tell you almost everything:
 
@@ -266,11 +265,9 @@ something calls it. `defer agent.Shutdown()` runs on a normal return from
 * **`os.Exit()`** (and `log.Fatal*`, which calls it) also skips every deferred
   function.
 
-Java does not have this problem: the Java agent registers a JVM shutdown hook
-(`ShutdownHookRegister`) that closes the agent automatically. Go has no
-`atexit` and no runtime shutdown hook, so this agent cannot do the same on its
-own, and it deliberately does not install a signal handler by default — see
-below for why.
+Go has no `atexit` and no runtime shutdown hook, so the agent cannot close
+itself on the way out, and it deliberately does not install a signal handler by
+default — see below for why.
 
 **Fix, option 1 — opt in to the agent's signal watcher.** If your program does
 not handle signals itself, let the agent do it:
@@ -337,13 +334,13 @@ case:
 | Warning | Meaning | Fix |
 |---|---|---|
 | `abnormal span - EndSpan already called` | `EndSpan()` called twice | end it once, via `defer` |
-| `abnormal span - has unclosed event` | events still open at `EndSpan()` | pair each `NewSpanEvent` with `EndSpanEvent`, in one `defer` |
+| `abnormal span - N unclosed event(s) ended by EndSpan` | events still open at `EndSpan()` | pair each `NewSpanEvent` with `EndSpanEvent`, in one `defer` |
 | `abnormal span - has no event` | recorder or goroutine tracer requested with no active event | open a span event first |
-| `span is shared by more than two goroutines` | one tracer used from several goroutines | `NewGoroutineTracer()` or `WrapGoroutine()` per goroutine |
+| `span is shared by more than one goroutine` | one tracer used from several goroutines | `NewGoroutineTracer()` or `WrapGoroutine()` per goroutine |
 | `callStack maximum depth/sequence exceeded` | span overflowed | record fewer events (one per loop, not per iteration), or raise `Span.MaxCallStackDepth` / `Span.MaxCallStackSequence` |
 
-Note that the shared-tracer check only runs at `debug` and `trace` levels, so a
-concurrency mistake is invisible in a production log. See
+The `called after EndSpan` warnings are logged at `debug` level, which is why
+this list is worth a debug run; the shared-tracer check runs at every level. See
 [Contracts](api_contracts.md) for each rule in full.
 
 ### Missing Distributed Traces
@@ -394,9 +391,8 @@ A call chain that shows as separate transactions instead of one:
 * **Sampling rate.** `counterRate: 1` traces every transaction. Raise the
   divisor (`counterRate: 10` is 10%) or set `Sampling.NewThroughput` to cap
   transactions per second under load.
-* **Debug logging.** `debug`/`trace` levels add per-event work (including the
-  goroutine-id read behind the shared-tracer check). Never leave them on in
-  production.
+* **Debug logging.** `debug`/`trace` levels add per-event work. Never leave
+  them on in production.
 * **`Error.TraceCallStack`.** Call-stack capture and symbolization is the
   costliest thing the agent does per error. It is off by default; keep
   `Error.CallStackDepth` modest when you turn it on.
@@ -451,8 +447,7 @@ nc -vz your-collector-host 9991
 when the connection was lost and when it came back.
 
 The transport logs each collector channel (`agent`, `span`, `stat`, `command`)
-under `src=grpc`. The lines below are worded the same in the C++ agent, so this
-entry applies to both.
+under `src=grpc`.
 
 * `<channel> connection state <from> -> <to>` (INFO) is an **observed** state
   change while the agent waited for the channel. `GetState` is a sampled read,
@@ -468,9 +463,9 @@ entry applies to both.
   rest.
 * `<channel> connection ready again after <d>; lifetime: not ready <n> times,
   <d> waiting for READY in total, <n> rotations` (INFO) closes an outage with
-  the running totals - the log-only stand-in for Java's Channelz reporters.
-  `rotations` counts `Collector.Grpc.ConnectionMaxAge` rotations over every
-  channel of the process, so the same value appears on each channel's line. A
+  the running totals. `rotations` counts `Collector.Grpc.ConnectionMaxAge`
+  rotations over every channel of the process, so the same value appears on
+  each channel's line. A
   first connect is not an outage and gets no summary. This line is rate
   limited like the state lines.
 * `<channel> connection not ready (state <s>): waited <d> so far` (WARN) is a

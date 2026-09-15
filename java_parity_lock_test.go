@@ -15,7 +15,7 @@
  */
 
 // Locked invariants. Cross-repository rationale and references live in
-// doc/java_parity.md; this file records only the Go behaviour under test.
+// doc/development.md; this file records only the Go behaviour under test.
 //
 // Groups:
 //   1  SQL normalization state machine
@@ -984,10 +984,10 @@ func Test_javaParityLock_CollectorPortDefaults(t *testing.T) {
 
 // Test_javaParityLock_GrpcChannelDefaults locks the channel options that were
 // verified equal across the three agents. flowControlWindow, writeBufferSize
-// three at the C-core defaults, which doc/java_parity.md records. The idle
+// three at the C-core defaults, which doc/development.md records. The idle
 // timeout is deliberately not locked: all three agents disable idling, but
-// decision is shared, not the value (doc/java_parity.md, "gRPC channel
-// arguments").
+// decision is shared, not the value (doc/development.md, "Java and C++
+// agent parity").
 func Test_javaParityLock_GrpcChannelDefaults(t *testing.T) {
 	assert.Equal(t, 30_000, grpcKeepAliveTime, "Java ClientOption keepAliveTime")
 	assert.Equal(t, 60_000, grpcKeepAliveTimeout, "Java ClientOption keepAliveTimeout")
@@ -1025,11 +1025,11 @@ func Test_javaParityLock_ReconnectBackoff(t *testing.T) {
 
 // Test_javaParityLock_AgentInfoSchedule locks the AgentInfo refresh cadence.
 // (profiler.agentInfo.send.retry.interval): registration gates tracing in both
-// ports, so it has to retry far more often. doc/java_parity.md records that.
+// ports, so it has to retry far more often. doc/development.md records that.
 func Test_javaParityLock_AgentInfoSchedule(t *testing.T) {
 	assert.Equal(t, 24*60*60*1000, defaultAgentInfoRefreshInterval, "Java AgentInfoSender refresh interval")
 	assert.Equal(t, 3, defaultAgentInfoMaxTryPerAttempt, "Java AgentInfoSender maxTryPerAttempt")
-	assert.Equal(t, 3000, defaultAgentInfoSendRetryInterval, "matches the C++ agent, not Java's effective 300000ms - see doc/java_parity.md")
+	assert.Equal(t, 3000, defaultAgentInfoSendRetryInterval, "matches the C++ agent, not Java's effective 300000ms - see doc/development.md")
 }
 
 // Test_javaParityLock_SqlCacheLengthLimitAppliesToTheUidCacheOnly locks that

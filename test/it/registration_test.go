@@ -212,7 +212,7 @@ func TestRetriesAgentRegistrationAfterApplicationRejection(t *testing.T) {
 
 // Retrying is not the same as running: for as long as the collector keeps
 // rejecting, the agent must stay disabled and open no stream. Registration is
-// the precondition for tracing here (see doc/java_parity.md), and an agent that
+// the precondition for tracing here (see doc/development.md), and an agent that
 // reported itself enabled while stuck in this loop would look healthy while
 // reporting nothing.
 func TestStaysDisabledWhileRegistrationIsRejected(t *testing.T) {

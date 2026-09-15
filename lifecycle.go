@@ -97,8 +97,8 @@ func allowedTransition(from, to agentPhase) bool {
 // the workers drain gets a noop tracer, and a span still open at the signal
 // has its final chunk refused, so the drain sends what was queued before the
 // signal and nothing produced after it. It used to stay true through
-// stopping, which let the drain race a request path that kept producing
-// (see doc/java_parity.md, "Lifecycle phases"). Enable() exposes it.
+// stopping, which let the drain race a request path that kept producing (see
+// doc/development.md, "Java and C++ agent parity"). Enable() exposes it.
 func (agent *agent) tracingEnabled() bool {
 	return agent.enable.current() == phaseRunning
 }

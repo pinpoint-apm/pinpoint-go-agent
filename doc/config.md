@@ -150,8 +150,7 @@ If this option is not set, the generated AgentId is used as AgentName.
 The maximum length is 255 bytes for Uid.Version v1 and v3, and 254 bytes for v4,
 and it must match `[a-zA-Z0-9\._\-]+`.
 A value that is too long or has invalid characters does not stop the agent:
-it is logged at warn and the generated AgentId is used instead,
-as the Java and C++ agents do.
+it is logged at warn and the generated AgentId is used instead.
 Check the agent log for that warning if the agent shows up under an AgentId you did not expect.
 See [Identity Versions](#identity-versions).
 
@@ -163,7 +162,6 @@ See [Identity Versions](#identity-versions).
 
 ### Uid.Version
 Uid.Version option selects the agent identity format used to identify the agent to Pinpoint collector.
-It mirrors the Java agent's `pinpoint.modules.uid.version` property.
 Supported values are v1, v3 and v4.
 The default is v3, and unknown or empty values fall back to v3.
 
@@ -277,7 +275,6 @@ Collector.StatPort option sets the stat port of Pinpoint collector.
 ### Collector.AgentInfo.RefreshInterval
 Collector.AgentInfo.RefreshInterval option sets the cycle for re-sending the agent information to the collector.
 If it is 0 or less, the agent information is sent only once at agent startup.
-The default matches the Java and C++ agents (24 hours).
 
 * --pinpoint-collector-agentinfo-refreshinterval
 * PINPOINT_GO_COLLECTOR_AGENTINFO_REFRESHINTERVAL
@@ -333,7 +330,7 @@ before closing the connection.
 ### Collector.Grpc.KeepAlivePermitWithoutCalls
 Collector.Grpc.KeepAlivePermitWithoutCalls option sets whether keepalive pings are sent even when there is no
 active stream.
-The default is false, matching the C++ agent. Agents older than this release always behaved as if it were true.
+The default is false. Agents older than this release always behaved as if it were true.
 
 * --pinpoint-collector-grpc-keepalivepermitwithoutcalls
 * PINPOINT_GO_COLLECTOR_GRPC_KEEPALIVEPERMITWITHOUTCALLS
@@ -422,7 +419,6 @@ Use it when the collector sits behind an L4 load balancer or is scaled out, so t
 connected spread across the collector instances over time instead of staying pinned to the one they first reached.
 The connection is only replaced while traffic flows, and the age is randomized by +/-10% so that agents
 deployed together do not reconnect in lockstep.
-This corresponds to the Java agent's `profiler.transport.grpc.loadbalancer.renew.period.millis`.
 The default 0 keeps a working connection for as long as the agent runs.
 
 Spreading across instances needs the `dns` resolver
@@ -462,8 +458,7 @@ Collector.Grpc.StreamMaxAge option sets the max age in milliseconds of the long-
 [Span.Batch.Enable](#spanbatchenable) is off), stat and command streams.
 A stream older than this is closed normally and reopened before the next send, so no span or stat is dropped;
 the command stream, which waits on the collector, is reopened when its age runs out.
-This corresponds to the Java agent's `profiler.transport.grpc.span.sender.rpc.age.max.millis`, and like it the age
-is randomized by +/-10%.
+The age is randomized by +/-10%.
 The default 0 keeps a stream open until it fails.
 
 * --pinpoint-collector-grpc-streammaxage
@@ -484,8 +479,6 @@ traffic reaches on the span channel in [Span.Batch.Enable](#spanbatchenable) mod
 Note that with [Collector.Grpc.KeepAlivePermitWithoutCalls](#collectorgrpckeepalivepermitwithoutcalls) at its
 default false, a connection with no open stream sends no keepalive pings even when idling is disabled.
 A negative value is treated as 0.
-This corresponds to the Java agent's `ClientOption.idleTimeoutMillis`, which is set to 30 days (in effect
-disabled), and to the C++ agent's `Collector.Grpc.IdleTimeoutMs`.
 
 * --pinpoint-collector-grpc-idletimeout
 * PINPOINT_GO_COLLECTOR_GRPC_IDLETIMEOUT
@@ -501,8 +494,6 @@ It used to share [Span.QueueSize](#spanqueuesize). When the queue is full the ol
 its cache entry released so a later span registers it again, and the agent logs a rate-limited warning
 carrying the cumulative number of dropped items.
 The retry schedule for failed metadata sends has its own fixed bound of 1000 and is not affected.
-The default matches the Java agent's `profiler.transport.grpc.metadata.sender.executor.queue.size` and the
-C++ agent's key of the same name.
 
 * --pinpoint-collector-grpc-senderqueuesize
 * PINPOINT_GO_COLLECTOR_GRPC_SENDERQUEUESIZE
@@ -513,8 +504,8 @@ C++ agent's key of the same name.
 
 ### Sampling.Type
 Sampling.Type option sets the type of agent sampler.
-Either "COUNTER" or "PERCENT" must be specified. "COUNTING", the Java agent's
-name for the counter sampler, is accepted as an alias of "COUNTER".
+Either "COUNTER" or "PERCENT" must be specified. "COUNTING" is accepted as an
+alias of "COUNTER".
 
 An unrecognized type falls back to "COUNTER" and keeps
 [Sampling.CounterRate](#samplingcounterrate) as configured, so a typo does not
@@ -545,13 +536,11 @@ Sample 1/rate. In other words, if the rate is 1, then it will be 100% and if it 
 Sampling.PercentRate option sets the sampling rate for a 'percent sampler'.
 The rate is truncated to hundredths of a percent, and a truncated rate of 0
 samples no new transaction at all - so `0`, a negative rate, and any positive
-rate below `0.01` (e.g. `0.005`) all turn percent sampling off. This is what the
-Java agent does (`PercentSamplerFactory.java:40-48,56-58`: `<= 0` becomes
-`FalseSampler`); a rate below `0.01` also logs a warning, because a positive
-rate that samples nothing is more often a typo than an intent. A rate of `100`
-or above always samples, Java's `TrueSampler`; a rate above `100` is clamped to
-it with a warning, because a rate over the documented maximum reads as a misuse
-of the option rather than an intent.
+rate below `0.01` (e.g. `0.005`) all turn percent sampling off; a rate below
+`0.01` also logs a warning, because a positive rate that samples nothing is
+more often a typo than an intent. A rate of `100` or above always samples; a
+rate above `100` is clamped to it with a warning, because a rate over the
+documented maximum reads as a misuse of the option rather than an intent.
 
 * --pinpoint-sampling-percentrate
 * PINPOINT_GO_SAMPLING_PERCENTRATE
@@ -652,7 +641,7 @@ Span.EventChunkSize option sets the size of span event chunk for gRPC.
 
 ### Span.MaxCallStackDepth
 Span.MaxCallStackDepth option sets the max callstack depth of a span, if -1 is unlimited and min is 2.
-Events nested one level deeper than this value are still recorded and the next level overflows, matching Java's `DefaultCallStack` (with the default 64, up to 65 levels are recorded).
+Events nested one level deeper than this value are still recorded and the next level overflows (with the default 64, up to 65 levels are recorded).
 
 * --pinpoint-span-maxcallstackdepth
 * PINPOINT_GO_SPAN_MAXCALLSTACKDEPTH
@@ -680,9 +669,6 @@ Each entry is `<type>:<message substring>`; either part may be empty, and both m
 The error and every error it wraps are checked, following `Cause()` first and falling back to `Unwrap()`
 (the same chain the exception recorder walks), up to 64 links deep.
 
-This corresponds to the Java agent's `profiler.ignore-error-handler.<name>.class-name`,
-`profiler.ignore-error-handler.<name>.exception-message.contains` and `profiler.ignore-error-handler.<name>.nested=true`.
-
 * --pinpoint-span-ignoreerrors
 * PINPOINT_GO_SPAN_IGNOREERRORS
 * WithSpanIgnoreErrors()
@@ -707,8 +693,7 @@ threw and returned 5xx reports `6`.
 
 Each entry is one of `exception`, `http-status` and `sql`, matched case-insensitively; a
 single entry may hold several of them comma separated. No entries at all - the default -
-means every cause, which is what Java's unset `profiler.error.mark` means. An unrecognised
-name is warned about and ignored, so a typo narrows nothing.
+means every cause. An unrecognised name is warned about and ignored, so a typo narrows nothing.
 
 The unknown cause (`1`) is not nameable and is always marked: it is what
 `SpanRecorder.SetFailure()` records when its caller names no cause, and excluding it would
@@ -720,8 +705,6 @@ amount to "never fail a transaction".
 | `http-status` | a response status listed in `Http.Server.StatusCodeErrors` |
 | `sql` | the `SQL.ErrorCount` limit on one transaction |
 | `unknown` | `SpanRecorder.SetFailure()` called with no cause |
-
-This corresponds to the Java agent's `profiler.error.mark`.
 
 * --pinpoint-span-errormark
 * PINPOINT_GO_SPAN_ERRORMARK
@@ -741,9 +724,8 @@ Span:
 
 ### Span.ErrorMarkExclude
 Span.ErrorMarkExclude option lists the error causes that must **not** fail a transaction,
-removed from whatever `Span.ErrorMark` allows (Java's `mark.removeAll(exclude)`, so an
-exclusion wins over an inclusion). Entries are spelled as in `Span.ErrorMark`, and the unknown
-cause cannot be excluded. `Span.ErrorMarkExclude: http-status` is how to say "a 5xx is not a
+removed from whatever `Span.ErrorMark` allows, so an exclusion wins over an inclusion.
+Entries are spelled as in `Span.ErrorMark`, and the unknown cause cannot be excluded. `Span.ErrorMarkExclude: http-status` is how to say "a 5xx is not a
 transaction failure" while keeping exceptions and the SQL count.
 
 An excluded cause is dropped from the verdict and from nothing else: the HTTP status
@@ -754,8 +736,6 @@ never disagree about the same request.
 
 `Span.IgnoreErrors` excludes individual errors by type and message; this option excludes a
 whole cause, however it was recorded.
-
-This corresponds to the Java agent's `profiler.error.mark.exclude`.
 
 * --pinpoint-span-errormarkexclude
 * PINPOINT_GO_SPAN_ERRORMARKEXCLUDE
@@ -785,7 +765,7 @@ traffic stops.
 * type: int
 * default: 5000
 * unit: milliseconds
-* range: 1000 ~ 10000 (Java's `DefaultAgentStatMonitor` bounds; an out-of-range value falls back to the default with a warning log)
+* range: 1000 ~ 10000 (an out-of-range value falls back to the default with a warning log)
 
 ### Stat.BatchCount
 Stat.BatchCount option sets batch delivery units for collected statistics.
@@ -825,11 +805,11 @@ SQL.TraceBindValue option enables bind value tracing for SQL Driver.
 ### SQL.MaxBindValueSize
 SQL.MaxBindValueSize option sets the max length of traced bind value for SQL Driver.
 It applies to bind values only. A truncated list ends with a
-`...(number of bind values)` marker, appended past the limit as in the Java
-agent. The parameters extracted by SQL normalization are never truncated,
-because the server splits them on `,` to restore the original statement. Only
+`...(number of bind values)` marker, appended past the limit. The parameters
+extracted by SQL normalization are never truncated, because the server splits
+them on `,` to restore the original statement. Only
 the SQL text published as metadata is truncated, at 64KB, and it carries a
-`...(original length)` marker as in the Java agent.
+`...(original length)` marker.
 
 A negative value turns bind value tracing off entirely - the size becomes 0 and
 `SQL.TraceBindValue` is set to false - and logs a warning.
@@ -902,14 +882,9 @@ high-cardinality SQL; the worst-case memory is roughly entries x
 65536; a value outside it is logged and the default is used.
 
 The option applies to the SQL caches only. The API and error caches keep their
-fixed 1024 entries, as in the Java agent, whose `profiler.jdbc.sqlcachesize`
-sizes `SimpleCacheFactory.newSqlCache()` / `newSqlUidCache()` while
-`newSimpleCache()` keeps its own default. It is read once when the agent builds
-its caches (`NewAgent`): resizing them while spans are in flight would orphan
-the ids those spans already carry.
-
-This corresponds to the Java agent's `profiler.jdbc.sqlcachesize`. The C++
-agent exposes the same setting as `Sql.CacheSize`.
+fixed 1024 entries. The option is read once at agent startup: resizing the
+caches while spans are in flight would orphan the ids those spans already
+carry.
 
 * --pinpoint-sql-cachesize
 * PINPOINT_GO_SQL_CACHESIZE
@@ -932,11 +907,7 @@ whose values do not depend on being cached. It does **not** apply to the SQL-ID
 cache, which is used when the collector does not support SQL UIDs. Those ids
 come from an agent-local sequence, so bypassing the cache would issue a fresh id
 - and send a fresh metadata message - on every execution of the statement, and
-the same query would appear in the UI as a separate entry per execution. The
-Java agent draws the same line: its bypass lives only in `UidCache`, while the
-id cache built by `SimpleCacheFactory.newSqlCache()` has no length check.
-
-This corresponds to the Java agent's `profiler.jdbc.sqlcachelengthlimit`.
+the same query would appear in the UI as a separate entry per execution.
 
 * --pinpoint-sql-cachelengthlimit
 * PINPOINT_GO_SQL_CACHELENGTHLIMIT
@@ -952,10 +923,8 @@ SQL UID metadata for a limited time (180 days by default), so in a process that
 runs longer than that a cached UID could outlive its row and the web UI would
 show an empty SQL for it until the agent restarted. Zero never expires an entry;
 a negative value is a typo rather than a request for that, so it recovers the
-default with a warning, as do values above 876000 (100 years). The SQL-ID, API and error caches have no expiry, as in
-the Java agent.
-
-This corresponds to the Java agent's `profiler.jdbc.sqlcacheexpirehours`.
+default with a warning, as do values above 876000 (100 years). The SQL-ID, API
+and error caches have no expiry.
 
 * --pinpoint-sql-cacheexpirehours
 * PINPOINT_GO_SQL_CACHEEXPIREHOURS
@@ -971,15 +940,7 @@ is drawn as a failure point in the scatter chart and counted in the failed
 histogram of the URL statistics. A value of 0 turns the count off and a negative
 value means the same, warned and published as 0. A span that has already failed
 is never counted, so the mark cannot replace an error that is already recorded.
-This corresponds to the Java agent's `profiler.sql.error.count` and
-`profiler.sql.error.enable`, which collapse into this single option. Java never
-range-checks its count (DefaultSqlCountService.java:15-25 uses the configured
-limit as given), so `enable=true` with a count of 0 or less marks the very first
-query as failed; that literal reading is deliberately not reproduced, because in
-the merged option 0 is already taken by `enable=false`, leaving "off" as the only
-consistent meaning a non-positive threshold can have here.
-Like Java, the count lives on the trace root, so queries spread over async spans
-add up (WrappedSpanEventRecorder.java:112, DefaultSqlCountService.java:16,21).
+The count lives on the trace root, so queries spread over async spans add up.
 The failure is recorded under the `sql` cause, so `Span.ErrorMarkExclude: sql` keeps
 the counting without the verdict - see
 [Span.ErrorMarkExclude](#spanerrormarkexclude).
@@ -1000,11 +961,8 @@ newline that ends a `--` or `//` comment goes with it, so
 so `SELECT/*c*/1` normalizes to `SELECT1` and the `1` is not extracted as a
 parameter.
 
-This corresponds to the Java agent's `profiler.jdbc.removecomments`, whose
-effective default is also `true` - the key is absent from the distributed
-`pinpoint.config`, and an unresolved placeholder leaves the field initializer in
-place. Turning it off makes the Go agent keep comments as it did before this
-option existed.
+Turning it off makes the agent keep comments as it did before this option
+existed.
 
 The option is **startup-only**. The normalized text is both the SQL id cache key
 and the input to the SQL UID hash, so flipping it against a populated cache
@@ -1012,8 +970,7 @@ would report one statement under two different ids.
 
 Comments are part of the statement's identity when they carry an Oracle hint or
 an ORM's trace tag, and removing them merges statements that differ only in that
-tag. That is what the Java agent does, and matching it is what makes a Go and a
-Java service report the same query as the same query.
+tag.
 
 * --pinpoint-sql-removecomments
 * PINPOINT_GO_SQL_REMOVECOMMENTS
@@ -1052,7 +1009,7 @@ output is a terminal; a file never receives ANSI escapes. Log lines carry
 * PINPOINT_GO_LOG_OUTPUT
 * WithLogOutput()
 * type: string
-* default: "stdout" (the C++ agent's default; it used to be "stderr")
+* default: "stdout" (it used to be "stderr")
 * case-insensitive
 * dynamic
 
@@ -1072,15 +1029,12 @@ A value below 1 recovers the default.
 
 ### Log.MaxBackups
 Log.MaxBackups option sets the number of rotated log files kept beside the
-current one. The key and its default are those of the C++ agent. Rotated files
-are kept until this many exist, whatever their age, and are not compressed;
-neither is configurable, because the C++ agent has no such setting and a Go-only
-key would leave the two agents' config files disagreeing.
+current one. Rotated files are kept until this many exist, whatever their age,
+and are not compressed; neither is configurable.
 
 A value below 1, including 0, is out of range and recovers the default with a
-warning: to the rotation library 0 means "keep every backup", which can fill
-the disk, while a reader of the C++ agent would take it as "keep none".
-Rotation with no history is `Log.MaxSize` alone.
+warning, because 0 would otherwise mean "keep every backup" and fill the disk
+rather than "keep none". Rotation with no history is `Log.MaxSize` alone.
 
 * --pinpoint-log-maxbackups
 * PINPOINT_GO_LOG_MAXBACKUPS
@@ -1121,8 +1075,6 @@ When the limit is hit, the error loses its call stack and its `EXCEPTION_CHAIN_I
 Everything else is unaffected: the span is still marked failed, and the error function id and
 message are still recorded.
 
-This corresponds to the Java agent's `profiler.exceptiontrace.new.throughput`.
-
 * --pinpoint-error-newthroughput
 * PINPOINT_GO_ERROR_NEWTHROUGHPUT
 * WithErrorNewThroughput()
@@ -1137,7 +1089,6 @@ limit is reached; the links beyond it are not sent as exception metadata.
 
 The chain comes from an arbitrary user error implementation, so the walk is bounded at 64
 links whatever this option asks for: 0 or less, and anything above 64, mean that ceiling.
-Java's `profiler.exceptiontrace.max.depth` corresponds, but defaults to 5.
 
 The same value also bounds the exception entries recorded on one span across all of its
 error chains (at least 10), so one chain is always recorded in full; entries beyond the
@@ -1155,8 +1106,7 @@ many entries it dropped in total when it ends.
 ### ServerInfo
 ServerInfo option sets the server description sent in the agent information
 (`PServerMetaData.serverInfo`) and shown on the server information view of the
-Pinpoint UI. If it is not set, "Go Application" is sent. The C++ agent has no
-config key for this value; it takes it through `AgentOptions.server_info` only.
+Pinpoint UI. If it is not set, "Go Application" is sent.
 
 The value is read at startup and sent with every agent information send, so a
 change to it reaches the collector with the next `Collector.AgentInfo.RefreshInterval`
@@ -1293,7 +1243,6 @@ Http.Server.RecordHandlerError sets whether to record the error returned by http
 ### Http.Server.ProxyHeaderEnable
 Http.Server.ProxyHeaderEnable turns the recording of proxy request headers on or off: `Pinpoint-ProxyApache`,
 `Pinpoint-ProxyNginx`, `Pinpoint-ProxyApp` and the headers named by `Http.Server.ProxyUserHeaderNames`.
-It is the Java agent's `profiler.proxy.http.header.enable`.
 
 * --pinpoint-http-server-proxyheaderenable
 * PINPOINT_GO_HTTP_SERVER_PROXYHEADERENABLE
@@ -1305,10 +1254,9 @@ It is the Java agent's `profiler.proxy.http.header.enable`.
 ### Http.Server.ProxyUserHeaderNames
 Http.Server.ProxyUserHeaderNames lists the request headers a user-defined proxy writes its receive time into.
 Each configured header present on a request is recorded as a proxy annotation of type USER (code 4) with the
-header name as its app, the same as the Java agent's `profiler.proxy.user.header.names`. The header may have been
-written by any of the three proxies, so the format of `t=` and `D=` is inferred from the value as the Java
-`UserRequestParser` does: an apache microsecond epoch, an nginx `sec.mmm` or an application's millisecond epoch.
-A header whose `t=` is missing or not positive is not recorded.
+header name as its app. The header may have been written by any of the three proxies, so the format of `t=`
+and `D=` is inferred from the value: an apache microsecond epoch, an nginx `sec.mmm` or an application's
+millisecond epoch. A header whose `t=` is missing or not positive is not recorded.
 The standard `Pinpoint-ProxyApache`, `Pinpoint-ProxyNginx` and `Pinpoint-ProxyApp` headers are always recorded
 and need no configuration.
 
@@ -1323,12 +1271,11 @@ and need no configuration.
 Http.Server.RealIpHeader lists, in order, the request headers the client address (`RemoteAddr`) is taken from.
 The first header present whose value yields an address wins. A header named `Forwarded` (RFC 7239) is parsed
 for its `for=` token, with a trailing `:port` removed; every other header contributes its first comma-separated
-hop. When no header yields an address the socket address is recorded, port stripped. It is the Java agent's
-`profiler.server.realipheader` (`RealIpHeaderResolver`).
+hop. When no header yields an address the socket address is recorded, port stripped.
 
-**Java trusts no header by default (`realipheader` is empty); this agent keeps `X-Forwarded-For` then
-`X-Real-Ip`** so existing deployments record the same address as before. Set an empty list to trust none, or
-list your edge's header first (`CF-Connecting-IP`, `True-Client-IP`, `Forwarded`).
+**The default trusts `X-Forwarded-For` then `X-Real-Ip`**, so existing deployments record the same address
+as before. Set an empty list to trust none, or list your edge's header first (`CF-Connecting-IP`,
+`True-Client-IP`, `Forwarded`).
 
 * --pinpoint-http-server-realipheader
 * PINPOINT_GO_HTTP_SERVER_REALIPHEADER
@@ -1346,7 +1293,6 @@ Http:
 ### Http.Server.RealIpEmptyValue
 Http.Server.RealIpEmptyValue is the header value that counts as absent when resolving the client address.
 A candidate equal to it (case-insensitive, typically `unknown`) is skipped and the next header is tried.
-It is the Java agent's `profiler.server.realipemptyvalue`.
 
 * --pinpoint-http-server-realipemptyvalue
 * PINPOINT_GO_HTTP_SERVER_REALIPEMPTYVALUE
@@ -1357,12 +1303,9 @@ It is the Java agent's `profiler.server.realipemptyvalue`.
 
 ### Http.Server.RecordRequestParam
 Http.Server.RecordRequestParam turns the recording of the request query string on or off. When on, the query
-string of a sampled request is recorded as annotation 41 (`HTTP.PARAM`) in the Java agent's
-`HttpServletParameterExtractor` format: `k=v&k=v`, percent-decoded, each key and value cut to 64 characters
-and the whole string to 512, with `...` marking every cut. It is the Java agent's
-`profiler.server.tracerequestparam`. **Java defaults this to on; the Go agent defaults it to off** because
-query strings routinely carry tokens, session ids and user ids. The C++ agent has the same key with the same
-default.
+string of a sampled request is recorded as annotation 41 (`HTTP.PARAM`) as `k=v&k=v`, percent-decoded,
+each key and value cut to 64 characters and the whole string to 512, with `...` marking every cut.
+**It defaults to off** because query strings routinely carry tokens, session ids and user ids.
 
 * --pinpoint-http-server-recordrequestparam
 * PINPOINT_GO_HTTP_SERVER_RECORDREQUESTPARAM
@@ -1413,9 +1356,7 @@ If sets to "HEADERS-ALL", it records all request headers.
 ### Http.Client.RecordUrlQuery
 Http.Client.RecordUrlQuery sets whether the client URL annotation (`HTTP.URL`, `GET http://host/path`) keeps
 its query string. By default the URL is recorded up to the `?`; the fragment, endpoint and destination are
-unaffected. It is the Java agent's `profiler.<plugin>.param` (`InterceptorUtils.getHttpUrl`). **Java defaults
-this to on; the Go agent defaults it to off** because query strings routinely carry tokens, session ids and
-user ids. The C++ agent has the same key with the same default.
+unaffected. **It defaults to off** because query strings routinely carry tokens, session ids and user ids.
 
 * --pinpoint-http-client-recordurlquery
 * PINPOINT_GO_HTTP_CLIENT_RECORDURLQUERY
@@ -1442,16 +1383,14 @@ traffic stops and no such request arrives - by its own 30 second window elapsing
 The send timer then carries whatever is over at that point. The send timer and the
 tick boundary are not aligned, so sending a tick still inside its window would split
 it across two consecutive messages and report a per-message max and average instead
-of a per-tick one. Java's `UriStatCollectingJob` drains a queue only completed data
-enters, for the same reason. **When nothing has been collected, no message is sent** -
+of a per-tick one. **When nothing has been collected, no message is sent** -
 an idle agent produces no URL statistics traffic at all. The tick still open when the
 agent shuts down is flushed on the way out, so a clean stop does not lose it.
 
 A completed tick is sent as soon as it is closed, not on the next timer expiry.
 The send timer has no option of its own: it follows `Stat.CollectInterval`
-(default 5 seconds), the way Java's `UriStatCollectingJob` runs on the agent stat
-scheduler, so under traffic a tick leaves within milliseconds of its boundary
-and, once traffic stops, the last tick is closed and sent within one
+(default 5 seconds), so under traffic a tick leaves within milliseconds of its
+boundary and, once traffic stops, the last tick is closed and sent within one
 `Stat.CollectInterval`.
 
 At most 4 completed ticks (two minutes) are retained while the stat stream is down.
@@ -1474,7 +1413,7 @@ and the agent logs a rate-limited warning carrying the number of warnings it sup
 * PINPOINT_GO_HTTP_URLSTAT_LIMITSIZE
 * WithHttpUrlStatLimitSize()
 * type: int
-* default: 1000 (Java's `profiler.uri.stat.completed.data.limit.size`)
+* default: 1000
 * range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
 * dynamic
 
@@ -1542,10 +1481,10 @@ the span transport (`Span.QueueSize`, `Span.Batch.Enable`, `Span.BatchSize`,
 `SQL.CacheExpireHours` and `Enable`.
 
 `SQL.CacheSize`, `SQL.CacheLengthLimit` and `SQL.CacheExpireHours` are read once
-when the agent builds its SQL caches (`NewAgent`); the C++ agent treats them as
-fixed for the same reason. Lowering `SQL.CacheLengthLimit` at runtime would leave
-the longer statements already cached in place and turn every statement now past
-the limit into one re-registered on each execution.
+when the agent builds its SQL caches. Lowering
+`SQL.CacheLengthLimit` at runtime would leave the longer statements already
+cached in place and turn every statement now past the limit into one
+re-registered on each execution.
 
 `SQL.RemoveComments` is restart-only for a reason of its own: the normalized SQL
 is the SQL id cache key and the SQL UID hash input, so a mid-process change would

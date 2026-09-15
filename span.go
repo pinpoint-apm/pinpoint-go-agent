@@ -580,7 +580,7 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 // The trace id, unlike the span ids, must parse: an unparseable one leaves no
 // continue even from a carrier that can report it as present - it names no
 // transaction - which is the same divergence, not a second one.
-// See doc/java_parity.md.
+// See doc/development.md.
 //
 // Both the sampler choice (NewSpanTracerWithReader) and the context extraction
 // (Extract) call this, so the two cannot disagree about which trace a request

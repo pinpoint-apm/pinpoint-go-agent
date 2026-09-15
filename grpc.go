@@ -205,7 +205,8 @@ const (
 	closeStreamTimeOut   = 1 * time.Second
 	commandStreamTimeOut = 1 * time.Second
 
-	// Defaults for the Collector.Grpc.* config keys. doc/java_parity.md ("gRPC
+	// Defaults for the Collector.Grpc.* config keys. doc/development.md
+	// ("Java and C++ agent parity") records the cross-agent comparison; the
 	// comments here only say what this agent does and why.
 	grpcKeepAliveTime               = 30000 // ms
 	grpcKeepAliveTimeout            = 60000 // ms
@@ -570,7 +571,7 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 			Version:   0,
 			VmVersion: fmt.Sprintf("%s(%d)", runtime.Version(), goIdOffset),
 			// Same reason as PJvmGc.type in makePAgentStat: Go's GC is none of
-			// the JVM collectors. See doc/java_parity.md.
+			// the JVM collectors. See doc/development.md.
 			GcType: pb.PJvmGcType_JVM_GC_TYPE_UNKNOWN,
 		},
 		Container: agentGrpc.agent.config.Bool(CfgIsContainerEnv),
@@ -783,7 +784,7 @@ func metaVerdictOf(err error, attempts int) metaVerdict {
 // releases the cache entry after one delay so the next use registers a
 // fresh id -- instead of every later span referencing an id the collector
 // (GrpcMetadata::process_completed) drops it and delays the cache release,
-// and Go does the same (metaRejected). See doc/java_parity.md.
+// and Go does the same (metaRejected). See doc/development.md.
 func metaResult(res *pb.PResult, err error) error {
 	if err != nil {
 		return err
@@ -1927,7 +1928,7 @@ func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
 			// agent sends for the same reason. The counts below are Go's own:
 			// NumGC counts whole cycles (Go has no generations) and
 			// PauseTotalNs sums stop-the-world time only, so both read lower
-			// doc/java_parity.md.
+			// than a JVM's. See doc/development.md.
 			Type:                 pb.PJvmGcType_JVM_GC_TYPE_UNKNOWN,
 			JvmMemoryHeapUsed:    stat.heapUsed,
 			JvmMemoryHeapMax:     stat.heapMax,

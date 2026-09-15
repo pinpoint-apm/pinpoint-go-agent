@@ -43,7 +43,7 @@ type sqlNormalizer struct {
 // rest, which loses the placeholder when the cut lands inside a literal and so
 // yields a SQL id / UID no other agent computes (gap N1 of the cross-agent
 // review). Dropping the statement instead never diverges - an over-cap
-// same value and the same drop policy (see doc/java_parity.md).
+// same value and the same drop policy (see doc/development.md).
 const maxSqlNormalizeLength = 1 << 20
 
 // sqlNormalizable reports whether sql is within maxSqlNormalizeLength. It

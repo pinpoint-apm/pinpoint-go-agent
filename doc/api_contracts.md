@@ -49,10 +49,10 @@ go f()
 `NewSpanEvent()` call and, on a call from a different goroutine, warns
 `span is shared by more than one goroutine` (throttled) and **still records the
 event**, so the shape of the trace does not depend on whether the check ran.
-The check runs at every log level; it is gated only on the goroutine id being
-readable, an offset into the runtime's `g` struct resolved at startup
-(`goIdOffset > 0` in `span.go`). When that resolution fails there is no
-detection and a shared tracer degrades silently.
+The check runs at every log level, so a concurrency mistake is visible in a
+production log too. It is gated only on the goroutine id being readable; where
+the agent cannot read it there is no detection and a shared tracer degrades
+silently.
 
 ## 2. A Goroutine Tracer Needs an Active Span Event
 
@@ -108,12 +108,9 @@ calls — `NewSpanEvent`, `EndSpanEvent`, `Inject`, `NewAsyncSpan`,
 `NewGoroutineTracer` and `WrapGoroutine` — are dropped too: `NewSpanEvent`
 returns the tracer without recording an event, `Inject` writes no headers and
 the async constructors return a no-op tracer, with a throttled warning
-`abnormal span - <call> called after EndSpan`. Dropping is not just tidiness:
-the final chunk is already on its way to the sender goroutine, so the write
-could not be sent, and applying it would race the sender reading the same
-field. An event created after the end would be worse still: once twenty of
-them accumulated the agent would send a non-final chunk behind the final one,
-which the collector protocol forbids.
+`abnormal span - <call> called after EndSpan`. The span's final chunk is
+already on its way to the collector by then, so there is nothing a late write
+could reach.
 
 ## 4. End Span Events in Nesting (LIFO) Order
 
@@ -138,9 +135,8 @@ written that way.
 `EndSpan()` ran, not when the work actually finished, so their durations are
 wrong — but they are kept, because their sequence numbers were already handed
 out and a span whose event sequence has holes makes the collector rebuild the
-call tree against parents that never arrive. This follows the C++ agent; the
-Java agent instead drops the whole span. An extra `EndSpanEvent()` on an empty
-stack pops nothing and warns `abnormal span - has no event`.
+call tree against parents that never arrive. An extra `EndSpanEvent()` on an
+empty stack pops nothing and warns `abnormal span - has no event`.
 
 A mis-nested `EndSpanEvent()` — one meant for `outer` while `inner` is still
 open — is **not detected**: the call takes no target, so the agent ends `inner`
@@ -207,7 +203,7 @@ Two limits bound the size of a single span:
 
 | Limit | Option | Default | Meaning |
 |---|---|---|---|
-| depth | `Span.MaxCallStackDepth` | 64 | max nesting of concurrently open events; one level deeper than the value is still recorded (65 at the default), as in Java's `DefaultCallStack` |
+| depth | `Span.MaxCallStackDepth` | 64 | max nesting of concurrently open events; one level deeper than the value is still recorded (65 at the default) |
 | sequence | `Span.MaxCallStackSequence` | 5000 | max total events in one span |
 
 Both accept `-1` for unlimited; minimums are 2 and 4 respectively. Both are
@@ -268,8 +264,7 @@ loop rather than one per iteration.
 * `SpanEventRecorder.SetSQL("", args)` is ignored: an empty statement records
   no SQL annotation and does not count toward `SQL.ErrorCount`. The
   `database/sql` wrapper relies on this for `Begin`, `Commit` and `Rollback`
-  events, which reach `SetSQL` with no statement. See
-  [Java parity](java_parity.md#empty-sql-statement--diverges).
+  events, which reach `SetSQL` with no statement.
 * `SpanEventRecorder.SetSQL(sql, args)` bounds `args`, and only `args`. A
   caller that composes the bind value list itself gets it cut to roughly twice
   `SQL.MaxBindValueSize` — the room the agent's own driver wrappers need for
@@ -280,8 +275,7 @@ loop rather than one per iteration.
   by the `database/sql` or pgx wrapper mean; those lists are within the bound
   by construction and are never cut here. `sql` itself is bounded elsewhere
   (`SQL.CacheLengthLimit`, the normalization cap), and the normalized
-  parameters are never cut. See
-  [Java parity](java_parity.md#setsql-bounds-a-caller-composed-bind-value-list--diverges).
+  parameters are never cut.
 
 ## 8. Keep Operation and Error Names Low-Cardinality
 
@@ -311,40 +305,27 @@ framework plugins do this for you where the framework exposes the pattern.
 * `SpanRecorder.SetError(err, errorName...)` marks the transaction failed.
   `SpanEventRecorder.SetError(err, errorName...)` marks one event failed **and
   the transaction with it** (`PSpan.err`, the URL stat failed histogram and the
-  scatter failure point), as the Java agent does; the optional name groups
-  errors in the UI and is subject to rule 8.
+  scatter failure point); the optional name groups errors in the UI and is
+  subject to rule 8.
 * `PSpan.err` is a **bitmask of causes**, not a flag: `ErrorCategoryUnknown`
   (1), `ErrorCategoryException` (2), `ErrorCategoryHttpStatus` (4) and
-  `ErrorCategorySql` (8), OR-ed together as the Java agent's
-  `Shared.maskErrorCode` accumulates them, so a request that threw and
-  returned 5xx reports 6. Both `SetError` forms record the exception cause, a
-  status in `Http.Server.StatusCodeErrors` records the http-status cause and
-  the `SQL.ErrorCount` limit records the sql cause. Read a failure as
-  `err != 0`, never `err == 1`. `Span.ErrorMark` and `Span.ErrorMarkExclude` decide
-  which causes are allowed to fail a transaction at all; a disabled cause
+  `ErrorCategorySql` (8), OR-ed together as they accumulate, so a request that
+  threw and returned 5xx reports 6. Both `SetError` forms record the exception
+  cause, a status in `Http.Server.StatusCodeErrors` records the http-status
+  cause and the `SQL.ErrorCount` limit records the sql cause. Read a failure as
+  `err != 0`, never `err == 1`. `Span.ErrorMark` and `Span.ErrorMarkExclude`
+  decide which causes are allowed to fail a transaction at all; a disabled cause
   records nothing in `err`, in the URL statistics or in the scatter chart,
   while its annotation, exception info and SQL counting are unaffected.
 * An error recorded on a goroutine or async tracer (`SetError`, `SetFailure`,
   an event `SetError`, the `SQL.ErrorCount` limit) fails the **root** span:
   an async span goes out as a `PSpanChunk`, which has no `err` field, so the
-  flag is stored on the root the way Java's `ChildTrace` shares its parent's
-  `TraceRoot`. Only the flag moves; the error message and exception chain stay
-  on the tracer that recorded them. The root's final chunk goes out at the
-  root's own `EndSpan()`, so a child that fails **after** the root ended is not
-  reflected in `PSpan.err` or the URL stat. Java's ordinary trace behaves the
-  same way: `DefaultTrace.close()` (`DefaultTrace.java:181-199`) calls
-  `logSpan()` and stores the `PSpan` at the root's close, and that is what
-  every normal entry point builds (`DefaultBaseTraceFactory.java:86,102,114`
-  → `newDefaultTrace()` at `:191`). Java's deferred store exists only on the
-  `AsyncDefaultTrace` path, whose `close()` awaits the last child through
-  `SpanAsyncStateListener` (`AsyncDefaultTrace.java:24-31`); its entry points
-  are `DefaultBaseTraceFactory.java:148,161`, both marked
-  `@InterfaceAudience.LimitedPrivate("vert.x")`. Deferring the root store here
-  would therefore be an extension past Java, not a parity fix. An **unsampled**
+  flag is stored on the root. Only the flag moves; the error message and
+  exception chain stay on the tracer that recorded them. The root's final chunk
+  goes out at the root's own `EndSpan()`, so a child that fails **after** the
+  root ended is not reflected in `PSpan.err` or the URL stat. An **unsampled**
   transaction follows the same rule: its async children carry a link to the
-  root, so the failure lands on the root's URL stat, as Java's
-  `continueDisableAsyncContextTraceObject` hands the child the parent's
-  `LocalTraceRoot` (`DefaultBaseTraceFactory.java:139-145`).
+  root, so the failure lands on the root's URL stat.
 * A `nil` error is ignored by both, so the common
   `tracer.SpanEvent().SetError(err)` after a call needs no guard.
 * `SetFailure(category...)` marks failure without an error message — the right
@@ -360,11 +341,11 @@ framework plugins do this for you where the framework exposes the pattern.
   the exception chain, bounded at 64 links so a self-referential or cyclic
   user error cannot hang the request goroutine. A multi-unwrap error
   (`errors.Join`, `Unwrap() []error`) contributes its **first element only**:
-  the chain is a single line of causes, as Java's `getCause()` is. As in the
-  Java agent, every link is sent under one exception id with `exceptionDepth`
-  0 for the recorded error and 1..n down the chain, `exceptionClassName` set
-  to the `SetError` name or the error's Go type name (e.g. `errors.withStack`),
-  and `startTime` set to the failed span event's start time.
+  the chain is a single line of causes. Every link is sent under one exception
+  id, with `exceptionDepth` 0 for the recorded error and 1..n down the chain,
+  `exceptionClassName` set to the `SetError` name or the error's Go type name
+  (e.g. `errors.withStack`), and `startTime` set to the failed span event's
+  start time.
 
 ## 10. No-op and Unsampled Tracers Are Deliberately Silent
 
@@ -404,10 +385,6 @@ context never carried a tracer therefore looks to the callee exactly like a
 call from an uninstrumented client, which is what it is. Suppressing tracing
 across those services instead would be silent and hard to diagnose.
 
-This matches Java, where `s0` is written only for a real trace created by
-`disableSampling()`; with no trace object the interceptor returns before
-writing any header.
-
 An async or goroutine tracer forked from an unsampled span inherits the
 unsampled marker, so calls made from that goroutine keep propagating `s0`. One
 forked from a no-op tracer stays a no-op.
@@ -415,8 +392,7 @@ forked from a no-op tracer stays a no-op.
 ### `Inject()` omits a header it has no value for
 
 The header set is not fixed. `Inject()` writes a header only when it has
-something to put in it, matching Java's `DefaultRequestTraceWriter`, which
-normalizes an empty value to `NOT_SET` and writes nothing:
+something to put in it:
 
 | Header | Written when |
 |---|---|
@@ -426,10 +402,10 @@ normalizes an empty value to `NOT_SET` and writes nothing:
 | `Pinpoint-Host` | a destination was recorded on the event, or - while overflowed - on the span |
 | `Pinpoint-pAppNamespace` | never; this agent has no namespace to send |
 
-An empty value is not a neutral one. A Java receiver configured with
-`profiler.cluster.namespace` accepts a missing `Pinpoint-pAppNamespace` for
-backward compatibility but rejects an empty one, and answers the mismatch by
-starting a **new trace** - which cuts the call chain at the Go->Java hop.
+An empty value is not a neutral one. A receiver configured with a cluster
+namespace accepts a missing `Pinpoint-pAppNamespace` for backward
+compatibility but rejects an empty one, and answers the mismatch by starting a
+**new trace** - which cuts the call chain at that hop.
 
 A `DistributedTracingContextWriter` must therefore not assume every header
 arrives on every call. Writers that append (`metadata.AppendToOutgoingContext`
@@ -454,16 +430,14 @@ message object.
 Anything else starts a **new transaction**: a fresh transaction id, a fresh span
 id, `parentSpanId = -1`, and none of the other inbound `Pinpoint-` headers read.
 
-This is Java's decision, taken in the same order
-(`DefaultTraceHeaderReader.read`, `DefaultTraceHeaderReader.java:44-76`):
+The headers are read in this order:
 
 1. `Pinpoint-Sampled: s0` -> tracing disabled for this request, before anything
-   else is looked at (`DefaultTraceHeaderReader.java:47-51`)
+   else is looked at
 2. no `Pinpoint-TraceID` -> new trace
 3. no `Pinpoint-pSpanID` -> new trace
 4. no `Pinpoint-SpanID` -> new trace
 5. otherwise -> continue, with `Pinpoint-Flags` defaulting to `0` when absent
-   (`DefaultTraceHeaderReader.java:71-72`)
 
 A trace id on its own names a transaction but not a position inside it.
 Continuing on it alone records a non-root span whose parent is in no trace, and
@@ -471,15 +445,12 @@ spends a continue-sampler slot - `isContinueSampled()` is unconditionally true -
 on a hop that does not exist. Header-stripping proxies, gateways and hand-rolled
 clients produce exactly that shape.
 
-The two span id headers are checked for **presence only**, as Java does: a value
-that will not parse still describes a hop, and Java keeps it as `SpanId.NULL`
-(`SpanId.java:27`) via `NumberUtils.parseLong`. Where this agent parses one of
-them differently from Java, see [java_parity.md](java_parity.md).
+The two span id headers are checked for **presence only**: a value that will
+not parse still describes a hop, and is kept as a null span id rather than
+rejected.
 
-A header **present with an empty value** is present. Java tests the header for
-`null` alone (`DefaultTraceHeaderReader.java:55`) and the C++ agent decides on
-`has_value()`, so both continue the trace across a proxy that blanks
-`Pinpoint-SpanID` rather than dropping it.
+A header **present with an empty value** is present, so the trace continues
+across a proxy that blanks `Pinpoint-SpanID` rather than dropping it.
 
 The carrier answers that question. `DistributedTracingContextReader.Get` returns
 **`(string, bool)`**: the value, and whether the carrier holds the key at all.
@@ -493,7 +464,7 @@ the carrier does not hold is `("", false)` and starts a new transaction.
 | fasthttp request header, via `ppfasthttp.HeaderReader` | `RequestHeader.PeekAll` |
 | sarama record headers (`plugin/sarama`, `plugin/sarama-IBM`) | the header slice |
 | kratos `transport.Header` (`plugin/kratos`, `plugin/kratosv3`) | **nothing** - value only |
-| `noopDistributedTracingContextReader` | **nothing** - every key absent |
+| no reader at all (`NewSpanTracer`) | **nothing** - every key absent |
 
 A carrier over a source that hands out a value and nothing else - kratos's
 `transport.Header` is the one in this repo - reports what it has as present and
@@ -502,9 +473,8 @@ transaction, exactly as it did before `Get` reported presence. Presence can only
 come from a source that has it.
 
 `Pinpoint-TraceID` does not follow this: it must **parse**, so a blank trace id
-starts a new transaction even from a carrier that reports it as present. It
-names no transaction to continue - see
-[java_parity.md](java_parity.md#malformed-inbound-trace-id--diverges).
+starts a new transaction even from a carrier that reports it as present: it
+names no transaction to continue.
 
 #### Implementing a carrier
 
@@ -531,10 +501,9 @@ the second result - so wrap it in `pinpoint.HttpHeaderReader(req.Header)`. The
 http plugin's `NewHttpServerTracer` already does.
 
 The same decision drives **both** the sampler choice (`NewSpanTracerWithReader`)
-and the context extraction (`Extract`), through one function, `continueHeaders`.
-They must not be able to disagree: a request routed through the continue sampler
-but extracted as a new transaction lets a peer bypass the configured sampling
-rate.
+and the context extraction (`Extract`), and the two cannot disagree: a request
+routed through the continue sampler but extracted as a new transaction lets a
+peer bypass the configured sampling rate.
 
 ### Statistics
 
@@ -544,17 +513,11 @@ tracers collect nothing, so an excluded URL is absent from these statistics as
 well as from traces.
 
 `AddMetric(MetricURLStat, *UrlStatEntry)` may be called more than once on a
-span. The `Url` is **first-wins**, as Java's `Shared.setUriTemplate`: once the
-span holds a non-empty `Url`, later calls keep it and refresh only `Method` and
-`Status`. An empty `Url` does not claim the slot, so a later real one still
-fills it. `AddMetric(MetricURLStatForce, *UrlStatEntry)` replaces the `Url`
-(Java's `setUriTemplate(value, force = true)`). The entry is copied; the span
-neither keeps the caller's pointer nor writes into it. See
-[java_parity.md](java_parity.md#uri-template-is-first-wins--same-as-java).
-
-The no-op tracer is a **process-wide singleton**. Its methods only ever read
-its fields; anything that writes per-request state must be gated on the span
-being a per-request one, or concurrent handlers race.
+span. The `Url` is **first-wins**: once the span holds a non-empty `Url`, later
+calls keep it and refresh only `Method` and `Status`. An empty `Url` does not
+claim the slot, so a later real one still fills it.
+`AddMetric(MetricURLStatForce, *UrlStatEntry)` replaces the `Url`. The entry is
+copied; the span neither keeps the caller's pointer nor writes into it.
 
 `IsSampled()` exists for the rare case where the instrumentation itself is
 expensive - serializing a payload to annotate, for example. Use it to skip that
@@ -606,8 +569,7 @@ ctx := pinpoint.NewContext(context.Background(), tracer.NewGoroutineTracer())
 * Both are **startup-only**. The values are re-read on every agent information
   send, but there is no call that triggers a send: a change reaches the
   collector with the next `Collector.AgentInfo.RefreshInterval` cycle (24 hours
-  by default) or never, when the refresh is disabled. See
-  [Java Parity](java_parity.md#server-metadata-injection--aligned-with-c).
+  by default) or never, when the refresh is disabled.
 * Host strings are sanitized to valid UTF-8 like every other string the agent
   sends; a value with invalid bytes is sent with those bytes replaced, not
   rejected.

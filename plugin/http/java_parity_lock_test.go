@@ -19,7 +19,7 @@
 // This is the plugin/http half of the parity lock suite. The proxy parsers
 // live in this package, which imports pinpoint, so the group cannot be tested
 // from package pinpoint without an import cycle. Rationale lives in
-// doc/java_parity.md.
+// doc/development.md.
 //
 // Groups:
 //  14  proxy request header pipeline

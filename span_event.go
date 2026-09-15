@@ -186,7 +186,7 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	// annotates "" (only null is refused, wrapSqlResult), but its commit and
 	// rollback interceptors never call recordSqlInfo, so "" reaches its SQL
 	// path only from a caller that passes it on purpose. See
-	// doc/java_parity.md, "Empty SQL statement".
+	// doc/development.md, "Java and C++ agent parity".
 	if sql == "" || se.warnIfFinished("SetSQL") {
 		return
 	}
@@ -228,7 +228,7 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	// the bound, documented rather than reshaped: parsing args back into
 	// values to re-mark them costs more than the case is worth, and dropping
 	// the marker would leave a silently cut annotation.
-	// See doc/java_parity.md and doc/api_contracts.md 7.
+	// See doc/development.md and doc/api_contracts.md 7.
 	if cfg.sqlMaxBindValueSize > 0 {
 		args = abbreviateString(args, maxBindValueAnnotationSize(cfg.sqlMaxBindValueSize))
 	}
