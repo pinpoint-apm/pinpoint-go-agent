@@ -659,9 +659,11 @@ func (agent *agent) stopSignal() context.Context {
 // signalShutdown marks the agent as shutting down and unblocks the waits that
 // are already in progress.
 func (agent *agent) signalShutdown() {
-	// A running agent enters stopping, where the request path still records
-	// and the workers still drain until shutdownAgent moves it to stopped. An
-	// agent that never ran - still registering, or failed - has nothing to
+	// A running agent enters stopping, where the request path stops recording -
+	// tracingEnabled is running-only, so NewSpanTracer hands out noop tracers
+	// from here on - while workerContinues keeps the workers draining what was
+	// queued before the signal, until shutdownAgent moves the agent to stopped.
+	// An agent that never ran - still registering, or failed - has nothing to
 	// drain and goes straight to stopped, as the shutdown flag alone did.
 	if !agent.enable.transitionTo(phaseStopping) {
 		agent.enable.transitionTo(phaseStopped)

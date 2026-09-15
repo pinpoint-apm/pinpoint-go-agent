@@ -34,6 +34,7 @@
 //  14  proxy request header pipeline    (parsers: plugin/http/java_parity_lock_test.go)
 //  15  logging level policy
 //  16  shutdown contract
+//  17  metadata retry budget and rejection policy
 
 package pinpoint
 

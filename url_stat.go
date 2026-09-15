@@ -24,12 +24,13 @@ type urlStat struct {
 	statusErr int
 }
 
-// maxCompletedUrlStatSnapshots caps the completed queue. Four ticks is two
-// snapshotQueue capacity. Bounded because a stats stream that never recovers
-// would otherwise grow the queue without limit; the oldest tick is the one
-// worth losing first.
 // maxCompletedUrlStatSnapshots is the number of closed ticks kept while the
-// stat stream is not draining.
+// stat stream is not draining. Five, which is Java's effective retention:
+// AsyncQueueingUriStatStorage.addCompletedData tests
+// snapshotQueue.size() > SNAPSHOT_LIMIT (4) before offering, so its queue
+// holds five. Bounded because a stats stream that never recovers would
+// otherwise grow the queue without limit; the oldest tick is the one worth
+// losing first.
 const maxCompletedUrlStatSnapshots = 5
 
 // urlStatSnapshotDropLog reports completed ticks evicted at the queue cap. Its
