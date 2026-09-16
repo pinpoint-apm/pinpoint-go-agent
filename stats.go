@@ -86,9 +86,9 @@ type agentStats struct {
 	// agent rather than in collectAgentStatWorker's frame so that a supervisor
 	// restart of the worker resumes the partial batch instead of discarding
 	// the snapshots gathered before the panic. workerStarted tells a restart
-	// from the first run (see collectAgentStatWorker).
-	// batch is atomic only so tests can watch the cursor from another
-	// goroutine; the worker is its sole writer.
+	// apart from the first run (see collectAgentStatWorker), and batch is atomic
+	// only so tests can watch the cursor from another goroutine; the worker is
+	// its sole writer.
 	collected     []*inspectorStats
 	batch         atomic.Int32
 	workerStarted bool
@@ -392,6 +392,7 @@ type statsCounterSnapshot struct {
 // uncollectedUsage is what numFD and numThreads report when the reading is
 // unavailable - no process handle, or a failed read. Zero is a plausible
 // measurement the inspector charts as fact, so it cannot mean "unknown"; -1 is
+// the value the inspector leaves out of the chart.
 const uncollectedUsage = -1
 
 func (stats *agentStats) numFD() int32 {

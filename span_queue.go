@@ -20,9 +20,9 @@ const (
 // Shards are picked per enqueue with math/rand/v2 (per-thread state, no shared
 // cache line) rather than a sticky per-goroutine home shard: Go has no stable
 // cheap goroutine identity, and non-sticky placement also lets a single busy
-// producer spread over every shard, so the whole capacity is used without the
-// the same critical section as the enqueue, so a drop is always paired with
-// exactly one successful enqueue.
+// producer spread over every shard, so the whole capacity is used. A head-drop
+// happens in the same critical section as the enqueue, so a drop is always
+// paired with exactly one successful enqueue.
 //
 // Concurrency contract: multi-producer, single consumer. cursor is a plain
 // field, so two concurrent dequeuers are a data race, not merely an
@@ -39,18 +39,15 @@ type spanQueue struct {
 	done   chan struct{}
 	closed atomic.Bool
 
-	// saturated is a hint that the last scan found every shard full. While it
-	// is set an enqueue whose first-choice shard is full overwrites there at
-	// once instead of re-scanning the other shards: under a sustained outage
-	// every producer otherwise walked all 32 shard locks per enqueue, in the
-	// same rotation, and the request path paid 3.4x the empty-queue cost right
-	// when the application was already under stress (639 ns vs 188 ns at 8
-	// producers). It is a hint only - correctness never depends on it: an
-	// enqueue that finds room in its first shard clears it, so one dequeued
-	// slot costs one scan to rediscover saturation, not one per enqueue, and a
-	// recovered consumer clears it on the very next enqueue. The stale window
-	// leaves at most the slots freed since the last scan unused, which is
-	// noise against a queue that is dropping on every enqueue anyway.
+	// saturated is a hint that the last scan found every shard full. While it is
+	// set, an enqueue whose first-choice shard is full overwrites there at once
+	// instead of walking all 32 shard locks again: under a sustained outage that
+	// scan cost the request path 3.4x the empty-queue cost (639 ns vs 188 ns at
+	// 8 producers) exactly when the application was already under stress.
+	//
+	// It is a hint only - correctness never depends on it. An enqueue that finds
+	// room in its first shard clears it, and the stale window leaves at most the
+	// slots freed since the last scan unused.
 	saturated atomic.Bool
 
 	// cursor rotates the consumer's sweep start so a persistently hot shard

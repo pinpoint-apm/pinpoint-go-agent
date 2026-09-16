@@ -425,10 +425,9 @@ func TestMetaCacheCapacityIsSplitExactly(t *testing.T) {
 }
 
 // peekOrAdd honours the TTL as peek does: an expired entry is a miss that the
-// new value replaces. The invariant used to hold only because cacheSqlUid
-// peeks first; a caller that only peekOrAdds, or a TTL that lapses between the
-// two calls, got the stale UID back and the re-publication the TTL exists for
-// was suppressed.
+// new value replaces. A caller that only peekOrAdds, or a TTL that lapses
+// between a peek and a peekOrAdd, would otherwise get the stale UID back and
+// suppress the re-publication the TTL exists for.
 func TestMetaCachePeekOrAddExpiresLikePeek(t *testing.T) {
 	c := newMetaCache[string, int32](cacheSize)
 	c.ttl = time.Hour

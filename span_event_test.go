@@ -503,7 +503,8 @@ func Test_spanEvent_SetErrorFailsTransaction(t *testing.T) {
 	assert.Equal(t, "db error", chunk.eventChunk[0].errorString)
 }
 
-// Span.IgnoreErrors: a matched error keeps its exception info but does not
+// Span.IgnoreErrors: a matched error keeps its exception info but does not mark
+// the span as failed.
 func Test_SetError_IgnoreErrors(t *testing.T) {
 	newConfig := func(rules ...string) *Config {
 		c, err := NewConfig(WithAppName("ignoreErrApp"), WithSpanIgnoreErrors(rules...))
@@ -592,9 +593,9 @@ func TestSpanEvent_ErrSetterConcurrentWithSenderIsRaceFree(t *testing.T) {
 	assert.Equal(t, int32(ErrorCategorySql|ErrorCategoryException), span.err.Load(), "span marked failed")
 }
 
-// enabled-category filter inside the recorder, downstream of
-// DefaultSqlCountService, so an operator who does not want an N+1 pattern to
-// fail a transaction can drop that one cause and keep every other failure.
+// The SQL count marks the transaction with ErrorCategorySql alone, so an
+// operator who does not want an N+1 pattern to fail a transaction can exclude
+// that one cause and keep every other failure.
 func Test_spanEvent_SetSQLCountExcludedCategoryLeavesTheTransactionClean(t *testing.T) {
 	cfg, err := NewConfig(WithAppName("sqlMarkExcludeApp"), WithSpanErrorMarkExclude("sql"))
 	require.NoError(t, err)

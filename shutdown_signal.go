@@ -48,7 +48,7 @@ var defaultShutdownSignals = []os.Signal{syscall.SIGTERM, os.Interrupt}
 //
 // When a watched signal arrives the helper calls Shutdown(), which drains the
 // span queue for at most shutdownTimeout, restores the default disposition of
-// the signal with signal.Stop, and raises the same signal again. For the
+// the signal with signal.Stop, and raises the same signal again. Under the
 // default disposition that terminates the process with exit status 128+signum,
 // exactly as it would have without the helper. If the host has its own
 // signal.Notify for the same signal, the re-raised signal is delivered to that

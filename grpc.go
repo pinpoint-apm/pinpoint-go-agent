@@ -43,11 +43,12 @@ const (
 
 	// headerSupportCommandCode carries the command codes this agent serves on
 	// the HandleCommandV2 stream. grpc-go lower-cases metadata keys, so the
+	// name is spelled that way here.
 	headerSupportCommandCode = "supportcommandcode"
 )
 
-// supportedCommandCodes lists the commands serveCommandStream dispatches, in
-// switch in serveCommandStream.
+// supportedCommandCodes lists the commands this agent serves. It must stay in
+// step with the switch in serveCommandStream.
 var supportedCommandCodes = []int32{
 	int32(pb.PCommandType_ECHO),
 	int32(pb.PCommandType_ACTIVE_THREAD_COUNT),
@@ -55,7 +56,8 @@ var supportedCommandCodes = []int32{
 	int32(pb.PCommandType_ACTIVE_THREAD_LIGHT_DUMP),
 }
 
-// supportCommandCodeHeader renders supportedCommandCodes the way the collector
+// supportCommandCodeHeader renders supportedCommandCodes as the ';'-separated
+// list the collector expects in the header.
 func supportCommandCodeHeader() string {
 	codes := make([]string, len(supportedCommandCodes))
 	for i, c := range supportedCommandCodes {
@@ -138,13 +140,13 @@ func backOffSleep(attempt int) time.Duration {
 	return randomize(time.Duration(dur), backOffJitter)
 }
 
-// randomize returns d scaled by a uniform factor in [1-jitter, 1+jitter], the
+// randomize returns d scaled by a uniform factor in [1-jitter, 1+jitter].
 func randomize(d time.Duration, jitter float64) time.Duration {
 	return time.Duration(float64(d) * (1 - jitter + rand.Float64()*2*jitter))
 }
 
-// streamAgeJitter randomizes every connection and stream max age by +/-10%,
-// deployed together do not renew in lockstep.
+// streamAgeJitter randomizes every connection and stream max age by +/-10%, so
+// agents deployed together do not renew in lockstep.
 const streamAgeJitter = 0.1
 
 // streamAge is embedded in the long-lived streams: expiresAt is set when the
@@ -170,9 +172,9 @@ type expiringStream interface {
 	close()
 }
 
-// renewIfExpired closes a stream past its max age and opens its replacement,
-// renewal is the normal path, logged at info and kept apart from the error
-// path the workers take when a send fails.
+// renewIfExpired closes a stream past its max age and opens its replacement.
+// Renewal is the normal path, logged at info and kept apart from the error path
+// the workers take when a send fails.
 func renewIfExpired[S expiringStream](stream S, reopen func() S, which string) S {
 	if !stream.expired() {
 		return stream
@@ -184,30 +186,25 @@ func renewIfExpired[S expiringStream](stream S, reopen func() S, which string) S
 
 const (
 	// agentGrpcTimeOut bounds the AgentInfo RPC (boot-time registration and
-	// with backOffUntilReady until it succeeds, so a hung collector costs a
-	// short wait and a retry instead of a minute of boot latency.
+	// refresh). Registration retries with backOffUntilReady until it succeeds,
+	// so a hung collector costs a short wait and a retry rather than a minute
+	// of boot latency.
 	agentGrpcTimeOut = 5 * time.Second
 
 	// metaGrpcTimeOut bounds each metadata RPC (api/string/sql/sqlUid/
-	// exception). Unlike AgentInfo these run under sendMetaWorker's
-	// metaMaxConcurrentRequests permits, and a failed send evicts the item's
-	// cache entry so it is re-registered on next use. Under the former 60s
-	// deadline a hung collector pinned every permit for up to
-	// 60s x metaRetryMaxAttempts; metaChan overflowed, tryEnqueueMeta
-	// head-dropped a queued item (evicting its cache entry), and each drop or
-	// timeout re-queued the same metadata -- an amplification loop that lasted
-	// request_timeout for unary RPCs: ample for a healthy collector, short
-	// enough that permits recycle before the queue fills. Kept as a constant
-	// deployment ever needs to tune it.
+	// exception). These run under sendMetaWorker's metaMaxConcurrentRequests
+	// permits, and a failed send evicts the item's cache entry so it is
+	// re-registered on next use. Kept short so a hung collector cannot pin every
+	// permit until metaChan overflows and each head-drop re-queues the same
+	// metadata: ample for a healthy collector, short enough that permits recycle
+	// before the queue fills.
 	metaGrpcTimeOut = 5 * time.Second
 
 	sendStreamTimeOut    = 5 * time.Second
 	closeStreamTimeOut   = 1 * time.Second
 	commandStreamTimeOut = 1 * time.Second
 
-	// Defaults for the Collector.Grpc.* config keys. doc/development.md
-	// ("Java and C++ agent parity") records the cross-agent comparison; the
-	// comments here only say what this agent does and why.
+	// Defaults for the Collector.Grpc.* config keys.
 	grpcKeepAliveTime               = 30000 // ms
 	grpcKeepAliveTimeout            = 60000 // ms
 	grpcKeepAlivePermitWithoutCalls = false
@@ -221,9 +218,8 @@ const (
 	// that disable value, and it is the default: see dialOptions.
 	grpcIdleTimeout = 0 // ms
 
-	// (profiler.transport.grpc.loadbalancer.renew.period.millis and
-	// profiler.transport.grpc.span.sender.rpc.age.max.millis default to a
-	// value the agent treats as disabled).
+	// 0 disables the periodic renewal of connections and streams, which is the
+	// default: a connection is replaced only when it breaks.
 	grpcConnectionMaxAge = 0 // ms
 	grpcStreamMaxAge     = 0 // ms
 )
@@ -359,11 +355,11 @@ func connectCollector(config *Config, portOption string) (*grpc.ClientConn, erro
 // bare host:port is also what localIP probes.
 //
 // dns is the default. It resolves the collector host into the channel's address
-// list and keeps re-resolving. SubconnectionExpiringLoadBalancer
-// (grpc_balancer.go) relies on this: with
-// several A records the picked SubConn holds them all, so a rotation or a
-// failure moves to another collector instance, and its ResolveNow on failure
-// and its address-change readdressing both act on a resolver that can answer.
+// list and keeps re-resolving, which the expiringPickFirst balancer
+// (grpc_balancer.go) relies on: with several A records the picked SubConn holds
+// them all, so a rotation or a failure moves to another collector instance, and
+// its ResolveNow on failure and its address-change readdressing both act on a
+// resolver that can answer.
 // The dns resolver also re-resolves at most every 30s
 // (internal/resolver/dns.MinResolutionInterval), so a very short
 // Collector.Grpc.ConnectionMaxAge rotates faster than the records refresh -
@@ -570,8 +566,8 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 		JvmInfo: &pb.PJvmInfo{
 			Version:   0,
 			VmVersion: fmt.Sprintf("%s(%d)", runtime.Version(), goIdOffset),
-			// Same reason as PJvmGc.type in makePAgentStat: Go's GC is none of
-			// the JVM collectors. See doc/development.md.
+			// Same reason as PJvmGc.type in makePAgentStat: Go's runtime is
+			// none of the VM types the field enumerates.
 			GcType: pb.PJvmGcType_JVM_GC_TYPE_UNKNOWN,
 		},
 		Container: agentGrpc.agent.config.Bool(CfgIsContainerEnv),
@@ -598,14 +594,14 @@ func (agentGrpc *agentGrpc) sendAgentInfo(ctx context.Context, agentInfo *pb.PAg
 }
 
 // registrationWaitLogInterval paces the line that says why tracing is off while
-// registration_wait_log_interval. A variable so tests can shorten it.
+// registration is still in progress. A variable so tests can shorten it.
 var registrationWaitLogInterval = 30 * time.Second
 
-// registerRetryInterval is the pause between boot registration attempts:
-// registerAgentWithRetry, randomized +/-30% so agents restarted together do not
-// retry in lockstep. Non-escalating, as there too - a rejecting collector is
-// polled at the interval the operator configured, and the connection readiness
-// wait that follows each attempt is what backs off during an outage.
+// registerRetryInterval is the pause registerAgentWithRetry takes between boot
+// registration attempts, randomized +/-30% so agents restarted together do not
+// retry in lockstep. It does not escalate: a rejecting collector is polled at
+// the interval the operator configured, and the connection readiness wait that
+// follows each attempt is what backs off during an outage.
 func registerRetryInterval(config *Config) time.Duration {
 	interval := time.Duration(config.Int(CfgCollectorAgentInfoSendRetryInterval)) * time.Millisecond
 	if interval <= 0 {
@@ -619,9 +615,9 @@ func registerRetryInterval(config *Config) time.Duration {
 func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 	// Tracing is off for the whole wait - NewSpan is a noop and nothing is
 	// collected - and the per-attempt failure lines say nothing about that
-	// consequence, so they read as a plain connectivity problem. Report the
-	// a silent agent - one whose agent port alone is blocked, say - can tell
-	// this wait apart from a healthy agent nobody instrumented.
+	// consequence, so they read as a plain connectivity problem. The periodic
+	// line below says it outright, so an operator looking at a silent agent can
+	// tell this wait apart from one nobody instrumented.
 	started := time.Now()
 	nextLog := started.Add(registrationWaitLogInterval)
 	rejected := false
@@ -638,13 +634,13 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 			nextLog = now.Add(registrationWaitLogInterval)
 		}
 
-		// build_agent_info per attempt) do: an outage outlives the values in
-		// here. The IP is the usual one - a NIC still coming up at boot leaves
-		// it empty - but the hostname and the server metadata can move too, and
-		// whatever this loop happened to capture first is what the collector
-		// would carry until the next refresh cycle. Nothing in here does I/O
-		// beyond a local route lookup and an interface scan, and attempts are
-		// at least backOffInitialInterval apart, so the repeat is free.
+		// Rebuilt per attempt: an outage outlives the values in here. The IP is
+		// the usual one - a NIC still coming up at boot leaves it empty - but
+		// the hostname and the server metadata can move too, and whatever this
+		// loop captured first is what the collector would carry until the next
+		// refresh cycle. Nothing here does I/O beyond a local route lookup and
+		// an interface scan, and attempts are at least backOffInitialInterval
+		// apart, so the repeat is free.
 		ctx, agentInfo := agentGrpc.makeAgentInfo()
 
 		res, err := agentGrpc.sendAgentInfo(ctx, agentInfo)
@@ -653,8 +649,9 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 				Log("agent").Infof("success to register agent")
 				return true
 			}
-			// does: the collector answers it while initializing or briefly
-			// refusing, and giving up would leave this process dead until restart.
+			// A rejection is retried rather than fatal: the collector answers
+			// this way while initializing or briefly refusing, and giving up
+			// would leave this process untraced until it restarts.
 			Log("agent").Warnf("register agent - %s, retrying", res.Message)
 		}
 		// A transport that worked and a collector that said no are different
@@ -675,12 +672,11 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 }
 
 // refreshAgentInfo re-sends AgentInfo once, trying up to maxTry sends spaced
-// retryInterval apart. Unlike boot-time registration it never loops forever:
-// a failed refresh is simply left for the next refresh cycle, mirroring the
+// retryInterval apart. Unlike boot-time registration it never loops forever: a
+// failed refresh is left for the next refresh cycle.
 func (agentGrpc *agentGrpc) refreshAgentInfo(maxTry int, retryInterval time.Duration) bool {
 	for try := 0; try < maxTry && !agentGrpc.agent.stopping(); try++ {
-		// Rebuilt per attempt for the same reason registerAgentWithRetry does
-		// build_agent_info per send_agent_info_once) do: attempts are
+		// Rebuilt per attempt, as registerAgentWithRetry does: attempts are
 		// retryInterval apart, so the host name, IP or server metadata can move
 		// between them, and this refresh is what corrects the collector's copy.
 		// Cheap to repeat - a local route lookup and an interface scan - and
@@ -707,15 +703,15 @@ func (agentGrpc *agentGrpc) refreshAgentInfo(maxTry int, retryInterval time.Dura
 }
 
 func isRetryableError(e error) bool {
-	// retry only for network error
+	// Retry network errors only.
 	code := status.Code(e)
 	return code == codes.Unavailable || code == codes.DeadlineExceeded
 }
 
-// agent's meta_retry_max_attempts. Once the budget is spent the item's cache
-// entry is released so its next use registers it again; without a bound a
-// metadata item facing a dead collector would circulate through the retry
-// schedule forever.
+// metaRetryMaxAttempts is the send budget of one metadata item. Once it is
+// spent the item's cache entry is released so its next use registers it again;
+// without a bound, an item facing a dead collector would circulate through the
+// retry schedule forever.
 const metaRetryMaxAttempts = 3
 
 // metaRetryDelay is the pause between two sends of one metadata item. It is
@@ -725,17 +721,17 @@ const metaRetryMaxAttempts = 3
 // budget would fire back to back against an already overloaded collector.
 const metaRetryDelay = time.Second
 
-// meta_retry_queue_size. The schedule is budgeted separately from metaChan on
-// purpose: while a collector outage lasts, every failed send comes back as a
-// retry, and a shared budget lets those retries fill the queue and starve new
-// metadata. New metadata dropped on overflow releases its cache entry, which
-// makes the next span register the same item again -- a drop-feeds-inflow
-// amplification loop that runs until the collector recovers. Two bounds keep
-// separation from its HashedWheelTimer, which never queues a retry at all.
+// metaRetryQueueSize bounds the retry schedule. It is budgeted separately from
+// metaChan on purpose: while a collector outage lasts every failed send comes
+// back as a retry, and a shared budget would let those retries fill the queue
+// and starve new metadata. New metadata dropped on overflow releases its cache
+// entry, which makes the next span register the same item again - a
+// drop-feeds-inflow loop that runs until the collector recovers. Two bounds keep
+// the retries and the new items out of each other's way.
 const metaRetryQueueSize = 1000
 
-// metaMaxConcurrentRequests bounds how many metadata sends sendMetaWorker
-// meta_max_concurrent_requests.
+// metaMaxConcurrentRequests bounds how many metadata sends sendMetaWorker may
+// have in flight at once.
 const metaMaxConcurrentRequests = 4
 
 // metaVerdict is what becomes of a metadata item after one send attempt.
@@ -750,11 +746,11 @@ const (
 	// metaGiveUp: the attempt budget is spent. The cache entry is released at
 	// once so the next use registers the item again.
 	metaGiveUp
-	// metaRejected: a failure a retry cannot change. The cache entry is
-	// released after one metaRetryDelay rather than at once: the release is
-	// what makes the next span miss the cache and re-send, so an immediate
-	// one turned a rejecting collector into a re-send per span, bounded only
-	// by the in-flight permits. Parking it makes the recovery probe periodic,
+	// metaRejected: a failure a retry cannot change. The cache entry is released
+	// after one metaRetryDelay rather than at once: the release is what makes
+	// the next span miss the cache and re-send, so releasing immediately would
+	// turn a rejecting collector into a re-send per span, bounded only by the
+	// in-flight permits. Parking it makes the recovery probe periodic.
 	metaRejected
 )
 
@@ -779,12 +775,10 @@ func metaVerdictOf(err error, attempts int) metaVerdict {
 // so the caller stops treating the send as delivered. The code is
 // FailedPrecondition, deliberately outside isRetryableError's list: a
 // rejection is a semantic verdict on the payload (schema mismatch and the
-// like), so re-sending the same bytes twice more is pure load on the
-// collector. metaVerdictOf therefore never retries it, and sendMetaWorker
-// releases the cache entry after one delay so the next use registers a
-// fresh id -- instead of every later span referencing an id the collector
-// (GrpcMetadata::process_completed) drops it and delays the cache release,
-// and Go does the same (metaRejected). See doc/development.md.
+// like), so re-sending the same bytes twice more is pure load on the collector.
+// metaVerdictOf therefore never retries it, and sendMetaWorker releases the
+// cache entry after one delay so the next use registers a fresh id instead of
+// every later span referencing one the collector never stored.
 func metaResult(res *pb.PResult, err error) error {
 	if err != nil {
 		return err
@@ -1012,10 +1006,10 @@ func (w *sendWatchdog) onTimeout() {
 	w.fired <- struct{}{}
 }
 
-// sendStreamWithTimeout runs op on the calling goroutine and cancels the
-// stream if op blocks past timeout. grpc-go unblocks a flow-control-blocked
-// Send/Recv/CloseSend once the stream context is cancelled, so no operation
-// wait plus TryCancel. Killing the stream on timeout matches the callers: they
+// sendStreamWithTimeout runs op on the calling goroutine and cancels the stream
+// if op blocks past timeout. grpc-go unblocks a flow-control-blocked
+// Send/Recv/CloseSend once the stream context is cancelled, so cancelling is
+// what ends the wait. Killing the stream on timeout matches the callers: they
 // already close and re-create the stream on any send error.
 func sendStreamWithTimeout(op func() error, cancelStream context.CancelFunc, timeout time.Duration, which string) error {
 	w := sendWatchdogPool.Get().(*sendWatchdog)
@@ -1047,11 +1041,8 @@ func sendStreamWithTimeout(op func() error, cancelStream context.CancelFunc, tim
 // for its log lines and the lifetime counters the recovery summary prints.
 // Package level, like the other logThrottle sites, because backOffUntilReady
 // calls waitUntilReady once per attempt and the throttle window must span
-// those calls or a dead collector logs a state line per attempt.
-//
-// ConnectivityStateMonitor of AbstractGrpcDataSender (transition lines) and
-// the Channelz reporters under sender/grpc/metric (counters). Nothing is
-// added to PAgentStat.
+// those calls or a dead collector logs a state line per attempt. Everything it
+// records goes to the log; nothing is added to PAgentStat.
 type channelStateLog struct {
 	mu sync.Mutex
 	// unreadySince is when the channel was last observed leaving READY (or
@@ -1118,8 +1109,9 @@ func (l *channelStateLog) observeNotReady() {
 // always logged.
 //
 // "Observed": GetState is a sampled read, not a stream of states. Transitions
-// that happen between two WaitForStateChange returns are never seen, so from
-// agent's log_channel_state_change so doc/troubleshooting.md can be shared.
+// that happen between two WaitForStateChange returns are never seen, so the log
+// shows the states the waits happened to sample, not every state the channel
+// passed through.
 func (l *channelStateLog) logTransition(which string, from, to connectivity.State) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -1687,14 +1679,14 @@ func (b *spanMessageBuilder) makePSpan(chunk *spanChunk) *pb.PSpanMessage {
 
 	acceptEvent := b.acceptEvents.get()
 	acceptEvent.Rpc = validUTF8(span.rpcName)
-	// empty string leaves the web UI with a blank inbound node instead of one
-	// labelled unknown.
+	// A span with no address recorded reports unknownAddress: an empty string
+	// leaves the web UI with a blank inbound node instead of one labelled
+	// unknown.
 	acceptEvent.EndPoint = validUTF8(cmp.Or(span.endPoint, unknownAddress))
 	acceptEvent.RemoteAddr = validUTF8(cmp.Or(span.remoteAddr, unknownAddress))
-	// A root span has no parent to describe, so it carries no PParentInfo
-	// naming an empty parent (ServerRequestRecorder records parent info only
-	// when Pinpoint-pAppName is present). ParentApplicationType is -1
-	// (UNDEFINED) when the name came without a parseable type.
+	// A root span has no parent to describe, so it carries no PParentInfo naming
+	// an empty parent. ParentApplicationType is -1 (UNDEFINED) when the name
+	// came without a parseable type.
 	if span.parentAppName != "" {
 		parentInfo := b.parentInfos.get()
 		parentInfo.ParentApplicationName = validUTF8(span.parentAppName)
@@ -1806,7 +1798,8 @@ func (b *spanMessageBuilder) makePSpanEvent(event *spanEvent) *pb.PSpanEvent {
 	if event.destinationId != "" {
 		messageEvent := b.messageEvents.get()
 		// Only an event that actually injected a trace context has a next span
-		// call to a span id no node will ever report.
+		// id; without this guard the message event would point the downstream
+		// call at a span id no node will ever report.
 		if event.nextSpanId != noneSpanId {
 			messageEvent.NextSpanId = event.nextSpanId
 		}
@@ -1925,10 +1918,9 @@ func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
 		Timestamp:       stat.sampleTime.UnixNano() / int64(time.Millisecond),
 		CollectInterval: stat.interval,
 		Gc: &pb.PJvmGc{
-			// agent sends for the same reason. The counts below are Go's own:
-			// NumGC counts whole cycles (Go has no generations) and
-			// PauseTotalNs sums stop-the-world time only, so both read lower
-			// than a JVM's. See doc/development.md.
+			// Go's collector is none of the types this field enumerates. The
+			// counts below are Go's own: NumGC counts whole cycles (Go has no
+			// generations) and PauseTotalNs sums stop-the-world time only.
 			Type:                 pb.PJvmGcType_JVM_GC_TYPE_UNKNOWN,
 			JvmMemoryHeapUsed:    stat.heapUsed,
 			JvmMemoryHeapMax:     stat.heapMax,
@@ -2058,7 +2050,7 @@ func (cmdGrpc *cmdGrpc) newHandleCommandStream() bool {
 	} else {
 		ctx, cancel = context.WithDeadline(commandMetadataContext(cmdGrpc.agent), age.expiresAt)
 	}
-	// in the IDL and the collector's V1 handler drops a stream that carries the
+	// V2 only: the collector's V1 handler drops a stream that carries the
 	// supportcommandcode header, so the RPC and the header go together.
 	stream, err := cmdGrpc.cmdClient.HandleCommandV2(ctx)
 	if err != nil {

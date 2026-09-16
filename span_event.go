@@ -33,8 +33,7 @@ type spanEvent struct {
 
 // defaultSpanEvent builds an event at the position sequence/depth, which the
 // caller must have claimed with span.reserveEventPosition. The pair is never
-// read off the span here: loading the counters and letting the push increment
-// them afterwards is what let two concurrent events share a sequence.
+// read off the span here, or two concurrent events could share a sequence.
 func defaultSpanEvent(span *span, operationName string, sequence int32, depth int32) *spanEvent {
 	se := spanEvent{}
 
@@ -102,7 +101,8 @@ func (se *spanEvent) end() {
 	se.annotations.seal()
 }
 
-// warnIfFinished reports whether the event has ended; a setter called after
+// warnIfFinished reports whether the event has ended, logging the name of the
+// setter that arrived too late.
 func (se *spanEvent) warnIfFinished(setter string) bool {
 	if !se.finished.Load() {
 		return false
@@ -135,20 +135,18 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 	se.errorString = abbreviateString(e.Error(), maxErrorMessageSize)
 
 	cfg := se.config()
-	// PSpan.err, the URL stat failed histogram and the scatter failure point.
-	// The cause is ErrorCategoryException wherever the error was recorded, as
-	// recorder. An error matching Span.IgnoreErrors (IgnoreErrorHandler)
-	// keeps its exception info but skips that failure marking.
+	// Marking the span failed drives PSpan.err, the URL stat failed histogram
+	// and the scatter failure point. An error matching Span.IgnoreErrors keeps
+	// its exception info but skips that marking.
 	if !cfg.ignoreError(e, errName) {
 		se.parentSpan.markSpanError(ErrorCategoryException)
 	}
-	// The entry cap (canAddErrorChain) is checked inside traceCallStack, under
-	// errorChainsLock: read here it raced the locked append of a concurrent
-	// SetError on another goroutine of the same call stack.
+	// The entry cap is checked inside traceCallStack under errorChainsLock;
+	// reading it here would race a concurrent SetError on another goroutine of
+	// the same call stack.
 	if cfg.errorTraceCallStack {
 		// A chain the Error.NewThroughput limiter denied, or one refused by the
-		// entry cap, is not on the wire, so it gets no annotation either -
-		// annotation the same way.
+		// entry cap, never reaches the wire, so it gets no annotation either.
 		if eid := se.parentSpan.traceCallStack(e, errName, cfg.errorCallStackDepth, time.UnixMilli(se.startTime)); eid != noExceptionChainId {
 			se.exceptionId = eid
 			se.Annotations().AppendLong(AnnotationExceptionChainId, eid)
@@ -182,11 +180,7 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	// metadata. The sql/driver wrapper routes Begin, BeginTx, Commit and
 	// Rollback through setSqlSpanEvent with sql == "" (newSqlSpanEventNoSql),
 	// so this guard is what keeps a transaction boundary from carrying an
-	// diverges deliberately elsewhere: DefaultSqlMetaDataService caches and
-	// annotates "" (only null is refused, wrapSqlResult), but its commit and
-	// rollback interceptors never call recordSqlInfo, so "" reaches its SQL
-	// path only from a caller that passes it on purpose. See
-	// doc/development.md, "Java and C++ agent parity".
+	// empty SQL annotation.
 	if sql == "" || se.warnIfFinished("SetSQL") {
 		return
 	}
@@ -195,8 +189,9 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	cfg := se.config()
 
 	// A statement past the normalization cap is dropped whole - not counted,
-	// not normalized, not annotated. Cutting it and normalizing the rest, as
-	// when the cut lands inside a literal; see maxSqlNormalizeLength.
+	// not normalized, not annotated. Cutting it and normalizing the rest would
+	// lose a placeholder when the cut lands inside a literal; see
+	// maxSqlNormalizeLength.
 	if !sqlNormalizable(sql) {
 		if IsDebugLogLevelEnabled() {
 			Log("span").Debugf("SetSQL: statement of %d bytes past the normalization cap dropped", len(sql))
@@ -210,25 +205,16 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	} else {
 		nsql, param = newSqlNormalizer(sql, cfg.sqlRemoveComments).run()
 	}
-	// cacheSqlUid abbreviate the text they publish, and the UID hashes the
-	// untruncated SQL. param is never abbreviated either - the server splits it
-	// on ',' to fill the <idx>#/<idx>$ placeholders of nsql, so a cut param
-	// leaves placeholders exposed. MaxBindValueSize applies to bind values
-	// not that every value should become an "...(0)" marker.
+	// Neither nsql nor param is abbreviated: cacheSql and cacheSqlUid abbreviate
+	// only the text they publish, the id and the UID cover the whole normalized
+	// statement, and the server splits param on ',' to fill the <idx>#/<idx>$
+	// placeholders of nsql, so a cut param leaves placeholders exposed.
 	//
-	// The allowance is what the bind value writers can spend past the limit,
-	// markers included (maxBindValueAnnotationSize), so a list either driver
-	// composed passes through untouched - Test_spanEvent_SetSQLLeavesDriverBindValuesAlone
-	// pins that. What is left is the public API: SetSQL takes args from any
-	// caller, including one that composes them itself and bounds nothing, and
-	// the annotation rides on the span, which is dropped whole if it outgrows
-	// the send message size. Such a caller gets abbreviateString's marker,
-	// which reports the byte length of the args string it passed - a third
-	// equivalent of, since its own recorder API bounds nothing here. Kept for
-	// the bound, documented rather than reshaped: parsing args back into
-	// values to re-mark them costs more than the case is worth, and dropping
-	// the marker would leave a silently cut annotation.
-	// See doc/development.md and doc/api_contracts.md 7.
+	// args is bounded by maxBindValueAnnotationSize rather than by
+	// SQL.MaxBindValueSize itself, so a list the driver writers composed within
+	// the limit passes through untouched while args from a caller that bounds
+	// nothing still cannot grow the span without limit. See
+	// doc/api_contracts.md 7.
 	if cfg.sqlMaxBindValueSize > 0 {
 		args = abbreviateString(args, maxBindValueAnnotationSize(cfg.sqlMaxBindValueSize))
 	}
@@ -247,32 +233,16 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 		se.annotations.AppendIntStringString(AnnotationSqlId, id, param, args)
 	}
 
-	// SQL.ErrorCount queries is marked failed - an N+1 loop is a trace the
-	// is already set, so the count never re-marks a recorded error; a finished
-	// span is skipped for the same reason SetError does (doc/api_contracts.md 5).
-	// Count and flag on the trace root, so queries spread over async spans add
-	// here, counting per span so an async child has its own sql_count_
-	// (src/span.h:644-646); it is not the reference for this placement.
-	// The cause is ErrorCategorySql, so an operator who does not want an N+1
-	// pattern to fail the transaction can drop just that one with
-	// inside the recorder, downstream of DefaultSqlCountService.
-	//
-	// (WrappedSpanEventRecorder.recordSqlInfo: recordSqlParsingResult, then
-	// recordSqlCount): a statement whose metadata registration failed - cache
-	// refused the key, id generator wrapped, agent not running - leaves no
-	// annotation and is not counted either, so a span is never marked for
-	// queries the UI cannot show.
-	//
-	// so its prepareStatement() path annotates without counting. No such gate
-	// here, on purpose: this agent has no service type registry, only the
-	// ServiceType*ExecuteQuery constants in tracer.go, and a hard-coded list of
-	// those would silently turn N+1 detection off for a driver plugin using a
-	// database type outside it. SetServiceType is also a separate public call
-	// with no enforced order against SetSQL - every caller in this repository
-	// happens to set the type first (NewDatabaseTracer, the gocql and pgxv5
-	// plugins), but a gate that depends on that convention misfires the moment a
-	// third-party plugin breaks it. Nothing in this repository calls SetSQL from
-	// a prepare path, so nothing is over-counted today.
+	// A trace that runs SQL.ErrorCount queries is marked failed: an N+1 loop is
+	// what the count exists to surface. Count and flag live on the trace root,
+	// so queries spread over async spans add up. An error already set is never
+	// re-marked, and a finished span is skipped for the same reason SetError
+	// skips one (doc/api_contracts.md 5). The counting sits after the
+	// annotation, so a statement whose metadata registration failed returned
+	// above and is not counted: a span is never marked for queries the UI
+	// cannot show. The cause is ErrorCategorySql, so an operator who does not
+	// want an N+1 pattern to fail the transaction can exclude that one category
+	// (Span.ErrorMarkExclude) and keep the rest.
 	root := se.parentSpan.root()
 	if cfg.sqlErrorCount > 0 && root.err.Load() == 0 && !se.parentSpan.finished.Load() {
 		if int(root.sqlCount.Add(1)) >= cfg.sqlErrorCount {

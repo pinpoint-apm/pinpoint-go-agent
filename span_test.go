@@ -271,15 +271,15 @@ func Test_splitTransactionId(t *testing.T) {
 		// registers, not when it parses this header.
 		{"abcdefghijklmnopqrstuvwxy^1^2", true, "abcdefghijklmnopqrstuvwxy", 1, 2}, // 25 chars
 		{"a^9223372036854775808^0", false, "", 0, 0},                               // overflows int64
-		{"a^123456789012345678901^0", false, "", 0, 0},                             // 21 digits: overflows, as Long.parseLong does
-		// Numeric fields follow Long.parseLong, so a sign, leading zeros and a
+		{"a^123456789012345678901^0", false, "", 0, 0},                             // 21 digits: overflows int64
+		// A sign, leading zeros and any length that still fits an int64 parse.
 		{"agent^-1^1", true, "agent", -1, 1},           // negative start time
 		{"a^+1^-2", true, "a", 1, -2},                  // '+' prefix, negative sequence
 		{"a^000000000000000000001^2", true, "a", 1, 2}, // 21 chars, leading zeros, fits int64
 		{"a^1^2^3", true, "a", 1, 2},                   // 4th field ignored, not rejected
 		{"a^1^2^", true, "a", 1, 2},                    // trailing delimiter after sequence
 		{"a^b^c^d", false, "", 0, 0},                   // still rejected: 'b' is not a number
-		{"a^ 1^2", false, "", 0, 0},                    // no whitespace, as Long.parseLong
+		{"a^ 1^2", false, "", 0, 0},                    // no whitespace allowed
 		{"a^1^0x10", false, "", 0, 0},                  // base 10 only
 		{"a^1^1_0", false, "", 0, 0},                   // no underscore separators
 		// The agent id is re-emitted in outbound Pinpoint-TraceID headers and
@@ -385,14 +385,16 @@ func Test_span_Inject(t *testing.T) {
 				HeaderFlags, HeaderParentApplicationName, HeaderParentApplicationType} {
 				assert.Contains(t, m, h, h)
 			}
-			// receiver with profiler.cluster.namespace set rejects the empty
-			// value and starts a new trace instead of continuing this one.
+			// The namespace header is omitted rather than sent empty: a
+			// receiver comparing it against its own value rejects an empty one
+			// and starts a new trace instead of continuing this one.
 			assert.NotContains(t, m, HeaderParentApplicationNamespace, HeaderParentApplicationNamespace)
 		})
 	}
 }
 
-// Pinpoint-Host names the node being called; with nothing to name it is left
+// Pinpoint-Host names the node being called; with nothing to name, the header is
+// left out rather than sent empty.
 func Test_span_Inject_Host(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -459,6 +461,7 @@ func Test_span_Inject_EventOverflow(t *testing.T) {
 	// The limits are the smallest publishable ones: applyDynamicConfig clamps
 	// MaxCallStackDepth to minEventDepth and MaxCallStackSequence to
 	// minEventSequence, so the event counts below are what it takes to overflow
+	// them.
 	tests := []struct {
 		name     string
 		limitOpt string
@@ -1424,7 +1427,8 @@ func BenchmarkValidateID(b *testing.B) {
 	}
 }
 
-// A parent application type that does not parse keeps the UNKNOWN default,
+// A parent application type that does not parse keeps the -1 UNDEFINED default
+// rather than the 0 the discarded parse result would write.
 func Test_span_Extract_malformedParentAppTypeKeepsDefault(t *testing.T) {
 	span := defaultTestSpan()
 	span.Extract(&DistributedTracingContextMap{m: map[string]string{
@@ -1887,10 +1891,9 @@ func TestSpan_EndSpanEventOverflowRepanicsRecovered(t *testing.T) {
 
 // ========== Error category (PSpan.err) ==========
 
-// PSpan.err is a bitmask of ErrorCategory, not a boolean: the collector reads
-// ConfigurableErrorRecorder (profiler.error.enable defaults to true), which ORs
-// errorCategory.getBitMask() into the shared error code. A flat 1 means an
-// unclassified failure.
+// PSpan.err is a bitmask of ErrorCategory, not a boolean: each cause ORs its own
+// bit into the shared error code, so a transaction that failed for several
+// reasons reports all of them. A flat 1 means an unclassified failure.
 func TestSpan_ErrorCategoryPerCause(t *testing.T) {
 	boom := errors.New("boom")
 
@@ -1917,7 +1920,8 @@ func TestSpan_ErrorCategoryPerCause(t *testing.T) {
 			s.SetFailure(ErrorCategoryHttpStatus)
 			s.SetError(boom)
 		}, int32(ErrorCategoryHttpStatus | ErrorCategoryException)},
-		// Re-marking a cause must neither double-count nor clear anything: err
+		// Re-marking a cause must neither double-count nor clear anything: the
+		// mask only ever gains bits.
 		{"the same causes twice", func(s *span) {
 			s.SetFailure(ErrorCategoryHttpStatus)
 			s.SetError(boom)

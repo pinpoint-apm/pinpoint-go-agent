@@ -230,6 +230,7 @@ func Test_javaParityLock_SqlNormalizerRemoveComments(t *testing.T) {
 
 // splitOutputParams is the agent-side counterpart of the server's
 // OutputParameterParser: it splits param on ',' and un-escapes the doubled
+// commas the normalizer writes for a comma inside a literal.
 func splitOutputParams(params string) []string {
 	if params == "" {
 		return nil
@@ -627,9 +628,9 @@ func Test_javaParityLock_SampledHeaderEncoding(t *testing.T) {
 // application type recorded when Pinpoint-pAppName arrives without a
 // parseable Pinpoint-pAppType: -1, ServiceType.UNDEFINED, which
 // ServerRequestRecorder.recordParentInfo produces through
-// NumberUtils.parseShort(type, ServiceType.UNDEFINED.getCode()). Both ports
-// used to default to 1 (UNKNOWN), a real service type the server map drew as
-// a node of that type.
+// NumberUtils.parseShort(type, ServiceType.UNDEFINED.getCode()). Defaulting to
+// 1 (UNKNOWN) instead would name a real service type, which the server map draws
+// as a node of that type.
 func Test_javaParityLock_ParentAppTypeDefaultsToUndefined(t *testing.T) {
 	assert.Equal(t, -1, defaultTestSpan().parentAppType, "a fresh span")
 

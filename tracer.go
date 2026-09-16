@@ -104,18 +104,17 @@ type Tracer interface {
 // ErrorCategory is the cause that failed a transaction, carried as one bit of
 // PSpan.err. The bit values are a wire contract, not an internal detail: the
 // collector reads them to tell an exception apart from a failing HTTP status,
-// must never be renumbered.
+// so they must never be renumbered.
 //
-// request that threw and returned 5xx reports both causes. Span.ErrorMark and
-// Span.ErrorMarkExclude decide which categories are allowed to fail a
-// transaction at all.
+// The causes accumulate, so a request that threw and returned 5xx reports both.
+// Span.ErrorMark and Span.ErrorMarkExclude decide which categories are allowed
+// to fail a transaction at all.
 type ErrorCategory int32
 
 const (
-	// ErrorCategoryUnknown is a failure with no cause attached: what
-	// SetFailure records when its caller names no category, and what an agent
-	// SimpleErrorRecorder, used when profiler.error.enable=false). It is
-	// always enabled, whatever Span.ErrorMark and Span.ErrorMarkExclude say.
+	// ErrorCategoryUnknown is a failure with no cause attached: what SetFailure
+	// records when its caller names no category. It is always enabled, whatever
+	// Span.ErrorMark and Span.ErrorMarkExclude say.
 	ErrorCategoryUnknown ErrorCategory = 1 << 0
 
 	// ErrorCategoryException is an error recorded through SetError, on the
@@ -225,8 +224,7 @@ type DistributedTracingContextReader interface {
 	// Pinpoint-SpanID instead of dropping it still describes a hop, and the
 	// trace must not split there. A carrier over a source that cannot tell the
 	// two apart reports a value it has as present and an empty one as absent
-	// (v, v != ""), which is how this agent read every carrier before Get
-	// reported presence. See doc/api_contracts.md.
+	// (v, v != ""). See doc/api_contracts.md.
 	Get(key string) (string, bool)
 }
 
@@ -260,7 +258,7 @@ type DistributedTracingContextWriter interface {
 	Set(key string, value string)
 }
 
-// keys of distributed tracing headers
+// Keys of the distributed tracing headers.
 const (
 	HeaderTraceId                    = "Pinpoint-TraceID"
 	HeaderSpanId                     = "Pinpoint-SpanID"
@@ -312,7 +310,7 @@ type UrlStatEntry struct {
 	Status int
 }
 
-// service types pre-defined
+// Pre-defined service types.
 const (
 	ServiceTypeGoApp                 = 1800
 	ServiceTypeGoFunction            = 1801
@@ -338,7 +336,7 @@ const (
 	ServiceTypeGoElastic             = 9204
 )
 
-// annotation keys pre-defined
+// Pre-defined annotation keys.
 const (
 	AnnotationArgs0               = -1
 	AnnotationApi                 = 12

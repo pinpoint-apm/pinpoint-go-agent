@@ -703,10 +703,10 @@ Span:
 }
 
 // A config file that still uses the deprecated LogLevel key must fire the
-// Log.Level callback the logger is registered on. setFinalValue mirrors the old
-// key onto the new one, but only the old name was reported as changed, so the
-// snapshot picked the new level up while the logger kept the one it started
-// with.
+// Log.Level callback the logger is registered on: setFinalValue mirrors the
+// deprecated key onto the current one, and reporting only the deprecated name as
+// changed would leave the logger at the level it started with while the snapshot
+// moved on.
 func Test_reloadConfig_deprecatedLogLevelFiresTheLogLevelCallback(t *testing.T) {
 	config, err := NewConfig(WithAppName("reloadApp"))
 	require.NoError(t, err)
@@ -1454,8 +1454,8 @@ func Test_ignoreError_CauseOnlyChain(t *testing.T) {
 	assert.False(t, snapshot.ignoreError(&causeOnlyErr{msg: "outer", cause: fmt.Errorf("other")}, ""))
 }
 
-// profiler.error.mark enables every category, so the default mask must too -
-// path (SimpleErrorRecorder).
+// With neither Span.ErrorMark nor Span.ErrorMarkExclude configured, every
+// category must be enabled.
 func TestNewConfig_ErrorMarkDefaultsToEveryCategory(t *testing.T) {
 	c, err := NewConfig(WithAppName("errorMarkApp"))
 	require.NoError(t, err)
@@ -1547,7 +1547,8 @@ func TestNewConfig_ErrorMarkWarnsOnAnUnknownCategory(t *testing.T) {
 	assert.Contains(t, buf.String(), "typo-here")
 }
 
-// A snapshot built by hand instead of by NewConfig has no mask at all; every
+// A snapshot built by hand instead of by NewConfig has no mask at all, and a
+// zero mask reads as every category enabled.
 func Test_marksError_ZeroMaskReadsAsEveryCategory(t *testing.T) {
 	snapshot := &configSnapshot{}
 

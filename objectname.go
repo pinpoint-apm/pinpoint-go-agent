@@ -8,7 +8,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// nameVersion selects the agent self-identification (ObjectName) scheme,
+// nameVersion selects the agent self-identification (ObjectName) scheme, which
+// decides the id length limits and the protocol version header.
 type nameVersion int
 
 const (
@@ -59,9 +60,9 @@ func validateID(value string, maxLen int) bool {
 	return isIDChars(value)
 }
 
-// IsValidId reports whether value is a non-empty id of at most maxLen bytes
-// IdValidateUtils.validateId does. Plugins use it for ids that arrive on the
-// wire, such as the app= token of the Pinpoint-ProxyApp header.
+// IsValidId reports whether value is a non-empty id of at most maxLen bytes made
+// only of allowed id characters. Plugins use it for ids that arrive on the wire,
+// such as the app= token of the Pinpoint-ProxyApp header.
 func IsValidId(value string, maxLen int) bool {
 	return validateID(value, maxLen)
 }

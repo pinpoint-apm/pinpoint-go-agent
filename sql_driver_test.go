@@ -151,12 +151,13 @@ func Test_writeBindValue_TruncatesOversizedBytes(t *testing.T) {
 	more := writeBindValue(&b, 0, value, 0, 1024)
 
 	assert.True(t, more)
-	// bytes of the slice rather than the characters of its rendering - what
+	// The marker counts the bytes of the slice, not the characters of its
+	// rendering.
 	assert.Equal(t, want[:1024]+"...(5000)", b.String())
 }
 
-// The separator precedes whatever comes next, so a list cut short ends with it
-// limit keeps nothing, marker included.
+// The separator precedes whatever comes next, so a list cut short ends with the
+// separator and then the count marker.
 func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -215,8 +216,8 @@ func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 	}
 }
 
-// SpanEventTest.SetSqlQueryStopsTracingBindValueAtConfiguredLimit and
-// BindValueUtils.bindValueToString. They are here rather than in
+// The bind value list is joined with ", " and cut at the configured limit, with
+// a marker standing in for whatever the limit left out.
 func Test_writeBindValue_MatchesJavaBindValueJoin(t *testing.T) {
 	for _, tt := range []struct {
 		name    string

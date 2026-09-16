@@ -41,25 +41,19 @@ type metaCacheShardInternal struct {
 	cap          int
 	ageThreshold uint64
 	// opSeq counts inserts and promotions; entry age = opSeq - lastPromoted.
-	// Both count because both move an entry back: an insert goes to the
-	// front, and so does a promoted entry, pushing everything behind it one
-	// position further from the front. Age therefore bounds an entry's
-	// distance from the front, and an entry promoted at ageThreshold (cap/2)
-	// is always caught in the front half. Counting inserts alone broke that
-	// bound - hot entries were evicted from under a threshold that no longer
-	// measured position - and the resend advantage over FIFO fell from
-	// 11-20x to 3-7x on the churn workload in meta_cache_test.
+	// Both count because both move an entry back: an insert goes to the front,
+	// and so does a promoted entry, pushing everything behind it one position
+	// further from the front. Age therefore bounds an entry's distance from the
+	// front, and an entry promoted at ageThreshold (cap/2) is always caught in
+	// the front half.
 	opSeq atomic.Uint64
 	// insertSeq counts inserts alone. A hit whose entry has aged past the
-	// threshold still skips the promotion while no insert has happened since
-	// the entry was last promoted: only an insert can evict, so until one
-	// arrives the order is not consulted, and promoting would only take the
-	// lock. Without this, a working set larger than ageThreshold in a full
-	// shard made every hit a promotion - each promotion aged the rest past
-	// the threshold - and the "lock-free hit" path was never taken again.
-	// The order is stale only over such an insert-free stretch; the first
-	// insert is followed by one promotion per aged hot entry, and the bound
-	// above holds again from there.
+	// threshold still skips the promotion while no insert has happened since the
+	// entry was last promoted: only an insert can evict, so until one arrives
+	// the order is not consulted and promoting would only take the lock. Without
+	// it, a working set larger than ageThreshold in a full shard makes every hit
+	// a promotion and the lock-free hit path is never taken. The order is stale
+	// only over such an insert-free stretch.
 	insertSeq atomic.Uint64
 	size      atomic.Int64
 }
@@ -80,11 +74,11 @@ type metaCache[K comparable, V any] struct {
 	// capacity when that is smaller, so no shard has a capacity of 0.
 	shardCount uint64
 	// ttl > 0 expires an entry that long after its insert: peek drops it and
-	// reports a miss, so the next lookup re-registers the metadata. Only the
-	// SQL UID cache sets one (SQL.CacheExpireHours): the collector's
-	// SqlUidMetaData rows have a 180-day TTL, and a UID whose row lapsed
-	// while the entry stayed cached showed an empty SQL in the web UI until
-	// the process restarted. The id caches keep entries for the process
+	// reports a miss, so the next lookup re-registers the metadata. Only the SQL
+	// UID cache sets one (SQL.CacheExpireHours), because the collector's
+	// SqlUidMetaData rows expire too and a UID whose row lapsed while the entry
+	// stayed cached shows an empty SQL in the web UI. The other caches keep
+	// their entries for the life of the process.
 	ttl time.Duration
 	now func() time.Time // time.Now, replaced by tests
 }

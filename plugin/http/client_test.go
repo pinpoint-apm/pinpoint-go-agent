@@ -415,8 +415,9 @@ func TestWrapClient_UnsampledRequestStillSendsS0(t *testing.T) {
 		"an unsampled transaction must still tell the callee not to trace")
 }
 
-// A request that already carries a Pinpoint context - a client wrapped twice,
-// or a proxy forwarding its inbound headers - is nested: the outer context is
+// A request that already carries a Pinpoint context - a client wrapped twice, or
+// a proxy forwarding its inbound headers - is nested: the context already
+// present travels alone and no second span event is recorded.
 func TestWrapClient_NestedRequestIsNotTraced(t *testing.T) {
 	startAgent(t)
 

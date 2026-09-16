@@ -38,7 +38,9 @@ func TestSpan_TraceCallStackBoundsCauserCycle(t *testing.T) {
 	}
 }
 
-// Each link of an error chain is recorded under one exception id with its
+// Each link of an error chain is recorded under one exception id, with its
+// depth counted from the outermost error and its class name taken from the
+// link's own type.
 func TestSpan_TraceCallStackChainDepthAndClassName(t *testing.T) {
 	inner := errors.New("inner")
 	tests := []struct {
@@ -182,6 +184,7 @@ func TestSpan_TraceCallStackLimitsNewChains(t *testing.T) {
 }
 
 // A denied chain records nothing at all - not the error, not its causes - and
+// hands back noExceptionChainId so the caller writes no annotation either.
 func TestSpan_TraceCallStackDeniedRecordsNothing(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgErrorNewThroughput, 1)
@@ -242,10 +245,10 @@ func assertChainDepthsContiguous(t *testing.T, span *span) {
 	}
 }
 
-// Wrapping a cause that is not the head of its chain - a sentinel wrapped
-// ExceptionRecordingState.stateOf only joins when the previously recorded
-// throwable is in the new one's cause chain. Joining the old chain would put
-// its head below the new error although it is not a cause of it.
+// Wrapping a cause that is not the head of its chain - a sentinel wrapped again
+// from another call site - starts a new chain rather than joining the recorded
+// one: joining would put that chain's head below the new error although it is
+// not a cause of it.
 func TestSpan_TraceCallStackWrappedInnerCauseStartsNewChain(t *testing.T) {
 	span := testSpanWithConfig(unlimitedNewChainsConfig())
 

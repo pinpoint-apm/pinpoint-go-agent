@@ -100,7 +100,8 @@ func (l *logrusLogger) setOutput(out string, maxSize, maxBackups int) {
 
 func (l *logrusLogger) setOutputLocked(out string, maxSize, maxBackups int) {
 	// The output is applied up to three times on the way to a running agent
-	// (twice while NewConfig loads, once by setup); an unchanged one is not
+	// (twice while NewConfig loads, once by setup), so an unchanged one is
+	// skipped rather than reopening the file.
 	if out == l.out && maxSize == l.maxSize && maxBackups == l.maxBackups {
 		return
 	}

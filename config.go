@@ -34,8 +34,9 @@ const (
 	CfgCollectorAgentInfoSendRetryInterval = "Collector.AgentInfo.SendRetryInterval"
 	CfgCollectorAgentInfoMaxTryPerAttempt  = "Collector.AgentInfo.MaxTryPerAttempt"
 
-	// are in milliseconds without a "Ms" suffix, following the convention of
-	// the other millisecond keys (Stat.CollectInterval, Span.BatchFlushInterval).
+	// The duration keys below are in milliseconds without a "Ms" suffix,
+	// following the other millisecond keys (Stat.CollectInterval,
+	// Span.BatchFlushInterval).
 	CfgCollectorGrpcKeepAliveTime               = "Collector.Grpc.KeepAliveTime"
 	CfgCollectorGrpcKeepAliveTimeout            = "Collector.Grpc.KeepAliveTimeout"
 	CfgCollectorGrpcKeepAlivePermitWithoutCalls = "Collector.Grpc.KeepAlivePermitWithoutCalls"
@@ -46,19 +47,19 @@ const (
 	CfgCollectorGrpcMaxHeaderListSize           = "Collector.Grpc.MaxHeaderListSize"
 	CfgCollectorGrpcSslEnable                   = "Collector.Grpc.SslEnable"
 	CfgCollectorGrpcTrustCertFilePath           = "Collector.Grpc.TrustCertFilePath"
-	//   ConnectionMaxAge <-> profiler.transport.grpc.loadbalancer.renew.period.millis
-	//   StreamMaxAge     <-> profiler.transport.grpc.span.sender.rpc.age.max.millis
-	// Both in milliseconds; 0 (the default) disables the renewal.
+	// How long a collector connection and a span stream may live before they
+	// are renewed, both in milliseconds; 0 (the default) disables the renewal.
 	CfgCollectorGrpcConnectionMaxAge = "Collector.Grpc.ConnectionMaxAge"
 	CfgCollectorGrpcStreamMaxAge     = "Collector.Grpc.StreamMaxAge"
-	// Channel idle timeout in milliseconds; 0 (the default) disables idling,
+	// Channel idle timeout in milliseconds; 0 (the default) disables idling.
 	CfgCollectorGrpcIdleTimeout = "Collector.Grpc.IdleTimeout"
 	// Collector.Grpc.DnsResolverEnable picks the gRPC name resolver for the
 	// collector target: the default dns resolver, or the legacy passthrough
 	// scheme. Only a rollback lever - see connectCollector in grpc.go.
 	CfgCollectorGrpcDnsResolverEnable = "Collector.Grpc.DnsResolverEnable"
-	// Collector.Grpc.SenderQueueSize sizes the metadata queue (metaChan), as
-	// fixed bound (metaRetryQueueSize in grpc.go), not this one.
+	// Collector.Grpc.SenderQueueSize sizes the metadata queue (metaChan). The
+	// retry schedule has a fixed bound of its own (metaRetryQueueSize in
+	// grpc.go), not this one.
 	CfgCollectorGrpcSenderQueueSize = "Collector.Grpc.SenderQueueSize"
 
 	CfgLogLevelOld                    = "LogLevel"
@@ -123,13 +124,13 @@ const (
 	samplingTypeCounting = "COUNTING"
 
 	defaultErrorCallStackDepth = 32
-	// defaultLogMaxBackups is what the agent kept before the key existed and
-	// a library this agent keeps the smaller footprint (Log.MaxSize x 2).
+	// defaultLogMaxBackups keeps the on-disk footprint of a library's log small
+	// (Log.MaxSize x 2).
 	defaultLogMaxBackups = 1
-	// stops at 5 (profiler.exceptiontrace.max.depth); lowering this would drop
-	// links applications already see, so it stays a knob, not a new default.
+	// The whole cause chain a span walks is recorded by default; lowering this
+	// would drop links applications already see, so it stays a knob.
 	defaultErrorMaxChainDepth = maxCauserDepth
-	// profiler.exceptiontrace.new.throughput default.
+	// New exception chains recorded per second.
 	defaultErrorNewThroughput = 1000
 	// Bound the per-error runtime.Callers allocation. This option is dynamic
 	// and can come from a config file, so an accidental huge value must not turn
@@ -137,14 +138,14 @@ const (
 	// panic in make([]uintptr, depth+3).
 	maxErrorCallStackDepth = 1024
 
-	// SQL caches by that key; the api and error caches keep cacheSize.
+	// Entries per SQL cache; the api and error caches keep cacheSize instead.
 	defaultSqlCacheSize = 1024
 	// The upper bound keeps a typo from committing gigabytes at startup: each
 	// of the three caches is bounded by this x SQL.CacheLengthLimit.
 	maxSqlCacheSize = 65536
 
-	// (profiler.jdbc.maxsqlbindvaluesize, DefaultJdbcOption). It bounds the
-	// whole bind value list of one SQL span event, not each value.
+	// The bind value budget of one SQL span event: it bounds the whole list,
+	// not each value.
 	defaultSqlMaxBindValueSize = 1024
 	// The ceiling on SQL.MaxBindValueSize. Values above the default remain
 	// available up to this bound.
@@ -161,13 +162,14 @@ const (
 
 	// SQL at or above this many bytes bypasses the SQL metadata caches.
 	defaultSqlCacheLengthLimit = 2048
-	// profiler.jdbc.sqlcacheexpirehours (SimpleCacheFactory, 7 days).
+	// Seven days.
 	defaultSqlCacheExpireHours = 168
 	// 100 years. An expiry this long is already "never" in practice, and the
 	// bound keeps hours * time.Hour from overflowing the Duration.
 	maxSqlCacheExpireHours = 24 * 365 * 100
 
-	// profiler.sql.error.enable collapses into a limit of 0 here.
+	// How many queries one trace may run before it is marked failed; 0 turns
+	// the check off.
 	defaultSqlErrorCount = 100
 
 	// Upper bounds for queue sizes and stat collection settings.
@@ -177,8 +179,7 @@ const (
 	maxStatCollectInterval = 10000
 	maxStatBatchCount      = 100
 
-	// profiler.transport.grpc.metadata.sender.executor.queue.size default
-	// (GrpcTransportConfig.DEFAULT_METADATA_SENDER_EXECUTOR_QUEUE_SIZE) and
+	// Default depth of the metadata send queue.
 	defaultMetaQueueSize = 1000
 )
 
@@ -346,7 +347,7 @@ type Config struct {
 
 	// serviceInfo holds the host's PServerMetaData.serviceInfo entries, set by
 	// WithServiceInfo. It is not a cfgMap item: a list of named lists has no
-	// spelling in a config file, a flag or an environment variable, and the
+	// spelling in a config file, a flag or an environment variable.
 	serviceInfo []serviceInfo
 
 	// watchMu owns the single restartable fsnotify watcher for this Config.
@@ -393,17 +394,15 @@ type configSnapshot struct {
 	errorIgnoreRules     []ignoreErrorRule // CfgSpanIgnoreErrors
 	errorMaxChainDepth   int               // CfgErrorMaxChainDepth
 	// errorMarkMask is the set of ErrorCategory bits allowed to fail a
-	// transaction, resolved from CfgSpanErrorMark and
-	// CfgSpanErrorMarkExclude. Zero means "unset" and reads as every
-	// category: a resolved mask always carries ErrorCategoryUnknown, so zero
-	// can only come from a snapshot built by hand instead of by NewConfig
-	// profiler.error.mark gives.
+	// transaction, resolved from CfgSpanErrorMark and CfgSpanErrorMarkExclude.
+	// Zero means "unset" and reads as every category: a resolved mask always
+	// carries ErrorCategoryUnknown, so zero can only come from a snapshot built
+	// by hand rather than by NewConfig.
 	errorMarkMask ErrorCategory // CfgSpanErrorMark, CfgSpanErrorMarkExclude
 }
 
 // ignoreErrorRule is one parsed Span.IgnoreErrors entry, "<type>:<message>";
-// an empty type or message matches anything. It is the Go counterpart of the
-// .exception-message.contains descriptor pair.
+// an empty type or message matches anything.
 type ignoreErrorRule struct {
 	typeName        string
 	messageContains string
@@ -480,9 +479,8 @@ func parseErrorMarkMask(mark []string, exclude []string) ErrorCategory {
 	return (marked &^ excluded) | ErrorCategoryUnknown
 }
 
-// marksError reports whether category is allowed to fail a transaction, i.e.
-// applies the same test inside ConfigurableErrorRecorder.recordError, so an
-// excluded category records nothing at all - not even ErrorCategoryUnknown.
+// marksError reports whether category is allowed to fail a transaction. An
+// excluded category marks nothing at all - not even ErrorCategoryUnknown.
 func (snapshot *configSnapshot) marksError(category ErrorCategory) bool {
 	if snapshot.errorMarkMask == 0 {
 		return true // unset, see the field comment
@@ -490,12 +488,15 @@ func (snapshot *configSnapshot) marksError(category ErrorCategory) bool {
 	return snapshot.errorMarkMask&category != 0
 }
 
-// ignoreError reports whether err, or any error it wraps (the nextCause chain,
-// matches a Span.IgnoreErrors rule. The walk stops after maxCauserDepth
-// links: the chain comes from a user error whose Unwrap() may return itself or
-// an ancestor, and this runs on the request goroutine inside SetError. Such an error is still recorded as exception info
-// but does not mark the span as failed. The type part matches the dynamic type
-// string (reflect.TypeOf(err).String()) or the errorName given to SetError.
+// ignoreError reports whether err, or any error it wraps (the nextCause chain),
+// matches a Span.IgnoreErrors rule. Such an error is still recorded as exception
+// info but does not mark the span as failed. The type part of a rule matches the
+// dynamic type string (reflect.TypeOf(err).String()) or the errorName given to
+// SetError.
+//
+// The walk stops after maxCauserDepth links: the chain comes from a user error
+// whose Unwrap() may return itself or an ancestor, and this runs on the request
+// goroutine inside SetError.
 func (snapshot *configSnapshot) ignoreError(err error, errName string) bool {
 	if len(snapshot.errorIgnoreRules) == 0 {
 		return false

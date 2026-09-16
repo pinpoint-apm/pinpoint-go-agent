@@ -136,8 +136,8 @@ func WithHttpServerProxyHeaderEnable(enable bool) pinpoint.ConfigOption {
 }
 
 // WithHttpServerRecordRequestParam turns the recording of the request query
-// string (annotation 41, Java's profiler.server.tracerequestparam) on or off.
-// Off by default: query strings carry tokens and ids.
+// string (annotation 41) on or off. Off by default: query strings carry tokens
+// and ids.
 //
 //	pphttp.WithHttpServerRecordRequestParam(true)
 func WithHttpServerRecordRequestParam(record bool) pinpoint.ConfigOption {
@@ -146,11 +146,10 @@ func WithHttpServerRecordRequestParam(record bool) pinpoint.ConfigOption {
 	}
 }
 
-// WithHttpServerRealIpHeader sets the ordered request headers the client
-// address is resolved from (Java's profiler.server.realipheader). A header
-// named "Forwarded" is parsed for its for= token; any other header gives its
-// first comma-separated hop. An empty list trusts no header and records the
-// socket address.
+// WithHttpServerRealIpHeader sets the ordered request headers the client address
+// is resolved from. A header named "Forwarded" is parsed for its for= token; any
+// other header gives its first comma-separated hop. An empty list trusts no
+// header and records the socket address.
 //
 //	pphttp.WithHttpServerRealIpHeader([]string{"CF-Connecting-IP", "X-Forwarded-For"})
 func WithHttpServerRealIpHeader(names []string) pinpoint.ConfigOption {
@@ -160,8 +159,8 @@ func WithHttpServerRealIpHeader(names []string) pinpoint.ConfigOption {
 }
 
 // WithHttpServerRealIpEmptyValue sets the header value that counts as absent
-// when resolving the client address, compared case-insensitively (Java's
-// profiler.server.realipemptyvalue, typically "unknown").
+// when resolving the client address, compared case-insensitively (typically
+// "unknown").
 func WithHttpServerRealIpEmptyValue(value string) pinpoint.ConfigOption {
 	return func(c *pinpoint.Config) {
 		c.Set(CfgHttpServerRealIpEmptyValue, value)
@@ -169,8 +168,9 @@ func WithHttpServerRealIpEmptyValue(value string) pinpoint.ConfigOption {
 }
 
 // WithHttpServerProxyUserHeaderNames sets the request headers a user-defined
-// proxy writes its receive time into ("t=<epoch millis>"). Each one present on
-// a request is recorded as a proxy annotation of type USER (4), with the header
+// proxy writes its receive time into ("t=<epoch millis>", optionally
+// "D=<micros>"). Each one present on a request is recorded as a proxy annotation
+// of type USER (4), named after the header it came from.
 //
 //	pphttp.WithHttpServerProxyUserHeaderNames([]string{"X-Proxy-Time"})
 func WithHttpServerProxyUserHeaderNames(names []string) pinpoint.ConfigOption {

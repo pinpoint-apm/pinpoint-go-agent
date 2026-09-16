@@ -1243,9 +1243,8 @@ func Test_agent_refreshAgentInfoWorker_honorsInterval(t *testing.T) {
 	assert.GreaterOrEqual(t, client.calls.Load(), int32(2), "worker must re-send agent info every interval")
 }
 
-// With no Collector.Grpc.* keys set, the channel options must equal the
-// values that were hard-coded before they became configurable, except for
-// PermitWithoutStream, which was deliberately flipped to false to match the
+// With no Collector.Grpc.* keys set, the channel options must come out at the
+// documented defaults.
 func Test_grpcChannelOptions_defaults(t *testing.T) {
 	cfg, err := NewConfig(WithAppName("TestApp"))
 	assert.NoError(t, err)
@@ -1359,6 +1358,7 @@ func Test_agentGrpc_sendMetadata_payloads(t *testing.T) {
 }
 
 // Exception metadata carries the transaction that raised it plus one entry per
+// link of the recorded chain.
 func Test_agentGrpc_sendExceptionMetadata(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agentGrpc, meta := newMockMetaAgentGrpc(agent)
@@ -1504,6 +1504,7 @@ func Test_sendMetaWorker_releasesSqlCachesOnFailure(t *testing.T) {
 }
 
 // Every metadata type the agent can queue is dispatched by the worker to its
+// own send call.
 func Test_sendMetaWorker_sendsEveryMetadataType(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agentGrpc, meta := newMockMetaAgentGrpc(agent)
@@ -1815,6 +1816,7 @@ func Test_agentGrpc_registerAgentWithRetry_rebuildsAgentInfoPerAttempt(t *testin
 // collector accepts the AgentInfo there are no spans and no stats at all. The
 // wait line is what connects the two, so it must appear while the retry runs,
 // name which of the two failures it is, and stop the moment registration
+// succeeds.
 func Test_agentGrpc_registerAgentWithRetry_saysWhyTracingIsOff(t *testing.T) {
 	prev := registrationWaitLogInterval
 	registrationWaitLogInterval = 10 * time.Millisecond
@@ -2000,6 +2002,7 @@ func newBoundedSpanGrpc(agent *agent, client *mockSpanGrpcClient) *spanGrpc {
 }
 
 // A chunk's wire shape depends on what it is: only a finished synchronous span
+// becomes a PSpan; non-final chunks and async spans stay PSpanChunks.
 func Test_spanGrpc_sendSpanBatch_spanShapePerChunk(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agent.spanGrpc = newMockSpanGrpc(agent)
@@ -2082,6 +2085,7 @@ func Test_spanGrpc_sendSpanBatch_rootSpanHasNoParentInfo(t *testing.T) {
 }
 
 // A chunk without a span carries nothing to report and must not reach the
+// batch.
 func Test_makePSpanMessageBatch_skipsEmptyChunks(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	builder := acquireSpanMessageBuilder()

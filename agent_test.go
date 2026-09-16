@@ -242,7 +242,7 @@ func Test_abbreviateString_RuneSafe(t *testing.T) {
 
 	// "가" is 3 bytes; a limit landing mid-rune must back up to the rune
 	// boundary, or protobuf rejects the string at marshal time and the whole
-	// span/metadata send fails. The marker reports the original size, as
+	// span/metadata send fails. The marker reports the original byte length.
 	s := strings.Repeat("가", 3)
 	got := abbreviateString(s, 4)
 	assert.Equal(t, "가...(9)", got)
@@ -319,7 +319,8 @@ func noSqlCacheBypassConfig() *Config {
 	return cfg
 }
 
-// DefaultCachingSqlNormalizer does, and publish text abbreviated to maxSqlSize.
+// The SQL caches key on the untruncated normalized statement and publish text
+// abbreviated to maxSqlSize.
 // An abbreviated key keeps no more than a 64KB prefix and the total length, so
 // two statements agreeing on both would share one entry: the second would
 // answer with the first's id and never publish its own metadata. The two texts
@@ -500,6 +501,7 @@ func Test_agent_SQLCacheLengthLimitIsFixedAtConstruction(t *testing.T) {
 // The SQL-ID cache is exempt from SQL.CacheLengthLimit: its ids come from an
 // agent-local sequence, so a bypassed statement would burn a fresh id - and a
 // fresh sqlMeta - on every execution, and the same query would show up in the UI
+// as a new entry per execution.
 func Test_agent_SQLIdCacheIgnoresLengthLimit(t *testing.T) {
 	sql := strings.Repeat("x", 3000)
 
@@ -1577,9 +1579,8 @@ func Test_sqlUid_MatchesJavaGuavaMurmur3_128(t *testing.T) {
 // things that must move together: which sampler ran, whether the parent span id
 // was adopted, and whether the transaction id was inherited or generated.
 //
-// Rows 2-4 failed before this table's change: a trace id on its own took the
-// continue sampler and left parentSpanId at its default with no parent node in
-// the trace.
+// A trace id on its own must not take the continue sampler: it would leave
+// parentSpanId at its default, with no parent node in the trace.
 func Test_agent_continueHeaders_table(t *testing.T) {
 	const validTid = "t123456^12345^1"
 
@@ -1596,7 +1597,8 @@ func Test_agent_continueHeaders_table(t *testing.T) {
 		{"blank tid", map[string]string{HeaderTraceId: "", HeaderSpanId: "67890", HeaderParentSpanId: "123"}, false},
 		{"malformed tid", map[string]string{HeaderTraceId: "garbage", HeaderSpanId: "67890", HeaderParentSpanId: "123"}, false},
 		{"malformed spanid", map[string]string{HeaderTraceId: validTid, HeaderSpanId: "garbage", HeaderParentSpanId: "123"}, true},
-		// A proxy that blanks a header instead of dropping it still describes
+		// A proxy that blanks a header instead of dropping it still describes a
+		// hop, so the trace continues.
 		{"blank spanid", map[string]string{HeaderTraceId: validTid, HeaderSpanId: "", HeaderParentSpanId: "123"}, true},
 	}
 

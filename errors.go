@@ -25,7 +25,8 @@ type errorWithCallStack struct {
 	callstack []uintptr
 }
 
-// error's dynamic type with any pointer stripped, e.g. "errors.withStack".
+// errorTypeName names the error by its dynamic type with any pointer stripped,
+// e.g. "errors.withStack".
 func errorTypeName(err error) string {
 	t := reflect.TypeOf(err)
 	if t == nil {
@@ -144,16 +145,15 @@ func (span *span) getExceptionChainId(err error) (int64, bool) {
 		return ec.exceptionId, false
 	}
 
-	// A cause already recorded joins its chain only when it is that chain's
-	// head (depth 0). The new throwable's cause chain is compared with the
-	// previously recorded throwable alone. A hit on an inner link - a sentinel like io.EOF wrapped again
-	// from another call site - is not a join: the recorded head is not a
-	// cause of err, so shifting it below err would misorder the chain.
+	// A cause already recorded joins its chain only when it is that chain's head
+	// (depth 0). A hit on an inner link - a sentinel like io.EOF wrapped again
+	// from another call site - is not a join: the recorded head is not a cause
+	// of err, so shifting it below err would misorder the chain.
 	//
-	// A chain the limiter refused is sticky: err or a cause of it being the
-	// refused head reuses the stored disabled state rather than asking the sampler again. Without this, every
-	// later link of a refused chain recorded from another span event is charged
-	// as a new chain, and under an error burst those refusals crowd out other chains.
+	// A chain the limiter refused is sticky: err or a cause of it being a
+	// refused head reuses that refusal rather than asking the limiter again, or
+	// every later link of a refused chain recorded from another span event
+	// would be charged as a new chain and crowd out other chains under a burst.
 	refused := span.isRefusedChainHead(err)
 	for e, depth := err, 0; e != nil && depth < span.cfg.errorMaxChainDepth; depth++ {
 		e = nextCause(e)
@@ -166,9 +166,8 @@ func (span *span) getExceptionChainId(err error) (int64, bool) {
 		return noExceptionChainId, false
 	}
 
-	// Only a new chain is rate limited. A denied
-	// request yields the DISABLED state, recording nothing. The id is minted
-	// after the permit is granted, so a denial does not burn one.
+	// Only a new chain is rate limited, and a denied one records nothing. The id
+	// is minted after the permit is granted, so a denial does not burn one.
 	if l := span.cfg.newExceptionLimiter; l != nil && !l.Allow() {
 		span.addRefusedChainHead(err)
 		return noExceptionChainId, false
@@ -212,8 +211,8 @@ func (span *span) addRefusedChainHead(err error) {
 }
 
 // addCauserCallStack records the causes of err under the same exception id,
-// (err itself is depth 0). A cause already recorded on this span ends the
-// walk: its own chain is on the wire already.
+// numbering them from depth 1 (err itself is depth 0). A cause already recorded
+// on this span ends the walk: its own chain is on the wire already.
 func (span *span) addCauserCallStack(err error, eid int64, errorTime time.Time) {
 	e := err
 	for depth := 1; depth < span.cfg.errorMaxChainDepth; depth++ {
@@ -245,9 +244,9 @@ func (span *span) traceCallStack(err error, className string, depth int, errorTi
 	defer span.errorChainsLock.Unlock()
 
 	// Under the lock, so the cap is judged against the entries actually
-	// recorded: an unlocked pre-check let two concurrent SetError calls both
-	// pass and exceed it. Before getExceptionChainId, so a refused chain does
-	// not spend a Error.NewThroughput permit either.
+	// recorded: an unlocked pre-check would let two concurrent SetError calls
+	// both pass and exceed it. Before getExceptionChainId, so a refused chain
+	// does not spend an Error.NewThroughput permit either.
 	if !span.canAddErrorChain() {
 		return noExceptionChainId
 	}
@@ -278,12 +277,12 @@ func (span *span) traceCallStack(err error, className string, depth int, errorTi
 		})
 		span.addCauserCallStack(err, eid, errorTime)
 
-		// getExceptionChainId hands back an existing id when err is a new
-		// wrapper around the head of a chain already recorded. Every entry of
-		// that chain is now below the links just appended, so they shift down
-		// by that many. The outermost error keeps depth 0, and no two entries share a depth - a
-		// second depth 0 leaves the collector no way to order the chain.
-		// A genuinely new id matches nothing here, so the loop is a no-op.
+		// getExceptionChainId hands back an existing id when err is a new wrapper
+		// around the head of a chain already recorded. Every entry of that chain
+		// now sits below the links just appended, so they shift down by that
+		// many: the outermost error keeps depth 0, and no two entries share a
+		// depth, which the collector needs to order the chain. A genuinely new
+		// id matches nothing here, so the loop is a no-op.
 		added := int32(len(span.errorChains) - existing)
 		for _, ec := range span.errorChains[:existing] {
 			if ec.exceptionId == eid {

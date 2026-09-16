@@ -5,21 +5,19 @@ import (
 	"strings"
 )
 
-// sqlNormalizer walks the statement one byte at a time, indexing the string
+// sqlNormalizer replaces the literals of a SQL statement with placeholders and
+// collects the removed values into a separate parameter string.
 //
-// Bytes, not runes: every decision the parser makes is on an ASCII character,
-// multibyte character all fall through to the same branch a whole rune would.
-// Decoding buys nothing and costs fidelity - an invalid UTF-8 byte would decode
-// to U+FFFD and be written back as three different bytes, rewriting a statement
-// the collector is supposed to receive verbatim.
+// It walks the statement one byte at a time rather than by rune: every decision
+// is on an ASCII character, and decoding would corrupt a statement the collector
+// is meant to receive verbatim, since an invalid byte decodes to U+FFFD and is
+// written back as three different bytes.
 //
 // The output is materialized lazily. Until the first byte that differs from the
-// input (a removed comment, a literal turned into a placeholder), the output is
-// by definition sql[:pos], so nothing is written: emit drops the byte and
-// materialize copies the prefix in one Grow-sized write when a change arrives.
-// A statement with no literals - the common shape of placeholder-based Go SQL -
-// therefore allocates nothing and is returned as it came in; before, its whole
-// text was copied byte by byte through a growing builder and then discarded.
+// input the output is by definition sql[:pos], so nothing is written: emit drops
+// the byte and materialize copies the prefix in one Grow-sized write when a
+// change arrives. A statement with no literals therefore allocates nothing and
+// is returned as it came in.
 type sqlNormalizer struct {
 	sql          string
 	pos          int
@@ -28,22 +26,18 @@ type sqlNormalizer struct {
 	param        strings.Builder
 	paramIndex   int
 	isChanged    bool
-	// removeComments drops comments from the output instead of copying them,
+	// removeComments drops comments from the output instead of copying them.
 	removeComments bool
 }
 
-// maxSqlNormalizeLength is the hard memory cap on SQL normalization, in bytes:
-// a statement longer than this is not normalized at all (see sqlNormalizable).
-// It is not the metadata cap - maxSqlSize (64KB) bounds only the text cacheSql
-// and cacheSqlUid publish, and a statement between the two is still normalized
-// of sqlCache / sqlUidCache / rawSqlCache and the key field of every queued
-// sqlMeta / sqlUidMeta, had no bound at all, so one huge generated statement
-// broke the memory guarantee of every one of those.
+// maxSqlNormalizeLength is the hard memory cap on SQL normalization, in bytes.
+// It is not the metadata cap: maxSqlSize (64KB) bounds only the text cacheSql
+// and cacheSqlUid publish, while the normalized output, the cache keys and the
+// queued metadata are bounded by this one.
 //
-// rest, which loses the placeholder when the cut lands inside a literal and so
-// yields a SQL id / UID no other agent computes (gap N1 of the cross-agent
-// review). Dropping the statement instead never diverges - an over-cap
-// same value and the same drop policy (see doc/development.md).
+// A statement past the cap is dropped whole rather than cut and normalized: a
+// cut landing inside a literal loses that literal's placeholder and yields a
+// SQL id / UID that no longer identifies the statement.
 const maxSqlNormalizeLength = 1 << 20
 
 // sqlNormalizable reports whether sql is within maxSqlNormalizeLength. It
@@ -57,10 +51,10 @@ func newSqlNormalizer(sql string, removeComments bool) *sqlNormalizer {
 	return &sqlNormalizer{sql: sql, removeComments: removeComments}
 }
 
-// does. The 64KB cap belongs to the metadata text alone (see cacheSql and
-// computes from the full normalized SQL, and param must stay whole because the
-// server splits it on ',' to refill the <idx>#/<idx>$ placeholders - a cut
-// param leaves placeholders exposed.
+// run returns the normalized statement and the extracted parameters, the latter
+// joined with ','. Neither is abbreviated: the id and UID are computed from the
+// whole normalized text, and the server splits param on ',' to refill the
+// <idx>#/<idx>$ placeholders, so a cut param leaves placeholders exposed.
 //
 // A statement past maxSqlNormalizeLength is not walked at all and comes back
 // empty. SetSQL checks sqlNormalizable first and drops such a statement before
@@ -77,9 +71,9 @@ func (s *sqlNormalizer) run() (string, string) {
 		s.pos++
 
 		if ch == '/' {
-			// The comment markers are decided before ch is written: under
-			// removeComments the marker itself must not reach the output.
-			// comment is not a number token boundary either way.
+			// The marker is decided before ch is written: under removeComments
+			// it must not reach the output. Either way a comment is not a
+			// number token boundary.
 			if s.lookahead('/') {
 				s.consumeSingleLineComment(ch)
 			} else if s.lookahead('*') {
@@ -98,7 +92,7 @@ func (s *sqlNormalizer) run() (string, string) {
 		} else if ch == '\'' {
 			s.emit(ch)
 			if s.lookahead('\'') {
-				// records a parameter for it nor marks the statement changed.
+				// An empty literal '' is copied through: no parameter, no change.
 				s.emit('\'')
 				s.pos++
 			} else {
@@ -111,9 +105,8 @@ func (s *sqlNormalizer) run() (string, string) {
 				s.emit(ch)
 			}
 		} else if ch == '$' {
-			// ($1, $2, ...); a '$' followed by anything else leaves it as it
-			// extracts, e.g. "$'x'1" - neither a string literal nor a comment
-			// touches the flag on the way to the digit.
+			// A '$' before a digit is a bind marker ($1, $2, ...), not a number
+			// literal; a '$' before anything else leaves the flag alone.
 			if s.lookaheadDigit() {
 				numberTokenStartEnable = false
 			}
@@ -122,8 +115,8 @@ func (s *sqlNormalizer) run() (string, string) {
 			numberTokenStartEnable = false
 			s.emit(ch)
 		} else {
-			// Whitespace, operators and separators land here, and so does every
-			// same of a non-ASCII char, so "테이블1" yields "테이블0#" on both.
+			// Whitespace, operators, separators and every byte of a non-ASCII
+			// character land here, so "테이블1" yields "테이블0#".
 			numberTokenStartEnable = true
 			s.emit(ch)
 		}
@@ -174,10 +167,10 @@ func (s *sqlNormalizer) writeParamIndex() {
 
 // consumeSingleLineComment consumes a // or -- comment. lead is the first
 // character of the marker, already read but not yet written. The terminating
-// with "\n" as the end token - so removal leaves nothing at all in its place.
+// newline belongs to the comment, so removal leaves nothing in its place.
 func (s *sqlNormalizer) consumeSingleLineComment(lead byte) {
 	if s.removeComments {
-		// A statement whose only change is a dropped comment still has to
+		// A dropped comment is a change even though it records no parameter.
 		s.isChanged = true
 		s.materialize(s.pos - 1) // lead is read, not written
 	} else {
@@ -208,7 +201,8 @@ func (s *sqlNormalizer) consumeMultiLineComment(lead byte) {
 	}
 	s.pos++ /* consume '*' */
 
-	// "*/" from behind it, so "/*/" runs to the end of the statement.
+	// The opening '*' cannot also close the comment, so "/*/" runs to the end
+	// of the statement.
 	prevStar := false
 	for s.pos < len(s.sql) {
 		ch := s.sql[s.pos]
@@ -223,8 +217,9 @@ func (s *sqlNormalizer) consumeMultiLineComment(lead byte) {
 	}
 }
 
-// consumeCharLiteral consumes a '...' literal, first being the opening quote,
-// but its content is still reported as a parameter.
+// consumeCharLiteral consumes a '...' literal whose opening quote the caller has
+// already emitted, replacing the content with <idx>$ and recording it as a
+// parameter.
 func (s *sqlNormalizer) consumeCharLiteral() {
 	s.isChanged = true
 	s.materialize(s.pos) // the opening quote is already accounted for
@@ -238,6 +233,7 @@ func (s *sqlNormalizer) consumeCharLiteral() {
 
 		if ch == ',' {
 			// The server splits param on ',', so a comma inside a literal is
+			// doubled to escape it: written here and again below.
 			s.param.WriteByte(ch)
 		} else if ch == '\'' {
 			if s.lookahead('\'') {
@@ -282,8 +278,7 @@ func (s *sqlNormalizer) lookahead(expected byte) bool {
 	return s.pos < len(s.sql) && s.sql[s.pos] == expected
 }
 
-// lookaheadDigit reports whether the next byte is a digit, without consuming
-// NEXT_TOKEN_NOT_EXIST there.
+// lookaheadDigit reports whether the next byte is a digit, without consuming it.
 func (s *sqlNormalizer) lookaheadDigit() bool {
 	return s.pos < len(s.sql) && isDigit(s.sql[s.pos])
 }

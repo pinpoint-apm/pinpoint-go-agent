@@ -31,9 +31,8 @@ const (
 	defaultEventStackDepth = 8
 	// minErrorChainEntry is the floor on the exception entries a span keeps.
 	// canAddErrorChain raises it to Error.MaxChainDepth so a single chain can
-	// always be recorded in full: a lower bound would drop links the option
-	// promised, and that alone is the reason for the floor. The cap is
-	// therefore derived from the option's own clamp ceiling, not chosen.
+	// always be recorded in full, rather than dropping links the option
+	// promised.
 	minErrorChainEntry = 10
 )
 
@@ -56,10 +55,9 @@ func (se *overflowSpanEvent) SetDestination(id string) {
 
 // SetError records nothing on the dropped event - no error string, no
 // annotation, no exception chain - but the failure still reaches the span, so
-// the transaction is not reported as a success because it failed past the
-// recorder during overflow and its recordException marks the trace root with
-// DisabledSpanEvent::SetError does the same with markSpanError.
-// The Span.IgnoreErrors filter applies exactly as on a recorded event.
+// a transaction that failed past the recorder during overflow is not reported
+// as a success. The Span.IgnoreErrors filter applies exactly as it does on a
+// recorded event.
 func (se *overflowSpanEvent) SetError(e error, errorName ...string) {
 	span := se.parent
 	if e == nil || span.finished.Load() {
@@ -149,33 +147,27 @@ type span struct {
 	urlStat         *UrlStatEntry
 	errorChains     []*exception
 	errorChainsLock sync.Mutex
-	// refusedChainHeads holds the heads of the new chains the
-	// refused throwable in ExceptionContext with the DISABLED state, so a later
-	// throwable that continues it reuses that state instead of asking the
-	// sampler again; the refused error is not in errorChains, so findError
-	// cannot stand in for that. A single slot would lose the older head as soon
-	// as a second chain is refused, and the first chain's remaining links would
-	// then be charged as a new chain each - exactly what the latch exists to
-	// prevent. Ring buffer of maxRefusedChainHeads, oldest evicted: a burst is
-	// unbounded, and remembering every refused head would grow without limit.
+	// refusedChainHeads holds the heads of the chains the throughput limiter
+	// refused, so a later error continuing one of them is recognized as the
+	// same chain instead of being charged as a new one. A refused chain is not
+	// in errorChains, so findError cannot stand in for this. Ring buffer of
+	// maxRefusedChainHeads, oldest evicted, since a burst is unbounded.
 	// Guarded by errorChainsLock like errorChains.
 	refusedChainHeads []error
 	refusedChainNext  int
 	// errorChainDropLog makes the entry cap log once a span, like
 	// eventOverflowLog, so a dropped exception entry is never silent.
 	errorChainDropLog atomic.Bool
-	// errorChainDrop counts every entry the cap refused, like eventOverflow.
-	// errorChainDropLog latches after the first one, so without this the log
-	// says a span hit the cap but not by how much - and a retry loop that
-	// dropped a handful of links reads exactly like one that dropped
-	// thousands. Reported once at the end, where the total is known.
+	// errorChainDrop counts every entry the cap refused, like eventOverflow:
+	// errorChainDropLog latches after the first one, so the log alone cannot
+	// say by how much a span overran the cap. Reported once at the end, where
+	// the total is known.
 	errorChainDrop atomic.Int32
 	finished       atomic.Bool
 	// traceRoot is the span whose PSpan carries the error mask, nil when this
 	// span is the root itself. An async span is serialized as a PSpanChunk,
-	// ChildTrace shares its parent's TraceRoot for the same reason
-	// (SpanMessageMapper maps span.traceRoot.shared.errorCode to err), and the
-	// the error string and exception chain stay on the recording span.
+	// which has no error field, so only the mask moves to the root: the error
+	// string and the exception chain stay on the recording span.
 	traceRoot *span
 }
 
@@ -188,7 +180,7 @@ func (span *span) root() *span {
 }
 
 // firstErrorCategory picks the category a SetFailure call named, defaulting to
-// ErrorCategoryUnknown - a failure with no cause attached, which is what
+// ErrorCategoryUnknown: a failure with no cause attached.
 func firstErrorCategory(category []ErrorCategory) ErrorCategory {
 	if len(category) > 0 {
 		return category[0]
@@ -198,16 +190,14 @@ func firstErrorCategory(category []ErrorCategory) ErrorCategory {
 
 // markSpanError ORs one ErrorCategory bit into the root's error mask and
 // reports whether the category was marked at all. It is the single point that
-// writes span.err: the span level SetError, an event's SetError, a failing
-// HTTP status and the SQL.ErrorCount limit all route here, each with its own
-// cause, so a transaction that failed for several reasons reports all of them
+// writes span.err: the span level SetError, an event's SetError, a failing HTTP
+// status and the SQL.ErrorCount limit all route here with their own cause, so a
+// transaction that failed for several reasons reports all of them.
 //
-// A category the operator removed with Span.ErrorMark or
-// Span.ErrorMarkExclude marks nothing at all, not even
-// ConfigurableErrorRecorder.recordError does: the mask is applied only when
-// the category is in the enabled set. The false return says exactly that, so
-// a caller with more than the mask to write (SetFailure and its URL stat
-// flag) can drop the whole verdict.
+// A category the operator removed with Span.ErrorMark or Span.ErrorMarkExclude
+// marks nothing at all. The false return says exactly that, so a caller with
+// more than the mask to write (SetFailure and its URL stat flag) can drop the
+// whole verdict.
 func (span *span) markSpanError(category ErrorCategory) bool {
 	if !span.cfg.marksError(category) {
 		return false
@@ -216,10 +206,10 @@ func (span *span) markSpanError(category ErrorCategory) bool {
 	return true
 }
 
-// generateSpanId draws a span id from the whole int64 range, the value space
-// span_queue.go) and its Int64 is documented as non-negative, so the full
-// range comes from Uint64 reinterpreted as int64. The NULL sentinel is
-// redrawn here, not at the call sites, so every id handed out is usable.
+// generateSpanId draws a span id from the whole int64 range. rand.Int64 is
+// documented as non-negative, so the full range comes from Uint64 reinterpreted
+// as int64. The NULL sentinel is redrawn here, not at the call sites, so every
+// id handed out is usable.
 //
 // It is a var so tests can force a collision; production always draws from rand.
 var generateSpanId = func() int64 {
@@ -230,10 +220,10 @@ var generateSpanId = func() int64 {
 	}
 }
 
-// guarantees it differs from this span's own id and from its parent's, and is
-// never the -1 NULL marker; generateSpanId already rules out the sentinel, but
-// the guard also covers the generators tests substitute, and a collision with
-// either id is a 2^-63 event whose downstream link is wrong when it happens.
+// nextSpanId draws the id of the span this call creates downstream. It
+// guarantees the id differs from this span's own id and from its parent's, and
+// is never the -1 NULL marker: a collision is a 2^-63 event, but its downstream
+// link is wrong when it happens.
 func nextSpanId(spanId int64, parentSpanId int64) int64 {
 	for {
 		if id := generateSpanId(); id != spanId && id != parentSpanId && id != -1 {
@@ -288,9 +278,8 @@ func (span *span) EndSpan() {
 	}
 
 	endTime := time.Now()
-	// Wall clock: an NTP step between start and end makes this negative,
-	// which would shrink the response-time and url stat totals. Clamped like
-	// the C++ SpanData::setEndTime.
+	// Wall clock: an NTP step between start and end makes this negative, which
+	// would shrink the response-time and url stat totals, so it is clamped.
 	span.elapsed = max(endTime.UnixMilli()-span.startTime.UnixMilli(), 0)
 
 	if !span.isAsyncSpan() {
@@ -303,10 +292,9 @@ func (span *span) EndSpan() {
 	// collector would rebuild the call tree against the missing parents.
 	//
 	// An async span legitimately holds one - its own event, open until this
-	// EndSpan - so it is ended here with the rest rather than by popping the
-	// top first: with a child still open that pop ended the child in the
-	// root's place and then counted the root as the unclosed one. Only what
-	// exceeds the expected count is a missed EndSpanEvent.
+	// EndSpan - so it is ended here with the rest rather than by popping the top
+	// first, which would end a still-open child in its place. Only what exceeds
+	// the expected count is a missed EndSpanEvent.
 	leftover := span.eventStack.endAll()
 	expectedOpen := 0
 	if span.isAsyncSpan() {
@@ -427,8 +415,9 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 			se = nil
 		} else {
 			nextSpanId = se.generateNextSpanId()
-			// endPoint (address actually contacted) and destinationId (logical node
-			// left unset, never overwrite the one it recorded.
+			// endPoint (the address actually contacted) falls back to
+			// destinationId (the logical node) only when the plugin left it
+			// unset; a recorded endPoint is never overwritten.
 			se.endPoint = cmp.Or(se.endPoint, se.destinationId)
 			destinationId = se.destinationId
 		}
@@ -440,12 +429,6 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 	writer.Set(HeaderFlags, strconv.Itoa(span.flags))
 	writer.Set(HeaderParentApplicationName, span.agent.appName)
 	writer.Set(HeaderParentApplicationType, strconv.Itoa(int(span.agent.appType)))
-
-	// This agent has no namespace to send, so the header is omitted rather
-	// profiler.cluster.namespace compares the header against its own value:
-	// null is accepted for backward compatibility, "" is not, so an empty
-	// header makes RequestTraceReader start a new trace instead of continuing.
-	// Empty namespaces are normalized to NOT_SET and omitted.
 
 	// Propagate this agent's serviceName when present; v1/v3 emit no such header.
 	if span.agent.serviceName != "" {
@@ -459,8 +442,8 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 		// other source for them.
 		destinationId = span.overflowSe.destination()
 	}
-	// DefaultRequestTraceWriter does: an empty value carries no less
-	// information than a missing header and risks being read as a real host.
+	// An empty value carries no less information than a missing header and
+	// risks being read as a real host, so the header is omitted instead.
 	if destinationId != "" {
 		writer.Set(HeaderHost, destinationId)
 	}
@@ -504,12 +487,11 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		return
 	}
 
-	// A continued trace names this hop's span id; a blank value is as broken
-	// as an unparseable one and is warned about the same way (the C++
-	// agent's "unparseable Pinpoint-SpanID header, generating a new span
-	// id"). bitSize 64, not 0: span ids are int64 and 0 means platform int,
-	// so a 32-bit build failed to parse an upstream node's id and silently
-	// left the span id at zero, breaking the distributed trace.
+	// A continued trace names this hop's span id; a blank value is as broken as
+	// an unparseable one and is warned about the same way. bitSize 64, not 0:
+	// span ids are int64, and 0 would mean platform int, so a 32-bit build would
+	// fail to parse an upstream node's id and silently leave the span id at
+	// zero, breaking the distributed trace.
 	spanid, _ := reader.Get(HeaderSpanId)
 	if v, err := strconv.ParseInt(spanid, 10, 64); err == nil {
 		span.spanId = v
@@ -538,7 +520,8 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 		span.parentAppName = pappname
 	}
 
-	// the discarded Atoi result wrote 0, a type neither agent defines.
+	// An unparseable type leaves parentAppType at its -1 UNDEFINED default:
+	// taking the discarded Atoi result would write 0, which is no service type.
 	papptype, _ := reader.Get(HeaderParentApplicationType)
 	if papptype != "" {
 		if v, err := strconv.Atoi(papptype); err == nil {
@@ -565,22 +548,16 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 }
 
 // continueHeaders reports whether the inbound headers describe a hop this span
-// can attach to, and returns the transaction id to continue when they do.
+// can attach to, and returns the transaction id to continue when they do. All
+// three of the trace id and the two span id headers must be present: a trace id
+// on its own names a transaction but not a position in it, so continuing on it
+// alone would record a non-root span whose parent is in no trace and burn a
+// continue-sampler slot for a hop that does not exist.
 //
-// any one of them missing returns NewTraceHeader. A trace id on its own names a
-// transaction but not a position in it, so continuing on it alone records a
-// non-root span whose parent is in no trace, and burns a continue-sampler slot
-// (isContinueSampled is unconditionally true) for a hop that does not exist.
-//
-// Presence is the carrier's answer, the second result of Get: a carrier over a
-// source that cannot tell a blank header from an absent one reports the blank
-// one as absent, and the request starts a new transaction as it did before Get
-// reported presence.
-//
-// The trace id, unlike the span ids, must parse: an unparseable one leaves no
-// continue even from a carrier that can report it as present - it names no
-// transaction - which is the same divergence, not a second one.
-// See doc/development.md.
+// Presence is the carrier's answer, the second result of Get, so a carrier that
+// cannot tell a blank header from an absent one reports the blank one as absent
+// and the request starts a new transaction. The trace id must also parse: one
+// that does not names no transaction to continue.
 //
 // Both the sampler choice (NewSpanTracerWithReader) and the context extraction
 // (Extract) call this, so the two cannot disagree about which trace a request
@@ -605,22 +582,15 @@ func continueHeaders(reader DistributedTracingContextReader) (TransactionId, boo
 // index-out-of-range panic on a malformed or hostile header. ok is false when
 // the header cannot be parsed, and the caller starts a new transaction.
 //
-//   - The agent id is held to IdValidateUtils' character class and nothing
-//     not when it parses this header. The charset half is what protects the
-//     rest: the id does not stay inside this process, since Inject writes it
-//     back out in the Pinpoint-TraceID of every downstream request and it is
-//     reported to the collector as PTransactionId.AgentId, so a header that
-//     could carry control bytes or a CRLF would carry them into both.
-//   - startTime and sequence go through strconv.ParseInt, which accepts what
-//     Long.parseLong accepts: a leading '+' or '-', leading zeros, and any
-//     length that still fits an int64. An empty field, a non-digit, or a value
-//     that overflows int64 is rejected, as NumberFormatException rejects it.
-//     at the next delimiter and never looks past it, so "a^1^2^3" is the
-//     transaction "a^1^2" to both agents.
-//
-// One deliberate gap, unreachable from an agent-emitted header: Long.parseLong
-// also accepts non-ASCII Unicode decimal digits (Character.digit), ParseInt
-// does not.
+//   - The agent id is held to the id character class, which is what protects
+//     the rest of the system: the id does not stay inside this process, since
+//     Inject writes it back out in the Pinpoint-TraceID of every downstream
+//     request and it is reported to the collector as PTransactionId.AgentId, so
+//     a header carrying control bytes or a CRLF would carry them into both.
+//   - startTime and sequence go through strconv.ParseInt: an empty field, a
+//     non-digit or a value overflowing int64 is rejected. The sequence stops at
+//     a third delimiter and never looks past it, so "a^1^2^3" is the
+//     transaction "a^1^2".
 func splitTransactionId(tid string) (agentId string, startTime int64, sequence int64, ok bool) {
 	i := strings.IndexByte(tid, '^')
 	// i < 1 rejects both a missing delimiter and an empty agent id; isIDChars
@@ -653,10 +623,9 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 		return span
 	}
 	// Goroutine-sharing detection is diagnostic only: the event is recorded
-	// either way. Returning early here skipped the push, so the caller's paired
-	// EndSpanEvent popped the parent's event - and since the check ran only at
-	// debug level, the log level decided the shape of the trace. Detection
-	// needs the runtime.g offset (goroutine.go); without it there is none.
+	// either way, since returning early here would skip the push and leave the
+	// caller's paired EndSpanEvent popping the parent's event. Detection needs
+	// the runtime.g offset (goroutine.go); without it there is none.
 	if goIdOffset > 0 {
 		gid := goIdFromG()
 		if !span.goroutineId.CompareAndSwap(-1, gid) && span.goroutineId.Load() != gid {
@@ -671,12 +640,9 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 	// the counters under the decision.
 	//
 	// se.depth is the depth the new event would be recorded at (eventDepth
-	// starts at 1), so se.depth-1 is the number of events already open. That is
-	// by isDepthOverflow as maxDepth < index, then incremented and stored as
-	// the event's depth. With maxDepth=3 the 4th push (index=3) is still
-	// recorded at depth 4, so the deepest recorded level is maxDepth+1.
-	// Written as se.depth-1 rather than max+1 because -1 (unlimited) is
-	// maxSequence <= sequence.
+	// starts at 1), so se.depth-1 is the number of events already open and is
+	// what the limit is compared against: with spanMaxEventDepth=3 the deepest
+	// recorded level is 4.
 	se := newSpanEvent(span, operationName)
 	if se.sequence >= cfg.spanMaxEventSequence || se.depth-1 > cfg.spanMaxEventDepth {
 		span.releaseEventPosition(se.sequence)
@@ -691,16 +657,13 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 }
 
 // reserveEventPosition claims the (sequence, depth) pair the next event will be
-// recorded at, each counter in one atomic step. eventDepth starts at 1, so a
-// single-threaded contract instead, DefaultCallStack.push doing sequence++
-// inside push.
+// recorded at, advancing each counter in one atomic step.
 //
-// It has to be atomic because a span here may be used from several goroutines
-// of one call stack (see the note on eventSequence). Reading the two counters
-// and incrementing them afterwards handed two concurrent NewSpanEvent calls the
-// same sequence and the same depth, and a span carrying a duplicate
-// PSpanEvent.sequence breaks the collector's call tree rebuild - not the
-// trace-quality problem those atomics are there to keep it at.
+// It has to be atomic because a span may be used from several goroutines of one
+// call stack (see the note on eventSequence): reading the counters and
+// incrementing them afterwards would hand two concurrent NewSpanEvent calls the
+// same sequence, and a duplicate PSpanEvent.sequence breaks the collector's call
+// tree rebuild.
 //
 // The caller owns what it claimed: an event that is pushed gives its depth back
 // in spanEvent.end(), one the overflow check refuses gives the position back
@@ -709,17 +672,14 @@ func (span *span) reserveEventPosition() (sequence, depth int32) {
 	return span.eventSequence.Add(1) - 1, span.eventDepth.Add(1) - 1
 }
 
-// releaseEventPosition gives back a position the overflow check refused, the
-// keep.
+// releaseEventPosition gives back a position the overflow check refused.
 //
-// The depth always goes back: no event was pushed, so nothing would ever
+// The depth always goes back: no event was pushed, so nothing else would
 // decrement it and the call stack would read as overflowed for the rest of the
-// span. The sequence goes back only while it is still the last one handed out,
-// which is what keeps eventSequence frozen at its limit for the single call
-// stack a Tracer normally instruments; when another goroutine has already
-// reserved past it the CAS fails and the number is simply spent. Rolling it
-// back unconditionally would hand that number to a second event, and sequence
-// uniqueness is worth more than the gap a refused event leaves behind anyway.
+// span. The sequence goes back only while it is still the last one handed out;
+// once another goroutine has reserved past it the CAS fails and the number is
+// spent, because rolling it back unconditionally would hand that number to a
+// second event.
 func (span *span) releaseEventPosition(sequence int32) {
 	span.eventDepth.Add(-1)
 	span.eventSequence.CompareAndSwap(sequence+1, sequence)
@@ -751,16 +711,14 @@ func (span *span) EndSpanEvent() {
 }
 
 // EndSpanEventOf ends the innermost span event of tracer, exactly as
-// tracer.EndSpanEvent() does, and warns when that event is not se - the
-// recorder the caller obtained from tracer.SpanEvent() for the event it meant
-// to end. EndSpanEvent takes no target, so a missing or doubled call ends the
-// wrong event with nobody's end time and nothing in the log; this is the
-// recorder anyway. A function rather than a Tracer method because Tracer is
-// implemented outside this module (every plugin test has a mock) and a new
-// interface method would break them.
+// tracer.EndSpanEvent() does, and warns when that event is not se - the recorder
+// the caller obtained from tracer.SpanEvent() for the event it meant to end.
+// EndSpanEvent takes no target, so a missing or doubled call silently ends the
+// wrong event; this reports it instead. It is a function rather than a Tracer
+// method because Tracer is implemented outside this module and a new interface
+// method would break those implementations.
 //
-// ends whatever is left open and warns through unclosedEventLog. Deferred
-// directly, it records a panic on the ended event and re-panics like
+// Deferred directly, it records a panic on the ended event and re-panics like
 // EndSpanEvent. A tracer that is not this agent's span falls back to its own
 // EndSpanEvent, which cannot recover a panic from this frame.
 func EndSpanEventOf(tracer Tracer, se SpanEventRecorder) {
@@ -786,11 +744,11 @@ func EndSpanEventOf(tracer Tracer, se SpanEventRecorder) {
 // value EndSpanEvent caught, or nil. want is the event the caller meant to
 // end, or nil when the caller did not say (EndSpanEvent).
 func (span *span) endSpanEvent(recovered interface{}, want SpanEventRecorder) {
-	// agent's SpanData::endDisabledSpanEvent does: a check-then-Add lets two
-	// concurrent ends of the same placeholder drive the counter to -1, after
-	// which the next real overflow only brings it back to 0 and its end pops
-	// a live ancestor off the stack. Overflowed events are never on the
-	// stack, so an end that consumed one must not fall through to the pop.
+	// A CAS loop, not a check-then-Add: two concurrent ends of the same
+	// placeholder would drive the counter to -1, after which the next real
+	// overflow only brings it back to 0 and its end pops a live ancestor off the
+	// stack. Overflowed events are never on the stack, so an end that consumed
+	// one must not fall through to the pop.
 	for pending := span.eventOverflow.Load(); pending > 0; pending = span.eventOverflow.Load() {
 		if span.eventOverflow.CompareAndSwap(pending, pending-1) {
 			// Cleared once the stack is back within its limits so a later
@@ -826,9 +784,8 @@ func (span *span) endSpanEvent(recovered interface{}, want SpanEventRecorder) {
 			// captured the panic.
 			span.appendEndedSpanEvent(se)
 			// Re-panic with the original value, not the recorded error:
-			// converting a non-error panic to an error broke every
-			// upstream recover comparing against the value it panicked
-			// with (a sentinel string, a custom type).
+			// converting a non-error panic to an error breaks an upstream
+			// recover comparing against the value it panicked with.
 			panic(v)
 		}
 		se.end()
@@ -841,9 +798,9 @@ func (span *span) endSpanEvent(recovered interface{}, want SpanEventRecorder) {
 	}
 }
 
-// warnMisnestedEnd logs that ended is not the event the caller asked for.
-// site fires once per request, so the dump rides on the throttle and is
-// taken once per dropReportInterval, never for a suppressed call.
+// warnMisnestedEnd logs that ended is not the event the caller asked for. The
+// stack dump rides on the throttle, so it is taken once per dropReportInterval
+// and never for a suppressed call.
 func (span *span) warnMisnestedEnd(ended *spanEvent, want SpanEventRecorder) {
 	held, ok := misnestedEventLog.acquire()
 	if !ok {
@@ -889,13 +846,10 @@ func (span *span) newAsyncSpan() Tracer {
 		asyncSpan.cfg = span.cfg // an async span continues under its parent's snapshot
 		asyncSpan.txId = span.txId
 		asyncSpan.spanId = span.spanId
-		// Always the first root, even for an async span forked from an async
-		// the root's final chunk is sent at its own EndSpan, so an error recorded
-		// ordinary trace has the same limit: DefaultTrace.close()
-		// at the root's close, and that is what every normal entry point builds
-		// The deferred store lives only on the AsyncDefaultTrace path, whose
-		// close() awaits the last child via SpanAsyncStateListener
-		// @InterfaceAudience.LimitedPrivate("vert.x"). So this is the same
+		// Always the first root, even for an async span forked from another
+		// async span, so every error in the tree lands on one mask. The root's
+		// final chunk is sent at its own EndSpan, so an error recorded after
+		// that no longer reaches the wire.
 		asyncSpan.traceRoot = span.traceRoot
 		if asyncSpan.traceRoot == nil {
 			asyncSpan.traceRoot = span
@@ -984,6 +938,7 @@ func (span *span) IsSampled() bool {
 
 func (span *span) SetError(e error, errorName ...string) {
 	// A call stack overflow only blocks span events; the span level error is
+	// recorded either way.
 	if e == nil || span.warnIfFinished("SetError") {
 		return
 	}
@@ -995,7 +950,8 @@ func (span *span) SetError(e error, errorName ...string) {
 	id := span.agent.cacheError(errName)
 	span.errorFuncId = id
 	span.errorString = abbreviateString(e.Error(), maxErrorMessageSize)
-	// does not fail the span.
+	// An error matching Span.IgnoreErrors is still recorded, but does not fail
+	// the span.
 	if !span.cfg.ignoreError(e, errName) {
 		span.markSpanError(ErrorCategoryException)
 	}
@@ -1042,11 +998,10 @@ func (span *span) SetEndPoint(endPoint string) {
 		return
 	}
 	span.endPoint = endPoint
-	// requestAdaptor.getAcceptorHost() - the address the request arrived on,
-	// which is this endPoint - when the caller sent no Pinpoint-Host header.
-	// Extract cannot do that itself: the server plugins set the endPoint only
-	// after it ran, so the fallback is applied here and an explicit header or
-	// SetAcceptorHost still wins.
+	// The acceptor host falls back to the address the request arrived on when
+	// the caller sent no Pinpoint-Host header. Extract cannot do this itself:
+	// the server plugins set the endPoint only after it ran, so the fallback is
+	// applied here and an explicit header or SetAcceptorHost still wins.
 	if span.acceptorHost == "" {
 		span.acceptorHost = endPoint
 	}
@@ -1156,7 +1111,7 @@ type spanChunk struct {
 }
 
 func (span *span) newEventChunk(final bool) *spanChunk {
-	// must spanEventLock holder
+	// Caller must hold spanEventLock.
 	chunk := &spanChunk{
 		span:       span,
 		eventChunk: span.spanEvents,
@@ -1187,11 +1142,10 @@ func (chunk *spanChunk) optimizeSpanEvents() {
 	}
 
 	// slices.SortStableFunc, not sort.Slice: this runs on the request goroutine
-	// per chunk, and sort.Slice builds a reflect-based swapper for the slice on
-	// every call. Stable, so that should two events ever share a sequence after
-	// all, the order this hands to the depth compression and the startElapsed
-	// deltas below - both of which read the event next to them - is the order
-	// they were recorded in, not one that varies run to run.
+	// once per chunk, and sort.Slice builds a reflect-based swapper on every
+	// call. Stable, so that two events sharing a sequence reach the depth
+	// compression and the startElapsed deltas below - both of which read the
+	// event next to them - in the order they were recorded.
 	slices.SortStableFunc(chunk.eventChunk, func(a, b *spanEvent) int {
 		return cmp.Compare(a.sequence, b.sequence)
 	})
@@ -1204,8 +1158,8 @@ func (chunk *spanChunk) optimizeSpanEvents() {
 	for i, se := range chunk.eventChunk {
 		if i == 0 {
 			se.startElapsed = se.startTime - chunk.keyTime
-			// Seed the compression baseline with the first event's own depth,
-			// event still carries its real depth; compression starts at i == 1.
+			// Seed the compression baseline with the first event's own depth:
+			// it keeps its real depth, and compression starts at i == 1.
 			prevDepth = se.depth
 		} else {
 			se.startElapsed = se.startTime - prevSe.startTime

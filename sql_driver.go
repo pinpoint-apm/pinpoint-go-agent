@@ -268,10 +268,9 @@ func writeBindValue(b *bytes.Buffer, index int, value interface{}, numComma int,
 		return false
 	}
 
-	// The separator is written before the value that follows it, never after
-	// the one before it, so it precedes whatever comes next: the next value,
-	// or the count marker standing in for the values left out. This is the
-	// it after every value but the last and then tests the budget.
+	// The separator is written before the value that follows it, never after the
+	// one before it, so it precedes whatever comes next: the next value, or the
+	// count marker standing in for the values left out.
 	if index > 0 {
 		b.WriteString(", ")
 	}
@@ -285,13 +284,13 @@ func writeBindValue(b *bytes.Buffer, index int, value interface{}, numComma int,
 
 // writeAbbreviatedBindValue writes one bind value abbreviated to maxSize.
 //
-// maxSize is the budget for the whole list, but it is spent per value: the
-// value that finds any of it left writes up to maxSize of itself, so the list
-// can reach roughly twice maxSize plus the markers. Cutting each value at what
-// is left of the budget instead would bound the buffer more tightly but put
-// it is the value's own head, not the list's total, that a reader needs to
-// recognize which bind value this was. maxBindValueAnnotationSize is what the
-// span side reserves for the result.
+// maxSize is the budget for the whole list, but it is spent per value: the value
+// that finds any of it left writes up to maxSize of itself, so the list can
+// reach roughly twice maxSize plus the markers. Cutting each value at what is
+// left of the budget instead would bound the buffer more tightly but leave the
+// last values as stubs, and it is a value's own head that a reader needs to
+// recognize it by. maxBindValueAnnotationSize is what the span side reserves for
+// the result.
 func writeAbbreviatedBindValue(b *bytes.Buffer, value interface{}, maxSize int) {
 	if value, ok := value.(string); ok {
 		writeAbbreviated(b, value, len(value), maxSize)
@@ -349,8 +348,8 @@ func writeAbbreviatedBindValue(b *bytes.Buffer, value interface{}, maxSize int) 
 // writeAbbreviatedByteSlice writes v as fmt.Sprint does ("[1 2 3]") without
 // building a string of the whole slice: elements are formatted into a scratch
 // buffer only until it holds more than maxSize bytes, since anything past that
-// is cut anyway. The cut is marked with the number of bytes in the slice, as
-// fact a reader wants, and counting the characters of its decimal rendering
+// is cut anyway. The cut is marked with the number of bytes in the slice, which
+// is the fact a reader wants; counting the characters of its decimal rendering
 // would mean walking every element the cut exists to avoid formatting.
 func writeAbbreviatedByteSlice(b *bytes.Buffer, v []byte, maxSize int) {
 	var scratch [128]byte
@@ -389,10 +388,9 @@ func writeAbbreviatedBytes(b *bytes.Buffer, value []byte, maxSize int) {
 
 // writeAbbreviated writes value cut to maxSize, marking the cut with valueLen -
 // the length of the value itself, which is not always the length of the text
-// being cut: an array reports how many elements it holds. This is the
-// is of StringUtils.abbreviate. The cut lands on a rune boundary: protobuf
-// rejects invalid UTF-8 string fields at marshal time, so a mid-rune cut would
-// fail the whole span carrying the annotation.
+// being cut: an array reports how many elements it holds. The cut lands on a
+// rune boundary: protobuf rejects invalid UTF-8 string fields at marshal time,
+// so a mid-rune cut would fail the whole span carrying the annotation.
 func writeAbbreviated(b *bytes.Buffer, value string, valueLen int, maxSize int) {
 	if len(value) <= maxSize {
 		b.WriteString(value)
@@ -410,9 +408,10 @@ func writeAbbreviated(b *bytes.Buffer, value string, valueLen int, maxSize int) 
 // list: a value abbreviated with the last of the budget is followed by the
 // count marker on the next round.
 //
-// writeBindLengthMarker says one value was cut and how long it was, the marker
-// list itself ended early and how many values the statement had, the marker
-// otherwise recover, since the limit is already known.
+// writeBindLengthMarker says one value was cut and how long it was;
+// writeBindCountMarker says the list itself ended early and how many values the
+// statement had. Both report the size a reader cannot otherwise recover, since
+// the limit is already known.
 //
 // Both land past the limit rather than cutting back over what is written:
 // making room inside a limit shorter than the marker would drop the marker

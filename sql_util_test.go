@@ -120,9 +120,9 @@ func Test_sqlNormalizer_NormalizesPastTheMetadataCap(t *testing.T) {
 	})
 }
 
-// normalized SQL - DefaultCachingSqlNormalizer keys the cache with it and
-// UidGenerator hashes that key - and publishes only an abbreviated copy marked
-// with the original length (SqlCacheService, StringUtils.abbreviate).
+// A statement past the metadata cap is still keyed and hashed on its whole
+// normalized text; only the published copy is abbreviated and marked with the
+// original length.
 func Test_sqlNormalizer_JavaEquivalence_SqlPastTheCap(t *testing.T) {
 	const size = 70000
 	head := "select * from t where a = 1 and b = '"

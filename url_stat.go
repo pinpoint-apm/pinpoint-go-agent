@@ -13,8 +13,8 @@ const (
 )
 
 // urlStatUnknown is the stand-in URI recorded when a span collects URL stats
-// agent's URL_STAT_UNKNOWN (src/url_stat.h) so a mixed deployment aggregates
-// its "no URI recorded" traffic under one server-side key.
+// without one, so all "no URI recorded" traffic aggregates under one
+// server-side key.
 const urlStatUnknown = "/NULL"
 
 type urlStat struct {
@@ -24,11 +24,8 @@ type urlStat struct {
 	statusErr int
 }
 
-// maxCompletedUrlStatSnapshots is the number of closed ticks kept while the
-// stat stream is not draining. Five, which is Java's effective retention:
-// AsyncQueueingUriStatStorage.addCompletedData tests
-// snapshotQueue.size() > SNAPSHOT_LIMIT (4) before offering, so its queue
-// holds five. Bounded because a stats stream that never recovers would
+// maxCompletedUrlStatSnapshots is the number of closed ticks kept while the stat
+// stream is not draining. Bounded because a stream that never recovers would
 // otherwise grow the queue without limit; the oldest tick is the one worth
 // losing first.
 const maxCompletedUrlStatSnapshots = 5
@@ -52,8 +49,8 @@ var urlStatNow = time.Now
 // stops and no such entry ever arrives - its own window elapses on the clock.
 // The send interval is not aligned with the tick interval, so a send that took
 // a tick still inside its window would split that tick's counts across two
-// consecutive messages - the collector stores each part under the same
-// for the same reason and avoids it the same way, by polling a queue that only
+// consecutive messages, and the collector would store the second part over the
+// first under the same key.
 type urlStats struct {
 	config *Config
 	mu     sync.Mutex
@@ -119,8 +116,7 @@ func (stats *urlStats) add(us *urlStat) {
 		return
 	}
 
-	// Tick boundary: the first entry of a newer tick closes the one in
-	// progress. Entries carry an end time of about "now", so the cut lands on
+	// Tick boundary: the first entry of a newer tick closes the one in progress.
 	//
 	// This is the cut of an agent under traffic, and it cannot be the only one:
 	// the last tick of a burst has no newer entry coming to close it. Once its
@@ -138,8 +134,8 @@ func (stats *urlStats) add(us *urlStat) {
 
 var urlStatLateLog = logThrottle{src: "url stat"}
 
-// Caller holds mu. Sort the small queue because a previously unseen older
-// tick may arrive after the current tick. Eviction still drops the oldest.
+// Caller holds mu. The queue is sorted because an older tick can arrive after
+// the current one has been closed. Eviction still drops the oldest.
 func (stats *urlStats) completeLocked(snapshot *urlStatSnapshot) {
 	stats.completed = append(stats.completed, snapshot)
 	slices.SortFunc(stats.completed, func(a, b *urlStatSnapshot) int { return a.tick.Compare(b.tick) })
@@ -237,9 +233,9 @@ func (snapshot *urlStatSnapshot) merge(other *urlStatSnapshot) {
 	}
 }
 
-// urlKey identifies a snapshot entry. method is kept apart from url rather
-// than joined into it: the key is built for every request the collect worker
-// receives, and "METHOD url" was a string allocation per request under
+// urlKey identifies a snapshot entry. method is kept apart from url rather than
+// joined into it: the key is built for every request the collect worker
+// receives, so joining would cost a string allocation per request under
 // Http.UrlStat.WithMethod even for a hit on an existing entry. The joined
 // display text is built once, in newEachUrlStat, for a new key only.
 type urlKey struct {
@@ -271,10 +267,9 @@ type urlStatHistogram struct {
 }
 
 // urlStatLimitLog reports the dropped url patterns. At the limit every request
-// carrying a new pattern reaches this site, so the warning is rate-limited and
-// the same way. It repeats rather than latching after one line (the way the
-// span event overflow does): the limit being reached is a standing condition
-// an operator has to size the limit for, not a one-off event.
+// carrying a new pattern reaches this site, so the warning is rate-limited. It
+// repeats rather than latching after one line: reaching the limit is a standing
+// condition an operator has to size the limit for, not a one-off event.
 var urlStatLimitLog = logThrottle{src: "url stat"}
 
 func (snapshot *urlStatSnapshot) add(us *urlStat) {
@@ -329,9 +324,9 @@ func newStatHistogram() *urlStatHistogram {
 }
 
 func (hg *urlStatHistogram) add(elapsed int64) {
-	// Wall-clock elapsed can go negative across an NTP step; unclamped it
-	// would decrement total and skew the average (the C++ UrlStatHistogram
-	// ::add clamps the same way, at the sink, whatever the producer did).
+	// Wall-clock elapsed can go negative across an NTP step; unclamped it would
+	// decrement total and skew the average. Clamped here, at the sink, whatever
+	// the producer did.
 	elapsed = max(elapsed, 0)
 	hg.total += elapsed
 	if hg.max < elapsed {

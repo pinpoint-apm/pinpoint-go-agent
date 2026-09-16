@@ -161,9 +161,8 @@ func Test_sendSpanWorker_reconnectLosesNothingAcrossShards(t *testing.T) {
 	client.OnSendSpan(mock.Anything).Return(healthy, nil)
 	agent.spanGrpc = &spanGrpc{spanClient: client, agent: agent}
 
-	// Every span predates the failure by an hour: under the old policy these
-	// were exactly the spans meant to be skipped, and shard order decided how
-	// many actually were.
+	// Every span predates the failure by an hour, so an age-based skip would
+	// drop exactly these - the slow traces an outage most needs.
 	for i := 0; i < queued; i++ {
 		span := defaultSpan(agent)
 		span.startTime = time.Now().Add(-time.Hour)

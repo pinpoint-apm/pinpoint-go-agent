@@ -89,10 +89,10 @@ func RecordHttpServerRequestWithReader(tracer pinpoint.Tracer, host string, remo
 	}
 }
 
-// RecordHttpServerRequestWithQuery is RecordHttpServerRequestWithReader plus
-// the raw query string, recorded as annotation 41 in Java's
-// HttpServletParameterExtractor format when Http.Server.RecordRequestParam is
-// on (default off: query strings carry tokens and ids).
+// RecordHttpServerRequestWithQuery is RecordHttpServerRequestWithReader plus the
+// raw query string, recorded as annotation 41 when
+// Http.Server.RecordRequestParam is on (default off: query strings carry tokens
+// and ids).
 func RecordHttpServerRequestWithQuery(tracer pinpoint.Tracer, host string, remoteAddr string, h Header, c Cookie, rawQuery string) {
 	RecordHttpServerRequestWithReader(tracer, host, remoteAddr, h, c)
 	if !tracer.IsSampled() || !httpCfg().srvRequestParam || rawQuery == "" {
@@ -101,17 +101,17 @@ func RecordHttpServerRequestWithQuery(tracer pinpoint.Tracer, host string, remot
 	tracer.Span().Annotations().AppendString(pinpoint.AnnotationHttpParam, FormatRequestParams(rawQuery))
 }
 
-// Java's HttpServletParameterExtractor limits.
+// Size limits of the recorded request parameter annotation.
 const (
 	requestParamEntryLimit = 64
 	requestParamTotalLimit = 512
 )
 
-// FormatRequestParams renders a raw query string the way Java's
-// HttpServletParameterExtractor does: "k=v&k=v", percent-decoded ("+" is a
-// space; an undecodable token is kept verbatim), each key and value cut to 64
-// characters and the whole string to 512, with "..." marking every cut.
-// Exported for the adapters that do not go through RecordHttpServerRequest.
+// FormatRequestParams renders a raw query string as the collector expects it:
+// "k=v&k=v", percent-decoded ("+" is a space; an undecodable token is kept
+// verbatim), each key and value cut to 64 characters and the whole string to
+// 512, with "..." marking every cut. Exported for the adapters that do not go
+// through RecordHttpServerRequest.
 func FormatRequestParams(rawQuery string) string {
 	cut := func(s string) string {
 		if len(s) > requestParamEntryLimit {
@@ -197,10 +197,10 @@ func headerFirst(h Header, key string) string {
 	return ""
 }
 
-// resolveRemoteAddr is Java's RealIpHeaderResolver: the first configured
-// header whose value yields an address wins; a value equal to emptyValue
-// (case-insensitive, when configured) is skipped. Without one the socket
-// address is returned with its port stripped.
+// resolveRemoteAddr resolves the client address from the configured headers: the
+// first one whose value yields an address wins, and a value equal to emptyValue
+// (case-insensitive, when configured) is skipped. Without one the socket address
+// is returned with its port stripped.
 func resolveRemoteAddr(h Header, remoteAddr string, headers []realIpHeader, emptyValue string) string {
 	for _, rh := range headers {
 		value := headerFirst(h, rh.name)
@@ -226,10 +226,10 @@ func resolveRemoteAddr(h Header, remoteAddr string, headers []realIpHeader, empt
 	return remoteAddr
 }
 
-// forwardedFor extracts the for= value of one RFC 7239 Forwarded element,
-// Java's (?i:for)="?([^;,"]+)"? with a trailing :port removed when the last
-// ':' follows the last ']' ("[::1]:80" -> "[::1]"; RFC 7239 brackets IPv6).
-// Returns "" when the element has no for= token.
+// forwardedFor extracts the for= value of one RFC 7239 Forwarded element, with a
+// trailing :port removed when the last ':' follows the last ']' ("[::1]:80" ->
+// "[::1]"; RFC 7239 brackets IPv6). Returns "" when the element has no for=
+// token.
 func forwardedFor(element string) string {
 	for rest := element; rest != ""; {
 		var pair string
@@ -268,11 +268,10 @@ const (
 // IdValidateUtils.validateId for the app= token.
 const proxyAppMaxLength = 30
 
-// ProxyRequestHeader.isValid(): DefaultProxyRequestRecorder records a header
-// only when its parser marked it valid. The optional fields start at -1, the
-// ProxyRequestHeaderBuilder defaults, so an absent or refused D=, i= or b=
-// goes on the wire as -1 - the value the web UI reads as "not reported" -
-// rather than as a 0 it cannot tell from a measured zero.
+// proxyRequest is one parsed proxy header. A header is recorded only when its
+// parser marked it valid. The optional fields start at -1, so an absent or
+// refused D=, i= or b= goes on the wire as -1 - the value the web UI reads as
+// "not reported" - rather than as a 0 it cannot tell from a measured zero.
 type proxyRequest struct {
 	valid        bool
 	receivedTime int64
@@ -283,9 +282,9 @@ type proxyRequest struct {
 }
 
 // setProxyHeader records one proxy annotation per proxy header the request
-// Nginx, App and the configured user headers - and records each valid result,
-// so a request that passed through more than one proxy gets one annotation per
-// hop rather than only the first match.
+// carries - Apache, Nginx, App and the configured user headers - so a request
+// that passed through more than one proxy gets one annotation per hop rather
+// than only the first match.
 func setProxyHeader(a pinpoint.Annotation, h Header) {
 	if v := headerFirst(h, proxyHeaderApache); v != "" {
 		appendProxyHeader(a, proxyTypeApache, parseProxyApache(v))
@@ -304,8 +303,8 @@ func setProxyHeader(a pinpoint.Annotation, h Header) {
 }
 
 func appendProxyHeader(a pinpoint.Annotation, code int32, p proxyRequest) {
-	// A header whose receive time is missing or not positive is discarded
-	// of 0 would draw the proxy hop at the epoch in the timeline.
+	// A header whose receive time is missing or not positive is discarded: a
+	// time of 0 would draw the proxy hop at the epoch in the timeline.
 	if !p.valid || p.receivedTime <= 0 {
 		return
 	}

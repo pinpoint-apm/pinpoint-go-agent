@@ -15,16 +15,16 @@ import (
 )
 
 // expiringPickFirstName is the load balancing policy that rotates the collector
-// connection while traffic flows, selected by connectCollector only when
-// SubconnectionExpiringLoadBalancer (policy name and behavior alike).
+// connection while traffic flows. connectCollector selects it only when
+// Collector.Grpc.ConnectionMaxAge is set.
 //
 // pick_first keeps one connection for the life of the channel, so an agent
 // behind an L4 load balancer or a scaled-out collector stays pinned to the
 // backend it first reached. This policy keeps at most one SubConn per state
 // (READY, CONNECTING, TRANSIENT_FAILURE) and, once the READY SubConn is older
 // than its max age, the next pick creates a successor. The successor replaces
-// the old SubConn only when it becomes READY (make-before-break); if it never
-// does, the old one keeps serving.
+// the incumbent only when it becomes READY (make-before-break); if it never
+// does, the incumbent keeps serving.
 const expiringPickFirstName = "subconnection_expiring_pick_first"
 
 func init() {
@@ -96,8 +96,8 @@ func (b *expiringPickFirst) UpdateClientConnState(state balancer.ClientConnState
 		b.maxAge = time.Duration(cfg.MaxAgeMillis) * time.Millisecond
 	}
 
-	// Endpoints supersede Addresses; the channel wraps Addresses into
-	// Endpoints as well, so flatten whichever is present into one SubConn's
+	// Endpoints supersede Addresses, and the channel wraps Addresses into
+	// Endpoints as well, so flatten whichever is present into one address list.
 	var addrs []resolver.Address
 	for _, endpoint := range state.ResolverState.Endpoints {
 		addrs = append(addrs, endpoint.Addresses...)
@@ -125,12 +125,12 @@ func (b *expiringPickFirst) UpdateClientConnState(state balancer.ClientConnState
 // readdressLocked opens the new address list, moving the SubConns already
 // created onto it.
 //
-// balancer.SubConn.UpdateAddresses would apply the list in place, and that is
-// method is deprecated as "this method will be removed. Create new SubConns
-// for new addresses instead." (balancer/subconn.go), so the list is applied by
-// creating a SubConn on it - which is the make-before-break path this policy
-// already runs for a max age rotation: the READY SubConn keeps serving until
-// the successor reports READY, and onSubConnState then shuts it down. A
+// balancer.SubConn.UpdateAddresses would apply the list in place, but it is
+// deprecated in favour of creating new SubConns for new addresses
+// (balancer/subconn.go), so the list is applied by creating a SubConn on it -
+// which is the make-before-break path this policy already runs for a max age
+// rotation: the READY SubConn keeps serving until the successor reports READY,
+// and onSubConnState then shuts it down. A
 // CONNECTING or TRANSIENT_FAILURE SubConn carries no traffic and is dialing
 // addresses that may be gone, so it is shut down at once, which is also what
 // frees the CONNECTING slot the successor needs.
@@ -216,7 +216,8 @@ func (b *expiringPickFirst) createSubConnLocked() {
 	Log("grpc").Infof("%s: %v created", expiringPickFirstName, sc)
 }
 
-// onSubConnState is the StateListener: it moves sd to the slot of its new
+// onSubConnState is the StateListener: it moves sd to the slot of its new state
+// and re-picks the connection the channel uses.
 func (b *expiringPickFirst) onSubConnState(sd *expiringSubConn, state balancer.SubConnState) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -235,8 +236,8 @@ func (b *expiringPickFirst) onSubConnState(sd *expiringSubConn, state balancer.S
 	}
 
 	if state.ConnectivityState == connectivity.TransientFailure || state.ConnectivityState == connectivity.Idle {
-		// dropped may be pointing at a backend that is gone, so a fresh
-		// resolution is requested before reconnecting.
+		// The address this SubConn dropped may point at a backend that is
+		// gone, so a fresh resolution is requested before reconnecting.
 		b.cc.ResolveNow(resolver.ResolveNowOptions{})
 	}
 

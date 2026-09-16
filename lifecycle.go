@@ -2,11 +2,8 @@ package pinpoint
 
 import "sync/atomic"
 
-// agentPhase is the agent's lifecycle phase. It replaces the enable and
-// shutdown bools, whose four combinations were these phases in disguise:
-// registering was "neither set", running "enable only", stopping "both",
-// init_failed_ trio (agent.h), collapsed into one value so the phases are
-// mutually exclusive by construction and can be told apart from outside.
+// agentPhase is the agent's lifecycle phase, held as one value rather than a
+// pair of flags so the phases are mutually exclusive by construction.
 type agentPhase int32
 
 const (
@@ -18,8 +15,7 @@ const (
 	phaseStopped
 	// phaseFailed: registration gave up for a reason other than Shutdown (a
 	// bad address, TLS setup). Kept apart from registering because the two
-	// need different responses from an operator - wait, or fix the config -
-	// and from the code: connectGrpcServer's release defer runs only here.
+	// need different responses from an operator - wait, or fix the config.
 	phaseFailed
 )
 
@@ -41,6 +37,7 @@ func (p agentPhase) String() string {
 
 // validTransitions lists, per source phase, the phases it may move to. Every
 // edge is forward: nothing returns to registering or running, so a torn-down
+// agent can never come back to life.
 var validTransitions = map[agentPhase][]agentPhase{
 	phaseRegistering: {phaseRunning, phaseFailed, phaseStopped},
 	phaseRunning:     {phaseStopping},
@@ -49,9 +46,9 @@ var validTransitions = map[agentPhase][]agentPhase{
 }
 
 // lifecycle holds the phase as one atomic integer rather than a mutex-guarded
-// enum: tracingEnabled is read on the request path (NewSpanTracer, every
-// agent's lifecycle_mutex_ would be a lock per span. Transitions are a CAS,
-// so two writers racing for the same edge see exactly one win.
+// enum: tracingEnabled is read on the request path, where a lock would cost one
+// acquisition per span. Transitions are a CAS, so two writers racing for the
+// same edge see exactly one win.
 type lifecycle struct {
 	phase atomic.Int32
 }
@@ -86,19 +83,12 @@ func allowedTransition(from, to agentPhase) bool {
 	return false
 }
 
-// The predicates below are the only readers of the phase outside the
-// transitions. Each is named for what its callers ask, and each reproduces
-// exactly the bool it replaced; a call site that wants a different answer
-// is a behaviour change and belongs in its own commit.
-
 // tracingEnabled reports whether the request path may record: create spans,
 // register metadata, queue spans and url stats. True while running only. It
 // turns false as soon as shutdown is signalled: a request that arrives while
 // the workers drain gets a noop tracer, and a span still open at the signal
 // has its final chunk refused, so the drain sends what was queued before the
-// signal and nothing produced after it. It used to stay true through
-// stopping, which let the drain race a request path that kept producing (see
-// doc/development.md, "Java and C++ agent parity"). Enable() exposes it.
+// signal and nothing produced after it. Enable() exposes it.
 func (agent *agent) tracingEnabled() bool {
 	return agent.enable.current() == phaseRunning
 }
@@ -113,10 +103,9 @@ func (agent *agent) workerContinues() bool {
 	return p == phaseRunning || p == phaseStopping
 }
 
-// stopping reports whether shutdown has begun - the former shutdown flag,
-// which was never cleared, so it stays true once stopped. Registration and
-// reconnect back-off loops end on it; a failed registration does not count,
-// as the flag was not set on that path either.
+// stopping reports whether shutdown has begun, and stays true once stopped.
+// Registration and reconnect back-off loops end on it; a failed registration
+// does not count.
 func (agent *agent) stopping() bool {
 	p := agent.enable.current()
 	return p == phaseStopping || p == phaseStopped

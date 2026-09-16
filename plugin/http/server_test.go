@@ -75,6 +75,7 @@ func Test_setProxyHeader(t *testing.T) {
 		{name: "apache t under a millisecond", header: "Pinpoint-ProxyApache", value: "t=999"},
 
 		// nginx t= and D= are seconds with exactly three decimals; D= is
+		// reported in microseconds and a zero duration reads as unset.
 		{name: "nginx", header: "Pinpoint-ProxyNginx", value: "t=1504230492.763 D=0.123",
 			want: &proxyValues{code: 2, receivedTime: 1504230492763, duration: 123000, idle: -1, busy: -1}},
 		{name: "nginx zero duration", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=0.000",
@@ -707,8 +708,8 @@ func TestRecordHttpServerResponse(t *testing.T) {
 }
 
 // Span.ErrorMarkExclude drops one cause of failure and nothing else: a 5xx is
-// still annotated and still classified as an error class here, it just does
-// profiler.error.mark.exclude.
+// still annotated and still classified as an error class here, it just does not
+// mark the transaction as failed.
 func TestRecordHttpServerResponse_ErrorMarkExcludeKeepsA5xxSuccessful(t *testing.T) {
 	usePluginConfig(t, WithHttpServerStatusCodeError([]string{"5xx"}),
 		pinpoint.WithSpanErrorMarkExclude("http-status"))
@@ -1106,8 +1107,7 @@ func Test_resolveRemoteAddr_Configured(t *testing.T) {
 func Test_forwardedFor(t *testing.T) {
 	assert.Equal(t, "", forwardedFor(""))
 	assert.Equal(t, "", forwardedFor("for"))
-	// RFC 7239 requires brackets around IPv6; a bare one is cut at its last
-	// ':' exactly as Java's RealIpHeaderResolver cuts it.
+	// RFC 7239 requires brackets around IPv6; a bare one is cut at its last ':'.
 	assert.Equal(t, ":", forwardedFor("for=::1"))
 	assert.Equal(t, "[::1]", forwardedFor("for=[::1]:80"))
 	assert.Equal(t, "_hidden", forwardedFor(" by=proxy ; FOR = _hidden "))

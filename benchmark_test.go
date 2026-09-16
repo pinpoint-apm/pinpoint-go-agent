@@ -370,8 +370,8 @@ func BenchmarkAnnotationAppendString(b *testing.B) {
 }
 
 // BenchmarkAnnotationAppendIntStringString covers the SQL-id annotation shape on
-// the hot path (the eager path previously allocated the PIntStringStringValue
-// plus two StringValue wrappers per call).
+// the hot path, where building the protobuf eagerly would cost a
+// PIntStringStringValue plus two StringValue wrappers per call.
 func BenchmarkAnnotationAppendIntStringString(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()

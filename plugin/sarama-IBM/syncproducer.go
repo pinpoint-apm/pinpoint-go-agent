@@ -26,11 +26,10 @@ type distributedTracingContextWriterProducer struct {
 }
 
 // isNested reports whether msg already carries a Pinpoint trace context - an
-// outer instrumented layer, or the retry pattern re-sending the message object
-// DefaultRequestTraceWriter.isNested, the producer then records no span event
-// and writes no header: the context already present travels alone. The async
-// producer's own ack id counts too: it is written by no one but a previous
-// injection of this plugin.
+// outer instrumented layer, or the retry pattern re-sending the same message
+// object. The producer then records no span event and writes no header: the
+// context already present travels alone. The async producer's own ack id counts
+// too, since nothing but a previous injection of this plugin writes it.
 func isNested(msg *sarama.ProducerMessage) bool {
 	w := distributedTracingContextWriterProducer{msg: msg}
 	// Presence, not a non-empty value: a header this plugin injected is a

@@ -5,8 +5,8 @@ package pinpoint
 // These measure the sender-side protobuf work that runs once per span send:
 // building the PSpanMessage object graph (makePSpan / makePSpanChunk /
 // makePSpanMessageBatch) and, for scale, the wire serialization gRPC performs
-// on top of it. They quantify the per-send allocation cost the report's §2.9
-// attributes to "a fresh protobuf struct per send".
+// on top of it. They quantify the allocation cost of building a fresh protobuf
+// struct per send.
 //
 // Run:
 //

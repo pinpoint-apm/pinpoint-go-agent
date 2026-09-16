@@ -91,11 +91,10 @@ type agent struct {
 	// yet (cacheSpanApi returns 0 while the agent is disabled, so it retries).
 	asyncApiId int32
 
-	// realTimeActiveSpan tracks this agent's in-flight spans by goroutine id
-	// for the real-time active thread views, gated by atcStreamCount so the
-	// span path only pays for it while a viewer is attached. Per-agent: a
-	// package map kept the entries of spans still in flight at shutdown for
-	// the life of the process.
+	// realTimeActiveSpan tracks this agent's in-flight spans by goroutine id for
+	// the real-time active thread views, gated by atcStreamCount so the span
+	// path only pays for it while a viewer is attached. Per-agent, so spans
+	// still in flight at shutdown are dropped with the agent.
 	realTimeActiveSpan sync.Map
 	atcStreamCount     atomic.Int32
 
@@ -109,10 +108,8 @@ type agent struct {
 	workerWg  sync.WaitGroup
 
 	// enable is the lifecycle phase (see lifecycle.go): registering, running,
-	// stopping, stopped or failed. It moves only through
-	// transitionTo, and is read only through the named predicates. The field
-	// keeps its old name: tests pin it, and its Load still answers "may the
-	// request path record", which is what the enable bool always meant.
+	// stopping, stopped or failed. It moves only through transitionTo, and is
+	// read only through the named predicates.
 	enable lifecycle
 
 	// workerStates holds one running flag per worker startWorkers started,
@@ -122,7 +119,7 @@ type agent struct {
 	workerStates []*workerState
 
 	// shutdownOnce serializes the teardown. Without it a concurrent second
-	// Shutdown returned at the phase check below and ran its deferred
+	// Shutdown would return at the phase check below and run its deferred
 	// connection close while the first call was still draining spans.
 	shutdownOnce sync.Once
 
@@ -158,28 +155,22 @@ type stringMeta struct {
 	funcName string
 }
 
-// sqlMeta and sqlUidMeta carry both the text to publish and the key that
-// cached the id: sql is abbreviated to maxSqlSize for the collector, key is the
-// untruncated statement the cache is keyed on. They differ for any statement
-// past the cap, and deleteMetaCache needs the key - dropping the wrong entry
-// would leave every later span pointing at an id the collector never received.
-// sqlMeta carries no cache key: the id cache is keyed by the untruncated
-// normalized statement. Keeping that key in queued metadata could retain up
-// to metaChan x 1 MiB during a collector outage, so deleteMetaCache removes
-// the cache entry by id instead.
+// sqlMeta carries the text to publish, abbreviated to maxSqlSize, but no cache
+// key: the id cache is keyed on the untruncated normalized statement, and
+// keeping that on the queue could retain up to metaChan x 1 MiB during a
+// collector outage, so deleteMetaCache removes the entry by id instead.
 type sqlMeta struct {
 	id  int32
 	sql string
 }
 
-// cached records whether the statement is in the UID cache. It cannot be
-// inferred from key: key is left empty for a bypassed statement to keep the
-// untruncated text off the queue, but a statement whose normalization is empty
-// ("/* hint */" under Sql.RemoveComments) is cached under an empty key too -
-// sqlCacheable admits it (agent.go:1080) and the normalizer returns it as it
-// stands (sql_util.go:39). Reading the empty key as "bypassed" left that entry
-// cached after a failed send, pointing every later span at a UID the collector
-// never received.
+// sqlUidMeta carries the key of the cache entry to drop after a failed send,
+// left empty for a bypassed statement to keep the untruncated text off the
+// queue. cached says whether the statement is in the cache at all, which the
+// key cannot: a statement whose normalization is empty ("/* hint */" under
+// SQL.RemoveComments) is cached under an empty key too, and reading that as
+// "bypassed" would leave it cached after a failed send, pointing every later
+// span at a UID the collector never received.
 type sqlUidMeta struct {
 	uid    []byte
 	sql    string
@@ -332,8 +323,9 @@ func NewAgent(config *Config) (Agent, error) {
 	}
 	agent.stopSignal()
 
-	// profiler.jdbc.sqlcachesize does; the api and error caches keep
-	// has already confined the value to [1, maxSqlCacheSize].
+	// The SQL caches are sized by SQL.CacheSize; the api and error caches keep
+	// the shared default. Config has already confined the value to
+	// [1, maxSqlCacheSize].
 	sqlCacheSize := config.Int(CfgSQLCacheSize)
 	agent.sqlCacheLengthLimit = config.Int(CfgSQLCacheLengthLimit)
 	agent.errorCache = newMetaCache[string, int32](cacheSize)
@@ -458,14 +450,12 @@ type worker struct {
 // always is the when predicate of a worker every enabled agent runs.
 func always() bool { return true }
 
-// workerTable is the one place the agent's workers are declared. Each entry
-// carries its start condition: span and span batch are
-// mutually exclusive on CfgSpanBatchEnable, and agent info refresh runs only
-// for a positive refresh interval. The connection fields (agentGrpc, spanGrpc,
-// statGrpc, cmdGrpc) are deliberately not a table: they are a different kind
-// of thing, closed by closeGrpc under a nil guard rather than supervised, and
-// nothing counts them. The hand-counted number this table replaces was the
-// workerWg.Add that the spawn loop in startWorkers now derives from the table.
+// workerTable is the one place the agent's workers are declared, each with its
+// start condition: span and span batch are mutually exclusive on
+// CfgSpanBatchEnable, and agent info refresh runs only for a positive refresh
+// interval. The connections (agentGrpc, spanGrpc, statGrpc, cmdGrpc) are
+// deliberately not in the table: they are closed by closeGrpc under a nil guard
+// rather than supervised, and nothing counts them.
 func (agent *agent) workerTable() []worker {
 	spanBatch := agent.config.Bool(CfgSpanBatchEnable)
 	refreshInterval := agent.agentInfoRefreshInterval()
@@ -489,10 +479,9 @@ func (agent *agent) workerTable() []worker {
 
 // startWorkers starts every worker whose when predicate holds, one supervised
 // goroutine each. workerWg is incremented per worker, right before its go
-// statement, so the count matches the goroutines by construction - a hand
-// counted Add that drifted from the go statements either made every Shutdown
-// wait out its full deadline (too large) or panicked the WaitGroup (too small),
-// and neither was caught by the compiler.
+// statement, so the count matches the goroutines by construction: a count that
+// drifted would either make every Shutdown wait out its full deadline or panic
+// the WaitGroup, and the compiler catches neither.
 //
 // The Add, and the state slice below, must stay here, on the connectGrpcServer
 // goroutine, and not move into superviseWorker: shutdownAgent reaches its
@@ -731,17 +720,14 @@ func (agent *agent) Shutdown() {
 }
 
 func (agent *agent) shutdownAgent() {
-	// Flush the url stat tick in progress before anything is signalled. Both
-	// url stat workers and sendStatsWorker stop on stopCtx, so a flush issued
-	// after the signal could land on a queue nobody reads any more: enqueueing
-	// here puts the tick in statChan before sendStatsWorker can see the stop,
-	// and that worker drains the queue once when the stop arrives, which is
-	// what actually gets the last tick out. Skipped for an agent that never
-	// ran - it has no workers and no stat queue.
-	// Aggregate what the request path queued and collectUrlStatWorker has
-	// not consumed yet, so the flush below sees it; the worker drains the
-	// same way when it stops. urlStats.add is locked, so the two drains can
-	// run side by side.
+	// Flush the url stat tick in progress before anything is signalled. Both url
+	// stat workers and sendStatsWorker stop on stopCtx, so a flush issued after
+	// the signal could land on a queue nobody reads any more: enqueueing here
+	// puts the tick in statChan before sendStatsWorker sees the stop, and that
+	// worker drains the queue once on the stop, which is what actually gets the
+	// last tick out. The drain first aggregates what the request path queued and
+	// collectUrlStatWorker has not consumed, so the flush sees it. Skipped for
+	// an agent that never ran - it has no workers and no stat queue.
 	if agent.tracingEnabled() {
 		agent.drainUrlStatChan()
 		agent.flushUrlStat(true)
@@ -755,7 +741,7 @@ func (agent *agent) shutdownAgent() {
 	agent.signalShutdown()
 	Log("agent").Infof("shutdown pinpoint agent")
 
-	// wait for the grpc connection to be completed
+	// Wait for the grpc connection to complete.
 	agent.connectWg.Wait()
 
 	// Close the collector connections on every path, including the
@@ -803,19 +789,15 @@ func (agent *agent) shutdownAgent() {
 	// with the channel itself.
 	agent.spanQueue.close()
 
-	//To terminate the listening state of the command stream,
-	//close the command grpc channel first
+	// To terminate the listening state of the command stream, close the command
+	// grpc channel first.
 	if agent.cmdGrpc != nil {
 		agent.cmdGrpc.close()
 	}
 
 	// Bound the drain: a collector outage must not keep the process alive.
-	// Abandoned workers are unblocked by the connection close below. The
-	// workers being waited for are the ones workerTable declared and
-	// startWorkers gave a state slot - one per go statement, all in place
-	// before connectWg.Wait above returned - so this wait cannot be left short
-	// or over-counted by a worker added elsewhere.
-	// On the overrun, name the workers still running so the deadline can be
+	// Abandoned workers are unblocked by the connection close below. On an
+	// overrun, name the workers still running so the deadline can be
 	// investigated; the in-time path logs nothing extra.
 	if !agent.waitWorkers(shutdownTimeout) {
 		Log("agent").Warnf("shutdown timeout(%v) exceeded, abandon in-flight workers: %s",
@@ -878,9 +860,9 @@ func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string, re
 	sampler := agent.config.load().sampler
 	// isContinueSampled is unconditionally true, so it must only be picked for
 	// headers Extract will actually continue. continueHeaders is the single
-	// definition of that; splitting it in two let a peer bypass the sampling
-	// rate with headers Extract then started a new transaction for. Extract
-	// calls it again; that is cheaper than widening its signature.
+	// definition of that: a second definition would let a peer bypass the
+	// sampling rate with headers Extract then starts a new transaction for.
+	// Extract calls it again, which is cheaper than widening its signature.
 	if _, continued := continueHeaders(reader); !continued {
 		return agent.samplingSpan(func() bool { return sampler.isNewSampled(agent.stats) }, operation, rpcName, reader)
 	}
@@ -921,9 +903,9 @@ func (agent *agent) sendPingWorker() {
 	stop := agent.stopSignal().Done()
 	stream := agent.agentGrpc.newPingStreamWithRetry()
 	// Deferred through a closure so that it closes whichever stream the loop
-	// ended up holding, on every exit: a panicked body that superviseWorker
-	// restarts, and the phase reaching stopped between iterations, both used
-	// to leave the stream open on the collector.
+	// ended up holding, on every exit - including a panicked body that
+	// superviseWorker restarts, and the phase reaching stopped between
+	// iterations.
 	defer func() { stream.close() }()
 
 	for agent.workerContinues() {
@@ -993,17 +975,11 @@ func (agent *agent) sendSpanWorker() {
 				break
 			}
 
-			// Leave queued spans to spanQueue's head-drop policy: it retains the
-			// newest chunks during an outage. A second age-based filter would drop
-			// spans twice because startTime is the span's start, not enqueue time.
-			// non-final chunks are cut while the span is still live, so any
-			// request slower than the one-second window lost its chunks even
-			// though they were enqueued after the failure - the slow traces
-			// an outage most needs. It also read the queue as FIFO, latching
-			// off at the first recent chunk; spanQueue sweeps 32 shards in
-			// unspecified order at the default capacity, so it released early
-			// and neither does sendSpanBatchWorker; a failed send now costs
-			// one reconnect and no spans on every span path.
+			// Leave queued spans to spanQueue's head-drop policy, which retains
+			// the newest chunks during an outage. An age filter here would drop
+			// spans a second time, and on the wrong clock: startTime is the
+			// span's start, not its enqueue time, so the slow traces an outage
+			// most needs to show would be the first to go.
 		}
 	}
 
@@ -1214,14 +1190,14 @@ type pendingMeta struct {
 	releaseOnly bool
 }
 
-// metaRetryQueue is the time-ordered retry schedule, the Go counterpart of the
-// is always due last and a slice kept in push order is kept in due order.
-// The schedule has its own bound, separate from metaChan's (see
-// metaRetryQueueSize), and a full one head-drops: the incoming item is the
+// metaRetryQueue is the time-ordered retry schedule. Every item waits the same
+// delay, so the newest is always due last and a slice kept in push order is
+// kept in due order. The schedule has its own bound, separate from metaChan's
+// (see metaRetryQueueSize), and a full one head-drops: the incoming item is the
 // last one due, so dropping it would freeze the schedule on whatever entered
-// first and deny every later failure a retry; dropping the oldest keeps the
-// freshest failures, whose spans the collector is still receiving, and keeps
-// the schedule moving under a sustained outage.
+// first and deny every later failure a retry, while dropping the oldest keeps
+// the freshest failures - the ones whose spans the collector is still
+// receiving - and keeps the schedule moving under a sustained outage.
 type metaRetryQueue struct {
 	mu       sync.Mutex
 	items    []pendingMeta
@@ -1430,10 +1406,10 @@ func validUTF8(s string) string {
 	return strings.ToValidUTF8(s, string(utf8.RuneError))
 }
 
-// abbreviateString truncates str to at most length bytes plus a "...(original
-// writes - the limit is already known to every reader, the original size is
-// not. The cut lands on a rune boundary: protobuf rejects invalid UTF-8 string
-// fields at marshal time, so a mid-rune cut would fail the whole span or
+// abbreviateString truncates str to at most length bytes plus a "...(n)" marker
+// carrying the original byte length, which the limit alone does not tell a
+// reader. The cut lands on a rune boundary: protobuf rejects invalid UTF-8
+// string fields at marshal time, so a mid-rune cut would fail the whole span or
 // metadata send carrying it.
 func abbreviateString(str string, length int) string {
 	if len(str) <= length {
@@ -1449,17 +1425,15 @@ func abbreviateString(str string, length int) string {
 // sqlCacheable reports whether a SQL key is short enough to keep in the SQL
 // metadata caches keyed by a hash of the statement. Anything longer bypasses
 // them and re-sends its metadata on every use, so a handful of huge generated
-// statements cannot pin megabytes of cache for the life of the process. This
-// (profiler.jdbc.sqlcachelengthlimit); the limit is in bytes here, not UTF-16
-// chars.
+// statements cannot pin megabytes of cache for the life of the process. The
+// limit (SQL.CacheLengthLimit) is in bytes.
 //
 // Deliberately not applied to sqlCache: its ids come from a sequence, so a
 // bypassed statement would burn a fresh id - and a fresh sqlMeta - on every
-// single use, and the same query would show up in the UI as a new entry per
-// SimpleCacheFactory.newSqlCache() builds the id cache with no length check.
-// That exemption is what caps the id cache at cacheSize statements of whatever
-// length the application generates, since the key is the untruncated text; the
-// UID cache is bounded by the limit instead.
+// single use, and the same query would appear in the UI as a new entry per
+// execution. That exemption caps the id cache at cacheSize statements of
+// whatever length the application generates, since the key is the untruncated
+// text; the UID cache is bounded by the limit instead.
 func (agent *agent) sqlCacheable(sql string) bool {
 	return len(sql) < agent.sqlCacheLengthLimit
 }
@@ -1469,9 +1443,10 @@ func (agent *agent) cacheSql(sql string) int32 {
 		return 0
 	}
 
-	// is: an abbreviated key keeps no more than a 64KB prefix and the total
-	// length, so two statements agreeing on both would share one id and the
-	// second would never publish its own metadata.
+	// Keyed on the untruncated statement, not the abbreviated text: an
+	// abbreviated key keeps no more than a 64KB prefix and the total length, so
+	// two statements agreeing on both would share one id and the second would
+	// never publish its own metadata.
 	//
 	// Bounded by maxSqlNormalizeLength: SetSQL drops a raw statement past it,
 	// but literal-heavy SQL normalizes larger than it came in, so the key is
@@ -1508,13 +1483,11 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 		return nil
 	}
 
-	// untruncated text (DefaultCachingSqlNormalizer), abbreviating only what it
-	// publishes (SqlCacheService) - so both the UID and the key come from sql
-	// here. An abbreviated key keeps no more than a 64KB prefix and the total
-	// length, and two statements agreeing on both would share one entry: the
-	// second would answer with the first's UID and never publish its own
-	// metadata. Nothing longer than the cache length limit reaches the LRU
-	// either way, since sqlCacheable now measures that same untruncated text,
+	// Both the UID and the cache key come from the untruncated statement, and
+	// only the published text is abbreviated: an abbreviated key keeps no more
+	// than a 64KB prefix and the total length, so two statements agreeing on
+	// both would share one entry and the second would answer with the first's
+	// UID without ever publishing its own metadata. Nothing past
 	// maxSqlNormalizeLength gets a UID at all (see cacheSql).
 	if !sqlNormalizable(sql) {
 		return nil
@@ -1534,9 +1507,9 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 	}
 
 	// A bypassed statement was never cached, so a failed send has no entry to
-	// evict and the key is dead weight: every execution queues one item, and
-	// the untruncated text is unbounded (normalization has no input cap, and
-	// same item at 64KB by abbreviating before it enqueues (SqlCacheService).
+	// evict and carrying its key would be dead weight - every execution queues
+	// one item, and the untruncated text is bounded only by
+	// maxSqlNormalizeLength. The published text is abbreviated either way.
 	aSql := abbreviateString(sql, maxSqlSize)
 	md := sqlUidMeta{uid: uid, sql: aSql, cached: cacheable}
 	if cacheable {
@@ -1550,9 +1523,10 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 	return uid
 }
 
-// sqlUid hashes a normalized SQL with murmur3 x64 128 (seed 0) and lays out
-// agent's MurmurHash3_x64_128 produce. spaolacci/murmur3's Sum() writes the
-// two words big-endian, which yielded a different UID for the same SQL.
+// sqlUid hashes a normalized SQL with murmur3 x64 128 (seed 0) and lays the two
+// words out little-endian, which is the byte order the collector expects;
+// murmur3's own Sum() writes them big-endian and would yield a different UID for
+// the same SQL.
 func sqlUid(sql string) []byte {
 	h1, h2 := murmur3.Sum128([]byte(sql))
 	uid := make([]byte, 16)
@@ -1575,8 +1549,8 @@ type normalizedSql struct {
 // lock-free lookup and stays resident under aged promotion.
 func (agent *agent) normalizeSql(sql string) (string, string) {
 	// SQL.CacheLengthLimit applies here as it does to the metadata caches: the
-	// raw text is both key and value, so one statement past the limit pinned
-	// twice its size per entry, which is the memory the limit exists to cap.
+	// raw text is both key and value, so an over-limit statement would pin twice
+	// its size per entry - the memory the limit exists to cap.
 	// SQL.RemoveComments is startup-only, so entries already in the cache stay
 	// consistent with the value read here.
 	removeComments := agent.config.load().sqlRemoveComments
@@ -1686,11 +1660,12 @@ func (agent *agent) enqueueUrlStat(stat *urlStat) bool {
 	return queued
 }
 
-// dropReporter counts records lost to a full queue and rate-limits the
+// dropReporter counts records lost to a full queue and rate-limits the warning
+// about them.
 type dropReporter struct {
-	// dropped is the running total of lost records, reported the total the
-	// last warning carried, and reportAt the unix nano before which the next
-	// warning stays silent; it starts at zero so the first drop reports.
+	// dropped is the running total of lost records, reported the total the last
+	// warning carried, and reportAt the unix nano before which the next warning
+	// stays silent; it starts at zero so the first drop reports.
 	dropped  atomic.Int64
 	reported atomic.Int64
 	reportAt atomic.Int64
@@ -1802,10 +1777,9 @@ func (agent *agent) sendUrlStatWorker() {
 
 	// A completed tick is sent as soon as urlStats closes it (completedTick);
 	// the ticker is only the ceiling on the trailing tick of an agent whose
-	// traffic stopped, which nothing arrives to close and takeSnapshot closes
-	// UriStatCollectingJob rides the agent stat scheduler
-	// (profiler.jvm.stat.collect.interval), rather than a second 30s timer of
-	// Read once: Stat.CollectInterval is not reloadable.
+	// traffic stopped, which nothing arrives to close. It rides the agent stat
+	// interval rather than a second timer of its own. Read once:
+	// Stat.CollectInterval is not reloadable.
 	interval := time.Duration(agent.config.Int(CfgStatCollectInterval)) * time.Millisecond
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -1830,8 +1804,8 @@ func (agent *agent) sendUrlStatWorker() {
 // includeInProgress takes the tick in progress whatever its window and is set
 // only on the shutdown path, where no later send will ever come for it.
 //
-// breaks out of its poll loop on an empty queue rather than sending an empty
-// nothing.
+// An empty snapshot is not enqueued: there is nothing for the collector to
+// store, and the sender would otherwise wake for nothing.
 func (agent *agent) flushUrlStat(includeInProgress bool) {
 	if !agent.config.load().collectUrlStat {
 		return
@@ -1972,8 +1946,9 @@ func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
 		stats:       newAgentStats(),
 		urlStats:    newUrlStats(config),
 	}
-	// profiler.jdbc.sqlcachesize does; the api and error caches keep
-	// has already confined the value to [1, maxSqlCacheSize].
+	// The SQL caches are sized by SQL.CacheSize; the api and error caches keep
+	// the shared default. Config has already confined the value to
+	// [1, maxSqlCacheSize].
 	sqlCacheSize := config.Int(CfgSQLCacheSize)
 	agent.sqlCacheLengthLimit = config.Int(CfgSQLCacheLengthLimit)
 	agent.errorCache = newMetaCache[string, int32](cacheSize)

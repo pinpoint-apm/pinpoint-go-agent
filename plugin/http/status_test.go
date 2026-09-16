@@ -147,9 +147,9 @@ func TestHttpStatusErrorMatchesLegacy(t *testing.T) {
 	}
 }
 
-// The equivalence test above pins the bit table to the old implementation; this
-// one pins both to what the option actually means, so a shared misreading of a
-// token cannot pass unnoticed.
+// The equivalence test above pins the bit table against the reference matcher;
+// this one pins both to what the option actually means, so a misreading shared
+// by the two cannot pass unnoticed.
 func TestHttpStatusErrorTokens(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -194,9 +194,9 @@ func TestHttpStatusErrorTokens(t *testing.T) {
 			notErrs: []int{500},
 		},
 		{
-			// An unparsable token became -1 in the old matcher and was then
-			// compared against the status; nothing a response carries is -1,
-			// so it must simply never fire.
+			// An unparsable token must never fire: parsing it to -1 and
+			// comparing that against the status would match nothing a real
+			// response carries, but it must not match anything at all.
 			name:    "unparsable tokens never fire",
 			cfg:     []string{"abc", "6xx", "5x", "40 4", ""},
 			errors:  []int{-1},

@@ -577,7 +577,7 @@ func TestComposeArgs_NoArguments(t *testing.T) {
 }
 
 // SQL.MaxBindValueSize bounds what one statement can add to a span, so the
-// composed arguments must respect it end to end, not only inside writeArg - up
+// composed argument list must respect it end to end, not only inside writeArg.
 func TestComposeArgs_HonoursTheSizeLimit(t *testing.T) {
 	agent := startAgent(t)
 	agent.Config().Set(pinpoint.CfgSQLTraceBindValue, true)
