@@ -67,7 +67,7 @@ collector:
   host: "collector.myhost.com"
 sampling:
   type: "percent"
-  percentRate: 10
+  percentRate: 1
 logLevel: "error"
 ```
 
@@ -99,8 +99,8 @@ The example below shows that config file and profile are set by command flag.
         "host": "dev.collector.host"
       },
       "sampling": {
-        "type": "COUNTER",
-        "CounterRate": 1
+        "type": "PERCENT",
+        "percentRate": 100
       }
     },
     "real": {
@@ -109,7 +109,7 @@ The example below shows that config file and profile are set by command flag.
       },
       "sampling": {
         "type": "percent",
-        "percentRate": 5.5
+        "percentRate": 1
       }
     }
   }
@@ -1516,8 +1516,8 @@ collector:
   host: "localhost"
 
 sampling:
-  type: "COUNTER"
-  counterRate: 1          # 100%
+  type: "PERCENT"
+  percentRate: 100        # 100%
 
 log:
   level: "debug"          # also enables the shared-tracer check
@@ -1562,8 +1562,8 @@ collector:
     trustCertFilePath: "/etc/ssl/certs/pinpoint-ca.pem"
 
 sampling:
-  type: "COUNTER"
-  counterRate: 10         # 10%
+  type: "PERCENT"
+  percentRate: 1          # 1%
   newThroughput: 100      # cap new transactions at 100/s
   continueThroughput: 200
 
@@ -1587,7 +1587,7 @@ http:
     excludeMethod: ["OPTIONS"]
 ```
 
-`Http.UrlStat.Enable` is the reason a 10% sampling rate is not a 10% view:
+`Http.UrlStat.Enable` is the reason a 1% sampling rate is not a 1% view:
 per-URL throughput and latency are aggregated for every request, sampled or
 not.
 
@@ -1602,8 +1602,8 @@ collector:
 log:
   output: "stdout"        # let the platform collect it
 sampling:
-  type: "COUNTER"
-  counterRate: 10
+  type: "PERCENT"
+  percentRate: 1
 ```
 
 In a container the environment is usually the natural source, and it overrides
@@ -1613,7 +1613,8 @@ the config file:
 PINPOINT_GO_APPLICATIONNAME=MyApp
 PINPOINT_GO_AGENTNAME=myapp
 PINPOINT_GO_COLLECTOR_HOST=pinpoint-collector.monitoring.svc.cluster.local
-PINPOINT_GO_SAMPLING_COUNTERRATE=10
+PINPOINT_GO_SAMPLING_TYPE=PERCENT
+PINPOINT_GO_SAMPLING_PERCENTRATE=1
 PINPOINT_GO_LOG_OUTPUT=stdout
 ```
 
@@ -1654,7 +1655,7 @@ See [ActiveProfile](#activeprofile) for the file layout.
 
 **High traffic**
 
-* Sample rather than throttle after the fact: raise `Sampling.CounterRate` and
+* Sample rather than throttle after the fact: lower `Sampling.PercentRate` and
   set `Sampling.NewThroughput` so a spike cannot become a collector incident.
 * Exclude the URLs that are noise — health checks, metrics endpoints, static
   assets — with `Http.Server.ExcludeUrl`. They are the bulk of the requests and
@@ -1681,14 +1682,14 @@ See [ActiveProfile](#activeprofile) for the file layout.
 | Symptom | Options to look at |
 |---|---|
 | Agent will not start | `ApplicationName`, `Uid.Version`, `Enable` |
-| Nothing appears in the UI | `Collector.Host`, `Collector.AgentPort`, `Sampling.CounterRate`, `Enable` |
+| Nothing appears in the UI | `Collector.Host`, `Collector.AgentPort`, `Sampling.PercentRate`, `Enable` |
 | Cannot connect / not registered | `Collector.Host`, the three ports, `Collector.Grpc.SslEnable`, `Collector.Grpc.TrustCertFilePath` |
-| Too many traces / collector overloaded | `Sampling.CounterRate`, `Sampling.NewThroughput`, `Sampling.ContinueThroughput`, `Http.Server.ExcludeUrl` |
+| Too many traces / collector overloaded | `Sampling.PercentRate`, `Sampling.NewThroughput`, `Sampling.ContinueThroughput`, `Http.Server.ExcludeUrl` |
 | Traces truncated mid-request | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence` |
 | Spans dropped under load | `Span.QueueSize`, `Span.Batch.Enable`, `Span.BatchSize` |
 | Agent using too much memory | `Span.QueueSize`, `Collector.Grpc.SenderQueueSize`, `Http.UrlStat.LimitSize`, `SQL.MaxBindValueSize`, `SQL.EnableRawSqlCache`, `SQL.CacheSize`, `SQL.CacheLengthLimit` |
 | SQL metadata re-sent constantly / spans show unresolved SQL ids | Raise `SQL.CacheSize` above the number of distinct statements the application runs |
-| Agent using too much CPU | `Sampling.CounterRate`, `Log.Level`, `Error.TraceCallStack` |
+| Agent using too much CPU | `Sampling.PercentRate`, `Log.Level`, `Error.TraceCallStack` |
 | No SQL detail in query spans | `SQL.TraceBindValue`, `SQL.TraceQueryStat`, `SQL.TraceCommit`, `SQL.TraceRollback` |
 | Sensitive data visible in traces | `SQL.TraceBindValue`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordRequestCookie` |
 | Health checks flooding the URL list | `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod` |

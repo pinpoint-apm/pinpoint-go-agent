@@ -246,8 +246,8 @@ applicationName: "MyAppName"
 collector:
   host: "collector.myhost.com"
 sampling:
-  type: "COUNTER"
-  counterRate: 1
+  type: "PERCENT"
+  percentRate: 1
 log:
   level: "info"
 ```
@@ -365,7 +365,7 @@ Every plugin directory also carries its own `README.md` and `example/`.
 | No `new pinpoint agent` line | `ApplicationName` is required; check the error from `NewAgent()` |
 | No `success to register agent` | collector host and all three ports; TLS settings |
 | Agent registered, but nothing in the UI | is anything actually instrumented? Go traces nothing by default |
-| Nothing in the UI, sampling suspected | set `Sampling.CounterRate` to 1 while diagnosing |
+| Nothing in the UI, sampling suspected | set `Sampling.PercentRate` to 100 while diagnosing |
 | Short-lived program reports nothing | add `defer agent.Shutdown()` |
 | Last spans before a rollout / `SIGTERM` are missing | a `defer` does not run on a signal; see [Troubleshooting](troubleshooting.md#spans-missing-at-shutdown-or-on-a-rollout) |
 | Only the first hop appears | the client must be wrapped, and the request must carry the tracer's context |

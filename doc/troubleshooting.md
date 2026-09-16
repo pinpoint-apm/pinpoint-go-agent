@@ -142,14 +142,14 @@ becomes a no-op call. See [Enable](config.md#enable).
 ### Sampling to zero
 
 To keep the agent connected but stop collecting transactions, set the sampling
-rate to zero instead. Unlike `Enable`, `Sampling.CounterRate` is
+rate to zero instead. Unlike `Enable`, `Sampling.PercentRate` is
 [dynamic](config.md#dynamic-configuration), so this takes effect on a running
 process as soon as the config file is saved:
 
 ```yaml
 sampling:
-  type: "COUNTER"
-  counterRate: 0
+  type: "PERCENT"
+  percentRate: 0
 ```
 
 URL statistics are still collected for unsampled requests, so basic throughput
@@ -235,9 +235,9 @@ Work down this list; it is ordered by how often each turns out to be the cause.
 2. **Is anything instrumented?** Go is not auto-instrumented. A span only
    exists where your code created one — via a plugin wrapper or
    `NewSpanTracer()`. An agent can be perfectly healthy and report nothing.
-3. **Sampling.** `Sampling.CounterRate` of 0 collects nothing;
+3. **Sampling.** `Sampling.PercentRate` of 0 collects nothing;
    `Sampling.NewThroughput` caps new transactions per second. Set
-   `counterRate: 1` while diagnosing.
+   `percentRate: 100` while diagnosing.
 4. **Wrong application in the UI.** The resolved config dump shows the
    `ApplicationName` actually sent.
 5. **Time skew.** Pinpoint indexes spans by timestamp. A host clock minutes off
@@ -388,8 +388,8 @@ A call chain that shows as separate transactions instead of one:
 
 ### High CPU Usage or Slow Responses
 
-* **Sampling rate.** `counterRate: 1` traces every transaction. Raise the
-  divisor (`counterRate: 10` is 10%) or set `Sampling.NewThroughput` to cap
+* **Sampling rate.** `percentRate: 100` traces every transaction. Lower the
+  rate (`percentRate: 1` is 1%) or set `Sampling.NewThroughput` to cap
   transactions per second under load.
 * **Debug logging.** `debug`/`trace` levels add per-event work. Never leave
   them on in production.
