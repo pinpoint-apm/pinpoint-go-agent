@@ -1943,3 +1943,187 @@ func Test_agent_ShutdownTimeoutLeavesOnlyTheStuckWorker(t *testing.T) {
 		require.True(t, waitTimeout(&agent.workerWg, time.Second), "stuck worker did not exit on release")
 	}
 }
+
+// ===========================================================================
+// Locked invariants - behaviour pinned against the Java and C++ agents. The
+// cross-agent rationale and references live in doc/development.md.
+// ===========================================================================
+
+// StringUtils.abbreviate writes: the value cut to the limit followed by
+// "...(original length)". The web tier shows the marker as-is, so the format is
+// part of the contract.
+func Test_TruncationFormat(t *testing.T) {
+	assert.Equal(t, "short", abbreviateString("short", 10), "a value within the limit is untouched")
+	assert.Equal(t, "0123456789", abbreviateString("0123456789", 10), "exactly at the limit is untouched")
+	assert.Equal(t, "0123456789...(11)", abbreviateString("0123456789A", 10), "the marker carries the original length")
+}
+
+// Test_TruncationCutsOnARuneBoundary locks the UTF-8 guard both
+// a mid-rune cut would fail the whole span or metadata send carrying it.
+func Test_TruncationCutsOnARuneBoundary(t *testing.T) {
+	// "가" is three bytes; a limit of 4 lands inside the second rune.
+	got := abbreviateString("가가가", 4)
+	assert.True(t, strings.HasPrefix(got, "가"))
+	assert.Equal(t, "가...(9)", got)
+}
+
+// AbstractRecorder abbreviates an exception message to 256 chars before
+// recording it on a span or span event, and
+// profiler.exceptiontrace.errormessage.max defaults to 2048 for one exception
+// metadata entry.
+func Test_MessageLimits(t *testing.T) {
+	assert.Equal(t, 256, maxErrorMessageSize, "Java AbstractRecorder.recordException")
+	assert.Equal(t, 2048, maxExceptionMessageSize, "Java profiler.exceptiontrace.errormessage.max")
+	assert.Equal(t, 64*1024, maxSqlSize, "Java profiler.jdbc.maxsqllength")
+}
+
+// Test_SqlCacheLengthLimitAppliesToTheUidCacheOnly locks that
+// the length limit bypasses only the UID cache. The ID cache remains stable:
+// bypassing it would allocate a new ID and metadata entry on every execution.
+func Test_SqlCacheLengthLimitAppliesToTheUidCacheOnly(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.sqlCacheLengthLimit = 32
+
+	const short = "select 1"
+	long := "select " + strings.Repeat("x", 64)
+	assert.True(t, agent.sqlCacheable(short), "within the limit")
+	assert.False(t, agent.sqlCacheable(long), "past the limit")
+
+	// The id cache takes both: an id is drawn from a sequence, so a bypass
+	// would mint a new one per execution.
+	assert.NotZero(t, agent.cacheSql(short))
+	assert.NotZero(t, agent.cacheSql(long))
+	_, shortHasId := agent.sqlCache.peek(short)
+	_, longHasId := agent.sqlCache.peek(long)
+	assert.True(t, shortHasId, "a short statement is cached by id")
+	assert.True(t, longHasId, "the length limit does not apply to the id cache")
+
+	// The UID cache takes only what fits: an over-limit statement still gets
+	// a UID, computed from the text, but is not kept.
+	assert.NotEmpty(t, agent.cacheSqlUid(short))
+	assert.NotEmpty(t, agent.cacheSqlUid(long))
+	_, shortHasUid := agent.sqlUidCache.peek(short)
+	_, longHasUid := agent.sqlUidCache.peek(long)
+	assert.True(t, shortHasUid, "a short statement is cached by uid")
+	assert.False(t, longHasUid, "the length limit bypasses the uid cache")
+
+	// Bypassing the cache must not change the value it would have returned:
+	// the same id and the same UID come back for a repeated statement.
+	assert.Equal(t, agent.cacheSql(long), agent.cacheSql(long), "the id is stable")
+	assert.Equal(t, agent.cacheSqlUid(long), agent.cacheSqlUid(long), "the uid is stable")
+}
+
+// Test_ShutdownDeadline locks the bound on the blocking phase
+// of shutdown (shutdownTimeout). Past it the workers are abandoned and Shutdown
+// returns: a collector outage must not keep the host process alive, and the
+// queue drain each worker is doing cannot be bounded on its own.
+// Test_agent_ShutdownDeadline exercises the wait end to end against a wedged
+// worker.
+func Test_ShutdownDeadline(t *testing.T) {
+	assert.Equal(t, 3*time.Second, shutdownTimeout,
+		"3s bounds the whole teardown; Java bounds only each sender's executor")
+}
+
+// Test_ShutdownIsIdempotent locks that the teardown runs once
+// however many callers reach Shutdown, sequentially or concurrently
+// (shutdownOnce). Not a formality: shutdownAgent closes the
+// span queue, which closes a channel, so a second run would panic with "close
+// of closed channel" and take the host process down on the way out - exactly
+// what an agent must never do. Run this one under -race as well:
+// Test_agent_ShutdownIsSerialized covers the ordering half,
+// that a concurrent second caller waits for the first rather than returning
+// into a half-torn-down agent.
+func Test_ShutdownIsIdempotent(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+
+	const callers = 8
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			agent.Shutdown()
+		}()
+	}
+	wg.Wait()
+	agent.Shutdown()
+
+	assert.Equal(t, phaseStopped, agent.enable.current(), "the teardown completed")
+	assert.True(t, agent.spanQueue.closed.Load(), "the span queue was closed, exactly once")
+}
+
+// Test_ShutdownNamesStragglers locks that a deadline overrun
+// reports the workers still running, by the names the worker table gave them
+// (runningWorkerNames, reported by shutdownAgent on the overrun).
+// "shutdown timeout exceeded" without the names is not actionable in a host
+// process, and the names are the log contract the troubleshooting guide
+// reads. The list has to be exactly the workers whose supervisor has not
+// exited - not every declared worker, and not a count.
+//
+// Test_agent_ShutdownTimeoutNamesRunningWorkers and
+// Test_agent_ShutdownInTimeLogsNoWorkerNames drive the whole shutdown to produce
+// the line; locked here is the reporting rule itself.
+func Test_ShutdownNamesStragglers(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+
+	exited := &workerState{name: "ping", done: make(chan struct{})}
+	stuck := &workerState{name: "send stats", done: make(chan struct{})}
+	stuck.running.Store(true)
+	agent.workerStates = []*workerState{exited, stuck}
+
+	assert.Equal(t, []string{"send stats"}, agent.runningWorkerNames(),
+		"only the workers that outlived the deadline are named")
+
+	stuck.running.Store(false)
+	assert.Empty(t, agent.runningWorkerNames(), "a drain that finished in time names nobody")
+}
+
+// Test_WorkerTableIsTheSingleSourceOfTruth locks that the
+// worker table is the only declaration of the agent's goroutines: startWorkers
+// spawns exactly the entries whose predicate holds, gives each one a state slot,
+// and counts each
+// one into workerWg right before its go statement - so the drain, the
+// straggler report and the goroutine set cannot disagree. The hand-counted
+// Add this replaced drifted from the go statements in both directions, and
+// the compiler caught neither: too large made every Shutdown wait out its
+// full deadline, too small panicked the WaitGroup.
+//
+// Test_agent_startWorkersCountMatchesTable locks the workerWg count against the
+// same table. Locked here is the state slice -
+// one slot per active entry, named by the table, nothing for an inactive one -
+// since that slice is what runningWorkerNames reports from.
+func Test_WorkerTableIsTheSingleSourceOfTruth(t *testing.T) {
+	for _, spanBatch := range []bool{true, false} {
+		for _, refreshInterval := range []int{0, 1000} {
+			agent := newTestAgent(workerTableConfig(spanBatch, refreshInterval))
+			table := agent.workerTable()
+			active := activeWorkerNames(table)
+
+			// The table's own bodies need a collector; keep its names and
+			// predicates and park each body on the stop signal instead.
+			stop := agent.stopSignal().Done()
+			stubs := make([]worker, len(table))
+			for i, w := range table {
+				stubs[i] = worker{name: w.name, when: w.when, body: func() { <-stop }}
+			}
+			agent.startWorkers(stubs)
+
+			names := make([]string, 0, len(agent.workerStates))
+			for _, st := range agent.workerStates {
+				names = append(names, st.name)
+			}
+			assert.Equal(t, active, names,
+				"one state slot per active table entry, in table order (span batch %v, refresh %d)",
+				spanBatch, refreshInterval)
+			for _, w := range table {
+				if !w.when() {
+					assert.NotContains(t, names, w.name, "an inactive entry gets no slot")
+				}
+			}
+
+			agent.signalShutdown()
+			assert.True(t, waitTimeout(&agent.workerWg, shutdownTimeout),
+				"every started worker releases the workerWg slot startWorkers added for it")
+		}
+	}
+}

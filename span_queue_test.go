@@ -198,3 +198,38 @@ func Benchmark_spanQueue_enqueueDequeue(b *testing.B) {
 		}
 	})
 }
+
+// ===========================================================================
+// Locked invariants - behaviour pinned against the Java and C++ agents. The
+// cross-agent rationale and references live in doc/development.md.
+// ===========================================================================
+
+// Test_SpanQueueHeadDrops locks the queue policy: a full queue
+// drops and counts its oldest chunk, preserving the most recent traces.
+func Test_SpanQueueHeadDrops(t *testing.T) {
+	// A capacity below spanQueueMinShardCap gives a single shard, so the ring
+	// is strictly FIFO and the surviving set is exact rather than the
+	// unspecified cross-shard order.
+	const capacity, enqueued = 4, 7
+	q := newSpanQueue(capacity)
+	assert.Len(t, q.shards, 1, "the test relies on a single, strictly FIFO shard")
+
+	for i := 0; i < enqueued; i++ {
+		assert.True(t, q.enqueue(&spanChunk{keyTime: int64(i)}),
+			"enqueue never rejects before close: the drop is the oldest, not the arrival")
+	}
+
+	assert.Equal(t, capacity, q.length(), "the queue stays at its bound")
+	assert.Equal(t, int64(enqueued-capacity), q.dropCount(),
+		"every head drop is counted, as Java's discard-oldest log line is")
+
+	var survived []int64
+	for {
+		chunk, ok := q.tryDequeue()
+		if !ok {
+			break
+		}
+		survived = append(survived, chunk.keyTime)
+	}
+	assert.Equal(t, []int64{3, 4, 5, 6}, survived, "the newest survive, the oldest are discarded")
+}

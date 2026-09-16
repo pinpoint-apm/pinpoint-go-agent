@@ -1161,3 +1161,210 @@ func TestRealIpOptions(t *testing.T) {
 	usePluginConfig(t)
 	assert.Equal(t, []realIpHeader{{"True-Client-Ip", false}, {"X-Real-Ip", false}}, httpCfg().srvRealIpHeaders)
 }
+
+// ===========================================================================
+// Locked invariants of the proxy request header pipeline - behaviour pinned
+// against the Java and C++ agents. The cross-agent rationale and references
+// live in doc/development.md. The parent half of the pipeline - PParentInfo is
+// emitted only for a non-empty parent application name - is locked from package
+// pinpoint, in Test_ParentInfoRequiresAParentAppName.
+// ===========================================================================
+
+// proxyAnnotationsOf runs the whole proxy pipeline over one request and hands
+// back the proxy annotations it recorded, in order.
+func proxyAnnotationsOf(headers map[string]string) []proxyValues {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+
+	a := &proxyAnnotation{}
+	setProxyHeader(a, header{req.Header})
+	return a.got
+}
+
+// Test_ProxyParsersRunIndependently locks that all four
+// parsers - apache, nginx, app and the configured user headers - run on every
+// request and record independently (setProxyHeader), so a request that crossed
+// two proxies produces two annotations rather than only the nearest hop.
+func Test_ProxyParsersRunIndependently(t *testing.T) {
+	usePluginConfig(t, WithHttpServerProxyUserHeaderNames([]string{"X-Proxy-Time"}))
+
+	got := proxyAnnotationsOf(map[string]string{
+		"Pinpoint-ProxyApache": "t=1000000000000 D=100 i=5 b=95",
+		"Pinpoint-ProxyNginx":  "t=2000000.000 D=0.200",
+		"Pinpoint-ProxyApp":    "t=3000000000000 app=OtherApp",
+		"X-Proxy-Time":         "t=4000000000000",
+	})
+
+	codes := make([]int32, 0, len(got))
+	for _, v := range got {
+		assert.Equal(t, int32(pinpoint.AnnotationHttpProxyHeader), v.key)
+		codes = append(codes, v.code)
+	}
+	assert.Equal(t, []int32{proxyTypeApache, proxyTypeNginx, proxyTypeApp, proxyTypeUser}, codes,
+		"one annotation per valid proxy header, in pipeline order")
+}
+
+// Test_ProxyHeaderNeedsAPositiveReceivedTime locks that every
+// parser is gated on a positive received time (appendProxyHeader): no t=, t=0,
+// or an unparseable t= records no annotation.
+//
+// An annotation with a received time of 0 is worse than no annotation: the web
+// UI charts the proxy-to-agent gap from that field, and 0 draws the hop at the
+// epoch. Test_setProxyHeader above carries the full per-parser matrix; one case
+// per parser per failure mode is locked here.
+func Test_ProxyHeaderNeedsAPositiveReceivedTime(t *testing.T) {
+	usePluginConfig(t, WithHttpServerProxyUserHeaderNames([]string{"X-Proxy-Time"}))
+
+	tests := []struct {
+		name   string
+		header string
+		value  string
+	}{
+		{"apache without t", "Pinpoint-ProxyApache", "D=1500 i=10 b=90"},
+		{"apache t=0", "Pinpoint-ProxyApache", "t=0 D=1500"},
+		{"apache unparseable t", "Pinpoint-ProxyApache", "t=abc D=1500"},
+		{"nginx without t", "Pinpoint-ProxyNginx", "D=0.123"},
+		{"nginx t=0", "Pinpoint-ProxyNginx", "t=0.000 D=0.123"},
+		{"nginx unparseable t", "Pinpoint-ProxyNginx", "t=abc D=0.123"},
+		{"app without t", "Pinpoint-ProxyApp", "app=MyApp"},
+		{"app t=0", "Pinpoint-ProxyApp", "t=0 app=MyApp"},
+		{"app unparseable t", "Pinpoint-ProxyApp", "t=abc app=MyApp"},
+		{"user without t", "X-Proxy-Time", "1500968753503"},
+		{"user t=0", "X-Proxy-Time", "t=0000000000000"},
+		{"user unparseable t", "X-Proxy-Time", "t=abc"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Empty(t, proxyAnnotationsOf(map[string]string{tc.header: tc.value}),
+				"%s: %q must record no annotation", tc.header, tc.value)
+		})
+	}
+}
+
+// Test_ProxyNginxTimestampsAreExactThreeDecimals locks the
+// nginx time format: t= ($msec) and D= ($request_time) are seconds with
+// exactly three decimals, and both are converted with integer arithmetic
+// (nginxMillis).
+//
+// That is what makes the value exact: 1504230492.763 has no binary
+// representation, so parsing it as a float and multiplying by 1000 lands on
+// 1504230492762.99 and truncates a millisecond away.
+func Test_ProxyNginxTimestampsAreExactThreeDecimals(t *testing.T) {
+	usePluginConfig(t)
+
+	got := proxyAnnotationsOf(map[string]string{"Pinpoint-ProxyNginx": "t=1504230492.763 D=0.123"})
+	require.Len(t, got, 1)
+	assert.Equal(t, int64(1504230492763), got[0].receivedTime,
+		"sec.mmm read as an exact integer count of milliseconds")
+	assert.Equal(t, int32(123000), got[0].duration, "0.123s is exactly 123000us, not 122999")
+
+	for _, tc := range []struct {
+		value string
+		want  int64
+	}{
+		{"1504230492.763", 1504230492763},
+		{"0.000", 0},
+		{"0.001", 1},
+		{"1504230492.76", 0},
+		{"1504230492.7634", 0},
+		{"1504230492", 0},
+		{"abc", 0},
+		{"", 0},
+	} {
+		assert.Equal(t, tc.want, nginxMillis(tc.value), "nginxMillis(%q)", tc.value)
+	}
+
+	// A t= that is not sec.mmm leaves no received time, so the whole header
+	// is discarded.
+	for _, bad := range []string{"1504230492.76", "1504230492", "1504230492.7634"} {
+		assert.Empty(t, proxyAnnotationsOf(map[string]string{"Pinpoint-ProxyNginx": "t=" + bad + " D=0.123"}),
+			"t=%s is not sec.mmm", bad)
+	}
+
+	// A D= that is not sec.mmm records no duration rather than a guess - the
+	// plain microsecond integer apache sends included, which read as seconds
+	// would inflate the duration a millionfold.
+	for _, bad := range []string{"0.1", "0.12", "0.1234", "123", "abc"} {
+		other := proxyAnnotationsOf(map[string]string{"Pinpoint-ProxyNginx": "t=1504230492.763 D=" + bad})
+		if assert.Len(t, other, 1, "D=%s must not discard the header", bad) {
+			assert.Equal(t, int32(-1), other[0].duration, "D=%s is not sec.mmm: unset (-1)", bad)
+		}
+	}
+}
+
+// Test_ProxyUserHeaderInfersItsWriter locks the user proxy
+// parser. A header named in Http.Server.ProxyUserHeaderNames may have been
+// written by any of the three proxies, so UserRequestParser.toReceivedTimeMillis
+// infers the format from the value's shape: fewer than 13 characters is not a
+// millisecond epoch and is rejected; 16 or more is apache's microseconds,
+// converted by dropping the last three digits before parsing; a '.' at index
+// 10 or later is nginx's sec.mmm; anything else is an app's milliseconds.
+// toDurationTimeMicros reads D= the same way - a '.' means fractional
+// seconds, otherwise a microsecond count - and, like every parser, applies
+// it only when positive.
+//
+// Reading t= as plain milliseconds would put an apache hop 47,000 years out
+// and drop an nginx hop whole, since "1504230492.763" does not parse.
+func Test_ProxyUserHeaderInfersItsWriter(t *testing.T) {
+	usePluginConfig(t, WithHttpServerProxyUserHeaderNames([]string{"X-Proxy-Time"}))
+
+	for _, tc := range []struct {
+		name         string
+		value        string
+		receivedTime int64
+		duration     int32
+	}{
+		{"apache micros", "t=1504230492763123 D=1500", 1504230492763, 1500},
+		{"nginx sec.mmm", "t=1504230492.763 D=0.123", 1504230492763, 123000},
+		{"app millis", "t=1504230492763 D=42", 1504230492763, 42},
+		{"D not positive is unset", "t=1504230492763 D=-5", 1504230492763, -1},
+		{"nginx D not positive is unset", "t=1504230492763 D=-0.123", 1504230492763, -1},
+		{"D beyond int32 is unset", "t=1504230492763 D=3000000.000", 1504230492763, -1},
+		{"no D is unset", "t=1504230492763", 1504230492763, -1},
+	} {
+		got := proxyAnnotationsOf(map[string]string{"X-Proxy-Time": tc.value})
+		if assert.Len(t, got, 1, "%s: %q", tc.name, tc.value) {
+			assert.Equal(t, tc.receivedTime, got[0].receivedTime, "%s: received time", tc.name)
+			assert.Equal(t, tc.duration, got[0].duration, "%s: duration", tc.name)
+			assert.Equal(t, "X-Proxy-Time", got[0].app, "the header name is the app")
+		}
+	}
+
+	// A t= whose shape fits none of the three writers leaves no received
+	// time, so the header is discarded whole.
+	for _, bad := range []string{"150423049276", "15042304.9276", "1504230492.76", "abc"} {
+		assert.Empty(t, proxyAnnotationsOf(map[string]string{"X-Proxy-Time": "t=" + bad}),
+			"t=%s fits no proxy's format", bad)
+	}
+}
+
+// Test_ProxyDurationAndPercentAreGated locks the value gates
+// the standard parsers share with UserRequestParser: every parser applies D=
+// only when positive; an overflowed nginx value is unset rather than wrapped;
+// and apache i=/b= apply only inside [0, 100]. An unset field goes on the wire
+// as -1, and an out-of-range percent is unset rather than truncated.
+func Test_ProxyDurationAndPercentAreGated(t *testing.T) {
+	usePluginConfig(t)
+
+	nginx := proxyAnnotationsOf(map[string]string{"Pinpoint-ProxyNginx": "t=1504230492.763 D=-0.123"})
+	require.Len(t, nginx, 1)
+	assert.Equal(t, int32(-1), nginx[0].duration, "negative nginx D= is unset")
+
+	nginx = proxyAnnotationsOf(map[string]string{"Pinpoint-ProxyNginx": "t=1504230492.763 D=3000000.000"})
+	require.Len(t, nginx, 1)
+	assert.Equal(t, int32(-1), nginx[0].duration, "nginx D= past int32/1000 is unset, not wrapped")
+
+	apache := proxyAnnotationsOf(map[string]string{"Pinpoint-ProxyApache": "t=1504230492763123 D=-7 i=101 b=-1"})
+	require.Len(t, apache, 1)
+	assert.Equal(t, int32(-1), apache[0].duration, "negative apache D= is unset")
+	assert.Equal(t, int32(-1), apache[0].idle, "i= above 100 is unset")
+	assert.Equal(t, int32(-1), apache[0].busy, "b= below 0 is unset")
+
+	apache = proxyAnnotationsOf(map[string]string{"Pinpoint-ProxyApache": "t=1504230492763123 D=7 i=0 b=100"})
+	require.Len(t, apache, 1)
+	assert.Equal(t, int32(7), apache[0].duration)
+	assert.Equal(t, int32(0), apache[0].idle)
+	assert.Equal(t, int32(100), apache[0].busy)
+}

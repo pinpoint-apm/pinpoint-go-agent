@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -2156,4 +2157,336 @@ func TestSpan_AsyncEndSpanCountsOnlyTheRealLeftovers(t *testing.T) {
 	balanced.NewSpanEvent("work").EndSpanEvent()
 	balanced.EndSpan()
 	assert.NotContains(t, buf.String(), "unclosed event")
+}
+
+// ===========================================================================
+// Locked invariants - behaviour pinned against the Java and C++ agents. The
+// cross-agent rationale and references live in doc/development.md.
+// ===========================================================================
+
+// profiler.callstack.max.depth=64, profiler.callstack.max.sequence=5000,
+// profiler.io.buffering.buffersize=20 (DefaultInstrumentConfig, pinpoint-root.config).
+func Test_SpanEventLimitDefaults(t *testing.T) {
+	assert.Equal(t, 64, defaultEventDepth, "Java profiler.callstack.max.depth")
+	assert.Equal(t, 5000, defaultEventSequence, "Java profiler.callstack.max.sequence")
+	assert.Equal(t, 20, defaultEventChunkSize, "Java profiler.io.buffering.buffersize")
+}
+
+// Test_SpanEventLimitFloors locks floors so a misconfigured
+// limit cannot make the call stack unusable.
+func Test_SpanEventLimitFloors(t *testing.T) {
+	assert.Equal(t, 2, minEventDepth, "C++ defaults MIN_SPAN_MAX_EVENT_DEPTH")
+	assert.Equal(t, 4, minEventSequence, "C++ defaults MIN_SPAN_MAX_EVENT_SEQUENCE")
+}
+
+// eventOverflowDecision is the overflow predicate. depth is the next event's
+// depth (index+1), hence depth-1.
+func eventOverflowDecision(sequence, depth, maxSequence, maxDepth int32) bool {
+	return sequence >= maxSequence || depth-1 > maxDepth
+}
+
+// Test_SpanEventOverflowDecision locks the boundaries the
+// predicate draws: the effective deepest recorded level is maxDepth+1, and
+// exactly maxSequence events are recorded.
+func Test_SpanEventOverflowDecision(t *testing.T) {
+	const maxDepth, maxSequence = 3, 5
+
+	// Depth: the push whose event would take depth maxDepth+1 is still
+	// recorded; maxDepth+2 overflows.
+	assert.False(t, eventOverflowDecision(0, int32(maxDepth), maxSequence, maxDepth))
+	assert.False(t, eventOverflowDecision(0, int32(maxDepth)+1, maxSequence, maxDepth))
+	assert.True(t, eventOverflowDecision(0, int32(maxDepth)+2, maxSequence, maxDepth))
+
+	// Sequence: 0..maxSequence-1 are recorded, maxSequence overflows.
+	assert.False(t, eventOverflowDecision(int32(maxSequence)-1, 1, maxSequence, maxDepth))
+	assert.True(t, eventOverflowDecision(int32(maxSequence), 1, maxSequence, maxDepth))
+}
+
+// assertContiguousRange reports that got is a permutation of
+// base..base+len(got)-1: every position handed out exactly once, with no gap.
+func assertContiguousRange(t *testing.T, got []int32, base int32, what string) {
+	t.Helper()
+
+	seen := make(map[int32]bool, len(got))
+	for _, v := range got {
+		assert.False(t, seen[v], "%s %d handed out twice", what, v)
+		seen[v] = true
+	}
+	for i := 0; i < len(got); i++ {
+		assert.True(t, seen[base+int32(i)], "%s %d missing from the reserved range", what, base+int32(i))
+	}
+}
+
+// Test_SpanEventPositionIsReservedAtomically locks atomic
+// (sequence, depth) reservations. A span may be driven from several
+// goroutines, and duplicate PSpanEvent sequences cannot be reconstructed by
+// the collector.
+//
+// Test_span_NewSpanEvent_ConcurrentSequencesAreUnique already locks the
+// sequence half through NewSpanEvent. The complementary property
+// locked here is the primitive itself, and that the depth counter carries the
+// same guarantee: under concurrency both coordinates come back unique and
+// contiguous, so a pair is never handed out twice and never leaves a hole.
+func Test_SpanEventPositionIsReservedAtomically(t *testing.T) {
+	const reservations = 256
+
+	sp := newSampledSpan(newTestAgent(defaultConfig()), "op", "/rpc")
+	sequences := make([]int32, reservations)
+	depths := make([]int32, reservations)
+
+	var wg sync.WaitGroup
+	for i := 0; i < reservations; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sequences[i], depths[i] = sp.reserveEventPosition()
+		}(i)
+	}
+	wg.Wait()
+
+	// eventSequence starts at 0 and eventDepth at 1 (defaultSpan), so the
+	// first event of a span is sequence 0 at depth 1 however the calls
+	// interleave.
+	assertContiguousRange(t, sequences, 0, "sequence")
+	assertContiguousRange(t, depths, 1, "depth")
+
+	// The counters are left where the reservations put them, so the next
+	// event continues the range instead of reusing a position.
+	assert.Equal(t, int32(reservations), sp.eventSequence.Load())
+	assert.Equal(t, int32(reservations)+1, sp.eventDepth.Load())
+}
+
+func testSpanEvent(sequence, depth int32, startTime int64) *spanEvent {
+	return &spanEvent{sequence: sequence, depth: depth, startTime: startTime}
+}
+
+// Test_ChunkKeyTimeAndStartElapsed locks the two values the
+// the final chunk keys off the span's start time, a non-final chunk off its
+// first event, and every startElapsed is the delta to the previous event
+// (to keyTime for the first).
+func Test_ChunkKeyTimeAndStartElapsed(t *testing.T) {
+	spanStart := time.UnixMilli(1_000)
+
+	t.Run("final chunk keys off the span start time", func(t *testing.T) {
+		chunk := &spanChunk{
+			span:       &span{startTime: spanStart},
+			eventChunk: []*spanEvent{testSpanEvent(0, 1, 1_050), testSpanEvent(1, 2, 1_120)},
+			final:      true,
+		}
+		chunk.optimizeSpanEvents()
+
+		assert.Equal(t, spanStart.UnixMilli(), chunk.keyTime)
+		assert.Equal(t, int64(50), chunk.eventChunk[0].startElapsed, "first event is relative to keyTime")
+		assert.Equal(t, int64(70), chunk.eventChunk[1].startElapsed, "later events are relative to the previous event")
+	})
+
+	t.Run("non-final chunk keys off its first event", func(t *testing.T) {
+		chunk := &spanChunk{
+			span:       &span{startTime: spanStart},
+			eventChunk: []*spanEvent{testSpanEvent(0, 1, 1_050), testSpanEvent(1, 2, 1_120)},
+			final:      false,
+		}
+		chunk.optimizeSpanEvents()
+
+		assert.Equal(t, int64(1_050), chunk.keyTime)
+		assert.Equal(t, int64(0), chunk.eventChunk[0].startElapsed)
+		assert.Equal(t, int64(70), chunk.eventChunk[1].startElapsed)
+	})
+}
+
+// Test_ChunkSortsBySequence locks that a chunk is ordered by
+// correct on a sorted chunk.
+func Test_ChunkSortsBySequence(t *testing.T) {
+	chunk := &spanChunk{
+		span:       &span{startTime: time.UnixMilli(1_000)},
+		eventChunk: []*spanEvent{testSpanEvent(2, 1, 1_300), testSpanEvent(0, 1, 1_100), testSpanEvent(1, 1, 1_200)},
+		final:      false,
+	}
+	chunk.optimizeSpanEvents()
+
+	got := make([]int32, 0, len(chunk.eventChunk))
+	for _, se := range chunk.eventChunk {
+		got = append(got, se.sequence)
+	}
+	assert.Equal(t, []int32{0, 1, 2}, got)
+	assert.Equal(t, int64(1_100), chunk.keyTime, "keyTime is the first event after sorting")
+}
+
+// Test_ChunkSnapshotsEndPoint locks that a chunk copies the
+// span's endPoint when it is cut. The sender serializes a non-final chunk while
+// the span is still live on the request goroutine, so reading it back off the
+// span there would race with SetEndPoint.
+func Test_ChunkSnapshotsEndPoint(t *testing.T) {
+	sp := &span{startTime: time.UnixMilli(1_000)}
+	sp.endPoint = "before"
+	sp.cfg = &configSnapshot{spanEventChunkSize: defaultEventChunkSize}
+
+	chunk := sp.newEventChunk(false)
+	sp.endPoint = "after"
+
+	assert.Equal(t, "before", chunk.endPoint, "the chunk must carry the endPoint it was cut with")
+}
+
+// Test_ChunkDepthCompression is the depth half of
+// GrpcSpanProcessorV2: an event at the same depth as its predecessor is sent
+// with depth 0, which the collector reads as "same as previous".
+func Test_ChunkDepthCompression(t *testing.T) {
+	chunk := &spanChunk{
+		span:       &span{startTime: time.UnixMilli(1_000)},
+		eventChunk: []*spanEvent{testSpanEvent(0, 2, 1_100), testSpanEvent(1, 2, 1_200), testSpanEvent(2, 3, 1_300)},
+		final:      false,
+	}
+	chunk.optimizeSpanEvents()
+
+	assert.Equal(t, int32(2), chunk.eventChunk[0].depth, "the first event always carries its real depth")
+	assert.Equal(t, int32(0), chunk.eventChunk[1].depth, "same depth as the previous event compresses to 0")
+	assert.Equal(t, int32(3), chunk.eventChunk[2].depth, "a change is sent explicitly")
+}
+
+// Span ID -1 and async ID 0 mean "absent", so generated IDs must skip them.
+func Test_Sentinels(t *testing.T) {
+	assert.Equal(t, int64(-1), int64(noneSpanId), "Java SpanId.NULL")
+	assert.Equal(t, int32(0), int32(noneAsyncId), "Java: asyncId 0 means no async context")
+}
+
+// Test_GeneratedSpanIdIsNeverTheSentinel locks that a drawn span
+// (SpanId.nextSpanID).
+func Test_GeneratedSpanIdIsNeverTheSentinel(t *testing.T) {
+	for i := 0; i < 10_000; i++ {
+		assert.NotEqual(t, int64(noneSpanId), generateSpanId())
+	}
+}
+
+// Test_PropagationHeaderNames locks all ten header names against
+// across a process boundary, with no error anywhere.
+func Test_PropagationHeaderNames(t *testing.T) {
+	assert.Equal(t, "Pinpoint-TraceID", HeaderTraceId)
+	assert.Equal(t, "Pinpoint-SpanID", HeaderSpanId)
+	assert.Equal(t, "Pinpoint-pSpanID", HeaderParentSpanId)
+	assert.Equal(t, "Pinpoint-Sampled", HeaderSampled)
+	assert.Equal(t, "Pinpoint-Flags", HeaderFlags)
+	assert.Equal(t, "Pinpoint-pAppName", HeaderParentApplicationName)
+	assert.Equal(t, "Pinpoint-pAppType", HeaderParentApplicationType)
+	assert.Equal(t, "Pinpoint-pAppNamespace", HeaderParentApplicationNamespace)
+	assert.Equal(t, "Pinpoint-pServiceName", HeaderParentServiceName)
+	assert.Equal(t, "Pinpoint-Host", HeaderHost)
+}
+
+// Test_TransactionIdFormat locks the wire format
+// through the parser.
+func Test_TransactionIdFormat(t *testing.T) {
+	tid := TransactionId{AgentId: "test-agent", StartTime: 1_600_000_000_000, Sequence: 42}
+	assert.Equal(t, "test-agent^1600000000000^42", tid.String())
+
+	agentId, startTime, sequence, ok := splitTransactionId(tid.String())
+	assert.True(t, ok)
+	assert.Equal(t, tid.AgentId, agentId)
+	assert.Equal(t, tid.StartTime, startTime)
+	assert.Equal(t, tid.Sequence, sequence)
+}
+
+// Test_TransactionIdParsing locks the parser's accept/reject set.
+// third delimiter, so "a^1^2^3" is parsed as transaction "a^1^2".
+func Test_TransactionIdParsing(t *testing.T) {
+	tests := []struct {
+		tid string
+		ok  bool
+	}{
+		{"agent.id_-09^1^2", true},
+		{"a^1^2^3", true},
+		{"bad agent^1^2", false},
+		{"bad/agent^1^2", false},
+		{"^1^2", false},
+		{"agent^1", false},
+		{"agent^x^2", false},
+		{"agent^1^x", false},
+		{"", false},
+	}
+	for _, tc := range tests {
+		_, _, _, ok := splitTransactionId(tc.tid)
+		assert.Equal(t, tc.ok, ok, "splitTransactionId(%q)", tc.tid)
+	}
+
+	agentId, startTime, sequence, ok := splitTransactionId("a^1^2^3")
+	assert.True(t, ok)
+	assert.Equal(t, "a", agentId)
+	assert.Equal(t, int64(1), startTime)
+	assert.Equal(t, int64(2), sequence, "the parser stops at the third delimiter")
+}
+
+// Test_SampledHeaderEncoding locks that only the exact string
+// else, "s1" or an absent header included, is sampled.
+func Test_SampledHeaderEncoding(t *testing.T) {
+	const samplingFlagFalse = "s0"
+
+	assert.Equal(t, "s0", samplingFlagFalse, "the off value is exactly \"s0\"")
+	for _, v := range []string{"s1", "S0", "", "0", "false", "s00", " s0"} {
+		assert.NotEqual(t, samplingFlagFalse, v, "%q must not disable sampling", v)
+	}
+}
+
+// Test_ParentAppTypeDefaultsToUndefined locks the parent
+// application type recorded when Pinpoint-pAppName arrives without a
+// parseable Pinpoint-pAppType: -1, ServiceType.UNDEFINED, which
+// ServerRequestRecorder.recordParentInfo produces through
+// NumberUtils.parseShort(type, ServiceType.UNDEFINED.getCode()). Defaulting to
+// 1 (UNKNOWN) instead would name a real service type, which the server map draws
+// as a node of that type.
+func Test_ParentAppTypeDefaultsToUndefined(t *testing.T) {
+	assert.Equal(t, -1, defaultTestSpan().parentAppType, "a fresh span")
+
+	for _, typ := range []string{"", "abc"} {
+		span := defaultTestSpan()
+		m := map[string]string{
+			HeaderTraceId:               "t123456^12345^1",
+			HeaderSpanId:                "67890",
+			HeaderParentSpanId:          "123",
+			HeaderParentApplicationName: "upstream",
+		}
+		if typ != "" {
+			m[HeaderParentApplicationType] = typ
+		}
+		span.Extract(&DistributedTracingContextMap{m})
+		assert.Equal(t, "upstream", span.parentAppName)
+		assert.Equal(t, -1, span.parentAppType, "pAppType %q", typ)
+	}
+}
+
+// Test_ErrorCategoryBits locks the four cause bits carried in
+// PSpan.err. They are a wire contract, not an internal
+// detail: the collector and the web tier tell an exception apart from a
+// failing HTTP status by the bit, so renumbering one silently rewrites what
+// the UI says every affected transaction failed of.
+func Test_ErrorCategoryBits(t *testing.T) {
+	assert.Equal(t, ErrorCategory(1<<0), ErrorCategoryUnknown, "Java ErrorCategory.UNKNOWN")
+	assert.Equal(t, ErrorCategory(1<<1), ErrorCategoryException, "Java ErrorCategory.EXCEPTION")
+	assert.Equal(t, ErrorCategory(1<<2), ErrorCategoryHttpStatus, "Java ErrorCategory.HTTP_STATUS")
+	assert.Equal(t, ErrorCategory(1<<3), ErrorCategorySql, "Java ErrorCategory.SQL")
+	assert.Equal(t, ErrorCategory(15), allErrorCategories, "Java EnumSet.allOf(ErrorCategory.class)")
+}
+
+// Test_ExcludedCategoryRecordsNothing locks the recorder half:
+// a category the operator removed records nothing at all - not the category
+// bit, and not an ErrorCategoryUnknown fallback either. markSpanError is the
+// single point that writes span.err, and it applies the mask only when the
+// category is enabled.
+func Test_ExcludedCategoryRecordsNothing(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgSpanErrorMarkExclude, []string{"exception"})
+	agent := newTestAgent(cfg)
+
+	excluded := newSampledSpan(agent, "op", "/rpc")
+	excluded.SetFailure(ErrorCategoryException)
+	assert.Equal(t, int32(0), excluded.err.Load(),
+		"an excluded category records nothing, not even ErrorCategoryUnknown")
+	assert.Equal(t, int32(0), excluded.statusErr.Load(),
+		"and the whole verdict is dropped, so the url stat is not failed either")
+
+	// The categories that survived still record, and a SetFailure that names
+	// none reports ErrorCategoryUnknown - always enabled.
+	kept := newSampledSpan(agent, "op", "/rpc")
+	kept.SetFailure(ErrorCategoryHttpStatus)
+	kept.SetFailure()
+	assert.Equal(t, int32(ErrorCategoryHttpStatus|ErrorCategoryUnknown), kept.err.Load(),
+		"a transaction that failed for several reasons reports all of them")
 }

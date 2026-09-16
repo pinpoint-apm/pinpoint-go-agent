@@ -416,3 +416,111 @@ func TestRateSamplerRateOneSkipsCounter(t *testing.T) {
 	}
 	assert.Equal(t, uint64(0), atomic.LoadUint64(&s.counter), "rate 1 must not spend the counter")
 }
+
+// ===========================================================================
+// Locked invariants - behaviour pinned against the Java and C++ agents. The
+// cross-agent rationale and references live in doc/development.md.
+// ===========================================================================
+
+// Test_CountingSamplerPhase locks the counting sampler's phase.
+// the process is sampled and every rate-th one after it - not the rate-th
+// request.
+func Test_CountingSamplerPhase(t *testing.T) {
+	s := newRateSampler(3)
+
+	var sampled []int
+	for i := 1; i <= 10; i++ {
+		if s.isSampled() {
+			sampled = append(sampled, i)
+		}
+	}
+	assert.Equal(t, []int{1, 4, 7, 10}, sampled, "the first call and every 3rd after it")
+}
+
+// TrueSampler and FalseSampler instead of CountingSampler.
+func Test_CountingSamplerEdgeRates(t *testing.T) {
+	always := newRateSampler(1)
+	for i := 0; i < 5; i++ {
+		assert.True(t, always.isSampled(), "rate 1 samples everything")
+	}
+
+	never := newRateSampler(0)
+	for i := 0; i < 5; i++ {
+		assert.False(t, never.isSampled(), "rate 0 samples nothing")
+	}
+
+	clamped := newRateSampler(-7)
+	for i := 0; i < 5; i++ {
+		assert.False(t, clamped.isSampled(), "a negative rate is clamped to 0, not treated as unsigned")
+	}
+}
+
+// PercentRateSampler adds the rate to a counter and samples on a remainder in
+// (0, rate] - the first request lands on exactly rate and is sampled, where a
+// [0, rate) window would sample the second one instead.
+func Test_PercentSamplerWindow(t *testing.T) {
+	s := newPercentSampler(1) // rate 100 of 10000
+
+	var sampled []int
+	for i := 1; i <= 200; i++ {
+		if s.isSampled() {
+			sampled = append(sampled, i)
+		}
+	}
+	assert.Equal(t, []int{1, 101}, sampled, "one per hundred, starting at the first call")
+}
+
+// does in PercentSamplerFactory: the percentage is multiplied by 100 and
+// truncated, so anything under 0.01 collects nothing.
+func Test_PercentSamplerRateTruncation(t *testing.T) {
+	assert.Equal(t, 10_000, samplingMaxPercentRate, "Java: 100 * 100")
+
+	assert.Equal(t, uint64(10_000), newPercentSampler(100).rate)
+	assert.Equal(t, uint64(10_000), newPercentSampler(150).rate, "over 100 is clamped to 100")
+	assert.Equal(t, uint64(50), newPercentSampler(0.5).rate)
+	assert.Equal(t, uint64(1), newPercentSampler(0.01).rate)
+	assert.Equal(t, uint64(0), newPercentSampler(0.009).rate, "truncated to 0, i.e. never sampled")
+	assert.Equal(t, uint64(0), newPercentSampler(-1).rate, "a negative percentage is clamped to 0")
+
+	always := newPercentSampler(100)
+	for i := 0; i < 5; i++ {
+		assert.True(t, always.isSampled(), "100% is the TrueSampler case")
+	}
+	never := newPercentSampler(0)
+	for i := 0; i < 5; i++ {
+		assert.False(t, never.isSampled(), "0% is the FalseSampler case")
+	}
+}
+
+// Test_ThroughputLimiterInitialState locks the shape of the
+// bucket behind every per-second throughput option (Sampling.NewThroughput,
+// builds a Guava SmoothBursty whose initial storedPermits is 0: a fresh limiter
+// injected through AllowN so the test is exact and sleep-free.
+func Test_ThroughputLimiterInitialState(t *testing.T) {
+	const tps = 10 // one token per 100ms
+	l := newTokenBucket(tps)
+	now := time.Now()
+
+	assert.True(t, l.AllowN(now, 1), "the first call passes")
+	assert.False(t, l.AllowN(now, 1), "no token is due yet")
+	assert.False(t, l.AllowN(now.Add(50*time.Millisecond), 1), "half an interval is not a token")
+	assert.True(t, l.AllowN(now.Add(100*time.Millisecond), 1), "one interval elapsed, one token due")
+	assert.False(t, l.AllowN(now.Add(100*time.Millisecond), 1))
+}
+
+// Test_ThroughputLimiterCapacity locks the steady-state
+// capacity at one second of permits, the maxBurstSeconds of RateLimiter.create:
+// an idle bucket refills to exactly tps and no further, however long the idle.
+func Test_ThroughputLimiterCapacity(t *testing.T) {
+	const tps = 10
+	l := newTokenBucket(tps)
+	idle := time.Now().Add(10 * time.Second)
+
+	admitted := 0
+	for i := 0; i < 2*tps; i++ {
+		if l.AllowN(idle, 1) {
+			admitted++
+		}
+	}
+	assert.Equal(t, tps, admitted, "an idle bucket holds exactly one second of permits")
+}

@@ -36,8 +36,8 @@
   `DefaultAgentStatMonitor` maximum, instead of `60000`; a larger value falls
   back to the default as before. A six-minute stat batch is no longer
   reachable by misconfiguration.
-- The metadata retry budget and rejection policy are locked as parity group
-  17 (`Test_javaParityLock_MetadataRetryBudget`), mirrored in the C++ suite:
+- The metadata retry budget and rejection policy are locked
+  (`Test_MetadataRetryBudget`), mirrored in the C++ suite:
   both ports drop a `PResult.success=false` reply where Java retries it, so
   a change in either port is now a deliberate joint change.
 

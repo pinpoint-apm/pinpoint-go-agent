@@ -2639,3 +2639,109 @@ func Test_collectorTarget_passthroughRollback(t *testing.T) {
 	assert.Equal(t, "[::1]:9991", addr)
 	assert.Equal(t, "passthrough:///[::1]:9991", collectorTarget(cfg, addr))
 }
+
+// ===========================================================================
+// Locked invariants - behaviour pinned against the Java and C++ agents. The
+// cross-agent rationale and references live in doc/development.md.
+// ===========================================================================
+
+// Test_CollectorPortDefaults locks the three collector ports.
+func Test_CollectorPortDefaults(t *testing.T) {
+	assert.Equal(t, 9991, cfgBaseMap[CfgCollectorAgentPort].defaultValue, "Java profiler.transport.grpc.agent.collector.port")
+	assert.Equal(t, 9992, cfgBaseMap[CfgCollectorStatPort].defaultValue, "Java profiler.transport.grpc.stat.collector.port")
+	assert.Equal(t, 9993, cfgBaseMap[CfgCollectorSpanPort].defaultValue, "Java profiler.transport.grpc.span.collector.port")
+}
+
+// Test_GrpcChannelDefaults locks the channel options that were
+// verified equal across the three agents. flowControlWindow, writeBufferSize
+// three at the C-core defaults, which doc/development.md records. The idle
+// timeout is deliberately not locked: all three agents disable idling, but
+// decision is shared, not the value (doc/development.md, "Java and C++
+// agent parity").
+func Test_GrpcChannelDefaults(t *testing.T) {
+	assert.Equal(t, 30_000, grpcKeepAliveTime, "Java ClientOption keepAliveTime")
+	assert.Equal(t, 60_000, grpcKeepAliveTimeout, "Java ClientOption keepAliveTimeout")
+	assert.False(t, grpcKeepAlivePermitWithoutCalls, "Java ClientOption keepAliveWithoutCalls")
+	assert.Equal(t, 4*1024*1024, grpcMaxMessageSize, "Java ClientOption maxInboundMessageSize")
+	assert.Equal(t, 1*1024*1024, grpcFlowControlWindow, "Java ClientOption flowControlWindow")
+	assert.Equal(t, 8*1024, grpcMaxHeaderListSize, "Java ClientOption maxHeaderListSize")
+	assert.Equal(t, 0, grpcConnectionMaxAge, "renewal off, as in Java")
+	assert.Equal(t, 0, grpcStreamMaxAge, "renewal off, as in Java")
+}
+
+// Test_ReconnectBackoff locks the reconnect backoff shape: a
+// x1.2 ramp from 3s to a 30s ceiling, randomized +/-30%, with the jitter
+// applied after the clamp so a capped interval lands within +/-30% of the
+// ceiling rather than always on it.
+func Test_ReconnectBackoff(t *testing.T) {
+	assert.Equal(t, 3*time.Second, backOffInitialInterval)
+	assert.Equal(t, 1.2, backOffMultiplier)
+	assert.Equal(t, 30*time.Second, backOffMaxInterval)
+	assert.Equal(t, 0.3, backOffJitter)
+
+	within := func(attempt int, base time.Duration) {
+		lo := time.Duration(float64(base) * (1 - backOffJitter))
+		hi := time.Duration(float64(base) * (1 + backOffJitter))
+		for i := 0; i < 200; i++ {
+			d := backOffSleep(attempt)
+			assert.GreaterOrEqual(t, d, lo, "attempt %d below the jitter window", attempt)
+			assert.LessOrEqual(t, d, hi, "attempt %d above the jitter window", attempt)
+		}
+	}
+	within(0, 3*time.Second)
+	within(1, 3600*time.Millisecond)
+	within(100, backOffMaxInterval)
+}
+
+// Test_AgentInfoSchedule locks the AgentInfo refresh cadence.
+// (profiler.agentInfo.send.retry.interval): registration gates tracing in both
+// ports, so it has to retry far more often. doc/development.md records that.
+func Test_AgentInfoSchedule(t *testing.T) {
+	assert.Equal(t, 24*60*60*1000, defaultAgentInfoRefreshInterval, "Java AgentInfoSender refresh interval")
+	assert.Equal(t, 3, defaultAgentInfoMaxTryPerAttempt, "Java AgentInfoSender maxTryPerAttempt")
+	assert.Equal(t, 3000, defaultAgentInfoSendRetryInterval, "matches the C++ agent, not Java's effective 300000ms - see doc/development.md")
+}
+
+// Test_ParentInfoRequiresAParentAppName locks that PParentInfo
+// is emitted only when parentAppName is non-empty. An acceptor host alone must
+// not create an unnamed parent node.
+func Test_ParentInfoRequiresAParentAppName(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+
+	// Set on both paths: an acceptor host alone must not produce a parent.
+	orphan := newSampledSpan(agent, "op", "/rpc")
+	orphan.acceptorHost = "api.example.com:8080"
+	orphan.parentServiceName = "parent-service"
+	orphan.NewSpanEvent("op")
+	orphanSpan := (&spanMessageBuilder{}).makePSpan(orphan.newEventChunk(true)).GetSpan()
+	assert.NotNil(t, orphanSpan.GetAcceptEvent(), "the accept event is always there")
+	assert.Nil(t, orphanSpan.GetAcceptEvent().GetParentInfo(),
+		"an acceptor host on its own must not invent a parent node")
+
+	child := newSampledSpan(agent, "op", "/rpc")
+	child.acceptorHost = "api.example.com:8080"
+	child.parentAppName = "ParentApp"
+	child.parentAppType = 1010
+	child.parentServiceName = "parent-service"
+	parent := (&spanMessageBuilder{}).makePSpan(child.newEventChunk(true)).GetSpan().GetAcceptEvent().GetParentInfo()
+	if assert.NotNil(t, parent, "a named parent is described") {
+		assert.Equal(t, "ParentApp", parent.GetParentApplicationName())
+		assert.Equal(t, int32(1010), parent.GetParentApplicationType())
+		assert.Equal(t, "parent-service", parent.GetParentServiceName())
+		assert.Equal(t, "api.example.com:8080", parent.GetAcceptorHost())
+	}
+}
+
+// A failed metadata send has three attempts, a one-second delay, and a
+// 1000-entry queue. A rejected result is not retried; its cache entry is
+// released after one retry delay.
+func Test_MetadataRetryBudget(t *testing.T) {
+	assert.Equal(t, 3, metaRetryMaxAttempts, "Java profiler.transport.grpc.metadata.sender.retry.max.count")
+	assert.Equal(t, time.Second, metaRetryDelay, "Java profiler.transport.grpc.metadata.sender.retry.delay.millis")
+	assert.Equal(t, 1000, metaRetryQueueSize,
+		"port consensus: the retry schedule is bounded like the new-metadata queue (Java metadata.sender.executor.queue.size)")
+	assert.Equal(t, 1000, defaultMetaQueueSize, "Java profiler.transport.grpc.metadata.sender.executor.queue.size")
+	rejected := metaResult(&pb.PResult{Success: false, Message: "no"}, nil)
+	assert.Equal(t, metaRejected, metaVerdictOf(rejected, 1),
+		"port consensus: a PResult.success=false reply is not retried")
+}

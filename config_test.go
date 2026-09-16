@@ -1619,3 +1619,115 @@ func Test_NoopAgentConfig_keepsNoReloadCallbacks(t *testing.T) {
 	regular.AddReloadCallback([]string{CfgSpanMaxCallStackDepth}, func() {})
 	assert.Equal(t, n+1, len(regular.callback), "a reloadable Config keeps its callbacks")
 }
+
+// ===========================================================================
+// Locked invariants - behaviour pinned against the Java and C++ agents. The
+// cross-agent rationale and references live in doc/development.md.
+// ===========================================================================
+
+// Test_ErrorMarkMaskResolution locks how Span.ErrorMark and
+// Span.ErrorMarkExclude resolve into the mask of categories allowed to fail a
+// transaction (parseErrorMarkMask). An unset mark enables
+// every category, exclude is subtracted from it, and UNKNOWN is added back
+// last. Tokens are trimmed and lower-cased; an unrecognised token is warned
+// about and ignored.
+func Test_ErrorMarkMaskResolution(t *testing.T) {
+	tests := []struct {
+		name    string
+		mark    []string
+		exclude []string
+		want    ErrorCategory
+	}{
+		{name: "an unset mark enables every category",
+			want: allErrorCategories},
+		{name: "a mark is the whole allow list, plus unknown",
+			mark: []string{"exception"}, want: ErrorCategoryUnknown | ErrorCategoryException},
+		{name: "exclude subtracts from the default everything",
+			exclude: []string{"http-status"}, want: allErrorCategories &^ ErrorCategoryHttpStatus},
+		{name: "exclude wins over mark",
+			mark: []string{"exception", "sql"}, exclude: []string{"sql"},
+			want: ErrorCategoryUnknown | ErrorCategoryException},
+		{name: "unknown is re-added after the subtraction",
+			mark: []string{"exception"}, exclude: []string{"exception"}, want: ErrorCategoryUnknown},
+		{name: "unknown is not selectable and cannot be excluded",
+			exclude: []string{"unknown"}, want: allErrorCategories},
+		{name: "unknown has no spelling of its own in a mark",
+			mark: []string{"unknown"}, want: ErrorCategoryUnknown},
+		{name: "excluding every named category still leaves unknown",
+			exclude: []string{"exception", "http-status", "sql"}, want: ErrorCategoryUnknown},
+		{name: "tokens match case-insensitively",
+			mark: []string{"EXCEPTION", "Http-Status", "sQl"}, want: allErrorCategories},
+		{name: "surrounding space is trimmed",
+			mark: []string{"  exception  "}, want: ErrorCategoryUnknown | ErrorCategoryException},
+		{name: "one entry may carry a comma separated list",
+			mark: []string{"exception,sql"},
+			want: ErrorCategoryUnknown | ErrorCategoryException | ErrorCategorySql},
+		{name: "an empty token is skipped, leaving an empty rather than a default set",
+			mark: []string{""}, want: ErrorCategoryUnknown},
+		{name: "an unrecognised token is ignored and the rest still resolves",
+			mark: []string{"exception", "nonsense"},
+			want: ErrorCategoryUnknown | ErrorCategoryException},
+		{name: "an unrecognised token in exclude subtracts nothing",
+			exclude: []string{"nonsense"}, want: allErrorCategories},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, parseErrorMarkMask(tc.mark, tc.exclude))
+		})
+	}
+}
+
+// Test_ConfigRejectsAnUnsupportedLogLevel locks the same rule
+// one layer up, where an operator actually meets it: a value that is not one of
+// trace, debug, info, warn or error keeps the level
+// already published, or the default on the first publish. logrus itself would
+// also take fatal and panic, which would silence warn and error while looking
+// like a valid setting, so the agent refuses them too.
+func Test_ConfigRejectsAnUnsupportedLogLevel(t *testing.T) {
+	t.Cleanup(func() { logger.setLevel("info") })
+
+	tests := []struct {
+		set  string
+		want string
+	}{
+		{"trace", "trace"},
+		{"debug", "debug"},
+		{"info", "info"},
+		{"warn", "warn"},
+		{"warning", "warning"},
+		{"error", "error"},
+		{"verbose", "info"},
+		{"fatal", "info"},
+		{"panic", "info"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.set, func(t *testing.T) {
+			c, err := NewConfig(WithAppName("logLevelApp"), WithLogLevel(tc.set))
+			assert.NoError(t, err)
+			assert.Equal(t, tc.want, c.String(CfgLogLevel),
+				"Log.Level = %q resolves to %q", tc.set, tc.want)
+		})
+	}
+}
+
+// Test_LogRotationDefaults locks the rotation defaults and the
+// floor under Log.MaxBackups. A value below 1 is restored to the default of 1.
+func Test_LogRotationDefaults(t *testing.T) {
+	t.Cleanup(func() { logger.setLevel("info") })
+
+	assert.Equal(t, 1, defaultLogMaxBackups, "one rotated file is kept")
+	assert.Equal(t, defaultLogMaxBackups, cfgBaseMap[CfgLogMaxBackups].defaultValue)
+	assert.Equal(t, 10, cfgBaseMap[CfgLogMaxSize].defaultValue, "10 MB before rotation")
+
+	for _, backups := range []int{0, -1} {
+		c, err := NewConfig(WithAppName("logRotationApp"), WithLogMaxBackups(backups))
+		assert.NoError(t, err)
+		assert.Equal(t, defaultLogMaxBackups, c.Int(CfgLogMaxBackups),
+			"Log.MaxBackups = %d is restored to the default, not honoured", backups)
+		assert.Equal(t, 10, c.Int(CfgLogMaxSize), "and an unset Log.MaxSize stays at 10 MB")
+	}
+
+	c, err := NewConfig(WithAppName("logRotationApp"), WithLogMaxSize(0))
+	assert.NoError(t, err)
+	assert.Equal(t, 10, c.Int(CfgLogMaxSize), "Log.MaxSize below 1 is restored to the default")
+}

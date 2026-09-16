@@ -139,8 +139,6 @@ func Test_calcResponseAvgReturnsZeroWithoutRequests(t *testing.T) {
 	assert.Equal(t, int64(0), calcResponseAvg(100, 0))
 }
 
-// Test_activeSpanShardIsCacheLinePadded guards the false-sharing fix: the shards
-// must stay a whole cache line apart, not packed several to a line.
 func Test_getStatsReportsCumulativeGcCounters(t *testing.T) {
 	stats := newAgentStats()
 
@@ -152,6 +150,8 @@ func Test_getStatsReportsCumulativeGcCounters(t *testing.T) {
 	assert.GreaterOrEqual(t, second.gcTime, first.gcTime, "gcTime is cumulative and never decreases")
 }
 
+// Test_activeSpanShardIsCacheLinePadded guards the false-sharing fix: the shards
+// must stay a whole cache line apart, not packed several to a line.
 func Test_activeSpanShardIsCacheLinePadded(t *testing.T) {
 	if got := unsafe.Sizeof(activeSpanShard{}); got%cacheLinePadSize != 0 {
 		t.Errorf("activeSpanShard is %d bytes, not a multiple of the %d-byte shard stride: shards share a cache line", got, cacheLinePadSize)
@@ -491,4 +491,65 @@ func Test_collectAgentStatWorker_restartKeepsPartialBatchAndRetakesBaseline(t *t
 	// across the gap since the last sample of the previous run.
 	first := agent.stats.collected[kept]
 	assert.Less(t, first.interval, int64(30), "the restart gap must not be reported as the interval")
+}
+
+// ===========================================================================
+// Locked invariants - behaviour pinned against the Java and C++ agents. The
+// cross-agent rationale and references live in doc/development.md.
+// ===========================================================================
+
+// Test_ActiveTraceHistogram locks the four active-trace slots
+// with an inclusive upper bound, so a span at exactly 1000ms is still "fast").
+func Test_ActiveTraceHistogram(t *testing.T) {
+	now := time.UnixMilli(100_000)
+
+	tests := []struct {
+		elapsedMs int64
+		slot      int
+	}{
+		{0, 0}, {1_000, 0},
+		{1_001, 1}, {3_000, 1},
+		{3_001, 2}, {5_000, 2},
+		{5_001, 3}, {60_000, 3},
+	}
+	for _, tc := range tests {
+		counts := []int32{0, 0, 0, 0}
+		bucketActiveSpan(counts, now, now.Add(-time.Duration(tc.elapsedMs)*time.Millisecond))
+
+		want := []int32{0, 0, 0, 0}
+		want[tc.slot] = 1
+		assert.Equal(t, want, counts, "an active span of %dms belongs in slot %d", tc.elapsedMs, tc.slot)
+	}
+}
+
+// DefaultTransactionCounter reports exist here and drain independently. A
+// missing one shows up as a flat line in the Inspector, not as an error.
+func Test_TransactionCounters(t *testing.T) {
+	stats := newAgentStats()
+
+	stats.incrSampleNew()
+	stats.incrSampleCont()
+	stats.incrSampleCont()
+	stats.incrUnSampleNew()
+	stats.incrUnSampleNew()
+	stats.incrUnSampleNew()
+	stats.incrUnSampleCont()
+	stats.incrSkipNew()
+	stats.incrSkipCont()
+
+	c := stats.drainCounters()
+	assert.Equal(t, int64(1), c.sampleNew)
+	assert.Equal(t, int64(2), c.sampleCont)
+	assert.Equal(t, int64(3), c.unSampleNew)
+	assert.Equal(t, int64(1), c.unSampleCont)
+	assert.Equal(t, int64(1), c.skipNew)
+	assert.Equal(t, int64(1), c.skipCont)
+
+	drained := stats.drainCounters()
+	assert.Equal(t, int64(0), drained.sampleNew, "a drain resets the counters")
+	assert.Equal(t, int64(0), drained.sampleCont)
+	assert.Equal(t, int64(0), drained.unSampleNew)
+	assert.Equal(t, int64(0), drained.unSampleCont)
+	assert.Equal(t, int64(0), drained.skipNew)
+	assert.Equal(t, int64(0), drained.skipCont)
 }

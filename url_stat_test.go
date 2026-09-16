@@ -838,3 +838,119 @@ func Test_urlStatHistogramClampsNegativeElapsed(t *testing.T) {
 	assert.Equal(t, int64(50), hg.max)
 	assert.Equal(t, int32(2), hg.histogram[0], "the negative sample lands in the fastest bucket")
 }
+
+// ===========================================================================
+// Locked invariants - behaviour pinned against the Java and C++ agents. The
+// cross-agent rationale and references live in doc/development.md.
+// ===========================================================================
+
+// Test_UrlStatHistogramBuckets locks the eight bucket bounds
+// positionally, so a shifted boundary silently rewrites history.
+func Test_UrlStatHistogramBuckets(t *testing.T) {
+	assert.Equal(t, 8, urlStatBucketSize)
+	assert.Equal(t, 0, urlStatBucketVersion, "Java UriStatHistogramBucket.getVersion")
+
+	tests := []struct {
+		elapsed int64
+		bucket  int
+	}{
+		{0, 0}, {99, 0},
+		{100, 1}, {299, 1},
+		{300, 2}, {499, 2},
+		{500, 3}, {999, 3},
+		{1_000, 4}, {2_999, 4},
+		{3_000, 5}, {4_999, 5},
+		{5_000, 6}, {7_999, 6},
+		{8_000, 7}, {1_000_000, 7},
+	}
+	for _, tc := range tests {
+		assert.Equal(t, tc.bucket, getBucket(tc.elapsed), "getBucket(%d)", tc.elapsed)
+	}
+}
+
+// Test_UrlStatWindow locks the tick size and the five closed
+// ticks retained while the stat stream is down.
+func Test_UrlStatWindow(t *testing.T) {
+	assert.Equal(t, 30*time.Second, urlStatCollectInterval, "Java TickClock interval")
+	assert.Equal(t, 5, maxCompletedUrlStatSnapshots, "Java snapshotQueue effective capacity (SNAPSHOT_LIMIT 4, checked before offer) / C++ kMaxCompletedSnapshots")
+}
+
+// Test_UrlStatEmptyHistogram locks that an all-zero histogram
+// decides on a count field; both ports decide on the bucket sum, so a single
+// 0ms sample must still count as non-empty.
+func Test_UrlStatEmptyHistogram(t *testing.T) {
+	hg := newStatHistogram()
+	assert.True(t, hg.isEmpty(), "a fresh histogram is empty")
+
+	hg.add(0)
+	assert.False(t, hg.isEmpty(), "a 0ms sample lands in bucket 0 and is not empty")
+	assert.Equal(t, int64(0), hg.total)
+	assert.Equal(t, int32(1), hg.histogram[0])
+}
+
+// Test_UrlStatUnknownKey locks the stand-in URL used when a span
+// src/url_stat.h). Both the sampled and the unsampled span paths are exercised.
+func Test_UrlStatUnknownKey(t *testing.T) {
+	const javaNullUri = "/NULL"
+	assert.Equal(t, javaNullUri, urlStatUnknown)
+
+	cfg := defaultConfig()
+	cfg.Set(CfgHttpUrlStatEnable, true)
+	agent := newTestAgent(cfg)
+	agent.urlStatChan = make(chan *urlStat, 1)
+
+	span := newSampledSpan(agent, "op", "/rpc")
+	span.collectUrlStat(&UrlStatEntry{Method: "GET"}, false)
+	assert.Equal(t, javaNullUri, span.urlStat.Url)
+
+	unsampled := newUnSampledSpan(agent, "/rpc")
+	unsampled.collectUrlStat(&UrlStatEntry{Method: "GET"}, false)
+	assert.Equal(t, javaNullUri, unsampled.urlStat.Url)
+}
+
+// Test_UrlStatTemplateIsFirstWriteWins locks the merge rule:
+// MetricURLStat keeps the first URL template, MetricURLStatForce replaces it,
+// and method and status are last-write-wins.
+func Test_UrlStatTemplateIsFirstWriteWins(t *testing.T) {
+	assert.Equal(t, "URLStat", MetricURLStat, "the metric name plugins record under")
+	assert.Equal(t, "URLStatForce", MetricURLStatForce, "and the force variant")
+
+	first := mergeUrlStat(nil, &UrlStatEntry{Url: "/route/{id}", Method: "GET"}, false)
+	assert.Equal(t, "/route/{id}", first.Url)
+
+	kept := mergeUrlStat(first, &UrlStatEntry{Url: "/route/7", Method: "POST", Status: 500}, false)
+	assert.Equal(t, "/route/{id}", kept.Url, "the template is first-write-wins")
+	assert.Equal(t, "POST", kept.Method, "the method is last-write-wins")
+	assert.Equal(t, 500, kept.Status, "the status code is last-write-wins")
+
+	forced := mergeUrlStat(kept, &UrlStatEntry{Url: "/route/override"}, true)
+	assert.Equal(t, "/route/override", forced.Url, "MetricURLStatForce overrides the template")
+
+	// The unknown stand-in is the absence of a template, not a value: it never
+	// wins over a real one, in either direction.
+	overUnknown := mergeUrlStat(&UrlStatEntry{Url: urlStatUnknown}, &UrlStatEntry{Url: "/late"}, false)
+	assert.Equal(t, "/late", overUnknown.Url, "a recorded template replaces the unknown stand-in")
+
+	underUnknown := mergeUrlStat(&UrlStatEntry{Url: "/early"}, &UrlStatEntry{Method: "GET"}, false)
+	assert.Equal(t, "/early", underUnknown.Url, "an entry with no url does not erase the template")
+
+	// The caller's entry is copied, so a later mutation of it cannot reach
+	// the statistic the span kept.
+	entry := &UrlStatEntry{Url: "/copied", Method: "GET"}
+	merged := mergeUrlStat(nil, entry, false)
+	entry.Method = "DELETE"
+	assert.Equal(t, "GET", merged.Method, "the recorded entry is a copy")
+}
+
+// Test_UrlStatWithoutAnEndTimeIsSkipped locks that an entry
+// whose end time was never set is skipped entirely, not keyed under tick 0.
+// A zero tick would collect every such entry into one epoch bucket.
+func Test_UrlStatWithoutAnEndTimeIsSkipped(t *testing.T) {
+	stats := newUrlStats(defaultConfig())
+
+	stats.add(&urlStat{entry: &UrlStatEntry{Url: "/no-end"}, elapsed: 10})
+	assert.True(t, stats.takeSnapshot(true).isEmpty(), "an entry with no end time is not collected")
+
+	stats.add(&urlStat{entry: &UrlStatEntry{Url: "/ended"}, endTime: time.Now(), elapsed: 10})
+	assert.False(t, stats.takeSnapshot(true).isEmpty(), "an entry with an end time is collected")
+}

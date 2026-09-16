@@ -645,3 +645,291 @@ func Test_sqlNormalizer_LazyOutput(t *testing.T) {
 	assert.Equal(t, "/* c */ SELECT 0#", sql)
 	assert.Equal(t, "1", param)
 }
+
+// ===========================================================================
+// Locked invariants - behaviour pinned against the Java and C++ agents. The
+// cross-agent rationale and references live in doc/development.md.
+// ===========================================================================
+
+// sqlNormalizeCase is one golden case of the normalized SQL and parameter wire
+// format.
+type sqlNormalizeCase struct {
+	name       string
+	sql        string
+	normalized string
+	params     string
+	// paramsUnsplittable marks a case whose param string cannot be split back
+	// into one entry per placeholder: an unterminated literal writes its content
+	// into param without emitting a placeholder, so the counts do not line up.
+	// Only the placeholder-counting test below skips such a case, never the
+	// byte-for-byte expectation.
+	paramsUnsplittable bool
+}
+
+func sqlNormalizeCases() []sqlNormalizeCase {
+	return []sqlNormalizeCase{
+		{
+			name:       "number, escaped quote and double-quoted identifier",
+			sql:        `select * from t where a = 1.5e3 and b = 'it''s' and c = "col1" -- comment`,
+			normalized: `select * from t where a = 0# and b = '1$' and c = "col1" -- comment`,
+			params:     `1.5e3,it''s`,
+		},
+		{
+			name:       "unary minus, exponent and hex literal",
+			sql:        `a = -1 and b = 1e-3 and c = 0x1F`,
+			normalized: `a = -0# and b = 1#-2# and c = 3#x1F`,
+			params:     `1,1e,3,0`,
+		},
+		{
+			name:       "dotted identifier and comma inside a literal",
+			sql:        `select t1.col2, t1.5 from t where id = 10 and name = 'a,b' and n2 = 'x''y'`,
+			normalized: `select t1.col2, t1.5 from t where id = 0# and name = '1$' and n2 = '2$'`,
+			params:     `10,a,,b,x''y`,
+		},
+		{
+			name:               "backslash does not escape a quote",
+			sql:                `s = 'a\'b' and n = 3`,
+			normalized:         `s = '0$'b'`,
+			params:             `a\, and n = 3`,
+			paramsUnsplittable: true,
+		},
+		{
+			name:       "hint, empty literal and multi-line comment",
+			sql:        "select /*+ INDEX(t idx) */ 1, \"2\", '' , 'z' from t /* multi\n line 42 */ where x = ?",
+			normalized: "select /*+ INDEX(t idx) */ 0#, \"1#\", '' , '2$' from t /* multi\n line 42 */ where x = ?",
+			params:     `1,2,z`,
+		},
+		{
+			name:       "multibyte identifiers enable a number token",
+			sql:        `SELECT/*c*/1 FROM t WHERE 테이블1 = 2 and 名前 = '値'`,
+			normalized: `SELECT/*c*/1 FROM t WHERE 테이블0# = 1# and 名前 = '2$'`,
+			params:     `1,2,値`,
+		},
+		{
+			name:       "dollar followed by a digit is an identifier",
+			sql:        `select $1, $2 from t where a=$3 and b = 4`,
+			normalized: `select $1, $2 from t where a=$3 and b = 0#`,
+			params:     `4`,
+		},
+		{
+			name:               "unterminated literal emits no placeholder",
+			sql:                `select 'abc`,
+			normalized:         `select '`,
+			params:             `abc`,
+			paramsUnsplittable: true,
+		},
+		{
+			name:       "value tuples and a line comment",
+			sql:        `insert into t values (1,2,3), ('a','b','c') // trailing`,
+			normalized: `insert into t values (0#,1#,2#), ('3$','4$','5$') // trailing`,
+			params:     `1,2,3,a,b,c`,
+		},
+		{
+			name:       "empty literal consumes no index",
+			sql:        `select '''' from t where a = 1`,
+			normalized: `select '''' from t where a = 0#`,
+			params:     `1`,
+		},
+		{
+			name:       "block comment end token is searched past the opener",
+			sql:        `/*/`,
+			normalized: `/*/`,
+			params:     ``,
+		},
+		{
+			name:       "dollar not followed by a digit keeps the flag",
+			sql:        `V$SESSION1`,
+			normalized: `V$SESSION1`,
+			params:     ``,
+		},
+		{
+			name:       "shared index counter across numbers and literals",
+			sql:        `$'x'1`,
+			normalized: `$'0$'1#`,
+			params:     `x,1`,
+		},
+		{
+			name:       "exponent sign is a separate token",
+			sql:        `1.4e-10`,
+			normalized: `0#-1#`,
+			params:     `1.4e,10`,
+		},
+		{
+			name:       "digits after a dot are part of the identifier",
+			sql:        `test.123`,
+			normalized: `test.123`,
+			params:     ``,
+		},
+		{
+			name:       "underscore then space re-enables the number token",
+			sql:        `test_ 123`,
+			normalized: `test_ 0#`,
+			params:     `123`,
+		},
+		{
+			name:       "hash is not a comment",
+			sql:        `select #1 from t`,
+			normalized: `select #0# from t`,
+			params:     `1`,
+		},
+		{
+			name:       "bind markers are preserved",
+			sql:        `select * from t where a in (?, ?, ?)`,
+			normalized: `select * from t where a in (?, ?, ?)`,
+			params:     ``,
+		},
+		{
+			name:       "an IN list of literals is one statement per arity",
+			sql:        `select * from t where a in (1,2,3)`,
+			normalized: `select * from t where a in (0#,1#,2#)`,
+			params:     `1,2,3`,
+		},
+	}
+}
+
+func Test_SqlNormalizerGoldenCases(t *testing.T) {
+	for _, tc := range sqlNormalizeCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			normalized, params := newSqlNormalizer(tc.sql, false).run()
+			assert.Equal(t, tc.normalized, normalized, "normalized SQL is the id/UID cache key and PSqlMetaData.sql; it must match Java byte for byte")
+			assert.Equal(t, tc.params, params, "param is split on ',' by the server to refill the placeholders")
+		})
+	}
+}
+
+// Test_SqlNormalizerIsNotIdempotent locks that normalizing an
+// already-normalized statement changes it again: `0#` becomes `0##`.
+func Test_SqlNormalizerIsNotIdempotent(t *testing.T) {
+	once, _ := newSqlNormalizer(`select 1`, false).run()
+	assert.Equal(t, `select 0#`, once)
+
+	twice, _ := newSqlNormalizer(once, false).run()
+	assert.Equal(t, `select 0##`, twice, "normalization is not idempotent in any of the three agents")
+}
+
+// Test_SqlNormalizerWhitespaceIsNotNormalized locks that runs of
+// whitespace survives verbatim, so statements differing only in spacing have
+// different SQL IDs.
+func Test_SqlNormalizerWhitespaceIsNotNormalized(t *testing.T) {
+	normalized, _ := newSqlNormalizer("select   *\n\tfrom  t", false).run()
+	assert.Equal(t, "select   *\n\tfrom  t", normalized)
+}
+
+// Test_SqlNormalizerRemoveComments locks the agent default
+// dropped rather than copied, and a statement that is nothing but a comment
+// normalizes to the empty string.
+func Test_SqlNormalizerRemoveComments(t *testing.T) {
+	normalized, params := newSqlNormalizer(`SELECT/*c*/1 FROM t`, true).run()
+	assert.Equal(t, `SELECT1 FROM t`, normalized, "the comment is dropped and the digit stays an identifier digit: a comment does not re-enable the number token")
+	assert.Equal(t, ``, params)
+
+	normalized, params = newSqlNormalizer(`/* only */`, true).run()
+	assert.Equal(t, ``, normalized)
+	assert.Equal(t, ``, params)
+}
+
+// splitOutputParams is the agent-side counterpart of the server's
+// OutputParameterParser: it splits param on ',' and un-escapes the doubled
+// commas the normalizer writes for a comma inside a literal.
+func splitOutputParams(params string) []string {
+	if params == "" {
+		return nil
+	}
+	var (
+		out []string
+		cur strings.Builder
+	)
+	for i := 0; i < len(params); i++ {
+		if params[i] != ',' {
+			cur.WriteByte(params[i])
+			continue
+		}
+		if i+1 < len(params) && params[i+1] == ',' {
+			cur.WriteByte(',')
+			i++
+			continue
+		}
+		out = append(out, cur.String())
+		cur.Reset()
+	}
+	out = append(out, cur.String())
+	return out
+}
+
+// scanPlaceholderIndices returns the placeholder indices of a normalized
+// statement in the order they appear. `<n>#` marks a number and `<n>$` a
+// character literal; both draw from one shared counter, which is what makes
+// the server able to refill them from a single comma-separated param string.
+func scanPlaceholderIndices(normalized string) []int {
+	var digits strings.Builder
+	out := []int{}
+	for i := 0; i < len(normalized); i++ {
+		ch := normalized[i]
+		if ch >= '0' && ch <= '9' {
+			digits.WriteByte(ch)
+			continue
+		}
+		if (ch == '#' || ch == '$') && digits.Len() > 0 {
+			n := 0
+			for _, d := range digits.String() {
+				n = n*10 + int(d-'0')
+			}
+			out = append(out, n)
+		}
+		digits.Reset()
+	}
+	return out
+}
+
+// Test_SqlNormalizerSharedIndexCounter locks the invariant the
+// server depends on: placeholders are numbered 0..n-1 from one counter shared
+// by numbers and literals, and there are exactly as many of them as there are
+// params.
+func Test_SqlNormalizerSharedIndexCounter(t *testing.T) {
+	for _, tc := range sqlNormalizeCases() {
+		if tc.paramsUnsplittable {
+			continue
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			normalized, params := newSqlNormalizer(tc.sql, false).run()
+			indices := scanPlaceholderIndices(normalized)
+
+			want := make([]int, len(indices))
+			for i := range want {
+				want[i] = i
+			}
+			assert.Equal(t, want, indices, "placeholder indices must run 0..n-1 in order")
+			assert.Len(t, splitOutputParams(params), len(indices), "one param per placeholder")
+		})
+	}
+}
+
+// Test_SqlNormalizerInputCapDropsTheWholeStatement locks the
+// input limit. A statement longer than maxSqlNormalizeLength (1 << 20) is
+// dropped whole: run() returns empty normalized text and parameters, never a
+// cut. A cut can leave a literal without its placeholder and produce a different
+// SQL ID or UID.
+//
+// The boundary cases - one byte either side of the cap, a multibyte character
+// straddling it - belong to Test_sqlNormalizer_DropsInputPastTheNormalizationCap
+// above and are not repeated here.
+func Test_SqlNormalizerInputCapDropsTheWholeStatement(t *testing.T) {
+	assert.Equal(t, 1<<20, maxSqlNormalizeLength)
+	assert.Greater(t, maxSqlNormalizeLength, maxSqlSize, "the memory cap sits above the metadata cap")
+
+	// A literal that runs past the cap: precisely the shape where a cut would
+	// leave the opening quote without its placeholder.
+	over := "select 1 from t where a = '" + strings.Repeat("x", maxSqlNormalizeLength) + "'"
+	assert.Greater(t, len(over), maxSqlNormalizeLength)
+	assert.False(t, sqlNormalizable(over))
+
+	normalized, params := newSqlNormalizer(over, false).run()
+	assert.Equal(t, "", normalized, "an over-cap statement is dropped whole, not cut")
+	assert.Equal(t, "", params, "a cut param would leave placeholders the server cannot refill")
+
+	// The cap measures the raw input and changes nothing else: a statement
+	// within it normalizes exactly as any other.
+	normalized, params = newSqlNormalizer("select 1", false).run()
+	assert.Equal(t, "select 0#", normalized)
+	assert.Equal(t, "1", params)
+}

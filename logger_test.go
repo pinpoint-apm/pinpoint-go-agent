@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -258,4 +259,32 @@ func Test_ReloadAppliesLogMaxBackups(t *testing.T) {
 	write(3)
 	require.Eventually(t, func() bool { return backups() == 3 },
 		2*time.Second, 10*time.Millisecond, "Log.MaxBackups reload did not reach the file logger")
+}
+
+// ===========================================================================
+// Locked invariants - behaviour pinned against the Java and C++ agents. The
+// cross-agent rationale and references live in doc/development.md.
+// ===========================================================================
+
+// Test_UnsupportedLogLevelKeepsTheCurrentLevel locks that an
+// unsupported level leaves the current level unchanged and logs the error.
+// Both "warn" and "warning" are accepted.
+func Test_UnsupportedLogLevelKeepsTheCurrentLevel(t *testing.T) {
+	l := newLogger()
+
+	l.setLevel("error")
+	assert.Equal(t, logrus.ErrorLevel, l.defaultLogger.GetLevel())
+
+	for _, unsupported := range []string{"warnign", "", "WARN ", "2", "verbose"} {
+		l.setLevel(unsupported)
+		assert.Equal(t, logrus.ErrorLevel, l.defaultLogger.GetLevel(),
+			"%q must leave the level where it was", unsupported)
+	}
+
+	// Both spellings of warn are accepted, and each is a real level change.
+	for _, name := range []string{"warn", "warning"} {
+		l.setLevel("error")
+		l.setLevel(name)
+		assert.Equal(t, logrus.WarnLevel, l.defaultLogger.GetLevel(), "%q is accepted", name)
+	}
 }
