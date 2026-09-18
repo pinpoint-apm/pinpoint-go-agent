@@ -63,6 +63,11 @@ the URL, status and configured headers.
 | [plugin/kratosv3](/plugin/kratosv3) | [go-kratos/kratos/v3](https://github.com/go-kratos/kratos) | `ServerMiddleware` |
 | [plugin/grpc](/plugin/grpc) | [grpc/grpc-go](https://github.com/grpc/grpc-go) | `UnaryServerInterceptor`, `StreamServerInterceptor` |
 
+[go-kit/kit](https://github.com/go-kit/kit) needs no plugin of its own: its
+HTTP and gRPC transports sit directly on `net/http` and grpc-go, so the
+`plugin/http` and `plugin/grpc` entry points above trace them. See
+[example/gokit](/example/gokit).
+
 ```go
 import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin"
 
