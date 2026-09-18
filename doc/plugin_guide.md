@@ -195,6 +195,7 @@ handler.
 |---|---|---|
 | [plugin/sarama](/plugin/sarama) | [Shopify/sarama](https://github.com/Shopify/sarama) | producers: `NewSyncProducer`, `NewAsyncProducer`; consumers: `ConsumeMessageContext`, `NewContext`, `WrapPartitionConsumer` |
 | [plugin/sarama-IBM](/plugin/sarama-IBM) | [IBM/sarama](https://github.com/IBM/sarama) | same as above |
+| [plugin/confluentkafka](/plugin/confluentkafka) | [confluentinc/confluent-kafka-go](https://github.com/confluentinc/confluent-kafka-go) | producers: `NewProducer`, `ProduceContext`; consumers: `ConsumeMessageContext`, `NewContext` |
 
 A queue is a trace boundary, so it has two halves. The producer records a span
 event on the current transaction and writes the tracing context into the

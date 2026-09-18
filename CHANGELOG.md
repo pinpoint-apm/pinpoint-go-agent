@@ -12,6 +12,10 @@
 
 ### Added
 
+- **`plugin/confluentkafka`** instruments [confluentinc/confluent-kafka-go](https://github.com/confluentinc/confluent-kafka-go)
+  v2: `NewProducer` + `ProduceContext` on the producer side, `ConsumeMessageContext`
+  + `NewContext` on the consumer side, with the same headers and annotations as
+  the sarama plugins ([#80](https://github.com/pinpoint-apm/pinpoint-go-agent/issues/80)).
 - **Configurable real-IP headers.** `Http.Server.RealIpHeader` (ordered list,
   default `["X-Forwarded-For", "X-Real-Ip"]` = today's behaviour, `[]` trusts
   none) and `Http.Server.RealIpEmptyValue` port Java's `RealIpHeaderResolver`:
