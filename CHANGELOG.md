@@ -115,6 +115,21 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **Compile-time instrumentation support.** For the Pinpoint Go compile-time
+  instrumentation tool, and useful on their own:
+  `pinpoint.ErrAgentAlreadyCreated` is the sentinel `NewAgent` returns with the
+  existing agent (`errors.Is`); `pinpoint.IsInternalContext(ctx)` reports the
+  agent's own collector RPCs so process-wide gRPC client instrumentation can
+  skip them; `GetAgent`, `NoopAgent`, `GetConfig` and `Log` no longer panic
+  when reached before the package initialized (a hook called from the init
+  function of a package that does not import the agent);
+  `pphttp.NewHttpClientTracer`/`EndHttpClientTracer` are supported entry
+  points again (the exported halves of `WrapClient`).
+- **Command line flags in the `--pinpoint-key value` form.** Flags that take a
+  value accept it as the next argument as well as after `=`; an unknown
+  `--pinpoint-*` flag no longer stops the parse at the flags after it; a
+  value-taking flag without a value is dropped with a warning instead of
+  failing the whole command line.
 - **One request, one span when server instrumentation is layered.**
   `pphttp.NewHttpServerTracer` and the `ppgrpc` server interceptors reuse the
   tracer already in the request context — a middleware installed twice, a
