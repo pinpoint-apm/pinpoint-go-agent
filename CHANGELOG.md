@@ -116,6 +116,17 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **One request, one span when server instrumentation is layered.**
+  `pphttp.NewHttpServerTracer` and the `ppgrpc` server interceptors reuse the
+  tracer already in the request context — a middleware installed twice, a
+  framework middleware inside `WrapHandler`, or the compile-time
+  instrumentation tool in front of the manual wrapper — instead of starting a
+  second transaction: the inner layer records its span event on the existing
+  span, records no second status, and its `EndSpan` is ignored
+  (`pinpoint.NestedTracer`, `pinpoint.IsNestedTracer`). This is what the Java
+  agent does (`DefaultTraceFactory.checkAndGet`, "already Trace Object
+  exist"); the Go agent previously logged "installed twice" at debug level and
+  created two spans with different transaction ids.
 - **`plugin/confluentkafka`** instruments [confluentinc/confluent-kafka-go](https://github.com/confluentinc/confluent-kafka-go)
   v2: `NewProducer` + `ProduceContext` on the producer side, `ConsumeMessageContext`
   + `NewContext` on the consumer side, with the same headers and annotations as

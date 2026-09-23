@@ -92,7 +92,17 @@ func loweredKey(key string) string {
 	return strings.ToLower(key)
 }
 
+// startSpan starts the server span, or reuses the tracer an outer layer (an
+// interceptor registered twice, or compile-time instrumentation in front of
+// the manual one) already put in the context: one request is one span, as
+// in the Java agent (DefaultTraceFactory.checkAndGet). The nested view
+// records this layer's span event and error on the existing span and leaves
+// EndSpan to the owner.
 func startSpan(ctx context.Context, rpcName string) pinpoint.Tracer {
+	if existing := pinpoint.FromContext(ctx); existing != pinpoint.NoopTracer() {
+		pinpoint.Log("grpc").Debugf("context already carries a tracer (%s): reusing it instead of starting a second span", rpcName)
+		return pinpoint.NestedTracer(existing)
+	}
 	reader := distributedTracingContextReaderMD{ctx}
 	tracer := pinpoint.GetAgent().NewSpanTracerWithReader("gRPC Server", rpcName, reader)
 	tracer.Span().SetServiceType(pinpoint.ServiceTypeGrpcServer)

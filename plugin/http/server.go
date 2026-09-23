@@ -41,9 +41,17 @@ const defaultServerName = "HTTP Server"
 // NewHttpServerTracer returns a pinpoint.Tracer that instruments the request handler for http server.
 // The tracer extracts the pinpoint header from the http request header,
 // and then creates a span that initiates or continues the transaction.
+//
+// A request whose context already carries a tracer — a middleware installed
+// twice, a framework middleware inside a wrapped handler, or compile-time
+// instrumentation in front of the manual wrapper — gets a nested view of that
+// tracer (pinpoint.NestedTracer) instead of a second span: the layer records
+// its span event on the existing span and its EndSpan is ignored, as the Java
+// agent keeps the existing Trace for one request.
 func NewHttpServerTracer(req *http.Request, operation string) (tracer pinpoint.Tracer) {
-	if pinpoint.TracerFromRequestContext(req).IsSampled() {
-		pinpoint.Log("http").Debugf("request context already carries a sampled tracer (%s): is the pinpoint middleware installed twice?", req.URL.Path)
+	if existing := pinpoint.TracerFromRequestContext(req); existing != pinpoint.NoopTracer() {
+		pinpoint.Log("http").Debugf("request context already carries a tracer (%s): reusing it instead of starting a second span", req.URL.Path)
+		return pinpoint.NestedTracer(existing)
 	}
 	tracer = NewHttpServerTracerWithReader(req.Method, req.URL.Path, operation,
 		pinpoint.HttpHeaderReader(req.Header))
@@ -72,7 +80,8 @@ func RecordHttpServerRequest(tracer pinpoint.Tracer, req *http.Request) {
 // remoteAddr is the transport-level peer address; the headers listed in
 // Http.Server.RealIpHeader override it, exactly as in RecordHttpServerRequest.
 func RecordHttpServerRequestWithReader(tracer pinpoint.Tracer, host string, remoteAddr string, h Header, c Cookie) {
-	if !tracer.IsSampled() {
+	// A nested layer leaves the request attributes to the layer that owns the span.
+	if !tracer.IsSampled() || pinpoint.IsNestedTracer(tracer) {
 		return
 	}
 
@@ -502,7 +511,9 @@ func RecordHttpServerResponse(tracer pinpoint.Tracer, status int, h http.Header)
 // when a response-header recorder is configured, so passing a reader avoids
 // copying every header into a map that the default noop recorder ignores.
 func RecordHttpServerResponseWithReader(tracer pinpoint.Tracer, status int, h Header) {
-	if tracer.IsSampled() {
+	// A nested layer leaves the status and response headers to the layer that
+	// owns the span; both layers see the same status through the wrapped writer.
+	if tracer.IsSampled() && !pinpoint.IsNestedTracer(tracer) {
 		span := tracer.Span()
 		recordServerHttpStatus(span, status)
 		recordServerHttpResponseHeader(span.Annotations(), h)

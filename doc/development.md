@@ -287,6 +287,7 @@ references live here.
 | Behavior | Java reference |
 |---|---|
 | `PSpan.err` is a bitmask of causes, OR-ed as they accumulate | `Shared.maskErrorCode` |
+| a server layer that finds a tracer already in its context (a middleware installed twice, a framework middleware inside a wrapped handler, compile-time instrumentation outside the manual wrapper) reuses it: `pinpoint.NestedTracer` records the layer's span event on the existing span and ignores its `EndSpan` | `DefaultTraceFactory.checkAndGet` keeps the existing `Trace` ("already Trace Object exist.") instead of starting a second one for the request |
 | an error on an async/goroutine tracer sets the flag on the root span | `ChildTrace` shares its parent's `TraceRoot` |
 | `Inject()` omits a header it has no value for | `DefaultRequestTraceWriter`, which normalizes an empty value to `NOT_SET` |
 | `s0` is written only by a tracer that stands for a real transaction | written for a trace created by `disableSampling()`; with no trace the interceptor returns before writing any header |

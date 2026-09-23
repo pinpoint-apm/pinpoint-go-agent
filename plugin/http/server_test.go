@@ -1368,3 +1368,66 @@ func Test_ProxyDurationAndPercentAreGated(t *testing.T) {
 	assert.Equal(t, int32(0), apache[0].idle)
 	assert.Equal(t, int32(100), apache[0].busy)
 }
+
+// A request whose context already carries a tracer — WrapHandler inside
+// WrapHandler here; a framework middleware inside a wrapped handler, or
+// compile-time instrumentation outside the wrapper, in practice — is one
+// request and gets one span: the inner layer records its span event on the
+// outer's span, records no second status, and its EndSpan does not end it
+// (Java: DefaultTraceFactory.checkAndGet keeps the existing Trace).
+func TestWrapHandler_ReusesTheContextTracer(t *testing.T) {
+	startAgent(t)
+
+	var outer, inner pinpoint.Tracer
+	handler := WrapHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		outer = pinpoint.FromContext(r.Context())
+		WrapHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			inner = pinpoint.FromContext(r.Context())
+			w.WriteHeader(http.StatusNotFound)
+		})).ServeHTTP(w, r)
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/nested", nil))
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+
+	require.NotNil(t, outer)
+	require.NotNil(t, inner)
+	assert.False(t, pinpoint.IsNestedTracer(outer), "the outer wrapper owns the span")
+	assert.True(t, pinpoint.IsNestedTracer(inner), "the inner wrapper must reuse the outer's span")
+	assert.Equal(t, outer.TransactionId().String(), inner.TransactionId().String())
+	assert.Equal(t, outer.SpanId(), inner.SpanId(), "one request, one span")
+
+	var span map[string]interface{}
+	require.NoError(t, json.Unmarshal(outer.JsonString(), &span))
+	assert.Equal(t, "/nested", span["RpcName"])
+	statusCodes := 0
+	for _, a := range span["Annotations"].([]interface{}) {
+		if key, _ := a.(map[string]interface{})["key"].(float64); int(key) == pinpoint.AnnotationHttpStatusCode {
+			statusCodes++
+		}
+	}
+	assert.Equal(t, 1, statusCodes, "the status is recorded once, by the layer that owns the span")
+}
+
+func TestNewHttpServerTracer_ReusesTheContextTracer(t *testing.T) {
+	startAgent(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/nested", nil)
+	owner := NewHttpServerTracer(req, "HTTP Server")
+	defer owner.EndSpan()
+	nested := NewHttpServerTracer(pinpoint.RequestWithTracerContext(req, owner), "Gin Server")
+
+	assert.True(t, pinpoint.IsNestedTracer(nested))
+	assert.Equal(t, owner.SpanId(), nested.SpanId())
+	nested.NewSpanEvent("inner").EndSpanEvent()
+	nested.EndSpan()
+	// The owner's span is still open: it can record and end normally.
+	owner.NewSpanEvent("after").EndSpanEvent()
+
+	// A context without a tracer still starts a span.
+	fresh := NewHttpServerTracer(httptest.NewRequest(http.MethodGet, "/fresh", nil), "HTTP Server")
+	defer fresh.EndSpan()
+	assert.False(t, pinpoint.IsNestedTracer(fresh))
+	assert.NotEqual(t, owner.TransactionId().String(), fresh.TransactionId().String())
+}

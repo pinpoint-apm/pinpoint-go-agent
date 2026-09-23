@@ -853,3 +853,54 @@ func TestStreamClientInterceptor_AbandonedStreamEndsItsSpan(t *testing.T) {
 	assert.Equal(t, int32(1), atomic.LoadInt32(&caller.ends),
 		"ending it must not touch the caller's tracer")
 }
+
+// A server interceptor that finds a tracer already in the context — another
+// server interceptor outside it, or compile-time instrumentation — records
+// its span event on that span instead of starting a second transaction for
+// the same request, and leaves ending the span to the outer layer.
+func TestUnaryServerInterceptor_ReusesTheContextTracer(t *testing.T) {
+	startAgent(t)
+
+	var outer, inner pinpoint.Tracer
+	_, err := UnaryServerInterceptor()(context.Background(), "request",
+		&grpc.UnaryServerInfo{FullMethod: "/testapp.Hello/Greet"},
+		func(ctx context.Context, req interface{}) (interface{}, error) {
+			outer = pinpoint.FromContext(ctx)
+			return UnaryServerInterceptor()(ctx, req,
+				&grpc.UnaryServerInfo{FullMethod: "/testapp.Hello/Greet"},
+				func(ctx context.Context, req interface{}) (interface{}, error) {
+					inner = pinpoint.FromContext(ctx)
+					return "response", errors.New("handler failed")
+				})
+		})
+
+	require.Error(t, err)
+	require.NotNil(t, inner)
+	assert.False(t, pinpoint.IsNestedTracer(outer), "the outer interceptor owns the span")
+	assert.True(t, pinpoint.IsNestedTracer(inner), "the inner interceptor must reuse the outer's span")
+	assert.Equal(t, outer.TransactionId().String(), inner.TransactionId().String())
+	assert.Equal(t, outer.SpanId(), inner.SpanId(), "one request, one span")
+	assert.NotEqual(t, float64(0), spanOf(t, outer)["Err"], "the inner handler error must fail the shared span")
+}
+
+func TestStreamServerInterceptor_ReusesTheContextTracer(t *testing.T) {
+	startAgent(t)
+
+	var outer, inner pinpoint.Tracer
+	info := &grpc.StreamServerInfo{FullMethod: "/testapp.Hello/Stream"}
+	err := StreamServerInterceptor()(nil, &fakeServerStream{ctx: context.Background()}, info,
+		func(srv interface{}, stream grpc.ServerStream) error {
+			outer = pinpoint.FromContext(stream.Context())
+			return StreamServerInterceptor()(srv, stream, info,
+				func(srv interface{}, stream grpc.ServerStream) error {
+					inner = pinpoint.FromContext(stream.Context())
+					return nil
+				})
+		})
+
+	require.NoError(t, err)
+	require.NotNil(t, inner)
+	assert.False(t, pinpoint.IsNestedTracer(outer))
+	assert.True(t, pinpoint.IsNestedTracer(inner))
+	assert.Equal(t, outer.SpanId(), inner.SpanId(), "one request, one span")
+}
