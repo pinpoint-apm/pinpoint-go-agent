@@ -24,9 +24,8 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 - **The agent id is not configurable.** `WithAgentId`, `CfgAgentID`, the
   `AgentId` key, `PINPOINT_GO_AGENTID` and `--pinpoint-agentid` are gone:
   every process generates its own id, so an instance shows up under a new id
-  after each restart, and `AgentName` is the stable label. The config file key
-  and the environment variable are ignored; a leftover `--pinpoint-agentid` is
-  an unknown flag, and the `--pinpoint-` flags after it are not applied.
+  after each restart, and `AgentName` is the stable label. The config file key,
+  the environment variable and a leftover `--pinpoint-agentid` are ignored.
 - **`DistributedTracingContextReader.Get` returns `(string, bool)`**: the value
   and whether the carrier holds the key, since a header held with an empty
   value and a header not held at all decide trace continuation differently. A

@@ -114,7 +114,7 @@ human-readable label. Remove the old setting wherever it is:
 |---|---|
 | `AgentId` in the config file | ignored |
 | `PINPOINT_GO_AGENTID` | ignored |
-| `--pinpoint-agentid` | an unknown flag: the agent logs `command line config loading error: unknown flag: --pinpoint-agentid` and does not apply the `--pinpoint-` flags that come after it |
+| `--pinpoint-agentid` | ignored, like any unknown `--pinpoint-` flag |
 | `pinpoint.WithAgentId()` | does not compile |
 
 ### Defaults that changed

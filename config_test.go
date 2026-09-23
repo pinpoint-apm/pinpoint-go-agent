@@ -534,6 +534,41 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 	}
 }
 
+// Flags that take a value accept "--pinpoint-key value" as well as
+// "--pinpoint-key=value"; a boolean flag takes no value token; an unknown
+// --pinpoint-* flag is ignored without stopping the parse; a value-taking
+// flag without a value is dropped with a warning. The application's own
+// arguments are never consumed.
+func TestNewConfig_CmdLineArg_ValueForms(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+
+	os.Args = []string{
+		"app",
+		"--pinpoint-applicationname", "SpacedApp",
+		"--pinpoint-collector-agentport", "7001",
+		"--pinpoint-sql-tracequerystat", "positional", // boolean: "positional" is the application's
+		"--pinpoint-unknown-option=1",
+		"--pinpoint-unknown-flag", "value",
+		"--pinpoint-agentname=EqAgent",
+		"-x",
+		"--pinpoint-log-level", "--pinpoint-sampling-counterrate=3", // no value: dropped, the next flag still applies
+		"--pinpoint-span-maxcallstackdepth", "-1", // a value starting with "-" needs the "=" form
+	}
+
+	c, err := NewConfig()
+	require.NoError(t, err)
+	defer c.Close()
+
+	assert.Equal(t, "SpacedApp", c.String(CfgAppName))
+	assert.Equal(t, 7001, c.Int(CfgCollectorAgentPort))
+	assert.True(t, c.Bool(CfgSQLTraceQueryStat))
+	assert.Equal(t, "EqAgent", c.String(CfgAgentName))
+	assert.Equal(t, 3, c.Int(CfgSamplingCounterRate), "the flags after an unknown or valueless one are still parsed")
+	assert.Equal(t, defaultEventDepth, c.Int(CfgSpanMaxCallStackDepth), "a value starting with - is not taken")
+	assert.Equal(t, "info", c.String(CfgLogLevel), "a valueless string flag is dropped")
+}
+
 func TestNewConfig_CmdLineArg(t *testing.T) {
 	type args struct {
 		opts []ConfigOption

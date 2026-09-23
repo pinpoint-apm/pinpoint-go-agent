@@ -89,6 +89,11 @@ The example below shows that config file and profile are set by command flag.
 ```
 --pinpoint-configfile=pinpoint-config.json --pinpoint-activeprofile=dev
 ```
+A flag that takes a value also accepts the `--pinpoint-key value` form; a value that starts with `-` needs the `=` form.
+Boolean flags take no value token (`--pinpoint-enable` or `--pinpoint-enable=false`). An unknown `--pinpoint-*` flag is ignored.
+The agent reads its flags from `os.Args` without removing them, so an application that parses its own flags with the
+standard `flag` package still sees them and rejects them; such an application configures the agent through environment
+variables or the config file instead.
 ```json
 {
   "applicationName": "JsonAppName",

@@ -666,7 +666,7 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 
 	cmdEnvViper := viper.New()
 	flagSet := config.newFlagSet()
-	if err := flagSet.Parse(filterCmdArgs()); err != nil {
+	if err := flagSet.Parse(filterCmdArgs(flagSet)); err != nil {
 		Log("config").Errorf("command line config loading error: %v", err)
 	}
 	cmdEnvViper.BindPFlags(flagSet)
@@ -757,6 +757,9 @@ func defaultConfig() *Config {
 
 func (config *Config) newFlagSet() *pflag.FlagSet {
 	flagSet := pflag.NewFlagSet("pinpoint_go_agent", pflag.ContinueOnError)
+	// A --pinpoint-* flag this agent does not know (another agent version, a
+	// typo) must not stop the parse at the flags after it.
+	flagSet.ParseErrorsWhitelist.UnknownFlags = true
 
 	for _, v := range config.cfgMap {
 		switch v.valueType {
@@ -776,13 +779,37 @@ func (config *Config) newFlagSet() *pflag.FlagSet {
 	return flagSet
 }
 
-func filterCmdArgs() []string {
+// filterCmdArgs picks the agent's flags out of os.Args: the --pinpoint-*
+// arguments in the --pinpoint-key=value form and, for flags that take a
+// value, in the --pinpoint-key value form as well. Everything else is the
+// application's. A value that starts with "-" needs the "=" form. The
+// arguments are not removed from os.Args, so an application that parses its
+// own flags with the standard flag package still sees them.
+func filterCmdArgs(flagSet *pflag.FlagSet) []string {
+	args := os.Args[1:]
 	cmdArgs := make([]string, 0)
 
-	for _, arg := range os.Args[1:] {
-		if strings.HasPrefix(arg, "--pinpoint-") {
-			cmdArgs = append(cmdArgs, arg)
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if !strings.HasPrefix(arg, "--pinpoint-") {
+			continue
 		}
+		if strings.Contains(arg, "=") {
+			cmdArgs = append(cmdArgs, arg)
+			continue
+		}
+		f := flagSet.Lookup(strings.TrimPrefix(arg, "--"))
+		if f == nil || f.Value.Type() == "bool" {
+			// Unknown (ignored by the flag set) or boolean: no value token.
+			cmdArgs = append(cmdArgs, arg)
+			continue
+		}
+		if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			cmdArgs = append(cmdArgs, arg, args[i+1])
+			i++
+			continue
+		}
+		Log("config").Warnf("command line flag %s needs a value (%s=value or %s value), ignored", arg, arg, arg)
 	}
 	return cmdArgs
 }
