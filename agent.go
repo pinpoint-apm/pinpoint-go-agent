@@ -250,6 +250,13 @@ type agentHolder struct {
 	agent Agent
 }
 
+// ErrAgentAlreadyCreated is returned by NewAgent, together with the existing
+// agent, when an agent exists already. An application whose agent may have
+// been created before its own NewAgent call - by the compile-time
+// instrumentation tool's bootstrap, or by another package - checks for it
+// with errors.Is and keeps the returned agent instead of failing.
+var ErrAgentAlreadyCreated = errors.New("agent is already created")
+
 // GetAgent returns a global Agent created by NewAgent.
 func GetAgent() Agent {
 	return globalAgent.Load().(agentHolder).agent
@@ -279,7 +286,7 @@ func NewAgent(config *Config) (Agent, error) {
 		if config != nil && config != a.Config() {
 			config.Close()
 		}
-		return a, errors.New("agent is already created")
+		return a, ErrAgentAlreadyCreated
 	}
 	if config == nil {
 		return NoopAgent(), errors.New("configuration is missing")
