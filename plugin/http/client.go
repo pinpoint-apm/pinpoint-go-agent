@@ -7,7 +7,16 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
-// NewHttpClientTracer is deprecated. Use WrapClient or DoClient.
+// NewHttpClientTracer starts the client span event for req on tracer and
+// injects the distributed tracing headers into req.Header: the entry half of
+// what WrapClient and DoClient do around a request. It is for instrumentation
+// that cannot wrap the client itself, such as an adapter driving a
+// framework's own HTTP client (plugin/beego) or a compile-time hook inside
+// (*http.Transport).RoundTrip. The request is modified, so a caller bound by
+// the RoundTripper contract copies it first, as WrapClient does. A request
+// whose headers already carry a Pinpoint trace gets a noop tracer, so that
+// two layers around one request record one event. End it with
+// EndHttpClientTracer. Applications use WrapClient or DoClient.
 func NewHttpClientTracer(tracer pinpoint.Tracer, operationName string, req *http.Request) pinpoint.Tracer {
 	return before(tracer, operationName, req)
 }
@@ -46,7 +55,8 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 	return tracer
 }
 
-// EndHttpClientTracer is deprecated.
+// EndHttpClientTracer records the response (status code, configured headers)
+// or the error on the span event NewHttpClientTracer started and ends it.
 func EndHttpClientTracer(tracer pinpoint.Tracer, resp *http.Response, err error) {
 	after(tracer, resp, err)
 }
