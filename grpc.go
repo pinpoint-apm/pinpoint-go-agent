@@ -73,7 +73,30 @@ func supportCommandCodeHeader() string {
 func commandMetadataContext(agent *agent) context.Context {
 	m := agentHeaderMap(agent)
 	m[headerSupportCommandCode] = supportCommandCodeHeader()
-	return metadata.NewOutgoingContext(context.Background(), metadata.New(m))
+	return metadata.NewOutgoingContext(internalContext(context.Background()), metadata.New(m))
+}
+
+// internalContextKey marks the contexts of the agent's own RPCs to the
+// collector. Instrumentation of google.golang.org/grpc that is applied to
+// every client connection in the process - the compile-time instrumentation
+// tool - reads it through IsInternalContext to leave those RPCs alone.
+type internalContextKey struct{}
+
+func internalContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, internalContextKey{}, true)
+}
+
+// IsInternalContext reports whether ctx belongs to one of the agent's own
+// RPCs to the collector (agent registration and ping, span, stat and command
+// streams). gRPC client instrumentation applied process-wide skips such a
+// call: it carries no tracer anyway, and tracing the agent's transport would
+// be self-instrumentation.
+func IsInternalContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	v, ok := ctx.Value(internalContextKey{}).(bool)
+	return ok && v
 }
 
 func grpcMetadataContext(agent *agent, socketId int64) context.Context {
@@ -86,7 +109,7 @@ func grpcMetadataContext(agent *agent, socketId int64) context.Context {
 	// Only the ping stream sets a socketId; it is low frequency, so build fresh.
 	m := agentHeaderMap(agent)
 	m[headerSocketID] = strconv.FormatInt(socketId, 10)
-	return metadata.NewOutgoingContext(context.Background(), metadata.New(m))
+	return metadata.NewOutgoingContext(internalContext(context.Background()), metadata.New(m))
 }
 
 func agentHeaderMap(agent *agent) map[string]string {
@@ -114,7 +137,7 @@ func agentHeaderMap(agent *agent) map[string]string {
 func (agent *agent) baseOutgoingContext() context.Context {
 	agent.grpcMetaOnce.Do(func() {
 		md := metadata.New(agentHeaderMap(agent))
-		agent.grpcMetaCtx = metadata.NewOutgoingContext(context.Background(), md)
+		agent.grpcMetaCtx = metadata.NewOutgoingContext(internalContext(context.Background()), md)
 	})
 	return agent.grpcMetaCtx
 }
@@ -577,7 +600,7 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 		Log("grpc").Debugf("agent info: %s", agentInfo.String())
 	}
 
-	ctx := metadata.NewOutgoingContext(agentGrpc.agent.stopSignal(), metadata.New(agentHeaderMap(agentGrpc.agent)))
+	ctx := metadata.NewOutgoingContext(internalContext(agentGrpc.agent.stopSignal()), metadata.New(agentHeaderMap(agentGrpc.agent)))
 	return ctx, agentInfo
 }
 
