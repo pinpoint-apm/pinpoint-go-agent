@@ -21,8 +21,12 @@ func initNoopAgent() {
 	defaultNoopAgent.config.static = true
 }
 
-// NoopAgent returns a Agent that doesn't collect tracing data.
+// NoopAgent returns a Agent that doesn't collect tracing data. It is safe to
+// call before this package's init function ran (see initPackage).
 func NoopAgent() Agent {
+	if defaultNoopAgent == nil || defaultNoopAgent.config == nil {
+		initPackage()
+	}
 	return defaultNoopAgent
 }
 

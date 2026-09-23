@@ -17,11 +17,19 @@ func initLogger() {
 	logger = newLogger()
 }
 
+// Log returns a log entry for src. It is safe to call before this package's
+// init function ran (see initPackage in agent.go).
 func Log(src string) *logEntry {
+	if logger == nil {
+		initLogger()
+	}
 	return logger.newEntry(src)
 }
 
 func IsLogLevelEnabled(level logrus.Level) bool {
+	if logger == nil {
+		initLogger()
+	}
 	if logger.defaultLogger.GetLevel() >= level {
 		return true
 	}

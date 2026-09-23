@@ -21,8 +21,25 @@ import (
 )
 
 func init() {
+	initPackage()
+}
+
+// initPackage is this package's initialization. init runs it, and so does the
+// first GetAgent, NoopAgent or Log call that arrives before init did: Go
+// initializes packages one at a time, dependencies first and then in import
+// path order, and a compile-time instrumentation hook is reached from the init
+// function of a package that does not import this one (a sql.Open in a
+// package init, for instance) with every variable here still zero. Running the
+// steps twice is harmless: no other package can have registered configuration
+// in between, since anything that could has this package as a dependency.
+// Package variable initializers run again in between too, so this must not
+// rely on a value it set surviving until init.
+func initPackage() {
 	initLogger()
 	initConfig()
+	if defaultNoopAgent == nil {
+		defaultNoopAgent = &noopAgent{}
+	}
 	initNoopAgent()
 	initGoroutine()
 	setGlobalAgent(NoopAgent())
@@ -257,8 +274,14 @@ type agentHolder struct {
 // with errors.Is and keeps the returned agent instead of failing.
 var ErrAgentAlreadyCreated = errors.New("agent is already created")
 
-// GetAgent returns a global Agent created by NewAgent.
+// GetAgent returns a global Agent created by NewAgent, or NoopAgent before
+// NewAgent ran. It is safe to call before this package's init function ran
+// (see initPackage).
 func GetAgent() Agent {
+	if h, ok := globalAgent.Load().(agentHolder); ok {
+		return h.agent
+	}
+	initPackage()
 	return globalAgent.Load().(agentHolder).agent
 }
 
