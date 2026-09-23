@@ -40,17 +40,38 @@ func NewDatabaseTracer(ctx context.Context, funcName string, info *DBInfo) Trace
 }
 
 // WrapSQLDriver wraps a driver.Driver and instruments SQL query calls.
+// The returned driver implements driver.DriverContext exactly when drv does,
+// so database/sql keeps taking the connector path for drivers that have it.
 func WrapSQLDriver(drv driver.Driver, info DBInfo) driver.Driver {
 	wrapped := &sqlDriver{Driver: drv, dbInfo: info}
 	if _, ok := drv.(driver.DriverContext); ok {
-		return struct {
-			driver.Driver
-			driver.DriverContext
-		}{wrapped, wrapped}
+		return wrappedSQLDriverContext{wrapped, wrapped}
 	}
-	return struct {
+	return wrappedSQLDriver{wrapped}
+}
+
+// wrappedSQLDriver and wrappedSQLDriverContext are the two shapes WrapSQLDriver
+// returns, named so that IsWrappedSQLDriver can tell them apart from a
+// driver that has not been wrapped.
+type (
+	wrappedSQLDriver        struct{ driver.Driver }
+	wrappedSQLDriverContext struct {
 		driver.Driver
-	}{wrapped}
+		driver.DriverContext
+	}
+)
+
+// IsWrappedSQLDriver reports whether drv came from WrapSQLDriver. Code that
+// wraps drivers as they are registered - the compile-time instrumentation
+// tool's sql.Register hook - uses it to leave a driver a plugin already
+// wrapped (mysql-pinpoint, pq-pinpoint, ...) alone, so that a query is
+// recorded once.
+func IsWrappedSQLDriver(drv driver.Driver) bool {
+	switch drv.(type) {
+	case *sqlDriver, wrappedSQLDriver, wrappedSQLDriverContext:
+		return true
+	}
+	return false
 }
 
 type sqlDriver struct {

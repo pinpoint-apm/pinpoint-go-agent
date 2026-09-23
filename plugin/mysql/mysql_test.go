@@ -168,20 +168,20 @@ func Test_parseDSN_InvalidLeavesInfoUntouched(t *testing.T) {
 // only fill in the address: overwriting the service types would file that one
 // connection's queries under a different node.
 func Test_parseDSN_LeavesTheServiceTypesAlone(t *testing.T) {
-	info := dbInfo
+	info := DBInfo()
 	parseDSN(&info, "root:p123@tcp(127.0.0.1:3306)/testdb")
 
-	assert.Equal(t, dbInfo.DBType, info.DBType)
-	assert.Equal(t, dbInfo.QueryType, info.QueryType)
+	assert.Equal(t, DBInfo().DBType, info.DBType)
+	assert.Equal(t, DBInfo().QueryType, info.QueryType)
 	assert.Equal(t, "127.0.0.1", info.DBHost)
 }
 
 // The registered driver has to carry the mysql service types; a wrong type
 // files every query under the wrong node on the server map.
 func TestRegisteredDriverInfo(t *testing.T) {
-	assert.Equal(t, pinpoint.ServiceTypeMysql, dbInfo.DBType)
-	assert.Equal(t, pinpoint.ServiceTypeMysqlExecuteQuery, dbInfo.QueryType)
-	assert.NotNil(t, dbInfo.ParseDSN, "without a ParseDSN the wrapper never learns the host or database")
+	assert.Equal(t, pinpoint.ServiceTypeMysql, DBInfo().DBType)
+	assert.Equal(t, pinpoint.ServiceTypeMysqlExecuteQuery, DBInfo().QueryType)
+	assert.NotNil(t, DBInfo().ParseDSN, "without a ParseDSN the wrapper never learns the host or database")
 }
 
 // The documented driver name is the only thing an application refers to, so it

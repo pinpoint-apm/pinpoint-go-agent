@@ -26,8 +26,17 @@ import (
 	"github.com/sijms/go-ora/v3"
 )
 
-var dbInfo = pinpoint.DBInfo{
-	ParseDSN: parseDSN,
+// DBInfo returns the database description the plugin instruments the driver
+// with: service types and the DSN parser that fills in the host and database
+// name. It is a constructor rather than a variable so that a caller that runs
+// before this package initialized (the compile-time instrumentation tool's
+// sql.Register hook, inside the driver's init) gets a complete value.
+func DBInfo() pinpoint.DBInfo {
+	return pinpoint.DBInfo{
+		DBType:    pinpoint.ServiceTypeOracle,
+		QueryType: pinpoint.ServiceTypeOracleExecuteQuery,
+		ParseDSN:  parseDSN,
+	}
 }
 
 // Unlike v2, a v3 OracleDriver is not usable as a zero value: NewDriver fills
@@ -36,9 +45,7 @@ var dbInfo = pinpoint.DBInfo{
 var oracleDriver = go_ora.NewDriver()
 
 func init() {
-	dbInfo.DBType = pinpoint.ServiceTypeOracle
-	dbInfo.QueryType = pinpoint.ServiceTypeOracleExecuteQuery
-	sql.Register("oraclev3-pinpoint", pinpoint.WrapSQLDriver(oracleDriver, dbInfo))
+	sql.Register("oraclev3-pinpoint", pinpoint.WrapSQLDriver(oracleDriver, DBInfo()))
 }
 
 func parseDSN(info *pinpoint.DBInfo, dbUrl string) {

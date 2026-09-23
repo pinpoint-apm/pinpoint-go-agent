@@ -125,6 +125,13 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   function of a package that does not import the agent);
   `pphttp.NewHttpClientTracer`/`EndHttpClientTracer` are supported entry
   points again (the exported halves of `WrapClient`).
+- **SQL drivers can be wrapped as they register.** `pinpoint.IsWrappedSQLDriver`
+  tells a driver `WrapSQLDriver` returned from one that has not been wrapped,
+  and every SQL plugin exports `DBInfo()` (service types and DSN parser) as a
+  constructor, so the compile-time instrumentation tool's `sql.Register` hook
+  can wrap the driver the application registers (`sql.Open("mysql", dsn)` then
+  traces like `sql.Open("mysql-pinpoint", dsn)`) and skip the plugin's own,
+  already wrapped registration.
 - **Command line flags in the `--pinpoint-key value` form.** Flags that take a
   value accept it as the next argument as well as after `=`; an unknown
   `--pinpoint-*` flag no longer stops the parse at the flags after it; a

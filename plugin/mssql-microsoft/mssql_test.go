@@ -92,20 +92,20 @@ func Test_parseDSN_InvalidLeavesInfoUntouched(t *testing.T) {
 // only fill in the address: overwriting the service types would file that one
 // connection's queries under a different node.
 func Test_parseDSN_LeavesTheServiceTypesAlone(t *testing.T) {
-	info := dbInfo
+	info := DBInfo()
 	parseDSN(&info, "server=dbhost;database=TestDB")
 
-	assert.Equal(t, dbInfo.DBType, info.DBType)
-	assert.Equal(t, dbInfo.QueryType, info.QueryType)
+	assert.Equal(t, DBInfo().DBType, info.DBType)
+	assert.Equal(t, DBInfo().QueryType, info.QueryType)
 	assert.Equal(t, "dbhost", info.DBHost)
 }
 
 // The registered driver has to carry the mssql service types; a wrong type
 // files every query under the wrong node on the server map.
 func TestRegisteredDriverInfo(t *testing.T) {
-	assert.Equal(t, pinpoint.ServiceTypeMssql, dbInfo.DBType)
-	assert.Equal(t, pinpoint.ServiceTypeMssqlExecuteQuery, dbInfo.QueryType)
-	assert.NotNil(t, dbInfo.ParseDSN, "without a ParseDSN the wrapper never learns the host or database")
+	assert.Equal(t, pinpoint.ServiceTypeMssql, DBInfo().DBType)
+	assert.Equal(t, pinpoint.ServiceTypeMssqlExecuteQuery, DBInfo().QueryType)
+	assert.NotNil(t, DBInfo().ParseDSN, "without a ParseDSN the wrapper never learns the host or database")
 }
 
 // The documented driver name is the only thing an application refers to, so it

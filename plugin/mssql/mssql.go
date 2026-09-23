@@ -20,14 +20,21 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
-var dbInfo = pinpoint.DBInfo{
-	ParseDSN: parseDSN,
+// DBInfo returns the database description the plugin instruments the driver
+// with: service types and the DSN parser that fills in the host and database
+// name. It is a constructor rather than a variable so that a caller that runs
+// before this package initialized (the compile-time instrumentation tool's
+// sql.Register hook, inside the driver's init) gets a complete value.
+func DBInfo() pinpoint.DBInfo {
+	return pinpoint.DBInfo{
+		DBType:    pinpoint.ServiceTypeMssql,
+		QueryType: pinpoint.ServiceTypeMssqlExecuteQuery,
+		ParseDSN:  parseDSN,
+	}
 }
 
 func init() {
-	dbInfo.DBType = pinpoint.ServiceTypeMssql
-	dbInfo.QueryType = pinpoint.ServiceTypeMssqlExecuteQuery
-	sql.Register("sqlserver-pinpoint", pinpoint.WrapSQLDriver(&mssql.Driver{}, dbInfo))
+	sql.Register("sqlserver-pinpoint", pinpoint.WrapSQLDriver(&mssql.Driver{}, DBInfo()))
 }
 
 func parseDSN(info *pinpoint.DBInfo, dsn string) {
