@@ -22,7 +22,14 @@ import (
 
 func init() {
 	initPackage()
+	initDone = true
 }
+
+// initDone is set once init ran. Log discards before that: it writes through
+// logrus, whose own package (a dependency of this one, so initialized no
+// earlier) has a nil buffer pool until its init ran, and a hook reached from
+// another package's init function would crash in it.
+var initDone bool
 
 // initPackage is this package's initialization. init runs it, and so does the
 // first GetAgent, NoopAgent or Log call that arrives before init did: Go

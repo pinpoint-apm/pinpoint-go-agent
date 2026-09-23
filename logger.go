@@ -17,18 +17,19 @@ func initLogger() {
 	logger = newLogger()
 }
 
-// Log returns a log entry for src. It is safe to call before this package's
-// init function ran (see initPackage in agent.go).
+// Log returns a log entry for src. Before this package's init function ran
+// (a compile-time instrumentation hook reached from another package's init)
+// the entry discards what is logged: logrus may not be initialized either.
 func Log(src string) *logEntry {
-	if logger == nil {
-		initLogger()
+	if !initDone {
+		return &logEntry{}
 	}
 	return logger.newEntry(src)
 }
 
 func IsLogLevelEnabled(level logrus.Level) bool {
-	if logger == nil {
-		initLogger()
+	if !initDone {
+		return false
 	}
 	if logger.defaultLogger.GetLevel() >= level {
 		return true
@@ -204,6 +205,9 @@ type logEntry struct {
 // entry may be reused for later calls, so its Logger must keep pointing at the
 // default logger.
 func (l *logEntry) log(level logrus.Level, format string, args ...interface{}) {
+	if l.entry == nil { // an entry handed out before init: discard
+		return
+	}
 	l.entry.Logf(level, format, args...)
 	if l.extraLogger != nil {
 		extra := l.entry.Dup()

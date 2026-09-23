@@ -22,6 +22,7 @@ func TestAccessorsBeforeInit(t *testing.T) {
 		defaultNoopAgent = savedNoop
 		logger = savedLogger
 		cfgBaseMap = savedBase
+		initDone = true
 	})
 
 	// The state before init: nothing set, the noop agent's initializer not run.
@@ -29,9 +30,12 @@ func TestAccessorsBeforeInit(t *testing.T) {
 	defaultNoopAgent = nil
 	logger = nil
 	cfgBaseMap = nil
+	initDone = false
 
-	Log("init").Debugf("a hook logs before init")
-	_ = IsDebugLogLevelEnabled()
+	// Logging is discarded rather than attempted: logrus may be uninitialized too.
+	Log("init").Infof("a hook logs before init")
+	Log("init").Errorf("and errors")
+	assert.False(t, IsDebugLogLevelEnabled())
 
 	agent := GetAgent()
 	require.NotNil(t, agent)
