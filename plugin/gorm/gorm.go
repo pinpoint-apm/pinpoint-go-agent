@@ -5,6 +5,10 @@
 //
 //	g, err := ppgorm.Open(mysql.New(mysql.Config{Conn: db}), &gorm.Config{})
 //
+// Or register the callbacks on a *gorm.DB opened elsewhere:
+//
+//	g = ppgorm.Instrument(g)
+//
 // It is necessary to pass the context containing the pinpoint.Tracer to gorm.DB.
 //
 //	g = g.WithContext(pinpoint.NewContext(context.Background(), tracer))
@@ -22,9 +26,25 @@ func Open(dialector gorm.Dialector, opts ...gorm.Option) (*gorm.DB, error) {
 	if err != nil {
 		return db, err
 	}
+	return Instrument(db), nil
+}
 
+// beforeCreateCallback is the first callback registerCallbacks adds; its
+// presence tells an already instrumented db apart.
+const beforeCreateCallback = "pinpoint:before_create"
+
+// Instrument registers the plugin's callbacks on a db that gorm.Open returned
+// and returns it. Open calls it; a compile-time hook on gorm.Open, or an
+// application that opened the db itself, calls it directly. It is idempotent:
+// a db that already carries the callbacks is left alone, so Open on top of an
+// instrumented db, or Open next to a compile-time hook, records every
+// statement once.
+func Instrument(db *gorm.DB) *gorm.DB {
+	if db == nil || db.Callback().Create().Get(beforeCreateCallback) != nil {
+		return db
+	}
 	registerCallbacks(db)
-	return db, err
+	return db
 }
 
 func registerCallbacks(db *gorm.DB) {
@@ -32,7 +52,7 @@ func registerCallbacks(db *gorm.DB) {
 	//https://github.com/go-gorm/gorm/blob/master/callbacks/callbacks.go
 
 	create := db.Callback().Create()
-	_ = create.Before("gorm:before_create").Register("pinpoint:before_create", wrapBefore("gorm.create"))
+	_ = create.Before("gorm:before_create").Register(beforeCreateCallback, wrapBefore("gorm.create"))
 	_ = create.After("gorm:after_create").Register("pinpoint:after_create", after)
 
 	update := db.Callback().Update()

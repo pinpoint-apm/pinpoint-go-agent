@@ -258,3 +258,25 @@ type failingDialector struct {
 }
 
 func (d failingDialector) Initialize(*gorm.DB) error { return d.err }
+
+// Instrument is idempotent: registering on an already instrumented db (Open
+// after Open, or a manual Open next to the compile-time hook) keeps one span
+// event per statement, and a nil db is passed through.
+func TestInstrument_Idempotent(t *testing.T) {
+	db := openDB(t)
+	require.Same(t, db, Instrument(db))
+	assert.Nil(t, Instrument(nil))
+
+	for _, p := range callbackPairs {
+		t.Run(p.kind, func(t *testing.T) {
+			tracer := newRecordingTracer()
+			processor := processorFor(db, p.kind)
+			stmt := &gorm.DB{Statement: &gorm.Statement{
+				Context: pinpoint.NewContext(context.Background(), tracer),
+			}}
+			processor.Get(p.before)(stmt)
+			processor.Get(p.after)(stmt)
+			require.Len(t, tracer.events, 1, "a second Instrument must not register the callbacks again")
+		})
+	}
+}

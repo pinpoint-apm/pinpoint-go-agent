@@ -18,6 +18,13 @@ This package instruments the go-gorm/gorm calls. Use the Open as the gorm.Open.
 g, err := ppgorm.Open(mysql.New(mysql.Config{Conn: db}), &gorm.Config{})
 ```
 
+Or register the callbacks on a `*gorm.DB` opened elsewhere (idempotent; the
+compile-time instrumentation tool uses it from its `gorm.Open` hook):
+
+``` go
+g = ppgorm.Instrument(g)
+```
+
 It is necessary to pass the context containing the pinpoint.Tracer to gorm.DB.
 
 ``` go

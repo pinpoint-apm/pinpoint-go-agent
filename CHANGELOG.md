@@ -115,6 +115,10 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **`ppgorm.Instrument(db)`** registers the gorm plugin's callbacks on a
+  `*gorm.DB` opened elsewhere, idempotently; `ppgorm.Open` now calls it. The
+  compile-time instrumentation tool uses it from its `gorm.Open` hook
+  (agent_changes 14).
 - **Compile-time instrumentation support.** For the Pinpoint Go compile-time
   instrumentation tool, and useful on their own:
   `pinpoint.ErrAgentAlreadyCreated` is the sentinel `NewAgent` returns with the
