@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [ main ]
 
+# Run each matrix entry with the toolchain it names. With the default
+# GOTOOLCHAIN=auto, a dependency whose go.mod asks for a newer Go makes the go
+# command download that toolchain and the 1.25.x job silently tests 1.26. With
+# local, such a drift fails the job instead, which is what tells us a
+# dependency raised the floor (agent_changes 17 of the compile-time
+# instrumentation tool; its own CI does the same).
+env:
+  GOTOOLCHAIN: local
+
 jobs:
 
   build:
