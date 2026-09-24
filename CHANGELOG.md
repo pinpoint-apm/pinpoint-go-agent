@@ -115,6 +115,10 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **`ppredigo.WrapConn(c, address)`** wraps a `redis.Conn` dialed elsewhere
+  the way `ppredigo.Dial` wraps the one it dials (idempotent). The compile-time
+  instrumentation tool uses it from its `redis.DialContext` hook
+  (agent_changes 18).
 - **`pphttprouter.WrapHandle(handler, path ...string)`** takes the route
   pattern as an optional second argument and then collects URL statistics as
   `pphttprouter.New()` does; existing calls are unchanged. The compile-time

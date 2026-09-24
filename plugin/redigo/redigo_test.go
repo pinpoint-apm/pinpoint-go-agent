@@ -361,3 +361,15 @@ func Test_wrappedConn_WithoutAContext(t *testing.T) {
 	c.opMu.Unlock()
 	assert.NotPanics(t, func() { end(nil) }, "the untraced end must be a no-op")
 }
+
+// WrapConn is the exported makeWrappedConn for connections dialed elsewhere
+// (compile-time instrumentation); wrapping twice must not stack two layers.
+func TestWrapConn(t *testing.T) {
+	base := &fakeRedisConn{}
+	c := WrapConn(base, "redis1:6379")
+	wc, ok := c.(*wrappedConn)
+	require.True(t, ok)
+	assert.Equal(t, "redis1", wc.endpoint)
+	assert.Same(t, base, wc.base)
+	assert.Same(t, c, WrapConn(c, "other:6379"), "an already wrapped connection is returned as it is")
+}

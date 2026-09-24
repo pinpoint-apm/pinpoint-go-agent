@@ -88,6 +88,19 @@ func WithContext(c redis.Conn, ctx context.Context) {
 	}
 }
 
+// WrapConn returns a redis.Conn that records the operations of c as span
+// events, with the endpoint derived from the dial address as Dial does. A
+// connection this package already wrapped is returned as it is. It serves
+// callers that dialed themselves, such as the compile-time instrumentation
+// wrapping the result of redis.DialContext (every Dial variant funnels into
+// it).
+func WrapConn(c redis.Conn, address string) redis.Conn {
+	if _, ok := c.(*wrappedConn); ok {
+		return c
+	}
+	return makeWrappedConn(c, address)
+}
+
 // makeWrappedConn derives the endpoint from the dial address. The split
 // failing is not a dial failure: a unix-socket address has no host:port shape,
 // but redis.Dial has already connected. Returning an error here dropped the
