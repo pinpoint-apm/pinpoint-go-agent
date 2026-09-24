@@ -115,6 +115,10 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **`ppgohbase.WrapClient(c, zkquorum)`** wraps a `gohbase.Client` created
+  elsewhere the way `ppgohbase.NewClient` wraps the one it creates
+  (idempotent). The compile-time instrumentation tool uses it from its
+  `gohbase.NewClient` hook (agent_changes 19).
 - **`ppredigo.WrapConn(c, address)`** wraps a `redis.Conn` dialed elsewhere
   the way `ppredigo.Dial` wraps the one it dials (idempotent). The compile-time
   instrumentation tool uses it from its `redis.DialContext` hook
