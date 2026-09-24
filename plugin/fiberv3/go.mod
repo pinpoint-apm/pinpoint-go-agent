@@ -9,7 +9,10 @@ require (
 	github.com/stretchr/testify v1.11.1
 )
 
-require github.com/valyala/fasthttp v1.73.0 // indirect
+require (
+	github.com/valyala/fasthttp v1.73.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
+)
 
 require (
 	github.com/andybalholm/brotli v1.2.2 // indirect
@@ -52,7 +55,6 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.0.0-20201208040808-7e3f01d25324 // indirect
-	google.golang.org/genproto v0.0.0-20220519153652-3a47de7e79bd // indirect
 	google.golang.org/grpc v1.82.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/ini.v1 v1.66.4 // indirect
