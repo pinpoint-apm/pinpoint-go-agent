@@ -115,6 +115,11 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **`pphttprouter.WrapHandle(handler, path ...string)`** takes the route
+  pattern as an optional second argument and then collects URL statistics as
+  `pphttprouter.New()` does; existing calls are unchanged. The compile-time
+  instrumentation tool passes the pattern from the `(*Router).Handle` it hooks
+  (agent_changes 15).
 - **`ppgorm.Instrument(db)`** registers the gorm plugin's callbacks on a
   `*gorm.DB` opened elsewhere, idempotently; `ppgorm.Open` now calls it. The
   compile-time instrumentation tool uses it from its `gorm.Open` hook

@@ -381,3 +381,32 @@ func TestWrapHandle_PassesThroughWhenAgentDisabled(t *testing.T) {
 	require.True(t, called, "the handler did not run")
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 }
+
+// WrapHandle given the route pattern collects the URL statistic under it and
+// still traces and routes the call; the one-argument form keeps working.
+func TestWrapHandle_WithPathCollectsUrlStat(t *testing.T) {
+	startAgent(t, pinpoint.WithHttpUrlStatEnable(true))
+
+	r := httprouter.New()
+	var tracer pinpoint.Tracer
+	r.GET("/hello/:name", WrapHandle(func(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
+		tracer = pinpoint.TracerFromRequestContext(req)
+		w.WriteHeader(http.StatusNoContent)
+	}, "/hello/:name"))
+	r.GET("/plain", WrapHandle(func(w http.ResponseWriter, _ *http.Request, _ httprouter.Params) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	assert.NotPanics(t, func() {
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/hello/pinpoint", nil))
+	})
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	require.NotNil(t, tracer)
+	assert.True(t, tracer.IsSampled())
+	assert.Equal(t, "/hello/pinpoint", spanOf(t, tracer)["RpcName"])
+
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/plain", nil))
+	assert.Equal(t, http.StatusOK, rec.Code)
+}

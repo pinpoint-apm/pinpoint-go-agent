@@ -59,7 +59,7 @@ func main() {
 [Full Example Source](/plugin/httprouter/example/httprouter_server.go)
 
 This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
-But, WrapHandle function doesn't support URL Statistics feature.
+WrapHandle collects URL Statistics only when it is given the route pattern as its second argument, e.g. `pphttprouter.WrapHandle(hello, "/hello/:name")`; without it the statistics are skipped.
 
 ### Config Options
 * [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
