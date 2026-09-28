@@ -291,3 +291,7 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 - **`ShutdownOnSignal` is documented as exclusive with a host signal handler**,
   which receives every signal twice, and on Windows, where a process cannot
   re-raise a Ctrl-C, watches only SIGTERM by default.
+- **`ppgrpc`'s stream client interceptor no longer appends into gRPC's shared
+  call options.** Without per-call options a stream is handed the
+  `ClientConn`'s default option slice, and concurrent streams raced over its
+  spare capacity and swapped each other's `OnFinish`.

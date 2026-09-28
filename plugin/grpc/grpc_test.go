@@ -548,6 +548,29 @@ func TestStreamClientInterceptor_StreamerError(t *testing.T) {
 	assert.Nil(t, stream, "a failed streamer must not yield a stream to wrap")
 }
 
+// With no per-call options gRPC hands the interceptor the ClientConn's own
+// default option slice, which every stream on the connection shares, so the
+// OnFinish option must not land in that slice's spare capacity.
+func TestStreamClientInterceptor_DoesNotAppendIntoTheCallersOptions(t *testing.T) {
+	startAgent(t)
+
+	shared := make([]grpc.CallOption, 1, 4)
+	shared[0] = grpc.WaitForReady(true)
+	var got []grpc.CallOption
+	_, _ = StreamClientInterceptor()(
+		context.Background(),
+		&grpc.StreamDesc{StreamName: "Stream"},
+		lazyConn(t, "localhost:8080"),
+		"/testapp.Hello/Stream",
+		func(_ context.Context, _ *grpc.StreamDesc, _ *grpc.ClientConn, _ string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+			got = opts
+			return nil, errors.New("unavailable")
+		}, shared...)
+
+	assert.Len(t, got, 2, "the streamer gets the caller's option and OnFinish")
+	assert.Nil(t, shared[:2][1], "OnFinish was written into the caller's slice")
+}
+
 // forkingTracer records event pairing on itself and hands out a child tracer
 // for NewGoroutineTracer, so a test can tell which tracer a span event was
 // ended on.

@@ -171,7 +171,12 @@ func StreamClientInterceptor() grpc.StreamClientInterceptor {
 		// before the stream is returned. It reports the actual RPC status, whereas
 		// the stream context is canceled on success too. It also ends abandoned
 		// streams without a goroutine waiting on Context().Done().
-		opts = append(opts, grpc.OnFinish(cs.endSpan))
+		//
+		// Capped before the append: with no per-call options gRPC hands every
+		// stream the ClientConn's own default option slice, and an append into
+		// its spare capacity raced other streams and gave them this stream's
+		// OnFinish.
+		opts = append(opts[:len(opts):len(opts)], grpc.OnFinish(cs.endSpan))
 		var stream grpc.ClientStream
 		defer func() {
 			if stream == nil {
