@@ -70,10 +70,9 @@ func WrapProducer(producer *kafka.Producer, conf *kafka.ConfigMap) *Producer {
 
 // ProduceContext produces a given message with tracer context, as kafka.Producer.Produce does.
 //
-// With a deliveryChan, the span event is ended by the delivery report, so a
-// failed delivery is recorded on it, and the report is then forwarded to
-// deliveryChan. Without one, the delivery report goes to Events() as usual and
-// the span event covers only the enqueue.
+// The span event covers the enqueue, and the delivery report goes where
+// Produce sends it - deliveryChan, or Events() without one - untouched and in
+// librdkafka's order.
 func (p *Producer) ProduceContext(ctx context.Context, msg *kafka.Message, deliveryChan chan kafka.Event) error {
 	// A disabled agent traces nothing and injects nothing - not even the
 	// unsampled marker - so the message headers are left untouched. A nested
@@ -82,36 +81,16 @@ func (p *Producer) ProduceContext(ctx context.Context, msg *kafka.Message, deliv
 		return p.Producer.Produce(msg, deliveryChan)
 	}
 
-	if deliveryChan == nil {
-		tracer := newProducerTracer(pinpoint.FromContext(ctx), p.broker, msg)
-		defer tracer.EndSpanEvent()
-		err := p.Producer.Produce(msg, nil)
-		tracer.SpanEvent().SetError(err)
-		return err
-	}
-
-	// The report arrives on another goroutine, possibly after the caller's
-	// span has ended, so the delivery is tracked on a goroutine tracer.
-	tracer := newProducerTracer(pinpoint.FromContext(ctx).NewGoroutineTracer(), p.broker, msg)
-	reports := make(chan kafka.Event, 1)
-	if err := p.Producer.Produce(msg, reports); err != nil {
-		endProducerTracer(tracer, err)
-		return err
-	}
-	// ponytail: one goroutine per in-flight message. It parks forever if the
-	// producer is closed without Flush, exactly like a message the application
-	// itself would never get a report for. A single forwarder over a shared
-	// report channel keyed on msg.Opaque is the upgrade path if that matters.
-	go func() {
-		e := <-reports
-		var err error
-		if m, ok := e.(*kafka.Message); ok {
-			err = m.TopicPartition.Error
-		}
-		endProducerTracer(tracer, err)
-		deliveryChan <- e
-	}()
-	return nil
+	// The report is not intercepted to end the span event on it: that took a
+	// goroutine per message, which reordered the reports on a shared channel
+	// - and an application tracking the last delivered offset by them - and
+	// could still be sending after Flush returned, into a channel the
+	// application had closed.
+	tracer := newProducerTracer(pinpoint.FromContext(ctx), p.broker, msg)
+	defer tracer.EndSpanEvent()
+	err := p.Producer.Produce(msg, deliveryChan)
+	tracer.SpanEvent().SetError(err)
+	return err
 }
 
 func newProducerTracer(tracer pinpoint.Tracer, broker string, msg *kafka.Message) pinpoint.Tracer {
@@ -122,12 +101,6 @@ func newProducerTracer(tracer pinpoint.Tracer, broker string, msg *kafka.Message
 	se.SetDestination(broker)
 	tracer.Inject(&headerWriter{msg})
 	return tracer
-}
-
-func endProducerTracer(tracer pinpoint.Tracer, err error) {
-	tracer.SpanEvent().SetError(err)
-	tracer.EndSpanEvent()
-	tracer.EndSpan()
 }
 
 // isNested reports whether msg already carries a Pinpoint trace context - an

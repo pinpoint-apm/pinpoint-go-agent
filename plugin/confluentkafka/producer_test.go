@@ -61,9 +61,6 @@ func Test_ProduceContext_DeliveryChan(t *testing.T) {
 	startAgent(t)
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
 	defer tracer.EndSpan()
-	// A goroutine tracer forks off the caller's open span event, the one an
-	// instrumented handler always has.
-	defer tracer.NewSpanEvent("handler").EndSpanEvent()
 
 	p := newTestProducer(t)
 	msg := newMessage("widgets")
@@ -87,6 +84,36 @@ func Test_ProduceContext_DeliveryChan(t *testing.T) {
 		assert.Error(t, m.TopicPartition.Error, "a message to a broker that is not there fails")
 	case <-time.After(5 * time.Second):
 		t.Fatal("the delivery report never reached the application's channel")
+	}
+}
+
+// Reports on a shared delivery channel arrive in the order librdkafka sends
+// them, as with raw Produce: forwarding each through its own goroutine
+// reordered them, and an application tracking the last delivered offset by
+// them lost its place.
+func Test_ProduceContext_DeliveryChanKeepsReportOrder(t *testing.T) {
+	startAgent(t)
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
+	defer tracer.EndSpan()
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+
+	p := newTestProducer(t)
+	const n = 100
+	reports := make(chan kafka.Event, n)
+	for i := 0; i < n; i++ {
+		msg := newMessage("widgets")
+		msg.Opaque = i
+		require.NoError(t, p.ProduceContext(ctx, msg, reports))
+	}
+	for i := 0; i < n; i++ {
+		select {
+		case e := <-reports:
+			m, ok := e.(*kafka.Message)
+			require.True(t, ok, "%T", e)
+			require.Equal(t, i, m.Opaque, "reports out of order")
+		case <-time.After(5 * time.Second):
+			t.Fatalf("report %d never arrived", i)
+		}
 	}
 }
 

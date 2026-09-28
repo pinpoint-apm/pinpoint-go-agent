@@ -299,3 +299,8 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   caller's header map, which a template request shares with every
   `WithContext` copy: the writes raced, and the first transaction's headers
   made every later call look nested. `WrapClient` keeps a nil header nil too.
+- **`ppconfluentkafka.ProduceContext` hands delivery reports over untouched.**
+  A goroutine per message forwarded them, which reordered the reports on a
+  shared channel and could send after `Flush` into a channel the application
+  had closed. The span event now covers the enqueue with a delivery channel as
+  without one, so a failed delivery is no longer recorded on it.

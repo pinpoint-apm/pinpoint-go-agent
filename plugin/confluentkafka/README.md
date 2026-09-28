@@ -59,7 +59,7 @@ func save(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-With a delivery channel, the span event ends when the delivery report arrives, so a failed delivery is recorded on it, and the report is then forwarded to the channel.
-Without one, the delivery report goes to `Events()` as usual and the span event covers only the enqueue.
+The span event covers the enqueue, and a failed enqueue is recorded on it.
+The delivery report goes where `Produce` sends it - the delivery channel, or `Events()` without one - untouched and in librdkafka's order.
 
 [Full Example Source](/plugin/confluentkafka/example/producer/producer.go)
