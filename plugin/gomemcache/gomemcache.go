@@ -46,7 +46,15 @@ type Client struct {
 
 // NewClient wraps memcache.New and returns a memcache.Client wrapper ready to instrument.
 func NewClient(server ...string) *Client {
-	c := &Client{Client: memcache.New(server...), endpoint: strings.Join(server, ",")}
+	return WrapClient(memcache.New(server...), strings.Join(server, ","))
+}
+
+// WrapClient wraps a *memcache.Client created elsewhere the way NewClient
+// wraps the one it creates; endpoint is what the span events report as the
+// endpoint (NewClient joins the server addresses with ","). The compile-time
+// instrumentation tool uses it from its memcache.New hook.
+func WrapClient(client *memcache.Client, endpoint string) *Client {
+	c := &Client{Client: client, endpoint: endpoint}
 	c.tracer.Store(&tracerBox{pinpoint.NoopTracer()})
 	return c
 }

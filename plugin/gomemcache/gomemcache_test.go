@@ -157,6 +157,23 @@ func TestNewClient_EndpointJoinsEveryServer(t *testing.T) {
 	assert.Equal(t, "127.0.0.1:1,127.0.0.2:1", tracer.last().endPoint)
 }
 
+// WrapClient wraps a client created elsewhere exactly as NewClient wraps the
+// one it creates: the endpoint given is recorded and, until WithContext, the
+// wrapper records nothing.
+func TestWrapClient(t *testing.T) {
+	addr := closedAddr(t)
+	raw := memcache.New(addr)
+	c := WrapClient(raw, "cache-pool")
+	assert.Same(t, raw, c.Client, "the wrapper must keep the client it was given")
+	assert.False(t, c.currentTracer().IsSampled(), "a wrapped client starts without a tracer")
+
+	tracer := newRecordingTracer()
+	_, _ = c.WithContext(pinpoint.NewContext(context.Background(), tracer)).Get("foo")
+
+	require.Len(t, tracer.events, 1)
+	assert.Equal(t, "cache-pool", tracer.last().endPoint)
+}
+
 // A client built from no server at all still has to record an endpoint field
 // rather than crash the first call.
 func TestNewClient_WithoutAServer(t *testing.T) {

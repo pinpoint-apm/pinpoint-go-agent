@@ -115,6 +115,10 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **`ppgomemcache.WrapClient(c, endpoint)`** wraps a `*memcache.Client` created
+  elsewhere the way `ppgomemcache.NewClient` wraps the one it creates;
+  `NewClient` now calls it. The compile-time instrumentation tool uses it from
+  its `memcache.New` hook (agent_changes 22).
 - **`ppsaramaibm.WrapSyncProducer(p, addrs)` / `WrapAsyncProducer(p, addrs, config)`**
   (and the same in `ppsarama`) wrap a producer created elsewhere the way
   `NewSyncProducer`/`NewAsyncProducer` wrap the one they create (idempotent);
