@@ -363,6 +363,15 @@ func TestSpan_TraceCallStackUncomparableErrorType(t *testing.T) {
 	assert.Equal(t, "pinpoint.uncomparableError", span.errorChains[0].className)
 }
 
+// wrapperError is a value-type wrapper, a comparable type whose == still
+// panics once Err holds an uncomparable error.
+type wrapperError struct {
+	Op  string
+	Err error
+}
+
+func (e wrapperError) Error() string { return e.Op + ": " + e.Err.Error() }
+
 func Test_sameError(t *testing.T) {
 	comparable := errors.New("x")
 	tests := []struct {
@@ -376,6 +385,9 @@ func Test_sameError(t *testing.T) {
 		{"one nil", comparable, nil, false},
 		{"different types", comparable, uncomparableError{"a"}, false},
 		{"same uncomparable type", uncomparableError{"a"}, uncomparableError{"a"}, false},
+		{"comparable wrapper, comparable field", wrapperError{"op", comparable}, wrapperError{"op", comparable}, true},
+		{"comparable wrapper, uncomparable field", wrapperError{"op", uncomparableError{"a"}}, wrapperError{"op", uncomparableError{"a"}}, false},
+		{"comparable wrapper, one uncomparable field", wrapperError{"op", comparable}, wrapperError{"op", uncomparableError{"a"}}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -285,3 +285,6 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   one another - an outage - each keeps its cache entry for up to 30 retry
   delays instead of being re-registered with a new id every couple of
   seconds; any delivery ends the wait.
+- **Recording a value-type error wrapper no longer panics.** With
+  `Error.TraceCallStack` on, comparing two `struct{ Err error }` values whose
+  `Err` held a slice-based error panicked on the request goroutine.
