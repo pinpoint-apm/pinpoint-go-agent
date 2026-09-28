@@ -462,6 +462,37 @@ func Test_responseWriter_PreservesOptionalInterfaces(t *testing.T) {
 	}
 }
 
+type closeNotifyWriter struct {
+	http.ResponseWriter
+	closed chan bool
+}
+
+func (w closeNotifyWriter) CloseNotify() <-chan bool { return w.closed }
+
+// gin's c.Stream asserts http.CloseNotifier unchecked, so every wrapper shape
+// must have it: delegated to a writer that has it, as net/http's own do, and
+// never firing for one that does not.
+func Test_responseWriter_CloseNotifier(t *testing.T) {
+	status := 0
+	closed := make(chan bool, 1)
+	wrapped := WrapResponseWriter(closeNotifyWriter{httptest.NewRecorder(), closed}, &status)
+	cn, ok := wrapped.(http.CloseNotifier) //nolint:staticcheck // the interface under test
+	require.True(t, ok)
+	closed <- true
+	assert.True(t, <-cn.CloseNotify(), "delegated to the underlying writer")
+
+	for mask := 0; mask < 8; mask++ {
+		original := responseWriterWithOptionalInterfaces(httptest.NewRecorder(), &optionalResponseWriter{}, mask)
+		cn, ok := WrapResponseWriter(original, &status).(http.CloseNotifier) //nolint:staticcheck // the interface under test
+		require.True(t, ok, "mask%03b", mask)
+		select {
+		case <-cn.CloseNotify():
+			t.Fatalf("mask%03b: fired for a writer that cannot notify", mask)
+		default:
+		}
+	}
+}
+
 // The status pointer follows the first final response status, as net/http does.
 func Test_responseWriter_StatusTracking(t *testing.T) {
 	t.Run("write without WriteHeader", func(t *testing.T) {

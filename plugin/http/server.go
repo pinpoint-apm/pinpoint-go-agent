@@ -715,6 +715,19 @@ func (w *responseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
+// CloseNotify keeps http.CloseNotifier, which net/http's own writers implement
+// and gin's c.Stream asserts unchecked: without it every streamed gin response
+// behind this wrapper panicked. Unlike the interfaces above it is on every
+// shape instead of doubling the combinations again - it is deprecated, and a
+// channel that never fires, what a writer without it gets, is a correct answer
+// for it: the client has not gone away as far as this writer can tell.
+func (w *responseWriter) CloseNotify() <-chan bool {
+	if cn, ok := w.ResponseWriter.(http.CloseNotifier); ok { //nolint:staticcheck // kept for the handlers that still assert it
+		return cn.CloseNotify()
+	}
+	return make(chan bool)
+}
+
 type serveMux struct {
 	*http.ServeMux
 }

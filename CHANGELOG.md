@@ -243,3 +243,8 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   stdlib), a connection whose rollback had just failed went back to the pool
   with its transaction open on the server, and go-ora's next statement
   committed it. The wrapper now has exactly the ones the driver has.
+- **`pphttp`'s response writer keeps `http.CloseNotifier`.** gin's `c.Stream`
+  asserts it unchecked, so every streamed gin response behind
+  `pphttp.WrapHandler` (and the chi, gorilla, beego and httprouter plugins that
+  use it) panicked with a 500. A writer without it gets a channel that never
+  fires.
