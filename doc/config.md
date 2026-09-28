@@ -606,6 +606,7 @@ Span.BatchSize option sets the max number of spans per SendSpanBatch request.
 * WithSpanBatchSize()
 * type: int
 * default: 50
+* range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
 
 ### Span.BatchFlushInterval
 Span.BatchFlushInterval option sets how long span batch sender waits for an available request permit.
@@ -644,10 +645,11 @@ Span.EventChunkSize option sets the size of span event chunk for gRPC.
 * WithSpanEventChunkSize()
 * type: int
 * default: 20
+* range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
 * dynamic
 
 ### Span.MaxCallStackDepth
-Span.MaxCallStackDepth option sets the max callstack depth of a span, if -1 is unlimited and min is 2.
+Span.MaxCallStackDepth option sets the max callstack depth of a span, if -1 is unlimited and min is 2. A value above 2147483647 (MaxInt32) is unlimited too.
 Events nested one level deeper than this value are still recorded and the next level overflows (with the default 64, up to 65 levels are recorded).
 
 * --pinpoint-span-maxcallstackdepth
@@ -658,7 +660,7 @@ Events nested one level deeper than this value are still recorded and the next l
 * dynamic
 
 ### Span.MaxCallStackSequence
-Span.MaxCallStackDepth option sets the max callstack sequence of a span, if -1 is unlimited and min is 4.
+Span.MaxCallStackSequence option sets the max callstack sequence of a span, if -1 is unlimited and min is 4. A value above 2147483647 (MaxInt32) is unlimited too.
 
 * --pinpoint-span-maxcallstacksequence
 * PINPOINT_GO_SPAN_MAXCALLSTACKSEQUENCE

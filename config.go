@@ -1019,6 +1019,17 @@ func cfgTypeName(valueType int) string {
 func convertCfgValue(valueType int, value interface{}) (interface{}, error) {
 	switch valueType {
 	case CfgInt:
+		// cast.ToIntE converts a float with int(f), which truncates a
+		// fraction and is implementation-defined for a value int cannot hold:
+		// .inf or 1e20 from a config file became MaxInt64 on arm64 and
+		// MinInt64 on amd64, so one file passed the range checks on one CPU
+		// and not on the other. Only a float holding an int converts.
+		if f, ok := value.(float32); ok {
+			value = float64(f)
+		}
+		if f, ok := value.(float64); ok && (f != math.Trunc(f) || f < math.MinInt || f >= math.MaxInt) {
+			return nil, fmt.Errorf("unable to cast %v to int", f)
+		}
 		return cast.ToIntE(value)
 	case CfgFloat:
 		return cast.ToFloat64E(value)
@@ -1226,9 +1237,10 @@ func (config *Config) publish() {
 	// values are invalid rather than another spelling of no expiry.
 	config.defaultIfOutOfRange(CfgSQLCacheExpireHours, 0, maxSqlCacheExpireHours)
 
-	if config.stagedInt(CfgSpanEventChunkSize) < 1 {
-		config.cfgMap[CfgSpanEventChunkSize].value = defaultEventChunkSize
-	}
+	// Dynamic, and a chunk's worth of span events is what every sampled
+	// request sizes its buffer by, so the upper bound is the typo guard the
+	// queues use.
+	config.defaultIfOutOfRange(CfgSpanEventChunkSize, 1, maxQueueSize)
 
 	// Dynamic key, and unlike the queues below a bad value here is silent data
 	// loss rather than a panic: with a limit of 0 or less, snapshot.count is
@@ -1255,9 +1267,7 @@ func (config *Config) publish() {
 	config.defaultIfOutOfRange(CfgStatBatchCount, 1, maxStatBatchCount)
 	config.defaultIfOutOfRange(CfgStatQueueSize, 1, maxQueueSize)
 	config.defaultIfOutOfRange(CfgCollectorGrpcSenderQueueSize, 1, maxQueueSize)
-	if config.stagedInt(CfgSpanBatchSize) < 1 {
-		config.cfgMap[CfgSpanBatchSize].value = defaultSpanBatchSize
-	}
+	config.defaultIfOutOfRange(CfgSpanBatchSize, 1, maxQueueSize)
 	if config.stagedInt(CfgSpanBatchFlushInterval) < 1 {
 		config.cfgMap[CfgSpanBatchFlushInterval].value = defaultSpanBatchFlushInterval
 	}
@@ -1284,8 +1294,10 @@ func (config *Config) publish() {
 	if config.stagedInt(CfgCollectorGrpcIdleTimeout) < 0 {
 		config.cfgMap[CfgCollectorGrpcIdleTimeout].value = grpcIdleTimeout
 	}
+	// The snapshot holds both as int32: a value above MaxInt32 is as unlimited
+	// as -1, where converting it wrapped to 0 or below and dropped every event.
 	maxDepth := config.stagedInt(CfgSpanMaxCallStackDepth)
-	if maxDepth == -1 {
+	if maxDepth == -1 || maxDepth > math.MaxInt32 {
 		maxDepth = math.MaxInt32
 	} else if maxDepth < minEventDepth {
 		maxDepth = minEventDepth
@@ -1293,7 +1305,7 @@ func (config *Config) publish() {
 	config.cfgMap[CfgSpanMaxCallStackDepth].value = maxDepth
 
 	maxSeq := config.stagedInt(CfgSpanMaxCallStackSequence)
-	if maxSeq == -1 {
+	if maxSeq == -1 || maxSeq > math.MaxInt32 {
 		maxSeq = math.MaxInt32
 	} else if maxSeq < minEventSequence {
 		maxSeq = minEventSequence

@@ -252,7 +252,7 @@ func defaultSpan(agent *agent) *span {
 	span.goroutineId.Store(-1)
 	span.asyncId = noneAsyncId
 	span.eventStack = newStack()
-	span.spanEvents = make([]*spanEvent, 0, span.cfg.spanEventChunkSize)
+	span.spanEvents = make([]*spanEvent, 0, eventChunkCap(span.cfg))
 	span.errorChains = make([]*exception, 0)
 	span.overflowSe.parent = &span
 
@@ -1122,12 +1122,20 @@ func (span *span) newEventChunk(final bool) *spanChunk {
 		endPoint:   span.endPoint,
 	}
 
-	capacity := span.cfg.spanEventChunkSize
+	capacity := eventChunkCap(span.cfg)
 	if final {
 		capacity = 0
 	}
 	span.spanEvents = make([]*spanEvent, 0, capacity)
 	return chunk
+}
+
+// eventChunkCap is what a span preallocates for its next chunk: the chunk
+// size, but no more than the default's, since the cut is decided by length
+// (appendEndedSpanEvent) and most spans end far below a large configured
+// size - which every sampled request would otherwise allocate up front.
+func eventChunkCap(cfg *configSnapshot) int {
+	return min(cfg.spanEventChunkSize, defaultEventChunkSize)
 }
 
 func (chunk *spanChunk) enqueue() bool {

@@ -938,6 +938,12 @@ func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
 		{CfgHttpUrlStatQueueSize, maxQueueSize + 1, defaultQueueSize},
 		{CfgCollectorGrpcSenderQueueSize, 0, defaultMetaQueueSize},
 		{CfgCollectorGrpcSenderQueueSize, maxQueueSize + 1, defaultMetaQueueSize},
+		// Every sampled request sized its chunk buffer by it, and every batch
+		// its slice: 1e7 allocated 76MiB a request.
+		{CfgSpanEventChunkSize, 0, defaultEventChunkSize},
+		{CfgSpanEventChunkSize, 1e7, defaultEventChunkSize},
+		{CfgSpanBatchSize, 0, defaultSpanBatchSize},
+		{CfgSpanBatchSize, 1e9, defaultSpanBatchSize},
 		{CfgStatCollectInterval, 0, 5000},
 		{CfgStatCollectInterval, 100, 5000},
 		{CfgStatCollectInterval, 999, 5000},
@@ -978,6 +984,40 @@ func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
 	assert.Equal(t, 10000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
 	assert.Equal(t, 100, c.Int(CfgStatBatchCount), CfgStatBatchCount)
 	assert.NotContains(t, buf.String(), "out of range")
+}
+
+// A float reaches an int option from a YAML, JSON or TOML file, or from Set.
+// int(f) is implementation-defined for a value int cannot hold, so .inf or
+// 1e20 took a different value on each CPU; only a float holding an int
+// converts.
+func Test_convertCfgValue_IntTakesOnlyIntegralFloats(t *testing.T) {
+	for _, v := range []interface{}{20.0, float32(20)} {
+		got, err := convertCfgValue(CfgInt, v)
+		assert.NoError(t, err)
+		assert.Equal(t, 20, got)
+	}
+	for _, v := range []interface{}{2.5, math.Inf(1), math.Inf(-1), math.NaN(), 1e20, -1e20} {
+		_, err := convertCfgValue(CfgInt, v)
+		assert.Error(t, err, "%v", v)
+	}
+}
+
+// The snapshot holds the call stack limits as int32, so a value above
+// MaxInt32 must mean unlimited like -1 rather than wrap to 0 and drop every
+// span event.
+func TestNewConfig_CallStackLimitsAboveMaxInt32AreUnlimited(t *testing.T) {
+	if math.MaxInt < 1<<32 {
+		t.Skip("int cannot hold a value above MaxInt32")
+	}
+	c, err := NewConfig(WithAppName("TestApp"))
+	assert.NoError(t, err)
+	c.Set(CfgSpanMaxCallStackDepth, int64(1)<<32)
+	c.Set(CfgSpanMaxCallStackSequence, int64(1)<<32+1)
+
+	assert.Equal(t, math.MaxInt32, c.Int(CfgSpanMaxCallStackDepth))
+	assert.Equal(t, math.MaxInt32, c.Int(CfgSpanMaxCallStackSequence))
+	assert.Equal(t, int32(math.MaxInt32), c.load().spanMaxEventDepth)
+	assert.Equal(t, int32(math.MaxInt32), c.load().spanMaxEventSequence)
 }
 
 // Collector.Grpc.IdleTimeout defaults to 0, which is grpc-go's documented

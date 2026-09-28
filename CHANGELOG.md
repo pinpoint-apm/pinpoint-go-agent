@@ -266,3 +266,15 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   marker: rejected as outside a transaction while the commit reported success,
   or a `WaitGroup` panic in `CommitTxn`. Both now hand sarama every accepted
   message first.
+- **`Span.EventChunkSize` and `Span.BatchSize` have an upper bound.** Only
+  values below 1 were refused, and every sampled request sized its chunk
+  buffer by the first (1e7 allocated 76MiB a request), every batch its slice
+  by the second. Both now take 1 to 65536 like the queue sizes, and a chunk
+  buffer is preallocated no larger than the default's 20 events.
+- **A float for an int option must hold an int.** `.inf` or `1e20` from a
+  config file converted through `int(f)`, which is implementation-defined: the
+  same file became MaxInt64 on arm64 and MinInt64 on amd64. A non-finite,
+  fractional or out-of-range float is now refused with the usual warning.
+- **`Span.MaxCallStackDepth`/`Span.MaxCallStackSequence` above MaxInt32 are
+  unlimited**, like -1, instead of wrapping to 0 or below and dropping every
+  span event.
