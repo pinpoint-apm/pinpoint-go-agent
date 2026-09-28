@@ -333,7 +333,7 @@ func (span *span) EndSpan() {
 	}
 
 	if dropped := span.errorChainDrop.Load(); dropped > 0 {
-		Log("span").Warnf("exception entry limit dropped %d error chain link(s): %s", dropped, span.operationName)
+		errorChainDroppedLog.warnf("exception entry limit dropped %d error chain link(s): %s", dropped, span.operationName)
 	}
 
 	if span.urlStat != nil {
@@ -650,7 +650,7 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 		span.releaseEventPosition(se.sequence)
 		span.eventOverflow.Add(1)
 		if span.eventOverflowLog.CompareAndSwap(false, true) {
-			Log("span").Warnf("callStack maximum depth/sequence exceeded. (depth=%d, seq=%d)", se.depth, se.sequence)
+			callStackOverflowLog.warnf("callStack maximum depth/sequence exceeded. (depth=%d, seq=%d)", se.depth, se.sequence)
 		}
 	} else {
 		span.appendSpanEvent(se)
@@ -1068,7 +1068,7 @@ func (span *span) AddMetric(metric string, value interface{}) {
 		if entry, ok := value.(*UrlStatEntry); ok && entry != nil {
 			span.collectUrlStat(entry, metric == MetricURLStatForce)
 		} else {
-			Log("span").Warnf("AddMetric: value for %s must be *UrlStatEntry", metric)
+			addMetricTypeLog.warnf("AddMetric: value for %s must be *UrlStatEntry", metric)
 		}
 	}
 }
@@ -1096,7 +1096,7 @@ func (span *span) canAddErrorChain() bool {
 	}
 	span.errorChainDrop.Add(1)
 	if span.errorChainDropLog.CompareAndSwap(false, true) {
-		Log("span").Warnf("exception entry limit reached, dropping further error chain links (entries=%d)", len(span.errorChains))
+		errorChainLimitLog.warnf("exception entry limit reached, dropping further error chain links (entries=%d)", len(span.errorChains))
 	}
 	return false
 }

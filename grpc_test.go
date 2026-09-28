@@ -921,6 +921,68 @@ func Test_sendMetaWorker_retriesUpToTheBound(t *testing.T) {
 	assert.Equal(t, int32(metaRetryMaxAttempts), failing.callCount(), "no send past the bound")
 }
 
+// The first give-up since a delivery is released at once, so the next use
+// re-registers the item as soon as the collector is over its failure. A run
+// of give-ups - an outage - holds each cache entry for up to metaGiveUpParks
+// retry delays: released at once, every hot key's next use minted a new id and
+// ran through the attempt budget again every couple of seconds for as long as
+// the collector was down. A delivery - the collector is back - releases it at
+// the next delay.
+func Test_sendMetaWorker_parksRepeatedGiveUpReleases(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agentGrpc, failing := newFailingMetaAgentGrpc(agent, status.Errorf(codes.Unavailable, "collector down"))
+	agentGrpc.retryDelay = 50 * time.Millisecond
+	agent.agentGrpc = agentGrpc
+
+	apiKey := apiCacheKey{"test.api", apiTypeInvocation}
+	apiCached := func() bool { _, ok := agent.apiCache.peek(apiKey); return ok }
+	assert.NotZero(t, agent.cacheSpanApi(apiKey.descriptor, apiKey.apiType))
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("meta", agent.sendMetaWorker)
+	defer func() {
+		agent.signalShutdown()
+		agent.workerWg.Wait()
+	}()
+
+	// Two delays for the attempts, well short of a park: only an immediate
+	// release gets there in time.
+	assert.Eventually(t, func() bool { return !apiCached() }, 10*agentGrpc.retryDelay, time.Millisecond,
+		"the first give-up since a delivery must be released at once")
+
+	// Re-registered, it gives up again with nothing delivered in between.
+	assert.NotZero(t, agent.cacheSpanApi(apiKey.descriptor, apiKey.apiType))
+	assert.Eventually(t, func() bool { return failing.callCount() == 2*metaRetryMaxAttempts },
+		5*time.Second, time.Millisecond)
+	assert.Never(t, func() bool { return !apiCached() }, 10*agentGrpc.retryDelay, time.Millisecond,
+		"a repeated give-up was released at once")
+	assert.Equal(t, int32(2*metaRetryMaxAttempts), failing.callCount(), "sent again while parked")
+
+	// Well inside the parks left (20 delays): only the delivery can release it.
+	agent.metaDelivered.Add(1) // another item got through: the collector is back
+	assert.Eventually(t, func() bool { return !apiCached() }, 5*agentGrpc.retryDelay, time.Millisecond,
+		"a delivery must end the park")
+}
+
+// Every metadata send fails while the collector is down, and an error line
+// per failed send buried the host's log: the send sites log once an interval
+// and say how many they held back.
+func Test_sendMetadata_failureLogIsThrottled(t *testing.T) {
+	metaSendLog = logThrottle{src: "grpc"}
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	agentGrpc, _ := newFailingMetaAgentGrpc(newTestAgent(defaultConfig()), status.Errorf(codes.Unavailable, "collector down"))
+	for i := 0; i < 100; i++ {
+		assert.Error(t, agentGrpc.sendStringMetadataOnce(1, "test.error"))
+	}
+	assert.Equal(t, 1, strings.Count(buf.String(), "send string metadata"), "logged per failed send")
+
+	metaSendLog.next.Store(0) // the interval elapses
+	assert.Error(t, agentGrpc.sendStringMetadataOnce(1, "test.error"))
+	assert.Contains(t, buf.String(), "(99 similar warning(s) suppressed)")
+}
+
 // A collector that is up but refusing (Unavailable) answers at once, so the
 // retry delay is the only thing spacing the attempts out: they must not fire
 // back to back against an already overloaded collector.
@@ -1010,12 +1072,13 @@ func Test_sendMetaWorker_movesOnAndReleasesCache(t *testing.T) {
 		return failing.callCount() == int32(2*metaRetryMaxAttempts)
 	}, 5*time.Second, 5*time.Millisecond, "worker must drain both items, got %d calls", failing.callCount())
 
+	// the failed items release their cache entries once their parks are
+	// served, which a zero retry delay makes immediate...
+	assert.Eventually(t, func() bool { return !apiCached() && !errCached() },
+		5*time.Second, time.Millisecond, "the given-up items' cache entries were never released")
+
 	agent.signalShutdown()
 	agent.workerWg.Wait()
-
-	// the failed items released their cache entries...
-	assert.False(t, apiCached())
-	assert.False(t, errCached())
 
 	// ...so the next use re-registers and re-enqueues the metadata. The
 	// request path is refused while stopping, so the phase is put back to

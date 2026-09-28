@@ -744,6 +744,21 @@ const metaRetryMaxAttempts = 3
 // budget would fire back to back against an already overloaded collector.
 const metaRetryDelay = time.Second
 
+// metaGiveUpParks is how many retry delays a given-up item's cache entry is
+// held before its release while give-ups follow one another with no delivery
+// between them, unless the collector delivers another item first. The first
+// give-up since a delivery is released at once: its next use re-registers it
+// under a fresh id, which is all a failure the collector is already over
+// needs. Released at once throughout an outage, though, each hot API, SQL or
+// error name minted a new id and cycled through its attempt budget every
+// couple of seconds - an RPC and an error line each time - for as long as the
+// collector stayed down; held, it cycles once per metaGiveUpParks delays. A
+// delivery means the collector is back, so the entry is released at its next
+// delay and the re-registration is not held up once the outage is over. The
+// schedule keeps a single delay (see metaRetryQueue), so a long wait is
+// served as repeated parks of one delay each.
+const metaGiveUpParks = 30
+
 // metaRetryQueueSize bounds the retry schedule. It is budgeted separately from
 // metaChan on purpose: while a collector outage lasts every failed send comes
 // back as a retry, and a shared budget would let those retries fill the queue
@@ -757,6 +772,19 @@ const metaRetryQueueSize = 1000
 // have in flight at once.
 const metaMaxConcurrentRequests = 4
 
+// The per-send log sites of the metadata and span batch paths are throttled:
+// while the collector is down every send fails, and a line per failed send -
+// several per hot metadata key a second, one per batch - buried the host's own
+// log. What was lost is still counted (dropReporter), and each line says how
+// many it held back.
+var (
+	metaSendLog         = logThrottle{src: "grpc"}
+	metaSkipLog         = logThrottle{src: "grpc"}
+	spanBatchSkipLog    = logThrottle{src: "grpc"}
+	spanBatchFailLog    = logThrottle{src: "grpc"}
+	spanBatchPartialLog = logThrottle{src: "grpc"}
+)
+
 // metaVerdict is what becomes of a metadata item after one send attempt.
 type metaVerdict int
 
@@ -766,8 +794,9 @@ const (
 	// metaRetryLater: a transport failure with attempt budget left. The item
 	// goes to the retry schedule; the cache entry stays.
 	metaRetryLater
-	// metaGiveUp: the attempt budget is spent. The cache entry is released at
-	// once so the next use registers the item again.
+	// metaGiveUp: the attempt budget is spent. The cache entry is released so
+	// the next use registers the item again: at once, or after up to
+	// metaGiveUpParks retry delays while the give-ups keep coming.
 	metaGiveUp
 	// metaRejected: a failure a retry cannot change. The cache entry is released
 	// after one metaRetryDelay rather than at once: the release is what makes
@@ -818,7 +847,7 @@ func (agentGrpc *agentGrpc) sendApiMetadata(in *pb.PApiMetaData) error {
 
 	err := metaResult(agentGrpc.metaClient.RequestApiMetaData(ctx, in))
 	if err != nil {
-		Log("grpc").Errorf("send api metadata - %v", err)
+		metaSendLog.errorf("send api metadata - %v", err)
 	}
 	return err
 }
@@ -844,7 +873,7 @@ func (agentGrpc *agentGrpc) sendStringMetadata(in *pb.PStringMetaData) error {
 
 	err := metaResult(agentGrpc.metaClient.RequestStringMetaData(ctx, in))
 	if err != nil {
-		Log("grpc").Errorf("send string metadata - %v", err)
+		metaSendLog.errorf("send string metadata - %v", err)
 	}
 	return err
 }
@@ -868,7 +897,7 @@ func (agentGrpc *agentGrpc) sendSqlMetadata(in *pb.PSqlMetaData) error {
 
 	err := metaResult(agentGrpc.metaClient.RequestSqlMetaData(ctx, in))
 	if err != nil {
-		Log("grpc").Errorf("send sql metadata - %v", err)
+		metaSendLog.errorf("send sql metadata - %v", err)
 	}
 
 	return err
@@ -893,7 +922,7 @@ func (agentGrpc *agentGrpc) sendSqlUidMetadata(in *pb.PSqlUidMetaData) error {
 
 	err := metaResult(agentGrpc.metaClient.RequestSqlUidMetaData(ctx, in))
 	if err != nil {
-		Log("grpc").Errorf("send sql uid metadata - %v", err)
+		metaSendLog.errorf("send sql uid metadata - %v", err)
 	}
 
 	return err
@@ -924,7 +953,7 @@ func (agentGrpc *agentGrpc) sendExceptionMetadata(in *pb.PExceptionMetaData) err
 	maxSize := agentGrpc.agent.config.Int(CfgCollectorGrpcMaxSendMessageSize)
 	if size := proto.Size(in); size > maxSize {
 		err := status.Errorf(codes.ResourceExhausted, "gRPC message exceeds maximum size: %d > %d", size, maxSize)
-		Log("grpc").Warnf("skip exception metadata - %v", err)
+		metaSkipLog.warnf("skip exception metadata - %v", err)
 		return err
 	}
 
@@ -933,7 +962,7 @@ func (agentGrpc *agentGrpc) sendExceptionMetadata(in *pb.PExceptionMetaData) err
 
 	err := metaResult(agentGrpc.metaClient.RequestExceptionMetaData(ctx, in))
 	if err != nil {
-		Log("grpc").Errorf("send exception metadata - %v", err)
+		metaSendLog.errorf("send exception metadata - %v", err)
 	}
 
 	return err
@@ -1532,7 +1561,7 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 		// Counted with the queue's head-drops: these spans are lost the same
 		// way, and reportSpanDrops would otherwise under-report the loss.
 		spanGrpc.agent.spanDrops.record(int64(len(chunks)))
-		Log("grpc").Infof(
+		spanBatchSkipLog.infof(
 			"SendSpanBatch skipped: %d spans dropped, no available permits within %s concurrentRequests:%d/%d",
 			len(chunks),
 			spanGrpc.batchFlushTimeout.String(),
@@ -1585,7 +1614,7 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 				// Lost like a head-drop or a permit skip, and counted with
 				// them, so reportSpanDrops covers every cause.
 				spanGrpc.agent.spanDrops.record(int64(len(chunks)))
-				Log("grpc").Infof("SendSpanBatch failed - %d spans dropped: %v", len(chunks), err)
+				spanBatchFailLog.infof("SendSpanBatch failed - %d spans dropped: %v", len(chunks), err)
 				return
 			}
 			handleSpanBatchResponse(response)
@@ -1645,7 +1674,7 @@ func handleSpanBatchResponse(response *pb.PSpanResultBatch) {
 	partialSuccess := response.GetPartialSuccess()
 	rejectedSpans := partialSuccess.GetRejectedSpans()
 	if rejectedSpans > 0 {
-		Log("grpc").Warnf(
+		spanBatchPartialLog.warnf(
 			"SendSpanBatch partial success: rejectedSpans=%d, errorId=%d, errorMessage=%s",
 			rejectedSpans,
 			partialSuccess.GetErrorId(),
@@ -1655,7 +1684,7 @@ func handleSpanBatchResponse(response *pb.PSpanResultBatch) {
 	}
 
 	if partialSuccess.GetErrorMessage() != "" {
-		Log("grpc").Infof(
+		spanBatchPartialLog.infof(
 			"SendSpanBatch warning: errorId=%d, %s",
 			partialSuccess.GetErrorId(),
 			partialSuccess.GetErrorMessage(),

@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
+	"github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 )
 
@@ -81,9 +82,14 @@ type agent struct {
 	spanDrops    dropReporter
 
 	// metaRetry holds metadata sends waiting out a retry delay, and rejected
-	// items waiting out their cache release, budgeted apart from metaChan.
+	// and given-up items waiting out their cache release, budgeted apart from
+	// metaChan. metaDelivered counts the items the collector accepted, which
+	// ends a given-up item's wait, and metaGiveUps the give-ups since the last
+	// of them, which decides whether there is a wait (metaGiveUpParks).
 	metaRetry      metaRetryQueue
 	metaRetryDrops dropReporter
+	metaDelivered  atomic.Int64
+	metaGiveUps    atomic.Int64
 
 	errorCache  *metaCache[string, int32]
 	errorIdGen  idGen
@@ -1140,8 +1146,15 @@ func (agent *agent) sendMetaWorker() {
 		agent.metaRetryDrops.report("meta retry", retry.capacity)
 
 		// A parked release needs no permit: it is the drop the rejection
-		// earned, delayed by one retry interval (metaRejected).
+		// earned, delayed by one retry interval (metaRejected), or a given-up
+		// item's, delayed by up to metaGiveUpParks of them unless the
+		// collector has delivered another item since.
 		if item.releaseOnly {
+			if item.parks > 0 && agent.metaDelivered.Load() == item.delivered {
+				item.parks--
+				agent.scheduleMetaRetry(item)
+				continue
+			}
 			agent.deleteMetaCache(item.md)
 			continue
 		}
@@ -1176,10 +1189,21 @@ func (agent *agent) sendMetadataOnce(item pendingMeta) {
 	err := agent.sendMetadata(item.md)
 	switch metaVerdictOf(err, attempts) {
 	case metaDelivered:
+		agent.metaDelivered.Add(1)
+		agent.metaGiveUps.Store(0)
 	case metaRetryLater:
 		agent.scheduleMetaRetry(pendingMeta{md: item.md, attempts: attempts})
 	case metaGiveUp:
-		agent.deleteMetaCache(item.md)
+		// The first give-up since a delivery is released at once, so a
+		// failure the collector is over by the next use re-registers
+		// right away; only a run of them - an outage - waits (metaGiveUpParks).
+		// Exception metadata is never cached, so there is nothing to wait with.
+		if _, ok := item.md.(exceptionMeta); ok || agent.metaGiveUps.Add(1) == 1 {
+			agent.deleteMetaCache(item.md)
+			return
+		}
+		agent.scheduleMetaRetry(pendingMeta{md: item.md, releaseOnly: true,
+			parks: metaGiveUpParks, delivered: agent.metaDelivered.Load()})
 	case metaRejected:
 		// Exception metadata is never cached, so there is nothing to park.
 		if _, ok := item.md.(exceptionMeta); ok {
@@ -1227,9 +1251,13 @@ type pendingMeta struct {
 	// attempts counts the sends made so far.
 	attempts int
 	dueAt    time.Time
-	// releaseOnly parks a rejected item: when it comes due only its cache
-	// entry is released, nothing is sent (metaRejected).
+	// releaseOnly parks a rejected or given-up item: when it comes due only
+	// its cache entry is released, nothing is sent (metaRejected). A given-up
+	// one is parked again while parks remain and nothing was delivered since
+	// the delivered count it was parked at (metaGiveUpParks).
 	releaseOnly bool
+	parks       int
+	delivered   int64
 }
 
 // metaRetryQueue is the time-ordered retry schedule. Every item waits the same
@@ -1763,6 +1791,10 @@ var (
 	malformedTraceIdLog, malformedSpanIdLog, malformedParentSpanIdLog logThrottle
 	endSpanTwiceLog, unclosedEventLog, noEventLog, sharedGoroutineLog logThrottle
 	afterEndSpanLog, misnestedEventLog                                logThrottle
+	// Latched once a span as well, but once a span is once a request for an
+	// endpoint that always overflows or always reaches the entry cap.
+	callStackOverflowLog, errorChainLimitLog, errorChainDroppedLog logThrottle
+	addMetricTypeLog                                               logThrottle
 )
 
 // acquire reports whether the site may log now and, if so, how many calls it
@@ -1778,6 +1810,18 @@ func (t *logThrottle) acquire() (held int64, ok bool) {
 }
 
 func (t *logThrottle) warnf(format string, args ...interface{}) {
+	t.logf(logrus.WarnLevel, format, args...)
+}
+
+func (t *logThrottle) errorf(format string, args ...interface{}) {
+	t.logf(logrus.ErrorLevel, format, args...)
+}
+
+func (t *logThrottle) infof(format string, args ...interface{}) {
+	t.logf(logrus.InfoLevel, format, args...)
+}
+
+func (t *logThrottle) logf(level logrus.Level, format string, args ...interface{}) {
 	n, ok := t.acquire()
 	if !ok {
 		return
@@ -1790,7 +1834,7 @@ func (t *logThrottle) warnf(format string, args ...interface{}) {
 	if src == "" {
 		src = "span"
 	}
-	Log(src).Warnf(format, args...)
+	Log(src).log(level, format, args...)
 }
 
 func (agent *agent) collectUrlStatWorker() {

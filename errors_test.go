@@ -480,6 +480,7 @@ func TestSpanEvent_SetErrorRecordsMaxChainDepthLinks(t *testing.T) {
 // errorChainDropLog claims parity with eventOverflowLog, which warns. Captured
 // on the global logger Log("span") actually writes to, not a local instance.
 func TestSpanEvent_SetErrorLogsDropAtDefaultLevel(t *testing.T) {
+	errorChainLimitLog = logThrottle{} // throttled process-wide, like the other span warnings
 	var buf bytes.Buffer
 	defer captureLogAt(&buf, logrus.InfoLevel)()
 

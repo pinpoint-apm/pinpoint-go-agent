@@ -278,3 +278,10 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 - **`Span.MaxCallStackDepth`/`Span.MaxCallStackSequence` above MaxInt32 are
   unlimited**, like -1, instead of wrapping to 0 or below and dropping every
   span event.
+- **A collector outage no longer floods the log or churns the metadata.** The
+  metadata send, span batch and per-span warnings are throttled to a line an
+  interval with a suppressed count. A metadata item out of attempts is still
+  released at once the first time since a delivery, but while give-ups follow
+  one another - an outage - each keeps its cache entry for up to 30 retry
+  delays instead of being re-registered with a new id every couple of
+  seconds; any delivery ends the wait.
