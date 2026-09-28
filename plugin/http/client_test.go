@@ -229,7 +229,27 @@ func TestDoClient(t *testing.T) {
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusTeapot, resp.StatusCode)
-	assert.NotEmpty(t, pinpointHeaders(t, req.Header), "DoClient injects into the request it is given")
+	assert.NotEmpty(t, pinpointHeaders(t, rt.sent.Header), "the request sent carries the trace")
+}
+
+// DoClient must leave the caller's request alone: a template reused per call
+// shares its header map with every req.WithContext copy, where the injected
+// headers raced each other and stayed behind, so every later call looked nested
+// and carried the first transaction's ids.
+func TestDoClient_LeavesTheCallersHeaderAlone(t *testing.T) {
+	startAgent(t)
+	tracer := serverTracer(t)
+
+	template, err := http.NewRequest(http.MethodGet, "http://example.com/callee", nil)
+	require.NoError(t, err)
+	rt := &recordingTransport{}
+	resp, err := DoClient((&http.Client{Transport: rt}).Do,
+		template.WithContext(pinpoint.NewContext(context.Background(), tracer)))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.NotEmpty(t, pinpointHeaders(t, rt.sent.Header), "the request sent carries the trace")
+	assert.Empty(t, pinpointHeaders(t, template.Header), "the caller's header map was written")
 }
 
 // As with WrapClient: no tracer means no transaction, so the call carries no

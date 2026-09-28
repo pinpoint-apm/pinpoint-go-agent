@@ -115,11 +115,30 @@ func DoClient(doFunc func(req *http.Request) (*http.Response, error), req *http.
 		return doFunc(req)
 	}
 
+	req = withOwnHeader(req)
 	tracer := before(pinpoint.TracerFromRequestContext(req), "http/Client.Do()", req)
 	resp, err := doFunc(req)
 	after(tracer, resp, err)
 
 	return resp, err
+}
+
+// withOwnHeader returns a shallow copy of req with a header map of its own for
+// the tracing headers: the caller's request stays as it was, which the
+// RoundTripper contract requires, and so does a map other requests share -
+// req.WithContext keeps it - where DoClient's writes raced and left the first
+// transaction's ids on every later call. The values are shared, since Set
+// replaces a key's slice rather than writing into it. A nil map stays nil,
+// for net/http to reject as it would have.
+func withOwnHeader(req *http.Request) *http.Request {
+	clone := *req
+	if req.Header != nil {
+		clone.Header = make(http.Header, len(req.Header))
+		for k, v := range req.Header {
+			clone.Header[k] = v
+		}
+	}
+	return &clone
 }
 
 type roundTripper struct {
@@ -190,15 +209,7 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		tracer = pinpoint.FromContext(req.Context())
 	}
 
-	// By the specification of http.RoundTripper, it requires that the given Request is not changed.
-	// We make a copy of the Request because pinpoint headers need to be added.
-	clone := *req
-	clone.Header = make(http.Header, len(req.Header))
-	for k, v := range req.Header {
-		clone.Header[k] = v
-	}
-	req = &clone
-
+	req = withOwnHeader(req)
 	tracer = before(tracer, "http/Client.Do()", req)
 	resp, err := r.original.RoundTrip(req)
 	after(tracer, resp, err)

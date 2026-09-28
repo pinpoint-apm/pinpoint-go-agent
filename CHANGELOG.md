@@ -295,3 +295,7 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   call options.** Without per-call options a stream is handed the
   `ClientConn`'s default option slice, and concurrent streams raced over its
   spare capacity and swapped each other's `OnFinish`.
+- **`pphttp.DoClient` injects into a copy of the request.** It wrote into the
+  caller's header map, which a template request shares with every
+  `WithContext` copy: the writes raced, and the first transaction's headers
+  made every later call look nested. `WrapClient` keeps a nil header nil too.
