@@ -352,8 +352,6 @@ func Test_sqlConn_PrepareContextFallback(t *testing.T) {
 func Test_sqlConn_OptionalInterfacePassthrough(t *testing.T) {
 	plain := newSqlConn(&fakeDriverConn{}, DBInfo{})
 	assert.NoError(t, plain.Ping(context.Background()), "no Pinger: succeed like database/sql")
-	assert.NoError(t, plain.ResetSession(context.Background()), "no SessionResetter: succeed")
-	assert.True(t, plain.IsValid(), "no Validator: assume valid")
 	assert.ErrorIs(t, plain.CheckNamedValue(&driver.NamedValue{}), driver.ErrSkip, "no checker: default handling")
 
 	checker := &checkerDriverConn{}
@@ -370,6 +368,61 @@ func Test_sqlConn_OptionalInterfacePassthrough(t *testing.T) {
 
 	assert.Equal(t, driver.DefaultParameterConverter,
 		stmt.ColumnConverter(0), "no ColumnConverter: default converter")
+}
+
+type resetterDriverConn struct {
+	fakeDriverConn
+	err error
+}
+
+func (c *resetterDriverConn) ResetSession(context.Context) error { return c.err }
+
+type validatorDriverConn struct {
+	fakeDriverConn
+	valid bool
+}
+
+func (c *validatorDriverConn) IsValid() bool { return c.valid }
+
+type sessionDriverConn struct {
+	resetterDriverConn
+	valid bool
+}
+
+func (c *sessionDriverConn) IsValid() bool { return c.valid }
+
+// database/sql keeps a connection after a rollback its context triggered only
+// when the driver has both SessionResetter and Validator - it asks whether they
+// exist, not what they answer - so the wrapper must have exactly the ones the
+// wrapped connection has, and pass their answers through.
+func Test_sqlConn_SessionInterfacesMatchDriver(t *testing.T) {
+	for _, tt := range []struct {
+		name                string
+		conn                driver.Conn
+		resetter, validator bool
+	}{
+		{"neither", &fakeDriverConn{}, false, false},
+		{"SessionResetter", &resetterDriverConn{err: driver.ErrBadConn}, true, false},
+		{"Validator", &validatorDriverConn{}, false, true},
+		{"both", &sessionDriverConn{resetterDriverConn: resetterDriverConn{err: driver.ErrBadConn}}, true, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			conn := newSqlConn(tt.conn, DBInfo{}).withSessionInterfaces()
+
+			r, isResetter := conn.(driver.SessionResetter)
+			assert.Equal(t, tt.resetter, isResetter)
+			if isResetter {
+				assert.ErrorIs(t, r.ResetSession(context.Background()), driver.ErrBadConn, "answer passed through")
+			}
+			v, isValidator := conn.(driver.Validator)
+			assert.Equal(t, tt.validator, isValidator)
+			if isValidator {
+				assert.False(t, v.IsValid(), "answer passed through")
+			}
+			_, isQueryer := conn.(driver.QueryerContext)
+			assert.True(t, isQueryer, "still the instrumented wrapper")
+		})
+	}
 }
 
 func Test_sqlConn_DirectExecutionFallbackPreservesNamedArguments(t *testing.T) {

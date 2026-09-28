@@ -87,7 +87,7 @@ func (d *sqlDriver) Open(name string) (driver.Conn, error) {
 
 	sc := newSqlConn(conn, d.dbInfo)
 	parseDSN(&sc.dbInfo, name)
-	return sc, nil
+	return sc.withSessionInterfaces(), nil
 }
 
 func (d *sqlDriver) OpenConnector(name string) (driver.Connector, error) {
@@ -116,7 +116,7 @@ func (c *sqlConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	if conn, err := c.Connector.Connect(ctx); err != nil {
 		return nil, err
 	} else {
-		return newSqlConn(conn, c.dbInfo), nil
+		return newSqlConn(conn, c.dbInfo).withSessionInterfaces(), nil
 	}
 }
 
@@ -136,6 +136,45 @@ func newSqlConn(conn driver.Conn, dbInfo DBInfo) *sqlConn {
 	}
 }
 
+// The shapes withSessionInterfaces returns: each adds to sqlConn exactly the
+// session interfaces of the connection it wraps.
+type (
+	sqlConnResetter struct {
+		*sqlConn
+		driver.SessionResetter
+	}
+	sqlConnValidator struct {
+		*sqlConn
+		driver.Validator
+	}
+	sqlConnResetterValidator struct {
+		*sqlConn
+		driver.SessionResetter
+		driver.Validator
+	}
+)
+
+// withSessionInterfaces returns c with SessionResetter and Validator exactly
+// when the wrapped connection has them. database/sql decides from their mere
+// presence (beginDC's keepConnOnRollback) whether a connection survives a
+// rollback its context triggered. Claiming both for a driver that has neither
+// - go-ora v2, the sqlite drivers - put a connection whose rollback had just
+// failed back in the pool with its transaction still open on the server,
+// where go-ora's next statement committed it.
+func (c *sqlConn) withSessionInterfaces() driver.Conn {
+	r, isResetter := c.Conn.(driver.SessionResetter)
+	v, isValidator := c.Conn.(driver.Validator)
+	switch {
+	case isResetter && isValidator:
+		return sqlConnResetterValidator{c, r, v}
+	case isResetter:
+		return sqlConnResetter{c, r}
+	case isValidator:
+		return sqlConnValidator{c, v}
+	}
+	return c
+}
+
 // cfg resolves the settings per operation rather than pinning the Config the
 // connection was opened with. A connection opened before NewAgent - a Ping
 // from package init, a pool warmed at startup - captured the noop agent's own
@@ -148,31 +187,18 @@ func (c *sqlConn) cfg() *configSnapshot {
 // The wrapper embeds the driver.Conn interface, which hides the underlying
 // connection's optional interfaces from database/sql's type assertions:
 // without the passthroughs below, a driver's custom argument types stop
-// converting (NamedValueChecker), dead connections get reused after network
-// blips (Validator/SessionResetter) and Ping degrades to a no-op. Each method
+// converting (NamedValueChecker) and Ping degrades to a no-op. Each method
 // delegates when the underlying connection implements the interface and
 // otherwise answers exactly as database/sql would have for a driver without
-// it.
+// it. SessionResetter and Validator cannot be answered that way, since their
+// presence alone changes database/sql's behavior; withSessionInterfaces adds
+// them only for a connection that has them.
 
 func (c *sqlConn) Ping(ctx context.Context) error {
 	if p, ok := c.Conn.(driver.Pinger); ok {
 		return p.Ping(ctx)
 	}
 	return nil
-}
-
-func (c *sqlConn) ResetSession(ctx context.Context) error {
-	if r, ok := c.Conn.(driver.SessionResetter); ok {
-		return r.ResetSession(ctx)
-	}
-	return nil
-}
-
-func (c *sqlConn) IsValid() bool {
-	if v, ok := c.Conn.(driver.Validator); ok {
-		return v.IsValid()
-	}
-	return true
 }
 
 func (c *sqlConn) CheckNamedValue(nv *driver.NamedValue) error {

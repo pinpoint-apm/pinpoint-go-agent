@@ -232,3 +232,14 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   caches (`SQL.Cache*`, `SQL.EnableRawSqlCache`) and the agent identity
   (`Uid.Version`, `ServiceName`, `ApiKey`). Each is described in
   [Configuration](doc/config.md).
+
+### Fixed
+
+- **A wrapped SQL driver no longer keeps a connection whose rollback failed.**
+  The wrapper claimed `driver.SessionResetter` and `driver.Validator` for every
+  driver, and database/sql decides from their presence alone whether a
+  connection survives a rollback its context triggered. For a driver with
+  neither (go-ora v2 in `plugin/oracle`, the sqlite drivers) or only one (pgx v5
+  stdlib), a connection whose rollback had just failed went back to the pool
+  with its transaction open on the server, and go-ora's next statement
+  committed it. The wrapper now has exactly the ones the driver has.
