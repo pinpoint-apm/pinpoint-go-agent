@@ -884,6 +884,11 @@ func (agent *agent) NewSpanTracer(operation string, rpcName string) Tracer {
 }
 
 func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
+	// NewSpanTracer delegates here: the SpanStart hook sees every root tracer.
+	return hookSpanStart(agent.newSpanTracerWithReader(operation, rpcName, reader))
+}
+
+func (agent *agent) newSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
 	if !agent.tracingEnabled() || reader == nil {
 		return NoopTracer()
 	}

@@ -22,7 +22,12 @@ func NewContext(ctx context.Context, tracer Tracer) context.Context {
 }
 
 // FromContext returns the Tracer from the context. If not present, NoopTracer is returned.
+// The registered tracer hooks (SetTracerHooks) see the result and may replace it.
 func FromContext(ctx context.Context) Tracer {
+	return hookFromContext(tracerFromContext(ctx))
+}
+
+func tracerFromContext(ctx context.Context) Tracer {
 	if ctx == nil {
 		return NoopTracer()
 	}

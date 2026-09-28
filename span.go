@@ -270,6 +270,7 @@ func newSampledSpan(agent *agent, operation string, rpcName string) *span {
 }
 
 func (span *span) EndSpan() {
+	hookSpanEnd(span)
 	// A second EndSpan would double-count the response time, re-enqueue the
 	// url stat and send a second final chunk with the same span id.
 	if !span.finished.CompareAndSwap(false, true) {
@@ -619,6 +620,7 @@ func splitTransactionId(tid string) (agentId string, startTime int64, sequence i
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
+	hookSpanEvent(span)
 	if span.warnAfterEndSpan("NewSpanEvent") {
 		return span
 	}

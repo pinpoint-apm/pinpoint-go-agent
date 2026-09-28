@@ -112,6 +112,7 @@ func newUnSampledSpan(agent *agent, rpcName string) *noopSpan {
 }
 
 func (span *noopSpan) EndSpan() {
+	hookSpanEnd(span)
 	// A second EndSpan must not double-count; the swap also orders EndSpan
 	// against SetError/SetFailure racing from other goroutines.
 	if span.withStats.CompareAndSwap(true, false) {
@@ -126,6 +127,7 @@ func (span *noopSpan) EndSpan() {
 }
 
 func (span *noopSpan) NewSpanEvent(operationName string) Tracer {
+	hookSpanEvent(span)
 	return span
 }
 

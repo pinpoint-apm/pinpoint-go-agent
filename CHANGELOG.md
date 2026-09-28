@@ -115,6 +115,14 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **`pinpoint.SetTracerHooks(TracerHooks)`** registers callbacks the core
+  calls with the agent's `Tracer`: `FromContext` sees (and may replace) the
+  tracer `FromContext` returns, `SpanStart` the tracer `NewSpanTracer`/
+  `NewSpanTracerWithReader` return, `SpanEvent` and `SpanEnd` run first in
+  `NewSpanEvent` and `EndSpan` of sampled and unsampled spans. The
+  compile-time instrumentation tool's goroutine-local tracer registers them
+  instead of instrumenting the core's functions by name (agent_changes 20).
+  Unregistered, each call site costs one atomic load.
 - **`ppconfluentkafka.WrapProducer(p, conf)`** wraps a `*kafka.Producer` created
   elsewhere the way `ppconfluentkafka.NewProducer` wraps the one it creates
   (the broker comes from the configuration's `bootstrap.servers`);
