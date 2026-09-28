@@ -115,6 +115,11 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **`ppconfluentkafka.WrapProducer(p, conf)`** wraps a `*kafka.Producer` created
+  elsewhere the way `ppconfluentkafka.NewProducer` wraps the one it creates
+  (the broker comes from the configuration's `bootstrap.servers`);
+  `NewProducer` now calls it. The compile-time instrumentation tool uses it
+  from its `kafka.NewProducer` hook (agent_changes 23).
 - **`ppgomemcache.WrapClient(c, endpoint)`** wraps a `*memcache.Client` created
   elsewhere the way `ppgomemcache.NewClient` wraps the one it creates;
   `NewClient` now calls it. The compile-time instrumentation tool uses it from

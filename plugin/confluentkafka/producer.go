@@ -48,8 +48,24 @@ func NewProducer(conf *kafka.ConfigMap) (*Producer, error) {
 	if err != nil {
 		return nil, err
 	}
-	servers, _ := conf.Get("bootstrap.servers", "")
-	return &Producer{Producer: producer, broker: firstBroker(servers.(string))}, nil
+	return WrapProducer(producer, conf), nil
+}
+
+// WrapProducer wraps a *kafka.Producer created elsewhere the way NewProducer
+// wraps the one it creates; conf is the producer's configuration, whose
+// first "bootstrap.servers" entry the span events report as the broker (a
+// nil conf or a missing entry: "Unknown", as NewProducer records it). The
+// compile-time instrumentation tool uses it from its kafka.NewProducer hook.
+func WrapProducer(producer *kafka.Producer, conf *kafka.ConfigMap) *Producer {
+	servers := ""
+	if conf != nil {
+		if v, err := conf.Get("bootstrap.servers", ""); err == nil {
+			if s, ok := v.(string); ok {
+				servers = s
+			}
+		}
+	}
+	return &Producer{Producer: producer, broker: firstBroker(servers)}
 }
 
 // ProduceContext produces a given message with tracer context, as kafka.Producer.Produce does.
