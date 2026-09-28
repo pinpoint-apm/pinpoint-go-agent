@@ -44,6 +44,97 @@ func newStubAsyncProducer() *stubAsyncProducer {
 	}
 }
 
+// newConfig is sarama's default configuration at the first Kafka version with
+// record headers: older sarama releases default to 0.8.2, below which the
+// wrapper writes no trace header at all.
+func newConfig() *sarama.Config {
+	config := sarama.NewConfig()
+	config.Version = sarama.V0_11_0_0
+	return config
+}
+
+// txnStubAsyncProducer records how many messages had reached sarama's input
+// when a transaction was ended.
+type txnStubAsyncProducer struct {
+	*stubAsyncProducer
+	committedWith, abortedWith int
+}
+
+func (s *txnStubAsyncProducer) CommitTxn() error { s.committedWith = len(s.input); return nil }
+func (s *txnStubAsyncProducer) AbortTxn() error  { s.abortedWith = len(s.input); return nil }
+
+// sarama ends a transaction behind the messages already on its own input, so
+// CommitTxn and AbortTxn must first hand it every message the wrapper accepted:
+// one still in the wrapper's buffer landed after the marker.
+func Test_asyncProducer_EndTxnForwardsAcceptedMessagesFirst(t *testing.T) {
+	stub := &txnStubAsyncProducer{stubAsyncProducer: newStubAsyncProducer()}
+	stub.onClose = func() {
+		close(stub.successes)
+		close(stub.errors)
+	}
+	p := wrapAsyncProducer(stub, nil, newConfig())
+
+	for i := 0; i < 4; i++ {
+		p.Input() <- &sarama.ProducerMessage{Topic: "widgets"}
+	}
+	require.NoError(t, p.CommitTxn())
+	assert.Equal(t, 4, stub.committedWith, "committed before the accepted messages reached sarama")
+
+	for i := 0; i < 4; i++ {
+		p.InputContext(context.Background(), &sarama.ProducerMessage{Topic: "widgets"})
+	}
+	require.NoError(t, p.AbortTxn())
+	assert.Equal(t, 8, stub.abortedWith, "aborted before the accepted messages reached sarama")
+
+	p.AsyncClose()
+	requireChannelsClosed(t, p)
+}
+
+// Below Kafka 0.11 sarama rejects every message carrying headers, so the
+// wrapper must leave a message's nil headers nil whenever it injects nothing -
+// no tracer in the context - and inject nothing on such a producer, even for a
+// sampled tracer, where the span must not then wait for an ack it cannot be
+// matched to.
+func TestProducers_WriteNoHeadersUnlessInjecting(t *testing.T) {
+	startAgent(t)
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
+	defer tracer.EndSpan()
+	// The async producer traces on a goroutine tracer, which needs an open
+	// event to link to.
+	defer tracer.NewSpanEvent("produce").EndSpanEvent()
+	kafka010 := sarama.NewConfig()
+	kafka010.Version = sarama.V0_10_2_0
+
+	for _, tt := range []struct {
+		name   string
+		ctx    context.Context
+		config *sarama.Config
+	}{
+		{"no tracer", context.Background(), newConfig()},
+		{"before Kafka 0.11", pinpoint.NewContext(context.Background(), tracer), kafka010},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := &sarama.ProducerMessage{Topic: "widgets"}
+			_, _, err := WrapSyncProducer(&stubSyncProducer{}, nil, tt.config).SendMessageContext(tt.ctx, msg)
+			require.NoError(t, err)
+			assert.Nil(t, msg.Headers, "sync producer")
+
+			tt.config.Producer.Return.Successes = true // acks end the spans
+			stub := newStubAsyncProducer()
+			stub.onClose = func() {
+				close(stub.successes)
+				close(stub.errors)
+			}
+			p := wrapAsyncProducer(stub, nil, tt.config)
+			p.InputContext(tt.ctx, &sarama.ProducerMessage{Topic: "widgets"})
+			assert.Nil(t, (<-stub.input).Headers, "async producer")
+			requireSpanCount(t, p, 0)
+			p.AsyncClose()
+			requireChannelsClosed(t, p)
+		})
+	}
+}
+
 type recordingSpanEvent struct {
 	pinpoint.SpanEventRecorder
 	err error
@@ -118,7 +209,7 @@ func requireSpanCount(t *testing.T, p *asyncProducer, want int) {
 // afterwards.
 func Test_asyncProducer_AsyncCloseDrainsInFlightAcks(t *testing.T) {
 	startAgent(t)
-	config := sarama.NewConfig()
+	config := newConfig()
 	config.Producer.Return.Successes = true
 
 	stub := newStubAsyncProducer()
@@ -198,7 +289,7 @@ func Test_asyncProducer_InputAckEndsTracer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := sarama.NewConfig()
+			config := newConfig()
 			config.Producer.Return.Successes = true
 
 			stub := newStubAsyncProducer()
@@ -256,7 +347,7 @@ func Test_asyncProducer_AsyncCloseDeliversBlockedInput(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := sarama.NewConfig()
+			config := newConfig()
 			config.Producer.Return.Successes = true
 
 			msg := &sarama.ProducerMessage{Topic: "topic"}
@@ -312,7 +403,7 @@ func Test_asyncProducer_InputContextAfterAsyncCloseReturns(t *testing.T) {
 		close(stub.successes)
 		close(stub.errors)
 	}
-	p := wrapAsyncProducer(stub, []string{"broker:9092"}, sarama.NewConfig())
+	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
 	p.AsyncClose()
 
 	returned := make(chan struct{})
@@ -338,7 +429,7 @@ func Test_asyncProducer_AsyncCloseDoesNotBlock(t *testing.T) {
 		close(stub.successes)
 		close(stub.errors)
 	}
-	p := wrapAsyncProducer(stub, []string{"broker:9092"}, sarama.NewConfig())
+	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
 
 	returned := make(chan struct{})
 	go func() {
@@ -362,7 +453,7 @@ func Test_asyncProducer_InputDuringAsyncCloseReturns(t *testing.T) {
 		close(stub.successes)
 		close(stub.errors)
 	}
-	p := wrapAsyncProducer(stub, []string{"broker:9092"}, sarama.NewConfig())
+	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
 
 	closeReturned := make(chan struct{})
 	go func() {
@@ -395,7 +486,7 @@ func Test_asyncProducer_InputAfterShutdownPanics(t *testing.T) {
 		close(stub.successes)
 		close(stub.errors)
 	}
-	p := wrapAsyncProducer(stub, []string{"broker:9092"}, sarama.NewConfig())
+	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
 	require.NoError(t, p.Close())
 	waitForClose(t, p.drainDone, "input drainer")
 
@@ -414,7 +505,7 @@ func Test_asyncProducer_InputAfterShutdownPanics(t *testing.T) {
 
 func Test_asyncProducer_UnderlyingInputPanicCleansTracer(t *testing.T) {
 	startAgent(t)
-	config := sarama.NewConfig()
+	config := newConfig()
 	config.Producer.Return.Successes = true
 
 	stub := newStubAsyncProducer()
@@ -444,7 +535,7 @@ func Test_asyncProducer_UnderlyingInputPanicCleansTracer(t *testing.T) {
 
 func Test_asyncProducer_ShutdownEndsRemainingTracer(t *testing.T) {
 	startAgent(t)
-	config := sarama.NewConfig()
+	config := newConfig()
 	config.Producer.Return.Successes = true
 
 	stub := newStubAsyncProducer()
@@ -471,7 +562,7 @@ func Test_asyncProducer_ShutdownEndsRemainingTracer(t *testing.T) {
 // Close must return the undelivered messages as ProducerErrors, like raw
 // sarama's Close, with every event drained through the wrapper.
 func Test_asyncProducer_CloseCollectsErrors(t *testing.T) {
-	config := sarama.NewConfig()
+	config := newConfig()
 
 	stub := newStubAsyncProducer()
 	stub.errors <- &sarama.ProducerError{
@@ -523,7 +614,7 @@ func Test_asyncProducer_NilConfigStillDeliversMessages(t *testing.T) {
 // ack already cleared.
 func Test_asyncProducer_RetriedMessageIsNested(t *testing.T) {
 	startAgent(t)
-	config := sarama.NewConfig()
+	config := newConfig()
 	config.Producer.Return.Successes = true
 
 	stub := newStubAsyncProducer()
@@ -561,7 +652,7 @@ func Test_asyncProducer_RetriedMessageIsNested(t *testing.T) {
 // message is handed to sarama.
 func Test_asyncProducer_NoErrorReturnsEndsSpansImmediately(t *testing.T) {
 	startAgent(t)
-	config := sarama.NewConfig()
+	config := newConfig()
 	config.Producer.Return.Successes = true
 	config.Producer.Return.Errors = false
 
@@ -604,7 +695,7 @@ func (t *gatedTracer) NewSpanEvent(string) pinpoint.Tracer {
 // Every message accepted before shutdown reaches sarama.
 func Test_asyncProducer_ShutdownForwardsAcceptedMessages(t *testing.T) {
 	startAgent(t)
-	config := sarama.NewConfig()
+	config := newConfig()
 	config.Producer.Return.Successes = true
 	config.Producer.Return.Errors = true
 
@@ -686,7 +777,7 @@ func Test_asyncProducer_CloseDrainsBufferedMessagesThroughBackpressure(t *testin
 	stub := newStubAsyncProducer()
 	stub.input = make(chan *sarama.ProducerMessage)
 	stub.onClose = func() { close(stub.successes); close(stub.errors) }
-	p := wrapAsyncProducer(stub, []string{"broker:9092"}, sarama.NewConfig())
+	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
 	const count = 32
 	messages := make([]*sarama.ProducerMessage, count)
 	for i := range messages {

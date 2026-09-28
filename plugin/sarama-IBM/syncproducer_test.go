@@ -36,7 +36,7 @@ func Test_newSyncProducerTracer_NestedMessageIsNotTraced(t *testing.T) {
 	}
 	before := append([]sarama.RecordHeader(nil), msg.Headers...)
 
-	tracer := newSyncProducerTracer(context.Background(), []string{"broker:9092"}, msg)
+	tracer := newSyncProducerTracer(context.Background(), &syncProducer{addrs: []string{"broker:9092"}}, msg)
 	tracer.EndSpanEvent()
 
 	assert.Equal(t, before, msg.Headers, "a nested message's headers are left untouched")
@@ -168,7 +168,7 @@ func Test_newSyncProducerTracer_RecordsTopicAndBroker(t *testing.T) {
 	msg := &sarama.ProducerMessage{Topic: "widgets"}
 
 	newSyncProducerTracer(pinpoint.NewContext(context.Background(), tracer),
-		[]string{"broker1:9092", "broker2:9092"}, msg).EndSpanEvent()
+		&syncProducer{addrs: []string{"broker1:9092", "broker2:9092"}}, msg).EndSpanEvent()
 
 	require.Len(t, tracer.events, 1, "one message must produce exactly one span event")
 	e := tracer.events[0]

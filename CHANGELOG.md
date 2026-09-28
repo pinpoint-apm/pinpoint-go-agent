@@ -132,13 +132,14 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   elsewhere the way `ppgomemcache.NewClient` wraps the one it creates;
   `NewClient` now calls it. The compile-time instrumentation tool uses it from
   its `memcache.New` hook (agent_changes 22).
-- **`ppsaramaibm.WrapSyncProducer(p, addrs)` / `WrapAsyncProducer(p, addrs, config)`**
+- **`ppsaramaibm.WrapSyncProducer(p, addrs, config)` / `WrapAsyncProducer(p, addrs, config)`**
   (and the same in `ppsarama`) wrap a producer created elsewhere the way
   `NewSyncProducer`/`NewAsyncProducer` wrap the one they create (idempotent);
-  those constructors now call them. A wrapped producer without an address
-  records no destination instead of panicking. The compile-time
-  instrumentation tool uses them from its `sarama.NewSyncProducer`/
-  `NewAsyncProducer` hooks (agent_changes 21).
+  those constructors now call them. `config` is the producer's configuration
+  (nil means sarama's default); its `Version` decides whether trace headers
+  are written. A wrapped producer without an address records no destination
+  instead of panicking. The compile-time instrumentation tool uses them from
+  its `sarama.NewSyncProducer`/`NewAsyncProducer` hooks (agent_changes 21).
 - **`ppgohbase.WrapClient(c, zkquorum)`** wraps a `gohbase.Client` created
   elsewhere the way `ppgohbase.NewClient` wraps the one it creates
   (idempotent). The compile-time instrumentation tool uses it from its
@@ -253,3 +254,15 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   kept the context read that request's user values and raced their writes. The
   parent is `context.Background()` again; the `RequestCtx` has no deadline and
   its `Done` closes only at server shutdown.
+- **The sarama producers no longer fail every message below Kafka 0.11.** The
+  header writer replaced a nil `Headers` with an empty slice even when nothing
+  was injected, and sarama rejects any message with non-nil headers below
+  `V0_11_0_0` - `Config.Version`'s default in the sarama releases `ppsarama`
+  supports. Headers are now written only when injected, and not at all on such a
+  producer.
+- **The sarama async producer keeps transactions intact.** `CommitTxn` and
+  `AbortTxn` went straight to sarama while accepted messages could still sit in
+  the wrapper's buffer, so they reached sarama after the end-of-transaction
+  marker: rejected as outside a transaction while the commit reported success,
+  or a `WaitGroup` panic in `CommitTxn`. Both now hand sarama every accepted
+  message first.

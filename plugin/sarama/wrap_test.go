@@ -16,11 +16,11 @@ import (
 func TestWrapSyncProducer(t *testing.T) {
 	startAgent(t)
 	stub := &stubSyncProducer{}
-	wrapped := WrapSyncProducer(stub, []string{"broker1:9092"})
+	wrapped := WrapSyncProducer(stub, []string{"broker1:9092"}, newConfig())
 	p, ok := wrapped.(*syncProducer)
 	require.True(t, ok, "WrapSyncProducer must return the plugin's wrapper")
 	assert.Equal(t, []string{"broker1:9092"}, p.addrs)
-	assert.Same(t, wrapped, WrapSyncProducer(wrapped, nil), "wrapping twice must return the same producer")
+	assert.Same(t, wrapped, WrapSyncProducer(wrapped, nil, nil), "wrapping twice must return the same producer")
 
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
 	defer tracer.EndSpan()
@@ -40,7 +40,7 @@ func TestWrapSyncProducer_WithoutAddress(t *testing.T) {
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
 	defer tracer.EndSpan()
 	stub := &stubSyncProducer{}
-	_, _, err := WrapSyncProducer(stub, nil).SendMessageContext(pinpoint.NewContext(context.Background(), tracer), &sarama.ProducerMessage{Topic: "widgets"})
+	_, _, err := WrapSyncProducer(stub, nil, nil).SendMessageContext(pinpoint.NewContext(context.Background(), tracer), &sarama.ProducerMessage{Topic: "widgets"})
 	require.NoError(t, err)
 	require.Len(t, stub.sent, 1)
 }

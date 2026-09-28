@@ -233,6 +233,12 @@ for msg := range pc.Messages() {
 Use `SendMessageContext` rather than `WithContext` + `SendMessage`:
 `WithContext` binds the tracer to the producer itself and is not thread-safe.
 
+The context travels in record headers, which Kafka has since 0.11. A sarama
+producer whose `Config.Version` is older - the default in older sarama
+releases - still records its span event but writes no header, since sarama
+rejects every message that carries one; set `Config.Version` to your brokers'
+version for the consumer to continue the transaction.
+
 ## Logging integration
 
 | Plugin package | Instrumented package | Entry point |

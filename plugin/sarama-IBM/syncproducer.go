@@ -19,10 +19,23 @@ type syncProducer struct {
 	sarama.SyncProducer
 	addrs []string
 	ctx   context.Context
+	// noHeaders is set for a producer whose Kafka version predates record
+	// headers (headersSupported).
+	noHeaders bool
 }
 
 type distributedTracingContextWriterProducer struct {
-	msg *sarama.ProducerMessage
+	msg   *sarama.ProducerMessage
+	grown bool
+}
+
+// headersSupported reports whether a producer configured with config can send
+// record headers. Below Kafka 0.11 sarama rejects every message that carries
+// any - and 0.8.2 is Config.Version's default in older sarama releases - so
+// such a producer propagates no trace context rather than losing every
+// message.
+func headersSupported(config *sarama.Config) bool {
+	return config.Version.IsAtLeast(sarama.V0_11_0_0)
 }
 
 // isNested reports whether msg already carries a Pinpoint trace context - an
@@ -42,21 +55,27 @@ func isNested(msg *sarama.ProducerMessage) bool {
 	return false
 }
 
-// newProducerHeaderWriter prepares msg for injection: the header slice is grown
-// once for the injected set instead of through the append doublings. The
-// caller has already ruled out a nested message (isNested), so Set is a plain
-// append onto headers that carry no Pinpoint context yet.
+// newProducerHeaderWriter returns the writer the trace context is injected into
+// msg through. The caller has already ruled out a nested message (isNested),
+// so Set is a plain append onto headers that carry no Pinpoint context yet.
 func newProducerHeaderWriter(msg *sarama.ProducerMessage) *distributedTracingContextWriterProducer {
-	const injectedHeaders = 10
-	if cap(msg.Headers)-len(msg.Headers) < injectedHeaders {
-		grown := make([]sarama.RecordHeader, len(msg.Headers), len(msg.Headers)+injectedHeaders)
-		copy(grown, msg.Headers)
-		msg.Headers = grown
-	}
 	return &distributedTracingContextWriterProducer{msg: msg}
 }
 
 func (m *distributedTracingContextWriterProducer) Set(key string, value string) {
+	// The slice is replaced on the first header written, never ahead of it:
+	// a message nothing is injected into - no tracer in the context - keeps
+	// its own slice, nil included, which a producer below Kafka 0.11 requires.
+	// It is grown once for the injected set instead of through the append
+	// doublings, into a new array, so no header is written into spare
+	// capacity the application's slice may share with another message.
+	if !m.grown {
+		const injectedHeaders = 10
+		grown := make([]sarama.RecordHeader, len(m.msg.Headers), len(m.msg.Headers)+injectedHeaders)
+		copy(grown, m.msg.Headers)
+		m.msg.Headers = grown
+		m.grown = true
+	}
 	m.msg.Headers = append(m.msg.Headers, sarama.RecordHeader{
 		Key:   []byte(key),
 		Value: []byte(value),
@@ -82,7 +101,7 @@ func (p *syncProducer) SendMessageContext(ctx context.Context, msg *sarama.Produ
 		return p.SyncProducer.SendMessage(msg)
 	}
 
-	defer newSyncProducerTracer(ctx, p.addrs, msg).EndSpanEvent()
+	defer newSyncProducerTracer(ctx, p, msg).EndSpanEvent()
 	partition, offset, err = p.SyncProducer.SendMessage(msg)
 	return partition, offset, err
 }
@@ -100,7 +119,7 @@ func (p *syncProducer) SendMessagesContext(ctx context.Context, msgs []*sarama.P
 
 	spans := make([]pinpoint.Tracer, len(msgs))
 	for i, msg := range msgs {
-		spans[i] = newSyncProducerTracer(ctx, p.addrs, msg)
+		spans[i] = newSyncProducerTracer(ctx, p, msg)
 	}
 
 	err := p.SyncProducer.SendMessages(msgs)
@@ -134,24 +153,29 @@ func NewSyncProducer(addrs []string, config *sarama.Config) (SyncProducer, error
 		return nil, err
 	}
 
-	return WrapSyncProducer(producer, addrs), nil
+	return WrapSyncProducer(producer, addrs, config), nil
 }
 
 // WrapSyncProducer wraps a sarama.SyncProducer created elsewhere the way
 // NewSyncProducer wraps the one it creates: SendMessageContext and
 // SendMessagesContext trace on the context given, SendMessage and
 // SendMessages on the one bound with WithContext. addrs are the broker
-// addresses; the first is the span event's destination. A producer that is
-// already wrapped is returned as it is. The compile-time instrumentation
-// tool uses it from its sarama.NewSyncProducer hook.
-func WrapSyncProducer(producer sarama.SyncProducer, addrs []string) SyncProducer {
+// addresses; the first is the span event's destination. config is the
+// producer's configuration (nil means sarama's default): below Kafka 0.11
+// (Config.Version) no trace header is written. A producer that is already
+// wrapped is returned as it is. The compile-time instrumentation tool uses it
+// from its sarama.NewSyncProducer hook.
+func WrapSyncProducer(producer sarama.SyncProducer, addrs []string, config *sarama.Config) SyncProducer {
 	if p, ok := producer.(*syncProducer); ok {
 		return p
 	}
-	return &syncProducer{SyncProducer: producer, addrs: addrs, ctx: context.Background()}
+	if config == nil {
+		config = sarama.NewConfig() // what sarama.NewSyncProducer substitutes for nil
+	}
+	return &syncProducer{SyncProducer: producer, addrs: addrs, ctx: context.Background(), noHeaders: !headersSupported(config)}
 }
 
-func newSyncProducerTracer(ctx context.Context, addrs []string, msg *sarama.ProducerMessage) pinpoint.Tracer {
+func newSyncProducerTracer(ctx context.Context, p *syncProducer, msg *sarama.ProducerMessage) pinpoint.Tracer {
 	if isNested(msg) {
 		return pinpoint.NoopTracer()
 	}
@@ -162,11 +186,13 @@ func newSyncProducerTracer(ctx context.Context, addrs []string, msg *sarama.Prod
 	se.SetServiceType(pinpoint.ServiceTypeKafkaClient)
 	se.Annotations().AppendString(pinpoint.AnnotationKafkaTopic, msg.Topic)
 	// A wrapped producer (WrapSyncProducer) may come without an address.
-	if len(addrs) > 0 {
-		se.SetDestination(addrs[0])
+	if len(p.addrs) > 0 {
+		se.SetDestination(p.addrs[0])
 	}
 
-	tracer.Inject(newProducerHeaderWriter(msg))
+	if !p.noHeaders {
+		tracer.Inject(newProducerHeaderWriter(msg))
+	}
 
 	return tracer
 }

@@ -164,7 +164,7 @@ func TestProducerToConsumerContinuesTheTransaction(t *testing.T) {
 
 	caller := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
 	produced := &sarama.ProducerMessage{Topic: "widgets"}
-	newSyncProducerTracer(pinpoint.NewContext(context.Background(), caller), []string{"broker1:9092"}, produced).EndSpanEvent()
+	newSyncProducerTracer(pinpoint.NewContext(context.Background(), caller), &syncProducer{addrs: []string{"broker1:9092"}}, produced).EndSpanEvent()
 	callerTxId := caller.TransactionId().String()
 	caller.EndSpan()
 

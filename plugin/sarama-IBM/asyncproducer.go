@@ -26,10 +26,49 @@ type asyncProducer struct {
 	inputDone    chan struct{}
 	ackDone      chan struct{}
 	drainDone    chan struct{}
+	flush        chan chan struct{}
 	closeOnce    sync.Once
 	ctx          context.Context
 	spans        map[string]pinpoint.Tracer
 	spansLock    sync.Mutex
+}
+
+// transactional is the part of sarama.AsyncProducer the wrapper intercepts
+// from sarama releases that have transactions; older ones cannot reach it.
+type transactional interface {
+	CommitTxn() error
+	AbortTxn() error
+}
+
+// CommitTxn and AbortTxn first hand sarama every message the wrapper has
+// accepted. sarama ends a transaction by queuing a marker on its own input
+// behind the messages sent before it, and a message still in the wrapper's
+// buffer reached sarama after the marker: rejected as outside a transaction
+// while the commit reported success, or racing the commit's wait into a
+// panic.
+func (p *asyncProducer) CommitTxn() error {
+	p.flushInput()
+	return p.AsyncProducer.(transactional).CommitTxn()
+}
+
+func (p *asyncProducer) AbortTxn() error {
+	p.flushInput()
+	return p.AsyncProducer.(transactional).AbortTxn()
+}
+
+// flushInput returns once the forwarder has handed sarama every message the
+// wrapper accepted before the call, or has gone.
+func (p *asyncProducer) flushInput() {
+	flushed := make(chan struct{})
+	select {
+	case p.flush <- flushed:
+	case <-p.inputDone:
+		return
+	}
+	select {
+	case <-flushed:
+	case <-p.inputDone:
+	}
 }
 
 // InputContext sends a given message with tracer context to the input channel of sarama.AsyncProducer.
@@ -172,6 +211,7 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 		inputDone:     make(chan struct{}),
 		ackDone:       make(chan struct{}),
 		drainDone:     make(chan struct{}),
+		flush:         make(chan chan struct{}),
 		ctx:           context.Background(),
 		spans:         make(map[string]pinpoint.Tracer),
 	}
@@ -222,6 +262,23 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 					msg, traced = m, true
 				case m := <-wrapped.input:
 					msg, traced = m, false
+				case flushed := <-wrapped.flush:
+					// A message accepted before the request may have been
+					// queued after takeInput looked, so the buffers are
+					// forwarded up to their lengths now, which covers it and
+					// ends even while other goroutines keep sending.
+					for n := len(wrapped.inputContext); n > 0; n-- {
+						if !wrapped.forward(<-wrapped.inputContext, true) {
+							return
+						}
+					}
+					for n := len(wrapped.input); n > 0; n-- {
+						if !wrapped.forward(<-wrapped.input, false) {
+							return
+						}
+					}
+					close(flushed)
+					continue
 				}
 			}
 			if !wrapped.forward(msg, traced) {
@@ -382,13 +439,17 @@ func newAsyncProducerTracer(tracer pinpoint.Tracer, addrs []string, msg *sarama.
 		se.SetDestination(addrs[0])
 	}
 
-	writer := newProducerHeaderWriter(msg)
-	tracer.Inject(writer)
-
+	// Without headers there is no ack id either, so the span is ended at save
+	// time instead of waiting in the span map for an ack it cannot be matched
+	// to.
 	id := ""
-	if trackAcks(config) && tracer.IsSampled() {
-		id = tracer.AsyncSpanId()
-		writer.Set(HeaderAsyncSpanId, id)
+	if headersSupported(config) {
+		writer := newProducerHeaderWriter(msg)
+		tracer.Inject(writer)
+		if trackAcks(config) && tracer.IsSampled() {
+			id = tracer.AsyncSpanId()
+			writer.Set(HeaderAsyncSpanId, id)
+		}
 	}
 
 	return tracer, id
