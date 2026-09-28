@@ -178,9 +178,15 @@ func NewAsyncProducer(addrs []string, config *sarama.Config) (AsyncProducer, err
 // configuration (nil means sarama's default): Producer.Return.Successes and
 // Errors decide whether delivery acks end the message spans. addrs are the
 // broker addresses; the first is the span event's destination. A producer
-// that is already wrapped is returned as it is. The compile-time
-// instrumentation tool uses it from its sarama.NewAsyncProducer hook.
+// that is already wrapped is returned as it is, and a nil one - what
+// sarama.NewAsyncProducer returns with its error - as nil: the wrapper's
+// delivery goroutine read its channels and crashed the process. The
+// compile-time instrumentation tool uses it from its sarama.NewAsyncProducer
+// hook.
 func WrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sarama.Config) AsyncProducer {
+	if producer == nil {
+		return nil
+	}
 	if p, ok := producer.(*asyncProducer); ok {
 		return p
 	}

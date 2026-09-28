@@ -68,3 +68,12 @@ func TestWrapAsyncProducer(t *testing.T) {
 	requireChannelsClosed(t, p)
 	waitForClose(t, p.drainDone, "input drainer")
 }
+
+// sarama.NewSyncProducer and NewAsyncProducer return nil with their error, and
+// the compile-time hook wraps whatever they return: a nil producer must come
+// back as a nil interface, not a wrapper around nil - whose delivery goroutine,
+// for the async one, crashed the process on the nil producer's channels.
+func TestWrapProducers_NilStaysNil(t *testing.T) {
+	assert.True(t, WrapSyncProducer(nil, nil, nil) == nil, "WrapSyncProducer(nil)")
+	assert.True(t, WrapAsyncProducer(nil, nil, nil) == nil, "WrapAsyncProducer(nil)")
+}

@@ -304,3 +304,6 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   shared channel and could send after `Flush` into a channel the application
   had closed. The span event now covers the enqueue with a delivery channel as
   without one, so a failed delivery is no longer recorded on it.
+- **`ppsarama`/`ppsaramaibm` `WrapSyncProducer(nil)` and `WrapAsyncProducer(nil)`
+  return nil.** The async wrapper's delivery goroutine read a nil producer's
+  channels and crashed the process.
