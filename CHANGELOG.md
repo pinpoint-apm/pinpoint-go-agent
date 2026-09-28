@@ -248,3 +248,8 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   `pphttp.WrapHandler` (and the chi, gorilla, beego and httprouter plugins that
   use it) panicked with a 500. A writer without it gets a channel that never
   fires.
+- **`ppfasthttp`'s tracer context no longer derives from the `RequestCtx`.**
+  fasthttp reuses the `RequestCtx` for the next request, so a goroutine that
+  kept the context read that request's user values and raced their writes. The
+  parent is `context.Background()` again; the `RequestCtx` has no deadline and
+  its `Done` closes only at server shutdown.

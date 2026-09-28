@@ -200,6 +200,25 @@ func TestWrapHandler_PutsSampledTracerInUserValue(t *testing.T) {
 	assert.Equal(t, "hello", string(ctx.Response.Body()))
 }
 
+// fasthttp reuses the RequestCtx for the next request, and its Value reads the
+// user values of whichever request it serves now. A context derived from it
+// handed a goroutine the handler started another request's values, so the
+// tracer's context must not reach them.
+func TestWrapHandler_TracerContextDoesNotReadRequestUserValues(t *testing.T) {
+	startAgent(t)
+
+	var traced context.Context
+	h := WrapHandler(func(ctx *fasthttp.RequestCtx) {
+		ctx.SetUserValue("tenant", "request-1")
+		traced = ctx.UserValue(CtxKey).(context.Context)
+	})
+	h(newRequestCtx(http.MethodGet, "http://localhost/hello"))
+
+	require.NotNil(t, traced)
+	assert.Nil(t, traced.Value("tenant"), "the tracer's context reads the pooled RequestCtx")
+	assert.True(t, pinpoint.FromContext(traced).IsSampled(), "the tracer is still there")
+}
+
 // The wrapper never converts the fasthttp request to a net/http one, so the
 // span attributes have to be read straight off the fasthttp context.
 func TestWrapHandler_RecordsRequestAttributesOnTheSpan(t *testing.T) {

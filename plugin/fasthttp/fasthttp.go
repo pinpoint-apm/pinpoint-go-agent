@@ -86,9 +86,13 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 
 		defer tracer.NewSpanEvent(handlerName).EndSpanEvent()
 
-		// Derive from the RequestCtx itself - it is a context.Context - so
-		// deadlines and values fasthttp carries stay visible downstream.
-		ctx.SetUserValue(CtxKey, pinpoint.NewContext(ctx, tracer))
+		// Not derived from the RequestCtx, although it is a context.Context:
+		// fasthttp reuses it for the next request once the handler returns,
+		// and its Value reads that request's user values, so a goroutine the
+		// handler started with this context read another request's values and
+		// raced their writes. It has no deadline, and its Done closes only at
+		// server shutdown, so nothing is lost.
+		ctx.SetUserValue(CtxKey, pinpoint.NewContext(context.Background(), tracer))
 		handler(ctx)
 		pphttp.RecordHttpHandlerError(tracer, ctx.Err())
 
