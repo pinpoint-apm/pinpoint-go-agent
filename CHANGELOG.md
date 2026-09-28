@@ -115,6 +115,13 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **`ppsaramaibm.WrapSyncProducer(p, addrs)` / `WrapAsyncProducer(p, addrs, config)`**
+  (and the same in `ppsarama`) wrap a producer created elsewhere the way
+  `NewSyncProducer`/`NewAsyncProducer` wrap the one they create (idempotent);
+  those constructors now call them. A wrapped producer without an address
+  records no destination instead of panicking. The compile-time
+  instrumentation tool uses them from its `sarama.NewSyncProducer`/
+  `NewAsyncProducer` hooks (agent_changes 21).
 - **`ppgohbase.WrapClient(c, zkquorum)`** wraps a `gohbase.Client` created
   elsewhere the way `ppgohbase.NewClient` wraps the one it creates
   (idempotent). The compile-time instrumentation tool uses it from its

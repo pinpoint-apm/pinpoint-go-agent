@@ -134,7 +134,21 @@ func NewSyncProducer(addrs []string, config *sarama.Config) (SyncProducer, error
 		return nil, err
 	}
 
-	return &syncProducer{SyncProducer: producer, addrs: addrs, ctx: context.Background()}, nil
+	return WrapSyncProducer(producer, addrs), nil
+}
+
+// WrapSyncProducer wraps a sarama.SyncProducer created elsewhere the way
+// NewSyncProducer wraps the one it creates: SendMessageContext and
+// SendMessagesContext trace on the context given, SendMessage and
+// SendMessages on the one bound with WithContext. addrs are the broker
+// addresses; the first is the span event's destination. A producer that is
+// already wrapped is returned as it is. The compile-time instrumentation
+// tool uses it from its sarama.NewSyncProducer hook.
+func WrapSyncProducer(producer sarama.SyncProducer, addrs []string) SyncProducer {
+	if p, ok := producer.(*syncProducer); ok {
+		return p
+	}
+	return &syncProducer{SyncProducer: producer, addrs: addrs, ctx: context.Background()}
 }
 
 func newSyncProducerTracer(ctx context.Context, addrs []string, msg *sarama.ProducerMessage) pinpoint.Tracer {
@@ -147,7 +161,10 @@ func newSyncProducerTracer(ctx context.Context, addrs []string, msg *sarama.Prod
 	se := tracer.SpanEvent()
 	se.SetServiceType(pinpoint.ServiceTypeKafkaClient)
 	se.Annotations().AppendString(pinpoint.AnnotationKafkaTopic, msg.Topic)
-	se.SetDestination(addrs[0])
+	// A wrapped producer (WrapSyncProducer) may come without an address.
+	if len(addrs) > 0 {
+		se.SetDestination(addrs[0])
+	}
 
 	tracer.Inject(newProducerHeaderWriter(msg))
 

@@ -131,7 +131,21 @@ func NewAsyncProducer(addrs []string, config *sarama.Config) (AsyncProducer, err
 		return nil, err
 	}
 
-	return wrapAsyncProducer(producer, addrs, config), nil
+	return WrapAsyncProducer(producer, addrs, config), nil
+}
+
+// WrapAsyncProducer wraps a sarama.AsyncProducer created elsewhere the way
+// NewAsyncProducer wraps the one it creates. config is the producer's
+// configuration (nil means sarama's default): Producer.Return.Successes and
+// Errors decide whether delivery acks end the message spans. addrs are the
+// broker addresses; the first is the span event's destination. A producer
+// that is already wrapped is returned as it is. The compile-time
+// instrumentation tool uses it from its sarama.NewAsyncProducer hook.
+func WrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sarama.Config) AsyncProducer {
+	if p, ok := producer.(*asyncProducer); ok {
+		return p
+	}
+	return wrapAsyncProducer(producer, addrs, config)
 }
 
 func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sarama.Config) *asyncProducer {
@@ -363,7 +377,10 @@ func newAsyncProducerTracer(tracer pinpoint.Tracer, addrs []string, msg *sarama.
 	se := tracer.SpanEvent()
 	se.SetServiceType(pinpoint.ServiceTypeKafkaClient)
 	se.Annotations().AppendString(pinpoint.AnnotationKafkaTopic, msg.Topic)
-	se.SetDestination(addrs[0])
+	// A wrapped producer (WrapAsyncProducer) may come without an address.
+	if len(addrs) > 0 {
+		se.SetDestination(addrs[0])
+	}
 
 	writer := newProducerHeaderWriter(msg)
 	tracer.Inject(writer)
