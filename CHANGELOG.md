@@ -288,3 +288,6 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 - **Recording a value-type error wrapper no longer panics.** With
   `Error.TraceCallStack` on, comparing two `struct{ Err error }` values whose
   `Err` held a slice-based error panicked on the request goroutine.
+- **`ShutdownOnSignal` is documented as exclusive with a host signal handler**,
+  which receives every signal twice, and on Windows, where a process cannot
+  re-raise a Ctrl-C, watches only SIGTERM by default.

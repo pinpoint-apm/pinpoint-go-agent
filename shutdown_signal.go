@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"syscall"
 )
@@ -29,9 +30,22 @@ var (
 )
 
 // defaultShutdownSignals are the signals ShutdownOnSignal watches when the
-// caller names none: SIGTERM is what container orchestrators and init systems
-// send on a rollout or stop, SIGINT is Ctrl-C in a terminal.
-var defaultShutdownSignals = []os.Signal{syscall.SIGTERM, os.Interrupt}
+// caller names none.
+var defaultShutdownSignals = shutdownSignalsFor(runtime.GOOS)
+
+// shutdownSignalsFor names them for goos: SIGTERM is what container
+// orchestrators and init systems send on a rollout or stop, SIGINT is Ctrl-C
+// in a terminal. Windows leaves Ctrl-C out: a process cannot raise it on
+// itself there, so the helper could not hand it back and the first Ctrl-C only
+// stopped the agent. Windows ends the process itself once a watched SIGTERM
+// (console close, logoff, shutdown) has been handled, so that one keeps its
+// flush.
+func shutdownSignalsFor(goos string) []os.Signal {
+	if goos == "windows" {
+		return []os.Signal{syscall.SIGTERM}
+	}
+	return []os.Signal{syscall.SIGTERM, os.Interrupt}
+}
 
 // ShutdownOnSignal calls agent.Shutdown() when the process receives one of
 // sigs, then hands the signal back to the process so it dies the way it would
@@ -44,16 +58,24 @@ var defaultShutdownSignals = []os.Signal{syscall.SIGTERM, os.Interrupt}
 // library must not do that silently: the host may have its own handler for the
 // same signals, and a process whose SIGTERM is consumed and never re-raised
 // does not exit until the orchestrator escalates to SIGKILL. With no sigs the
-// helper watches SIGTERM and SIGINT (os.Interrupt).
+// helper watches SIGTERM and SIGINT (os.Interrupt); SIGTERM alone on Windows.
 //
 // When a watched signal arrives the helper calls Shutdown(), which drains the
 // span queue for at most shutdownTimeout, restores the default disposition of
 // the signal with signal.Stop, and raises the same signal again. Under the
 // default disposition that terminates the process with exit status 128+signum,
-// exactly as it would have without the helper. If the host has its own
-// signal.Notify for the same signal, the re-raised signal is delivered to that
-// channel instead and the host decides what to do next - the helper never
-// calls os.Exit.
+// exactly as it would have without the helper. The helper never calls
+// os.Exit.
+//
+// It is for a program that does not handle these signals itself. One that does
+// gets each signal twice, from the operating system and from the re-raise: a
+// second SIGTERM, which a program treating it as "force quit" exits on, or,
+// once the program's own handler is gone - the stop of signal.NotifyContext -
+// the default disposition, which kills it in the middle of its graceful
+// shutdown. Such a program calls agent.Shutdown() from its own handler instead
+// (doc/troubleshooting.md). On Windows, where a process cannot raise a signal
+// on itself, SIGINT is not watched by default, and a SIGINT passed in sigs is
+// not handed back: the first one only stops the agent.
 //
 // The returned function stops watching: it calls signal.Stop and waits for the
 // watcher goroutine to exit. Call it once the agent is no longer wanted to

@@ -292,7 +292,9 @@ signal, with the same `128+signum` exit status it would have had, so
 orchestrators and shell scripts see nothing different. The agent never calls
 `os.Exit`. The returned `stop` function removes the watcher and ends its
 goroutine; call it when the agent is no longer wanted. It is safe alongside
-`defer agent.Shutdown()`: `Shutdown()` is idempotent.
+`defer agent.Shutdown()`: `Shutdown()` is idempotent. On Windows it watches
+only SIGTERM by default: a process cannot re-raise a Ctrl-C there, so a
+watched one would only stop the agent.
 
 This is **off by default**, and must stay opt-in, because `signal.Notify`
 changes process-wide state: it disables the default handling of every signal

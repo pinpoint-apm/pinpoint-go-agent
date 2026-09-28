@@ -1798,6 +1798,14 @@ func replaceRaiseSignal(t *testing.T) *[]os.Signal {
 	return raised
 }
 
+// A process cannot raise SIGINT on itself on Windows, so a watched Ctrl-C
+// could not be handed back there and the first one only stopped the agent;
+// Windows ends the process itself after a watched SIGTERM.
+func Test_shutdownSignalsFor(t *testing.T) {
+	assert.Equal(t, []os.Signal{syscall.SIGTERM}, shutdownSignalsFor("windows"))
+	assert.Equal(t, []os.Signal{syscall.SIGTERM, os.Interrupt}, shutdownSignalsFor("linux"))
+}
+
 // A watched signal must run Shutdown and then be re-raised, so the process
 // still dies of it with the usual 128+signum status once the agent is down.
 func Test_ShutdownOnSignal_ShutsDownAndReRaises(t *testing.T) {
