@@ -12,7 +12,7 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent/v2/asm"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/asm"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 )
 
