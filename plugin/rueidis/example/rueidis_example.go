@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	pprueidis "github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	pprueidis "github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/redis/rueidis"
 	"github.com/redis/rueidis/rueidishook"
 )

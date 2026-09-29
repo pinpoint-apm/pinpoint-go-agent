@@ -4,13 +4,13 @@ This package instruments the standard library's [log/slog](https://pkg.go.dev/lo
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/slog
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/slog/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/slog"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/slog/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/slog)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/slog)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/slog/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/slog/v2)
 
 This package allows additional transaction id and span id of the pinpoint span to be printed in the log message.
 Wrap the handler of your logger with NewHandler. The ids are taken from the context passed to the log call,
@@ -41,8 +41,8 @@ import (
     "log/slog"
     "os"
 
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/slog"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/slog/v2"
 )
 
 func logging(w http.ResponseWriter, r *http.Request) {

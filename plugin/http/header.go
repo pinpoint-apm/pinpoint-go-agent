@@ -3,7 +3,7 @@ package pphttp
 import (
 	"strings"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 type Header interface {

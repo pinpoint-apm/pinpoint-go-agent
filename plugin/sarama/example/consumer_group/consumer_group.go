@@ -7,8 +7,8 @@ import (
 	"os"
 
 	"github.com/Shopify/sarama"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	ppsarama "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
+	ppsarama "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 type exampleConsumerGroupHandler struct {

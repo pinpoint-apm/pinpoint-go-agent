@@ -4,13 +4,13 @@ This package instruments the [beego/v2](https://github.com/beego/beego) package.
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego/v2)
 
 ### server
 This package instruments inbound requests handled by a beego instance.
@@ -29,8 +29,8 @@ package main
 
 import (
     "github.com/beego/beego/v2/server/web"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego/v2"
 )
 
 func (m *MainController) Hello() {
@@ -73,8 +73,8 @@ req.AddFilters(ppbeego.ClientFilterChain(tracer))
 ``` go
 import (
 	"github.com/beego/beego/v2/client/httplib"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego/v2"
 )
 
 func (m *MainController) Get() {

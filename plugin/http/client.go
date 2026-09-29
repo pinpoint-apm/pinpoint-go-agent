@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 // NewHttpClientTracer is deprecated. Use WrapClient or DoClient.

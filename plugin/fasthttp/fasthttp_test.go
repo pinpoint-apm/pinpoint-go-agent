@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/valyala/fasthttp"

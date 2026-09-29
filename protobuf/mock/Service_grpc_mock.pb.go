@@ -9,7 +9,7 @@ package grpcmock
 
 import (
 	context "context"
-	protobuf "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	protobuf "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf"
 	mock "github.com/stretchr/testify/mock"
 	grpc "google.golang.org/grpc"
 	metadata "google.golang.org/grpc/metadata"

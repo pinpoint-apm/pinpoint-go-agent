@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	ppgoredisv9 "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv9"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppgoredisv9 "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv9/v2"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/redis/go-redis/v9"
 )
 

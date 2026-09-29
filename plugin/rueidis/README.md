@@ -4,13 +4,13 @@ This package instruments the [redis/rueidis](https://github.com/redis/rueidis) p
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis/v2)
 
 This package instruments the redis/rueidis calls.
 
@@ -36,8 +36,8 @@ err = client.Do(ctx, client.B().Set().Key("foo").Value("bar").Nx().Build()).Erro
 package main
 
 import (
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis/v2"
     "github.com/redis/rueidis"
     "github.com/redis/rueidis/rueidishook"
 )

@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/gocql/gocql"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 type Observer struct{}

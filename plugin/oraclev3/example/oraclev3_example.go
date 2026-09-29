@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func insertData(ctx context.Context, conn *sql.DB) error {

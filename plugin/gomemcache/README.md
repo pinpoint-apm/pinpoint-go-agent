@@ -4,13 +4,13 @@ This package instruments the [bradfitz/gomemcache](https://github.com/bradfitz/g
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache/v2)
 
 This package instruments the gomemcache calls. Use the NewClient as the memcache.New.
 
@@ -28,8 +28,8 @@ mc.Get("foo")
 ``` go
 import (
     "github.com/bradfitz/gomemcache/memcache"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache/v2"
 )
 
 func doMemcache(w http.ResponseWriter, r *http.Request) {

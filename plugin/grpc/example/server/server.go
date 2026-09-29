@@ -7,9 +7,9 @@ import (
 	"net"
 	"os"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/example/testapp"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2/example/testapp"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"google.golang.org/grpc"
 )
 

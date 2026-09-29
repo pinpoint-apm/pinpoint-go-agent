@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/gomodule/redigo/redis"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	ppredigo "github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	ppredigo "github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func redigo_test(w http.ResponseWriter, r *http.Request) {

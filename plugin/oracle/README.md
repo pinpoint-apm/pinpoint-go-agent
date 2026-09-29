@@ -17,13 +17,13 @@ This package instruments the [sijms/go-ora/v2](https://github.com/sijms/go-ora) 
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle/v2)
 
 This package instruments the Oracle driver calls.
 Use this package's driver in place of the Oracle driver.
@@ -42,8 +42,8 @@ row, err := db.QueryContext(ctx, "SELECT * FROM BONUS")
 ``` go
 import (
     "database/sql"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle/v2"
 )
 
 func query(w http.ResponseWriter, r *http.Request) {

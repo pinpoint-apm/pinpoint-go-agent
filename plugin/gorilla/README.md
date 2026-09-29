@@ -4,13 +4,13 @@ This package instruments the [gorilla/mux](https://github.com/gorilla/mux) packa
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla/v2)
 
 This package instruments inbound requests handled by a gorilla mux.Router.
 Register the Middleware as the middleware of the router to trace all handlers:
@@ -35,9 +35,9 @@ package main
 
 import (
     "github.com/gorilla/mux"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 )
 
 func hello(w http.ResponseWriter, r *http.Request) {

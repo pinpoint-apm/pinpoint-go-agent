@@ -11,9 +11,9 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	ppmongov2 "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriverv2"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	ppmongov2 "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriverv2/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func mongodb(w http.ResponseWriter, r *http.Request) {

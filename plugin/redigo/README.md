@@ -4,13 +4,13 @@ This package instruments the [gomodule/redigo](https://github.com/gomodule/redig
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo/v2)
 
 This package instruments the gomodule/redigo calls.
 Use the Dial, DialContext (or DialURL, DialURLContext) as the redis.Dial.
@@ -37,8 +37,8 @@ package main
 
 import (
     "github.com/gomodule/redigo/redis"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo/v2"
 )
 
 func redigo_test(w http.ResponseWriter, r *http.Request) {

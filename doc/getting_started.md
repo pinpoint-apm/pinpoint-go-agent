@@ -18,12 +18,12 @@ not about a launcher.
 ## Install
 ### Go get
 ```
-go get github.com/pinpoint-apm/pinpoint-go-agent
+go get github.com/pinpoint-apm/pinpoint-go-agent/v2
 ```
 
 ### import
 ``` go
-import "github.com/pinpoint-apm/pinpoint-go-agent"
+import "github.com/pinpoint-apm/pinpoint-go-agent/v2"
 ```
 
 ## Create an Agent
@@ -76,8 +76,8 @@ The complete example code for tracing the http server's handler is as follows:
 package main
 
 import (
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 )
 
 func index(w http.ResponseWriter, r *http.Request) {
@@ -143,8 +143,8 @@ package main
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin/v2"
 )
 
 func hello(c *gin.Context) {
@@ -173,7 +173,7 @@ db, err := sql.Open("mysql", "user:password@/dbname")
 ```
 you can use the pinpoint mysql plugin.
 ``` go
-import _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
+import _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2"
 
 db, err := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/information_schema")
 ```
@@ -185,8 +185,8 @@ package main
 import (
 	"database/sql"
 
-	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
-	github.com/pinpoint-apm/pinpoint-go-agent"
+	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2"
+	github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func query(w http.ResponseWriter, r *http.Request) {

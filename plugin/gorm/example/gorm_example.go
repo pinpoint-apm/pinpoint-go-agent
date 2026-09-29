@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	ppgorm "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
+	ppgorm "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm/v2"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )

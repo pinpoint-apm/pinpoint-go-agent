@@ -9,7 +9,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 // TraceHeaders are the response headers every server sets so the caller can

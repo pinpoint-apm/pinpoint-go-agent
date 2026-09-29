@@ -4,13 +4,13 @@ This package instruments the [denisenkom/go-mssqldb](https://github.com/denisenk
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql/v2)
 
 This package instruments the MS SQL Server driver calls.
 Use this package's driver in place of the SQL Server driver.
@@ -30,8 +30,8 @@ row, err := db.QueryContext(ctx, "SELECT * FROM Inventory")
 ``` go
 import (
     "database/sql"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql/v2"
 )
 
 func query(w http.ResponseWriter, r *http.Request) {

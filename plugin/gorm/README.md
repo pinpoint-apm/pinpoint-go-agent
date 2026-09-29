@@ -4,13 +4,13 @@ This package instruments the [go-gorm/gorm](https://github.com/go-gorm/gorm) pac
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm/v2)
 
 This package instruments the go-gorm/gorm calls. Use the Open as the gorm.Open.
 
@@ -29,9 +29,9 @@ g.Create(&Product{Code: "D42", Price: 100})
 package main
 
 import (
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm"
-    _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm/v2"
+    _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2"
     "gorm.io/driver/mysql"
     "gorm.io/gorm"
 )

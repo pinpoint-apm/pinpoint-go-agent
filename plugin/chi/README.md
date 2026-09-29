@@ -4,13 +4,13 @@ This package instruments the [go-chi/chi](https://github.com/go-chi/chi) package
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi/v2)
 
 This package instruments inbound requests handled by a chi.Router.
 Register the Middleware as the middleware of the router to trace all handlers:
@@ -35,8 +35,8 @@ import (
     "net/http"
 
     "github.com/go-chi/chi"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi/v2"
 )
 
 func hello(w http.ResponseWriter, r *http.Request) {

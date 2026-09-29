@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	"github.com/go-redis/redis"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 // Client wraps redis.Client.

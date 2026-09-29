@@ -4,13 +4,13 @@ This package instruments the [uber-go/zap](https://github.com/uber-go/zap) packa
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/zap
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/zap/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/zap"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/zap/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/zap)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/zap)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/zap/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/zap/v2)
 
 This package allows additional transaction id and span id of the pinpoint span to be printed in the log message.
 Use the NewField and pass the zap fields back to the logger.
@@ -41,8 +41,8 @@ sugar.Errorw("sugared log message", "foo", "bar")
 
 ``` go
 import (
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/zap"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/zap/v2"
     "go.uber.org/zap"
 )
 

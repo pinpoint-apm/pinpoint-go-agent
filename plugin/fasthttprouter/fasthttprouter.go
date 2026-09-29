@@ -10,7 +10,7 @@ package ppfasthttprouter
 
 import (
 	"github.com/fasthttp/router"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2"
 	"github.com/valyala/fasthttp"
 )
 

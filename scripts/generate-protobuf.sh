@@ -12,7 +12,7 @@ PROTOC_VERSION="${PROTOC_VERSION:-36.1}"
 PROTOC_GEN_GO_VERSION="${PROTOC_GEN_GO_VERSION:-v1.36.11}"
 PROTOC_GEN_GO_GRPC_VERSION="${PROTOC_GEN_GO_GRPC_VERSION:-v1.6.2}"
 PROTOC_GEN_GO_GRPCMOCK_VERSION="${PROTOC_GEN_GO_GRPCMOCK_VERSION:-v1.3.2}"
-MOCK_GO_PACKAGE="${MOCK_GO_PACKAGE:-github.com/pinpoint-apm/pinpoint-go-agent/protobuf;grpcmock}"
+MOCK_GO_PACKAGE="${MOCK_GO_PACKAGE:-github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf;grpcmock}"
 # Log.proto describes a log-shipping service this agent does not implement;
 # generating it would ship a client and a mock nothing ever calls.
 EXCLUDED_PROTOS="${EXCLUDED_PROTOS:-Log.proto}"

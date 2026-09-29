@@ -7,9 +7,9 @@ import (
 	"os"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	ppconfluentkafka "github.com/pinpoint-apm/pinpoint-go-agent/plugin/confluentkafka"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppconfluentkafka "github.com/pinpoint-apm/pinpoint-go-agent/plugin/confluentkafka/v2"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 var producer *ppconfluentkafka.Producer

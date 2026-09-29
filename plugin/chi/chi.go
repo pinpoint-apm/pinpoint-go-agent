@@ -15,7 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"net/http"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 )
 
 const serverName = "Chi HTTP Server"

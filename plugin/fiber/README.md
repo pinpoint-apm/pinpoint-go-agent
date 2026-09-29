@@ -4,13 +4,13 @@ This package instruments the [gofiber/fiber/v2](https://github.com/gofiber/fiber
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiber
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiber/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiber"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiber/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiber)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiber)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiber/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiber/v2)
 
 This package instruments inbound requests handled by a fiber instance.
 Register the Middleware as the middleware of the router to trace all handlers:
@@ -35,8 +35,8 @@ package main
 
 import (
     "github.com/gofiber/fiber/v2"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiber"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiber/v2"
 )
 
 func hello(c *fiber.Ctx) error {

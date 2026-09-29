@@ -4,13 +4,13 @@ This package instruments the [elastic/go-elasticsearch/v8](https://github.com/el
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv8
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv8/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv8"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv8/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv8)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv8)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv8/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv8/v2)
 
 This package instruments the go-elasticsearch/v8 calls.
 Use the NewTransport function as the elasticsearch.Client's Transport.
@@ -37,8 +37,8 @@ res, err = es.Search(
 import (
     "github.com/elastic/go-elasticsearch/v8"
     "github.com/elastic/go-elasticsearch/v8/esapi"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv8"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv8/v2"
 )
 
 func goelasticv8(w http.ResponseWriter, req *http.Request) {

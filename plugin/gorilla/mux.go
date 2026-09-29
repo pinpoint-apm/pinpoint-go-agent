@@ -15,7 +15,7 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 )
 
 const serverName = "Gorilla/Mux HTTP Server"

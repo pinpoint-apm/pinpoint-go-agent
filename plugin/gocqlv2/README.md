@@ -5,13 +5,13 @@ The v2 driver is published under the module path `github.com/apache/cassandra-go
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocqlv2
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocqlv2/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocqlv2"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocqlv2/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocqlv2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocqlv2)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocqlv2/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocqlv2/v2)
 
 This package instruments all queries created from gocql session.
 Use the NewObserver as the gocql.QueryObserver or gocql.BatchObserver:
@@ -29,8 +29,8 @@ It is necessary to pass the context containing the pinpoint.Tracer using the pin
 ``` go
 import (
     "github.com/apache/cassandra-gocql-driver/v2"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocqlv2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocqlv2/v2"
 )
 
 func doCassandra(w http.ResponseWriter, r *http.Request) {

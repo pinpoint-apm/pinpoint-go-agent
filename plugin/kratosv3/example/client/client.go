@@ -12,10 +12,10 @@ import (
 	"github.com/go-kratos/kratos/v3/errors"
 	transgrpc "github.com/go-kratos/kratos/v3/transport/grpc"
 	transhttp "github.com/go-kratos/kratos/v3/transport/http"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3"
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/example/helloworld"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/v2"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/v2/example/helloworld"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func main() {

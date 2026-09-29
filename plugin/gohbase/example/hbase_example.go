@@ -4,9 +4,9 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	ppgohbase "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppgohbase "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase/v2"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/tsuna/gohbase/filter"
 	"github.com/tsuna/gohbase/hrpc"
 )

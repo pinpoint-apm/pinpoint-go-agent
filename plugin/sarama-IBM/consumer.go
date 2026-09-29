@@ -53,7 +53,7 @@ import (
 	"strconv"
 
 	"github.com/IBM/sarama"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 // errNilConsumerMessage guards the Consume entry points: a nil message would

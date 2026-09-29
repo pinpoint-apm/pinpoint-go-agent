@@ -1,5 +1,5 @@
 ![ci](https://github.com/pinpoint-apm/pinpoint-go-agent/workflows/ci/badge.svg)
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/v2)
 
 # Pinpoint Go Agent
 
@@ -12,7 +12,7 @@ Developers can instrument Go applications using the APIs provided in this packag
 
 ## Installation
 ```
-go get github.com/pinpoint-apm/pinpoint-go-agent
+go get github.com/pinpoint-apm/pinpoint-go-agent/v2
 ```
 
 ## Requirements

@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"

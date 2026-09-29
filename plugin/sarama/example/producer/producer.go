@@ -7,9 +7,9 @@ import (
 	"os"
 
 	"github.com/Shopify/sarama"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	ppsarama "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	ppsarama "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 var fakeDB string

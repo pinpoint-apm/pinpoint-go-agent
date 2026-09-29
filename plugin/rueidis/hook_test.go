@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/redis/rueidis"
 	"github.com/redis/rueidis/rueidishook"
 	"github.com/stretchr/testify/assert"

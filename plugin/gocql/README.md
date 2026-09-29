@@ -4,13 +4,13 @@ This package instruments the [gocql](https://github.com/gocql/gocql) package.
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql/v2)
 
 This package instruments all queries created from gocql session.
 Use the NewObserver as the gocql.QueryObserver or gocql.BatchObserver:
@@ -28,8 +28,8 @@ It is necessary to pass the context containing the pinpoint.Tracer using the pin
 ``` go
 import (
     "github.com/gocql/gocql"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql/v2"
 )
 
 func doCassandra(w http.ResponseWriter, r *http.Request) {

@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-kratos/kratos/v3/transport"
 	transhttp "github.com/go-kratos/kratos/v3/transport/http"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/peer"

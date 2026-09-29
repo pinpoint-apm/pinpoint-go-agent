@@ -4,13 +4,13 @@ This package instruments the [tsuna/gohbase](https://github.com/tsuna/gohbase) p
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase/v2)
 
 This package instruments the gohbase calls. Use the NewClient as the gohbase.NewClient.
 
@@ -29,8 +29,8 @@ client.Put(putRequest)
 ``` go
 import (
     "github.com/tsuna/gohbase/hrpc"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase/v2"
 )
 
 func doHbase(w http.ResponseWriter, r *http.Request) {

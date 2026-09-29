@@ -7,8 +7,8 @@ import (
 	"os"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	ppconfluentkafka "github.com/pinpoint-apm/pinpoint-go-agent/plugin/confluentkafka"
+	ppconfluentkafka "github.com/pinpoint-apm/pinpoint-go-agent/plugin/confluentkafka/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func processMessage(ctx context.Context, msg *kafka.Message) error {

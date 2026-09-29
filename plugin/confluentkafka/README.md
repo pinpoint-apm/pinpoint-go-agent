@@ -4,15 +4,15 @@ This package instruments the [confluentinc/confluent-kafka-go](https://github.co
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/confluentkafka
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/confluentkafka/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/confluentkafka"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/confluentkafka/v2"
 ```
 confluent-kafka-go is a cgo binding to librdkafka, so `CGO_ENABLED=1` and a C compiler are required, as for the library itself.
 
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/confluentkafka)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/confluentkafka)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/confluentkafka/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/confluentkafka/v2)
 
 This package instruments Kafka consumers and producers.
 

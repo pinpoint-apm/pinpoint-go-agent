@@ -4,13 +4,13 @@ This package instruments the [fasthttp/router](https://github.com/fasthttp/route
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter/v2)
 
 This package instruments inbound requests handled by a fasthttp/router.Router.
 Use New() to trace all handlers:
@@ -26,9 +26,9 @@ Alternatively, the context of the request may be propagated where the context th
 
 ``` go
 import (
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter/v2"
     "github.com/valyala/fasthttp"
 )
 

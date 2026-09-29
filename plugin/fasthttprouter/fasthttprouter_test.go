@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"testing"
 
-	ppfasthttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp"
+	ppfasthttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/valyala/fasthttp"

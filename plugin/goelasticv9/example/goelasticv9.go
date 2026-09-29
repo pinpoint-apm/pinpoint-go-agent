@@ -16,9 +16,9 @@ import (
 
 	"github.com/elastic/go-elasticsearch/v9"
 	"github.com/elastic/go-elasticsearch/v9/esapi"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	ppgoelasticv9 "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv9"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppgoelasticv9 "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv9/v2"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 // The example below is referred from

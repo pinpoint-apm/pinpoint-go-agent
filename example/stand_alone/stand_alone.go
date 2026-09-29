@@ -11,9 +11,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func newSpan(name string) pinpoint.Tracer {

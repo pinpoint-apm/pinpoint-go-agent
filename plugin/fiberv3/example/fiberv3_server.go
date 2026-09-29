@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiberv3"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiberv3/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 // Handler

@@ -12,7 +12,7 @@
 package ppgorm
 
 import (
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"gorm.io/gorm"
 )
 

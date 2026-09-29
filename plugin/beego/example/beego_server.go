@@ -8,8 +8,8 @@ import (
 
 	"github.com/beego/beego/v2/client/httplib"
 	"github.com/beego/beego/v2/server/web"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func main() {

@@ -4,13 +4,13 @@ This package instruments the [jackc/pgx/v5](https://github.com/jackc/pgx) packag
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5/v2)
 
 This package instruments the jackc/pgx/v5.
 Use the NewTracer as the pgx.ConnConfig.Tracer.
@@ -31,8 +31,8 @@ rows := conn.QueryRow(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
 ``` go
 import (
     "github.com/jackc/pgx/v5"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5/v2"
 )
 
 func connect() *pgx.Conn {

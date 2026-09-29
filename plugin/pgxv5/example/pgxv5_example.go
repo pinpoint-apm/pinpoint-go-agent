@@ -11,9 +11,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	pppgxv5 "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	pppgxv5 "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 var connUrl = "postgresql://testuser:p123@localhost/testdb?sslmode=disable"

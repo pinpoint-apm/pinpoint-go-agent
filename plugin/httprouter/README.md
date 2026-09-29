@@ -4,13 +4,13 @@ This package instruments the [julienschmidt/httprouter](https://github.com/julie
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/httprouter
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/httprouter/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/httprouter"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/httprouter/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/httprouter)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/httprouter)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/httprouter/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/httprouter/v2)
 
 This package instruments inbound requests handled by a httprouter.Router.
 Use New() to trace all handlers:
@@ -34,8 +34,8 @@ Alternatively, the context of the request may be propagated where the context th
 ``` go
 import (
     "github.com/julienschmidt/httprouter"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/httprouter"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/httprouter/v2"
 )
 
 func Index(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {

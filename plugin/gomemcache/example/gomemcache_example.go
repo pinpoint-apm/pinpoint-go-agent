@@ -9,9 +9,9 @@ import (
 	"os"
 
 	"github.com/bradfitz/gomemcache/memcache"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	ppgomemcache "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppgomemcache "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache/v2"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func doMemcache(w http.ResponseWriter, r *http.Request) {

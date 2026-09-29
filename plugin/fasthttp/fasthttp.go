@@ -32,8 +32,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/valyala/fasthttp"
 )
 

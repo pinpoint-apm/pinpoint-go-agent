@@ -32,7 +32,7 @@ import (
 	"context"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 // Producer wraps the kafka.Producer and provides the additional function ProduceContext for trace.

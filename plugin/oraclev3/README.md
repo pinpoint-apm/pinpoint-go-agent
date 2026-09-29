@@ -17,13 +17,13 @@ This package instruments the [sijms/go-ora/v3](https://github.com/sijms/go-ora) 
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3/v2)
 
 This package instruments the Oracle driver calls.
 Use this package's driver in place of the Oracle driver.
@@ -42,8 +42,8 @@ row, err := db.QueryContext(ctx, "SELECT * FROM BONUS")
 ``` go
 import (
     "database/sql"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3/v2"
 )
 
 func query(w http.ResponseWriter, r *http.Request) {

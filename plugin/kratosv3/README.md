@@ -4,13 +4,13 @@ This package instruments the [go-kratos/kratos/v3](https://github.com/go-kratos/
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/v2)
 
 This package instruments kratos servers and clients.
 
@@ -42,8 +42,8 @@ import (
     "github.com/go-kratos/kratos/v3"
     "github.com/go-kratos/kratos/v3/transport"
     "github.com/go-kratos/kratos/v3/transport/http"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/v2"
 )
 
 type server struct {
@@ -94,8 +94,8 @@ reply, err := client.SayHello(pinpoint.NewContext(context.Background(), tracer),
 ``` go
 import (
     transhttp "github.com/go-kratos/kratos/v3/transport/http"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/v2"
 )
 
 func callHTTP(w http.ResponseWriter, r *http.Request) {

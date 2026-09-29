@@ -14,9 +14,9 @@ import (
 	"github.com/go-kratos/kratos/v3/transport"
 	"github.com/go-kratos/kratos/v3/transport/grpc"
 	"github.com/go-kratos/kratos/v3/transport/http"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/example/helloworld"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/v2/example/helloworld"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 // server is used to implement helloworld.GreeterServer.

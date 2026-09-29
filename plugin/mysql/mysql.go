@@ -16,7 +16,7 @@ import (
 	"net"
 
 	"github.com/go-sql-driver/mysql"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 var dbInfo = pinpoint.DBInfo{

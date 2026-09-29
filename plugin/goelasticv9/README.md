@@ -4,13 +4,13 @@ This package instruments the [elastic/go-elasticsearch/v9](https://github.com/el
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv9
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv9/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv9"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv9/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv9)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv9)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv9/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv9/v2)
 
 This package instruments the go-elasticsearch/v9 calls.
 Use the NewTransport function as the elasticsearch.Client's Transport.
@@ -37,8 +37,8 @@ res, err = es.Search(
 import (
     "github.com/elastic/go-elasticsearch/v9"
     "github.com/elastic/go-elasticsearch/v9/esapi"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv9"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelasticv9/v2"
 )
 
 func goelasticv9(w http.ResponseWriter, req *http.Request) {

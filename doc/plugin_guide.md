@@ -12,7 +12,7 @@ Every plugin is its **own Go module**, so you only take on the dependencies of
 the libraries you actually instrument:
 
 ```bash
-go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin
+go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin/v2
 ```
 
 Each package name is the directory prefixed with `pp` (`plugin/gin` is
@@ -69,14 +69,14 @@ HTTP and gRPC transports sit directly on `net/http` and grpc-go, so the
 [example/gokit](/example/gokit).
 
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin/v2"
 
 router := gin.Default()
 router.Use(ppgin.Middleware())
 ```
 
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 
 http.HandleFunc("/", pphttp.WrapHandlerFunc(index))
 ```
@@ -137,7 +137,7 @@ the driver name in `sql.Open` and pass a context carrying the tracer to the
 | [plugin/gorm](/plugin/gorm) | [go-gorm/gorm](https://github.com/go-gorm/gorm) | `Open` (wraps `gorm.Open`) |
 
 ```go
-import _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
+import _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2"
 
 db, _ := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/information_schema")
 

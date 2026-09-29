@@ -7,9 +7,9 @@ import (
 	"os"
 
 	"github.com/gocql/gocql"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	ppgocql "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppgocql "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql/v2"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func doCassandra(w http.ResponseWriter, r *http.Request) {

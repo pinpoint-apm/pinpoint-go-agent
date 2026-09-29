@@ -4,13 +4,13 @@ This package instruments the [lib/pq](https://github.com/lib/pq) package.
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql/v2)
 
 This package instruments the postgres driver calls.
 Use this package's driver in place of the postgres driver.
@@ -29,9 +29,9 @@ row := db.QueryRowContext(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
 
 ``` go
 import (
-    pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-    _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql"
+    pinpoint "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+    _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql/v2"
 )
 
 func query(w http.ResponseWriter, r *http.Request) {

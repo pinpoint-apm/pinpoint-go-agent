@@ -16,9 +16,9 @@ import (
 	"net/http"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	ppfasthttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppfasthttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 const serverName = "Fiber Server"

@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	empty "google.golang.org/protobuf/types/known/emptypb"

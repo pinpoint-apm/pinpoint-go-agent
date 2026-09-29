@@ -451,7 +451,7 @@ For a `database/sql` driver, prefer wrapping the driver over hand-writing
 events — that is what the SQL plugins do, in one call:
 
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent"
+import "github.com/pinpoint-apm/pinpoint-go-agent/v2"
 
 var dbInfo = pinpoint.DBInfo{
     DBType:    pinpoint.ServiceTypeMysql,
@@ -506,7 +506,7 @@ header/cookie recording, status handling, URL and method filters — without
 re-implementing it:
 
 ```go
-import pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+import pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 
 func handle(w http.ResponseWriter, r *http.Request) {
     tracer := pphttp.NewHttpServerTracer(r, "MyServer")

@@ -18,7 +18,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 // NewAttrs returns the transaction id and the span id of a pinpoint span as

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent/asm"
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/asm"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf"
 )
 
 var (

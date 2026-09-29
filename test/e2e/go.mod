@@ -3,9 +3,9 @@ module github.com/pinpoint-apm/pinpoint-go-agent/test/e2e
 go 1.25.0
 
 require (
-	github.com/pinpoint-apm/pinpoint-go-agent v1.4.4
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc v1.4.4
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.4.4
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2 v2.0.0
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0
+	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.11
 )
@@ -46,8 +46,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/pinpoint-apm/pinpoint-go-agent => ../..
+replace github.com/pinpoint-apm/pinpoint-go-agent/v2 => ../..
 
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/http => ../../plugin/http
+replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 => ../../plugin/http
 
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc => ../../plugin/grpc
+replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2 => ../../plugin/grpc

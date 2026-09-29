@@ -11,7 +11,7 @@ import (
 
 	"github.com/beego/beego/v2/client/httplib"
 	beegoContext "github.com/beego/beego/v2/server/web/context"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

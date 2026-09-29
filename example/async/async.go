@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func outGoingRequest(w http.ResponseWriter, ctx context.Context) {

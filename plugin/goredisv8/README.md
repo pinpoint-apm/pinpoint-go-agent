@@ -4,13 +4,13 @@ This package instruments the [go-redis/redis/v8](https://github.com/go-redis/red
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8/v2)
 
 This package instruments the go-redis/v8 calls. Use the NewHook or NewClusterHook as the redis.Hook.
 Only available in versions of go-redis with an AddHook() function.
@@ -32,8 +32,8 @@ package main
 
 import (
     "github.com/go-redis/redis/v8"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8/v2"
 )
 
 var redisClient *redis.Client

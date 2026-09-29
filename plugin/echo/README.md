@@ -21,13 +21,13 @@ This package instruments the [labstack/echo](https://github.com/labstack/echo) p
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo/v2)
 
 This package instruments inbound requests handled by an echo.Router.
 Register the Middleware as the middleware of the router to trace all handlers:
@@ -52,8 +52,8 @@ package main
 
 import (
     "github.com/labstack/echo"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo/v2"
 )
 
 func hello(c echo.Context) error {

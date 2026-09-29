@@ -1,7 +1,7 @@
 package pinpoint
 
 import (
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf"
 	"io"
 	"sync"
 	"time"

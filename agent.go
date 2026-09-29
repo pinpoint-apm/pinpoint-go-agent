@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf"
 	"github.com/spaolacci/murmur3"
 )
 

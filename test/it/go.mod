@@ -3,8 +3,8 @@ module github.com/pinpoint-apm/pinpoint-go-agent/test/it
 go 1.25.0
 
 require (
-	github.com/pinpoint-apm/pinpoint-go-agent v1.4.4
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v0.0.0-00010101000000-000000000000
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0
+	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0
 	github.com/stretchr/testify v1.8.0
 	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
@@ -47,6 +47,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/pinpoint-apm/pinpoint-go-agent => ../..
+replace github.com/pinpoint-apm/pinpoint-go-agent/v2 => ../..
 
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/http => ../../plugin/http
+replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 => ../../plugin/http

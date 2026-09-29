@@ -7,8 +7,8 @@ import (
 	"os"
 
 	"github.com/IBM/sarama"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 type exampleConsumerGroupHandler struct {

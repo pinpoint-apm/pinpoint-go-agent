@@ -4,13 +4,13 @@ This package instruments the [labstack/echo/v5](https://github.com/labstack/echo
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/echov5
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/echov5/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/echov5"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/echov5/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/echov5)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/echov5)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/echov5/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/echov5/v2)
 
 This package instruments inbound requests handled by an echo.Router.
 Register the Middleware as the middleware of the router to trace all handlers:
@@ -51,8 +51,8 @@ package main
 
 import (
     "github.com/labstack/echo/v5"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/echov5"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/echov5/v2"
 )
 
 func hello(c *echo.Context) error {

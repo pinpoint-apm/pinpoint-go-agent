@@ -4,13 +4,13 @@ This package instruments the [go-sql-driver/mysql](https://github.com/go-sql-dri
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2)
 
 This package instruments the mysql driver calls.
 Use this package's driver in place of the mysql driver.
@@ -29,8 +29,8 @@ row := db.QueryRowContext(ctx, "SELECT count(*) from tables")
 ``` go
 import (
     "database/sql"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2"
 )
 
 func query(w http.ResponseWriter, r *http.Request) {

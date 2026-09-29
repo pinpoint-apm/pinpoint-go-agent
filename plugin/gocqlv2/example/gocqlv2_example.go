@@ -7,9 +7,9 @@ import (
 	"os"
 
 	"github.com/apache/cassandra-gocql-driver/v2"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	ppgocqlv2 "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocqlv2"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppgocqlv2 "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocqlv2/v2"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func doCassandra(w http.ResponseWriter, r *http.Request) {

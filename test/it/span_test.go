@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

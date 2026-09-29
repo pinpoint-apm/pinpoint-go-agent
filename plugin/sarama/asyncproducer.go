@@ -5,7 +5,7 @@ import (
 	"sync"
 
 	"github.com/Shopify/sarama"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 // AsyncProducer wraps the sarama.AsyncProducer and provides additional function InputContext for trace.

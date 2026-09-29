@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"

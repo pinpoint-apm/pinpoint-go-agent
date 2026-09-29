@@ -1,11 +1,11 @@
-module github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter
+module github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter/v2
 
 go 1.25.0
 
 require (
 	github.com/fasthttp/router v1.5.4
-	github.com/pinpoint-apm/pinpoint-go-agent v1.4.4
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp v1.4.4
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2 v2.0.0
+	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0
 	github.com/stretchr/testify v1.8.0
 	github.com/valyala/fasthttp v1.73.0
 )
@@ -23,7 +23,7 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/pelletier/go-toml v1.9.5 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.1 // indirect
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.4.4 // indirect
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
@@ -54,8 +54,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/pinpoint-apm/pinpoint-go-agent => ../..
+replace github.com/pinpoint-apm/pinpoint-go-agent/v2 => ../..
 
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/http => ../http
+replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 => ../http
 
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp => ../fasthttp
+replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2 => ../fasthttp

@@ -1,7 +1,7 @@
 package main
 
 import (
-	ppgorilla "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla"
+	ppgorilla "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla/v2"
 	"io"
 	"log"
 	"math/rand"
@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func hello(w http.ResponseWriter, r *http.Request) {

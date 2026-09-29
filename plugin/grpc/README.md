@@ -4,13 +4,13 @@ This package instruments the [grpc/grpc-go](https://github.com/grpc/grpc-go) pac
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2)
 
 This package instruments gRPC servers and clients.
 
@@ -40,10 +40,10 @@ func (s *Server) UnaryCallUnaryReturn(ctx context.Context, msg *testapp.Greeting
 package main
 
 import (
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/example/testapp"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2/example/testapp"
     "google.golang.org/grpc"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2"
 )
 
 type Server struct{}
@@ -101,9 +101,9 @@ client.UnaryCallUnaryReturn(pinpoint.NewContext(context.Background(), tracer), g
 ``` go
 import (
     "google.golang.org/grpc"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/example/testapp"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2/example/testapp"
 )
 
 func unaryCallUnaryReturn(ctx context.Context, client testapp.HelloClient) {

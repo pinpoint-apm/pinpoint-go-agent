@@ -4,13 +4,13 @@ This package instruments the [mongodb/mongo-go-driver](https://github.com/mongod
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver/v2)
 
 This package instruments the mongo-go-driver calls.
 Use the NewMonitor as Monitor field of mongo-go-driver's ClientOptions.
@@ -34,8 +34,8 @@ import (
     "go.mongodb.org/mongo-driver/bson"
     "go.mongodb.org/mongo-driver/mongo"
     "go.mongodb.org/mongo-driver/mongo/options"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver/v2"
 )
 
 func mongodb(w http.ResponseWriter, r *http.Request) {

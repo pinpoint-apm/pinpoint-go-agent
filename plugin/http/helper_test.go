@@ -3,7 +3,7 @@ package pphttp
 import (
 	"testing"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/stretchr/testify/require"
 )
 

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/julienschmidt/httprouter"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/httprouter"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/httprouter/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func Index(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {

@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"github.com/IBM/sarama"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"io"
 	"log"
 	"net/http"

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/protobuf"
-	grpcmock "github.com/pinpoint-apm/pinpoint-go-agent/protobuf/mock"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf"
+	grpcmock "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"

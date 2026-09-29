@@ -4,13 +4,13 @@ Package pphttp instruments servers and clients that use net/http package.
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/http
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/http)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/http)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2)
 
 ### http server
 This package instruments inbound requests handled by a http.ServeMux.
@@ -36,8 +36,8 @@ package main
 
 import (
     "net/http"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 )
 
 func outGoing(w http.ResponseWriter, r *http.Request) {
@@ -98,8 +98,8 @@ It is necessary to pass the context containing the pinpoint.Tracer to the http.R
 ``` go
 import (
     "net/http"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 )
 
 func wrapClient(w http.ResponseWriter, r *http.Request) {

@@ -8,9 +8,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/valyala/fasthttp"
 )
 

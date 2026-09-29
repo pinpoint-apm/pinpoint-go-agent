@@ -15,7 +15,7 @@ package ppgohbase
 import (
 	"context"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	hbase "github.com/tsuna/gohbase"
 	"github.com/tsuna/gohbase/hrpc"
 )

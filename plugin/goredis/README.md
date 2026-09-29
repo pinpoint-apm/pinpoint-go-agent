@@ -4,13 +4,13 @@ This package instruments the [go-redis/redis](https://github.com/go-redis/redis)
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis/v2)
 
 This package instruments the go-redis calls.
 Use the NewClient as the redis.NewClient and the NewClusterClient as redis.NewClusterClient, respectively.
@@ -32,8 +32,8 @@ package main
 
 import (
     "github.com/go-redis/redis"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis/v2"
 )
 
 var redisClient *ppgoredis.Client

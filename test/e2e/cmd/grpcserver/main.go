@@ -13,10 +13,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	ppgrpc "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/example/testapp"
+	ppgrpc "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2/example/testapp"
 	"github.com/pinpoint-apm/pinpoint-go-agent/test/e2e/internal/e2e"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

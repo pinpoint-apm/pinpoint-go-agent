@@ -8,13 +8,13 @@ The two register different driver names, so a binary may import both.
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft/v2)
 
 This package instruments the MS SQL Server driver calls.
 Use this package's driver in place of the SQL Server driver.
@@ -34,8 +34,8 @@ row, err := db.QueryContext(ctx, "SELECT * FROM Inventory")
 ``` go
 import (
     "database/sql"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft/v2"
 )
 
 func query(w http.ResponseWriter, r *http.Request) {

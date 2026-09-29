@@ -4,13 +4,13 @@ This package instruments the [sirupsen/logrus](https://github.com/sirupsen/logru
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus/v2)
 
 This package allows additional transaction id and span id of the pinpoint span to be printed in the log message.
 Use the NewField or NewEntry and pass the logrus field back to the logger.
@@ -36,8 +36,8 @@ entry.Error("hook log message")
 ``` go
 import (
     "github.com/sirupsen/logrus"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus/v2"
 )
 
 func logging(w http.ResponseWriter, r *http.Request) {

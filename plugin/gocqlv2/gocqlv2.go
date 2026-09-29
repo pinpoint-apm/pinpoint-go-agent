@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/apache/cassandra-gocql-driver/v2"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 type Observer struct{}

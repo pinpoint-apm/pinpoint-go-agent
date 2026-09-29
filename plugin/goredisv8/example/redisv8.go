@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	ppgoredisv8 "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8"
-	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http"
+	ppgoredisv8 "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8/v2"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 var redisClient *redis.Client

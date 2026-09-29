@@ -4,13 +4,13 @@ This package instruments the [valyala/fasthttp](https://github.com/valyala/fasth
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2)
 
 ### server
 This package instruments inbound requests handled by a fasthttp instance.
@@ -28,8 +28,8 @@ Alternatively, the context of the handler may be propagated where the context th
 package main
 
 import (
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2"
     "github.com/valyala/fasthttp"
 )
 

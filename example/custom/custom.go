@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func externalRequest(tracer pinpoint.Tracer) int {

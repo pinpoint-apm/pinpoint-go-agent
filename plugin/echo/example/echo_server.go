@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/labstack/echo"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/echo/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func hello(c echo.Context) error {

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/go-redis/redis/v8"
-	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

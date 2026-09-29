@@ -4,13 +4,13 @@ This package instruments the [IBM/sarama](https://github.com/IBM/sarama) package
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2)
 
 This package instruments Kafka consumers and producers.
 
@@ -58,8 +58,8 @@ package main
 
 import (
     "github.com/IBM/sarama"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2"
 )
 
 func processMessage(ctx context.Context, msg *sarama.ConsumerMessage) error {
@@ -118,8 +118,8 @@ package main
 
 import (
     "github.com/IBM/sarama"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2"
 )
 
 func prepareMessage(topic, message string) *sarama.ProducerMessage {
@@ -173,8 +173,8 @@ package main
 
 import (
     "github.com/IBM/sarama"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2"
 )
 
 func prepareAsyncMessage(topic, message string) *sarama.ProducerMessage {

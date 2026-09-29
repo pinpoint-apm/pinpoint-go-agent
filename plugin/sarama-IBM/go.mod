@@ -1,11 +1,11 @@
-module github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM
+module github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2
 
 go 1.25.0
 
 require (
 	github.com/IBM/sarama v1.60.2
-	github.com/pinpoint-apm/pinpoint-go-agent v1.4.4
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http v1.4.4
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0
+	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0
 	github.com/stretchr/testify v1.12.1
 )
 
@@ -59,6 +59,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/pinpoint-apm/pinpoint-go-agent => ../..
+replace github.com/pinpoint-apm/pinpoint-go-agent/v2 => ../..
 
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/http => ../http
+replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 => ../http

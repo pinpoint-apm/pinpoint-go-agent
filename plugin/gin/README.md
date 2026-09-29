@@ -4,13 +4,13 @@ This package instruments the [gin-gonic/gin](https://github.com/gin-gonic/gin) p
 ## Installation
 
 ```bash
-$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin
+$ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin/v2
 ```
 ```go
-import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin"
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin/v2"
 ```
 ## Usage
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin/v2)
 
 This package instruments inbound requests handled by a gin.Engine.
 Register the Middleware as the middleware of the router to trace all handlers:
@@ -35,8 +35,8 @@ package main
 
 import (
     "github.com/gin-gonic/gin"
-    "github.com/pinpoint-apm/pinpoint-go-agent"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin/v2"
 )
 
 func endpoint(c *gin.Context) {
