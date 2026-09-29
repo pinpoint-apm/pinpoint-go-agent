@@ -584,12 +584,14 @@ It sizes the span queue only; the metadata queue is sized by
 
 ### Span.Batch.Enable
 Span.Batch.Enable option enables SendSpanBatch unary requests instead of the long-lived SendSpan stream.
+A collector implements SendSpanBatch from Pinpoint 3.1.0. Against an older one every batch fails and its spans
+are dropped, with `SendSpanBatch failed - N spans dropped` in the agent log, so turn this off for it.
 
 * --pinpoint-span-batch-enable
 * PINPOINT_GO_SPAN_BATCH_ENABLE
 * WithSpanBatchEnable()
 * type: bool
-* default: false
+* default: true
 
 ### Span.BatchSize
 Span.BatchSize option sets the max number of spans per SendSpanBatch request.

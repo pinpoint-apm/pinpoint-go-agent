@@ -232,17 +232,20 @@ Work down this list; it is ordered by how often each turns out to be the cause.
 1. **Agent registered?** Without `success to register agent` the problem is
    connectivity or identity, not instrumentation. See
    [Cannot Connect to Collector](#cannot-connect-to-collector).
-2. **Is anything instrumented?** Go is not auto-instrumented. A span only
+2. **Collector older than 3.1.0?** `SendSpanBatch failed - N spans dropped` in
+   the agent log means the collector does not implement the default span
+   sender. Set [Span.Batch.Enable](config.md#spanbatchenable) to false for it.
+3. **Is anything instrumented?** Go is not auto-instrumented. A span only
    exists where your code created one — via a plugin wrapper or
    `NewSpanTracer()`. An agent can be perfectly healthy and report nothing.
-3. **Sampling.** `Sampling.PercentRate` of 0 collects nothing;
+4. **Sampling.** `Sampling.PercentRate` of 0 collects nothing;
    `Sampling.NewThroughput` caps new transactions per second. Set
    `percentRate: 100` while diagnosing.
-4. **Wrong application in the UI.** The resolved config dump shows the
+5. **Wrong application in the UI.** The resolved config dump shows the
    `ApplicationName` actually sent.
-5. **Time skew.** Pinpoint indexes spans by timestamp. A host clock minutes off
+6. **Time skew.** Pinpoint indexes spans by timestamp. A host clock minutes off
    puts your traces outside the window you are looking at.
-6. **Process exited too early.** Short-lived programs need
+7. **Process exited too early.** Short-lived programs need
    `defer agent.Shutdown()`; see above. Only the last spans before a restart
    missing? See [Spans Missing at Shutdown or on a Rollout](#spans-missing-at-shutdown-or-on-a-rollout).
 
@@ -439,7 +442,8 @@ nc -vz your-collector-host 9991
   supported way to finish with an agent, and it is safe here - the teardown runs
   once and repeats are no-ops.
 * Check the collector's own logs. A version mismatch is rejected there, not
-  here: the agent requires Pinpoint 2.4.0+.
+  here: the agent requires Pinpoint 3.1.0+, or 2.4.0+ with
+  [Span.Batch.Enable](config.md#spanbatchenable) set to false.
 
 ### Collector Connection Dropped and Recovered
 

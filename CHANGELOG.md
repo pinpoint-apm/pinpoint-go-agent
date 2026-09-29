@@ -1,60 +1,58 @@
 # Changelog
 
-## Unreleased
+## v2.0.0 (unreleased)
+
+Every module moves to a `/v2` module path, so an application moves to v2 on
+purpose: `go get -u` keeps it on v1. What to change, in order, is in
+[Migrating from v1 to v2](doc/migration_v2.md).
 
 ### Breaking
 
+- **Every module path carries `/v2`.** The agent is
+  `github.com/pinpoint-apm/pinpoint-go-agent/v2` and each plugin
+  `github.com/pinpoint-apm/pinpoint-go-agent/plugin/<name>/v2`; the package
+  names do not change. Move every pinpoint import at once: v1 and v2 register
+  the same protobuf files, so a binary that links a module of each panics at
+  startup with `proto: file "v1/Annotation.proto" is already registered`.
+- **Go 1.25 or newer** is required, up from 1.21.
+- **Pinpoint 3.1.0 or newer** is required, up from 2.4.0. `Span.Batch.Enable`
+  (default `true`) sends spans in unary `SendSpanBatch` requests instead of the
+  long-lived `SendSpan` stream, and a collector implements `SendSpanBatch` from
+  3.1.0. Against an older collector every batch fails and its spans are
+  dropped; with `Span.Batch.Enable: false` the agent keeps the stream, which
+  collectors from 2.4.0 take.
+- **The agent id is not configurable.** `WithAgentId`, `CfgAgentID`, the
+  `AgentId` key, `PINPOINT_GO_AGENTID` and `--pinpoint-agentid` are gone:
+  every process generates its own id, so an instance shows up under a new id
+  after each restart, and `AgentName` is the stable label. The config file key
+  and the environment variable are ignored; a leftover `--pinpoint-agentid` is
+  an unknown flag, and the `--pinpoint-` flags after it are not applied.
+- **`DistributedTracingContextReader.Get` returns `(string, bool)`**: the value
+  and whether the carrier holds the key, since a header held with an empty
+  value and a header not held at all decide trace continuation differently. A
+  reader of your own has to report both; `pinpoint.HttpHeaderReader` adapts an
+  `http.Header`.
+- **`SpanRecorder.SetError` and `SetFailure` take optional arguments**, an
+  error group name and an `ErrorCategory`. Calls compile as before; an
+  implementation of the interface, such as a mock, has to declare them.
+- **`protobuf` and `asm` are internal packages.** The generated gRPC code, whose
+  exported API every regeneration changed, and the goroutine pointer helper
+  were importable although no application needs them. They are
+  `internal/protobuf` and `internal/asm` now, which leaves the agent's root
+  package as its only public one.
+- `pphttp.WrapResponseWriter` returns an `http.ResponseWriter` instead of the
+  unexported `*responseWriter`.
+- `ppgomemcache.(*Client).WithContext` returns the copy of the client bound to
+  the context's tracer; the request's calls should use that copy.
 - **The HTTP client URL annotation strips the query by default.** `pphttp`
   and `ppfasthttp` record `HTTP.URL` up to the `?` unless the new
   `Http.Client.RecordUrlQuery` (default `false`) is on, matching the C++ agent;
   Java's `profiler.<plugin>.param` defaults on. Query strings carry tokens and
   ids. Endpoint and destination are unchanged.
 
-### Added
+### Changed
 
-- **`plugin/confluentkafka`** instruments [confluentinc/confluent-kafka-go](https://github.com/confluentinc/confluent-kafka-go)
-  v2: `NewProducer` + `ProduceContext` on the producer side, `ConsumeMessageContext`
-  + `NewContext` on the consumer side, with the same headers and annotations as
-  the sarama plugins ([#80](https://github.com/pinpoint-apm/pinpoint-go-agent/issues/80)).
-- **Configurable real-IP headers.** `Http.Server.RealIpHeader` (ordered list,
-  default `["X-Forwarded-For", "X-Real-Ip"]` = today's behaviour, `[]` trusts
-  none) and `Http.Server.RealIpEmptyValue` port Java's `RealIpHeaderResolver`:
-  a `Forwarded` header is parsed for its `for=` token, other headers give
-  their first hop, a value equal to the empty value is skipped. Both
-  reloadable.
-- **Request parameter recording, opt-in.** `pphttp.RecordHttpServerRequestWithQuery`
-  (used by `RecordHttpServerRequest`, so every net/http based plugin gets it)
-  records the query string as annotation 41 (`HTTP.PARAM`) in Java's
-  `HttpServletParameterExtractor` format when `Http.Server.RecordRequestParam`
-  is on (default `false`; Java defaults on). `pphttp.FormatRequestParams` is
-  exported for adapters that hold the query outside a net/http request.
-
-- `Http.UrlStat.LimitSize` now defaults to `1000`, Java's
-  `profiler.uri.stat.completed.data.limit.size`, instead of `1024`; the C++
-  agent made the same move, so the two ports and Java drop a tick's excess
-  URIs at the same point. `Http.UrlStat.QueueSize` stays `1024`: it bounds a
-  different queue - the input queue between the request path and the
-  aggregator, which Java sizes at 5192 on one queue and neither port
-  reproduces.
-- `Stat.CollectInterval` is capped at `10000` ms, Java's
-  `DefaultAgentStatMonitor` maximum, instead of `60000`; a larger value falls
-  back to the default as before. A six-minute stat batch is no longer
-  reachable by misconfiguration.
-- The metadata retry budget and rejection policy are locked
-  (`Test_MetadataRetryBudget`), mirrored in the C++ suite:
-  both ports drop a `PResult.success=false` reply where Java retries it, so
-  a change in either port is now a deliberate joint change.
-
-- A span that drops exception entries at the `Error.MaxChainDepth` entry limit
-  now logs how many it dropped when it ends. The existing warning latches after
-  the first drop, so it said a span hit the limit but not by how much, and a
-  retry loop that lost a handful of chain links read exactly like one that lost
-  thousands. The limit itself is unchanged (10 to 64 entries a span, derived
-  from `Error.MaxChainDepth`'s own clamp ceiling). It is not raised to the C++
-  agent's 100 because the cap here is derived from the option rather than set
-  independently, so one chain of the configured depth is always kept whole;
-  Java's mid-span buffer flush is not ported because sending exception metadata
-  before the span ends is a separate design, not a constant.
+- `Log.Output` defaults to `stdout`; it was `stderr`.
 - **Default behavior change.** The collector channel now uses the gRPC `dns`
   resolver (`dns:///host:port`) instead of the `passthrough` scheme. A collector
   host with several A records is resolved into the channel's full address list,
@@ -69,6 +67,79 @@
   authority - the collector hostname. The new `Collector.Grpc.DnsResolverEnable`
   (default true) restores the `passthrough` scheme when set to false, as a
   rollback lever that needs no redeploy.
+- The new `Collector.Grpc.KeepAlivePermitWithoutCalls` defaults to `false`, so
+  keepalive pings stop while no stream is open; v1 always sent them, which
+  `true` restores.
+- The new `SQL.RemoveComments` defaults to `true`: comments are dropped from the
+  normalized SQL, which changes the text, and with it the SQL id, of every
+  statement that carries one. `false` keeps them as v1 did.
+- `Http.UrlStat.LimitSize` now defaults to `1000`, Java's
+  `profiler.uri.stat.completed.data.limit.size`, instead of `1024`; the C++
+  agent made the same move, so the two ports and Java drop a tick's excess
+  URIs at the same point. `Http.UrlStat.QueueSize` stays `1024`: it bounds a
+  different queue - the input queue between the request path and the
+  aggregator, which Java sizes at 5192 on one queue and neither port
+  reproduces.
+- `Stat.CollectInterval` is capped at `10000` ms, Java's
+  `DefaultAgentStatMonitor` maximum, instead of `60000`; a larger value falls
+  back to the default as before. A six-minute stat batch is no longer
+  reachable by misconfiguration.
+- URL statistics recorded without a URI template are now keyed as `/NULL`
+  (Java's `URITemplate.NULL_URI`, also used by the C++ agent) instead of
+  `UNKNOWN_URL`. Server-side history under the old `UNKNOWN_URL` key does not
+  carry over to the new key.
+- SQL statements longer than 1 MiB are no longer normalized or recorded: no SQL
+  annotation, no SQL metadata, and no `SQL.ErrorCount` increment. The 64KB
+  metadata text cap is unchanged. The value matches the C++ agent; the
+  drop policy is documented in `doc/development.md`.
+- The active span registry behind the active-request histogram is now bounded
+  at 10240 entries (320 per shard), the Java agent's `DefaultActiveTraceRepository`
+  maximum. A span that is never ended used to leave its entry behind forever;
+  now a full shard evicts an existing entry for the new span and logs a
+  rate-limited warning naming the size and the cap. Only an application that
+  leaks spans reaches the cap; the histogram it then reports covers the most
+  recent 10240 spans rather than all of them.
+- A span that drops exception entries at the `Error.MaxChainDepth` entry limit
+  now logs how many it dropped when it ends. The existing warning latches after
+  the first drop, so it said a span hit the limit but not by how much, and a
+  retry loop that lost a handful of chain links read exactly like one that lost
+  thousands. The limit itself is unchanged (10 to 64 entries a span, derived
+  from `Error.MaxChainDepth`'s own clamp ceiling). It is not raised to the C++
+  agent's 100 because the cap here is derived from the option rather than set
+  independently, so one chain of the configured depth is always kept whole;
+  Java's mid-span buffer flush is not ported because sending exception metadata
+  before the span ends is a separate design, not a constant.
+- The metadata retry budget and rejection policy are locked
+  (`Test_MetadataRetryBudget`), mirrored in the C++ suite:
+  both ports drop a `PResult.success=false` reply where Java retries it, so
+  a change in either port is now a deliberate joint change.
+
+### Added
+
+- **`plugin/confluentkafka`** instruments [confluentinc/confluent-kafka-go](https://github.com/confluentinc/confluent-kafka-go)
+  v2: `NewProducer` + `ProduceContext` on the producer side, `ConsumeMessageContext`
+  + `NewContext` on the consumer side, with the same headers and annotations as
+  the sarama plugins ([#80](https://github.com/pinpoint-apm/pinpoint-go-agent/issues/80)).
+- **Plugins for new libraries and new library majors**: `plugin/echov5`
+  (labstack/echo v5), `plugin/fiberv3` (gofiber/fiber v3), `plugin/kratosv3`
+  (go-kratos/kratos v3), `plugin/gocqlv2` (gocql v2), `plugin/goelasticv8` and
+  `plugin/goelasticv9` (elastic/go-elasticsearch v8 and v9),
+  `plugin/mongodriverv2` (mongo-go-driver v2), `plugin/oraclev3`
+  (sijms/go-ora v3), `plugin/mssql-microsoft` (microsoft/go-mssqldb),
+  `plugin/slog` (log/slog) and `plugin/zap` (uber-go/zap). See the
+  [Plugin User Guide](doc/plugin_guide.md).
+- **Configurable real-IP headers.** `Http.Server.RealIpHeader` (ordered list,
+  default `["X-Forwarded-For", "X-Real-Ip"]` = today's behaviour, `[]` trusts
+  none) and `Http.Server.RealIpEmptyValue` port Java's `RealIpHeaderResolver`:
+  a `Forwarded` header is parsed for its `for=` token, other headers give
+  their first hop, a value equal to the empty value is skipped. Both
+  reloadable.
+- **Request parameter recording, opt-in.** `pphttp.RecordHttpServerRequestWithQuery`
+  (used by `RecordHttpServerRequest`, so every net/http based plugin gets it)
+  records the query string as annotation 41 (`HTTP.PARAM`) in Java's
+  `HttpServletParameterExtractor` format when `Http.Server.RecordRequestParam`
+  is on (default `false`; Java defaults on). `pphttp.FormatRequestParams` is
+  exported for adapters that hold the query outside a net/http request.
 - New `pinpoint.ShutdownOnSignal(agent, sigs...) (stop func())` calls
   `Shutdown()` when the process receives one of the given signals (`SIGTERM`
   and `SIGINT` by default), then restores the default signal handling and
@@ -80,18 +151,11 @@
   cannot be covered by any means; see `doc/troubleshooting.md`. The C++ agent
   takes the same opt-in policy with a different mechanism (`std::atexit`, no
   signal handler); see `doc/development.md`.
-- The active span registry behind the active-request histogram is now bounded
-  at 10240 entries (320 per shard), the Java agent's `DefaultActiveTraceRepository`
-  maximum. A span that is never ended used to leave its entry behind forever;
-  now a full shard evicts an existing entry for the new span and logs a
-  rate-limited warning naming the size and the cap. Only an application that
-  leaks spans reaches the cap; the histogram it then reports covers the most
-  recent 10240 spans rather than all of them.
-- URL statistics recorded without a URI template are now keyed as `/NULL`
-  (Java's `URITemplate.NULL_URI`, also used by the C++ agent) instead of
-  `UNKNOWN_URL`. Server-side history under the old `UNKNOWN_URL` key does not
-  carry over to the new key.
-- SQL statements longer than 1 MiB are no longer normalized or recorded: no SQL
-  annotation, no SQL metadata, and no `SQL.ErrorCount` increment. The 64KB
-  metadata text cap is unchanged. The value matches the C++ agent; the
-  drop policy is documented in `doc/development.md`.
+- **47 new configuration options**, among them TLS on the collector channels
+  (`Collector.Grpc.SslEnable`, `Collector.Grpc.TrustCertFilePath`), gRPC
+  channel tuning (`Collector.Grpc.*`), the span batch sender (`Span.Batch*`),
+  error causes and exception chains (`Span.ErrorMark`, `Span.ErrorMarkExclude`,
+  `Span.IgnoreErrors`, `Error.MaxChainDepth`, `Error.NewThroughput`), the SQL
+  caches (`SQL.Cache*`, `SQL.EnableRawSqlCache`) and the agent identity
+  (`Uid.Version`, `ServiceName`, `ApiKey`). Each is described in
+  [Configuration](doc/config.md).
