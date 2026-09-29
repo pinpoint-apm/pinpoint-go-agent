@@ -5,7 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 )
 
 // annotation stores recorded annotations as compact value structs instead of

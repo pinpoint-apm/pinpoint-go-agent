@@ -17,7 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

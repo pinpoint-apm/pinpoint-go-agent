@@ -1,4 +1,4 @@
-module github.com/pinpoint-apm/pinpoint-go-agent/test/e2e
+module github.com/pinpoint-apm/pinpoint-go-agent/v2/test/e2e
 
 go 1.25.0
 

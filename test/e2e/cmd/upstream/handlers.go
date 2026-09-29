@@ -11,8 +11,8 @@ import (
 	"time"
 
 	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
-	"github.com/pinpoint-apm/pinpoint-go-agent/test/e2e/internal/e2e"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/e2e/internal/e2e"
 )
 
 var (

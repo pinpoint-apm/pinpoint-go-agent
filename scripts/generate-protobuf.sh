@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROTO_SRC_DIR="${PROTO_SRC_DIR:-$ROOT_DIR/pinpoint-grpc-idl/proto}"
-OUT_DIR="${OUT_DIR:-$ROOT_DIR/protobuf}"
-MOCK_OUT_DIR="${MOCK_OUT_DIR:-$ROOT_DIR/protobuf/mock}"
+OUT_DIR="${OUT_DIR:-$ROOT_DIR/internal/protobuf}"
+MOCK_OUT_DIR="${MOCK_OUT_DIR:-$ROOT_DIR/internal/protobuf/mock}"
 TOOLS_DIR="${TOOLS_DIR:-$ROOT_DIR/.tools}"
 BIN_DIR="$TOOLS_DIR/bin"
 
@@ -12,7 +12,7 @@ PROTOC_VERSION="${PROTOC_VERSION:-36.1}"
 PROTOC_GEN_GO_VERSION="${PROTOC_GEN_GO_VERSION:-v1.36.11}"
 PROTOC_GEN_GO_GRPC_VERSION="${PROTOC_GEN_GO_GRPC_VERSION:-v1.6.2}"
 PROTOC_GEN_GO_GRPCMOCK_VERSION="${PROTOC_GEN_GO_GRPCMOCK_VERSION:-v1.3.2}"
-MOCK_GO_PACKAGE="${MOCK_GO_PACKAGE:-github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf;grpcmock}"
+MOCK_GO_PACKAGE="${MOCK_GO_PACKAGE:-github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf;grpcmock}"
 # Log.proto describes a log-shipping service this agent does not implement;
 # generating it would ship a client and a mock nothing ever calls.
 EXCLUDED_PROTOS="${EXCLUDED_PROTOS:-Log.proto}"
@@ -209,11 +209,11 @@ generate() {
 }
 
 # generate_mocks emits testify mocks for every generated gRPC client, server and
-# stream into protobuf/mock, a package of its own so that testify stays out of
-# the protobuf package the agent ships. The testify version each header records
-# is the one the generator itself was built against, read out of its build info
-# - not the one this module requires, which only has to be new enough to
-# compile what the generator wrote. The M options below name the protobuf
+# stream into internal/protobuf/mock, a package of its own so that testify stays
+# out of the protobuf package the agent ships. The testify version each header
+# records is the one the generator itself was built against, read out of its
+# build info - not the one this module requires, which only has to be new enough
+# to compile what the generator wrote. The M options below name the protobuf
 # package as the one to import and "grpcmock" as the package to emit, which is
 # what import_package=true keys off; the package is named grpcmock rather than
 # mock so that importers can still call the testify package mock.

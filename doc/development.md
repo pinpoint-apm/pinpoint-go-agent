@@ -23,6 +23,13 @@ important thing to know before running anything:
 | `test/it/` | own module | depends on `plugin/http`, which the agent module must not |
 | `test/e2e/` | own module | depends on `plugin/http` and `plugin/grpc` |
 
+The generated gRPC code is `internal/protobuf`, which Go lets only code under
+the agent's own path import. The test modules build their collector stand-ins
+from it, so their module paths sit under the agent's
+(`github.com/pinpoint-apm/pinpoint-go-agent/v2/test/it`). `example/` stays
+outside on purpose: like an application, it can build against the public API
+only.
+
 `go test ./...` from the repository root therefore does **not** run the plugin
 or integration tests — each module has to be entered. That is what the loops
 below are for.
@@ -147,8 +154,8 @@ request path, so an allocation added per span event is a real regression —
 
 ## Regenerating the protobuf code
 
-The generated code in `protobuf/` is committed, so this is only needed when the
-IDL changes:
+The generated code in `internal/protobuf/` is committed, so this is only needed
+when the IDL changes:
 
 ```bash
 ./scripts/generate-protobuf.sh

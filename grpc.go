@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

@@ -5,8 +5,8 @@ ephemeral ports and drives a real agent against it. It needs no running
 Pinpoint Collector and no external network access. It is the Go counterpart of
 the C++ agent's `test/it`.
 
-The mock uses the generated `protobuf` service types and exposes the same
-topology as production:
+The mock uses the generated `internal/protobuf` service types and exposes the
+same topology as production:
 
 - Agent, Metadata and ProfilerCommandService on the agent port
 - Span on the span port

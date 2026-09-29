@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pinpoint-apm/pinpoint-go-agent/test/e2e/internal/e2e"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/e2e/internal/e2e"
 )
 
 // The SQL endpoints exercise the agent's database/sql driver wrapper, which is

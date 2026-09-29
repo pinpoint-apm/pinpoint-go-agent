@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf"
-	grpcmock "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf/mock"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
+	grpcmock "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -20,9 +20,9 @@ import (
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
-// The mocks in protobuf/mock are generated from the same .proto files as
-// the clients themselves (protoc-gen-go-grpcmock, testify), so they satisfy the
-// real interfaces and a scenario can script the collector per call -- fail
+// The mocks in internal/protobuf/mock are generated from the same .proto files
+// as the clients themselves (protoc-gen-go-grpcmock, testify), so they satisfy
+// the real interfaces and a scenario can script the collector per call -- fail
 // twice, then recover -- instead of hand-rolling a counter per stub.
 var (
 	_ pb.AgentClient                  = (*grpcmock.MockAgentClient)(nil)

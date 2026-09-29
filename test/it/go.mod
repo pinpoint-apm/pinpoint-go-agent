@@ -1,4 +1,4 @@
-module github.com/pinpoint-apm/pinpoint-go-agent/test/it
+module github.com/pinpoint-apm/pinpoint-go-agent/v2/test/it
 
 go 1.25.0
 

@@ -3,7 +3,7 @@ package pinpoint
 import (
 	"sync"
 
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 	wrappers "google.golang.org/protobuf/types/known/wrapperspb"
 )
 

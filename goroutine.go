@@ -13,7 +13,7 @@ import (
 	"unsafe"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2/asm"
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/protobuf"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 )
 
 var (

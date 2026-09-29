@@ -9,9 +9,12 @@ set -euo pipefail
 # to vN.0.0, which the replace directives resolve locally until a release tags
 # it.
 #
-# The example and test modules are never published, so their own module paths
-# stay and only what they import moves. Web URLs of the repository are not
-# import paths and stay too, as do the files that name the old paths on purpose.
+# The test modules are never published, but they use the agent's internal
+# packages, which Go lets only code under the agent's own path import, so their
+# paths sit under the root module's path and follow its major version. The
+# example module stays outside it on purpose: like an application, it can build
+# against the public API only. Web URLs of the repository are not import paths
+# and stay, as do the files that name the old paths on purpose.
 #
 # Usage: scripts/set-major-version.sh N
 #
@@ -44,8 +47,8 @@ BEGIN {
 	$repo = $ENV{REPO_PATH};
 	$major = $ENV{MAJOR};
 	for (split " ", $ENV{MODULES}) {
-		my ($dir, $published) = split /:/;
-		push @bases, [$dir eq "." ? $repo : "$repo/$dir", $dir, $published];
+		my ($dir, $kind) = split /:/;
+		push @bases, [$dir eq "." ? $repo : "$repo/$dir", $dir, $kind];
 	}
 	# Longest first, so a plugin module claims its paths before the root does.
 	@bases = sort { length($b->[0]) <=> length($a->[0]) } @bases;
@@ -55,17 +58,22 @@ BEGIN {
 # package here, such as a directory mentioned in prose.
 sub moved {
 	my ($path) = @_;
+	# The root module's major suffix goes first, since the test modules sit
+	# under it too.
+	(my $plain = $path) =~ s{^\Q$repo\E/v[0-9]+(?=/|$)}{$repo};
 	for my $module (@bases) {
-		my ($base, $dir, $published) = @$module;
-		next unless $path eq $base || index($path, "$base/") == 0;
-		my $rest = substr($path, length $base);
-		$rest =~ s{^/v[0-9]+(?=/|$)}{} if $published;
+		my ($base, $dir, $kind) = @$module;
+		next unless $plain eq $base || index($plain, "$base/") == 0;
+		my $rest = substr($plain, length $base);
+		$rest =~ s{^/v[0-9]+(?=/|$)}{} if $kind eq "published";
 		if ($rest ne "") {
 			my $pkg = $dir eq "." ? substr($rest, 1) : $dir . $rest;
 			my @go = glob("$pkg/*.go");
 			return undef unless @go;
 		}
-		return $published ? "$base/v$major$rest" : $path;
+		return "$base/v$major$rest" if $kind eq "published";
+		return "$repo/v$major/$dir$rest" if $kind eq "nested";
+		return "$base$rest";
 	}
 	return undef;
 }
@@ -120,13 +128,16 @@ command -v go >/dev/null 2>&1 || die "go is required"
 
 cd "$ROOT_DIR"
 
-# Each module directory, marked with whether it is published.
+# Each module directory, marked with how its path moves: a published module
+# gains the suffix, a nested one sits under the root module's path, and a
+# standalone one keeps its path.
 modules=()
 while IFS= read -r gomod; do
 	dir="$(dirname "$gomod")"
 	case "$dir" in
-		. | plugin/*) modules+=("$dir:1") ;;
-		*) modules+=("$dir:0") ;;
+		. | plugin/*) modules+=("$dir:published") ;;
+		test/*) modules+=("$dir:nested") ;;
+		*) modules+=("$dir:standalone") ;;
 	esac
 done < <(git ls-files '*go.mod')
 
