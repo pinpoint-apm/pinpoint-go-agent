@@ -124,3 +124,17 @@ jobs:
       working-directory: test/it
       env:
         GOEXPERIMENT: goroutineleakprofile
+
+  # The published modules have to agree with each other: every reference names
+  # the module paths of the root module's major version, and every requirement
+  # between them names the same version, resolved by a replace directive to
+  # that module's directory. The jobs above resolve the modules through those
+  # replace directives, so they pass either way; a user's build, which ignores
+  # them, is the one that would break. The check needs git and perl, no Go.
+  modules:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Module paths and in-repo requirements
+      run: scripts/set-major-version.sh --check

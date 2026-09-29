@@ -188,10 +188,10 @@ Each new plugin needs:
 1. **Its own module.** `plugin/<name>/go.mod`, with the agent as a dependency.
    Never add the instrumented library to the agent's own `go.mod`. The module
    path carries the agent's major version, like every other plugin's
-   (`github.com/pinpoint-apm/pinpoint-go-agent/plugin/<name>/v2`), and it
-   requires the agent and any plugin it builds on at the version the other
-   modules require, each with a `replace` to its directory:
-   `scripts/release.sh check` fails a release otherwise.
+   (`.../plugin/<name>/v2`), and it requires the agent and any plugin it
+   builds on at the version the other modules require, each with a `replace`
+   to its directory. CI (`scripts/set-major-version.sh --check`) fails
+   otherwise.
 2. **Package name `pp<name>`.** `plugin/gin` is `ppgin`.
 3. **A thin entry point.** Prefer the library's own seam — middleware, hook,
    observer, monitor, `RoundTripper` — over wrapping every call site.
@@ -435,6 +435,7 @@ pull request to `main`, in four jobs:
 | `build` | `go build` and `go test` on the agent, plus the `test/it` suite, on Go 1.25 and 1.26 |
 | `plugins` | `go test -race` in every `plugin/*` module, on Go 1.25 and 1.26 |
 | `goroutine-leak` | `test/it` under `GOEXPERIMENT=goroutineleakprofile`, Go 1.26 only |
+| `modules` | `scripts/set-major-version.sh --check`: every reference names the current major version's module paths, and the in-repo requirements agree on one version, each with its `replace` |
 | — | `test/e2e` is **not** in CI: it needs a live collector |
 
 `fail-fast` is off in the matrices on purpose: a break on one Go version still
@@ -445,7 +446,7 @@ one broken plugin does not hide the rest.
 Before opening a pull request, the short version of CI:
 
 ```bash
-go test -race ./... && (cd test/it && go test ./...) && for dir in plugin/*/; do (cd "$dir" && go test -race ./) || echo "FAILED: $dir"; done
+scripts/set-major-version.sh --check && go test -race ./... && (cd test/it && go test ./...) && for dir in plugin/*/; do (cd "$dir" && go test -race ./) || echo "FAILED: $dir"; done
 ```
 
 ## Releasing
