@@ -186,7 +186,12 @@ Follow an existing plugin of the same shape — a middleware plugin like
 Each new plugin needs:
 
 1. **Its own module.** `plugin/<name>/go.mod`, with the agent as a dependency.
-   Never add the instrumented library to the agent's own `go.mod`.
+   Never add the instrumented library to the agent's own `go.mod`. The module
+   path carries the agent's major version, like every other plugin's
+   (`github.com/pinpoint-apm/pinpoint-go-agent/plugin/<name>/v2`), and it
+   requires the agent and any plugin it builds on at the version the other
+   modules require, each with a `replace` to its directory:
+   `scripts/release.sh check` fails a release otherwise.
 2. **Package name `pp<name>`.** `plugin/gin` is `ppgin`.
 3. **A thin entry point.** Prefer the library's own seam — middleware, hook,
    observer, monitor, `RoundTripper` — over wrapping every call site.
@@ -442,6 +447,36 @@ Before opening a pull request, the short version of CI:
 ```bash
 go test -race ./... && (cd test/it && go test ./...) && for dir in plugin/*/; do (cd "$dir" && go test -race ./) || echo "FAILED: $dir"; done
 ```
+
+## Releasing
+
+The published modules - the agent and every `plugin/<name>` - are released
+together, at one version, by [`scripts/release.sh`](/scripts/release.sh). A
+user's build ignores `replace` directives, so every requirement between these
+modules has to name a version that is tagged. The release commit requires each
+sibling at the release version, and every published module is tagged at that
+commit (`v2.0.0`, `plugin/gin/v2.0.0`, ...):
+
+```bash
+scripts/release.sh prepare v2.0.0-rc.1   # in-repo requirements and version.go
+git commit -am "[#noissue] bump version number up to v2.0.0-rc.1" && git push
+# once CI passes on that commit:
+scripts/release.sh tag v2.0.0-rc.1       # checks the commit, then tags HEAD
+scripts/release.sh push v2.0.0-rc.1      # one atomic push of every tag
+scripts/release.sh verify v2.0.0-rc.1    # fetch and build each module as a user would
+```
+
+Cut a pre-release first. The module proxy and the checksum database keep the
+first content they see for a version, so a pushed tag cannot be moved: a
+broken release is fixed by the next version, with a `retract` directive for
+the broken one. `check` and `tag` refuse a version whose tags already exist
+here or on the remote, and `push` refuses a commit that no branch of the remote
+holds.
+
+A new major version starts with
+[`scripts/set-major-version.sh`](/scripts/set-major-version.sh) `N`, which
+moves every module path to `/vN`. v1 fixes are released from the
+`v1.4.0-patch` branch.
 
 ## Contributing
 
