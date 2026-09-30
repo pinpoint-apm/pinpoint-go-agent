@@ -55,20 +55,8 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 		}
 
 		method := string(ctx.Method())
-		requestHeader := RequestHeader{&ctx.Request.Header}
 		status := http.StatusOK
-		tracer := pphttp.NewHttpServerTracerWithReader(method, string(ctx.Path()), serverName,
-			HeaderReader{&ctx.Request.Header})
-		// Record straight from the fasthttp request: converting it to a
-		// net/http request (fasthttpadaptor.ConvertRequest) materialized the
-		// full header map, parsed the URL and buffered the body per sampled
-		// request, only for values the default noop recorders never read.
-		// The sampling check keeps the host copy and remote-addr formatting
-		// off the unsampled path; the callee would discard them.
-		if tracer.IsSampled() {
-			pphttp.RecordHttpServerRequestWithReader(tracer, string(ctx.Host()), ctx.RemoteAddr().String(),
-				requestHeader, Cookie{&ctx.Request.Header})
-		}
+		tracer := serverTracer(ctx, method)
 
 		defer tracer.EndSpan()
 		defer func() {
@@ -98,6 +86,32 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 
 		status = ctx.Response.StatusCode()
 	}
+}
+
+// serverTracer starts the request's span, or hands back a nested view of the
+// tracer the request's user value already carries (pinpoint.NestedTracer) - a
+// handler wrapped twice, a router adapter's route inside a manual WrapHandler
+// - so one request makes one span, as pphttp.NewHttpServerTracer does: this
+// layer's event goes on the existing span and its EndSpan is ignored.
+func serverTracer(ctx *fasthttp.RequestCtx, method string) pinpoint.Tracer {
+	if uc, ok := ctx.UserValue(CtxKey).(context.Context); ok {
+		if existing := pinpoint.FromContext(uc); existing != pinpoint.NoopTracer() {
+			return pinpoint.NestedTracer(existing)
+		}
+	}
+	tracer := pphttp.NewHttpServerTracerWithReader(method, string(ctx.Path()), serverName,
+		HeaderReader{&ctx.Request.Header})
+	// Record straight from the fasthttp request: converting it to a
+	// net/http request (fasthttpadaptor.ConvertRequest) materialized the
+	// full header map, parsed the URL and buffered the body per sampled
+	// request, only for values the default noop recorders never read.
+	// The sampling check keeps the host copy and remote-addr formatting
+	// off the unsampled path; the callee would discard them.
+	if tracer.IsSampled() {
+		pphttp.RecordHttpServerRequestWithReader(tracer, string(ctx.Host()), ctx.RemoteAddr().String(),
+			RequestHeader{&ctx.Request.Header}, Cookie{&ctx.Request.Header})
+	}
+	return tracer
 }
 
 func recordResponse(tracer pinpoint.Tracer, c *fasthttp.RequestCtx, status int) {

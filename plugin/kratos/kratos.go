@@ -59,20 +59,23 @@ func ServerMiddleware() middleware.Middleware {
 			}
 
 			if tr, ok := transport.FromServerContext(ctx); ok {
-				tracer := pinpoint.GetAgent().NewSpanTracerWithReader("Kratos Server", tr.Operation(),
-					headerReader{tr.RequestHeader()})
+				tracer := serverTracer(ctx, tr)
 				defer tracer.EndSpan()
 				defer tracer.NewSpanEvent(tr.Operation()).EndSpanEvent()
 
 				span := tracer.Span()
-				if tr.Kind() == transport.KindGRPC {
-					span.SetServiceType(pinpoint.ServiceTypeGrpcServer)
-				}
-				// The endpoint trim and peer-address formatting are discarded
-				// on an unsampled span.
-				if tracer.IsSampled() {
-					span.SetEndPoint(serverEndpoint(tr.Endpoint()))
-					span.SetRemoteAddress(serverRemoteAddr(ctx, tr))
+				// A nested layer leaves the span-level request attributes to
+				// the layer that owns the span.
+				if !pinpoint.IsNestedTracer(tracer) {
+					if tr.Kind() == transport.KindGRPC {
+						span.SetServiceType(pinpoint.ServiceTypeGrpcServer)
+					}
+					// The endpoint trim and peer-address formatting are
+					// discarded on an unsampled span.
+					if tracer.IsSampled() {
+						span.SetEndPoint(serverEndpoint(tr.Endpoint()))
+						span.SetRemoteAddress(serverRemoteAddr(ctx, tr))
+					}
 				}
 
 				ctx = pinpoint.NewContext(ctx, tracer)
@@ -84,6 +87,19 @@ func ServerMiddleware() middleware.Middleware {
 			}
 		}
 	}
+}
+
+// serverTracer starts the request's span, or hands back a nested view of the
+// tracer the context already carries (pinpoint.NestedTracer) - the middleware
+// registered twice, or a gRPC server that also runs ppgrpc's interceptor - so
+// one request makes one span, as ppgrpc and pphttp do: this layer's event goes
+// on the existing span and its EndSpan is ignored.
+func serverTracer(ctx context.Context, tr transport.Transporter) pinpoint.Tracer {
+	if existing := pinpoint.FromContext(ctx); existing != pinpoint.NoopTracer() {
+		return pinpoint.NestedTracer(existing)
+	}
+	return pinpoint.GetAgent().NewSpanTracerWithReader("Kratos Server", tr.Operation(),
+		headerReader{tr.RequestHeader()})
 }
 
 // serverRemoteAddr takes the transporter the caller already has instead of
