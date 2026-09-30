@@ -1,5 +1,5 @@
 # ppgoelastic
-This package instruments the [elastic/go-elasticsearch](https://github.com/elastic/go-elasticsearch) package.
+This package instruments the [elastic/go-elasticsearch](https://github.com/elastic/go-elasticsearch) package, every major of it: `NewTransport` is an `http.RoundTripper`, and `elasticsearch.Config.Transport` is the same field in v7, v8 and v9.
 
 ## Installation
 
@@ -58,4 +58,4 @@ func goelastic(w http.ResponseWriter, req *http.Request) {
     ...
 }
 ```
-[Full Example Source](/plugin/goelastic/example/goelastic.go)
+[Full Example Source](/example/goelastic/goelastic.go)

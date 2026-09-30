@@ -54,7 +54,7 @@ func main() {
     log.Fatal(app.Listen(":9000"))
 }
 ```
-[Full Example Source](/plugin/fiberv3/example/fiberv3_server.go)
+[Full Example Source](/example/fiberv3/fiberv3_server.go)
 
 This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
 

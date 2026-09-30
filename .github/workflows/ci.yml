@@ -84,10 +84,11 @@ jobs:
         go-version: ${{ matrix.go-version }}
         cache-dependency-path: plugin/*/go.sum
 
-    # One module at a time, since each plugin has its own go.mod. go build
-    # ./... covers the example directories - standalone programs, one main per
-    # subdirectory, with no tests - while go test stays on the module's own
-    # package, the only one that has any. Several plugins guard against data
+    # One module at a time, since each plugin has its own go.mod. The plugin
+    # examples live in the root example module and are built by the agent
+    # job; plugin/grpc alone keeps its example, so go build ./... covers it
+    # here while go test stays on the module's own package. Several plugins
+    # guard against data
     # races the agent's tracers are sensitive to, so -race is part of the
     # contract, not an extra. Every module runs before the step fails, so one
     # broken plugin does not hide the rest.

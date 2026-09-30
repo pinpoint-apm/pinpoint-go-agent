@@ -50,10 +50,27 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   ids. Endpoint and destination are unchanged.
 - **`pinpoint.NewTestAgent(config)` takes no `*testing.T`.** The parameter was
   never used, and it made every production binary link the `testing` package.
+- **`plugin/echo` is gone.** It instrumented labstack/echo v3, which is
+  end-of-life upstream with an unpatched advisory (GHSA-vfp3-v2gw-7wfq) and no
+  fixed v3 release to pin, and its code was a copy of `plugin/echov4`. Use
+  `plugin/echov4` or `plugin/echov5`.
+- **`plugin/goelastic` serves every go-elasticsearch major**, and the
+  `plugin/goelasticv8` and `plugin/goelasticv9` modules v2 had introduced are
+  gone. `ppgoelastic.NewTransport` is an `http.RoundTripper` that never imports
+  the client, and `elasticsearch.Config.Transport` is the same field in v7, v8
+  and v9, so the three were one file under three names. Import
+  `plugin/goelastic/v2`; `NewTransport` is unchanged.
 
 ### Changed
 
 - `Log.Output` defaults to `stdout`; it was `stderr`.
+- **The plugin examples live in the root `example` module** (`example/<plugin>`)
+  instead of inside each plugin module. A plugin's go.mod no longer requires
+  `plugin/http` (or, for `plugin/gorm`, `plugin/mysql` and the mysql driver) for
+  a program only its example ran, so those requirements leave the module graph
+  of every application importing the plugin. `plugin/grpc` keeps its example:
+  its `example/testapp` is a package the end-to-end suite and `example/gokit`
+  import.
 - The `net/http.Header` carriers no longer canonicalize the Pinpoint header
   names on every lookup. Seven of the ten names (`Pinpoint-TraceID`,
   `Pinpoint-pSpanID`, ...) are not in textproto canonical form, so
@@ -215,8 +232,7 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   the sarama plugins ([#80](https://github.com/pinpoint-apm/pinpoint-go-agent/issues/80)).
 - **Plugins for new libraries and new library majors**: `plugin/echov5`
   (labstack/echo v5), `plugin/fiberv3` (gofiber/fiber v3), `plugin/kratosv3`
-  (go-kratos/kratos v3), `plugin/gocqlv2` (gocql v2), `plugin/goelasticv8` and
-  `plugin/goelasticv9` (elastic/go-elasticsearch v8 and v9),
+  (go-kratos/kratos v3), `plugin/gocqlv2` (gocql v2),
   `plugin/mongodriverv2` (mongo-go-driver v2), `plugin/oraclev3`
   (sijms/go-ora v3), `plugin/mssql-microsoft` (microsoft/go-mssqldb),
   `plugin/slog` (log/slog) and `plugin/zap` (uber-go/zap). See the
@@ -277,7 +293,7 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   wrappers do, and **injects headers into a slice of the message's own**
   rather than into spare capacity the caller's slice may share with another
   message.
-- **`ppecho` and `ppechov4` record the committed status.** A handler that
+- **`ppechov4` records the committed status.** A handler that
   wrote its response and then returned an error was recorded with the error's
   status while the wire kept the written one.
 - **`pphttp` refuses a nil handler at registration**, as net/http does,
@@ -296,9 +312,9 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   connection from a `redis.Pool` is redigo's own type and is traced through
   `redis.DoContext`; the no-op binding is now logged at debug level and
   documented.
-- **`ppgoelastic`, `ppgoelasticv8` and `ppgoelasticv9` pool their gzip
-  readers** instead of allocating one per compressed request, and read the `q`
-  parameter without building the whole query map.
+- **`ppgoelastic` pools its gzip readers** instead of allocating one per
+  compressed request, and reads the `q` parameter without building the whole
+  query map.
 - **A full metadata queue no longer spends an id per use.** A span that missed
   the API, error or SQL cache while `Collector.Grpc.SenderQueueSize` items were
   waiting minted an id, was refused, and released the entry, so the next use

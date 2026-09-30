@@ -14,7 +14,7 @@ import (
 	transhttp "github.com/go-kratos/kratos/v3/transport/http"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/v2"
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/v2/example/helloworld"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/example/kratosv3/helloworld"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 

@@ -63,4 +63,4 @@ func main() {
     ...
 }
 ```
-[Full Example Source](/plugin/goredisv7/example/redisv7.go)
+[Full Example Source](/example/goredisv7/redisv7.go)

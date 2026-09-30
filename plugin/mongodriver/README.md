@@ -49,4 +49,4 @@ func mongodb(w http.ResponseWriter, r *http.Request) {
     ...
 }
 ```
-[Full Example Source](/plugin/mongodriver/example/mongo_example.go)
+[Full Example Source](/example/mongodriver/mongo_example.go)

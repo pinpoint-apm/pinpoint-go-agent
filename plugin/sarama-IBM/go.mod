@@ -4,7 +4,6 @@ go 1.25.0
 
 require (
 	github.com/IBM/sarama v1.60.2
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0
 	github.com/stretchr/testify v1.12.1
 )
@@ -60,5 +59,3 @@ require (
 )
 
 replace github.com/pinpoint-apm/pinpoint-go-agent/v2 => ../..
-
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 => ../http

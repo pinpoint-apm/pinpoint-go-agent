@@ -42,4 +42,4 @@ func doMemcache(w http.ResponseWriter, r *http.Request) {
     ...
 }
 ```
-[Full Example Source](/plugin/gomemcache/example/gomemcache_example.go)
+[Full Example Source](/example/gomemcache/gomemcache_example.go)

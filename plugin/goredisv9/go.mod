@@ -3,7 +3,6 @@ module github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv9/v2
 go 1.25.0
 
 require (
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/stretchr/testify v1.8.0
@@ -51,5 +50,3 @@ require (
 )
 
 replace github.com/pinpoint-apm/pinpoint-go-agent/v2 => ../..
-
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 => ../http

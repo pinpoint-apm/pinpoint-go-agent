@@ -3,7 +3,6 @@ module github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis/v2
 go 1.25.0
 
 require (
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0
 	github.com/redis/rueidis v1.0.77
 	github.com/redis/rueidis/rueidishook v1.0.77
@@ -50,5 +49,3 @@ require (
 )
 
 replace github.com/pinpoint-apm/pinpoint-go-agent/v2 => ../..
-
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 => ../http

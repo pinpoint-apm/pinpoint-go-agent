@@ -57,4 +57,4 @@ func rueidisv1(w http.ResponseWriter, r *http.Request) {
     err = client.Do(ctx, client.B().Set().Key("foo").Value("bar").Nx().Build()).Error()
     ...
 ```
-[Full Example Source](/plugin/rueidis/example/rueidis_example.go)
+[Full Example Source](/example/rueidis/rueidis_example.go)

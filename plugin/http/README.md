@@ -117,7 +117,7 @@ func main() {
 }
 
 ```
-[Full Example Source](/plugin/http/example/http_server/http_server.go)
+[Full Example Source](/example/http/http_server/http_server.go)
 
 #### Config Options
 * [Http.Client.RecordRequestHeader](/doc/config.md#Http.Client.RecordRequestHeader)

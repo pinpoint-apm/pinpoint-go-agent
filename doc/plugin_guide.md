@@ -17,7 +17,8 @@ go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin/v2
 
 Each package name is the directory prefixed with `pp` (`plugin/gin` is
 `ppgin`), and every plugin directory carries a `README.md` and a runnable
-`example/` — those are the authoritative reference for the plugin's options.
+example under [example/](/example) (`example/<plugin>`) — those are the
+authoritative reference for the plugin's options.
 
 A plugin needs a running agent, and most of them need a **tracer in the
 context** of the call they instrument. That is the one recurring mistake: an
@@ -49,7 +50,6 @@ the URL, status and configured headers.
 | [plugin/http](/plugin/http) | Go standard `net/http` | `WrapHandler`, `WrapHandlerFunc`, `NewServeMux` |
 | [plugin/beego](/plugin/beego) | [beego/beego/v2](https://github.com/beego/beego) | `ServerFilterChain`, `Middleware` |
 | [plugin/chi](/plugin/chi) | [go-chi/chi](https://github.com/go-chi/chi) | `Middleware`, `WrapHandler`, `WrapHandlerFunc` |
-| [plugin/echo](/plugin/echo) | [labstack/echo](https://github.com/labstack/echo) — *deprecated* | `Middleware`, `WrapHandler` |
 | [plugin/echov4](/plugin/echov4) | [labstack/echo/v4](https://github.com/labstack/echo) | `Middleware`, `WrapHandler` |
 | [plugin/echov5](/plugin/echov5) | [labstack/echo/v5](https://github.com/labstack/echo) | `Middleware`, `WrapHandler` |
 | [plugin/fasthttp](/plugin/fasthttp) | [valyala/fasthttp](https://github.com/valyala/fasthttp) | `WrapHandler` |
@@ -170,9 +170,7 @@ privacy gate on bind values. See [Configuration](config.md#sqltracebindvalue).
 | [plugin/gocql](/plugin/gocql) | [gocql](https://github.com/gocql/gocql) | `NewObserver` |
 | [plugin/gocqlv2](/plugin/gocqlv2) | [gocql/v2](https://github.com/apache/cassandra-gocql-driver) | `NewObserver` |
 | [plugin/gohbase](/plugin/gohbase) | [tsuna/gohbase](https://github.com/tsuna/gohbase) | `NewClient` |
-| [plugin/goelastic](/plugin/goelastic) | [elastic/go-elasticsearch](https://github.com/elastic/go-elasticsearch) | `NewTransport` |
-| [plugin/goelasticv8](/plugin/goelasticv8) | [elastic/go-elasticsearch/v8](https://github.com/elastic/go-elasticsearch) | `NewTransport` |
-| [plugin/goelasticv9](/plugin/goelasticv9) | [elastic/go-elasticsearch/v9](https://github.com/elastic/go-elasticsearch) | `NewTransport` |
+| [plugin/goelastic](/plugin/goelastic) | [elastic/go-elasticsearch](https://github.com/elastic/go-elasticsearch) v7, v8 and v9 | `NewTransport` |
 
 These clients hook into the library's own observability seam — a hook, monitor,
 observer or `RoundTripper` — so you register once at construction:

@@ -43,4 +43,4 @@ func doHbase(w http.ResponseWriter, r *http.Request) {
     ...
 }
 ```
-[Full Example Source](/plugin/gohbase/example/hbase_example.go)
+[Full Example Source](/example/gohbase/hbase_example.go)

@@ -54,7 +54,7 @@ func tableCount(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-[Full Example Source](/plugin/pgxv5/example/pgxv5_example.go)
+[Full Example Source](/example/pgxv5/pgxv5_example.go)
 
 ### database/sql driver
 This package instruments the database/sql driver of pgx calls also.

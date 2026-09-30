@@ -54,4 +54,4 @@ func logging(w http.ResponseWriter, r *http.Request) {
     logger.Error("ohhh, what a world", ppzap.NewField(tracer)...)
 }
 ```
-[Full Example Source](/plugin/zap/example/zap_example.go)
+[Full Example Source](/example/zap/zap_example.go)

@@ -51,4 +51,4 @@ func redigo_test(w http.ResponseWriter, r *http.Request) {
     //or 
     //redis.DoContext(c, r.Context(), "GET", "vehicle")
 ```
-[Full Example Source](/plugin/redigo/example/redigo_example.go)
+[Full Example Source](/example/redigo/redigo_example.go)

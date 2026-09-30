@@ -86,7 +86,7 @@ func (m *MainController) Get() {
     m.Ctx.WriteString(str)
 }
 ```
-[Full Example Source](/plugin/beego/example/beego_server.go)
+[Full Example Source](/example/beego/beego_server.go)
 
 #### Config Options
 * [Http.Client.RecordRequestHeader](/doc/config.md#Http.Client.RecordRequestHeader)

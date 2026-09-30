@@ -47,14 +47,14 @@ func main() {
     ... //setup agent
 	
     e := echo.New()
-    e.Use(ppecho.Middleware())
+    e.Use(ppechov4.Middleware())
 
     e.GET("/hello", hello)
     e.Start(":9000")
 }
 
 ```
-[Full Example Source](/plugin/echov4/example/echov4_server.go)
+[Full Example Source](/example/echov4/echov4_server.go)
 
 This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
 

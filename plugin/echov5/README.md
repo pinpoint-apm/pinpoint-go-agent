@@ -70,7 +70,7 @@ func main() {
 }
 
 ```
-[Full Example Source](/plugin/echov5/example/echov5_server.go)
+[Full Example Source](/example/echov5/echov5_server.go)
 
 This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
 

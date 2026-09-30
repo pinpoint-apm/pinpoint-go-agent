@@ -42,4 +42,4 @@ func query(w http.ResponseWriter, r *http.Request) {
     fmt.Println("number of tables in information_schema", count)
 }
 ```
-[Full Example Source](/plugin/mysql/example/mysql_example.go)
+[Full Example Source](/example/mysql/mysql_example.go)

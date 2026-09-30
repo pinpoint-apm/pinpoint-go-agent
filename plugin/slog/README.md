@@ -50,4 +50,4 @@ func logging(w http.ResponseWriter, r *http.Request) {
     logger.ErrorContext(r.Context(), "ohhh, what a world")
 }
 ```
-[Full Example Source](/plugin/slog/example/slog_example.go)
+[Full Example Source](/example/slog/slog_example.go)

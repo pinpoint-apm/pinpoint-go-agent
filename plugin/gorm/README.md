@@ -57,4 +57,4 @@ func gormQuery(w http.ResponseWriter, r *http.Request) {
     ...
 }
 ```
-[Full Example Source](/plugin/gorm/example/gorm_example.go)
+[Full Example Source](/example/gorm/gorm_example.go)

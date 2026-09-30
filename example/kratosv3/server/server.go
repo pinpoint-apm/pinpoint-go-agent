@@ -9,13 +9,13 @@ import (
 	"log"
 	"os"
 
-	"github.com/go-kratos/kratos/v2"
-	"github.com/go-kratos/kratos/v2/errors"
-	"github.com/go-kratos/kratos/v2/transport"
-	"github.com/go-kratos/kratos/v2/transport/grpc"
-	"github.com/go-kratos/kratos/v2/transport/http"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratos/v2"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratos/v2/example/helloworld"
+	"github.com/go-kratos/kratos/v3"
+	"github.com/go-kratos/kratos/v3/errors"
+	"github.com/go-kratos/kratos/v3/transport"
+	"github.com/go-kratos/kratos/v3/transport/grpc"
+	"github.com/go-kratos/kratos/v3/transport/http"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/example/kratosv3/helloworld"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
@@ -58,13 +58,13 @@ func main() {
 	httpSrv := http.NewServer(
 		http.Address(":8000"),
 		http.Middleware(
-			ppkratos.ServerMiddleware(),
+			ppkratosv3.ServerMiddleware(),
 		),
 	)
 	grpcSrv := grpc.NewServer(
 		grpc.Address(":9000"),
 		grpc.Middleware(
-			ppkratos.ServerMiddleware(),
+			ppkratosv3.ServerMiddleware(),
 		),
 	)
 	helloworld.RegisterGreeterServer(grpcSrv, s)

@@ -47,7 +47,7 @@ func main() {
     log.Fatal(fasthttp.ListenAndServe(":9000", r.Handler))
 }
 ```
-[Full Example Source](/plugin/fasthttprouter/example/fasthttprouter_server.go)
+[Full Example Source](/example/fasthttprouter/fasthttprouter_server.go)
 
 This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
 

@@ -56,4 +56,4 @@ func query(w http.ResponseWriter, r *http.Request) {
     }
 }
 ```
-[Full Example Source](/plugin/oracle/example/oracle_example.go)
+[Full Example Source](/example/oracle/oracle_example.go)

@@ -1,6 +1,8 @@
 // Package ppgoelastic instruments the elastic/go-elasticsearch package (https://github.com/elastic/go-elasticsearch).
 //
-// This package instruments the elasticsearch calls.
+// This package instruments the elasticsearch calls of every client major (v7,
+// v8 and v9): NewTransport is an http.RoundTripper, and the Transport field it
+// goes into is the same in each.
 // Use the NewTransport as the elasticsearch.Client's Transport.
 //
 //	elasticsearch.NewClient(elasticsearch.Config{Transport: ppgoelastic.NewTransport(nil)})

@@ -46,4 +46,4 @@ func logging(w http.ResponseWriter, r *http.Request) {
     logger.WithFields(pplogrus.NewField(tracer)).Fatal("ohhh, what a world")
 }
 ```
-[Full Example Source](/plugin/logrus/example/logrus_example.go)
+[Full Example Source](/example/logrus/logrus_example.go)

@@ -55,7 +55,7 @@ func main() {
 }
 
 ```
-[Full Example Source](/plugin/gorilla/example/mux_server.go)
+[Full Example Source](/example/gorilla/mux_server.go)
 
 This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
 

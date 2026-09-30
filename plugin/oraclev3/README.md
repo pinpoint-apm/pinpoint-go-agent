@@ -56,4 +56,4 @@ func query(w http.ResponseWriter, r *http.Request) {
     }
 }
 ```
-[Full Example Source](/plugin/oraclev3/example/oraclev3_example.go)
+[Full Example Source](/example/oraclev3/oraclev3_example.go)

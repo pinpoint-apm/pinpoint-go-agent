@@ -43,7 +43,7 @@ func processMessage(ctx context.Context, msg *kafka.Message) error {
     return nil
 }
 ```
-[Full Example Source](/plugin/confluentkafka/example/consumer/consumer.go)
+[Full Example Source](/example/confluentkafka/consumer/consumer.go)
 
 ### Producer
 To instrument a Kafka producer, use NewProducer and ProduceContext with the context containing the pinpoint.Tracer.
@@ -62,4 +62,4 @@ func save(w http.ResponseWriter, r *http.Request) {
 The span event covers the enqueue, and a failed enqueue is recorded on it.
 The delivery report goes where `Produce` sends it - the delivery channel, or `Events()` without one - untouched and in librdkafka's order.
 
-[Full Example Source](/plugin/confluentkafka/example/producer/producer.go)
+[Full Example Source](/example/confluentkafka/producer/producer.go)

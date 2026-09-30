@@ -3,20 +3,15 @@ module github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm/v2
 go 1.25.0
 
 require (
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0
 	github.com/stretchr/testify v1.8.0
-	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.31.2
 )
 
 require (
-	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
-	github.com/go-sql-driver/mysql v1.10.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
@@ -55,7 +50,3 @@ require (
 )
 
 replace github.com/pinpoint-apm/pinpoint-go-agent/v2 => ../..
-
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 => ../http
-
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2 => ../mysql

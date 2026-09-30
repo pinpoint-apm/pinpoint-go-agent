@@ -47,7 +47,7 @@ func main() {
 }
 
 ```
-[Full Example Source](/plugin/fasthttp/example/fasthttp_server.go)
+[Full Example Source](/example/fasthttp/fasthttp_server.go)
 
 This package supports URL Statistics feature. It aggregates response times, successes and failures for each pattern given as parameter of a WrapHandler function.
 
@@ -93,7 +93,7 @@ func client(ctx *fasthttp.RequestCtx) {
     ...
 }
 ```
-[Full Example Source](/plugin/fasthttp/example/fasthttp_server.go)
+[Full Example Source](/example/fasthttp/fasthttp_server.go)
 
 #### Config Options
 * [Http.Client.RecordRequestHeader](/doc/config.md#Http.Client.RecordRequestHeader)

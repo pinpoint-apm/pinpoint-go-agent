@@ -54,7 +54,7 @@ func main() {
 }
 
 ```
-[Full Example Source](/plugin/gin/example/gin_server.go)
+[Full Example Source](/example/gin/gin_server.go)
 
 This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
 

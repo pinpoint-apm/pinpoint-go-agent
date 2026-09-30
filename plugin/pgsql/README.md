@@ -43,4 +43,4 @@ func query(w http.ResponseWriter, r *http.Request) {
     fmt.Println("number of entries in pg_catalog.pg_tables", count)
 }
 ```
-[Full Example Source](/plugin/pgsql/example/pgsql_example.go)
+[Full Example Source](/example/pgsql/pgsql_example.go)

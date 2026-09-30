@@ -46,4 +46,4 @@ func doCassandra(w http.ResponseWriter, r *http.Request) {
 }
 
 ```
-[Full Example Source](/plugin/gocqlv2/example/gocqlv2_example.go)
+[Full Example Source](/example/gocqlv2/gocqlv2_example.go)

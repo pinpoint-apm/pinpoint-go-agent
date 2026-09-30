@@ -3,7 +3,6 @@ module github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase/v2
 go 1.25.0
 
 require (
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tsuna/gohbase v0.0.0-20260720181522-8b8e010ab4a7
@@ -66,5 +65,3 @@ require (
 )
 
 replace github.com/pinpoint-apm/pinpoint-go-agent/v2 => ../..
-
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 => ../http

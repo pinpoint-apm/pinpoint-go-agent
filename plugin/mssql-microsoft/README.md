@@ -51,4 +51,4 @@ func query(w http.ResponseWriter, r *http.Request) {
     rows.Close()
 }
 ```
-[Full Example Source](/plugin/mssql-microsoft/example/mssql_example.go)
+[Full Example Source](/example/mssql-microsoft/mssql_example.go)

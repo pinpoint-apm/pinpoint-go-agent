@@ -79,6 +79,7 @@ find none started and record nothing. Do not use it to put the migration off.
 | `pphttp.WrapResponseWriter` returns the unexported `*responseWriter` | returns `http.ResponseWriter` | nothing where the result was used as an `http.ResponseWriter` |
 | `(*ppgomemcache.Client).WithContext(ctx)` returns nothing | returns the `*Client` bound to the context's tracer | use the returned copy for the request's calls |
 | `pinpoint.NewTestAgent(config, t)` | `NewTestAgent(config)` | drop the `*testing.T`; it was never used |
+| `plugin/echo` (`ppecho`) | removed | use `plugin/echov4` or `plugin/echov5`: echo v3 is end-of-life upstream with an unpatched advisory |
 
 A carrier of your own - a message queue's headers, say - now tells a key held
 with an empty value from a key it does not hold. The difference decides whether
