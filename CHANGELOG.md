@@ -236,6 +236,50 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Fixed
 
+- **An empty `os.Args` no longer panics, and a panic while connecting no
+  longer ends the host.** A process exec'd with no argv at all panicked in
+  `NewConfig` and in the registration goroutine, which nothing recovered;
+  the connect goroutine is now recovered like the workers and releases the
+  agent as a failed connect.
+- **`Collector.Grpc.*` sizes and keepalive times are range checked.** A 0 or
+  negative message size failed every send with `ResourceExhausted`, and a
+  negative keepalive timeout dropped the connection after every ping; a value
+  out of range recovers the default, as the queue sizes do.
+- **A nil carrier is safe on a sampled span.** `Inject(nil)` and `Extract(nil)`
+  did nothing on the noop tracer and panicked once the request was sampled.
+- **An unsampled span clamps a negative elapsed time**, as a sampled one does,
+  so an NTP step no longer shrinks the response-time total.
+- **`ppsarama` and `ppsaramaibm` answer `CommitTxn` and `AbortTxn` with an
+  error on a producer without transactions** instead of panicking on the
+  type assertion.
+- **The kafka consumers take a nil context** (`ppsarama`, `ppsaramaibm`,
+  `ppconfluentkafka`) instead of panicking once the agent is enabled.
+- **`ppconfluentkafka.WrapProducer` keeps a nil producer nil**, as the sarama
+  wrappers do, and **injects headers into a slice of the message's own**
+  rather than into spare capacity the caller's slice may share with another
+  message.
+- **`ppecho` and `ppechov4` record the committed status.** A handler that
+  wrote its response and then returned an error was recorded with the error's
+  status while the wire kept the written one.
+- **`pphttp` refuses a nil handler at registration**, as net/http does,
+  instead of panicking on every request, and **masks a password in the
+  recorded client URL**.
+- **`ppgomemcache` tolerates a `Client` built as a struct literal** instead of
+  nil-dereferencing on its first operation.
+- **`ppgoredis` derives every `WithContext` copy from the base client.** A copy
+  of a copy stacked another process wrapper and recorded two events per
+  command for each `WithContext` in the chain.
+- **`ppgoredis`, `ppgoredisv9`, `pprueidis` and `ppredigo` record the error on
+  the event they opened**, not on whichever event is on top of the stack once
+  the call returns, which under a fan-out on one request was another
+  goroutine's.
+- **`ppredigo.WithContext` says when it cannot bind a connection.** A
+  connection from a `redis.Pool` is redigo's own type and is traced through
+  `redis.DoContext`; the no-op binding is now logged at debug level and
+  documented.
+- **`ppgoelastic`, `ppgoelasticv8` and `ppgoelasticv9` pool their gzip
+  readers** instead of allocating one per compressed request, and read the `q`
+  parameter without building the whole query map.
 - **A full metadata queue no longer spends an id per use.** A span that missed
   the API, error or SQL cache while `Collector.Grpc.SenderQueueSize` items were
   waiting minted an id, was refused, and released the entry, so the next use
