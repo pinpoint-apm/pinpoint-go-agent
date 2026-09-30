@@ -82,9 +82,17 @@ func (c *wrappedConn) currentContext() context.Context {
 
 // WithContext passes the context to the provided redis.Conn.
 // It is possible to trace only when the given context contains a pinpoint.Tracer.
+//
+// It binds a connection this package dialed or wrapped. A connection taken
+// from a redis.Pool is redigo's own type in front of the wrapped one, which
+// this cannot reach: a pooled connection is traced through redis.DoContext
+// and redis.ReceiveContext, which the pool forwards to the wrapped
+// connection with the context.
 func WithContext(c redis.Conn, ctx context.Context) {
 	if wc, ok := c.(pinpointContext); ok {
 		wc.WithContext(ctx)
+	} else if c != nil {
+		pinpoint.Log("redigo").Debugf("WithContext: %T is not a connection this package wrapped (a pooled connection is traced through redis.DoContext)", c)
 	}
 }
 
