@@ -1292,6 +1292,17 @@ func (config *Config) publish() {
 	if config.stagedInt(CfgCollectorAgentInfoMaxTryPerAttempt) < 1 {
 		config.cfgMap[CfgCollectorAgentInfoMaxTryPerAttempt].value = defaultAgentInfoMaxTryPerAttempt
 	}
+	// The gRPC sizes and keepalive times: a 0 or negative message size fails
+	// every send with ResourceExhausted, and a negative keepalive timeout
+	// drops the connection after every ping, so a value out of range recovers
+	// the default like the queue sizes above.
+	config.defaultIfOutOfRange(CfgCollectorGrpcKeepAliveTime, 1, math.MaxInt32)
+	config.defaultIfOutOfRange(CfgCollectorGrpcKeepAliveTimeout, 1, math.MaxInt32)
+	config.defaultIfOutOfRange(CfgCollectorGrpcMaxSendMessageSize, 1, math.MaxInt32)
+	config.defaultIfOutOfRange(CfgCollectorGrpcMaxReceiveMessageSize, 1, math.MaxInt32)
+	config.defaultIfOutOfRange(CfgCollectorGrpcFlowControlWindow, 1, math.MaxInt32)
+	config.defaultIfOutOfRange(CfgCollectorGrpcWriteBufferSize, 0, math.MaxInt32)
+	config.defaultIfOutOfRange(CfgCollectorGrpcMaxHeaderListSize, 1, math.MaxInt32)
 	// A negative max age means the same as the default: renewal off.
 	if config.stagedInt(CfgCollectorGrpcConnectionMaxAge) < 0 {
 		config.cfgMap[CfgCollectorGrpcConnectionMaxAge].value = grpcConnectionMaxAge
