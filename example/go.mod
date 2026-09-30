@@ -14,7 +14,6 @@ require (
 	github.com/go-kit/kit v0.13.0
 	github.com/go-kratos/kratos/v2 v2.7.3
 	github.com/go-kratos/kratos/v3 v3.0.0
-	github.com/go-redis/redis v6.10.0+incompatible
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/gocql/gocql v1.5.0
 	github.com/gofiber/fiber/v2 v2.52.14
@@ -165,7 +164,6 @@ require (
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelastic/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv9/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla/v2 v2.0.0
@@ -242,8 +240,6 @@ replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelastic/v2 => ../plug
 replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase/v2 => ../plugin/gohbase
 
 replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache/v2 => ../plugin/gomemcache
-
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis/v2 => ../plugin/goredis
 
 replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8/v2 => ../plugin/goredisv8
 

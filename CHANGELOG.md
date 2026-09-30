@@ -72,11 +72,13 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   modules they required (fsnotify, hcl, go-toml, ini, properties,
   mapstructure, afero, ...) leave the module graph of every application
   importing the agent.
-- **Three plugins for dead upstreams are gone: `plugin/sarama`, `plugin/goredisv7`
-  and `plugin/mssql`.** Shopify/sarama is archived and IBM/sarama is the same
+- **Four plugins for dead upstreams are gone: `plugin/sarama`, `plugin/goredis`,
+  `plugin/goredisv7` and `plugin/mssql`.** Shopify/sarama is archived and IBM/sarama is the same
   module renamed, so `plugin/sarama-IBM` (`ppsaramaibm`) is the sarama plugin:
-  the two were one file under two import paths. go-redis v7 is end-of-life;
-  `plugin/goredisv8` and `plugin/goredisv9` serve the maintained majors.
+  the two were one file under two import paths. go-redis v6 (the
+  pre-modules `github.com/go-redis/redis`, last released in 2020) and v7 are
+  end-of-life; `plugin/goredisv8` and `plugin/goredisv9` serve the maintained
+  majors.
   denisenkom/go-mssqldb is deprecated for its fork microsoft/go-mssqldb, so
   `plugin/mssql-microsoft` is the SQL Server plugin; its driver is registered
   as `mssql-microsoft-pinpoint`, where `ppmssql` used `sqlserver-pinpoint`.
@@ -348,10 +350,7 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   recorded client URL**.
 - **`ppgomemcache` tolerates a `Client` built as a struct literal** instead of
   nil-dereferencing on its first operation.
-- **`ppgoredis` derives every `WithContext` copy from the base client.** A copy
-  of a copy stacked another process wrapper and recorded two events per
-  command for each `WithContext` in the chain.
-- **`ppgoredis`, `ppgoredisv9`, `pprueidis` and `ppredigo` record the error on
+- **`ppgoredisv9`, `pprueidis` and `ppredigo` record the error on
   the event they opened**, not on whichever event is on top of the stack once
   the call returns, which under a fan-out on one request was another
   goroutine's.

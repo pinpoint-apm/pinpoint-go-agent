@@ -157,7 +157,6 @@ privacy gate on bind values. See [Configuration](config.md#sqltracebindvalue).
 
 | Plugin package | Instrumented package | Entry point |
 |---|---|---|
-| [plugin/goredis](/plugin/goredis) | [go-redis/redis](https://github.com/go-redis/redis) | `NewClient`, `NewClusterClient` |
 | [plugin/goredisv8](/plugin/goredisv8) | [go-redis/redis/v8](https://github.com/go-redis/redis) | `NewHook`, `NewClusterHook` |
 | [plugin/goredisv9](/plugin/goredisv9) | [redis/go-redis/v9](https://github.com/redis/go-redis) | `NewHook`, `NewClusterHook` |
 | [plugin/redigo](/plugin/redigo) | [gomodule/redigo](https://github.com/gomodule/redigo) | `Dial`, `DialContext`, `DialURL`, `WithContext` |
