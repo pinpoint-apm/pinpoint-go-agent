@@ -236,6 +236,48 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Fixed
 
+- **A full metadata queue no longer spends an id per use.** A span that missed
+  the API, error or SQL cache while `Collector.Grpc.SenderQueueSize` items were
+  waiting minted an id, was refused, and released the entry, so the next use
+  minted another: through a collector outage the int32 sequence wrapped within
+  hours on a busy service, after which no SQL was recorded until the process
+  restarted. The queue is checked first; a refused use records no metadata and
+  the next one registers it once there is room.
+- **The config file watcher survives a watcher error.** One error from fsnotify
+  - an inotify queue overflow while the config file's directory was busy - ended
+  the watcher goroutine and, with it, dynamic reload for the rest of the
+  process. The error is logged and the watcher keeps running.
+- **`SetLogging` is a plain store.** The logrus, slog and zap plugins call it
+  from whichever goroutine logs with the request's tracer, and two at once were
+  a data race.
+- **`ppsarama` and `ppsaramaibm` pass a nil message through.** sarama logs and
+  ignores a nil on `Input()`; the wrapper dereferenced it, and on `Input()` the
+  input forwarder died and every later message was dropped in silence, while
+  `InputContext` panicked in the caller.
+- **`ppbeego` records the status the response went out with.** `Output.Body`
+  (behind `ServeJSON`, `Render` and the rest) resets `Output.Status` to 0 after
+  writing the header, so nearly every response was recorded as status 0 and a
+  5xx never failed the span. The writer's status is read first.
+- **`ppbeego`'s client filter ends its own event.** `ClientFilterChain` and
+  `DoRequest` discarded the tracer `pphttp.NewHttpClientTracer` returns and
+  ended the caller's instead, so a filter added twice, or a retried request,
+  closed whatever event the caller had open.
+- **`ppfiber`, `ppfiberv3` and `ppfasthttp` make one span per request.** A
+  handler wrapped inside the middleware, or wrapped twice, started a second
+  span with its own transaction id and double-counted the response time and URL
+  statistics. The inner layer now records on the existing span, as
+  `pphttp.NewHttpServerTracer` does. `ppkratos` and `ppkratosv3` do the same for
+  a middleware registered twice or combined with `ppgrpc`.
+- **`ppfasthttp` no longer fails every request completing during a graceful
+  stop.** `RequestCtx.Err()` was recorded as a handler error; it reports
+  `context.Canceled` only once `Server.Shutdown` has begun, and it panicked on a
+  `RequestCtx` no server initialized. Nothing is recorded from it.
+- **`pppgsql` reads a keyword/value DSN.** Every DSN went through
+  `pq.ParseURL`, which takes only URLs, so `host=... dbname=...` was rejected
+  with an ERROR line per pooled connection and the spans carried no endpoint.
+- **`pppgxv5` copies the connection config only for a sampled query.** Each
+  callback called `Conn.Config()` - a deep copy with a `tls.Config` clone -
+  before the sampling check, on every query of an unsampled request.
 - **A wrapped SQL driver no longer keeps a connection whose rollback failed.**
   The wrapper claimed `driver.SessionResetter` and `driver.Validator` for every
   driver, and database/sql decides from their presence alone whether a
