@@ -39,7 +39,7 @@ func (t *pgxTracer) TraceConnectEnd(ctx context.Context, data pgx.TraceConnectEn
 }
 
 func (t *pgxTracer) TraceQueryStart(ctx context.Context, c *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
-	if tracer := newSpanEvent(ctx, c.Config(), "pgx.Query"); tracer.IsSampled() {
+	if tracer := connSpanEvent(ctx, c, "pgx.Query"); tracer.IsSampled() {
 		se := tracer.SpanEvent()
 		sqlArgs := t.composeArgs(data.Args)
 		se.SetSQL(data.SQL, sqlArgs)
@@ -58,12 +58,12 @@ func (t *pgxTracer) TraceQueryEnd(ctx context.Context, c *pgx.Conn, data pgx.Tra
 }
 
 func (t *pgxTracer) TraceBatchStart(ctx context.Context, c *pgx.Conn, _ pgx.TraceBatchStartData) context.Context {
-	newSpanEvent(ctx, c.Config(), "pgx.Batch")
+	connSpanEvent(ctx, c, "pgx.Batch")
 	return ctx
 }
 
 func (t *pgxTracer) TraceBatchQuery(ctx context.Context, c *pgx.Conn, data pgx.TraceBatchQueryData) {
-	if tracer := newSpanEvent(ctx, c.Config(), "pgx.BatchQuery"); tracer.IsSampled() {
+	if tracer := connSpanEvent(ctx, c, "pgx.BatchQuery"); tracer.IsSampled() {
 		defer tracer.EndSpanEvent()
 
 		se := tracer.SpanEvent()
@@ -83,7 +83,7 @@ func (t *pgxTracer) TraceBatchEnd(ctx context.Context, _ *pgx.Conn, data pgx.Tra
 }
 
 func (t *pgxTracer) TraceCopyFromStart(ctx context.Context, c *pgx.Conn, data pgx.TraceCopyFromStartData) context.Context {
-	recordCopyFromTarget(newSpanEvent(ctx, c.Config(), "pgx.CopyFrom"), data.TableName)
+	recordCopyFromTarget(connSpanEvent(ctx, c, "pgx.CopyFrom"), data.TableName)
 	return ctx
 }
 
@@ -103,6 +103,17 @@ func (t *pgxTracer) TraceCopyFromEnd(ctx context.Context, _ *pgx.Conn, data pgx.
 		se := tracer.SpanEvent()
 		se.SetError(data.Err, "pgx.CopyFrom error")
 	}
+}
+
+// connSpanEvent is newSpanEvent for a live connection. The sampling check
+// comes first: pgx's Conn.Config() is not an accessor but a deep copy of the
+// ConnConfig - a tls.Config clone, the runtime parameter map, the fallbacks -
+// which an unsampled query paid for on every call and threw away.
+func connSpanEvent(ctx context.Context, c *pgx.Conn, cmd string) pinpoint.Tracer {
+	if tracer := pinpoint.FromContext(ctx); !tracer.IsSampled() {
+		return tracer
+	}
+	return newSpanEvent(ctx, c.Config(), cmd)
 }
 
 func newSpanEvent(ctx context.Context, config *pgx.ConnConfig, cmd string) pinpoint.Tracer {
