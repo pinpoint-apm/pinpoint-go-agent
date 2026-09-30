@@ -378,7 +378,9 @@ func (span *span) warnAfterEndSpan(call string) bool {
 }
 
 func (span *span) Inject(writer DistributedTracingContextWriter) {
-	if span.warnAfterEndSpan("Inject") {
+	// A nil carrier writes nothing, as it does on the noop tracer: the
+	// sampled span alone panicked on it.
+	if writer == nil || span.warnAfterEndSpan("Inject") {
 		return
 	}
 	// The trace context is written even when the span has overflowed
@@ -460,6 +462,10 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 func (span *span) Extract(reader DistributedTracingContextReader) {
 	if span.warnAfterEndSpan("Extract") {
 		return
+	}
+	// A nil carrier is a request with no headers, as on the noop tracer.
+	if reader == nil {
+		reader = &noopDistributedTracingContextReader{}
 	}
 	tid, _ := reader.Get(HeaderTraceId)
 	txId, continued := continueHeaders(reader)
