@@ -98,8 +98,11 @@ type span struct {
 	remoteAddr         string
 	acceptorHost       string
 	annotations        annotation
-	loggingInfo        int32
-	apiId              int32
+	// loggingInfo is atomic like the counters below: the logging plugins
+	// call SetLogging from whichever goroutine logs with the request's
+	// tracer, and two of them at once were a data race.
+	loggingInfo atomic.Int32
+	apiId       int32
 
 	// Atomic: a Tracer instruments a single call stack, but plugins cannot
 	// always keep one on a single goroutine - a gRPC client stream is driven
@@ -1027,7 +1030,7 @@ func (span *span) SetLogging(logInfo int32) {
 	if span.warnIfFinished("SetLogging") {
 		return
 	}
-	span.loggingInfo = logInfo
+	span.loggingInfo.Store(logInfo)
 }
 
 func (span *span) collectUrlStat(stat *UrlStatEntry, force bool) {

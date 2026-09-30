@@ -1177,7 +1177,7 @@ func TestSpan_SettersAfterEndSpanAreNoop(t *testing.T) {
 	assert.Equal(t, "10.0.0.1", span.remoteAddr, "remoteAddr")
 	assert.Equal(t, "host:8080", span.endPoint, "endPoint")
 	assert.Equal(t, "acceptor", span.acceptorHost, "acceptorHost")
-	assert.Equal(t, int32(1), span.loggingInfo, "loggingInfo")
+	assert.Equal(t, int32(1), span.loggingInfo.Load(), "loggingInfo")
 	assert.Equal(t, int32(0), span.err.Load(), "err")
 	assert.Equal(t, int32(0), span.statusErr.Load(), "statusErr")
 	assert.Len(t, span.annotations.getList(), 1, "annotations")

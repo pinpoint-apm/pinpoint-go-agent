@@ -1755,7 +1755,7 @@ func (b *spanMessageBuilder) makePSpan(chunk *spanChunk) *pb.PSpanMessage {
 	pspan.SpanEvent = b.makePSpanEventList(chunk)
 	pspan.Err = span.err.Load()
 	pspan.ApplicationServiceType = span.agent.appType
-	pspan.LoggingTransactionInfo = span.loggingInfo
+	pspan.LoggingTransactionInfo = span.loggingInfo.Load()
 
 	if span.errorString != "" {
 		exceptionInfo := b.intStringValues.get()
