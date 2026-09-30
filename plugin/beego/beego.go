@@ -71,9 +71,25 @@ func ServerFilterChain() func(web.FilterFunc) web.FilterFunc {
 
 			ctx.Request = pinpoint.RequestWithTracerContext(r, tracer)
 			next(ctx)
-			status = ctx.Output.Status
+			status = responseStatus(ctx)
 		}
 	}
+}
+
+// responseStatus is the status the response went out with. The writer's
+// Status is what beego's own access log reads: Output.Body, behind ServeJSON,
+// Render and the rest, writes the header and then resets Output.Status to 0,
+// and Redirect and plain writes never set it, so reading Output.Status alone
+// recorded 0 for nearly every response. Output.Status still covers a handler
+// that set a status and wrote nothing; a response nothing wrote to is a 200.
+func responseStatus(ctx *beegoContext.Context) int {
+	if status := ctx.ResponseWriter.Status; status != 0 {
+		return status
+	}
+	if status := ctx.Output.Status; status != 0 {
+		return status
+	}
+	return http.StatusOK
 }
 
 // DoRequest is deprecated. Use ClientFilterChain.
