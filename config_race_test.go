@@ -15,7 +15,7 @@ import (
 )
 
 // TestConfigReloadRace drives a config reload concurrently with the reads a
-// request goroutine performs, which is what the fsnotify watcher does in
+// request goroutine performs, which is what the config file poller does in
 // production. Run it with -race: before the config was published as an
 // immutable snapshot, the reloader wrote Config's typed fields, cfgMap[k].value
 // and agent.sampler in place while spans and the generic accessors read them.
@@ -55,7 +55,7 @@ Http:
 	writeCfgFile(0)
 
 	// The reload is driven directly rather than through WithConfigFile so the
-	// test does not depend on fsnotify timing.
+	// test does not depend on the poll timing.
 	config, err := NewConfig(WithAppName("raceApp"))
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ Http:
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go func() { // stands in for the fsnotify goroutine
+	go func() { // stands in for the poller goroutine
 		defer wg.Done()
 		for i := 1; !stopped(); i++ {
 			writeCfgFile(i)

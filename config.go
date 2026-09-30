@@ -5,7 +5,6 @@ import (
 	"maps"
 	"math"
 	"os"
-	"path/filepath"
 	"reflect"
 	"runtime/debug"
 	"slices"
@@ -14,7 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cast"
 	"github.com/spf13/pflag"
@@ -351,11 +349,11 @@ type Config struct {
 	// spelling in a config file, a flag or an environment variable.
 	serviceInfo []serviceInfo
 
-	// watchMu owns the single restartable fsnotify watcher for this Config.
+	// watchMu owns the single restartable config file poller for this Config:
+	// watcherStop ends its goroutine, watcherDone reports that it ended.
 	watchMu       sync.Mutex
-	watcher       *fsnotify.Watcher
+	watcherStop   chan struct{}
 	watcherDone   chan struct{}
-	watcherClose  *sync.Once
 	configFile    string
 	configFileCfg *viper.Viper
 
@@ -843,9 +841,13 @@ func (config *Config) loadConfigFile(cmdEnvViper *viper.Viper) *viper.Viper {
 	return cfgFileViper
 }
 
-// Close stops the config file watcher and waits for its goroutine to exit. It
+// configPollInterval is how often the config file is checked for a change. A
+// variable so tests can shorten it.
+var configPollInterval = time.Second
+
+// Close stops the config file poller and waits for its goroutine to exit. It
 // is safe to call more than once; a later NewAgent with the same Config starts
-// the watcher again.
+// the poller again.
 //
 // Close must not be called from a reload callback: callbacks run on the very
 // goroutine Close waits for, so a callback that closes its own Config
@@ -854,19 +856,18 @@ func (config *Config) Close() {
 	config.watchMu.Lock()
 	defer config.watchMu.Unlock()
 
-	if config.watcher == nil {
+	if config.watcherStop == nil {
 		return
 	}
 
-	// Closing the watcher releases its descriptor right here; the wait below is
-	// only for the goroutine, which may still be running a reload callback.
-	// Callbacks are caller-supplied (see AddReloadCallback) and Close is on the
-	// Shutdown path, so bound the wait the same way the worker drain is bounded
-	// - a slow callback must not keep the process alive. The abandoned
-	// goroutine reads a watcher that is already closed, so it only has to
-	// finish the callback in flight before returning; it publishes nothing
-	// after the timeout, having published before the callbacks ran.
-	config.watcherClose.Do(func() { _ = config.watcher.Close() })
+	// The wait is for the goroutine, which may still be running a reload
+	// callback. Callbacks are caller-supplied (see AddReloadCallback) and Close
+	// is on the Shutdown path, so bound the wait the same way the worker drain
+	// is bounded - a slow callback must not keep the process alive. The
+	// abandoned goroutine only has to finish the callback in flight before it
+	// sees the stop; it publishes nothing after the timeout, having published
+	// before the callbacks ran.
+	close(config.watcherStop)
 	timer := time.NewTimer(shutdownTimeout)
 	select {
 	case <-config.watcherDone:
@@ -875,9 +876,8 @@ func (config *Config) Close() {
 	}
 	timer.Stop()
 
-	config.watcher = nil
+	config.watcherStop = nil
 	config.watcherDone = nil
-	config.watcherClose = nil
 }
 
 func (config *Config) startConfigWatcher() bool {
@@ -887,74 +887,73 @@ func (config *Config) startConfigWatcher() bool {
 	if config.configFileCfg == nil {
 		return false
 	}
-	if config.watcher != nil {
+	if config.watcherStop != nil {
 		select {
 		case <-config.watcherDone:
-			config.watcher = nil
+			config.watcherStop = nil
 			config.watcherDone = nil
-			config.watcherClose = nil
 		default:
 			return false
 		}
 	}
 
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		Log("config").Errorf("config file watcher creation error: %v", err)
-		return false
-	}
-
-	configFile := filepath.Clean(config.configFile)
-	configDir, _ := filepath.Split(configFile)
-	if err := watcher.Add(configDir); err != nil {
-		_ = watcher.Close()
-		Log("config").Errorf("config file watcher start error: %v", err)
-		return false
-	}
-
-	done := make(chan struct{})
-	closeOnce := new(sync.Once)
-	config.watcher = watcher
+	stop, done := make(chan struct{}), make(chan struct{})
+	config.watcherStop = stop
 	config.watcherDone = done
-	config.watcherClose = closeOnce
-	go config.watchConfigFile(watcher, done, closeOnce, configFile, config.configFileCfg)
+	go config.pollConfigFile(stop, done, config.configFile, config.configFileCfg)
 	return true
 }
 
-func (config *Config) watchConfigFile(watcher *fsnotify.Watcher, done chan struct{}, closeOnce *sync.Once, configFile string, cfgFileViper *viper.Viper) {
+// pollConfigFile reloads the config file whenever its modification time or
+// size changes, checked every configPollInterval. A poll rather than a file
+// system watch: it needs no platform code and no dependency, a rename or an
+// unlink+rewrite save (editors, deploy tools, a Kubernetes ConfigMap symlink
+// swap) is just a file whose stamp changed, and a config change taking up to
+// one interval to apply costs nothing.
+//
+// ponytail: mtime+size, so a same-size rewrite inside the file system's
+// timestamp granularity is missed; hash the contents if that ever bites.
+func (config *Config) pollConfigFile(stop, done chan struct{}, configFile string, cfgFileViper *viper.Viper) {
 	defer close(done)
-	defer closeOnce.Do(func() { _ = watcher.Close() })
 
-	realConfigFile, _ := filepath.EvalSymlinks(configFile)
+	last, _ := configFileStamp(configFile)
+	ticker := time.NewTicker(configPollInterval)
+	defer ticker.Stop()
 	for {
 		select {
-		case event, ok := <-watcher.Events:
-			if !ok {
-				return
-			}
-
-			// A Remove of the config file is deliberately not an exit: the watch
-			// is on the directory, so it stays valid, and unlink+rewrite savers
-			// (editors, deploy tools) emit Remove then Create - returning on the
-			// Remove silently ended dynamic reload for the rest of the process.
-			currentConfigFile, _ := filepath.EvalSymlinks(configFile)
-			const writeOrCreateMask = fsnotify.Write | fsnotify.Create
-			if (filepath.Clean(event.Name) == configFile && event.Op&writeOrCreateMask != 0) ||
-				(currentConfigFile != "" && currentConfigFile != realConfigFile) {
-				realConfigFile = currentConfigFile
-				config.reloadConfig(cfgFileViper)
-			}
-		case err, ok := <-watcher.Errors:
-			if !ok {
-				return
-			}
-			// Logged and kept, not an exit: what fsnotify reports here is
-			// transient - an inotify queue overflow while the watched
-			// directory is busy - and returning on it ended dynamic reload
-			// for the rest of the process with one line in the log.
-			Log("config").Errorf("config file watcher error: %v", err)
+		case <-stop:
+			return
+		case <-ticker.C:
 		}
+		// A file that is missing right now - an unlink+rewrite saver between
+		// its two steps - keeps the old stamp, so the rewrite is seen as a
+		// change on a later tick.
+		stamp, ok := configFileStamp(configFile)
+		if !ok || stamp.same(last) {
+			continue
+		}
+		last = stamp
+		config.reloadConfig(cfgFileViper)
 	}
+}
+
+type fileStamp struct {
+	modTime time.Time
+	size    int64
+}
+
+func (s fileStamp) same(o fileStamp) bool {
+	return s.size == o.size && s.modTime.Equal(o.modTime)
+}
+
+// configFileStamp identifies the file's current contents. os.Stat follows a
+// symlink, so a link that now points at another file reports that file.
+func configFileStamp(path string) (fileStamp, bool) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fileStamp{}, false
+	}
+	return fileStamp{fi.ModTime(), fi.Size()}, true
 }
 
 func (config *Config) loadProfile(cmdEnvViper *viper.Viper, cfgFileViper *viper.Viper) *viper.Viper {

@@ -14,8 +14,8 @@ import (
 	"github.com/go-kratos/kratos/v2/transport"
 	"github.com/go-kratos/kratos/v2/transport/grpc"
 	"github.com/go-kratos/kratos/v2/transport/http"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratos/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/example/kratos/helloworld"
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratos/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 

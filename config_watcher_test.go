@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -41,28 +40,9 @@ func requireWatcherDone(t *testing.T, done <-chan struct{}) {
 	}
 }
 
-// watcherFDCount counts the inotify descriptors the process holds, one per live
-// fsnotify watcher. A process-wide descriptor count cannot stand in for it:
-// newAgentStats builds a gopsutil process handle once per NewAgent, and that is
-// an os.FindProcess pidfd which nothing but a garbage collection closes, so ten
-// agent lifecycles move the total on their own. Linux only; the caller skips the
-// check where /proc is not mounted.
-func watcherFDCount() (int, bool) {
-	const dir = "/proc/self/fd"
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return 0, false
-	}
-	n := 0
-	for _, entry := range entries {
-		// An inotify instance reads back as "anon_inode:inotify".
-		if target, err := os.Readlink(filepath.Join(dir, entry.Name())); err == nil &&
-			strings.Contains(target, "inotify") {
-			n++
-		}
-	}
-	return n, true
-}
+// The poller is paced for a process, not a test: every watcher test waits on a
+// reload, so the whole test binary polls fast.
+func init() { configPollInterval = 20 * time.Millisecond }
 
 func TestConfigWatcherReloadAndClose(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
@@ -114,20 +94,6 @@ func TestConfigWatcherDoesNotAccumulateAcrossAgentLifecycles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	writeConfigRate(t, path, 1)
 
-	// Warm up logger and runtime state before taking the descriptor baseline.
-	warmConfig, err := NewConfig(
-		WithAppName("watcher-warmup"),
-		WithConfigFile(path),
-	)
-	require.NoError(t, err)
-	warmConfig.offGrpc = true
-	warmAgent, err := NewAgent(warmConfig)
-	require.NoError(t, err)
-	warmDone := requireWatcher(t, warmConfig)
-	warmAgent.Shutdown()
-	requireWatcherDone(t, warmDone)
-
-	baselineFDs, canCountFDs := watcherFDCount()
 	for i := 0; i < 10; i++ {
 		config, err := NewConfig(
 			WithAppName("watcher-lifecycle"),
@@ -136,27 +102,12 @@ func TestConfigWatcherDoesNotAccumulateAcrossAgentLifecycles(t *testing.T) {
 		require.NoError(t, err)
 		config.offGrpc = true
 		done := requireWatcher(t, config)
-		if canCountFDs {
-			// Asserted against every iteration, not just the last: it catches
-			// accumulation as it happens, and a count that stayed at the
-			// baseline with a watcher live would mean the counter had stopped
-			// seeing watchers and the check below had quietly become a no-op.
-			fds, _ := watcherFDCount()
-			require.Equal(t, baselineFDs+1, fds, "live config watcher descriptor was not counted")
-		}
 
 		agent, err := NewAgent(config)
 		require.NoError(t, err)
 		agent.Shutdown()
 		requireWatcherDone(t, done)
 		require.Nil(t, configWatcherDone(config))
-	}
-
-	if canCountFDs {
-		// Close releases the descriptors before it returns, so this needs no
-		// settling window.
-		fds, _ := watcherFDCount()
-		require.Equal(t, baselineFDs, fds, "config watcher file descriptors accumulated")
 	}
 }
 

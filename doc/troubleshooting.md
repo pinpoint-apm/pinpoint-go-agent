@@ -485,9 +485,10 @@ under `src=grpc`.
 * Only options marked **dynamic** reload from the config file; see the
   [reloadable options list](config.md#dynamic-configuration-reference).
   Everything else needs a restart.
-* Reloads come from a file watcher, so they require the running process to have
-  been given a config file (`ConfigFile`) — environment variables and command
-  flags are read once at startup.
+* Reloads come from polling the config file once a second, so a change takes
+  up to that long to apply, and they require the running process to have been
+  given a config file (`ConfigFile`) — environment variables and command flags
+  are read once at startup.
 * Remember the precedence order. An environment variable overrides the config
   file, so editing the file will not change an option that is also set in the
   environment. The startup config dump shows the effective value.

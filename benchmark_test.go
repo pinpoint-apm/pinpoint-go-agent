@@ -461,9 +461,9 @@ func BenchmarkSetSQL(b *testing.B) {
 }
 
 // BenchmarkSendStreamWithTimeout measures the per-send overhead of the timeout
-// wrapper used by the streaming span/ping/stat/command senders (now one timer
-// per Send, no goroutine or channel). The send itself is a no-op so the result
-// is pure wrapper overhead.
+// wrapper used by the streaming span/ping/stat/command senders: one timer,
+// closure and channel per send. The send itself is a no-op so the result is
+// pure wrapper overhead.
 func BenchmarkSendStreamWithTimeout(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()

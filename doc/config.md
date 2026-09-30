@@ -1460,9 +1460,10 @@ with no application restart. The rest are read once at agent startup.
 
 Two things make a reload not happen, and both are easy to miss:
 
-* Reloading is driven by a **file watcher**, so it only works if the process
-  was given a config file (`ConfigFile`). Command flags and environment
-  variables are read once at startup and never re-read.
+* The agent **polls the config file** - its modification time and size, once a
+  second - so a change takes up to that long to apply, and it only works if
+  the process was given a config file (`ConfigFile`). Command flags and
+  environment variables are read once at startup and never re-read.
 * Precedence still applies. An option also set by a command flag or an
   environment variable keeps that value; editing the file will not change it.
 

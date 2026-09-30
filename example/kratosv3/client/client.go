@@ -12,9 +12,9 @@ import (
 	"github.com/go-kratos/kratos/v3/errors"
 	transgrpc "github.com/go-kratos/kratos/v3/transport/grpc"
 	transhttp "github.com/go-kratos/kratos/v3/transport/http"
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/example/kratosv3/helloworld"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/v2"
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/example/kratosv3/helloworld"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 

@@ -288,7 +288,7 @@ func BenchmarkHttpStatusErrorLegacy(b *testing.B) {
 	}
 }
 
-func BenchmarkHttpStatusErrorBitmap(b *testing.B) {
+func BenchmarkHttpStatusErrorMap(b *testing.B) {
 	for _, c := range statusBenchConfigs {
 		h := parseHttpStatusErrors(c.cfg)
 		b.Run(c.name, func(b *testing.B) {

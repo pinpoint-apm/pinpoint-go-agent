@@ -237,7 +237,7 @@ func WithHttpClientRecordUrlQuery(record bool) pinpoint.ConfigOption {
 type httpConfig struct {
 	srvUrl             *httpUrlFilter
 	srvMethod          *httpMethodFilter
-	srvStatus          *httpStatusError
+	srvStatus          httpStatusError
 	srvReqHeader       httpHeaderRecorder
 	srvResHeader       httpHeaderRecorder
 	srvCookie          httpHeaderRecorder

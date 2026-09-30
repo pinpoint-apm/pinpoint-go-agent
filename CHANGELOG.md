@@ -64,6 +64,12 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 ### Changed
 
 - `Log.Output` defaults to `stdout`; it was `stderr`.
+- **The config file is polled, not watched.** The dynamic options reload when
+  the file's modification time or size changes, checked every second, so a
+  change applies within that. The direct fsnotify dependency and the platform
+  watch code with its failure modes (an inotify queue overflow, a directory
+  watch for unlink+rewrite savers) are gone; viper still requires fsnotify, so
+  the module stays in the graph as an indirect dependency.
 - **The plugin examples live in the root `example` module** (`example/<plugin>`)
   instead of inside each plugin module. A plugin's go.mod no longer requires
   `plugin/http` (or, for `plugin/gorm`, `plugin/mysql` and the mysql driver) for
@@ -323,8 +329,7 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   `redis.DoContext`; the no-op binding is now logged at debug level and
   documented.
 - **`ppgoelastic` pools its gzip readers** instead of allocating one per
-  compressed request, and reads the `q` parameter without building the whole
-  query map.
+  compressed request.
 - **A full metadata queue no longer spends an id per use.** A span that missed
   the API, error or SQL cache while `Collector.Grpc.SenderQueueSize` items were
   waiting minted an id, was refused, and released the entry, so the next use
@@ -332,10 +337,6 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   hours on a busy service, after which no SQL was recorded until the process
   restarted. The queue is checked first; a refused use records no metadata and
   the next one registers it once there is room.
-- **The config file watcher survives a watcher error.** One error from fsnotify
-  - an inotify queue overflow while the config file's directory was busy - ended
-  the watcher goroutine and, with it, dynamic reload for the rest of the
-  process. The error is logged and the watcher keeps running.
 - **`SetLogging` is a plain store.** The logrus, slog and zap plugins call it
   from whichever goroutine logs with the request's tracer, and two at once were
   a data race.
