@@ -151,6 +151,16 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **`pphttp.TraceSpan(tracer, funcName, fn, after)`** is the server trace
+  sequence every framework adapter runs - the handler's span event, 500 on a
+  panic, then URL stat and response recording, then `EndSpan` - for an
+  adapter over a framework that is not `http.Handler`-shaped. `TraceHandler`
+  is it applied to an `http.Handler`; gin, echo, beego, httprouter, fasthttp
+  and fiber are built on it instead of each carrying a copy.
+- **`pinpoint.BindValuesString(args)`** renders a bind value list the way the
+  `database/sql` wrapper records it, under `SQL.TraceBindValue` and
+  `SQL.MaxBindValueSize`, for a plugin instrumenting a driver outside
+  `database/sql`; `pppgxv5` uses it instead of its own copy.
 - **`pinpoint.SetTracerHooks(TracerHooks)`** registers callbacks the core
   calls with the agent's `Tracer`: `FromContext` sees (and may replace) the
   tracer `FromContext` returns, `SpanStart` the tracer `NewSpanTracer`/

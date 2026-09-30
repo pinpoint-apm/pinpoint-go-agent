@@ -15,7 +15,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
-	"net/http"
 )
 
 const serverName = "Gin HTTP Server"
@@ -32,28 +31,18 @@ func wrap(doFunc func(c *gin.Context), funcName string) gin.HandlerFunc {
 			return
 		}
 
-		status := http.StatusOK
 		tracer := pphttp.NewHttpServerTracer(c.Request, serverName)
-
-		defer tracer.EndSpan()
-		defer func() {
+		c.Request = pinpoint.RequestWithTracerContext(c.Request, tracer)
+		pphttp.TraceSpan(tracer, funcName, func() int {
+			doFunc(c)
+			if len(c.Errors) > 0 {
+				pphttp.RecordHttpHandlerError(tracer, c.Errors.Last())
+			}
+			return c.Writer.Status()
+		}, func(status int) {
 			pphttp.CollectUrlStat(tracer, c.FullPath(), c.Request.Method, status)
 			pphttp.RecordHttpServerResponse(tracer, status, c.Writer.Header())
-		}()
-		defer func() {
-			if e := recover(); e != nil {
-				status = http.StatusInternalServerError
-				panic(e)
-			}
-		}()
-		defer tracer.NewSpanEvent(funcName).EndSpanEvent()
-
-		c.Request = pinpoint.RequestWithTracerContext(c.Request, tracer)
-		doFunc(c)
-		if len(c.Errors) > 0 {
-			pphttp.RecordHttpHandlerError(tracer, c.Errors.Last())
-		}
-		status = c.Writer.Status()
+		})
 	}
 }
 

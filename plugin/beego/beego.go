@@ -42,36 +42,26 @@ func ServerFilterChain() func(web.FilterFunc) web.FilterFunc {
 			}
 
 			r := ctx.Request
-			status := http.StatusOK
 			tracer := pphttp.NewHttpServerTracer(r, serverName)
-
-			defer tracer.EndSpan()
-			defer func() {
+			ctx.Request = pinpoint.RequestWithTracerContext(r, tracer)
+			pphttp.TraceSpan(tracer, "beego/v2.HandlerFunc()", func() int {
+				next(ctx)
+				return responseStatus(ctx)
+			}, func(status int) {
 				// GetData takes a mutex and probes a map per call, so don't
 				// pay for it when the stat would be dropped anyway.
 				if pphttp.IsUrlStatEnabled() {
+					routerPattern := ""
 					// Comma-ok: Input.GetData is an interface{} store keyed by
 					// string, so anything the application put under the same key
 					// panicked the deferred stat collection.
-					routerPattern := ""
 					if rp, ok := ctx.Input.GetData("RouterPattern").(string); ok {
 						routerPattern = rp
 					}
 					pphttp.CollectUrlStat(tracer, routerPattern, r.Method, status)
 				}
 				pphttp.RecordHttpServerResponse(tracer, status, ctx.ResponseWriter.Header())
-			}()
-			defer func() {
-				if e := recover(); e != nil {
-					status = http.StatusInternalServerError
-					panic(e)
-				}
-			}()
-			defer tracer.NewSpanEvent("beego/v2.HandlerFunc()").EndSpanEvent()
-
-			ctx.Request = pinpoint.RequestWithTracerContext(r, tracer)
-			next(ctx)
-			status = responseStatus(ctx)
+			})
 		}
 	}
 }

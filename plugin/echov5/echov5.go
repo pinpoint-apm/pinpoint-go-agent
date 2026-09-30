@@ -12,8 +12,6 @@
 package ppechov5
 
 import (
-	"net/http"
-
 	"github.com/labstack/echo/v5"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
@@ -27,41 +25,33 @@ func wrap(handler echo.HandlerFunc, funcName func(*echo.Context) string) echo.Ha
 			return handler(c)
 		}
 
-		status := http.StatusOK
 		req := c.Request()
 		tracer := pphttp.NewHttpServerTracer(req, serverName)
-
-		defer tracer.EndSpan()
-		defer func() {
-			pphttp.CollectUrlStat(tracer, c.Path(), req.Method, status)
-			pphttp.RecordHttpServerResponse(tracer, status, c.Response().Header())
-		}()
-		defer func() {
-			if e := recover(); e != nil {
-				status = http.StatusInternalServerError
-				panic(e)
-			}
-		}()
 		// An unsampled tracer discards the name; routeName's RouteInfo clones
 		// the route's parameter slice and builds a comparison string per call.
 		spanName := "echo.HandlerFunc()"
 		if tracer.IsSampled() {
 			spanName = funcName(c)
 		}
-		defer tracer.NewSpanEvent(spanName).EndSpanEvent()
 
 		ctx := pinpoint.NewContext(req.Context(), tracer)
 		c.SetRequest(req.WithContext(ctx))
-		err := handler(c)
-		if err != nil {
-			pphttp.RecordHttpHandlerError(tracer, err)
-		}
-		// Do not call c.Error here: returning the error already routes it to
-		// echo's HTTPErrorHandler, and calling it as well would run that
-		// handler - and its logging, metrics and other side effects - twice for
-		// every failed request. ResolveResponseStatus reports the status echo
-		// will send without running the error handler.
-		_, status = echo.ResolveResponseStatus(c.Response(), err)
+		var err error
+		pphttp.TraceSpan(tracer, spanName, func() int {
+			if err = handler(c); err != nil {
+				// Do not call c.Error here: returning the error already routes it to
+				// echo's HTTPErrorHandler, and calling it as well would run that
+				// handler - and its logging, metrics and other side effects - twice for
+				// every failed request. ResolveResponseStatus reports the status echo
+				// will send without running the error handler.
+				pphttp.RecordHttpHandlerError(tracer, err)
+			}
+			_, status := echo.ResolveResponseStatus(c.Response(), err)
+			return status
+		}, func(status int) {
+			pphttp.CollectUrlStat(tracer, c.Path(), req.Method, status)
+			pphttp.RecordHttpServerResponse(tracer, status, c.Response().Header())
+		})
 		return err
 	}
 }

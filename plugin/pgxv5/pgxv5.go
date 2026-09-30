@@ -2,11 +2,6 @@ package pppgxv5
 
 import (
 	"context"
-	"fmt"
-	"reflect"
-	"strconv"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
@@ -129,105 +124,5 @@ func newSpanEvent(ctx context.Context, config *pgx.ConnConfig, cmd string) pinpo
 }
 
 func (t *pgxTracer) composeArgs(args []any) string {
-	cfg := pinpoint.GetConfig()
-	if len(args) == 0 || !cfg.Bool(pinpoint.CfgSQLTraceBindValue) {
-		return ""
-	}
-
-	var b strings.Builder
-	numComma := len(args) - 1
-	maxSize := cfg.Int(pinpoint.CfgSQLMaxBindValueSize)
-
-	for i, v := range args {
-		if !writeArg(&b, i, v, numComma, maxSize) {
-			break
-		}
-	}
-
-	return b.String()
-}
-
-func writeArg(b *strings.Builder, index int, value any, numComma int, maxSize int) bool {
-	if maxSize <= 0 {
-		return false
-	}
-
-	// The separator is written before the value that follows it, never after
-	// the one before it, so it precedes whatever comes next: the next value,
-	// or the count marker standing in for the values left out. This mirrors
-	// BindValueUtils.bindValueToString.
-	if index > 0 {
-		b.WriteString(", ")
-	}
-	if b.Len() >= maxSize {
-		writeArgCountMarker(b, numComma+1)
-		return false
-	}
-	writeAbbreviatedArg(b, value, maxSize)
-	return true
-}
-
-// writeAbbreviatedArg writes one argument abbreviated to maxSize.
-//
-// maxSize is the budget for the whole list, but it is spent per value: the
-// value that finds any of it left writes up to maxSize of itself, so the list
-// can reach roughly twice maxSize plus the markers. It is the value's own
-// head, not the list's total, that a reader needs to recognize which argument
-// this was, and the agent reserves the same room for the result.
-func writeAbbreviatedArg(b *strings.Builder, value any, maxSize int) {
-	if value, ok := value.(string); ok {
-		writeAbbreviated(b, value, len(value), maxSize)
-		return
-	}
-
-	// fmt.Sprint preserves the established "[1 2 3]" representation. Every
-	// element adds at least one character to it, so no more than maxSize
-	// elements can contribute to its prefix: slicing the rest away keeps a
-	// million-element array parameter from being built whole to keep a
-	// kilobyte. The length marker survives that slicing because an array
-	// ArrayUtils.abbreviate reports a byte[] bind value.
-	if rv := reflect.ValueOf(value); rv.Kind() == reflect.Slice {
-		elems := rv.Len()
-		if elems > maxSize {
-			value = rv.Slice(0, maxSize).Interface()
-		}
-		writeAbbreviated(b, fmt.Sprint(value), elems, maxSize)
-		return
-	}
-	s := fmt.Sprint(value)
-	writeAbbreviated(b, s, len(s), maxSize)
-}
-
-// writeAbbreviated writes value cut to maxSize, marking the cut with valueLen -
-// the length of the value itself, which is not always the length of the text
-// being cut: an array reports how many elements it holds. The cut lands on a
-// rune boundary: protobuf rejects invalid UTF-8 string fields at marshal time,
-// so a mid-rune cut would fail the whole span carrying the annotation.
-func writeAbbreviated(b *strings.Builder, value string, valueLen int, maxSize int) {
-	if len(value) <= maxSize {
-		b.WriteString(value)
-		return
-	}
-	cut := maxSize
-	for cut > 0 && !utf8.RuneStart(value[cut]) {
-		cut--
-	}
-	b.WriteString(value[:cut])
-	writeArgLengthMarker(b, valueLen)
-}
-
-// The two markers report two different events, and both can appear in one
-// list: a value abbreviated with the last of the budget is followed by the
-// count marker on the next round. writeArgLengthMarker says one value was cut
-// and how long it was; writeArgCountMarker says the list itself ended early
-// and how many arguments the statement had. Both land past the limit rather
-// than cutting back over what is written: making room inside a limit shorter
-// than the marker would drop the marker itself and leave the truncation with
-// no trace at all.
-func writeArgLengthMarker(b *strings.Builder, valueLen int) {
-	b.WriteString("...(" + strconv.Itoa(valueLen) + ")")
-}
-
-func writeArgCountMarker(b *strings.Builder, numValues int) {
-	b.WriteString("...(" + strconv.Itoa(numValues) + ")")
+	return pinpoint.BindValuesString(args)
 }

@@ -279,17 +279,24 @@ func setSqlSpanEvent(tracer Tracer, start time.Time, err error, sql string, args
 }
 
 func (c *sqlConn) namedValueToString(named []driver.NamedValue) string {
-	return c.bindValuesToString(len(named), func(i int) interface{} { return named[i].Value })
+	return bindValuesString(c.cfg(), len(named), func(i int) interface{} { return named[i].Value })
 }
 
 func (c *sqlConn) valueToString(values []driver.Value) string {
-	return c.bindValuesToString(len(values), func(i int) interface{} { return values[i] })
+	return bindValuesString(c.cfg(), len(values), func(i int) interface{} { return values[i] })
 }
 
-// bindValuesToString renders n bind values, value(i) being the i-th, within
-// SQL.MaxBindValueSize; "" when bind value tracing is off.
-func (c *sqlConn) bindValuesToString(n int, value func(int) interface{}) string {
-	cfg := c.cfg()
+// BindValuesString renders args as the bind value list of a SQL span event:
+// each value abbreviated to SQL.MaxBindValueSize with a "...(n)" marker, and ""
+// when SQL.TraceBindValue is off. It is what the database/sql wrapper records,
+// for a plugin that instruments a driver outside database/sql (pgxv5) to hand
+// to SetSQL as well.
+func BindValuesString(args []interface{}) string {
+	return bindValuesString(GetConfig().load(), len(args), func(i int) interface{} { return args[i] })
+}
+
+// bindValuesString renders n bind values, value(i) being the i-th, under cfg.
+func bindValuesString(cfg *configSnapshot, n int, value func(int) interface{}) string {
 	if !cfg.sqlTraceBindValue || n == 0 {
 		return ""
 	}

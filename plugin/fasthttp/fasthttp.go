@@ -30,7 +30,6 @@ package ppfasthttp
 
 import (
 	"context"
-	"net/http"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
@@ -55,39 +54,27 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 		}
 
 		method := string(ctx.Method())
-		status := http.StatusOK
 		tracer := serverTracer(ctx, method)
-
-		defer tracer.EndSpan()
-		defer func() {
-			if urlPattern != "" {
-				pphttp.CollectUrlStat(tracer, urlPattern, method, status)
-			}
-			recordResponse(tracer, ctx, status)
-		}()
-		defer func() {
-			if e := recover(); e != nil {
-				status = http.StatusInternalServerError
-				panic(e)
-			}
-		}()
-
-		defer tracer.NewSpanEvent(handlerName).EndSpanEvent()
-
 		// Not derived from the RequestCtx, although it is a context.Context:
 		// fasthttp reuses it for the next request once the handler returns,
 		// and its Value reads that request's user values, so a goroutine the
 		// handler started with this context read another request's values and
 		// raced their writes. It has no deadline, and its Done closes only at
 		// server shutdown, so nothing is lost.
-		// No handler error is recorded: a fasthttp handler returns none, and
-		// RequestCtx.Err() is not one either - it turns non-nil only once
-		// Server.Shutdown has begun, which marked every request completing
-		// during a graceful stop as failed. The status carries the failure.
 		ctx.SetUserValue(CtxKey, pinpoint.NewContext(context.Background(), tracer))
-		handler(ctx)
-
-		status = ctx.Response.StatusCode()
+		pphttp.TraceSpan(tracer, handlerName, func() int {
+			handler(ctx)
+			// No handler error is recorded: a fasthttp handler returns none, and
+			// RequestCtx.Err() is not one either - it turns non-nil only once
+			// Server.Shutdown has begun, which marked every request completing
+			// during a graceful stop as failed. The status carries the failure.
+			return ctx.Response.StatusCode()
+		}, func(status int) {
+			if urlPattern != "" {
+				pphttp.CollectUrlStat(tracer, urlPattern, method, status)
+			}
+			recordResponse(tracer, ctx, status)
+		})
 	}
 }
 

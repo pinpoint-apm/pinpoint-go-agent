@@ -1,17 +1,13 @@
 package pppgxv5
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
-	"fmt"
 	"slices"
 	"strings"
 	"testing"
-	"time"
-	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -21,187 +17,6 @@ import (
 )
 
 const driverName = "pgxv5-pinpoint"
-
-type argStringer string
-
-func (s argStringer) String() string { return "stringer:" + string(s) }
-
-func TestWriteArgPreservesFormatting(t *testing.T) {
-	values := []any{
-		nil,
-		"text",
-		[]byte{0, 1, 127, 255},
-		int64(-42),
-		float64(1.25),
-		true,
-		time.Date(2026, time.August, 28, 1, 2, 3, 4, time.UTC),
-		argStringer("value"),
-	}
-
-	var b strings.Builder
-	for i, value := range values {
-		require.True(t, writeArg(&b, i, value, len(values)-1, 4096), "writeArg stopped at value %d", i)
-	}
-
-	want := make([]string, len(values))
-	for i, value := range values {
-		want[i] = fmt.Sprint(value)
-	}
-	assert.Equal(t, strings.Join(want, ", "), b.String())
-}
-
-func TestWriteArgTruncatesOversizedValues(t *testing.T) {
-	for _, test := range []struct {
-		name  string
-		value any
-	}{
-		{"string", strings.Repeat("x", 5000)},
-		{"bytes", bytes.Repeat([]byte{255}, 5000)},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			full := fmt.Sprint(test.value)
-			var b strings.Builder
-			require.True(t, writeArg(&b, 0, test.value, 0, 1024),
-				"writeArg ended the list on a value it only abbreviated")
-			// The marker reports the value's own length and lands past the
-			// array.
-			assert.Equal(t, full[:1024]+"...(5000)", b.String())
-		})
-	}
-}
-
-// The separator precedes whatever comes next, so a list cut short ends with it
-// limit keeps nothing, marker included.
-func TestWriteArgTruncatesAtBoundary(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		values   []any
-		maxSize  int
-		want     string
-		wantMore bool
-	}{
-		{
-			name:    "budget spent by the first value",
-			values:  []any{strings.Repeat("p", 1023), "z"},
-			maxSize: 1024,
-			want:    strings.Repeat("p", 1023) + ", ...(2)",
-		},
-		{
-			name:     "everything fits",
-			values:   []any{strings.Repeat("p", 1020), "z"},
-			maxSize:  1024,
-			want:     strings.Repeat("p", 1020) + ", z",
-			wantMore: true,
-		},
-		{
-			name:    "two of three values dropped",
-			values:  []any{"0123456789", "b", "c"},
-			maxSize: 10,
-			want:    "0123456789, ...(3)",
-		},
-		{
-			// The marker counts the bind values, so it fits no limit at all -
-			// appending it past the limit is what keeps the truncation visible.
-			name:    "limit shorter than the marker",
-			values:  []any{"a", "b", "c"},
-			maxSize: 2,
-			want:    "a, ...(3)",
-		},
-		{
-			name:    "zero limit",
-			values:  []any{"abc"},
-			maxSize: 0,
-			want:    "",
-		},
-		{
-			name:    "a negative limit keeps nothing either",
-			values:  []any{"abc"},
-			maxSize: -1,
-			want:    "",
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var b strings.Builder
-			more := true
-			for i, v := range test.values {
-				if more = writeArg(&b, i, v, len(test.values)-1, test.maxSize); !more {
-					break
-				}
-			}
-			assert.Equal(t, test.wantMore, more, "writeArg reported the wrong continuation")
-			assert.Equal(t, test.want, b.String())
-		})
-	}
-}
-
-var benchmarkArgSink string
-
-func BenchmarkWriteArgLarge(b *testing.B) {
-	for _, benchmark := range []struct {
-		name  string
-		value any
-	}{
-		{"string", strings.Repeat("x", 1<<20)},
-		{"bytes", bytes.Repeat([]byte{255}, 1<<20)},
-	} {
-		b.Run(benchmark.name, func(b *testing.B) {
-			b.SetBytes(1 << 20)
-			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
-				var out strings.Builder
-				writeArg(&out, 0, benchmark.value, 0, 1024)
-				benchmarkArgSink = out.String()
-			}
-		})
-	}
-}
-
-func TestWriteArgLimitsLargeValues(t *testing.T) {
-	const maxSize = 65
-	tests := []struct {
-		name       string
-		value      any
-		wantPrefix string
-		wantSuffix string
-	}{
-		// A string reports its length in bytes, an array the number of
-		// StringUtils.abbreviate and ArrayUtils.abbreviate report it.
-		{name: "string", value: strings.Repeat("가", 1<<20), wantPrefix: "가", wantSuffix: "...(3145728)"},
-		{name: "bytes", value: bytes.Repeat([]byte{255}, 1<<20), wantPrefix: "[255 ", wantSuffix: "...(1048576)"},
-		{name: "slice", value: make([]int32, 1<<20), wantPrefix: "[0 0 ", wantSuffix: "...(1048576)"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var b strings.Builder
-			more := writeArg(&b, 0, tt.value, 0, maxSize)
-
-			require.True(t, more, "writeArg ended the list on a value it only abbreviated")
-			assert.LessOrEqual(t, b.Len(), maxSize+len(tt.wantSuffix), "the result grew past the limit")
-			assert.LessOrEqual(t, b.Cap(), maxSize*2,
-				"the buffer retained %d bytes for a %d-byte limit", b.Cap(), maxSize)
-			assert.True(t, strings.HasPrefix(b.String(), tt.wantPrefix),
-				"result %q does not preserve prefix %q", b.String(), tt.wantPrefix)
-			assert.True(t, strings.HasSuffix(b.String(), tt.wantSuffix),
-				"result %q has no truncation marker", b.String())
-			assert.True(t, utf8.ValidString(b.String()), "result is not valid UTF-8: %q", b.String())
-		})
-	}
-}
-
-func TestWriteArgLimitsMultipleValues(t *testing.T) {
-	values := []any{"0123456789", "abcdefgh", "xyz"}
-	var b strings.Builder
-	for i, value := range values {
-		if !writeArg(&b, i, value, len(values)-1, 20) {
-			break
-		}
-	}
-
-	// The budget is spent between values, so "abcdefgh" goes in whole even
-	// though it lands on the limit; the round after it finds nothing left.
-	assert.Equal(t, "0123456789, abcdefgh, ...(3)", b.String())
-}
 
 // recordingTracer captures what the pgx tracer records on a span event. A real
 // tracer's recorders are write-only, so this stands in for one.

@@ -13,7 +13,6 @@ package ppfiberv3
 
 import (
 	"errors"
-	"net/http"
 
 	"github.com/gofiber/fiber/v3"
 	ppfasthttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2"
@@ -41,34 +40,22 @@ func wrap(f func(c fiber.Ctx) error, handlerName string) fiber.Handler {
 		}
 
 		method := string(c.RequestCtx().Method())
-		status := http.StatusOK
 		tracer := serverTracer(c, method)
-
-		defer tracer.EndSpan()
-		defer func() {
-			pphttp.CollectUrlStat(tracer, c.Route().Path, method, status)
-			recordResponse(tracer, c, status)
-		}()
-		defer func() {
-			if e := recover(); e != nil {
-				status = http.StatusInternalServerError
-				panic(e)
-			}
-		}()
-
-		defer tracer.NewSpanEvent(handlerName).EndSpanEvent()
-
 		// Derive from the request's own context, not a fresh background one:
 		// replacing it discarded whatever an earlier middleware had put there
 		// - auth values, deadlines - for the rest of the handler.
 		c.SetContext(pinpoint.NewContext(c.Context(), tracer))
-		err := f(c)
-		if err != nil {
-			pphttp.RecordHttpHandlerError(tracer, err)
-			status = statusCode(err)
-		} else {
-			status = c.Response().StatusCode()
-		}
+		var err error
+		pphttp.TraceSpan(tracer, handlerName, func() int {
+			if err = f(c); err != nil {
+				pphttp.RecordHttpHandlerError(tracer, err)
+				return statusCode(err)
+			}
+			return c.Response().StatusCode()
+		}, func(status int) {
+			pphttp.CollectUrlStat(tracer, c.Route().Path, method, status)
+			recordResponse(tracer, c, status)
+		})
 		return err
 	}
 }

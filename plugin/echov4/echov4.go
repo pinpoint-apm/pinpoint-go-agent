@@ -60,21 +60,8 @@ func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
 			return handler(c)
 		}
 
-		status := http.StatusOK
 		req := c.Request()
 		tracer := pphttp.NewHttpServerTracer(req, serverName)
-
-		defer tracer.EndSpan()
-		defer func() {
-			pphttp.CollectUrlStat(tracer, c.Path(), req.Method, status)
-			pphttp.RecordHttpServerResponse(tracer, status, c.Response().Header())
-		}()
-		defer func() {
-			if e := recover(); e != nil {
-				status = http.StatusInternalServerError
-				panic(e)
-			}
-		}()
 
 		// A local, never the captured parameter: Middleware passes "" once and
 		// the closure serves every request, so writing the resolved name back
@@ -84,13 +71,14 @@ func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
 		if name == "" {
 			name = handlerName(c, req)
 		}
-		defer tracer.NewSpanEvent(name).EndSpanEvent()
 
 		ctx := pinpoint.NewContext(req.Context(), tracer)
 		c.SetRequest(req.WithContext(ctx))
-		err := handler(c)
-		if err != nil {
-			pphttp.RecordHttpHandlerError(tracer, err)
+		var err error
+		pphttp.TraceSpan(tracer, name, func() int {
+			if err = handler(c); err == nil {
+				return c.Response().Status
+			}
 			// Do not call c.Error here: returning the error already routes it
 			// to echo's HTTPErrorHandler, and calling it as well ran that
 			// handler - and its logging, metrics and other side effects -
@@ -99,14 +87,15 @@ func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
 			// as the fiber plugin does - unless the response is committed:
 			// echo's error handler then leaves it alone, and the wire keeps
 			// the status the handler already wrote.
+			pphttp.RecordHttpHandlerError(tracer, err)
 			if c.Response().Committed {
-				status = c.Response().Status
-			} else {
-				status = statusCode(err)
+				return c.Response().Status
 			}
-		} else {
-			status = c.Response().Status
-		}
+			return statusCode(err)
+		}, func(status int) {
+			pphttp.CollectUrlStat(tracer, c.Path(), req.Method, status)
+			pphttp.RecordHttpServerResponse(tracer, status, c.Response().Header())
+		})
 		return err
 	}
 }

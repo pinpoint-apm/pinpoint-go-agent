@@ -51,25 +51,17 @@ func wrapHandleWithName(handler httprouter.Handle, handlerName string, path stri
 
 		status := http.StatusOK
 		tracer := pphttp.NewHttpServerTracer(r, serverName)
-
-		defer tracer.EndSpan()
-		defer func() {
+		w = pphttp.WrapResponseWriter(w, &status)
+		r = pinpoint.RequestWithTracerContext(r, tracer)
+		pphttp.TraceSpan(tracer, handlerName, func() int {
+			handler(w, r, p)
+			return status
+		}, func(status int) {
 			if path != "" {
 				pphttp.CollectUrlStat(tracer, path, r.Method, status)
 			}
 			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
-		}()
-		defer func() {
-			if e := recover(); e != nil {
-				status = http.StatusInternalServerError
-				panic(e)
-			}
-		}()
-
-		defer tracer.NewSpanEvent(handlerName).EndSpanEvent()
-		w = pphttp.WrapResponseWriter(w, &status)
-		r = pinpoint.RequestWithTracerContext(r, tracer)
-		handler(w, r, p)
+		})
 	}
 }
 
