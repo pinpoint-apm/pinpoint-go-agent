@@ -68,6 +68,12 @@ func newConsumerTracer(ctx context.Context, msg *kafka.Message) pinpoint.Tracer 
 		return pinpoint.NoopTracer()
 	}
 
+	// A nil context is a request with nothing in it; reading a value off it
+	// panicked in the consumer.
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	reader := headerReader{msg}
 	tracer := agent.NewSpanTracerWithReader("Kafka Consumer Invocation", makeRpcName(msg), reader)
 

@@ -174,6 +174,12 @@ func newConsumerTracer(ctx context.Context, msg *sarama.ConsumerMessage) pinpoin
 		return pinpoint.NoopTracer()
 	}
 
+	// A nil context is a request with nothing in it; reading a value off it
+	// panicked out of ConsumeClaim and ended the consumer group session.
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	reader := &distributedTracingContextReaderConsumer{msg}
 	tracer := agent.NewSpanTracerWithReader("Sarama Consumer Invocation", makeRpcName(msg), reader)
 
