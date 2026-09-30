@@ -73,8 +73,13 @@ func (c *Client) WithContext(ctx context.Context) *Client {
 	return copied
 }
 
+// currentTracer is the tracer WithContext bound, or the noop tracer for a
+// Client built as a struct literal, which nothing stored a box into.
 func (c *Client) currentTracer() pinpoint.Tracer {
-	return c.tracer.Load().t
+	if box := c.tracer.Load(); box != nil {
+		return box.t
+	}
+	return pinpoint.NoopTracer()
 }
 
 func (c *Client) newMemcacheSpanEvent(op string, key string, start time.Time, err error) {
