@@ -96,8 +96,14 @@ func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
 			// handler - and its logging, metrics and other side effects -
 			// twice for every failed request. Derive the status from the
 			// error instead of reading it off the not-yet-committed response,
-			// as the fiber plugin does.
-			status = statusCode(err)
+			// as the fiber plugin does - unless the response is committed:
+			// echo's error handler then leaves it alone, and the wire keeps
+			// the status the handler already wrote.
+			if c.Response().Committed {
+				status = c.Response().Status
+			} else {
+				status = statusCode(err)
+			}
 		} else {
 			status = c.Response().Status
 		}
