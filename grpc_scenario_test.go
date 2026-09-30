@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -79,114 +78,10 @@ func Test_sendPingWorker_replacesStreamTheCollectorBroke(t *testing.T) {
 	healthy.AssertNumberOfCalls(t, "CloseSend", 1)
 }
 
-// A failed send costs one reconnect and no spans: everything already queued
-// still goes out on the replacement stream.
-func Test_sendSpanWorker_reopensStreamAndResendsNothingLost(t *testing.T) {
-	agent := newTestAgent(defaultConfig())
-	agent.spanQueue = newSpanQueue(4) // one shard: FIFO is deterministic
-
-	var mu sync.Mutex
-	var sent []int64
-	record := func(args mock.Arguments) {
-		// The transport recycles the message once Send returns, so read it here.
-		mu.Lock()
-		defer mu.Unlock()
-		sent = append(sent, args.Get(0).(*pb.PSpanMessage).GetSpan().GetSpanId())
-	}
-
-	broken := grpcmock.NewMockSpan_SendSpanClient()
-	broken.OnSend(mock.Anything).Return(collectorDown())
-	broken.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
-
-	healthy := grpcmock.NewMockSpan_SendSpanClient()
-	healthy.OnSend(mock.Anything).Run(record).Return(nil)
-	healthy.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
-
-	client := grpcmock.NewMockSpanClient()
-	client.OnSendSpan(mock.Anything).Return(broken, nil).Once()
-	client.OnSendSpan(mock.Anything).Return(healthy, nil)
-	agent.spanGrpc = &spanGrpc{spanClient: client, agent: agent}
-
-	// The queue is filled and closed up front, so the worker drains exactly
-	// these three and exits: no timing to wait on. Span 2 is a slow request -
-	// it started before the failure but its chunk is queued live, and the old
-	// policy discarded exactly this span.
-	for i, startTime := range []time.Time{
-		time.Now(), time.Now().Add(-time.Hour), time.Now(),
-	} {
-		span := defaultSpan(agent)
-		span.spanId = int64(i + 1)
-		span.startTime = startTime
-		require.True(t, agent.spanQueue.enqueue(span.newEventChunk(true)))
-	}
-	agent.spanQueue.close()
-
-	agent.workerWg.Add(1)
-	go agent.superviseWorker("span", agent.sendSpanWorker)
-	agent.workerWg.Wait()
-
-	broken.AssertNumberOfCalls(t, "Send", 1)
-	client.AssertNumberOfCalls(t, "SendSpan", 2)
-	mu.Lock()
-	defer mu.Unlock()
-	assert.Equal(t, []int64{2, 3}, sent,
-		"span 1 failed with the stream; 2 and 3 must both survive the reconnect")
-}
-
-// The same guarantee at the default capacity, where the queue sweeps 32 shards
-// in unspecified order: a reconnect must not turn dequeue order into a
-// data-loss lottery, which is what the removed startTime filter did.
-func Test_sendSpanWorker_reconnectLosesNothingAcrossShards(t *testing.T) {
-	const queued = 200
-
-	agent := newTestAgent(defaultConfig())
-	agent.spanQueue = newSpanQueue(1024) // default: 32 shards
-
-	var mu sync.Mutex
-	var sent int
-	healthy := grpcmock.NewMockSpan_SendSpanClient()
-	healthy.OnSend(mock.Anything).Run(func(mock.Arguments) {
-		mu.Lock()
-		sent++
-		mu.Unlock()
-	}).Return(nil)
-	healthy.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
-
-	broken := grpcmock.NewMockSpan_SendSpanClient()
-	broken.OnSend(mock.Anything).Return(collectorDown())
-	broken.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
-
-	client := grpcmock.NewMockSpanClient()
-	client.OnSendSpan(mock.Anything).Return(broken, nil).Once()
-	client.OnSendSpan(mock.Anything).Return(healthy, nil)
-	agent.spanGrpc = &spanGrpc{spanClient: client, agent: agent}
-
-	// Every span predates the failure by an hour, so an age-based skip would
-	// drop exactly these - the slow traces an outage most needs.
-	for i := 0; i < queued; i++ {
-		span := defaultSpan(agent)
-		span.startTime = time.Now().Add(-time.Hour)
-		require.True(t, agent.spanQueue.enqueue(span.newEventChunk(true)))
-	}
-	agent.spanQueue.close()
-
-	agent.workerWg.Add(1)
-	go agent.superviseWorker("span", agent.sendSpanWorker)
-	agent.workerWg.Wait()
-
-	assert.Zero(t, agent.spanQueue.dropCount(), "the queue was never saturated")
-	mu.Lock()
-	defer mu.Unlock()
-	assert.Equal(t, queued-1, sent,
-		"only the span that rode the broken stream is lost, regardless of shard order")
-}
-
 // A collector outage must not wedge the batch sender: the failed batches give
 // their concurrency permits back and the batches behind them still go out.
 func Test_sendSpanBatchWorker_resumesAfterCollectorOutage(t *testing.T) {
-	cfg := defaultConfig()
-	cfg.Set(CfgSpanBatchEnable, true)
-	agent := newTestAgent(cfg)
+	agent := newTestAgent(defaultConfig())
 	agent.spanQueue = newSpanQueue(4)
 
 	var delivered counter
@@ -318,22 +213,6 @@ func Test_workers_closeTheirStreamOnThePanicPath(t *testing.T) {
 		stream.AssertNumberOfCalls(t, "CloseSend", 1)
 	})
 
-	t.Run("span", func(t *testing.T) {
-		agent := newTestAgent(defaultConfig())
-
-		stream := grpcmock.NewMockSpan_SendSpanClient()
-		stream.OnSend(mock.Anything).Run(func(mock.Arguments) { panic("span send exploded") }).Return(nil)
-		stream.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
-
-		client := grpcmock.NewMockSpanClient()
-		client.OnSendSpan(mock.Anything).Return(stream, nil)
-		agent.spanGrpc = &spanGrpc{spanClient: client, agent: agent}
-
-		require.True(t, agent.spanQueue.enqueue(newTestSpanChunk(agent)))
-		assert.Panics(t, agent.sendSpanWorker)
-		stream.AssertNumberOfCalls(t, "CloseAndRecv", 1)
-	})
-
 	t.Run("command", func(t *testing.T) {
 		agent := newTestAgent(defaultConfig())
 
@@ -387,10 +266,10 @@ func Test_runCommandService_pacesReconnectsAndStopsPromptly(t *testing.T) {
 	}
 }
 
-// Stream renewal is the normal path, not the outage path: the span worker
-// swaps an aged stream for a new one between two sends and delivers both spans,
-// whereas a failed send would have skipped the span that hit the failure.
-// streamMaxAgeForTest is the Collector.Grpc.StreamMaxAge the two renewal
+// Stream renewal is the normal path, not the outage path: a worker swaps an
+// aged stream for a new one between two sends and delivers both, whereas a
+// failed send would have skipped the message that hit the failure.
+// streamMaxAgeForTest is the Collector.Grpc.StreamMaxAge the renewal
 // scenarios below run with. It has to be long enough that the first send
 // cannot outlive it: the worker opens the stream and then re-checks the age
 // before every send, so a 1 ms age turned any scheduling hiccup before the
@@ -398,38 +277,6 @@ func Test_runCommandService_pacesReconnectsAndStopsPromptly(t *testing.T) {
 // assert two. Jitter is +/-10% and the sleeps are twice this, so both sides
 // keep a wide margin.
 const streamMaxAgeForTest = 50
-
-func Test_sendSpanWorker_renewsAgedStreamWithoutDroppingSpans(t *testing.T) {
-	cfg := defaultConfig()
-	cfg.Set(CfgCollectorGrpcStreamMaxAge, streamMaxAgeForTest)
-	agent := newTestAgent(cfg)
-
-	var sent counter
-	stream := grpcmock.NewMockSpan_SendSpanClient()
-	stream.OnSend(mock.Anything).Run(sent.count).Return(nil)
-	stream.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
-
-	client := grpcmock.NewMockSpanClient()
-	client.OnSendSpan(mock.Anything).Return(stream, nil)
-	agent.spanGrpc = &spanGrpc{spanClient: client, agent: agent}
-
-	agent.workerWg.Add(1)
-	go agent.superviseWorker("span", agent.sendSpanWorker)
-
-	require.True(t, agent.spanQueue.enqueue(newTestSpanChunk(agent)))
-	waitFor(t, "the first span to be sent", func() bool { return sent.get() == 1 })
-	time.Sleep(2 * streamMaxAgeForTest * time.Millisecond) // past the jittered max age
-	require.True(t, agent.spanQueue.enqueue(newTestSpanChunk(agent)))
-	waitFor(t, "the second span to be sent", func() bool { return sent.get() == 2 })
-
-	agent.spanQueue.close()
-	agent.workerWg.Wait()
-
-	client.AssertNumberOfCalls(t, "SendSpan", 2)
-	// One CloseAndRecv for the renewal, one for the worker's final close.
-	stream.AssertNumberOfCalls(t, "CloseAndRecv", 2)
-	assert.EqualValues(t, 2, sent.get(), "no span is dropped over a renewal")
-}
 
 func Test_sendStatsWorker_renewsAgedStream(t *testing.T) {
 	cfg := defaultConfig()
@@ -502,8 +349,7 @@ func Test_runCommandService_renewsAgedStreamWithoutBackOff(t *testing.T) {
 
 // A collector outage saturates the span queue, and the loss has to be visible
 // in the log rather than only in dropCount(): the producers just bump their
-// shard counter, so it is the worker that has to warn. Both span workers are
-// covered because each polls from its own cycle.
+// shard counter, so it is the worker that has to warn.
 func Test_spanWorkers_warnAboutSaturatedQueue(t *testing.T) {
 	const queueCap, enqueued = 4, 6
 
@@ -523,27 +369,9 @@ func Test_spanWorkers_warnAboutSaturatedQueue(t *testing.T) {
 		setup func(t *testing.T) (*agent, func())
 	}{
 		{
-			name: "stream",
-			setup: func(t *testing.T) (*agent, func()) {
-				agent := newTestAgent(defaultConfig())
-				agent.spanQueue = newSpanQueue(queueCap)
-
-				stream := grpcmock.NewMockSpan_SendSpanClient()
-				stream.OnSend(mock.Anything).Return(nil)
-				stream.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
-				client := grpcmock.NewMockSpanClient()
-				client.OnSendSpan(mock.Anything).Return(stream, nil)
-				agent.spanGrpc = &spanGrpc{spanClient: client, agent: agent}
-
-				return agent, agent.sendSpanWorker
-			},
-		},
-		{
 			name: "batch",
 			setup: func(t *testing.T) (*agent, func()) {
-				cfg := defaultConfig()
-				cfg.Set(CfgSpanBatchEnable, true)
-				agent := newTestAgent(cfg)
+				agent := newTestAgent(defaultConfig())
 				agent.spanQueue = newSpanQueue(queueCap)
 
 				client := grpcmock.NewMockSpanClient()
@@ -583,42 +411,6 @@ func Test_spanWorkers_warnAboutSaturatedQueue(t *testing.T) {
 					enqueued-queueCap, queueCap))
 		})
 	}
-}
-
-// Shutdown clears enable before it closes the span queue, so the drain runs on
-// a disabled agent, where a reconnect can never succeed. The worker must stop
-// there instead of walking the rest of the queue: every later send fails with
-// "span stream is nil", delivering nothing and logging one error per chunk.
-func Test_sendSpanWorker_stopsWhenReconnectGivesUp(t *testing.T) {
-	const queued = 5
-
-	agent := newTestAgent(defaultConfig())
-	agent.spanQueue = newSpanQueue(8) // one shard: FIFO is deterministic
-
-	broken := grpcmock.NewMockSpan_SendSpanClient()
-	broken.OnSend(mock.Anything).Return(collectorDown())
-	broken.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
-
-	client := grpcmock.NewMockSpanClient()
-	client.OnSendSpan(mock.Anything).Return(broken, nil)
-	agent.spanGrpc = &spanGrpc{spanClient: client, agent: agent}
-
-	for i := 0; i < queued; i++ {
-		span := defaultSpan(agent)
-		span.spanId = int64(i + 1)
-		require.True(t, agent.spanQueue.enqueue(span.newEventChunk(true)))
-	}
-
-	// The shutdown order: the agent is disabled first, then the queue closed.
-	agent.enable.Store(false)
-	agent.spanQueue.close()
-
-	agent.workerWg.Add(1)
-	go agent.superviseWorker("span", agent.sendSpanWorker)
-	agent.workerWg.Wait()
-
-	assert.Equal(t, queued-1, agent.spanQueue.length(),
-		"the drain must end at the first chunk a dead stream refuses, not walk the queue")
 }
 
 // A collector outage must not turn metadata drops into metadata inflow. The

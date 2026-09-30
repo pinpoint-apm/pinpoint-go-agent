@@ -224,31 +224,6 @@ func Test_pingStream_sendPing(t *testing.T) {
 	}
 }
 
-func Test_spanStream_sendSpan(t *testing.T) {
-	type args struct {
-		agent *agent
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{newTestAgent(defaultConfig())}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			agent := tt.args.agent
-			agent.spanGrpc = newMockSpanGrpc(agent)
-			stream := agent.spanGrpc.newSpanStreamWithRetry()
-
-			span := defaultSpan(agent)
-			span.NewSpanEvent("t1")
-			err := stream.sendSpan(span.newEventChunk(true))
-			assert.NoError(t, err, "sendSpan")
-			stream.close()
-		})
-	}
-}
-
 func Test_spanGrpc_sendSpanBatch(t *testing.T) {
 	type args struct {
 		agent *agent
@@ -293,9 +268,7 @@ func Test_spanGrpc_sendSpanBatchEmptyReleasesPermit(t *testing.T) {
 }
 
 func Test_agent_enqueueSpan_discardsOldestAndEnqueuesNewest(t *testing.T) {
-	cfg := defaultConfig()
-	cfg.Set(CfgSpanBatchEnable, true)
-	agent := newTestAgent(cfg)
+	agent := newTestAgent(defaultConfig())
 	agent.spanQueue = newSpanQueue(2) // single shard: FIFO is deterministic
 
 	first := newTestSpanChunk(agent)
@@ -305,30 +278,6 @@ func Test_agent_enqueueSpan_discardsOldestAndEnqueuesNewest(t *testing.T) {
 	assert.True(t, agent.enqueueSpan(first), "enqueue first")
 	assert.True(t, agent.enqueueSpan(second), "enqueue second")
 	assert.True(t, agent.enqueueSpan(third), "enqueue third")
-
-	got, _ := agent.spanQueue.tryDequeue()
-	assert.Equal(t, second, got, "oldest span should be discarded")
-	got, _ = agent.spanQueue.tryDequeue()
-	assert.Equal(t, third, got, "newest span should be enqueued")
-}
-
-func Test_agent_enqueueSpan_streamModeAlsoDiscardsOldest(t *testing.T) {
-	// The queue-full drop policy is independent of the span transport: even in
-	// legacy stream mode (Span.Batch.Enable=false) enqueueSpan discards the
-	// oldest span and enqueues the newest, so recent traces are favored under
-	// backpressure just like in batch mode.
-	cfg := defaultConfig()
-	cfg.Set(CfgSpanBatchEnable, false)
-	agent := newTestAgent(cfg)
-	agent.spanQueue = newSpanQueue(2) // single shard: FIFO is deterministic
-
-	first := newTestSpanChunk(agent)
-	second := newTestSpanChunk(agent)
-	third := newTestSpanChunk(agent)
-
-	assert.True(t, agent.enqueueSpan(first), "enqueue first")
-	assert.True(t, agent.enqueueSpan(second), "enqueue second")
-	assert.True(t, agent.enqueueSpan(third), "newest span is enqueued after discarding the oldest")
 
 	got, _ := agent.spanQueue.tryDequeue()
 	assert.Equal(t, second, got, "oldest span should be discarded")
@@ -2256,10 +2205,7 @@ func Test_handleSpanBatchResponse_toleratesEveryShape(t *testing.T) {
 // every worker keeps calling into it until it notices. Sending must report
 // Unavailable rather than dereferencing a nil stream.
 func Test_streams_nilStreamReportsUnavailable(t *testing.T) {
-	agent := newTestAgent(defaultConfig())
-
 	assert.Equal(t, codes.Unavailable, status.Code((&pingStream{}).sendPing()))
-	assert.Equal(t, codes.Unavailable, status.Code((&spanStream{}).sendSpan(newTestSpanChunk(agent))))
 	assert.Equal(t, codes.Unavailable, status.Code((&statStream{}).sendStats(&pb.PStatMessage{})))
 	assert.Equal(t, codes.Unavailable, status.Code((&cmdStream{}).sendFailMessage(1, "rejected")))
 	assert.Equal(t, codes.Unavailable, status.Code((&activeThreadCountStream{}).sendActiveThreadCount()))
@@ -2269,7 +2215,6 @@ func Test_streams_nilStreamReportsUnavailable(t *testing.T) {
 
 	assert.NotPanics(t, func() {
 		(&pingStream{}).close()
-		(&spanStream{}).close()
 		(&statStream{}).close()
 		(&cmdStream{}).close()
 		(&activeThreadCountStream{}).close()

@@ -18,21 +18,11 @@ v2 needs Go 1.25 or newer, up from 1.21; `go get` raises the `go` line of your
 `go.mod` to match.
 
 It also needs a Pinpoint 3.1.0 or newer collector, up from 2.4.0. The agent
-sends spans with the unary `SendSpanBatch` RPC by default
-([Span.Batch.Enable](config.md#spanbatchenable)), which a collector implements
-from 3.1.0. Against an older collector every batch fails, the agent logs
-`SendSpanBatch failed - N spans dropped`, and nothing reaches the UI. Until the
-collector is upgraded, turn the option off to keep v1's long-lived `SendSpan`
-stream, which collectors from 2.4.0 take:
-
-```yaml
-Span:
-  Batch:
-    Enable: false
-```
-
-The same setting is `PINPOINT_GO_SPAN_BATCH_ENABLE=false`,
-`--pinpoint-span-batch-enable=false` or `pinpoint.WithSpanBatchEnable(false)`.
+sends spans with the unary `SendSpanBatch` RPC, which a collector implements
+from 3.1.0; v1's long-lived `SendSpan` stream is gone. Against an older
+collector every batch fails, the agent logs
+`SendSpanBatch failed - N spans dropped`, and nothing reaches the UI. Upgrade
+the collector before the agent.
 
 ## 2. Move every import to v2 at once
 
@@ -141,7 +131,6 @@ The deprecated `LogLevel` key is gone too: `LogLevel` in the config file,
 | [SQL.RemoveComments](config.md#sqlremovecomments) (new) | comments kept in the SQL | `true`: comments removed | `false` |
 | [Http.UrlStat.LimitSize](config.md#httpurlstatlimitsize) | 1024 | 1000 | 1024 |
 | [Stat.CollectInterval](config.md#statcollectinterval) | up to 60000 ms | up to 10000 ms; a larger value falls back to the 5000 ms default | none |
-| [Span.Batch.Enable](config.md#spanbatchenable) (new) | `SendSpan` stream | `true`: `SendSpanBatch` | `false` |
 
 ## 5. Expect some recorded data to change
 

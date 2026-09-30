@@ -259,9 +259,8 @@ func Test_validUTF8(t *testing.T) {
 
 // Plugins feed network-origin bytes into span string fields (percent-decoded
 // URL paths, binary row keys, raw query bodies, driver error strings). One
-// invalid UTF-8 string fails proto.Marshal for the whole message, and a failed
-// span stream Send cancels the stream - so the conversion boundary must
-// sanitize every such field.
+// invalid UTF-8 string fails proto.Marshal for the whole batch, dropping every
+// span in it - so the conversion boundary must sanitize every such field.
 func Test_spanMessageBuilder_SanitizesInvalidUTF8(t *testing.T) {
 	a := newTestAgent(defaultConfig())
 	bad := "bad\xff\xfe"
@@ -1228,24 +1227,19 @@ func Test_agent_superviseWorkerDoesNotRestartWhileStopping(t *testing.T) {
 }
 
 // workerTableCases are the configuration combinations that select different
-// rows of the worker table: span vs span batch, and whether the agent info
-// refresh worker runs.
+// rows of the worker table: whether the agent info refresh worker runs.
 var workerTableCases = []struct {
 	name            string
-	spanBatch       bool
 	refreshInterval int
 	want            []string
 }{
-	{"batch on, refresh on", true, 1000, []string{"ping", "span batch", "command", "meta", "collect agent stat", "collect uri stat", "send uri stat", "send stats", "agent info refresh"}},
-	{"batch on, refresh off", true, 0, []string{"ping", "span batch", "command", "meta", "collect agent stat", "collect uri stat", "send uri stat", "send stats"}},
-	{"batch off, refresh on", false, 1000, []string{"ping", "span", "command", "meta", "collect agent stat", "collect uri stat", "send uri stat", "send stats", "agent info refresh"}},
-	{"batch off, refresh off", false, 0, []string{"ping", "span", "command", "meta", "collect agent stat", "collect uri stat", "send uri stat", "send stats"}},
+	{"refresh on", 1000, []string{"ping", "span batch", "command", "meta", "collect agent stat", "collect uri stat", "send uri stat", "send stats", "agent info refresh"}},
+	{"refresh off", 0, []string{"ping", "span batch", "command", "meta", "collect agent stat", "collect uri stat", "send uri stat", "send stats"}},
 }
 
 // workerTableConfig builds a config selecting one worker table case.
-func workerTableConfig(spanBatch bool, refreshInterval int) *Config {
+func workerTableConfig(refreshInterval int) *Config {
 	cfg := defaultConfig()
-	cfg.Set(CfgSpanBatchEnable, spanBatch)
 	cfg.Set(CfgCollectorAgentInfoRefreshInterval, refreshInterval)
 	return cfg
 }
@@ -1278,13 +1272,12 @@ func stubWorkers(agent *agent, table []worker, started *atomic.Int32) []worker {
 
 // The table's predicates must reproduce exactly the worker set the old
 // hand-written go statements produced, under every configuration that selects
-// different rows: span and span batch are mutually exclusive, and agent info
-// refresh runs only for a positive interval. Names are the log contract, so
+// different rows: agent info refresh runs only for a positive interval. Names are the log contract, so
 // they are pinned by value and must be unique.
 func Test_agent_workerTableSelectsWorkersByConfig(t *testing.T) {
 	for _, tc := range workerTableCases {
 		t.Run(tc.name, func(t *testing.T) {
-			agent := newTestAgent(workerTableConfig(tc.spanBatch, tc.refreshInterval))
+			agent := newTestAgent(workerTableConfig(tc.refreshInterval))
 			table := agent.workerTable()
 
 			assert.Equal(t, tc.want, activeWorkerNames(table))
@@ -1306,7 +1299,7 @@ func Test_agent_workerTableSelectsWorkersByConfig(t *testing.T) {
 func Test_agent_startWorkersCountMatchesTable(t *testing.T) {
 	for _, tc := range workerTableCases {
 		t.Run(tc.name, func(t *testing.T) {
-			agent := newTestAgent(workerTableConfig(tc.spanBatch, tc.refreshInterval))
+			agent := newTestAgent(workerTableConfig(tc.refreshInterval))
 			var started atomic.Int32
 			table := agent.workerTable()
 			agent.startWorkers(stubWorkers(agent, table, &started))
@@ -1333,7 +1326,7 @@ func Test_agent_startWorkersCountMatchesTable(t *testing.T) {
 func Test_agent_ShutdownDrainsWorkerTableWithinDeadline(t *testing.T) {
 	for _, tc := range workerTableCases {
 		t.Run(tc.name, func(t *testing.T) {
-			agent := newTestAgent(workerTableConfig(tc.spanBatch, tc.refreshInterval))
+			agent := newTestAgent(workerTableConfig(tc.refreshInterval))
 			agent.config.offGrpc = false
 			var started atomic.Int32
 			table := agent.workerTable()
@@ -1388,7 +1381,7 @@ func Test_agent_ShutdownTimeoutNamesRunningWorkers(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			shortShutdownTimeout(t)
-			agent := newTestAgent(workerTableConfig(true, 1000))
+			agent := newTestAgent(workerTableConfig(1000))
 			agent.config.offGrpc = false
 			release := make(chan struct{})
 			defer close(release)
@@ -1420,7 +1413,7 @@ func Test_agent_ShutdownTimeoutNamesRunningWorkers(t *testing.T) {
 
 // A Shutdown that drains inside its deadline logs nothing about workers.
 func Test_agent_ShutdownInTimeLogsNoWorkerNames(t *testing.T) {
-	agent := newTestAgent(workerTableConfig(true, 1000))
+	agent := newTestAgent(workerTableConfig(1000))
 	agent.config.offGrpc = false
 	var started atomic.Int32
 	table := agent.workerTable()
@@ -1970,7 +1963,7 @@ func Test_agent_ShutdownTimeoutLeavesOnlyTheStuckWorker(t *testing.T) {
 	before := runtime.NumGoroutine()
 	const cycles = 8
 	for i := 0; i < cycles; i++ {
-		agent := newTestAgent(workerTableConfig(true, 1000))
+		agent := newTestAgent(workerTableConfig(1000))
 		agent.config.offGrpc = false
 		var started atomic.Int32
 		table := agent.workerTable()
@@ -2141,37 +2134,34 @@ func Test_ShutdownNamesStragglers(t *testing.T) {
 // one slot per active entry, named by the table, nothing for an inactive one -
 // since that slice is what runningWorkerNames reports from.
 func Test_WorkerTableIsTheSingleSourceOfTruth(t *testing.T) {
-	for _, spanBatch := range []bool{true, false} {
-		for _, refreshInterval := range []int{0, 1000} {
-			agent := newTestAgent(workerTableConfig(spanBatch, refreshInterval))
-			table := agent.workerTable()
-			active := activeWorkerNames(table)
+	for _, refreshInterval := range []int{0, 1000} {
+		agent := newTestAgent(workerTableConfig(refreshInterval))
+		table := agent.workerTable()
+		active := activeWorkerNames(table)
 
-			// The table's own bodies need a collector; keep its names and
-			// predicates and park each body on the stop signal instead.
-			stop := agent.stopSignal().Done()
-			stubs := make([]worker, len(table))
-			for i, w := range table {
-				stubs[i] = worker{name: w.name, start: w.start, body: func() { <-stop }}
-			}
-			agent.startWorkers(stubs)
-
-			names := make([]string, 0, len(agent.workerStates))
-			for _, st := range agent.workerStates {
-				names = append(names, st.name)
-			}
-			assert.Equal(t, active, names,
-				"one state slot per active table entry, in table order (span batch %v, refresh %d)",
-				spanBatch, refreshInterval)
-			for _, w := range table {
-				if !w.start {
-					assert.NotContains(t, names, w.name, "an inactive entry gets no slot")
-				}
-			}
-
-			agent.signalShutdown()
-			assert.True(t, waitTimeout(&agent.workerWg, shutdownTimeout),
-				"every started worker releases the workerWg slot startWorkers added for it")
+		// The table's own bodies need a collector; keep its names and
+		// predicates and park each body on the stop signal instead.
+		stop := agent.stopSignal().Done()
+		stubs := make([]worker, len(table))
+		for i, w := range table {
+			stubs[i] = worker{name: w.name, start: w.start, body: func() { <-stop }}
 		}
+		agent.startWorkers(stubs)
+
+		names := make([]string, 0, len(agent.workerStates))
+		for _, st := range agent.workerStates {
+			names = append(names, st.name)
+		}
+		assert.Equal(t, active, names,
+			"one state slot per active table entry, in table order (refresh %d)", refreshInterval)
+		for _, w := range table {
+			if !w.start {
+				assert.NotContains(t, names, w.name, "an inactive entry gets no slot")
+			}
+		}
+
+		agent.signalShutdown()
+		assert.True(t, waitTimeout(&agent.workerWg, shutdownTimeout),
+			"every started worker releases the workerWg slot startWorkers added for it")
 	}
 }

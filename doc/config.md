@@ -463,9 +463,9 @@ instances. Set it to false only to roll the `dns` resolver back without a redepl
 * default: true
 
 ### Collector.Grpc.StreamMaxAge
-Collector.Grpc.StreamMaxAge option sets the max age in milliseconds of the long-lived ping, span (when
-[Span.Batch.Enable](#spanbatchenable) is off), stat and command streams.
-A stream older than this is closed normally and reopened before the next send, so no span or stat is dropped;
+Collector.Grpc.StreamMaxAge option sets the max age in milliseconds of the long-lived ping, stat and command
+streams.
+A stream older than this is closed normally and reopened before the next send, so no stat is dropped;
 the command stream, which waits on the collector, is reopened when its age runs out.
 The age is randomized by +/-10%.
 The default 0 keeps a stream open until it fails.
@@ -484,7 +484,7 @@ firewall or L4 load balancer on the path can drop the connection unnoticed, and 
 and possibly a backoff wait.
 The default 0 disables idling: a quiet channel keeps its connection for as long as the agent runs.
 Without this option grpc-go (v1.82.1) would apply its own default of 30 minutes, which an application with no
-traffic reaches on the span channel in [Span.Batch.Enable](#spanbatchenable) mode.
+traffic reaches on the span channel, which only carries unary SendSpanBatch requests.
 Note that with [Collector.Grpc.KeepAlivePermitWithoutCalls](#collectorgrpckeepalivepermitwithoutcalls) at its
 default false, a connection with no open stream sends no keepalive pings even when idling is disabled.
 A negative value is treated as 0.
@@ -592,19 +592,11 @@ It sizes the span queue only; the metadata queue is sized by
 * default: 1024
 * range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
 
-### Span.Batch.Enable
-Span.Batch.Enable option enables SendSpanBatch unary requests instead of the long-lived SendSpan stream.
-A collector implements SendSpanBatch from Pinpoint 3.1.0. Against an older one every batch fails and its spans
-are dropped, with `SendSpanBatch failed - N spans dropped` in the agent log, so turn this off for it.
-
-* --pinpoint-span-batch-enable
-* PINPOINT_GO_SPAN_BATCH_ENABLE
-* WithSpanBatchEnable()
-* type: bool
-* default: true
-
 ### Span.BatchSize
 Span.BatchSize option sets the max number of spans per SendSpanBatch request.
+Spans are always sent in unary SendSpanBatch requests, which a collector implements from Pinpoint 3.1.0. Against
+an older one every batch fails and its spans are dropped, with `SendSpanBatch failed - N spans dropped` in the
+agent log.
 
 * --pinpoint-span-batchsize
 * PINPOINT_GO_SPAN_BATCHSIZE
@@ -1484,7 +1476,7 @@ Two things make a reload not happen, and both are easy to miss:
 
 Identity (`ApplicationName`, `AgentId`, `AgentName`, `Uid.Version`,
 `ServiceName`, `ApiKey`, `ApplicationType`), everything under `Collector.*`,
-the span transport (`Span.QueueSize`, `Span.Batch.Enable`, `Span.BatchSize`,
+the span transport (`Span.QueueSize`, `Span.BatchSize`,
 `Span.BatchFlushInterval`, `Span.BatchCollectDeadline`,
 `Span.BatchMaxConcurrentRequests`), `Stat.*`,
 `Http.UrlStat.QueueSize`, `IsContainerEnv`, `ConfigFile`, `ActiveProfile`,
@@ -1672,8 +1664,8 @@ See [ActiveProfile](#activeprofile) for the file layout.
   assets — with `Http.Server.ExcludeUrl`. They are the bulk of the requests and
   none of the insight.
 * Keep `Error.TraceCallStack` off; it is the costliest per-error work.
-* For a very high span rate, try `Span.Batch.Enable`, which replaces the
-  long-lived stream with batched unary sends.
+* For a very high span rate, tune `Span.BatchSize` and
+  `Span.BatchMaxConcurrentRequests`.
 * Leave `Log.Level` at `info` or `warn`. Debug logging adds per-event work.
 
 **Getting it right**
@@ -1697,7 +1689,7 @@ See [ActiveProfile](#activeprofile) for the file layout.
 | Cannot connect / not registered | `Collector.Host`, the three ports, `Collector.Grpc.SslEnable`, `Collector.Grpc.TrustCertFilePath` |
 | Too many traces / collector overloaded | `Sampling.PercentRate`, `Sampling.NewThroughput`, `Sampling.ContinueThroughput`, `Http.Server.ExcludeUrl` |
 | Traces truncated mid-request | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence` |
-| Spans dropped under load | `Span.QueueSize`, `Span.Batch.Enable`, `Span.BatchSize` |
+| Spans dropped under load | `Span.QueueSize`, `Span.BatchSize`, `Span.BatchMaxConcurrentRequests` |
 | Agent using too much memory | `Span.QueueSize`, `Collector.Grpc.SenderQueueSize`, `Http.UrlStat.LimitSize`, `SQL.MaxBindValueSize`, `SQL.EnableRawSqlCache`, `SQL.CacheSize`, `SQL.CacheLengthLimit` |
 | SQL metadata re-sent constantly / spans show unresolved SQL ids | Raise `SQL.CacheSize` above the number of distinct statements the application runs |
 | Agent using too much CPU | `Sampling.PercentRate`, `Log.Level`, `Error.TraceCallStack` |

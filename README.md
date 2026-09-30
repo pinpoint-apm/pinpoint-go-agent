@@ -17,7 +17,7 @@ go get github.com/pinpoint-apm/pinpoint-go-agent/v2
 
 ## Requirements
 * Go 1.25+
-* Pinpoint 3.1.0+; a 2.4.0+ collector works with [Span.Batch.Enable](doc/config.md#spanbatchenable) set to false
+* Pinpoint 3.1.0+
 * Linux, OS X, and Windows are supported.
 
 Moving from v1? See [Migrating from v1 to v2](doc/migration_v2.md).

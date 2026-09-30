@@ -15,12 +15,10 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   the same protobuf files, so a binary that links a module of each panics at
   startup with `proto: file "v1/Annotation.proto" is already registered`.
 - **Go 1.25 or newer** is required, up from 1.21.
-- **Pinpoint 3.1.0 or newer** is required, up from 2.4.0. `Span.Batch.Enable`
-  (default `true`) sends spans in unary `SendSpanBatch` requests instead of the
-  long-lived `SendSpan` stream, and a collector implements `SendSpanBatch` from
-  3.1.0. Against an older collector every batch fails and its spans are
-  dropped; with `Span.Batch.Enable: false` the agent keeps the stream, which
-  collectors from 2.4.0 take.
+- **Pinpoint 3.1.0 or newer** is required, up from 2.4.0. Spans are sent in
+  unary `SendSpanBatch` requests, which a collector implements from 3.1.0; the
+  long-lived `SendSpan` stream of v1 is gone. Against an older collector every
+  batch fails and its spans are dropped.
 - **The agent id is not configurable.** `WithAgentId`, `CfgAgentID`, the
   `AgentId` key, `PINPOINT_GO_AGENTID` and `--pinpoint-agentid` are gone:
   every process generates its own id, so an instance shows up under a new id

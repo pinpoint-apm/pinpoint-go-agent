@@ -184,16 +184,6 @@ func Test_spanMessageBuilder_streamReuseKeepsSentBytes(t *testing.T) {
 	}
 }
 
-type retainingSpanSendClient struct {
-	pb.Span_SendSpanClient
-	request *pb.PSpanMessage
-}
-
-func (c *retainingSpanSendClient) Send(in *pb.PSpanMessage) error {
-	c.request = in
-	return nil
-}
-
 type retainingSpanBatchClient struct {
 	request *pb.PSpanMessageBatch
 }
@@ -207,19 +197,14 @@ func (c *retainingSpanBatchClient) SendSpanBatch(_ context.Context, in *pb.PSpan
 	return &pb.PSpanResultBatch{}, nil
 }
 
-// grpc-go tracing retains request pointers after Send returns. Those requests
-// must be detached from the slabs before their builders are recycled.
+// grpc-go tracing retains request pointers after the call returns. Those
+// requests must be detached from the slabs before their builders are recycled.
 func Test_spanGrpc_tracingRetainsStableMessages(t *testing.T) {
 	previous := grpc.EnableTracing
 	grpc.EnableTracing = true
 	defer func() { grpc.EnableTracing = previous }()
 
 	agent := newTestAgent(defaultConfig())
-	streamClient := &retainingSpanSendClient{}
-	stream := &spanStream{stream: streamClient, cancel: func() {}}
-	assert.NoError(t, stream.sendSpan(slabTestChunk(agent, 7, 3)))
-	assert.NoError(t, verifySeedMessage(streamClient.request, 7, 3))
-
 	batchClient := &retainingSpanBatchClient{}
 	spanGrpc := &spanGrpc{
 		spanClient:              batchClient,

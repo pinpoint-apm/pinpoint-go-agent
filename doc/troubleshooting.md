@@ -233,8 +233,8 @@ Work down this list; it is ordered by how often each turns out to be the cause.
    connectivity or identity, not instrumentation. See
    [Cannot Connect to Collector](#cannot-connect-to-collector).
 2. **Collector older than 3.1.0?** `SendSpanBatch failed - N spans dropped` in
-   the agent log means the collector does not implement the default span
-   sender. Set [Span.Batch.Enable](config.md#spanbatchenable) to false for it.
+   the agent log means the collector does not implement the span sender.
+   Upgrade the collector.
 3. **Is anything instrumented?** Go is not auto-instrumented. A span only
    exists where your code created one — via a plugin wrapper or
    `NewSpanTracer()`. An agent can be perfectly healthy and report nothing.
@@ -403,8 +403,8 @@ A call chain that shows as separate transactions instead of one:
   `Error.CallStackDepth` modest when you turn it on.
 * **Over-instrumentation.** Events inside a hot loop cost more than they teach.
   Record one event around the loop.
-* **`Span.Batch.Enable`.** For a very high span rate, batched unary sends can
-  behave better than the long-lived stream; see the `Span.Batch*` options.
+* **`Span.Batch*`.** For a very high span rate, tune `Span.BatchSize` and
+  `Span.BatchMaxConcurrentRequests`.
 
 ### Cannot Connect to Collector
 
@@ -444,8 +444,7 @@ nc -vz your-collector-host 9991
   supported way to finish with an agent, and it is safe here - the teardown runs
   once and repeats are no-ops.
 * Check the collector's own logs. A version mismatch is rejected there, not
-  here: the agent requires Pinpoint 3.1.0+, or 2.4.0+ with
-  [Span.Batch.Enable](config.md#spanbatchenable) set to false.
+  here: the agent requires Pinpoint 3.1.0+.
 
 ### Collector Connection Dropped and Recovered
 

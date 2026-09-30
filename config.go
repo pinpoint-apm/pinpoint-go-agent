@@ -47,8 +47,8 @@ const (
 	CfgCollectorGrpcMaxHeaderListSize           = "Collector.Grpc.MaxHeaderListSize"
 	CfgCollectorGrpcSslEnable                   = "Collector.Grpc.SslEnable"
 	CfgCollectorGrpcTrustCertFilePath           = "Collector.Grpc.TrustCertFilePath"
-	// How long a collector connection and a span stream may live before they
-	// are renewed, both in milliseconds; 0 (the default) disables the renewal.
+	// How long a collector connection and a long-lived stream may live before
+	// they are renewed, both in milliseconds; 0 (the default) disables the renewal.
 	CfgCollectorGrpcConnectionMaxAge = "Collector.Grpc.ConnectionMaxAge"
 	CfgCollectorGrpcStreamMaxAge     = "Collector.Grpc.StreamMaxAge"
 	// Channel idle timeout in milliseconds; 0 (the default) disables idling.
@@ -72,7 +72,6 @@ const (
 	CfgSamplingNewThroughput          = "Sampling.NewThroughput"
 	CfgSamplingContinueThroughput     = "Sampling.ContinueThroughput"
 	CfgSpanQueueSize                  = "Span.QueueSize"
-	CfgSpanBatchEnable                = "Span.Batch.Enable"
 	CfgSpanBatchSize                  = "Span.BatchSize"
 	CfgSpanBatchFlushInterval         = "Span.BatchFlushInterval"
 	CfgSpanBatchCollectDeadline       = "Span.BatchCollectDeadline"
@@ -254,7 +253,6 @@ func initConfig() {
 	AddConfig(CfgSamplingNewThroughput, CfgInt, 0, true)
 	AddConfig(CfgSamplingContinueThroughput, CfgInt, 0, true)
 	AddConfig(CfgSpanQueueSize, CfgInt, defaultQueueSize, false)
-	AddConfig(CfgSpanBatchEnable, CfgBool, true, false)
 	AddConfig(CfgSpanBatchSize, CfgInt, defaultSpanBatchSize, false)
 	AddConfig(CfgSpanBatchFlushInterval, CfgInt, defaultSpanBatchFlushInterval, false)
 	AddConfig(CfgSpanBatchCollectDeadline, CfgInt, defaultSpanBatchCollectDeadline, false)
@@ -1740,7 +1738,7 @@ func WithCollectorGrpcDnsResolverEnable(enable bool) ConfigOption {
 }
 
 // WithCollectorGrpcStreamMaxAge sets the max age in milliseconds of the
-// long-lived ping, span, stat and command streams. A stream older than this is
+// long-lived ping, stat and command streams. A stream older than this is
 // closed normally and reopened by its worker. 0 (the default) keeps a stream
 // open until it fails.
 func WithCollectorGrpcStreamMaxAge(ms int) ConfigOption {
@@ -1891,9 +1889,6 @@ func WithEnable(enable bool) ConfigOption { return withValue(CfgEnable, enable) 
 
 // WithSpanQueueSize sets the size of the span queue for gRPC.
 func WithSpanQueueSize(size int) ConfigOption { return withValue(CfgSpanQueueSize, size) }
-
-// WithSpanBatchEnable enables SendSpanBatch instead of the long-lived SendSpan stream.
-func WithSpanBatchEnable(enable bool) ConfigOption { return withValue(CfgSpanBatchEnable, enable) }
 
 // WithSpanBatchSize sets the max number of spans per SendSpanBatch request.
 func WithSpanBatchSize(size int) ConfigOption { return withValue(CfgSpanBatchSize, size) }

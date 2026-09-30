@@ -50,7 +50,6 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, 0, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
 			assert.Equal(t, 0, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
 			assert.Equal(t, defaultQueueSize, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
-			assert.Equal(t, true, c.Bool(CfgSpanBatchEnable), CfgSpanBatchEnable)
 			assert.Equal(t, defaultSpanBatchSize, c.Int(CfgSpanBatchSize), CfgSpanBatchSize)
 			assert.Equal(t, defaultSpanBatchFlushInterval, c.Int(CfgSpanBatchFlushInterval), CfgSpanBatchFlushInterval)
 			assert.Equal(t, defaultSpanBatchCollectDeadline, c.Int(CfgSpanBatchCollectDeadline), CfgSpanBatchCollectDeadline)
@@ -104,7 +103,6 @@ func TestNewConfig_WithFunc(t *testing.T) {
 		WithSamplingNewThroughput(20),
 		WithSamplingContinueThroughput(30),
 		WithSpanQueueSize(2048),
-		WithSpanBatchEnable(false),
 		WithSpanBatchSize(25),
 		WithSpanBatchFlushInterval(2000),
 		WithSpanBatchCollectDeadline(250),
@@ -153,7 +151,6 @@ func TestNewConfig_WithFunc(t *testing.T) {
 			assert.Equal(t, 20, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
 			assert.Equal(t, 30, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
 			assert.Equal(t, 2048, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
-			assert.Equal(t, false, c.Bool(CfgSpanBatchEnable), CfgSpanBatchEnable)
 			assert.Equal(t, 25, c.Int(CfgSpanBatchSize), CfgSpanBatchSize)
 			assert.Equal(t, 2000, c.Int(CfgSpanBatchFlushInterval), CfgSpanBatchFlushInterval)
 			assert.Equal(t, 250, c.Int(CfgSpanBatchCollectDeadline), CfgSpanBatchCollectDeadline)
@@ -457,7 +454,6 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 	t.Setenv("PINPOINT_GO_SAMPLING_CONTINUETHROUGHPUT", "200")
 	t.Setenv("PINPOINT_GO_SPAN_QUEUESIZE", "1000")
 	t.Setenv("PINPOINT_GO_COLLECTOR_GRPC_SENDERQUEUESIZE", "700")
-	t.Setenv("PINPOINT_GO_SPAN_BATCH_ENABLE", "true")
 	t.Setenv("PINPOINT_GO_SPAN_BATCHSIZE", "40")
 	t.Setenv("PINPOINT_GO_SPAN_BATCHFLUSHINTERVAL", "1500")
 	t.Setenv("PINPOINT_GO_SPAN_BATCHCOLLECTDEADLINE", "300")
@@ -506,7 +502,6 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 			assert.Equal(t, 200, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
 			assert.Equal(t, 1000, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
 			assert.Equal(t, 700, c.Int(CfgCollectorGrpcSenderQueueSize), CfgCollectorGrpcSenderQueueSize)
-			assert.Equal(t, true, c.Bool(CfgSpanBatchEnable), CfgSpanBatchEnable)
 			assert.Equal(t, 40, c.Int(CfgSpanBatchSize), CfgSpanBatchSize)
 			assert.Equal(t, 1500, c.Int(CfgSpanBatchFlushInterval), CfgSpanBatchFlushInterval)
 			assert.Equal(t, 300, c.Int(CfgSpanBatchCollectDeadline), CfgSpanBatchCollectDeadline)
@@ -607,7 +602,6 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 		"--pinpoint-sampling-continuethroughput=600",
 		"--pinpoint-span-queuesize=10",
 		"--pinpoint-collector-grpc-senderqueuesize=20",
-		"--pinpoint-span-batch-enable=true",
 		"--pinpoint-span-batchsize=30",
 		"--pinpoint-span-batchflushinterval=2500",
 		"--pinpoint-span-batchcollectdeadline=350",
@@ -661,7 +655,6 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 			assert.Equal(t, 600, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
 			assert.Equal(t, 10, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
 			assert.Equal(t, 20, c.Int(CfgCollectorGrpcSenderQueueSize), CfgCollectorGrpcSenderQueueSize)
-			assert.Equal(t, true, c.Bool(CfgSpanBatchEnable), CfgSpanBatchEnable)
 			assert.Equal(t, 30, c.Int(CfgSpanBatchSize), CfgSpanBatchSize)
 			assert.Equal(t, 2500, c.Int(CfgSpanBatchFlushInterval), CfgSpanBatchFlushInterval)
 			assert.Equal(t, 350, c.Int(CfgSpanBatchCollectDeadline), CfgSpanBatchCollectDeadline)

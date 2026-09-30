@@ -158,16 +158,7 @@ func newMockAgentGrpc(agent *agent) *agentGrpc {
 	return &agentGrpc{agentClient: &mockAgentGrpcClient{}, metaClient: &mockMetaGrpcClient{}, pingSocketId: -1, agent: agent}
 }
 
-// mockSpanStream stands in for the collector side of a span stream.
-type mockSpanStream struct {
-	grpc.ClientStream // never called; the agent only uses Send/CloseAndRecv
-}
-
-func (s *mockSpanStream) Send(*pb.PSpanMessage) error         { return nil }
-func (s *mockSpanStream) CloseAndRecv() (*empty.Empty, error) { return &empty.Empty{}, nil }
-
-// mockSpanGrpcClient supports both span transports used by tests:
-// it returns a stub SendSpan stream for legacy mode and records SendSpanBatch payloads for batch mode.
+// mockSpanGrpcClient records SendSpanBatch payloads.
 type mockSpanGrpcClient struct {
 	mu       sync.Mutex
 	requests []*pb.PSpanMessageBatch
@@ -178,8 +169,8 @@ type mockSpanGrpcClient struct {
 	hold chan struct{}
 }
 
-func (spanGrpcClient *mockSpanGrpcClient) SendSpan(ctx context.Context, _ ...grpc.CallOption) (pb.Span_SendSpanClient, error) {
-	return &mockSpanStream{}, nil
+func (spanGrpcClient *mockSpanGrpcClient) SendSpan(context.Context, ...grpc.CallOption) (pb.Span_SendSpanClient, error) {
+	panic("not used")
 }
 
 func (spanGrpcClient *mockSpanGrpcClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch, _ ...grpc.CallOption) (*pb.PSpanResultBatch, error) {
@@ -220,7 +211,6 @@ func newMockSpanGrpc(agent *agent) *spanGrpc {
 	return &spanGrpc{
 		spanClient:              &mockSpanGrpcClient{},
 		agent:                   agent,
-		stream:                  nil,
 		batchSize:               defaultSpanBatchSize,
 		batchFlushTimeout:       time.Duration(defaultSpanBatchFlushInterval) * time.Millisecond,
 		batchCollectDeadline:    time.Duration(defaultSpanBatchCollectDeadline) * time.Millisecond,

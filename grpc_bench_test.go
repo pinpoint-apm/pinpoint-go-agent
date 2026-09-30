@@ -21,13 +21,12 @@ import (
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
-	empty "google.golang.org/protobuf/types/known/emptypb"
 )
 
 // buildBenchChunk builds a finished, realistic span chunk: a sampled web
 // request with nEvents traced calls, each carrying one SQL-shaped annotation,
 // plus an HTTP status annotation on the span itself. The chunk is what
-// sendSpanWorker dequeues and hands to the conversion functions.
+// sendSpanBatchWorker dequeues and hands to the conversion functions.
 func buildBenchChunk(a *agent, nEvents int) *spanChunk {
 	s := newSampledSpan(a, "GET /bench", "/bench/rpc")
 	s.annotations.AppendInt(AnnotationHttpStatusCode, 200)
@@ -138,17 +137,6 @@ func benchMakePSpanN(b *testing.B, nEvents int) {
 // machinery: per-span timer + marshal on the stream path vs per-batch
 // goroutine + permit + context on the batch path.
 
-type stubSpanSendClient struct {
-	grpc.ClientStream
-}
-
-func (s *stubSpanSendClient) Send(msg *pb.PSpanMessage) error {
-	_, err := proto.Marshal(msg)
-	return err
-}
-
-func (s *stubSpanSendClient) CloseAndRecv() (*empty.Empty, error) { return &empty.Empty{}, nil }
-
 type stubSpanBatchClient struct{}
 
 func (stubSpanBatchClient) SendSpan(ctx context.Context, _ ...grpc.CallOption) (pb.Span_SendSpanClient, error) {
@@ -158,20 +146,6 @@ func (stubSpanBatchClient) SendSpan(ctx context.Context, _ ...grpc.CallOption) (
 func (stubSpanBatchClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch, _ ...grpc.CallOption) (*pb.PSpanResultBatch, error) {
 	_, err := proto.Marshal(in)
 	return &pb.PSpanResultBatch{}, err
-}
-
-func Benchmark_spanTransport_streamSendPerSpan(b *testing.B) {
-	a := benchAgent()
-	chunk := buildBenchChunk(a, 10)
-	stream := &spanStream{stream: &stubSpanSendClient{}, cancel: func() {}}
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := stream.sendSpan(chunk); err != nil {
-			b.Fatal(err)
-		}
-	}
 }
 
 // One iteration sends one 50-span batch; divide ns/op, B/op, allocs/op by 50

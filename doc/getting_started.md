@@ -8,8 +8,7 @@ guide takes you from `go get` to a traced request in the Pinpoint UI.
 * **Go 1.25+**
 * A running **Pinpoint 3.1.0+** collector, and its host address. Three ports
   must be reachable from your application: 9991 (agent), 9993 (span) and
-  9992 (stat). An older collector, from 2.4.0, does not take the default span
-  sender: set [Span.Batch.Enable](config.md#spanbatchenable) to false for it.
+  9992 (stat). An older collector does not take the agent's span sender.
 * Linux, macOS or Windows.
 
 Go compiles to native machine code, so there is nothing to attach at startup.

@@ -192,7 +192,6 @@ func (c *agentConfig) options(mc *MockCollector) []pinpoint.ConfigOption {
 		pinpoint.WithSamplingContinueThroughput(c.continueThroughput),
 
 		pinpoint.WithSpanQueueSize(c.spanQueueSize),
-		pinpoint.WithSpanBatchEnable(true),
 		pinpoint.WithSpanBatchSize(c.spanBatchSize),
 		pinpoint.WithSpanBatchFlushInterval(c.spanBatchFlushInterval),
 		pinpoint.WithSpanBatchCollectDeadline(c.spanBatchCollectDeadline),

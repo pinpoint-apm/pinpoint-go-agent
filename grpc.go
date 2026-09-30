@@ -309,9 +309,9 @@ func (o grpcChannelOptions) dialOptions(creds credentials.TransportCredentials) 
 		// manager counts an open stream as an ongoing RPC (stream.go
 		// OnCallBegin/OnCallEnd), so the agent channel (ping and command
 		// streams) and the stat channel (stat stream) rarely qualify; the span
-		// channel in Span.Batch.Enable mode sends unary SendSpanBatch RPCs and
-		// goes quiet whenever the application has no traffic, which is exactly
-		// where the 30-minute default would bite.
+		// channel sends unary SendSpanBatch RPCs and goes quiet whenever the
+		// application has no traffic, which is exactly where the 30-minute
+		// default would bite.
 		//
 		// Two things this does not change. Keepalive pings only run while a
 		// stream is open unless PermitWithoutStream is set (default false), so
@@ -987,9 +987,8 @@ func makePStackTraceElementList(frames []frame) []*pb.PStackTraceElement {
 // what ends the wait. Killing the stream on timeout matches the callers: they
 // already close and re-create the stream on any send error.
 //
-// A timer, a closure and a channel per call: the per-chunk sends this was
-// once pooled for are the legacy span stream's, off the default batch path,
-// and ping, stat and command send seconds apart.
+// A timer, a closure and a channel per call: ping, stat and command send
+// seconds apart, so pooling these would buy nothing.
 func sendStreamWithTimeout(op func() error, cancelStream context.CancelFunc, timeout time.Duration, which string) error {
 	cancelled := make(chan struct{})
 	timer := time.AfterFunc(timeout, func() {
@@ -1313,12 +1312,10 @@ func (agentGrpc *agentGrpc) close() {
 	}
 }
 
-// spanGrpc supports both span send transports: the legacy long-lived SendSpan stream
-// and the SendSpanBatch unary sender selected by Span.Batch.Enable.
+// spanGrpc sends spans as unary SendSpanBatch requests.
 type spanGrpc struct {
 	spanConn              *grpc.ClientConn
 	spanClient            pb.SpanClient
-	stream                *spanStream
 	agent                 *agent
 	batchSize             int
 	batchFlushTimeout     time.Duration
@@ -1330,12 +1327,6 @@ type spanGrpc struct {
 	// receive from it.
 	concurrentRequestPermit chan struct{}
 	inFlight                sync.WaitGroup
-}
-
-type spanStream struct {
-	stream pb.Span_SendSpanClient
-	cancel context.CancelFunc
-	streamAge
 }
 
 func newSpanGrpc(agent *agent) (*spanGrpc, error) {
@@ -1366,63 +1357,6 @@ func (spanGrpc *spanGrpc) close() {
 	if spanGrpc.spanConn != nil {
 		spanGrpc.spanConn.Close()
 	}
-}
-
-func (spanGrpc *spanGrpc) newSpanStream() bool {
-	ctx, cancel := context.WithCancel(grpcMetadataContext(spanGrpc.agent, -1))
-	stream, err := spanGrpc.spanClient.SendSpan(ctx)
-	if err != nil {
-		cancel()
-		Log("grpc").Errorf("make span stream - %v", err)
-		return false
-	}
-
-	spanGrpc.stream = &spanStream{stream: stream, cancel: cancel, streamAge: newStreamAge(spanGrpc.agent)}
-	return true
-}
-
-func (spanGrpc *spanGrpc) newSpanStreamWithRetry() *spanStream {
-	if newStreamWithRetry(spanGrpc.agent, spanGrpc.spanConn, spanGrpc.newSpanStream, "span") {
-		return spanGrpc.stream
-	}
-	return &spanStream{}
-}
-
-func (s *spanStream) close() {
-	if s.stream == nil {
-		return
-	}
-	closeStream(s.cancel, func() error { _, err := s.stream.CloseAndRecv(); return err }, "span stream.CloseAndRecv()")
-	s.stream = nil
-	Log("grpc").Infof("close span stream")
-}
-
-func (s *spanStream) sendSpan(chunk *spanChunk) error {
-	if s.stream == nil {
-		return status.Errorf(codes.Unavailable, "span stream is nil")
-	}
-
-	builder := acquireSpanMessageBuilder()
-	defer releaseSpanMessageBuilder(builder)
-
-	gspan := builder.makePSpanMessage(chunk)
-
-	if IsLogLevelEnabled(logrus.DebugLevel) {
-		Log("grpc").Debugf("PSpanMessage Size: %d", proto.Size(gspan))
-	}
-	if IsLogLevelEnabled(logrus.TraceLevel) {
-		Log("grpc").Tracef("PSpanMessage: %s", gspan.String())
-	}
-	if grpc.EnableTracing {
-		// grpc-go's lazy trace keeps the request after Send returns.
-		gspan = proto.Clone(gspan).(*pb.PSpanMessage)
-	}
-
-	err := sendStreamWithTimeout(func() error { return s.stream.Send(gspan) }, s.cancel, sendStreamTimeOut, "span stream.Send()")
-	if err != nil {
-		s.cancel()
-	}
-	return err
 }
 
 // collectSpanBatch gathers the first span plus queued spans until batch size or collect deadline is reached.

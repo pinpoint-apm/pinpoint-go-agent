@@ -512,18 +512,15 @@ type worker struct {
 }
 
 // workerTable is the one place the agent's workers are declared, each with its
-// start condition: span and span batch are mutually exclusive on
-// CfgSpanBatchEnable, and agent info refresh runs only for a positive refresh
+// start condition: agent info refresh runs only for a positive refresh
 // interval. The connections (agentGrpc, spanGrpc, statGrpc, cmdGrpc) are
 // deliberately not in the table: they are closed by closeGrpc under a nil guard
 // rather than supervised, and nothing counts them.
 func (agent *agent) workerTable() []worker {
-	spanBatch := agent.config.Bool(CfgSpanBatchEnable)
 	refreshInterval := agent.agentInfoRefreshInterval()
 	return []worker{
 		{name: "ping", body: agent.sendPingWorker, start: true},
-		{name: "span batch", body: agent.sendSpanBatchWorker, start: spanBatch},
-		{name: "span", body: agent.sendSpanWorker, start: !spanBatch},
+		{name: "span batch", body: agent.sendSpanBatchWorker, start: true},
 		{name: "command", body: agent.runCommandService, start: true},
 		{name: "meta", body: agent.sendMetaWorker, start: true},
 		{name: "collect agent stat", body: agent.collectAgentStatWorker, start: true},
@@ -994,60 +991,6 @@ func (agent *agent) sendPingWorker() {
 	}
 }
 
-func (agent *agent) sendSpanWorker() {
-	Log("agent").Infof("start span goroutine")
-
-	stream := agent.spanGrpc.newSpanStreamWithRetry()
-	// Deferred for the same reason as the ping worker's: a panic recovered by
-	// superviseWorker would otherwise leak this stream and let the restarted
-	// body open another on top of it.
-	defer func() { stream.close() }()
-
-	for {
-		// Break on a drained queue only, not on the disabled flag: shutdown
-		// clears enable before it closes the queue, so also breaking here
-		// dropped everything still queued - the very spans the shutdown drain
-		// window exists to flush. Matches sendSpanBatchWorker's best-effort
-		// flush; if the stream is already gone, each send fails fast and the
-		// drain stays bounded by the queue length.
-		chunk, ok := agent.spanQueue.dequeue()
-		if !ok {
-			break
-		}
-		agent.reportSpanDrops()
-
-		stream = renewIfExpired(stream, agent.spanGrpc.newSpanStreamWithRetry, "span")
-		err := stream.sendSpan(chunk)
-		if err != nil {
-			// The chunk is not re-sent (see below); counted with the other
-			// span losses so reportSpanDrops covers this cause too.
-			agent.spanDrops.record(1)
-			if err != io.EOF {
-				Log("agent").Errorf("send span - %v", err)
-			}
-
-			stream.close()
-			stream = agent.spanGrpc.newSpanStreamWithRetry()
-			if stream.stream == nil {
-				// The reconnect gave up, which newStreamWithRetry only does
-				// once the agent is disabled - the drain this loop is running.
-				// Every later send would fail with "span stream is nil", so
-				// carrying on only logs one error per chunk still queued
-				// without delivering any of them.
-				break
-			}
-
-			// Leave queued spans to spanQueue's head-drop policy, which retains
-			// the newest chunks during an outage. An age filter here would drop
-			// spans a second time, and on the wrong clock: startTime is the
-			// span's start, not its enqueue time, so the slow traces an outage
-			// most needs to show would be the first to go.
-		}
-	}
-
-	Log("agent").Infof("end span goroutine")
-}
-
 func (agent *agent) sendSpanBatchWorker() {
 	Log("agent").Infof("start span batch goroutine")
 
@@ -1077,8 +1020,7 @@ func (agent *agent) sendSpanBatchWorker() {
 }
 
 // reportSpanDrops warns about spans lost to a saturated span queue or skipped
-// by the batch sender. Called by whichever span worker is running, once per
-// cycle: producers only bump their shard's counter, so the clock read and the
+// by the batch sender. Called by the span batch worker once per cycle: producers only bump their shard's counter, so the clock read and the
 // logging land on the consumer.
 func (agent *agent) reportSpanDrops() {
 	total := agent.spanQueue.dropCount() + agent.spanDrops.dropped.Load()
