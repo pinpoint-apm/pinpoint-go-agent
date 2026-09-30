@@ -203,7 +203,7 @@ startup when it is enabled.
 ## Differences from the C++ suite
 
 - The C API and fork scenarios have no Go counterpart.
-- `testapp.Greeting` (reused from `plugin/grpc/example`) carries only a message
+- `testapp.Greeting` (`test/testapp`, shared with the grpc examples) carries only a message
   field, so the gRPC downstream appends its trace context to the reply message
   as `|trace_id=..|span_id=..|sampled=..` instead of using dedicated fields.
   Regenerating the proto is not required for the propagation assertions.

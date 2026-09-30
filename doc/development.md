@@ -161,6 +161,9 @@ when the IDL changes:
 ./scripts/generate-protobuf.sh
 ```
 
+The same run regenerates `test/testapp`, the gRPC test service the end-to-end
+suite and the grpc examples talk over, from `test/testapp/testapp.proto`.
+
 The script downloads pinned versions of `protoc`, `protoc-gen-go`,
 `protoc-gen-go-grpc` and the gRPC mock generator into `.tools/`, so it does not
 depend on what happens to be installed: each one has to report the pinned

@@ -40,7 +40,7 @@ func (s *Server) UnaryCallUnaryReturn(ctx context.Context, msg *testapp.Greeting
 package main
 
 import (
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2/example/testapp"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2/test/testapp"
     "google.golang.org/grpc"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2"
@@ -78,7 +78,7 @@ func main() {
 }
 
 ```
-[Full Example Source](/plugin/grpc/example/server/server.go)
+[Full Example Source](/example/grpc/server/server.go)
 
 ### client
 To instrument a gRPC client, use UnaryClientInterceptor and StreamClientInterceptor.
@@ -103,7 +103,7 @@ import (
     "google.golang.org/grpc"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2/example/testapp"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2/test/testapp"
 )
 
 func unaryCallUnaryReturn(ctx context.Context, client testapp.HelloClient) {
@@ -137,4 +137,4 @@ func doGrpc(w http.ResponseWriter, r *http.Request) {
     streamCallUnaryReturn(ctx, client)
 }
 ```
-[Full Example Source](/plugin/grpc/example/client/client.go)
+[Full Example Source](/example/grpc/client/client.go)

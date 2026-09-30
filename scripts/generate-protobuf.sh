@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROTO_SRC_DIR="${PROTO_SRC_DIR:-$ROOT_DIR/pinpoint-grpc-idl/proto}"
 OUT_DIR="${OUT_DIR:-$ROOT_DIR/internal/protobuf}"
 MOCK_OUT_DIR="${MOCK_OUT_DIR:-$ROOT_DIR/internal/protobuf/mock}"
+TEST_PROTO_DIR="${TEST_PROTO_DIR:-$ROOT_DIR/test/testapp}"
 TOOLS_DIR="${TOOLS_DIR:-$ROOT_DIR/.tools}"
 BIN_DIR="$TOOLS_DIR/bin"
 
@@ -255,6 +256,24 @@ generate_mocks() {
 	gofmt -w "$MOCK_OUT_DIR"/*.pb.go
 }
 
+# generate_testapp compiles test/testapp/testapp.proto, the gRPC service the
+# end-to-end suite and the grpc examples talk over, in place: its go_package is
+# that directory, and it is a test fixture, not part of the collector protocol.
+generate_testapp() {
+	[ -f "$TEST_PROTO_DIR/testapp.proto" ] || die "missing test proto: $TEST_PROTO_DIR/testapp.proto"
+
+	log "generating the testapp test service"
+	find "$TEST_PROTO_DIR" -maxdepth 1 -type f -name '*.pb.go' -delete
+	protoc \
+		--proto_path="$TEST_PROTO_DIR" \
+		--go_out="$TEST_PROTO_DIR" \
+		--go_opt=paths=source_relative \
+		--go-grpc_out="$TEST_PROTO_DIR" \
+		--go-grpc_opt=paths=source_relative \
+		"$TEST_PROTO_DIR/testapp.proto"
+	gofmt -w "$TEST_PROTO_DIR"/*.pb.go
+}
+
 export PATH="$BIN_DIR:$PATH"
 trap cleanup EXIT
 
@@ -266,4 +285,5 @@ ensure_go_tool protoc-gen-go-grpcmock github.com/lovoo/protoc-gen-go-grpcmock/cm
 collect_proto_sources
 generate
 generate_mocks
+generate_testapp
 log "protobuf generation complete"

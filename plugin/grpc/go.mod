@@ -3,8 +3,6 @@ module github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2
 go 1.25.0
 
 require (
-	github.com/golang/protobuf v1.5.4
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0
 	github.com/stretchr/testify v1.8.0
 	google.golang.org/grpc v1.83.2
@@ -36,5 +34,3 @@ require (
 )
 
 replace github.com/pinpoint-apm/pinpoint-go-agent/v2 => ../..
-
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 => ../http

@@ -12,8 +12,8 @@ import (
 	"github.com/go-kit/kit/endpoint"
 	grpctransport "github.com/go-kit/kit/transport/grpc"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2/example/testapp"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/testapp"
 	"google.golang.org/grpc"
 )
 

@@ -14,9 +14,9 @@ import (
 	"syscall"
 
 	ppgrpc "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2"
-	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2/example/testapp"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/e2e/internal/e2e"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/testapp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -31,7 +31,9 @@ func traceSuffix(ctx context.Context) string {
 		tracer.TransactionId().String(), e2e.SpanIDString(tracer), tracer.IsSampled())
 }
 
-type helloServer struct{}
+type helloServer struct {
+	testapp.UnimplementedHelloServer
+}
 
 func (helloServer) UnaryCallUnaryReturn(ctx context.Context, in *testapp.Greeting) (*testapp.Greeting, error) {
 	tracer := pinpoint.FromContext(ctx)
