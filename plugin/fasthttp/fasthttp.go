@@ -80,9 +80,12 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 		// handler started with this context read another request's values and
 		// raced their writes. It has no deadline, and its Done closes only at
 		// server shutdown, so nothing is lost.
+		// No handler error is recorded: a fasthttp handler returns none, and
+		// RequestCtx.Err() is not one either - it turns non-nil only once
+		// Server.Shutdown has begun, which marked every request completing
+		// during a graceful stop as failed. The status carries the failure.
 		ctx.SetUserValue(CtxKey, pinpoint.NewContext(context.Background(), tracer))
 		handler(ctx)
-		pphttp.RecordHttpHandlerError(tracer, ctx.Err())
 
 		status = ctx.Response.StatusCode()
 	}
