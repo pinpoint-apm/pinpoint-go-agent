@@ -941,10 +941,14 @@ func (config *Config) watchConfigFile(watcher *fsnotify.Watcher, done chan struc
 				config.reloadConfig(cfgFileViper)
 			}
 		case err, ok := <-watcher.Errors:
-			if ok {
-				Log("config").Errorf("config file watcher error: %v", err)
+			if !ok {
+				return
 			}
-			return
+			// Logged and kept, not an exit: what fsnotify reports here is
+			// transient - an inotify queue overflow while the watched
+			// directory is busy - and returning on it ended dynamic reload
+			// for the rest of the process with one line in the log.
+			Log("config").Errorf("config file watcher error: %v", err)
 		}
 	}
 }
