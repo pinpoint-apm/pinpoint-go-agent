@@ -1422,7 +1422,7 @@ func Test_isIDChars(t *testing.T) {
 func BenchmarkValidateID(b *testing.B) {
 	const id = "AZm7kQ2vRtYpLxNc0dHgUw" // v4 agent id shape: base64url of a UUID
 	for i := 0; i < b.N; i++ {
-		if !validateID(id, agentIDMaxLen) {
+		if !IsValidId(id, agentIDMaxLen) {
 			b.Fatal("must validate")
 		}
 	}

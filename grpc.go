@@ -592,7 +592,6 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 		ServerMetaData: makeServerMetaData(agentGrpc.agent.config),
 
 		JvmInfo: &pb.PJvmInfo{
-			Version:   0,
 			VmVersion: fmt.Sprintf("%s(%d)", runtime.Version(), goIdOffset),
 			// Same reason as PJvmGc.type in makePAgentStat: Go's runtime is
 			// none of the VM types the field enumerates.
@@ -717,12 +716,8 @@ func (agentGrpc *agentGrpc) refreshAgentInfo(maxTry int, retryInterval time.Dura
 			Log("agent").Infof("success to refresh agent info")
 			return true
 		}
-		if try+1 < maxTry {
-			select {
-			case <-agentGrpc.agent.stopSignal().Done():
-				return false
-			case <-time.After(retryInterval):
-			}
+		if try+1 < maxTry && !sleepUnlessStopped(agentGrpc.agent, retryInterval) {
+			return false
 		}
 	}
 
@@ -846,104 +841,58 @@ func metaResult(res *pb.PResult, err error) error {
 	return nil
 }
 
-func (agentGrpc *agentGrpc) sendApiMetadata(in *pb.PApiMetaData) error {
+// sendMeta makes one metadata RPC: kind names it in the log lines, in is the
+// message and call is the MetadataClient method that carries it.
+func sendMeta[M proto.Message](agentGrpc *agentGrpc, kind string, in M, call func(context.Context, M, ...grpc.CallOption) (*pb.PResult, error)) error {
+	if IsLogLevelEnabled(logrus.DebugLevel) {
+		Log("grpc").Debugf("%s metadata: %v", kind, in)
+	}
+
 	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), metaGrpcTimeOut)
 	defer cancel()
 
-	err := metaResult(agentGrpc.metaClient.RequestApiMetaData(ctx, in))
+	err := metaResult(call(ctx, in))
 	if err != nil {
-		metaSendLog.errorf("send api metadata - %v", err)
+		metaSendLog.errorf("send %s metadata - %v", kind, err)
 	}
 	return err
 }
 
+func (agentGrpc *agentGrpc) sendApiMetadata(in *pb.PApiMetaData) error {
+	return sendMeta(agentGrpc, "api", in, agentGrpc.metaClient.RequestApiMetaData)
+}
+
 func (agentGrpc *agentGrpc) sendApiMetadataOnce(apiId int32, api string, line int, apiType int) error {
-	apiMeta := pb.PApiMetaData{
+	return agentGrpc.sendApiMetadata(&pb.PApiMetaData{
 		ApiId:   apiId,
 		ApiInfo: validUTF8(api),
 		Line:    int32(line),
 		Type:    int32(apiType),
-	}
-
-	if IsLogLevelEnabled(logrus.DebugLevel) {
-		Log("grpc").Debugf("api metadata: %s", apiMeta.String())
-	}
-
-	return agentGrpc.sendApiMetadata(&apiMeta)
+	})
 }
 
 func (agentGrpc *agentGrpc) sendStringMetadata(in *pb.PStringMetaData) error {
-	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), metaGrpcTimeOut)
-	defer cancel()
-
-	err := metaResult(agentGrpc.metaClient.RequestStringMetaData(ctx, in))
-	if err != nil {
-		metaSendLog.errorf("send string metadata - %v", err)
-	}
-	return err
+	return sendMeta(agentGrpc, "string", in, agentGrpc.metaClient.RequestStringMetaData)
 }
 
 func (agentGrpc *agentGrpc) sendStringMetadataOnce(strId int32, str string) error {
-	strMeta := pb.PStringMetaData{
-		StringId:    strId,
-		StringValue: validUTF8(str),
-	}
-
-	if IsLogLevelEnabled(logrus.DebugLevel) {
-		Log("grpc").Debugf("string metadata: %s", strMeta.String())
-	}
-
-	return agentGrpc.sendStringMetadata(&strMeta)
+	return agentGrpc.sendStringMetadata(&pb.PStringMetaData{StringId: strId, StringValue: validUTF8(str)})
 }
 
 func (agentGrpc *agentGrpc) sendSqlMetadata(in *pb.PSqlMetaData) error {
-	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), metaGrpcTimeOut)
-	defer cancel()
-
-	err := metaResult(agentGrpc.metaClient.RequestSqlMetaData(ctx, in))
-	if err != nil {
-		metaSendLog.errorf("send sql metadata - %v", err)
-	}
-
-	return err
+	return sendMeta(agentGrpc, "sql", in, agentGrpc.metaClient.RequestSqlMetaData)
 }
 
 func (agentGrpc *agentGrpc) sendSqlMetadataOnce(sqlId int32, sql string) error {
-	sqlMeta := pb.PSqlMetaData{
-		SqlId: sqlId,
-		Sql:   validUTF8(sql),
-	}
-
-	if IsLogLevelEnabled(logrus.DebugLevel) {
-		Log("grpc").Debugf("sql metadata: %s", sqlMeta.String())
-	}
-
-	return agentGrpc.sendSqlMetadata(&sqlMeta)
+	return agentGrpc.sendSqlMetadata(&pb.PSqlMetaData{SqlId: sqlId, Sql: validUTF8(sql)})
 }
 
 func (agentGrpc *agentGrpc) sendSqlUidMetadata(in *pb.PSqlUidMetaData) error {
-	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), metaGrpcTimeOut)
-	defer cancel()
-
-	err := metaResult(agentGrpc.metaClient.RequestSqlUidMetaData(ctx, in))
-	if err != nil {
-		metaSendLog.errorf("send sql uid metadata - %v", err)
-	}
-
-	return err
+	return sendMeta(agentGrpc, "sql uid", in, agentGrpc.metaClient.RequestSqlUidMetaData)
 }
 
 func (agentGrpc *agentGrpc) sendSqlUidMetadataOnce(sqlUid []byte, sql string) error {
-	sqlUidMeta := pb.PSqlUidMetaData{
-		SqlUid: sqlUid,
-		Sql:    sql,
-	}
-
-	if IsLogLevelEnabled(logrus.DebugLevel) {
-		Log("grpc").Debugf("sql uid metadata: %s", sqlUidMeta.String())
-	}
-
-	return agentGrpc.sendSqlUidMetadata(&sqlUidMeta)
+	return agentGrpc.sendSqlUidMetadata(&pb.PSqlUidMetaData{SqlUid: sqlUid, Sql: sql})
 }
 
 func (agentGrpc *agentGrpc) sendExceptionMetadata(in *pb.PExceptionMetaData) error {
@@ -1328,6 +1277,13 @@ func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc f
 	return false
 }
 
+// closeStream runs a stream's close op under closeStreamTimeOut and then
+// cancels its context; every stream's close is this shape.
+func closeStream(cancel context.CancelFunc, op func() error, which string) {
+	sendStreamWithTimeout(op, cancel, closeStreamTimeOut, which)
+	cancel()
+}
+
 type pingStream struct {
 	stream pb.Agent_PingSessionClient
 	cancel context.CancelFunc
@@ -1380,9 +1336,7 @@ func (s *pingStream) close() {
 	if s.stream == nil {
 		return
 	}
-	defer s.cancel()
-
-	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, s.cancel, closeStreamTimeOut, "ping stream.CloseSend()")
+	closeStream(s.cancel, s.stream.CloseSend, "ping stream.CloseSend()")
 	s.stream = nil
 	Log("grpc").Infof("close ping stream")
 }
@@ -1472,15 +1426,7 @@ func (s *spanStream) close() {
 	if s.stream == nil {
 		return
 	}
-	defer s.cancel()
-
-	sendStreamWithTimeout(
-		func() error {
-			_, err := s.stream.CloseAndRecv()
-			return err
-		},
-		s.cancel, closeStreamTimeOut, "span stream.CloseAndRecv()",
-	)
+	closeStream(s.cancel, func() error { _, err := s.stream.CloseAndRecv(); return err }, "span stream.CloseAndRecv()")
 	s.stream = nil
 	Log("grpc").Infof("close span stream")
 }
@@ -1655,15 +1601,7 @@ func (spanGrpc *spanGrpc) releaseSpanBatchPermit() {
 // awaitInFlightSpanBatch waits briefly for async sends.
 // Shutdown is best effort: wait up to three seconds for accepted requests, then continue closing.
 func (spanGrpc *spanGrpc) awaitInFlightSpanBatch() {
-	done := make(chan struct{})
-	go func() {
-		spanGrpc.inFlight.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
+	if !waitTimeout(&spanGrpc.inFlight, 3*time.Second) {
 		Log("grpc").Warnf("Timed out waiting for in-flight span requests to complete")
 	}
 }
@@ -1928,15 +1866,7 @@ func (s *statStream) close() {
 	if s.stream == nil {
 		return
 	}
-	defer s.cancel()
-
-	sendStreamWithTimeout(
-		func() error {
-			_, err := s.stream.CloseAndRecv()
-			return err
-		},
-		s.cancel, closeStreamTimeOut, "stat stream.CloseAndRecv()",
-	)
+	closeStream(s.cancel, func() error { _, err := s.stream.CloseAndRecv(); return err }, "stat stream.CloseAndRecv()")
 	s.stream = nil
 	Log("grpc").Infof("close stat stream")
 }
@@ -1985,7 +1915,6 @@ func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
 			JvmMemoryNonHeapMax:  stat.nonHeapMax,
 			JvmGcOldCount:        stat.gcNum,
 			JvmGcOldTime:         stat.gcTime,
-			JvmGcDetailed:        nil,
 		},
 		CpuLoad: &pb.PCpuLoad{
 			JvmCpuLoad:    stat.cpuProcLoad,
@@ -2006,21 +1935,16 @@ func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
 				ActiveTraceCount:    stat.activeSpan,
 			},
 		},
-		DataSourceList: nil,
 		ResponseTime: &pb.PResponseTime{
 			Avg: stat.responseAvg,
 			Max: stat.responseMax,
 		},
-		Deadlock: nil,
 		FileDescriptor: &pb.PFileDescriptor{
 			OpenFileDescriptorCount: stat.numOpenFD,
 		},
-		DirectBuffer: nil,
-		Metadata:     "",
 		TotalThread: &pb.PTotalThread{
 			TotalThreadCount: stat.numThreads,
 		},
-		LoadedClass: nil,
 	}
 }
 
@@ -2131,9 +2055,7 @@ func (s *cmdStream) close() {
 	if s.stream == nil {
 		return
 	}
-	defer s.cancel()
-
-	sendStreamWithTimeout(func() error { return s.stream.CloseSend() }, s.cancel, closeStreamTimeOut, "cmd stream.CloseSend()")
+	closeStream(s.cancel, s.stream.CloseSend, "cmd stream.CloseSend()")
 	s.stream = nil
 	Log("grpc").Infof("close command stream")
 }
@@ -2167,8 +2089,6 @@ func (s *cmdStream) sendFailMessage(reqId int32, msg string) error {
 }
 
 func (s *cmdStream) recvCommandRequest() (*pb.PCmdRequest, error) {
-	var gCmdReq *pb.PCmdRequest
-
 	if s.stream == nil {
 		return nil, status.Errorf(codes.Unavailable, "command stream is nil")
 	}
@@ -2236,21 +2156,11 @@ func (s *activeThreadCountStream) close() {
 	if s.stream == nil {
 		return
 	}
-	defer s.cancel()
-
-	sendStreamWithTimeout(
-		func() error {
-			_, err := s.stream.CloseAndRecv()
-			return err
-		},
-		s.cancel, closeStreamTimeOut, "arc stream.CloseAndRecv()",
-	)
+	closeStream(s.cancel, func() error { _, err := s.stream.CloseAndRecv(); return err }, "arc stream.CloseAndRecv()")
 	s.stream = nil
 }
 
 func (s *activeThreadCountStream) sendActiveThreadCount() error {
-	var gRes *pb.PCmdActiveThreadCountRes
-
 	if s.stream == nil {
 		return status.Errorf(codes.Unavailable, "active thread count stream is nil")
 	}
@@ -2259,7 +2169,7 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 	activeThreadCount := s.streams.activeSpanCount(now)
 	s.actCount++
 
-	gRes = &pb.PCmdActiveThreadCountRes{
+	gRes := &pb.PCmdActiveThreadCountRes{
 		CommonStreamResponse: &pb.PCmdStreamResponse{
 			ResponseId: s.reqId,
 			SequenceId: s.actCount,
@@ -2282,8 +2192,6 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 }
 
 func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadName []string, localId []int64, dump *goroutineDump) {
-	var gRes *pb.PCmdActiveThreadDumpRes
-
 	status := int32(0)
 	msg := ""
 
@@ -2292,7 +2200,7 @@ func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadNam
 		msg = "An error occurred while dumping Goroutine"
 	}
 
-	gRes = &pb.PCmdActiveThreadDumpRes{
+	gRes := &pb.PCmdActiveThreadDumpRes{
 		CommonResponse: &pb.PCmdResponse{
 			ResponseId: reqId,
 			Status:     status,
@@ -2300,7 +2208,6 @@ func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadNam
 		},
 		ThreadDump: makePActiveThreadDumpList(dump, int(limit), threadName, localId),
 		Type:       "Go",
-		SubType:    "",
 		Version:    runtime.Version(),
 	}
 
@@ -2349,24 +2256,12 @@ func makePActiveThreadDumpList(dump *goroutineDump, limit int, threadName []stri
 
 func makePActiveThreadDump(g *goroutine) *pb.PActiveThreadDump {
 	aDump := &pb.PActiveThreadDump{
-		StartTime:    g.span.startTime.UnixNano() / int64(time.Millisecond),
-		LocalTraceId: 0,
+		StartTime: g.span.startTime.UnixNano() / int64(time.Millisecond),
 		ThreadDump: &pb.PThreadDump{
-			ThreadName:         g.header,
-			ThreadId:           g.id,
-			BlockedTime:        0,
-			BlockedCount:       0,
-			WaitedTime:         0,
-			WaitedCount:        0,
-			LockName:           "",
-			LockOwnerId:        0,
-			LockOwnerName:      "",
-			InNative:           false,
-			Suspended:          false,
-			ThreadState:        g.threadState(),
-			StackTrace:         g.stackTrace(),
-			LockedMonitor:      nil,
-			LockedSynchronizer: nil,
+			ThreadName:  g.header,
+			ThreadId:    g.id,
+			ThreadState: g.threadState(),
+			StackTrace:  g.stackTrace(),
 		},
 		Sampled:       g.span.sampled,
 		TransactionId: g.span.txId,
@@ -2377,8 +2272,6 @@ func makePActiveThreadDump(g *goroutine) *pb.PActiveThreadDump {
 }
 
 func (cmdGrpc *cmdGrpc) sendActiveThreadLightDump(reqId int32, limit int32, dump *goroutineDump) {
-	var gRes *pb.PCmdActiveThreadLightDumpRes
-
 	status := int32(0)
 	msg := ""
 
@@ -2387,7 +2280,7 @@ func (cmdGrpc *cmdGrpc) sendActiveThreadLightDump(reqId int32, limit int32, dump
 		msg = "An error occurred while dumping Goroutine"
 	}
 
-	gRes = &pb.PCmdActiveThreadLightDumpRes{
+	gRes := &pb.PCmdActiveThreadLightDumpRes{
 		CommonResponse: &pb.PCmdResponse{
 			ResponseId: reqId,
 			Status:     status,                            //error
@@ -2395,7 +2288,6 @@ func (cmdGrpc *cmdGrpc) sendActiveThreadLightDump(reqId int32, limit int32, dump
 		},
 		ThreadDump: makePActiveThreadLightDumpList(dump, int(limit)),
 		Type:       "Go",
-		SubType:    "",
 		Version:    runtime.Version(),
 	}
 
@@ -2431,8 +2323,7 @@ func makePActiveThreadLightDumpList(dump *goroutineDump, limit int) []*pb.PActiv
 
 func makePActiveThreadLightDump(g *goroutine) *pb.PActiveThreadLightDump {
 	aDump := &pb.PActiveThreadLightDump{
-		StartTime:    g.span.startTime.UnixNano() / int64(time.Millisecond),
-		LocalTraceId: 0,
+		StartTime: g.span.startTime.UnixNano() / int64(time.Millisecond),
 		ThreadDump: &pb.PThreadLightDump{
 			ThreadName:  g.header,
 			ThreadId:    g.id,
@@ -2447,12 +2338,9 @@ func makePActiveThreadLightDump(g *goroutine) *pb.PActiveThreadLightDump {
 }
 
 func (cmdGrpc *cmdGrpc) sendEcho(reqId int32, msg string) {
-	var gRes *pb.PCmdEchoResponse
-
-	gRes = &pb.PCmdEchoResponse{
+	gRes := &pb.PCmdEchoResponse{
 		CommonResponse: &pb.PCmdResponse{
 			ResponseId: reqId,
-			Status:     0,                                //error
 			Message:    &wrappers.StringValue{Value: ""}, //error message
 		},
 		Message: msg,

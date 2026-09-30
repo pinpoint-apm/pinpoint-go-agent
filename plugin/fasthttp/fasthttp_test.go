@@ -261,7 +261,7 @@ func TestWrapHandler_ContinuesTheCallersTransaction(t *testing.T) {
 
 	ctx := newRequestCtx(http.MethodGet, "http://localhost/hello")
 	caller.NewSpanEvent("call")
-	caller.Inject(&distributedTracingContextWriterMD{&ctx.Request.Header})
+	caller.Inject(&ctx.Request.Header)
 	caller.EndSpanEvent()
 
 	var tracer pinpoint.Tracer

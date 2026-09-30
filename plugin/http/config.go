@@ -251,14 +251,8 @@ type httpConfig struct {
 	srvProxyHeader      bool
 	srvRequestParam     bool
 	cltUrlQuery         bool
-	srvRealIpHeaders    []realIpHeader
+	srvRealIpHeaders    []string
 	srvRealIpEmptyValue string
-}
-
-// realIpHeader is one entry of Http.Server.RealIpHeader, canonicalized once.
-type realIpHeader struct {
-	name      string
-	forwarded bool // RFC 7239 Forwarded: parse the for= token
 }
 
 var httpConfigOpts = []string{
@@ -343,20 +337,13 @@ func newHttpConfigFor(config *pinpoint.Config) *httpConfig {
 		srvProxyHeader:      config.Bool(CfgHttpServerProxyHeaderEnable),
 		srvRequestParam:     config.Bool(CfgHttpServerRecordRequestParam),
 		cltUrlQuery:         config.Bool(CfgHttpClientRecordUrlQuery),
-		srvRealIpHeaders:    makeRealIpHeaders(config.StringSlice(CfgHttpServerRealIpHeader)),
+		srvRealIpHeaders:    makeProxyUserHeaderNames(config.StringSlice(CfgHttpServerRealIpHeader)),
 		srvRealIpEmptyValue: config.String(CfgHttpServerRealIpEmptyValue),
 	}
 }
 
+// forwardedHeader is the RFC 7239 header, whose for= token carries the address.
 var forwardedHeader = textproto.CanonicalMIMEHeaderKey("Forwarded")
-
-func makeRealIpHeaders(cfg []string) []realIpHeader {
-	var headers []realIpHeader
-	for _, name := range makeProxyUserHeaderNames(cfg) {
-		headers = append(headers, realIpHeader{name: name, forwarded: name == forwardedHeader})
-	}
-	return headers
-}
 
 func makeProxyUserHeaderNames(cfg []string) []string {
 	var names []string

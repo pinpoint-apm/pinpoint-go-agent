@@ -54,7 +54,7 @@ func TestDecodeUID_GoldenVectors(t *testing.T) {
 
 func TestEncodeDecodeUID_RoundTrip(t *testing.T) {
 	for i := 0; i < 100; i++ {
-		u, err := newAgentUID()
+		u, err := uuid.NewV7()
 		assert.NoError(t, err)
 
 		enc := encodeUID(u)
@@ -67,7 +67,7 @@ func TestEncodeDecodeUID_RoundTrip(t *testing.T) {
 }
 
 func TestNewAgentUID_IsVersion7(t *testing.T) {
-	u, err := newAgentUID()
+	u, err := uuid.NewV7()
 	assert.NoError(t, err)
 	assert.Equal(t, uuid.Version(7), u.Version(), "must be UUIDv7 (RFC 9562)")
 	assert.Equal(t, uuid.RFC4122, u.Variant(), "must use RFC 4122 variant bits")

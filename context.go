@@ -28,29 +28,20 @@ func FromContext(ctx context.Context) Tracer {
 }
 
 func tracerFromContext(ctx context.Context) Tracer {
-	if ctx == nil {
-		return NoopTracer()
-	}
-
-	if v := ctx.Value(contextKey); v != nil {
-		tracer, ok := v.(Tracer)
-		if !ok {
-			return NoopTracer()
+	if ctx != nil {
+		if tracer, ok := ctx.Value(contextKey).(Tracer); ok {
+			return tracer
 		}
-		return tracer
-	} else {
-		return NoopTracer()
 	}
+	return NoopTracer()
 }
 
 // RequestWithTracerContext returns the request that has a Context carrying the given Tracer.
 func RequestWithTracerContext(req *http.Request, tracer Tracer) *http.Request {
-	if req != nil {
-		ctx := NewContext(req.Context(), tracer)
-		return req.WithContext(ctx)
-	} else {
-		return req
+	if req == nil {
+		return nil
 	}
+	return req.WithContext(NewContext(req.Context(), tracer))
 }
 
 // TracerFromRequestContext returns the Tracer from the request's context. If not present, NoopTracer is returned.

@@ -2,12 +2,13 @@ package pinpoint
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime/debug"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -733,15 +734,13 @@ func defaultConfig() *Config {
 	config.cfgMap = make(map[string]*cfgMapItem, 0)
 	for k, v := range cfgBaseMap {
 		config.cfgMap[k] = &cfgMapItem{
+			value:        v.defaultValue,
 			defaultValue: v.defaultValue,
 			valueType:    v.valueType,
 			cmdKey:       v.cmdKey,
 			envKey:       v.envKey,
 			dynamic:      v.dynamic,
 		}
-	}
-	for _, v := range config.cfgMap {
-		v.value = v.defaultValue
 	}
 
 	config.containerCheck = true
@@ -985,12 +984,7 @@ func (config *Config) loadProfile(cmdEnvViper *viper.Viper, cfgFileViper *viper.
 }
 
 func (config *Config) loadConfig(cmdEnvViper *viper.Viper, cfgFileViper *viper.Viper, profileViper *viper.Viper) {
-	sortKeys := make([]string, 0)
-	for k := range config.cfgMap {
-		sortKeys = append(sortKeys, k)
-	}
-	sort.Strings(sortKeys)
-	for _, k := range sortKeys {
+	for _, k := range slices.Sorted(maps.Keys(config.cfgMap)) {
 		v := config.cfgMap[k]
 		if cmdEnvViper.IsSet(v.cmdKey) {
 			config.setFinalValue(k, v, cmdEnvViper.Get(v.cmdKey), cfgSrcCmd)
@@ -1106,13 +1100,7 @@ func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value inte
 // is a caller bug rather than a typo, but it must not leave a wrong-typed
 // value staged either. The caller must hold config.mu.
 func (config *Config) normalizeCfgValues() {
-	sortKeys := make([]string, 0, len(config.cfgMap))
-	for k := range config.cfgMap {
-		sortKeys = append(sortKeys, k)
-	}
-	sort.Strings(sortKeys)
-
-	for _, k := range sortKeys {
+	for _, k := range slices.Sorted(maps.Keys(config.cfgMap)) {
 		v := config.cfgMap[k]
 		converted, err := convertCfgValue(v.valueType, v.value)
 		if err != nil {
@@ -1492,12 +1480,7 @@ func (config *Config) reloadConfig(cfgFileViper *viper.Viper) {
 func (config *Config) loadDynamicConfig(cfgFileViper *viper.Viper, profileViper *viper.Viper) map[string]bool {
 	changed := make(map[string]bool)
 
-	sortKeys := make([]string, 0)
-	for k := range config.cfgMap {
-		sortKeys = append(sortKeys, k)
-	}
-	sort.Strings(sortKeys)
-	for _, k := range sortKeys {
+	for _, k := range slices.Sorted(maps.Keys(config.cfgMap)) {
 		v := config.cfgMap[k]
 		if !v.dynamic {
 			continue
@@ -1564,180 +1547,115 @@ func isContainerEnv() bool {
 	return false
 }
 
-// WithAppName sets the application name.
-func WithAppName(name string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgAppName].value = name
-	}
+// withValue is the shape of every plain ConfigOption: it stores v under key.
+func withValue(key string, v interface{}) ConfigOption {
+	return func(c *Config) { c.cfgMap[key].value = v }
 }
+
+// WithAppName sets the application name.
+func WithAppName(name string) ConfigOption { return withValue(CfgAppName, name) }
 
 // WithAppType sets the application type.
-func WithAppType(typ int32) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgAppType].value = typ
-	}
-}
+func WithAppType(typ int32) ConfigOption { return withValue(CfgAppType, typ) }
 
 // WithAgentName sets the agent name.
-func WithAgentName(name string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgAgentName].value = name
-	}
-}
+func WithAgentName(name string) ConfigOption { return withValue(CfgAgentName, name) }
 
 // WithUidVersion sets the agent self-identification version (v1, v3, or v4).
 // Unknown values fall back to v3.
-func WithUidVersion(version string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgUIDVersion].value = version
-	}
-}
+func WithUidVersion(version string) ConfigOption { return withValue(CfgUIDVersion, version) }
 
 // WithServiceName sets the service name (required for v4).
-func WithServiceName(name string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgServiceName].value = name
-	}
-}
+func WithServiceName(name string) ConfigOption { return withValue(CfgServiceName, name) }
 
 // WithApiKey sets the api key (required for v4).
-func WithApiKey(apiKey string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgApiKey].value = apiKey
-	}
-}
+func WithApiKey(apiKey string) ConfigOption { return withValue(CfgApiKey, apiKey) }
 
 // WithConfigFile sets the configuration file.
-func WithConfigFile(filePath string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgConfigFile].value = filePath
-	}
-}
+func WithConfigFile(filePath string) ConfigOption { return withValue(CfgConfigFile, filePath) }
 
 // WithCollectorHost sets the host address of pinpoint collector.
-func WithCollectorHost(host string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorHost].value = host
-	}
-}
+func WithCollectorHost(host string) ConfigOption { return withValue(CfgCollectorHost, host) }
 
 // WithCollectorAgentPort sets the agent port of pinpoint collector.
-func WithCollectorAgentPort(port int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorAgentPort].value = port
-	}
-}
+func WithCollectorAgentPort(port int) ConfigOption { return withValue(CfgCollectorAgentPort, port) }
 
 // WithCollectorSpanPort sets the span port of pinpoint collector.
-func WithCollectorSpanPort(port int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorSpanPort].value = port
-	}
-}
+func WithCollectorSpanPort(port int) ConfigOption { return withValue(CfgCollectorSpanPort, port) }
 
 // WithCollectorStatPort sets the agent stat of pinpoint collector.
-func WithCollectorStatPort(port int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorStatPort].value = port
-	}
-}
+func WithCollectorStatPort(port int) ConfigOption { return withValue(CfgCollectorStatPort, port) }
 
 // WithCollectorAgentInfoRefreshInterval sets the cycle for re-sending the agent information
 // to the collector, in milliseconds. Defaults to 24 hours; if 0 or less, it is sent only
 // once at startup.
 func WithCollectorAgentInfoRefreshInterval(interval int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorAgentInfoRefreshInterval].value = interval
-	}
+	return withValue(CfgCollectorAgentInfoRefreshInterval, interval)
 }
 
 // WithCollectorAgentInfoSendRetryInterval sets the wait between agent information send
 // retries, in milliseconds. It paces both the registration retry at startup and the
 // retries within one refresh cycle.
 func WithCollectorAgentInfoSendRetryInterval(interval int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorAgentInfoSendRetryInterval].value = interval
-	}
+	return withValue(CfgCollectorAgentInfoSendRetryInterval, interval)
 }
 
 // WithCollectorAgentInfoMaxTryPerAttempt sets the max number of agent information sends
 // per refresh cycle.
 func WithCollectorAgentInfoMaxTryPerAttempt(count int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorAgentInfoMaxTryPerAttempt].value = count
-	}
+	return withValue(CfgCollectorAgentInfoMaxTryPerAttempt, count)
 }
 
 // WithCollectorGrpcKeepAliveTime sets the gRPC keepalive ping interval in milliseconds.
 func WithCollectorGrpcKeepAliveTime(ms int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorGrpcKeepAliveTime].value = ms
-	}
+	return withValue(CfgCollectorGrpcKeepAliveTime, ms)
 }
 
 // WithCollectorGrpcKeepAliveTimeout sets the gRPC keepalive ping timeout in milliseconds.
 func WithCollectorGrpcKeepAliveTimeout(ms int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorGrpcKeepAliveTimeout].value = ms
-	}
+	return withValue(CfgCollectorGrpcKeepAliveTimeout, ms)
 }
 
 // WithCollectorGrpcKeepAlivePermitWithoutCalls sets whether keepalive pings are sent without active streams.
 func WithCollectorGrpcKeepAlivePermitWithoutCalls(permit bool) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorGrpcKeepAlivePermitWithoutCalls].value = permit
-	}
+	return withValue(CfgCollectorGrpcKeepAlivePermitWithoutCalls, permit)
 }
 
 // WithCollectorGrpcMaxSendMessageSize sets the max size in bytes of a gRPC message the agent can send.
 func WithCollectorGrpcMaxSendMessageSize(size int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorGrpcMaxSendMessageSize].value = size
-	}
+	return withValue(CfgCollectorGrpcMaxSendMessageSize, size)
 }
 
 // WithCollectorGrpcMaxReceiveMessageSize sets the max size in bytes of a gRPC message the agent can receive.
 func WithCollectorGrpcMaxReceiveMessageSize(size int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorGrpcMaxReceiveMessageSize].value = size
-	}
+	return withValue(CfgCollectorGrpcMaxReceiveMessageSize, size)
 }
 
 // WithCollectorGrpcFlowControlWindow sets the initial HTTP/2 flow-control window size in bytes.
 func WithCollectorGrpcFlowControlWindow(size int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorGrpcFlowControlWindow].value = size
-	}
+	return withValue(CfgCollectorGrpcFlowControlWindow, size)
 }
 
 // WithCollectorGrpcWriteBufferSize sets the gRPC transport write buffer size in bytes.
 func WithCollectorGrpcWriteBufferSize(size int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorGrpcWriteBufferSize].value = size
-	}
+	return withValue(CfgCollectorGrpcWriteBufferSize, size)
 }
 
 // WithCollectorGrpcMaxHeaderListSize sets the max size in bytes of gRPC response headers.
 func WithCollectorGrpcMaxHeaderListSize(size int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorGrpcMaxHeaderListSize].value = size
-	}
+	return withValue(CfgCollectorGrpcMaxHeaderListSize, size)
 }
 
 // WithCollectorGrpcSslEnable enables TLS on the gRPC channels to pinpoint collector.
 func WithCollectorGrpcSslEnable(enable bool) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorGrpcSslEnable].value = enable
-	}
+	return withValue(CfgCollectorGrpcSslEnable, enable)
 }
 
 // WithCollectorGrpcTrustCertFilePath sets the PEM certificate used as the trust
 // root when verifying the collector's TLS certificate.
 // If not set, the system root CAs are used.
 func WithCollectorGrpcTrustCertFilePath(path string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorGrpcTrustCertFilePath].value = path
-	}
+	return withValue(CfgCollectorGrpcTrustCertFilePath, path)
 }
 
 // WithCollectorGrpcConnectionMaxAge sets the max age in milliseconds of a
@@ -1746,9 +1664,7 @@ func WithCollectorGrpcTrustCertFilePath(path string) ConfigOption {
 // behind a load balancer spread across collector instances over time.
 // 0 (the default) never replaces a working connection.
 func WithCollectorGrpcConnectionMaxAge(ms int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorGrpcConnectionMaxAge].value = ms
-	}
+	return withValue(CfgCollectorGrpcConnectionMaxAge, ms)
 }
 
 // WithCollectorGrpcDnsResolverEnable selects the gRPC name resolver used for
@@ -1758,9 +1674,7 @@ func WithCollectorGrpcConnectionMaxAge(ms int) ConfigOption {
 // as-is: one address at a time, no re-resolution. Keep it true unless the dns
 // resolver has to be rolled back without a redeploy.
 func WithCollectorGrpcDnsResolverEnable(enable bool) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorGrpcDnsResolverEnable].value = enable
-	}
+	return withValue(CfgCollectorGrpcDnsResolverEnable, enable)
 }
 
 // WithCollectorGrpcStreamMaxAge sets the max age in milliseconds of the
@@ -1768,9 +1682,7 @@ func WithCollectorGrpcDnsResolverEnable(enable bool) ConfigOption {
 // closed normally and reopened by its worker. 0 (the default) keeps a stream
 // open until it fails.
 func WithCollectorGrpcStreamMaxAge(ms int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorGrpcStreamMaxAge].value = ms
-	}
+	return withValue(CfgCollectorGrpcStreamMaxAge, ms)
 }
 
 // WithCollectorGrpcIdleTimeout sets how long in milliseconds a collector
@@ -1778,113 +1690,65 @@ func WithCollectorGrpcStreamMaxAge(ms int) ConfigOption {
 // into IDLE, which also stops its keepalive pings; the next send reconnects.
 // 0 (the default) disables idling so a quiet channel keeps its connection.
 func WithCollectorGrpcIdleTimeout(ms int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorGrpcIdleTimeout].value = ms
-	}
+	return withValue(CfgCollectorGrpcIdleTimeout, ms)
 }
 
 // WithCollectorGrpcSenderQueueSize sets the size of the queue buffering
 // metadata (API, string, SQL, exception) waiting to be sent to the collector.
 func WithCollectorGrpcSenderQueueSize(size int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgCollectorGrpcSenderQueueSize].value = size
-	}
+	return withValue(CfgCollectorGrpcSenderQueueSize, size)
 }
 
 // WithLogLevel sets the logging level for agent logger.
-func WithLogLevel(level string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgLogLevel].value = level
-	}
-}
+func WithLogLevel(level string) ConfigOption { return withValue(CfgLogLevel, level) }
 
 // WithLogOutput sets the output for agent logger.
-func WithLogOutput(output string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgLogOutput].value = output
-	}
-}
+func WithLogOutput(output string) ConfigOption { return withValue(CfgLogOutput, output) }
 
 // WithLogMaxSize sets the max size of output file for agent logger.
-func WithLogMaxSize(size int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgLogMaxSize].value = size
-	}
-}
+func WithLogMaxSize(size int) ConfigOption { return withValue(CfgLogMaxSize, size) }
 
 // WithLogMaxBackups sets the number of rotated log files kept beside the
 // current one. Together with WithLogMaxSize it bounds the disk the agent log
 // takes to MaxSize x (MaxBackups+1) MB.
-func WithLogMaxBackups(backups int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgLogMaxBackups].value = backups
-	}
-}
+func WithLogMaxBackups(backups int) ConfigOption { return withValue(CfgLogMaxBackups, backups) }
 
 // WithSamplingType sets the type of agent sampler.
 // Either "COUNTER" or "PERCENT" must be specified.
 func WithSamplingType(samplingType string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSamplingType].value = samplingType
-	}
+	return withValue(CfgSamplingType, samplingType)
 }
 
 // WithSamplingRate DEPRECATED: Use WithSamplingCounterRate()
-func WithSamplingRate(rate int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSamplingCounterRate].value = rate
-	}
-}
+func WithSamplingRate(rate int) ConfigOption { return withValue(CfgSamplingCounterRate, rate) }
 
 // WithSamplingCounterRate sets the sampling rate for a 'counter sampler'.
-func WithSamplingCounterRate(rate int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSamplingCounterRate].value = rate
-	}
-}
+func WithSamplingCounterRate(rate int) ConfigOption { return withValue(CfgSamplingCounterRate, rate) }
 
 // WithSamplingPercentRate sets the sampling rate for a 'percent sampler'.
 func WithSamplingPercentRate(rate float32) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSamplingPercentRate].value = rate
-	}
+	return withValue(CfgSamplingPercentRate, rate)
 }
 
 // WithSamplingNewThroughput sets the new tps for a 'throughput sampler'.
-func WithSamplingNewThroughput(tps int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSamplingNewThroughput].value = tps
-	}
-}
+func WithSamplingNewThroughput(tps int) ConfigOption { return withValue(CfgSamplingNewThroughput, tps) }
 
 // WithSamplingContinueThroughput sets the cont tps for a 'throughput sampler'.
 func WithSamplingContinueThroughput(tps int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSamplingContinueThroughput].value = tps
-	}
+	return withValue(CfgSamplingContinueThroughput, tps)
 }
 
 // WithStatCollectInterval sets the statistics collection cycle for the agent.
 func WithStatCollectInterval(interval int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgStatCollectInterval].value = interval
-	}
+	return withValue(CfgStatCollectInterval, interval)
 }
 
 // WithStatBatchCount sets batch delivery units for collected statistics.
-func WithStatBatchCount(count int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgStatBatchCount].value = count
-	}
-}
+func WithStatBatchCount(count int) ConfigOption { return withValue(CfgStatBatchCount, count) }
 
 // WithServerInfo sets PServerMetaData.serverInfo, the server description shown
 // by the Pinpoint UI. Empty keeps the default "Go Application".
-func WithServerInfo(info string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgServerInfo].value = info
-	}
-}
+func WithServerInfo(info string) ConfigOption { return withValue(CfgServerInfo, info) }
 
 // serviceInfo is one host-supplied PServerMetaData.serviceInfo entry.
 type serviceInfo struct {
@@ -1912,179 +1776,101 @@ func WithIsContainerEnv(isContainer bool) ConfigOption {
 }
 
 // WithActiveProfile sets the configuration profile.
-func WithActiveProfile(profile string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgActiveProfile].value = profile
-	}
-}
+func WithActiveProfile(profile string) ConfigOption { return withValue(CfgActiveProfile, profile) }
 
 // WithSQLTraceBindValue enables bind value tracing for SQL Driver.
-func WithSQLTraceBindValue(trace bool) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSQLTraceBindValue].value = trace
-	}
-}
+func WithSQLTraceBindValue(trace bool) ConfigOption { return withValue(CfgSQLTraceBindValue, trace) }
 
 // WithSQLMaxBindValueSize sets the max length of traced bind value for SQL Driver.
 // It also caps the literal parameters extracted by SQL normalization.
-func WithSQLMaxBindValueSize(size int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSQLMaxBindValueSize].value = size
-	}
-}
+func WithSQLMaxBindValueSize(size int) ConfigOption { return withValue(CfgSQLMaxBindValueSize, size) }
 
 // WithSQLTraceCommit enables commit tracing for SQL Driver.
-func WithSQLTraceCommit(trace bool) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSQLTraceCommit].value = trace
-	}
-}
+func WithSQLTraceCommit(trace bool) ConfigOption { return withValue(CfgSQLTraceCommit, trace) }
 
 // WithSQLTraceRollback enables rollback tracing for SQL Driver.
-func WithSQLTraceRollback(trace bool) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSQLTraceRollback].value = trace
-	}
-}
+func WithSQLTraceRollback(trace bool) ConfigOption { return withValue(CfgSQLTraceRollback, trace) }
 
 // WithSQLEnableRawSqlCache enables caching of SQL normalization results keyed by raw SQL text.
 func WithSQLEnableRawSqlCache(enable bool) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSQLEnableRawSqlCache].value = enable
-	}
+	return withValue(CfgSQLEnableRawSqlCache, enable)
 }
 
 // WithSQLCacheSize sets how many statements each SQL metadata cache (SQL-ID,
 // SQL-UID and raw SQL) holds. Raise it for applications running more distinct
 // statements than the default, which otherwise evict and re-register SQL
 // metadata continuously. Read once at agent startup.
-func WithSQLCacheSize(size int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSQLCacheSize].value = size
-	}
-}
+func WithSQLCacheSize(size int) ConfigOption { return withValue(CfgSQLCacheSize, size) }
 
 // WithSQLCacheLengthLimit sets the max length in bytes of a SQL kept in the SQL
 // UID cache and the raw SQL cache. The SQL-ID cache is exempt - its ids come
 // from a sequence, so bypassing it would issue a new id per execution. A
 // negative value caches every SQL.
-func WithSQLCacheLengthLimit(limit int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSQLCacheLengthLimit].value = limit
-	}
-}
+func WithSQLCacheLengthLimit(limit int) ConfigOption { return withValue(CfgSQLCacheLengthLimit, limit) }
 
 // WithSQLCacheExpireHours sets how many hours a SQL UID stays cached before
 // its metadata is registered with the collector again. Zero never expires an
 // entry; a negative value is out of range and recovers the default.
-func WithSQLCacheExpireHours(hours int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSQLCacheExpireHours].value = hours
-	}
-}
+func WithSQLCacheExpireHours(hours int) ConfigOption { return withValue(CfgSQLCacheExpireHours, hours) }
 
 // WithSQLRemoveComments drops comments from normalized SQL instead of copying
 // startup-only: the normalized text is the SQL id cache key and the UID hash
 // input, so changing it at runtime would split one statement across two ids.
-func WithSQLRemoveComments(remove bool) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSQLRemoveComments].value = remove
-	}
-}
+func WithSQLRemoveComments(remove bool) ConfigOption { return withValue(CfgSQLRemoveComments, remove) }
 
 // WithSQLErrorCount sets how many SQL executions mark a span failed. A value of
 // 0 or less turns the count off.
-func WithSQLErrorCount(count int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSQLErrorCount].value = count
-	}
-}
+func WithSQLErrorCount(count int) ConfigOption { return withValue(CfgSQLErrorCount, count) }
 
 // WithSQLTraceQueryStat enables to trace SQL query statistics for SQL Driver.
 func WithSQLTraceQueryStat(collect bool) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSQLTraceQueryStat].value = collect
-	}
+	return withValue(CfgSQLTraceQueryStat, collect)
 }
 
 // WithEnable enables the agent is operational state.
-func WithEnable(enable bool) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgEnable].value = enable
-	}
-}
+func WithEnable(enable bool) ConfigOption { return withValue(CfgEnable, enable) }
 
 // WithSpanQueueSize sets the size of the span queue for gRPC.
-func WithSpanQueueSize(size int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSpanQueueSize].value = size
-	}
-}
+func WithSpanQueueSize(size int) ConfigOption { return withValue(CfgSpanQueueSize, size) }
 
 // WithSpanBatchEnable enables SendSpanBatch instead of the long-lived SendSpan stream.
-func WithSpanBatchEnable(enable bool) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSpanBatchEnable].value = enable
-	}
-}
+func WithSpanBatchEnable(enable bool) ConfigOption { return withValue(CfgSpanBatchEnable, enable) }
 
 // WithSpanBatchSize sets the max number of spans per SendSpanBatch request.
-func WithSpanBatchSize(size int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSpanBatchSize].value = size
-	}
-}
+func WithSpanBatchSize(size int) ConfigOption { return withValue(CfgSpanBatchSize, size) }
 
 // WithSpanBatchFlushInterval sets the permit wait timeout for span batch requests, in milliseconds.
 func WithSpanBatchFlushInterval(interval int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSpanBatchFlushInterval].value = interval
-	}
+	return withValue(CfgSpanBatchFlushInterval, interval)
 }
 
 // WithSpanBatchCollectDeadline sets the collection window for a span batch, in milliseconds.
 func WithSpanBatchCollectDeadline(deadline int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSpanBatchCollectDeadline].value = deadline
-	}
+	return withValue(CfgSpanBatchCollectDeadline, deadline)
 }
 
 // WithSpanBatchMaxConcurrentRequests sets the max number of concurrent SendSpanBatch requests.
 func WithSpanBatchMaxConcurrentRequests(max int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSpanBatchMaxConcurrentRequests].value = max
-	}
+	return withValue(CfgSpanBatchMaxConcurrentRequests, max)
 }
 
 // WithSpanEventChunkSize sets the event chunk of a span.
-func WithSpanEventChunkSize(size int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSpanEventChunkSize].value = size
-	}
-}
+func WithSpanEventChunkSize(size int) ConfigOption { return withValue(CfgSpanEventChunkSize, size) }
 
 // WithSpanMaxCallStackDepth sets the max callstack depth of a span.
 func WithSpanMaxCallStackDepth(depth int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSpanMaxCallStackDepth].value = depth
-	}
+	return withValue(CfgSpanMaxCallStackDepth, depth)
 }
 
 // WithSpanMaxCallStackSequence sets the max callstack sequence of a span.
 func WithSpanMaxCallStackSequence(seq int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSpanMaxCallStackSequence].value = seq
-	}
+	return withValue(CfgSpanMaxCallStackSequence, seq)
 }
 
 // WithSpanIgnoreErrors sets the errors that are recorded as exception info but
 // do not mark the span as failed. Each entry is "<type>:<message substring>";
 // either part may be empty.
-func WithSpanIgnoreErrors(rules ...string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSpanIgnoreErrors].value = rules
-	}
-}
+func WithSpanIgnoreErrors(rules ...string) ConfigOption { return withValue(CfgSpanIgnoreErrors, rules) }
 
 // WithSpanErrorMark sets which error causes are allowed to fail a transaction.
 // Each entry is one of "exception", "http-status" and "sql", or several of
@@ -2092,98 +1878,56 @@ func WithSpanIgnoreErrors(rules ...string) ConfigOption {
 // cause - a failure recorded with no category, as SetFailure does - is always
 // marked, whatever this option and WithSpanErrorMarkExclude say.
 func WithSpanErrorMark(categories ...string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSpanErrorMark].value = categories
-	}
+	return withValue(CfgSpanErrorMark, categories)
 }
 
 // WithSpanErrorMarkExclude sets the error causes that must not fail a
 // transaction, removed from whatever WithSpanErrorMark allows. The entries are
 // spelled as in WithSpanErrorMark.
 func WithSpanErrorMarkExclude(categories ...string) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgSpanErrorMarkExclude].value = categories
-	}
+	return withValue(CfgSpanErrorMarkExclude, categories)
 }
 
 // WithHttpUrlStatEnable enables the agent collects the HTTP URL statistics.
-func WithHttpUrlStatEnable(enable bool) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgHttpUrlStatEnable].value = enable
-	}
-}
+func WithHttpUrlStatEnable(enable bool) ConfigOption { return withValue(CfgHttpUrlStatEnable, enable) }
 
 // WithStatQueueSize sets the size of the queue buffering agent stat messages
 // waiting to be sent to the collector.
-func WithStatQueueSize(size int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgStatQueueSize].value = size
-	}
-}
+func WithStatQueueSize(size int) ConfigOption { return withValue(CfgStatQueueSize, size) }
 
 // WithHttpUrlStatLimitSize sets the maximum number of URLs that can be stored in one snapshot.
-func WithHttpUrlStatLimitSize(size int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgHttpUrlStatLimitSize].value = size
-	}
-}
+func WithHttpUrlStatLimitSize(size int) ConfigOption { return withValue(CfgHttpUrlStatLimitSize, size) }
 
 // WithHttpUrlStatQueueSize sets the size of the queue buffering per-request URL
 // statistics records until they are aggregated into a snapshot.
-func WithHttpUrlStatQueueSize(size int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgHttpUrlStatQueueSize].value = size
-	}
-}
+func WithHttpUrlStatQueueSize(size int) ConfigOption { return withValue(CfgHttpUrlStatQueueSize, size) }
 
 // WithHttpUrlStatWithMethod adds http method as prefix to uri string key.
 func WithHttpUrlStatWithMethod(withMethod bool) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgHttpUrlStatWithMethod].value = withMethod
-	}
+	return withValue(CfgHttpUrlStatWithMethod, withMethod)
 }
 
 // WithErrorTraceCallStack enables the agent collects a call stack when error occurs.
 func WithErrorTraceCallStack(trace bool) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgErrorTraceCallStack].value = trace
-	}
+	return withValue(CfgErrorTraceCallStack, trace)
 }
 
 // WithErrorCallStackDepth sets the maximum depth of call stack that can be dumped.
-func WithErrorCallStackDepth(depth int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgErrorCallStackDepth].value = depth
-	}
-}
+func WithErrorCallStackDepth(depth int) ConfigOption { return withValue(CfgErrorCallStackDepth, depth) }
 
 // WithErrorMaxChainDepth sets how many links of an error's cause chain are
 // recorded, the error itself included. 0 or less, and anything above 64, mean
 // the 64-link ceiling.
-func WithErrorMaxChainDepth(depth int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgErrorMaxChainDepth].value = depth
-	}
-}
+func WithErrorMaxChainDepth(depth int) ConfigOption { return withValue(CfgErrorMaxChainDepth, depth) }
 
 // WithErrorNewThroughput sets the maximum number of new exception chains
 // recorded per second. 0 or less means unlimited.
-func WithErrorNewThroughput(tps int) ConfigOption {
-	return func(c *Config) {
-		c.cfgMap[CfgErrorNewThroughput].value = tps
-	}
-}
+func WithErrorNewThroughput(tps int) ConfigOption { return withValue(CfgErrorNewThroughput, tps) }
 
 func (config *Config) printConfigString() {
 	values := config.load().values
 
-	sortKeys := make([]string, 0)
-	for k := range values {
-		sortKeys = append(sortKeys, k)
-	}
-	sort.Strings(sortKeys)
-
-	for _, k := range sortKeys {
+	for _, k := range slices.Sorted(maps.Keys(values)) {
 		if k == CfgApiKey {
 			if values[k] == "" {
 				Log("config").Infof("%s = ", k)

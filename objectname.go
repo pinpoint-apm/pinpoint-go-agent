@@ -51,20 +51,15 @@ func isIDChars(s string) bool {
 	return true
 }
 
-// validateID reports whether value is a non-empty id within maxLen UTF-8 bytes
-// and contains only allowed characters. Equivalent to IdValidateUtils.validateId.
-func validateID(value string, maxLen int) bool {
+// IsValidId reports whether value is a non-empty id of at most maxLen UTF-8
+// bytes made only of allowed id characters (IdValidateUtils.validateId).
+// Plugins use it for ids that arrive on the wire, such as the app= token of
+// the Pinpoint-ProxyApp header.
+func IsValidId(value string, maxLen int) bool {
 	if len(value) == 0 || len(value) > maxLen {
 		return false
 	}
 	return isIDChars(value)
-}
-
-// IsValidId reports whether value is a non-empty id of at most maxLen bytes made
-// only of allowed id characters. Plugins use it for ids that arrive on the wire,
-// such as the app= token of the Pinpoint-ProxyApp header.
-func IsValidId(value string, maxLen int) bool {
-	return validateID(value, maxLen)
 }
 
 // parseNameVersion parses the configured version string (case-insensitive).
@@ -126,17 +121,55 @@ func (o *objectName) versionString() string {
 }
 
 // resolveObjectName builds the agent ObjectName from config according to the
-// configured version. Missing required fields abort agent startup with an error.
+// configured version (Uid.Version). agentId is always a freshly generated
+// base64(UUIDv7), never user-configurable; applicationName is required for
+// every version, serviceName and apiKey for v4 as well. A missing required
+// field aborts agent startup with an error. v1 and v3 differ only in the
+// applicationName length limit; v4 allows a longer agentName.
 func resolveObjectName(config *Config) (*objectName, error) {
 	version := parseNameVersion(config.String(CfgUIDVersion))
+	appNameMax, agentNameMax := appNameMaxLenV3, agentNameMaxLen
 	switch version {
 	case nameV1:
-		return resolveV1V3(config, nameV1, appNameMaxLenV1)
+		appNameMax = appNameMaxLenV1
 	case nameV4:
-		return resolveV4(config)
-	default:
-		return resolveV1V3(config, nameV3, appNameMaxLenV3)
+		agentNameMax = agentNameMaxLenV4
 	}
+
+	uid, err := uuid.NewV7()
+	if err != nil {
+		return nil, errors.New("failed to generate AgentID: " + err.Error())
+	}
+	agentID := encodeUID(uid)
+	Log("config").Infof("auto-generated AgentID: %v", agentID)
+
+	appName := config.String(CfgAppName)
+	if !IsValidId(appName, appNameMax) {
+		return nil, errors.New("application name is required and must match " +
+			cfgIdPattern + " within " + strconv.Itoa(appNameMax) + " bytes")
+	}
+	o := &objectName{
+		version:         version,
+		agentID:         agentID,
+		agentName:       resolveAgentName(config, agentID, agentNameMax),
+		applicationName: appName,
+	}
+	if version != nameV4 {
+		return o, nil
+	}
+
+	o.serviceName = config.String(CfgServiceName)
+	if !IsValidId(o.serviceName, serviceNameMaxLen) {
+		return nil, errors.New("service name is required and must match " +
+			cfgIdPattern + " within " + strconv.Itoa(serviceNameMaxLen) + " bytes")
+	}
+	// apiKey: required, only checked for non-emptiness.
+	o.apiKey = config.String(CfgApiKey)
+	if o.apiKey == "" {
+		return nil, errors.New("api key (" + CfgApiKey + ") is required")
+	}
+	o.agentUID = uid
+	return o, nil
 }
 
 // resolveAgentName returns the configured agent name, or agentID when it is
@@ -144,7 +177,7 @@ func resolveObjectName(config *Config) (*objectName, error) {
 // so a typo does not stay invisible.
 func resolveAgentName(config *Config, agentID string, maxLen int) string {
 	agentName := config.String(CfgAgentName)
-	if validateID(agentName, maxLen) {
+	if IsValidId(agentName, maxLen) {
 		return agentName
 	}
 	if agentName != "" {
@@ -152,76 +185,4 @@ func resolveAgentName(config *Config, agentID string, maxLen int) string {
 			CfgAgentName, agentName, cfgIdPattern, maxLen, agentID)
 	}
 	return agentID
-}
-
-// resolveV1V3 produces an ObjectNameV1-style identity (shared by v1 and v3,
-// differing only in the applicationName length limit).
-func resolveV1V3(config *Config, version nameVersion, appNameMax int) (*objectName, error) {
-	// agentId: always a freshly generated base64(UUIDv7); not user-configurable.
-	uid, err := newAgentUID()
-	if err != nil {
-		return nil, errors.New("failed to generate AgentID: " + err.Error())
-	}
-	agentID := encodeUID(uid)
-	Log("config").Infof("auto-generated AgentID: %v", agentID)
-
-	// applicationName: required.
-	appName := config.String(CfgAppName)
-	if !validateID(appName, appNameMax) {
-		return nil, errors.New("application name is required and must match " +
-			cfgIdPattern + " within " + strconv.Itoa(appNameMax) + " bytes")
-	}
-
-	// agentName: optional, falls back to agentId.
-	agentName := resolveAgentName(config, agentID, agentNameMaxLen)
-
-	return &objectName{
-		version:         version,
-		agentID:         agentID,
-		agentName:       agentName,
-		applicationName: appName,
-	}, nil
-}
-
-// resolveV4 produces an ObjectNameV4 identity. agentId is always a freshly
-// generated UUIDv7; serviceName and apiKey are required.
-func resolveV4(config *Config) (*objectName, error) {
-	uid, err := newAgentUID()
-	if err != nil {
-		return nil, errors.New("failed to generate AgentID: " + err.Error())
-	}
-	agentID := encodeUID(uid)
-
-	// agentName: optional, falls back to base64(agentId UUID).
-	agentName := resolveAgentName(config, agentID, agentNameMaxLenV4)
-
-	// applicationName: required.
-	appName := config.String(CfgAppName)
-	if !validateID(appName, appNameMaxLenV3) {
-		return nil, errors.New("application name is required and must match " +
-			cfgIdPattern + " within " + strconv.Itoa(appNameMaxLenV3) + " bytes")
-	}
-
-	// serviceName: required.
-	serviceName := config.String(CfgServiceName)
-	if !validateID(serviceName, serviceNameMaxLen) {
-		return nil, errors.New("service name is required and must match " +
-			cfgIdPattern + " within " + strconv.Itoa(serviceNameMaxLen) + " bytes")
-	}
-
-	// apiKey: required, only checked for non-emptiness.
-	apiKey := config.String(CfgApiKey)
-	if apiKey == "" {
-		return nil, errors.New("api key (" + CfgApiKey + ") is required")
-	}
-
-	return &objectName{
-		version:         nameV4,
-		agentID:         agentID,
-		agentName:       agentName,
-		applicationName: appName,
-		serviceName:     serviceName,
-		apiKey:          apiKey,
-		agentUID:        uid,
-	}, nil
 }

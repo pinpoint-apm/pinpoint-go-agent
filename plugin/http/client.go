@@ -2,6 +2,7 @@ package pphttp
 
 import (
 	"context"
+	"maps"
 	"net/http"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
@@ -143,12 +144,7 @@ func DoClient(doFunc func(req *http.Request) (*http.Response, error), req *http.
 // for net/http to reject as it would have.
 func withOwnHeader(req *http.Request) *http.Request {
 	clone := *req
-	if req.Header != nil {
-		clone.Header = make(http.Header, len(req.Header))
-		for k, v := range req.Header {
-			clone.Header[k] = v
-		}
-	}
+	clone.Header = maps.Clone(req.Header)
 	return &clone
 }
 

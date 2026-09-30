@@ -276,7 +276,7 @@ func Test_sendStatsWorker_drainsLastUrlStatDuringShutdown(t *testing.T) {
 	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
 
 	agent.statChan <- &pb.PStatMessage{}
-	agent.startWorkers([]worker{{name: "send stats", body: agent.sendStatsWorker, when: always}})
+	agent.startWorkers([]worker{{name: "send stats", body: agent.sendStatsWorker, start: true}})
 	<-entered
 	agent.urlStats.add(&urlStat{
 		entry:   &UrlStatEntry{Url: "/shutdown", Status: 200},

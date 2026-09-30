@@ -2,7 +2,6 @@ package pinpoint
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -148,12 +147,7 @@ func (span *noopSpan) NewGoroutineTracer() Tracer {
 func (span *noopSpan) WrapGoroutine(goroutineName string, goroutine func(context.Context), ctx context.Context) func() {
 	asyncSpan := span.NewGoroutineTracer()
 
-	var newCtx context.Context
-	if ctx == nil {
-		newCtx = NewContext(context.Background(), asyncSpan)
-	} else {
-		newCtx = NewContext(ctx, asyncSpan)
-	}
+	newCtx := NewContext(ctx, asyncSpan)
 
 	return func() {
 		goroutine(newCtx)
@@ -271,9 +265,9 @@ func (span *noopSpan) AddMetric(metric string, value interface{}) {
 	}
 }
 
+// JsonString is what json.Marshal makes of a struct with no exported fields.
 func (span *noopSpan) JsonString() []byte {
-	b, _ := json.Marshal(span)
-	return b
+	return []byte("{}")
 }
 
 type noopSpanEvent struct {

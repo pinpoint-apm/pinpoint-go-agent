@@ -13,9 +13,8 @@ import (
 
 type clientStream struct {
 	grpc.ClientStream
-	mutex      sync.Mutex
-	isFinished bool
-	tracer     pinpoint.Tracer
+	once   sync.Once
+	tracer pinpoint.Tracer
 }
 
 func (cs *clientStream) SendMsg(m interface{}) error {
@@ -44,13 +43,10 @@ func (cs *clientStream) CloseSend() error {
 }
 
 func (cs *clientStream) endSpan(err error) {
-	cs.mutex.Lock()
-	defer cs.mutex.Unlock()
-	if !cs.isFinished {
+	cs.once.Do(func() {
 		endSpanEvent(cs.tracer, err)
 		cs.tracer.EndSpan()
-		cs.isFinished = true
-	}
+	})
 }
 
 // kvInjectionWriter collects the injected headers so they go out through one

@@ -253,16 +253,13 @@ func defaultSpan(agent *agent) *span {
 	span.agent = agent
 	span.cfg = agent.config.load()
 	span.parentSpanId = -1
-	span.parentAppName = ""
 	// -1 is ServiceType.UNDEFINED when Pinpoint-pAppType is absent or
 	// unparseable. It is sent only next to a parent application name.
 	span.parentAppType = -1
-	span.parentServiceName = ""
 	span.eventDepth.Store(1)
 	span.serviceType = ServiceTypeGoApp
 	span.startTime = time.Now()
 	span.goroutineId.Store(-1)
-	span.asyncId = noneAsyncId
 	span.eventStack.buf = span.stackBuf[:0]
 	span.spanEvents = span.chunkBuf[:0]
 	span.errorChains = make([]*exception, 0)
@@ -909,12 +906,7 @@ func (span *span) NewGoroutineTracer() Tracer {
 func (span *span) WrapGoroutine(goroutineName string, goroutine func(context.Context), ctx context.Context) func() {
 	asyncSpan := span.newAsyncSpan()
 
-	var newCtx context.Context
-	if ctx == nil {
-		newCtx = NewContext(context.Background(), asyncSpan)
-	} else {
-		newCtx = NewContext(ctx, asyncSpan)
-	}
+	newCtx := NewContext(ctx, asyncSpan)
 
 	return func() {
 		defer asyncSpan.EndSpan()

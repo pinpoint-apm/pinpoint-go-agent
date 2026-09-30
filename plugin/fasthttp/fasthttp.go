@@ -121,14 +121,6 @@ func recordResponse(tracer pinpoint.Tracer, c *fasthttp.RequestCtx, status int) 
 	pphttp.RecordHttpServerResponseWithReader(tracer, status, ResponseHeader{&c.Response.Header})
 }
 
-type distributedTracingContextWriterMD struct {
-	Header *fasthttp.RequestHeader
-}
-
-func (w *distributedTracingContextWriterMD) Set(key string, value string) {
-	w.Header.Set(key, value)
-}
-
 func before(tracer pinpoint.Tracer, operationName string, req *fasthttp.Request) {
 	tracer.NewSpanEvent(operationName)
 	se := tracer.SpanEvent()
@@ -143,8 +135,7 @@ func before(tracer pinpoint.Tracer, operationName string, req *fasthttp.Request)
 		pphttp.RecordClientHttpCookie(a, Cookie{&req.Header})
 	}
 
-	wr := &distributedTracingContextWriterMD{&req.Header}
-	tracer.Inject(wr)
+	tracer.Inject(&req.Header)
 }
 
 func after(tracer pinpoint.Tracer, resp *fasthttp.Response, err error) {

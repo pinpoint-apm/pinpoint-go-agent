@@ -39,16 +39,11 @@ func defaultSpanEvent(span *span, operationName string, sequence int32, depth in
 
 	se.parentSpan = span
 	se.startTime = time.Now().UnixMilli()
-	se.startElapsed = 0
 	se.sequence = sequence
 	se.depth = depth
 	se.operationName = operationName
-	se.endPoint = ""
 	se.nextSpanId = noneSpanId
-	se.asyncId = noneAsyncId
-	se.asyncSeqGen = 0
 	se.serviceType = ServiceTypeGoFunction
-	se.isTimeFixed = false
 
 	if IsTraceLogLevelEnabled() {
 		Log("span").Tracef("newSpanEvent: %s, %d, %d, %s", se.operationName, se.sequence, se.depth, time.Now())

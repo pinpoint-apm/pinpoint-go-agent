@@ -1,6 +1,9 @@
 package pinpoint
 
-import "sync/atomic"
+import (
+	"slices"
+	"sync/atomic"
+)
 
 // agentPhase is the agent's lifecycle phase, held as one value rather than a
 // pair of flags so the phases are mutually exclusive by construction.
@@ -63,7 +66,7 @@ func (l *lifecycle) current() agentPhase {
 func (l *lifecycle) transitionTo(to agentPhase) bool {
 	for {
 		from := l.current()
-		if !allowedTransition(from, to) {
+		if !slices.Contains(validTransitions[from], to) {
 			Log("agent").Warnf("agent phase transition refused: %s -> %s", from, to)
 			return false
 		}
@@ -72,15 +75,6 @@ func (l *lifecycle) transitionTo(to agentPhase) bool {
 			return true
 		}
 	}
-}
-
-func allowedTransition(from, to agentPhase) bool {
-	for _, p := range validTransitions[from] {
-		if p == to {
-			return true
-		}
-	}
-	return false
 }
 
 // tracingEnabled reports whether the request path may record: create spans,

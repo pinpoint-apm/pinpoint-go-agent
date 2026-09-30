@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 	"github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
@@ -347,6 +348,26 @@ func NewAgent(config *Config) (Agent, error) {
 	Log("agent").Infof("new pinpoint agent")
 	config.printConfigString()
 
+	agent := newAgentStruct(config)
+	agent.stopSignal()
+
+	config.logCallbackOnce.Do(func() {
+		config.AddReloadCallback([]string{CfgLogLevel}, func() { logger.reloadLevel(config) })
+		config.AddReloadCallback([]string{CfgLogOutput, CfgLogMaxSize, CfgLogMaxBackups}, func() { logger.reloadOutput(config) })
+	})
+
+	if !config.offGrpc {
+		agent.connectWg.Add(1)
+		go agent.connectGrpcServer()
+	}
+	setGlobalAgent(agent)
+	return agent, nil
+}
+
+// newAgentStruct builds an agent on config: its identity, queues and metadata
+// caches. NewAgent and NewTestAgent share it and differ only in what they
+// connect it to.
+func newAgentStruct(config *Config) *agent {
 	agent := &agent{
 		appName:     config.objName.applicationName,
 		appType:     int32(config.Int(CfgAppType)),
@@ -363,8 +384,6 @@ func NewAgent(config *Config) (Agent, error) {
 		stats:       newAgentStats(),
 		urlStats:    newUrlStats(config),
 	}
-	agent.stopSignal()
-
 	// The SQL caches are sized by SQL.CacheSize; the api and error caches keep
 	// the shared default. Config has already confined the value to
 	// [1, maxSqlCacheSize].
@@ -376,18 +395,7 @@ func NewAgent(config *Config) (Agent, error) {
 	agent.sqlUidCache.ttl = time.Duration(config.Int(CfgSQLCacheExpireHours)) * time.Hour
 	agent.rawSqlCache = newMetaCache[string, normalizedSql](sqlCacheSize)
 	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
-
-	config.logCallbackOnce.Do(func() {
-		config.AddReloadCallback([]string{CfgLogLevel}, func() { logger.reloadLevel(config) })
-		config.AddReloadCallback([]string{CfgLogOutput, CfgLogMaxSize, CfgLogMaxBackups}, func() { logger.reloadOutput(config) })
-	})
-
-	if !config.offGrpc {
-		agent.connectWg.Add(1)
-		go agent.connectGrpcServer()
-	}
-	setGlobalAgent(agent)
-	return agent, nil
+	return agent
 }
 
 // closeGrpc closes whatever connections connectGrpcServer managed to create.
@@ -499,11 +507,9 @@ func (agent *agent) connect() (err error) {
 type worker struct {
 	name string
 	body func()
-	when func() bool
+	// start is false for a worker this agent's config leaves out.
+	start bool
 }
-
-// always is the when predicate of a worker every enabled agent runs.
-func always() bool { return true }
 
 // workerTable is the one place the agent's workers are declared, each with its
 // start condition: span and span batch are mutually exclusive on
@@ -515,24 +521,24 @@ func (agent *agent) workerTable() []worker {
 	spanBatch := agent.config.Bool(CfgSpanBatchEnable)
 	refreshInterval := agent.agentInfoRefreshInterval()
 	return []worker{
-		{name: "ping", body: agent.sendPingWorker, when: always},
-		{name: "span batch", body: agent.sendSpanBatchWorker, when: func() bool { return spanBatch }},
-		{name: "span", body: agent.sendSpanWorker, when: func() bool { return !spanBatch }},
-		{name: "command", body: agent.runCommandService, when: always},
-		{name: "meta", body: agent.sendMetaWorker, when: always},
-		{name: "collect agent stat", body: agent.collectAgentStatWorker, when: always},
-		{name: "collect uri stat", body: agent.collectUrlStatWorker, when: always},
-		{name: "send uri stat", body: agent.sendUrlStatWorker, when: always},
-		{name: "send stats", body: agent.sendStatsWorker, when: always},
+		{name: "ping", body: agent.sendPingWorker, start: true},
+		{name: "span batch", body: agent.sendSpanBatchWorker, start: spanBatch},
+		{name: "span", body: agent.sendSpanWorker, start: !spanBatch},
+		{name: "command", body: agent.runCommandService, start: true},
+		{name: "meta", body: agent.sendMetaWorker, start: true},
+		{name: "collect agent stat", body: agent.collectAgentStatWorker, start: true},
+		{name: "collect uri stat", body: agent.collectUrlStatWorker, start: true},
+		{name: "send uri stat", body: agent.sendUrlStatWorker, start: true},
+		{name: "send stats", body: agent.sendStatsWorker, start: true},
 		{
-			name: "agent info refresh",
-			body: func() { agent.refreshAgentInfoWorker(refreshInterval) },
-			when: func() bool { return refreshInterval > 0 },
+			name:  "agent info refresh",
+			body:  func() { agent.refreshAgentInfoWorker(refreshInterval) },
+			start: refreshInterval > 0,
 		},
 	}
 }
 
-// startWorkers starts every worker whose when predicate holds, one supervised
+// startWorkers starts every worker whose start flag is set, one supervised
 // goroutine each. workerWg is incremented per worker, right before its go
 // statement, so the count matches the goroutines by construction: a count that
 // drifted would either make every Shutdown wait out its full deadline or panic
@@ -551,13 +557,13 @@ func (agent *agent) startWorkers(workers []worker) {
 	// once a worker exists.
 	var states []*workerState
 	for _, w := range workers {
-		if w.when() {
+		if w.start {
 			states = append(states, &workerState{name: w.name, done: make(chan struct{})})
 		}
 	}
 	agent.workerStates = states
 	for _, w := range workers {
-		if !w.when() {
+		if !w.start {
 			continue
 		}
 		agent.workerWg.Add(1)
@@ -625,7 +631,6 @@ func (agent *agent) superviseWorker(name string, body func()) {
 		defer st.running.Store(false)
 	}
 
-	stop := agent.stopSignal().Done()
 	for {
 		if recoverPanic(name, body) {
 			return
@@ -633,13 +638,9 @@ func (agent *agent) superviseWorker(name string, body func()) {
 		if !agent.workerContinues() {
 			return
 		}
-		timer := time.NewTimer(workerRestartDelay)
-		select {
-		case <-stop:
-			timer.Stop()
+		if !sleepUnlessStopped(agent, workerRestartDelay) {
 			Log("agent").Infof("%s goroutine stopping, not restarted", name)
 			return
-		case <-timer.C:
 		}
 		if !agent.workerContinues() {
 			return
@@ -747,8 +748,9 @@ func (agent *agent) waitWorkers(timeout time.Duration) bool {
 }
 
 // waitTimeout waits for wg and reports whether it completed within timeout.
-// A test helper: the goroutine it parks on wg.Wait outlives a timeout, which
-// is why shutdownAgent uses waitWorkers instead.
+// The goroutine it parks on wg.Wait outlives a timeout, which is why
+// shutdownAgent uses waitWorkers instead; the span batch drain and the tests
+// use it.
 func waitTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {
 	done := make(chan struct{})
 	go func() {
@@ -1736,39 +1738,39 @@ func (agent *agent) enqueueUrlStat(stat *urlStat) bool {
 	if !agent.tracingEnabled() {
 		return false
 	}
-
-	select {
-	case agent.urlStatChan <- stat:
-		return true
-	default:
-		break
+	queued, dropped := headDropEnqueue(agent.urlStatChan, stat)
+	if dropped > 0 {
+		agent.urlStatDrops.record(dropped)
+		agent.urlStatDrops.report("url stat", cap(agent.urlStatChan))
 	}
+	return queued
+}
 
-	// The queue is full: head-drop the oldest record and hand its slot to stat,
-	// the same policy as enqueueStat and tryEnqueueMeta. An overflow costs
-	// exactly one record - the evicted one, or stat itself when another
-	// producer takes the freed slot first.
-	dropped := int64(0)
+// headDropEnqueue queues v on ch and, when ch is full, head-drops the oldest
+// record to make room - the policy of the url stat and stat queues, and of
+// tryEnqueueMeta. An overflow costs exactly one record: the evicted one, or v
+// itself when another producer takes the freed slot first. It reports whether
+// v was queued and how many records were lost.
+func headDropEnqueue[T any](ch chan T, v T) (queued bool, dropped int64) {
 	select {
-	case <-agent.urlStatChan:
+	case ch <- v:
+		return true, 0
+	default:
+	}
+	select {
+	case <-ch:
 		dropped++
 	default:
 		// The consumer drained one meanwhile, so nothing had to be evicted.
 	}
-	queued := false
 	select {
-	case agent.urlStatChan <- stat:
+	case ch <- v:
 		queued = true
 	default:
-		// Another producer took the freed slot: stat is the record lost.
+		// Another producer took the freed slot: v is the record lost.
 		dropped++
 	}
-	if dropped == 0 {
-		return true
-	}
-	agent.urlStatDrops.record(dropped)
-	agent.urlStatDrops.report("url stat", cap(agent.urlStatChan))
-	return queued
+	return queued, dropped
 }
 
 // dropReporter counts records lost to a full queue and rate-limits the warning
@@ -1946,42 +1948,17 @@ func (agent *agent) flushUrlStat(includeInProgress bool) {
 }
 
 func (agent *agent) enqueueStat(stat *pb.PStatMessage) bool {
-	select {
-	case agent.statChan <- stat:
-		return true
-	default:
-		break
+	// stat is a time series, so the newest sample is the one worth keeping.
+	queued, dropped := headDropEnqueue(agent.statChan, stat)
+	if dropped > 0 {
+		agent.statDrops.record(dropped)
+		// Reported here rather than in sendStatsWorker: the worker only
+		// reaches its report after pulling from the queue, so a collector
+		// outage parks it in newStatStreamWithRetry and silences the warning
+		// for exactly the stretch where the drops happen. Same policy as
+		// enqueueUrlStat.
+		agent.statDrops.report("stat", cap(agent.statChan))
 	}
-
-	// The queue is full: head-drop the oldest record and hand its slot to stat,
-	// the same policy as tryEnqueueMeta. An overflow costs exactly one record
-	// either way - the evicted one, or stat itself when another producer takes
-	// the freed slot first - and stat is a time series, so the newest sample
-	// is the one worth keeping.
-	dropped := int64(0)
-	select {
-	case <-agent.statChan:
-		dropped++
-	default:
-		// The consumer drained one meanwhile, so nothing had to be evicted.
-	}
-	queued := false
-	select {
-	case agent.statChan <- stat:
-		queued = true
-	default:
-		// Another producer took the freed slot: stat is the record lost.
-		dropped++
-	}
-	if dropped == 0 {
-		return true
-	}
-	agent.statDrops.record(dropped)
-	// Reported here rather than in sendStatsWorker: the worker only reaches its
-	// report after pulling from the queue, so a collector outage parks it in
-	// newStatStreamWithRetry and silences the warning for exactly the stretch
-	// where the drops happen. Same policy as enqueueUrlStat.
-	agent.statDrops.report("stat", cap(agent.statChan))
 	return queued
 }
 
@@ -2048,7 +2025,7 @@ func NewTestAgent(config *Config) (Agent, error) {
 			// Tests may omit required identity fields; fall back to a default
 			// v3 identity so the header builder has a non-nil object name.
 			agentID := ""
-			if uid, err := newAgentUID(); err == nil {
+			if uid, err := uuid.NewV7(); err == nil {
 				agentID = encodeUID(uid)
 			}
 			config.objName = &objectName{
@@ -2060,33 +2037,7 @@ func NewTestAgent(config *Config) (Agent, error) {
 		}
 	}
 
-	agent := &agent{
-		appName:     config.objName.applicationName,
-		appType:     int32(config.Int(CfgAppType)),
-		agentID:     config.objName.agentID,
-		agentName:   config.objName.agentName,
-		serviceName: config.objName.serviceName,
-		objName:     config.objName,
-		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
-		spanQueue:   newSpanQueue(config.Int(CfgSpanQueueSize)),
-		metaChan:    make(chan interface{}, config.Int(CfgCollectorGrpcSenderQueueSize)),
-		urlStatChan: make(chan *urlStat, config.Int(CfgHttpUrlStatQueueSize)),
-		statChan:    make(chan *pb.PStatMessage, config.Int(CfgStatQueueSize)),
-		config:      config,
-		stats:       newAgentStats(),
-		urlStats:    newUrlStats(config),
-	}
-	// The SQL caches are sized by SQL.CacheSize; the api and error caches keep
-	// the shared default. Config has already confined the value to
-	// [1, maxSqlCacheSize].
-	sqlCacheSize := config.Int(CfgSQLCacheSize)
-	agent.sqlCacheLengthLimit = config.Int(CfgSQLCacheLengthLimit)
-	agent.errorCache = newMetaCache[string, int32](cacheSize)
-	agent.sqlCache = newMetaCache[string, int32](sqlCacheSize)
-	agent.sqlUidCache = newMetaCache[string, []byte](sqlCacheSize)
-	agent.sqlUidCache.ttl = time.Duration(config.Int(CfgSQLCacheExpireHours)) * time.Hour
-	agent.rawSqlCache = newMetaCache[string, normalizedSql](sqlCacheSize)
-	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
+	agent := newAgentStruct(config)
 
 	// offGrpc keeps connectGrpcServer - and every worker it starts - from
 	// running, so no caller ever reaches the clients. A bare struct is enough

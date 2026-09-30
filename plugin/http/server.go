@@ -147,19 +147,12 @@ func FormatRequestParams(rawQuery string) string {
 		}
 		k, v, _ := strings.Cut(item, "=")
 		entry := cut(unescape(k)) + "=" + cut(unescape(v))
-		sep := 0
 		if b.Len() > 0 {
-			sep = 1
+			b.WriteByte('&')
 		}
-		if b.Len()+sep+len(entry) > requestParamTotalLimit {
-			if sep == 1 {
-				b.WriteByte('&')
-			}
+		if b.Len()+len(entry) > requestParamTotalLimit {
 			b.WriteString("...")
 			break
-		}
-		if sep == 1 {
-			b.WriteByte('&')
 		}
 		b.WriteString(entry)
 	}
@@ -214,15 +207,15 @@ func headerFirst(h Header, key string) string {
 // first one whose value yields an address wins, and a value equal to emptyValue
 // (case-insensitive, when configured) is skipped. Without one the socket address
 // is returned with its port stripped.
-func resolveRemoteAddr(h Header, remoteAddr string, headers []realIpHeader, emptyValue string) string {
+func resolveRemoteAddr(h Header, remoteAddr string, headers []string, emptyValue string) string {
 	for _, rh := range headers {
-		value := headerFirst(h, rh.name)
+		value := headerFirst(h, rh)
 		if value == "" {
 			continue
 		}
 		first, _, _ := strings.Cut(value, ",")
 		candidate := strings.TrimSpace(first)
-		if rh.forwarded {
+		if rh == forwardedHeader {
 			candidate = forwardedFor(candidate)
 		}
 		if candidate == "" || (emptyValue != "" && strings.EqualFold(candidate, emptyValue)) {
@@ -601,8 +594,7 @@ func WrapHandler(handler http.Handler, serverName ...string) http.Handler {
 // WrapHandlerFunc wraps the given http handler function and adds the pinpoint.Tracer to the request's context.
 // By using the pinpoint.FromContext function, this tracer can be obtained.
 func WrapHandlerFunc(handler func(http.ResponseWriter, *http.Request), serverName ...string) func(http.ResponseWriter, *http.Request) {
-	h := wrapHandler("", http.HandlerFunc(handler), serverName...)
-	return func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }
+	return wrapHandler("", http.HandlerFunc(handler), serverName...).ServeHTTP
 }
 
 // WrapHandle is deprecated. Use WrapHandler.
@@ -613,7 +605,7 @@ func WrapHandle(agent pinpoint.Agent, handlerName string, pattern string, handle
 // WrapHandleFunc is deprecated. Use WrapHandlerFunc.
 func WrapHandleFunc(agent pinpoint.Agent, handlerName string, pattern string, handler func(http.ResponseWriter, *http.Request)) (string, func(http.ResponseWriter, *http.Request)) {
 	p, h := WrapHandle(agent, handlerName, pattern, http.HandlerFunc(handler))
-	return p, func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }
+	return p, h.ServeHTTP
 }
 
 type responseWriter struct {
@@ -771,8 +763,7 @@ func (mux *serveMux) HandleFunc(pattern string, handler func(http.ResponseWriter
 	if handler == nil {
 		panic("http: nil handler")
 	}
-	h := wrapHandler(pattern, http.HandlerFunc(handler))
-	mux.ServeMux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) })
+	mux.ServeMux.Handle(pattern, wrapHandler(pattern, http.HandlerFunc(handler)))
 }
 
 // HandlerFuncName returns the handler's function or concrete type name.

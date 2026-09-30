@@ -123,15 +123,9 @@ func (s *sqlNormalizer) run() (string, string) {
 	}
 
 	if s.isChanged {
-		if s.param.Len() > 0 {
-			return s.output.String(), s.param.String()
-		} else {
-			return s.output.String(), ""
-		}
-	} else {
-		return s.sql, ""
+		return s.output.String(), s.param.String()
 	}
-
+	return s.sql, ""
 }
 
 // emit writes ch to the output once it is materialized. Before that the byte

@@ -279,31 +279,24 @@ func setSqlSpanEvent(tracer Tracer, start time.Time, err error, sql string, args
 }
 
 func (c *sqlConn) namedValueToString(named []driver.NamedValue) string {
-	cfg := c.cfg()
-	if !cfg.sqlTraceBindValue || named == nil {
-		return ""
-	}
-
-	var b strings.Builder
-	numComma := len(named) - 1
-	for i, param := range named {
-		if !writeBindValue(&b, i, param.Value, numComma, cfg.sqlMaxBindValueSize) {
-			break
-		}
-	}
-	return b.String()
+	return c.bindValuesToString(len(named), func(i int) interface{} { return named[i].Value })
 }
 
 func (c *sqlConn) valueToString(values []driver.Value) string {
+	return c.bindValuesToString(len(values), func(i int) interface{} { return values[i] })
+}
+
+// bindValuesToString renders n bind values, value(i) being the i-th, within
+// SQL.MaxBindValueSize; "" when bind value tracing is off.
+func (c *sqlConn) bindValuesToString(n int, value func(int) interface{}) string {
 	cfg := c.cfg()
-	if !cfg.sqlTraceBindValue || values == nil {
+	if !cfg.sqlTraceBindValue || n == 0 {
 		return ""
 	}
 
 	var b strings.Builder
-	numComma := len(values) - 1
-	for i, v := range values {
-		if !writeBindValue(&b, i, v, numComma, cfg.sqlMaxBindValueSize) {
+	for i := 0; i < n; i++ {
+		if !writeBindValue(&b, i, value(i), n-1, cfg.sqlMaxBindValueSize) {
 			break
 		}
 	}
@@ -322,7 +315,7 @@ func writeBindValue(b *strings.Builder, index int, value interface{}, numComma i
 		b.WriteString(", ")
 	}
 	if b.Len() >= maxSize {
-		writeBindCountMarker(b, numComma+1)
+		writeBindMarker(b, numComma+1)
 		return false
 	}
 	writeAbbreviatedBindValue(b, value, maxSize)
@@ -418,7 +411,7 @@ func writeAbbreviatedByteSlice(b *strings.Builder, v []byte, maxSize int) {
 		return
 	}
 	b.Write(buf[:maxSize])
-	writeBindLengthMarker(b, len(v))
+	writeBindMarker(b, len(v))
 }
 
 // writeAbbreviatedBytes is writeAbbreviated for a value formatted into a
@@ -430,7 +423,7 @@ func writeAbbreviatedBytes(b *strings.Builder, value []byte, maxSize int) {
 		return
 	}
 	b.Write(value[:maxSize])
-	writeBindLengthMarker(b, len(value))
+	writeBindMarker(b, len(value))
 }
 
 // writeAbbreviated writes value cut to maxSize, marking the cut with valueLen -
@@ -448,27 +441,21 @@ func writeAbbreviated(b *strings.Builder, value string, valueLen int, maxSize in
 		cut--
 	}
 	b.WriteString(value[:cut])
-	writeBindLengthMarker(b, valueLen)
+	writeBindMarker(b, valueLen)
 }
 
-// The two markers report two different events, and both can appear in one
-// list: a value abbreviated with the last of the budget is followed by the
-// count marker on the next round.
+// writeBindMarker appends the "...(n)" marker that reports one of two events,
+// both of which can appear in one list: after a value cut with the last of
+// the budget, n is that value's length (writeAbbreviated*); after a list ended
+// early, n is how many values the statement had (writeBindValue), and the
+// count marker follows the cut value on the next round. Either way n is the
+// size a reader cannot otherwise recover, since the limit is already known.
 //
-// writeBindLengthMarker says one value was cut and how long it was;
-// writeBindCountMarker says the list itself ended early and how many values the
-// statement had. Both report the size a reader cannot otherwise recover, since
-// the limit is already known.
-//
-// Both land past the limit rather than cutting back over what is written:
-// making room inside a limit shorter than the marker would drop the marker
-// itself and leave the truncation with no trace at all.
-func writeBindLengthMarker(b *strings.Builder, valueLen int) {
-	b.WriteString("...(" + strconv.Itoa(valueLen) + ")")
-}
-
-func writeBindCountMarker(b *strings.Builder, numValues int) {
-	b.WriteString("...(" + strconv.Itoa(numValues) + ")")
+// The marker lands past the limit rather than cutting back over what is
+// written: making room inside a limit shorter than the marker would drop the
+// marker itself and leave the truncation with no trace at all.
+func writeBindMarker(b *strings.Builder, n int) {
+	b.WriteString("...(" + strconv.Itoa(n) + ")")
 }
 
 func (c *sqlConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {

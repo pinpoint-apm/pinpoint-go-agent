@@ -20,9 +20,3 @@ func encodeUID(u uuid.UUID) string {
 	// u is a [16]byte already in big-endian network order.
 	return base64.RawURLEncoding.EncodeToString(u[:])
 }
-
-// newAgentUID generates a time-based UUID (RFC 9562 version 7: 48-bit Unix epoch
-// milliseconds prefix, version/variant bits set, remaining bits random).
-func newAgentUID() (uuid.UUID, error) {
-	return uuid.NewV7()
-}

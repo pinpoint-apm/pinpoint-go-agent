@@ -122,11 +122,10 @@ func serverRemoteAddr(ctx context.Context, tr transport.Transporter) (addr strin
 }
 
 func serverEndpoint(endpoint string) string {
-	if i := strings.Index(endpoint, "//"); i > -1 {
-		return endpoint[i+2:]
-	} else {
-		return endpoint
+	if _, after, ok := strings.Cut(endpoint, "//"); ok {
+		return after
 	}
+	return endpoint
 }
 
 // ClientMiddleware returns a client side middleware ready to instrument.

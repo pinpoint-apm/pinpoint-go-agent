@@ -114,24 +114,16 @@ type activeSpanInfo struct {
 func (agent *agent) runCommandService() {
 	Log("cmd").Infof("start command goroutine")
 
-	stop := agent.stopSignal().Done()
-
 	for attempt := 0; agent.workerContinues(); attempt++ {
-		if attempt > 0 {
-			// Pace consecutive stream failures. newCommandStreamWithRetry's
-			// back-off only waits while the connection is not ready, so a
-			// collector whose channel is READY but whose command stream fails
-			// immediately (unimplemented, instant close) would otherwise spin
-			// this loop hot, opening streams continuously inside the host
-			// application.
-			t := time.NewTimer(backOffSleep(attempt - 1))
-			select {
-			case <-stop:
-				t.Stop()
-				Log("cmd").Infof("end command goroutine")
-				return
-			case <-t.C:
-			}
+		// Pace consecutive stream failures. newCommandStreamWithRetry's
+		// back-off only waits while the connection is not ready, so a
+		// collector whose channel is READY but whose command stream fails
+		// immediately (unimplemented, instant close) would otherwise spin
+		// this loop hot, opening streams continuously inside the host
+		// application.
+		if attempt > 0 && !sleepUnlessStopped(agent, backOffSleep(attempt-1)) {
+			Log("cmd").Infof("end command goroutine")
+			return
 		}
 
 		attempt = agent.serveCommandStream(attempt)

@@ -354,22 +354,15 @@ func (hg *urlStatHistogram) isEmpty() bool {
 	return true
 }
 
+// urlStatBucketBounds are the exclusive upper bounds of the first seven
+// histogram buckets, in milliseconds; the last bucket takes the rest.
+var urlStatBucketBounds = [urlStatBucketSize - 1]int64{100, 300, 500, 1000, 3000, 5000, 8000}
+
 func getBucket(elapsed int64) int {
-	if elapsed < 100 {
-		return 0
-	} else if elapsed < 300 {
-		return 1
-	} else if elapsed < 500 {
-		return 2
-	} else if elapsed < 1000 {
-		return 3
-	} else if elapsed < 3000 {
-		return 4
-	} else if elapsed < 5000 {
-		return 5
-	} else if elapsed < 8000 {
-		return 6
-	} else {
-		return 7
+	for i, bound := range urlStatBucketBounds {
+		if elapsed < bound {
+			return i
+		}
 	}
+	return len(urlStatBucketBounds)
 }

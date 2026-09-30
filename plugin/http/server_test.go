@@ -1083,7 +1083,7 @@ func TestRecordHttpServerRequest_Query(t *testing.T) {
 	}
 }
 
-var defaultRealIpHeaders = makeRealIpHeaders([]string{"X-Forwarded-For", "X-Real-Ip"})
+var defaultRealIpHeaders = makeProxyUserHeaderNames([]string{"X-Forwarded-For", "X-Real-Ip"})
 
 func Test_resolveRemoteAddr_Configured(t *testing.T) {
 	tests := []struct {
@@ -1129,7 +1129,7 @@ func Test_resolveRemoteAddr_Configured(t *testing.T) {
 			for k, v := range tt.headers {
 				h.Set(k, v)
 			}
-			got := resolveRemoteAddr(header{h}, "10.0.0.1:54321", makeRealIpHeaders(tt.cfg), tt.emptyValue)
+			got := resolveRemoteAddr(header{h}, "10.0.0.1:54321", makeProxyUserHeaderNames(tt.cfg), tt.emptyValue)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -1177,7 +1177,7 @@ func TestRealIpOptions(t *testing.T) {
 
 	usePluginConfig(t, WithHttpServerRealIpHeader([]string{" cf-connecting-ip ", "", "forwarded"}), WithHttpServerRealIpEmptyValue("unknown"))
 	cfg = httpCfg()
-	assert.Equal(t, []realIpHeader{{"Cf-Connecting-Ip", false}, {"Forwarded", true}}, cfg.srvRealIpHeaders)
+	assert.Equal(t, []string{"Cf-Connecting-Ip", "Forwarded"}, cfg.srvRealIpHeaders)
 	assert.Equal(t, "unknown", cfg.srvRealIpEmptyValue)
 
 	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
@@ -1190,7 +1190,7 @@ func TestRealIpOptions(t *testing.T) {
 
 	t.Setenv("PINPOINT_GO_HTTP_SERVER_REALIPHEADER", "True-Client-IP,X-Real-Ip")
 	usePluginConfig(t)
-	assert.Equal(t, []realIpHeader{{"True-Client-Ip", false}, {"X-Real-Ip", false}}, httpCfg().srvRealIpHeaders)
+	assert.Equal(t, []string{"True-Client-Ip", "X-Real-Ip"}, httpCfg().srvRealIpHeaders)
 }
 
 // ===========================================================================

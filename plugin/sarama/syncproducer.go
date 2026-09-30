@@ -145,10 +145,6 @@ func (p *syncProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
 	return p.SendMessagesContext(p.ctx, msgs)
 }
 
-func (p *syncProducer) Close() error {
-	return p.SyncProducer.Close()
-}
-
 // WithContext is deprecated and not thread-safe. Use SendMessageContext.
 // WithContext passes the context to the provided producer.
 // It is possible to trace only when the given context contains a pinpoint.Tracer.

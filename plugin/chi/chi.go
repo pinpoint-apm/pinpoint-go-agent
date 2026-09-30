@@ -49,6 +49,5 @@ func WrapHandler(handler http.Handler) http.Handler {
 
 // WrapHandlerFunc wraps the given http handler function.
 func WrapHandlerFunc(f func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
-	h := WrapHandler(http.HandlerFunc(f))
-	return func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }
+	return WrapHandler(http.HandlerFunc(f)).ServeHTTP
 }

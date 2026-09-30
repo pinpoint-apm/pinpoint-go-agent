@@ -147,11 +147,11 @@ func TestObjectName_String_MasksApiKey(t *testing.T) {
 }
 
 func TestValidateID_ByteLength(t *testing.T) {
-	assert.False(t, validateID("é", 1), "multibyte char exceeds 1-byte limit")
+	assert.False(t, IsValidId("é", 1), "multibyte char exceeds 1-byte limit")
 	// Also rejected by pattern, but the length check is what we assert here.
-	assert.True(t, validateID("ab", 2))
-	assert.False(t, validateID("abc", 2))
-	assert.False(t, validateID("", 5))
+	assert.True(t, IsValidId("ab", 2))
+	assert.False(t, IsValidId("abc", 2))
+	assert.False(t, IsValidId("", 5))
 }
 
 // An invalid non-empty agentName falls back to the agentId with a warning,

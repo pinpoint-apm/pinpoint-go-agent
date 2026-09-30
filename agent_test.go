@@ -1254,7 +1254,7 @@ func workerTableConfig(spanBatch bool, refreshInterval int) *Config {
 func activeWorkerNames(table []worker) []string {
 	var names []string
 	for _, w := range table {
-		if w.when() {
+		if w.start {
 			names = append(names, w.name)
 		}
 	}
@@ -1268,7 +1268,7 @@ func stubWorkers(agent *agent, table []worker, started *atomic.Int32) []worker {
 	stop := agent.stopSignal().Done()
 	stubs := make([]worker, len(table))
 	for i, w := range table {
-		stubs[i] = worker{name: w.name, when: w.when, body: func() {
+		stubs[i] = worker{name: w.name, start: w.start, body: func() {
 			started.Add(1)
 			<-stop
 		}}
@@ -1294,7 +1294,6 @@ func Test_agent_workerTableSelectsWorkersByConfig(t *testing.T) {
 				assert.False(t, seen[w.name], "duplicate worker name %q", w.name)
 				seen[w.name] = true
 				assert.NotNil(t, w.body, "%s has no body", w.name)
-				assert.NotNil(t, w.when, "%s has no predicate", w.name)
 			}
 		})
 	}
@@ -2153,7 +2152,7 @@ func Test_WorkerTableIsTheSingleSourceOfTruth(t *testing.T) {
 			stop := agent.stopSignal().Done()
 			stubs := make([]worker, len(table))
 			for i, w := range table {
-				stubs[i] = worker{name: w.name, when: w.when, body: func() { <-stop }}
+				stubs[i] = worker{name: w.name, start: w.start, body: func() { <-stop }}
 			}
 			agent.startWorkers(stubs)
 
@@ -2165,7 +2164,7 @@ func Test_WorkerTableIsTheSingleSourceOfTruth(t *testing.T) {
 				"one state slot per active table entry, in table order (span batch %v, refresh %d)",
 				spanBatch, refreshInterval)
 			for _, w := range table {
-				if !w.when() {
+				if !w.start {
 					assert.NotContains(t, names, w.name, "an inactive entry gets no slot")
 				}
 			}
