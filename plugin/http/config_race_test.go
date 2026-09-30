@@ -112,7 +112,7 @@ func TestHttpConfigFollowsAgentRestart(t *testing.T) {
 
 	config.Set(CfgHttpServerExcludeUrl, []string{"/new"})
 	config.Set(pinpoint.CfgHttpUrlStatEnable, true)
-	second, err := pinpoint.NewTestAgent(config, t)
+	second, err := pinpoint.NewTestAgent(config)
 	require.NoError(t, err)
 	t.Cleanup(second.Shutdown)
 

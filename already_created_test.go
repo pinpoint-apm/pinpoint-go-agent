@@ -14,7 +14,7 @@ import (
 func TestNewAgent_AlreadyCreated(t *testing.T) {
 	config, err := NewConfig(WithAppName("firstApp"), WithAgentName("firstAgent"))
 	require.NoError(t, err)
-	first, err := NewTestAgent(config, t)
+	first, err := NewTestAgent(config)
 	require.NoError(t, err)
 	defer first.Shutdown()
 

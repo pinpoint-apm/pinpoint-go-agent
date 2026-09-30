@@ -10,7 +10,7 @@ import (
 func TestNestedTracer(t *testing.T) {
 	config, err := NewConfig(WithAppName("nestedApp"), WithAgentName("nestedAgent"))
 	require.NoError(t, err)
-	agent, err := NewTestAgent(config, t)
+	agent, err := NewTestAgent(config)
 	require.NoError(t, err)
 	defer agent.Shutdown()
 

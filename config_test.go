@@ -1443,7 +1443,7 @@ func Test_StatQueueSizeIsIndependentOfSpanQueueSize(t *testing.T) {
 	assert.Equal(t, 16, c.Int(CfgSpanQueueSize))
 	assert.Equal(t, defaultQueueSize, c.Int(CfgStatQueueSize), "Span.QueueSize must not move the stat queue")
 
-	a, err := NewTestAgent(c, t)
+	a, err := NewTestAgent(c)
 	require.NoError(t, err)
 	defer a.Shutdown()
 	assert.Equal(t, defaultQueueSize, cap(a.(*agent).statChan), "statChan must be sized from Stat.QueueSize")
@@ -1458,7 +1458,7 @@ func Test_MetaQueueSizeIsIndependentOfSpanQueueSize(t *testing.T) {
 	assert.Equal(t, 16, c.Int(CfgSpanQueueSize))
 	assert.Equal(t, 32, c.Int(CfgCollectorGrpcSenderQueueSize))
 
-	a, err := NewTestAgent(c, t)
+	a, err := NewTestAgent(c)
 	require.NoError(t, err)
 	defer a.Shutdown()
 	assert.Equal(t, 32, cap(a.(*agent).metaChan), "metaChan must be sized from Collector.Grpc.SenderQueueSize")

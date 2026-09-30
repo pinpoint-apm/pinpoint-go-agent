@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"testing"
 	"time"
 	"unicode/utf8"
 
@@ -2035,7 +2034,12 @@ func (agent *agent) sendStatsOrReopen(stream *statStream, stats *pb.PStatMessage
 	}
 	return stream
 }
-func NewTestAgent(config *Config, t *testing.T) (Agent, error) {
+
+// NewTestAgent makes a running agent that talks to no collector, for tests:
+// spans are queued and dropped, nothing is sent. It sets the global agent as
+// NewAgent does. The *testing.T of v1 was never used; dropping it keeps the
+// testing package out of production binaries.
+func NewTestAgent(config *Config) (Agent, error) {
 	config.offGrpc = true
 	logger.setup(config)
 

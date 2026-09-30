@@ -24,7 +24,7 @@ func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) pinpoint.Agent {
 	config, err := pinpoint.NewConfig(opts...)
 	require.NoError(t, err)
 
-	agent, err := pinpoint.NewTestAgent(config, t)
+	agent, err := pinpoint.NewTestAgent(config)
 	require.NoError(t, err)
 	t.Cleanup(agent.Shutdown)
 

@@ -48,6 +48,8 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   `Http.Client.RecordUrlQuery` (default `false`) is on, matching the C++ agent;
   Java's `profiler.<plugin>.param` defaults on. Query strings carry tokens and
   ids. Endpoint and destination are unchanged.
+- **`pinpoint.NewTestAgent(config)` takes no `*testing.T`.** The parameter was
+  never used, and it made every production binary link the `testing` package.
 
 ### Changed
 

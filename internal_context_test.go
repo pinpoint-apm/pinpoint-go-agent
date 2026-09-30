@@ -14,7 +14,7 @@ import (
 func TestIsInternalContext(t *testing.T) {
 	config, err := NewConfig(WithAppName("internalApp"), WithAgentName("internalAgent"))
 	require.NoError(t, err)
-	a, err := NewTestAgent(config, t)
+	a, err := NewTestAgent(config)
 	require.NoError(t, err)
 	defer a.Shutdown()
 	ag := a.(*agent)

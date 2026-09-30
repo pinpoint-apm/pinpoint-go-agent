@@ -78,6 +78,7 @@ find none started and record nothing. Do not use it to put the migration off.
 | `.../protobuf`, `.../protobuf/mock`, `.../asm` | moved under `internal/` | nothing replaces them: they are the agent's wire format and its goroutine pointer helper, not API |
 | `pphttp.WrapResponseWriter` returns the unexported `*responseWriter` | returns `http.ResponseWriter` | nothing where the result was used as an `http.ResponseWriter` |
 | `(*ppgomemcache.Client).WithContext(ctx)` returns nothing | returns the `*Client` bound to the context's tracer | use the returned copy for the request's calls |
+| `pinpoint.NewTestAgent(config, t)` | `NewTestAgent(config)` | drop the `*testing.T`; it was never used |
 
 A carrier of your own - a message queue's headers, say - now tells a key held
 with an empty value from a key it does not hold. The difference decides whether

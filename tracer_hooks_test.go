@@ -26,7 +26,7 @@ func (unsampledReader) Get(key string) (string, bool) {
 func TestTracerHooks(t *testing.T) {
 	config, err := NewConfig(WithAppName("testApp"), WithAgentName("testAgent"))
 	require.NoError(t, err)
-	agent, err := NewTestAgent(config, t)
+	agent, err := NewTestAgent(config)
 	require.NoError(t, err)
 	t.Cleanup(agent.Shutdown)
 

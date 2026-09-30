@@ -17,7 +17,7 @@ func startAgent(t *testing.T) {
 	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentName("testAgent"))
 	require.NoError(t, err)
 
-	agent, err := pinpoint.NewTestAgent(config, t)
+	agent, err := pinpoint.NewTestAgent(config)
 	require.NoError(t, err)
 	t.Cleanup(agent.Shutdown)
 }
