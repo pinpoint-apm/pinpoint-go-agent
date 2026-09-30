@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -720,8 +719,7 @@ Span:
 `
 	assert.NoError(t, os.WriteFile(cfgFile, []byte(body), 0o600))
 
-	cfgFileViper := viper.New()
-	cfgFileViper.SetConfigFile(cfgFile)
+	cfgFileViper := newConfigFile(cfgFile)
 	config.reloadConfig(cfgFileViper)
 
 	assert.Equal(t, []string{"after", "/**/*.do"}, config.StringSlice(sliceOpt))
@@ -749,8 +747,7 @@ func Test_reloadConfig_unknownLogLevelKeepsCurrentLevel(t *testing.T) {
 	require.Equal(t, logrus.ErrorLevel, logger.defaultLogger.GetLevel())
 
 	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
-	cfgFileViper := viper.New()
-	cfgFileViper.SetConfigFile(cfgFile)
+	cfgFileViper := newConfigFile(cfgFile)
 	for _, body := range []string{"Log:\n  Level: eror\n"} {
 		var buf bytes.Buffer
 		restore := captureLogAt(&buf, logrus.ErrorLevel)
@@ -785,8 +782,7 @@ func Test_reloadConfig_recoversCallbackPanic(t *testing.T) {
 
 	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	assert.NoError(t, os.WriteFile(cfgFile, []byte("Sampling:\n  CounterRate: 2\n"), 0o600))
-	cfgFileViper := viper.New()
-	cfgFileViper.SetConfigFile(cfgFile)
+	cfgFileViper := newConfigFile(cfgFile)
 
 	assert.NotPanics(t, func() { config.reloadConfig(cfgFileViper) })
 	assert.Equal(t, 1, panickingCalls)
@@ -819,8 +815,7 @@ func Test_reloadConfig_keepsSamplerWhenSamplingUnchanged(t *testing.T) {
 
 	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	assert.NoError(t, os.WriteFile(cfgFile, []byte("Span:\n  MaxCallStackDepth: 12\n"), 0o600))
-	cfgFileViper := viper.New()
-	cfgFileViper.SetConfigFile(cfgFile)
+	cfgFileViper := newConfigFile(cfgFile)
 
 	sampler := config.load().sampler
 	config.reloadConfig(cfgFileViper)
@@ -838,8 +833,7 @@ func Test_reloadConfig_percentRateZeroStopsSampling(t *testing.T) {
 	assert.NoError(t, err)
 
 	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
-	cfgFileViper := viper.New()
-	cfgFileViper.SetConfigFile(cfgFile)
+	cfgFileViper := newConfigFile(cfgFile)
 
 	sampledOf := func(n int) int {
 		sampler := config.load().sampler
@@ -870,8 +864,7 @@ func Test_reloadConfig_keepsExceptionLimiterWhenThroughputUnchanged(t *testing.T
 
 	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	assert.NoError(t, os.WriteFile(cfgFile, []byte("Span:\n  MaxCallStackDepth: 12\n"), 0o600))
-	cfgFileViper := viper.New()
-	cfgFileViper.SetConfigFile(cfgFile)
+	cfgFileViper := newConfigFile(cfgFile)
 
 	limiter := config.load().newExceptionLimiter
 	assert.NotNil(t, limiter)
@@ -1044,8 +1037,7 @@ func TestNewConfig_ClampErrorCallStackDepth(t *testing.T) {
 
 	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	assert.NoError(t, os.WriteFile(cfgFile, []byte("Error:\n  CallStackDepth: 999999999\n"), 0o600))
-	cfgFileViper := viper.New()
-	cfgFileViper.SetConfigFile(cfgFile)
+	cfgFileViper := newConfigFile(cfgFile)
 	c.reloadConfig(cfgFileViper)
 	assert.Equal(t, maxErrorCallStackDepth, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 }
@@ -1371,8 +1363,7 @@ func Test_reloadConfig_malformedValueKeepsCurrentValue(t *testing.T) {
 
 	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	require.NoError(t, os.WriteFile(cfgFile, []byte("Sampling:\n  CounterRate: abc\n"), 0o600))
-	cfgFileViper := viper.New()
-	cfgFileViper.SetConfigFile(cfgFile)
+	cfgFileViper := newConfigFile(cfgFile)
 	c.reloadConfig(cfgFileViper)
 
 	assert.Equal(t, 1, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
@@ -1400,8 +1391,7 @@ func TestNewConfig_StoresTheRegisteredType(t *testing.T) {
 
 	var reloaded int
 	c.AddReloadCallback([]string{CfgSamplingPercentRate}, func() { reloaded++ })
-	cfgFileViper := viper.New()
-	cfgFileViper.SetConfigFile(cfgFile)
+	cfgFileViper := newConfigFile(cfgFile)
 	c.reloadConfig(cfgFileViper)
 	assert.Equal(t, 0, reloaded, "an unchanged rate was reported as changed")
 }
@@ -1640,8 +1630,7 @@ Sampling:
   CounterRate: 9
 `
 	require.NoError(t, os.WriteFile(cfgFile, []byte(body), 0o600))
-	cfgFileViper := viper.New()
-	cfgFileViper.SetConfigFile(cfgFile)
+	cfgFileViper := newConfigFile(cfgFile)
 	config.reloadConfig(cfgFileViper)
 
 	assert.Equal(t, 12, config.Int(CfgSpanMaxCallStackDepth), "an option given through Set() is a default the file overrides")

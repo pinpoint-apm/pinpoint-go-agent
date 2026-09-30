@@ -16,7 +16,7 @@ func TestEmptyArgsDoNotPanic(t *testing.T) {
 	os.Args = nil
 
 	config := defaultConfig()
-	assert.NotPanics(t, func() { assert.Empty(t, filterCmdArgs(config.newFlagSet())) })
+	assert.NotPanics(t, func() { assert.Empty(t, config.parseCmdArgs()) })
 	assert.NotPanics(t, func() { assert.Empty(t, makeServerMetaData(config).VmArg) })
 }
 

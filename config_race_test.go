@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -72,8 +71,7 @@ Http:
 	require.Same(t, config.load(), conn.cfg(),
 		"the sqlConn has to read the config this test reloads, or its read races nothing")
 
-	cfgFileViper := viper.New()
-	cfgFileViper.SetConfigFile(cfgFile)
+	cfgFileViper := newConfigFile(cfgFile)
 
 	done := make(chan struct{})
 	stopped := func() bool {

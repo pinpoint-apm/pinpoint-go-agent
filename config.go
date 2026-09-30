@@ -1,10 +1,12 @@
 package pinpoint
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"math"
 	"os"
+	"path/filepath"
 	"reflect"
 	"runtime/debug"
 	"slices"
@@ -15,9 +17,8 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cast"
-	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
 	"golang.org/x/time/rate"
+	"gopkg.in/yaml.v3"
 )
 
 // Config option keys
@@ -353,7 +354,7 @@ type Config struct {
 	watcherStop   chan struct{}
 	watcherDone   chan struct{}
 	configFile    string
-	configFileCfg *viper.Viper
+	configFileCfg *configFile
 
 	containerCheck bool
 	offGrpc        bool //for test
@@ -660,23 +661,16 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		config.mu.Unlock()
 	}
 
-	cmdEnvViper := viper.New()
-	flagSet := config.newFlagSet()
-	if err := flagSet.Parse(filterCmdArgs(flagSet)); err != nil {
-		Log("config").Errorf("command line config loading error: %v", err)
-	}
-	cmdEnvViper.BindPFlags(flagSet)
-	cmdEnvViper.SetEnvPrefix("pinpoint_go")
-	cmdEnvViper.AutomaticEnv()
-	config.applyLogging(cmdEnvViper, viper.New(), viper.New())
+	sources := &cfgSources{cmd: config.parseCmdArgs(), env: true}
+	config.applyLogging(sources)
 
-	cfgFileViper := config.loadConfigFile(cmdEnvViper)
+	sources.file = config.loadConfigFile(sources)
 
 	config.mu.Lock()
 
-	profileViper := config.loadProfile(cmdEnvViper, cfgFileViper)
-	config.applyLogging(cmdEnvViper, profileViper, cfgFileViper)
-	config.loadConfig(cmdEnvViper, cfgFileViper, profileViper)
+	sources.profile = config.loadProfile(sources)
+	config.applyLogging(sources)
+	config.loadConfig(sources)
 
 	if config.containerCheck {
 		config.cfgMap[CfgIsContainerEnv].value = isContainerEnv()
@@ -694,29 +688,18 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 // wrong type, an unsupported Sampling.Type - reach the configured output. The
 // values come from the config file themselves, so this runs twice: with the
 // command line and environment alone, then again once the file and profile
-// inside make_config). Nothing is staged here and type errors are left for
+// are read. Nothing is staged here and type errors are left for
 // loadConfig to report; a value that does not convert is applied as the zero
 // value and corrected by the next pass or by setup.
-func (config *Config) applyLogging(cmdEnvViper, profileViper, cfgFileViper *viper.Viper) {
-	resolve := func(name string) (interface{}, bool) {
-		v := config.cfgMap[name]
-		switch {
-		case cmdEnvViper.IsSet(v.cmdKey):
-			return cmdEnvViper.Get(v.cmdKey), true
-		case cmdEnvViper.IsSet(v.envKey):
-			return cmdEnvViper.Get(v.envKey), true
-		case profileViper.IsSet(name):
-			return profileViper.Get(name), true
-		case cfgFileViper.IsSet(name):
-			return cfgFileViper.Get(name), true
+func (config *Config) applyLogging(sources *cfgSources) {
+	resolve := func(name string) interface{} {
+		if value, _, ok := sources.lookup(name, config.cfgMap[name]); ok {
+			return value
 		}
-		return v.value, false
+		return config.cfgMap[name].value
 	}
-	level, _ := resolve(CfgLogLevel)
-	out, _ := resolve(CfgLogOutput)
-	maxSize, _ := resolve(CfgLogMaxSize)
-	maxBackups, _ := resolve(CfgLogMaxBackups)
-	logger.apply(cast.ToString(level), cast.ToString(out), cast.ToInt(maxSize), cast.ToInt(maxBackups))
+	logger.apply(cast.ToString(resolve(CfgLogLevel)), cast.ToString(resolve(CfgLogOutput)),
+		cast.ToInt(resolve(CfgLogMaxSize)), cast.ToInt(resolve(CfgLogMaxBackups)))
 }
 
 func defaultConfig() *Config {
@@ -744,93 +727,211 @@ func defaultConfig() *Config {
 	return config
 }
 
-func (config *Config) newFlagSet() *pflag.FlagSet {
-	flagSet := pflag.NewFlagSet("pinpoint_go_agent", pflag.ContinueOnError)
-	// A --pinpoint-* flag this agent does not know (another agent version, a
-	// typo) must not stop the parse at the flags after it.
-	flagSet.ParseErrorsWhitelist.UnknownFlags = true
-
-	for _, v := range config.cfgMap {
-		switch v.valueType {
-		case CfgInt:
-			flagSet.Int(v.cmdKey, 0, "")
-		case CfgFloat:
-			flagSet.Float64(v.cmdKey, 0, "")
-		case CfgBool:
-			flagSet.Bool(v.cmdKey, false, "")
-		case CfgString:
-			flagSet.String(v.cmdKey, "", "")
-		case CfgStringSlice:
-			flagSet.StringSlice(v.cmdKey, nil, "")
-		}
-	}
-
-	return flagSet
-}
-
-// filterCmdArgs picks the agent's flags out of os.Args: the --pinpoint-*
+// parseCmdArgs picks the agent's flags out of os.Args: the --pinpoint-*
 // arguments in the --pinpoint-key=value form and, for flags that take a
 // value, in the --pinpoint-key value form as well. Everything else is the
 // application's. A value that starts with "-" needs the "=" form. The
 // arguments are not removed from os.Args, so an application that parses its
-// own flags with the standard flag package still sees them.
-func filterCmdArgs(flagSet *pflag.FlagSet) []string {
+// own flags with the standard flag package still sees them. Every value is
+// kept as the string it was given; convertCfgValue types it like a value from
+// any other source.
+func (config *Config) parseCmdArgs() map[string]string {
+	byFlag := make(map[string]*cfgMapItem, len(config.cfgMap))
+	for _, v := range config.cfgMap {
+		byFlag[v.cmdKey] = v
+	}
 	// os.Args is empty for a process exec'd with no argv at all, and [1:]
 	// on it panics inside NewConfig.
 	var args []string
 	if len(os.Args) > 1 {
 		args = os.Args[1:]
 	}
-	cmdArgs := make([]string, 0)
+	cmd := make(map[string]string)
+	set := func(item *cfgMapItem, value string) {
+		// A list flag given more than once accumulates, as a CSV flag does.
+		if prev, ok := cmd[item.cmdKey]; ok && item.valueType == CfgStringSlice {
+			value = prev + "," + value
+		}
+		cmd[item.cmdKey] = value
+	}
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if !strings.HasPrefix(arg, "--pinpoint-") {
 			continue
 		}
-		if strings.Contains(arg, "=") {
-			cmdArgs = append(cmdArgs, arg)
-			continue
+		name, value, hasValue := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
+		item := byFlag[name]
+		if item == nil {
+			continue // another agent version's flag, or a typo: ignored
 		}
-		f := flagSet.Lookup(strings.TrimPrefix(arg, "--"))
-		if f == nil || f.Value.Type() == "bool" {
-			// Unknown (ignored by the flag set) or boolean: no value token.
-			cmdArgs = append(cmdArgs, arg)
-			continue
-		}
-		if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-			cmdArgs = append(cmdArgs, arg, args[i+1])
+		switch {
+		case hasValue:
+			set(item, value)
+		case item.valueType == CfgBool:
+			set(item, "true")
+		case i+1 < len(args) && !strings.HasPrefix(args[i+1], "-"):
+			set(item, args[i+1])
 			i++
-			continue
+		default:
+			Log("config").Warnf("command line flag %s needs a value (%s=value or %s value), ignored", arg, arg, arg)
 		}
-		Log("config").Warnf("command line flag %s needs a value (%s=value or %s value), ignored", arg, arg, arg)
 	}
-	return cmdArgs
+	return cmd
 }
 
-func (config *Config) loadConfigFile(cmdEnvViper *viper.Viper) *viper.Viper {
-	var cfgFile string
-
+func (config *Config) loadConfigFile(sources *cfgSources) *configFile {
 	item := config.cfgMap[CfgConfigFile]
-	if cmdEnvViper.IsSet(item.cmdKey) {
-		cfgFile = cmdEnvViper.GetString(item.cmdKey)
-	} else if cmdEnvViper.IsSet(item.envKey) {
-		cfgFile = cmdEnvViper.GetString(item.envKey)
-	} else {
-		cfgFile = item.value.(string)
+	cfgFile := cast.ToString(item.value)
+	if value, _, ok := sources.lookup(CfgConfigFile, item); ok {
+		cfgFile = cast.ToString(value)
+	}
+	if cfgFile == "" {
+		return newConfigFile("")
 	}
 
-	cfgFileViper := viper.New()
-	if cfgFile != "" {
-		cfgFileViper.SetConfigFile(cfgFile)
-		if err := cfgFileViper.ReadInConfig(); err != nil {
-			Log("config").Errorf("config file loading error: %v", err)
+	f := newConfigFile(cfgFile)
+	if err := f.read(); err != nil {
+		Log("config").Errorf("config file loading error: %v", err)
+	}
+	config.configFile = cfgFile
+	config.configFileCfg = f
+	return f
+}
+
+// cfgSources are where an option's value comes from, in precedence order:
+// the command line flags, the environment, the active profile of the config
+// file, and the config file itself. A reload consults only the last two.
+type cfgSources struct {
+	cmd     map[string]string // parseCmdArgs, by flag name
+	env     bool              // read the environment
+	file    *configFile       // nil before the file is read
+	profile *configFile       // nil without an active profile
+}
+
+// lookup returns the value of the option name (whose registry entry is item)
+// from the highest-precedence source that sets it, and that source.
+func (s *cfgSources) lookup(name string, item *cfgMapItem) (interface{}, int, bool) {
+	if v, ok := s.cmd[item.cmdKey]; ok {
+		return v, cfgSrcCmd, true
+	}
+	if s.env {
+		// An empty variable counts as unset, as it always did.
+		if v, ok := os.LookupEnv("PINPOINT_GO_" + strings.ToUpper(item.envKey)); ok && v != "" {
+			return v, cfgSrcEnv, true
 		}
-		config.configFile = cfgFile
-		config.configFileCfg = cfgFileViper
 	}
+	if s.profile != nil && s.profile.isSet(name) {
+		return s.profile.get(name), cfgSrcProfile, true
+	}
+	if s.file != nil && s.file.isSet(name) {
+		return s.file.get(name), cfgSrcFile, true
+	}
+	return nil, cfgSrcDefault, false
+}
 
-	return cfgFileViper
+// configFile is a config file's contents flattened to lower-case dotted keys
+// ("collector.host"), which is how every option is looked up: keys in the
+// file are case-insensitive, and the active profile is the keys under
+// "profile.<name>.".
+type configFile struct {
+	path   string
+	values map[string]interface{}
+}
+
+func newConfigFile(path string) *configFile {
+	return &configFile{path: path, values: map[string]interface{}{}}
+}
+
+// read (re)reads the file. The extension names the format: YAML (.yaml,
+// .yml), JSON (.json) or properties (.properties, .props, .prop).
+func (f *configFile) read() error {
+	data, err := os.ReadFile(f.path)
+	if err != nil {
+		return err
+	}
+	var tree map[string]interface{}
+	switch ext := strings.ToLower(filepath.Ext(f.path)); ext {
+	case ".yaml", ".yml":
+		err = yaml.Unmarshal(data, &tree)
+	case ".json":
+		err = json.Unmarshal(data, &tree)
+	case ".properties", ".props", ".prop":
+		tree = parseProperties(data)
+	default:
+		return fmt.Errorf("config file %s: unsupported extension %q (yaml, yml, json, properties, props or prop)", f.path, ext)
+	}
+	if err != nil {
+		return fmt.Errorf("config file %s: %w", f.path, err)
+	}
+	values := make(map[string]interface{})
+	flattenConfig("", tree, values)
+	f.values = values
+	return nil
+}
+
+// flattenConfig copies tree into flat under dotted lower-case keys. A mapping
+// is stored under its own key as well as flattened, so an option given a
+// mapping where a scalar belongs reads the mapping and is rejected as a value
+// of the wrong type rather than silently left unset.
+func flattenConfig(prefix string, tree map[string]interface{}, flat map[string]interface{}) {
+	for k, v := range tree {
+		key := strings.ToLower(k)
+		if prefix != "" {
+			key = prefix + "." + key
+		}
+		flat[key] = v
+		if sub, ok := v.(map[string]interface{}); ok {
+			flattenConfig(key, sub, flat)
+		}
+	}
+}
+
+// parseProperties reads key=value (or key: value) lines; a # or ! starts a
+// comment and a line with no separator is a key with an empty value. No
+// escapes, continuations or ${} references: the agent's keys and values need
+// none, and every value is a string that convertCfgValue types.
+func parseProperties(data []byte) map[string]interface{} {
+	tree := make(map[string]interface{})
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line[0] == '#' || line[0] == '!' {
+			continue
+		}
+		key, value, _ := strings.Cut(line, "=")
+		if i := strings.IndexByte(key, ':'); i >= 0 && !strings.Contains(line, "=") {
+			key, value = line[:i], line[i+1:]
+		}
+		tree[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+	return tree
+}
+
+// isSet reports whether key holds a value; a key present with no value (an
+// empty YAML entry) does not count, as it never did.
+func (f *configFile) isSet(key string) bool {
+	v, ok := f.values[strings.ToLower(key)]
+	return ok && v != nil
+}
+
+func (f *configFile) get(key string) interface{} {
+	return f.values[strings.ToLower(key)]
+}
+
+// sub returns the keys under prefix with the prefix cut off, or nil when the
+// file has none.
+func (f *configFile) sub(prefix string) *configFile {
+	prefix = strings.ToLower(prefix) + "."
+	sub := newConfigFile(f.path)
+	for k, v := range f.values {
+		if strings.HasPrefix(k, prefix) {
+			sub.values[strings.TrimPrefix(k, prefix)] = v
+		}
+	}
+	if len(sub.values) == 0 {
+		return nil
+	}
+	return sub
 }
 
 // configPollInterval is how often the config file is checked for a change. A
@@ -905,7 +1006,7 @@ func (config *Config) startConfigWatcher() bool {
 //
 // ponytail: mtime+size, so a same-size rewrite inside the file system's
 // timestamp granularity is missed; hash the contents if that ever bites.
-func (config *Config) pollConfigFile(stop, done chan struct{}, configFile string, cfgFileViper *viper.Viper) {
+func (config *Config) pollConfigFile(stop, done chan struct{}, configFile string, f *configFile) {
 	defer close(done)
 
 	last, _ := configFileStamp(configFile)
@@ -925,7 +1026,7 @@ func (config *Config) pollConfigFile(stop, done chan struct{}, configFile string
 			continue
 		}
 		last = stamp
-		config.reloadConfig(cfgFileViper)
+		config.reloadConfig(f)
 	}
 }
 
@@ -948,43 +1049,26 @@ func configFileStamp(path string) (fileStamp, bool) {
 	return fileStamp{fi.ModTime(), fi.Size()}, true
 }
 
-func (config *Config) loadProfile(cmdEnvViper *viper.Viper, cfgFileViper *viper.Viper) *viper.Viper {
-	var profile string
-
+func (config *Config) loadProfile(sources *cfgSources) *configFile {
 	item := config.cfgMap[CfgActiveProfile]
-	if cmdEnvViper.IsSet(item.cmdKey) {
-		profile = cmdEnvViper.GetString(item.cmdKey)
-	} else if cmdEnvViper.IsSet(item.envKey) {
-		profile = cmdEnvViper.GetString(item.envKey)
-	} else if cfgFileViper.IsSet(CfgActiveProfile) {
-		profile = cfgFileViper.GetString(CfgActiveProfile)
-	} else {
-		profile = item.value.(string)
+	profile := cast.ToString(item.value)
+	if value, _, ok := sources.lookup(CfgActiveProfile, item); ok {
+		profile = cast.ToString(value)
 	}
-
-	if profile != "" {
-		profileViper := cfgFileViper.Sub("profile." + profile)
-		if profileViper != nil {
-			return profileViper
-		} else {
-			Log("config").Warnf("config file doesn't have the profile: %s", profile)
-		}
+	if profile == "" {
+		return nil
 	}
-
-	return viper.New()
+	sub := sources.file.sub("profile." + profile)
+	if sub == nil {
+		Log("config").Warnf("config file doesn't have the profile: %s", profile)
+	}
+	return sub
 }
 
-func (config *Config) loadConfig(cmdEnvViper *viper.Viper, cfgFileViper *viper.Viper, profileViper *viper.Viper) {
+func (config *Config) loadConfig(sources *cfgSources) {
 	for _, k := range slices.Sorted(maps.Keys(config.cfgMap)) {
-		v := config.cfgMap[k]
-		if cmdEnvViper.IsSet(v.cmdKey) {
-			config.setFinalValue(k, v, cmdEnvViper.Get(v.cmdKey), cfgSrcCmd)
-		} else if cmdEnvViper.IsSet(v.envKey) {
-			config.setFinalValue(k, v, cmdEnvViper.Get(v.envKey), cfgSrcEnv)
-		} else if profileViper.IsSet(k) {
-			config.setFinalValue(k, v, profileViper.Get(k), cfgSrcProfile)
-		} else if cfgFileViper.IsSet(k) {
-			config.setFinalValue(k, v, cfgFileViper.Get(k), cfgSrcFile)
+		if value, source, ok := sources.lookup(k, config.cfgMap[k]); ok {
+			config.setFinalValue(k, config.cfgMap[k], value, source)
 		}
 	}
 }
@@ -1439,16 +1523,17 @@ func (config *Config) AddReloadCallback(optNames []string, callback func()) {
 	config.callback = append(config.callback, reloadCallback{optNames, callback})
 }
 
-func (config *Config) reloadConfig(cfgFileViper *viper.Viper) {
+func (config *Config) reloadConfig(f *configFile) {
 	config.mu.Lock()
-	if err := cfgFileViper.ReadInConfig(); err != nil {
+	if err := f.read(); err != nil {
 		config.mu.Unlock()
 		Log("config").Errorf("config file reloading error: %v", err)
 		return
 	}
 
-	profileViper := config.loadProfile(viper.New(), cfgFileViper)
-	changed := config.loadDynamicConfig(cfgFileViper, profileViper)
+	sources := &cfgSources{file: f}
+	sources.profile = config.loadProfile(sources)
+	changed := config.loadDynamicConfig(sources)
 	config.publish()
 	// Callbacks read the config they were just given a new generation of, and
 	// may register further callbacks, so run them off a copy with the lock
@@ -1464,7 +1549,7 @@ func (config *Config) reloadConfig(cfgFileViper *viper.Viper) {
 
 // loadDynamicConfig restages the dynamic options from the config file and
 // returns the set of option names whose value actually changed.
-func (config *Config) loadDynamicConfig(cfgFileViper *viper.Viper, profileViper *viper.Viper) map[string]bool {
+func (config *Config) loadDynamicConfig(sources *cfgSources) map[string]bool {
 	changed := make(map[string]bool)
 
 	for _, k := range slices.Sorted(maps.Keys(config.cfgMap)) {
@@ -1477,14 +1562,12 @@ func (config *Config) loadDynamicConfig(cfgFileViper *viper.Viper, profileViper 
 			continue
 		}
 
-		oldValue := v.value
-		if profileViper.IsSet(k) {
-			config.setFinalValue(k, v, profileViper.Get(k), cfgSrcProfile)
-		} else if cfgFileViper.IsSet(k) {
-			config.setFinalValue(k, v, cfgFileViper.Get(k), cfgSrcFile)
-		} else {
+		value, source, ok := sources.lookup(k, v)
+		if !ok {
 			continue
 		}
+		oldValue := v.value
+		config.setFinalValue(k, v, value, source)
 		if !reflect.DeepEqual(oldValue, v.value) {
 			changed[k] = true
 		}

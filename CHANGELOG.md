@@ -62,6 +62,16 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   that bound a tracer to a producer without being thread-safe (send through
   `SendMessageContext`, `SendMessagesContext` and `InputContext`; the plain
   `SendMessage`, `SendMessages` and `Input` now produce without tracing).
+- **The config file is read by the agent itself, not viper.** YAML, JSON and
+  properties files - the documented formats - are told apart by extension
+  (`.yaml`/`.yml`, `.json`, `.properties`/`.props`/`.prop`), keys stay
+  case-insensitive, and the command line flags and `PINPOINT_GO_*` variables
+  are read the same way as before. What viper read on top of that is not:
+  TOML, HCL, INI and `.env` files, and in a properties file the `${...}`
+  references, escapes and line continuations. viper, pflag and the fourteen
+  modules they required (fsnotify, hcl, go-toml, ini, properties,
+  mapstructure, afero, ...) leave the module graph of every application
+  importing the agent.
 - **Three plugins for dead upstreams are gone: `plugin/sarama`, `plugin/goredisv7`
   and `plugin/mssql`.** Shopify/sarama is archived and IBM/sarama is the same
   module renamed, so `plugin/sarama-IBM` (`ppsaramaibm`) is the sarama plugin:

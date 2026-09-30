@@ -50,8 +50,10 @@ config function, value type and additional information.
 
 ### ConfigFile
 The config options below can be saved to the config file is set by ConfigFile option.
-It is supported JSON, YAML and Properties config files
-and configuration keys used in config files are case-insensitive.
+The file's extension names its format: YAML (`.yaml`, `.yml`), JSON (`.json`)
+or properties (`.properties`, `.props`, `.prop`). Configuration keys used in
+config files are case-insensitive. A properties file is `key=value` lines with
+`#` comments: no escapes, line continuations or `${...}` references.
 
 * --pinpoint-configfile
 * PINPOINT_GO_CONFIGFILE
