@@ -521,6 +521,11 @@ func RecordHttpServerResponseWithReader(tracer pinpoint.Tracer, status int, h He
 }
 
 func wrapHandler(pattern string, handler http.Handler, serverName ...string) http.Handler {
+	// net/http refuses a nil handler at registration; wrapped into a live
+	// HandlerFunc it registered fine and panicked on every request instead.
+	if handler == nil {
+		panic("http: nil handler")
+	}
 	var srvName string
 	if len(serverName) > 0 {
 		srvName = serverName[0]
@@ -748,6 +753,9 @@ func (mux *serveMux) Handle(pattern string, handler http.Handler) {
 // HandleFunc registers the handler function for the given pattern.
 // The handler is wrapped by WrapHandlerFunc.
 func (mux *serveMux) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
+	if handler == nil {
+		panic("http: nil handler")
+	}
 	h := wrapHandler(pattern, http.HandlerFunc(handler))
 	mux.ServeMux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) })
 }
