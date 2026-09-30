@@ -118,7 +118,9 @@ func (span *noopSpan) EndSpan() {
 	if span.withStats.CompareAndSwap(true, false) {
 		dropUnSampledActiveSpan(span)
 		endTime := time.Now()
-		elapsed := endTime.UnixMilli() - span.startTime.UnixMilli()
+		// Clamped like span.EndSpan: an NTP step between start and end makes
+		// this negative, which shrank the response-time total.
+		elapsed := max(endTime.UnixMilli()-span.startTime.UnixMilli(), 0)
 		span.agent.stats.collectResponseTime(elapsed)
 		if span.urlStat != nil {
 			span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: elapsed, statusErr: int(span.statusErr.Load())})
