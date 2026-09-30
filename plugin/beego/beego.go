@@ -94,9 +94,12 @@ func responseStatus(ctx *beegoContext.Context) int {
 
 // DoRequest is deprecated. Use ClientFilterChain.
 func DoRequest(tracer pinpoint.Tracer, req *httplib.BeegoHTTPRequest) (resp *http.Response, err error) {
-	pphttp.NewHttpClientTracer(tracer, "beego/v2.DoRequest()", req.GetRequest())
+	// Ended through the tracer NewHttpClientTracer returns, not the caller's:
+	// for a request that already carries the headers it returns a noop, and
+	// ending the caller's tracer instead closed whatever event it had open.
+	t := pphttp.NewHttpClientTracer(tracer, "beego/v2.DoRequest()", req.GetRequest())
 	defer func() {
-		pphttp.EndHttpClientTracer(tracer, resp, err)
+		pphttp.EndHttpClientTracer(t, resp, err)
 	}()
 	resp, err = req.DoRequest()
 	return
@@ -106,9 +109,10 @@ func DoRequest(tracer pinpoint.Tracer, req *httplib.BeegoHTTPRequest) (resp *htt
 func ClientFilterChain(tracer pinpoint.Tracer) func(httplib.Filter) httplib.Filter {
 	return func(next httplib.Filter) httplib.Filter {
 		return func(ctx context.Context, req *httplib.BeegoHTTPRequest) (resp *http.Response, err error) {
-			pphttp.NewHttpClientTracer(tracer, "beego/v2.DoRequest()", req.GetRequest())
+			// See DoRequest for why the returned tracer ends the event.
+			t := pphttp.NewHttpClientTracer(tracer, "beego/v2.DoRequest()", req.GetRequest())
 			defer func() {
-				pphttp.EndHttpClientTracer(tracer, resp, err)
+				pphttp.EndHttpClientTracer(t, resp, err)
 			}()
 			resp, err = next(ctx, req)
 			return

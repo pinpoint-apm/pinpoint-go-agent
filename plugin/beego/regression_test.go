@@ -1,10 +1,12 @@
 package ppbeego
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/beego/beego/v2/client/httplib"
 	beegoContext "github.com/beego/beego/v2/server/web/context"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/stretchr/testify/assert"
@@ -64,4 +66,41 @@ func TestServerFilterChain_RecordsTheStatusWrittenThroughOutputBody(t *testing.T
 			assert.Equal(t, tt.wantFail, spanOf(t, tracer)["Err"] != float64(0))
 		})
 	}
+}
+
+// A request that already carries the tracing headers - the filter added twice,
+// or a request retried through DoRequest - gets a noop client tracer, and the
+// filter has to end that one: ending the caller's tracer instead closed
+// whatever event the caller had open.
+func TestClientFilterChain_StackedFiltersLeaveTheCallersEventOpen(t *testing.T) {
+	startAgent(t)
+
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
+	defer tracer.EndSpan()
+	tracer.NewSpanEvent("serverHandler")
+	open := tracer.SpanEvent()
+
+	next := func(context.Context, *httplib.BeegoHTTPRequest) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK}, nil
+	}
+	_, err := ClientFilterChain(tracer)(ClientFilterChain(tracer)(next))(context.Background(), httplib.Get("http://localhost:9090/hello"))
+	require.NoError(t, err)
+
+	assert.Same(t, open, tracer.SpanEvent(), "the stacked client filters ended the caller's own event")
+}
+
+// The deprecated DoRequest ends its event through the same tracer.
+func TestDoRequest_LeavesTheCallersEventOpenWhenNested(t *testing.T) {
+	startAgent(t)
+
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
+	defer tracer.EndSpan()
+	tracer.NewSpanEvent("serverHandler")
+	open := tracer.SpanEvent()
+
+	req := httplib.Get("http://" + closedAddr(t) + "/hello")
+	tracer.Inject(req.GetRequest().Header) // already traced, as a retry would be
+	_, _ = DoRequest(tracer, req)
+
+	assert.Same(t, open, tracer.SpanEvent(), "DoRequest on an already traced request ended the caller's own event")
 }
