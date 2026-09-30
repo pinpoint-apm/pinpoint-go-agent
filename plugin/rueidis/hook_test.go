@@ -89,7 +89,7 @@ func TestNewSpanEventSkipsCommandForUnsampledTracer(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			called := false
-			tracer := testHook().newSpanEvent(tt.ctx, "test", func() string {
+			tracer, _ := testHook().newSpanEvent(tt.ctx, "test", func() string {
 				called = true
 				return "large command"
 			})

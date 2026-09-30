@@ -66,9 +66,10 @@ func (r *hook) ProcessHook(hook redis.ProcessHook) redis.ProcessHook {
 			return hook(ctx, cmd)
 		}
 
-		defer r.newSpanEvent(tracer, opName, cmd.Name()).EndSpanEvent()
+		defer tracer.EndSpanEvent()
+		se := r.newSpanEvent(tracer, opName, cmd.Name())
 		err := hook(ctx, cmd)
-		setSpanError(tracer, err)
+		setSpanError(se, err)
 		return err
 	}
 }
@@ -82,29 +83,34 @@ func (r *hook) ProcessPipelineHook(hook redis.ProcessPipelineHook) redis.Process
 			return hook(ctx, cmds)
 		}
 
-		defer r.newSpanEvent(tracer, opName, cmdName(cmds)).EndSpanEvent()
+		defer tracer.EndSpanEvent()
+		se := r.newSpanEvent(tracer, opName, cmdName(cmds))
 		err := hook(ctx, cmds)
-		setSpanError(tracer, err)
+		setSpanError(se, err)
 		return err
 	}
 }
 
-func (r *hook) newSpanEvent(tracer pinpoint.Tracer, operation string, cmd string) pinpoint.Tracer {
+// newSpanEvent opens the event and returns its recorder, which the error is
+// recorded on: reading the recorder back after the call lands on whichever
+// event is on top by then, another goroutine's under a fan-out on one
+// request.
+func (r *hook) newSpanEvent(tracer pinpoint.Tracer, operation string, cmd string) pinpoint.SpanEventRecorder {
 	tracer.NewSpanEvent(operation)
 	se := tracer.SpanEvent()
 	se.SetServiceType(pinpoint.ServiceTypeRedis)
 	se.SetDestination("REDIS")
 	se.SetEndPoint(r.endpoint)
 	se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
-	return tracer
+	return se
 }
 
-// setSpanError records err on the span, except a cache miss: redis.Nil is a
-// normal outcome, and recording it marked every miss as a failure (and walked
-// the stack per miss with Error.TraceCallStack on).
-func setSpanError(tracer pinpoint.Tracer, err error) {
+// setSpanError records err on the span event, except a cache miss: redis.Nil
+// is a normal outcome, and recording it marked every miss as a failure (and
+// walked the stack per miss with Error.TraceCallStack on).
+func setSpanError(se pinpoint.SpanEventRecorder, err error) {
 	if err != nil && err != redis.Nil {
-		tracer.SpanEvent().SetError(err)
+		se.SetError(err)
 	}
 }
 

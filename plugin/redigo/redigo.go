@@ -297,8 +297,11 @@ func (c *wrappedConn) startSpanEvent(ctx context.Context, operation string, cmd 
 		se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
 	}
 
+	// The error goes on the event opened above, not on whatever is on top of
+	// the stack by the time the call ends - another goroutine's under a
+	// fan-out on one request.
 	return func(err error) {
-		tracer.SpanEvent().SetError(err)
+		se.SetError(err)
 		tracer.EndSpanEvent()
 		c.opMu.Unlock()
 	}
