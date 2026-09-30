@@ -79,6 +79,10 @@ find none started and record nothing. Do not use it to put the migration off.
 | `pphttp.WrapResponseWriter` returns the unexported `*responseWriter` | returns `http.ResponseWriter` | nothing where the result was used as an `http.ResponseWriter` |
 | `(*ppgomemcache.Client).WithContext(ctx)` returns nothing | returns the `*Client` bound to the context's tracer | use the returned copy for the request's calls |
 | `pinpoint.NewTestAgent(config, t)` | `NewTestAgent(config)` | drop the `*testing.T`; it was never used |
+| `pinpoint.WithSamplingRate(n)` | removed | `WithSamplingCounterRate(n)` |
+| `pplogrus.WithField(tracer)` | removed | `pplogrus.NewField(tracer)` |
+| `ppsarama.ConsumeMessage`, `WrapConsumerMessage`, `NewConsumer`, `WrapPartitionConsumer` (and `ppsaramaibm`) | removed | `ConsumeMessageContext(handler, ctx, msg)` on a raw `sarama` consumer, with `ppsarama.NewContext` carrying the broker addresses |
+| `ppsarama.WithContext(ctx, producer)`, `producer.WithContext(ctx)` (and `ppsaramaibm`) | removed | `SendMessageContext`, `SendMessagesContext`, `InputContext` with the context; `SendMessage`, `SendMessages` and `Input` produce without tracing |
 | `plugin/echo` (`ppecho`) | removed | use `plugin/echov4` or `plugin/echov5`: echo v3 is end-of-life upstream with an unpatched advisory |
 
 A carrier of your own - a message queue's headers, say - now tells a key held
@@ -118,6 +122,10 @@ human-readable label. Remove the old setting wherever it is:
 | `PINPOINT_GO_AGENTID` | ignored |
 | `--pinpoint-agentid` | ignored, like any unknown `--pinpoint-` flag |
 | `pinpoint.WithAgentId()` | does not compile |
+
+The deprecated `LogLevel` key is gone too: `LogLevel` in the config file,
+`PINPOINT_GO_LOGLEVEL` and `--pinpoint-loglevel` are ignored. Use `Log.Level`,
+`PINPOINT_GO_LOG_LEVEL` and `--pinpoint-log-level`.
 
 ### Defaults that changed
 

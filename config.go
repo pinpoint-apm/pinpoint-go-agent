@@ -61,7 +61,6 @@ const (
 	// grpc.go), not this one.
 	CfgCollectorGrpcSenderQueueSize = "Collector.Grpc.SenderQueueSize"
 
-	CfgLogLevelOld                    = "LogLevel"
 	CfgLogLevel                       = "Log.Level"
 	CfgLogOutput                      = "Log.Output"
 	CfgLogMaxSize                     = "Log.MaxSize"
@@ -244,7 +243,6 @@ func initConfig() {
 	AddConfig(CfgCollectorGrpcIdleTimeout, CfgInt, grpcIdleTimeout, false)
 	AddConfig(CfgCollectorGrpcDnsResolverEnable, CfgBool, true, false)
 	AddConfig(CfgCollectorGrpcSenderQueueSize, CfgInt, defaultMetaQueueSize, false)
-	AddConfig(CfgLogLevelOld, CfgString, "info", true)
 	AddConfig(CfgLogLevel, CfgString, "info", true)
 	AddConfig(CfgLogOutput, CfgString, "stdout", true)
 	AddConfig(CfgLogMaxSize, CfgInt, 10, true)
@@ -358,7 +356,6 @@ type Config struct {
 	configFileCfg *viper.Viper
 
 	containerCheck bool
-	useNewLogOpt   bool
 	offGrpc        bool //for test
 	objName        *objectName
 }
@@ -715,12 +712,7 @@ func (config *Config) applyLogging(cmdEnvViper, profileViper, cfgFileViper *vipe
 		}
 		return v.value, false
 	}
-	level, set := resolve(CfgLogLevel)
-	if !set {
-		if old, ok := resolve(CfgLogLevelOld); ok {
-			level = old
-		}
-	}
+	level, _ := resolve(CfgLogLevel)
 	out, _ := resolve(CfgLogOutput)
 	maxSize, _ := resolve(CfgLogMaxSize)
 	maxBackups, _ := resolve(CfgLogMaxBackups)
@@ -1079,10 +1071,6 @@ func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value inte
 	item.source = source
 	if cfgName == CfgIsContainerEnv {
 		config.containerCheck = false
-	} else if cfgName == CfgLogLevel {
-		config.useNewLogOpt = true
-	} else if cfgName == CfgLogLevelOld && !config.useNewLogOpt {
-		config.cfgMap[CfgLogLevel].value = value
 	}
 }
 
@@ -1499,14 +1487,6 @@ func (config *Config) loadDynamicConfig(cfgFileViper *viper.Viper, profileViper 
 		}
 		if !reflect.DeepEqual(oldValue, v.value) {
 			changed[k] = true
-			// setFinalValue mirrors the deprecated LogLevel key onto Log.Level,
-			// and the logger's reload callback is registered on the new name.
-			// A file that still uses the old one has to report both, or the
-			// snapshot picks the new level up while the logger keeps the one
-			// it started with.
-			if k == CfgLogLevelOld && !config.useNewLogOpt {
-				changed[CfgLogLevel] = true
-			}
 		}
 	}
 	return changed
@@ -1717,9 +1697,6 @@ func WithLogMaxBackups(backups int) ConfigOption { return withValue(CfgLogMaxBac
 func WithSamplingType(samplingType string) ConfigOption {
 	return withValue(CfgSamplingType, samplingType)
 }
-
-// WithSamplingRate DEPRECATED: Use WithSamplingCounterRate()
-func WithSamplingRate(rate int) ConfigOption { return withValue(CfgSamplingCounterRate, rate) }
 
 // WithSamplingCounterRate sets the sampling rate for a 'counter sampler'.
 func WithSamplingCounterRate(rate int) ConfigOption { return withValue(CfgSamplingCounterRate, rate) }

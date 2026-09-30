@@ -32,9 +32,6 @@ func save(w http.ResponseWriter, r *http.Request) {
 	topic := "go-sarama-test"
 	msg := prepareMessage(topic, "Hello, Kafka!!")
 
-	//ppsaramaibm.WithContext(r.Context(), producer)
-	//partition, offset, err := producer.SendMessage(msg)
-
 	partition, offset, err := producer.SendMessageContext(r.Context(), msg)
 
 	if err != nil {

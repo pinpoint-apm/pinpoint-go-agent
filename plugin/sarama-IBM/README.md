@@ -105,8 +105,7 @@ config.Producer.Return.Successes = true
 producer, err := ppsaramaibm.NewSyncProducer(brokers, config)
 ```
 
-Use SendMessageContext with the context containing the pinpoint.Tracer.
-You can also use SendMessage with WithContext, but we recommend using SendMessageContext because the WithContext is not thread-safe.
+Use SendMessageContext with the context containing the pinpoint.Tracer; SendMessage produces without tracing.
 
 ``` go
 ctx := pinpoint.NewContext(context.Background(), tracer)
@@ -160,8 +159,7 @@ config.Producer.Return.Successes = true
 producer, err := ppsaramaibm.NewAsyncProducer(brokers, config)
 ```
 
-Use InputContext with the context containing the pinpoint.Tracer.
-You can also use Input with WithContext, but we recommend using InputContext because the WithContext is not thread-safe.
+Use InputContext with the context containing the pinpoint.Tracer; Input produces without tracing.
 
 ``` go
 ctx := pinpoint.NewContext(context.Background(), tracer)

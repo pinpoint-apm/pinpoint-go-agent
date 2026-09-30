@@ -300,9 +300,8 @@ func Test_asyncProducer_InputAckEndsTracer(t *testing.T) {
 			p := wrapAsyncProducer(stub, []string{"broker:9092"}, config)
 
 			tracer := newRecordingTracer(tt.name)
-			p.WithContext(pinpoint.NewContext(context.Background(), tracer))
 			msg := &sarama.ProducerMessage{Topic: "topic"}
-			p.Input() <- msg
+			p.InputContext(pinpoint.NewContext(context.Background(), tracer), msg)
 			<-stub.input
 			requireSpanCount(t, p, 1)
 
@@ -330,13 +329,6 @@ func Test_asyncProducer_AsyncCloseDeliversBlockedInput(t *testing.T) {
 		name string
 		send func(*asyncProducer, context.Context, *sarama.ProducerMessage)
 	}{
-		{
-			name: "Input",
-			send: func(p *asyncProducer, ctx context.Context, msg *sarama.ProducerMessage) {
-				p.WithContext(ctx)
-				p.Input() <- msg
-			},
-		},
 		{
 			name: "InputContext",
 			send: func(p *asyncProducer, ctx context.Context, msg *sarama.ProducerMessage) {
@@ -672,26 +664,6 @@ func Test_asyncProducer_NoErrorReturnsEndsSpansImmediately(t *testing.T) {
 	}
 }
 
-// gatedTracer holds the input forwarder inside newAsyncProducerTracer until
-// the gate opens, which is how a test gets messages to pile up in the
-// wrapper's buffered inputs while the forwarder cannot drain them.
-type gatedTracer struct {
-	*recordingTracer
-	gate chan struct{}
-	held chan struct{}
-	once sync.Once
-}
-
-func (t *gatedTracer) NewGoroutineTracer() pinpoint.Tracer { return t }
-
-func (t *gatedTracer) NewSpanEvent(string) pinpoint.Tracer {
-	t.once.Do(func() {
-		close(t.held)
-		<-t.gate
-	})
-	return t
-}
-
 // Every message accepted before shutdown reaches sarama.
 func Test_asyncProducer_ShutdownForwardsAcceptedMessages(t *testing.T) {
 	startAgent(t)
@@ -701,27 +673,15 @@ func Test_asyncProducer_ShutdownForwardsAcceptedMessages(t *testing.T) {
 
 	const messages = 16
 	stub := newStubAsyncProducer()
-	// Room in sarama's input is never the limit here; the shutdown signal is
-	// the only thing that could stop the forwarder.
-	stub.input = make(chan *sarama.ProducerMessage, messages)
+	// An unbuffered sarama input parks the forwarder on the first message,
+	// with the rest buffered behind it in the wrapper, until the reads below.
+	stub.input = make(chan *sarama.ProducerMessage)
 	p := wrapAsyncProducer(stub, []string{"broker:9092"}, config)
-
-	gate := &gatedTracer{
-		recordingTracer: newRecordingTracer("gate"),
-		gate:            make(chan struct{}),
-		held:            make(chan struct{}),
-	}
-	p.WithContext(pinpoint.NewContext(context.Background(), gate))
 
 	for i := 0; i < messages; i++ {
 		p.Input() <- &sarama.ProducerMessage{Topic: "topic"}
 	}
-	// The forwarder is now parked in the first message's tracer creation with
-	// the rest buffered behind it.
-	waitForClose(t, gate.held, "the forwarder to reach the gated tracer")
-
 	p.AsyncClose()
-	close(gate.gate)
 
 	for i := 0; i < messages; i++ {
 		select {
@@ -738,30 +698,27 @@ func Test_asyncProducer_ShutdownForwardsAcceptedMessages(t *testing.T) {
 }
 
 // takeInput is what gives an accepted message priority over the shutdown
-// signal, so it must report both what it found and whether InputContext had
-// already traced it.
+// signal, from either input.
 func Test_asyncProducer_takeInput(t *testing.T) {
 	p := &asyncProducer{
 		inputContext: make(chan *sarama.ProducerMessage, 1),
 		input:        make(chan *sarama.ProducerMessage, 1),
 	}
 
-	_, _, ok := p.takeInput()
+	_, ok := p.takeInput()
 	assert.False(t, ok, "nothing accepted yet")
 
 	traced := &sarama.ProducerMessage{Topic: "traced"}
 	p.inputContext <- traced
-	msg, isTraced, ok := p.takeInput()
+	msg, ok := p.takeInput()
 	require.True(t, ok)
 	assert.Same(t, traced, msg)
-	assert.True(t, isTraced, "InputContext traced it already")
 
 	raw := &sarama.ProducerMessage{Topic: "raw"}
 	p.input <- raw
-	msg, isTraced, ok = p.takeInput()
+	msg, ok = p.takeInput()
 	require.True(t, ok)
 	assert.Same(t, raw, msg)
-	assert.False(t, isTraced, "the deprecated Input path arrives untraced")
 }
 
 // A closed underlying input cannot panic the host process.

@@ -248,89 +248,9 @@ func TestNewContext_ForeignStringKeyDoesNotShadowTheAddresses(t *testing.T) {
 	assert.Equal(t, []string{"broker1:9092"}, ctx.Value(contextKey))
 }
 
-// The deprecated form hands the tracer to the handler on the wrapper rather
-// than in a context; it still has to work.
-func TestConsumeMessage(t *testing.T) {
-	startAgent(t)
-
-	want := errors.New("handler failed")
-	msg := &sarama.ConsumerMessage{Topic: "widgets"}
-
-	err := ConsumeMessage(func(m *ConsumerMessage) error {
-		assert.Same(t, msg, m.ConsumerMessage, "the handler received a different message")
-		require.NotNil(t, m.Tracer())
-		assert.True(t, m.Tracer().IsSampled(), "the handler received an unsampled tracer")
-		assert.Equal(t, m.Tracer(), m.SpanTracer(), "SpanTracer and Tracer returned different tracers")
-		return want
-	}, msg)
-
-	assert.ErrorIs(t, err, want, "the handler's error must come back unchanged")
-}
-
-// The deprecated partition-consumer wrapper forwards every message from
-// sarama's channel with a tracer attached, and closes its own channel when
-// sarama's closes.
-func TestWrapPartitionConsumer(t *testing.T) {
-	startAgent(t)
-
-	stub := &stubPartitionConsumer{messages: make(chan *sarama.ConsumerMessage, 2)}
-	stub.messages <- &sarama.ConsumerMessage{Topic: "widgets", Offset: 1}
-	stub.messages <- &sarama.ConsumerMessage{Topic: "widgets", Offset: 2}
-	close(stub.messages)
-
-	pc := WrapPartitionConsumer(stub)
-
-	var offsets []int64
-	for msg := range pc.Messages() {
-		assert.True(t, msg.Tracer().IsSampled(), "a forwarded message carries an unsampled tracer")
-		offsets = append(offsets, msg.Offset)
-		msg.Tracer().EndSpan()
-	}
-
-	assert.Equal(t, []int64{1, 2}, offsets,
-		"every message must be forwarded, in order, and the channel closed after the last")
-}
-
-type stubPartitionConsumer struct {
-	sarama.PartitionConsumer
-	messages chan *sarama.ConsumerMessage
-}
-
-func (s *stubPartitionConsumer) Messages() <-chan *sarama.ConsumerMessage { return s.messages }
-
-func (s *stubPartitionConsumer) Close() error {
-	// Raw sarama's Close delivers what is in flight and closes the channel.
-	close(s.messages)
-	return nil
-}
-
-// A caller that stops receiving and just calls Close - sarama's documented
-// shutdown - must not leave the forwarder parked on the wrapper's unbuffered
-// channel holding a never-ended span.
-func TestWrapPartitionConsumer_CloseUnblocksAbandonedForwarder(t *testing.T) {
-	startAgent(t)
-
-	stub := &stubPartitionConsumer{messages: make(chan *sarama.ConsumerMessage, 2)}
-	stub.messages <- &sarama.ConsumerMessage{Topic: "widgets", Offset: 1}
-	stub.messages <- &sarama.ConsumerMessage{Topic: "widgets", Offset: 2}
-
-	pc := WrapPartitionConsumer(stub)
-
-	msg := <-pc.Messages() // take one message, then abandon the channel
-	msg.Tracer().EndSpan()
-
-	require.NoError(t, pc.Close())
-
-	// Close only returns once its drain saw the wrapper channel closed, i.e.
-	// the forwarder exited; the channel must therefore read as closed here.
-	_, ok := <-pc.Messages()
-	assert.False(t, ok, "the wrapper channel must be closed after Close")
-}
-
 // A nil message must come back as an error, not as a panic that would
 // propagate out of ConsumeClaim and kill the consumer-group session.
-func TestConsumeMessage_NilMessage(t *testing.T) {
-	assert.Error(t, ConsumeMessage(func(*ConsumerMessage) error { return nil }, nil))
+func TestConsumeMessageContext_NilMessage(t *testing.T) {
 	assert.Error(t, ConsumeMessageContext(func(context.Context, *sarama.ConsumerMessage) error { return nil },
 		context.Background(), nil))
 }

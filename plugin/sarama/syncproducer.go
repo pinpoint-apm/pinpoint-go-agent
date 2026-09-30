@@ -18,7 +18,6 @@ type SyncProducer interface {
 type syncProducer struct {
 	sarama.SyncProducer
 	addrs []string
-	ctx   context.Context
 	// noHeaders is set for a producer whose Kafka version predates record
 	// headers (headersSupported).
 	noHeaders bool
@@ -116,9 +115,9 @@ func (p *syncProducer) SendMessageContext(ctx context.Context, msg *sarama.Produ
 	return partition, offset, err
 }
 
-// SendMessage produces a given message. For trace, WithContext should be called first.
+// SendMessage produces a given message without tracing. Use SendMessageContext.
 func (p *syncProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
-	return p.SendMessageContext(p.ctx, msg)
+	return p.SyncProducer.SendMessage(msg)
 }
 
 // SendMessagesContext produces a given set of messages with tracer context.
@@ -140,16 +139,9 @@ func (p *syncProducer) SendMessagesContext(ctx context.Context, msgs []*sarama.P
 	return err
 }
 
-// SendMessages produces a given set of messages. For trace, WithContext should be called first.
+// SendMessages produces a given set of messages without tracing. Use SendMessagesContext.
 func (p *syncProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
-	return p.SendMessagesContext(p.ctx, msgs)
-}
-
-// WithContext is deprecated and not thread-safe. Use SendMessageContext.
-// WithContext passes the context to the provided producer.
-// It is possible to trace only when the given context contains a pinpoint.Tracer.
-func (p *syncProducer) WithContext(ctx context.Context) {
-	p.ctx = ctx
+	return p.SyncProducer.SendMessages(msgs)
 }
 
 // NewSyncProducer wraps sarama.NewSyncProducer and returns a sarama.SyncProducer ready to instrument.
@@ -164,8 +156,8 @@ func NewSyncProducer(addrs []string, config *sarama.Config) (SyncProducer, error
 
 // WrapSyncProducer wraps a sarama.SyncProducer created elsewhere the way
 // NewSyncProducer wraps the one it creates: SendMessageContext and
-// SendMessagesContext trace on the context given, SendMessage and
-// SendMessages on the one bound with WithContext. addrs are the broker
+// SendMessagesContext trace on the context given; SendMessage and
+// SendMessages trace nothing. addrs are the broker
 // addresses; the first is the span event's destination. config is the
 // producer's configuration (nil means sarama's default): below Kafka 0.11
 // (Config.Version) no trace header is written. A producer that is already
@@ -182,7 +174,7 @@ func WrapSyncProducer(producer sarama.SyncProducer, addrs []string, config *sara
 	if config == nil {
 		config = sarama.NewConfig() // what sarama.NewSyncProducer substitutes for nil
 	}
-	return &syncProducer{SyncProducer: producer, addrs: addrs, ctx: context.Background(), noHeaders: !headersSupported(config)}
+	return &syncProducer{SyncProducer: producer, addrs: addrs, noHeaders: !headersSupported(config)}
 }
 
 func newSyncProducerTracer(ctx context.Context, p *syncProducer, msg *sarama.ProducerMessage) pinpoint.Tracer {
@@ -205,15 +197,4 @@ func newSyncProducerTracer(ctx context.Context, p *syncProducer, msg *sarama.Pro
 	}
 
 	return tracer
-}
-
-// WithContext is deprecated and not thread-safe.
-// WithContext passes the context to the provided producer.
-// It is possible to trace only when the given context contains a pinpoint.Tracer.
-func WithContext(ctx context.Context, producer interface{}) {
-	if p, ok := producer.(*syncProducer); ok {
-		p.WithContext(ctx)
-	} else if p, ok := producer.(*asyncProducer); ok {
-		p.WithContext(ctx)
-	}
 }

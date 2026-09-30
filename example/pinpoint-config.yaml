@@ -14,7 +14,8 @@ sampling:
   counterrate: 20
   NewThroughput: 50
   ContinueThroughput: 60
-loglevel: "debug"
+log:
+  level: "debug"
 span:
   queueSize: 512
   eventChunkSize: 50

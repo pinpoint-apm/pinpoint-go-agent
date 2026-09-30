@@ -228,8 +228,8 @@ for msg := range pc.Messages() {
 }
 ```
 
-Use `SendMessageContext` rather than `WithContext` + `SendMessage`:
-`WithContext` binds the tracer to the producer itself and is not thread-safe.
+Send through `SendMessageContext` (or `InputContext`): the plain `SendMessage`
+and `Input` produce without tracing, since they carry no context.
 
 The context travels in record headers, which Kafka has since 0.11. A sarama
 producer whose `Config.Version` is older - the default in older sarama
@@ -242,7 +242,7 @@ version for the consumer to continue the transaction.
 | Plugin package | Instrumented package | Entry point |
 |---|---|---|
 | [plugin/slog](/plugin/slog) | [log/slog](https://pkg.go.dev/log/slog) | `NewHandler`, `NewAttrs` |
-| [plugin/logrus](/plugin/logrus) | [sirupsen/logrus](https://github.com/sirupsen/logrus) | `NewHook`, `NewField`, `WithField`, `NewEntry`, `NewLoggerEntry` |
+| [plugin/logrus](/plugin/logrus) | [sirupsen/logrus](https://github.com/sirupsen/logrus) | `NewHook`, `NewField`, `NewEntry`, `NewLoggerEntry` |
 | [plugin/zap](/plugin/zap) | [uber-go/zap](https://github.com/uber-go/zap) | `NewField`, `NewLogger` |
 
 These collect nothing on their own. They stamp the transaction and span id onto
@@ -261,7 +261,7 @@ logger.LogAttrs(ctx, slog.LevelError, "something failed", ppslog.NewAttrs(tracer
 logger.AddHook(pplogrus.NewHook())
 
 // or per-entry
-logger.WithFields(pplogrus.WithField(tracer)).Error("something failed")
+logger.WithFields(pplogrus.NewField(tracer)).Error("something failed")
 ```
 
 ```go

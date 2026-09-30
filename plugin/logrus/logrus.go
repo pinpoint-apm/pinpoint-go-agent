@@ -24,11 +24,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// WithField is deprecated. Use NewField.
-func WithField(tracer pinpoint.Tracer) logrus.Fields {
-	return NewField(tracer)
-}
-
 // NewField returns a new logrus.Fields added the transaction id and the span id of a pinpoint span.
 func NewField(tracer pinpoint.Tracer) logrus.Fields {
 	if tracer == nil || !tracer.IsSampled() {

@@ -140,7 +140,7 @@ func Test_syncProducer_SendMessageContext(t *testing.T) {
 	defer tracer.EndSpan()
 
 	stub := &stubSyncProducer{}
-	p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}, ctx: context.Background()}
+	p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}}
 	msg := &sarama.ProducerMessage{Topic: "widgets"}
 
 	partition, offset, err := p.SendMessageContext(pinpoint.NewContext(context.Background(), tracer), msg)
@@ -185,7 +185,7 @@ func Test_syncProducer_SendMessagesContext(t *testing.T) {
 	startAgent(t)
 	tracer := newCapturingTracer()
 	stub := &stubSyncProducer{err: errors.New("broker unavailable")}
-	p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}, ctx: context.Background()}
+	p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}}
 
 	msgs := []*sarama.ProducerMessage{{Topic: "widgets"}, {Topic: "gadgets"}}
 	err := p.SendMessagesContext(pinpoint.NewContext(context.Background(), tracer), msgs)
@@ -195,28 +195,6 @@ func Test_syncProducer_SendMessagesContext(t *testing.T) {
 	assert.Len(t, stub.batches[0], 2, "the whole batch must reach the underlying producer")
 
 	require.Len(t, tracer.events, 2, "each message in a batch is its own record, so its own span event")
-	for i, want := range []string{"widgets", "gadgets"} {
-		assert.Equal(t, want, tracer.events[i].annotations[pinpoint.AnnotationKafkaTopic],
-			"topic annotation %d", i)
-		assert.True(t, tracer.events[i].ended, "span event %d was left open", i)
-	}
-}
-
-// The deprecated WithContext form has to reach the same instrumentation as
-// SendMessageContext, through the context stored on the producer.
-func Test_syncProducer_WithContext(t *testing.T) {
-	startAgent(t)
-	tracer := newCapturingTracer()
-	stub := &stubSyncProducer{}
-	p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}, ctx: context.Background()}
-
-	WithContext(pinpoint.NewContext(context.Background(), tracer), p)
-
-	_, _, err := p.SendMessage(&sarama.ProducerMessage{Topic: "widgets"})
-	require.NoError(t, err)
-	require.NoError(t, p.SendMessages([]*sarama.ProducerMessage{{Topic: "gadgets"}}))
-
-	require.Len(t, tracer.events, 2)
 	for i, want := range []string{"widgets", "gadgets"} {
 		assert.Equal(t, want, tracer.events[i].annotations[pinpoint.AnnotationKafkaTopic],
 			"topic annotation %d", i)
@@ -236,11 +214,11 @@ func Test_syncProducer_WithoutASampledTracer(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			stub := &stubSyncProducer{}
-			p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}, ctx: tt.ctx}
+			p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}}
 
-			_, _, err := p.SendMessage(&sarama.ProducerMessage{Topic: "widgets"})
+			_, _, err := p.SendMessageContext(tt.ctx, &sarama.ProducerMessage{Topic: "widgets"})
 			require.NoError(t, err)
-			require.NoError(t, p.SendMessages([]*sarama.ProducerMessage{{Topic: "gadgets"}}))
+			require.NoError(t, p.SendMessagesContext(tt.ctx, []*sarama.ProducerMessage{{Topic: "gadgets"}}))
 
 			assert.Len(t, stub.sent, 1, "the message must still be produced")
 			assert.Len(t, stub.batches, 1, "the batch must still be produced")
@@ -296,7 +274,7 @@ func TestNewSyncProducer_ReturnsTheBrokerError(t *testing.T) {
 func Test_syncProducer_SendMessagesContext_EmptyBatch(t *testing.T) {
 	tracer := newCapturingTracer()
 	stub := &stubSyncProducer{}
-	p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}, ctx: context.Background()}
+	p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}}
 
 	require.NoError(t, p.SendMessagesContext(pinpoint.NewContext(context.Background(), tracer), nil))
 

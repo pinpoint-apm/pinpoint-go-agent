@@ -29,7 +29,6 @@ type asyncProducer struct {
 	drainDone    chan struct{}
 	flush        chan chan struct{}
 	closeOnce    sync.Once
-	ctx          context.Context
 	spans        map[string]pinpoint.Tracer
 	spansLock    sync.Mutex
 }
@@ -117,7 +116,8 @@ func (p *asyncProducer) InputContext(ctx context.Context, msg *sarama.ProducerMe
 	}
 }
 
-// Input returns the input channel of sarama.AsyncProducer. For trace, WithContext should be called first.
+// Input returns the input channel; a message sent on it is produced without
+// tracing. Use InputContext.
 func (p *asyncProducer) Input() chan<- *sarama.ProducerMessage {
 	return p.input
 }
@@ -166,14 +166,6 @@ func (p *asyncProducer) Close() error {
 		return errs
 	}
 	return nil
-}
-
-// WithContext is deprecated and not thread-safe. Use InputContext.
-// WithContext passes the context to the provided producer.
-// It is possible to trace only when the given context contains a pinpoint.Tracer.
-func (p *asyncProducer) WithContext(ctx context.Context) {
-	tracer := pinpoint.FromContext(ctx)
-	p.ctx = pinpoint.NewContext(context.Background(), tracer.NewGoroutineTracer())
 }
 
 // NewAsyncProducer wraps sarama.NewAsyncProducer and returns a AsyncProducer ready to instrument.
@@ -233,7 +225,6 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 		ackDone:       make(chan struct{}),
 		drainDone:     make(chan struct{}),
 		flush:         make(chan chan struct{}),
-		ctx:           context.Background(),
 		spans:         make(map[string]pinpoint.Tracer),
 	}
 
@@ -265,36 +256,34 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 			// goroutine, so those messages still have a path out.
 			//
 			// ponytail: drains what is there rather than a length snapshot, so
-			// a goroutine still writing to the deprecated Input channel during
+			// a goroutine still writing to the untraced Input channel during
 			// shutdown can extend the drain; InputContext stops accepting on
 			// done by itself. Snapshot the lengths if that ever matters.
-			msg, traced, ok := wrapped.takeInput()
+			msg, ok := wrapped.takeInput()
 			if !ok {
 				select {
 				case <-wrapped.done:
 					// A send may have completed after takeInput's empty
 					// check but before shutdown. Recheck before exiting,
 					// since select can choose done over that queued message.
-					msg, traced, ok = wrapped.takeInput()
+					msg, ok = wrapped.takeInput()
 					if !ok {
 						return
 					}
-				case m := <-wrapped.inputContext:
-					msg, traced = m, true
-				case m := <-wrapped.input:
-					msg, traced = m, false
+				case msg = <-wrapped.inputContext:
+				case msg = <-wrapped.input:
 				case flushed := <-wrapped.flush:
 					// A message accepted before the request may have been
 					// queued after takeInput looked, so the buffers are
 					// forwarded up to their lengths now, which covers it and
 					// ends even while other goroutines keep sending.
 					for n := len(wrapped.inputContext); n > 0; n-- {
-						if !wrapped.forward(<-wrapped.inputContext, true) {
+						if !wrapped.forward(<-wrapped.inputContext) {
 							return
 						}
 					}
 					for n := len(wrapped.input); n > 0; n-- {
-						if !wrapped.forward(<-wrapped.input, false) {
+						if !wrapped.forward(<-wrapped.input) {
 							return
 						}
 					}
@@ -302,7 +291,7 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 					continue
 				}
 			}
-			if !wrapped.forward(msg, traced) {
+			if !wrapped.forward(msg) {
 				return
 			}
 		}
@@ -346,30 +335,21 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 }
 
 // takeInput pulls an already accepted message off the wrapper's inputs without
-// blocking. It reports whether it found one, and whether InputContext has
-// already traced it.
-func (p *asyncProducer) takeInput() (*sarama.ProducerMessage, bool, bool) {
+// blocking, reporting whether it found one.
+func (p *asyncProducer) takeInput() (*sarama.ProducerMessage, bool) {
 	select {
 	case msg := <-p.inputContext:
-		return msg, true, true
+		return msg, true
 	case msg := <-p.input:
-		return msg, false, true
+		return msg, true
 	default:
-		return nil, false, false
+		return nil, false
 	}
 }
 
-// forward hands a message to sarama's own input, tracing it first when the
-// deprecated Input path left it untraced: the tracer is saved before the send,
-// because a broker ack can reach the ack loop before a save placed after the
-// send, and the span would then never be ended. A disabled agent traces and
-// injects nothing, as InputContext. A closed underlying input ends the message
-// span here, and false says the forwarder is done.
-func (p *asyncProducer) forward(msg *sarama.ProducerMessage, traced bool) bool {
-	if !traced && pinpoint.GetAgent().Enable() && !isNested(msg) {
-		span, id := newAsyncProducerTracer(pinpoint.FromContext(p.ctx), p.addrs, msg, p.config)
-		saveAsyncProducerTracer(p, span, id)
-	}
+// forward hands a message to sarama's own input. A closed underlying input
+// ends the message span here, and false says the forwarder is done.
+func (p *asyncProducer) forward(msg *sarama.ProducerMessage) bool {
 	if !sendAsyncProducerMessage(p.AsyncProducer.Input(), msg) {
 		endAsyncProducerTracer(p, msg, sarama.ErrShuttingDown)
 		return false

@@ -31,19 +31,12 @@
 //
 //	  fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
 //
-// To instrument a Kafka producer, use NewSyncProducer or NewAsyncProducer.
+// To instrument a Kafka producer, use NewSyncProducer or NewAsyncProducer and
+// send through SendMessageContext (or InputContext) with the context that
+// carries the pinpoint.Tracer. SendMessage and Input produce without tracing.
 //
 //	config := sarama.NewConfig()
 //	producer, err = ppsaramaibm.NewSyncProducer(brokers, config)
-//
-// It is necessary to pass the context containing the pinpoint.Tracer
-// to sarama.SyncProducer (or sarama.AsyncProducer) using WithContext function.
-//
-//	ppsaramaibm.WithContext(pinpoint.NewContext(context.Background(), tracer), producer)
-//	partition, offset, err := producer.SendMessage(msg)
-//
-// The WithContext function() function is not thread-safe, so use the SendMessageContext function() if you have a data trace.
-//
 //	partition, offset, err := producer.SendMessageContext(r.Context(), msg)
 package ppsaramaibm
 
@@ -75,55 +68,6 @@ func NewContext(ctx context.Context, addrs []string) context.Context {
 		ctx = context.Background()
 	}
 	return context.WithValue(ctx, contextKey, addrs)
-}
-
-// ConsumerMessage is deprecated.
-type ConsumerMessage struct {
-	*sarama.ConsumerMessage
-	tracer pinpoint.Tracer
-}
-
-// SpanTracer is deprecated. Use Tracer.
-func (c *ConsumerMessage) SpanTracer() pinpoint.Tracer {
-	return c.tracer
-}
-
-// Tracer returns the pinpoint.Tracer.
-func (c *ConsumerMessage) Tracer() pinpoint.Tracer {
-	return c.tracer
-}
-
-// WrapConsumerMessage is deprecated.
-// WrapConsumerMessage wraps a sarama.ConsumerMessage
-// and creates a pinpoint.Tracer that instruments the sarama.ConsumerMessage.
-// The tracer extracts the pinpoint header from message header,
-// and then creates a span that initiates or continues the transaction.
-func WrapConsumerMessage(msg *sarama.ConsumerMessage) *ConsumerMessage {
-	return wrapConsumerMessage(context.Background(), msg)
-}
-
-func wrapConsumerMessage(ctx context.Context, msg *sarama.ConsumerMessage) *ConsumerMessage {
-	return &ConsumerMessage{msg, newConsumerTracer(ctx, msg)}
-}
-
-// HandlerFunc is deprecated.
-type HandlerFunc func(msg *ConsumerMessage) error
-
-// ConsumeMessage is deprecated.
-// ConsumeMessage creates a pinpoint.Tracer that instruments the sarama.ConsumerMessage.
-// The tracer extracts the pinpoint header from message header,
-// and then creates a span that initiates or continues the transaction.
-// ConsumeMessage passes a ConsumerMessage having pinpoint.Tracer to HandlerFunc.
-func ConsumeMessage(handler HandlerFunc, msg *sarama.ConsumerMessage) error {
-	if msg == nil {
-		return errNilConsumerMessage
-	}
-	wrapped := WrapConsumerMessage(msg)
-	defer wrapped.Tracer().EndSpan()
-
-	err := handler(wrapped)
-	wrapped.Tracer().Span().SetError(err)
-	return err
 }
 
 type HandlerContextFunc func(context.Context, *sarama.ConsumerMessage) error
@@ -207,74 +151,4 @@ func newConsumerTracer(ctx context.Context, msg *sarama.ConsumerMessage) pinpoin
 	a.AppendLong(pinpoint.AnnotationKafkaOffset, msg.Offset)
 
 	return tracer
-}
-
-// PartitionConsumer is deprecated.
-type PartitionConsumer struct {
-	sarama.PartitionConsumer
-	messages chan *ConsumerMessage
-}
-
-// Messages is deprecated.
-func (pc *PartitionConsumer) Messages() <-chan *ConsumerMessage {
-	return pc.messages
-}
-
-// Close is deprecated. Close mirrors raw sarama's Close, which drains the
-// message channel: the forwarder may be parked sending a message it already
-// took off sarama's channel to a caller that stopped receiving, and without
-// the drain that goroutine - and the message's never-ended span - would leak
-// for the life of the process.
-func (pc *PartitionConsumer) Close() error {
-	err := pc.PartitionConsumer.Close()
-	for msg := range pc.messages {
-		msg.Tracer().EndSpan()
-	}
-	return err
-}
-
-// WrapPartitionConsumer is deprecated.
-func WrapPartitionConsumer(pc sarama.PartitionConsumer) *PartitionConsumer {
-	return wrapPartitionConsumer(context.Background(), pc)
-}
-
-func wrapPartitionConsumer(ctx context.Context, pc sarama.PartitionConsumer) *PartitionConsumer {
-	wrapped := &PartitionConsumer{
-		PartitionConsumer: pc,
-		messages:          make(chan *ConsumerMessage),
-	}
-
-	go func() {
-		for msg := range pc.Messages() {
-			wrapped.messages <- wrapConsumerMessage(ctx, msg)
-		}
-		close(wrapped.messages)
-	}()
-
-	return wrapped
-}
-
-// Consumer is deprecated.
-type Consumer struct {
-	sarama.Consumer
-	addrs []string
-}
-
-// ConsumePartition is deprecated.
-func (c *Consumer) ConsumePartition(topic string, partition int32, offset int64) (*PartitionConsumer, error) {
-	pc, err := c.Consumer.ConsumePartition(topic, partition, offset)
-	if err != nil {
-		return nil, err
-	}
-	return wrapPartitionConsumer(NewContext(context.Background(), c.addrs), pc), nil
-}
-
-// NewConsumer is deprecated.
-func NewConsumer(addrs []string, config *sarama.Config) (*Consumer, error) {
-	consumer, err := sarama.NewConsumer(addrs, config)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Consumer{Consumer: consumer, addrs: addrs}, nil
 }

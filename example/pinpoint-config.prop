@@ -1,6 +1,5 @@
 applicationName=PropAppName
 applicationtype=1902
-agentid=PropAgentID
 
 collector.host=prop.collector.host
 collector.agentPort=7000
@@ -21,7 +20,7 @@ span.maxCallstackSequence=1
 Stat.CollectInterval=7000
 Stat.BatchCount=10
 
-loglevel=debug
+log.level=debug
 isContainerEnv=true
 
 profile.dev.collector.host=dev.collector.host

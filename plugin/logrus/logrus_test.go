@@ -95,15 +95,6 @@ func TestNewField_WithoutASampledTracer(t *testing.T) {
 	}
 }
 
-// WithField is the deprecated spelling and has to stay equivalent.
-func TestWithField(t *testing.T) {
-	startAgent(t)
-	tracer := newTracer(t)
-
-	assert.Equal(t, NewField(tracer), WithField(tracer))
-	assert.Empty(t, WithField(nil), "the deprecated spelling must tolerate a nil tracer too")
-}
-
 // The entry constructors are what most applications use, and both have to end
 // up with the same fields NewField produces - on the standard logger and on a
 // provided one.

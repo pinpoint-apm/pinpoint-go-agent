@@ -15,7 +15,9 @@
     "NewThroughput": 50,
     "ContinueThroughput": 60
   },
-  "loglevel": "debug",
+  "log": {
+    "level": "debug"
+  },
   "Span": {
     "EventChunkSize": 10,
     "MaxCallstackDepth": 10,

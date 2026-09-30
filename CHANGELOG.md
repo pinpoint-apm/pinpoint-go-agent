@@ -50,6 +50,18 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   ids. Endpoint and destination are unchanged.
 - **`pinpoint.NewTestAgent(config)` takes no `*testing.T`.** The parameter was
   never used, and it made every production binary link the `testing` package.
+- **The deprecated v1 spellings are gone.** `pinpoint.WithSamplingRate` (use
+  `WithSamplingCounterRate`); the `LogLevel` config key with its
+  `--pinpoint-loglevel` flag and `PINPOINT_GO_LOGLEVEL` variable (use
+  `Log.Level`, `--pinpoint-log-level`, `PINPOINT_GO_LOG_LEVEL`);
+  `pplogrus.WithField` (use `NewField`); and in `ppsarama` and `ppsaramaibm`
+  the consumer wrappers `ConsumeMessage`, `WrapConsumerMessage`,
+  `ConsumerMessage`, `HandlerFunc`, `NewConsumer`, `Consumer`,
+  `WrapPartitionConsumer` and `PartitionConsumer` (use `ConsumeMessageContext`
+  on a raw sarama consumer) together with the three `WithContext` functions
+  that bound a tracer to a producer without being thread-safe (send through
+  `SendMessageContext`, `SendMessagesContext` and `InputContext`; the plain
+  `SendMessage`, `SendMessages` and `Input` now produce without tracing).
 - **`plugin/echo` is gone.** It instrumented labstack/echo v3, which is
   end-of-life upstream with an unpatched advisory (GHSA-vfp3-v2gw-7wfq) and no
   fixed v3 release to pin, and its code was a copy of `plugin/echov4`. Use
