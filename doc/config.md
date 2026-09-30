@@ -495,9 +495,10 @@ A negative value is treated as 0.
 ### Collector.Grpc.SenderQueueSize
 Collector.Grpc.SenderQueueSize option sets the size of the agent's metadata queue: the API, string, SQL and
 exception metadata registered by spans and waiting to be sent to the collector.
-It used to share [Span.QueueSize](#spanqueuesize). When the queue is full the oldest item is overwritten and
-its cache entry released so a later span registers it again, and the agent logs a rate-limited warning
-carrying the cumulative number of dropped items.
+It used to share [Span.QueueSize](#spanqueuesize). While the queue is full a span that would register new
+metadata records none for that one use - no id is minted and nothing is cached, so the next use registers
+it once there is room - and the agent logs a rate-limited warning carrying the cumulative number of refused
+items. Items already queued keep their ids.
 The retry schedule for failed metadata sends has its own fixed bound of 1000 and is not affected.
 
 * --pinpoint-collector-grpc-senderqueuesize

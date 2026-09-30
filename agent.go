@@ -1382,6 +1382,23 @@ func (agent *agent) enqueueMeta(md interface{}) {
 	}
 }
 
+// metaQueueFull reports whether the metadata queue has no room, counting the
+// call as a drop when it has none. A cache miss asks before minting an id: an
+// id minted for an item the queue then refuses is spent for nothing - the
+// entry is released and the next use mints another - and under a collector
+// outage that loop ran at the request rate, wrapping the int32 sequence
+// within hours on a busy service and switching the metadata off for the rest
+// of the process (idGen). Refusing here records nothing for this one use and
+// the next use tries again. Two producers racing for the last slot still reach
+// enqueueMeta's release, which is the backstop, not the common path.
+func (agent *agent) metaQueueFull() bool {
+	if len(agent.metaChan) < cap(agent.metaChan) {
+		return false
+	}
+	agent.metaDrops.record(1)
+	return true
+}
+
 // tryEnqueueMeta queues md, refusing a new item when the queue is full.
 // Unlike a span, metadata has no recency value, and what differs between
 // the oldest and the newest item is how many spans already reference the id.
@@ -1441,6 +1458,9 @@ func (agent *agent) cacheError(errorName string) int32 {
 
 	if v, ok := agent.errorCache.peek(errorName); ok {
 		return v
+	}
+	if agent.metaQueueFull() {
+		return 0
 	}
 
 	id := agent.errorIdGen.next("error")
@@ -1528,6 +1548,9 @@ func (agent *agent) cacheSql(sql string) int32 {
 	if v, ok := agent.sqlCache.peek(sql); ok {
 		return v
 	}
+	if agent.metaQueueFull() {
+		return 0
+	}
 
 	// A wrapped sequence records no SQL: SetSQL skips a zero id.
 	id := agent.sqlIdGen.next("sql")
@@ -1567,6 +1590,9 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 		if v, ok := agent.sqlUidCache.peek(sql); ok {
 			return v
 		}
+	}
+	if agent.metaQueueFull() {
+		return nil
 	}
 
 	uid := sqlUid(sql)
@@ -1644,6 +1670,9 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 
 	if v, ok := agent.apiCache.peek(key); ok {
 		return v
+	}
+	if agent.metaQueueFull() {
+		return 0
 	}
 
 	id := agent.apiIdGen.next("api")

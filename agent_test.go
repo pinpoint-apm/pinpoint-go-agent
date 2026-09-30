@@ -1001,24 +1001,37 @@ func Test_agent_GetAgentIsRaceFreeAgainstShutdown(t *testing.T) {
 	assert.Equal(t, NoopAgent(), GetAgent(), "global agent released")
 }
 
-// A metadata item dropped by a full queue must not stay cached: its id was
-// already handed to spans, so the entry has to be re-registered rather than
-// left pointing at an id the collector never received. The queue refuses the
-// newcomer, so the item that loses its cache entry is the one just registered;
-// queued items keep theirs.
-func Test_agent_MetaCacheDropsEntryWhenQueueIsFull(t *testing.T) {
+// A full queue refuses a new item before an id is minted for it: the use that
+// missed the cache records no metadata, nothing is cached, and the next use
+// registers the item once there is room. Minting first and releasing the
+// entry after the refusal spent an id per use for as long as the queue stayed
+// full - a collector outage wrapped the int32 sequence within hours on a busy
+// service and switched the metadata off for the rest of the process. Queued
+// items keep their entries.
+func Test_agent_MetaQueueFullMintsNoId(t *testing.T) {
 	a := newTestAgent(defaultConfig())
 	a.metaChan = make(chan interface{}, 2)
 
 	oldest := a.cacheError("oldest")
 	a.cacheError("filler")
 
-	first := a.cacheError("boom")
-	second := a.cacheError("boom")
-	assert.NotZero(t, first, "id minted")
-	assert.NotEqual(t, first, second, "the refused item is re-registered with a new id")
-	assert.Equal(t, oldest, a.cacheError("oldest"),
-		"the queued item stays cached")
+	for i := 0; i < 3; i++ {
+		assert.Zero(t, a.cacheError("boom"), "no error id while the queue is full")
+		assert.Zero(t, a.cacheSql("select 1"), "no sql id while the queue is full")
+		assert.Nil(t, a.cacheSqlUid("select 2"), "no sql uid while the queue is full")
+		assert.Zero(t, a.cacheSpanApi("api", apiTypeDefault), "no api id while the queue is full")
+	}
+	assert.EqualValues(t, 0, a.errorIdGen.id-2, "no id spent on the refused uses")
+	assert.EqualValues(t, 0, a.sqlIdGen.id)
+	assert.EqualValues(t, 0, a.apiIdGen.id)
+	assert.EqualValues(t, 12, a.metaDrops.dropped.Load(), "every refused use counts as a drop")
+	_, cached := a.errorCache.peek("boom")
+	assert.False(t, cached, "a refused item is not cached")
+	assert.Equal(t, oldest, a.cacheError("oldest"), "the queued item stays cached")
+
+	<-a.metaChan
+	assert.NotZero(t, a.cacheError("boom"), "registered once the queue has room")
+	assert.Len(t, a.metaChan, 2)
 }
 
 // One overflow costs exactly one cache entry: the newcomer's. The head of the

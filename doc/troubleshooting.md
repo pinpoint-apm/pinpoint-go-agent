@@ -376,8 +376,8 @@ A call chain that shows as separate transactions instead of one:
   `span channel - max capacity reached or closed` at `trace` level. Lowering
   the queue bounds the memory; fixing the collector fixes the cause. The
   metadata queue is bounded separately by `Collector.Grpc.SenderQueueSize`
-  (default 1000); a full one overwrites its oldest item and logs
-  `meta queue overflow`.
+  (default 1000); while it is full, new metadata is left unregistered for
+  that use (no id is spent) and the agent logs `meta queue overflow`.
 * **High-cardinality names.** Operation and error names are interned per
   process, so a name built from a request value grows an unbounded cache. See
   [contract 8](api_contracts.md#8-keep-operation-and-error-names-low-cardinality).
