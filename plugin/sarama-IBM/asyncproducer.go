@@ -2,6 +2,7 @@ package ppsaramaibm
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/IBM/sarama"
@@ -46,15 +47,29 @@ type transactional interface {
 // buffer reached sarama after the marker: rejected as outside a transaction
 // while the commit reported success, or racing the commit's wait into a
 // panic.
+//
+// The wrapper exposes both whatever the underlying producer has; one without
+// transactions answers errNoTransactions rather than panicking on the
+// assertion.
 func (p *asyncProducer) CommitTxn() error {
+	t, ok := p.AsyncProducer.(transactional)
+	if !ok {
+		return errNoTransactions
+	}
 	p.flushInput()
-	return p.AsyncProducer.(transactional).CommitTxn()
+	return t.CommitTxn()
 }
 
 func (p *asyncProducer) AbortTxn() error {
+	t, ok := p.AsyncProducer.(transactional)
+	if !ok {
+		return errNoTransactions
+	}
 	p.flushInput()
-	return p.AsyncProducer.(transactional).AbortTxn()
+	return t.AbortTxn()
 }
+
+var errNoTransactions = errors.New("sarama: the underlying producer does not support transactions")
 
 // flushInput returns once the forwarder has handed sarama every message the
 // wrapper accepted before the call, or has gone.
