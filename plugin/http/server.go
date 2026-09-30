@@ -165,7 +165,8 @@ func FormatRequestParams(rawQuery string) string {
 
 // ClientUrl builds the client AnnotationHttpUrl value, "METHOD url". The
 // query string is dropped unless Http.Client.RecordUrlQuery is on; the
-// fragment is kept. A nil URL yields the bare method.
+// fragment is kept, and a password in the userinfo is masked. A nil URL
+// yields the bare method.
 func ClientUrl(method string, u *url.URL) string {
 	if u == nil {
 		return method
@@ -175,7 +176,7 @@ func ClientUrl(method string, u *url.URL) string {
 		c.RawQuery, c.ForceQuery = "", false
 		u = &c
 	}
-	return method + " " + u.String()
+	return method + " " + u.Redacted()
 }
 
 // ClientUrlString is ClientUrl for adapters that hold the URL as a string
