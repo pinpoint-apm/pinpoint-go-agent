@@ -132,15 +132,13 @@ func Test_parseDSN(t *testing.T) {
 	}
 }
 
-// pq.ParseURL only accepts URLs. A keyword/value DSN - which lib/pq itself
-// connects with - and a malformed URL must leave the driver's shared DBInfo
-// alone rather than half-filling it.
+// A malformed URL must leave the driver's shared DBInfo alone rather than
+// half-filling it. Only a postgres:// or postgresql:// URL is parsed as one,
+// as lib/pq does; anything else is read as the keyword/value form.
 func Test_parseDSN_UnparsableLeavesInfoUntouched(t *testing.T) {
 	for _, dsn := range []string{
-		"host=localhost dbname=testdb", // keyword/value, not a URL
-		"://bad",                       // missing scheme
-		"mysql://dbhost/testdb",        // wrong protocol
-		"",                             // nothing at all
+		"postgres://bad%zz/testdb", // a URL that does not parse
+		"postgresql://[::1/testdb", // an unclosed IPv6 literal
 	} {
 		info := pinpoint.DBInfo{DBHost: "keep", DBName: "keep"}
 		parseDSN(&info, dsn)

@@ -41,10 +41,17 @@ func init() {
 var dsnSplit = regexp.MustCompile(`(\w+)\s*=\s*('[^=]*'|[^'\s]+)`)
 
 func parseDSN(info *pinpoint.DBInfo, dsn string) {
-	convDsn, err := pq.ParseURL(dsn)
-	if err != nil {
-		pinpoint.Log("pgsql").Errorf("dsn parse error: %v", err)
-		return
+	// Only a URL goes through pq.ParseURL, as lib/pq itself decides
+	// (NewConnector): the keyword/value form it also connects with is what
+	// dsnSplit reads, and handing it to ParseURL rejected every such DSN,
+	// once per pooled connection, with an ERROR line and no endpoint.
+	convDsn := dsn
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		var err error
+		if convDsn, err = pq.ParseURL(dsn); err != nil {
+			pinpoint.Log("pgsql").Errorf("dsn parse error: %v", err)
+			return
+		}
 	}
 
 	host := os.Getenv("PGHOST")
