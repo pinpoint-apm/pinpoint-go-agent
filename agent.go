@@ -454,29 +454,42 @@ func (agent *agent) connectGrpcServer() {
 		globalAgentLock.Unlock()
 	}()
 
+	// Recovered like the workers are: a panic here - a dial option, the route
+	// lookup, the metadata built from argv - must not take the host down, and
+	// the release above needs the goroutine to get there.
+	if !recoverPanic("connect", func() { err = agent.connect() }) && err == nil {
+		err = errors.New("connect panicked")
+	}
+}
+
+// connect opens the collector connections, registers the agent and starts the
+// workers. A nil error with the phase still registering means the registration
+// was cut short by Shutdown.
+func (agent *agent) connect() (err error) {
 	if agent.agentGrpc, err = newAgentGrpc(agent); err != nil {
-		return
+		return err
 	}
 	if !agent.agentGrpc.registerAgentWithRetry() {
-		return
+		return nil
 	}
 	if agent.spanGrpc, err = newSpanGrpc(agent); err != nil {
-		return
+		return err
 	}
 	if agent.statGrpc, err = newStatGrpc(agent); err != nil {
-		return
+		return err
 	}
 	if agent.cmdGrpc, err = newCommandGrpc(agent); err != nil {
-		return
+		return err
 	}
 
 	// A Shutdown that completed while registration was finishing has moved the
 	// phase to stopped; workers started now would only find it so and exit,
 	// and the closed connections are already released by that Shutdown.
 	if !agent.enable.transitionTo(phaseRunning) {
-		return
+		return nil
 	}
 	agent.startWorkers(agent.workerTable())
+	return nil
 }
 
 // worker declares one of the agent's worker goroutines: the name the

@@ -786,7 +786,12 @@ func (config *Config) newFlagSet() *pflag.FlagSet {
 // arguments are not removed from os.Args, so an application that parses its
 // own flags with the standard flag package still sees them.
 func filterCmdArgs(flagSet *pflag.FlagSet) []string {
-	args := os.Args[1:]
+	// os.Args is empty for a process exec'd with no argv at all, and [1:]
+	// on it panics inside NewConfig.
+	var args []string
+	if len(os.Args) > 1 {
+		args = os.Args[1:]
+	}
 	cmdArgs := make([]string, 0)
 
 	for i := 0; i < len(args); i++ {
