@@ -55,8 +55,14 @@ func NewProducer(conf *kafka.ConfigMap) (*Producer, error) {
 // wraps the one it creates; conf is the producer's configuration, whose
 // first "bootstrap.servers" entry the span events report as the broker (a
 // nil conf or a missing entry: "Unknown", as NewProducer records it). The
-// compile-time instrumentation tool uses it from its kafka.NewProducer hook.
+// compile-time instrumentation tool uses it from its kafka.NewProducer hook,
+// together with the error kafka.NewProducer returned: a nil producer stays
+// nil, so a caller that checks the wrapper for nil is not handed one whose
+// every method nil-derefs inside the bindings.
 func WrapProducer(producer *kafka.Producer, conf *kafka.ConfigMap) *Producer {
+	if producer == nil {
+		return nil
+	}
 	servers := ""
 	if conf != nil {
 		if v, err := conf.Get("bootstrap.servers", ""); err == nil {
