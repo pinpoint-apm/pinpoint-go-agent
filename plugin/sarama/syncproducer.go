@@ -44,6 +44,13 @@ func headersSupported(config *sarama.Config) bool {
 // context already present travels alone. The async producer's own ack id counts
 // too, since nothing but a previous injection of this plugin writes it.
 func isNested(msg *sarama.ProducerMessage) bool {
+	// A nil message is passed through untouched, as a nested one is: sarama
+	// logs and ignores it. Tracing it read msg.Topic and panicked - in the
+	// caller for InputContext, and in the input forwarder for Input, whose
+	// death then dropped every later message in silence.
+	if msg == nil {
+		return true
+	}
 	w := distributedTracingContextWriterProducer{msg: msg}
 	// Presence, not a non-empty value: a header this plugin injected is a
 	// context already present even if the value it carries is empty.
@@ -85,6 +92,9 @@ func (m *distributedTracingContextWriterProducer) Set(key string, value string) 
 // Get reports a record header written with an empty value as present, as the
 // consumer reader does: the same message headers are read back here.
 func (m *distributedTracingContextWriterProducer) Get(key string) (string, bool) {
+	if m.msg == nil {
+		return "", false
+	}
 	for _, h := range m.msg.Headers {
 		if string(h.Key) == key {
 			return string(h.Value), true
