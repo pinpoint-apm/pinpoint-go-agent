@@ -25,7 +25,7 @@ func externalRequest(tracer pinpoint.Tracer) int {
 	se.SetDestination(req.Host)
 	se.SetServiceType(pinpoint.ServiceTypeGoHttpClient)
 	se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, req.URL.String())
-	tracer.Inject(req.Header)
+	tracer.Inject(pinpoint.HttpHeaderWriter(req.Header))
 
 	resp, err := client.Do(req)
 	// Record the verdict first, then bail out: on a failed request resp is nil,

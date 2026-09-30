@@ -52,6 +52,15 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 ### Changed
 
 - `Log.Output` defaults to `stdout`; it was `stderr`.
+- The `net/http.Header` carriers no longer canonicalize the Pinpoint header
+  names on every lookup. Seven of the ten names (`Pinpoint-TraceID`,
+  `Pinpoint-pSpanID`, ...) are not in textproto canonical form, so
+  `HttpHeaderReader` and `Header.Set` took `CanonicalMIMEHeaderKey`'s
+  allocating path per header: 9 allocations to extract a continued trace and
+  11 to inject one. Both now use a table built once; the new
+  `pinpoint.HttpHeaderWriter` is the `Inject` carrier for an `http.Header`,
+  which `pphttp`'s client uses. `HttpHeaderReader` and `Header.Get` read the
+  same keys as before.
 - **Default behavior change.** The collector channel now uses the gRPC `dns`
   resolver (`dns:///host:port`) instead of the `passthrough` scheme. A collector
   host with several A records is resolved into the channel's full address list,

@@ -130,7 +130,9 @@ func externalRequest(tracer pinpoint.Tracer) int {
     se.SetDestination(req.Host)
     se.SetServiceType(pinpoint.ServiceTypeGoHttpClient)
     se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, req.URL.String())
-    tracer.Inject(req.Header)
+    // HttpHeaderWriter writes the headers without canonicalizing each key;
+    // a bare req.Header works too, through Header.Set.
+    tracer.Inject(pinpoint.HttpHeaderWriter(req.Header))
 
     resp, err := client.Do(req)
     defer resp.Body.Close()

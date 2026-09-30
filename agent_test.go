@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/textproto"
 	"os"
 	"os/signal"
 	"runtime"
@@ -1731,6 +1732,33 @@ func Test_agent_continueHeaders_httpHeaderReader(t *testing.T) {
 	v, ok := HttpHeaderReader(h).Get(HeaderParentSpanId)
 	assert.True(t, ok, "a canonicalized key must still be found")
 	assert.Equal(t, "123", v)
+}
+
+// HttpHeaderWriter stores under the key Header.Set would have chosen, so a
+// value it wrote is read back by Header.Get, by HttpHeaderReader and by a
+// caller iterating the map with the canonical name.
+func Test_HttpHeaderWriter_storesCanonicalKeys(t *testing.T) {
+	h := http.Header{}
+	w := HttpHeaderWriter(h)
+	for _, k := range []string{
+		HeaderTraceId, HeaderSpanId, HeaderParentSpanId, HeaderSampled, HeaderFlags,
+		HeaderParentApplicationName, HeaderParentApplicationType,
+		HeaderParentApplicationNamespace, HeaderParentServiceName, HeaderHost,
+		"X-Custom-not-canonical",
+	} {
+		w.Set(k, "v:"+k)
+		assert.Equal(t, "v:"+k, h.Get(k), "Header.Get must find %s", k)
+		_, stored := h[textproto.CanonicalMIMEHeaderKey(k)]
+		assert.True(t, stored, "%s must be stored under its canonical key", k)
+		v, ok := HttpHeaderReader(h).Get(k)
+		assert.True(t, ok)
+		assert.Equal(t, "v:"+k, v)
+	}
+	assert.Len(t, h, 11, "one entry per key, no case duplicates")
+
+	w.Set(HeaderTraceId, "second")
+	assert.Equal(t, []string{"second"}, h[textproto.CanonicalMIMEHeaderKey(HeaderTraceId)],
+		"Set replaces the value like Header.Set, it does not append")
 }
 
 // The headers Inject writes must be readable as a continued trace by the other

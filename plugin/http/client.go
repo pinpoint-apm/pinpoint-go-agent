@@ -29,7 +29,14 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 	// proxy forwarding its inbound headers - that already wrote the context:
 	// does. The returned noop tracer keeps after() from ending the caller's
 	// open event.
-	if req.Header.Get(pinpoint.HeaderTraceId) != "" || req.Header.Get(pinpoint.HeaderSampled) != "" {
+	// Read through HttpHeaderReader rather than Header.Get: it looks the
+	// pre-canonicalized key up directly, where Get canonicalizes
+	// "Pinpoint-TraceID" on every call and allocates doing so.
+	inbound := pinpoint.HttpHeaderReader(req.Header)
+	if v, _ := inbound.Get(pinpoint.HeaderTraceId); v != "" {
+		return pinpoint.NoopTracer()
+	}
+	if v, _ := inbound.Get(pinpoint.HeaderSampled); v != "" {
 		return pinpoint.NoopTracer()
 	}
 
@@ -50,7 +57,9 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 	// a nil header map; net/http rejects such a request with an error, and
 	// the wrapper must not turn that error into a panic.
 	if req.Header != nil {
-		tracer.Inject(req.Header)
+		// HttpHeaderWriter, not the Header itself: Header.Set canonicalizes
+		// each key and allocates twice per non-canonical Pinpoint header.
+		tracer.Inject(pinpoint.HttpHeaderWriter(req.Header))
 	}
 	return tracer
 }

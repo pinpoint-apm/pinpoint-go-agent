@@ -246,10 +246,49 @@ type httpHeaderReader http.Header
 
 func (r httpHeaderReader) Get(key string) (string, bool) {
 	// Keys are stored canonicalized, as net/http.Header.Get looks them up.
-	if v := r[textproto.CanonicalMIMEHeaderKey(key)]; len(v) > 0 {
+	if v := r[canonicalHeaderKey(key)]; len(v) > 0 {
 		return v[0], true
 	}
 	return "", false
+}
+
+// HttpHeaderWriter adapts a net/http.Header to DistributedTracingContextWriter
+// for Inject. Header.Set would do, but seven of the ten Pinpoint header names
+// are not in textproto canonical form and Set canonicalizes its key on every
+// call, allocating twice per header; this writer stores under the same
+// canonical key without that work, so Header.Get still finds every value.
+func HttpHeaderWriter(h http.Header) DistributedTracingContextWriter {
+	return httpHeaderWriter(h)
+}
+
+type httpHeaderWriter http.Header
+
+func (w httpHeaderWriter) Set(key string, value string) {
+	w[canonicalHeaderKey(key)] = []string{value}
+}
+
+// canonicalHeaderKeys holds the Pinpoint header names in canonical form,
+// computed once: CanonicalMIMEHeaderKey takes an allocating slow path for a
+// name that is not already canonical, and most of these are not
+// ("Pinpoint-TraceID", "Pinpoint-pSpanID"). Same idea as the gRPC plugin's
+// pre-lowered keys and pphttp's pre-canonicalized proxy header names.
+var canonicalHeaderKeys = func() map[string]string {
+	m := make(map[string]string)
+	for _, k := range []string{
+		HeaderTraceId, HeaderSpanId, HeaderParentSpanId, HeaderSampled, HeaderFlags,
+		HeaderParentApplicationName, HeaderParentApplicationType,
+		HeaderParentApplicationNamespace, HeaderParentServiceName, HeaderHost,
+	} {
+		m[k] = textproto.CanonicalMIMEHeaderKey(k)
+	}
+	return m
+}()
+
+func canonicalHeaderKey(key string) string {
+	if c, ok := canonicalHeaderKeys[key]; ok {
+		return c
+	}
+	return textproto.CanonicalMIMEHeaderKey(key)
 }
 
 // DistributedTracingContextWriter writes distributed tracing headers to carrier.

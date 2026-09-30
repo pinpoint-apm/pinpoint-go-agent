@@ -19,6 +19,7 @@ package pinpoint
 import (
 	"errors"
 	"math"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -284,6 +285,49 @@ func BenchmarkExtractContinue(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		s.Extract(reader)
 		dropSampledActiveSpan(s) // keep activeSpan balanced
+	}
+}
+
+// BenchmarkExtractContinueHttpHeader is BenchmarkExtractContinue through the
+// net/http.Header carrier the http plugin hands over: the map reader above
+// hides the header key canonicalization HttpHeaderReader has to do.
+func BenchmarkExtractContinueHttpHeader(b *testing.B) {
+	a := benchAgent()
+	stop := startDrain(a)
+	defer stop()
+	h := http.Header{}
+	h.Set(HeaderTraceId, "test-agent^1610000000000^12345")
+	h.Set(HeaderSpanId, "1234567890")
+	h.Set(HeaderParentSpanId, "987654321")
+	h.Set(HeaderFlags, "0")
+	h.Set(HeaderParentApplicationName, "UpstreamApp")
+	h.Set(HeaderParentApplicationType, "1800")
+	h.Set(HeaderHost, "10.0.0.1:8080")
+	reader := HttpHeaderReader(h)
+	s := benchSpan(a)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s.Extract(reader)
+		dropSampledActiveSpan(s)
+	}
+}
+
+// BenchmarkInjectHttpHeader measures Inject into a net/http.Header through
+// HttpHeaderWriter: what every outbound net/http client call pays.
+func BenchmarkInjectHttpHeader(b *testing.B) {
+	a := benchAgent()
+	stop := startDrain(a)
+	defer stop()
+	s := benchSpan(a)
+	s.NewSpanEvent("client")
+	w := HttpHeaderWriter(http.Header{})
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s.Inject(w)
 	}
 }
 
