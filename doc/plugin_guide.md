@@ -132,7 +132,6 @@ the driver name in `sql.Open` and pass a context carrying the tracer to the
 | [plugin/pgxv5](/plugin/pgxv5) | [jackc/pgx/v5](https://github.com/jackc/pgx) | `pgxv5-pinpoint`, or `NewTracer()` for the native pgx API |
 | [plugin/oracle](/plugin/oracle) | [sijms/go-ora/v2](https://github.com/sijms/go-ora) | `oracle-pinpoint` |
 | [plugin/oraclev3](/plugin/oraclev3) | [sijms/go-ora/v3](https://github.com/sijms/go-ora) | `oraclev3-pinpoint` |
-| [plugin/mssql](/plugin/mssql) | [denisenkom/go-mssqldb](https://github.com/denisenkom/go-mssqldb) | `sqlserver-pinpoint` |
 | [plugin/mssql-microsoft](/plugin/mssql-microsoft) | [microsoft/go-mssqldb](https://github.com/microsoft/go-mssqldb) | `mssql-microsoft-pinpoint` |
 | [plugin/gorm](/plugin/gorm) | [go-gorm/gorm](https://github.com/go-gorm/gorm) | `Open` (wraps `gorm.Open`) |
 
@@ -159,7 +158,6 @@ privacy gate on bind values. See [Configuration](config.md#sqltracebindvalue).
 | Plugin package | Instrumented package | Entry point |
 |---|---|---|
 | [plugin/goredis](/plugin/goredis) | [go-redis/redis](https://github.com/go-redis/redis) | `NewClient`, `NewClusterClient` |
-| [plugin/goredisv7](/plugin/goredisv7) | [go-redis/redis/v7](https://github.com/go-redis/redis) | `NewHook`, `NewClusterHook` |
 | [plugin/goredisv8](/plugin/goredisv8) | [go-redis/redis/v8](https://github.com/go-redis/redis) | `NewHook`, `NewClusterHook` |
 | [plugin/goredisv9](/plugin/goredisv9) | [redis/go-redis/v9](https://github.com/redis/go-redis) | `NewHook`, `NewClusterHook` |
 | [plugin/redigo](/plugin/redigo) | [gomodule/redigo](https://github.com/gomodule/redigo) | `Dial`, `DialContext`, `DialURL`, `WithContext` |
@@ -196,8 +194,7 @@ handler.
 
 | Plugin package | Instrumented package | Entry point |
 |---|---|---|
-| [plugin/sarama](/plugin/sarama) | [Shopify/sarama](https://github.com/Shopify/sarama) | producers: `NewSyncProducer`, `NewAsyncProducer`; consumers: `ConsumeMessageContext`, `NewContext`, `WrapPartitionConsumer` |
-| [plugin/sarama-IBM](/plugin/sarama-IBM) | [IBM/sarama](https://github.com/IBM/sarama) | same as above |
+| [plugin/sarama-IBM](/plugin/sarama-IBM) | [IBM/sarama](https://github.com/IBM/sarama) | producers: `NewSyncProducer`, `NewAsyncProducer`; consumers: `ConsumeMessageContext`, `NewContext` |
 | [plugin/confluentkafka](/plugin/confluentkafka) | [confluentinc/confluent-kafka-go](https://github.com/confluentinc/confluent-kafka-go) | producers: `NewProducer`, `ProduceContext`; consumers: `ConsumeMessageContext`, `NewContext` |
 
 A queue is a trace boundary, so it has two halves. The producer records a span
@@ -207,7 +204,7 @@ continues that transaction:
 
 ```go
 // producer, inside a traced request
-producer, _ := ppsarama.NewSyncProducer(brokers, config)
+producer, _ := ppsaramaibm.NewSyncProducer(brokers, config)
 
 ctx := pinpoint.NewContext(context.Background(), tracer)
 partition, offset, err := producer.SendMessageContext(ctx, msg)
@@ -222,9 +219,9 @@ func process(ctx context.Context, msg *sarama.ConsumerMessage) error {
 }
 
 // NewContext carries the broker addresses so the UI can show the Kafka node
-ctx := ppsarama.NewContext(context.Background(), brokers)
+ctx := ppsaramaibm.NewContext(context.Background(), brokers)
 for msg := range pc.Messages() {
-    ppsarama.ConsumeMessageContext(process, ctx, msg)
+    ppsaramaibm.ConsumeMessageContext(process, ctx, msg)
 }
 ```
 

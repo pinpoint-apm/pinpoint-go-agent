@@ -62,6 +62,14 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   that bound a tracer to a producer without being thread-safe (send through
   `SendMessageContext`, `SendMessagesContext` and `InputContext`; the plain
   `SendMessage`, `SendMessages` and `Input` now produce without tracing).
+- **Three plugins for dead upstreams are gone: `plugin/sarama`, `plugin/goredisv7`
+  and `plugin/mssql`.** Shopify/sarama is archived and IBM/sarama is the same
+  module renamed, so `plugin/sarama-IBM` (`ppsaramaibm`) is the sarama plugin:
+  the two were one file under two import paths. go-redis v7 is end-of-life;
+  `plugin/goredisv8` and `plugin/goredisv9` serve the maintained majors.
+  denisenkom/go-mssqldb is deprecated for its fork microsoft/go-mssqldb, so
+  `plugin/mssql-microsoft` is the SQL Server plugin; its driver is registered
+  as `mssql-microsoft-pinpoint`, where `ppmssql` used `sqlserver-pinpoint`.
 - **`plugin/echo` is gone.** It instrumented labstack/echo v3, which is
   end-of-life upstream with an unpatched advisory (GHSA-vfp3-v2gw-7wfq) and no
   fixed v3 release to pin, and its code was a copy of `plugin/echov4`. Use
@@ -197,7 +205,7 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   `NewClient` now calls it. The compile-time instrumentation tool uses it from
   its `memcache.New` hook (agent_changes 22).
 - **`ppsaramaibm.WrapSyncProducer(p, addrs, config)` / `WrapAsyncProducer(p, addrs, config)`**
-  (and the same in `ppsarama`) wrap a producer created elsewhere the way
+  wrap a producer created elsewhere the way
   `NewSyncProducer`/`NewAsyncProducer` wrap the one they create (idempotent);
   those constructors now call them. `config` is the producer's configuration
   (nil means sarama's default); its `Version` decides whether trace headers
@@ -401,8 +409,8 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 - **The sarama producers no longer fail every message below Kafka 0.11.** The
   header writer replaced a nil `Headers` with an empty slice even when nothing
   was injected, and sarama rejects any message with non-nil headers below
-  `V0_11_0_0` - `Config.Version`'s default in the sarama releases `ppsarama`
-  supports. Headers are now written only when injected, and not at all on such a
+  `V0_11_0_0` - `Config.Version`'s default in the sarama releases
+  `ppsaramaibm` supports. Headers are now written only when injected, and not at all on such a
   producer.
 - **The sarama async producer keeps transactions intact.** `CommitTxn` and
   `AbortTxn` went straight to sarama while accepted messages could still sit in

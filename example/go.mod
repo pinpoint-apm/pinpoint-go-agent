@@ -4,7 +4,6 @@ go 1.25.0
 
 require (
 	github.com/IBM/sarama v1.60.2
-	github.com/Shopify/sarama v1.26.4
 	github.com/apache/cassandra-gocql-driver/v2 v2.1.2
 	github.com/beego/beego/v2 v2.0.7
 	github.com/bradfitz/gomemcache v0.0.0-20260422231931-4d751bb6e37c
@@ -16,7 +15,6 @@ require (
 	github.com/go-kratos/kratos/v2 v2.7.3
 	github.com/go-kratos/kratos/v3 v3.0.0
 	github.com/go-redis/redis v6.10.0+incompatible
-	github.com/go-redis/redis/v7 v7.4.1
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/gocql/gocql v1.5.0
 	github.com/gofiber/fiber/v2 v2.52.14
@@ -54,11 +52,8 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/denisenkom/go-mssqldb v0.12.2 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/eapache/go-resiliency v1.7.0 // indirect
-	github.com/eapache/go-xerial-snappy v0.0.0-20180814174437-776d5712da21 // indirect
-	github.com/eapache/queue v1.1.0 // indirect
 	github.com/fasthttp/router v1.5.4 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
@@ -104,7 +99,6 @@ require (
 	github.com/montanaflynn/stats v0.7.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
-	github.com/pierrec/lz4 v2.4.1+incompatible // indirect
 	github.com/pierrec/lz4/v4 v4.1.29 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
@@ -141,10 +135,6 @@ require (
 	golang.org/x/sync v0.22.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	gopkg.in/jcmturner/aescts.v1 v1.0.1 // indirect
-	gopkg.in/jcmturner/dnsutils.v1 v1.0.1 // indirect
-	gopkg.in/jcmturner/gokrb5.v7 v7.5.0 // indirect
-	gopkg.in/jcmturner/rpc.v1 v1.1.0 // indirect
 	modernc.org/b/v2 v2.1.11 // indirect
 )
 
@@ -181,7 +171,6 @@ require (
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv7/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv9/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla/v2 v2.0.0
@@ -193,7 +182,6 @@ require (
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriverv2/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql/v2 v2.0.0
@@ -201,7 +189,6 @@ require (
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/slog/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/zap/v2 v2.0.0
 	github.com/pkg/errors v0.9.1 // indirect
@@ -269,8 +256,6 @@ replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache/v2 => ../plu
 
 replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredis/v2 => ../plugin/goredis
 
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv7/v2 => ../plugin/goredisv7
-
 replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8/v2 => ../plugin/goredisv8
 
 replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv9/v2 => ../plugin/goredisv9
@@ -293,8 +278,6 @@ replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriverv2/v2 => ../
 
 replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft/v2 => ../plugin/mssql-microsoft
 
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql/v2 => ../plugin/mssql
-
 replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle/v2 => ../plugin/oracle
 
 replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3/v2 => ../plugin/oraclev3
@@ -308,8 +291,6 @@ replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo/v2 => ../plugin/
 replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis/v2 => ../plugin/rueidis
 
 replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2 => ../plugin/sarama-IBM
-
-replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama/v2 => ../plugin/sarama
 
 replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/slog/v2 => ../plugin/slog
 

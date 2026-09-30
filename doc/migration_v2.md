@@ -83,6 +83,9 @@ find none started and record nothing. Do not use it to put the migration off.
 | `pplogrus.WithField(tracer)` | removed | `pplogrus.NewField(tracer)` |
 | `ppsarama.ConsumeMessage`, `WrapConsumerMessage`, `NewConsumer`, `WrapPartitionConsumer` (and `ppsaramaibm`) | removed | `ConsumeMessageContext(handler, ctx, msg)` on a raw `sarama` consumer, with `ppsarama.NewContext` carrying the broker addresses |
 | `ppsarama.WithContext(ctx, producer)`, `producer.WithContext(ctx)` (and `ppsaramaibm`) | removed | `SendMessageContext`, `SendMessagesContext`, `InputContext` with the context; `SendMessage`, `SendMessages` and `Input` produce without tracing |
+| `plugin/sarama` (`ppsarama`, Shopify/sarama) | removed | move to IBM/sarama upstream and `plugin/sarama-IBM/v2` (`ppsaramaibm`, the same API) |
+| `plugin/goredisv7` (`ppgoredisv7`) | removed | go-redis v7 is end-of-life: `plugin/goredisv8/v2` or `plugin/goredisv9/v2` |
+| `plugin/mssql` (`ppmssql`, denisenkom/go-mssqldb) | removed | `plugin/mssql-microsoft/v2` with microsoft/go-mssqldb; open with `sql.Open("mssql-microsoft-pinpoint", dsn)` instead of `"sqlserver-pinpoint"` |
 | `plugin/echo` (`ppecho`) | removed | use `plugin/echov4` or `plugin/echov5`: echo v3 is end-of-life upstream with an unpatched advisory |
 
 A carrier of your own - a message queue's headers, say - now tells a key held

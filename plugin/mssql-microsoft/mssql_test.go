@@ -109,9 +109,10 @@ func TestRegisteredDriverInfo(t *testing.T) {
 }
 
 // The documented driver name is the only thing an application refers to, so it
-// has to be the name package init actually registered. It is deliberately not
-// plugin/mssql's "sqlserver-pinpoint": database/sql panics on a duplicate
-// registration if a binary imports both forks.
+// has to be the name package init actually registered. It stays
+// "mssql-microsoft-pinpoint" rather than the "sqlserver-pinpoint" the retired
+// denisenkom plugin used: a binary that still links that v1 plugin would panic
+// in database/sql on the duplicate registration.
 func TestRegisteredDriverName(t *testing.T) {
 	assert.True(t, slices.Contains(sql.Drivers(), driverName),
 		"%s not registered, got %v", driverName, sql.Drivers())
