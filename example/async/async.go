@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"io"
+	"log"
 	"math/rand"
 	"net/http"
 	"os"
@@ -129,7 +130,10 @@ func main() {
 		//phttp.WithHttpServerRecordRespondHeader([]string{"HEADERS-ALL"}),
 	}
 	c, _ := pinpoint.NewConfig(opts...)
-	agent, _ := pinpoint.NewAgent(c)
+	agent, err := pinpoint.NewAgent(c)
+	if err != nil {
+		log.Printf("pinpoint agent start failed: %v", err)
+	}
 	defer agent.Shutdown()
 
 	http.HandleFunc("/async_chan", pphttp.WrapHandlerFunc(asyncWithChan))

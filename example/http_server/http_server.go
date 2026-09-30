@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"time"
 
@@ -71,7 +72,10 @@ func main() {
 		pinpoint.WithCollectorHost("localhost"),
 	}
 	c, _ := pinpoint.NewConfig(opts...)
-	agent, _ := pinpoint.NewAgent(c)
+	agent, err := pinpoint.NewAgent(c)
+	if err != nil {
+		log.Printf("pinpoint agent start failed: %v", err)
+	}
 	defer agent.Shutdown()
 
 	server := http.Server{
