@@ -69,7 +69,7 @@ func Test_ConsumeMessageContext(t *testing.T) {
 	defer producerTracer.EndSpan()
 
 	msg := consumed("widgets", 1, 7)
-	producerTracer.Inject(&headerWriter{msg})
+	producerTracer.Inject(&headerWriter{msg: msg})
 
 	want := errors.New("handler failed")
 	var got pinpoint.Tracer

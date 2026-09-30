@@ -171,7 +171,7 @@ func Test_isNested(t *testing.T) {
 // A header written with an empty value is present, unlike one never written.
 func Test_headerReader(t *testing.T) {
 	msg := &kafka.Message{}
-	w := &headerWriter{msg}
+	w := &headerWriter{msg: msg}
 	w.Set(pinpoint.HeaderTraceId, "txid^1^1")
 	w.Set(pinpoint.HeaderParentSpanId, "")
 

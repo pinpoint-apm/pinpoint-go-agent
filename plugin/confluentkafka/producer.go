@@ -105,7 +105,7 @@ func newProducerTracer(tracer pinpoint.Tracer, broker string, msg *kafka.Message
 	se.SetServiceType(pinpoint.ServiceTypeKafkaClient)
 	se.Annotations().AppendString(pinpoint.AnnotationKafkaTopic, topicOf(msg))
 	se.SetDestination(broker)
-	tracer.Inject(&headerWriter{msg})
+	tracer.Inject(&headerWriter{msg: msg})
 	return tracer
 }
 
@@ -124,9 +124,21 @@ func isNested(msg *kafka.Message) bool {
 
 type headerWriter struct {
 	msg *kafka.Message
+	// grown is set once the slice was replaced for the injected headers.
+	grown bool
 }
 
+// Set appends the header into a slice of the message's own: the first write
+// copies the headers into a new array, so nothing lands in spare capacity the
+// application's slice may share with another message.
 func (w *headerWriter) Set(key string, value string) {
+	if !w.grown {
+		const injectedHeaders = 8
+		grown := make([]kafka.Header, len(w.msg.Headers), len(w.msg.Headers)+injectedHeaders)
+		copy(grown, w.msg.Headers)
+		w.msg.Headers = grown
+		w.grown = true
+	}
 	w.msg.Headers = append(w.msg.Headers, kafka.Header{Key: key, Value: []byte(value)})
 }
 
