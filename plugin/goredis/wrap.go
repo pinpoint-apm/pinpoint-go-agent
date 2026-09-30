@@ -26,11 +26,18 @@ import (
 type Client struct {
 	*redis.Client
 	endpoint string
+	// base is the client as NewClient made it, before any WithContext. A copy
+	// is always derived from it: go-redis copies the process wrappers along
+	// with the client, so deriving from a copy stacked another wrapper on
+	// top and recorded a second event per command for each WithContext in
+	// the chain.
+	base *redis.Client
 }
 
 // NewClient returns a new Client ready to instrument.
 func NewClient(opt *redis.Options) *Client {
-	return &Client{Client: redis.NewClient(opt), endpoint: opt.Addr}
+	c := redis.NewClient(opt)
+	return &Client{Client: c, endpoint: opt.Addr, base: c}
 }
 
 // WithContext returns a copy of the client bound to the given context.
@@ -39,7 +46,11 @@ func NewClient(opt *redis.Options) *Client {
 // concurrent requests, and rebinding it in place both races the field write
 // and records one request's commands on another request's tracer.
 func (c *Client) WithContext(ctx context.Context) *Client {
-	copied := &Client{Client: c.Client.WithContext(ctx), endpoint: c.endpoint}
+	base := c.base
+	if base == nil { // a Client built as a struct literal
+		base = c.Client
+	}
+	copied := &Client{Client: base.WithContext(ctx), endpoint: c.endpoint, base: base}
 	copied.WrapProcess(process(ctx, c.endpoint))
 	copied.WrapProcessPipeline(processPipeline(ctx, c.endpoint))
 	return copied
@@ -49,19 +60,24 @@ func (c *Client) WithContext(ctx context.Context) *Client {
 type ClusterClient struct {
 	*redis.ClusterClient
 	endpoint string
+	base     *redis.ClusterClient // see Client.base
 }
 
 // NewClusterClient returns a new ClusterClient ready to instrument.
 func NewClusterClient(opt *redis.ClusterOptions) *ClusterClient {
-	endpoint := strings.Join(opt.Addrs, ",")
-	return &ClusterClient{ClusterClient: redis.NewClusterClient(opt), endpoint: endpoint}
+	c := redis.NewClusterClient(opt)
+	return &ClusterClient{ClusterClient: c, endpoint: strings.Join(opt.Addrs, ","), base: c}
 }
 
 // WithContext returns a copy of the client bound to the given context.
 // It is possible to trace only when the given context contains a pinpoint.Tracer.
 // The receiver is not modified, for the same reason as Client.WithContext.
 func (c *ClusterClient) WithContext(ctx context.Context) *ClusterClient {
-	copied := &ClusterClient{ClusterClient: c.ClusterClient.WithContext(ctx), endpoint: c.endpoint}
+	base := c.base
+	if base == nil {
+		base = c.ClusterClient
+	}
+	copied := &ClusterClient{ClusterClient: base.WithContext(ctx), endpoint: c.endpoint, base: base}
 	copied.WrapProcess(process(ctx, c.endpoint))
 	copied.WrapProcessPipeline(processPipeline(ctx, c.endpoint))
 	return copied
