@@ -16,6 +16,9 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
@@ -82,7 +85,7 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func dslString(req *http.Request) (string, error) {
 	if req.URL.RawQuery != "" {
-		if dsl := req.URL.Query().Get("q"); dsl != "" {
+		if dsl := queryParam(req.URL.RawQuery, "q"); dsl != "" {
 			return dsl, nil
 		}
 	}
@@ -120,9 +123,33 @@ func getBodyFromCopy(req *http.Request) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(body, maxBodyRead))
 }
 
+// queryParam returns the first value of key in rawQuery without building the
+// whole url.Values map: filter_path, refresh and routing ride on most calls,
+// and every sampled request paid the map for one lookup.
+func queryParam(rawQuery, key string) string {
+	for rawQuery != "" {
+		var pair string
+		pair, rawQuery, _ = strings.Cut(rawQuery, "&")
+		k, v, _ := strings.Cut(pair, "=")
+		if k != key {
+			continue
+		}
+		if value, err := url.QueryUnescape(v); err == nil {
+			return value
+		}
+		return ""
+	}
+	return ""
+}
+
+// gzipReaders keeps the inflaters: gzip.NewReader allocates a 32 KiB window
+// and the huffman tables per call, for at most maxBodyRead bytes of output.
+var gzipReaders = sync.Pool{New: func() any { return new(gzip.Reader) }}
+
 func unzip(dsl []byte) ([]byte, error) {
-	r, err := gzip.NewReader(bytes.NewReader(dsl))
-	if err != nil {
+	r := gzipReaders.Get().(*gzip.Reader)
+	defer gzipReaders.Put(r)
+	if err := r.Reset(bytes.NewReader(dsl)); err != nil {
 		return dsl, err
 	}
 	defer r.Close()
