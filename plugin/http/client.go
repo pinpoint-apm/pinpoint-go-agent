@@ -40,15 +40,16 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 		return pinpoint.NoopTracer()
 	}
 
+	// One lookup: each SpanEvent() call takes the event stack lock.
 	tracer.NewSpanEvent(operationName)
-	tracer.SpanEvent().SetEndPoint(req.Host)
-	tracer.SpanEvent().SetDestination(req.Host)
-	tracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeGoHttpClient)
+	se := tracer.SpanEvent()
+	se.SetEndPoint(req.Host)
+	se.SetDestination(req.Host)
+	se.SetServiceType(pinpoint.ServiceTypeGoHttpClient)
 
 	if tracer.IsSampled() {
-		tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHttpUrl, ClientUrl(req.Method, req.URL))
-
-		a := tracer.SpanEvent().Annotations()
+		a := se.Annotations()
+		a.AppendString(pinpoint.AnnotationHttpUrl, ClientUrl(req.Method, req.URL))
 		RecordClientHttpRequestHeader(a, header{req.Header})
 		RecordClientHttpCookie(a, cookie{req})
 	}
@@ -76,9 +77,10 @@ func after(tracer pinpoint.Tracer, resp *http.Response, err error) {
 	}
 	defer tracer.EndSpanEvent()
 
-	tracer.SpanEvent().SetError(err)
+	se := tracer.SpanEvent()
+	se.SetError(err)
 	if resp != nil && tracer.IsSampled() {
-		a := tracer.SpanEvent().Annotations()
+		a := se.Annotations()
 		a.AppendInt(pinpoint.AnnotationHttpStatusCode, int32(resp.StatusCode))
 		RecordClientHttpResponseHeader(a, header{resp.Header})
 	}

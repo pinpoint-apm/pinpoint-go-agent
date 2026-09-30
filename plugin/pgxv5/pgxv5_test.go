@@ -38,7 +38,7 @@ func TestWriteArgPreservesFormatting(t *testing.T) {
 		argStringer("value"),
 	}
 
-	var b bytes.Buffer
+	var b strings.Builder
 	for i, value := range values {
 		require.True(t, writeArg(&b, i, value, len(values)-1, 4096), "writeArg stopped at value %d", i)
 	}
@@ -60,7 +60,7 @@ func TestWriteArgTruncatesOversizedValues(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			full := fmt.Sprint(test.value)
-			var b bytes.Buffer
+			var b strings.Builder
 			require.True(t, writeArg(&b, 0, test.value, 0, 1024),
 				"writeArg ended the list on a value it only abbreviated")
 			// The marker reports the value's own length and lands past the
@@ -121,7 +121,7 @@ func TestWriteArgTruncatesAtBoundary(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			var b bytes.Buffer
+			var b strings.Builder
 			more := true
 			for i, v := range test.values {
 				if more = writeArg(&b, i, v, len(test.values)-1, test.maxSize); !more {
@@ -148,7 +148,7 @@ func BenchmarkWriteArgLarge(b *testing.B) {
 			b.SetBytes(1 << 20)
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				var out bytes.Buffer
+				var out strings.Builder
 				writeArg(&out, 0, benchmark.value, 0, 1024)
 				benchmarkArgSink = out.String()
 			}
@@ -173,7 +173,7 @@ func TestWriteArgLimitsLargeValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var b bytes.Buffer
+			var b strings.Builder
 			more := writeArg(&b, 0, tt.value, 0, maxSize)
 
 			require.True(t, more, "writeArg ended the list on a value it only abbreviated")
@@ -191,7 +191,7 @@ func TestWriteArgLimitsLargeValues(t *testing.T) {
 
 func TestWriteArgLimitsMultipleValues(t *testing.T) {
 	values := []any{"0123456789", "abcdefgh", "xyz"}
-	var b bytes.Buffer
+	var b strings.Builder
 	for i, value := range values {
 		if !writeArg(&b, i, value, len(values)-1, 20) {
 			break

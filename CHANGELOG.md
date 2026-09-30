@@ -61,6 +61,14 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   `pinpoint.HttpHeaderWriter` is the `Inject` carrier for an `http.Header`,
   which `pphttp`'s client uses. `HttpHeaderReader` and `Header.Get` read the
   same keys as before.
+- Smaller request-path savings: a sampled span is one allocation instead of
+  four (its event stack and first event chunk are inline), `NewSpanEvent` no
+  longer takes `spanEventLock` on top of the stack's own lock, the SQL
+  normalizer reserves its parameter buffer once instead of growing it byte by
+  byte, the bind value list is built in a `strings.Builder` (no copy on
+  `String()`; `pppgxv5` too), `pphttp`'s client and `ppgohbase` look the span
+  event up once per call, `pphttp` loads its config once per request phase,
+  and `pphttp.WrapResponseWriter` is one allocation instead of two.
 - **Default behavior change.** The collector channel now uses the gRPC `dns`
   resolver (`dns:///host:port`) instead of the `passthrough` scheme. A collector
   host with several A records is resolved into the channel's full address list,

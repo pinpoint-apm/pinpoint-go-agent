@@ -1,7 +1,6 @@
 package pinpoint
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -216,7 +215,7 @@ func Test_spanEvent_SetSQLLeavesDriverBindValuesAlone(t *testing.T) {
 		strings.Repeat("b", 100*limit),
 		"c",
 	}
-	var b bytes.Buffer
+	var b strings.Builder
 	for i, v := range values {
 		if !writeBindValue(&b, i, v, len(values)-1, limit) {
 			break

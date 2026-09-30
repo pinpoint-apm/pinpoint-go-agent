@@ -223,9 +223,7 @@ func (s *sqlNormalizer) consumeMultiLineComment(lead byte) {
 func (s *sqlNormalizer) consumeCharLiteral() {
 	s.isChanged = true
 	s.materialize(s.pos) // the opening quote is already accounted for
-	if s.param.Len() > 0 {
-		s.param.WriteByte(',')
-	}
+	s.startParam()
 
 	for s.pos < len(s.sql) {
 		ch := s.sql[s.pos]
@@ -256,9 +254,7 @@ func (s *sqlNormalizer) consumeCharLiteral() {
 func (s *sqlNormalizer) consumeNumberLiteral(first byte) {
 	s.isChanged = true
 	s.materialize(s.pos - 1) // first is read, not written
-	if s.param.Len() > 0 {
-		s.param.WriteByte(',')
-	}
+	s.startParam()
 	s.writeParamIndex()
 	s.output.WriteByte('#')
 	s.param.WriteByte(first)
@@ -271,6 +267,21 @@ func (s *sqlNormalizer) consumeNumberLiteral(first byte) {
 		s.param.WriteByte(ch)
 		s.pos++
 	}
+}
+
+// paramInitialCap is what the parameter buffer reserves at its first literal.
+// Grown byte by byte from nothing it doubled through 8, 16 and 32 bytes for a
+// typical WHERE clause, three allocations where one holds the whole list.
+const paramInitialCap = 64
+
+// startParam separates the next parameter from the previous one, reserving
+// the buffer on the first.
+func (s *sqlNormalizer) startParam() {
+	if s.param.Len() > 0 {
+		s.param.WriteByte(',')
+		return
+	}
+	s.param.Grow(paramInitialCap)
 }
 
 // lookahead reports whether the next byte is expected, without consuming it.

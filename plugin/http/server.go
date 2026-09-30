@@ -63,7 +63,10 @@ func NewHttpServerTracer(req *http.Request, operation string) (tracer pinpoint.T
 // a net/http request. Framework adapters can make the sampling decision from
 // their native request before converting it for sampled-request annotations.
 func NewHttpServerTracerWithReader(method, path, operation string, reader pinpoint.DistributedTracingContextReader) pinpoint.Tracer {
-	if isExcludedUrl(path) || isExcludedMethod(method) {
+	// The config is loaded once per call site: httpCfg is three atomic loads,
+	// and one load also keeps a reload from splitting a request across two
+	// generations of the filters.
+	if cfg := httpCfg(); cfg.srvUrl.isFiltered(path) || cfg.srvMethod.isExcludedMethod(method) {
 		return pinpoint.NoopTracer()
 	}
 	return pinpoint.GetAgent().NewSpanTracerWithReader(operation, path, reader)
@@ -91,10 +94,10 @@ func RecordHttpServerRequestWithReader(tracer pinpoint.Tracer, host string, remo
 	span.SetRemoteAddress(resolveRemoteAddr(h, remoteAddr, cfg.srvRealIpHeaders, cfg.srvRealIpEmptyValue))
 
 	a := span.Annotations()
-	recordServerHttpRequestHeader(a, h)
-	recordServerHttpCookie(a, c)
-	if proxyHeaderEnabled() {
-		setProxyHeader(a, h)
+	cfg.srvReqHeader.recordHeader(a, pinpoint.AnnotationHttpRequestHeader, h)
+	cfg.srvCookie.recordCookie(a, c)
+	if cfg.srvProxyHeader {
+		setProxyHeaderNames(a, h, cfg.srvProxyUserHeaders)
 	}
 }
 
@@ -296,6 +299,12 @@ type proxyRequest struct {
 // that passed through more than one proxy gets one annotation per hop rather
 // than only the first match.
 func setProxyHeader(a pinpoint.Annotation, h Header) {
+	setProxyHeaderNames(a, h, proxyUserHeaderNames())
+}
+
+// setProxyHeaderNames is setProxyHeader with the configured user header names
+// passed in, for a caller that already loaded the config.
+func setProxyHeaderNames(a pinpoint.Annotation, h Header, userHeaders []string) {
 	if v := headerFirst(h, proxyHeaderApache); v != "" {
 		appendProxyHeader(a, proxyTypeApache, parseProxyApache(v))
 	}
@@ -305,7 +314,7 @@ func setProxyHeader(a pinpoint.Annotation, h Header) {
 	if v := headerFirst(h, proxyHeaderApp); v != "" {
 		appendProxyHeader(a, proxyTypeApp, parseProxyApp(v))
 	}
-	for _, name := range proxyUserHeaderNames() {
+	for _, name := range userHeaders {
 		if v := headerFirst(h, name); v != "" {
 			appendProxyHeader(a, proxyTypeUser, parseProxyUser(name, v))
 		}
@@ -516,8 +525,9 @@ func RecordHttpServerResponseWithReader(tracer pinpoint.Tracer, status int, h He
 	// owns the span; both layers see the same status through the wrapped writer.
 	if tracer.IsSampled() && !pinpoint.IsNestedTracer(tracer) {
 		span := tracer.Span()
-		recordServerHttpStatus(span, status)
-		recordServerHttpResponseHeader(span.Annotations(), h)
+		cfg := httpCfg()
+		recordServerHttpStatus(cfg, span, status)
+		cfg.srvResHeader.recordHeader(span.Annotations(), pinpoint.AnnotationHttpResponseHeader, h)
 	}
 }
 
@@ -620,36 +630,40 @@ type responseWriter struct {
 // WebSocket upgrades (http.Hijacker). io.ReaderFrom is deliberately left
 // out - preserving it would double the combinations and it only costs the
 // sendfile fast path in io.Copy(w, f); add it here if that ever matters.
+//
+// Each wrapper embeds responseWriter by value and is returned as a pointer,
+// so wrapping is one allocation: embedding a *responseWriter made it two, the
+// recorder plus the wrapper boxed into the interface.
 type (
 	responseWriterF struct {
-		*responseWriter
+		responseWriter
 		http.Flusher
 	}
 	responseWriterH struct {
-		*responseWriter
+		responseWriter
 		http.Hijacker
 	}
 	responseWriterP struct {
-		*responseWriter
+		responseWriter
 		http.Pusher
 	}
 	responseWriterFH struct {
-		*responseWriter
+		responseWriter
 		http.Flusher
 		http.Hijacker
 	}
 	responseWriterFP struct {
-		*responseWriter
+		responseWriter
 		http.Flusher
 		http.Pusher
 	}
 	responseWriterHP struct {
-		*responseWriter
+		responseWriter
 		http.Hijacker
 		http.Pusher
 	}
 	responseWriterFHP struct {
-		*responseWriter
+		responseWriter
 		http.Flusher
 		http.Hijacker
 		http.Pusher
@@ -659,28 +673,28 @@ type (
 // WrapResponseWriter records the response status while preserving exactly the
 // optional HTTP interfaces implemented by w.
 func WrapResponseWriter(w http.ResponseWriter, status *int) http.ResponseWriter {
-	rw := &responseWriter{ResponseWriter: w, status: status}
+	rw := responseWriter{ResponseWriter: w, status: status}
 	f, canFlush := w.(http.Flusher)
 	h, canHijack := w.(http.Hijacker)
 	p, canPush := w.(http.Pusher)
 
 	switch {
 	case canFlush && canHijack && canPush:
-		return responseWriterFHP{rw, f, h, p}
+		return &responseWriterFHP{rw, f, h, p}
 	case canFlush && canHijack:
-		return responseWriterFH{rw, f, h}
+		return &responseWriterFH{rw, f, h}
 	case canFlush && canPush:
-		return responseWriterFP{rw, f, p}
+		return &responseWriterFP{rw, f, p}
 	case canHijack && canPush:
-		return responseWriterHP{rw, h, p}
+		return &responseWriterHP{rw, h, p}
 	case canFlush:
-		return responseWriterF{rw, f}
+		return &responseWriterF{rw, f}
 	case canHijack:
-		return responseWriterH{rw, h}
+		return &responseWriterH{rw, h}
 	case canPush:
-		return responseWriterP{rw, p}
+		return &responseWriterP{rw, p}
 	default:
-		return rw
+		return &rw
 	}
 }
 
@@ -711,10 +725,10 @@ func (w *responseWriter) flush(f http.Flusher) {
 	f.Flush()
 }
 
-func (w responseWriterF) Flush()   { w.responseWriter.flush(w.Flusher) }
-func (w responseWriterFH) Flush()  { w.responseWriter.flush(w.Flusher) }
-func (w responseWriterFP) Flush()  { w.responseWriter.flush(w.Flusher) }
-func (w responseWriterFHP) Flush() { w.responseWriter.flush(w.Flusher) }
+func (w *responseWriterF) Flush()   { w.responseWriter.flush(w.Flusher) }
+func (w *responseWriterFH) Flush()  { w.responseWriter.flush(w.Flusher) }
+func (w *responseWriterFP) Flush()  { w.responseWriter.flush(w.Flusher) }
+func (w *responseWriterFHP) Flush() { w.responseWriter.flush(w.Flusher) }
 
 // Unwrap lets http.ResponseController reach the underlying writer.
 func (w *responseWriter) Unwrap() http.ResponseWriter {

@@ -49,10 +49,11 @@ func (c *Client) trace(op string, ctx context.Context) pinpoint.Tracer {
 		return nil
 	}
 
-	tracer.NewSpanEvent(op)
-	tracer.SpanEvent().SetServiceType(pinpoint.ServiceTypeHbaseClient)
-	tracer.SpanEvent().SetDestination("HBASE")
-	tracer.SpanEvent().SetEndPoint(c.host)
+	// One lookup: each SpanEvent() call takes the event stack lock.
+	se := tracer.NewSpanEvent(op).SpanEvent()
+	se.SetServiceType(pinpoint.ServiceTypeHbaseClient)
+	se.SetDestination("HBASE")
+	se.SetEndPoint(c.host)
 
 	return tracer
 }

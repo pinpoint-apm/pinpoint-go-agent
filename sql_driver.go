@@ -1,13 +1,13 @@
 package pinpoint
 
 import (
-	"bytes"
 	"context"
 	"database/sql/driver"
 	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -284,7 +284,7 @@ func (c *sqlConn) namedValueToString(named []driver.NamedValue) string {
 		return ""
 	}
 
-	var b bytes.Buffer
+	var b strings.Builder
 	numComma := len(named) - 1
 	for i, param := range named {
 		if !writeBindValue(&b, i, param.Value, numComma, cfg.sqlMaxBindValueSize) {
@@ -300,7 +300,7 @@ func (c *sqlConn) valueToString(values []driver.Value) string {
 		return ""
 	}
 
-	var b bytes.Buffer
+	var b strings.Builder
 	numComma := len(values) - 1
 	for i, v := range values {
 		if !writeBindValue(&b, i, v, numComma, cfg.sqlMaxBindValueSize) {
@@ -310,7 +310,7 @@ func (c *sqlConn) valueToString(values []driver.Value) string {
 	return b.String()
 }
 
-func writeBindValue(b *bytes.Buffer, index int, value interface{}, numComma int, maxSize int) bool {
+func writeBindValue(b *strings.Builder, index int, value interface{}, numComma int, maxSize int) bool {
 	if maxSize <= 0 {
 		return false
 	}
@@ -338,7 +338,7 @@ func writeBindValue(b *bytes.Buffer, index int, value interface{}, numComma int,
 // last values as stubs, and it is a value's own head that a reader needs to
 // recognize it by. maxBindValueAnnotationSize is what the span side reserves for
 // the result.
-func writeAbbreviatedBindValue(b *bytes.Buffer, value interface{}, maxSize int) {
+func writeAbbreviatedBindValue(b *strings.Builder, value interface{}, maxSize int) {
 	if value, ok := value.(string); ok {
 		writeAbbreviated(b, value, len(value), maxSize)
 		return
@@ -398,7 +398,7 @@ func writeAbbreviatedBindValue(b *bytes.Buffer, value interface{}, maxSize int) 
 // is cut anyway. The cut is marked with the number of bytes in the slice, which
 // is the fact a reader wants; counting the characters of its decimal rendering
 // would mean walking every element the cut exists to avoid formatting.
-func writeAbbreviatedByteSlice(b *bytes.Buffer, v []byte, maxSize int) {
+func writeAbbreviatedByteSlice(b *strings.Builder, v []byte, maxSize int) {
 	var scratch [128]byte
 	buf := append(scratch[:0], '[')
 	for i, e := range v {
@@ -424,7 +424,7 @@ func writeAbbreviatedByteSlice(b *bytes.Buffer, v []byte, maxSize int) {
 // writeAbbreviatedBytes is writeAbbreviated for a value formatted into a
 // scratch buffer: the buffer holds the whole value, and every byte of it is
 // ASCII, so the cut needs no rune boundary.
-func writeAbbreviatedBytes(b *bytes.Buffer, value []byte, maxSize int) {
+func writeAbbreviatedBytes(b *strings.Builder, value []byte, maxSize int) {
 	if len(value) <= maxSize {
 		b.Write(value)
 		return
@@ -438,7 +438,7 @@ func writeAbbreviatedBytes(b *bytes.Buffer, value []byte, maxSize int) {
 // being cut: an array reports how many elements it holds. The cut lands on a
 // rune boundary: protobuf rejects invalid UTF-8 string fields at marshal time,
 // so a mid-rune cut would fail the whole span carrying the annotation.
-func writeAbbreviated(b *bytes.Buffer, value string, valueLen int, maxSize int) {
+func writeAbbreviated(b *strings.Builder, value string, valueLen int, maxSize int) {
 	if len(value) <= maxSize {
 		b.WriteString(value)
 		return
@@ -463,11 +463,11 @@ func writeAbbreviated(b *bytes.Buffer, value string, valueLen int, maxSize int) 
 // Both land past the limit rather than cutting back over what is written:
 // making room inside a limit shorter than the marker would drop the marker
 // itself and leave the truncation with no trace at all.
-func writeBindLengthMarker(b *bytes.Buffer, valueLen int) {
+func writeBindLengthMarker(b *strings.Builder, valueLen int) {
 	b.WriteString("...(" + strconv.Itoa(valueLen) + ")")
 }
 
-func writeBindCountMarker(b *bytes.Buffer, numValues int) {
+func writeBindCountMarker(b *strings.Builder, numValues int) {
 	b.WriteString("...(" + strconv.Itoa(numValues) + ")")
 }
 

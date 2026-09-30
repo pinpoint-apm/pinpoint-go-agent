@@ -76,7 +76,7 @@ func Test_writeBindValue_PreservesFormatting(t *testing.T) {
 		bindStringer("value"),
 	}
 
-	var b bytes.Buffer
+	var b strings.Builder
 	for i, value := range values {
 		assert.True(t, writeBindValue(&b, i, value, len(values)-1, 4096))
 	}
@@ -92,7 +92,7 @@ func Test_writeBindValue_PreservesFormatting(t *testing.T) {
 // value was - the byte count a reader is actually after. The list itself is
 // not cut short here: it has no further value to write.
 func Test_writeBindValue_TruncatesOversizedValue(t *testing.T) {
-	var b bytes.Buffer
+	var b strings.Builder
 	more := writeBindValue(&b, 0, strings.Repeat("x", 5000), 0, 1024)
 
 	assert.True(t, more)
@@ -116,7 +116,7 @@ func Test_writeBindValue_LimitsLargeValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var b bytes.Buffer
+			var b strings.Builder
 			more := writeBindValue(&b, 0, tt.value, 0, maxSize)
 
 			assert.True(t, more)
@@ -131,7 +131,7 @@ func Test_writeBindValue_LimitsLargeValues(t *testing.T) {
 
 func Test_writeBindValue_LimitsMultipleValues(t *testing.T) {
 	values := []interface{}{"0123456789", "abcdefgh", "xyz"}
-	var b bytes.Buffer
+	var b strings.Builder
 	for i, value := range values {
 		if !writeBindValue(&b, i, value, len(values)-1, 20) {
 			break
@@ -147,7 +147,7 @@ func Test_writeBindValue_TruncatesOversizedBytes(t *testing.T) {
 	value := bytes.Repeat([]byte{255}, 5000)
 	want := fmt.Sprint(value)
 
-	var b bytes.Buffer
+	var b strings.Builder
 	more := writeBindValue(&b, 0, value, 0, 1024)
 
 	assert.True(t, more)
@@ -203,7 +203,7 @@ func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var b bytes.Buffer
+			var b strings.Builder
 			more := true
 			for i, v := range tt.values {
 				if more = writeBindValue(&b, i, v, len(tt.values)-1, tt.maxSize); !more {
@@ -235,7 +235,7 @@ func Test_writeBindValue_MatchesJavaBindValueJoin(t *testing.T) {
 		{name: "tracing off", values: []interface{}{"1234"}, maxSize: 0, want: ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			var b bytes.Buffer
+			var b strings.Builder
 			for i, v := range tt.values {
 				if !writeBindValue(&b, i, v, len(tt.values)-1, tt.maxSize) {
 					break
@@ -260,7 +260,7 @@ func Benchmark_writeBindValue_Large(b *testing.B) {
 			b.SetBytes(1 << 20)
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				var out bytes.Buffer
+				var out strings.Builder
 				writeBindValue(&out, 0, benchmark.value, 0, 1024)
 				benchmarkBindValueSink = out.String()
 			}
@@ -460,14 +460,21 @@ func Test_sqlConn_UsesLiveConfig(t *testing.T) {
 // pins the output; this pins the cost.
 func Test_writeBindValue_DriverValuesDoNotAllocate(t *testing.T) {
 	values := []interface{}{nil, int64(-42), float64(1.25), true, []byte{0, 1, 127, 255}, "text"}
-	var b bytes.Buffer
-	b.Grow(1024)
-	allocs := testing.AllocsPerRun(100, func() {
-		b.Reset()
+	write := func(b *strings.Builder) {
 		for i, value := range values {
-			writeBindValue(&b, i, value, len(values)-1, 1024)
+			writeBindValue(b, i, value, len(values)-1, 1024)
 		}
-	})
-	assert.Equal(t, 0.0, allocs)
+	}
+
+	var b strings.Builder
+	write(&b)
 	assert.Equal(t, "<nil>, -42, 1.25, true, [0 1 127 255], text", b.String())
+
+	// strings.Builder.Reset drops its buffer (the string handed out may still
+	// reference it), so the runs append to one builder grown up front instead
+	// of resetting it: what is measured is the writers, not the buffer.
+	var runs strings.Builder
+	runs.Grow(101 * (b.Len() + 1))
+	allocs := testing.AllocsPerRun(100, func() { write(&runs) })
+	assert.Equal(t, 0.0, allocs)
 }

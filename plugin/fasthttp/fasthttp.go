@@ -186,8 +186,8 @@ type HeaderReader struct {
 // set to "" as an empty slice or as a nil one depending on whether the
 // header's slot was reused, so a nil check on Peek reports the same header as
 // present on one request and absent on the next. PeekAll returns one entry per
-// stored header either way. It allocates that slice; the tracing context asks
-// on the header decision this exists to get right.
+// stored header either way, in a slice the RequestHeader keeps and reuses
+// across calls, so the lookup allocates nothing once that slice has grown.
 func (h HeaderReader) Get(key string) (string, bool) {
 	if v := h.Hdr.PeekAll(key); len(v) > 0 {
 		return string(v[0]), true

@@ -90,8 +90,9 @@ func startDrain(a *agent) (stop func()) {
 }
 
 // BenchmarkNewSampledSpan measures the per-request fixed cost of allocating a
-// sampled span: the span struct, eventStack, spanEvents/errorChains slices, plus
-// the cacheSpanApi lookup for the entry-point operation.
+// sampled span: the span struct (which carries the eventStack buffer and the
+// first event chunk inline), plus the cacheSpanApi lookup for the entry-point
+// operation.
 func BenchmarkNewSampledSpan(b *testing.B) {
 	a := benchAgent()
 	stop := startDrain(a)

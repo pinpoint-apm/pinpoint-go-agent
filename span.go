@@ -146,7 +146,7 @@ type span struct {
 	// stored: the store is gated by atcStreamCount at start, and a viewer that
 	// attached or left in between makes the count at end time no guide.
 	realTimeTracked atomic.Bool
-	eventStack      *stack
+	eventStack      stack
 	urlStat         *UrlStatEntry
 	errorChains     []*exception
 	errorChainsLock sync.Mutex
@@ -172,6 +172,15 @@ type span struct {
 	// which has no error field, so only the mask moves to the root: the error
 	// string and the exception chain stay on the recording span.
 	traceRoot *span
+
+	// stackBuf and chunkBuf back eventStack and the first event chunk, so a
+	// sampled span is one allocation instead of four (span, stack, its buffer,
+	// the chunk slice). A call stack deeper than stackBuf or a chunk larger
+	// than chunkBuf grows onto the heap as any slice does; the chunk cut hands
+	// chunkBuf to the sender and allocates the next chunk, which is fine since
+	// the chunk keeps the span alive anyway.
+	stackBuf [defaultEventStackDepth]*spanEvent
+	chunkBuf [defaultEventChunkSize]*spanEvent
 }
 
 // root returns the span carrying the trace-wide error mask and failure flag.
@@ -239,7 +248,7 @@ func nextSpanId(spanId int64, parentSpanId int64) int64 {
 // itself: the two always travel together, and the span keeps that snapshot for
 // its whole life.
 func defaultSpan(agent *agent) *span {
-	span := span{}
+	span := &span{}
 
 	span.agent = agent
 	span.cfg = agent.config.load()
@@ -254,12 +263,12 @@ func defaultSpan(agent *agent) *span {
 	span.startTime = time.Now()
 	span.goroutineId.Store(-1)
 	span.asyncId = noneAsyncId
-	span.eventStack = newStack()
-	span.spanEvents = make([]*spanEvent, 0, eventChunkCap(span.cfg))
+	span.eventStack.buf = span.stackBuf[:0]
+	span.spanEvents = span.chunkBuf[:0]
 	span.errorChains = make([]*exception, 0)
-	span.overflowSe.parent = &span
+	span.overflowSe.parent = span
 
-	return &span
+	return span
 }
 
 func newSampledSpan(agent *agent, operation string, rpcName string) *span {
@@ -696,12 +705,10 @@ func (span *span) releaseEventPosition(sequence int32) {
 	span.eventSequence.CompareAndSwap(sequence+1, sequence)
 }
 
+// appendSpanEvent pushes the event: the counters were advanced by the
+// reserveEventPosition the event was built with. The stack has its own lock
+// and nothing reads it under spanEventLock, so that lock is not taken here.
 func (span *span) appendSpanEvent(se *spanEvent) {
-	span.spanEventLock.Lock()
-	defer span.spanEventLock.Unlock()
-
-	// Push only: the counters were advanced by the reserveEventPosition the
-	// event was built with.
 	span.eventStack.push(se)
 }
 
@@ -1142,7 +1149,8 @@ func (span *span) newEventChunk(final bool) *spanChunk {
 // eventChunkCap is what a span preallocates for its next chunk: the chunk
 // size, but no more than the default's, since the cut is decided by length
 // (appendEndedSpanEvent) and most spans end far below a large configured
-// size - which every sampled request would otherwise allocate up front.
+// size - which every sampled request would otherwise allocate up front. The
+// first chunk needs no allocation at all: it lives in span.chunkBuf.
 func eventChunkCap(cfg *configSnapshot) int {
 	return min(cfg.spanEventChunkSize, defaultEventChunkSize)
 }
@@ -1194,14 +1202,10 @@ func (chunk *spanChunk) optimizeSpanEvents() {
 
 // stack is the LIFO of currently-open span events. It is backed by a slice
 // (not a linked list) so that pushing an event reuses the preallocated backing
-// array instead of allocating a node per call on the hot path.
+// array (span.stackBuf) instead of allocating a node per call on the hot path.
 type stack struct {
 	lock sync.Mutex
 	buf  []*spanEvent
-}
-
-func newStack() *stack {
-	return &stack{buf: make([]*spanEvent, 0, defaultEventStackDepth)}
 }
 
 func (s *stack) len() int {

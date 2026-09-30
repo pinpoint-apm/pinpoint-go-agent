@@ -392,8 +392,8 @@ func isExcludedMethod(method string) bool {
 	return httpCfg().srvMethod.isExcludedMethod(method)
 }
 
-func recordServerHttpStatus(span pinpoint.SpanRecorder, status int) {
-	if httpCfg().srvStatus.isError(status) {
+func recordServerHttpStatus(cfg *httpConfig, span pinpoint.SpanRecorder, status int) {
+	if cfg.srvStatus.isError(status) {
 		// records ErrorCategory.HTTP_STATUS: an operator who does not want a
 		// 5xx to count as a transaction failure drops that one cause with
 		// Span.ErrorMarkExclude and keeps every other kind of failure. The
@@ -401,18 +401,6 @@ func recordServerHttpStatus(span pinpoint.SpanRecorder, status int) {
 		span.SetFailure(pinpoint.ErrorCategoryHttpStatus)
 	}
 	span.Annotations().AppendInt(pinpoint.AnnotationHttpStatusCode, int32(status))
-}
-
-func recordServerHttpRequestHeader(annotation pinpoint.Annotation, header Header) {
-	httpCfg().srvReqHeader.recordHeader(annotation, pinpoint.AnnotationHttpRequestHeader, header)
-}
-
-func recordServerHttpResponseHeader(annotation pinpoint.Annotation, header Header) {
-	httpCfg().srvResHeader.recordHeader(annotation, pinpoint.AnnotationHttpResponseHeader, header)
-}
-
-func recordServerHttpCookie(annotation pinpoint.Annotation, cookie Cookie) {
-	httpCfg().srvCookie.recordCookie(annotation, cookie)
 }
 
 func RecordClientHttpRequestHeader(annotation pinpoint.Annotation, header Header) {

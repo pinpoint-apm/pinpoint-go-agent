@@ -1,11 +1,11 @@
 package pppgxv5
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"reflect"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
@@ -134,7 +134,7 @@ func (t *pgxTracer) composeArgs(args []any) string {
 		return ""
 	}
 
-	var b bytes.Buffer
+	var b strings.Builder
 	numComma := len(args) - 1
 	maxSize := cfg.Int(pinpoint.CfgSQLMaxBindValueSize)
 
@@ -147,7 +147,7 @@ func (t *pgxTracer) composeArgs(args []any) string {
 	return b.String()
 }
 
-func writeArg(b *bytes.Buffer, index int, value any, numComma int, maxSize int) bool {
+func writeArg(b *strings.Builder, index int, value any, numComma int, maxSize int) bool {
 	if maxSize <= 0 {
 		return false
 	}
@@ -174,7 +174,7 @@ func writeArg(b *bytes.Buffer, index int, value any, numComma int, maxSize int) 
 // can reach roughly twice maxSize plus the markers. It is the value's own
 // head, not the list's total, that a reader needs to recognize which argument
 // this was, and the agent reserves the same room for the result.
-func writeAbbreviatedArg(b *bytes.Buffer, value any, maxSize int) {
+func writeAbbreviatedArg(b *strings.Builder, value any, maxSize int) {
 	if value, ok := value.(string); ok {
 		writeAbbreviated(b, value, len(value), maxSize)
 		return
@@ -203,7 +203,7 @@ func writeAbbreviatedArg(b *bytes.Buffer, value any, maxSize int) {
 // being cut: an array reports how many elements it holds. The cut lands on a
 // rune boundary: protobuf rejects invalid UTF-8 string fields at marshal time,
 // so a mid-rune cut would fail the whole span carrying the annotation.
-func writeAbbreviated(b *bytes.Buffer, value string, valueLen int, maxSize int) {
+func writeAbbreviated(b *strings.Builder, value string, valueLen int, maxSize int) {
 	if len(value) <= maxSize {
 		b.WriteString(value)
 		return
@@ -224,10 +224,10 @@ func writeAbbreviated(b *bytes.Buffer, value string, valueLen int, maxSize int) 
 // than cutting back over what is written: making room inside a limit shorter
 // than the marker would drop the marker itself and leave the truncation with
 // no trace at all.
-func writeArgLengthMarker(b *bytes.Buffer, valueLen int) {
+func writeArgLengthMarker(b *strings.Builder, valueLen int) {
 	b.WriteString("...(" + strconv.Itoa(valueLen) + ")")
 }
 
-func writeArgCountMarker(b *bytes.Buffer, numValues int) {
+func writeArgCountMarker(b *strings.Builder, numValues int) {
 	b.WriteString("...(" + strconv.Itoa(numValues) + ")")
 }

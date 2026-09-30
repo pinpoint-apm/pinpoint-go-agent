@@ -27,7 +27,7 @@ func Test_defaultSpan(t *testing.T) {
 	assert.Equal(t, span.parentAppType, -1, "parentAppType is UNDEFINED until a header names one")
 	assert.Equal(t, span.eventDepth.Load(), int32(1), "eventDepth")
 	assert.Equal(t, span.serviceType, int32(ServiceTypeGoApp), "serviceType")
-	assert.NotNil(t, span.eventStack, "stack")
+	assert.NotNil(t, span.eventStack.buf, "stack backed by span.stackBuf")
 }
 
 type DistributedTracingContextMap struct {
