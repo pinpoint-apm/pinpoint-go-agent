@@ -2018,8 +2018,6 @@ func (agent *agent) sendStatsWorker() {
 
 		stream = agent.sendStatsOrReopen(stream, stats)
 	}
-
-	Log("agent").Infof("end send stats goroutine")
 }
 
 // sendStatsOrReopen sends stats on stream and returns the stream to keep
