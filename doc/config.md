@@ -1445,6 +1445,32 @@ Http.UrlStat.WithMethod option adds http method as prefix to url string key.
 
 ---
 
+### Mongo.RecordCommand
+Mongo.RecordCommand option sets whether the MongoDB plugins (mongodriver,
+mongodriverv2) record the command document on the span event, converted to
+extended JSON. The conversion runs on the request goroutine for every sampled
+command; turn it off when the document is not needed in the trace.
+
+* --pinpoint-mongo-recordcommand
+* PINPOINT_GO_MONGO_RECORDCOMMAND
+* WithMongoRecordCommand()
+* type: bool
+* default: true
+* dynamic
+
+### Mongo.CommandMaxSize
+Mongo.CommandMaxSize option sets the size in bytes the recorded command
+document is cut to. A command whose BSON is larger than this is not converted
+at all and is recorded as a one-line description instead, so a lower value also
+lowers the cost of large commands. A value of 0 or less keeps the default.
+
+* --pinpoint-mongo-commandmaxsize
+* PINPOINT_GO_MONGO_COMMANDMAXSIZE
+* WithMongoCommandMaxSize()
+* type: int
+* default: 65536
+* dynamic
+
 ## Dynamic Configuration Reference
 
 Options marked **dynamic** above are re-read when the config file changes,
@@ -1471,6 +1497,7 @@ Two things make a reload not happen, and both are easy to miss:
 | HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError`, `Http.Server.ProxyUserHeaderNames`, `Http.Server.ProxyHeaderEnable`, `Http.Server.RecordRequestParam`, `Http.Server.RealIpHeader`, `Http.Server.RealIpEmptyValue` |
 | HTTP client | `Http.Client.RecordRequestHeader`, `Http.Client.RecordResponseHeader`, `Http.Client.RecordRequestCookie`, `Http.Client.RecordUrlQuery` |
 | URL statistics | `Http.UrlStat.Enable`, `Http.UrlStat.LimitSize`, `Http.UrlStat.WithMethod` |
+| MongoDB | `Mongo.RecordCommand`, `Mongo.CommandMaxSize` |
 
 ### Restart-only options
 

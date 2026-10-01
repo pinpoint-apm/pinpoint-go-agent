@@ -35,11 +35,57 @@ type spanKey struct {
 }
 
 const (
+	// maxJsonSize is the default of Mongo.CommandMaxSize: the size the command
+	// annotation is cut to, and the BSON size above which the command is not
+	// converted at all. MarshalExtJSON buffers the whole result, so a command
+	// whose source BSON already reaches the limit is skipped instead of
+	// converted.
 	maxJsonSize = 64 * 1024
-	// MarshalExtJSON buffers the whole result, so commands whose source BSON already
-	// reaches the limit are skipped instead of converted.
 	maxBsonSize = maxJsonSize
 )
+
+// Mongo.RecordCommand records the command document as the span event's
+// AnnotationMongoJasonData, converted to extended JSON; Mongo.CommandMaxSize
+// bounds it. The conversion runs on the request goroutine for every sampled
+// command, and a 64 KB document costs hundreds of microseconds, so an
+// application that does not need the document in the trace turns it off, and
+// one that only needs its head lowers the size: a command above the size is
+// not converted at all.
+const (
+	CfgMongoRecordCommand  = "Mongo.RecordCommand"
+	CfgMongoCommandMaxSize = "Mongo.CommandMaxSize"
+)
+
+func init() {
+	pinpoint.AddConfig(CfgMongoRecordCommand, pinpoint.CfgBool, true, true)
+	pinpoint.AddConfig(CfgMongoCommandMaxSize, pinpoint.CfgInt, maxJsonSize, true)
+}
+
+// WithMongoRecordCommand sets whether the command document is recorded on the
+// span event (Mongo.RecordCommand, default true).
+func WithMongoRecordCommand(record bool) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(CfgMongoRecordCommand, record)
+	}
+}
+
+// WithMongoCommandMaxSize sets the size in bytes the recorded command document
+// is cut to; a command larger than this is not converted at all
+// (Mongo.CommandMaxSize, default 65536). A value of 0 or less keeps the default.
+func WithMongoCommandMaxSize(size int) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) {
+		c.Set(CfgMongoCommandMaxSize, size)
+	}
+}
+
+// commandSettings reads the two options; a size of 0 or less is the default.
+func commandSettings(cfg *pinpoint.Config) (record bool, maxSize int) {
+	maxSize = cfg.Int(CfgMongoCommandMaxSize)
+	if maxSize <= 0 {
+		maxSize = maxJsonSize
+	}
+	return cfg.Bool(CfgMongoRecordCommand), maxSize
+}
 
 // maxPendingSpans bounds the span map. The driver pairs every started event
 // with a finished one, but a pairing that never arrives would otherwise hold
@@ -75,8 +121,10 @@ func (m *monitor) Started(ctx context.Context, evt *event.CommandStartedEvent) {
 	collection := collectionName(evt)
 	a := tracer.SpanEvent().Annotations()
 	a.AppendString(pinpoint.AnnotationMongoCollectionInfo, collection)
-	if command := commandAnnotation(evt, collection); command != "" {
-		a.AppendStringString(pinpoint.AnnotationMongoJasonData, command, "")
+	if record, maxSize := commandSettings(pinpoint.GetConfig()); record {
+		if command := commandAnnotation(evt, collection, maxSize); command != "" {
+			a.AppendStringString(pinpoint.AnnotationMongoJasonData, command, "")
+		}
 	}
 
 	key := spanKey{
@@ -105,8 +153,11 @@ func (m *monitor) Started(ctx context.Context, evt *event.CommandStartedEvent) {
 	}
 }
 
-func commandAnnotation(e *event.CommandStartedEvent, collection string) string {
-	if len(e.Command) > maxBsonSize {
+// commandAnnotation renders the command as extended JSON cut to maxSize; a
+// command whose BSON is already larger than maxSize is described, not
+// converted (see maxJsonSize).
+func commandAnnotation(e *event.CommandStartedEvent, collection string, maxSize int) string {
+	if len(e.Command) > maxSize {
 		return fmt.Sprintf("[MongoDB command omitted: command=%s, collection=%s, bsonSize=%d]", e.CommandName, collection, len(e.Command))
 	}
 
@@ -114,7 +165,7 @@ func commandAnnotation(e *event.CommandStartedEvent, collection string) string {
 	if err != nil {
 		return ""
 	}
-	return abbreviateJson(b, maxJsonSize)
+	return abbreviateJson(b, maxSize)
 }
 
 func collectionName(e *event.CommandStartedEvent) string {

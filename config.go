@@ -301,13 +301,39 @@ func initConfig() {
 // NewConfig call: it writes the unsynchronized package-global registry that
 // NewConfig reads, so a concurrent call at runtime is a data race.
 func AddConfig(cfgName string, valueType int, defaultValue interface{}, dynamic bool) {
-	cfgBaseMap[cfgName] = &cfgMapItem{
+	item := &cfgMapItem{
 		defaultValue: defaultValue,
 		valueType:    valueType,
 		cmdKey:       cmdName(cfgName),
 		envKey:       envName(cfgName),
 		dynamic:      dynamic,
 	}
+	cfgBaseMap[cfgName] = item
+	// The noop agent's Config was copied from the registry when this package
+	// initialized, which is before any plugin's init function could register
+	// its options: a plugin that reads them through GetConfig() while no agent
+	// exists - before NewAgent, or in its own tests - saw zero values in place
+	// of its defaults. The item is added to that Config as well.
+	if defaultNoopAgent != nil && defaultNoopAgent.config != nil {
+		defaultNoopAgent.config.addItem(cfgName, item)
+	}
+}
+
+// addItem stages a registry item on a Config built before the item was
+// registered, with its default as the value, and republishes.
+func (config *Config) addItem(cfgName string, item *cfgMapItem) {
+	config.mu.Lock()
+	defer config.mu.Unlock()
+	config.cfgMap[cfgName] = &cfgMapItem{
+		value:        item.defaultValue,
+		defaultValue: item.defaultValue,
+		valueType:    item.valueType,
+		cmdKey:       item.cmdKey,
+		envKey:       item.envKey,
+		dynamic:      item.dynamic,
+	}
+	config.normalizeCfgValues()
+	config.publish()
 }
 
 func cmdName(cfgName string) string {

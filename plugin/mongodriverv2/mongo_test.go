@@ -26,7 +26,7 @@ func TestCommandAnnotation(t *testing.T) {
 		want, err := bson.MarshalExtJSON(evt.Command, false, false)
 		require.NoError(t, err)
 
-		assert.Equal(t, string(want), commandAnnotation(evt, "widgets"))
+		assert.Equal(t, string(want), commandAnnotation(evt, "widgets", maxJsonSize))
 	})
 
 	t.Run("expanded extended JSON is abbreviated", func(t *testing.T) {
@@ -38,7 +38,7 @@ func TestCommandAnnotation(t *testing.T) {
 		require.NoError(t, err)
 		require.Greater(t, len(b), maxJsonSize, "the test command must expand past the JSON limit")
 
-		got := commandAnnotation(evt, "widgets")
+		got := commandAnnotation(evt, "widgets", maxJsonSize)
 		assert.True(t, strings.HasSuffix(got, abbreviationMarker),
 			"commandAnnotation() = %.80q, want the abbreviation marker", got)
 		assert.LessOrEqual(t, len(got), maxJsonSize, "the annotation grew past the limit")
@@ -53,7 +53,7 @@ func TestCommandAnnotation(t *testing.T) {
 		cut := maxJsonSize - len(abbreviationMarker)
 		require.False(t, utf8.RuneStart(b[cut]), "the test payload does not straddle the cut at %d", cut)
 
-		got := commandAnnotation(evt, "widgets")
+		got := commandAnnotation(evt, "widgets", maxJsonSize)
 		assert.True(t, utf8.ValidString(got), "commandAnnotation() is not valid UTF-8 (%d bytes)", len(got))
 		assert.True(t, strings.HasSuffix(got, abbreviationMarker),
 			"commandAnnotation() = %.80q, want the abbreviation marker", got)
@@ -64,12 +64,37 @@ func TestCommandAnnotation(t *testing.T) {
 		require.Greater(t, len(evt.Command), maxBsonSize, "the test command must exceed the BSON gate")
 
 		want := fmt.Sprintf("[MongoDB command omitted: command=insert, collection=widgets, bsonSize=%d]", len(evt.Command))
-		assert.Equal(t, want, commandAnnotation(evt, "widgets"))
+		assert.Equal(t, want, commandAnnotation(evt, "widgets", maxJsonSize))
 	})
 }
 
 // Allocations must stay flat once the command exceeds maxBsonSize; the 1KB case
 // keeps the normal conversion path measured so a regression there still shows up.
+// Mongo.RecordCommand turns the command annotation off and
+// Mongo.CommandMaxSize bounds it; a command larger than the size is described
+// rather than converted, which is what makes the size a cost knob and not
+// only a length one.
+func TestCommandSettings(t *testing.T) {
+	cfg, err := pinpoint.NewConfig(pinpoint.WithAppName("mongo"), WithMongoRecordCommand(false), WithMongoCommandMaxSize(100))
+	require.NoError(t, err)
+	defer cfg.Close()
+	record, maxSize := commandSettings(cfg)
+	assert.False(t, record)
+	assert.Equal(t, 100, maxSize)
+
+	cfg.Set(CfgMongoCommandMaxSize, 0)
+	_, maxSize = commandSettings(cfg)
+	assert.Equal(t, maxJsonSize, maxSize, "0 keeps the default")
+
+	record, maxSize = commandSettings(pinpoint.GetConfig())
+	assert.True(t, record, "recorded by default")
+	assert.Equal(t, maxJsonSize, maxSize)
+
+	evt := commandStartedEvent(t, "find", "widgets", strings.Repeat("x", 64))
+	got := commandAnnotation(evt, "widgets", 16)
+	assert.Equal(t, fmt.Sprintf("[MongoDB command omitted: command=find, collection=widgets, bsonSize=%d]", len(evt.Command)), got)
+}
+
 func BenchmarkCommandAnnotation(b *testing.B) {
 	for _, size := range []int{1 << 10, 128 << 10, 1 << 20, 8 << 20} {
 		b.Run(fmt.Sprintf("BSON_%dKB", size>>10), func(b *testing.B) {
@@ -77,7 +102,7 @@ func BenchmarkCommandAnnotation(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				commandAnnotationSink = commandAnnotation(evt, "widgets")
+				commandAnnotationSink = commandAnnotation(evt, "widgets", maxJsonSize)
 			}
 		})
 	}

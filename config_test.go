@@ -15,6 +15,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// A plugin registers its options from its own init function, after this
+// package built the noop agent's Config, and reads them through GetConfig()
+// before an agent exists: the registration has to reach that Config, or the
+// plugin sees zero values instead of its defaults.
+func Test_AddConfigReachesTheNoopAgentConfig(t *testing.T) {
+	AddConfig("Test.LateBool", CfgBool, true, true)
+	AddConfig("Test.LateInt", CfgInt, 42, true)
+	assert.True(t, NoopAgent().Config().Bool("Test.LateBool"))
+	assert.Equal(t, 42, NoopAgent().Config().Int("Test.LateInt"))
+
+	cfg, err := NewConfig(WithAppName("late"))
+	require.NoError(t, err)
+	defer cfg.Close()
+	assert.Equal(t, 42, cfg.Int("Test.LateInt"), "a Config built afterwards carries it as before")
+}
+
 func TestNewConfig_DefaultValue(t *testing.T) {
 	type args struct {
 		opts []ConfigOption

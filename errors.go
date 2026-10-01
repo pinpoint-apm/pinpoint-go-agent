@@ -112,16 +112,25 @@ func splitName(fullName string) (string, string) {
 // interfaces with == panics when both hold the same uncomparable dynamic type
 // - a slice-, map- or func-based error such as validator.ValidationErrors -
 // and this runs on the request goroutine for any error handed to SetError, so
-// such a pair is reported as distinct instead of taken to the comparison. The
-// check is on the values, not the type: a struct error with an error field is
-// a comparable type, and == still panicked once that field held a slice.
-func sameError(a, b error) bool {
+// such a pair is reported as distinct instead of taken to the comparison.
+//
+// The panic is recovered rather than predicted: the check has to be on the
+// values, not the type - a struct error with an error field is a comparable
+// type, and == still panics once that field holds a slice - and asking
+// reflect.Value.Comparable of both values allocated twice per call. The
+// error chain walk calls this once per recorded entry per cause, so a
+// SetError joining a chain on a span with a few dozen entries made a few
+// dozen allocations here. The recover costs nothing until a comparison
+// panics, which only an uncomparable pair does.
+func sameError(a, b error) (same bool) {
 	if reflect.TypeOf(a) != reflect.TypeOf(b) {
 		return false
 	}
-	if a != nil && (!reflect.ValueOf(a).Comparable() || !reflect.ValueOf(b).Comparable()) {
-		return false
-	}
+	defer func() {
+		if recover() != nil {
+			same = false
+		}
+	}()
 	return a == b
 }
 
