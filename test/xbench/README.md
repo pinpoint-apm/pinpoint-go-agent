@@ -73,6 +73,12 @@ reporting a fast number.
   sending and serializing spans in the background shows up in `ns/op`. A
   version that does more work per span on the sender looks slower here than its
   request path alone would.
+- The test binary holds a 64MB pointer-free `ballast` for the application's
+  own heap, which is what sets the GC pace in production. Without it the heap
+  is mostly the agent's, and an agent with a smaller footprint gets a lower
+  heap goal and more GCs: v2's ~2MB live heap against v1.4.7's ~16MB meant
+  133 GCs against 27 over the same 2,000,000 requests, each a stop-the-world
+  the one P at `-cpu=1` waits out, and read as a +26% unsampled regression.
 - The span queue and the url stat queue are both 65536, so 50000 requests never
   reach the head-drop path, which is cheaper and would flatter the number. v1
   sizes the url stat queue with `Span.QueueSize`, so `compat_v2.go.in` sets
@@ -94,33 +100,29 @@ reporting a fast number.
 - The templates end in `.go.in` so the root module never compiles them: the
   `PINPOINT` placeholder and the v1 import would break `go vet ./...`.
 
-## Results: v1.4.7 against v2 at 8bc1d4f (Apple M1 Pro, 6 rounds)
+## Results: v1.4.7 against v2 (Apple M1 Pro, 6 rounds)
 
-Medians; `-cpu=4` and `-cpu=8` show the change against v1.4.7 at the same
-count.
+Measured at 8bc1d4f with the 64MB ballast. Medians; the `-cpu=4` and
+`-cpu=8` columns are the change against v1.4.7 at the same count.
 
 | shape | -cpu=1 | -cpu=4 | -cpu=8 | allocs/op |
 |---|---|---|---|---|
-| Sampled | 5.71µs → 1.25µs (−78%) | −75% | −73% | 68 → 4 |
-| Continued | 6.10µs → 1.56µs (−74%) | −73% | −72% | 74 → 4 |
-| Nested10 | 21.3µs → 4.45µs (−79%) | −80% | −77% | 264 → 13 |
-| SQL | 9.97µs → 1.16µs (−88%) | −83% | −82% | 76 → 4 |
-| Error | 4.62µs → 1.18µs (−74%) | −68% | −75% | 47 → 3 |
-| Inject | 6.15µs → 1.68µs (−73%) | −70% | −69% | 67 → 9 |
-| UrlStat | 6.97µs → 1.75µs (−75%) | −71% | −53% | 74 → 5 |
-| Unsampled | 211ns → 276ns (~, p=0.065) | −53% | −66% | 4 → 1 |
-| UnsampledHeader | 213ns → 268ns (+26%) | −55% | −65% | 4 → 1 |
+| Sampled | 4.70µs → 943ns (−80%) | −79% | −77% | 66 → 4 |
+| Continued | 4.55µs → 1.19µs (−74%) | −75% | −75% | 71 → 4 |
+| Nested10 | 16.6µs → 3.59µs (−78%) | −78% | −80% | 247 → 13 |
+| SQL | 6.63µs → 870ns (−87%) | −86% | −83% | 69 → 4 |
+| Error | 3.09µs → 840ns (−73%) | −72% | −77% | 44 → 3 |
+| Inject | 4.44µs → 1.38µs (−69%) | −69% | −74% | 64 → 9 |
+| UrlStat | 4.88µs → 1.27µs (−74%) | −76% | −57% | 69 → 5 |
+| Unsampled | 214ns → 204ns (−5%) | −66% | −71% | 4 → 1 |
+| UnsampledHeader | 208ns → 196ns (−6%) | −63% | −73% | 4 → 1 |
 
-Geomean: −70% time and −91% allocations.
+Geomean: −73% time and −91% allocations, with no shape slower at any count.
 
-- The v1.4.7 `-cpu=1` rows vary by up to ±89%: its sender serializes spans on
+- The v1.4.7 `-cpu=1` rows vary by up to ±57%: its sender serializes spans on
   the one P the requests run on. Compare the `-cpu=4` and `-cpu=8` rows for
   stable numbers.
-- The one regression is the two unsampled shapes at `-cpu=1`. A longer run
-  (2,000,000 requests, 8 rounds) put `Unsampled` at +8%. The agent's own CPU
-  per request is lower in v2, so the extra time is most likely the single P
-  shared with background goroutines; the cause was not confirmed.
-- `Continued` went from −37% to −72% at `-cpu=8` with 8bc1d4f. Before it, a
+- `Continued` went from −37% to −75% at `-cpu=8` with 8bc1d4f. Before it, a
   continued span was registered under the span id from the upstream header,
   so this benchmark's identical headers put every request on one registry
   shard lock.

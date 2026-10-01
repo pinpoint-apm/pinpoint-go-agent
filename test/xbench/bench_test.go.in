@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -18,6 +19,13 @@ import (
 )
 
 var agent pinpoint.Agent
+
+// ballast stands in for the application's own live heap, which sets the GC
+// pace in production. Without it the test binary's heap is mostly the agent's,
+// so an agent with a smaller footprint gets a lower heap goal and more GCs:
+// v2's ~2MB against v1.4.7's ~16MB meant five times as many, which read as a
+// request-path regression at -cpu=1. Pointer-free, so the GC never scans it.
+var ballast = make([]byte, 64<<20)
 
 func TestMain(m *testing.M) {
 	rate, _ := strconv.Atoi(os.Getenv("XBENCH_RATE"))
@@ -47,6 +55,7 @@ func TestMain(m *testing.M) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	code := m.Run()
+	runtime.KeepAlive(ballast)
 	agent.Shutdown()
 	os.Exit(code)
 }
