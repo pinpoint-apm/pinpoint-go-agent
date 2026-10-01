@@ -50,7 +50,7 @@ func benchSpan(a *agent) *span {
 	return defaultSpan(a)
 }
 
-// startDrain consumes the span queue/metaChan in the background so enqueue
+// startDrain consumes the span queue/metaChan/urlStatChan in the background so enqueue
 // stays on its non-saturated path, mirroring production where the sender keeps
 // up. Without this, the buffers fill after ~1024 chunks and the benchmark
 // would instead measure the queue-full drop path.
@@ -80,6 +80,8 @@ func startDrain(a *agent) (stop func()) {
 			case <-done:
 				return
 			case <-a.metaChan:
+			case u := <-a.urlStatChan: // nil, so never ready, unless a benchmark enabled url stats
+				a.urlStats.add(u)
 			}
 		}
 	}()
@@ -201,6 +203,82 @@ func BenchmarkSpanLifecycleParallel(b *testing.B) {
 			tracer.EndSpan()
 		}
 	})
+}
+
+// BenchmarkSpanLifecycleShapes is BenchmarkSpanLifecycleParallel per request
+// shape, after the C++ agent's span_lifecycle_benchmark: the shapes cost very
+// different amounts and real traffic is a mix of them. unsampled is what most
+// requests pay whenever sampling is on; continued parses the inbound trace and
+// bypasses the sampler; urlStat adds the per-request urlStatChan push and the
+// collector goroutine aggregating it. Each shape is verified before it is
+// timed, so a phase cannot degrade to noop spans and still publish a fast
+// number. Run with -cpu=1,4,8: ns/op that stays flat as goroutines are added
+// means no cross-core contention.
+func BenchmarkSpanLifecycleShapes(b *testing.B) {
+	continued := map[string]string{
+		HeaderTraceId:               "test-agent^1610000000000^12345",
+		HeaderSpanId:                "1234567890",
+		HeaderParentSpanId:          "987654321",
+		HeaderFlags:                 "0",
+		HeaderParentApplicationName: "UpstreamApp",
+		HeaderParentApplicationType: "1800",
+		HeaderHost:                  "10.0.0.1:8080",
+	}
+	entry := &UrlStatEntry{Url: "/bench/rpc", Method: "GET", Status: 200}
+	shapes := []struct {
+		name    string
+		cfg     string
+		header  map[string]string
+		sampled bool
+	}{
+		{"unsampled", CfgSamplingCounterRate, map[string]string{}, false},
+		{"unsampledHeader", "", map[string]string{HeaderSampled: "s0"}, false},
+		{"sampled", "", map[string]string{}, true},
+		{"continued", "", continued, true},
+		{"urlStat", CfgHttpUrlStatEnable, map[string]string{}, true},
+	}
+	for _, sh := range shapes {
+		b.Run(sh.name, func(b *testing.B) {
+			a := benchAgent()
+			switch sh.cfg {
+			case CfgSamplingCounterRate:
+				a.config.Set(CfgSamplingCounterRate, 0)
+			case CfgHttpUrlStatEnable:
+				a.config.Set(CfgHttpUrlStatEnable, true)
+				a.urlStatChan = make(chan *urlStat, a.config.Int(CfgHttpUrlStatQueueSize))
+				// The overflow warning would split the result line; drops/op
+				// below reports the same thing.
+				logger.defaultLogger.SetLevel(logrus.ErrorLevel)
+				defer logger.defaultLogger.SetLevel(logrus.WarnLevel)
+			}
+			stop := startDrain(a)
+			defer stop()
+			reader := &DistributedTracingContextMap{m: sh.header}
+
+			tracer := a.NewSpanTracerWithReader("operation", "/bench/rpc", reader)
+			if tracer.IsSampled() != sh.sampled || tracer.SpanId() == 0 {
+				b.Fatalf("sampled=%v spanId=%d, want sampled=%v", tracer.IsSampled(), tracer.SpanId(), sh.sampled)
+			}
+			tracer.EndSpan()
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			b.RunParallel(func(pb *testing.PB) {
+				for pb.Next() {
+					tracer := a.NewSpanTracerWithReader("operation", "/bench/rpc", reader)
+					tracer.NewSpanEvent("event1").EndSpanEvent()
+					tracer.NewSpanEvent("event2").EndSpanEvent()
+					tracer.AddMetric(MetricURLStat, entry)
+					tracer.EndSpan()
+				}
+			})
+			if a.urlStatChan != nil {
+				// Head-dropped url stats: the drop path is cheaper, so a high
+				// rate means the number above is partly the overflow path.
+				b.ReportMetric(float64(a.urlStatDrops.dropped.Load())/float64(b.N), "drops/op")
+			}
+		})
+	}
 }
 
 // BenchmarkOptimizeSpanEvents measures the per-chunk sort and elapsed-time pass
