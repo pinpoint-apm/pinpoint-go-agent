@@ -66,10 +66,10 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 			assert.Equal(t, 0, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
 			assert.Equal(t, 0, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
 			assert.Equal(t, defaultQueueSize, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
-			assert.Equal(t, defaultSpanBatchSize, c.Int(CfgSpanBatchSize), CfgSpanBatchSize)
-			assert.Equal(t, defaultSpanBatchFlushInterval, c.Int(CfgSpanBatchFlushInterval), CfgSpanBatchFlushInterval)
-			assert.Equal(t, defaultSpanBatchCollectDeadline, c.Int(CfgSpanBatchCollectDeadline), CfgSpanBatchCollectDeadline)
-			assert.Equal(t, defaultSpanBatchMaxConcurrentRequests, c.Int(CfgSpanBatchMaxConcurrentRequests), CfgSpanBatchMaxConcurrentRequests)
+			assert.Equal(t, defaultSpanBatchSize, c.Int(CfgCollectorGrpcSpanBatchSize), CfgCollectorGrpcSpanBatchSize)
+			assert.Equal(t, defaultSpanBatchFlushInterval, c.Int(CfgCollectorGrpcSpanBatchFlushInterval), CfgCollectorGrpcSpanBatchFlushInterval)
+			assert.Equal(t, defaultSpanBatchCollectDeadline, c.Int(CfgCollectorGrpcSpanBatchCollectDeadline), CfgCollectorGrpcSpanBatchCollectDeadline)
+			assert.Equal(t, defaultSpanBatchMaxConcurrentRequests, c.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests), CfgCollectorGrpcSpanBatchMaxConcurrentRequests)
 			assert.Equal(t, defaultEventChunkSize, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
 			assert.Equal(t, defaultEventDepth, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
 			assert.Equal(t, defaultEventSequence, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
@@ -119,10 +119,10 @@ func TestNewConfig_WithFunc(t *testing.T) {
 		WithSamplingNewThroughput(20),
 		WithSamplingContinueThroughput(30),
 		WithSpanQueueSize(2048),
-		WithSpanBatchSize(25),
-		WithSpanBatchFlushInterval(2000),
-		WithSpanBatchCollectDeadline(250),
-		WithSpanBatchMaxConcurrentRequests(4),
+		WithCollectorGrpcSpanBatchSize(25),
+		WithCollectorGrpcSpanBatchFlushInterval(2000),
+		WithCollectorGrpcSpanBatchCollectDeadline(250),
+		WithCollectorGrpcSpanBatchMaxConcurrentRequests(4),
 		WithSpanEventChunkSize(100),
 		WithSpanMaxCallStackDepth(100),
 		WithSpanMaxCallStackSequence(1000),
@@ -167,10 +167,10 @@ func TestNewConfig_WithFunc(t *testing.T) {
 			assert.Equal(t, 20, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
 			assert.Equal(t, 30, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
 			assert.Equal(t, 2048, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
-			assert.Equal(t, 25, c.Int(CfgSpanBatchSize), CfgSpanBatchSize)
-			assert.Equal(t, 2000, c.Int(CfgSpanBatchFlushInterval), CfgSpanBatchFlushInterval)
-			assert.Equal(t, 250, c.Int(CfgSpanBatchCollectDeadline), CfgSpanBatchCollectDeadline)
-			assert.Equal(t, 4, c.Int(CfgSpanBatchMaxConcurrentRequests), CfgSpanBatchMaxConcurrentRequests)
+			assert.Equal(t, 25, c.Int(CfgCollectorGrpcSpanBatchSize), CfgCollectorGrpcSpanBatchSize)
+			assert.Equal(t, 2000, c.Int(CfgCollectorGrpcSpanBatchFlushInterval), CfgCollectorGrpcSpanBatchFlushInterval)
+			assert.Equal(t, 250, c.Int(CfgCollectorGrpcSpanBatchCollectDeadline), CfgCollectorGrpcSpanBatchCollectDeadline)
+			assert.Equal(t, 4, c.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests), CfgCollectorGrpcSpanBatchMaxConcurrentRequests)
 			assert.Equal(t, 100, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
 			assert.Equal(t, 100, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
 			assert.Equal(t, 1000, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
@@ -470,10 +470,10 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 	t.Setenv("PINPOINT_GO_SAMPLING_CONTINUETHROUGHPUT", "200")
 	t.Setenv("PINPOINT_GO_SPAN_QUEUESIZE", "1000")
 	t.Setenv("PINPOINT_GO_COLLECTOR_GRPC_SENDERQUEUESIZE", "700")
-	t.Setenv("PINPOINT_GO_SPAN_BATCHSIZE", "40")
-	t.Setenv("PINPOINT_GO_SPAN_BATCHFLUSHINTERVAL", "1500")
-	t.Setenv("PINPOINT_GO_SPAN_BATCHCOLLECTDEADLINE", "300")
-	t.Setenv("PINPOINT_GO_SPAN_BATCHMAXCONCURRENTREQUESTS", "3")
+	t.Setenv("PINPOINT_GO_COLLECTOR_GRPC_SPANBATCHSIZE", "40")
+	t.Setenv("PINPOINT_GO_COLLECTOR_GRPC_SPANBATCHFLUSHINTERVAL", "1500")
+	t.Setenv("PINPOINT_GO_COLLECTOR_GRPC_SPANBATCHCOLLECTDEADLINE", "300")
+	t.Setenv("PINPOINT_GO_COLLECTOR_GRPC_SPANBATCHMAXCONCURRENTREQUESTS", "3")
 	t.Setenv("PINPOINT_GO_SPAN_EVENTCHUNKSIZE", "88")
 	t.Setenv("PINPOINT_GO_SPAN_MAXCALLSTACKDEPTH", "128")
 	t.Setenv("PINPOINT_GO_SPAN_MAXCALLSTACKSEQUENCE", "2000")
@@ -518,10 +518,10 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 			assert.Equal(t, 200, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
 			assert.Equal(t, 1000, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
 			assert.Equal(t, 700, c.Int(CfgCollectorGrpcSenderQueueSize), CfgCollectorGrpcSenderQueueSize)
-			assert.Equal(t, 40, c.Int(CfgSpanBatchSize), CfgSpanBatchSize)
-			assert.Equal(t, 1500, c.Int(CfgSpanBatchFlushInterval), CfgSpanBatchFlushInterval)
-			assert.Equal(t, 300, c.Int(CfgSpanBatchCollectDeadline), CfgSpanBatchCollectDeadline)
-			assert.Equal(t, 3, c.Int(CfgSpanBatchMaxConcurrentRequests), CfgSpanBatchMaxConcurrentRequests)
+			assert.Equal(t, 40, c.Int(CfgCollectorGrpcSpanBatchSize), CfgCollectorGrpcSpanBatchSize)
+			assert.Equal(t, 1500, c.Int(CfgCollectorGrpcSpanBatchFlushInterval), CfgCollectorGrpcSpanBatchFlushInterval)
+			assert.Equal(t, 300, c.Int(CfgCollectorGrpcSpanBatchCollectDeadline), CfgCollectorGrpcSpanBatchCollectDeadline)
+			assert.Equal(t, 3, c.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests), CfgCollectorGrpcSpanBatchMaxConcurrentRequests)
 			assert.Equal(t, 88, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
 			assert.Equal(t, 128, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
 			assert.Equal(t, 2000, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
@@ -618,10 +618,10 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 		"--pinpoint-sampling-continuethroughput=600",
 		"--pinpoint-span-queuesize=10",
 		"--pinpoint-collector-grpc-senderqueuesize=20",
-		"--pinpoint-span-batchsize=30",
-		"--pinpoint-span-batchflushinterval=2500",
-		"--pinpoint-span-batchcollectdeadline=350",
-		"--pinpoint-span-batchmaxconcurrentrequests=2",
+		"--pinpoint-collector-grpc-spanbatchsize=30",
+		"--pinpoint-collector-grpc-spanbatchflushinterval=2500",
+		"--pinpoint-collector-grpc-spanbatchcollectdeadline=350",
+		"--pinpoint-collector-grpc-spanbatchmaxconcurrentrequests=2",
 		"--pinpoint-span-eventchunksize=30",
 		"--pinpoint-span-maxcallstackdepth=-1",
 		"--pinpoint-span-maxcallstacksequence=-1",
@@ -671,10 +671,10 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 			assert.Equal(t, 600, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
 			assert.Equal(t, 10, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
 			assert.Equal(t, 20, c.Int(CfgCollectorGrpcSenderQueueSize), CfgCollectorGrpcSenderQueueSize)
-			assert.Equal(t, 30, c.Int(CfgSpanBatchSize), CfgSpanBatchSize)
-			assert.Equal(t, 2500, c.Int(CfgSpanBatchFlushInterval), CfgSpanBatchFlushInterval)
-			assert.Equal(t, 350, c.Int(CfgSpanBatchCollectDeadline), CfgSpanBatchCollectDeadline)
-			assert.Equal(t, 2, c.Int(CfgSpanBatchMaxConcurrentRequests), CfgSpanBatchMaxConcurrentRequests)
+			assert.Equal(t, 30, c.Int(CfgCollectorGrpcSpanBatchSize), CfgCollectorGrpcSpanBatchSize)
+			assert.Equal(t, 2500, c.Int(CfgCollectorGrpcSpanBatchFlushInterval), CfgCollectorGrpcSpanBatchFlushInterval)
+			assert.Equal(t, 350, c.Int(CfgCollectorGrpcSpanBatchCollectDeadline), CfgCollectorGrpcSpanBatchCollectDeadline)
+			assert.Equal(t, 2, c.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests), CfgCollectorGrpcSpanBatchMaxConcurrentRequests)
 			assert.Equal(t, 30, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
 			assert.Equal(t, math.MaxInt32, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
 			assert.Equal(t, math.MaxInt32, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
@@ -916,8 +916,8 @@ func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
 		// its slice: 1e7 allocated 76MiB a request.
 		{CfgSpanEventChunkSize, 0, defaultEventChunkSize},
 		{CfgSpanEventChunkSize, 1e7, defaultEventChunkSize},
-		{CfgSpanBatchSize, 0, defaultSpanBatchSize},
-		{CfgSpanBatchSize, 1e9, defaultSpanBatchSize},
+		{CfgCollectorGrpcSpanBatchSize, 0, defaultSpanBatchSize},
+		{CfgCollectorGrpcSpanBatchSize, 1e9, defaultSpanBatchSize},
 		{CfgStatCollectInterval, 0, 5000},
 		{CfgStatCollectInterval, 100, 5000},
 		{CfgStatCollectInterval, 999, 5000},

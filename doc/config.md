@@ -512,6 +512,52 @@ The retry schedule for failed metadata sends has its own fixed bound of 1000 and
 * default: 1000
 * range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
 
+### Collector.Grpc.SpanBatchSize
+Collector.Grpc.SpanBatchSize option sets the max number of spans per SendSpanBatch request.
+Spans are always sent in unary SendSpanBatch requests, which a collector implements from Pinpoint 3.1.0. Against
+an older one every batch fails and its spans are dropped, with `SendSpanBatch failed - N spans dropped` in the
+agent log.
+
+* --pinpoint-collector-grpc-spanbatchsize
+* PINPOINT_GO_COLLECTOR_GRPC_SPANBATCHSIZE
+* WithCollectorGrpcSpanBatchSize()
+* type: int
+* default: 50
+* range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
+
+### Collector.Grpc.SpanBatchFlushInterval
+Collector.Grpc.SpanBatchFlushInterval option sets how long span batch sender waits for an available request permit.
+
+* --pinpoint-collector-grpc-spanbatchflushinterval
+* PINPOINT_GO_COLLECTOR_GRPC_SPANBATCHFLUSHINTERVAL
+* WithCollectorGrpcSpanBatchFlushInterval()
+* type: int
+* default: 1000
+* unit: milliseconds
+
+### Collector.Grpc.SpanBatchCollectDeadline
+Collector.Grpc.SpanBatchCollectDeadline option sets how long span batch sender collects additional spans after the first span arrives.
+
+* --pinpoint-collector-grpc-spanbatchcollectdeadline
+* PINPOINT_GO_COLLECTOR_GRPC_SPANBATCHCOLLECTDEADLINE
+* WithCollectorGrpcSpanBatchCollectDeadline()
+* type: int
+* default: 500
+* unit: milliseconds
+
+### Collector.Grpc.SpanBatchMaxConcurrentRequests
+Collector.Grpc.SpanBatchMaxConcurrentRequests option sets the max number of concurrent SendSpanBatch requests.
+The same number bounds the metadata sends (API, string, SQL and exception
+metadata) the agent has in flight at once. Exception metadata is one request
+per failed span when `Error.TraceCallStack` is on, so raise this together with
+`Error.NewThroughput` when the metadata queue overflows.
+
+* --pinpoint-collector-grpc-spanbatchmaxconcurrentrequests
+* PINPOINT_GO_COLLECTOR_GRPC_SPANBATCHMAXCONCURRENTREQUESTS
+* WithCollectorGrpcSpanBatchMaxConcurrentRequests()
+* type: int
+* default: 10
+
 ### Sampling.Type
 Sampling.Type option sets the type of agent sampler.
 Either "COUNTER" or "PERCENT" must be specified. "COUNTING" is accepted as an
@@ -591,52 +637,6 @@ It sizes the span queue only; the metadata queue is sized by
 * type: int
 * default: 1024
 * range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
-
-### Span.BatchSize
-Span.BatchSize option sets the max number of spans per SendSpanBatch request.
-Spans are always sent in unary SendSpanBatch requests, which a collector implements from Pinpoint 3.1.0. Against
-an older one every batch fails and its spans are dropped, with `SendSpanBatch failed - N spans dropped` in the
-agent log.
-
-* --pinpoint-span-batchsize
-* PINPOINT_GO_SPAN_BATCHSIZE
-* WithSpanBatchSize()
-* type: int
-* default: 50
-* range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
-
-### Span.BatchFlushInterval
-Span.BatchFlushInterval option sets how long span batch sender waits for an available request permit.
-
-* --pinpoint-span-batchflushinterval
-* PINPOINT_GO_SPAN_BATCHFLUSHINTERVAL
-* WithSpanBatchFlushInterval()
-* type: int
-* default: 1000
-* unit: milliseconds
-
-### Span.BatchCollectDeadline
-Span.BatchCollectDeadline option sets how long span batch sender collects additional spans after the first span arrives.
-
-* --pinpoint-span-batchcollectdeadline
-* PINPOINT_GO_SPAN_BATCHCOLLECTDEADLINE
-* WithSpanBatchCollectDeadline()
-* type: int
-* default: 500
-* unit: milliseconds
-
-### Span.BatchMaxConcurrentRequests
-Span.BatchMaxConcurrentRequests option sets the max number of concurrent SendSpanBatch requests.
-The same number bounds the metadata sends (API, string, SQL and exception
-metadata) the agent has in flight at once. Exception metadata is one request
-per failed span when `Error.TraceCallStack` is on, so raise this together with
-`Error.NewThroughput` when the metadata queue overflows.
-
-* --pinpoint-span-batchmaxconcurrentrequests
-* PINPOINT_GO_SPAN_BATCHMAXCONCURRENTREQUESTS
-* WithSpanBatchMaxConcurrentRequests()
-* type: int
-* default: 10
 
 ### Span.EventChunkSize
 Span.EventChunkSize option sets the size of span event chunk for gRPC.
@@ -1507,9 +1507,9 @@ Two things make a reload not happen, and both are easy to miss:
 
 Identity (`ApplicationName`, `AgentId`, `AgentName`, `Uid.Version`,
 `ServiceName`, `ApiKey`, `ApplicationType`), everything under `Collector.*`,
-the span transport (`Span.QueueSize`, `Span.BatchSize`,
-`Span.BatchFlushInterval`, `Span.BatchCollectDeadline`,
-`Span.BatchMaxConcurrentRequests`), `Stat.*`,
+the span transport (`Span.QueueSize`, `Collector.Grpc.SpanBatchSize`,
+`Collector.Grpc.SpanBatchFlushInterval`, `Collector.Grpc.SpanBatchCollectDeadline`,
+`Collector.Grpc.SpanBatchMaxConcurrentRequests`), `Stat.*`,
 `Http.UrlStat.QueueSize`, `IsContainerEnv`, `ConfigFile`, `ActiveProfile`,
 `SQL.RemoveComments`, `SQL.CacheSize`, `SQL.CacheLengthLimit`,
 `SQL.CacheExpireHours` and `Enable`.
@@ -1695,8 +1695,8 @@ See [ActiveProfile](#activeprofile) for the file layout.
   assets — with `Http.Server.ExcludeUrl`. They are the bulk of the requests and
   none of the insight.
 * Keep `Error.TraceCallStack` off; it is the costliest per-error work.
-* For a very high span rate, tune `Span.BatchSize` and
-  `Span.BatchMaxConcurrentRequests`.
+* For a very high span rate, tune `Collector.Grpc.SpanBatchSize` and
+  `Collector.Grpc.SpanBatchMaxConcurrentRequests`.
 * Leave `Log.Level` at `info` or `warn`. Debug logging adds per-event work.
 
 **Getting it right**
@@ -1720,7 +1720,7 @@ See [ActiveProfile](#activeprofile) for the file layout.
 | Cannot connect / not registered | `Collector.Host`, the three ports, `Collector.Grpc.SslEnable`, `Collector.Grpc.TrustCertFilePath` |
 | Too many traces / collector overloaded | `Sampling.PercentRate`, `Sampling.NewThroughput`, `Sampling.ContinueThroughput`, `Http.Server.ExcludeUrl` |
 | Traces truncated mid-request | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence` |
-| Spans dropped under load | `Span.QueueSize`, `Span.BatchSize`, `Span.BatchMaxConcurrentRequests` |
+| Spans dropped under load | `Span.QueueSize`, `Collector.Grpc.SpanBatchSize`, `Collector.Grpc.SpanBatchMaxConcurrentRequests` |
 | Agent using too much memory | `Span.QueueSize`, `Collector.Grpc.SenderQueueSize`, `Http.UrlStat.LimitSize`, `SQL.MaxBindValueSize`, `SQL.EnableRawSqlCache`, `SQL.CacheSize`, `SQL.CacheLengthLimit` |
 | SQL metadata re-sent constantly / spans show unresolved SQL ids | Raise `SQL.CacheSize` above the number of distinct statements the application runs |
 | Agent using too much CPU | `Sampling.PercentRate`, `Log.Level`, `Error.TraceCallStack` |

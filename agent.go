@@ -1140,7 +1140,7 @@ func (agent *agent) sendMetaWorker() {
 }
 
 // metaMaxConcurrentRequests bounds how many metadata sends sendMetaWorker may
-// have in flight at once: Span.BatchMaxConcurrentRequests, the same budget
+// have in flight at once: Collector.Grpc.SpanBatchMaxConcurrentRequests, the same budget
 // the span batch sender has. A fixed four was the cap on exception metadata,
 // which is one unary RPC per failed span with Error.TraceCallStack on: at a
 // 20 ms round trip four permits carry some 200 a second, against the 1000 new
@@ -1148,7 +1148,7 @@ func (agent *agent) sendMetaWorker() {
 // overflowed metaChan. One option rather than a second one: an operator sizing
 // the agent's concurrency toward the collector sizes both paths with it.
 func (agent *agent) metaMaxConcurrentRequests() int {
-	return agent.config.Int(CfgSpanBatchMaxConcurrentRequests)
+	return agent.config.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests)
 }
 
 // sendMetadataOnce makes one send of item and hands it on according to the

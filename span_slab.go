@@ -194,7 +194,7 @@ func (b *spanMessageBuilder) stringValue(s string) *wrappers.StringValue {
 // rebuilt from zero regrows all of its slabs by doubling: measured on the
 // 50-span batch benchmark, that regrowth was ~70KB and 14 allocations per
 // batch, more than the marshal itself. The batch sender bounds its live
-// builders by Span.BatchMaxConcurrentRequests (default 10) plus the one the
+// builders by Collector.Grpc.SpanBatchMaxConcurrentRequests (default 10) plus the one the
 // worker is filling, so a free list of that order holds the steady state.
 //
 // ponytail: fixed capacity; size it from config if the default permit count

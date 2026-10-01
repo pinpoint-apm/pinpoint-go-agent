@@ -309,7 +309,7 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   signal handler); see `doc/development.md`.
 - **47 new configuration options**, among them TLS on the collector channels
   (`Collector.Grpc.SslEnable`, `Collector.Grpc.TrustCertFilePath`), gRPC
-  channel tuning (`Collector.Grpc.*`), the span batch sender (`Span.Batch*`),
+  channel tuning (`Collector.Grpc.*`), the span batch sender (`Collector.Grpc.SpanBatch*`),
   error causes and exception chains (`Span.ErrorMark`, `Span.ErrorMarkExclude`,
   `Span.IgnoreErrors`, `Error.MaxChainDepth`, `Error.NewThroughput`), the SQL
   caches (`SQL.Cache*`, `SQL.EnableRawSqlCache`) and the agent identity
@@ -426,7 +426,7 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   marker: rejected as outside a transaction while the commit reported success,
   or a `WaitGroup` panic in `CommitTxn`. Both now hand sarama every accepted
   message first.
-- **`Span.EventChunkSize` and `Span.BatchSize` have an upper bound.** Only
+- **`Span.EventChunkSize` and `Collector.Grpc.SpanBatchSize` have an upper bound.** Only
   values below 1 were refused, and every sampled request sized its chunk
   buffer by the first (1e7 allocated 76MiB a request), every batch its slice
   by the second. Both now take 1 to 65536 like the queue sizes, and a chunk

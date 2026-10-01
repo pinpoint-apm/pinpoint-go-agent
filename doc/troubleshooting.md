@@ -403,8 +403,8 @@ A call chain that shows as separate transactions instead of one:
   `Error.CallStackDepth` modest when you turn it on.
 * **Over-instrumentation.** Events inside a hot loop cost more than they teach.
   Record one event around the loop.
-* **`Span.Batch*`.** For a very high span rate, tune `Span.BatchSize` and
-  `Span.BatchMaxConcurrentRequests`.
+* **`Collector.Grpc.SpanBatch*`.** For a very high span rate, tune `Collector.Grpc.SpanBatchSize` and
+  `Collector.Grpc.SpanBatchMaxConcurrentRequests`.
 
 ### Cannot Connect to Collector
 

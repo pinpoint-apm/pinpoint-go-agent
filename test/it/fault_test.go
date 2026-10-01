@@ -402,7 +402,7 @@ func TestKeepsServingAndRecyclingQueuesThroughCollectorOutage(t *testing.T) {
 
 	// The span sender keeps draining its queue into failing batches while
 	// recycling its in-flight permits: a permit leak would stall the pipeline
-	// after Span.BatchMaxConcurrentRequests (2) failures.
+	// after Collector.Grpc.SpanBatchMaxConcurrentRequests (2) failures.
 	require.True(t, mc.WaitFor(func(s Snapshot) bool {
 		return countResults(s, RpcSendSpanBatch, codes.Unavailable) >= 3
 	}, waitTimeout))
@@ -512,7 +512,7 @@ func TestKeepsServingThroughHungCollectorAndRecovers(t *testing.T) {
 	assert.True(t, agent.Enable())
 
 	// The collector holds exactly the agent's permit budget: two span batches
-	// and two metadata sends, both bounded by Span.BatchMaxConcurrentRequests.
+	// and two metadata sends, both bounded by Collector.Grpc.SpanBatchMaxConcurrentRequests.
 	// Every other batch is dropped once its permit wait runs out, and every
 	// other metadata item waits in its queue. The hang ends well inside the
 	// agent's 5s RPC deadlines, so no permit frees up meanwhile.
@@ -525,7 +525,7 @@ func TestKeepsServingThroughHungCollectorAndRecovers(t *testing.T) {
 		return batches >= cfg.spanBatchMaxConcurrentRequests && metadata >= metaPermits
 	}, waitTimeout))
 	// Room for a call past the budget to show up: the span sender gives up on a
-	// permit after Span.BatchFlushInterval (50ms).
+	// permit after Collector.Grpc.SpanBatchFlushInterval (50ms).
 	time.Sleep(300 * time.Millisecond)
 	batches, metadata := held(mc.Snapshot())
 	assert.Equal(t, cfg.spanBatchMaxConcurrentRequests, batches)

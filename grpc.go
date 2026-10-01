@@ -1335,11 +1335,11 @@ func newSpanGrpc(agent *agent) (*spanGrpc, error) {
 		spanConn:                conn,
 		spanClient:              pb.NewSpanClient(conn),
 		agent:                   agent,
-		batchSize:               agent.config.Int(CfgSpanBatchSize),
-		batchFlushTimeout:       time.Duration(agent.config.Int(CfgSpanBatchFlushInterval)) * time.Millisecond,
-		batchCollectDeadline:    time.Duration(agent.config.Int(CfgSpanBatchCollectDeadline)) * time.Millisecond,
-		maxConcurrentRequests:   agent.config.Int(CfgSpanBatchMaxConcurrentRequests),
-		concurrentRequestPermit: make(chan struct{}, agent.config.Int(CfgSpanBatchMaxConcurrentRequests)),
+		batchSize:               agent.config.Int(CfgCollectorGrpcSpanBatchSize),
+		batchFlushTimeout:       time.Duration(agent.config.Int(CfgCollectorGrpcSpanBatchFlushInterval)) * time.Millisecond,
+		batchCollectDeadline:    time.Duration(agent.config.Int(CfgCollectorGrpcSpanBatchCollectDeadline)) * time.Millisecond,
+		maxConcurrentRequests:   agent.config.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests),
+		concurrentRequestPermit: make(chan struct{}, agent.config.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests)),
 	}, nil
 }
 

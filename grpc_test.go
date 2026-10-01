@@ -1099,7 +1099,7 @@ func (c *blockingMetaClient) RequestExceptionMetaData(context.Context, *pb.PExce
 
 // While earlier sends are still waiting on the collector, the worker must keep
 // pulling items and pipeline up to metaMaxConcurrentRequests sends
-// (Span.BatchMaxConcurrentRequests) -- and no more.
+// (Collector.Grpc.SpanBatchMaxConcurrentRequests) -- and no more.
 func Test_sendMetaWorker_pipelinesUpToConcurrencyLimit(t *testing.T) {
 	cfg, _ := NewConfig(WithAppName("TestApp"))
 	agent := newTestAgent(cfg)

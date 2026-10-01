@@ -44,6 +44,10 @@ Collector:
     # spread long-running agents across a scaled-out collector, e.g. 600000.
     ConnectionMaxAge: 0 # ms
     StreamMaxAge: 0 # ms
+    SpanBatchSize: 8
+    SpanBatchFlushInterval: 500
+    SpanBatchCollectDeadline: 1000
+    SpanBatchMaxConcurrentRequests: 4
 
 # --- Logging ---
 Log:
@@ -66,12 +70,6 @@ Span:
   MaxCallStackDepth: 16 # /deep?depth=32 verifies depth overflow safely
   MaxCallStackSequence: 128 # /wide?width=256 verifies sequence overflow safely
   EventChunkSize: 8 # forces multiple PSpanChunk sends in the smoke phase
-  Batch:
-    Enable: true
-  BatchSize: 8
-  BatchFlushInterval: 500
-  BatchCollectDeadline: 1000
-  BatchMaxConcurrentRequests: 4
 
 # --- Statistics ---
 Stat:

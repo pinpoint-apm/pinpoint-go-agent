@@ -36,7 +36,7 @@ const (
 
 	// The duration keys below are in milliseconds without a "Ms" suffix,
 	// following the other millisecond keys (Stat.CollectInterval,
-	// Span.BatchFlushInterval).
+	// Collector.Grpc.SpanBatchFlushInterval).
 	CfgCollectorGrpcKeepAliveTime               = "Collector.Grpc.KeepAliveTime"
 	CfgCollectorGrpcKeepAliveTimeout            = "Collector.Grpc.KeepAliveTimeout"
 	CfgCollectorGrpcKeepAlivePermitWithoutCalls = "Collector.Grpc.KeepAlivePermitWithoutCalls"
@@ -61,57 +61,58 @@ const (
 	// retry schedule has a fixed bound of its own (metaRetryQueueSize in
 	// grpc.go), not this one.
 	CfgCollectorGrpcSenderQueueSize = "Collector.Grpc.SenderQueueSize"
+	// Collector.Grpc.SpanBatch* tune the unary SendSpanBatch sender.
+	CfgCollectorGrpcSpanBatchSize                  = "Collector.Grpc.SpanBatchSize"
+	CfgCollectorGrpcSpanBatchFlushInterval         = "Collector.Grpc.SpanBatchFlushInterval"
+	CfgCollectorGrpcSpanBatchCollectDeadline       = "Collector.Grpc.SpanBatchCollectDeadline"
+	CfgCollectorGrpcSpanBatchMaxConcurrentRequests = "Collector.Grpc.SpanBatchMaxConcurrentRequests"
 
-	CfgLogLevel                       = "Log.Level"
-	CfgLogOutput                      = "Log.Output"
-	CfgLogMaxSize                     = "Log.MaxSize"
-	CfgLogMaxBackups                  = "Log.MaxBackups"
-	CfgSamplingType                   = "Sampling.Type"
-	CfgSamplingCounterRate            = "Sampling.CounterRate"
-	CfgSamplingPercentRate            = "Sampling.PercentRate"
-	CfgSamplingNewThroughput          = "Sampling.NewThroughput"
-	CfgSamplingContinueThroughput     = "Sampling.ContinueThroughput"
-	CfgSpanQueueSize                  = "Span.QueueSize"
-	CfgSpanBatchSize                  = "Span.BatchSize"
-	CfgSpanBatchFlushInterval         = "Span.BatchFlushInterval"
-	CfgSpanBatchCollectDeadline       = "Span.BatchCollectDeadline"
-	CfgSpanBatchMaxConcurrentRequests = "Span.BatchMaxConcurrentRequests"
-	CfgSpanEventChunkSize             = "Span.EventChunkSize"
-	CfgSpanMaxCallStackDepth          = "Span.MaxCallStackDepth"
-	CfgSpanMaxCallStackSequence       = "Span.MaxCallStackSequence"
-	CfgSpanIgnoreErrors               = "Span.IgnoreErrors"
-	CfgSpanErrorMark                  = "Span.ErrorMark"
-	CfgSpanErrorMarkExclude           = "Span.ErrorMarkExclude"
-	CfgStatCollectInterval            = "Stat.CollectInterval"
-	CfgStatBatchCount                 = "Stat.BatchCount"
-	CfgStatQueueSize                  = "Stat.QueueSize"
-	CfgIsContainerEnv                 = "IsContainerEnv"
-	CfgServerInfo                     = "ServerInfo"
-	CfgConfigFile                     = "ConfigFile"
-	CfgActiveProfile                  = "ActiveProfile"
-	CfgSQLTraceBindValue              = "SQL.TraceBindValue"
-	CfgSQLMaxBindValueSize            = "SQL.MaxBindValueSize"
-	CfgSQLTraceCommit                 = "SQL.TraceCommit"
-	CfgSQLTraceRollback               = "SQL.TraceRollback"
-	CfgSQLTraceQueryStat              = "SQL.TraceQueryStat"
-	CfgSQLEnableRawSqlCache           = "SQL.EnableRawSqlCache"
-	CfgSQLCacheSize                   = "SQL.CacheSize"
-	CfgSQLCacheLengthLimit            = "SQL.CacheLengthLimit"
-	CfgSQLCacheExpireHours            = "SQL.CacheExpireHours"
-	CfgSQLErrorCount                  = "SQL.ErrorCount"
-	CfgSQLRemoveComments              = "SQL.RemoveComments"
-	CfgEnable                         = "Enable"
-	CfgHttpUrlStatEnable              = "Http.UrlStat.Enable"
-	CfgHttpUrlStatLimitSize           = "Http.UrlStat.LimitSize"
-	CfgHttpUrlStatQueueSize           = "Http.UrlStat.QueueSize"
-	CfgHttpUrlStatWithMethod          = "Http.UrlStat.WithMethod"
-	CfgErrorTraceCallStack            = "Error.TraceCallStack"
-	CfgErrorCallStackDepth            = "Error.CallStackDepth"
-	CfgErrorNewThroughput             = "Error.NewThroughput"
-	CfgErrorMaxChainDepth             = "Error.MaxChainDepth"
-	CfgUIDVersion                     = "Uid.Version"
-	CfgServiceName                    = "ServiceName"
-	CfgApiKey                         = "ApiKey"
+	CfgLogLevel                   = "Log.Level"
+	CfgLogOutput                  = "Log.Output"
+	CfgLogMaxSize                 = "Log.MaxSize"
+	CfgLogMaxBackups              = "Log.MaxBackups"
+	CfgSamplingType               = "Sampling.Type"
+	CfgSamplingCounterRate        = "Sampling.CounterRate"
+	CfgSamplingPercentRate        = "Sampling.PercentRate"
+	CfgSamplingNewThroughput      = "Sampling.NewThroughput"
+	CfgSamplingContinueThroughput = "Sampling.ContinueThroughput"
+	CfgSpanQueueSize              = "Span.QueueSize"
+	CfgSpanEventChunkSize         = "Span.EventChunkSize"
+	CfgSpanMaxCallStackDepth      = "Span.MaxCallStackDepth"
+	CfgSpanMaxCallStackSequence   = "Span.MaxCallStackSequence"
+	CfgSpanIgnoreErrors           = "Span.IgnoreErrors"
+	CfgSpanErrorMark              = "Span.ErrorMark"
+	CfgSpanErrorMarkExclude       = "Span.ErrorMarkExclude"
+	CfgStatCollectInterval        = "Stat.CollectInterval"
+	CfgStatBatchCount             = "Stat.BatchCount"
+	CfgStatQueueSize              = "Stat.QueueSize"
+	CfgIsContainerEnv             = "IsContainerEnv"
+	CfgServerInfo                 = "ServerInfo"
+	CfgConfigFile                 = "ConfigFile"
+	CfgActiveProfile              = "ActiveProfile"
+	CfgSQLTraceBindValue          = "SQL.TraceBindValue"
+	CfgSQLMaxBindValueSize        = "SQL.MaxBindValueSize"
+	CfgSQLTraceCommit             = "SQL.TraceCommit"
+	CfgSQLTraceRollback           = "SQL.TraceRollback"
+	CfgSQLTraceQueryStat          = "SQL.TraceQueryStat"
+	CfgSQLEnableRawSqlCache       = "SQL.EnableRawSqlCache"
+	CfgSQLCacheSize               = "SQL.CacheSize"
+	CfgSQLCacheLengthLimit        = "SQL.CacheLengthLimit"
+	CfgSQLCacheExpireHours        = "SQL.CacheExpireHours"
+	CfgSQLErrorCount              = "SQL.ErrorCount"
+	CfgSQLRemoveComments          = "SQL.RemoveComments"
+	CfgEnable                     = "Enable"
+	CfgHttpUrlStatEnable          = "Http.UrlStat.Enable"
+	CfgHttpUrlStatLimitSize       = "Http.UrlStat.LimitSize"
+	CfgHttpUrlStatQueueSize       = "Http.UrlStat.QueueSize"
+	CfgHttpUrlStatWithMethod      = "Http.UrlStat.WithMethod"
+	CfgErrorTraceCallStack        = "Error.TraceCallStack"
+	CfgErrorCallStackDepth        = "Error.CallStackDepth"
+	CfgErrorNewThroughput         = "Error.NewThroughput"
+	CfgErrorMaxChainDepth         = "Error.MaxChainDepth"
+	CfgUIDVersion                 = "Uid.Version"
+	CfgServiceName                = "ServiceName"
+	CfgApiKey                     = "ApiKey"
 )
 
 const (
@@ -253,10 +254,10 @@ func initConfig() {
 	AddConfig(CfgSamplingNewThroughput, CfgInt, 0, true)
 	AddConfig(CfgSamplingContinueThroughput, CfgInt, 0, true)
 	AddConfig(CfgSpanQueueSize, CfgInt, defaultQueueSize, false)
-	AddConfig(CfgSpanBatchSize, CfgInt, defaultSpanBatchSize, false)
-	AddConfig(CfgSpanBatchFlushInterval, CfgInt, defaultSpanBatchFlushInterval, false)
-	AddConfig(CfgSpanBatchCollectDeadline, CfgInt, defaultSpanBatchCollectDeadline, false)
-	AddConfig(CfgSpanBatchMaxConcurrentRequests, CfgInt, defaultSpanBatchMaxConcurrentRequests, false)
+	AddConfig(CfgCollectorGrpcSpanBatchSize, CfgInt, defaultSpanBatchSize, false)
+	AddConfig(CfgCollectorGrpcSpanBatchFlushInterval, CfgInt, defaultSpanBatchFlushInterval, false)
+	AddConfig(CfgCollectorGrpcSpanBatchCollectDeadline, CfgInt, defaultSpanBatchCollectDeadline, false)
+	AddConfig(CfgCollectorGrpcSpanBatchMaxConcurrentRequests, CfgInt, defaultSpanBatchMaxConcurrentRequests, false)
 	AddConfig(CfgSpanEventChunkSize, CfgInt, defaultEventChunkSize, true)
 	AddConfig(CfgSpanMaxCallStackDepth, CfgInt, defaultEventDepth, true)
 	AddConfig(CfgSpanMaxCallStackSequence, CfgInt, defaultEventSequence, true)
@@ -1359,15 +1360,15 @@ func (config *Config) publish() {
 	config.defaultIfOutOfRange(CfgStatBatchCount, 1, maxStatBatchCount)
 	config.defaultIfOutOfRange(CfgStatQueueSize, 1, maxQueueSize)
 	config.defaultIfOutOfRange(CfgCollectorGrpcSenderQueueSize, 1, maxQueueSize)
-	config.defaultIfOutOfRange(CfgSpanBatchSize, 1, maxQueueSize)
-	if config.stagedInt(CfgSpanBatchFlushInterval) < 1 {
-		config.cfgMap[CfgSpanBatchFlushInterval].value = defaultSpanBatchFlushInterval
+	config.defaultIfOutOfRange(CfgCollectorGrpcSpanBatchSize, 1, maxQueueSize)
+	if config.stagedInt(CfgCollectorGrpcSpanBatchFlushInterval) < 1 {
+		config.cfgMap[CfgCollectorGrpcSpanBatchFlushInterval].value = defaultSpanBatchFlushInterval
 	}
-	if config.stagedInt(CfgSpanBatchCollectDeadline) < 1 {
-		config.cfgMap[CfgSpanBatchCollectDeadline].value = defaultSpanBatchCollectDeadline
+	if config.stagedInt(CfgCollectorGrpcSpanBatchCollectDeadline) < 1 {
+		config.cfgMap[CfgCollectorGrpcSpanBatchCollectDeadline].value = defaultSpanBatchCollectDeadline
 	}
-	if config.stagedInt(CfgSpanBatchMaxConcurrentRequests) < 1 {
-		config.cfgMap[CfgSpanBatchMaxConcurrentRequests].value = defaultSpanBatchMaxConcurrentRequests
+	if config.stagedInt(CfgCollectorGrpcSpanBatchMaxConcurrentRequests) < 1 {
+		config.cfgMap[CfgCollectorGrpcSpanBatchMaxConcurrentRequests].value = defaultSpanBatchMaxConcurrentRequests
 	}
 	if config.stagedInt(CfgCollectorAgentInfoSendRetryInterval) < 1 {
 		config.cfgMap[CfgCollectorAgentInfoSendRetryInterval].value = defaultAgentInfoSendRetryInterval
@@ -1916,24 +1917,26 @@ func WithEnable(enable bool) ConfigOption { return withValue(CfgEnable, enable) 
 // WithSpanQueueSize sets the size of the span queue for gRPC.
 func WithSpanQueueSize(size int) ConfigOption { return withValue(CfgSpanQueueSize, size) }
 
-// WithSpanBatchSize sets the max number of spans per SendSpanBatch request.
-func WithSpanBatchSize(size int) ConfigOption { return withValue(CfgSpanBatchSize, size) }
-
-// WithSpanBatchFlushInterval sets the permit wait timeout for span batch requests, in milliseconds.
-func WithSpanBatchFlushInterval(interval int) ConfigOption {
-	return withValue(CfgSpanBatchFlushInterval, interval)
+// WithCollectorGrpcSpanBatchSize sets the max number of spans per SendSpanBatch request.
+func WithCollectorGrpcSpanBatchSize(size int) ConfigOption {
+	return withValue(CfgCollectorGrpcSpanBatchSize, size)
 }
 
-// WithSpanBatchCollectDeadline sets the collection window for a span batch, in milliseconds.
-func WithSpanBatchCollectDeadline(deadline int) ConfigOption {
-	return withValue(CfgSpanBatchCollectDeadline, deadline)
+// WithCollectorGrpcSpanBatchFlushInterval sets the permit wait timeout for span batch requests, in milliseconds.
+func WithCollectorGrpcSpanBatchFlushInterval(interval int) ConfigOption {
+	return withValue(CfgCollectorGrpcSpanBatchFlushInterval, interval)
 }
 
-// WithSpanBatchMaxConcurrentRequests sets the max number of concurrent
+// WithCollectorGrpcSpanBatchCollectDeadline sets the collection window for a span batch, in milliseconds.
+func WithCollectorGrpcSpanBatchCollectDeadline(deadline int) ConfigOption {
+	return withValue(CfgCollectorGrpcSpanBatchCollectDeadline, deadline)
+}
+
+// WithCollectorGrpcSpanBatchMaxConcurrentRequests sets the max number of concurrent
 // SendSpanBatch requests. The same number bounds the metadata sends (API,
 // string, SQL, exception) in flight at once.
-func WithSpanBatchMaxConcurrentRequests(max int) ConfigOption {
-	return withValue(CfgSpanBatchMaxConcurrentRequests, max)
+func WithCollectorGrpcSpanBatchMaxConcurrentRequests(max int) ConfigOption {
+	return withValue(CfgCollectorGrpcSpanBatchMaxConcurrentRequests, max)
 }
 
 // WithSpanEventChunkSize sets the event chunk of a span.
