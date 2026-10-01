@@ -94,7 +94,7 @@ type agent struct {
 
 	errorCache  *metaCache[string, int32]
 	errorIdGen  idGen
-	sqlCache    *metaCache[string, int32]
+	sqlCache    *metaCache[sqlHash, int32]
 	sqlIdGen    idGen
 	sqlUidCache *metaCache[string, []byte]
 	rawSqlCache *metaCache[string, normalizedSql]
@@ -188,13 +188,13 @@ type stringMeta struct {
 	funcName string
 }
 
-// sqlMeta carries the text to publish, abbreviated to maxSqlSize, but no cache
-// key: the id cache is keyed on the untruncated normalized statement, and
-// keeping that on the queue could retain up to metaChan x 1 MiB during a
-// collector outage, so deleteMetaCache removes the entry by id instead.
+// sqlMeta carries the text to publish, abbreviated to maxSqlSize, and the
+// hash the id cache keys the statement by, so a failed send drops exactly the
+// entry that published the id.
 type sqlMeta struct {
 	id  int32
 	sql string
+	key sqlHash
 }
 
 // sqlUidMeta carries the key of the cache entry to drop after a failed send,
@@ -393,7 +393,7 @@ func newAgentStruct(config *Config) *agent {
 	sqlCacheSize := config.Int(CfgSQLCacheSize)
 	agent.sqlCacheLengthLimit = config.Int(CfgSQLCacheLengthLimit)
 	agent.errorCache = newMetaCache[string, int32](cacheSize)
-	agent.sqlCache = newMetaCache[string, int32](sqlCacheSize)
+	agent.sqlCache = newMetaCache[sqlHash, int32](sqlCacheSize)
 	agent.sqlUidCache = newMetaCache[string, []byte](sqlCacheSize)
 	agent.sqlUidCache.ttl = time.Duration(config.Int(CfgSQLCacheExpireHours)) * time.Hour
 	agent.rawSqlCache = newMetaCache[string, normalizedSql](sqlCacheSize)
@@ -1327,9 +1327,7 @@ func (agent *agent) deleteMetaCache(md interface{}) {
 	case stringMeta:
 		agent.errorCache.remove(md.funcName, func(id int32) bool { return id == md.id })
 	case sqlMeta:
-		// By id: the meta has no key (see sqlMeta). Ids are unique per
-		// sequence, so the scan finds at most the entry that published it.
-		agent.sqlCache.removeValue(func(id int32) bool { return id == md.id })
+		agent.sqlCache.remove(md.key, func(id int32) bool { return id == md.id })
 	case sqlUidMeta:
 		// A statement that bypassed the cache has nothing to drop.
 		if !md.cached {
@@ -1500,9 +1498,9 @@ func abbreviateString(str string, length int) string {
 // Deliberately not applied to sqlCache: its ids come from a sequence, so a
 // bypassed statement would burn a fresh id - and a fresh sqlMeta - on every
 // single use, and the same query would appear in the UI as a new entry per
-// execution. That exemption caps the id cache at cacheSize statements of
-// whatever length the application generates, since the key is the untruncated
-// text; the UID cache is bounded by the limit instead.
+// execution. The id cache needs no such bound: it is keyed by the statement's
+// 128-bit hash (sqlHash), so an entry costs the same whatever the statement's
+// length. The UID cache keys on the text and is bounded by the limit.
 func (agent *agent) sqlCacheable(sql string) bool {
 	return len(sql) < agent.sqlCacheLengthLimit
 }
@@ -1512,10 +1510,13 @@ func (agent *agent) cacheSql(sql string) int32 {
 		return 0
 	}
 
-	// Keyed on the untruncated statement, not the abbreviated text: an
-	// abbreviated key keeps no more than a 64KB prefix and the total length, so
-	// two statements agreeing on both would share one id and the second would
-	// never publish its own metadata.
+	// Keyed on a hash of the untruncated statement, not on the abbreviated
+	// text: an abbreviated key keeps no more than a 64KB prefix and the total
+	// length, so two statements agreeing on both would share one id and the
+	// second would never publish its own metadata. The hash and not the text
+	// itself, because the text is kept for the life of the entry and is
+	// bounded only by maxSqlNormalizeLength: SQL.CacheSize statements of up to
+	// 1 MiB each pinned up to a gigabyte, where the hash pins 16 bytes.
 	//
 	// Bounded by maxSqlNormalizeLength: SetSQL drops a raw statement past it,
 	// but literal-heavy SQL normalizes larger than it came in, so the key is
@@ -1524,7 +1525,8 @@ func (agent *agent) cacheSql(sql string) int32 {
 	if !sqlNormalizable(sql) {
 		return 0
 	}
-	if v, ok := agent.sqlCache.peek(sql); ok {
+	key := sqlHashOf(sql)
+	if v, ok := agent.sqlCache.peek(key); ok {
 		return v
 	}
 	if agent.metaQueueFull() {
@@ -1536,12 +1538,12 @@ func (agent *agent) cacheSql(sql string) int32 {
 	if id == 0 {
 		return 0
 	}
-	if v, ok := agent.sqlCache.peekOrAdd(sql, id); ok {
+	if v, ok := agent.sqlCache.peekOrAdd(key, id); ok {
 		return v
 	}
 
 	aSql := abbreviateString(sql, maxSqlSize)
-	md := sqlMeta{id: id, sql: aSql}
+	md := sqlMeta{id: id, sql: aSql, key: key}
 	agent.enqueueMeta(md)
 
 	if IsDebugLogLevelEnabled() {
@@ -1603,15 +1605,26 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 // murmur3's own Sum() writes them big-endian and would yield a different UID for
 // the same SQL.
 func sqlUid(sql string) []byte {
+	uid := sqlHashOf(sql)
+	return uid[:]
+}
+
+// sqlHash is the murmur3 x64 128 hash of a normalized statement, in the byte
+// order sqlUid describes. It is the SQL id cache's key: two statements share a
+// key with probability 2^-128, which is no collision in practice, and the
+// cache holds 16 bytes per statement instead of the statement.
+type sqlHash [16]byte
+
+func sqlHashOf(sql string) sqlHash {
 	// The string's bytes are hashed in place: Sum128 only reads them and
 	// retains nothing, and the copy []byte(sql) made was the size of the
 	// statement on every cache miss and every execution of a statement past
 	// SQL.CacheLengthLimit.
 	h1, h2 := murmur3.Sum128(unsafe.Slice(unsafe.StringData(sql), len(sql)))
-	uid := make([]byte, 16)
-	binary.LittleEndian.PutUint64(uid[0:8], h1)
-	binary.LittleEndian.PutUint64(uid[8:16], h2)
-	return uid
+	var h sqlHash
+	binary.LittleEndian.PutUint64(h[0:8], h1)
+	binary.LittleEndian.PutUint64(h[8:16], h2)
+	return h
 }
 
 // normalizedSql is the immutable result of normalizing one raw SQL text.

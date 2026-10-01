@@ -1495,7 +1495,7 @@ func Test_sendMetaWorker_releasesSqlCachesOnFailure(t *testing.T) {
 	agent.agentGrpc = agentGrpc
 
 	const sql = "SELECT * FROM t WHERE id = 1"
-	sqlCached := func() bool { _, ok := agent.sqlCache.peek(sql); return ok }
+	sqlCached := func() bool { _, ok := agent.sqlCache.peek(sqlHashOf(sql)); return ok }
 	sqlUidCached := func() bool { _, ok := agent.sqlUidCache.peek(sql); return ok }
 	assert.NotZero(t, agent.cacheSql(sql))
 	assert.NotEmpty(t, agent.cacheSqlUid(sql))

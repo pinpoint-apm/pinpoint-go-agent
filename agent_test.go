@@ -338,10 +338,10 @@ func Test_agent_SQLCachesKeyTheWholeStatement(t *testing.T) {
 		firstID, secondID := a.cacheSql(first), a.cacheSql(second)
 
 		assert.NotEqual(t, firstID, secondID, "each statement needs its own id")
-		cached, ok := a.sqlCache.peek(second)
+		cached, ok := a.sqlCache.peek(sqlHashOf(second))
 		assert.True(t, ok, "the whole statement is the key")
 		assert.Equal(t, secondID, cached)
-		_, abbreviated := a.sqlCache.peek(bounded)
+		_, abbreviated := a.sqlCache.peek(sqlHashOf(bounded))
 		assert.False(t, abbreviated)
 
 		assert.Len(t, a.metaChan, 2, "each statement publishes its own metadata")
@@ -349,7 +349,7 @@ func Test_agent_SQLCachesKeyTheWholeStatement(t *testing.T) {
 		assert.Equal(t, bounded, md.sql, "the published text stays capped")
 
 		a.deleteMetaCache(md)
-		_, stillCached := a.sqlCache.peek(first)
+		_, stillCached := a.sqlCache.peek(sqlHashOf(first))
 		assert.False(t, stillCached, "a dropped meta must drop the entry that published its id")
 	})
 
@@ -392,7 +392,7 @@ func Test_agent_QueuedSqlIdMetaHoldsNoUntruncatedKey(t *testing.T) {
 	assert.Equal(t, id, md.id)
 
 	a.deleteMetaCache(md)
-	_, still := a.sqlCache.peek(huge)
+	_, still := a.sqlCache.peek(sqlHashOf(huge))
 	assert.False(t, still, "a dropped meta still evicts the entry that published its id")
 }
 
@@ -1787,7 +1787,7 @@ func Test_agent_SQLCachesRefuseAKeyPastTheNormalizationCap(t *testing.T) {
 	t.Run("sql id", func(t *testing.T) {
 		a := newTestAgent(defaultConfig())
 		assert.Equal(t, int32(0), a.cacheSql(past), "no id for a key past the cap")
-		_, cached := a.sqlCache.peek(past)
+		_, cached := a.sqlCache.peek(sqlHashOf(past))
 		assert.False(t, cached)
 		assert.Empty(t, a.metaChan, "nothing queued for a refused key")
 
@@ -2035,8 +2035,8 @@ func Test_SqlCacheLengthLimitAppliesToTheUidCacheOnly(t *testing.T) {
 	// would mint a new one per execution.
 	assert.NotZero(t, agent.cacheSql(short))
 	assert.NotZero(t, agent.cacheSql(long))
-	_, shortHasId := agent.sqlCache.peek(short)
-	_, longHasId := agent.sqlCache.peek(long)
+	_, shortHasId := agent.sqlCache.peek(sqlHashOf(short))
+	_, longHasId := agent.sqlCache.peek(sqlHashOf(long))
 	assert.True(t, shortHasId, "a short statement is cached by id")
 	assert.True(t, longHasId, "the length limit does not apply to the id cache")
 
