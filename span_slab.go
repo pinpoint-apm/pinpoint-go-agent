@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"sync"
+	"unsafe"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 	wrappers "google.golang.org/protobuf/types/known/wrapperspb"
@@ -28,6 +29,13 @@ func (s *slab[T]) reset() {
 	s.buf = s.buf[:0]
 }
 
+// retained is the memory the slab keeps between uses: its capacity, which
+// reset leaves in place.
+func (s *slab[T]) retained() int {
+	var zero T
+	return cap(s.buf) * int(unsafe.Sizeof(zero))
+}
+
 // ptrSlab hands out fixed-size []*T lists carved from one reusable backing
 // array. The returned slice is capped at n, zeroed, and owned by the caller
 // until the next reset.
@@ -50,6 +58,10 @@ func (s *ptrSlab[T]) take(n int) []*T {
 func (s *ptrSlab[T]) reset() {
 	clear(s.buf)
 	s.buf = s.buf[:0]
+}
+
+func (s *ptrSlab[T]) retained() int {
+	return cap(s.buf) * int(unsafe.Sizeof((*T)(nil)))
 }
 
 // spanMessageBuilder builds PSpanMessage graphs out of reusable slabs — the Go
@@ -134,6 +146,43 @@ func (b *spanMessageBuilder) reset() {
 	b.longIntIntByteByteStrings.reset()
 }
 
+// retained is the memory the builder keeps between uses, summed over its
+// slabs; releaseSpanMessageBuilder reads it to decide whether to keep it.
+func (b *spanMessageBuilder) retained() int {
+	return 0 +
+		b.messages.retained() +
+		b.spanOneofs.retained() +
+		b.spans.retained() +
+		b.chunkOneofs.retained() +
+		b.chunks.retained() +
+		b.txIds.retained() +
+		b.acceptEvents.retained() +
+		b.parentInfos.retained() +
+		b.localAsyncIds.retained() +
+		b.events.retained() +
+		b.eventLists.retained() +
+		b.messageLists.retained() +
+		b.nextEvents.retained() +
+		b.nextEventOneofs.retained() +
+		b.messageEvents.retained() +
+		b.intStringValues.retained() +
+		b.stringValues.retained() +
+		b.annotations.retained() +
+		b.annotationLists.retained() +
+		b.annotationValues.retained() +
+		b.intOneofs.retained() +
+		b.longOneofs.retained() +
+		b.stringOneofs.retained() +
+		b.stringStringOneofs.retained() +
+		b.stringStrings.retained() +
+		b.intStringStringOneofs.retained() +
+		b.intStringStrings.retained() +
+		b.bytesStringStringOneofs.retained() +
+		b.bytesStringStrings.retained() +
+		b.longIntIntByteByteStringOneofs.retained() +
+		b.longIntIntByteByteStrings.retained()
+}
+
 func (b *spanMessageBuilder) stringValue(s string) *wrappers.StringValue {
 	v := b.stringValues.get()
 	v.Value = validUTF8(s)
@@ -151,6 +200,18 @@ func (b *spanMessageBuilder) stringValue(s string) *wrappers.StringValue {
 // ponytail: fixed capacity; size it from config if the default permit count
 // is raised well past it.
 const spanMessageBuilderFreeListSize = 16
+
+// spanMessageBuilderMaxRetained is the most a builder may keep between uses
+// and still be recycled. The slabs never shrink - reset keeps their capacity,
+// which is the point of reusing them - so one outsized batch would otherwise
+// size a builder for good, and sixteen of them on the free list for the life
+// of the process. Measured (buildBenchChunk, one SQL annotation per event):
+// a 50-span batch of 10 to 20 events retains 0.3 to 0.6 MiB, 100 events
+// 2.6 MiB, 1000 events 25 MiB and 5000 events 118 MiB. 4 MiB keeps the
+// ordinary shapes and bounds the free list at 64 MiB; a builder past it is
+// left to the GC and the next send regrows one from zero, which is what
+// every send did before the free list existed.
+const spanMessageBuilderMaxRetained = 4 << 20
 
 var (
 	spanMessageBuilderFreeList = make(chan *spanMessageBuilder, spanMessageBuilderFreeListSize)
@@ -170,6 +231,9 @@ func acquireSpanMessageBuilder() *spanMessageBuilder {
 // Call only after the collector send completed (see the type comment).
 func releaseSpanMessageBuilder(b *spanMessageBuilder) {
 	b.reset()
+	if b.retained() > spanMessageBuilderMaxRetained {
+		return
+	}
 	select {
 	case spanMessageBuilderFreeList <- b:
 	default:

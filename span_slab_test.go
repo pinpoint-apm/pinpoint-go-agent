@@ -298,3 +298,39 @@ func Test_spanGrpc_sendSpanBatchAsync_noDataMixing(t *testing.T) {
 	assert.Equal(t, senders*batchesPerSender*spansPerBatch, client.received,
 		"every span must reach the collector (no permit timeouts expected)")
 }
+
+// drainBuilderFreeList empties the free list and reports whether b was on it.
+func drainBuilderFreeList(b *spanMessageBuilder) (found bool) {
+	for {
+		select {
+		case x := <-spanMessageBuilderFreeList:
+			if x == b {
+				found = true
+			}
+		default:
+			return found
+		}
+	}
+}
+
+// A builder that served an outsized batch keeps that capacity for good, so it
+// is not recycled: left on the free list it would pin the memory for the life
+// of the process, sixteen times over. An ordinary one is recycled as before.
+func Test_releaseSpanMessageBuilderDropsAnOversizedBuilder(t *testing.T) {
+	drainBuilderFreeList(nil)
+
+	small := &spanMessageBuilder{}
+	small.events.buf = make([]pb.PSpanEvent, 0, 1024)
+	assert.Less(t, small.retained(), spanMessageBuilderMaxRetained)
+	releaseSpanMessageBuilder(small)
+	assert.True(t, drainBuilderFreeList(small), "an ordinary builder goes back on the free list")
+
+	big := &spanMessageBuilder{}
+	big.events.buf = make([]pb.PSpanEvent, 0, 1)
+	for big.retained() <= spanMessageBuilderMaxRetained {
+		big.events.buf = make([]pb.PSpanEvent, 0, 2*cap(big.events.buf))
+	}
+	releaseSpanMessageBuilder(big)
+	assert.False(t, drainBuilderFreeList(big), "an oversized builder is left to the GC")
+	assert.Empty(t, big.events.buf, "release still resets it")
+}
