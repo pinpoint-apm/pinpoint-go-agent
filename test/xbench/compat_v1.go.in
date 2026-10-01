@@ -1,0 +1,15 @@
+package xbench
+
+import pinpoint "github.com/pinpoint-apm/pinpoint-go-agent"
+
+type mapReader map[string]string
+
+func (m mapReader) Get(k string) string { return m[k] }
+
+type mapWriter map[string]string
+
+func (m mapWriter) Set(k, v string) { m[k] = v }
+
+func versionOpts() []pinpoint.ConfigOption {
+	return []pinpoint.ConfigOption{pinpoint.WithAgentId("xbench-agent")}
+}

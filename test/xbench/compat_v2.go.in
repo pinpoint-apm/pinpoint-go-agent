@@ -1,0 +1,16 @@
+package xbench
+
+import pinpoint "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+
+type mapReader map[string]string
+
+func (m mapReader) Get(k string) (string, bool) { v, ok := m[k]; return v, ok }
+
+type mapWriter map[string]string
+
+func (m mapWriter) Set(k, v string) { m[k] = v }
+
+// v1 sizes the url stat queue with Span.QueueSize; match it.
+func versionOpts() []pinpoint.ConfigOption {
+	return []pinpoint.ConfigOption{pinpoint.WithHttpUrlStatQueueSize(65536)}
+}

@@ -1,0 +1,148 @@
+// Cross-version request-path benchmarks through the public API only, so the
+// same file runs against a v1 or v2 release and the working tree; run.sh
+// replaces PINPOINT with the module path and adds compat_v<major>.go.in for
+// what the two majors spell differently. Mirrors the C++ agent's
+// span_lifecycle_benchmark: what one instrumented request costs the goroutine
+// that makes it, per request shape, against a live (stub) collector.
+package xbench
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+	"testing"
+	"time"
+
+	pinpoint "PINPOINT"
+)
+
+var agent pinpoint.Agent
+
+func TestMain(m *testing.M) {
+	rate, _ := strconv.Atoi(os.Getenv("XBENCH_RATE"))
+	opts := append(versionOpts(),
+		pinpoint.WithAppName("xbench"),
+		pinpoint.WithCollectorHost("127.0.0.1"),
+		pinpoint.WithLogLevel("error"),
+		pinpoint.WithSamplingType("COUNTER"),
+		pinpoint.WithSamplingCounterRate(rate),
+		pinpoint.WithHttpUrlStatEnable(true),
+		// Large enough that -benchtime=50000x never reaches the head-drop path.
+		pinpoint.WithSpanQueueSize(65536),
+		pinpoint.WithSpanMaxCallStackDepth(1<<20),
+		pinpoint.WithSpanMaxCallStackSequence(1<<30),
+	)
+	cfg, err := pinpoint.NewConfig(opts...)
+	if err != nil {
+		panic(err)
+	}
+	if agent, err = pinpoint.NewAgent(cfg); err != nil {
+		panic(err)
+	}
+	for i := 0; !agent.Enable(); i++ {
+		if i > 100 {
+			panic("agent never came online: is the stub collector running?")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	code := m.Run()
+	agent.Shutdown()
+	os.Exit(code)
+}
+
+var (
+	errBench     = errors.New("bench error")
+	newTrace     = mapReader{}
+	unsampledHdr = mapReader{pinpoint.HeaderSampled: "s0"}
+	continued    = mapReader{
+		pinpoint.HeaderTraceId:               "upstream-agent^1610000000000^12345",
+		pinpoint.HeaderSpanId:                "1234567890",
+		pinpoint.HeaderParentSpanId:          "987654321",
+		pinpoint.HeaderFlags:                 "0",
+		pinpoint.HeaderParentApplicationName: "UpstreamApp",
+		pinpoint.HeaderParentApplicationType: "1800",
+		pinpoint.HeaderHost:                  "10.0.0.1:8080",
+	}
+)
+
+const query = "SELECT id, name, email FROM users WHERE id = 1234 AND status = 'active' AND age > 21"
+
+type shape struct {
+	name    string
+	reader  mapReader
+	sampled bool
+	body    func(t pinpoint.Tracer)
+}
+
+func twoEvents(t pinpoint.Tracer) {
+	t.NewSpanEvent("event1").EndSpanEvent()
+	t.NewSpanEvent("event2").EndSpanEvent()
+}
+
+var shapes = []shape{
+	// unsampled: the sampler (XBENCH_RATE=0) rejects a new trace — the
+	// majority path in production whenever sampling is on.
+	{"Unsampled", newTrace, false, twoEvents},
+	// unsampledHeader: upstream said s0.
+	{"UnsampledHeader", unsampledHdr, false, twoEvents},
+	{"Sampled", newTrace, true, twoEvents},
+	{"Continued", continued, true, twoEvents},
+	{"Nested10", newTrace, true, func(t pinpoint.Tracer) {
+		for i := 0; i < 10; i++ {
+			t.NewSpanEvent("nested")
+		}
+		for i := 0; i < 10; i++ {
+			t.EndSpanEvent()
+		}
+	}},
+	{"SQL", newTrace, true, func(t pinpoint.Tracer) {
+		t.NewSpanEvent("query").SpanEvent().SetSQL(query, "")
+		t.EndSpanEvent()
+	}},
+	{"Error", newTrace, true, func(t pinpoint.Tracer) {
+		t.NewSpanEvent("call").SpanEvent().SetError(errBench)
+		t.EndSpanEvent()
+	}},
+	{"Inject", newTrace, true, func(t pinpoint.Tracer) {
+		t.NewSpanEvent("client")
+		t.Inject(mapWriter{})
+		t.EndSpanEvent()
+	}},
+	{"UrlStat", newTrace, true, func(t pinpoint.Tracer) {
+		twoEvents(t)
+		t.AddMetric(pinpoint.MetricURLStat, &pinpoint.UrlStatEntry{Url: "/bench/rpc", Method: "GET", Status: 200})
+	}},
+}
+
+func request(s shape) {
+	t := agent.NewSpanTracerWithReader("operation", "/bench/rpc", s.reader)
+	s.body(t)
+	t.EndSpan()
+}
+
+func BenchmarkRequest(b *testing.B) {
+	wantSampled := os.Getenv("XBENCH_RATE") != "0"
+	for _, s := range shapes {
+		if s.sampled != wantSampled && s.name != "UnsampledHeader" {
+			continue
+		}
+		time.Sleep(2 * time.Second) // let the sender drain the previous shape
+		b.Run(s.name, func(b *testing.B) {
+			// Verify the shape before timing it so a phase can't silently
+			// degrade to noop spans and publish a fast number.
+			t := agent.NewSpanTracerWithReader("operation", "/bench/rpc", s.reader)
+			if t.IsSampled() != s.sampled || t.SpanId() == 0 {
+				b.Fatal(fmt.Sprintf("shape %s: sampled=%v spanId=%d", s.name, t.IsSampled(), t.SpanId()))
+			}
+			t.EndSpan()
+			b.ReportAllocs()
+			b.ResetTimer()
+			b.RunParallel(func(pb *testing.PB) {
+				for pb.Next() {
+					request(s)
+				}
+			})
+		})
+	}
+}
