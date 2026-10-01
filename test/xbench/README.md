@@ -94,20 +94,33 @@ reporting a fast number.
 - The templates end in `.go.in` so the root module never compiles them: the
   `PINPOINT` placeholder and the v1 import would break `go vet ./...`.
 
-## Results: v1.4.7 against v2 (Apple M1 Pro, 6 rounds)
+## Results: v1.4.7 against v2 at 8bc1d4f (Apple M1 Pro, 6 rounds)
+
+Medians; `-cpu=4` and `-cpu=8` show the change against v1.4.7 at the same
+count.
 
 | shape | -cpu=1 | -cpu=4 | -cpu=8 | allocs/op |
 |---|---|---|---|---|
-| Sampled | 6.57µs → 1.34µs (−80%) | −76% | −74% | 70 → 4 |
-| Continued | 8.52µs → 1.59µs (−81%) | −64% | −37% | 83 → 4 |
-| Nested10 | 27.3µs → 4.49µs (−84%) | −79% | −76% | 305 → 13 |
-| SQL | 14.1µs → 1.19µs (−92%) | −82% | −83% | 96 → 4 |
-| Error | 6.28µs → 1.19µs (−81%) | −69% | −75% | 54 → 3 |
-| Inject | 9.54µs → 1.69µs (−82%) | −69% | −70% | 81 → 9 |
-| UrlStat | 6.41µs → 1.84µs (−71%) | −69% | −55% | 92 → 5 |
-| Unsampled | 249ns → 269ns (+8%) | −47% | −62% | 4 → 1 |
+| Sampled | 5.71µs → 1.25µs (−78%) | −75% | −73% | 68 → 4 |
+| Continued | 6.10µs → 1.56µs (−74%) | −73% | −72% | 74 → 4 |
+| Nested10 | 21.3µs → 4.45µs (−79%) | −80% | −77% | 264 → 13 |
+| SQL | 9.97µs → 1.16µs (−88%) | −83% | −82% | 76 → 4 |
+| Error | 4.62µs → 1.18µs (−74%) | −68% | −75% | 47 → 3 |
+| Inject | 6.15µs → 1.68µs (−73%) | −70% | −69% | 67 → 9 |
+| UrlStat | 6.97µs → 1.75µs (−75%) | −71% | −53% | 74 → 5 |
+| Unsampled | 211ns → 276ns (~, p=0.065) | −53% | −66% | 4 → 1 |
+| UnsampledHeader | 213ns → 268ns (+26%) | −55% | −65% | 4 → 1 |
 
-Geomean: −71% time and −91% allocations. The one regression is `Unsampled` at
-`-cpu=1`. The agent's own CPU per request is lower in v2, so the extra time is
-most likely the single P shared with background goroutines; the cause was not
-confirmed.
+Geomean: −70% time and −91% allocations.
+
+- The v1.4.7 `-cpu=1` rows vary by up to ±89%: its sender serializes spans on
+  the one P the requests run on. Compare the `-cpu=4` and `-cpu=8` rows for
+  stable numbers.
+- The one regression is the two unsampled shapes at `-cpu=1`. A longer run
+  (2,000,000 requests, 8 rounds) put `Unsampled` at +8%. The agent's own CPU
+  per request is lower in v2, so the extra time is most likely the single P
+  shared with background goroutines; the cause was not confirmed.
+- `Continued` went from −37% to −72% at `-cpu=8` with 8bc1d4f. Before it, a
+  continued span was registered under the span id from the upstream header,
+  so this benchmark's identical headers put every request on one registry
+  shard lock.
