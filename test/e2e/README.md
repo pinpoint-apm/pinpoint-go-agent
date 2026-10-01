@@ -117,6 +117,34 @@ Append a load mode to the orchestrated run:
 ./run_e2e.sh --load-mode full --load-duration 120 --load-concurrency 20
 ```
 
+That pass runs after `smoke_test.sh`, at the smoke run's settings rather than
+the exported ones:
+
+- the sampling check restarts the upstream agent through
+  `POST /agent/reload?counter_rate=N`, which sets
+  `PINPOINT_GO_SAMPLING_COUNTERRATE` in the server's environment and is never
+  undone. The upstream ends at counter rate 1 and samples every load request
+  whatever rate was exported, and the downstreams continue its decision, so the
+  whole stack traces 100%;
+- the runner defaults `PINPOINT_GO_LOG_LEVEL` to `debug` for its span-batch
+  transport check, which inflates load-phase CPU (more so on an agent that logs
+  every span at debug).
+
+The smoke checks also expect every request to be sampled, so with any other
+rate exported they fail on their own. To load the stack at the configured
+rate, add `--load-only`:
+
+```bash
+export PINPOINT_GO_SAMPLING_COUNTERRATE=100   # sample 1%
+./run_e2e.sh --load-only --load-mode mixed --load-duration 120
+```
+
+It skips `smoke_test.sh` and the debug-only span-batch check, keeps the
+exported sampling rate, and leaves the log level to the environment and
+`pinpoint-config.yaml` (`info`). Before the load it still waits for every
+process log to show `success to register agent` and for the upstream's
+`/ready`; afterwards it still checks registration and rejected span batches.
+
 For maximum throughput without an RPS limit, run the generator against an
 already-started stack. `--concurrency` is the number of workers continuously
 kept busy:

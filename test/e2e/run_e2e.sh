@@ -8,6 +8,7 @@ PORT=8090
 DOWNSTREAM_PORT=8091
 GRPC_PORT=50051
 LOAD_MODE=""
+LOAD_ONLY=false
 LOAD_DURATION=30
 LOAD_CONCURRENCY=5
 LOAD_RPS=""
@@ -37,6 +38,9 @@ Options:
                             real one (self-test of the stack; records nothing)
       --load-mode MODE      Load workload to run after the smoke checks
                             (unthrottled maximum throughput unless --load-rps)
+      --load-only           Skip the smoke checks and the debug-level span
+                            batch check, so the load runs at the exported
+                            sampling rate and log level (needs a load phase)
       --load-duration SEC   Load duration (default: $LOAD_DURATION)
       --load-concurrency N  Load workers, or fixed-RPS max in-flight requests
                             (default: $LOAD_CONCURRENCY)
@@ -67,6 +71,7 @@ while [[ $# -gt 0 ]]; do
         --grpc-port) GRPC_PORT=$2; shift 2 ;;
         --local-collector) LOCAL_COLLECTOR=true; shift ;;
         --load-mode) LOAD_MODE=$2; shift 2 ;;
+        --load-only) LOAD_ONLY=true; shift ;;
         --load-duration) LOAD_DURATION=$2; shift 2 ;;
         --load-concurrency) LOAD_CONCURRENCY=$2; shift 2 ;;
         --load-rps) LOAD_RPS=$2; shift 2 ;;
@@ -94,6 +99,10 @@ if ! $PROFILE && [[ -n "$PROFILE_OUTPUT$PROFILE_SECONDS" ]]; then
 fi
 if [[ -n "$MAX_ERROR_RATE" && -z "$LOAD_MODE" ]]; then
     echo "--max-error-rate requires a load phase (--load-mode or --load-rps)." >&2
+    exit 2
+fi
+if $LOAD_ONLY && [[ -z "$LOAD_MODE" ]]; then
+    echo "--load-only requires a load phase (--load-mode or --load-rps)." >&2
     exit 2
 fi
 
@@ -144,8 +153,11 @@ fi
 export PINPOINT_GO_COLLECTOR_HOST
 export PINPOINT_GO_CONFIGFILE="${PINPOINT_GO_CONFIGFILE:-$SCRIPT_DIR/pinpoint-config.yaml}"
 # Debug level, because the transport evidence below reads the span-batch lines
-# the agent only logs at that level.
-export PINPOINT_GO_LOG_LEVEL="${PINPOINT_GO_LOG_LEVEL:-debug}"
+# the agent only logs at that level. --load-only skips that check, and debug
+# logging would inflate the load numbers.
+if ! $LOAD_ONLY; then
+    export PINPOINT_GO_LOG_LEVEL="${PINPOINT_GO_LOG_LEVEL:-debug}"
+fi
 export PINPOINT_E2E_AGENT_TIMEOUT="${PINPOINT_E2E_AGENT_TIMEOUT:-30}"
 
 RUN_SUFFIX="$(date +%H%M%S)-$$"
@@ -169,6 +181,17 @@ wait_exit() {
     [[ -n "$pid" ]] || return 0
     while kill -0 "$pid" 2>/dev/null && [[ $waited -lt 50 ]]; do
         sleep 0.1
+        waited=$((waited + 1))
+    done
+}
+
+# Runs a command once a second until it succeeds, giving up after
+# PINPOINT_E2E_AGENT_TIMEOUT seconds.
+retry() {
+    local waited=0
+    until "$@"; do
+        [[ $waited -lt $PINPOINT_E2E_AGENT_TIMEOUT ]] || return 1
+        sleep 1
         waited=$((waited + 1))
     done
 }
@@ -231,11 +254,30 @@ for process in "$GRPC_PID:$GRPC_BIN" "$DOWNSTREAM_PID:$DOWNSTREAM_BIN" \
     fi
 done
 
-set +e
-env "HOST=$HOST" "PORT=$PORT" "DOWNSTREAM_PORT=$DOWNSTREAM_PORT" \
-    bash "$SCRIPT_DIR/smoke_test.sh"
-RESULT=$?
-set -e
+RESULT=0
+if $LOAD_ONLY; then
+    # smoke_test.sh would leave the upstream at counter rate 1 (its sampling
+    # reload is never undone), so wait for registration here instead: until
+    # then the agents hand out noop tracers and the load would go untraced.
+    echo "Waiting for agent registration"
+    for log in upstream.log downstream.log grpcserver.log; do
+        if ! retry grep -q 'success to register agent' "$LOG_DIR/$log"; then
+            echo "$log shows no agent registration after ${PINPOINT_E2E_AGENT_TIMEOUT}s; see $LOG_DIR" >&2
+            exit 1
+        fi
+    done
+    # The registration line is logged just before the agent enables tracing.
+    if ! retry curl -sf --max-time 2 -o /dev/null "http://$HOST:$PORT/ready"; then
+        echo "upstream /ready reports no enabled agent; see $LOG_DIR" >&2
+        exit 1
+    fi
+else
+    set +e
+    env "HOST=$HOST" "PORT=$PORT" "DOWNSTREAM_PORT=$DOWNSTREAM_PORT" \
+        bash "$SCRIPT_DIR/smoke_test.sh"
+    RESULT=$?
+    set -e
+fi
 
 if [[ -n "$LOAD_MODE" ]]; then
     echo ""
@@ -292,7 +334,9 @@ for log in upstream.log downstream.log grpcserver.log; do
         RESULT=1
     fi
 done
-if grep -q 'SendSpanBatch size=' "$LOG_DIR/upstream.log"; then
+if $LOAD_ONLY; then
+    echo "  SKIP  span batch line (debug level only; --load-only)"
+elif grep -q 'SendSpanBatch size=' "$LOG_DIR/upstream.log"; then
     echo "  PASS  upstream sent span batches to the collector"
 else
     echo "  FAIL  upstream log shows no span batch" >&2
