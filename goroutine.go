@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"io"
+	"math"
 	"reflect"
-	"regexp"
 	"runtime"
 	"runtime/pprof"
 	"strconv"
@@ -17,9 +17,8 @@ import (
 )
 
 var (
-	goIdOffset      uintptr
-	stateMap        map[string]pb.PThreadState
-	goroutineHeader = regexp.MustCompile(`^goroutine\s+(\d+)\s+\[(.*)\]:$`)
+	goIdOffset uintptr
+	stateMap   map[string]pb.PThreadState
 )
 
 func initGoroutine() {
@@ -55,9 +54,9 @@ type goroutine struct {
 	span   *activeSpanInfo
 }
 
-func (g *goroutine) addLine(line string) {
-	g.buf.WriteString(line)
-	g.buf.WriteString("\n")
+func (g *goroutine) addLine(line []byte) {
+	g.buf.Write(line)
+	g.buf.WriteByte('\n')
 }
 
 func (g *goroutine) threadState() pb.PThreadState {
@@ -71,20 +70,49 @@ func (g *goroutine) stackTrace() []string {
 	return []string{g.buf.String()}
 }
 
-func newGoroutine(idStr string, state string, line string) *goroutine {
-	if id, err := strconv.Atoi(idStr); err == nil {
-		g := &goroutine{
-			id:     int64(id),
-			header: "goroutine " + idStr,
-			state:  strings.TrimSpace(strings.Split(state, ",")[0]),
-			buf:    &bytes.Buffer{},
-		}
-		g.addLine(line)
-		return g
-	} else {
-		Log("cmd").Errorf("convert goroutine id: %v", err)
+func newGoroutine(id int64, state string, line []byte) *goroutine {
+	g := &goroutine{
+		id:     id,
+		header: goroutineHeaderPrefix + strconv.FormatInt(id, 10),
+		state:  strings.TrimSpace(strings.Split(state, ",")[0]),
+		buf:    &bytes.Buffer{},
 	}
-	return nil
+	g.addLine(line)
+	return g
+}
+
+// goroutineHeaderPrefix starts every goroutine block of a debug=2 profile.
+const goroutineHeaderPrefix = "goroutine "
+
+// parseGoroutineHeader reads "goroutine <id> [<state>]:", the block header
+// runtime.Stack writes, and reports false for any other line. The state is
+// everything between the brackets, "select, 3 minutes" included; the caller
+// keeps the first word. By hand rather than with a regexp: the dump has one
+// header per goroutine of the process, and ^goroutine\s+(\d+)\s+\[(.*)\]:$
+// took a third of the parse on a 10k-goroutine dump.
+func parseGoroutineHeader(line []byte) (id int64, state []byte, ok bool) {
+	if !bytes.HasPrefix(line, []byte(goroutineHeaderPrefix)) {
+		return 0, nil, false
+	}
+	rest := line[len(goroutineHeaderPrefix):]
+	sp := bytes.IndexByte(rest, ' ')
+	if sp < 1 {
+		return 0, nil, false
+	}
+	for _, c := range rest[:sp] {
+		if c < '0' || c > '9' {
+			return 0, nil, false
+		}
+		if id > (math.MaxInt64-int64(c-'0'))/10 {
+			return 0, nil, false // more digits than an id can have
+		}
+		id = id*10 + int64(c-'0')
+	}
+	rest = rest[sp+1:]
+	if len(rest) < 3 || rest[0] != '[' || rest[len(rest)-2] != ']' || rest[len(rest)-1] != ':' {
+		return 0, nil, false
+	}
+	return id, rest[1 : len(rest)-2], true
 }
 
 type goroutineDump struct {
@@ -154,29 +182,41 @@ func dumpGoroutineProfile(agent *agent, write func(io.Writer) error) (dump *goro
 	return
 }
 
+// parseProfile keeps the goroutines that carry a span (realTimeActiveSpan)
+// and nothing else: the dump holds every goroutine of the process, and the
+// handful being traced is all the command reports. An untracked goroutine's
+// block is skipped line by line without a goroutine struct or a buffer, where
+// collecting it first copied the whole dump a second time only to drop it.
 func parseProfile(r io.Reader, agent *agent) *goroutineDump {
 	dump := newGoroutineDump()
+	// g collects the stack lines of a tracked goroutine; inBlock says a block
+	// is open, tracked or not, so a header is looked for only between blocks.
 	var g *goroutine
+	inBlock := false
 
 	scanner := bufio.NewScanner(r)
 
 	for scanner.Scan() {
-		line := scanner.Text()
-		if g == nil {
-			if match := goroutineHeader.FindStringSubmatch(line); match != nil {
-				if g = newGoroutine(match[1], match[2], line); g != nil {
-					if v, ok := agent.realTimeActiveSpan.Load(g.id); ok {
-						g.span = v.(*activeSpanInfo)
-						dump.add(g)
-					}
-				}
-			}
-		} else {
-			if line == "" {
-				g = nil
-			} else {
+		// Bytes, not Text: Text copies every line into a string, and the
+		// lines of untracked goroutines are looked at and dropped.
+		line := scanner.Bytes()
+		if inBlock {
+			if len(line) == 0 {
+				inBlock, g = false, nil
+			} else if g != nil {
 				g.addLine(line)
 			}
+			continue
+		}
+		id, state, ok := parseGoroutineHeader(line)
+		if !ok {
+			continue
+		}
+		inBlock = true
+		if v, ok := agent.realTimeActiveSpan.Load(id); ok {
+			g = newGoroutine(id, string(state), line)
+			g.span = v.(*activeSpanInfo)
+			dump.add(g)
 		}
 	}
 

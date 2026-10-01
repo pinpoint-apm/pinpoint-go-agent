@@ -74,6 +74,47 @@ func Test_goroutineDumpIndexesParsedActiveGoroutines(t *testing.T) {
 	assert.Nil(t, byHeader["goroutine 8"])
 }
 
+// The parser skips an untracked goroutine's block without collecting it, and
+// a tracked block that follows gets only its own lines. The header is read by
+// hand (parseGoroutineHeader), so the shapes runtime.Stack writes - a wait
+// reason with a duration, a header without a reason - and a malformed line
+// are checked here rather than left to a regexp.
+func Test_parseProfileSkipsUntrackedBlocksAndReadsHeaders(t *testing.T) {
+	agent := &agent{}
+	agent.realTimeActiveSpan.Store(int64(9), &activeSpanInfo{startTime: time.Unix(1, 0)})
+	profile := "goroutine 8 [runnable]:\nmain.idle()\n\t/tmp/main.go:2 +0x1\n\n" +
+		"goroutine x [running]:\nmain.bad()\n\n" +
+		"goroutine 9 [select, 3 minutes]:\nmain.active()\n\t/tmp/main.go:1 +0x1\n\n"
+
+	dump := parseProfile(strings.NewReader(profile), agent)
+	require.NotNil(t, dump)
+	require.Len(t, dump.goroutines, 1)
+	g := dump.goroutines[0]
+	assert.Equal(t, int64(9), g.id)
+	assert.Equal(t, "goroutine 9", g.header)
+	assert.Equal(t, "select", g.state)
+	assert.Equal(t, "goroutine 9 [select, 3 minutes]:\nmain.active()\n\t/tmp/main.go:1 +0x1\n", g.buf.String())
+
+	for _, tt := range []struct {
+		line  string
+		id    int64
+		state string
+		ok    bool
+	}{
+		{"goroutine 1 [running]:", 1, "running", true},
+		{"goroutine 123 [IO wait, 5 minutes]:", 123, "IO wait, 5 minutes", true},
+		{"goroutine 1 [running]", 0, "", false},                     // no trailing colon
+		{"goroutine  1 [running]:", 0, "", false},                   // empty id
+		{"goroutine 99999999999999999999 [running]:", 0, "", false}, // past int64
+		{"main.active()", 0, "", false},
+	} {
+		id, state, ok := parseGoroutineHeader([]byte(tt.line))
+		assert.Equal(t, tt.ok, ok, tt.line)
+		assert.Equal(t, tt.id, id, tt.line)
+		assert.Equal(t, tt.state, string(state), tt.line)
+	}
+}
+
 func Test_makePActiveThreadDumpListPreservesRequestedOrderAndLimit(t *testing.T) {
 	dump := newGoroutineDump()
 	for id := int64(1); id <= 3; id++ {
