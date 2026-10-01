@@ -105,7 +105,8 @@ assert both the received protobuf and the injected result; a unary result also
 carries the request it answered (`RpcResult.Request`), which is how a test
 tells exactly which metadata the collector accepted. The failure tests
 cover metadata retries and cache release, command deadlines, failed span
-batches, ping/command/stat stream reconnection, endpoint recovery, and bounded
+batches, ping/command/stat stream reconnection (including the re-send of the
+stat that found its stream closed), endpoint recovery, and bounded
 shutdown while a span or stat request is stalled.
 
 ## Collector-outage scenarios

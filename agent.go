@@ -1940,6 +1940,12 @@ func (agent *agent) sendStatsWorker() {
 
 // sendStatsOrReopen sends stats on stream and returns the stream to keep
 // using: the same one, or its replacement when the send broke it.
+//
+// A failed send is usually how the worker learns the collector already closed
+// the stream (io.EOF), so stats is sent once more on the replacement instead
+// of being lost with the dead stream. If that fails too it is dropped, and the
+// next send replaces the stream again. The empty stream returned while
+// stopping is not retried on.
 func (agent *agent) sendStatsOrReopen(stream *statStream, stats *pb.PStatMessage) *statStream {
 	stream = renewIfExpired(stream, agent.statGrpc.newStatStreamWithRetry, "stat")
 	err := stream.sendStats(stats)
@@ -1950,6 +1956,11 @@ func (agent *agent) sendStatsOrReopen(stream *statStream, stats *pb.PStatMessage
 
 		stream.close()
 		stream = agent.statGrpc.newStatStreamWithRetry()
+		if stream.stream != nil {
+			if err := stream.sendStats(stats); err != nil && err != io.EOF {
+				Log("stats").Errorf("resend stats - %v", err)
+			}
+		}
 	}
 	return stream
 }

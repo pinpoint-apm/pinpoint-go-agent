@@ -116,7 +116,8 @@ func Test_sendSpanBatchWorker_resumesAfterCollectorOutage(t *testing.T) {
 }
 
 // The stat stream is long-lived, so a single failed send has to cost one
-// reconnect and not the statistics that follow it.
+// reconnect and no statistics: the batch that hit the failure is re-sent on
+// the replacement, and the one behind it follows.
 func Test_sendStatsWorker_reopensStreamAfterSendErrorAndResumes(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agent.statChan = make(chan *pb.PStatMessage, 4)
@@ -140,12 +141,13 @@ func Test_sendStatsWorker_reopensStreamAfterSendErrorAndResumes(t *testing.T) {
 
 	agent.workerWg.Add(1)
 	go agent.superviseWorker("send stats", agent.sendStatsWorker)
-	waitFor(t, "the replacement stat stream to carry a batch", func() bool { return stats.get() > 0 })
+	waitFor(t, "the replacement stat stream to carry both batches", func() bool { return stats.get() == 2 })
 
 	agent.signalShutdown()
 	agent.workerWg.Wait()
 
 	broken.AssertNumberOfCalls(t, "Send", 1)
+	healthy.AssertNumberOfCalls(t, "Send", 2)
 	client.AssertNumberOfCalls(t, "SendAgentStat", 2)
 }
 
@@ -267,8 +269,8 @@ func Test_runCommandService_pacesReconnectsAndStopsPromptly(t *testing.T) {
 }
 
 // Stream renewal is the normal path, not the outage path: a worker swaps an
-// aged stream for a new one between two sends and delivers both, whereas a
-// failed send would have skipped the message that hit the failure.
+// aged stream for a new one between two sends, so no send fails and both are
+// delivered.
 // streamMaxAgeForTest is the Collector.Grpc.StreamMaxAge the renewal
 // scenarios below run with. It has to be long enough that the first send
 // cannot outlive it: the worker opens the stream and then re-checks the age

@@ -292,6 +292,31 @@ func TestReconnectsStatStreamAfterServerError(t *testing.T) {
 	assert.True(t, agent.Enable())
 }
 
+// The worker learns that the collector closed the stat stream only when its
+// next send fails, so that send's message must go out on the replacement
+// stream rather than be dropped with the dead one.
+func TestResendsStatOnReopenedStream(t *testing.T) {
+	cfg := defaultAgentConfig()
+	mc, _ := startStack(t, cfg)
+	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.Stats) > 0 }, waitTimeout))
+
+	// The outage ends the open stream at its next message, and the test resumes
+	// right after that tick.
+	mc.BeginOutage()
+	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+		return hasResultSuccess(s, RpcSendAgentStat, codes.Unavailable, false)
+	}, waitTimeout))
+	n := len(mc.Snapshot().Stats)
+	mc.EndOutage()
+
+	// The next tick's send finds the stream dead and reopens it, so its stat
+	// lands about one interval from here; dropped, the first one would come a
+	// tick later.
+	interval := time.Duration(cfg.statCollectInterval) * time.Millisecond
+	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.Stats) > n }, interval*3/2),
+		"the stat that found the stream closed was dropped instead of re-sent")
+}
+
 func TestShutdownCancelsTimedOutStatStream(t *testing.T) {
 	mc, agent := startStack(t, defaultAgentConfig())
 
