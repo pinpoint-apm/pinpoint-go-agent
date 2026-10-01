@@ -627,6 +627,10 @@ Span.BatchCollectDeadline option sets how long span batch sender collects additi
 
 ### Span.BatchMaxConcurrentRequests
 Span.BatchMaxConcurrentRequests option sets the max number of concurrent SendSpanBatch requests.
+The same number bounds the metadata sends (API, string, SQL and exception
+metadata) the agent has in flight at once. Exception metadata is one request
+per failed span when `Error.TraceCallStack` is on, so raise this together with
+`Error.NewThroughput` when the metadata queue overflows.
 
 * --pinpoint-span-batchmaxconcurrentrequests
 * PINPOINT_GO_SPAN_BATCHMAXCONCURRENTREQUESTS

@@ -215,8 +215,8 @@ const (
 	agentGrpcTimeOut = 5 * time.Second
 
 	// metaGrpcTimeOut bounds each metadata RPC (api/string/sql/sqlUid/
-	// exception). These run under sendMetaWorker's metaMaxConcurrentRequests
-	// permits, and a failed send evicts the item's cache entry so it is
+	// exception). These run under sendMetaWorker's permits (agent.
+	// metaMaxConcurrentRequests), and a failed send evicts the item's cache entry so it is
 	// re-registered on next use. Kept short so a hung collector cannot pin every
 	// permit until metaChan overflows and each head-drop re-queues the same
 	// metadata: ample for a healthy collector, short enough that permits recycle
@@ -767,10 +767,6 @@ const metaGiveUpParks = 30
 // drop-feeds-inflow loop that runs until the collector recovers. Two bounds keep
 // the retries and the new items out of each other's way.
 const metaRetryQueueSize = 1000
-
-// metaMaxConcurrentRequests bounds how many metadata sends sendMetaWorker may
-// have in flight at once.
-const metaMaxConcurrentRequests = 4
 
 // The per-send log sites of the metadata and span batch paths are throttled:
 // while the collector is down every send fails, and a line per failed send -

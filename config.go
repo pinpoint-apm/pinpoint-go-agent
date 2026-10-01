@@ -1929,7 +1929,9 @@ func WithSpanBatchCollectDeadline(deadline int) ConfigOption {
 	return withValue(CfgSpanBatchCollectDeadline, deadline)
 }
 
-// WithSpanBatchMaxConcurrentRequests sets the max number of concurrent SendSpanBatch requests.
+// WithSpanBatchMaxConcurrentRequests sets the max number of concurrent
+// SendSpanBatch requests. The same number bounds the metadata sends (API,
+// string, SQL, exception) in flight at once.
 func WithSpanBatchMaxConcurrentRequests(max int) ConfigOption {
 	return withValue(CfgSpanBatchMaxConcurrentRequests, max)
 }

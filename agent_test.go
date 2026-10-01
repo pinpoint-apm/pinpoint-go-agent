@@ -935,10 +935,11 @@ func Test_agent_sendMetaWorkerStopsWhileAllPermitsHeld(t *testing.T) {
 	agent.workerWg.Add(1)
 	go agent.superviseWorker("meta", agent.sendMetaWorker)
 
-	for i := 0; i < metaMaxConcurrentRequests; i++ {
+	permits := agent.metaMaxConcurrentRequests()
+	for i := 0; i < permits; i++ {
 		agent.metaChan <- stringMeta{id: int32(i), funcName: "f"}
 	}
-	assert.Eventually(t, func() bool { return blocking.inFlight() == metaMaxConcurrentRequests },
+	assert.Eventually(t, func() bool { return blocking.inFlight() == permits },
 		5*time.Second, time.Millisecond, "all permits held")
 
 	// One more item: the worker pulls it and parks on the permit acquisition.
@@ -951,7 +952,7 @@ func Test_agent_sendMetaWorkerStopsWhileAllPermitsHeld(t *testing.T) {
 
 	assert.True(t, waitTimeout(&agent.workerWg, 5*time.Second), "worker exits")
 	_, total := blocking.stats()
-	assert.Equal(t, metaMaxConcurrentRequests, total, "no send dispatched after the stop signal")
+	assert.Equal(t, permits, total, "no send dispatched after the stop signal")
 }
 
 // An agent that never finished registration must still release the global, so

@@ -512,12 +512,11 @@ func TestKeepsServingThroughHungCollectorAndRecovers(t *testing.T) {
 	assert.True(t, agent.Enable())
 
 	// The collector holds exactly the agent's permit budget: two span batches
-	// (Span.BatchMaxConcurrentRequests) and four metadata sends (the agent's
-	// fixed metadata concurrency). Every other batch is dropped once its permit
-	// wait runs out, and every other metadata item waits in its queue. The hang
-	// ends well inside the agent's 5s RPC deadlines, so no permit frees up
-	// meanwhile.
-	const metaPermits = 4
+	// and two metadata sends, both bounded by Span.BatchMaxConcurrentRequests.
+	// Every other batch is dropped once its permit wait runs out, and every
+	// other metadata item waits in its queue. The hang ends well inside the
+	// agent's 5s RPC deadlines, so no permit frees up meanwhile.
+	metaPermits := cfg.spanBatchMaxConcurrentRequests
 	held := func(s Snapshot) (batches, metadata int) {
 		return len(s.SpanBatches) - len(healthy.SpanBatches), len(s.ApiMetadata) - len(healthy.ApiMetadata)
 	}

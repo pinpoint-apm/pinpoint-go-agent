@@ -969,12 +969,12 @@ func Test_sendMetaWorker_retryWaitHoldsNoPermitAndStopsPromptly(t *testing.T) {
 	go agent.superviseWorker("meta", agent.sendMetaWorker)
 
 	// More items than permits: every one is sent once and parked. With the
-	// wait inside the send, the permits would be gone after the fourth.
-	const items = 3 * metaMaxConcurrentRequests
+	// wait inside the send, the permits would be gone after the last one.
+	items := 3 * agent.metaMaxConcurrentRequests()
 	for i := 0; i < items; i++ {
 		agent.metaChan <- stringMeta{id: int32(i), funcName: "f"}
 	}
-	assert.Eventually(t, func() bool { return failing.callCount() == items }, 5*time.Second, time.Millisecond,
+	assert.Eventually(t, func() bool { return int(failing.callCount()) == items }, 5*time.Second, time.Millisecond,
 		"every item is attempted once while the earlier ones wait out their retry")
 	assert.Eventually(t, func() bool { return agent.metaRetry.length() == items }, time.Second, time.Millisecond)
 
@@ -1098,15 +1098,16 @@ func (c *blockingMetaClient) RequestExceptionMetaData(context.Context, *pb.PExce
 }
 
 // While earlier sends are still waiting on the collector, the worker must keep
-// pulling items and pipeline up to metaMaxConcurrentRequests sends -- and no
-// more.
+// pulling items and pipeline up to metaMaxConcurrentRequests sends
+// (Span.BatchMaxConcurrentRequests) -- and no more.
 func Test_sendMetaWorker_pipelinesUpToConcurrencyLimit(t *testing.T) {
 	cfg, _ := NewConfig(WithAppName("TestApp"))
 	agent := newTestAgent(cfg)
 	blocking := &blockingMetaClient{release: make(chan struct{})}
 	agent.agentGrpc = &agentGrpc{metaClient: blocking, agent: agent}
 
-	const items = 2 * metaMaxConcurrentRequests
+	permits := agent.metaMaxConcurrentRequests()
+	items := 2 * permits
 	for i := 0; i < items; i++ {
 		agent.metaChan <- apiMeta{id: int32(i), descriptor: "test.api", apiType: apiTypeInvocation}
 	}
@@ -1115,7 +1116,7 @@ func Test_sendMetaWorker_pipelinesUpToConcurrencyLimit(t *testing.T) {
 	go agent.superviseWorker("meta", agent.sendMetaWorker)
 
 	assert.Eventually(t, func() bool {
-		return blocking.inFlight() == metaMaxConcurrentRequests
+		return blocking.inFlight() == permits
 	}, 5*time.Second, time.Millisecond, "sends must pipeline while the collector is slow")
 
 	close(blocking.release)
@@ -1128,7 +1129,7 @@ func Test_sendMetaWorker_pipelinesUpToConcurrencyLimit(t *testing.T) {
 	agent.workerWg.Wait()
 
 	max, _ := blocking.stats()
-	assert.Equal(t, metaMaxConcurrentRequests, max, "in-flight sends must not exceed the limit")
+	assert.Equal(t, permits, max, "in-flight sends must not exceed the limit")
 }
 
 // countingAgentClient counts RequestAgentInfo calls, records the host name each

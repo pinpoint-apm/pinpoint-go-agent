@@ -1045,7 +1045,7 @@ func (agent *agent) sendMetaWorker() {
 	// spans), while serial sends cap throughput at one item per round trip,
 	// which falls behind when high error rates produce exception metadata
 	// per span.
-	permit := make(chan struct{}, metaMaxConcurrentRequests)
+	permit := make(chan struct{}, agent.metaMaxConcurrentRequests())
 	var inFlight sync.WaitGroup
 	// Deferred so both exits -- the stop signal and a disabled agent -- wait
 	// for the sends already accepted, giving them the same best-effort flush.
@@ -1137,6 +1137,18 @@ func (agent *agent) sendMetaWorker() {
 			})
 		}(item)
 	}
+}
+
+// metaMaxConcurrentRequests bounds how many metadata sends sendMetaWorker may
+// have in flight at once: Span.BatchMaxConcurrentRequests, the same budget
+// the span batch sender has. A fixed four was the cap on exception metadata,
+// which is one unary RPC per failed span with Error.TraceCallStack on: at a
+// 20 ms round trip four permits carry some 200 a second, against the 1000 new
+// chains a second Error.NewThroughput admits by default, and the rest
+// overflowed metaChan. One option rather than a second one: an operator sizing
+// the agent's concurrency toward the collector sizes both paths with it.
+func (agent *agent) metaMaxConcurrentRequests() int {
+	return agent.config.Int(CfgSpanBatchMaxConcurrentRequests)
 }
 
 // sendMetadataOnce makes one send of item and hands it on according to the
