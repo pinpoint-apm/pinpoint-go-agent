@@ -323,12 +323,13 @@ func BenchmarkInjectHttpHeader(b *testing.B) {
 	defer stop()
 	s := benchSpan(a)
 	s.NewSpanEvent("client")
-	w := HttpHeaderWriter(http.Header{})
+	h := http.Header{}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		s.Inject(w)
+		// A writer per Inject, as the http client plugin makes one per request.
+		s.Inject(HttpHeaderWriter(h))
 	}
 }
 

@@ -124,7 +124,9 @@ type agent struct {
 
 	// realTimeActiveSpan tracks this agent's in-flight spans by goroutine id for
 	// the real-time active thread views, gated by atcStreamCount so the span
-	// path only pays for it while a viewer is attached. Per-agent, so spans
+	// path only pays for it while a viewer is attached, and cleared when the
+	// last viewer leaves (atcStreams.remove) so a span that is never ended
+	// cannot pin an entry for the life of the agent. Per-agent, so spans
 	// still in flight at shutdown are dropped with the agent.
 	realTimeActiveSpan sync.Map
 	atcStreamCount     atomic.Int32

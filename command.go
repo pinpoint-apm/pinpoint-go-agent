@@ -70,6 +70,16 @@ func (r *atcStreams) remove(s *activeThreadCountStream) {
 
 	delete(r.streams, s)
 	r.publishCount()
+	// The map is only fed while a viewer is attached, so a span that was
+	// never ended (a missing EndSpan on an error path) would otherwise keep
+	// its entry for the life of the agent, and the map has no bound of its
+	// own. Nothing reads it without a viewer; a span still running when the
+	// next one attaches was not in the map for that viewer anyway, since the
+	// store is gated at span start. A span that stored an entry in the race
+	// with this clear deletes it at its own EndSpan.
+	if len(r.streams) == 0 {
+		r.agent.realTimeActiveSpan.Clear()
+	}
 }
 
 func (r *atcStreams) count() int {

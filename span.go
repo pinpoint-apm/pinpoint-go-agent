@@ -147,7 +147,13 @@ type span struct {
 	// attached or left in between makes the count at end time no guide.
 	realTimeTracked atomic.Bool
 	eventStack      stack
+	// urlStat is nil until AddMetric records an entry; it then points at
+	// urlStatBuf, and EndSpan queues urlStatRecord. Both live in the span so
+	// a request with URL statistics costs no allocation beyond the span:
+	// the entry copy and the record were two more per request.
 	urlStat         *UrlStatEntry
+	urlStatBuf      UrlStatEntry
+	urlStatRecord   urlStat
 	errorChains     []*exception
 	errorChainsLock sync.Mutex
 	// refusedChainHeads holds the heads of the chains the throughput limiter
@@ -349,7 +355,8 @@ func (span *span) EndSpan() {
 		// Read from the root: an async worker that failed before this end
 		// marked it there. One that ends later is not seen (see newAsyncSpan).
 		root := span.root()
-		span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed, statusErr: int(root.statusErr.Load() | root.err.Load())})
+		span.urlStatRecord = urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed, statusErr: int(root.statusErr.Load() | root.err.Load())}
+		span.agent.enqueueUrlStat(&span.urlStatRecord)
 	}
 
 	// Last: the final chunk is enqueued and the url stat read, so nothing this
@@ -1049,28 +1056,30 @@ func (span *span) SetLogging(logInfo int32) {
 
 func (span *span) collectUrlStat(stat *UrlStatEntry, force bool) {
 	if span.cfg.collectUrlStat {
-		span.urlStat = mergeUrlStat(span.urlStat, stat, force)
+		mergeUrlStat(&span.urlStatBuf, span.urlStat != nil, stat, force)
+		span.urlStat = &span.urlStatBuf
 	}
 }
 
-// mergeUrlStat applies a recorded entry to the one a span already holds and
-// returns the entry to keep. Shared by span and noopSpan so both paths use the
-// same merge rule: the URL is first-write-wins unless force is set, while the
-// method and status come from the most recent entry. A matched route must not
-// be replaced by a later, less precise URL, but response fields may arrive
-// later.
+// mergeUrlStat applies a recorded entry onto dst, the entry a span holds; has
+// says whether dst holds one already. Shared by span and noopSpan so both
+// paths use the same merge rule: the URL is first-write-wins unless force is
+// set, while the method and status come from the most recent entry. A matched
+// route must not be replaced by a later, less precise URL, but response fields
+// may arrive later.
 //
 // The caller's entry is copied, never stored or written to, so later caller
 // mutation cannot change the span's statistic.
-func mergeUrlStat(current, stat *UrlStatEntry, force bool) *UrlStatEntry {
-	entry := *stat
-	if entry.Url == "" {
-		entry.Url = urlStatUnknown
+func mergeUrlStat(dst *UrlStatEntry, has bool, stat *UrlStatEntry, force bool) {
+	keep := has && !force && dst.Url != urlStatUnknown
+	url := dst.Url
+	*dst = *stat
+	if dst.Url == "" {
+		dst.Url = urlStatUnknown
 	}
-	if current != nil && !force && current.Url != urlStatUnknown {
-		entry.Url = current.Url
+	if keep {
+		dst.Url = url
 	}
-	return &entry
 }
 
 func (span *span) AddMetric(metric string, value interface{}) {

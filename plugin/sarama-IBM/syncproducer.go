@@ -68,6 +68,30 @@ func newProducerHeaderWriter(msg *sarama.ProducerMessage) *distributedTracingCon
 	return &distributedTracingContextWriterProducer{msg: msg}
 }
 
+// headerKeys is the byte form of every header name this plugin writes, built
+// once: Set runs for each of them per message, and []byte(key) allocated the
+// same bytes per call. sarama encodes a record header's key and never writes
+// into it, so messages share these. Any other key is converted as before.
+var headerKeys = func() map[string][]byte {
+	m := make(map[string][]byte)
+	for _, k := range []string{
+		pinpoint.HeaderTraceId, pinpoint.HeaderSpanId, pinpoint.HeaderParentSpanId,
+		pinpoint.HeaderSampled, pinpoint.HeaderFlags, pinpoint.HeaderParentApplicationName,
+		pinpoint.HeaderParentApplicationType, pinpoint.HeaderParentApplicationNamespace,
+		pinpoint.HeaderParentServiceName, pinpoint.HeaderHost, HeaderAsyncSpanId,
+	} {
+		m[k] = []byte(k)
+	}
+	return m
+}()
+
+func headerKey(key string) []byte {
+	if b, ok := headerKeys[key]; ok {
+		return b
+	}
+	return []byte(key)
+}
+
 func (m *distributedTracingContextWriterProducer) Set(key string, value string) {
 	// The slice is replaced on the first header written, never ahead of it:
 	// a message nothing is injected into - no tracer in the context - keeps
@@ -83,7 +107,7 @@ func (m *distributedTracingContextWriterProducer) Set(key string, value string) 
 		m.grown = true
 	}
 	m.msg.Headers = append(m.msg.Headers, sarama.RecordHeader{
-		Key:   []byte(key),
+		Key:   headerKey(key),
 		Value: []byte(value),
 	})
 }

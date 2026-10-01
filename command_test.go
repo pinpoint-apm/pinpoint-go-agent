@@ -238,6 +238,27 @@ var benchmarkActiveThreadCount []int32
 // one, judged by the span's own flag rather than the viewer count at end time:
 // a viewer that attached in between must not cost a lookup, and one that left
 // in between must not leave the entry behind.
+// The real-time span map has no bound of its own, so the last viewer leaving
+// clears it: a span never ended while a viewer was attached must not keep
+// its entry for the life of the agent.
+func Test_atcStreamsClearsRealTimeSpansWhenLastViewerLeaves(t *testing.T) {
+	agent := &agent{}
+	r := &atcStreams{agent: agent}
+	first, second := newActiveThreadCountStream(r, 1), newActiveThreadCountStream(r, 2)
+	require.True(t, r.add(first))
+	require.True(t, r.add(second))
+	agent.realTimeActiveSpan.Store(int64(5), &activeSpanInfo{startTime: time.Now()})
+
+	r.remove(first)
+	_, stored := agent.realTimeActiveSpan.Load(int64(5))
+	assert.True(t, stored, "a viewer is still attached: the map is kept")
+
+	r.remove(second)
+	_, stored = agent.realTimeActiveSpan.Load(int64(5))
+	assert.False(t, stored, "the last viewer left: the map is cleared")
+	assert.Equal(t, int32(0), agent.atcStreamCount.Load())
+}
+
 func Test_realTimeActiveSpan_DropFollowsWhatAddStored(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 

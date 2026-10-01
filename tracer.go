@@ -258,13 +258,28 @@ func (r httpHeaderReader) Get(key string) (string, bool) {
 // call, allocating twice per header; this writer stores under the same
 // canonical key without that work, so Header.Get still finds every value.
 func HttpHeaderWriter(h http.Header) DistributedTracingContextWriter {
-	return httpHeaderWriter(h)
+	return &httpHeaderWriter{h: h}
 }
 
-type httpHeaderWriter http.Header
+// httpHeaderWriter carves the one-element value slices out of vals: Inject
+// writes up to eight headers, and a []string{value} per header was seven of
+// the nine allocations of an Inject. The slices are capped at one element,
+// so a later Header.Add on a key reallocates instead of writing into the
+// neighbour's slot. A ninth header gets a slice of its own.
+type httpHeaderWriter struct {
+	h    http.Header
+	n    int
+	vals [8]string
+}
 
-func (w httpHeaderWriter) Set(key string, value string) {
-	w[canonicalHeaderKey(key)] = []string{value}
+func (w *httpHeaderWriter) Set(key string, value string) {
+	if w.n < len(w.vals) {
+		w.vals[w.n] = value
+		w.h[canonicalHeaderKey(key)] = w.vals[w.n : w.n+1 : w.n+1]
+		w.n++
+		return
+	}
+	w.h[canonicalHeaderKey(key)] = []string{value}
 }
 
 // canonicalHeaderKeys holds the Pinpoint header names in canonical form,

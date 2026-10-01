@@ -60,8 +60,11 @@ type noopSpan struct {
 	realTimeTracked bool
 	withStats       atomic.Bool
 	unsampled       bool
-	urlStat         *UrlStatEntry
-	statusErr       atomic.Int32
+	// urlStat, urlStatBuf and urlStatRecord: see span.
+	urlStat       *UrlStatEntry
+	urlStatBuf    UrlStatEntry
+	urlStatRecord urlStat
+	statusErr     atomic.Int32
 	// traceRoot is the unsampled span holding the statistics, nil when this
 	// span is the root itself. An unsampled async child keeps no statistics of
 	// continueDisableAsyncContextTraceObject hands the child the parent's
@@ -122,7 +125,8 @@ func (span *noopSpan) EndSpan() {
 		elapsed := max(endTime.UnixMilli()-span.startTime.UnixMilli(), 0)
 		span.agent.stats.collectResponseTime(elapsed)
 		if span.urlStat != nil {
-			span.agent.enqueueUrlStat(&urlStat{entry: span.urlStat, endTime: endTime, elapsed: elapsed, statusErr: int(span.statusErr.Load())})
+			span.urlStatRecord = urlStat{entry: span.urlStat, endTime: endTime, elapsed: elapsed, statusErr: int(span.statusErr.Load())}
+			span.agent.enqueueUrlStat(&span.urlStatRecord)
 		}
 	}
 }
@@ -253,7 +257,8 @@ func (span *noopSpan) IsSampled() bool {
 // written to.
 func (span *noopSpan) collectUrlStat(stat *UrlStatEntry, force bool) {
 	if span.withStats.Load() && span.cfg.collectUrlStat {
-		span.urlStat = mergeUrlStat(span.urlStat, stat, force)
+		mergeUrlStat(&span.urlStatBuf, span.urlStat != nil, stat, force)
+		span.urlStat = &span.urlStatBuf
 	}
 }
 
