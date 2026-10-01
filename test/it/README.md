@@ -21,7 +21,7 @@ statistics, and profiler echo/active-thread commands.
 without adding that dependency to the agent module. Run it from this directory.
 
 ```bash
-go test ./...            # full suite, ~1 minute
+go test ./...            # full suite, ~1.5 minutes
 go test -short ./...     # skips the URL-statistics test's 30s tick
 go test -race ./...      # clean: the agent races this suite used to surface are fixed
 go test -run TestSendsAllMetadataAndCompleteSpanShapes -v
@@ -94,27 +94,43 @@ their collector wire representation:
   `Unavailable`) until the outage ends. The ports stay open, so the agent sees
   an unhealthy collector rather than a dead host, and every rejected attempt
   stays visible in the records.
+- `BeginHang()` simulates a collector that keeps its connections up but never
+  answers: every RPC is held until the client's deadline or until
+  `EndOutage()` releases it with `Unavailable`. Unlike a failing outage, a hang
+  pins the agent's in-flight permits and leaves its bounded queues to absorb
+  the load.
 
 Each handler completion is appended to `Snapshot.RpcResults`, so a test can
-assert both the received protobuf and the injected result. The failure tests
+assert both the received protobuf and the injected result; a unary result also
+carries the request it answered (`RpcResult.Request`), which is how a test
+tells exactly which metadata the collector accepted. The failure tests
 cover metadata retries and cache release, command deadlines, failed span
 batches, ping/command/stat stream reconnection, endpoint recovery, and bounded
 shutdown while a span or stat request is stalled.
 
 ## Collector-outage scenarios
 
-Four scenarios assert that the host application never degrades with the
+Five scenarios assert that the host application never degrades with the
 collector:
 
-- An agent started while the collector is unavailable keeps retrying
-  registration, stays disabled, starts no downstream worker, and hands inert
-  tracers to application requests; once the collector recovers it enables
-  itself and every channel carries fresh work.
-- A mid-flight outage leaves the agent enabled: application requests keep
-  completing with real sampled spans while the span sender drains its queue
-  into failing batches (recycling its concurrency permits) and the stat stream
-  keeps reopening — after recovery spans, statistics and profiler commands all
-  flow again.
+- An agent started while the collector is down (a dead host, a failing
+  collector or a hung one) keeps retrying registration, stays disabled and
+  starts no downstream worker. Against a failing or hung collector `NewAgent`
+  returns at once and every application request gets an inert tracer. Once the
+  collector recovers the agent enables itself, every channel carries fresh
+  work, new spans resolve to registered metadata, and nothing the inert tracers
+  saw ever reaches the collector.
+- A mid-flight failing outage leaves the agent enabled: application requests
+  keep completing with real sampled spans while the span sender drains its
+  queue into failing batches (recycling its concurrency permits and never
+  re-sending a batch), metadata is retried within its three-send budget, and
+  the command and stat streams reconnect at a paced rate instead of a hot loop.
+  After recovery spans, statistics and profiler commands all flow again, and
+  the metadata given up during the outage is registered again, so new spans
+  resolve.
+- A hung collector holds exactly the agent's permit budget (two span batches
+  and four metadata sends) while the application runs unblocked; after
+  recovery every metadata item queued behind the hang is registered.
 - With a small `Span.QueueSize`, a span-endpoint connection outage shows that
   the bounded queue never blocks the application and that tracing resumes once
   the endpoint returns.

@@ -344,8 +344,9 @@ func TestShutdownCancelsTimedOutSpanRequest(t *testing.T) {
 }
 
 // Every RPC fails while the connections stay up -- an unhealthy collector
-// rather than a dead host. The application-facing side must be unaffected and
-// every channel must recover once the outage ends.
+// rather than a dead host. The application-facing side must be unaffected, the
+// agent's queues and retries must behave as designed, and every channel must
+// recover once the outage ends.
 func TestKeepsServingAndRecyclingQueuesThroughCollectorOutage(t *testing.T) {
 	mc, agent := startStack(t, defaultAgentConfig())
 
@@ -357,6 +358,7 @@ func TestKeepsServingAndRecyclingQueuesThroughCollectorOutage(t *testing.T) {
 	}, waitTimeout))
 
 	mc.BeginOutage()
+	outageStarted := time.Now()
 
 	// Spans are still real (not noop) and requests still complete promptly.
 	probe := agent.NewSpanTracer("outage.probe", "/collector-outage-probe")
@@ -377,13 +379,7 @@ func TestKeepsServingAndRecyclingQueuesThroughCollectorOutage(t *testing.T) {
 	// recycling its in-flight permits: a permit leak would stall the pipeline
 	// after Span.BatchMaxConcurrentRequests (2) failures.
 	require.True(t, mc.WaitFor(func(s Snapshot) bool {
-		failures := 0
-		for _, r := range resultsFor(s, RpcSendSpanBatch) {
-			if r.Code == codes.Unavailable {
-				failures++
-			}
-		}
-		return failures >= 3
+		return countResults(s, RpcSendSpanBatch, codes.Unavailable) >= 3
 	}, waitTimeout))
 
 	// The stat stream broke with the outage and the worker keeps reopening it
@@ -392,8 +388,16 @@ func TestKeepsServingAndRecyclingQueuesThroughCollectorOutage(t *testing.T) {
 		return hasResultSuccess(s, RpcSendAgentStat, codes.Unavailable, false)
 	}, longTimeout))
 
+	// Metadata first seen during the outage is retried, a second apart, until
+	// its budget of three sends is spent (the agent's metaRetryMaxAttempts).
+	const metaAttempts = 3
+	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+		return countApiMetadata(s, "app.request") >= metaAttempts
+	}, waitTimeout))
+
 	statsDuringOutage := len(mc.Snapshot().Stats)
 	mc.EndOutage()
+	outage := time.Since(outageStarted)
 
 	// Fresh spans, statistics and profiler commands all flow again.
 	require.True(t, waitUntil(func() bool {
@@ -407,6 +411,128 @@ func TestKeepsServingAndRecyclingQueuesThroughCollectorOutage(t *testing.T) {
 
 	mc.SendEchoCommand(707, "collector-outage-recovered")
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return hasEchoResponse(s, 707) }, longTimeout))
+
+	// The metadata given up during the outage is registered again, so the
+	// application's next requests carry api ids the collector accepted and
+	// their traces resolve. Every probe gets a URI of its own because one may
+	// take several polls to land.
+	var probes []string
+	require.True(t, waitUntil(func() bool {
+		probe := fmt.Sprintf("/collector-outage-resolved-%d", len(probes))
+		probes = append(probes, probe)
+		handleInstrumentedRequest(agent, probe, 0)
+		s := mc.Snapshot()
+		for _, p := range probes {
+			span := findSpanByRpc(s, p)
+			if span != nil && len(span.GetSpanEvent()) == 1 &&
+				acceptedApiIds(s, "app.request")[span.GetApiId()] &&
+				acceptedApiIds(s, "app.compute")[span.GetSpanEvent()[0].GetApiId()] {
+				return true
+			}
+		}
+		return false
+	}, longTimeout))
+
+	s := mc.Snapshot()
+	// No api id was sent past its budget, during the outage or after it.
+	attempts := make(map[int32]int)
+	for _, r := range s.ApiMetadata {
+		attempts[r.Message.GetApiId()]++
+	}
+	for id, n := range attempts {
+		assert.LessOrEqualf(t, n, metaAttempts, "api id %d was sent %d times", id, n)
+	}
+	assertNoSpanSentTwice(t, s)
+	// Reconnects were paced rather than looping hot inside the host process:
+	// neither the command stream (backing off from 3s) nor the stat stream
+	// (reopened on its 1s tick) was retried more than about once a second.
+	perSecond := int(outage/time.Second) + 2
+	assert.LessOrEqual(t, countResults(s, RpcHandleCommandV2, codes.Unavailable), perSecond)
+	assert.LessOrEqual(t, countResults(s, RpcSendAgentStat, codes.Unavailable), perSecond)
+	assert.True(t, agent.Enable())
+}
+
+// A collector that keeps its connections up but never answers is the outage
+// most likely to hurt the host: every RPC hangs until its deadline, which pins
+// the agent's in-flight permits and leaves its bounded queues to absorb the
+// load. The application must never wait on it, the agent must park exactly its
+// permit budget on the collector, and what the queues held must flow once the
+// collector answers again.
+func TestKeepsServingThroughHungCollectorAndRecovers(t *testing.T) {
+	cfg := defaultAgentConfig()
+	mc, agent := startStack(t, cfg)
+
+	warm := agent.NewSpanTracer("hang.before", "/collector-hang-before")
+	require.True(t, warm.IsSampled())
+	warm.EndSpan()
+	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+		return findSpanByRpc(s, "/collector-hang-before") != nil &&
+			len(acceptedApiIds(s, "hang.before")) > 0
+	}, waitTimeout))
+	healthy := mc.Snapshot()
+
+	mc.BeginHang()
+
+	// Every request uses an operation of its own, so each one also queues an API
+	// metadata item behind the hung collector.
+	const requests = 64
+	operation := func(i int) string { return fmt.Sprintf("hang.op.%d", i) }
+	loadStarted := time.Now()
+	for i := 0; i < requests; i++ {
+		tracer := agent.NewSpanTracer(operation(i), fmt.Sprintf("/collector-hang/%d", i))
+		assert.True(t, tracer.IsSampled(), i)
+		tracer.EndSpan()
+	}
+	assert.Less(t, time.Since(loadStarted), time.Second, "the application waited on the hung collector")
+	assert.True(t, agent.Enable())
+
+	// The collector holds exactly the agent's permit budget: two span batches
+	// (Span.BatchMaxConcurrentRequests) and four metadata sends (the agent's
+	// fixed metadata concurrency). Every other batch is dropped once its permit
+	// wait runs out, and every other metadata item waits in its queue. The hang
+	// ends well inside the agent's 5s RPC deadlines, so no permit frees up
+	// meanwhile.
+	const metaPermits = 4
+	held := func(s Snapshot) (batches, metadata int) {
+		return len(s.SpanBatches) - len(healthy.SpanBatches), len(s.ApiMetadata) - len(healthy.ApiMetadata)
+	}
+	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+		batches, metadata := held(s)
+		return batches >= cfg.spanBatchMaxConcurrentRequests && metadata >= metaPermits
+	}, waitTimeout))
+	// Room for a call past the budget to show up: the span sender gives up on a
+	// permit after Span.BatchFlushInterval (50ms).
+	time.Sleep(300 * time.Millisecond)
+	batches, metadata := held(mc.Snapshot())
+	assert.Equal(t, cfg.spanBatchMaxConcurrentRequests, batches)
+	assert.Equal(t, metaPermits, metadata)
+
+	mc.EndOutage()
+
+	require.True(t, waitUntil(func() bool {
+		recovered := agent.NewSpanTracer("hang.after", "/collector-hang-after")
+		recovered.EndSpan()
+		return findSpanByRpc(mc.Snapshot(), "/collector-hang-after") != nil
+	}, longTimeout))
+
+	// Nothing the metadata queue held is lost: the sends the hang failed are
+	// retried and the items queued behind them go out, so every operation used
+	// during the hang is registered, under the id its delivered spans carry.
+	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+		for i := 0; i < requests; i++ {
+			if len(acceptedApiIds(s, operation(i))) == 0 {
+				return false
+			}
+		}
+		return true
+	}, longTimeout))
+	s := mc.Snapshot()
+	for i := 0; i < requests; i++ {
+		if span := findSpanByRpc(s, fmt.Sprintf("/collector-hang/%d", i)); span != nil {
+			assert.True(t, acceptedApiIds(s, operation(i))[span.GetApiId()], operation(i))
+		}
+	}
+	assertNoSpanSentTwice(t, s)
 	assert.True(t, agent.Enable())
 }
 

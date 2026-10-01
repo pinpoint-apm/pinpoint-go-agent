@@ -120,6 +120,9 @@ type RpcResult struct {
 	Code    codes.Code
 	Success bool
 	Message string
+	// Request is the message a unary call carried, so a test can tell which
+	// request was accepted; nil for a stream, whose result covers many.
+	Request proto.Message
 }
 
 // Snapshot is an immutable copy of everything received so far.
@@ -210,10 +213,13 @@ type MockCollector struct {
 	snapshot Snapshot
 	faults   map[Rpc][]fault
 
-	outage    bool
+	// outageErr is set for the duration of a BeginOutage or BeginHang period.
 	outageErr *status.Status
-	// outageCh is closed for the duration of an outage so streams already in
-	// flight observe it instead of blocking until their next message.
+	// hang holds every call instead of failing it.
+	hang bool
+	// outageCh is closed for the duration of a failing outage so the command
+	// stream observes it instead of blocking until its next message. During a
+	// hang it stays open until EndOutage closes it, releasing every held call.
 	outageCh chan struct{}
 
 	endpoints [3]*endpointServer
@@ -303,14 +309,14 @@ func (c *MockCollector) StartEndpoint(e Endpoint) error {
 	return s.start(s.boundPort())
 }
 
-// BeginOutage enters a sustained collector outage: every stream in flight is
-// released and every subsequent RPC on all three endpoints fails with code
-// until EndOutage is called. Unlike FailNext the fault is not consumed per
-// call; unlike StopEndpoint the ports stay open, so the agent observes an
-// unhealthy collector rather than a dead host. Queued
-// FailNext/TimeoutNext/RejectNext faults are left untouched and apply again
-// once the outage ends, and every failed call is still recorded in
-// Snapshot.RpcResults.
+// BeginOutage enters a sustained collector outage: the command stream is
+// released at once, every other open stream fails at its next message, and
+// every subsequent RPC on all three endpoints fails with code until EndOutage
+// is called. Unlike FailNext the fault is not consumed per call; unlike
+// StopEndpoint the ports stay open, so the agent observes an unhealthy
+// collector rather than a dead host. Queued FailNext/TimeoutNext/RejectNext
+// faults are left untouched and apply again once the outage ends, and every
+// failed call is still recorded in Snapshot.RpcResults.
 func (c *MockCollector) BeginOutage(code ...codes.Code) {
 	st := status.New(codes.Unavailable, "injected collector outage")
 	if len(code) > 0 {
@@ -318,22 +324,43 @@ func (c *MockCollector) BeginOutage(code ...codes.Code) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.outage {
+	if c.outageErr != nil {
 		return
 	}
-	c.outage = true
 	c.outageErr = st
 	c.outageCh = make(chan struct{})
 	close(c.outageCh)
 }
 
-// EndOutage ends a BeginOutage period.
+// BeginHang enters a sustained outage in which the collector keeps its
+// connections up and accepts every RPC but never answers: each call is held
+// until the client's deadline or cancellation, or until EndOutage releases it
+// with Unavailable. Open streams stay open and stall at their next message;
+// the command stream alone keeps relaying SendCommand requests, whose
+// responses then hang. Unlike a fast-failing BeginOutage, a hang pins the
+// agent's in-flight permits and leaves its bounded queues to absorb the load.
+// A held call is recorded as received when it arrives and gets its RpcResult
+// when released.
+func (c *MockCollector) BeginHang() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.outageErr != nil {
+		return
+	}
+	c.outageErr = status.New(codes.Unavailable, "injected collector hang")
+	c.outageCh = make(chan struct{})
+	c.hang = true
+}
+
+// EndOutage ends a BeginOutage or BeginHang period, releasing every call a
+// hang still holds.
 func (c *MockCollector) EndOutage() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.outage = false
-	c.outageErr = nil
-	c.outageCh = nil
+	if c.hang {
+		close(c.outageCh)
+	}
+	c.outageErr, c.outageCh, c.hang = nil, nil, false
 }
 
 // FailNext returns a gRPC error from the next matching RPC or stream. For
@@ -515,10 +542,26 @@ func (c *MockCollector) takeFault(rpc Rpc, msgCount int) (fault, bool) {
 func (c *MockCollector) outageState() (*status.Status, <-chan struct{}) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.outage {
-		return nil, nil
-	}
 	return c.outageErr, c.outageCh
+}
+
+// outageError applies a BeginOutage or BeginHang period to one call: nil while
+// the collector is healthy, otherwise the recorded error the call must end
+// with. A hang first holds the call until the client gives up or EndOutage
+// releases it.
+func (c *MockCollector) outageError(ctx context.Context, rpc Rpc, req proto.Message) error {
+	c.mu.Lock()
+	st, ch, hang := c.outageErr, c.outageCh, c.hang
+	c.mu.Unlock()
+	if st == nil {
+		return nil
+	}
+	code := st.Code()
+	if hang {
+		code = c.waitForCancel(ctx, ch)
+	}
+	c.addResult(rpc, req, code, false, st.Message())
+	return status.Error(code, st.Message())
 }
 
 func (c *MockCollector) record(fn func(*Snapshot)) {
@@ -527,9 +570,9 @@ func (c *MockCollector) record(fn func(*Snapshot)) {
 	fn(&c.snapshot)
 }
 
-func (c *MockCollector) addResult(rpc Rpc, code codes.Code, success bool, msg string) {
+func (c *MockCollector) addResult(rpc Rpc, req proto.Message, code codes.Code, success bool, msg string) {
 	c.record(func(s *Snapshot) {
-		s.RpcResults = append(s.RpcResults, RpcResult{Rpc: rpc, Code: code, Success: success, Message: msg})
+		s.RpcResults = append(s.RpcResults, RpcResult{Rpc: rpc, Code: code, Success: success, Message: msg, Request: req})
 	})
 }
 
@@ -547,7 +590,7 @@ func clone[T proto.Message](m T) T {
 }
 
 // waitForCancel blocks until the client gives up (deadline or cancellation) or
-// an outage releases the call, and returns the recorded status code.
+// outageCh releases the call, and returns the recorded status code.
 //
 // A server context reports Canceled for the RST_STREAM a client sends when its
 // deadline expires, so an expired deadline is reported as DeadlineExceeded --
@@ -571,53 +614,36 @@ func (c *MockCollector) waitForCancel(ctx context.Context, outageCh <-chan struc
 	}
 }
 
-// applyUnary resolves the fault state for a unary call and returns the PResult
-// and error the handler must produce.
-func (c *MockCollector) applyUnary(ctx context.Context, rpc Rpc) (*pb.PResult, error) {
-	if st, _ := c.outageState(); st != nil {
-		c.addResult(rpc, st.Code(), false, st.Message())
-		return nil, st.Err()
+// applyUnary resolves the fault state for a unary call, records its result
+// against req, and returns the PResult and error the handler must produce.
+func (c *MockCollector) applyUnary(ctx context.Context, rpc Rpc, req proto.Message) (*pb.PResult, error) {
+	if err := c.outageError(ctx, rpc, req); err != nil {
+		return nil, err
 	}
 	if f, ok := c.takeFault(rpc, 0); ok {
 		switch f.kind {
 		case faultFail:
-			c.addResult(rpc, f.code, false, f.msg)
+			c.addResult(rpc, req, f.code, false, f.msg)
 			return nil, status.Error(f.code, f.msg)
 		case faultTimeout:
 			code := c.waitForCancel(ctx, nil)
-			c.addResult(rpc, code, false, "injected timeout")
+			c.addResult(rpc, req, code, false, "injected timeout")
 			return nil, status.Error(code, "injected timeout")
 		case faultReject:
-			c.addResult(rpc, codes.OK, false, f.msg)
+			c.addResult(rpc, req, codes.OK, false, f.msg)
 			return &pb.PResult{Success: false, Message: f.msg}, nil
 		}
 	}
-	c.addResult(rpc, codes.OK, true, "success")
+	c.addResult(rpc, req, codes.OK, true, "success")
 	return &pb.PResult{Success: true, Message: "success"}, nil
 }
 
 // applyUnaryEmpty is applyUnary for the command RPCs, which answer with Empty
 // rather than PResult.
-func (c *MockCollector) applyUnaryEmpty(ctx context.Context, rpc Rpc) (*emptypb.Empty, error) {
-	if st, _ := c.outageState(); st != nil {
-		c.addResult(rpc, st.Code(), false, st.Message())
-		return nil, st.Err()
+func (c *MockCollector) applyUnaryEmpty(ctx context.Context, rpc Rpc, req proto.Message) (*emptypb.Empty, error) {
+	if _, err := c.applyUnary(ctx, rpc, req); err != nil {
+		return nil, err
 	}
-	if f, ok := c.takeFault(rpc, 0); ok {
-		switch f.kind {
-		case faultFail:
-			c.addResult(rpc, f.code, false, f.msg)
-			return nil, status.Error(f.code, f.msg)
-		case faultTimeout:
-			code := c.waitForCancel(ctx, nil)
-			c.addResult(rpc, code, false, "injected timeout")
-			return nil, status.Error(code, "injected timeout")
-		case faultReject:
-			c.addResult(rpc, codes.OK, false, f.msg)
-			return &emptypb.Empty{}, nil
-		}
-	}
-	c.addResult(rpc, codes.OK, true, "success")
 	return &emptypb.Empty{}, nil
 }
 
@@ -632,9 +658,8 @@ type streamGate struct {
 
 // check reports the error the stream must terminate with, or nil to continue.
 func (g *streamGate) check() error {
-	if st, _ := g.c.outageState(); st != nil {
-		g.c.addResult(g.rpc, st.Code(), false, st.Message())
-		return st.Err()
+	if err := g.c.outageError(g.ctx, g.rpc, nil); err != nil {
+		return err
 	}
 	f, ok := g.c.takeFault(g.rpc, g.msgCount)
 	if !ok {
@@ -646,12 +671,12 @@ func (g *streamGate) check() error {
 		if f.kind == faultReject {
 			code = codes.Internal
 		}
-		g.c.addResult(g.rpc, code, false, f.msg)
+		g.c.addResult(g.rpc, nil, code, false, f.msg)
 		return status.Error(code, f.msg)
 	case faultTimeout:
 		_, ch := g.c.outageState()
 		code := g.c.waitForCancel(g.ctx, ch)
-		g.c.addResult(g.rpc, code, false, "injected timeout")
+		g.c.addResult(g.rpc, nil, code, false, "injected timeout")
 		return status.Error(code, "injected timeout")
 	}
 	return nil
@@ -660,10 +685,10 @@ func (g *streamGate) check() error {
 // done records the normal completion of a stream.
 func (g *streamGate) done(err error) error {
 	if err != nil {
-		g.c.addResult(g.rpc, status.Code(err), false, err.Error())
+		g.c.addResult(g.rpc, nil, status.Code(err), false, err.Error())
 		return err
 	}
-	g.c.addResult(g.rpc, codes.OK, true, "success")
+	g.c.addResult(g.rpc, nil, codes.OK, true, "success")
 	return nil
 }
 
@@ -680,7 +705,7 @@ func (s *agentService) RequestAgentInfo(ctx context.Context, in *pb.PAgentInfo) 
 	s.c.record(func(snap *Snapshot) {
 		snap.AgentInfos = append(snap.AgentInfos, Received[*pb.PAgentInfo]{msg, md})
 	})
-	return s.c.applyUnary(ctx, RpcAgentInfo)
+	return s.c.applyUnary(ctx, RpcAgentInfo, msg)
 }
 
 func (s *agentService) PingSession(stream grpc.BidiStreamingServer[pb.PPing, pb.PPing]) error {
@@ -723,7 +748,7 @@ func (s *metadataService) RequestSqlMetaData(ctx context.Context, in *pb.PSqlMet
 	s.c.record(func(snap *Snapshot) {
 		snap.SqlMetadata = append(snap.SqlMetadata, Received[*pb.PSqlMetaData]{msg, md})
 	})
-	return s.c.applyUnary(ctx, RpcSqlMetadata)
+	return s.c.applyUnary(ctx, RpcSqlMetadata, msg)
 }
 
 func (s *metadataService) RequestSqlUidMetaData(ctx context.Context, in *pb.PSqlUidMetaData) (*pb.PResult, error) {
@@ -731,7 +756,7 @@ func (s *metadataService) RequestSqlUidMetaData(ctx context.Context, in *pb.PSql
 	s.c.record(func(snap *Snapshot) {
 		snap.SqlUidMetadata = append(snap.SqlUidMetadata, Received[*pb.PSqlUidMetaData]{msg, md})
 	})
-	return s.c.applyUnary(ctx, RpcSqlUidMetadata)
+	return s.c.applyUnary(ctx, RpcSqlUidMetadata, msg)
 }
 
 func (s *metadataService) RequestApiMetaData(ctx context.Context, in *pb.PApiMetaData) (*pb.PResult, error) {
@@ -739,7 +764,7 @@ func (s *metadataService) RequestApiMetaData(ctx context.Context, in *pb.PApiMet
 	s.c.record(func(snap *Snapshot) {
 		snap.ApiMetadata = append(snap.ApiMetadata, Received[*pb.PApiMetaData]{msg, md})
 	})
-	return s.c.applyUnary(ctx, RpcApiMetadata)
+	return s.c.applyUnary(ctx, RpcApiMetadata, msg)
 }
 
 func (s *metadataService) RequestStringMetaData(ctx context.Context, in *pb.PStringMetaData) (*pb.PResult, error) {
@@ -747,7 +772,7 @@ func (s *metadataService) RequestStringMetaData(ctx context.Context, in *pb.PStr
 	s.c.record(func(snap *Snapshot) {
 		snap.StringMetadata = append(snap.StringMetadata, Received[*pb.PStringMetaData]{msg, md})
 	})
-	return s.c.applyUnary(ctx, RpcStringMetadata)
+	return s.c.applyUnary(ctx, RpcStringMetadata, msg)
 }
 
 func (s *metadataService) RequestExceptionMetaData(ctx context.Context, in *pb.PExceptionMetaData) (*pb.PResult, error) {
@@ -755,7 +780,7 @@ func (s *metadataService) RequestExceptionMetaData(ctx context.Context, in *pb.P
 	s.c.record(func(snap *Snapshot) {
 		snap.ExceptionMetadata = append(snap.ExceptionMetadata, Received[*pb.PExceptionMetaData]{msg, md})
 	})
-	return s.c.applyUnary(ctx, RpcExceptionMetadata)
+	return s.c.applyUnary(ctx, RpcExceptionMetadata, msg)
 }
 
 // --- Span service ----------------------------------------------------------
@@ -793,26 +818,9 @@ func (s *spanService) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatc
 	s.c.record(func(snap *Snapshot) {
 		snap.SpanBatches = append(snap.SpanBatches, Received[*pb.PSpanMessageBatch]{msg, md})
 	})
-	if st, _ := s.c.outageState(); st != nil {
-		s.c.addResult(RpcSendSpanBatch, st.Code(), false, st.Message())
-		return nil, st.Err()
+	if _, err := s.c.applyUnary(ctx, RpcSendSpanBatch, msg); err != nil {
+		return nil, err
 	}
-	if f, ok := s.c.takeFault(RpcSendSpanBatch, 0); ok {
-		switch f.kind {
-		case faultFail:
-			s.c.addResult(RpcSendSpanBatch, f.code, false, f.msg)
-			return nil, status.Error(f.code, f.msg)
-		case faultTimeout:
-			_, ch := s.c.outageState()
-			code := s.c.waitForCancel(ctx, ch)
-			s.c.addResult(RpcSendSpanBatch, code, false, "injected timeout")
-			return nil, status.Error(code, "injected timeout")
-		case faultReject:
-			s.c.addResult(RpcSendSpanBatch, codes.OK, false, f.msg)
-			return &pb.PSpanResultBatch{}, nil
-		}
-	}
-	s.c.addResult(RpcSendSpanBatch, codes.OK, true, "success")
 	return &pb.PSpanResultBatch{}, nil
 }
 
@@ -901,7 +909,7 @@ func (s *commandService) handleCommand(rpc Rpc, stream grpc.BidiStreamingServer[
 			if st == nil {
 				continue
 			}
-			s.c.addResult(rpc, st.Code(), false, st.Message())
+			s.c.addResult(rpc, nil, st.Code(), false, st.Message())
 			return st.Err()
 		case req := <-s.c.commands:
 			if err := stream.Send(req); err != nil {
@@ -918,7 +926,7 @@ func (s *commandService) CommandEcho(ctx context.Context, in *pb.PCmdEchoRespons
 	s.c.record(func(snap *Snapshot) {
 		snap.EchoResponses = append(snap.EchoResponses, Received[*pb.PCmdEchoResponse]{msg, md})
 	})
-	return s.c.applyUnaryEmpty(ctx, RpcCommandEcho)
+	return s.c.applyUnaryEmpty(ctx, RpcCommandEcho, msg)
 }
 
 func (s *commandService) CommandStreamActiveThreadCount(stream grpc.ClientStreamingServer[pb.PCmdActiveThreadCountRes, emptypb.Empty]) error {
@@ -952,7 +960,7 @@ func (s *commandService) CommandActiveThreadDump(ctx context.Context, in *pb.PCm
 	s.c.record(func(snap *Snapshot) {
 		snap.ActiveThreadDumpResponses = append(snap.ActiveThreadDumpResponses, Received[*pb.PCmdActiveThreadDumpRes]{msg, md})
 	})
-	return s.c.applyUnaryEmpty(ctx, RpcCommandActiveThreadDump)
+	return s.c.applyUnaryEmpty(ctx, RpcCommandActiveThreadDump, msg)
 }
 
 func (s *commandService) CommandActiveThreadLightDump(ctx context.Context, in *pb.PCmdActiveThreadLightDumpRes) (*emptypb.Empty, error) {
@@ -960,5 +968,5 @@ func (s *commandService) CommandActiveThreadLightDump(ctx context.Context, in *p
 	s.c.record(func(snap *Snapshot) {
 		snap.ActiveThreadLightDumps = append(snap.ActiveThreadLightDumps, Received[*pb.PCmdActiveThreadLightDumpRes]{msg, md})
 	})
-	return s.c.applyUnaryEmpty(ctx, RpcCommandActiveThreadLightDump)
+	return s.c.applyUnaryEmpty(ctx, RpcCommandActiveThreadLightDump, msg)
 }

@@ -134,9 +134,10 @@ func defaultAgentConfig() *agentConfig {
 		maxCallStackDepth:              16,
 		maxCallStackSequence:           128,
 
-		// One agent-stat batch per tick, so the statistics assertions do not
-		// wait for the production 5s/6-batch cadence.
-		statCollectInterval: 200,
+		// One agent-stat batch per tick at the configuration floor (1s), so the
+		// statistics assertions do not wait for the production 5s/6-batch
+		// cadence. A value below the floor silently falls back to 5s.
+		statCollectInterval: 1000,
 		statBatchCount:      1,
 
 		sqlTraceQueryStat:   true,
@@ -538,6 +539,43 @@ func hasResultSuccess(s Snapshot, rpc Rpc, code codes.Code, success bool) bool {
 		}
 	}
 	return false
+}
+
+func countResults(s Snapshot, rpc Rpc, code codes.Code) int {
+	count := 0
+	for _, r := range s.RpcResults {
+		if r.Rpc == rpc && r.Code == code {
+			count++
+		}
+	}
+	return count
+}
+
+// acceptedApiIds returns the api ids the collector accepted metadata for under
+// apiInfo. A span resolves only when its api id is among them.
+func acceptedApiIds(s Snapshot, apiInfo string) map[int32]bool {
+	ids := make(map[int32]bool)
+	for _, r := range resultsFor(s, RpcApiMetadata) {
+		if m, ok := r.Request.(*pb.PApiMetaData); ok && r.Success && m.GetApiInfo() == apiInfo {
+			ids[m.GetApiId()] = true
+		}
+	}
+	return ids
+}
+
+// assertNoSpanSentTwice checks the span sender's drop policy: a batch that
+// failed is lost, never re-sent, so no span reaches the collector twice.
+func assertNoSpanSentTwice(t *testing.T, s Snapshot) {
+	t.Helper()
+	sent := make(map[int64]int)
+	for _, m := range allSpanMessages(s) {
+		if span := m.GetSpan(); span != nil {
+			sent[span.GetSpanId()]++
+		}
+	}
+	for id, n := range sent {
+		assert.Equalf(t, 1, n, "span %d reached the collector %d times", id, n)
+	}
 }
 
 func hasApiMetadata(s Snapshot, apiInfo string, apiType int32) bool {

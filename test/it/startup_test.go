@@ -94,57 +94,78 @@ func TestShutdownInterruptsInitialCollectorWait(t *testing.T) {
 	assert.Empty(t, s.StatStreams)
 }
 
-// Models an application that starts while the collector is unhealthy: the
-// ports accept connections but every RPC keeps failing until EndOutage, so the
-// rejected registration attempts stay visible in the collector records.
+// Models an application that starts while the collector is unhealthy, in both
+// of its shapes: failing every RPC at once, or hanging every RPC until the
+// client gives up. The ports accept connections either way, so the
+// registration attempts stay visible in the collector records. The
+// application must start and run untraced -- NewAgent does not wait for the
+// collector and every tracer is inert -- and tracing must come up on its own
+// once the collector answers.
 func TestServesNoopTracersDuringOutageAndEnablesTracingAfterRecovery(t *testing.T) {
-	mc := startCollector(t)
-	mc.BeginOutage()
-	agent := startAgent(t, mc, defaultAgentConfig())
+	for _, outage := range []struct {
+		name  string
+		begin func(*MockCollector)
+		// registering reports that registration is under way against the outage.
+		registering func(Snapshot) bool
+	}{
+		// Rejected twice over: the agent keeps retrying.
+		{"failing collector", func(mc *MockCollector) { mc.BeginOutage() },
+			func(s Snapshot) bool { return len(resultsFor(s, RpcAgentInfo)) >= 2 }},
+		// The first attempt is parked on the collector.
+		{"hung collector", (*MockCollector).BeginHang,
+			func(s Snapshot) bool { return len(s.AgentInfos) > 0 }},
+	} {
+		t.Run(outage.name, func(t *testing.T) {
+			mc := startCollector(t)
+			outage.begin(mc)
+			started := time.Now()
+			agent := startAgent(t, mc, defaultAgentConfig())
+			assert.Less(t, time.Since(started), time.Second, "NewAgent waited on the collector")
 
-	// The agent keeps retrying registration against the failing collector
-	// without ever coming online.
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
-		return len(resultsFor(s, RpcAgentInfo)) >= 2
-	}, longTimeout))
-	assert.False(t, agent.Enable())
+			require.True(t, mc.WaitFor(outage.registering, longTimeout))
+			assert.False(t, agent.Enable())
 
-	// The application's own work proceeds normally; the disabled agent hands an
-	// inert tracer to every request.
-	for request := 0; request < 5; request++ {
-		requireNoopTracer(t, agent.NewSpanTracer("startup.outage", "/startup-outage"))
-		assert.Equal(t, request*2+1, handleInstrumentedRequest(agent, "/startup-outage", request))
+			// The application's own work proceeds normally; the disabled agent hands an
+			// inert tracer to every request.
+			for request := 0; request < 5; request++ {
+				requireNoopTracer(t, agent.NewSpanTracer("startup.outage", "/startup-outage"))
+				assert.Equal(t, request*2+1, handleInstrumentedRequest(agent, "/startup-outage", request))
+			}
+
+			// Nothing but the registration attempts may have reached the collector, and
+			// none was accepted: no downstream worker starts before AgentInfo is.
+			s := mc.Snapshot()
+			for _, result := range resultsFor(s, RpcAgentInfo) {
+				assert.False(t, result.Success)
+			}
+			assert.Empty(t, allSpanMessages(s))
+			assert.Empty(t, s.PingStreams)
+			assert.Empty(t, s.StatStreams)
+			assert.Empty(t, s.CommandStreams)
+
+			// Collector recovers: the ongoing retry loop must succeed and enable the agent.
+			mc.EndOutage()
+			require.True(t, mc.WaitFor(func(s Snapshot) bool {
+				return hasResultSuccess(s, RpcAgentInfo, codes.OK, true)
+			}, longTimeout))
+			require.True(t, waitUntil(func() bool { return agent.Enable() }, longTimeout))
+
+			// Tracing now runs for real, and its spans resolve.
+			recovered := agent.NewSpanTracer("startup.outage.recovered", "/startup-outage-recovered")
+			require.True(t, recovered.IsSampled())
+			assert.NotEqual(t, int64(0), recovered.SpanId())
+			assert.Equal(t, registeredAgentID(t, mc), recovered.TransactionId().AgentId)
+			recovered.EndSpan()
+
+			require.True(t, mc.WaitFor(func(s Snapshot) bool {
+				span := findSpanByRpc(s, "/startup-outage-recovered")
+				return span != nil && acceptedApiIds(s, "startup.outage.recovered")[span.GetApiId()] &&
+					len(s.Pings) > 0
+			}, longTimeout))
+			// The noop tracers recorded nothing, so nothing of theirs can surface
+			// now that the collector is back.
+			assert.Zero(t, countSpansByRpc(mc.Snapshot(), "/startup-outage"))
+			assert.True(t, agent.Enable())
+		})
 	}
-
-	// Nothing but the rejected registration attempts may have reached the
-	// collector: no downstream worker starts before AgentInfo is accepted.
-	s := mc.Snapshot()
-	attempts := resultsFor(s, RpcAgentInfo)
-	require.GreaterOrEqual(t, len(attempts), 2)
-	for _, result := range attempts {
-		assert.Equal(t, codes.Unavailable, result.Code)
-	}
-	assert.Empty(t, allSpanMessages(s))
-	assert.Empty(t, s.PingStreams)
-	assert.Empty(t, s.StatStreams)
-	assert.Empty(t, s.CommandStreams)
-
-	// Collector recovers: the ongoing retry loop must succeed and enable the agent.
-	mc.EndOutage()
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
-		return hasResultSuccess(s, RpcAgentInfo, codes.OK, true)
-	}, longTimeout))
-	require.True(t, waitUntil(func() bool { return agent.Enable() }, longTimeout))
-
-	// Tracing now runs for real.
-	recovered := agent.NewSpanTracer("startup.outage.recovered", "/startup-outage-recovered")
-	require.True(t, recovered.IsSampled())
-	assert.NotEqual(t, int64(0), recovered.SpanId())
-	assert.Equal(t, registeredAgentID(t, mc), recovered.TransactionId().AgentId)
-	recovered.EndSpan()
-
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
-		return findSpanByRpc(s, "/startup-outage-recovered") != nil && len(s.Pings) > 0
-	}, longTimeout))
-	assert.True(t, agent.Enable())
 }
