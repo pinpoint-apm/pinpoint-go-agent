@@ -923,8 +923,17 @@ func (span *span) SpanId() int64 {
 	return span.spanId
 }
 
+// AsyncSpanId renders "spanId^asyncId^sequence". By hand rather than with
+// fmt.Sprintf, which boxes the three integers: the Kafka async producer calls
+// this once per message.
 func (span *span) AsyncSpanId() string {
-	return fmt.Sprintf("%d^%d^%d", span.spanId, span.asyncId, span.asyncSequence)
+	var buf [64]byte // three integers at their widest plus two separators
+	b := strconv.AppendInt(buf[:0], span.spanId, 10)
+	b = append(b, '^')
+	b = strconv.AppendInt(b, int64(span.asyncId), 10)
+	b = append(b, '^')
+	b = strconv.AppendInt(b, int64(span.asyncSequence), 10)
+	return string(b)
 }
 
 func (span *span) Span() SpanRecorder {

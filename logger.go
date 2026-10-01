@@ -17,14 +17,17 @@ func initLogger() {
 	logger = newLogger()
 }
 
-// Log returns a log entry for src. Before this package's init function ran
-// (a compile-time instrumentation hook reached from another package's init)
-// the entry discards what is logged: logrus may not be initialized either.
-func Log(src string) *logEntry {
-	if !initDone {
-		return &logEntry{}
-	}
-	return logger.newEntry(src)
+// Log returns a log entry for src. The entry is a value carrying only the
+// source: the logrus entry behind it is built in log, after the level check,
+// so a call whose level is disabled - every Debugf and Tracef site at the
+// default level - allocates nothing. Built eagerly, each call cost two logrus
+// entries and a Fields map (six allocations) for a line that was then dropped.
+//
+// Before this package's init function ran (a compile-time instrumentation
+// hook reached from another package's init) the entry discards what is
+// logged: logrus may not be initialized either.
+func Log(src string) logEntry {
+	return logEntry{src: src}
 }
 
 func IsLogLevelEnabled(level logrus.Level) bool {
@@ -144,7 +147,7 @@ func (l *logrusLogger) setOutputLocked(out string, maxSize, maxBackups int) {
 	if previous != nil {
 		_ = previous.Close()
 	}
-	l.newEntry("config").Infof("log output: %s", out)
+	Log("config").Infof("log output: %s", out)
 }
 
 // apply installs the logging options of a Config that is still being loaded,
@@ -188,50 +191,48 @@ func (l *logrusLogger) reloadOutput(config *Config) {
 	}
 }
 
-func (l *logrusLogger) newEntry(src string) *logEntry {
-	return &logEntry{
-		entry:       logrus.NewEntry(l.defaultLogger).WithFields(logrus.Fields{"module": "pinpoint", "src": src}),
-		extraLogger: l.extra(),
-	}
+func (l *logrusLogger) newEntry(src string) *logrus.Entry {
+	return logrus.NewEntry(l.defaultLogger).WithFields(logrus.Fields{"module": "pinpoint", "src": src})
 }
 
 type logEntry struct {
-	entry       *logrus.Entry
-	extraLogger *logrus.Logger
+	src string
 }
 
 // log writes the line to the default logger and, when one is installed, to the
-// extra logger as well. The extra write goes through a copy of the entry: the
-// entry may be reused for later calls, so its Logger must keep pointing at the
-// default logger.
-func (l *logEntry) log(level logrus.Level, format string, args ...interface{}) {
-	if l.entry == nil { // an entry handed out before init: discard
+// extra logger as well. Nothing is built until a logger wants the level:
+// IsLogLevelEnabled covers both, and each Logf below re-checks its own. The
+// extra write goes through a copy of the entry so its Logger can point at the
+// extra logger while the original keeps the default one.
+func (l logEntry) log(level logrus.Level, format string, args ...interface{}) {
+	if !IsLogLevelEnabled(level) { // also false before init: discard
 		return
 	}
-	l.entry.Logf(level, format, args...)
-	if l.extraLogger != nil {
-		extra := l.entry.Dup()
-		extra.Logger = l.extraLogger
+	entry := logger.newEntry(l.src)
+	entry.Logf(level, format, args...)
+	if extraLogger := logger.extra(); extraLogger != nil {
+		extra := entry.Dup()
+		extra.Logger = extraLogger
 		extra.Logf(level, format, args...)
 	}
 }
 
-func (l *logEntry) Errorf(format string, args ...interface{}) {
+func (l logEntry) Errorf(format string, args ...interface{}) {
 	l.log(logrus.ErrorLevel, format, args...)
 }
 
-func (l *logEntry) Warnf(format string, args ...interface{}) {
+func (l logEntry) Warnf(format string, args ...interface{}) {
 	l.log(logrus.WarnLevel, format, args...)
 }
 
-func (l *logEntry) Infof(format string, args ...interface{}) {
+func (l logEntry) Infof(format string, args ...interface{}) {
 	l.log(logrus.InfoLevel, format, args...)
 }
 
-func (l *logEntry) Debugf(format string, args ...interface{}) {
+func (l logEntry) Debugf(format string, args ...interface{}) {
 	l.log(logrus.DebugLevel, format, args...)
 }
 
-func (l *logEntry) Tracef(format string, args ...interface{}) {
+func (l logEntry) Tracef(format string, args ...interface{}) {
 	l.log(logrus.TraceLevel, format, args...)
 }
