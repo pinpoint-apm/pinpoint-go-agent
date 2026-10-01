@@ -179,9 +179,9 @@ func Test_span_Extract_malformedTraceId(t *testing.T) {
 	}
 }
 
-// countActiveSpans totals the registry across shards: addSampledActiveSpan is
-// keyed by span id, so a span registered under a stale id would show up as a
-// second entry, and a path that forgot to register shows up as none.
+// countActiveSpans totals the registry across shards: a span registered twice
+// under different keys would show up as a second entry, and a path that forgot
+// to register shows up as none.
 func countActiveSpans(agent *agent) int {
 	n := 0
 	for i := range agent.stats.activeSpan.shards {
@@ -235,6 +235,28 @@ func Test_span_Extract_registersActiveSpanOnce(t *testing.T) {
 			assert.Equal(t, 0, countActiveSpans(span.agent), "registered under the final span id")
 		})
 	}
+}
+
+// Two in-flight requests carrying the same headers continue to the same span
+// id. Keyed by that id they shared one registry entry, so the active count
+// showed one request, and none once the first ended.
+func Test_span_Extract_sameHeadersRegisterSeparately(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	headers := map[string]string{
+		HeaderTraceId:      "t123456^12345^1",
+		HeaderSpanId:       "67890",
+		HeaderParentSpanId: "123",
+	}
+	first, second := defaultSpan(agent), defaultSpan(agent)
+	first.Extract(&DistributedTracingContextMap{m: headers})
+	second.Extract(&DistributedTracingContextMap{m: headers})
+	assert.Equal(t, first.spanId, second.spanId, "both continue the upstream span id")
+	assert.Equal(t, 2, countActiveSpans(agent), "each in-flight request has its own entry")
+
+	first.EndSpan()
+	assert.Equal(t, 1, countActiveSpans(agent), "ending one leaves the other active")
+	second.EndSpan()
+	assert.Equal(t, 0, countActiveSpans(agent))
 }
 
 func Test_span_Extract_malformedSpanIds(t *testing.T) {

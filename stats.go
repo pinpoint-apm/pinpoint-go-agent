@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"math/rand/v2"
 	"os"
 	"runtime"
 	"runtime/metrics"
@@ -231,10 +232,12 @@ func (stats *agentStats) shard() *statShard {
 	return &stats.shards[uint64(goIdFromG())&(statShardCount-1)]
 }
 
-// activeSpanRegistry tracks the start time of in-flight spans keyed by span id.
-// It replaces a sync.Map so that store/delete on the span hot path avoid boxing
+// activeSpanRegistry tracks the start time of in-flight spans under a key that
+// is random and local to the process: an unsampled span's generated span id, a
+// sampled span's activeKey (its span id can come from an upstream header). It
+// replaces a sync.Map so that store/delete on the span hot path avoid boxing
 // the int64 key and time.Time value into interface{} (the sync.Map did 3 heap
-// allocations per sampled span). Sharding by span id keeps the per-span
+// allocations per sampled span). Sharding by the random key keeps the per-span
 // store/delete churn from serializing on a single lock.
 const activeSpanShardCount = 32 // must be a power of two
 
@@ -243,7 +246,7 @@ const activeSpanShardCount = 32 // must be a power of two
 // in the application, or a plugin's missing EndSpan on an error path - leaves
 // its entry behind forever, and since the entries are real map values the
 // registry grows without bound. The bound is applied per shard
-// (activeSpanMaxSize / activeSpanShardCount): span ids are random, so the
+// (activeSpanMaxSize / activeSpanShardCount): the keys are random, so the
 // shards fill evenly without a registry-wide lock or counter on the store path.
 const activeSpanMaxSize = 10240
 
@@ -292,15 +295,15 @@ func (r *activeSpanRegistry) init() {
 	}
 }
 
-func (r *activeSpanRegistry) shard(spanId int64) *activeSpanShard {
-	return &r.shards[uint64(spanId)&(activeSpanShardCount-1)]
+func (r *activeSpanRegistry) shard(key int64) *activeSpanShard {
+	return &r.shards[uint64(key)&(activeSpanShardCount-1)]
 }
 
-func (r *activeSpanRegistry) store(spanId int64, startTime time.Time) {
-	s := r.shard(spanId)
+func (r *activeSpanRegistry) store(key int64, startTime time.Time) {
+	s := r.shard(key)
 	s.mu.Lock()
 	evicted := false
-	if _, present := s.m[spanId]; !present && len(s.m) >= activeSpanShardMaxSize {
+	if _, present := s.m[key]; !present && len(s.m) >= activeSpanShardMaxSize {
 		// Full: make room by dropping one existing entry, as Caffeine evicts on
 		// insert. Which one is up to Go's randomized map iteration - the same
 		// of one-shot keys - and the victim's later remove is a harmless
@@ -312,7 +315,7 @@ func (r *activeSpanRegistry) store(spanId int64, startTime time.Time) {
 		}
 		evicted = true
 	}
-	s.m[spanId] = startTime
+	s.m[key] = startTime
 	s.mu.Unlock()
 	if evicted {
 		total := r.evicted.Add(1)
@@ -336,10 +339,10 @@ func (r *activeSpanRegistry) size() int {
 	return n
 }
 
-func (r *activeSpanRegistry) remove(spanId int64) {
-	s := r.shard(spanId)
+func (r *activeSpanRegistry) remove(key int64) {
+	s := r.shard(key)
 	s.mu.Lock()
-	delete(s.m, spanId)
+	delete(s.m, key)
 	s.mu.Unlock()
 }
 
@@ -641,12 +644,18 @@ func (stats *agentStats) reset() {
 }
 
 func addSampledActiveSpan(span *span) {
-	span.agent.stats.activeSpan.store(span.spanId, span.startTime)
+	if span.activeKey == 0 {
+		// The top bit keeps it non-zero without touching the low bits the
+		// shard is picked by. Drawn once, so a second Extract re-registers the
+		// same entry instead of leaking the first.
+		span.activeKey = int64(rand.Uint64() | 1<<63)
+	}
+	span.agent.stats.activeSpan.store(span.activeKey, span.startTime)
 	addRealTimeSampledActiveSpan(span)
 }
 
 func dropSampledActiveSpan(span *span) {
-	span.agent.stats.activeSpan.remove(span.spanId)
+	span.agent.stats.activeSpan.remove(span.activeKey)
 	dropRealTimeSampledActiveSpan(span)
 }
 

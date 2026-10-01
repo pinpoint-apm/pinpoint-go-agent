@@ -146,7 +146,14 @@ type span struct {
 	// stored: the store is gated by atcStreamCount at start, and a viewer that
 	// attached or left in between makes the count at end time no guide.
 	realTimeTracked atomic.Bool
-	eventStack      stack
+	// activeKey is this span's key in the active span registry, drawn locally
+	// on first registration (0: not drawn yet). Not spanId: a continued span
+	// takes its id from the upstream header, so two in-flight requests carrying
+	// the same headers - a retrying proxy, a header-copying client - shared one
+	// entry, the first EndSpan removed it from under the other, and every such
+	// request locked the same shard.
+	activeKey  int64
+	eventStack stack
 	// urlStat is nil until AddMetric records an entry; it then points at
 	// urlStatBuf, and EndSpan queues urlStatRecord. Both live in the span so
 	// a request with URL statistics costs no allocation beyond the span:
