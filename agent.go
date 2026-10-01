@@ -874,6 +874,15 @@ func (agent *agent) shutdownAgent() {
 			Log("agent").Warnf("%d url stat record(s) arrived after the shutdown flush and are lost", late)
 		}
 	}
+
+	// The stat queues report from their producers, so a burst that ended
+	// inside the rate limit's interval is still held back, and nothing reports
+	// after this: the last report bypasses the limit. The url stat total
+	// includes the late records above.
+	agent.statDrops.reportAt.Store(0)
+	agent.statDrops.report("stat", cap(agent.statChan))
+	agent.urlStatDrops.reportAt.Store(0)
+	agent.urlStatDrops.report("url stat", cap(agent.urlStatChan))
 }
 
 // drainUrlStatChan aggregates every record queued so far without blocking and
@@ -1064,6 +1073,11 @@ func (agent *agent) sendMetaWorker() {
 	// for the sends already accepted, giving them the same best-effort flush.
 	defer func() {
 		inFlight.Wait()
+		// No later cycle will log what the rate limit holds back, so the last
+		// report bypasses it, once the sends in flight can add no more.
+		agent.metaDrops.reportAt.Store(0)
+		agent.metaRetryDrops.reportAt.Store(0)
+		agent.reportMetaDrops()
 		Log("agent").Infof("end meta goroutine")
 	}()
 
@@ -1072,6 +1086,11 @@ func (agent *agent) sendMetaWorker() {
 	retry.init(metaRetryQueueSize)
 
 	for agent.workerContinues() {
+		// Reported here rather than from the producers: enqueueMeta and the
+		// send goroutines only bump a counter. Before the wait, so that a
+		// total the rate limit holds back can bound it.
+		held := agent.reportMetaDrops()
+
 		// retry schedule: a retry is a second try at an id whose spans went
 		// out a delay ago, a new item is an id whose spans are going out now.
 		var item pendingMeta
@@ -1084,10 +1103,17 @@ func (agent *agent) sendMetaWorker() {
 			// Nothing to send until a new item, a due retry or a retry
 			// scheduled while the queue was empty (wake) arrives. The timer
 			// is armed per wait: a retry is only ever appended behind the
-			// head, so the head's due time is fixed until it is popped.
+			// head, so the head's due time is fixed until it is popped. A
+			// held-back total arms it sooner, so a burst that ends in silence
+			// still gets logged: popDue then finds nothing due, and the next
+			// cycle reports it.
+			wait, ok := retry.headWait(time.Now())
+			if held > 0 && (!ok || held < wait) {
+				wait, ok = held, true
+			}
 			var due <-chan time.Time
 			var timer *time.Timer
-			if wait, ok := retry.headWait(time.Now()); ok {
+			if ok {
 				timer = time.NewTimer(wait)
 				due = timer.C
 			}
@@ -1111,11 +1137,6 @@ func (agent *agent) sendMetaWorker() {
 				continue
 			}
 		}
-
-		// Reported here rather than from the producers: enqueueMeta and the
-		// send goroutines only bump a counter.
-		agent.metaDrops.report("meta", cap(agent.metaChan))
-		agent.metaRetryDrops.report("meta retry", retry.capacity)
 
 		// A parked release needs no permit: it is the drop the rejection
 		// earned, delayed by one retry interval (metaRejected), or a given-up
@@ -1150,6 +1171,18 @@ func (agent *agent) sendMetaWorker() {
 			})
 		}(item)
 	}
+}
+
+// reportMetaDrops warns about metadata lost to a full metaChan or retry
+// schedule, and returns how long the rate limit holds back a total it did not
+// log: the sooner of the two queues', so each is logged once its limit lifts.
+func (agent *agent) reportMetaDrops() time.Duration {
+	held := agent.metaDrops.report("meta", cap(agent.metaChan))
+	retryHeld := agent.metaRetryDrops.report("meta retry", agent.metaRetry.capacity)
+	if held <= 0 || (retryHeld > 0 && retryHeld < held) {
+		held = retryHeld
+	}
+	return held
 }
 
 // metaMaxConcurrentRequests bounds how many metadata sends sendMetaWorker may
@@ -1789,9 +1822,10 @@ func (r *dropReporter) record(n int64) {
 // report logs the running total at most once per dropReportInterval, and only
 // when drops have accumulated since the last warning. WARN so the data loss is
 // visible at the default log level, rate-limited so a saturated queue cannot
-// log once per dropped record.
-func (r *dropReporter) report(queue string, queueSize int) {
-	r.reportTotal(r.dropped.Load(), queue, queueSize)
+// log once per dropped record. Like reportTotal, it returns how long the limit
+// holds back a total it did not log.
+func (r *dropReporter) report(queue string, queueSize int) time.Duration {
+	return r.reportTotal(r.dropped.Load(), queue, queueSize)
 }
 
 // reportTotal is report for a queue that keeps its own drop counter: total is

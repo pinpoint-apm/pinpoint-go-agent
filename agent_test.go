@@ -1495,6 +1495,82 @@ func Test_dropReporter_rateLimitsAndAccumulates(t *testing.T) {
 	assert.EqualValues(t, 7, r.dropped.Load(), "the total must never be reset by a report")
 }
 
+// A total the rate limit holds back must reach the log even when no metadata
+// follows: the worker wakes once the limit lifts instead of waiting for the
+// next item.
+func Test_sendMetaWorker_reportsHeldBackDropsWhileIdle(t *testing.T) {
+	shortDropReportInterval(t, 300*time.Millisecond)
+
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	agent := newTestAgent(defaultConfig())
+	agent.agentGrpc = newMockAgentGrpc(agent)
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("meta", agent.sendMetaWorker)
+
+	// Each queue in turn: the report after one item logs the first drop and
+	// starts the limit, and the report after the next sees 31 inside it and
+	// holds it back. Nothing follows, so only the idle wake can log 31.
+	for _, r := range []*dropReporter{&agent.metaDrops, &agent.metaRetryDrops} {
+		reported := func(total int64) func() bool {
+			return func() bool { return r.reported.Load() == total }
+		}
+		r.record(1)
+		agent.metaChan <- stringMeta{id: 1, funcName: "f"}
+		waitFor(t, "the first drop to be reported", reported(1))
+
+		r.record(30)
+		agent.metaChan <- stringMeta{id: 2, funcName: "f"}
+		waitFor(t, "the held-back total to be reported while idle", reported(31))
+	}
+
+	agent.signalShutdown()
+	agent.workerWg.Wait()
+	assert.Contains(t, buf.String(), "meta queue overflow: 31 dropped in total")
+	assert.Contains(t, buf.String(), "meta retry queue overflow: 31 dropped in total")
+}
+
+// Each queue logs its first drop, which starts the rate limit, and drops more
+// inside it. Nothing reports after the shutdown, so the shutdown reports every
+// queue past the limit.
+func Test_agent_ShutdownReportsHeldBackDrops(t *testing.T) {
+	shortDropReportInterval(t, time.Hour) // only the shutdown can lift the limit
+
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	agent := newTestAgent(defaultConfig())
+	agent.statChan = make(chan *pb.PStatMessage, 1)
+	agent.urlStatChan = make(chan *urlStat, 1)
+
+	agent.metaDrops.record(1)
+	agent.metaRetryDrops.record(1)
+	startTestWorker(agent, "meta", agent.sendMetaWorker)
+	waitFor(t, "the meta worker's first reports", func() bool {
+		return agent.metaDrops.reported.Load() == 1 && agent.metaRetryDrops.reported.Load() == 1
+	})
+	agent.statDrops.record(1)
+	agent.statDrops.report("stat", 1)
+	agent.urlStatDrops.record(1)
+	agent.urlStatDrops.report("url stat", 1)
+
+	agent.metaDrops.record(2)
+	agent.metaRetryDrops.record(3)
+	agent.statDrops.record(4)
+	agent.urlStatDrops.record(5)
+	agent.Shutdown()
+
+	for _, line := range []string{
+		"meta queue overflow: 3 dropped in total",
+		"meta retry queue overflow: 4 dropped in total",
+		"stat queue overflow: 5 dropped in total",
+		"url stat queue overflow: 6 dropped in total",
+	} {
+		assert.Contains(t, buf.String(), line)
+	}
+}
+
 // A total the rate limit holds back must reach the log even when no span
 // follows: the worker wakes once the limit lifts instead of waiting for the
 // next chunk, and its exit reports past the limit, since no cycle comes after.
