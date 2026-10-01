@@ -4,6 +4,7 @@ import (
 	"math/rand/v2"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 )
 
@@ -147,14 +148,24 @@ func (q *spanQueue) enqueue(chunk *spanChunk) bool {
 }
 
 // dequeue blocks until a chunk is available, and reports false once the queue
-// is closed and fully drained.
-func (q *spanQueue) dequeue() (*spanChunk, bool) {
+// is closed and fully drained. A positive idle bounds the wait on an empty
+// queue: once it runs out, dequeue returns (nil, true).
+func (q *spanQueue) dequeue(idle time.Duration) (*spanChunk, bool) {
+	var timeout <-chan time.Time
 	for {
 		if chunk, ok := q.tryDequeue(); ok {
 			return chunk, true
 		}
+		// Armed only once the queue runs dry, like collectSpanBatch's deadline.
+		if idle > 0 && timeout == nil {
+			timer := time.NewTimer(idle)
+			defer timer.Stop()
+			timeout = timer.C
+		}
 		select {
 		case <-q.wake:
+		case <-timeout:
+			return nil, true
 		case <-q.done:
 			// A producer may have enqueued between the failed sweep and the
 			// close; drain rather than trusting that sweep.

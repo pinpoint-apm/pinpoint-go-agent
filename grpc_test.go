@@ -300,7 +300,7 @@ func Test_agent_enqueueSpan_saturatedConcurrentProducers(t *testing.T) {
 	go func() {
 		defer consumerWg.Done()
 		for {
-			if _, ok := agent.spanQueue.dequeue(); !ok {
+			if _, ok := agent.spanQueue.dequeue(0); !ok {
 				return
 			}
 			consumed.Add(1)

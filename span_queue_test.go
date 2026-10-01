@@ -59,10 +59,10 @@ func Test_spanQueue_closeRejectsEnqueueAndReportsDone(t *testing.T) {
 	q.close()
 	assert.False(t, q.enqueue(chunk), "enqueue after close is rejected")
 
-	got, ok := q.dequeue()
+	got, ok := q.dequeue(0)
 	assert.True(t, ok, "closed queue still drains what it holds")
 	assert.Equal(t, chunk, got)
-	_, ok = q.dequeue()
+	_, ok = q.dequeue(0)
 	assert.False(t, ok, "drained closed queue reports done")
 }
 
@@ -90,7 +90,7 @@ func Test_spanQueue_closeConcurrentProducersDrainsAccepted(t *testing.T) {
 	go func() {
 		defer close(consumerDone)
 		for {
-			if _, ok := q.dequeue(); !ok {
+			if _, ok := q.dequeue(0); !ok {
 				return
 			}
 			consumed.Add(1)

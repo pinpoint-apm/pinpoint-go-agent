@@ -1001,13 +1001,20 @@ func (agent *agent) sendSpanBatchWorker() {
 	// The first chunk starts a batch, collectSpanBatch opportunistically gathers more chunks,
 	// and sendSpanBatchAsync hands the batch to a bounded async sender.
 	for {
-		chunk, ok := agent.spanQueue.dequeue()
+		// Drops are reported once per cycle, before the wait. While spans flow
+		// collectSpanBatch's collect deadline bounds a cycle, so the poll stays
+		// regular; a total the rate limit holds back bounds the wait instead,
+		// so a burst that ends in silence still gets its total logged.
+		// ponytail: a send that fails once the worker is idle with nothing held
+		// back waits for the next cycle or the exit report; bound the wait while
+		// sends are in flight too if that lag matters.
+		chunk, ok := agent.spanQueue.dequeue(agent.reportSpanDrops())
 		if !ok {
 			break
 		}
-		// No timer of its own: collectSpanBatch's collect deadline already
-		// bounds how long a cycle can take, so the poll stays regular.
-		agent.reportSpanDrops()
+		if chunk == nil {
+			continue // the limit has lifted: report what it held back
+		}
 
 		batch, closed := agent.spanGrpc.collectSpanBatch(chunk, agent.spanQueue)
 		agent.spanGrpc.sendSpanBatchAsync(batch)
@@ -1019,15 +1026,21 @@ func (agent *agent) sendSpanBatchWorker() {
 	// The span queue is closed during shutdown; wait for already accepted async batches
 	// before the worker exits so queued spans get the same best-effort flush.
 	agent.spanGrpc.awaitInFlightSpanBatch()
+	// No later cycle will log what the rate limit holds back, so the last
+	// report bypasses it - after the await, to count the sends that failed in it.
+	agent.spanDrops.reportAt.Store(0)
+	agent.reportSpanDrops()
 	Log("agent").Infof("end span batch goroutine")
 }
 
 // reportSpanDrops warns about spans lost to a saturated span queue or skipped
-// by the batch sender. Called by the span batch worker once per cycle: producers only bump their shard's counter, so the clock read and the
-// logging land on the consumer.
-func (agent *agent) reportSpanDrops() {
+// by the batch sender, and returns how long the rate limit holds back a total
+// it did not log. Called by the span batch worker once per cycle: producers
+// only bump their shard's counter, so the clock read and the logging land on
+// the consumer.
+func (agent *agent) reportSpanDrops() time.Duration {
 	total := agent.spanQueue.dropCount() + agent.spanDrops.dropped.Load()
-	agent.spanDrops.reportTotal(total, "span", agent.spanQueue.capacity)
+	return agent.spanDrops.reportTotal(total, "span", agent.spanQueue.capacity)
 }
 
 func (agent *agent) enqueueSpan(span *spanChunk) bool {
@@ -1783,20 +1796,23 @@ func (r *dropReporter) report(queue string, queueSize int) {
 
 // reportTotal is report for a queue that keeps its own drop counter: total is
 // that queue's running total, so the reporter contributes only the rate limit.
-func (r *dropReporter) reportTotal(total int64, queue string, queueSize int) {
+// It returns how long that limit holds back a total it did not log, for a
+// consumer that would otherwise go quiet before reporting it.
+func (r *dropReporter) reportTotal(total int64, queue string, queueSize int) time.Duration {
 	if total == r.reported.Load() {
-		return
+		return 0
 	}
 
 	now := time.Now().UnixNano()
 	next := r.reportAt.Load()
 	if now < next || !r.reportAt.CompareAndSwap(next, now+int64(dropReportInterval)) {
-		return
+		return time.Duration(r.reportAt.Load() - now)
 	}
 	r.reported.Store(total)
 	Log("agent").Warnf(
 		"%s queue overflow: %d dropped in total (oldest overwritten, max queue size %d)",
 		queue, total, queueSize)
+	return 0
 }
 
 // logThrottle rate-limits one warning site to a message per dropReportInterval,

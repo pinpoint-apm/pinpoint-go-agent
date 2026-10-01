@@ -1495,6 +1495,44 @@ func Test_dropReporter_rateLimitsAndAccumulates(t *testing.T) {
 	assert.EqualValues(t, 7, r.dropped.Load(), "the total must never be reset by a report")
 }
 
+// A total the rate limit holds back must reach the log even when no span
+// follows: the worker wakes once the limit lifts instead of waiting for the
+// next chunk, and its exit reports past the limit, since no cycle comes after.
+func Test_sendSpanBatchWorker_reportsHeldBackDrops(t *testing.T) {
+	shortDropReportInterval(t, 300*time.Millisecond)
+
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	agent := newTestAgent(defaultConfig())
+	agent.spanGrpc = newMockSpanGrpc(agent)
+	agent.spanGrpc.batchSize = 1 // a chunk is a whole cycle, no collect wait
+	reported := func(total int64) func() bool {
+		return func() bool { return agent.spanDrops.reported.Load() == total }
+	}
+
+	agent.spanDrops.record(1)
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("span batch", agent.sendSpanBatchWorker)
+	waitFor(t, "the first drop to be reported", reported(1))
+
+	// The cycle this chunk starts sees 31 inside the interval and holds it
+	// back; no span follows, so only the idle wake can log it.
+	agent.spanDrops.record(30)
+	require.True(t, agent.spanQueue.enqueue(newTestSpanChunk(agent)))
+	waitFor(t, "the held-back total to be reported while idle", reported(31))
+
+	// The queue closes inside the next interval: only the exit report is left.
+	agent.spanDrops.record(500)
+	agent.spanQueue.close()
+	agent.workerWg.Wait()
+
+	assert.Equal(t, 3, strings.Count(buf.String(), "span queue overflow"))
+	for _, total := range []int{1, 31, 531} {
+		assert.Contains(t, buf.String(), fmt.Sprintf("span queue overflow: %d dropped in total", total))
+	}
+}
+
 // enqueueStat counts what a full queue costs: the rejected snapshot plus the
 // queued one evicted to make room for the next.
 func Test_agent_enqueueStatCountsEveryDroppedRecord(t *testing.T) {
