@@ -25,7 +25,6 @@ type sqlNormalizer struct {
 	materialized bool
 	param        strings.Builder
 	paramIndex   int
-	isChanged    bool
 	// removeComments drops comments from the output instead of copying them.
 	removeComments bool
 }
@@ -122,7 +121,7 @@ func (s *sqlNormalizer) run() (string, string) {
 		}
 	}
 
-	if s.isChanged {
+	if s.materialized {
 		return s.output.String(), s.param.String()
 	}
 	return s.sql, ""
@@ -140,8 +139,8 @@ func (s *sqlNormalizer) emit(ch byte) {
 // materialize starts the output at the first change, copying the unchanged
 // prefix sql[:upto] in one write. upto is where the changed bytes begin, which
 // is pos minus whatever the caller read but has not emitted (the lead byte of
-// a comment marker or a number literal); every caller also marks isChanged, so
-// run returns the output exactly when it was materialized.
+// a comment marker or a number literal). run returns the output exactly when
+// it was materialized.
 func (s *sqlNormalizer) materialize(upto int) {
 	if s.materialized {
 		return
@@ -165,7 +164,6 @@ func (s *sqlNormalizer) writeParamIndex() {
 func (s *sqlNormalizer) consumeSingleLineComment(lead byte) {
 	if s.removeComments {
 		// A dropped comment is a change even though it records no parameter.
-		s.isChanged = true
 		s.materialize(s.pos - 1) // lead is read, not written
 	} else {
 		s.emit(lead)
@@ -187,7 +185,6 @@ func (s *sqlNormalizer) consumeSingleLineComment(lead byte) {
 // read but not yet written.
 func (s *sqlNormalizer) consumeMultiLineComment(lead byte) {
 	if s.removeComments {
-		s.isChanged = true
 		s.materialize(s.pos - 1) // lead is read, not written
 	} else {
 		s.emit(lead)
@@ -215,7 +212,6 @@ func (s *sqlNormalizer) consumeMultiLineComment(lead byte) {
 // already emitted, replacing the content with <idx>$ and recording it as a
 // parameter.
 func (s *sqlNormalizer) consumeCharLiteral() {
-	s.isChanged = true
 	s.materialize(s.pos) // the opening quote is already accounted for
 	s.startParam()
 
@@ -246,7 +242,6 @@ func (s *sqlNormalizer) consumeCharLiteral() {
 // consumeNumberLiteral consumes a numeric literal, first being its leading
 // digit, already read but not yet written.
 func (s *sqlNormalizer) consumeNumberLiteral(first byte) {
-	s.isChanged = true
 	s.materialize(s.pos - 1) // first is read, not written
 	s.startParam()
 	s.writeParamIndex()

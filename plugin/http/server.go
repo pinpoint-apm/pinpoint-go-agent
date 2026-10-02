@@ -287,16 +287,10 @@ type proxyRequest struct {
 	app          string
 }
 
-// setProxyHeader records one proxy annotation per proxy header the request
-// carries - Apache, Nginx, App and the configured user headers - so a request
-// that passed through more than one proxy gets one annotation per hop rather
-// than only the first match.
-func setProxyHeader(a pinpoint.Annotation, h Header) {
-	setProxyHeaderNames(a, h, proxyUserHeaderNames())
-}
-
-// setProxyHeaderNames is setProxyHeader with the configured user header names
-// passed in, for a caller that already loaded the config.
+// setProxyHeaderNames records one proxy annotation per proxy header the
+// request carries - Apache, Nginx, App and userHeaders, the configured user
+// headers - so a request that passed through more than one proxy gets one
+// annotation per hop rather than only the first match.
 func setProxyHeaderNames(a pinpoint.Annotation, h Header, userHeaders []string) {
 	if v := headerFirst(h, proxyHeaderApache); v != "" {
 		appendProxyHeader(a, proxyTypeApache, parseProxyApache(v))

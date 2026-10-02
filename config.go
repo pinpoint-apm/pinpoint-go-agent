@@ -1002,17 +1002,10 @@ func (config *Config) startConfigWatcher() bool {
 	config.watchMu.Lock()
 	defer config.watchMu.Unlock()
 
-	if config.configFileCfg == nil {
+	// The poller returns only once Close stops it, and Close clears both
+	// channels, so a set watcherStop is a poller still running.
+	if config.configFileCfg == nil || config.watcherStop != nil {
 		return false
-	}
-	if config.watcherStop != nil {
-		select {
-		case <-config.watcherDone:
-			config.watcherStop = nil
-			config.watcherDone = nil
-		default:
-			return false
-		}
 	}
 
 	stop, done := make(chan struct{}), make(chan struct{})

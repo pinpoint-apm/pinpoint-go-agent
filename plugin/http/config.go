@@ -316,10 +316,6 @@ func httpCfg() *httpConfig {
 	return curHttpConfig.Load()
 }
 
-func newHttpConfig() *httpConfig {
-	return newHttpConfigFor(pinpoint.GetConfig())
-}
-
 func newHttpConfigFor(config *pinpoint.Config) *httpConfig {
 	return &httpConfig{
 		srvUrl:              setupHttpUrlFilter(trimStringSlice(config.StringSlice(CfgHttpServerExcludeUrl))),
@@ -355,28 +351,12 @@ func makeProxyUserHeaderNames(cfg []string) []string {
 	return names
 }
 
-func proxyUserHeaderNames() []string {
-	return httpCfg().srvProxyUserHeaders
-}
-
-func proxyHeaderEnabled() bool {
-	return httpCfg().srvProxyHeader
-}
-
 // IsUrlStatEnabled reports whether URL statistics collection is enabled.
 // Plugins whose route pattern is expensive to look up (a context walk, a lock,
 // a string build) use it to skip that lookup when CollectUrlStat would drop
 // the entry anyway.
 func IsUrlStatEnabled() bool {
 	return httpCfg().urlStatEnabled
-}
-
-func isExcludedUrl(url string) bool {
-	return httpCfg().srvUrl.isFiltered(url)
-}
-
-func isExcludedMethod(method string) bool {
-	return httpCfg().srvMethod.isExcludedMethod(method)
 }
 
 func recordServerHttpStatus(cfg *httpConfig, span pinpoint.SpanRecorder, status int) {
@@ -407,10 +387,6 @@ func RecordHttpHandlerError(tracer pinpoint.Tracer, err error) {
 	if httpCfg().recordHandlerError {
 		tracer.Span().SetError(err)
 	}
-}
-
-func makeHttpHeaderRecorder(cfgName string) httpHeaderRecorder {
-	return makeHttpHeaderRecorderFor(pinpoint.GetConfig(), cfgName)
 }
 
 func makeHttpHeaderRecorderFor(config *pinpoint.Config, cfgName string) httpHeaderRecorder {

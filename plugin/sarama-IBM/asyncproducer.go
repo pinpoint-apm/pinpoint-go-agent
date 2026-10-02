@@ -2,7 +2,6 @@ package ppsaramaibm
 
 import (
 	"context"
-	"errors"
 	"sync"
 
 	"github.com/IBM/sarama"
@@ -33,42 +32,21 @@ type asyncProducer struct {
 	spansLock    sync.Mutex
 }
 
-// transactional is the part of sarama.AsyncProducer the wrapper intercepts
-// from sarama releases that have transactions; older ones cannot reach it.
-type transactional interface {
-	CommitTxn() error
-	AbortTxn() error
-}
-
 // CommitTxn and AbortTxn first hand sarama every message the wrapper has
 // accepted. sarama ends a transaction by queuing a marker on its own input
 // behind the messages sent before it, and a message still in the wrapper's
 // buffer reached sarama after the marker: rejected as outside a transaction
 // while the commit reported success, or racing the commit's wait into a
 // panic.
-//
-// The wrapper exposes both whatever the underlying producer has; one without
-// transactions answers errNoTransactions rather than panicking on the
-// assertion.
 func (p *asyncProducer) CommitTxn() error {
-	t, ok := p.AsyncProducer.(transactional)
-	if !ok {
-		return errNoTransactions
-	}
 	p.flushInput()
-	return t.CommitTxn()
+	return p.AsyncProducer.CommitTxn()
 }
 
 func (p *asyncProducer) AbortTxn() error {
-	t, ok := p.AsyncProducer.(transactional)
-	if !ok {
-		return errNoTransactions
-	}
 	p.flushInput()
-	return t.AbortTxn()
+	return p.AsyncProducer.AbortTxn()
 }
-
-var errNoTransactions = errors.New("sarama: the underlying producer does not support transactions")
 
 // flushInput returns once the forwarder has handed sarama every message the
 // wrapper accepted before the call, or has gone.

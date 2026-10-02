@@ -32,7 +32,6 @@ func initGoroutine() {
 	stateMap["running"] = pb.PThreadState_THREAD_STATE_RUNNABLE
 	stateMap["syscall"] = pb.PThreadState_THREAD_STATE_RUNNABLE
 	stateMap["copystack"] = pb.PThreadState_THREAD_STATE_RUNNABLE
-	stateMap["preempted"] = pb.PThreadState_THREAD_STATE_RUNNABLE
 	stateMap["dead"] = pb.PThreadState_THREAD_STATE_TERMINATED
 	stateMap["dumping heap"] = pb.PThreadState_THREAD_STATE_BLOCKED
 	stateMap["garbage collection"] = pb.PThreadState_THREAD_STATE_BLOCKED

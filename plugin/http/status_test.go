@@ -104,7 +104,7 @@ func TestHttpStatusErrorTokens(t *testing.T) {
 func TestHttpStatusErrorDefaultConfig(t *testing.T) {
 	startAgent(t)
 
-	h := newHttpStatusError()
+	h := newHttpConfig().srvStatus
 	assert.True(t, h.isError(500))
 	assert.True(t, h.isError(503))
 	assert.False(t, h.isError(200))
@@ -116,7 +116,7 @@ func TestHttpStatusErrorDefaultConfig(t *testing.T) {
 func TestHttpStatusErrorFromAgentConfig(t *testing.T) {
 	startAgent(t, WithHttpServerStatusCodeError([]string{"4xx", "302"}))
 
-	h := newHttpStatusError()
+	h := newHttpConfig().srvStatus
 	assert.True(t, h.isError(404))
 	assert.True(t, h.isError(302))
 	assert.False(t, h.isError(500), "5xx is no longer configured")

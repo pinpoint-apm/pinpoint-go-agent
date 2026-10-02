@@ -106,18 +106,6 @@ DOWNSTREAM_BIN="$BIN_DIR/downstream"
 GRPC_BIN="$BIN_DIR/grpcserver"
 STUB_BIN="$BIN_DIR/stubcollector"
 
-for binary in "$UPSTREAM_BIN" "$DOWNSTREAM_BIN" "$GRPC_BIN"; do
-    if [[ ! -x "$binary" ]]; then
-        echo "Missing end-to-end binary: $binary" >&2
-        echo "Build with: (cd $SCRIPT_DIR && go build -o bin/ ./cmd/...)" >&2
-        exit 2
-    fi
-done
-if $LOCAL_COLLECTOR && [[ ! -x "$STUB_BIN" ]]; then
-    echo "Missing stub collector binary: $STUB_BIN" >&2
-    exit 2
-fi
-
 if [[ -z "$LOG_DIR" ]]; then
     LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pinpoint-go-e2e.XXXXXX")
     AUTO_LOG_DIR=true

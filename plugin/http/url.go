@@ -187,11 +187,6 @@ type httpUrlFilter struct {
 	ant    []*httpExcludeUrl
 }
 
-func newHttpUrlFilter() *httpUrlFilter {
-	cfgFilters := trimStringSlice(pinpoint.GetConfig().StringSlice(CfgHttpServerExcludeUrl))
-	return setupHttpUrlFilter(cfgFilters)
-}
-
 func setupHttpUrlFilter(cfgFilters []string) *httpUrlFilter {
 	filter := &httpUrlFilter{}
 	for _, u := range cfgFilters {
@@ -255,14 +250,6 @@ func (h *httpUrlFilter) antFiltered(url string) bool {
 
 type httpMethodFilter struct {
 	excludeMethod []string
-}
-
-func newHttpExcludeMethod() *httpMethodFilter {
-	cfg := trimStringSlice(pinpoint.GetConfig().StringSlice(CfgHttpServerExcludeMethod))
-
-	return &httpMethodFilter{
-		excludeMethod: cfg,
-	}
 }
 
 func (h *httpMethodFilter) isExcludedMethod(method string) bool {

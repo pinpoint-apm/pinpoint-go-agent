@@ -84,20 +84,19 @@ type span struct {
 	agent *agent
 	// cfg is pinned when the span is created and kept for its whole life, so a
 	// reload can never move this span's event limits mid-trace.
-	cfg                *configSnapshot
-	txId               TransactionId
-	spanId             int64
-	parentSpanId       int64
-	parentAppName      string
-	parentAppType      int
-	parentAppNamespace string
-	parentServiceName  string
-	serviceType        int32
-	rpcName            string
-	endPoint           string
-	remoteAddr         string
-	acceptorHost       string
-	annotations        annotation
+	cfg               *configSnapshot
+	txId              TransactionId
+	spanId            int64
+	parentSpanId      int64
+	parentAppName     string
+	parentAppType     int
+	parentServiceName string
+	serviceType       int32
+	rpcName           string
+	endPoint          string
+	remoteAddr        string
+	acceptorHost      string
+	annotations       annotation
 	// loggingInfo is atomic like the counters below: the logging plugins
 	// call SetLogging from whichever goroutine logs with the request's
 	// tracer, and two of them at once were a data race.

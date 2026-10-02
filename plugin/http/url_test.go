@@ -361,12 +361,13 @@ func TestUrlAndMethodFiltersComeFromAgentConfig(t *testing.T) {
 		WithHttpServerExcludeMethod([]string{" put ", "delete"}),
 	)
 
-	urlFilter := newHttpUrlFilter()
+	cfg := newHttpConfig()
+	urlFilter := cfg.srvUrl
 	assert.True(t, urlFilter.isFiltered("/skip/a/b"), "the configured prefix pattern should filter")
 	assert.True(t, urlFilter.isFiltered("/ab/exclude.html"), "the configured Ant pattern should filter")
 	assert.False(t, urlFilter.isFiltered("/keep/a/b"))
 
-	methodFilter := newHttpExcludeMethod()
+	methodFilter := cfg.srvMethod
 	assert.True(t, methodFilter.isExcludedMethod("PUT"), "surrounding whitespace must be trimmed off the config value")
 	assert.True(t, methodFilter.isExcludedMethod("DELETE"))
 	assert.False(t, methodFilter.isExcludedMethod("GET"))

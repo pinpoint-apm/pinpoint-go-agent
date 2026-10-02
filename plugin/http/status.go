@@ -3,8 +3,6 @@ package pphttp
 import (
 	"strconv"
 	"strings"
-
-	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 // httpStatusError is the set of response statuses that count as a failure,
@@ -14,10 +12,6 @@ import (
 // RecordHttpServerResponse takes any int, so the verdict stays what it was
 // for every input.
 type httpStatusError map[int]bool
-
-func newHttpStatusError() httpStatusError {
-	return parseHttpStatusErrors(pinpoint.GetConfig().StringSlice(CfgHttpServerStatusCodeErrors))
-}
 
 // parseHttpStatusErrors expands the configured tokens - a status class, "1xx"
 // through "5xx" case-insensitively, or a single status code - into the set.
