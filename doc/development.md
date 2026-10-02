@@ -349,6 +349,12 @@ Before opening a pull request, the short version of CI:
 scripts/set-major-version.sh --check && go test -race ./... && (cd test/it && go test ./...) && for dir in plugin/*/; do (cd "$dir" && go test -race ./) || echo "FAILED: $dir"; done
 ```
 
+[`scripts/coverage.sh`](/scripts/coverage.sh) `[OUT_DIR]` measures statement
+coverage across the unit tests (agent and every plugin), `test/it` and
+`test/e2e` against its bundled stub collector, and prints each layer and the
+merged total per package, plus a line-by-line HTML report of the agent package.
+It is not part of CI.
+
 ## Releasing
 
 The published modules - the agent and every `plugin/<name>` - are released
