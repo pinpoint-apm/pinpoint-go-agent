@@ -197,6 +197,12 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   and rejects `0x10`, `1_000` and `10.0` with the usual "is not a valid int"
   warning; a bool option takes the numbers 1 and 0 but no other, and a number
   option no longer takes a bool. A YAML or JSON number is read as before.
+- `gopkg.in/natefinch/lumberjack.v2` is v2.2.1, up from v2.0.0 (2016). A log
+  file it creates is `0600` instead of `0644` and a log directory `0755`
+  instead of `0744`; an existing file keeps its mode, also across rotation.
+  v2.0.0 had no go.mod, so its test dependencies `BurntSushi/toml` and
+  `gopkg.in/yaml.v2` were in the module graph of every application importing
+  the agent.
 
 ### Added
 
