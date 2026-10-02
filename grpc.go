@@ -2163,11 +2163,11 @@ func makePActiveThreadDump(g *goroutine) *pb.PActiveThreadDump {
 			ThreadName:  g.header,
 			ThreadId:    g.id,
 			ThreadState: g.threadState(),
-			StackTrace:  g.stackTrace(),
+			StackTrace:  []string{validUTF8(g.buf.String())},
 		},
 		Sampled:       g.span.sampled,
 		TransactionId: g.span.txId,
-		EntryPoint:    g.span.entryPoint,
+		EntryPoint:    validUTF8(g.span.entryPoint),
 	}
 
 	return aDump
@@ -2233,7 +2233,7 @@ func makePActiveThreadLightDump(g *goroutine) *pb.PActiveThreadLightDump {
 		},
 		Sampled:       g.span.sampled,
 		TransactionId: g.span.txId,
-		EntryPoint:    g.span.entryPoint,
+		EntryPoint:    validUTF8(g.span.entryPoint),
 	}
 
 	return aDump

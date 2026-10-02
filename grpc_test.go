@@ -2069,6 +2069,20 @@ func Test_cmdGrpc_sendActiveThreadDump_reportsDumpFailure(t *testing.T) {
 	assert.Empty(t, lightDumps[0].GetThreadDump())
 }
 
+// The entry point is the request URL path, which percent-decoding can fill with
+// any bytes, and the stack trace carries the build machine's source paths. One
+// such string fails the whole dump reply while that request is in flight.
+func Test_makePActiveThreadDump_SanitizesInvalidUTF8(t *testing.T) {
+	g := testGoroutine(1)
+	g.span.entryPoint = "bad\xff"
+	g.addLine([]byte("\t/tmp/caf\xe9/app/main.go:1 +0x1"))
+
+	_, err := proto.Marshal(makePActiveThreadDump(g))
+	assert.NoError(t, err)
+	_, err = proto.Marshal(makePActiveThreadLightDump(g))
+	assert.NoError(t, err)
+}
+
 // dialOptions returns opaque grpc.DialOptions, so the flow-control settings
 // can only be checked on the wire. A correctly configured client advertises the
 // window as SETTINGS_INITIAL_WINDOW_SIZE (the per-stream window) and then

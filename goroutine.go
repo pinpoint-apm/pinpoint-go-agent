@@ -65,10 +65,6 @@ func (g *goroutine) threadState() pb.PThreadState {
 	return pb.PThreadState_THREAD_STATE_WAITING
 }
 
-func (g *goroutine) stackTrace() []string {
-	return []string{g.buf.String()}
-}
-
 func newGoroutine(id int64, state string, line []byte) *goroutine {
 	g := &goroutine{
 		id:     id,
