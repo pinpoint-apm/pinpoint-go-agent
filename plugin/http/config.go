@@ -47,22 +47,23 @@ func init() {
 	pinpoint.AddConfig(CfgHttpClientRecordUrlQuery, pinpoint.CfgBool, false, true)
 }
 
+// withValue is the shape of every option below: it sets key to v.
+func withValue(key string, v interface{}) pinpoint.ConfigOption {
+	return func(c *pinpoint.Config) { c.Set(key, v) }
+}
+
 // WithHttpServerStatusCodeError sets HTTP status code with request failure.
 //
 //	pphttp.WithHttpServerStatusCodeError([]string{"5xx", "4xx", "302"})
 func WithHttpServerStatusCodeError(errors []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(CfgHttpServerStatusCodeErrors, errors)
-	}
+	return withValue(CfgHttpServerStatusCodeErrors, errors)
 }
 
 // WithHttpServerRecordHandlerError sets whether to record the error returned by http handler.
 //
 //	pphttp.WithHttpServerRecordHandlerError(false)
 func WithHttpServerRecordHandlerError(record bool) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(CfgHttpServerRecordHandlerError, record)
-	}
+	return withValue(CfgHttpServerRecordHandlerError, record)
 }
 
 // WithHttpServerExcludeUrl sets URLs to exclude from tracking.
@@ -70,18 +71,14 @@ func WithHttpServerRecordHandlerError(record bool) pinpoint.ConfigOption {
 //
 //	pphttp.WithHttpServerExcludeUrl([]string{"/wrap_*", "/**/*.do"})
 func WithHttpServerExcludeUrl(urlPath []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(CfgHttpServerExcludeUrl, urlPath)
-	}
+	return withValue(CfgHttpServerExcludeUrl, urlPath)
 }
 
 // WithHttpServerExcludeMethod sets HTTP Request methods to exclude from tracking.
 //
 //	pphttp.WithHttpServerExcludeMethod([]string{"put", "delete"})
 func WithHttpServerExcludeMethod(method []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(CfgHttpServerExcludeMethod, method)
-	}
+	return withValue(CfgHttpServerExcludeMethod, method)
 }
 
 // WithHttpServerRecordRequestHeader sets HTTP request headers to be logged on the server side.
@@ -93,9 +90,7 @@ func WithHttpServerExcludeMethod(method []string) pinpoint.ConfigOption {
 //
 //	pphttp.WithHttpServerRecordRequestHeader([]string{"foo", "bar"})
 func WithHttpServerRecordRequestHeader(header []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(CfgHttpServerRecordRequestHeader, header)
-	}
+	return withValue(CfgHttpServerRecordRequestHeader, header)
 }
 
 // WithHttpServerRecordRespondHeader sets HTTP response headers to be logged on the server side.
@@ -107,9 +102,7 @@ func WithHttpServerRecordRequestHeader(header []string) pinpoint.ConfigOption {
 //
 //	pphttp.WithHttpServerRecordRespondHeader([]string{"foo", "bar", "set-cookie"})
 func WithHttpServerRecordRespondHeader(header []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(CfgHttpServerRecordResponseHeader, header)
-	}
+	return withValue(CfgHttpServerRecordResponseHeader, header)
 }
 
 // WithHttpServerRecordRequestCookie sets HTTP request cookies to be logged on the server side.
@@ -121,18 +114,14 @@ func WithHttpServerRecordRespondHeader(header []string) pinpoint.ConfigOption {
 //
 //	pphttp.WithHttpServerRecordRequestCookie([]string{"foo", "bar"})
 func WithHttpServerRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(CfgHttpServerRecordRequestCookie, cookie)
-	}
+	return withValue(CfgHttpServerRecordRequestCookie, cookie)
 }
 
 // WithHttpServerProxyHeaderEnable turns the recording of proxy request headers
 // (Pinpoint-ProxyApache, -ProxyNginx, -ProxyApp and the configured user
 // headers) on or off.
 func WithHttpServerProxyHeaderEnable(enable bool) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(CfgHttpServerProxyHeaderEnable, enable)
-	}
+	return withValue(CfgHttpServerProxyHeaderEnable, enable)
 }
 
 // WithHttpServerRecordRequestParam turns the recording of the request query
@@ -141,9 +130,7 @@ func WithHttpServerProxyHeaderEnable(enable bool) pinpoint.ConfigOption {
 //
 //	pphttp.WithHttpServerRecordRequestParam(true)
 func WithHttpServerRecordRequestParam(record bool) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(CfgHttpServerRecordRequestParam, record)
-	}
+	return withValue(CfgHttpServerRecordRequestParam, record)
 }
 
 // WithHttpServerRealIpHeader sets the ordered request headers the client address
@@ -153,18 +140,14 @@ func WithHttpServerRecordRequestParam(record bool) pinpoint.ConfigOption {
 //
 //	pphttp.WithHttpServerRealIpHeader([]string{"CF-Connecting-IP", "X-Forwarded-For"})
 func WithHttpServerRealIpHeader(names []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(CfgHttpServerRealIpHeader, names)
-	}
+	return withValue(CfgHttpServerRealIpHeader, names)
 }
 
 // WithHttpServerRealIpEmptyValue sets the header value that counts as absent
 // when resolving the client address, compared case-insensitively (typically
 // "unknown").
 func WithHttpServerRealIpEmptyValue(value string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(CfgHttpServerRealIpEmptyValue, value)
-	}
+	return withValue(CfgHttpServerRealIpEmptyValue, value)
 }
 
 // WithHttpServerProxyUserHeaderNames sets the request headers a user-defined
@@ -174,9 +157,7 @@ func WithHttpServerRealIpEmptyValue(value string) pinpoint.ConfigOption {
 //
 //	pphttp.WithHttpServerProxyUserHeaderNames([]string{"X-Proxy-Time"})
 func WithHttpServerProxyUserHeaderNames(names []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(CfgHttpServerProxyUserHeaderNames, names)
-	}
+	return withValue(CfgHttpServerProxyUserHeaderNames, names)
 }
 
 // WithHttpClientRecordRequestHeader sets HTTP request headers to be logged on the client side.
@@ -188,9 +169,7 @@ func WithHttpServerProxyUserHeaderNames(names []string) pinpoint.ConfigOption {
 //
 //	pphttp.WithHttpClientRecordRequestHeader([]string{"foo", "bar"})
 func WithHttpClientRecordRequestHeader(header []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(CfgHttpClientRecordRequestHeader, header)
-	}
+	return withValue(CfgHttpClientRecordRequestHeader, header)
 }
 
 // WithHttpClientRecordRespondHeader sets HTTP response headers to be logged on the client side.
@@ -202,9 +181,7 @@ func WithHttpClientRecordRequestHeader(header []string) pinpoint.ConfigOption {
 //
 //	pphttp.WithHttpClientRecordRespondHeader([]string{"foo", "bar"})
 func WithHttpClientRecordRespondHeader(header []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(CfgHttpClientRecordResponseHeader, header)
-	}
+	return withValue(CfgHttpClientRecordResponseHeader, header)
 }
 
 // WithHttpClientRecordRequestCookie sets HTTP request cookies to be logged on the client side.
@@ -216,9 +193,7 @@ func WithHttpClientRecordRespondHeader(header []string) pinpoint.ConfigOption {
 //
 //	pphttp.WithHttpClientRecordRequestCookie([]string{"foo", "bar"})
 func WithHttpClientRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(CfgHttpClientRecordRequestCookie, cookie)
-	}
+	return withValue(CfgHttpClientRecordRequestCookie, cookie)
 }
 
 // WithHttpClientRecordUrlQuery sets whether the client URL annotation keeps
@@ -226,9 +201,7 @@ func WithHttpClientRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
 //
 //	pphttp.WithHttpClientRecordUrlQuery(true)
 func WithHttpClientRecordUrlQuery(record bool) pinpoint.ConfigOption {
-	return func(c *pinpoint.Config) {
-		c.Set(CfgHttpClientRecordUrlQuery, record)
-	}
+	return withValue(CfgHttpClientRecordUrlQuery, record)
 }
 
 // httpConfig bundles every component derived from this plugin's options. A
