@@ -68,12 +68,7 @@ func newSpanEventGoroutine(span *span) *spanEvent {
 	se := defaultSpanEvent(span, "", sequence, depth)
 
 	//Asynchronous Invocation
-	apiId := atomic.LoadInt32(&span.agent.asyncApiId)
-	if apiId == 0 {
-		apiId = span.agent.cacheSpanApi("Goroutine Invocation", apiTypeInvocation)
-		atomic.StoreInt32(&span.agent.asyncApiId, apiId)
-	}
-	se.apiId = apiId
+	se.apiId = span.agent.cacheSpanApi("Goroutine Invocation", apiTypeInvocation)
 	se.serviceType = ServiceTypeAsync
 
 	return se

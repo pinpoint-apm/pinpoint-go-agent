@@ -310,24 +310,26 @@ func Test_spanEvent_SetSQLCountReloadsDynamically(t *testing.T) {
 	assert.Equal(t, int32(0), reloaded.sqlCount.Load(), "sqlCount")
 }
 
+// publishedGoroutineApiId drains a.metaChan and returns the id of the
+// "Goroutine Invocation" API it published, or 0 if none was queued.
+func publishedGoroutineApiId(t *testing.T, a *agent) int32 {
+	for {
+		select {
+		case md := <-a.metaChan:
+			if api, ok := md.(apiMeta); ok && api.descriptor == "Goroutine Invocation" {
+				assert.Equal(t, apiTypeInvocation, api.apiType, "apiType")
+				return api.id
+			}
+		default:
+			return 0
+		}
+	}
+}
+
 // A goroutine span event must carry an api id its own agent registered: ids
 // come from the per-agent apiIdGen, so a process-global cache would make the
 // second agent (Shutdown() + NewAgent()) reuse an id it never published.
 func Test_newSpanEventGoroutine_apiIdIsPerAgent(t *testing.T) {
-	publishedGoroutineApiId := func(a *agent) int32 {
-		for {
-			select {
-			case md := <-a.metaChan:
-				if api, ok := md.(apiMeta); ok && api.descriptor == "Goroutine Invocation" {
-					assert.Equal(t, apiTypeInvocation, api.apiType, "apiType")
-					return api.id
-				}
-			default:
-				return 0
-			}
-		}
-	}
-
 	for _, name := range []string{"first agent", "second agent"} {
 		t.Run(name, func(t *testing.T) {
 			s := defaultTestSpan()
@@ -335,13 +337,29 @@ func Test_newSpanEventGoroutine_apiIdIsPerAgent(t *testing.T) {
 
 			assert.Equal(t, int32(ServiceTypeAsync), se.serviceType, "serviceType")
 			assert.NotZero(t, se.apiId, "apiId")
-			assert.Equal(t, se.apiId, publishedGoroutineApiId(s.agent), "registered apiId")
+			assert.Equal(t, se.apiId, publishedGoroutineApiId(t, s.agent), "registered apiId")
 
 			// second event on the same agent reuses the id, publishing nothing
 			assert.Equal(t, se.apiId, newSpanEventGoroutine(s).apiId, "cached apiId")
-			assert.Zero(t, publishedGoroutineApiId(s.agent), "re-registered apiId")
+			assert.Zero(t, publishedGoroutineApiId(t, s.agent), "re-registered apiId")
 		})
 	}
+}
+
+// When the goroutine API's metadata never reaches the collector, the failure
+// path drops its cache entry, so the next goroutine event must register it
+// again instead of reusing the id the collector never received.
+func Test_newSpanEventGoroutine_reregistersAfterMetaFailure(t *testing.T) {
+	s := defaultTestSpan()
+	first := newSpanEventGoroutine(s).apiId
+	assert.Equal(t, first, publishedGoroutineApiId(t, s.agent), "registered apiId")
+
+	s.agent.deleteMetaCache(apiMeta{id: first, descriptor: "Goroutine Invocation", apiType: apiTypeInvocation})
+
+	second := newSpanEventGoroutine(s).apiId
+	assert.NotZero(t, second, "apiId")
+	assert.NotEqual(t, first, second, "fresh apiId")
+	assert.Equal(t, second, publishedGoroutineApiId(t, s.agent), "re-registered apiId")
 }
 
 // Exception chain ids are per-agent: a new agent (Shutdown() + NewAgent())

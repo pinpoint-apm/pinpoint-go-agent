@@ -115,13 +115,6 @@ type agent struct {
 	// rather than continuing a previous agent's count.
 	exceptionIdGen atomic.Int64
 
-	// asyncApiId caches this agent's id for the "Goroutine Invocation" API.
-	// Per-agent, not package-global: ids come from apiIdGen and are published
-	// through this agent's metadata channel, so a new agent after Shutdown()
-	// must mint and register its own. Accessed atomically; 0 means not cached
-	// yet (cacheSpanApi returns 0 while the agent is disabled, so it retries).
-	asyncApiId int32
-
 	// realTimeActiveSpan tracks this agent's in-flight spans by goroutine id for
 	// the real-time active thread views, gated by atcStreamCount so the span
 	// path only pays for it while a viewer is attached, and cleared when the
