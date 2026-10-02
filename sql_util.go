@@ -74,16 +74,16 @@ func (s *sqlNormalizer) run() (string, string) {
 			// it must not reach the output. Either way a comment is not a
 			// number token boundary.
 			if s.lookahead('/') {
-				s.consumeSingleLineComment(ch)
+				s.consumeComment("\n")
 			} else if s.lookahead('*') {
-				s.consumeMultiLineComment(ch)
+				s.consumeComment("*/")
 			} else {
 				s.emit(ch)
 				numberTokenStartEnable = true
 			}
 		} else if ch == '-' {
 			if s.lookahead('-') {
-				s.consumeSingleLineComment(ch)
+				s.consumeComment("\n")
 			} else {
 				s.emit(ch)
 				numberTokenStartEnable = true
@@ -158,54 +158,24 @@ func (s *sqlNormalizer) writeParamIndex() {
 	s.paramIndex++
 }
 
-// consumeSingleLineComment consumes a // or -- comment. lead is the first
-// character of the marker, already read but not yet written. The terminating
-// newline belongs to the comment, so removal leaves nothing in its place.
-func (s *sqlNormalizer) consumeSingleLineComment(lead byte) {
+// consumeComment consumes a comment whose two-byte opening marker starts one
+// byte before pos: that byte is read, not yet written. The comment runs through
+// term, or to the end of the statement. A // or -- comment's terminating
+// newline belongs to it, so removal leaves nothing in its place, and the
+// opening '*' of /* cannot also close it, so "/*/" runs to the end.
+func (s *sqlNormalizer) consumeComment(term string) {
+	start := s.pos - 1
+	end := len(s.sql)
+	if i := strings.Index(s.sql[start+2:], term); i >= 0 {
+		end = start + 2 + i + len(term)
+	}
 	if s.removeComments {
 		// A dropped comment is a change even though it records no parameter.
-		s.materialize(s.pos - 1) // lead is read, not written
-	} else {
-		s.emit(lead)
+		s.materialize(start)
+	} else if s.materialized {
+		s.output.WriteString(s.sql[start:end])
 	}
-
-	for s.pos < len(s.sql) {
-		ch := s.sql[s.pos]
-		s.pos++
-		if !s.removeComments {
-			s.emit(ch)
-		}
-		if ch == '\n' {
-			break
-		}
-	}
-}
-
-// consumeMultiLineComment consumes a /* */ comment. lead is the '/', already
-// read but not yet written.
-func (s *sqlNormalizer) consumeMultiLineComment(lead byte) {
-	if s.removeComments {
-		s.materialize(s.pos - 1) // lead is read, not written
-	} else {
-		s.emit(lead)
-		s.emit('*')
-	}
-	s.pos++ /* consume '*' */
-
-	// The opening '*' cannot also close the comment, so "/*/" runs to the end
-	// of the statement.
-	prevStar := false
-	for s.pos < len(s.sql) {
-		ch := s.sql[s.pos]
-		s.pos++
-		if !s.removeComments {
-			s.emit(ch)
-		}
-		if prevStar && ch == '/' {
-			break
-		}
-		prevStar = ch == '*'
-	}
+	s.pos = end
 }
 
 // consumeCharLiteral consumes a '...' literal whose opening quote the caller has

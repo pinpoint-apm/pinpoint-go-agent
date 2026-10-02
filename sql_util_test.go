@@ -193,6 +193,27 @@ func Test_sqlNormalizer_NumberState(t *testing.T) {
 	}
 }
 
+// A comment ends right after its terminator, or with the statement when it
+// has none - "/*/" included, whose '*' cannot also close it - kept or dropped
+// whole by SQL.RemoveComments.
+func Test_sqlNormalizer_CommentEnds(t *testing.T) {
+	for _, tt := range []struct {
+		sql    string
+		remove bool
+		want   string
+	}{
+		{"SELECT 1 /*/ x", false, "SELECT 0# /*/ x"},
+		{"SELECT 1 /*/ x", true, "SELECT 0# "},
+		{"SELECT 1 // c", true, "SELECT 0# "},
+		{"a /* b */* 5", false, "a /* b */* 0#"},
+		{"a /* b */* 5", true, "a * 0#"},
+		{"x -- y", true, "x "},
+	} {
+		got, _ := newSqlNormalizer(tt.sql, tt.remove).run()
+		assert.Equal(t, tt.want, got, "%q, remove %v", tt.sql, tt.remove)
+	}
+}
+
 func Test_sqlNormalizer_CommentState(t *testing.T) {
 	tests := []struct {
 		sql        string
