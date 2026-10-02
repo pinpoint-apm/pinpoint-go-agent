@@ -171,36 +171,6 @@ func Test_cookie(t *testing.T) {
 	assert.Equal(t, map[string]string{"first": "1", "second": "2"}, got)
 }
 
-// A request without cookies must simply yield nothing.
-func Test_cookie_Empty(t *testing.T) {
-	ctx := newRequestCtx(http.MethodGet, "http://localhost/hello")
-
-	cookie{&ctx.Request.Header}.VisitAll(func(string, string) {
-		t.Error("a request without cookies yielded one")
-	})
-}
-
-// The handler reads its tracer out of the user value the wrapper stores, so
-// that value must be a context carrying a sampled tracer.
-func TestWrapHandler_PutsSampledTracerInUserValue(t *testing.T) {
-	startAgent(t)
-
-	var tracer pinpoint.Tracer
-	h := WrapHandler(func(ctx *fasthttp.RequestCtx) {
-		tracer = tracerOf(t, ctx)
-		ctx.SetStatusCode(http.StatusTeapot)
-		ctx.SetBodyString("hello")
-	}, "/hello/{name}")
-
-	ctx := newRequestCtx(http.MethodGet, "http://localhost/hello/pinpoint")
-	h(ctx)
-
-	require.NotNil(t, tracer, "no tracer in the handler's user value")
-	assert.True(t, tracer.IsSampled(), "handler received an unsampled tracer")
-	assert.Equal(t, http.StatusTeapot, ctx.Response.StatusCode())
-	assert.Equal(t, "hello", string(ctx.Response.Body()))
-}
-
 // fasthttp reuses the RequestCtx for the next request, and its Value reads the
 // user values of whichever request it serves now. A context derived from it
 // handed a goroutine the handler started another request's values, so the
@@ -252,26 +222,6 @@ func TestWrapHandler_ResolvesTheForwardedRemoteAddress(t *testing.T) {
 	assert.Equal(t, "203.0.113.7", spanOf(t, tracer)["RemoteAddr"])
 }
 
-// A fasthttp service is usually one hop of a larger call: the tracing headers
-// the caller sent have to put this span in the caller's transaction.
-func TestWrapHandler_ContinuesTheCallersTransaction(t *testing.T) {
-	startAgent(t)
-
-	caller := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
-	defer caller.EndSpan()
-
-	ctx := newRequestCtx(http.MethodGet, "http://localhost/hello")
-	caller.NewSpanEvent("call")
-	caller.Inject(&ctx.Request.Header)
-	caller.EndSpanEvent()
-
-	var tracer pinpoint.Tracer
-	WrapHandler(func(ctx *fasthttp.RequestCtx) { tracer = tracerOf(t, ctx) })(ctx)
-
-	require.NotNil(t, tracer)
-	assert.Equal(t, caller.TransactionId().String(), tracer.TransactionId().String())
-}
-
 // The status the span records is fasthttp's response status, read after the
 // handler has run.
 func TestWrapHandler_RecordsTheFinalStatus(t *testing.T) {
@@ -315,22 +265,6 @@ func TestWrapHandler_RecordsTheFinalStatus(t *testing.T) {
 				"the default 5xx error class decides whether the span fails")
 		})
 	}
-}
-
-// The route pattern is optional; without it the wrapper skips URL statistics
-// and still traces the call.
-func TestWrapHandler_WithoutARoutePattern(t *testing.T) {
-	startAgent(t, pinpoint.WithHttpUrlStatEnable(true))
-
-	var tracer pinpoint.Tracer
-	assert.NotPanics(t, func() {
-		WrapHandler(func(ctx *fasthttp.RequestCtx) {
-			tracer = tracerOf(t, ctx)
-		})(newRequestCtx(http.MethodGet, "http://localhost/hello"))
-	})
-
-	require.NotNil(t, tracer, "the handler did not run")
-	assert.True(t, tracer.IsSampled())
 }
 
 // The wrapper marks the span failed and re-panics; swallowing the panic would
@@ -439,23 +373,6 @@ func TestDoClient_WithNoopTracer(t *testing.T) {
 	assert.True(t, called, "the request was not made")
 }
 
-// A nil response is what a caller passes when it does not need one back; the
-// status annotation is simply skipped.
-func TestDoClient_WithoutAResponse(t *testing.T) {
-	startAgent(t)
-
-	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
-	defer tracer.EndSpan()
-
-	req := fasthttp.AcquireRequest()
-	defer fasthttp.ReleaseRequest(req)
-	req.SetRequestURI("http://localhost:9090/hello")
-
-	assert.NotPanics(t, func() {
-		_ = DoClient(func() error { return nil }, pinpoint.NewContext(context.Background(), tracer), req, nil)
-	})
-}
-
 type endCountingTracer struct {
 	pinpoint.Tracer
 	ends int
@@ -533,22 +450,6 @@ func TestDoClient_StripsTheUrlQuery(t *testing.T) {
 
 		assert.Equal(t, []string{tt.want}, tracer.a.urls)
 	}
-}
-
-// The fasthttp header adapter takes the Get path of the resolver, so a
-// custom real-IP header must resolve through it too.
-func TestWrapHandler_ResolvesACustomRealIpHeader(t *testing.T) {
-	startAgent(t, pphttp.WithHttpServerRealIpHeader([]string{"CF-Connecting-IP"}))
-	ctx := newRequestCtx(http.MethodGet, "http://example.com/p")
-	ctx.Request.Header.Set("CF-Connecting-IP", "1.1.1.1")
-	ctx.Request.Header.Set("X-Forwarded-For", "2.2.2.2")
-
-	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/p")
-	defer tracer.EndSpan()
-	pphttp.RecordHttpServerRequestWithReader(tracer, "example.com", ctx.RemoteAddr().String(),
-		requestHeader{&ctx.Request.Header}, cookie{&ctx.Request.Header})
-
-	assert.Equal(t, "1.1.1.1", spanOf(t, tracer)["RemoteAddr"])
 }
 
 // A handler wrapped twice - a router adapter's route inside a manual

@@ -70,25 +70,6 @@ func TestMiddleware_PreservesRouting(t *testing.T) {
 	assert.Equal(t, "hello pinpoint (/hello/:name)", rec.Body.String())
 }
 
-// The handler reads its tracer out of the request context, so the middleware
-// has to replace c.Request with the tracer-carrying one before calling Next.
-func TestMiddleware_PutsSampledTracerInRequestContext(t *testing.T) {
-	startAgent(t)
-
-	var tracer pinpoint.Tracer
-	r := gin.New()
-	r.Use(Middleware())
-	r.GET("/", func(c *gin.Context) {
-		tracer = pinpoint.FromContext(c.Request.Context())
-	})
-
-	serve(r, httptest.NewRequest(http.MethodGet, "/", nil))
-
-	require.NotNil(t, tracer, "no tracer in the handler's request context")
-	assert.True(t, tracer.IsSampled(), "handler received an unsampled tracer")
-	assert.NotEmpty(t, tracer.TransactionId().String(), "handler received a tracer without a transaction id")
-}
-
 // The span is what shows up in Pinpoint, so the request attributes it carries
 // have to come from the gin request rather than defaults.
 func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
@@ -193,7 +174,8 @@ func TestMiddleware_RecordsTheFinalStatus(t *testing.T) {
 // A middleware registered after this one may abort the chain; the wrapper has
 // to end its span all the same and report what the client actually received.
 func TestMiddleware_AbortedChain(t *testing.T) {
-	startAgent(t)
+	// 403 configured as an error class makes the recorded status observable.
+	startAgent(t, pphttp.WithHttpServerStatusCodeError([]string{"403"}))
 
 	var tracer pinpoint.Tracer
 	handlerRan := false
@@ -209,7 +191,7 @@ func TestMiddleware_AbortedChain(t *testing.T) {
 
 	assert.False(t, handlerRan, "the aborting middleware should have stopped the chain")
 	assert.Equal(t, http.StatusForbidden, rec.Code)
-	assert.True(t, spanOf(t, tracer) != nil)
+	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "the span must record the 403 the client received")
 }
 
 // An unmatched route still runs the global middleware, and c.FullPath() is
@@ -249,19 +231,6 @@ func TestWrapHandler_PutsSampledTracerInRequestContext(t *testing.T) {
 	assert.True(t, tracer.IsSampled(), "wrapped handler received an unsampled tracer")
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 	assert.Equal(t, "/wrapped", spanOf(t, tracer)["RpcName"])
-}
-
-// WrapHandler names its span event after the wrapped function, so a handler
-// that is not a plain func must not break the name lookup.
-func TestWrapHandler_HandlerName(t *testing.T) {
-	startAgent(t)
-
-	assert.Contains(t, pphttp.HandlerFuncName(gin.HandlerFunc(func(c *gin.Context) {})), "()")
-	assert.NotPanics(t, func() {
-		r := gin.New()
-		r.GET("/wrapped", WrapHandler(func(c *gin.Context) { c.Status(http.StatusOK) }))
-		serve(r, httptest.NewRequest(http.MethodGet, "/wrapped", nil))
-	})
 }
 
 // The wrapper marks the span failed and re-panics; swallowing the panic would

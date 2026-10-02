@@ -55,7 +55,7 @@ func TestStreamClientInterceptor_RecordsFinalStatus(t *testing.T) {
 		for _, early := range []bool{false, true} {
 			child := &completionTracer{recordingTracer: newRecordingTracer()}
 			caller := &completionTracer{recordingTracer: newRecordingTracer(), child: child}
-			fake := newFakeClientStream(t, io.EOF)
+			fake := &fakeClientStream{err: io.EOF}
 			var finish func(error)
 			stream, err := StreamClientInterceptor()(
 				pinpoint.NewContext(context.Background(), caller), &grpc.StreamDesc{ServerStreams: true},
@@ -64,14 +64,12 @@ func TestStreamClientInterceptor_RecordsFinalStatus(t *testing.T) {
 					finish = streamFinishCallback(t, opts)
 					if early {
 						finish(result)
-						fake.cancel()
 					}
 					return fake, nil
 				})
 			require.NoError(t, err)
 			if !early {
 				finish(result)
-				fake.cancel()
 			}
 			require.ErrorIs(t, stream.RecvMsg(nil), io.EOF)
 			require.Equal(t, result, child.event.err)

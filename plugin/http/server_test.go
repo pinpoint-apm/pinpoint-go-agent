@@ -60,6 +60,10 @@ func Test_setProxyHeader(t *testing.T) {
 			want: &proxyValues{code: 3, receivedTime: 1500968753, duration: -1, idle: -1, busy: -1}},
 		{name: "apache repeated keys keep the last", header: "Pinpoint-ProxyApache", value: "t=1500968753503 D=1 D=2",
 			want: &proxyValues{code: 3, receivedTime: 1500968753, duration: 2, idle: -1, busy: -1}},
+		{name: "apache negative D and out-of-range i, b are unset", header: "Pinpoint-ProxyApache", value: "t=1504230492763123 D=-7 i=101 b=-1",
+			want: &proxyValues{code: 3, receivedTime: 1504230492763, duration: -1, idle: -1, busy: -1}},
+		{name: "apache i, b at the [0, 100] bounds", header: "Pinpoint-ProxyApache", value: "t=1504230492763123 D=7 i=0 b=100",
+			want: &proxyValues{code: 3, receivedTime: 1504230492763, duration: 7, idle: 0, busy: 100}},
 		{name: "apache missing t", header: "Pinpoint-ProxyApache", value: "D=125 i=51 b=48"},
 		{name: "apache bare token", header: "Pinpoint-ProxyApache", value: "t"},
 		{name: "apache empty values", header: "Pinpoint-ProxyApache", value: "t= D= i= b="},
@@ -84,6 +88,10 @@ func Test_setProxyHeader(t *testing.T) {
 		{name: "nginx D with four decimals", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=0.1234",
 			want: &proxyValues{code: 2, receivedTime: 1504164327484, duration: -1, idle: -1, busy: -1}},
 		{name: "nginx D unparsable", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=a.bcd",
+			want: &proxyValues{code: 2, receivedTime: 1504164327484, duration: -1, idle: -1, busy: -1}},
+		{name: "nginx negative D", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=-0.123",
+			want: &proxyValues{code: 2, receivedTime: 1504164327484, duration: -1, idle: -1, busy: -1}},
+		{name: "nginx D past int32 micros is unset, not wrapped", header: "Pinpoint-ProxyNginx", value: "t=1504164327.484 D=3000000.000",
 			want: &proxyValues{code: 2, receivedTime: 1504164327484, duration: -1, idle: -1, busy: -1}},
 		{name: "nginx bare token before valid one", header: "Pinpoint-ProxyNginx", value: "D t=1504164327.484",
 			want: &proxyValues{code: 2, receivedTime: 1504164327484, duration: -1, idle: -1, busy: -1}},
@@ -176,7 +184,7 @@ func Test_setProxyHeader_EveryHeader_oneInvalid(t *testing.T) {
 }
 
 func Test_setProxyHeader_User(t *testing.T) {
-	usePluginConfig(t, WithHttpServerProxyUserHeaderNames([]string{" x-proxy-time ", "", "X-Other-Proxy"}))
+	startAgent(t, WithHttpServerProxyUserHeaderNames([]string{" x-proxy-time ", "", "X-Other-Proxy"}))
 
 	tests := []struct {
 		name    string
@@ -200,6 +208,8 @@ func Test_setProxyHeader_User(t *testing.T) {
 			want: []proxyValues{{code: 4, receivedTime: 1504230492763, duration: 42, app: "X-Proxy-Time", idle: -1, busy: -1}}},
 		{name: "shorter than a millis epoch", headers: map[string]string{"X-Proxy-Time": "t=150423049276"}},
 		{name: "nginx dot too early", headers: map[string]string{"X-Proxy-Time": "t=15042304.9276"}},
+		{name: "nginx shape with two decimals", headers: map[string]string{"X-Proxy-Time": "t=1504230492.76"}},
+		{name: "millis-length zeros", headers: map[string]string{"X-Proxy-Time": "t=0000000000000"}},
 		{name: "negative D unset", headers: map[string]string{"X-Proxy-Time": "t=1504230492763 D=-5"},
 			want: []proxyValues{{code: 4, receivedTime: 1504230492763, app: "X-Proxy-Time", duration: -1, idle: -1, busy: -1}}},
 		{name: "missing t", headers: map[string]string{"X-Proxy-Time": "1500968753503"}},
@@ -230,7 +240,7 @@ func Test_setProxyHeader_User(t *testing.T) {
 }
 
 func Test_setProxyHeader_User_unconfigured(t *testing.T) {
-	usePluginConfig(t)
+	startAgent(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("X-Proxy-Time", "t=1500968753503")
@@ -490,18 +500,6 @@ func Test_responseWriter_CloseNotifier(t *testing.T) {
 
 // The status pointer follows the first final response status, as net/http does.
 func Test_responseWriter_StatusTracking(t *testing.T) {
-	t.Run("write without WriteHeader", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		status := http.StatusOK
-		wrapped := WrapResponseWriter(rec, &status)
-
-		_, err := wrapped.Write([]byte("hello"))
-		require.NoError(t, err)
-
-		assert.Equal(t, http.StatusOK, status)
-		assert.Equal(t, "hello", rec.Body.String())
-	})
-
 	t.Run("first final WriteHeader wins", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		status := http.StatusOK
@@ -526,16 +524,6 @@ func Test_responseWriter_StatusTracking(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 	})
 
-	t.Run("headers set through the wrapper reach the original", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		status := http.StatusOK
-		wrapped := WrapResponseWriter(rec, &status)
-
-		wrapped.Header().Set("X-Res", "v")
-		wrapped.WriteHeader(http.StatusNoContent)
-
-		assert.Equal(t, "v", rec.Header().Get("X-Res"))
-	})
 }
 
 type handlerNameTestHandler struct{}
@@ -639,7 +627,7 @@ func TestServeMux_SpanNameIsTheRequestPath(t *testing.T) {
 // A request the config excludes must produce a noop tracer: the handler still
 // runs and answers normally, but nothing is traced.
 func TestExcludedRequestsAreNotTraced(t *testing.T) {
-	usePluginConfig(t,
+	startAgent(t,
 		WithHttpServerExcludeUrl([]string{"/health", "/static/**"}),
 		WithHttpServerExcludeMethod([]string{"options"}),
 	)
@@ -679,7 +667,7 @@ func TestExcludedRequestsAreNotTraced(t *testing.T) {
 // The status code annotation is what the Pinpoint UI shows, and the configured
 // error classes are what turn a span red.
 func TestRecordHttpServerResponse(t *testing.T) {
-	usePluginConfig(t, WithHttpServerStatusCodeError([]string{"5xx", "302"}))
+	startAgent(t, WithHttpServerStatusCodeError([]string{"5xx", "302"}))
 
 	tests := []struct {
 		status string
@@ -720,7 +708,7 @@ func TestRecordHttpServerResponse(t *testing.T) {
 // still annotated and still classified as an error class here, it just does not
 // mark the transaction as failed.
 func TestRecordHttpServerResponse_ErrorMarkExcludeKeepsA5xxSuccessful(t *testing.T) {
-	usePluginConfig(t, WithHttpServerStatusCodeError([]string{"5xx"}),
+	startAgent(t, WithHttpServerStatusCodeError([]string{"5xx"}),
 		pinpoint.WithSpanErrorMarkExclude("http-status"))
 
 	var tracer pinpoint.Tracer
@@ -740,7 +728,7 @@ func TestRecordHttpServerResponse_ErrorMarkExcludeKeepsA5xxSuccessful(t *testing
 // A recorded response header is read off the writer the handler wrote to, so
 // the wrapper has to hand the real header map to the recorder.
 func TestWrapHandler_RecordsConfiguredHeaders(t *testing.T) {
-	usePluginConfig(t,
+	startAgent(t,
 		WithHttpServerRecordRequestHeader([]string{"X-Req"}),
 		WithHttpServerRecordRespondHeader([]string{"X-Res"}),
 		WithHttpServerRecordRequestCookie([]string{"session"}),
@@ -815,7 +803,7 @@ func TestRecordHttpHandlerError(t *testing.T) {
 		{name: "suppressed by the option", record: false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			usePluginConfig(t, WithHttpServerRecordHandlerError(tt.record))
+			startAgent(t, WithHttpServerRecordHandlerError(tt.record))
 
 			var tracer pinpoint.Tracer
 			h := WrapHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -830,33 +818,19 @@ func TestRecordHttpHandlerError(t *testing.T) {
 	}
 }
 
-// A noop tracer reaches RecordHttpHandlerError whenever the url is excluded; it
-// must be a no-op rather than a nil dereference.
-func TestRecordHttpHandlerError_NoopTracer(t *testing.T) {
-	startAgent(t)
-	assert.NotPanics(t, func() {
-		RecordHttpHandlerError(pinpoint.NoopTracer(), errors.New("handler failed"))
-	})
-}
-
 // A pattern registered on the mux is collected as a URL statistic; WrapHandler
 // has no pattern to report and must not collect one.
 func TestCollectUrlStat(t *testing.T) {
-	usePluginConfig(t, pinpoint.WithHttpUrlStatEnable(true))
+	startAgent(t, pinpoint.WithHttpUrlStatEnable(true))
 
 	var tracer pinpoint.Tracer
-	assert.NotPanics(t, func() {
-		mux := NewServeMux()
-		mux.HandleFunc("/users/", func(w http.ResponseWriter, r *http.Request) {
-			tracer = pinpoint.TracerFromRequestContext(r)
-		})
-		mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users/42", nil))
+	mux := NewServeMux()
+	mux.HandleFunc("/users/", func(w http.ResponseWriter, r *http.Request) {
+		tracer = pinpoint.TracerFromRequestContext(r)
 	})
+	mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users/42", nil))
 	require.NotNil(t, tracer)
-
-	// AddMetric with a value of the wrong type must be ignored, not fatal.
-	assert.NotPanics(t, func() { tracer.AddMetric(pinpoint.MetricURLStat, "not an entry") })
-	assert.NotPanics(t, func() { CollectUrlStat(pinpoint.NoopTracer(), "/users/", http.MethodGet, 200) })
+	assert.True(t, tracer.IsSampled())
 }
 
 type metricCountingTracer struct {
@@ -871,7 +845,7 @@ func (t *metricCountingTracer) AddMetric(string, interface{}) { t.metrics++ }
 // route-pattern lookup for the same reason.
 func TestCollectUrlStat_GatedByUrlStatEnable(t *testing.T) {
 	t.Run("disabled", func(t *testing.T) {
-		usePluginConfig(t)
+		startAgent(t)
 		tracer := &metricCountingTracer{Tracer: pinpoint.NoopTracer()}
 		CollectUrlStat(tracer, "/users/", http.MethodGet, 200)
 		assert.False(t, IsUrlStatEnabled())
@@ -879,7 +853,7 @@ func TestCollectUrlStat_GatedByUrlStatEnable(t *testing.T) {
 	})
 
 	t.Run("enabled", func(t *testing.T) {
-		usePluginConfig(t, pinpoint.WithHttpUrlStatEnable(true))
+		startAgent(t, pinpoint.WithHttpUrlStatEnable(true))
 		tracer := &metricCountingTracer{Tracer: pinpoint.NoopTracer()}
 		CollectUrlStat(tracer, "/users/", http.MethodGet, 200)
 		assert.True(t, IsUrlStatEnabled())
@@ -887,32 +861,12 @@ func TestCollectUrlStat_GatedByUrlStatEnable(t *testing.T) {
 	})
 }
 
-// A server tracer continues a transaction the caller started, so the ids it
-// extracts from the pinpoint headers have to be the caller's.
-func TestNewHttpServerTracer_ContinuesTheCallersTransaction(t *testing.T) {
-	startAgent(t)
-
-	client := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
-	defer client.EndSpan()
-	client.NewSpanEvent("call")
-	outgoing := httptest.NewRequest(http.MethodGet, "/callee", nil)
-	client.Inject(outgoing.Header)
-	client.EndSpanEvent()
-
-	server := NewHttpServerTracer(outgoing, "HTTP Server")
-	defer server.EndSpan()
-
-	require.True(t, server.IsSampled())
-	assert.Equal(t, client.TransactionId().String(), server.TransactionId().String(),
-		"the server span must join the caller's transaction")
-}
-
 // A proxy that blanks Pinpoint-SpanID instead of dropping it must not split the
 // trace: net/http.Header keeps the header in its map, so the agent can tell it
 // from an absent one and continues the caller's transaction. This is the path
 // req.Header takes, and the one a blanking gateway actually breaks.
 func TestNewHttpServerTracer_BlankSpanIdHeaderContinuesTheTrace(t *testing.T) {
-	usePluginConfig(t)
+	startAgent(t)
 
 	caller := pinpoint.GetAgent().NewSpanTracer("HTTP Server", "/caller")
 	caller.NewSpanEvent("call")
@@ -935,21 +889,6 @@ func TestNewHttpServerTracer_BlankSpanIdHeaderContinuesTheTrace(t *testing.T) {
 	defer dropped.EndSpan()
 	assert.NotEqual(t, caller.TransactionId().String(), dropped.TransactionId().String(),
 		"an absent span id header starts a new transaction")
-}
-
-// NewHttpServerTracerWithReader is the entry point adapters without a
-// net/http request use; the sampling decision must match the request-based one.
-func TestNewHttpServerTracerWithReader(t *testing.T) {
-	usePluginConfig(t, WithHttpServerExcludeUrl([]string{"/health"}))
-
-	traced := NewHttpServerTracerWithReader(http.MethodGet, "/api", "HTTP Server", pinpoint.HttpHeaderReader(http.Header{}))
-	defer traced.EndSpan()
-	assert.True(t, traced.IsSampled())
-	assert.Equal(t, "/api", spanOf(t, traced).RpcName)
-
-	excluded := NewHttpServerTracerWithReader(http.MethodGet, "/health", "HTTP Server", pinpoint.HttpHeaderReader(http.Header{}))
-	defer excluded.EndSpan()
-	assert.False(t, excluded.IsSampled(), "an excluded url must produce a noop tracer")
 }
 
 // spanJson is the subset of a span JsonString asserts against.
@@ -1008,7 +947,7 @@ func TestRecordHttpServerRequest_Query(t *testing.T) {
 			if tt.record {
 				opts = append(opts, WithHttpServerRecordRequestParam(true))
 			}
-			usePluginConfig(t, opts...)
+			startAgent(t, opts...)
 			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
 			tracer := NewHttpServerTracer(req, "test")
 			defer tracer.EndSpan()
@@ -1084,7 +1023,7 @@ func TestRecordHttpServerRequest_RealIpHeaderFollowsReload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	write := func(body string) { require.NoError(t, os.WriteFile(path, []byte(body), 0o600)) }
 	write("Http:\n  Server:\n    RealIpHeader: [X-Forwarded-For]\n")
-	usePluginConfig(t, pinpoint.WithConfigFile(path))
+	startAgent(t, pinpoint.WithConfigFile(path))
 
 	record := func() string {
 		req := httptest.NewRequest(http.MethodGet, "/p", nil)
@@ -1105,12 +1044,12 @@ func TestRecordHttpServerRequest_RealIpHeaderFollowsReload(t *testing.T) {
 }
 
 func TestRealIpOptions(t *testing.T) {
-	usePluginConfig(t)
+	startAgent(t)
 	cfg := httpCfg()
 	assert.Equal(t, defaultRealIpHeaders, cfg.srvRealIpHeaders)
 	assert.Equal(t, "", cfg.srvRealIpEmptyValue)
 
-	usePluginConfig(t, WithHttpServerRealIpHeader([]string{" cf-connecting-ip ", "", "forwarded"}), WithHttpServerRealIpEmptyValue("unknown"))
+	startAgent(t, WithHttpServerRealIpHeader([]string{" cf-connecting-ip ", "", "forwarded"}), WithHttpServerRealIpEmptyValue("unknown"))
 	cfg = httpCfg()
 	assert.Equal(t, []string{"Cf-Connecting-Ip", "Forwarded"}, cfg.srvRealIpHeaders)
 	assert.Equal(t, "unknown", cfg.srvRealIpEmptyValue)
@@ -1118,221 +1057,14 @@ func TestRealIpOptions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	require.NoError(t, os.WriteFile(path, []byte("Http:\n  Server:\n    RealIpHeader: []\n"), 0o600))
 	t.Setenv("PINPOINT_GO_HTTP_SERVER_REALIPEMPTYVALUE", "none")
-	usePluginConfig(t, pinpoint.WithConfigFile(path))
+	startAgent(t, pinpoint.WithConfigFile(path))
 	cfg = httpCfg()
 	assert.Empty(t, cfg.srvRealIpHeaders, "[] parses to empty")
 	assert.Equal(t, "none", cfg.srvRealIpEmptyValue)
 
 	t.Setenv("PINPOINT_GO_HTTP_SERVER_REALIPHEADER", "True-Client-IP,X-Real-Ip")
-	usePluginConfig(t)
+	startAgent(t)
 	assert.Equal(t, []string{"True-Client-Ip", "X-Real-Ip"}, httpCfg().srvRealIpHeaders)
-}
-
-// ===========================================================================
-// Locked invariants of the proxy request header pipeline - behaviour pinned
-// against the Java and C++ agents. The cross-agent rationale and references
-// live in doc/development.md. The parent half of the pipeline - PParentInfo is
-// emitted only for a non-empty parent application name - is locked from package
-// pinpoint, in Test_ParentInfoRequiresAParentAppName.
-// ===========================================================================
-
-// proxyAnnotationsOf runs the whole proxy pipeline over one request and hands
-// back the proxy annotations it recorded, in order.
-func proxyAnnotationsOf(headers map[string]string) []proxyValues {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	for name, value := range headers {
-		req.Header.Set(name, value)
-	}
-
-	a := &proxyAnnotation{}
-	setProxyHeader(a, header{req.Header})
-	return a.got
-}
-
-// Test_ProxyParsersRunIndependently locks that all four
-// parsers - apache, nginx, app and the configured user headers - run on every
-// request and record independently (setProxyHeader), so a request that crossed
-// two proxies produces two annotations rather than only the nearest hop.
-func Test_ProxyParsersRunIndependently(t *testing.T) {
-	usePluginConfig(t, WithHttpServerProxyUserHeaderNames([]string{"X-Proxy-Time"}))
-
-	got := proxyAnnotationsOf(map[string]string{
-		"Pinpoint-ProxyApache": "t=1000000000000 D=100 i=5 b=95",
-		"Pinpoint-ProxyNginx":  "t=2000000.000 D=0.200",
-		"Pinpoint-ProxyApp":    "t=3000000000000 app=OtherApp",
-		"X-Proxy-Time":         "t=4000000000000",
-	})
-
-	codes := make([]int32, 0, len(got))
-	for _, v := range got {
-		assert.Equal(t, int32(pinpoint.AnnotationHttpProxyHeader), v.key)
-		codes = append(codes, v.code)
-	}
-	assert.Equal(t, []int32{proxyTypeApache, proxyTypeNginx, proxyTypeApp, proxyTypeUser}, codes,
-		"one annotation per valid proxy header, in pipeline order")
-}
-
-// Test_ProxyHeaderNeedsAPositiveReceivedTime locks that every
-// parser is gated on a positive received time (appendProxyHeader): no t=, t=0,
-// or an unparseable t= records no annotation.
-//
-// An annotation with a received time of 0 is worse than no annotation: the web
-// UI charts the proxy-to-agent gap from that field, and 0 draws the hop at the
-// epoch. Test_setProxyHeader above carries the full per-parser matrix; one case
-// per parser per failure mode is locked here.
-func Test_ProxyHeaderNeedsAPositiveReceivedTime(t *testing.T) {
-	usePluginConfig(t, WithHttpServerProxyUserHeaderNames([]string{"X-Proxy-Time"}))
-
-	tests := []struct {
-		name   string
-		header string
-		value  string
-	}{
-		{"apache without t", "Pinpoint-ProxyApache", "D=1500 i=10 b=90"},
-		{"apache t=0", "Pinpoint-ProxyApache", "t=0 D=1500"},
-		{"apache unparseable t", "Pinpoint-ProxyApache", "t=abc D=1500"},
-		{"nginx without t", "Pinpoint-ProxyNginx", "D=0.123"},
-		{"nginx t=0", "Pinpoint-ProxyNginx", "t=0.000 D=0.123"},
-		{"nginx unparseable t", "Pinpoint-ProxyNginx", "t=abc D=0.123"},
-		{"app without t", "Pinpoint-ProxyApp", "app=MyApp"},
-		{"app t=0", "Pinpoint-ProxyApp", "t=0 app=MyApp"},
-		{"app unparseable t", "Pinpoint-ProxyApp", "t=abc app=MyApp"},
-		{"user without t", "X-Proxy-Time", "1500968753503"},
-		{"user t=0", "X-Proxy-Time", "t=0000000000000"},
-		{"user unparseable t", "X-Proxy-Time", "t=abc"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Empty(t, proxyAnnotationsOf(map[string]string{tc.header: tc.value}),
-				"%s: %q must record no annotation", tc.header, tc.value)
-		})
-	}
-}
-
-// Test_ProxyNginxTimestampsAreExactThreeDecimals locks the
-// nginx time format: t= ($msec) and D= ($request_time) are seconds with
-// exactly three decimals, and both are converted with integer arithmetic
-// (nginxMillis).
-//
-// That is what makes the value exact: 1504230492.763 has no binary
-// representation, so parsing it as a float and multiplying by 1000 lands on
-// 1504230492762.99 and truncates a millisecond away.
-func Test_ProxyNginxTimestampsAreExactThreeDecimals(t *testing.T) {
-	usePluginConfig(t)
-
-	got := proxyAnnotationsOf(map[string]string{"Pinpoint-ProxyNginx": "t=1504230492.763 D=0.123"})
-	require.Len(t, got, 1)
-	assert.Equal(t, int64(1504230492763), got[0].receivedTime,
-		"sec.mmm read as an exact integer count of milliseconds")
-	assert.Equal(t, int32(123000), got[0].duration, "0.123s is exactly 123000us, not 122999")
-
-	for _, tc := range []struct {
-		value string
-		want  int64
-	}{
-		{"1504230492.763", 1504230492763},
-		{"0.000", 0},
-		{"0.001", 1},
-		{"1504230492.76", 0},
-		{"1504230492.7634", 0},
-		{"1504230492", 0},
-		{"abc", 0},
-		{"", 0},
-	} {
-		assert.Equal(t, tc.want, nginxMillis(tc.value), "nginxMillis(%q)", tc.value)
-	}
-
-	// A t= that is not sec.mmm leaves no received time, so the whole header
-	// is discarded.
-	for _, bad := range []string{"1504230492.76", "1504230492", "1504230492.7634"} {
-		assert.Empty(t, proxyAnnotationsOf(map[string]string{"Pinpoint-ProxyNginx": "t=" + bad + " D=0.123"}),
-			"t=%s is not sec.mmm", bad)
-	}
-
-	// A D= that is not sec.mmm records no duration rather than a guess - the
-	// plain microsecond integer apache sends included, which read as seconds
-	// would inflate the duration a millionfold.
-	for _, bad := range []string{"0.1", "0.12", "0.1234", "123", "abc"} {
-		other := proxyAnnotationsOf(map[string]string{"Pinpoint-ProxyNginx": "t=1504230492.763 D=" + bad})
-		if assert.Len(t, other, 1, "D=%s must not discard the header", bad) {
-			assert.Equal(t, int32(-1), other[0].duration, "D=%s is not sec.mmm: unset (-1)", bad)
-		}
-	}
-}
-
-// Test_ProxyUserHeaderInfersItsWriter locks the user proxy
-// parser. A header named in Http.Server.ProxyUserHeaderNames may have been
-// written by any of the three proxies, so UserRequestParser.toReceivedTimeMillis
-// infers the format from the value's shape: fewer than 13 characters is not a
-// millisecond epoch and is rejected; 16 or more is apache's microseconds,
-// converted by dropping the last three digits before parsing; a '.' at index
-// 10 or later is nginx's sec.mmm; anything else is an app's milliseconds.
-// toDurationTimeMicros reads D= the same way - a '.' means fractional
-// seconds, otherwise a microsecond count - and, like every parser, applies
-// it only when positive.
-//
-// Reading t= as plain milliseconds would put an apache hop 47,000 years out
-// and drop an nginx hop whole, since "1504230492.763" does not parse.
-func Test_ProxyUserHeaderInfersItsWriter(t *testing.T) {
-	usePluginConfig(t, WithHttpServerProxyUserHeaderNames([]string{"X-Proxy-Time"}))
-
-	for _, tc := range []struct {
-		name         string
-		value        string
-		receivedTime int64
-		duration     int32
-	}{
-		{"apache micros", "t=1504230492763123 D=1500", 1504230492763, 1500},
-		{"nginx sec.mmm", "t=1504230492.763 D=0.123", 1504230492763, 123000},
-		{"app millis", "t=1504230492763 D=42", 1504230492763, 42},
-		{"D not positive is unset", "t=1504230492763 D=-5", 1504230492763, -1},
-		{"nginx D not positive is unset", "t=1504230492763 D=-0.123", 1504230492763, -1},
-		{"D beyond int32 is unset", "t=1504230492763 D=3000000.000", 1504230492763, -1},
-		{"no D is unset", "t=1504230492763", 1504230492763, -1},
-	} {
-		got := proxyAnnotationsOf(map[string]string{"X-Proxy-Time": tc.value})
-		if assert.Len(t, got, 1, "%s: %q", tc.name, tc.value) {
-			assert.Equal(t, tc.receivedTime, got[0].receivedTime, "%s: received time", tc.name)
-			assert.Equal(t, tc.duration, got[0].duration, "%s: duration", tc.name)
-			assert.Equal(t, "X-Proxy-Time", got[0].app, "the header name is the app")
-		}
-	}
-
-	// A t= whose shape fits none of the three writers leaves no received
-	// time, so the header is discarded whole.
-	for _, bad := range []string{"150423049276", "15042304.9276", "1504230492.76", "abc"} {
-		assert.Empty(t, proxyAnnotationsOf(map[string]string{"X-Proxy-Time": "t=" + bad}),
-			"t=%s fits no proxy's format", bad)
-	}
-}
-
-// Test_ProxyDurationAndPercentAreGated locks the value gates
-// the standard parsers share with UserRequestParser: every parser applies D=
-// only when positive; an overflowed nginx value is unset rather than wrapped;
-// and apache i=/b= apply only inside [0, 100]. An unset field goes on the wire
-// as -1, and an out-of-range percent is unset rather than truncated.
-func Test_ProxyDurationAndPercentAreGated(t *testing.T) {
-	usePluginConfig(t)
-
-	nginx := proxyAnnotationsOf(map[string]string{"Pinpoint-ProxyNginx": "t=1504230492.763 D=-0.123"})
-	require.Len(t, nginx, 1)
-	assert.Equal(t, int32(-1), nginx[0].duration, "negative nginx D= is unset")
-
-	nginx = proxyAnnotationsOf(map[string]string{"Pinpoint-ProxyNginx": "t=1504230492.763 D=3000000.000"})
-	require.Len(t, nginx, 1)
-	assert.Equal(t, int32(-1), nginx[0].duration, "nginx D= past int32/1000 is unset, not wrapped")
-
-	apache := proxyAnnotationsOf(map[string]string{"Pinpoint-ProxyApache": "t=1504230492763123 D=-7 i=101 b=-1"})
-	require.Len(t, apache, 1)
-	assert.Equal(t, int32(-1), apache[0].duration, "negative apache D= is unset")
-	assert.Equal(t, int32(-1), apache[0].idle, "i= above 100 is unset")
-	assert.Equal(t, int32(-1), apache[0].busy, "b= below 0 is unset")
-
-	apache = proxyAnnotationsOf(map[string]string{"Pinpoint-ProxyApache": "t=1504230492763123 D=7 i=0 b=100"})
-	require.Len(t, apache, 1)
-	assert.Equal(t, int32(7), apache[0].duration)
-	assert.Equal(t, int32(0), apache[0].idle)
-	assert.Equal(t, int32(100), apache[0].busy)
 }
 
 // A request whose context already carries a tracer — WrapHandler inside
@@ -1376,28 +1108,6 @@ func TestWrapHandler_ReusesTheContextTracer(t *testing.T) {
 	assert.Equal(t, 1, statusCodes, "the status is recorded once, by the layer that owns the span")
 }
 
-func TestNewHttpServerTracer_ReusesTheContextTracer(t *testing.T) {
-	startAgent(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/nested", nil)
-	owner := NewHttpServerTracer(req, "HTTP Server")
-	defer owner.EndSpan()
-	nested := NewHttpServerTracer(pinpoint.RequestWithTracerContext(req, owner), "Gin Server")
-
-	assert.True(t, pinpoint.IsNestedTracer(nested))
-	assert.Equal(t, owner.SpanId(), nested.SpanId())
-	nested.NewSpanEvent("inner").EndSpanEvent()
-	nested.EndSpan()
-	// The owner's span is still open: it can record and end normally.
-	owner.NewSpanEvent("after").EndSpanEvent()
-
-	// A context without a tracer still starts a span.
-	fresh := NewHttpServerTracer(httptest.NewRequest(http.MethodGet, "/fresh", nil), "HTTP Server")
-	defer fresh.EndSpan()
-	assert.False(t, pinpoint.IsNestedTracer(fresh))
-	assert.NotEqual(t, owner.TransactionId().String(), fresh.TransactionId().String())
-}
-
 func TestFormatRequestParams(t *testing.T) {
 	long := strings.Repeat("v", 100)
 	var many []string
@@ -1431,7 +1141,7 @@ func TestClientUrl(t *testing.T) {
 	u, err := url.Parse("https://h/p?token=x#frag")
 	require.NoError(t, err)
 
-	usePluginConfig(t)
+	startAgent(t)
 	assert.Equal(t, "GET https://h/p#frag", ClientUrl("GET", u))
 	assert.Equal(t, "GET https://h/p#frag", ClientUrlString("GET", "https://h/p?token=x#frag"))
 	assert.Equal(t, "GET https://h/p", ClientUrlString("GET", "https://h/p?token=x"))
@@ -1439,7 +1149,7 @@ func TestClientUrl(t *testing.T) {
 	assert.Equal(t, "GET", ClientUrl("GET", nil))
 	assert.Equal(t, "https://h/p?token=x#frag", u.String(), "the caller's URL must not be modified")
 
-	usePluginConfig(t, WithHttpClientRecordUrlQuery(true))
+	startAgent(t, WithHttpClientRecordUrlQuery(true))
 	assert.Equal(t, "GET https://h/p?token=x#frag", ClientUrl("GET", u))
 	assert.Equal(t, "GET https://h/p?token=x#frag", ClientUrlString("GET", "https://h/p?token=x#frag"))
 

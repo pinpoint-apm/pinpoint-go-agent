@@ -28,16 +28,6 @@ func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) pinpoint.Agent {
 	return agent
 }
 
-// usePluginConfig starts an agent with the given options and initializes the
-// plugin's derived config from it.
-func usePluginConfig(t *testing.T, opts ...pinpoint.ConfigOption) pinpoint.Agent {
-	t.Helper()
-
-	agent := startAgent(t, opts...)
-	httpCfg()
-	return agent
-}
-
 // Shorthands for the config the request path reads: newHttpConfig builds it
 // from the agent config, the others read the one httpCfg holds.
 func newHttpConfig() *httpConfig { return newHttpConfigFor(pinpoint.GetConfig()) }

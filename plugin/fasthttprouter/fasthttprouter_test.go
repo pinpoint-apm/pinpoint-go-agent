@@ -61,8 +61,8 @@ func tracerOf(t *testing.T, ctx *fasthttp.RequestCtx) pinpoint.Tracer {
 	return pinpoint.FromContext(value)
 }
 
-// Every method helper has to register the wrapped handler under the same path
-// and method, or the route silently disappears. Each one is registered on its
+// Every method helper, ANY and Handle have to register the wrapped handler
+// under the same path and method, or the route silently disappears. Each one is registered on its
 // own router and driven end to end, checking that the route parameter still
 // resolves and the tracer reaches the handler.
 func TestRouter_AllMethodsStayRouted(t *testing.T) {
@@ -81,6 +81,10 @@ func TestRouter_AllMethodsStayRouted(t *testing.T) {
 		{http.MethodConnect, (*Router).CONNECT},
 		{http.MethodOptions, (*Router).OPTIONS},
 		{http.MethodTrace, (*Router).TRACE},
+		// ANY registers one handler for every method, a custom one included.
+		{"PROPFIND", (*Router).ANY},
+		// Handle takes the method as an argument rather than from the helper name.
+		{"PURGE", func(r *Router, p string, h fasthttp.RequestHandler) { r.Handle("PURGE", p, h) }},
 	} {
 		t.Run(tt.method, func(t *testing.T) {
 			r := New()
@@ -117,45 +121,6 @@ func TestRouter_SpanNameIsTheRequestPath(t *testing.T) {
 	assert.Equal(t, "/hello/pinpoint", span["RpcName"])
 	assert.Equal(t, "myhost:8080", span["EndPoint"])
 	assert.Equal(t, "10.0.0.1", span["RemoteAddr"])
-}
-
-// ANY registers one handler for every method fasthttp/router knows.
-func TestRouter_ANY(t *testing.T) {
-	startAgent(t)
-
-	r := New()
-	calls := 0
-	sampled := 0
-	r.ANY("/hello", func(ctx *fasthttp.RequestCtx) {
-		calls++
-		if tracerOf(t, ctx).IsSampled() {
-			sampled++
-		}
-	})
-
-	methods := []string{http.MethodGet, http.MethodPost, http.MethodDelete}
-	for _, method := range methods {
-		serve(r.Handler, method, "http://localhost/hello")
-	}
-
-	assert.Equal(t, len(methods), calls, "the handler did not run for every method")
-	assert.Equal(t, len(methods), sampled, "every method must be traced, not only the first")
-}
-
-// Handle takes the method as an argument rather than from the helper name.
-func TestRouter_Handle(t *testing.T) {
-	startAgent(t)
-
-	r := New()
-	var tracer pinpoint.Tracer
-	r.Handle(http.MethodGet, "/hello/{name}", func(ctx *fasthttp.RequestCtx) {
-		tracer = tracerOf(t, ctx)
-	})
-
-	serve(r.Handler, http.MethodGet, "http://localhost/hello/pinpoint")
-
-	require.NotNil(t, tracer, "the handler did not run")
-	assert.True(t, tracer.IsSampled())
 }
 
 // Registering a route must not change what the router does with the methods it

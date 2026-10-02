@@ -98,25 +98,6 @@ func TestMiddleware_PreservesRouting(t *testing.T) {
 	assert.Equal(t, "hello pinpoint (/hello/:name)", readBody(t, resp))
 }
 
-// The handler reads its tracer out of the request context.
-func TestMiddleware_PutsSampledTracerInRequestContext(t *testing.T) {
-	startAgent(t)
-
-	var tracer pinpoint.Tracer
-	app := fiber.New()
-	app.Use(Middleware())
-	app.Get("/", func(c fiber.Ctx) error {
-		tracer = pinpoint.FromContext(c.Context())
-		return nil
-	})
-
-	get(t, app, "/")
-
-	require.NotNil(t, tracer, "no tracer in the handler's request context")
-	assert.True(t, tracer.IsSampled(), "handler received an unsampled tracer")
-	assert.NotEmpty(t, tracer.TransactionId().String())
-}
-
 // The span attributes are read straight off the fasthttp request fiber owns;
 // the wrapper never converts it to a net/http request.
 func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {

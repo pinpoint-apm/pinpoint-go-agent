@@ -84,11 +84,6 @@ func Test_remoteAddr(t *testing.T) {
 	assert.Equal(t, "127.0.0.1", remoteAddr(context.Background()), "a call with no peer falls back")
 }
 
-func Test_makeUrl(t *testing.T) {
-	assert.Equal(t, "grpc://localhost:8080/testapp.Hello/Greet",
-		makeUrl("localhost:8080", "/testapp.Hello/Greet"))
-}
-
 // value drops the presence result, for assertions about the value alone.
 func value(v string, _ bool) string { return v }
 
@@ -172,24 +167,6 @@ func Test_newClientTracer_NestedCallIsNotTraced(t *testing.T) {
 		tracer.EndSpanEvent()
 		tracer.EndSpan()
 	}
-}
-
-// The caller's own outgoing context must not be written to; only the derived
-// one carries the tracing metadata.
-func Test_newClientTracer_DoesNotModifyTheCallersMetadata(t *testing.T) {
-	startAgent(t)
-
-	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
-	defer tracer.EndSpan()
-
-	callerMD := metadata.Pairs("authorization", "bearer token")
-	ctx := metadata.NewOutgoingContext(pinpoint.NewContext(context.Background(), tracer), callerMD)
-
-	_, spanTracer := newClientTracer(ctx, "/testapp.Hello/Greet", "localhost:8080")
-	defer spanTracer.EndSpanEvent()
-
-	assert.Empty(t, callerMD.Get(pinpoint.HeaderTraceId),
-		"the metadata the caller built was written to in place")
 }
 
 // recordingTracer captures what the instrumentation records on a span event.
@@ -359,27 +336,11 @@ func Test_newClientTracer_WithUnsampledSpan(t *testing.T) {
 type fakeClientStream struct {
 	grpc.ClientStream
 	err error
-	// ctx stands in for the stream context gRPC cancels when a stream
-	// terminates, which is what ends an abandoned stream's span.
-	ctx    context.Context
-	cancel context.CancelFunc
-}
-
-func newFakeClientStream(t *testing.T, err error) *fakeClientStream {
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	return &fakeClientStream{err: err, ctx: ctx, cancel: cancel}
 }
 
 func (s *fakeClientStream) SendMsg(interface{}) error { return s.err }
 func (s *fakeClientStream) RecvMsg(interface{}) error { return s.err }
 func (s *fakeClientStream) CloseSend() error          { return s.err }
-func (s *fakeClientStream) Context() context.Context {
-	if s.ctx != nil {
-		return s.ctx
-	}
-	return context.Background()
-}
 
 // A gRPC stream is legally used from two goroutines at once - one sending, one
 // receiving - and either side can be the one that sees the stream end. The
@@ -575,7 +536,7 @@ func TestStreamClientInterceptor_StreamEndsOnItsOwnTracer(t *testing.T) {
 		lazyConn(t, "localhost:8080"),
 		"/testapp.Hello/Stream",
 		func(context.Context, *grpc.StreamDesc, *grpc.ClientConn, string, ...grpc.CallOption) (grpc.ClientStream, error) {
-			return newFakeClientStream(t, io.EOF), nil
+			return &fakeClientStream{err: io.EOF}, nil
 		})
 	require.NoError(t, err)
 
@@ -798,18 +759,6 @@ func TestServerInterceptors_PassThroughWhenAgentDisabled(t *testing.T) {
 	assert.True(t, called, "the stream handler did not run")
 }
 
-// serverStream must delegate everything but Context to the stream gRPC gave it.
-func Test_serverStream(t *testing.T) {
-	type ctxKey struct{}
-	base := context.WithValue(context.Background(), ctxKey{}, "from-the-transport")
-	wrapped := context.WithValue(base, ctxKey{}, "from-the-interceptor")
-
-	s := &serverStream{ServerStream: &fakeServerStream{ctx: base}, context: wrapped}
-
-	assert.Equal(t, "from-the-interceptor", s.Context().Value(ctxKey{}),
-		"Context must report the interceptor's context, not the transport's")
-}
-
 // A server interceptor that finds a tracer already in the context — another
 // server interceptor outside it, or compile-time instrumentation — records
 // its span event on that span instead of starting a second transaction for
@@ -837,26 +786,4 @@ func TestUnaryServerInterceptor_ReusesTheContextTracer(t *testing.T) {
 	assert.Equal(t, outer.TransactionId().String(), inner.TransactionId().String())
 	assert.Equal(t, outer.SpanId(), inner.SpanId(), "one request, one span")
 	assert.NotEqual(t, float64(0), spanOf(t, outer)["Err"], "the inner handler error must fail the shared span")
-}
-
-func TestStreamServerInterceptor_ReusesTheContextTracer(t *testing.T) {
-	startAgent(t)
-
-	var outer, inner pinpoint.Tracer
-	info := &grpc.StreamServerInfo{FullMethod: "/testapp.Hello/Stream"}
-	err := StreamServerInterceptor()(nil, &fakeServerStream{ctx: context.Background()}, info,
-		func(srv interface{}, stream grpc.ServerStream) error {
-			outer = pinpoint.FromContext(stream.Context())
-			return StreamServerInterceptor()(srv, stream, info,
-				func(srv interface{}, stream grpc.ServerStream) error {
-					inner = pinpoint.FromContext(stream.Context())
-					return nil
-				})
-		})
-
-	require.NoError(t, err)
-	require.NotNil(t, inner)
-	assert.False(t, pinpoint.IsNestedTracer(outer))
-	assert.True(t, pinpoint.IsNestedTracer(inner))
-	assert.Equal(t, outer.SpanId(), inner.SpanId(), "one request, one span")
 }

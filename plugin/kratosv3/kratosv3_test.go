@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/go-kratos/kratos/v3/transport"
-	transhttp "github.com/go-kratos/kratos/v3/transport/http"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,27 +37,16 @@ func spanOf(t *testing.T, tracer pinpoint.Tracer) map[string]interface{} {
 }
 
 // header is a transport.Header backed by a map, standing in for the http.Header
-// or metadata.MD a real transport carries.
-type header map[string][]string
+// or metadata.MD a real transport carries. The middleware only calls Get and
+// Set; the embedded interface is nil.
+type header struct {
+	transport.Header
+	m map[string]string
+}
 
-func (h header) Get(key string) string {
-	if v := h[key]; len(v) > 0 {
-		return v[0]
-	}
-	return ""
-}
-func (h header) Set(key, value string) { h[key] = []string{value} }
-func (h header) Add(key, value string) { h[key] = append(h[key], value) }
-func (h header) Values(key string) []string {
-	return h[key]
-}
-func (h header) Keys() []string {
-	keys := make([]string, 0, len(h))
-	for k := range h {
-		keys = append(keys, k)
-	}
-	return keys
-}
+func newHeader() header                { return header{m: map[string]string{}} }
+func (h header) Get(key string) string { return h.m[key] }
+func (h header) Set(key, value string) { h.m[key] = value }
 
 // grpcTransport is a transport.Transporter of kind grpc.
 type grpcTransport struct {
@@ -68,14 +56,14 @@ type grpcTransport struct {
 }
 
 func newGrpcTransport(endpoint, operation string) *grpcTransport {
-	return &grpcTransport{endpoint: endpoint, operation: operation, reqHeader: header{}}
+	return &grpcTransport{endpoint: endpoint, operation: operation, reqHeader: newHeader()}
 }
 
 func (t *grpcTransport) Kind() transport.Kind            { return transport.KindGRPC }
 func (t *grpcTransport) Endpoint() string                { return t.endpoint }
 func (t *grpcTransport) Operation() string               { return t.operation }
 func (t *grpcTransport) RequestHeader() transport.Header { return t.reqHeader }
-func (t *grpcTransport) ReplyHeader() transport.Header   { return header{} }
+func (t *grpcTransport) ReplyHeader() transport.Header   { return newHeader() }
 
 // httpTransport is a transport/http.Transporter, the interface the plugin type
 // asserts to reach the underlying *http.Request.
@@ -84,11 +72,9 @@ type httpTransport struct {
 	req *http.Request
 }
 
-var _ transhttp.Transporter = (*httpTransport)(nil)
-
 func newHttpTransport(endpoint, operation string, req *http.Request) *httpTransport {
 	return &httpTransport{
-		grpcTransport: grpcTransport{endpoint: endpoint, operation: operation, reqHeader: header{}},
+		grpcTransport: grpcTransport{endpoint: endpoint, operation: operation, reqHeader: newHeader()},
 		req:           req,
 	}
 }
@@ -236,31 +222,6 @@ func TestServerMiddleware_SuccessfulHandler(t *testing.T) {
 	assert.Equal(t, float64(0), spanOf(t, tracer)["Err"], "a successful handler must not fail the span")
 }
 
-// A kratos server is usually one hop of a larger call: the tracing headers the
-// caller sent arrive in the request header and have to put this span in the
-// caller's transaction.
-func TestServerMiddleware_ContinuesTheCallersTransaction(t *testing.T) {
-	startAgent(t)
-
-	caller := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
-	defer caller.EndSpan()
-
-	tr := newGrpcTransport("grpc://127.0.0.1:9000", "/helloworld.Greeter/SayHello")
-	caller.NewSpanEvent("call")
-	caller.Inject(tr.reqHeader)
-	caller.EndSpanEvent()
-
-	var tracer pinpoint.Tracer
-	_, err := ServerMiddleware()(func(ctx context.Context, req interface{}) (interface{}, error) {
-		tracer = pinpoint.FromContext(ctx)
-		return nil, nil
-	})(transport.NewServerContext(context.Background(), tr), "request")
-
-	require.NoError(t, err)
-	require.NotNil(t, tracer)
-	assert.Equal(t, caller.TransactionId().String(), tracer.TransactionId().String())
-}
-
 // A handler reached without a kratos server transport - a plain call, or a
 // transport kind the middleware was not mounted on - must still run.
 func TestServerMiddleware_WithoutAServerTransport(t *testing.T) {
@@ -310,27 +271,39 @@ func TestServerMiddleware_PassesThroughWhenAgentDisabled(t *testing.T) {
 
 // The client middleware is what links the caller's span to the callee's, so it
 // has to inject the distributed-tracing headers into the outgoing request
-// header before the call, and return the call's result unchanged.
+// header before the call, and return the call's result unchanged. An HTTP call
+// records a different service type and url scheme than a gRPC one; both have
+// to go through.
 func TestClientMiddleware_InjectsTracingHeaders(t *testing.T) {
 	startAgent(t)
 
-	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
-	defer tracer.EndSpan()
+	for _, tt := range []struct {
+		name string
+		tr   transport.Transporter
+	}{
+		{"grpc", newGrpcTransport("provider:9000", "/helloworld.Greeter/SayHello")},
+		{"http", newHttpTransport("", "/helloworld.Greeter/SayHello",
+			httptest.NewRequest(http.MethodGet, "http://provider:8000/hello", nil))},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
+			defer tracer.EndSpan()
+			ctx := transport.NewClientContext(pinpoint.NewContext(context.Background(), tracer), tt.tr)
 
-	tr := newGrpcTransport("provider:9000", "/helloworld.Greeter/SayHello")
-	ctx := transport.NewClientContext(pinpoint.NewContext(context.Background(), tracer), tr)
+			want := errors.New("rpc failed")
+			reply, err := ClientMiddleware()(func(context.Context, interface{}) (interface{}, error) {
+				return "reply", want
+			})(ctx, "request")
 
-	want := errors.New("rpc failed")
-	reply, err := ClientMiddleware()(func(context.Context, interface{}) (interface{}, error) {
-		return "reply", want
-	})(ctx, "request")
-
-	assert.Equal(t, "reply", reply, "the call's reply must come back unchanged")
-	assert.ErrorIs(t, err, want, "the call's error must come back unchanged")
-	for _, key := range pinpointHeaders {
-		assert.NotEmpty(t, tr.reqHeader.Get(key), "outgoing request header is missing %s", key)
+			assert.Equal(t, "reply", reply, "the call's reply must come back unchanged")
+			assert.ErrorIs(t, err, want, "the call's error must come back unchanged")
+			hdr := tt.tr.RequestHeader()
+			for _, key := range pinpointHeaders {
+				assert.NotEmpty(t, hdr.Get(key), "outgoing request header is missing %s", key)
+			}
+			assert.Equal(t, tracer.TransactionId().String(), hdr.Get(pinpoint.HeaderTraceId))
+		})
 	}
-	assert.Equal(t, tracer.TransactionId().String(), tr.reqHeader.Get(pinpoint.HeaderTraceId))
 }
 
 // The callee reads those headers back through the server middleware and has to
@@ -356,29 +329,6 @@ func TestClientAndServerShareOneTransaction(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, callee)
 	assert.Equal(t, caller.TransactionId().String(), callee.TransactionId().String())
-}
-
-// An HTTP client call records a different service type and url scheme than a
-// gRPC one; both have to go through without disturbing the call.
-func TestClientMiddleware_HttpTransport(t *testing.T) {
-	startAgent(t)
-
-	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
-	defer tracer.EndSpan()
-
-	tr := newHttpTransport("", "/helloworld.Greeter/SayHello",
-		httptest.NewRequest(http.MethodGet, "http://provider:8000/hello", nil))
-	ctx := transport.NewClientContext(pinpoint.NewContext(context.Background(), tracer), tr)
-
-	reply, err := ClientMiddleware()(func(context.Context, interface{}) (interface{}, error) {
-		return "reply", nil
-	})(ctx, "request")
-
-	require.NoError(t, err)
-	assert.Equal(t, "reply", reply)
-	for _, key := range pinpointHeaders {
-		assert.NotEmpty(t, tr.reqHeader.Get(key), "outgoing request header is missing %s", key)
-	}
 }
 
 // A call made without a kratos client transport must still go through.

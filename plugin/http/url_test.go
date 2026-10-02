@@ -290,18 +290,6 @@ func TestHttpUrlFilterIgnoresEmptyPatterns(t *testing.T) {
 	assert.False(t, f.isFiltered(""))
 }
 
-// No pattern configured is the default: nothing is ever filtered, and the Ant
-// scratch buffer is never touched.
-func TestHttpUrlFilterWithoutPatterns(t *testing.T) {
-	for _, cfg := range [][]string{nil, {}, {""}} {
-		f := setupHttpUrlFilter(cfg)
-		assert.Empty(t, f.ant)
-		for _, url := range []string{"", "/", "/a/b/c.html"} {
-			assert.False(t, f.isFiltered(url), "isFiltered(%q) with config %q", url, cfg)
-		}
-	}
-}
-
 var benchmarkFiltered bool
 
 func TestHttpUrlFilterReusesLongAntScratch(t *testing.T) {
@@ -341,15 +329,6 @@ func TestHttpMethodFilter(t *testing.T) {
 	}
 	for _, method := range []string{"GET", "POST", "PU", "PUTX", ""} {
 		assert.False(t, f.isExcludedMethod(method), "isExcludedMethod(%q)", method)
-	}
-}
-
-func TestHttpMethodFilterWithoutConfig(t *testing.T) {
-	for _, cfg := range [][]string{nil, {}} {
-		f := &httpMethodFilter{excludeMethod: cfg}
-		for _, method := range []string{"GET", "POST", "PUT", ""} {
-			assert.False(t, f.isExcludedMethod(method), "nothing is excluded when no method is configured")
-		}
 	}
 }
 

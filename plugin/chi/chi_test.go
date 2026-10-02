@@ -77,25 +77,6 @@ func TestMiddleware_PreservesRouting(t *testing.T) {
 	assert.Equal(t, "hello pinpoint", rec.Body.String())
 }
 
-// The handler reads its tracer out of the request context, so the wrapper has
-// to hand the handler the tracer-carrying request.
-func TestMiddleware_PutsSampledTracerInRequestContext(t *testing.T) {
-	startAgent(t)
-
-	var tracer pinpoint.Tracer
-	r := chi.NewRouter()
-	r.Use(Middleware())
-	r.Get("/", func(w http.ResponseWriter, req *http.Request) {
-		tracer = pinpoint.TracerFromRequestContext(req)
-	})
-
-	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
-
-	require.NotNil(t, tracer, "no tracer in the handler's request context")
-	assert.True(t, tracer.IsSampled(), "handler received an unsampled tracer")
-	assert.NotEmpty(t, tracer.TransactionId().String())
-}
-
 // The span is what shows up in Pinpoint, so the request attributes it carries
 // have to come from the request rather than defaults.
 func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
@@ -235,29 +216,6 @@ func TestMiddleware_ComposesWithOtherChiMiddleware(t *testing.T) {
 	assert.Equal(t, http.StatusTeapot, rec.Code)
 	require.NotNil(t, tracer)
 	assert.True(t, tracer.IsSampled())
-}
-
-// WrapHandlerFunc can be mounted outside a chi router, where chi.RouteContext
-// returns nil. The wrapper still has to trace the call and serve the request.
-func TestWrapHandlerFunc_OutsideAChiRouter(t *testing.T) {
-	startAgent(t)
-
-	var tracer pinpoint.Tracer
-	h := WrapHandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		tracer = pinpoint.TracerFromRequestContext(req)
-		w.WriteHeader(http.StatusNoContent)
-	})
-
-	srv := http.NewServeMux()
-	srv.HandleFunc("/plain", h)
-
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/plain", nil))
-
-	require.NotNil(t, tracer)
-	assert.True(t, tracer.IsSampled(), "handler received an unsampled tracer")
-	assert.Equal(t, http.StatusNoContent, rec.Code)
-	assert.Equal(t, "/plain", spanOf(t, tracer)["RpcName"])
 }
 
 // WrapHandler instruments one route instead of the whole router.

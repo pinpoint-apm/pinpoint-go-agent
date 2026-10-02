@@ -19,7 +19,6 @@ import (
 type recordingTransport struct {
 	sent       *http.Request
 	status     int
-	header     http.Header
 	err        error
 	idleClosed bool
 }
@@ -33,13 +32,9 @@ func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	if status == 0 {
 		status = http.StatusOK
 	}
-	header := rt.header
-	if header == nil {
-		header = http.Header{}
-	}
 	return &http.Response{
 		StatusCode: status,
-		Header:     header,
+		Header:     http.Header{},
 		Body:       io.NopCloser(strings.NewReader("")),
 		Request:    req,
 	}, nil
@@ -248,7 +243,7 @@ func TestClient_TransportError(t *testing.T) {
 // The client-side recorders are configured separately from the server ones, so
 // a client header must only be recorded when the client option asks for it.
 func TestClientHeaderRecordersUseTheClientOptions(t *testing.T) {
-	usePluginConfig(t,
+	startAgent(t,
 		WithHttpClientRecordRequestHeader([]string{"X-Req"}),
 		WithHttpClientRecordRespondHeader([]string{"X-Res"}),
 		WithHttpClientRecordRequestCookie([]string{"session"}),
@@ -348,7 +343,7 @@ func TestDoClient_HandBuiltRequest(t *testing.T) {
 // here would order every downstream service to stop tracing - health checks
 // and batch jobs would blind the services they call.
 func TestWrapClient_ExcludedUrlHandlerSendsNoTracingHeader(t *testing.T) {
-	usePluginConfig(t, WithHttpServerExcludeUrl([]string{"/health"}))
+	startAgent(t, WithHttpServerExcludeUrl([]string{"/health"}))
 
 	tracer := NewHttpServerTracerWithReader(http.MethodGet, "/health", "HTTP Server", pinpoint.HttpHeaderReader(http.Header{}))
 	defer tracer.EndSpan()
@@ -436,7 +431,7 @@ func TestBefore_RecordsTheUrlWithoutItsQueryByDefault(t *testing.T) {
 		{false, "GET https://h/p"},
 		{true, "GET https://h/p?token=x"},
 	} {
-		usePluginConfig(t, WithHttpClientRecordUrlQuery(tt.record))
+		startAgent(t, WithHttpClientRecordUrlQuery(tt.record))
 		tracer := &annotationTracer{pinpoint.GetAgent().NewSpanTracer("test", "/caller"), newStringAnnotation()}
 		req, err := http.NewRequest(http.MethodGet, "https://h/p?token=x", nil)
 		require.NoError(t, err)

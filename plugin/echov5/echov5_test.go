@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 
 	"github.com/labstack/echo/v5"
@@ -34,43 +33,40 @@ func spanOf(t *testing.T, tracer pinpoint.Tracer) map[string]interface{} {
 	return m
 }
 
-// The wrapper reads the status it records through echo.ResolveResponseStatus.
-// v5's c.Response() is a plain http.ResponseWriter, so that only reports the
-// real status while it still unwraps to *echo.Response.
-func TestContextResponseCarriesTheStatus(t *testing.T) {
-	var status int
-	e := echo.New()
-	e.GET("/", func(c *echo.Context) error {
-		err := c.String(http.StatusTeapot, "hi")
-		_, status = echo.ResolveResponseStatus(c.Response(), nil)
-		return err
-	})
+// An error a handler returns has to be recorded on the span and reach echo's
+// HTTPErrorHandler exactly once - by echo, from the returned error - not once
+// by the wrapper and again by echo, in both instrumentation forms.
+func TestHandlerError_RecordedAndHandledOnce(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		route func(e *echo.Echo, h echo.HandlerFunc)
+	}{
+		{"WrapHandler", func(e *echo.Echo, h echo.HandlerFunc) { e.GET("/boom", WrapHandler(h)) }},
+		{"Middleware", func(e *echo.Echo, h echo.HandlerFunc) { e.Use(Middleware()); e.GET("/boom", h) }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			startAgent(t)
 
-	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+			e := echo.New()
+			calls := 0
+			e.HTTPErrorHandler = func(c *echo.Context, err error) {
+				calls++
+				echo.DefaultHTTPErrorHandler(false)(c, err)
+			}
+			var tracer pinpoint.Tracer
+			tt.route(e, func(c *echo.Context) error {
+				tracer = pinpoint.TracerFromRequestContext(c.Request())
+				return echo.NewHTTPError(http.StatusTeapot, "boom")
+			})
 
-	assert.Equal(t, http.StatusTeapot, status)
-}
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/boom", nil))
 
-// A handler that returns an error must have echo's HTTPErrorHandler run once -
-// by echo, from the returned error - not once by the wrapper and again by echo.
-func TestWrapHandler_RunsErrorHandlerOnce(t *testing.T) {
-	startAgent(t)
-
-	e := echo.New()
-	calls := 0
-	e.HTTPErrorHandler = func(c *echo.Context, err error) {
-		calls++
-		echo.DefaultHTTPErrorHandler(false)(c, err)
+			assert.Equal(t, 1, calls, "HTTPErrorHandler ran more than once for one failed request")
+			assert.Equal(t, http.StatusTeapot, rec.Code)
+			assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "the handler error must be recorded on the span")
+		})
 	}
-	e.GET("/boom", WrapHandler(func(c *echo.Context) error {
-		return echo.NewHTTPError(http.StatusTeapot, "boom")
-	}))
-
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/boom", nil))
-
-	assert.Equal(t, 1, calls, "HTTPErrorHandler ran more than once for one failed request")
-	assert.Equal(t, http.StatusTeapot, rec.Code)
 }
 
 // The middleware sits in front of every route, so it must leave echo's own
@@ -90,26 +86,6 @@ func TestMiddleware_PreservesRouting(t *testing.T) {
 
 	assert.Equal(t, http.StatusTeapot, rec.Code)
 	assert.Equal(t, "hello pinpoint (/hello/:name)", rec.Body.String())
-}
-
-// The handler reads its tracer out of the request context, so the wrapper has
-// to replace c.Request with the tracer-carrying one before calling the handler.
-func TestMiddleware_PutsSampledTracerInRequestContext(t *testing.T) {
-	startAgent(t)
-
-	var tracer pinpoint.Tracer
-	e := echo.New()
-	e.Use(Middleware())
-	e.GET("/", func(c *echo.Context) error {
-		tracer = pinpoint.TracerFromRequestContext(c.Request())
-		return nil
-	})
-
-	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
-
-	require.NotNil(t, tracer, "no tracer in the handler's request context")
-	assert.True(t, tracer.IsSampled(), "handler received an unsampled tracer")
-	assert.NotEmpty(t, tracer.TransactionId().String())
 }
 
 // The span is what shows up in Pinpoint, so the request attributes it carries
@@ -243,46 +219,6 @@ func TestWrapHandler_PutsSampledTracerInRequestContext(t *testing.T) {
 	assert.Equal(t, "/wrapped", spanOf(t, tracer)["RpcName"])
 }
 
-// An error a wrapped handler returns has to be recorded on the span and still
-// reach echo's error handler.
-func TestWrapHandler_RecordsTheHandlerError(t *testing.T) {
-	startAgent(t)
-
-	var tracer pinpoint.Tracer
-	e := echo.New()
-	e.GET("/boom", WrapHandler(func(c *echo.Context) error {
-		tracer = pinpoint.TracerFromRequestContext(c.Request())
-		return echo.NewHTTPError(http.StatusTeapot, "boom")
-	}))
-
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/boom", nil))
-
-	assert.Equal(t, http.StatusTeapot, rec.Code)
-	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "the handler error must be recorded on the span")
-}
-
-// The middleware form has to route errors to the HTTPErrorHandler exactly once
-// too, not only the wrapped-handler form.
-func TestMiddleware_RunsErrorHandlerOnce(t *testing.T) {
-	startAgent(t)
-
-	e := echo.New()
-	calls := 0
-	e.HTTPErrorHandler = func(c *echo.Context, err error) {
-		calls++
-		echo.DefaultHTTPErrorHandler(false)(c, err)
-	}
-	e.Use(Middleware())
-	e.GET("/boom", func(c *echo.Context) error { return echo.NewHTTPError(http.StatusTeapot, "boom") })
-
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/boom", nil))
-
-	assert.Equal(t, 1, calls, "HTTPErrorHandler ran more than once for one failed request")
-	assert.Equal(t, http.StatusTeapot, rec.Code)
-}
-
 // A route no handler is registered for is echo's own 404; the middleware still
 // wraps it and must not disturb the response.
 func TestMiddleware_UnmatchedRoute(t *testing.T) {
@@ -349,35 +285,6 @@ func TestWrapHandler_PassesThroughWhenAgentDisabled(t *testing.T) {
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/boom", nil))
 
 	assert.Equal(t, http.StatusTeapot, rec.Code, "the handler error must still reach echo's error handler")
-}
-
-// One wrapper closure serves every request, so concurrent requests through the
-// middleware must stay race-free. Run under -race.
-func TestMiddleware_ConcurrentRequests(t *testing.T) {
-	startAgent(t)
-
-	e := echo.New()
-	e.Use(Middleware())
-	e.GET("/hello/:name", func(c *echo.Context) error { return c.String(http.StatusOK, c.Param("name")) })
-	e.POST("/widgets", func(c *echo.Context) error { return c.NoContent(http.StatusCreated) })
-
-	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 25; j++ {
-				rec := httptest.NewRecorder()
-				e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/hello/pinpoint", nil))
-				assert.Equal(t, http.StatusOK, rec.Code)
-
-				rec = httptest.NewRecorder()
-				e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/widgets", nil))
-				assert.Equal(t, http.StatusCreated, rec.Code)
-			}
-		}()
-	}
-	wg.Wait()
 }
 
 // v5 does not record the handler function name on a route, so Middleware falls

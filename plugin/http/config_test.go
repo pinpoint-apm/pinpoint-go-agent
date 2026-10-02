@@ -16,9 +16,8 @@ import (
 // recorders were published as one immutable value, the reload callback
 // reassigned ten plain package globals that every request read.
 func TestHttpConfigReloadRace(t *testing.T) {
-	// usePluginConfig, not a bare NewTestAgent: it shuts the agent down and
-	// initializes the derived config used below.
-	usePluginConfig(t,
+	// startAgent, not a bare NewTestAgent: it shuts the agent down.
+	startAgent(t,
 		WithHttpServerExcludeUrl([]string{"/skip/*", "/**/*.do"}),
 		WithHttpServerExcludeMethod([]string{"put", "delete"}),
 		WithHttpServerStatusCodeError([]string{"5xx", "302"}),
@@ -65,7 +64,7 @@ func TestHttpConfigReloadRace(t *testing.T) {
 // A reload publishes one whole config, so a request never reads a filter built
 // from one generation next to a recorder built from another.
 func TestHttpConfigReloadIsAtomic(t *testing.T) {
-	usePluginConfig(t,
+	startAgent(t,
 		WithHttpServerExcludeUrl([]string{"/skip/**"}),
 		WithHttpServerStatusCodeError([]string{"4xx"}),
 	)
@@ -75,7 +74,7 @@ func TestHttpConfigReloadIsAtomic(t *testing.T) {
 	require.True(t, before.srvStatus.isError(404))
 
 	// Rebuilding under a new agent config swaps every derived value at once.
-	usePluginConfig(t,
+	startAgent(t,
 		WithHttpServerExcludeUrl([]string{"/other/**"}),
 		WithHttpServerStatusCodeError([]string{"5xx"}),
 	)
@@ -117,7 +116,7 @@ func TestQueryOptions_EnvAndYaml(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("Http:\n  Server:\n    RecordRequestParam: true\n"), 0o600))
 	t.Setenv("PINPOINT_GO_HTTP_CLIENT_RECORDURLQUERY", "true")
 
-	usePluginConfig(t, pinpoint.WithConfigFile(path))
+	startAgent(t, pinpoint.WithConfigFile(path))
 	cfg := httpCfg()
 	assert.True(t, cfg.cltUrlQuery, "env")
 	assert.True(t, cfg.srvRequestParam, "yaml")

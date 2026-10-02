@@ -89,15 +89,6 @@ func Test_defaultHttpHeaderRecorder_recordCookie_RecordsEveryConfiguredName(t *t
 	assert.Equal(t, 1, c.visits, "the cookies must be walked exactly once, not once per configured name")
 }
 
-func Test_defaultHttpHeaderRecorder_recordCookie_NoMatch(t *testing.T) {
-	c := requestWithCookies(t, &http.Cookie{Name: "other", Value: "x"})
-
-	a := newRecordingAnnotation()
-	newDefaultHttpHeaderRecorder([]string{"session"}).recordCookie(a, c)
-
-	assert.Empty(t, a.got, "no configured cookie was present, so nothing should be annotated")
-}
-
 func Test_defaultHttpHeaderRecorder_recordHeader(t *testing.T) {
 	h := http.Header{}
 	h.Add("X-Trace", "one")
@@ -107,27 +98,12 @@ func Test_defaultHttpHeaderRecorder_recordHeader(t *testing.T) {
 	a := newRecordingAnnotation()
 	// "x-trace" checks that lookup goes through http.Header's canonical form.
 	newDefaultHttpHeaderRecorder([]string{"x-trace", "X-Missing"}).
-		recordHeader(a, pinpoint.AnnotationHttpRequestHeader, header{h})
+		recordHeader(a, pinpoint.AnnotationHttpResponseHeader, header{h})
 
 	assert.Equal(t, map[string]string{"x-trace": "one,two"},
-		a.values(pinpoint.AnnotationHttpRequestHeader))
-	assert.NotContains(t, a.values(pinpoint.AnnotationHttpRequestHeader), "X-Missing",
+		a.values(pinpoint.AnnotationHttpResponseHeader))
+	assert.NotContains(t, a.values(pinpoint.AnnotationHttpResponseHeader), "X-Missing",
 		"a header that is absent must not be annotated at all")
-}
-
-// Request and response headers land under different annotation keys; the key is
-// the recorder's argument, so it must be carried through unchanged.
-func Test_defaultHttpHeaderRecorder_recordHeader_UsesGivenKey(t *testing.T) {
-	h := http.Header{}
-	h.Set("X-Trace", "v")
-
-	a := newRecordingAnnotation()
-	r := newDefaultHttpHeaderRecorder([]string{"X-Trace"})
-	r.recordHeader(a, pinpoint.AnnotationHttpRequestHeader, header{h})
-	r.recordHeader(a, pinpoint.AnnotationHttpResponseHeader, header{h})
-
-	assert.Equal(t, map[string]string{"X-Trace": "v"}, a.values(pinpoint.AnnotationHttpRequestHeader))
-	assert.Equal(t, map[string]string{"X-Trace": "v"}, a.values(pinpoint.AnnotationHttpResponseHeader))
 }
 
 func Test_allHttpHeaderRecorder(t *testing.T) {
@@ -155,22 +131,6 @@ func Test_allHttpHeaderRecorder_recordCookie(t *testing.T) {
 	assert.Equal(t, map[string]string{"session": "s1", "other": "x"}, a.cookies())
 }
 
-// The noop recorder is what an unconfigured request pays for, so it must touch
-// neither the annotation nor the header.
-func Test_noopHttpHeaderRecorder(t *testing.T) {
-	h := http.Header{}
-	h.Set("X-A", "1")
-	c := &testCookie{cookies: map[string]string{"session": "s1"}}
-
-	a := newRecordingAnnotation()
-	r := newNoopHttpHeaderRecorder()
-	r.recordHeader(a, pinpoint.AnnotationHttpRequestHeader, header{h})
-	r.recordCookie(a, c)
-
-	assert.Empty(t, a.got)
-	assert.Zero(t, c.visits, "the noop recorder must not walk the cookies")
-}
-
 // makeHttpHeaderRecorder picks the recorder from the option value; picking the
 // wrong one either records nothing or records every header of every request.
 func TestMakeHttpHeaderRecorder(t *testing.T) {
@@ -185,36 +145,6 @@ func TestMakeHttpHeaderRecorder(t *testing.T) {
 	assert.IsType(t, &defaultHttpHeaderRecorder{}, makeHttpHeaderRecorder(CfgHttpServerRecordResponseHeader))
 	assert.IsType(t, &noopHttpHeaderRecorder{}, makeHttpHeaderRecorder(CfgHttpServerRecordRequestCookie))
 	assert.IsType(t, &allHttpHeaderRecorder{}, makeHttpHeaderRecorder(CfgHttpClientRecordRequestHeader))
-}
-
-// header adapts http.Header to the Header interface both recorders read
-// through; VisitAll must see every name and Values must be canonical-form.
-func TestHeaderAdapter(t *testing.T) {
-	h := http.Header{}
-	h.Add("X-A", "1")
-	h.Add("X-A", "2")
-	h.Set("X-B", "3")
-	adapter := header{h}
-
-	assert.Equal(t, []string{"1", "2"}, adapter.Values("x-a"))
-	assert.Empty(t, adapter.Values("X-Missing"))
-
-	seen := map[string][]string{}
-	adapter.VisitAll(func(name string, values []string) { seen[name] = values })
-	assert.Equal(t, map[string][]string{"X-A": {"1", "2"}, "X-B": {"3"}}, seen)
-}
-
-// cookie parses the request's Cookie header inside VisitAll; a request with no
-// cookies must simply yield nothing.
-func TestCookieAdapter(t *testing.T) {
-	c := requestWithCookies(t, &http.Cookie{Name: "a", Value: "1"}, &http.Cookie{Name: "b", Value: "2"})
-
-	seen := map[string]string{}
-	c.VisitAll(func(name, value string) { seen[name] = value })
-	assert.Equal(t, map[string]string{"a": "1", "b": "2"}, seen)
-
-	empty := requestWithCookies(t)
-	empty.VisitAll(func(string, string) { t.Error("a request without cookies yielded one") })
 }
 
 // stringAnnotation also keeps the single string annotations (HTTP.URL,

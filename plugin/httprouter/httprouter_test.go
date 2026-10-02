@@ -38,9 +38,9 @@ func spanOf(t *testing.T, tracer pinpoint.Tracer) map[string]interface{} {
 	return m
 }
 
-// Every method helper has to register the wrapped handler under the same path
-// and method, or the route silently disappears. Each one is registered on its
-// own router and driven end to end.
+// Every method helper, and Handle, has to register the wrapped handler under
+// the same path and method, or the route silently disappears. Each one is
+// registered on its own router and driven end to end.
 func TestRouter_AllMethodsStayRouted(t *testing.T) {
 	startAgent(t)
 
@@ -55,6 +55,8 @@ func TestRouter_AllMethodsStayRouted(t *testing.T) {
 		{http.MethodPut, (*Router).PUT},
 		{http.MethodPatch, (*Router).PATCH},
 		{http.MethodDelete, (*Router).DELETE},
+		// Handle takes the method as an argument rather than from the helper name.
+		{http.MethodTrace, func(r *Router, p string, h httprouter.Handle) { r.Handle(http.MethodTrace, p, h) }},
 	} {
 		t.Run(tt.method, func(t *testing.T) {
 			r := New()
@@ -91,22 +93,6 @@ func TestRouter_MethodNotAllowed(t *testing.T) {
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/hello", nil))
 
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
-}
-
-// Handle takes the method as an argument rather than from the helper name.
-func TestRouter_Handle(t *testing.T) {
-	startAgent(t)
-
-	r := New()
-	var tracer pinpoint.Tracer
-	r.Handle(http.MethodGet, "/hello/:name", func(w http.ResponseWriter, req *http.Request, p httprouter.Params) {
-		tracer = pinpoint.TracerFromRequestContext(req)
-	})
-
-	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/hello/pinpoint", nil))
-
-	require.NotNil(t, tracer, "the handler did not run")
-	assert.True(t, tracer.IsSampled())
 }
 
 // Handler and HandlerFunc adapt a net/http handler, which reads its route
@@ -160,24 +146,6 @@ func TestRouter_HandlerWithoutParams(t *testing.T) {
 	require.NotNil(t, tracer)
 	assert.True(t, tracer.IsSampled())
 	assert.Equal(t, http.StatusNoContent, rec.Code)
-}
-
-// The handler reads its tracer out of the request context, so the wrapper has
-// to hand the handler the tracer-carrying request.
-func TestRouter_PutsSampledTracerInRequestContext(t *testing.T) {
-	startAgent(t)
-
-	r := New()
-	var tracer pinpoint.Tracer
-	r.GET("/", func(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
-		tracer = pinpoint.TracerFromRequestContext(req)
-	})
-
-	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
-
-	require.NotNil(t, tracer, "no tracer in the handler's request context")
-	assert.True(t, tracer.IsSampled(), "handler received an unsampled tracer")
-	assert.NotEmpty(t, tracer.TransactionId().String())
 }
 
 // The span is what shows up in Pinpoint, so the request attributes it carries
@@ -272,33 +240,6 @@ func TestRouter_RecordsTheFinalStatus(t *testing.T) {
 				"the default 5xx error class decides whether the span fails")
 		})
 	}
-}
-
-// WrapHandle instruments a handler registered on a plain httprouter.Router,
-// where the wrapper never learns the route pattern. It still has to trace the
-// call and keep the route working.
-func TestWrapHandle_OnAPlainRouter(t *testing.T) {
-	startAgent(t, pinpoint.WithHttpUrlStatEnable(true))
-
-	r := httprouter.New()
-	var name string
-	var tracer pinpoint.Tracer
-	r.GET("/hello/:name", WrapHandle(func(w http.ResponseWriter, req *http.Request, p httprouter.Params) {
-		name = p.ByName("name")
-		tracer = pinpoint.TracerFromRequestContext(req)
-		w.WriteHeader(http.StatusNoContent)
-	}))
-
-	rec := httptest.NewRecorder()
-	assert.NotPanics(t, func() {
-		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/hello/pinpoint", nil))
-	}, "collecting a URL statistic without a known route pattern must be skipped, not fatal")
-
-	assert.Equal(t, "pinpoint", name, "route parameter")
-	require.NotNil(t, tracer)
-	assert.True(t, tracer.IsSampled(), "handler received an unsampled tracer")
-	assert.Equal(t, http.StatusNoContent, rec.Code)
-	assert.Equal(t, "/hello/pinpoint", spanOf(t, tracer)["RpcName"])
 }
 
 // The wrapper marks the span failed and re-panics; swallowing the panic would

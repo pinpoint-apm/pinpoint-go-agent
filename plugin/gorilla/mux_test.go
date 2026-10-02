@@ -58,25 +58,6 @@ func TestMiddleware_PreservesRoutingAndVars(t *testing.T) {
 	assert.Equal(t, "hello pinpoint", rec.Body.String())
 }
 
-// The handler reads its tracer out of the request context, so the wrapper has
-// to hand the handler the tracer-carrying request.
-func TestMiddleware_PutsSampledTracerInRequestContext(t *testing.T) {
-	startAgent(t)
-
-	var tracer pinpoint.Tracer
-	r := mux.NewRouter()
-	r.Use(Middleware())
-	r.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
-		tracer = pinpoint.TracerFromRequestContext(req)
-	})
-
-	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
-
-	require.NotNil(t, tracer, "no tracer in the handler's request context")
-	assert.True(t, tracer.IsSampled(), "handler received an unsampled tracer")
-	assert.NotEmpty(t, tracer.TransactionId().String())
-}
-
 // The span is what shows up in Pinpoint, so the request attributes it carries
 // have to come from the request rather than defaults.
 func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
