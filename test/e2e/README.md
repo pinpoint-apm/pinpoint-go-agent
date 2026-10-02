@@ -141,7 +141,10 @@ export PINPOINT_GO_SAMPLING_COUNTERRATE=100   # sample 1%
 
 It skips `smoke_test.sh` and the debug-only span-batch check, keeps the
 exported sampling rate, and leaves the log level to the environment and
-`pinpoint-config.yaml` (`info`). Before the load it still waits for every
+`pinpoint-config.yaml` (`info`). It also sends spans in batches of the agent
+default 50 rather than the config file's 8, which is there so the smoke run
+crosses batch boundaries and under load would send six times the RPCs;
+export `PINPOINT_GO_COLLECTOR_GRPC_SPANBATCHSIZE` to choose another. Before the load it still waits for every
 process log to show `success to register agent` and for the upstream's
 `/ready`; afterwards it still checks registration and rejected span batches.
 

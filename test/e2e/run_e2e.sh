@@ -157,6 +157,11 @@ export PINPOINT_GO_CONFIGFILE="${PINPOINT_GO_CONFIGFILE:-$SCRIPT_DIR/pinpoint-co
 # logging would inflate the load numbers.
 if ! $LOAD_ONLY; then
     export PINPOINT_GO_LOG_LEVEL="${PINPOINT_GO_LOG_LEVEL:-debug}"
+else
+    # pinpoint-config.yaml's batch size of 8 makes the smoke run cross batch
+    # boundaries, but under load it sends six times the agent default's RPCs
+    # and inflates the agent's share, so the load measures the default (50).
+    export PINPOINT_GO_COLLECTOR_GRPC_SPANBATCHSIZE="${PINPOINT_GO_COLLECTOR_GRPC_SPANBATCHSIZE:-50}"
 fi
 export PINPOINT_E2E_AGENT_TIMEOUT="${PINPOINT_E2E_AGENT_TIMEOUT:-30}"
 

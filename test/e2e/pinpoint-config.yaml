@@ -44,7 +44,7 @@ Collector:
     # spread long-running agents across a scaled-out collector, e.g. 600000.
     ConnectionMaxAge: 0 # ms
     StreamMaxAge: 0 # ms
-    SpanBatchSize: 8
+    SpanBatchSize: 8 # small so the smoke run crosses batches; --load-only uses 50
     SpanBatchFlushInterval: 500
     SpanBatchCollectDeadline: 1000
     SpanBatchMaxConcurrentRequests: 4
