@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -108,20 +109,20 @@ func query(w http.ResponseWriter, r *http.Request) {
 		uid        int
 		empName    string
 		department string
-		created    string
+		created    time.Time // pgx scans a DATE into a time.Time, not a string
 	)
 
 	rows, _ := dbPool.Query(ctx, "SELECT * FROM employee WHERE id = 1")
 	for rows.Next() {
 		_ = rows.Scan(&uid, &empName, &department, &created)
-		fmt.Printf("user: %d, %s, %s, %s\n", uid, empName, department, created)
+		fmt.Printf("user: %d, %s, %s, %s\n", uid, empName, department, created.Format(time.DateOnly))
 	}
 	rows.Close()
 
 	rows, _ = dbPool.Query(ctx, "SELECT * FROM employee WHERE id = $1", 1)
 	for rows.Next() {
 		_ = rows.Scan(&uid, &empName, &department, &created)
-		fmt.Printf("user: %d, %s, %s, %s\n", uid, empName, department, created)
+		fmt.Printf("user: %d, %s, %s, %s\n", uid, empName, department, created.Format(time.DateOnly))
 	}
 	rows.Close()
 
