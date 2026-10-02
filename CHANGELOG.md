@@ -349,9 +349,6 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   did nothing on the noop tracer and panicked once the request was sampled.
 - **An unsampled span clamps a negative elapsed time**, as a sampled one does,
   so an NTP step no longer shrinks the response-time total.
-- **`ppsarama` and `ppsaramaibm` answer `CommitTxn` and `AbortTxn` with an
-  error on a producer without transactions** instead of panicking on the
-  type assertion.
 - **The kafka consumers take a nil context** (`ppsarama`, `ppsaramaibm`,
   `ppconfluentkafka`) instead of panicking once the agent is enabled.
 - **`ppconfluentkafka.WrapProducer` keeps a nil producer nil**, as the sarama
