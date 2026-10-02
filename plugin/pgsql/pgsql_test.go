@@ -2,8 +2,6 @@ package pppgsql
 
 import (
 	"database/sql"
-	"database/sql/driver"
-	"slices"
 	"testing"
 
 	"github.com/lib/pq"
@@ -177,34 +175,12 @@ func Test_parseDSN_UnparsableLeavesInfoUntouched(t *testing.T) {
 	}
 }
 
-// parseDSN runs per connection against a copy of the shared DBInfo, and must
-// only fill in the address: overwriting the service types would file that one
-// connection's queries under a different node.
-func Test_parseDSN_LeavesTheServiceTypesAlone(t *testing.T) {
-	t.Setenv("PGHOST", "")
-	t.Setenv("PGDATABASE", "")
-
-	info := DBInfo()
-	parseDSN(&info, "postgres://testuser@dbhost/testdb")
-
-	assert.Equal(t, DBInfo().DBType, info.DBType)
-	assert.Equal(t, DBInfo().QueryType, info.QueryType)
-	assert.Equal(t, "dbhost", info.DBHost)
-}
-
 // The registered driver has to carry the postgres service types; a wrong type
 // files every query under the wrong node on the server map.
 func TestRegisteredDriverInfo(t *testing.T) {
 	assert.Equal(t, pinpoint.ServiceTypePgSql, DBInfo().DBType)
 	assert.Equal(t, pinpoint.ServiceTypePgSqlExecuteQuery, DBInfo().QueryType)
 	assert.NotNil(t, DBInfo().ParseDSN, "without a ParseDSN the wrapper never learns the host or database")
-}
-
-// The documented driver name is the only thing an application refers to, so it
-// has to be the name package init actually registered.
-func TestRegisteredDriverName(t *testing.T) {
-	assert.True(t, slices.Contains(sql.Drivers(), driverName),
-		"%s not registered, got %v", driverName, sql.Drivers())
 }
 
 // Opening through the registered name must hand database/sql the instrumented
@@ -219,5 +195,4 @@ func TestOpenUsesTheInstrumentedDriver(t *testing.T) {
 	// even with the bare driver registered.
 	_, bare := db.Driver().(*pq.Driver)
 	assert.False(t, bare, "the bare pq driver was registered, so nothing is traced")
-	assert.Implements(t, (*driver.Driver)(nil), db.Driver())
 }

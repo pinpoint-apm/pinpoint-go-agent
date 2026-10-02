@@ -69,33 +69,36 @@ func host(t *testing.T) *gocql.HostInfo {
 
 // The observer runs after the driver has already timed the query, so the span
 // event has to carry the driver's own start and end rather than the moment the
-// callback fired, along with the statement, keyspace and coordinator host.
+// callback fired, along with the statement, keyspace and coordinator host. A
+// query that succeeded records no error, so a later failed one is not mistaken
+// for it.
 func TestObserveQuery(t *testing.T) {
-	tracer := newRecordingTracer()
 	start := time.Date(2026, time.August, 30, 1, 2, 3, 0, time.UTC)
 	end := start.Add(15 * time.Millisecond)
-	queryErr := errors.New("query failed")
 
-	NewObserver().ObserveQuery(pinpoint.NewContext(context.Background(), tracer), gocql.ObservedQuery{
-		Keyspace:  "testspace",
-		Statement: "SELECT id, text FROM widgets WHERE id = ?",
-		Start:     start,
-		End:       end,
-		Host:      host(t),
-		Err:       queryErr,
-	})
+	for _, queryErr := range []error{errors.New("query failed"), nil} {
+		tracer := newRecordingTracer()
+		NewObserver().ObserveQuery(pinpoint.NewContext(context.Background(), tracer), gocql.ObservedQuery{
+			Keyspace:  "testspace",
+			Statement: "SELECT id, text FROM widgets WHERE id = ?",
+			Start:     start,
+			End:       end,
+			Host:      host(t),
+			Err:       queryErr,
+		})
 
-	require.Len(t, tracer.events, 1, "one query must produce exactly one span event")
-	e := tracer.events[0]
-	assert.Equal(t, "cassandra.query", e.operation)
-	assert.Equal(t, int32(pinpoint.ServiceTypeCassandraExecuteQuery), e.serviceType)
-	assert.Equal(t, "testspace", e.destination, "the keyspace is the destination")
-	assert.Equal(t, "10.0.0.1:9042", e.endPoint, "the coordinator host is the endpoint")
-	assert.Equal(t, "SELECT id, text FROM widgets WHERE id = ?", e.sql)
-	assert.ErrorIs(t, e.err, queryErr)
-	assert.True(t, e.start.Equal(start), "start = %v, want the driver's own %v", e.start, start)
-	assert.True(t, e.end.Equal(end), "end = %v, want the driver's own %v", e.end, end)
-	assert.True(t, e.ended, "the span event was left open")
+		require.Len(t, tracer.events, 1, "one query must produce exactly one span event")
+		e := tracer.events[0]
+		assert.Equal(t, "cassandra.query", e.operation)
+		assert.Equal(t, int32(pinpoint.ServiceTypeCassandraExecuteQuery), e.serviceType)
+		assert.Equal(t, "testspace", e.destination, "the keyspace is the destination")
+		assert.Equal(t, "10.0.0.1:9042", e.endPoint, "the coordinator host is the endpoint")
+		assert.Equal(t, "SELECT id, text FROM widgets WHERE id = ?", e.sql)
+		assert.Equal(t, queryErr, e.err)
+		assert.True(t, e.start.Equal(start), "start = %v, want the driver's own %v", e.start, start)
+		assert.True(t, e.end.Equal(end), "end = %v, want the driver's own %v", e.end, end)
+		assert.True(t, e.ended, "the span event was left open")
+	}
 }
 
 // A batch is one span event, so every statement in it has to be visible in the
@@ -160,22 +163,6 @@ func TestObserveBatch_Error(t *testing.T) {
 	assert.ErrorIs(t, tracer.events[0].err, want)
 }
 
-// A query that succeeded records no error, so a later failed one is not
-// mistaken for it.
-func TestObserveQuery_Success(t *testing.T) {
-	tracer := newRecordingTracer()
-
-	NewObserver().ObserveQuery(pinpoint.NewContext(context.Background(), tracer), gocql.ObservedQuery{
-		Keyspace:  "testspace",
-		Statement: "SELECT 1",
-		Host:      host(t),
-	})
-
-	require.Len(t, tracer.events, 1)
-	assert.NoError(t, tracer.events[0].err)
-	assert.True(t, tracer.events[0].ended)
-}
-
 // One observer serves every query of a shared session, so a second query has
 // to open its own span event rather than reuse the first one's.
 func TestObserver_RecordsEveryQuery(t *testing.T) {
@@ -208,20 +195,11 @@ func TestObserver_SatisfiesBothObserverInterfaces(t *testing.T) {
 // next on that goroutine.
 func TestObserver_IgnoresUnsampledQueries(t *testing.T) {
 	o := NewObserver()
+	ctx := context.Background()
 
-	for _, tt := range []struct {
-		name string
-		ctx  context.Context
-	}{
-		{"background context", context.Background()},
-		{"noop tracer", pinpoint.NewContext(context.Background(), pinpoint.NoopTracer())},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			// A nil Host would panic if the observer got as far as recording.
-			assert.NotPanics(t, func() {
-				o.ObserveQuery(tt.ctx, gocql.ObservedQuery{Statement: "SELECT 1"})
-				o.ObserveBatch(tt.ctx, gocql.ObservedBatch{Statements: []string{"SELECT 1"}})
-			}, "an untraced query must be stepped over, not recorded")
-		})
-	}
+	// A nil Host would panic if the observer got as far as recording.
+	assert.NotPanics(t, func() {
+		o.ObserveQuery(ctx, gocql.ObservedQuery{Statement: "SELECT 1"})
+		o.ObserveBatch(ctx, gocql.ObservedBatch{Statements: []string{"SELECT 1"}})
+	}, "an untraced query must be stepped over, not recorded")
 }

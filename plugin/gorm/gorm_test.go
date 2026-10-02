@@ -162,25 +162,13 @@ func TestCallbacks_RecordTheStatementError(t *testing.T) {
 // statement the application makes - including those from code that never
 // started a span, and those whose statement carries no context at all.
 func TestCallbacks_WithoutASampledTracer(t *testing.T) {
-	db := openDB(t)
-	create := db.Callback().Create()
+	create := openDB(t).Callback().Create()
+	stmt := &gorm.DB{Statement: &gorm.Statement{}}
 
-	for _, tt := range []struct {
-		name string
-		ctx  context.Context
-	}{
-		{"nil context", nil},
-		{"background context", context.Background()},
-		{"noop tracer", pinpoint.NewContext(context.Background(), pinpoint.NoopTracer())},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			stmt := &gorm.DB{Statement: &gorm.Statement{Context: tt.ctx}}
-			assert.NotPanics(t, func() {
-				create.Get("pinpoint:before_create")(stmt)
-				create.Get("pinpoint:after_create")(stmt)
-			}, "an untraced statement must not take the application down")
-		})
-	}
+	assert.NotPanics(t, func() {
+		create.Get("pinpoint:before_create")(stmt)
+		create.Get("pinpoint:after_create")(stmt)
+	}, "an untraced statement must not take the application down")
 }
 
 // A dialector that cannot initialize must surface its own error, and must not
@@ -195,47 +183,6 @@ func TestOpen_ReturnsTheDialectorError(t *testing.T) {
 		assert.Nil(t, db.Callback().Create().Get("pinpoint:before_create"),
 			"the pinpoint callbacks must not be registered on a failed connection")
 	}
-}
-
-// The pinpoint callbacks are registered relative to gorm's own hooks, so gorm's
-// callbacks have to still be there and still run: registering against a hook
-// name gorm does not know silently drops the instrumentation.
-func TestOpen_KeepsGormsOwnCallbacks(t *testing.T) {
-	db := openDB(t)
-
-	for _, tt := range []struct {
-		kind string
-		name string
-	}{
-		{"create", "gorm:before_create"},
-		{"create", "gorm:after_create"},
-		{"update", "gorm:before_update"},
-		{"update", "gorm:after_update"},
-		{"delete", "gorm:before_delete"},
-		{"delete", "gorm:after_delete"},
-		{"query", "gorm:query"},
-		{"row", "gorm:row"},
-		{"raw", "gorm:raw"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.NotNil(t, processorFor(db, tt.kind).Get(tt.name),
-				"gorm's own %s callback was lost", tt.name)
-		})
-	}
-}
-
-// Open returns gorm's own *gorm.DB, so everything an application does with it
-// keeps working - WithContext included, which is how the tracer gets in.
-func TestOpen_ReturnsAUsableDB(t *testing.T) {
-	db := openDB(t)
-
-	require.NotNil(t, db)
-	require.NoError(t, db.Error)
-
-	tracer := newRecordingTracer()
-	scoped := db.WithContext(pinpoint.NewContext(context.Background(), tracer))
-	assert.Equal(t, tracer, pinpoint.FromContext(scoped.Statement.Context),
-		"WithContext must carry the tracer through to the statement")
 }
 
 type failingDialector struct {

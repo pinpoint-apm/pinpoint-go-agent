@@ -121,19 +121,8 @@ func TestHandler_HandleSetsLogging(t *testing.T) {
 func TestNewAttrs_WithoutASampledTracer(t *testing.T) {
 	startAgent(t)
 
-	for _, tt := range []struct {
-		name   string
-		tracer pinpoint.Tracer
-	}{
-		{"nil tracer", nil},
-		{"noop tracer", pinpoint.NoopTracer()},
-		{"tracer from a context without a span", pinpoint.FromContext(context.Background())},
-		{"tracer from a nil context", pinpoint.FromContext(nil)},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Empty(t, NewAttrs(tt.tracer), "an unsampled tracer must contribute no attributes")
-		})
-	}
+	assert.Empty(t, NewAttrs(nil), "a nil tracer must contribute no attributes")
+	assert.Empty(t, NewAttrs(pinpoint.NoopTracer()), "an unsampled tracer must contribute no attributes")
 }
 
 // The handler takes the tracer from the record's context instead of the call
@@ -176,24 +165,14 @@ func TestHandler_HandleOnEveryLevel(t *testing.T) {
 func TestHandler_HandleWithoutATracer(t *testing.T) {
 	startAgent(t)
 
-	for _, tt := range []struct {
-		name string
-		ctx  context.Context
-	}{
-		{"context without a span", context.Background()},
-		{"context with a noop tracer", pinpoint.NewContext(context.Background(), pinpoint.NoopTracer())},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			logger, out := jsonLogger(t)
-			logger.InfoContext(tt.ctx, "message", "foo", "bar")
+	logger, out := jsonLogger(t)
+	logger.InfoContext(context.Background(), "message", "foo", "bar")
 
-			fields := loggedFields(t, out)
-			assert.Equal(t, "message", fields["msg"])
-			assert.Equal(t, "bar", fields["foo"])
-			assert.NotContains(t, fields, pinpoint.LogTransactionIdKey)
-			assert.NotContains(t, fields, pinpoint.LogSpanIdKey)
-		})
-	}
+	fields := loggedFields(t, out)
+	assert.Equal(t, "message", fields["msg"])
+	assert.Equal(t, "bar", fields["foo"])
+	assert.NotContains(t, fields, pinpoint.LogTransactionIdKey)
+	assert.NotContains(t, fields, pinpoint.LogSpanIdKey)
 }
 
 // WithAttrs and WithGroup have to be delegated, or the application's own

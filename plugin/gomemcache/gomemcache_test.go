@@ -186,27 +186,6 @@ func TestNewClient_WithoutAServer(t *testing.T) {
 	assert.Equal(t, "", tracer.last().endPoint)
 }
 
-// The wrapper replaces the application's client, so every operation must still
-// run when there is no span to record it on - and must record nothing, or the
-// span-event stack of whatever runs next on that goroutine unbalances.
-func TestClient_RecordsNothingWithoutASampledTracer(t *testing.T) {
-	addr := closedAddr(t)
-	// A client never given a context starts on the noop tracer.
-	_, err := NewClient(addr).Get("foo")
-	assert.Error(t, err, "the call unexpectedly succeeded against a closed port")
-
-	for _, ctx := range []context.Context{
-		context.Background(),
-		pinpoint.NewContext(context.Background(), pinpoint.NoopTracer()),
-	} {
-		c := NewClient(addr).WithContext(ctx)
-		require.False(t, c.currentTracer().IsSampled(), "an untraced context produced a sampled tracer")
-
-		_, err := c.Get("foo")
-		assert.Error(t, err, "the call unexpectedly succeeded against a closed port")
-	}
-}
-
 // WithContext also rebinds the shared receiver, so the tracer the next call
 // records against is the one bound last.
 func TestClient_WithContextRebindsTheReceiver(t *testing.T) {

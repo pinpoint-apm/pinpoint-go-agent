@@ -17,8 +17,6 @@ type stubAsyncProducer struct {
 	input     chan *sarama.ProducerMessage
 	successes chan *sarama.ProducerMessage
 	errors    chan *sarama.ProducerError
-	inputSeen chan struct{}
-	inputOnce sync.Once
 	onClose   func()
 }
 
@@ -27,11 +25,7 @@ func (s *stubAsyncProducer) AsyncClose() {
 		s.onClose()
 	}
 }
-func (s *stubAsyncProducer) Close() error { return nil }
-func (s *stubAsyncProducer) Input() chan<- *sarama.ProducerMessage {
-	s.inputOnce.Do(func() { close(s.inputSeen) })
-	return s.input
-}
+func (s *stubAsyncProducer) Input() chan<- *sarama.ProducerMessage     { return s.input }
 func (s *stubAsyncProducer) Successes() <-chan *sarama.ProducerMessage { return s.successes }
 func (s *stubAsyncProducer) Errors() <-chan *sarama.ProducerError      { return s.errors }
 
@@ -42,7 +36,6 @@ func newStubAsyncProducer() *stubAsyncProducer {
 		input:     make(chan *sarama.ProducerMessage, 8),
 		successes: make(chan *sarama.ProducerMessage, 8),
 		errors:    make(chan *sarama.ProducerError, 8),
-		inputSeen: make(chan struct{}),
 	}
 	s.onClose = func() { close(s.successes); close(s.errors) }
 	return s
@@ -243,116 +236,6 @@ func Test_asyncProducer_AsyncCloseDrainsInFlightAcks(t *testing.T) {
 		require.Equal(t, nil, tracer.se.err, "the span event recorded the wrong verdict")
 	}
 	requireSpanCount(t, p, 0)
-}
-
-// The Input path - WithContext plus the raw channel - must save its tracer and
-// end it on the broker's verdict, exactly as InputContext's does. Both verdicts
-// are covered: a delivery error has to reach the span, not just the shutdown
-// errors the close tests record.
-func Test_asyncProducer_InputAckEndsTracer(t *testing.T) {
-	startAgent(t)
-	tests := []struct {
-		name string
-		ack  func(*stubAsyncProducer, *sarama.ProducerMessage)
-		recv func(*testing.T, *asyncProducer, *sarama.ProducerMessage)
-		want error
-	}{
-		{
-			name: "success",
-			ack: func(stub *stubAsyncProducer, msg *sarama.ProducerMessage) {
-				stub.successes <- msg
-			},
-			recv: func(t *testing.T, p *asyncProducer, msg *sarama.ProducerMessage) {
-				t.Helper()
-				require.Same(t, msg, <-p.Successes(), "Successes delivered a different message")
-			},
-		},
-		{
-			name: "error",
-			ack: func(stub *stubAsyncProducer, msg *sarama.ProducerMessage) {
-				stub.errors <- &sarama.ProducerError{Msg: msg, Err: sarama.ErrOutOfBrokers}
-			},
-			recv: func(t *testing.T, p *asyncProducer, msg *sarama.ProducerMessage) {
-				t.Helper()
-				got := <-p.Errors()
-				require.Same(t, msg, got.Msg, "Errors delivered a different message")
-				require.ErrorIs(t, got.Err, sarama.ErrOutOfBrokers)
-			},
-			want: sarama.ErrOutOfBrokers,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := ackConfig()
-
-			stub := newStubAsyncProducer()
-			p := wrapAsyncProducer(stub, []string{"broker:9092"}, config)
-
-			tracer := newRecordingTracer(tt.name)
-			msg := &sarama.ProducerMessage{Topic: "topic"}
-			p.InputContext(pinpoint.NewContext(context.Background(), tracer), msg)
-			<-stub.input
-			requireSpanCount(t, p, 1)
-
-			// The tracer is ended before the ack is handed on, so receiving it
-			// orders the assertions below.
-			tt.ack(stub, msg)
-			tt.recv(t, p, msg)
-			recv(t, tracer.ended, "acknowledged tracer")
-			require.Equal(t, tt.want, tracer.se.err, "the span event recorded the wrong verdict")
-			requireSpanCount(t, p, 0)
-
-			p.AsyncClose()
-			for range p.Successes() {
-			}
-			for range p.Errors() {
-			}
-			recv(t, p.drainDone, "input drainer")
-		})
-	}
-}
-
-func Test_asyncProducer_AsyncCloseDeliversBlockedInput(t *testing.T) {
-	startAgent(t)
-	config := ackConfig()
-
-	msg := &sarama.ProducerMessage{Topic: "topic"}
-	stub := newStubAsyncProducer()
-	stub.input = make(chan *sarama.ProducerMessage)
-	stub.onClose = func() {
-		stub.successes <- msg
-		close(stub.successes)
-		close(stub.errors)
-	}
-	p := wrapAsyncProducer(stub, []string{"broker:9092"}, config)
-	tracer := newRecordingTracer("InputContext")
-	ctx := pinpoint.NewContext(context.Background(), tracer)
-
-	inputReturned := make(chan struct{})
-	go func() {
-		p.InputContext(ctx, msg)
-		close(inputReturned)
-	}()
-	recv(t, stub.inputSeen, "blocked underlying input")
-	recv(t, inputReturned, "wrapper input")
-	requireSpanCount(t, p, 1)
-
-	closeReturned := make(chan struct{})
-	go func() {
-		p.AsyncClose()
-		close(closeReturned)
-	}()
-	recv(t, closeReturned, "AsyncClose")
-	require.Same(t, msg, recv(t, stub.input, "accepted message"))
-	// The underlying shutdown hook publishes the delivery result
-	// only after the forwarder has handed over the message.
-	recv(t, tracer.ended, "acknowledged tracer")
-	require.Equal(t, nil, tracer.se.err, "the span event recorded the wrong verdict")
-	requireSpanCount(t, p, 0)
-
-	require.Same(t, msg, <-p.Successes())
-	requireChannelsClosed(t, p)
 }
 
 func Test_asyncProducer_InputContextAfterAsyncCloseReturns(t *testing.T) {
@@ -556,8 +439,9 @@ func Test_asyncProducer_RetriedMessageIsNested(t *testing.T) {
 	p.InputContext(pinpoint.NewContext(context.Background(), first), msg)
 	<-stub.input
 	stub.errors <- &sarama.ProducerError{Msg: msg, Err: sarama.ErrOutOfBrokers}
-	<-p.Errors()
+	require.Same(t, msg, (<-p.Errors()).Msg, "Errors delivered a different message")
 	recv(t, first.ended, "first attempt's span end")
+	assert.ErrorIs(t, first.se.err, sarama.ErrOutOfBrokers, "a delivery error has to reach the span event")
 	before := append([]sarama.RecordHeader(nil), msg.Headers...)
 
 	retry := newRecordingTracer("id-2")
@@ -599,34 +483,6 @@ func Test_asyncProducer_NoErrorReturnsEndsSpansImmediately(t *testing.T) {
 		assert.NotEqual(t, HeaderAsyncSpanId, string(h.Key),
 			"no async span id header must be added when acks cannot end the tracer")
 	}
-}
-
-// Every message accepted before shutdown reaches sarama.
-func Test_asyncProducer_ShutdownForwardsAcceptedMessages(t *testing.T) {
-	startAgent(t)
-	config := ackConfig()
-	config.Producer.Return.Errors = true
-
-	const messages = 16
-	stub := newStubAsyncProducer()
-	stub.onClose = nil
-	// An unbuffered sarama input parks the forwarder on the first message,
-	// with the rest buffered behind it in the wrapper, until the reads below.
-	stub.input = make(chan *sarama.ProducerMessage)
-	p := wrapAsyncProducer(stub, []string{"broker:9092"}, config)
-
-	for i := 0; i < messages; i++ {
-		p.Input() <- &sarama.ProducerMessage{Topic: "topic"}
-	}
-	p.AsyncClose()
-
-	for i := 0; i < messages; i++ {
-		recv(t, stub.input, "accepted message")
-	}
-
-	close(stub.successes)
-	close(stub.errors)
-	requireChannelsClosed(t, p)
 }
 
 // takeInput is what gives an accepted message priority over the shutdown

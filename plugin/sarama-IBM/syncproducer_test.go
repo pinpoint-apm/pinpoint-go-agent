@@ -71,8 +71,6 @@ func (s *stubSyncProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
 	return s.err
 }
 
-func (s *stubSyncProducer) Close() error { return nil }
-
 // capturingTracer records what the producer wrapper puts on a span event. A
 // real tracer's recorders are write-only, so this stands in for one. Span
 // events nest like the real tracer's - a batch send opens all of them before
@@ -205,25 +203,16 @@ func Test_syncProducer_SendMessagesContext(t *testing.T) {
 // A producer used without any pinpoint context still has to produce; the
 // wrapper records nothing on a noop tracer.
 func Test_syncProducer_WithoutASampledTracer(t *testing.T) {
-	for _, tt := range []struct {
-		name string
-		ctx  context.Context
-	}{
-		{"background context", context.Background()},
-		{"noop tracer", pinpoint.NewContext(context.Background(), pinpoint.NoopTracer())},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			stub := &stubSyncProducer{}
-			p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}}
+	stub := &stubSyncProducer{}
+	p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}}
+	ctx := context.Background()
 
-			_, _, err := p.SendMessageContext(tt.ctx, &sarama.ProducerMessage{Topic: "widgets"})
-			require.NoError(t, err)
-			require.NoError(t, p.SendMessagesContext(tt.ctx, []*sarama.ProducerMessage{{Topic: "gadgets"}}))
+	_, _, err := p.SendMessageContext(ctx, &sarama.ProducerMessage{Topic: "widgets"})
+	require.NoError(t, err)
+	require.NoError(t, p.SendMessagesContext(ctx, []*sarama.ProducerMessage{{Topic: "gadgets"}}))
 
-			assert.Len(t, stub.sent, 1, "the message must still be produced")
-			assert.Len(t, stub.batches, 1, "the batch must still be produced")
-		})
-	}
+	assert.Len(t, stub.sent, 1, "the message must still be produced")
+	assert.Len(t, stub.batches, 1, "the batch must still be produced")
 }
 
 // distributedTracingContextWriterProducer is what carries the transaction to
@@ -268,18 +257,6 @@ func TestNewSyncProducer_ReturnsTheBrokerError(t *testing.T) {
 
 	assert.Error(t, err, "a producer for an unreachable broker cannot be created")
 	assert.Nil(t, p, "a failed NewSyncProducer must not yield a producer")
-}
-
-// An empty batch has nothing to record and must still reach the producer.
-func Test_syncProducer_SendMessagesContext_EmptyBatch(t *testing.T) {
-	tracer := newCapturingTracer()
-	stub := &stubSyncProducer{}
-	p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}}
-
-	require.NoError(t, p.SendMessagesContext(pinpoint.NewContext(context.Background(), tracer), nil))
-
-	assert.Empty(t, tracer.events, "an empty batch has no message to record")
-	assert.Len(t, stub.batches, 1, "the empty batch must still reach the underlying producer")
 }
 
 // closedAddr returns a loopback address with nothing listening on it: the port

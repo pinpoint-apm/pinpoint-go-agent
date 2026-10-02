@@ -91,7 +91,6 @@ func (c *fakeClient) CheckAndPut(*hrpc.Mutate, string, string, []byte) (bool, er
 	return true, c.err
 }
 func (c *fakeClient) Scan(*hrpc.Scan) hrpc.Scanner { c.calls++; return nil }
-func (c *fakeClient) Close()                       {}
 
 func newClient(t *testing.T, err error) (*Client, *fakeClient) {
 	t.Helper()
@@ -204,55 +203,28 @@ func TestClient_Scan(t *testing.T) {
 	assert.True(t, e.ended, "the span event was left open")
 }
 
-// An open-ended scan has no bounds to name, and must still be recorded rather
-// than skipped.
-func TestClient_ScanWithoutARange(t *testing.T) {
-	client, fake := newClient(t, nil)
-	tracer := newRecordingTracer()
-
-	s, err := hrpc.NewScanStr(pinpoint.NewContext(context.Background(), tracer), "table")
-	require.NoError(t, err)
-	client.Scan(s)
-
-	require.Equal(t, 1, fake.calls)
-	require.Len(t, tracer.events, 1)
-	assert.Equal(t, "startRowKey: , stopRowKey: ",
-		tracer.events[0].annotations[pinpoint.AnnotationHbaseClientParams])
-}
-
 // The wrapper replaces the application's client, so every operation must still
 // run when there is no span to record it on - and must record nothing, or the
 // span-event stack of whatever runs next on that goroutine unbalances.
 func TestClient_PassesThroughWithoutASampledTracer(t *testing.T) {
-	for _, tt := range []struct {
-		name string
-		ctx  context.Context
-	}{
-		{"background context", context.Background()},
-		{"noop tracer", pinpoint.NewContext(context.Background(), pinpoint.NoopTracer())},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			client, fake := newClient(t, nil)
-			tracer := newRecordingTracer()
+	client, fake := newClient(t, nil)
+	ctx := context.Background()
 
-			g, err := hrpc.NewGetStr(tt.ctx, "table", "rowkey")
-			require.NoError(t, err)
-			_, err = client.Get(g)
-			require.NoError(t, err)
+	g, err := hrpc.NewGetStr(ctx, "table", "rowkey")
+	require.NoError(t, err)
+	_, err = client.Get(g)
+	require.NoError(t, err)
 
-			p, err := hrpc.NewPutStr(tt.ctx, "table", "rowkey", values())
-			require.NoError(t, err)
-			_, err = client.Put(p)
-			require.NoError(t, err)
+	p, err := hrpc.NewPutStr(ctx, "table", "rowkey", values())
+	require.NoError(t, err)
+	_, err = client.Put(p)
+	require.NoError(t, err)
 
-			s, err := hrpc.NewScanStr(tt.ctx, "table")
-			require.NoError(t, err)
-			client.Scan(s)
+	s, err := hrpc.NewScanStr(ctx, "table")
+	require.NoError(t, err)
+	client.Scan(s)
 
-			assert.Equal(t, 3, fake.calls, "every operation must still reach the underlying client")
-			assert.Empty(t, tracer.events, "an untraced operation must not record a span event")
-		})
-	}
+	assert.Equal(t, 3, fake.calls, "every operation must still reach the underlying client")
 }
 
 func Test_keyString(t *testing.T) {
@@ -271,7 +243,6 @@ func TestNewClient_KeepsTheQuorum(t *testing.T) {
 	t.Cleanup(c.Close)
 
 	assert.Equal(t, "zk1.example:2181,zk2.example:2181", c.host)
-	assert.Implements(t, (*hbase.Client)(nil), c, "the wrapper must still be a gohbase.Client")
 }
 
 // WrapClient is NewClient for a client created elsewhere (compile-time

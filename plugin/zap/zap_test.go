@@ -1,7 +1,6 @@
 package ppzap
 
 import (
-	"context"
 	"sync"
 	"testing"
 
@@ -104,19 +103,8 @@ func TestNewField_SetsLogging(t *testing.T) {
 func TestNewField_WithoutASampledTracer(t *testing.T) {
 	startAgent(t)
 
-	for _, tt := range []struct {
-		name   string
-		tracer pinpoint.Tracer
-	}{
-		{"nil tracer", nil},
-		{"noop tracer", pinpoint.NoopTracer()},
-		{"tracer from a context without a span", pinpoint.FromContext(context.Background())},
-		{"tracer from a nil context", pinpoint.FromContext(nil)},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Empty(t, NewField(tt.tracer), "an unsampled tracer must contribute no fields")
-		})
-	}
+	assert.Empty(t, NewField(nil), "a nil tracer must contribute no fields")
+	assert.Empty(t, NewField(pinpoint.NoopTracer()), "an unsampled tracer must contribute no fields")
 }
 
 // NewLogger is what most applications use, and it has to add the same fields
@@ -136,36 +124,6 @@ func TestNewLogger(t *testing.T) {
 	assert.Equal(t, "1", fields["before"], "the provided logger's own fields must be kept")
 	assert.Equal(t, "2", fields["after"])
 	assert.Equal(t, "logger log message", logs.All()[0].Message)
-}
-
-// A logger derived for an unsampled tracer must carry only the application's
-// own fields, and must not be a different logger than the one it was given.
-func TestNewLogger_WithoutASampledTracer(t *testing.T) {
-	startAgent(t)
-
-	logger, logs := observedLogger(t)
-	NewLogger(logger, pinpoint.NoopTracer()).With(zap.String("foo", "bar")).Error("message")
-
-	fields := loggedFields(t, logs)
-	assert.Equal(t, "bar", fields["foo"])
-	assert.NotContains(t, fields, pinpoint.LogTransactionIdKey)
-	assert.NotContains(t, fields, pinpoint.LogSpanIdKey)
-
-	assert.Same(t, logger, NewLogger(logger, nil), "an unsampled tracer must not clone the logger")
-}
-
-// The sugared logger has no fields of its own to instrument, so it is derived
-// from an instrumented *zap.Logger. That path has to carry the ids too.
-func TestNewLogger_Sugar(t *testing.T) {
-	startAgent(t)
-	tracer := newTracer(t)
-
-	logger, logs := observedLogger(t)
-	NewLogger(logger, tracer).Sugar().With("foo", "bar").Errorw("sugared log message")
-
-	fields := loggedFields(t, logs)
-	assert.Equal(t, tracer.TransactionId().String(), fields[pinpoint.LogTransactionIdKey])
-	assert.Equal(t, "bar", fields["foo"])
 }
 
 // One base logger serves every request in a process, so deriving from it

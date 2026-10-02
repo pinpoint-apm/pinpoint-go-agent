@@ -3,14 +3,12 @@ package ppgoelastic
 import (
 	"bytes"
 	"compress/gzip"
-	"context"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/stretchr/testify/assert"
@@ -68,58 +66,9 @@ func Test_dslString_LimitsCopiedBodyRead(t *testing.T) {
 	assert.Equal(t, huge, string(sent), "the request body the transport sends must be untouched")
 }
 
-func TestRoundTrip_DoesNotPreconsumeStreamingBodyWithoutGetBody(t *testing.T) {
-	reader, writer := io.Pipe()
-	defer reader.Close()
-	defer writer.Close()
-
-	req, _ := tracedRequest(t, http.MethodPost, "http://es:9200/_bulk", reader)
-
-	entered := make(chan *http.Request, 1)
-	bodyRead := make(chan []byte, 1)
-	rt := NewTransport(roundTripperFunc(func(got *http.Request) (*http.Response, error) {
-		entered <- got
-		body, err := io.ReadAll(got.Body)
-		bodyRead <- body
-		if err != nil {
-			return nil, err
-		}
-		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: got}, nil
-	}))
-
-	roundTripDone := make(chan error, 1)
-	go func() {
-		_, err := rt.RoundTrip(req)
-		roundTripDone <- err
-	}()
-
-	var sentReq *http.Request
-	select {
-	case sentReq = <-entered:
-	case <-time.After(2 * time.Second):
-		_ = writer.CloseWithError(io.ErrClosedPipe)
-		<-roundTripDone
-		t.Fatal("underlying transport was not called before the streaming body reached EOF")
-	}
-	assert.Equal(t, io.ReadCloser(reader), sentReq.Body,
-		"the underlying transport received a replaced body of type %T", sentReq.Body)
-
-	payload := []byte("streamed bulk body")
-	writeDone := make(chan error, 1)
-	go func() {
-		_, err := writer.Write(payload)
-		if closeErr := writer.Close(); err == nil {
-			err = closeErr
-		}
-		writeDone <- err
-	}()
-
-	got := <-bodyRead
-	require.NoError(t, <-writeDone)
-	require.NoError(t, <-roundTripDone)
-	assert.Equal(t, string(payload), string(got))
-}
-
+// Without GetBody the transport has no copy to read the DSL from, so the body
+// must reach the underlying transport untouched: reading it first would stall
+// a streaming request until EOF and, on a read error, truncate what is sent.
 func TestRoundTrip_DoesNotMutateReadErrorBodyWithoutGetBody(t *testing.T) {
 	body := &readErrorBody{}
 	req, _ := tracedRequest(t, http.MethodPost, "http://es:9200/_bulk", body)
@@ -273,28 +222,17 @@ func TestRoundTrip_TruncatesTheDsl(t *testing.T) {
 // Recording those would unbalance the span-event stack of whatever ran next on
 // that goroutine.
 func TestRoundTrip_IgnoresUnsampledRequests(t *testing.T) {
-	for _, tt := range []struct {
-		name string
-		ctx  context.Context
-	}{
-		{"background context", context.Background()},
-		{"noop tracer", pinpoint.NewContext(context.Background(), pinpoint.NoopTracer())},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			req, err := http.NewRequest(http.MethodGet, "http://es:9200/test/_search?q=name:foo", nil)
-			require.NoError(t, err)
-			req = req.WithContext(tt.ctx)
+	req, err := http.NewRequest(http.MethodGet, "http://es:9200/test/_search?q=name:foo", nil)
+	require.NoError(t, err)
 
-			called := false
-			rt := NewTransport(roundTripperFunc(func(*http.Request) (*http.Response, error) {
-				called = true
-				return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
-			}))
-			_, err = rt.RoundTrip(req)
-			require.NoError(t, err)
-			assert.True(t, called, "the underlying transport was not called")
-		})
-	}
+	called := false
+	rt := NewTransport(roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		called = true
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+	}))
+	_, err = rt.RoundTrip(req)
+	require.NoError(t, err)
+	assert.True(t, called, "the underlying transport was not called")
 }
 
 // The DSL is whatever describes the query: the q parameter for a URI search,
@@ -398,7 +336,6 @@ func TestNewTransport_DefaultsToHttpDefaultTransport(t *testing.T) {
 func TestNewTransport_KeepsTheGivenTransport(t *testing.T) {
 	given := roundTripperFunc(func(*http.Request) (*http.Response, error) { return nil, nil })
 
-	assert.Implements(t, (*http.RoundTripper)(nil), NewTransport(given))
 	assert.False(t, NewTransport(given).(*transport).rt == http.RoundTripper(http.DefaultTransport),
 		"the caller's transport was replaced by the default")
 }

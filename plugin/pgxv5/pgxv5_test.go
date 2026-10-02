@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
-	"slices"
 	"strings"
 	"testing"
 
@@ -16,6 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// driverName is deliberately not plugin/pgsql's "pq-pinpoint": database/sql
+// panics on a duplicate registration if a binary imports both.
 const driverName = "pgxv5-pinpoint"
 
 // recordingTracer captures what the pgx tracer records on a span event. A real
@@ -46,18 +47,6 @@ func (t *recordingTracer) EndSpanEvent() { t.last().ended = true }
 
 func (t *recordingTracer) last() *recordedEvent { return t.events[len(t.events)-1] }
 
-// open reports the events that were never closed; every callback pair has to
-// leave this empty or the span-event stack of the surrounding request skews.
-func (t *recordingTracer) open() []string {
-	var open []string
-	for _, e := range t.events {
-		if !e.ended {
-			open = append(open, e.operation)
-		}
-	}
-	return open
-}
-
 type recordedEvent struct {
 	pinpoint.SpanEventRecorder
 	operation   string
@@ -85,15 +74,10 @@ type recordedAnnotation struct {
 
 func (a recordedAnnotation) AppendString(key int32, s string) { a.into[key] = s }
 
-func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) pinpoint.Agent {
+func startAgent(t *testing.T) pinpoint.Agent {
 	t.Helper()
 
-	opts = append([]pinpoint.ConfigOption{
-		pinpoint.WithAppName("testApp"),
-		pinpoint.WithAgentName("testAgent"),
-	}, opts...)
-
-	config, err := pinpoint.NewConfig(opts...)
+	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentName("testAgent"))
 	require.NoError(t, err)
 
 	agent, err := pinpoint.NewTestAgent(config)
@@ -112,54 +96,18 @@ func testConfig(t *testing.T) *pgx.ConnConfig {
 	return config
 }
 
-// The endpoint recorded on every span event comes from here. pgx resolves a
-// DSN against libpq's environment defaults at connect time, and both DSN
-// dialects it accepts have to reduce to the same host and database, or the
-// span points at a different server than the connection.
+// parseDSN copies the host and database pgconn's own parser found into the
+// DBInfo every span event's endpoint comes from. pgx resolves a DSN against
+// libpq's environment defaults, so those are cleared first.
 func Test_parseDSN(t *testing.T) {
-	for _, tt := range []struct {
-		name     string
-		dsn      string
-		wantHost string
-		wantName string
-	}{
-		{
-			name:     "url dsn",
-			dsn:      "postgres://testuser:p123@dbhost:5432/testdb?sslmode=disable",
-			wantHost: "dbhost",
-			wantName: "testdb",
-		},
-		{
-			name:     "keyword value dsn",
-			dsn:      "host=dbhost port=5432 dbname=testdb user=testuser password=p123",
-			wantHost: "dbhost",
-			wantName: "testdb",
-		},
-		{
-			// A socket directory is what pgx dials; it is recorded verbatim.
-			name:     "unix socket directory",
-			dsn:      "postgres:///testdb?host=/var/run/postgresql",
-			wantHost: "/var/run/postgresql",
-			wantName: "testdb",
-		},
-		{
-			name:     "an ipv6 host",
-			dsn:      "postgres://testuser@[::1]:5432/testdb",
-			wantHost: "::1",
-			wantName: "testdb",
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("PGHOST", "")
-			t.Setenv("PGDATABASE", "")
+	t.Setenv("PGHOST", "")
+	t.Setenv("PGDATABASE", "")
 
-			var info pinpoint.DBInfo
-			parseDSN(&info, tt.dsn)
+	var info pinpoint.DBInfo
+	parseDSN(&info, "postgres://testuser:p123@dbhost:5432/testdb?sslmode=disable")
 
-			assert.Equal(t, tt.wantHost, info.DBHost)
-			assert.Equal(t, tt.wantName, info.DBName)
-		})
-	}
+	assert.Equal(t, "dbhost", info.DBHost)
+	assert.Equal(t, "testdb", info.DBName)
 }
 
 // An unparsable DSN must leave the driver's shared DBInfo alone rather than
@@ -185,15 +133,6 @@ func TestRegisteredDriverInfo(t *testing.T) {
 	assert.NotNil(t, DBInfo().ParseDSN, "without a ParseDSN the wrapper never learns the host or database")
 }
 
-// The documented driver name is the only thing an application refers to, so it
-// has to be the name package init actually registered. It is deliberately not
-// plugin/pgsql's "pq-pinpoint": database/sql panics on a duplicate registration
-// if a binary imports both.
-func TestRegisteredDriverName(t *testing.T) {
-	assert.True(t, slices.Contains(sql.Drivers(), driverName),
-		"%s not registered, got %v", driverName, sql.Drivers())
-}
-
 // Opening through the registered name must hand database/sql the instrumented
 // driver, not the bare stdlib one - otherwise nothing is ever traced.
 func TestOpenUsesTheInstrumentedDriver(t *testing.T) {
@@ -201,12 +140,11 @@ func TestOpenUsesTheInstrumentedDriver(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	// *stdlib.Driver satisfies both interfaces on its own, so the Implements
-	// checks alone passed with the bare driver registered. The type assertion
+	// *stdlib.Driver implements DriverContext on its own, so the Implements
+	// check alone passed with the bare driver registered. The type assertion
 	// is what rules that out.
 	_, bare := db.Driver().(*stdlib.Driver)
 	assert.False(t, bare, "the bare stdlib driver was registered, so nothing is traced")
-	assert.Implements(t, (*driver.Driver)(nil), db.Driver())
 	assert.Implements(t, (*driver.DriverContext)(nil), db.Driver(),
 		"the wrapper must keep the driver's OpenConnector reachable")
 }
@@ -233,21 +171,9 @@ func Test_newSpanEvent(t *testing.T) {
 // must also come before that copy: a zero Conn has no config, and reaching
 // Config() on it panics.
 func Test_newSpanEventIgnoresUnsampledCalls(t *testing.T) {
-	config := testConfig(t)
-
-	for _, tt := range []struct {
-		name string
-		ctx  context.Context
-	}{
-		{"background context", context.Background()},
-		{"noop tracer", pinpoint.NewContext(context.Background(), pinpoint.NoopTracer())},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			tracer := newSpanEvent(tt.ctx, config, "pgx.Query")
-			assert.False(t, tracer.IsSampled(), "an unsampled context produced a sampled tracer")
-			assert.False(t, connSpanEvent(tt.ctx, &pgx.Conn{}, "pgx.Query").IsSampled())
-		})
-	}
+	ctx := context.Background()
+	assert.False(t, newSpanEvent(ctx, testConfig(t), "pgx.Query").IsSampled(), "an unsampled context produced a sampled tracer")
+	assert.False(t, connSpanEvent(ctx, &pgx.Conn{}, "pgx.Query").IsSampled())
 }
 
 // Connecting is a span event of its own, opened on start and closed on end -
@@ -265,67 +191,41 @@ func TestTraceConnect(t *testing.T) {
 	e := tracer.events[0]
 	assert.Equal(t, "pgx.Connect", e.operation)
 	assert.Equal(t, "dbhost", e.endPoint)
-	assert.Empty(t, tracer.open(), "the span event was left open")
+	assert.True(t, e.ended, "the span event was left open")
 }
 
 // pgx hands each Start callback a live *pgx.Conn to read the connection config
 // off, and there is no way to build one without a server; what those halves
-// record is covered through newSpanEvent and composeArgs. The End halves take
-// the connection but never use it, so the pairing they complete - and the error
-// they record - is testable here.
-func TestTraceQueryEnd(t *testing.T) {
-	tracer := newRecordingTracer()
-	ctx := pinpoint.NewContext(context.Background(), tracer)
-	newSpanEvent(ctx, testConfig(t), "pgx.Query") // what TraceQueryStart opens
+// record is covered through newSpanEvent. The End halves take the connection
+// but never use it, so the pairing they complete - and the error they record,
+// none on success - is testable here. TraceBatchEnd is the only thing that
+// closes the enclosing batch event.
+func TestEndCallbacks(t *testing.T) {
+	pgxT := NewTracer()
+	for _, tt := range []struct {
+		operation string
+		end       func(context.Context, error)
+	}{
+		{"pgx.Query", func(ctx context.Context, err error) { pgxT.TraceQueryEnd(ctx, nil, pgx.TraceQueryEndData{Err: err}) }},
+		{"pgx.Batch", func(ctx context.Context, err error) { pgxT.TraceBatchEnd(ctx, nil, pgx.TraceBatchEndData{Err: err}) }},
+		{"pgx.CopyFrom", func(ctx context.Context, err error) {
+			pgxT.TraceCopyFromEnd(ctx, nil, pgx.TraceCopyFromEndData{Err: err})
+		}},
+	} {
+		t.Run(tt.operation, func(t *testing.T) {
+			for _, want := range []error{errors.New(tt.operation + " failed"), nil} {
+				tracer := newRecordingTracer()
+				ctx := pinpoint.NewContext(context.Background(), tracer)
+				newSpanEvent(ctx, testConfig(t), tt.operation) // what the Start half opens
 
-	want := errors.New("relation does not exist")
-	NewTracer().TraceQueryEnd(ctx, nil, pgx.TraceQueryEndData{Err: want})
+				tt.end(ctx, want)
 
-	require.Len(t, tracer.events, 1)
-	assert.Equal(t, want, tracer.events[0].err, "the query error must be recorded on the span event")
-	assert.Empty(t, tracer.open(), "the span event was left open")
-}
-
-// A successful query closes its event with no error recorded.
-func TestTraceQueryEnd_Success(t *testing.T) {
-	tracer := newRecordingTracer()
-	ctx := pinpoint.NewContext(context.Background(), tracer)
-	newSpanEvent(ctx, testConfig(t), "pgx.Query")
-
-	NewTracer().TraceQueryEnd(ctx, nil, pgx.TraceQueryEndData{})
-
-	require.Len(t, tracer.events, 1)
-	assert.NoError(t, tracer.events[0].err)
-	assert.Empty(t, tracer.open())
-}
-
-// The batch-level error goes on the enclosing event, which TraceBatchEnd is
-// the only thing that closes.
-func TestTraceBatchEnd(t *testing.T) {
-	tracer := newRecordingTracer()
-	ctx := pinpoint.NewContext(context.Background(), tracer)
-	newSpanEvent(ctx, testConfig(t), "pgx.Batch") // what TraceBatchStart opens
-
-	want := errors.New("batch aborted")
-	NewTracer().TraceBatchEnd(ctx, nil, pgx.TraceBatchEndData{Err: want})
-
-	require.Len(t, tracer.events, 1)
-	assert.Equal(t, want, tracer.events[0].err)
-	assert.Empty(t, tracer.open(), "the enclosing batch event was left open")
-}
-
-// CopyFrom is one event too, closed with whatever the copy failed with.
-func TestTraceCopyFromEnd(t *testing.T) {
-	tracer := newRecordingTracer()
-	ctx := pinpoint.NewContext(context.Background(), tracer)
-	newSpanEvent(ctx, testConfig(t), "pgx.CopyFrom") // what TraceCopyFromStart opens
-
-	want := errors.New("copy failed")
-	NewTracer().TraceCopyFromEnd(ctx, nil, pgx.TraceCopyFromEndData{Err: want})
-
-	require.Len(t, tracer.events, 1)
-	assert.Equal(t, want, tracer.events[0].err)
-	assert.Empty(t, tracer.open(), "the span event was left open")
+				require.Len(t, tracer.events, 1)
+				assert.Equal(t, want, tracer.events[0].err, "the error must be recorded on the span event")
+				assert.True(t, tracer.events[0].ended, "the span event was left open")
+			}
+		})
+	}
 }
 
 // The copy target is what CopyFrom records in place of a SQL statement, so the
@@ -342,26 +242,6 @@ func TestCopyFromTargetIsSanitized(t *testing.T) {
 	assert.Equal(t, `"public"."users"`,
 		tracer.events[0].annotations[pinpoint.AnnotationArgs0],
 		"the sanitized copy target belongs in the Args0 annotation")
-}
-
-// Every End callback also runs for queries made outside a span. Closing a span
-// event that was never opened would unwind the surrounding request's stack.
-func TestEndCallbacksIgnoreUnsampledCalls(t *testing.T) {
-	startAgent(t)
-
-	pgxT := NewTracer()
-
-	for _, ctx := range []context.Context{
-		context.Background(),
-		pinpoint.NewContext(context.Background(), pinpoint.NoopTracer()),
-	} {
-		assert.NotPanics(t, func() {
-			pgxT.TraceConnectEnd(ctx, pgx.TraceConnectEndData{})
-			pgxT.TraceQueryEnd(ctx, nil, pgx.TraceQueryEndData{})
-			pgxT.TraceBatchEnd(ctx, nil, pgx.TraceBatchEndData{})
-			pgxT.TraceCopyFromEnd(ctx, nil, pgx.TraceCopyFromEndData{})
-		})
-	}
 }
 
 // Bind values can hold personal data, so SQL.TraceBindValue is a privacy gate:

@@ -19,8 +19,6 @@ type fakeRedisConn struct {
 	inReceive chan struct{}
 }
 
-var _ redis.Conn = (*fakeRedisConn)(nil)
-
 func (f *fakeRedisConn) Close() error { return nil }
 func (f *fakeRedisConn) Err() error   { return nil }
 func (f *fakeRedisConn) Do(cmd string, args ...interface{}) (interface{}, error) {

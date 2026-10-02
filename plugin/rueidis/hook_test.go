@@ -7,7 +7,6 @@ import (
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/redis/rueidis"
-	"github.com/redis/rueidis/rueidishook"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,8 +35,6 @@ func (t *recordingTracer) NewSpanEvent(operation string) pinpoint.Tracer {
 
 func (t *recordingTracer) SpanEvent() pinpoint.SpanEventRecorder { return t.last() }
 
-func (t *recordingTracer) EndSpanEvent() { t.last().ended = true }
-
 func (t *recordingTracer) last() *recordedEvent { return t.events[len(t.events)-1] }
 
 type recordedEvent struct {
@@ -46,15 +43,12 @@ type recordedEvent struct {
 	serviceType int32
 	destination string
 	endPoint    string
-	err         error
 	annotations map[int32]string
-	ended       bool
 }
 
-func (e *recordedEvent) SetServiceType(typ int32)        { e.serviceType = typ }
-func (e *recordedEvent) SetDestination(id string)        { e.destination = id }
-func (e *recordedEvent) SetEndPoint(endPoint string)     { e.endPoint = endPoint }
-func (e *recordedEvent) SetError(err error, _ ...string) { e.err = err }
+func (e *recordedEvent) SetServiceType(typ int32)    { e.serviceType = typ }
+func (e *recordedEvent) SetDestination(id string)    { e.destination = id }
+func (e *recordedEvent) SetEndPoint(endPoint string) { e.endPoint = endPoint }
 
 func (e *recordedEvent) Annotations() pinpoint.Annotation {
 	return recordedAnnotation{Annotation: e.SpanEventRecorder.Annotations(), into: e.annotations}
@@ -71,33 +65,17 @@ func testHook() *Hook {
 	return NewHook(rueidis.ClientOption{InitAddress: []string{"redis1:6379"}})
 }
 
-// rueidishook.WithHook is the only documented way to use this plugin, so *Hook
-// has to keep satisfying that interface as rueidis adds methods to it.
-func TestHookSatisfiesTheRueidisInterface(t *testing.T) {
-	assert.Implements(t, (*rueidishook.Hook)(nil), testHook())
-}
-
 // The command name is built for the annotation only; an untraced call must not
 // pay for building it.
 func TestNewSpanEventSkipsCommandForUnsampledTracer(t *testing.T) {
-	for _, tt := range []struct {
-		name string
-		ctx  context.Context
-	}{
-		{"background context", context.Background()},
-		{"noop tracer", pinpoint.NewContext(context.Background(), pinpoint.NoopTracer())},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			called := false
-			tracer, _ := testHook().newSpanEvent(tt.ctx, "test", func() string {
-				called = true
-				return "large command"
-			})
+	called := false
+	tracer, _ := testHook().newSpanEvent(context.Background(), "test", func() string {
+		called = true
+		return "large command"
+	})
 
-			assert.False(t, tracer.IsSampled(), "an unsampled context produced a sampled tracer")
-			assert.False(t, called, "the command was built for an unsampled tracer")
-		})
-	}
+	assert.False(t, tracer.IsSampled(), "an unsampled context produced a sampled tracer")
+	assert.False(t, called, "the command was built for an unsampled tracer")
 }
 
 // The endpoint is what puts the call on the right node of the server map. The

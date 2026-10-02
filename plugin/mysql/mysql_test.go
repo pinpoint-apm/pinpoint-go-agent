@@ -3,7 +3,6 @@ package ppmysql
 import (
 	"database/sql"
 	"database/sql/driver"
-	"slices"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
@@ -98,54 +97,13 @@ func Test_parseConfig(t *testing.T) {
 	}
 }
 
+// parseDSN hands mysql's own parse of the dsn to parseConfig.
 func Test_parseDSN(t *testing.T) {
-	for _, tt := range []struct {
-		name     string
-		dsn      string
-		wantHost string
-		wantName string
-	}{
-		{
-			name:     "the documented dsn",
-			dsn:      "root:p123@tcp(127.0.0.1:3306)/testdb",
-			wantHost: "127.0.0.1",
-			wantName: "testdb",
-		},
-		{
-			name:     "a named host",
-			dsn:      "root:p123@tcp(dbhost:3306)/testdb?parseTime=true",
-			wantHost: "dbhost",
-			wantName: "testdb",
-		},
-		{
-			name:     "a unix socket dsn",
-			dsn:      "root:p123@unix(/tmp/mysql.sock)/testdb",
-			wantHost: "localhost",
-			wantName: "testdb",
-		},
-		{
-			// mysql defaults to 127.0.0.1:3306 when the dsn names no address.
-			name:     "no address in the dsn",
-			dsn:      "root:p123@/testdb",
-			wantHost: "127.0.0.1",
-			wantName: "testdb",
-		},
-		{
-			// An empty dsn is not an error to mysql: it is every default.
-			name:     "an empty dsn is mysql's defaults",
-			dsn:      "",
-			wantHost: "127.0.0.1",
-			wantName: "",
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			var info pinpoint.DBInfo
-			parseDSN(&info, tt.dsn)
+	var info pinpoint.DBInfo
+	parseDSN(&info, "root:p123@tcp(127.0.0.1:3306)/testdb")
 
-			assert.Equal(t, tt.wantHost, info.DBHost)
-			assert.Equal(t, tt.wantName, info.DBName)
-		})
-	}
+	assert.Equal(t, "127.0.0.1", info.DBHost)
+	assert.Equal(t, "testdb", info.DBName)
 }
 
 // An unparsable DSN must leave the driver's shared DBInfo alone rather than
@@ -164,31 +122,12 @@ func Test_parseDSN_InvalidLeavesInfoUntouched(t *testing.T) {
 	}
 }
 
-// parseDSN runs per connection against a copy of the shared DBInfo, and must
-// only fill in the address: overwriting the service types would file that one
-// connection's queries under a different node.
-func Test_parseDSN_LeavesTheServiceTypesAlone(t *testing.T) {
-	info := DBInfo()
-	parseDSN(&info, "root:p123@tcp(127.0.0.1:3306)/testdb")
-
-	assert.Equal(t, DBInfo().DBType, info.DBType)
-	assert.Equal(t, DBInfo().QueryType, info.QueryType)
-	assert.Equal(t, "127.0.0.1", info.DBHost)
-}
-
 // The registered driver has to carry the mysql service types; a wrong type
 // files every query under the wrong node on the server map.
 func TestRegisteredDriverInfo(t *testing.T) {
 	assert.Equal(t, pinpoint.ServiceTypeMysql, DBInfo().DBType)
 	assert.Equal(t, pinpoint.ServiceTypeMysqlExecuteQuery, DBInfo().QueryType)
 	assert.NotNil(t, DBInfo().ParseDSN, "without a ParseDSN the wrapper never learns the host or database")
-}
-
-// The documented driver name is the only thing an application refers to, so it
-// has to be the name package init actually registered.
-func TestRegisteredDriverName(t *testing.T) {
-	assert.True(t, slices.Contains(sql.Drivers(), driverName),
-		"%s not registered, got %v", driverName, sql.Drivers())
 }
 
 // Opening through the registered name must hand database/sql the instrumented

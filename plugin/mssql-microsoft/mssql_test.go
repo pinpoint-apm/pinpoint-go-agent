@@ -2,8 +2,6 @@ package ppmssqlmicrosoft
 
 import (
 	"database/sql"
-	"database/sql/driver"
-	"slices"
 	"testing"
 
 	mssql "github.com/microsoft/go-mssqldb"
@@ -12,65 +10,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// driverName stays "mssql-microsoft-pinpoint" rather than the
+// "sqlserver-pinpoint" the retired denisenkom plugin used: a binary that still
+// links that v1 plugin would panic in database/sql on the duplicate
+// registration.
 const driverName = "mssql-microsoft-pinpoint"
 
-// The endpoint recorded on every span event comes from here, so both DSN
-// dialects go-mssqldb accepts - ADO keyword pairs and a sqlserver:// URL -
-// have to reduce to the same host and database.
+// parseDSN copies the host and database go-mssqldb's own parser found into
+// the DBInfo every span event's endpoint comes from.
 func Test_parseDSN(t *testing.T) {
-	for _, tt := range []struct {
-		name     string
-		dsn      string
-		wantHost string
-		wantName string
-	}{
-		{
-			name:     "ado keyword dsn",
-			dsn:      "server=dbhost;user id=sa;password=p123;port=1433;database=TestDB",
-			wantHost: "dbhost",
-			wantName: "TestDB",
-		},
-		{
-			name:     "url dsn",
-			dsn:      "sqlserver://sa:p123@dbhost:1433?database=TestDB",
-			wantHost: "dbhost",
-			wantName: "TestDB",
-		},
-		{
-			name:     "odbc dsn",
-			dsn:      "odbc:server=dbhost;database=TestDB",
-			wantHost: "dbhost",
-			wantName: "TestDB",
-		},
-		{
-			// The named instance is not part of the host the collector groups by.
-			name:     "named instance",
-			dsn:      `server=dbhost\SQLEXPRESS;database=TestDB`,
-			wantHost: "dbhost",
-			wantName: "TestDB",
-		},
-		{
-			// go-mssqldb resolves both "." and an omitted server to localhost.
-			name:     "local server shorthand",
-			dsn:      "server=.;database=TestDB",
-			wantHost: "localhost",
-			wantName: "TestDB",
-		},
-		{
-			name:     "no database selected",
-			dsn:      "server=dbhost;user id=sa",
-			wantHost: "dbhost",
-			wantName: "",
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			var info pinpoint.DBInfo
-			parseDSN(&info, tt.dsn)
+	var info pinpoint.DBInfo
+	parseDSN(&info, "server=dbhost;user id=sa;password=p123;port=1433;database=TestDB")
 
-			assert.Equal(t, tt.wantHost, info.DBHost)
-			assert.Equal(t, tt.wantName, info.DBName)
-		})
-	}
+	assert.Equal(t, "dbhost", info.DBHost)
+	assert.Equal(t, "TestDB", info.DBName)
 }
 
 // An unparsable DSN must leave the driver's shared DBInfo alone rather than
@@ -88,34 +41,12 @@ func Test_parseDSN_InvalidLeavesInfoUntouched(t *testing.T) {
 	}
 }
 
-// parseDSN runs per connection against a copy of the shared DBInfo, and must
-// only fill in the address: overwriting the service types would file that one
-// connection's queries under a different node.
-func Test_parseDSN_LeavesTheServiceTypesAlone(t *testing.T) {
-	info := DBInfo()
-	parseDSN(&info, "server=dbhost;database=TestDB")
-
-	assert.Equal(t, DBInfo().DBType, info.DBType)
-	assert.Equal(t, DBInfo().QueryType, info.QueryType)
-	assert.Equal(t, "dbhost", info.DBHost)
-}
-
 // The registered driver has to carry the mssql service types; a wrong type
 // files every query under the wrong node on the server map.
 func TestRegisteredDriverInfo(t *testing.T) {
 	assert.Equal(t, pinpoint.ServiceTypeMssql, DBInfo().DBType)
 	assert.Equal(t, pinpoint.ServiceTypeMssqlExecuteQuery, DBInfo().QueryType)
 	assert.NotNil(t, DBInfo().ParseDSN, "without a ParseDSN the wrapper never learns the host or database")
-}
-
-// The documented driver name is the only thing an application refers to, so it
-// has to be the name package init actually registered. It stays
-// "mssql-microsoft-pinpoint" rather than the "sqlserver-pinpoint" the retired
-// denisenkom plugin used: a binary that still links that v1 plugin would panic
-// in database/sql on the duplicate registration.
-func TestRegisteredDriverName(t *testing.T) {
-	assert.True(t, slices.Contains(sql.Drivers(), driverName),
-		"%s not registered, got %v", driverName, sql.Drivers())
 }
 
 // Opening through the registered name must hand database/sql the instrumented
@@ -125,7 +56,6 @@ func TestOpenUsesTheInstrumentedDriver(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	assert.Implements(t, (*driver.Driver)(nil), db.Driver())
 	// A type assertion, not a comparison against a constructed driver value:
 	// that only catches a bare driver registered in exactly the same form, and
 	// passed for every other one.

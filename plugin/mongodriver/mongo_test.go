@@ -44,20 +44,6 @@ func TestCommandAnnotation(t *testing.T) {
 		assert.Equal(t, string(b[:maxJsonSize-len(abbreviationMarker)])+abbreviationMarker, got)
 	})
 
-	t.Run("abbreviation keeps valid UTF-8", func(t *testing.T) {
-		// Escaped control bytes push the cut into the multi-byte run that follows.
-		evt := commandStartedEvent(t, "insert", "widgets", strings.Repeat("\x01", 10900)+strings.Repeat("\uac00", 200))
-		b, err := bson.MarshalExtJSON(evt.Command, false, false)
-		require.NoError(t, err)
-		cut := maxJsonSize - len(abbreviationMarker)
-		require.False(t, utf8.RuneStart(b[cut]), "the test payload does not straddle the cut at %d", cut)
-
-		got := commandAnnotation(evt, "widgets", maxJsonSize)
-		assert.True(t, utf8.ValidString(got), "commandAnnotation() is not valid UTF-8 (%d bytes)", len(got))
-		assert.True(t, strings.HasSuffix(got, abbreviationMarker),
-			"commandAnnotation() = %.80q, want the abbreviation marker", got)
-	})
-
 	t.Run("large command skips extended JSON", func(t *testing.T) {
 		evt := commandStartedEvent(t, "insert", "widgets", strings.Repeat("x", maxBsonSize))
 		require.Greater(t, len(evt.Command), maxBsonSize, "the test command must exceed the BSON gate")

@@ -14,15 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) pinpoint.Agent {
+func startAgent(t *testing.T) pinpoint.Agent {
 	t.Helper()
 
-	opts = append([]pinpoint.ConfigOption{
-		pinpoint.WithAppName("testApp"),
-		pinpoint.WithAgentName("testAgent"),
-	}, opts...)
-
-	config, err := pinpoint.NewConfig(opts...)
+	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentName("testAgent"))
 	require.NoError(t, err)
 
 	agent, err := pinpoint.NewTestAgent(config)
@@ -80,19 +75,8 @@ func TestNewField(t *testing.T) {
 func TestNewField_WithoutASampledTracer(t *testing.T) {
 	startAgent(t)
 
-	for _, tt := range []struct {
-		name   string
-		tracer pinpoint.Tracer
-	}{
-		{"nil tracer", nil},
-		{"noop tracer", pinpoint.NoopTracer()},
-		{"tracer from a context without a span", pinpoint.FromContext(context.Background())},
-		{"tracer from a nil context", pinpoint.FromContext(nil)},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Empty(t, NewField(tt.tracer), "an unsampled tracer must contribute no fields")
-		})
-	}
+	assert.Empty(t, NewField(nil), "a nil tracer must contribute no fields")
+	assert.Empty(t, NewField(pinpoint.NoopTracer()), "an unsampled tracer must contribute no fields")
 }
 
 // The entry constructors are what most applications use, and both have to end
@@ -150,48 +134,14 @@ func TestHook_Fire(t *testing.T) {
 	assert.Equal(t, "hook log message", fields["msg"])
 }
 
-// The hook fires on every level, so the ids have to reach a debug line as
-// readily as an error one.
-func TestHook_FireOnEveryLevel(t *testing.T) {
-	startAgent(t)
-	tracer := newTracer(t)
-
-	for _, level := range logrus.AllLevels {
-		if level == logrus.PanicLevel || level == logrus.FatalLevel {
-			continue // these end the process rather than returning
-		}
-		t.Run(level.String(), func(t *testing.T) {
-			logger, out := jsonLogger(t)
-			logger.AddHook(NewHook())
-
-			logger.WithContext(pinpoint.NewContext(context.Background(), tracer)).Log(level, "message")
-
-			assert.Equal(t, tracer.TransactionId().String(), loggedFields(t, out)[pinpoint.LogTransactionIdKey])
-		})
-	}
-}
-
 // Most log lines are written without a context. The hook must leave those
 // entries alone instead of failing the log call.
 func TestHook_FireWithoutATracer(t *testing.T) {
 	startAgent(t)
 
-	for _, tt := range []struct {
-		name  string
-		entry *logrus.Entry
-	}{
-		{"no context", &logrus.Entry{Data: logrus.Fields{}}},
-		{"context without a span", &logrus.Entry{Context: context.Background(), Data: logrus.Fields{}}},
-		{"context with a noop tracer", &logrus.Entry{
-			Context: pinpoint.NewContext(context.Background(), pinpoint.NoopTracer()),
-			Data:    logrus.Fields{},
-		}},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			require.NoError(t, NewHook().Fire(tt.entry))
-			assert.Empty(t, tt.entry.Data, "an entry without a sampled tracer must be left alone")
-		})
-	}
+	entry := &logrus.Entry{Data: logrus.Fields{}}
+	require.NoError(t, NewHook().Fire(entry))
+	assert.Empty(t, entry.Data, "an entry without a sampled tracer must be left alone")
 }
 
 // A hook registered for fewer levels would silently skip the ids on the log

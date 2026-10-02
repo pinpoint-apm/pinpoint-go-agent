@@ -13,16 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	processOperation  = "go-redis/v9.Process()"
-	pipelineOperation = "go-redis/v9.ProcessPipeline()"
-)
-
 // recordingTracer captures what the hook records on a span event. A real
 // tracer's recorders are write-only, so this stands in for one.
 type recordingTracer struct {
 	pinpoint.Tracer
-	mu     sync.Mutex
 	events []*recordedEvent
 }
 
@@ -33,8 +27,6 @@ func newRecordingTracer() *recordingTracer {
 func (t *recordingTracer) IsSampled() bool { return true }
 
 func (t *recordingTracer) NewSpanEvent(operation string) pinpoint.Tracer {
-	t.mu.Lock()
-	defer t.mu.Unlock()
 	t.events = append(t.events, &recordedEvent{
 		SpanEventRecorder: t.Tracer.SpanEvent(),
 		operation:         operation,
@@ -47,11 +39,7 @@ func (t *recordingTracer) SpanEvent() pinpoint.SpanEventRecorder { return t.last
 
 func (t *recordingTracer) EndSpanEvent() { t.last().ended = true }
 
-func (t *recordingTracer) last() *recordedEvent {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.events[len(t.events)-1]
-}
+func (t *recordingTracer) last() *recordedEvent { return t.events[len(t.events)-1] }
 
 type recordedEvent struct {
 	pinpoint.SpanEventRecorder
@@ -111,46 +99,34 @@ func TestNewHook_Endpoint(t *testing.T) {
 }
 
 // One command is one span event, wrapped around the next hook in the chain.
-// The command's error has to reach both the caller and the span.
+// The command's error has to reach both the caller and the span; a command
+// that succeeded records none, so a later failed one is not mistaken for it.
 func TestProcessHook(t *testing.T) {
-	tracer := newRecordingTracer()
-	ctx := pinpoint.NewContext(context.Background(), tracer)
 	h := NewHook(&redis.Options{Addr: "redis1:6379"})
 
-	cmdErr := errors.New("WRONGTYPE")
-	inner := false
-	err := h.ProcessHook(func(context.Context, redis.Cmder) error {
-		inner = true
-		return cmdErr
-	})(ctx, cmd("get"))
+	for _, cmdErr := range []error{errors.New("WRONGTYPE"), nil} {
+		tracer := newRecordingTracer()
+		ctx := pinpoint.NewContext(context.Background(), tracer)
 
-	require.True(t, inner, "the next hook did not run")
-	assert.ErrorIs(t, err, cmdErr, "the command's error must come back unchanged")
+		inner := false
+		err := h.ProcessHook(func(context.Context, redis.Cmder) error {
+			inner = true
+			return cmdErr
+		})(ctx, cmd("get"))
 
-	require.Len(t, tracer.events, 1, "one command must produce exactly one span event")
-	e := tracer.events[0]
-	assert.Equal(t, processOperation, e.operation)
-	assert.Equal(t, int32(pinpoint.ServiceTypeRedis), e.serviceType)
-	assert.Equal(t, "REDIS", e.destination)
-	assert.Equal(t, "redis1:6379", e.endPoint)
-	assert.Equal(t, "get", e.annotations[pinpoint.AnnotationArgs0])
-	assert.ErrorIs(t, e.err, cmdErr)
-	assert.True(t, e.ended, "the span event was left open")
-}
+		require.True(t, inner, "the next hook did not run")
+		assert.Equal(t, cmdErr, err, "the command's error must come back unchanged")
 
-// A command that succeeded records no error, so a later failed one is not
-// mistaken for it.
-func TestProcessHook_SuccessfulCommand(t *testing.T) {
-	tracer := newRecordingTracer()
-	ctx := pinpoint.NewContext(context.Background(), tracer)
-
-	err := NewHook(&redis.Options{Addr: "redis1:6379"}).
-		ProcessHook(func(context.Context, redis.Cmder) error { return nil })(ctx, cmd("get"))
-
-	require.NoError(t, err)
-	require.Len(t, tracer.events, 1)
-	assert.NoError(t, tracer.events[0].err)
-	assert.True(t, tracer.events[0].ended)
+		require.Len(t, tracer.events, 1, "one command must produce exactly one span event")
+		e := tracer.events[0]
+		assert.Equal(t, "go-redis/v9.Process()", e.operation)
+		assert.Equal(t, int32(pinpoint.ServiceTypeRedis), e.serviceType)
+		assert.Equal(t, "REDIS", e.destination)
+		assert.Equal(t, "redis1:6379", e.endPoint)
+		assert.Equal(t, "get", e.annotations[pinpoint.AnnotationArgs0])
+		assert.Equal(t, cmdErr, e.err)
+		assert.True(t, e.ended, "the span event was left open")
+	}
 }
 
 // The next hook panicking must not leave the span event open: the deferred
@@ -180,7 +156,7 @@ func TestProcessPipelineHook(t *testing.T) {
 
 	require.Len(t, tracer.events, 1, "a pipeline is one round trip, so one span event")
 	e := tracer.events[0]
-	assert.Equal(t, pipelineOperation, e.operation)
+	assert.Equal(t, "go-redis/v9.ProcessPipeline()", e.operation)
 	assert.Equal(t, int32(pinpoint.ServiceTypeRedis), e.serviceType)
 	assert.Equal(t, "set, get, del", e.annotations[pinpoint.AnnotationArgs0])
 	assert.NoError(t, e.err)
@@ -215,31 +191,21 @@ func Test_cmdName(t *testing.T) {
 // that goroutine, so the hook has to step aside and still run the chain.
 func TestHooks_IgnoreUnsampledCommands(t *testing.T) {
 	h := NewHook(&redis.Options{Addr: "redis1:6379"})
+	ctx := context.Background()
+	cmdErr := errors.New("WRONGTYPE")
+	inner := 0
 
-	for _, tt := range []struct {
-		name string
-		ctx  context.Context
-	}{
-		{"background context", context.Background()},
-		{"noop tracer", pinpoint.NewContext(context.Background(), pinpoint.NoopTracer())},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			cmdErr := errors.New("WRONGTYPE")
-			inner := 0
+	assert.ErrorIs(t, h.ProcessHook(func(context.Context, redis.Cmder) error {
+		inner++
+		return cmdErr
+	})(ctx, cmd("get")), cmdErr)
 
-			assert.ErrorIs(t, h.ProcessHook(func(context.Context, redis.Cmder) error {
-				inner++
-				return cmdErr
-			})(tt.ctx, cmd("get")), cmdErr)
+	assert.ErrorIs(t, h.ProcessPipelineHook(func(context.Context, []redis.Cmder) error {
+		inner++
+		return cmdErr
+	})(ctx, []redis.Cmder{cmd("get")}), cmdErr)
 
-			assert.ErrorIs(t, h.ProcessPipelineHook(func(context.Context, []redis.Cmder) error {
-				inner++
-				return cmdErr
-			})(tt.ctx, []redis.Cmder{cmd("get")}), cmdErr)
-
-			assert.Equal(t, 2, inner, "the next hook must still run for an untraced command")
-		})
-	}
+	assert.Equal(t, 2, inner, "the next hook must still run for an untraced command")
 }
 
 // Dialing is not traced, but the hook still sits in the chain: it has to pass

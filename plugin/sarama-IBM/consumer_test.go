@@ -183,40 +183,30 @@ func TestProducerToConsumerContinuesTheTransaction(t *testing.T) {
 }
 
 // ConsumeMessageContext wraps the application's handler, so the handler's
-// context has to carry the tracer and its error has to reach the caller.
+// context has to carry the tracer - built from the brokers in the caller's
+// context - and its error has to reach the caller.
 func TestConsumeMessageContext(t *testing.T) {
 	startAgent(t)
 
 	want := errors.New("handler failed")
 	var (
 		sampled bool
+		span    spanFields
 		gotMsg  *sarama.ConsumerMessage
 	)
 	msg := &sarama.ConsumerMessage{Topic: "widgets", Partition: 1, Offset: 7}
 
 	err := ConsumeMessageContext(func(ctx context.Context, m *sarama.ConsumerMessage) error {
 		sampled = pinpoint.FromContext(ctx).IsSampled()
+		span = readSpan(t, pinpoint.FromContext(ctx))
 		gotMsg = m
 		return want
 	}, NewContext(context.Background(), []string{"broker1:9092"}), msg)
 
 	assert.True(t, sampled, "the handler received an unsampled tracer")
+	assert.Equal(t, "broker1:9092", span.EndPoint)
 	assert.Same(t, msg, gotMsg, "the handler received a different message")
 	assert.ErrorIs(t, err, want, "the handler's error must come back unchanged")
-}
-
-// A handler that succeeds must leave the consumer span unfailed.
-func TestConsumeMessageContext_SuccessfulHandler(t *testing.T) {
-	startAgent(t)
-
-	var span spanFields
-	err := ConsumeMessageContext(func(ctx context.Context, m *sarama.ConsumerMessage) error {
-		span = readSpan(t, pinpoint.FromContext(ctx))
-		return nil
-	}, NewContext(context.Background(), []string{"broker1:9092"}), &sarama.ConsumerMessage{Topic: "widgets"})
-
-	require.NoError(t, err)
-	assert.Equal(t, "broker1:9092", span.EndPoint)
 }
 
 // A panicking handler must not be swallowed by the wrapper.
