@@ -18,7 +18,7 @@ import (
 // A transport error on a metadata publication is retried until it succeeds,
 // and the agent stays online throughout.
 func TestRetriesMetadataAfterTransportError(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	mc.FailNext(RpcApiMetadata, codes.Unavailable, "metadata endpoint unavailable")
 
@@ -44,7 +44,7 @@ func TestRetriesMetadataAfterTransportError(t *testing.T) {
 // A non-retryable error abandons the publication and releases the cache entry,
 // so the same API string is re-cached under a fresh id and published again.
 func TestReRegistersMetadataAfterNonRetryableError(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	mc.FailNext(RpcApiMetadata, codes.Internal, "metadata permanently rejected")
 
@@ -78,7 +78,7 @@ func TestReRegistersMetadataAfterNonRetryableError(t *testing.T) {
 }
 
 func TestHandlesProfilerCommandsOverRealGrpcStreams(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.CommandStreams) > 0 }, waitTimeout))
 
@@ -170,7 +170,7 @@ func TestHandlesProfilerCommandsOverRealGrpcStreams(t *testing.T) {
 // sequence 1. Re-issuing the same request id (collector reconnect behavior)
 // must therefore produce a second stream, not reuse the first.
 func TestRestartsActiveThreadCountStreamForDuplicateRequest(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.CommandStreams) > 0 }, waitTimeout))
 
 	mc.SendActiveThreadCountCommand(501)
@@ -186,7 +186,7 @@ func TestRestartsActiveThreadCountStreamForDuplicateRequest(t *testing.T) {
 }
 
 func TestTimesOutCommandRequestAndKeepsStreamUsable(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.CommandStreams) > 0 }, waitTimeout))
 
 	mc.TimeoutNext(RpcCommandEcho)
@@ -204,7 +204,7 @@ func TestTimesOutCommandRequestAndKeepsStreamUsable(t *testing.T) {
 }
 
 func TestContinuesSendingAfterSpanRequestError(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	mc.FailNext(RpcSendSpanBatch, codes.Internal, "span batch rejected")
 	failed := agent.NewSpanTracer("faulted.span", "/faulted-span")
@@ -226,7 +226,7 @@ func TestContinuesSendingAfterSpanRequestError(t *testing.T) {
 }
 
 func TestReconnectsAfterEndpointAndCommandStreamFailures(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool {
 		return len(s.PingStreams) > 0 && len(s.CommandStreams) > 0
@@ -269,7 +269,7 @@ func TestReconnectsAfterEndpointAndCommandStreamFailures(t *testing.T) {
 }
 
 func TestReconnectsStatStreamAfterServerError(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.Stats) > 0 }, waitTimeout))
 	initial := len(mc.Snapshot().StatStreams)
@@ -296,8 +296,7 @@ func TestReconnectsStatStreamAfterServerError(t *testing.T) {
 // next send fails, so that send's message must go out on the replacement
 // stream rather than be dropped with the dead one.
 func TestResendsStatOnReopenedStream(t *testing.T) {
-	cfg := defaultAgentConfig()
-	mc, _ := startStack(t, cfg)
+	mc, agent := startStack(t)
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.Stats) > 0 }, waitTimeout))
 
 	// The outage ends the open stream at its next message, and the test resumes
@@ -312,13 +311,13 @@ func TestResendsStatOnReopenedStream(t *testing.T) {
 	// The next tick's send finds the stream dead and reopens it, so its stat
 	// lands about one interval from here; dropped, the first one would come a
 	// tick later.
-	interval := time.Duration(cfg.statCollectInterval) * time.Millisecond
+	interval := time.Duration(agent.Config().Int(pinpoint.CfgStatCollectInterval)) * time.Millisecond
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.Stats) > n }, interval*3/2),
 		"the stat that found the stream closed was dropped instead of re-sent")
 }
 
 func TestShutdownCancelsTimedOutStatStream(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.StatStreams) > 0 }, waitTimeout))
 	before := len(mc.Snapshot().Stats)
@@ -343,7 +342,7 @@ func TestShutdownCancelsTimedOutStatStream(t *testing.T) {
 }
 
 func TestShutdownCancelsTimedOutSpanRequest(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	mc.TimeoutNext(RpcSendSpanBatch)
 	tracer := agent.NewSpanTracer("shutdown.timeout", "/timeout-shutdown")
@@ -373,7 +372,7 @@ func TestShutdownCancelsTimedOutSpanRequest(t *testing.T) {
 // agent's queues and retries must behave as designed, and every channel must
 // recover once the outage ends.
 func TestKeepsServingAndRecyclingQueuesThroughCollectorOutage(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	before := agent.NewSpanTracer("outage.before", "/collector-outage-before")
 	require.True(t, before.IsSampled())
@@ -484,8 +483,8 @@ func TestKeepsServingAndRecyclingQueuesThroughCollectorOutage(t *testing.T) {
 // permit budget on the collector, and what the queues held must flow once the
 // collector answers again.
 func TestKeepsServingThroughHungCollectorAndRecovers(t *testing.T) {
-	cfg := defaultAgentConfig()
-	mc, agent := startStack(t, cfg)
+	mc, agent := startStack(t)
+	permits := agent.Config().Int(pinpoint.CfgCollectorGrpcSpanBatchMaxConcurrentRequests)
 
 	warm := agent.NewSpanTracer("hang.before", "/collector-hang-before")
 	require.True(t, warm.IsSampled())
@@ -516,19 +515,19 @@ func TestKeepsServingThroughHungCollectorAndRecovers(t *testing.T) {
 	// Every other batch is dropped once its permit wait runs out, and every
 	// other metadata item waits in its queue. The hang ends well inside the
 	// agent's 5s RPC deadlines, so no permit frees up meanwhile.
-	metaPermits := cfg.spanBatchMaxConcurrentRequests
+	metaPermits := permits
 	held := func(s Snapshot) (batches, metadata int) {
 		return len(s.SpanBatches) - len(healthy.SpanBatches), len(s.ApiMetadata) - len(healthy.ApiMetadata)
 	}
 	require.True(t, mc.WaitFor(func(s Snapshot) bool {
 		batches, metadata := held(s)
-		return batches >= cfg.spanBatchMaxConcurrentRequests && metadata >= metaPermits
+		return batches >= permits && metadata >= metaPermits
 	}, waitTimeout))
 	// Room for a call past the budget to show up: the span sender gives up on a
 	// permit after Collector.Grpc.SpanBatchFlushInterval (50ms).
 	time.Sleep(300 * time.Millisecond)
 	batches, metadata := held(mc.Snapshot())
-	assert.Equal(t, cfg.spanBatchMaxConcurrentRequests, batches)
+	assert.Equal(t, permits, batches)
 	assert.Equal(t, metaPermits, metadata)
 
 	mc.EndOutage()
@@ -563,11 +562,9 @@ func TestKeepsServingThroughHungCollectorAndRecovers(t *testing.T) {
 // With the span endpoint down the bounded queue absorbs the load and the
 // application is never blocked; traffic resumes after the endpoint returns.
 func TestKeepsServingWhileSpanEndpointIsDownAndRecovers(t *testing.T) {
-	cfg := defaultAgentConfig()
 	// A capacity below the shard threshold keeps the queue at a single shard,
 	// so the bounded head-drop policy applies in strict FIFO order.
-	cfg.spanQueueSize = 8
-	mc, agent := startStack(t, cfg)
+	mc, agent := startStack(t, pinpoint.WithSpanQueueSize(8))
 
 	warm := agent.NewSpanTracer("queue.before", "/queue-before")
 	require.True(t, warm.IsSampled())
@@ -629,7 +626,7 @@ func TestKeepsServingWhileSpanEndpointIsDownAndRecovers(t *testing.T) {
 }
 
 func TestShutdownStopsTracingAndServesNoopTracersToTheApp(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	warm := agent.NewSpanTracer("shutdown.noop.before", "/shutdown-noop-before")
 	require.True(t, warm.IsSampled())
@@ -673,7 +670,7 @@ func TestShutdownStopsTracingAndServesNoopTracersToTheApp(t *testing.T) {
 // A host that stops and resumes tracing while it keeps serving must build a new
 // agent: Shutdown is terminal for an agent instance.
 func TestRecoversTracingAcrossRepeatedCreateShutdownCycles(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	const cycles = 3
 	for cycle := 1; cycle <= cycles; cycle++ {
@@ -695,7 +692,7 @@ func TestRecoversTracingAcrossRepeatedCreateShutdownCycles(t *testing.T) {
 			stale.EndSpan()
 		}
 
-		agent = startAgent(t, mc, defaultAgentConfig())
+		agent = startAgent(t, mc)
 		require.True(t, waitUntil(func() bool { return agent.Enable() }, waitTimeout),
 			"the agent never came back online")
 
@@ -727,7 +724,7 @@ func TestRecoversTracingAcrossRepeatedCreateShutdownCycles(t *testing.T) {
 // the item is abandoned and its cache entry released, so the same API string is
 // re-cached under a fresh id and published again.
 func TestReRegistersMetadataAfterRetryExhaustion(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	const operation = "retry.exhausted.api"
 	// One initial attempt plus its retries: every attempt for this item must
@@ -776,7 +773,7 @@ func TestReRegistersMetadataAfterRetryExhaustion(t *testing.T) {
 // worker, so a single item stalling on a slow collector must not hold up the
 // rest.
 func TestKeepsPublishingMetadataWhileOneItemStalls(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	// The first metadata publication after this point is withheld until the
 	// client's deadline; everything queued behind it must still get through.
@@ -810,7 +807,7 @@ func TestKeepsPublishingMetadataWhileOneItemStalls(t *testing.T) {
 // request is refused with a fail message on the command stream instead of
 // silently starting another responder goroutine.
 func TestRejectsActiveThreadCountStreamsBeyondLimit(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.CommandStreams) > 0 }, waitTimeout))
 
 	const firstID = int32(601)
@@ -848,7 +845,7 @@ func TestRejectsActiveThreadCountStreamsBeyondLimit(t *testing.T) {
 // producer that is mid-send when the agent stops must not be left writing into
 // a torn-down queue -- that crashed the whole process.
 func TestKeepsProducingSpansWhileShuttingDown(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	stop := make(chan struct{})
 	var producers sync.WaitGroup
@@ -895,10 +892,8 @@ func TestKeepsProducingSpansWhileShuttingDown(t *testing.T) {
 // content. Every span here is self-identifying: its annotation repeats its RPC
 // name, so any crossed wire shows up as a mismatch.
 func TestDeliversEveryConcurrentSpanIntactUnderLoad(t *testing.T) {
-	cfg := defaultAgentConfig()
 	// Room for the whole burst, so a drop cannot be mistaken for corruption.
-	cfg.spanQueueSize = 1024
-	mc, agent := startStack(t, cfg)
+	mc, agent := startStack(t, pinpoint.WithSpanQueueSize(1024))
 
 	const workers = 8
 	const perWorker = 25

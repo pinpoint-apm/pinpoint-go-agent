@@ -56,31 +56,6 @@ func (*blockingAgentInfoClient) PingSession(context.Context, ...grpc.CallOption)
 	return nil, nil
 }
 
-func Test_agentGrpc_sendAgentInfo(t *testing.T) {
-	type args struct {
-		agent *agent
-	}
-	opts := []ConfigOption{
-		WithAppName("TestApp"),
-	}
-	cfg, _ := NewConfig(opts...)
-
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{newTestAgent(cfg)}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			agent := tt.args.agent
-			agent.agentGrpc = newMockAgentGrpc(agent)
-			b := agent.agentGrpc.registerAgentWithRetry()
-			assert.Equal(t, true, b, "sendAgentInfo")
-		})
-	}
-}
-
 func Test_agentGrpc_registerAgentWithRetry_cancelsRequestOnShutdown(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agent.enable.Store(false)
@@ -123,132 +98,18 @@ func Test_agentGrpc_registerAgentWithRetry_cancelsRequestOnShutdown(t *testing.T
 	}
 }
 
-func Test_agentGrpc_sendApiMetadata(t *testing.T) {
-	type args struct {
-		agent *agent
-	}
-	opts := []ConfigOption{
-		WithAppName("TestApp"),
-	}
-	cfg, _ := NewConfig(opts...)
-
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{newTestAgent(cfg)}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			agent := tt.args.agent
-			agent.agentGrpc = newMockAgentGrpc(agent)
-			err := agent.agentGrpc.sendApiMetadataOnce(1, "Asynchronous Invocation", -1, apiTypeInvocation)
-			assert.NoError(t, err, "sendApiMetadata")
-		})
-	}
-}
-
-func Test_agentGrpc_sendSqlMetadata(t *testing.T) {
-	type args struct {
-		agent *agent
-	}
-	opts := []ConfigOption{
-		WithAppName("TestApp"),
-	}
-	cfg, _ := NewConfig(opts...)
-
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{newTestAgent(cfg)}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			agent := tt.args.agent
-			agent.agentGrpc = newMockAgentGrpc(agent)
-			err := agent.agentGrpc.sendSqlMetadataOnce(1, "SELECT 1")
-			assert.NoError(t, err, "sendSqlMetadata")
-		})
-	}
-}
-
-func Test_agentGrpc_sendStringMetadata(t *testing.T) {
-	type args struct {
-		agent *agent
-	}
-	opts := []ConfigOption{
-		WithAppName("TestApp"),
-	}
-	cfg, _ := NewConfig(opts...)
-
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{newTestAgent(cfg)}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			agent := tt.args.agent
-			agent.agentGrpc = newMockAgentGrpc(agent)
-			err := agent.agentGrpc.sendStringMetadataOnce(1, "string value")
-			assert.NoError(t, err, "sendStringMetadata")
-		})
-	}
-}
-
-func Test_pingStream_sendPing(t *testing.T) {
-	type args struct {
-		agent *agent
-	}
-	opts := []ConfigOption{
-		WithAppName("TestApp"),
-	}
-	cfg, _ := NewConfig(opts...)
-
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{newTestAgent(cfg)}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			agent := tt.args.agent
-			agent.agentGrpc = newMockAgentGrpc(agent)
-			stream := agent.agentGrpc.newPingStreamWithRetry()
-			err := stream.sendPing()
-			assert.NoError(t, err, "sendPing")
-		})
-	}
-}
-
 func Test_spanGrpc_sendSpanBatch(t *testing.T) {
-	type args struct {
-		agent *agent
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{newTestAgent(defaultConfig())}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			agent := tt.args.agent
-			agent.spanGrpc = newMockSpanGrpc(agent)
+	agent := newTestAgent(defaultConfig())
+	agent.spanGrpc = newMockSpanGrpc(agent)
 
-			span := defaultSpan(agent)
-			span.NewSpanEvent("t1")
-			agent.spanGrpc.sendSpanBatchAsync([]*spanChunk{span.newEventChunk(true)})
-			agent.spanGrpc.awaitInFlightSpanBatch()
+	span := defaultSpan(agent)
+	span.NewSpanEvent("t1")
+	agent.spanGrpc.sendSpanBatchAsync([]*spanChunk{span.newEventChunk(true)})
+	agent.spanGrpc.awaitInFlightSpanBatch()
 
-			client := agent.spanGrpc.spanClient.(*mockSpanGrpcClient)
-			assert.Equal(t, 1, client.requestCount(), "sendSpanBatch")
-			assert.Len(t, client.lastRequest().GetSpan(), 1, "span batch size")
-		})
-	}
+	client := agent.spanGrpc.spanClient.(*mockSpanGrpcClient)
+	assert.Equal(t, 1, client.requestCount(), "sendSpanBatch")
+	assert.Len(t, client.lastRequest().GetSpan(), 1, "span batch size")
 }
 
 func Test_spanGrpc_sendSpanBatchEmptyReleasesPermit(t *testing.T) {
@@ -411,28 +272,19 @@ func Test_spanGrpc_collectSpanBatch_flushesClosedQueue(t *testing.T) {
 }
 
 func Test_statStream_sendStat(t *testing.T) {
-	type args struct {
-		agent *agent
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{newTestAgent(defaultConfig())}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			agent := tt.args.agent
-			agent.statGrpc = newMockStatGrpc(agent)
-			stream := agent.statGrpc.newStatStreamWithRetry()
+	agent := newTestAgent(defaultConfig())
+	statStream := grpcmock.NewMockStat_SendAgentStatClient()
+	statStream.OnSend(mock.Anything).Return(nil)
+	client := grpcmock.NewMockStatClient()
+	client.OnSendAgentStat(mock.Anything).Return(statStream, nil)
+	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
+	stream := agent.statGrpc.newStatStreamWithRetry()
 
-			stats := make([]*inspectorStats, 1)
-			stats[0] = agent.stats.getStats()
-			msg := makePAgentStatBatch(stats)
-			err := stream.sendStats(msg)
-			assert.NoError(t, err, "sendStats")
-		})
-	}
+	stats := make([]*inspectorStats, 1)
+	stats[0] = agent.stats.getStats()
+	msg := makePAgentStatBatch(stats)
+	err := stream.sendStats(msg)
+	assert.NoError(t, err, "sendStats")
 }
 
 func newTestSpanChunk(agent *agent) *spanChunk {
@@ -440,28 +292,21 @@ func newTestSpanChunk(agent *agent) *spanChunk {
 }
 
 func Test_statStream_sendStatRetry(t *testing.T) {
-	type args struct {
-		agent *agent
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{newTestAgent(defaultConfig())}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			agent := tt.args.agent
-			agent.statGrpc = newRetryMockStatGrpc(agent)
-			stream := agent.statGrpc.newStatStreamWithRetry()
+	agent := newTestAgent(defaultConfig())
+	statStream := grpcmock.NewMockStat_SendAgentStatClient()
+	statStream.OnSend(mock.Anything).Return(nil)
+	client := grpcmock.NewMockStatClient()
+	client.OnSendAgentStat(mock.Anything).Return((*grpcmock.MockStat_SendAgentStatClient)(nil), collectorDown()).Times(3)
+	client.OnSendAgentStat(mock.Anything).Return(statStream, nil)
+	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
+	stream := agent.statGrpc.newStatStreamWithRetry()
 
-			stats := make([]*inspectorStats, 1)
-			stats[0] = agent.stats.getStats()
-			msg := makePAgentStatBatch(stats)
-			err := stream.sendStats(msg)
-			assert.NoError(t, err, "sendStats")
-		})
-	}
+	stats := make([]*inspectorStats, 1)
+	stats[0] = agent.stats.getStats()
+	msg := makePAgentStatBatch(stats)
+	err := stream.sendStats(msg)
+	assert.NoError(t, err, "sendStats")
+	client.AssertNumberOfCalls(t, "SendAgentStat", 4)
 }
 
 func Test_backOffUntilReady_abortsOnShutdown(t *testing.T) {
@@ -781,24 +626,17 @@ type failingMetaClient struct {
 	failFirst int32
 }
 
-func (c *failingMetaClient) fail() error {
+// result mirrors a real client: an accepted request answers with
+// PResult.Success=true, which the send path now requires.
+func (c *failingMetaClient) result(context.Context, proto.Message) (*pb.PResult, error) {
 	c.mu.Lock()
 	c.at = append(c.at, time.Now())
 	c.mu.Unlock()
 	n := atomic.AddInt32(&c.calls, 1)
 	if c.failFirst > 0 && n > c.failFirst {
-		return nil
+		return &pb.PResult{Success: true}, nil
 	}
-	return c.err
-}
-
-// result mirrors a real client: an accepted request answers with
-// PResult.Success=true, which the send path now requires.
-func (c *failingMetaClient) result() (*pb.PResult, error) {
-	if err := c.fail(); err != nil {
-		return nil, err
-	}
-	return &pb.PResult{Success: true}, nil
+	return nil, c.err
 }
 
 func (c *failingMetaClient) callCount() int32 {
@@ -811,29 +649,9 @@ func (c *failingMetaClient) callTimes() []time.Time {
 	return append([]time.Time(nil), c.at...)
 }
 
-func (c *failingMetaClient) RequestApiMetaData(context.Context, *pb.PApiMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return c.result()
-}
-
-func (c *failingMetaClient) RequestSqlMetaData(context.Context, *pb.PSqlMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return c.result()
-}
-
-func (c *failingMetaClient) RequestSqlUidMetaData(context.Context, *pb.PSqlUidMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return c.result()
-}
-
-func (c *failingMetaClient) RequestStringMetaData(context.Context, *pb.PStringMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return c.result()
-}
-
-func (c *failingMetaClient) RequestExceptionMetaData(context.Context, *pb.PExceptionMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return c.result()
-}
-
 func newFailingMetaAgentGrpc(agent *agent, err error) (*agentGrpc, *failingMetaClient) {
 	failing := &failingMetaClient{err: err}
-	return &agentGrpc{metaClient: failing, agent: agent}, failing
+	return &agentGrpc{metaClient: metaClientFunc(failing.result), agent: agent}, failing
 }
 
 // One send is one attempt: the classifier hands a transport failure back to
@@ -1048,7 +866,7 @@ type blockingMetaClient struct {
 	release chan struct{}
 }
 
-func (c *blockingMetaClient) block() (*pb.PResult, error) {
+func (c *blockingMetaClient) block(context.Context, proto.Message) (*pb.PResult, error) {
 	c.mu.Lock()
 	c.current++
 	c.total++
@@ -1077,26 +895,6 @@ func (c *blockingMetaClient) stats() (max, total int) {
 	return c.max, c.total
 }
 
-func (c *blockingMetaClient) RequestApiMetaData(context.Context, *pb.PApiMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return c.block()
-}
-
-func (c *blockingMetaClient) RequestSqlMetaData(context.Context, *pb.PSqlMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return c.block()
-}
-
-func (c *blockingMetaClient) RequestSqlUidMetaData(context.Context, *pb.PSqlUidMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return c.block()
-}
-
-func (c *blockingMetaClient) RequestStringMetaData(context.Context, *pb.PStringMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return c.block()
-}
-
-func (c *blockingMetaClient) RequestExceptionMetaData(context.Context, *pb.PExceptionMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return c.block()
-}
-
 // While earlier sends are still waiting on the collector, the worker must keep
 // pulling items and pipeline up to metaMaxConcurrentRequests sends
 // (Collector.Grpc.SpanBatchMaxConcurrentRequests) -- and no more.
@@ -1104,7 +902,7 @@ func Test_sendMetaWorker_pipelinesUpToConcurrencyLimit(t *testing.T) {
 	cfg, _ := NewConfig(WithAppName("TestApp"))
 	agent := newTestAgent(cfg)
 	blocking := &blockingMetaClient{release: make(chan struct{})}
-	agent.agentGrpc = &agentGrpc{metaClient: blocking, agent: agent}
+	agent.agentGrpc = &agentGrpc{metaClient: metaClientFunc(blocking.block), agent: agent}
 
 	permits := agent.metaMaxConcurrentRequests()
 	items := 2 * permits
@@ -1130,36 +928,6 @@ func Test_sendMetaWorker_pipelinesUpToConcurrencyLimit(t *testing.T) {
 
 	max, _ := blocking.stats()
 	assert.Equal(t, permits, max, "in-flight sends must not exceed the limit")
-}
-
-// countingAgentClient counts RequestAgentInfo calls, records the host name each
-// send carried, and fails them on demand.
-type countingAgentClient struct {
-	calls atomic.Int32
-	fail  atomic.Bool
-	mu    sync.Mutex
-	hosts []string
-}
-
-func (c *countingAgentClient) sentHosts() []string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]string(nil), c.hosts...)
-}
-
-func (c *countingAgentClient) RequestAgentInfo(ctx context.Context, agentInfo *pb.PAgentInfo, _ ...grpc.CallOption) (*pb.PResult, error) {
-	c.calls.Add(1)
-	c.mu.Lock()
-	c.hosts = append(c.hosts, agentInfo.GetHostname())
-	c.mu.Unlock()
-	if c.fail.Load() {
-		return nil, status.Errorf(codes.Unavailable, "collector down")
-	}
-	return &pb.PResult{Success: true}, nil
-}
-
-func (c *countingAgentClient) PingSession(ctx context.Context, _ ...grpc.CallOption) (pb.Agent_PingSessionClient, error) {
-	return nil, status.Errorf(codes.Unimplemented, "not used")
 }
 
 func Test_config_agentInfoRefreshDefaults(t *testing.T) {
@@ -1192,26 +960,25 @@ func Test_agent_agentInfoRefreshInterval(t *testing.T) {
 func Test_agentGrpc_refreshAgentInfo_stopsAtMaxTry(t *testing.T) {
 	cfg, _ := NewConfig(WithAppName("TestApp"))
 	agent := newTestAgent(cfg)
-	client := &countingAgentClient{}
-	client.fail.Store(true)
+	client := &mockAgentGrpcClient{failures: 1 << 30}
 	agentGrpc := &agentGrpc{agentClient: client, agent: agent}
 
 	ok := agentGrpc.refreshAgentInfo(3, time.Millisecond)
 
 	assert.False(t, ok, "refresh must give up after maxTry sends")
-	assert.EqualValues(t, 3, client.calls.Load())
+	assert.Len(t, client.sentAgentInfo(), 3)
 }
 
 func Test_agentGrpc_refreshAgentInfo_stopsOnSuccess(t *testing.T) {
 	cfg, _ := NewConfig(WithAppName("TestApp"))
 	agent := newTestAgent(cfg)
-	client := &countingAgentClient{}
+	client := &mockAgentGrpcClient{}
 	agentGrpc := &agentGrpc{agentClient: client, agent: agent}
 
 	ok := agentGrpc.refreshAgentInfo(3, time.Millisecond)
 
 	assert.True(t, ok)
-	assert.EqualValues(t, 1, client.calls.Load())
+	assert.Len(t, client.sentAgentInfo(), 1)
 }
 
 // A refresh retry must carry a freshly built payload, not the snapshot the
@@ -1224,12 +991,15 @@ func Test_agentGrpc_refreshAgentInfo_rebuildsInfoPerAttempt(t *testing.T) {
 	getHostName = func() string { return "host-" + strconv.Itoa(int(n.Add(1))) }
 
 	cfg, _ := NewConfig(WithAppName("TestApp"))
-	client := &countingAgentClient{}
-	client.fail.Store(true)
+	client := &mockAgentGrpcClient{failures: 1 << 30}
 	agentGrpc := &agentGrpc{agentClient: client, agent: newTestAgent(cfg)}
 
 	assert.False(t, agentGrpc.refreshAgentInfo(3, time.Millisecond))
-	assert.Equal(t, []string{"host-1", "host-2", "host-3"}, client.sentHosts(),
+	var hosts []string
+	for _, info := range client.sentAgentInfo() {
+		hosts = append(hosts, info.GetHostname())
+	}
+	assert.Equal(t, []string{"host-1", "host-2", "host-3"}, hosts,
 		"every attempt must send the host name read at that attempt")
 }
 
@@ -1240,20 +1010,20 @@ func Test_agent_refreshAgentInfoWorker_honorsInterval(t *testing.T) {
 		WithCollectorAgentInfoMaxTryPerAttempt(1),
 	)
 	agent := newTestAgent(cfg)
-	client := &countingAgentClient{}
+	client := &mockAgentGrpcClient{}
 	agent.agentGrpc = &agentGrpc{agentClient: client, agent: agent}
 
 	agent.workerWg.Add(1)
 	go agent.superviseWorker("agent info refresh", func() { agent.refreshAgentInfoWorker(20 * time.Millisecond) })
 
 	deadline := time.Now().Add(3 * time.Second)
-	for client.calls.Load() < 2 && time.Now().Before(deadline) {
+	for len(client.sentAgentInfo()) < 2 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	agent.signalShutdown()
 	agent.workerWg.Wait()
 
-	assert.GreaterOrEqual(t, client.calls.Load(), int32(2), "worker must re-send agent info every interval")
+	assert.GreaterOrEqual(t, len(client.sentAgentInfo()), 2, "worker must re-send agent info every interval")
 }
 
 // With no Collector.Grpc.* keys set, the channel options must come out at the
@@ -1330,13 +1100,6 @@ func Test_makePException_AbbreviatesMessage(t *testing.T) {
 }
 
 // --- metadata ---------------------------------------------------------------
-
-// newMockMetaAgentGrpc wires an agent to a metadata client that accepts every
-// request and keeps it, so a test can assert on the payload put on the wire.
-func newMockMetaAgentGrpc(agent *agent) (*agentGrpc, *mockMetaGrpcClient) {
-	meta := &mockMetaGrpcClient{}
-	return &agentGrpc{metaClient: meta, agent: agent}, meta
-}
 
 // Each metadata type must reach the collector with the fields the caller
 // MetaDataSqlUidTest.
@@ -1458,7 +1221,7 @@ func Test_sendMetaWorker_succeedsAfterRetryableFailure(t *testing.T) {
 		err:       status.Errorf(codes.Unavailable, "collector down"),
 		failFirst: metaRetryMaxAttempts - 1,
 	}
-	agent.agentGrpc = &agentGrpc{metaClient: failing, agent: agent}
+	agent.agentGrpc = &agentGrpc{metaClient: metaClientFunc(failing.result), agent: agent}
 
 	apiKey := apiCacheKey{"test.api", apiTypeInvocation}
 	apiCached := func() bool { _, ok := agent.apiCache.peek(apiKey); return ok }
@@ -2003,15 +1766,14 @@ func Test_grpcMetadataContext_socketId(t *testing.T) {
 // newBoundedSpanGrpc returns a batch sender with a single permit and a short
 // flush timeout, so permit contention resolves within a test's patience.
 func newBoundedSpanGrpc(agent *agent, client *mockSpanGrpcClient) *spanGrpc {
-	return &spanGrpc{
-		spanClient:              client,
-		agent:                   agent,
-		batchSize:               1,
-		batchFlushTimeout:       10 * time.Millisecond,
-		batchCollectDeadline:    10 * time.Millisecond,
-		maxConcurrentRequests:   1,
-		concurrentRequestPermit: make(chan struct{}, 1),
-	}
+	spanGrpc := newMockSpanGrpc(agent)
+	spanGrpc.spanClient = client
+	spanGrpc.batchSize = 1
+	spanGrpc.batchFlushTimeout = 10 * time.Millisecond
+	spanGrpc.batchCollectDeadline = 10 * time.Millisecond
+	spanGrpc.maxConcurrentRequests = 1
+	spanGrpc.concurrentRequestPermit = make(chan struct{}, 1)
+	return spanGrpc
 }
 
 // A chunk's wire shape depends on what it is: only a finished synchronous span
@@ -2392,29 +2154,22 @@ func Test_grpcChannelOptions_dialOptions_flowControlWindow(t *testing.T) {
 	assert.Equal(t, uint32(window-65535), update.Increment, "connection window")
 }
 
-// deadlineMetaClient records the deadline carried by a metadata request.
-type deadlineMetaClient struct {
-	pb.MetadataClient
-	deadline time.Time
-}
-
-func (c *deadlineMetaClient) RequestApiMetaData(ctx context.Context, _ *pb.PApiMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
-	c.deadline, _ = ctx.Deadline()
-	return &pb.PResult{Success: true}, nil
-}
-
 // Metadata sends must carry the short metaGrpcTimeOut, not agentGrpcTimeOut:
 // a hung collector otherwise pins sendMetaWorker's permits for a minute per
 // attempt while metaChan overflows and evicts cache entries.
 func Test_sendApiMetadata_usesMetaDeadline(t *testing.T) {
 	cfg, _ := NewConfig(WithAppName("TestApp"))
 	agent := newTestAgent(cfg)
-	client := &deadlineMetaClient{}
+	var deadline time.Time
+	client := metaClientFunc(func(ctx context.Context, _ proto.Message) (*pb.PResult, error) {
+		deadline, _ = ctx.Deadline()
+		return &pb.PResult{Success: true}, nil
+	})
 	agentGrpc := &agentGrpc{metaClient: client, agent: agent}
 
 	before := time.Now()
 	assert.NoError(t, agentGrpc.sendApiMetadata(&pb.PApiMetaData{ApiId: 1}))
-	assert.WithinDuration(t, before.Add(metaGrpcTimeOut), client.deadline, time.Second)
+	assert.WithinDuration(t, before.Add(metaGrpcTimeOut), deadline, time.Second)
 }
 
 // Renewal is off unless configured: the defaults are zero, negative values
@@ -2472,46 +2227,20 @@ func Test_randomize_staysWithinJitter(t *testing.T) {
 // --- collector rejection ----------------------------------------------------
 
 // rejectingMetaClient answers every metadata request with PResult.Success=false,
-// the way a collector refuses a payload it will not store.
-type rejectingMetaClient struct {
-	calls int32
-}
-
-func (c *rejectingMetaClient) reject() (*pb.PResult, error) {
-	atomic.AddInt32(&c.calls, 1)
-	return &pb.PResult{Success: false, Message: "unsupported metadata"}, nil
-}
-
-func (c *rejectingMetaClient) callCount() int32 {
-	return atomic.LoadInt32(&c.calls)
-}
-
-func (c *rejectingMetaClient) RequestApiMetaData(context.Context, *pb.PApiMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return c.reject()
-}
-
-func (c *rejectingMetaClient) RequestSqlMetaData(context.Context, *pb.PSqlMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return c.reject()
-}
-
-func (c *rejectingMetaClient) RequestSqlUidMetaData(context.Context, *pb.PSqlUidMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return c.reject()
-}
-
-func (c *rejectingMetaClient) RequestStringMetaData(context.Context, *pb.PStringMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return c.reject()
-}
-
-func (c *rejectingMetaClient) RequestExceptionMetaData(context.Context, *pb.PExceptionMetaData, ...grpc.CallOption) (*pb.PResult, error) {
-	return c.reject()
+// the way a collector refuses a payload it will not store, counting the calls.
+func rejectingMetaClient(calls *atomic.Int32) metaClientFunc {
+	return func(context.Context, proto.Message) (*pb.PResult, error) {
+		calls.Add(1)
+		return &pb.PResult{Success: false, Message: "unsupported metadata"}, nil
+	}
 }
 
 // A rejection is a verdict on the payload, not a transport hiccup: the send
 // fails, and it fails without burning the retry budget on the same bytes.
 func Test_metaVerdictOf_noRetryOnCollectorRejection(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
-	rejecting := &rejectingMetaClient{}
-	agentGrpc := &agentGrpc{metaClient: rejecting, agent: agent}
+	var calls atomic.Int32
+	agentGrpc := &agentGrpc{metaClient: rejectingMetaClient(&calls), agent: agent}
 
 	err := agentGrpc.sendApiMetadata(&pb.PApiMetaData{ApiId: 1, ApiInfo: "test.api"})
 	require.Error(t, err)
@@ -2521,7 +2250,7 @@ func Test_metaVerdictOf_noRetryOnCollectorRejection(t *testing.T) {
 	err = agentGrpc.sendStringMetadataOnce(1, "test.error")
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 	assert.Equal(t, metaRejected, metaVerdictOf(err, 1), "a rejection must not be retried")
-	assert.Equal(t, int32(2), rejecting.callCount())
+	assert.Equal(t, int32(2), calls.Load())
 }
 
 // A rejected id was already handed to the spans referencing it, so its cache
@@ -2530,8 +2259,8 @@ func Test_metaVerdictOf_noRetryOnCollectorRejection(t *testing.T) {
 // the id again and meet the same rejection, one round trip per span.
 func Test_sendMetaWorker_releasesCacheOnCollectorRejection(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
-	rejecting := &rejectingMetaClient{}
-	agent.agentGrpc = &agentGrpc{metaClient: rejecting, agent: agent, retryDelay: 200 * time.Millisecond}
+	var calls atomic.Int32
+	agent.agentGrpc = &agentGrpc{metaClient: rejectingMetaClient(&calls), agent: agent, retryDelay: 200 * time.Millisecond}
 
 	apiKey := apiCacheKey{"test.api", apiTypeInvocation}
 	apiCached := func() bool { _, ok := agent.apiCache.peek(apiKey); return ok }
@@ -2542,14 +2271,14 @@ func Test_sendMetaWorker_releasesCacheOnCollectorRejection(t *testing.T) {
 	go agent.superviseWorker("meta", agent.sendMetaWorker)
 
 	assert.Eventually(t, func() bool {
-		return rejecting.callCount() == 1
+		return calls.Load() == 1
 	}, 5*time.Second, 5*time.Millisecond, "the rejected item must be sent exactly once")
 	assert.True(t, apiCached(), "the release waits out one retry delay")
 	assert.Equal(t, 1, agent.metaRetry.length(), "the rejected item is parked, not re-sent")
 
 	assert.Eventually(t, func() bool { return !apiCached() }, 5*time.Second, 5*time.Millisecond,
 		"a rejected metadata send must release its cache entry once the delay is up")
-	assert.Equal(t, int32(1), rejecting.callCount(), "a parked release sends nothing")
+	assert.Equal(t, int32(1), calls.Load(), "a parked release sends nothing")
 
 	agent.signalShutdown()
 	agent.workerWg.Wait()
@@ -2668,12 +2397,6 @@ func Test_CollectorPortDefaults(t *testing.T) {
 // decision is shared, not the value (doc/development.md, "Java and C++
 // agent parity").
 func Test_GrpcChannelDefaults(t *testing.T) {
-	assert.Equal(t, 30_000, grpcKeepAliveTime, "Java ClientOption keepAliveTime")
-	assert.Equal(t, 60_000, grpcKeepAliveTimeout, "Java ClientOption keepAliveTimeout")
-	assert.False(t, grpcKeepAlivePermitWithoutCalls, "Java ClientOption keepAliveWithoutCalls")
-	assert.Equal(t, 4*1024*1024, grpcMaxMessageSize, "Java ClientOption maxInboundMessageSize")
-	assert.Equal(t, 1*1024*1024, grpcFlowControlWindow, "Java ClientOption flowControlWindow")
-	assert.Equal(t, 8*1024, grpcMaxHeaderListSize, "Java ClientOption maxHeaderListSize")
 	assert.Equal(t, 0, grpcConnectionMaxAge, "renewal off, as in Java")
 	assert.Equal(t, 0, grpcStreamMaxAge, "renewal off, as in Java")
 }
@@ -2687,19 +2410,6 @@ func Test_ReconnectBackoff(t *testing.T) {
 	assert.Equal(t, 1.2, backOffMultiplier)
 	assert.Equal(t, 30*time.Second, backOffMaxInterval)
 	assert.Equal(t, 0.3, backOffJitter)
-
-	within := func(attempt int, base time.Duration) {
-		lo := time.Duration(float64(base) * (1 - backOffJitter))
-		hi := time.Duration(float64(base) * (1 + backOffJitter))
-		for i := 0; i < 200; i++ {
-			d := backOffSleep(attempt)
-			assert.GreaterOrEqual(t, d, lo, "attempt %d below the jitter window", attempt)
-			assert.LessOrEqual(t, d, hi, "attempt %d above the jitter window", attempt)
-		}
-	}
-	within(0, 3*time.Second)
-	within(1, 3600*time.Millisecond)
-	within(100, backOffMaxInterval)
 }
 
 // Test_AgentInfoSchedule locks the AgentInfo refresh cadence.

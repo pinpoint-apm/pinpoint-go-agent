@@ -206,13 +206,10 @@ func Test_spanGrpc_tracingRetainsStableMessages(t *testing.T) {
 
 	agent := newTestAgent(defaultConfig())
 	batchClient := &retainingSpanBatchClient{}
-	spanGrpc := &spanGrpc{
-		spanClient:              batchClient,
-		agent:                   agent,
-		batchFlushTimeout:       time.Second,
-		maxConcurrentRequests:   1,
-		concurrentRequestPermit: make(chan struct{}, 1),
-	}
+	spanGrpc := newMockSpanGrpc(agent)
+	spanGrpc.spanClient = batchClient
+	spanGrpc.maxConcurrentRequests = 1
+	spanGrpc.concurrentRequestPermit = make(chan struct{}, 1)
 	spanGrpc.sendSpanBatchAsync([]*spanChunk{slabTestChunk(agent, 8, 3)})
 	spanGrpc.inFlight.Wait()
 	if assert.Len(t, batchClient.request.GetSpan(), 1) {
@@ -257,15 +254,10 @@ func (c *mixCheckSpanClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMess
 func Test_spanGrpc_sendSpanBatchAsync_noDataMixing(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	client := &mixCheckSpanClient{}
-	spanGrpc := &spanGrpc{
-		spanClient:              client,
-		agent:                   agent,
-		batchSize:               defaultSpanBatchSize,
-		batchFlushTimeout:       time.Second,
-		batchCollectDeadline:    time.Duration(defaultSpanBatchCollectDeadline) * time.Millisecond,
-		maxConcurrentRequests:   8,
-		concurrentRequestPermit: make(chan struct{}, 8),
-	}
+	spanGrpc := newMockSpanGrpc(agent)
+	spanGrpc.spanClient = client
+	spanGrpc.maxConcurrentRequests = 8
+	spanGrpc.concurrentRequestPermit = make(chan struct{}, 8)
 
 	const senders, batchesPerSender, spansPerBatch = 4, 25, 5
 	var wg sync.WaitGroup

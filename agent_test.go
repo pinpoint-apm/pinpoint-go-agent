@@ -26,68 +26,40 @@ import (
 )
 
 func Test_agent_NewAgentError(t *testing.T) {
-	tests := []struct {
-		name string
-	}{
-		{"1"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			a, err := NewAgent(nil)
-			assert.Equal(t, NoopAgent(), a, "noop agent")
-			assert.Error(t, err, "error")
-		})
-	}
+	a, err := NewAgent(nil)
+	assert.Equal(t, NoopAgent(), a, "noop agent")
+	assert.Error(t, err, "error")
 }
 
 func Test_agent_NewAgent(t *testing.T) {
-	type args struct {
-		config *Config
-	}
-
 	opts := []ConfigOption{
 		WithAppName("test"),
 	}
 	c, _ := NewConfig(opts...)
 	c.offGrpc = true
 
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{c}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := tt.args.config
-			a, err := NewAgent(c)
-			agent := a.(*agent)
-			assert.NoError(t, err, "NewAgent")
-			assert.Equal(t, "test", agent.appName, "ApplicationName")
-			assert.Len(t, agent.agentID, uidBase64Len, "AgentID")
-			assert.Equal(t, int32(ServiceTypeGoApp), agent.appType, "ApplicationType")
-			assert.Greater(t, agent.startTime, int64(0), "StartTime")
-			assert.Equal(t, GetAgent(), a, "global agent")
+	a, err := NewAgent(c)
+	agent := a.(*agent)
+	assert.NoError(t, err, "NewAgent")
+	assert.Equal(t, "test", agent.appName, "ApplicationName")
+	assert.Len(t, agent.agentID, uidBase64Len, "AgentID")
+	assert.Equal(t, int32(ServiceTypeGoApp), agent.appType, "ApplicationType")
+	assert.Greater(t, agent.startTime, int64(0), "StartTime")
+	assert.Equal(t, GetAgent(), a, "global agent")
 
-			agent.startTime = 12345
-			agent.enable.Store(true)
-			assert.Equal(t, agent.agentID+"^12345^1", agent.generateTransactionId().String(), "generateTransactionId")
+	agent.startTime = 12345
+	agent.enable.Store(true)
+	assert.Equal(t, agent.agentID+"^12345^1", agent.generateTransactionId().String(), "generateTransactionId")
 
-			a.Shutdown()
-			assert.Equal(t, NoopAgent(), GetAgent(), "global agent")
-			assert.Equal(t, false, a.Enable(), "Enable")
+	a.Shutdown()
+	assert.Equal(t, NoopAgent(), GetAgent(), "global agent")
+	assert.Equal(t, false, a.Enable(), "Enable")
 
-			span := agent.NewSpanTracer("test", "/")
-			assert.Equal(t, NoopTracer(), span, "NewSpanTracer")
-		})
-	}
+	span := agent.NewSpanTracer("test", "/")
+	assert.Equal(t, NoopTracer(), span, "NewSpanTracer")
 }
 
 func Test_agent_GlobalAgent(t *testing.T) {
-	type args struct {
-		config *Config
-	}
-
 	opts := []ConfigOption{
 		WithAppName("testGlobal"),
 	}
@@ -98,29 +70,15 @@ func Test_agent_GlobalAgent(t *testing.T) {
 	agent.enable.Store(true)
 	defer a.Shutdown()
 
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{c}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, GetAgent(), a, "global agent")
-			assert.NotEqual(t, GetAgent(), NoopAgent(), "global agent")
+	assert.Equal(t, GetAgent(), a, "global agent")
+	assert.NotEqual(t, GetAgent(), NoopAgent(), "global agent")
 
-			a, err := NewAgent(c)
-			assert.Error(t, err, "NewAgent")
-			assert.Equal(t, GetAgent(), a, "global agent")
-		})
-	}
+	a, err := NewAgent(c)
+	assert.Error(t, err, "NewAgent")
+	assert.Equal(t, GetAgent(), a, "global agent")
 }
 
 func Test_agent_NewSpanTracer(t *testing.T) {
-	type args struct {
-		agent Agent
-	}
-
 	opts := []ConfigOption{
 		WithAppName("test"),
 	}
@@ -131,34 +89,18 @@ func Test_agent_NewSpanTracer(t *testing.T) {
 	agent.enable.Store(true)
 	defer a.Shutdown()
 
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{agent}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ag := tt.args.agent
-			span := ag.NewSpanTracer("test", "/")
+	span := agent.NewSpanTracer("test", "/")
 
-			txid := span.TransactionId()
-			assert.Equal(t, agent.agentID, txid.AgentId, "AgentId")
-			assert.Greater(t, txid.StartTime, int64(0), "StartTime")
-			assert.Greater(t, txid.Sequence, int64(0), "Sequence")
+	txid := span.TransactionId()
+	assert.Equal(t, agent.agentID, txid.AgentId, "AgentId")
+	assert.Greater(t, txid.StartTime, int64(0), "StartTime")
+	assert.Greater(t, txid.Sequence, int64(0), "Sequence")
 
-			spanid := span.SpanId()
-			assert.NotEqual(t, int64(0), spanid, "spanId")
-		})
-	}
+	spanid := span.SpanId()
+	assert.NotEqual(t, int64(0), spanid, "spanId")
 }
 
 func Test_agent_NewSpanTracerWithReader(t *testing.T) {
-	type args struct {
-		agent  Agent
-		reader DistributedTracingContextReader
-	}
-
 	opts := []ConfigOption{
 		WithAppName("test"),
 	}
@@ -175,24 +117,13 @@ func Test_agent_NewSpanTracerWithReader(t *testing.T) {
 		HeaderParentSpanId: "123",
 	}
 
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{agent, &DistributedTracingContextMap{m}}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			agent := tt.args.agent
-			span := agent.NewSpanTracerWithReader("test", "/", tt.args.reader)
+	span := agent.NewSpanTracerWithReader("test", "/", &DistributedTracingContextMap{m})
 
-			txId := span.TransactionId()
-			assert.Equal(t, "t123456", txId.AgentId, "AgentId")
-			assert.Equal(t, int64(12345), txId.StartTime, "StartTime")
-			assert.Equal(t, int64(1), txId.Sequence, "Sequence")
-			assert.Equal(t, int64(67890), span.SpanId(), "SpanId")
-		})
-	}
+	txId := span.TransactionId()
+	assert.Equal(t, "t123456", txId.AgentId, "AgentId")
+	assert.Equal(t, int64(12345), txId.StartTime, "StartTime")
+	assert.Equal(t, int64(1), txId.Sequence, "Sequence")
+	assert.Equal(t, int64(67890), span.SpanId(), "SpanId")
 }
 
 // An unparseable trace id must go through the new-trace sampler: Extract
@@ -240,6 +171,7 @@ func Test_agent_NewSpanTracerWithReader_samplerByParseability(t *testing.T) {
 
 func Test_abbreviateString_RuneSafe(t *testing.T) {
 	assert.Equal(t, "abc", abbreviateString("abc", 5))
+	assert.Equal(t, "0123456789", abbreviateString("0123456789", 10), "exactly at the limit is untouched")
 
 	// "가" is 3 bytes; a limit landing mid-rune must back up to the rune
 	// boundary, or protobuf rejects the string at marshal time and the whole
@@ -930,7 +862,7 @@ func Test_agent_ShutdownDoesNotCloseProducerChannels(t *testing.T) {
 func Test_agent_sendMetaWorkerStopsWhileAllPermitsHeld(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	blocking := &blockingMetaClient{release: make(chan struct{})}
-	agent.agentGrpc = &agentGrpc{metaClient: blocking, agent: agent}
+	agent.agentGrpc = &agentGrpc{metaClient: metaClientFunc(blocking.block), agent: agent}
 
 	agent.workerWg.Add(1)
 	go agent.superviseWorker("meta", agent.sendMetaWorker)
@@ -2104,24 +2036,6 @@ func Test_agent_ShutdownTimeoutLeavesOnlyTheStuckWorker(t *testing.T) {
 // Locked invariants - behaviour pinned against the Java and C++ agents. The
 // cross-agent rationale and references live in doc/development.md.
 // ===========================================================================
-
-// StringUtils.abbreviate writes: the value cut to the limit followed by
-// "...(original length)". The web tier shows the marker as-is, so the format is
-// part of the contract.
-func Test_TruncationFormat(t *testing.T) {
-	assert.Equal(t, "short", abbreviateString("short", 10), "a value within the limit is untouched")
-	assert.Equal(t, "0123456789", abbreviateString("0123456789", 10), "exactly at the limit is untouched")
-	assert.Equal(t, "0123456789...(11)", abbreviateString("0123456789A", 10), "the marker carries the original length")
-}
-
-// Test_TruncationCutsOnARuneBoundary locks the UTF-8 guard both
-// a mid-rune cut would fail the whole span or metadata send carrying it.
-func Test_TruncationCutsOnARuneBoundary(t *testing.T) {
-	// "가" is three bytes; a limit of 4 lands inside the second rune.
-	got := abbreviateString("가가가", 4)
-	assert.True(t, strings.HasPrefix(got, "가"))
-	assert.Equal(t, "가...(9)", got)
-}
 
 // AbstractRecorder abbreviates an exception message to 256 chars before
 // recording it on a span or span event, and

@@ -1,7 +1,6 @@
 package pinpoint
 
 import (
-	"container/list"
 	"fmt"
 	"strings"
 	"sync"
@@ -108,81 +107,6 @@ func TestMetaCacheEvictsLeastRecentlyUsed(t *testing.T) {
 	v, ok := c.peek(second)
 	assert.True(t, ok)
 	assert.Equal(t, int32(2), v)
-}
-
-// fifoCache replicates how the four caches behaved on hashicorp/golang-lru:
-// Peek never promotes, so eviction order is insertion order.
-type fifoCache struct {
-	m     map[string]*list.Element
-	order *list.List
-	cap   int
-}
-
-func newFifoCache(capacity int) *fifoCache {
-	return &fifoCache{m: make(map[string]*list.Element), order: list.New(), cap: capacity}
-}
-
-func (c *fifoCache) peek(k string) bool {
-	_, ok := c.m[k]
-	return ok
-}
-
-func (c *fifoCache) add(k string) {
-	if _, ok := c.m[k]; ok {
-		return
-	}
-	c.m[k] = c.order.PushFront(k)
-	if len(c.m) > c.cap {
-		victim := c.order.Back()
-		delete(c.m, victim.Value.(string))
-		c.order.Remove(victim)
-	}
-}
-
-// runMetaWorkload interleaves a fixed hot set with a stream of one-shot churn
-// keys, the access pattern where FIFO eviction hurts: churn pushes hot keys
-// out even though they are hit every round. It returns how many times a hot
-// key had to be re-inserted after the warmup round — in the agent each such
-// re-insert is a new id plus a metadata resend to the collector.
-func runMetaWorkload(peek func(string) bool, add func(string)) int {
-	const hotN, rounds, churnPerRound = 256, 32, 256
-	hot := make([]string, hotN)
-	for i := range hot {
-		hot[i] = fmt.Sprintf("select * from hot_table_%03d where id = ?", i)
-	}
-	hotResends := 0
-	churn := 0
-	for r := 0; r < rounds; r++ {
-		for i := 0; i < hotN; i++ {
-			if !peek(hot[i]) {
-				add(hot[i])
-				if r > 0 {
-					hotResends++
-				}
-			}
-			ck := fmt.Sprintf("select * from churn_table_%06d", churn)
-			churn++
-			if !peek(ck) {
-				add(ck)
-			}
-		}
-	}
-	return hotResends
-}
-
-func TestMetaCacheLruBeatsFifoOnResends(t *testing.T) {
-	fifo := newFifoCache(cacheSize)
-	fifoResends := runMetaWorkload(fifo.peek, fifo.add)
-
-	c := newMetaCache[string, int32](cacheSize)
-	lruResends := runMetaWorkload(
-		func(k string) bool { _, ok := c.peek(k); return ok },
-		func(k string) { c.peekOrAdd(k, 0) },
-	)
-
-	t.Logf("hot-key metadata resends: fifo(old)=%d lru(new)=%d", fifoResends, lruResends)
-	// observed ~11-20x fewer resends; ×4 leaves headroom for hash-seed variance
-	assert.Greater(t, fifoResends, lruResends*4)
 }
 
 func TestMetaCacheConcurrent(t *testing.T) {

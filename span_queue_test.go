@@ -12,9 +12,7 @@ import (
 // Test_spanQueueShardIsCacheLinePadded guards the false-sharing fix: the shards
 // must stay a whole cache line apart, not packed several to a line.
 func Test_spanQueueShardIsCacheLinePadded(t *testing.T) {
-	if got := unsafe.Sizeof(spanQueueShard{}); got%cacheLinePadSize != 0 {
-		t.Errorf("spanQueueShard is %d bytes, not a multiple of the %d-byte shard stride: shards share a cache line", got, cacheLinePadSize)
-	}
+	assert.Zero(t, unsafe.Sizeof(spanQueueShard{})%cacheLinePadSize, "spanQueueShard is not a multiple of the %d-byte shard stride: shards share a cache line", cacheLinePadSize)
 }
 
 func Test_spanQueue_shardCapacitySumsToCapacity(t *testing.T) {

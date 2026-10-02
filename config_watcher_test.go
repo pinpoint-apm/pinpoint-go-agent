@@ -8,14 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func writeConfigRate(t testing.TB, path string, rate int) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(fmt.Sprintf("Sampling:\n  CounterRate: %d\n", rate)), 0o600); err != nil {
-		t.Error(err)
-	}
+	assert.NoError(t, os.WriteFile(path, []byte(fmt.Sprintf("Sampling:\n  CounterRate: %d\n", rate)), 0o600))
 }
 
 func configWatcherDone(config *Config) <-chan struct{} {
@@ -70,9 +69,7 @@ func TestConfigWatcherReloadAndClose(t *testing.T) {
 func TestConfigWatcherReloadKeepsEnvValue(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	write := func(rate int, percent float64) {
-		if err := os.WriteFile(path, []byte(fmt.Sprintf("Sampling:\n  CounterRate: %d\n  PercentRate: %g\n", rate, percent)), 0o600); err != nil {
-			t.Error(err)
-		}
+		assert.NoError(t, os.WriteFile(path, []byte(fmt.Sprintf("Sampling:\n  CounterRate: %d\n  PercentRate: %g\n", rate, percent)), 0o600))
 	}
 	write(1, 10)
 	t.Setenv("PINPOINT_GO_SAMPLING_COUNTERRATE", "7")

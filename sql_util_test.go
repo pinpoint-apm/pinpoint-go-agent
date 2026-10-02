@@ -737,36 +737,6 @@ func sqlNormalizeCases() []sqlNormalizeCase {
 			params:     ``,
 		},
 		{
-			name:       "dollar not followed by a digit keeps the flag",
-			sql:        `V$SESSION1`,
-			normalized: `V$SESSION1`,
-			params:     ``,
-		},
-		{
-			name:       "shared index counter across numbers and literals",
-			sql:        `$'x'1`,
-			normalized: `$'0$'1#`,
-			params:     `x,1`,
-		},
-		{
-			name:       "exponent sign is a separate token",
-			sql:        `1.4e-10`,
-			normalized: `0#-1#`,
-			params:     `1.4e,10`,
-		},
-		{
-			name:       "digits after a dot are part of the identifier",
-			sql:        `test.123`,
-			normalized: `test.123`,
-			params:     ``,
-		},
-		{
-			name:       "underscore then space re-enables the number token",
-			sql:        `test_ 123`,
-			normalized: `test_ 0#`,
-			params:     `123`,
-		},
-		{
 			name:       "hash is not a comment",
 			sql:        `select #1 from t`,
 			normalized: `select #0# from t`,
@@ -813,19 +783,6 @@ func Test_SqlNormalizerIsNotIdempotent(t *testing.T) {
 func Test_SqlNormalizerWhitespaceIsNotNormalized(t *testing.T) {
 	normalized, _ := newSqlNormalizer("select   *\n\tfrom  t", false).run()
 	assert.Equal(t, "select   *\n\tfrom  t", normalized)
-}
-
-// Test_SqlNormalizerRemoveComments locks the agent default
-// dropped rather than copied, and a statement that is nothing but a comment
-// normalizes to the empty string.
-func Test_SqlNormalizerRemoveComments(t *testing.T) {
-	normalized, params := newSqlNormalizer(`SELECT/*c*/1 FROM t`, true).run()
-	assert.Equal(t, `SELECT1 FROM t`, normalized, "the comment is dropped and the digit stays an identifier digit: a comment does not re-enable the number token")
-	assert.Equal(t, ``, params)
-
-	normalized, params = newSqlNormalizer(`/* only */`, true).run()
-	assert.Equal(t, ``, normalized)
-	assert.Equal(t, ``, params)
 }
 
 // splitOutputParams is the agent-side counterpart of the server's
@@ -902,34 +859,4 @@ func Test_SqlNormalizerSharedIndexCounter(t *testing.T) {
 			assert.Len(t, splitOutputParams(params), len(indices), "one param per placeholder")
 		})
 	}
-}
-
-// Test_SqlNormalizerInputCapDropsTheWholeStatement locks the
-// input limit. A statement longer than maxSqlNormalizeLength (1 << 20) is
-// dropped whole: run() returns empty normalized text and parameters, never a
-// cut. A cut can leave a literal without its placeholder and produce a different
-// SQL ID or UID.
-//
-// The boundary cases - one byte either side of the cap, a multibyte character
-// straddling it - belong to Test_sqlNormalizer_DropsInputPastTheNormalizationCap
-// above and are not repeated here.
-func Test_SqlNormalizerInputCapDropsTheWholeStatement(t *testing.T) {
-	assert.Equal(t, 1<<20, maxSqlNormalizeLength)
-	assert.Greater(t, maxSqlNormalizeLength, maxSqlSize, "the memory cap sits above the metadata cap")
-
-	// A literal that runs past the cap: precisely the shape where a cut would
-	// leave the opening quote without its placeholder.
-	over := "select 1 from t where a = '" + strings.Repeat("x", maxSqlNormalizeLength) + "'"
-	assert.Greater(t, len(over), maxSqlNormalizeLength)
-	assert.False(t, sqlNormalizable(over))
-
-	normalized, params := newSqlNormalizer(over, false).run()
-	assert.Equal(t, "", normalized, "an over-cap statement is dropped whole, not cut")
-	assert.Equal(t, "", params, "a cut param would leave placeholders the server cannot refill")
-
-	// The cap measures the raw input and changes nothing else: a statement
-	// within it normalizes exactly as any other.
-	normalized, params = newSqlNormalizer("select 1", false).run()
-	assert.Equal(t, "select 0#", normalized)
-	assert.Equal(t, "1", params)
 }

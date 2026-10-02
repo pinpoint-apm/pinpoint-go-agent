@@ -32,75 +32,53 @@ func Test_AddConfigReachesTheNoopAgentConfig(t *testing.T) {
 }
 
 func TestNewConfig_DefaultValue(t *testing.T) {
-	type args struct {
-		opts []ConfigOption
-	}
-
-	opts := []ConfigOption{
-		WithAppName("TestApp"),
-	}
-
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{opts}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, _ := NewConfig(tt.args.opts...)
-			assert.Equal(t, "TestApp", c.String(CfgAppName), CfgAppName)
-			assert.Equal(t, ServiceTypeGoApp, c.Int(CfgAppType), CfgAppType)
-			assert.Empty(t, c.String(CfgAgentName), CfgAgentName)
-			assert.Equal(t, "localhost", c.String(CfgCollectorHost), CfgCollectorHost)
-			assert.Equal(t, 9991, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
-			assert.Equal(t, 9993, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
-			assert.Equal(t, 9992, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
-			assert.Equal(t, "info", c.String(CfgLogLevel), CfgLogLevel)
-			assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
-			assert.Equal(t, 10, c.Int(CfgLogMaxSize), CfgLogMaxSize)
-			assert.Equal(t, 1, c.Int(CfgLogMaxBackups), CfgLogMaxBackups)
-			assert.Equal(t, samplingTypeCounter, c.String(CfgSamplingType), CfgSamplingType)
-			assert.Equal(t, 1, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
-			assert.Equal(t, float64(100), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
-			assert.Equal(t, 0, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
-			assert.Equal(t, 0, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
-			assert.Equal(t, defaultQueueSize, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
-			assert.Equal(t, defaultSpanBatchSize, c.Int(CfgCollectorGrpcSpanBatchSize), CfgCollectorGrpcSpanBatchSize)
-			assert.Equal(t, defaultSpanBatchFlushInterval, c.Int(CfgCollectorGrpcSpanBatchFlushInterval), CfgCollectorGrpcSpanBatchFlushInterval)
-			assert.Equal(t, defaultSpanBatchCollectDeadline, c.Int(CfgCollectorGrpcSpanBatchCollectDeadline), CfgCollectorGrpcSpanBatchCollectDeadline)
-			assert.Equal(t, defaultSpanBatchMaxConcurrentRequests, c.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests), CfgCollectorGrpcSpanBatchMaxConcurrentRequests)
-			assert.Equal(t, defaultEventChunkSize, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
-			assert.Equal(t, defaultEventDepth, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
-			assert.Equal(t, defaultEventSequence, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
-			assert.Equal(t, defaultQueueSize, c.Int(CfgStatQueueSize), CfgStatQueueSize)
-			assert.Equal(t, defaultMetaQueueSize, c.Int(CfgCollectorGrpcSenderQueueSize), CfgCollectorGrpcSenderQueueSize)
-			assert.Equal(t, 5000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
-			assert.Equal(t, 6, c.Int(CfgStatBatchCount), CfgStatBatchCount)
-			assert.Equal(t, false, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
-			assert.Empty(t, c.String(CfgConfigFile), CfgConfigFile)
-			assert.Empty(t, c.String(CfgActiveProfile), CfgActiveProfile)
-			assert.Equal(t, true, c.Bool(CfgSQLTraceBindValue), CfgSQLTraceBindValue)
-			assert.Equal(t, 1024, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
-			assert.Equal(t, true, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
-			assert.Equal(t, true, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
-			assert.Equal(t, true, c.Bool(CfgEnable), CfgEnable)
-			assert.Equal(t, false, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
-			assert.Equal(t, 1000, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
-			assert.Equal(t, 1024, c.Int(CfgHttpUrlStatQueueSize), CfgHttpUrlStatQueueSize)
-			assert.Equal(t, false, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
-			assert.Equal(t, 32, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
-			assert.Equal(t, 24*60*60*1000, c.Int(CfgCollectorAgentInfoRefreshInterval), CfgCollectorAgentInfoRefreshInterval)
-		})
-	}
+	c, _ := NewConfig(WithAppName("TestApp"))
+	assert.Equal(t, "TestApp", c.String(CfgAppName), CfgAppName)
+	assert.Equal(t, ServiceTypeGoApp, c.Int(CfgAppType), CfgAppType)
+	assert.Empty(t, c.String(CfgAgentName), CfgAgentName)
+	assert.Equal(t, "localhost", c.String(CfgCollectorHost), CfgCollectorHost)
+	assert.Equal(t, 9991, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
+	assert.Equal(t, 9993, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
+	assert.Equal(t, 9992, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
+	assert.Equal(t, "info", c.String(CfgLogLevel), CfgLogLevel)
+	assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
+	assert.Equal(t, 10, c.Int(CfgLogMaxSize), CfgLogMaxSize)
+	assert.Equal(t, 1, c.Int(CfgLogMaxBackups), CfgLogMaxBackups)
+	assert.Equal(t, samplingTypeCounter, c.String(CfgSamplingType), CfgSamplingType)
+	assert.Equal(t, 1, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
+	assert.Equal(t, float64(100), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
+	assert.Equal(t, 0, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
+	assert.Equal(t, 0, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
+	assert.Equal(t, defaultQueueSize, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+	assert.Equal(t, defaultSpanBatchSize, c.Int(CfgCollectorGrpcSpanBatchSize), CfgCollectorGrpcSpanBatchSize)
+	assert.Equal(t, defaultSpanBatchFlushInterval, c.Int(CfgCollectorGrpcSpanBatchFlushInterval), CfgCollectorGrpcSpanBatchFlushInterval)
+	assert.Equal(t, defaultSpanBatchCollectDeadline, c.Int(CfgCollectorGrpcSpanBatchCollectDeadline), CfgCollectorGrpcSpanBatchCollectDeadline)
+	assert.Equal(t, defaultSpanBatchMaxConcurrentRequests, c.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests), CfgCollectorGrpcSpanBatchMaxConcurrentRequests)
+	assert.Equal(t, defaultEventChunkSize, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
+	assert.Equal(t, defaultEventDepth, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
+	assert.Equal(t, defaultEventSequence, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
+	assert.Equal(t, defaultQueueSize, c.Int(CfgStatQueueSize), CfgStatQueueSize)
+	assert.Equal(t, defaultMetaQueueSize, c.Int(CfgCollectorGrpcSenderQueueSize), CfgCollectorGrpcSenderQueueSize)
+	assert.Equal(t, 5000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
+	assert.Equal(t, 6, c.Int(CfgStatBatchCount), CfgStatBatchCount)
+	assert.Equal(t, false, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
+	assert.Empty(t, c.String(CfgConfigFile), CfgConfigFile)
+	assert.Empty(t, c.String(CfgActiveProfile), CfgActiveProfile)
+	assert.Equal(t, true, c.Bool(CfgSQLTraceBindValue), CfgSQLTraceBindValue)
+	assert.Equal(t, 1024, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
+	assert.Equal(t, true, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
+	assert.Equal(t, true, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
+	assert.Equal(t, true, c.Bool(CfgEnable), CfgEnable)
+	assert.Equal(t, false, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
+	assert.Equal(t, 1000, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
+	assert.Equal(t, 1024, c.Int(CfgHttpUrlStatQueueSize), CfgHttpUrlStatQueueSize)
+	assert.Equal(t, false, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
+	assert.Equal(t, 32, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
+	assert.Equal(t, 24*60*60*1000, c.Int(CfgCollectorAgentInfoRefreshInterval), CfgCollectorAgentInfoRefreshInterval)
 }
 
 func TestNewConfig_WithFunc(t *testing.T) {
-	type args struct {
-		opts []ConfigOption
-	}
-
 	opts := []ConfigOption{
 		WithAppName("TestApp"),
 		WithAppType(1234),
@@ -141,274 +119,170 @@ func TestNewConfig_WithFunc(t *testing.T) {
 		WithErrorCallStackDepth(64),
 	}
 
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{opts}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, _ := NewConfig(tt.args.opts...)
-			assert.Equal(t, "TestApp", c.String(CfgAppName), CfgAppName)
-			assert.Equal(t, 1234, c.Int(CfgAppType), CfgAppType)
-			assert.Equal(t, "TestAgentName", c.String(CfgAgentName), CfgAgentName)
-			assert.Equal(t, "func.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
-			assert.Equal(t, 7777, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
-			assert.Equal(t, 8888, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
-			assert.Equal(t, 9999, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
-			assert.Equal(t, "error", c.String(CfgLogLevel), CfgLogLevel)
-			assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
-			assert.Equal(t, 100, c.Int(CfgLogMaxSize), CfgLogMaxSize)
-			assert.Equal(t, 5, c.Int(CfgLogMaxBackups), CfgLogMaxBackups)
-			assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
-			assert.Equal(t, 200, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
-			assert.Equal(t, float64(90), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
-			assert.Equal(t, 20, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
-			assert.Equal(t, 30, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
-			assert.Equal(t, 2048, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
-			assert.Equal(t, 25, c.Int(CfgCollectorGrpcSpanBatchSize), CfgCollectorGrpcSpanBatchSize)
-			assert.Equal(t, 2000, c.Int(CfgCollectorGrpcSpanBatchFlushInterval), CfgCollectorGrpcSpanBatchFlushInterval)
-			assert.Equal(t, 250, c.Int(CfgCollectorGrpcSpanBatchCollectDeadline), CfgCollectorGrpcSpanBatchCollectDeadline)
-			assert.Equal(t, 4, c.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests), CfgCollectorGrpcSpanBatchMaxConcurrentRequests)
-			assert.Equal(t, 100, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
-			assert.Equal(t, 100, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
-			assert.Equal(t, 1000, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
-			assert.Equal(t, 10000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
-			assert.Equal(t, 3, c.Int(CfgStatBatchCount), CfgStatBatchCount)
-			assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceBindValue), CfgSQLTraceBindValue)
-			assert.Equal(t, 512, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
-			assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
-			assert.Equal(t, false, c.Bool(CfgEnable), CfgEnable)
-			assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
-			assert.Equal(t, 2048, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
-			assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
-			assert.Equal(t, 64, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
-		})
-	}
+	c, _ := NewConfig(opts...)
+	assert.Equal(t, "TestApp", c.String(CfgAppName), CfgAppName)
+	assert.Equal(t, 1234, c.Int(CfgAppType), CfgAppType)
+	assert.Equal(t, "TestAgentName", c.String(CfgAgentName), CfgAgentName)
+	assert.Equal(t, "func.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
+	assert.Equal(t, 7777, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
+	assert.Equal(t, 8888, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
+	assert.Equal(t, 9999, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
+	assert.Equal(t, "error", c.String(CfgLogLevel), CfgLogLevel)
+	assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
+	assert.Equal(t, 100, c.Int(CfgLogMaxSize), CfgLogMaxSize)
+	assert.Equal(t, 5, c.Int(CfgLogMaxBackups), CfgLogMaxBackups)
+	assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
+	assert.Equal(t, 200, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
+	assert.Equal(t, float64(90), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
+	assert.Equal(t, 20, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
+	assert.Equal(t, 30, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
+	assert.Equal(t, 2048, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+	assert.Equal(t, 25, c.Int(CfgCollectorGrpcSpanBatchSize), CfgCollectorGrpcSpanBatchSize)
+	assert.Equal(t, 2000, c.Int(CfgCollectorGrpcSpanBatchFlushInterval), CfgCollectorGrpcSpanBatchFlushInterval)
+	assert.Equal(t, 250, c.Int(CfgCollectorGrpcSpanBatchCollectDeadline), CfgCollectorGrpcSpanBatchCollectDeadline)
+	assert.Equal(t, 4, c.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests), CfgCollectorGrpcSpanBatchMaxConcurrentRequests)
+	assert.Equal(t, 100, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
+	assert.Equal(t, 100, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
+	assert.Equal(t, 1000, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
+	assert.Equal(t, 10000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
+	assert.Equal(t, 3, c.Int(CfgStatBatchCount), CfgStatBatchCount)
+	assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceBindValue), CfgSQLTraceBindValue)
+	assert.Equal(t, 512, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
+	assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
+	assert.Equal(t, false, c.Bool(CfgEnable), CfgEnable)
+	assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
+	assert.Equal(t, 2048, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
+	assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
+	assert.Equal(t, 64, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 }
 
 func TestNewConfig_AppNameMissing(t *testing.T) {
-	type args struct {
-		opts []ConfigOption
-	}
-
-	opts := []ConfigOption{}
-
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{opts}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, err := NewConfig(tt.args.opts...)
-			err = c.checkNameAndID()
-			assert.Error(t, err, "error")
-		})
-	}
-}
-
-func TestNewConfig_GenerateAgentId(t *testing.T) {
-	type args struct {
-		opts []ConfigOption
-	}
-
-	opts := []ConfigOption{
-		WithAppName("TestApp"),
-	}
-
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{opts}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, _ := NewConfig(tt.args.opts...)
-			c.checkNameAndID()
-			assert.Equal(t, c.String(CfgAppName), "TestApp", CfgAppName)
-		})
-	}
+	c, _ := NewConfig()
+	assert.Error(t, c.checkNameAndID(), "error")
 }
 
 func TestNewConfig_ConfigFileYaml(t *testing.T) {
-	type args struct {
-		opts []ConfigOption
-	}
-
 	opts := []ConfigOption{
 		WithAppName("TestApp"),
 		WithConfigFile("example/pinpoint-config.yaml"),
 	}
 
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{opts}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, _ := NewConfig(tt.args.opts...)
-			defer c.Close()
-			assert.Equal(t, "MyAppName", c.String(CfgAppName), CfgAppName)
-			assert.Equal(t, 1900, c.Int(CfgAppType), CfgAppType)
-			assert.Equal(t, "my.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
-			assert.Equal(t, 9000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
-			assert.Equal(t, 9001, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
-			assert.Equal(t, 9002, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
-			assert.Equal(t, "debug", c.String(CfgLogLevel), CfgLogLevel)
-			assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
-			assert.Equal(t, 20, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
-			assert.Equal(t, 0.1, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
-			assert.Equal(t, 50, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
-			assert.Equal(t, 60, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
-			assert.Equal(t, 512, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
-			assert.Equal(t, 50, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
-			assert.Equal(t, 32, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
-			assert.Equal(t, 512, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
-			assert.Equal(t, 7000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
-			assert.Equal(t, 10, c.Int(CfgStatBatchCount), CfgStatBatchCount)
-			assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceBindValue), CfgSQLTraceBindValue)
-			assert.Equal(t, 512, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
-			assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
-			assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
-			assert.Equal(t, 1234, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
-			assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
-			assert.Equal(t, 20, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
-		})
-	}
+	c, _ := NewConfig(opts...)
+	defer c.Close()
+	assert.Equal(t, "MyAppName", c.String(CfgAppName), CfgAppName)
+	assert.Equal(t, 1900, c.Int(CfgAppType), CfgAppType)
+	assert.Equal(t, "my.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
+	assert.Equal(t, 9000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
+	assert.Equal(t, 9001, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
+	assert.Equal(t, 9002, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
+	assert.Equal(t, "debug", c.String(CfgLogLevel), CfgLogLevel)
+	assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
+	assert.Equal(t, 20, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
+	assert.Equal(t, 0.1, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
+	assert.Equal(t, 50, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
+	assert.Equal(t, 60, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
+	assert.Equal(t, 512, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+	assert.Equal(t, 50, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
+	assert.Equal(t, 32, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
+	assert.Equal(t, 512, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
+	assert.Equal(t, 7000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
+	assert.Equal(t, 10, c.Int(CfgStatBatchCount), CfgStatBatchCount)
+	assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceBindValue), CfgSQLTraceBindValue)
+	assert.Equal(t, 512, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
+	assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
+	assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
+	assert.Equal(t, 1234, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
+	assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
+	assert.Equal(t, 20, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 }
 
 func TestNewConfig_ConfigFileJson(t *testing.T) {
-	type args struct {
-		opts []ConfigOption
-	}
-
 	opts := []ConfigOption{
 		WithAppName("TestApp"),
 		WithConfigFile("example/pinpoint-config.json"),
 	}
 
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{opts}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, _ := NewConfig(tt.args.opts...)
-			defer c.Close()
-			assert.Equal(t, "JsonAppName", c.String(CfgAppName), CfgAppName)
-			assert.Equal(t, 1901, c.Int(CfgAppType), CfgAppType)
-			assert.Equal(t, "real.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
-			assert.Equal(t, 9000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
-			assert.Equal(t, 9001, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
-			assert.Equal(t, 9002, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
-			assert.Equal(t, "debug", c.String(CfgLogLevel), CfgLogLevel)
-			assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
-			assert.Equal(t, 20, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
-			assert.Equal(t, 5.5, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
-			assert.Equal(t, 50, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
-			assert.Equal(t, 60, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
-			assert.Equal(t, 1024, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
-			assert.Equal(t, 10, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
-			assert.Equal(t, 10, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
-			assert.Equal(t, 50, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
-			assert.Equal(t, 7000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
-			assert.Equal(t, 10, c.Int(CfgStatBatchCount), CfgStatBatchCount)
-			assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceBindValue), CfgSQLTraceBindValue)
-			assert.Equal(t, 256, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
-			assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
-			assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
-			assert.Equal(t, 10, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
-			assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
-			assert.Equal(t, 30, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
-		})
-	}
+	c, _ := NewConfig(opts...)
+	defer c.Close()
+	assert.Equal(t, "JsonAppName", c.String(CfgAppName), CfgAppName)
+	assert.Equal(t, 1901, c.Int(CfgAppType), CfgAppType)
+	assert.Equal(t, "real.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
+	assert.Equal(t, 9000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
+	assert.Equal(t, 9001, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
+	assert.Equal(t, 9002, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
+	assert.Equal(t, "debug", c.String(CfgLogLevel), CfgLogLevel)
+	assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
+	assert.Equal(t, 20, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
+	assert.Equal(t, 5.5, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
+	assert.Equal(t, 50, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
+	assert.Equal(t, 60, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
+	assert.Equal(t, 1024, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+	assert.Equal(t, 10, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
+	assert.Equal(t, 10, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
+	assert.Equal(t, 50, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
+	assert.Equal(t, 7000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
+	assert.Equal(t, 10, c.Int(CfgStatBatchCount), CfgStatBatchCount)
+	assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceBindValue), CfgSQLTraceBindValue)
+	assert.Equal(t, 256, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
+	assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
+	assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
+	assert.Equal(t, 10, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
+	assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
+	assert.Equal(t, 30, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 }
 
 func TestNewConfig_ConfigFileProp(t *testing.T) {
-	type args struct {
-		opts []ConfigOption
-	}
-
 	opts := []ConfigOption{
 		WithAppName("TestApp"),
 		WithConfigFile("example/pinpoint-config.prop"),
 	}
 
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{opts}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, _ := NewConfig(tt.args.opts...)
-			defer c.Close()
-			assert.Equal(t, "PropAppName", c.String(CfgAppName), CfgAppName)
-			assert.Equal(t, 1902, c.Int(CfgAppType), CfgAppType)
-			assert.Equal(t, "real.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
-			assert.Equal(t, 7000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
-			assert.Equal(t, 7001, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
-			assert.Equal(t, 7002, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
-			assert.Equal(t, "debug", c.String(CfgLogLevel), CfgLogLevel)
-			assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
-			assert.Equal(t, 20, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
-			assert.Equal(t, 5.5, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
-			assert.Equal(t, 50, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
-			assert.Equal(t, 60, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
-			assert.Equal(t, defaultQueueSize, c.Int(CfgSpanQueueSize), CfgSpanQueueSize) // span.queueSize=-1 falls back to the default
-			assert.Equal(t, 20, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
-			assert.Equal(t, 2, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
-			assert.Equal(t, 4, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
-			assert.Equal(t, 7000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
-			assert.Equal(t, 10, c.Int(CfgStatBatchCount), CfgStatBatchCount)
-			assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceBindValue), CfgSQLTraceBindValue)
-			assert.Equal(t, 128, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
-			assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
-			assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
-			assert.Equal(t, 10240, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
-			assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
-			assert.Equal(t, 40, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
-		})
-	}
+	c, _ := NewConfig(opts...)
+	defer c.Close()
+	assert.Equal(t, "PropAppName", c.String(CfgAppName), CfgAppName)
+	assert.Equal(t, 1902, c.Int(CfgAppType), CfgAppType)
+	assert.Equal(t, "real.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
+	assert.Equal(t, 7000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
+	assert.Equal(t, 7001, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
+	assert.Equal(t, 7002, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
+	assert.Equal(t, "debug", c.String(CfgLogLevel), CfgLogLevel)
+	assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
+	assert.Equal(t, 20, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
+	assert.Equal(t, 5.5, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
+	assert.Equal(t, 50, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
+	assert.Equal(t, 60, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
+	assert.Equal(t, defaultQueueSize, c.Int(CfgSpanQueueSize), CfgSpanQueueSize) // span.queueSize=-1 falls back to the default
+	assert.Equal(t, 20, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
+	assert.Equal(t, 2, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
+	assert.Equal(t, 4, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
+	assert.Equal(t, 7000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
+	assert.Equal(t, 10, c.Int(CfgStatBatchCount), CfgStatBatchCount)
+	assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceBindValue), CfgSQLTraceBindValue)
+	assert.Equal(t, 128, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
+	assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
+	assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
+	assert.Equal(t, 10240, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
+	assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
+	assert.Equal(t, 40, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 }
 
 func TestNewConfig_ConfigFileProfile(t *testing.T) {
-	type args struct {
-		opts []ConfigOption
-	}
-
 	opts := []ConfigOption{
 		WithAppName("TestApp"),
 		WithConfigFile("example/test-config.yaml"),
 		WithActiveProfile("real"),
-	}
-
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{opts}},
 	}
 
 	oldArgs := os.Args
@@ -420,39 +294,24 @@ func TestNewConfig_ConfigFileProfile(t *testing.T) {
 	}
 	t.Setenv("PINPOINT_GO_ACTIVEPROFILE", "dev")
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, _ := NewConfig(tt.args.opts...)
-			defer c.Close()
-			assert.Equal(t, "MyAppName", c.String(CfgAppName), CfgAppName)
-			assert.Equal(t, "dev.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
-			assert.Equal(t, samplingTypeCounter, c.String(CfgSamplingType), CfgSamplingType)
-			assert.Equal(t, 1, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
-			assert.Equal(t, 0.1, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
-			assert.Equal(t, 50, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
-			assert.Equal(t, 60, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
-			assert.Equal(t, 7000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
-			assert.Equal(t, 10, c.Int(CfgStatBatchCount), CfgStatBatchCount)
-			assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
-		})
-	}
+	c, _ := NewConfig(opts...)
+	defer c.Close()
+	assert.Equal(t, "MyAppName", c.String(CfgAppName), CfgAppName)
+	assert.Equal(t, "dev.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
+	assert.Equal(t, samplingTypeCounter, c.String(CfgSamplingType), CfgSamplingType)
+	assert.Equal(t, 1, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
+	assert.Equal(t, 0.1, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
+	assert.Equal(t, 50, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
+	assert.Equal(t, 60, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
+	assert.Equal(t, 7000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
+	assert.Equal(t, 10, c.Int(CfgStatBatchCount), CfgStatBatchCount)
+	assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
 }
 
 func TestNewConfig_EnvVarArg(t *testing.T) {
-	type args struct {
-		opts []ConfigOption
-	}
-
 	opts := []ConfigOption{
 		WithAppName("TestApp"),
 		WithConfigFile("example/test.yaml"),
-	}
-
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{opts}},
 	}
 
 	t.Setenv("PINPOINT_GO_ACTIVEPROFILE", "dev")
@@ -496,52 +355,48 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 	t.Setenv("PINPOINT_GO_ERROR_TRACECALLSTACK", "true")
 	t.Setenv("PINPOINT_GO_ERROR_CALLSTACKDEPTH", "50")
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, _ := NewConfig(tt.args.opts...)
-			defer c.Close()
-			assert.Equal(t, "EnvVarArgTest", c.String(CfgAppName), CfgAppName)
-			assert.Equal(t, 2000, c.Int(CfgAppType), CfgAppType)
-			assert.Equal(t, "envagentname", c.String(CfgAgentName), CfgAgentName)
-			assert.Equal(t, "env.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
-			assert.Equal(t, 8000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
-			assert.Equal(t, 8100, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
-			assert.Equal(t, 8200, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
-			assert.Equal(t, "trace", c.String(CfgLogLevel), CfgLogLevel)
-			assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
-			assert.Equal(t, 50, c.Int(CfgLogMaxSize), CfgLogMaxSize)
-			assert.Equal(t, 4, c.Int(CfgLogMaxBackups), CfgLogMaxBackups)
-			assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
-			assert.Equal(t, 100, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
-			assert.Equal(t, float64(120), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
-			assert.Equal(t, 100, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
-			assert.Equal(t, 200, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
-			assert.Equal(t, 1000, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
-			assert.Equal(t, 700, c.Int(CfgCollectorGrpcSenderQueueSize), CfgCollectorGrpcSenderQueueSize)
-			assert.Equal(t, 40, c.Int(CfgCollectorGrpcSpanBatchSize), CfgCollectorGrpcSpanBatchSize)
-			assert.Equal(t, 1500, c.Int(CfgCollectorGrpcSpanBatchFlushInterval), CfgCollectorGrpcSpanBatchFlushInterval)
-			assert.Equal(t, 300, c.Int(CfgCollectorGrpcSpanBatchCollectDeadline), CfgCollectorGrpcSpanBatchCollectDeadline)
-			assert.Equal(t, 3, c.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests), CfgCollectorGrpcSpanBatchMaxConcurrentRequests)
-			assert.Equal(t, 88, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
-			assert.Equal(t, 128, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
-			assert.Equal(t, 2000, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
-			assert.Equal(t, 3000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
-			assert.Equal(t, 11, c.Int(CfgStatBatchCount), CfgStatBatchCount)
-			assert.Equal(t, false, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
-			assert.Equal(t, true, c.Bool(CfgSQLTraceBindValue), CfgSQLTraceBindValue)
-			assert.Equal(t, 100, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
-			assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
-			assert.Equal(t, "example/pinpoint-config.yaml", c.String(CfgConfigFile), CfgConfigFile)
-			assert.Equal(t, "dev", c.String(CfgActiveProfile), CfgActiveProfile)
-			assert.Equal(t, false, c.Bool(CfgEnable), CfgEnable)
-			assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
-			assert.Equal(t, 100, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
-			assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
-			assert.Equal(t, 50, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
-		})
-	}
+	c, _ := NewConfig(opts...)
+	defer c.Close()
+	assert.Equal(t, "EnvVarArgTest", c.String(CfgAppName), CfgAppName)
+	assert.Equal(t, 2000, c.Int(CfgAppType), CfgAppType)
+	assert.Equal(t, "envagentname", c.String(CfgAgentName), CfgAgentName)
+	assert.Equal(t, "env.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
+	assert.Equal(t, 8000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
+	assert.Equal(t, 8100, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
+	assert.Equal(t, 8200, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
+	assert.Equal(t, "trace", c.String(CfgLogLevel), CfgLogLevel)
+	assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
+	assert.Equal(t, 50, c.Int(CfgLogMaxSize), CfgLogMaxSize)
+	assert.Equal(t, 4, c.Int(CfgLogMaxBackups), CfgLogMaxBackups)
+	assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
+	assert.Equal(t, 100, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
+	assert.Equal(t, float64(120), c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
+	assert.Equal(t, 100, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
+	assert.Equal(t, 200, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
+	assert.Equal(t, 1000, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+	assert.Equal(t, 700, c.Int(CfgCollectorGrpcSenderQueueSize), CfgCollectorGrpcSenderQueueSize)
+	assert.Equal(t, 40, c.Int(CfgCollectorGrpcSpanBatchSize), CfgCollectorGrpcSpanBatchSize)
+	assert.Equal(t, 1500, c.Int(CfgCollectorGrpcSpanBatchFlushInterval), CfgCollectorGrpcSpanBatchFlushInterval)
+	assert.Equal(t, 300, c.Int(CfgCollectorGrpcSpanBatchCollectDeadline), CfgCollectorGrpcSpanBatchCollectDeadline)
+	assert.Equal(t, 3, c.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests), CfgCollectorGrpcSpanBatchMaxConcurrentRequests)
+	assert.Equal(t, 88, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
+	assert.Equal(t, 128, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
+	assert.Equal(t, 2000, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
+	assert.Equal(t, 3000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
+	assert.Equal(t, 11, c.Int(CfgStatBatchCount), CfgStatBatchCount)
+	assert.Equal(t, false, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
+	assert.Equal(t, true, c.Bool(CfgSQLTraceBindValue), CfgSQLTraceBindValue)
+	assert.Equal(t, 100, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
+	assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
+	assert.Equal(t, "example/pinpoint-config.yaml", c.String(CfgConfigFile), CfgConfigFile)
+	assert.Equal(t, "dev", c.String(CfgActiveProfile), CfgActiveProfile)
+	assert.Equal(t, false, c.Bool(CfgEnable), CfgEnable)
+	assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
+	assert.Equal(t, 100, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
+	assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
+	assert.Equal(t, 50, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 }
 
 // Flags that take a value accept "--pinpoint-key value" as well as
@@ -580,20 +435,9 @@ func TestNewConfig_CmdLineArg_ValueForms(t *testing.T) {
 }
 
 func TestNewConfig_CmdLineArg(t *testing.T) {
-	type args struct {
-		opts []ConfigOption
-	}
-
 	opts := []ConfigOption{
 		WithAppName("TestApp"),
 		WithConfigFile("example/test-config.yaml"),
-	}
-
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{opts}},
 	}
 
 	oldArgs := os.Args
@@ -648,53 +492,49 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 		"--pinpoint-error-callstackdepth=100",
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, _ := NewConfig(tt.args.opts...)
-			defer c.Close()
+	c, _ := NewConfig(opts...)
+	defer c.Close()
 
-			assert.Equal(t, "CmdLineArgTest", c.String(CfgAppName), CfgAppName)
-			assert.Equal(t, 2100, c.Int(CfgAppType), CfgAppType)
-			assert.Equal(t, "cmdAgentName", c.String(CfgAgentName), CfgAgentName)
-			assert.Equal(t, "cmd.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
-			assert.Equal(t, 7000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
-			assert.Equal(t, 7100, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
-			assert.Equal(t, 7200, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
-			assert.Equal(t, "error", c.String(CfgLogLevel), CfgLogLevel)
-			assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
-			assert.Equal(t, 20, c.Int(CfgLogMaxSize), CfgLogMaxSize)
-			assert.Equal(t, 3, c.Int(CfgLogMaxBackups), CfgLogMaxBackups)
-			assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
-			assert.Equal(t, 10, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
-			assert.Equal(t, 0.0001, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
-			assert.Equal(t, 500, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
-			assert.Equal(t, 600, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
-			assert.Equal(t, 10, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
-			assert.Equal(t, 20, c.Int(CfgCollectorGrpcSenderQueueSize), CfgCollectorGrpcSenderQueueSize)
-			assert.Equal(t, 30, c.Int(CfgCollectorGrpcSpanBatchSize), CfgCollectorGrpcSpanBatchSize)
-			assert.Equal(t, 2500, c.Int(CfgCollectorGrpcSpanBatchFlushInterval), CfgCollectorGrpcSpanBatchFlushInterval)
-			assert.Equal(t, 350, c.Int(CfgCollectorGrpcSpanBatchCollectDeadline), CfgCollectorGrpcSpanBatchCollectDeadline)
-			assert.Equal(t, 2, c.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests), CfgCollectorGrpcSpanBatchMaxConcurrentRequests)
-			assert.Equal(t, 30, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
-			assert.Equal(t, math.MaxInt32, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
-			assert.Equal(t, math.MaxInt32, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
-			assert.Equal(t, 6000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
-			assert.Equal(t, 5, c.Int(CfgStatBatchCount), CfgStatBatchCount)
-			assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceBindValue), CfgSQLTraceBindValue)
-			assert.Equal(t, 500, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
-			assert.Equal(t, true, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
-			assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
-			assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
-			assert.Equal(t, "example/pinpoint-config.yaml", c.String(CfgConfigFile), CfgConfigFile)
-			assert.Equal(t, "real", c.String(CfgActiveProfile), CfgActiveProfile)
-			assert.Equal(t, false, c.Bool(CfgEnable), CfgEnable)
-			assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
-			assert.Equal(t, 200, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
-			assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
-			assert.Equal(t, 100, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
-		})
-	}
+	assert.Equal(t, "CmdLineArgTest", c.String(CfgAppName), CfgAppName)
+	assert.Equal(t, 2100, c.Int(CfgAppType), CfgAppType)
+	assert.Equal(t, "cmdAgentName", c.String(CfgAgentName), CfgAgentName)
+	assert.Equal(t, "cmd.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
+	assert.Equal(t, 7000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
+	assert.Equal(t, 7100, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
+	assert.Equal(t, 7200, c.Int(CfgCollectorStatPort), CfgCollectorStatPort)
+	assert.Equal(t, "error", c.String(CfgLogLevel), CfgLogLevel)
+	assert.Equal(t, "stdout", c.String(CfgLogOutput), CfgLogOutput)
+	assert.Equal(t, 20, c.Int(CfgLogMaxSize), CfgLogMaxSize)
+	assert.Equal(t, 3, c.Int(CfgLogMaxBackups), CfgLogMaxBackups)
+	assert.Equal(t, samplingTypePercent, c.String(CfgSamplingType), CfgSamplingType) // normalized
+	assert.Equal(t, 10, c.Int(CfgSamplingCounterRate), CfgSamplingCounterRate)
+	assert.Equal(t, 0.0001, c.Float(CfgSamplingPercentRate), CfgSamplingPercentRate)
+	assert.Equal(t, 500, c.Int(CfgSamplingNewThroughput), CfgSamplingNewThroughput)
+	assert.Equal(t, 600, c.Int(CfgSamplingContinueThroughput), CfgSamplingContinueThroughput)
+	assert.Equal(t, 10, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
+	assert.Equal(t, 20, c.Int(CfgCollectorGrpcSenderQueueSize), CfgCollectorGrpcSenderQueueSize)
+	assert.Equal(t, 30, c.Int(CfgCollectorGrpcSpanBatchSize), CfgCollectorGrpcSpanBatchSize)
+	assert.Equal(t, 2500, c.Int(CfgCollectorGrpcSpanBatchFlushInterval), CfgCollectorGrpcSpanBatchFlushInterval)
+	assert.Equal(t, 350, c.Int(CfgCollectorGrpcSpanBatchCollectDeadline), CfgCollectorGrpcSpanBatchCollectDeadline)
+	assert.Equal(t, 2, c.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests), CfgCollectorGrpcSpanBatchMaxConcurrentRequests)
+	assert.Equal(t, 30, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
+	assert.Equal(t, math.MaxInt32, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
+	assert.Equal(t, math.MaxInt32, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
+	assert.Equal(t, 6000, c.Int(CfgStatCollectInterval), CfgStatCollectInterval)
+	assert.Equal(t, 5, c.Int(CfgStatBatchCount), CfgStatBatchCount)
+	assert.Equal(t, true, c.Bool(CfgIsContainerEnv), CfgIsContainerEnv)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceBindValue), CfgSQLTraceBindValue)
+	assert.Equal(t, 500, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
+	assert.Equal(t, true, c.Bool(CfgSQLTraceCommit), CfgSQLTraceCommit)
+	assert.Equal(t, false, c.Bool(CfgSQLTraceRollback), CfgSQLTraceRollback)
+	assert.Equal(t, true, c.Bool(CfgSQLTraceQueryStat), CfgSQLTraceQueryStat)
+	assert.Equal(t, "example/pinpoint-config.yaml", c.String(CfgConfigFile), CfgConfigFile)
+	assert.Equal(t, "real", c.String(CfgActiveProfile), CfgActiveProfile)
+	assert.Equal(t, false, c.Bool(CfgEnable), CfgEnable)
+	assert.Equal(t, true, c.Bool(CfgHttpUrlStatEnable), CfgHttpUrlStatEnable)
+	assert.Equal(t, 200, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
+	assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
+	assert.Equal(t, 100, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 }
 
 func Test_reloadConfig(t *testing.T) {
@@ -1521,59 +1361,15 @@ func TestErrorCategory_BitValuesMatchJava(t *testing.T) {
 	assert.Equal(t, ErrorCategory(8), ErrorCategorySql, "Java ErrorCategory.SQL")
 }
 
+// The resolution rules themselves are in Test_ErrorMarkMaskResolution; this
+// checks the two options reach parseErrorMarkMask.
 func TestNewConfig_ErrorMarkAndExclude(t *testing.T) {
-	tests := []struct {
-		name     string
-		mark     []string
-		exclude  []string
-		wantMask ErrorCategory
-	}{
-		{
-			"mark selects the listed causes",
-			[]string{"exception", "sql"}, nil,
-			ErrorCategoryUnknown | ErrorCategoryException | ErrorCategorySql,
-		},
-		{
-			// each entry before the switch.
-			"exclude removes from every cause",
-			nil, []string{"Http-Status"},
-			ErrorCategoryUnknown | ErrorCategoryException | ErrorCategorySql,
-		},
-		{
-			"exclude wins over mark",
-			[]string{"exception", "http-status", "sql"}, []string{"sql"},
-			ErrorCategoryUnknown | ErrorCategoryException | ErrorCategoryHttpStatus,
-		},
-		{
-			// The unknown cause has no spelling and survives every exclusion:
-			// excluding it would mean "never fail a transaction", which is not
-			// what the keys are for.
-			"the unknown cause is always marked",
-			[]string{"exception"}, []string{"exception", "unknown"},
-			ErrorCategoryUnknown,
-		},
-		{
-			// config file or an environment variable spells a string slice here.
-			"a single comma separated entry",
-			[]string{"exception, sql"}, nil,
-			ErrorCategoryUnknown | ErrorCategoryException | ErrorCategorySql,
-		},
-		{
-			"empty entries are skipped",
-			[]string{""}, []string{" "},
-			ErrorCategoryUnknown,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, err := NewConfig(WithAppName("errorMarkApp"),
-				WithSpanErrorMark(tt.mark...), WithSpanErrorMarkExclude(tt.exclude...))
-			require.NoError(t, err)
-			defer c.Close()
+	c, err := NewConfig(WithAppName("errorMarkApp"),
+		WithSpanErrorMark("exception", "http-status", "sql"), WithSpanErrorMarkExclude("sql"))
+	require.NoError(t, err)
+	defer c.Close()
 
-			assert.Equal(t, tt.wantMask, c.load().errorMarkMask)
-		})
-	}
+	assert.Equal(t, ErrorCategoryUnknown|ErrorCategoryException|ErrorCategoryHttpStatus, c.load().errorMarkMask)
 }
 
 // An unrecognised name is warned about and ignored - it must not silently

@@ -15,7 +15,7 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) pinpoint.Agent {
+func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) {
 	t.Helper()
 
 	opts = append([]pinpoint.ConfigOption{
@@ -29,8 +29,6 @@ func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) pinpoint.Agent {
 	agent, err := pinpoint.NewTestAgent(config)
 	require.NoError(t, err)
 	t.Cleanup(agent.Shutdown)
-
-	return agent
 }
 
 // spanOf reads back what the tracer recorded on its span: the RPC name, the

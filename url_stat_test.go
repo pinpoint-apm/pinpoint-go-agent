@@ -42,6 +42,7 @@ func Test_urlStatBucketLayoutFromJavaAgent(t *testing.T) {
 		{elapsed: 5000, bucket: 6},
 		{elapsed: 7999, bucket: 6},
 		{elapsed: 8000, bucket: 7},
+		{elapsed: 1_000_000, bucket: 7},
 	}
 
 	for _, tt := range tests {
@@ -843,30 +844,6 @@ func Test_urlStatHistogramClampsNegativeElapsed(t *testing.T) {
 // Locked invariants - behaviour pinned against the Java and C++ agents. The
 // cross-agent rationale and references live in doc/development.md.
 // ===========================================================================
-
-// Test_UrlStatHistogramBuckets locks the eight bucket bounds
-// positionally, so a shifted boundary silently rewrites history.
-func Test_UrlStatHistogramBuckets(t *testing.T) {
-	assert.Equal(t, 8, urlStatBucketSize)
-	assert.Equal(t, 0, urlStatBucketVersion, "Java UriStatHistogramBucket.getVersion")
-
-	tests := []struct {
-		elapsed int64
-		bucket  int
-	}{
-		{0, 0}, {99, 0},
-		{100, 1}, {299, 1},
-		{300, 2}, {499, 2},
-		{500, 3}, {999, 3},
-		{1_000, 4}, {2_999, 4},
-		{3_000, 5}, {4_999, 5},
-		{5_000, 6}, {7_999, 6},
-		{8_000, 7}, {1_000_000, 7},
-	}
-	for _, tc := range tests {
-		assert.Equal(t, tc.bucket, getBucket(tc.elapsed), "getBucket(%d)", tc.elapsed)
-	}
-}
 
 // Test_UrlStatWindow locks the tick size and the five closed
 // ticks retained while the stat stream is down.

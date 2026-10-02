@@ -16,6 +16,7 @@ import http.client
 import json
 import math
 import os
+import statistics
 import subprocess
 import sys
 import threading
@@ -24,6 +25,11 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
+
+TIMEOUT = 30.0
+REPORT_INTERVAL = 1.0
+USER_AGENT = "pinpoint-e2e-load-test/1.0"
 
 
 @dataclass(frozen=True)
@@ -33,27 +39,6 @@ class Endpoint:
 
 
 WORKLOADS: Dict[str, Tuple[Endpoint, ...]] = {
-    "simple": (Endpoint("/simple"),),
-    "deep": (
-        Endpoint("/deep?depth=10"),
-        Endpoint("/deep?depth=30"),
-        Endpoint("/deep?depth=50"),
-    ),
-    "wide": (
-        Endpoint("/wide?width=20"),
-        Endpoint("/wide?width=100"),
-        Endpoint("/wide?width=300"),
-    ),
-    "annotated": (Endpoint("/annotated"),),
-    "features": (Endpoint("/features"),),
-    "http": (
-        Endpoint("/http-client"),
-        Endpoint("/http-client?error=1"),
-    ),
-    "limits": (
-        Endpoint("/deep?depth=32"),
-        Endpoint("/wide?width=256"),
-    ),
     "mixed": (
         Endpoint("/simple"),
         Endpoint("/deep?depth=10"),
@@ -64,32 +49,6 @@ WORKLOADS: Dict[str, Tuple[Endpoint, ...]] = {
         Endpoint("/features"),
         Endpoint("/mixed"),
         Endpoint("/error", expected_status=500),
-    ),
-    "stress": (),  # Populated from mixed below; RPS controls stress intensity.
-    "db-batch": (
-        Endpoint("/db-batch?size=10"),
-        Endpoint("/db-batch?size=50"),
-        Endpoint("/db-batch?size=100"),
-    ),
-    "db-complex": (Endpoint("/db-complex"),),
-    "db-all": (
-        Endpoint("/db-batch?size=10"),
-        Endpoint("/db-batch?size=50"),
-        Endpoint("/db-complex"),
-    ),
-    "grpc-unary": (Endpoint("/grpc-unary"),),
-    "grpc-stream": (Endpoint("/grpc-stream"),),
-    "grpc-client-stream": (Endpoint("/grpc-client-stream?count=5"),),
-    "grpc-bidi": (
-        Endpoint("/grpc-bidi?count=3"),
-        Endpoint("/grpc-bidi?count=10"),
-    ),
-    "grpc-all": (
-        Endpoint("/grpc-unary"),
-        Endpoint("/grpc-stream"),
-        Endpoint("/grpc-client-stream?count=5"),
-        Endpoint("/grpc-bidi?count=3"),
-        Endpoint("/grpc-all"),
     ),
     "full": (
         Endpoint("/simple"),
@@ -111,89 +70,28 @@ WORKLOADS: Dict[str, Tuple[Endpoint, ...]] = {
         Endpoint("/db-complex"),
     ),
 }
-WORKLOADS["stress"] = WORKLOADS["mixed"]
-
-
-def positive_float(value: str) -> float:
-    parsed = float(value)
-    if not math.isfinite(parsed) or parsed <= 0:
-        raise argparse.ArgumentTypeError("must be a finite number greater than zero")
-    return parsed
-
-
-def non_negative_float(value: str) -> float:
-    parsed = float(value)
-    if not math.isfinite(parsed) or parsed < 0:
-        raise argparse.ArgumentTypeError(
-            "must be a finite number greater than or equal to zero"
-        )
-    return parsed
-
-
-def positive_int(value: str) -> int:
-    parsed = int(value)
-    if parsed <= 0:
-        raise argparse.ArgumentTypeError("must be greater than zero")
-    return parsed
-
-
-def percentage(value: str) -> float:
-    parsed = float(value)
-    if not math.isfinite(parsed) or not 0 <= parsed <= 100:
-        raise argparse.ArgumentTypeError("must be between 0 and 100")
-    return parsed
-
-
-@dataclass(frozen=True)
-class ServerAddress:
-    scheme: str
-    host: str
-    port: int
-    base_path: str
-
-    def target(self, endpoint_path: str) -> str:
-        return self.base_path.rstrip("/") + endpoint_path
-
-
-def parse_server_address(base_url: str) -> ServerAddress:
-    parsed = urlsplit(base_url)
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError("base URL scheme must be http or https")
-    if not parsed.hostname:
-        raise ValueError("base URL must include a host")
-    if parsed.query or parsed.fragment:
-        raise ValueError("base URL must not include a query or fragment")
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    return ServerAddress(parsed.scheme, parsed.hostname, port, parsed.path.rstrip("/"))
 
 
 class HttpClient:
     """One reusable HTTP connection per worker thread."""
 
-    def __init__(
-        self,
-        server: ServerAddress,
-        timeout: float,
-        user_agent: str = "pinpoint-e2e-load-test/1.0",
-    ) -> None:
-        self.server = server
+    def __init__(self, base_url: str, timeout: float, user_agent: str = USER_AGENT) -> None:
+        self.url = urlsplit(base_url)
         self.timeout = timeout
         self.user_agent = user_agent
         self.local = threading.local()
 
-    def _new_connection(self) -> http.client.HTTPConnection:
-        connection_type = (
-            http.client.HTTPSConnection
-            if self.server.scheme == "https"
-            else http.client.HTTPConnection
-        )
-        return connection_type(self.server.host, self.server.port, timeout=self.timeout)
-
     def _connection(self) -> http.client.HTTPConnection:
         connection = getattr(self.local, "connection", None)
         if connection is None:
-            connection = self._new_connection()
-            self.local.connection = connection
+            connection_type = (
+                http.client.HTTPSConnection
+                if self.url.scheme == "https"
+                else http.client.HTTPConnection
+            )
+            connection = self.local.connection = connection_type(
+                self.url.hostname, self.url.port, timeout=self.timeout
+            )
         return connection
 
     def get(self, path: str) -> int:
@@ -201,7 +99,7 @@ class HttpClient:
         try:
             connection.request(
                 "GET",
-                self.server.target(path),
+                self.url.path.rstrip("/") + path,
                 headers={"User-Agent": self.user_agent},
             )
             response = connection.getresponse()
@@ -217,51 +115,26 @@ class HttpClient:
             raise
 
 
-def get_json(server: ServerAddress, path: str, timeout: float) -> dict:
-    connection_type = (
-        http.client.HTTPSConnection
-        if server.scheme == "https"
-        else http.client.HTTPConnection
-    )
-    connection = connection_type(server.host, server.port, timeout=timeout)
-    try:
-        connection.request(
-            "GET",
-            server.target(path),
-            headers={"User-Agent": "pinpoint-e2e-load-test/1.0"},
-        )
-        response = connection.getresponse()
-        body = response.read().decode("utf-8", errors="replace")
-        if not 200 <= response.status < 300:
-            raise RuntimeError(f"GET {path} returned HTTP {response.status}: {body}")
-        decoded = json.loads(body)
-        if not isinstance(decoded, dict):
-            raise RuntimeError(f"GET {path} did not return a JSON object")
-        return decoded
-    finally:
-        connection.close()
+def get_json(base_url: str, path: str, timeout: float) -> dict:
+    request = Request(base_url.rstrip("/") + path, headers={"User-Agent": USER_AGENT})
+    with urlopen(request, timeout=timeout) as response:
+        return json.load(response)
 
 
-def preflight(server: ServerAddress, timeout: float, require_agent: bool) -> dict:
-    stats = get_json(server, "/stats", min(timeout, 5.0))
+def preflight(base_url: str, require_agent: bool) -> dict:
+    stats = get_json(base_url, "/stats", min(TIMEOUT, 5.0))
     missing_stats = {"total_requests", "active_requests"} - stats.keys()
     if missing_stats:
         raise RuntimeError(
             "/stats is missing required fields: " + ", ".join(sorted(missing_stats))
         )
     if require_agent:
-        get_json(server, "/ready", min(timeout, 5.0))
+        get_json(base_url, "/ready", min(TIMEOUT, 5.0))
     return stats
 
 
 class Results:
-    """Latency/status accounting with 0.1 ms histograms.
-
-    The histograms avoid retaining one float per request during long,
-    high-throughput runs while keeping percentiles useful. Shared instances
-    (fixed-RPS mode) are guarded by the lock; per-worker instances
-    (unthrottled mode) never contend on it and are merged at the end.
-    """
+    """Latency/status accounting shared by all worker threads."""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -269,17 +142,17 @@ class Results:
         self.completed = 0
         self.succeeded = 0
         self.failed = 0
-        self.total_latency_ms = 0.0
         self.dropped = Counter()  # type: Counter[str]
         self.status_codes = Counter()  # type: Counter[int]
-        self.latency_buckets = Counter()  # type: Counter[int]
-        self.schedule_lag_buckets = Counter()  # type: Counter[int]
+        # ponytail: one float per request; switch back to bucket Counters if runs reach tens of millions of requests.
+        self.latencies_ms = []  # type: List[float]
+        self.schedule_lags_ms = []  # type: List[float]
         self.error_samples = []  # type: List[str]
 
     def record_started(self, lag_seconds: float) -> None:
         with self.lock:
             self.started += 1
-            self.schedule_lag_buckets[int(max(lag_seconds, 0.0) * 10000.0)] += 1
+            self.schedule_lags_ms.append(max(lag_seconds, 0.0) * 1000.0)
 
     def record_completed(
         self,
@@ -288,11 +161,9 @@ class Results:
         status: Optional[int],
         error: Optional[str],
     ) -> None:
-        latency_ms = latency_seconds * 1000.0
         with self.lock:
             self.completed += 1
-            self.total_latency_ms += latency_ms
-            self.latency_buckets[int(latency_ms * 10.0)] += 1
+            self.latencies_ms.append(latency_seconds * 1000.0)
             if status is not None:
                 self.status_codes[status] += 1
             if error is None and status == endpoint.expected_status:
@@ -317,43 +188,15 @@ class Results:
             return self.started, self.completed, sum(self.dropped.values())
 
 
-def merge_results(worker_results: Sequence[Results]) -> Results:
-    merged = Results()
-    for result in worker_results:
-        merged.started += result.started
-        merged.completed += result.completed
-        merged.succeeded += result.succeeded
-        merged.failed += result.failed
-        merged.total_latency_ms += result.total_latency_ms
-        merged.dropped.update(result.dropped)
-        merged.status_codes.update(result.status_codes)
-        merged.latency_buckets.update(result.latency_buckets)
-        merged.schedule_lag_buckets.update(result.schedule_lag_buckets)
-        for sample in result.error_samples:
-            if len(merged.error_samples) >= 5:
-                break
-            merged.error_samples.append(sample)
-    return merged
-
-
-def histogram_percentile(buckets: Counter, total: int, percent: float) -> float:
-    if total == 0:
-        return 0.0
-    threshold = math.ceil(total * percent / 100.0)
-    observed = 0
-    for bucket, count in sorted(buckets.items()):
-        observed += count
-        if observed >= threshold:
-            return bucket / 10.0
-    return max(buckets, default=0) / 10.0
-
-
-def histogram_line(buckets: Counter, total: int) -> str:
+def percentile_line(values: List[float]) -> str:
+    quantiles = (
+        statistics.quantiles(values, n=100, method="inclusive")
+        if len(values) > 1
+        else [values[0] if values else 0.0] * 99
+    )
     return (
-        f"p50={histogram_percentile(buckets, total, 50):.2f}, "
-        f"p95={histogram_percentile(buckets, total, 95):.2f}, "
-        f"p99={histogram_percentile(buckets, total, 99):.2f}, "
-        f"max={max(buckets, default=0) / 10.0:.2f}"
+        f"p50={quantiles[49]:.2f}, p95={quantiles[94]:.2f}, "
+        f"p99={quantiles[98]:.2f}, max={max(values, default=0.0):.2f}"
     )
 
 
@@ -386,11 +229,9 @@ class RssTracker:
             )
 
 
-def server_active_requests(server: ServerAddress, timeout: float) -> str:
+def server_active_requests(base_url: str) -> str:
     try:
-        return str(
-            get_json(server, "/stats", min(timeout, 2.0)).get("active_requests", "?")
-        )
+        return str(get_json(base_url, "/stats", 2.0).get("active_requests", "?"))
     except Exception:
         return "?"
 
@@ -413,11 +254,11 @@ def print_common_results(results: Results, rss: Optional[RssTracker]) -> None:
             )
         )
     average_latency = (
-        results.total_latency_ms / results.completed if results.completed else 0.0
+        statistics.fmean(results.latencies_ms) if results.latencies_ms else 0.0
     )
     print(
         f"Latency (ms):      avg={average_latency:.2f}, "
-        + histogram_line(results.latency_buckets, results.completed)
+        + percentile_line(results.latencies_ms)
     )
     if rss is not None:
         rss.report()
@@ -488,9 +329,8 @@ def report_fixed_rps_progress(
     done: threading.Event,
     started_at: float,
     duration: float,
-    interval: float,
     target_rps: float,
-    server: ServerAddress,
+    base_url: str,
     results: Results,
     rss: Optional[RssTracker],
 ) -> None:
@@ -504,7 +344,7 @@ def report_fixed_rps_progress(
         "--------|------------|-------------|-----------|"
         "-----------|---------|--------------"
     )
-    while not done.wait(interval):
+    while not done.wait(REPORT_INTERVAL):
         now = time.monotonic()
         started, completed, dropped = results.snapshot()
         sample_duration = max(now - previous_time, 1e-9)
@@ -514,15 +354,14 @@ def report_fixed_rps_progress(
         print(
             f"{min(now - started_at, duration):7.1f} | {target_rps:10.2f} | "
             f"{sample_rps:11.2f} | {completed:9d} | {started - completed:9d} | "
-            f"{dropped:7d} | {server_active_requests(server, interval):>13}",
+            f"{dropped:7d} | {server_active_requests(base_url):>13}",
             flush=True,
         )
         previous_started = started
         previous_time = now
 
 
-def run_fixed_rps(args, server: ServerAddress, initial_stats: dict) -> int:
-    endpoints = WORKLOADS[args.mode]
+def run_fixed_rps(args, endpoints: Sequence[Endpoint], initial_stats: dict) -> int:
     interval = 1.0 / args.rps
     planned = math.floor(args.duration * args.rps + 1e-9)
     if planned < 1:
@@ -544,7 +383,7 @@ def run_fixed_rps(args, server: ServerAddress, initial_stats: dict) -> int:
     print(f"Endpoints:     {len(endpoints)} (deterministic round-robin)")
     print("=" * 64)
 
-    client = HttpClient(server, args.timeout)
+    client = HttpClient(args.base_url, TIMEOUT)
     results = Results()
     rss = RssTracker(args.rss_pid) if args.rss_pid else None
     if rss is not None:
@@ -562,9 +401,8 @@ def run_fixed_rps(args, server: ServerAddress, initial_stats: dict) -> int:
             reporter_done,
             start,
             args.duration,
-            args.report_interval,
             args.rps,
-            server,
+            args.base_url,
             results,
             rss,
         ),
@@ -609,13 +447,13 @@ def run_fixed_rps(args, server: ServerAddress, initial_stats: dict) -> int:
     finally:
         executor.shutdown(wait=True)
         reporter_done.set()
-        reporter.join(timeout=args.report_interval + 1.0)
+        reporter.join(timeout=REPORT_INTERVAL + 1.0)
 
     finished = time.monotonic()
     if rss is not None:
         rss.sample()
     try:
-        final_stats = get_json(server, "/stats", min(args.timeout, 5.0))
+        final_stats = get_json(args.base_url, "/stats", min(TIMEOUT, 5.0))
     except Exception:
         final_stats = {}
 
@@ -641,10 +479,7 @@ def run_fixed_rps(args, server: ServerAddress, initial_stats: dict) -> int:
     print(f"Total wall time:    {elapsed:.2f}s")
     if server_delta is not None:
         print(f"Server request delta: {server_delta}")
-    print(
-        "Schedule lag (ms): "
-        + histogram_line(results.schedule_lag_buckets, started)
-    )
+    print("Schedule lag (ms): " + percentile_line(results.schedule_lags_ms))
     print_common_results(results, rss)
 
     if interrupted:
@@ -677,13 +512,6 @@ class TestWindow:
     warmup_start: float = 0.0
     measurement_start: float = 0.0
     end: float = 0.0
-
-
-def scalar_snapshot(worker_results: Sequence[Results]) -> tuple:
-    return (
-        sum(result.completed for result in worker_results),
-        sum(result.failed for result in worker_results),
-    )
 
 
 def throughput_worker(
@@ -720,8 +548,7 @@ def throughput_worker(
             )
 
 
-def run_max_throughput(args, server: ServerAddress, initial_stats: dict) -> int:
-    endpoints = WORKLOADS[args.mode]
+def run_max_throughput(args, endpoints: Sequence[Endpoint], initial_stats: dict) -> int:
     print("=" * 68)
     print(" Pinpoint Go Agent - Maximum Throughput Load Test")
     print("=" * 68)
@@ -735,7 +562,7 @@ def run_max_throughput(args, server: ServerAddress, initial_stats: dict) -> int:
     print("=" * 68)
 
     client = HttpClient(
-        server, args.timeout, user_agent="pinpoint-max-throughput-test/1.0"
+        args.base_url, TIMEOUT, user_agent="pinpoint-max-throughput-test/1.0"
     )
     rss = RssTracker(args.rss_pid) if args.rss_pid else None
     if rss is not None:
@@ -743,7 +570,7 @@ def run_max_throughput(args, server: ServerAddress, initial_stats: dict) -> int:
     start_event = threading.Event()
     stop_event = threading.Event()
     window = TestWindow()
-    worker_results = [Results() for _ in range(args.concurrency)]
+    results = Results()
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=args.concurrency)
     futures = []
     try:
@@ -757,7 +584,7 @@ def run_max_throughput(args, server: ServerAddress, initial_stats: dict) -> int:
                     window,
                     start_event,
                     stop_event,
-                    worker_results[worker_id],
+                    results,
                 )
             )
     except Exception as exc:
@@ -780,7 +607,7 @@ def run_max_throughput(args, server: ServerAddress, initial_stats: dict) -> int:
         if not wait_until(window.measurement_start, stop_event):
             raise KeyboardInterrupt
         try:
-            measurement_stats = get_json(server, "/stats", min(args.timeout, 2.0))
+            measurement_stats = get_json(args.base_url, "/stats", 2.0)
         except Exception:
             pass
 
@@ -788,14 +615,12 @@ def run_max_throughput(args, server: ServerAddress, initial_stats: dict) -> int:
         print("--------|--------------|-----------|--------|--------------")
         previous_completed = 0
         previous_time = window.measurement_start
-        next_report = min(
-            window.measurement_start + args.report_interval, window.end
-        )
+        next_report = min(window.measurement_start + REPORT_INTERVAL, window.end)
         while not stop_event.is_set():
             if not wait_until(next_report, stop_event):
                 break
             now = time.monotonic()
-            completed, failed = scalar_snapshot(worker_results)
+            completed, failed = results.completed, results.failed
             sample_seconds = max(now - previous_time, 1e-9)
             sample_rps = (completed - previous_completed) / sample_seconds
             if rss is not None:
@@ -803,14 +628,14 @@ def run_max_throughput(args, server: ServerAddress, initial_stats: dict) -> int:
             print(
                 f"{min(now - window.measurement_start, args.duration):7.1f} | "
                 f"{sample_rps:12.2f} | {completed:9d} | {failed:6d} | "
-                f"{server_active_requests(server, args.report_interval):>13}",
+                f"{server_active_requests(args.base_url):>13}",
                 flush=True,
             )
             previous_completed = completed
             previous_time = now
             if now >= window.end:
                 break
-            next_report = min(next_report + args.report_interval, window.end)
+            next_report = min(next_report + REPORT_INTERVAL, window.end)
     except KeyboardInterrupt:
         interrupted = True
         print("\nInterrupted; waiting for active requests...", file=sys.stderr)
@@ -828,11 +653,10 @@ def run_max_throughput(args, server: ServerAddress, initial_stats: dict) -> int:
     if rss is not None:
         rss.sample()
     try:
-        final_stats = get_json(server, "/stats", min(args.timeout, 5.0))
+        final_stats = get_json(args.base_url, "/stats", min(TIMEOUT, 5.0))
     except Exception:
         final_stats = None
 
-    results = merge_results(worker_results)
     achieved_rps = results.completed / args.duration
     error_rate = (
         results.failed / results.completed * 100.0 if results.completed else 100.0
@@ -890,41 +714,44 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-r",
         "--rps",
-        type=positive_float,
+        type=float,
         default=None,
         help="constant arrival rate; omit for unthrottled maximum throughput",
     )
-    parser.add_argument("-d", "--duration", type=positive_float, default=60.0)
+    parser.add_argument("-d", "--duration", type=float, default=60.0)
     parser.add_argument(
         "-c",
         "--concurrency",
-        type=positive_int,
+        type=int,
         default=100,
         help=(
             "worker count (unthrottled), or maximum in-flight requests with "
             "--rps where saturated arrivals are dropped (default: 100)"
         ),
     )
-    parser.add_argument("-m", "--mode", choices=sorted(WORKLOADS), default="mixed")
+    parser.add_argument(
+        "-m",
+        "--mode",
+        default="mixed",
+        help="'mixed', 'full', or a single endpoint path such as /deep?depth=30 (default: mixed)",
+    )
     parser.add_argument(
         "--warmup",
-        type=non_negative_float,
+        type=float,
         default=2.0,
         metavar="SEC",
         help="unmeasured full-load warm-up duration, unthrottled mode only (default: 2)",
     )
-    parser.add_argument("--timeout", type=positive_float, default=30.0)
-    parser.add_argument("--report-interval", type=positive_float, default=1.0)
     parser.add_argument(
         "--max-error-rate",
-        type=percentage,
+        type=float,
         default=0.0,
         metavar="PERCENT",
         help="fail when completed-request errors exceed this percentage (default: 0)",
     )
     parser.add_argument(
         "--rps-tolerance",
-        type=percentage,
+        type=float,
         default=5.0,
         metavar="PERCENT",
         help="allowed percentage of planned arrivals that may be dropped, "
@@ -932,14 +759,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--min-rps",
-        type=non_negative_float,
+        type=float,
         default=0.0,
         help="optional minimum average throughput required to pass, "
         "unthrottled mode only",
     )
     parser.add_argument(
         "--rss-pid",
-        type=positive_int,
+        type=int,
         default=None,
         metavar="PID",
         help="sample this process's RSS each report interval and summarize it",
@@ -953,22 +780,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
-    try:
-        server = parse_server_address(args.base_url)
-    except ValueError as exc:
-        print(f"ERROR: invalid --base-url: {exc}", file=sys.stderr)
-        return 2
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    endpoints = (
+        (Endpoint(args.mode),) if args.mode.startswith("/") else WORKLOADS.get(args.mode)
+    )
+    if not endpoints:
+        parser.error(f"--mode must be one of {sorted(WORKLOADS)} or an endpoint path")
 
     try:
-        initial_stats = preflight(server, args.timeout, not args.no_require_agent)
+        initial_stats = preflight(args.base_url, not args.no_require_agent)
     except Exception as exc:
         print(f"ERROR: e2e server pre-flight check failed: {exc}", file=sys.stderr)
         return 2
 
     if args.rps is not None:
-        return run_fixed_rps(args, server, initial_stats)
-    return run_max_throughput(args, server, initial_stats)
+        return run_fixed_rps(args, endpoints, initial_stats)
+    return run_max_throughput(args, endpoints, initial_stats)
 
 
 if __name__ == "__main__":

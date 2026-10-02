@@ -171,7 +171,9 @@ python3 ./load_test.py \
   --mode mixed --rps 50 --duration 60 --concurrency 100
 ```
 
-It rotates deterministically through the endpoints in the selected mode. The
+It rotates deterministically through the endpoints in the selected mode:
+`mixed` (the default), `full`, or a single endpoint path such as
+`--mode /deep?depth=30`. The
 `/error` endpoint's intentional HTTP 500 is treated as success. Arrivals are
 dropped rather than queued or emitted as catch-up bursts when the client falls
 behind or reaches the `--concurrency` in-flight bound; the default pass criteria

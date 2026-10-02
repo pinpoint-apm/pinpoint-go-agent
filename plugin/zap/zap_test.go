@@ -13,22 +13,14 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
-func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) pinpoint.Agent {
+func startAgent(t *testing.T) {
 	t.Helper()
-
-	opts = append([]pinpoint.ConfigOption{
-		pinpoint.WithAppName("testApp"),
-		pinpoint.WithAgentName("testAgent"),
-	}, opts...)
-
-	config, err := pinpoint.NewConfig(opts...)
+	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentName("testAgent"))
 	require.NoError(t, err)
 
 	agent, err := pinpoint.NewTestAgent(config)
 	require.NoError(t, err)
 	t.Cleanup(agent.Shutdown)
-
-	return agent
 }
 
 func newTracer(t *testing.T) pinpoint.Tracer {

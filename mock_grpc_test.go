@@ -2,12 +2,12 @@ package pinpoint
 
 import (
 	"context"
-	"errors"
 	"io"
 	"sync"
 	"time"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
+	grpcmock "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf/mock"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -85,60 +85,44 @@ func (agentGrpcClient *mockAgentGrpcClient) callTimes() []time.Time {
 }
 
 func (agentGrpcClient *mockAgentGrpcClient) PingSession(ctx context.Context, _ ...grpc.CallOption) (pb.Agent_PingSessionClient, error) {
-	return &mockPingStream{}, nil
+	return grpcmock.NewMockAgent_PingSessionClient(), nil
 }
 
-type mockPingStream struct {
-	grpc.ClientStream // never called; the agent only uses Send/Recv/CloseSend
+// metaClientFunc adapts one func to pb.MetadataClient, so a test scripts the
+// collector's metadata side as a closure.
+type metaClientFunc func(ctx context.Context, req proto.Message) (*pb.PResult, error)
+
+func (f metaClientFunc) RequestApiMetaData(ctx context.Context, in *pb.PApiMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
+	return f(ctx, in)
 }
 
-func (s *mockPingStream) Send(*pb.PPing) error     { return nil }
-func (s *mockPingStream) Recv() (*pb.PPing, error) { return nil, nil }
-func (s *mockPingStream) CloseSend() error         { return nil }
+func (f metaClientFunc) RequestSqlMetaData(ctx context.Context, in *pb.PSqlMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
+	return f(ctx, in)
+}
+
+func (f metaClientFunc) RequestSqlUidMetaData(ctx context.Context, in *pb.PSqlUidMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
+	return f(ctx, in)
+}
+
+func (f metaClientFunc) RequestStringMetaData(ctx context.Context, in *pb.PStringMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
+	return f(ctx, in)
+}
+
+func (f metaClientFunc) RequestExceptionMetaData(ctx context.Context, in *pb.PExceptionMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
+	return f(ctx, in)
+}
 
 // mockMetaGrpcClient accepts every metadata request and keeps it, so tests can
 // assert on the payload the agent actually put on the wire.
 type mockMetaGrpcClient struct {
-	mu     sync.Mutex
-	api    []*pb.PApiMetaData
-	str    []*pb.PStringMetaData
-	sql    []*pb.PSqlMetaData
-	sqlUid []*pb.PSqlUidMetaData
-	except []*pb.PExceptionMetaData
+	mu   sync.Mutex
+	sent []proto.Message
 }
 
-func (metaGrpcClient *mockMetaGrpcClient) RequestApiMetaData(ctx context.Context, in *pb.PApiMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
+func (metaGrpcClient *mockMetaGrpcClient) record(_ context.Context, req proto.Message) (*pb.PResult, error) {
 	metaGrpcClient.mu.Lock()
 	defer metaGrpcClient.mu.Unlock()
-	metaGrpcClient.api = append(metaGrpcClient.api, in)
-	return &pb.PResult{Success: true, Message: "success"}, nil
-}
-
-func (metaGrpcClient *mockMetaGrpcClient) RequestSqlMetaData(ctx context.Context, in *pb.PSqlMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
-	metaGrpcClient.mu.Lock()
-	defer metaGrpcClient.mu.Unlock()
-	metaGrpcClient.sql = append(metaGrpcClient.sql, in)
-	return &pb.PResult{Success: true, Message: "success"}, nil
-}
-
-func (metaGrpcClient *mockMetaGrpcClient) RequestSqlUidMetaData(ctx context.Context, in *pb.PSqlUidMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
-	metaGrpcClient.mu.Lock()
-	defer metaGrpcClient.mu.Unlock()
-	metaGrpcClient.sqlUid = append(metaGrpcClient.sqlUid, in)
-	return &pb.PResult{Success: true, Message: "success"}, nil
-}
-
-func (metaGrpcClient *mockMetaGrpcClient) RequestStringMetaData(ctx context.Context, in *pb.PStringMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
-	metaGrpcClient.mu.Lock()
-	defer metaGrpcClient.mu.Unlock()
-	metaGrpcClient.str = append(metaGrpcClient.str, in)
-	return &pb.PResult{Success: true, Message: "success"}, nil
-}
-
-func (metaGrpcClient *mockMetaGrpcClient) RequestExceptionMetaData(ctx context.Context, in *pb.PExceptionMetaData, _ ...grpc.CallOption) (*pb.PResult, error) {
-	metaGrpcClient.mu.Lock()
-	defer metaGrpcClient.mu.Unlock()
-	metaGrpcClient.except = append(metaGrpcClient.except, in)
+	metaGrpcClient.sent = append(metaGrpcClient.sent, req)
 	return &pb.PResult{Success: true, Message: "success"}, nil
 }
 
@@ -147,15 +131,34 @@ func (metaGrpcClient *mockMetaGrpcClient) sentMeta() (api []*pb.PApiMetaData, st
 	sql []*pb.PSqlMetaData, sqlUid []*pb.PSqlUidMetaData, except []*pb.PExceptionMetaData) {
 	metaGrpcClient.mu.Lock()
 	defer metaGrpcClient.mu.Unlock()
-	return append([]*pb.PApiMetaData(nil), metaGrpcClient.api...),
-		append([]*pb.PStringMetaData(nil), metaGrpcClient.str...),
-		append([]*pb.PSqlMetaData(nil), metaGrpcClient.sql...),
-		append([]*pb.PSqlUidMetaData(nil), metaGrpcClient.sqlUid...),
-		append([]*pb.PExceptionMetaData(nil), metaGrpcClient.except...)
+	for _, req := range metaGrpcClient.sent {
+		switch req := req.(type) {
+		case *pb.PApiMetaData:
+			api = append(api, req)
+		case *pb.PStringMetaData:
+			str = append(str, req)
+		case *pb.PSqlMetaData:
+			sql = append(sql, req)
+		case *pb.PSqlUidMetaData:
+			sqlUid = append(sqlUid, req)
+		case *pb.PExceptionMetaData:
+			except = append(except, req)
+		}
+	}
+	return
+}
+
+// newMockMetaAgentGrpc wires an agent to a metadata client that accepts every
+// request and keeps it, so a test can assert on the payload put on the wire.
+func newMockMetaAgentGrpc(agent *agent) (*agentGrpc, *mockMetaGrpcClient) {
+	meta := &mockMetaGrpcClient{}
+	return &agentGrpc{metaClient: metaClientFunc(meta.record), agent: agent}, meta
 }
 
 func newMockAgentGrpc(agent *agent) *agentGrpc {
-	return &agentGrpc{agentClient: &mockAgentGrpcClient{}, metaClient: &mockMetaGrpcClient{}, pingSocketId: -1, agent: agent}
+	agentGrpc, _ := newMockMetaAgentGrpc(agent)
+	agentGrpc.agentClient, agentGrpc.pingSocketId = &mockAgentGrpcClient{}, -1
+	return agentGrpc
 }
 
 // mockSpanGrpcClient records SendSpanBatch payloads.
@@ -217,42 +220,6 @@ func newMockSpanGrpc(agent *agent) *spanGrpc {
 		maxConcurrentRequests:   defaultSpanBatchMaxConcurrentRequests,
 		concurrentRequestPermit: make(chan struct{}, defaultSpanBatchMaxConcurrentRequests),
 	}
-}
-
-// mockStatStream stands in for the collector side of a stat stream.
-type mockStatStream struct {
-	grpc.ClientStream // never called; the agent only uses Send/CloseAndRecv
-}
-
-func (s *mockStatStream) Send(*pb.PStatMessage) error         { return nil }
-func (s *mockStatStream) CloseAndRecv() (*empty.Empty, error) { return &empty.Empty{}, nil }
-
-type mockStaGrpcClient struct{}
-
-func (statGrpcClient *mockStaGrpcClient) SendAgentStat(ctx context.Context, _ ...grpc.CallOption) (pb.Stat_SendAgentStatClient, error) {
-	return &mockStatStream{}, nil
-}
-
-func newMockStatGrpc(agent *agent) *statGrpc {
-	return &statGrpc{nil, &mockStaGrpcClient{}, nil, agent}
-}
-
-type mockRetryStaGrpcClient struct {
-	retry int
-}
-
-func (statGrpcClient *mockRetryStaGrpcClient) SendAgentStat(ctx context.Context, _ ...grpc.CallOption) (pb.Stat_SendAgentStatClient, error) {
-	if statGrpcClient.retry < 3 {
-		time.Sleep(1 * time.Second)
-		statGrpcClient.retry++
-		return nil, errors.New("")
-	}
-	statGrpcClient.retry++
-	return &mockStatStream{}, nil
-}
-
-func newRetryMockStatGrpc(agent *agent) *statGrpc {
-	return &statGrpc{nil, &mockRetryStaGrpcClient{}, nil, agent}
 }
 
 // mockAtcStream stands in for the collector side of an active thread count

@@ -15,7 +15,7 @@ import (
 )
 
 func TestRegistersAgentAndMaintainsPingAndCommandStreams(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool {
 		return len(s.Pings) > 0 && len(s.CommandStreams) > 0
@@ -51,11 +51,10 @@ func TestRegistersAgentAndMaintainsPingAndCommandStreams(t *testing.T) {
 }
 
 func TestSendsV4IdentityAcrossGrpcAndTracePropagation(t *testing.T) {
-	cfg := defaultAgentConfig()
-	cfg.uidVersion = "v4"
-	cfg.serviceName = "go-it-service"
-	cfg.apiKey = "go-it-api-key"
-	mc, agent := startStack(t, cfg)
+	mc, agent := startStack(t,
+		pinpoint.WithUidVersion("v4"),
+		pinpoint.WithServiceName("go-it-service"),
+		pinpoint.WithApiKey("go-it-api-key"))
 
 	root := agent.NewSpanTracer("v4.server", "/v4-root")
 	require.True(t, root.IsSampled())
@@ -134,7 +133,7 @@ func TestSendsV4IdentityAcrossGrpcAndTracePropagation(t *testing.T) {
 }
 
 func TestReconnectsPingStreamAfterResponseError(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig(), func(mc *MockCollector) {
+	mc, agent := startArmedStack(t, func(mc *MockCollector) {
 		mc.FailNext(RpcPingSession, codes.Unavailable, "first ping stream disconnected", 1)
 	})
 
@@ -156,7 +155,7 @@ func TestReconnectsPingStreamAfterResponseError(t *testing.T) {
 }
 
 func TestRecyclesPingStreamWhenCollectorNeverResponds(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig(), func(mc *MockCollector) {
+	mc, agent := startArmedStack(t, func(mc *MockCollector) {
 		mc.TimeoutNext(RpcPingSession)
 	})
 
@@ -173,7 +172,7 @@ func TestRecyclesPingStreamWhenCollectorNeverResponds(t *testing.T) {
 func TestRetriesAgentRegistrationAfterInitialFailure(t *testing.T) {
 	// startStack blocks until registration succeeded and the agent came
 	// online, so by now the failed first attempt and its retry are on record.
-	mc, agent := startStack(t, defaultAgentConfig(), func(mc *MockCollector) {
+	mc, agent := startArmedStack(t, func(mc *MockCollector) {
 		mc.FailNext(RpcAgentInfo, codes.Unavailable, "first registration attempt rejected")
 	})
 
@@ -197,7 +196,7 @@ func TestRetriesAgentRegistrationAfterInitialFailure(t *testing.T) {
 func TestRetriesAgentRegistrationAfterApplicationRejection(t *testing.T) {
 	// startStack blocks until registration succeeded, so by now the rejected
 	// first attempt and its retry are both on record.
-	mc, agent := startStack(t, defaultAgentConfig(), func(mc *MockCollector) {
+	mc, agent := startArmedStack(t, func(mc *MockCollector) {
 		mc.RejectNext(RpcAgentInfo, "collector rejected this agent")
 	})
 
@@ -216,15 +215,12 @@ func TestRetriesAgentRegistrationAfterApplicationRejection(t *testing.T) {
 // reported itself enabled while stuck in this loop would look healthy while
 // reporting nothing.
 func TestStaysDisabledWhileRegistrationIsRejected(t *testing.T) {
-	cfg := defaultAgentConfig()
-	// Slow enough that the rejections below cover the assertions comfortably.
-	cfg.agentInfoSendRetryInterval = 300
-
 	mc := startCollector(t)
 	for i := 0; i < 3; i++ {
 		mc.RejectNext(RpcAgentInfo, "collector rejected this agent")
 	}
-	agent := startAgent(t, mc, cfg)
+	// Slow enough that the rejections below cover the assertions comfortably.
+	agent := startAgent(t, mc, pinpoint.WithCollectorAgentInfoSendRetryInterval(300))
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool {
 		return len(resultsFor(s, RpcAgentInfo)) >= 2
@@ -264,11 +260,9 @@ func TestCreatesNoopAgentWhenDisabledByConfig(t *testing.T) {
 // either way. The other retry tests here all cover the boot path, which is a
 // different loop.
 func TestRetriesPeriodicAgentInfoResendAfterFailure(t *testing.T) {
-	cfg := defaultAgentConfig()
 	// Short enough that a refresh lands during the test; the retry interval and
 	// attempt count come from the fixture (50ms, 2 tries).
-	cfg.agentInfoRefreshInterval = 200
-	mc, agent := startStack(t, cfg)
+	mc, agent := startStack(t, pinpoint.WithCollectorAgentInfoRefreshInterval(200))
 
 	require.GreaterOrEqual(t, len(mc.Snapshot().AgentInfos), 1)
 
@@ -308,9 +302,8 @@ func TestRetriesPeriodicAgentInfoResendAfterFailure(t *testing.T) {
 // The fixture sets the refresh interval to zero, which keeps the periodic
 // re-sender off and registers exactly once (the library default is 24h).
 func TestSendsAgentInfoOnceWhenRefreshDisabled(t *testing.T) {
-	cfg := defaultAgentConfig()
-	require.Zero(t, cfg.agentInfoRefreshInterval)
-	mc, agent := startStack(t, cfg)
+	mc, agent := startStack(t)
+	require.Zero(t, agent.Config().Int(pinpoint.CfgCollectorAgentInfoRefreshInterval))
 
 	require.Len(t, mc.Snapshot().AgentInfos, 1)
 	// Several refresh intervals' worth of time for a worker that must not exist.

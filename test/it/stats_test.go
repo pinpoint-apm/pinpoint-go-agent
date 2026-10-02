@@ -27,9 +27,7 @@ const urlStatFlushInterval = 30 * time.Second
 
 func TestStreamsAgentStatistics(t *testing.T) {
 	// The configuration floor, and so the shortest tick this test can wait on.
-	cfg := defaultAgentConfig()
-	cfg.statCollectInterval = 1000
-	mc, agent := startStack(t, cfg)
+	mc, agent := startStack(t, pinpoint.WithStatCollectInterval(1000))
 
 	active := agent.NewSpanTracer("active.request", "/active")
 	require.True(t, active.IsSampled())
@@ -72,7 +70,7 @@ func TestStreamsAgentStatistics(t *testing.T) {
 }
 
 func TestReportsResponseTimeAndRuntimeStatistics(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return agentStatCount(s) >= 1 }, waitTimeout))
 	baseline := agentStatCount(mc.Snapshot())
@@ -135,9 +133,7 @@ func continueCarrier(traceID string) mapCarrier {
 }
 
 func TestAppliesCounterAndParentSamplingAndReportsDecisions(t *testing.T) {
-	cfg := defaultAgentConfig()
-	cfg.samplingCounterRate = 3
-	mc, agent := startStack(t, cfg)
+	mc, agent := startStack(t, pinpoint.WithSamplingCounterRate(3))
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return agentStatCount(s) >= 1 }, waitTimeout))
 	baseline := agentStatCount(mc.Snapshot())
@@ -179,10 +175,9 @@ func TestAppliesCounterAndParentSamplingAndReportsDecisions(t *testing.T) {
 }
 
 func TestAppliesPercentSamplingPattern(t *testing.T) {
-	cfg := defaultAgentConfig()
-	cfg.samplingType = "PERCENT"
-	cfg.samplingPercentRate = 50
-	mc, agent := startStack(t, cfg)
+	mc, agent := startStack(t,
+		pinpoint.WithSamplingType("PERCENT"),
+		pinpoint.WithSamplingPercentRate(50))
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return agentStatCount(s) >= 1 }, waitTimeout))
 	baseline := agentStatCount(mc.Snapshot())
@@ -208,9 +203,7 @@ func TestAppliesPercentSamplingPattern(t *testing.T) {
 func TestSamplesOnlyContinuedTracesWhenCounterRateIsZero(t *testing.T) {
 	// CounterRate 0 means "never sample a new trace"; continued traces bypass
 	// the base sampler entirely, so they must still be recorded.
-	cfg := defaultAgentConfig()
-	cfg.samplingCounterRate = 0
-	mc, agent := startStack(t, cfg)
+	mc, agent := startStack(t, pinpoint.WithSamplingCounterRate(0))
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return agentStatCount(s) >= 1 }, waitTimeout))
 	baseline := agentStatCount(mc.Snapshot())
@@ -239,10 +232,9 @@ func TestSamplesOnlyContinuedTracesWhenCounterRateIsZero(t *testing.T) {
 }
 
 func TestEnforcesNewAndContinuationThroughputLimits(t *testing.T) {
-	cfg := defaultAgentConfig()
-	cfg.newThroughput = 2
-	cfg.continueThroughput = 1
-	mc, agent := startStack(t, cfg)
+	mc, agent := startStack(t,
+		pinpoint.WithSamplingNewThroughput(2),
+		pinpoint.WithSamplingContinueThroughput(1))
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return agentStatCount(s) >= 1 }, waitTimeout))
 	baseline := agentStatCount(mc.Snapshot())
@@ -282,7 +274,7 @@ func TestAggregatesUrlStatisticsIncludingFailuresAndUnsampledSpans(t *testing.T)
 	if testing.Short() {
 		t.Skip("waits for the agent's 30s URL-statistics tick")
 	}
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	// Two requests on the same URL template aggregate into one entry, and the
 	// failed one is counted in both histograms.

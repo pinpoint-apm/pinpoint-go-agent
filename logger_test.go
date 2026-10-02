@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -37,12 +36,8 @@ func Test_SetOutputClosesPreviousFileLogger(t *testing.T) {
 
 	l.setOutput("stderr", 10, 1)
 
-	if !previous.closed {
-		t.Fatal("previous file logger was not closed")
-	}
-	if l.fileLogger != nil {
-		t.Fatal("file logger reference was not cleared")
-	}
+	require.True(t, previous.closed, "previous file logger was not closed")
+	require.Nil(t, l.fileLogger, "file logger reference was not cleared")
 }
 
 func Test_SetupClosesFileLoggerFromPreviousAgent(t *testing.T) {
@@ -52,18 +47,12 @@ func Test_SetupClosesFileLoggerFromPreviousAgent(t *testing.T) {
 	l.fileLogger = previous
 
 	config, err := NewConfig()
-	if err != nil {
-		t.Fatalf("NewConfig: %v", err)
-	}
+	require.NoError(t, err)
 	config.Set(CfgLogOutput, "stderr")
 	l.setup(config)
 
-	if !previous.closed {
-		t.Fatal("file logger from previous agent was not closed")
-	}
-	if l.fileLogger != nil {
-		t.Fatal("file logger reference from previous agent was not cleared")
-	}
+	require.True(t, previous.closed, "file logger from previous agent was not closed")
+	require.Nil(t, l.fileLogger, "file logger reference from previous agent was not cleared")
 }
 
 func Test_IsLogLevelEnabledChecksExtraLogger(t *testing.T) {
@@ -76,20 +65,14 @@ func Test_IsLogLevelEnabledChecksExtraLogger(t *testing.T) {
 
 	logger.defaultLogger.SetLevel(logrus.InfoLevel)
 	logger.extraLogger.Store(nil)
-	if IsDebugLogLevelEnabled() {
-		t.Fatal("debug should be disabled when default logger is info and extra logger is nil")
-	}
+	require.False(t, IsDebugLogLevelEnabled(), "debug should be disabled when default logger is info and extra logger is nil")
 
 	extraLogger := logrus.New()
 	extraLogger.SetLevel(logrus.TraceLevel)
 	SetExtraLogger(extraLogger)
 
-	if !IsDebugLogLevelEnabled() {
-		t.Fatal("debug should be enabled when extra logger is trace")
-	}
-	if !IsTraceLogLevelEnabled() {
-		t.Fatal("trace should be enabled when extra logger is trace")
-	}
+	require.True(t, IsDebugLogLevelEnabled(), "debug should be enabled when extra logger is trace")
+	require.True(t, IsTraceLogLevelEnabled(), "trace should be enabled when extra logger is trace")
 }
 
 // SetExtraLogger can be called while other goroutines are logging. Run under
@@ -136,18 +119,10 @@ func Test_FileOutputHasNoAnsiColors(t *testing.T) {
 	Log("test").Infof("hello")
 
 	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(b), "\x1b[") {
-		t.Errorf("file log contains ANSI escape: %q", b)
-	}
-	if !strings.Contains(string(b), "hello") {
-		t.Errorf("file log missing message: %q", b)
-	}
-	if !strings.Contains(string(b), "log output: "+path) {
-		t.Errorf("file log missing the output-switch line: %q", b)
-	}
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "\x1b[", "file log contains ANSI escape")
+	assert.Contains(t, string(b), "hello", "file log missing message")
+	assert.Contains(t, string(b), "log output: "+path, "file log missing the output-switch line")
 }
 
 // Reloading Log.Output back and forth must give each destination its own
@@ -170,12 +145,8 @@ func Test_OutputSwitchReformatsEachTime(t *testing.T) {
 		logger.setOutput(path, 10, 1)
 		Log("test").Infof("plain")
 		b, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(b), "\x1b[") {
-			t.Fatalf("round %d: file log contains ANSI escape: %q", i, b)
-		}
+		require.NoError(t, err)
+		require.NotContains(t, string(b), "\x1b[", "round %d: file log contains ANSI escape", i)
 		logger.setOutput("stdout", 10, 1)
 		os.Remove(path)
 	}
@@ -210,12 +181,9 @@ func Test_ReusedEntryWritesToBothLoggers(t *testing.T) {
 		buf  *bytes.Buffer
 	}{{"default", &defaultOut}, {"extra", &extraOut}} {
 		s := out.buf.String()
-		if !strings.Contains(s, "first") || !strings.Contains(s, "second") {
-			t.Errorf("%s logger missing lines: %q", out.name, s)
-		}
-		if !strings.Contains(s, "src=test") {
-			t.Errorf("%s logger missing fields: %q", out.name, s)
-		}
+		assert.Contains(t, s, "first", "%s logger missing lines", out.name)
+		assert.Contains(t, s, "second", "%s logger missing lines", out.name)
+		assert.Contains(t, s, "src=test", "%s logger missing fields", out.name)
 	}
 }
 

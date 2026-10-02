@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -25,10 +26,9 @@ func connectionsTo(s Snapshot, e Endpoint) int {
 // flows -- and every span still arrives, with no failed RPC: the switch is
 // make-before-break, and a stream renewal is not a failure.
 func TestRotatesConnectionsAndStreamsWithoutLosingSpans(t *testing.T) {
-	cfg := defaultAgentConfig()
-	cfg.grpcConnectionMaxAge = 100
-	cfg.grpcStreamMaxAge = 150
-	mc, agent := startStack(t, cfg)
+	mc, agent := startStack(t,
+		pinpoint.WithCollectorGrpcConnectionMaxAge(100),
+		pinpoint.WithCollectorGrpcStreamMaxAge(150))
 
 	const spans = 100
 	for i := 0; i < spans; i++ {
@@ -57,7 +57,7 @@ func TestRotatesConnectionsAndStreamsWithoutLosingSpans(t *testing.T) {
 // The defaults leave both renewals off: one connection per endpoint for the
 // life of the agent, exactly as before the option existed.
 func TestKeepsOneConnectionPerEndpointByDefault(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	for i := 0; i < 20; i++ {
 		handleInstrumentedRequest(agent, fmt.Sprintf("/steady/%d", i), i)

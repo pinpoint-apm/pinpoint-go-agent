@@ -51,126 +51,15 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// agentConfig holds the knobs consumed by options(). Tests that need
-// non-default values change the struct returned by defaultAgentConfig before
-// calling startStack.
-type agentConfig struct {
-	samplingType        string
-	samplingCounterRate int
-	samplingPercentRate float32
-	newThroughput       int
-	continueThroughput  int
-
-	uidVersion  string
-	serviceName string
-	apiKey      string
-
-	// AgentInfo refresh. A zero interval keeps the periodic re-send off, which
-	// is the agent's default.
-	agentInfoRefreshInterval   int
-	agentInfoSendRetryInterval int
-	agentInfoMaxTryPerAttempt  int
-
-	grpcSslEnable         bool
-	grpcTrustCertFilePath string
-	// Connection and stream renewal, in milliseconds. Zero keeps both off,
-	// which is the agent default.
-	grpcConnectionMaxAge int
-	grpcStreamMaxAge     int
-
-	spanQueueSize                  int
-	spanBatchSize                  int
-	spanBatchFlushInterval         int
-	spanBatchCollectDeadline       int
-	spanBatchMaxConcurrentRequests int
-	spanEventChunkSize             int
-	maxCallStackDepth              int
-	maxCallStackSequence           int
-
-	statCollectInterval int
-	statBatchCount      int
-
-	sqlTraceQueryStat   bool
-	sqlTraceBindValue   bool
-	sqlMaxBindValueSize int
-
-	urlStatEnable     bool
-	urlStatWithMethod bool
-	urlStatQueueSize  int
-
-	errorTraceCallStack bool
-	errorCallStackDepth int
-
-	serverExcludeUrls     []string
-	serverExcludeMethods  []string
-	serverRequestHeaders  []string
-	serverRequestCookies  []string
-	serverResponseHeaders []string
-	clientRequestHeaders  []string
-	clientRequestCookies  []string
-	clientResponseHeaders []string
-	serverStatusCodeError []string
-}
-
-func defaultAgentConfig() *agentConfig {
-	return &agentConfig{
-		samplingType:        "COUNTER",
-		samplingCounterRate: 1,
-		samplingPercentRate: 100,
-
-		uidVersion: "v3",
-
-		agentInfoSendRetryInterval: 50,
-		agentInfoMaxTryPerAttempt:  2,
-
-		spanQueueSize: 128,
-		spanBatchSize: 4,
-		// Short enough that a single span reaches the collector within a test's
-		// patience, long enough that a batch of four is still assembled.
-		spanBatchFlushInterval:         50,
-		spanBatchCollectDeadline:       20,
-		spanBatchMaxConcurrentRequests: 2,
-		spanEventChunkSize:             2,
-		maxCallStackDepth:              16,
-		maxCallStackSequence:           128,
-
-		// One agent-stat batch per tick at the configuration floor (1s), so the
-		// statistics assertions do not wait for the production 5s/6-batch
-		// cadence. A value below the floor silently falls back to 5s.
-		statCollectInterval: 1000,
-		statBatchCount:      1,
-
-		sqlTraceQueryStat:   true,
-		sqlTraceBindValue:   true,
-		sqlMaxBindValueSize: 1024,
-
-		urlStatEnable:     true,
-		urlStatWithMethod: true,
-		urlStatQueueSize:  128,
-
-		errorTraceCallStack: true,
-		errorCallStackDepth: 8,
-
-		serverExcludeUrls:     []string{"/excluded/**"},
-		serverExcludeMethods:  []string{"OPTIONS"},
-		serverRequestHeaders:  []string{"x-request-id"},
-		serverRequestCookies:  []string{"session_id"},
-		serverResponseHeaders: []string{"x-response-id"},
-		clientRequestHeaders:  []string{"x-client-request"},
-		clientRequestCookies:  []string{"client_session"},
-		clientResponseHeaders: []string{"x-client-response"},
-		serverStatusCodeError: []string{"4xx", "5xx"},
-	}
-}
-
-func (c *agentConfig) options(mc *MockCollector) []pinpoint.ConfigOption {
+// defaultOptions is the inline configuration every test starts from. Tests
+// that need other values append their own pinpoint.With* options: a later
+// option for the same key overwrites an earlier one.
+func defaultOptions(mc *MockCollector) []pinpoint.ConfigOption {
 	return []pinpoint.ConfigOption{
 		pinpoint.WithAppName(itAppName),
 		pinpoint.WithAgentName(itAgentName),
 		pinpoint.WithAppType(itAppType),
-		pinpoint.WithUidVersion(c.uidVersion),
-		pinpoint.WithServiceName(c.serviceName),
-		pinpoint.WithApiKey(c.apiKey),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithIsContainerEnv(true),
 		pinpoint.WithLogLevel("error"),
 
@@ -178,52 +67,57 @@ func (c *agentConfig) options(mc *MockCollector) []pinpoint.ConfigOption {
 		pinpoint.WithCollectorAgentPort(mc.AgentPort()),
 		pinpoint.WithCollectorSpanPort(mc.SpanPort()),
 		pinpoint.WithCollectorStatPort(mc.StatPort()),
-		pinpoint.WithCollectorAgentInfoRefreshInterval(c.agentInfoRefreshInterval),
-		pinpoint.WithCollectorAgentInfoSendRetryInterval(c.agentInfoSendRetryInterval),
-		pinpoint.WithCollectorAgentInfoMaxTryPerAttempt(c.agentInfoMaxTryPerAttempt),
-		pinpoint.WithCollectorGrpcSslEnable(c.grpcSslEnable),
-		pinpoint.WithCollectorGrpcTrustCertFilePath(c.grpcTrustCertFilePath),
-		pinpoint.WithCollectorGrpcConnectionMaxAge(c.grpcConnectionMaxAge),
-		pinpoint.WithCollectorGrpcStreamMaxAge(c.grpcStreamMaxAge),
+		// AgentInfo refresh. A zero interval keeps the periodic re-send off, which
+		// is the agent's default.
+		pinpoint.WithCollectorAgentInfoRefreshInterval(0),
+		pinpoint.WithCollectorAgentInfoSendRetryInterval(50),
+		pinpoint.WithCollectorAgentInfoMaxTryPerAttempt(2),
+		// Connection and stream renewal, in milliseconds. Zero keeps both off,
+		// which is the agent default.
+		pinpoint.WithCollectorGrpcConnectionMaxAge(0),
+		pinpoint.WithCollectorGrpcStreamMaxAge(0),
 
-		pinpoint.WithSamplingType(c.samplingType),
-		pinpoint.WithSamplingCounterRate(c.samplingCounterRate),
-		pinpoint.WithSamplingPercentRate(c.samplingPercentRate),
-		pinpoint.WithSamplingNewThroughput(c.newThroughput),
-		pinpoint.WithSamplingContinueThroughput(c.continueThroughput),
+		pinpoint.WithSamplingType("COUNTER"),
+		pinpoint.WithSamplingCounterRate(1),
+		pinpoint.WithSamplingPercentRate(100),
 
-		pinpoint.WithSpanQueueSize(c.spanQueueSize),
-		pinpoint.WithCollectorGrpcSpanBatchSize(c.spanBatchSize),
-		pinpoint.WithCollectorGrpcSpanBatchFlushInterval(c.spanBatchFlushInterval),
-		pinpoint.WithCollectorGrpcSpanBatchCollectDeadline(c.spanBatchCollectDeadline),
-		pinpoint.WithCollectorGrpcSpanBatchMaxConcurrentRequests(c.spanBatchMaxConcurrentRequests),
-		pinpoint.WithSpanEventChunkSize(c.spanEventChunkSize),
-		pinpoint.WithSpanMaxCallStackDepth(c.maxCallStackDepth),
-		pinpoint.WithSpanMaxCallStackSequence(c.maxCallStackSequence),
+		pinpoint.WithSpanQueueSize(128),
+		pinpoint.WithCollectorGrpcSpanBatchSize(4),
+		// Short enough that a single span reaches the collector within a test's
+		// patience, long enough that a batch of four is still assembled.
+		pinpoint.WithCollectorGrpcSpanBatchFlushInterval(50),
+		pinpoint.WithCollectorGrpcSpanBatchCollectDeadline(20),
+		pinpoint.WithCollectorGrpcSpanBatchMaxConcurrentRequests(2),
+		pinpoint.WithSpanEventChunkSize(2),
+		pinpoint.WithSpanMaxCallStackDepth(16),
+		pinpoint.WithSpanMaxCallStackSequence(128),
 
-		pinpoint.WithStatCollectInterval(c.statCollectInterval),
-		pinpoint.WithStatBatchCount(c.statBatchCount),
+		// One agent-stat batch per tick at the configuration floor (1s), so the
+		// statistics assertions do not wait for the production 5s/6-batch
+		// cadence. A value below the floor silently falls back to 5s.
+		pinpoint.WithStatCollectInterval(1000),
+		pinpoint.WithStatBatchCount(1),
 
-		pinpoint.WithSQLTraceQueryStat(c.sqlTraceQueryStat),
-		pinpoint.WithSQLTraceBindValue(c.sqlTraceBindValue),
-		pinpoint.WithSQLMaxBindValueSize(c.sqlMaxBindValueSize),
+		pinpoint.WithSQLTraceQueryStat(true),
+		pinpoint.WithSQLTraceBindValue(true),
+		pinpoint.WithSQLMaxBindValueSize(1024),
 
-		pinpoint.WithHttpUrlStatEnable(c.urlStatEnable),
-		pinpoint.WithHttpUrlStatWithMethod(c.urlStatWithMethod),
-		pinpoint.WithHttpUrlStatQueueSize(c.urlStatQueueSize),
+		pinpoint.WithHttpUrlStatEnable(true),
+		pinpoint.WithHttpUrlStatWithMethod(true),
+		pinpoint.WithHttpUrlStatQueueSize(128),
 
-		pinpoint.WithErrorTraceCallStack(c.errorTraceCallStack),
-		pinpoint.WithErrorCallStackDepth(c.errorCallStackDepth),
+		pinpoint.WithErrorTraceCallStack(true),
+		pinpoint.WithErrorCallStackDepth(8),
 
-		pphttp.WithHttpServerStatusCodeError(c.serverStatusCodeError),
-		pphttp.WithHttpServerExcludeUrl(c.serverExcludeUrls),
-		pphttp.WithHttpServerExcludeMethod(c.serverExcludeMethods),
-		pphttp.WithHttpServerRecordRequestHeader(c.serverRequestHeaders),
-		pphttp.WithHttpServerRecordRequestCookie(c.serverRequestCookies),
-		pphttp.WithHttpServerRecordRespondHeader(c.serverResponseHeaders),
-		pphttp.WithHttpClientRecordRequestHeader(c.clientRequestHeaders),
-		pphttp.WithHttpClientRecordRequestCookie(c.clientRequestCookies),
-		pphttp.WithHttpClientRecordRespondHeader(c.clientResponseHeaders),
+		pphttp.WithHttpServerStatusCodeError([]string{"4xx", "5xx"}),
+		pphttp.WithHttpServerExcludeUrl([]string{"/excluded/**"}),
+		pphttp.WithHttpServerExcludeMethod([]string{"OPTIONS"}),
+		pphttp.WithHttpServerRecordRequestHeader([]string{"x-request-id"}),
+		pphttp.WithHttpServerRecordRequestCookie([]string{"session_id"}),
+		pphttp.WithHttpServerRecordRespondHeader([]string{"x-response-id"}),
+		pphttp.WithHttpClientRecordRequestHeader([]string{"x-client-request"}),
+		pphttp.WithHttpClientRecordRequestCookie([]string{"client_session"}),
+		pphttp.WithHttpClientRecordRespondHeader([]string{"x-client-response"}),
 	}
 }
 
@@ -239,11 +133,11 @@ func startCollector(t *testing.T) *MockCollector {
 	return mc
 }
 
-// startAgent builds an agent from cfg and returns it without waiting for
-// registration. The agent is shut down on test cleanup.
-func startAgent(t *testing.T, mc *MockCollector, cfg *agentConfig) pinpoint.Agent {
+// startAgent builds an agent from defaultOptions plus opts and returns it
+// without waiting for registration. The agent is shut down on test cleanup.
+func startAgent(t *testing.T, mc *MockCollector, opts ...pinpoint.ConfigOption) pinpoint.Agent {
 	t.Helper()
-	config, err := pinpoint.NewConfig(cfg.options(mc)...)
+	config, err := pinpoint.NewConfig(append(defaultOptions(mc), opts...)...)
 	require.NoError(t, err)
 	agent, err := pinpoint.NewAgent(config)
 	require.NoError(t, err, "a previous test left a global agent installed")
@@ -253,15 +147,20 @@ func startAgent(t *testing.T, mc *MockCollector, cfg *agentConfig) pinpoint.Agen
 
 // startStack starts the collector and an agent, then blocks until the agent is
 // registered and enabled.
-func startStack(t *testing.T, cfg *agentConfig, arm ...func(*MockCollector)) (*MockCollector, pinpoint.Agent) {
+func startStack(t *testing.T, opts ...pinpoint.ConfigOption) (*MockCollector, pinpoint.Agent) {
+	t.Helper()
+	return startArmedStack(t, nil, opts...)
+}
+
+// startArmedStack is startStack with a collector-side fault armed before the
+// agent starts: NewAgent begins registration immediately.
+func startArmedStack(t *testing.T, arm func(*MockCollector), opts ...pinpoint.ConfigOption) (*MockCollector, pinpoint.Agent) {
 	t.Helper()
 	mc := startCollector(t)
-	// Collector-side faults must be armed before the agent starts: NewAgent
-	// begins registration immediately.
-	for _, fn := range arm {
-		fn(mc)
+	if arm != nil {
+		arm(mc)
 	}
-	agent := startAgent(t, mc, cfg)
+	agent := startAgent(t, mc, opts...)
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.AgentInfos) > 0 }, waitTimeout),
 		"the agent never registered with the collector")
 	require.True(t, waitUntil(func() bool { return agent.Enable() }, waitTimeout),

@@ -15,7 +15,7 @@ import (
 )
 
 func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	root := agent.NewSpanTracer("http.server", "/orders/42")
 	require.True(t, root.IsSampled())
@@ -181,7 +181,7 @@ func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
 // sequence and break the collector's call tree. The span itself is still
 // delivered exactly once.
 func TestFinalizesSpanWithUnclosedEvents(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	tracer := agent.NewSpanTracer("span.lifecycle", "/span-lifecycle")
 	require.True(t, tracer.IsSampled())
@@ -212,7 +212,7 @@ func TestFinalizesSpanWithUnclosedEvents(t *testing.T) {
 }
 
 func TestPreservesNestedEventSequenceAndDepth(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	tracer := agent.NewSpanTracer("event.lifecycle", "/event-lifecycle")
 	require.True(t, tracer.IsSampled())
@@ -267,10 +267,9 @@ func TestPreservesNestedEventSequenceAndDepth(t *testing.T) {
 func TestKeepsTraceContextWhenEventLimitsOverflow(t *testing.T) {
 	// The smallest limits the config accepts, so the overflow paths are
 	// reachable with a handful of events.
-	cfg := defaultAgentConfig()
-	cfg.maxCallStackDepth = 2
-	cfg.maxCallStackSequence = 4
-	mc, agent := startStack(t, cfg)
+	mc, agent := startStack(t,
+		pinpoint.WithSpanMaxCallStackDepth(2),
+		pinpoint.WithSpanMaxCallStackSequence(4))
 	require.Equal(t, 2, agent.Config().Int("Span.MaxCallStackDepth"))
 	require.Equal(t, 4, agent.Config().Int("Span.MaxCallStackSequence"))
 
@@ -358,7 +357,7 @@ func TestKeepsTraceContextWhenEventLimitsOverflow(t *testing.T) {
 // fresh transaction rather than dropping the request. A well-formed context
 // from a foreign agent is adopted verbatim.
 func TestStartsNewTransactionOnMalformedContextAndAdoptsForeignContext(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	malformed := []string{
 		"missing-separators",
@@ -419,7 +418,7 @@ func TestStartsNewTransactionOnMalformedContextAndAdoptsForeignContext(t *testin
 }
 
 func TestSharesAsyncIdAcrossAsyncSpansFromOneEvent(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	tracer := agent.NewSpanTracer("async.parent", "/async-parent")
 	require.True(t, tracer.IsSampled())
@@ -482,7 +481,7 @@ func TestSharesAsyncIdAcrossAsyncSpansFromOneEvent(t *testing.T) {
 }
 
 func TestFlushesExceptionMetadataForAsyncSpans(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	tracer := agent.NewSpanTracer("async.exception.parent", "/async-exception")
 	require.True(t, tracer.IsSampled())
@@ -525,7 +524,7 @@ func TestFlushesExceptionMetadataForAsyncSpans(t *testing.T) {
 }
 
 func TestWrapGoroutinePropagatesTraceIntoGoroutine(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	tracer := agent.NewSpanTracer("goroutine.parent", "/goroutine-parent")
 	require.True(t, tracer.IsSampled())
@@ -563,7 +562,7 @@ func TestWrapGoroutinePropagatesTraceIntoGoroutine(t *testing.T) {
 }
 
 func TestPropagatesUnsampledDecisionDownstream(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return agentStatCount(s) >= 1 }, waitTimeout))
 	baseline := agentStatCount(mc.Snapshot())

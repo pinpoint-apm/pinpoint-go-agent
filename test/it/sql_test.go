@@ -72,7 +72,7 @@ func registerFakeDB(t *testing.T) *sql.DB {
 }
 
 func TestNormalizesSqlIntoSharedUidMetadata(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 
 	const rawSQL = "SELECT * FROM orders WHERE id = 42 AND status = 'ready'"
 	const normalizedSQL = "SELECT * FROM orders WHERE id = 0# AND status = '1$'"
@@ -114,9 +114,7 @@ func TestNormalizesSqlIntoSharedUidMetadata(t *testing.T) {
 }
 
 func TestRegistersSqlIdMetadataWhenQueryStatsDisabled(t *testing.T) {
-	cfg := defaultAgentConfig()
-	cfg.sqlTraceQueryStat = false
-	mc, agent := startStack(t, cfg)
+	mc, agent := startStack(t, pinpoint.WithSQLTraceQueryStat(false))
 
 	const rawSQL = "UPDATE inventory SET count = 7 WHERE sku = 'ABC-1'"
 	const normalizedSQL = "UPDATE inventory SET count = 0# WHERE sku = '1$'"
@@ -154,7 +152,7 @@ func TestRegistersSqlIdMetadataWhenQueryStatsDisabled(t *testing.T) {
 }
 
 func TestSerializesEveryTypedSqlBindValueOnTheWire(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 	db := registerFakeDB(t)
 
 	tracer := agent.NewSpanTracer("sql.typed.binds", "/sql-typed-binds")
@@ -189,9 +187,7 @@ func TestSerializesEveryTypedSqlBindValueOnTheWire(t *testing.T) {
 }
 
 func TestOmitsSensitiveSqlBindValuesFromSpanPayload(t *testing.T) {
-	cfg := defaultAgentConfig()
-	cfg.sqlTraceBindValue = false
-	mc, agent := startStack(t, cfg)
+	mc, agent := startStack(t, pinpoint.WithSQLTraceBindValue(false))
 	db := registerFakeDB(t)
 
 	const secret = "do-not-collect-this-token"
@@ -221,9 +217,7 @@ func TestOmitsSensitiveSqlBindValuesFromSpanPayload(t *testing.T) {
 
 func TestTruncatesSqlBindArgsAtConfiguredLimit(t *testing.T) {
 	// Small enough that a handful of short bind values overflows the join limit.
-	cfg := defaultAgentConfig()
-	cfg.sqlMaxBindValueSize = 20
-	mc, agent := startStack(t, cfg)
+	mc, agent := startStack(t, pinpoint.WithSQLMaxBindValueSize(20))
 	db := registerFakeDB(t)
 
 	tracer := agent.NewSpanTracer("sql.bind.limit", "/sql-bind-limit")
@@ -254,7 +248,7 @@ func TestTruncatesSqlBindArgsAtConfiguredLimit(t *testing.T) {
 }
 
 func TestRecordsSqlErrorAndTransactionSpanEvents(t *testing.T) {
-	mc, agent := startStack(t, defaultAgentConfig())
+	mc, agent := startStack(t)
 	db := registerFakeDB(t)
 
 	tracer := agent.NewSpanTracer("sql.tx", "/sql-tx")

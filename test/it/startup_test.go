@@ -19,7 +19,7 @@ func startWithUnavailableCollector(t *testing.T) (*MockCollector, pinpoint.Agent
 	mc.StopEndpoint(EndpointAgent)
 	mc.StopEndpoint(EndpointSpan)
 	mc.StopEndpoint(EndpointStat)
-	return mc, startAgent(t, mc, defaultAgentConfig())
+	return mc, startAgent(t, mc)
 }
 
 func restartCollector(t *testing.T, mc *MockCollector) {
@@ -119,7 +119,7 @@ func TestServesNoopTracersDuringOutageAndEnablesTracingAfterRecovery(t *testing.
 			mc := startCollector(t)
 			outage.begin(mc)
 			started := time.Now()
-			agent := startAgent(t, mc, defaultAgentConfig())
+			agent := startAgent(t, mc)
 			assert.Less(t, time.Since(started), time.Second, "NewAgent waited on the collector")
 
 			require.True(t, mc.WaitFor(outage.registering, longTimeout))

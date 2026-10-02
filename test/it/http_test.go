@@ -16,7 +16,7 @@ import (
 
 // The http plugin publishes its own config snapshot once per process (see
 // pphttp.httpCfg), so every test in this package must share the HTTP settings
-// from defaultAgentConfig. Changing them per test would silently have no
+// from defaultOptions. Changing them per test would silently have no
 // effect after the first HTTP request of the run.
 
 func serverRequest(t *testing.T, method, target string, headers map[string]string) *http.Request {
@@ -31,7 +31,7 @@ func serverRequest(t *testing.T, method, target string, headers map[string]strin
 }
 
 func TestHttpHelpersPopulateServerAndClientWireData(t *testing.T) {
-	mc, _ := startStack(t, defaultAgentConfig())
+	mc, _ := startStack(t)
 
 	// A real downstream that echoes back the trace headers it received.
 	var downstreamHeaders http.Header
@@ -128,7 +128,7 @@ func TestHttpHelpersPopulateServerAndClientWireData(t *testing.T) {
 }
 
 func TestParsesApacheProxyHeaderAndRealIpFallback(t *testing.T) {
-	mc, _ := startStack(t, defaultAgentConfig())
+	mc, _ := startStack(t)
 
 	req := serverRequest(t, http.MethodGet, "/proxy-apache", map[string]string{
 		"X-Real-Ip":            "203.0.113.99",
@@ -160,7 +160,7 @@ func TestParsesApacheProxyHeaderAndRealIpFallback(t *testing.T) {
 }
 
 func TestRecordsEveryProxyHopAndDropsMalformedNginxTime(t *testing.T) {
-	mc, _ := startStack(t, defaultAgentConfig())
+	mc, _ := startStack(t)
 
 	trace := func(rpc, operation string, headers map[string]string) {
 		tracer := pphttp.NewHttpServerTracer(serverRequest(t, http.MethodGet, rpc, headers), operation)
@@ -229,7 +229,7 @@ func TestRecordsEveryProxyHopAndDropsMalformedNginxTime(t *testing.T) {
 // unsampled request still carries a real id, so the id separates filtering
 // from a sampling decision.
 func TestExcludesFilteredUrlsAndMethods(t *testing.T) {
-	mc, _ := startStack(t, defaultAgentConfig())
+	mc, _ := startStack(t)
 
 	excluded := pphttp.NewHttpServerTracer(
 		serverRequest(t, http.MethodGet, "/excluded/deep/leaf", nil), "http.excluded")
@@ -261,7 +261,7 @@ func TestExcludesFilteredUrlsAndMethods(t *testing.T) {
 // trace the request, name the handler as a span event, and hand the tracer to
 // the handler through the request context.
 func TestWrappedHandlerTracesRequestEndToEnd(t *testing.T) {
-	mc, _ := startStack(t, defaultAgentConfig())
+	mc, _ := startStack(t)
 
 	handler := pphttp.WrapHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tracer := pinpoint.TracerFromRequestContext(r)

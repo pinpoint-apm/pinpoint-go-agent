@@ -15,101 +15,49 @@ import (
 )
 
 func Test_newSpanEvent(t *testing.T) {
-	type args struct {
-		span          *span
-		operationName string
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{defaultTestSpan(), "t1"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			se := newSpanEvent(tt.args.span, tt.args.operationName)
-			assert.Equal(t, se.operationName, tt.args.operationName, "operationName")
-			assert.Equal(t, se.serviceType, int32(ServiceTypeGoFunction), "serviceType")
-			assert.NotNil(t, se.startTime, "startTime")
-		})
-	}
+	span := defaultTestSpan()
+	se := newSpanEvent(span, "t1")
+	assert.Equal(t, se.operationName, "t1", "operationName")
+	assert.Equal(t, se.serviceType, int32(ServiceTypeGoFunction), "serviceType")
+	assert.NotNil(t, se.startTime, "startTime")
 }
 
 func Test_spanEvent_end(t *testing.T) {
-	type args struct {
-		span          *span
-		operationName string
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{defaultTestSpan(), "t1"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			se := newSpanEvent(tt.args.span, tt.args.operationName)
-			tt.args.span.appendSpanEvent(se)
-			assert.Equal(t, se.parentSpan.eventDepth.Load(), int32(2), "eventDepth")
+	span := defaultTestSpan()
+	se := newSpanEvent(span, "t1")
+	span.appendSpanEvent(se)
+	assert.Equal(t, se.parentSpan.eventDepth.Load(), int32(2), "eventDepth")
 
-			time.Sleep(100 * time.Millisecond)
-			se.end()
+	time.Sleep(100 * time.Millisecond)
+	se.end()
 
-			assert.Equal(t, se.operationName, tt.args.operationName, "operationName")
-			assert.Equal(t, se.parentSpan.eventDepth.Load(), int32(1), "eventDepth")
-			assert.Greater(t, se.endElapsed, int64(99), "endElapsed")
-		})
-	}
+	assert.Equal(t, se.operationName, "t1", "operationName")
+	assert.Equal(t, se.parentSpan.eventDepth.Load(), int32(1), "eventDepth")
+	assert.Greater(t, se.endElapsed, int64(99), "endElapsed")
 }
 
 func Test_spanEvent_generateNextSpanId(t *testing.T) {
-	type args struct {
-		span          *span
-		operationName string
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{defaultTestSpan(), "t1"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			se := newSpanEvent(tt.args.span, tt.args.operationName)
-			id := se.generateNextSpanId()
-			assert.Equal(t, se.operationName, tt.args.operationName, "operationName")
-			assert.Equal(t, se.nextSpanId, id, "nextSpanId")
-			assert.NotEqual(t, se.nextSpanId, int64(0), "nextSpanId")
+	span := defaultTestSpan()
+	se := newSpanEvent(span, "t1")
+	id := se.generateNextSpanId()
+	assert.Equal(t, se.operationName, "t1", "operationName")
+	assert.Equal(t, se.nextSpanId, id, "nextSpanId")
+	assert.NotEqual(t, se.nextSpanId, int64(0), "nextSpanId")
 
-			// the event path must avoid the parent span's ids as well
-			se.parentSpan.spanId = 10
-			se.parentSpan.parentSpanId = 20
-			stubSpanIdGenerator(t, 10, 20, -1, 30)
-			assert.Equal(t, int64(30), se.generateNextSpanId(), "nextSpanId on collision")
-		})
-	}
+	// the event path must avoid the parent span's ids as well
+	se.parentSpan.spanId = 10
+	se.parentSpan.parentSpanId = 20
+	stubSpanIdGenerator(t, 10, 20, -1, 30)
+	assert.Equal(t, int64(30), se.generateNextSpanId(), "nextSpanId on collision")
 }
 
 func Test_spanEvent_SetError(t *testing.T) {
-	type args struct {
-		span          *span
-		operationName string
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{defaultTestSpan(), "t1"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tt.args.span.agent = newTestAgent(defaultConfig())
-			se := newSpanEvent(tt.args.span, tt.args.operationName)
-			se.SetError(errors.New("TEST_ERROR"))
-			assert.Equal(t, int32(1), se.errorFuncId, "errorFuncId")
-			assert.Equal(t, "TEST_ERROR", se.errorString, "errorString")
-		})
-	}
+	span := defaultTestSpan()
+	span.agent = newTestAgent(defaultConfig())
+	se := newSpanEvent(span, "t1")
+	se.SetError(errors.New("TEST_ERROR"))
+	assert.Equal(t, int32(1), se.errorFuncId, "errorFuncId")
+	assert.Equal(t, "TEST_ERROR", se.errorString, "errorString")
 }
 
 func Test_SetError_AbbreviatesMessage(t *testing.T) {
@@ -137,24 +85,11 @@ func Test_SetError_AbbreviatesMessage(t *testing.T) {
 }
 
 func Test_spanEvent_SetSQL(t *testing.T) {
-	type args struct {
-		span          *span
-		operationName string
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{defaultTestSpan(), "t1"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tt.args.span.agent = newTestAgent(defaultConfig())
-			se := newSpanEvent(tt.args.span, tt.args.operationName)
-			se.SetSQL("SELECT 1", "")
-			assert.Equal(t, len(se.annotations.values), int(1), "annotations.len")
-		})
-	}
+	span := defaultTestSpan()
+	span.agent = newTestAgent(defaultConfig())
+	se := newSpanEvent(span, "t1")
+	se.SetSQL("SELECT 1", "")
+	assert.Equal(t, len(se.annotations.values), int(1), "annotations.len")
 }
 
 func Test_spanEvent_SetSQLBoundsAnnotationValues(t *testing.T) {

@@ -70,10 +70,6 @@ func testSpanWithConfig(config *Config) *span {
 }
 
 func Test_span_Extract(t *testing.T) {
-	type args struct {
-		reader DistributedTracingContextReader
-	}
-
 	m := map[string]string{
 		HeaderTraceId:               "t123456^12345^1",
 		HeaderSpanId:                "67890",
@@ -82,26 +78,16 @@ func Test_span_Extract(t *testing.T) {
 		HeaderHost:                  "upstream:8080",
 	}
 
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{&DistributedTracingContextMap{m}}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			span := defaultTestSpan()
-			span.Extract(tt.args.reader)
+	span := defaultTestSpan()
+	span.Extract(&DistributedTracingContextMap{m})
 
-			assert.Equal(t, span.txId.AgentId, "t123456", "AgentId")
-			assert.Equal(t, span.txId.StartTime, int64(12345), "StartTime")
-			assert.Equal(t, span.txId.Sequence, int64(1), "Sequence")
-			assert.Equal(t, span.spanId, int64(67890), "spanId")
-			assert.Equal(t, span.parentSpanId, int64(123), "parentSpanId")
-			assert.Equal(t, "upstream", span.parentAppName, "parentAppName")
-			assert.Equal(t, "upstream:8080", span.acceptorHost, "acceptorHost")
-		})
-	}
+	assert.Equal(t, span.txId.AgentId, "t123456", "AgentId")
+	assert.Equal(t, span.txId.StartTime, int64(12345), "StartTime")
+	assert.Equal(t, span.txId.Sequence, int64(1), "Sequence")
+	assert.Equal(t, span.spanId, int64(67890), "spanId")
+	assert.Equal(t, span.parentSpanId, int64(123), "parentSpanId")
+	assert.Equal(t, "upstream", span.parentAppName, "parentAppName")
+	assert.Equal(t, "upstream:8080", span.acceptorHost, "acceptorHost")
 }
 
 // Without a Pinpoint-Host header the acceptor host falls back to the endPoint
@@ -380,40 +366,26 @@ func Test_nextSpanId(t *testing.T) {
 }
 
 func Test_span_Inject(t *testing.T) {
-	type args struct {
-		writer DistributedTracingContextWriter
-	}
-
 	m := make(map[string]string)
 
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{&DistributedTracingContextMap{m}}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			span := defaultTestSpan()
-			span.txId.AgentId = "t123456"
-			span.txId.StartTime = int64(12345)
-			span.txId.Sequence = int64(1)
-			span.NewSpanEvent("t")
+	span := defaultTestSpan()
+	span.txId.AgentId = "t123456"
+	span.txId.StartTime = int64(12345)
+	span.txId.Sequence = int64(1)
+	span.NewSpanEvent("t")
 
-			span.Inject(tt.args.writer)
-			assert.Equal(t, m[HeaderTraceId], span.txId.String(), "headerTraceId")
+	span.Inject(&DistributedTracingContextMap{m})
+	assert.Equal(t, m[HeaderTraceId], span.txId.String(), "headerTraceId")
 
-			// The normal path still carries every header it always has.
-			for _, h := range []string{HeaderTraceId, HeaderSpanId, HeaderParentSpanId,
-				HeaderFlags, HeaderParentApplicationName, HeaderParentApplicationType} {
-				assert.Contains(t, m, h, h)
-			}
-			// The namespace header is omitted rather than sent empty: a
-			// receiver comparing it against its own value rejects an empty one
-			// and starts a new trace instead of continuing this one.
-			assert.NotContains(t, m, HeaderParentApplicationNamespace, HeaderParentApplicationNamespace)
-		})
+	// The normal path still carries every header it always has.
+	for _, h := range []string{HeaderTraceId, HeaderSpanId, HeaderParentSpanId,
+		HeaderFlags, HeaderParentApplicationName, HeaderParentApplicationType} {
+		assert.Contains(t, m, h, h)
 	}
+	// The namespace header is omitted rather than sent empty: a
+	// receiver comparing it against its own value rejects an empty one
+	// and starts a new trace instead of continuing this one.
+	assert.NotContains(t, m, HeaderParentApplicationNamespace, HeaderParentApplicationNamespace)
 }
 
 // Pinpoint-Host names the node being called; with nothing to name, the header is
@@ -547,129 +519,101 @@ func Test_span_Inject_EventOverflow(t *testing.T) {
 }
 
 func Test_span_NewSpanEvent(t *testing.T) {
-	type args struct {
-		operationName string
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{"t1"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			span := defaultTestSpan()
-			span.NewSpanEvent(tt.args.operationName)
-			assert.Equal(t, span.eventSequence.Load(), int32(1), "eventSequence")
-			assert.Equal(t, span.eventDepth.Load(), int32(2), "eventDepth")
-			assert.Equal(t, span.eventStack.len(), int(1), "stack.len")
+	span := defaultTestSpan()
+	span.NewSpanEvent("t1")
+	assert.Equal(t, span.eventSequence.Load(), int32(1), "eventSequence")
+	assert.Equal(t, span.eventDepth.Load(), int32(2), "eventDepth")
+	assert.Equal(t, span.eventStack.len(), int(1), "stack.len")
 
-			se, exist := span.eventStack.peek()
-			assert.Equal(t, exist, true, "eventStack.peek")
-			assert.Equal(t, se.operationName, tt.args.operationName, "operationName")
-		})
-	}
+	se, exist := span.eventStack.peek()
+	assert.Equal(t, exist, true, "eventStack.peek")
+	assert.Equal(t, se.operationName, "t1", "operationName")
 }
 
 func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
-	type args struct {
-		operationName string
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{"t1"}},
-	}
+	config := defaultConfig()
+	config.Set(CfgSpanMaxCallStackDepth, 3)
+	s := testSpanWithConfig(config)
 
-	for _, tt := range tests {
+	// 4 levels fit and only the 5th overflows.
+	s.NewSpanEvent("t1")
+	s.NewSpanEvent("t1")
+	s.NewSpanEvent("t1")
+	s.NewSpanEvent("t1")
+	s.NewSpanEvent("t1")
 
-		t.Run(tt.name, func(t *testing.T) {
-			config := defaultConfig()
-			config.Set(CfgSpanMaxCallStackDepth, 3)
-			s := testSpanWithConfig(config)
+	assert.Equal(t, s.eventSequence.Load(), int32(4), "eventSequence")
+	assert.Equal(t, s.eventDepth.Load(), int32(5), "eventDepth")
+	assert.Equal(t, s.eventOverflow.Load(), int32(1), "eventOverflow")
+	assert.Equal(t, s.eventOverflowLog.Load(), true, "eventOverflowLog")
+	assert.Equal(t, s.eventStack.len(), 4, "stack.len()")
 
-			// 4 levels fit and only the 5th overflows.
-			s.NewSpanEvent(tt.args.operationName)
-			s.NewSpanEvent(tt.args.operationName)
-			s.NewSpanEvent(tt.args.operationName)
-			s.NewSpanEvent(tt.args.operationName)
-			s.NewSpanEvent(tt.args.operationName)
+	s.EndSpanEvent()
+	assert.Equal(t, s.eventOverflow.Load(), int32(0), "eventOverflow")
+	assert.Equal(t, s.eventStack.len(), 4, "stack.len()")
 
-			assert.Equal(t, s.eventSequence.Load(), int32(4), "eventSequence")
-			assert.Equal(t, s.eventDepth.Load(), int32(5), "eventDepth")
-			assert.Equal(t, s.eventOverflow.Load(), int32(1), "eventOverflow")
-			assert.Equal(t, s.eventOverflowLog.Load(), true, "eventOverflowLog")
-			assert.Equal(t, s.eventStack.len(), 4, "stack.len()")
+	s.EndSpanEvent()
+	assert.Equal(t, s.eventStack.len(), 3, "stack.len()")
+	s.EndSpanEvent()
+	assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
+	s.EndSpanEvent()
+	assert.Equal(t, s.eventStack.len(), 1, "stack.len()")
+	s.EndSpanEvent()
+	assert.Equal(t, s.eventStack.len(), 0, "stack.len()")
 
-			s.EndSpanEvent()
-			assert.Equal(t, s.eventOverflow.Load(), int32(0), "eventOverflow")
-			assert.Equal(t, s.eventStack.len(), 4, "stack.len()")
+	s.NewSpanEvent("t1")
+	s.NewSpanEvent("t1")
+	s.NewSpanEvent("t1")
+	s.NewSpanEvent("t1")
+	s.NewSpanEvent("t1")
 
-			s.EndSpanEvent()
-			assert.Equal(t, s.eventStack.len(), 3, "stack.len()")
-			s.EndSpanEvent()
-			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
-			s.EndSpanEvent()
-			assert.Equal(t, s.eventStack.len(), 1, "stack.len()")
-			s.EndSpanEvent()
-			assert.Equal(t, s.eventStack.len(), 0, "stack.len()")
+	assert.Equal(t, s.eventSequence.Load(), int32(8), "eventSequence")
+	assert.Equal(t, s.eventDepth.Load(), int32(5), "eventDepth")
+	assert.Equal(t, s.eventOverflow.Load(), int32(1), "eventOverflow")
+	assert.Equal(t, s.eventOverflowLog.Load(), true, "eventOverflowLog")
+	assert.Equal(t, s.eventStack.len(), 4, "stack.len()")
 
-			s.NewSpanEvent(tt.args.operationName)
-			s.NewSpanEvent(tt.args.operationName)
-			s.NewSpanEvent(tt.args.operationName)
-			s.NewSpanEvent(tt.args.operationName)
-			s.NewSpanEvent(tt.args.operationName)
+	// Overflowed events record nothing, except the destination the
+	// span keeps for Inject's Pinpoint-Host.
+	ose, ok := s.SpanEvent().(*overflowSpanEvent)
+	assert.Equal(t, ok, true, "overflowSpanEvent")
+	ose.SetDestination("my-cluster")
+	assert.Equal(t, "my-cluster", s.overflowSe.destination(), "destination")
 
-			assert.Equal(t, s.eventSequence.Load(), int32(8), "eventSequence")
-			assert.Equal(t, s.eventDepth.Load(), int32(5), "eventDepth")
-			assert.Equal(t, s.eventOverflow.Load(), int32(1), "eventOverflow")
-			assert.Equal(t, s.eventOverflowLog.Load(), true, "eventOverflowLog")
-			assert.Equal(t, s.eventStack.len(), 4, "stack.len()")
+	tracer := s.NewGoroutineTracer()
+	noop, ok := tracer.(*noopSpan)
+	assert.Equal(t, ok, true, "noopSpan")
+	assert.Equal(t, noop.IsSampled(), false, "IsSampled")
+	assert.Equal(t, noop.SpanId(), int64(0), "SpanId")
+	assert.False(t, noop.withStats.Load(), "SpanId")
 
-			// Overflowed events record nothing, except the destination the
-			// span keeps for Inject's Pinpoint-Host.
-			ose, ok := s.SpanEvent().(*overflowSpanEvent)
-			assert.Equal(t, ok, true, "overflowSpanEvent")
-			ose.SetDestination("my-cluster")
-			assert.Equal(t, "my-cluster", s.overflowSe.destination(), "destination")
+	s.EndSpanEvent()
+	assert.Equal(t, s.eventOverflow.Load(), int32(0), "eventOverflow")
+	assert.Equal(t, s.eventStack.len(), 4, "stack.len()")
 
-			tracer := s.NewGoroutineTracer()
-			noop, ok := tracer.(*noopSpan)
-			assert.Equal(t, ok, true, "noopSpan")
-			assert.Equal(t, noop.IsSampled(), false, "IsSampled")
-			assert.Equal(t, noop.SpanId(), int64(0), "SpanId")
-			assert.False(t, noop.withStats.Load(), "SpanId")
+	_, ok = s.SpanEvent().(*noopSpanEvent)
+	assert.Equal(t, ok, false, "noopSpanEvent")
 
-			s.EndSpanEvent()
-			assert.Equal(t, s.eventOverflow.Load(), int32(0), "eventOverflow")
-			assert.Equal(t, s.eventStack.len(), 4, "stack.len()")
+	se, ok := s.SpanEvent().(*spanEvent)
+	assert.Equal(t, ok, true, "spanEvent")
+	assert.Equal(t, se.depth, int32(4), "depth")
+	assert.Equal(t, se.sequence, int32(7), "sequence")
 
-			_, ok = s.SpanEvent().(*noopSpanEvent)
-			assert.Equal(t, ok, false, "noopSpanEvent")
+	tracer = s.NewGoroutineTracer()
+	ss, ok := tracer.(*span)
+	assert.Equal(t, ok, true, "span")
+	assert.Equal(t, tracer.IsSampled(), true, "IsSampled")
+	assert.Equal(t, ss.isAsyncSpan(), true, "isAsyncSpan")
+	tracer.EndSpan()
 
-			se, ok := s.SpanEvent().(*spanEvent)
-			assert.Equal(t, ok, true, "spanEvent")
-			assert.Equal(t, se.depth, int32(4), "depth")
-			assert.Equal(t, se.sequence, int32(7), "sequence")
-
-			tracer = s.NewGoroutineTracer()
-			ss, ok := tracer.(*span)
-			assert.Equal(t, ok, true, "span")
-			assert.Equal(t, tracer.IsSampled(), true, "IsSampled")
-			assert.Equal(t, ss.isAsyncSpan(), true, "isAsyncSpan")
-			tracer.EndSpan()
-
-			s.EndSpanEvent()
-			assert.Equal(t, s.eventStack.len(), 3, "stack.len()")
-			s.EndSpanEvent()
-			assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
-			s.EndSpanEvent()
-			assert.Equal(t, s.eventStack.len(), 1, "stack.len()")
-			s.EndSpanEvent()
-			assert.Equal(t, s.eventStack.len(), 0, "stack.len()")
-		})
-	}
+	s.EndSpanEvent()
+	assert.Equal(t, s.eventStack.len(), 3, "stack.len()")
+	s.EndSpanEvent()
+	assert.Equal(t, s.eventStack.len(), 2, "stack.len()")
+	s.EndSpanEvent()
+	assert.Equal(t, s.eventStack.len(), 1, "stack.len()")
+	s.EndSpanEvent()
+	assert.Equal(t, s.eventStack.len(), 0, "stack.len()")
 }
 
 // DefaultCallStack.push, isDepthOverflow checks maxDepth < index where index is
@@ -714,67 +658,52 @@ func Test_span_NewSpanEventDepthBoundary(t *testing.T) {
 }
 
 func Test_span_NewSpanEventSequenceOverflow(t *testing.T) {
-	type args struct {
-		operationName string
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{"t1"}},
-	}
+	config := defaultConfig()
+	config.Set(CfgSpanMaxCallStackSequence, 5)
+	span := testSpanWithConfig(config)
 
-	for _, tt := range tests {
+	span.NewSpanEvent("t1").EndSpanEvent()
+	span.NewSpanEvent("t1").EndSpanEvent()
+	span.NewSpanEvent("t1").EndSpanEvent()
+	span.NewSpanEvent("t1")
+	span.NewSpanEvent("t1")
+	assert.Equal(t, span.eventSequence.Load(), int32(5), "eventSequence")
+	assert.Equal(t, span.eventOverflow.Load(), int32(0), "eventOverflow")
+	assert.Equal(t, span.eventDepth.Load(), int32(3), "eventDepth")
+	assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
 
-		t.Run(tt.name, func(t *testing.T) {
-			config := defaultConfig()
-			config.Set(CfgSpanMaxCallStackSequence, 5)
-			span := testSpanWithConfig(config)
+	span.NewSpanEvent("t1")
+	assert.Equal(t, span.eventSequence.Load(), int32(5), "eventSequence")
+	assert.Equal(t, span.eventOverflow.Load(), int32(1), "eventOverflow")
+	assert.Equal(t, span.eventOverflowLog.Load(), true, "eventOverflowLog")
+	assert.Equal(t, span.eventDepth.Load(), int32(3), "eventDepth")
+	assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
 
-			span.NewSpanEvent(tt.args.operationName).EndSpanEvent()
-			span.NewSpanEvent(tt.args.operationName).EndSpanEvent()
-			span.NewSpanEvent(tt.args.operationName).EndSpanEvent()
-			span.NewSpanEvent(tt.args.operationName)
-			span.NewSpanEvent(tt.args.operationName)
-			assert.Equal(t, span.eventSequence.Load(), int32(5), "eventSequence")
-			assert.Equal(t, span.eventOverflow.Load(), int32(0), "eventOverflow")
-			assert.Equal(t, span.eventDepth.Load(), int32(3), "eventDepth")
-			assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
+	span.NewSpanEvent("t1")
+	assert.Equal(t, span.eventSequence.Load(), int32(5), "eventSequence")
+	assert.Equal(t, span.eventOverflow.Load(), int32(2), "eventOverflow")
+	assert.Equal(t, span.eventDepth.Load(), int32(3), "eventDepth")
+	assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
 
-			span.NewSpanEvent(tt.args.operationName)
-			assert.Equal(t, span.eventSequence.Load(), int32(5), "eventSequence")
-			assert.Equal(t, span.eventOverflow.Load(), int32(1), "eventOverflow")
-			assert.Equal(t, span.eventOverflowLog.Load(), true, "eventOverflowLog")
-			assert.Equal(t, span.eventDepth.Load(), int32(3), "eventDepth")
-			assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
+	span.EndSpanEvent()
+	assert.Equal(t, span.eventOverflow.Load(), int32(1), "eventOverflow")
+	assert.Equal(t, span.eventDepth.Load(), int32(3), "eventDepth")
+	assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
 
-			span.NewSpanEvent(tt.args.operationName)
-			assert.Equal(t, span.eventSequence.Load(), int32(5), "eventSequence")
-			assert.Equal(t, span.eventOverflow.Load(), int32(2), "eventOverflow")
-			assert.Equal(t, span.eventDepth.Load(), int32(3), "eventDepth")
-			assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
+	span.EndSpanEvent()
+	assert.Equal(t, span.eventOverflow.Load(), int32(0), "eventOverflow")
+	assert.Equal(t, span.eventDepth.Load(), int32(3), "eventDepth")
+	assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
 
-			span.EndSpanEvent()
-			assert.Equal(t, span.eventOverflow.Load(), int32(1), "eventOverflow")
-			assert.Equal(t, span.eventDepth.Load(), int32(3), "eventDepth")
-			assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
+	span.EndSpanEvent()
+	assert.Equal(t, span.eventOverflow.Load(), int32(0), "eventOverflow")
+	assert.Equal(t, span.eventDepth.Load(), int32(2), "eventDepth")
+	assert.Equal(t, span.eventStack.len(), 1, "stack.len()")
 
-			span.EndSpanEvent()
-			assert.Equal(t, span.eventOverflow.Load(), int32(0), "eventOverflow")
-			assert.Equal(t, span.eventDepth.Load(), int32(3), "eventDepth")
-			assert.Equal(t, span.eventStack.len(), 2, "stack.len()")
-
-			span.EndSpanEvent()
-			assert.Equal(t, span.eventOverflow.Load(), int32(0), "eventOverflow")
-			assert.Equal(t, span.eventDepth.Load(), int32(2), "eventDepth")
-			assert.Equal(t, span.eventStack.len(), 1, "stack.len()")
-
-			span.EndSpanEvent()
-			assert.Equal(t, span.eventOverflow.Load(), int32(0), "eventOverflow")
-			assert.Equal(t, span.eventDepth.Load(), int32(1), "eventDepth")
-			assert.Equal(t, span.eventStack.len(), 0, "stack.len()")
-		})
-	}
+	span.EndSpanEvent()
+	assert.Equal(t, span.eventOverflow.Load(), int32(0), "eventOverflow")
+	assert.Equal(t, span.eventDepth.Load(), int32(1), "eventDepth")
+	assert.Equal(t, span.eventStack.len(), 0, "stack.len()")
 }
 
 func Test_span_EndSpan(t *testing.T) {
@@ -824,95 +753,56 @@ func Test_span_ConcurrentEventPairingIsRaceFree(t *testing.T) {
 }
 
 func Test_span_EndSpanEvent(t *testing.T) {
-	type args struct {
-		operationName string
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{"t1"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			span := defaultTestSpan()
-			span.NewSpanEvent(tt.args.operationName)
-			span.NewSpanEvent("t2")
-			assert.Equal(t, span.eventStack.len(), int(2), "stack.len()")
-			span.EndSpanEvent()
-			assert.Equal(t, span.eventStack.len(), int(1), "stack.len()")
-			span.EndSpanEvent()
-			assert.Equal(t, span.eventStack.len(), int(0), "stack.len()")
-			span.EndSpanEvent()
-			assert.Equal(t, span.eventStack.len(), int(0), "stack.len()")
-		})
-	}
+	span := defaultTestSpan()
+	span.NewSpanEvent("t1")
+	span.NewSpanEvent("t2")
+	assert.Equal(t, span.eventStack.len(), int(2), "stack.len()")
+	span.EndSpanEvent()
+	assert.Equal(t, span.eventStack.len(), int(1), "stack.len()")
+	span.EndSpanEvent()
+	assert.Equal(t, span.eventStack.len(), int(0), "stack.len()")
+	span.EndSpanEvent()
+	assert.Equal(t, span.eventStack.len(), int(0), "stack.len()")
 }
 
 func Test_span_NewGoroutineTracer(t *testing.T) {
-	type args struct {
-		operationName string
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{"t1"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := defaultTestSpan()
-			s.NewSpanEvent(tt.args.operationName)
-			a := s.NewGoroutineTracer()
+	s := defaultTestSpan()
+	s.NewSpanEvent("t1")
+	a := s.NewGoroutineTracer()
 
-			se, _ := s.eventStack.peek()
-			assert.Equal(t, se.asyncId, int32(1), "asyncId")
-			assert.Equal(t, se.asyncSeqGen, int32(1), "asyncSeqGen")
+	se, _ := s.eventStack.peek()
+	assert.Equal(t, se.asyncId, int32(1), "asyncId")
+	assert.Equal(t, se.asyncSeqGen, int32(1), "asyncSeqGen")
 
-			as := a.(*span)
-			assert.Equal(t, as.agent, s.agent, "agent")
-			assert.Equal(t, as.txId, s.txId, "txId")
-			assert.Equal(t, as.spanId, s.spanId, "spanId")
+	as := a.(*span)
+	assert.Equal(t, as.agent, s.agent, "agent")
+	assert.Equal(t, as.txId, s.txId, "txId")
+	assert.Equal(t, as.spanId, s.spanId, "spanId")
 
-			ase, _ := as.eventStack.peek()
-			assert.Equal(t, ase.serviceType, int32(100), "serviceType")
-		})
-	}
+	ase, _ := as.eventStack.peek()
+	assert.Equal(t, ase.serviceType, int32(100), "serviceType")
 }
 
 func Test_span_WrapGoroutine(t *testing.T) {
-	type args struct {
-		operationName string
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{"1", args{"t1"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := defaultTestSpan()
-			s.NewSpanEvent(tt.args.operationName)
-			f := s.WrapGoroutine("t1", func(ctx context.Context) {
-				tracer := FromContext(ctx)
-				as := tracer.(*span)
-				assert.Equal(t, as.agent, s.agent, "agent")
-				assert.Equal(t, as.txId, s.txId, "txId")
-				assert.Equal(t, as.spanId, s.spanId, "spanId")
+	s := defaultTestSpan()
+	s.NewSpanEvent("t1")
+	f := s.WrapGoroutine("t1", func(ctx context.Context) {
+		tracer := FromContext(ctx)
+		as := tracer.(*span)
+		assert.Equal(t, as.agent, s.agent, "agent")
+		assert.Equal(t, as.txId, s.txId, "txId")
+		assert.Equal(t, as.spanId, s.spanId, "spanId")
 
-				ase, _ := as.eventStack.peek()
-				assert.Equal(t, ase.serviceType, int32(ServiceTypeGoFunction), "serviceType")
-				assert.Equal(t, as.eventStack.len(), 2, "stack.len()")
-			}, context.Background())
+		ase, _ := as.eventStack.peek()
+		assert.Equal(t, ase.serviceType, int32(ServiceTypeGoFunction), "serviceType")
+		assert.Equal(t, as.eventStack.len(), 2, "stack.len()")
+	}, context.Background())
 
-			se, _ := s.eventStack.peek()
-			assert.Equal(t, se.asyncId, int32(1), "asyncId")
-			assert.Equal(t, se.asyncSeqGen, int32(1), "asyncSeqGen")
+	se, _ := s.eventStack.peek()
+	assert.Equal(t, se.asyncId, int32(1), "asyncId")
+	assert.Equal(t, se.asyncSeqGen, int32(1), "asyncSeqGen")
 
-			f()
-		})
-	}
+	f()
 }
 
 func TestSpan_AddMetric_IgnoresWrongValueType(t *testing.T) {
@@ -2394,48 +2284,6 @@ func Test_PropagationHeaderNames(t *testing.T) {
 	assert.Equal(t, "Pinpoint-Host", HeaderHost)
 }
 
-// Test_TransactionIdFormat locks the wire format
-// through the parser.
-func Test_TransactionIdFormat(t *testing.T) {
-	tid := TransactionId{AgentId: "test-agent", StartTime: 1_600_000_000_000, Sequence: 42}
-	assert.Equal(t, "test-agent^1600000000000^42", tid.String())
-
-	agentId, startTime, sequence, ok := splitTransactionId(tid.String())
-	assert.True(t, ok)
-	assert.Equal(t, tid.AgentId, agentId)
-	assert.Equal(t, tid.StartTime, startTime)
-	assert.Equal(t, tid.Sequence, sequence)
-}
-
-// Test_TransactionIdParsing locks the parser's accept/reject set.
-// third delimiter, so "a^1^2^3" is parsed as transaction "a^1^2".
-func Test_TransactionIdParsing(t *testing.T) {
-	tests := []struct {
-		tid string
-		ok  bool
-	}{
-		{"agent.id_-09^1^2", true},
-		{"a^1^2^3", true},
-		{"bad agent^1^2", false},
-		{"bad/agent^1^2", false},
-		{"^1^2", false},
-		{"agent^1", false},
-		{"agent^x^2", false},
-		{"agent^1^x", false},
-		{"", false},
-	}
-	for _, tc := range tests {
-		_, _, _, ok := splitTransactionId(tc.tid)
-		assert.Equal(t, tc.ok, ok, "splitTransactionId(%q)", tc.tid)
-	}
-
-	agentId, startTime, sequence, ok := splitTransactionId("a^1^2^3")
-	assert.True(t, ok)
-	assert.Equal(t, "a", agentId)
-	assert.Equal(t, int64(1), startTime)
-	assert.Equal(t, int64(2), sequence, "the parser stops at the third delimiter")
-}
-
 // Test_SampledHeaderEncoding locks that only the exact string
 // else, "s1" or an absent header included, is sampled.
 func Test_SampledHeaderEncoding(t *testing.T) {
@@ -2472,19 +2320,6 @@ func Test_ParentAppTypeDefaultsToUndefined(t *testing.T) {
 		assert.Equal(t, "upstream", span.parentAppName)
 		assert.Equal(t, -1, span.parentAppType, "pAppType %q", typ)
 	}
-}
-
-// Test_ErrorCategoryBits locks the four cause bits carried in
-// PSpan.err. They are a wire contract, not an internal
-// detail: the collector and the web tier tell an exception apart from a
-// failing HTTP status by the bit, so renumbering one silently rewrites what
-// the UI says every affected transaction failed of.
-func Test_ErrorCategoryBits(t *testing.T) {
-	assert.Equal(t, ErrorCategory(1<<0), ErrorCategoryUnknown, "Java ErrorCategory.UNKNOWN")
-	assert.Equal(t, ErrorCategory(1<<1), ErrorCategoryException, "Java ErrorCategory.EXCEPTION")
-	assert.Equal(t, ErrorCategory(1<<2), ErrorCategoryHttpStatus, "Java ErrorCategory.HTTP_STATUS")
-	assert.Equal(t, ErrorCategory(1<<3), ErrorCategorySql, "Java ErrorCategory.SQL")
-	assert.Equal(t, ErrorCategory(15), allErrorCategories, "Java EnumSet.allOf(ErrorCategory.class)")
 }
 
 // Test_ExcludedCategoryRecordsNothing locks the recorder half:

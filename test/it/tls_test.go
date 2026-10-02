@@ -66,10 +66,9 @@ func TestRegistersAndTracesOverTlsCollector(t *testing.T) {
 	certFile, keyFile := selfSignedCert(t, "pinpoint-it-collector")
 	mc := startTLSCollector(t, certFile, keyFile)
 
-	cfg := defaultAgentConfig()
-	cfg.grpcSslEnable = true
-	cfg.grpcTrustCertFilePath = certFile
-	agent := startAgent(t, mc, cfg)
+	agent := startAgent(t, mc,
+		pinpoint.WithCollectorGrpcSslEnable(true),
+		pinpoint.WithCollectorGrpcTrustCertFilePath(certFile))
 
 	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.AgentInfos) > 0 }, waitTimeout))
 	require.True(t, waitUntil(func() bool { return agent.Enable() }, waitTimeout))
@@ -98,10 +97,9 @@ func TestRefusesCollectorWithUntrustedCertificate(t *testing.T) {
 	otherCert, _ := selfSignedCert(t, "pinpoint-it-other")
 	mc := startTLSCollector(t, certFile, keyFile)
 
-	cfg := defaultAgentConfig()
-	cfg.grpcSslEnable = true
-	cfg.grpcTrustCertFilePath = otherCert
-	agent := startAgent(t, mc, cfg)
+	agent := startAgent(t, mc,
+		pinpoint.WithCollectorGrpcSslEnable(true),
+		pinpoint.WithCollectorGrpcTrustCertFilePath(otherCert))
 
 	assert.False(t, waitUntil(func() bool { return agent.Enable() }, 2*time.Second),
 		"an unverifiable collector certificate must not enable the agent")
@@ -117,10 +115,9 @@ func TestDoesNotFallBackToPlaintextWhenTlsIsEnabled(t *testing.T) {
 	certFile, _ := selfSignedCert(t, "pinpoint-it-collector")
 	mc := startCollector(t) // plaintext
 
-	cfg := defaultAgentConfig()
-	cfg.grpcSslEnable = true
-	cfg.grpcTrustCertFilePath = certFile
-	agent := startAgent(t, mc, cfg)
+	agent := startAgent(t, mc,
+		pinpoint.WithCollectorGrpcSslEnable(true),
+		pinpoint.WithCollectorGrpcTrustCertFilePath(certFile))
 
 	assert.False(t, waitUntil(func() bool { return agent.Enable() }, 2*time.Second))
 	assert.Empty(t, mc.Snapshot().AgentInfos)
@@ -131,10 +128,9 @@ func TestDoesNotFallBackToPlaintextWhenTlsIsEnabled(t *testing.T) {
 func TestRefusesUnreadableTrustCertificate(t *testing.T) {
 	mc := startCollector(t)
 
-	cfg := defaultAgentConfig()
-	cfg.grpcSslEnable = true
-	cfg.grpcTrustCertFilePath = filepath.Join(t.TempDir(), "missing.pem")
-	agent := startAgent(t, mc, cfg)
+	agent := startAgent(t, mc,
+		pinpoint.WithCollectorGrpcSslEnable(true),
+		pinpoint.WithCollectorGrpcTrustCertFilePath(filepath.Join(t.TempDir(), "missing.pem")))
 
 	assert.False(t, waitUntil(func() bool { return agent.Enable() }, 2*time.Second))
 	assert.Empty(t, mc.Snapshot().AgentInfos)

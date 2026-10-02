@@ -16,7 +16,6 @@ package pinpoint
 import (
 	"context"
 	"testing"
-	"time"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 	"google.golang.org/grpc"
@@ -152,15 +151,10 @@ func (stubSpanBatchClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMessag
 // for the per-span cost.
 func Benchmark_spanTransport_batchSendPerBatch50(b *testing.B) {
 	a := benchAgent()
-	spanGrpc := &spanGrpc{
-		spanClient:              stubSpanBatchClient{},
-		agent:                   a,
-		batchSize:               defaultSpanBatchSize,
-		batchFlushTimeout:       time.Second,
-		batchCollectDeadline:    time.Duration(defaultSpanBatchCollectDeadline) * time.Millisecond,
-		maxConcurrentRequests:   8,
-		concurrentRequestPermit: make(chan struct{}, 8),
-	}
+	spanGrpc := newMockSpanGrpc(a)
+	spanGrpc.spanClient = stubSpanBatchClient{}
+	spanGrpc.maxConcurrentRequests = 8
+	spanGrpc.concurrentRequestPermit = make(chan struct{}, 8)
 	chunks := make([]*spanChunk, defaultSpanBatchSize)
 	for i := range chunks {
 		chunks[i] = buildBenchChunk(a, 10)

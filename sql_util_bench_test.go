@@ -5,6 +5,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ~200B: a typical ORM-generated point query with literals to extract.
@@ -69,29 +72,23 @@ func TestNormalizeSqlCacheEquivalence(t *testing.T) {
 		wantSql, wantParam := newSqlNormalizer(sql, removeComments).run()
 		for _, path := range []string{"miss", "hit"} {
 			gotSql, gotParam := a.normalizeSql(sql)
-			if gotSql != wantSql || gotParam != wantParam {
-				t.Errorf("%s path: normalizeSql(%.60q) = (%q, %q), want (%q, %q)",
-					path, sql, gotSql, gotParam, wantSql, wantParam)
-			}
+			assert.Equal(t, wantSql, gotSql, "%s path: normalizeSql(%.60q)", path, sql)
+			assert.Equal(t, wantParam, gotParam, "%s path: normalizeSql(%.60q)", path, sql)
 		}
 	}
 }
 
 func TestNormalizeSqlCacheBypassesHugeSql(t *testing.T) {
 	huge := strings.Repeat("select * from t where a = 'x' and b = 123 union all ", 2000) + "select 1"
-	if len(huge) <= maxSqlSize {
-		t.Fatalf("test sql too short: %d", len(huge))
-	}
+	require.Greater(t, len(huge), maxSqlSize, "test sql too short")
 
 	a := newNormalizeTestAgent()
 	wantSql, wantParam := newSqlNormalizer(huge, a.config.load().sqlRemoveComments).run()
 	gotSql, gotParam := a.normalizeSql(huge)
-	if gotSql != wantSql || gotParam != wantParam {
-		t.Errorf("bypass path result differs from uncached normalizer")
-	}
-	if _, cached := a.rawSqlCache.peek(huge); cached {
-		t.Errorf("sql longer than %d bytes must not be cached", maxSqlSize)
-	}
+	assert.Equal(t, wantSql, gotSql, "bypass path result differs from uncached normalizer")
+	assert.Equal(t, wantParam, gotParam, "bypass path result differs from uncached normalizer")
+	_, cached := a.rawSqlCache.peek(huge)
+	assert.False(t, cached, "sql longer than %d bytes must not be cached", maxSqlSize)
 }
 
 // Run with -race: concurrent callers over more unique queries than the cache
@@ -115,8 +112,7 @@ func TestNormalizeSqlCacheConcurrent(t *testing.T) {
 				for i := range queries {
 					idx := (i + g*137) % len(queries)
 					nsql, param := a.normalizeSql(queries[idx])
-					if nsql != expected[idx].sql || param != expected[idx].param {
-						t.Errorf("goroutine %d: mixed result for query %d", g, idx)
+					if !assert.Equal(t, expected[idx], normalizedSql{sql: nsql, param: param}, "goroutine %d: mixed result for query %d", g, idx) {
 						return
 					}
 				}

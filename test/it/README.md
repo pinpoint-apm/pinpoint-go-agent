@@ -151,7 +151,7 @@ the agent.
 process-global singleton, so the tests run sequentially and each shuts its
 agent down in `t.Cleanup`. One consequence remains: the `plugin/http` package
 publishes its own config snapshot once per process, so every test here shares
-the HTTP settings from `defaultAgentConfig`. Changing them per test would
+the HTTP settings from `defaultOptions`. Changing them per test would
 silently have no effect.
 
 **Differences from the C++ suite.** Some C++ tests have no Go counterpart

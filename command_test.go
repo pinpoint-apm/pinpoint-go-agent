@@ -141,9 +141,7 @@ func Test_atcStreamsSampleIsSafeToShare(t *testing.T) {
 	// previous sample would see its counts change underneath it.
 	first := streams.activeSpanCount(base)
 	second := streams.activeSpanCount(base.Add(activeThreadCountInterval))
-	if &first[0] == &second[0] {
-		t.Fatal("two sample generations share a backing array")
-	}
+	require.NotSame(t, &first[0], &second[0], "two sample generations share a backing array")
 
 	var wg sync.WaitGroup
 	churn := make(chan struct{})
@@ -169,8 +167,7 @@ func Test_atcStreamsSampleIsSafeToShare(t *testing.T) {
 			// A third of an interval apart, so callers both share and expire samples.
 			for i := 0; i < 1000; i++ {
 				counts := streams.activeSpanCount(base.Add(time.Duration(i) * activeThreadCountInterval / 3))
-				if len(counts) != 4 {
-					t.Errorf("sample has %d buckets, want 4", len(counts))
+				if !assert.Len(t, counts, 4) {
 					return
 				}
 				_ = counts[0] + counts[1] + counts[2] + counts[3]

@@ -91,15 +91,12 @@ func Test_sendSpanBatchWorker_resumesAfterCollectorOutage(t *testing.T) {
 	client.OnSendSpanBatch(mock.Anything, mock.Anything).
 		Run(delivered.count).Return(&pb.PSpanResultBatch{}, nil)
 
-	agent.spanGrpc = &spanGrpc{
-		spanClient:              client,
-		agent:                   agent,
-		batchSize:               1, // one chunk per batch keeps the count exact
-		batchFlushTimeout:       time.Second,
-		batchCollectDeadline:    time.Millisecond,
-		maxConcurrentRequests:   2,
-		concurrentRequestPermit: make(chan struct{}, 2),
-	}
+	agent.spanGrpc = newMockSpanGrpc(agent)
+	agent.spanGrpc.spanClient = client
+	agent.spanGrpc.batchSize = 1 // one chunk per batch keeps the count exact
+	agent.spanGrpc.batchCollectDeadline = time.Millisecond
+	agent.spanGrpc.maxConcurrentRequests = 2
+	agent.spanGrpc.concurrentRequestPermit = make(chan struct{}, 2)
 
 	for i := 0; i < 4; i++ {
 		require.True(t, agent.spanQueue.enqueue(newTestSpanChunk(agent)))
@@ -366,53 +363,34 @@ func Test_spanWorkers_warnAboutSaturatedQueue(t *testing.T) {
 		agent.spanQueue.close()
 	}
 
-	for _, tc := range []struct {
-		name  string
-		setup func(t *testing.T) (*agent, func())
-	}{
-		{
-			name: "batch",
-			setup: func(t *testing.T) (*agent, func()) {
-				agent := newTestAgent(defaultConfig())
-				agent.spanQueue = newSpanQueue(queueCap)
+	agent := newTestAgent(defaultConfig())
+	agent.spanQueue = newSpanQueue(queueCap)
 
-				client := grpcmock.NewMockSpanClient()
-				client.OnSendSpanBatch(mock.Anything, mock.Anything).
-					Return(&pb.PSpanResultBatch{}, nil)
-				agent.spanGrpc = &spanGrpc{
-					spanClient:              client,
-					agent:                   agent,
-					batchSize:               1, // one cycle per chunk, so the poll repeats
-					batchFlushTimeout:       time.Second,
-					batchCollectDeadline:    time.Millisecond,
-					maxConcurrentRequests:   2,
-					concurrentRequestPermit: make(chan struct{}, 2),
-				}
+	client := grpcmock.NewMockSpanClient()
+	client.OnSendSpanBatch(mock.Anything, mock.Anything).
+		Return(&pb.PSpanResultBatch{}, nil)
+	agent.spanGrpc = newMockSpanGrpc(agent)
+	agent.spanGrpc.spanClient = client
+	agent.spanGrpc.batchSize = 1 // one cycle per chunk, so the poll repeats
+	agent.spanGrpc.batchCollectDeadline = time.Millisecond
+	agent.spanGrpc.maxConcurrentRequests = 2
+	agent.spanGrpc.concurrentRequestPermit = make(chan struct{}, 2)
 
-				return agent, agent.sendSpanBatchWorker
-			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			agent, worker := tc.setup(t)
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
 
-			var buf bytes.Buffer
-			defer captureWarnLog(&buf)()
+	fill(agent)
+	assert.Empty(t, buf.String(), "the producer path must not log")
 
-			fill(agent)
-			assert.Empty(t, buf.String(), "the producer path must not log")
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("batch", agent.sendSpanBatchWorker)
+	agent.workerWg.Wait()
 
-			agent.workerWg.Add(1)
-			go agent.superviseWorker(tc.name, worker)
-			agent.workerWg.Wait()
-
-			assert.Equal(t, 1, strings.Count(buf.String(), "span queue overflow"),
-				"the worker must warn once per report interval, not once per cycle")
-			assert.Contains(t, buf.String(),
-				fmt.Sprintf("%d dropped in total (oldest overwritten, max queue size %d)",
-					enqueued-queueCap, queueCap))
-		})
-	}
+	assert.Equal(t, 1, strings.Count(buf.String(), "span queue overflow"),
+		"the worker must warn once per report interval, not once per cycle")
+	assert.Contains(t, buf.String(),
+		fmt.Sprintf("%d dropped in total (oldest overwritten, max queue size %d)",
+			enqueued-queueCap, queueCap))
 }
 
 // A collector outage must not turn metadata drops into metadata inflow. The
