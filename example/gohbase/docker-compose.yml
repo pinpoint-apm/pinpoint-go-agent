@@ -1,21 +1,26 @@
-version: '3.8'
-
 services:
   hbase:
     image: dajobe/hbase
+    platform: linux/amd64
     container_name: hbase-gohbase-test
     hostname: hbase
+    # Standalone master (with its region server) only. The region server binds
+    # every interface but registers as localhost, the address the example on
+    # the host reaches it at through the published port.
+    command: >-
+      bash -c "/opt/replace-hostname && mkdir -p /data/logs /data/hbase /data/run &&
+      exec hbase master -D hbase.regionserver.hostname=localhost -D hbase.regionserver.ipc.address=0.0.0.0 start"
     ports:
       - "2181:2181"   # Zookeeper
       - "16000:16000" # HBase Master
       - "16010:16010" # HBase Master Web UI
       - "16020:16020" # HBase RegionServer
       - "16030:16030" # HBase RegionServer Web UI
-    environment:
-      - HBASE_MANAGES_ZK=true
+    # Healthy once the example rows are written; a failed write creates the
+    # table, so a later check succeeds.
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo 'status' | /hbase/bin/hbase shell -n 2>/dev/null | grep -q 'active master'"]
-      interval: 10s
-      timeout: 10s
-      retries: 30
-
+      test: ["CMD-SHELL", "printf \"put 'table','row1','cf:a','value1'\\nput 'table','7row2','cf:a','value2'\\nput 'table','7row3','cf:a','value3'\\n\" | hbase shell -n >/dev/null 2>&1 || { echo \"create 'table','cf'\" | hbase shell -n >/dev/null 2>&1; exit 1; }"]
+      interval: 30s
+      timeout: 120s
+      start_period: 60s
+      retries: 20

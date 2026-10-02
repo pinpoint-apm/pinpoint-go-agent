@@ -50,7 +50,10 @@ docker pull dajobe/hbase
 
 # Step 3: Start HBase container
 echo -e "\n${YELLOW}[3/7] Starting HBase container...${NC}"
+# The region server binds every interface but registers as localhost, the
+# address the example on the host reaches it at through the published port.
 docker run -d \
+    --platform linux/amd64 \
     --name $CONTAINER_NAME \
     --hostname hbase \
     -p 2181:2181 \
@@ -58,7 +61,9 @@ docker run -d \
     -p 16010:16010 \
     -p 16020:16020 \
     -p 16030:16030 \
-    dajobe/hbase
+    dajobe/hbase \
+    bash -c "/opt/replace-hostname && mkdir -p /data/logs /data/hbase /data/run &&
+    exec hbase master -D hbase.regionserver.hostname=localhost -D hbase.regionserver.ipc.address=0.0.0.0 start"
 
 echo "Started HBase server"
 echo "  - Zookeeper: 2181"

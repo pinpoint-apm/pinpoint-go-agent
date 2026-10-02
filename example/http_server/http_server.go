@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
@@ -69,7 +70,7 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("testGoAgent"),
 		pinpoint.WithAgentName("testGoAgentName"),
-		pinpoint.WithCollectorHost("localhost"),
+		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	c, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(c)

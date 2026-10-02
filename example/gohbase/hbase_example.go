@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 
 	ppgohbase "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase/v2"
 	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
@@ -13,6 +14,7 @@ import (
 
 func doHbase(w http.ResponseWriter, r *http.Request) {
 	client := ppgohbase.NewClient("localhost")
+	defer client.Close()
 	ctx := r.Context()
 
 	values := map[string]map[string][]byte{"cf": {"a": []byte{0}}}
@@ -47,7 +49,7 @@ func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoHbaseTest"),
 		pinpoint.WithAgentName("GoHbaseTestAgent"),
-		pinpoint.WithCollectorHost("localhost"),
+		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 		pinpoint.WithLogLevel("debug"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)
