@@ -54,7 +54,7 @@ func wrap(f func(c *fiber.Ctx) error, handlerName string) fiber.Handler {
 			return c.Response().StatusCode()
 		}, func(status int) {
 			pphttp.CollectUrlStat(tracer, c.Route().Path, method, status)
-			recordResponse(tracer, c, status)
+			ppfasthttp.RecordServerResponse(tracer, c.Context(), status)
 		})
 		return err
 	}
@@ -69,28 +69,7 @@ func serverTracer(c *fiber.Ctx, method string) pinpoint.Tracer {
 	if existing := pinpoint.FromContext(c.UserContext()); existing != pinpoint.NoopTracer() {
 		return pinpoint.NestedTracer(existing)
 	}
-	tracer := pphttp.NewHttpServerTracerWithReader(
-		method,
-		string(c.Context().Path()),
-		serverName,
-		ppfasthttp.HeaderReader{Hdr: &c.Context().Request.Header},
-	)
-	// Record straight from the fasthttp request: converting it to a
-	// net/http request (fasthttpadaptor.ConvertRequest) materialized the
-	// full header map, parsed the URL and buffered the body per sampled
-	// request, only for values the default noop recorders never read.
-	// The sampling check keeps the host copy and remote-addr formatting
-	// off the unsampled path; the callee would discard them.
-	if tracer.IsSampled() {
-		pphttp.RecordHttpServerRequestWithReader(tracer,
-			string(c.Context().Host()), c.Context().RemoteAddr().String(),
-			ppfasthttp.RequestHeader{Hdr: &c.Context().Request.Header}, ppfasthttp.Cookie{Hdr: &c.Context().Request.Header})
-	}
-	return tracer
-}
-
-func recordResponse(tracer pinpoint.Tracer, c *fiber.Ctx, status int) {
-	pphttp.RecordHttpServerResponseWithReader(tracer, status, ppfasthttp.ResponseHeader{Hdr: &c.Context().Response.Header})
+	return ppfasthttp.NewServerTracer(c.Context(), method, serverName)
 }
 
 func statusCode(err error) int {

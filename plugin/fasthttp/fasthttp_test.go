@@ -80,7 +80,7 @@ func Test_reqHeader(t *testing.T) {
 	ctx.Request.Header.Set("X-Trace", "abc")
 	ctx.Request.Header.Add("X-Multi", "one")
 	ctx.Request.Header.Add("X-Multi", "two")
-	h := RequestHeader{&ctx.Request.Header}
+	h := requestHeader{&ctx.Request.Header}
 
 	assert.Equal(t, "abc", h.Get("X-Trace"))
 	assert.Equal(t, "abc", h.Get("x-trace"), "header names are case-insensitive")
@@ -107,7 +107,7 @@ func Test_headerReader(t *testing.T) {
 	ctx := newRequestCtx(http.MethodGet, "http://localhost/hello")
 	ctx.Request.Header.Set("X-Trace", "abc")
 	ctx.Request.Header.Set(pinpoint.HeaderSpanId, "")
-	r := HeaderReader{&ctx.Request.Header}
+	r := headerReader{&ctx.Request.Header}
 
 	v, ok := r.Get("X-Trace")
 	assert.True(t, ok)
@@ -127,7 +127,7 @@ func Test_headerReader(t *testing.T) {
 func Test_resHeader(t *testing.T) {
 	ctx := newRequestCtx(http.MethodGet, "http://localhost/hello")
 	ctx.Response.Header.Set("X-Result", "ok")
-	h := ResponseHeader{&ctx.Response.Header}
+	h := responseHeader{&ctx.Response.Header}
 
 	assert.Equal(t, []string{"ok"}, h.Values("X-Result"))
 	assert.Nil(t, h.Values("X-Absent"), "an absent response header must read as absent")
@@ -166,7 +166,7 @@ func Test_cookie(t *testing.T) {
 	ctx.Request.Header.SetCookie("second", "2")
 
 	got := map[string]string{}
-	Cookie{&ctx.Request.Header}.VisitAll(func(name, value string) { got[name] = value })
+	cookie{&ctx.Request.Header}.VisitAll(func(name, value string) { got[name] = value })
 
 	assert.Equal(t, map[string]string{"first": "1", "second": "2"}, got)
 }
@@ -175,7 +175,7 @@ func Test_cookie(t *testing.T) {
 func Test_cookie_Empty(t *testing.T) {
 	ctx := newRequestCtx(http.MethodGet, "http://localhost/hello")
 
-	Cookie{&ctx.Request.Header}.VisitAll(func(string, string) {
+	cookie{&ctx.Request.Header}.VisitAll(func(string, string) {
 		t.Error("a request without cookies yielded one")
 	})
 }
@@ -546,7 +546,7 @@ func TestWrapHandler_ResolvesACustomRealIpHeader(t *testing.T) {
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/p")
 	defer tracer.EndSpan()
 	pphttp.RecordHttpServerRequestWithReader(tracer, "example.com", ctx.RemoteAddr().String(),
-		RequestHeader{&ctx.Request.Header}, Cookie{&ctx.Request.Header})
+		requestHeader{&ctx.Request.Header}, cookie{&ctx.Request.Header})
 
 	assert.Equal(t, "1.1.1.1", spanOf(t, tracer)["RemoteAddr"])
 }

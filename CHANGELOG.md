@@ -213,6 +213,10 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **`ppfasthttp.NewServerTracer(ctx, method, serverName)`** and
+  **`RecordServerResponse(tracer, ctx, status)`** start a server span from a
+  `*fasthttp.RequestCtx` and record its response, for the plugin of a framework
+  built on fasthttp; `ppfiber` and `ppfiberv3` use them.
 - **`pphttp.TraceSpan(tracer, funcName, fn, after)`** is the server trace
   sequence every framework adapter runs - the handler's span event, 500 on a
   panic, then URL stat and response recording, then `EndSpan` - for an

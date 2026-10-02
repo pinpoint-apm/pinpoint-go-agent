@@ -73,7 +73,7 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 			if urlPattern != "" {
 				pphttp.CollectUrlStat(tracer, urlPattern, method, status)
 			}
-			recordResponse(tracer, ctx, status)
+			RecordServerResponse(tracer, ctx, status)
 		})
 	}
 }
@@ -89,8 +89,16 @@ func serverTracer(ctx *fasthttp.RequestCtx, method string) pinpoint.Tracer {
 			return pinpoint.NestedTracer(existing)
 		}
 	}
+	return NewServerTracer(ctx, method, serverName)
+}
+
+// NewServerTracer starts the span of a request served by fasthttp and records
+// the request on it. It is for the plugins of frameworks built on fasthttp
+// (ppfiber, ppfiberv3), which look for a tracer to nest under in their own
+// context first.
+func NewServerTracer(ctx *fasthttp.RequestCtx, method string, serverName string) pinpoint.Tracer {
 	tracer := pphttp.NewHttpServerTracerWithReader(method, string(ctx.Path()), serverName,
-		HeaderReader{&ctx.Request.Header})
+		headerReader{&ctx.Request.Header})
 	// Record straight from the fasthttp request: converting it to a
 	// net/http request (fasthttpadaptor.ConvertRequest) materialized the
 	// full header map, parsed the URL and buffered the body per sampled
@@ -99,13 +107,15 @@ func serverTracer(ctx *fasthttp.RequestCtx, method string) pinpoint.Tracer {
 	// off the unsampled path; the callee would discard them.
 	if tracer.IsSampled() {
 		pphttp.RecordHttpServerRequestWithReader(tracer, string(ctx.Host()), ctx.RemoteAddr().String(),
-			RequestHeader{&ctx.Request.Header}, Cookie{&ctx.Request.Header})
+			requestHeader{&ctx.Request.Header}, cookie{&ctx.Request.Header})
 	}
 	return tracer
 }
 
-func recordResponse(tracer pinpoint.Tracer, c *fasthttp.RequestCtx, status int) {
-	pphttp.RecordHttpServerResponseWithReader(tracer, status, ResponseHeader{&c.Response.Header})
+// RecordServerResponse records the status and the configured response headers
+// of a request NewServerTracer started.
+func RecordServerResponse(tracer pinpoint.Tracer, ctx *fasthttp.RequestCtx, status int) {
+	pphttp.RecordHttpServerResponseWithReader(tracer, status, responseHeader{&ctx.Response.Header})
 }
 
 func before(tracer pinpoint.Tracer, operationName string, req *fasthttp.Request) {
@@ -118,8 +128,8 @@ func before(tracer pinpoint.Tracer, operationName string, req *fasthttp.Request)
 	if tracer.IsSampled() {
 		a := se.Annotations()
 		a.AppendString(pinpoint.AnnotationHttpUrl, pphttp.ClientUrlString(string(req.Header.Method()), req.URI().String()))
-		pphttp.RecordClientHttpRequestHeader(a, RequestHeader{&req.Header})
-		pphttp.RecordClientHttpCookie(a, Cookie{&req.Header})
+		pphttp.RecordClientHttpRequestHeader(a, requestHeader{&req.Header})
+		pphttp.RecordClientHttpCookie(a, cookie{&req.Header})
 	}
 
 	tracer.Inject(&req.Header)
@@ -131,28 +141,27 @@ func after(tracer pinpoint.Tracer, resp *fasthttp.Response, err error) {
 	if resp != nil && tracer.IsSampled() {
 		a := se.Annotations()
 		a.AppendInt(pinpoint.AnnotationHttpStatusCode, int32(resp.StatusCode()))
-		pphttp.RecordClientHttpResponseHeader(a, ResponseHeader{&resp.Header})
+		pphttp.RecordClientHttpResponseHeader(a, responseHeader{&resp.Header})
 	}
 	tracer.EndSpanEvent()
 }
 
-// RequestHeader adapts a *fasthttp.RequestHeader to the pphttp.Header
-// interface. Exported for the fasthttp-family plugins (fiber, fiberv3) so
-// they don't each carry their own copy of the same adapter.
-type RequestHeader struct {
+// requestHeader adapts a *fasthttp.RequestHeader to the pphttp.Header
+// interface.
+type requestHeader struct {
 	Hdr *fasthttp.RequestHeader
 }
 
-func (h RequestHeader) Get(key string) string {
+func (h requestHeader) Get(key string) string {
 	return string(h.Hdr.Peek(key))
 }
 
-// HeaderReader adapts a *fasthttp.RequestHeader to the tracing carrier
+// headerReader adapts a *fasthttp.RequestHeader to the tracing carrier
 // pinpoint.DistributedTracingContextReader, whose Get reports whether the
-// header was carried at all. RequestHeader above keeps its plain Get: the
+// header was carried at all. requestHeader above keeps its plain Get: the
 // pphttp recorder reads it through an interface{ Get(string) string }
 // assertion, which a two-result Get would silently stop matching.
-type HeaderReader struct {
+type headerReader struct {
 	Hdr *fasthttp.RequestHeader
 }
 
@@ -166,7 +175,7 @@ type HeaderReader struct {
 // present on one request and absent on the next. PeekAll returns one entry per
 // stored header either way, in a slice the RequestHeader keeps and reuses
 // across calls, so the lookup allocates nothing once that slice has grown.
-func (h HeaderReader) Get(key string) (string, bool) {
+func (h headerReader) Get(key string) (string, bool) {
 	if v := h.Hdr.PeekAll(key); len(v) > 0 {
 		return string(v[0]), true
 	}
@@ -177,44 +186,44 @@ func (h HeaderReader) Get(key string) (string, bool) {
 // net/http's Header.Values does. Returning a one-element slice holding the
 // empty string instead made every configured-but-missing header look present
 // to the recorder, which annotated it with an empty value on every request.
-func (h RequestHeader) Values(key string) []string {
+func (h requestHeader) Values(key string) []string {
 	if v := h.Hdr.Peek(key); v != nil {
 		return []string{string(v)}
 	}
 	return nil
 }
 
-func (h RequestHeader) VisitAll(f func(name string, values []string)) {
+func (h requestHeader) VisitAll(f func(name string, values []string)) {
 	h.Hdr.VisitAll(func(key, value []byte) {
 		f(string(key), []string{string(value)})
 	})
 }
 
-// ResponseHeader adapts a *fasthttp.ResponseHeader to pphttp.Header.
-type ResponseHeader struct {
+// responseHeader adapts a *fasthttp.ResponseHeader to pphttp.Header.
+type responseHeader struct {
 	Hdr *fasthttp.ResponseHeader
 }
 
-// Values reports an absent header as absent, as RequestHeader.Values does.
-func (h ResponseHeader) Values(key string) []string {
+// Values reports an absent header as absent, as requestHeader.Values does.
+func (h responseHeader) Values(key string) []string {
 	if v := h.Hdr.Peek(key); v != nil {
 		return []string{string(v)}
 	}
 	return nil
 }
 
-func (h ResponseHeader) VisitAll(f func(name string, values []string)) {
+func (h responseHeader) VisitAll(f func(name string, values []string)) {
 	h.Hdr.VisitAll(func(key, value []byte) {
 		f(string(key), []string{string(value)})
 	})
 }
 
-// Cookie adapts the cookies of a *fasthttp.RequestHeader to pphttp.Cookie.
-type Cookie struct {
+// cookie adapts the cookies of a *fasthttp.RequestHeader to pphttp.Cookie.
+type cookie struct {
 	Hdr *fasthttp.RequestHeader
 }
 
-func (c Cookie) VisitAll(f func(name string, value string)) {
+func (c cookie) VisitAll(f func(name string, value string)) {
 	c.Hdr.VisitAllCookie(func(key, value []byte) {
 		f(string(key), string(value))
 	})
