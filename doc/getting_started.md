@@ -300,7 +300,15 @@ cd example
 PINPOINT_GO_COLLECTOR_HOST=collector.myhost.com go run ./http_server
 ```
 
-Every plugin directory also carries its own `README.md` and `example/`.
+An example that needs a database (`mysql`, `pgsql`, `gocql`, `goredisv9`, ...)
+starts it from its `docker-compose.yml` first:
+
+```bash
+PINPOINT_GO_COLLECTOR_HOST=collector.myhost.com example/run.sh mysql
+```
+
+Every plugin directory also carries its own `README.md`; its example is
+`example/<plugin>`.
 
 ## Next Steps
 

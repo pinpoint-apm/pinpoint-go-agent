@@ -1,9 +1,0 @@
-FROM postgres:15
-
-ENV POSTGRES_USER=testuser
-ENV POSTGRES_PASSWORD=p123
-ENV POSTGRES_DB=testdb
-
-# Expose PostgreSQL port
-EXPOSE 5432
-
