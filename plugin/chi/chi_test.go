@@ -324,10 +324,6 @@ func TestMiddleware_RepanicsAndLetsRecovererRespond(t *testing.T) {
 
 // With no agent running the middleware must be a straight pass-through.
 func TestMiddleware_PassesThroughWhenAgentDisabled(t *testing.T) {
-	if pinpoint.GetAgent().Enable() {
-		t.Skip("a global agent is still enabled")
-	}
-
 	called := false
 	r := chi.NewRouter()
 	r.Use(Middleware())
@@ -347,10 +343,6 @@ func TestMiddleware_PassesThroughWhenAgentDisabled(t *testing.T) {
 
 // WrapHandler is the other entry point and has to pass through too.
 func TestWrapHandler_PassesThroughWhenAgentDisabled(t *testing.T) {
-	if pinpoint.GetAgent().Enable() {
-		t.Skip("a global agent is still enabled")
-	}
-
 	called := false
 	h := WrapHandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		called = true

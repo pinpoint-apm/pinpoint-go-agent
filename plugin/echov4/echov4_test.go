@@ -329,10 +329,6 @@ func TestMiddleware_PanicPropagates(t *testing.T) {
 
 // With no agent running the middleware must be a straight pass-through.
 func TestMiddleware_PassesThroughWhenAgentDisabled(t *testing.T) {
-	if pinpoint.GetAgent().Enable() {
-		t.Skip("a global agent is still enabled")
-	}
-
 	called := false
 	e := echo.New()
 	e.Use(Middleware())
@@ -353,10 +349,6 @@ func TestMiddleware_PassesThroughWhenAgentDisabled(t *testing.T) {
 // WrapHandler is the other entry point and has to pass through too, error and
 // all.
 func TestWrapHandler_PassesThroughWhenAgentDisabled(t *testing.T) {
-	if pinpoint.GetAgent().Enable() {
-		t.Skip("a global agent is still enabled")
-	}
-
 	e := echo.New()
 	e.GET("/boom", WrapHandler(func(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusTeapot)

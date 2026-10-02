@@ -321,10 +321,6 @@ func TestMiddleware_HandlerErrorsDoNotChangeTheResponse(t *testing.T) {
 // With no agent running the middleware must be a straight pass-through: no
 // tracer in the context and no panic from tracing a disabled agent.
 func TestMiddleware_PassesThroughWhenAgentDisabled(t *testing.T) {
-	if pinpoint.GetAgent().Enable() {
-		t.Skip("a global agent is still enabled")
-	}
-
 	called := false
 	r := gin.New()
 	r.Use(Middleware())
@@ -343,10 +339,6 @@ func TestMiddleware_PassesThroughWhenAgentDisabled(t *testing.T) {
 
 // WrapHandler is the other entry point, and it has to pass through too.
 func TestWrapHandler_PassesThroughWhenAgentDisabled(t *testing.T) {
-	if pinpoint.GetAgent().Enable() {
-		t.Skip("a global agent is still enabled")
-	}
-
 	called := false
 	r := gin.New()
 	r.GET("/wrapped", WrapHandler(func(c *gin.Context) {

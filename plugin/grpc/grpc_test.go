@@ -774,10 +774,6 @@ func TestServerInterceptors_PanicPropagates(t *testing.T) {
 // With no agent running the server interceptors must be straight
 // pass-throughs.
 func TestServerInterceptors_PassThroughWhenAgentDisabled(t *testing.T) {
-	if pinpoint.GetAgent().Enable() {
-		t.Skip("a global agent is still enabled")
-	}
-
 	called := false
 	_, err := UnaryServerInterceptor()(context.Background(), nil,
 		&grpc.UnaryServerInfo{FullMethod: "/testapp.Hello/Greet"},

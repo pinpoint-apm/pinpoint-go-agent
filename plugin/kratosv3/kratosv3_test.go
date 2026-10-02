@@ -294,10 +294,6 @@ func TestServerMiddleware_PanicPropagates(t *testing.T) {
 
 // With no agent running the middleware must be a straight pass-through.
 func TestServerMiddleware_PassesThroughWhenAgentDisabled(t *testing.T) {
-	if pinpoint.GetAgent().Enable() {
-		t.Skip("a global agent is still enabled")
-	}
-
 	ctx := transport.NewServerContext(context.Background(),
 		newGrpcTransport("grpc://127.0.0.1:9000", "/helloworld.Greeter/SayHello"))
 

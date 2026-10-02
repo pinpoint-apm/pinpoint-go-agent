@@ -205,10 +205,6 @@ func TestRouter_PanicPropagates(t *testing.T) {
 
 // With no agent running the router must be a straight pass-through.
 func TestRouter_PassesThroughWhenAgentDisabled(t *testing.T) {
-	if pinpoint.GetAgent().Enable() {
-		t.Skip("a global agent is still enabled")
-	}
-
 	r := New()
 	called := false
 	r.GET("/hello/{name}", func(ctx *fasthttp.RequestCtx) {

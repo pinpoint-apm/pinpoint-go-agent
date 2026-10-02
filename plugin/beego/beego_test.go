@@ -199,10 +199,6 @@ func TestServerFilterChain_PanicPropagates(t *testing.T) {
 
 // With no agent running the filter must be a straight pass-through.
 func TestServerFilterChain_PassesThroughWhenAgentDisabled(t *testing.T) {
-	if pinpoint.GetAgent().Enable() {
-		t.Skip("a global agent is still enabled")
-	}
-
 	ctx := newBeegoContext(httptest.NewRequest(http.MethodGet, "/hello", nil), httptest.NewRecorder())
 
 	called := false
@@ -249,10 +245,6 @@ func TestMiddleware_PanicPropagates(t *testing.T) {
 }
 
 func TestMiddleware_PassesThroughWhenAgentDisabled(t *testing.T) {
-	if pinpoint.GetAgent().Enable() {
-		t.Skip("a global agent is still enabled")
-	}
-
 	called := false
 	h := Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true

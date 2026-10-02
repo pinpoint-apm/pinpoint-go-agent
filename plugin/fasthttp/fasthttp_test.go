@@ -352,10 +352,6 @@ func TestWrapHandler_PanicPropagates(t *testing.T) {
 // With no agent running the wrapper must be a straight pass-through, and must
 // not leave a user value the handler would type-assert on.
 func TestWrapHandler_PassesThroughWhenAgentDisabled(t *testing.T) {
-	if pinpoint.GetAgent().Enable() {
-		t.Skip("a global agent is still enabled")
-	}
-
 	called := false
 	h := WrapHandler(func(ctx *fasthttp.RequestCtx) {
 		called = true

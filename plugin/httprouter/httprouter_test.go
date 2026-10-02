@@ -340,10 +340,6 @@ func TestRouter_PanicPropagates(t *testing.T) {
 
 // With no agent running the wrapper must be a straight pass-through.
 func TestRouter_PassesThroughWhenAgentDisabled(t *testing.T) {
-	if pinpoint.GetAgent().Enable() {
-		t.Skip("a global agent is still enabled")
-	}
-
 	r := New()
 	called := false
 	r.GET("/hello/:name", func(w http.ResponseWriter, req *http.Request, p httprouter.Params) {
@@ -362,10 +358,6 @@ func TestRouter_PassesThroughWhenAgentDisabled(t *testing.T) {
 
 // WrapHandle is the other entry point and has to pass through too.
 func TestWrapHandle_PassesThroughWhenAgentDisabled(t *testing.T) {
-	if pinpoint.GetAgent().Enable() {
-		t.Skip("a global agent is still enabled")
-	}
-
 	r := httprouter.New()
 	called := false
 	r.GET("/hello/:name", WrapHandle(func(w http.ResponseWriter, req *http.Request, p httprouter.Params) {
