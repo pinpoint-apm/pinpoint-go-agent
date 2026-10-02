@@ -3,7 +3,9 @@ package pinpoint
 import (
 	"context"
 	"io"
+	"net"
 	"sync"
+	"testing"
 	"time"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
@@ -14,6 +16,26 @@ import (
 	"google.golang.org/protobuf/proto"
 	empty "google.golang.org/protobuf/types/known/emptypb"
 )
+
+// startTestServer serves an empty gRPC server on 127.0.0.1:0 until the test ends.
+func startTestServer(t testing.TB, opts ...grpc.ServerOption) net.Listener {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := grpc.NewServer(opts...)
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+	return lis
+}
+
+// swapForTest sets *p to v for the rest of the test.
+func swapForTest[T any](t testing.TB, p *T, v T) {
+	prev := *p
+	*p = v
+	t.Cleanup(func() { *p = prev })
+}
 
 func newTestAgent(config *Config) *agent {
 	a := &agent{

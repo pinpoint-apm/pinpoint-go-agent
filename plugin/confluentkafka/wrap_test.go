@@ -23,4 +23,7 @@ func TestWrapProducer(t *testing.T) {
 	assert.Equal(t, addr, p.broker)
 	assert.Equal(t, "Unknown", WrapProducer(raw, nil).broker)
 	assert.Equal(t, "Unknown", WrapProducer(raw, &kafka.ConfigMap{}).broker)
+	// A nil producer stays nil, as the sarama wrappers keep it: a wrapper around
+	// a nil producer nil-derefs inside the bindings on its first call.
+	assert.Nil(t, WrapProducer(nil, nil))
 }

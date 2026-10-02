@@ -50,6 +50,7 @@ func Test_newConsumerTracer_Broker(t *testing.T) {
 		{"from the context", NewContext(context.Background(), "broker1:9092,broker2:9092"), consumed("w", 0, 0), "broker1:9092"},
 		{"from the producer's header", context.Background(), consumed("w", 0, 0, kafka.Header{Key: pinpoint.HeaderHost, Value: []byte("broker3:9092")}), "broker3:9092"},
 		{"neither", context.Background(), consumed("w", 0, 0), "Unknown"},
+		{"nil context", nil, consumed("w", 0, 0), "Unknown"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			tracer := newConsumerTracer(tt.ctx, tt.msg)

@@ -1100,19 +1100,11 @@ func Test_agent_MetaOverflowRateLimitsWarning(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(buf.String(), "meta queue overflow"))
 }
 
-// shortWorkerRestartDelay shortens the supervisor's restart pacing for the
-// duration of a test.
-func shortWorkerRestartDelay(t *testing.T) {
-	prev := workerRestartDelay
-	workerRestartDelay = 10 * time.Millisecond
-	t.Cleanup(func() { workerRestartDelay = prev })
-}
-
 // An agent bug must not take the host process down: a worker body that panics
 // is recovered and the worker is restarted after the delay, then stops
 // normally on the shutdown signal.
 func Test_agent_superviseWorkerRecoversAndRestarts(t *testing.T) {
-	shortWorkerRestartDelay(t)
+	swapForTest(t, &workerRestartDelay, 10*time.Millisecond)
 	agent := newTestAgent(defaultConfig())
 	stop := agent.stopSignal().Done()
 
@@ -1142,7 +1134,7 @@ func Test_agent_superviseWorkerDoesNotRestartWhileStopping(t *testing.T) {
 		"disabled":    func(a *agent) { a.enable.Store(false) },
 	} {
 		t.Run(name, func(t *testing.T) {
-			shortWorkerRestartDelay(t)
+			swapForTest(t, &workerRestartDelay, 10*time.Millisecond)
 			agent := newTestAgent(defaultConfig())
 
 			var runs atomic.Int32
@@ -1275,14 +1267,6 @@ func Test_agent_ShutdownDrainsWorkerTableWithinDeadline(t *testing.T) {
 	}
 }
 
-// shortShutdownTimeout shortens Shutdown's worker drain deadline for the
-// duration of a test.
-func shortShutdownTimeout(t *testing.T) {
-	prev := shutdownTimeout
-	shutdownTimeout = 20 * time.Millisecond
-	t.Cleanup(func() { shutdownTimeout = prev })
-}
-
 // stuckWorkers is stubWorkers with the named workers parked on release
 // instead of the stop signal, so they outlive the shutdown deadline.
 func stuckWorkers(agent *agent, table []worker, started *atomic.Int32, release chan struct{}, stuck ...string) []worker {
@@ -1313,7 +1297,7 @@ func Test_agent_ShutdownTimeoutNamesRunningWorkers(t *testing.T) {
 		{"two workers", []string{"ping", "agent info refresh"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			shortShutdownTimeout(t)
+			swapForTest(t, &shutdownTimeout, 20*time.Millisecond)
 			agent := newTestAgent(workerTableConfig(1000))
 			agent.config.offGrpc = false
 			release := make(chan struct{})
@@ -1381,20 +1365,12 @@ func Test_agent_sendMetaWorkerSurvivesPanicInSend(t *testing.T) {
 	assert.True(t, waitTimeout(&agent.workerWg, 5*time.Second), "worker exits after the recovered send panic")
 }
 
-// shortDropReportInterval shortens the overflow warning's rate limit for the
-// duration of a test.
-func shortDropReportInterval(t *testing.T, d time.Duration) {
-	prev := dropReportInterval
-	dropReportInterval = d
-	t.Cleanup(func() { dropReportInterval = prev })
-}
-
 // The reporter's whole job is the rate limit: repeated reports inside one
 // interval collapse to a single warning, a report with nothing new to say
 // stays silent, and the total it carries keeps accumulating across intervals
 // rather than restarting.
 func Test_dropReporter_rateLimitsAndAccumulates(t *testing.T) {
-	shortDropReportInterval(t, time.Hour) // only the explicit reportAt resets advance time
+	swapForTest(t, &dropReportInterval, time.Hour) // only the explicit reportAt resets advance time
 
 	var buf bytes.Buffer
 	defer captureWarnLog(&buf)()
@@ -1431,7 +1407,7 @@ func Test_dropReporter_rateLimitsAndAccumulates(t *testing.T) {
 // follows: the worker wakes once the limit lifts instead of waiting for the
 // next item.
 func Test_sendMetaWorker_reportsHeldBackDropsWhileIdle(t *testing.T) {
-	shortDropReportInterval(t, 300*time.Millisecond)
+	swapForTest(t, &dropReportInterval, 300*time.Millisecond)
 
 	var buf bytes.Buffer
 	defer captureWarnLog(&buf)()
@@ -1467,7 +1443,7 @@ func Test_sendMetaWorker_reportsHeldBackDropsWhileIdle(t *testing.T) {
 // inside it. Nothing reports after the shutdown, so the shutdown reports every
 // queue past the limit.
 func Test_agent_ShutdownReportsHeldBackDrops(t *testing.T) {
-	shortDropReportInterval(t, time.Hour) // only the shutdown can lift the limit
+	swapForTest(t, &dropReportInterval, time.Hour) // only the shutdown can lift the limit
 
 	var buf bytes.Buffer
 	defer captureWarnLog(&buf)()
@@ -1507,7 +1483,7 @@ func Test_agent_ShutdownReportsHeldBackDrops(t *testing.T) {
 // follows: the worker wakes once the limit lifts instead of waiting for the
 // next chunk, and its exit reports past the limit, since no cycle comes after.
 func Test_sendSpanBatchWorker_reportsHeldBackDrops(t *testing.T) {
-	shortDropReportInterval(t, 300*time.Millisecond)
+	swapForTest(t, &dropReportInterval, 300*time.Millisecond)
 
 	var buf bytes.Buffer
 	defer captureWarnLog(&buf)()
@@ -1867,14 +1843,12 @@ func replaceRaiseSignal(t *testing.T) *[]os.Signal {
 	t.Helper()
 	var mu sync.Mutex
 	raised := &[]os.Signal{}
-	orig := raiseSignal
-	raiseSignal = func(sig os.Signal) error {
+	swapForTest(t, &raiseSignal, func(sig os.Signal) error {
 		mu.Lock()
 		defer mu.Unlock()
 		*raised = append(*raised, sig)
 		return nil
-	}
-	t.Cleanup(func() { raiseSignal = orig })
+	})
 	return raised
 }
 
@@ -1940,9 +1914,7 @@ func Test_ShutdownOnSignal_StopEndsTheWatch(t *testing.T) {
 // changes the process-wide disposition of the signals it is given.
 func Test_agent_DefaultNeverCallsSignalNotify(t *testing.T) {
 	var notifies atomic.Int32
-	orig := signalNotify
-	signalNotify = func(chan<- os.Signal, ...os.Signal) { notifies.Add(1) }
-	defer func() { signalNotify = orig }()
+	swapForTest(t, &signalNotify, func(chan<- os.Signal, ...os.Signal) { notifies.Add(1) })
 
 	c, _ := NewConfig(WithAppName("test"))
 	c.offGrpc = true
@@ -2002,7 +1974,7 @@ func Test_agent_ShutdownSendsQueuedSpans(t *testing.T) {
 
 // A Shutdown that overruns its deadline leaves only the stuck worker behind.
 func Test_agent_ShutdownTimeoutLeavesOnlyTheStuckWorker(t *testing.T) {
-	shortShutdownTimeout(t)
+	swapForTest(t, &shutdownTimeout, 20*time.Millisecond)
 	release := make(chan struct{})
 	var agents []*agent
 
@@ -2193,4 +2165,58 @@ func Test_WorkerTableIsTheSingleSourceOfTruth(t *testing.T) {
 		assert.True(t, waitTimeout(&agent.workerWg, shutdownTimeout),
 			"every started worker releases the workerWg slot startWorkers added for it")
 	}
+}
+
+// A panic while connecting is recovered like a worker's: the agent is released
+// as a failed connect, not the host process ended.
+func TestNewAgent_PanicWhileConnectingIsRecovered(t *testing.T) {
+	swapForTest(t, &getHostName, func() string { panic("boom") })
+
+	config, err := NewConfig(WithAppName("connect-panic"))
+	require.NoError(t, err)
+	a, err := NewAgent(config)
+	require.NoError(t, err)
+	t.Cleanup(a.Shutdown)
+
+	a.(*agent).connectWg.Wait()
+	assert.Equal(t, phaseFailed, a.(*agent).enable.current())
+	assert.Equal(t, NoopAgent(), GetAgent(), "the failed agent is released")
+}
+
+// A compile-time instrumentation hook can call into this package from the
+// init function of a package that does not import it, before this package
+// initialized. Every accessor a hook may touch answers as it would right
+// after init instead of panicking on the zero-valued globals.
+func TestAccessorsBeforeInit(t *testing.T) {
+	savedAgent := globalAgent.Load()
+	savedNoop := defaultNoopAgent
+	savedLogger := logger
+	savedBase := cfgBaseMap
+	t.Cleanup(func() {
+		globalAgent.Store(savedAgent)
+		defaultNoopAgent = savedNoop
+		logger = savedLogger
+		cfgBaseMap = savedBase
+		initDone = true
+	})
+
+	// The state before init: nothing set, the noop agent's initializer not run.
+	globalAgent = atomic.Value{}
+	defaultNoopAgent = nil
+	logger = nil
+	cfgBaseMap = nil
+	initDone = false
+
+	// Logging is discarded rather than attempted: logrus may be uninitialized too.
+	Log("init").Infof("a hook logs before init")
+	Log("init").Errorf("and errors")
+	assert.False(t, IsDebugLogLevelEnabled())
+
+	agent := GetAgent()
+	require.NotNil(t, agent)
+	assert.False(t, agent.Enable(), "no agent exists before init: the noop agent answers")
+	assert.Equal(t, NoopAgent(), agent)
+	require.NotNil(t, GetConfig())
+	assert.Equal(t, "localhost", GetConfig().String(CfgCollectorHost), "the noop config carries the defaults")
+	assert.False(t, GetConfig().Bool("Auto.Nothing.Registered"), "an unregistered key reads as its zero value")
 }

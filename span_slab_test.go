@@ -200,9 +200,7 @@ func (c *retainingSpanBatchClient) SendSpanBatch(_ context.Context, in *pb.PSpan
 // grpc-go tracing retains request pointers after the call returns. Those
 // requests must be detached from the slabs before their builders are recycled.
 func Test_spanGrpc_tracingRetainsStableMessages(t *testing.T) {
-	previous := grpc.EnableTracing
-	grpc.EnableTracing = true
-	defer func() { grpc.EnableTracing = previous }()
+	swapForTest(t, &grpc.EnableTracing, true)
 
 	agent := newTestAgent(defaultConfig())
 	batchClient := &retainingSpanBatchClient{}

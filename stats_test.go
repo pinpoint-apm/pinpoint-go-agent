@@ -103,9 +103,7 @@ func Test_drainStatsCountersAggregatesAllShards(t *testing.T) {
 // Without a goid offset the counters degrade to a single shard but must
 // still aggregate correctly.
 func Test_statShardWithoutGoIdOffset(t *testing.T) {
-	saved := goIdOffset
-	goIdOffset = 0
-	defer func() { goIdOffset = saved }()
+	swapForTest(t, &goIdOffset, 0)
 
 	stats := newAgentStats()
 	stats.collectResponseTime(100)
@@ -525,4 +523,22 @@ func Test_TransactionCounters(t *testing.T) {
 	assert.Equal(t, int64(0), drained.unSampleCont)
 	assert.Equal(t, int64(0), drained.skipNew)
 	assert.Equal(t, int64(0), drained.skipCont)
+}
+
+// Benchmarks for the per-request stat counters (stats.go). The counters are
+// sharded by goroutine id within one agent's agentStats; run with -cpu=1,4,16
+// to expose the cross-core traffic the sharding removes.
+
+// The per-request combo: response time (acc+count+max) plus one sampler
+// outcome counter.
+func BenchmarkStatsCounterUpdate(b *testing.B) {
+	stats := newAgentStats()
+	b.RunParallel(func(pb *testing.PB) {
+		i := int64(0)
+		for pb.Next() {
+			stats.collectResponseTime(i & 1023)
+			stats.incrSampleNew()
+			i++
+		}
+	})
 }

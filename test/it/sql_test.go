@@ -3,53 +3,17 @@ package it
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"fmt"
-	"io"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/testapp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// --- a driver that records nothing and connects to nothing ----------------
-//
-// The agent's SQL instrumentation is a driver wrapper, so the bind-value,
-// truncation and metadata paths are only reachable through database/sql. This
-// fake driver makes them reachable without a database.
-
-type fakeDriver struct{}
-
-func (fakeDriver) Open(string) (driver.Conn, error) { return &fakeConn{}, nil }
-
-type fakeConn struct{}
-
-func (c *fakeConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
-func (c *fakeConn) Close() error                        { return nil }
-func (c *fakeConn) Begin() (driver.Tx, error)           { return fakeTx{}, nil }
-
-func (c *fakeConn) ExecContext(context.Context, string, []driver.NamedValue) (driver.Result, error) {
-	return driver.RowsAffected(1), nil
-}
-
-func (c *fakeConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
-	return &fakeRows{}, nil
-}
-
-type fakeTx struct{}
-
-func (fakeTx) Commit() error   { return nil }
-func (fakeTx) Rollback() error { return nil }
-
-type fakeRows struct{}
-
-func (r *fakeRows) Columns() []string         { return []string{"col"} }
-func (r *fakeRows) Close() error              { return nil }
-func (r *fakeRows) Next([]driver.Value) error { return io.EOF }
 
 var fakeDriverSeq int32
 
@@ -59,7 +23,7 @@ var fakeDriverSeq int32
 func registerFakeDB(t *testing.T) *sql.DB {
 	t.Helper()
 	name := fmt.Sprintf("pinpoint-it-fake-%d", atomic.AddInt32(&fakeDriverSeq, 1))
-	sql.Register(name, pinpoint.WrapSQLDriver(fakeDriver{}, pinpoint.DBInfo{
+	sql.Register(name, pinpoint.WrapSQLDriver(testapp.FakeDriver{}, pinpoint.DBInfo{
 		DBType:    pinpoint.ServiceTypeMysql,
 		QueryType: pinpoint.ServiceTypeMysqlExecuteQuery,
 		DBName:    "it_test",

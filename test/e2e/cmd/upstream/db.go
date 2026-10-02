@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
-	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -15,41 +13,13 @@ import (
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/e2e/internal/e2e"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/testapp"
 )
 
 // The SQL endpoints exercise the agent's database/sql driver wrapper, which is
 // where SQL normalization, metadata publication and bind-value recording live.
-// They need no database: the wrapped driver below accepts every statement and
-// returns nothing, so the traced code path is real while the storage is not.
-
-type fakeDriver struct{}
-
-func (fakeDriver) Open(string) (driver.Conn, error) { return &fakeConn{}, nil }
-
-type fakeConn struct{}
-
-func (*fakeConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
-func (*fakeConn) Close() error                        { return nil }
-func (*fakeConn) Begin() (driver.Tx, error)           { return fakeTx{}, nil }
-
-func (*fakeConn) ExecContext(context.Context, string, []driver.NamedValue) (driver.Result, error) {
-	return driver.RowsAffected(1), nil
-}
-
-func (*fakeConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
-	return &fakeRows{}, nil
-}
-
-type fakeTx struct{}
-
-func (fakeTx) Commit() error   { return nil }
-func (fakeTx) Rollback() error { return nil }
-
-type fakeRows struct{}
-
-func (*fakeRows) Columns() []string         { return []string{"col"} }
-func (*fakeRows) Close() error              { return nil }
-func (*fakeRows) Next([]driver.Value) error { return io.EOF }
+// They need no database: the wrapped testapp.FakeDriver accepts every statement
+// and returns nothing, so the traced code path is real while the storage is not.
 
 var (
 	db *sql.DB
@@ -70,7 +40,7 @@ var (
 )
 
 func initDB() {
-	sql.Register("pinpoint-e2e-fake", pinpoint.WrapSQLDriver(fakeDriver{}, pinpoint.DBInfo{
+	sql.Register("pinpoint-e2e-fake", pinpoint.WrapSQLDriver(testapp.FakeDriver{}, pinpoint.DBInfo{
 		DBType:    pinpoint.ServiceTypeMysql,
 		QueryType: pinpoint.ServiceTypeMysqlExecuteQuery,
 		DBName:    "e2e_test",

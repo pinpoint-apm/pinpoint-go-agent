@@ -66,13 +66,7 @@ func TestReRegistersMetadataAfterNonRetryableError(t *testing.T) {
 	}, waitTimeout))
 
 	s := mc.Snapshot()
-	ids := make(map[int32]bool)
-	for _, r := range s.ApiMetadata {
-		if r.Message.GetApiInfo() == operation {
-			ids[r.Message.GetApiId()] = true
-		}
-	}
-	assert.GreaterOrEqual(t, len(ids), 2, "a released cache entry must yield a fresh api id")
+	assert.GreaterOrEqual(t, len(apiIdsFor(s, operation)), 2, "a released cache entry must yield a fresh api id")
 	assert.True(t, hasResultSuccess(s, RpcApiMetadata, codes.OK, true))
 	assert.True(t, agent.Enable())
 }
@@ -759,13 +753,7 @@ func TestReRegistersMetadataAfterRetryExhaustion(t *testing.T) {
 			hasResultSuccess(s, RpcApiMetadata, codes.OK, true)
 	}, longTimeout))
 
-	ids := make(map[int32]bool)
-	for _, r := range mc.Snapshot().ApiMetadata {
-		if r.Message.GetApiInfo() == operation {
-			ids[r.Message.GetApiId()] = true
-		}
-	}
-	assert.GreaterOrEqual(t, len(ids), 2, "an exhausted item must be re-cached under a fresh id")
+	assert.GreaterOrEqual(t, len(apiIdsFor(mc.Snapshot(), operation)), 2, "an exhausted item must be re-cached under a fresh id")
 	assert.True(t, agent.Enable())
 }
 

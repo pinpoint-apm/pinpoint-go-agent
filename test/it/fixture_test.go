@@ -3,6 +3,7 @@ package it
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -311,8 +312,6 @@ func agentStats(s Snapshot) []*pb.PAgentStat {
 	return result
 }
 
-func agentStatCount(s Snapshot) int { return len(agentStats(s)) }
-
 type transactionTotals struct {
 	sampledNew          int64
 	sampledContinuation int64
@@ -343,16 +342,13 @@ func transactionTotalsAfter(s Snapshot, skip int) transactionTotals {
 }
 
 func maxResponseTimeAfter(s Snapshot, skip int) int64 {
-	var max int64
+	var m int64
 	for i, stat := range agentStats(s) {
-		if i < skip {
-			continue
-		}
-		if v := stat.GetResponseTime().GetMax(); v > max {
-			max = v
+		if i >= skip {
+			m = max(m, stat.GetResponseTime().GetMax())
 		}
 	}
-	return max
+	return m
 }
 
 // sampledNewAgentStat returns the first agent stat that actually carries a
@@ -391,12 +387,8 @@ func uriStatTotalsFor(s Snapshot, uri string) uriStatTotals {
 			totals.entries++
 			totals.totalElapsed += each.GetTotalHistogram().GetTotal()
 			totals.failedElapsed += each.GetFailedHistogram().GetTotal()
-			if v := each.GetTotalHistogram().GetMax(); v > totals.maxElapsed {
-				totals.maxElapsed = v
-			}
-			if v := each.GetFailedHistogram().GetMax(); v > totals.failedMax {
-				totals.failedMax = v
-			}
+			totals.maxElapsed = max(totals.maxElapsed, each.GetTotalHistogram().GetMax())
+			totals.failedMax = max(totals.failedMax, each.GetFailedHistogram().GetMax())
 			for _, c := range each.GetTotalHistogram().GetHistogram() {
 				totals.totalCount += int64(c)
 			}
@@ -408,36 +400,16 @@ func uriStatTotalsFor(s Snapshot, uri string) uriStatTotals {
 	return totals
 }
 
-func hasUriStat(s Snapshot, uri string) bool {
-	return uriStatTotalsFor(s, uri).entries > 0
-}
-
 func resultsFor(s Snapshot, rpc Rpc) []RpcResult {
-	result := make([]RpcResult, 0)
-	for _, r := range s.RpcResults {
-		if r.Rpc == rpc {
-			result = append(result, r)
-		}
-	}
-	return result
+	return slices.DeleteFunc(slices.Clone(s.RpcResults), func(r RpcResult) bool { return r.Rpc != rpc })
 }
 
-func hasResult(s Snapshot, rpc Rpc, code codes.Code) bool {
-	for _, r := range s.RpcResults {
-		if r.Rpc == rpc && r.Code == code {
-			return true
-		}
-	}
-	return false
-}
+func hasResult(s Snapshot, rpc Rpc, code codes.Code) bool { return countResults(s, rpc, code) > 0 }
 
 func hasResultSuccess(s Snapshot, rpc Rpc, code codes.Code, success bool) bool {
-	for _, r := range s.RpcResults {
-		if r.Rpc == rpc && r.Code == code && r.Success == success {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(s.RpcResults, func(r RpcResult) bool {
+		return r.Rpc == rpc && r.Code == code && r.Success == success
+	})
 }
 
 func countResults(s Snapshot, rpc Rpc, code codes.Code) int {
@@ -457,6 +429,18 @@ func acceptedApiIds(s Snapshot, apiInfo string) map[int32]bool {
 	for _, r := range resultsFor(s, RpcApiMetadata) {
 		if m, ok := r.Request.(*pb.PApiMetaData); ok && r.Success && m.GetApiInfo() == apiInfo {
 			ids[m.GetApiId()] = true
+		}
+	}
+	return ids
+}
+
+// apiIdsFor returns every api id the agent sent metadata for under apiInfo,
+// accepted or not.
+func apiIdsFor(s Snapshot, apiInfo string) map[int32]bool {
+	ids := make(map[int32]bool)
+	for _, r := range s.ApiMetadata {
+		if r.Message.GetApiInfo() == apiInfo {
+			ids[r.Message.GetApiId()] = true
 		}
 	}
 	return ids

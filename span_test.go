@@ -2347,3 +2347,87 @@ func Test_ExcludedCategoryRecordsNothing(t *testing.T) {
 	assert.Equal(t, int32(ErrorCategoryHttpStatus|ErrorCategoryUnknown), kept.err.Load(),
 		"a transaction that failed for several reasons reports all of them")
 }
+
+// A nil carrier writes and reads nothing on the sampled span, as it does on
+// the noop tracer, instead of panicking only once the request is sampled.
+func TestSpan_NilCarrier(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	tracer := agent.NewSpanTracer("root", "/rpc")
+	defer tracer.EndSpan()
+
+	assert.NotPanics(t, func() { tracer.Inject(nil) })
+	assert.NotPanics(t, func() { tracer.Extract(nil) })
+	assert.NotEmpty(t, tracer.TransactionId().AgentId, "Extract(nil) starts a transaction like an empty carrier")
+}
+
+// The logging plugins call SetLogging from whichever goroutine logs with the
+// request's tracer, so two of them at once must be a plain store, not a data
+// race (run under -race).
+func TestSpan_SetLogging_ConcurrentCallsAreRaceFree(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	tracer := agent.NewSpanTracer("root", "/rpc")
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tracer.Span().SetLogging(Logged)
+		}()
+	}
+	wg.Wait()
+	tracer.EndSpan()
+
+	assert.Equal(t, int32(Logged), tracer.(*span).loggingInfo.Load())
+}
+
+func TestSpanInject_ServiceNamePropagation(t *testing.T) {
+	// v4 agent with a serviceName injects Pinpoint-pServiceName.
+	span := defaultTestSpan()
+	span.agent.serviceName = "MyService"
+	span.NewSpanEvent("op")
+
+	m := map[string]string{}
+	span.Inject(&DistributedTracingContextMap{m})
+	assert.Equal(t, "MyService", m[HeaderParentServiceName])
+}
+
+func TestSpanInject_NoServiceName_OmitsHeader(t *testing.T) {
+	// v1/v3 agent (no serviceName) injects no Pinpoint-pServiceName header.
+	span := defaultTestSpan()
+	span.agent.serviceName = ""
+	span.NewSpanEvent("op")
+
+	m := map[string]string{}
+	span.Inject(&DistributedTracingContextMap{m})
+	_, ok := m[HeaderParentServiceName]
+	assert.False(t, ok, "no serviceName -> no Pinpoint-pServiceName header")
+}
+
+func TestSpanExtract_ServiceName(t *testing.T) {
+	span := defaultTestSpan()
+	reader := &DistributedTracingContextMap{m: map[string]string{
+		// Needs all three continue headers: without them this is a new
+		// transaction and every other Pinpoint header is ignored on purpose.
+		HeaderTraceId:           "t123456^12345^1",
+		HeaderSpanId:            "67890",
+		HeaderParentSpanId:      "123",
+		HeaderParentServiceName: "UpstreamService",
+	}}
+	span.Extract(reader)
+	assert.Equal(t, "UpstreamService", span.parentServiceName)
+}
+
+func TestSpanInjectExtract_ServiceNameRoundTrip(t *testing.T) {
+	sender := defaultTestSpan()
+	sender.agent.serviceName = "ServiceA"
+	sender.txId = sender.agent.generateTransactionId()
+	sender.NewSpanEvent("op")
+
+	carrier := map[string]string{}
+	sender.Inject(&DistributedTracingContextMap{carrier})
+
+	receiver := defaultTestSpan()
+	receiver.Extract(&DistributedTracingContextMap{carrier})
+	assert.Equal(t, "ServiceA", receiver.parentServiceName)
+}

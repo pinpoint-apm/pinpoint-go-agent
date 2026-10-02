@@ -76,53 +76,77 @@ func serverTracer(t *testing.T) pinpoint.Tracer {
 	return tracer
 }
 
+// The two client entry points, so each test below sends the same request through
+// WrapClient and through DoClient.
+var clientSends = []struct {
+	name string
+	send func(rt *recordingTransport, req *http.Request) (*http.Response, error)
+}{
+	{"WrapClient", func(rt *recordingTransport, req *http.Request) (*http.Response, error) {
+		return WrapClient(&http.Client{Transport: rt}).Do(req)
+	}},
+	{"DoClient", func(rt *recordingTransport, req *http.Request) (*http.Response, error) {
+		return DoClient((&http.Client{Transport: rt}).Do, req)
+	}},
+}
+
 // The whole point of the client wrapper: the callee has to receive the headers
-// that let it join this transaction.
-func TestWrapClient_InjectsTracingHeaders(t *testing.T) {
-	startAgent(t)
-	tracer := serverTracer(t)
+// that let it join this transaction, and the response must come back untouched.
+func TestClient_InjectsTracingHeaders(t *testing.T) {
+	for _, tt := range clientSends {
+		t.Run(tt.name, func(t *testing.T) {
+			startAgent(t)
+			tracer := serverTracer(t)
 
-	rt := &recordingTransport{}
-	client := WrapClient(&http.Client{Transport: rt})
+			rt := &recordingTransport{status: http.StatusTeapot}
+			req, err := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer),
+				http.MethodGet, "http://example.com/callee", nil)
+			require.NoError(t, err)
 
-	req, err := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer),
-		http.MethodGet, "http://example.com/callee", nil)
-	require.NoError(t, err)
+			resp, err := tt.send(rt, req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
 
-	resp, err := client.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
+			assert.Equal(t, http.StatusTeapot, resp.StatusCode)
+			require.NotNil(t, rt.sent, "the wrapped transport was never called")
+			assert.NotEmpty(t, pinpointHeaders(t, rt.sent.Header), "no pinpoint header reached the callee")
 
-	require.NotNil(t, rt.sent, "the wrapped transport was never called")
-	assert.NotEmpty(t, pinpointHeaders(t, rt.sent.Header), "no pinpoint header reached the callee")
-
-	// The callee's tracer must land in the caller's transaction.
-	callee := NewHttpServerTracerWithReader(http.MethodGet, "/callee", "HTTP Server", pinpoint.HttpHeaderReader(rt.sent.Header))
-	defer callee.EndSpan()
-	assert.Equal(t, tracer.TransactionId().String(), callee.TransactionId().String())
+			// The callee's tracer must land in the caller's transaction.
+			callee := NewHttpServerTracerWithReader(http.MethodGet, "/callee", "HTTP Server", pinpoint.HttpHeaderReader(rt.sent.Header))
+			defer callee.EndSpan()
+			assert.Equal(t, tracer.TransactionId().String(), callee.TransactionId().String())
+		})
+	}
 }
 
 // http.RoundTripper requires that the request it is handed is not modified, so
-// the injected headers have to go on a copy.
-func TestWrapClient_DoesNotModifyTheCallersRequest(t *testing.T) {
-	startAgent(t)
-	tracer := serverTracer(t)
+// the injected headers have to go on a copy. A template reused per call shares
+// its header map with every req.WithContext copy, where the injected headers
+// raced each other and stayed behind, so every later call looked nested and
+// carried the first transaction's ids.
+func TestClient_LeavesTheCallersRequestAlone(t *testing.T) {
+	for _, tt := range clientSends {
+		t.Run(tt.name, func(t *testing.T) {
+			startAgent(t)
+			tracer := serverTracer(t)
 
-	rt := &recordingTransport{}
-	client := WrapClient(&http.Client{Transport: rt})
+			template, err := http.NewRequest(http.MethodGet, "http://example.com/callee", nil)
+			require.NoError(t, err)
+			template.Header.Set("X-Caller", "v")
+			req := template.WithContext(pinpoint.NewContext(context.Background(), tracer))
 
-	req, err := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer),
-		http.MethodGet, "http://example.com/callee", nil)
-	require.NoError(t, err)
-	req.Header.Set("X-Caller", "v")
+			rt := &recordingTransport{}
+			resp, err := tt.send(rt, req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
 
-	resp, err := client.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Empty(t, pinpointHeaders(t, req.Header), "the caller's own request was written to")
-	assert.Equal(t, "v", rt.sent.Header.Get("X-Caller"), "the caller's headers must survive the copy")
-	assert.NotSame(t, req.Header, rt.sent.Header)
+			assert.Empty(t, pinpointHeaders(t, req.Header), "the caller's own request was written to")
+			assert.Empty(t, pinpointHeaders(t, template.Header), "the caller's header map was written")
+			assert.NotEmpty(t, pinpointHeaders(t, rt.sent.Header), "the request sent carries the trace")
+			assert.Equal(t, "v", rt.sent.Header.Get("X-Caller"), "the caller's headers must survive the copy")
+			assert.NotSame(t, req.Header, rt.sent.Header)
+		})
+	}
 }
 
 // WrapClient copies the client, so the original stays untouched and any other
@@ -177,109 +201,48 @@ func TestWrapClientWithContext(t *testing.T) {
 // entry point free to start one of its own; "s0" would instead order it not to
 // trace. See TestWrapClient_UnsampledRequestStillSendsS0 for the case that
 // does have a decision to pass on.
-func TestWrapClient_WithoutATracer(t *testing.T) {
-	startAgent(t)
+func TestClient_WithoutATracer(t *testing.T) {
+	for _, tt := range clientSends {
+		t.Run(tt.name, func(t *testing.T) {
+			startAgent(t)
 
-	rt := &recordingTransport{}
-	client := WrapClient(&http.Client{Transport: rt})
+			rt := &recordingTransport{}
+			req, err := http.NewRequest(http.MethodGet, "http://example.com/callee", nil)
+			require.NoError(t, err)
 
-	resp, err := client.Get("http://example.com/callee")
-	require.NoError(t, err)
-	defer resp.Body.Close()
+			resp, err := tt.send(rt, req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
 
-	require.NotNil(t, rt.sent, "the request must still be sent")
-	assert.Empty(t, pinpointHeaders(t, rt.sent.Header),
-		"a call with no transaction behind it must not tell the callee to skip tracing")
+			require.NotNil(t, rt.sent, "the request must still be sent")
+			assert.Empty(t, pinpointHeaders(t, rt.sent.Header),
+				"a call with no transaction behind it must not tell the callee to skip tracing")
+			assert.Empty(t, pinpointHeaders(t, req.Header), "an untraced call carries no marker at all")
 
-	callee := NewHttpServerTracerWithReader(http.MethodGet, "/callee", "HTTP Server", pinpoint.HttpHeaderReader(rt.sent.Header))
-	defer callee.EndSpan()
-	assert.True(t, callee.IsSampled(), "the callee must be free to start its own transaction")
+			callee := NewHttpServerTracerWithReader(http.MethodGet, "/callee", "HTTP Server", pinpoint.HttpHeaderReader(rt.sent.Header))
+			defer callee.EndSpan()
+			assert.True(t, callee.IsSampled(), "the callee must be free to start its own transaction")
+		})
+	}
 }
 
 // A transport error is the caller's to handle; the wrapper records it and
 // returns it unchanged.
-func TestWrapClient_TransportError(t *testing.T) {
-	startAgent(t)
-	tracer := serverTracer(t)
+func TestClient_TransportError(t *testing.T) {
+	for _, tt := range clientSends {
+		t.Run(tt.name, func(t *testing.T) {
+			startAgent(t)
+			tracer := serverTracer(t)
 
-	wantErr := errors.New("dial failed")
-	client := WrapClient(&http.Client{Transport: &recordingTransport{err: wantErr}})
+			wantErr := errors.New("dial failed")
+			req, err := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer),
+				http.MethodGet, "http://example.com/callee", nil)
+			require.NoError(t, err)
 
-	req, err := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer),
-		http.MethodGet, "http://example.com/callee", nil)
-	require.NoError(t, err)
-
-	_, err = client.Do(req)
-	assert.ErrorIs(t, err, wantErr, "the transport error must reach the caller unchanged")
-}
-
-// DoClient is the wrapper for callers that keep their own do function; it reads
-// the tracer off the request and must return the response untouched.
-func TestDoClient(t *testing.T) {
-	startAgent(t)
-	tracer := serverTracer(t)
-
-	rt := &recordingTransport{status: http.StatusTeapot}
-	req, err := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer),
-		http.MethodGet, "http://example.com/callee", nil)
-	require.NoError(t, err)
-
-	resp, err := DoClient((&http.Client{Transport: rt}).Do, req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Equal(t, http.StatusTeapot, resp.StatusCode)
-	assert.NotEmpty(t, pinpointHeaders(t, rt.sent.Header), "the request sent carries the trace")
-}
-
-// DoClient must leave the caller's request alone: a template reused per call
-// shares its header map with every req.WithContext copy, where the injected
-// headers raced each other and stayed behind, so every later call looked nested
-// and carried the first transaction's ids.
-func TestDoClient_LeavesTheCallersHeaderAlone(t *testing.T) {
-	startAgent(t)
-	tracer := serverTracer(t)
-
-	template, err := http.NewRequest(http.MethodGet, "http://example.com/callee", nil)
-	require.NoError(t, err)
-	rt := &recordingTransport{}
-	resp, err := DoClient((&http.Client{Transport: rt}).Do,
-		template.WithContext(pinpoint.NewContext(context.Background(), tracer)))
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.NotEmpty(t, pinpointHeaders(t, rt.sent.Header), "the request sent carries the trace")
-	assert.Empty(t, pinpointHeaders(t, template.Header), "the caller's header map was written")
-}
-
-// As with WrapClient: no tracer means no transaction, so the call carries no
-// pinpoint header rather than a "do not trace" order.
-func TestDoClient_WithoutATracer(t *testing.T) {
-	startAgent(t)
-
-	rt := &recordingTransport{}
-	req, err := http.NewRequest(http.MethodGet, "http://example.com/callee", nil)
-	require.NoError(t, err)
-
-	resp, err := DoClient((&http.Client{Transport: rt}).Do, req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Empty(t, pinpointHeaders(t, req.Header),
-		"an untraced call carries no marker at all")
-}
-
-func TestDoClient_Error(t *testing.T) {
-	startAgent(t)
-	tracer := serverTracer(t)
-
-	wantErr := errors.New("dial failed")
-	req, err := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer),
-		http.MethodGet, "http://example.com/callee", nil)
-	require.NoError(t, err)
-
-	_, err = DoClient((&http.Client{Transport: &recordingTransport{err: wantErr}}).Do, req)
-	assert.ErrorIs(t, err, wantErr)
+			_, err = tt.send(&recordingTransport{err: wantErr}, req)
+			assert.ErrorIs(t, err, wantErr, "the transport error must reach the caller unchanged")
+		})
+	}
 }
 
 // The client-side recorders are configured separately from the server ones, so

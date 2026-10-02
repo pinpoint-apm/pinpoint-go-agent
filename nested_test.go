@@ -4,15 +4,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestNestedTracer(t *testing.T) {
-	config, err := NewConfig(WithAppName("nestedApp"), WithAgentName("nestedAgent"))
-	require.NoError(t, err)
-	agent, err := NewTestAgent(config)
-	require.NoError(t, err)
-	defer agent.Shutdown()
+	agent := newTestAgent(defaultConfig())
 
 	owner := agent.NewSpanTracer("HTTP Server", "/nested")
 	nested := NestedTracer(owner)

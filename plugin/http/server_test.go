@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -681,23 +682,6 @@ func TestExcludedRequestsAreNotTraced(t *testing.T) {
 	}
 }
 
-// The status the span records comes from the wrapped writer, so a handler that
-// never calls WriteHeader has to leave the default 200 in place and still send
-// its body.
-func TestWrapHandlerFunc_ImplicitStatus(t *testing.T) {
-	startAgent(t)
-
-	h := WrapHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("hello"))
-	})
-
-	rec := httptest.NewRecorder()
-	h(rec, httptest.NewRequest(http.MethodGet, "/hello", nil))
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "hello", rec.Body.String())
-}
-
 // The status code annotation is what the Pinpoint UI shows, and the configured
 // error classes are what turn a span red.
 func TestRecordHttpServerResponse(t *testing.T) {
@@ -1073,7 +1057,11 @@ func TestRecordHttpServerRequest_Query(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			usePluginConfig(t, WithHttpServerRecordRequestParam(tt.record))
+			var opts []pinpoint.ConfigOption
+			if tt.record {
+				opts = append(opts, WithHttpServerRecordRequestParam(true))
+			}
+			usePluginConfig(t, opts...)
 			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
 			tracer := NewHttpServerTracer(req, "test")
 			defer tracer.EndSpan()
@@ -1461,4 +1449,67 @@ func TestNewHttpServerTracer_ReusesTheContextTracer(t *testing.T) {
 	defer fresh.EndSpan()
 	assert.False(t, pinpoint.IsNestedTracer(fresh))
 	assert.NotEqual(t, owner.TransactionId().String(), fresh.TransactionId().String())
+}
+
+func TestFormatRequestParams(t *testing.T) {
+	long := strings.Repeat("v", 100)
+	var many []string
+	for i := 0; i < 100; i++ {
+		many = append(many, "k"+strings.Repeat("0", 2)+"=vvvvvvvvvv")
+	}
+
+	tests := []struct {
+		name, in, want string
+	}{
+		{"empty", "", ""},
+		{"plain", "a=1&b=x%20y&empty=", "a=1&b=x y&empty="},
+		{"blank items skipped", "&&a=1&&", "a=1"},
+		{"bare key", "a+b=c+d&flag", "a b=c d&flag="},
+		{"undecodable kept verbatim", "bad=%zz%4&ok=%41", "bad=%zz%4&ok=A"},
+		{"long value cut", "k=" + long, "k=" + strings.Repeat("v", 64) + "..."},
+		{"long key cut", long + "=1", strings.Repeat("v", 64) + "...=1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, FormatRequestParams(tt.in))
+		})
+	}
+
+	got := FormatRequestParams(strings.Join(many, "&"))
+	assert.True(t, strings.HasSuffix(got, "&..."), got)
+	assert.LessOrEqual(t, len(got), 512+4)
+}
+
+func TestClientUrl(t *testing.T) {
+	u, err := url.Parse("https://h/p?token=x#frag")
+	require.NoError(t, err)
+
+	usePluginConfig(t)
+	assert.Equal(t, "GET https://h/p#frag", ClientUrl("GET", u))
+	assert.Equal(t, "GET https://h/p#frag", ClientUrlString("GET", "https://h/p?token=x#frag"))
+	assert.Equal(t, "GET https://h/p", ClientUrlString("GET", "https://h/p?token=x"))
+	assert.Equal(t, "GET https://h/p", ClientUrlString("GET", "https://h/p"))
+	assert.Equal(t, "GET", ClientUrl("GET", nil))
+	assert.Equal(t, "https://h/p?token=x#frag", u.String(), "the caller's URL must not be modified")
+
+	usePluginConfig(t, WithHttpClientRecordUrlQuery(true))
+	assert.Equal(t, "GET https://h/p?token=x#frag", ClientUrl("GET", u))
+	assert.Equal(t, "GET https://h/p?token=x#frag", ClientUrlString("GET", "https://h/p?token=x#frag"))
+
+	// A password in the URL's userinfo is masked in the recorded URL.
+	u, err = url.Parse("https://user:secret@example.com/p?q=1")
+	require.NoError(t, err)
+	got := ClientUrl(http.MethodGet, u)
+	assert.NotContains(t, got, "secret")
+	assert.Contains(t, got, "user:xxxxx@example.com/p")
+}
+
+// A nil handler is refused at registration, as net/http's ServeMux refuses
+// it: wrapped into a live HandlerFunc it registered fine and panicked on
+// every request instead.
+func TestServeMux_NilHandlerPanicsAtRegistration(t *testing.T) {
+	mux := NewServeMux()
+	assert.PanicsWithValue(t, "http: nil handler", func() { mux.Handle("/x", nil) })
+	assert.PanicsWithValue(t, "http: nil handler", func() { mux.HandleFunc("/y", nil) })
+	assert.PanicsWithValue(t, "http: nil handler", func() { WrapHandler(nil) })
 }

@@ -1,6 +1,8 @@
 package pphttp
 
 import (
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -119,4 +121,15 @@ func TestHttpConfigFollowsAgentRestart(t *testing.T) {
 	assert.False(t, isExcludedUrl("/old"))
 	assert.True(t, isExcludedUrl("/new"))
 	assert.True(t, IsUrlStatEnabled())
+}
+
+func TestQueryOptions_EnvAndYaml(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("Http:\n  Server:\n    RecordRequestParam: true\n"), 0o600))
+	t.Setenv("PINPOINT_GO_HTTP_CLIENT_RECORDURLQUERY", "true")
+
+	usePluginConfig(t, pinpoint.WithConfigFile(path))
+	cfg := httpCfg()
+	assert.True(t, cfg.cltUrlQuery, "env")
+	assert.True(t, cfg.srvRequestParam, "yaml")
 }

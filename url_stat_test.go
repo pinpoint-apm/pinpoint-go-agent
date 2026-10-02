@@ -106,33 +106,46 @@ func Test_urlStatSnapshotTransformsMethodLikeJavaAgent(t *testing.T) {
 func Test_makePAgentUriStatConvertsLikeJavaAgentMapper(t *testing.T) {
 	snapshot, endTime := newUrlStatTestSnapshot(10, false)
 
-	samples := []urlStatSample{
-		{url: "/index.html", statusErr: 0, elapsed: 50},
-		{url: "/index.html", statusErr: 1, elapsed: 150},
-		{url: "/main", statusErr: 0, elapsed: 350},
-		{url: "/main", statusErr: 0, elapsed: 900},
-		{url: "/error", statusErr: 1, elapsed: 1200},
-		{url: "/error", statusErr: 1, elapsed: 6000},
-	}
-	expected := makeExpectedUrlStats(samples, endTime)
-	for _, sample := range samples {
+	for _, sample := range []struct {
+		url       string
+		statusErr int
+		elapsed   int64
+	}{
+		{"/index.html", 0, 50},
+		{"/index.html", 1, 150},
+		{"/main", 0, 350},
+		{"/main", 0, 900},
+		{"/error", 1, 1200},
+		{"/error", 1, 6000},
+	} {
 		addTestUrlStat(snapshot, sample.url, "", sample.statusErr, sample.elapsed, endTime)
 	}
 
 	agentUriStat := makePAgentUriStat(snapshot).GetAgentUriStat()
-
 	assert.Equal(t, int32(urlStatBucketVersion), agentUriStat.GetBucketVersion())
-	assert.Len(t, agentUriStat.GetEachUriStat(), len(expected))
-	for _, actual := range agentUriStat.GetEachUriStat() {
-		expectedStat, ok := expected[actual.GetUri()]
-		assert.True(t, ok, "unexpected uri=%s", actual.GetUri())
-		if !ok {
-			continue
-		}
+	byUri := eachUriStatsByUri(t, agentUriStat)
+	require.Len(t, byUri, 3)
 
-		assert.Equal(t, expectedStat.timestamp, actual.GetTimestamp())
-		assertUriHistogram(t, expectedStat.total, actual.GetTotalHistogram())
-		assertUriHistogram(t, expectedStat.failed, actual.GetFailedHistogram())
+	// Buckets split at 100, 300, 500, 1000, 3000, 5000 and 8000 ms; a
+	// histogram with no samples is sent empty, not as eight zeroes.
+	for uri, want := range map[string]struct {
+		total, failed    int64
+		max, failedMax   int64
+		hist, failedHist []int32
+	}{
+		"/index.html": {200, 150, 150, 150, []int32{1, 1, 0, 0, 0, 0, 0, 0}, []int32{0, 1, 0, 0, 0, 0, 0, 0}},
+		"/main":       {1250, 0, 900, 0, []int32{0, 0, 1, 1, 0, 0, 0, 0}, nil},
+		"/error":      {7200, 7200, 6000, 6000, []int32{0, 0, 0, 0, 1, 0, 1, 0}, []int32{0, 0, 0, 0, 1, 0, 1, 0}},
+	} {
+		got := byUri[uri]
+		require.NotNil(t, got, uri)
+		assert.Equal(t, int64(1699999980000), got.GetTimestamp(), "%s: the 30s tick in ms", uri)
+		assert.Equal(t, want.total, got.GetTotalHistogram().GetTotal(), uri)
+		assert.Equal(t, want.max, got.GetTotalHistogram().GetMax(), uri)
+		assert.Equal(t, want.hist, got.GetTotalHistogram().GetHistogram(), uri)
+		assert.Equal(t, want.failed, got.GetFailedHistogram().GetTotal(), uri)
+		assert.Equal(t, want.failedMax, got.GetFailedHistogram().GetMax(), uri)
+		assert.Equal(t, want.failedHist, got.GetFailedHistogram().GetHistogram(), uri)
 	}
 }
 
@@ -181,24 +194,6 @@ func Test_spanStatusErrIsSetOnlyBySetFailure(t *testing.T) {
 	assert.Equal(t, int32(1), span.statusErr.Load())
 }
 
-type urlStatSample struct {
-	url       string
-	statusErr int
-	elapsed   int64
-}
-
-type expectedUrlStat struct {
-	timestamp int64
-	total     expectedUrlHistogram
-	failed    expectedUrlHistogram
-}
-
-type expectedUrlHistogram struct {
-	total     int64
-	max       int64
-	histogram []int32
-}
-
 func newUrlStatTestSnapshot(limit int, withMethod bool) (*urlStatSnapshot, time.Time) {
 	config := defaultConfig()
 	config.Set(CfgHttpUrlStatLimitSize, limit)
@@ -240,65 +235,6 @@ func histogramCount(histogram *urlStatHistogram) int32 {
 		count += bucketCount
 	}
 	return count
-}
-
-func makeExpectedUrlStats(samples []urlStatSample, endTime time.Time) map[string]*expectedUrlStat {
-	expected := make(map[string]*expectedUrlStat)
-	timestamp := endTime.Truncate(urlStatCollectInterval).UnixNano() / int64(time.Millisecond)
-
-	for _, sample := range samples {
-		stat := expected[sample.url]
-		if stat == nil {
-			stat = &expectedUrlStat{
-				timestamp: timestamp,
-				total:     newExpectedUrlHistogram(),
-				failed:    newExpectedUrlHistogram(),
-			}
-			expected[sample.url] = stat
-		}
-
-		stat.total.add(sample.elapsed)
-		if sample.statusErr != 0 {
-			stat.failed.add(sample.elapsed)
-		}
-	}
-
-	return expected
-}
-
-func newExpectedUrlHistogram() expectedUrlHistogram {
-	return expectedUrlHistogram{
-		histogram: make([]int32, urlStatBucketSize),
-	}
-}
-
-func (histogram *expectedUrlHistogram) add(elapsed int64) {
-	histogram.total += elapsed
-	if histogram.max < elapsed {
-		histogram.max = elapsed
-	}
-	histogram.histogram[getBucket(elapsed)]++
-}
-
-func assertUriHistogram(t *testing.T, expected expectedUrlHistogram, actual *pb.PUriHistogram) {
-	t.Helper()
-
-	assert.Equal(t, expected.total, actual.GetTotal())
-	assert.Equal(t, expected.max, actual.GetMax())
-	if expected.isEmpty() {
-		assert.Empty(t, actual.GetHistogram())
-		return
-	}
-	assert.Equal(t, expected.histogram, actual.GetHistogram())
-}
-
-func (histogram expectedUrlHistogram) isEmpty() bool {
-	for _, count := range histogram.histogram {
-		if count != 0 {
-			return false
-		}
-	}
-	return true
 }
 
 // Url stats accumulate in the agent's own urlStats, not in a package global: a
@@ -701,10 +637,8 @@ func Test_urlStatSendsTheLastTickOfABurstOnceItsWindowIsOver(t *testing.T) {
 func fixUrlStatClock(t *testing.T, at time.Time) func(time.Time) {
 	t.Helper()
 
-	prev := urlStatNow
 	now := at
-	urlStatNow = func() time.Time { return now }
-	t.Cleanup(func() { urlStatNow = prev })
+	swapForTest(t, &urlStatNow, func() time.Time { return now })
 
 	return func(to time.Time) { now = to }
 }

@@ -564,8 +564,8 @@ func TestWrapGoroutinePropagatesTraceIntoGoroutine(t *testing.T) {
 func TestPropagatesUnsampledDecisionDownstream(t *testing.T) {
 	mc, agent := startStack(t)
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return agentStatCount(s) >= 1 }, waitTimeout))
-	baseline := agentStatCount(mc.Snapshot())
+	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout))
+	baseline := len(agentStats(mc.Snapshot()))
 
 	tracer := agent.NewSpanTracerWithReader("unsampled.origin", "/unsampled-origin", mapCarrier{
 		pinpoint.HeaderSampled: "s0",

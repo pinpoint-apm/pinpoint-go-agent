@@ -2,7 +2,6 @@ package pinpoint
 
 import (
 	"context"
-	"net"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -294,12 +293,8 @@ func (c *connCounter) HandleConn(_ context.Context, s stats.ConnStats) {
 // make-before-break not one RPC sees Unavailable. The server has no services,
 // so every RPC that reaches it ends in Unimplemented.
 func Test_expiringPickFirst_rotatesConnectionsWithoutFailingRpcs(t *testing.T) {
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
 	counter := &connCounter{}
-	srv := grpc.NewServer(grpc.StatsHandler(counter))
-	go srv.Serve(lis)
-	defer srv.Stop()
+	lis := startTestServer(t, grpc.StatsHandler(counter))
 
 	conn, err := grpc.NewClient(lis.Addr().String(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -324,12 +319,8 @@ func Test_expiringPickFirst_rotatesConnectionsWithoutFailingRpcs(t *testing.T) {
 // With the policy left unselected the channel behaves as before: one
 // connection for as long as it lives.
 func Test_expiringPickFirst_notSelectedByDefault(t *testing.T) {
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
 	counter := &connCounter{}
-	srv := grpc.NewServer(grpc.StatsHandler(counter))
-	go srv.Serve(lis)
-	defer srv.Stop()
+	lis := startTestServer(t, grpc.StatsHandler(counter))
 
 	cfg, err := NewConfig(WithAppName("TestApp"))
 	require.NoError(t, err)

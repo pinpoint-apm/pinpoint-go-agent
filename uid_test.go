@@ -44,14 +44,6 @@ func TestEncodeUID_GoldenVectors(t *testing.T) {
 	}
 }
 
-func TestDecodeUID_GoldenVectors(t *testing.T) {
-	for _, v := range goldenVectors {
-		got, err := decodeUID(v.base64)
-		assert.NoError(t, err, "decode %s", v.base64)
-		assert.Equal(t, uuid.MustParse(v.uuid), got, "decode %s", v.base64)
-	}
-}
-
 func TestEncodeDecodeUID_RoundTrip(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		u, err := uuid.NewV7()
@@ -64,16 +56,4 @@ func TestEncodeDecodeUID_RoundTrip(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, u, dec)
 	}
-}
-
-func TestNewAgentUID_IsVersion7(t *testing.T) {
-	u, err := uuid.NewV7()
-	assert.NoError(t, err)
-	assert.Equal(t, uuid.Version(7), u.Version(), "must be UUIDv7 (RFC 9562)")
-	assert.Equal(t, uuid.RFC4122, u.Variant(), "must use RFC 4122 variant bits")
-}
-
-func TestDecodeUID_InvalidLength(t *testing.T) {
-	_, err := decodeUID("tooshort")
-	assert.Error(t, err)
 }

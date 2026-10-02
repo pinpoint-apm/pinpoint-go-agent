@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -146,10 +147,10 @@ func TestReconnectsPingStreamAfterResponseError(t *testing.T) {
 	// reconnect from a duplicate registration.
 	s := mc.Snapshot()
 	require.GreaterOrEqual(t, len(s.PingStreams), 2)
-	first, ok := s.PingStreams[0].Int64("socketid")
-	require.True(t, ok)
-	second, ok := s.PingStreams[1].Int64("socketid")
-	require.True(t, ok)
+	first, err := strconv.ParseInt(s.PingStreams[0].ValueOr("socketid", ""), 10, 64)
+	require.NoError(t, err)
+	second, err := strconv.ParseInt(s.PingStreams[1].ValueOr("socketid", ""), 10, 64)
+	require.NoError(t, err)
 	assert.Equal(t, first+1, second)
 	assert.True(t, agent.Enable())
 }

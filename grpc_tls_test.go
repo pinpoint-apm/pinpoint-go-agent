@@ -57,13 +57,7 @@ func startTLSCollector(t *testing.T) (port int, certFile string) {
 	creds, err := credentials.NewServerTLSFromFile(certFile, keyFile)
 	assert.NoError(t, err)
 
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	assert.NoError(t, err)
-
-	srv := grpc.NewServer(grpc.Creds(creds))
-	go srv.Serve(lis)
-	t.Cleanup(srv.Stop)
-	return lis.Addr().(*net.TCPAddr).Port, certFile
+	return startTestServer(t, grpc.Creds(creds)).Addr().(*net.TCPAddr).Port, certFile
 }
 
 func tlsTestConfig(t *testing.T, port int, opts ...ConfigOption) *Config {
@@ -122,13 +116,7 @@ func Test_connectCollector_badTrustCertFailsLoud(t *testing.T) {
 }
 
 func Test_connectCollector_defaultInsecure(t *testing.T) {
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	assert.NoError(t, err)
-	srv := grpc.NewServer()
-	go srv.Serve(lis)
-	t.Cleanup(srv.Stop)
-
-	c := tlsTestConfig(t, lis.Addr().(*net.TCPAddr).Port)
+	c := tlsTestConfig(t, startTestServer(t).Addr().(*net.TCPAddr).Port)
 	assert.False(t, c.Bool(CfgCollectorGrpcSslEnable))
 
 	conn, err := connectCollector(c, CfgCollectorAgentPort)

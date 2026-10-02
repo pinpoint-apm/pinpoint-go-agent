@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BIN_DIR=""
+BIN_DIR="$SCRIPT_DIR/bin"
 HOST="127.0.0.1"
 PORT=8090
 DOWNSTREAM_PORT=8091
@@ -14,12 +14,9 @@ LOAD_CONCURRENCY=5
 LOAD_RPS=""
 MAX_ERROR_RATE=""
 PROFILE=false
-PROFILE_OUTPUT=""
-PROFILE_SECONDS=""
 LOCAL_COLLECTOR=false
 KEEP_LOGS=false
 LOG_DIR=""
-SKIP_BUILD=false
 
 usage() {
     cat <<USAGE
@@ -28,8 +25,6 @@ Usage: $0 [OPTIONS]
 Build and run the live-collector end-to-end suite.
 
 Options:
-      --bin-dir DIR         Directory holding prebuilt binaries (default: build here)
-      --skip-build          Reuse the binaries already in --bin-dir
       --host HOST           HTTP bind/check host (default: $HOST)
       --port PORT           Upstream HTTP port (default: $PORT)
       --downstream-port N   Downstream HTTP port (default: $DOWNSTREAM_PORT)
@@ -49,8 +44,6 @@ Options:
                             (default: 0 -- any failed request fails the run)
       --profile             Capture a CPU profile of the upstream server during
                             the load phase through its pprof endpoint
-      --profile-output PATH Profile output file (default: under the log dir)
-      --profile-seconds N   Profile duration (default: the load duration)
       --log-dir DIR         Store process logs in DIR
       --keep-logs           Keep an auto-created log directory on success
   -h, --help                Show this help
@@ -63,8 +56,6 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --bin-dir) BIN_DIR=$2; shift 2 ;;
-        --skip-build) SKIP_BUILD=true; shift ;;
         --host) HOST=$2; shift 2 ;;
         --port) PORT=$2; shift 2 ;;
         --downstream-port) DOWNSTREAM_PORT=$2; shift 2 ;;
@@ -77,8 +68,6 @@ while [[ $# -gt 0 ]]; do
         --load-rps) LOAD_RPS=$2; shift 2 ;;
         --max-error-rate) MAX_ERROR_RATE=$2; shift 2 ;;
         --profile) PROFILE=true; shift ;;
-        --profile-output) PROFILE_OUTPUT=$2; shift 2 ;;
-        --profile-seconds) PROFILE_SECONDS=$2; shift 2 ;;
         --log-dir) LOG_DIR=$2; shift 2 ;;
         --keep-logs) KEEP_LOGS=true; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -91,10 +80,6 @@ if [[ -n "$LOAD_RPS" && -z "$LOAD_MODE" ]]; then
 fi
 if $PROFILE && [[ -z "$LOAD_MODE" ]]; then
     echo "--profile requires a load phase (--load-mode or --load-rps)." >&2
-    exit 2
-fi
-if ! $PROFILE && [[ -n "$PROFILE_OUTPUT$PROFILE_SECONDS" ]]; then
-    echo "--profile-output/--profile-seconds require --profile." >&2
     exit 2
 fi
 if [[ -n "$MAX_ERROR_RATE" && -z "$LOAD_MODE" ]]; then
@@ -113,16 +98,8 @@ elif [[ -z "${PINPOINT_GO_COLLECTOR_HOST:-}" ]]; then
     exit 2
 fi
 
-if [[ -z "$BIN_DIR" ]]; then
-    BIN_DIR="$SCRIPT_DIR/bin"
-fi
-mkdir -p "$BIN_DIR"
-BIN_DIR="$(cd "$BIN_DIR" && pwd)"
-
-if ! $SKIP_BUILD; then
-    echo "Building end-to-end binaries into $BIN_DIR"
-    (cd "$SCRIPT_DIR" && go build -o "$BIN_DIR/" ./cmd/...)
-fi
+echo "Building end-to-end binaries into $BIN_DIR"
+(cd "$SCRIPT_DIR" && go build -o "$BIN_DIR/" ./cmd/...)
 
 UPSTREAM_BIN="$BIN_DIR/upstream"
 DOWNSTREAM_BIN="$BIN_DIR/downstream"
@@ -296,15 +273,12 @@ if [[ -n "$LOAD_MODE" ]]; then
 
     PROFILE_PID=""
     if $PROFILE; then
-        if [[ -z "$PROFILE_OUTPUT" ]]; then
-            PROFILE_OUTPUT="$LOG_DIR/profiles/${LOAD_KIND}-${RUN_SUFFIX}.pprof"
-            KEEP_LOGS=true
-        fi
+        PROFILE_OUTPUT="$LOG_DIR/profiles/${LOAD_KIND}-${RUN_SUFFIX}.pprof"
+        KEEP_LOGS=true
         mkdir -p "$(dirname "$PROFILE_OUTPUT")"
-        SECONDS_ARG="${PROFILE_SECONDS:-$LOAD_DURATION}"
-        echo "Capturing a ${SECONDS_ARG}s CPU profile to $PROFILE_OUTPUT"
-        curl -sS --max-time $((SECONDS_ARG + 30)) -o "$PROFILE_OUTPUT" \
-            "http://$HOST:$PORT/debug/pprof/profile?seconds=$SECONDS_ARG" &
+        echo "Capturing a ${LOAD_DURATION}s CPU profile to $PROFILE_OUTPUT"
+        curl -sS --max-time $((LOAD_DURATION + 30)) -o "$PROFILE_OUTPUT" \
+            "http://$HOST:$PORT/debug/pprof/profile?seconds=$LOAD_DURATION" &
         PROFILE_PID=$!
     fi
 

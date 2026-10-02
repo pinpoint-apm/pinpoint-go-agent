@@ -579,33 +579,6 @@ func BenchmarkGrpcMetadataContextPing(b *testing.B) {
 	}
 }
 
-// BenchmarkMakePSpanMessageBatch measures span serialization on the sender
-// goroutine: building the protobuf PSpanMessage for a final span with several
-// events. Exercises the preallocated span-event slice and deferred annotation
-// construction.
-func BenchmarkMakePSpanMessageBatch(b *testing.B) {
-	a := benchAgent()
-	s := newSampledSpan(a, "operation", "/bench/rpc")
-	for i := 0; i < 5; i++ {
-		s.NewSpanEvent("event").EndSpanEvent()
-	}
-	chunk := &spanChunk{
-		span:       s,
-		eventChunk: s.spanEvents,
-		final:      true,
-		keyTime:    s.startTime.UnixMilli(),
-	}
-	batch := []*spanChunk{chunk}
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		builder := acquireSpanMessageBuilder()
-		_ = builder.makePSpanMessageBatch(batch)
-		releaseSpanMessageBuilder(builder)
-	}
-}
-
 // BenchmarkSpanEventSetError measures the error-recording path (cacheError +
 // errorString) without call-stack collection (errorTraceCallStack defaults off).
 func BenchmarkSpanEventSetError(b *testing.B) {

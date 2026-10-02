@@ -64,7 +64,6 @@ collector in [test/it](../it/README.md).
 
 ```bash
 ./run_e2e.sh
-./run_e2e.sh --skip-build            # reuse ./bin
 go build -o bin/ ./cmd/...           # build by hand
 ```
 
@@ -203,9 +202,9 @@ duration of the load phase:
   --load-concurrency 100 --profile --keep-logs
 ```
 
-The profile is written under the run's log directory (kept automatically) and
-read with `go tool pprof <file>`. `--profile-output` selects another location
-and `--profile-seconds` shortens the capture. Against an already-running stack:
+The profile covers the load duration, is written under the run's log directory
+(kept automatically) and is read with `go tool pprof <file>`. Against an
+already-running stack:
 
 ```bash
 go tool pprof http://127.0.0.1:8090/debug/pprof/profile?seconds=30

@@ -285,13 +285,10 @@ func TestNewConfig_ConfigFileProfile(t *testing.T) {
 		WithActiveProfile("real"),
 	}
 
-	oldArgs := os.Args
-	defer func() { os.Args = oldArgs }()
-
-	os.Args = []string{
+	swapForTest(t, &os.Args, []string{
 		"pinpoint_go_agent",
 		"--pinpoint-configfile=example/pinpoint-config.yaml",
-	}
+	})
 	t.Setenv("PINPOINT_GO_ACTIVEPROFILE", "dev")
 
 	c, _ := NewConfig(opts...)
@@ -405,10 +402,7 @@ func TestNewConfig_EnvVarArg(t *testing.T) {
 // flag without a value is dropped with a warning. The application's own
 // arguments are never consumed.
 func TestNewConfig_CmdLineArg_ValueForms(t *testing.T) {
-	oldArgs := os.Args
-	defer func() { os.Args = oldArgs }()
-
-	os.Args = []string{
+	swapForTest(t, &os.Args, []string{
 		"app",
 		"--pinpoint-applicationname", "SpacedApp",
 		"--pinpoint-collector-agentport", "7001",
@@ -419,7 +413,7 @@ func TestNewConfig_CmdLineArg_ValueForms(t *testing.T) {
 		"-x",
 		"--pinpoint-log-level", "--pinpoint-sampling-counterrate=3", // no value: dropped, the next flag still applies
 		"--pinpoint-span-maxcallstackdepth", "-1", // a value starting with "-" needs the "=" form
-	}
+	})
 
 	c, err := NewConfig()
 	require.NoError(t, err)
@@ -440,10 +434,7 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 		WithConfigFile("example/test-config.yaml"),
 	}
 
-	oldArgs := os.Args
-	defer func() { os.Args = oldArgs }()
-
-	os.Args = []string{
+	swapForTest(t, &os.Args, []string{
 		"pinpoint_go_agent",
 		"--app-arg1=1",
 		"--app-arg2=2",
@@ -490,7 +481,7 @@ func TestNewConfig_CmdLineArg(t *testing.T) {
 		"--app-arg5=5",
 		"--pinpoint-error-tracecallstack=true",
 		"--pinpoint-error-callstackdepth=100",
-	}
+	})
 
 	c, _ := NewConfig(opts...)
 	defer c.Close()
@@ -1571,4 +1562,14 @@ func Test_LogRotationDefaults(t *testing.T) {
 	c, err := NewConfig(WithAppName("logRotationApp"), WithLogMaxSize(0))
 	assert.NoError(t, err)
 	assert.Equal(t, 10, c.Int(CfgLogMaxSize), "Log.MaxSize below 1 is restored to the default")
+}
+
+// A process exec'd with no argv at all has an empty os.Args; slicing it from
+// 1 panicked NewConfig and the registration goroutine.
+func TestEmptyArgsDoNotPanic(t *testing.T) {
+	swapForTest(t, &os.Args, nil)
+
+	config := defaultConfig()
+	assert.NotPanics(t, func() { assert.Empty(t, config.parseCmdArgs()) })
+	assert.NotPanics(t, func() { assert.Empty(t, makeServerMetaData(config).VmArg) })
 }

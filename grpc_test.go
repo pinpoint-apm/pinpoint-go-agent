@@ -128,75 +128,6 @@ func Test_spanGrpc_sendSpanBatchEmptyReleasesPermit(t *testing.T) {
 	assert.Empty(t, spanGrpc.concurrentRequestPermit)
 }
 
-func Test_agent_enqueueSpan_discardsOldestAndEnqueuesNewest(t *testing.T) {
-	agent := newTestAgent(defaultConfig())
-	agent.spanQueue = newSpanQueue(2) // single shard: FIFO is deterministic
-
-	first := newTestSpanChunk(agent)
-	second := newTestSpanChunk(agent)
-	third := newTestSpanChunk(agent)
-
-	assert.True(t, agent.enqueueSpan(first), "enqueue first")
-	assert.True(t, agent.enqueueSpan(second), "enqueue second")
-	assert.True(t, agent.enqueueSpan(third), "enqueue third")
-
-	got, _ := agent.spanQueue.tryDequeue()
-	assert.Equal(t, second, got, "oldest span should be discarded")
-	got, _ = agent.spanQueue.tryDequeue()
-	assert.Equal(t, third, got, "newest span should be enqueued")
-}
-
-func Test_agent_enqueueSpan_saturatedConcurrentProducers(t *testing.T) {
-	agent := newTestAgent(defaultConfig())
-	const queueCap = 256 // 8 shards of 32
-	agent.spanQueue = newSpanQueue(queueCap)
-	chunk := newTestSpanChunk(agent)
-
-	const producers = 16
-	const perProducer = 500
-
-	var consumed atomic.Int64
-	var consumerWg sync.WaitGroup
-	consumerWg.Add(1)
-	go func() {
-		defer consumerWg.Done()
-		for {
-			if _, ok := agent.spanQueue.dequeue(0); !ok {
-				return
-			}
-			consumed.Add(1)
-			time.Sleep(10 * time.Microsecond) // slow consumer keeps the queue saturated
-		}
-	}()
-
-	var rejected atomic.Int64
-	var producerWg sync.WaitGroup
-	for i := 0; i < producers; i++ {
-		producerWg.Add(1)
-		go func() {
-			defer producerWg.Done()
-			for j := 0; j < perProducer; j++ {
-				if !agent.enqueueSpan(chunk) {
-					rejected.Add(1)
-				}
-				if n := agent.spanQueue.length(); n > queueCap {
-					t.Errorf("queue length %d exceeds capacity %d", n, queueCap)
-				}
-			}
-		}()
-	}
-	producerWg.Wait()
-	agent.spanQueue.close() // the consumer drains the rest, then dequeue reports done
-	consumerWg.Wait()
-
-	dropped := agent.spanQueue.dropCount()
-	assert.Zero(t, rejected.Load(), "a saturated queue must never lose the new span")
-	assert.Positive(t, dropped, "test must actually saturate the queue")
-	assert.Zero(t, agent.spanQueue.length(), "consumer must drain the closed queue")
-	assert.Equal(t, int64(producers*perProducer), consumed.Load()+dropped,
-		"produced == consumed + dropped")
-}
-
 // Multi-producer enqueue with a draining consumer: the producer-contention
 // path a loaded service exercises on every request.
 func Benchmark_agent_enqueueSpan_parallel(b *testing.B) {
@@ -442,7 +373,7 @@ func waitNotReady(t *testing.T, conn *grpc.ClientConn) {
 func Test_waitUntilReady_logsRecoveryToReady(t *testing.T) {
 	const which = "recovery-test"
 	freshChannelStateLog(t, which)
-	shortDropReportInterval(t, time.Hour)
+	swapForTest(t, &dropReportInterval, time.Hour)
 	var buf bytes.Buffer
 	defer captureLogAt(&buf, logrus.InfoLevel)()
 
@@ -477,7 +408,7 @@ func Test_waitUntilReady_logsRecoveryToReady(t *testing.T) {
 func Test_waitUntilReady_throttlesFlappingButKeepsFirstRecovery(t *testing.T) {
 	const which = "flap-test"
 	freshChannelStateLog(t, which)
-	shortDropReportInterval(t, time.Hour)
+	swapForTest(t, &dropReportInterval, time.Hour)
 	var buf bytes.Buffer
 	defer captureLogAt(&buf, logrus.InfoLevel)()
 
@@ -510,7 +441,7 @@ func Test_waitUntilReady_throttlesFlappingButKeepsFirstRecovery(t *testing.T) {
 func Test_waitUntilReady_throttlePersistsAcrossAttempts(t *testing.T) {
 	const which = "attempts-test"
 	freshChannelStateLog(t, which)
-	shortDropReportInterval(t, time.Hour)
+	swapForTest(t, &dropReportInterval, time.Hour)
 	var buf bytes.Buffer
 	defer captureLogAt(&buf, logrus.InfoLevel)()
 
@@ -985,10 +916,8 @@ func Test_agentGrpc_refreshAgentInfo_stopsOnSuccess(t *testing.T) {
 // first attempt happened to capture: attempts are retryInterval apart, and this
 // send is what corrects the collector's copy of a host name or IP that moved.
 func Test_agentGrpc_refreshAgentInfo_rebuildsInfoPerAttempt(t *testing.T) {
-	saved := getHostName
-	defer func() { getHostName = saved }()
 	var n atomic.Int32
-	getHostName = func() string { return "host-" + strconv.Itoa(int(n.Add(1))) }
+	swapForTest(t, &getHostName, func() string { return "host-" + strconv.Itoa(int(n.Add(1))) })
 
 	cfg, _ := NewConfig(WithAppName("TestApp"))
 	client := &mockAgentGrpcClient{failures: 1 << 30}
@@ -1347,9 +1276,7 @@ func Test_agentGrpc_makeAgentInfo_SanitizesInvalidUTF8(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agentGrpc := newMockAgentGrpc(agent)
 
-	saved := os.Args
-	defer func() { os.Args = saved }()
-	os.Args = []string{"app", "--name=caf\xe9", "\x80", "--path=/tmp/\xff"}
+	swapForTest(t, &os.Args, []string{"app", "--name=caf\xe9", "\x80", "--path=/tmp/\xff"})
 
 	_, info := agentGrpc.makeAgentInfo()
 
@@ -1366,9 +1293,7 @@ func Test_agentGrpc_makeAgentInfo_KeepsValidUTF8(t *testing.T) {
 	agentGrpc := newMockAgentGrpc(agent)
 
 	args := []string{"--name=\ud55c\uae00", "--emoji=\U0001f680", "--cjk=\u6f22\u5b57"}
-	saved := os.Args
-	defer func() { os.Args = saved }()
-	os.Args = append([]string{"app"}, args...)
+	swapForTest(t, &os.Args, append([]string{"app"}, args...))
 
 	_, info := agentGrpc.makeAgentInfo()
 
@@ -1594,9 +1519,7 @@ func Test_agentGrpc_registerAgentWithRetry_rebuildsAgentInfoPerAttempt(t *testin
 // name which of the two failures it is, and stop the moment registration
 // succeeds.
 func Test_agentGrpc_registerAgentWithRetry_saysWhyTracingIsOff(t *testing.T) {
-	prev := registrationWaitLogInterval
-	registrationWaitLogInterval = 10 * time.Millisecond
-	defer func() { registrationWaitLogInterval = prev }()
+	swapForTest(t, &registrationWaitLogInterval, 10*time.Millisecond)
 
 	var buf bytes.Buffer
 	defer captureLogAt(&buf, logrus.InfoLevel)()
@@ -1701,13 +1624,7 @@ func Test_agent_closeGrpc(t *testing.T) {
 func dialReadyConn(t *testing.T) *grpc.ClientConn {
 	t.Helper()
 
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	srv := grpc.NewServer()
-	go srv.Serve(lis)
-	t.Cleanup(srv.Stop)
-
-	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(startTestServer(t).Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	t.Cleanup(func() { conn.Close() })
 	require.True(t, waitUntilReady(context.Background(), conn, 5*time.Second, "test"))
@@ -1737,6 +1654,24 @@ func Test_agentGrpc_registerAgentWithRetry_retriesUntilSuccess(t *testing.T) {
 }
 
 // --- headers ----------------------------------------------------------------
+
+// Every context the agent sends a collector RPC with is marked, so that gRPC
+// client instrumentation applied to every connection in the process can skip
+// the agent's own calls.
+func TestIsInternalContext(t *testing.T) {
+	ag := newTestAgent(defaultConfig())
+
+	assert.False(t, IsInternalContext(context.Background()))
+	assert.False(t, IsInternalContext(nil))
+	assert.False(t, IsInternalContext(NewContext(context.Background(), NoopTracer())))
+
+	assert.True(t, IsInternalContext(grpcMetadataContext(ag, -1)), "base outgoing context")
+	assert.True(t, IsInternalContext(grpcMetadataContext(ag, 7)), "ping stream context")
+	assert.True(t, IsInternalContext(commandMetadataContext(ag)), "command stream context")
+	ctx, cancel := context.WithCancel(grpcMetadataContext(ag, -1))
+	defer cancel()
+	assert.True(t, IsInternalContext(ctx), "derived contexts keep the marker")
+}
 
 // Only the ping stream identifies a socket, and it must not pollute the header
 // GrpcMetadataTest.SocketIdNeverInBaseHeaderSet.

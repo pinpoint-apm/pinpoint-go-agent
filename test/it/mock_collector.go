@@ -33,18 +33,6 @@ const (
 	EndpointStat
 )
 
-func (e Endpoint) String() string {
-	switch e {
-	case EndpointAgent:
-		return "agent"
-	case EndpointSpan:
-		return "span"
-	case EndpointStat:
-		return "stat"
-	}
-	return "unknown"
-}
-
 // Rpc identifies an individual RPC for deterministic fault injection.
 type Rpc string
 
@@ -93,19 +81,6 @@ func (m RpcMetadata) ValueOr(key, def string) string {
 func (m RpcMetadata) Has(key string) bool {
 	_, ok := m.Value(key)
 	return ok
-}
-
-// Int64 returns the metadata value for key parsed as an int64.
-func (m RpcMetadata) Int64(key string) (int64, bool) {
-	v, ok := m.Value(key)
-	if !ok {
-		return 0, false
-	}
-	i, err := strconv.ParseInt(v, 10, 64)
-	if err != nil {
-		return 0, false
-	}
-	return i, true
 }
 
 // Received is a protobuf received by the mock collector plus its call headers.
@@ -311,23 +286,19 @@ func (c *MockCollector) StartEndpoint(e Endpoint) error {
 
 // BeginOutage enters a sustained collector outage: the command stream is
 // released at once, every other open stream fails at its next message, and
-// every subsequent RPC on all three endpoints fails with code until EndOutage
+// every subsequent RPC on all three endpoints fails with Unavailable until EndOutage
 // is called. Unlike FailNext the fault is not consumed per call; unlike
 // StopEndpoint the ports stay open, so the agent observes an unhealthy
 // collector rather than a dead host. Queued FailNext/TimeoutNext/RejectNext
 // faults are left untouched and apply again once the outage ends, and every
 // failed call is still recorded in Snapshot.RpcResults.
-func (c *MockCollector) BeginOutage(code ...codes.Code) {
-	st := status.New(codes.Unavailable, "injected collector outage")
-	if len(code) > 0 {
-		st = status.New(code[0], "injected collector outage")
-	}
+func (c *MockCollector) BeginOutage() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.outageErr != nil {
 		return
 	}
-	c.outageErr = st
+	c.outageErr = status.New(codes.Unavailable, "injected collector outage")
 	c.outageCh = make(chan struct{})
 	close(c.outageCh)
 }
@@ -413,16 +384,6 @@ func (c *MockCollector) SendActiveThreadCountCommand(requestID int32) {
 		RequestId: requestID,
 		Command: &pb.PCmdRequest_CommandActiveThreadCount{
 			CommandActiveThreadCount: &pb.PCmdActiveThreadCount{},
-		},
-	})
-}
-
-// SendActiveThreadDumpCommand queues an ACTIVE_THREAD_DUMP command.
-func (c *MockCollector) SendActiveThreadDumpCommand(requestID int32, limit int32) {
-	c.SendCommand(&pb.PCmdRequest{
-		RequestId: requestID,
-		Command: &pb.PCmdRequest_CommandActiveThreadDump{
-			CommandActiveThreadDump: &pb.PCmdActiveThreadDump{Limit: limit},
 		},
 	})
 }
