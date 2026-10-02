@@ -815,6 +815,16 @@ func Test_convertCfgValue_IntTakesOnlyIntegralFloats(t *testing.T) {
 	}
 }
 
+// A flag, an environment variable or a properties file gives an int option a
+// string, which is read in base 10: "010" is ten, not octal eight.
+func Test_convertCfgValue_IntStringIsDecimal(t *testing.T) {
+	got, err := convertCfgValue(CfgInt, "010")
+	assert.NoError(t, err)
+	assert.Equal(t, 10, got)
+	_, err = convertCfgValue(CfgInt, "0x10")
+	assert.Error(t, err)
+}
+
 // The snapshot holds the call stack limits as int32, so a value above
 // MaxInt32 must mean unlimited like -1 rather than wrap to 0 and drop every
 // span event.
@@ -1071,10 +1081,10 @@ func TestNewConfig_MalformedValueKeepsCurrentValue(t *testing.T) {
 			},
 		},
 		{
-			// cast.ToStringSliceE would wrap a scalar into a one-element slice,
-			// so convertCfgValue rejects anything that is not a sequence - a
-			// comma separated string excepted, which is how a list is spelled
-			// in an environment variable.
+			// convertCfgValue rejects anything that is not a sequence rather
+			// than wrap a scalar into a one-element slice - a comma separated
+			// string excepted, which is how a list is spelled in an
+			// environment variable.
 			name:     "string slice option given a scalar",
 			body:     "Span:\n  IgnoreErrors: 42\n",
 			cfgName:  CfgSpanIgnoreErrors,

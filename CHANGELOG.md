@@ -98,8 +98,8 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   the file's modification time or size changes, checked every second, so a
   change applies within that. The direct fsnotify dependency and the platform
   watch code with its failure modes (an inotify queue overflow, a directory
-  watch for unlink+rewrite savers) are gone; viper still requires fsnotify, so
-  the module stays in the graph as an indirect dependency.
+  watch for unlink+rewrite savers) are gone, and with viper the module leaves
+  the graph.
 - **The plugin examples live in the root `example` module** (`example/<plugin>`)
   instead of inside each plugin module. A plugin's go.mod no longer requires
   `plugin/http` (or, for `plugin/gorm`, `plugin/mysql` and the mysql driver) for
@@ -191,6 +191,12 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   (`Test_MetadataRetryBudget`), mirrored in the C++ suite:
   both ports drop a `PResult.success=false` reply where Java retries it, so
   a change in either port is now a deliberate joint change.
+- **`github.com/spf13/cast` is no longer a dependency**; the agent converts
+  option values itself, through the text a value is written as, so every
+  source reads alike. An int option reads `010` as 10, where cast read octal 8,
+  and rejects `0x10`, `1_000` and `10.0` with the usual "is not a valid int"
+  warning; a bool option takes the numbers 1 and 0 but no other, and a number
+  option no longer takes a bool. A YAML or JSON number is read as before.
 
 ### Added
 

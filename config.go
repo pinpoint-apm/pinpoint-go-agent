@@ -10,13 +10,13 @@ import (
 	"reflect"
 	"runtime/debug"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"github.com/spf13/cast"
 	"golang.org/x/time/rate"
 	"gopkg.in/yaml.v3"
 )
@@ -601,28 +601,28 @@ func (config *Config) Set(cfgName string, value interface{}) {
 
 // Int returns an integer value for the specified configuration item.
 func (config *Config) Int(cfgName string) int {
-	return cast.ToInt(config.load().values[cfgName])
+	return valueAs[int](config.load().values[cfgName])
 }
 
 // Float returns a float value for the specified configuration item.
 func (config *Config) Float(cfgName string) float64 {
-	return cast.ToFloat64(config.load().values[cfgName])
+	return valueAs[float64](config.load().values[cfgName])
 }
 
 // String returns a string value for the specified configuration item.
 func (config *Config) String(cfgName string) string {
-	return cast.ToString(config.load().values[cfgName])
+	return valueAs[string](config.load().values[cfgName])
 }
 
 // StringSlice returns a string slice value for the specified configuration item.
 // The returned slice belongs to the published snapshot - copy it before writing.
 func (config *Config) StringSlice(cfgName string) []string {
-	return cast.ToStringSlice(config.load().values[cfgName])
+	return valueAs[[]string](config.load().values[cfgName])
 }
 
 // Bool returns a boolean value for the specified configuration item.
 func (config *Config) Bool(cfgName string) bool {
-	return cast.ToBool(config.load().values[cfgName])
+	return valueAs[bool](config.load().values[cfgName])
 }
 
 // staged reads a value straight out of the cfgMap staging area. Only the
@@ -636,11 +636,11 @@ func (config *Config) staged(cfgName string) interface{} {
 }
 
 func (config *Config) stagedInt(cfgName string) int {
-	return cast.ToInt(config.staged(cfgName))
+	return valueAs[int](config.staged(cfgName))
 }
 
 func (config *Config) stagedString(cfgName string) string {
-	return cast.ToString(config.staged(cfgName))
+	return valueAs[string](config.staged(cfgName))
 }
 
 // NewConfig creates a Config populated with default settings, command line arguments,
@@ -723,8 +723,8 @@ func (config *Config) applyLogging(sources *cfgSources) {
 		}
 		return config.cfgMap[name].value
 	}
-	logger.apply(cast.ToString(resolve(CfgLogLevel)), cast.ToString(resolve(CfgLogOutput)),
-		cast.ToInt(resolve(CfgLogMaxSize)), cast.ToInt(resolve(CfgLogMaxBackups)))
+	logger.apply(valueAs[string](resolve(CfgLogLevel)), valueAs[string](resolve(CfgLogOutput)),
+		valueAs[int](resolve(CfgLogMaxSize)), valueAs[int](resolve(CfgLogMaxBackups)))
 }
 
 func defaultConfig() *Config {
@@ -807,9 +807,9 @@ func (config *Config) parseCmdArgs() map[string]string {
 
 func (config *Config) loadConfigFile(sources *cfgSources) *configFile {
 	item := config.cfgMap[CfgConfigFile]
-	cfgFile := cast.ToString(item.value)
+	cfgFile := valueAs[string](item.value)
 	if value, _, ok := sources.lookup(CfgConfigFile, item); ok {
-		cfgFile = cast.ToString(value)
+		cfgFile = valueAs[string](value)
 	}
 	if cfgFile == "" {
 		return newConfigFile("")
@@ -1076,9 +1076,9 @@ func configFileStamp(path string) (fileStamp, bool) {
 
 func (config *Config) loadProfile(sources *cfgSources) *configFile {
 	item := config.cfgMap[CfgActiveProfile]
-	profile := cast.ToString(item.value)
+	profile := valueAs[string](item.value)
 	if value, _, ok := sources.lookup(CfgActiveProfile, item); ok {
-		profile = cast.ToString(value)
+		profile = valueAs[string](value)
 	}
 	if profile == "" {
 		return nil
@@ -1115,46 +1115,98 @@ func cfgTypeName(valueType int) string {
 }
 
 // convertCfgValue coerces a raw config value to the type its option was
-// registered with, using the strict cast.To*E variants. The lenient cast.To*
-// the accessors call turns anything it cannot parse into the zero value.
-// Strict conversion keeps an invalid sampling rate from silently disabling
+// registered with. A value that does not convert is an error rather than the
+// zero value, which keeps an invalid sampling rate from silently disabling
 // tracing.
+//
+// A scalar converts through the text it is written as in a file or on the
+// command line, so every source reads alike: an int is base 10 ("010" is
+// ten), and a float converts to an int only when it holds one - how a JSON
+// file spells every number - where int(f) would truncate a fraction or, past
+// the int range, take a value that differs between CPUs.
 func convertCfgValue(valueType int, value interface{}) (interface{}, error) {
+	if valueType == CfgStringSlice {
+		return toStringSlice(value)
+	}
+	s, err := scalarString(value)
+	if err != nil {
+		return nil, err
+	}
 	switch valueType {
 	case CfgInt:
-		// cast.ToIntE converts a float with int(f), which truncates a
-		// fraction and is implementation-defined for a value int cannot hold:
-		// .inf or 1e20 from a config file became MaxInt64 on arm64 and
-		// MinInt64 on amd64, so one file passed the range checks on one CPU
-		// and not on the other. Only a float holding an int converts.
-		if f, ok := value.(float32); ok {
-			value = float64(f)
-		}
-		if f, ok := value.(float64); ok && (f != math.Trunc(f) || f < math.MinInt || f >= math.MaxInt) {
-			return nil, fmt.Errorf("unable to cast %v to int", f)
-		}
-		return cast.ToIntE(value)
+		return strconv.Atoi(s)
 	case CfgFloat:
-		return cast.ToFloat64E(value)
+		return strconv.ParseFloat(s, 64)
 	case CfgBool:
-		return cast.ToBoolE(value)
-	case CfgStringSlice:
-		// A plain string is how a config file or an environment variable
-		// spells a list, comma separated.
-		if str, ok := value.(string); ok {
-			return strings.Split(str, ","), nil
-		}
-		// cast.ToStringSliceE turns any other single value it can stringify
-		// into a one-element slice, so a bare scalar where a list belongs -
-		// a list written without its dashes, say - would pass as a one-entry
-		// list instead of being reported. Only an actual sequence converts.
-		if k := reflect.ValueOf(value).Kind(); k != reflect.Slice && k != reflect.Array {
-			return nil, fmt.Errorf("unable to cast %#v of type %T to []string", value, value)
-		}
-		return cast.ToStringSliceE(value)
-	default:
-		return cast.ToStringE(value)
+		return strconv.ParseBool(s)
 	}
+	return s, nil
+}
+
+// scalarString is a scalar config value as text; a float is written out in
+// full rather than as 1e+06.
+func scalarString(value interface{}) (string, error) {
+	switch v := value.(type) {
+	case string:
+		return v, nil
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64), nil
+	case float32:
+		return strconv.FormatFloat(float64(v), 'f', -1, 32), nil
+	case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return fmt.Sprint(v), nil
+	}
+	return "", fmt.Errorf("%#v of type %T is not a scalar", value, value)
+}
+
+// toStringSlice reads a string as a comma separated list, which is how a
+// config file or an environment variable spells one. Any other value must be
+// an actual sequence: a bare scalar where a list belongs - a list written
+// without its dashes, say - is reported instead of passing as a one-entry
+// list. An element that is not a scalar reads as "".
+func toStringSlice(value interface{}) ([]string, error) {
+	switch v := value.(type) {
+	case []string:
+		return v, nil
+	case string:
+		return strings.Split(v, ","), nil
+	}
+	rv := reflect.ValueOf(value)
+	if k := rv.Kind(); k != reflect.Slice && k != reflect.Array {
+		return nil, fmt.Errorf("%#v of type %T is not a list", value, value)
+	}
+	var list []string
+	for i := range rv.Len() {
+		s, _ := scalarString(rv.Index(i).Interface())
+		list = append(list, s)
+	}
+	return list, nil
+}
+
+// valueAs reads a config value as T. Values are converted to their option's
+// type when they are staged, so this is a type assertion; anything else - an
+// option read as a type it was not registered with - goes through
+// convertCfgValue and reads as the zero value when it does not convert.
+func valueAs[T int | float64 | bool | string | []string](value interface{}) T {
+	v, ok := value.(T)
+	if ok {
+		return v
+	}
+	valueType := CfgString
+	switch any(v).(type) {
+	case int:
+		valueType = CfgInt
+	case float64:
+		valueType = CfgFloat
+	case bool:
+		valueType = CfgBool
+	case []string:
+		valueType = CfgStringSlice
+	}
+	if converted, err := convertCfgValue(valueType, value); err == nil {
+		v, _ = converted.(T)
+	}
+	return v
 }
 
 // setFinalValue stages a value coming from a config file, a profile, an
@@ -1454,26 +1506,26 @@ func (config *Config) publish() {
 
 	snapshot := &configSnapshot{
 		values:               values,
-		collectUrlStat:       cast.ToBool(values[CfgHttpUrlStatEnable]),
-		urlStatLimitSize:     cast.ToInt(values[CfgHttpUrlStatLimitSize]),
-		urlStatWithMethod:    cast.ToBool(values[CfgHttpUrlStatWithMethod]),
-		sqlTraceBindValue:    cast.ToBool(values[CfgSQLTraceBindValue]),
-		sqlMaxBindValueSize:  cast.ToInt(values[CfgSQLMaxBindValueSize]),
-		sqlTraceCommit:       cast.ToBool(values[CfgSQLTraceCommit]),
-		sqlTraceRollback:     cast.ToBool(values[CfgSQLTraceRollback]),
-		sqlTraceQueryStat:    cast.ToBool(values[CfgSQLTraceQueryStat]),
-		sqlEnableRawSqlCache: cast.ToBool(values[CfgSQLEnableRawSqlCache]),
-		sqlErrorCount:        cast.ToInt(values[CfgSQLErrorCount]),
-		sqlRemoveComments:    cast.ToBool(values[CfgSQLRemoveComments]),
-		spanEventChunkSize:   cast.ToInt(values[CfgSpanEventChunkSize]),
-		spanMaxEventDepth:    cast.ToInt32(values[CfgSpanMaxCallStackDepth]),
-		spanMaxEventSequence: cast.ToInt32(values[CfgSpanMaxCallStackSequence]),
-		errorTraceCallStack:  cast.ToBool(values[CfgErrorTraceCallStack]),
-		errorCallStackDepth:  cast.ToInt(values[CfgErrorCallStackDepth]),
-		errorIgnoreRules:     parseIgnoreErrorRules(cast.ToStringSlice(values[CfgSpanIgnoreErrors])),
-		errorMaxChainDepth:   cast.ToInt(values[CfgErrorMaxChainDepth]),
-		errorMarkMask: parseErrorMarkMask(cast.ToStringSlice(values[CfgSpanErrorMark]),
-			cast.ToStringSlice(values[CfgSpanErrorMarkExclude])),
+		collectUrlStat:       valueAs[bool](values[CfgHttpUrlStatEnable]),
+		urlStatLimitSize:     valueAs[int](values[CfgHttpUrlStatLimitSize]),
+		urlStatWithMethod:    valueAs[bool](values[CfgHttpUrlStatWithMethod]),
+		sqlTraceBindValue:    valueAs[bool](values[CfgSQLTraceBindValue]),
+		sqlMaxBindValueSize:  valueAs[int](values[CfgSQLMaxBindValueSize]),
+		sqlTraceCommit:       valueAs[bool](values[CfgSQLTraceCommit]),
+		sqlTraceRollback:     valueAs[bool](values[CfgSQLTraceRollback]),
+		sqlTraceQueryStat:    valueAs[bool](values[CfgSQLTraceQueryStat]),
+		sqlEnableRawSqlCache: valueAs[bool](values[CfgSQLEnableRawSqlCache]),
+		sqlErrorCount:        valueAs[int](values[CfgSQLErrorCount]),
+		sqlRemoveComments:    valueAs[bool](values[CfgSQLRemoveComments]),
+		spanEventChunkSize:   valueAs[int](values[CfgSpanEventChunkSize]),
+		spanMaxEventDepth:    int32(valueAs[int](values[CfgSpanMaxCallStackDepth])),
+		spanMaxEventSequence: int32(valueAs[int](values[CfgSpanMaxCallStackSequence])),
+		errorTraceCallStack:  valueAs[bool](values[CfgErrorTraceCallStack]),
+		errorCallStackDepth:  valueAs[int](values[CfgErrorCallStackDepth]),
+		errorIgnoreRules:     parseIgnoreErrorRules(valueAs[[]string](values[CfgSpanIgnoreErrors])),
+		errorMaxChainDepth:   valueAs[int](values[CfgErrorMaxChainDepth]),
+		errorMarkMask: parseErrorMarkMask(valueAs[[]string](values[CfgSpanErrorMark]),
+			valueAs[[]string](values[CfgSpanErrorMarkExclude])),
 	}
 	snapshot.sampler = newTraceSampler(config.load(), values)
 	snapshot.newExceptionLimiter = newExceptionLimiter(config.load(), values)
@@ -1490,14 +1542,14 @@ func newTraceSampler(prev *configSnapshot, values map[string]interface{}) traceS
 	}
 
 	var baseSampler sampler
-	if cast.ToString(values[CfgSamplingType]) == samplingTypeCounter {
-		baseSampler = newRateSampler(cast.ToInt(values[CfgSamplingCounterRate]))
+	if valueAs[string](values[CfgSamplingType]) == samplingTypeCounter {
+		baseSampler = newRateSampler(valueAs[int](values[CfgSamplingCounterRate]))
 	} else {
-		baseSampler = newPercentSampler(cast.ToFloat64(values[CfgSamplingPercentRate]))
+		baseSampler = newPercentSampler(valueAs[float64](values[CfgSamplingPercentRate]))
 	}
 
-	newTps := cast.ToInt(values[CfgSamplingNewThroughput])
-	continueTps := cast.ToInt(values[CfgSamplingContinueThroughput])
+	newTps := valueAs[int](values[CfgSamplingNewThroughput])
+	continueTps := valueAs[int](values[CfgSamplingContinueThroughput])
 	if newTps > 0 || continueTps > 0 {
 		return newThroughputLimitTraceSampler(baseSampler, newTps, continueTps)
 	}
@@ -1513,7 +1565,7 @@ func newExceptionLimiter(prev *configSnapshot, values map[string]interface{}) *r
 		return prev.newExceptionLimiter
 	}
 
-	tps := cast.ToInt(values[CfgErrorNewThroughput])
+	tps := valueAs[int](values[CfgErrorNewThroughput])
 	if tps <= 0 {
 		return nil
 	}
