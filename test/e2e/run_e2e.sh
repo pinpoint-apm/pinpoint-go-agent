@@ -190,7 +190,11 @@ cleanup() {
     stop_process "$GRPC_PID"
     stop_process "$STUB_PID"
 }
-trap cleanup EXIT INT TERM
+# A trap that only cleaned up would let the script carry on against the stack it
+# had just stopped; exiting runs cleanup through the EXIT trap instead.
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo "==========================================="
 echo " Pinpoint Go Agent - End-to-End Test Stack"
