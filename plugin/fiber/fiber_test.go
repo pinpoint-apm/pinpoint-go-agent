@@ -2,7 +2,6 @@ package ppfiber
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,29 +12,10 @@ import (
 	"github.com/gofiber/fiber/v2"
 	recovermw "github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func startAgent(t *testing.T) {
-	t.Helper()
-	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentName("testAgent"))
-	require.NoError(t, err)
-
-	agent, err := pinpoint.NewTestAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
-}
-
-// spanOf reads back what the tracer recorded on its span: the RPC name, the
-// endpoint, the resolved remote address and whether the span failed.
-func spanOf(t *testing.T, tracer pinpoint.Tracer) map[string]interface{} {
-	t.Helper()
-	require.NotNil(t, tracer, "the handler never ran")
-	var m map[string]interface{}
-	require.NoError(t, json.Unmarshal(tracer.JsonString(), &m))
-	return m
-}
 
 func request(t *testing.T, app *fiber.App, req *http.Request) *http.Response {
 	t.Helper()
@@ -84,7 +64,7 @@ func Test_statusCode(t *testing.T) {
 // behaviour intact: route parameters still resolve and the handler's status and
 // body reach the client unchanged.
 func TestMiddleware_PreservesRouting(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	app := fiber.New()
 	app.Use(Middleware())
@@ -101,7 +81,7 @@ func TestMiddleware_PreservesRouting(t *testing.T) {
 // The span attributes are read straight off the fasthttp request fiber owns;
 // the wrapper never converts it to a net/http request.
 func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	app := fiber.New()
@@ -116,7 +96,7 @@ func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
 	req.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.2")
 	request(t, app, req)
 
-	span := spanOf(t, tracer)
+	span := pptest.SpanOf(t, tracer)
 	assert.Equal(t, "/hello/pinpoint", span["RpcName"], "the span is named after the request path, not the route pattern")
 	assert.Equal(t, "myhost:8080", span["EndPoint"])
 	assert.Equal(t, "203.0.113.7", span["RemoteAddr"], "X-Forwarded-For must win over the transport peer address")
@@ -125,7 +105,7 @@ func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
 // A fiber service is usually one hop of a larger call: the tracing headers the
 // caller sent have to put this span in the caller's transaction.
 func TestMiddleware_ContinuesTheCallersTransaction(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	caller := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
 	defer caller.EndSpan()
@@ -152,7 +132,7 @@ func TestMiddleware_ContinuesTheCallersTransaction(t *testing.T) {
 // it with a fresh background context - instead of deriving from it - discarded
 // the values and deadlines the rest of the handler chain depends on.
 func TestMiddleware_KeepsExistingUserContextValues(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	type ctxKey struct{}
 
@@ -221,7 +201,7 @@ func TestMiddleware_RecordsTheFinalStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			startAgent(t)
+			pptest.StartAgent(t)
 
 			var tracer pinpoint.Tracer
 			app := fiber.New()
@@ -234,14 +214,14 @@ func TestMiddleware_RecordsTheFinalStatus(t *testing.T) {
 			resp := get(t, app, "/")
 
 			assert.Equal(t, tt.wantStatus, resp.StatusCode)
-			assert.Equal(t, tt.wantFail, spanOf(t, tracer)["Err"] != float64(0))
+			assert.Equal(t, tt.wantFail, pptest.SpanOf(t, tracer)["Err"] != float64(0))
 		})
 	}
 }
 
 // WrapHandler instruments one route instead of the whole app.
 func TestWrapHandler_PutsSampledTracerInUserContext(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	app := fiber.New()
@@ -255,13 +235,13 @@ func TestWrapHandler_PutsSampledTracerInUserContext(t *testing.T) {
 	require.NotNil(t, tracer)
 	assert.True(t, tracer.IsSampled(), "wrapped handler received an unsampled tracer")
 	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
-	assert.Equal(t, "/wrapped", spanOf(t, tracer)["RpcName"])
+	assert.Equal(t, "/wrapped", pptest.SpanOf(t, tracer)["RpcName"])
 }
 
 // An error a wrapped handler returns has to be recorded on the span and still
 // reach fiber's error handler.
 func TestWrapHandler_RecordsTheHandlerError(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	app := fiber.New()
@@ -273,13 +253,13 @@ func TestWrapHandler_RecordsTheHandlerError(t *testing.T) {
 	resp := get(t, app, "/boom")
 
 	assert.Equal(t, http.StatusTeapot, resp.StatusCode)
-	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "the handler error must be recorded on the span")
+	assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "the handler error must be recorded on the span")
 }
 
 // A handler that returns an error must have fiber's ErrorHandler run once - by
 // fiber, from the returned error - not once by the wrapper and again by fiber.
 func TestMiddleware_RunsErrorHandlerOnce(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	calls := 0
 	app := fiber.New(fiber.Config{
@@ -300,7 +280,7 @@ func TestMiddleware_RunsErrorHandlerOnce(t *testing.T) {
 // A path no route matches is fiber's own 404; the middleware still wraps it and
 // must not disturb the response.
 func TestMiddleware_UnmatchedRoute(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	app := fiber.New()
 	app.Use(Middleware())
@@ -314,7 +294,7 @@ func TestMiddleware_UnmatchedRoute(t *testing.T) {
 // The wrapper marks the span failed and re-panics; swallowing the panic would
 // turn a crash fiber's recover middleware reports into a silent 200.
 func TestMiddleware_RepanicsIntoTheRecoverMiddleware(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	app := fiber.New()
@@ -328,7 +308,7 @@ func TestMiddleware_RepanicsIntoTheRecoverMiddleware(t *testing.T) {
 	resp := get(t, app, "/boom")
 
 	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
-	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "a panicking handler must fail the span")
+	assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "a panicking handler must fail the span")
 }
 
 // With no agent running the middleware must be a straight pass-through.
@@ -366,7 +346,7 @@ func TestWrapHandler_PassesThroughWhenAgentDisabled(t *testing.T) {
 // inner layer finds the tracer the outer one put in the user context and
 // records on it, as pphttp does for a middleware inside a wrapped handler.
 func TestWrapHandler_InsideMiddlewareIsNested(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var outer, inner pinpoint.Tracer
 	app := fiber.New()

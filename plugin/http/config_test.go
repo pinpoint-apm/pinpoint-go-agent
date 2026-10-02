@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +18,7 @@ import (
 // reassigned ten plain package globals that every request read.
 func TestHttpConfigReloadRace(t *testing.T) {
 	// startAgent, not a bare NewTestAgent: it shuts the agent down.
-	startAgent(t,
+	pptest.StartAgent(t,
 		WithHttpServerExcludeUrl([]string{"/skip/*", "/**/*.do"}),
 		WithHttpServerExcludeMethod([]string{"put", "delete"}),
 		WithHttpServerStatusCodeError([]string{"5xx", "302"}),
@@ -64,7 +65,7 @@ func TestHttpConfigReloadRace(t *testing.T) {
 // A reload publishes one whole config, so a request never reads a filter built
 // from one generation next to a recorder built from another.
 func TestHttpConfigReloadIsAtomic(t *testing.T) {
-	startAgent(t,
+	pptest.StartAgent(t,
 		WithHttpServerExcludeUrl([]string{"/skip/**"}),
 		WithHttpServerStatusCodeError([]string{"4xx"}),
 	)
@@ -74,7 +75,7 @@ func TestHttpConfigReloadIsAtomic(t *testing.T) {
 	require.True(t, before.srvStatus.isError(404))
 
 	// Rebuilding under a new agent config swaps every derived value at once.
-	startAgent(t,
+	pptest.StartAgent(t,
 		WithHttpServerExcludeUrl([]string{"/other/**"}),
 		WithHttpServerStatusCodeError([]string{"5xx"}),
 	)
@@ -92,7 +93,7 @@ func TestHttpConfigReloadIsAtomic(t *testing.T) {
 }
 
 func TestHttpConfigFollowsAgentRestart(t *testing.T) {
-	first := startAgent(t,
+	first := pptest.StartAgent(t,
 		WithHttpServerExcludeUrl([]string{"/old"}),
 		pinpoint.WithHttpUrlStatEnable(false),
 	)
@@ -116,7 +117,7 @@ func TestQueryOptions_EnvAndYaml(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("Http:\n  Server:\n    RecordRequestParam: true\n"), 0o600))
 	t.Setenv("PINPOINT_GO_HTTP_CLIENT_RECORDURLQUERY", "true")
 
-	startAgent(t, pinpoint.WithConfigFile(path))
+	pptest.StartAgent(t, pinpoint.WithConfigFile(path))
 	cfg := httpCfg()
 	assert.True(t, cfg.cltUrlQuery, "env")
 	assert.True(t, cfg.srvRequestParam, "yaml")

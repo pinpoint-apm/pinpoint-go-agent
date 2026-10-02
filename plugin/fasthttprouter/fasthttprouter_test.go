@@ -2,7 +2,6 @@ package ppfasthttprouter
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"net/http"
 	"testing"
@@ -10,36 +9,11 @@ import (
 	ppfasthttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/valyala/fasthttp"
 )
-
-func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) {
-	t.Helper()
-
-	opts = append([]pinpoint.ConfigOption{
-		pinpoint.WithAppName("testApp"),
-		pinpoint.WithAgentName("testAgent"),
-	}, opts...)
-
-	config, err := pinpoint.NewConfig(opts...)
-	require.NoError(t, err)
-
-	agent, err := pinpoint.NewTestAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
-}
-
-// spanOf reads back what the tracer recorded on its span: the RPC name, the
-// endpoint, the resolved remote address and whether the span failed.
-func spanOf(t *testing.T, tracer pinpoint.Tracer) map[string]interface{} {
-	t.Helper()
-	require.NotNil(t, tracer, "the handler never ran")
-	var m map[string]interface{}
-	require.NoError(t, json.Unmarshal(tracer.JsonString(), &m))
-	return m
-}
 
 func serve(handler fasthttp.RequestHandler, method, uri string) *fasthttp.RequestCtx {
 	var req fasthttp.Request
@@ -66,7 +40,7 @@ func tracerOf(t *testing.T, ctx *fasthttp.RequestCtx) pinpoint.Tracer {
 // own router and driven end to end, checking that the route parameter still
 // resolves and the tracer reaches the handler.
 func TestRouter_AllMethodsStayRouted(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	for _, tt := range []struct {
 		method   string
@@ -109,7 +83,7 @@ func TestRouter_AllMethodsStayRouted(t *testing.T) {
 // The router knows the route pattern, so it hands it to the wrapper for URL
 // statistics while the span still names itself after the concrete path.
 func TestRouter_SpanNameIsTheRequestPath(t *testing.T) {
-	startAgent(t, pinpoint.WithHttpUrlStatEnable(true))
+	pptest.StartAgent(t, pinpoint.WithHttpUrlStatEnable(true))
 
 	r := New()
 	var tracer pinpoint.Tracer
@@ -117,7 +91,7 @@ func TestRouter_SpanNameIsTheRequestPath(t *testing.T) {
 
 	serve(r.Handler, http.MethodGet, "http://myhost:8080/hello/pinpoint")
 
-	span := spanOf(t, tracer)
+	span := pptest.SpanOf(t, tracer)
 	assert.Equal(t, "/hello/pinpoint", span["RpcName"])
 	assert.Equal(t, "myhost:8080", span["EndPoint"])
 	assert.Equal(t, "10.0.0.1", span["RemoteAddr"])
@@ -126,7 +100,7 @@ func TestRouter_SpanNameIsTheRequestPath(t *testing.T) {
 // Registering a route must not change what the router does with the methods it
 // was not registered for.
 func TestRouter_UnregisteredMethodStillRejected(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	r := New()
 	r.GET("/hello", func(ctx *fasthttp.RequestCtx) { t.Error("the GET handler ran for a POST") })
@@ -139,7 +113,7 @@ func TestRouter_UnregisteredMethodStillRejected(t *testing.T) {
 // A path no route matches is the router's own 404 and never reaches an
 // instrumented handler.
 func TestRouter_UnmatchedPath(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	r := New()
 	r.GET("/hello", func(ctx *fasthttp.RequestCtx) { t.Error("the handler ran for an unmatched path") })
@@ -152,7 +126,7 @@ func TestRouter_UnmatchedPath(t *testing.T) {
 // A route registered through the router re-panics exactly as the bare fasthttp
 // wrapper does.
 func TestRouter_PanicPropagates(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	r := New()
 	var tracer pinpoint.Tracer
@@ -165,7 +139,7 @@ func TestRouter_PanicPropagates(t *testing.T) {
 		serve(r.Handler, http.MethodGet, "http://localhost/boom")
 	}, "the wrapper swallowed the handler panic")
 
-	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "a panicking handler must fail the span")
+	assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "a panicking handler must fail the span")
 }
 
 // With no agent running the router must be a straight pass-through.

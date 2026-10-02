@@ -6,66 +6,12 @@ import (
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	hbase "github.com/tsuna/gohbase"
 	"github.com/tsuna/gohbase/hrpc"
 )
-
-// recordingTracer captures what the wrapper records on a span event. A real
-// tracer's recorders are write-only, so this stands in for one.
-type recordingTracer struct {
-	pinpoint.Tracer
-	events []*recordedEvent
-}
-
-func newRecordingTracer() *recordingTracer {
-	return &recordingTracer{Tracer: pinpoint.NoopTracer()}
-}
-
-func (t *recordingTracer) IsSampled() bool { return true }
-
-func (t *recordingTracer) NewSpanEvent(operation string) pinpoint.Tracer {
-	t.events = append(t.events, &recordedEvent{
-		SpanEventRecorder: t.Tracer.SpanEvent(),
-		operation:         operation,
-		annotations:       map[int32]string{},
-	})
-	return t
-}
-
-func (t *recordingTracer) SpanEvent() pinpoint.SpanEventRecorder { return t.last() }
-
-func (t *recordingTracer) EndSpanEvent() { t.last().ended = true }
-
-func (t *recordingTracer) last() *recordedEvent { return t.events[len(t.events)-1] }
-
-type recordedEvent struct {
-	pinpoint.SpanEventRecorder
-	operation   string
-	serviceType int32
-	destination string
-	endPoint    string
-	err         error
-	annotations map[int32]string
-	ended       bool
-}
-
-func (e *recordedEvent) SetServiceType(typ int32)        { e.serviceType = typ }
-func (e *recordedEvent) SetDestination(id string)        { e.destination = id }
-func (e *recordedEvent) SetEndPoint(endPoint string)     { e.endPoint = endPoint }
-func (e *recordedEvent) SetError(err error, _ ...string) { e.err = err }
-
-func (e *recordedEvent) Annotations() pinpoint.Annotation {
-	return recordedAnnotation{Annotation: e.SpanEventRecorder.Annotations(), into: e.annotations}
-}
-
-type recordedAnnotation struct {
-	pinpoint.Annotation
-	into map[int32]string
-}
-
-func (a recordedAnnotation) AppendString(key int32, s string) { a.into[key] = s }
 
 // fakeClient stands in for a real HBase cluster: it records the call and
 // returns whatever the test asked for.
@@ -164,21 +110,21 @@ func TestClient_RecordsTheRowKey(t *testing.T) {
 		t.Run(tt.operation, func(t *testing.T) {
 			for _, want := range []error{nil, errors.New("region unavailable")} {
 				client, fake := newClient(t, want)
-				tracer := newRecordingTracer()
+				tracer := pptest.NewRecordingTracer()
 
 				err := tt.call(client, pinpoint.NewContext(context.Background(), tracer))
 				require.ErrorIs(t, err, want, "the operation's error must come back unchanged")
 
 				require.Equal(t, 1, fake.calls, "the underlying client must be called exactly once")
-				require.Len(t, tracer.events, 1, "one operation must produce exactly one span event")
-				e := tracer.events[0]
-				assert.Equal(t, tt.operation, e.operation)
-				assert.Equal(t, int32(pinpoint.ServiceTypeHbaseClient), e.serviceType)
-				assert.Equal(t, "HBASE", e.destination)
-				assert.Equal(t, "zk1.example:2181", e.endPoint, "the ZooKeeper quorum is the endpoint")
-				assert.Equal(t, "rowKey: rowkey", e.annotations[pinpoint.AnnotationHbaseClientParams])
-				assert.ErrorIs(t, e.err, want, "the span event must carry the operation's verdict")
-				assert.True(t, e.ended, "the span event was left open")
+				require.Len(t, tracer.Events, 1, "one operation must produce exactly one span event")
+				e := tracer.Events[0]
+				assert.Equal(t, tt.operation, e.Operation)
+				assert.Equal(t, int32(pinpoint.ServiceTypeHbaseClient), e.ServiceType)
+				assert.Equal(t, "HBASE", e.Destination)
+				assert.Equal(t, "zk1.example:2181", e.EndPoint, "the ZooKeeper quorum is the endpoint")
+				assert.Equal(t, "rowKey: rowkey", e.Strings[pinpoint.AnnotationHbaseClientParams])
+				assert.ErrorIs(t, e.Err, want, "the span event must carry the operation's verdict")
+				assert.True(t, e.Ended, "the span event was left open")
 			}
 		})
 	}
@@ -188,19 +134,19 @@ func TestClient_RecordsTheRowKey(t *testing.T) {
 // belong in the annotation.
 func TestClient_Scan(t *testing.T) {
 	client, fake := newClient(t, nil)
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 
 	s, err := hrpc.NewScanRangeStr(pinpoint.NewContext(context.Background(), tracer), "table", "aaa", "zzz")
 	require.NoError(t, err)
 	client.Scan(s)
 
 	require.Equal(t, 1, fake.calls, "the underlying client must be called exactly once")
-	require.Len(t, tracer.events, 1)
-	e := tracer.events[0]
-	assert.Equal(t, "hbase.Scan", e.operation)
-	assert.Equal(t, int32(pinpoint.ServiceTypeHbaseClient), e.serviceType)
-	assert.Equal(t, "startRowKey: aaa, stopRowKey: zzz", e.annotations[pinpoint.AnnotationHbaseClientParams])
-	assert.True(t, e.ended, "the span event was left open")
+	require.Len(t, tracer.Events, 1)
+	e := tracer.Events[0]
+	assert.Equal(t, "hbase.Scan", e.Operation)
+	assert.Equal(t, int32(pinpoint.ServiceTypeHbaseClient), e.ServiceType)
+	assert.Equal(t, "startRowKey: aaa, stopRowKey: zzz", e.Strings[pinpoint.AnnotationHbaseClientParams])
+	assert.True(t, e.Ended, "the span event was left open")
 }
 
 // The wrapper replaces the application's client, so every operation must still

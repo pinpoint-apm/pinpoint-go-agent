@@ -3,6 +3,7 @@ package pphttp
 import (
 	"testing"
 
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -102,7 +103,7 @@ func TestHttpStatusErrorTokens(t *testing.T) {
 
 // The default is "5xx": a server error fails the span and nothing else does.
 func TestHttpStatusErrorDefaultConfig(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	h := newHttpConfig().srvStatus
 	assert.True(t, h.isError(500))
@@ -114,7 +115,7 @@ func TestHttpStatusErrorDefaultConfig(t *testing.T) {
 // The option is what an application actually sets, so it has to reach the
 // matcher a request consults.
 func TestHttpStatusErrorFromAgentConfig(t *testing.T) {
-	startAgent(t, WithHttpServerStatusCodeError([]string{"4xx", "302"}))
+	pptest.StartAgent(t, WithHttpServerStatusCodeError([]string{"4xx", "302"}))
 
 	h := newHttpConfig().srvStatus
 	assert.True(t, h.isError(404))

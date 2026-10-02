@@ -30,6 +30,12 @@ from it, so their module paths sit under the agent's
 outside on purpose: like an application, it can build against the public API
 only.
 
+The plugin tests share `test/pptest`, a package of the agent module: an
+offline agent per test (`StartAgent`), a span's JSON (`SpanOf`) and a tracer
+that records the span events a plugin makes (`RecordingTracer`). A plugin
+module cannot import the agent's `internal/` packages, so it is an ordinary
+package, but it is test support and not part of the supported API.
+
 `go test ./...` from the repository root therefore does **not** run the plugin
 or integration tests — each module has to be entered. That is what the loops
 below are for.

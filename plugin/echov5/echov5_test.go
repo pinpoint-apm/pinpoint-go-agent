@@ -1,7 +1,6 @@
 package ppechov5
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,29 +8,10 @@ import (
 
 	"github.com/labstack/echo/v5"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func startAgent(t *testing.T) {
-	t.Helper()
-	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentName("testAgent"))
-	require.NoError(t, err)
-
-	agent, err := pinpoint.NewTestAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
-}
-
-// spanOf reads back what the tracer recorded on its span: the RPC name, the
-// endpoint, the resolved remote address and whether the span failed.
-func spanOf(t *testing.T, tracer pinpoint.Tracer) map[string]interface{} {
-	t.Helper()
-	require.NotNil(t, tracer, "the handler never ran")
-	var m map[string]interface{}
-	require.NoError(t, json.Unmarshal(tracer.JsonString(), &m))
-	return m
-}
 
 // An error a handler returns has to be recorded on the span and reach echo's
 // HTTPErrorHandler exactly once - by echo, from the returned error - not once
@@ -45,7 +25,7 @@ func TestHandlerError_RecordedAndHandledOnce(t *testing.T) {
 		{"Middleware", func(e *echo.Echo, h echo.HandlerFunc) { e.Use(Middleware()); e.GET("/boom", h) }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			startAgent(t)
+			pptest.StartAgent(t)
 
 			e := echo.New()
 			calls := 0
@@ -64,7 +44,7 @@ func TestHandlerError_RecordedAndHandledOnce(t *testing.T) {
 
 			assert.Equal(t, 1, calls, "HTTPErrorHandler ran more than once for one failed request")
 			assert.Equal(t, http.StatusTeapot, rec.Code)
-			assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "the handler error must be recorded on the span")
+			assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "the handler error must be recorded on the span")
 		})
 	}
 }
@@ -73,7 +53,7 @@ func TestHandlerError_RecordedAndHandledOnce(t *testing.T) {
 // behaviour intact: route parameters still resolve and the handler's status and
 // body reach the client unchanged.
 func TestMiddleware_PreservesRouting(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	e := echo.New()
 	e.Use(Middleware())
@@ -91,7 +71,7 @@ func TestMiddleware_PreservesRouting(t *testing.T) {
 // The span is what shows up in Pinpoint, so the request attributes it carries
 // have to come from the echo request rather than defaults.
 func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	e := echo.New()
@@ -106,7 +86,7 @@ func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
 	req.RemoteAddr = "10.0.0.1:4242"
 	e.ServeHTTP(httptest.NewRecorder(), req)
 
-	span := spanOf(t, tracer)
+	span := pptest.SpanOf(t, tracer)
 	assert.Equal(t, "/hello/pinpoint", span["RpcName"], "the span is named after the request path, not the route pattern")
 	assert.Equal(t, "myhost:8080", span["EndPoint"])
 	assert.Equal(t, "10.0.0.1", span["RemoteAddr"])
@@ -115,7 +95,7 @@ func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
 // An echo service is usually one hop of a larger call: the tracing headers the
 // caller sent have to put this span in the caller's transaction.
 func TestMiddleware_ContinuesTheCallersTransaction(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	caller := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
 	defer caller.EndSpan()
@@ -180,7 +160,7 @@ func TestMiddleware_RecordsTheFinalStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			startAgent(t)
+			pptest.StartAgent(t)
 
 			var tracer pinpoint.Tracer
 			e := echo.New()
@@ -194,14 +174,14 @@ func TestMiddleware_RecordsTheFinalStatus(t *testing.T) {
 			e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
 			assert.Equal(t, tt.wantStatus, rec.Code)
-			assert.Equal(t, tt.wantFail, spanOf(t, tracer)["Err"] != float64(0))
+			assert.Equal(t, tt.wantFail, pptest.SpanOf(t, tracer)["Err"] != float64(0))
 		})
 	}
 }
 
 // WrapHandler instruments one route instead of the whole router.
 func TestWrapHandler_PutsSampledTracerInRequestContext(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	e := echo.New()
@@ -216,13 +196,13 @@ func TestWrapHandler_PutsSampledTracerInRequestContext(t *testing.T) {
 	require.NotNil(t, tracer)
 	assert.True(t, tracer.IsSampled(), "wrapped handler received an unsampled tracer")
 	assert.Equal(t, http.StatusNoContent, rec.Code)
-	assert.Equal(t, "/wrapped", spanOf(t, tracer)["RpcName"])
+	assert.Equal(t, "/wrapped", pptest.SpanOf(t, tracer)["RpcName"])
 }
 
 // A route no handler is registered for is echo's own 404; the middleware still
 // wraps it and must not disturb the response.
 func TestMiddleware_UnmatchedRoute(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	e := echo.New()
 	e.Use(Middleware())
@@ -237,7 +217,7 @@ func TestMiddleware_UnmatchedRoute(t *testing.T) {
 // The wrapper marks the span failed and re-panics; swallowing the panic would
 // turn a crash echo's Recover middleware reports into a silent 200.
 func TestMiddleware_PanicPropagates(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	e := echo.New()
@@ -251,7 +231,7 @@ func TestMiddleware_PanicPropagates(t *testing.T) {
 		e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/boom", nil))
 	}, "the wrapper swallowed the handler panic")
 
-	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "a panicking handler must fail the span")
+	assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "a panicking handler must fail the span")
 }
 
 // With no agent running the middleware must be a straight pass-through.

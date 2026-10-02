@@ -6,6 +6,7 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,7 +15,7 @@ import (
 // NewSyncProducer wraps the one it creates, once: the wrapper traces on the
 // context given and the underlying producer receives the message.
 func TestWrapSyncProducer(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	stub := &stubSyncProducer{}
 	wrapped := WrapSyncProducer(stub, []string{"broker1:9092"}, newConfig())
 	p, ok := wrapped.(*syncProducer)
@@ -36,7 +37,7 @@ func TestWrapSyncProducer(t *testing.T) {
 // A wrapped producer without an address records no destination instead of
 // panicking on the first message.
 func TestWrapSyncProducer_WithoutAddress(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
 	defer tracer.EndSpan()
 	stub := &stubSyncProducer{}

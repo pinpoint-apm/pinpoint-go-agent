@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -335,7 +336,7 @@ func TestHttpMethodFilter(t *testing.T) {
 // The two filters a request consults are built from the agent config, so the
 // options have to reach them through pinpoint.GetConfig().
 func TestUrlAndMethodFiltersComeFromAgentConfig(t *testing.T) {
-	startAgent(t,
+	pptest.StartAgent(t,
 		WithHttpServerExcludeUrl([]string{" /skip/** ", "/??/exclude.html"}),
 		WithHttpServerExcludeMethod([]string{" put ", "delete"}),
 	)

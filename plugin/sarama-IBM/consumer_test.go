@@ -8,6 +8,7 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,7 +16,7 @@ import (
 // An empty or mistyped broker-address value must fall back to Unknown instead
 // of panicking out of ConsumeClaim and killing the consumer.
 func Test_newConsumerTracer_EmptyBrokerAddress(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	msg := &sarama.ConsumerMessage{Topic: "topic"}
 
 	for _, ctx := range []context.Context{
@@ -29,16 +30,6 @@ func Test_newConsumerTracer_EmptyBrokerAddress(t *testing.T) {
 		require.NotNil(t, tracer, "no tracer returned")
 		tracer.EndSpan()
 	}
-}
-
-func startAgent(t *testing.T) {
-	t.Helper()
-	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentName("testAgent"))
-	require.NoError(t, err)
-
-	agent, err := pinpoint.NewTestAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
 }
 
 // spanFields reads back what a span recorder was given. A real tracer's
@@ -108,7 +99,7 @@ func Test_distributedTracingContextReaderConsumer(t *testing.T) {
 // the producer stamped on the message; with neither, the span still needs an
 // endpoint it can be filed under.
 func Test_newConsumerTracer_BrokerAddress(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	for _, tt := range []struct {
 		name string
@@ -162,7 +153,7 @@ func Test_newConsumerTracer_BrokerAddress(t *testing.T) {
 // producer's transaction rather than starting a new one. This is the whole
 // round trip: the producer injects, the consumer extracts.
 func TestProducerToConsumerContinuesTheTransaction(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	caller := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
 	produced := &sarama.ProducerMessage{Topic: "widgets"}
@@ -186,7 +177,7 @@ func TestProducerToConsumerContinuesTheTransaction(t *testing.T) {
 // context has to carry the tracer - built from the brokers in the caller's
 // context - and its error has to reach the caller.
 func TestConsumeMessageContext(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	want := errors.New("handler failed")
 	var (
@@ -211,7 +202,7 @@ func TestConsumeMessageContext(t *testing.T) {
 
 // A panicking handler must not be swallowed by the wrapper.
 func TestConsumeMessageContext_PanicPropagates(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	assert.PanicsWithValue(t, "boom", func() {
 		_ = ConsumeMessageContext(func(context.Context, *sarama.ConsumerMessage) error { panic("boom") },
@@ -249,7 +240,7 @@ func TestConsumeMessageContext_NilMessage(t *testing.T) {
 
 // A nil context is a message with nothing attached, not a reason to panic.
 func TestConsumeMessageContext_NilContext(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	require.NotPanics(t, func() {
 		_ = ConsumeMessageContext(func(context.Context, *sarama.ConsumerMessage) error { return nil },
 			nil, &sarama.ConsumerMessage{Topic: "topic"})

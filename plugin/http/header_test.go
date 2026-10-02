@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -134,7 +135,7 @@ func Test_allHttpHeaderRecorder_recordCookie(t *testing.T) {
 // makeHttpHeaderRecorder picks the recorder from the option value; picking the
 // wrong one either records nothing or records every header of every request.
 func TestMakeHttpHeaderRecorder(t *testing.T) {
-	startAgent(t,
+	pptest.StartAgent(t,
 		WithHttpServerRecordRequestHeader([]string{"headers-all"}), // case-insensitive
 		WithHttpServerRecordRespondHeader([]string{"X-Trace"}),
 		WithHttpServerRecordRequestCookie([]string{}),

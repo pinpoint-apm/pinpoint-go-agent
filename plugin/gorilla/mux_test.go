@@ -1,48 +1,22 @@
 package ppgorilla
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gorilla/mux"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) {
-	t.Helper()
-
-	opts = append([]pinpoint.ConfigOption{
-		pinpoint.WithAppName("testApp"),
-		pinpoint.WithAgentName("testAgent"),
-	}, opts...)
-
-	config, err := pinpoint.NewConfig(opts...)
-	require.NoError(t, err)
-
-	agent, err := pinpoint.NewTestAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
-}
-
-// spanOf reads back what the tracer recorded on its span: the RPC name, the
-// endpoint, the resolved remote address and whether the span failed.
-func spanOf(t *testing.T, tracer pinpoint.Tracer) map[string]interface{} {
-	t.Helper()
-	require.NotNil(t, tracer, "the handler never ran")
-	var m map[string]interface{}
-	require.NoError(t, json.Unmarshal(tracer.JsonString(), &m))
-	return m
-}
 
 // The middleware sits in front of every route, so it must leave mux's own
 // behaviour intact: route variables still resolve and the handler's status and
 // body reach the client unchanged.
 func TestMiddleware_PreservesRoutingAndVars(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	r := mux.NewRouter()
 	r.Use(Middleware())
@@ -61,7 +35,7 @@ func TestMiddleware_PreservesRoutingAndVars(t *testing.T) {
 // The span is what shows up in Pinpoint, so the request attributes it carries
 // have to come from the request rather than defaults.
 func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	r := mux.NewRouter()
@@ -76,7 +50,7 @@ func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
 	req.Header.Set("X-Real-Ip", "203.0.113.9")
 	r.ServeHTTP(httptest.NewRecorder(), req)
 
-	span := spanOf(t, tracer)
+	span := pptest.SpanOf(t, tracer)
 	assert.Equal(t, "/hello/pinpoint", span["RpcName"], "the span is named after the request path, not the route template")
 	assert.Equal(t, "myhost:8080", span["EndPoint"])
 	assert.Equal(t, "203.0.113.9", span["RemoteAddr"], "X-Real-Ip must win over the transport peer address")
@@ -85,7 +59,7 @@ func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
 // A mux service is usually one hop of a larger call: the tracing headers the
 // caller sent have to put this span in the caller's transaction.
 func TestMiddleware_ContinuesTheCallersTransaction(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	caller := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
 	defer caller.EndSpan()
@@ -136,7 +110,7 @@ func TestMiddleware_RecordsTheFinalStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			startAgent(t)
+			pptest.StartAgent(t)
 
 			var tracer pinpoint.Tracer
 			r := mux.NewRouter()
@@ -150,7 +124,7 @@ func TestMiddleware_RecordsTheFinalStatus(t *testing.T) {
 			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
 			assert.Equal(t, tt.wantStatus, rec.Code)
-			assert.Equal(t, tt.wantFail, spanOf(t, tracer)["Err"] != float64(0),
+			assert.Equal(t, tt.wantFail, pptest.SpanOf(t, tracer)["Err"] != float64(0),
 				"the default 5xx error class decides whether the span fails")
 		})
 	}
@@ -159,7 +133,7 @@ func TestMiddleware_RecordsTheFinalStatus(t *testing.T) {
 // A request no route matches is answered by mux's own 404 handler, which the
 // middleware does not wrap; the router must still answer it.
 func TestMiddleware_UnmatchedRoute(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	r := mux.NewRouter()
 	r.Use(Middleware())
@@ -174,7 +148,7 @@ func TestMiddleware_UnmatchedRoute(t *testing.T) {
 // Subrouters build their own middleware chain; a middleware registered on the
 // parent has to reach the routes a subrouter owns.
 func TestMiddleware_OnASubrouter(t *testing.T) {
-	startAgent(t, pinpoint.WithHttpUrlStatEnable(true))
+	pptest.StartAgent(t, pinpoint.WithHttpUrlStatEnable(true))
 
 	var tracer pinpoint.Tracer
 	var pathTemplate string
@@ -194,14 +168,14 @@ func TestMiddleware_OnASubrouter(t *testing.T) {
 	assert.Equal(t, "/api/hello/{name}", pathTemplate)
 	require.NotNil(t, tracer)
 	assert.True(t, tracer.IsSampled())
-	assert.Equal(t, "/api/hello/pinpoint", spanOf(t, tracer)["RpcName"])
+	assert.Equal(t, "/api/hello/pinpoint", pptest.SpanOf(t, tracer)["RpcName"])
 }
 
 // mux.CurrentRoute returns nil whenever a wrapped handler runs outside a mux
 // router, so the URL-stat path lookup - which runs in a defer, after the
 // handler - must tolerate its absence instead of dereferencing nil.
 func TestWrapHandlerFunc_OutsideAMuxRouter(t *testing.T) {
-	startAgent(t, pinpoint.WithHttpUrlStatEnable(true))
+	pptest.StartAgent(t, pinpoint.WithHttpUrlStatEnable(true))
 
 	var tracer pinpoint.Tracer
 	h := WrapHandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -226,7 +200,7 @@ func TestWrapHandlerFunc_OutsideAMuxRouter(t *testing.T) {
 // WrapHandler instruments one route instead of the whole router; inside a mux
 // router the route template is available to the deferred URL-stat collection.
 func TestWrapHandler_InsideAMuxRouter(t *testing.T) {
-	startAgent(t, pinpoint.WithHttpUrlStatEnable(true))
+	pptest.StartAgent(t, pinpoint.WithHttpUrlStatEnable(true))
 
 	var pathTemplate string
 	var tracer pinpoint.Tracer
@@ -247,7 +221,7 @@ func TestWrapHandler_InsideAMuxRouter(t *testing.T) {
 // The wrapper marks the span failed and re-panics; swallowing the panic would
 // turn a crash the server reports into a silent 200.
 func TestMiddleware_PanicPropagates(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	r := mux.NewRouter()
@@ -261,7 +235,7 @@ func TestMiddleware_PanicPropagates(t *testing.T) {
 		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/boom", nil))
 	}, "the wrapper swallowed the handler panic")
 
-	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "a panicking handler must fail the span")
+	assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "a panicking handler must fail the span")
 }
 
 // With no agent running the middleware must be a straight pass-through.

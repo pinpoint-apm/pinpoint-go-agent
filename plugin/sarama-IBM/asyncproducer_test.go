@@ -8,6 +8,7 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -92,7 +93,7 @@ func Test_asyncProducer_EndTxnForwardsAcceptedMessagesFirst(t *testing.T) {
 // sampled tracer, where the span must not then wait for an ack it cannot be
 // matched to.
 func TestProducers_WriteNoHeadersUnlessInjecting(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
 	defer tracer.EndSpan()
 	// The async producer traces on a goroutine tracer, which needs an open
@@ -196,7 +197,7 @@ func requireSpanCount(t *testing.T, p *asyncProducer, want int) {
 // user, exactly as raw sarama guarantees, and the wrapper's channels must close
 // afterwards.
 func Test_asyncProducer_AsyncCloseDrainsInFlightAcks(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	config := ackConfig()
 
 	stub := newStubAsyncProducer()
@@ -332,7 +333,7 @@ func Test_asyncProducer_InputAfterShutdownPanics(t *testing.T) {
 }
 
 func Test_asyncProducer_UnderlyingInputPanicCleansTracer(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	config := ackConfig()
 
 	stub := newStubAsyncProducer()
@@ -357,7 +358,7 @@ func Test_asyncProducer_UnderlyingInputPanicCleansTracer(t *testing.T) {
 }
 
 func Test_asyncProducer_ShutdownEndsRemainingTracer(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	config := ackConfig()
 
 	stub := newStubAsyncProducer()
@@ -405,7 +406,7 @@ func Test_asyncProducer_CloseCollectsErrors(t *testing.T) {
 // not let it kill the input forwarder - every later message would be consumed
 // and silently dropped by the drainer.
 func Test_asyncProducer_NilConfigStillDeliversMessages(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	stub := newStubAsyncProducer()
 	p := wrapAsyncProducer(stub, []string{"broker:9092"}, nil)
 
@@ -427,7 +428,7 @@ func Test_asyncProducer_NilConfigStillDeliversMessages(t *testing.T) {
 // retry's ack matches nothing in the span map, which the first attempt's error
 // ack already cleared.
 func Test_asyncProducer_RetriedMessageIsNested(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	config := ackConfig()
 
 	stub := newStubAsyncProducer()
@@ -465,7 +466,7 @@ func Test_asyncProducer_RetriedMessageIsNested(t *testing.T) {
 // must not park tracers in the span map waiting for one: the span ends as the
 // message is handed to sarama.
 func Test_asyncProducer_NoErrorReturnsEndsSpansImmediately(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	config := ackConfig()
 	config.Producer.Return.Errors = false
 
@@ -542,7 +543,7 @@ func Test_asyncProducer_CloseDrainsBufferedMessagesThroughBackpressure(t *testin
 // untouched. Tracing it dereferenced the nil in the input forwarder, whose
 // death then dropped every later message in silence.
 func Test_asyncProducer_NilMessageOnInputIsPassedThrough(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	stub := newStubAsyncProducer()
 	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
 
@@ -563,7 +564,7 @@ func Test_asyncProducer_NilMessageOnInputIsPassedThrough(t *testing.T) {
 // The same nil through InputContext, which traces in the caller's goroutine:
 // it must not panic there either.
 func Test_asyncProducer_NilMessageOnInputContextIsPassedThrough(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	stub := newStubAsyncProducer()
 	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
 

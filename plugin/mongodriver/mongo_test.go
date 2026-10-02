@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/bson"
@@ -106,64 +107,6 @@ func commandStartedEvent(t testing.TB, name, collection, payload string) *event.
 	}
 }
 
-// recordingTracer captures what the monitor records on a span event. A real
-// tracer's recorders are write-only, so this stands in for one.
-type recordingTracer struct {
-	pinpoint.Tracer
-	events []*recordedEvent
-}
-
-func newRecordingTracer() *recordingTracer {
-	return &recordingTracer{Tracer: pinpoint.NoopTracer()}
-}
-
-func (t *recordingTracer) IsSampled() bool { return true }
-
-func (t *recordingTracer) NewSpanEvent(operation string) pinpoint.Tracer {
-	t.events = append(t.events, &recordedEvent{
-		SpanEventRecorder: t.Tracer.SpanEvent(),
-		operation:         operation,
-		annotations:       map[int32]string{},
-	})
-	return t
-}
-
-func (t *recordingTracer) SpanEvent() pinpoint.SpanEventRecorder { return t.last() }
-
-func (t *recordingTracer) EndSpanEvent() { t.last().ended = true }
-
-func (t *recordingTracer) last() *recordedEvent { return t.events[len(t.events)-1] }
-
-type recordedEvent struct {
-	pinpoint.SpanEventRecorder
-	operation   string
-	serviceType int32
-	destination string
-	endPoint    string
-	err         error
-	annotations map[int32]string
-	ended       bool
-}
-
-func (e *recordedEvent) SetServiceType(typ int32)        { e.serviceType = typ }
-func (e *recordedEvent) SetDestination(id string)        { e.destination = id }
-func (e *recordedEvent) SetEndPoint(endPoint string)     { e.endPoint = endPoint }
-func (e *recordedEvent) SetError(err error, _ ...string) { e.err = err }
-
-func (e *recordedEvent) Annotations() pinpoint.Annotation {
-	return recordedAnnotation{Annotation: e.SpanEventRecorder.Annotations(), into: e.annotations}
-}
-
-type recordedAnnotation struct {
-	pinpoint.Annotation
-	into map[int32]string
-}
-
-func (a recordedAnnotation) AppendString(key int32, s string) { a.into[key] = s }
-func (a recordedAnnotation) AppendStringString(key int32, s1, s2 string) {
-	a.into[key] = s1
-}
-
 // The driver reports the connection as an address with a pool index appended.
 // The endpoint has to be the bare host, or the same server is filed under one
 // node per connection on the server map.
@@ -205,7 +148,7 @@ func startedEvent(t *testing.T, connID string, requestID int64, name, collection
 // has to pair them by connection and request id.
 func TestMonitor_StartedAndSucceeded(t *testing.T) {
 	m := &monitor{spans: make(map[spanKey]pinpoint.Tracer)}
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 
 	started := startedEvent(t, "mongo1:27017[-3]", 42, "find", "widgets")
@@ -214,17 +157,17 @@ func TestMonitor_StartedAndSucceeded(t *testing.T) {
 		CommandFinishedEvent: event.CommandFinishedEvent{ConnectionID: started.ConnectionID, RequestID: started.RequestID},
 	})
 
-	require.Len(t, tracer.events, 1, "one command must produce exactly one span event")
-	e := tracer.events[0]
-	assert.Equal(t, "mongodb.find", e.operation)
-	assert.Equal(t, int32(pinpoint.ServiceTypeMongoExecuteQuery), e.serviceType)
-	assert.Equal(t, "mongo1", e.endPoint, "the endpoint is the bare host, without the pool index")
-	assert.Equal(t, "testdb", e.destination)
-	assert.Equal(t, "widgets", e.annotations[pinpoint.AnnotationMongoCollectionInfo])
-	assert.NotEmpty(t, e.annotations[pinpoint.AnnotationMongoJasonData],
+	require.Len(t, tracer.Events, 1, "one command must produce exactly one span event")
+	e := tracer.Events[0]
+	assert.Equal(t, "mongodb.find", e.Operation)
+	assert.Equal(t, int32(pinpoint.ServiceTypeMongoExecuteQuery), e.ServiceType)
+	assert.Equal(t, "mongo1", e.EndPoint, "the endpoint is the bare host, without the pool index")
+	assert.Equal(t, "testdb", e.Destination)
+	assert.Equal(t, "widgets", e.Strings[pinpoint.AnnotationMongoCollectionInfo])
+	assert.NotEmpty(t, e.Strings[pinpoint.AnnotationMongoJasonData],
 		"the command was not recorded as an annotation")
-	assert.NoError(t, e.err)
-	assert.True(t, e.ended, "the span event was left open")
+	assert.NoError(t, e.Err)
+	assert.True(t, e.Ended, "the span event was left open")
 	assert.Empty(t, m.spans, "the finished command was left in the span map")
 }
 
@@ -232,7 +175,7 @@ func TestMonitor_StartedAndSucceeded(t *testing.T) {
 // failure text has to reach the span event.
 func TestMonitor_Failed(t *testing.T) {
 	m := &monitor{spans: make(map[spanKey]pinpoint.Tracer)}
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 
 	started := startedEvent(t, "mongo1:27017[-3]", 42, "insert", "widgets")
@@ -242,11 +185,11 @@ func TestMonitor_Failed(t *testing.T) {
 		Failure:              "E11000 duplicate key error",
 	})
 
-	require.Len(t, tracer.events, 1)
-	e := tracer.events[0]
-	require.Error(t, e.err, "the driver's failure was not recorded")
-	assert.Contains(t, e.err.Error(), "duplicate key")
-	assert.True(t, e.ended, "the span event was left open")
+	require.Len(t, tracer.Events, 1)
+	e := tracer.Events[0]
+	require.Error(t, e.Err, "the driver's failure was not recorded")
+	assert.Contains(t, e.Err.Error(), "duplicate key")
+	assert.True(t, e.Ended, "the span event was left open")
 	assert.Empty(t, m.spans, "the failed command was left in the span map")
 }
 
@@ -278,7 +221,7 @@ func TestMonitor_IgnoresUnsampledCommands(t *testing.T) {
 // finishing one must not close the other's span event.
 func TestMonitor_InterleavedCommandsOnOneConnection(t *testing.T) {
 	m := &monitor{spans: make(map[spanKey]pinpoint.Tracer)}
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 
 	first := startedEvent(t, "mongo1:27017[-3]", 1, "find", "widgets")
@@ -297,9 +240,9 @@ func TestMonitor_InterleavedCommandsOnOneConnection(t *testing.T) {
 	})
 	assert.Empty(t, m.spans)
 
-	require.Len(t, tracer.events, 2)
-	assert.Equal(t, "mongodb.find", tracer.events[0].operation)
-	assert.Equal(t, "mongodb.insert", tracer.events[1].operation)
+	require.Len(t, tracer.Events, 2)
+	assert.Equal(t, "mongodb.find", tracer.Events[0].Operation)
+	assert.Equal(t, "mongodb.insert", tracer.Events[1].Operation)
 }
 
 // NewMonitor is what an application installs on its client options; all three
@@ -340,7 +283,7 @@ func TestMonitor_ConcurrentCommands(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			tracer := newRecordingTracer()
+			tracer := pptest.NewRecordingTracer()
 			ctx := pinpoint.NewContext(context.Background(), tracer)
 
 			for j := 0; j < 20; j++ {
@@ -352,7 +295,7 @@ func TestMonitor_ConcurrentCommands(t *testing.T) {
 					},
 				})
 			}
-			assert.Len(t, tracer.events, 20, "connection %d recorded the wrong number of span events", i)
+			assert.Len(t, tracer.Events, 20, "connection %d recorded the wrong number of span events", i)
 		}(i)
 	}
 	wg.Wait()

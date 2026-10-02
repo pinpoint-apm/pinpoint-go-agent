@@ -9,55 +9,10 @@ import (
 
 	"github.com/gocql/gocql"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// recordingTracer captures what the observer records on a span event. A real
-// tracer's recorders are write-only, so this stands in for one.
-type recordingTracer struct {
-	pinpoint.Tracer
-	events []*recordedEvent
-}
-
-func newRecordingTracer() *recordingTracer {
-	return &recordingTracer{Tracer: pinpoint.NoopTracer()}
-}
-
-func (t *recordingTracer) IsSampled() bool { return true }
-
-func (t *recordingTracer) NewSpanEvent(operation string) pinpoint.Tracer {
-	t.events = append(t.events, &recordedEvent{
-		SpanEventRecorder: t.Tracer.SpanEvent(),
-		operation:         operation,
-	})
-	return t
-}
-
-func (t *recordingTracer) SpanEvent() pinpoint.SpanEventRecorder { return t.last() }
-
-func (t *recordingTracer) EndSpanEvent() { t.last().ended = true }
-
-func (t *recordingTracer) last() *recordedEvent { return t.events[len(t.events)-1] }
-
-type recordedEvent struct {
-	pinpoint.SpanEventRecorder
-	operation   string
-	serviceType int32
-	destination string
-	endPoint    string
-	sql         string
-	err         error
-	start, end  time.Time
-	ended       bool
-}
-
-func (e *recordedEvent) SetServiceType(typ int32)         { e.serviceType = typ }
-func (e *recordedEvent) SetDestination(id string)         { e.destination = id }
-func (e *recordedEvent) SetEndPoint(endPoint string)      { e.endPoint = endPoint }
-func (e *recordedEvent) SetSQL(sql string, args string)   { e.sql = sql }
-func (e *recordedEvent) SetError(err error, _ ...string)  { e.err = err }
-func (e *recordedEvent) FixDuration(start, end time.Time) { e.start, e.end = start, end }
 
 func host(t *testing.T) *gocql.HostInfo {
 	t.Helper()
@@ -74,7 +29,7 @@ func TestObserveQuery(t *testing.T) {
 	end := start.Add(15 * time.Millisecond)
 
 	for _, queryErr := range []error{errors.New("query failed"), nil} {
-		tracer := newRecordingTracer()
+		tracer := pptest.NewRecordingTracer()
 		NewObserver().ObserveQuery(pinpoint.NewContext(context.Background(), tracer), gocql.ObservedQuery{
 			Keyspace:  "testspace",
 			Statement: "SELECT id, text FROM widgets WHERE id = ?",
@@ -84,24 +39,24 @@ func TestObserveQuery(t *testing.T) {
 			Err:       queryErr,
 		})
 
-		require.Len(t, tracer.events, 1, "one query must produce exactly one span event")
-		e := tracer.events[0]
-		assert.Equal(t, "cassandra.query", e.operation)
-		assert.Equal(t, int32(pinpoint.ServiceTypeCassandraExecuteQuery), e.serviceType)
-		assert.Equal(t, "testspace", e.destination, "the keyspace is the destination")
-		assert.Equal(t, "10.0.0.1:0", e.endPoint, "the coordinator host is the endpoint")
-		assert.Equal(t, "SELECT id, text FROM widgets WHERE id = ?", e.sql)
-		assert.Equal(t, queryErr, e.err)
-		assert.True(t, e.start.Equal(start), "start = %v, want the driver's own %v", e.start, start)
-		assert.True(t, e.end.Equal(end), "end = %v, want the driver's own %v", e.end, end)
-		assert.True(t, e.ended, "the span event was left open")
+		require.Len(t, tracer.Events, 1, "one query must produce exactly one span event")
+		e := tracer.Events[0]
+		assert.Equal(t, "cassandra.query", e.Operation)
+		assert.Equal(t, int32(pinpoint.ServiceTypeCassandraExecuteQuery), e.ServiceType)
+		assert.Equal(t, "testspace", e.Destination, "the keyspace is the destination")
+		assert.Equal(t, "10.0.0.1:0", e.EndPoint, "the coordinator host is the endpoint")
+		assert.Equal(t, "SELECT id, text FROM widgets WHERE id = ?", e.SQL)
+		assert.Equal(t, queryErr, e.Err)
+		assert.True(t, e.Start.Equal(start), "start = %v, want the driver's own %v", e.Start, start)
+		assert.True(t, e.End.Equal(end), "end = %v, want the driver's own %v", e.End, end)
+		assert.True(t, e.Ended, "the span event was left open")
 	}
 }
 
 // A batch is one span event, so every statement in it has to be visible in the
 // recorded SQL - bracketed, since they are separate statements.
 func TestObserveBatch(t *testing.T) {
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 	start := time.Date(2026, time.August, 30, 1, 2, 3, 0, time.UTC)
 	end := start.Add(20 * time.Millisecond)
 
@@ -116,37 +71,37 @@ func TestObserveBatch(t *testing.T) {
 		Host:  host(t),
 	})
 
-	require.Len(t, tracer.events, 1, "a batch is one round trip, so one span event")
-	e := tracer.events[0]
-	assert.Equal(t, "cassandra.batch", e.operation)
-	assert.Equal(t, int32(pinpoint.ServiceTypeCassandraExecuteQuery), e.serviceType)
-	assert.Equal(t, "[INSERT INTO widgets (id, text) VALUES (?, ?)][DELETE FROM widgets WHERE id = ?]", e.sql)
-	assert.Equal(t, "testspace", e.destination)
-	assert.Equal(t, "10.0.0.1:0", e.endPoint)
-	assert.NoError(t, e.err)
-	assert.True(t, e.start.Equal(start), "start = %v, want the driver's own %v", e.start, start)
-	assert.True(t, e.end.Equal(end), "end = %v, want the driver's own %v", e.end, end)
-	assert.True(t, e.ended, "the span event was left open")
+	require.Len(t, tracer.Events, 1, "a batch is one round trip, so one span event")
+	e := tracer.Events[0]
+	assert.Equal(t, "cassandra.batch", e.Operation)
+	assert.Equal(t, int32(pinpoint.ServiceTypeCassandraExecuteQuery), e.ServiceType)
+	assert.Equal(t, "[INSERT INTO widgets (id, text) VALUES (?, ?)][DELETE FROM widgets WHERE id = ?]", e.SQL)
+	assert.Equal(t, "testspace", e.Destination)
+	assert.Equal(t, "10.0.0.1:0", e.EndPoint)
+	assert.NoError(t, e.Err)
+	assert.True(t, e.Start.Equal(start), "start = %v, want the driver's own %v", e.Start, start)
+	assert.True(t, e.End.Equal(end), "end = %v, want the driver's own %v", e.End, end)
+	assert.True(t, e.Ended, "the span event was left open")
 }
 
 // An empty batch still produces one span event, with no statements to record.
 func TestObserveBatch_NoStatements(t *testing.T) {
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 
 	NewObserver().ObserveBatch(pinpoint.NewContext(context.Background(), tracer), gocql.ObservedBatch{
 		Keyspace: "testspace",
 		Host:     host(t),
 	})
 
-	require.Len(t, tracer.events, 1)
-	assert.Equal(t, "", tracer.events[0].sql, "an empty batch has no statement to record")
-	assert.True(t, tracer.events[0].ended, "the span event was left open")
+	require.Len(t, tracer.Events, 1)
+	assert.Equal(t, "", tracer.Events[0].SQL, "an empty batch has no statement to record")
+	assert.True(t, tracer.Events[0].Ended, "the span event was left open")
 }
 
 // A batch that failed records its error, so the failed round trip is the one
 // that stands out in the trace.
 func TestObserveBatch_Error(t *testing.T) {
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 	want := errors.New("batch failed")
 
 	NewObserver().ObserveBatch(pinpoint.NewContext(context.Background(), tracer), gocql.ObservedBatch{
@@ -156,14 +111,14 @@ func TestObserveBatch_Error(t *testing.T) {
 		Err:        want,
 	})
 
-	require.Len(t, tracer.events, 1)
-	assert.ErrorIs(t, tracer.events[0].err, want)
+	require.Len(t, tracer.Events, 1)
+	assert.ErrorIs(t, tracer.Events[0].Err, want)
 }
 
 // One observer serves every query of a shared session, so a second query has
 // to open its own span event rather than reuse the first one's.
 func TestObserver_RecordsEveryQuery(t *testing.T) {
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 	o := NewObserver()
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 
@@ -171,11 +126,11 @@ func TestObserver_RecordsEveryQuery(t *testing.T) {
 	o.ObserveBatch(ctx, gocql.ObservedBatch{Statements: []string{"SELECT 2"}, Host: host(t)})
 	o.ObserveQuery(ctx, gocql.ObservedQuery{Statement: "SELECT 3", Host: host(t)})
 
-	require.Len(t, tracer.events, 3)
+	require.Len(t, tracer.Events, 3)
 	assert.Equal(t, []string{"cassandra.query", "cassandra.batch", "cassandra.query"},
-		[]string{tracer.events[0].operation, tracer.events[1].operation, tracer.events[2].operation})
-	for _, e := range tracer.events {
-		assert.True(t, e.ended, "%s was left open", e.operation)
+		[]string{tracer.Events[0].Operation, tracer.Events[1].Operation, tracer.Events[2].Operation})
+	for _, e := range tracer.Events {
+		assert.True(t, e.Ended, "%s was left open", e.Operation)
 	}
 }
 

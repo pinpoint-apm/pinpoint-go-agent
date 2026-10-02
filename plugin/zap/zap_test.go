@@ -5,22 +5,13 @@ import (
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 )
-
-func startAgent(t *testing.T) {
-	t.Helper()
-	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentName("testAgent"))
-	require.NoError(t, err)
-
-	agent, err := pinpoint.NewTestAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
-}
 
 func newTracer(t *testing.T) pinpoint.Tracer {
 	t.Helper()
@@ -48,7 +39,7 @@ func loggedFields(t *testing.T, logs *observer.ObservedLogs) map[string]interfac
 // The two fields are what lets the Pinpoint web UI jump from a log line to the
 // span that produced it, so both have to carry the tracer's own ids.
 func TestNewField(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := newTracer(t)
 
 	fields := NewField(tracer)
@@ -83,7 +74,7 @@ func (t *tracerSpy) Span() pinpoint.SpanRecorder { return t.span }
 // log line exists for the trace, so it has to happen whenever ids are handed
 // out - and not for a span that contributes none.
 func TestNewField_SetsLogging(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	sampled := &tracerSpy{Tracer: newTracer(t)}
 	sampled.span = &spanSpy{SpanRecorder: sampled.Tracer.Span()}
@@ -101,7 +92,7 @@ func TestNewField_SetsLogging(t *testing.T) {
 // so a nil or unsampled tracer has to yield no fields rather than nil-panic or
 // log ids that point at nothing.
 func TestNewField_WithoutASampledTracer(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	assert.Empty(t, NewField(nil), "a nil tracer must contribute no fields")
 	assert.Empty(t, NewField(pinpoint.NoopTracer()), "an unsampled tracer must contribute no fields")
@@ -110,7 +101,7 @@ func TestNewField_WithoutASampledTracer(t *testing.T) {
 // NewLogger is what most applications use, and it has to add the same fields
 // NewField produces without dropping the ones the logger already carries.
 func TestNewLogger(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := newTracer(t)
 
 	logger, logs := observedLogger(t)
@@ -129,7 +120,7 @@ func TestNewLogger(t *testing.T) {
 // One base logger serves every request in a process, so deriving from it
 // concurrently must stay race-free. Run under -race.
 func TestNewLogger_ConcurrentLogging(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	logger, _ := observedLogger(t)
 

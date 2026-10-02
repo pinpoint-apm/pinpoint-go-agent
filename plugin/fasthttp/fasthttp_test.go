@@ -12,37 +12,12 @@ import (
 
 	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttp/fasthttputil"
 )
-
-func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) {
-	t.Helper()
-
-	opts = append([]pinpoint.ConfigOption{
-		pinpoint.WithAppName("testApp"),
-		pinpoint.WithAgentName("testAgent"),
-	}, opts...)
-
-	config, err := pinpoint.NewConfig(opts...)
-	require.NoError(t, err)
-
-	agent, err := pinpoint.NewTestAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
-}
-
-// spanOf reads back what the tracer recorded on its span: the RPC name, the
-// endpoint, the resolved remote address and whether the span failed.
-func spanOf(t *testing.T, tracer pinpoint.Tracer) map[string]interface{} {
-	t.Helper()
-	require.NotNil(t, tracer, "the handler never ran")
-	var m map[string]interface{}
-	require.NoError(t, json.Unmarshal(tracer.JsonString(), &m))
-	return m
-}
 
 func newRequestCtx(method, uri string) *fasthttp.RequestCtx {
 	var req fasthttp.Request
@@ -144,7 +119,7 @@ func Test_resHeader(t *testing.T) {
 // adapter that answered []string{""} for every absent header put an empty
 // annotation on every sampled request.
 func TestWrapHandler_DoesNotRecordAbsentRequestHeaders(t *testing.T) {
-	startAgent(t, pphttp.WithHttpServerRecordRequestHeader([]string{"X-Present", "X-Absent"}))
+	pptest.StartAgent(t, pphttp.WithHttpServerRecordRequestHeader([]string{"X-Present", "X-Absent"}))
 
 	var tracer pinpoint.Tracer
 	h := WrapHandler(func(ctx *fasthttp.RequestCtx) { tracer = tracerOf(t, ctx) }, "/hello")
@@ -153,7 +128,7 @@ func TestWrapHandler_DoesNotRecordAbsentRequestHeaders(t *testing.T) {
 	ctx.Request.Header.Set("X-Present", "here")
 	h(ctx)
 
-	annotations := spanOf(t, tracer)["Annotations"]
+	annotations := pptest.SpanOf(t, tracer)["Annotations"]
 	encoded, err := json.Marshal(annotations)
 	require.NoError(t, err)
 	assert.Contains(t, string(encoded), "X-Present")
@@ -176,7 +151,7 @@ func Test_cookie(t *testing.T) {
 // handed a goroutine the handler started another request's values, so the
 // tracer's context must not reach them.
 func TestWrapHandler_TracerContextDoesNotReadRequestUserValues(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var traced context.Context
 	h := WrapHandler(func(ctx *fasthttp.RequestCtx) {
@@ -193,7 +168,7 @@ func TestWrapHandler_TracerContextDoesNotReadRequestUserValues(t *testing.T) {
 // The wrapper never converts the fasthttp request to a net/http one, so the
 // span attributes have to be read straight off the fasthttp context.
 func TestWrapHandler_RecordsRequestAttributesOnTheSpan(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	h := WrapHandler(func(ctx *fasthttp.RequestCtx) { tracer = tracerOf(t, ctx) }, "/hello/{name}")
@@ -201,7 +176,7 @@ func TestWrapHandler_RecordsRequestAttributesOnTheSpan(t *testing.T) {
 	ctx := newRequestCtx(http.MethodGet, "http://myhost:8080/hello/pinpoint")
 	h(ctx)
 
-	span := spanOf(t, tracer)
+	span := pptest.SpanOf(t, tracer)
 	assert.Equal(t, "/hello/pinpoint", span["RpcName"], "the span is named after the request path, not the route pattern")
 	assert.Equal(t, "myhost:8080", span["EndPoint"])
 	assert.Equal(t, "10.0.0.1", span["RemoteAddr"], "the peer address must be stripped of its port")
@@ -210,7 +185,7 @@ func TestWrapHandler_RecordsRequestAttributesOnTheSpan(t *testing.T) {
 // X-Forwarded-For overrides the transport peer address, exactly as it does for
 // net/http; the fasthttp header adapter is what makes that reachable.
 func TestWrapHandler_ResolvesTheForwardedRemoteAddress(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	h := WrapHandler(func(ctx *fasthttp.RequestCtx) { tracer = tracerOf(t, ctx) })
@@ -219,7 +194,7 @@ func TestWrapHandler_ResolvesTheForwardedRemoteAddress(t *testing.T) {
 	ctx.Request.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.2")
 	h(ctx)
 
-	assert.Equal(t, "203.0.113.7", spanOf(t, tracer)["RemoteAddr"])
+	assert.Equal(t, "203.0.113.7", pptest.SpanOf(t, tracer)["RemoteAddr"])
 }
 
 // The status the span records is fasthttp's response status, read after the
@@ -251,7 +226,7 @@ func TestWrapHandler_RecordsTheFinalStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			startAgent(t)
+			pptest.StartAgent(t)
 
 			var tracer pinpoint.Tracer
 			ctx := newRequestCtx(http.MethodGet, "http://localhost/hello")
@@ -261,7 +236,7 @@ func TestWrapHandler_RecordsTheFinalStatus(t *testing.T) {
 			})(ctx)
 
 			assert.Equal(t, tt.wantCode, ctx.Response.StatusCode())
-			assert.Equal(t, tt.wantFail, spanOf(t, tracer)["Err"] != float64(0),
+			assert.Equal(t, tt.wantFail, pptest.SpanOf(t, tracer)["Err"] != float64(0),
 				"the default 5xx error class decides whether the span fails")
 		})
 	}
@@ -270,7 +245,7 @@ func TestWrapHandler_RecordsTheFinalStatus(t *testing.T) {
 // The wrapper marks the span failed and re-panics; swallowing the panic would
 // turn a crash fasthttp's server reports into a silent 200.
 func TestWrapHandler_PanicPropagates(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	assert.PanicsWithValue(t, "boom", func() {
@@ -280,7 +255,7 @@ func TestWrapHandler_PanicPropagates(t *testing.T) {
 		})(newRequestCtx(http.MethodGet, "http://localhost/boom"))
 	}, "the wrapper swallowed the handler panic")
 
-	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "a panicking handler must fail the span")
+	assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "a panicking handler must fail the span")
 }
 
 // With no agent running the wrapper must be a straight pass-through, and must
@@ -304,7 +279,7 @@ func TestWrapHandler_PassesThroughWhenAgentDisabled(t *testing.T) {
 // inject the distributed-tracing headers into the outgoing request before the
 // call and return the caller's error unchanged.
 func TestDoClient_InjectsTracingHeaders(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
 	defer tracer.EndSpan()
@@ -331,7 +306,7 @@ func TestDoClient_InjectsTracingHeaders(t *testing.T) {
 // The callee reads the headers back through the same adapter the server side
 // uses, and has to land in the caller's transaction.
 func TestDoClient_AndWrapHandlerShareOneTransaction(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	caller := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
 	defer caller.EndSpan()
@@ -360,7 +335,7 @@ func TestDoClient_AndWrapHandlerShareOneTransaction(t *testing.T) {
 // A context that never had a span yields a noop tracer. DoClient must record
 // nothing and still make the call.
 func TestDoClient_WithNoopTracer(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
@@ -383,7 +358,7 @@ func (t *endCountingTracer) EndSpanEvent()                       { t.ends++ }
 
 // A panicking doFunc must still close the span event on its way up.
 func TestDoClient_PanicStillClosesTheSpanEvent(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := &endCountingTracer{Tracer: pinpoint.NoopTracer()}
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
@@ -435,7 +410,7 @@ func TestDoClient_StripsTheUrlQuery(t *testing.T) {
 		{false, "GET http://localhost:9090/hello"},
 		{true, "GET http://localhost:9090/hello?token=x"},
 	} {
-		startAgent(t, pphttp.WithHttpClientRecordUrlQuery(tt.record))
+		pptest.StartAgent(t, pphttp.WithHttpClientRecordUrlQuery(tt.record))
 		tracer := &urlTracer{pinpoint.GetAgent().NewSpanTracer("test", "/caller"), &urlAnnotation{}}
 
 		req := fasthttp.AcquireRequest()
@@ -456,7 +431,7 @@ func TestDoClient_StripsTheUrlQuery(t *testing.T) {
 // WrapHandler - makes one span: the inner layer finds the tracer the outer one
 // stored under CtxKey and records on it.
 func TestWrapHandler_WrappedTwiceIsNested(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var outer, inner pinpoint.Tracer
 	h := WrapHandler(func(ctx *fasthttp.RequestCtx) {
@@ -479,7 +454,7 @@ func TestWrapHandler_WrappedTwiceIsNested(t *testing.T) {
 // request still in flight; it is not a handler error, and recording it marked
 // each request that completed during a graceful stop as failed.
 func TestWrapHandler_ShutdownDoesNotFailInflightRequests(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	entered := make(chan struct{})
 	var tracer pinpoint.Tracer
@@ -509,14 +484,14 @@ func TestWrapHandler_ShutdownDoesNotFailInflightRequests(t *testing.T) {
 	require.NoError(t, <-shut)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode())
-	assert.Equal(t, float64(0), spanOf(t, tracer)["Err"], "a request that completed during shutdown is not a failure")
+	assert.Equal(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "a request that completed during shutdown is not a failure")
 }
 
 // A RequestCtx no server initialized - what a unit test of a handler builds -
 // has no server to read a shutdown from, and the wrapper must not reach for
 // one.
 func TestWrapHandler_BareRequestCtx(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	ctx := &fasthttp.RequestCtx{}
 	ctx.Request.Header.SetMethod(http.MethodGet)

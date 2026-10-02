@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -29,7 +30,7 @@ func streamFinishCallback(t *testing.T, opts []grpc.CallOption) func(error) {
 }
 
 type completionTracer struct {
-	*recordingTracer
+	*pptest.RecordingTracer
 	child *completionTracer
 	ends  int
 	done  chan struct{}
@@ -37,7 +38,7 @@ type completionTracer struct {
 
 func (r *completionTracer) NewGoroutineTracer() pinpoint.Tracer { return r.child }
 func (r *completionTracer) NewSpanEvent(s string) pinpoint.Tracer {
-	r.recordingTracer.NewSpanEvent(s)
+	r.RecordingTracer.NewSpanEvent(s)
 	return r
 }
 func (r *completionTracer) EndSpan() {
@@ -50,11 +51,11 @@ func (r *completionTracer) EndSpan() {
 // gRPC calls OnFinish before canceling its stream context, including when
 // finishing successfully. It may complete before the streamer returns.
 func TestStreamClientInterceptor_RecordsFinalStatus(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	for _, result := range []error{nil, status.Error(codes.Unavailable, "backend failed"), context.Canceled, context.DeadlineExceeded} {
 		for _, early := range []bool{false, true} {
-			child := &completionTracer{recordingTracer: newRecordingTracer()}
-			caller := &completionTracer{recordingTracer: newRecordingTracer(), child: child}
+			child := &completionTracer{RecordingTracer: pptest.NewRecordingTracer()}
+			caller := &completionTracer{RecordingTracer: pptest.NewRecordingTracer(), child: child}
 			fake := &fakeClientStream{err: io.EOF}
 			var finish func(error)
 			stream, err := StreamClientInterceptor()(
@@ -72,7 +73,7 @@ func TestStreamClientInterceptor_RecordsFinalStatus(t *testing.T) {
 				finish(result)
 			}
 			require.ErrorIs(t, stream.RecvMsg(nil), io.EOF)
-			require.Equal(t, result, child.event.err)
+			require.Equal(t, result, child.Last().Err)
 			require.Equal(t, 1, child.ends, "callback and RecvMsg must end the span only once")
 		}
 	}
@@ -81,7 +82,7 @@ func TestStreamClientInterceptor_RecordsFinalStatus(t *testing.T) {
 // Exercise the real gRPC completion callback over an in-memory transport,
 // including a canceled stream whose caller never calls RecvMsg again.
 func TestStreamClientInterceptor_RealStreamCompletion(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	for _, code := range []codes.Code{codes.OK, codes.Unavailable, codes.Canceled} {
 		t.Run(code.String(), func(t *testing.T) {
 			listener := bufconn.Listen(1024 * 1024)
@@ -112,8 +113,8 @@ func TestStreamClientInterceptor_RealStreamCompletion(t *testing.T) {
 				grpc.WithStreamInterceptor(StreamClientInterceptor()))
 			require.NoError(t, err)
 			t.Cleanup(func() { cc.Close() })
-			child := &completionTracer{recordingTracer: newRecordingTracer(), done: make(chan struct{})}
-			caller := &completionTracer{recordingTracer: newRecordingTracer(), child: child}
+			child := &completionTracer{RecordingTracer: pptest.NewRecordingTracer(), done: make(chan struct{})}
+			caller := &completionTracer{RecordingTracer: pptest.NewRecordingTracer(), child: child}
 			ctx, cancel := context.WithTimeout(pinpoint.NewContext(context.Background(), caller), 5*time.Second)
 			defer cancel()
 			stream, err := cc.NewStream(ctx, &grpc.StreamDesc{ServerStreams: true}, "/completion.Test/Run")
@@ -135,7 +136,7 @@ func TestStreamClientInterceptor_RealStreamCompletion(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("RPC completion did not end its span")
 			}
-			require.Equal(t, code, status.Code(child.event.err))
+			require.Equal(t, code, status.Code(child.Last().Err))
 			require.Equal(t, 1, child.ends)
 		})
 	}

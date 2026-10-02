@@ -5,10 +5,10 @@ import (
 	"net"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,63 +36,6 @@ func TestClient_WithContextIsConcurrencySafe(t *testing.T) {
 	}
 	wg.Wait()
 }
-
-// recordingTracer captures what the wrapper records on a span event. A real
-// tracer's recorders are write-only, so this stands in for one.
-type recordingTracer struct {
-	pinpoint.Tracer
-	events []*recordedEvent
-}
-
-func newRecordingTracer() *recordingTracer {
-	return &recordingTracer{Tracer: pinpoint.NoopTracer()}
-}
-
-func (t *recordingTracer) IsSampled() bool { return true }
-
-func (t *recordingTracer) NewSpanEvent(operation string) pinpoint.Tracer {
-	t.events = append(t.events, &recordedEvent{
-		SpanEventRecorder: t.Tracer.SpanEvent(),
-		operation:         operation,
-		annotations:       map[int32]string{},
-	})
-	return t
-}
-
-func (t *recordingTracer) SpanEvent() pinpoint.SpanEventRecorder { return t.last() }
-
-func (t *recordingTracer) EndSpanEvent() { t.last().ended = true }
-
-func (t *recordingTracer) last() *recordedEvent { return t.events[len(t.events)-1] }
-
-type recordedEvent struct {
-	pinpoint.SpanEventRecorder
-	operation   string
-	serviceType int32
-	destination string
-	endPoint    string
-	err         error
-	annotations map[int32]string
-	start, end  time.Time
-	ended       bool
-}
-
-func (e *recordedEvent) SetServiceType(typ int32)         { e.serviceType = typ }
-func (e *recordedEvent) SetDestination(id string)         { e.destination = id }
-func (e *recordedEvent) SetEndPoint(endPoint string)      { e.endPoint = endPoint }
-func (e *recordedEvent) SetError(err error, _ ...string)  { e.err = err }
-func (e *recordedEvent) FixDuration(start, end time.Time) { e.start, e.end = start, end }
-
-func (e *recordedEvent) Annotations() pinpoint.Annotation {
-	return recordedAnnotation{Annotation: e.SpanEventRecorder.Annotations(), into: e.annotations}
-}
-
-type recordedAnnotation struct {
-	pinpoint.Annotation
-	into map[int32]string
-}
-
-func (a recordedAnnotation) AppendString(key int32, s string) { a.into[key] = s }
 
 // Every wrapped operation has to produce exactly one span event named after it
 // and annotated with the key it touched - that key is what makes a memcached
@@ -124,7 +67,7 @@ func TestClient_RecordsEveryOperation(t *testing.T) {
 		{"gomemcache.FlushAll()", "", func(c *Client) error { return c.FlushAll() }},
 	} {
 		t.Run(tt.operation, func(t *testing.T) {
-			tracer := newRecordingTracer()
+			tracer := pptest.NewRecordingTracer()
 			addr := closedAddr(t)
 			c := NewClient(addr).WithContext(pinpoint.NewContext(context.Background(), tracer))
 
@@ -132,16 +75,16 @@ func TestClient_RecordsEveryOperation(t *testing.T) {
 
 			require.Error(t, err, "the call unexpectedly succeeded against a closed port")
 
-			require.Len(t, tracer.events, 1, "one operation must produce exactly one span event")
-			e := tracer.events[0]
-			assert.Equal(t, tt.operation, e.operation)
-			assert.Equal(t, int32(pinpoint.ServiceTypeMemcached), e.serviceType)
-			assert.Equal(t, "MEMCACHED", e.destination)
-			assert.Equal(t, addr, e.endPoint)
-			assert.Equal(t, tt.key, e.annotations[pinpoint.AnnotationArgs0], "key annotation")
-			assert.Error(t, e.err, "the failure was not recorded on the span event")
-			assert.False(t, e.end.Before(e.start), "duration = %v..%v, want a non-negative span", e.start, e.end)
-			assert.True(t, e.ended, "the span event was left open")
+			require.Len(t, tracer.Events, 1, "one operation must produce exactly one span event")
+			e := tracer.Events[0]
+			assert.Equal(t, tt.operation, e.Operation)
+			assert.Equal(t, int32(pinpoint.ServiceTypeMemcached), e.ServiceType)
+			assert.Equal(t, "MEMCACHED", e.Destination)
+			assert.Equal(t, addr, e.EndPoint)
+			assert.Equal(t, tt.key, e.Strings[pinpoint.AnnotationArgs0], "key annotation")
+			assert.Error(t, e.Err, "the failure was not recorded on the span event")
+			assert.False(t, e.End.Before(e.Start), "duration = %v..%v, want a non-negative span", e.Start, e.End)
+			assert.True(t, e.Ended, "the span event was left open")
 		})
 	}
 }
@@ -149,12 +92,12 @@ func TestClient_RecordsEveryOperation(t *testing.T) {
 // The endpoint identifies the memcached pool on the server map, so a client
 // built from several servers has to record all of them.
 func TestNewClient_EndpointJoinsEveryServer(t *testing.T) {
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 	c := NewClient("127.0.0.1:1", "127.0.0.2:1").WithContext(pinpoint.NewContext(context.Background(), tracer))
 
 	_, _ = c.Get("foo")
 
-	assert.Equal(t, "127.0.0.1:1,127.0.0.2:1", tracer.last().endPoint)
+	assert.Equal(t, "127.0.0.1:1,127.0.0.2:1", tracer.Last().EndPoint)
 }
 
 // WrapClient wraps a client created elsewhere exactly as NewClient wraps the
@@ -167,23 +110,23 @@ func TestWrapClient(t *testing.T) {
 	assert.Same(t, raw, c.Client, "the wrapper must keep the client it was given")
 	assert.False(t, c.currentTracer().IsSampled(), "a wrapped client starts without a tracer")
 
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 	_, _ = c.WithContext(pinpoint.NewContext(context.Background(), tracer)).Get("foo")
 
-	require.Len(t, tracer.events, 1)
-	assert.Equal(t, "cache-pool", tracer.last().endPoint)
+	require.Len(t, tracer.Events, 1)
+	assert.Equal(t, "cache-pool", tracer.Last().EndPoint)
 }
 
 // A client built from no server at all still has to record an endpoint field
 // rather than crash the first call.
 func TestNewClient_WithoutAServer(t *testing.T) {
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 	c := NewClient().WithContext(pinpoint.NewContext(context.Background(), tracer))
 
 	// Ping over an empty server list has nothing to reach and reports success.
 	assert.NoError(t, c.Ping())
-	require.Len(t, tracer.events, 1, "the call must still be traced")
-	assert.Equal(t, "", tracer.last().endPoint)
+	require.Len(t, tracer.Events, 1, "the call must still be traced")
+	assert.Equal(t, "", tracer.Last().EndPoint)
 }
 
 // WithContext also rebinds the shared receiver, so the tracer the next call
@@ -191,18 +134,18 @@ func TestNewClient_WithoutAServer(t *testing.T) {
 func TestClient_WithContextRebindsTheReceiver(t *testing.T) {
 	mc := NewClient("localhost:1")
 
-	first := newRecordingTracer()
+	first := pptest.NewRecordingTracer()
 	mc.WithContext(pinpoint.NewContext(context.Background(), first))
 	_, _ = mc.Get("foo")
 
-	second := newRecordingTracer()
+	second := pptest.NewRecordingTracer()
 	mc.WithContext(pinpoint.NewContext(context.Background(), second))
 	_, _ = mc.Get("bar")
 
-	require.Len(t, first.events, 1, "the first tracer must keep only its own call")
-	require.Len(t, second.events, 1, "the rebound tracer must record the next call")
-	assert.Equal(t, "foo", first.events[0].annotations[pinpoint.AnnotationArgs0])
-	assert.Equal(t, "bar", second.events[0].annotations[pinpoint.AnnotationArgs0])
+	require.Len(t, first.Events, 1, "the first tracer must keep only its own call")
+	require.Len(t, second.Events, 1, "the rebound tracer must record the next call")
+	assert.Equal(t, "foo", first.Events[0].Strings[pinpoint.AnnotationArgs0])
+	assert.Equal(t, "bar", second.Events[0].Strings[pinpoint.AnnotationArgs0])
 }
 
 // A copy handed to one request must keep recording on its own tracer even
@@ -210,16 +153,16 @@ func TestClient_WithContextRebindsTheReceiver(t *testing.T) {
 func TestClient_CopyKeepsItsOwnTracer(t *testing.T) {
 	mc := NewClient("localhost:1")
 
-	mine := newRecordingTracer()
+	mine := pptest.NewRecordingTracer()
 	c := mc.WithContext(pinpoint.NewContext(context.Background(), mine))
 
 	// Another request rebinds the shared client.
-	mc.WithContext(pinpoint.NewContext(context.Background(), newRecordingTracer()))
+	mc.WithContext(pinpoint.NewContext(context.Background(), pptest.NewRecordingTracer()))
 
 	_, _ = c.Get("foo")
 
-	require.Len(t, mine.events, 1, "the copy recorded on someone else's tracer")
-	assert.Equal(t, "foo", mine.events[0].annotations[pinpoint.AnnotationArgs0])
+	require.Len(t, mine.Events, 1, "the copy recorded on someone else's tracer")
+	assert.Equal(t, "foo", mine.Events[0].Strings[pinpoint.AnnotationArgs0])
 }
 
 // closedAddr returns a loopback address with nothing listening on it: the port

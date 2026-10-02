@@ -6,49 +6,12 @@ import (
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 	"gorm.io/gorm/utils/tests"
 )
-
-// recordingTracer captures what the callbacks record on a span event. A real
-// tracer's recorders are write-only, so this stands in for one.
-type recordingTracer struct {
-	pinpoint.Tracer
-	events []*recordedEvent
-}
-
-func newRecordingTracer() *recordingTracer {
-	return &recordingTracer{Tracer: pinpoint.NoopTracer()}
-}
-
-func (t *recordingTracer) IsSampled() bool { return true }
-
-func (t *recordingTracer) NewSpanEvent(operation string) pinpoint.Tracer {
-	t.events = append(t.events, &recordedEvent{
-		SpanEventRecorder: t.Tracer.SpanEvent(),
-		operation:         operation,
-	})
-	return t
-}
-
-func (t *recordingTracer) SpanEvent() pinpoint.SpanEventRecorder { return t.last() }
-
-func (t *recordingTracer) EndSpanEvent() { t.last().ended = true }
-
-func (t *recordingTracer) last() *recordedEvent { return t.events[len(t.events)-1] }
-
-type recordedEvent struct {
-	pinpoint.SpanEventRecorder
-	operation   string
-	serviceType int32
-	err         error
-	ended       bool
-}
-
-func (e *recordedEvent) SetServiceType(typ int32)        { e.serviceType = typ }
-func (e *recordedEvent) SetError(err error, _ ...string) { e.err = err }
 
 // The callback names are the contract with gorm's own registry: registering
 // under a name gorm does not know, or against a hook that does not exist,
@@ -119,7 +82,7 @@ func TestCallbacks_RecordOneSpanEventPerStatement(t *testing.T) {
 
 	for _, p := range callbackPairs {
 		t.Run(p.kind, func(t *testing.T) {
-			tracer := newRecordingTracer()
+			tracer := pptest.NewRecordingTracer()
 			processor := processorFor(db, p.kind)
 			stmt := &gorm.DB{Statement: &gorm.Statement{
 				Context: pinpoint.NewContext(context.Background(), tracer),
@@ -128,12 +91,12 @@ func TestCallbacks_RecordOneSpanEventPerStatement(t *testing.T) {
 			processor.Get(p.before)(stmt)
 			processor.Get(p.after)(stmt)
 
-			require.Len(t, tracer.events, 1, "one statement must produce exactly one span event")
-			e := tracer.events[0]
-			assert.Equal(t, p.operation, e.operation)
-			assert.Equal(t, int32(pinpoint.ServiceTypeGoFunction), e.serviceType)
-			assert.NoError(t, e.err, "a successful statement records no error")
-			assert.True(t, e.ended, "the span event was left open")
+			require.Len(t, tracer.Events, 1, "one statement must produce exactly one span event")
+			e := tracer.Events[0]
+			assert.Equal(t, p.operation, e.Operation)
+			assert.Equal(t, int32(pinpoint.ServiceTypeGoFunction), e.ServiceType)
+			assert.NoError(t, e.Err, "a successful statement records no error")
+			assert.True(t, e.Ended, "the span event was left open")
 		})
 	}
 }
@@ -142,7 +105,7 @@ func TestCallbacks_RecordOneSpanEventPerStatement(t *testing.T) {
 // gorm left on the DB has to reach the span event.
 func TestCallbacks_RecordTheStatementError(t *testing.T) {
 	db := openDB(t)
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 
 	want := errors.New("duplicate key")
 	stmt := &gorm.DB{
@@ -154,8 +117,8 @@ func TestCallbacks_RecordTheStatementError(t *testing.T) {
 	create.Get("pinpoint:before_create")(stmt)
 	create.Get("pinpoint:after_create")(stmt)
 
-	require.Len(t, tracer.events, 1)
-	assert.ErrorIs(t, tracer.events[0].err, want)
+	require.Len(t, tracer.Events, 1)
+	assert.ErrorIs(t, tracer.Events[0].Err, want)
 }
 
 // The callbacks are registered on the shared *gorm.DB, so they run for every

@@ -2,7 +2,6 @@ package ppbeego
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -11,35 +10,10 @@ import (
 	"github.com/beego/beego/v2/client/httplib"
 	beegoContext "github.com/beego/beego/v2/server/web/context"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) {
-	t.Helper()
-
-	opts = append([]pinpoint.ConfigOption{
-		pinpoint.WithAppName("testApp"),
-		pinpoint.WithAgentName("testAgent"),
-	}, opts...)
-
-	config, err := pinpoint.NewConfig(opts...)
-	require.NoError(t, err)
-
-	agent, err := pinpoint.NewTestAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
-}
-
-// spanOf reads back what the tracer recorded on its span: the RPC name, the
-// endpoint, the resolved remote address and whether the span failed.
-func spanOf(t *testing.T, tracer pinpoint.Tracer) map[string]interface{} {
-	t.Helper()
-	require.NotNil(t, tracer, "the handler never ran")
-	var m map[string]interface{}
-	require.NoError(t, json.Unmarshal(tracer.JsonString(), &m))
-	return m
-}
 
 func newBeegoContext(req *http.Request, rec *httptest.ResponseRecorder) *beegoContext.Context {
 	ctx := beegoContext.NewContext()
@@ -60,7 +34,7 @@ var pinpointHeaders = []string{
 // The filter runs in front of every handler, so it must leave beego's own
 // behaviour intact and hand the handler the tracer-carrying request.
 func TestServerFilterChain_TracesAndPassesTheContextThrough(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/hello", nil)
@@ -80,7 +54,7 @@ func TestServerFilterChain_TracesAndPassesTheContextThrough(t *testing.T) {
 	assert.True(t, tracer.IsSampled(), "handler received an unsampled tracer")
 	assert.Equal(t, http.StatusTeapot, rec.Code)
 
-	span := spanOf(t, tracer)
+	span := pptest.SpanOf(t, tracer)
 	assert.Equal(t, "/hello", span["RpcName"], "the span is named after the request path, not the router pattern")
 	assert.Equal(t, "myhost:8080", span["EndPoint"])
 	assert.Equal(t, "10.0.0.1", span["RemoteAddr"])
@@ -109,7 +83,7 @@ func TestServerFilterChain_RecordsTheFinalStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			startAgent(t)
+			pptest.StartAgent(t)
 
 			rec := httptest.NewRecorder()
 			ctx := newBeegoContext(httptest.NewRequest(http.MethodGet, "/hello", nil), rec)
@@ -128,7 +102,7 @@ func TestServerFilterChain_RecordsTheFinalStatus(t *testing.T) {
 				assert.Equal(t, tt.wantStatus, rec.Code, "wire status")
 			}
 			assert.Equal(t, tt.wantStatus, statusAnnotation(t, tracer), "recorded status")
-			assert.Equal(t, tt.wantFail, spanOf(t, tracer)["Err"] != float64(0),
+			assert.Equal(t, tt.wantFail, pptest.SpanOf(t, tracer)["Err"] != float64(0),
 				"the default 5xx error class decides whether the span fails")
 		})
 	}
@@ -137,7 +111,7 @@ func TestServerFilterChain_RecordsTheFinalStatus(t *testing.T) {
 // A beego service is usually one hop of a larger call: the tracing headers the
 // caller sent have to put this span in the caller's transaction.
 func TestServerFilterChain_ContinuesTheCallersTransaction(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	caller := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
 	defer caller.EndSpan()
@@ -161,7 +135,7 @@ func TestServerFilterChain_ContinuesTheCallersTransaction(t *testing.T) {
 // deferred URL-stat collection, and a non-string value must not take the
 // request down with it.
 func TestServerFilterChain_ForeignRouterPatternValue(t *testing.T) {
-	startAgent(t, pinpoint.WithHttpUrlStatEnable(true))
+	pptest.StartAgent(t, pinpoint.WithHttpUrlStatEnable(true))
 
 	for _, value := range []interface{}{nil, 42, struct{ Path string }{"/hello"}, []string{"/hello"}} {
 		rec := httptest.NewRecorder()
@@ -181,7 +155,7 @@ func TestServerFilterChain_ForeignRouterPatternValue(t *testing.T) {
 // The wrapper marks the span failed and re-panics; swallowing the panic would
 // turn a crash beego's recover filter reports into a silent 200.
 func TestServerFilterChain_PanicPropagates(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	ctx := newBeegoContext(httptest.NewRequest(http.MethodGet, "/boom", nil), httptest.NewRecorder())
 
@@ -193,7 +167,7 @@ func TestServerFilterChain_PanicPropagates(t *testing.T) {
 		})(ctx)
 	}, "the wrapper swallowed the handler panic")
 
-	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "a panicking handler must fail the span")
+	assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "a panicking handler must fail the span")
 }
 
 // With no agent running the filter must be a straight pass-through.
@@ -214,7 +188,7 @@ func TestServerFilterChain_PassesThroughWhenAgentDisabled(t *testing.T) {
 // to inject the distributed-tracing headers into the outgoing request before
 // the next filter sends it, and return that filter's result unchanged.
 func TestClientFilterChain_InjectsTracingHeaders(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
 	defer tracer.EndSpan()
@@ -241,7 +215,7 @@ func TestClientFilterChain_InjectsTracingHeaders(t *testing.T) {
 // A transport failure has to reach the caller unchanged; the filter only
 // records it.
 func TestClientFilterChain_ReturnsTheTransportError(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
 	defer tracer.EndSpan()
@@ -259,7 +233,7 @@ func TestClientFilterChain_ReturnsTheTransportError(t *testing.T) {
 // pass one from a context that never had a span - a noop tracer. That must
 // record nothing and still send the request.
 func TestClientFilterChain_WithNoopTracer(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	called := false
 	_, err := ClientFilterChain(pinpoint.FromContext(context.Background()))(
@@ -276,7 +250,7 @@ func TestClientFilterChain_WithNoopTracer(t *testing.T) {
 // {"key":46,"value":{"Field":{"IntValue":500}}}.
 func statusAnnotation(t *testing.T, tracer pinpoint.Tracer) int {
 	t.Helper()
-	annotations, _ := spanOf(t, tracer)["Annotations"].([]interface{})
+	annotations, _ := pptest.SpanOf(t, tracer)["Annotations"].([]interface{})
 	for _, a := range annotations {
 		m, _ := a.(map[string]interface{})
 		if key, _ := m["key"].(float64); int(key) != pinpoint.AnnotationHttpStatusCode {
@@ -294,7 +268,7 @@ func statusAnnotation(t *testing.T, tracer pinpoint.Tracer) int {
 // say - gets a noop client tracer, and the filter has to end that one: ending the caller's tracer instead closed
 // whatever event the caller had open.
 func TestClientFilterChain_StackedFiltersLeaveTheCallersEventOpen(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
 	defer tracer.EndSpan()

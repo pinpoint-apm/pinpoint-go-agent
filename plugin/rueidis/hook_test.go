@@ -6,60 +6,11 @@ import (
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// recordingTracer captures what the hook records on a span event. A real
-// tracer's recorders are write-only, so this stands in for one.
-type recordingTracer struct {
-	pinpoint.Tracer
-	events []*recordedEvent
-}
-
-func newRecordingTracer() *recordingTracer {
-	return &recordingTracer{Tracer: pinpoint.NoopTracer()}
-}
-
-func (t *recordingTracer) IsSampled() bool { return true }
-
-func (t *recordingTracer) NewSpanEvent(operation string) pinpoint.Tracer {
-	t.events = append(t.events, &recordedEvent{
-		SpanEventRecorder: t.Tracer.SpanEvent(),
-		operation:         operation,
-		annotations:       map[int32]string{},
-	})
-	return t
-}
-
-func (t *recordingTracer) SpanEvent() pinpoint.SpanEventRecorder { return t.last() }
-
-func (t *recordingTracer) last() *recordedEvent { return t.events[len(t.events)-1] }
-
-type recordedEvent struct {
-	pinpoint.SpanEventRecorder
-	operation   string
-	serviceType int32
-	destination string
-	endPoint    string
-	annotations map[int32]string
-}
-
-func (e *recordedEvent) SetServiceType(typ int32)    { e.serviceType = typ }
-func (e *recordedEvent) SetDestination(id string)    { e.destination = id }
-func (e *recordedEvent) SetEndPoint(endPoint string) { e.endPoint = endPoint }
-
-func (e *recordedEvent) Annotations() pinpoint.Annotation {
-	return recordedAnnotation{Annotation: e.SpanEventRecorder.Annotations(), into: e.annotations}
-}
-
-type recordedAnnotation struct {
-	pinpoint.Annotation
-	into map[int32]string
-}
-
-func (a recordedAnnotation) AppendString(key int32, s string) { a.into[key] = s }
 
 func testHook() *Hook {
 	return NewHook(rueidis.ClientOption{InitAddress: []string{"redis1:6379"}})
@@ -93,11 +44,11 @@ func TestNewHook_Endpoint(t *testing.T) {
 		{"an empty address list", rueidis.ClientOption{InitAddress: []string{}}, ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			tracer := newRecordingTracer()
+			tracer := pptest.NewRecordingTracer()
 			NewHook(tt.opts).newSpanEvent(pinpoint.NewContext(context.Background(), tracer),
 				"rueidis.Do()", func() string { return "GET,key" })
 
-			assert.Equal(t, tt.want, tracer.last().endPoint)
+			assert.Equal(t, tt.want, tracer.Last().EndPoint)
 		})
 	}
 }
@@ -106,7 +57,7 @@ func TestNewHook_Endpoint(t *testing.T) {
 // the service type, destination and command annotation it sets are what the
 // whole plugin records.
 func TestNewSpanEventRecordsTheCommand(t *testing.T) {
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 
 	built := 0
 	testHook().newSpanEvent(pinpoint.NewContext(context.Background(), tracer),
@@ -116,25 +67,25 @@ func TestNewSpanEventRecordsTheCommand(t *testing.T) {
 		})
 
 	assert.Equal(t, 1, built, "the command name must be built exactly once")
-	require.Len(t, tracer.events, 1)
-	e := tracer.events[0]
-	assert.Equal(t, "rueidis.DoMulti()", e.operation)
-	assert.Equal(t, int32(pinpoint.ServiceTypeRedis), e.serviceType)
-	assert.Equal(t, "REDIS", e.destination)
-	assert.Equal(t, "redis1:6379", e.endPoint)
-	assert.Equal(t, "SET,key,value, GET,key", e.annotations[pinpoint.AnnotationArgs0])
+	require.Len(t, tracer.Events, 1)
+	e := tracer.Events[0]
+	assert.Equal(t, "rueidis.DoMulti()", e.Operation)
+	assert.Equal(t, int32(pinpoint.ServiceTypeRedis), e.ServiceType)
+	assert.Equal(t, "REDIS", e.Destination)
+	assert.Equal(t, "redis1:6379", e.EndPoint)
+	assert.Equal(t, "SET,key,value, GET,key", e.Strings[pinpoint.AnnotationArgs0])
 }
 
 // An empty command name would annotate the span event with an empty string,
 // which reads as a command that ran with no name rather than one that could
 // not be described.
 func TestNewSpanEventSkipsAnEmptyCommandAnnotation(t *testing.T) {
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 
 	testHook().newSpanEvent(pinpoint.NewContext(context.Background(), tracer),
 		"rueidis.Do()", func() string { return "" })
 
-	assert.NotContains(t, tracer.last().annotations, pinpoint.AnnotationArgs0,
+	assert.NotContains(t, tracer.Last().Strings, pinpoint.AnnotationArgs0,
 		"an empty command was recorded as an annotation")
 }
 

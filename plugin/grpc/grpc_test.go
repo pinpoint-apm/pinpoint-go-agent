@@ -2,7 +2,6 @@ package ppgrpc
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -19,26 +19,6 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 )
-
-func startAgent(t *testing.T) {
-	t.Helper()
-	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentName("testAgent"))
-	require.NoError(t, err)
-
-	agent, err := pinpoint.NewTestAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
-}
-
-// spanOf reads back what the tracer recorded on its span: the RPC name, the
-// endpoint, the resolved remote address and whether the span failed.
-func spanOf(t *testing.T, tracer pinpoint.Tracer) map[string]interface{} {
-	t.Helper()
-	require.NotNil(t, tracer, "the handler never ran")
-	var m map[string]interface{}
-	require.NoError(t, json.Unmarshal(tracer.JsonString(), &m))
-	return m
-}
 
 // pinpointHeaders are the distributed tracing headers Inject writes; the callee
 // continues the transaction from them.
@@ -121,7 +101,7 @@ func Test_distributedTracingContextReaderMD(t *testing.T) {
 // metadata - that is the only channel the callee can read them from - without
 // dropping metadata the application already set.
 func Test_newClientTracer_InjectsMetadata(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
 	defer tracer.EndSpan()
@@ -147,7 +127,7 @@ func Test_newClientTracer_InjectsMetadata(t *testing.T) {
 // gateway forwards - marks the call as nested: no span event and no header, as
 // receiver's Get took the first.
 func Test_newClientTracer_NestedCallIsNotTraced(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	for _, marker := range []string{pinpoint.HeaderTraceId, pinpoint.HeaderSampled} {
 		tracer := pinpoint.GetAgent().NewSpanTracer("test", "/gateway")
@@ -169,58 +149,6 @@ func Test_newClientTracer_NestedCallIsNotTraced(t *testing.T) {
 	}
 }
 
-// recordingTracer captures what the instrumentation records on a span event.
-// A real tracer's recorders are write-only, so this stands in for one wherever
-// a test asserts recorded values rather than observable behaviour.
-type recordingTracer struct {
-	pinpoint.Tracer
-	event *recordedEvent
-}
-
-func newRecordingTracer() *recordingTracer {
-	return &recordingTracer{Tracer: pinpoint.NoopTracer()}
-}
-
-func (t *recordingTracer) IsSampled() bool { return true }
-
-func (t *recordingTracer) NewSpanEvent(operation string) pinpoint.Tracer {
-	t.event = &recordedEvent{
-		SpanEventRecorder: t.Tracer.SpanEvent(),
-		operation:         operation,
-		annotations:       map[int32]string{},
-	}
-	return t
-}
-
-func (t *recordingTracer) SpanEvent() pinpoint.SpanEventRecorder { return t.event }
-
-func (t *recordingTracer) EndSpanEvent() { t.event.ended = true }
-
-type recordedEvent struct {
-	pinpoint.SpanEventRecorder
-	operation   string
-	serviceType int32
-	destination string
-	err         error
-	annotations map[int32]string
-	ended       bool
-}
-
-func (e *recordedEvent) SetServiceType(typ int32)        { e.serviceType = typ }
-func (e *recordedEvent) SetDestination(id string)        { e.destination = id }
-func (e *recordedEvent) SetError(err error, _ ...string) { e.err = err }
-
-func (e *recordedEvent) Annotations() pinpoint.Annotation {
-	return recordedAnnotation{Annotation: e.SpanEventRecorder.Annotations(), into: e.annotations}
-}
-
-type recordedAnnotation struct {
-	pinpoint.Annotation
-	into map[int32]string
-}
-
-func (a recordedAnnotation) AppendString(key int32, s string) { a.into[key] = s }
-
 // The destination recorded for a client call is the dial target, which gRPC
 // spells with a resolver scheme. Recording it verbatim would file one server
 // under several names, and the recorded URL has to match it.
@@ -236,19 +164,19 @@ func Test_newClientTracer_RecordsTheDialTarget(t *testing.T) {
 		{"unix:///tmp/grpc.sock", "localhost"},
 	} {
 		t.Run(tt.target, func(t *testing.T) {
-			tracer := newRecordingTracer()
+			tracer := pptest.NewRecordingTracer()
 
 			_, spanTracer := newClientTracer(
 				pinpoint.NewContext(context.Background(), tracer), "/testapp.Hello/Greet", tt.target)
 			spanTracer.EndSpanEvent()
 
-			assert.Equal(t, "/testapp.Hello/Greet", tracer.event.operation,
+			assert.Equal(t, "/testapp.Hello/Greet", tracer.Last().Operation,
 				"the span event is named after the gRPC method")
-			assert.Equal(t, int32(pinpoint.ServiceTypeGrpc), tracer.event.serviceType)
-			assert.Equal(t, tt.want, tracer.event.destination)
+			assert.Equal(t, int32(pinpoint.ServiceTypeGrpc), tracer.Last().ServiceType)
+			assert.Equal(t, tt.want, tracer.Last().Destination)
 			assert.Equal(t, "grpc://"+tt.want+"/testapp.Hello/Greet",
-				tracer.event.annotations[pinpoint.AnnotationHttpUrl])
-			assert.True(t, tracer.event.ended, "the span event was left open")
+				tracer.Last().Strings[pinpoint.AnnotationHttpUrl])
+			assert.True(t, tracer.Last().Ended, "the span event was left open")
 		})
 	}
 }
@@ -267,13 +195,13 @@ func Test_endSpanEvent(t *testing.T) {
 		{name: "a wrapped io.EOF is still a failure", err: fmt.Errorf("wrapped: %w", io.EOF), wantErr: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			tracer := newRecordingTracer()
+			tracer := pptest.NewRecordingTracer()
 			tracer.NewSpanEvent("/testapp.Hello/Greet")
 
 			endSpanEvent(tracer, tt.err)
 
-			assert.Equal(t, tt.wantErr, tracer.event.err != nil, "recorded error = %v", tracer.event.err)
-			assert.True(t, tracer.event.ended, "the span event was left open")
+			assert.Equal(t, tt.wantErr, tracer.Last().Err != nil, "recorded error = %v", tracer.Last().Err)
+			assert.True(t, tracer.Last().Ended, "the span event was left open")
 		})
 	}
 }
@@ -303,7 +231,7 @@ func Test_newClientTracer_WithNoopTracer(t *testing.T) {
 // onward.
 func unsampledTracer(t *testing.T) pinpoint.Tracer {
 	t.Helper()
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	inbound := metadata.NewIncomingContext(context.Background(),
 		metadata.Pairs(pinpoint.HeaderSampled, "s0"))
@@ -402,7 +330,7 @@ func TestClientStream_ReturnsTheStreamError(t *testing.T) {
 // to hand the invoker a context carrying the tracing metadata and return the
 // invoker's error unchanged.
 func TestUnaryClientInterceptor(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
 	defer tracer.EndSpan()
@@ -429,7 +357,7 @@ func TestUnaryClientInterceptor(t *testing.T) {
 // The stream client interceptor wraps the stream the streamer returned, so the
 // span event stays open until the stream ends.
 func TestStreamClientInterceptor(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
 	defer tracer.EndSpan()
@@ -457,7 +385,7 @@ func TestStreamClientInterceptor(t *testing.T) {
 // A streamer that fails never produces a stream, so the interceptor has to
 // close its own span event and pass the error straight back.
 func TestStreamClientInterceptor_StreamerError(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
 	defer tracer.EndSpan()
@@ -480,7 +408,7 @@ func TestStreamClientInterceptor_StreamerError(t *testing.T) {
 // default option slice, which every stream on the connection shares, so the
 // OnFinish option must not land in that slice's spare capacity.
 func TestStreamClientInterceptor_DoesNotAppendIntoTheCallersOptions(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	shared := make([]grpc.CallOption, 1, 4)
 	shared[0] = grpc.WaitForReady(true)
@@ -527,7 +455,7 @@ func (t *forkingTracer) NewGoroutineTracer() pinpoint.Tracer {
 // tracer popped whatever event the application had open there at that moment
 // and recorded the stream's error on it.
 func TestStreamClientInterceptor_StreamEndsOnItsOwnTracer(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	caller := newForkingTracer()
 
 	stream, err := StreamClientInterceptor()(
@@ -555,7 +483,7 @@ func TestStreamClientInterceptor_StreamEndsOnItsOwnTracer(t *testing.T) {
 
 // A panicking invoker must still close the span event on its way up.
 func TestUnaryClientInterceptor_PanicStillClosesTheSpanEvent(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	caller := newForkingTracer()
 	assert.PanicsWithValue(t, "boom", func() {
 		_ = UnaryClientInterceptor()(
@@ -572,7 +500,7 @@ func TestUnaryClientInterceptor_PanicStillClosesTheSpanEvent(t *testing.T) {
 // The interceptor wraps the handler, so the handler's result - value and error
 // alike - has to come back untouched, with a sampled tracer in its context.
 func TestUnaryServerInterceptor(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	want := errors.New("handler failed")
 	var tracer pinpoint.Tracer
@@ -594,7 +522,7 @@ func TestUnaryServerInterceptor(t *testing.T) {
 	assert.Equal(t, "response", resp, "the handler's response must come back unchanged")
 	assert.ErrorIs(t, err, want, "the handler's error must come back unchanged")
 
-	span := spanOf(t, tracer)
+	span := pptest.SpanOf(t, tracer)
 	assert.Equal(t, "/testapp.Hello/Greet", span["RpcName"], "the span is named after the gRPC method")
 	assert.Equal(t, "10.0.0.1", span["RemoteAddr"], "the peer address must be stripped of its port")
 	assert.NotEqual(t, float64(0), span["Err"], "the handler error must fail the span")
@@ -602,7 +530,7 @@ func TestUnaryServerInterceptor(t *testing.T) {
 
 // A handler that succeeds must leave the span unfailed.
 func TestUnaryServerInterceptor_SuccessfulHandler(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	resp, err := UnaryServerInterceptor()(context.Background(), "request",
@@ -614,13 +542,13 @@ func TestUnaryServerInterceptor_SuccessfulHandler(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "response", resp)
-	assert.Equal(t, float64(0), spanOf(t, tracer)["Err"], "a successful handler must not fail the span")
+	assert.Equal(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "a successful handler must not fail the span")
 }
 
 // A gRPC server is usually one hop of a larger call: the tracing metadata the
 // caller sent has to put this span in the caller's transaction.
 func TestUnaryServerInterceptor_ContinuesTheCallersTransaction(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	caller := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
 	defer caller.EndSpan()
@@ -655,7 +583,7 @@ func (s *fakeServerStream) Context() context.Context { return s.ctx }
 // is none - so it has to hand the handler a stream whose Context carries the
 // tracer, while leaving everything else about the stream alone.
 func TestStreamServerInterceptor(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	type ctxKey struct{}
 	base := context.WithValue(context.Background(), ctxKey{}, "from-the-transport")
@@ -684,14 +612,14 @@ func TestStreamServerInterceptor(t *testing.T) {
 	assert.Equal(t, "from-the-transport", baseKept, "the transport's context values were discarded")
 	assert.Equal(t, srv, gotSrv, "the service implementation must reach the handler unchanged")
 	assert.ErrorIs(t, err, want, "the handler's error must come back unchanged")
-	assert.Equal(t, "/testapp.Hello/Stream", spanOf(t, tracer)["RpcName"])
-	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "the handler error must fail the span")
+	assert.Equal(t, "/testapp.Hello/Stream", pptest.SpanOf(t, tracer)["RpcName"])
+	assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "the handler error must fail the span")
 }
 
 // The stream interceptor reads its tracing metadata off the stream's context,
 // so it continues the caller's transaction the same way the unary one does.
 func TestStreamServerInterceptor_ContinuesTheCallersTransaction(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	caller := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
 	defer caller.EndSpan()
@@ -717,7 +645,7 @@ func TestStreamServerInterceptor_ContinuesTheCallersTransaction(t *testing.T) {
 
 // A panicking handler must not be swallowed by either server interceptor.
 func TestServerInterceptors_PanicPropagates(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	assert.PanicsWithValue(t, "boom", func() {
 		_, _ = UnaryServerInterceptor()(context.Background(), nil,
@@ -764,7 +692,7 @@ func TestServerInterceptors_PassThroughWhenAgentDisabled(t *testing.T) {
 // its span event on that span instead of starting a second transaction for
 // the same request, and leaves ending the span to the outer layer.
 func TestUnaryServerInterceptor_ReusesTheContextTracer(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var outer, inner pinpoint.Tracer
 	_, err := UnaryServerInterceptor()(context.Background(), "request",
@@ -785,5 +713,5 @@ func TestUnaryServerInterceptor_ReusesTheContextTracer(t *testing.T) {
 	assert.True(t, pinpoint.IsNestedTracer(inner), "the inner interceptor must reuse the outer's span")
 	assert.Equal(t, outer.TransactionId().String(), inner.TransactionId().String())
 	assert.Equal(t, outer.SpanId(), inner.SpanId(), "one request, one span")
-	assert.NotEqual(t, float64(0), spanOf(t, outer)["Err"], "the inner handler error must fail the shared span")
+	assert.NotEqual(t, float64(0), pptest.SpanOf(t, outer)["Err"], "the inner handler error must fail the shared span")
 }

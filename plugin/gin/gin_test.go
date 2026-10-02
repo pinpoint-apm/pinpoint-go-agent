@@ -1,7 +1,6 @@
 package ppgin
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,32 +17,6 @@ import (
 func TestMain(m *testing.M) {
 	gin.SetMode(gin.TestMode)
 	m.Run()
-}
-
-func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) {
-	t.Helper()
-
-	opts = append([]pinpoint.ConfigOption{
-		pinpoint.WithAppName("testApp"),
-		pinpoint.WithAgentName("testAgent"),
-	}, opts...)
-
-	config, err := pinpoint.NewConfig(opts...)
-	require.NoError(t, err)
-
-	agent, err := pinpoint.NewTestAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
-}
-
-// spanOf reads back what the tracer recorded on its span: the RPC name, the
-// endpoint, the resolved remote address and whether the span failed.
-func spanOf(t *testing.T, tracer pinpoint.Tracer) map[string]interface{} {
-	t.Helper()
-	require.NotNil(t, tracer, "the handler never ran")
-	var m map[string]interface{}
-	require.NoError(t, json.Unmarshal(tracer.JsonString(), &m))
-	return m
 }
 
 // serve runs one request through r and returns the recorder.
@@ -56,7 +30,7 @@ func serve(r *gin.Engine, req *http.Request) *httptest.ResponseRecorder {
 // behaviour intact: the matched route still runs with its path parameters, and
 // the handler's status and body reach the client unchanged.
 func TestMiddleware_PreservesRouting(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	r := gin.New()
 	r.Use(Middleware())
@@ -73,7 +47,7 @@ func TestMiddleware_PreservesRouting(t *testing.T) {
 // The span is what shows up in Pinpoint, so the request attributes it carries
 // have to come from the gin request rather than defaults.
 func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	r := gin.New()
@@ -89,7 +63,7 @@ func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
 	req.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.2")
 	serve(r, req)
 
-	span := spanOf(t, tracer)
+	span := pptest.SpanOf(t, tracer)
 	assert.Equal(t, "/hello/pinpoint", span["RpcName"], "the span is named after the request path, not the route pattern")
 	assert.Equal(t, "myhost:8080", span["EndPoint"])
 	assert.Equal(t, "203.0.113.7", span["RemoteAddr"], "X-Forwarded-For must win over the transport peer address")
@@ -98,7 +72,7 @@ func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
 // A gin service is usually one hop of a larger call: the tracing headers the
 // caller sent have to put this span in the caller's transaction.
 func TestMiddleware_ContinuesTheCallersTransaction(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	caller := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
 	defer caller.EndSpan()
@@ -152,7 +126,7 @@ func TestMiddleware_RecordsTheFinalStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			startAgent(t)
+			pptest.StartAgent(t)
 
 			var tracer pinpoint.Tracer
 			r := gin.New()
@@ -165,7 +139,7 @@ func TestMiddleware_RecordsTheFinalStatus(t *testing.T) {
 			rec := serve(r, httptest.NewRequest(http.MethodGet, "/", nil))
 
 			assert.Equal(t, tt.wantStatus, rec.Code)
-			assert.Equal(t, tt.wantFail, spanOf(t, tracer)["Err"] != float64(0),
+			assert.Equal(t, tt.wantFail, pptest.SpanOf(t, tracer)["Err"] != float64(0),
 				"the default 5xx error class decides whether the span fails")
 		})
 	}
@@ -175,7 +149,7 @@ func TestMiddleware_RecordsTheFinalStatus(t *testing.T) {
 // to end its span all the same and report what the client actually received.
 func TestMiddleware_AbortedChain(t *testing.T) {
 	// 403 configured as an error class makes the recorded status observable.
-	startAgent(t, pphttp.WithHttpServerStatusCodeError([]string{"403"}))
+	pptest.StartAgent(t, pphttp.WithHttpServerStatusCodeError([]string{"403"}))
 
 	var tracer pinpoint.Tracer
 	handlerRan := false
@@ -191,13 +165,13 @@ func TestMiddleware_AbortedChain(t *testing.T) {
 
 	assert.False(t, handlerRan, "the aborting middleware should have stopped the chain")
 	assert.Equal(t, http.StatusForbidden, rec.Code)
-	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "the span must record the 403 the client received")
+	assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "the span must record the 403 the client received")
 }
 
 // An unmatched route still runs the global middleware, and c.FullPath() is
 // empty there; collecting the URL statistic must not choke on that.
 func TestMiddleware_UnmatchedRoute(t *testing.T) {
-	startAgent(t, pinpoint.WithHttpUrlStatEnable(true))
+	pptest.StartAgent(t, pinpoint.WithHttpUrlStatEnable(true))
 
 	var tracer pinpoint.Tracer
 	r := gin.New()
@@ -210,13 +184,13 @@ func TestMiddleware_UnmatchedRoute(t *testing.T) {
 	rec := serve(r, httptest.NewRequest(http.MethodGet, "/nowhere", nil))
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
-	assert.Equal(t, "/nowhere", spanOf(t, tracer)["RpcName"])
+	assert.Equal(t, "/nowhere", pptest.SpanOf(t, tracer)["RpcName"])
 }
 
 // WrapHandler instruments one route instead of the whole router, and has to
 // give that handler the same tracer-carrying request the middleware does.
 func TestWrapHandler_PutsSampledTracerInRequestContext(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	r := gin.New()
@@ -230,13 +204,13 @@ func TestWrapHandler_PutsSampledTracerInRequestContext(t *testing.T) {
 	require.NotNil(t, tracer)
 	assert.True(t, tracer.IsSampled(), "wrapped handler received an unsampled tracer")
 	assert.Equal(t, http.StatusNoContent, rec.Code)
-	assert.Equal(t, "/wrapped", spanOf(t, tracer)["RpcName"])
+	assert.Equal(t, "/wrapped", pptest.SpanOf(t, tracer)["RpcName"])
 }
 
 // The wrapper marks the span failed and re-panics; swallowing the panic would
 // turn a crash gin's Recovery middleware reports into a silent 200.
 func TestMiddleware_RepanicsAndLetsRecoveryRespond(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	r := gin.New()
@@ -249,12 +223,12 @@ func TestMiddleware_RepanicsAndLetsRecoveryRespond(t *testing.T) {
 	rec := serve(r, httptest.NewRequest(http.MethodGet, "/boom", nil))
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "a panicking handler must fail the span")
+	assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "a panicking handler must fail the span")
 }
 
 // Without a recovery middleware the panic must still reach the caller.
 func TestMiddleware_PanicPropagates(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	r := gin.New()
 	r.Use(Middleware())
@@ -268,7 +242,7 @@ func TestMiddleware_PanicPropagates(t *testing.T) {
 // c.Error is gin's way of reporting a failure without aborting; the wrapper
 // records the last one, and must not disturb the response gin sends.
 func TestMiddleware_HandlerErrorsDoNotChangeTheResponse(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	r := gin.New()
@@ -284,7 +258,7 @@ func TestMiddleware_HandlerErrorsDoNotChangeTheResponse(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Equal(t, "bad", rec.Body.String())
-	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "a handler error must fail the span")
+	assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "a handler error must fail the span")
 }
 
 // With no agent running the middleware must be a straight pass-through: no

@@ -8,6 +8,7 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -132,7 +133,7 @@ func (a capturedAnnotation) AppendString(key int32, s string) { a.into[key] = s 
 // A produced message is one span event, and the tracing headers it carries are
 // the only channel the consumer can continue the transaction through.
 func Test_syncProducer_SendMessageContext(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
 	defer tracer.EndSpan()
@@ -180,7 +181,7 @@ func Test_newSyncProducerTracer_RecordsTopicAndBroker(t *testing.T) {
 // A batch send is one span event per message - each one is a separate record
 // on a topic - and all of them have to be closed once the batch returns.
 func Test_syncProducer_SendMessagesContext(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := newCapturingTracer()
 	stub := &stubSyncProducer{err: errors.New("broker unavailable")}
 	p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}}

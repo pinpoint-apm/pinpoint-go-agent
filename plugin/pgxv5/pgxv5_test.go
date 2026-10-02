@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,74 +19,6 @@ import (
 // driverName is deliberately not plugin/pgsql's "pq-pinpoint": database/sql
 // panics on a duplicate registration if a binary imports both.
 const driverName = "pgxv5-pinpoint"
-
-// recordingTracer captures what the pgx tracer records on a span event. A real
-// tracer's recorders are write-only, so this stands in for one.
-type recordingTracer struct {
-	pinpoint.Tracer
-	events []*recordedEvent
-}
-
-func newRecordingTracer() *recordingTracer {
-	return &recordingTracer{Tracer: pinpoint.NoopTracer()}
-}
-
-func (t *recordingTracer) IsSampled() bool { return true }
-
-func (t *recordingTracer) NewSpanEvent(operation string) pinpoint.Tracer {
-	t.events = append(t.events, &recordedEvent{
-		SpanEventRecorder: t.Tracer.SpanEvent(),
-		operation:         operation,
-		annotations:       map[int32]string{},
-	})
-	return t
-}
-
-func (t *recordingTracer) SpanEvent() pinpoint.SpanEventRecorder { return t.last() }
-
-func (t *recordingTracer) EndSpanEvent() { t.last().ended = true }
-
-func (t *recordingTracer) last() *recordedEvent { return t.events[len(t.events)-1] }
-
-type recordedEvent struct {
-	pinpoint.SpanEventRecorder
-	operation   string
-	serviceType int32
-	destination string
-	endPoint    string
-	err         error
-	annotations map[int32]string
-	ended       bool
-}
-
-func (e *recordedEvent) SetServiceType(typ int32)        { e.serviceType = typ }
-func (e *recordedEvent) SetDestination(id string)        { e.destination = id }
-func (e *recordedEvent) SetEndPoint(endPoint string)     { e.endPoint = endPoint }
-func (e *recordedEvent) SetError(err error, _ ...string) { e.err = err }
-
-func (e *recordedEvent) Annotations() pinpoint.Annotation {
-	return recordedAnnotation{Annotation: e.SpanEventRecorder.Annotations(), into: e.annotations}
-}
-
-type recordedAnnotation struct {
-	pinpoint.Annotation
-	into map[int32]string
-}
-
-func (a recordedAnnotation) AppendString(key int32, s string) { a.into[key] = s }
-
-func startAgent(t *testing.T) pinpoint.Agent {
-	t.Helper()
-
-	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentName("testAgent"))
-	require.NoError(t, err)
-
-	agent, err := pinpoint.NewTestAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
-
-	return agent
-}
 
 func testConfig(t *testing.T) *pgx.ConnConfig {
 	t.Helper()
@@ -153,15 +86,15 @@ func TestOpenUsesTheInstrumentedDriver(t *testing.T) {
 // service type, endpoint and destination it sets are what the whole tracer
 // records.
 func Test_newSpanEvent(t *testing.T) {
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 	newSpanEvent(pinpoint.NewContext(context.Background(), tracer), testConfig(t), "pgx.Query")
 
-	require.Len(t, tracer.events, 1)
-	e := tracer.events[0]
-	assert.Equal(t, "pgx.Query", e.operation)
-	assert.Equal(t, int32(pinpoint.ServiceTypePgSqlExecuteQuery), e.serviceType)
-	assert.Equal(t, "dbhost", e.endPoint)
-	assert.Equal(t, "testdb", e.destination)
+	require.Len(t, tracer.Events, 1)
+	e := tracer.Events[0]
+	assert.Equal(t, "pgx.Query", e.Operation)
+	assert.Equal(t, int32(pinpoint.ServiceTypePgSqlExecuteQuery), e.ServiceType)
+	assert.Equal(t, "dbhost", e.EndPoint)
+	assert.Equal(t, "testdb", e.Destination)
 }
 
 // The tracer is registered on the pool, so its callbacks run for every query
@@ -180,18 +113,18 @@ func Test_newSpanEventIgnoresUnsampledCalls(t *testing.T) {
 // pgx calls the two on the same context, so an unbalanced pair would skew the
 // event stack of the request that opened the connection.
 func TestTraceConnect(t *testing.T) {
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 	pgxT := NewTracer()
 
 	ctx = pgxT.TraceConnectStart(ctx, pgx.TraceConnectStartData{ConnConfig: testConfig(t)})
 	pgxT.TraceConnectEnd(ctx, pgx.TraceConnectEndData{})
 
-	require.Len(t, tracer.events, 1)
-	e := tracer.events[0]
-	assert.Equal(t, "pgx.Connect", e.operation)
-	assert.Equal(t, "dbhost", e.endPoint)
-	assert.True(t, e.ended, "the span event was left open")
+	require.Len(t, tracer.Events, 1)
+	e := tracer.Events[0]
+	assert.Equal(t, "pgx.Connect", e.Operation)
+	assert.Equal(t, "dbhost", e.EndPoint)
+	assert.True(t, e.Ended, "the span event was left open")
 }
 
 // pgx hands each Start callback a live *pgx.Conn to read the connection config
@@ -214,15 +147,15 @@ func TestEndCallbacks(t *testing.T) {
 	} {
 		t.Run(tt.operation, func(t *testing.T) {
 			for _, want := range []error{errors.New(tt.operation + " failed"), nil} {
-				tracer := newRecordingTracer()
+				tracer := pptest.NewRecordingTracer()
 				ctx := pinpoint.NewContext(context.Background(), tracer)
 				newSpanEvent(ctx, testConfig(t), tt.operation) // what the Start half opens
 
 				tt.end(ctx, want)
 
-				require.Len(t, tracer.events, 1)
-				assert.Equal(t, want, tracer.events[0].err, "the error must be recorded on the span event")
-				assert.True(t, tracer.events[0].ended, "the span event was left open")
+				require.Len(t, tracer.Events, 1)
+				assert.Equal(t, want, tracer.Events[0].Err, "the error must be recorded on the span event")
+				assert.True(t, tracer.Events[0].Ended, "the span event was left open")
 			}
 		})
 	}
@@ -232,15 +165,15 @@ func TestEndCallbacks(t *testing.T) {
 // identifier has to reach the annotation the way pgx sanitizes it. Asserting
 // pgx.Identifier.Sanitize on its own tested pgx, not the plugin.
 func TestCopyFromTargetIsSanitized(t *testing.T) {
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 
 	recordCopyFromTarget(newSpanEvent(ctx, testConfig(t), "pgx.CopyFrom"),
 		pgx.Identifier{"public", "users"})
 
-	require.Len(t, tracer.events, 1)
+	require.Len(t, tracer.Events, 1)
 	assert.Equal(t, `"public"."users"`,
-		tracer.events[0].annotations[pinpoint.AnnotationArgs0],
+		tracer.Events[0].Strings[pinpoint.AnnotationArgs0],
 		"the sanitized copy target belongs in the Args0 annotation")
 }
 
@@ -248,7 +181,7 @@ func TestCopyFromTargetIsSanitized(t *testing.T) {
 // with it off, nothing about the arguments may reach the span - not even how
 // many there were.
 func TestComposeArgs_HonoursTheBindValueGate(t *testing.T) {
-	agent := startAgent(t)
+	agent := pptest.StartAgent(t)
 	pgxT := NewTracer()
 
 	agent.Config().Set(pinpoint.CfgSQLTraceBindValue, true)
@@ -260,7 +193,7 @@ func TestComposeArgs_HonoursTheBindValueGate(t *testing.T) {
 
 // A statement with no bind values has nothing to record, whatever the gate says.
 func TestComposeArgs_NoArguments(t *testing.T) {
-	agent := startAgent(t)
+	agent := pptest.StartAgent(t)
 	agent.Config().Set(pinpoint.CfgSQLTraceBindValue, true)
 
 	assert.Empty(t, NewTracer().composeArgs(nil))
@@ -270,7 +203,7 @@ func TestComposeArgs_NoArguments(t *testing.T) {
 // SQL.MaxBindValueSize bounds what one statement can add to a span, so the
 // composed argument list must respect it end to end, not only inside writeArg.
 func TestComposeArgs_HonoursTheSizeLimit(t *testing.T) {
-	agent := startAgent(t)
+	agent := pptest.StartAgent(t)
 	agent.Config().Set(pinpoint.CfgSQLTraceBindValue, true)
 	agent.Config().Set(pinpoint.CfgSQLMaxBindValueSize, 32)
 

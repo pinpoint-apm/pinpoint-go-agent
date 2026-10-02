@@ -8,6 +8,7 @@ import (
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,16 +23,6 @@ func recv[T any](t *testing.T, ch <-chan T, name string) T {
 		require.FailNow(t, "timed out waiting for "+name)
 		panic("unreachable")
 	}
-}
-
-func startAgent(t *testing.T) {
-	t.Helper()
-	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentName("testAgent"))
-	require.NoError(t, err)
-
-	agent, err := pinpoint.NewTestAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
 }
 
 // closedAddr returns a loopback address with nothing listening on it, so the
@@ -70,7 +61,7 @@ func newMessage(topic string) *kafka.Message {
 // A produced message carries the transaction to the consumer in its headers,
 // and its delivery report still reaches the channel the application gave.
 func Test_ProduceContext_DeliveryChan(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
 	defer tracer.EndSpan()
 
@@ -100,7 +91,7 @@ func Test_ProduceContext_DeliveryChan(t *testing.T) {
 // reordered them, and an application tracking the last delivered offset by
 // them lost its place.
 func Test_ProduceContext_DeliveryChanKeepsReportOrder(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
 	defer tracer.EndSpan()
 	ctx := pinpoint.NewContext(context.Background(), tracer)
@@ -123,7 +114,7 @@ func Test_ProduceContext_DeliveryChanKeepsReportOrder(t *testing.T) {
 
 // Without a delivery channel the report goes to Events(), as raw Produce does.
 func Test_ProduceContext_Events(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
 	defer tracer.EndSpan()
 
@@ -146,7 +137,7 @@ func Test_ProduceContext_Events(t *testing.T) {
 // A message that already carries a Pinpoint context - an outer instrumented
 // layer, or a retry re-sending the same message object - is sent untouched.
 func Test_ProduceContext_NestedMessageIsNotTraced(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	p := newTestProducer(t)
 	msg := newMessage("widgets")
 	msg.Headers = []kafka.Header{{Key: pinpoint.HeaderTraceId, Value: []byte("first^1^1")}}

@@ -10,19 +10,10 @@ import (
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func startAgent(t *testing.T) {
-	t.Helper()
-	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentName("testAgent"))
-	require.NoError(t, err)
-
-	agent, err := pinpoint.NewTestAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
-}
 
 func newTracer(t *testing.T) pinpoint.Tracer {
 	t.Helper()
@@ -53,7 +44,7 @@ func loggedFields(t *testing.T, out *bytes.Buffer) map[string]interface{} {
 // The two attributes are what lets the Pinpoint web UI jump from a log line to
 // the span that produced it, so both have to carry the tracer's own ids.
 func TestNewAttrs(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := newTracer(t)
 
 	attrs := NewAttrs(tracer)
@@ -88,7 +79,7 @@ func (t *tracerSpy) Span() pinpoint.SpanRecorder { return t.span }
 // log line exists for the trace, so it has to happen whenever ids are handed
 // out - and not for a span that contributes none.
 func TestNewAttrs_SetsLogging(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	sampled := &tracerSpy{Tracer: newTracer(t)}
 	sampled.span = &spanSpy{SpanRecorder: sampled.Tracer.Span()}
@@ -104,7 +95,7 @@ func TestNewAttrs_SetsLogging(t *testing.T) {
 
 // The handler marks the span through the same path.
 func TestHandler_HandleSetsLogging(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	tracer := &tracerSpy{Tracer: newTracer(t)}
 	tracer.span = &spanSpy{SpanRecorder: tracer.Tracer.Span()}
@@ -119,7 +110,7 @@ func TestHandler_HandleSetsLogging(t *testing.T) {
 // so a nil or unsampled tracer has to yield no attributes rather than nil-panic
 // or log ids that point at nothing.
 func TestNewAttrs_WithoutASampledTracer(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	assert.Empty(t, NewAttrs(nil), "a nil tracer must contribute no attributes")
 	assert.Empty(t, NewAttrs(pinpoint.NoopTracer()), "an unsampled tracer must contribute no attributes")
@@ -129,7 +120,7 @@ func TestNewAttrs_WithoutASampledTracer(t *testing.T) {
 // site, so it has to add the same two attributes to whatever the application
 // logs.
 func TestHandler_Handle(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := newTracer(t)
 
 	logger, out := jsonLogger(t)
@@ -145,7 +136,7 @@ func TestHandler_Handle(t *testing.T) {
 // The handler is installed once for every level the logger emits, so the ids
 // have to reach a debug line as readily as an error one.
 func TestHandler_HandleOnEveryLevel(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := newTracer(t)
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 
@@ -163,7 +154,7 @@ func TestHandler_HandleOnEveryLevel(t *testing.T) {
 // slog.Logger.Info and friends pass context.Background(). The handler must
 // leave those records alone instead of failing the log call.
 func TestHandler_HandleWithoutATracer(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	logger, out := jsonLogger(t)
 	logger.InfoContext(context.Background(), "message", "foo", "bar")
@@ -179,7 +170,7 @@ func TestHandler_HandleWithoutATracer(t *testing.T) {
 // attributes are dropped. The ids must survive both, and stay at the top level
 // under a group - a qualified key is not the one the UI looks for.
 func TestHandler_WithAttrsAndWithGroup(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := newTracer(t)
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 
@@ -248,7 +239,7 @@ func TestHandler_Enabled(t *testing.T) {
 // One handler instance serves every log call in a process, so concurrent
 // logging through it must stay race-free. Run under -race.
 func TestHandler_ConcurrentLogging(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	logger, _ := jsonLogger(t)
 	grouped := logger.WithGroup("req").With("foo", "bar")

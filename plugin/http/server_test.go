@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -184,7 +185,7 @@ func Test_setProxyHeader_EveryHeader_oneInvalid(t *testing.T) {
 }
 
 func Test_setProxyHeader_User(t *testing.T) {
-	startAgent(t, WithHttpServerProxyUserHeaderNames([]string{" x-proxy-time ", "", "X-Other-Proxy"}))
+	pptest.StartAgent(t, WithHttpServerProxyUserHeaderNames([]string{" x-proxy-time ", "", "X-Other-Proxy"}))
 
 	tests := []struct {
 		name    string
@@ -240,7 +241,7 @@ func Test_setProxyHeader_User(t *testing.T) {
 }
 
 func Test_setProxyHeader_User_unconfigured(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("X-Proxy-Time", "t=1500968753503")
@@ -565,7 +566,7 @@ func TestHandlerFuncName_Nil(t *testing.T) {
 // NewServeMux instruments every handler registered on it, so both registration
 // forms have to keep routing to the right handler and hand it the tracer.
 func TestServeMux_TracesRegisteredHandlers(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	for _, tt := range []struct {
 		name     string
@@ -610,7 +611,7 @@ func TestServeMux_TracesRegisteredHandlers(t *testing.T) {
 // the concrete path, so a wildcard route must not collapse every request into
 // one span name.
 func TestServeMux_SpanNameIsTheRequestPath(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	mux := NewServeMux()
 	var tracer pinpoint.Tracer
@@ -627,7 +628,7 @@ func TestServeMux_SpanNameIsTheRequestPath(t *testing.T) {
 // A request the config excludes must produce a noop tracer: the handler still
 // runs and answers normally, but nothing is traced.
 func TestExcludedRequestsAreNotTraced(t *testing.T) {
-	startAgent(t,
+	pptest.StartAgent(t,
 		WithHttpServerExcludeUrl([]string{"/health", "/static/**"}),
 		WithHttpServerExcludeMethod([]string{"options"}),
 	)
@@ -667,7 +668,7 @@ func TestExcludedRequestsAreNotTraced(t *testing.T) {
 // The status code annotation is what the Pinpoint UI shows, and the configured
 // error classes are what turn a span red.
 func TestRecordHttpServerResponse(t *testing.T) {
-	startAgent(t, WithHttpServerStatusCodeError([]string{"5xx", "302"}))
+	pptest.StartAgent(t, WithHttpServerStatusCodeError([]string{"5xx", "302"}))
 
 	tests := []struct {
 		status string
@@ -708,7 +709,7 @@ func TestRecordHttpServerResponse(t *testing.T) {
 // still annotated and still classified as an error class here, it just does not
 // mark the transaction as failed.
 func TestRecordHttpServerResponse_ErrorMarkExcludeKeepsA5xxSuccessful(t *testing.T) {
-	startAgent(t, WithHttpServerStatusCodeError([]string{"5xx"}),
+	pptest.StartAgent(t, WithHttpServerStatusCodeError([]string{"5xx"}),
 		pinpoint.WithSpanErrorMarkExclude("http-status"))
 
 	var tracer pinpoint.Tracer
@@ -728,7 +729,7 @@ func TestRecordHttpServerResponse_ErrorMarkExcludeKeepsA5xxSuccessful(t *testing
 // A recorded response header is read off the writer the handler wrote to, so
 // the wrapper has to hand the real header map to the recorder.
 func TestWrapHandler_RecordsConfiguredHeaders(t *testing.T) {
-	startAgent(t,
+	pptest.StartAgent(t,
 		WithHttpServerRecordRequestHeader([]string{"X-Req"}),
 		WithHttpServerRecordRespondHeader([]string{"X-Res"}),
 		WithHttpServerRecordRequestCookie([]string{"session"}),
@@ -759,7 +760,7 @@ func TestWrapHandler_RecordsConfiguredHeaders(t *testing.T) {
 // The wrapper marks the span failed and re-panics; swallowing the panic would
 // turn a crash net/http reports into a silent 200.
 func TestWrapHandler_PanicPropagates(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	h := WrapHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -803,7 +804,7 @@ func TestRecordHttpHandlerError(t *testing.T) {
 		{name: "suppressed by the option", record: false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			startAgent(t, WithHttpServerRecordHandlerError(tt.record))
+			pptest.StartAgent(t, WithHttpServerRecordHandlerError(tt.record))
 
 			var tracer pinpoint.Tracer
 			h := WrapHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -821,7 +822,7 @@ func TestRecordHttpHandlerError(t *testing.T) {
 // A pattern registered on the mux is collected as a URL statistic; WrapHandler
 // has no pattern to report and must not collect one.
 func TestCollectUrlStat(t *testing.T) {
-	startAgent(t, pinpoint.WithHttpUrlStatEnable(true))
+	pptest.StartAgent(t, pinpoint.WithHttpUrlStatEnable(true))
 
 	var tracer pinpoint.Tracer
 	mux := NewServeMux()
@@ -845,7 +846,7 @@ func (t *metricCountingTracer) AddMetric(string, interface{}) { t.metrics++ }
 // route-pattern lookup for the same reason.
 func TestCollectUrlStat_GatedByUrlStatEnable(t *testing.T) {
 	t.Run("disabled", func(t *testing.T) {
-		startAgent(t)
+		pptest.StartAgent(t)
 		tracer := &metricCountingTracer{Tracer: pinpoint.NoopTracer()}
 		CollectUrlStat(tracer, "/users/", http.MethodGet, 200)
 		assert.False(t, IsUrlStatEnabled())
@@ -853,7 +854,7 @@ func TestCollectUrlStat_GatedByUrlStatEnable(t *testing.T) {
 	})
 
 	t.Run("enabled", func(t *testing.T) {
-		startAgent(t, pinpoint.WithHttpUrlStatEnable(true))
+		pptest.StartAgent(t, pinpoint.WithHttpUrlStatEnable(true))
 		tracer := &metricCountingTracer{Tracer: pinpoint.NoopTracer()}
 		CollectUrlStat(tracer, "/users/", http.MethodGet, 200)
 		assert.True(t, IsUrlStatEnabled())
@@ -866,7 +867,7 @@ func TestCollectUrlStat_GatedByUrlStatEnable(t *testing.T) {
 // from an absent one and continues the caller's transaction. This is the path
 // req.Header takes, and the one a blanking gateway actually breaks.
 func TestNewHttpServerTracer_BlankSpanIdHeaderContinuesTheTrace(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	caller := pinpoint.GetAgent().NewSpanTracer("HTTP Server", "/caller")
 	caller.NewSpanEvent("call")
@@ -947,7 +948,7 @@ func TestRecordHttpServerRequest_Query(t *testing.T) {
 			if tt.record {
 				opts = append(opts, WithHttpServerRecordRequestParam(true))
 			}
-			startAgent(t, opts...)
+			pptest.StartAgent(t, opts...)
 			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
 			tracer := NewHttpServerTracer(req, "test")
 			defer tracer.EndSpan()
@@ -1023,7 +1024,7 @@ func TestRecordHttpServerRequest_RealIpHeaderFollowsReload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	write := func(body string) { require.NoError(t, os.WriteFile(path, []byte(body), 0o600)) }
 	write("Http:\n  Server:\n    RealIpHeader: [X-Forwarded-For]\n")
-	startAgent(t, pinpoint.WithConfigFile(path))
+	pptest.StartAgent(t, pinpoint.WithConfigFile(path))
 
 	record := func() string {
 		req := httptest.NewRequest(http.MethodGet, "/p", nil)
@@ -1044,12 +1045,12 @@ func TestRecordHttpServerRequest_RealIpHeaderFollowsReload(t *testing.T) {
 }
 
 func TestRealIpOptions(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	cfg := httpCfg()
 	assert.Equal(t, defaultRealIpHeaders, cfg.srvRealIpHeaders)
 	assert.Equal(t, "", cfg.srvRealIpEmptyValue)
 
-	startAgent(t, WithHttpServerRealIpHeader([]string{" cf-connecting-ip ", "", "forwarded"}), WithHttpServerRealIpEmptyValue("unknown"))
+	pptest.StartAgent(t, WithHttpServerRealIpHeader([]string{" cf-connecting-ip ", "", "forwarded"}), WithHttpServerRealIpEmptyValue("unknown"))
 	cfg = httpCfg()
 	assert.Equal(t, []string{"Cf-Connecting-Ip", "Forwarded"}, cfg.srvRealIpHeaders)
 	assert.Equal(t, "unknown", cfg.srvRealIpEmptyValue)
@@ -1057,13 +1058,13 @@ func TestRealIpOptions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	require.NoError(t, os.WriteFile(path, []byte("Http:\n  Server:\n    RealIpHeader: []\n"), 0o600))
 	t.Setenv("PINPOINT_GO_HTTP_SERVER_REALIPEMPTYVALUE", "none")
-	startAgent(t, pinpoint.WithConfigFile(path))
+	pptest.StartAgent(t, pinpoint.WithConfigFile(path))
 	cfg = httpCfg()
 	assert.Empty(t, cfg.srvRealIpHeaders, "[] parses to empty")
 	assert.Equal(t, "none", cfg.srvRealIpEmptyValue)
 
 	t.Setenv("PINPOINT_GO_HTTP_SERVER_REALIPHEADER", "True-Client-IP,X-Real-Ip")
-	startAgent(t)
+	pptest.StartAgent(t)
 	assert.Equal(t, []string{"True-Client-Ip", "X-Real-Ip"}, httpCfg().srvRealIpHeaders)
 }
 
@@ -1074,7 +1075,7 @@ func TestRealIpOptions(t *testing.T) {
 // outer's span, records no second status, and its EndSpan does not end it
 // (Java: DefaultTraceFactory.checkAndGet keeps the existing Trace).
 func TestWrapHandler_ReusesTheContextTracer(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var outer, inner pinpoint.Tracer
 	handler := WrapHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1141,7 +1142,7 @@ func TestClientUrl(t *testing.T) {
 	u, err := url.Parse("https://h/p?token=x#frag")
 	require.NoError(t, err)
 
-	startAgent(t)
+	pptest.StartAgent(t)
 	assert.Equal(t, "GET https://h/p#frag", ClientUrl("GET", u))
 	assert.Equal(t, "GET https://h/p#frag", ClientUrlString("GET", "https://h/p?token=x#frag"))
 	assert.Equal(t, "GET https://h/p", ClientUrlString("GET", "https://h/p?token=x"))
@@ -1149,7 +1150,7 @@ func TestClientUrl(t *testing.T) {
 	assert.Equal(t, "GET", ClientUrl("GET", nil))
 	assert.Equal(t, "https://h/p?token=x#frag", u.String(), "the caller's URL must not be modified")
 
-	startAgent(t, WithHttpClientRecordUrlQuery(true))
+	pptest.StartAgent(t, WithHttpClientRecordUrlQuery(true))
 	assert.Equal(t, "GET https://h/p?token=x#frag", ClientUrl("GET", u))
 	assert.Equal(t, "GET https://h/p?token=x#frag", ClientUrlString("GET", "https://h/p?token=x#frag"))
 

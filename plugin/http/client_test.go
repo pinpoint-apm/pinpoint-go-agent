@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,7 +91,7 @@ var clientSends = []struct {
 func TestClient_InjectsTracingHeaders(t *testing.T) {
 	for _, tt := range clientSends {
 		t.Run(tt.name, func(t *testing.T) {
-			startAgent(t)
+			pptest.StartAgent(t)
 			tracer := serverTracer(t)
 
 			rt := &recordingTransport{status: http.StatusTeapot}
@@ -122,7 +123,7 @@ func TestClient_InjectsTracingHeaders(t *testing.T) {
 func TestClient_LeavesTheCallersRequestAlone(t *testing.T) {
 	for _, tt := range clientSends {
 		t.Run(tt.name, func(t *testing.T) {
-			startAgent(t)
+			pptest.StartAgent(t)
 			tracer := serverTracer(t)
 
 			template, err := http.NewRequest(http.MethodGet, "http://example.com/callee", nil)
@@ -147,7 +148,7 @@ func TestClient_LeavesTheCallersRequestAlone(t *testing.T) {
 // WrapClient copies the client, so the original stays untouched and any other
 // fields the caller set are kept.
 func TestWrapClient_CopiesTheClient(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	rt := &recordingTransport{}
 	original := &http.Client{Transport: rt}
@@ -161,7 +162,7 @@ func TestWrapClient_CopiesTheClient(t *testing.T) {
 // A nil client is the documented shorthand for http.DefaultClient; a nil
 // transport is the shorthand for http.DefaultTransport.
 func TestWrapClient_Defaults(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	wrapped := WrapClient(nil)
 	require.NotNil(t, wrapped)
@@ -176,7 +177,7 @@ func TestWrapClient_Defaults(t *testing.T) {
 // WrapClientWithContext takes the tracer from the context it was built with, so
 // requests that carry no tracer of their own are still traced.
 func TestWrapClientWithContext(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := serverTracer(t)
 
 	rt := &recordingTransport{}
@@ -199,7 +200,7 @@ func TestWrapClientWithContext(t *testing.T) {
 func TestClient_WithoutATracer(t *testing.T) {
 	for _, tt := range clientSends {
 		t.Run(tt.name, func(t *testing.T) {
-			startAgent(t)
+			pptest.StartAgent(t)
 
 			rt := &recordingTransport{}
 			req, err := http.NewRequest(http.MethodGet, "http://example.com/callee", nil)
@@ -226,7 +227,7 @@ func TestClient_WithoutATracer(t *testing.T) {
 func TestClient_TransportError(t *testing.T) {
 	for _, tt := range clientSends {
 		t.Run(tt.name, func(t *testing.T) {
-			startAgent(t)
+			pptest.StartAgent(t)
 			tracer := serverTracer(t)
 
 			wantErr := errors.New("dial failed")
@@ -243,7 +244,7 @@ func TestClient_TransportError(t *testing.T) {
 // The client-side recorders are configured separately from the server ones, so
 // a client header must only be recorded when the client option asks for it.
 func TestClientHeaderRecordersUseTheClientOptions(t *testing.T) {
-	startAgent(t,
+	pptest.StartAgent(t,
 		WithHttpClientRecordRequestHeader([]string{"X-Req"}),
 		WithHttpClientRecordRespondHeader([]string{"X-Res"}),
 		WithHttpClientRecordRequestCookie([]string{"session"}),
@@ -276,7 +277,7 @@ func TestClientHeaderRecordersUseTheClientOptions(t *testing.T) {
 // The deprecated pair is the same before/after code path; it must keep working
 // for callers that have not migrated.
 func TestNewAndEndHttpClientTracer(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := serverTracer(t)
 
 	req, err := http.NewRequest(http.MethodGet, "http://example.com/callee", nil)
@@ -298,7 +299,7 @@ func TestNewAndEndHttpClientTracer(t *testing.T) {
 // An end-to-end round trip over a real listener: the server side has to see the
 // headers the client side wrote and continue the transaction.
 func TestClientAndServerShareOneTransaction(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var calleeTxID string
 	server := httptest.NewServer(WrapHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -325,7 +326,7 @@ func TestClientAndServerShareOneTransaction(t *testing.T) {
 // nil header map. net/http rejects such a request with an error, and the
 // instrumentation must not turn that error into a panic.
 func TestDoClient_HandBuiltRequest(t *testing.T) {
-	agent := startAgent(t)
+	agent := pptest.StartAgent(t)
 	tracer := agent.NewSpanTracer("test", "/caller")
 	defer tracer.EndSpan()
 
@@ -343,7 +344,7 @@ func TestDoClient_HandBuiltRequest(t *testing.T) {
 // here would order every downstream service to stop tracing - health checks
 // and batch jobs would blind the services they call.
 func TestWrapClient_ExcludedUrlHandlerSendsNoTracingHeader(t *testing.T) {
-	startAgent(t, WithHttpServerExcludeUrl([]string{"/health"}))
+	pptest.StartAgent(t, WithHttpServerExcludeUrl([]string{"/health"}))
 
 	tracer := NewHttpServerTracerWithReader(http.MethodGet, "/health", "HTTP Server", pinpoint.HttpHeaderReader(http.Header{}))
 	defer tracer.EndSpan()
@@ -369,7 +370,7 @@ func TestWrapClient_ExcludedUrlHandlerSendsNoTracingHeader(t *testing.T) {
 // a real transaction, so its outgoing calls keep sending "s0" and the callee
 // does not sample the transaction back into existence.
 func TestWrapClient_UnsampledRequestStillSendsS0(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	inbound := http.Header{}
 	inbound.Set(pinpoint.HeaderSampled, "s0")
@@ -397,7 +398,7 @@ func TestWrapClient_UnsampledRequestStillSendsS0(t *testing.T) {
 // a proxy forwarding its inbound headers - is nested: the context already
 // present travels alone and no second span event is recorded.
 func TestWrapClient_NestedRequestIsNotTraced(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	for _, marker := range []string{pinpoint.HeaderTraceId, pinpoint.HeaderSampled} {
 		tracer := serverTracer(t)
@@ -431,7 +432,7 @@ func TestBefore_RecordsTheUrlWithoutItsQueryByDefault(t *testing.T) {
 		{false, "GET https://h/p"},
 		{true, "GET https://h/p?token=x"},
 	} {
-		startAgent(t, WithHttpClientRecordUrlQuery(tt.record))
+		pptest.StartAgent(t, WithHttpClientRecordUrlQuery(tt.record))
 		tracer := &annotationTracer{pinpoint.GetAgent().NewSpanTracer("test", "/caller"), newStringAnnotation()}
 		req, err := http.NewRequest(http.MethodGet, "https://h/p?token=x", nil)
 		require.NoError(t, err)

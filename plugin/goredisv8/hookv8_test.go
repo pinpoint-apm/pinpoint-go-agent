@@ -8,64 +8,10 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// recordingTracer captures what the hook records on a span event. A real
-// tracer's recorders are write-only, so this stands in for one.
-type recordingTracer struct {
-	pinpoint.Tracer
-	events []*recordedEvent
-}
-
-func newRecordingTracer() *recordingTracer {
-	return &recordingTracer{Tracer: pinpoint.NoopTracer()}
-}
-
-func (t *recordingTracer) IsSampled() bool { return true }
-
-func (t *recordingTracer) NewSpanEvent(operation string) pinpoint.Tracer {
-	t.events = append(t.events, &recordedEvent{
-		SpanEventRecorder: t.Tracer.SpanEvent(),
-		operation:         operation,
-		annotations:       map[int32]string{},
-	})
-	return t
-}
-
-func (t *recordingTracer) SpanEvent() pinpoint.SpanEventRecorder { return t.last() }
-
-func (t *recordingTracer) EndSpanEvent() { t.last().ended = true }
-
-func (t *recordingTracer) last() *recordedEvent { return t.events[len(t.events)-1] }
-
-type recordedEvent struct {
-	pinpoint.SpanEventRecorder
-	operation   string
-	serviceType int32
-	destination string
-	endPoint    string
-	err         error
-	annotations map[int32]string
-	ended       bool
-}
-
-func (e *recordedEvent) SetServiceType(typ int32)        { e.serviceType = typ }
-func (e *recordedEvent) SetDestination(id string)        { e.destination = id }
-func (e *recordedEvent) SetEndPoint(endPoint string)     { e.endPoint = endPoint }
-func (e *recordedEvent) SetError(err error, _ ...string) { e.err = err }
-
-func (e *recordedEvent) Annotations() pinpoint.Annotation {
-	return recordedAnnotation{Annotation: e.SpanEventRecorder.Annotations(), into: e.annotations}
-}
-
-type recordedAnnotation struct {
-	pinpoint.Annotation
-	into map[int32]string
-}
-
-func (a recordedAnnotation) AppendString(key int32, s string) { a.into[key] = s }
 
 func cmd(name string, err error) redis.Cmder {
 	c := redis.NewCmd(context.Background(), name, "key")
@@ -79,7 +25,7 @@ func cmd(name string, err error) redis.Cmder {
 // hook is constructed from the same options the client is, and a caller that
 // passes none must not produce an empty endpoint.
 func TestNewHook_Endpoint(t *testing.T) {
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 
 	for _, tt := range []struct {
@@ -99,7 +45,7 @@ func TestNewHook_Endpoint(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, tt.hook.AfterProcess(ctx, cmd("get", nil)))
 
-			assert.Equal(t, tt.want, tracer.last().endPoint)
+			assert.Equal(t, tt.want, tracer.Last().EndPoint)
 		})
 	}
 }
@@ -111,7 +57,7 @@ func TestHook_Process(t *testing.T) {
 	h := NewHook(&redis.Options{Addr: "redis1:6379"})
 
 	for _, cmdErr := range []error{errors.New("WRONGTYPE"), nil} {
-		tracer := newRecordingTracer()
+		tracer := pptest.NewRecordingTracer()
 		ctx := pinpoint.NewContext(context.Background(), tracer)
 
 		got, err := h.BeforeProcess(ctx, cmd("get", nil))
@@ -119,22 +65,22 @@ func TestHook_Process(t *testing.T) {
 		assert.Equal(t, ctx, got, "BeforeProcess replaced the context")
 		require.NoError(t, h.AfterProcess(ctx, cmd("get", cmdErr)))
 
-		require.Len(t, tracer.events, 1, "one command must produce exactly one span event")
-		e := tracer.events[0]
-		assert.Equal(t, "go-redis/v8.Process()", e.operation)
-		assert.Equal(t, int32(pinpoint.ServiceTypeRedis), e.serviceType)
-		assert.Equal(t, "REDIS", e.destination)
-		assert.Equal(t, "redis1:6379", e.endPoint)
-		assert.Equal(t, "get", e.annotations[pinpoint.AnnotationArgs0])
-		assert.Equal(t, cmdErr, e.err, "the command's own error must reach the span event")
-		assert.True(t, e.ended, "the span event was left open")
+		require.Len(t, tracer.Events, 1, "one command must produce exactly one span event")
+		e := tracer.Events[0]
+		assert.Equal(t, "go-redis/v8.Process()", e.Operation)
+		assert.Equal(t, int32(pinpoint.ServiceTypeRedis), e.ServiceType)
+		assert.Equal(t, "REDIS", e.Destination)
+		assert.Equal(t, "redis1:6379", e.EndPoint)
+		assert.Equal(t, "get", e.Strings[pinpoint.AnnotationArgs0])
+		assert.Equal(t, cmdErr, e.Err, "the command's own error must reach the span event")
+		assert.True(t, e.Ended, "the span event was left open")
 	}
 }
 
 // A pipeline is one round trip, so it is one span event listing every command
 // in it, failed by the first command that failed.
 func TestHook_ProcessPipeline(t *testing.T) {
-	tracer := newRecordingTracer()
+	tracer := pptest.NewRecordingTracer()
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 	h := NewHook(&redis.Options{Addr: "redis1:6379"})
 
@@ -146,13 +92,13 @@ func TestHook_ProcessPipeline(t *testing.T) {
 	assert.Equal(t, ctx, got, "BeforeProcessPipeline replaced the context")
 	require.NoError(t, h.AfterProcessPipeline(ctx, cmds))
 
-	require.Len(t, tracer.events, 1, "a pipeline is one round trip, so one span event")
-	e := tracer.events[0]
-	assert.Equal(t, "go-redis/v8.ProcessPipeline()", e.operation)
-	assert.Equal(t, int32(pinpoint.ServiceTypeRedis), e.serviceType)
-	assert.Equal(t, "set, get, del", e.annotations[pinpoint.AnnotationArgs0])
-	assert.ErrorIs(t, e.err, cmdErr, "the pipeline must be failed by its first failure")
-	assert.True(t, e.ended, "the span event was left open")
+	require.Len(t, tracer.Events, 1, "a pipeline is one round trip, so one span event")
+	e := tracer.Events[0]
+	assert.Equal(t, "go-redis/v8.ProcessPipeline()", e.Operation)
+	assert.Equal(t, int32(pinpoint.ServiceTypeRedis), e.ServiceType)
+	assert.Equal(t, "set, get, del", e.Strings[pinpoint.AnnotationArgs0])
+	assert.ErrorIs(t, e.Err, cmdErr, "the pipeline must be failed by its first failure")
+	assert.True(t, e.Ended, "the span event was left open")
 }
 
 func Test_cmdName(t *testing.T) {
@@ -207,14 +153,14 @@ func TestHook_ConcurrentCommands(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			// Each goroutine carries its own tracer, as each request would.
-			tracer := newRecordingTracer()
+			tracer := pptest.NewRecordingTracer()
 			ctx := pinpoint.NewContext(context.Background(), tracer)
 			for j := 0; j < 25; j++ {
 				_, err := h.BeforeProcess(ctx, cmd("get", nil))
 				assert.NoError(t, err)
 				assert.NoError(t, h.AfterProcess(ctx, cmd("get", nil)))
 			}
-			assert.Len(t, tracer.events, 25)
+			assert.Len(t, tracer.Events, 25)
 		}()
 	}
 	wg.Wait()

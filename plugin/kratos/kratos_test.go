@@ -2,7 +2,6 @@ package ppkratos
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -11,30 +10,11 @@ import (
 
 	"github.com/go-kratos/kratos/v2/transport"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/peer"
 )
-
-func startAgent(t *testing.T) {
-	t.Helper()
-	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentName("testAgent"))
-	require.NoError(t, err)
-
-	agent, err := pinpoint.NewTestAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
-}
-
-// spanOf reads back what the tracer recorded on its span: the RPC name, the
-// endpoint, the resolved remote address and whether the span failed.
-func spanOf(t *testing.T, tracer pinpoint.Tracer) map[string]interface{} {
-	t.Helper()
-	require.NotNil(t, tracer, "the handler never ran")
-	var m map[string]interface{}
-	require.NoError(t, json.Unmarshal(tracer.JsonString(), &m))
-	return m
-}
 
 // header is a transport.Header backed by a map, standing in for the http.Header
 // or metadata.MD a real transport carries. The middleware only calls Get and
@@ -172,7 +152,7 @@ func Test_makeUrl(t *testing.T) {
 // The middleware wraps the handler, so the handler's reply and error have to
 // come back untouched, with a sampled tracer in its context.
 func TestServerMiddleware(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	for _, tt := range []struct {
 		name string
@@ -196,7 +176,7 @@ func TestServerMiddleware(t *testing.T) {
 			assert.Equal(t, "reply", reply, "the handler's reply must come back unchanged")
 			assert.ErrorIs(t, err, want, "the handler's error must come back unchanged")
 
-			span := spanOf(t, tracer)
+			span := pptest.SpanOf(t, tracer)
 			assert.Equal(t, "/helloworld.Greeter/SayHello", span["RpcName"],
 				"the span is named after the kratos operation")
 			assert.Equal(t, "127.0.0.1:"+map[string]string{"http": "8000", "grpc": "9000"}[tt.name], span["EndPoint"],
@@ -208,7 +188,7 @@ func TestServerMiddleware(t *testing.T) {
 
 // A handler that succeeds must leave the span unfailed.
 func TestServerMiddleware_SuccessfulHandler(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	reply, err := ServerMiddleware()(func(ctx context.Context, req interface{}) (interface{}, error) {
@@ -219,13 +199,13 @@ func TestServerMiddleware_SuccessfulHandler(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "reply", reply)
-	assert.Equal(t, float64(0), spanOf(t, tracer)["Err"], "a successful handler must not fail the span")
+	assert.Equal(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "a successful handler must not fail the span")
 }
 
 // A handler reached without a kratos server transport - a plain call, or a
 // transport kind the middleware was not mounted on - must still run.
 func TestServerMiddleware_WithoutAServerTransport(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	called := false
 	_, err := ServerMiddleware()(func(ctx context.Context, req interface{}) (interface{}, error) {
@@ -241,7 +221,7 @@ func TestServerMiddleware_WithoutAServerTransport(t *testing.T) {
 
 // A panicking handler must not be swallowed by the middleware.
 func TestServerMiddleware_PanicPropagates(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	ctx := transport.NewServerContext(context.Background(),
 		newGrpcTransport("grpc://127.0.0.1:9000", "/helloworld.Greeter/SayHello"))
@@ -275,7 +255,7 @@ func TestServerMiddleware_PassesThroughWhenAgentDisabled(t *testing.T) {
 // records a different service type and url scheme than a gRPC one; both have
 // to go through.
 func TestClientMiddleware_InjectsTracingHeaders(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	for _, tt := range []struct {
 		name string
@@ -309,7 +289,7 @@ func TestClientMiddleware_InjectsTracingHeaders(t *testing.T) {
 // The callee reads those headers back through the server middleware and has to
 // land in the caller's transaction.
 func TestClientAndServerShareOneTransaction(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	caller := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
 	defer caller.EndSpan()
@@ -333,7 +313,7 @@ func TestClientAndServerShareOneTransaction(t *testing.T) {
 
 // A call made without a kratos client transport must still go through.
 func TestClientMiddleware_WithoutAClientTransport(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	called := false
 	_, err := ClientMiddleware()(func(context.Context, interface{}) (interface{}, error) {
@@ -350,7 +330,7 @@ func TestClientMiddleware_WithoutAClientTransport(t *testing.T) {
 // there is no transaction behind it, so the callee stays free to start one.
 // Only a request that lost sampling may send "s0".
 func TestClientMiddleware_WithNoopTracer(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	tr := newGrpcTransport("provider:9000", "/helloworld.Greeter/SayHello")
 	ctx := transport.NewClientContext(context.Background(), tr)
@@ -371,7 +351,7 @@ func TestClientMiddleware_WithNoopTracer(t *testing.T) {
 // gRPC server that also runs ppgrpc's interceptor makes one span: the inner
 // layer finds the tracer the outer one put in the context and records on it.
 func TestServerMiddleware_InsideAnotherTracerIsNested(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	mw := ServerMiddleware()
 	var outer, inner pinpoint.Tracer
@@ -391,5 +371,5 @@ func TestServerMiddleware_InsideAnotherTracerIsNested(t *testing.T) {
 	assert.True(t, pinpoint.IsNestedTracer(inner), "the inner middleware records on the outer span")
 	assert.Equal(t, outer.SpanId(), inner.SpanId(), "one span per request")
 	assert.Equal(t, outer.TransactionId(), inner.TransactionId())
-	assert.Equal(t, "127.0.0.1:9000", spanOf(t, outer)["EndPoint"], "the owner recorded the endpoint")
+	assert.Equal(t, "127.0.0.1:9000", pptest.SpanOf(t, outer)["EndPoint"], "the owner recorded the endpoint")
 }

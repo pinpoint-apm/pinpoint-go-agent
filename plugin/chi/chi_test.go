@@ -2,7 +2,6 @@ package ppchi
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,35 +9,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func startAgent(t *testing.T, opts ...pinpoint.ConfigOption) {
-	t.Helper()
-
-	opts = append([]pinpoint.ConfigOption{
-		pinpoint.WithAppName("testApp"),
-		pinpoint.WithAgentName("testAgent"),
-	}, opts...)
-
-	config, err := pinpoint.NewConfig(opts...)
-	require.NoError(t, err)
-
-	agent, err := pinpoint.NewTestAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
-}
-
-// spanOf reads back what the tracer recorded on its span: the RPC name, the
-// endpoint, the resolved remote address and whether the span failed.
-func spanOf(t *testing.T, tracer pinpoint.Tracer) map[string]interface{} {
-	t.Helper()
-	require.NotNil(t, tracer, "the handler never ran")
-	var m map[string]interface{}
-	require.NoError(t, json.Unmarshal(tracer.JsonString(), &m))
-	return m
-}
 
 // chi.RouteContext returns nil outside a chi router, so the wrapper's pattern
 // lookup must tolerate its absence instead of dereferencing nil.
@@ -61,7 +35,7 @@ func Test_routePattern(t *testing.T) {
 // behaviour intact: URL parameters still resolve and the handler's status and
 // body reach the client unchanged.
 func TestMiddleware_PreservesRouting(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	r := chi.NewRouter()
 	r.Use(Middleware())
@@ -80,7 +54,7 @@ func TestMiddleware_PreservesRouting(t *testing.T) {
 // The span is what shows up in Pinpoint, so the request attributes it carries
 // have to come from the request rather than defaults.
 func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	r := chi.NewRouter()
@@ -94,7 +68,7 @@ func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
 	req.RemoteAddr = "10.0.0.1:4242"
 	r.ServeHTTP(httptest.NewRecorder(), req)
 
-	span := spanOf(t, tracer)
+	span := pptest.SpanOf(t, tracer)
 	assert.Equal(t, "/hello/pinpoint", span["RpcName"], "the span is named after the request path, not the route pattern")
 	assert.Equal(t, "myhost:8080", span["EndPoint"])
 	assert.Equal(t, "10.0.0.1", span["RemoteAddr"])
@@ -103,7 +77,7 @@ func TestMiddleware_RecordsRequestAttributesOnTheSpan(t *testing.T) {
 // A chi service is usually one hop of a larger call: the tracing headers the
 // caller sent have to put this span in the caller's transaction.
 func TestMiddleware_ContinuesTheCallersTransaction(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	caller := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
 	defer caller.EndSpan()
@@ -155,7 +129,7 @@ func TestMiddleware_RecordsTheFinalStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			startAgent(t)
+			pptest.StartAgent(t)
 
 			var tracer pinpoint.Tracer
 			r := chi.NewRouter()
@@ -169,7 +143,7 @@ func TestMiddleware_RecordsTheFinalStatus(t *testing.T) {
 			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
 			assert.Equal(t, tt.wantStatus, rec.Code)
-			assert.Equal(t, tt.wantFail, spanOf(t, tracer)["Err"] != float64(0),
+			assert.Equal(t, tt.wantFail, pptest.SpanOf(t, tracer)["Err"] != float64(0),
 				"the default 5xx error class decides whether the span fails")
 		})
 	}
@@ -178,7 +152,7 @@ func TestMiddleware_RecordsTheFinalStatus(t *testing.T) {
 // Inside a chi router the route pattern is available to the deferred URL-stat
 // collection, mounted routes included.
 func TestMiddleware_RoutePatternInsideARouter(t *testing.T) {
-	startAgent(t, pinpoint.WithHttpUrlStatEnable(true))
+	pptest.StartAgent(t, pinpoint.WithHttpUrlStatEnable(true))
 
 	var pattern string
 	r := chi.NewRouter()
@@ -197,7 +171,7 @@ func TestMiddleware_RoutePatternInsideARouter(t *testing.T) {
 // chi middlewares wrap the response writer too; the wrapper has to keep the
 // chain's own writer working rather than shadowing it.
 func TestMiddleware_ComposesWithOtherChiMiddleware(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	r := chi.NewRouter()
@@ -220,7 +194,7 @@ func TestMiddleware_ComposesWithOtherChiMiddleware(t *testing.T) {
 
 // WrapHandler instruments one route instead of the whole router.
 func TestWrapHandler_InsideAChiRouter(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	r := chi.NewRouter()
@@ -242,7 +216,7 @@ func TestWrapHandler_InsideAChiRouter(t *testing.T) {
 // The wrapper marks the span failed and re-panics; swallowing the panic would
 // turn a crash chi's Recoverer reports into a silent 200.
 func TestMiddleware_PanicPropagates(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	r := chi.NewRouter()
@@ -256,13 +230,13 @@ func TestMiddleware_PanicPropagates(t *testing.T) {
 		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/boom", nil))
 	}, "the wrapper swallowed the handler panic")
 
-	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"], "a panicking handler must fail the span")
+	assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "a panicking handler must fail the span")
 }
 
 // With chi's Recoverer in front, the panic becomes a 500 and the span still
 // has to be closed and marked failed.
 func TestMiddleware_RepanicsAndLetsRecovererRespond(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	var tracer pinpoint.Tracer
 	r := chi.NewRouter()
@@ -277,7 +251,7 @@ func TestMiddleware_RepanicsAndLetsRecovererRespond(t *testing.T) {
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/boom", nil))
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	assert.NotEqual(t, float64(0), spanOf(t, tracer)["Err"])
+	assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"])
 }
 
 // With no agent running the middleware must be a straight pass-through.

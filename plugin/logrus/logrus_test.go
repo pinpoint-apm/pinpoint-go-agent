@@ -9,23 +9,11 @@ import (
 	"testing"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func startAgent(t *testing.T) pinpoint.Agent {
-	t.Helper()
-
-	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentName("testAgent"))
-	require.NoError(t, err)
-
-	agent, err := pinpoint.NewTestAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
-
-	return agent
-}
 
 func newTracer(t *testing.T) pinpoint.Tracer {
 	t.Helper()
@@ -59,7 +47,7 @@ func loggedFields(t *testing.T, out *bytes.Buffer) map[string]interface{} {
 // The two fields are what lets the Pinpoint web UI jump from a log line to the
 // span that produced it, so both have to carry the tracer's own ids.
 func TestNewField(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := newTracer(t)
 
 	fields := NewField(tracer)
@@ -73,7 +61,7 @@ func TestNewField(t *testing.T) {
 // so a nil or unsampled tracer has to yield empty fields rather than nil-panic
 // or log ids that point at nothing.
 func TestNewField_WithoutASampledTracer(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	assert.Empty(t, NewField(nil), "a nil tracer must contribute no fields")
 	assert.Empty(t, NewField(pinpoint.NoopTracer()), "an unsampled tracer must contribute no fields")
@@ -83,7 +71,7 @@ func TestNewField_WithoutASampledTracer(t *testing.T) {
 // up with the same fields NewField produces - on the standard logger and on a
 // provided one.
 func TestNewEntryAndNewLoggerEntry(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := newTracer(t)
 
 	logger, _ := jsonLogger(t)
@@ -103,7 +91,7 @@ func TestNewEntryAndNewLoggerEntry(t *testing.T) {
 // An entry built for an unsampled tracer must carry only the application's own
 // fields.
 func TestNewLoggerEntry_WithoutASampledTracer(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	logger, out := jsonLogger(t)
 	NewLoggerEntry(logger, pinpoint.NoopTracer()).WithField("foo", "bar").Error("message")
@@ -117,7 +105,7 @@ func TestNewLoggerEntry_WithoutASampledTracer(t *testing.T) {
 // The hook takes the tracer from the entry's context instead of the call site,
 // so it has to add the same two fields to whatever the application logs.
 func TestHook_Fire(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	tracer := newTracer(t)
 
 	logger, out := jsonLogger(t)
@@ -137,7 +125,7 @@ func TestHook_Fire(t *testing.T) {
 // Most log lines are written without a context. The hook must leave those
 // entries alone instead of failing the log call.
 func TestHook_FireWithoutATracer(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	entry := &logrus.Entry{Data: logrus.Fields{}}
 	require.NoError(t, NewHook().Fire(entry))
@@ -153,7 +141,7 @@ func TestHook_Levels(t *testing.T) {
 // One hook instance serves every log call in a process, so concurrent logging
 // through it must stay race-free. Run under -race.
 func TestHook_ConcurrentLogging(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 
 	logger, _ := jsonLogger(t)
 	logger.AddHook(NewHook())
@@ -178,7 +166,7 @@ func TestHook_ConcurrentLogging(t *testing.T) {
 // is nil for a hand-built entry that never allocated Data. The hook must not
 // panic on such an entry.
 func TestHook_Fire_NilDataEntry(t *testing.T) {
-	agent := startAgent(t)
+	agent := pptest.StartAgent(t)
 	tracer := agent.NewSpanTracer("test", "/caller")
 	defer tracer.EndSpan()
 

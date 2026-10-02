@@ -8,6 +8,7 @@ import (
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +41,7 @@ func readSpan(t *testing.T, tracer pinpoint.Tracer) spanFields {
 // The broker comes from the context the application built, or from the host
 // the producer stamped on the message, or is Unknown.
 func Test_newConsumerTracer_Broker(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	for _, tt := range []struct {
 		name string
 		ctx  context.Context
@@ -65,7 +66,7 @@ func Test_newConsumerTracer_Broker(t *testing.T) {
 
 // The consumer continues the producer's transaction from the message headers.
 func Test_ConsumeMessageContext(t *testing.T) {
-	startAgent(t)
+	pptest.StartAgent(t)
 	producerTracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
 	defer producerTracer.EndSpan()
 
