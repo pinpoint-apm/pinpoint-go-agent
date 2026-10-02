@@ -392,7 +392,7 @@ type Config struct {
 // an in-flight request can never observe a half-applied reload.
 type configSnapshot struct {
 	values  map[string]interface{}
-	sampler traceSampler
+	sampler *traceSampler
 	// newExceptionLimiter caps how many new exception chains a second are
 	// nil means unlimited.
 	newExceptionLimiter *rate.Limiter
@@ -1529,7 +1529,7 @@ func (config *Config) publish() {
 // newTraceSampler carries the previous sampler over when no sampling option
 // changed, so an unrelated reload does not reset the throughput limiter's
 // counters.
-func newTraceSampler(prev *configSnapshot, values map[string]interface{}) traceSampler {
+func newTraceSampler(prev *configSnapshot, values map[string]interface{}) *traceSampler {
 	if prev != nil && prev.sampler != nil && sameValues(prev.values, values, samplingOpts) {
 		return prev.sampler
 	}
@@ -1541,29 +1541,20 @@ func newTraceSampler(prev *configSnapshot, values map[string]interface{}) traceS
 		baseSampler = newPercentSampler(valueAs[float64](values[CfgSamplingPercentRate]))
 	}
 
-	newTps := valueAs[int](values[CfgSamplingNewThroughput])
-	continueTps := valueAs[int](values[CfgSamplingContinueThroughput])
-	if newTps > 0 || continueTps > 0 {
-		return newThroughputLimitTraceSampler(baseSampler, newTps, continueTps)
-	}
-	return newBasicTraceSampler(baseSampler)
+	return buildTraceSampler(baseSampler, valueAs[int](values[CfgSamplingNewThroughput]),
+		valueAs[int](values[CfgSamplingContinueThroughput]))
 }
 
-// newExceptionLimiter builds the rate limiter on new exception chain ids, the
-// less means unlimited. Like newTraceSampler it carries the previous limiter
-// over when the option did not change, so an unrelated reload does not refill
-// the token bucket.
+// newExceptionLimiter builds the rate limiter on new exception chain ids, nil
+// for an Error.NewThroughput of 0 or less, which means unlimited. Like
+// newTraceSampler it carries the previous limiter over when the option did
+// not change, so an unrelated reload does not refill the token bucket.
 func newExceptionLimiter(prev *configSnapshot, values map[string]interface{}) *rate.Limiter {
 	if prev != nil && sameValues(prev.values, values, []string{CfgErrorNewThroughput}) {
 		return prev.newExceptionLimiter
 	}
 
-	tps := valueAs[int](values[CfgErrorNewThroughput])
-	if tps <= 0 {
-		return nil
-	}
-	// documents the shape it copies.
-	return newTokenBucket(tps)
+	return newTokenBucket(valueAs[int](values[CfgErrorNewThroughput]))
 }
 
 // sameValues compares config values with DeepEqual: a value can be a slice

@@ -95,69 +95,27 @@ func (s *percentSampler) isSampled() bool {
 	return r > 0 && r <= s.rate
 }
 
-// traceSampler takes the agentStats to count into as an argument rather than
-// holding one: the sampler is built by Config, which is created before the agent
-// whose stats it counts into.
-type traceSampler interface {
-	isNewSampled(stats *agentStats) bool
-	isContinueSampled(stats *agentStats) bool
-}
-
-type basicTraceSampler struct {
-	baseSampler sampler
-}
-
-func newBasicTraceSampler(base sampler) *basicTraceSampler {
-	return &basicTraceSampler{
-		baseSampler: base,
-	}
-}
-
-func (s *basicTraceSampler) isNewSampled(stats *agentStats) bool {
-	sampled := s.baseSampler.isSampled()
-	if sampled {
-		stats.incrSampleNew()
-	} else {
-		stats.incrUnSampleNew()
-	}
-	return sampled
-}
-
-func (s *basicTraceSampler) isContinueSampled(stats *agentStats) bool {
-	stats.incrSampleCont()
-	return true
-}
-
-type throughputLimitTraceSampler struct {
+// traceSampler decides whether a transaction is traced: the base sampler for a
+// new one, and for a new and a continued one the throughput limiters, nil when
+// the throughput is unlimited. It takes the agentStats to count into as an
+// argument rather than holding one: the sampler is built by Config, which is
+// created before the agent whose stats it counts into.
+type traceSampler struct {
 	baseSampler           sampler
 	newSampleLimiter      *rate.Limiter
 	continueSampleLimiter *rate.Limiter
 }
 
-func newThroughputLimitTraceSampler(base sampler, newTps int, continueTps int) *throughputLimitTraceSampler {
-	var (
-		newLimiter  *rate.Limiter
-		contLimiter *rate.Limiter
-	)
-
-	if newTps > 0 {
-		newLimiter = newTokenBucket(newTps)
-	}
-	if continueTps > 0 {
-		contLimiter = newTokenBucket(continueTps)
-	}
-	return &throughputLimitTraceSampler{
+func buildTraceSampler(base sampler, newTps int, continueTps int) *traceSampler {
+	return &traceSampler{
 		baseSampler:           base,
-		newSampleLimiter:      newLimiter,
-		continueSampleLimiter: contLimiter,
+		newSampleLimiter:      newTokenBucket(newTps),
+		continueSampleLimiter: newTokenBucket(continueTps),
 	}
 }
 
-func per(throughput int, d time.Duration) rate.Limit {
-	return rate.Every(d / time.Duration(throughput))
-}
-
-// newTokenBucket builds the limiter behind every per-second throughput option.
+// newTokenBucket builds the limiter behind every per-second throughput option,
+// or nil for tps 0 or less, which means unlimited.
 //
 //   - Steady-state capacity is one second of permits, so a burst of tps requests
 //     after an idle second is sampled in full. A burst of 1 would spread the
@@ -172,46 +130,35 @@ func per(throughput int, d time.Duration) rate.Limit {
 // change, so an unrelated reload does not restart the pacing.
 //
 // AllowN rather than SetTokensAt, which does not exist in the x/time version
-// go.mod pins. On an unlimited rate (tps above one per nanosecond, see per)
-// AllowN is a no-op, which is the intended result.
+// go.mod pins. On an unlimited rate (tps above one per nanosecond) AllowN is a
+// no-op, which is the intended result.
 func newTokenBucket(tps int) *rate.Limiter {
-	l := rate.NewLimiter(per(tps, time.Second), tps)
+	if tps <= 0 {
+		return nil
+	}
+	l := rate.NewLimiter(rate.Every(time.Second/time.Duration(tps)), tps)
 	l.AllowN(time.Now(), tps-1)
 	return l
 }
 
-func (s *throughputLimitTraceSampler) isNewSampled(stats *agentStats) bool {
-	sampled := s.baseSampler.isSampled()
-	if sampled {
-		if s.newSampleLimiter != nil {
-			sampled = s.newSampleLimiter.Allow()
-			if sampled {
-				stats.incrSampleNew()
-			} else {
-				stats.incrSkipNew()
-			}
-		} else {
-			stats.incrSampleNew()
-		}
-	} else {
+func (s *traceSampler) isNewSampled(stats *agentStats) bool {
+	if !s.baseSampler.isSampled() {
 		stats.incrUnSampleNew()
+		return false
 	}
-
-	return sampled
+	if s.newSampleLimiter != nil && !s.newSampleLimiter.Allow() {
+		stats.incrSkipNew()
+		return false
+	}
+	stats.incrSampleNew()
+	return true
 }
 
-func (s *throughputLimitTraceSampler) isContinueSampled(stats *agentStats) bool {
-	sampled := true
-	if s.continueSampleLimiter != nil {
-		sampled = s.continueSampleLimiter.Allow()
-		if sampled {
-			stats.incrSampleCont()
-		} else {
-			stats.incrSkipCont()
-		}
-	} else {
-		stats.incrSampleCont()
+func (s *traceSampler) isContinueSampled(stats *agentStats) bool {
+	if s.continueSampleLimiter != nil && !s.continueSampleLimiter.Allow() {
+		stats.incrSkipCont()
+		return false
 	}
-
-	return sampled
+	stats.incrSampleCont()
+	return true
 }

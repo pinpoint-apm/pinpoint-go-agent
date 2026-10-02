@@ -92,7 +92,7 @@ func Test_percentSampler_samplesFirstRequest(t *testing.T) {
 	}
 }
 
-func Test_basicTraceSampler_isNewSampled(t *testing.T) {
+func Test_traceSampler_unlimited_isNewSampled(t *testing.T) {
 	type fields struct {
 		baseSampler sampler
 	}
@@ -106,7 +106,7 @@ func Test_basicTraceSampler_isNewSampled(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &basicTraceSampler{
+			s := &traceSampler{
 				baseSampler: tt.fields.baseSampler,
 			}
 			assert.Equal(t, tt.want, s.isNewSampled(newAgentStats()))
@@ -114,7 +114,7 @@ func Test_basicTraceSampler_isNewSampled(t *testing.T) {
 	}
 }
 
-func Test_basicTraceSampler_isContinueSampled(t *testing.T) {
+func Test_traceSampler_unlimited_isContinueSampled(t *testing.T) {
 	type fields struct {
 		baseSampler sampler
 	}
@@ -128,7 +128,7 @@ func Test_basicTraceSampler_isContinueSampled(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &basicTraceSampler{
+			s := &traceSampler{
 				baseSampler: tt.fields.baseSampler,
 			}
 			assert.Equal(t, tt.want, s.isContinueSampled(newAgentStats()))
@@ -136,17 +136,17 @@ func Test_basicTraceSampler_isContinueSampled(t *testing.T) {
 	}
 }
 
-func Test_throughputLimitTraceSampler_isNewSampled(t *testing.T) {
+func Test_traceSampler_isNewSampled(t *testing.T) {
 	type fields struct {
-		sampler traceSampler
+		sampler *traceSampler
 	}
 	tests := []struct {
 		name   string
 		fields fields
 		want   bool
 	}{
-		{"1", fields{newThroughputLimitTraceSampler(newRateSampler(1), 10, 10)}, true},
-		{"2", fields{newThroughputLimitTraceSampler(&rateSampler{rate: 10, counter: 1}, 10, 10)}, false},
+		{"1", fields{buildTraceSampler(newRateSampler(1), 10, 10)}, true},
+		{"2", fields{buildTraceSampler(&rateSampler{rate: 10, counter: 1}, 10, 10)}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -156,8 +156,8 @@ func Test_throughputLimitTraceSampler_isNewSampled(t *testing.T) {
 	}
 }
 
-func Test_throughputLimitTraceSampler_skipNew(t *testing.T) {
-	s := newThroughputLimitTraceSampler(newRateSampler(1), 1, 10)
+func Test_traceSampler_skipNew(t *testing.T) {
+	s := buildTraceSampler(newRateSampler(1), 1, 10)
 	stats := newAgentStats()
 
 	for i := 0; i < 100; i++ {
@@ -175,17 +175,17 @@ func Test_throughputLimitTraceSampler_skipNew(t *testing.T) {
 	assert.Equal(t, int64(99*2), stats.readCounters().skipNew, "skipNew")
 }
 
-func Test_throughputLimitTraceSampler_isContinueSampled(t *testing.T) {
+func Test_traceSampler_isContinueSampled(t *testing.T) {
 	type fields struct {
-		sampler traceSampler
+		sampler *traceSampler
 	}
 	tests := []struct {
 		name   string
 		fields fields
 		want   bool
 	}{
-		{"1", fields{newThroughputLimitTraceSampler(newRateSampler(1), 10, 10)}, true},
-		{"2", fields{newThroughputLimitTraceSampler(newRateSampler(100), 10, 10)}, true},
+		{"1", fields{buildTraceSampler(newRateSampler(1), 10, 10)}, true},
+		{"2", fields{buildTraceSampler(newRateSampler(100), 10, 10)}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -195,8 +195,8 @@ func Test_throughputLimitTraceSampler_isContinueSampled(t *testing.T) {
 	}
 }
 
-func Test_throughputLimitTraceSampler_skipContinue(t *testing.T) {
-	s := newThroughputLimitTraceSampler(newRateSampler(100), 10, 1)
+func Test_traceSampler_skipContinue(t *testing.T) {
+	s := buildTraceSampler(newRateSampler(100), 10, 1)
 	stats := newAgentStats()
 
 	for i := 0; i < 100; i++ {
@@ -232,9 +232,9 @@ func countConcurrent(n int, isSampled func() bool) int {
 	return int(count)
 }
 
-func Test_throughputLimitTraceSampler_burst(t *testing.T) {
+func Test_traceSampler_burst(t *testing.T) {
 	const tps = 100
-	s := newThroughputLimitTraceSampler(newRateSampler(1), tps, tps)
+	s := buildTraceSampler(newRateSampler(1), tps, tps)
 	stats := newAgentStats()
 
 	// A fresh limiter starts empty, so a burst of tps requests arriving at once
@@ -261,11 +261,11 @@ func Test_throughputLimitTraceSampler_burst(t *testing.T) {
 	assert.Less(t, burst, tps+tps/10, "idle burst")
 }
 
-func Test_throughputLimitTraceSampler_hugeThroughput(t *testing.T) {
+func Test_traceSampler_hugeThroughput(t *testing.T) {
 	// a tps beyond one event per nanosecond makes per() an infinite rate: the
 	// burst of tps must neither overflow the limiter nor throttle anything,
 	// and the drain that empties a fresh bucket must not apply either.
-	s := newThroughputLimitTraceSampler(newRateSampler(1), math.MaxInt32, math.MaxInt32)
+	s := buildTraceSampler(newRateSampler(1), math.MaxInt32, math.MaxInt32)
 	stats := newAgentStats()
 
 	assert.Equal(t, 1000, countConcurrent(1000, func() bool { return s.isNewSampled(stats) }), "new")

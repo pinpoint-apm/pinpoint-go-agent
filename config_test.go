@@ -955,7 +955,7 @@ func TestNewConfig_SamplingTypeAliases(t *testing.T) {
 		c, err := NewConfig(WithAppName("TestApp"), WithSamplingType(given), WithSamplingCounterRate(100))
 		assert.NoError(t, err)
 		assert.Equal(t, samplingTypeCounter, c.String(CfgSamplingType), given)
-		_, isRate := c.load().sampler.(*basicTraceSampler).baseSampler.(*rateSampler)
+		_, isRate := c.load().sampler.baseSampler.(*rateSampler)
 		assert.True(t, isRate, "%q did not build a counter sampler", given)
 		c.Close()
 	}
