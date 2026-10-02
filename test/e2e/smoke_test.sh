@@ -12,8 +12,6 @@ PASS_COUNT=0
 FAIL_COUNT=0
 HTTP_STATUS=""
 HTTP_BODY=""
-WORK_DIR=$(mktemp -d)
-trap 'rm -rf "$WORK_DIR"' EXIT
 
 pass() {
     PASS_COUNT=$((PASS_COUNT + 1))
@@ -32,11 +30,10 @@ http_request() {
     local method=$1
     local url=$2
     shift 2
-    local body_file="$WORK_DIR/response-${PASS_COUNT}-${FAIL_COUNT}-$$"
-    : > "$body_file"
-    HTTP_STATUS=$(curl -sS --max-time 10 -X "$method" -o "$body_file" \
-        -w '%{http_code}' "$@" "$url") || HTTP_STATUS="000"
-    HTTP_BODY=$(<"$body_file")
+    local out
+    out=$(curl -sS --max-time 10 -X "$method" -w $'\n%{http_code}' "$@" "$url") || out=$'\n000'
+    HTTP_STATUS=${out##*$'\n'}
+    HTTP_BODY=${out%$'\n'*}
 }
 
 assert_status() {

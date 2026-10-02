@@ -118,6 +118,28 @@ func Test_parseDSN(t *testing.T) {
 			wantHost: "::1",
 			wantName: "testdb",
 		},
+		{
+			// The keyword/value form lib/pq connects with is read as it is:
+			// handing it to pq.ParseURL rejected it, once per pooled connection
+			// with an ERROR line, and left every span of the pool without an
+			// endpoint.
+			name:     "keyword form",
+			dsn:      "host=db1 dbname=app user=x sslmode=disable",
+			wantHost: "db1",
+			wantName: "app",
+		},
+		{
+			name:     "keyword form hostaddr wins over host",
+			dsn:      "hostaddr=10.0.0.1 host=db1 dbname=app",
+			wantHost: "10.0.0.1",
+			wantName: "app",
+		},
+		{
+			name:     "keyword form quoted value and socket directory",
+			dsn:      "dbname='app db' host=/var/run/postgresql",
+			wantHost: "localhost",
+			wantName: "app db",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("PGHOST", tt.pgHost)

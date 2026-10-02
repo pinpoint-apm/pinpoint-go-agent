@@ -2,6 +2,7 @@
 package e2e
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -29,10 +30,7 @@ func SetDefaultEnv(key, value string) {
 
 // EnvOr returns the value of key, or fallback when it is unset.
 func EnvOr(key, fallback string) string {
-	if v, ok := os.LookupEnv(key); ok {
-		return v
-	}
-	return fallback
+	return cmp.Or(os.Getenv(key), fallback)
 }
 
 // CollectorHost reports the collector the run was pointed at. The agent reads

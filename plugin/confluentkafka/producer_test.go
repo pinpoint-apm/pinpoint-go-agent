@@ -12,6 +12,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// recv receives from ch or fails the test after five seconds.
+func recv[T any](t *testing.T, ch <-chan T, name string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "timed out waiting for "+name)
+		panic("unreachable")
+	}
+}
+
 func startAgent(t *testing.T) {
 	t.Helper()
 	config, err := pinpoint.NewConfig(pinpoint.WithAppName("testApp"), pinpoint.WithAgentName("testAgent"))
@@ -77,14 +89,10 @@ func Test_ProduceContext_DeliveryChan(t *testing.T) {
 	tid, _ := r.Get(pinpoint.HeaderTraceId)
 	assert.Equal(t, tracer.TransactionId().String(), tid)
 
-	select {
-	case e := <-reports:
-		m, ok := e.(*kafka.Message)
-		require.True(t, ok, "the delivery report must be forwarded as it is: %T", e)
-		assert.Error(t, m.TopicPartition.Error, "a message to a broker that is not there fails")
-	case <-time.After(5 * time.Second):
-		t.Fatal("the delivery report never reached the application's channel")
-	}
+	e := recv(t, reports, "the delivery report on the application's channel")
+	m, ok := e.(*kafka.Message)
+	require.True(t, ok, "the delivery report must be forwarded as it is: %T", e)
+	assert.Error(t, m.TopicPartition.Error, "a message to a broker that is not there fails")
 }
 
 // Reports on a shared delivery channel arrive in the order librdkafka sends
@@ -106,14 +114,10 @@ func Test_ProduceContext_DeliveryChanKeepsReportOrder(t *testing.T) {
 		require.NoError(t, p.ProduceContext(ctx, msg, reports))
 	}
 	for i := 0; i < n; i++ {
-		select {
-		case e := <-reports:
-			m, ok := e.(*kafka.Message)
-			require.True(t, ok, "%T", e)
-			require.Equal(t, i, m.Opaque, "reports out of order")
-		case <-time.After(5 * time.Second):
-			t.Fatalf("report %d never arrived", i)
-		}
+		e := recv(t, reports, "delivery report")
+		m, ok := e.(*kafka.Message)
+		require.True(t, ok, "%T", e)
+		require.Equal(t, i, m.Opaque, "reports out of order")
 	}
 }
 
@@ -132,15 +136,9 @@ func Test_ProduceContext_Events(t *testing.T) {
 
 	// Connection failures reach Events() too; the delivery report is the
 	// first *kafka.Message among them.
-	deadline := time.After(5 * time.Second)
 	for {
-		select {
-		case e := <-p.Events():
-			if _, ok := e.(*kafka.Message); ok {
-				return
-			}
-		case <-deadline:
-			t.Fatal("the delivery report never reached Events()")
+		if _, ok := recv(t, p.Events(), "the delivery report on Events()").(*kafka.Message); ok {
+			return
 		}
 	}
 }

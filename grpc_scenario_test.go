@@ -19,18 +19,6 @@ import (
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
-// The mocks in internal/protobuf/mock are generated from the same .proto files
-// as the clients themselves (protoc-gen-go-grpcmock, testify), so they satisfy
-// the real interfaces and a scenario can script the collector per call -- fail
-// twice, then recover -- instead of hand-rolling a counter per stub.
-var (
-	_ pb.AgentClient                  = (*grpcmock.MockAgentClient)(nil)
-	_ pb.MetadataClient               = (*grpcmock.MockMetadataClient)(nil)
-	_ pb.SpanClient                   = (*grpcmock.MockSpanClient)(nil)
-	_ pb.StatClient                   = (*grpcmock.MockStatClient)(nil)
-	_ pb.ProfilerCommandServiceClient = (*grpcmock.MockProfilerCommandServiceClient)(nil)
-)
-
 func collectorDown() error {
 	return status.Error(codes.Unavailable, "collector down")
 }
@@ -66,7 +54,7 @@ func Test_sendPingWorker_replacesStreamTheCollectorBroke(t *testing.T) {
 
 	agent.workerWg.Add(1)
 	go agent.superviseWorker("ping", agent.sendPingWorker)
-	waitFor(t, "the broken ping stream to be replaced", func() bool { return opened.get() == 2 })
+	require.Eventually(t, func() bool { return opened.get() == 2 }, 2*time.Second, 2*time.Millisecond, "the broken ping stream to be replaced")
 
 	agent.signalShutdown()
 	agent.workerWg.Wait()
@@ -138,7 +126,7 @@ func Test_sendStatsWorker_reopensStreamAfterSendErrorAndResumes(t *testing.T) {
 
 	agent.workerWg.Add(1)
 	go agent.superviseWorker("send stats", agent.sendStatsWorker)
-	waitFor(t, "the replacement stat stream to carry both batches", func() bool { return stats.get() == 2 })
+	require.Eventually(t, func() bool { return stats.get() == 2 }, 2*time.Second, 2*time.Millisecond, "the replacement stat stream to carry both batches")
 
 	agent.signalShutdown()
 	agent.workerWg.Wait()
@@ -296,10 +284,10 @@ func Test_sendStatsWorker_renewsAgedStream(t *testing.T) {
 	go agent.superviseWorker("send stats", agent.sendStatsWorker)
 
 	agent.statChan <- makePAgentStatBatch([]*inspectorStats{agent.stats.getStats()})
-	waitFor(t, "the first batch to be sent", func() bool { return sent.get() == 1 })
+	require.Eventually(t, func() bool { return sent.get() == 1 }, 2*time.Second, 2*time.Millisecond, "the first batch to be sent")
 	time.Sleep(2 * streamMaxAgeForTest * time.Millisecond)
 	agent.statChan <- makePAgentStatBatch([]*inspectorStats{agent.stats.getStats()})
-	waitFor(t, "the second batch to be sent", func() bool { return sent.get() == 2 })
+	require.Eventually(t, func() bool { return sent.get() == 2 }, 2*time.Second, 2*time.Millisecond, "the second batch to be sent")
 
 	agent.signalShutdown()
 	agent.workerWg.Wait()
@@ -337,9 +325,9 @@ func Test_runCommandService_renewsAgedStreamWithoutBackOff(t *testing.T) {
 	agent.workerWg.Add(1)
 	go agent.superviseWorker("command", agent.runCommandService)
 
-	// backOffSleep(0) is at least 2.1s, so three streams inside the 2s waitFor
+	// backOffSleep(0) is at least 2.1s, so three streams inside the 2s Eventually
 	// window can only mean the renewals skipped the back-off.
-	waitFor(t, "the command stream to be renewed twice", func() bool { return opened.get() >= 3 })
+	require.Eventually(t, func() bool { return opened.get() >= 3 }, 2*time.Second, 2*time.Millisecond, "the command stream to be renewed twice")
 
 	agent.enable.Store(false)
 	agent.signalShutdown()

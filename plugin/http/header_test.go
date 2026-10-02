@@ -12,7 +12,8 @@ import (
 // recordingAnnotation captures the key/name/value triples the header recorders
 // append, keyed by annotation key so request and response headers stay apart.
 type recordingAnnotation struct {
-	got map[int32]map[string]string
+	pinpoint.Annotation // nil: only AppendStringString is called
+	got                 map[int32]map[string]string
 }
 
 func newRecordingAnnotation() *recordingAnnotation {
@@ -35,15 +36,6 @@ func (a *recordingAnnotation) values(key int32) map[string]string {
 
 func (a *recordingAnnotation) cookies() map[string]string {
 	return a.values(pinpoint.AnnotationHttpCookie)
-}
-
-func (a *recordingAnnotation) AppendInt(int32, int32)                             {}
-func (a *recordingAnnotation) AppendLong(int32, int64)                            {}
-func (a *recordingAnnotation) AppendString(int32, string)                         {}
-func (a *recordingAnnotation) AppendIntStringString(int32, int32, string, string) {}
-func (a *recordingAnnotation) AppendBytesStringString(int32, []byte, string, string) {
-}
-func (a *recordingAnnotation) AppendLongIntIntByteByteString(int32, int64, int32, int32, int32, int32, string) {
 }
 
 // testCookie is a Cookie that counts how often the recorder walks it: the

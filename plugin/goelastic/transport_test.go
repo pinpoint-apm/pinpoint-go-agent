@@ -17,16 +17,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type sampledTracer struct {
-	pinpoint.Tracer
-}
-
-func (sampledTracer) IsSampled() bool { return true }
-
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+// okTransport answers every request with 200 OK and no body.
+var okTransport = NewTransport(roundTripperFunc(func(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+}))
+
+// tracedRequest builds a request whose context carries a sampled capturing
+// tracer, which is what makes the transport record anything at all.
+func tracedRequest(t *testing.T, method, url string, body io.Reader) (*http.Request, *capturingTracer) {
+	t.Helper()
+	req, err := http.NewRequest(method, url, body)
+	require.NoError(t, err)
+	tracer := newCapturingTracer()
+	return req.WithContext(pinpoint.NewContext(req.Context(), tracer)), tracer
 }
 
 type readErrorBody struct {
@@ -64,9 +73,7 @@ func TestRoundTrip_DoesNotPreconsumeStreamingBodyWithoutGetBody(t *testing.T) {
 	defer reader.Close()
 	defer writer.Close()
 
-	req, err := http.NewRequest(http.MethodPost, "http://es:9200/_bulk", reader)
-	require.NoError(t, err)
-	req = req.WithContext(pinpoint.NewContext(req.Context(), sampledTracer{pinpoint.NoopTracer()}))
+	req, _ := tracedRequest(t, http.MethodPost, "http://es:9200/_bulk", reader)
 
 	entered := make(chan *http.Request, 1)
 	bodyRead := make(chan []byte, 1)
@@ -115,9 +122,7 @@ func TestRoundTrip_DoesNotPreconsumeStreamingBodyWithoutGetBody(t *testing.T) {
 
 func TestRoundTrip_DoesNotMutateReadErrorBodyWithoutGetBody(t *testing.T) {
 	body := &readErrorBody{}
-	req, err := http.NewRequest(http.MethodPost, "http://es:9200/_bulk", body)
-	require.NoError(t, err)
-	req = req.WithContext(pinpoint.NewContext(req.Context(), sampledTracer{pinpoint.NoopTracer()}))
+	req, _ := tracedRequest(t, http.MethodPost, "http://es:9200/_bulk", body)
 
 	var (
 		sentBody     io.ReadCloser
@@ -132,7 +137,7 @@ func TestRoundTrip_DoesNotMutateReadErrorBodyWithoutGetBody(t *testing.T) {
 		return nil, err
 	}))
 
-	_, err = rt.RoundTrip(req)
+	_, err := rt.RoundTrip(req)
 	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	assert.Equal(t, io.ReadCloser(body), sentBody,
 		"the underlying transport received a replaced body of type %T", sentBody)
@@ -206,16 +211,10 @@ func (a capturedAnnotation) AppendString(key int32, s string) { a.into[key] = s 
 // on the HTTP client type, so one call has to record both events - the outer
 // one carrying the query, the inner one the host it went to.
 func TestRoundTrip_RecordsBothSpanEvents(t *testing.T) {
-	req, err := http.NewRequest(http.MethodPost, "http://es:9200/test/_search",
+	req, tracer := tracedRequest(t, http.MethodPost, "http://es:9200/test/_search",
 		strings.NewReader(`{"query":{"match_all":{}}}`))
-	require.NoError(t, err)
-	tracer := newCapturingTracer()
-	req = req.WithContext(pinpoint.NewContext(req.Context(), tracer))
 
-	rt := NewTransport(roundTripperFunc(func(*http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
-	}))
-	_, err = rt.RoundTrip(req)
+	_, err := okTransport.RoundTrip(req)
 	require.NoError(t, err)
 
 	require.Len(t, tracer.events, 2, "one call must record the Elasticsearch event and the HTTP one")
@@ -241,15 +240,12 @@ func TestRoundTrip_RecordsBothSpanEvents(t *testing.T) {
 // A transport failure is what tracing is for, so it has to reach the caller and
 // the span event that made the call.
 func TestRoundTrip_RecordsTheTransportError(t *testing.T) {
-	req, err := http.NewRequest(http.MethodGet, "http://es:9200/test/_search?q=name:foo", nil)
-	require.NoError(t, err)
-	tracer := newCapturingTracer()
-	req = req.WithContext(pinpoint.NewContext(req.Context(), tracer))
+	req, tracer := tracedRequest(t, http.MethodGet, "http://es:9200/test/_search?q=name:foo", nil)
 
 	want := errors.New("connection refused")
 	rt := NewTransport(roundTripperFunc(func(*http.Request) (*http.Response, error) { return nil, want }))
 
-	_, err = rt.RoundTrip(req)
+	_, err := rt.RoundTrip(req)
 	assert.ErrorIs(t, err, want, "the transport error must come back unchanged")
 
 	require.Len(t, tracer.events, 2)
@@ -263,15 +259,9 @@ func TestRoundTrip_RecordsTheTransportError(t *testing.T) {
 // be cut rather than blow up the annotation.
 func TestRoundTrip_TruncatesTheDsl(t *testing.T) {
 	body := `{"query":"` + strings.Repeat("x", 4*MaxDslLength) + `"}`
-	req, err := http.NewRequest(http.MethodPost, "http://es:9200/test/_search", strings.NewReader(body))
-	require.NoError(t, err)
-	tracer := newCapturingTracer()
-	req = req.WithContext(pinpoint.NewContext(req.Context(), tracer))
+	req, tracer := tracedRequest(t, http.MethodPost, "http://es:9200/test/_search", strings.NewReader(body))
 
-	rt := NewTransport(roundTripperFunc(func(*http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
-	}))
-	_, err = rt.RoundTrip(req)
+	_, err := okTransport.RoundTrip(req)
 	require.NoError(t, err)
 
 	assert.Equal(t, body[:MaxDslLength], tracer.events[0].annotations[pinpoint.AnnotationEsDsl],
@@ -311,66 +301,55 @@ func TestRoundTrip_IgnoresUnsampledRequests(t *testing.T) {
 // the request body for a body search, and nothing at all when there is neither
 // or when the body cannot be copied.
 func Test_dslString(t *testing.T) {
+	mustReq := func(method, url string, body io.Reader) *http.Request {
+		req, err := http.NewRequest(method, url, body)
+		require.NoError(t, err)
+		return req
+	}
 	for _, tt := range []struct {
 		name string
-		req  func(*testing.T) *http.Request
+		req  *http.Request
 		want string
 	}{
 		{
 			name: "uri search",
-			req: func(t *testing.T) *http.Request {
-				return httptest.NewRequest(http.MethodGet, "http://es:9200/test/_search?q=name:foo", nil)
-			},
+			req:  httptest.NewRequest(http.MethodGet, "http://es:9200/test/_search?q=name:foo", nil),
 			want: "name:foo",
 		},
 		{
 			// The q parameter wins: it is the query, the body is not one.
 			name: "uri search with a body",
-			req: func(t *testing.T) *http.Request {
-				return httptest.NewRequest(http.MethodPost, "http://es:9200/test/_search?q=name:foo",
-					strings.NewReader(`{"query":{"match_all":{}}}`))
-			},
+			req: httptest.NewRequest(http.MethodPost, "http://es:9200/test/_search?q=name:foo",
+				strings.NewReader(`{"query":{"match_all":{}}}`)),
 			want: "name:foo",
 		},
 		{
 			name: "other query parameters only",
-			req: func(t *testing.T) *http.Request {
-				return httptest.NewRequest(http.MethodGet, "http://es:9200/test/_search?size=10", nil)
-			},
+			req:  httptest.NewRequest(http.MethodGet, "http://es:9200/test/_search?size=10", nil),
 			want: "",
 		},
 		{
 			// http.NewRequest gives a strings.Reader body a GetBody, which is
 			// the copy the annotation is read from.
 			name: "body search",
-			req: func(t *testing.T) *http.Request {
-				req, err := http.NewRequest(http.MethodPost, "http://es:9200/test/_search",
-					strings.NewReader(`{"query":{"match_all":{}}}`))
-				require.NoError(t, err)
-				return req
-			},
+			req: mustReq(http.MethodPost, "http://es:9200/test/_search",
+				strings.NewReader(`{"query":{"match_all":{}}}`)),
 			want: `{"query":{"match_all":{}}}`,
 		},
 		{
 			name: "no body",
-			req: func(t *testing.T) *http.Request {
-				return httptest.NewRequest(http.MethodGet, "http://es:9200/test/_search", nil)
-			},
+			req:  httptest.NewRequest(http.MethodGet, "http://es:9200/test/_search", nil),
 			want: "",
 		},
 		{
 			// A streaming body has no GetBody, so there is no copy to read.
 			name: "body without GetBody",
-			req: func(t *testing.T) *http.Request {
-				req, err := http.NewRequest(http.MethodPost, "http://es:9200/_bulk", io.LimitReader(strings.NewReader("x"), 1))
-				require.NoError(t, err)
-				return req
-			},
+			req:  mustReq(http.MethodPost, "http://es:9200/_bulk", io.LimitReader(strings.NewReader("x"), 1)),
 			want: "",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := dslString(tt.req(t))
+			got, err := dslString(tt.req)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -427,18 +406,15 @@ func TestNewTransport_KeepsTheGivenTransport(t *testing.T) {
 // A DSL that fails to read must not lose the call: the request still goes out,
 // with an empty annotation instead of a query.
 func TestRoundTrip_RecordsTheCallWhenTheDslCannotBeRead(t *testing.T) {
-	req, err := http.NewRequest(http.MethodPost, "http://es:9200/test/_search", strings.NewReader("not gzip"))
-	require.NoError(t, err)
+	req, tracer := tracedRequest(t, http.MethodPost, "http://es:9200/test/_search", strings.NewReader("not gzip"))
 	req.Header.Set("Content-Encoding", "gzip")
-	tracer := newCapturingTracer()
-	req = req.WithContext(pinpoint.NewContext(req.Context(), tracer))
 
 	called := false
 	rt := NewTransport(roundTripperFunc(func(*http.Request) (*http.Response, error) {
 		called = true
 		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
 	}))
-	_, err = rt.RoundTrip(req)
+	_, err := rt.RoundTrip(req)
 
 	require.NoError(t, err, "an unreadable DSL must not fail the request")
 	assert.True(t, called, "the underlying transport was not called")

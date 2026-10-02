@@ -77,9 +77,9 @@ func TestHttpHelpersPopulateServerAndClientWireData(t *testing.T) {
 	pphttp.CollectUrlStat(tracer, "/http-helper/{id}", http.MethodPost, http.StatusServiceUnavailable)
 	tracer.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/http-helper") != nil && len(eventsForSpan(s, spanID)) >= 1
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	wire := findSpanByRpc(s, "/http-helper")
@@ -138,9 +138,9 @@ func TestParsesApacheProxyHeaderAndRealIpFallback(t *testing.T) {
 	require.True(t, tracer.IsSampled())
 	tracer.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/proxy-apache") != nil
-	}, waitTimeout))
+	}, waitTimeout)
 
 	wire := findSpanByRpc(mc.Snapshot(), "/proxy-apache")
 	require.NotNil(t, wire)
@@ -185,11 +185,11 @@ func TestRecordsEveryProxyHopAndDropsMalformedNginxTime(t *testing.T) {
 		"Pinpoint-ProxyApp":    "t=1710000004000 app=edge-app",
 	})
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/proxy-app") != nil &&
 			findSpanByRpc(s, "/proxy-nginx-range") != nil &&
 			findSpanByRpc(s, "/proxy-multi") != nil
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	// Every proxy annotation of a span, in the order the recorder appends
@@ -248,9 +248,9 @@ func TestExcludesFilteredUrlsAndMethods(t *testing.T) {
 	assert.NotEqual(t, int64(0), kept.SpanId())
 	kept.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/kept") != nil
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	assert.Equal(t, 1, countSpansByRpc(s, "/kept"))
@@ -280,10 +280,10 @@ func TestWrappedHandlerTracesRequestEndToEnd(t *testing.T) {
 	resp.Body.Close()
 	assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		wire := findSpanByRpc(s, "/wrapped")
 		return wire != nil && len(eventsForSpan(s, wire.GetSpanId())) >= 2
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	wire := findSpanByRpc(s, "/wrapped")

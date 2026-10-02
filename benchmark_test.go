@@ -46,10 +46,6 @@ func benchAgent() *agent {
 	return newTestAgent(cfg)
 }
 
-func benchSpan(a *agent) *span {
-	return defaultSpan(a)
-}
-
 // startDrain consumes the span queue/metaChan/urlStatChan in the background so enqueue
 // stays on its non-saturated path, mirroring production where the sender keeps
 // up. Without this, the buffers fill after ~1024 chunks and the benchmark
@@ -115,7 +111,7 @@ func BenchmarkSpanEvent(b *testing.B) {
 	a := benchAgent()
 	stop := startDrain(a)
 	defer stop()
-	s := benchSpan(a)
+	s := defaultSpan(a)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -131,7 +127,7 @@ func BenchmarkSpanEventNested(b *testing.B) {
 	a := benchAgent()
 	stop := startDrain(a)
 	defer stop()
-	s := benchSpan(a)
+	s := defaultSpan(a)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -156,7 +152,7 @@ func BenchmarkSpanEventParallel(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
-		s := benchSpan(a)
+		s := defaultSpan(a)
 		for pb.Next() {
 			s.NewSpanEvent("operation").EndSpanEvent()
 		}
@@ -288,7 +284,7 @@ func BenchmarkSpanLifecycleShapes(b *testing.B) {
 func BenchmarkOptimizeSpanEvents(b *testing.B) {
 	const n = defaultEventChunkSize
 	a := benchAgent()
-	s := benchSpan(a)
+	s := defaultSpan(a)
 
 	src := make([]*spanEvent, n)
 	for i := range src {
@@ -357,7 +353,7 @@ func BenchmarkExtractContinue(b *testing.B) {
 		HeaderParentApplicationType: "1800",
 		HeaderHost:                  "10.0.0.1:8080",
 	}}
-	s := benchSpan(a)
+	s := defaultSpan(a)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -383,7 +379,7 @@ func BenchmarkExtractContinueHttpHeader(b *testing.B) {
 	h.Set(HeaderParentApplicationType, "1800")
 	h.Set(HeaderHost, "10.0.0.1:8080")
 	reader := HttpHeaderReader(h)
-	s := benchSpan(a)
+	s := defaultSpan(a)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -399,7 +395,7 @@ func BenchmarkInjectHttpHeader(b *testing.B) {
 	a := benchAgent()
 	stop := startDrain(a)
 	defer stop()
-	s := benchSpan(a)
+	s := defaultSpan(a)
 	s.NewSpanEvent("client")
 	h := http.Header{}
 
@@ -418,7 +414,7 @@ func BenchmarkExtractNewTrace(b *testing.B) {
 	stop := startDrain(a)
 	defer stop()
 	reader := &DistributedTracingContextMap{m: map[string]string{}}
-	s := benchSpan(a)
+	s := defaultSpan(a)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -528,7 +524,7 @@ func BenchmarkSetSQL(b *testing.B) {
 	a := benchAgent()
 	stop := startDrain(a)
 	defer stop()
-	s := benchSpan(a)
+	s := defaultSpan(a)
 	const query = "SELECT id, name, email FROM users WHERE id = 1234 AND status = 'active' AND age > 21"
 
 	b.ReportAllocs()
@@ -585,7 +581,7 @@ func BenchmarkSpanEventSetError(b *testing.B) {
 	a := benchAgent()
 	stop := startDrain(a)
 	defer stop()
-	s := benchSpan(a)
+	s := defaultSpan(a)
 	err := errors.New("bench error")
 
 	b.ReportAllocs()

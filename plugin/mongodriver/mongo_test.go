@@ -266,37 +266,26 @@ func TestMonitor_Failed(t *testing.T) {
 
 // The monitor is registered on the client, so it sees commands the driver
 // issues on its own - handshakes and heartbeats on connections no application
-// span ever started. Finishing one of those must not end a span event that was
-// never opened.
-func TestMonitor_FinishedWithoutAStart(t *testing.T) {
-	m := &monitor{spans: make(map[spanKey]pinpoint.Tracer)}
-
-	assert.NotPanics(t, func() {
-		m.Succeeded(context.Background(), &event.CommandSucceededEvent{
-			CommandFinishedEvent: event.CommandFinishedEvent{ConnectionID: "mongo1:27017[-3]", RequestID: 42},
-		})
-		m.Failed(context.Background(), &event.CommandFailedEvent{
-			CommandFinishedEvent: event.CommandFinishedEvent{ConnectionID: "mongo1:27017[-3]", RequestID: 42},
-			Failure:              "boom",
-		})
-	}, "finishing a command that was never started must be a no-op")
-	assert.Empty(t, m.spans)
-}
-
-// An unsampled command leaves nothing in the span map, so the matching finish
-// callback has nothing to close either.
+// span ever started - and commands made outside a span. Neither leaves anything
+// in the span map, so the matching finish callback must not end a span event
+// that was never opened.
 func TestMonitor_IgnoresUnsampledCommands(t *testing.T) {
 	m := &monitor{spans: make(map[spanKey]pinpoint.Tracer)}
 
 	started := startedEvent(t, "mongo1:27017[-3]", 42, "find", "widgets")
 	m.Started(context.Background(), started)
-
 	assert.Empty(t, m.spans, "an unsampled command must not be recorded in the span map")
+
 	assert.NotPanics(t, func() {
 		m.Succeeded(context.Background(), &event.CommandSucceededEvent{
 			CommandFinishedEvent: event.CommandFinishedEvent{ConnectionID: started.ConnectionID, RequestID: started.RequestID},
 		})
-	})
+		m.Failed(context.Background(), &event.CommandFailedEvent{
+			CommandFinishedEvent: event.CommandFinishedEvent{ConnectionID: started.ConnectionID, RequestID: started.RequestID},
+			Failure:              "boom",
+		})
+	}, "finishing a command that was never started must be a no-op")
+	assert.Empty(t, m.spans)
 }
 
 // Two commands in flight on the same connection are told apart by request id;

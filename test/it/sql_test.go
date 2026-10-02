@@ -54,9 +54,9 @@ func TestNormalizesSqlIntoSharedUidMetadata(t *testing.T) {
 	}
 	tracer.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(eventsForSpan(s, spanID)) >= 2 && findSqlUidMetadata(s, normalizedSQL) != nil
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	metadata := findSqlUidMetadata(s, normalizedSQL)
@@ -92,9 +92,9 @@ func TestRegistersSqlIdMetadataWhenQueryStatsDisabled(t *testing.T) {
 	tracer.EndSpanEvent()
 	tracer.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(eventsForSpan(s, spanID)) >= 1 && findSqlMetadata(s, normalizedSQL) != nil
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	metadata := findSqlMetadata(s, normalizedSQL)
@@ -131,9 +131,9 @@ func TestSerializesEveryTypedSqlBindValueOnTheWire(t *testing.T) {
 	require.NoError(t, err)
 	tracer.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(eventsForSpan(s, spanID)) >= 1 && len(s.SqlUidMetadata) > 0
-	}, waitTimeout))
+	}, waitTimeout)
 
 	events := eventsForSpan(mc.Snapshot(), spanID)
 	require.Len(t, events, 1)
@@ -165,9 +165,9 @@ func TestOmitsSensitiveSqlBindValuesFromSpanPayload(t *testing.T) {
 	require.NoError(t, err)
 	tracer.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(eventsForSpan(s, spanID)) >= 1
-	}, waitTimeout))
+	}, waitTimeout)
 
 	events := eventsForSpan(mc.Snapshot(), spanID)
 	require.Len(t, events, 1)
@@ -194,9 +194,9 @@ func TestTruncatesSqlBindArgsAtConfiguredLimit(t *testing.T) {
 	require.NoError(t, err)
 	tracer.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(eventsForSpan(s, spanID)) >= 1
-	}, waitTimeout))
+	}, waitTimeout)
 
 	events := eventsForSpan(mc.Snapshot(), spanID)
 	require.Len(t, events, 1)
@@ -227,9 +227,9 @@ func TestRecordsSqlErrorAndTransactionSpanEvents(t *testing.T) {
 	require.NoError(t, tx.Commit())
 	tracer.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(eventsForSpan(s, spanID)) >= 3
-	}, waitTimeout))
+	}, waitTimeout)
 
 	events := eventsForSpan(mc.Snapshot(), spanID)
 	// ConnBeginTx, the traced statement, and Commit.

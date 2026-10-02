@@ -249,7 +249,6 @@ func newMockSpanGrpc(agent *agent) *spanGrpc {
 type mockAtcStream struct {
 	grpc.ClientStream // never called; the agent only uses Send/CloseAndRecv
 	mu                sync.Mutex
-	sends             int
 	responses         []*pb.PCmdActiveThreadCountRes
 	closed            bool
 	sendErr           error
@@ -258,7 +257,6 @@ type mockAtcStream struct {
 func (s *mockAtcStream) Send(response *pb.PCmdActiveThreadCountRes) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sends++
 	s.responses = append(s.responses, response)
 	return s.sendErr
 }
@@ -273,7 +271,7 @@ func (s *mockAtcStream) CloseAndRecv() (*empty.Empty, error) {
 func (s *mockAtcStream) sendCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.sends
+	return len(s.responses)
 }
 
 func (s *mockAtcStream) sentResponses() []*pb.PCmdActiveThreadCountRes {
@@ -304,12 +302,6 @@ func (s *mockCmdStream) Send(m *pb.PCmdMessage) error {
 
 func (s *mockCmdStream) Recv() (*pb.PCmdRequest, error) {
 	return nil, io.EOF
-}
-
-func (s *mockCmdStream) sentMessages() []*pb.PCmdMessage {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]*pb.PCmdMessage(nil), s.sent...)
 }
 
 func (s *mockCmdStream) failMessages() []*pb.PCmdResponse {

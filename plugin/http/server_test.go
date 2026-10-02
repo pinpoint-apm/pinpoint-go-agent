@@ -33,19 +33,13 @@ type proxyValues struct {
 // proxyAnnotation captures every proxy header annotation setProxyHeader records,
 // in order.
 type proxyAnnotation struct {
-	got []proxyValues
+	pinpoint.Annotation // nil: only AppendLongIntIntByteByteString is called
+	got                 []proxyValues
 }
 
 func (a *proxyAnnotation) AppendLongIntIntByteByteString(key int32, l int64, i1 int32, i2 int32, b1 int32, b2 int32, s string) {
 	a.got = append(a.got, proxyValues{key, l, i1, i2, b1, b2, s})
 }
-
-func (a *proxyAnnotation) AppendInt(int32, int32)                                {}
-func (a *proxyAnnotation) AppendLong(int32, int64)                               {}
-func (a *proxyAnnotation) AppendString(int32, string)                            {}
-func (a *proxyAnnotation) AppendStringString(int32, string, string)              {}
-func (a *proxyAnnotation) AppendIntStringString(int32, int32, string, string)    {}
-func (a *proxyAnnotation) AppendBytesStringString(int32, []byte, string, string) {}
 
 func Test_setProxyHeader(t *testing.T) {
 	tests := []struct {
@@ -716,7 +710,7 @@ func TestRecordHttpServerResponse(t *testing.T) {
 			span := spanOf(t, tracer)
 			assert.Equal(t, tt.wantErr, span.Err,
 				"status %d should%s fail the span", tt.code, map[bool]string{true: "", false: " not"}[tt.wantErr != 0])
-			assert.Contains(t, span.annotationInts(pinpoint.AnnotationHttpStatusCode), tt.code,
+			assert.Contains(t, span.annotations(pinpoint.AnnotationHttpStatusCode, "IntValue"), float64(tt.code),
 				"the status code must be annotated on the span")
 		})
 	}
@@ -739,8 +733,8 @@ func TestRecordHttpServerResponse_ErrorMarkExcludeKeepsA5xxSuccessful(t *testing
 	require.NotNil(t, tracer)
 	span := spanOf(t, tracer)
 	assert.Equal(t, 0, span.Err, "an excluded cause must not fail the span")
-	assert.Contains(t, span.annotationInts(pinpoint.AnnotationHttpStatusCode),
-		http.StatusInternalServerError, "the status code is still annotated")
+	assert.Contains(t, span.annotations(pinpoint.AnnotationHttpStatusCode, "IntValue"),
+		float64(http.StatusInternalServerError), "the status code is still annotated")
 }
 
 // A recorded response header is read off the writer the handler wrote to, so
@@ -995,11 +989,12 @@ type spanJson struct {
 	Annotations []interface{} `json:"Annotations"`
 }
 
-// annotationInts returns every integer annotated under key. The annotation list
-// is untyped JSON - {"key":46,"value":{"Field":{"IntValue":500}}} - so each
-// entry is matched on its key and then unwrapped.
-func (s spanJson) annotationInts(key int32) []int {
-	var values []int
+// annotations returns every value annotated under key, read off the given
+// leaf ("IntValue" or "StringValue"). The annotation list is untyped JSON -
+// {"key":46,"value":{"Field":{"IntValue":500}}} - so each entry is matched on
+// its key and then unwrapped; numbers come back as float64.
+func (s spanJson) annotations(key int32, leaf string) []any {
+	var values []any
 	for _, a := range s.Annotations {
 		m, ok := a.(map[string]interface{})
 		if !ok {
@@ -1010,8 +1005,8 @@ func (s spanJson) annotationInts(key int32) []int {
 		}
 		value, _ := m["value"].(map[string]interface{})
 		field, _ := value["Field"].(map[string]interface{})
-		if n, ok := field["IntValue"].(float64); ok {
-			values = append(values, int(n))
+		if v, ok := field[leaf]; ok {
+			values = append(values, v)
 		}
 	}
 	return values
@@ -1024,35 +1019,15 @@ func spanOf(t *testing.T, tracer pinpoint.Tracer) spanJson {
 	return s
 }
 
-// annotationStrings returns every string annotated under key.
-func (s spanJson) annotationStrings(key int32) []string {
-	var values []string
-	for _, a := range s.Annotations {
-		m, ok := a.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if k, ok := m["key"].(float64); !ok || int32(k) != key {
-			continue
-		}
-		value, _ := m["value"].(map[string]interface{})
-		field, _ := value["Field"].(map[string]interface{})
-		if str, ok := field["StringValue"].(string); ok {
-			values = append(values, str)
-		}
-	}
-	return values
-}
-
 func TestRecordHttpServerRequest_Query(t *testing.T) {
 	tests := []struct {
 		name   string
 		record bool
 		url    string
-		want   []string
+		want   []any
 	}{
 		{"off by default", false, "/p?a=1&b=x%20y&empty=", nil},
-		{"on", true, "/p?a=1&b=x%20y&empty=", []string{"a=1&b=x y&empty="}},
+		{"on", true, "/p?a=1&b=x%20y&empty=", []any{"a=1&b=x y&empty="}},
 		{"on, no query", true, "/p", nil},
 	}
 	for _, tt := range tests {
@@ -1066,7 +1041,7 @@ func TestRecordHttpServerRequest_Query(t *testing.T) {
 			tracer := NewHttpServerTracer(req, "test")
 			defer tracer.EndSpan()
 
-			assert.Equal(t, tt.want, spanOf(t, tracer).annotationStrings(pinpoint.AnnotationHttpParam))
+			assert.Equal(t, tt.want, spanOf(t, tracer).annotations(pinpoint.AnnotationHttpParam, "StringValue"))
 		})
 	}
 }

@@ -47,10 +47,11 @@ func Test_noopSpan_Inject(t *testing.T) {
 func Test_noopSpan_Inject_SingletonNotMutated(t *testing.T) {
 	require.Zero(t, defaultNoopSpan.statusErr.Load(), "the singleton starts at its zero value")
 
-	done := make(chan struct{})
+	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
+		wg.Add(1)
 		go func() {
-			defer func() { done <- struct{}{} }()
+			defer wg.Done()
 			for j := 0; j < 200; j++ {
 				tracer := NoopTracer()
 				tracer.Span().SetFailure()
@@ -58,9 +59,7 @@ func Test_noopSpan_Inject_SingletonNotMutated(t *testing.T) {
 			}
 		}()
 	}
-	for i := 0; i < 4; i++ {
-		<-done
-	}
+	wg.Wait()
 
 	assert.Zero(t, defaultNoopSpan.statusErr.Load(), "the singleton was written to")
 }

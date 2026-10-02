@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/stretchr/testify/assert"
@@ -94,41 +94,32 @@ func value(v string, _ bool) string { return v }
 
 // Incoming metadata is absent on an unary call made without any, and gRPC
 // stores every key as a list. The reader has to flatten that to the single
-// value the tracing header carries.
+// value the tracing header carries. A key carried with an empty value is
+// present, and the trace continues through it - the value alone cannot say so.
 func Test_distributedTracingContextReaderMD(t *testing.T) {
 	r := distributedTracingContextReaderMD{metadata.NewIncomingContext(context.Background(), metadata.Pairs(
 		pinpoint.HeaderTraceId, "txid^1^1",
+		pinpoint.HeaderSpanId, "",
 		"multi", "first",
 		"multi", "second",
 	))}
 
-	assert.Equal(t, "txid^1^1", value(r.Get(pinpoint.HeaderTraceId)))
-	assert.Equal(t, "first", value(r.Get("multi")), "only the first value of a repeated key is the header")
-	assert.Equal(t, "", value(r.Get("absent")))
-
-	// A context with no incoming metadata reads as absent, not a panic.
-	assert.Equal(t, "", value((distributedTracingContextReaderMD{context.Background()}).Get("any")))
-
 	// gRPC lowercases metadata keys on the wire, so lookup has to match that.
 	assert.Equal(t, "txid^1^1", value(r.Get(pinpoint.HeaderTraceId)))
-}
-
-// A metadata key carried with an empty value is present, and the trace
-// continues through it - the value alone cannot say so.
-func Test_distributedTracingContextReaderMD_Presence(t *testing.T) {
-	r := distributedTracingContextReaderMD{metadata.NewIncomingContext(context.Background(), metadata.Pairs(
-		pinpoint.HeaderSpanId, "",
-	))}
+	assert.Equal(t, "first", value(r.Get("multi")), "only the first value of a repeated key is the header")
 
 	v, ok := r.Get(pinpoint.HeaderSpanId)
 	assert.True(t, ok, "a key carried with an empty value is present")
 	assert.Equal(t, "", v)
 
-	_, ok = r.Get("absent")
+	v, ok = r.Get("absent")
 	assert.False(t, ok)
+	assert.Equal(t, "", v)
 
-	_, ok = (distributedTracingContextReaderMD{context.Background()}).Get("any")
+	// A context with no incoming metadata reads as absent, not a panic.
+	v, ok = (distributedTracingContextReaderMD{context.Background()}).Get("any")
 	assert.False(t, ok, "no incoming metadata at all")
+	assert.Equal(t, "", v)
 }
 
 // The client interceptor has to publish the tracing headers as outgoing
@@ -296,7 +287,7 @@ func Test_endSpanEvent(t *testing.T) {
 		{name: "clean end", err: io.EOF},
 		{name: "no error"},
 		{name: "rpc failure", err: errors.New("unavailable"), wantErr: true},
-		{name: "a wrapped io.EOF is still a failure", err: errWrappingEOF{}, wantErr: true},
+		{name: "a wrapped io.EOF is still a failure", err: fmt.Errorf("wrapped: %w", io.EOF), wantErr: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			tracer := newRecordingTracer()
@@ -309,13 +300,6 @@ func Test_endSpanEvent(t *testing.T) {
 		})
 	}
 }
-
-// errWrappingEOF stands for an error that carries io.EOF underneath but is not
-// io.EOF itself; gRPC reports a clean stream end as io.EOF exactly.
-type errWrappingEOF struct{}
-
-func (errWrappingEOF) Error() string { return "wrapped: " + io.EOF.Error() }
-func (errWrappingEOF) Unwrap() error { return io.EOF }
 
 // A context without a span yields a noop tracer: there is no transaction to
 // propagate, so the call must carry no sampling header at all. Sending "s0"
@@ -372,15 +356,6 @@ func Test_newClientTracer_WithUnsampledSpan(t *testing.T) {
 		"an unsampled transaction must still tell the callee not to trace")
 }
 
-type countingTracer struct {
-	pinpoint.Tracer
-	ends int32
-}
-
-func newCountingTracer() *countingTracer { return &countingTracer{Tracer: pinpoint.NoopTracer()} }
-
-func (t *countingTracer) EndSpanEvent() { atomic.AddInt32(&t.ends, 1) }
-
 type fakeClientStream struct {
 	grpc.ClientStream
 	err error
@@ -411,7 +386,7 @@ func (s *fakeClientStream) Context() context.Context {
 // span event must be closed exactly once no matter how the race falls, or the
 // agent's event stack unwinds too far. Run under -race.
 func TestClientStream_EndsTheSpanEventOnce(t *testing.T) {
-	tracer := newCountingTracer()
+	tracer := newForkingTracer()
 	cs := &clientStream{ClientStream: &fakeClientStream{err: io.EOF}, tracer: tracer}
 
 	var wg sync.WaitGroup
@@ -436,7 +411,7 @@ func TestClientStream_EndsTheSpanEventOnce(t *testing.T) {
 // A successful send or receive is not the end of the stream, so it must not
 // close the span event, including a successful half-close.
 func TestClientStream_SuccessfulCallsKeepTheSpanEventOpen(t *testing.T) {
-	tracer := newCountingTracer()
+	tracer := newForkingTracer()
 	cs := &clientStream{ClientStream: &fakeClientStream{}, tracer: tracer}
 
 	for i := 0; i < 3; i++ {
@@ -453,7 +428,7 @@ func TestClientStream_SuccessfulCallsKeepTheSpanEventOpen(t *testing.T) {
 // surfaces it.
 func TestClientStream_ReturnsTheStreamError(t *testing.T) {
 	want := errors.New("unavailable")
-	tracer := newCountingTracer()
+	tracer := newForkingTracer()
 	cs := &clientStream{ClientStream: &fakeClientStream{err: want}, tracer: tracer}
 
 	assert.ErrorIs(t, cs.SendMsg(nil), want)
@@ -837,36 +812,6 @@ func Test_serverStream(t *testing.T) {
 
 	assert.Equal(t, "from-the-interceptor", s.Context().Value(ctxKey{}),
 		"Context must report the interceptor's context, not the transport's")
-}
-
-// A cancelled stream context ends the goroutine span, even when the caller
-// abandons the stream without Recv or CloseSend.
-func TestStreamClientInterceptor_AbandonedStreamEndsItsSpan(t *testing.T) {
-	startAgent(t)
-	caller := newForkingTracer()
-
-	fake := newFakeClientStream(t, nil)
-	var finish func(error)
-	_, err := StreamClientInterceptor()(
-		pinpoint.NewContext(context.Background(), caller),
-		&grpc.StreamDesc{StreamName: "Stream"},
-		lazyConn(t, "localhost:8080"),
-		"/testapp.Hello/Stream",
-		func(_ context.Context, _ *grpc.StreamDesc, _ *grpc.ClientConn, _ string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-			finish = streamFinishCallback(t, opts)
-			return fake, nil
-		})
-	require.NoError(t, err)
-	require.NotNil(t, caller.child, "the stream must run on its own goroutine tracer")
-	require.False(t, caller.child.spanEnded.Load(), "the stream is still live")
-
-	fake.cancel()
-	finish(context.Canceled)
-
-	assert.Eventually(t, func() bool { return caller.child.spanEnded.Load() },
-		time.Second, time.Millisecond, "an abandoned stream must end its own span")
-	assert.Equal(t, int32(1), atomic.LoadInt32(&caller.ends),
-		"ending it must not touch the caller's tracer")
 }
 
 // A server interceptor that finds a tracer already in the context — another

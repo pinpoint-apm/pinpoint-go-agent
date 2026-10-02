@@ -74,7 +74,8 @@ func Test_agent_GlobalAgent(t *testing.T) {
 	assert.NotEqual(t, GetAgent(), NoopAgent(), "global agent")
 
 	a, err := NewAgent(c)
-	assert.Error(t, err, "NewAgent")
+	assert.ErrorIs(t, err, ErrAgentAlreadyCreated)
+	assert.EqualError(t, err, "agent is already created", "the message applications matched so far is unchanged")
 	assert.Equal(t, GetAgent(), a, "global agent")
 }
 
@@ -1426,11 +1427,11 @@ func Test_sendMetaWorker_reportsHeldBackDropsWhileIdle(t *testing.T) {
 		}
 		r.record(1)
 		agent.metaChan <- stringMeta{id: 1, funcName: "f"}
-		waitFor(t, "the first drop to be reported", reported(1))
+		require.Eventually(t, reported(1), 2*time.Second, 2*time.Millisecond, "the first drop to be reported")
 
 		r.record(30)
 		agent.metaChan <- stringMeta{id: 2, funcName: "f"}
-		waitFor(t, "the held-back total to be reported while idle", reported(31))
+		require.Eventually(t, reported(31), 2*time.Second, 2*time.Millisecond, "the held-back total to be reported while idle")
 	}
 
 	agent.signalShutdown()
@@ -1455,9 +1456,9 @@ func Test_agent_ShutdownReportsHeldBackDrops(t *testing.T) {
 	agent.metaDrops.record(1)
 	agent.metaRetryDrops.record(1)
 	startTestWorker(agent, "meta", agent.sendMetaWorker)
-	waitFor(t, "the meta worker's first reports", func() bool {
+	require.Eventually(t, func() bool {
 		return agent.metaDrops.reported.Load() == 1 && agent.metaRetryDrops.reported.Load() == 1
-	})
+	}, 2*time.Second, 2*time.Millisecond, "the meta worker's first reports")
 	agent.statDrops.record(1)
 	agent.statDrops.report("stat", 1)
 	agent.urlStatDrops.record(1)
@@ -1498,13 +1499,13 @@ func Test_sendSpanBatchWorker_reportsHeldBackDrops(t *testing.T) {
 	agent.spanDrops.record(1)
 	agent.workerWg.Add(1)
 	go agent.superviseWorker("span batch", agent.sendSpanBatchWorker)
-	waitFor(t, "the first drop to be reported", reported(1))
+	require.Eventually(t, reported(1), 2*time.Second, 2*time.Millisecond, "the first drop to be reported")
 
 	// The cycle this chunk starts sees 31 inside the interval and holds it
 	// back; no span follows, so only the idle wake can log it.
 	agent.spanDrops.record(30)
 	require.True(t, agent.spanQueue.enqueue(newTestSpanChunk(agent)))
-	waitFor(t, "the held-back total to be reported while idle", reported(31))
+	require.Eventually(t, reported(31), 2*time.Second, 2*time.Millisecond, "the held-back total to be reported while idle")
 
 	// The queue closes inside the next interval: only the exit report is left.
 	agent.spanDrops.record(500)

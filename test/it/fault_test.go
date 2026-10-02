@@ -27,10 +27,10 @@ func TestRetriesMetadataAfterTransportError(t *testing.T) {
 	require.True(t, tracer.IsSampled())
 	tracer.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return countApiMetadata(s, "fault.retry.api") >= 2 &&
 			hasResultSuccess(s, RpcApiMetadata, codes.OK, true)
-	}, longTimeout))
+	}, longTimeout)
 
 	results := resultsFor(mc.Snapshot(), RpcApiMetadata)
 	require.GreaterOrEqual(t, len(results), 2)
@@ -53,17 +53,17 @@ func TestReRegistersMetadataAfterNonRetryableError(t *testing.T) {
 	require.True(t, first.IsSampled())
 	first.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return hasResultSuccess(s, RpcApiMetadata, codes.Internal, false)
-	}, waitTimeout))
+	}, waitTimeout)
 
 	// The released cache entry means the next span with the same operation
 	// mints a new id and publishes it again, successfully this time.
-	require.True(t, waitUntil(func() bool {
+	require.Eventually(t, func() bool {
 		second := agent.NewSpanTracer(operation, "/fault-exhausted-2")
 		second.EndSpan()
 		return countApiMetadata(mc.Snapshot(), operation) >= 2
-	}, waitTimeout))
+	}, waitTimeout, 10*time.Millisecond)
 
 	s := mc.Snapshot()
 	assert.GreaterOrEqual(t, len(apiIdsFor(s, operation)), 2, "a released cache entry must yield a fresh api id")
@@ -74,24 +74,24 @@ func TestReRegistersMetadataAfterNonRetryableError(t *testing.T) {
 func TestHandlesProfilerCommandsOverRealGrpcStreams(t *testing.T) {
 	mc, agent := startStack(t)
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.CommandStreams) > 0 }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(s.CommandStreams) > 0 }, waitTimeout)
 
 	mc.SendEchoCommand(101, "collector-echo")
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return hasEchoResponse(s, 101) }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return hasEchoResponse(s, 101) }, waitTimeout)
 
 	// The agent only tracks per-goroutine active spans while an
 	// active-thread-count stream is open, so the stream has to be running
 	// before the request this test wants to see counted.
 	mc.SendActiveThreadCountCommand(102)
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return countActiveThreadResponses(s, 102) >= 1
-	}, waitTimeout))
+	}, waitTimeout)
 
 	active := agent.NewSpanTracer("command.active", "/command-active")
 	require.True(t, active.IsSampled())
 	defer active.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		for _, r := range s.ActiveThreadCountResponses {
 			if r.Message.GetCommonStreamResponse().GetResponseId() != 102 {
 				continue
@@ -105,16 +105,16 @@ func TestHandlesProfilerCommandsOverRealGrpcStreams(t *testing.T) {
 			}
 		}
 		return false
-	}, waitTimeout))
+	}, waitTimeout)
 
 	// A light dump lists the goroutines that currently carry a span; the full
 	// dump is then targeted at one of them by name, which is how the collector
 	// drills into a specific request.
 	mc.SendActiveThreadLightDumpCommand(103, 5)
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(s.ActiveThreadLightDumps) > 0 &&
 			len(s.ActiveThreadLightDumps[0].Message.GetThreadDump()) > 0
-	}, waitTimeout))
+	}, waitTimeout)
 
 	light := mc.Snapshot().ActiveThreadLightDumps[0].Message
 	assert.Equal(t, int32(103), light.GetCommonResponse().GetResponseId())
@@ -133,10 +133,10 @@ func TestHandlesProfilerCommandsOverRealGrpcStreams(t *testing.T) {
 			CommandActiveThreadDump: &pb.PCmdActiveThreadDump{Limit: 1, ThreadName: []string{threadName}},
 		},
 	})
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(s.ActiveThreadDumpResponses) > 0 &&
 			len(s.ActiveThreadDumpResponses[0].Message.GetThreadDump()) > 0
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	assert.Equal(t, "collector-echo", s.EchoResponses[0].Message.GetMessage())
@@ -165,35 +165,35 @@ func TestHandlesProfilerCommandsOverRealGrpcStreams(t *testing.T) {
 // must therefore produce a second stream, not reuse the first.
 func TestRestartsActiveThreadCountStreamForDuplicateRequest(t *testing.T) {
 	mc, agent := startStack(t)
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.CommandStreams) > 0 }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(s.CommandStreams) > 0 }, waitTimeout)
 
 	mc.SendActiveThreadCountCommand(501)
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return countActiveThreadResponses(s, 501, 1) >= 1
-	}, waitTimeout))
+	}, waitTimeout)
 
 	mc.SendActiveThreadCountCommand(501)
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return countActiveThreadResponses(s, 501, 1) >= 2 && len(s.ActiveThreadCountStreams) >= 2
-	}, waitTimeout))
+	}, waitTimeout)
 	assert.True(t, agent.Enable())
 }
 
 func TestTimesOutCommandRequestAndKeepsStreamUsable(t *testing.T) {
 	mc, agent := startStack(t)
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.CommandStreams) > 0 }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(s.CommandStreams) > 0 }, waitTimeout)
 
 	mc.TimeoutNext(RpcCommandEcho)
 	mc.SendEchoCommand(201, "will-time-out")
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return hasResult(s, RpcCommandEcho, codes.DeadlineExceeded)
-	}, waitTimeout))
+	}, waitTimeout)
 
 	// A timed-out unary response must not tear down the command bidi stream.
 	mc.SendEchoCommand(202, "after-timeout")
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return hasEchoResponse(s, 202) && hasResultSuccess(s, RpcCommandEcho, codes.OK, true)
-	}, waitTimeout))
+	}, waitTimeout)
 	assert.True(t, agent.Enable())
 }
 
@@ -204,27 +204,27 @@ func TestContinuesSendingAfterSpanRequestError(t *testing.T) {
 	failed := agent.NewSpanTracer("faulted.span", "/faulted-span")
 	require.True(t, failed.IsSampled())
 	failed.EndSpan()
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/faulted-span") != nil &&
 			hasResultSuccess(s, RpcSendSpanBatch, codes.Internal, false)
-	}, waitTimeout))
+	}, waitTimeout)
 
 	healthy := agent.NewSpanTracer("healthy.span", "/healthy-span")
 	require.True(t, healthy.IsSampled())
 	healthy.EndSpan()
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/healthy-span") != nil &&
 			hasResultSuccess(s, RpcSendSpanBatch, codes.OK, true)
-	}, waitTimeout))
+	}, waitTimeout)
 	assert.True(t, agent.Enable())
 }
 
 func TestReconnectsAfterEndpointAndCommandStreamFailures(t *testing.T) {
 	mc, agent := startStack(t)
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(s.PingStreams) > 0 && len(s.CommandStreams) > 0
-	}, waitTimeout))
+	}, waitTimeout)
 	before := len(mc.Snapshot().CommandStreams)
 
 	// Closing the listening socket drops every live Agent/Metadata/Command
@@ -233,13 +233,13 @@ func TestReconnectsAfterEndpointAndCommandStreamFailures(t *testing.T) {
 	mc.FailNext(RpcHandleCommandV2, codes.Unavailable, "command stream rejected after reconnect")
 	require.NoError(t, mc.StartEndpoint(EndpointAgent))
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(s.CommandStreams) >= before+2 &&
 			hasResultSuccess(s, RpcHandleCommandV2, codes.Unavailable, false)
-	}, longTimeout))
+	}, longTimeout)
 
 	mc.SendEchoCommand(303, "after-reconnect")
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return hasEchoResponse(s, 303) }, longTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return hasEchoResponse(s, 303) }, longTimeout)
 
 	// Exercise a separate transport channel outage as well. A span queued
 	// during the outage may be dropped by policy, but later traffic must flow.
@@ -253,36 +253,36 @@ func TestReconnectsAfterEndpointAndCommandStreamFailures(t *testing.T) {
 	// The span channel reconnects on its own schedule and a batch sent while
 	// it is still down is dropped rather than retried, so the application keeps
 	// producing spans until one lands.
-	require.True(t, waitUntil(func() bool {
+	require.Eventually(t, func() bool {
 		recovered := agent.NewSpanTracer("span.after.reconnect", "/span-after-reconnect")
 		require.True(t, recovered.IsSampled())
 		recovered.EndSpan()
 		return findSpanByRpc(mc.Snapshot(), "/span-after-reconnect") != nil
-	}, longTimeout))
+	}, longTimeout, 10*time.Millisecond)
 	assert.True(t, agent.Enable())
 }
 
 func TestReconnectsStatStreamAfterServerError(t *testing.T) {
 	mc, agent := startStack(t)
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.Stats) > 0 }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(s.Stats) > 0 }, waitTimeout)
 	initial := len(mc.Snapshot().StatStreams)
 
 	// Consumed by the already-open stream after its next message.
 	mc.FailNext(RpcSendAgentStat, codes.Unavailable, "stat stream closed by collector", 1)
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return hasResultSuccess(s, RpcSendAgentStat, codes.Unavailable, false)
-	}, waitTimeout))
+	}, waitTimeout)
 
 	// The worker must notice the closed stream and open a fresh one, then keep
 	// delivering statistics through it.
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(s.StatStreams) >= initial+1
-	}, longTimeout))
+	}, longTimeout)
 	received := len(mc.Snapshot().Stats)
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(s.Stats) > received
-	}, longTimeout))
+	}, longTimeout)
 	assert.True(t, agent.Enable())
 }
 
@@ -291,14 +291,14 @@ func TestReconnectsStatStreamAfterServerError(t *testing.T) {
 // stream rather than be dropped with the dead one.
 func TestResendsStatOnReopenedStream(t *testing.T) {
 	mc, agent := startStack(t)
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.Stats) > 0 }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(s.Stats) > 0 }, waitTimeout)
 
 	// The outage ends the open stream at its next message, and the test resumes
 	// right after that tick.
 	mc.BeginOutage()
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return hasResultSuccess(s, RpcSendAgentStat, codes.Unavailable, false)
-	}, waitTimeout))
+	}, waitTimeout)
 	n := len(mc.Snapshot().Stats)
 	mc.EndOutage()
 
@@ -306,20 +306,20 @@ func TestResendsStatOnReopenedStream(t *testing.T) {
 	// lands about one interval from here; dropped, the first one would come a
 	// tick later.
 	interval := time.Duration(agent.Config().Int(pinpoint.CfgStatCollectInterval)) * time.Millisecond
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.Stats) > n }, interval*3/2),
+	mc.WaitFor(t, func(s Snapshot) bool { return len(s.Stats) > n }, interval*3/2,
 		"the stat that found the stream closed was dropped instead of re-sent")
 }
 
 func TestShutdownCancelsTimedOutStatStream(t *testing.T) {
 	mc, agent := startStack(t)
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.StatStreams) > 0 }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(s.StatStreams) > 0 }, waitTimeout)
 	before := len(mc.Snapshot().Stats)
 
 	// The open stream accepts one more message, then deliberately stops
 	// completing the RPC until the client gives up.
 	mc.TimeoutNext(RpcSendAgentStat, 1)
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.Stats) > before }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(s.Stats) > before }, waitTimeout)
 
 	started := time.Now()
 	agent.Shutdown()
@@ -329,10 +329,11 @@ func TestShutdownCancelsTimedOutStatStream(t *testing.T) {
 	assert.False(t, agent.Enable())
 	// The stat stream carries no request deadline: the agent cancels the
 	// stalled send itself, which the collector observes as a cancellation.
-	assert.True(t, mc.WaitFor(func(s Snapshot) bool {
+	assert.Eventually(t, func() bool {
+		s := mc.Snapshot()
 		return hasResult(s, RpcSendAgentStat, codes.Canceled) ||
 			hasResult(s, RpcSendAgentStat, codes.DeadlineExceeded)
-	}, 2*time.Second))
+	}, 2*time.Second, 10*time.Millisecond)
 }
 
 func TestShutdownCancelsTimedOutSpanRequest(t *testing.T) {
@@ -342,9 +343,9 @@ func TestShutdownCancelsTimedOutSpanRequest(t *testing.T) {
 	tracer := agent.NewSpanTracer("shutdown.timeout", "/timeout-shutdown")
 	require.True(t, tracer.IsSampled())
 	tracer.EndSpan()
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/timeout-shutdown") != nil
-	}, waitTimeout))
+	}, waitTimeout)
 
 	started := time.Now()
 	agent.Shutdown()
@@ -355,10 +356,11 @@ func TestShutdownCancelsTimedOutSpanRequest(t *testing.T) {
 	// Shutdown abandons in-flight batches after its grace period and closes
 	// the connection, which cancels the stalled request well before its own
 	// deadline: the collector sees a cancellation, not an expired deadline.
-	assert.True(t, mc.WaitFor(func(s Snapshot) bool {
+	assert.Eventually(t, func() bool {
+		s := mc.Snapshot()
 		return hasResult(s, RpcSendSpanBatch, codes.Canceled) ||
 			hasResult(s, RpcSendSpanBatch, codes.DeadlineExceeded)
-	}, 2*time.Second))
+	}, 2*time.Second, 10*time.Millisecond)
 }
 
 // Every RPC fails while the connections stay up -- an unhealthy collector
@@ -371,9 +373,9 @@ func TestKeepsServingAndRecyclingQueuesThroughCollectorOutage(t *testing.T) {
 	before := agent.NewSpanTracer("outage.before", "/collector-outage-before")
 	require.True(t, before.IsSampled())
 	before.EndSpan()
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/collector-outage-before") != nil && len(s.Stats) > 0
-	}, waitTimeout))
+	}, waitTimeout)
 
 	mc.BeginOutage()
 	outageStarted := time.Now()
@@ -396,46 +398,46 @@ func TestKeepsServingAndRecyclingQueuesThroughCollectorOutage(t *testing.T) {
 	// The span sender keeps draining its queue into failing batches while
 	// recycling its in-flight permits: a permit leak would stall the pipeline
 	// after Collector.Grpc.SpanBatchMaxConcurrentRequests (2) failures.
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return countResults(s, RpcSendSpanBatch, codes.Unavailable) >= 3
-	}, waitTimeout))
+	}, waitTimeout)
 
 	// The stat stream broke with the outage and the worker keeps reopening it
 	// against the failing collector.
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return hasResultSuccess(s, RpcSendAgentStat, codes.Unavailable, false)
-	}, longTimeout))
+	}, longTimeout)
 
 	// Metadata first seen during the outage is retried, a second apart, until
 	// its budget of three sends is spent (the agent's metaRetryMaxAttempts).
 	const metaAttempts = 3
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return countApiMetadata(s, "app.request") >= metaAttempts
-	}, waitTimeout))
+	}, waitTimeout)
 
 	statsDuringOutage := len(mc.Snapshot().Stats)
 	mc.EndOutage()
 	outage := time.Since(outageStarted)
 
 	// Fresh spans, statistics and profiler commands all flow again.
-	require.True(t, waitUntil(func() bool {
+	require.Eventually(t, func() bool {
 		recovered := agent.NewSpanTracer("outage.after", "/collector-outage-after")
 		recovered.EndSpan()
 		return findSpanByRpc(mc.Snapshot(), "/collector-outage-after") != nil
-	}, longTimeout))
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	}, longTimeout, 10*time.Millisecond)
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(s.Stats) > statsDuringOutage
-	}, longTimeout))
+	}, longTimeout)
 
 	mc.SendEchoCommand(707, "collector-outage-recovered")
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return hasEchoResponse(s, 707) }, longTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return hasEchoResponse(s, 707) }, longTimeout)
 
 	// The metadata given up during the outage is registered again, so the
 	// application's next requests carry api ids the collector accepted and
 	// their traces resolve. Every probe gets a URI of its own because one may
 	// take several polls to land.
 	var probes []string
-	require.True(t, waitUntil(func() bool {
+	require.Eventually(t, func() bool {
 		probe := fmt.Sprintf("/collector-outage-resolved-%d", len(probes))
 		probes = append(probes, probe)
 		handleInstrumentedRequest(agent, probe, 0)
@@ -449,7 +451,7 @@ func TestKeepsServingAndRecyclingQueuesThroughCollectorOutage(t *testing.T) {
 			}
 		}
 		return false
-	}, longTimeout))
+	}, longTimeout, 10*time.Millisecond)
 
 	s := mc.Snapshot()
 	// No api id was sent past its budget, during the outage or after it.
@@ -483,10 +485,10 @@ func TestKeepsServingThroughHungCollectorAndRecovers(t *testing.T) {
 	warm := agent.NewSpanTracer("hang.before", "/collector-hang-before")
 	require.True(t, warm.IsSampled())
 	warm.EndSpan()
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/collector-hang-before") != nil &&
 			len(acceptedApiIds(s, "hang.before")) > 0
-	}, waitTimeout))
+	}, waitTimeout)
 	healthy := mc.Snapshot()
 
 	mc.BeginHang()
@@ -513,10 +515,10 @@ func TestKeepsServingThroughHungCollectorAndRecovers(t *testing.T) {
 	held := func(s Snapshot) (batches, metadata int) {
 		return len(s.SpanBatches) - len(healthy.SpanBatches), len(s.ApiMetadata) - len(healthy.ApiMetadata)
 	}
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		batches, metadata := held(s)
 		return batches >= permits && metadata >= metaPermits
-	}, waitTimeout))
+	}, waitTimeout)
 	// Room for a call past the budget to show up: the span sender gives up on a
 	// permit after Collector.Grpc.SpanBatchFlushInterval (50ms).
 	time.Sleep(300 * time.Millisecond)
@@ -526,23 +528,23 @@ func TestKeepsServingThroughHungCollectorAndRecovers(t *testing.T) {
 
 	mc.EndOutage()
 
-	require.True(t, waitUntil(func() bool {
+	require.Eventually(t, func() bool {
 		recovered := agent.NewSpanTracer("hang.after", "/collector-hang-after")
 		recovered.EndSpan()
 		return findSpanByRpc(mc.Snapshot(), "/collector-hang-after") != nil
-	}, longTimeout))
+	}, longTimeout, 10*time.Millisecond)
 
 	// Nothing the metadata queue held is lost: the sends the hang failed are
 	// retried and the items queued behind them go out, so every operation used
 	// during the hang is registered, under the id its delivered spans carry.
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		for i := 0; i < requests; i++ {
 			if len(acceptedApiIds(s, operation(i))) == 0 {
 				return false
 			}
 		}
 		return true
-	}, longTimeout))
+	}, longTimeout)
 	s := mc.Snapshot()
 	for i := 0; i < requests; i++ {
 		if span := findSpanByRpc(s, fmt.Sprintf("/collector-hang/%d", i)); span != nil {
@@ -563,9 +565,9 @@ func TestKeepsServingWhileSpanEndpointIsDownAndRecovers(t *testing.T) {
 	warm := agent.NewSpanTracer("queue.before", "/queue-before")
 	require.True(t, warm.IsSampled())
 	warm.EndSpan()
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/queue-before") != nil
-	}, waitTimeout))
+	}, waitTimeout)
 
 	mc.StopEndpoint(EndpointSpan)
 	time.Sleep(300 * time.Millisecond)
@@ -591,7 +593,7 @@ func TestKeepsServingWhileSpanEndpointIsDownAndRecovers(t *testing.T) {
 	// duplicating a span, which is what the count below checks for.
 	var probes []string
 	landed := ""
-	require.True(t, waitUntil(func() bool {
+	require.Eventually(t, func() bool {
 		probe := fmt.Sprintf("/queue-recovered-%d", len(probes)+1)
 		probes = append(probes, probe)
 		recovered := agent.NewSpanTracer("queue.recovered", probe)
@@ -605,7 +607,7 @@ func TestKeepsServingWhileSpanEndpointIsDownAndRecovers(t *testing.T) {
 			}
 		}
 		return false
-	}, longTimeout))
+	}, longTimeout, 10*time.Millisecond)
 
 	s := mc.Snapshot()
 	survivors := 0
@@ -625,9 +627,9 @@ func TestShutdownStopsTracingAndServesNoopTracersToTheApp(t *testing.T) {
 	warm := agent.NewSpanTracer("shutdown.noop.before", "/shutdown-noop-before")
 	require.True(t, warm.IsSampled())
 	warm.EndSpan()
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/shutdown-noop-before") != nil
-	}, waitTimeout))
+	}, waitTimeout)
 
 	started := time.Now()
 	agent.Shutdown()
@@ -687,7 +689,7 @@ func TestRecoversTracingAcrossRepeatedCreateShutdownCycles(t *testing.T) {
 		}
 
 		agent = startAgent(t, mc)
-		require.True(t, waitUntil(func() bool { return agent.Enable() }, waitTimeout),
+		require.Eventually(t, func() bool { return agent.Enable() }, waitTimeout, 10*time.Millisecond,
 			"the agent never came back online")
 
 		// Finishing the straddling span must be inert, not a crash: its agent
@@ -700,9 +702,9 @@ func TestRecoversTracingAcrossRepeatedCreateShutdownCycles(t *testing.T) {
 		tracer := agent.NewSpanTracer("restart.cycle", rpc)
 		require.True(t, tracer.IsSampled())
 		tracer.EndSpan()
-		require.True(t, mc.WaitFor(func(s Snapshot) bool {
+		mc.WaitFor(t, func(s Snapshot) bool {
 			return findSpanByRpc(s, rpc) != nil
-		}, waitTimeout), "span never reached the collector")
+		}, waitTimeout, "span never reached the collector")
 	}
 
 	s := mc.Snapshot()
@@ -732,7 +734,7 @@ func TestReRegistersMetadataAfterRetryExhaustion(t *testing.T) {
 	require.True(t, first.IsSampled())
 	first.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		failed := 0
 		for _, r := range resultsFor(s, RpcApiMetadata) {
 			if r.Code == codes.Unavailable {
@@ -740,18 +742,18 @@ func TestReRegistersMetadataAfterRetryExhaustion(t *testing.T) {
 			}
 		}
 		return failed >= 3
-	}, longTimeout))
+	}, longTimeout)
 
 	// Exhaustion releases the cache entry, so the same operation is re-cached
 	// under a fresh id and published successfully. The release happens on the
 	// sender worker shortly after the last failure, hence the poll.
-	require.True(t, waitUntil(func() bool {
+	require.Eventually(t, func() bool {
 		second := agent.NewSpanTracer(operation, "/retry-exhausted-2")
 		second.EndSpan()
 		s := mc.Snapshot()
 		return countApiMetadata(s, operation) >= 4 &&
 			hasResultSuccess(s, RpcApiMetadata, codes.OK, true)
-	}, longTimeout))
+	}, longTimeout, 10*time.Millisecond)
 
 	assert.GreaterOrEqual(t, len(apiIdsFor(mc.Snapshot(), operation)), 2, "an exhausted item must be re-cached under a fresh id")
 	assert.True(t, agent.Enable())
@@ -780,14 +782,14 @@ func TestKeepsPublishingMetadataWhileOneItemStalls(t *testing.T) {
 
 	// The stalled call is still parked on the collector at this point, so these
 	// can only have arrived through a concurrent send.
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		for i := 0; i < 3; i++ {
 			if !hasApiMetadata(s, fmt.Sprintf("pipelined.metadata.api.%d", i), apiTypeWebRequest) {
 				return false
 			}
 		}
 		return true
-	}, waitTimeout))
+	}, waitTimeout)
 	assert.True(t, agent.Enable())
 }
 
@@ -796,27 +798,27 @@ func TestKeepsPublishingMetadataWhileOneItemStalls(t *testing.T) {
 // silently starting another responder goroutine.
 func TestRejectsActiveThreadCountStreamsBeyondLimit(t *testing.T) {
 	mc, agent := startStack(t)
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.CommandStreams) > 0 }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(s.CommandStreams) > 0 }, waitTimeout)
 
 	const firstID = int32(601)
 	const maxStreams = 10
 	for i := int32(0); i < maxStreams; i++ {
 		mc.SendActiveThreadCountCommand(firstID + i)
 	}
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		for i := int32(0); i < maxStreams; i++ {
 			if countActiveThreadResponses(s, firstID+i) < 1 {
 				return false
 			}
 		}
 		return true
-	}, waitTimeout))
+	}, waitTimeout)
 
 	const rejectedID = firstID + maxStreams
 	mc.SendActiveThreadCountCommand(rejectedID)
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findFailMessage(s, rejectedID) != nil
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	fail := findFailMessage(s, rejectedID)
@@ -864,7 +866,7 @@ func TestKeepsProducingSpansWhileShuttingDown(t *testing.T) {
 	}
 
 	// Let the load reach the workers before pulling the agent out from under it.
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(allSpanMessages(s)) > 0 }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(allSpanMessages(s)) > 0 }, waitTimeout)
 	agent.Shutdown()
 	close(stop)
 	producers.Wait()
@@ -907,9 +909,9 @@ func TestDeliversEveryConcurrentSpanIntactUnderLoad(t *testing.T) {
 	}
 	producers.Wait()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return countSpansByRpcPrefix(s, "/load-integrity/") >= totalSpans
-	}, longTimeout), "not every span reached the collector")
+	}, longTimeout, "not every span reached the collector")
 
 	s := mc.Snapshot()
 	delivered := 0

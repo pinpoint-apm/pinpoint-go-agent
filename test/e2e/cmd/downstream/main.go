@@ -79,7 +79,6 @@ func main() {
 			"collector_host": e2e.CollectorHost(),
 		})
 	})
-	mux.HandleFunc("/echo", trace)
 	mux.HandleFunc("/trace", trace)
 	mux.HandleFunc("/error", trace)
 

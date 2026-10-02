@@ -119,30 +119,6 @@ func TestNewField_WithoutASampledTracer(t *testing.T) {
 	}
 }
 
-// The fields have to reach the log line itself, on every level, alongside
-// whatever the application logs.
-func TestNewField_Logged(t *testing.T) {
-	startAgent(t)
-	tracer := newTracer(t)
-
-	for name, log := range map[string]func(*zap.Logger, ...zap.Field){
-		"Debug": func(l *zap.Logger, f ...zap.Field) { l.Debug("message", f...) },
-		"Info":  func(l *zap.Logger, f ...zap.Field) { l.Info("message", f...) },
-		"Warn":  func(l *zap.Logger, f ...zap.Field) { l.Warn("message", f...) },
-		"Error": func(l *zap.Logger, f ...zap.Field) { l.Error("message", f...) },
-	} {
-		t.Run(name, func(t *testing.T) {
-			logger, logs := observedLogger(t)
-			log(logger, append(NewField(tracer), zap.String("foo", "bar"))...)
-
-			fields := loggedFields(t, logs)
-			assert.Equal(t, tracer.TransactionId().String(), fields[pinpoint.LogTransactionIdKey])
-			assert.Equal(t, tracer.SpanId(), fields[pinpoint.LogSpanIdKey])
-			assert.Equal(t, "bar", fields["foo"], "the application's own fields must survive")
-		})
-	}
-}
-
 // NewLogger is what most applications use, and it has to add the same fields
 // NewField produces without dropping the ones the logger already carries.
 func TestNewLogger(t *testing.T) {

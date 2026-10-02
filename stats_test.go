@@ -383,9 +383,9 @@ func Test_readMemStatsMatchesRuntimeMemStats(t *testing.T) {
 // publish rejects (Stat.CollectInterval is range-checked to >= 1 s), so worker
 // tests can tick in milliseconds. The published snapshot is patched after the
 // range check; nothing reloads it during these tests.
-func fastStatConfig(collectIntervalMs, batchCount int) *Config {
+func fastStatConfig(collectIntervalMs int) *Config {
 	c := defaultConfig()
-	c.Set(CfgStatBatchCount, batchCount)
+	c.Set(CfgStatBatchCount, 100)
 	c.load().values[CfgStatCollectInterval] = collectIntervalMs
 	return c
 }
@@ -394,7 +394,7 @@ func fastStatConfig(collectIntervalMs, batchCount int) *Config {
 // the next tick fills the same slot, and the failure is reported through a
 // throttled WARN.
 func Test_collectAgentStatWorker_failedCollectionSkipsOnlyThatSnapshot(t *testing.T) {
-	config := fastStatConfig(10, 100) // never completes within the test
+	config := fastStatConfig(10) // never completes within the test
 	agent := newTestAgent(config)
 	agent.statChan = make(chan *pb.PStatMessage, 1)
 
@@ -427,7 +427,7 @@ func Test_collectAgentStatWorker_failedCollectionSkipsOnlyThatSnapshot(t *testin
 // Two failures inside one report interval yield one WARN line that counts
 // what it suppressed, like the other throttled warning sites.
 func Test_collectAgentStatWorker_collectionFailureWarningIsThrottled(t *testing.T) {
-	config := fastStatConfig(5, 100)
+	config := fastStatConfig(5)
 	agent := newTestAgent(config)
 	agent.statChan = make(chan *pb.PStatMessage, 1)
 	agent.stats.failCollects.Store(3)
@@ -452,7 +452,7 @@ func Test_collectAgentStatWorker_collectionFailureWarningIsThrottled(t *testing.
 // driven by a second worker run on the same stats, which is what
 // superviseWorker does after a panic.
 func Test_collectAgentStatWorker_restartKeepsPartialBatchAndRetakesBaseline(t *testing.T) {
-	config := fastStatConfig(10, 100)
+	config := fastStatConfig(10)
 	agent := newTestAgent(config)
 	agent.statChan = make(chan *pb.PStatMessage, 1)
 

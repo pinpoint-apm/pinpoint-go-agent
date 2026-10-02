@@ -93,7 +93,7 @@ func newExpiringPickFirst(t *testing.T, maxAgeMillis int64) (*expiringPickFirst,
 	t.Helper()
 	cc := &fakeBalancerCC{}
 	b := expiringPickFirstBuilder{}.Build(cc, balancer.BuildOptions{}).(*expiringPickFirst)
-	cfg, err := expiringPickFirstBuilder{}.ParseConfig([]byte(`{"maxAgeMillis":` + itoa(maxAgeMillis) + `}`))
+	cfg, err := expiringPickFirstBuilder{}.ParseConfig([]byte(`{"maxAgeMillis":` + strconv.FormatInt(maxAgeMillis, 10) + `}`))
 	require.NoError(t, err)
 	require.NoError(t, b.UpdateClientConnState(balancer.ClientConnState{
 		ResolverState:  resolver.State{Addresses: []resolver.Address{{Addr: "collector:9991"}}},
@@ -101,8 +101,6 @@ func newExpiringPickFirst(t *testing.T, maxAgeMillis int64) (*expiringPickFirst,
 	}))
 	return b, cc
 }
-
-func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 
 // readyExpiringPickFirst brings the first SubConn to READY and lets it pass
 // its max age.
@@ -138,7 +136,7 @@ func Test_expiringPickFirst_createsExactlyOneSuccessorUnderConcurrentPicks(t *te
 	}
 	wg.Wait()
 
-	waitFor(t, "the successor to be created", func() bool { return cc.count() == 2 })
+	require.Eventually(t, func() bool { return cc.count() == 2 }, 2*time.Second, 2*time.Millisecond, "the successor to be created")
 	time.Sleep(20 * time.Millisecond) // give any duplicate a chance to show up
 	assert.Equal(t, 2, cc.count(), "100k picks on one expired SubConn open exactly one successor")
 	assert.EqualValues(t, 1, cc.subConn(1).connects.Load())
@@ -150,7 +148,7 @@ func Test_expiringPickFirst_createsExactlyOneSuccessorUnderConcurrentPicks(t *te
 func Test_expiringPickFirst_makeBeforeBreak(t *testing.T) {
 	_, cc := readyExpiringPickFirst(t, 1)
 	cc.pick()
-	waitFor(t, "the successor to be created", func() bool { return cc.count() == 2 })
+	require.Eventually(t, func() bool { return cc.count() == 2 }, 2*time.Second, 2*time.Millisecond, "the successor to be created")
 	old, successor := cc.subConn(0), cc.subConn(1)
 
 	successor.setState(connectivity.Connecting)
@@ -172,7 +170,7 @@ func Test_expiringPickFirst_makeBeforeBreak(t *testing.T) {
 func Test_expiringPickFirst_keepsOldSubConnWhenSuccessorFails(t *testing.T) {
 	_, cc := readyExpiringPickFirst(t, 1)
 	cc.pick()
-	waitFor(t, "the successor to be created", func() bool { return cc.count() == 2 })
+	require.Eventually(t, func() bool { return cc.count() == 2 }, 2*time.Second, 2*time.Millisecond, "the successor to be created")
 	old, successor := cc.subConn(0), cc.subConn(1)
 
 	successor.setState(connectivity.Connecting)
@@ -199,7 +197,7 @@ func Test_expiringPickFirst_keepsOldSubConnWhenSuccessorFails(t *testing.T) {
 func Test_expiringPickFirst_oneSubConnPerSlot(t *testing.T) {
 	_, cc := readyExpiringPickFirst(t, 1)
 	cc.pick()
-	waitFor(t, "the successor to be created", func() bool { return cc.count() == 2 })
+	require.Eventually(t, func() bool { return cc.count() == 2 }, 2*time.Second, 2*time.Millisecond, "the successor to be created")
 	old, successor := cc.subConn(0), cc.subConn(1)
 	successor.setState(connectivity.Connecting)
 

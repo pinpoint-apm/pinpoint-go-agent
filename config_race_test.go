@@ -73,21 +73,11 @@ Http:
 
 	cfgFileViper := newConfigFile(cfgFile)
 
-	done := make(chan struct{})
-	stopped := func() bool {
-		select {
-		case <-done:
-			return true
-		default:
-			return false
-		}
-	}
-
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() { // stands in for the poller goroutine
 		defer wg.Done()
-		for i := 1; !stopped(); i++ {
+		for i := 1; i <= 200; i++ {
 			writeCfgFile(i)
 			config.reloadConfig(cfgFileViper)
 		}
@@ -96,7 +86,7 @@ Http:
 	wg.Add(1)
 	go func() { // AddReloadCallback races the reloader's walk of the callback list
 		defer wg.Done()
-		for i := 0; i < 50 && !stopped(); i++ {
+		for i := 0; i < 50; i++ {
 			config.AddReloadCallback([]string{CfgSamplingCounterRate}, func() {})
 			time.Sleep(time.Millisecond)
 		}
@@ -107,7 +97,7 @@ Http:
 		go func() { // request goroutines
 			defer wg.Done()
 			named := []driver.NamedValue{{Ordinal: 1, Value: "1"}}
-			for !stopped() {
+			for i := 0; i < 2000; i++ {
 				_ = config.Bool(CfgSQLTraceBindValue)
 				_ = config.Int(CfgSpanMaxCallStackDepth)
 				_ = config.Float(CfgSamplingPercentRate)
@@ -126,7 +116,5 @@ Http:
 		}()
 	}
 
-	time.Sleep(300 * time.Millisecond)
-	close(done)
 	wg.Wait()
 }

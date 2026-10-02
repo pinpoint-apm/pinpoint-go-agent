@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/stretchr/testify/assert"
@@ -27,21 +26,13 @@ func TestHttpConfigReloadRace(t *testing.T) {
 		WithHttpServerRecordRespondHeader([]string{"HEADERS-ALL"}),
 	)
 
-	done := make(chan struct{})
-	stopped := func() bool {
-		select {
-		case <-done:
-			return true
-		default:
-			return false
-		}
-	}
+	const iterations = 2000
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() { // stands in for the config reload callback
 		defer wg.Done()
-		for !stopped() {
+		for i := 0; i < iterations; i++ {
 			curHttpConfig.Store(newHttpConfig())
 		}
 	}()
@@ -50,7 +41,7 @@ func TestHttpConfigReloadRace(t *testing.T) {
 		wg.Add(1)
 		go func() { // request goroutines
 			defer wg.Done()
-			for !stopped() {
+			for i := 0; i < iterations; i++ {
 				_ = isExcludedUrl("/skip/index.html")
 				_ = isExcludedUrl("/keep/index.html")
 				_ = isExcludedMethod("PUT")
@@ -68,8 +59,6 @@ func TestHttpConfigReloadRace(t *testing.T) {
 		}()
 	}
 
-	time.Sleep(300 * time.Millisecond)
-	close(done)
 	wg.Wait()
 }
 

@@ -64,21 +64,14 @@ type recordedEvent struct {
 	serviceType int32
 	destination string
 	endPoint    string
-	sql         string
-	sqlArgs     string
 	err         error
 	annotations map[int32]string
 	ended       bool
 }
 
-func (e *recordedEvent) SetServiceType(typ int32)    { e.serviceType = typ }
-func (e *recordedEvent) SetDestination(id string)    { e.destination = id }
-func (e *recordedEvent) SetEndPoint(endPoint string) { e.endPoint = endPoint }
-
-func (e *recordedEvent) SetSQL(sql string, args string) {
-	e.sql, e.sqlArgs = sql, args
-}
-
+func (e *recordedEvent) SetServiceType(typ int32)        { e.serviceType = typ }
+func (e *recordedEvent) SetDestination(id string)        { e.destination = id }
+func (e *recordedEvent) SetEndPoint(endPoint string)     { e.endPoint = endPoint }
 func (e *recordedEvent) SetError(err error, _ ...string) { e.err = err }
 
 func (e *recordedEvent) Annotations() pinpoint.Annotation {
@@ -236,7 +229,9 @@ func Test_newSpanEvent(t *testing.T) {
 // The tracer is registered on the pool, so its callbacks run for every query
 // the application makes - including those from code that never started a span.
 // Recording those would unbalance the span-event stack of whatever ran next on
-// that goroutine.
+// that goroutine. pgx's Conn.Config() deep-copies the ConnConfig, so the gate
+// must also come before that copy: a zero Conn has no config, and reaching
+// Config() on it panics.
 func Test_newSpanEventIgnoresUnsampledCalls(t *testing.T) {
 	config := testConfig(t)
 
@@ -250,6 +245,7 @@ func Test_newSpanEventIgnoresUnsampledCalls(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tracer := newSpanEvent(tt.ctx, config, "pgx.Query")
 			assert.False(t, tracer.IsSampled(), "an unsampled context produced a sampled tracer")
+			assert.False(t, connSpanEvent(tt.ctx, &pgx.Conn{}, "pgx.Query").IsSampled())
 		})
 	}
 }

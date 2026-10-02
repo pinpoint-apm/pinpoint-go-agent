@@ -47,6 +47,15 @@ func setTraceHeaders(w http.ResponseWriter, tracer pinpoint.Tracer) {
 	w.Header().Set(e2e.HeaderSpanID, e2e.SpanIDString(tracer))
 }
 
+// writeText sends a plain-text response and finishes the span.
+func writeText(w http.ResponseWriter, r *http.Request, tracer pinpoint.Tracer, status int, body string) {
+	setTraceHeaders(w, tracer)
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(status)
+	fmt.Fprint(w, body)
+	finishSpan(w, r, tracer, status)
+}
+
 // onSimple is the minimal traced request: one span with one event.
 func onSimple(w http.ResponseWriter, r *http.Request) {
 	defer track()()
@@ -54,11 +63,7 @@ func onSimple(w http.ResponseWriter, r *http.Request) {
 	tracer.NewSpanEvent("simple_work")
 	tracer.EndSpanEvent()
 
-	setTraceHeaders(w, tracer)
-	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, "ok")
-	finishSpan(w, r, tracer, http.StatusOK)
+	writeText(w, r, tracer, http.StatusOK, "ok")
 }
 
 // onDeep nests span events until (and past) the configured depth limit. Past
@@ -89,11 +94,7 @@ func onDeep(w http.ResponseWriter, r *http.Request) {
 		tracer.EndSpanEvent()
 	}
 
-	setTraceHeaders(w, tracer)
-	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "depth=%d overflow_context=%t", depth, overflowContext)
-	finishSpan(w, r, tracer, http.StatusOK)
+	writeText(w, r, tracer, http.StatusOK, fmt.Sprintf("depth=%d overflow_context=%t", depth, overflowContext))
 }
 
 // onWide records many sequential events, crossing the sequence limit.
@@ -107,11 +108,7 @@ func onWide(w http.ResponseWriter, r *http.Request) {
 		tracer.EndSpanEvent()
 	}
 
-	setTraceHeaders(w, tracer)
-	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "width=%d", width)
-	finishSpan(w, r, tracer, http.StatusOK)
+	writeText(w, r, tracer, http.StatusOK, fmt.Sprintf("width=%d", width))
 }
 
 // onAnnotated records every annotation shape the public API offers.
@@ -133,11 +130,7 @@ func onAnnotated(w http.ResponseWriter, r *http.Request) {
 		tracer.EndSpanEvent()
 	}
 
-	setTraceHeaders(w, tracer)
-	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, "annotated")
-	finishSpan(w, r, tracer, http.StatusOK)
+	writeText(w, r, tracer, http.StatusOK, "annotated")
 }
 
 // onMixed combines nesting, annotations, SQL-shaped events and a goroutine
@@ -185,11 +178,7 @@ func onMixed(w http.ResponseWriter, r *http.Request) {
 	}
 	wg.Wait()
 
-	setTraceHeaders(w, tracer)
-	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, "mixed")
-	finishSpan(w, r, tracer, http.StatusOK)
+	writeText(w, r, tracer, http.StatusOK, "mixed")
 }
 
 // onError returns an intentional 500 with an error span.
@@ -202,11 +191,7 @@ func onError(w http.ResponseWriter, r *http.Request) {
 	tracer.EndSpanEvent()
 	tracer.Span().SetError(errors.New("Internal Server Error"))
 
-	setTraceHeaders(w, tracer)
-	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusInternalServerError)
-	fmt.Fprint(w, "error")
-	finishSpan(w, r, tracer, http.StatusInternalServerError)
+	writeText(w, r, tracer, http.StatusInternalServerError, "error")
 }
 
 // onFilterProbe reports whether the URL/method filters admitted this request.

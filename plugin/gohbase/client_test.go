@@ -273,3 +273,13 @@ func TestNewClient_KeepsTheQuorum(t *testing.T) {
 	assert.Equal(t, "zk1.example:2181,zk2.example:2181", c.host)
 	assert.Implements(t, (*hbase.Client)(nil), c, "the wrapper must still be a gohbase.Client")
 }
+
+// WrapClient is NewClient for a client created elsewhere (compile-time
+// instrumentation); wrapping twice must not stack two layers.
+func TestWrapClient(t *testing.T) {
+	base := &fakeClient{}
+	c := WrapClient(base, "zk1,zk2")
+	assert.Equal(t, "zk1,zk2", c.host)
+	assert.Same(t, base, c.Client)
+	assert.Same(t, c, WrapClient(c, "other"), "an already wrapped client is returned as it is")
+}

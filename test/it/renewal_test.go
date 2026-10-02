@@ -7,7 +7,6 @@ import (
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 )
 
@@ -36,9 +35,9 @@ func TestRotatesConnectionsAndStreamsWithoutLosingSpans(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return countSpansByRpcPrefix(s, "/renew/") == spans
-	}, longTimeout), "every span sent across the rotations must arrive")
+	}, longTimeout, "every span sent across the rotations must arrive")
 
 	s := mc.Snapshot()
 	// A second of span batches on a 100ms max age is several rotations; the
@@ -63,9 +62,9 @@ func TestKeepsOneConnectionPerEndpointByDefault(t *testing.T) {
 		handleInstrumentedRequest(agent, fmt.Sprintf("/steady/%d", i), i)
 		time.Sleep(10 * time.Millisecond)
 	}
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return countSpansByRpcPrefix(s, "/steady/") == 20 && len(s.Stats) > 0
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	assert.Equal(t, 1, connectionsTo(s, EndpointSpan))

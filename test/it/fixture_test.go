@@ -162,22 +162,11 @@ func startArmedStack(t *testing.T, arm func(*MockCollector), opts ...pinpoint.Co
 		arm(mc)
 	}
 	agent := startAgent(t, mc, opts...)
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.AgentInfos) > 0 }, waitTimeout),
+	mc.WaitFor(t, func(s Snapshot) bool { return len(s.AgentInfos) > 0 }, waitTimeout,
 		"the agent never registered with the collector")
-	require.True(t, waitUntil(func() bool { return agent.Enable() }, waitTimeout),
+	require.Eventually(t, func() bool { return agent.Enable() }, waitTimeout, 10*time.Millisecond,
 		"the agent never came online")
 	return mc, agent
-}
-
-func waitUntil(predicate func() bool, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if predicate() {
-			return true
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return predicate()
 }
 
 // mapCarrier is a distributed-tracing carrier backed by a plain map.

@@ -33,13 +33,6 @@ var benchLongSQL = func() string {
 // before normalization, which is not what this input is meant to measure.
 var benchHugeLiteralSQL = "SELECT '" + strings.Repeat("x", maxSqlNormalizeLength-16) + "'"
 
-func newNormalizeTestAgent() *agent {
-	cfg := defaultConfig()
-	a := &agent{config: cfg, sqlCacheLengthLimit: cfg.Int(CfgSQLCacheLengthLimit)}
-	a.rawSqlCache = newMetaCache[string, normalizedSql](cacheSize)
-	return a
-}
-
 // uniqueSQLs derives n distinct raw SQL texts from base by interpolating a
 // different literal into each — the ORM-inlines-literals worst case.
 func uniqueSQLs(base string, n int) []string {
@@ -66,7 +59,7 @@ func TestNormalizeSqlCacheEquivalence(t *testing.T) {
 		benchLongSQL,
 	}
 
-	a := newNormalizeTestAgent()
+	a := newTestAgent(defaultConfig())
 	removeComments := a.config.load().sqlRemoveComments
 	for _, sql := range corpus {
 		wantSql, wantParam := newSqlNormalizer(sql, removeComments).run()
@@ -82,7 +75,7 @@ func TestNormalizeSqlCacheBypassesHugeSql(t *testing.T) {
 	huge := strings.Repeat("select * from t where a = 'x' and b = 123 union all ", 2000) + "select 1"
 	require.Greater(t, len(huge), maxSqlSize, "test sql too short")
 
-	a := newNormalizeTestAgent()
+	a := newTestAgent(defaultConfig())
 	wantSql, wantParam := newSqlNormalizer(huge, a.config.load().sqlRemoveComments).run()
 	gotSql, gotParam := a.normalizeSql(huge)
 	assert.Equal(t, wantSql, gotSql, "bypass path result differs from uncached normalizer")
@@ -96,7 +89,7 @@ func TestNormalizeSqlCacheBypassesHugeSql(t *testing.T) {
 // their own query — no mixing of cached values across keys.
 func TestNormalizeSqlCacheConcurrent(t *testing.T) {
 	queries := uniqueSQLs("select * from t where a = 1 and s = 'v'", cacheSize+200)
-	a := newNormalizeTestAgent()
+	a := newTestAgent(defaultConfig())
 	expected := make([]normalizedSql, len(queries))
 	for i, q := range queries {
 		nsql, param := newSqlNormalizer(q, a.config.load().sqlRemoveComments).run()
@@ -140,7 +133,7 @@ func BenchmarkSqlNormalizeHugeLiteral(b *testing.B) {
 
 // Win case: the same statement repeats, every call after the first is a hit.
 func benchmarkNormalizeCachedRepeat(b *testing.B, sql string) {
-	a := newNormalizeTestAgent()
+	a := newTestAgent(defaultConfig())
 	a.normalizeSql(sql)
 	b.SetBytes(int64(len(sql)))
 	b.ReportAllocs()
@@ -156,7 +149,7 @@ func benchmarkNormalizeCachedRepeat(b *testing.B, sql string) {
 // worst-case overhead.
 func benchmarkNormalizeCachedUnique(b *testing.B, base string, n int) {
 	queries := uniqueSQLs(base, n)
-	a := newNormalizeTestAgent()
+	a := newTestAgent(defaultConfig())
 	b.SetBytes(int64(len(queries[0])))
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -182,7 +175,7 @@ func BenchmarkSqlNormalizeCachedLongUnique(b *testing.B) {
 // Concurrent hits: SetSQL runs on many request goroutines at once, so the hit
 // path must scale, not serialize on the cache lock.
 func BenchmarkSqlNormalizeCachedShortRepeatParallel(b *testing.B) {
-	a := newNormalizeTestAgent()
+	a := newTestAgent(defaultConfig())
 	a.normalizeSql(benchShortSQL)
 	b.ReportAllocs()
 	b.ResetTimer()

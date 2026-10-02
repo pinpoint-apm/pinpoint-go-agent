@@ -95,7 +95,7 @@ func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
 	assert.False(t, unsampled.IsSampled())
 	unsampled.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/orders/42") != nil &&
 			findSpanByRpc(s, "/downstream") != nil &&
 			// Span batches are sent concurrently, so the final PSpan can
@@ -104,7 +104,7 @@ func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
 			len(asyncChunksFor(s, rootSpanID)) > 0 &&
 			len(s.ApiMetadata) > 0 && len(s.StringMetadata) > 0 &&
 			len(s.SqlUidMetadata) > 0 && len(s.ExceptionMetadata) > 0
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	rootWire := findSpanByRpc(s, "/orders/42")
@@ -198,9 +198,9 @@ func TestFinalizesSpanWithUnclosedEvents(t *testing.T) {
 
 	tracer.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return countSpansByRpc(s, "/span-lifecycle") == 1 && len(eventsForSpan(s, spanID)) >= 2
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	assert.Equal(t, 1, countSpansByRpc(s, "/span-lifecycle"))
@@ -238,9 +238,9 @@ func TestPreservesNestedEventSequenceAndDepth(t *testing.T) {
 	tracer.EndSpanEvent()
 	tracer.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return countSpansByRpc(s, "/event-lifecycle") == 1 && len(eventsForSpan(s, spanID)) == 3
-	}, waitTimeout))
+	}, waitTimeout)
 
 	events := eventsForSpan(mc.Snapshot(), spanID)
 	require.Len(t, events, 3)
@@ -326,13 +326,13 @@ func TestKeepsTraceContextWhenEventLimitsOverflow(t *testing.T) {
 	}
 	seqTracer.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/overflow-depth") != nil &&
 			findSpanByRpc(s, "/overflow-continued") != nil &&
 			findSpanByRpc(s, "/overflow-sequence") != nil &&
 			len(eventsForSpan(s, spanID)) >= 3 &&
 			len(eventsForSpan(s, seqSpanID)) >= 4
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	// End to end: the overflowed caller's destination reached the downstream
@@ -390,10 +390,10 @@ func TestStartsNewTransactionOnMalformedContextAndAdoptsForeignContext(t *testin
 	assert.Equal(t, int64(77777), continued.SpanId())
 	continued.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/foreign-continued") != nil &&
 			findSpanByRpc(s, "/malformed/0") != nil
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	for i := range malformed {
@@ -443,12 +443,12 @@ func TestSharesAsyncIdAcrossAsyncSpansFromOneEvent(t *testing.T) {
 	tracer.EndSpanEvent()
 	tracer.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/async-parent") != nil &&
 			len(asyncChunksFor(s, spanID)) >= 2 &&
 			len(eventsForSpan(s, spanID)) >= 3 &&
 			hasApiMetadata(s, "Goroutine Invocation", apiTypeInvocation)
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	chunks := asyncChunksFor(s, spanID)
@@ -500,9 +500,9 @@ func TestFlushesExceptionMetadataForAsyncSpans(t *testing.T) {
 	tracer.EndSpanEvent()
 	tracer.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(asyncChunksFor(s, spanID)) > 0 && findExceptionForSpan(s, spanID) != nil
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	chunks := asyncChunksFor(s, spanID)
@@ -545,12 +545,12 @@ func TestWrapGoroutinePropagatesTraceIntoGoroutine(t *testing.T) {
 	tracer.EndSpanEvent()
 	tracer.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/goroutine-parent") != nil &&
 			len(asyncChunksFor(s, spanID)) >= 1 &&
 			// the async root event plus the goroutine's own event
 			len(eventsForSpan(s, spanID)) >= 3
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	chunks := asyncChunksFor(s, spanID)
@@ -564,7 +564,7 @@ func TestWrapGoroutinePropagatesTraceIntoGoroutine(t *testing.T) {
 func TestPropagatesUnsampledDecisionDownstream(t *testing.T) {
 	mc, agent := startStack(t)
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout)
 	baseline := len(agentStats(mc.Snapshot()))
 
 	tracer := agent.NewSpanTracerWithReader("unsampled.origin", "/unsampled-origin", mapCarrier{
@@ -590,9 +590,9 @@ func TestPropagatesUnsampledDecisionDownstream(t *testing.T) {
 	assert.False(t, downstream.IsSampled())
 	downstream.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return transactionTotalsAfter(s, baseline).unsampledCont >= 2
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	assert.Equal(t, 0, countSpansByRpc(s, "/unsampled-origin"))

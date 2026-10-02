@@ -8,9 +8,11 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"testing"
 	"time"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -427,16 +429,10 @@ func (c *MockCollector) Snapshot() Snapshot {
 	return s
 }
 
-// WaitFor polls until predicate matches a coherent snapshot, or timeout elapses.
-func (c *MockCollector) WaitFor(predicate func(Snapshot) bool, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if predicate(c.Snapshot()) {
-			return true
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return predicate(c.Snapshot())
+// WaitFor fails the test unless predicate matches a coherent snapshot within timeout.
+func (c *MockCollector) WaitFor(t testing.TB, predicate func(Snapshot) bool, timeout time.Duration, msgAndArgs ...any) {
+	t.Helper()
+	require.Eventually(t, func() bool { return predicate(c.Snapshot()) }, timeout, 10*time.Millisecond, msgAndArgs...)
 }
 
 // --- internals -------------------------------------------------------------

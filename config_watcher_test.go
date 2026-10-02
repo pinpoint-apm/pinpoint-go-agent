@@ -200,7 +200,7 @@ func TestRejectedConfigWatcherStopsWithoutAffectingRunningAgent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	writeConfigRate(t, path, 1)
 
-	newConfig := func(id string) *Config {
+	newConfig := func() *Config {
 		config, err := NewConfig(
 			WithAppName("watcher-reject"),
 			WithConfigFile(path),
@@ -211,13 +211,13 @@ func TestRejectedConfigWatcherStopsWithoutAffectingRunningAgent(t *testing.T) {
 		return config
 	}
 
-	runningConfig := newConfig("watcher-running")
+	runningConfig := newConfig()
 	running, err := NewAgent(runningConfig)
 	require.NoError(t, err)
 	t.Cleanup(running.Shutdown)
 	runningDone := requireWatcher(t, runningConfig)
 
-	rejectedConfig := newConfig("watcher-rejected")
+	rejectedConfig := newConfig()
 	rejectedDone := requireWatcher(t, rejectedConfig)
 	got, err := NewAgent(rejectedConfig)
 	require.Error(t, err)

@@ -383,16 +383,12 @@ func TestTrimStringSlice(t *testing.T) {
 	assert.Empty(t, trimStringSlice(nil))
 }
 
-func benchmarkHttpUrlFilter(patterns ...string) *httpUrlFilter {
-	return setupHttpUrlFilter(patterns)
-}
-
 func BenchmarkHttpUrlFilterExact(b *testing.B) {
 	patterns := make([]string, 128)
 	for i := range patterns {
 		patterns[i] = fmt.Sprintf("/excluded/%03d", i)
 	}
-	f := benchmarkHttpUrlFilter(patterns...)
+	f := setupHttpUrlFilter(patterns)
 	url := patterns[len(patterns)-1]
 
 	b.ReportAllocs()
@@ -416,7 +412,7 @@ func BenchmarkHttpUrlFilterMixed(b *testing.B) {
 		"/api/v?/**/four.json",
 		"/api/v?/**/result.json",
 	)
-	f := benchmarkHttpUrlFilter(patterns...)
+	f := setupHttpUrlFilter(patterns)
 	url := "/api/v2/one/two/result.json"
 
 	b.ReportAllocs()
@@ -427,13 +423,13 @@ func BenchmarkHttpUrlFilterMixed(b *testing.B) {
 }
 
 func BenchmarkHttpUrlFilterLongAnt(b *testing.B) {
-	f := benchmarkHttpUrlFilter(
+	f := setupHttpUrlFilter([]string{
 		"/api/**/one.json",
 		"/api/**/two.json",
 		"/api/**/three.json",
 		"/api/**/four.json",
 		"/api/**/result.json",
-	)
+	})
 	url := "/api" + strings.Repeat("/segment", antScratchLen/4) + "/result.json"
 
 	b.ReportAllocs()
@@ -451,7 +447,7 @@ func BenchmarkHttpUrlFilterPrefixOnly(b *testing.B) {
 	for i := range patterns {
 		patterns[i] = fmt.Sprintf("/static%d/**", i)
 	}
-	f := benchmarkHttpUrlFilter(patterns...)
+	f := setupHttpUrlFilter(patterns)
 	url := "/api/v2/users/1234/profile"
 
 	b.ReportAllocs()

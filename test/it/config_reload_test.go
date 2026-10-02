@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/stretchr/testify/assert"
@@ -34,8 +35,8 @@ func TestReloadsConfigFileAndAppliesNewSamplingRate(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(agent.Shutdown)
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.AgentInfos) > 0 }, waitTimeout))
-	require.True(t, waitUntil(func() bool { return agent.Enable() }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(s.AgentInfos) > 0 }, waitTimeout)
+	require.Eventually(t, func() bool { return agent.Enable() }, waitTimeout, 10*time.Millisecond)
 	require.Equal(t, 1, agent.Config().Int(pinpoint.CfgSamplingCounterRate))
 
 	before := agent.NewSpanTracer("reload.probe", "/reloaded/before")
@@ -44,9 +45,9 @@ func TestReloadsConfigFileAndAppliesNewSamplingRate(t *testing.T) {
 	infosBefore := len(mc.Snapshot().AgentInfos)
 
 	writeSamplingConfig(2)
-	require.True(t, waitUntil(func() bool {
+	require.Eventually(t, func() bool {
 		return agent.Config().Int(pinpoint.CfgSamplingCounterRate) == 2
-	}, waitTimeout), "the config-file watcher never applied the new sampling rate")
+	}, waitTimeout, 10*time.Millisecond, "the config-file watcher never applied the new sampling rate")
 
 	// The reloaded sampler starts a fresh count, so it admits its first new
 	// trace and every second one after that, and everything else keeps tracing.
@@ -54,10 +55,10 @@ func TestReloadsConfigFileAndAppliesNewSamplingRate(t *testing.T) {
 	sampled := driveSamplingPattern(t, agent, "reload.probe", "/reloaded/after/", expected, nil)
 	require.NotEmpty(t, sampled)
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/reloaded/before") != nil &&
 			findSpanByRpc(s, "/reloaded/after/0") != nil
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	assert.Equal(t, 1, countSpansByRpc(s, "/reloaded/before"))

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -56,11 +57,6 @@ func readBody(t *testing.T, resp *http.Response) string {
 	return string(body)
 }
 
-type wrapErr struct{ err error }
-
-func (e wrapErr) Error() string { return "wrapped: " + e.err.Error() }
-func (e wrapErr) Unwrap() error { return e.err }
-
 // The wrapper reports the status fiber's ErrorHandler will send, instead of
 // invoking that handler itself to read the status off the response.
 func Test_statusCode(t *testing.T) {
@@ -71,9 +67,9 @@ func Test_statusCode(t *testing.T) {
 	}{
 		{name: "a fiber.Error carries its own status", err: fiber.NewError(http.StatusNotFound), want: http.StatusNotFound},
 		{name: "a plain error is a server error", err: errors.New("boom"), want: http.StatusInternalServerError},
-		{name: "a wrapped fiber.Error is unwrapped", err: wrapErr{fiber.NewError(http.StatusTeapot)}, want: http.StatusTeapot},
-		{name: "a twice-wrapped fiber.Error is still unwrapped", err: wrapErr{wrapErr{fiber.NewError(http.StatusTeapot)}}, want: http.StatusTeapot},
-		{name: "a wrapped plain error is a server error", err: wrapErr{errors.New("boom")}, want: http.StatusInternalServerError},
+		{name: "a wrapped fiber.Error is unwrapped", err: fmt.Errorf("wrapped: %w", fiber.NewError(http.StatusTeapot)), want: http.StatusTeapot},
+		{name: "a twice-wrapped fiber.Error is still unwrapped", err: fmt.Errorf("wrapped: %w", fmt.Errorf("wrapped: %w", fiber.NewError(http.StatusTeapot))), want: http.StatusTeapot},
+		{name: "a wrapped plain error is a server error", err: fmt.Errorf("wrapped: %w", errors.New("boom")), want: http.StatusInternalServerError},
 		{name: "a fiber.Error built with a message", err: fiber.NewError(http.StatusBadRequest, "bad"), want: http.StatusBadRequest},
 	}
 

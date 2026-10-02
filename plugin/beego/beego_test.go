@@ -91,26 +91,44 @@ func TestServerFilterChain_TracesAndPassesTheContextThrough(t *testing.T) {
 // has run; a configured error class turns the span red.
 func TestServerFilterChain_RecordsTheFinalStatus(t *testing.T) {
 	tests := []struct {
-		name     string
-		status   int
-		wantFail bool
+		name       string
+		status     int
+		body       bool // write through Output.Body
+		wantStatus int
+		wantFail   bool
 	}{
-		{name: "a success status", status: http.StatusOK},
-		{name: "a client error is not a failure by default", status: http.StatusNotFound},
-		{name: "a server error fails the span", status: http.StatusInternalServerError, wantFail: true},
+		{name: "a success status", status: http.StatusOK, wantStatus: http.StatusOK},
+		{name: "a client error is not a failure by default", status: http.StatusNotFound, wantStatus: http.StatusNotFound},
+		{name: "a server error fails the span", status: http.StatusInternalServerError, wantStatus: http.StatusInternalServerError, wantFail: true},
+		// Output.Body - behind ServeJSON, Render and the rest - writes the header
+		// and resets Output.Status to 0, and a plain write never sets it, so the
+		// status has to be read from the writer beego itself logs.
+		{name: "a body without a status is a 200", body: true, wantStatus: http.StatusOK},
+		{name: "a success status written through Output.Body", status: http.StatusCreated, body: true, wantStatus: http.StatusCreated},
+		{name: "a server error written through Output.Body fails the span", status: http.StatusInternalServerError, body: true, wantStatus: http.StatusInternalServerError, wantFail: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			startAgent(t)
 
-			ctx := newBeegoContext(httptest.NewRequest(http.MethodGet, "/hello", nil), httptest.NewRecorder())
+			rec := httptest.NewRecorder()
+			ctx := newBeegoContext(httptest.NewRequest(http.MethodGet, "/hello", nil), rec)
 			var tracer pinpoint.Tracer
 			ServerFilterChain()(func(c *beegoContext.Context) {
 				tracer = pinpoint.TracerFromRequestContext(c.Request)
-				c.Output.SetStatus(tt.status)
+				if tt.status != 0 {
+					c.Output.SetStatus(tt.status)
+				}
+				if tt.body {
+					require.NoError(t, c.Output.Body([]byte("body")))
+				}
 			})(ctx)
 
+			if tt.body {
+				assert.Equal(t, tt.wantStatus, rec.Code, "wire status")
+			}
+			assert.Equal(t, tt.wantStatus, statusAnnotation(t, tracer), "recorded status")
 			assert.Equal(t, tt.wantFail, spanOf(t, tracer)["Err"] != float64(0),
 				"the default 5xx error class decides whether the span fails")
 		})
@@ -349,4 +367,59 @@ func closedAddr(t *testing.T) string {
 	addr := l.Addr().String()
 	require.NoError(t, l.Close())
 	return addr
+}
+
+// statusAnnotation reads the recorded HTTP status back out of the span JSON:
+// {"key":46,"value":{"Field":{"IntValue":500}}}.
+func statusAnnotation(t *testing.T, tracer pinpoint.Tracer) int {
+	t.Helper()
+	annotations, _ := spanOf(t, tracer)["Annotations"].([]interface{})
+	for _, a := range annotations {
+		m, _ := a.(map[string]interface{})
+		if key, _ := m["key"].(float64); int(key) != pinpoint.AnnotationHttpStatusCode {
+			continue
+		}
+		value, _ := m["value"].(map[string]interface{})
+		field, _ := value["Field"].(map[string]interface{})
+		n, _ := field["IntValue"].(float64)
+		return int(n)
+	}
+	return 0
+}
+
+// A request that already carries the tracing headers - the filter added twice,
+// or a request retried through DoRequest - gets a noop client tracer, and the
+// filter has to end that one: ending the caller's tracer instead closed
+// whatever event the caller had open.
+func TestClientFilterChain_StackedFiltersLeaveTheCallersEventOpen(t *testing.T) {
+	startAgent(t)
+
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
+	defer tracer.EndSpan()
+	tracer.NewSpanEvent("serverHandler")
+	open := tracer.SpanEvent()
+
+	next := func(context.Context, *httplib.BeegoHTTPRequest) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK}, nil
+	}
+	_, err := ClientFilterChain(tracer)(ClientFilterChain(tracer)(next))(context.Background(), httplib.Get("http://localhost:9090/hello"))
+	require.NoError(t, err)
+
+	assert.Same(t, open, tracer.SpanEvent(), "the stacked client filters ended the caller's own event")
+}
+
+// The deprecated DoRequest ends its event through the same tracer.
+func TestDoRequest_LeavesTheCallersEventOpenWhenNested(t *testing.T) {
+	startAgent(t)
+
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
+	defer tracer.EndSpan()
+	tracer.NewSpanEvent("serverHandler")
+	open := tracer.SpanEvent()
+
+	req := httplib.Get("http://" + closedAddr(t) + "/hello")
+	tracer.Inject(req.GetRequest().Header) // already traced, as a retry would be
+	_, _ = DoRequest(tracer, req)
+
+	assert.Same(t, open, tracer.SpanEvent(), "DoRequest on an already traced request ended the caller's own event")
 }

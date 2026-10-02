@@ -33,7 +33,7 @@ func TestStreamsAgentStatistics(t *testing.T) {
 	require.True(t, active.IsSampled())
 
 	// An in-flight sampled request must show up in the active-trace histogram.
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		for _, stat := range agentStats(s) {
 			var total int32
 			for _, c := range stat.GetActiveTrace().GetHistogram().GetActiveTraceCount() {
@@ -44,12 +44,12 @@ func TestStreamsAgentStatistics(t *testing.T) {
 			}
 		}
 		return false
-	}, waitTimeout))
+	}, waitTimeout)
 	active.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return sampledNewAgentStat(s) != nil
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	require.NotEmpty(t, s.StatStreams)
@@ -72,7 +72,7 @@ func TestStreamsAgentStatistics(t *testing.T) {
 func TestReportsResponseTimeAndRuntimeStatistics(t *testing.T) {
 	mc, agent := startStack(t)
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout)
 	baseline := len(agentStats(mc.Snapshot()))
 
 	// Span elapsed time is measured, not settable, so the slow request has to
@@ -84,10 +84,10 @@ func TestReportsResponseTimeAndRuntimeStatistics(t *testing.T) {
 		tracer.EndSpan()
 	}
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return transactionTotalsAfter(s, baseline).sampledNew >= 3 &&
 			maxResponseTimeAfter(s, baseline) >= 400
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	totals := transactionTotalsAfter(s, baseline)
@@ -135,7 +135,7 @@ func continueCarrier(traceID string) mapCarrier {
 func TestAppliesCounterAndParentSamplingAndReportsDecisions(t *testing.T) {
 	mc, agent := startStack(t, pinpoint.WithSamplingCounterRate(3))
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout)
 	baseline := len(agentStats(mc.Snapshot()))
 
 	// The counter sampler admits the first new trace and then one in every
@@ -154,12 +154,12 @@ func TestAppliesCounterAndParentSamplingAndReportsDecisions(t *testing.T) {
 	assert.False(t, unsampled.IsSampled())
 	unsampled.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		totals := transactionTotalsAfter(s, baseline)
 		return totals.sampledNew >= 2 && totals.unsampledNew >= 4 &&
 			totals.sampledContinuation >= 1 && totals.unsampledCont >= 1 &&
 			countSpansByRpc(s, "/sampling/continued") == 1
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	totals := transactionTotalsAfter(s, baseline)
@@ -179,7 +179,7 @@ func TestAppliesPercentSamplingPattern(t *testing.T) {
 		pinpoint.WithSamplingType("PERCENT"),
 		pinpoint.WithSamplingPercentRate(50))
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout)
 	baseline := len(agentStats(mc.Snapshot()))
 
 	// The percent sampler accumulates the rate (50% == 5000/10000) per request,
@@ -187,10 +187,10 @@ func TestAppliesPercentSamplingPattern(t *testing.T) {
 	expected := []bool{true, false, true, false}
 	driveSamplingPattern(t, agent, "sampling.percent", "/sampling/percent/", expected, nil)
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		totals := transactionTotalsAfter(s, baseline)
 		return totals.sampledNew >= 2 && totals.unsampledNew >= 2
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	totals := transactionTotalsAfter(s, baseline)
@@ -205,7 +205,7 @@ func TestSamplesOnlyContinuedTracesWhenCounterRateIsZero(t *testing.T) {
 	// the base sampler entirely, so they must still be recorded.
 	mc, agent := startStack(t, pinpoint.WithSamplingCounterRate(0))
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout)
 	baseline := len(agentStats(mc.Snapshot()))
 
 	driveSamplingPattern(t, agent, "sampling.zero", "/sampling/zero/", []bool{false, false, false}, nil)
@@ -215,11 +215,11 @@ func TestSamplesOnlyContinuedTracesWhenCounterRateIsZero(t *testing.T) {
 	assert.True(t, continued.IsSampled())
 	continued.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		totals := transactionTotalsAfter(s, baseline)
 		return totals.unsampledNew >= 3 && totals.sampledContinuation >= 1 &&
 			countSpansByRpc(s, "/sampling/zero/continued") == 1
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	totals := transactionTotalsAfter(s, baseline)
@@ -236,7 +236,7 @@ func TestEnforcesNewAndContinuationThroughputLimits(t *testing.T) {
 		pinpoint.WithSamplingNewThroughput(2),
 		pinpoint.WithSamplingContinueThroughput(1))
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout)
 	baseline := len(agentStats(mc.Snapshot()))
 
 	// The limiter refills continuously, so the whole burst must be issued
@@ -249,12 +249,12 @@ func TestEnforcesNewAndContinuationThroughputLimits(t *testing.T) {
 	driveSamplingPattern(t, agent, "sampling.throughput.continued", "/sampling/throughput/continued/",
 		expectedCont, continueCarrier(parentTraceID))
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		totals := transactionTotalsAfter(s, baseline)
 		return totals.sampledNew >= 2 && totals.skippedNew >= 2 &&
 			totals.sampledContinuation >= 1 && totals.skippedCont >= 2 &&
 			countSpansByRpc(s, "/sampling/throughput/continued/0") == 1
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	totals := transactionTotalsAfter(s, baseline)
@@ -300,10 +300,10 @@ func TestAggregatesUrlStatisticsIncludingFailuresAndUnsampledSpans(t *testing.T)
 	unsampled.EndSpan()
 
 	const aggregated = "GET /api/orders/{id}/items"
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return uriStatTotalsFor(s, aggregated).totalCount >= 2 &&
 			uriStatTotalsFor(s, "GET /unsampled/{id}").entries > 0
-	}, 2*urlStatFlushInterval+waitTimeout))
+	}, 2*urlStatFlushInterval+waitTimeout)
 
 	s := mc.Snapshot()
 	totals := uriStatTotalsFor(s, aggregated)

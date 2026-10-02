@@ -760,6 +760,14 @@ func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
 		// 0 is "unlimited" to lumberjack; refused so the disk stays bounded.
 		{CfgLogMaxBackups, 0, defaultLogMaxBackups},
 		{CfgLogMaxBackups, -1, defaultLogMaxBackups},
+		// A 0 message size fails every send.
+		{CfgCollectorGrpcMaxSendMessageSize, 0, grpcMaxMessageSize},
+		{CfgCollectorGrpcMaxReceiveMessageSize, -1, grpcMaxMessageSize},
+		{CfgCollectorGrpcKeepAliveTime, 0, grpcKeepAliveTime},
+		{CfgCollectorGrpcKeepAliveTimeout, -1, grpcKeepAliveTimeout},
+		{CfgCollectorGrpcFlowControlWindow, 0, grpcFlowControlWindow},
+		{CfgCollectorGrpcWriteBufferSize, -1, grpcWriteBufferSize},
+		{CfgCollectorGrpcMaxHeaderListSize, 0, grpcMaxHeaderListSize},
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%s=%d", tt.name, tt.value), func(t *testing.T) {

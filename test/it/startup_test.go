@@ -44,24 +44,24 @@ func TestEnablesAndStartsAllGrpcWorkersAfterCollectorRecovery(t *testing.T) {
 	assert.Empty(t, outage.StatStreams)
 
 	restartCollector(t, mc)
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(s.AgentInfos) > 0 && len(s.Pings) > 0 &&
 			len(s.CommandStreams) > 0 && len(s.StatStreams) > 0
-	}, longTimeout))
-	require.True(t, waitUntil(func() bool { return agent.Enable() }, longTimeout))
+	}, longTimeout)
+	require.Eventually(t, func() bool { return agent.Enable() }, longTimeout, 10*time.Millisecond)
 
 	// Verify more than registration: every independent collector channel must
 	// carry fresh work after the full outage ends.
 	statsBefore := len(mc.Snapshot().Stats)
 	mc.SendEchoCommand(401, "collector-recovered")
-	require.True(t, waitUntil(func() bool {
+	require.Eventually(t, func() bool {
 		tracer := agent.NewSpanTracer("collector.startup.recovery", "/collector-startup-recovery")
 		tracer.EndSpan()
 		s := mc.Snapshot()
 		return findSpanByRpc(s, "/collector-startup-recovery") != nil &&
 			hasApiMetadata(s, "collector.startup.recovery", apiTypeWebRequest) &&
 			len(s.Stats) > statsBefore && hasEchoResponse(s, 401)
-	}, longTimeout))
+	}, longTimeout, 10*time.Millisecond)
 	assert.True(t, agent.Enable())
 }
 
@@ -122,7 +122,7 @@ func TestServesNoopTracersDuringOutageAndEnablesTracingAfterRecovery(t *testing.
 			agent := startAgent(t, mc)
 			assert.Less(t, time.Since(started), time.Second, "NewAgent waited on the collector")
 
-			require.True(t, mc.WaitFor(outage.registering, longTimeout))
+			mc.WaitFor(t, outage.registering, longTimeout)
 			assert.False(t, agent.Enable())
 
 			// The application's own work proceeds normally; the disabled agent hands an
@@ -145,10 +145,10 @@ func TestServesNoopTracersDuringOutageAndEnablesTracingAfterRecovery(t *testing.
 
 			// Collector recovers: the ongoing retry loop must succeed and enable the agent.
 			mc.EndOutage()
-			require.True(t, mc.WaitFor(func(s Snapshot) bool {
+			mc.WaitFor(t, func(s Snapshot) bool {
 				return hasResultSuccess(s, RpcAgentInfo, codes.OK, true)
-			}, longTimeout))
-			require.True(t, waitUntil(func() bool { return agent.Enable() }, longTimeout))
+			}, longTimeout)
+			require.Eventually(t, func() bool { return agent.Enable() }, longTimeout, 10*time.Millisecond)
 
 			// Tracing now runs for real, and its spans resolve.
 			recovered := agent.NewSpanTracer("startup.outage.recovered", "/startup-outage-recovered")
@@ -157,11 +157,11 @@ func TestServesNoopTracersDuringOutageAndEnablesTracingAfterRecovery(t *testing.
 			assert.Equal(t, registeredAgentID(t, mc), recovered.TransactionId().AgentId)
 			recovered.EndSpan()
 
-			require.True(t, mc.WaitFor(func(s Snapshot) bool {
+			mc.WaitFor(t, func(s Snapshot) bool {
 				span := findSpanByRpc(s, "/startup-outage-recovered")
 				return span != nil && acceptedApiIds(s, "startup.outage.recovered")[span.GetApiId()] &&
 					len(s.Pings) > 0
-			}, longTimeout))
+			}, longTimeout)
 			// The noop tracers recorded nothing, so nothing of theirs can surface
 			// now that the collector is back.
 			assert.Zero(t, countSpansByRpc(mc.Snapshot(), "/startup-outage"))

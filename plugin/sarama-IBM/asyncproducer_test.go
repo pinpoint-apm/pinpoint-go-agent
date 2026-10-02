@@ -169,12 +169,15 @@ func (t *recordingTracer) EndSpan() {
 	t.endOnce.Do(func() { close(t.ended) })
 }
 
-func waitForClose(t *testing.T, ch <-chan struct{}, name string) {
+// recv receives from ch or fails the test after a second.
+func recv[T any](t *testing.T, ch <-chan T, name string) T {
 	t.Helper()
 	select {
-	case <-ch:
+	case v := <-ch:
+		return v
 	case <-time.After(time.Second):
 		require.FailNow(t, "timed out waiting for "+name)
+		panic("unreachable")
 	}
 }
 
@@ -186,13 +189,6 @@ func requireChannelsClosed(t *testing.T, p *asyncProducer) {
 	assert.False(t, ok, "Successes channel not closed after shutdown")
 	_, ok = <-p.Errors()
 	assert.False(t, ok, "Errors channel not closed after shutdown")
-}
-
-// requireSpanError must follow the tracer's ended signal, which is what orders
-// the wrapper's write against this read.
-func requireSpanError(t *testing.T, tracer *recordingTracer, want error) {
-	t.Helper()
-	require.Equal(t, want, tracer.se.err, "the span event recorded the wrong verdict")
 }
 
 func requireSpanCount(t *testing.T, p *asyncProducer, want int) {
@@ -243,8 +239,8 @@ func Test_asyncProducer_AsyncCloseDrainsInFlightAcks(t *testing.T) {
 	_, ok := <-p.Errors()
 	assert.False(t, ok, "Errors channel not closed after shutdown")
 	for _, tracer := range tracers {
-		waitForClose(t, tracer.ended, "acknowledged tracer")
-		requireSpanError(t, tracer, nil)
+		recv(t, tracer.ended, "acknowledged tracer")
+		require.Equal(t, nil, tracer.se.err, "the span event recorded the wrong verdict")
 	}
 	requireSpanCount(t, p, 0)
 }
@@ -303,8 +299,8 @@ func Test_asyncProducer_InputAckEndsTracer(t *testing.T) {
 			// orders the assertions below.
 			tt.ack(stub, msg)
 			tt.recv(t, p, msg)
-			waitForClose(t, tracer.ended, "acknowledged tracer")
-			requireSpanError(t, tracer, tt.want)
+			recv(t, tracer.ended, "acknowledged tracer")
+			require.Equal(t, tt.want, tracer.se.err, "the span event recorded the wrong verdict")
 			requireSpanCount(t, p, 0)
 
 			p.AsyncClose()
@@ -312,74 +308,51 @@ func Test_asyncProducer_InputAckEndsTracer(t *testing.T) {
 			}
 			for range p.Errors() {
 			}
-			waitForClose(t, p.drainDone, "input drainer")
+			recv(t, p.drainDone, "input drainer")
 		})
 	}
 }
 
 func Test_asyncProducer_AsyncCloseDeliversBlockedInput(t *testing.T) {
 	startAgent(t)
-	tests := []struct {
-		name string
-		send func(*asyncProducer, context.Context, *sarama.ProducerMessage)
-	}{
-		{
-			name: "InputContext",
-			send: func(p *asyncProducer, ctx context.Context, msg *sarama.ProducerMessage) {
-				p.InputContext(ctx, msg)
-			},
-		},
+	config := ackConfig()
+
+	msg := &sarama.ProducerMessage{Topic: "topic"}
+	stub := newStubAsyncProducer()
+	stub.input = make(chan *sarama.ProducerMessage)
+	stub.onClose = func() {
+		stub.successes <- msg
+		close(stub.successes)
+		close(stub.errors)
 	}
+	p := wrapAsyncProducer(stub, []string{"broker:9092"}, config)
+	tracer := newRecordingTracer("InputContext")
+	ctx := pinpoint.NewContext(context.Background(), tracer)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := ackConfig()
+	inputReturned := make(chan struct{})
+	go func() {
+		p.InputContext(ctx, msg)
+		close(inputReturned)
+	}()
+	recv(t, stub.inputSeen, "blocked underlying input")
+	recv(t, inputReturned, "wrapper input")
+	requireSpanCount(t, p, 1)
 
-			msg := &sarama.ProducerMessage{Topic: "topic"}
-			stub := newStubAsyncProducer()
-			stub.input = make(chan *sarama.ProducerMessage)
-			stub.onClose = func() {
-				stub.successes <- msg
-				close(stub.successes)
-				close(stub.errors)
-			}
-			p := wrapAsyncProducer(stub, []string{"broker:9092"}, config)
-			tracer := newRecordingTracer(tt.name)
-			ctx := pinpoint.NewContext(context.Background(), tracer)
+	closeReturned := make(chan struct{})
+	go func() {
+		p.AsyncClose()
+		close(closeReturned)
+	}()
+	recv(t, closeReturned, "AsyncClose")
+	require.Same(t, msg, recv(t, stub.input, "accepted message"))
+	// The underlying shutdown hook publishes the delivery result
+	// only after the forwarder has handed over the message.
+	recv(t, tracer.ended, "acknowledged tracer")
+	require.Equal(t, nil, tracer.se.err, "the span event recorded the wrong verdict")
+	requireSpanCount(t, p, 0)
 
-			inputReturned := make(chan struct{})
-			go func() {
-				tt.send(p, ctx, msg)
-				close(inputReturned)
-			}()
-			waitForClose(t, stub.inputSeen, "blocked underlying input")
-			waitForClose(t, inputReturned, "wrapper input")
-			requireSpanCount(t, p, 1)
-
-			closeReturned := make(chan struct{})
-			go func() {
-				p.AsyncClose()
-				close(closeReturned)
-			}()
-			waitForClose(t, closeReturned, "AsyncClose")
-			select {
-			case got := <-stub.input:
-				require.Same(t, msg, got)
-			case <-p.inputDone:
-				t.Fatal("shutdown dropped the accepted message")
-			case <-time.After(time.Second):
-				t.Fatal("accepted message was not delivered")
-			}
-			// The underlying shutdown hook publishes the delivery result
-			// only after the forwarder has handed over the message.
-			waitForClose(t, tracer.ended, "acknowledged tracer")
-			requireSpanError(t, tracer, nil)
-			requireSpanCount(t, p, 0)
-
-			require.Same(t, msg, <-p.Successes())
-			requireChannelsClosed(t, p)
-		})
-	}
+	require.Same(t, msg, <-p.Successes())
+	requireChannelsClosed(t, p)
 }
 
 func Test_asyncProducer_InputContextAfterAsyncCloseReturns(t *testing.T) {
@@ -392,7 +365,7 @@ func Test_asyncProducer_InputContextAfterAsyncCloseReturns(t *testing.T) {
 		p.InputContext(context.Background(), &sarama.ProducerMessage{Topic: "topic"})
 		close(returned)
 	}()
-	waitForClose(t, returned, "InputContext after AsyncClose")
+	recv(t, returned, "InputContext after AsyncClose")
 	requireChannelsClosed(t, p)
 }
 
@@ -417,12 +390,12 @@ func Test_asyncProducer_AsyncCloseDoesNotBlock(t *testing.T) {
 		p.AsyncClose()
 		close(returned)
 	}()
-	waitForClose(t, returned, "AsyncClose")
+	recv(t, returned, "AsyncClose")
 	p.AsyncClose() // a repeat call must not block on the pending shutdown either
 
 	close(release)
 	requireChannelsClosed(t, p)
-	waitForClose(t, p.drainDone, "input drainer")
+	recv(t, p.drainDone, "input drainer")
 }
 
 func Test_asyncProducer_InputDuringAsyncCloseReturns(t *testing.T) {
@@ -443,19 +416,19 @@ func Test_asyncProducer_InputDuringAsyncCloseReturns(t *testing.T) {
 	}()
 	// The input forwarder is gone and the underlying shutdown is pending, so
 	// only the drainer can still receive from the wrapper's input.
-	waitForClose(t, closing, "underlying AsyncClose")
+	recv(t, closing, "underlying AsyncClose")
 
 	sent := make(chan struct{})
 	go func() {
 		p.Input() <- &sarama.ProducerMessage{Topic: "topic"}
 		close(sent)
 	}()
-	waitForClose(t, sent, "Input racing AsyncClose")
+	recv(t, sent, "Input racing AsyncClose")
 
 	close(release)
-	waitForClose(t, closeReturned, "AsyncClose")
+	recv(t, closeReturned, "AsyncClose")
 	requireChannelsClosed(t, p)
-	waitForClose(t, p.drainDone, "input drainer")
+	recv(t, p.drainDone, "input drainer")
 }
 
 // Once shutdown has completed there is no receiver left, so a send on Input is
@@ -465,19 +438,14 @@ func Test_asyncProducer_InputAfterShutdownPanics(t *testing.T) {
 	stub := newStubAsyncProducer()
 	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
 	require.NoError(t, p.Close())
-	waitForClose(t, p.drainDone, "input drainer")
+	recv(t, p.drainDone, "input drainer")
 
 	panicked := make(chan any, 1)
 	go func() {
 		defer func() { panicked <- recover() }()
 		p.Input() <- &sarama.ProducerMessage{Topic: "topic"}
 	}()
-	select {
-	case v := <-panicked:
-		require.NotNil(t, v, "sending on Input after shutdown did not panic")
-	case <-time.After(time.Second):
-		require.FailNow(t, "Input after shutdown blocked instead of panicking")
-	}
+	require.NotNil(t, recv(t, panicked, "Input after shutdown to panic"), "sending on Input after shutdown did not panic")
 }
 
 func Test_asyncProducer_UnderlyingInputPanicCleansTracer(t *testing.T) {
@@ -495,10 +463,10 @@ func Test_asyncProducer_UnderlyingInputPanicCleansTracer(t *testing.T) {
 		p.InputContext(ctx, &sarama.ProducerMessage{Topic: "topic"})
 		close(inputReturned)
 	}()
-	waitForClose(t, inputReturned, "wrapper input")
-	waitForClose(t, p.inputDone, "input forwarder")
-	waitForClose(t, tracer.ended, "panicked-send tracer")
-	requireSpanError(t, tracer, sarama.ErrShuttingDown)
+	recv(t, inputReturned, "wrapper input")
+	recv(t, p.inputDone, "input forwarder")
+	recv(t, tracer.ended, "panicked-send tracer")
+	require.Equal(t, sarama.ErrShuttingDown, tracer.se.err, "the span event recorded the wrong verdict")
 	requireSpanCount(t, p, 0)
 
 	p.AsyncClose()
@@ -520,10 +488,10 @@ func Test_asyncProducer_ShutdownEndsRemainingTracer(t *testing.T) {
 	p.AsyncClose()
 
 	requireChannelsClosed(t, p)
-	waitForClose(t, tracer.ended, "remaining tracer")
-	requireSpanError(t, tracer, sarama.ErrShuttingDown)
+	recv(t, tracer.ended, "remaining tracer")
+	require.Equal(t, sarama.ErrShuttingDown, tracer.se.err, "the span event recorded the wrong verdict")
 	requireSpanCount(t, p, 0)
-	waitForClose(t, p.drainDone, "input drainer")
+	recv(t, p.drainDone, "input drainer")
 }
 
 // Close must return the undelivered messages as ProducerErrors, like raw
@@ -562,16 +530,11 @@ func Test_asyncProducer_NilConfigStillDeliversMessages(t *testing.T) {
 	msg := &sarama.ProducerMessage{Topic: "topic"}
 	p.InputContext(pinpoint.NewContext(context.Background(), tracer), msg)
 
-	select {
-	case got := <-stub.input:
-		require.Same(t, msg, got, "the wrong message reached the underlying producer")
-	case <-time.After(time.Second):
-		require.FailNow(t, "message never reached the underlying producer")
-	}
+	require.Same(t, msg, recv(t, stub.input, "the underlying producer's message"), "the wrong message reached the underlying producer")
 
 	// nil config means Return.Successes=false: the span must be ended
 	// immediately instead of waiting for an ack that will never come.
-	waitForClose(t, tracer.ended, "span end")
+	recv(t, tracer.ended, "span end")
 	requireSpanCount(t, p, 0)
 }
 
@@ -594,7 +557,7 @@ func Test_asyncProducer_RetriedMessageIsNested(t *testing.T) {
 	<-stub.input
 	stub.errors <- &sarama.ProducerError{Msg: msg, Err: sarama.ErrOutOfBrokers}
 	<-p.Errors()
-	waitForClose(t, first.ended, "first attempt's span end")
+	recv(t, first.ended, "first attempt's span end")
 	before := append([]sarama.RecordHeader(nil), msg.Headers...)
 
 	retry := newRecordingTracer("id-2")
@@ -630,7 +593,7 @@ func Test_asyncProducer_NoErrorReturnsEndsSpansImmediately(t *testing.T) {
 	p.InputContext(pinpoint.NewContext(context.Background(), tracer), msg)
 	<-stub.input
 
-	waitForClose(t, tracer.ended, "span end")
+	recv(t, tracer.ended, "span end")
 	requireSpanCount(t, p, 0)
 	for _, h := range msg.Headers {
 		assert.NotEqual(t, HeaderAsyncSpanId, string(h.Key),
@@ -658,12 +621,7 @@ func Test_asyncProducer_ShutdownForwardsAcceptedMessages(t *testing.T) {
 	p.AsyncClose()
 
 	for i := 0; i < messages; i++ {
-		select {
-		case <-stub.input:
-		case <-time.After(time.Second):
-			require.FailNowf(t, "accepted messages were dropped",
-				"only %d of %d messages reached sarama", i, messages)
-		}
+		recv(t, stub.input, "accepted message")
 	}
 
 	close(stub.successes)
@@ -716,22 +674,43 @@ func Test_asyncProducer_CloseDrainsBufferedMessagesThroughBackpressure(t *testin
 	}
 	closed := make(chan error, 1)
 	go func() { closed <- p.Close() }()
-	waitForClose(t, p.done, "shutdown signal")
+	recv(t, p.done, "shutdown signal")
 	for _, want := range messages {
-		select {
-		case got := <-stub.input:
-			require.Same(t, want, got)
-		case <-closed:
-			t.Fatal("Close returned before delivering all accepted messages")
-		case <-time.After(time.Second):
-			t.Fatal("accepted message was not delivered")
-		}
+		require.Same(t, want, recv(t, stub.input, "accepted message"))
 	}
+	require.NoError(t, recv(t, closed, "Close"))
+	recv(t, p.drainDone, "input drainer")
+}
+
+// sarama logs and ignores a nil message on Input(); the wrapper hands it on
+// untouched. Tracing it dereferenced the nil in the input forwarder, whose
+// death then dropped every later message in silence.
+func Test_asyncProducer_NilMessageOnInputIsPassedThrough(t *testing.T) {
+	startAgent(t)
+	stub := newStubAsyncProducer()
+	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
+
+	p.Input() <- nil
+	p.Input() <- &sarama.ProducerMessage{Topic: "widgets"}
+
 	select {
-	case err := <-closed:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("Close did not finish after delivery")
+	case <-p.inputDone:
+		t.Fatal("the input forwarder died on a nil message")
+	case <-time.After(100 * time.Millisecond):
 	}
-	waitForClose(t, p.drainDone, "input drainer")
+	assert.Nil(t, recv(t, stub.input, "the nil message"), "the nil is forwarded for sarama to ignore")
+	msg := recv(t, stub.input, "the message after the nil")
+	require.NotNil(t, msg)
+	assert.Equal(t, "widgets", msg.Topic, "the message after the nil is delivered")
+}
+
+// The same nil through InputContext, which traces in the caller's goroutine:
+// it must not panic there either.
+func Test_asyncProducer_NilMessageOnInputContextIsPassedThrough(t *testing.T) {
+	startAgent(t)
+	stub := newStubAsyncProducer()
+	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
+
+	assert.NotPanics(t, func() { p.InputContext(t.Context(), nil) })
+	assert.Nil(t, recv(t, stub.input, "the nil message"))
 }

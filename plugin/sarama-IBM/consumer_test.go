@@ -15,11 +15,13 @@ import (
 // An empty or mistyped broker-address value must fall back to Unknown instead
 // of panicking out of ConsumeClaim and killing the consumer.
 func Test_newConsumerTracer_EmptyBrokerAddress(t *testing.T) {
+	startAgent(t)
 	msg := &sarama.ConsumerMessage{Topic: "topic"}
 
 	for _, ctx := range []context.Context{
 		NewContext(context.Background(), []string{}),
 		context.WithValue(context.Background(), contextKey, "not-a-slice"),
+		nil, // a message with nothing attached
 	} {
 		var tracer pinpoint.Tracer
 		require.NotPanics(t, func() { tracer = newConsumerTracer(ctx, msg) },
@@ -253,4 +255,13 @@ func TestNewContext_ForeignStringKeyDoesNotShadowTheAddresses(t *testing.T) {
 func TestConsumeMessageContext_NilMessage(t *testing.T) {
 	assert.Error(t, ConsumeMessageContext(func(context.Context, *sarama.ConsumerMessage) error { return nil },
 		context.Background(), nil))
+}
+
+// A nil context is a message with nothing attached, not a reason to panic.
+func TestConsumeMessageContext_NilContext(t *testing.T) {
+	startAgent(t)
+	require.NotPanics(t, func() {
+		_ = ConsumeMessageContext(func(context.Context, *sarama.ConsumerMessage) error { return nil },
+			nil, &sarama.ConsumerMessage{Topic: "topic"})
+	})
 }

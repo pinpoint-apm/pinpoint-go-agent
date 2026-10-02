@@ -110,9 +110,12 @@ func TestOpen_RegistersEveryCallback(t *testing.T) {
 
 // Each pair has to open exactly one span event, name it after the statement
 // kind, and close it - an unbalanced pair leaves the span-event stack of the
-// request skewed for everything that follows.
+// request skewed for everything that follows. Instrument is idempotent, so a
+// second registration (Open after Open, or a manual Open next to the
+// compile-time hook) must not add a second event.
 func TestCallbacks_RecordOneSpanEventPerStatement(t *testing.T) {
 	db := openDB(t)
+	require.Same(t, db, Instrument(db))
 
 	for _, p := range callbackPairs {
 		t.Run(p.kind, func(t *testing.T) {
@@ -129,6 +132,7 @@ func TestCallbacks_RecordOneSpanEventPerStatement(t *testing.T) {
 			e := tracer.events[0]
 			assert.Equal(t, p.operation, e.operation)
 			assert.Equal(t, int32(pinpoint.ServiceTypeGoFunction), e.serviceType)
+			assert.NoError(t, e.err, "a successful statement records no error")
 			assert.True(t, e.ended, "the span event was left open")
 		})
 	}
@@ -234,24 +238,6 @@ func TestOpen_ReturnsAUsableDB(t *testing.T) {
 		"WithContext must carry the tracer through to the statement")
 }
 
-// A statement that succeeded records no error, so a later failed one is not
-// mistaken for it.
-func TestCallbacks_SuccessfulStatement(t *testing.T) {
-	db := openDB(t)
-	tracer := newRecordingTracer()
-
-	stmt := &gorm.DB{Statement: &gorm.Statement{
-		Context: pinpoint.NewContext(context.Background(), tracer),
-	}}
-
-	create := db.Callback().Create()
-	create.Get("pinpoint:before_create")(stmt)
-	create.Get("pinpoint:after_create")(stmt)
-
-	require.Len(t, tracer.events, 1)
-	assert.NoError(t, tracer.events[0].err)
-}
-
 type failingDialector struct {
 	tests.DummyDialector
 	err error
@@ -259,24 +245,7 @@ type failingDialector struct {
 
 func (d failingDialector) Initialize(*gorm.DB) error { return d.err }
 
-// Instrument is idempotent: registering on an already instrumented db (Open
-// after Open, or a manual Open next to the compile-time hook) keeps one span
-// event per statement, and a nil db is passed through.
-func TestInstrument_Idempotent(t *testing.T) {
-	db := openDB(t)
-	require.Same(t, db, Instrument(db))
+// A nil db is passed through.
+func TestInstrument_Nil(t *testing.T) {
 	assert.Nil(t, Instrument(nil))
-
-	for _, p := range callbackPairs {
-		t.Run(p.kind, func(t *testing.T) {
-			tracer := newRecordingTracer()
-			processor := processorFor(db, p.kind)
-			stmt := &gorm.DB{Statement: &gorm.Statement{
-				Context: pinpoint.NewContext(context.Background(), tracer),
-			}}
-			processor.Get(p.before)(stmt)
-			processor.Get(p.after)(stmt)
-			require.Len(t, tracer.events, 1, "a second Instrument must not register the callbacks again")
-		})
-	}
 }

@@ -11,28 +11,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func waitFor(t *testing.T, what string, cond func() bool) {
-	t.Helper()
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s", what)
-}
-
 // drainAtcStreams shuts the agent down and asserts that every stream left the
 // registry, which is the agent shutdown arm of the three exit paths.
 func drainAtcStreams(t *testing.T, agent *agent) {
 	t.Helper()
 
 	agent.signalShutdown()
-	waitFor(t, "active thread count streams to drain on shutdown", func() bool {
+	require.Eventually(t, func() bool {
 		return agent.cmdGrpc.atcStreams.count() == 0
-	})
+	}, 2*time.Second, 2*time.Millisecond, "active thread count streams to drain on shutdown")
 }
 
 func Test_agent_handleActiveThreadCountRejectsBeyondLimit(t *testing.T) {
@@ -70,14 +57,14 @@ func Test_agent_handleActiveThreadCountReplacesSameRequestId(t *testing.T) {
 	defer drainAtcStreams(t, agent)
 
 	agent.handleActiveThreadCount(7, cmd)
-	waitFor(t, "first stream to sample", func() bool { return client.stream(0).sendCount() > 0 })
+	require.Eventually(t, func() bool { return client.stream(0).sendCount() > 0 }, 2*time.Second, 2*time.Millisecond, "first stream to sample")
 
 	agent.handleActiveThreadCount(7, cmd)
 
-	waitFor(t, "superseded stream to close", func() bool { return client.stream(0).isClosed() })
-	waitFor(t, "superseded stream to leave the registry", func() bool {
+	require.Eventually(t, func() bool { return client.stream(0).isClosed() }, 2*time.Second, 2*time.Millisecond, "superseded stream to close")
+	require.Eventually(t, func() bool {
 		return agent.cmdGrpc.atcStreams.count() == 1
-	})
+	}, 2*time.Second, 2*time.Millisecond, "superseded stream to leave the registry")
 	assert.Equal(t, 2, client.streamCount())
 	assert.False(t, client.stream(1).isClosed())
 	// A re-issue is served, not rejected.
@@ -92,9 +79,9 @@ func Test_agent_handleActiveThreadCountReleasesSlotOnSendError(t *testing.T) {
 	client.sendErr = errors.New("send failed")
 	agent.handleActiveThreadCount(1, cmd)
 
-	waitFor(t, "failed stream to leave the registry", func() bool {
+	require.Eventually(t, func() bool {
 		return agent.cmdGrpc.atcStreams.count() == 0
-	})
+	}, 2*time.Second, 2*time.Millisecond, "failed stream to leave the registry")
 	assert.True(t, client.stream(0).isClosed())
 }
 

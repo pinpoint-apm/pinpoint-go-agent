@@ -945,10 +945,7 @@ func Test_agent_refreshAgentInfoWorker_honorsInterval(t *testing.T) {
 	agent.workerWg.Add(1)
 	go agent.superviseWorker("agent info refresh", func() { agent.refreshAgentInfoWorker(20 * time.Millisecond) })
 
-	deadline := time.Now().Add(3 * time.Second)
-	for len(client.sentAgentInfo()) < 2 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	require.Eventually(t, func() bool { return len(client.sentAgentInfo()) >= 2 }, 3*time.Second, 5*time.Millisecond, "worker must re-send agent info every interval")
 	agent.signalShutdown()
 	agent.workerWg.Wait()
 

@@ -255,3 +255,13 @@ func closedAddr(t *testing.T) string {
 	require.NoError(t, l.Close())
 	return addr
 }
+
+// Client and its embedded *memcache.Client are exported, so a literal
+// construction skips the store WrapClient makes; the first operation then
+// dereferenced a nil box.
+func TestClient_BuiltAsALiteralHasANoopTracer(t *testing.T) {
+	c := &Client{Client: memcache.New("localhost:11211")}
+	assert.NotPanics(t, func() {
+		assert.Equal(t, pinpoint.NoopTracer(), c.currentTracer())
+	})
+}

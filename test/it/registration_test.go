@@ -18,9 +18,9 @@ import (
 func TestRegistersAgentAndMaintainsPingAndCommandStreams(t *testing.T) {
 	mc, agent := startStack(t)
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(s.Pings) > 0 && len(s.CommandStreams) > 0
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	require.NotEmpty(t, s.AgentInfos)
@@ -78,13 +78,13 @@ func TestSendsV4IdentityAcrossGrpcAndTracePropagation(t *testing.T) {
 	continued.EndSpan()
 	root.EndSpan()
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/v4-root") != nil &&
 			findSpanByRpc(s, "/v4-continued") != nil &&
 			len(s.ApiMetadata) > 0 && len(s.SpanBatches) > 0 &&
 			len(s.Stats) > 0 && len(s.StatStreams) > 0 &&
 			len(s.PingStreams) > 0 && len(s.CommandStreams) > 0
-	}, waitTimeout))
+	}, waitTimeout)
 
 	s := mc.Snapshot()
 	// The agent always mints its own 22-byte agent id; every channel must
@@ -138,10 +138,10 @@ func TestReconnectsPingStreamAfterResponseError(t *testing.T) {
 		mc.FailNext(RpcPingSession, codes.Unavailable, "first ping stream disconnected", 1)
 	})
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(s.PingStreams) >= 2 && len(s.Pings) > 0 &&
 			hasResultSuccess(s, RpcPingSession, codes.Unavailable, false)
-	}, waitTimeout))
+	}, waitTimeout)
 
 	// Each ping stream carries a fresh socket id so the collector can tell a
 	// reconnect from a duplicate registration.
@@ -162,11 +162,11 @@ func TestRecyclesPingStreamWhenCollectorNeverResponds(t *testing.T) {
 
 	// sendStreamWithTimeout cancels the stalled stream after sendStreamTimeOut,
 	// which the collector observes as a cancellation of the RPC.
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(s.PingStreams) >= 2 &&
 			(hasResult(s, RpcPingSession, codes.Canceled) ||
 				hasResult(s, RpcPingSession, codes.DeadlineExceeded))
-	}, longTimeout))
+	}, longTimeout)
 	assert.True(t, agent.Enable())
 }
 
@@ -223,9 +223,9 @@ func TestStaysDisabledWhileRegistrationIsRejected(t *testing.T) {
 	// Slow enough that the rejections below cover the assertions comfortably.
 	agent := startAgent(t, mc, pinpoint.WithCollectorAgentInfoSendRetryInterval(300))
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return len(resultsFor(s, RpcAgentInfo)) >= 2
-	}, waitTimeout), "the rejected registration was not retried")
+	}, waitTimeout, "the rejected registration was not retried")
 
 	assert.False(t, agent.Enable(), "a rejected registration must not enable the agent")
 	s := mc.Snapshot()
@@ -283,11 +283,11 @@ func TestRetriesPeriodicAgentInfoResendAfterFailure(t *testing.T) {
 		}
 		return -1
 	}
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		results := resultsFor(s, RpcAgentInfo)
 		failed := findFailed(results)
 		return failed >= 0 && failed+1 < len(results)
-	}, waitTimeout))
+	}, waitTimeout)
 
 	results := resultsFor(mc.Snapshot(), RpcAgentInfo)
 	failed := findFailed(results)

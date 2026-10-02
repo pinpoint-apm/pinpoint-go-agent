@@ -70,18 +70,18 @@ func TestRegistersAndTracesOverTlsCollector(t *testing.T) {
 		pinpoint.WithCollectorGrpcSslEnable(true),
 		pinpoint.WithCollectorGrpcTrustCertFilePath(certFile))
 
-	require.True(t, mc.WaitFor(func(s Snapshot) bool { return len(s.AgentInfos) > 0 }, waitTimeout))
-	require.True(t, waitUntil(func() bool { return agent.Enable() }, waitTimeout))
+	mc.WaitFor(t, func(s Snapshot) bool { return len(s.AgentInfos) > 0 }, waitTimeout)
+	require.Eventually(t, func() bool { return agent.Enable() }, waitTimeout, 10*time.Millisecond)
 
 	tracer := agent.NewSpanTracer("tls.request", "/tls-traced")
 	require.True(t, tracer.IsSampled())
 	tracer.EndSpan()
 
 	mc.SendEchoCommand(801, "tls-echo")
-	require.True(t, mc.WaitFor(func(s Snapshot) bool {
+	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/tls-traced") != nil &&
 			len(s.Stats) > 0 && len(s.Pings) > 0 && hasEchoResponse(s, 801)
-	}, waitTimeout))
+	}, waitTimeout)
 
 	// The identity headers must survive the encrypted hop unchanged.
 	s := mc.Snapshot()
@@ -101,7 +101,7 @@ func TestRefusesCollectorWithUntrustedCertificate(t *testing.T) {
 		pinpoint.WithCollectorGrpcSslEnable(true),
 		pinpoint.WithCollectorGrpcTrustCertFilePath(otherCert))
 
-	assert.False(t, waitUntil(func() bool { return agent.Enable() }, 2*time.Second),
+	assert.Never(t, func() bool { return agent.Enable() }, 2*time.Second, 10*time.Millisecond,
 		"an unverifiable collector certificate must not enable the agent")
 	s := mc.Snapshot()
 	assert.Empty(t, s.AgentInfos, "no request may reach a collector the agent cannot verify")
@@ -119,7 +119,7 @@ func TestDoesNotFallBackToPlaintextWhenTlsIsEnabled(t *testing.T) {
 		pinpoint.WithCollectorGrpcSslEnable(true),
 		pinpoint.WithCollectorGrpcTrustCertFilePath(certFile))
 
-	assert.False(t, waitUntil(func() bool { return agent.Enable() }, 2*time.Second))
+	assert.Never(t, func() bool { return agent.Enable() }, 2*time.Second, 10*time.Millisecond)
 	assert.Empty(t, mc.Snapshot().AgentInfos)
 }
 
@@ -132,7 +132,7 @@ func TestRefusesUnreadableTrustCertificate(t *testing.T) {
 		pinpoint.WithCollectorGrpcSslEnable(true),
 		pinpoint.WithCollectorGrpcTrustCertFilePath(filepath.Join(t.TempDir(), "missing.pem")))
 
-	assert.False(t, waitUntil(func() bool { return agent.Enable() }, 2*time.Second))
+	assert.Never(t, func() bool { return agent.Enable() }, 2*time.Second, 10*time.Millisecond)
 	assert.Empty(t, mc.Snapshot().AgentInfos)
 
 	// A connect that can never succeed releases the global agent itself, without

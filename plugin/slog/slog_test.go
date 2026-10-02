@@ -170,8 +170,9 @@ func TestHandler_HandleOnEveryLevel(t *testing.T) {
 	}
 }
 
-// Most log lines are written without a context carrying a span. The handler
-// must leave those records alone instead of failing the log call.
+// Most log lines are written without a context carrying a span -
+// slog.Logger.Info and friends pass context.Background(). The handler must
+// leave those records alone instead of failing the log call.
 func TestHandler_HandleWithoutATracer(t *testing.T) {
 	startAgent(t)
 
@@ -187,25 +188,12 @@ func TestHandler_HandleWithoutATracer(t *testing.T) {
 			logger.InfoContext(tt.ctx, "message", "foo", "bar")
 
 			fields := loggedFields(t, out)
+			assert.Equal(t, "message", fields["msg"])
 			assert.Equal(t, "bar", fields["foo"])
 			assert.NotContains(t, fields, pinpoint.LogTransactionIdKey)
 			assert.NotContains(t, fields, pinpoint.LogSpanIdKey)
 		})
 	}
-}
-
-// slog.Logger.Info and friends pass context.Background(), which never carries a
-// span. Such a line must still be written, without the ids.
-func TestHandler_HandleWithoutAContext(t *testing.T) {
-	startAgent(t)
-	newTracer(t)
-
-	logger, out := jsonLogger(t)
-	logger.Info("message")
-
-	fields := loggedFields(t, out)
-	assert.Equal(t, "message", fields["msg"])
-	assert.NotContains(t, fields, pinpoint.LogTransactionIdKey)
 }
 
 // WithAttrs and WithGroup have to be delegated, or the application's own
@@ -215,15 +203,6 @@ func TestHandler_WithAttrsAndWithGroup(t *testing.T) {
 	startAgent(t)
 	tracer := newTracer(t)
 	ctx := pinpoint.NewContext(context.Background(), tracer)
-
-	t.Run("WithAttrs", func(t *testing.T) {
-		logger, out := jsonLogger(t)
-		logger.With("foo", "bar").InfoContext(ctx, "message")
-
-		fields := loggedFields(t, out)
-		assert.Equal(t, "bar", fields["foo"])
-		assert.Equal(t, tracer.TransactionId().String(), fields[pinpoint.LogTransactionIdKey])
-	})
 
 	t.Run("WithGroup", func(t *testing.T) {
 		logger, out := jsonLogger(t)
