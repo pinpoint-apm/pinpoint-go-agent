@@ -12,8 +12,8 @@ CREATE TABLE IF NOT EXISTS tweet (
     PRIMARY KEY (timeline, id)
 );
 
--- Insert test data
-INSERT INTO tweet (timeline, id, text) VALUES ('me', uuid(), 'Hello from Pinpoint!');
-INSERT INTO tweet (timeline, id, text) VALUES ('me', uuid(), 'Testing Cassandra with gocql/v2');
-INSERT INTO tweet (timeline, id, text) VALUES ('me', uuid(), 'Distributed database');
+-- Insert test data (fixed ids, so running this again changes nothing)
+INSERT INTO tweet (timeline, id, text) VALUES ('me', 00000000-0000-0000-0000-000000000001, 'Hello from Pinpoint!');
+INSERT INTO tweet (timeline, id, text) VALUES ('me', 00000000-0000-0000-0000-000000000002, 'Testing Cassandra with gocql/v2');
+INSERT INTO tweet (timeline, id, text) VALUES ('me', 00000000-0000-0000-0000-000000000003, 'Distributed database');
 

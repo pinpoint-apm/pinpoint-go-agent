@@ -21,7 +21,12 @@ func doCassandra(w http.ResponseWriter, r *http.Request) {
 	cluster.QueryObserver = observer
 	cluster.BatchObserver = observer
 
-	session, _ := cluster.CreateSession()
+	session, err := cluster.CreateSession()
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, err.Error())
+		return
+	}
 	defer session.Close()
 
 	ctx := r.Context()

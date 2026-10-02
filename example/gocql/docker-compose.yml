@@ -10,13 +10,15 @@ services:
       - CASSANDRA_CLUSTER_NAME=TestCluster
       - CASSANDRA_DC=dc1
       - CASSANDRA_RACK=rack1
+    # Healthy once init.cql (idempotent) has run, so the example data is there.
     healthcheck:
-      test: ["CMD-SHELL", "nodetool status | grep UN"]
+      test: ["CMD", "cqlsh", "-f", "/init.cql"]
       interval: 10s
       timeout: 10s
       retries: 30
     volumes:
       - cassandra_data:/var/lib/cassandra
+      - ./init.cql:/init.cql:ro
 
 volumes:
   cassandra_data:
