@@ -416,9 +416,11 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   stop.** `RequestCtx.Err()` was recorded as a handler error; it reports
   `context.Canceled` only once `Server.Shutdown` has begun, and it panicked on a
   `RequestCtx` no server initialized. Nothing is recorded from it.
-- **`pppgsql` reads a keyword/value DSN.** Every DSN went through
-  `pq.ParseURL`, which takes only URLs, so `host=... dbname=...` was rejected
-  with an ERROR line per pooled connection and the spans carried no endpoint.
+- **`pppgsql` reads the DSN with lib/pq's own `pq.NewConfig`.** Every DSN
+  went through `pq.ParseURL`, which takes only URLs, so `host=... dbname=...`
+  was rejected with an ERROR line per pooled connection and the spans carried
+  no endpoint. Reading it as the driver does also records the first host of a
+  multi-host DSN instead of the whole `h1,h2` list, and honors `PGHOSTADDR`.
 - **`pppgxv5` copies the connection config only for a sampled query.** Each
   callback called `Conn.Config()` - a deep copy with a `tls.Config` clone -
   before the sampling check, on every query of an unsampled request.

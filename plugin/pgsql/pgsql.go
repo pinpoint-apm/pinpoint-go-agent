@@ -13,8 +13,6 @@ package pppgsql
 
 import (
 	"database/sql"
-	"os"
-	"regexp"
 	"strings"
 
 	"github.com/lib/pq"
@@ -38,54 +36,26 @@ func init() {
 	sql.Register("pq-pinpoint", pinpoint.WrapSQLDriver(&pq.Driver{}, DBInfo()))
 }
 
-var dsnSplit = regexp.MustCompile(`(\w+)\s*=\s*('[^=]*'|[^'\s]+)`)
-
+// parseDSN reads the DSN as lib/pq does, through its own pq.NewConfig: the URL
+// and the keyword/value form, the PG* environment variables, the localhost
+// default, and hostaddr over host, since hostaddr is the server contacted.
 func parseDSN(info *pinpoint.DBInfo, dsn string) {
-	// Only a URL goes through pq.ParseURL, as lib/pq itself decides
-	// (NewConnector): the keyword/value form it also connects with is what
-	// dsnSplit reads, and handing it to ParseURL rejected every such DSN,
-	// once per pooled connection, with an ERROR line and no endpoint.
-	convDsn := dsn
-	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
-		var err error
-		if convDsn, err = pq.ParseURL(dsn); err != nil {
-			pinpoint.Log("pgsql").Errorf("dsn parse error: %v", err)
-			return
-		}
+	cfg, err := pq.NewConfig(dsn)
+	if err != nil {
+		pinpoint.Log("pgsql").Errorf("dsn parse error: %v", err)
+		return
 	}
 
-	host := os.Getenv("PGHOST")
-	hostaddr := ""
-	dbname := os.Getenv("PGDATABASE")
-
-	for _, split := range dsnSplit.FindAllStringSubmatch(convDsn, -1) {
-		if len(split) != 3 {
-			continue
-		}
-		key := split[1]
-		value := strings.Trim(split[2], `'`)
-
-		switch key {
-		case "dbname":
-			dbname = value
-		case "host":
-			host = value
-		case "hostaddr":
-			hostaddr = value
-		}
+	host := cfg.Host
+	if cfg.Hostaddr.IsValid() {
+		host = cfg.Hostaddr.String()
 	}
-
-	if "" != hostaddr {
-		host = hostaddr
-	} else if "" == host {
-		host = "localhost"
-	}
-
-	if strings.HasPrefix(host, "/") {
-		// this is a unix socket
+	if host == "" || strings.HasPrefix(host, "/") {
+		// No host, or a unix socket directory, which is no address the
+		// collector can group by.
 		host = "localhost"
 	}
 
 	info.DBHost = host
-	info.DBName = dbname
+	info.DBName = cfg.Database
 }

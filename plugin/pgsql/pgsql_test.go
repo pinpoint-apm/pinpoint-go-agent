@@ -135,6 +135,13 @@ func Test_parseDSN(t *testing.T) {
 			wantName: "app",
 		},
 		{
+			// lib/pq tries the hosts in order; the first is the one recorded.
+			name:     "a multi-host list records its first host",
+			dsn:      "host=db1,db2 dbname=app",
+			wantHost: "db1",
+			wantName: "app",
+		},
+		{
 			name:     "keyword form quoted value and socket directory",
 			dsn:      "dbname='app db' host=/var/run/postgresql",
 			wantHost: "localhost",
