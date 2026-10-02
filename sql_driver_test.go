@@ -88,17 +88,6 @@ func Test_writeBindValue_PreservesFormatting(t *testing.T) {
 	assert.Equal(t, strings.Join(want, ", "), b.String())
 }
 
-// StringUtils.appendAbbreviate does, and the marker reports how long that
-// value was - the byte count a reader is actually after. The list itself is
-// not cut short here: it has no further value to write.
-func Test_writeBindValue_TruncatesOversizedValue(t *testing.T) {
-	var b strings.Builder
-	more := writeBindValue(&b, 0, strings.Repeat("x", 5000), 0, 1024)
-
-	assert.True(t, more)
-	assert.Equal(t, strings.Repeat("x", 1024)+"...(5000)", b.String())
-}
-
 func Test_writeBindValue_LimitsLargeValues(t *testing.T) {
 	const maxSize = 65
 	tests := []struct {
@@ -129,20 +118,6 @@ func Test_writeBindValue_LimitsLargeValues(t *testing.T) {
 	}
 }
 
-func Test_writeBindValue_LimitsMultipleValues(t *testing.T) {
-	values := []interface{}{"0123456789", "abcdefgh", "xyz"}
-	var b strings.Builder
-	for i, value := range values {
-		if !writeBindValue(&b, i, value, len(values)-1, 20) {
-			break
-		}
-	}
-
-	// The budget is spent between values, so "abcdefgh" goes in whole even
-	// though it lands on the limit; the round after it finds nothing left.
-	assert.Equal(t, "0123456789, abcdefgh, ...(3)", b.String())
-}
-
 func Test_writeBindValue_TruncatesOversizedBytes(t *testing.T) {
 	value := bytes.Repeat([]byte{255}, 5000)
 	want := fmt.Sprint(value)
@@ -156,52 +131,38 @@ func Test_writeBindValue_TruncatesOversizedBytes(t *testing.T) {
 	assert.Equal(t, want[:1024]+"...(5000)", b.String())
 }
 
-// The separator precedes whatever comes next, so a list cut short ends with the
-// separator and then the count marker.
-func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
-	tests := []struct {
-		name     string
-		values   []interface{}
-		maxSize  int
-		want     string
-		wantMore bool
+// The bind value list is joined with ", " and cut at the configured limit, with
+// a marker standing in for whatever the limit left out. The separator precedes
+// whatever comes next, so a list cut short ends with the separator and then the
+// count marker. A string value is cut where StringUtils.appendAbbreviate does,
+// and its marker reports the value's length in bytes.
+func Test_writeBindValue_MatchesJavaBindValueJoin(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		values  []interface{}
+		maxSize int
+		want    string
+		more    bool
 	}{
-		{
-			name:    "budget spent by the first value",
-			values:  []interface{}{strings.Repeat("p", 1023), "z"},
-			maxSize: 1024,
-			want:    strings.Repeat("p", 1023) + ", ...(2)",
-		},
-		{
-			name:     "everything fits",
-			values:   []interface{}{strings.Repeat("p", 1020), "z"},
-			maxSize:  1024,
-			want:     strings.Repeat("p", 1020) + ", z",
-			wantMore: true,
-		},
-		{
-			name:    "two of three values dropped",
-			values:  []interface{}{"0123456789", "b", "c"},
-			maxSize: 10,
-			want:    "0123456789, ...(3)",
-		},
-		{
-			// The marker counts the bind values, so it fits no limit at all -
-			// appending it past the limit is what keeps the truncation visible.
-			name:    "limit shorter than the marker",
-			values:  []interface{}{"a", "b", "c"},
-			maxSize: 2,
-			want:    "a, ...(3)",
-		},
-		{
-			name:    "zero limit",
-			values:  []interface{}{"abc"},
-			maxSize: 0,
-			want:    "",
-		},
-	}
-
-	for _, tt := range tests {
+		{name: "at the limit", values: []interface{}{"1234"}, maxSize: 4, want: "1234", more: true},
+		{name: "one byte over", values: []interface{}{"12345"}, maxSize: 4, want: "1234...(5)", more: true},
+		{name: "far over the budget", values: []interface{}{strings.Repeat("v", 20)}, maxSize: 4, want: "vvvv...(20)", more: true},
+		{name: "a value that fits, then one that does not", values: []interface{}{"1", strings.Repeat("z", 11)}, maxSize: 4, want: "1, zzzz...(11)", more: true},
+		{name: "tail dropped after a value that fit", values: []interface{}{"1234", "5"}, maxSize: 4, want: "1234, ...(2)"},
+		{name: "both markers in one list", values: []interface{}{"12345", strings.Repeat("z", 11)}, maxSize: 10, want: "12345, " + strings.Repeat("z", 10) + "...(11)", more: true},
+		{name: "a CLOB at the default limit", values: []interface{}{strings.Repeat("v", 2000)}, maxSize: 1024, want: strings.Repeat("v", 1024) + "...(2000)", more: true},
+		{name: "oversized value", values: []interface{}{strings.Repeat("x", 5000)}, maxSize: 1024, want: strings.Repeat("x", 1024) + "...(5000)", more: true},
+		{name: "budget spent by the first value", values: []interface{}{strings.Repeat("p", 1023), "z"}, maxSize: 1024, want: strings.Repeat("p", 1023) + ", ...(2)"},
+		{name: "everything fits", values: []interface{}{strings.Repeat("p", 1020), "z"}, maxSize: 1024, want: strings.Repeat("p", 1020) + ", z", more: true},
+		{name: "two of three values dropped", values: []interface{}{"0123456789", "b", "c"}, maxSize: 10, want: "0123456789, ...(3)"},
+		// The budget is spent between values, so "abcdefgh" goes in whole even
+		// though it lands on the limit; the round after it finds nothing left.
+		{name: "value landing on the limit", values: []interface{}{"0123456789", "abcdefgh", "xyz"}, maxSize: 20, want: "0123456789, abcdefgh, ...(3)"},
+		// The marker counts the bind values, so it fits no limit at all -
+		// appending it past the limit is what keeps the truncation visible.
+		{name: "limit shorter than the marker", values: []interface{}{"a", "b", "c"}, maxSize: 2, want: "a, ...(3)"},
+		{name: "tracing off", values: []interface{}{"abc"}, maxSize: 0, want: ""},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var b strings.Builder
 			more := true
@@ -210,43 +171,11 @@ func Test_writeBindValue_TruncatesAtBoundary(t *testing.T) {
 					break
 				}
 			}
-			assert.Equal(t, tt.wantMore, more)
+			assert.Equal(t, tt.more, more)
 			assert.Equal(t, tt.want, b.String())
 		})
 	}
 }
-
-// The bind value list is joined with ", " and cut at the configured limit, with
-// a marker standing in for whatever the limit left out.
-func Test_writeBindValue_MatchesJavaBindValueJoin(t *testing.T) {
-	for _, tt := range []struct {
-		name    string
-		values  []interface{}
-		maxSize int
-		want    string
-	}{
-		{name: "at the limit", values: []interface{}{"1234"}, maxSize: 4, want: "1234"},
-		{name: "one byte over", values: []interface{}{"12345"}, maxSize: 4, want: "1234...(5)"},
-		{name: "far over the budget", values: []interface{}{strings.Repeat("v", 20)}, maxSize: 4, want: "vvvv...(20)"},
-		{name: "a value that fits, then one that does not", values: []interface{}{"1", strings.Repeat("z", 11)}, maxSize: 4, want: "1, zzzz...(11)"},
-		{name: "tail dropped after a value that fit", values: []interface{}{"1234", "5"}, maxSize: 4, want: "1234, ...(2)"},
-		{name: "both markers in one list", values: []interface{}{"12345", strings.Repeat("z", 11)}, maxSize: 10, want: "12345, " + strings.Repeat("z", 10) + "...(11)"},
-		{name: "a CLOB at the default limit", values: []interface{}{strings.Repeat("v", 2000)}, maxSize: 1024, want: strings.Repeat("v", 1024) + "...(2000)"},
-		{name: "tracing off", values: []interface{}{"1234"}, maxSize: 0, want: ""},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			var b strings.Builder
-			for i, v := range tt.values {
-				if !writeBindValue(&b, i, v, len(tt.values)-1, tt.maxSize) {
-					break
-				}
-			}
-			assert.Equal(t, tt.want, b.String())
-		})
-	}
-}
-
-var benchmarkBindValueSink string
 
 func Benchmark_writeBindValue_Large(b *testing.B) {
 	for _, benchmark := range []struct {
@@ -259,10 +188,9 @@ func Benchmark_writeBindValue_Large(b *testing.B) {
 		b.Run(benchmark.name, func(b *testing.B) {
 			b.SetBytes(1 << 20)
 			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				var out strings.Builder
 				writeBindValue(&out, 0, benchmark.value, 0, 1024)
-				benchmarkBindValueSink = out.String()
 			}
 		})
 	}

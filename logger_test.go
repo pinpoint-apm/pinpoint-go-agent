@@ -82,14 +82,12 @@ func Test_SetExtraLoggerIsRaceFree(t *testing.T) {
 	t.Cleanup(func() { logger.extraLogger.Store(oldExtraLogger) })
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := 0; i < 200; i++ {
 			IsDebugLogLevelEnabled()
 			Log("test").Debugf("line %d", i)
 		}
-	}()
+	})
 
 	for i := 0; i < 200; i++ {
 		SetExtraLogger(logrus.New())

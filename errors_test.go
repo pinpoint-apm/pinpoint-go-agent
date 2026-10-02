@@ -544,15 +544,13 @@ func TestSpanEvent_ConcurrentSetErrorRespectsChainCapWithoutRace(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for g := 0; g < 4; g++ {
-		wg.Add(1)
-		go func(g int) {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := 0; i < 50; i++ {
 				se := newSpanEvent(span, "op")
 				se.SetError(fmt.Errorf("err %d-%d", g, i))
 				se.end()
 			}
-		}(g)
+		})
 	}
 	wg.Wait()
 

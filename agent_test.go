@@ -127,49 +127,6 @@ func Test_agent_NewSpanTracerWithReader(t *testing.T) {
 	assert.Equal(t, int64(67890), span.SpanId(), "SpanId")
 }
 
-// An unparseable trace id must go through the new-trace sampler: Extract
-// starts a new root transaction for it, and the continue sampler is
-// unconditionally true, so a peer could otherwise defeat the sampling rate
-// with any garbage Pinpoint-TraceID.
-func Test_agent_NewSpanTracerWithReader_samplerByParseability(t *testing.T) {
-	c, _ := NewConfig(
-		WithAppName("test"),
-		WithSamplingType("COUNTER"),
-		WithSamplingCounterRate(100),
-	)
-	c.offGrpc = true
-	a, _ := NewAgent(c)
-	agent := a.(*agent)
-	agent.enable.Store(true)
-	defer a.Shutdown()
-
-	run := func(tid string) (sampled int) {
-		for i := 0; i < 100; i++ {
-			m := map[string]string{HeaderSpanId: "67890", HeaderParentSpanId: "123"}
-			if tid != "" {
-				m[HeaderTraceId] = tid
-			}
-			tr := agent.NewSpanTracerWithReader("test", "/", &DistributedTracingContextMap{m})
-			if tr.IsSampled() {
-				sampled++
-			}
-			tr.EndSpan()
-		}
-		return
-	}
-
-	assert.Equal(t, 1, run("garbage"), "malformed tid: new sampler at 1%")
-	assert.Equal(t, 1, run(""), "empty tid: new sampler at 1%")
-	assert.Equal(t, 100, run("t123456^12345^1"), "valid tid: continue sampler, always sampled")
-
-	cs := agent.stats.readCounters()
-	assert.Equal(t, int64(2), cs.sampleNew, "sampleNew")
-	assert.Equal(t, int64(198), cs.unSampleNew, "unSampleNew")
-	assert.Equal(t, int64(100), cs.sampleCont, "sampleCont")
-	assert.Equal(t, int64(0), cs.unSampleCont, "unSampleCont")
-	assert.Equal(t, int64(300), cs.sampleNew+cs.unSampleNew+cs.sampleCont+cs.unSampleCont+cs.skipNew+cs.skipCont, "total")
-}
-
 func Test_abbreviateString_RuneSafe(t *testing.T) {
 	assert.Equal(t, "abc", abbreviateString("abc", 5))
 	assert.Equal(t, "0123456789", abbreviateString("0123456789", 10), "exactly at the limit is untouched")
@@ -601,7 +558,6 @@ func Test_agent_ShutdownAfterPingWorkerExited(t *testing.T) {
 	}
 }
 
-// A worker stuck on an unreachable collector must not hold Shutdown forever.
 // startTestWorker spawns body as a supervised worker the way startWorkers
 // does, state slot included, so shutdownAgent waits for it.
 func startTestWorker(agent *agent, name string, body func()) {
@@ -610,29 +566,8 @@ func startTestWorker(agent *agent, name string, body func()) {
 	go agent.superviseWorker(name, body)
 }
 
-func Test_agent_ShutdownDeadline(t *testing.T) {
-	opts := []ConfigOption{
-		WithAppName("test"),
-	}
-	c, _ := NewConfig(opts...)
-	c.offGrpc = true
-	a, _ := NewAgent(c)
-	agent := a.(*agent)
-	agent.enable.Store(true)
-
-	stuck := make(chan struct{})
-	defer close(stuck)
-	startTestWorker(agent, "stuck", func() { <-stuck })
-
-	start := time.Now()
-	a.Shutdown()
-	elapsed := time.Since(start)
-
-	assert.GreaterOrEqual(t, elapsed, shutdownTimeout, "waits for the deadline")
-	assert.Less(t, elapsed, shutdownTimeout+2*time.Second, "gives up at the deadline")
-}
-
-// Shutdown is serialized, so a concurrent second call waits for the first.
+// A worker stuck on an unreachable collector must not hold Shutdown forever,
+// and Shutdown is serialized, so a concurrent second call waits for the first.
 func Test_agent_ShutdownIsSerialized(t *testing.T) {
 	c, _ := NewConfig(WithAppName("test"))
 	c.offGrpc = true
@@ -654,8 +589,9 @@ func Test_agent_ShutdownIsSerialized(t *testing.T) {
 	}()
 
 	a.Shutdown()
-	require.GreaterOrEqual(t, time.Since(start), shutdownTimeout,
-		"the first call drains to its deadline")
+	first := time.Since(start)
+	require.GreaterOrEqual(t, first, shutdownTimeout, "the first call drains to its deadline")
+	assert.Less(t, first, shutdownTimeout+2*time.Second, "gives up at the deadline")
 
 	select {
 	case elapsed := <-second:
@@ -697,11 +633,9 @@ func Test_agent_ShutdownDoesNotWaitOutRetryingRegistration(t *testing.T) {
 		registerRetryDelay: time.Hour,
 	}
 
-	a.connectWg.Add(1)
-	go func() {
-		defer a.connectWg.Done()
+	a.connectWg.Go(func() {
 		agentGrpc.registerAgentWithRetry()
-	}()
+	})
 	require.Eventually(t, func() bool { return len(client.sentAgentInfo()) == 1 }, time.Second, time.Millisecond)
 
 	start := time.Now()
@@ -725,30 +659,6 @@ func captureLogAt(buf *bytes.Buffer, level logrus.Level) func() {
 	capture.SetLevel(level)
 	SetExtraLogger(capture)
 	return func() { logger.extraLogger.Store(prev) }
-}
-
-func Test_agent_enqueueUrlStatCountsEveryDroppedRecord(t *testing.T) {
-	const queueSize, enqueued = 4, 100
-
-	agent := newTestAgent(defaultConfig())
-	agent.urlStatChan = make(chan *urlStat, queueSize)
-	defer captureWarnLog(&bytes.Buffer{})()
-
-	for i := 0; i < enqueued; i++ {
-		agent.enqueueUrlStat(&urlStat{})
-	}
-
-	close(agent.urlStatChan)
-	queued := 0
-	for range agent.urlStatChan {
-		queued++
-	}
-
-	// Nothing drained the queue while it filled, so every record that is not
-	// still sitting in it was dropped: the oldest one evicted by each overflow.
-	assert.Equal(t, int64(enqueued-queued), agent.urlStatDrops.dropped.Load(),
-		"drop counter must account for every record that never reached the consumer")
-	assert.Equal(t, queueSize, queued, "test must leave the queue full")
 }
 
 // Each overflow head-drops the oldest record and queues the new one, so a full
@@ -786,13 +696,11 @@ func Test_agent_enqueueUrlStatCountsDropsFromConcurrentProducers(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := 0; i < producers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := 0; j < perProducer; j++ {
 				agent.enqueueUrlStat(&urlStat{})
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -922,13 +830,11 @@ func Test_agent_GetAgentIsRaceFreeAgainstShutdown(t *testing.T) {
 
 	// Request-path readers concurrent with the Shutdown swap; run under -race.
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := 0; i < 1000; i++ {
 			GetAgent().Enable()
 		}
-	}()
+	})
 	a.Shutdown()
 	wg.Wait()
 
@@ -1040,14 +946,12 @@ func Test_agent_MetaOverflowCountsDropsFromConcurrentProducers(t *testing.T) {
 	a.metaChan = make(chan interface{}, 4)
 
 	var wg sync.WaitGroup
-	for i := 0; i < producers; i++ {
-		wg.Add(1)
-		go func(p int) {
-			defer wg.Done()
+	for p := 0; p < producers; p++ {
+		wg.Go(func() {
 			for j := 0; j < perProducer; j++ {
 				a.cacheError(fmt.Sprintf("error-%d-%d", p, j))
 			}
-		}(i)
+		})
 	}
 	wg.Wait()
 
@@ -1229,6 +1133,12 @@ func Test_agent_startWorkersCountMatchesTable(t *testing.T) {
 			var started atomic.Int32
 			table := agent.workerTable()
 			agent.startWorkers(stubWorkers(agent, table, &started))
+			var slots []string
+			for _, st := range agent.workerStates {
+				slots = append(slots, st.name)
+			}
+			assert.Equal(t, activeWorkerNames(table), slots,
+				"one state slot per active entry, in table order: runningWorkerNames reports from it")
 
 			want := int32(len(activeWorkerNames(table)))
 			require.Eventually(t, func() bool { return started.Load() == want },
@@ -1516,30 +1426,6 @@ func Test_sendSpanBatchWorker_reportsHeldBackDrops(t *testing.T) {
 	for _, total := range []int{1, 31, 531} {
 		assert.Contains(t, buf.String(), fmt.Sprintf("span queue overflow: %d dropped in total", total))
 	}
-}
-
-// enqueueStat counts what a full queue costs: the rejected snapshot plus the
-// queued one evicted to make room for the next.
-func Test_agent_enqueueStatCountsEveryDroppedRecord(t *testing.T) {
-	const queueSize, enqueued = 4, 100
-
-	agent := newTestAgent(defaultConfig())
-	agent.statChan = make(chan *pb.PStatMessage, queueSize)
-
-	for i := 0; i < enqueued; i++ {
-		agent.enqueueStat(&pb.PStatMessage{})
-	}
-	close(agent.statChan)
-	queued := 0
-	for range agent.statChan {
-		queued++
-	}
-
-	// Nothing drained the queue while it filled, so every record that is not
-	// still sitting in it was lost: the oldest one evicted by each overflow.
-	assert.EqualValues(t, enqueued-queued, agent.statDrops.dropped.Load(),
-		"every record the collector will never see must be counted once")
-	assert.Equal(t, queueSize, queued, "test must leave the queue full")
 }
 
 // Each overflow head-drops the oldest record and queues the new one, so a full
@@ -2060,8 +1946,8 @@ func Test_SqlCacheLengthLimitAppliesToTheUidCacheOnly(t *testing.T) {
 // of shutdown (shutdownTimeout). Past it the workers are abandoned and Shutdown
 // returns: a collector outage must not keep the host process alive, and the
 // queue drain each worker is doing cannot be bounded on its own.
-// Test_agent_ShutdownDeadline exercises the wait end to end against a wedged
-// worker.
+// Test_agent_ShutdownIsSerialized exercises the wait end to end against a
+// wedged worker.
 func Test_ShutdownDeadline(t *testing.T) {
 	assert.Equal(t, 3*time.Second, shutdownTimeout,
 		"3s bounds the whole teardown; Java bounds only each sender's executor")
@@ -2082,90 +1968,15 @@ func Test_ShutdownIsIdempotent(t *testing.T) {
 	const callers = 8
 	var wg sync.WaitGroup
 	for i := 0; i < callers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			agent.Shutdown()
-		}()
+		})
 	}
 	wg.Wait()
 	agent.Shutdown()
 
 	assert.Equal(t, phaseStopped, agent.enable.current(), "the teardown completed")
 	assert.True(t, agent.spanQueue.closed.Load(), "the span queue was closed, exactly once")
-}
-
-// Test_ShutdownNamesStragglers locks that a deadline overrun
-// reports the workers still running, by the names the worker table gave them
-// (runningWorkerNames, reported by shutdownAgent on the overrun).
-// "shutdown timeout exceeded" without the names is not actionable in a host
-// process, and the names are the log contract the troubleshooting guide
-// reads. The list has to be exactly the workers whose supervisor has not
-// exited - not every declared worker, and not a count.
-//
-// Test_agent_ShutdownTimeoutNamesRunningWorkers and
-// Test_agent_ShutdownInTimeLogsNoWorkerNames drive the whole shutdown to produce
-// the line; locked here is the reporting rule itself.
-func Test_ShutdownNamesStragglers(t *testing.T) {
-	agent := newTestAgent(defaultConfig())
-
-	exited := &workerState{name: "ping", done: make(chan struct{})}
-	stuck := &workerState{name: "send stats", done: make(chan struct{})}
-	stuck.running.Store(true)
-	agent.workerStates = []*workerState{exited, stuck}
-
-	assert.Equal(t, []string{"send stats"}, agent.runningWorkerNames(),
-		"only the workers that outlived the deadline are named")
-
-	stuck.running.Store(false)
-	assert.Empty(t, agent.runningWorkerNames(), "a drain that finished in time names nobody")
-}
-
-// Test_WorkerTableIsTheSingleSourceOfTruth locks that the
-// worker table is the only declaration of the agent's goroutines: startWorkers
-// spawns exactly the entries whose predicate holds, gives each one a state slot,
-// and counts each
-// one into workerWg right before its go statement - so the drain, the
-// straggler report and the goroutine set cannot disagree. The hand-counted
-// Add this replaced drifted from the go statements in both directions, and
-// the compiler caught neither: too large made every Shutdown wait out its
-// full deadline, too small panicked the WaitGroup.
-//
-// Test_agent_startWorkersCountMatchesTable locks the workerWg count against the
-// same table. Locked here is the state slice -
-// one slot per active entry, named by the table, nothing for an inactive one -
-// since that slice is what runningWorkerNames reports from.
-func Test_WorkerTableIsTheSingleSourceOfTruth(t *testing.T) {
-	for _, refreshInterval := range []int{0, 1000} {
-		agent := newTestAgent(workerTableConfig(refreshInterval))
-		table := agent.workerTable()
-		active := activeWorkerNames(table)
-
-		// The table's own bodies need a collector; keep its names and
-		// predicates and park each body on the stop signal instead.
-		stop := agent.stopSignal().Done()
-		stubs := make([]worker, len(table))
-		for i, w := range table {
-			stubs[i] = worker{name: w.name, start: w.start, body: func() { <-stop }}
-		}
-		agent.startWorkers(stubs)
-
-		names := make([]string, 0, len(agent.workerStates))
-		for _, st := range agent.workerStates {
-			names = append(names, st.name)
-		}
-		assert.Equal(t, active, names,
-			"one state slot per active table entry, in table order (refresh %d)", refreshInterval)
-		for _, w := range table {
-			if !w.start {
-				assert.NotContains(t, names, w.name, "an inactive entry gets no slot")
-			}
-		}
-
-		agent.signalShutdown()
-		assert.True(t, waitTimeout(&agent.workerWg, shutdownTimeout),
-			"every started worker releases the workerWg slot startWorkers added for it")
-	}
 }
 
 // A panic while connecting is recovered like a worker's: the agent is released

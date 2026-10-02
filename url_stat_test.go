@@ -301,23 +301,6 @@ func Test_urlStatSnapshotThrottlesTheDropWarning(t *testing.T) {
 	assert.Len(t, snapshot.urlMap, 1)
 }
 
-// A limit of 0 or less makes snapshot.count >= limit true before the first url,
-// dropping every url stat entry. It has to recover the default instead.
-func Test_configHttpUrlStatLimitSizeOutOfRangeRecoversTheDefault(t *testing.T) {
-	for _, limit := range []int{0, -1, maxQueueSize + 1} {
-		var buf bytes.Buffer
-		restore := captureLogAt(&buf, logrus.InfoLevel)
-
-		config := defaultConfig()
-		config.Set(CfgHttpUrlStatLimitSize, limit)
-
-		assert.Equal(t, 1000, config.Int(CfgHttpUrlStatLimitSize), "limit=%d", limit)
-		assert.Contains(t, buf.String(), "Http.UrlStat.LimitSize", "limit=%d", limit)
-		assert.Contains(t, buf.String(), "is out of range [1, 65536]", "limit=%d", limit)
-		restore()
-	}
-}
-
 // Only a closed tick is sent. The send interval is not aligned with the tick
 // interval, so a send that took the tick in progress would put part of one
 // (uri, tick) key in one message and the rest in the next - the collector

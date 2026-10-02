@@ -49,15 +49,13 @@ func Test_noopSpan_Inject_SingletonNotMutated(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := 0; j < 200; j++ {
 				tracer := NoopTracer()
 				tracer.Span().SetFailure()
 				tracer.Inject(&DistributedTracingContextMap{make(map[string]string)})
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -154,9 +152,8 @@ func Test_noopSpan_SetError_ConcurrentWithEndSpan(t *testing.T) {
 	span.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"})
 
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() { defer wg.Done(); span.SetError(errors.New("boom")) }()
-	go func() { defer wg.Done(); span.SetFailure() }()
+	wg.Go(func() { span.SetError(errors.New("boom")) })
+	wg.Go(func() { span.SetFailure() })
 	span.EndSpan()
 	wg.Wait()
 
@@ -228,16 +225,14 @@ func Test_noopSpan_AsyncChild_SingletonUntouched(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := 0; j < 200; j++ {
 				child := NoopTracer().NewGoroutineTracer()
 				child.Span().SetFailure()
 				child.Span().SetError(errors.New("boom"))
 				child.EndSpan()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

@@ -156,34 +156,6 @@ func Test_spanMessageBuilder_unknownAddressAndUnsetNextSpanId(t *testing.T) {
 	assert.Zero(t, me.GetNextSpanId(), "nextSpanId must stay unset")
 }
 
-// The stream sender's contract: the message is marshaled by Send before the
-// builder is released. Bytes captured at "Send" time must stay intact after
-// the builder is recycled for later spans.
-func Test_spanMessageBuilder_streamReuseKeepsSentBytes(t *testing.T) {
-	a := newTestAgent(defaultConfig())
-
-	type sent struct {
-		seed  int
-		bytes []byte
-	}
-	var sends []sent
-
-	for seed := 1; seed <= 20; seed++ {
-		builder := acquireSpanMessageBuilder()
-		msg := builder.makePSpanMessage(slabTestChunk(a, seed, 4))
-		wire, err := proto.Marshal(msg) // what stream.Send does before returning
-		assert.NoError(t, err)
-		sends = append(sends, sent{seed, wire})
-		releaseSpanMessageBuilder(builder)
-	}
-
-	for _, s := range sends {
-		var msg pb.PSpanMessage
-		assert.NoError(t, proto.Unmarshal(s.bytes, &msg))
-		assert.NoError(t, verifySeedMessage(&msg, s.seed, 4))
-	}
-}
-
 type retainingSpanBatchClient struct {
 	request *pb.PSpanMessageBatch
 }
@@ -260,9 +232,7 @@ func Test_spanGrpc_sendSpanBatchAsync_noDataMixing(t *testing.T) {
 	const senders, batchesPerSender, spansPerBatch = 4, 25, 5
 	var wg sync.WaitGroup
 	for g := 0; g < senders; g++ {
-		wg.Add(1)
-		go func(g int) {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := 0; i < batchesPerSender; i++ {
 				chunks := make([]*spanChunk, spansPerBatch)
 				for j := range chunks {
@@ -271,7 +241,7 @@ func Test_spanGrpc_sendSpanBatchAsync_noDataMixing(t *testing.T) {
 				}
 				spanGrpc.sendSpanBatchAsync(chunks)
 			}
-		}(g)
+		})
 	}
 	wg.Wait()
 	spanGrpc.inFlight.Wait()

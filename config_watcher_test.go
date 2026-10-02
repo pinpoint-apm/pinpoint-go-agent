@@ -260,9 +260,7 @@ func TestConfigWatcherReloadShutdownRace(t *testing.T) {
 		close(stop)
 		wg.Wait()
 	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := 2; ; i++ {
 			select {
 			case <-stop:
@@ -272,12 +270,10 @@ func TestConfigWatcherReloadShutdownRace(t *testing.T) {
 				time.Sleep(time.Millisecond)
 			}
 		}
-	}()
+	})
 
 	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				select {
 				case <-stop:
@@ -289,7 +285,7 @@ func TestConfigWatcherReloadShutdownRace(t *testing.T) {
 					_ = config.load().sampler
 				}
 			}
-		}()
+		})
 	}
 
 	for i := 0; i < 10; i++ {

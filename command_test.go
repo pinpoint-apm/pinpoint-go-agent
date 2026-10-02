@@ -132,9 +132,7 @@ func Test_atcStreamsSampleIsSafeToShare(t *testing.T) {
 
 	var wg sync.WaitGroup
 	churn := make(chan struct{})
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := 0; ; i++ {
 			select {
 			case <-churn:
@@ -145,12 +143,10 @@ func Test_atcStreamsSampleIsSafeToShare(t *testing.T) {
 			agent.realTimeActiveSpan.Store(id, &activeSpanInfo{startTime: base})
 			agent.realTimeActiveSpan.Delete(id)
 		}
-	}()
+	})
 
 	for s := 0; s < maxActiveThreadCountStreams; s++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			// A third of an interval apart, so callers both share and expire samples.
 			for i := 0; i < 1000; i++ {
 				counts := streams.activeSpanCount(base.Add(time.Duration(i) * activeThreadCountInterval / 3))
@@ -159,7 +155,7 @@ func Test_atcStreamsSampleIsSafeToShare(t *testing.T) {
 				}
 				_ = counts[0] + counts[1] + counts[2] + counts[3]
 			}
-		}()
+		})
 	}
 
 	close(churn)
@@ -203,20 +199,15 @@ func BenchmarkActiveThreadCountSampling(b *testing.B) {
 	}
 	streams := atcStreams{agent: agent}
 	sampleTime := now
-	var counts []int32
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sampleTime = sampleTime.Add(activeThreadCountInterval)
 		for stream := 0; stream < maxActiveThreadCountStreams; stream++ {
-			counts = streams.activeSpanCount(sampleTime)
+			streams.activeSpanCount(sampleTime)
 		}
 	}
-	benchmarkActiveThreadCount = counts
 }
-
-var benchmarkActiveThreadCount []int32
 
 // EndSpan deletes the real-time active span entry only when the start stored
 // one, judged by the span's own flag rather than the viewer count at end time:

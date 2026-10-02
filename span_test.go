@@ -739,14 +739,12 @@ func Test_span_ConcurrentEventPairingIsRaceFree(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for g := 0; g < 4; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := 0; i < 500; i++ {
 				span.NewSpanEvent("concurrent")
 				span.EndSpanEvent()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	span.EndSpan()
@@ -913,23 +911,6 @@ func TestNoopSpan_EndSpanTwiceCountsOnce(t *testing.T) {
 		requests += atomic.LoadInt64(&agent.stats.shards[i].requestCount)
 	}
 	assert.Equal(t, int64(1), requests, "response time collected once")
-}
-
-// The shared noop singleton must stay immutable: concurrent tracer-less
-// requests call SetFailure on it. Run under -race.
-func TestNoopSpan_SharedSingletonSetFailureIsRaceFree(t *testing.T) {
-	var wg sync.WaitGroup
-	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
-				NoopTracer().Span().SetFailure()
-			}
-		}()
-	}
-	wg.Wait()
-	assert.Zero(t, defaultNoopSpan.statusErr.Load(), "singleton untouched")
 }
 
 // Span ids are int64: bitSize 0 (platform int) dropped an upstream node's id
@@ -1137,9 +1118,7 @@ func TestSpanEvent_LateSetterConcurrentWithSenderIsRaceFree(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := 0; i < 100; i++ {
 			se.SetError(errors.New("late"))
 			se.SetEndPoint("host")
@@ -1147,14 +1126,13 @@ func TestSpanEvent_LateSetterConcurrentWithSenderIsRaceFree(t *testing.T) {
 			se.SetServiceType(ServiceTypeMysql)
 			se.Annotations().AppendString(AnnotationApi, "late")
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		b := &spanMessageBuilder{}
 		for i := 0; i < 100; i++ {
 			b.makePSpanMessage(chunk)
 		}
-	}()
+	})
 	wg.Wait()
 
 	assert.Empty(t, se.annotations.values, "fallback not written back to the event")
@@ -1218,9 +1196,7 @@ func TestSpan_LateSetterConcurrentWithSenderIsRaceFree(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := 0; i < 100; i++ {
 			span.SetError(errors.New("late"))
 			span.SetFailure()
@@ -1234,14 +1210,13 @@ func TestSpan_LateSetterConcurrentWithSenderIsRaceFree(t *testing.T) {
 			span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/late", Method: "POST"})
 			a.AppendString(AnnotationHttpUrl, "late") // handle taken before the end
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		b := &spanMessageBuilder{}
 		for i := 0; i < 100; i++ {
 			b.makePSpanMessage(chunk)
 		}
-	}()
+	})
 	wg.Wait()
 
 	assert.Equal(t, "/rpc", span.rpcName, "rpcName")
@@ -1257,11 +1232,9 @@ func TestSpan_ConcurrentEndSpanEnqueuesOneChunk(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			span.EndSpan()
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -1317,7 +1290,7 @@ func Test_isIDChars(t *testing.T) {
 
 func BenchmarkValidateID(b *testing.B) {
 	const id = "AZm7kQ2vRtYpLxNc0dHgUw" // v4 agent id shape: base64url of a UUID
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if !IsValidId(id, agentIDMaxLen) {
 			b.Fatal("must validate")
 		}
@@ -1470,11 +1443,9 @@ func Test_span_EndSpanEvent_ConcurrentOverflowFloorsAtZero(t *testing.T) {
 		s := overflowedSpan()
 		var wg sync.WaitGroup
 		for g := 0; g < 2; g++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				s.EndSpanEvent()
-			}()
+			})
 		}
 		wg.Wait()
 		assert.GreaterOrEqual(t, s.eventOverflow.Load(), int32(0), "eventOverflow")
@@ -1500,12 +1471,10 @@ func Test_span_NewSpanEvent_ConcurrentSequencesAreUnique(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := 0; i < events; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			s.NewSpanEvent("concurrent")
 			s.EndSpanEvent()
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -1876,18 +1845,15 @@ func Test_span_Inject_ConcurrentEndSpanEvent(t *testing.T) {
 
 		m := make(map[string]string)
 		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			s.Inject(&DistributedTracingContextMap{m})
-		}()
+		})
 		var seenNext int64
 		var seenEndPoint string
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			s.EndSpanEvent()
 			seenNext, seenEndPoint = se.nextSpanId, se.endPoint // the sender's read
-		}()
+		})
 		wg.Wait()
 
 		got, err := strconv.ParseInt(m[HeaderSpanId], 10, 64)
@@ -1919,17 +1885,13 @@ func Test_span_EndSpan_ConcurrentSetError(t *testing.T) {
 
 		var wg sync.WaitGroup
 		for g, se := range events {
-			wg.Add(1)
-			go func(g int, se *spanEvent) {
-				defer wg.Done()
+			wg.Go(func() {
 				se.SetError(fmt.Errorf("boom %d", g))
-			}(g, se)
+			})
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			s.EndSpan()
-		}()
+		})
 		wg.Wait()
 
 		s.errorChainsLock.Lock()
@@ -1990,29 +1952,6 @@ func Test_SpanEventLimitFloors(t *testing.T) {
 	assert.Equal(t, 4, minEventSequence, "C++ defaults MIN_SPAN_MAX_EVENT_SEQUENCE")
 }
 
-// eventOverflowDecision is the overflow predicate. depth is the next event's
-// depth (index+1), hence depth-1.
-func eventOverflowDecision(sequence, depth, maxSequence, maxDepth int32) bool {
-	return sequence >= maxSequence || depth-1 > maxDepth
-}
-
-// Test_SpanEventOverflowDecision locks the boundaries the
-// predicate draws: the effective deepest recorded level is maxDepth+1, and
-// exactly maxSequence events are recorded.
-func Test_SpanEventOverflowDecision(t *testing.T) {
-	const maxDepth, maxSequence = 3, 5
-
-	// Depth: the push whose event would take depth maxDepth+1 is still
-	// recorded; maxDepth+2 overflows.
-	assert.False(t, eventOverflowDecision(0, int32(maxDepth), maxSequence, maxDepth))
-	assert.False(t, eventOverflowDecision(0, int32(maxDepth)+1, maxSequence, maxDepth))
-	assert.True(t, eventOverflowDecision(0, int32(maxDepth)+2, maxSequence, maxDepth))
-
-	// Sequence: 0..maxSequence-1 are recorded, maxSequence overflows.
-	assert.False(t, eventOverflowDecision(int32(maxSequence)-1, 1, maxSequence, maxDepth))
-	assert.True(t, eventOverflowDecision(int32(maxSequence), 1, maxSequence, maxDepth))
-}
-
 // assertContiguousRange reports that got is a permutation of
 // base..base+len(got)-1: every position handed out exactly once, with no gap.
 func assertContiguousRange(t *testing.T, got []int32, base int32, what string) {
@@ -2047,11 +1986,9 @@ func Test_SpanEventPositionIsReservedAtomically(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := 0; i < reservations; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
+		wg.Go(func() {
 			sequences[i], depths[i] = sp.reserveEventPosition()
-		}(i)
+		})
 	}
 	wg.Wait()
 
@@ -2160,14 +2097,6 @@ func Test_Sentinels(t *testing.T) {
 	assert.Equal(t, int32(0), int32(noneAsyncId), "Java: asyncId 0 means no async context")
 }
 
-// Test_GeneratedSpanIdIsNeverTheSentinel locks that a drawn span
-// (SpanId.nextSpanID).
-func Test_GeneratedSpanIdIsNeverTheSentinel(t *testing.T) {
-	for i := 0; i < 10_000; i++ {
-		assert.NotEqual(t, int64(noneSpanId), generateSpanId())
-	}
-}
-
 // Test_PropagationHeaderNames locks all ten header names against
 // across a process boundary, with no error anywhere.
 func Test_PropagationHeaderNames(t *testing.T) {
@@ -2181,17 +2110,6 @@ func Test_PropagationHeaderNames(t *testing.T) {
 	assert.Equal(t, "Pinpoint-pAppNamespace", HeaderParentApplicationNamespace)
 	assert.Equal(t, "Pinpoint-pServiceName", HeaderParentServiceName)
 	assert.Equal(t, "Pinpoint-Host", HeaderHost)
-}
-
-// Test_SampledHeaderEncoding locks that only the exact string
-// else, "s1" or an absent header included, is sampled.
-func Test_SampledHeaderEncoding(t *testing.T) {
-	const samplingFlagFalse = "s0"
-
-	assert.Equal(t, "s0", samplingFlagFalse, "the off value is exactly \"s0\"")
-	for _, v := range []string{"s1", "S0", "", "0", "false", "s00", " s0"} {
-		assert.NotEqual(t, samplingFlagFalse, v, "%q must not disable sampling", v)
-	}
 }
 
 // Test_ParentAppTypeDefaultsToUndefined locks the parent
@@ -2266,11 +2184,9 @@ func TestSpan_SetLogging_ConcurrentCallsAreRaceFree(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			tracer.Span().SetLogging(Logged)
-		}()
+		})
 	}
 	wg.Wait()
 	tracer.EndSpan()

@@ -11,86 +11,75 @@ import (
 )
 
 func Test_sqlNormalizer_DefaultSqlNormalizerCases(t *testing.T) {
-	tests := []struct {
-		name       string
-		sql        string
-		normalized string
-		params     string
-	}{
+	runNormalizeCases(t, []normalizeRow{
+		// complex literals
 		{
-			name:       "complex literals",
 			sql:        "select * from table a = 1 and b=50 and c=? and d='11'",
 			normalized: "select * from table a = 0# and b=1# and c=? and d='2$'",
 			params:     "1,50,11",
 		},
+		// negative literals
 		{
-			name:       "negative literals",
 			sql:        "select * from table a = -1 and b=-50 and c=? and d='-11'",
 			normalized: "select * from table a = -0# and b=-1# and c=? and d='2$'",
 			params:     "1,50,-11",
 		},
+		// positive literals
 		{
-			name:       "positive literals",
 			sql:        "select * from table a = +1 and b=+50 and c=? and d='+11'",
 			normalized: "select * from table a = +0# and b=+1# and c=? and d='2$'",
 			params:     "1,50,+11",
 		},
+		// comments around literals
 		{
-			name:       "comments around literals",
 			sql:        "select * from table a = 1/*test*/ and b=50/*test*/ and c=? and d='11'",
 			normalized: "select * from table a = 0#/*test*/ and b=1#/*test*/ and c=? and d='2$'",
 			params:     "1,50,11",
 		},
+		// plain identifiers
 		{
-			name:       "plain identifiers",
 			sql:        "select ZIPCODE,CITY from ZIPCODE",
 			normalized: "select ZIPCODE,CITY from ZIPCODE",
 		},
+		// qualified identifiers
 		{
-			name:       "qualified identifiers",
 			sql:        "select a.ZIPCODE,a.CITY from ZIPCODE as a",
 			normalized: "select a.ZIPCODE,a.CITY from ZIPCODE as a",
 		},
+		// projection number
 		{
-			name:       "projection number",
 			sql:        "select ZIPCODE,123 from ZIPCODE",
 			normalized: "select ZIPCODE,0# from ZIPCODE",
 			params:     "123",
 		},
+		// subtraction expression
 		{
-			name:       "subtraction expression",
 			sql:        "SELECT * from table a=123 and b='abc' and c=1-3",
 			normalized: "SELECT * from table a=0# and b='1$' and c=2#-3#",
 			params:     "123,abc,1,3",
 		},
+		// function arguments
 		{
-			name:       "function arguments",
 			sql:        "SYSTEM_RANGE(1, 10)",
 			normalized: "SYSTEM_RANGE(0#, 1#)",
 			params:     "1,10",
 		},
+		// identifier with dot
 		{
-			name:       "identifier with dot",
 			sql:        "test.abc",
 			normalized: "test.abc",
 		},
+		// identifier with digits
 		{
-			name:       "identifier with digits",
 			sql:        "test.abc123",
 			normalized: "test.abc123",
 		},
+		// dot before digits
 		{
-			name:       "dot before digits",
 			sql:        "test.123",
 			normalized: "test.123",
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assertNormalize(t, tt.sql, tt.normalized, tt.params)
-		})
-	}
+	})
 }
 
 // 64KB cap to SqlCacheService, which abbreviates only the text it publishes. A
@@ -154,11 +143,7 @@ func Test_sqlNormalizer_JavaEquivalence_SqlPastTheCap(t *testing.T) {
 }
 
 func Test_sqlNormalizer_NumberState(t *testing.T) {
-	tests := []struct {
-		sql        string
-		normalized string
-		params     string
-	}{
+	runNormalizeCases(t, []normalizeRow{
 		{"123", "0#", "123"},
 		{"-123", "-0#", "123"},
 		{"+123", "+0#", "123"},
@@ -184,13 +169,7 @@ func Test_sqlNormalizer_NumberState(t *testing.T) {
 		{"1.23E", "0#", "1.23E"},
 		{"1.4e-10", "0#-1#", "1.4e,10"},
 		{"123 ", "0# ", "123"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.sql, func(t *testing.T) {
-			assertNormalize(t, tt.sql, tt.normalized, tt.params)
-		})
-	}
+	})
 }
 
 // A comment ends right after its terminator, or with the statement when it
@@ -215,11 +194,7 @@ func Test_sqlNormalizer_CommentEnds(t *testing.T) {
 }
 
 func Test_sqlNormalizer_CommentState(t *testing.T) {
-	tests := []struct {
-		sql        string
-		normalized string
-		params     string
-	}{
+	runNormalizeCases(t, []normalizeRow{
 		{"--", "--", ""},
 		{"//", "//", ""},
 		{"--123", "--123", ""},
@@ -243,142 +218,101 @@ func Test_sqlNormalizer_CommentState(t *testing.T) {
 		{"/* '' */", "/* '' */", ""},
 		{"/*  */ 123 */", "/*  */ 0# */", "123"},
 		{"' /* */'", "'0$'", " /* */"},
-	}
-
-	for _, tt := range tests {
-		t.Run(displayName(tt.sql), func(t *testing.T) {
-			assertNormalize(t, tt.sql, tt.normalized, tt.params)
-		})
-	}
+	})
 }
 
 func Test_sqlNormalizer_SymbolState(t *testing.T) {
-	tests := []struct {
-		sql        string
-		normalized string
-		params     string
-	}{
+	runNormalizeCases(t, []normalizeRow{
 		{"''", "''", ""},
 		{"'abc'", "'0$'", "abc"},
 		{"'a''bc'", "'0$'", "a''bc"},
 		{"'a' 'bc'", "'0$' '1$'", "a,bc"},
 		{"'a''bc' 'a''bc'", "'0$' '1$'", "a''bc,a''bc"},
 		{"select * from table where a='a'", "select * from table where a='0$'", "a"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.sql, func(t *testing.T) {
-			assertNormalize(t, tt.sql, tt.normalized, tt.params)
-		})
-	}
+	})
 }
 
 func Test_sqlNormalizer_SeparatorAndEmptyChar(t *testing.T) {
-	tests := []struct {
-		name       string
-		sql        string
-		normalized string
-		params     string
-	}{
+	runNormalizeCases(t, []normalizeRow{
+		// numbers separated by comma
 		{
-			name:       "numbers separated by comma",
 			sql:        "1234 456,7",
 			normalized: "0# 1#,2#",
 			params:     "1234,456,7",
 		},
+		// string containing comma
 		{
-			name:       "string containing comma",
 			sql:        "'1234 456,7'",
 			normalized: "'0$'",
 			params:     "1234 456,,7",
 		},
+		// string containing escaped quote and comma
 		{
-			name:       "string containing escaped quote and comma",
 			sql:        "'1234''456,7'",
 			normalized: "'0$'",
 			params:     "1234''456,,7",
 		},
+		// adjacent string literals
 		{
-			name:       "adjacent string literals",
 			sql:        "'1234' '456,7'",
 			normalized: "'0$' '1$'",
 			params:     "1234,456,,7",
 		},
+		// empty string literal is preserved
 		{
-			name:       "empty string literal is preserved",
 			sql:        "select u.user_no as userNo,ifnull(s.equipment,'') as equipment,ifnull(s.gender, '0') as gender from user u left join supply s on u.user_no = s.user_no where u.user_no = ?",
 			normalized: "select u.user_no as userNo,ifnull(s.equipment,'') as equipment,ifnull(s.gender, '0$') as gender from user u left join supply s on u.user_no = s.user_no where u.user_no = ?",
 			params:     "0",
 		},
+		// mixed empty and non-empty strings
 		{
-			name:       "mixed empty and non-empty strings",
 			sql:        "select u.user_no as userNo,ifnull(s.equipment,'test_str') as equipment,ifnull(s.gender, '0') as gender from user u left join supply s on u.user_no = s.user_no where u.user_no != ''",
 			normalized: "select u.user_no as userNo,ifnull(s.equipment,'0$') as equipment,ifnull(s.gender, '1$') as gender from user u left join supply s on u.user_no = s.user_no where u.user_no != ''",
 			params:     "test_str,0",
 		},
+		// concat with comma in string
 		{
-			name:       "concat with comma in string",
 			sql:        "select concat ('hello,', u.name, ?)as hello, u.user_no as userNo from user u where 1 = 1 and u.user_no = '10010'",
 			normalized: "select concat ('0$', u.name, ?)as hello, u.user_no as userNo from user u where 1# = 2# and u.user_no = '3$'",
 			params:     "hello,,,1,1,10010",
 		},
+		// concat with space string
 		{
-			name:       "concat with space string",
 			sql:        "select concat ('hello,', u.name, ' ')as hello, u.user_no as userNo from user u where 1 = 1 and u.user_no != ''",
 			normalized: "select concat ('0$', u.name, '1$')as hello, u.user_no as userNo from user u where 2# = 3# and u.user_no != ''",
 			params:     "hello,,, ,1,1",
 		},
+		// concat with age comparison
 		{
-			name:       "concat with age comparison",
 			sql:        "select concat ('hello,', u.name, 'zhangsan')as hello, u.user_no as userNo from user u where 1 = 1 and u.user_no != '' and u.age > 20",
 			normalized: "select concat ('0$', u.name, '1$')as hello, u.user_no as userNo from user u where 2# = 3# and u.user_no != '' and u.age > 4#",
 			params:     "hello,,,zhangsan,1,1,20",
 		},
+		// nested select in concat
 		{
-			name:       "nested select in concat",
 			sql:        "select concat ('pinpoint,', u.name, (select s.user_no from user s where s.user_no = '8888'))as hello, u.user_no as userNo from user u where 1 = 1 and u.habit != '2768' and u.age > 20",
 			normalized: "select concat ('0$', u.name, (select s.user_no from user s where s.user_no = '1$'))as hello, u.user_no as userNo from user u where 2# = 3# and u.habit != '4$' and u.age > 5#",
 			params:     "pinpoint,,,8888,1,1,2768,20",
 		},
+		// ifnull query
 		{
-			name:       "ifnull query",
 			sql:        "SELECT n.order_logistics_id, MAX(IF(IFNULL(n.id, '') != '', '2', '0')) AS is_ts FROM t_e_shipping_note n WHERE IFNULL(n.delflag, '') <> '1' AND IFNULL(n.document_require, '0') = '2' GROUP BY n.order_logistics_id",
 			normalized: "SELECT n.order_logistics_id, MAX(IF(IFNULL(n.id, '') != '', '0$', '1$')) AS is_ts FROM t_e_shipping_note n WHERE IFNULL(n.delflag, '') <> '2$' AND IFNULL(n.document_require, '3$') = '4$' GROUP BY n.order_logistics_id",
 			params:     "2,0,1,0,2",
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assertNormalize(t, tt.sql, tt.normalized, tt.params)
-		})
-	}
+	})
 }
 
 func Test_sqlNormalizer_SequentialIndexes(t *testing.T) {
-	tests := []struct {
-		sql        string
-		normalized string
-		params     string
-	}{
+	runNormalizeCases(t, []normalizeRow{
 		{"123 345", "0# 1#", "123,345"},
 		{"123 345 'test'", "0# 1# '2$'", "123,345,test"},
 		{"1 2 3 4 5 6 7 8 9 10 11", "0# 1# 2# 3# 4# 5# 6# 7# 8# 9# 10#", "1,2,3,4,5,6,7,8,9,10,11"},
-	}
-
-	for _, tt := range tests {
-		t.Run(displayName(tt.sql), func(t *testing.T) {
-			assertNormalize(t, tt.sql, tt.normalized, tt.params)
-		})
-	}
+	})
 }
 
 func Test_sqlNormalizer_PostgresPositionalParameter(t *testing.T) {
-	tests := []struct {
-		sql        string
-		normalized string
-		params     string
-	}{
+	runNormalizeCases(t, []normalizeRow{
 		{
 			sql:        "SELECT * FROM member WHERE user = 'Kim' AND id = $1 AND no = 10",
 			normalized: "SELECT * FROM member WHERE user = '0$' AND id = $1 AND no = 1#",
@@ -432,21 +366,21 @@ func Test_sqlNormalizer_PostgresPositionalParameter(t *testing.T) {
 			normalized: "= $'0$'1#",
 			params:     "x,1",
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(displayName(tt.sql), func(t *testing.T) {
-			assertNormalize(t, tt.sql, tt.normalized, tt.params)
-		})
-	}
+	})
 }
 
-func assertNormalize(t *testing.T, sql, normalized, params string) {
-	t.Helper()
+// normalizeRow is one expectation of the normalized SQL and its params.
+type normalizeRow struct{ sql, normalized, params string }
 
-	actualNormalized, actualParams := newSqlNormalizer(sql, false).run()
-	assert.Equal(t, normalized, actualNormalized, "normalized sql")
-	assert.Equal(t, params, actualParams, "params")
+func runNormalizeCases(t *testing.T, rows []normalizeRow) {
+	t.Helper()
+	for _, tt := range rows {
+		t.Run(displayName(tt.sql), func(t *testing.T) {
+			normalized, params := newSqlNormalizer(tt.sql, false).run()
+			assert.Equal(t, tt.normalized, normalized, "normalized sql")
+			assert.Equal(t, tt.params, params, "params")
+		})
+	}
 }
 
 func displayName(sql string) string {
@@ -488,11 +422,7 @@ func TestNormalizeRemoveComments(t *testing.T) {
 // alone, and neither a string literal nor a comment touches it on the way to
 // the next digit, so the digit is still extracted.
 func TestNormalizeDollarNumberTokenStart(t *testing.T) {
-	tests := []struct {
-		sql        string
-		normalized string
-		params     string
-	}{
+	runNormalizeCases(t, []normalizeRow{
 		// $ before a digit: the placeholder is kept whole.
 		{"$1", "$1", ""},
 		{"where id = $122309 and no = 122309", "where id = $122309 and no = 0#", "122309"},
@@ -504,13 +434,7 @@ func TestNormalizeDollarNumberTokenStart(t *testing.T) {
 		// digit after it stays part of the identifier (Oracle's V$SESSION1).
 		{"V$SESSION1", "V$SESSION1", ""},
 		{"a$1", "a$1", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(displayName(tt.sql), func(t *testing.T) {
-			assertNormalize(t, tt.sql, tt.normalized, tt.params)
-		})
-	}
+	})
 
 	// A comment does not touch the flag either, in both comment modes.
 	t.Run("comment", func(t *testing.T) {
@@ -529,49 +453,38 @@ func TestNormalizeDollarNumberTokenStart(t *testing.T) {
 // has to come back out unchanged - including a byte that is not valid UTF-8 and
 // a NUL, neither of which ends the statement.
 func TestNormalizeByteFidelity(t *testing.T) {
-	tests := []struct {
-		name       string
-		sql        string
-		normalized string
-		params     string
-	}{
+	runNormalizeCases(t, []normalizeRow{
+		// invalid utf-8 passes through
 		{
-			name:       "invalid utf-8 passes through",
 			sql:        "select \xffcol from t where a = 1",
 			normalized: "select \xffcol from t where a = 0#",
 			params:     "1",
 		},
+		// invalid utf-8 inside a literal
 		{
-			name:       "invalid utf-8 inside a literal",
 			sql:        "select * from t where a = '\xff\xfe'",
 			normalized: "select * from t where a = '0$'",
 			params:     "\xff\xfe",
 		},
+		// nul does not end the statement
 		{
-			name:       "nul does not end the statement",
 			sql:        "select 'a' \x00 and b = 1",
 			normalized: "select '0$' \x00 and b = 1#",
 			params:     "a,1",
 		},
+		// nul does not start a number token either
 		{
-			name:       "nul does not start a number token either",
 			sql:        "select a\x001 from t",
 			normalized: "select a\x000# from t",
 			params:     "1",
 		},
+		// multibyte utf-8 is not a letter, as in java
 		{
-			name:       "multibyte utf-8 is not a letter, as in java",
 			sql:        "select 테이블1 from t",
 			normalized: "select 테이블0# from t",
 			params:     "1",
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assertNormalize(t, tt.sql, tt.normalized, tt.params)
-		})
-	}
+	})
 }
 
 // maxSqlNormalizeLength is a hard memory cap on the raw input, distinct from
@@ -679,12 +592,6 @@ type sqlNormalizeCase struct {
 	sql        string
 	normalized string
 	params     string
-	// paramsUnsplittable marks a case whose param string cannot be split back
-	// into one entry per placeholder: an unterminated literal writes its content
-	// into param without emitting a placeholder, so the counts do not line up.
-	// Only the placeholder-counting test below skips such a case, never the
-	// byte-for-byte expectation.
-	paramsUnsplittable bool
 }
 
 func sqlNormalizeCases() []sqlNormalizeCase {
@@ -708,11 +615,10 @@ func sqlNormalizeCases() []sqlNormalizeCase {
 			params:     `10,a,,b,x''y`,
 		},
 		{
-			name:               "backslash does not escape a quote",
-			sql:                `s = 'a\'b' and n = 3`,
-			normalized:         `s = '0$'b'`,
-			params:             `a\, and n = 3`,
-			paramsUnsplittable: true,
+			name:       "backslash does not escape a quote",
+			sql:        `s = 'a\'b' and n = 3`,
+			normalized: `s = '0$'b'`,
+			params:     `a\, and n = 3`,
 		},
 		{
 			name:       "hint, empty literal and multi-line comment",
@@ -733,11 +639,10 @@ func sqlNormalizeCases() []sqlNormalizeCase {
 			params:     `4`,
 		},
 		{
-			name:               "unterminated literal emits no placeholder",
-			sql:                `select 'abc`,
-			normalized:         `select '`,
-			params:             `abc`,
-			paramsUnsplittable: true,
+			name:       "unterminated literal emits no placeholder",
+			sql:        `select 'abc`,
+			normalized: `select '`,
+			params:     `abc`,
 		},
 		{
 			name:       "value tuples and a line comment",
@@ -804,80 +709,4 @@ func Test_SqlNormalizerIsNotIdempotent(t *testing.T) {
 func Test_SqlNormalizerWhitespaceIsNotNormalized(t *testing.T) {
 	normalized, _ := newSqlNormalizer("select   *\n\tfrom  t", false).run()
 	assert.Equal(t, "select   *\n\tfrom  t", normalized)
-}
-
-// splitOutputParams is the agent-side counterpart of the server's
-// OutputParameterParser: it splits param on ',' and un-escapes the doubled
-// commas the normalizer writes for a comma inside a literal.
-func splitOutputParams(params string) []string {
-	if params == "" {
-		return nil
-	}
-	var (
-		out []string
-		cur strings.Builder
-	)
-	for i := 0; i < len(params); i++ {
-		if params[i] != ',' {
-			cur.WriteByte(params[i])
-			continue
-		}
-		if i+1 < len(params) && params[i+1] == ',' {
-			cur.WriteByte(',')
-			i++
-			continue
-		}
-		out = append(out, cur.String())
-		cur.Reset()
-	}
-	out = append(out, cur.String())
-	return out
-}
-
-// scanPlaceholderIndices returns the placeholder indices of a normalized
-// statement in the order they appear. `<n>#` marks a number and `<n>$` a
-// character literal; both draw from one shared counter, which is what makes
-// the server able to refill them from a single comma-separated param string.
-func scanPlaceholderIndices(normalized string) []int {
-	var digits strings.Builder
-	out := []int{}
-	for i := 0; i < len(normalized); i++ {
-		ch := normalized[i]
-		if ch >= '0' && ch <= '9' {
-			digits.WriteByte(ch)
-			continue
-		}
-		if (ch == '#' || ch == '$') && digits.Len() > 0 {
-			n := 0
-			for _, d := range digits.String() {
-				n = n*10 + int(d-'0')
-			}
-			out = append(out, n)
-		}
-		digits.Reset()
-	}
-	return out
-}
-
-// Test_SqlNormalizerSharedIndexCounter locks the invariant the
-// server depends on: placeholders are numbered 0..n-1 from one counter shared
-// by numbers and literals, and there are exactly as many of them as there are
-// params.
-func Test_SqlNormalizerSharedIndexCounter(t *testing.T) {
-	for _, tc := range sqlNormalizeCases() {
-		if tc.paramsUnsplittable {
-			continue
-		}
-		t.Run(tc.name, func(t *testing.T) {
-			normalized, params := newSqlNormalizer(tc.sql, false).run()
-			indices := scanPlaceholderIndices(normalized)
-
-			want := make([]int, len(indices))
-			for i := range want {
-				want[i] = i
-			}
-			assert.Equal(t, want, indices, "placeholder indices must run 0..n-1 in order")
-			assert.Len(t, splitOutputParams(params), len(indices), "one param per placeholder")
-		})
-	}
 }

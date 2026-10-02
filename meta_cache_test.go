@@ -119,9 +119,7 @@ func TestMetaCacheConcurrent(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	for g := 0; g < 8; g++ {
-		wg.Add(1)
-		go func(g int) {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := 0; i < 20000; i++ {
 				k := keys[(i*7+g*13)&511]
 				if _, ok := c.peek(k); !ok {
@@ -131,7 +129,7 @@ func TestMetaCacheConcurrent(t *testing.T) {
 					c.remove(k, func(int32) bool { return true })
 				}
 			}
-		}(g)
+		})
 	}
 	wg.Wait()
 }
@@ -223,8 +221,8 @@ func BenchmarkMetaCacheShard(b *testing.B) {
 	for _, size := range []int{190, 1024, 8 * 1024, maxSqlSize} {
 		key := "select * from t where x in (" + strings.Repeat("9", size) + ")"
 		b.Run(fmt.Sprint(size), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				_ = c.shard(key)
+			for b.Loop() {
+				c.shard(key)
 			}
 		})
 	}

@@ -67,11 +67,9 @@ func Test_agentGrpc_registerAgentWithRetry_cancelsRequestOnShutdown(t *testing.T
 	defer close(client.release)
 	agent.agentGrpc = &agentGrpc{agentClient: client, agent: agent}
 
-	agent.connectWg.Add(1)
-	go func() {
-		defer agent.connectWg.Done()
+	agent.connectWg.Go(func() {
 		agent.agentGrpc.registerAgentWithRetry()
-	}()
+	})
 
 	select {
 	case <-client.started:

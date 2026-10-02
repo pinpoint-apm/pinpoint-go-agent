@@ -124,15 +124,13 @@ func Test_expiringPickFirst_createsExactlyOneSuccessorUnderConcurrentPicks(t *te
 
 	var wg sync.WaitGroup
 	for g := 0; g < 100; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := 0; i < 1000; i++ {
 				sc, err := cc.pick()
 				assert.NoError(t, err)
 				assert.Same(t, cc.subConn(0), sc, "the expired SubConn keeps serving until its successor is READY")
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

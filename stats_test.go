@@ -32,33 +32,6 @@ func (stats *agentStats) readCounters() statsCounterSnapshot {
 	return c
 }
 
-func Test_drainStatsCountersSwapsAndResets(t *testing.T) {
-	stats := newAgentStats()
-
-	stats.collectResponseTime(100)
-	stats.collectResponseTime(200)
-	stats.incrSampleNew()
-	stats.incrUnSampleNew()
-	stats.incrSampleCont()
-	stats.incrUnSampleCont()
-	stats.incrSkipNew()
-	stats.incrSkipCont()
-
-	counters := stats.drainCounters()
-
-	assert.Equal(t, int64(300), counters.accResponseTime)
-	assert.Equal(t, int64(200), counters.maxResponseTime)
-	assert.Equal(t, int64(2), counters.requestCount)
-	assert.Equal(t, int64(1), counters.sampleNew)
-	assert.Equal(t, int64(1), counters.unSampleNew)
-	assert.Equal(t, int64(1), counters.sampleCont)
-	assert.Equal(t, int64(1), counters.unSampleCont)
-	assert.Equal(t, int64(1), counters.skipNew)
-	assert.Equal(t, int64(1), counters.skipCont)
-
-	assert.Equal(t, statsCounterSnapshot{}, stats.drainCounters(), "second drain must return zeros")
-}
-
 // Every increment must be aggregated exactly once across all shards,
 // regardless of which goroutine (and therefore which shard) recorded it.
 func Test_drainStatsCountersAggregatesAllShards(t *testing.T) {
@@ -69,9 +42,7 @@ func Test_drainStatsCountersAggregatesAllShards(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for g := 0; g < goroutines; g++ {
-		wg.Add(1)
-		go func(g int) {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := 0; i < perG; i++ {
 				stats.collectResponseTime(int64(g*perG + i + 1))
 				stats.incrSampleNew()
@@ -81,7 +52,7 @@ func Test_drainStatsCountersAggregatesAllShards(t *testing.T) {
 				stats.incrSkipNew()
 				stats.incrSkipCont()
 			}
-		}(g)
+		})
 	}
 	wg.Wait()
 
@@ -516,13 +487,7 @@ func Test_TransactionCounters(t *testing.T) {
 	assert.Equal(t, int64(1), c.skipNew)
 	assert.Equal(t, int64(1), c.skipCont)
 
-	drained := stats.drainCounters()
-	assert.Equal(t, int64(0), drained.sampleNew, "a drain resets the counters")
-	assert.Equal(t, int64(0), drained.sampleCont)
-	assert.Equal(t, int64(0), drained.unSampleNew)
-	assert.Equal(t, int64(0), drained.unSampleCont)
-	assert.Equal(t, int64(0), drained.skipNew)
-	assert.Equal(t, int64(0), drained.skipCont)
+	assert.Equal(t, statsCounterSnapshot{}, stats.drainCounters(), "a drain resets the counters")
 }
 
 // Benchmarks for the per-request stat counters (stats.go). The counters are

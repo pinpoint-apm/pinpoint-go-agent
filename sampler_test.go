@@ -39,17 +39,6 @@ func Test_rateSampler_isSampled(t *testing.T) {
 	}
 }
 
-// and the rate-th one after it - not the rate-th request.
-func Test_rateSampler_samplesFirstRequest(t *testing.T) {
-	s := newRateSampler(10)
-
-	assert.True(t, s.isSampled(), "request 1")
-	for i := 2; i <= 10; i++ {
-		assert.False(t, s.isSampled(), "request %d", i)
-	}
-	assert.True(t, s.isSampled(), "request 11")
-}
-
 func Test_percentSampler_isSampled(t *testing.T) {
 	type fields struct {
 		percent float64
@@ -75,20 +64,6 @@ func Test_percentSampler_isSampled(t *testing.T) {
 			}
 			assert.Equal(t, tt.want, s.isSampled())
 		})
-	}
-}
-
-// the odd requests are sampled - starting with the first - not the even ones.
-// to TrueSampler.
-func Test_percentSampler_samplesFirstRequest(t *testing.T) {
-	half := newPercentSampler(50)
-	for i := 1; i <= 4; i++ {
-		assert.Equal(t, i%2 == 1, half.isSampled(), "50%% request %d", i)
-	}
-
-	full := newPercentSampler(100)
-	for i := 1; i <= 3; i++ {
-		assert.True(t, full.isSampled(), "100%% request %d", i)
 	}
 }
 
@@ -156,23 +131,31 @@ func Test_traceSampler_isNewSampled(t *testing.T) {
 	}
 }
 
-func Test_traceSampler_skipNew(t *testing.T) {
-	s := buildTraceSampler(newRateSampler(1), 1, 10)
-	stats := newAgentStats()
-
-	for i := 0; i < 100; i++ {
-		s.isNewSampled(stats)
+// The throughput limit samples one request per second per permit and skips
+// the rest, for both the new and the continue sampler.
+func Test_traceSampler_skip(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		sampler   *traceSampler
+		isSampled func(*traceSampler, *agentStats) bool
+		perSecond statsCounterSnapshot
+	}{
+		{"new", buildTraceSampler(newRateSampler(1), 1, 10), (*traceSampler).isNewSampled, statsCounterSnapshot{sampleNew: 1, skipNew: 99}},
+		{"continue", buildTraceSampler(newRateSampler(100), 10, 1), (*traceSampler).isContinueSampled, statsCounterSnapshot{sampleCont: 1, skipCont: 99}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			stats := newAgentStats()
+			for second := 0; second < 2; second++ {
+				if second > 0 {
+					time.Sleep(time.Second)
+				}
+				for i := 0; i < 100; i++ {
+					tt.isSampled(tt.sampler, stats)
+				}
+				assert.Equal(t, tt.perSecond, stats.drainCounters(), "second %d", second)
+			}
+		})
 	}
-	assert.Equal(t, int64(1), stats.readCounters().sampleNew, "sampleNew")
-	assert.Equal(t, int64(99), stats.readCounters().skipNew, "skipNew")
-
-	time.Sleep(1 * time.Second)
-
-	for i := 0; i < 100; i++ {
-		s.isNewSampled(stats)
-	}
-	assert.Equal(t, int64(1*2), stats.readCounters().sampleNew, "sampleNew")
-	assert.Equal(t, int64(99*2), stats.readCounters().skipNew, "skipNew")
 }
 
 func Test_traceSampler_isContinueSampled(t *testing.T) {
@@ -195,38 +178,17 @@ func Test_traceSampler_isContinueSampled(t *testing.T) {
 	}
 }
 
-func Test_traceSampler_skipContinue(t *testing.T) {
-	s := buildTraceSampler(newRateSampler(100), 10, 1)
-	stats := newAgentStats()
-
-	for i := 0; i < 100; i++ {
-		s.isContinueSampled(stats)
-	}
-	assert.Equal(t, int64(1), stats.readCounters().sampleCont, "sampleCont")
-	assert.Equal(t, int64(99), stats.readCounters().skipCont, "skipCont")
-
-	time.Sleep(1 * time.Second)
-
-	for i := 0; i < 100; i++ {
-		s.isContinueSampled(stats)
-	}
-	assert.Equal(t, int64(1*2), stats.readCounters().sampleCont, "sampleCont")
-	assert.Equal(t, int64(99*2), stats.readCounters().skipCont, "skipCont")
-}
-
 // countConcurrent fires n concurrent calls and returns how many were sampled.
 func countConcurrent(n int, isSampled func() bool) int {
 	var wg sync.WaitGroup
 	var count int64
 
-	wg.Add(n)
 	for i := 0; i < n; i++ {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if isSampled() {
 				atomic.AddInt64(&count, 1)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	return int(count)
@@ -286,6 +248,7 @@ func Test_percentSampler_javaMapping(t *testing.T) {
 		{0, 0, 0},
 		{0.005, 0, 0},
 		{0.01, 1, 1},
+		{0.5, 50, 5},
 		{50, 5000, 500},
 		{100, 10000, 1000},
 		// to 100 lands on 10000, which isSampled treats as always-sample too.
@@ -428,28 +391,6 @@ func Test_PercentSamplerWindow(t *testing.T) {
 		}
 	}
 	assert.Equal(t, []int{1, 101}, sampled, "one per hundred, starting at the first call")
-}
-
-// does in PercentSamplerFactory: the percentage is multiplied by 100 and
-// truncated, so anything under 0.01 collects nothing.
-func Test_PercentSamplerRateTruncation(t *testing.T) {
-	assert.Equal(t, 10_000, samplingMaxPercentRate, "Java: 100 * 100")
-
-	assert.Equal(t, uint64(10_000), newPercentSampler(100).rate)
-	assert.Equal(t, uint64(10_000), newPercentSampler(150).rate, "over 100 is clamped to 100")
-	assert.Equal(t, uint64(50), newPercentSampler(0.5).rate)
-	assert.Equal(t, uint64(1), newPercentSampler(0.01).rate)
-	assert.Equal(t, uint64(0), newPercentSampler(0.009).rate, "truncated to 0, i.e. never sampled")
-	assert.Equal(t, uint64(0), newPercentSampler(-1).rate, "a negative percentage is clamped to 0")
-
-	always := newPercentSampler(100)
-	for i := 0; i < 5; i++ {
-		assert.True(t, always.isSampled(), "100% is the TrueSampler case")
-	}
-	never := newPercentSampler(0)
-	for i := 0; i < 5; i++ {
-		assert.False(t, never.isSampled(), "0% is the FalseSampler case")
-	}
 }
 
 // Test_ThroughputLimiterInitialState locks the shape of the

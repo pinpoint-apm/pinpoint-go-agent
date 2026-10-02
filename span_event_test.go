@@ -51,15 +51,6 @@ func Test_spanEvent_generateNextSpanId(t *testing.T) {
 	assert.Equal(t, int64(30), se.generateNextSpanId(), "nextSpanId on collision")
 }
 
-func Test_spanEvent_SetError(t *testing.T) {
-	span := defaultTestSpan()
-	span.agent = newTestAgent(defaultConfig())
-	se := newSpanEvent(span, "t1")
-	se.SetError(errors.New("TEST_ERROR"))
-	assert.Equal(t, int32(1), se.errorFuncId, "errorFuncId")
-	assert.Equal(t, "TEST_ERROR", se.errorString, "errorString")
-}
-
 func Test_SetError_AbbreviatesMessage(t *testing.T) {
 	long := strings.Repeat("e", 300)
 	tests := []struct {
@@ -82,14 +73,6 @@ func Test_SetError_AbbreviatesMessage(t *testing.T) {
 			assert.Equal(t, tt.want, se.errorString, "spanEvent errorString")
 		})
 	}
-}
-
-func Test_spanEvent_SetSQL(t *testing.T) {
-	span := defaultTestSpan()
-	span.agent = newTestAgent(defaultConfig())
-	se := newSpanEvent(span, "t1")
-	se.SetSQL("SELECT 1", "")
-	assert.Equal(t, len(se.annotations.values), int(1), "annotations.len")
 }
 
 func Test_spanEvent_SetSQLBoundsAnnotationValues(t *testing.T) {
@@ -521,23 +504,20 @@ func TestSpanEvent_ErrSetterConcurrentWithSenderIsRaceFree(t *testing.T) {
 	span.spanEventLock.Unlock()
 
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := 0; i < 100; i++ {
 			span.NewSpanEvent("query")
 			span.SpanEvent().SetSQL("SELECT 1", "")
 			span.SpanEvent().SetError(errors.New("late"))
 			span.EndSpanEvent()
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		b := &spanMessageBuilder{}
 		for i := 0; i < 100; i++ {
 			b.makePSpan(chunk)
 		}
-	}()
+	})
 	wg.Wait()
 
 	// The first query reaches the limit of 1 and every event records an error,

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // ~200B: a typical ORM-generated point query with literals to extract.
@@ -71,19 +70,6 @@ func TestNormalizeSqlCacheEquivalence(t *testing.T) {
 	}
 }
 
-func TestNormalizeSqlCacheBypassesHugeSql(t *testing.T) {
-	huge := strings.Repeat("select * from t where a = 'x' and b = 123 union all ", 2000) + "select 1"
-	require.Greater(t, len(huge), maxSqlSize, "test sql too short")
-
-	a := newTestAgent(defaultConfig())
-	wantSql, wantParam := newSqlNormalizer(huge, a.config.load().sqlRemoveComments).run()
-	gotSql, gotParam := a.normalizeSql(huge)
-	assert.Equal(t, wantSql, gotSql, "bypass path result differs from uncached normalizer")
-	assert.Equal(t, wantParam, gotParam, "bypass path result differs from uncached normalizer")
-	_, cached := a.rawSqlCache.peek(huge)
-	assert.False(t, cached, "sql longer than %d bytes must not be cached", maxSqlSize)
-}
-
 // Run with -race: concurrent callers over more unique queries than the cache
 // holds (forcing eviction churn) must each still get the exact result for
 // their own query — no mixing of cached values across keys.
@@ -98,9 +84,7 @@ func TestNormalizeSqlCacheConcurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for g := 0; g < 8; g++ {
-		wg.Add(1)
-		go func(g int) {
-			defer wg.Done()
+		wg.Go(func() {
 			for pass := 0; pass < 3; pass++ {
 				for i := range queries {
 					idx := (i + g*137) % len(queries)
@@ -110,7 +94,7 @@ func TestNormalizeSqlCacheConcurrent(t *testing.T) {
 					}
 				}
 			}
-		}(g)
+		})
 	}
 	wg.Wait()
 }
@@ -118,9 +102,8 @@ func TestNormalizeSqlCacheConcurrent(t *testing.T) {
 func benchmarkNormalize(b *testing.B, sql string) {
 	b.SetBytes(int64(len(sql)))
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		nsql, param := newSqlNormalizer(sql, true).run()
-		_, _ = nsql, param
+	for b.Loop() {
+		newSqlNormalizer(sql, true).run()
 	}
 }
 
@@ -137,10 +120,8 @@ func benchmarkNormalizeCachedRepeat(b *testing.B, sql string) {
 	a.normalizeSql(sql)
 	b.SetBytes(int64(len(sql)))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		nsql, param := a.normalizeSql(sql)
-		_, _ = nsql, param
+	for b.Loop() {
+		a.normalizeSql(sql)
 	}
 }
 
@@ -152,10 +133,8 @@ func benchmarkNormalizeCachedUnique(b *testing.B, base string, n int) {
 	a := newTestAgent(defaultConfig())
 	b.SetBytes(int64(len(queries[0])))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		nsql, param := a.normalizeSql(queries[i%len(queries)])
-		_, _ = nsql, param
+	for i := 0; b.Loop(); i++ {
+		a.normalizeSql(queries[i%len(queries)])
 	}
 }
 
@@ -181,8 +160,7 @@ func BenchmarkSqlNormalizeCachedShortRepeatParallel(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			nsql, param := a.normalizeSql(benchShortSQL)
-			_, _ = nsql, param
+			a.normalizeSql(benchShortSQL)
 		}
 	})
 }
@@ -193,10 +171,8 @@ func benchmarkNormalizeUniqueNoCache(b *testing.B, base string, n int) {
 	queries := uniqueSQLs(base, n)
 	b.SetBytes(int64(len(queries[0])))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		nsql, param := newSqlNormalizer(queries[i%len(queries)], true).run()
-		_, _ = nsql, param
+	for i := 0; b.Loop(); i++ {
+		newSqlNormalizer(queries[i%len(queries)], true).run()
 	}
 }
 

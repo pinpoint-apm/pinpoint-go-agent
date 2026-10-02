@@ -74,28 +74,22 @@ Http:
 	cfgFileViper := newConfigFile(cfgFile)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() { // stands in for the poller goroutine
-		defer wg.Done()
+	wg.Go(func() { // stands in for the poller goroutine
 		for i := 1; i <= 200; i++ {
 			writeCfgFile(i)
 			config.reloadConfig(cfgFileViper)
 		}
-	}()
+	})
 
-	wg.Add(1)
-	go func() { // AddReloadCallback races the reloader's walk of the callback list
-		defer wg.Done()
+	wg.Go(func() { // AddReloadCallback races the reloader's walk of the callback list
 		for i := 0; i < 50; i++ {
 			config.AddReloadCallback([]string{CfgSamplingCounterRate}, func() {})
 			time.Sleep(time.Millisecond)
 		}
-	}()
+	})
 
 	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		go func() { // request goroutines
-			defer wg.Done()
+		wg.Go(func() { // request goroutines
 			named := []driver.NamedValue{{Ordinal: 1, Value: "1"}}
 			for i := 0; i < 2000; i++ {
 				_ = config.Bool(CfgSQLTraceBindValue)
@@ -113,7 +107,7 @@ Http:
 				tracer.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/race", Method: "GET", Status: 200})
 				tracer.EndSpan()
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

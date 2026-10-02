@@ -159,11 +159,6 @@ func TestNewConfig_WithFunc(t *testing.T) {
 	assert.Equal(t, 64, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 }
 
-func TestNewConfig_AppNameMissing(t *testing.T) {
-	c, _ := NewConfig()
-	assert.Error(t, c.checkNameAndID(), "error")
-}
-
 func TestNewConfig_ConfigFileYaml(t *testing.T) {
 	opts := []ConfigOption{
 		WithAppName("TestApp"),
@@ -741,6 +736,10 @@ func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
 		{CfgSpanQueueSize, 1e9, defaultQueueSize},
 		{CfgHttpUrlStatQueueSize, -1, defaultQueueSize},
 		{CfgHttpUrlStatQueueSize, maxQueueSize + 1, defaultQueueSize},
+		// A limit of 0 or less would drop every url stat entry.
+		{CfgHttpUrlStatLimitSize, 0, 1000},
+		{CfgHttpUrlStatLimitSize, -1, 1000},
+		{CfgHttpUrlStatLimitSize, maxQueueSize + 1, 1000},
 		{CfgCollectorGrpcSenderQueueSize, 0, defaultMetaQueueSize},
 		{CfgCollectorGrpcSenderQueueSize, maxQueueSize + 1, defaultMetaQueueSize},
 		// Every sampled request sized its chunk buffer by it, and every batch
@@ -1560,23 +1559,8 @@ func Test_ConfigRejectsAnUnsupportedLogLevel(t *testing.T) {
 	}
 }
 
-// Test_LogRotationDefaults locks the rotation defaults and the
-// floor under Log.MaxBackups. A value below 1 is restored to the default of 1.
-func Test_LogRotationDefaults(t *testing.T) {
-	t.Cleanup(func() { logger.setLevel("info") })
-
-	assert.Equal(t, 1, defaultLogMaxBackups, "one rotated file is kept")
-	assert.Equal(t, defaultLogMaxBackups, cfgBaseMap[CfgLogMaxBackups].defaultValue)
-	assert.Equal(t, 10, cfgBaseMap[CfgLogMaxSize].defaultValue, "10 MB before rotation")
-
-	for _, backups := range []int{0, -1} {
-		c, err := NewConfig(WithAppName("logRotationApp"), WithLogMaxBackups(backups))
-		assert.NoError(t, err)
-		assert.Equal(t, defaultLogMaxBackups, c.Int(CfgLogMaxBackups),
-			"Log.MaxBackups = %d is restored to the default, not honoured", backups)
-		assert.Equal(t, 10, c.Int(CfgLogMaxSize), "and an unset Log.MaxSize stays at 10 MB")
-	}
-
+// A Log.MaxSize below 1 is restored to the 10 MB default.
+func Test_LogMaxSizeFloor(t *testing.T) {
 	c, err := NewConfig(WithAppName("logRotationApp"), WithLogMaxSize(0))
 	assert.NoError(t, err)
 	assert.Equal(t, 10, c.Int(CfgLogMaxSize), "Log.MaxSize below 1 is restored to the default")

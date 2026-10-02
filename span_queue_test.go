@@ -99,10 +99,8 @@ func Test_spanQueue_closeConcurrentProducersDrainsAccepted(t *testing.T) {
 	start := make(chan struct{})
 	ready := make(chan struct{}, producers)
 	var producerWg sync.WaitGroup
-	producerWg.Add(producers)
 	for i := 0; i < producers; i++ {
-		go func() {
-			defer producerWg.Done()
+		producerWg.Go(func() {
 			<-start
 			if q.enqueue(chunk) {
 				accepted.Add(1)
@@ -111,7 +109,7 @@ func Test_spanQueue_closeConcurrentProducersDrainsAccepted(t *testing.T) {
 			for q.enqueue(chunk) {
 				accepted.Add(1)
 			}
-		}()
+		})
 	}
 	close(start)
 	for i := 0; i < producers; i++ {

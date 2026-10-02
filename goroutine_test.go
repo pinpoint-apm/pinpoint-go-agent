@@ -127,8 +127,6 @@ func Test_makePActiveThreadDumpListPreservesRequestedOrderAndLimit(t *testing.T)
 	assert.Equal(t, "goroutine 1", got[1].GetThreadDump().GetThreadName())
 }
 
-var benchmarkDumpSelection []*goroutine
-
 // BenchmarkActiveThreadDumpSelection covers building one request-local header
 // index and running every lookup through it. Goroutine profile parsing is
 // common to any selection strategy and is left out.
@@ -147,8 +145,7 @@ func BenchmarkActiveThreadDumpSelection(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		dump := &goroutineDump{goroutines: goroutines}
 		byHeader := dump.indexByHeader(names)
 		selected := make([]*goroutine, 0, requested)
@@ -157,6 +154,5 @@ func BenchmarkActiveThreadDumpSelection(b *testing.B) {
 				selected = append(selected, g)
 			}
 		}
-		benchmarkDumpSelection = selected
 	}
 }

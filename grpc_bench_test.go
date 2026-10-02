@@ -15,6 +15,7 @@ package pinpoint
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
@@ -45,38 +46,15 @@ func buildBenchChunk(a *agent, nEvents int) *spanChunk {
 	return chunk
 }
 
-// Conversion only: the object graph built for every stream Send.
+// The object graph built per span (makePSpan) and per SendSpanBatch request at
+// the default batch size (makePSpanMessageBatch); marshal=true adds the wire
+// serialization gRPC performs on top of it.
 func Benchmark_spanTransport_makePSpan(b *testing.B) {
-	a := benchAgent()
-	chunk := buildBenchChunk(a, 10)
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		builder := acquireSpanMessageBuilder()
-		_ = builder.makePSpan(chunk)
-		releaseSpanMessageBuilder(builder)
+	for _, marshal := range []bool{false, true} {
+		b.Run(fmt.Sprintf("marshal=%v", marshal), func(b *testing.B) { benchMakePSpanN(b, 10, marshal) })
 	}
 }
 
-// Conversion + wire marshal: the full protobuf cost of one stream Send.
-func Benchmark_spanTransport_makePSpanMarshal(b *testing.B) {
-	a := benchAgent()
-	chunk := buildBenchChunk(a, 10)
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		builder := acquireSpanMessageBuilder()
-		msg := builder.makePSpan(chunk)
-		if _, err := proto.Marshal(msg); err != nil {
-			b.Fatal(err)
-		}
-		releaseSpanMessageBuilder(builder)
-	}
-}
-
-// The batch path: one SendSpanBatch request at the default batch size.
 func Benchmark_spanTransport_makePSpanMessageBatch(b *testing.B) {
 	a := benchAgent()
 	chunks := make([]*spanChunk, defaultSpanBatchSize)
@@ -84,48 +62,40 @@ func Benchmark_spanTransport_makePSpanMessageBatch(b *testing.B) {
 		chunks[i] = buildBenchChunk(a, 10)
 	}
 
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		builder := acquireSpanMessageBuilder()
-		_ = builder.makePSpanMessageBatch(chunks)
-		releaseSpanMessageBuilder(builder)
-	}
-}
-
-func Benchmark_spanTransport_makePSpanMessageBatchMarshal(b *testing.B) {
-	a := benchAgent()
-	chunks := make([]*spanChunk, defaultSpanBatchSize)
-	for i := range chunks {
-		chunks[i] = buildBenchChunk(a, 10)
-	}
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		builder := acquireSpanMessageBuilder()
-		msg := builder.makePSpanMessageBatch(chunks)
-		if _, err := proto.Marshal(msg); err != nil {
-			b.Fatal(err)
-		}
-		releaseSpanMessageBuilder(builder)
+	for _, marshal := range []bool{false, true} {
+		b.Run(fmt.Sprintf("marshal=%v", marshal), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				builder := acquireSpanMessageBuilder()
+				benchMarshal(b, marshal, builder.makePSpanMessageBatch(chunks))
+				releaseSpanMessageBuilder(builder)
+			}
+		})
 	}
 }
 
 // Event-count scaling: where the per-send allocations come from.
-func Benchmark_spanTransport_makePSpanEvents1(b *testing.B)  { benchMakePSpanN(b, 1) }
-func Benchmark_spanTransport_makePSpanEvents50(b *testing.B) { benchMakePSpanN(b, 50) }
+func Benchmark_spanTransport_makePSpanEvents1(b *testing.B)  { benchMakePSpanN(b, 1, false) }
+func Benchmark_spanTransport_makePSpanEvents50(b *testing.B) { benchMakePSpanN(b, 50, false) }
 
-func benchMakePSpanN(b *testing.B, nEvents int) {
+func benchMakePSpanN(b *testing.B, nEvents int, marshal bool) {
 	a := benchAgent()
 	chunk := buildBenchChunk(a, nEvents)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		builder := acquireSpanMessageBuilder()
-		_ = builder.makePSpan(chunk)
+		benchMarshal(b, marshal, builder.makePSpan(chunk))
 		releaseSpanMessageBuilder(builder)
+	}
+}
+
+// benchMarshal adds the wire serialization when marshal is set.
+func benchMarshal(b *testing.B, marshal bool, msg proto.Message) {
+	if marshal {
+		if _, err := proto.Marshal(msg); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -161,8 +131,7 @@ func Benchmark_spanTransport_batchSendPerBatch50(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		spanGrpc.sendSpanBatchAsync(chunks)
 	}
 	b.StopTimer()

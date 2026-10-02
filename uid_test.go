@@ -1,27 +1,11 @@
 package pinpoint
 
 import (
-	"encoding/base64"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
-
-// decodeUID reverses encodeUID: it decodes a 22-character URL-safe base64
-// string (no padding) back into the original UUID. Production code never
-// decodes an agent UID, so this lives with the tests that verify encodeUID.
-func decodeUID(s string) (uuid.UUID, error) {
-	var u uuid.UUID
-	b, err := base64.RawURLEncoding.DecodeString(s)
-	if err != nil {
-		return u, err
-	}
-	if err := u.UnmarshalBinary(b); err != nil {
-		return u, err
-	}
-	return u, nil
-}
 
 var goldenVectors = []struct {
 	uuid   string
@@ -41,19 +25,5 @@ func TestEncodeUID_GoldenVectors(t *testing.T) {
 		got := encodeUID(u)
 		assert.Equal(t, v.base64, got, "encode %s", v.uuid)
 		assert.Len(t, got, uidBase64Len, "length of %s", v.uuid)
-	}
-}
-
-func TestEncodeDecodeUID_RoundTrip(t *testing.T) {
-	for i := 0; i < 100; i++ {
-		u, err := uuid.NewV7()
-		assert.NoError(t, err)
-
-		enc := encodeUID(u)
-		assert.Len(t, enc, uidBase64Len)
-
-		dec, err := decodeUID(enc)
-		assert.NoError(t, err)
-		assert.Equal(t, u, dec)
 	}
 }

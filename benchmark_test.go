@@ -53,9 +53,7 @@ func benchAgent() *agent {
 func startDrain(a *agent) (stop func()) {
 	done := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			for {
 				if _, ok := a.spanQueue.tryDequeue(); !ok {
@@ -68,9 +66,8 @@ func startDrain(a *agent) (stop func()) {
 			case <-a.spanQueue.wake:
 			}
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		for {
 			select {
 			case <-done:
@@ -80,7 +77,7 @@ func startDrain(a *agent) (stop func()) {
 				a.urlStats.add(u)
 			}
 		}
-	}()
+	})
 	return func() {
 		close(done)
 		wg.Wait()
@@ -97,9 +94,8 @@ func BenchmarkNewSampledSpan(b *testing.B) {
 	defer stop()
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = newSampledSpan(a, "operation", "/bench/rpc")
+	for b.Loop() {
+		newSampledSpan(a, "operation", "/bench/rpc")
 	}
 }
 
@@ -114,8 +110,7 @@ func BenchmarkSpanEvent(b *testing.B) {
 	s := defaultSpan(a)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		s.NewSpanEvent("operation").EndSpanEvent()
 	}
 }
@@ -130,8 +125,7 @@ func BenchmarkSpanEventNested(b *testing.B) {
 	s := defaultSpan(a)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for d := 0; d < depth; d++ {
 			s.NewSpanEvent("operation")
 		}
@@ -171,8 +165,7 @@ func BenchmarkSpanLifecycle(b *testing.B) {
 	reader := &DistributedTracingContextMap{m: map[string]string{}}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		tracer := a.NewSpanTracerWithReader("operation", "/bench/rpc", reader)
 		tracer.NewSpanEvent("event1").EndSpanEvent()
 		tracer.NewSpanEvent("event2").EndSpanEvent()
@@ -180,29 +173,9 @@ func BenchmarkSpanLifecycle(b *testing.B) {
 	}
 }
 
-// BenchmarkSpanLifecycleParallel measures the full transaction path under
-// contention: active-span registry shard churn and the apiCache lru lock across
-// cores.
-func BenchmarkSpanLifecycleParallel(b *testing.B) {
-	a := benchAgent()
-	stop := startDrain(a)
-	defer stop()
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		reader := &DistributedTracingContextMap{m: map[string]string{}}
-		for pb.Next() {
-			tracer := a.NewSpanTracerWithReader("operation", "/bench/rpc", reader)
-			tracer.NewSpanEvent("event1").EndSpanEvent()
-			tracer.NewSpanEvent("event2").EndSpanEvent()
-			tracer.EndSpan()
-		}
-	})
-}
-
-// BenchmarkSpanLifecycleShapes is BenchmarkSpanLifecycleParallel per request
-// shape, after the C++ agent's span_lifecycle_benchmark: the shapes cost very
+// BenchmarkSpanLifecycleShapes measures the full transaction path under
+// contention (active-span registry shard churn and the apiCache lru lock across
+// cores) per request shape, after the C++ agent's span_lifecycle_benchmark: the shapes cost very
 // different amounts and real traffic is a mix of them. unsampled is what most
 // requests pay whenever sampling is on; continued parses the inbound trace and
 // bypasses the sampler; urlStat adds the per-request urlStatChan push and the
@@ -294,8 +267,7 @@ func BenchmarkOptimizeSpanEvents(b *testing.B) {
 	chunk := &spanChunk{span: s, eventChunk: work, final: true}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		copy(work, src) // restore the unsorted order; sorting is in place
 		chunk.optimizeSpanEvents()
 	}
@@ -356,8 +328,7 @@ func BenchmarkExtractContinue(b *testing.B) {
 	s := defaultSpan(a)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		s.extract(reader)
 		dropSampledActiveSpan(s) // keep activeSpan balanced
 	}
@@ -382,8 +353,7 @@ func BenchmarkExtractContinueHttpHeader(b *testing.B) {
 	s := defaultSpan(a)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		s.extract(reader)
 		dropSampledActiveSpan(s)
 	}
@@ -400,8 +370,7 @@ func BenchmarkInjectHttpHeader(b *testing.B) {
 	h := http.Header{}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		// A writer per Inject, as the http client plugin makes one per request.
 		s.Inject(HttpHeaderWriter(h))
 	}
@@ -417,8 +386,7 @@ func BenchmarkExtractNewTrace(b *testing.B) {
 	s := defaultSpan(a)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		s.extract(reader)
 		dropSampledActiveSpan(s)
 	}
@@ -427,9 +395,8 @@ func BenchmarkExtractNewTrace(b *testing.B) {
 // BenchmarkSplitTransactionId isolates the allocation-free trace-id parser.
 func BenchmarkSplitTransactionId(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _, _, _ = splitTransactionId("test-agent^1610000000000^12345")
+	for b.Loop() {
+		splitTransactionId("test-agent^1610000000000^12345")
 	}
 }
 
@@ -439,9 +406,8 @@ func BenchmarkTransactionIdString(b *testing.B) {
 	tid := TransactionId{AgentId: "test-agent", StartTime: 1610000000000, Sequence: 12345}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = tid.String()
+	for b.Loop() {
+		_ = tid.String() // vet flags an unused String result
 	}
 }
 
@@ -454,9 +420,8 @@ func BenchmarkCacheSpanApi(b *testing.B) {
 	a.cacheSpanApi("operation", apiTypeDefault) // prime the cache
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = a.cacheSpanApi("operation", apiTypeDefault)
+	for b.Loop() {
+		a.cacheSpanApi("operation", apiTypeDefault)
 	}
 }
 
@@ -482,8 +447,7 @@ func BenchmarkCacheSpanApiParallel(b *testing.B) {
 // benchmark setup, not part of Append).
 func BenchmarkAnnotationAppendString(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		a := &annotation{}
 		a.AppendString(AnnotationHttpUrl, "/bench/rpc?q=1")
 	}
@@ -494,8 +458,7 @@ func BenchmarkAnnotationAppendString(b *testing.B) {
 // PIntStringStringValue plus two StringValue wrappers per call.
 func BenchmarkAnnotationAppendIntStringString(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		a := &annotation{}
 		a.AppendIntStringString(AnnotationSqlId, 1, "params", "args")
 	}
@@ -508,13 +471,12 @@ func BenchmarkAnnotationAppendIntStringString(b *testing.B) {
 // request hot path.
 func BenchmarkAnnotationBuildList(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		a := &annotation{}
 		a.AppendString(AnnotationHttpUrl, "/bench/rpc?q=1")
 		a.AppendInt(AnnotationHttpStatusCode, 200)
 		a.AppendIntStringString(AnnotationSqlId, 1, "params", "args")
-		_ = a.getList()
+		a.getList()
 	}
 }
 
@@ -528,8 +490,7 @@ func BenchmarkSetSQL(b *testing.B) {
 	const query = "SELECT id, name, email FROM users WHERE id = 1234 AND status = 'active' AND age > 21"
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		se := newSpanEvent(s, "query")
 		se.SetSQL(query, "")
 	}
@@ -541,9 +502,8 @@ func BenchmarkSetSQL(b *testing.B) {
 // pure wrapper overhead.
 func BenchmarkSendStreamWithTimeout(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = sendStreamWithTimeout(func() error { return nil }, func() {}, 5*time.Second, "bench")
+	for b.Loop() {
+		sendStreamWithTimeout(func() error { return nil }, func() {}, 5*time.Second, "bench")
 	}
 }
 
@@ -555,9 +515,8 @@ func BenchmarkGrpcMetadataContext(b *testing.B) {
 	a := benchAgent()
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = grpcMetadataContext(a, -1)
+	for b.Loop() {
+		grpcMetadataContext(a, -1)
 	}
 }
 
@@ -569,8 +528,7 @@ func BenchmarkGrpcMetadataContextPing(b *testing.B) {
 	a := benchAgent()
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		_ = grpcMetadataContext(a, int64(i+1))
 	}
 }
@@ -585,8 +543,7 @@ func BenchmarkSpanEventSetError(b *testing.B) {
 	err := errors.New("bench error")
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		se := newSpanEvent(s, "operation")
 		se.SetError(err)
 	}
