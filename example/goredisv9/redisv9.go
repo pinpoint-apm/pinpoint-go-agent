@@ -78,18 +78,16 @@ func main() {
 	}
 	defer agent.Shutdown()
 
-	addrs := []string{"localhost:6379", "localhost:6380"}
-
 	//redis client
 	redisOpts := &redis.Options{
-		Addr: addrs[0],
+		Addr: "localhost:6379",
 	}
 	redisClient = redis.NewClient(redisOpts)
 	redisClient.AddHook(ppgoredisv9.NewHook(redisOpts))
 
 	//redis cluster client
 	redisClusterOpts := &redis.ClusterOptions{
-		Addrs: addrs,
+		Addrs: []string{"localhost:6380"},
 	}
 	redisClusterClient = redis.NewClusterClient(redisClusterOpts)
 	redisClusterClient.AddHook(ppgoredisv9.NewClusterHook(redisClusterOpts))

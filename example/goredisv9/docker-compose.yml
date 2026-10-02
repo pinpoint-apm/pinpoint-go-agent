@@ -17,10 +17,12 @@ services:
     image: redis:7-alpine
     container_name: redis-goredisv9-test-2
     ports:
-      - "6380:6379"
-    command: redis-server --appendonly yes --port 6379
+      - "6380:6380"
+    # A single-node cluster that owns every slot. It announces 127.0.0.1:6380,
+    # the address the cluster client on the host reaches it at.
+    command: sh -c "(until redis-cli -p 6380 ping >/dev/null 2>&1; do sleep 0.2; done; redis-cli -p 6380 cluster addslots $$(seq 0 16383)) & exec redis-server --port 6380 --cluster-enabled yes --cluster-announce-ip 127.0.0.1 --appendonly yes"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -p 6380 cluster info | grep -q cluster_state:ok"]
       interval: 5s
       timeout: 3s
       retries: 5

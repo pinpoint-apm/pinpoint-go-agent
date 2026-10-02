@@ -1,4 +1,4 @@
-FROM redis:7-alpine
+FROM redis:6-alpine
 
 # Expose Redis port
 EXPOSE 6379

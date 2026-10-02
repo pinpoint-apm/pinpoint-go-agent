@@ -66,11 +66,11 @@ echo "Started Redis server 1 on port 6379"
 # Start Redis 2 (port 6380)
 docker run -d \
     --name $CONTAINER_NAME_2 \
-    -p 6380:6379 \
+    -p 6380:6380 \
     redis-goredisv9-test \
-    redis-server --appendonly yes
+    sh -c "(until redis-cli -p 6380 ping >/dev/null 2>&1; do sleep 0.2; done; redis-cli -p 6380 cluster addslots \$(seq 0 16383)) & exec redis-server --port 6380 --cluster-enabled yes --cluster-announce-ip 127.0.0.1 --appendonly yes"
 
-echo "Started Redis server 2 on port 6380"
+echo "Started Redis server 2 on port 6380 (single-node cluster)"
 
 # Step 4: Wait for Redis to be ready
 echo -e "\n${YELLOW}[4/6] Waiting for Redis servers to be ready...${NC}"
@@ -80,8 +80,8 @@ for port in 6379 6380; do
     RETRY_COUNT=0
     echo -n "Checking Redis on port $port"
     while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-        if docker exec $CONTAINER_NAME_1 redis-cli -p 6379 ping > /dev/null 2>&1 || \
-           docker exec $CONTAINER_NAME_2 redis-cli ping > /dev/null 2>&1; then
+        if { [ $port = 6379 ] && docker exec $CONTAINER_NAME_1 redis-cli -p 6379 ping > /dev/null 2>&1; } || \
+           { [ $port = 6380 ] && docker exec $CONTAINER_NAME_2 redis-cli -p 6380 cluster info 2>/dev/null | grep -q cluster_state:ok; }; then
             echo -e " ${GREEN}✓${NC}"
             break
         fi
