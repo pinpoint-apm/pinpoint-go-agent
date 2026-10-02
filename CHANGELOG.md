@@ -53,9 +53,11 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   `--pinpoint-loglevel` flag and `PINPOINT_GO_LOGLEVEL` variable (use
   `Log.Level`, `--pinpoint-log-level`, `PINPOINT_GO_LOG_LEVEL`);
   `pplogrus.WithField` (use `NewField`); `Tracer.NewAsyncSpan` (use
-  `NewGoroutineTracer`); and in `ppsarama` and `ppsaramaibm` the consumer
-  wrappers `ConsumeMessage`, `WrapConsumerMessage`, `ConsumerMessage`,
-  `HandlerFunc`, `NewConsumer`, `Consumer`,
+  `NewGoroutineTracer`); `pphttp.WrapHandle` and `WrapHandleFunc` (use
+  `WrapHandler` and `WrapHandlerFunc`); `ppbeego.Middleware` and `DoRequest`
+  (use `ServerFilterChain` and `ClientFilterChain`); and in `ppsarama` and
+  `ppsaramaibm` the consumer wrappers `ConsumeMessage`, `WrapConsumerMessage`,
+  `ConsumerMessage`, `HandlerFunc`, `NewConsumer`, `Consumer`,
   `WrapPartitionConsumer` and `PartitionConsumer` (use `ConsumeMessageContext`
   on a raw sarama consumer) together with the three `WithContext` functions
   that bound a tracer to a producer without being thread-safe (send through
@@ -396,9 +398,9 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   (behind `ServeJSON`, `Render` and the rest) resets `Output.Status` to 0 after
   writing the header, so nearly every response was recorded as status 0 and a
   5xx never failed the span. The writer's status is read first.
-- **`ppbeego`'s client filter ends its own event.** `ClientFilterChain` and
-  `DoRequest` discarded the tracer `pphttp.NewHttpClientTracer` returns and
-  ended the caller's instead, so a filter added twice, or a retried request,
+- **`ppbeego`'s client filter ends its own event.** `ClientFilterChain`
+  discarded the tracer `pphttp.NewHttpClientTracer` returns and ended the
+  caller's instead, so a filter added twice, or a retried request,
   closed whatever event the caller had open.
 - **`ppfiber`, `ppfiberv3` and `ppfasthttp` make one span per request.** A
   handler wrapped inside the middleware, or wrapped twice, started a second

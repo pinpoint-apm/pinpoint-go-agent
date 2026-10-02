@@ -887,30 +887,6 @@ func TestCollectUrlStat_GatedByUrlStatEnable(t *testing.T) {
 	})
 }
 
-// The deprecated wrappers must keep returning the pattern they were given
-// along with an instrumented handler.
-func TestWrapHandleAndWrapHandleFunc(t *testing.T) {
-	startAgent(t)
-
-	sampled := false
-	pattern, handler := WrapHandle(pinpoint.GetAgent(), "hello", "/hello",
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			sampled = pinpoint.TracerFromRequestContext(r).IsSampled()
-		}))
-	assert.Equal(t, "/hello", pattern, "WrapHandle must return the pattern it was given")
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/hello", nil))
-	assert.True(t, sampled, "WrapHandle's handler received an unsampled tracer")
-
-	sampled = false
-	pattern, handlerFunc := WrapHandleFunc(pinpoint.GetAgent(), "hello", "/hello",
-		func(w http.ResponseWriter, r *http.Request) {
-			sampled = pinpoint.TracerFromRequestContext(r).IsSampled()
-		})
-	assert.Equal(t, "/hello", pattern, "WrapHandleFunc must return the pattern it was given")
-	handlerFunc(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/hello", nil))
-	assert.True(t, sampled, "WrapHandleFunc's handler received an unsampled tracer")
-}
-
 // A server tracer continues a transaction the caller started, so the ids it
 // extracts from the pinpoint headers have to be the caller's.
 func TestNewHttpServerTracer_ContinuesTheCallersTransaction(t *testing.T) {

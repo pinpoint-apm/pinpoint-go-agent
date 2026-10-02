@@ -33,8 +33,6 @@ func main() {
 	web.Router("/regexp/:username:string", ctrl, "get:Regexp")
 	web.InsertFilterChain("/*", ppbeego.ServerFilterChain())
 	web.Run("localhost:9000")
-
-	//	web.RunWithMiddleWares("localhost:9000", ppbeego.Middleware())
 }
 
 type MainController struct {
@@ -49,7 +47,6 @@ func (ctrl *MainController) Hello() {
 	defer tracer.NewSpanEvent("f2").EndSpanEvent()
 
 	req := httplib.Get("http://localhost:9090/")
-	//ppbeego.DoRequest(tracer, req)
 	req.AddFilters(ppbeego.ClientFilterChain(tracer))
 
 	_, err := req.Response()

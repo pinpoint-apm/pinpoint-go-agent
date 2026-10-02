@@ -48,7 +48,7 @@ the URL, status and configured headers.
 | Plugin package | Instrumented package | Entry point |
 |---|---|---|
 | [plugin/http](/plugin/http) | Go standard `net/http` | `WrapHandler`, `WrapHandlerFunc`, `NewServeMux` |
-| [plugin/beego](/plugin/beego) | [beego/beego/v2](https://github.com/beego/beego) | `ServerFilterChain`, `Middleware` |
+| [plugin/beego](/plugin/beego) | [beego/beego/v2](https://github.com/beego/beego) | `ServerFilterChain` |
 | [plugin/chi](/plugin/chi) | [go-chi/chi](https://github.com/go-chi/chi) | `Middleware`, `WrapHandler`, `WrapHandlerFunc` |
 | [plugin/echov4](/plugin/echov4) | [labstack/echo/v4](https://github.com/labstack/echo) | `Middleware`, `WrapHandler` |
 | [plugin/echov5](/plugin/echov5) | [labstack/echo/v5](https://github.com/labstack/echo) | `Middleware`, `WrapHandler` |
@@ -101,7 +101,7 @@ inject the tracing headers so the next node continues it.
 |---|---|---|
 | [plugin/http](/plugin/http) | Go standard `net/http` client | `WrapClient`, `WrapClientWithContext`, `DoClient` |
 | [plugin/fasthttp](/plugin/fasthttp) | [valyala/fasthttp](https://github.com/valyala/fasthttp) client | `DoClient` |
-| [plugin/beego](/plugin/beego) | beego `httplib` client | `DoRequest`, `ClientFilterChain` |
+| [plugin/beego](/plugin/beego) | beego `httplib` client | `ClientFilterChain` |
 | [plugin/grpc](/plugin/grpc) | [grpc/grpc-go](https://github.com/grpc/grpc-go) | `UnaryClientInterceptor`, `StreamClientInterceptor` |
 | [plugin/kratos](/plugin/kratos) | [go-kratos/kratos/v2](https://github.com/go-kratos/kratos) | `ClientMiddleware` |
 | [plugin/kratosv3](/plugin/kratosv3) | [go-kratos/kratos/v3](https://github.com/go-kratos/kratos) | `ClientMiddleware` |

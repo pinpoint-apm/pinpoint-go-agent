@@ -600,17 +600,6 @@ func WrapHandlerFunc(handler func(http.ResponseWriter, *http.Request), serverNam
 	return wrapHandler("", http.HandlerFunc(handler), serverName...).ServeHTTP
 }
 
-// WrapHandle is deprecated. Use WrapHandler.
-func WrapHandle(agent pinpoint.Agent, handlerName string, pattern string, handler http.Handler) (string, http.Handler) {
-	return pattern, WrapHandler(handler)
-}
-
-// WrapHandleFunc is deprecated. Use WrapHandlerFunc.
-func WrapHandleFunc(agent pinpoint.Agent, handlerName string, pattern string, handler func(http.ResponseWriter, *http.Request)) (string, func(http.ResponseWriter, *http.Request)) {
-	p, h := WrapHandle(agent, handlerName, pattern, http.HandlerFunc(handler))
-	return p, h.ServeHTTP
-}
-
 type responseWriter struct {
 	http.ResponseWriter
 	status      *int

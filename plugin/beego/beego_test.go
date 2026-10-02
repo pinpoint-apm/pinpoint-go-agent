@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -211,53 +210,6 @@ func TestServerFilterChain_PassesThroughWhenAgentDisabled(t *testing.T) {
 	require.True(t, called, "the handler did not run")
 }
 
-// Middleware is the deprecated net/http form of the server filter. It still
-// has to trace the handler and leave the response untouched.
-func TestMiddleware_TracesAndPreservesTheResponse(t *testing.T) {
-	startAgent(t)
-
-	var tracer pinpoint.Tracer
-	h := Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tracer = pinpoint.TracerFromRequestContext(r)
-		w.WriteHeader(http.StatusTeapot)
-		_, _ = w.Write([]byte("hello"))
-	}))
-
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/hello", nil))
-
-	require.NotNil(t, tracer)
-	assert.True(t, tracer.IsSampled(), "handler received an unsampled tracer")
-	assert.Equal(t, http.StatusTeapot, rec.Code)
-	assert.Equal(t, "hello", rec.Body.String())
-	assert.Equal(t, "/hello", spanOf(t, tracer)["RpcName"])
-}
-
-// The deprecated middleware re-panics too.
-func TestMiddleware_PanicPropagates(t *testing.T) {
-	startAgent(t)
-
-	h := Middleware()(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") }))
-
-	assert.PanicsWithValue(t, "boom", func() {
-		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/boom", nil))
-	})
-}
-
-func TestMiddleware_PassesThroughWhenAgentDisabled(t *testing.T) {
-	called := false
-	h := Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
-		w.WriteHeader(http.StatusNoContent)
-	}))
-
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/hello", nil))
-
-	require.True(t, called, "the handler did not run")
-	assert.Equal(t, http.StatusNoContent, rec.Code)
-}
-
 // The client filter is what links the caller's span to the callee's, so it has
 // to inject the distributed-tracing headers into the outgoing request before
 // the next filter sends it, and return that filter's result unchanged.
@@ -320,47 +272,6 @@ func TestClientFilterChain_WithNoopTracer(t *testing.T) {
 	assert.True(t, called, "the next filter did not run")
 }
 
-// DoRequest is the deprecated client wrapper; it has to inject the same
-// headers ClientFilterChain does.
-func TestDoRequest(t *testing.T) {
-	startAgent(t)
-
-	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
-	defer tracer.EndSpan()
-
-	// No server is listening, so the request fails - what matters is that the
-	// headers were injected before the attempt and the error came back.
-	req := httplib.Get("http://" + closedAddr(t) + "/hello")
-	_, err := DoRequest(tracer, req)
-	assert.Error(t, err, "an unreachable host must surface its error")
-
-	for _, key := range pinpointHeaders {
-		assert.NotEmpty(t, req.GetRequest().Header.Get(key), "outgoing request is missing the %s header", key)
-	}
-}
-
-// A nil tracer is what callers hand these when tracing is off.
-func TestDoRequest_WithNilTracer(t *testing.T) {
-	startAgent(t)
-
-	assert.NotPanics(t, func() {
-		_, _ = DoRequest(nil, httplib.Get("http://"+closedAddr(t)+"/hello"))
-	})
-}
-
-// closedAddr returns a loopback address with nothing listening on it: the port
-// is bound and released, so a connection is refused right away. A hard-coded
-// port like :1 only works while nothing serves it and while the sandbox
-// allows the dial at all, which is not something a test should rest on.
-func closedAddr(t *testing.T) string {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	addr := l.Addr().String()
-	require.NoError(t, l.Close())
-	return addr
-}
-
 // statusAnnotation reads the recorded HTTP status back out of the span JSON:
 // {"key":46,"value":{"Field":{"IntValue":500}}}.
 func statusAnnotation(t *testing.T, tracer pinpoint.Tracer) int {
@@ -380,8 +291,7 @@ func statusAnnotation(t *testing.T, tracer pinpoint.Tracer) int {
 }
 
 // A request that already carries the tracing headers - the filter added twice,
-// or a request retried through DoRequest - gets a noop client tracer, and the
-// filter has to end that one: ending the caller's tracer instead closed
+// say - gets a noop client tracer, and the filter has to end that one: ending the caller's tracer instead closed
 // whatever event the caller had open.
 func TestClientFilterChain_StackedFiltersLeaveTheCallersEventOpen(t *testing.T) {
 	startAgent(t)
@@ -398,20 +308,4 @@ func TestClientFilterChain_StackedFiltersLeaveTheCallersEventOpen(t *testing.T) 
 	require.NoError(t, err)
 
 	assert.Same(t, open, tracer.SpanEvent(), "the stacked client filters ended the caller's own event")
-}
-
-// The deprecated DoRequest ends its event through the same tracer.
-func TestDoRequest_LeavesTheCallersEventOpenWhenNested(t *testing.T) {
-	startAgent(t)
-
-	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
-	defer tracer.EndSpan()
-	tracer.NewSpanEvent("serverHandler")
-	open := tracer.SpanEvent()
-
-	req := httplib.Get("http://" + closedAddr(t) + "/hello")
-	tracer.Inject(req.GetRequest().Header) // already traced, as a retry would be
-	_, _ = DoRequest(tracer, req)
-
-	assert.Same(t, open, tracer.SpanEvent(), "DoRequest on an already traced request ended the caller's own event")
 }

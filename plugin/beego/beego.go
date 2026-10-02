@@ -25,13 +25,6 @@ import (
 
 const serverName = "Beego Server"
 
-// Middleware is deprecated. Use ServerFilterChain.
-func Middleware() func(http.Handler) http.Handler {
-	return func(h http.Handler) http.Handler {
-		return pphttp.TraceHandler(h, serverName, "beego/v2.HandlerFunc()", nil)
-	}
-}
-
 // ServerFilterChain returns filter function that will trace the incoming requests.
 func ServerFilterChain() func(web.FilterFunc) web.FilterFunc {
 	return func(next web.FilterFunc) web.FilterFunc {
@@ -80,19 +73,6 @@ func responseStatus(ctx *beegoContext.Context) int {
 		return status
 	}
 	return http.StatusOK
-}
-
-// DoRequest is deprecated. Use ClientFilterChain.
-func DoRequest(tracer pinpoint.Tracer, req *httplib.BeegoHTTPRequest) (resp *http.Response, err error) {
-	// Ended through the tracer NewHttpClientTracer returns, not the caller's:
-	// for a request that already carries the headers it returns a noop, and
-	// ending the caller's tracer instead closed whatever event it had open.
-	t := pphttp.NewHttpClientTracer(tracer, "beego/v2.DoRequest()", req.GetRequest())
-	defer func() {
-		pphttp.EndHttpClientTracer(t, resp, err)
-	}()
-	resp, err = req.DoRequest()
-	return
 }
 
 // ClientFilterChain returns filter function that will trace the outgoing requests.
