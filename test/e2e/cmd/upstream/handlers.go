@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"os"
+	"runtime"
+	"runtime/metrics"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -358,7 +361,20 @@ func onStats(w http.ResponseWriter, r *http.Request) {
 		"agent_enabled":       pinpoint.GetAgent().Enable(),
 		"collector_host":      e2e.CollectorHost(),
 		"requests_per_second": rps,
+		// For soak_test.sh: the process to sample from outside, and the two
+		// leak signals only the Go runtime sees.
+		"pid":             os.Getpid(),
+		"goroutines":      runtime.NumGoroutine(),
+		"heap_live_bytes": heapLiveBytes(),
 	})
+}
+
+// heapLiveBytes is the heap the last GC marked live. Unlike HeapAlloc it holds
+// no garbage awaiting collection, so it does not saw-tooth between GC cycles.
+func heapLiveBytes() uint64 {
+	s := []metrics.Sample{{Name: "/gc/heap/live:bytes"}}
+	metrics.Read(s)
+	return s[0].Value.Uint64()
 }
 
 func onReady(w http.ResponseWriter, r *http.Request) {

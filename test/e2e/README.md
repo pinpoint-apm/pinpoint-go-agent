@@ -1,6 +1,6 @@
 # Pinpoint Go Agent live end-to-end tests
 
-This directory contains two complementary suites, the Go counterparts of the
+This directory contains three complementary suites, the Go counterparts of the
 C++ agent's `test/e2e`:
 
 - `smoke_test.sh` is a deterministic correctness suite. It checks agent
@@ -15,6 +15,9 @@ C++ agent's `test/e2e`:
   unthrottled saturation test whose workers reuse HTTP connections and issue the
   next request immediately after each response. `--rss-pid` additionally samples
   the server's memory across the run (useful for leak/stress passes).
+- `soak_test.sh` is the long-running drift check: hours of fixed-rate load at
+  reduced sampling while the upstream's resources are sampled once a minute.
+  See [Soak](#soak).
 
 The correctness stack uses separate processes because a Pinpoint agent is a
 process-global singleton:
@@ -191,6 +194,51 @@ tail-latency timeouts are expected rather than meaningful — a heavily
 instrumented build or a contended host can push p95 far enough that the
 occasional request reaches the generator's 30s client timeout.
 
+## Soak
+
+`soak_test.sh` answers what a load pass cannot: does anything drift over
+hours? Its default shape matches the C++ suite's soak, 12 h at 100 RPS in
+`full` mode with 30% `PERCENT` sampling:
+
+```bash
+export PINPOINT_GO_COLLECTOR_HOST="your-collector-host"
+./soak_test.sh
+nohup ./soak_test.sh >/dev/null 2>&1 &        # detached; stdout is only a heartbeat
+./soak_test.sh --duration 3600 --rps 50 --sampling-rate 100
+```
+
+It runs in two phases. `run_e2e.sh` runs first, unmodified, as a gate: the
+smoke checks need every request sampled and the span-batch check needs debug
+logging, neither of which a soak can have, so a broken stack fails in minutes
+rather than after 12 h. Then `run_e2e.sh --load-only` is the soak itself, at the
+requested sampling and the config file's `info` level, while the script samples
+the upstream server every `--sample-interval` seconds (default 60):
+
+- RSS, CPU time, OS threads and open fds, read from outside the process (`ps`,
+  and `lsof` on macOS or `/proc` on Linux), so they survive a wedged server;
+- goroutines and the live heap from `/stats`. The live heap is
+  `/gc/heap/live:bytes`, what the last GC marked live, which unlike `HeapAlloc`
+  does not saw-tooth between GC cycles;
+- `agent_enabled` and `total_requests` from `/stats`. An agent that goes offline
+  mid-run looks like a healthy run in every request-side metric.
+
+The output is the series in `resources.csv`, not the exit status. The summary
+fits a least-squares slope to the second half of each series, since the first
+carries the warm-up, and calls it growth only when it exceeds 0.5 per hour (MB
+per hour for RSS and the live heap) and twice its own standard error: a slope
+fitted to jitter is not zero either. A run shorter than an hour gets no
+verdict. The latest goroutine dump and heap profile are kept as
+`goroutines.txt` and `heap.pprof` (`go tool pprof heap.pprof`), so a growing
+series can be traced to its stacks without another 12 h run.
+
+Everything lands in `--out-dir` (default `soak-<timestamp>` here):
+`summary.txt`, `resources.csv`, `load.log` (the phase-2 `run_e2e.sh` output),
+`validate.log`, the server logs under `logs/`, `warnings.txt` (warning and
+error lines grouped by message) and the two profiles. Interrupted with Ctrl-C
+or SIGTERM, it stops the stack and summarises what it has. On macOS it holds a
+`caffeinate` assertion while it runs: an idle sleep would stop the arrivals,
+and `load_test.py` fails a run past 5% dropped arrivals.
+
 ## Performance profiling
 
 The upstream server exposes Go's own profiler at `/debug/pprof`, so no external
@@ -240,6 +288,9 @@ startup when it is enabled.
   as `|trace_id=..|span_id=..|sampled=..` instead of using dedicated fields.
   Regenerating the proto is not required for the propagation assertions.
 - Profiling uses Go's pprof endpoint rather than `perf`/`xctrace`.
+- The soak drives its load phase through `run_e2e.sh --load-only` instead of
+  starting the stack itself, runs on macOS as well as Linux, and adds
+  goroutines and the live heap to the resource series.
 - URL statistics are collected with the request path as the template: the Go
   API takes an already-normalized URL, so there is no path-trimming setting to
   exercise.
