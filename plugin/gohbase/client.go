@@ -43,19 +43,19 @@ func WrapClient(c hbase.Client, zkquorum string) *Client {
 	return &Client{Client: c, host: zkquorum}
 }
 
-func (c *Client) trace(op string, ctx context.Context) pinpoint.Tracer {
+// trace starts the span event of op on the context's tracer and returns both,
+// or a nil tracer when the request is not sampled.
+func (c *Client) trace(op string, ctx context.Context) (pinpoint.Tracer, pinpoint.SpanEventRecorder) {
 	tracer := pinpoint.FromContext(ctx)
 	if !tracer.IsSampled() {
-		return nil
+		return nil, nil
 	}
 
-	// One lookup: each SpanEvent() call takes the event stack lock.
 	se := tracer.NewSpanEvent(op).SpanEvent()
 	se.SetServiceType(pinpoint.ServiceTypeHbaseClient)
 	se.SetDestination("HBASE")
 	se.SetEndPoint(c.host)
-
-	return tracer
+	return tracer, se
 }
 
 func keyString(key []byte) string {
@@ -66,100 +66,54 @@ func scanKeyString(startKey []byte, stopKey []byte) string {
 	return "startRowKey: " + string(startKey) + ", stopRowKey: " + string(stopKey)
 }
 
-func (c *Client) Get(g *hrpc.Get) (*hrpc.Result, error) {
-	tracer := c.trace("hbase.Get", g.Context())
+// call runs f, an operation on the row key, as the span event op records.
+func call[T any](c *Client, op string, ctx context.Context, key []byte, f func() (T, error)) (T, error) {
+	tracer, se := c.trace(op, ctx)
 	if tracer == nil {
-		return c.Client.Get(g)
+		return f()
 	}
-
 	defer tracer.EndSpanEvent()
-	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHbaseClientParams, keyString(g.Key()))
+	se.Annotations().AppendString(pinpoint.AnnotationHbaseClientParams, keyString(key))
 
-	r, e := c.Client.Get(g)
-	if e != nil {
-		tracer.SpanEvent().SetError(e)
-	}
-	return r, e
+	r, err := f()
+	se.SetError(err)
+	return r, err
+}
+
+func (c *Client) Get(g *hrpc.Get) (*hrpc.Result, error) {
+	return call(c, "hbase.Get", g.Context(), g.Key(), func() (*hrpc.Result, error) { return c.Client.Get(g) })
 }
 
 func (c *Client) Put(p *hrpc.Mutate) (*hrpc.Result, error) {
-	tracer := c.trace("hbase.Put", p.Context())
-	if tracer == nil {
-		return c.Client.Put(p)
-	}
-
-	defer tracer.EndSpanEvent()
-	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHbaseClientParams, keyString(p.Key()))
-
-	r, e := c.Client.Put(p)
-	tracer.SpanEvent().SetError(e)
-	return r, e
+	return call(c, "hbase.Put", p.Context(), p.Key(), func() (*hrpc.Result, error) { return c.Client.Put(p) })
 }
 
 func (c *Client) Delete(d *hrpc.Mutate) (*hrpc.Result, error) {
-	tracer := c.trace("hbase.Delete", d.Context())
-	if tracer == nil {
-		return c.Client.Delete(d)
-	}
-
-	defer tracer.EndSpanEvent()
-	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHbaseClientParams, keyString(d.Key()))
-
-	r, e := c.Client.Delete(d)
-	tracer.SpanEvent().SetError(e)
-	return r, e
+	return call(c, "hbase.Delete", d.Context(), d.Key(), func() (*hrpc.Result, error) { return c.Client.Delete(d) })
 }
 
 func (c *Client) Append(a *hrpc.Mutate) (*hrpc.Result, error) {
-	tracer := c.trace("hbase.Append", a.Context())
-	if tracer == nil {
-		return c.Client.Append(a)
-	}
-
-	defer tracer.EndSpanEvent()
-	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHbaseClientParams, keyString(a.Key()))
-
-	r, e := c.Client.Append(a)
-	tracer.SpanEvent().SetError(e)
-	return r, e
+	return call(c, "hbase.Append", a.Context(), a.Key(), func() (*hrpc.Result, error) { return c.Client.Append(a) })
 }
 
 func (c *Client) Increment(i *hrpc.Mutate) (int64, error) {
-	tracer := c.trace("hbase.Increment", i.Context())
-	if tracer == nil {
-		return c.Client.Increment(i)
-	}
-
-	defer tracer.EndSpanEvent()
-	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHbaseClientParams, keyString(i.Key()))
-
-	r, e := c.Client.Increment(i)
-	tracer.SpanEvent().SetError(e)
-	return r, e
+	return call(c, "hbase.Increment", i.Context(), i.Key(), func() (int64, error) { return c.Client.Increment(i) })
 }
 
 func (c *Client) CheckAndPut(p *hrpc.Mutate, family string, qualifier string, expectedValue []byte) (bool, error) {
-	tracer := c.trace("hbase.CheckAndPut", p.Context())
-	if tracer == nil {
+	return call(c, "hbase.CheckAndPut", p.Context(), p.Key(), func() (bool, error) {
 		return c.Client.CheckAndPut(p, family, qualifier, expectedValue)
-	}
-
-	defer tracer.EndSpanEvent()
-	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHbaseClientParams, keyString(p.Key()))
-
-	r, e := c.Client.CheckAndPut(p, family, qualifier, expectedValue)
-	tracer.SpanEvent().SetError(e)
-	return r, e
+	})
 }
 
 func (c *Client) Scan(s *hrpc.Scan) hrpc.Scanner {
-	tracer := c.trace("hbase.Scan", s.Context())
+	tracer, se := c.trace("hbase.Scan", s.Context())
 	if tracer == nil {
 		return c.Client.Scan(s)
 	}
 
 	defer tracer.EndSpanEvent()
-	tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationHbaseClientParams, scanKeyString(s.StartRow(), s.StopRow()))
+	se.Annotations().AppendString(pinpoint.AnnotationHbaseClientParams, scanKeyString(s.StartRow(), s.StopRow()))
 
 	return c.Client.Scan(s)
 }
