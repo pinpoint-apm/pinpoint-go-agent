@@ -672,12 +672,12 @@ func Test_sendMetadata_failureLogIsThrottled(t *testing.T) {
 
 	agentGrpc, _ := newFailingMetaAgentGrpc(newTestAgent(defaultConfig()), status.Errorf(codes.Unavailable, "collector down"))
 	for i := 0; i < 100; i++ {
-		assert.Error(t, agentGrpc.sendStringMetadataOnce(1, "test.error"))
+		assert.Error(t, agentGrpc.sendMetadata(stringMeta{id: 1, funcName: "test.error"}))
 	}
 	assert.Equal(t, 1, strings.Count(buf.String(), "send string metadata"), "logged per failed send")
 
 	metaSendLog.next.Store(0) // the interval elapses
-	assert.Error(t, agentGrpc.sendStringMetadataOnce(1, "test.error"))
+	assert.Error(t, agentGrpc.sendMetadata(stringMeta{id: 1, funcName: "test.error"}))
 	assert.Contains(t, buf.String(), "(99 similar warning(s) suppressed)")
 }
 
@@ -737,7 +737,7 @@ func Test_metaVerdictOf_noRetryOnNonRetryableError(t *testing.T) {
 	agent := newTestAgent(cfg)
 	agentGrpc, failing := newFailingMetaAgentGrpc(agent, status.Errorf(codes.Internal, "bad request"))
 
-	err := agentGrpc.sendStringMetadataOnce(1, "test.error")
+	err := agentGrpc.sendMetadata(stringMeta{id: 1, funcName: "test.error"})
 
 	assert.Error(t, err)
 	assert.Equal(t, metaRejected, metaVerdictOf(err, 1), "non-retryable errors must not retry")
@@ -1051,17 +1051,17 @@ func Test_agentGrpc_sendMetadata_payloads(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agentGrpc, meta := newMockMetaAgentGrpc(agent)
 
-	assert.NoError(t, agentGrpc.sendApiMetadataOnce(7, "test.api", 42, apiTypeInvocation))
-	assert.NoError(t, agentGrpc.sendStringMetadataOnce(8, "test.error"))
-	assert.NoError(t, agentGrpc.sendSqlMetadataOnce(9, "SELECT 1"))
-	assert.NoError(t, agentGrpc.sendSqlUidMetadataOnce([]byte{0xde, 0xad}, "SELECT 2"))
+	assert.NoError(t, agentGrpc.sendMetadata(apiMeta{id: 7, descriptor: "test.api", apiType: apiTypeInvocation}))
+	assert.NoError(t, agentGrpc.sendMetadata(stringMeta{id: 8, funcName: "test.error"}))
+	assert.NoError(t, agentGrpc.sendMetadata(sqlMeta{id: 9, sql: "SELECT 1"}))
+	assert.NoError(t, agentGrpc.sendMetadata(sqlUidMeta{uid: []byte{0xde, 0xad}, sql: "SELECT 2"}))
 
 	api, str, sql, sqlUid, _ := meta.sentMeta()
 
 	require.Len(t, api, 1)
 	assert.Equal(t, int32(7), api[0].GetApiId())
 	assert.Equal(t, "test.api", api[0].GetApiInfo())
-	assert.Equal(t, int32(42), api[0].GetLine())
+	assert.Equal(t, int32(-1), api[0].GetLine())
 	assert.EqualValues(t, apiTypeInvocation, api[0].GetType())
 
 	require.Len(t, str, 1)
@@ -1079,10 +1079,10 @@ func Test_agentGrpc_sendMetadata_payloads(t *testing.T) {
 
 // A statement can carry bytes that are not UTF-8 (a binary literal). A SQL UID
 // item that fails to marshal is rejected and re-registered every retry delay.
-func Test_agentGrpc_sendSqlUidMetadataOnce_SanitizesInvalidUTF8(t *testing.T) {
+func Test_agentGrpc_sendMetadata_SqlUidSanitizesInvalidUTF8(t *testing.T) {
 	agentGrpc, meta := newMockMetaAgentGrpc(newTestAgent(defaultConfig()))
 
-	require.NoError(t, agentGrpc.sendSqlUidMetadataOnce([]byte{1}, "SELECT 'bad\xff'"))
+	require.NoError(t, agentGrpc.sendMetadata(sqlUidMeta{uid: []byte{1}, sql: "SELECT 'bad\xff'"}))
 
 	_, _, _, sqlUid, _ := meta.sentMeta()
 	require.Len(t, sqlUid, 1)
@@ -1100,7 +1100,7 @@ func Test_agentGrpc_sendExceptionMetadata(t *testing.T) {
 	pcs = pcs[:runtime.Callers(1, pcs)]
 	errorTime := time.Unix(0, 1234*int64(time.Millisecond))
 
-	assert.NoError(t, agentGrpc.sendExceptionMetadataOnce(&exceptionMeta{
+	assert.NoError(t, agentGrpc.sendMetadata(exceptionMeta{
 		txId:        TransactionId{AgentId: "testAgent", StartTime: 11, Sequence: 22},
 		spanId:      33,
 		uriTemplate: "/test/uri",
@@ -1138,7 +1138,7 @@ func Test_agentGrpc_sendExceptionMetadata_sizeGuardFollowsConfiguredLimit(t *tes
 	// must be sent; the two limits are unrelated.
 	agent := newTestAgent(defaultConfig())
 	agentGrpc, meta := newMockMetaAgentGrpc(agent)
-	assert.NoError(t, agentGrpc.sendExceptionMetadataOnce(&exceptionMeta{uriTemplate: strings.Repeat("x", 2*grpcWriteBufferSize)}))
+	assert.NoError(t, agentGrpc.sendMetadata(exceptionMeta{uriTemplate: strings.Repeat("x", 2*grpcWriteBufferSize)}))
 	_, _, _, _, except := meta.sentMeta()
 	assert.Len(t, except, 1, "a message under MaxSendMessageSize is sent")
 
@@ -1148,8 +1148,8 @@ func Test_agentGrpc_sendExceptionMetadata_sizeGuardFollowsConfiguredLimit(t *tes
 	agent = newTestAgent(cfg)
 	agentGrpc, meta = newMockMetaAgentGrpc(agent)
 
-	assert.NoError(t, agentGrpc.sendExceptionMetadataOnce(&exceptionMeta{uriTemplate: strings.Repeat("x", 32*1024)}))
-	assert.Error(t, agentGrpc.sendExceptionMetadataOnce(&exceptionMeta{uriTemplate: strings.Repeat("x", 64*1024)}))
+	assert.NoError(t, agentGrpc.sendMetadata(exceptionMeta{uriTemplate: strings.Repeat("x", 32*1024)}))
+	assert.Error(t, agentGrpc.sendMetadata(exceptionMeta{uriTemplate: strings.Repeat("x", 64*1024)}))
 	_, _, _, _, except = meta.sentMeta()
 	assert.Len(t, except, 1, "only the message under the configured limit reaches the collector")
 }
@@ -1161,7 +1161,7 @@ func Test_agentGrpc_sendExceptionMetadata_oversizedIsSkippedWithoutRetry(t *test
 	agentGrpc, meta := newMockMetaAgentGrpc(agent)
 	oversized := &exceptionMeta{uriTemplate: strings.Repeat("x", grpcMaxMessageSize)}
 
-	assert.Error(t, agentGrpc.sendExceptionMetadataOnce(oversized))
+	assert.Error(t, agentGrpc.sendMetadata(*oversized))
 	_, _, _, _, except := meta.sentMeta()
 	assert.Empty(t, except, "an oversized message must not reach the collector")
 
@@ -2145,7 +2145,7 @@ func Test_sendApiMetadata_usesMetaDeadline(t *testing.T) {
 	agentGrpc := &agentGrpc{metaClient: client, agent: agent}
 
 	before := time.Now()
-	assert.NoError(t, agentGrpc.sendApiMetadata(&pb.PApiMetaData{ApiId: 1}))
+	assert.NoError(t, agentGrpc.sendMetadata(apiMeta{id: 1}))
 	assert.WithinDuration(t, before.Add(metaGrpcTimeOut), deadline, time.Second)
 }
 
@@ -2219,12 +2219,12 @@ func Test_metaVerdictOf_noRetryOnCollectorRejection(t *testing.T) {
 	var calls atomic.Int32
 	agentGrpc := &agentGrpc{metaClient: rejectingMetaClient(&calls), agent: agent}
 
-	err := agentGrpc.sendApiMetadata(&pb.PApiMetaData{ApiId: 1, ApiInfo: "test.api"})
+	err := agentGrpc.sendMetadata(apiMeta{id: 1, descriptor: "test.api"})
 	require.Error(t, err)
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 	assert.Contains(t, err.Error(), "unsupported metadata", "the collector's reason must reach the log")
 
-	err = agentGrpc.sendStringMetadataOnce(1, "test.error")
+	err = agentGrpc.sendMetadata(stringMeta{id: 1, funcName: "test.error"})
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 	assert.Equal(t, metaRejected, metaVerdictOf(err, 1), "a rejection must not be retried")
 	assert.Equal(t, int32(2), calls.Load())

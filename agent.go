@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 	"runtime/debug"
 	"strconv"
@@ -1196,7 +1195,7 @@ func (agent *agent) metaMaxConcurrentRequests() int {
 // slots and stall sendMetaWorker on the permit while metaChan overflows.
 func (agent *agent) sendMetadataOnce(item pendingMeta) {
 	attempts := item.attempts + 1
-	err := agent.sendMetadata(item.md)
+	err := agent.agentGrpc.sendMetadata(item.md)
 	switch metaVerdictOf(err, attempts) {
 	case metaDelivered:
 		agent.metaDelivered.Add(1)
@@ -1236,23 +1235,6 @@ func (agent *agent) scheduleMetaRetry(item pendingMeta) {
 		agent.deleteMetaCache(evicted.md)
 		agent.metaRetryDrops.record(1)
 	}
-}
-
-// sendMetadata makes one send of md and returns its error.
-func (agent *agent) sendMetadata(md interface{}) error {
-	switch md := md.(type) {
-	case apiMeta:
-		return agent.agentGrpc.sendApiMetadataOnce(md.id, md.descriptor, -1, md.apiType)
-	case stringMeta:
-		return agent.agentGrpc.sendStringMetadataOnce(md.id, md.funcName)
-	case sqlMeta:
-		return agent.agentGrpc.sendSqlMetadataOnce(md.id, md.sql)
-	case sqlUidMeta:
-		return agent.agentGrpc.sendSqlUidMetadataOnce(md.uid, md.sql)
-	case exceptionMeta:
-		return agent.agentGrpc.sendExceptionMetadataOnce(&md)
-	}
-	return fmt.Errorf("unknown metadata type %T", md)
 }
 
 // pendingMeta is a metadata item on the retry schedule.

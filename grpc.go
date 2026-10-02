@@ -857,41 +857,26 @@ func sendMeta[M proto.Message](agentGrpc *agentGrpc, kind string, in M, call fun
 	return err
 }
 
-func (agentGrpc *agentGrpc) sendApiMetadata(in *pb.PApiMetaData) error {
-	return sendMeta(agentGrpc, "api", in, agentGrpc.metaClient.RequestApiMetaData)
-}
-
-func (agentGrpc *agentGrpc) sendApiMetadataOnce(apiId int32, api string, line int, apiType int) error {
-	return agentGrpc.sendApiMetadata(&pb.PApiMetaData{
-		ApiId:   apiId,
-		ApiInfo: validUTF8(api),
-		Line:    int32(line),
-		Type:    int32(apiType),
-	})
-}
-
-func (agentGrpc *agentGrpc) sendStringMetadata(in *pb.PStringMetaData) error {
-	return sendMeta(agentGrpc, "string", in, agentGrpc.metaClient.RequestStringMetaData)
-}
-
-func (agentGrpc *agentGrpc) sendStringMetadataOnce(strId int32, str string) error {
-	return agentGrpc.sendStringMetadata(&pb.PStringMetaData{StringId: strId, StringValue: validUTF8(str)})
-}
-
-func (agentGrpc *agentGrpc) sendSqlMetadata(in *pb.PSqlMetaData) error {
-	return sendMeta(agentGrpc, "sql", in, agentGrpc.metaClient.RequestSqlMetaData)
-}
-
-func (agentGrpc *agentGrpc) sendSqlMetadataOnce(sqlId int32, sql string) error {
-	return agentGrpc.sendSqlMetadata(&pb.PSqlMetaData{SqlId: sqlId, Sql: validUTF8(sql)})
-}
-
-func (agentGrpc *agentGrpc) sendSqlUidMetadata(in *pb.PSqlUidMetaData) error {
-	return sendMeta(agentGrpc, "sql uid", in, agentGrpc.metaClient.RequestSqlUidMetaData)
-}
-
-func (agentGrpc *agentGrpc) sendSqlUidMetadataOnce(sqlUid []byte, sql string) error {
-	return agentGrpc.sendSqlUidMetadata(&pb.PSqlUidMetaData{SqlUid: sqlUid, Sql: validUTF8(sql)})
+// sendMetadata makes one send of md, built into the message of its kind.
+func (agentGrpc *agentGrpc) sendMetadata(md interface{}) error {
+	client := agentGrpc.metaClient
+	switch md := md.(type) {
+	case apiMeta:
+		return sendMeta(agentGrpc, "api", &pb.PApiMetaData{
+			ApiId: md.id, ApiInfo: validUTF8(md.descriptor), Line: -1, Type: int32(md.apiType),
+		}, client.RequestApiMetaData)
+	case stringMeta:
+		return sendMeta(agentGrpc, "string", &pb.PStringMetaData{StringId: md.id, StringValue: validUTF8(md.funcName)},
+			client.RequestStringMetaData)
+	case sqlMeta:
+		return sendMeta(agentGrpc, "sql", &pb.PSqlMetaData{SqlId: md.id, Sql: validUTF8(md.sql)}, client.RequestSqlMetaData)
+	case sqlUidMeta:
+		return sendMeta(agentGrpc, "sql uid", &pb.PSqlUidMetaData{SqlUid: md.uid, Sql: validUTF8(md.sql)},
+			client.RequestSqlUidMetaData)
+	case exceptionMeta:
+		return agentGrpc.sendExceptionMetadata(makePExceptionMetaData(&md))
+	}
+	return fmt.Errorf("unknown metadata type %T", md)
 }
 
 func (agentGrpc *agentGrpc) sendExceptionMetadata(in *pb.PExceptionMetaData) error {
@@ -909,29 +894,7 @@ func (agentGrpc *agentGrpc) sendExceptionMetadata(in *pb.PExceptionMetaData) err
 		metaSkipLog.warnf("skip exception metadata - %v", err)
 		return err
 	}
-
-	ctx, cancel := context.WithTimeout(grpcMetadataContext(agentGrpc.agent, -1), metaGrpcTimeOut)
-	defer cancel()
-
-	err := metaResult(agentGrpc.metaClient.RequestExceptionMetaData(ctx, in))
-	if err != nil {
-		metaSendLog.errorf("send exception metadata - %v", err)
-	}
-
-	return err
-}
-
-func (agentGrpc *agentGrpc) sendExceptionMetadataOnce(exception *exceptionMeta) error {
-	exceptMeta := makePExceptionMetaData(exception)
-
-	if IsLogLevelEnabled(logrus.DebugLevel) {
-		Log("grpc").Debugf("exception metadata: %s", exceptMeta.String())
-	}
-
-	// Unlike the other metadata types, a failure here releases nothing:
-	// exception metadata is never cached (deleteMetaCache is a no-op for
-	// exceptionMeta), so there is no stale id to invalidate.
-	return agentGrpc.sendExceptionMetadata(exceptMeta)
+	return sendMeta(agentGrpc, "exception", in, agentGrpc.metaClient.RequestExceptionMetaData)
 }
 
 func makePExceptionMetaData(e *exceptionMeta) *pb.PExceptionMetaData {
