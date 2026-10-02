@@ -14,8 +14,10 @@ import (
 )
 
 func query(w http.ResponseWriter, r *http.Request) {
+	// encrypt=disable: the container's self-signed certificate can carry a
+	// negative serial number, which crypto/x509 rejects since Go 1.23.
 	// First connect to master database to create TestDB if it doesn't exist
-	masterDsn := "server=localhost;user id=sa;password=TestPass123;port=1433;database=master"
+	masterDsn := "server=localhost;user id=sa;password=TestPass123;port=1433;database=master;encrypt=disable"
 	masterDb, err := sql.Open("mssql-microsoft-pinpoint", masterDsn)
 	if err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -29,7 +31,7 @@ func query(w http.ResponseWriter, r *http.Request) {
 	masterDb.Close()
 
 	// Now connect to TestDB
-	dsn := "server=localhost;user id=sa;password=TestPass123;port=1433;database=TestDB"
+	dsn := "server=localhost;user id=sa;password=TestPass123;port=1433;database=TestDB;encrypt=disable"
 	db, err := sql.Open("mssql-microsoft-pinpoint", dsn)
 	if err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
