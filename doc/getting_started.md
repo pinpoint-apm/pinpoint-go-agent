@@ -45,7 +45,7 @@ func main() {
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)
 	if err != nil {
-		log.Fatalf("pinpoint agent start fail: %v", err)
+		log.Printf("pinpoint agent start failed: %v", err) // keeps running, untraced
 	}
 	
 	...
@@ -93,7 +93,7 @@ func main() {
 	cfg, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(cfg)
 	if err != nil {
-		log.Fatalf("pinpoint agent start fail: %v", err)
+		log.Printf("pinpoint agent start failed: %v", err) // keeps running, untraced
 	}
 	defer agent.Shutdown()                   // normal return from main
 	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM/SIGINT: a defer alone does not run on a signal
@@ -109,7 +109,7 @@ The WrapClient() function in the pinpoint http plugin allows you to trace http c
 
 ``` go
 func outgoing(w http.ResponseWriter, r *http.Request) {
-	client := phttp.WrapClient(nil)
+	client := pphttp.WrapClient(nil)
 
 	request, _ := http.NewRequest("GET", "http://localhost:9000/hello", nil)
 	request = request.WithContext(r.Context())
@@ -136,7 +136,7 @@ Below is an example of tracking the handler of the Gin framework.
 You can simply register Gin plugin with the middleware of the Gin or wrap the Gin handler like http plugin.
 
 ``` go
-router.Use(pgin.Middleware())
+router.Use(ppgin.Middleware())
 ```
 ``` go
 package main
@@ -186,7 +186,7 @@ import (
 	"database/sql"
 
 	_ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2"
-	github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 func query(w http.ResponseWriter, r *http.Request) {
@@ -205,32 +205,6 @@ func query(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("number of tables in information_schema", count)
 }
 
-```
-
-## Context propagation
-In the example of trace database query above, looking at the query() function,
-there is a code that invokes the pinpoint.FromContext() function to acquire the tracer.
-
-``` go
-tracer := pinpoint.FromContext(r.Context())
-```
-
-And, the query() function calls the pinpoint.NewContext() function to add the tracer to the go context.
-
-``` go
-ctx := pinpoint.NewContext(context.Background(), tracer)
-row := db.QueryRowContext(ctx, "SELECT count(*) from tables")
-```
-
-The tracer is the object that implements the Tracer interface of the Pinpoint Go Agent,
-which generates and stores instrumentation information. When calling the go function, 
-we use the context of the go language to propagate this tracer. 
-Pinpoint Go Agent provides a function that adds a tracer to the context, 
-and a function that imports a tracer from the context, respectively.
-
-``` go
-NewContext(ctx context.Context, tracer Tracer) context.Context 
-FromContext(ctx context.Context) Tracer
 ```
 
 ## Configure the Agent
@@ -298,34 +272,16 @@ agent, err := pinpoint.NewAgent(cfg)
 if err != nil {
     log.Printf("pinpoint agent start failed: %v", err)  // always check this
 }
-defer agent.Shutdown()                                  // flush before exit
+defer agent.Shutdown()                                  // flush on a normal return from main
+defer pinpoint.ShutdownOnSignal(agent)()                // ... and on SIGTERM/SIGINT, which a defer alone misses
 ```
 
 `NewAgent()` returns a **no-op agent plus an error** when the configuration is
-invalid — the application then runs perfectly and reports nothing, so the error
-is your only signal. And because spans are sent by a separate goroutine, a
-process that exits immediately can drop whatever is still queued;
-`defer agent.Shutdown()` is what flushes it.
-
-That `defer` only runs on a normal return from `main()`. It does **not** run
-when the process is killed by a signal — and `SIGTERM` is exactly what
-Kubernetes, Docker and systemd send on every rollout, scale-down or stop — nor
-on `os.Exit()`. In both cases the spans still queued are lost and the collector
-never learns the agent stopped, so the UI keeps listing it as alive. If your
-program does not already handle its own signals, opt in with
-`pinpoint.ShutdownOnSignal`, which runs `Shutdown()` on `SIGTERM`/`SIGINT` and
-then re-raises the signal so the process still exits the way it would have:
-
-```go
-defer agent.Shutdown()
-defer pinpoint.ShutdownOnSignal(agent)()  // off unless you call it
-```
-
-If your program already has its own `signal.Notify`, call `agent.Shutdown()`
-from that handler instead. Nothing covers `os.Exit`: Go has no `atexit`, so a
-program that exits that way must call `agent.Shutdown()` first. See
-[Troubleshooting](troubleshooting.md#spans-missing-at-shutdown-or-on-a-rollout)
-for the details and the `os.Exit` limitation.
+invalid: the application then runs perfectly and reports nothing, so the error
+is your only signal. Spans are sent by a separate goroutine, so a process that
+exits without `Shutdown()` drops whatever is still queued. A `defer` does not
+run on a signal or `os.Exit()`; see
+[Troubleshooting](troubleshooting.md#spans-missing-at-shutdown-or-on-a-rollout).
 
 ## Runnable examples
 
@@ -356,21 +312,6 @@ Every plugin directory also carries its own `README.md` and `example/`.
   second instrument.
 * [Configuration](config.md) — every option, plus sampling and privacy
   settings for production.
-* [Troubleshooting](troubleshooting.md) — when the trace does not show up.
-
-## Troubleshooting
-
-| Symptom | First thing to check |
-|---|---|
-| No `new pinpoint agent` line | `ApplicationName` is required; check the error from `NewAgent()` |
-| No `success to register agent` | collector host and all three ports; TLS settings |
-| Agent registered, but nothing in the UI | is anything actually instrumented? Go traces nothing by default |
-| Nothing in the UI, sampling suspected | set `Sampling.PercentRate` to 100 while diagnosing |
-| Short-lived program reports nothing | add `defer agent.Shutdown()` |
-| Last spans before a rollout / `SIGTERM` are missing | a `defer` does not run on a signal; see [Troubleshooting](troubleshooting.md#spans-missing-at-shutdown-or-on-a-rollout) |
-| Only the first hop appears | the client must be wrapped, and the request must carry the tracer's context |
-
-Run once with `PINPOINT_GO_LOG_LEVEL=debug` before digging further: the agent
-prints its fully resolved configuration at startup, and reports API misuse
-(`src=span` warnings) that is silent at the default level. See
-[Troubleshooting](troubleshooting.md) for the full guide.
+* [Troubleshooting](troubleshooting.md) — when the trace does not show up. Run
+  once with `PINPOINT_GO_LOG_LEVEL=debug` first: the agent prints its resolved
+  configuration and reports API misuse (`src=span`) that is silent at `info`.

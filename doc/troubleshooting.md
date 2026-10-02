@@ -165,32 +165,10 @@ After it returns, that agent never collects trace data again. To resume, build
 a new agent with `NewAgent()` — again, no process restart.
 
 ```go
-func newAgent(w http.ResponseWriter, r *http.Request) {
-    opts := []pinpoint.ConfigOption{
-        pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
-    }
-    c, _ := pinpoint.NewConfig(opts...)
-    _, err := pinpoint.NewAgent(c)
-    if err == nil {
-        io.WriteString(w, "New Pinpoint Go Agent - success")
-    } else {
-        io.WriteString(w, "New Pinpoint Go Agent - fail")
-    }
-}
+pinpoint.GetAgent().Shutdown()          // stop: that agent never traces again
 
-func shutdown(w http.ResponseWriter, r *http.Request) {
-    pinpoint.GetAgent().Shutdown()
-    io.WriteString(w, "Shutdown Pinpoint Go Agent")
-}
-
-func main() {
-    ...
-
-    http.HandleFunc("/newagent", newAgent)
-    http.HandleFunc("/shutdown", shutdown)
-    http.HandleFunc("/handler", pphttp.WrapHandlerFunc(handler))
-    http.ListenAndServe(":8000", nil)
-}
+c, _ := pinpoint.NewConfig(pinpoint.WithConfigFile("/etc/myapp/pinpoint-config.yaml"))
+agent, err := pinpoint.NewAgent(c)      // resume: a fresh agent, same process
 ```
 
 Two things to know about this pattern:
@@ -431,9 +409,6 @@ nc -vz your-collector-host 9991
   registration with `success=false` (still initializing, briefly refusing) is
   retried the same way and logs `register agent - <message>, retrying`; it is
   never treated as permanent.
-  Every 30 seconds of that wait the agent also logs `still waiting for agent
-  registration after <n>ms`, which names the consequence the per-attempt lines
-  leave out: no spans and no stats until registration succeeds.
 * If the connection cannot even be set up (bad TLS material, unparsable
   address) the agent logs `failed to connect to collector, agent disabled` and
   releases itself, so `GetAgent()` returns the no-op agent and `NewAgent` can be
@@ -451,38 +426,24 @@ nc -vz your-collector-host 9991
 **Symptoms:** a gap in spans or stats that closed by itself; you need to know
 when the connection was lost and when it came back.
 
-The transport logs each collector channel (`agent`, `span`, `stat`, `command`)
-under `src=grpc`.
+Each collector channel (`agent`, `span`, `stat`, `command`) logs under
+`src=grpc`, rate limited to one line per channel per minute so a flapping
+collector cannot flood the log; a line that closes a quiet window carries the
+number of transitions it folded:
 
-* `<channel> connection state <from> -> <to>` (INFO) is an **observed** state
-  change while the agent waited for the channel. `GetState` is a sampled read,
-  not a stream of states: what happened between two samples is not seen, so
-  `from` and `to` are consecutive samples, not necessarily consecutive states.
-  A `-> READY` line is the moment the channel recovered.
-* The lines are rate limited to one per channel per minute so a flapping
-  collector cannot flood the log. A line that closes a quiet window carries
-  `(<n> transitions since the last state line)`; the first recovery to `READY`
-  in a window is always logged and marked `(other transitions are folded into
-  the next state line)`. Within a window only that one recovery is shown; a
-  channel that flaps several times a minute logs the first one and counts the
-  rest.
-* `<channel> connection ready again after <d>; lifetime: not ready <n> times,
-  <d> waiting for READY in total, <n> rotations` (INFO) closes an outage with
-  the running totals. `rotations` counts `Collector.Grpc.ConnectionMaxAge`
-  rotations over every channel of the process, so the same value appears on
-  each channel's line. A
-  first connect is not an outage and gets no summary. This line is rate
-  limited like the state lines.
-* `<channel> connection not ready (state <s>): waited <d> so far` (WARN) is a
-  wait that ran out with the channel still down; it repeats at most once per
-  channel per minute while the outage lasts. WARN because data is not being
-  sent meanwhile: the per-attempt `wait <channel> connection ready` INFO line
-  (unchanged) says an attempt started, this one says the outage is ongoing.
+| Line | Level | Means |
+|---|---|---|
+| `<channel> connection state <from> -> <to>` | INFO | an observed state change; `-> READY` is the moment the channel recovered |
+| `<channel> connection ready again after <d>; lifetime: ...` | INFO | an outage closed, with running totals (`rotations` counts `Collector.Grpc.ConnectionMaxAge` rotations over every channel) |
+| `<channel> connection not ready (state <s>): waited <d> so far` | WARN | the outage is ongoing and data is not being sent meanwhile |
+
+The state is a sampled read, not a stream: `from` and `to` are consecutive
+samples, and a first connect is not an outage and gets no summary.
 
 ### Configuration Changes Not Taking Effect
 
 * Only options marked **dynamic** reload from the config file; see the
-  [reloadable options list](config.md#dynamic-configuration-reference).
+  [dynamic options](config.md#dynamic-configuration).
   Everything else needs a restart.
 * Reloads come from polling the config file once a second, so a change takes
   up to that long to apply, and they require the running process to have been
@@ -508,13 +469,3 @@ When reporting an issue, include:
 
 Report bugs and ask questions on the
 [GitHub repository](https://github.com/pinpoint-apm/pinpoint-go-agent/issues).
-
----
-
-## Related Documentation
-
-* [Getting Started](getting_started.md)
-* [Configuration](config.md)
-* [Custom Instrumentation](instrument.md)
-* [Tracer, Span, and Annotation Contracts](api_contracts.md)
-* [Plugin User Guide](plugin_guide.md)

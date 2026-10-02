@@ -81,7 +81,7 @@ find none started and record nothing. Do not use it to put the migration off.
 A carrier of your own - a message queue's headers, say - now tells a key held
 with an empty value from a key it does not hold. The difference decides whether
 a trace continues across a proxy that blanks a header instead of dropping it
-([Implementing a carrier](api_contracts.md#implementing-a-carrier)):
+([contract 10](api_contracts.md#10-no-op-and-unsampled-tracers-are-deliberately-silent)):
 
 ```go
 // v1

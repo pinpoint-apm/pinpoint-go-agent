@@ -199,33 +199,13 @@ handler.
 A queue is a trace boundary, so it has two halves. The producer records a span
 event on the current transaction and writes the tracing context into the
 message headers; the consumer opens a **new root span** per message that
-continues that transaction:
-
-```go
-// producer, inside a traced request
-producer, _ := ppsaramaibm.NewSyncProducer(brokers, config)
-
-ctx := pinpoint.NewContext(context.Background(), tracer)
-partition, offset, err := producer.SendMessageContext(ctx, msg)
-```
-
-```go
-// consumer
-func process(ctx context.Context, msg *sarama.ConsumerMessage) error {
-    tracer := pinpoint.FromContext(ctx)
-    defer tracer.NewSpanEvent("process").EndSpanEvent()
-    return handle(msg)
-}
-
-// NewContext carries the broker addresses so the UI can show the Kafka node
-ctx := ppsaramaibm.NewContext(context.Background(), brokers)
-for msg := range pc.Messages() {
-    ppsaramaibm.ConsumeMessageContext(process, ctx, msg)
-}
-```
+continues that transaction.
 
 Send through `SendMessageContext` (or `InputContext`): the plain `SendMessage`
-and `Input` produce without tracing, since they carry no context.
+and `Input` produce without tracing, since they carry no context. The consumer
+side is `ConsumeMessageContext` over a context from `NewContext`, which carries
+the broker addresses so the UI can show the Kafka node; each plugin README has
+the full producer and consumer code.
 
 The context travels in record headers, which Kafka has since 0.11. A sarama
 producer whose `Config.Version` is older - the default in older sarama
@@ -253,29 +233,11 @@ logger.ErrorContext(ctx, "something failed")
 logger.LogAttrs(ctx, slog.LevelError, "something failed", ppslog.NewAttrs(tracer)...)
 ```
 
-```go
-logger.AddHook(pplogrus.NewHook())
-
-// or per-entry
-logger.WithFields(pplogrus.NewField(tracer)).Error("something failed")
-```
-
-```go
-logger.Error("something failed", ppzap.NewField(tracer)...)
-
-// or once per request
-logger := ppzap.NewLogger(zap.L(), tracer)
-```
-
 The slog handler reads the tracer from the context the log call is given, so use
 the `*Context` methods of `slog.Logger`; a plain `logger.Error` passes
-`context.Background()` and gets no ids. Attributes and groups the application
-added are kept, and the ids stay at the top level under `WithGroup`.
-
-zap has no automatic form: it passes no `context.Context` to `zapcore.Core`, so
-there is nothing for a wrapper to read and the span has to be named where the
-logger is derived. A `*zap.SugaredLogger` is derived from an instrumented
-`*zap.Logger` — `ppzap.NewLogger(logger, tracer).Sugar()`.
+`context.Background()` and gets no ids. logrus takes a hook (`NewHook`) the same
+way; zap gets no context from `zapcore.Core`, so it is per-call (`NewField`) or
+per-request (`NewLogger`). The logrus and zap READMEs have the code.
 
 Another logging library needs no plugin: build the two fields yourself, as
 described in [Correlating your logs](instrument.md#correlating-your-logs).
@@ -298,13 +260,3 @@ themselves are built on exactly the same public API:
 Read [Tracer, Span, and Annotation Contracts](api_contracts.md) first; it is
 short, and it covers the rules that a broken hand-written instrument usually
 violates.
-
----
-
-## Related Documentation
-
-* [Getting Started](getting_started.md)
-* [Custom Instrumentation](instrument.md)
-* [Tracer, Span, and Annotation Contracts](api_contracts.md)
-* [Configuration](config.md)
-* [Troubleshooting](troubleshooting.md)

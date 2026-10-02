@@ -16,13 +16,31 @@ For example, if a configuration item is specified in the environment variable an
 the value set in the environment variable is finally used.
 
 ### Dynamic Configuration
-Pinpoint Go Agent supports the ability to have your application live read a config file while running.
-Configuration options marked with the **dynamic** can be changed at runtime when you change the config file.
+Options marked **dynamic** below are re-read when the config file changes, with no application restart.
+The rest are read once at agent startup.
 
 A reload keeps the initial precedence: an option given by command line flag or environment variable is not
 overwritten by the config file, and neither is a value set through `Config.Set()`.
 Only options whose current value came from the config file, a profile, a config function or the default are updated.
 `Config.Set()` on a non-dynamic option stores the value and logs a warning; the agent applies it after a restart.
+
+Two things make a reload not happen, and both are easy to miss:
+
+* The agent **polls the config file** - its modification time and size, once a
+  second - so a change takes up to that long to apply, and it only works if
+  the process was given a config file (`ConfigFile`). Command flags and
+  environment variables are read once at startup and never re-read.
+* Precedence still applies. An option also set by a command flag or an
+  environment variable keeps that value; editing the file will not change it.
+
+A reload rebuilds the components derived from the changed options (the
+sampler, the logger, the HTTP filters) behind an immutable snapshot, so an
+in-flight request never sees a half-applied change. Watch for `src=config`
+lines on save; a parse error leaves the previous values in place.
+
+`Enable` cannot be reloaded, but `Agent.Shutdown()` stops a running agent and
+`NewAgent()` starts a new one, both without a restart. See
+[Troubleshooting](troubleshooting.md#stopping-and-resuming-the-agent).
 
 ### Malformed Values
 A value that cannot be converted to the type its option is declared with is rejected: the agent logs
@@ -45,8 +63,18 @@ below; those recover the option's default rather than keeping the previous value
 
 ## Configuration Option
 The titles below are used as configuration keys in config file.
-In the description of each config option below, the list is shown in the order command flag, environment variable,
-config function, value type and additional information.
+Every key has the same three spellings, derived from the key:
+
+| Source | Spelling | `Sampling.PercentRate` |
+|---|---|---|
+| command flag | `--pinpoint-` + key, lowercase, `.` to `-` | `--pinpoint-sampling-percentrate` |
+| environment variable | `PINPOINT_GO_` + key, uppercase, `.` to `_` | `PINPOINT_GO_SAMPLING_PERCENTRATE` |
+| config function | `With` + key without `.`, as `pinpoint.ConfigOption` | `WithSamplingPercentRate()` |
+
+Five functions deviate from the rule: `WithAppName()` (ApplicationName), `WithAppType()` (ApplicationType),
+`WithHttpServerStatusCodeError()`, `WithHttpServerRecordRespondHeader()` and `WithHttpClientRecordRespondHeader()`.
+The `Mongo.*` functions live in the mongodriver plugin packages, not in `pinpoint`.
+Each option below lists its environment variable, then its value type and additional information.
 
 ### ConfigFile
 The config options below can be saved to the config file is set by ConfigFile option.
@@ -55,9 +83,7 @@ or properties (`.properties`, `.props`, `.prop`). Configuration keys used in
 config files are case-insensitive. A properties file is `key=value` lines with
 `#` comments: no escapes, line continuations or `${...}` references.
 
-* --pinpoint-configfile
 * PINPOINT_GO_CONFIGFILE
-* WithConfigFile()
 * string
 * case-sensitive
 
@@ -70,7 +96,8 @@ collector:
 sampling:
   type: "percent"
   percentRate: 1
-logLevel: "error"
+log:
+  level: "error"
 ```
 
 * [YAML File Example](/example/pinpoint-config.yaml)
@@ -81,9 +108,7 @@ logLevel: "error"
 The configuration profile feature is supported.
 You can set the profile in the config file and specify the profile to activate with the ActiveProfile option.
 
-* --pinpoint-activeprofile
 * PINPOINT_GO_ACTIVEPROFILE
-* WithActiveProfile()
 * string
 * case-insensitive
 
@@ -131,18 +156,14 @@ If this option is not provided, the agent can't be started.
 The maximum length depends on Uid.Version: 24 bytes for v1, and 254 bytes for v3 and v4.
 See [Identity Versions](#identity-versions).
 
-* --pinpoint-applicationname
 * PINPOINT_GO_APPLICATIONNAME
-* WithAppName()
 * string
 * case-sensitive
 
 ### ApplicationType
 ApplicationType option sets the application type.
 
-* --pinpoint-applicationtype
 * PINPOINT_GO_APPLICATIONTYPE
-* WithAppType()
 * int
 * default: 1800 (ServiceTypeGoApp)
 
@@ -163,9 +184,7 @@ it is logged at warn and the generated AgentId is used instead.
 Check the agent log for that warning if the agent shows up under an AgentId you did not expect.
 See [Identity Versions](#identity-versions).
 
-* --pinpoint-agentname
 * PINPOINT_GO_AGENTNAME
-* WithAgentName()
 * string
 * case-sensitive
 
@@ -179,9 +198,7 @@ The v4 identity protocol is implemented in the agent, but it has not been releas
 so no collector accepts it.
 Use v1 or v3; the v4 details below are documented for when server-side support ships.
 
-* --pinpoint-uid-version
 * PINPOINT_GO_UID_VERSION
-* WithUidVersion()
 * string
 * default: "v3"
 * case-insensitive
@@ -221,9 +238,7 @@ It is ignored for v1 and v3.
 If it is not set, has invalid characters, or the maximum length is exceeded, agent startup fails.
 Note that v4 is not usable at this time, so this option currently has no effect. See [Uid.Version](#uidversion).
 
-* --pinpoint-servicename
 * PINPOINT_GO_SERVICENAME
-* WithServiceName()
 * string
 * default: ""
 * case-sensitive
@@ -237,9 +252,7 @@ If it is not set, agent startup fails.
 The value is masked in agent logs and is never logged in plaintext.
 Note that v4 is not usable at this time, so this option currently has no effect. See [Uid.Version](#uidversion).
 
-* --pinpoint-apikey
 * PINPOINT_GO_APIKEY
-* WithApiKey()
 * string
 * default: ""
 * case-sensitive
@@ -247,9 +260,7 @@ Note that v4 is not usable at this time, so this option currently has no effect.
 ### Collector.Host
 Collector.Host option sets the host address of Pinpoint collector.
 
-* --pinpoint-collector-host
 * PINPOINT_GO_COLLECTOR_HOST
-* WithCollectorHost()
 * string
 * default: "localhost"
 * case-sensitive
@@ -257,27 +268,21 @@ Collector.Host option sets the host address of Pinpoint collector.
 ### Collector.AgentPort
 Collector.AgentPort option sets the agent port of Pinpoint collector.
 
-* --pinpoint-collector-agentport
 * PINPOINT_GO_COLLECTOR_AGENTPORT
-* WithCollectorAgentPort()
 * int
 * default: 9991
 
 ### Collector.SpanPort
 Collector.SpanPort option sets the span port of Pinpoint collector.
 
-* --pinpoint-collector-spanport
 * PINPOINT_GO_COLLECTOR_SPANPORT
-* WithCollectorSpanPort()
 * int
 * default: 9993
 
 ### Collector.StatPort
 Collector.StatPort option sets the stat port of Pinpoint collector.
 
-* --pinpoint-collector-statport
 * PINPOINT_GO_COLLECTOR_STATPORT
-* WithCollectorStatPort()
 * int
 * default: 9992
 
@@ -285,9 +290,7 @@ Collector.StatPort option sets the stat port of Pinpoint collector.
 Collector.AgentInfo.RefreshInterval option sets the cycle for re-sending the agent information to the collector.
 If it is 0 or less, the agent information is sent only once at agent startup.
 
-* --pinpoint-collector-agentinfo-refreshinterval
 * PINPOINT_GO_COLLECTOR_AGENTINFO_REFRESHINTERVAL
-* WithCollectorAgentInfoRefreshInterval()
 * type: int
 * default: 86400000 (24 hours)
 * unit: milliseconds
@@ -298,9 +301,7 @@ It paces two loops: the registration retry at agent startup, which repeats until
 The wait is randomized by +/-30% so agents restarted together do not retry in lockstep, and it does not escalate - a collector that keeps rejecting the registration is polled at this interval for as long as the process runs.
 Only the refresh use has no effect if Collector.AgentInfo.RefreshInterval is 0.
 
-* --pinpoint-collector-agentinfo-sendretryinterval
 * PINPOINT_GO_COLLECTOR_AGENTINFO_SENDRETRYINTERVAL
-* WithCollectorAgentInfoSendRetryInterval()
 * type: int
 * default: 3000
 * unit: milliseconds
@@ -309,9 +310,7 @@ Only the refresh use has no effect if Collector.AgentInfo.RefreshInterval is 0.
 Collector.AgentInfo.MaxTryPerAttempt option sets the max number of agent information sends per refresh cycle.
 It has no effect if Collector.AgentInfo.RefreshInterval is 0.
 
-* --pinpoint-collector-agentinfo-maxtryperattempt
 * PINPOINT_GO_COLLECTOR_AGENTINFO_MAXTRYPERATTEMPT
-* WithCollectorAgentInfoMaxTryPerAttempt()
 * type: int
 * default: 3
 
@@ -320,9 +319,7 @@ Collector.Grpc.KeepAliveTime option sets the interval in milliseconds after whic
 keepalive ping on an idle collector connection.
 The options below apply equally to every collector connection (agent, metadata, span, stat and command channels).
 
-* --pinpoint-collector-grpc-keepalivetime
 * PINPOINT_GO_COLLECTOR_GRPC_KEEPALIVETIME
-* WithCollectorGrpcKeepAliveTime()
 * int
 * default: 30000
 
@@ -330,9 +327,7 @@ The options below apply equally to every collector connection (agent, metadata, 
 Collector.Grpc.KeepAliveTimeout option sets the time in milliseconds the agent waits for a keepalive ping ack
 before closing the connection.
 
-* --pinpoint-collector-grpc-keepalivetimeout
 * PINPOINT_GO_COLLECTOR_GRPC_KEEPALIVETIMEOUT
-* WithCollectorGrpcKeepAliveTimeout()
 * int
 * default: 60000
 
@@ -341,54 +336,42 @@ Collector.Grpc.KeepAlivePermitWithoutCalls option sets whether keepalive pings a
 active stream.
 The default is false. Agents older than this release always behaved as if it were true.
 
-* --pinpoint-collector-grpc-keepalivepermitwithoutcalls
 * PINPOINT_GO_COLLECTOR_GRPC_KEEPALIVEPERMITWITHOUTCALLS
-* WithCollectorGrpcKeepAlivePermitWithoutCalls()
 * type: bool
 * default: false
 
 ### Collector.Grpc.MaxSendMessageSize
 Collector.Grpc.MaxSendMessageSize option sets the max size in bytes of a gRPC message the agent can send.
 
-* --pinpoint-collector-grpc-maxsendmessagesize
 * PINPOINT_GO_COLLECTOR_GRPC_MAXSENDMESSAGESIZE
-* WithCollectorGrpcMaxSendMessageSize()
 * int
 * default: 4194304
 
 ### Collector.Grpc.MaxReceiveMessageSize
 Collector.Grpc.MaxReceiveMessageSize option sets the max size in bytes of a gRPC message the agent can receive.
 
-* --pinpoint-collector-grpc-maxreceivemessagesize
 * PINPOINT_GO_COLLECTOR_GRPC_MAXRECEIVEMESSAGESIZE
-* WithCollectorGrpcMaxReceiveMessageSize()
 * int
 * default: 4194304
 
 ### Collector.Grpc.FlowControlWindow
 Collector.Grpc.FlowControlWindow option sets the initial HTTP/2 flow-control window size in bytes.
 
-* --pinpoint-collector-grpc-flowcontrolwindow
 * PINPOINT_GO_COLLECTOR_GRPC_FLOWCONTROLWINDOW
-* WithCollectorGrpcFlowControlWindow()
 * int
 * default: 1048576
 
 ### Collector.Grpc.WriteBufferSize
 Collector.Grpc.WriteBufferSize option sets the gRPC transport write buffer size in bytes.
 
-* --pinpoint-collector-grpc-writebuffersize
 * PINPOINT_GO_COLLECTOR_GRPC_WRITEBUFFERSIZE
-* WithCollectorGrpcWriteBufferSize()
 * int
 * default: 65536
 
 ### Collector.Grpc.MaxHeaderListSize
 Collector.Grpc.MaxHeaderListSize option sets the max size in bytes of gRPC response headers the agent accepts.
 
-* --pinpoint-collector-grpc-maxheaderlistsize
 * PINPOINT_GO_COLLECTOR_GRPC_MAXHEADERLISTSIZE
-* WithCollectorGrpcMaxHeaderListSize()
 * int
 * default: 8192
 
@@ -397,9 +380,7 @@ Collector.Grpc.SslEnable option enables TLS on all gRPC channels
 (agent, metadata, span, stat) to Pinpoint collector.
 When disabled (default), the agent connects in plaintext as before.
 
-* --pinpoint-collector-grpc-sslenable
 * PINPOINT_GO_COLLECTOR_GRPC_SSLENABLE
-* WithCollectorGrpcSslEnable()
 * bool
 * default: false
 
@@ -412,9 +393,7 @@ error and fails the collector connection instead of falling back to plaintext,
 so the agent stays disabled.
 It is ignored unless [Collector.Grpc.SslEnable](#collectorgrpcsslenable) is enabled.
 
-* --pinpoint-collector-grpc-trustcertfilepath
 * PINPOINT_GO_COLLECTOR_GRPC_TRUSTCERTFILEPATH
-* WithCollectorGrpcTrustCertFilePath()
 * string
 * default: ""
 * case-sensitive
@@ -438,9 +417,7 @@ refreshes: the rotations are still make-before-break and still spread over the a
 resolved, they just cannot see a record change sooner than the resolver does. Renewal periods are
 minutes in practice, where this does not arise.
 
-* --pinpoint-collector-grpc-connectionmaxage
 * PINPOINT_GO_COLLECTOR_GRPC_CONNECTIONMAXAGE
-* WithCollectorGrpcConnectionMaxAge()
 * int
 * default: 0
 * unit: milliseconds
@@ -456,9 +433,7 @@ the host is resolved once per new connection, so the channel only ever holds a s
 [Collector.Grpc.ConnectionMaxAge](#collectorgrpcconnectionmaxage) cannot spread connections across
 instances. Set it to false only to roll the `dns` resolver back without a redeploy.
 
-* --pinpoint-collector-grpc-dnsresolverenable
 * PINPOINT_GO_COLLECTOR_GRPC_DNSRESOLVERENABLE
-* WithCollectorGrpcDnsResolverEnable()
 * bool
 * default: true
 
@@ -470,9 +445,7 @@ the command stream, which waits on the collector, is reopened when its age runs 
 The age is randomized by +/-10%.
 The default 0 keeps a stream open until it fails.
 
-* --pinpoint-collector-grpc-streammaxage
 * PINPOINT_GO_COLLECTOR_GRPC_STREAMMAXAGE
-* WithCollectorGrpcStreamMaxAge()
 * int
 * default: 0
 * unit: milliseconds
@@ -489,9 +462,7 @@ Note that with [Collector.Grpc.KeepAlivePermitWithoutCalls](#collectorgrpckeepal
 default false, a connection with no open stream sends no keepalive pings even when idling is disabled.
 A negative value is treated as 0.
 
-* --pinpoint-collector-grpc-idletimeout
 * PINPOINT_GO_COLLECTOR_GRPC_IDLETIMEOUT
-* WithCollectorGrpcIdleTimeout()
 * int
 * default: 0
 * unit: milliseconds
@@ -505,9 +476,7 @@ it once there is room - and the agent logs a rate-limited warning carrying the c
 items. Items already queued keep their ids.
 The retry schedule for failed metadata sends has its own fixed bound of 1000 and is not affected.
 
-* --pinpoint-collector-grpc-senderqueuesize
 * PINPOINT_GO_COLLECTOR_GRPC_SENDERQUEUESIZE
-* WithCollectorGrpcSenderQueueSize()
 * type: int
 * default: 1000
 * range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
@@ -518,9 +487,7 @@ Spans are always sent in unary SendSpanBatch requests, which a collector impleme
 an older one every batch fails and its spans are dropped, with `SendSpanBatch failed - N spans dropped` in the
 agent log.
 
-* --pinpoint-collector-grpc-spanbatchsize
 * PINPOINT_GO_COLLECTOR_GRPC_SPANBATCHSIZE
-* WithCollectorGrpcSpanBatchSize()
 * type: int
 * default: 50
 * range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
@@ -528,9 +495,7 @@ agent log.
 ### Collector.Grpc.SpanBatchFlushInterval
 Collector.Grpc.SpanBatchFlushInterval option sets how long span batch sender waits for an available request permit.
 
-* --pinpoint-collector-grpc-spanbatchflushinterval
 * PINPOINT_GO_COLLECTOR_GRPC_SPANBATCHFLUSHINTERVAL
-* WithCollectorGrpcSpanBatchFlushInterval()
 * type: int
 * default: 1000
 * unit: milliseconds
@@ -538,9 +503,7 @@ Collector.Grpc.SpanBatchFlushInterval option sets how long span batch sender wai
 ### Collector.Grpc.SpanBatchCollectDeadline
 Collector.Grpc.SpanBatchCollectDeadline option sets how long span batch sender collects additional spans after the first span arrives.
 
-* --pinpoint-collector-grpc-spanbatchcollectdeadline
 * PINPOINT_GO_COLLECTOR_GRPC_SPANBATCHCOLLECTDEADLINE
-* WithCollectorGrpcSpanBatchCollectDeadline()
 * type: int
 * default: 500
 * unit: milliseconds
@@ -552,9 +515,7 @@ metadata) the agent has in flight at once. Exception metadata is one request
 per failed span when `Error.TraceCallStack` is on, so raise this together with
 `Error.NewThroughput` when the metadata queue overflows.
 
-* --pinpoint-collector-grpc-spanbatchmaxconcurrentrequests
 * PINPOINT_GO_COLLECTOR_GRPC_SPANBATCHMAXCONCURRENTREQUESTS
-* WithCollectorGrpcSpanBatchMaxConcurrentRequests()
 * type: int
 * default: 10
 
@@ -568,9 +529,7 @@ An unrecognized type falls back to "COUNTER" and keeps
 turn sampling off; the warning it logs names the type and the rate that were
 applied.
 
-* --pinpoint-sampling-type
 * PINPOINT_GO_SAMPLING_TYPE
-* WithSamplingType()
 * string
 * default: "COUNTER"
 * case-insensitive
@@ -580,9 +539,7 @@ applied.
 Sampling.CounterRate option sets the counter sampling rate.
 Sample 1/rate. In other words, if the rate is 1, then it will be 100% and if it is 100, it will be 1% sampling.
 
-* --pinpoint-sampling-counterrate
 * PINPOINT_GO_SAMPLING_COUNTERRATE
-* WithSamplingCounterRate()
 * int
 * default: 1
 * valid range: 0 ~ 100
@@ -598,9 +555,7 @@ more often a typo than an intent. A rate of `100` or above always samples; a
 rate above `100` is clamped to it with a warning, because a rate over the
 documented maximum reads as a misuse of the option rather than an intent.
 
-* --pinpoint-sampling-percentrate
 * PINPOINT_GO_SAMPLING_PERCENTRATE
-* WithSamplingPercentRate()
 * float
 * default: 100
 * valid range: 0 ~ 100 (0 = no sampling)
@@ -609,9 +564,7 @@ documented maximum reads as a misuse of the option rather than an intent.
 ### Sampling.NewThroughput
 Sampling.NewThroughput option sets the new TPS for a 'throughput sampler'.
 
-* --pinpoint-sampling-newthroughput
 * PINPOINT_GO_SAMPLING_NEWTHROUGHPUT
-* WithSamplingNewThroughput()
 * type: int
 * default: 0
 * dynamic
@@ -619,9 +572,7 @@ Sampling.NewThroughput option sets the new TPS for a 'throughput sampler'.
 ### Sampling.ContinueThroughput
 Sampling.ContinueThroughput option sets the cont TPS for a 'throughput sampler'.
 
-* --pinpoint-sampling-continuethroughput
 * PINPOINT_GO_SAMPLING_CONTINUETHROUGHPUT
-* WithSamplingContinueThroughput()
 * type: int
 * default: 0
 * dynamic
@@ -631,9 +582,7 @@ Span.QueueSize option sets the size of agent's span queue for gRPC.
 It sizes the span queue only; the metadata queue is sized by
 [Collector.Grpc.SenderQueueSize](#collectorgrpcsenderqueuesize) and the stat queue by [Stat.QueueSize](#statqueuesize).
 
-* --pinpoint-span-queuesize
 * PINPOINT_GO_SPAN_QUEUESIZE
-* WithSpanQueueSize()
 * type: int
 * default: 1024
 * range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
@@ -641,9 +590,7 @@ It sizes the span queue only; the metadata queue is sized by
 ### Span.EventChunkSize
 Span.EventChunkSize option sets the size of span event chunk for gRPC.
 
-* --pinpoint-span-eventchunksize
 * PINPOINT_GO_SPAN_EVENTCHUNKSIZE
-* WithSpanEventChunkSize()
 * type: int
 * default: 20
 * range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
@@ -653,9 +600,7 @@ Span.EventChunkSize option sets the size of span event chunk for gRPC.
 Span.MaxCallStackDepth option sets the max callstack depth of a span, if -1 is unlimited and min is 2. A value above 2147483647 (MaxInt32) is unlimited too.
 Events nested one level deeper than this value are still recorded and the next level overflows (with the default 64, up to 65 levels are recorded).
 
-* --pinpoint-span-maxcallstackdepth
 * PINPOINT_GO_SPAN_MAXCALLSTACKDEPTH
-* WithSpanMaxCallStackDepth()
 * type: int
 * default: 64
 * dynamic
@@ -663,9 +608,7 @@ Events nested one level deeper than this value are still recorded and the next l
 ### Span.MaxCallStackSequence
 Span.MaxCallStackSequence option sets the max callstack sequence of a span, if -1 is unlimited and min is 4. A value above 2147483647 (MaxInt32) is unlimited too.
 
-* --pinpoint-span-maxcallstacksequence
 * PINPOINT_GO_SPAN_MAXCALLSTACKSEQUENCE
-* WithSpanMaxCallStackSequence()
 * type: int
 * default: 5000
 * dynamic
@@ -679,9 +622,7 @@ Each entry is `<type>:<message substring>`; either part may be empty, and both m
 The error and every error it wraps are checked, following `Cause()` first and falling back to `Unwrap()`
 (the same chain the exception recorder walks), up to 64 links deep.
 
-* --pinpoint-span-ignoreerrors
 * PINPOINT_GO_SPAN_IGNOREERRORS
-* WithSpanIgnoreErrors()
 * type: string slice
 * default: none
 * dynamic
@@ -716,9 +657,7 @@ amount to "never fail a transaction".
 | `sql` | the `SQL.ErrorCount` limit on one transaction |
 | `unknown` | `SpanRecorder.SetFailure()` called with no cause |
 
-* --pinpoint-span-errormark
 * PINPOINT_GO_SPAN_ERRORMARK
-* WithSpanErrorMark()
 * type: string slice
 * default: none, which means every cause
 * case-insensitive
@@ -747,9 +686,7 @@ never disagree about the same request.
 `Span.IgnoreErrors` excludes individual errors by type and message; this option excludes a
 whole cause, however it was recorded.
 
-* --pinpoint-span-errormarkexclude
 * PINPOINT_GO_SPAN_ERRORMARKEXCLUDE
-* WithSpanErrorMarkExclude()
 * type: string slice
 * default: none
 * case-insensitive
@@ -769,9 +706,7 @@ It is also the timer of the URL statistics send worker (see
 immediately, and this interval bounds how late the last tick is closed once
 traffic stops.
 
-* --pinpoint-stat-collectinterval
 * PINPOINT_GO_STAT_COLLECTINTERVAL
-* WithStatCollectInterval()
 * type: int
 * default: 5000
 * unit: milliseconds
@@ -780,9 +715,7 @@ traffic stops.
 ### Stat.BatchCount
 Stat.BatchCount option sets batch delivery units for collected statistics.
 
-* --pinpoint-stat-batchcount
 * PINPOINT_GO_STAT_BATCHCOUNT
-* WithStatBatchCount()
 * type: int
 * default: 6
 * range: 1 ~ 100 (an out-of-range value falls back to the default with a warning log)
@@ -795,9 +728,7 @@ used to share.
 When the queue is full the oldest message is overwritten, and the agent logs a
 rate-limited warning carrying the cumulative number of dropped messages.
 
-* --pinpoint-stat-queuesize
 * PINPOINT_GO_STAT_QUEUESIZE
-* WithStatQueueSize()
 * type: int
 * default: 1024
 * range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
@@ -805,9 +736,7 @@ rate-limited warning carrying the cumulative number of dropped messages.
 ### SQL.TraceBindValue
 SQL.TraceBindValue option enables bind value tracing for SQL Driver.
 
-* --pinpoint-sql-tracebindvalue
 * PINPOINT_GO_SQL_TRACEBINDVALUE
-* WithSQLTraceBindValue()
 * type: bool 
 * default: true
 * dynamic
@@ -824,9 +753,7 @@ the SQL text published as metadata is truncated, at 64KB, and it carries a
 A negative value turns bind value tracing off entirely - the size becomes 0 and
 `SQL.TraceBindValue` is set to false - and logs a warning.
 
-* --pinpoint-sql-maxbindvaluesize
 * PINPOINT_GO_SQL_MAXBINDVALUESIZE
-* WithSQLMaxBindValueSize()
 * type: int
 * default: 1024
 * range: 0 ~ 262144 (a larger value is clamped with a warning log; the ceiling
@@ -838,9 +765,7 @@ A negative value turns bind value tracing off entirely - the size becomes 0 and
 ### SQL.TraceCommit
 SQL.TraceCommit option enables commit tracing for SQL Driver.
 
-* --pinpoint-sql-tracecommit
 * PINPOINT_GO_SQL_TRACECOMMIT
-* WithSQLTraceCommit()
 * type: bool
 * default: true
 * dynamic
@@ -848,9 +773,7 @@ SQL.TraceCommit option enables commit tracing for SQL Driver.
 ### SQL.TraceRollback
 SQL.TraceRollback option enables rollback tracing for SQL Driver.
 
-* --pinpoint-sql-tracerollback
 * PINPOINT_GO_SQL_TRACEROLLBACK
-* WithSQLTraceRollback()
 * type: bool
 * default: true
 * dynamic
@@ -858,9 +781,7 @@ SQL.TraceRollback option enables rollback tracing for SQL Driver.
 ### SQL.TraceQueryStat
 SQL.TraceQueryStat option enables trace SQL query statistics.
 
-* --pinpoint-sql-tracequerystat
 * PINPOINT_GO_SQL_TRACEQUERYSTAT
-* WithSQLTraceQueryStat()
 * type: bool
 * default: false
 * dynamic
@@ -872,9 +793,7 @@ Consider disabling it if your application inlines literal values into every quer
 instead of using bind variables, since such queries never repeat and every call
 pays a small cache-miss overhead.
 
-* --pinpoint-sql-enablerawsqlcache
 * PINPOINT_GO_SQL_ENABLERAWSQLCACHE
-* WithSQLEnableRawSqlCache()
 * type: bool
 * default: true
 * dynamic
@@ -896,9 +815,7 @@ fixed 1024 entries. The option is read once at agent startup: resizing the
 caches while spans are in flight would orphan the ids those spans already
 carry.
 
-* --pinpoint-sql-cachesize
 * PINPOINT_GO_SQL_CACHESIZE
-* WithSQLCacheSize()
 * type: int
 * default: 1024
 
@@ -919,9 +836,7 @@ come from an agent-local sequence, so bypassing the cache would issue a fresh id
 - and send a fresh metadata message - on every execution of the statement, and
 the same query would appear in the UI as a separate entry per execution.
 
-* --pinpoint-sql-cachelengthlimit
 * PINPOINT_GO_SQL_CACHELENGTHLIMIT
-* WithSQLCacheLengthLimit()
 * type: int
 * default: 2048
 * unit: bytes
@@ -936,9 +851,7 @@ a negative value is a typo rather than a request for that, so it recovers the
 default with a warning, as do values above 876000 (100 years). The SQL-ID, API
 and error caches have no expiry.
 
-* --pinpoint-sql-cacheexpirehours
 * PINPOINT_GO_SQL_CACHEEXPIREHOURS
-* WithSQLCacheExpireHours()
 * type: int
 * default: 168
 * unit: hours
@@ -955,9 +868,7 @@ The failure is recorded under the `sql` cause, so `Span.ErrorMarkExclude: sql` k
 the counting without the verdict - see
 [Span.ErrorMarkExclude](#spanerrormarkexclude).
 
-* --pinpoint-sql-errorcount
 * PINPOINT_GO_SQL_ERRORCOUNT
-* WithSQLErrorCount()
 * type: int
 * default: 100
 * dynamic
@@ -982,9 +893,7 @@ Comments are part of the statement's identity when they carry an Oracle hint or
 an ORM's trace tag, and removing them merges statements that differ only in that
 tag.
 
-* --pinpoint-sql-removecomments
 * PINPOINT_GO_SQL_REMOVECOMMENTS
-* WithSQLRemoveComments()
 * type: bool
 * default: true
 
@@ -997,9 +906,7 @@ accept and which would silence warn and error - is rejected with an error log,
 and the level in effect is kept: the default at startup, the previous level on
 a reload.
 
-* --pinpoint-log-level
 * PINPOINT_GO_LOG_LEVEL
-* WithLogLevel()
 * type: string
 * default: "info"
 * case-insensitive
@@ -1011,9 +918,7 @@ You can set stderr, stdout or file path. Lines are colored only when the
 output is a terminal; a file never receives ANSI escapes. Log lines carry
 `module` and `src` fields but no file/line caller information.
 
-* --pinpoint-log-output
 * PINPOINT_GO_LOG_OUTPUT
-* WithLogOutput()
 * type: string
 * default: "stdout" (it used to be "stderr")
 * case-insensitive
@@ -1026,9 +931,7 @@ rotated files are kept, so the agent log takes at most
 `Log.MaxSize x (Log.MaxBackups + 1)` MB of disk (20 MB with the defaults).
 A value below 1 recovers the default.
 
-* --pinpoint-log-maxsize
 * PINPOINT_GO_LOG_MAXSIZE
-* WithLogMaxSize()
 * type: int
 * default: 10
 * dynamic
@@ -1042,9 +945,7 @@ A value below 1, including 0, is out of range and recovers the default with a
 warning, because 0 would otherwise mean "keep every backup" and fill the disk
 rather than "keep none". Rotation with no history is `Log.MaxSize` alone.
 
-* --pinpoint-log-maxbackups
 * PINPOINT_GO_LOG_MAXBACKUPS
-* WithLogMaxBackups()
 * type: int
 * default: 1
 * dynamic
@@ -1052,9 +953,7 @@ rather than "keep none". Rotation with no history is `Log.MaxSize` alone.
 ### Error.TraceCallStack
 Error.TraceCallStack option enables trace callstack dump when a error occurs.
 
-* --pinpoint-error-tracecallstack
 * PINPOINT_GO_ERROR_TRACECALLSTACK
-* WithErrorTraceCallStack()
 * type: bool
 * default: false
 * dynamic
@@ -1062,9 +961,7 @@ Error.TraceCallStack option enables trace callstack dump when a error occurs.
 ### Error.CallStackDepth
 Error.CallStackDepth option sets the max depth of callstack to be dumped.
 
-* --pinpoint-error-callstackdepth
 * PINPOINT_GO_ERROR_CALLSTACKDEPTH
-* WithErrorCallStackDepth()
 * type: int
 * default: 32
 * max: 1024
@@ -1081,9 +978,7 @@ When the limit is hit, the error loses its call stack and its `EXCEPTION_CHAIN_I
 Everything else is unaffected: the span is still marked failed, and the error function id and
 message are still recorded.
 
-* --pinpoint-error-newthroughput
 * PINPOINT_GO_ERROR_NEWTHROUGHPUT
-* WithErrorNewThroughput()
 * type: int
 * default: 1000
 * dynamic
@@ -1101,9 +996,7 @@ error chains (at least 10), so one chain is always recorded in full; entries bey
 bound are dropped. The first drop is warned about once per span, and the span logs how
 many entries it dropped in total when it ends.
 
-* --pinpoint-error-maxchaindepth
 * PINPOINT_GO_ERROR_MAXCHAINDEPTH
-* WithErrorMaxChainDepth()
 * type: int
 * default: 64
 * max: 64
@@ -1122,9 +1015,7 @@ The other server metadata, the service information list, is a list of named
 lists and has no config file spelling. It is set with `WithServiceInfo()`; see
 [API Contracts](api_contracts.md#13-server-metadata).
 
-* --pinpoint-serverinfo
 * PINPOINT_GO_SERVERINFO
-* WithServerInfo()
 * type: string
 * default: "" (sends "Go Application")
 
@@ -1132,9 +1023,7 @@ lists and has no config file spelling. It is set with `WithServiceInfo()`; see
 IsContainerEnv option sets whether the application is running in a container environment or not.
 If this is not set, the agent automatically checks it.
 
-* --pinpoint-iscontainerenv
 * PINPOINT_GO_ISCONTAINERENV
-* WithIsContainerEnv()
 * type: bool
 * default: false
 
@@ -1142,9 +1031,7 @@ If this is not set, the agent automatically checks it.
 Enable option enables the agent is operational state.
 If this is set as false, the agent doesn't start working.
 
-* --pinpoint-enable
 * PINPOINT_GO_ENABLE
-* WithEnable()
 * type: bool
 * default: true
 
@@ -1152,9 +1039,7 @@ If this is set as false, the agent doesn't start working.
 Http.Server.StatusCodeErrors option sets HTTP status code with request failure.
 Refer https://pinpoint-apm.gitbook.io/pinpoint/documents/http-status-code-failure.
 
-* --pinpoint-http-server-statuscodeerrors
 * PINPOINT_GO_HTTP_SERVER_STATUSCODEERRORS
-* WithHttpServerStatusCodeError()
 * type: string slice
 * default: {"5xx"}
 * case-insensitive
@@ -1186,9 +1071,7 @@ metacharacters, is matched literally. URI template variables (e.g. `/aa/{name}.h
 supported.
 Refer https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/util/AntPathMatcher.html.
 
-* --pinpoint-http-server-excludeurl
 * PINPOINT_GO_HTTP_SERVER_EXCLUDEURL
-* WithHttpServerExcludeUrl()
 * type: string slice
 * case-sensitive
 * dynamic
@@ -1196,9 +1079,7 @@ Refer https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/sprin
 ### Http.Server.ExcludeMethod
 Http.Server.ExcludeMethod option sets HTTP Request methods to exclude from tracking.
 
-* --pinpoint-http-server-excludemethod
 * PINPOINT_GO_HTTP_SERVER_EXCLUDEMETHOD
-* WithHttpServerExcludeMethod()
 * type: string slice
 * case-insensitive
 * dynamic
@@ -1207,9 +1088,7 @@ Http.Server.ExcludeMethod option sets HTTP Request methods to exclude from track
 Http.Server.RecordRequestHeader option sets HTTP request headers to be logged on the server side.
 If sets to "HEADERS-ALL", it records all request headers.
 
-* --pinpoint-http-server-recordrequestheader
 * PINPOINT_GO_HTTP_SERVER_RECORDREQUESTHEADER
-* WithHttpServerRecordRequestHeader()
 * type: string slice
 * case-insensitive
 * dynamic
@@ -1218,9 +1097,7 @@ If sets to "HEADERS-ALL", it records all request headers.
 Http.Server.RecordResponseHeader option sets HTTP response headers to be logged on the server side.
 If sets to "HEADERS-ALL", it records all request headers.
 
-* --pinpoint-http-server-recordresponseheader
 * PINPOINT_GO_HTTP_SERVER_RECORDRESPONSEHEADER
-* WithHttpServerRecordRespondHeader()
 * type: string slice
 * case-insensitive
 * dynamic
@@ -1229,9 +1106,7 @@ If sets to "HEADERS-ALL", it records all request headers.
 Http.Server.RecordRequestCookie option sets HTTP request cookies to be logged on the server side.
 If sets to "HEADERS-ALL", it records all request headers.
 
-* --pinpoint-http-server-recordrequestcookie
 * PINPOINT_GO_HTTP_SERVER_RECORDREQUESTCOOKIE
-* WithHttpServerRecordRequestCookie()
 * type: string slice
 * case-insensitive
 * dynamic
@@ -1239,9 +1114,7 @@ If sets to "HEADERS-ALL", it records all request headers.
 ### Http.Server.RecordHandlerError
 Http.Server.RecordHandlerError sets whether to record the error returned by http handler.
 
-* --pinpoint-http-server-recordhandlererror
 * PINPOINT_GO_HTTP_SERVER_RECORDHANDLERERROR
-* WithHttpServerRecordHandlerError()
 * type: bool
 * default: true
 * dynamic
@@ -1250,9 +1123,7 @@ Http.Server.RecordHandlerError sets whether to record the error returned by http
 Http.Server.ProxyHeaderEnable turns the recording of proxy request headers on or off: `Pinpoint-ProxyApache`,
 `Pinpoint-ProxyNginx`, `Pinpoint-ProxyApp` and the headers named by `Http.Server.ProxyUserHeaderNames`.
 
-* --pinpoint-http-server-proxyheaderenable
 * PINPOINT_GO_HTTP_SERVER_PROXYHEADERENABLE
-* WithHttpServerProxyHeaderEnable()
 * type: bool
 * default: true
 * dynamic
@@ -1266,9 +1137,7 @@ millisecond epoch. A header whose `t=` is missing or not positive is not recorde
 The standard `Pinpoint-ProxyApache`, `Pinpoint-ProxyNginx` and `Pinpoint-ProxyApp` headers are always recorded
 and need no configuration.
 
-* --pinpoint-http-server-proxyuserheadernames
 * PINPOINT_GO_HTTP_SERVER_PROXYUSERHEADERNAMES
-* WithHttpServerProxyUserHeaderNames()
 * type: string slice
 * default: empty
 * dynamic
@@ -1283,9 +1152,7 @@ hop. When no header yields an address the socket address is recorded, port strip
 as before. Set an empty list to trust none, or list your edge's header first (`CF-Connecting-IP`,
 `True-Client-IP`, `Forwarded`).
 
-* --pinpoint-http-server-realipheader
 * PINPOINT_GO_HTTP_SERVER_REALIPHEADER
-* WithHttpServerRealIpHeader()
 * type: string slice
 * default: X-Forwarded-For, X-Real-Ip
 * dynamic
@@ -1300,9 +1167,7 @@ Http:
 Http.Server.RealIpEmptyValue is the header value that counts as absent when resolving the client address.
 A candidate equal to it (case-insensitive, typically `unknown`) is skipped and the next header is tried.
 
-* --pinpoint-http-server-realipemptyvalue
 * PINPOINT_GO_HTTP_SERVER_REALIPEMPTYVALUE
-* WithHttpServerRealIpEmptyValue()
 * type: string
 * default: empty
 * dynamic
@@ -1313,9 +1178,7 @@ string of a sampled request is recorded as annotation 41 (`HTTP.PARAM`) as `k=v&
 each key and value cut to 64 characters and the whole string to 512, with `...` marking every cut.
 **It defaults to off** because query strings routinely carry tokens, session ids and user ids.
 
-* --pinpoint-http-server-recordrequestparam
 * PINPOINT_GO_HTTP_SERVER_RECORDREQUESTPARAM
-* WithHttpServerRecordRequestParam()
 * type: bool
 * default: false
 * dynamic
@@ -1330,9 +1193,7 @@ Http:
 Http.Client.RecordRequestHeader option sets HTTP request headers to be logged on the client side.
 If sets to "HEADERS-ALL", it records all request headers.
 
-* --pinpoint-http-client-recordrequestheader
 * PINPOINT_GO_HTTP_CLIENT_RECORDREQUESTHEADER
-* WithHttpClientRecordRequestHeader()
 * type: string slice
 * case-insensitive
 * dynamic
@@ -1341,9 +1202,7 @@ If sets to "HEADERS-ALL", it records all request headers.
 Http.Client.RecordResponseHeader option sets HTTP response headers to be logged on the client side.
 If sets to "HEADERS-ALL", it records all request headers.
 
-* --pinpoint-http-client-recordresponseheader
 * PINPOINT_GO_HTTP_CLIENT_RECORDRESPONSEHEADER
-* WithHttpClientRecordRespondHeader()
 * type: string slice
 * case-insensitive
 * dynamic
@@ -1352,9 +1211,7 @@ If sets to "HEADERS-ALL", it records all request headers.
 Http.Client.RecordRequestCookie option sets HTTP request cookies to be logged on the client side.
 If sets to "HEADERS-ALL", it records all request headers.
 
-* --pinpoint-http-client-recordrequestcookie
 * PINPOINT_GO_HTTP_CLIENT_RECORDREQUESTCOOKIE
-* WithHttpClientRecordRequestCookie()
 * type: string slice
 * case-insensitive
 * dynamic
@@ -1364,9 +1221,7 @@ Http.Client.RecordUrlQuery sets whether the client URL annotation (`HTTP.URL`, `
 its query string. By default the URL is recorded up to the `?`; the fragment, endpoint and destination are
 unaffected. **It defaults to off** because query strings routinely carry tokens, session ids and user ids.
 
-* --pinpoint-http-client-recordurlquery
 * PINPOINT_GO_HTTP_CLIENT_RECORDURLQUERY
-* WithHttpClientRecordUrlQuery()
 * type: bool
 * default: false
 * dynamic
@@ -1402,9 +1257,7 @@ boundary and, once traffic stops, the last tick is closed and sent within one
 At most 4 completed ticks (two minutes) are retained while the stat stream is down.
 Beyond that the oldest tick is dropped and the agent logs a rate-limited warning.
 
-* --pinpoint-http-urlstat-enable
 * PINPOINT_GO_HTTP_URLSTAT_ENABLE
-* WithHttpUrlStatEnable()
 * type: bool
 * default: false
 * dynamic
@@ -1415,9 +1268,7 @@ It caps the number of distinct URLs kept in one tick. Once the limit is reached,
 URLs already in the tick keep being aggregated but every further new URL is dropped,
 and the agent logs a rate-limited warning carrying the number of warnings it suppressed.
 
-* --pinpoint-http-urlstat-limitsize
 * PINPOINT_GO_HTTP_URLSTAT_LIMITSIZE
-* WithHttpUrlStatLimitSize()
 * type: int
 * default: 1000
 * range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
@@ -1430,9 +1281,7 @@ unlike Http.UrlStat.LimitSize which caps the number of distinct URLs kept in one
 When the queue is full the records are dropped, and the agent logs a rate-limited warning
 carrying the cumulative number of dropped records.
 
-* --pinpoint-http-urlstat-queuesize
 * PINPOINT_GO_HTTP_URLSTAT_QUEUESIZE
-* WithHttpUrlStatQueueSize()
 * type: int
 * default: 1024
 * range: 1 ~ 65536 (an out-of-range value falls back to the default with a warning log)
@@ -1440,9 +1289,7 @@ carrying the cumulative number of dropped records.
 ### Http.UrlStat.WithMethod
 Http.UrlStat.WithMethod option adds http method as prefix to url string key.
 
-* --pinpoint-http-urlstat-withmethod
 * PINPOINT_GO_HTTP_URLSTAT_WITHMETHOD
-* WithHttpUrlStatWithMethod()
 * type: bool
 * default: false
 * dynamic
@@ -1455,9 +1302,7 @@ mongodriverv2) record the command document on the span event, converted to
 extended JSON. The conversion runs on the request goroutine for every sampled
 command; turn it off when the document is not needed in the trace.
 
-* --pinpoint-mongo-recordcommand
 * PINPOINT_GO_MONGO_RECORDCOMMAND
-* WithMongoRecordCommand()
 * type: bool
 * default: true
 * dynamic
@@ -1468,72 +1313,10 @@ document is cut to. A command whose BSON is larger than this is not converted
 at all and is recorded as a one-line description instead, so a lower value also
 lowers the cost of large commands. A value of 0 or less keeps the default.
 
-* --pinpoint-mongo-commandmaxsize
 * PINPOINT_GO_MONGO_COMMANDMAXSIZE
-* WithMongoCommandMaxSize()
 * type: int
 * default: 65536
 * dynamic
-
-## Dynamic Configuration Reference
-
-Options marked **dynamic** above are re-read when the config file changes,
-with no application restart. The rest are read once at agent startup.
-
-Two things make a reload not happen, and both are easy to miss:
-
-* The agent **polls the config file** - its modification time and size, once a
-  second - so a change takes up to that long to apply, and it only works if
-  the process was given a config file (`ConfigFile`). Command flags and
-  environment variables are read once at startup and never re-read.
-* Precedence still applies. An option also set by a command flag or an
-  environment variable keeps that value; editing the file will not change it.
-
-### Reloadable options
-
-| Group | Options |
-|---|---|
-| Sampling | `Sampling.Type`, `Sampling.CounterRate`, `Sampling.PercentRate`, `Sampling.NewThroughput`, `Sampling.ContinueThroughput` |
-| Span limits and error marking | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence`, `Span.EventChunkSize`, `Span.IgnoreErrors`, `Span.ErrorMark`, `Span.ErrorMarkExclude` |
-| SQL | `SQL.TraceBindValue`, `SQL.MaxBindValueSize`, `SQL.TraceCommit`, `SQL.TraceRollback`, `SQL.TraceQueryStat`, `SQL.EnableRawSqlCache`, `SQL.ErrorCount` |
-| Logging | `Log.Level`, `Log.Output`, `Log.MaxSize`, `Log.MaxBackups` |
-| Errors | `Error.TraceCallStack`, `Error.CallStackDepth`, `Error.NewThroughput`, `Error.MaxChainDepth` |
-| HTTP server | `Http.Server.StatusCodeErrors`, `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordResponseHeader`, `Http.Server.RecordRequestCookie`, `Http.Server.RecordHandlerError`, `Http.Server.ProxyUserHeaderNames`, `Http.Server.ProxyHeaderEnable`, `Http.Server.RecordRequestParam`, `Http.Server.RealIpHeader`, `Http.Server.RealIpEmptyValue` |
-| HTTP client | `Http.Client.RecordRequestHeader`, `Http.Client.RecordResponseHeader`, `Http.Client.RecordRequestCookie`, `Http.Client.RecordUrlQuery` |
-| URL statistics | `Http.UrlStat.Enable`, `Http.UrlStat.LimitSize`, `Http.UrlStat.WithMethod` |
-| MongoDB | `Mongo.RecordCommand`, `Mongo.CommandMaxSize` |
-
-### Restart-only options
-
-Identity (`ApplicationName`, `AgentId`, `AgentName`, `Uid.Version`,
-`ServiceName`, `ApiKey`, `ApplicationType`), everything under `Collector.*`,
-the span transport (`Span.QueueSize`, `Collector.Grpc.SpanBatchSize`,
-`Collector.Grpc.SpanBatchFlushInterval`, `Collector.Grpc.SpanBatchCollectDeadline`,
-`Collector.Grpc.SpanBatchMaxConcurrentRequests`), `Stat.*`,
-`Http.UrlStat.QueueSize`, `IsContainerEnv`, `ConfigFile`, `ActiveProfile`,
-`SQL.RemoveComments`, `SQL.CacheSize`, `SQL.CacheLengthLimit`,
-`SQL.CacheExpireHours` and `Enable`.
-
-`SQL.CacheSize`, `SQL.CacheLengthLimit` and `SQL.CacheExpireHours` are read once
-when the agent builds its SQL caches. Lowering
-`SQL.CacheLengthLimit` at runtime would leave the longer statements already
-cached in place and turn every statement now past the limit into one
-re-registered on each execution.
-
-`SQL.RemoveComments` is restart-only for a reason of its own: the normalized SQL
-is the SQL id cache key and the SQL UID hash input, so a mid-process change would
-report one statement under two ids.
-
-`Enable` deserves a note: it cannot be reloaded, but `Agent.Shutdown()` stops a
-running agent and `NewAgent()` starts a new one, both without a restart. See
-[Troubleshooting](troubleshooting.md#stopping-and-resuming-the-agent).
-
-A reload rebuilds the components derived from the changed options — the
-sampler, the logger, the HTTP filters — behind an immutable snapshot, so an
-in-flight request never sees a half-applied change. Watch for `src=config`
-lines on save; a parse error leaves the previous values in place.
-
----
 
 ## Configuration Examples
 
@@ -1689,15 +1472,9 @@ See [ActiveProfile](#activeprofile) for the file layout.
 
 **High traffic**
 
-* Sample rather than throttle after the fact: lower `Sampling.PercentRate` and
-  set `Sampling.NewThroughput` so a spike cannot become a collector incident.
-* Exclude the URLs that are noise — health checks, metrics endpoints, static
-  assets — with `Http.Server.ExcludeUrl`. They are the bulk of the requests and
-  none of the insight.
-* Keep `Error.TraceCallStack` off; it is the costliest per-error work.
-* For a very high span rate, tune `Collector.Grpc.SpanBatchSize` and
-  `Collector.Grpc.SpanBatchMaxConcurrentRequests`.
-* Leave `Log.Level` at `info` or `warn`. Debug logging adds per-event work.
+See [Troubleshooting](troubleshooting.md#high-cpu-usage-or-slow-responses):
+sample rather than throttle, exclude the noise URLs, keep `Error.TraceCallStack`
+off and `Log.Level` at `info`.
 
 **Getting it right**
 
@@ -1708,37 +1485,3 @@ See [ActiveProfile](#activeprofile) for the file layout.
   across flags, environment and file is how precedence surprises happen.
 * Always pass the routed URL pattern, not the resolved path, so
   `Http.UrlStat.LimitSize` bounds something meaningful.
-
----
-
-## Symptom → Key Index
-
-| Symptom | Options to look at |
-|---|---|
-| Agent will not start | `ApplicationName`, `Uid.Version`, `Enable` |
-| Nothing appears in the UI | `Collector.Host`, `Collector.AgentPort`, `Sampling.PercentRate`, `Enable` |
-| Cannot connect / not registered | `Collector.Host`, the three ports, `Collector.Grpc.SslEnable`, `Collector.Grpc.TrustCertFilePath` |
-| Too many traces / collector overloaded | `Sampling.PercentRate`, `Sampling.NewThroughput`, `Sampling.ContinueThroughput`, `Http.Server.ExcludeUrl` |
-| Traces truncated mid-request | `Span.MaxCallStackDepth`, `Span.MaxCallStackSequence` |
-| Spans dropped under load | `Span.QueueSize`, `Collector.Grpc.SpanBatchSize`, `Collector.Grpc.SpanBatchMaxConcurrentRequests` |
-| Agent using too much memory | `Span.QueueSize`, `Collector.Grpc.SenderQueueSize`, `Http.UrlStat.LimitSize`, `SQL.MaxBindValueSize`, `SQL.EnableRawSqlCache`, `SQL.CacheSize`, `SQL.CacheLengthLimit` |
-| SQL metadata re-sent constantly / spans show unresolved SQL ids | Raise `SQL.CacheSize` above the number of distinct statements the application runs |
-| Agent using too much CPU | `Sampling.PercentRate`, `Log.Level`, `Error.TraceCallStack` |
-| No SQL detail in query spans | `SQL.TraceBindValue`, `SQL.TraceQueryStat`, `SQL.TraceCommit`, `SQL.TraceRollback` |
-| Sensitive data visible in traces | `SQL.TraceBindValue`, `Http.Server.RecordRequestHeader`, `Http.Server.RecordRequestCookie` |
-| Health checks flooding the URL list | `Http.Server.ExcludeUrl`, `Http.Server.ExcludeMethod` |
-| No per-URL statistics | `Http.UrlStat.Enable`, `Http.UrlStat.LimitSize`, `Http.UrlStat.WithMethod` |
-| Wrong requests marked as errors | `Http.Server.StatusCodeErrors`, `Http.Server.RecordHandlerError`, `Span.ErrorMark`, `Span.ErrorMarkExclude`, `Span.IgnoreErrors` |
-| No error stack traces | `Error.TraceCallStack`, `Error.CallStackDepth` |
-| Agent logs too quiet / too loud | `Log.Level`, `Log.Output`, `Log.MaxSize` |
-| Config change has no effect | `ConfigFile`, `ActiveProfile`, and the [reloadable list](#reloadable-options) |
-
----
-
-## Related Documentation
-
-* [Getting Started](getting_started.md)
-* [Custom Instrumentation](instrument.md)
-* [Tracer, Span, and Annotation Contracts](api_contracts.md)
-* [Plugin User Guide](plugin_guide.md)
-* [Troubleshooting](troubleshooting.md)

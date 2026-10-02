@@ -35,7 +35,7 @@ Refer the [Plugin User Guide](doc/plugin_guide.md) for more information.
 ## Documents
 * [Getting Started](doc/getting_started.md) - install, configure and verify your first trace
 * [Migrating from v1 to v2](doc/migration_v2.md) - the import paths, APIs and defaults that changed
-* [Configuration](doc/config.md) - every option, plus examples and a symptom index
+* [Configuration](doc/config.md) - every option, plus development, production and container examples
 * [Plugin User Guide](doc/plugin_guide.md) - the supported frameworks, drivers and clients
 * [Custom Instrumentation](doc/instrument.md) - trace what no plugin covers
 * [Tracer, Span, and Annotation Contracts](doc/api_contracts.md) - the API rules to keep

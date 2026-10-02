@@ -34,22 +34,6 @@ only.
 or integration tests — each module has to be entered. That is what the loops
 below are for.
 
-Inside the agent module, the pieces worth knowing:
-
-| File | Responsibility |
-|---|---|
-| `agent.go` | lifecycle, the goroutines, the global singleton |
-| `config.go` | option registry, five-source precedence, file watcher and reload |
-| `span.go`, `span_event.go` | the call-stack model behind `Tracer` |
-| `span_queue.go`, `span_slab.go` | span buffering between the request path and the sender |
-| `grpc.go`, `grpc_balancer.go` | the four collector channels and their streams |
-| `sampler.go` | counter, percent and throughput samplers |
-| `sql_driver.go`, `sql_util.go` | the `database/sql` wrapper and SQL normalization |
-| `url_stat.go`, `stats.go` | URL and agent statistics aggregation |
-| `noop.go` | the no-op agent and tracer — the reason instrumentation needs no guards |
-| `command.go`, `goroutine.go` | profiler commands, active-thread and goroutine dumps |
-| `uid.go`, `objectname.go` | agent identity, v1/v3/v4 |
-
 ## Build and test the agent
 
 ```bash
@@ -219,65 +203,6 @@ Two that plugin authors hit most often:
   the panic propagate, so the framework's own recovery middleware behaves as
   the user configured it.
 
-## Internals behind the API contracts
-
-[Tracer, Span, and Annotation Contracts](api_contracts.md) states the rules a
-caller has to keep. This section is the other half — why the agent enforces
-them the way it does, which is what you need before changing the enforcement.
-
-**Goroutine-sharing detection is diagnostic only.** `span.NewSpanEvent()`
-compares the calling goroutine's id against the first one it saw and warns on a
-mismatch, but records the event either way. It has to stay that way: an earlier
-version returned early on a mismatch, so the caller's paired `EndSpanEvent()`
-popped the *parent's* event — and because the check then ran only at debug
-level, the log level decided the shape of the trace. Detection needs the
-`runtime.g` offset resolved at startup (`goIdOffset`, `goroutine.go`); where
-that resolution fails there is no detection at all, so nothing may depend on
-the check having run.
-
-**Writes after `EndSpan()` are dropped, not applied.** By then the span's final
-chunk is already on its way to the sender goroutine: the write could not be
-sent, and applying it would race the sender reading the same field. An event
-created after the end is worse — once `Span.EventChunkSize` of them accumulated
-(20 by default), the agent would cut a non-final chunk *behind* the final one,
-which the collector protocol forbids. Hence `warnAfterEndSpan` on every setter
-and every lifecycle call, and the `sealed` flag on an annotation collector,
-which is set at the very end of `EndSpan()` — after the final chunk is enqueued
-and the URL stat read, so nothing recorded on time is lost.
-
-**Unclosed events are ended and sent, not discarded.** Their sequence numbers
-were already handed out, and a span whose event sequence has holes makes the
-collector rebuild the call tree against parents that never arrive. This follows
-the C++ agent; the Java agent drops the whole span instead.
-
-**The no-op tracer is a process-wide singleton.** Its methods may only ever read
-its fields. Anything that writes per-request state has to be gated on the span
-being a per-request one, or concurrent handlers race on the shared object.
-
-**Inbound headers are decided in one place.** `continueHeaders()` (`span.go`)
-answers "does this request continue an existing trace?" for both the sampler
-choice in `NewSpanTracerWithReader()` and the context extraction in `Extract()`.
-They must not be able to disagree: a request routed through the continue sampler
-but extracted as a new transaction lets a peer bypass the configured sampling
-rate.
-
-**Carrier presence comes from the carrier.**
-`DistributedTracingContextReader.Get` returns `(value, present)`, and presence
-can only come from a source that has it. A carrier over a value-only API —
-kratos's `transport.Header` is the one in this repo — reports `v, v != ""`, and
-`noopDistributedTracingContextReader` reports every key absent. When you add a
-carrier, take presence from the underlying map or a `PeekAll`-style call if the
-library offers one; do not synthesize it.
-
-**Some options are read once on purpose.** `SQL.CacheSize`,
-`SQL.CacheLengthLimit` and `SQL.CacheExpireHours` are read where `NewAgent()`
-builds the SQL caches, because resizing them while spans are in flight would
-orphan the ids those spans already carry. `SQL.RemoveComments` is read once
-because the normalized text is both the SQL id cache key and the SQL UID hash
-input, so flipping it against a populated cache would report one statement
-under two ids. Adding a `dynamic` marker to any of these is a behavior change,
-not a convenience.
-
 ## Java and C++ agent parity
 
 The Go agent is the third implementation of the same protocol, and a good
@@ -294,15 +219,15 @@ references live here.
 | an error on an async/goroutine tracer sets the flag on the root span | `ChildTrace` shares its parent's `TraceRoot` |
 | `Inject()` omits a header it has no value for | `DefaultRequestTraceWriter`, which normalizes an empty value to `NOT_SET` |
 | `s0` is written only by a tracer that stands for a real transaction | written for a trace created by `disableSampling()`; with no trace the interceptor returns before writing any header |
-| inbound continuation requires TraceID + SpanID + pSpanID, checked in that order | `DefaultTraceHeaderReader.read` (`DefaultTraceHeaderReader.java:44-76`); `s0` short-circuits at `:47-51`, `Pinpoint-Flags` defaults to `0` at `:71-72` |
-| the two span id headers are checked for presence only | an unparseable value is kept as `SpanId.NULL` (`SpanId.java:27`) via `NumberUtils.parseLong` |
-| a header present with an empty value is present | Java tests for `null` alone (`DefaultTraceHeaderReader.java:55`); the C++ agent decides on `has_value()` |
+| inbound continuation requires TraceID + SpanID + pSpanID, checked in that order | `DefaultTraceHeaderReader.read`: `s0` short-circuits first, `Pinpoint-Flags` defaults to `0` |
+| the two span id headers are checked for presence only | an unparseable value is kept as `SpanId.NULL` via `NumberUtils.parseLong` |
+| a header present with an empty value is present | `DefaultTraceHeaderReader` tests for `null` alone; the C++ agent decides on `has_value()` |
 | `AddMetric(MetricURLStat, ...)` is first-wins; `MetricURLStatForce` replaces | `Shared.setUriTemplate`, and `setUriTemplate(value, force = true)` |
-| a percent rate `<= 0` samples nothing, `>= 100` always samples | `PercentSamplerFactory.java:40-48,56-58` — `FalseSampler` and `TrueSampler` |
+| a percent rate `<= 0` samples nothing, `>= 100` always samples | `PercentSamplerFactory`: `FalseSampler` and `TrueSampler` |
 | events one level deeper than `Span.MaxCallStackDepth` are still recorded | `DefaultCallStack` |
 | `SQL.CacheSize` sizes the SQL caches only; API and error caches stay at 1024 | `profiler.jdbc.sqlcachesize` sizes `SimpleCacheFactory.newSqlCache()` / `newSqlUidCache()`, while `newSimpleCache()` keeps its own default |
 | `SQL.CacheLengthLimit` bypasses the UID and raw caches but not the SQL-ID cache | the bypass lives only in `UidCache`; the id cache from `SimpleCacheFactory.newSqlCache()` has no length check |
-| the SQL error count lives on the trace root, so async spans add up | `WrappedSpanEventRecorder.java:112`, `DefaultSqlCountService.java:16,21` |
+| the SQL error count lives on the trace root, so async spans add up | `WrappedSpanEventRecorder`, `DefaultSqlCountService` |
 | `SQL.RemoveComments` defaults to on | `profiler.jdbc.removecomments` is absent from the distributed `pinpoint.config`, and the unresolved placeholder leaves the field initializer in place |
 | the request query string annotation format | `HttpServletParameterExtractor` |
 | the client URL annotation drops its query by default | `profiler.<plugin>.param` / `InterceptorUtils.getHttpUrl` — **Java defaults this on; the Go agent defaults it off**, because query strings routinely carry tokens and user ids |
@@ -363,90 +288,54 @@ the key it came from.
 
 * **Tracing waits for registration.** The Java agent traces whether or not
   registration has succeeded; this agent returns a no-op span and collects no
-  stats until the collector accepts the AgentInfo. The consequence is that a
-  blocked agent port shows up as "no data at all" rather than as partial data,
-  which is the easier failure to diagnose.
-* **The root span's error flag is not deferred.** A child that fails after the
-  root ended is not reflected in `PSpan.err` or the URL stat. Java's ordinary
-  trace behaves the same way — `DefaultTrace.close()`
-  (`DefaultTrace.java:181-199`) calls `logSpan()` and stores the `PSpan` at the
-  root's close, and that is what every normal entry point builds
-  (`DefaultBaseTraceFactory.java:86,102,114` → `newDefaultTrace()` at `:191`).
-  Java's deferred store exists only on the `AsyncDefaultTrace` path, whose
-  `close()` awaits the last child through `SpanAsyncStateListener`
-  (`AsyncDefaultTrace.java:24-31`); its entry points
-  (`DefaultBaseTraceFactory.java:148,161`) are both marked
-  `@InterfaceAudience.LimitedPrivate("vert.x")`. Deferring the root store here
-  would be an extension past Java, not a parity fix.
-* **`SQL.ErrorCount` merges two Java options.** Java's `profiler.sql.error.count`
-  and `profiler.sql.error.enable` collapse into one key, and Java never
-  range-checks its count (`DefaultSqlCountService.java:15-25` uses the
-  configured limit as given), so `enable=true` with a count of 0 or less marks
-  the very first query as failed. That literal reading is deliberately not
-  reproduced: in the merged option 0 is already taken by `enable=false`,
-  leaving "off" as the only consistent meaning a non-positive threshold can
-  have.
-* **An empty SQL statement records nothing.** `SetSQL("", args)` returns before
-  the cap check, the SQL count, normalization, bind value truncation and the
-  `AnnotationSqlId` / `AnnotationSqlUid` annotations, so a trace carries no sign
-  that the call happened. Java's `DefaultSqlMetaDataService.wrapSqlResult`
-  refuses only `null` and caches, sends and counts `""` like any other
-  statement — but nothing in its JDBC instrumentation passes `""`, because its
-  commit and rollback interceptors never call `recordSqlInfo`. The
-  `database/sql` wrapper here does route `Begin`, `Commit` and `Rollback`
-  through that path with no statement, and the guard is what keeps a
-  transaction boundary from carrying an empty SQL annotation.
-* **`SetSQL` bounds a caller-composed bind value list.** Java's
-  `WrappedSpanEventRecorder.recordSqlParsingResult` bounds nothing. Here the
-  public API takes `args` from any caller, and the annotation rides on a span
-  that is dropped whole if it outgrows the send message size, so `args` is cut
-  to the room the driver wrappers need past `SQL.MaxBindValueSize` and carries
-  a marker reporting the byte length it was passed. Lists composed by the
-  agent's own driver wrappers are within the bound by construction and pass
-  through untouched.
+  stats until the collector accepts the AgentInfo, so a blocked agent port
+  shows up as "no data at all" rather than as partial data, which is the easier
+  failure to diagnose.
+* **The root span's error flag is not deferred.** Java's ordinary
+  `DefaultTrace` stores the `PSpan` at the root's close as well; only the
+  `AsyncDefaultTrace` path, marked `LimitedPrivate("vert.x")`, awaits the last
+  child. Deferring the root store here would be an extension past Java, not a
+  parity fix.
+* **`SQL.ErrorCount` merges two Java options.** Java never range-checks
+  `profiler.sql.error.count`, so `enable=true` with a count of 0 fails the very
+  first query. Here 0 already spells `enable=false`, which leaves "off" as the
+  only consistent meaning of a non-positive threshold.
+* **An empty SQL statement records nothing.** Java caches and counts `""` like
+  any statement, but its commit and rollback interceptors never pass one. The
+  `database/sql` wrapper here routes `Begin`, `Commit` and `Rollback` through
+  `SetSQL` with no statement, so the guard keeps a transaction boundary from
+  carrying an empty SQL annotation.
+* **`SetSQL` bounds a caller-composed bind value list.** Java bounds nothing
+  there. Here `args` comes from any caller and rides on a span that is dropped
+  whole past the send message size; the agent's own driver wrappers compose
+  lists within the bound and pass through untouched.
 * **A malformed inbound trace id starts a new transaction.** Java takes the
-  continue path on any non-null `Pinpoint-TraceID` and parses it later, where
-  `TransactionIdUtils.parseTransactionId` throws on a value with no `^`.
-  `continueHeaders` requires it to parse; a blank or malformed one is treated as
-  no trace id at all, with a throttled warning for a non-empty one. An exception
-  on the request path is a worse answer than a new trace to a header this agent
-  did not write, and routing it through the *continue* sampler would be worse
-  still: `isContinueSampled()` is unconditionally true, so any garbage trace id
-  would bypass the configured sampling rate. The two span id headers are
-  presence-only, as in the Java agent — that is the same divergence, not a
-  second one.
+  continue path on any non-null `Pinpoint-TraceID` and throws when it parses
+  it later. An exception on the request path is a worse answer than a new
+  trace, and routing a garbage id through the continue sampler, whose
+  `isContinueSampled()` is unconditionally true, would bypass the configured
+  sampling rate.
 * **JVM-shaped stat fields carry Go values.** Go's GC is concurrent and
   non-generational, so `PJvmInfo.gcType` and `PJvmGc.type` are
-  `JVM_GC_TYPE_UNKNOWN` — as in the C++ agent — rather than a fabricated
-  collector name. `jvmGcOldCount` carries `runtime.MemStats.NumGC`, whole
-  cycles with no old-generation subset, and `jvmGcOldTime` carries
-  `PauseTotalNs` in milliseconds, stop-the-world time only, so both read lower
-  than a JVM's.
-* **No shutdown hook.** The Java agent closes itself from a JVM shutdown hook
-  (`ShutdownHookRegister`). Go has no `atexit` and no runtime shutdown hook, and
-  installing a `signal.Notify` by default would change process-wide state behind
-  the application's back, so `pinpoint.ShutdownOnSignal` is opt-in. The C++
-  agent is the mirror image: its opt-in hook is `std::atexit`, which covers
-  `exit()` but not a signal. See
+  `JVM_GC_TYPE_UNKNOWN`, as in the C++ agent. `jvmGcOldCount` carries
+  `runtime.MemStats.NumGC` and `jvmGcOldTime` carries `PauseTotalNs` in
+  milliseconds, so both read lower than a JVM's.
+* **No shutdown hook.** Java closes itself from a JVM shutdown hook. Go has no
+  `atexit`, and a `signal.Notify` installed by default would change
+  process-wide state behind the application's back, so `ShutdownOnSignal` is
+  opt-in; the C++ agent's opt-in is `std::atexit`, which covers `exit()` but not
+  a signal. See
   [Troubleshooting](troubleshooting.md#spans-missing-at-shutdown-or-on-a-rollout).
 
 ## Continuous integration
 
 [`.github/workflows/ci.yml`](/.github/workflows/ci.yml) runs on every push and
-pull request to `main`, in four jobs:
-
-| Job | What it runs |
-|---|---|
-| `build` | `go build` and `go test` on the agent, plus the `test/it` suite, on Go 1.25 and 1.26 |
-| `plugins` | `go test -race` in every `plugin/*` module, on Go 1.25 and 1.26 |
-| `goroutine-leak` | `test/it` under `GOEXPERIMENT=goroutineleakprofile`, Go 1.26 only |
-| `modules` | `scripts/set-major-version.sh --check`: every reference names the current major version's module paths, and the in-repo requirements agree on one version, each with its `replace` |
-| — | `test/e2e` is **not** in CI: it needs a live collector |
-
-`fail-fast` is off in the matrices on purpose: a break on one Go version still
-reports the other, which is what distinguishes a version-specific regression
-from a real one. The plugin loop likewise runs every module before failing, so
-one broken plugin does not hide the rest.
+pull request to `main`: the agent build and tests plus `test/it` on Go 1.25 and
+1.26, the plugin loop above with `-race` on both versions, `test/it` under
+`GOEXPERIMENT=goroutineleakprofile` on 1.26, and
+`scripts/set-major-version.sh --check`. `test/e2e` is **not** in CI: it needs a
+live collector. `fail-fast` is off on purpose, so a break on one Go version or
+one plugin still reports the rest.
 
 Before opening a pull request, the short version of CI:
 
@@ -488,14 +377,3 @@ moves every module path to `/vN`. v1 fixes are released from the
 
 See [CONTRIBUTING.md](/CONTRIBUTING.md). Pull requests need a signed
 Contributor License Agreement, and should not break the build or any test.
-
----
-
-## Related Documentation
-
-* [Getting Started](getting_started.md)
-* [Custom Instrumentation](instrument.md)
-* [Tracer, Span, and Annotation Contracts](api_contracts.md)
-* [Plugin User Guide](plugin_guide.md)
-* [Configuration](config.md)
-* [Troubleshooting](troubleshooting.md)

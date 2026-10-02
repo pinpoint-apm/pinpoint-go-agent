@@ -1,35 +1,15 @@
 # Custom Instrumentation
 
-Pinpoint Go Agent enables you to monitor Go applications using Pinpoint.
-Go applications must be instrumented manually at the source code level,
-because Go is a compiled language and does not have a virtual machine like Java.
-
-There are two ways to instrument your applications:
-
-* Using plugin packages.
-* Custom instrumentation with the Pinpoint Go Agent API.
-
-Pinpoint Go Agent provides plugins packages to help developers trace the popular frameworks and toolkits.
-These packages help you to make instruments with simple source code modifications.
-For more information on plugin packages, refer [Plugin User Guide](plugin_guide.md).
+Go is instrumented at the source level. The [plugins](plugin_guide.md) cover
+the popular frameworks and clients; this guide is the API underneath them, for
+everything they do not cover. In Pinpoint, a transaction is a group of Spans,
+one per node it passed through, and each Span records its function calls as
+SpanEvents in a call-stack-like tree.
 
 The API is thin and the rules it expects you to keep are not all obvious from
 the signatures — a broken hand-written instrument almost always violates one of
 them. Read [Tracer, Span, and Annotation Contracts](api_contracts.md)
 alongside this guide; it is short, and it is what this document assumes.
-
-## Overview
-
-In Pinpoint, a transaction consists of a group of Spans.
-Each span represents a trace of a single logical node where the transaction has gone through.
-A span records important function invocations and their related data(arguments, return value, etc.)
-before encapsulating them as SpanEvents in a call stack like representation.
-The span itself and each of its SpanEvents represents a function invocation.
-
-Find out more about the concept of Pinpoint at the links below:
-
-* https://pinpoint-apm.gitbook.io/pinpoint/want-a-quick-tour/techdetail
-* https://pinpoint-apm.gitbook.io/pinpoint/documents/plugin-dev-guide
 
 ## Span
 
@@ -182,25 +162,16 @@ func tableCount(w http.ResponseWriter, r *http.Request) {
 
 ## Instrument Goroutine
 
-The Pinpoint Tracer is designed to track a single call stack,
-so applications can be crashed if a tracer is shared on goroutines.
-The Tracer.NewGoroutineTracer() function should be called to create a new tracer that traces a goroutine,
-and then pass it to the goroutine.
-
-To pass the tracer to a goroutine, there is ways below:
-
-* function parameter
-* channel
-* context.Context
-
-The **Tracer.EndSpan()** function must be called at the end of the goroutine.
-
-### Function parameter
+A tracer tracks a single call stack, so a goroutine needs its own: create one
+with **Tracer.NewGoroutineTracer()** and pass it to the goroutine (as a
+parameter, over a channel, or in a `context.Context`; it makes no difference).
+The goroutine must call **Tracer.EndSpan()** on it when it is done.
+See [contract 1](api_contracts.md#1-a-tracer-tracks-one-goroutine).
 
 ``` go
 func outGoingRequest(ctx context.Context) {
     client := pphttp.WrapClient(nil)
-	
+
     request, _ := http.NewRequest("GET", "https://github.com/pinpoint-apm/pinpoint-go-agent", nil)
     request = request.WithContext(ctx)
 
@@ -225,78 +196,26 @@ func asyncWithTracer(w http.ResponseWriter, r *http.Request) {
         defer asyncTracer.NewSpanEvent("asyncWithTracer_goroutine").EndSpanEvent()
 
         ctx := pinpoint.NewContext(context.Background(), asyncTracer)
-        outGoingRequest(w, ctx)
+        outGoingRequest(ctx)
     }(tracer.NewGoroutineTracer())
 
     wg.Wait()
 }
 ```
 
-### Channel
-
-``` go
-func asyncWithChan(w http.ResponseWriter, r *http.Request) {
-    tracer := pinpoint.FromContext(r.Context())
-    wg := &sync.WaitGroup{}
-    wg.Add(1)
-
-    ch := make(chan pinpoint.Tracer)
-
-    go func() {
-        defer wg.Done()
-
-        asyncTracer := <-ch
-        defer asyncTracer.EndSpan() // must be called
-        defer asyncTracer.NewSpanEvent("asyncWithChan_goroutine").EndSpanEvent()
-
-        ctx := pinpoint.NewContext(context.Background(), asyncTracer)
-        outGoingRequest(w, ctx)
-    }()
-
-    ch <- tracer.NewGoroutineTracer()
-    wg.Wait()
-}
-```
-
-### Context
-
-``` go
-func asyncWithContext(w http.ResponseWriter, r *http.Request) {
-    tracer := pinpoint.FromContext(r.Context())
-    wg := &sync.WaitGroup{}
-    wg.Add(1)
-
-    go func(asyncCtx context.Context) {
-        defer wg.Done()
-
-        asyncTracer := pinpoint.FromContext(asyncCtx)
-        defer asyncTracer.EndSpan() // must be called
-        defer asyncTracer.NewSpanEvent("asyncWithContext_goroutine").EndSpanEvent()
-
-        ctx := pinpoint.NewContext(context.Background(), asyncTracer)
-        outGoingRequest(w, ctx)
-    }(pinpoint.NewContext(context.Background(), tracer.NewGoroutineTracer()))
-
-    wg.Wait()
-}
-```
-
 ### Wrapper function
-**Tracer.WrapGoroutine()** function creates a tracer for the goroutine and passes it to the goroutine in context.
-You don't need to call Tracer.EndSpan() because wrapper call it when the goroutine function ends.
-Just call the wrapped function as goroutine.
-We recommend using this function.
+**Tracer.WrapGoroutine()** creates the goroutine tracer, passes it in the
+context, and calls `EndSpan()` when the wrapped function returns. Just call the
+wrapped function as a goroutine. This is the recommended form.
 
 ``` go
 func asyncFunc(asyncCtx context.Context) {
-    w := asyncCtx.Value("wr").(http.ResponseWriter)
-    outGoingRequest(w, asyncCtx)
+    outGoingRequest(asyncCtx)
 }
 
 func asyncWithWrapper(w http.ResponseWriter, r *http.Request) {
     tracer := pinpoint.FromContext(r.Context())
-    ctx := context.WithValue(context.Background(), "wr", w)
-    f := tracer.WrapGoroutine("asyncFunc", asyncFunc, ctx)
+    f := tracer.WrapGoroutine("asyncFunc", asyncFunc, context.Background())
     go f()
 }
 ```
@@ -340,21 +259,10 @@ Custom keys are plain `int32` values. They are transmitted as-is, but only
 render with a label if the key is registered in the Pinpoint web's annotation
 key list; otherwise the UI shows the bare number.
 
-Annotate before the span or event ends. Afterwards `Annotations()` returns a
-no-op collector, and a handle kept from before the end is sealed, so the late
-annotation is dropped either way. Holding one handle for several appends is
-the normal idiom — just do not let it outlive its event:
-
-```go
-a := tracer.SpanEvent().Annotations()
-a.AppendString(pinpoint.AnnotationKafkaTopic, msg.Topic)
-a.AppendLong(pinpoint.AnnotationKafkaOffset, msg.Offset)
-tracer.EndSpanEvent()
-a.AppendInt(pinpoint.AnnotationKafkaPartition, msg.Partition) // sealed; dropped
-```
-
-Prefer an annotation over a variable operation name — see
-[the contracts](api_contracts.md#7-annotation-rules).
+Annotate before the span or event ends; a late append is dropped
+([contract 5](api_contracts.md#5-recorders-are-views-not-owned-objects)). Prefer
+an annotation over a variable operation name
+([contract 7](api_contracts.md#7-annotation-rules)).
 
 ### What not to record
 
@@ -399,13 +307,9 @@ if err != nil {
 ```
 
 An error that carries no stack — a plain `errors.New` — is recorded with
-exactly `Error.CallStackDepth` frames captured at the `SetError` call site.
-`Cause()` and `Unwrap()` (`fmt.Errorf("%w")`) chains are followed to build the
-exception chain shown in the UI, bounded at 64 links; each link is reported
-with its depth (0 = the error passed to `SetError`) and its Go type name as the
-exception class name. A multi-unwrap error (`errors.Join`, `Unwrap() []error`)
-contributes its first element only — the chain is a single line of causes, and
-the remaining branches are dropped.
+`Error.CallStackDepth` frames captured at the `SetError` call site. How the
+`Cause()`/`Unwrap()` chain is walked into the exception chain is in
+[contract 9](api_contracts.md#9-error-recording).
 
 Stack capture and symbolization is the most expensive thing the agent does per
 error, which is why it is off by default. Turn it on when you are diagnosing,
@@ -557,11 +461,8 @@ pphttp.CollectUrlStat(tracer, "/users/{id}", r.Method, status)
 Passing the resolved path instead would create one entry per id and exhaust
 `Http.UrlStat.LimitSize`.
 
-The URL is first-wins: once a span holds a non-empty URL,
-later `AddMetric(pinpoint.MetricURLStat, ...)` calls keep it and refresh only
-the method and status code. To replace a URL deliberately (for example, to
-correct an early guess with the route that was eventually matched), record with
-`pinpoint.MetricURLStatForce`:
+The URL is first-wins ([contract 10](api_contracts.md#statistics)); to replace
+one deliberately, record with `pinpoint.MetricURLStatForce`:
 
 ```go
 tracer.AddMetric(pinpoint.MetricURLStatForce, &pinpoint.UrlStatEntry{Url: "/users/{id}", Method: r.Method, Status: status})
@@ -619,13 +520,3 @@ Before shipping a hand-written instrument:
 - [ ] Verified once with `PINPOINT_GO_LOG_LEVEL=debug`, with no `src=span`
       warnings — the `called after EndSpan` ones are logged only at that
       level.
-
----
-
-## Related Documentation
-
-* [Getting Started](getting_started.md)
-* [Tracer, Span, and Annotation Contracts](api_contracts.md)
-* [Plugin User Guide](plugin_guide.md)
-* [Configuration](config.md)
-* [Troubleshooting](troubleshooting.md)

@@ -450,12 +450,10 @@ not parse still describes a hop, and is kept as a null span id rather than
 rejected.
 
 A header **present with an empty value** is present, so the trace continues
-across a proxy that blanks `Pinpoint-SpanID` rather than dropping it.
-
-The carrier answers that question. `DistributedTracingContextReader.Get` returns
-**`(string, bool)`**: the value, and whether the carrier holds the key at all.
-A header held with an empty value is `("", true)` and continues the trace; one
-the carrier does not hold is `("", false)` and starts a new transaction.
+across a proxy that blanks `Pinpoint-SpanID` rather than dropping it. Presence
+is the carrier's to report: `DistributedTracingContextReader.Get` returns
+**`(string, bool)`**, the value and whether the carrier holds the key at all,
+and `pinpoint.HttpHeaderReader` adapts a `net/http.Header`.
 
 | Carrier | Presence from |
 |---|---|
@@ -463,42 +461,12 @@ the carrier does not hold is `("", false)` and starts a new transaction.
 | gRPC metadata (`plugin/grpc`) | `metadata.ValueFromIncomingContext` |
 | fasthttp request header, via `ppfasthttp.HeaderReader` | `RequestHeader.PeekAll` |
 | sarama record headers (`plugin/sarama`, `plugin/sarama-IBM`) | the header slice |
-| kratos `transport.Header` (`plugin/kratos`, `plugin/kratosv3`) | **nothing** - value only |
+| kratos `transport.Header` (`plugin/kratos`, `plugin/kratosv3`) | **nothing** - value only, so it reports `v, v != ""` and a blanked header starts a new transaction |
 | no reader at all (`NewSpanTracer`) | **nothing** - every key absent |
-
-A carrier over a source that hands out a value and nothing else - kratos's
-`transport.Header` is the one in this repo - reports what it has as present and
-an empty value as absent (`v, v != ""`). Such a request starts a new
-transaction, exactly as it did before `Get` reported presence. Presence can only
-come from a source that has it.
 
 `Pinpoint-TraceID` does not follow this: it must **parse**, so a blank trace id
 starts a new transaction even from a carrier that reports it as present: it
 names no transaction to continue.
-
-#### Implementing a carrier
-
-`Get` returning `(string, bool)` is a **breaking change**: a carrier written
-against the old `Get(key string) string` no longer satisfies
-`DistributedTracingContextReader` and fails to compile. Two shapes to update to:
-
-```go
-// A source that can report presence.
-func (c myCarrier) Get(key string) (string, bool) {
-    v, ok := c.header[key]
-    return v, ok
-}
-
-// A source that hands out a value only: the pre-existing reading.
-func (c myCarrier) Get(key string) (string, bool) {
-    v := c.header.Get(key)
-    return v, v != ""
-}
-```
-
-`net/http.Header` is not a carrier itself any more - a stdlib type cannot carry
-the second result - so wrap it in `pinpoint.HttpHeaderReader(req.Header)`. The
-http plugin's `NewHttpServerTracer` already does.
 
 The same decision drives **both** the sampler choice (`NewSpanTracerWithReader`)
 and the context extraction (`Extract`), and the two cannot disagree: a request
@@ -573,13 +541,3 @@ ctx := pinpoint.NewContext(context.Background(), tracer.NewGoroutineTracer())
 * Host strings are sanitized to valid UTF-8 like every other string the agent
   sends; a value with invalid bytes is sent with those bytes replaced, not
   rejected.
-
----
-
-## Related Documentation
-
-* [Getting Started](getting_started.md)
-* [Custom Instrumentation](instrument.md)
-* [Configuration](config.md)
-* [Plugin User Guide](plugin_guide.md)
-* [Troubleshooting](troubleshooting.md)
