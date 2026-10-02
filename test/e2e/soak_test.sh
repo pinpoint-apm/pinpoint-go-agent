@@ -33,9 +33,9 @@ RPS=100
 DURATION=43200            # 12 h
 SAMPLING_RATE=30          # percent of requests traced
 # The in-flight ceiling: an arrival past it is dropped rather than queued into
-# a burst, and load_test.py fails the run past 5 % dropped.
+# a burst, and the load generator fails the run past 5 % dropped.
 CONCURRENCY=16
-# load_test.py evaluates this once, after the run, so it only decides whether
+# The load generator evaluates this once, after the run, so it only decides whether
 # one transient blip in 4.3 M requests marks the soak failed. 0 (its default)
 # is the wrong choice for a 12 h unattended run.
 MAX_ERROR_RATE="0.1"
@@ -56,7 +56,7 @@ hours while sampling the upstream server's resources.
 
 Options:
       --out-dir DIR       Artifact directory (default: soak-<timestamp> beside this script)
-      --mode MODE         load_test.py mode (default: $MODE)
+      --mode MODE         load generator mode (default: $MODE)
       --rps RPS           Fixed arrival rate (default: $RPS)
       --duration SEC      Soak duration (default: $DURATION = 12h)
       --sampling-rate PCT Trace sampling percent (default: $SAMPLING_RATE)
@@ -99,7 +99,7 @@ done
 fail() { echo "PREFLIGHT FAIL: $*" >&2; exit 2; }
 stamp() { date +%Y-%m-%dT%H:%M:%S%z; }
 # python3 rather than nc or timeout, whose flags differ between macOS and Linux;
-# load_test.py needs it anyway.
+# the summary needs it anyway.
 reachable() {
     python3 -c 'import socket, sys; socket.create_connection((sys.argv[1], int(sys.argv[2])), 5)' \
         "$1" "$2" 2>/dev/null
@@ -126,7 +126,7 @@ LOAD_LOG="$OUT_DIR/load.log"
 VALIDATE_LOG="$OUT_DIR/validate.log"
 SLOG="$OUT_DIR/logs"
 
-# A Mac that idle-sleeps mid-run stops the arrivals, and load_test.py then fails
+# A Mac that idle-sleeps mid-run stops the arrivals, and the load generator then fails
 # the run on dropped arrivals; hold the machine awake while this script lives.
 if command -v caffeinate >/dev/null; then caffeinate -is -w $$ & fi
 
@@ -356,11 +356,11 @@ on_signal() {
     set +e
     echo "" >&2
     echo "interrupted at $(stamp) -- stopping and summarising what we have" >&2
-    # load_test.py runs as a background job, which ignores SIGINT, and
+    # The load generator runs as a background job, which ignores SIGINT, and
     # run_e2e.sh holds its own TERM until that foreground child ends: TERM both,
     # and run_e2e.sh shuts the stack down on its way out. Not a bare wait,
     # which would also wait for caffeinate, itself waiting for this script.
-    pkill -TERM -P "$RUN_PID" -f load_test.py 2>/dev/null
+    pkill -TERM -P "$RUN_PID" -f bin/load 2>/dev/null
     kill -TERM "$RUN_PID" 2>/dev/null
     wait "$RUN_PID" 2>/dev/null
     [[ -n "$SAMPLER_PID" ]] && kill "$SAMPLER_PID" 2>/dev/null && wait "$SAMPLER_PID" 2>/dev/null

@@ -120,7 +120,7 @@ collector an explicit runtime decision. To exercise the harness without a
 collector, `--local-collector` starts a bundled stub that accepts everything
 and records nothing — a self-test of the harness, not of the protocol.
 
-`load_test.py` is the load generator: with `--rps` a constant-arrival-rate test
+`test/e2e/cmd/load` is the load generator: with `--rps` a constant-arrival-rate test
 that reports latency and scheduling lag, without it an unthrottled saturation
 test. See [test/e2e/README.md](/test/e2e/README.md).
 

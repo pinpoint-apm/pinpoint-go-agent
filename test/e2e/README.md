@@ -8,7 +8,7 @@ C++ agent's `test/e2e`:
   RPC shapes, annotations, SQL metadata, call-stack errors, goroutine spans,
   URL/method filters, span limits, sampling reload, the config-file watcher, and
   lifecycle shutdown/restart.
-- `load_test.py` is the load generator. With `--rps` it is a
+- `cmd/load` is the load generator. With `--rps` it is a
   constant-arrival-rate test that schedules request starts at monotonic-clock
   deadlines, reports latency and scheduling lag, and fails when errors or
   dropped arrivals exceed the configured thresholds. Without `--rps` it is an
@@ -155,20 +155,19 @@ already-started stack. `--concurrency` is the number of workers continuously
 kept busy:
 
 ```bash
-python3 ./load_test.py \
+go run ./cmd/load \
   --base-url http://127.0.0.1:8090 \
   --mode mixed --duration 60 --concurrency 100
 ```
 
 The default two-second warm-up is excluded from throughput and latency results.
-Use `--warmup 0` to disable it, `--max-error-rate` to permit expected errors, or
-`--min-rps` to enforce a performance-regression threshold. The agent must be
-ready unless `--no-require-agent` is supplied.
+Use `--warmup 0` to disable it, or `--max-error-rate` to permit expected errors.
+The server's `/stats` and `/ready` must answer before the load starts.
 
 For a fixed request rate, add `--rps`:
 
 ```bash
-python3 ./load_test.py \
+go run ./cmd/load \
   --base-url http://127.0.0.1:8090 \
   --mode mixed --rps 50 --duration 60 --concurrency 100
 ```
@@ -237,7 +236,7 @@ Everything lands in `--out-dir` (default `soak-<timestamp>` here):
 error lines grouped by message) and the two profiles. Interrupted with Ctrl-C
 or SIGTERM, it stops the stack and summarises what it has. On macOS it holds a
 `caffeinate` assertion while it runs: an idle sleep would stop the arrivals,
-and `load_test.py` fails a run past 5% dropped arrivals.
+and the load generator fails a run past 5% dropped arrivals.
 
 ## Performance profiling
 

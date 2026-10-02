@@ -275,7 +275,7 @@ if [[ -n "$LOAD_MODE" ]]; then
     fi
 
     set +e
-    python3 "$SCRIPT_DIR/load_test.py" \
+    "$BIN_DIR/load" \
         --base-url "http://$HOST:$PORT" --mode "$LOAD_MODE" \
         --duration "$LOAD_DURATION" --concurrency "$LOAD_CONCURRENCY" \
         --rss-pid "$UPSTREAM_PID" \
