@@ -22,7 +22,7 @@ type Product struct {
 }
 
 func gormQuery(w http.ResponseWriter, r *http.Request) {
-	db, err := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/testdb")
+	db, err := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/testdb?parseTime=true")
 	if nil != err {
 		panic(err)
 	}
