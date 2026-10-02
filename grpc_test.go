@@ -1025,6 +1025,24 @@ func Test_makePException_AbbreviatesMessage(t *testing.T) {
 	assert.Equal(t, strings.Repeat("e", maxExceptionMessageSize)+"...(3072)", p.ExceptionMessage)
 }
 
+// The SetError name, the error text (a driver can echo binary data), the URL
+// and a frame's build path are bytes the agent did not produce. Exception
+// metadata that fails to marshal is lost: it is never retried.
+func Test_makePExceptionMetaData_SanitizesInvalidUTF8(t *testing.T) {
+	bad := "bad\xff"
+	md := makePExceptionMetaData(&exceptionMeta{
+		uriTemplate: "/" + bad,
+		exceptions: []*exception{{
+			className: bad,
+			callstack: &errorWithCallStack{err: errors.New(bad), errorTime: time.Now()},
+		}},
+	})
+	md.Exceptions[0].StackTraceElement = makePStackTraceElementList([]frame{{file: "/home/caf\xe9/main.go"}})
+
+	_, err := proto.Marshal(md)
+	assert.NoError(t, err)
+}
+
 // --- metadata ---------------------------------------------------------------
 
 // Each metadata type must reach the collector with the fields the caller
@@ -1057,6 +1075,19 @@ func Test_agentGrpc_sendMetadata_payloads(t *testing.T) {
 	require.Len(t, sqlUid, 1)
 	assert.Equal(t, []byte{0xde, 0xad}, sqlUid[0].GetSqlUid())
 	assert.Equal(t, "SELECT 2", sqlUid[0].GetSql())
+}
+
+// A statement can carry bytes that are not UTF-8 (a binary literal). A SQL UID
+// item that fails to marshal is rejected and re-registered every retry delay.
+func Test_agentGrpc_sendSqlUidMetadataOnce_SanitizesInvalidUTF8(t *testing.T) {
+	agentGrpc, meta := newMockMetaAgentGrpc(newTestAgent(defaultConfig()))
+
+	require.NoError(t, agentGrpc.sendSqlUidMetadataOnce([]byte{1}, "SELECT 'bad\xff'"))
+
+	_, _, _, sqlUid, _ := meta.sentMeta()
+	require.Len(t, sqlUid, 1)
+	_, err := proto.Marshal(sqlUid[0])
+	assert.NoError(t, err)
 }
 
 // Exception metadata carries the transaction that raised it plus one entry per

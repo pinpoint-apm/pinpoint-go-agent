@@ -891,7 +891,7 @@ func (agentGrpc *agentGrpc) sendSqlUidMetadata(in *pb.PSqlUidMetaData) error {
 }
 
 func (agentGrpc *agentGrpc) sendSqlUidMetadataOnce(sqlUid []byte, sql string) error {
-	return agentGrpc.sendSqlUidMetadata(&pb.PSqlUidMetaData{SqlUid: sqlUid, Sql: sql})
+	return agentGrpc.sendSqlUidMetadata(&pb.PSqlUidMetaData{SqlUid: sqlUid, Sql: validUTF8(sql)})
 }
 
 func (agentGrpc *agentGrpc) sendExceptionMetadata(in *pb.PExceptionMetaData) error {
@@ -942,7 +942,7 @@ func makePExceptionMetaData(e *exceptionMeta) *pb.PExceptionMetaData {
 			Sequence:       e.txId.Sequence,
 		},
 		SpanId:      e.spanId,
-		UriTemplate: e.uriTemplate,
+		UriTemplate: validUTF8(e.uriTemplate),
 		Exceptions:  makePExceptionList(e.exceptions),
 	}
 }
@@ -958,8 +958,8 @@ func makePExceptionList(exceptions []*exception) []*pb.PException {
 func makePException(e *exception) *pb.PException {
 	frames := e.callstack.stackTrace()
 	return &pb.PException{
-		ExceptionClassName: e.className,
-		ExceptionMessage:   abbreviateString(e.callstack.err.Error(), maxExceptionMessageSize),
+		ExceptionClassName: validUTF8(e.className),
+		ExceptionMessage:   validUTF8(abbreviateString(e.callstack.err.Error(), maxExceptionMessageSize)),
 		StartTime:          e.callstack.errorTime.UnixNano() / int64(time.Millisecond),
 		ExceptionId:        e.exceptionId,
 		ExceptionDepth:     e.depth,
@@ -970,9 +970,12 @@ func makePException(e *exception) *pb.PException {
 func makePStackTraceElementList(frames []frame) []*pb.PStackTraceElement {
 	list := make([]*pb.PStackTraceElement, 0, len(frames))
 	for _, f := range frames {
+		// Only the file needs it: a source path from the build machine can
+		// hold invalid UTF-8 (a Latin-1 directory name), while the compiler
+		// rejects such bytes in identifiers and import paths.
 		list = append(list, &pb.PStackTraceElement{
 			ClassName:  f.moduleName,
-			FileName:   f.file,
+			FileName:   validUTF8(f.file),
 			LineNumber: f.line,
 			MethodName: f.funcName,
 		})
