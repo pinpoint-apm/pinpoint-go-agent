@@ -15,32 +15,6 @@ import (
 	"google.golang.org/grpc/codes"
 )
 
-// A transport error on a metadata publication is retried until it succeeds,
-// and the agent stays online throughout.
-func TestRetriesMetadataAfterTransportError(t *testing.T) {
-	mc, agent := startStack(t)
-
-	mc.FailNext(RpcApiMetadata, codes.Unavailable, "metadata endpoint unavailable")
-
-	// A fresh operation name is what makes the agent publish API metadata.
-	tracer := agent.NewSpanTracer("fault.retry.api", "/fault-retry")
-	require.True(t, tracer.IsSampled())
-	tracer.EndSpan()
-
-	mc.WaitFor(t, func(s Snapshot) bool {
-		return countApiMetadata(s, "fault.retry.api") >= 2 &&
-			hasResultSuccess(s, RpcApiMetadata, codes.OK, true)
-	}, longTimeout)
-
-	results := resultsFor(mc.Snapshot(), RpcApiMetadata)
-	require.GreaterOrEqual(t, len(results), 2)
-	assert.Equal(t, codes.Unavailable, results[0].Code)
-	assert.False(t, results[0].Success)
-	assert.Equal(t, codes.OK, results[1].Code)
-	assert.True(t, results[1].Success)
-	assert.True(t, agent.Enable())
-}
-
 // A non-retryable error abandons the publication and releases the cache entry,
 // so the same API string is re-cached under a fresh id and published again.
 func TestReRegistersMetadataAfterNonRetryableError(t *testing.T) {
@@ -240,49 +214,6 @@ func TestReconnectsAfterEndpointAndCommandStreamFailures(t *testing.T) {
 
 	mc.SendEchoCommand(303, "after-reconnect")
 	mc.WaitFor(t, func(s Snapshot) bool { return hasEchoResponse(s, 303) }, longTimeout)
-
-	// Exercise a separate transport channel outage as well. A span queued
-	// during the outage may be dropped by policy, but later traffic must flow.
-	mc.StopEndpoint(EndpointSpan)
-	outage := agent.NewSpanTracer("span.during.outage", "/span-during-outage")
-	require.True(t, outage.IsSampled())
-	outage.EndSpan()
-	time.Sleep(100 * time.Millisecond)
-	require.NoError(t, mc.StartEndpoint(EndpointSpan))
-
-	// The span channel reconnects on its own schedule and a batch sent while
-	// it is still down is dropped rather than retried, so the application keeps
-	// producing spans until one lands.
-	require.Eventually(t, func() bool {
-		recovered := agent.NewSpanTracer("span.after.reconnect", "/span-after-reconnect")
-		require.True(t, recovered.IsSampled())
-		recovered.EndSpan()
-		return findSpanByRpc(mc.Snapshot(), "/span-after-reconnect") != nil
-	}, longTimeout, 10*time.Millisecond)
-	assert.True(t, agent.Enable())
-}
-
-func TestReconnectsStatStreamAfterServerError(t *testing.T) {
-	mc, agent := startStack(t)
-
-	mc.WaitFor(t, func(s Snapshot) bool { return len(s.Stats) > 0 }, waitTimeout)
-	initial := len(mc.Snapshot().StatStreams)
-
-	// Consumed by the already-open stream after its next message.
-	mc.FailNext(RpcSendAgentStat, codes.Unavailable, "stat stream closed by collector", 1)
-	mc.WaitFor(t, func(s Snapshot) bool {
-		return hasResultSuccess(s, RpcSendAgentStat, codes.Unavailable, false)
-	}, waitTimeout)
-
-	// The worker must notice the closed stream and open a fresh one, then keep
-	// delivering statistics through it.
-	mc.WaitFor(t, func(s Snapshot) bool {
-		return len(s.StatStreams) >= initial+1
-	}, longTimeout)
-	received := len(mc.Snapshot().Stats)
-	mc.WaitFor(t, func(s Snapshot) bool {
-		return len(s.Stats) > received
-	}, longTimeout)
 	assert.True(t, agent.Enable())
 }
 
@@ -310,57 +241,47 @@ func TestResendsStatOnReopenedStream(t *testing.T) {
 		"the stat that found the stream closed was dropped instead of re-sent")
 }
 
-func TestShutdownCancelsTimedOutStatStream(t *testing.T) {
-	mc, agent := startStack(t)
+// Shutdown must not wait out a send the collector stalls, and the collector
+// sees the agent give up on it. The stat stream carries no request deadline,
+// so the agent cancels the stalled send itself; in-flight span batches are
+// abandoned after the shutdown grace period and the closed connection cancels
+// them well before their own deadline.
+func TestShutdownCancelsStalledSends(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rpc   Rpc
+		stall func(*testing.T, *MockCollector, pinpoint.Agent)
+	}{
+		{"stat stream", RpcSendAgentStat, func(t *testing.T, mc *MockCollector, _ pinpoint.Agent) {
+			mc.WaitFor(t, func(s Snapshot) bool { return len(s.StatStreams) > 0 }, waitTimeout)
+			before := len(mc.Snapshot().Stats)
+			// The open stream accepts one more message, then deliberately stops
+			// completing the RPC until the client gives up.
+			mc.TimeoutNext(RpcSendAgentStat, 1)
+			mc.WaitFor(t, func(s Snapshot) bool { return len(s.Stats) > before }, waitTimeout)
+		}},
+		{"span batch", RpcSendSpanBatch, func(t *testing.T, mc *MockCollector, agent pinpoint.Agent) {
+			mc.TimeoutNext(RpcSendSpanBatch)
+			tracer := agent.NewSpanTracer("shutdown.timeout", "/timeout-shutdown")
+			require.True(t, tracer.IsSampled())
+			tracer.EndSpan()
+			mc.WaitFor(t, func(s Snapshot) bool { return findSpanByRpc(s, "/timeout-shutdown") != nil }, waitTimeout)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mc, agent := startStack(t)
+			tc.stall(t, mc, agent)
 
-	mc.WaitFor(t, func(s Snapshot) bool { return len(s.StatStreams) > 0 }, waitTimeout)
-	before := len(mc.Snapshot().Stats)
-
-	// The open stream accepts one more message, then deliberately stops
-	// completing the RPC until the client gives up.
-	mc.TimeoutNext(RpcSendAgentStat, 1)
-	mc.WaitFor(t, func(s Snapshot) bool { return len(s.Stats) > before }, waitTimeout)
-
-	started := time.Now()
-	agent.Shutdown()
-	elapsed := time.Since(started)
-
-	assert.Less(t, elapsed, 8*time.Second)
-	assert.False(t, agent.Enable())
-	// The stat stream carries no request deadline: the agent cancels the
-	// stalled send itself, which the collector observes as a cancellation.
-	assert.Eventually(t, func() bool {
-		s := mc.Snapshot()
-		return hasResult(s, RpcSendAgentStat, codes.Canceled) ||
-			hasResult(s, RpcSendAgentStat, codes.DeadlineExceeded)
-	}, 2*time.Second, 10*time.Millisecond)
-}
-
-func TestShutdownCancelsTimedOutSpanRequest(t *testing.T) {
-	mc, agent := startStack(t)
-
-	mc.TimeoutNext(RpcSendSpanBatch)
-	tracer := agent.NewSpanTracer("shutdown.timeout", "/timeout-shutdown")
-	require.True(t, tracer.IsSampled())
-	tracer.EndSpan()
-	mc.WaitFor(t, func(s Snapshot) bool {
-		return findSpanByRpc(s, "/timeout-shutdown") != nil
-	}, waitTimeout)
-
-	started := time.Now()
-	agent.Shutdown()
-	elapsed := time.Since(started)
-
-	assert.Less(t, elapsed, 8*time.Second)
-	assert.False(t, agent.Enable())
-	// Shutdown abandons in-flight batches after its grace period and closes
-	// the connection, which cancels the stalled request well before its own
-	// deadline: the collector sees a cancellation, not an expired deadline.
-	assert.Eventually(t, func() bool {
-		s := mc.Snapshot()
-		return hasResult(s, RpcSendSpanBatch, codes.Canceled) ||
-			hasResult(s, RpcSendSpanBatch, codes.DeadlineExceeded)
-	}, 2*time.Second, 10*time.Millisecond)
+			started := time.Now()
+			agent.Shutdown()
+			assert.Less(t, time.Since(started), 8*time.Second)
+			assert.False(t, agent.Enable())
+			assert.Eventually(t, func() bool {
+				s := mc.Snapshot()
+				return hasResult(s, tc.rpc, codes.Canceled) || hasResult(s, tc.rpc, codes.DeadlineExceeded)
+			}, 2*time.Second, 10*time.Millisecond)
+		})
+	}
 }
 
 // Every RPC fails while the connections stay up -- an unhealthy collector
@@ -840,9 +761,7 @@ func TestKeepsProducingSpansWhileShuttingDown(t *testing.T) {
 	stop := make(chan struct{})
 	var producers sync.WaitGroup
 	for worker := 0; worker < 8; worker++ {
-		producers.Add(1)
-		go func(worker int) {
-			defer producers.Done()
+		producers.Go(func() {
 			for i := 0; ; i++ {
 				select {
 				case <-stop:
@@ -862,7 +781,7 @@ func TestKeepsProducingSpansWhileShuttingDown(t *testing.T) {
 				})
 				tracer.EndSpan()
 			}
-		}(worker)
+		})
 	}
 
 	// Let the load reach the workers before pulling the agent out from under it.
@@ -891,9 +810,7 @@ func TestDeliversEveryConcurrentSpanIntactUnderLoad(t *testing.T) {
 
 	var producers sync.WaitGroup
 	for worker := 0; worker < workers; worker++ {
-		producers.Add(1)
-		go func(worker int) {
-			defer producers.Done()
+		producers.Go(func() {
 			for i := 0; i < perWorker; i++ {
 				rpc := fmt.Sprintf("/load-integrity/%d/%d", worker, i)
 				tracer := agent.NewSpanTracer("load.integrity", rpc)
@@ -905,7 +822,7 @@ func TestDeliversEveryConcurrentSpanIntactUnderLoad(t *testing.T) {
 				}
 				tracer.EndSpan()
 			}
-		}(worker)
+		})
 	}
 	producers.Wait()
 

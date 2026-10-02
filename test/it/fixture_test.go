@@ -214,10 +214,7 @@ func requireNoopTracer(t *testing.T, tracer pinpoint.Tracer) {
 // --- wire accessors --------------------------------------------------------
 
 func allSpanMessages(s Snapshot) []*pb.PSpanMessage {
-	result := make([]*pb.PSpanMessage, 0, len(s.SpanMessages)+len(s.SpanBatches)*2)
-	for _, r := range s.SpanMessages {
-		result = append(result, r.Message)
-	}
+	result := make([]*pb.PSpanMessage, 0, len(s.SpanBatches)*2)
 	for _, r := range s.SpanBatches {
 		result = append(result, r.Message.GetSpan()...)
 	}
@@ -503,7 +500,7 @@ func registeredAgentID(t *testing.T, mc *MockCollector) string {
 	t.Helper()
 	s := mc.Snapshot()
 	require.NotEmpty(t, s.AgentInfos)
-	id := s.AgentInfos[0].Metadata.ValueOr("agentid", "")
+	id := s.AgentInfos[0].Metadata.Get("agentid")
 	require.Len(t, id, generatedAgentIDLen)
 	return id
 }
@@ -513,12 +510,12 @@ func registeredAgentID(t *testing.T, mc *MockCollector) string {
 // socket id.
 func expectCommonMetadata(t *testing.T, md RpcMetadata, expectSocketID bool) {
 	t.Helper()
-	assert.Equal(t, itAppName, md.ValueOr("applicationname", ""))
-	assert.Len(t, md.ValueOr("agentid", ""), generatedAgentIDLen)
-	assert.Equal(t, itAgentName, md.ValueOr("agentname", ""))
-	assert.Equal(t, fmt.Sprint(itAppType), md.ValueOr("servicetype", ""))
-	assert.Equal(t, "100", md.ValueOr("protocol.version", ""))
-	assert.NotEmpty(t, md.ValueOr("starttime", ""))
+	assert.Equal(t, itAppName, md.Get("applicationname"))
+	assert.Len(t, md.Get("agentid"), generatedAgentIDLen)
+	assert.Equal(t, itAgentName, md.Get("agentname"))
+	assert.Equal(t, fmt.Sprint(itAppType), md.Get("servicetype"))
+	assert.Equal(t, "100", md.Get("protocol.version"))
+	assert.NotEmpty(t, md.Get("starttime"))
 	assert.Equal(t, expectSocketID, md.Has("socketid"))
 }
 

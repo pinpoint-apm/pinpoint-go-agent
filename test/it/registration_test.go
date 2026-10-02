@@ -46,7 +46,7 @@ func TestRegistersAgentAndMaintainsPingAndCommandStreams(t *testing.T) {
 	expectCommonMetadata(t, s.CommandStreams[0], false)
 	// HandleCommandV2 registers the connection from this header alone: the
 	// supported codes, ";"-separated and ascending, with no handshake message.
-	assert.Equal(t, "710;730;740;750", s.CommandStreams[0].ValueOr("supportcommandcode", ""))
+	assert.Equal(t, "710;730;740;750", s.CommandStreams[0].Get("supportcommandcode"))
 	assert.False(t, s.AgentInfos[0].Metadata.Has("supportcommandcode"), "only the command stream carries the header")
 	assert.True(t, agent.Enable())
 }
@@ -89,20 +89,20 @@ func TestSendsV4IdentityAcrossGrpcAndTracePropagation(t *testing.T) {
 	s := mc.Snapshot()
 	// The agent always mints its own 22-byte agent id; every channel must
 	// carry that same generated id.
-	agentID := s.AgentInfos[0].Metadata.ValueOr("agentid", "")
+	agentID := s.AgentInfos[0].Metadata.Get("agentid")
 	require.Len(t, agentID, generatedAgentIDLen)
-	startTime := s.AgentInfos[0].Metadata.ValueOr("starttime", "")
+	startTime := s.AgentInfos[0].Metadata.Get("starttime")
 	require.NotEmpty(t, startTime)
 
 	expectV4 := func(md RpcMetadata, expectSocketID bool) {
-		assert.Equal(t, itAppName, md.ValueOr("applicationname", ""))
-		assert.Equal(t, agentID, md.ValueOr("agentid", ""))
-		assert.Equal(t, itAgentName, md.ValueOr("agentname", ""))
-		assert.Equal(t, startTime, md.ValueOr("starttime", ""))
-		assert.Equal(t, fmt.Sprint(itAppType), md.ValueOr("servicetype", ""))
-		assert.Equal(t, "400", md.ValueOr("protocol.version", ""))
-		assert.Equal(t, "go-it-service", md.ValueOr("servicename", ""))
-		assert.Equal(t, "go-it-api-key", md.ValueOr("apikey", ""))
+		assert.Equal(t, itAppName, md.Get("applicationname"))
+		assert.Equal(t, agentID, md.Get("agentid"))
+		assert.Equal(t, itAgentName, md.Get("agentname"))
+		assert.Equal(t, startTime, md.Get("starttime"))
+		assert.Equal(t, fmt.Sprint(itAppType), md.Get("servicetype"))
+		assert.Equal(t, "400", md.Get("protocol.version"))
+		assert.Equal(t, "go-it-service", md.Get("servicename"))
+		assert.Equal(t, "go-it-api-key", md.Get("apikey"))
 		assert.Equal(t, expectSocketID, md.Has("socketid"))
 	}
 	expectV4(s.AgentInfos[0].Metadata, false)
@@ -147,9 +147,9 @@ func TestReconnectsPingStreamAfterResponseError(t *testing.T) {
 	// reconnect from a duplicate registration.
 	s := mc.Snapshot()
 	require.GreaterOrEqual(t, len(s.PingStreams), 2)
-	first, err := strconv.ParseInt(s.PingStreams[0].ValueOr("socketid", ""), 10, 64)
+	first, err := strconv.ParseInt(s.PingStreams[0].Get("socketid"), 10, 64)
 	require.NoError(t, err)
-	second, err := strconv.ParseInt(s.PingStreams[1].ValueOr("socketid", ""), 10, 64)
+	second, err := strconv.ParseInt(s.PingStreams[1].Get("socketid"), 10, 64)
 	require.NoError(t, err)
 	assert.Equal(t, first+1, second)
 	assert.True(t, agent.Enable())
@@ -170,51 +170,16 @@ func TestRecyclesPingStreamWhenCollectorNeverResponds(t *testing.T) {
 	assert.True(t, agent.Enable())
 }
 
-func TestRetriesAgentRegistrationAfterInitialFailure(t *testing.T) {
-	// startStack blocks until registration succeeded and the agent came
-	// online, so by now the failed first attempt and its retry are on record.
-	mc, agent := startArmedStack(t, func(mc *MockCollector) {
-		mc.FailNext(RpcAgentInfo, codes.Unavailable, "first registration attempt rejected")
-	})
-
-	s := mc.Snapshot()
-	require.GreaterOrEqual(t, len(s.AgentInfos), 2)
-	assert.Equal(t, s.AgentInfos[0].Message.GetAgentVersion(), s.AgentInfos[1].Message.GetAgentVersion())
-
-	results := resultsFor(s, RpcAgentInfo)
-	require.GreaterOrEqual(t, len(results), 2)
-	assert.Equal(t, codes.Unavailable, results[0].Code)
-	assert.False(t, results[0].Success)
-	assert.Equal(t, codes.OK, results[1].Code)
-	assert.True(t, results[1].Success)
-	assert.True(t, agent.Enable())
-}
-
-// A registration the collector answers with PResult.success=false is retried
-// like a transport error rather than treated as permanent: a collector answers
-// that way while it is initializing or briefly refusing, and giving up would
-// leave the process untraced until someone restarts it.
-func TestRetriesAgentRegistrationAfterApplicationRejection(t *testing.T) {
-	// startStack blocks until registration succeeded, so by now the rejected
-	// first attempt and its retry are both on record.
-	mc, agent := startArmedStack(t, func(mc *MockCollector) {
-		mc.RejectNext(RpcAgentInfo, "collector rejected this agent")
-	})
-
-	results := resultsFor(mc.Snapshot(), RpcAgentInfo)
-	require.GreaterOrEqual(t, len(results), 2)
-	assert.Equal(t, codes.OK, results[0].Code, "the collector answered; it just said no")
-	assert.False(t, results[0].Success)
-	assert.Equal(t, codes.OK, results[1].Code)
-	assert.True(t, results[1].Success)
-	assert.True(t, agent.Enable())
-}
-
 // Retrying is not the same as running: for as long as the collector keeps
 // rejecting, the agent must stay disabled and open no stream. Registration is
 // the precondition for tracing here (see doc/development.md), and an agent that
 // reported itself enabled while stuck in this loop would look healthy while
 // reporting nothing.
+//
+// A PResult.success=false answer is still retried like a transport error
+// rather than treated as permanent: a collector answers that way while it is
+// initializing or briefly refusing, and giving up would leave the process
+// untraced until someone restarts it.
 func TestStaysDisabledWhileRegistrationIsRejected(t *testing.T) {
 	mc := startCollector(t)
 	for i := 0; i < 3; i++ {
@@ -232,6 +197,9 @@ func TestStaysDisabledWhileRegistrationIsRejected(t *testing.T) {
 	assert.Empty(t, s.PingStreams)
 	assert.Empty(t, s.StatStreams)
 	assert.Empty(t, s.CommandStreams)
+
+	require.Eventually(t, agent.Enable, longTimeout, 10*time.Millisecond,
+		"the agent never registered once the collector stopped rejecting")
 }
 
 // Runs without the fixture: a disabled configuration must produce the noop

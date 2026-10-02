@@ -6,7 +6,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"io"
 	"log"
 	"net"
@@ -56,10 +55,6 @@ func (metadataService) RequestExceptionMetaData(context.Context, *pb.PExceptionM
 
 type spanService struct{ pb.UnimplementedSpanServer }
 
-func (spanService) SendSpan(stream grpc.ClientStreamingServer[pb.PSpanMessage, emptypb.Empty]) error {
-	return drain(stream)
-}
-
 func (spanService) SendSpanBatch(context.Context, *pb.PSpanMessageBatch) (*pb.PSpanResultBatch, error) {
 	return &pb.PSpanResultBatch{}, nil
 }
@@ -74,16 +69,12 @@ type commandService struct {
 	pb.UnimplementedProfilerCommandServiceServer
 }
 
-func (commandService) HandleCommand(stream grpc.BidiStreamingServer[pb.PCmdMessage, pb.PCmdRequest]) error {
+func (commandService) HandleCommandV2(stream grpc.BidiStreamingServer[pb.PCmdMessage, pb.PCmdRequest]) error {
 	for {
 		if _, err := stream.Recv(); err != nil {
 			return nil
 		}
 	}
-}
-
-func (c commandService) HandleCommandV2(stream grpc.BidiStreamingServer[pb.PCmdMessage, pb.PCmdRequest]) error {
-	return c.HandleCommand(stream)
 }
 
 func (commandService) CommandEcho(context.Context, *pb.PCmdEchoResponse) (*emptypb.Empty, error) {
@@ -132,19 +123,16 @@ func serve(port int, register func(*grpc.Server)) {
 	}()
 }
 
+// main listens on the collector's default ports, which pinpoint-config.yaml
+// points the agents at.
 func main() {
-	agentPort := flag.Int("agent-port", 9991, "agent/metadata/command port")
-	statPort := flag.Int("stat-port", 9992, "stat port")
-	spanPort := flag.Int("span-port", 9993, "span port")
-	flag.Parse()
-
-	serve(*agentPort, func(s *grpc.Server) {
+	serve(9991, func(s *grpc.Server) {
 		pb.RegisterAgentServer(s, agentService{})
 		pb.RegisterMetadataServer(s, metadataService{})
 		pb.RegisterProfilerCommandServiceServer(s, commandService{})
 	})
-	serve(*spanPort, func(s *grpc.Server) { pb.RegisterSpanServer(s, spanService{}) })
-	serve(*statPort, func(s *grpc.Server) { pb.RegisterStatServer(s, statService{}) })
+	serve(9993, func(s *grpc.Server) { pb.RegisterSpanServer(s, spanService{}) })
+	serve(9992, func(s *grpc.Server) { pb.RegisterStatServer(s, statService{}) })
 
 	select {}
 }

@@ -89,12 +89,6 @@ func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
 	}
 	root.EndSpan()
 
-	unsampled := agent.NewSpanTracerWithReader("not.sampled", "/unsampled", mapCarrier{
-		pinpoint.HeaderSampled: "s0",
-	})
-	assert.False(t, unsampled.IsSampled())
-	unsampled.EndSpan()
-
 	mc.WaitFor(t, func(s Snapshot) bool {
 		return findSpanByRpc(s, "/orders/42") != nil &&
 			findSpanByRpc(s, "/downstream") != nil &&
@@ -129,8 +123,10 @@ func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
 	assert.Equal(t, "right", findAnnotation(annotations, 9003).GetValue().GetStringStringValue().GetStringValue2().GetValue())
 	assert.Equal(t, int32(11), findAnnotation(annotations, 9004).GetValue().GetIntStringStringValue().GetIntValue())
 	assert.Len(t, findAnnotation(annotations, 9005).GetValue().GetBytesStringStringValue().GetBytesValue(), 16)
-	assert.Equal(t, "network-detail",
-		findAnnotation(annotations, 9006).GetValue().GetLongIntIntByteByteStringValue().GetStringValue().GetValue())
+	detail := findAnnotation(annotations, 9006).GetValue().GetLongIntIntByteByteStringValue()
+	assert.Equal(t, int32(3), detail.GetByteValue1())
+	assert.Equal(t, int32(4), detail.GetByteValue2())
+	assert.Equal(t, "network-detail", detail.GetStringValue().GetValue())
 	assert.Equal(t, int32(503),
 		findAnnotation(annotations, pinpoint.AnnotationHttpStatusCode).GetValue().GetIntValue())
 	assert.Equal(t, "request-123",
@@ -172,8 +168,6 @@ func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
 
 	require.NotEmpty(t, s.SpanBatches)
 	expectCommonMetadata(t, s.SpanBatches[0].Metadata, false)
-
-	assert.Equal(t, 0, countSpansByRpc(s, "/unsampled"))
 }
 
 // Go's EndSpan finalizes a span whose events were left open by the

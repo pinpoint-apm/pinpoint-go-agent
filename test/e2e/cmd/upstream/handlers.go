@@ -86,11 +86,7 @@ func onDeep(w http.ResponseWriter, r *http.Request) {
 	overflowContext := false
 	if r.URL.Query().Has("inject") {
 		tracer.SpanEvent().SetDestination("deep-overflow-target:8080")
-		carrier := headerCarrier{}
-		tracer.Inject(carrier)
-		overflowContext = carrier.has(pinpoint.HeaderTraceId) &&
-			carrier.has(pinpoint.HeaderSpanId) &&
-			carrier.has(pinpoint.HeaderParentSpanId)
+		overflowContext = injectsTraceContext(tracer)
 	}
 
 	for i := 0; i < depth; i++ {
@@ -162,16 +158,14 @@ func onMixed(w http.ResponseWriter, r *http.Request) {
 	tracer.NewSpanEvent("prepare_async")
 	async := tracer.NewGoroutineTracer()
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := 0; i < rand.Intn(20)+1; i++ {
 			async.NewSpanEvent("async_work_" + strconv.Itoa(i))
 			time.Sleep(time.Duration(rand.Intn(50)+1) * time.Millisecond)
 			async.EndSpanEvent()
 		}
 		async.EndSpan()
-	}()
+	})
 	tracer.EndSpanEvent()
 
 	for i := 0; i < rand.Intn(20)+1; i++ {
@@ -213,15 +207,12 @@ func onFilterProbe(w http.ResponseWriter, r *http.Request) {
 }
 
 type featuresResponse struct {
-	Status              string `json:"status"`
-	Sampled             bool   `json:"sampled"`
-	TraceID             string `json:"trace_id"`
-	SpanID              string `json:"span_id"`
-	ActiveEventObserved bool   `json:"active_event_observed"`
-	LoggingContext      bool   `json:"logging_context"`
-	ContextInjected     bool   `json:"context_injected"`
-	AsyncComplete       bool   `json:"async_complete"`
-	AsyncTraceMatches   bool   `json:"async_trace_matches"`
+	Status            string `json:"status"`
+	Sampled           bool   `json:"sampled"`
+	TraceID           string `json:"trace_id"`
+	SpanID            string `json:"span_id"`
+	ContextInjected   bool   `json:"context_injected"`
+	AsyncTraceMatches bool   `json:"async_trace_matches"`
 }
 
 // onFeatures is deterministic coverage of the public tracing API. The response
@@ -241,7 +232,6 @@ func onFeatures(w http.ResponseWriter, r *http.Request) {
 	a.AppendStringString(9103, "feature-key", "feature-value")
 
 	tracer.NewSpanEvent("feature-event")
-	activeEventObserved := tracer.SpanEvent() != nil
 	se := tracer.SpanEvent()
 	se.SetServiceType(pinpoint.ServiceTypeGoFunction)
 	se.SetDestination("feature-destination")
@@ -270,37 +260,25 @@ func onFeatures(w http.ResponseWriter, r *http.Request) {
 	tracer.SpanEvent().SetError(errors.New("deterministic feature failure"), "FeatureFailure")
 	tracer.EndSpanEvent()
 
-	logging := headerCarrier{}
-	logging.Set(pinpoint.LogTransactionIdKey, tracer.TransactionId().String())
-	logging.Set(pinpoint.LogSpanIdKey, e2e.SpanIDString(tracer))
-	loggingContext := logging.has(pinpoint.LogTransactionIdKey) && logging.has(pinpoint.LogSpanIdKey)
-
-	injected := headerCarrier{}
 	tracer.NewSpanEvent("feature-context-injection")
 	tracer.SpanEvent().SetDestination("feature-context-target:8080")
-	tracer.Inject(injected)
+	contextInjected := injectsTraceContext(tracer)
 	tracer.EndSpanEvent()
-	contextInjected := injected.has(pinpoint.HeaderTraceId) &&
-		injected.has(pinpoint.HeaderSpanId) &&
-		injected.has(pinpoint.HeaderParentSpanId)
 
 	// A goroutine tracer hangs off the event on top of the stack, so an event
 	// must still be open when it is created.
 	tracer.NewSpanEvent("feature-async-invocation")
 	async := tracer.NewGoroutineTracer()
 	parentTraceID := tracer.TransactionId().String()
-	var asyncComplete, asyncTraceMatches bool
+	var asyncTraceMatches bool
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		async.NewSpanEvent("feature-async-work")
 		async.SpanEvent().Annotations().AppendString(pinpoint.AnnotationApi, "feature-async-work")
 		async.EndSpanEvent()
 		asyncTraceMatches = async.TransactionId().String() == parentTraceID
 		async.EndSpan()
-		asyncComplete = true
-	}()
+	})
 	wg.Wait()
 	tracer.EndSpanEvent()
 
@@ -308,15 +286,12 @@ func onFeatures(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Response-Time", "2ms")
 	w.Header().Set("X-Request-ID", r.Header.Get("X-Request-ID"))
 	e2e.WriteJSON(w, http.StatusOK, featuresResponse{
-		Status:              "ok",
-		Sampled:             tracer.IsSampled(),
-		TraceID:             tracer.TransactionId().String(),
-		SpanID:              e2e.SpanIDString(tracer),
-		ActiveEventObserved: activeEventObserved,
-		LoggingContext:      loggingContext,
-		ContextInjected:     contextInjected,
-		AsyncComplete:       asyncComplete,
-		AsyncTraceMatches:   asyncTraceMatches,
+		Status:            "ok",
+		Sampled:           tracer.IsSampled(),
+		TraceID:           tracer.TransactionId().String(),
+		SpanID:            e2e.SpanIDString(tracer),
+		ContextInjected:   contextInjected,
+		AsyncTraceMatches: asyncTraceMatches,
 	})
 	finishSpan(w, r, tracer, http.StatusOK)
 }
@@ -392,10 +367,12 @@ func onReady(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// headerCarrier is a distributed-tracing carrier backed by a plain map, used
-// where the endpoint injects a context it then inspects itself.
-type headerCarrier map[string]string
-
-func (h headerCarrier) Get(key string) (string, bool) { v, ok := h[key]; return v, ok }
-func (h headerCarrier) Set(key, value string)         { h[key] = value }
-func (h headerCarrier) has(key string) bool           { _, ok := h[key]; return ok }
+// injectsTraceContext reports whether the tracer's open event hands a complete
+// trace context to an outbound call.
+func injectsTraceContext(tracer pinpoint.Tracer) bool {
+	h := http.Header{}
+	tracer.Inject(pinpoint.HttpHeaderWriter(h))
+	return h.Get(pinpoint.HeaderTraceId) != "" &&
+		h.Get(pinpoint.HeaderSpanId) != "" &&
+		h.Get(pinpoint.HeaderParentSpanId) != ""
+}

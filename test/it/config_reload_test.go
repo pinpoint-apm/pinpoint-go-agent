@@ -25,18 +25,9 @@ func TestReloadsConfigFileAndAppliesNewSamplingRate(t *testing.T) {
 	}
 	writeSamplingConfig(1)
 
-	mc := startCollector(t)
 	// The config file wins over ConfigOption values, so sampling comes from the
 	// file while everything else stays inline.
-	options := append(defaultOptions(mc), pinpoint.WithConfigFile(path))
-	config, err := pinpoint.NewConfig(options...)
-	require.NoError(t, err)
-	agent, err := pinpoint.NewAgent(config)
-	require.NoError(t, err)
-	t.Cleanup(agent.Shutdown)
-
-	mc.WaitFor(t, func(s Snapshot) bool { return len(s.AgentInfos) > 0 }, waitTimeout)
-	require.Eventually(t, func() bool { return agent.Enable() }, waitTimeout, 10*time.Millisecond)
+	mc, agent := startStack(t, pinpoint.WithConfigFile(path))
 	require.Equal(t, 1, agent.Config().Int(pinpoint.CfgSamplingCounterRate))
 
 	before := agent.NewSpanTracer("reload.probe", "/reloaded/before")

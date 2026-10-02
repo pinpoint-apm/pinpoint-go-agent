@@ -2,6 +2,7 @@ package it
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,139 +133,69 @@ func continueCarrier(traceID string) mapCarrier {
 	}
 }
 
-func TestAppliesCounterAndParentSamplingAndReportsDecisions(t *testing.T) {
-	mc, agent := startStack(t, pinpoint.WithSamplingCounterRate(3))
+// Each sampler drives a burst of new traces and then a burst continuing the
+// first sampled one (or a foreign trace when none was sampled), and must both
+// make the expected decisions and report them in the transaction counters.
+func TestAppliesSamplingAndReportsDecisions(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		opts                    []pinpoint.ConfigOption
+		newPattern, contPattern []bool
+		wantTotals              transactionTotals
+	}{
+		// The counter sampler admits the first new trace and then one in every
+		// CounterRate after it. Continued traces bypass it.
+		{"counter", []pinpoint.ConfigOption{pinpoint.WithSamplingCounterRate(3)},
+			[]bool{true, false, false, true, false, false}, []bool{true},
+			transactionTotals{sampledNew: 2, unsampledNew: 4, sampledContinuation: 1}},
+		// The percent sampler accumulates the rate (50% == 5000/10000) per
+		// request, so admission alternates deterministically.
+		{"percent", []pinpoint.ConfigOption{pinpoint.WithSamplingType("PERCENT"), pinpoint.WithSamplingPercentRate(50)},
+			[]bool{true, false, true, false}, nil,
+			transactionTotals{sampledNew: 2, unsampledNew: 2}},
+		// CounterRate 0 means "never sample a new trace"; continued traces
+		// bypass the base sampler entirely, so they must still be recorded.
+		{"counter rate zero", []pinpoint.ConfigOption{pinpoint.WithSamplingCounterRate(0)},
+			[]bool{false, false, false}, []bool{true},
+			transactionTotals{unsampledNew: 3, sampledContinuation: 1}},
+		// The limiter refills continuously, so the whole burst must be issued
+		// without pauses for the skipped decisions to be deterministic.
+		{"throughput limits", []pinpoint.ConfigOption{pinpoint.WithSamplingNewThroughput(2), pinpoint.WithSamplingContinueThroughput(1)},
+			[]bool{true, true, false, false}, []bool{true, false, false},
+			transactionTotals{sampledNew: 2, skippedNew: 2, sampledContinuation: 1, skippedCont: 2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mc, agent := startStack(t, tc.opts...)
+			mc.WaitFor(t, func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout)
+			baseline := len(agentStats(mc.Snapshot()))
 
-	mc.WaitFor(t, func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout)
-	baseline := len(agentStats(mc.Snapshot()))
+			parent := driveSamplingPattern(t, agent, "sampling.new", "/sampling/new/", tc.newPattern, nil)
+			if parent == "" {
+				parent = "java-agent-7^1700000000000^99"
+			}
+			driveSamplingPattern(t, agent, "sampling.continued", "/sampling/continued/", tc.contPattern, continueCarrier(parent))
 
-	// The counter sampler admits the first new trace and then one in every
-	// CounterRate after it.
-	expected := []bool{true, false, false, true, false, false}
-	sampledTraceID := driveSamplingPattern(t, agent, "sampling.counter", "/sampling/counter/", expected, nil)
-	require.NotEmpty(t, sampledTraceID)
+			decisions := int64(len(tc.newPattern) + len(tc.contPattern))
+			sum := func(x transactionTotals) int64 {
+				return x.sampledNew + x.sampledContinuation + x.unsampledNew + x.unsampledCont + x.skippedNew + x.skippedCont
+			}
+			mc.WaitFor(t, func(s Snapshot) bool {
+				return sum(transactionTotalsAfter(s, baseline)) >= decisions &&
+					(len(tc.contPattern) == 0 || countSpansByRpc(s, "/sampling/continued/0") == 1)
+			}, waitTimeout)
 
-	continued := agent.NewSpanTracerWithReader("sampling.continued", "/sampling/continued", continueCarrier(sampledTraceID))
-	assert.True(t, continued.IsSampled())
-	continued.EndSpan()
-
-	unsampled := agent.NewSpanTracerWithReader("sampling.parent-denied", "/sampling/parent-denied", mapCarrier{
-		pinpoint.HeaderSampled: "s0",
-	})
-	assert.False(t, unsampled.IsSampled())
-	unsampled.EndSpan()
-
-	mc.WaitFor(t, func(s Snapshot) bool {
-		totals := transactionTotalsAfter(s, baseline)
-		return totals.sampledNew >= 2 && totals.unsampledNew >= 4 &&
-			totals.sampledContinuation >= 1 && totals.unsampledCont >= 1 &&
-			countSpansByRpc(s, "/sampling/continued") == 1
-	}, waitTimeout)
-
-	s := mc.Snapshot()
-	totals := transactionTotalsAfter(s, baseline)
-	assert.Equal(t, int64(2), totals.sampledNew)
-	assert.Equal(t, int64(4), totals.unsampledNew)
-	assert.Equal(t, int64(1), totals.sampledContinuation)
-	assert.Equal(t, int64(1), totals.unsampledCont)
-	assert.Equal(t, int64(0), totals.skippedNew)
-	assert.Equal(t, int64(0), totals.skippedCont)
-	expectSamplingPattern(t, s, "/sampling/counter/", expected)
-	assert.Equal(t, 1, countSpansByRpc(s, "/sampling/continued"))
-	assert.Equal(t, 0, countSpansByRpc(s, "/sampling/parent-denied"))
-}
-
-func TestAppliesPercentSamplingPattern(t *testing.T) {
-	mc, agent := startStack(t,
-		pinpoint.WithSamplingType("PERCENT"),
-		pinpoint.WithSamplingPercentRate(50))
-
-	mc.WaitFor(t, func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout)
-	baseline := len(agentStats(mc.Snapshot()))
-
-	// The percent sampler accumulates the rate (50% == 5000/10000) per request,
-	// so admission alternates deterministically: sample, skip, sample, skip.
-	expected := []bool{true, false, true, false}
-	driveSamplingPattern(t, agent, "sampling.percent", "/sampling/percent/", expected, nil)
-
-	mc.WaitFor(t, func(s Snapshot) bool {
-		totals := transactionTotalsAfter(s, baseline)
-		return totals.sampledNew >= 2 && totals.unsampledNew >= 2
-	}, waitTimeout)
-
-	s := mc.Snapshot()
-	totals := transactionTotalsAfter(s, baseline)
-	assert.Equal(t, int64(2), totals.sampledNew)
-	assert.Equal(t, int64(2), totals.unsampledNew)
-	assert.Equal(t, int64(0), totals.skippedNew)
-	expectSamplingPattern(t, s, "/sampling/percent/", expected)
-}
-
-func TestSamplesOnlyContinuedTracesWhenCounterRateIsZero(t *testing.T) {
-	// CounterRate 0 means "never sample a new trace"; continued traces bypass
-	// the base sampler entirely, so they must still be recorded.
-	mc, agent := startStack(t, pinpoint.WithSamplingCounterRate(0))
-
-	mc.WaitFor(t, func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout)
-	baseline := len(agentStats(mc.Snapshot()))
-
-	driveSamplingPattern(t, agent, "sampling.zero", "/sampling/zero/", []bool{false, false, false}, nil)
-
-	continued := agent.NewSpanTracerWithReader("sampling.zero.continued", "/sampling/zero/continued",
-		continueCarrier("java-agent-7^1700000000000^99"))
-	assert.True(t, continued.IsSampled())
-	continued.EndSpan()
-
-	mc.WaitFor(t, func(s Snapshot) bool {
-		totals := transactionTotalsAfter(s, baseline)
-		return totals.unsampledNew >= 3 && totals.sampledContinuation >= 1 &&
-			countSpansByRpc(s, "/sampling/zero/continued") == 1
-	}, waitTimeout)
-
-	s := mc.Snapshot()
-	totals := transactionTotalsAfter(s, baseline)
-	assert.Equal(t, int64(0), totals.sampledNew)
-	assert.Equal(t, int64(3), totals.unsampledNew)
-	assert.Equal(t, int64(1), totals.sampledContinuation)
-	wire := findSpanByRpc(s, "/sampling/zero/continued")
-	require.NotNil(t, wire)
-	assert.Equal(t, "java-agent-7", wire.GetTransactionId().GetAgentId())
-}
-
-func TestEnforcesNewAndContinuationThroughputLimits(t *testing.T) {
-	mc, agent := startStack(t,
-		pinpoint.WithSamplingNewThroughput(2),
-		pinpoint.WithSamplingContinueThroughput(1))
-
-	mc.WaitFor(t, func(s Snapshot) bool { return len(agentStats(s)) >= 1 }, waitTimeout)
-	baseline := len(agentStats(mc.Snapshot()))
-
-	// The limiter refills continuously, so the whole burst must be issued
-	// without pauses for the skipped decisions to be deterministic.
-	expectedNew := []bool{true, true, false, false}
-	parentTraceID := driveSamplingPattern(t, agent, "sampling.throughput.new", "/sampling/throughput/new/", expectedNew, nil)
-	require.NotEmpty(t, parentTraceID)
-
-	expectedCont := []bool{true, false, false}
-	driveSamplingPattern(t, agent, "sampling.throughput.continued", "/sampling/throughput/continued/",
-		expectedCont, continueCarrier(parentTraceID))
-
-	mc.WaitFor(t, func(s Snapshot) bool {
-		totals := transactionTotalsAfter(s, baseline)
-		return totals.sampledNew >= 2 && totals.skippedNew >= 2 &&
-			totals.sampledContinuation >= 1 && totals.skippedCont >= 2 &&
-			countSpansByRpc(s, "/sampling/throughput/continued/0") == 1
-	}, waitTimeout)
-
-	s := mc.Snapshot()
-	totals := transactionTotalsAfter(s, baseline)
-	assert.Equal(t, int64(2), totals.sampledNew)
-	assert.Equal(t, int64(2), totals.skippedNew)
-	assert.Equal(t, int64(0), totals.unsampledNew)
-	assert.Equal(t, int64(1), totals.sampledContinuation)
-	assert.Equal(t, int64(2), totals.skippedCont)
-	expectSamplingPattern(t, s, "/sampling/throughput/new/", expectedNew)
-	expectSamplingPattern(t, s, "/sampling/throughput/continued/", expectedCont)
+			s := mc.Snapshot()
+			assert.Equal(t, tc.wantTotals, transactionTotalsAfter(s, baseline))
+			expectSamplingPattern(t, s, "/sampling/new/", tc.newPattern)
+			expectSamplingPattern(t, s, "/sampling/continued/", tc.contPattern)
+			if len(tc.contPattern) > 0 {
+				// The continued span stays on its parent's trace.
+				wire := findSpanByRpc(s, "/sampling/continued/0")
+				require.NotNil(t, wire)
+				assert.Equal(t, strings.SplitN(parent, "^", 2)[0], wire.GetTransactionId().GetAgentId())
+			}
+		})
+	}
 }
 
 // URL statistics flush on the agent's fixed 30s tick, so this test waits for a

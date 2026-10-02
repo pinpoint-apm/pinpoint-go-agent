@@ -81,23 +81,14 @@ func WriteJSON(w http.ResponseWriter, status int, body any) {
 	}
 }
 
-// IntParam reads a bounded integer query parameter.
-func IntParam(r *http.Request, name string, def, min, max int) int {
-	raw := r.URL.Query().Get(name)
-	if raw == "" {
-		return def
-	}
-	v, err := strconv.Atoi(raw)
+// IntParam reads an integer query parameter clamped to [lo, hi], or def when
+// it is absent or malformed.
+func IntParam(r *http.Request, name string, def, lo, hi int) int {
+	v, err := strconv.Atoi(r.URL.Query().Get(name))
 	if err != nil {
 		return def
 	}
-	if v < min {
-		return min
-	}
-	if v > max {
-		return max
-	}
-	return v
+	return min(max(v, lo), hi)
 }
 
 // SpanIDString renders a span id the way the smoke test expects to read it.

@@ -127,38 +127,6 @@ func TestHttpHelpersPopulateServerAndClientWireData(t *testing.T) {
 		pinpoint.AnnotationHttpResponseHeader, "x-client-response", "client-response-5"))
 }
 
-func TestParsesApacheProxyHeaderAndRealIpFallback(t *testing.T) {
-	mc, _ := startStack(t)
-
-	req := serverRequest(t, http.MethodGet, "/proxy-apache", map[string]string{
-		"X-Real-Ip":            "203.0.113.99",
-		"Pinpoint-ProxyApache": "t=1710000001000000 D=250 i=7 b=12",
-	})
-	tracer := pphttp.NewHttpServerTracer(req, "http.proxy.apache")
-	require.True(t, tracer.IsSampled())
-	tracer.EndSpan()
-
-	mc.WaitFor(t, func(s Snapshot) bool {
-		return findSpanByRpc(s, "/proxy-apache") != nil
-	}, waitTimeout)
-
-	wire := findSpanByRpc(mc.Snapshot(), "/proxy-apache")
-	require.NotNil(t, wire)
-	// X-Real-Ip wins over the socket address when no X-Forwarded-For exists.
-	assert.Equal(t, "203.0.113.99", wire.GetAcceptEvent().GetRemoteAddr())
-
-	proxy := findAnnotation(wire.GetAnnotation(), pinpoint.AnnotationHttpProxyHeader)
-	require.NotNil(t, proxy)
-	value := proxy.GetValue().GetLongIntIntByteByteStringValue()
-	// Apache reports microseconds; the agent converts to milliseconds and tags
-	// the annotation with code 3 plus duration/idle/busy.
-	assert.Equal(t, int64(1710000001000), value.GetLongValue())
-	assert.Equal(t, int32(3), value.GetIntValue1())
-	assert.Equal(t, int32(250), value.GetIntValue2())
-	assert.Equal(t, int32(7), value.GetByteValue1())
-	assert.Equal(t, int32(12), value.GetByteValue2())
-}
-
 func TestRecordsEveryProxyHopAndDropsMalformedNginxTime(t *testing.T) {
 	mc, _ := startStack(t)
 

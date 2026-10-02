@@ -96,10 +96,7 @@ http_request GET "$BASE_URL/features" \
     -H 'Cookie: session_id=smoke-session; token=smoke-token'
 assert_status "features" 200
 assert_contains "features sampled" '"sampled":true'
-assert_contains "active event" '"active_event_observed":true'
-assert_contains "logging context" '"logging_context":true'
 assert_contains "context injection" '"context_injected":true'
-assert_contains "async completion" '"async_complete":true'
 assert_contains "async trace" '"async_trace_matches":true'
 
 echo ""

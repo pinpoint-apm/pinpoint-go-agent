@@ -46,10 +46,8 @@ const (
 	RpcApiMetadata                    Rpc = "ApiMetadata"
 	RpcStringMetadata                 Rpc = "StringMetadata"
 	RpcExceptionMetadata              Rpc = "ExceptionMetadata"
-	RpcSendSpan                       Rpc = "SendSpan"
 	RpcSendSpanBatch                  Rpc = "SendSpanBatch"
 	RpcSendAgentStat                  Rpc = "SendAgentStat"
-	RpcHandleCommand                  Rpc = "HandleCommand"
 	RpcHandleCommandV2                Rpc = "HandleCommandV2"
 	RpcCommandEcho                    Rpc = "CommandEcho"
 	RpcCommandStreamActiveThreadCount Rpc = "CommandStreamActiveThreadCount"
@@ -62,28 +60,16 @@ type RpcMetadata struct {
 	md metadata.MD
 }
 
-// Value returns the first value recorded for key, and whether it was present.
-func (m RpcMetadata) Value(key string) (string, bool) {
-	v := m.md.Get(key)
-	if len(v) == 0 {
-		return "", false
+// Get returns the first value recorded for key, or "" when absent.
+func (m RpcMetadata) Get(key string) string {
+	if v := m.md.Get(key); len(v) > 0 {
+		return v[0]
 	}
-	return v[0], true
-}
-
-// ValueOr returns the first value recorded for key, or def when absent.
-func (m RpcMetadata) ValueOr(key, def string) string {
-	if v, ok := m.Value(key); ok {
-		return v
-	}
-	return def
+	return ""
 }
 
 // Has reports whether key was present in the call metadata.
-func (m RpcMetadata) Has(key string) bool {
-	_, ok := m.Value(key)
-	return ok
-}
+func (m RpcMetadata) Has(key string) bool { return len(m.md.Get(key)) > 0 }
 
 // Received is a protobuf received by the mock collector plus its call headers.
 type Received[T proto.Message] struct {
@@ -123,8 +109,7 @@ type Snapshot struct {
 	StringMetadata    []Received[*pb.PStringMetaData]
 	ExceptionMetadata []Received[*pb.PExceptionMetaData]
 
-	SpanMessages []Received[*pb.PSpanMessage]
-	SpanBatches  []Received[*pb.PSpanMessageBatch]
+	SpanBatches []Received[*pb.PSpanMessageBatch]
 
 	StatStreams []RpcMetadata
 	Stats       []Received[*pb.PStatMessage]
@@ -157,7 +142,6 @@ type endpointServer struct {
 	mu       sync.Mutex
 	port     int
 	server   *grpc.Server
-	listener net.Listener
 	creds    credentials.TransportCredentials
 	register func(*grpc.Server)
 	onConn   func()
@@ -415,7 +399,6 @@ func (c *MockCollector) Snapshot() Snapshot {
 	s.ApiMetadata = append([]Received[*pb.PApiMetaData](nil), c.snapshot.ApiMetadata...)
 	s.StringMetadata = append([]Received[*pb.PStringMetaData](nil), c.snapshot.StringMetadata...)
 	s.ExceptionMetadata = append([]Received[*pb.PExceptionMetaData](nil), c.snapshot.ExceptionMetadata...)
-	s.SpanMessages = append([]Received[*pb.PSpanMessage](nil), c.snapshot.SpanMessages...)
 	s.SpanBatches = append([]Received[*pb.PSpanMessageBatch](nil), c.snapshot.SpanBatches...)
 	s.StatStreams = append([]RpcMetadata(nil), c.snapshot.StatStreams...)
 	s.Stats = append([]Received[*pb.PStatMessage](nil), c.snapshot.Stats...)
@@ -447,7 +430,6 @@ func (e *endpointServer) start(port int) error {
 	if err != nil {
 		return fmt.Errorf("listen on port %d: %w", port, err)
 	}
-	e.listener = ln
 	e.port = ln.Addr().(*net.TCPAddr).Port
 	opts := []grpc.ServerOption{grpc.StatsHandler(connStats{e.onConn})}
 	if e.creds != nil {
@@ -463,7 +445,6 @@ func (e *endpointServer) stop() {
 	e.mu.Lock()
 	server := e.server
 	e.server = nil
-	e.listener = nil
 	e.mu.Unlock()
 	if server != nil {
 		server.Stop()
@@ -623,13 +604,9 @@ func (g *streamGate) check() error {
 		return nil
 	}
 	switch f.kind {
-	case faultFail, faultReject:
-		code := f.code
-		if f.kind == faultReject {
-			code = codes.Internal
-		}
-		g.c.addResult(g.rpc, nil, code, false, f.msg)
-		return status.Error(code, f.msg)
+	case faultFail:
+		g.c.addResult(g.rpc, nil, f.code, false, f.msg)
+		return status.Error(f.code, f.msg)
 	case faultTimeout:
 		_, ch := g.c.outageState()
 		code := g.c.waitForCancel(g.ctx, ch)
@@ -747,29 +724,6 @@ type spanService struct {
 	c *MockCollector
 }
 
-func (s *spanService) SendSpan(stream grpc.ClientStreamingServer[pb.PSpanMessage, emptypb.Empty]) error {
-	md := mdOf(stream.Context())
-	g := &streamGate{c: s.c, rpc: RpcSendSpan, ctx: stream.Context()}
-	if err := g.check(); err != nil {
-		return err
-	}
-	for {
-		span, err := stream.Recv()
-		if err != nil {
-			_ = g.done(nil)
-			return stream.SendAndClose(&emptypb.Empty{})
-		}
-		msg := clone(span)
-		s.c.record(func(snap *Snapshot) {
-			snap.SpanMessages = append(snap.SpanMessages, Received[*pb.PSpanMessage]{msg, md})
-		})
-		g.msgCount++
-		if err := g.check(); err != nil {
-			return err
-		}
-	}
-}
-
 func (s *spanService) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch) (*pb.PSpanResultBatch, error) {
 	md, msg := mdOf(ctx), clone(in)
 	s.c.record(func(snap *Snapshot) {
@@ -821,15 +775,8 @@ type commandService struct {
 	c *MockCollector
 }
 
-func (s *commandService) HandleCommand(stream grpc.BidiStreamingServer[pb.PCmdMessage, pb.PCmdRequest]) error {
-	return s.handleCommand(RpcHandleCommand, stream)
-}
-
 func (s *commandService) HandleCommandV2(stream grpc.BidiStreamingServer[pb.PCmdMessage, pb.PCmdRequest]) error {
-	return s.handleCommand(RpcHandleCommandV2, stream)
-}
-
-func (s *commandService) handleCommand(rpc Rpc, stream grpc.BidiStreamingServer[pb.PCmdMessage, pb.PCmdRequest]) error {
+	const rpc = RpcHandleCommandV2
 	md := mdOf(stream.Context())
 	s.c.record(func(snap *Snapshot) {
 		snap.CommandStreams = append(snap.CommandStreams, md)
