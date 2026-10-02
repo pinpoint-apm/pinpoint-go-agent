@@ -848,3 +848,29 @@ func Test_UrlStatWithoutAnEndTimeIsSkipped(t *testing.T) {
 	stats.add(&urlStat{entry: &UrlStatEntry{Url: "/ended"}, endTime: time.Now(), elapsed: 10})
 	assert.False(t, stats.takeSnapshot(true).isEmpty(), "an entry with an end time is collected")
 }
+
+// merge folds the histograms of a key both snapshots hold instead of
+// replacing one with the other, moves the keys only the other holds, and keeps
+// the newer tick.
+func Test_urlStatSnapshotMergeFoldsSharedKeys(t *testing.T) {
+	stats := newUrlStats(defaultConfig())
+	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+	next := tick.Add(urlStatCollectInterval)
+
+	into := stats.newSnapshot()
+	into.add(newTestUrlStat("/a", 10, tick))
+	other := stats.newSnapshot()
+	other.add(newTestUrlStat("/a", 400, tick))
+	other.add(newTestUrlStat("/b", 20, next))
+
+	into.merge(other)
+
+	require.Len(t, into.urlMap, 2)
+	assert.Equal(t, 2, into.count, "a shared key is counted once")
+	folded := into.urlMap[urlKey{url: "/a", tick: tick}]
+	assert.Equal(t, int64(410), folded.totalHistogram.total)
+	assert.Equal(t, int64(400), folded.totalHistogram.max)
+	assert.Equal(t, int32(2), histogramCount(folded.totalHistogram))
+	assert.Contains(t, into.urlMap, urlKey{url: "/b", tick: next})
+	assert.Equal(t, next, into.tick, "the newer tick is kept")
+}

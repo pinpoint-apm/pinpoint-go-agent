@@ -1,9 +1,12 @@
 package pinpoint
 
 import (
+	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -237,4 +240,94 @@ func Test_noopSpan_AsyncChild_SingletonUntouched(t *testing.T) {
 	wg.Wait()
 
 	assert.Zero(t, defaultNoopSpan.statusErr.Load(), "the singleton was written to")
+}
+
+// Every recorder of the noop tracer is a no-op: plugins call them on the
+// shared singleton from every tracer-less request at once, so none of them may
+// write it. Run with -race.
+func Test_noopSpan_RecordersLeaveSingletonUntouched(t *testing.T) {
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Go(func() {
+			tracer := NoopTracer()
+			span := tracer.Span()
+			span.SetServiceType(ServiceTypeGoApp)
+			span.SetRpcName("/rpc")
+			span.SetRemoteAddress("127.0.0.1")
+			span.SetEndPoint("host:80")
+			span.SetAcceptorHost("host")
+			span.SetLogging(1)
+			recordNoopAnnotations(span.Annotations())
+
+			tracer.NewSpanEvent("event")
+			se := tracer.SpanEvent()
+			se.SetError(errors.New("boom"), "name")
+			se.SetServiceType(ServiceTypeMysqlExecuteQuery)
+			se.SetDestination("db")
+			se.SetEndPoint("db:3306")
+			se.SetSQL("SELECT 1", "")
+			se.FixDuration(time.Now(), time.Now())
+			recordNoopAnnotations(se.Annotations())
+			tracer.EndSpanEvent()
+		})
+	}
+	wg.Wait()
+
+	assert.Zero(t, defaultNoopSpan.spanId)
+	assert.Empty(t, defaultNoopSpan.rpcName)
+	assert.Zero(t, defaultNoopSpan.statusErr.Load())
+	assert.False(t, defaultNoopSpan.withStats.Load())
+	assert.Nil(t, defaultNoopSpan.urlStat)
+}
+
+func recordNoopAnnotations(a Annotation) {
+	a.AppendInt(1, 1)
+	a.AppendLong(1, 1)
+	a.AppendString(1, "s")
+	a.AppendStringString(1, "s1", "s2")
+	a.AppendIntStringString(1, 1, "s1", "s2")
+	a.AppendBytesStringString(1, []byte("b"), "s1", "s2")
+	a.AppendLongIntIntByteByteString(1, 1, 1, 1, 1, 1, "s")
+}
+
+func Test_noopAgent(t *testing.T) {
+	agent := NoopAgent()
+	assert.False(t, agent.Enable())
+	assert.Same(t, NoopTracer(), agent.NewSpanTracer("op", "/rpc"))
+	assert.Same(t, NoopTracer(), agent.NewSpanTracerWithReader("op", "/rpc", &noopDistributedTracingContextReader{}))
+	agent.Shutdown()
+	assert.Same(t, NoopTracer(), agent.NewSpanTracer("op", "/rpc"), "Shutdown leaves the noop agent usable")
+}
+
+func Test_noopSpan_Identity(t *testing.T) {
+	assert.Equal(t, "0^Noop", NoopTracer().AsyncSpanId())
+	assert.JSONEq(t, "{}", string(NoopTracer().JsonString()))
+
+	span := newUnSampledSpan(newTestAgent(defaultConfig()), "/test")
+	defer span.EndSpan()
+	assert.Equal(t, strconv.FormatInt(span.SpanId(), 10)+"^Noop", span.AsyncSpanId())
+}
+
+// The goroutine WrapGoroutine returns runs under a child of the tracer, which
+// carries the parent's unsampled marker but never its statistics.
+func Test_noopSpan_WrapGoroutine(t *testing.T) {
+	type ctxKey struct{}
+	parent := context.WithValue(context.Background(), ctxKey{}, "v")
+	root := newUnSampledSpan(newTestAgent(defaultConfig()), "/test")
+	defer root.EndSpan()
+
+	var got Tracer
+	var value interface{}
+	root.WrapGoroutine("worker", func(ctx context.Context) {
+		got = FromContext(ctx)
+		value = ctx.Value(ctxKey{})
+	}, parent)()
+
+	child, ok := got.(*noopSpan)
+	require.True(t, ok, "the goroutine runs under a noop child")
+	assert.NotSame(t, root, child)
+	assert.True(t, child.unsampled, "the unsampled marker is inherited")
+	assert.False(t, child.withStats.Load(), "the statistics stay with the root")
+	assert.Same(t, root, child.root())
+	assert.Equal(t, "v", value, "the parent context's values are kept")
 }

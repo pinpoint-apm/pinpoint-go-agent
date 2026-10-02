@@ -7,12 +7,14 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type fakeDriverConn struct{ begun bool }
@@ -436,4 +438,114 @@ func TestIsWrappedSQLDriver(t *testing.T) {
 
 	// Wrapping twice is the mistake the check exists for; the shape still holds.
 	assert.True(t, IsWrappedSQLDriver(WrapSQLDriver(plain, DBInfo{})))
+}
+
+// legacyDriver is a driver with a connector whose connections offer only the
+// pre-context interfaces (Execer, Queryer, Prepare, Begin) and whose
+// statements only Exec and Query: the wrapper's fallback paths.
+type legacyDriver struct{}
+
+func (legacyDriver) Open(string) (driver.Conn, error) { return &legacyConn{}, nil }
+func (d legacyDriver) OpenConnector(string) (driver.Connector, error) {
+	return legacyConnector{d}, nil
+}
+
+type legacyConnector struct{ d legacyDriver }
+
+func (c legacyConnector) Connect(context.Context) (driver.Conn, error) { return &legacyConn{}, nil }
+func (c legacyConnector) Driver() driver.Driver                        { return c.d }
+
+type legacyConn struct{ fakeDriverConn }
+
+func (c *legacyConn) Prepare(string) (driver.Stmt, error) { return &legacyStmt{}, nil }
+func (c *legacyConn) Exec(string, []driver.Value) (driver.Result, error) {
+	return driver.RowsAffected(1), nil
+}
+func (c *legacyConn) Query(string, []driver.Value) (driver.Rows, error) { return emptyRows{}, nil }
+
+type legacyStmt struct{ fakeDriverStmt }
+
+func (s *legacyStmt) Exec([]driver.Value) (driver.Result, error) { return driver.RowsAffected(1), nil }
+func (s *legacyStmt) Query([]driver.Value) (driver.Rows, error)  { return emptyRows{}, nil }
+
+type emptyRows struct{}
+
+func (emptyRows) Columns() []string         { return []string{"c"} }
+func (emptyRows) Close() error              { return nil }
+func (emptyRows) Next([]driver.Value) error { return io.EOF }
+
+// A driver with only the pre-context interfaces is still traced through
+// database/sql: the connector path opens instrumented connections, and the
+// Exec/Query fallbacks of the connection and of a prepared statement each
+// record their SQL with its bind values, as a rollback records its own event.
+func Test_sqlDriver_LegacyInterfacesAreTraced(t *testing.T) {
+	wrapped := WrapSQLDriver(legacyDriver{}, DBInfo{DBType: ServiceTypeMysql, QueryType: ServiceTypeMysqlExecuteQuery})
+	connector, err := wrapped.(driver.DriverContext).OpenConnector("dsn")
+	require.NoError(t, err)
+	db := sql.OpenDB(connector)
+	defer db.Close()
+	assert.Same(t, wrapped.(wrappedSQLDriverContext).Driver, db.Driver(), "the connector reports the wrapping driver")
+
+	tracer := newTestAgent(defaultConfig()).NewSpanTracer("sql", "/sql")
+	ctx := NewContext(context.Background(), tracer)
+
+	_, err = db.ExecContext(ctx, "UPDATE t SET a = ?", int64(1))
+	require.NoError(t, err)
+	rows, err := db.QueryContext(ctx, "SELECT ?", "x")
+	require.NoError(t, err)
+	require.NoError(t, rows.Close())
+
+	stmt, err := db.PrepareContext(ctx, "INSERT INTO t VALUES (?)")
+	require.NoError(t, err)
+	_, err = stmt.ExecContext(ctx, int64(2))
+	require.NoError(t, err)
+	rows, err = stmt.QueryContext(ctx, int64(3))
+	require.NoError(t, err)
+	require.NoError(t, rows.Close())
+	require.NoError(t, stmt.Close())
+
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	require.NoError(t, tx.Rollback())
+
+	// A pre-context driver cannot take named parameters.
+	_, err = db.ExecContext(ctx, "SELECT :id", sql.Named("id", 1))
+	assert.ErrorContains(t, err, "Named Parameters")
+	_, err = db.QueryContext(ctx, "SELECT :id", sql.Named("id", 1))
+	assert.ErrorContains(t, err, "Named Parameters")
+
+	var ops, binds []string
+	for _, se := range tracer.(*span).spanEvents {
+		ops = append(ops, se.operationName)
+		assert.Equal(t, int32(ServiceTypeMysqlExecuteQuery), se.serviceType, se.operationName)
+		if values := se.annotations.values; len(values) > 0 {
+			binds = append(binds, values[0].s2)
+		}
+	}
+	assert.Equal(t, []string{"ConnExec", "ConnQuery", "StmtExec", "StmtQuery", "Begin", "Rollback"}, ops)
+	assert.Equal(t, []string{"1", "x", "2", "3"}, binds, "bind values of the SQL events")
+}
+
+// The fallbacks mirror database/sql: a context canceled before the call
+// returns its error without running the statement.
+func Test_sqlStmt_FallbackHonorsCanceledContext(t *testing.T) {
+	conn := newSqlConn(&legacyConn{}, DBInfo{})
+	stmt := &sqlStmt{Stmt: &legacyStmt{}, conn: conn, sql: "SELECT 1"}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := stmt.ExecContext(canceled, nil)
+	assert.ErrorIs(t, err, context.Canceled)
+	_, err = stmt.QueryContext(canceled, nil)
+	assert.ErrorIs(t, err, context.Canceled)
+	_, err = conn.ExecContext(canceled, "SELECT 1", nil)
+	assert.ErrorIs(t, err, context.Canceled)
+	_, err = conn.QueryContext(canceled, "SELECT 1", nil)
+	assert.ErrorIs(t, err, context.Canceled)
+
+	named := []driver.NamedValue{{Name: "id", Value: 1}}
+	_, err = stmt.ExecContext(context.Background(), named)
+	assert.ErrorContains(t, err, "Named Parameters")
+	_, err = stmt.QueryContext(context.Background(), named)
+	assert.ErrorContains(t, err, "Named Parameters")
 }

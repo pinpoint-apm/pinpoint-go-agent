@@ -2244,3 +2244,22 @@ func TestSpanInjectExtract_ServiceNameRoundTrip(t *testing.T) {
 	receiver.extract(&DistributedTracingContextMap{carrier})
 	assert.Equal(t, "ServiceA", receiver.parentServiceName)
 }
+
+// AsyncSpanId is formatted by hand; it must read exactly as
+// "spanId^asyncId^sequence" does through fmt at every width, the widest
+// values included, since the 64-byte buffer is sized for them.
+func Test_span_AsyncSpanId(t *testing.T) {
+	span := defaultSpan(newTestAgent(defaultConfig()))
+	for _, tt := range []struct {
+		spanId          int64
+		asyncId, seqNum int32
+	}{
+		{0, 0, 0},
+		{1234567890123, 7, 3},
+		{math.MinInt64, math.MinInt32, math.MinInt32},
+		{math.MaxInt64, math.MaxInt32, math.MaxInt32},
+	} {
+		span.spanId, span.asyncId, span.asyncSequence = tt.spanId, tt.asyncId, tt.seqNum
+		assert.Equal(t, fmt.Sprintf("%d^%d^%d", tt.spanId, tt.asyncId, tt.seqNum), span.AsyncSpanId())
+	}
+}

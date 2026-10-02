@@ -117,6 +117,10 @@ func TestNewConfig_WithFunc(t *testing.T) {
 		WithHttpUrlStatLimitSize(2048),
 		WithErrorTraceCallStack(true),
 		WithErrorCallStackDepth(64),
+		WithSQLEnableRawSqlCache(false),
+		WithSQLRemoveComments(false),
+		WithStatQueueSize(2048),
+		WithErrorMaxChainDepth(10),
 	}
 
 	c, _ := NewConfig(opts...)
@@ -157,6 +161,10 @@ func TestNewConfig_WithFunc(t *testing.T) {
 	assert.Equal(t, 2048, c.Int(CfgHttpUrlStatLimitSize), CfgHttpUrlStatLimitSize)
 	assert.Equal(t, true, c.Bool(CfgErrorTraceCallStack), CfgErrorTraceCallStack)
 	assert.Equal(t, 64, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
+	assert.Equal(t, false, c.Bool(CfgSQLEnableRawSqlCache), CfgSQLEnableRawSqlCache)
+	assert.Equal(t, false, c.Bool(CfgSQLRemoveComments), CfgSQLRemoveComments)
+	assert.Equal(t, 2048, c.Int(CfgStatQueueSize), CfgStatQueueSize)
+	assert.Equal(t, 10, c.Int(CfgErrorMaxChainDepth), CfgErrorMaxChainDepth)
 }
 
 func TestNewConfig_ConfigFileYaml(t *testing.T) {

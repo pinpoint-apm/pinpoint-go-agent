@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -258,6 +259,46 @@ func Test_expiringPickFirst_exitIdleConnectsOnlyWhenNothingIsUp(t *testing.T) {
 	cc.subConn(0).setState(connectivity.Ready)
 	b.ExitIdle()
 	assert.Equal(t, 1, cc.count(), "a READY SubConn needs no connection attempt")
+}
+
+// A resolver error fails RPCs only while nothing is READY: a working
+// connection outlives a name resolution problem, and a closed policy publishes
+// nothing at all.
+func Test_expiringPickFirst_resolverErrorOnlyWithoutReadySubConn(t *testing.T) {
+	resolveErr := errors.New("resolve failed")
+
+	b, cc := newExpiringPickFirst(t, 0)
+	b.ResolverError(resolveErr)
+	assert.Equal(t, connectivity.TransientFailure, cc.state().ConnectivityState)
+	_, err := cc.pick()
+	assert.ErrorIs(t, err, resolveErr)
+
+	b, cc = readyExpiringPickFirst(t, 0)
+	b.ResolverError(resolveErr)
+	assert.Equal(t, connectivity.Ready, cc.state().ConnectivityState, "READY keeps serving")
+
+	b, cc = newExpiringPickFirst(t, 0)
+	b.Close()
+	published := len(cc.states)
+	b.ResolverError(resolveErr)
+	assert.Len(t, cc.states, published, "closed: nothing published")
+
+	// The policy reads SubConn state from each StateListener only.
+	b, cc = newExpiringPickFirst(t, 0)
+	published = len(cc.states)
+	b.UpdateSubConnState(cc.subConn(0), balancer.SubConnState{ConnectivityState: connectivity.Ready})
+	assert.Len(t, cc.states, published, "UpdateSubConnState publishes nothing")
+}
+
+// An update that resolves no address is a bad resolver state, reported to the
+// RPCs waiting on the channel.
+func Test_expiringPickFirst_noAddressesIsBadResolverState(t *testing.T) {
+	b, cc := newExpiringPickFirst(t, 0)
+	err := b.UpdateClientConnState(balancer.ClientConnState{})
+	assert.ErrorIs(t, err, balancer.ErrBadResolverState)
+	assert.Equal(t, connectivity.TransientFailure, cc.state().ConnectivityState)
+	_, err = cc.pick()
+	assert.ErrorContains(t, err, "no addresses resolved")
 }
 
 func Test_expiringPickFirst_parseConfig(t *testing.T) {

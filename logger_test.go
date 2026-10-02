@@ -254,3 +254,19 @@ func Test_UnsupportedLogLevelKeepsTheCurrentLevel(t *testing.T) {
 		assert.Equal(t, logrus.WarnLevel, l.defaultLogger.GetLevel(), "%q is accepted", name)
 	}
 }
+
+// Tracef writes at Trace level only: it reaches a logger at Trace and is
+// dropped by one at Debug.
+func Test_TracefLogsAtTraceLevelOnly(t *testing.T) {
+	var buf bytes.Buffer
+	restore := captureLogAt(&buf, logrus.DebugLevel)
+	Log("test").Tracef("dropped %d", 1)
+	restore()
+	assert.NotContains(t, buf.String(), "dropped")
+
+	restore = captureLogAt(&buf, logrus.TraceLevel)
+	defer restore()
+	Log("test").Tracef("kept %d", 2)
+	assert.Contains(t, buf.String(), "kept 2")
+	assert.Contains(t, buf.String(), "level=trace")
+}
