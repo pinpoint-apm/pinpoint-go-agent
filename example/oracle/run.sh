@@ -6,7 +6,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
 echo "================================================"
-echo "Oracle Database XE + Go Example Runner"
+echo "Oracle Database Free + Go Example Runner"
 echo "================================================"
 
 # Colors for output
@@ -45,20 +45,21 @@ if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
 fi
 
 # Step 2: Pull Docker image
-echo -e "\n${YELLOW}[2/7] Pulling Oracle XE Docker image...${NC}"
-echo "Note: This may take a while (image is ~2GB)"
-docker pull container-registry.oracle.com/database/express:21.3.0-xe
+echo -e "\n${YELLOW}[2/7] Pulling Oracle Database Free Docker image...${NC}"
+docker pull gvenzl/oracle-free:23-slim
 
 # Step 3: Start Oracle container
-echo -e "\n${YELLOW}[3/7] Starting Oracle XE container...${NC}"
+echo -e "\n${YELLOW}[3/7] Starting Oracle Database Free container...${NC}"
 docker run -d \
     --name $CONTAINER_NAME \
     -p 1521:1521 \
-    -e ORACLE_PWD=tiger \
-    -e ORACLE_CHARACTERSET=AL32UTF8 \
-    container-registry.oracle.com/database/express:21.3.0-xe
+    -e ORACLE_PASSWORD=tiger \
+    -e APP_USER=scott \
+    -e APP_USER_PASSWORD=tiger \
+    -v "$SCRIPT_DIR/init.sql:/container-entrypoint-initdb.d/init.sql:ro" \
+    gvenzl/oracle-free:23-slim
 
-echo "Started Oracle XE on port 1521"
+echo "Started Oracle Database Free on port 1521"
 
 # Step 4: Wait for Oracle to be ready
 echo -e "\n${YELLOW}[4/7] Waiting for Oracle Database to be ready...${NC}"
@@ -90,10 +91,13 @@ echo -e "${GREEN}✓ Oracle Database is ready!${NC}"
 # Additional wait to ensure Oracle is fully ready for connections
 sleep 5
 
-# Step 5: Create BONUS table
-echo -e "\n${YELLOW}[5/7] Creating BONUS table...${NC}"
-docker exec $CONTAINER_NAME bash -c "echo \"CREATE TABLE scott.BONUS (ENAME VARCHAR2(10), JOB VARCHAR2(9), SAL NUMBER, COMM NUMBER);\" | sqlplus -s scott/tiger@//localhost:1521/xe" > /dev/null 2>&1 || true
-echo -e "${GREEN}✓ Table creation attempted (may already exist)${NC}"
+# Step 5: Check BONUS table (created by init.sql)
+echo -e "\n${YELLOW}[5/7] Checking BONUS table...${NC}"
+if echo "SELECT COUNT(*) FROM BONUS;" | docker exec -i $CONTAINER_NAME sqlplus -s scott/tiger@//localhost:1521/FREEPDB1 | grep -q ORA-; then
+    echo -e "${RED}Error: BONUS table is not available${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✓ BONUS table is ready${NC}"
 
 # Step 6: Setup Pinpoint config if needed
 echo -e "\n${YELLOW}[6/7] Checking Pinpoint configuration...${NC}"
@@ -147,9 +151,9 @@ echo -e "\n${GREEN}================================================${NC}"
 echo -e "${GREEN}Everything is ready!${NC}"
 echo -e "${GREEN}================================================${NC}"
 echo ""
-echo "Oracle Database XE:"
+echo "Oracle Database Free:"
 echo "  - Host: localhost:1521"
-echo "  - Service: xe"
+echo "  - Service: FREEPDB1"
 echo "  - Username: scott"
 echo "  - Password: tiger"
 echo "  - Table: BONUS"

@@ -76,7 +76,7 @@ func withTracer(f func(context.Context, *sql.DB) error, ctx context.Context, con
 }
 
 func query(w http.ResponseWriter, r *http.Request) {
-	conn, err := sql.Open("oraclev3-pinpoint", "oracle://scott:tiger@localhost:1521/xe")
+	conn, err := sql.Open("oraclev3-pinpoint", "oracle://scott:tiger@localhost:1521/FREEPDB1")
 	if err != nil {
 		fmt.Println("open error: ", err)
 		return

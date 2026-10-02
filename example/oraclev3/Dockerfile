@@ -1,4 +1,4 @@
-FROM container-registry.oracle.com/database/express:21.3.0-xe
+FROM gvenzl/oracle-free:23-slim
 
 # Expose Oracle port
 EXPOSE 1521

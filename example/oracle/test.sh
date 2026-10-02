@@ -56,5 +56,5 @@ echo ""
 echo "Check the console output of run.sh for detailed Oracle operation results"
 echo ""
 echo "You can also query Oracle directly:"
-echo "  docker exec oracle-test bash -c \"echo 'SELECT * FROM scott.BONUS;' | sqlplus -s scott/tiger@//localhost:1521/xe\""
+echo "  docker exec oracle-test bash -c \"echo 'SELECT * FROM scott.BONUS;' | sqlplus -s scott/tiger@//localhost:1521/FREEPDB1\""
 

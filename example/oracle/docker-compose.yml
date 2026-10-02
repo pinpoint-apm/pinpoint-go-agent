@@ -1,17 +1,17 @@
-version: '3.8'
-
 services:
   oracle:
-    image: container-registry.oracle.com/database/express:21.3.0-xe
+    image: gvenzl/oracle-free:23-slim
     container_name: oracle-test
     environment:
-      ORACLE_PWD: tiger
-      ORACLE_CHARACTERSET: AL32UTF8
+      ORACLE_PASSWORD: tiger
+      APP_USER: scott
+      APP_USER_PASSWORD: tiger
     ports:
       - "1521:1521"
+    volumes:
+      - ./init.sql:/container-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "echo 'SELECT 1 FROM DUAL;' | sqlplus -s scott/tiger@//localhost:1521/xe || exit 1"]
+      test: ["CMD", "healthcheck.sh"]
       interval: 10s
       timeout: 5s
       retries: 30
-
