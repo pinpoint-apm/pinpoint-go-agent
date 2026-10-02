@@ -234,14 +234,22 @@ func Test_traceSampler_hugeThroughput(t *testing.T) {
 	assert.Equal(t, 1000, countConcurrent(1000, func() bool { return s.isContinueSampled(stats) }), "continue")
 }
 
+// The rate is the percent in hundredths, rounded: 0.29 * 100 is
+// 28.999999999999996 in float64, and truncating it sampled 0.28%.
+func Test_newPercentSampler_RoundsToHundredths(t *testing.T) {
+	for percent, want := range map[float64]uint64{0.29: 29, 2.3: 230, 4.35: 435, 99.99: 9999, 0.01: 1, 0.005: 0, 0.009: 0} {
+		assert.Equal(t, want, newPercentSampler(percent).rate, "%v", percent)
+	}
+}
+
 // configured rate to hundredths of a percent and then picks one of three
 // (FalseSampler), >= 10000 always samples (TrueSampler), anything between
 // runs PercentRateSampler. Here the same three cases fall out of the
-// truncation in newPercentSampler plus the two guards in isSampled.
+// rate newPercentSampler computes plus the two guards in isSampled.
 func Test_percentSampler_javaMapping(t *testing.T) {
 	tests := []struct {
 		percent float64
-		rate    uint64 // truncated internal rate
+		rate    uint64 // internal rate, in hundredths of a percent
 		sampled int    // out of 1000 calls
 	}{
 		{-1, 0, 0},
@@ -257,7 +265,7 @@ func Test_percentSampler_javaMapping(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%g", tt.percent), func(t *testing.T) {
 			s := newPercentSampler(tt.percent)
-			assert.Equal(t, tt.rate, s.rate, "truncated rate")
+			assert.Equal(t, tt.rate, s.rate, "internal rate")
 
 			sampled := 0
 			for i := 0; i < 1000; i++ {

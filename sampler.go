@@ -1,9 +1,11 @@
 package pinpoint
 
 import (
-	"golang.org/x/time/rate"
+	"math"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -67,13 +69,16 @@ func newPercentSampler(percent float64) *percentSampler {
 		Log("config").Warnf("sampling percent rate %v is above the maximum 100, every new transaction is sampled", percent)
 		percent = 100
 	} else if percent > 0 && percent < 0.01 {
-		// Truncated to a rate of 0 below, i.e. never sampled. Warned about
-		// because it reads as a typo, where an explicit 0 is a deliberate off.
+		// A rate of 0, i.e. never sampled. Warned about because it reads as a
+		// typo, where an explicit 0 is a deliberate off.
 		Log("config").Warnf("sampling percent rate %v is below the minimum 0.01, no new transaction is sampled", percent)
+		percent = 0
 	}
 
+	// Rounded, not truncated: 0.29 * 100 is 28.999999999999996 in float64, so
+	// a truncated rate sampled 0.28%.
 	return &percentSampler{
-		rate:    uint64(percent * 100),
+		rate:    uint64(math.Round(percent * 100)),
 		counter: 0,
 	}
 }

@@ -347,6 +347,10 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Fixed
 
+- **`Sampling.PercentRate` is rounded to hundredths of a percent, not
+  truncated.** `0.29 * 100` is `28.999999999999996` in float64, so 0.29%
+  sampled 0.28%, 2.3% sampled 2.29% and 4.35% sampled 4.34%. A rate below the
+  0.01 minimum still samples nothing.
 - **An empty `os.Args` no longer panics, and a panic while connecting no
   longer ends the host.** A process exec'd with no argv at all panicked in
   `NewConfig` and in the registration goroutine, which nothing recovered;
