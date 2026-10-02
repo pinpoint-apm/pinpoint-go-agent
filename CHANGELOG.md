@@ -139,6 +139,12 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   authority - the collector hostname. The new `Collector.Grpc.DnsResolverEnable`
   (default true) restores the `passthrough` scheme when set to false, as a
   rollback lever that needs no redeploy.
+- `Collector.Grpc.WriteBufferSize` defaults to `65536`; it was 1MB. grpc-go
+  pools write buffers in a `sync.Pool` that every GC cycle empties, so each
+  collector connection allocated a fresh 1MB buffer after most cycles. In the
+  end-to-end mixed load at 1000 RPS that was 42% of the bytes the process
+  allocated; at 64KB the same load allocated 40% less and peaked 46% lower in
+  RSS with unchanged throughput.
 - The new `Collector.Grpc.KeepAlivePermitWithoutCalls` defaults to `false`, so
   keepalive pings stop while no stream is open; v1 always sent them, which
   `true` restores.

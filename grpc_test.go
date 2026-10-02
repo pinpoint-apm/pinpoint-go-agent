@@ -1267,7 +1267,7 @@ func Test_grpcChannelOptions_defaults(t *testing.T) {
 	assert.Equal(t, 60*time.Second, o.keepAlive.Timeout, "keepalive timeout")
 	assert.Equal(t, false, o.keepAlive.PermitWithoutStream, "permit without calls")
 	assert.Equal(t, int32(1*1024*1024), o.flowControlWindow, "flow control window")
-	assert.Equal(t, 1*1024*1024, o.writeBufferSize, "write buffer size")
+	assert.Equal(t, 64*1024, o.writeBufferSize, "write buffer size")
 	assert.Equal(t, 4*1024*1024, o.maxSendMsgSize, "max send message size")
 	assert.Equal(t, 4*1024*1024, o.maxRecvMsgSize, "max receive message size")
 	assert.Equal(t, uint32(8*1024), o.maxHeaderListSize, "max header list size")
@@ -1414,7 +1414,7 @@ func Test_agentGrpc_sendExceptionMetadata(t *testing.T) {
 // not the write buffer size: a message under the limit is sent, one over it is
 // dropped before encoding, and lowering the limit lowers the guard.
 func Test_agentGrpc_sendExceptionMetadata_sizeGuardFollowsConfiguredLimit(t *testing.T) {
-	// A message that fits the 4MB send limit but exceeds the 1MB write buffer
+	// A message that fits the 4MB send limit but exceeds the write buffer
 	// must be sent; the two limits are unrelated.
 	agent := newTestAgent(defaultConfig())
 	agentGrpc, meta := newMockMetaAgentGrpc(agent)

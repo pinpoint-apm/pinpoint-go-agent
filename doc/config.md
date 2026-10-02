@@ -381,7 +381,7 @@ Collector.Grpc.WriteBufferSize option sets the gRPC transport write buffer size 
 * PINPOINT_GO_COLLECTOR_GRPC_WRITEBUFFERSIZE
 * WithCollectorGrpcWriteBufferSize()
 * int
-* default: 1048576
+* default: 65536
 
 ### Collector.Grpc.MaxHeaderListSize
 Collector.Grpc.MaxHeaderListSize option sets the max size in bytes of gRPC response headers the agent accepts.

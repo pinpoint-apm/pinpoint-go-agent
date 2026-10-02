@@ -232,9 +232,12 @@ const (
 	grpcKeepAliveTimeout            = 60000 // ms
 	grpcKeepAlivePermitWithoutCalls = false
 	grpcFlowControlWindow           = 1 * 1024 * 1024
-	grpcWriteBufferSize             = 1 * 1024 * 1024
-	grpcMaxMessageSize              = 4 * 1024 * 1024
-	grpcMaxHeaderListSize           = 8 * 1024
+	// grpc-go shares write buffers through a sync.Pool that GC empties, so
+	// each connection allocates a fresh buffer of this size after most GC
+	// cycles; at 1MB that was ~40% of the agent process's allocated bytes.
+	grpcWriteBufferSize   = 64 * 1024
+	grpcMaxMessageSize    = 4 * 1024 * 1024
+	grpcMaxHeaderListSize = 8 * 1024
 	// grpc-go v1.82.1 puts a channel into IDLE after 30 minutes without an RPC
 	// (dialoptions.go defaultDialOptions: idleTimeout 30 * time.Minute) and
 	// documents WithIdleTimeout(0) as the way to disable idling. 0 here is

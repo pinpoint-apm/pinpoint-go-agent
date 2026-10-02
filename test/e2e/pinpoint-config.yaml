@@ -33,7 +33,7 @@ Collector:
     MaxSendMessageSize: 4194304
     MaxReceiveMessageSize: 4194304
     FlowControlWindow: 1048576
-    WriteBufferSize: 1048576
+    WriteBufferSize: 65536
     MaxHeaderListSize: 8192
     # For a TLS collector, set these (or PINPOINT_GO_COLLECTOR_GRPC_SSLENABLE
     # and PINPOINT_GO_COLLECTOR_GRPC_TRUSTCERTFILEPATH) on the run. An empty
