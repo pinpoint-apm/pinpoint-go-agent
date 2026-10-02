@@ -222,7 +222,7 @@ references live here.
 | inbound continuation requires TraceID + SpanID + pSpanID, checked in that order | `DefaultTraceHeaderReader.read`: `s0` short-circuits first, `Pinpoint-Flags` defaults to `0` |
 | the two span id headers are checked for presence only | an unparseable value is kept as `SpanId.NULL` via `NumberUtils.parseLong` |
 | a header present with an empty value is present | `DefaultTraceHeaderReader` tests for `null` alone; the C++ agent decides on `has_value()` |
-| `AddMetric(MetricURLStat, ...)` is first-wins; `MetricURLStatForce` replaces | `Shared.setUriTemplate`, and `setUriTemplate(value, force = true)` |
+| `AddMetric(MetricURLStat, ...)` is first-wins | `Shared.setUriTemplate` |
 | a percent rate `<= 0` samples nothing, `>= 100` always samples | `PercentSamplerFactory`: `FalseSampler` and `TrueSampler` |
 | events one level deeper than `Span.MaxCallStackDepth` are still recorded | `DefaultCallStack` |
 | `SQL.CacheSize` sizes the SQL caches only; API and error caches stay at 1024 | `profiler.jdbc.sqlcachesize` sizes `SimpleCacheFactory.newSqlCache()` / `newSqlUidCache()`, while `newSimpleCache()` keeps its own default |

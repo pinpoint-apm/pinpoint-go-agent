@@ -358,7 +358,7 @@ func BenchmarkExtractContinue(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		s.Extract(reader)
+		s.extract(reader)
 		dropSampledActiveSpan(s) // keep activeSpan balanced
 	}
 }
@@ -384,7 +384,7 @@ func BenchmarkExtractContinueHttpHeader(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		s.Extract(reader)
+		s.extract(reader)
 		dropSampledActiveSpan(s)
 	}
 }
@@ -419,7 +419,7 @@ func BenchmarkExtractNewTrace(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		s.Extract(reader)
+		s.extract(reader)
 		dropSampledActiveSpan(s)
 	}
 }

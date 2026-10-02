@@ -29,7 +29,7 @@ func Test_noopSpan_Inject(t *testing.T) {
 			func() *noopSpan { return unsampled().NewGoroutineTracer().(*noopSpan) },
 			map[string]string{HeaderSampled: "s0"}},
 		{"a noop tracer's goroutine tracer stays silent",
-			func() *noopSpan { return defaultNoopSpan.NewAsyncSpan().(*noopSpan) },
+			func() *noopSpan { return defaultNoopSpan.NewGoroutineTracer().(*noopSpan) },
 			map[string]string{}},
 	}
 
@@ -90,7 +90,7 @@ func Test_noopSpan_SetError_FailsUrlStat(t *testing.T) {
 			a.urlStatChan = make(chan *urlStat, 1)
 
 			span := newUnSampledSpan(a, "/test")
-			span.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"}, false)
+			span.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"})
 			span.SetError(tt.err, tt.errName...)
 			span.EndSpan()
 
@@ -113,7 +113,7 @@ func Test_noopSpan_SetError_SingletonUntouched(t *testing.T) {
 
 // The unsampled span follows span.collectUrlStat's policy: Url first-wins,
 // Method and Status last-wins, the urlStatUnknown stand-in does not claim the
-// slot, MetricURLStatForce replaces the Url, and the caller's entry is copied.
+// slot, and the caller's entry is copied.
 func Test_noopSpan_AddMetric_URLStatIsFirstWinsOnUrl(t *testing.T) {
 	c, err := NewConfig(WithAppName("unsampledUrlStatApp"), WithHttpUrlStatEnable(true))
 	require.NoError(t, err)
@@ -129,21 +129,16 @@ func Test_noopSpan_AddMetric_URLStatIsFirstWinsOnUrl(t *testing.T) {
 	assert.Equal(t, "POST", span.urlStat.Method, "Method is last-wins")
 	assert.Equal(t, 500, span.urlStat.Status, "Status is last-wins")
 	assert.NotSame(t, first, span.urlStat, "caller's entry is copied")
-
-	span.AddMetric(MetricURLStatForce, &UrlStatEntry{Url: "/forced", Method: "GET", Status: 200})
-	assert.Equal(t, "/forced", span.urlStat.Url, "force replaces the Url")
 }
 
 // The singleton stays untouched (withStats gate) and a disabled gate records
-// nothing, force or not.
+// nothing.
 func Test_noopSpan_AddMetric_URLStatGates(t *testing.T) {
 	NoopTracer().AddMetric(MetricURLStat, &UrlStatEntry{Url: "/singleton", Method: "GET"})
-	NoopTracer().AddMetric(MetricURLStatForce, &UrlStatEntry{Url: "/singleton", Method: "GET"})
 	assert.Nil(t, defaultNoopSpan.urlStat)
 
 	span := newUnSampledSpan(newTestAgent(defaultConfig()), "/test")
 	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
-	span.AddMetric(MetricURLStatForce, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 	assert.Nil(t, span.urlStat)
 }
 
@@ -156,7 +151,7 @@ func Test_noopSpan_SetError_ConcurrentWithEndSpan(t *testing.T) {
 	a.urlStatChan = make(chan *urlStat, 1)
 
 	span := newUnSampledSpan(a, "/test")
-	span.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"}, false)
+	span.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"})
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -180,11 +175,10 @@ func Test_noopSpan_AsyncChild_FailsRootUrlStat(t *testing.T) {
 		child func(*noopSpan) Tracer
 		call  func(Tracer)
 	}{
-		{"async child SetError", (*noopSpan).NewAsyncSpan, func(tr Tracer) { tr.Span().SetError(errors.New("boom")) }},
-		{"async child SetFailure", (*noopSpan).NewAsyncSpan, func(tr Tracer) { tr.Span().SetFailure() }},
 		{"goroutine child SetError", (*noopSpan).NewGoroutineTracer, func(tr Tracer) { tr.Span().SetError(errors.New("boom")) }},
+		{"goroutine child SetFailure", (*noopSpan).NewGoroutineTracer, func(tr Tracer) { tr.Span().SetFailure() }},
 		{"grandchild SetError", func(s *noopSpan) Tracer {
-			return s.NewGoroutineTracer().NewAsyncSpan()
+			return s.NewGoroutineTracer().NewGoroutineTracer()
 		}, func(tr Tracer) { tr.Span().SetError(errors.New("boom")) }},
 	}
 
@@ -196,7 +190,7 @@ func Test_noopSpan_AsyncChild_FailsRootUrlStat(t *testing.T) {
 			a.urlStatChan = make(chan *urlStat, 1)
 
 			root := newUnSampledSpan(a, "/test")
-			root.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"}, false)
+			root.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"})
 
 			child := tt.child(root)
 			tt.call(child)
@@ -220,8 +214,8 @@ func Test_noopSpan_AsyncChild_IgnoreErrors(t *testing.T) {
 	a.urlStatChan = make(chan *urlStat, 1)
 
 	root := newUnSampledSpan(a, "/test")
-	root.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"}, false)
-	root.NewAsyncSpan().Span().SetError(errors.New("boom"))
+	root.collectUrlStat(&UrlStatEntry{Url: "/test", Method: "GET"})
+	root.NewGoroutineTracer().Span().SetError(errors.New("boom"))
 	root.EndSpan()
 
 	assert.Zero(t, (<-a.urlStatChan).statusErr, "an ignored error failed the root")
@@ -238,7 +232,7 @@ func Test_noopSpan_AsyncChild_SingletonUntouched(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 200; j++ {
-				child := NoopTracer().NewAsyncSpan()
+				child := NoopTracer().NewGoroutineTracer()
 				child.Span().SetFailure()
 				child.Span().SetError(errors.New("boom"))
 				child.EndSpan()

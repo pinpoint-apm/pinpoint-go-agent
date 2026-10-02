@@ -79,7 +79,7 @@ func Test_span_Extract(t *testing.T) {
 	}
 
 	span := defaultTestSpan()
-	span.Extract(&DistributedTracingContextMap{m})
+	span.extract(&DistributedTracingContextMap{m})
 
 	assert.Equal(t, span.txId.AgentId, "t123456", "AgentId")
 	assert.Equal(t, span.txId.StartTime, int64(12345), "StartTime")
@@ -101,7 +101,7 @@ func Test_span_Extract_acceptorHostFallback(t *testing.T) {
 	}
 
 	span := defaultTestSpan()
-	span.Extract(&DistributedTracingContextMap{m})
+	span.extract(&DistributedTracingContextMap{m})
 	assert.Empty(t, span.acceptorHost, "no header, no endPoint yet")
 
 	span.SetEndPoint("localhost:8080")
@@ -126,7 +126,7 @@ func Test_span_Extract_acceptorHostHeaderWins(t *testing.T) {
 	}
 
 	span := defaultTestSpan()
-	span.Extract(&DistributedTracingContextMap{m})
+	span.extract(&DistributedTracingContextMap{m})
 	span.SetEndPoint("localhost:8080")
 
 	assert.Equal(t, "upstream:8080", span.acceptorHost, "acceptorHost")
@@ -154,7 +154,7 @@ func Test_span_Extract_malformedTraceId(t *testing.T) {
 				HeaderHost:                  "upstream:8080",
 			}}
 
-			assert.NotPanics(t, func() { span.Extract(reader) }, "Extract must not panic")
+			assert.NotPanics(t, func() { span.extract(reader) }, "Extract must not panic")
 			assert.Equal(t, span.agent.agentID, span.txId.AgentId, "a new local transaction id is assigned")
 			assert.Equal(t, int64(-1), span.parentSpanId, "root span")
 			assert.NotEqual(t, int64(67890), span.spanId, "span id header must be ignored")
@@ -194,7 +194,7 @@ func Test_span_Extract_noTraceId(t *testing.T) {
 		HeaderHost:                  "upstream:8080",
 	}}
 
-	span.Extract(reader)
+	span.extract(reader)
 
 	assert.Equal(t, span.agent.agentID, span.txId.AgentId, "a new local transaction id is assigned")
 	assert.Equal(t, int64(-1), span.parentSpanId, "root span")
@@ -211,7 +211,7 @@ func Test_span_Extract_registersActiveSpanOnce(t *testing.T) {
 	for _, tid := range []string{"t123456^12345^1", "malformed", ""} {
 		t.Run(tid, func(t *testing.T) {
 			span := defaultTestSpan()
-			span.Extract(&DistributedTracingContextMap{m: map[string]string{
+			span.extract(&DistributedTracingContextMap{m: map[string]string{
 				HeaderTraceId: tid,
 				HeaderSpanId:  "67890",
 			}})
@@ -234,8 +234,8 @@ func Test_span_Extract_sameHeadersRegisterSeparately(t *testing.T) {
 		HeaderParentSpanId: "123",
 	}
 	first, second := defaultSpan(agent), defaultSpan(agent)
-	first.Extract(&DistributedTracingContextMap{m: headers})
-	second.Extract(&DistributedTracingContextMap{m: headers})
+	first.extract(&DistributedTracingContextMap{m: headers})
+	second.extract(&DistributedTracingContextMap{m: headers})
 	assert.Equal(t, first.spanId, second.spanId, "both continue the upstream span id")
 	assert.Equal(t, 2, countActiveSpans(agent), "each in-flight request has its own entry")
 
@@ -247,7 +247,7 @@ func Test_span_Extract_sameHeadersRegisterSeparately(t *testing.T) {
 
 func Test_span_Extract_malformedSpanIds(t *testing.T) {
 	span := defaultTestSpan()
-	span.Extract(&DistributedTracingContextMap{m: map[string]string{
+	span.extract(&DistributedTracingContextMap{m: map[string]string{
 		HeaderTraceId:      "t123456^12345^1",
 		HeaderSpanId:       "abc",
 		HeaderParentSpanId: "0x10",
@@ -843,21 +843,6 @@ func TestSpan_AddMetric_URLStatIsFirstWinsOnUrl(t *testing.T) {
 	assert.Equal(t, 500, span.urlStat.Status, "Status is last-wins")
 }
 
-func TestSpan_AddMetric_URLStatForceReplacesUrl(t *testing.T) {
-	cfg := defaultConfig()
-	cfg.Set(CfgHttpUrlStatEnable, true)
-	span := newSampledSpan(newTestAgent(cfg), "op", "/rpc")
-
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/guess", Method: "GET"})
-	span.AddMetric(MetricURLStatForce, &UrlStatEntry{Url: "/users/{id}", Method: "GET", Status: 200})
-	assert.Equal(t, "/users/{id}", span.urlStat.Url, "force replaces the Url")
-	assert.Equal(t, 200, span.urlStat.Status)
-
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/later", Method: "GET", Status: 404})
-	assert.Equal(t, "/users/{id}", span.urlStat.Url, "a forced Url is still first-wins afterwards")
-	assert.Equal(t, 404, span.urlStat.Status)
-}
-
 // call without a Url does not claim the slot, so a later real Url fills it.
 func TestSpan_AddMetric_URLStatUnknownDoesNotClaimUrl(t *testing.T) {
 	cfg := defaultConfig()
@@ -891,12 +876,11 @@ func TestSpan_AddMetric_URLStatDoesNotAliasCallerEntry(t *testing.T) {
 	assert.Equal(t, urlStatUnknown, span.urlStat.Url)
 }
 
-// With Http.UrlStat.Enable off nothing is recorded, force or not.
+// With Http.UrlStat.Enable off nothing is recorded.
 func TestSpan_AddMetric_URLStatDisabledRecordsNothing(t *testing.T) {
 	span := newSampledSpan(newTestAgent(defaultConfig()), "op", "/rpc")
 
 	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
-	span.AddMetric(MetricURLStatForce, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 	assert.Nil(t, span.urlStat)
 }
 
@@ -958,7 +942,7 @@ func TestSpan_ExtractParsesFullRangeSpanId(t *testing.T) {
 		HeaderParentSpanId: "-9007199254740993",
 	}}
 
-	span.Extract(reader)
+	span.extract(reader)
 	assert.Equal(t, int64(9007199254740993), span.spanId, "spanId")
 	assert.Equal(t, int64(-9007199254740993), span.parentSpanId, "parentSpanId")
 }
@@ -975,14 +959,14 @@ func TestSpan_GeneratedSpanIdCoversFullInt64Range(t *testing.T) {
 	// Two ids: the span's own, and the one Inject draws for the next node.
 	stubSpanIdGenerator(t, math.MinInt64, math.MaxInt64)
 	span := defaultSpan(newTestAgent(defaultConfig()))
-	span.Extract(&DistributedTracingContextMap{m: map[string]string{}})
+	span.extract(&DistributedTracingContextMap{m: map[string]string{}})
 	assert.Equal(t, int64(math.MinInt64), span.spanId, "generated spanId")
 
 	m := make(map[string]string)
 	span.Inject(&DistributedTracingContextMap{m})
 
 	next := defaultSpan(newTestAgent(defaultConfig()))
-	next.Extract(&DistributedTracingContextMap{m: m})
+	next.extract(&DistributedTracingContextMap{m: m})
 	assert.Equal(t, int64(math.MaxInt64), next.spanId, "spanId after round trip")
 	assert.Equal(t, int64(math.MinInt64), next.parentSpanId, "parentSpanId after round trip")
 }
@@ -1344,7 +1328,7 @@ func BenchmarkValidateID(b *testing.B) {
 // rather than the 0 the discarded parse result would write.
 func Test_span_Extract_malformedParentAppTypeKeepsDefault(t *testing.T) {
 	span := defaultTestSpan()
-	span.Extract(&DistributedTracingContextMap{m: map[string]string{
+	span.extract(&DistributedTracingContextMap{m: map[string]string{
 		HeaderTraceId:               "t123456^12345^1",
 		HeaderSpanId:                "67890",
 		HeaderParentSpanId:          "123",
@@ -1366,14 +1350,14 @@ func Test_span_Extract_malformedHeaderWarningIsThrottled(t *testing.T) {
 
 	for i := 0; i < 1000; i++ {
 		span := defaultTestSpan()
-		span.Extract(&DistributedTracingContextMap{m: map[string]string{HeaderTraceId: "not^a^traceid"}})
+		span.extract(&DistributedTracingContextMap{m: map[string]string{HeaderTraceId: "not^a^traceid"}})
 		dropSampledActiveSpan(span)
 	}
 	assert.Equal(t, 1, strings.Count(buf.String(), "malformed trace id header"), buf.String())
 
 	malformedTraceIdLog.next.Store(0) // the interval elapses
 	span := defaultTestSpan()
-	span.Extract(&DistributedTracingContextMap{m: map[string]string{HeaderTraceId: "not^a^traceid"}})
+	span.extract(&DistributedTracingContextMap{m: map[string]string{HeaderTraceId: "not^a^traceid"}})
 	dropSampledActiveSpan(span)
 	assert.Equal(t, 2, strings.Count(buf.String(), "malformed trace id header"))
 	assert.Contains(t, buf.String(), "(999 similar warning(s) suppressed)")
@@ -1434,7 +1418,6 @@ func TestSpan_LifecycleStopsAtEndSpan(t *testing.T) {
 	assert.Empty(t, m, "Inject writes no headers after EndSpan")
 
 	assert.Equal(t, NoopTracer(), span.NewGoroutineTracer(), "async span after EndSpan is noop")
-	assert.Equal(t, NoopTracer(), span.NewAsyncSpan(), "async span after EndSpan is noop")
 }
 
 // Regression: EndSpan sets finished and then ends the leftover unclosed events
@@ -1754,36 +1737,6 @@ func TestSpan_AsyncSQLCountFailsTheTraceRoot(t *testing.T) {
 	assert.Equal(t, int32(0), async.err.Load(), "async err")
 }
 
-// Extract writes txId, spanId, endPoint and friends non-atomically and
-// registers the span as active. After EndSpan the sender is serializing that
-// span and the registry entry is already dropped, so a late Extract both
-// races the fields and leaks the span back into the registry.
-func TestSpan_ExtractAfterEndSpanIsNoop(t *testing.T) {
-	var buf bytes.Buffer
-	defer captureWarnLog(&buf)()
-	afterEndSpanLog = logThrottle{}
-
-	span := defaultTestSpan()
-	span.Extract(&DistributedTracingContextMap{map[string]string{}})
-	txId, spanId, endPoint := span.txId, span.spanId, span.endPoint
-	span.EndSpan()
-	active := countActiveSpans(span.agent)
-
-	span.Extract(&DistributedTracingContextMap{map[string]string{
-		HeaderTraceId:               "agent^1^2",
-		HeaderSpanId:                "67890",
-		HeaderParentSpanId:          "12345",
-		HeaderParentApplicationName: "parent",
-		HeaderHost:                  "host:8080",
-	}})
-
-	assert.Contains(t, buf.String(), "Extract called after EndSpan")
-	assert.Equal(t, txId, span.txId, "txId unchanged")
-	assert.Equal(t, spanId, span.spanId, "spanId unchanged")
-	assert.Equal(t, endPoint, span.endPoint, "endPoint unchanged")
-	assert.Equal(t, active, countActiveSpans(span.agent), "no re-registration after EndSpan")
-}
-
 // EndSpanEvent reads eventOverflow before recover(), and endSpanEvent reads it
 // again in the CAS loop. A placeholder raised between the two reads sends an
 // already-captured panic down the overflow path, where it is re-raised.
@@ -1794,7 +1747,7 @@ func TestSpan_EndSpanEventOverflowRepanicsRecovered(t *testing.T) {
 	var got interface{}
 	func() {
 		defer func() { got = recover() }()
-		span.endSpanEvent("sentinel", nil)
+		span.endSpanEvent("sentinel")
 	}()
 
 	assert.Equal(t, "sentinel", got, "captured panic re-raised, not swallowed")
@@ -1907,60 +1860,6 @@ func TestNoopSpan_ErrorMarkExcludeKeepsTheUnsampledRequestSuccessful(t *testing.
 	// The unknown cause is never excluded, so it still fails the request.
 	span.SetFailure()
 	assert.Equal(t, int32(1), span.statusErr.Load(), "statusErr")
-}
-
-// Ending an event other than the innermost one is the mis-nesting the plain
-// EndSpanEvent cannot see: the stack is not empty, so noEventLog stays quiet
-// and the wrong event silently takes the end time. With a target the agent
-// mismatch, but warns and dumps the stack.
-func Test_span_EndSpanEventOf_MisnestedEndWarns(t *testing.T) {
-	var buf bytes.Buffer
-	restore := captureLogAt(&buf, logrus.WarnLevel)
-	defer restore()
-	misnestedEventLog = logThrottle{}
-
-	span := defaultTestSpan()
-	span.NewSpanEvent("A")
-	a := span.SpanEvent()
-	span.NewSpanEvent("B")
-
-	EndSpanEventOf(span, a) // wants A, ends B
-	assert.Contains(t, buf.String(), "ended B instead of A")
-	assert.Equal(t, 1, strings.Count(buf.String(), "[running]"), "stack dump on the first fire")
-	assert.Equal(t, 1, span.eventStack.len())
-
-	span.NewSpanEvent("C")
-	EndSpanEventOf(span, a) // throttled: no second dump
-	assert.Equal(t, 1, strings.Count(buf.String(), "[running]"))
-
-	buf.Reset()
-	EndSpanEventOf(span, a) // the right one: silent
-	assert.Empty(t, buf.String())
-	assert.Equal(t, 0, span.eventStack.len())
-
-	// A tracer that is not a span falls back to its own EndSpanEvent.
-	EndSpanEventOf(NoopTracer(), a)
-	assert.Empty(t, buf.String())
-}
-
-// The targeted end is deferred like EndSpanEvent, so it must record the panic
-// on the ended event and re-panic with the original value.
-func Test_span_EndSpanEventOf_RepanicsOriginalValue(t *testing.T) {
-	span := defaultTestSpan()
-	span.NewSpanEvent("A")
-	a := span.SpanEvent()
-
-	func() {
-		defer func() { assert.Equal(t, "boom", recover()) }()
-		func() {
-			defer EndSpanEventOf(span, a)
-			panic("boom")
-		}()
-	}()
-	assert.Equal(t, 0, span.eventStack.len())
-	assert.True(t, span.recovered.Load())
-	assert.Equal(t, 1, len(span.spanEvents))
-	assert.Equal(t, "boom", span.spanEvents[0].errorString)
 }
 
 // Inject on one goroutine while another ends the peeked event: once ended the
@@ -2316,7 +2215,7 @@ func Test_ParentAppTypeDefaultsToUndefined(t *testing.T) {
 		if typ != "" {
 			m[HeaderParentApplicationType] = typ
 		}
-		span.Extract(&DistributedTracingContextMap{m})
+		span.extract(&DistributedTracingContextMap{m})
 		assert.Equal(t, "upstream", span.parentAppName)
 		assert.Equal(t, -1, span.parentAppType, "pAppType %q", typ)
 	}
@@ -2348,16 +2247,14 @@ func Test_ExcludedCategoryRecordsNothing(t *testing.T) {
 		"a transaction that failed for several reasons reports all of them")
 }
 
-// A nil carrier writes and reads nothing on the sampled span, as it does on
-// the noop tracer, instead of panicking only once the request is sampled.
+// A nil carrier writes nothing on the sampled span, as on the noop tracer,
+// instead of panicking only once the request is sampled.
 func TestSpan_NilCarrier(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	tracer := agent.NewSpanTracer("root", "/rpc")
 	defer tracer.EndSpan()
 
 	assert.NotPanics(t, func() { tracer.Inject(nil) })
-	assert.NotPanics(t, func() { tracer.Extract(nil) })
-	assert.NotEmpty(t, tracer.TransactionId().AgentId, "Extract(nil) starts a transaction like an empty carrier")
 }
 
 // The logging plugins call SetLogging from whichever goroutine logs with the
@@ -2414,7 +2311,7 @@ func TestSpanExtract_ServiceName(t *testing.T) {
 		HeaderParentSpanId:      "123",
 		HeaderParentServiceName: "UpstreamService",
 	}}
-	span.Extract(reader)
+	span.extract(reader)
 	assert.Equal(t, "UpstreamService", span.parentServiceName)
 }
 
@@ -2428,6 +2325,6 @@ func TestSpanInjectExtract_ServiceNameRoundTrip(t *testing.T) {
 	sender.Inject(&DistributedTracingContextMap{carrier})
 
 	receiver := defaultTestSpan()
-	receiver.Extract(&DistributedTracingContextMap{carrier})
+	receiver.extract(&DistributedTracingContextMap{carrier})
 	assert.Equal(t, "ServiceA", receiver.parentServiceName)
 }

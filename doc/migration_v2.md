@@ -71,6 +71,8 @@ find none started and record nothing. Do not use it to put the migration off.
 | `pinpoint.NewTestAgent(config, t)` | `NewTestAgent(config)` | drop the `*testing.T`; it was never used |
 | `pinpoint.WithSamplingRate(n)` | removed | `WithSamplingCounterRate(n)` |
 | `pplogrus.WithField(tracer)` | removed | `pplogrus.NewField(tracer)` |
+| `Tracer.NewAsyncSpan()` | removed | `NewGoroutineTracer()` |
+| `Tracer.Extract(reader)` | removed | create the span with `Agent.NewSpanTracerWithReader(operation, rpcName, reader)` |
 | `ppsarama.ConsumeMessage`, `WrapConsumerMessage`, `NewConsumer`, `WrapPartitionConsumer` (and `ppsaramaibm`) | removed | `ConsumeMessageContext(handler, ctx, msg)` on a raw `sarama` consumer, with `ppsarama.NewContext` carrying the broker addresses |
 | `ppsarama.WithContext(ctx, producer)`, `producer.WithContext(ctx)` (and `ppsaramaibm`) | removed | `SendMessageContext`, `SendMessagesContext`, `InputContext` with the context; `SendMessage`, `SendMessages` and `Input` produce without tracing |
 | `plugin/sarama` (`ppsarama`, Shopify/sarama) | removed | move to IBM/sarama upstream and `plugin/sarama-IBM/v2` (`ppsaramaibm`, the same API) |

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
-	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -384,7 +383,7 @@ func (span *span) warnIfFinished(setter string) bool {
 }
 
 // warnAfterEndSpan reports whether the span has ended; a lifecycle call after
-// EndSpan (NewSpanEvent, EndSpanEvent, Inject, NewAsyncSpan) is dropped. The
+// EndSpan (NewSpanEvent, EndSpanEvent, Inject, NewGoroutineTracer) is dropped. The
 // final PSpan is already sent, so an event made now could only leak out as a
 // non-final PSpanChunk behind it, or advance eventSequence past the range the
 // PSpan declared. Throttled: a misinstrumented host hits this once per request.
@@ -463,7 +462,7 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 	if se == nil {
 		// Overflowed: the event was dropped, but the destination it recorded
 		// was kept for exactly this - the downstream fills acceptorHost,
-		// endPoint and remoteAddr from this header (see Extract) and has no
+		// endPoint and remoteAddr from this header (see extract) and has no
 		// other source for them.
 		destinationId = span.overflowSe.destination()
 	}
@@ -478,14 +477,9 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 	}
 }
 
-func (span *span) Extract(reader DistributedTracingContextReader) {
-	if span.warnAfterEndSpan("Extract") {
-		return
-	}
-	// A nil carrier is a request with no headers, as on the noop tracer.
-	if reader == nil {
-		reader = &noopDistributedTracingContextReader{}
-	}
+// extract continues the trace the reader's headers carry, or starts one. It
+// runs once, on the span samplingSpan has just created.
+func (span *span) extract(reader DistributedTracingContextReader) {
 	tid, _ := reader.Get(HeaderTraceId)
 	txId, continued := continueHeaders(reader)
 	if continued {
@@ -589,7 +583,7 @@ func (span *span) Extract(reader DistributedTracingContextReader) {
 // that does not names no transaction to continue.
 //
 // Both the sampler choice (NewSpanTracerWithReader) and the context extraction
-// (Extract) call this, so the two cannot disagree about which trace a request
+// (extract) call this, so the two cannot disagree about which trace a request
 // belongs to.
 func continueHeaders(reader DistributedTracingContextReader) (TransactionId, bool) {
 	tid, _ := reader.Get(HeaderTraceId)
@@ -735,43 +729,13 @@ func (span *span) EndSpanEvent() {
 	if span.eventOverflow.Load() == 0 && !span.recovered.Load() {
 		recovered = recover()
 	}
-	span.endSpanEvent(recovered, nil)
-}
-
-// EndSpanEventOf ends the innermost span event of tracer, exactly as
-// tracer.EndSpanEvent() does, and warns when that event is not se - the recorder
-// the caller obtained from tracer.SpanEvent() for the event it meant to end.
-// EndSpanEvent takes no target, so a missing or doubled call silently ends the
-// wrong event; this reports it instead. It is a function rather than a Tracer
-// method because Tracer is implemented outside this module and a new interface
-// method would break those implementations.
-//
-// Deferred directly, it records a panic on the ended event and re-panics like
-// EndSpanEvent. A tracer that is not this agent's span falls back to its own
-// EndSpanEvent, which cannot recover a panic from this frame.
-func EndSpanEventOf(tracer Tracer, se SpanEventRecorder) {
-	span, ok := tracer.(*span)
-	if !ok {
-		tracer.EndSpanEvent()
-		return
-	}
-	if span.warnAfterEndSpan("EndSpanEvent") {
-		return
-	}
-	// Same guard as EndSpanEvent: recover must be called by the deferred
-	// function itself, so the body cannot be shared.
-	var recovered interface{}
-	if span.eventOverflow.Load() == 0 && !span.recovered.Load() {
-		recovered = recover()
-	}
-	span.endSpanEvent(recovered, se)
+	span.endSpanEvent(recovered)
 }
 
 // endSpanEvent is the unguarded body: EndSpan sets finished first and then
 // ends the async span's own event through this path. recovered is the panic
-// value EndSpanEvent caught, or nil. want is the event the caller meant to
-// end, or nil when the caller did not say (EndSpanEvent).
-func (span *span) endSpanEvent(recovered interface{}, want SpanEventRecorder) {
+// value EndSpanEvent caught, or nil.
+func (span *span) endSpanEvent(recovered interface{}) {
 	// A CAS loop, not a check-then-Add: two concurrent ends of the same
 	// placeholder would drive the counter to -1, after which the next real
 	// overflow only brings it back to 0 and its end pops a live ancestor off the
@@ -794,9 +758,6 @@ func (span *span) endSpanEvent(recovered interface{}, want SpanEventRecorder) {
 		}
 	}
 	if se, ok := span.eventStack.pop(); ok {
-		if want != nil && SpanEventRecorder(se) != want {
-			span.warnMisnestedEnd(se, want)
-		}
 		if v := recovered; v != nil {
 			err, ok := v.(error)
 			if !ok {
@@ -826,26 +787,6 @@ func (span *span) endSpanEvent(recovered interface{}, want SpanEventRecorder) {
 	}
 }
 
-// warnMisnestedEnd logs that ended is not the event the caller asked for. The
-// stack dump rides on the throttle, so it is taken once per dropReportInterval
-// and never for a suppressed call.
-func (span *span) warnMisnestedEnd(ended *spanEvent, want SpanEventRecorder) {
-	held, ok := misnestedEventLog.acquire()
-	if !ok {
-		return
-	}
-	wanted := "<not a span event>"
-	if w, ok := want.(*spanEvent); ok {
-		wanted = w.operationName
-	}
-	suppressed := ""
-	if held > 0 {
-		suppressed = fmt.Sprintf(" (%d similar warning(s) suppressed)", held)
-	}
-	Log("span").Warnf("abnormal span - EndSpanEventOf ended %s instead of %s: %s%s\n%s",
-		ended.operationName, wanted, span.operationName, suppressed, debug.Stack())
-}
-
 // appendEndedSpanEvent records a completed event, cutting a chunk for the
 // sender once enough have accumulated.
 func (span *span) appendEndedSpanEvent(se *spanEvent) {
@@ -865,7 +806,7 @@ func (span *span) appendEndedSpanEvent(se *spanEvent) {
 }
 
 func (span *span) newAsyncSpan() Tracer {
-	if span.warnAfterEndSpan("NewAsyncSpan") || span.eventOverflow.Load() > 0 {
+	if span.warnAfterEndSpan("NewGoroutineTracer") || span.eventOverflow.Load() > 0 {
 		return NoopTracer()
 	}
 	if se, ok := span.eventStack.peek(); ok {
@@ -906,10 +847,6 @@ func (span *span) newAsyncSpan() Tracer {
 
 func (span *span) isAsyncSpan() bool {
 	return span.asyncId != noneAsyncId
-}
-
-func (span *span) NewAsyncSpan() Tracer {
-	return span.newAsyncSpan()
 }
 
 func (span *span) NewGoroutineTracer() Tracer {
@@ -1031,7 +968,7 @@ func (span *span) SetEndPoint(endPoint string) {
 	}
 	span.endPoint = endPoint
 	// The acceptor host falls back to the address the request arrived on when
-	// the caller sent no Pinpoint-Host header. Extract cannot do this itself:
+	// the caller sent no Pinpoint-Host header. extract cannot do this itself:
 	// the server plugins set the endPoint only after it ran, so the fallback is
 	// applied here and an explicit header or SetAcceptorHost still wins.
 	if span.acceptorHost == "" {
@@ -1060,24 +997,24 @@ func (span *span) SetLogging(logInfo int32) {
 	span.loggingInfo.Store(logInfo)
 }
 
-func (span *span) collectUrlStat(stat *UrlStatEntry, force bool) {
+func (span *span) collectUrlStat(stat *UrlStatEntry) {
 	if span.cfg.collectUrlStat {
-		mergeUrlStat(&span.urlStatBuf, span.urlStat != nil, stat, force)
+		mergeUrlStat(&span.urlStatBuf, span.urlStat != nil, stat)
 		span.urlStat = &span.urlStatBuf
 	}
 }
 
 // mergeUrlStat applies a recorded entry onto dst, the entry a span holds; has
 // says whether dst holds one already. Shared by span and noopSpan so both
-// paths use the same merge rule: the URL is first-write-wins unless force is
-// set, while the method and status come from the most recent entry. A matched
+// paths use the same merge rule: the URL is first-write-wins, while the
+// method and status come from the most recent entry. A matched
 // route must not be replaced by a later, less precise URL, but response fields
 // may arrive later.
 //
 // The caller's entry is copied, never stored or written to, so later caller
 // mutation cannot change the span's statistic.
-func mergeUrlStat(dst *UrlStatEntry, has bool, stat *UrlStatEntry, force bool) {
-	keep := has && !force && dst.Url != urlStatUnknown
+func mergeUrlStat(dst *UrlStatEntry, has bool, stat *UrlStatEntry) {
+	keep := has && dst.Url != urlStatUnknown
 	url := dst.Url
 	*dst = *stat
 	if dst.Url == "" {
@@ -1096,9 +1033,9 @@ func (span *span) AddMetric(metric string, value interface{}) {
 		return
 	}
 
-	if metric == MetricURLStat || metric == MetricURLStatForce {
+	if metric == MetricURLStat {
 		if entry, ok := value.(*UrlStatEntry); ok && entry != nil {
-			span.collectUrlStat(entry, metric == MetricURLStatForce)
+			span.collectUrlStat(entry)
 		} else {
 			addMetricTypeLog.warnf("AddMetric: value for %s must be *UrlStatEntry", metric)
 		}

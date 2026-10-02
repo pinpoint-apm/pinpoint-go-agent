@@ -84,14 +84,12 @@ If the request came from another node traced by a Pinpoint Agent, then the trans
 Most of these data are sent from the previous node, usually packed in the request message. 
 Pinpoint Go Agent provides two functions below to read and write these data.
 
-* **Tracer.Extract**(reader DistributedTracingContextReader) extracts distributed tracing headers from the reader.
+* **Agent.NewSpanTracerWithReader**(operation, rpcName string, reader DistributedTracingContextReader) creates a span
+  that continues the transaction the reader's headers carry, or starts a new one when they carry none.
   The reader's **Get**(key) returns the header value and whether the carrier holds the key at all;
   a header carried with an empty value is reported as present and continues the trace.
   A `net/http.Header` is wrapped with **pinpoint.HttpHeaderReader**() to be used as a reader.
 * **Tracer.Inject**(writer DistributedTracingContextWriter) injects distributed tracing headers to the writer.
-
-Using **Agent.NewSpanTracerWithReader()**, you can create a span that continues the transaction started from previous node.
-(Tracer.Extract() function is used internally to read the transaction context.)
 
 If you request to another service and the next node is traceable, the transaction context must be propagated to the next node.
 Tracer.Inject() is provided for this action.
@@ -461,12 +459,7 @@ pphttp.CollectUrlStat(tracer, "/users/{id}", r.Method, status)
 Passing the resolved path instead would create one entry per id and exhaust
 `Http.UrlStat.LimitSize`.
 
-The URL is first-wins ([contract 10](api_contracts.md#statistics)); to replace
-one deliberately, record with `pinpoint.MetricURLStatForce`:
-
-```go
-tracer.AddMetric(pinpoint.MetricURLStatForce, &pinpoint.UrlStatEntry{Url: "/users/{id}", Method: r.Method, Status: status})
-```
+The URL is first-wins ([contract 10](api_contracts.md#statistics)).
 
 ## Service types
 

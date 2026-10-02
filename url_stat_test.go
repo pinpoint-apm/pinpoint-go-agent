@@ -811,48 +811,44 @@ func Test_UrlStatUnknownKey(t *testing.T) {
 	agent.urlStatChan = make(chan *urlStat, 1)
 
 	span := newSampledSpan(agent, "op", "/rpc")
-	span.collectUrlStat(&UrlStatEntry{Method: "GET"}, false)
+	span.collectUrlStat(&UrlStatEntry{Method: "GET"})
 	assert.Equal(t, javaNullUri, span.urlStat.Url)
 
 	unsampled := newUnSampledSpan(agent, "/rpc")
-	unsampled.collectUrlStat(&UrlStatEntry{Method: "GET"}, false)
+	unsampled.collectUrlStat(&UrlStatEntry{Method: "GET"})
 	assert.Equal(t, javaNullUri, unsampled.urlStat.Url)
 }
 
 // Test_UrlStatTemplateIsFirstWriteWins locks the merge rule:
-// MetricURLStat keeps the first URL template, MetricURLStatForce replaces it,
-// and method and status are last-write-wins.
+// MetricURLStat keeps the first URL template, and method and status are
+// last-write-wins.
 func Test_UrlStatTemplateIsFirstWriteWins(t *testing.T) {
 	assert.Equal(t, "URLStat", MetricURLStat, "the metric name plugins record under")
-	assert.Equal(t, "URLStatForce", MetricURLStatForce, "and the force variant")
 
 	var kept UrlStatEntry
-	mergeUrlStat(&kept, false, &UrlStatEntry{Url: "/route/{id}", Method: "GET"}, false)
+	mergeUrlStat(&kept, false, &UrlStatEntry{Url: "/route/{id}", Method: "GET"})
 	assert.Equal(t, "/route/{id}", kept.Url)
 
-	mergeUrlStat(&kept, true, &UrlStatEntry{Url: "/route/7", Method: "POST", Status: 500}, false)
+	mergeUrlStat(&kept, true, &UrlStatEntry{Url: "/route/7", Method: "POST", Status: 500})
 	assert.Equal(t, "/route/{id}", kept.Url, "the template is first-write-wins")
 	assert.Equal(t, "POST", kept.Method, "the method is last-write-wins")
 	assert.Equal(t, 500, kept.Status, "the status code is last-write-wins")
 
-	mergeUrlStat(&kept, true, &UrlStatEntry{Url: "/route/override"}, true)
-	assert.Equal(t, "/route/override", kept.Url, "MetricURLStatForce overrides the template")
-
 	// The unknown stand-in is the absence of a template, not a value: it never
 	// wins over a real one, in either direction.
 	overUnknown := UrlStatEntry{Url: urlStatUnknown}
-	mergeUrlStat(&overUnknown, true, &UrlStatEntry{Url: "/late"}, false)
+	mergeUrlStat(&overUnknown, true, &UrlStatEntry{Url: "/late"})
 	assert.Equal(t, "/late", overUnknown.Url, "a recorded template replaces the unknown stand-in")
 
 	underUnknown := UrlStatEntry{Url: "/early"}
-	mergeUrlStat(&underUnknown, true, &UrlStatEntry{Method: "GET"}, false)
+	mergeUrlStat(&underUnknown, true, &UrlStatEntry{Method: "GET"})
 	assert.Equal(t, "/early", underUnknown.Url, "an entry with no url does not erase the template")
 
 	// The caller's entry is copied, so a later mutation of it cannot reach
 	// the statistic the span kept.
 	entry := &UrlStatEntry{Url: "/copied", Method: "GET"}
 	var merged UrlStatEntry
-	mergeUrlStat(&merged, false, entry, false)
+	mergeUrlStat(&merged, false, entry)
 	entry.Method = "DELETE"
 	assert.Equal(t, "GET", merged.Method, "the recorded entry is a copy")
 }

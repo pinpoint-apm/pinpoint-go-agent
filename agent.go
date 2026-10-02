@@ -930,10 +930,10 @@ func (agent *agent) newSpanTracerWithReader(operation string, rpcName string, re
 
 	sampler := agent.config.load().sampler
 	// isContinueSampled is unconditionally true, so it must only be picked for
-	// headers Extract will actually continue. continueHeaders is the single
+	// headers extract will actually continue. continueHeaders is the single
 	// definition of that: a second definition would let a peer bypass the
-	// sampling rate with headers Extract then starts a new transaction for.
-	// Extract calls it again, which is cheaper than widening its signature.
+	// sampling rate with headers extract then starts a new transaction for.
+	// extract calls it again, which is cheaper than widening its signature.
 	if _, continued := continueHeaders(reader); !continued {
 		return agent.samplingSpan(func() bool { return sampler.isNewSampled(agent.stats) }, operation, rpcName, reader)
 	}
@@ -943,7 +943,7 @@ func (agent *agent) newSpanTracerWithReader(operation string, rpcName string, re
 func (agent *agent) samplingSpan(samplingFunc func() bool, operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
 	if samplingFunc() {
 		tracer := newSampledSpan(agent, operation, rpcName)
-		tracer.Extract(reader)
+		tracer.extract(reader)
 		return tracer
 	} else {
 		return newUnSampledSpan(agent, rpcName)
@@ -1865,7 +1865,7 @@ type logThrottle struct {
 var (
 	malformedTraceIdLog, malformedSpanIdLog, malformedParentSpanIdLog logThrottle
 	endSpanTwiceLog, unclosedEventLog, noEventLog, sharedGoroutineLog logThrottle
-	afterEndSpanLog, misnestedEventLog                                logThrottle
+	afterEndSpanLog                                                   logThrottle
 	// Latched once a span as well, but once a span is once a request for an
 	// endpoint that always overflows or always reaches the entry cap.
 	callStackOverflowLog, errorChainLimitLog, errorChainDroppedLog logThrottle

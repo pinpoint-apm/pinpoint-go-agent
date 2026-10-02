@@ -104,8 +104,8 @@ recorder setter — `SetError`, `SetFailure`, `SetServiceType`, `SetRpcName`,
 `Annotations` and `AddMetric` — returns without writing once `EndSpan()` has
 run, and warns `abnormal span - <setter> called after EndSpan` at debug level;
 the span event setters do the same after `EndSpanEvent()`. The lifecycle
-calls — `NewSpanEvent`, `EndSpanEvent`, `Inject`, `NewAsyncSpan`,
-`NewGoroutineTracer` and `WrapGoroutine` — are dropped too: `NewSpanEvent`
+calls — `NewSpanEvent`, `EndSpanEvent`, `Inject`, `NewGoroutineTracer` and
+`WrapGoroutine` — are dropped too: `NewSpanEvent`
 returns the tracer without recording an event, `Inject` writes no headers and
 the async constructors return a no-op tracer, with a throttled warning
 `abnormal span - <call> called after EndSpan`. The span's final chunk is
@@ -142,18 +142,7 @@ A mis-nested `EndSpanEvent()` — one meant for `outer` while `inner` is still
 open — is **not detected**: the call takes no target, so the agent ends `inner`
 with `outer`'s end time and the stack is one event deeper than the caller
 thinks. The next `EndSpanEvent()` ends `outer` and the trace looks plausible
-with the durations shifted by one event. If you hold the recorder of the event
-you are ending, use `pinpoint.EndSpanEventOf(tracer, se)` instead: it ends the
-innermost event exactly like `EndSpanEvent()`, but when that event is not `se`
-it warns `abnormal span - EndSpanEventOf ended <inner> instead of <outer>` with
-a stack dump (throttled, one dump per interval). It does not unwind to `se`;
-whatever is left open is ended by `EndSpan()` as above.
-
-```go
-tracer.NewSpanEvent("outer")
-se := tracer.SpanEvent()
-defer pinpoint.EndSpanEventOf(tracer, se)
-```
+with the durations shifted by one event.
 
 ## 5. Recorders Are Views, Not Owned Objects
 
@@ -418,7 +407,8 @@ message object.
 
 ### An inbound request continues a trace only with all three headers
 
-`Extract()` treats a request as a continuation of an existing trace only when
+`NewSpanTracerWithReader()` treats a request as a continuation of an existing
+trace only when
 **all three** of these are present:
 
 | Header | Requirement |
@@ -468,8 +458,8 @@ and `pinpoint.HttpHeaderReader` adapts a `net/http.Header`.
 starts a new transaction even from a carrier that reports it as present: it
 names no transaction to continue.
 
-The same decision drives **both** the sampler choice (`NewSpanTracerWithReader`)
-and the context extraction (`Extract`), and the two cannot disagree: a request
+The same decision drives **both** the sampler choice and the context extraction
+in `NewSpanTracerWithReader`, and the two cannot disagree: a request
 routed through the continue sampler but extracted as a new transaction lets a
 peer bypass the configured sampling rate.
 
@@ -483,9 +473,8 @@ well as from traces.
 `AddMetric(MetricURLStat, *UrlStatEntry)` may be called more than once on a
 span. The `Url` is **first-wins**: once the span holds a non-empty `Url`, later
 calls keep it and refresh only `Method` and `Status`. An empty `Url` does not
-claim the slot, so a later real one still fills it.
-`AddMetric(MetricURLStatForce, *UrlStatEntry)` replaces the `Url`. The entry is
-copied; the span neither keeps the caller's pointer nor writes into it.
+claim the slot, so a later real one still fills it. The entry is copied; the
+span neither keeps the caller's pointer nor writes into it.
 
 `IsSampled()` exists for the rare case where the instrumentation itself is
 expensive - serializing a payload to annotate, for example. Use it to skip that

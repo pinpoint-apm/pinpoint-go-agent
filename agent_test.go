@@ -1704,7 +1704,7 @@ func Test_agent_continueHeaders_blankParentSpanId(t *testing.T) {
 	assert.Equal(t, "t123456", txId.AgentId, "transaction id inherited")
 
 	span := defaultSpan(agent)
-	span.Extract(reader)
+	span.extract(reader)
 	assert.Equal(t, "t123456", span.txId.AgentId, "extracted transaction id")
 	assert.Equal(t, int64(-1), span.parentSpanId, "unparseable parent span id stays root")
 }

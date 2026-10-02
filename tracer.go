@@ -60,9 +60,6 @@ type Tracer interface {
 	// NewSpanEvent returns a span event.
 	NewSpanEvent(operationName string) Tracer
 
-	// NewAsyncSpan is deprecated. Use NewGoroutineTracer.
-	NewAsyncSpan() Tracer
-
 	// NewGoroutineTracer returns a tracer that tracks the call stack of a goroutine.
 	NewGoroutineTracer() Tracer
 
@@ -78,9 +75,6 @@ type Tracer interface {
 
 	// Inject injects distributed tracing headers to the writer.
 	Inject(writer DistributedTracingContextWriter)
-
-	// Extract extracts distributed tracing headers from the reader.
-	Extract(reader DistributedTracingContextReader)
 
 	// TransactionId returns the ID of the transaction containing the span.
 	TransactionId() TransactionId
@@ -418,13 +412,8 @@ const (
 	LogSpanIdKey        = "PspanId"
 	Logged              = 1
 	NotLogged           = 0
-	// MetricURLStat records the span's URL statistics entry (*UrlStatEntry).
-	// CAS): once a span holds a real Url, later calls keep it and refresh only
-	// the Method and Status. An empty Url counts as "not recorded yet".
+	// MetricURLStat records the span's URL statistics entry (*UrlStatEntry):
+	// once a span holds a real Url, later calls keep it and refresh only the
+	// Method and Status. An empty Url counts as "not recorded yet".
 	MetricURLStat = "URLStat"
-	// force = true) semantics: the Url recorded before is replaced. For a host
-	// that has to correct an early, less precise guess with the route it
-	// eventually matched. A separate key rather than a field on UrlStatEntry
-	// so existing callers and the exported struct are untouched.
-	MetricURLStatForce = "URLStatForce"
 )

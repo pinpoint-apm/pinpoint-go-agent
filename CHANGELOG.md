@@ -52,14 +52,19 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   `WithSamplingCounterRate`); the `LogLevel` config key with its
   `--pinpoint-loglevel` flag and `PINPOINT_GO_LOGLEVEL` variable (use
   `Log.Level`, `--pinpoint-log-level`, `PINPOINT_GO_LOG_LEVEL`);
-  `pplogrus.WithField` (use `NewField`); and in `ppsarama` and `ppsaramaibm`
-  the consumer wrappers `ConsumeMessage`, `WrapConsumerMessage`,
-  `ConsumerMessage`, `HandlerFunc`, `NewConsumer`, `Consumer`,
+  `pplogrus.WithField` (use `NewField`); `Tracer.NewAsyncSpan` (use
+  `NewGoroutineTracer`); and in `ppsarama` and `ppsaramaibm` the consumer
+  wrappers `ConsumeMessage`, `WrapConsumerMessage`, `ConsumerMessage`,
+  `HandlerFunc`, `NewConsumer`, `Consumer`,
   `WrapPartitionConsumer` and `PartitionConsumer` (use `ConsumeMessageContext`
   on a raw sarama consumer) together with the three `WithContext` functions
   that bound a tracer to a producer without being thread-safe (send through
   `SendMessageContext`, `SendMessagesContext` and `InputContext`; the plain
   `SendMessage`, `SendMessages` and `Input` now produce without tracing).
+- **`Tracer.Extract` is gone.** Called on a live span it re-read the
+  transaction from a carrier after `Inject` may already have sent the old ids
+  downstream. `Agent.NewSpanTracerWithReader` reads the carrier as it creates
+  the span, which is all the agent itself ever used `Extract` for.
 - **The config file is read by the agent itself, not viper.** YAML, JSON and
   properties files - the documented formats - are told apart by extension
   (`.yaml`/`.yml`, `.json`, `.properties`/`.props`/`.prop`), keys stay
@@ -345,8 +350,8 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   negative message size failed every send with `ResourceExhausted`, and a
   negative keepalive timeout dropped the connection after every ping; a value
   out of range recovers the default, as the queue sizes do.
-- **A nil carrier is safe on a sampled span.** `Inject(nil)` and `Extract(nil)`
-  did nothing on the noop tracer and panicked once the request was sampled.
+- **A nil carrier is safe on a sampled span.** `Inject(nil)` did nothing on
+  the noop tracer and panicked once the request was sampled.
 - **An unsampled span clamps a negative elapsed time**, as a sampled one does,
   so an NTP step no longer shrinks the response-time total.
 - **The kafka consumers take a nil context** (`ppsarama`, `ppsaramaibm`,

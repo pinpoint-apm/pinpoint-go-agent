@@ -140,10 +140,6 @@ func (span *noopSpan) NewSpanEvent(operationName string) Tracer {
 // goroutine still tell the callee not to trace, and a link to the root so a
 // failure it records reaches the request's statistics - but never withStats:
 // the statistics belong to the request's own span, which alone must end them.
-func (span *noopSpan) NewAsyncSpan() Tracer {
-	return &noopSpan{unsampled: span.unsampled, traceRoot: span.root()}
-}
-
 func (span *noopSpan) NewGoroutineTracer() Tracer {
 	return &noopSpan{unsampled: span.unsampled, traceRoot: span.root()}
 }
@@ -240,8 +236,6 @@ func (span *noopSpan) Inject(writer DistributedTracingContextWriter) {
 	}
 }
 
-func (span *noopSpan) Extract(reader DistributedTracingContextReader) {}
-
 func (span *noopSpan) Annotations() Annotation {
 	return &span.annotations
 }
@@ -255,17 +249,17 @@ func (span *noopSpan) IsSampled() bool {
 // collectUrlStat follows the same first-wins policy as span.collectUrlStat
 // (see mergeUrlStat); withStats keeps the process-wide singleton from being
 // written to.
-func (span *noopSpan) collectUrlStat(stat *UrlStatEntry, force bool) {
+func (span *noopSpan) collectUrlStat(stat *UrlStatEntry) {
 	if span.withStats.Load() && span.cfg.collectUrlStat {
-		mergeUrlStat(&span.urlStatBuf, span.urlStat != nil, stat, force)
+		mergeUrlStat(&span.urlStatBuf, span.urlStat != nil, stat)
 		span.urlStat = &span.urlStatBuf
 	}
 }
 
 func (span *noopSpan) AddMetric(metric string, value interface{}) {
-	if metric == MetricURLStat || metric == MetricURLStatForce {
+	if metric == MetricURLStat {
 		if entry, ok := value.(*UrlStatEntry); ok && entry != nil {
-			span.collectUrlStat(entry, metric == MetricURLStatForce)
+			span.collectUrlStat(entry)
 		}
 	}
 }
