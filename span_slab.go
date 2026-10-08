@@ -110,77 +110,41 @@ type spanMessageBuilder struct {
 	longIntIntByteByteStrings      slab[pb.PLongIntIntByteByteStringValue]
 }
 
+// slabber is what every slab of the builder offers reset and retained.
+type slabber interface {
+	reset()
+	retained() int
+}
+
+// slabs lists every slab, so reset and retained cannot miss one: a slab left
+// out of reset would hand a batch's messages to the next one.
+func (b *spanMessageBuilder) slabs() [31]slabber {
+	return [...]slabber{
+		&b.messages, &b.spanOneofs, &b.spans, &b.chunkOneofs, &b.chunks, &b.txIds,
+		&b.acceptEvents, &b.parentInfos, &b.localAsyncIds,
+		&b.events, &b.eventLists, &b.messageLists, &b.nextEvents, &b.nextEventOneofs,
+		&b.messageEvents, &b.intStringValues, &b.stringValues,
+		&b.annotations, &b.annotationLists, &b.annotationValues, &b.intOneofs, &b.longOneofs,
+		&b.stringOneofs, &b.stringStringOneofs, &b.stringStrings, &b.intStringStringOneofs,
+		&b.intStringStrings, &b.bytesStringStringOneofs, &b.bytesStringStrings,
+		&b.longIntIntByteByteStringOneofs, &b.longIntIntByteByteStrings,
+	}
+}
+
 func (b *spanMessageBuilder) reset() {
-	b.messages.reset()
-	b.spanOneofs.reset()
-	b.spans.reset()
-	b.chunkOneofs.reset()
-	b.chunks.reset()
-	b.txIds.reset()
-	b.acceptEvents.reset()
-	b.parentInfos.reset()
-	b.localAsyncIds.reset()
-
-	b.events.reset()
-	b.eventLists.reset()
-	b.messageLists.reset()
-	b.nextEvents.reset()
-	b.nextEventOneofs.reset()
-	b.messageEvents.reset()
-	b.intStringValues.reset()
-	b.stringValues.reset()
-
-	b.annotations.reset()
-	b.annotationLists.reset()
-	b.annotationValues.reset()
-	b.intOneofs.reset()
-	b.longOneofs.reset()
-	b.stringOneofs.reset()
-	b.stringStringOneofs.reset()
-	b.stringStrings.reset()
-	b.intStringStringOneofs.reset()
-	b.intStringStrings.reset()
-	b.bytesStringStringOneofs.reset()
-	b.bytesStringStrings.reset()
-	b.longIntIntByteByteStringOneofs.reset()
-	b.longIntIntByteByteStrings.reset()
+	for _, s := range b.slabs() {
+		s.reset()
+	}
 }
 
 // retained is the memory the builder keeps between uses, summed over its
 // slabs; releaseSpanMessageBuilder reads it to decide whether to keep it.
 func (b *spanMessageBuilder) retained() int {
-	return 0 +
-		b.messages.retained() +
-		b.spanOneofs.retained() +
-		b.spans.retained() +
-		b.chunkOneofs.retained() +
-		b.chunks.retained() +
-		b.txIds.retained() +
-		b.acceptEvents.retained() +
-		b.parentInfos.retained() +
-		b.localAsyncIds.retained() +
-		b.events.retained() +
-		b.eventLists.retained() +
-		b.messageLists.retained() +
-		b.nextEvents.retained() +
-		b.nextEventOneofs.retained() +
-		b.messageEvents.retained() +
-		b.intStringValues.retained() +
-		b.stringValues.retained() +
-		b.annotations.retained() +
-		b.annotationLists.retained() +
-		b.annotationValues.retained() +
-		b.intOneofs.retained() +
-		b.longOneofs.retained() +
-		b.stringOneofs.retained() +
-		b.stringStringOneofs.retained() +
-		b.stringStrings.retained() +
-		b.intStringStringOneofs.retained() +
-		b.intStringStrings.retained() +
-		b.bytesStringStringOneofs.retained() +
-		b.bytesStringStrings.retained() +
-		b.longIntIntByteByteStringOneofs.retained() +
-		b.longIntIntByteByteStrings.retained()
+	n := 0
+	for _, s := range b.slabs() {
+		n += s.retained()
+	}
+	return n
 }
 
 func (b *spanMessageBuilder) stringValue(s string) *wrappers.StringValue {
