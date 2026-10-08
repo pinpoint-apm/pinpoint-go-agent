@@ -45,6 +45,38 @@ func (rt *recordingTransport) CloseIdleConnections() {
 	rt.idleClosed = true
 }
 
+// panickingTransport stands for a transport, or a doFunc, that panics mid-request.
+type panickingTransport struct{}
+
+func (panickingTransport) RoundTrip(*http.Request) (*http.Response, error) { panic("boom") }
+
+// A panic in the transport or the doFunc must still end the client span event,
+// or EndSpan closes it later with the request's whole duration and warns about
+// an unclosed event. The panic itself propagates unchanged.
+func TestClient_PanicStillEndsTheSpanEvent(t *testing.T) {
+	pptest.StartAgent(t)
+
+	for _, tt := range []struct {
+		name string
+		do   func(*http.Request) (*http.Response, error)
+	}{
+		{"DoClient", func(req *http.Request) (*http.Response, error) {
+			return DoClient(panickingTransport{}.RoundTrip, req)
+		}},
+		{"WrapClient", WrapClient(&http.Client{Transport: panickingTransport{}}).Do},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tracer := pptest.NewRecordingTracer()
+			req, err := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer), "GET", "http://example.com/", nil)
+			require.NoError(t, err)
+
+			assert.PanicsWithValue(t, "boom", func() { _, _ = tt.do(req) })
+			require.Len(t, tracer.Events, 1, "the client event must be recorded once")
+			assert.True(t, tracer.Events[0].Ended, "the client event was left open by the panic")
+		})
+	}
+}
+
 func TestWrapClient_ClosesUnderlyingIdleConnections(t *testing.T) {
 	rt := &recordingTransport{}
 	WrapClient(&http.Client{Transport: rt}).CloseIdleConnections()

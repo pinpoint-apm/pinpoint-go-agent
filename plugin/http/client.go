@@ -120,7 +120,7 @@ func (c cookie) VisitAll(f func(name string, value string)) {
 //
 //	req, _ := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer), "GET", url, nil)
 //	pphttp.DoClient(http.DefaultClient.Do, req)
-func DoClient(doFunc func(req *http.Request) (*http.Response, error), req *http.Request) (*http.Response, error) {
+func DoClient(doFunc func(req *http.Request) (*http.Response, error), req *http.Request) (resp *http.Response, err error) {
 	// A disabled agent traces nothing and injects nothing - not even the
 	// unsampled marker - matching the other pinpoint agents' disabled state.
 	if !pinpoint.GetAgent().Enable() {
@@ -129,10 +129,10 @@ func DoClient(doFunc func(req *http.Request) (*http.Response, error), req *http.
 
 	req = withOwnHeader(req)
 	tracer := before(pinpoint.TracerFromRequestContext(req), "http/Client.Do()", req)
-	resp, err := doFunc(req)
-	after(tracer, resp, err)
-
-	return resp, err
+	// Deferred so a panicking doFunc still ends the client event; left open,
+	// EndSpan would close it with the request's whole duration.
+	defer func() { after(tracer, resp, err) }()
+	return doFunc(req)
 }
 
 // withOwnHeader returns a shallow copy of req with a header map of its own for
@@ -201,7 +201,7 @@ func wrapRoundTripper(ctx context.Context, original http.RoundTripper) http.Roun
 	}
 }
 
-func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+func (r *roundTripper) RoundTrip(req *http.Request) (resp *http.Response, err error) {
 	// A disabled agent traces nothing and injects nothing - not even the
 	// unsampled marker - so skip the request clone and header copy too.
 	if !pinpoint.GetAgent().Enable() {
@@ -218,8 +218,8 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	req = withOwnHeader(req)
 	tracer = before(tracer, "http/Client.Do()", req)
-	resp, err := r.original.RoundTrip(req)
-	after(tracer, resp, err)
-
-	return resp, err
+	// Deferred for the same reason as in DoClient: a panicking transport must
+	// not leave the client event open.
+	defer func() { after(tracer, resp, err) }()
+	return r.original.RoundTrip(req)
 }
