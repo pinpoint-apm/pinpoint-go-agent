@@ -710,3 +710,10 @@ func Test_SqlNormalizerWhitespaceIsNotNormalized(t *testing.T) {
 	normalized, _ := newSqlNormalizer("select   *\n\tfrom  t", false).run()
 	assert.Equal(t, "select   *\n\tfrom  t", normalized)
 }
+
+// sqlUid is the UID of a normalized statement as the collector expects it, for
+// the tests that compare against known values.
+func sqlUid(sql string) []byte {
+	uid := sqlHashOf(sql)
+	return uid[:]
+}

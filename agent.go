@@ -1568,19 +1568,12 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 		})
 }
 
-// sqlUid hashes a normalized SQL with murmur3 x64 128 (seed 0) and lays the two
-// words out little-endian, which is the byte order the collector expects;
-// murmur3's own Sum() writes them big-endian and would yield a different UID for
-// the same SQL.
-func sqlUid(sql string) []byte {
-	uid := sqlHashOf(sql)
-	return uid[:]
-}
-
-// sqlHash is the murmur3 x64 128 hash of a normalized statement, in the byte
-// order sqlUid describes. It is the SQL id cache's key: two statements share a
-// key with probability 2^-128, which is no collision in practice, and the
-// cache holds 16 bytes per statement instead of the statement.
+// sqlHash is the murmur3 x64 128 hash (seed 0) of a normalized statement, its
+// two words laid out little-endian: the byte order the collector expects of a
+// SQL UID, where murmur3's own Sum() writes them big-endian and would yield a
+// different UID for the same SQL. It is the SQL id cache's key as well: two
+// statements share a key with probability 2^-128, which is no collision in
+// practice, and the cache holds 16 bytes per statement instead of the statement.
 type sqlHash [16]byte
 
 func sqlHashOf(sql string) sqlHash {
