@@ -191,11 +191,12 @@ func (b *expiringPickFirst) Close() {
 	b.ready, b.connecting, b.failure = nil, nil, nil
 }
 
-// createSubConnLocked opens a new SubConn into the CONNECTING slot. With the
-// down on the conflict, which ends the same way.
-func (b *expiringPickFirst) createSubConnLocked() {
+// createSubConnLocked opens a new SubConn into the CONNECTING slot and reports
+// whether it did: not while the slot is taken, after Close, without addresses,
+// or when the channel refuses the SubConn.
+func (b *expiringPickFirst) createSubConnLocked() bool {
 	if b.closed || b.connecting != nil || len(b.addrs) == 0 {
-		return
+		return false
 	}
 
 	sd := &expiringSubConn{}
@@ -205,7 +206,7 @@ func (b *expiringPickFirst) createSubConnLocked() {
 	})
 	if err != nil {
 		Log("grpc").Warnf("%s: create subconn - %v", expiringPickFirstName, err)
-		return
+		return false
 	}
 	sd.sc = sc
 	if b.maxAge > 0 {
@@ -215,6 +216,7 @@ func (b *expiringPickFirst) createSubConnLocked() {
 	b.connecting = sd
 	sc.Connect()
 	Log("grpc").Infof("%s: %v created", expiringPickFirstName, sc)
+	return true
 }
 
 // onSubConnState is the StateListener: it moves sd to the slot of its new state
@@ -316,8 +318,14 @@ func (b *expiringPickFirst) requestSuccessor(sd *expiringSubConn) {
 		return
 	}
 	Log("grpc").Infof("%s: %v reached its max age, creating a successor", expiringPickFirstName, sd.sc)
+	if !b.createSubConnLocked() {
+		// The slot was taken - an address change still connecting, say - or
+		// the channel refused. Hand the CAS back so a later pick asks again;
+		// latched, the connection never rotated until it broke.
+		sd.successor.Store(false)
+		return
+	}
 	channelRotations.Add(1)
-	b.createSubConnLocked()
 }
 
 // channelRotations counts the max age rotations started, over every collector

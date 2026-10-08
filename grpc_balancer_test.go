@@ -190,6 +190,36 @@ func Test_expiringPickFirst_keepsOldSubConnWhenSuccessorFails(t *testing.T) {
 	assert.Same(t, old, must(cc.pick()))
 }
 
+// A pick that finds the CONNECTING slot taken - here by the SubConn an address
+// change opened - cannot create the successor. The request must not be spent:
+// once the slot is free again, the next pick asks once more, or the expired
+// connection would serve until it broke.
+func Test_expiringPickFirst_retriesSuccessorWhenTheSlotWasTaken(t *testing.T) {
+	b, cc := readyExpiringPickFirst(t, 1)
+	cfg, err := expiringPickFirstBuilder{}.ParseConfig([]byte(`{"maxAgeMillis":1}`))
+	require.NoError(t, err)
+	require.NoError(t, b.UpdateClientConnState(balancer.ClientConnState{
+		ResolverState:  resolver.State{Addresses: []resolver.Address{{Addr: "collector-2:9991"}}},
+		BalancerConfig: cfg,
+	}))
+	require.Equal(t, 2, cc.count(), "the address change opens a SubConn into the CONNECTING slot")
+	old, pending := cc.subConn(0), cc.subConn(1)
+
+	cc.pick() // expired, but the slot is taken
+	require.Eventually(t, func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.ready != nil && !b.ready.successor.Load()
+	}, 2*time.Second, 2*time.Millisecond, "the refused request must hand the CAS back")
+	assert.Equal(t, 2, cc.count(), "no SubConn while the slot is taken")
+
+	pending.setState(connectivity.Connecting)
+	pending.setState(connectivity.TransientFailure)
+	assert.Same(t, old, must(cc.pick()), "the old SubConn still serves")
+	require.Eventually(t, func() bool { return cc.count() == 3 }, 2*time.Second, 2*time.Millisecond,
+		"the successor is requested again once the slot is free")
+}
+
 // The single-SubConn-per-slot invariant: while the successor holds the
 // CONNECTING slot, an old SubConn that drops and wants to reconnect is shut
 // down rather than becoming a second connection attempt.
