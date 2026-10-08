@@ -1162,13 +1162,28 @@ func TestNewConfig_LoadWarningsReachTheConfiguredLogFile(t *testing.T) {
 		t.Setenv("PINPOINT_GO_LOG_OUTPUT", logFile)
 
 		c, err := NewConfig(WithAppName("TestApp"), WithConfigFile(filepath.Join(t.TempDir(), "missing.yaml")))
-		require.NoError(t, err)
+		require.NoError(t, err, "a missing file is optional, not an error")
 		defer c.Close()
 
 		b, err := os.ReadFile(logFile)
 		require.NoError(t, err)
 		assert.Contains(t, string(b), "config file loading error")
 	})
+}
+
+// A config file that is there but cannot be read is a misconfiguration the
+// caller should see: NewConfig returns it, with a Config that is complete on
+// defaults all the same. A missing file stays optional (the test above).
+func TestNewConfig_ReturnsAnUnreadableConfigFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("Sampling:\n  CounterRate: [not closed\n"), 0o600))
+
+	c, err := NewConfig(WithAppName("TestApp"), WithConfigFile(path))
+	require.Error(t, err)
+	require.NotNil(t, c, "the Config is still returned")
+	defer c.Close()
+	assert.Equal(t, 1, c.Int(CfgSamplingCounterRate), "and runs on defaults")
+	assert.Equal(t, "TestApp", c.String(CfgAppName))
 }
 
 // The same policy has to hold for every source the value can arrive from, not
