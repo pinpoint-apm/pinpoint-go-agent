@@ -237,110 +237,119 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 		spans:         make(map[string]pinpoint.Tracer),
 	}
 
-	go func() {
-		// Keep a closed underlying input from panicking the host application.
-		// AsyncClose waits for this goroutine before closing that input itself.
-		// Nothing receives from the wrapper's inputs once this returns, so hand
-		// them to a drainer before releasing AsyncClose.
-		defer func() {
-			go drainAsyncProducerInput(wrapped)
-			close(wrapped.inputDone)
-		}()
-		defer func() {
-			// A dead forwarder means every later message is silently dropped
-			// by the drainer, so its death must never be silent itself.
-			if r := recover(); r != nil {
-				pinpoint.Log("sarama").Errorf("async producer input forwarder died: %v", r)
-			}
-		}()
-
-		for {
-			// An already accepted message takes priority over the shutdown
-			// signal. The wrapper's inputs are buffered, so during shutdown
-			// both are ready at once and a plain select picks between them at
-			// random: returning on done left the buffered messages to the
-			// drainer, which discards them, breaking AsyncClose's promise to
-			// deliver everything it has accepted. sarama keeps consuming its
-			// own input until AsyncClose, and AsyncClose waits for this
-			// goroutine, so those messages still have a path out.
-			//
-			// ponytail: drains what is there rather than a length snapshot, so
-			// a goroutine still writing to the untraced Input channel during
-			// shutdown can extend the drain; InputContext stops accepting on
-			// done by itself. Snapshot the lengths if that ever matters.
-			// A flush request is served between two forwards as well as on an
-			// empty queue: served only there, CommitTxn and AbortTxn waited
-			// for a gap in the inputs that a steadily producing application
-			// never gave them.
-			select {
-			case flushed := <-wrapped.flush:
-				if !wrapped.flushBuffers(flushed) {
-					return
-				}
-			default:
-			}
-
-			msg, ok := wrapped.takeInput()
-			if !ok {
-				select {
-				case <-wrapped.done:
-					// A send may have completed after takeInput's empty
-					// check but before shutdown. Recheck before exiting,
-					// since select can choose done over that queued message.
-					msg, ok = wrapped.takeInput()
-					if !ok {
-						return
-					}
-				case msg = <-wrapped.inputContext:
-				case msg = <-wrapped.input:
-				case flushed := <-wrapped.flush:
-					if !wrapped.flushBuffers(flushed) {
-						return
-					}
-					continue
-				}
-			}
-			if !wrapped.forward(msg) {
-				return
-			}
-		}
-	}()
-
-	go func() {
-		// Closed only here, and only after sarama has closed its own pair:
-		// AsyncClose guarantees delivery of every in-flight message on
-		// Successes/Errors before closing them, and the user is entitled to
-		// drain all of it through the wrapper. wrapped.inputContext is never
-		// closed - its senders are user goroutines, and closing a
-		// channel under a sender panics the send. wrapped.input is closed
-		// instead by the drainer below, once no legitimate sender is left.
-		defer close(wrapped.ackDone)
-		defer close(wrapped.successes)
-		defer close(wrapped.errors)
-		defer endRemainingAsyncProducerTracers(wrapped)
-
-		successes, errs := producer.Successes(), producer.Errors()
-		for successes != nil || errs != nil {
-			select {
-			case msg, ok := <-successes:
-				if !ok {
-					successes = nil
-					continue
-				}
-				endAsyncProducerTracer(wrapped, msg, nil)
-				wrapped.successes <- msg
-			case e, ok := <-errs:
-				if !ok {
-					errs = nil
-					continue
-				}
-				endAsyncProducerTracer(wrapped, e.Msg, e.Err)
-				wrapped.errors <- e
-			}
-		}
-	}()
+	go wrapped.forwardInput()
+	go wrapped.forwardAcks()
 
 	return wrapped
+}
+
+// forwardInput moves the messages the wrapper accepted on its inputs to the
+// underlying producer, serving flushes in between, until the producer is
+// closed; its comments explain the ordering.
+func (p *asyncProducer) forwardInput() {
+	// Keep a closed underlying input from panicking the host application.
+	// AsyncClose waits for this goroutine before closing that input itself.
+	// Nothing receives from the wrapper's inputs once this returns, so hand
+	// them to a drainer before releasing AsyncClose.
+	defer func() {
+		go drainAsyncProducerInput(p)
+		close(p.inputDone)
+	}()
+	defer func() {
+		// A dead forwarder means every later message is silently dropped
+		// by the drainer, so its death must never be silent itself.
+		if r := recover(); r != nil {
+			pinpoint.Log("sarama").Errorf("async producer input forwarder died: %v", r)
+		}
+	}()
+
+	for {
+		// An already accepted message takes priority over the shutdown
+		// signal. The wrapper's inputs are buffered, so during shutdown
+		// both are ready at once and a plain select picks between them at
+		// random: returning on done left the buffered messages to the
+		// drainer, which discards them, breaking AsyncClose's promise to
+		// deliver everything it has accepted. sarama keeps consuming its
+		// own input until AsyncClose, and AsyncClose waits for this
+		// goroutine, so those messages still have a path out.
+		//
+		// ponytail: drains what is there rather than a length snapshot, so
+		// a goroutine still writing to the untraced Input channel during
+		// shutdown can extend the drain; InputContext stops accepting on
+		// done by itself. Snapshot the lengths if that ever matters.
+		// A flush request is served between two forwards as well as on an
+		// empty queue: served only there, CommitTxn and AbortTxn waited
+		// for a gap in the inputs that a steadily producing application
+		// never gave them.
+		select {
+		case flushed := <-p.flush:
+			if !p.flushBuffers(flushed) {
+				return
+			}
+		default:
+		}
+
+		msg, ok := p.takeInput()
+		if !ok {
+			select {
+			case <-p.done:
+				// A send may have completed after takeInput's empty
+				// check but before shutdown. Recheck before exiting,
+				// since select can choose done over that queued message.
+				msg, ok = p.takeInput()
+				if !ok {
+					return
+				}
+			case msg = <-p.inputContext:
+			case msg = <-p.input:
+			case flushed := <-p.flush:
+				if !p.flushBuffers(flushed) {
+					return
+				}
+				continue
+			}
+		}
+		if !p.forward(msg) {
+			return
+		}
+	}
+}
+
+// forwardAcks moves the underlying producer's acks to the wrapper's
+// Successes and Errors, ending each message's tracer on the way, until the
+// producer has closed both.
+func (p *asyncProducer) forwardAcks() {
+	// Closed only here, and only after sarama has closed its own pair:
+	// AsyncClose guarantees delivery of every in-flight message on
+	// Successes/Errors before closing them, and the user is entitled to
+	// drain all of it through the wrapper. p.inputContext is never
+	// closed - its senders are user goroutines, and closing a
+	// channel under a sender panics the send. p.input is closed
+	// instead by the drainer below, once no legitimate sender is left.
+	defer close(p.ackDone)
+	defer close(p.successes)
+	defer close(p.errors)
+	defer endRemainingAsyncProducerTracers(p)
+
+	successes, errs := p.AsyncProducer.Successes(), p.AsyncProducer.Errors()
+	for successes != nil || errs != nil {
+		select {
+		case msg, ok := <-successes:
+			if !ok {
+				successes = nil
+				continue
+			}
+			endAsyncProducerTracer(p, msg, nil)
+			p.successes <- msg
+		case e, ok := <-errs:
+			if !ok {
+				errs = nil
+				continue
+			}
+			endAsyncProducerTracer(p, e.Msg, e.Err)
+			p.errors <- e
+		}
+	}
 }
 
 // takeInput pulls an already accepted message off the wrapper's inputs without
