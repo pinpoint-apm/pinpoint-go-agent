@@ -11,11 +11,10 @@ require (
 require (
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongomonitor/v2 v2.0.0
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
-	github.com/rogpeppe/go-internal v1.6.1 // indirect
 	github.com/shirou/gopsutil/v3 v3.24.5 // indirect
 	github.com/shoenig/go-m1cpu v0.1.6 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
@@ -36,3 +35,5 @@ require (
 )
 
 replace github.com/pinpoint-apm/pinpoint-go-agent/v2 => ../..
+
+replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongomonitor/v2 => ../mongomonitor

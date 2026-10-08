@@ -174,6 +174,7 @@ require (
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriverv2/v2 v2.0.0
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongomonitor/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3/v2 v2.0.0
@@ -283,3 +284,5 @@ replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/zap/v2 => ../plugin/zap
 // orders above the v1.9.x line ppredigo needs; the plugin's own module never
 // meets beego, but this module unites every example, so pin the content.
 replace github.com/gomodule/redigo v2.0.0+incompatible => github.com/gomodule/redigo v1.9.3
+
+replace github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongomonitor/v2 => ../plugin/mongomonitor

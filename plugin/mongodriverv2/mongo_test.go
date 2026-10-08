@@ -5,10 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"testing"
-	"unicode/utf8"
 
+	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongomonitor/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
@@ -27,59 +26,32 @@ func TestCommandAnnotation(t *testing.T) {
 		want, err := bson.MarshalExtJSON(evt.Command, false, false)
 		require.NoError(t, err)
 
-		assert.Equal(t, string(want), commandAnnotation(evt, "widgets", maxJsonSize))
+		assert.Equal(t, string(want), commandAnnotation(evt, "widgets", ppmongomonitor.DefaultCommandMaxSize))
 	})
 
 	t.Run("expanded extended JSON is abbreviated", func(t *testing.T) {
 		// Control bytes are escaped as \uXXXX, so BSON below the gate still
-		// converts to extended JSON above maxJsonSize.
+		// converts to extended JSON above ppmongomonitor.DefaultCommandMaxSize.
 		evt := commandStartedEvent(t, "insert", "widgets", strings.Repeat("\x01", 60<<10))
-		require.LessOrEqual(t, len(evt.Command), maxBsonSize, "the test command must stay below the BSON gate")
+		require.LessOrEqual(t, len(evt.Command), ppmongomonitor.DefaultCommandMaxSize, "the test command must stay below the BSON gate")
 		b, err := bson.MarshalExtJSON(evt.Command, false, false)
 		require.NoError(t, err)
-		require.Greater(t, len(b), maxJsonSize, "the test command must expand past the JSON limit")
+		require.Greater(t, len(b), ppmongomonitor.DefaultCommandMaxSize, "the test command must expand past the JSON limit")
 
-		got := commandAnnotation(evt, "widgets", maxJsonSize)
+		got := commandAnnotation(evt, "widgets", ppmongomonitor.DefaultCommandMaxSize)
 		assert.True(t, strings.HasSuffix(got, abbreviationMarker),
 			"commandAnnotation() = %.80q, want the abbreviation marker", got)
-		assert.LessOrEqual(t, len(got), maxJsonSize, "the annotation grew past the limit")
-		assert.Equal(t, string(b[:maxJsonSize-len(abbreviationMarker)])+abbreviationMarker, got)
+		assert.LessOrEqual(t, len(got), ppmongomonitor.DefaultCommandMaxSize, "the annotation grew past the limit")
+		assert.Equal(t, string(b[:ppmongomonitor.DefaultCommandMaxSize-len(abbreviationMarker)])+abbreviationMarker, got)
 	})
 
 	t.Run("large command skips extended JSON", func(t *testing.T) {
-		evt := commandStartedEvent(t, "insert", "widgets", strings.Repeat("x", maxBsonSize))
-		require.Greater(t, len(evt.Command), maxBsonSize, "the test command must exceed the BSON gate")
+		evt := commandStartedEvent(t, "insert", "widgets", strings.Repeat("x", ppmongomonitor.DefaultCommandMaxSize))
+		require.Greater(t, len(evt.Command), ppmongomonitor.DefaultCommandMaxSize, "the test command must exceed the BSON gate")
 
 		want := fmt.Sprintf("[MongoDB command omitted: command=insert, collection=widgets, bsonSize=%d]", len(evt.Command))
-		assert.Equal(t, want, commandAnnotation(evt, "widgets", maxJsonSize))
+		assert.Equal(t, want, commandAnnotation(evt, "widgets", ppmongomonitor.DefaultCommandMaxSize))
 	})
-}
-
-// Allocations must stay flat once the command exceeds maxBsonSize; the 1KB case
-// keeps the normal conversion path measured so a regression there still shows up.
-// Mongo.RecordCommand turns the command annotation off and
-// Mongo.CommandMaxSize bounds it; a command larger than the size is described
-// rather than converted, which is what makes the size a cost knob and not
-// only a length one.
-func TestCommandSettings(t *testing.T) {
-	cfg, err := pinpoint.NewConfig(pinpoint.WithAppName("mongo"), WithMongoRecordCommand(false), WithMongoCommandMaxSize(100))
-	require.NoError(t, err)
-	defer cfg.Close()
-	record, maxSize := commandSettings(cfg)
-	assert.False(t, record)
-	assert.Equal(t, 100, maxSize)
-
-	cfg.Set(CfgMongoCommandMaxSize, 0)
-	_, maxSize = commandSettings(cfg)
-	assert.Equal(t, maxJsonSize, maxSize, "0 keeps the default")
-
-	record, maxSize = commandSettings(pinpoint.GetConfig())
-	assert.True(t, record, "recorded by default")
-	assert.Equal(t, maxJsonSize, maxSize)
-
-	evt := commandStartedEvent(t, "find", "widgets", strings.Repeat("x", 64))
-	got := commandAnnotation(evt, "widgets", 16)
-	assert.Equal(t, fmt.Sprintf("[MongoDB command omitted: command=find, collection=widgets, bsonSize=%d]", len(evt.Command)), got)
 }
 
 func BenchmarkCommandAnnotation(b *testing.B) {
@@ -89,7 +61,7 @@ func BenchmarkCommandAnnotation(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				commandAnnotationSink = commandAnnotation(evt, "widgets", maxJsonSize)
+				commandAnnotationSink = commandAnnotation(evt, "widgets", ppmongomonitor.DefaultCommandMaxSize)
 			}
 		})
 	}
@@ -105,21 +77,6 @@ func commandStartedEvent(t testing.TB, name, collection, payload string) *event.
 	return &event.CommandStartedEvent{
 		Command:     command,
 		CommandName: name,
-	}
-}
-
-// The driver reports the connection as an address with a pool index appended.
-// The endpoint has to be the bare host, or the same server is filed under one
-// node per connection on the server map.
-func Test_getHost(t *testing.T) {
-	for _, tt := range []struct{ connID, want string }{
-		{"localhost:27017[-13]", "localhost"},
-		{"mongo1.example:27017[-1]", "mongo1.example"},
-		{"localhost:27017", "localhost"},
-		{"localhost", "localhost"},
-		{"", ""},
-	} {
-		assert.Equal(t, tt.want, getHost(tt.connID), "getHost(%q)", tt.connID)
 	}
 }
 
@@ -148,7 +105,7 @@ func startedEvent(t *testing.T, connID string, requestID int64, name, collection
 // Succeeded - the driver reports them on different callbacks, so the monitor
 // has to pair them by connection and request id.
 func TestMonitor_StartedAndSucceeded(t *testing.T) {
-	m := &monitor{spans: make(map[spanKey]pinpoint.Tracer)}
+	m := &monitor{ppmongomonitor.NewMonitor()}
 	tracer := pptest.NewRecordingTracer()
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 
@@ -169,13 +126,13 @@ func TestMonitor_StartedAndSucceeded(t *testing.T) {
 		"the command was not recorded as an annotation")
 	assert.NoError(t, e.Err)
 	assert.True(t, e.Ended, "the span event was left open")
-	assert.Empty(t, m.spans, "the finished command was left in the span map")
+	assert.Zero(t, m.Pending(), "the finished command was left in the span map")
 }
 
 // A failed command is the one worth finding in the trace, so the driver's
 // failure text has to reach the span event.
 func TestMonitor_Failed(t *testing.T) {
-	m := &monitor{spans: make(map[spanKey]pinpoint.Tracer)}
+	m := &monitor{ppmongomonitor.NewMonitor()}
 	tracer := pptest.NewRecordingTracer()
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 
@@ -191,7 +148,7 @@ func TestMonitor_Failed(t *testing.T) {
 	require.Error(t, e.Err, "the driver's failure was not recorded")
 	assert.Contains(t, e.Err.Error(), "duplicate key")
 	assert.True(t, e.Ended, "the span event was left open")
-	assert.Empty(t, m.spans, "the failed command was left in the span map")
+	assert.Zero(t, m.Pending(), "the failed command was left in the span map")
 }
 
 // The monitor is registered on the client, so it sees commands the driver
@@ -200,11 +157,11 @@ func TestMonitor_Failed(t *testing.T) {
 // in the span map, so the matching finish callback must not end a span event
 // that was never opened.
 func TestMonitor_IgnoresUnsampledCommands(t *testing.T) {
-	m := &monitor{spans: make(map[spanKey]pinpoint.Tracer)}
+	m := &monitor{ppmongomonitor.NewMonitor()}
 
 	started := startedEvent(t, "mongo1:27017[-3]", 42, "find", "widgets")
 	m.Started(context.Background(), started)
-	assert.Empty(t, m.spans, "an unsampled command must not be recorded in the span map")
+	assert.Zero(t, m.Pending(), "an unsampled command must not be recorded in the span map")
 
 	assert.NotPanics(t, func() {
 		m.Succeeded(context.Background(), &event.CommandSucceededEvent{
@@ -215,35 +172,7 @@ func TestMonitor_IgnoresUnsampledCommands(t *testing.T) {
 			Failure:              errors.New("boom"),
 		})
 	}, "finishing a command that was never started must be a no-op")
-	assert.Empty(t, m.spans)
-}
-
-// Two commands in flight on the same connection are told apart by request id;
-// finishing one must not close the other's span event.
-func TestMonitor_InterleavedCommandsOnOneConnection(t *testing.T) {
-	m := &monitor{spans: make(map[spanKey]pinpoint.Tracer)}
-	tracer := pptest.NewRecordingTracer()
-	ctx := pinpoint.NewContext(context.Background(), tracer)
-
-	first := startedEvent(t, "mongo1:27017[-3]", 1, "find", "widgets")
-	second := startedEvent(t, "mongo1:27017[-3]", 2, "insert", "gadgets")
-	m.Started(ctx, first)
-	m.Started(ctx, second)
-	require.Len(t, m.spans, 2, "two commands in flight must hold two spans")
-
-	m.Succeeded(ctx, &event.CommandSucceededEvent{
-		CommandFinishedEvent: event.CommandFinishedEvent{ConnectionID: second.ConnectionID, RequestID: second.RequestID},
-	})
-	assert.Len(t, m.spans, 1, "finishing one command must leave the other in flight")
-
-	m.Succeeded(ctx, &event.CommandSucceededEvent{
-		CommandFinishedEvent: event.CommandFinishedEvent{ConnectionID: first.ConnectionID, RequestID: first.RequestID},
-	})
-	assert.Empty(t, m.spans)
-
-	require.Len(t, tracer.Events, 2)
-	assert.Equal(t, "mongodb.find", tracer.Events[0].Operation)
-	assert.Equal(t, "mongodb.insert", tracer.Events[1].Operation)
+	assert.Zero(t, m.Pending())
 }
 
 // NewMonitor is what an application installs on its client options; all three
@@ -255,76 +184,4 @@ func TestNewMonitor(t *testing.T) {
 	assert.NotNil(t, m.Started, "commands would go untraced")
 	assert.NotNil(t, m.Succeeded, "span events would never close")
 	assert.NotNil(t, m.Failed, "failures would never close their span event")
-}
-
-// abbreviateJson is what keeps a command annotation inside the limit; the
-// boundary cases are where a marker longer than the limit could push it over.
-func Test_abbreviateJson(t *testing.T) {
-	assert.Equal(t, "abc", abbreviateJson([]byte("abc"), 10), "a short value is kept whole")
-	assert.Equal(t, "abc", abbreviateJson([]byte("abc"), 3), "a value exactly at the limit is kept whole")
-
-	got := abbreviateJson([]byte(strings.Repeat("x", 100)), 20)
-	assert.Len(t, got, 20)
-	assert.True(t, strings.HasSuffix(got, "...(20)"), "got %q, want the marker", got)
-
-	// A limit shorter than the marker leaves only the marker.
-	assert.Equal(t, "...(2)", abbreviateJson([]byte("abcdef"), 2))
-	assert.True(t, utf8.ValidString(abbreviateJson([]byte(strings.Repeat("\uac00", 100)), 20)),
-		"the cut must land on a rune start")
-}
-
-// The span map is shared by every connection in the pool, so commands in
-// flight at the same time have to stay separate and the map has to survive
-// concurrent access. Run under -race.
-func TestMonitor_ConcurrentCommands(t *testing.T) {
-	m := &monitor{spans: make(map[spanKey]pinpoint.Tracer)}
-
-	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			tracer := pptest.NewRecordingTracer()
-			ctx := pinpoint.NewContext(context.Background(), tracer)
-
-			for j := 0; j < 20; j++ {
-				started := startedEvent(t, fmt.Sprintf("mongo1:27017[-%d]", i), int64(j), "find", "widgets")
-				m.Started(ctx, started)
-				m.Succeeded(ctx, &event.CommandSucceededEvent{
-					CommandFinishedEvent: event.CommandFinishedEvent{
-						ConnectionID: started.ConnectionID, RequestID: started.RequestID,
-					},
-				})
-			}
-			assert.Len(t, tracer.Events, 20, "connection %d recorded the wrong number of span events", i)
-		}(i)
-	}
-	wg.Wait()
-
-	assert.Empty(t, m.spans, "spans were left in the map")
-}
-
-// The span map is bounded: a command whose Succeeded or Failed never arrives -
-// a driver bug, a connection that vanished - must not pin its tracer forever.
-// At maxPendingSpans the next Started evicts one pending command, ending its
-// event with errSpanEvicted so the trace says what happened, and the map stays
-// at the cap.
-func TestMonitor_EvictsAtTheCap(t *testing.T) {
-	m := &monitor{spans: make(map[spanKey]pinpoint.Tracer)}
-	tracers := make([]*pptest.RecordingTracer, 0, maxPendingSpans+1)
-	for i := 0; i <= maxPendingSpans; i++ {
-		tracer := pptest.NewRecordingTracer()
-		tracers = append(tracers, tracer)
-		m.Started(pinpoint.NewContext(context.Background(), tracer), startedEvent(t, "mongo1:27017[-3]", int64(i), "find", "widgets"))
-	}
-
-	assert.Len(t, m.spans, maxPendingSpans, "the map must stay at the cap")
-	evicted := 0
-	for _, tracer := range tracers {
-		if e := tracer.Events[0]; e.Ended {
-			evicted++
-			assert.ErrorIs(t, e.Err, errSpanEvicted, "an evicted command must say so on its event")
-		}
-	}
-	assert.Equal(t, 1, evicted, "exactly one pending command is evicted per Started past the cap")
 }

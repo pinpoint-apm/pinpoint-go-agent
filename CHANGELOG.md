@@ -104,6 +104,13 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Changed
 
+- **`plugin/mongomonitor` holds what the two MongoDB plugins share.** The
+  `Mongo.*` options, the span map that pairs a command's started event with
+  its finished one, and the host and JSON helpers moved out of
+  `plugin/mongodriver` and `plugin/mongodriverv2` into one module both
+  require; `go get` of either plugin pulls it in. The plugins' own API -
+  `NewMonitor`, `WithMongoRecordCommand`, `WithMongoCommandMaxSize` and the
+  `CfgMongo*` keys - is unchanged.
 - **`NewConfig` returns an error for a config file that exists but cannot be
   read** - a syntax error, an unsupported extension. The `Config` comes back
   complete on defaults and the other sources, so `cfg, _ := NewConfig(...)`

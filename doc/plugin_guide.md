@@ -164,6 +164,7 @@ privacy gate on bind values. See [Configuration](config.md#sqltracebindvalue).
 | [plugin/gomemcache](/plugin/gomemcache) | [bradfitz/gomemcache](https://github.com/bradfitz/gomemcache) | `NewClient` |
 | [plugin/mongodriver](/plugin/mongodriver) | [mongodb/mongo-go-driver](https://github.com/mongodb/mongo-go-driver) | `NewMonitor` |
 | [plugin/mongodriverv2](/plugin/mongodriverv2) | [mongodb/mongo-go-driver/v2](https://github.com/mongodb/mongo-go-driver) | `NewMonitor` |
+| [plugin/mongomonitor](/plugin/mongomonitor) | shared by the two MongoDB plugins; not imported directly | - |
 | [plugin/gocql](/plugin/gocql) | [gocql](https://github.com/gocql/gocql) | `NewObserver` |
 | [plugin/gocqlv2](/plugin/gocqlv2) | [gocql/v2](https://github.com/apache/cassandra-gocql-driver) | `NewObserver` |
 | [plugin/gohbase](/plugin/gohbase) | [tsuna/gohbase](https://github.com/tsuna/gohbase) | `NewClient` |
