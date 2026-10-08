@@ -1073,8 +1073,7 @@ func (agent *agent) sendMetaWorker() {
 	}()
 
 	stop := agent.stopSignal().Done()
-	retry := &agent.metaRetry
-	retry.init(metaRetryQueueSize)
+	agent.metaRetry.init(metaRetryQueueSize)
 
 	for agent.workerContinues() {
 		// Reported here rather than from the producers: enqueueMeta and the
@@ -1091,55 +1090,17 @@ func (agent *agent) sendMetaWorker() {
 		case md := <-agent.metaChan:
 			item = pendingMeta{md: md}
 		default:
-			// Nothing to send until a new item, a due retry or a retry
-			// scheduled while the queue was empty (wake) arrives. The timer
-			// is armed per wait: a retry is only ever appended behind the
-			// head, so the head's due time is fixed until it is popped. A
-			// held-back total arms it sooner, so a burst that ends in silence
-			// still gets logged: popDue then finds nothing due, and the next
-			// cycle reports it.
-			wait, ok := retry.headWait(time.Now())
-			if held > 0 && (!ok || held < wait) {
-				wait, ok = held, true
-			}
-			var due <-chan time.Time
-			var timer *time.Timer
-			if ok {
-				timer = time.NewTimer(wait)
-				due = timer.C
-			}
-			var popped, stopped bool
-			select {
-			case <-stop:
-				stopped = true
-			case md := <-agent.metaChan:
-				item, popped = pendingMeta{md: md}, true
-			case <-retry.wake:
-			case <-due:
-				item, popped = retry.popDue(time.Now())
-			}
-			if timer != nil {
-				timer.Stop()
-			}
-			if stopped {
+			var ok, stopped bool
+			if item, ok, stopped = agent.awaitMeta(stop, held); stopped {
 				return
-			}
-			if !popped {
+			} else if !ok {
 				continue
 			}
 		}
 
-		// A parked release needs no permit: it is the drop the rejection
-		// earned, delayed by one retry interval (metaRejected), or a given-up
-		// item's, delayed by up to metaGiveUpParks of them unless the
-		// collector has delivered another item since.
+		// A parked release needs no permit.
 		if item.releaseOnly {
-			if item.parks > 0 && agent.metaDelivered.Load() == item.delivered {
-				item.parks--
-				agent.scheduleMetaRetry(item)
-				continue
-			}
-			agent.deleteMetaCache(item.md)
+			agent.releaseParkedMeta(item)
 			continue
 		}
 
@@ -1162,6 +1123,53 @@ func (agent *agent) sendMetaWorker() {
 			})
 		}(item)
 	}
+}
+
+// awaitMeta waits for the next item to send: a new item from metaChan, or a
+// retry come due. Nothing to send until one of those, or a retry scheduled
+// while the queue was empty (wake), arrives. The timer is armed per wait: a
+// retry is only ever appended behind the head, so the head's due time is
+// fixed until it is popped. A held-back drop total arms it sooner, so a burst
+// that ends in silence still gets logged: popDue then finds nothing due, ok
+// is false, and the next cycle reports it. stopped reports the stop signal.
+func (agent *agent) awaitMeta(stop <-chan struct{}, held time.Duration) (item pendingMeta, ok, stopped bool) {
+	retry := &agent.metaRetry
+	wait, armed := retry.headWait(time.Now())
+	if held > 0 && (!armed || held < wait) {
+		wait, armed = held, true
+	}
+	var due <-chan time.Time
+	var timer *time.Timer
+	if armed {
+		timer = time.NewTimer(wait)
+		due = timer.C
+	}
+	select {
+	case <-stop:
+		stopped = true
+	case md := <-agent.metaChan:
+		item, ok = pendingMeta{md: md}, true
+	case <-retry.wake:
+	case <-due:
+		item, ok = retry.popDue(time.Now())
+	}
+	if timer != nil {
+		timer.Stop()
+	}
+	return item, ok, stopped
+}
+
+// releaseParkedMeta handles a parked release come due: the drop a rejection
+// earned, delayed by one retry interval (metaRejected), or a given-up item's,
+// delayed by up to metaGiveUpParks of them unless the collector has delivered
+// another item since - then it is parked once more.
+func (agent *agent) releaseParkedMeta(item pendingMeta) {
+	if item.parks > 0 && agent.metaDelivered.Load() == item.delivered {
+		item.parks--
+		agent.scheduleMetaRetry(item)
+		return
+	}
+	agent.deleteMetaCache(item.md)
 }
 
 // reportMetaDrops warns about metadata lost to a full metaChan or retry
