@@ -12,8 +12,9 @@ const (
 	// at once. Every ACTIVE_THREAD_COUNT command costs a goroutine and a gRPC
 	// stream, and the web UI re-requests one whenever a user opens the
 	// real-time view, so without a cap a re-request loop grows both without
-	// same value as a tuning constant, and 10 concurrent real-time viewers of a
-	// single agent is already well past what the UI produces.
+	// bound. The cap is a tuning constant rather than an option: 10 concurrent
+	// real-time viewers of a single agent is already well past what the UI
+	// produces.
 	maxActiveThreadCountStreams = 10
 
 	// activeThreadCountInterval is how long a stream waits between samples.

@@ -65,7 +65,8 @@ type statShard struct {
 // agentStats owns everything the agent stat collector reads: the per-request
 // counters, the registry of in-flight spans, the process handle and the
 // previous sample's baselines. One instance per agent, reached from the request
-// package globals these had to be built once for the process lifetime and
+// path through the span's agent pointer. As package globals these had to be
+// built once for the process lifetime and
 // never rebuilt, because a restart would otherwise re-prime or swap them while
 // a previous agent's abandoned stat worker and its still-in-flight spans were
 // reading them; owning them per agent is what makes rebuilding them safe.
@@ -187,9 +188,9 @@ func newAgentStats() *agentStats {
 	return stats
 }
 
-// init primes the CPU and memory baselines and clears the counters so the
-// AgentStats::initAgentStats: the stat worker calls it on its first run,
-// which can be seconds after the agent was created.
+// init primes the CPU and memory baselines and clears the counters, so the
+// first sample measures from a known start. The stat worker calls it on its
+// first run, which can be seconds after the agent was created.
 func (stats *agentStats) init() {
 	stats.resetBaseline()
 	stats.reset()
@@ -200,7 +201,7 @@ func (stats *agentStats) init() {
 // request counters and the partial batch untouched. The stat worker calls it
 // when the supervisor restarts it: the first sample after a restart must not
 // report the restart gap as load or interval, yet the snapshots gathered
-// AgentStats::resetCollectionBaseline.
+// before the panic are kept.
 func (stats *agentStats) resetBaseline() {
 	// The system-wide CPU baseline lives in a gopsutil package global, so it
 	// is the one piece of this state that cannot move onto the agent.
@@ -433,7 +434,7 @@ func (stats *agentStats) cpuLoad() (float64, float64) {
 }
 
 // normalizeCpuLoad turns gopsutil percentages into the 0..1 loads the
-// process.Percent is not divided by the core count, so a process saturating
+// collector expects. process.Percent is not divided by the core count, so a process saturating
 // four cores reads 400; cpu.Percent(0, false) is already the whole-machine
 // average. Both are clamped so a negative or NaN reading never leaves range.
 //

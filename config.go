@@ -447,15 +447,14 @@ func parseIgnoreErrorRules(entries []string) []ignoreErrorRule {
 	return rules
 }
 
-// allErrorCategories is every cause a transaction can fail on, which is what
-// fallback in ConfigurableErrorRecorderFactory.getEnabledTypes.
+// allErrorCategories is every cause a transaction can fail on: the mask an
+// empty Span.ErrorMark resolves to.
 const allErrorCategories = ErrorCategoryUnknown | ErrorCategoryException |
 	ErrorCategoryHttpStatus | ErrorCategorySql
 
 // errorCategoryBit maps one Span.ErrorMark / Span.ErrorMarkExclude entry to
-// (ConfigurableErrorRecorderFactory.toCategorySet), matched
-// case-insensitively. ErrorCategoryUnknown has no spelling on purpose: it is
-// never selectable, because it is always on.
+// its ErrorCategory bit, matched case-insensitively. ErrorCategoryUnknown has
+// no spelling on purpose: it is never selectable, because it is always on.
 func errorCategoryBit(token string) ErrorCategory {
 	switch strings.ToLower(token) {
 	case "exception":
@@ -469,8 +468,8 @@ func errorCategoryBit(token string) ErrorCategory {
 }
 
 // toErrorCategoryMask folds a category list into a mask. Each entry is split
-// case ""); anything else unrecognised is a typo worth naming, since it
-// silently widens or narrows which errors fail a transaction.
+// on ',' and matched case-insensitively; an unrecognised token is a typo worth
+// naming, since it silently widens or narrows which errors fail a transaction.
 func toErrorCategoryMask(entries []string, cfgName string) ErrorCategory {
 	var mask ErrorCategory
 	for _, entry := range entries {
@@ -498,7 +497,7 @@ func parseErrorMarkMask(mark []string, exclude []string) ErrorCategory {
 		marked = toErrorCategoryMask(mark, CfgSpanErrorMark)
 	}
 	excluded := toErrorCategoryMask(exclude, CfgSpanErrorMarkExclude)
-	// it after removing the excluded ones (getEnabledTypes). It is the
+	// ErrorCategoryUnknown is always in the mask, excluded or not. It is the
 	// category of a failure whose cause was not classified, so excluding it
 	// would amount to "never fail a transaction" - which is not what either
 	// key is for.
@@ -1308,8 +1307,8 @@ func (config *Config) defaultIfOutOfRange(name string, min, max int) {
 // zeroIfNegative normalizes a negative value to 0 on options where 0 already
 // carries the meaning: the feature off, or a throughput unlimited. A negative
 // value has always behaved like 0 here, so storing 0 keeps the published value
-// equal to the effective one and the warning makes the coercion visible - the
-// the feature on.
+// equal to the effective one, and the warning makes the coercion visible to an
+// operator who meant to turn the feature on.
 func (config *Config) zeroIfNegative(name string) {
 	if v := config.stagedInt(name); v < 0 {
 		Log("config").Warnf("%s = %d is negative, using 0", name, v)
@@ -1374,8 +1373,9 @@ func (config *Config) publish() {
 		config.cfgMap[CfgSQLMaxBindValueSize].value = 0
 	}
 
-	// it as fixed too. Only -1 turns the bypass off and caches every SQL, the
-	// recovers the default, the rule Span.MaxCallStackDepth already follows.
+	// Non-dynamic, like SQL.CacheSize: the agent reads it once at startup.
+	// Only -1 turns the bypass off and memoizes every SQL; any other negative
+	// value recovers the default, the rule Span.MaxCallStackDepth already follows.
 	if limit := config.stagedInt(CfgSQLCacheLengthLimit); limit == -1 {
 		config.cfgMap[CfgSQLCacheLengthLimit].value = math.MaxInt32
 	} else if limit < 0 {
@@ -1396,7 +1396,7 @@ func (config *Config) publish() {
 	// Dynamic key, and unlike the queues below a bad value here is silent data
 	// loss rather than a panic: with a limit of 0 or less, snapshot.count is
 	// already at it before the first url, so every url stat entry is dropped.
-	// > 0). The upper bound is maxQueueSize, the typo guard the queues use -
+	// The lower bound is therefore 1; the upper bound is maxQueueSize, the typo guard the queues use -
 	// the map grows lazily so a large limit costs nothing up front, but a map
 	// of that many distinct urls is a runaway pattern set, not a capacity
 	// anyone configures.
@@ -1408,7 +1408,7 @@ func (config *Config) publish() {
 	// worker's batch indexing, killing the host process. The upper bounds stop
 	// a typo (queue 1e9) from allocating a huge channel buffer or stalling the
 	// stat collector. An out-of-range value falls back to the default, the same
-	// the config layer, so it is not a reference here).
+	// rule the dynamic keys above follow.
 	config.defaultIfOutOfRange(CfgSpanQueueSize, 1, maxQueueSize)
 	config.defaultIfOutOfRange(CfgHttpUrlStatQueueSize, 1, maxQueueSize)
 	// Non-dynamic: the SQL caches are built once in NewAgent, and resizing

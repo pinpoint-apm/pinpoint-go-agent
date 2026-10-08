@@ -90,7 +90,8 @@ func newTextFormatter() logrus.Formatter {
 }
 
 func (l *logrusLogger) setLevel(level string) {
-	// turned a typo in a reloaded config file into more log output on a host
+	// An unknown level is refused, not defaulted: defaulting to info turned a
+	// typo in a reloaded config file into more log output on a host
 	// that had just lowered the level to get less. publish already rejects
 	// such a value, so this is the guard for a caller that bypasses Config.
 	lvl, err := logrus.ParseLevel(level)

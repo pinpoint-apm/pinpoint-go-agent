@@ -230,7 +230,8 @@ const (
 	defaultAgentInfoMaxTryPerAttempt  = 3
 
 	maxSqlSize = 64 * 1024
-	// messages to 256 chars before recording them on a span or span event.
+	// maxErrorMessageSize abbreviates error messages to 256 chars before
+	// recording them on a span or span event.
 	maxErrorMessageSize = 256
 	// maxExceptionMessageSize bounds the message of one exception metadata
 	// default. A cause chain carries one message per link, and a driver error
@@ -1818,8 +1819,9 @@ var (
 	malformedTraceIdLog, malformedSpanIdLog, malformedParentSpanIdLog logThrottle
 	endSpanTwiceLog, unclosedEventLog, noEventLog, sharedGoroutineLog logThrottle
 	afterEndSpanLog                                                   logThrottle
-	// Latched once a span as well, but once a span is once a request for an
-	// endpoint that always overflows or always reaches the entry cap.
+	// Latched once per span as well (eventOverflowLog, errorChainDropLog), but
+	// once a span is once a request for an endpoint that always overflows or
+	// always reaches the entry cap, so these throttle across spans too.
 	callStackOverflowLog, errorChainLimitLog, errorChainDroppedLog logThrottle
 	addMetricTypeLog                                               logThrottle
 )

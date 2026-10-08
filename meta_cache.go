@@ -15,9 +15,9 @@ import (
 // degenerated to insertion order (FIFO): a hot SQL was evicted before a
 // cold-but-recent one, re-issuing its id and re-sending its metadata to the
 // collector. This cache shards the key space and restores real LRU ordering
-// sync.Map keeps steady-state hits lock-free, while an aged entry only takes
-// the shard lock when it needs to move to the front. Promoting on every hit
-// per hot-set hit at 16 threads).
+// without a global lock: a sync.Map keeps steady-state hits lock-free, while an
+// aged entry only takes the shard lock when it needs to move to the front.
+// Promoting on every hit would take that lock on every hit instead.
 const metaCacheShardCount = 16 // power of two
 
 var metaCacheSeed = maphash.MakeSeed()

@@ -174,7 +174,8 @@ func resolveObjectName(config *Config) (*objectName, error) {
 
 // resolveAgentName returns the configured agent name, or agentID when it is
 // unset or invalid. agentName is a display label, not a required value, so an
-// so a typo does not stay invisible.
+// invalid one falls back to the id with a warning rather than failing startup,
+// and the warning is what keeps a typo from staying invisible.
 func resolveAgentName(config *Config, agentID string, maxLen int) string {
 	agentName := config.String(CfgAgentName)
 	if IsValidId(agentName, maxLen) {
