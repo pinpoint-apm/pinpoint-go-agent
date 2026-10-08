@@ -119,7 +119,12 @@ func remoteAddr(ctx context.Context) (addr string) {
 	if p, ok := peer.FromContext(ctx); ok {
 		addr = p.Addr.String()
 	}
-	if addr, _, _ = net.SplitHostPort(addr); addr == "" {
+	// Strip the port only when there is one: overwriting with SplitHostPort's
+	// error result turned a bare IP into the 127.0.0.1 fallback.
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		addr = host
+	} else if net.ParseIP(addr) == nil {
+		// A unix socket path, or no peer at all: the client is local.
 		addr = "127.0.0.1"
 	}
 	return addr

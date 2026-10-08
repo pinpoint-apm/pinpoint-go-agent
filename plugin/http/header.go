@@ -49,7 +49,7 @@ func newDefaultHttpHeaderRecorder(headers []string) *defaultHttpHeaderRecorder {
 
 func (h *defaultHttpHeaderRecorder) recordHeader(annotation pinpoint.Annotation, key int, header Header) {
 	for _, name := range h.cfg {
-		if v := header.Values(name); v != nil && len(v) > 0 {
+		if v := header.Values(name); len(v) > 0 {
 			vStr := strings.Join(v[:], ",")
 			annotation.AppendStringString(int32(key), name, vStr)
 		}

@@ -42,7 +42,9 @@ func init() {
 func parseDSN(info *pinpoint.DBInfo, dsn string) {
 	cfg, err := pq.NewConfig(dsn)
 	if err != nil {
-		pinpoint.Log("pgsql").Errorf("dsn parse error: %v", err)
+		// Debug, like the other drivers' wrappers: the driver itself reports a
+		// DSN it cannot use, and this runs once per pooled connection.
+		pinpoint.Log("pgsql").Debugf("dsn parse error: %v", err)
 		return
 	}
 

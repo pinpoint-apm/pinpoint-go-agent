@@ -14,6 +14,7 @@ package ppgoredisv8
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -99,7 +100,7 @@ func (r *hook) setSpanEvent(tracer pinpoint.Tracer, cmd string, err error) {
 	se.SetEndPoint(r.endpoint)
 	// A cache miss is a normal outcome, not a failure: redis.Nil must not
 	// mark the span errored (nor walk the stack with Error.TraceCallStack on).
-	if err != redis.Nil {
+	if !errors.Is(err, redis.Nil) {
 		se.SetError(err)
 	}
 	se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
@@ -129,7 +130,7 @@ func cmdName(cmds []redis.Cmder) string {
 func pipeError(cmds []redis.Cmder) error {
 	for _, cmd := range cmds {
 		// redis.Nil is a miss, not a pipeline failure.
-		if err := cmd.Err(); err != nil && err != redis.Nil {
+		if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
 			return err
 		}
 	}

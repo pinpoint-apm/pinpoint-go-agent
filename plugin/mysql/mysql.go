@@ -38,7 +38,8 @@ func init() {
 
 func parseDSN(info *pinpoint.DBInfo, dsn string) {
 	cfg, err := mysql.ParseDSN(dsn)
-	if nil != err {
+	if err != nil {
+		pinpoint.Log("mysql").Debugf("dsn parse error: %v", err)
 		return
 	}
 	parseConfig(info, cfg)

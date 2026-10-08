@@ -51,6 +51,7 @@ func init() {
 func parseDSN(info *pinpoint.DBInfo, dbUrl string) {
 	u, err := url.Parse(dbUrl)
 	if err != nil {
+		pinpoint.Log("oraclev3").Debugf("dsn parse error: %v", err)
 		return
 	}
 

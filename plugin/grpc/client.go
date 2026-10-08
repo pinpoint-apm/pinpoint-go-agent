@@ -19,7 +19,7 @@ type clientStream struct {
 
 func (cs *clientStream) SendMsg(m interface{}) error {
 	err := cs.ClientStream.SendMsg(m)
-	if err != nil && err != io.EOF {
+	if err != nil && err != io.EOF { // only the bare sentinel is a clean end; a wrapped EOF is a failure
 		cs.endSpan(err)
 	}
 	return err
@@ -117,7 +117,7 @@ func makeUrl(remote string, method string) string {
 
 func endSpanEvent(tracer pinpoint.Tracer, err error) {
 	defer tracer.EndSpanEvent()
-	if err != nil && err != io.EOF {
+	if err != nil && err != io.EOF { // only the bare sentinel is a clean end; a wrapped EOF is a failure
 		tracer.SpanEvent().SetError(err, "grpc error")
 	}
 }

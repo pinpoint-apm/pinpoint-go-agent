@@ -46,6 +46,7 @@ func init() {
 func parseDSN(info *pinpoint.DBInfo, dbUrl string) {
 	u, err := url.Parse(dbUrl)
 	if err != nil {
+		pinpoint.Log("oracle").Debugf("dsn parse error: %v", err)
 		return
 	}
 

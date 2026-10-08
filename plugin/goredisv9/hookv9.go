@@ -14,6 +14,7 @@ package ppgoredisv9
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -109,7 +110,7 @@ func (r *hook) newSpanEvent(tracer pinpoint.Tracer, operation string, cmd string
 // is a normal outcome, and recording it marked every miss as a failure (and
 // walked the stack per miss with Error.TraceCallStack on).
 func setSpanError(se pinpoint.SpanEventRecorder, err error) {
-	if err != nil && err != redis.Nil {
+	if err != nil && !errors.Is(err, redis.Nil) {
 		se.SetError(err)
 	}
 }

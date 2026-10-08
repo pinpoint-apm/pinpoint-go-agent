@@ -44,8 +44,15 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 	// One lookup: each SpanEvent() call takes the event stack lock.
 	tracer.NewSpanEvent(operationName)
 	se := tracer.SpanEvent()
-	se.SetEndPoint(req.Host)
-	se.SetDestination(req.Host)
+	// http.NewRequest fills req.Host from the URL; a hand-built request may
+	// leave it empty, and an empty host would also drop the Pinpoint-Host
+	// header the callee fills acceptorHost from.
+	host := req.Host
+	if host == "" && req.URL != nil {
+		host = req.URL.Host
+	}
+	se.SetEndPoint(host)
+	se.SetDestination(host)
 	se.SetServiceType(pinpoint.ServiceTypeGoHttpClient)
 
 	if tracer.IsSampled() {

@@ -39,7 +39,8 @@ func init() {
 
 func parseDSN(info *pinpoint.DBInfo, dsn string) {
 	cfg, err := msdsn.Parse(dsn)
-	if nil != err {
+	if err != nil {
+		pinpoint.Log("mssql").Debugf("dsn parse error: %v", err)
 		return
 	}
 
