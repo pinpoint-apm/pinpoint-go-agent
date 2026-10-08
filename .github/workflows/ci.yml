@@ -43,11 +43,25 @@ jobs:
     - name: Build
       run: go build -v
 
+    # The agent supports exactly the four architectures internal/asm has a
+    # Getg body for, and this runner is one of them. Type-checking the module
+    # for the other three is what compiles their assembly declarations and
+    # the goid path at all in CI; no emulation, a few seconds.
+    - name: Vet the supported architectures
+      run: |
+        for arch in 386 amd64 arm arm64; do
+          echo "::group::GOARCH=$arch"
+          GOARCH=$arch go vet ./...
+          echo "::endgroup::"
+        done
+
     # -race for the same reason the plugin job uses it: the agent's own workers,
     # span queue, config snapshot and metadata caches are all concurrent, and
     # a race there is exactly the class of bug this suite exists to catch.
+    # ./... rather than the root package alone: internal/asm has a test of its
+    # own now, and the other packages of the module have none to cost anything.
     - name: Test
-      run: go test -race -v
+      run: go test -race -v ./...
 
     # The mock-collector integration suite is a nested module (it depends on
     # plugin/http) and needs no collector or network access, so it runs here
