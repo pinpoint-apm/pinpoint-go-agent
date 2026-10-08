@@ -113,14 +113,11 @@ func connSpanEvent(ctx context.Context, c *pgx.Conn, cmd string) pinpoint.Tracer
 
 func newSpanEvent(ctx context.Context, config *pgx.ConnConfig, cmd string) pinpoint.Tracer {
 	tracer := pinpoint.FromContext(ctx)
-	if tracer.IsSampled() {
-		se := tracer.NewSpanEvent(cmd).SpanEvent()
-		se.SetServiceType(pinpoint.ServiceTypePgSqlExecuteQuery)
-		se.SetEndPoint(config.Host)
-		se.SetDestination(config.Database)
+	if !tracer.IsSampled() {
+		return tracer
 	}
-
-	return tracer
+	info := pinpoint.DBInfo{QueryType: pinpoint.ServiceTypePgSqlExecuteQuery, DBName: config.Database, DBHost: config.Host}
+	return pinpoint.NewDatabaseTracer(ctx, cmd, &info)
 }
 
 func (t *pgxTracer) composeArgs(args []any) string {

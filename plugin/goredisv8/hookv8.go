@@ -22,33 +22,30 @@ import (
 )
 
 type hook struct {
-	endpoint string
+	dbInfo pinpoint.DBInfo
+}
+
+// redisInfo describes the Redis endpoint the span events report.
+func redisInfo(endpoint string) pinpoint.DBInfo {
+	return pinpoint.DBInfo{QueryType: pinpoint.ServiceTypeRedis, DBName: "REDIS", DBHost: endpoint}
 }
 
 // NewHook creates a redis.Hook to instrument redis calls.
 func NewHook(opts *redis.Options) redis.Hook {
-	h := hook{}
-
+	endpoint := "unknown"
 	if opts != nil {
-		h.endpoint = opts.Addr
-	} else {
-		h.endpoint = "unknown"
+		endpoint = opts.Addr
 	}
-
-	return &h
+	return &hook{dbInfo: redisInfo(endpoint)}
 }
 
 // NewClusterHook creates a redis.Hook to instrument redis cluster calls.
 func NewClusterHook(opts *redis.ClusterOptions) redis.Hook {
-	h := hook{}
-
+	endpoint := "unknown"
 	if opts != nil {
-		h.endpoint = strings.Join(opts.Addrs, ",")
-	} else {
-		h.endpoint = "unknown"
+		endpoint = strings.Join(opts.Addrs, ",")
 	}
-
-	return &h
+	return &hook{dbInfo: redisInfo(endpoint)}
 }
 
 // recorderKey carries the span event recorder from BeforeProcess to
@@ -84,11 +81,7 @@ func (r *hook) before(ctx context.Context, operation string, cmd string) context
 		return ctx
 	}
 
-	tracer.NewSpanEvent(operation)
-	se := tracer.SpanEvent()
-	se.SetServiceType(pinpoint.ServiceTypeRedis)
-	se.SetDestination("REDIS")
-	se.SetEndPoint(r.endpoint)
+	se := pinpoint.NewDatabaseTracer(ctx, operation, &r.dbInfo).SpanEvent()
 	se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
 	return context.WithValue(ctx, recorderKey{}, se)
 }

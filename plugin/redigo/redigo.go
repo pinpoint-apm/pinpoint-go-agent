@@ -45,8 +45,8 @@ var (
 var noopEnd = func(error) {}
 
 type wrappedConn struct {
-	base     redis.Conn
-	endpoint string
+	base   redis.Conn
+	dbInfo pinpoint.DBInfo
 
 	// ctxMu guards the context bound by WithContext; opMu serializes span
 	// event recording (see startSpanEvent). Two locks, because an operation
@@ -62,9 +62,9 @@ type pinpointContext interface {
 
 func wrapConn(c redis.Conn, addr string) redis.Conn {
 	return &wrappedConn{
-		base:     c,
-		endpoint: addr,
-		ctx:      context.Background(),
+		base:   c,
+		dbInfo: pinpoint.DBInfo{QueryType: pinpoint.ServiceTypeRedis, DBName: "REDIS", DBHost: addr},
+		ctx:    context.Background(),
 	}
 }
 
@@ -295,12 +295,7 @@ func (c *wrappedConn) startSpanEvent(ctx context.Context, operation string, cmd 
 		return noopEnd
 	}
 
-	tracer.NewSpanEvent(operation)
-
-	se := tracer.SpanEvent()
-	se.SetServiceType(pinpoint.ServiceTypeRedis)
-	se.SetDestination("REDIS")
-	se.SetEndPoint(c.endpoint)
+	se := pinpoint.NewDatabaseTracer(ctx, operation, &c.dbInfo).SpanEvent()
 	if cmd != "" {
 		se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
 	}

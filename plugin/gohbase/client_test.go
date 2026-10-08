@@ -41,7 +41,7 @@ func (c *fakeClient) Scan(*hrpc.Scan) hrpc.Scanner { c.calls++; return nil }
 func newClient(t *testing.T, err error) (*Client, *fakeClient) {
 	t.Helper()
 	fake := &fakeClient{err: err}
-	return &Client{Client: fake, host: "zk1.example:2181"}, fake
+	return &Client{Client: fake, dbInfo: hbaseInfo("zk1.example:2181")}, fake
 }
 
 func values() map[string]map[string][]byte {
@@ -188,7 +188,7 @@ func TestNewClient_KeepsTheQuorum(t *testing.T) {
 	c := NewClient("zk1.example:2181,zk2.example:2181")
 	t.Cleanup(c.Close)
 
-	assert.Equal(t, "zk1.example:2181,zk2.example:2181", c.host)
+	assert.Equal(t, "zk1.example:2181,zk2.example:2181", c.dbInfo.DBHost)
 }
 
 // WrapClient is NewClient for a client created elsewhere (compile-time
@@ -196,7 +196,7 @@ func TestNewClient_KeepsTheQuorum(t *testing.T) {
 func TestWrapClient(t *testing.T) {
 	base := &fakeClient{}
 	c := WrapClient(base, "zk1,zk2")
-	assert.Equal(t, "zk1,zk2", c.host)
+	assert.Equal(t, "zk1,zk2", c.dbInfo.DBHost)
 	assert.Same(t, base, c.Client)
 	assert.Same(t, c, WrapClient(c, "other"), "an already wrapped client is returned as it is")
 }

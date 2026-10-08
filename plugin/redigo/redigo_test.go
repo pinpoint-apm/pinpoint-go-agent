@@ -270,16 +270,16 @@ func Test_wrappedConn_ConcurrentOperationGoesUntraced(t *testing.T) {
 // port, while a URL's authority may leave both parts implicit.
 func Test_makeWrappedConn(t *testing.T) {
 	c := makeWrappedConn(&fakeRedisConn{}, "redis1:6379")
-	assert.Equal(t, "redis1", c.(*wrappedConn).endpoint, "the port is not part of the endpoint")
+	assert.Equal(t, "redis1", c.(*wrappedConn).dbInfo.DBHost, "the port is not part of the endpoint")
 
 	ipv6 := makeWrappedConn(&fakeRedisConn{}, "[::1]:6379")
-	assert.Equal(t, "::1", ipv6.(*wrappedConn).endpoint)
+	assert.Equal(t, "::1", ipv6.(*wrappedConn).dbInfo.DBHost)
 
 	// A unix-socket address has no host:port shape, but by the time the
 	// endpoint is derived redis.Dial has already connected: the split failing
 	// must wrap the live connection instead of dropping it unclosed.
 	sock := makeWrappedConn(&fakeRedisConn{}, "/var/run/redis.sock")
-	assert.Equal(t, "/var/run/redis.sock", sock.(*wrappedConn).endpoint)
+	assert.Equal(t, "/var/run/redis.sock", sock.(*wrappedConn).dbInfo.DBHost)
 }
 
 func Test_makeWrappedConnURL(t *testing.T) {
@@ -306,7 +306,7 @@ func Test_makeWrappedConnURL(t *testing.T) {
 				assert.NoError(t, err)
 			}
 			require.NotNil(t, c, "a connection that is already open must be handed back either way")
-			assert.Equal(t, tt.want, c.(*wrappedConn).endpoint)
+			assert.Equal(t, tt.want, c.(*wrappedConn).dbInfo.DBHost)
 		})
 	}
 }
@@ -367,7 +367,7 @@ func TestWrapConn(t *testing.T) {
 	c := WrapConn(base, "redis1:6379")
 	wc, ok := c.(*wrappedConn)
 	require.True(t, ok)
-	assert.Equal(t, "redis1", wc.endpoint)
+	assert.Equal(t, "redis1", wc.dbInfo.DBHost)
 	assert.Same(t, base, wc.base)
 	assert.Same(t, c, WrapConn(c, "other:6379"), "an already wrapped connection is returned as it is")
 }

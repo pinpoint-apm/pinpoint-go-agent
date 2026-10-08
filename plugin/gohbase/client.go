@@ -22,13 +22,19 @@ import (
 
 type Client struct {
 	hbase.Client
-	host string
+	dbInfo pinpoint.DBInfo
+}
+
+// hbaseInfo describes the HBase cluster the span events report, by its
+// zookeeper quorum.
+func hbaseInfo(zkquorum string) pinpoint.DBInfo {
+	return pinpoint.DBInfo{QueryType: pinpoint.ServiceTypeHbaseClient, DBName: "HBASE", DBHost: zkquorum}
 }
 
 // NewClient wraps gohbase.NewClient and returns a gohbase.Client ready to instrument.
 func NewClient(zkquorum string, options ...hbase.Option) *Client {
 	client := hbase.NewClient(zkquorum, options...)
-	return &Client{Client: client, host: zkquorum}
+	return &Client{Client: client, dbInfo: hbaseInfo(zkquorum)}
 }
 
 // WrapClient returns a Client that records the operations of c as span
@@ -40,7 +46,7 @@ func WrapClient(c hbase.Client, zkquorum string) *Client {
 	if w, ok := c.(*Client); ok {
 		return w
 	}
-	return &Client{Client: c, host: zkquorum}
+	return &Client{Client: c, dbInfo: hbaseInfo(zkquorum)}
 }
 
 // trace starts the span event of op on the context's tracer and returns both,
@@ -51,11 +57,7 @@ func (c *Client) trace(op string, ctx context.Context) (pinpoint.Tracer, pinpoin
 		return nil, nil
 	}
 
-	se := tracer.NewSpanEvent(op).SpanEvent()
-	se.SetServiceType(pinpoint.ServiceTypeHbaseClient)
-	se.SetDestination("HBASE")
-	se.SetEndPoint(c.host)
-	return tracer, se
+	return tracer, pinpoint.NewDatabaseTracer(ctx, op, &c.dbInfo).SpanEvent()
 }
 
 func keyString(key []byte) string {

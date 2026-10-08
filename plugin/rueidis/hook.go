@@ -16,20 +16,21 @@ import (
 var _ rueidishook.Hook = (*Hook)(nil)
 
 type Hook struct {
-	endpoint string
+	dbInfo pinpoint.DBInfo
+}
+
+// redisInfo describes the Redis endpoint the span events report.
+func redisInfo(endpoint string) pinpoint.DBInfo {
+	return pinpoint.DBInfo{QueryType: pinpoint.ServiceTypeRedis, DBName: "REDIS", DBHost: endpoint}
 }
 
 // NewHook creates a ruedis.Hook to instrument redis calls.
 func NewHook(opts rueidis.ClientOption) *Hook {
-	h := Hook{}
-
-	if opts.InitAddress == nil {
-		h.endpoint = "unknown"
-	} else {
-		h.endpoint = strings.Join(opts.InitAddress, ",")
+	endpoint := "unknown"
+	if opts.InitAddress != nil {
+		endpoint = strings.Join(opts.InitAddress, ",")
 	}
-
-	return &h
+	return &Hook{dbInfo: redisInfo(endpoint)}
 }
 
 func (h *Hook) Do(client rueidis.Client, ctx context.Context, cmd rueidis.Completed) (resp rueidis.RedisResult) {
@@ -136,10 +137,7 @@ func (h *Hook) newSpanEvent(ctx context.Context, operation string, commandName f
 		return tracer, nil
 	}
 
-	se := tracer.NewSpanEvent(operation).SpanEvent()
-	se.SetServiceType(pinpoint.ServiceTypeRedis)
-	se.SetDestination("REDIS")
-	se.SetEndPoint(h.endpoint)
+	se := pinpoint.NewDatabaseTracer(ctx, operation, &h.dbInfo).SpanEvent()
 	if cmd := commandName(); cmd != "" {
 		se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
 	}

@@ -35,13 +35,11 @@ func (o *Observer) ObserveQuery(ctx context.Context, query gocql.ObservedQuery) 
 		return
 	}
 
-	span := tracer.NewSpanEvent("cassandra.query")
+	info := cassandraInfo(query.Keyspace, query.Host.HostnameAndPort())
+	span := pinpoint.NewDatabaseTracer(ctx, "cassandra.query", &info)
 	defer span.EndSpanEvent()
 
 	se := span.SpanEvent()
-	se.SetServiceType(pinpoint.ServiceTypeCassandraExecuteQuery)
-	se.SetEndPoint(query.Host.HostnameAndPort())
-	se.SetDestination(query.Keyspace)
 	se.SetSQL(query.Statement, "")
 	se.FixDuration(query.Start, query.End)
 	se.SetError(query.Err, "query error")
@@ -56,17 +54,20 @@ func (o *Observer) ObserveBatch(ctx context.Context, batch gocql.ObservedBatch) 
 		return
 	}
 
-	span := tracer.NewSpanEvent("cassandra.batch")
+	info := cassandraInfo(batch.Keyspace, batch.Host.HostnameAndPort())
+	span := pinpoint.NewDatabaseTracer(ctx, "cassandra.batch", &info)
 	defer span.EndSpanEvent()
 
 	se := span.SpanEvent()
-	se.SetServiceType(pinpoint.ServiceTypeCassandraExecuteQuery)
-	se.SetEndPoint(batch.Host.HostnameAndPort())
-	se.SetDestination(batch.Keyspace)
 	se.FixDuration(batch.Start, batch.End)
 
 	se.SetSQL(batchSQL(batch.Statements), "")
 	se.SetError(batch.Err, "batch error")
+}
+
+// cassandraInfo describes the keyspace and host a query ran against.
+func cassandraInfo(keyspace, host string) pinpoint.DBInfo {
+	return pinpoint.DBInfo{QueryType: pinpoint.ServiceTypeCassandraExecuteQuery, DBName: keyspace, DBHost: host}
 }
 
 // maxBatchSQL bounds the batch annotation: gocql puts no limit on the batch

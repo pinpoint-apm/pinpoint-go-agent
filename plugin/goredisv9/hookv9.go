@@ -22,33 +22,30 @@ import (
 )
 
 type hook struct {
-	endpoint string
+	dbInfo pinpoint.DBInfo
+}
+
+// redisInfo describes the Redis endpoint the span events report.
+func redisInfo(endpoint string) pinpoint.DBInfo {
+	return pinpoint.DBInfo{QueryType: pinpoint.ServiceTypeRedis, DBName: "REDIS", DBHost: endpoint}
 }
 
 // NewHook creates a redis.Hook to instrument redis calls.
 func NewHook(opts *redis.Options) redis.Hook {
-	h := hook{}
-
+	endpoint := "unknown"
 	if opts != nil {
-		h.endpoint = opts.Addr
-	} else {
-		h.endpoint = "unknown"
+		endpoint = opts.Addr
 	}
-
-	return &h
+	return &hook{dbInfo: redisInfo(endpoint)}
 }
 
 // NewClusterHook creates a redis.Hook to instrument redis cluster calls.
 func NewClusterHook(opts *redis.ClusterOptions) redis.Hook {
-	h := hook{}
-
+	endpoint := "unknown"
 	if opts != nil {
-		h.endpoint = strings.Join(opts.Addrs, ",")
-	} else {
-		h.endpoint = "unknown"
+		endpoint = strings.Join(opts.Addrs, ",")
 	}
-
-	return &h
+	return &hook{dbInfo: redisInfo(endpoint)}
 }
 
 // DialHook records nothing, so hand the next hook back untouched instead of
@@ -67,7 +64,7 @@ func (r *hook) ProcessHook(hook redis.ProcessHook) redis.ProcessHook {
 		}
 
 		defer tracer.EndSpanEvent()
-		se := r.newSpanEvent(tracer, opName, cmd.Name())
+		se := r.newSpanEvent(ctx, opName, cmd.Name())
 		err := hook(ctx, cmd)
 		setSpanError(se, err)
 		return err
@@ -84,7 +81,7 @@ func (r *hook) ProcessPipelineHook(hook redis.ProcessPipelineHook) redis.Process
 		}
 
 		defer tracer.EndSpanEvent()
-		se := r.newSpanEvent(tracer, opName, cmdName(cmds))
+		se := r.newSpanEvent(ctx, opName, cmdName(cmds))
 		err := hook(ctx, cmds)
 		setSpanError(se, err)
 		return err
@@ -95,12 +92,8 @@ func (r *hook) ProcessPipelineHook(hook redis.ProcessPipelineHook) redis.Process
 // recorded on: reading the recorder back after the call lands on whichever
 // event is on top by then, another goroutine's under a fan-out on one
 // request.
-func (r *hook) newSpanEvent(tracer pinpoint.Tracer, operation string, cmd string) pinpoint.SpanEventRecorder {
-	tracer.NewSpanEvent(operation)
-	se := tracer.SpanEvent()
-	se.SetServiceType(pinpoint.ServiceTypeRedis)
-	se.SetDestination("REDIS")
-	se.SetEndPoint(r.endpoint)
+func (r *hook) newSpanEvent(ctx context.Context, operation string, cmd string) pinpoint.SpanEventRecorder {
+	se := pinpoint.NewDatabaseTracer(ctx, operation, &r.dbInfo).SpanEvent()
 	se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
 	return se
 }
