@@ -22,6 +22,7 @@ The rest are read once at agent startup.
 A reload keeps the initial precedence: an option given by command line flag or environment variable is not
 overwritten by the config file, and neither is a value set through `Config.Set()`.
 Only options whose current value came from the config file, a profile, a config function or the default are updated.
+A dynamic option deleted from the file goes back to the value it had before the file set it: the config function's, or the default.
 `Config.Set()` on a non-dynamic option stores the value and logs a warning; the agent applies it after a restart.
 
 Two things make a reload not happen, and both are easy to miss:
@@ -807,7 +808,8 @@ a fresh id (or re-sends its UID metadata) and re-normalizes the raw text, so an
 application running more distinct statements than this churns metadata traffic
 and can leave spans referencing ids the collector never resolved. Raise it for
 high-cardinality SQL; the worst-case memory is roughly entries x
-[SQL.CacheLengthLimit](#sqlcachelengthlimit) per cache. The valid range is 1 to
+[SQL.CacheLengthLimit](#sqlcachelengthlimit) for the raw SQL cache, and 16-byte
+hashes per entry for the id and UID caches. The valid range is 1 to
 65536; a value outside it is logged and the default is used.
 
 The option applies to the SQL caches only. The API and error caches keep their
@@ -820,21 +822,20 @@ carry.
 * default: 1024
 
 ### SQL.CacheLengthLimit
-SQL.CacheLengthLimit option sets the max length of a SQL statement kept in the SQL
-metadata caches. A statement at or above this length bypasses the cache: it is
-registered again and its metadata is sent to the collector on every execution,
-so a few huge generated statements cannot hold the cache - and their bytes - for
-the life of the process. A limit of 0 caches nothing. A limit of exactly -1
-caches every statement regardless of length; any other negative value is treated
+SQL.CacheLengthLimit option sets the max length of a raw SQL statement whose
+normalization is memoized by the raw SQL cache
+([SQL.EnableRawSqlCache](#sqlenablerawsqlcache)). A statement at or above this
+length is normalized again on every execution, so a few huge generated statements
+cannot hold the cache - which keeps the text itself as key and value - for the
+life of the process. A limit of 0 memoizes nothing. A limit of exactly -1
+memoizes every statement regardless of length; any other negative value is treated
 as a typo and recovers the default, with a warning.
 
-The limit applies to the SQL-UID cache and to the raw SQL cache
-([SQL.EnableRawSqlCache](#sqlenablerawsqlcache)), whose keys are hashes and
-whose values do not depend on being cached. It does **not** apply to the SQL-ID
-cache, which is used when the collector does not support SQL UIDs. Those ids
-come from an agent-local sequence, so bypassing the cache would issue a fresh id
-- and send a fresh metadata message - on every execution of the statement, and
-the same query would appear in the UI as a separate entry per execution.
+The limit does **not** apply to the SQL-ID and SQL-UID metadata caches. Both key
+on a 128-bit hash of the normalized statement, so an entry costs the same
+whatever the statement's length, and bypassing them would re-send the metadata
+on every execution of a long statement - for the id cache under a fresh id each
+time, so the same query would appear in the UI as a separate entry per execution.
 
 * PINPOINT_GO_SQL_CACHELENGTHLIMIT
 * type: int

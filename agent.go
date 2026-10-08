@@ -95,7 +95,7 @@ type agent struct {
 	errorIdGen  idGen
 	sqlCache    *metaCache[sqlHash, int32]
 	sqlIdGen    idGen
-	sqlUidCache *metaCache[string, []byte]
+	sqlUidCache *metaCache[sqlHash, []byte]
 	rawSqlCache *metaCache[string, normalizedSql]
 	apiCache    *metaCache[apiCacheKey, int32]
 	apiIdGen    idGen
@@ -189,18 +189,13 @@ type sqlMeta struct {
 	key sqlHash
 }
 
-// sqlUidMeta carries the key of the cache entry to drop after a failed send,
-// left empty for a bypassed statement to keep the untruncated text off the
-// queue. cached says whether the statement is in the cache at all, which the
-// key cannot: a statement whose normalization is empty ("/* hint */" under
-// SQL.RemoveComments) is cached under an empty key too, and reading that as
-// "bypassed" would leave it cached after a failed send, pointing every later
-// span at a UID the collector never received.
+// sqlUidMeta carries the hash the UID cache keys the statement by, so a failed
+// send drops exactly the entry that published the UID; the text is only the
+// abbreviated copy to publish.
 type sqlUidMeta struct {
-	uid    []byte
-	sql    string
-	key    string
-	cached bool
+	uid []byte
+	sql string
+	key sqlHash
 }
 
 type exceptionMeta struct {
@@ -386,7 +381,7 @@ func newAgentStruct(config *Config) *agent {
 	agent.sqlCacheLengthLimit = config.Int(CfgSQLCacheLengthLimit)
 	agent.errorCache = newMetaCache[string, int32](cacheSize)
 	agent.sqlCache = newMetaCache[sqlHash, int32](sqlCacheSize)
-	agent.sqlUidCache = newMetaCache[string, []byte](sqlCacheSize)
+	agent.sqlUidCache = newMetaCache[sqlHash, []byte](sqlCacheSize)
 	agent.sqlUidCache.ttl = time.Duration(config.Int(CfgSQLCacheExpireHours)) * time.Hour
 	agent.rawSqlCache = newMetaCache[string, normalizedSql](sqlCacheSize)
 	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
@@ -1350,12 +1345,6 @@ func (agent *agent) deleteMetaCache(md interface{}) {
 	case sqlMeta:
 		agent.sqlCache.remove(md.key, func(id int32) bool { return id == md.id })
 	case sqlUidMeta:
-		// A statement that bypassed the cache has nothing to drop.
-		if !md.cached {
-			return
-		}
-		// A re-registered UID is the same hash, so this only guards a key
-		// that changed hands to a different statement's entry.
 		agent.sqlUidCache.remove(md.key, func(uid []byte) bool { return bytes.Equal(uid, md.uid) })
 	}
 }
@@ -1510,18 +1499,16 @@ func abbreviateString(str string, length int) string {
 	return str[:cut] + "...(" + strconv.Itoa(len(str)) + ")"
 }
 
-// sqlCacheable reports whether a SQL key is short enough to keep in the SQL
-// metadata caches keyed by a hash of the statement. Anything longer bypasses
-// them and re-sends its metadata on every use, so a handful of huge generated
-// statements cannot pin megabytes of cache for the life of the process. The
-// limit (SQL.CacheLengthLimit) is in bytes.
+// sqlCacheable reports whether a raw SQL text is short enough to memoize its
+// normalization (rawSqlCache), which holds the text as key and value. Anything
+// longer is normalized on every use, so a handful of huge generated statements
+// cannot pin megabytes of cache for the life of the process. The limit
+// (SQL.CacheLengthLimit) is in bytes.
 //
-// Deliberately not applied to sqlCache: its ids come from a sequence, so a
-// bypassed statement would burn a fresh id - and a fresh sqlMeta - on every
-// single use, and the same query would appear in the UI as a new entry per
-// execution. The id cache needs no such bound: it is keyed by the statement's
+// The id and UID caches are not bounded by it: both key on the statement's
 // 128-bit hash (sqlHash), so an entry costs the same whatever the statement's
-// length. The UID cache keys on the text and is bounded by the limit.
+// length, and a bypass would re-send the metadata - and for the id cache mint
+// a fresh id, a new UI entry per execution - on every use of a long statement.
 func (agent *agent) sqlCacheable(sql string) bool {
 	return len(sql) < agent.sqlCacheLengthLimit
 }
@@ -1578,41 +1565,31 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 		return nil
 	}
 
-	// Both the UID and the cache key come from the untruncated statement, and
-	// only the published text is abbreviated: an abbreviated key keeps no more
-	// than a 64KB prefix and the total length, so two statements agreeing on
-	// both would share one entry and the second would answer with the first's
-	// UID without ever publishing its own metadata. Nothing past
-	// maxSqlNormalizeLength gets a UID at all (see cacheSql).
+	// The UID is the hash of the untruncated statement, and the cache keys on
+	// that same hash: a text key was bounded by SQL.CacheLengthLimit, so every
+	// execution of a statement past it - 2 KB by default, which an ORM reaches
+	// easily - re-sent its metadata and re-normalized the text. The hash keeps
+	// 16 bytes per statement whatever its length, and only the published text
+	// is abbreviated. Nothing past maxSqlNormalizeLength gets a UID at all (see
+	// cacheSql).
 	if !sqlNormalizable(sql) {
 		return nil
 	}
-	cacheable := agent.sqlCacheable(sql)
-	if cacheable {
-		if v, ok := agent.sqlUidCache.peek(sql); ok {
-			return v
-		}
+	key := sqlHashOf(sql)
+	if v, ok := agent.sqlUidCache.peek(key); ok {
+		return v
 	}
 	if agent.metaQueueFull() {
 		return nil
 	}
 
-	uid := sqlUid(sql)
-	if cacheable {
-		if v, ok := agent.sqlUidCache.peekOrAdd(sql, uid); ok {
-			return v
-		}
+	uid := key[:]
+	if v, ok := agent.sqlUidCache.peekOrAdd(key, uid); ok {
+		return v
 	}
 
-	// A bypassed statement was never cached, so a failed send has no entry to
-	// evict and carrying its key would be dead weight - every execution queues
-	// one item, and the untruncated text is bounded only by
-	// maxSqlNormalizeLength. The published text is abbreviated either way.
 	aSql := abbreviateString(sql, maxSqlSize)
-	md := sqlUidMeta{uid: uid, sql: aSql, cached: cacheable}
-	if cacheable {
-		md.key = sql
-	}
+	md := sqlUidMeta{uid: uid, sql: aSql, key: key}
 	agent.enqueueMeta(md)
 
 	if IsDebugLogLevelEnabled() {

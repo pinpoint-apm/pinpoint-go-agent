@@ -232,7 +232,7 @@ references live here.
 | a percent rate `<= 0` samples nothing, `>= 100` always samples | `PercentSamplerFactory`: `FalseSampler` and `TrueSampler` |
 | events one level deeper than `Span.MaxCallStackDepth` are still recorded | `DefaultCallStack` |
 | `SQL.CacheSize` sizes the SQL caches only; API and error caches stay at 1024 | `profiler.jdbc.sqlcachesize` sizes `SimpleCacheFactory.newSqlCache()` / `newSqlUidCache()`, while `newSimpleCache()` keeps its own default |
-| `SQL.CacheLengthLimit` bypasses the UID and raw caches but not the SQL-ID cache | the bypass lives only in `UidCache`; the id cache from `SimpleCacheFactory.newSqlCache()` has no length check |
+| `SQL.CacheLengthLimit` bypasses only the raw SQL cache; the SQL-ID and SQL-UID caches key on the statement hash | the bypass lives in `UidCache`, whose key is the text; the id cache from `SimpleCacheFactory.newSqlCache()` has no length check |
 | the SQL error count lives on the trace root, so async spans add up | `WrappedSpanEventRecorder`, `DefaultSqlCountService` |
 | `SQL.RemoveComments` defaults to on | `profiler.jdbc.removecomments` is absent from the distributed `pinpoint.config`, and the unresolved placeholder leaves the field initializer in place |
 | the request query string annotation format | `HttpServletParameterExtractor` |

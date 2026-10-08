@@ -215,8 +215,8 @@ func noSqlCacheBypassConfig() *Config {
 // two statements agreeing on both would share one entry: the second would
 // answer with the first's id and never publish its own metadata. The two texts
 // differ past the cap, so the id meta cannot carry an abbreviated key and
-// carries none: deleteMetaCache removes by id. The uid meta carries the key,
-// which sqlCacheable already bounds.
+// carries none: deleteMetaCache removes by id. The uid meta carries the hash,
+// which is 16 bytes whatever the statement's length.
 func Test_agent_SQLCachesKeyTheWholeStatement(t *testing.T) {
 	prefix := strings.Repeat("x", maxSqlSize)
 	first, second := prefix+"select 1", prefix+"select 2"
@@ -248,10 +248,10 @@ func Test_agent_SQLCachesKeyTheWholeStatement(t *testing.T) {
 		firstUid, secondUid := a.cacheSqlUid(first), a.cacheSqlUid(second)
 
 		assert.NotEqual(t, firstUid, secondUid, "the uid hashes the whole statement")
-		cached, ok := a.sqlUidCache.peek(second)
+		cached, ok := a.sqlUidCache.peek(sqlHashOf(second))
 		assert.True(t, ok, "the whole statement is the key")
 		assert.Equal(t, secondUid, cached)
-		_, abbreviated := a.sqlUidCache.peek(bounded)
+		_, abbreviated := a.sqlUidCache.peek(sqlHashOf(bounded))
 		assert.False(t, abbreviated)
 
 		assert.Len(t, a.metaChan, 2, "each statement publishes its own metadata")
@@ -259,7 +259,7 @@ func Test_agent_SQLCachesKeyTheWholeStatement(t *testing.T) {
 		assert.Equal(t, bounded, md.sql, "the published text stays capped")
 
 		a.deleteMetaCache(md)
-		_, stillCached := a.sqlUidCache.peek(first)
+		_, stillCached := a.sqlUidCache.peek(sqlHashOf(first))
 		assert.False(t, stillCached, "a dropped meta must drop the entry that published its uid")
 	})
 }
@@ -286,31 +286,31 @@ func Test_agent_QueuedSqlIdMetaHoldsNoUntruncatedKey(t *testing.T) {
 	assert.False(t, still, "a dropped meta still evicts the entry that published its id")
 }
 
-// Cache membership is a flag on the meta, not the shape of its key. A SQL whose
-// normalization is empty ("/* hint */" under Sql.RemoveComments) is cached
-// under an empty key, so reading the empty key as "bypassed" skipped the
-// eviction and left a UID cached that the collector never received.
+// A SQL whose normalization is empty ("/* hint */" under Sql.RemoveComments) is
+// a statement like any other: cached under the hash of the empty text, and
+// evicted after a failed send so the collector never misses its UID.
 func Test_agent_SQLUidCacheEvictsEmptyNormalizedStatement(t *testing.T) {
 	nsql, _ := newSqlNormalizer("/* hint */", true).run()
 	require.Empty(t, nsql, "the normalization of a lone comment is empty")
 
 	a := newTestAgent(defaultConfig())
 	require.NotNil(t, a.cacheSqlUid(nsql))
-	_, cached := a.sqlUidCache.peek(nsql)
-	require.True(t, cached, "an empty key is short enough to cache")
+	_, cached := a.sqlUidCache.peek(sqlHashOf(nsql))
+	require.True(t, cached, "the empty statement is cached")
 
 	md := (<-a.metaChan).(sqlUidMeta)
-	assert.True(t, md.cached, "a cached statement must say so")
+	assert.Equal(t, sqlHashOf(nsql), md.key, "the meta carries the entry's key")
 
 	a.deleteMetaCache(md)
-	_, stillCached := a.sqlUidCache.peek(nsql)
+	_, stillCached := a.sqlUidCache.peek(sqlHashOf(nsql))
 	assert.False(t, stillCached, "a dropped meta must drop the entry that published its uid")
 }
 
-// A SQL at or above SQL.CacheLengthLimit is not cached by the hash-keyed caches:
-// bypassLength. Caching them instead lets a few huge generated statements hold
-// the cache - and their bytes - for the life of the process. The SQL-ID cache is
-// exempt; see Test_agent_SQLIdCacheIgnoresLengthLimit.
+// A raw SQL at or above SQL.CacheLengthLimit is not memoized: the raw cache
+// holds the text as key and value, so a few huge generated statements would
+// hold it - and their bytes - for the life of the process. The id and UID
+// caches key on the statement's hash and take a statement of any length: a
+// bypass there re-sent the metadata on every execution of a long statement.
 func Test_agent_SQLCachesBypassKeysOverLengthLimit(t *testing.T) {
 	sql := strings.Repeat("x", 3000)
 
@@ -319,31 +319,15 @@ func Test_agent_SQLCachesBypassKeysOverLengthLimit(t *testing.T) {
 		first := a.cacheSqlUid(sql)
 		second := a.cacheSqlUid(sql)
 
-		_, cached := a.sqlUidCache.peek(sql)
-		assert.False(t, cached, "a sql over the length limit must not be cached")
+		cached, ok := a.sqlUidCache.peek(sqlHashOf(sql))
+		assert.True(t, ok, "a sql over the length limit is still cached by its hash")
+		assert.Equal(t, first, cached)
 		assert.Equal(t, first, second, "the uid hashes the sql, so it is stable")
-		assert.Len(t, a.metaChan, 2, "metadata must be enqueued on every use")
+		assert.Len(t, a.metaChan, 1, "metadata is sent once, not on every use")
 
-		// Nothing was cached, so the item carries no key to evict by and its
-		// size is bounded by the published text alone.
 		md := (<-a.metaChan).(sqlUidMeta)
-		assert.False(t, md.cached, "a bypassed statement has no entry to evict")
-		assert.Empty(t, md.key, "and carries no key, so the queue item stays bounded")
-		assert.LessOrEqual(t, len(md.sql), maxSqlSize)
-
-		// deleteMetaCache must not reach the cache at all for a bypassed item.
-		// An entry sitting at exactly the key and uid the item carries is what
-		// an unguarded remove would delete - remove is a no-op for a missing
-		// key, so evicting by md.key alone passes without the md.cached guard.
-		_, existed := a.sqlUidCache.peekOrAdd(md.key, md.uid)
-		require.False(t, existed, "the planted entry is the only one at that key")
-		small := "select 1"
-		a.cacheSqlUid(small)
-		a.deleteMetaCache(md)
-		_, stillPlanted := a.sqlUidCache.peek(md.key)
-		assert.True(t, stillPlanted, "a bypassed statement must not touch the cache")
-		_, stillCached := a.sqlUidCache.peek(small)
-		assert.True(t, stillCached, "an uncached statement must not evict anything")
+		assert.Equal(t, sqlHashOf(sql), md.key, "the meta carries the hash, not the text")
+		assert.LessOrEqual(t, len(md.sql), maxSqlSize, "the published text is abbreviated")
 	})
 
 	// The normalization memo holds the raw text as key and the normalized text
@@ -382,7 +366,7 @@ func Test_agent_SQLCacheLengthLimitIsFixedAtConstruction(t *testing.T) {
 	a.cacheSqlUid(sql)
 	a.normalizeSql(sql)
 	assert.Len(t, a.metaChan, 1, "a cached statement must not be re-sent after a runtime Set")
-	_, cached := a.sqlUidCache.peek(sql)
+	_, cached := a.sqlUidCache.peek(sqlHashOf(sql))
 	assert.True(t, cached)
 	_, cached = a.rawSqlCache.peek(sql)
 	assert.True(t, cached)
@@ -1706,7 +1690,7 @@ func Test_agent_SQLCachesRefuseAKeyPastTheNormalizationCap(t *testing.T) {
 	t.Run("sql uid", func(t *testing.T) {
 		a := newTestAgent(noSqlCacheBypassConfig())
 		assert.Nil(t, a.cacheSqlUid(past), "no uid for a key past the cap")
-		_, cached := a.sqlUidCache.peek(past)
+		_, cached := a.sqlUidCache.peek(sqlHashOf(past))
 		assert.False(t, cached)
 		assert.Empty(t, a.metaChan, "nothing queued for a refused key")
 
@@ -1906,10 +1890,10 @@ func Test_MessageLimits(t *testing.T) {
 	assert.Equal(t, 64*1024, maxSqlSize, "Java profiler.jdbc.maxsqllength")
 }
 
-// Test_SqlCacheLengthLimitAppliesToTheUidCacheOnly locks that
-// the length limit bypasses only the UID cache. The ID cache remains stable:
-// bypassing it would allocate a new ID and metadata entry on every execution.
-func Test_SqlCacheLengthLimitAppliesToTheUidCacheOnly(t *testing.T) {
+// Test_SqlCacheLengthLimitAppliesToTheRawCacheOnly locks that the length limit
+// bypasses only the raw SQL cache, the one that holds the text. The id and UID
+// caches key on the statement's hash and keep a statement of any length.
+func Test_SqlCacheLengthLimitAppliesToTheRawCacheOnly(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agent.sqlCacheLengthLimit = 32
 
@@ -1927,14 +1911,22 @@ func Test_SqlCacheLengthLimitAppliesToTheUidCacheOnly(t *testing.T) {
 	assert.True(t, shortHasId, "a short statement is cached by id")
 	assert.True(t, longHasId, "the length limit does not apply to the id cache")
 
-	// The UID cache takes only what fits: an over-limit statement still gets
-	// a UID, computed from the text, but is not kept.
+	// The UID cache takes both as well: a bypass re-sent the UID metadata on
+	// every execution of a long statement.
 	assert.NotEmpty(t, agent.cacheSqlUid(short))
 	assert.NotEmpty(t, agent.cacheSqlUid(long))
-	_, shortHasUid := agent.sqlUidCache.peek(short)
-	_, longHasUid := agent.sqlUidCache.peek(long)
+	_, shortHasUid := agent.sqlUidCache.peek(sqlHashOf(short))
+	_, longHasUid := agent.sqlUidCache.peek(sqlHashOf(long))
 	assert.True(t, shortHasUid, "a short statement is cached by uid")
-	assert.False(t, longHasUid, "the length limit bypasses the uid cache")
+	assert.True(t, longHasUid, "the length limit does not apply to the uid cache")
+
+	// The raw cache takes only what fits: it holds the text itself.
+	agent.normalizeSql(short)
+	agent.normalizeSql(long)
+	_, shortMemoized := agent.rawSqlCache.peek(short)
+	_, longMemoized := agent.rawSqlCache.peek(long)
+	assert.True(t, shortMemoized, "a short statement's normalization is memoized")
+	assert.False(t, longMemoized, "the length limit bypasses the raw cache")
 
 	// Bypassing the cache must not change the value it would have returned:
 	// the same id and the same UID come back for a repeated statement.

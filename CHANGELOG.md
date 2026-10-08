@@ -100,6 +100,10 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Changed
 
+- **`SQL.CacheLengthLimit` no longer bounds the SQL-UID cache.** The cache keys
+  on the statement's hash, so a statement past the limit registers its UID once
+  instead of re-sending the metadata on every execution; the limit applies to
+  the raw SQL cache alone.
 - `Log.Output` defaults to `stdout`; it was `stderr`.
 - **The config file is polled, not watched.** The dynamic options reload when
   the file's modification time or size changes, checked every second, so a
