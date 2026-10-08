@@ -17,7 +17,6 @@ import (
 	"time"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
-	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
@@ -603,7 +602,7 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 		Container: agentGrpc.agent.config.Bool(CfgIsContainerEnv),
 	}
 
-	if IsLogLevelEnabled(logrus.DebugLevel) {
+	if IsDebugLogLevelEnabled() {
 		Log("grpc").Debugf("agent info: %s", agentInfo.String())
 	}
 
@@ -848,7 +847,7 @@ func metaResult(res *pb.PResult, err error) error {
 // sendMeta makes one metadata RPC: kind names it in the log lines, in is the
 // message and call is the MetadataClient method that carries it.
 func sendMeta[M proto.Message](agentGrpc *agentGrpc, kind string, in M, call func(context.Context, M, ...grpc.CallOption) (*pb.PResult, error)) error {
-	if IsLogLevelEnabled(logrus.DebugLevel) {
+	if IsDebugLogLevelEnabled() {
 		Log("grpc").Debugf("%s metadata: %v", kind, in)
 	}
 
@@ -1443,10 +1442,10 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 				return
 			}
 
-			if IsLogLevelEnabled(logrus.DebugLevel) {
+			if IsDebugLogLevelEnabled() {
 				Log("grpc").Debugf("SendSpanBatch size=%d messageSize=%d", len(spanMessageBatch.GetSpan()), proto.Size(spanMessageBatch))
 			}
-			if IsLogLevelEnabled(logrus.TraceLevel) {
+			if IsTraceLogLevelEnabled() {
 				Log("grpc").Tracef("PSpanMessageBatch: %s", spanMessageBatch.String())
 			}
 
@@ -1765,7 +1764,7 @@ func (s *statStream) close() {
 }
 
 func (s *statStream) sendStats(stats *pb.PStatMessage) error {
-	if s.open() && IsLogLevelEnabled(logrus.TraceLevel) {
+	if s.open() && IsTraceLogLevelEnabled() {
 		Log("grpc").Tracef("PStatMessage: %s", stats.String())
 	}
 	return s.send(func(c pb.Stat_SendAgentStatClient) error { return c.Send(stats) }, "stat stream.Send()")
@@ -1951,7 +1950,7 @@ func (s *cmdStream) sendFailMessage(reqId int32, msg string) error {
 		},
 	}
 
-	if s.open() && IsLogLevelEnabled(logrus.DebugLevel) {
+	if s.open() && IsDebugLogLevelEnabled() {
 		Log("grpc").Debugf("PCmdMessage: %s", gCmd.String())
 	}
 	return s.send(func(c pb.ProfilerCommandService_HandleCommandV2Client) error { return c.Send(gCmd) }, "cmd stream.Send()")
@@ -1967,7 +1966,7 @@ func (s *cmdStream) recvCommandRequest() (*pb.PCmdRequest, error) {
 		return nil, err
 	}
 
-	if IsLogLevelEnabled(logrus.DebugLevel) {
+	if IsDebugLogLevelEnabled() {
 		Log("grpc").Debugf("PCmdRequest: %s", gCmdReq.String())
 	}
 	return gCmdReq, nil
@@ -2049,7 +2048,7 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 		TimeStamp:           now.UnixNano() / int64(time.Millisecond),
 	}
 
-	if IsLogLevelEnabled(logrus.DebugLevel) {
+	if IsDebugLogLevelEnabled() {
 		Log("grpc").Debugf("PCmdActiveThreadCountRes: %s", gRes.String())
 	}
 
@@ -2116,7 +2115,7 @@ func makePActiveThreadDumpList(dump *goroutineDump, limit int, threadName []stri
 			}
 		}
 
-		if IsLogLevelEnabled(logrus.DebugLevel) {
+		if IsDebugLogLevelEnabled() {
 			Log("grpc").Debugf("send makePActiveThreadDumpList: %v", selected)
 		}
 

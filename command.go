@@ -1,10 +1,12 @@
 package pinpoint
 
 import (
-	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
+	"errors"
 	"io"
 	"sync"
 	"time"
+
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 )
 
 const (
@@ -172,7 +174,7 @@ func (agent *agent) serveCommandStream(attempt int) int {
 				// renewal, not a failure, so reopen without the pause.
 				Log("cmd").Infof("renew command stream: max age reached")
 				attempt = -1
-			} else if agent.workerContinues() && err != io.EOF {
+			} else if agent.workerContinues() && !errors.Is(err, io.EOF) {
 				Log("cmd").Warnf("recv command request - %v", err)
 			}
 			break
@@ -249,7 +251,7 @@ func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
 	for agent.workerContinues() && !s.stopped() {
 		err := s.sendActiveThreadCount()
 		if err != nil {
-			if err != io.EOF {
+			if !errors.Is(err, io.EOF) {
 				Log("cmd").Errorf("send active thread count - %d, %v", s.reqId, err)
 			}
 			return

@@ -973,7 +973,7 @@ func (agent *agent) sendPingWorker() {
 		// report - the select below ends the worker.
 		if stream.open() {
 			if err := stream.sendPing(); err != nil {
-				if err != io.EOF {
+				if !errors.Is(err, io.EOF) {
 					Log("agent").Errorf("send ping - %v", err)
 				}
 
@@ -1943,14 +1943,14 @@ func (agent *agent) sendStatsOrReopen(stream *statStream, stats *pb.PStatMessage
 	}
 	err := stream.sendStats(stats)
 	if err != nil {
-		if err != io.EOF {
+		if !errors.Is(err, io.EOF) {
 			Log("stats").Errorf("send stats - %v", err)
 		}
 
 		stream.close()
 		stream = agent.statGrpc.newStatStreamWithRetry()
 		if stream.open() {
-			if err := stream.sendStats(stats); err != nil && err != io.EOF {
+			if err := stream.sendStats(stats); err != nil && !errors.Is(err, io.EOF) {
 				Log("stats").Errorf("resend stats - %v", err)
 			}
 		}
