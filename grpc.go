@@ -1222,10 +1222,52 @@ func closeStream(cancel context.CancelFunc, op func() error, which string) {
 	cancel()
 }
 
-type pingStream struct {
-	stream pb.Agent_PingSessionClient
+// streamHandle is what the long-lived client streams share: the generated
+// stream S, the cancel of its context and its max age. The zero value stands
+// for no stream, what the openers hand back once shutdown began during their
+// wait; every S is an interface type, so its zero value is nil.
+type streamHandle[S comparable] struct {
+	stream S
 	cancel context.CancelFunc
 	streamAge
+}
+
+func newStreamHandle[S comparable](stream S, cancel context.CancelFunc, age streamAge) streamHandle[S] {
+	return streamHandle[S]{stream: stream, cancel: cancel, streamAge: age}
+}
+
+func (h *streamHandle[S]) open() bool {
+	var none S
+	return h.stream != none
+}
+
+// send runs op, one call on the stream, under sendStreamTimeOut. A failed
+// send cancels the stream: the worker closes and reopens it next.
+func (h *streamHandle[S]) send(op func(S) error, which string) error {
+	if !h.open() {
+		return status.Errorf(codes.Unavailable, "%s: stream is nil", which)
+	}
+	err := sendStreamWithTimeout(func() error { return op(h.stream) }, h.cancel, sendStreamTimeOut, which)
+	if err != nil {
+		h.cancel()
+	}
+	return err
+}
+
+// close runs op, the stream's own close, through closeStream and forgets the
+// stream; a handle holding none does nothing.
+func (h *streamHandle[S]) close(op func(S) error, which string) {
+	if !h.open() {
+		return
+	}
+	closeStream(h.cancel, func() error { return op(h.stream) }, which+" stream close")
+	var none S
+	h.stream = none
+	Log("grpc").Infof("close %s stream", which)
+}
+
+type pingStream struct {
+	streamHandle[pb.Agent_PingSessionClient]
 }
 
 func (agentGrpc *agentGrpc) newPingStream() bool {
@@ -1238,7 +1280,7 @@ func (agentGrpc *agentGrpc) newPingStream() bool {
 		return false
 	}
 
-	agentGrpc.pingStream = &pingStream{stream: stream, cancel: cancel, streamAge: newStreamAge(agentGrpc.agent)}
+	agentGrpc.pingStream = &pingStream{newStreamHandle(stream, cancel, newStreamAge(agentGrpc.agent))}
 	return true
 }
 
@@ -1252,31 +1294,14 @@ func (agentGrpc *agentGrpc) newPingStreamWithRetry() *pingStream {
 var ping = pb.PPing{}
 
 func (s *pingStream) sendPing() error {
-	if s.stream == nil {
-		return status.Errorf(codes.Unavailable, "ping stream is nil")
-	}
-	err := sendStreamWithTimeout(func() error { return s.stream.Send(&ping) }, s.cancel, sendStreamTimeOut, "ping stream.Send()")
-	if err != nil {
-		s.cancel()
+	if err := s.send(func(c pb.Agent_PingSessionClient) error { return c.Send(&ping) }, "ping stream.Send()"); err != nil {
 		return err
 	}
-
-	return sendStreamWithTimeout(
-		func() error {
-			_, err := s.stream.Recv()
-			return err
-		},
-		s.cancel, sendStreamTimeOut, "ping stream.Recv()",
-	)
+	return s.send(func(c pb.Agent_PingSessionClient) error { _, err := c.Recv(); return err }, "ping stream.Recv()")
 }
 
 func (s *pingStream) close() {
-	if s.stream == nil {
-		return
-	}
-	closeStream(s.cancel, s.stream.CloseSend, "ping stream.CloseSend()")
-	s.stream = nil
-	Log("grpc").Infof("close ping stream")
+	s.streamHandle.close(func(c pb.Agent_PingSessionClient) error { return c.CloseSend() }, "ping")
 }
 
 func (agentGrpc *agentGrpc) close() {
@@ -1693,9 +1718,7 @@ type statGrpc struct {
 }
 
 type statStream struct {
-	stream pb.Stat_SendAgentStatClient
-	cancel context.CancelFunc
-	streamAge
+	streamHandle[pb.Stat_SendAgentStatClient]
 }
 
 func newStatGrpc(agent *agent) (*statGrpc, error) {
@@ -1726,7 +1749,7 @@ func (statGrpc *statGrpc) newStatStream() bool {
 		return false
 	}
 
-	statGrpc.stream = &statStream{stream: stream, cancel: cancel, streamAge: newStreamAge(statGrpc.agent)}
+	statGrpc.stream = &statStream{newStreamHandle(stream, cancel, newStreamAge(statGrpc.agent))}
 	return true
 }
 
@@ -1738,27 +1761,14 @@ func (statGrpc *statGrpc) newStatStreamWithRetry() *statStream {
 }
 
 func (s *statStream) close() {
-	if s.stream == nil {
-		return
-	}
-	closeStream(s.cancel, func() error { _, err := s.stream.CloseAndRecv(); return err }, "stat stream.CloseAndRecv()")
-	s.stream = nil
-	Log("grpc").Infof("close stat stream")
+	s.streamHandle.close(func(c pb.Stat_SendAgentStatClient) error { _, err := c.CloseAndRecv(); return err }, "stat")
 }
 
 func (s *statStream) sendStats(stats *pb.PStatMessage) error {
-	if s.stream == nil {
-		return status.Errorf(codes.Unavailable, "stat stream is nil")
-	}
-	if IsLogLevelEnabled(logrus.TraceLevel) {
+	if s.open() && IsLogLevelEnabled(logrus.TraceLevel) {
 		Log("grpc").Tracef("PStatMessage: %s", stats.String())
 	}
-
-	err := sendStreamWithTimeout(func() error { return s.stream.Send(stats) }, s.cancel, sendStreamTimeOut, "stat stream.Send()")
-	if err != nil {
-		s.cancel()
-	}
-	return err
+	return s.send(func(c pb.Stat_SendAgentStatClient) error { return c.Send(stats) }, "stat stream.Send()")
 }
 
 func makePAgentStatBatch(stats []*inspectorStats) *pb.PStatMessage {
@@ -1872,9 +1882,7 @@ type cmdGrpc struct {
 }
 
 type cmdStream struct {
-	stream pb.ProfilerCommandService_HandleCommandV2Client
-	cancel context.CancelFunc
-	streamAge
+	streamHandle[pb.ProfilerCommandService_HandleCommandV2Client]
 }
 
 func newCommandGrpc(agent *agent) (*cmdGrpc, error) {
@@ -1915,7 +1923,7 @@ func (cmdGrpc *cmdGrpc) newHandleCommandStream() bool {
 		return false
 	}
 
-	cmdGrpc.stream = &cmdStream{stream: stream, cancel: cancel, streamAge: age}
+	cmdGrpc.stream = &cmdStream{newStreamHandle(stream, cancel, age)}
 	return true
 }
 
@@ -1927,22 +1935,13 @@ func (cmdGrpc *cmdGrpc) newCommandStreamWithRetry() *cmdStream {
 }
 
 func (s *cmdStream) close() {
-	if s.stream == nil {
-		return
-	}
-	closeStream(s.cancel, s.stream.CloseSend, "cmd stream.CloseSend()")
-	s.stream = nil
-	Log("grpc").Infof("close command stream")
+	s.streamHandle.close(func(c pb.ProfilerCommandService_HandleCommandV2Client) error { return c.CloseSend() }, "command")
 }
 
 // sendFailMessage rejects a command on the command stream itself, which is the
 // only channel the protocol offers for a request the agent will not serve:
 // sets the request id and a reason and leaves status at its default.
 func (s *cmdStream) sendFailMessage(reqId int32, msg string) error {
-	if s.stream == nil {
-		return status.Errorf(codes.Unavailable, "command stream is nil")
-	}
-
 	gCmd := &pb.PCmdMessage{
 		Message: &pb.PCmdMessage_FailMessage{
 			FailMessage: &pb.PCmdResponse{
@@ -1952,19 +1951,14 @@ func (s *cmdStream) sendFailMessage(reqId int32, msg string) error {
 		},
 	}
 
-	if IsLogLevelEnabled(logrus.DebugLevel) {
+	if s.open() && IsLogLevelEnabled(logrus.DebugLevel) {
 		Log("grpc").Debugf("PCmdMessage: %s", gCmd.String())
 	}
-
-	err := sendStreamWithTimeout(func() error { return s.stream.Send(gCmd) }, s.cancel, sendStreamTimeOut, "cmd stream.Send()")
-	if err != nil {
-		s.cancel()
-	}
-	return err
+	return s.send(func(c pb.ProfilerCommandService_HandleCommandV2Client) error { return c.Send(gCmd) }, "cmd stream.Send()")
 }
 
 func (s *cmdStream) recvCommandRequest() (*pb.PCmdRequest, error) {
-	if s.stream == nil {
+	if !s.open() {
 		return nil, status.Errorf(codes.Unavailable, "command stream is nil")
 	}
 

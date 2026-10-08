@@ -159,7 +159,7 @@ func (agent *agent) serveCommandStream(attempt int) int {
 	stream := agent.cmdGrpc.newCommandStreamWithRetry()
 	defer stream.close()
 
-	if stream.stream == nil {
+	if !stream.open() {
 		// newStreamWithRetry gave up, which only happens on shutdown.
 		return attempt
 	}

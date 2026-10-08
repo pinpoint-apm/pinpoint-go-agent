@@ -971,7 +971,7 @@ func (agent *agent) sendPingWorker() {
 		// An empty stream is what newPingStreamWithRetry hands back once
 		// shutdown began during its wait: nothing to send on, and nothing to
 		// report - the select below ends the worker.
-		if stream.stream != nil {
+		if stream.open() {
 			if err := stream.sendPing(); err != nil {
 				if err != io.EOF {
 					Log("agent").Errorf("send ping - %v", err)
@@ -1937,7 +1937,7 @@ func (agent *agent) sendStatsOrReopen(stream *statStream, stats *pb.PStatMessage
 	// began during its wait. The stat is dropped with the rest of the queue,
 	// as the teardown comment in shutdownAgent says, and not reported as a
 	// send failure: during a collector outage every queued stat logged one.
-	if stream.stream == nil {
+	if !stream.open() {
 		return stream
 	}
 	err := stream.sendStats(stats)
@@ -1948,7 +1948,7 @@ func (agent *agent) sendStatsOrReopen(stream *statStream, stats *pb.PStatMessage
 
 		stream.close()
 		stream = agent.statGrpc.newStatStreamWithRetry()
-		if stream.stream != nil {
+		if stream.open() {
 			if err := stream.sendStats(stats); err != nil && err != io.EOF {
 				Log("stats").Errorf("resend stats - %v", err)
 			}

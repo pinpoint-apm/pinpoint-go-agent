@@ -390,5 +390,5 @@ func (c *mockCmdGrpcClient) streamCount() int {
 func newMockCmdGrpc(agent *agent) (*cmdStream, *mockCmdGrpcClient) {
 	client := &mockCmdGrpcClient{}
 	agent.cmdGrpc = &cmdGrpc{cmdClient: client, agent: agent, atcStreams: atcStreams{agent: agent}}
-	return &cmdStream{stream: &mockCmdStream{}, cancel: func() {}}, client
+	return &cmdStream{newStreamHandle[pb.ProfilerCommandService_HandleCommandV2Client](&mockCmdStream{}, func() {}, streamAge{})}, client
 }
