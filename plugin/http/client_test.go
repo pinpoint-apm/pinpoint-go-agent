@@ -172,7 +172,10 @@ func TestClient_LeavesTheCallersRequestAlone(t *testing.T) {
 			assert.Empty(t, pinpointHeaders(t, template.Header), "the caller's header map was written")
 			assert.NotEmpty(t, pinpointHeaders(t, rt.sent.Header), "the request sent carries the trace")
 			assert.Equal(t, "v", rt.sent.Header.Get("X-Caller"), "the caller's headers must survive the copy")
-			assert.NotSame(t, req.Header, rt.sent.Header)
+			// A map of its own, not the caller's: a write to the sent one must not
+			// show on the caller's. (testify's NotSame takes pointers only.)
+			rt.sent.Header.Set("X-Probe", "1")
+			assert.Empty(t, req.Header.Get("X-Probe"), "the sent request must have a header map of its own")
 		})
 	}
 }

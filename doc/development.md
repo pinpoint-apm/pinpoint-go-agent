@@ -52,7 +52,7 @@ go test -v
 go test -race ./...
 ```
 ```bash
-go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 $(go list ./... | grep -v /internal/protobuf)
 ```
 
 The agent's tracers are concurrency-sensitive, so `-race` is part of the

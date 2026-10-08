@@ -134,9 +134,9 @@ func buildTraceSampler(base sampler, newTps int, continueTps int) *traceSampler 
 // empty bucket; the callers keep the previous limiter when the option did not
 // change, so an unrelated reload does not restart the pacing.
 //
-// AllowN rather than SetTokensAt, which does not exist in the x/time version
-// go.mod pins. On an unlimited rate (tps above one per nanosecond) AllowN is a
-// no-op, which is the intended result.
+// AllowN, because rate.Limiter has no setter for its token count. On an
+// unlimited rate (tps above one per nanosecond) AllowN is a no-op, which is
+// the intended result.
 func newTokenBucket(tps int) *rate.Limiter {
 	if tps <= 0 {
 		return nil
