@@ -23,7 +23,8 @@ func unaryCallUnaryReturn(ctx context.Context, client testapp.HelloClient) {
 
 	in, err := client.UnaryCallUnaryReturn(ctx, greeting)
 	if err != nil {
-		log.Fatalf("unaryCallUnaryReturn got error %v", err)
+		log.Printf("unaryCallUnaryReturn got error %v", err)
+		return
 	}
 	log.Println(in.Msg)
 }
@@ -34,7 +35,8 @@ func unaryCallStreamReturn(ctx context.Context, client testapp.HelloClient) {
 
 	stream, err := client.UnaryCallStreamReturn(ctx, greeting)
 	if err != nil {
-		log.Fatalf("unaryCallStreamReturn got error %v", err)
+		log.Printf("unaryCallStreamReturn got error %v", err)
+		return
 	}
 
 	for {
@@ -43,7 +45,8 @@ func unaryCallStreamReturn(ctx context.Context, client testapp.HelloClient) {
 			break
 		}
 		if err != nil {
-			log.Fatalf("unaryCallStreamReturn got error %v", err)
+			log.Printf("unaryCallStreamReturn got error %v", err)
+			return
 		}
 		log.Println(in.Msg)
 	}
@@ -55,7 +58,8 @@ func streamCallUnaryReturn(ctx context.Context, client testapp.HelloClient) {
 
 	stream, err := client.StreamCallUnaryReturn(ctx)
 	if err != nil {
-		log.Fatalf("streamCallUnaryReturn got error %v", err)
+		log.Printf("streamCallUnaryReturn got error %v", err)
+		return
 	}
 
 	for i := 0; i < 2; i++ {
@@ -63,13 +67,15 @@ func streamCallUnaryReturn(ctx context.Context, client testapp.HelloClient) {
 			if err == io.EOF {
 				break
 			}
-			log.Fatalf("streamCallUnaryReturn got error %v", err)
+			log.Printf("streamCallUnaryReturn got error %v", err)
+			break
 		}
 	}
 
 	msg, err := stream.CloseAndRecv()
 	if err != nil {
-		log.Fatalf("streamCallUnaryReturn got error %v", err)
+		log.Printf("streamCallUnaryReturn got error %v", err)
+		return
 	}
 	log.Println(msg.Msg)
 }
@@ -80,7 +86,8 @@ func streamCallStreamReturn(ctx context.Context, client testapp.HelloClient) {
 
 	stream, err := client.StreamCallStreamReturn(ctx)
 	if err != nil {
-		log.Fatalf("streamCallStreamReturn got error %v", err)
+		log.Printf("streamCallStreamReturn got error %v", err)
+		return
 	}
 
 	waitc := make(chan struct{})
@@ -92,7 +99,9 @@ func streamCallStreamReturn(ctx context.Context, client testapp.HelloClient) {
 				return
 			}
 			if err != nil {
-				log.Fatalf("streamCallStreamReturn got error %v", err)
+				log.Printf("streamCallStreamReturn got error %v", err)
+				close(waitc)
+				return
 			}
 			log.Println(in.Msg)
 		}
@@ -100,7 +109,8 @@ func streamCallStreamReturn(ctx context.Context, client testapp.HelloClient) {
 
 	for i := 0; i < 2; i++ {
 		if err := stream.Send(greeting); err != nil {
-			log.Fatalf("streamCallStreamReturn got error %v", err)
+			log.Printf("streamCallStreamReturn got error %v", err)
+			break
 		}
 	}
 	stream.CloseSend()
@@ -141,6 +151,7 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
 	http.HandleFunc("/grpc", pphttp.WrapHandlerFunc(doGrpc))
 	http.ListenAndServe(":9000", nil)

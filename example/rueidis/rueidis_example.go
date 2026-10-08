@@ -51,6 +51,7 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
 	http.HandleFunc("/rueidis", pphttp.WrapHandlerFunc(rueidisv1))
 	http.ListenAndServe(":9014", nil)

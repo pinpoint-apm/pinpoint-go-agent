@@ -54,6 +54,7 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
 	mux := pphttp.NewServeMux()
 	mux.Handle("/foo", http.HandlerFunc(indexMux))

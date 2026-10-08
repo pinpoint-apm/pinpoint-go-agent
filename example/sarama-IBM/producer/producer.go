@@ -53,6 +53,7 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
 	config := sarama.NewConfig()
 	config.Producer.Partitioner = sarama.NewRandomPartitioner

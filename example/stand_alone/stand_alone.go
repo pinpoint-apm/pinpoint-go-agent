@@ -20,14 +20,11 @@ func newSpan(name string) pinpoint.Tracer {
 	return pinpoint.GetAgent().NewSpanTracer(name, "/")
 }
 
+var db *sql.DB // opened once in main, shared by every run()
+
 func query(ctx context.Context) {
 	tracer := pinpoint.FromContext(ctx)
 	defer tracer.NewSpanEvent("query").EndSpanEvent()
-
-	db, err := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/information_schema")
-	if nil != err {
-		panic(err)
-	}
 
 	gormdb, err := gorm.Open(mysql.New(mysql.Config{Conn: db}), &gorm.Config{})
 	if err != nil {
@@ -83,6 +80,13 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
+
+	db, err = sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/information_schema")
+	if err != nil {
+		log.Fatalf("cannot open database: %v", err)
+	}
+	defer db.Close()
 
 	for true {
 		run()

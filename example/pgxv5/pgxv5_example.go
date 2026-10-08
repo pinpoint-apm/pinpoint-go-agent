@@ -23,7 +23,7 @@ func connect() *pgx.Conn {
 	cfg, err := pgx.ParseConfig(connUrl)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Unable to parse connection config: %v\n", err)
-		os.Exit(1)
+		return nil
 	}
 
 	cfg.Tracer = pppgxv5.NewTracer()
@@ -31,7 +31,7 @@ func connect() *pgx.Conn {
 	conn, err := pgx.ConnectConfig(context.Background(), cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
-		os.Exit(1)
+		return nil
 	}
 
 	log.Println("successfully connected to db")
@@ -76,21 +76,17 @@ func tableCount(w http.ResponseWriter, r *http.Request) {
 	var count int
 	err := rows.Scan(&count)
 	if err != nil {
-		log.Fatalf("sql error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	fmt.Println("number of entries in pg_catalog.pg_tables", count)
 	io.WriteString(w, "success")
 }
 
-func query(w http.ResponseWriter, r *http.Request) {
-	dbPool := connectionPool()
-	if dbPool == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		io.WriteString(w, "db connection fail")
-		return
-	}
+var dbPool *pgxpool.Pool // opened once in main, shared by query()
 
+func query(w http.ResponseWriter, r *http.Request) {
 	ctx := pinpoint.NewContext(context.Background(), pinpoint.TracerFromRequestContext(r))
 
 	_, _ = dbPool.Exec(ctx, "CREATE TABLE employee (id INTEGER PRIMARY KEY, emp_name VARCHAR(64), department VARCHAR(64), created DATE)")
@@ -134,7 +130,8 @@ func query(w http.ResponseWriter, r *http.Request) {
 func tx(ctx context.Context, db *pgxpool.Pool) {
 	tx, err := db.Begin(ctx)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return
 	}
 
 	_, err = tx.Exec(ctx, "INSERT INTO employee VALUES (3, 'ipad', 'apple', '2022-08-15'), ($1, $2, $3, $4)",
@@ -160,7 +157,7 @@ func tx(ctx context.Context, db *pgxpool.Pool) {
 
 	err = tx.Commit(ctx)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 }
 
@@ -281,7 +278,8 @@ func queryStdSql(w http.ResponseWriter, r *http.Request) {
 func txStdSql(ctx context.Context, db *sql.DB) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return
 	}
 
 	_, err = tx.ExecContext(ctx, "INSERT INTO employee VALUES (3, 'ipad', 'apple', '2022-08-15'), ($1, $2, $3, $4)",
@@ -307,7 +305,7 @@ func txStdSql(ctx context.Context, db *sql.DB) {
 
 	err = tx.Commit()
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 }
 
@@ -324,6 +322,10 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
+
+	dbPool = connectionPool()
+	defer dbPool.Close()
 
 	http.HandleFunc("/tableCount", pphttp.WrapHandlerFunc(tableCount))
 	http.HandleFunc("/query", pphttp.WrapHandlerFunc(query))

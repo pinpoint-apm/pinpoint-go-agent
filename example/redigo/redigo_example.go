@@ -17,7 +17,8 @@ func redigo_test(w http.ResponseWriter, r *http.Request) {
 	//Dial
 	c, err := ppredigo.Dial("tcp", "127.0.0.1:6379")
 	if err != nil {
-		log.Fatal(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	c.Do("SET", "vehicle", "truck") //not traced
@@ -39,7 +40,8 @@ func redigo_test(w http.ResponseWriter, r *http.Request) {
 	//DialUrl
 	c, err = ppredigo.DialURL("redis://127.0.0.1:6379")
 	if err != nil {
-		log.Fatal(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	ppredigo.WithContext(c, ctx)
@@ -61,6 +63,7 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
 	http.HandleFunc("/redis", pphttp.WrapHandlerFunc(redigo_test))
 	http.ListenAndServe(":9013", nil)

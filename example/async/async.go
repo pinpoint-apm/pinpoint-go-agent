@@ -135,6 +135,7 @@ func main() {
 		log.Printf("pinpoint agent start failed: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
 	http.HandleFunc("/async_chan", pphttp.WrapHandlerFunc(asyncWithChan))
 	http.HandleFunc("/async_context", pphttp.WrapHandlerFunc(asyncWithContext))

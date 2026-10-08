@@ -33,7 +33,8 @@ func elasticTest(w http.ResponseWriter, req *http.Request) {
 			Transport: ppgoelastic.NewTransport(nil),
 		})
 	if err != nil {
-		log.Fatalf("Error creating the client: %s", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	indexDocument(ctx, es)
@@ -71,7 +72,8 @@ func indexDocument(ctx context.Context, es *elasticsearch.Client) {
 			// Perform the request with the client.
 			res, err := req.Do(pinpoint.NewContext(context.Background(), asyncTracer), es)
 			if err != nil {
-				log.Fatalf("Error getting response: %s", err)
+				log.Printf("Error getting response: %s", err)
+				return
 			}
 			defer res.Body.Close()
 
@@ -102,7 +104,8 @@ func searchDocument(ctx context.Context, es *elasticsearch.Client) bytes.Buffer 
 		},
 	}
 	if err := json.NewEncoder(&buf).Encode(query); err != nil {
-		log.Fatalf("Error encoding query: %s", err)
+		log.Printf("Error encoding query: %s", err)
+		return buf
 	}
 
 	var zbuf bytes.Buffer
@@ -120,27 +123,30 @@ func searchDocument(ctx context.Context, es *elasticsearch.Client) bytes.Buffer 
 		es.Search.WithPretty(),
 	)
 	if err != nil {
-		log.Fatalf("Error getting response: %s", err)
+		log.Printf("Error getting response: %s", err)
+		return buf
 	}
 	defer res.Body.Close()
 
 	if res.IsError() {
 		var e map[string]interface{}
 		if err := json.NewDecoder(res.Body).Decode(&e); err != nil {
-			log.Fatalf("Error parsing the response body: %s", err)
+			log.Printf("Error parsing the response body: %s", err)
 		} else {
 			// Print the response status and error information.
-			log.Fatalf("[%s] %s: %s",
+			log.Printf("[%s] %s: %s",
 				res.Status(),
 				e["error"].(map[string]interface{})["type"],
 				e["error"].(map[string]interface{})["reason"],
 			)
 		}
+		return buf
 	}
 
 	var r map[string]interface{}
 	if err := json.NewDecoder(res.Body).Decode(&r); err != nil {
-		log.Fatalf("Error parsing the response body: %s", err)
+		log.Printf("Error parsing the response body: %s", err)
+		return buf
 	}
 	js, _ := json.MarshalIndent(r, "", "    ")
 
@@ -163,6 +169,7 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
 	http.HandleFunc("/elastic", pphttp.WrapHandlerFunc(elasticTest))
 	http.ListenAndServe(":9018", nil)

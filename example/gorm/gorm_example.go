@@ -21,12 +21,9 @@ type Product struct {
 	Price uint
 }
 
-func gormQuery(w http.ResponseWriter, r *http.Request) {
-	db, err := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/testdb?parseTime=true")
-	if nil != err {
-		panic(err)
-	}
+var db *sql.DB // opened once in main, shared by every request
 
+func gormQuery(w http.ResponseWriter, r *http.Request) {
 	gormdb, err := ppgorm.Open(mysql.New(mysql.Config{Conn: db}), &gorm.Config{})
 	if err != nil {
 		panic("failed to connect database")
@@ -65,6 +62,13 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
+
+	db, err = sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/testdb?parseTime=true")
+	if err != nil {
+		log.Fatalf("cannot open database: %v", err)
+	}
+	defer db.Close()
 
 	http.HandleFunc("/gormquery", pphttp.WrapHandlerFunc(gormQuery))
 

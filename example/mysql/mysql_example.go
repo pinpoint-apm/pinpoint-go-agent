@@ -112,7 +112,8 @@ func query(w http.ResponseWriter, r *http.Request) {
 func tx(ctx context.Context, db *sql.DB) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return
 	}
 
 	_, err = tx.ExecContext(ctx, "INSERT INTO employee(emp_name, department, created) VALUES ('ipad', 'apple', '2022-08-15'), ('chrome', 'google', '2022-08-18')")
@@ -137,7 +138,7 @@ func tx(ctx context.Context, db *sql.DB) {
 
 	err = tx.Commit()
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 }
@@ -156,6 +157,7 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
 	http.HandleFunc("/tableCount", pphttp.WrapHandlerFunc(tableCount))
 	http.HandleFunc("/query", pphttp.WrapHandlerFunc(query))

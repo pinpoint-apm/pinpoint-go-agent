@@ -29,7 +29,8 @@ func tableCount(w http.ResponseWriter, r *http.Request) {
 	var count int
 	err = row.Scan(&count)
 	if err != nil {
-		log.Fatalf("sql error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	fmt.Println("number of entries in pg_catalog.pg_tables", count)
@@ -111,7 +112,8 @@ func query(w http.ResponseWriter, r *http.Request) {
 func tx(ctx context.Context, db *sql.DB) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return
 	}
 
 	_, err = tx.ExecContext(ctx, "INSERT INTO employee VALUES (3, 'ipad', 'apple', '2022-08-15'), ($1, $2, $3, $4)",
@@ -137,7 +139,7 @@ func tx(ctx context.Context, db *sql.DB) {
 
 	err = tx.Commit()
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 }
@@ -154,6 +156,7 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
 	http.HandleFunc("/tableCount", pphttp.WrapHandlerFunc(tableCount))
 	http.HandleFunc("/query", pphttp.WrapHandlerFunc(query))

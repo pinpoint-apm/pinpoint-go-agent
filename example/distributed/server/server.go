@@ -143,6 +143,7 @@ func main() {
 		log.Printf("pinpoint agent start fail: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
 	// "mysql-pinpoint" is the traced driver the mysql plugin registers; it is
 	// the only change a database call needs to show up in Pinpoint.

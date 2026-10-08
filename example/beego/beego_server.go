@@ -25,6 +25,7 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
 	ctrl := &MainController{}
 	web.Router("/hello", ctrl, "get:Hello")

@@ -83,6 +83,7 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
 	conn, err := grpc.NewClient("localhost:8080",
 		grpc.WithTransportCredentials(insecure.NewCredentials()),

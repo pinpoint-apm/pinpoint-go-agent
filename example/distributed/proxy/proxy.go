@@ -80,6 +80,7 @@ func main() {
 		log.Printf("pinpoint agent start fail: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
 	addr := envOr("ADDR", ":8080")
 	http.HandleFunc("/api/members", pphttp.WrapHandlerFunc(members, "Go Proxy"))

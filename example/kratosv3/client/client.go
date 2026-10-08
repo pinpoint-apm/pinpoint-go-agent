@@ -29,6 +29,7 @@ func main() {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
 	defer agent.Shutdown()
+	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
 	http.HandleFunc("/http", pphttp.WrapHandlerFunc(callHTTP))
 	http.HandleFunc("/grpc", pphttp.WrapHandlerFunc(callGRPC))
@@ -54,7 +55,8 @@ func callHTTP(w http.ResponseWriter, r *http.Request) {
 	client := pb.NewGreeterHTTPClient(conn)
 	reply, err := client.SayHello(ctx, &pb.HelloRequest{Name: "kratos"})
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return
 	}
 	log.Printf("[http] SayHello %s\n", reply.Message)
 
@@ -87,7 +89,8 @@ func callGRPC(w http.ResponseWriter, r *http.Request) {
 	client := pb.NewGreeterClient(conn)
 	reply, err := client.SayHello(ctx, &pb.HelloRequest{Name: "kratos"})
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return
 	}
 	log.Printf("[grpc] SayHello %+v\n", reply)
 
