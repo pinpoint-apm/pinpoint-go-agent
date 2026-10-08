@@ -64,15 +64,51 @@ func (l *lifecycle) current() agentPhase {
 // the table does not allow is refused and logged, never applied: the phase
 // stays where it is so the caller can decide what that means for it.
 func (l *lifecycle) transitionTo(to agentPhase) bool {
+	if l.tryTransitionTo(to) {
+		return true
+	}
+	Log("agent").Warnf("agent phase transition refused: %s -> %s", l.current(), to)
+	return false
+}
+
+// tryTransitionTo is transitionTo without the warning, for the edges a
+// concurrent Shutdown can legitimately make impossible: a registration that
+// finishes, or fails, against an agent Shutdown has already moved to stopped.
+// There the refusal is the expected outcome of the race, not a bug to report.
+func (l *lifecycle) tryTransitionTo(to agentPhase) bool {
 	for {
 		from := l.current()
 		if !slices.Contains(validTransitions[from], to) {
-			Log("agent").Warnf("agent phase transition refused: %s -> %s", from, to)
 			return false
 		}
 		if l.phase.CompareAndSwap(int32(from), int32(to)) {
 			Log("agent").Infof("agent phase: %s -> %s", from, to)
 			return true
+		}
+	}
+}
+
+// beginShutdown moves a running agent to stopping, where the workers drain,
+// and an agent that never ran - still registering, or failed - straight to
+// stopped, since it has nothing to drain. An agent already stopping or stopped
+// is left alone. One CAS loop over the phase it finds, rather than trying the
+// running edge and falling back: the fallback refused and warned on every
+// Shutdown of an agent that was never running, which is a normal path.
+func (l *lifecycle) beginShutdown() {
+	for {
+		from := l.current()
+		var to agentPhase
+		switch from {
+		case phaseRunning:
+			to = phaseStopping
+		case phaseRegistering, phaseFailed:
+			to = phaseStopped
+		default:
+			return
+		}
+		if l.phase.CompareAndSwap(int32(from), int32(to)) {
+			Log("agent").Infof("agent phase: %s -> %s", from, to)
+			return
 		}
 	}
 }

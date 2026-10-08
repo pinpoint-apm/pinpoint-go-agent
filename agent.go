@@ -422,7 +422,7 @@ func (agent *agent) connectGrpcServer() {
 		// moved the phase on; only a connect that failed is still registering.
 		// The transition is a CAS, so a Shutdown racing this defer wins or
 		// loses cleanly and the loser leaves the release to the winner.
-		if agent.enable.current() != phaseRegistering || !agent.enable.transitionTo(phaseFailed) {
+		if agent.enable.current() != phaseRegistering || !agent.enable.tryTransitionTo(phaseFailed) {
 			return
 		}
 		Log("agent").Errorf("failed to connect to collector, agent disabled: %v", err)
@@ -482,8 +482,9 @@ func (agent *agent) connect() (err error) {
 
 	// A Shutdown that completed while registration was finishing has moved the
 	// phase to stopped; workers started now would only find it so and exit,
-	// and the closed connections are already released by that Shutdown.
-	if !agent.enable.transitionTo(phaseRunning) {
+	// and the closed connections are already released by that Shutdown. The
+	// refusal is that race's normal outcome, so it is not warned about.
+	if !agent.enable.tryTransitionTo(phaseRunning) {
 		return nil
 	}
 	agent.startWorkers(agent.workerTable())
@@ -698,9 +699,7 @@ func (agent *agent) signalShutdown() {
 	// queued before the signal, until shutdownAgent moves the agent to stopped.
 	// An agent that never ran - still registering, or failed - has nothing to
 	// drain and goes straight to stopped, as the shutdown flag alone did.
-	if !agent.enable.transitionTo(phaseStopping) {
-		agent.enable.transitionTo(phaseStopped)
-	}
+	agent.enable.beginShutdown()
 	agent.stopSignal() // ensure the context exists before cancelling it
 	agent.stopCancel()
 
@@ -969,14 +968,18 @@ func (agent *agent) sendPingWorker() {
 
 	for agent.workerContinues() {
 		stream = renewIfExpired(stream, agent.agentGrpc.newPingStreamWithRetry, "ping")
-		err := stream.sendPing()
-		if err != nil {
-			if err != io.EOF {
-				Log("agent").Errorf("send ping - %v", err)
-			}
+		// An empty stream is what newPingStreamWithRetry hands back once
+		// shutdown began during its wait: nothing to send on, and nothing to
+		// report - the select below ends the worker.
+		if stream.stream != nil {
+			if err := stream.sendPing(); err != nil {
+				if err != io.EOF {
+					Log("agent").Errorf("send ping - %v", err)
+				}
 
-			stream.close()
-			stream = agent.agentGrpc.newPingStreamWithRetry()
+				stream.close()
+				stream = agent.agentGrpc.newPingStreamWithRetry()
+			}
 		}
 
 		select {
@@ -1992,6 +1995,13 @@ func (agent *agent) sendStatsWorker() {
 // stopping is not retried on.
 func (agent *agent) sendStatsOrReopen(stream *statStream, stats *pb.PStatMessage) *statStream {
 	stream = renewIfExpired(stream, agent.statGrpc.newStatStreamWithRetry, "stat")
+	// An empty stream is what newStatStreamWithRetry hands back once shutdown
+	// began during its wait. The stat is dropped with the rest of the queue,
+	// as the teardown comment in shutdownAgent says, and not reported as a
+	// send failure: during a collector outage every queued stat logged one.
+	if stream.stream == nil {
+		return stream
+	}
 	err := stream.sendStats(stats)
 	if err != nil {
 		if err != io.EOF {

@@ -81,6 +81,29 @@ func Test_lifecycle_FailedRegistrationIsItsOwnPhase(t *testing.T) {
 	assert.True(t, agent.enable.transitionTo(phaseStopped), "Shutdown after a failure still lands on stopped")
 }
 
+// beginShutdown takes the one edge the current phase allows - running drains
+// through stopping, an agent that never ran goes straight to stopped - and
+// leaves an agent already on its way out alone, so a Shutdown of an agent in
+// any phase is a normal path with no refused transition to warn about.
+func Test_lifecycle_BeginShutdownPicksTheEdgeForThePhase(t *testing.T) {
+	for _, tt := range []struct {
+		from, want agentPhase
+	}{
+		{phaseRegistering, phaseStopped},
+		{phaseFailed, phaseStopped},
+		{phaseRunning, phaseStopping},
+		{phaseStopping, phaseStopping},
+		{phaseStopped, phaseStopped},
+	} {
+		t.Run(tt.from.String(), func(t *testing.T) {
+			var l lifecycle
+			l.phase.Store(int32(tt.from))
+			l.beginShutdown()
+			assert.Equal(t, tt.want, l.current())
+		})
+	}
+}
+
 func Test_lifecycle_RefusesInvalidTransitions(t *testing.T) {
 	for _, tt := range []struct {
 		from, to agentPhase
