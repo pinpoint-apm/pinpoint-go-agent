@@ -253,13 +253,23 @@ func getOffset() uintptr {
 	return 0
 }
 
+// eface is the runtime's layout of an empty interface: the type word and the
+// data word. typeRuntimeG builds one from a type pointer alone, so the data
+// word has to be laid out as nil on purpose. Reinterpreting the address of a
+// lone unsafe.Pointer as *interface{} read the word next to it on the stack as
+// the data word: whatever happened to be there went to reflect.TypeOf as a
+// pointer, which the GC may scan.
+type eface struct {
+	typ, data unsafe.Pointer
+}
+
 func typeRuntimeG() reflect.Type {
 	sections, offsets := typelinks()
 	//load go types
 	for i, base := range sections {
 		for _, offset := range offsets[i] {
-			typeAddr := add(base, uintptr(offset), "")
-			typ := reflect.TypeOf(*(*interface{})(unsafe.Pointer(&typeAddr)))
+			e := eface{typ: add(base, uintptr(offset), "")}
+			typ := reflect.TypeOf(*(*interface{})(unsafe.Pointer(&e)))
 			if typ.Kind() == reflect.Ptr && typ.Elem().String() == "runtime.g" {
 				return typ.Elem()
 			}
