@@ -62,12 +62,30 @@ func (t *RecordingTracer) NewSpanEvent(operation string) pinpoint.Tracer {
 	return t
 }
 
-func (t *RecordingTracer) SpanEvent() pinpoint.SpanEventRecorder { return t.Last() }
+// SpanEvent is the innermost event still open, as on a real tracer; an event
+// that has ended is not written to again.
+func (t *RecordingTracer) SpanEvent() pinpoint.SpanEventRecorder { return t.open() }
 
-func (t *RecordingTracer) EndSpanEvent() { t.Last().Ended = true }
+func (t *RecordingTracer) EndSpanEvent() { t.open().Ended = true }
 
-// Last is the span event started last.
-func (t *RecordingTracer) Last() *RecordedEvent { return t.Events[len(t.Events)-1] }
+// Last is the span event started last, ended or not.
+func (t *RecordingTracer) Last() *RecordedEvent {
+	if len(t.Events) == 0 {
+		panic("pptest: SpanEvent or EndSpanEvent before any NewSpanEvent")
+	}
+	return t.Events[len(t.Events)-1]
+}
+
+// open is the innermost event not yet ended; a readable failure, not an index
+// panic, when a plugin path ends or writes an event it never started.
+func (t *RecordingTracer) open() *RecordedEvent {
+	for i := len(t.Events) - 1; i >= 0; i-- {
+		if !t.Events[i].Ended {
+			return t.Events[i]
+		}
+	}
+	panic("pptest: SpanEvent or EndSpanEvent with no open span event")
+}
 
 // RecordedEvent is one span event and what was set on it. Strings holds the
 // annotations by key: each AppendString value, and the first value of each

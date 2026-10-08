@@ -199,6 +199,8 @@ occasional request reaches the generator's 30s client timeout.
 hours? Its default shape matches the C++ suite's soak, 12 h at 100 RPS in
 `full` mode with 30% `PERCENT` sampling:
 
+It needs `python3` on the host, for the port probes and the summary.
+
 ```bash
 export PINPOINT_GO_COLLECTOR_HOST="your-collector-host"
 ./soak_test.sh

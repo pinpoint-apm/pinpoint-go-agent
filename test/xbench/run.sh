@@ -39,7 +39,8 @@ mkmod "$WORK/run-head" "$ROOT"
 (cd "$ROOT/test/e2e" && go build -o "$WORK/stubcollector" ./cmd/stubcollector)
 "$WORK/stubcollector" > "$WORK/stubcollector.log" 2>&1 &
 STUB=$!
-trap 'kill $STUB 2>/dev/null' EXIT
+# The work dir is kept only when the caller named it with XBENCH_WORK.
+trap 'kill $STUB 2>/dev/null; [[ -n "${XBENCH_WORK:-}" ]] || rm -rf "$WORK"' EXIT
 sleep 1
 
 : > "$WORK/base.txt"

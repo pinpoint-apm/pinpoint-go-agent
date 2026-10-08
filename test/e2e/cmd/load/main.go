@@ -216,7 +216,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "ERROR: -mode must be mixed, full or an endpoint path; -concurrency and -duration must be positive")
 		os.Exit(2)
 	}
-	client.Transport = &http.Transport{MaxIdleConnsPerHost: *concurrency}
+	// A clone of the default transport, not a bare one: the bare one dropped the
+	// default dial and TLS handshake timeouts, so one wedged socket parked a
+	// worker for the whole client timeout.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConnsPerHost = *concurrency
+	client.Transport = transport
 
 	initial, err := serverStats()
 	if err == nil {

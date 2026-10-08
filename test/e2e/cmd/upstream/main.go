@@ -123,6 +123,10 @@ func onAgentWatchReload(w http.ResponseWriter, r *http.Request) {
 
 	agentMu.Lock()
 	defer agentMu.Unlock()
+	if agent == nil {
+		// After /agent/shutdown, like onAgentReload: start one to reconfigure.
+		agent = startAgent()
+	}
 
 	// The private file carries the collector ports too: it replaces the shared
 	// file wholesale, and the collector host arrives through the environment.

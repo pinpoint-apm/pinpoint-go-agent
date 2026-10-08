@@ -105,6 +105,7 @@ reachable() {
         "$1" "$2" 2>/dev/null
 }
 
+command -v python3 >/dev/null || fail "python3 is required (the port probes and the summary use it)."
 [[ -n "${PINPOINT_GO_COLLECTOR_HOST:-}" ]] || fail "PINPOINT_GO_COLLECTOR_HOST must be set."
 for v in RPS DURATION SAMPLE_INTERVAL CONCURRENCY; do
     [[ "${!v}" =~ ^[0-9]+$ && "${!v}" -gt 0 ]] || fail "$v must be a positive integer."
