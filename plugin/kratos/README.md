@@ -120,3 +120,12 @@ func callHTTP(w http.ResponseWriter, r *http.Request) {
 }
 ```
 [Full Example Source](/example/kratos/client/client.go)
+
+### Notes
+
+A handler error fails the span, as the gRPC plugin does: kratos reports a
+`404` as an `errors.NotFound` error, so such a response is a failed
+transaction here where it is not under the net/http plugins, whose
+`Http.Server.RecordHandlerError` option does not reach this plugin. The remote
+address of an HTTP transport is the socket's `RemoteAddr`; the
+`Http.Server.RealIpHeader` option is not applied either.

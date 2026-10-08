@@ -138,3 +138,8 @@ func doGrpc(w http.ResponseWriter, r *http.Request) {
 }
 ```
 [Full Example Source](/example/grpc/client/client.go)
+
+### Notes
+
+A handler error fails the span: the error is the RPC's status, so unlike the
+net/http plugins there is no `Http.Server.RecordHandlerError` switch here.

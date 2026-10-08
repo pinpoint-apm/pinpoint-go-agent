@@ -1103,6 +1103,8 @@ Http.Server.ExcludeMethod option sets HTTP Request methods to exclude from track
 ### Http.Server.RecordRequestHeader
 Http.Server.RecordRequestHeader option sets HTTP request headers to be logged on the server side.
 If sets to "HEADERS-ALL", it records all request headers.
+`HEADERS-ALL` records every header as it arrived, `Authorization` and `Cookie` included, so on a
+service that receives credentials list the headers you need instead.
 
 * PINPOINT_GO_HTTP_SERVER_RECORDREQUESTHEADER
 * type: string slice

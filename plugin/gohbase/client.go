@@ -106,6 +106,13 @@ func (c *Client) CheckAndPut(p *hrpc.Mutate, family string, qualifier string, ex
 	})
 }
 
+// Scan records the creation of the scanner, not the scan: gohbase's Scanner
+// fetches rows lazily in Next, so the event is over - a few microseconds, and
+// never an error - before any RPC is made. Keeping the event open across the
+// caller's Next loop would end it out of nesting order with whatever the
+// caller traces per row (doc/api_contracts.md 4), so the row fetches are
+// deliberately left untraced; a slow or failing scan shows up in the caller's
+// own event.
 func (c *Client) Scan(s *hrpc.Scan) hrpc.Scanner {
 	tracer, se := c.trace("hbase.Scan", s.Context())
 	if tracer == nil {
