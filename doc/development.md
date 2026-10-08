@@ -19,7 +19,7 @@ important thing to know before running anything:
 |---|---|---|
 | `/` | `pinpoint-go-agent` | the agent; depends on nothing but gRPC and its own support libraries |
 | `plugin/<name>/` | one module each | so instrumenting Gin does not pull in Kafka, Mongo and Elasticsearch |
-| `example/` | own module | depends on the agent and two plugins, via `replace` |
+| `example/` | own module | depends on the agent and every plugin, via `replace` |
 | `test/it/` | own module | depends on `plugin/http`, which the agent module must not |
 | `test/e2e/` | own module | depends on `plugin/http` and `plugin/grpc` |
 
@@ -74,8 +74,8 @@ uses, and the one to run locally before touching a plugin:
 for dir in plugin/*/; do (cd "$dir" && go test -race ./) || echo "FAILED: $dir"; done
 ```
 
-Only the module's own package is tested — the `example/` directories are
-standalone `main` programs and do not build as part of the package.
+Only the module's own package is tested — each plugin's example is a `main`
+program in the root `example/` module, which the agent job builds.
 
 ## Integration tests (mock collector)
 
@@ -198,7 +198,7 @@ Each new plugin needs:
 3. **A thin entry point.** Prefer the library's own seam — middleware, hook,
    observer, monitor, `RoundTripper` — over wrapping every call site.
 4. **A `README.md`** with install, usage and a link to the full example, and an
-   **`example/`** that builds and runs.
+   **`example/<name>`** in the root example module that builds and runs.
 5. **Tests, run with `-race`.** The convention in the existing plugins is to
    assert against a real agent, and to cover the cases that break in
    production: an unsampled transaction, a disabled agent, a panic through the

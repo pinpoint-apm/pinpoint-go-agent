@@ -543,7 +543,7 @@ Sample 1/rate. In other words, if the rate is 1, then it will be 100% and if it 
 * PINPOINT_GO_SAMPLING_COUNTERRATE
 * int
 * default: 1
-* valid range: 0 ~ 100
+* valid range: 0 (never sample) or a positive N (one transaction in N)
 * dynamic
 
 ### Sampling.PercentRate
@@ -1096,7 +1096,7 @@ If sets to "HEADERS-ALL", it records all request headers.
 
 ### Http.Server.RecordResponseHeader
 Http.Server.RecordResponseHeader option sets HTTP response headers to be logged on the server side.
-If sets to "HEADERS-ALL", it records all request headers.
+If sets to "HEADERS-ALL", it records all response headers.
 
 * PINPOINT_GO_HTTP_SERVER_RECORDRESPONSEHEADER
 * type: string slice
@@ -1105,7 +1105,7 @@ If sets to "HEADERS-ALL", it records all request headers.
 
 ### Http.Server.RecordRequestCookie
 Http.Server.RecordRequestCookie option sets HTTP request cookies to be logged on the server side.
-If sets to "HEADERS-ALL", it records all request headers.
+If sets to "HEADERS-ALL", it records all request cookies.
 
 * PINPOINT_GO_HTTP_SERVER_RECORDREQUESTCOOKIE
 * type: string slice
@@ -1201,7 +1201,7 @@ If sets to "HEADERS-ALL", it records all request headers.
 
 ### Http.Client.RecordResponseHeader
 Http.Client.RecordResponseHeader option sets HTTP response headers to be logged on the client side.
-If sets to "HEADERS-ALL", it records all request headers.
+If sets to "HEADERS-ALL", it records all response headers.
 
 * PINPOINT_GO_HTTP_CLIENT_RECORDRESPONSEHEADER
 * type: string slice
@@ -1210,7 +1210,7 @@ If sets to "HEADERS-ALL", it records all request headers.
 
 ### Http.Client.RecordRequestCookie
 Http.Client.RecordRequestCookie option sets HTTP request cookies to be logged on the client side.
-If sets to "HEADERS-ALL", it records all request headers.
+If sets to "HEADERS-ALL", it records all request cookies.
 
 * PINPOINT_GO_HTTP_CLIENT_RECORDREQUESTCOOKIE
 * type: string slice

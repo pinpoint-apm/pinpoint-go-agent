@@ -27,13 +27,13 @@ INFO[2026-09-03 11:36:00.000000] new pinpoint agent          module=pinpoint src
 INFO[2026-09-03 11:36:00.010000] connect to collector: my-collector:9991 (ssl: false)  module=pinpoint src=grpc
 INFO[2026-09-03 11:36:00.120000] success to register agent   module=pinpoint src=agent
 INFO[2026-09-03 11:36:00.121000] start ping goroutine        module=pinpoint src=agent
-INFO[2026-09-03 11:36:00.121000] start span goroutine        module=pinpoint src=agent
+INFO[2026-09-03 11:36:00.121000] start span batch goroutine  module=pinpoint src=agent
 INFO[2026-09-03 11:36:00.121000] start send stats goroutine  module=pinpoint src=agent
 ```
 
 The workers start only after `success to register agent` — registration is the
 precondition for tracing here. Until the collector accepts the AgentInfo,
-`NewSpan()` returns a no-op span and no stats are collected, so a blocked agent
+`NewSpanTracer()` returns a no-op tracer and no stats are collected, so a blocked agent
 port (9991) alone is enough to make a fully instrumented application report
 nothing at all. The retry never gives up, so a collector that comes up later is
 picked up without an application restart, and every 30 seconds of waiting the

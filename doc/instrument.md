@@ -28,7 +28,7 @@ The following is an example of creating a span from http server request handler:
 
 ``` go
 func doHandle(w http.ResponseWriter, r *http.Request) {
-    tracer = pinpoint.GetAgent().NewSpanTracerWithReader("HTTP Server", r.URL.Path, pinpoint.HttpHeaderReader(r.Header))
+    tracer := pinpoint.GetAgent().NewSpanTracerWithReader("HTTP Server", r.URL.Path, pinpoint.HttpHeaderReader(r.Header))
     defer tracer.EndSpan()
 
     span := tracer.Span()
