@@ -554,7 +554,7 @@ func makeServerMetaData(config *Config) *pb.PServerMetaData {
 	// os.Args is empty for a process exec'd with no argv at all; [1:] on it
 	// panicked the registration goroutine, and with it the host.
 	var vmArgs []string
-	if len(os.Args) > 1 {
+	if config.Bool(CfgCollectorAgentInfoSendArgs) && len(os.Args) > 1 {
 		vmArgs = make([]string, 0, len(os.Args)-1)
 		for _, arg := range os.Args[1:] {
 			vmArgs = append(vmArgs, validUTF8(arg))

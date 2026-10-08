@@ -100,6 +100,10 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Changed
 
+- **`NewConfig` returns an error for a config file that exists but cannot be
+  read** - a syntax error, an unsupported extension. The `Config` comes back
+  complete on defaults and the other sources, so `cfg, _ := NewConfig(...)`
+  behaves as before; a missing file is still optional and only logged.
 - **`SQL.CacheLengthLimit` no longer bounds the SQL-UID cache.** The cache keys
   on the statement's hash, so a statement past the limit registers its UID once
   instead of re-sending the metadata on every execution; the limit applies to
@@ -217,6 +221,10 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **`Collector.AgentInfo.SendArgs`** (`WithCollectorAgentInfoSendArgs`) turns
+  off sending the process's command line arguments with the agent information,
+  for a command line that carries a password or a token. On by default, as
+  before.
 - **`ppfasthttp.NewServerTracer(ctx, method, serverName)`** and
   **`RecordServerResponse(tracer, ctx, status)`** start a server span from a
   `*fasthttp.RequestCtx` and record its response, for the plugin of a framework

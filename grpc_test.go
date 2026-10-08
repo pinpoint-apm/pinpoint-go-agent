@@ -1313,6 +1313,21 @@ func Test_agentGrpc_makeAgentInfo_SanitizesInvalidUTF8(t *testing.T) {
 	require.NoError(t, err, "registration message must marshal")
 }
 
+// Collector.AgentInfo.SendArgs off keeps argv out of the registration: a
+// command line can carry a password or a token.
+func Test_agentGrpc_makeAgentInfo_SendArgsOff(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgCollectorAgentInfoSendArgs, false)
+	agent := newTestAgent(cfg)
+	agentGrpc := newMockAgentGrpc(agent)
+	swapForTest(t, &os.Args, []string{"app", "--db-password=hunter2"})
+
+	_, info := agentGrpc.makeAgentInfo()
+
+	assert.Empty(t, info.GetServerMetaData().GetVmArg())
+	assert.NotEmpty(t, info.GetServerMetaData().GetServiceInfo(), "the rest of the server metadata is still sent")
+}
+
 // The counterpart: sanitizing must not mangle legitimate non-ASCII argv.
 func Test_agentGrpc_makeAgentInfo_KeepsValidUTF8(t *testing.T) {
 	agent := newTestAgent(defaultConfig())

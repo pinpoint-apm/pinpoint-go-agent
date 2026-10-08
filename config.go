@@ -2,7 +2,9 @@ package pinpoint
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"math"
 	"os"
@@ -33,6 +35,9 @@ const (
 	CfgCollectorAgentInfoRefreshInterval   = "Collector.AgentInfo.RefreshInterval"
 	CfgCollectorAgentInfoSendRetryInterval = "Collector.AgentInfo.SendRetryInterval"
 	CfgCollectorAgentInfoMaxTryPerAttempt  = "Collector.AgentInfo.MaxTryPerAttempt"
+	// Collector.AgentInfo.SendArgs says whether the process's command line
+	// arguments go to the collector with the agent information.
+	CfgCollectorAgentInfoSendArgs = "Collector.AgentInfo.SendArgs"
 
 	// The duration keys below are in milliseconds without a "Ms" suffix,
 	// following the other millisecond keys (Stat.CollectInterval,
@@ -233,6 +238,7 @@ func initConfig() {
 	AddConfig(CfgCollectorAgentInfoRefreshInterval, CfgInt, defaultAgentInfoRefreshInterval, false)
 	AddConfig(CfgCollectorAgentInfoSendRetryInterval, CfgInt, defaultAgentInfoSendRetryInterval, false)
 	AddConfig(CfgCollectorAgentInfoMaxTryPerAttempt, CfgInt, defaultAgentInfoMaxTryPerAttempt, false)
+	AddConfig(CfgCollectorAgentInfoSendArgs, CfgBool, true, false)
 	AddConfig(CfgCollectorGrpcKeepAliveTime, CfgInt, grpcKeepAliveTime, false)
 	AddConfig(CfgCollectorGrpcKeepAliveTimeout, CfgInt, grpcKeepAliveTimeout, false)
 	AddConfig(CfgCollectorGrpcKeepAlivePermitWithoutCalls, CfgBool, grpcKeepAlivePermitWithoutCalls, false)
@@ -698,7 +704,8 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	sources := &cfgSources{cmd: config.parseCmdArgs(), env: true}
 	config.applyLogging(sources)
 
-	sources.file = config.loadConfigFile(sources)
+	var fileErr error
+	sources.file, fileErr = config.loadConfigFile(sources)
 
 	config.mu.Lock()
 
@@ -713,7 +720,9 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	config.mu.Unlock()
 
 	config.startConfigWatcher()
-	return config, nil
+	// The Config is complete and usable either way: fileErr only says the
+	// named file could not be read, see loadConfigFile.
+	return config, fileErr
 }
 
 // applyLogging resolves Log.Level, Log.Output, Log.MaxSize and Log.MaxBackups from the sources
@@ -814,23 +823,33 @@ func (config *Config) parseCmdArgs() map[string]string {
 	return cmd
 }
 
-func (config *Config) loadConfigFile(sources *cfgSources) *configFile {
+// loadConfigFile reads the config file, if one is named. A file that is not
+// there is not an error: the file is optional, every example names one that
+// may not exist, and the watcher picks it up once it appears. A file that is
+// there and cannot be read - a syntax error, an unsupported extension - is
+// returned as well as logged, so a caller that checks NewConfig's error sees
+// its misconfiguration instead of running on defaults.
+func (config *Config) loadConfigFile(sources *cfgSources) (*configFile, error) {
 	item := config.cfgMap[CfgConfigFile]
 	cfgFile := valueAs[string](item.value)
 	if value, _, ok := sources.lookup(CfgConfigFile, item); ok {
 		cfgFile = valueAs[string](value)
 	}
 	if cfgFile == "" {
-		return newConfigFile("")
+		return newConfigFile(""), nil
 	}
 
 	f := newConfigFile(cfgFile)
-	if err := f.read(); err != nil {
+	err := f.read()
+	if err != nil {
 		Log("config").Errorf("config file loading error: %v", err)
+		if errors.Is(err, fs.ErrNotExist) {
+			err = nil
+		}
 	}
 	config.configFile = cfgFile
 	config.configFileCfg = f
-	return f
+	return f, err
 }
 
 // cfgSources are where an option's value comes from, in precedence order:
@@ -1743,6 +1762,14 @@ func WithCollectorAgentInfoSendRetryInterval(interval int) ConfigOption {
 // per refresh cycle.
 func WithCollectorAgentInfoMaxTryPerAttempt(count int) ConfigOption {
 	return withValue(CfgCollectorAgentInfoMaxTryPerAttempt, count)
+}
+
+// WithCollectorAgentInfoSendArgs sets whether the process's command line arguments
+// are sent to the collector with the agent information, where the Pinpoint web
+// shows them on the server map. On by default; turn it off when the command
+// line carries secrets.
+func WithCollectorAgentInfoSendArgs(send bool) ConfigOption {
+	return withValue(CfgCollectorAgentInfoSendArgs, send)
 }
 
 // WithCollectorGrpcKeepAliveTime sets the gRPC keepalive ping interval in milliseconds.

@@ -84,6 +84,11 @@ or properties (`.properties`, `.props`, `.prop`). Configuration keys used in
 config files are case-insensitive. A properties file is `key=value` lines with
 `#` comments: no escapes, line continuations or `${...}` references.
 
+A file that does not exist is skipped with a log line and picked up by the watcher once it appears,
+so every example can name one. A file that exists but cannot be read - a syntax error, an unsupported
+extension - is logged as well and returned as `NewConfig`'s error; the returned `Config` is still complete,
+on defaults and the other sources, so `NewAgent` works with it either way.
+
 * PINPOINT_GO_CONFIGFILE
 * string
 * case-sensitive
@@ -314,6 +319,16 @@ It has no effect if Collector.AgentInfo.RefreshInterval is 0.
 * PINPOINT_GO_COLLECTOR_AGENTINFO_MAXTRYPERATTEMPT
 * type: int
 * default: 3
+
+### Collector.AgentInfo.SendArgs
+Collector.AgentInfo.SendArgs option sets whether the process's command line arguments are sent to the
+collector with the agent information, where the Pinpoint web shows them on the server map. Turn it off
+when the command line carries a password or a token: the arguments are sent as they are, on every
+registration and refresh.
+
+* PINPOINT_GO_COLLECTOR_AGENTINFO_SENDARGS
+* type: bool
+* default: true
 
 ### Collector.Grpc.KeepAliveTime
 Collector.Grpc.KeepAliveTime option sets the interval in milliseconds after which the agent sends an HTTP/2
