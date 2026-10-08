@@ -6,7 +6,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 	"unsafe"
@@ -18,16 +17,11 @@ import (
 
 // readCounters sums the shards without resetting them, for tests that assert
 // on cumulative counts (drainCounters is destructive).
-func (stats *agentStats) readCounters() statsCounterSnapshot {
-	var c statsCounterSnapshot
+func (stats *agentStats) readCounters() (c statsCounterSnapshot) {
 	for i := range stats.shards {
-		s := &stats.shards[i]
-		c.sampleNew += atomic.LoadInt64(&s.sampleNew)
-		c.skipNew += atomic.LoadInt64(&s.skipNew)
-		c.unSampleNew += atomic.LoadInt64(&s.unSampleNew)
-		c.sampleCont += atomic.LoadInt64(&s.sampleCont)
-		c.unSampleCont += atomic.LoadInt64(&s.unSampleCont)
-		c.skipCont += atomic.LoadInt64(&s.skipCont)
+		for k := range c {
+			c[k] += stats.shards[i].counters[k].Load()
+		}
 	}
 	return c
 }
@@ -45,12 +39,12 @@ func Test_drainStatsCountersAggregatesAllShards(t *testing.T) {
 		wg.Go(func() {
 			for i := 0; i < perG; i++ {
 				stats.collectResponseTime(int64(g*perG + i + 1))
-				stats.incrSampleNew()
-				stats.incrUnSampleNew()
-				stats.incrSampleCont()
-				stats.incrUnSampleCont()
-				stats.incrSkipNew()
-				stats.incrSkipCont()
+				stats.incr(statSampleNew)
+				stats.incr(statUnSampleNew)
+				stats.incr(statSampleCont)
+				stats.incr(statUnSampleCont)
+				stats.incr(statSkipNew)
+				stats.incr(statSkipCont)
 			}
 		})
 	}
@@ -59,15 +53,15 @@ func Test_drainStatsCountersAggregatesAllShards(t *testing.T) {
 	counters := stats.drainCounters()
 
 	const n = int64(goroutines * perG)
-	assert.Equal(t, n*(n+1)/2, counters.accResponseTime)
-	assert.Equal(t, n, counters.maxResponseTime)
-	assert.Equal(t, n, counters.requestCount)
-	assert.Equal(t, n, counters.sampleNew)
-	assert.Equal(t, n, counters.unSampleNew)
-	assert.Equal(t, n, counters.sampleCont)
-	assert.Equal(t, n, counters.unSampleCont)
-	assert.Equal(t, n, counters.skipNew)
-	assert.Equal(t, n, counters.skipCont)
+	assert.Equal(t, n*(n+1)/2, counters[statAccResponseTime])
+	assert.Equal(t, n, counters[statMaxResponseTime])
+	assert.Equal(t, n, counters[statRequestCount])
+	assert.Equal(t, n, counters[statSampleNew])
+	assert.Equal(t, n, counters[statUnSampleNew])
+	assert.Equal(t, n, counters[statSampleCont])
+	assert.Equal(t, n, counters[statUnSampleCont])
+	assert.Equal(t, n, counters[statSkipNew])
+	assert.Equal(t, n, counters[statSkipCont])
 	assert.Equal(t, statsCounterSnapshot{}, stats.drainCounters(), "second drain must return zeros")
 }
 
@@ -78,15 +72,15 @@ func Test_statShardWithoutGoIdOffset(t *testing.T) {
 
 	stats := newAgentStats()
 	stats.collectResponseTime(100)
-	stats.incrSkipNew()
+	stats.incr(statSkipNew)
 
 	assert.Equal(t, &stats.shards[0], stats.shard())
 
 	counters := stats.drainCounters()
-	assert.Equal(t, int64(100), counters.accResponseTime)
-	assert.Equal(t, int64(100), counters.maxResponseTime)
-	assert.Equal(t, int64(1), counters.requestCount)
-	assert.Equal(t, int64(1), counters.skipNew)
+	assert.Equal(t, int64(100), counters[statAccResponseTime])
+	assert.Equal(t, int64(100), counters[statMaxResponseTime])
+	assert.Equal(t, int64(1), counters[statRequestCount])
+	assert.Equal(t, int64(1), counters[statSkipNew])
 }
 
 func Test_collectResponseTimePreservesMax(t *testing.T) {
@@ -98,10 +92,10 @@ func Test_collectResponseTimePreservesMax(t *testing.T) {
 
 	counters := stats.drainCounters()
 
-	assert.Equal(t, int64(600), counters.accResponseTime)
-	assert.Equal(t, int64(3), counters.requestCount)
-	assert.Equal(t, int64(300), counters.maxResponseTime)
-	assert.Equal(t, int64(200), calcResponseAvg(counters.accResponseTime, counters.requestCount))
+	assert.Equal(t, int64(600), counters[statAccResponseTime])
+	assert.Equal(t, int64(3), counters[statRequestCount])
+	assert.Equal(t, int64(300), counters[statMaxResponseTime])
+	assert.Equal(t, int64(200), calcResponseAvg(counters[statAccResponseTime], counters[statRequestCount]))
 }
 
 func Test_calcResponseAvgReturnsZeroWithoutRequests(t *testing.T) {
@@ -469,23 +463,23 @@ func Test_collectAgentStatWorker_restartKeepsPartialBatchAndRetakesBaseline(t *t
 func Test_TransactionCounters(t *testing.T) {
 	stats := newAgentStats()
 
-	stats.incrSampleNew()
-	stats.incrSampleCont()
-	stats.incrSampleCont()
-	stats.incrUnSampleNew()
-	stats.incrUnSampleNew()
-	stats.incrUnSampleNew()
-	stats.incrUnSampleCont()
-	stats.incrSkipNew()
-	stats.incrSkipCont()
+	stats.incr(statSampleNew)
+	stats.incr(statSampleCont)
+	stats.incr(statSampleCont)
+	stats.incr(statUnSampleNew)
+	stats.incr(statUnSampleNew)
+	stats.incr(statUnSampleNew)
+	stats.incr(statUnSampleCont)
+	stats.incr(statSkipNew)
+	stats.incr(statSkipCont)
 
 	c := stats.drainCounters()
-	assert.Equal(t, int64(1), c.sampleNew)
-	assert.Equal(t, int64(2), c.sampleCont)
-	assert.Equal(t, int64(3), c.unSampleNew)
-	assert.Equal(t, int64(1), c.unSampleCont)
-	assert.Equal(t, int64(1), c.skipNew)
-	assert.Equal(t, int64(1), c.skipCont)
+	assert.Equal(t, int64(1), c[statSampleNew])
+	assert.Equal(t, int64(2), c[statSampleCont])
+	assert.Equal(t, int64(3), c[statUnSampleNew])
+	assert.Equal(t, int64(1), c[statUnSampleCont])
+	assert.Equal(t, int64(1), c[statSkipNew])
+	assert.Equal(t, int64(1), c[statSkipCont])
 
 	assert.Equal(t, statsCounterSnapshot{}, stats.drainCounters(), "a drain resets the counters")
 }
@@ -502,7 +496,7 @@ func BenchmarkStatsCounterUpdate(b *testing.B) {
 		i := int64(0)
 		for pb.Next() {
 			stats.collectResponseTime(i & 1023)
-			stats.incrSampleNew()
+			stats.incr(statSampleNew)
 			i++
 		}
 	})

@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -891,7 +890,7 @@ func TestSpan_EndSpanTwiceCountsOnce(t *testing.T) {
 
 	var requests int64
 	for i := range agent.stats.shards {
-		requests += atomic.LoadInt64(&agent.stats.shards[i].requestCount)
+		requests += agent.stats.shards[i].counters[statRequestCount].Load()
 	}
 	assert.Equal(t, int64(1), requests, "response time collected once")
 }
@@ -908,7 +907,7 @@ func TestNoopSpan_EndSpanTwiceCountsOnce(t *testing.T) {
 
 	var requests int64
 	for i := range agent.stats.shards {
-		requests += atomic.LoadInt64(&agent.stats.shards[i].requestCount)
+		requests += agent.stats.shards[i].counters[statRequestCount].Load()
 	}
 	assert.Equal(t, int64(1), requests, "response time collected once")
 }

@@ -1530,8 +1530,8 @@ func Test_agent_continueHeaders_table(t *testing.T) {
 
 			after := agent.stats.readCounters()
 			// (a) which sampler ran
-			contSampler := after.sampleCont > before.sampleCont
-			newSampler := after.sampleNew > before.sampleNew
+			contSampler := after[statSampleCont] > before[statSampleCont]
+			newSampler := after[statSampleNew] > before[statSampleNew]
 			// (b) parent adopted, or root
 			adoptedParent := s.parentSpanId != -1
 			// (c) transaction id inherited, or generated here

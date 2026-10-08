@@ -140,8 +140,8 @@ func Test_traceSampler_skip(t *testing.T) {
 		isSampled func(*traceSampler, *agentStats) bool
 		perSecond statsCounterSnapshot
 	}{
-		{"new", buildTraceSampler(newRateSampler(1), 1, 10), (*traceSampler).isNewSampled, statsCounterSnapshot{sampleNew: 1, skipNew: 99}},
-		{"continue", buildTraceSampler(newRateSampler(100), 10, 1), (*traceSampler).isContinueSampled, statsCounterSnapshot{sampleCont: 1, skipCont: 99}},
+		{"new", buildTraceSampler(newRateSampler(1), 1, 10), (*traceSampler).isNewSampled, statsCounterSnapshot{statSampleNew: 1, statSkipNew: 99}},
+		{"continue", buildTraceSampler(newRateSampler(100), 10, 1), (*traceSampler).isContinueSampled, statsCounterSnapshot{statSampleCont: 1, statSkipCont: 99}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			stats := newAgentStats()

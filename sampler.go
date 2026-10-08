@@ -148,22 +148,22 @@ func newTokenBucket(tps int) *rate.Limiter {
 
 func (s *traceSampler) isNewSampled(stats *agentStats) bool {
 	if !s.baseSampler.isSampled() {
-		stats.incrUnSampleNew()
+		stats.incr(statUnSampleNew)
 		return false
 	}
 	if s.newSampleLimiter != nil && !s.newSampleLimiter.Allow() {
-		stats.incrSkipNew()
+		stats.incr(statSkipNew)
 		return false
 	}
-	stats.incrSampleNew()
+	stats.incr(statSampleNew)
 	return true
 }
 
 func (s *traceSampler) isContinueSampled(stats *agentStats) bool {
 	if s.continueSampleLimiter != nil && !s.continueSampleLimiter.Allow() {
-		stats.incrSkipCont()
+		stats.incr(statSkipCont)
 		return false
 	}
-	stats.incrSampleCont()
+	stats.incr(statSampleCont)
 	return true
 }

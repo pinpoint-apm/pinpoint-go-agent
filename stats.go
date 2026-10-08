@@ -49,17 +49,26 @@ const statShardCount = 16 // power of two
 // statShard is padded to 128 bytes so two shards never share a cache line
 // regardless of the array's base alignment (Go has no alignas).
 type statShard struct {
-	accResponseTime int64
-	maxResponseTime int64
-	requestCount    int64
-	sampleNew       int64
-	unSampleNew     int64
-	sampleCont      int64
-	unSampleCont    int64
-	skipNew         int64
-	skipCont        int64
-	_               [7]int64
+	counters [statCounterCount]atomic.Int64
+	_        [16 - statCounterCount]int64
 }
+
+// statCounter indexes the per-request counters of a shard and of a
+// statsCounterSnapshot.
+type statCounter int
+
+const (
+	statAccResponseTime statCounter = iota
+	statMaxResponseTime
+	statRequestCount
+	statSampleNew
+	statUnSampleNew
+	statSampleCont
+	statUnSampleCont
+	statSkipNew
+	statSkipCont
+	statCounterCount
+)
 
 // agentStats owns everything the agent stat collector reads: the per-request
 // counters, the registry of in-flight spans, the process handle and the
@@ -380,17 +389,9 @@ func (r *activeSpanRegistry) count(now time.Time) []int32 {
 	return count
 }
 
-type statsCounterSnapshot struct {
-	accResponseTime int64
-	maxResponseTime int64
-	requestCount    int64
-	sampleNew       int64
-	unSampleNew     int64
-	sampleCont      int64
-	unSampleCont    int64
-	skipNew         int64
-	skipCont        int64
-}
+// statsCounterSnapshot is one collection interval's worth of the shard
+// counters, summed - statMaxResponseTime max-combined - by drainCounters.
+type statsCounterSnapshot [statCounterCount]int64
 
 // uncollectedUsage is what numFD and numThreads report when the reading is
 // unavailable - no process handle, or a failed read. Zero is a plausible
@@ -494,14 +495,14 @@ func (stats *agentStats) getStats() *inspectorStats {
 		gcTime:       int64(memStat.pauseTotalNs / uint64(time.Millisecond)),
 		numOpenFD:    int64(stats.numFD()),
 		numThreads:   int64(stats.numThreads()),
-		responseAvg:  calcResponseAvg(counters.accResponseTime, counters.requestCount),
-		responseMax:  counters.maxResponseTime,
-		sampleNew:    counters.sampleNew,
-		sampleCont:   counters.sampleCont,
-		unSampleNew:  counters.unSampleNew,
-		unSampleCont: counters.unSampleCont,
-		skipNew:      counters.skipNew,
-		skipCont:     counters.skipCont,
+		responseAvg:  calcResponseAvg(counters[statAccResponseTime], counters[statRequestCount]),
+		responseMax:  counters[statMaxResponseTime],
+		sampleNew:    counters[statSampleNew],
+		sampleCont:   counters[statSampleCont],
+		unSampleNew:  counters[statUnSampleNew],
+		unSampleCont: counters[statUnSampleCont],
+		skipNew:      counters[statSkipNew],
+		skipCont:     counters[statSkipCont],
 		activeSpan:   stats.activeSpan.count(now),
 	}
 
@@ -517,21 +518,16 @@ func (stats *agentStats) getStats() *inspectorStats {
 // (accResponseTime, requestCount) pair can split across two intervals if the
 // sweep interleaves between the two adds. Both were already true of the nine
 // sequential global swaps this replaces.
-func (stats *agentStats) drainCounters() statsCounterSnapshot {
-	var c statsCounterSnapshot
+func (stats *agentStats) drainCounters() (c statsCounterSnapshot) {
 	for i := range stats.shards {
-		s := &stats.shards[i]
-		c.accResponseTime += atomic.SwapInt64(&s.accResponseTime, 0)
-		if max := atomic.SwapInt64(&s.maxResponseTime, 0); max > c.maxResponseTime {
-			c.maxResponseTime = max
+		for k := range c {
+			v := stats.shards[i].counters[k].Swap(0)
+			if statCounter(k) == statMaxResponseTime {
+				c[k] = max(c[k], v)
+			} else {
+				c[k] += v
+			}
 		}
-		c.requestCount += atomic.SwapInt64(&s.requestCount, 0)
-		c.sampleNew += atomic.SwapInt64(&s.sampleNew, 0)
-		c.unSampleNew += atomic.SwapInt64(&s.unSampleNew, 0)
-		c.sampleCont += atomic.SwapInt64(&s.sampleCont, 0)
-		c.unSampleCont += atomic.SwapInt64(&s.unSampleCont, 0)
-		c.skipNew += atomic.SwapInt64(&s.skipNew, 0)
-		c.skipCont += atomic.SwapInt64(&s.skipCont, 0)
 	}
 	return c
 }
@@ -614,15 +610,15 @@ func (stats *agentStats) collect() (snapshot *inspectorStats) {
 
 func (stats *agentStats) collectResponseTime(resTime int64) {
 	s := stats.shard()
-	atomic.AddInt64(&s.accResponseTime, resTime)
-	atomic.AddInt64(&s.requestCount, 1)
+	s.counters[statAccResponseTime].Add(resTime)
+	s.counters[statRequestCount].Add(1)
 
 	for {
-		max := atomic.LoadInt64(&s.maxResponseTime)
+		max := s.counters[statMaxResponseTime].Load()
 		if max >= resTime {
 			return
 		}
-		if atomic.CompareAndSwapInt64(&s.maxResponseTime, max, resTime) {
+		if s.counters[statMaxResponseTime].CompareAndSwap(max, resTime) {
 			return
 		}
 	}
@@ -630,34 +626,13 @@ func (stats *agentStats) collectResponseTime(resTime int64) {
 
 func (stats *agentStats) reset() {
 	for i := range stats.shards {
-		s := &stats.shards[i]
-		atomic.StoreInt64(&s.accResponseTime, 0)
-		atomic.StoreInt64(&s.requestCount, 0)
-		atomic.StoreInt64(&s.maxResponseTime, 0)
-		atomic.StoreInt64(&s.sampleNew, 0)
-		atomic.StoreInt64(&s.unSampleNew, 0)
-		atomic.StoreInt64(&s.sampleCont, 0)
-		atomic.StoreInt64(&s.unSampleCont, 0)
-		atomic.StoreInt64(&s.skipNew, 0)
-		atomic.StoreInt64(&s.skipCont, 0)
+		for k := range stats.shards[i].counters {
+			stats.shards[i].counters[k].Store(0)
+		}
 	}
 }
 
-func (stats *agentStats) incrSampleNew() {
-	atomic.AddInt64(&stats.shard().sampleNew, 1)
-}
-func (stats *agentStats) incrUnSampleNew() {
-	atomic.AddInt64(&stats.shard().unSampleNew, 1)
-}
-func (stats *agentStats) incrSampleCont() {
-	atomic.AddInt64(&stats.shard().sampleCont, 1)
-}
-func (stats *agentStats) incrUnSampleCont() {
-	atomic.AddInt64(&stats.shard().unSampleCont, 1)
-}
-func (stats *agentStats) incrSkipNew() {
-	atomic.AddInt64(&stats.shard().skipNew, 1)
-}
-func (stats *agentStats) incrSkipCont() {
-	atomic.AddInt64(&stats.shard().skipCont, 1)
+// incr counts one sampling outcome on the caller's shard.
+func (stats *agentStats) incr(c statCounter) {
+	stats.shard().counters[c].Add(1)
 }
