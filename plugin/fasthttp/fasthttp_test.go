@@ -303,6 +303,54 @@ func TestDoClient_InjectsTracingHeaders(t *testing.T) {
 	assert.Equal(t, tracer.TransactionId().String(), string(req.Header.Peek(pinpoint.HeaderTraceId)))
 }
 
+// A fasthttp request is reused: sent again without Reset it still carries the
+// previous call's Pinpoint headers, so each DoClient must leave exactly the
+// headers of its own call - none for a noop tracer, its own ids for a sampled
+// one - rather than forwarding the previous transaction's.
+func TestDoClient_ReusedRequestCarriesOnlyItsOwnHeaders(t *testing.T) {
+	pptest.StartAgent(t)
+
+	req := fasthttp.AcquireRequest()
+	defer fasthttp.ReleaseRequest(req)
+	req.SetRequestURI("http://localhost:9090/hello")
+	req.Header.SetMethod(http.MethodGet)
+	send := func(ctx context.Context) {
+		require.NoError(t, DoClient(func() error { return nil }, ctx, req, nil))
+	}
+
+	first := pinpoint.GetAgent().NewSpanTracer("first", "/first")
+	send(pinpoint.NewContext(context.Background(), first))
+	first.EndSpan()
+	require.Equal(t, first.TransactionId().String(), string(req.Header.Peek(pinpoint.HeaderTraceId)))
+
+	send(context.Background())
+	for _, key := range pinpointHeaders {
+		assert.Empty(t, req.Header.Peek(key), "a noop-tracer call forwarded the previous call's %s", key)
+	}
+
+	second := pinpoint.GetAgent().NewSpanTracer("second", "/second")
+	defer second.EndSpan()
+	send(pinpoint.NewContext(context.Background(), second))
+	assert.Equal(t, second.TransactionId().String(), string(req.Header.Peek(pinpoint.HeaderTraceId)))
+}
+
+// Http.Server.RecordRequestParam applies to fasthttp servers as it does to
+// net/http ones: the query string is recorded on the span, in the collector's
+// "k=v&k=v" form.
+func TestWrapHandler_RecordsTheRequestParams(t *testing.T) {
+	pptest.StartAgent(t, pphttp.WithHttpServerRecordRequestParam(true))
+
+	var tracer pinpoint.Tracer
+	h := WrapHandler(func(ctx *fasthttp.RequestCtx) { tracer = tracerOf(t, ctx) }, "/p")
+	h(newRequestCtx(http.MethodGet, "http://localhost/p?a=1&b=x%20y"))
+
+	encoded, err := json.Marshal(pptest.SpanOf(t, tracer)["Annotations"])
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"key":41`, "annotation 41 must be recorded")
+	assert.Contains(t, string(encoded), "a=1", "the query must be recorded percent-decoded")
+	assert.Contains(t, string(encoded), "b=x y", "the query must be recorded percent-decoded")
+}
+
 // The callee reads the headers back through the same adapter the server side
 // uses, and has to land in the caller's transaction.
 func TestDoClient_AndWrapHandlerShareOneTransaction(t *testing.T) {
