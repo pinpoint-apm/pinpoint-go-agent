@@ -13,6 +13,7 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/testapp"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 var greeting = &testapp.Greeting{Msg: "Hello!"}
@@ -120,7 +121,7 @@ func streamCallStreamReturn(ctx context.Context, client testapp.HelloClient) {
 func doGrpc(w http.ResponseWriter, r *http.Request) {
 	conn, err := grpc.NewClient(
 		"dns:///localhost:8080",
-		grpc.WithInsecure(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithUnaryInterceptor(ppgrpc.UnaryClientInterceptor()),
 		grpc.WithStreamInterceptor(ppgrpc.StreamClientInterceptor()),
 	)
@@ -130,8 +131,7 @@ func doGrpc(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	client := testapp.NewHelloClient(conn)
-	tracer := pinpoint.FromContext(r.Context())
-	ctx := pinpoint.NewContext(context.Background(), tracer)
+	ctx := r.Context() // carries the request's tracer; no need to rewrap it
 
 	unaryCallUnaryReturn(ctx, client)
 	unaryCallStreamReturn(ctx, client)

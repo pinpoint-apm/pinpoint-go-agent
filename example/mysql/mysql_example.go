@@ -15,8 +15,6 @@ import (
 )
 
 func tableCount(w http.ResponseWriter, r *http.Request) {
-	tracer := pinpoint.FromContext(r.Context())
-
 	db, err := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/information_schema")
 	if err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -25,8 +23,7 @@ func tableCount(w http.ResponseWriter, r *http.Request) {
 	}
 	defer db.Close()
 
-	ctx := pinpoint.NewContext(context.Background(), tracer)
-	row := db.QueryRowContext(ctx, "SELECT count(*) from tables")
+	row := db.QueryRowContext(r.Context(), "SELECT count(*) from tables")
 	var count int
 	row.Scan(&count)
 
@@ -42,9 +39,9 @@ func query(w http.ResponseWriter, r *http.Request) {
 	}
 	defer db.Close()
 
-	ctx := pinpoint.NewContext(context.Background(), pinpoint.TracerFromRequestContext(r))
+	ctx := r.Context() // carries the request's tracer; no need to rewrap it
 
-	res, _ := db.ExecContext(ctx, "CREATE TABLE employee (id INT AUTO_INCREMENT, emp_name VARCHAR(64), department VARCHAR(64), created DATE, PRIMARY KEY (id))")
+	_, _ = db.ExecContext(ctx, "CREATE TABLE employee (id INT AUTO_INCREMENT, emp_name VARCHAR(64), department VARCHAR(64), created DATE, PRIMARY KEY (id))")
 
 	stmt, err := db.Prepare("INSERT employee SET emp_name = ?, department = ?, created = ?")
 	if err != nil {
@@ -53,8 +50,8 @@ func query(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, _ = stmt.ExecContext(ctx, "foo", "pinpoint", "2022-08-15")
-	res, _ = stmt.ExecContext(ctx, "bar", "avengers", "2022-08-16")
+	_, _ = stmt.ExecContext(ctx, "foo", "pinpoint", "2022-08-15")
+	res, _ := stmt.ExecContext(ctx, "bar", "avengers", "2022-08-16")
 	id, _ := res.LastInsertId()
 	fmt.Println("Insert ID", id)
 	stmt.Close()
@@ -106,7 +103,7 @@ func query(w http.ResponseWriter, r *http.Request) {
 
 	tx(ctx, db)
 
-	res, _ = db.ExecContext(ctx, "DROP TABLE employee")
+	_, _ = db.ExecContext(ctx, "DROP TABLE employee")
 }
 
 func tx(ctx context.Context, db *sql.DB) {

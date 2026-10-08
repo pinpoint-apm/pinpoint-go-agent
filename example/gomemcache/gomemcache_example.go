@@ -29,7 +29,9 @@ func doMemcache(w http.ResponseWriter, r *http.Request) {
 
 	item, err := mc.Get("foo")
 	if err != nil {
-		fmt.Println(err)
+		// A miss or a memcached that is down leaves item nil.
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
 	}
 	fmt.Printf("key: %s, value: %s", item.Key, string(item.Value))
 
@@ -46,8 +48,16 @@ func doMemcache(w http.ResponseWriter, r *http.Request) {
 	}
 
 	m, err := mc.GetMulti([]string{"foo", "bar"})
-	fmt.Printf("key: %s, value: %s", m["foo"].Key, string(m["foo"].Value))
-	fmt.Printf("key: %s, value: %s", m["bar"].Key, string(m["bar"].Value))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	// GetMulti leaves a missing key out of the map rather than erroring.
+	for _, key := range []string{"foo", "bar"} {
+		if it, ok := m[key]; ok {
+			fmt.Printf("key: %s, value: %s", it.Key, string(it.Value))
+		}
+	}
 
 	err = mc.Delete("foo")
 	if err != nil {

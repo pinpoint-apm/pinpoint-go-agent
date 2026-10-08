@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"log"
 	"net/http"
@@ -29,8 +28,7 @@ func gormQuery(w http.ResponseWriter, r *http.Request) {
 		panic("failed to connect database")
 	}
 
-	tracer := pinpoint.FromContext(r.Context())
-	ctx := pinpoint.NewContext(context.Background(), tracer)
+	ctx := r.Context() // carries the request's tracer; no need to rewrap it
 	gormdb = gormdb.WithContext(ctx)
 
 	gormdb.AutoMigrate(&Product{})

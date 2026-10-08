@@ -1,6 +1,6 @@
 {
   "applicationName": "JsonAppName",
-  "applicationtype": 1901,
+  "applicationtype": 1800,
   "agentname": "JsonAgentName",
   "collector": {
     "host": "json.collector.host",

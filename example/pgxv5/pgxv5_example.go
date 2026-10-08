@@ -68,8 +68,7 @@ func tableCount(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dbConn.Close(context.Background())
 
-	tracer := pinpoint.FromContext(r.Context())
-	ctx := pinpoint.NewContext(context.Background(), tracer)
+	ctx := r.Context() // carries the request's tracer; no need to rewrap it
 
 	rows := dbConn.QueryRow(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
 
@@ -87,7 +86,7 @@ func tableCount(w http.ResponseWriter, r *http.Request) {
 var dbPool *pgxpool.Pool // opened once in main, shared by query()
 
 func query(w http.ResponseWriter, r *http.Request) {
-	ctx := pinpoint.NewContext(context.Background(), pinpoint.TracerFromRequestContext(r))
+	ctx := r.Context() // carries the request's tracer; no need to rewrap it
 
 	_, _ = dbPool.Exec(ctx, "CREATE TABLE employee (id INTEGER PRIMARY KEY, emp_name VARCHAR(64), department VARCHAR(64), created DATE)")
 
@@ -170,8 +169,7 @@ func batch(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dbConn.Close(context.Background())
 
-	tracer := pinpoint.FromContext(r.Context())
-	ctx := pinpoint.NewContext(context.Background(), tracer)
+	ctx := r.Context() // carries the request's tracer; no need to rewrap it
 
 	_, _ = dbConn.Exec(ctx, "CREATE TABLE employee (id INTEGER PRIMARY KEY, emp_name VARCHAR(64), department VARCHAR(64), created DATE)")
 
@@ -211,7 +209,7 @@ func queryStdSql(w http.ResponseWriter, r *http.Request) {
 	}
 	defer db.Close()
 
-	ctx := pinpoint.NewContext(context.Background(), pinpoint.TracerFromRequestContext(r))
+	ctx := r.Context() // carries the request's tracer; no need to rewrap it
 
 	_, _ = db.ExecContext(ctx, "CREATE TABLE employee (id INTEGER PRIMARY KEY, emp_name VARCHAR(64), department VARCHAR(64), created DATE)")
 
@@ -272,7 +270,7 @@ func queryStdSql(w http.ResponseWriter, r *http.Request) {
 
 	txStdSql(ctx, db)
 
-	res, _ = db.ExecContext(ctx, "DROP TABLE employee")
+	_, _ = db.ExecContext(ctx, "DROP TABLE employee")
 }
 
 func txStdSql(ctx context.Context, db *sql.DB) {

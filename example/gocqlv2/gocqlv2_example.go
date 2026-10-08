@@ -40,13 +40,13 @@ func doCassandra(w http.ResponseWriter, r *http.Request) {
 	var text string
 
 	query := session.Query(`SELECT id, text FROM tweet WHERE timeline = ? LIMIT 1`, "me")
-	if err := query.WithContext(ctx).Consistency(gocql.One).Scan(&id, &text); err != nil {
+	if err := query.Consistency(gocql.One).ScanContext(ctx, &id, &text); err != nil {
 		log.Println(err)
 	}
 	io.WriteString(w, "Tweet:"+text)
 
 	query = session.Query(`SELECT id, text FROM tweet WHERE timeline = ?`, "me")
-	iter := query.WithContext(ctx).Iter()
+	iter := query.IterContext(ctx)
 	for iter.Scan(&id, &text) {
 		io.WriteString(w, "Tweet:"+text)
 	}

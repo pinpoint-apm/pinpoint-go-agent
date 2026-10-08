@@ -55,8 +55,8 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   `pplogrus.WithField` (use `NewField`); `Tracer.NewAsyncSpan` (use
   `NewGoroutineTracer`); `pphttp.WrapHandle` and `WrapHandleFunc` (use
   `WrapHandler` and `WrapHandlerFunc`); `ppbeego.Middleware` and `DoRequest`
-  (use `ServerFilterChain` and `ClientFilterChain`); and in `ppsarama` and
-  `ppsaramaibm` the consumer wrappers `ConsumeMessage`, `WrapConsumerMessage`,
+  (use `ServerFilterChain` and `ClientFilterChain`); and in `ppsaramaibm` the
+  consumer wrappers `ConsumeMessage`, `WrapConsumerMessage`,
   `ConsumerMessage`, `HandlerFunc`, `NewConsumer`, `Consumer`,
   `WrapPartitionConsumer` and `PartitionConsumer` (use `ConsumeMessageContext`
   on a raw sarama consumer) together with the three `WithContext` functions
@@ -91,9 +91,7 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   end-of-life upstream with an unpatched advisory (GHSA-vfp3-v2gw-7wfq) and no
   fixed v3 release to pin, and its code was a copy of `plugin/echov4`. Use
   `plugin/echov4` or `plugin/echov5`.
-- **`plugin/goelastic` serves every go-elasticsearch major**, and the
-  `plugin/goelasticv8` and `plugin/goelasticv9` modules v2 had introduced are
-  gone. `ppgoelastic.NewTransport` is an `http.RoundTripper` that never imports
+- **`plugin/goelastic` serves every go-elasticsearch major.** `ppgoelastic.NewTransport` is an `http.RoundTripper` that never imports
   the client, and `elasticsearch.Config.Transport` is the same field in v7, v8
   and v9, so the three were one file under three names. Import
   `plugin/goelastic/v2`; `NewTransport` is unchanged.
@@ -376,7 +374,7 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   the noop tracer and panicked once the request was sampled.
 - **An unsampled span clamps a negative elapsed time**, as a sampled one does,
   so an NTP step no longer shrinks the response-time total.
-- **The kafka consumers take a nil context** (`ppsarama`, `ppsaramaibm`,
+- **The kafka consumers take a nil context** (`ppsaramaibm`,
   `ppconfluentkafka`) instead of panicking once the agent is enabled.
 - **`ppconfluentkafka.WrapProducer` keeps a nil producer nil**, as the sarama
   wrappers do, and **injects headers into a slice of the message's own**
@@ -410,7 +408,7 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 - **`SetLogging` is a plain store.** The logrus, slog and zap plugins call it
   from whichever goroutine logs with the request's tracer, and two at once were
   a data race.
-- **`ppsarama` and `ppsaramaibm` pass a nil message through.** sarama logs and
+- **`ppsaramaibm` passes a nil message through.** sarama logs and
   ignores a nil on `Input()`; the wrapper dereferenced it, and on `Input()` the
   input forwarder died and every later message was dropped in silence, while
   `InputContext` panicked in the caller.
@@ -508,6 +506,6 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   shared channel and could send after `Flush` into a channel the application
   had closed. The span event now covers the enqueue with a delivery channel as
   without one, so a failed delivery is no longer recorded on it.
-- **`ppsarama`/`ppsaramaibm` `WrapSyncProducer(nil)` and `WrapAsyncProducer(nil)`
+- **`ppsaramaibm` `WrapSyncProducer(nil)` and `WrapAsyncProducer(nil)`
   return nil.** The async wrapper's delivery goroutine read a nil producer's
   channels and crashed the process.

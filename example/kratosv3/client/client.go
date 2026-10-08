@@ -49,8 +49,7 @@ func callHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	tracer := pinpoint.FromContext(r.Context())
-	ctx := pinpoint.NewContext(context.Background(), tracer)
+	ctx := r.Context() // carries the request's tracer; no need to rewrap it
 
 	client := pb.NewGreeterHTTPClient(conn)
 	reply, err := client.SayHello(ctx, &pb.HelloRequest{Name: "kratos"})
@@ -83,8 +82,7 @@ func callGRPC(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	tracer := pinpoint.FromContext(r.Context())
-	ctx := pinpoint.NewContext(context.Background(), tracer)
+	ctx := r.Context() // carries the request's tracer; no need to rewrap it
 
 	client := pb.NewGreeterClient(conn)
 	reply, err := client.SayHello(ctx, &pb.HelloRequest{Name: "kratos"})

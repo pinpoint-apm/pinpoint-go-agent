@@ -149,13 +149,10 @@ The following is an example of propagating Tracer to the sql driver using Contex
 
 ``` go
 func tableCount(w http.ResponseWriter, r *http.Request) {
-    tracer := pinpoint.FromContext(r.Context())
-
-    db, err := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/information_schema")
-    defer db.Close()
-
-    ctx := pinpoint.NewContext(context.Background(), tracer)
-    row := db.QueryRowContext(ctx, "SELECT count(*) from tables")
+    // r.Context() already carries the request's tracer, which the driver
+    // wrapper reads; rewrapping it in a fresh context would only drop the
+    // request's cancellation and deadline.
+    row := db.QueryRowContext(r.Context(), "SELECT count(*) from tables")
     var count int
     row.Scan(&count)
 

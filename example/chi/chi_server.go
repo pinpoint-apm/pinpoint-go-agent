@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"github.com/go-chi/chi/v5/middleware"
 	"io"
 	"log"
@@ -17,31 +16,10 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
-func hello(w http.ResponseWriter, r *http.Request) {
-	tracer := pinpoint.FromContext(r.Context())
-	defer tracer.NewSpanEvent("f1").EndSpanEvent()
-	defer tracer.NewSpanEvent("f2").EndSpanEvent()
-	tracer.NewSpanEvent("f3").EndSpanEvent()
-
-	var i http.ResponseWriter
-	i.Header() //panic
-
-	seed := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(seed)
-
-	time.Sleep(time.Duration(random.Intn(5000)+1) * time.Millisecond)
-	io.WriteString(w, "hello world")
-}
-
-func shutdown(w http.ResponseWriter, r *http.Request) {
-	pinpoint.GetAgent().Shutdown()
-	io.WriteString(w, "shutdown")
-}
-
 func outgoing(w http.ResponseWriter, r *http.Request) {
 	sleep()
 
-	ctx := pinpoint.NewContext(context.Background(), pinpoint.FromContext(r.Context()))
+	ctx := r.Context() // carries the request's tracer; no need to rewrap it
 	req, _ := http.NewRequestWithContext(ctx, "GET", "http://localhost:9000/async_wrapper", nil)
 
 	resp, err := pphttp.DoClient(http.DefaultClient.Do, req)
@@ -89,14 +67,7 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(ppchi.Middleware())
 
-	//r.Get("/hello", ppchi.WrapHandlerFunc(hello))
-	//r.Get("/outgoing", ppchi.WrapHandlerFunc(outgoing))
 	r.Get("/outgoing", outgoing)
-	//r.Handle("/shutdown", ppchi.WrapHandler(http.HandlerFunc(shutdown)))
-
-	//r.Get("/noname", ppchi.WrapHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	//	w.Write([]byte("noname handler"))
-	//}))
 
 	r.Get("/user/{name}", func(w http.ResponseWriter, r *http.Request) {
 		sleep()

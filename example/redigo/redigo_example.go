@@ -23,8 +23,7 @@ func redigo_test(w http.ResponseWriter, r *http.Request) {
 
 	c.Do("SET", "vehicle", "truck") //not traced
 
-	tracer := pinpoint.FromContext(r.Context())
-	ctx := pinpoint.NewContext(context.Background(), tracer)
+	ctx := r.Context() // carries the request's tracer; no need to rewrap it
 	ppredigo.WithContext(c, ctx)
 
 	c.Do("SET", "vehicle", "truck")

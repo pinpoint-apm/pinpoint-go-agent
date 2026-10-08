@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -27,7 +27,7 @@ func outGoingRequest(ctx context.Context) string {
 	}
 	defer resp.Body.Close()
 
-	ret, _ := ioutil.ReadAll(resp.Body)
+	ret, _ := io.ReadAll(resp.Body)
 	return string(ret)
 }
 
@@ -38,7 +38,7 @@ func processMessage(ctx context.Context, msg *sarama.ConsumerMessage) error {
 	fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
 	fmt.Println("retrieving message: ", string(msg.Value))
 
-	ret := outGoingRequest(pinpoint.NewContext(context.Background(), tracer))
+	ret := outGoingRequest(ctx) // the consumer's context already carries the tracer
 	fmt.Println("outGoingRequest: ", ret)
 
 	return nil

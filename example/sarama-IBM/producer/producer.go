@@ -12,8 +12,6 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
-var fakeDB string
-
 var producer ppsaramaibm.SyncProducer
 
 func prepareMessage(topic, message string) *sarama.ProducerMessage {

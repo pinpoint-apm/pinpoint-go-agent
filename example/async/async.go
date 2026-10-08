@@ -98,9 +98,18 @@ func asyncWithContext(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 }
 
+// ctxKey keeps the example's context values off the built-in string keys,
+// which any package could collide with.
+type ctxKey string
+
+const (
+	ctxKeyWriter    ctxKey = "wr"
+	ctxKeyWaitGroup ctxKey = "wg"
+)
+
 func asyncFunc(asyncCtx context.Context) {
-	w := asyncCtx.Value("wr").(http.ResponseWriter)
-	wg := asyncCtx.Value("wg").(*sync.WaitGroup)
+	w := asyncCtx.Value(ctxKeyWriter).(http.ResponseWriter)
+	wg := asyncCtx.Value(ctxKeyWaitGroup).(*sync.WaitGroup)
 	defer wg.Done()
 	outGoingRequest(w, asyncCtx)
 }
@@ -109,8 +118,8 @@ func asyncWithWrapper(w http.ResponseWriter, r *http.Request) {
 	tracer := pinpoint.FromContext(r.Context())
 	wg := &sync.WaitGroup{}
 
-	ctx := context.WithValue(context.Background(), "wr", w)
-	ctx = context.WithValue(ctx, "wg", wg)
+	ctx := context.WithValue(context.Background(), ctxKeyWriter, w)
+	ctx = context.WithValue(ctx, ctxKeyWaitGroup, wg)
 	f := tracer.WrapGoroutine("asyncFunc", asyncFunc, ctx)
 
 	wg.Add(1)

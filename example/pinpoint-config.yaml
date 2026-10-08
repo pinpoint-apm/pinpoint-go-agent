@@ -1,7 +1,7 @@
 #pinpoint go-agent configuration
 
 applicationname: "MyAppName"
-applicationtype: 1900
+applicationtype: 1800
 agentname: "MyAgentName"
 collector:
   host: "my.collector.host"

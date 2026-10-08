@@ -88,7 +88,7 @@ func main() {
 	}
 	defer db.Close()
 
-	for true {
+	for {
 		run()
 		time.Sleep(3 * time.Second)
 	}

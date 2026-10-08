@@ -1,7 +1,7 @@
 package main
 
 import (
-	"io/ioutil"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -14,19 +14,6 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
-
-func endpoint(c *gin.Context) {
-	tracer := pinpoint.FromContext(c.Request.Context())
-	defer tracer.NewSpanEvent("f1").EndSpanEvent()
-	defer tracer.NewSpanEvent("f2").EndSpanEvent()
-	tracer.NewSpanEvent("f3").EndSpanEvent()
-
-	var i http.ResponseWriter
-	i.Header() //panic
-
-	//	c.Writer.WriteString("endpoint")
-	c.Writer.WriteHeader(500)
-}
 
 func extCall(c *gin.Context) {
 	sleep()
@@ -45,7 +32,7 @@ func extCall(c *gin.Context) {
 	}
 
 	defer resp.Body.Close()
-	result, _ := ioutil.ReadAll(resp.Body)
+	result, _ := io.ReadAll(resp.Body)
 
 	c.Writer.WriteString(string(result))
 }
@@ -78,9 +65,6 @@ func main() {
 	router := gin.Default()
 	router.Use(gin.Recovery())
 	router.Use(ppgin.Middleware())
-
-	//router.GET("/endpoint", ppgin.WrapHandler(endpoint))
-	//router.GET("/external", ppgin.WrapHandler(extCall))
 
 	router.GET("/user/:name", func(c *gin.Context) {
 		sleep()

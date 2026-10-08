@@ -22,7 +22,9 @@ func insertData(ctx context.Context, conn *sql.DB) error {
 		_ = stmt.Close()
 	}()
 
-	_, err = stmt.ExecContext(ctx, "foo", "developer", 1.1, 2.2)
+	if _, err = stmt.ExecContext(ctx, "foo", "developer", 1.1, 2.2); err != nil {
+		return err
+	}
 	_, err = stmt.ExecContext(ctx, "bar", "manager", 3.3, 4.4)
 	return err
 }

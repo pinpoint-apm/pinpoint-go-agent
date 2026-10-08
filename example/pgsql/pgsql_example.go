@@ -22,8 +22,7 @@ func tableCount(w http.ResponseWriter, r *http.Request) {
 	}
 	defer db.Close()
 
-	tracer := pinpoint.FromContext(r.Context())
-	ctx := pinpoint.NewContext(context.Background(), tracer)
+	ctx := r.Context() // carries the request's tracer; no need to rewrap it
 	row := db.QueryRowContext(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
 
 	var count int
@@ -45,7 +44,7 @@ func query(w http.ResponseWriter, r *http.Request) {
 	}
 	defer db.Close()
 
-	ctx := pinpoint.NewContext(context.Background(), pinpoint.TracerFromRequestContext(r))
+	ctx := r.Context() // carries the request's tracer; no need to rewrap it
 
 	_, _ = db.ExecContext(ctx, "CREATE TABLE employee (id INTEGER PRIMARY KEY, emp_name VARCHAR(64), department VARCHAR(64), created DATE)")
 
@@ -106,7 +105,7 @@ func query(w http.ResponseWriter, r *http.Request) {
 
 	tx(ctx, db)
 
-	res, _ = db.ExecContext(ctx, "DROP TABLE employee")
+	_, _ = db.ExecContext(ctx, "DROP TABLE employee")
 }
 
 func tx(ctx context.Context, db *sql.DB) {
