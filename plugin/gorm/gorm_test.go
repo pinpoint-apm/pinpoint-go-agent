@@ -121,6 +121,25 @@ func TestCallbacks_RecordTheStatementError(t *testing.T) {
 	assert.ErrorIs(t, tracer.Events[0].Err, want)
 }
 
+// A not-found lookup is a miss, not a failure: gorm sets ErrRecordNotFound on
+// First, Take and Last, and recording it failed the whole transaction.
+func TestCallbacks_IgnoreRecordNotFound(t *testing.T) {
+	db := openDB(t)
+	tracer := pptest.NewRecordingTracer()
+	stmt := &gorm.DB{
+		Statement: &gorm.Statement{Context: pinpoint.NewContext(context.Background(), tracer)},
+		Error:     gorm.ErrRecordNotFound,
+	}
+
+	query := db.Callback().Query()
+	query.Get("pinpoint:before_query")(stmt)
+	query.Get("pinpoint:after_query")(stmt)
+
+	require.Len(t, tracer.Events, 1)
+	assert.NoError(t, tracer.Events[0].Err, "a miss must not fail the span")
+	assert.True(t, tracer.Events[0].Ended)
+}
+
 // The callbacks are registered on the shared *gorm.DB, so they run for every
 // statement the application makes - including those from code that never
 // started a span, and those whose statement carries no context at all.

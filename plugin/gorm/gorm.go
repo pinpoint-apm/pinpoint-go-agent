@@ -16,6 +16,8 @@
 package ppgorm
 
 import (
+	"errors"
+
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"gorm.io/gorm"
 )
@@ -94,7 +96,13 @@ func before(db *gorm.DB, operationName string) {
 
 func after(db *gorm.DB) {
 	if tracer := pinpoint.FromContext(db.Statement.Context); tracer.IsSampled() {
-		tracer.SpanEvent().SetError(db.Error)
+		// A miss is a normal outcome, not a failure: gorm sets ErrRecordNotFound
+		// on First, Take and Last before the after callbacks run, and recording
+		// it marked every not-found lookup as a failed transaction. Same rule
+		// as the redis and memcache plugins apply to their cache misses.
+		if !errors.Is(db.Error, gorm.ErrRecordNotFound) {
+			tracer.SpanEvent().SetError(db.Error)
+		}
 		tracer.EndSpanEvent()
 	}
 }
