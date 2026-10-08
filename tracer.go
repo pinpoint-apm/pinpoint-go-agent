@@ -18,6 +18,7 @@ package pinpoint
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/textproto"
 	"strconv"
@@ -417,3 +418,33 @@ const (
 	// Method and Status. An empty Url counts as "not recorded yet".
 	MetricURLStat = "URLStat"
 )
+
+// IsInjected reports whether the carrier already holds a trace context this
+// agent's Inject writes: a Pinpoint-TraceID, or the Pinpoint-Sampled marker of
+// an unsampled transaction. Presence, not a non-empty value: a header the agent
+// injected is a context even when the value it carries is empty. A client
+// plugin consults it before starting its event. An outer instrumented layer, a
+// wrapper applied twice or a proxy forwarding its inbound headers has already
+// written the context, and a second event with a second set of headers would
+// leave the receiver reading two values for one key.
+func IsInjected(reader DistributedTracingContextReader) bool {
+	if _, ok := reader.Get(HeaderTraceId); ok {
+		return true
+	}
+	_, ok := reader.Get(HeaderSampled)
+	return ok
+}
+
+// RemoteHost is the host of a peer address, for SpanRecorder.SetRemoteAddress:
+// the address without its port, the address itself when it is an IP that
+// carries none, and 127.0.0.1 for one that is no network address at all - an
+// empty string, or a unix socket path, whose peer is local by definition.
+func RemoteHost(addr string) string {
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	if net.ParseIP(addr) != nil {
+		return addr
+	}
+	return "127.0.0.1"
+}

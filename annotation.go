@@ -2,6 +2,8 @@ package pinpoint
 
 import (
 	"bytes"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -190,4 +192,29 @@ func (a *annotation) getListInto(b *spanMessageBuilder) []*pb.PAnnotation {
 // plainly GC-owned. Non-transport callers (JsonString) use this.
 func (a *annotation) getList() []*pb.PAnnotation {
 	return a.getListInto(&spanMessageBuilder{})
+}
+
+// maxAnnotationListItems is how many items AnnotationList names before it
+// counts the rest.
+const maxAnnotationListItems = 32
+
+// AnnotationList renders n items for a list annotation - the commands of a
+// pipeline, the keys of a multi-get - as the first 32 joined by ", " and
+// ", ...(k more)" for the rest. item returns the i-th. A batch size is the
+// caller's to choose, and an annotation must not grow with it.
+func AnnotationList(n int, item func(i int) string) string {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		if i == maxAnnotationListItems {
+			b.WriteString(", ...(")
+			b.WriteString(strconv.Itoa(n - maxAnnotationListItems))
+			b.WriteString(" more)")
+			break
+		}
+		if i != 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(item(i))
+	}
+	return b.String()
 }

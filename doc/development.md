@@ -196,7 +196,12 @@ Each new plugin needs:
    otherwise.
 2. **Package name `pp<name>`.** `plugin/gin` is `ppgin`.
 3. **A thin entry point.** Prefer the library's own seam — middleware, hook,
-   observer, monitor, `RoundTripper` — over wrapping every call site.
+   observer, monitor, `RoundTripper` — over wrapping every call site. The core
+   has the helpers the existing plugins share: `pinpoint.IsInjected` for a
+   client that must not start a second event on a carrier an outer layer
+   already injected, `pinpoint.RemoteHost` for the peer address a server
+   records, and `pinpoint.AnnotationList` for a batch annotation that must
+   not grow with the caller's batch.
 4. **A `README.md`** with install, usage and a link to the full example, and an
    **`example/<name>`** in the root example module that builds and runs.
 5. **Tests, run with `-race`.** The convention in the existing plugins is to

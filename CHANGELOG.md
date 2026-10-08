@@ -219,6 +219,12 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **`pinpoint.IsInjected`, `pinpoint.RemoteHost` and `pinpoint.AnnotationList`**
+  are the helpers the plugins shared by copy: the already-injected check of a
+  client plugin, the port-stripped peer address of a server plugin, and the
+  bounded list annotation of a batch. `IsInjected` goes by header presence,
+  as the kafka plugins did, so the http client now treats an injected header
+  with an empty value as a context too.
 - **`Collector.AgentInfo.SendArgs`** (`WithCollectorAgentInfoSendArgs`) turns
   off sending the process's command line arguments with the agent information,
   for a command line that carries a password or a token. On by default, as

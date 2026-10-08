@@ -59,7 +59,7 @@ func TestClient_RecordsEveryOperation(t *testing.T) {
 		{"gomemcache.Set()", "foo", func(c *Client) error { return c.Set(item()) }},
 		{"gomemcache.Replace()", "foo", func(c *Client) error { return c.Replace(item()) }},
 		{"gomemcache.Get()", "foo", func(c *Client) error { _, err := c.Get("foo"); return err }},
-		{"gomemcache.GetMulti()", "foo,bar", func(c *Client) error {
+		{"gomemcache.GetMulti()", "foo, bar", func(c *Client) error {
 			_, err := c.GetMulti([]string{"foo", "bar"})
 			return err
 		}},

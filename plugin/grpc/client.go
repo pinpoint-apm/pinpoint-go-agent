@@ -107,8 +107,18 @@ func isNested(ctx context.Context) bool {
 	if !ok {
 		return false
 	}
-	return len(md[loweredHeaderKeys[pinpoint.HeaderTraceId]]) > 0 ||
-		len(md[loweredHeaderKeys[pinpoint.HeaderSampled]]) > 0
+	return pinpoint.IsInjected(outgoingMetadataReader(md))
+}
+
+// outgoingMetadataReader reads the caller's outgoing metadata as a tracing
+// carrier, by the lowered keys grpc-go stores.
+type outgoingMetadataReader metadata.MD
+
+func (m outgoingMetadataReader) Get(key string) (string, bool) {
+	if v := m[loweredKey(key)]; len(v) > 0 {
+		return v[0], true
+	}
+	return "", false
 }
 
 func makeUrl(remote string, method string) string {

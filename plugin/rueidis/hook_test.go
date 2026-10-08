@@ -102,6 +102,9 @@ func Test_cmdNames_EmptyBatch(t *testing.T) {
 
 // Commands() carries the full command including keys and values; only the verb
 // may reach the annotation.
+// maxListedCmds is pinpoint.AnnotationList's cap, which the multi annotation follows.
+const maxListedCmds = 32
+
 func Test_cmdVerb(t *testing.T) {
 	assert.Equal(t, "", cmdVerb(nil))
 	assert.Equal(t, "", cmdVerb([]string{}))

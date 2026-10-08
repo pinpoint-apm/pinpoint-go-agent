@@ -18,7 +18,6 @@ package ppgomemcache
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -141,14 +140,10 @@ func (c *Client) GetMulti(keys []string) (map[string]*memcache.Item, error) {
 	return items, err
 }
 
-// joinKeys caps the annotation: GetMulti has no key-count limit, so listing
+// joinKeys lists the keys, bounded: GetMulti has no key-count limit, so listing
 // every key would grow the span with the caller's batch.
 func joinKeys(keys []string) string {
-	const maxListedKeys = 32
-	if len(keys) <= maxListedKeys {
-		return strings.Join(keys, ",")
-	}
-	return strings.Join(keys[:maxListedKeys], ",") + ",...(" + strconv.Itoa(len(keys)-maxListedKeys) + " more)"
+	return pinpoint.AnnotationList(len(keys), func(i int) string { return keys[i] })
 }
 
 func (c *Client) Delete(key string) error {

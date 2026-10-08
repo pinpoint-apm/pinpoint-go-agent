@@ -33,7 +33,6 @@ package ppgrpc
 
 import (
 	"context"
-	"net"
 	"strings"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
@@ -119,15 +118,7 @@ func remoteAddr(ctx context.Context) (addr string) {
 	if p, ok := peer.FromContext(ctx); ok {
 		addr = p.Addr.String()
 	}
-	// Strip the port only when there is one: overwriting with SplitHostPort's
-	// error result turned a bare IP into the 127.0.0.1 fallback.
-	if host, _, err := net.SplitHostPort(addr); err == nil {
-		addr = host
-	} else if net.ParseIP(addr) == nil {
-		// A unix socket path, or no peer at all: the client is local.
-		addr = "127.0.0.1"
-	}
-	return addr
+	return pinpoint.RemoteHost(addr)
 }
 
 // UnaryServerInterceptor returns a grpc.UnaryServerInterceptor ready to instrument

@@ -33,11 +33,7 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 	// Read through HttpHeaderReader rather than Header.Get: it looks the
 	// pre-canonicalized key up directly, where Get canonicalizes
 	// "Pinpoint-TraceID" on every call and allocates doing so.
-	inbound := pinpoint.HttpHeaderReader(req.Header)
-	if v, _ := inbound.Get(pinpoint.HeaderTraceId); v != "" {
-		return pinpoint.NoopTracer()
-	}
-	if v, _ := inbound.Get(pinpoint.HeaderSampled); v != "" {
+	if pinpoint.IsInjected(pinpoint.HttpHeaderReader(req.Header)) {
 		return pinpoint.NoopTracer()
 	}
 

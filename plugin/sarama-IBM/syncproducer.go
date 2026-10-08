@@ -50,15 +50,13 @@ func isNested(msg *sarama.ProducerMessage) bool {
 	if msg == nil {
 		return true
 	}
-	w := distributedTracingContextWriterProducer{msg: msg}
-	// Presence, not a non-empty value: a header this plugin injected is a
-	// context already present even if the value it carries is empty.
-	for _, key := range []string{pinpoint.HeaderTraceId, pinpoint.HeaderSampled, HeaderAsyncSpanId} {
-		if _, ok := w.Get(key); ok {
-			return true
-		}
+	w := &distributedTracingContextWriterProducer{msg: msg}
+	if pinpoint.IsInjected(w) {
+		return true
 	}
-	return false
+	// The async producer's own header counts as a context too.
+	_, ok := w.Get(HeaderAsyncSpanId)
+	return ok
 }
 
 // newProducerHeaderWriter returns the writer the trace context is injected into

@@ -33,7 +33,6 @@ package ppkratosv3
 
 import (
 	"context"
-	"net"
 	"strings"
 
 	"github.com/go-kratos/kratos/v3/middleware"
@@ -110,15 +109,7 @@ func serverRemoteAddr(ctx context.Context, tr transport.Transporter) (addr strin
 			addr = p.Addr.String()
 		}
 	}
-	// Strip the port only when there is one: overwriting with SplitHostPort's
-	// error result turned a bare IP into the 127.0.0.1 fallback.
-	if host, _, err := net.SplitHostPort(addr); err == nil {
-		addr = host
-	}
-	if addr == "" {
-		addr = "127.0.0.1"
-	}
-	return addr
+	return pinpoint.RemoteHost(addr)
 }
 
 func serverEndpoint(endpoint string) string {

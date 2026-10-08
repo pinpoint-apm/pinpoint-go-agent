@@ -2,7 +2,6 @@ package pprueidis
 
 import (
 	"context"
-	"strconv"
 	"strings"
 	"time"
 
@@ -157,25 +156,10 @@ func cmdVerb(commands []string) string {
 	return commands[0]
 }
 
-// maxListedCmds bounds the annotation of a multi: rueidis puts no limit on the
-// batch size, so listing every verb would grow with the caller's batch.
-const maxListedCmds = 32
-
+// cmdNames lists a multi's verbs, bounded: rueidis puts no limit on the batch
+// size, so listing every verb would grow with the caller's batch.
 func cmdNames(n int, verb func(i int) string) string {
-	var b strings.Builder
-	for i := 0; i < n; i++ {
-		if i == maxListedCmds {
-			b.WriteString(", ...(")
-			b.WriteString(strconv.Itoa(n - maxListedCmds))
-			b.WriteString(" more)")
-			break
-		}
-		if i != 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString(verb(i))
-	}
-	return b.String()
+	return pinpoint.AnnotationList(n, verb)
 }
 
 func cmdCompletedName(cmds []rueidis.Completed) string {

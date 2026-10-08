@@ -113,13 +113,7 @@ func newProducerTracer(tracer pinpoint.Tracer, broker string, msg *kafka.Message
 // outer instrumented layer, or the retry pattern re-sending the same message
 // object. The producer then records no span event and writes no header.
 func isNested(msg *kafka.Message) bool {
-	r := headerReader{msg}
-	for _, key := range []string{pinpoint.HeaderTraceId, pinpoint.HeaderSampled} {
-		if _, ok := r.Get(key); ok {
-			return true
-		}
-	}
-	return false
+	return pinpoint.IsInjected(headerReader{msg})
 }
 
 type headerWriter struct {
