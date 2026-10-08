@@ -14,7 +14,9 @@ package ppechov4
 import (
 	"errors"
 	"net/http"
+	"runtime"
 	"sync"
+	"weak"
 
 	"github.com/labstack/echo/v4"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
@@ -33,7 +35,12 @@ type key struct {
 // process: a second Echo in the same process, a test suite's instances, or an
 // instance built after the first request all reported "echo.HandlerFunc()"
 // for every route under a single process-wide map.
-var handlerNames sync.Map // *echo.Echo -> map[key]string
+//
+// Keyed by a weak pointer, with a cleanup that drops the entry once the Echo
+// is collected: keyed by the pointer itself, every instance ever served - a
+// test suite's, a per-tenant one - stayed reachable for the life of the
+// process.
+var handlerNames sync.Map // weak.Pointer[echo.Echo] -> map[key]string
 
 func makeHandlerNameMap(e *echo.Echo) map[key]string {
 	names := make(map[key]string)
@@ -45,9 +52,13 @@ func makeHandlerNameMap(e *echo.Echo) map[key]string {
 
 func handlerName(c echo.Context, r *http.Request) string {
 	e := c.Echo()
-	names, ok := handlerNames.Load(e)
+	k := weak.Make(e)
+	names, ok := handlerNames.Load(k)
 	if !ok {
-		names, _ = handlerNames.LoadOrStore(e, makeHandlerNameMap(e))
+		var loaded bool
+		if names, loaded = handlerNames.LoadOrStore(k, makeHandlerNameMap(e)); !loaded {
+			runtime.AddCleanup(e, func(k weak.Pointer[echo.Echo]) { handlerNames.Delete(k) }, k)
+		}
 	}
 
 	if name, ok := names.(map[key]string)[key{r.Method, c.Path()}]; ok {
