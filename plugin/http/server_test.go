@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -420,6 +421,27 @@ func responseWriterWithOptionalInterfaces(base http.ResponseWriter, optional *op
 		return testResponseWriterF{base, optional}
 	default:
 		return struct{ http.ResponseWriter }{base}
+	}
+}
+
+// ReadFrom reaches every wrapper shape, so io.Copy keeps net/http's sendfile
+// fast path, and it records the implicit status the way Write does.
+func Test_responseWriter_ReadFrom(t *testing.T) {
+	for mask := 0; mask < 8; mask++ {
+		t.Run(fmt.Sprintf("mask%03b", mask), func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			original := responseWriterWithOptionalInterfaces(recorder, &optionalResponseWriter{}, mask)
+			status := 0
+			wrapped := WrapResponseWriter(original, &status)
+
+			_, isReaderFrom := wrapped.(io.ReaderFrom)
+			require.True(t, isReaderFrom, "io.ReaderFrom must be reachable on every shape")
+			n, err := io.Copy(wrapped, strings.NewReader("payload"))
+			require.NoError(t, err)
+			assert.Equal(t, int64(len("payload")), n)
+			assert.Equal(t, "payload", recorder.Body.String())
+			assert.Equal(t, http.StatusOK, status, "ReadFrom must record the implicit 200 as Write does")
+		})
 	}
 }
 

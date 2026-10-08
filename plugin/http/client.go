@@ -143,11 +143,15 @@ func DoClient(doFunc func(req *http.Request) (*http.Response, error), req *http.
 // RoundTripper contract requires, and so does a map other requests share -
 // req.WithContext keeps it - where DoClient's writes raced and left the first
 // transaction's ids on every later call. The values are shared, since Set
-// replaces a key's slice rather than writing into it. A nil map stays nil,
-// for net/http to reject as it would have.
+// replaces a key's slice rather than writing into it. A nil map gets an empty
+// one: http.Client allocates a header itself and sends the request, so leaving
+// it nil skipped the injection and the callee started a new transaction.
 func withOwnHeader(req *http.Request) *http.Request {
 	clone := *req
 	clone.Header = maps.Clone(req.Header)
+	if clone.Header == nil {
+		clone.Header = make(http.Header)
+	}
 	return &clone
 }
 

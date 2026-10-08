@@ -23,6 +23,7 @@
 package pphttp
 
 import (
+	"io"
 	"math"
 	"net"
 	"net/http"
@@ -611,9 +612,9 @@ type responseWriter struct {
 // combination. A single type implementing all three would make type
 // assertions succeed on writers that do not support them, breaking the
 // feature detection handlers rely on: SSE flushing (http.Flusher) and
-// WebSocket upgrades (http.Hijacker). io.ReaderFrom is deliberately left
-// out - preserving it would double the combinations and it only costs the
-// sendfile fast path in io.Copy(w, f); add it here if that ever matters.
+// WebSocket upgrades (http.Hijacker). io.ReaderFrom needs no combination of
+// its own: responseWriter implements it on every shape, since an io.Copy
+// fallback is always a correct ReadFrom for a writer without one.
 //
 // Each wrapper embeds responseWriter by value and is returned as a pointer,
 // so wrapping is one allocation: embedding a *responseWriter made it two, the
@@ -693,6 +694,21 @@ func (w *responseWriter) WriteHeader(status int) {
 	}
 	w.wroteHeader = true
 	*w.status = status
+}
+
+// ReadFrom keeps net/http's sendfile fast path (http.ServeFile, io.Copy from a
+// file, reverse proxies) through the wrapper: without it every such response
+// fell back to the generic user-space copy loop. The status is recorded as
+// Write records it; a writer without ReadFrom gets the io.Copy fallback.
+func (w *responseWriter) ReadFrom(r io.Reader) (int64, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	// Wrapped in a plain io.Writer so io.Copy cannot find this ReadFrom again.
+	return io.Copy(struct{ io.Writer }{w.ResponseWriter}, r)
 }
 
 func (w *responseWriter) Write(p []byte) (int, error) {

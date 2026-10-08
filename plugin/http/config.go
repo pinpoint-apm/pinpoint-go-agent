@@ -254,7 +254,10 @@ var (
 	httpConfigSource atomic.Pointer[httpConfigOwner]
 )
 
-type httpConfigOwner struct{ agent pinpoint.Agent }
+type httpConfigOwner struct {
+	agent  pinpoint.Agent
+	config *pinpoint.Config
+}
 
 // httpCfg returns the config derived from the current agent. A new agent gets
 // its own derived value and reload callback, so restarting in the same process
@@ -277,14 +280,20 @@ func httpCfg() *httpConfig {
 	if source := httpConfigSource.Load(); source == nil || source.agent != agent {
 		config := agent.Config()
 		curHttpConfig.Store(newHttpConfigFor(config))
-		httpConfigSource.Store(&httpConfigOwner{agent: agent})
-		config.AddReloadCallback(httpConfigOpts, func() {
-			httpConfigMu.Lock()
-			defer httpConfigMu.Unlock()
-			if source := httpConfigSource.Load(); source != nil && source.agent == agent {
-				curHttpConfig.Store(newHttpConfigFor(config))
-			}
-		})
+		// One callback per Config, not per agent: the root reuses a Config
+		// across NewAgent/Shutdown cycles, and a callback per cycle grew its
+		// list by one and kept every retired agent reachable from a closure.
+		// The callback owns the Config, so it serves whichever agent runs on it.
+		if source == nil || source.config != config {
+			config.AddReloadCallback(httpConfigOpts, func() {
+				httpConfigMu.Lock()
+				defer httpConfigMu.Unlock()
+				if source := httpConfigSource.Load(); source != nil && source.config == config {
+					curHttpConfig.Store(newHttpConfigFor(config))
+				}
+			})
+		}
+		httpConfigSource.Store(&httpConfigOwner{agent: agent, config: config})
 	}
 	return curHttpConfig.Load()
 }
