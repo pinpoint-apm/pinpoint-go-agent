@@ -132,8 +132,10 @@ func (p *syncProducer) SendMessageContext(ctx context.Context, msg *sarama.Produ
 		return p.SyncProducer.SendMessage(msg)
 	}
 
-	defer newSyncProducerTracer(ctx, p, msg).EndSpanEvent()
+	tracer := newSyncProducerTracer(ctx, p, msg)
+	defer tracer.EndSpanEvent()
 	partition, offset, err = p.SyncProducer.SendMessage(msg)
+	tracer.SpanEvent().SetError(err)
 	return partition, offset, err
 }
 
@@ -148,16 +150,28 @@ func (p *syncProducer) SendMessagesContext(ctx context.Context, msgs []*sarama.P
 		return p.SyncProducer.SendMessages(msgs)
 	}
 
-	spans := make([]pinpoint.Tracer, len(msgs))
-	for i, msg := range msgs {
-		spans[i] = newSyncProducerTracer(ctx, p, msg)
+	// One event for the batch call, with the per-message events as its
+	// children, each ended as soon as its headers are injected. Keeping every
+	// message's event open until the batch returned nested them N deep on the
+	// one tracer: past Span.MaxCallStackDepth the rest overflowed, their
+	// downstream link fell back to the span-level id, and the survivors
+	// rendered as a call chain instead of siblings. The batch event carries
+	// the duration and the error; the message events carry topic and headers.
+	tracer := pinpoint.FromContext(ctx)
+	tracer.NewSpanEvent("sarama.SyncProducer.SendMessages")
+	defer tracer.EndSpanEvent()
+	se := tracer.SpanEvent()
+	se.SetServiceType(pinpoint.ServiceTypeKafkaClient)
+	if len(p.addrs) > 0 {
+		se.SetDestination(p.addrs[0])
+	}
+
+	for _, msg := range msgs {
+		newSyncProducerTracer(ctx, p, msg).EndSpanEvent()
 	}
 
 	err := p.SyncProducer.SendMessages(msgs)
-
-	for _, span := range spans {
-		span.EndSpanEvent()
-	}
+	se.SetError(err)
 	return err
 }
 

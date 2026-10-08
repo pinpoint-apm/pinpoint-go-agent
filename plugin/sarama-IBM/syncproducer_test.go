@@ -80,6 +80,9 @@ type capturingTracer struct {
 	pinpoint.Tracer
 	events []*capturedEvent
 	open   []*capturedEvent
+	// maxOpen is the deepest the event stack got: what the call stack depth
+	// limit of a real span is compared against.
+	maxOpen int
 }
 
 func newCapturingTracer() *capturingTracer {
@@ -96,6 +99,7 @@ func (t *capturingTracer) NewSpanEvent(operation string) pinpoint.Tracer {
 	}
 	t.events = append(t.events, e)
 	t.open = append(t.open, e)
+	t.maxOpen = max(t.maxOpen, len(t.open))
 	return t
 }
 
@@ -114,10 +118,16 @@ type capturedEvent struct {
 	destination string
 	annotations map[int32]string
 	ended       bool
+	err         error
 }
 
 func (e *capturedEvent) SetServiceType(typ int32) { e.serviceType = typ }
 func (e *capturedEvent) SetDestination(id string) { e.destination = id }
+func (e *capturedEvent) SetError(err error, _ ...string) {
+	if err != nil {
+		e.err = err
+	}
+}
 
 func (e *capturedEvent) Annotations() pinpoint.Annotation {
 	return capturedAnnotation{Annotation: e.SpanEventRecorder.Annotations(), into: e.annotations}
@@ -193,12 +203,54 @@ func Test_syncProducer_SendMessagesContext(t *testing.T) {
 	require.Len(t, stub.batches, 1)
 	assert.Len(t, stub.batches[0], 2, "the whole batch must reach the underlying producer")
 
-	require.Len(t, tracer.events, 2, "each message in a batch is its own record, so its own span event")
+	require.Len(t, tracer.events, 3, "one event for the batch call, then one per message")
+	batch := tracer.events[0]
+	assert.Equal(t, "sarama.SyncProducer.SendMessages", batch.operation)
+	assert.Equal(t, int32(pinpoint.ServiceTypeKafkaClient), batch.serviceType)
+	assert.Equal(t, "broker1:9092", batch.destination)
+	assert.ErrorIs(t, batch.err, stub.err, "the batch event must record the send error")
 	for i, want := range []string{"widgets", "gadgets"} {
-		assert.Equal(t, want, tracer.events[i].annotations[pinpoint.AnnotationKafkaTopic],
+		assert.Equal(t, want, tracer.events[i+1].annotations[pinpoint.AnnotationKafkaTopic],
 			"topic annotation %d", i)
-		assert.True(t, tracer.events[i].ended, "span event %d was left open", i)
 	}
+	for i, e := range tracer.events {
+		assert.True(t, e.ended, "span event %d was left open", i)
+	}
+	assert.Equal(t, 2, tracer.maxOpen, "message events are siblings under the batch event, not nested")
+}
+
+// A batch larger than Span.MaxCallStackDepth (64 by default) must not nest one
+// event per message: that overflowed the call stack, dropped the events past
+// the limit and lost their downstream link.
+func Test_syncProducer_SendMessagesContext_LargeBatchStaysTwoDeep(t *testing.T) {
+	pptest.StartAgent(t)
+	tracer := newCapturingTracer()
+	p := &syncProducer{SyncProducer: &stubSyncProducer{}, addrs: []string{"broker1:9092"}}
+
+	msgs := make([]*sarama.ProducerMessage, 200)
+	for i := range msgs {
+		msgs[i] = &sarama.ProducerMessage{Topic: "widgets"}
+	}
+	require.NoError(t, p.SendMessagesContext(pinpoint.NewContext(context.Background(), tracer), msgs))
+
+	assert.Len(t, tracer.events, 201)
+	assert.Equal(t, 2, tracer.maxOpen, "a batch of any size keeps the event stack two deep")
+	assert.Empty(t, tracer.open, "every event was ended")
+}
+
+// A failed single send is an error on its event, not a green event.
+func Test_syncProducer_SendMessageContext_RecordsTheError(t *testing.T) {
+	pptest.StartAgent(t)
+	tracer := newCapturingTracer()
+	stub := &stubSyncProducer{err: errors.New("broker unavailable")}
+	p := &syncProducer{SyncProducer: stub, addrs: []string{"broker1:9092"}}
+
+	_, _, err := p.SendMessageContext(pinpoint.NewContext(context.Background(), tracer), &sarama.ProducerMessage{Topic: "widgets"})
+
+	assert.ErrorIs(t, err, stub.err)
+	require.Len(t, tracer.events, 1)
+	assert.ErrorIs(t, tracer.events[0].err, stub.err, "the send error must be recorded on the event")
+	assert.True(t, tracer.events[0].ended)
 }
 
 // A producer used without any pinpoint context still has to produce; the
