@@ -82,10 +82,21 @@ func (p *asyncProducer) InputContext(ctx context.Context, msg *sarama.ProducerMe
 		return
 	}
 
+	// The hand-over is an event on the caller's own call stack, and the send
+	// the broker acks is a goroutine span forked under it. The event is what a
+	// goroutine tracer links to: forking straight off the caller's tracer
+	// returned a noop tracer - nothing recorded, no headers written - whenever
+	// the caller had no event open, which is every caller at span level (a
+	// batch job, a hand-built NewSpanTracer), with only a throttled log to say
+	// so. An HTTP handler worked by accident, under the handler's own event.
+	tracer := pinpoint.FromContext(ctx)
+	tracer.NewSpanEvent("sarama.AsyncProducer.Input()")
+	defer tracer.EndSpanEvent()
+
 	// The span is created and saved here, in the caller's goroutine: producer
 	// goroutines are not serialized behind the input forwarder, and the save
 	// still strictly precedes the send, so a broker ack cannot beat it.
-	span, id := newAsyncProducerTracer(pinpoint.FromContext(ctx).NewGoroutineTracer(), p.addrs, msg, p.config)
+	span, id := newAsyncProducerTracer(tracer.NewGoroutineTracer(), p.addrs, msg, p.config)
 	saveAsyncProducerTracer(p, span, id)
 	select {
 	case p.inputContext <- msg:

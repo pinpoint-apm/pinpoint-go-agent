@@ -96,8 +96,8 @@ func TestProducers_WriteNoHeadersUnlessInjecting(t *testing.T) {
 	pptest.StartAgent(t)
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
 	defer tracer.EndSpan()
-	// The async producer traces on a goroutine tracer, which needs an open
-	// event to link to.
+	// InputContext opens the event its goroutine tracer links to itself; this
+	// outer one only stands for a caller already inside an event.
 	defer tracer.NewSpanEvent("produce").EndSpanEvent()
 	kafka010 := sarama.NewConfig()
 	kafka010.Version = sarama.V0_10_2_0
