@@ -2060,37 +2060,43 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 	return err
 }
 
-func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadName []string, dump *goroutineDump) {
-	status := int32(0)
-	msg := ""
-
-	if dump == nil {
-		status = -1
-		msg = "An error occurred while dumping Goroutine"
-	}
-
-	gRes := &pb.PCmdActiveThreadDumpRes{
-		CommonResponse: &pb.PCmdResponse{
-			ResponseId: reqId,
-			Status:     status,
-			Message:    &wrappers.StringValue{Value: msg},
-		},
-		ThreadDump: makePActiveThreadDumpList(dump, int(limit), threadName),
-		Type:       "Go",
-		Version:    runtime.Version(),
-	}
-
-	if IsLogLevelEnabled(logrus.DebugLevel) {
-		Log("grpc").Debugf("send PCmdActiveThreadDumpRes: %s", gRes.String())
+// callCommand makes one unary command RPC under commandStreamTimeOut: res is
+// the response it carries, logged at debug, and what names it in the logs.
+func (cmdGrpc *cmdGrpc) callCommand(what string, res interface{ String() string }, call func(context.Context) error) {
+	if IsDebugLogLevelEnabled() {
+		Log("grpc").Debugf("send %s: %s", what, res.String())
 	}
 
 	ctx, cancel := context.WithTimeout(grpcMetadataContext(cmdGrpc.agent, -1), commandStreamTimeOut)
 	defer cancel()
 
-	_, err := cmdGrpc.cmdClient.CommandActiveThreadDump(ctx, gRes)
-	if err != nil {
-		Log("grpc").Errorf("send active thread dump - %v", err)
+	if err := call(ctx); err != nil {
+		Log("grpc").Errorf("send %s - %v", what, err)
 	}
+}
+
+// dumpResponse is the common response of a thread dump: failed when the
+// goroutines could not be dumped.
+func dumpResponse(reqId int32, dump *goroutineDump) *pb.PCmdResponse {
+	res := &pb.PCmdResponse{ResponseId: reqId, Message: &wrappers.StringValue{Value: ""}}
+	if dump == nil {
+		res.Status = -1
+		res.Message.Value = "An error occurred while dumping Goroutine"
+	}
+	return res
+}
+
+func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadName []string, dump *goroutineDump) {
+	gRes := &pb.PCmdActiveThreadDumpRes{
+		CommonResponse: dumpResponse(reqId, dump),
+		ThreadDump:     makePActiveThreadDumpList(dump, int(limit), threadName),
+		Type:           "Go",
+		Version:        runtime.Version(),
+	}
+	cmdGrpc.callCommand("active thread dump", gRes, func(ctx context.Context) error {
+		_, err := cmdGrpc.cmdClient.CommandActiveThreadDump(ctx, gRes)
+		return err
+	})
 }
 
 func makePActiveThreadDumpList(dump *goroutineDump, limit int, threadName []string) []*pb.PActiveThreadDump {
@@ -2141,36 +2147,16 @@ func makePActiveThreadDump(g *goroutine) *pb.PActiveThreadDump {
 }
 
 func (cmdGrpc *cmdGrpc) sendActiveThreadLightDump(reqId int32, limit int32, dump *goroutineDump) {
-	status := int32(0)
-	msg := ""
-
-	if dump == nil {
-		status = -1
-		msg = "An error occurred while dumping Goroutine"
-	}
-
 	gRes := &pb.PCmdActiveThreadLightDumpRes{
-		CommonResponse: &pb.PCmdResponse{
-			ResponseId: reqId,
-			Status:     status,                            //error
-			Message:    &wrappers.StringValue{Value: msg}, //error message
-		},
-		ThreadDump: makePActiveThreadLightDumpList(dump, int(limit)),
-		Type:       "Go",
-		Version:    runtime.Version(),
+		CommonResponse: dumpResponse(reqId, dump),
+		ThreadDump:     makePActiveThreadLightDumpList(dump, int(limit)),
+		Type:           "Go",
+		Version:        runtime.Version(),
 	}
-
-	if IsLogLevelEnabled(logrus.DebugLevel) {
-		Log("grpc").Debugf("send PCmdActiveThreadLightDumpRes: %s", gRes.String())
-	}
-
-	ctx, cancel := context.WithTimeout(grpcMetadataContext(cmdGrpc.agent, -1), commandStreamTimeOut)
-	defer cancel()
-
-	_, err := cmdGrpc.cmdClient.CommandActiveThreadLightDump(ctx, gRes)
-	if err != nil {
-		Log("grpc").Errorf("send active thread light dump - %v", err)
-	}
+	cmdGrpc.callCommand("active thread light dump", gRes, func(ctx context.Context) error {
+		_, err := cmdGrpc.cmdClient.CommandActiveThreadLightDump(ctx, gRes)
+		return err
+	})
 }
 
 func makePActiveThreadLightDumpList(dump *goroutineDump, limit int) []*pb.PActiveThreadLightDump {
@@ -2215,15 +2201,8 @@ func (cmdGrpc *cmdGrpc) sendEcho(reqId int32, msg string) {
 		Message: msg,
 	}
 
-	if IsLogLevelEnabled(logrus.DebugLevel) {
-		Log("grpc").Debugf("send PCmdEchoResponse: %s", gRes.String())
-	}
-
-	ctx, cancel := context.WithTimeout(grpcMetadataContext(cmdGrpc.agent, -1), commandStreamTimeOut)
-	defer cancel()
-
-	_, err := cmdGrpc.cmdClient.CommandEcho(ctx, gRes)
-	if err != nil {
-		Log("grpc").Errorf("send echo response - %v", err)
-	}
+	cmdGrpc.callCommand("echo response", gRes, func(ctx context.Context) error {
+		_, err := cmdGrpc.cmdClient.CommandEcho(ctx, gRes)
+		return err
+	})
 }
