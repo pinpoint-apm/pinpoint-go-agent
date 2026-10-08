@@ -456,8 +456,8 @@ func newAsyncProducerTracer(tracer pinpoint.Tracer, addrs []string, msg *sarama.
 	if headersSupported(config) {
 		writer := newProducerHeaderWriter(msg)
 		tracer.Inject(writer)
-		if trackAcks(config) && tracer.IsSampled() {
-			id = tracer.AsyncSpanId()
+		if a, ok := tracer.(pinpoint.AsyncSpanIdentifier); ok && trackAcks(config) && tracer.IsSampled() {
+			id = a.AsyncSpanId()
 			writer.Set(HeaderAsyncSpanId, id)
 		}
 	}

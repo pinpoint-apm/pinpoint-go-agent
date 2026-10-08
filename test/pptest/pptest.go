@@ -35,7 +35,7 @@ func SpanOf(t testing.TB, tracer pinpoint.Tracer) map[string]interface{} {
 	t.Helper()
 	require.NotNil(t, tracer, "the handler never ran")
 	var m map[string]interface{}
-	require.NoError(t, json.Unmarshal(tracer.JsonString(), &m))
+	require.NoError(t, json.Unmarshal(pinpoint.SpanJSON(tracer), &m))
 	return m
 }
 

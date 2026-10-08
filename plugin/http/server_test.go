@@ -750,7 +750,7 @@ func TestWrapHandler_RecordsConfiguredHeaders(t *testing.T) {
 	h(httptest.NewRecorder(), req)
 
 	require.NotNil(t, tracer)
-	annotations := string(tracer.JsonString())
+	annotations := string(pinpoint.SpanJSON(tracer))
 	assert.Contains(t, annotations, "req-value", "the configured request header must be recorded")
 	assert.Contains(t, annotations, "res-value", "the configured response header must be recorded")
 	assert.Contains(t, annotations, "s1", "the configured cookie must be recorded")
@@ -927,7 +927,7 @@ func (s spanJson) annotations(key int32, leaf string) []any {
 func spanOf(t *testing.T, tracer pinpoint.Tracer) spanJson {
 	t.Helper()
 	var s spanJson
-	require.NoError(t, json.Unmarshal(tracer.JsonString(), &s))
+	require.NoError(t, json.Unmarshal(pinpoint.SpanJSON(tracer), &s))
 	return s
 }
 
@@ -1098,7 +1098,7 @@ func TestWrapHandler_ReusesTheContextTracer(t *testing.T) {
 	assert.Equal(t, outer.SpanId(), inner.SpanId(), "one request, one span")
 
 	var span map[string]interface{}
-	require.NoError(t, json.Unmarshal(outer.JsonString(), &span))
+	require.NoError(t, json.Unmarshal(pinpoint.SpanJSON(outer), &span))
 	assert.Equal(t, "/nested", span["RpcName"])
 	statusCodes := 0
 	for _, a := range span["Annotations"].([]interface{}) {

@@ -300,8 +300,8 @@ func Test_noopAgent(t *testing.T) {
 }
 
 func Test_noopSpan_Identity(t *testing.T) {
-	assert.Equal(t, "0^Noop", NoopTracer().AsyncSpanId())
-	assert.JSONEq(t, "{}", string(NoopTracer().JsonString()))
+	assert.Equal(t, "0^Noop", NoopTracer().(AsyncSpanIdentifier).AsyncSpanId())
+	assert.JSONEq(t, "{}", string(SpanJSON(NoopTracer())))
 
 	span := newUnSampledSpan(newTestAgent(defaultConfig()), "/test")
 	defer span.EndSpan()

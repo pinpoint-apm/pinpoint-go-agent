@@ -43,7 +43,7 @@ type spanFields struct {
 func readSpan(t *testing.T, tracer pinpoint.Tracer) spanFields {
 	t.Helper()
 	var f spanFields
-	require.NoError(t, json.Unmarshal(tracer.JsonString(), &f))
+	require.NoError(t, json.Unmarshal(pinpoint.SpanJSON(tracer), &f))
 	return f
 }
 

@@ -91,8 +91,30 @@ type Tracer interface {
 
 	// AddMetric adds a custom metric.
 	AddMetric(metric string, value interface{})
+}
 
-	JsonString() []byte
+// SpanJSON renders what the tracer has recorded on its span as JSON - the rpc
+// name, the end point, the remote address, the error mask and the annotations -
+// for tests and debugging; it is not what the collector receives. A tracer that
+// records nothing, the noop tracer included, renders as "{}". A nested view
+// (NestedTracer) renders the span it is a view of.
+func SpanJSON(tracer Tracer) []byte {
+	if n, ok := tracer.(nestedTracer); ok {
+		tracer = n.Tracer
+	}
+	if j, ok := tracer.(interface{ JsonString() []byte }); ok {
+		return j.JsonString()
+	}
+	return []byte("{}")
+}
+
+// AsyncSpanIdentifier is the optional capability of a goroutine tracer that
+// stands for an asynchronous span: AsyncSpanId renders "spanId^asyncId^sequence",
+// the id a messaging plugin carries in a message header to end the span on the
+// broker's acknowledgement. The tracers of this package implement it; a
+// plugin asserts it on the goroutine tracer it forked, and records no id for a
+// tracer that lacks it.
+type AsyncSpanIdentifier interface {
 	AsyncSpanId() string
 }
 
