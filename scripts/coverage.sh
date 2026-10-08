@@ -14,9 +14,10 @@ set -uo pipefail
 #
 # Usage: scripts/coverage.sh [OUT_DIR]
 #
-# OUT_DIR (default: $TMPDIR/pinpoint-go-coverage) is emptied first. It ends up
-# holding unit/, it/ and e2e/ (binary data), all.out (the merged text
-# profile) and agent.html (the agent package, line by line). The run goes on
+# OUT_DIR (default: $TMPDIR/pinpoint-go-coverage) ends up holding unit/, it/
+# and e2e/ (binary data), all.out (the merged text profile) and agent.html
+# (the agent package, line by line); a previous run's copies of those are
+# removed first, and nothing else in the directory is touched. The run goes on
 # past a failing suite, so one break still reports the rest, and exits 1 if
 # any suite failed. e2e needs the ports run_e2e.sh defaults to.
 
@@ -26,7 +27,9 @@ AGENT=github.com/pinpoint-apm/pinpoint-go-agent/v2
 HTTP=github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2
 GRPC=github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2
 
-rm -rf "$OUT"
+# Only what this script writes: rm -rf on the whole directory wiped whatever
+# path the caller passed.
+rm -rf "$OUT"/{unit,it,e2e} "$OUT"/{all,agent}.out "$OUT"/agent.html
 mkdir -p "$OUT"/{unit,it,e2e}
 OUT="$(cd "$OUT" && pwd)"
 failed=()
