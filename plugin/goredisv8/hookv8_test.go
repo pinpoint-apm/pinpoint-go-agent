@@ -41,9 +41,9 @@ func TestNewHook_Endpoint(t *testing.T) {
 		{"no cluster options", NewClusterHook(nil), "unknown"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := tt.hook.BeforeProcess(ctx, cmd("get", nil))
+			got, err := tt.hook.BeforeProcess(ctx, cmd("get", nil))
 			require.NoError(t, err)
-			require.NoError(t, tt.hook.AfterProcess(ctx, cmd("get", nil)))
+			require.NoError(t, tt.hook.AfterProcess(got, cmd("get", nil)))
 
 			assert.Equal(t, tt.want, tracer.Last().EndPoint)
 		})
@@ -62,8 +62,8 @@ func TestHook_Process(t *testing.T) {
 
 		got, err := h.BeforeProcess(ctx, cmd("get", nil))
 		require.NoError(t, err)
-		assert.Equal(t, ctx, got, "BeforeProcess replaced the context")
-		require.NoError(t, h.AfterProcess(ctx, cmd("get", cmdErr)))
+		assert.Same(t, tracer, pinpoint.FromContext(got), "the returned context must keep the tracer")
+		require.NoError(t, h.AfterProcess(got, cmd("get", cmdErr)))
 
 		require.Len(t, tracer.Events, 1, "one command must produce exactly one span event")
 		e := tracer.Events[0]
@@ -89,8 +89,8 @@ func TestHook_ProcessPipeline(t *testing.T) {
 
 	got, err := h.BeforeProcessPipeline(ctx, cmds)
 	require.NoError(t, err)
-	assert.Equal(t, ctx, got, "BeforeProcessPipeline replaced the context")
-	require.NoError(t, h.AfterProcessPipeline(ctx, cmds))
+	assert.Same(t, tracer, pinpoint.FromContext(got), "the returned context must keep the tracer")
+	require.NoError(t, h.AfterProcessPipeline(got, cmds))
 
 	require.Len(t, tracer.Events, 1, "a pipeline is one round trip, so one span event")
 	e := tracer.Events[0]
@@ -156,12 +156,32 @@ func TestHook_ConcurrentCommands(t *testing.T) {
 			tracer := pptest.NewRecordingTracer()
 			ctx := pinpoint.NewContext(context.Background(), tracer)
 			for j := 0; j < 25; j++ {
-				_, err := h.BeforeProcess(ctx, cmd("get", nil))
+				got, err := h.BeforeProcess(ctx, cmd("get", nil))
 				assert.NoError(t, err)
-				assert.NoError(t, h.AfterProcess(ctx, cmd("get", nil)))
+				assert.NoError(t, h.AfterProcess(got, cmd("get", nil)))
 			}
 			assert.Len(t, tracer.Events, 25)
 		}()
 	}
 	wg.Wait()
+}
+
+// The error is recorded on the event BeforeProcess opened, not on whichever
+// event is innermost when AfterProcess runs: under a fan-out on one request,
+// another goroutine's event may have been pushed in between.
+func TestHook_RecordsOnTheEventItOpened(t *testing.T) {
+	h := NewHook(&redis.Options{Addr: "redis1:6379"})
+	tracer := pptest.NewRecordingTracer()
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+
+	got, err := h.BeforeProcess(ctx, cmd("get", nil))
+	require.NoError(t, err)
+	tracer.NewSpanEvent("another goroutine's call")
+
+	cmdErr := errors.New("WRONGTYPE")
+	require.NoError(t, h.AfterProcess(got, cmd("get", cmdErr)))
+
+	require.Len(t, tracer.Events, 2)
+	assert.Equal(t, cmdErr, tracer.Events[0].Err, "the error must land on the redis event")
+	assert.NoError(t, tracer.Events[1].Err, "the other event must not carry the redis error")
 }

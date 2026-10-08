@@ -51,58 +51,60 @@ func NewClusterHook(opts *redis.ClusterOptions) redis.Hook {
 	return &h
 }
 
-func (r *hook) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
-	tracer := pinpoint.FromContext(ctx)
-	if !tracer.IsSampled() {
-		return ctx, nil
-	}
+// recorderKey carries the span event recorder from BeforeProcess to
+// AfterProcess in the context go-redis threads through the hooks. The error
+// is recorded on that recorder: reading it back after the call would land on
+// whichever event is on top by then, another goroutine's under a fan-out on
+// one request.
+type recorderKey struct{}
 
-	tracer.NewSpanEvent("go-redis/v8.Process()")
-	return ctx, nil
+func (r *hook) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
+	return r.before(ctx, "go-redis/v8.Process()", cmd.Name()), nil
 }
 
 func (r *hook) AfterProcess(ctx context.Context, cmd redis.Cmder) error {
-	tracer := pinpoint.FromContext(ctx)
-	if !tracer.IsSampled() {
-		return nil
-	}
-
-	r.setSpanEvent(tracer, cmd.Name(), cmd.Err())
+	after(ctx, cmd.Err())
 	return nil
 }
 
 func (r *hook) BeforeProcessPipeline(ctx context.Context, cmds []redis.Cmder) (context.Context, error) {
-	tracer := pinpoint.FromContext(ctx)
-	if !tracer.IsSampled() {
-		return ctx, nil
-	}
-
-	tracer.NewSpanEvent("go-redis/v8.ProcessPipeline()")
-	return ctx, nil
+	return r.before(ctx, "go-redis/v8.ProcessPipeline()", cmdName(cmds)), nil
 }
 
 func (r *hook) AfterProcessPipeline(ctx context.Context, cmds []redis.Cmder) error {
-	tracer := pinpoint.FromContext(ctx)
-	if !tracer.IsSampled() {
-		return nil
-	}
-
-	r.setSpanEvent(tracer, cmdName(cmds), pipeError(cmds))
+	after(ctx, pipeError(cmds))
 	return nil
 }
 
-func (r *hook) setSpanEvent(tracer pinpoint.Tracer, cmd string, err error) {
-	defer tracer.EndSpanEvent()
+// before opens the span event of a sampled command and hands its recorder to
+// after through the returned context; an unsampled one gets ctx back as is.
+func (r *hook) before(ctx context.Context, operation string, cmd string) context.Context {
+	tracer := pinpoint.FromContext(ctx)
+	if !tracer.IsSampled() {
+		return ctx
+	}
+
+	tracer.NewSpanEvent(operation)
 	se := tracer.SpanEvent()
 	se.SetServiceType(pinpoint.ServiceTypeRedis)
 	se.SetDestination("REDIS")
 	se.SetEndPoint(r.endpoint)
+	se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
+	return context.WithValue(ctx, recorderKey{}, se)
+}
+
+// after records err on the event before opened and ends it.
+func after(ctx context.Context, err error) {
+	se, ok := ctx.Value(recorderKey{}).(pinpoint.SpanEventRecorder)
+	if !ok {
+		return
+	}
 	// A cache miss is a normal outcome, not a failure: redis.Nil must not
 	// mark the span errored (nor walk the stack with Error.TraceCallStack on).
 	if !errors.Is(err, redis.Nil) {
 		se.SetError(err)
 	}
-	se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
+	pinpoint.FromContext(ctx).EndSpanEvent()
 }
 
 // cmdName lists the pipeline's commands, bounded: the pipeline size is
