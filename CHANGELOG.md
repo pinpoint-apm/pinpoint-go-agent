@@ -111,6 +111,9 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   require; `go get` of either plugin pulls it in. The plugins' own API -
   `NewMonitor`, `WithMongoRecordCommand`, `WithMongoCommandMaxSize` and the
   `CfgMongo*` keys - is unchanged.
+- **`pinpoint.NewKafkaConsumerTracer` starts a Kafka consumer span.** The
+  sarama and confluent plugins both build theirs through it; a plugin for
+  another Kafka client can do the same.
 - **`NewConfig` returns an error for a config file that exists but cannot be
   read** - a syntax error, an unsupported extension. The `Config` comes back
   complete on defaults and the other sources, so `cfg, _ := NewConfig(...)`

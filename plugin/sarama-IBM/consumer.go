@@ -43,7 +43,6 @@ package ppsaramaibm
 import (
 	"context"
 	"errors"
-	"strconv"
 
 	"github.com/IBM/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
@@ -105,50 +104,29 @@ func (m *distributedTracingContextReaderConsumer) Get(key string) (string, bool)
 }
 
 func makeRpcName(msg *sarama.ConsumerMessage) string {
-	return "kafka://topic=" + msg.Topic +
-		"?partition=" + strconv.Itoa(int(msg.Partition)) +
-		"&offset=" + strconv.FormatInt(msg.Offset, 10)
+	return consumerMessage(msg).RpcName()
+}
+
+func consumerMessage(msg *sarama.ConsumerMessage) pinpoint.KafkaConsumerMessage {
+	return pinpoint.KafkaConsumerMessage{Topic: msg.Topic, Partition: msg.Partition, Offset: msg.Offset}
 }
 
 func newConsumerTracer(ctx context.Context, msg *sarama.ConsumerMessage) pinpoint.Tracer {
-	agent := pinpoint.GetAgent()
-	// A disabled agent returns the noop tracer anyway; return it before
-	// building the rpc name it would throw away.
-	if !agent.Enable() {
-		return pinpoint.NoopTracer()
-	}
-
 	// A nil context is a request with nothing in it; reading a value off it
 	// panicked out of ConsumeClaim and ended the consumer group session.
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	reader := &distributedTracingContextReaderConsumer{msg}
-	tracer := agent.NewSpanTracerWithReader("Sarama Consumer Invocation", makeRpcName(msg), reader)
-
+	m := consumerMessage(msg)
 	// Keep the Unknown fallback for an empty or mistyped context value: a
-	// panic here propagates out of ConsumeClaim and kills the consumer.
-	brokerAddr := "Unknown"
+	// panic here propagates out of ConsumeClaim and kills the consumer. An
+	// empty slice is still a value, so the host header is not consulted.
 	if v := ctx.Value(contextKey); v != nil {
+		m.Broker = "Unknown"
 		if addrs, ok := v.([]string); ok && len(addrs) > 0 {
-			brokerAddr = addrs[0]
+			m.Broker = addrs[0]
 		}
-	} else if host, _ := reader.Get(pinpoint.HeaderHost); host != "" {
-		brokerAddr = host
 	}
-
-	span := tracer.Span()
-	span.SetServiceType(pinpoint.ServiceTypeKafkaClient)
-	span.SetRemoteAddress(brokerAddr)
-	span.SetAcceptorHost(brokerAddr)
-	span.SetEndPoint(brokerAddr)
-
-	a := span.Annotations()
-	a.AppendString(pinpoint.AnnotationKafkaTopic, msg.Topic)
-	a.AppendInt(pinpoint.AnnotationKafkaPartition, msg.Partition)
-	// The offset is an int64; casting to int32 truncated it past 2^31.
-	a.AppendLong(pinpoint.AnnotationKafkaOffset, msg.Offset)
-
-	return tracer
+	return pinpoint.NewKafkaConsumerTracer("Sarama Consumer Invocation", m, &distributedTracingContextReaderConsumer{msg})
 }

@@ -3,7 +3,6 @@ package ppconfluentkafka
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
@@ -57,43 +56,27 @@ func ConsumeMessageContext(handler HandlerContextFunc, ctx context.Context, msg 
 }
 
 func makeRpcName(msg *kafka.Message) string {
-	return "kafka://topic=" + topicOf(msg) +
-		"?partition=" + strconv.Itoa(int(msg.TopicPartition.Partition)) +
-		"&offset=" + strconv.FormatInt(int64(msg.TopicPartition.Offset), 10)
+	return consumerMessage(msg).RpcName()
+}
+
+func consumerMessage(msg *kafka.Message) pinpoint.KafkaConsumerMessage {
+	return pinpoint.KafkaConsumerMessage{
+		Topic:     topicOf(msg),
+		Partition: msg.TopicPartition.Partition,
+		Offset:    int64(msg.TopicPartition.Offset),
+	}
 }
 
 func newConsumerTracer(ctx context.Context, msg *kafka.Message) pinpoint.Tracer {
-	agent := pinpoint.GetAgent()
-	if !agent.Enable() {
-		return pinpoint.NoopTracer()
-	}
-
 	// A nil context is a request with nothing in it; reading a value off it
 	// panicked in the consumer.
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	reader := headerReader{msg}
-	tracer := agent.NewSpanTracerWithReader("Kafka Consumer Invocation", makeRpcName(msg), reader)
-
-	broker := "Unknown"
-	if v, ok := ctx.Value(contextKey).(string); ok {
-		broker = v
-	} else if host, _ := reader.Get(pinpoint.HeaderHost); host != "" {
-		broker = host
-	}
-
-	span := tracer.Span()
-	span.SetServiceType(pinpoint.ServiceTypeKafkaClient)
-	span.SetRemoteAddress(broker)
-	span.SetAcceptorHost(broker)
-	span.SetEndPoint(broker)
-
-	a := span.Annotations()
-	a.AppendString(pinpoint.AnnotationKafkaTopic, topicOf(msg))
-	a.AppendInt(pinpoint.AnnotationKafkaPartition, msg.TopicPartition.Partition)
-	a.AppendLong(pinpoint.AnnotationKafkaOffset, int64(msg.TopicPartition.Offset))
-
-	return tracer
+	m := consumerMessage(msg)
+	// NewContext always stores a broker (Unknown for an empty list), so a
+	// missing value means the application gave none.
+	m.Broker, _ = ctx.Value(contextKey).(string)
+	return pinpoint.NewKafkaConsumerTracer("Kafka Consumer Invocation", m, headerReader{msg})
 }
