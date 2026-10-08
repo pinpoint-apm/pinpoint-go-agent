@@ -22,10 +22,9 @@ set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${1:-${TMPDIR:-/tmp}/pinpoint-go-coverage}"
-M=github.com/pinpoint-apm/pinpoint-go-agent
-AGENT=$M/v2
-HTTP=$M/plugin/http/v2
-GRPC=$M/plugin/grpc/v2
+AGENT=github.com/pinpoint-apm/pinpoint-go-agent/v2
+HTTP=github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2
+GRPC=github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2
 
 rm -rf "$OUT"
 mkdir -p "$OUT"/{unit,it,e2e}
