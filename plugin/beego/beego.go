@@ -76,9 +76,16 @@ func responseStatus(ctx *beegoContext.Context) int {
 }
 
 // ClientFilterChain returns filter function that will trace the outgoing requests.
+// The filter records on tracer, so add it per request (req.AddFilters) rather
+// than on settings shared by every request, which would record every caller's
+// request on the one tracer. A nil tracer reads the request's own, from the
+// context the filter is called with, which is the form that is safe to share.
 func ClientFilterChain(tracer pinpoint.Tracer) func(httplib.Filter) httplib.Filter {
 	return func(next httplib.Filter) httplib.Filter {
 		return func(ctx context.Context, req *httplib.BeegoHTTPRequest) (resp *http.Response, err error) {
+			if tracer == nil {
+				tracer = pinpoint.FromContext(ctx)
+			}
 			// See DoRequest for why the returned tracer ends the event.
 			t := pphttp.NewHttpClientTracer(tracer, "beego/v2.DoRequest()", req.GetRequest())
 			defer func() {

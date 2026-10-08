@@ -184,6 +184,9 @@ func WrapClient(client *http.Client) *http.Client {
 
 // WrapClientWithContext returns a new *http.Client ready to instrument.
 // It is possible to trace only when the given context contains a pinpoint.Tracer.
+// The context's tracer is the fallback for a request whose own context carries
+// none; a request that does carry one is traced on its own, so the client may
+// outlive the request it was built for.
 //
 //	client := pphttp.WrapClientWithContext(pinpoint.NewContext(context.Background(), tracer), &http.Client{})
 //	client.Get(external_url)
@@ -215,12 +218,13 @@ func (r *roundTripper) RoundTrip(req *http.Request) (resp *http.Response, err er
 		return r.original.RoundTrip(req)
 	}
 
-	var tracer pinpoint.Tracer
-
-	if r.ctx != nil {
+	// The request's own tracer first: a client built with WrapClientWithContext
+	// is a long-lived object, and a request made under another transaction
+	// must record on that transaction, not on the one the client was built
+	// with. The client's context stands in for a request that carries none.
+	tracer := pinpoint.FromContext(req.Context())
+	if tracer == pinpoint.NoopTracer() && r.ctx != nil {
 		tracer = pinpoint.FromContext(r.ctx)
-	} else {
-		tracer = pinpoint.FromContext(req.Context())
 	}
 
 	req = withOwnHeader(req)

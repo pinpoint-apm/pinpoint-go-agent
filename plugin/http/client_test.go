@@ -225,6 +225,18 @@ func TestWrapClientWithContext(t *testing.T) {
 	require.NotNil(t, rt.sent)
 	assert.NotEmpty(t, pinpointHeaders(t, rt.sent.Header),
 		"the tracer from the client's context should have been used")
+	assert.Equal(t, tracer.TransactionId().String(), rt.sent.Header.Get(pinpoint.HeaderTraceId))
+
+	// A request made under another transaction records on that one: the
+	// client is long-lived, the transaction it was built for is not.
+	other := serverTracer(t)
+	req, err := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), other), http.MethodGet, "http://example.com/callee", nil)
+	require.NoError(t, err)
+	resp, err = client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, other.TransactionId().String(), rt.sent.Header.Get(pinpoint.HeaderTraceId),
+		"the request's own tracer must win over the client's")
 }
 
 // Without a tracer anywhere the request must still go through - and carry no

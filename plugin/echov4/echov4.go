@@ -28,30 +28,32 @@ type key struct {
 	path   string
 }
 
-var (
-	handlerNameMap map[key]string
-	once           sync.Once
-)
+// handlerNames caches the route table of each *echo.Echo, built from its
+// Routes() on the instance's first request. Per instance rather than once per
+// process: a second Echo in the same process, a test suite's instances, or an
+// instance built after the first request all reported "echo.HandlerFunc()"
+// for every route under a single process-wide map.
+var handlerNames sync.Map // *echo.Echo -> map[key]string
 
-func makeHandlerNameMap(c echo.Context) {
-	handlerNameMap = make(map[key]string, 0)
-	for _, r := range c.Echo().Routes() {
-		k := key{r.Method, r.Path}
-		handlerNameMap[k] = r.Name + "()"
+func makeHandlerNameMap(e *echo.Echo) map[key]string {
+	names := make(map[key]string)
+	for _, r := range e.Routes() {
+		names[key{r.Method, r.Path}] = r.Name + "()"
 	}
+	return names
 }
 
 func handlerName(c echo.Context, r *http.Request) string {
-	once.Do(func() {
-		makeHandlerNameMap(c)
-	})
-
-	k := key{r.Method, c.Path()}
-	if name, ok := handlerNameMap[k]; ok {
-		return name
-	} else {
-		return "echo.HandlerFunc()"
+	e := c.Echo()
+	names, ok := handlerNames.Load(e)
+	if !ok {
+		names, _ = handlerNames.LoadOrStore(e, makeHandlerNameMap(e))
 	}
+
+	if name, ok := names.(map[key]string)[key{r.Method, c.Path()}]; ok {
+		return name
+	}
+	return "echo.HandlerFunc()"
 }
 
 func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {

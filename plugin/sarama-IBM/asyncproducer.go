@@ -48,6 +48,26 @@ func (p *asyncProducer) AbortTxn() error {
 	return p.AsyncProducer.AbortTxn()
 }
 
+// flushBuffers answers one flushInput: a message accepted before the request
+// may have been queued after the forwarder last looked, so both buffers are
+// forwarded up to their lengths now, which covers it and ends even while other
+// goroutines keep sending. The forwarder is the only receiver on these
+// channels, so the receives cannot block. False once sarama is gone.
+func (p *asyncProducer) flushBuffers(flushed chan struct{}) bool {
+	for n := len(p.inputContext); n > 0; n-- {
+		if !p.forward(<-p.inputContext) {
+			return false
+		}
+	}
+	for n := len(p.input); n > 0; n-- {
+		if !p.forward(<-p.input) {
+			return false
+		}
+	}
+	close(flushed)
+	return true
+}
+
 // flushInput returns once the forwarder has handed sarama every message the
 // wrapper accepted before the call, or has gone.
 func (p *asyncProducer) flushInput() {
@@ -248,6 +268,18 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 			// a goroutine still writing to the untraced Input channel during
 			// shutdown can extend the drain; InputContext stops accepting on
 			// done by itself. Snapshot the lengths if that ever matters.
+			// A flush request is served between two forwards as well as on an
+			// empty queue: served only there, CommitTxn and AbortTxn waited
+			// for a gap in the inputs that a steadily producing application
+			// never gave them.
+			select {
+			case flushed := <-wrapped.flush:
+				if !wrapped.flushBuffers(flushed) {
+					return
+				}
+			default:
+			}
+
 			msg, ok := wrapped.takeInput()
 			if !ok {
 				select {
@@ -262,21 +294,9 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 				case msg = <-wrapped.inputContext:
 				case msg = <-wrapped.input:
 				case flushed := <-wrapped.flush:
-					// A message accepted before the request may have been
-					// queued after takeInput looked, so the buffers are
-					// forwarded up to their lengths now, which covers it and
-					// ends even while other goroutines keep sending.
-					for n := len(wrapped.inputContext); n > 0; n-- {
-						if !wrapped.forward(<-wrapped.inputContext) {
-							return
-						}
+					if !wrapped.flushBuffers(flushed) {
+						return
 					}
-					for n := len(wrapped.input); n > 0; n-- {
-						if !wrapped.forward(<-wrapped.input) {
-							return
-						}
-					}
-					close(flushed)
 					continue
 				}
 			}
