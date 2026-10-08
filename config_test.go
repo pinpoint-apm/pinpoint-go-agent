@@ -176,7 +176,7 @@ func TestNewConfig_ConfigFileYaml(t *testing.T) {
 	c, _ := NewConfig(opts...)
 	defer c.Close()
 	assert.Equal(t, "MyAppName", c.String(CfgAppName), CfgAppName)
-	assert.Equal(t, 1900, c.Int(CfgAppType), CfgAppType)
+	assert.Equal(t, ServiceTypeGoApp, c.Int(CfgAppType), CfgAppType) // the sample names the Go type
 	assert.Equal(t, "my.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
 	assert.Equal(t, 9000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
 	assert.Equal(t, 9001, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
@@ -214,7 +214,7 @@ func TestNewConfig_ConfigFileJson(t *testing.T) {
 	c, _ := NewConfig(opts...)
 	defer c.Close()
 	assert.Equal(t, "JsonAppName", c.String(CfgAppName), CfgAppName)
-	assert.Equal(t, 1901, c.Int(CfgAppType), CfgAppType)
+	assert.Equal(t, ServiceTypeGoApp, c.Int(CfgAppType), CfgAppType) // the sample names the Go type
 	assert.Equal(t, "real.collector.host", c.String(CfgCollectorHost), CfgCollectorHost)
 	assert.Equal(t, 9000, c.Int(CfgCollectorAgentPort), CfgCollectorAgentPort)
 	assert.Equal(t, 9001, c.Int(CfgCollectorSpanPort), CfgCollectorSpanPort)
