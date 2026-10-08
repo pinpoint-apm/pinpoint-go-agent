@@ -154,5 +154,8 @@ func BenchmarkActiveThreadDumpSelection(b *testing.B) {
 				selected = append(selected, g)
 			}
 		}
+		if len(selected) != requested {
+			b.Fatalf("selected %d of %d requested goroutines", len(selected), requested)
+		}
 	}
 }

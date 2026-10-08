@@ -1688,7 +1688,7 @@ func TestIsInternalContext(t *testing.T) {
 	ag := newTestAgent(defaultConfig())
 
 	assert.False(t, IsInternalContext(context.Background()))
-	assert.False(t, IsInternalContext(nil))
+	assert.False(t, IsInternalContext(nil)) //lint:ignore SA1012 IsInternalContext tolerates nil on purpose
 	assert.False(t, IsInternalContext(NewContext(context.Background(), NoopTracer())))
 
 	assert.True(t, IsInternalContext(grpcMetadataContext(ag, -1)), "base outgoing context")

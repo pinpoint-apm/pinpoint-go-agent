@@ -199,6 +199,7 @@ func (b *expiringPickFirst) createSubConnLocked() {
 	}
 
 	sd := &expiringSubConn{}
+	//lint:ignore SA1019 one SubConn over the whole list is what make-before-break needs; see readdressLocked
 	sc, err := b.cc.NewSubConn(b.addrs, balancer.NewSubConnOptions{
 		StateListener: func(state balancer.SubConnState) { b.onSubConnState(sd, state) },
 	})

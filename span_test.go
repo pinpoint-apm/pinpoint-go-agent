@@ -1272,7 +1272,7 @@ func TestSpan_UnclosedEventsAreEndedAndSent(t *testing.T) {
 // verdicts for every one- and two-byte string, so the character class did not
 // drift when idPattern was dropped.
 func Test_isIDChars(t *testing.T) {
-	re := regexp.MustCompile("^[a-zA-Z0-9._\\-]+$")
+	re := regexp.MustCompile(`^[a-zA-Z0-9._\-]+$`)
 	check := func(s string) {
 		t.Helper()
 		assert.Equal(t, re.MatchString(s), len(s) > 0 && isIDChars(s), "%q", s)

@@ -51,10 +51,19 @@ go test -v
 ```bash
 go test -race ./...
 ```
+```bash
+go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+```
 
 The agent's tracers are concurrency-sensitive, so `-race` is part of the
 contract rather than an occasional extra. Run it before sending a change that
 touches spans, the queue or the config snapshot.
+
+staticcheck runs in CI on the newest toolchain and has to come back clean. A
+deliberate use of deprecated API - the `database/sql` fallbacks for drivers
+without the Context interfaces, the balancer's `NewSubConn` - carries a
+`//lint:ignore SA1019 <reason>` directive on its line; add one, with the
+reason, rather than widening the configuration.
 
 ## Test the plugins
 

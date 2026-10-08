@@ -478,7 +478,7 @@ func (c *sqlConn) ExecContext(ctx context.Context, query string, args []driver.N
 		return result, err
 	}
 
-	e, ok := c.Conn.(driver.Execer)
+	e, ok := c.Conn.(driver.Execer) //lint:ignore SA1019 fallback for a driver without ExecerContext
 	if !ok {
 		return nil, driver.ErrSkip
 	}
@@ -514,7 +514,7 @@ func (c *sqlConn) QueryContext(ctx context.Context, query string, args []driver.
 		return rows, err
 	}
 
-	q, ok := c.Conn.(driver.Queryer)
+	q, ok := c.Conn.(driver.Queryer) //lint:ignore SA1019 fallback for a driver without QueryerContext
 	if !ok {
 		return nil, driver.ErrSkip
 	}
@@ -565,7 +565,7 @@ func (c *sqlConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx
 		return nil, errors.New("sql: driver does not support read-only transactions")
 	}
 
-	tx, err = c.Conn.Begin()
+	tx, err = c.Conn.Begin() //lint:ignore SA1019 fallback for a driver without ConnBeginTx
 	if err == nil {
 		select {
 		case <-ctx.Done():
@@ -628,6 +628,7 @@ func (s *sqlStmt) CheckNamedValue(nv *driver.NamedValue) error {
 }
 
 func (s *sqlStmt) ColumnConverter(idx int) driver.ValueConverter {
+	//lint:ignore SA1019 passed through for a driver that still implements it
 	if cc, ok := s.Stmt.(driver.ColumnConverter); ok {
 		return cc.ColumnConverter(idx)
 	}
@@ -654,7 +655,7 @@ func (s *sqlStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (dr
 		return nil, ctx.Err()
 	}
 
-	result, err := s.Stmt.Exec(dargs)
+	result, err := s.Stmt.Exec(dargs) //lint:ignore SA1019 fallback for a statement without StmtExecContext
 	s.conn.newSqlSpanEventWithValue(ctx, "StmtExec", start, err, s.sql, dargs)
 	return result, err
 }
@@ -679,7 +680,7 @@ func (s *sqlStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (d
 		return nil, ctx.Err()
 	}
 
-	rows, err := s.Stmt.Query(dargs)
+	rows, err := s.Stmt.Query(dargs) //lint:ignore SA1019 fallback for a statement without StmtQueryContext
 	s.conn.newSqlSpanEventWithValue(ctx, "StmtQuery", start, err, s.sql, dargs)
 	return rows, err
 }

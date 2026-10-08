@@ -540,7 +540,7 @@ func makeGoLibraryInfo() *pb.PServiceInfo {
 	}
 
 	return &pb.PServiceInfo{
-		ServiceName: "Go (" + runtime.GOOS + ", " + runtime.GOARCH + ", " + runtime.GOROOT() + ")",
+		ServiceName: "Go (" + runtime.GOOS + ", " + runtime.GOARCH + ")",
 		ServiceLib:  libs,
 	}
 }

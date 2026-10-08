@@ -14,7 +14,7 @@ func TestContext_RoundTrip(t *testing.T) {
 
 func TestContext_MissingTracerIsNoop(t *testing.T) {
 	assert.Equal(t, NoopTracer(), FromContext(context.Background()), "empty context")
-	assert.Equal(t, NoopTracer(), FromContext(nil), "nil context")
+	assert.Equal(t, NoopTracer(), FromContext(nil), "nil context") //lint:ignore SA1012 FromContext tolerates nil on purpose
 }
 
 // The private key type prevents external context values from shadowing the
@@ -22,7 +22,7 @@ func TestContext_MissingTracerIsNoop(t *testing.T) {
 func TestContext_ForeignStringKeyDoesNotShadowTheTracer(t *testing.T) {
 	tracer := defaultTestSpan()
 	ctx := NewContext(context.Background(), tracer)
-	ctx = context.WithValue(ctx, "pinpoint.spanTracer", "not a tracer") //nolint:staticcheck // the point of the test
+	ctx = context.WithValue(ctx, "pinpoint.spanTracer", "not a tracer") //lint:ignore SA1029 a foreign string key is the point of the test
 
 	assert.Same(t, tracer, FromContext(ctx), "tracer survives the foreign key")
 }
