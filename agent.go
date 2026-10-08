@@ -1434,38 +1434,47 @@ func (g *idGen) next(kind string) int32 {
 	return 0
 }
 
-func (agent *agent) cacheError(errorName string) int32 {
+// registerMeta is the metadata registration every id cache follows: a hit on
+// key returns the cached value; a miss mints one, publishes it in cache and
+// queues the metadata md builds for it. The zero value comes back, and
+// nothing is minted, while tracing is off, when the metadata queue is full
+// (metaQueueFull) or when mint declines - an id sequence that wrapped. Two
+// goroutines missing on the same key both mint, and the one peekOrAdd admits
+// is the value both return.
+func registerMeta[K comparable, V any](agent *agent, cache *metaCache[K, V], kind string, key K,
+	mint func() (V, bool), md func(V) interface{}) V {
+	var zero V
 	if !agent.tracingEnabled() {
-		return 0
+		return zero
 	}
-
-	if v, ok := agent.errorCache.peek(errorName); ok {
+	if v, ok := cache.peek(key); ok {
 		return v
 	}
 	if agent.metaQueueFull() {
-		return 0
+		return zero
+	}
+	v, ok := mint()
+	if !ok {
+		return zero
+	}
+	if cached, ok := cache.peekOrAdd(key, v); ok {
+		return cached
 	}
 
-	id := agent.errorIdGen.next("error")
-	if id == 0 {
-		return 0
-	}
-	if v, ok := agent.errorCache.peekOrAdd(errorName, id); ok {
-		return v
-	}
-
-	md := stringMeta{
-		id:       id,
-		funcName: errorName,
-	}
-	agent.enqueueMeta(md)
-
+	m := md(v)
+	agent.enqueueMeta(m)
 	// Debug, not info: a miss runs on the request goroutine, and a workload
 	// whose cardinality exceeds the cache would otherwise log per request.
 	if IsDebugLogLevelEnabled() {
-		Log("agent").Debugf("cache error id: %d, %s", id, errorName)
+		Log("agent").Debugf("register %s metadata: %+v", kind, m)
 	}
-	return id
+	return v
+}
+
+func (agent *agent) cacheError(errorName string) int32 {
+	return registerMeta(agent, agent.errorCache, "error", errorName,
+		func() (int32, bool) { id := agent.errorIdGen.next("error"); return id, id != 0 },
+		func(id int32) interface{} { return stringMeta{id: id, funcName: errorName} })
 }
 
 // validUTF8 replaces invalid UTF-8 sequences in s with the replacement rune.
@@ -1518,10 +1527,6 @@ func (agent *agent) sqlCacheable(sql string) bool {
 }
 
 func (agent *agent) cacheSql(sql string) int32 {
-	if !agent.tracingEnabled() {
-		return 0
-	}
-
 	// Keyed on a hash of the untruncated statement, not on the abbreviated
 	// text: an abbreviated key keeps no more than a 64KB prefix and the total
 	// length, so two statements agreeing on both would share one id and the
@@ -1538,37 +1543,13 @@ func (agent *agent) cacheSql(sql string) int32 {
 		return 0
 	}
 	key := sqlHashOf(sql)
-	if v, ok := agent.sqlCache.peek(key); ok {
-		return v
-	}
-	if agent.metaQueueFull() {
-		return 0
-	}
-
-	// A wrapped sequence records no SQL: SetSQL skips a zero id.
-	id := agent.sqlIdGen.next("sql")
-	if id == 0 {
-		return 0
-	}
-	if v, ok := agent.sqlCache.peekOrAdd(key, id); ok {
-		return v
-	}
-
-	aSql := abbreviateString(sql, maxSqlSize)
-	md := sqlMeta{id: id, sql: aSql, key: key}
-	agent.enqueueMeta(md)
-
-	if IsDebugLogLevelEnabled() {
-		Log("agent").Debugf("cache sql id: %d, %s", id, aSql)
-	}
-	return id
+	return registerMeta(agent, agent.sqlCache, "sql", key,
+		// A wrapped sequence records no SQL: SetSQL skips a zero id.
+		func() (int32, bool) { id := agent.sqlIdGen.next("sql"); return id, id != 0 },
+		func(id int32) interface{} { return sqlMeta{id: id, sql: abbreviateString(sql, maxSqlSize), key: key} })
 }
 
 func (agent *agent) cacheSqlUid(sql string) []byte {
-	if !agent.tracingEnabled() {
-		return nil
-	}
-
 	// The UID is the hash of the untruncated statement, and the cache keys on
 	// that same hash: a text key was bounded by SQL.CacheLengthLimit, so every
 	// execution of a statement past it - 2 KB by default, which an ORM reaches
@@ -1580,26 +1561,11 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 		return nil
 	}
 	key := sqlHashOf(sql)
-	if v, ok := agent.sqlUidCache.peek(key); ok {
-		return v
-	}
-	if agent.metaQueueFull() {
-		return nil
-	}
-
-	uid := key[:]
-	if v, ok := agent.sqlUidCache.peekOrAdd(key, uid); ok {
-		return v
-	}
-
-	aSql := abbreviateString(sql, maxSqlSize)
-	md := sqlUidMeta{uid: uid, sql: aSql, key: key}
-	agent.enqueueMeta(md)
-
-	if IsDebugLogLevelEnabled() {
-		Log("agent").Debugf("cache sql uid: %#v, %s", uid, aSql)
-	}
-	return uid
+	return registerMeta(agent, agent.sqlUidCache, "sql uid", key,
+		func() ([]byte, bool) { return key[:], true },
+		func(uid []byte) interface{} {
+			return sqlUidMeta{uid: uid, sql: abbreviateString(sql, maxSqlSize), key: key}
+		})
 }
 
 // sqlUid hashes a normalized SQL with murmur3 x64 128 (seed 0) and lays the two
@@ -1660,38 +1626,10 @@ func (agent *agent) normalizeSql(sql string) (string, string) {
 }
 
 func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
-	if !agent.tracingEnabled() {
-		return 0
-	}
-
 	key := apiCacheKey{descriptor, apiType}
-
-	if v, ok := agent.apiCache.peek(key); ok {
-		return v
-	}
-	if agent.metaQueueFull() {
-		return 0
-	}
-
-	id := agent.apiIdGen.next("api")
-	if id == 0 {
-		return 0
-	}
-	if v, ok := agent.apiCache.peekOrAdd(key, id); ok {
-		return v
-	}
-
-	md := apiMeta{
-		id:         id,
-		descriptor: descriptor,
-		apiType:    apiType,
-	}
-	agent.enqueueMeta(md)
-
-	if IsDebugLogLevelEnabled() {
-		Log("agent").Debugf("cache api id: %d, %s_%d", id, descriptor, apiType)
-	}
-	return id
+	return registerMeta(agent, agent.apiCache, "api", key,
+		func() (int32, bool) { id := agent.apiIdGen.next("api"); return id, id != 0 },
+		func(id int32) interface{} { return apiMeta{id: id, descriptor: descriptor, apiType: apiType} })
 }
 
 // enqueueExceptionMeta sends chains, taken from span under errorChainsLock by
