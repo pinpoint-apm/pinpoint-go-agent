@@ -303,3 +303,28 @@ func TestMonitor_ConcurrentCommands(t *testing.T) {
 
 	assert.Empty(t, m.spans, "spans were left in the map")
 }
+
+// The span map is bounded: a command whose Succeeded or Failed never arrives -
+// a driver bug, a connection that vanished - must not pin its tracer forever.
+// At maxPendingSpans the next Started evicts one pending command, ending its
+// event with errSpanEvicted so the trace says what happened, and the map stays
+// at the cap.
+func TestMonitor_EvictsAtTheCap(t *testing.T) {
+	m := &monitor{spans: make(map[spanKey]pinpoint.Tracer)}
+	tracers := make([]*pptest.RecordingTracer, 0, maxPendingSpans+1)
+	for i := 0; i <= maxPendingSpans; i++ {
+		tracer := pptest.NewRecordingTracer()
+		tracers = append(tracers, tracer)
+		m.Started(pinpoint.NewContext(context.Background(), tracer), startedEvent(t, "mongo1:27017[-3]", int64(i), "find", "widgets"))
+	}
+
+	assert.Len(t, m.spans, maxPendingSpans, "the map must stay at the cap")
+	evicted := 0
+	for _, tracer := range tracers {
+		if e := tracer.Events[0]; e.Ended {
+			evicted++
+			assert.ErrorIs(t, e.Err, errSpanEvicted, "an evicted command must say so on its event")
+		}
+	}
+	assert.Equal(t, 1, evicted, "exactly one pending command is evicted per Started past the cap")
+}
