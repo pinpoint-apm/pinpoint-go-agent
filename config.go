@@ -194,11 +194,15 @@ const (
 type cfgMapItem struct {
 	value        interface{}
 	defaultValue interface{}
-	valueType    int
-	cmdKey       string
-	envKey       string
-	dynamic      bool
-	source       int
+	// baseValue is the value NewConfig had before it read the config file: the
+	// ConfigOption's, or the registered default. A dynamic option the file
+	// stops setting goes back to it on reload.
+	baseValue interface{}
+	valueType int
+	cmdKey    string
+	envKey    string
+	dynamic   bool
+	source    int
 }
 
 // Where a config value came from, in ascending precedence. A reload only
@@ -684,6 +688,12 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		}
 		config.normalizeCfgValues()
 		config.mu.Unlock()
+	}
+
+	// What the options left is the base the file layers over; a reload that
+	// finds a key gone from the file restores it (loadDynamicConfig).
+	for _, v := range config.cfgMap {
+		v.baseValue = v.value
 	}
 
 	sources := &cfgSources{cmd: config.parseCmdArgs(), env: true}
@@ -1626,12 +1636,15 @@ func (config *Config) loadDynamicConfig(sources *cfgSources) map[string]bool {
 			continue
 		}
 
-		value, source, ok := sources.lookup(k, v)
-		if !ok {
-			continue
-		}
 		oldValue := v.value
-		config.setFinalValue(k, v, value, source)
+		if value, source, ok := sources.lookup(k, v); ok {
+			config.setFinalValue(k, v, value, source)
+		} else if v.source != cfgSrcDefault {
+			// The file set this key and no longer does: back to the value it
+			// had before the file, the ConfigOption's or the default. Keeping
+			// the file's last value left a deleted key in force until restart.
+			v.value, v.source = v.baseValue, cfgSrcDefault
+		}
 		if !reflect.DeepEqual(oldValue, v.value) {
 			changed[k] = true
 		}
@@ -1925,10 +1938,10 @@ func WithSQLEnableRawSqlCache(enable bool) ConfigOption {
 // metadata continuously. Read once at agent startup.
 func WithSQLCacheSize(size int) ConfigOption { return withValue(CfgSQLCacheSize, size) }
 
-// WithSQLCacheLengthLimit sets the max length in bytes of a SQL kept in the SQL
-// UID cache and the raw SQL cache. The SQL-ID cache is exempt - its ids come
-// from a sequence, so bypassing it would issue a new id per execution. A
-// negative value caches every SQL.
+// WithSQLCacheLengthLimit sets the max length in bytes of a raw SQL text whose
+// normalization is memoized (the raw SQL cache). The SQL-ID and SQL-UID caches
+// are exempt: both key on a hash of the statement, so an entry costs the same
+// whatever its length. -1 memoizes every SQL.
 func WithSQLCacheLengthLimit(limit int) ConfigOption { return withValue(CfgSQLCacheLengthLimit, limit) }
 
 // WithSQLCacheExpireHours sets how many hours a SQL UID stays cached before

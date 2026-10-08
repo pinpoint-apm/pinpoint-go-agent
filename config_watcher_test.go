@@ -66,6 +66,26 @@ func TestConfigWatcherReloadAndClose(t *testing.T) {
 	require.Equal(t, 2, config.Int(CfgSamplingCounterRate), "closed watcher still reloaded the file")
 }
 
+// A dynamic key deleted from the file goes back to the value the file had
+// overridden - the config function's here - rather than staying at the file's
+// last value until restart.
+func TestConfigWatcherReloadRestoresRemovedKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	writeConfigRate(t, path, 2)
+
+	config, err := NewConfig(WithAppName("watcher-removed"), WithSamplingCounterRate(5), WithConfigFile(path))
+	require.NoError(t, err)
+	requireWatcher(t, config)
+	t.Cleanup(config.Close)
+	require.Equal(t, 2, config.Int(CfgSamplingCounterRate), "the file overrides the option")
+
+	assert.NoError(t, os.WriteFile(path, []byte("Sampling:\n  PercentRate: 50\n"), 0o600))
+	require.Eventually(t, func() bool {
+		return config.Int(CfgSamplingCounterRate) == 5
+	}, 2*time.Second, 10*time.Millisecond, "a key removed from the file kept the file's value")
+	assert.Equal(t, 50.0, config.Float(CfgSamplingPercentRate), "the key still in the file is applied")
+}
+
 func TestConfigWatcherReloadKeepsEnvValue(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	write := func(rate int, percent float64) {
