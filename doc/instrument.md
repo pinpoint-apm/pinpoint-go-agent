@@ -113,9 +113,14 @@ func externalRequest(tracer pinpoint.Tracer) int {
     tracer.Inject(pinpoint.HttpHeaderWriter(req.Header))
 
     resp, err := client.Do(req)
+    // Record the error before touching resp: on an error resp is nil, and a
+    // deferred resp.Body.Close() placed above this check panics.
+    tracer.SpanEvent().SetError(err)
+    if err != nil {
+        return http.StatusInternalServerError
+    }
     defer resp.Body.Close()
 
-    tracer.SpanEvent().SetError(err)
     return resp.StatusCode
 }
 ```

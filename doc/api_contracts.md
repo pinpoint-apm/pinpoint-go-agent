@@ -450,7 +450,7 @@ and `pinpoint.HttpHeaderReader` adapts a `net/http.Header`.
 | `net/http.Header`, via `pinpoint.HttpHeaderReader` | the header map |
 | gRPC metadata (`plugin/grpc`) | `metadata.ValueFromIncomingContext` |
 | fasthttp request header (`plugin/fasthttp`, `plugin/fiber`, `plugin/fiberv3`) | `RequestHeader.PeekAll` |
-| sarama record headers (`plugin/sarama`, `plugin/sarama-IBM`) | the header slice |
+| sarama record headers (`plugin/sarama-IBM`) | the header slice |
 | kratos `transport.Header` (`plugin/kratos`, `plugin/kratosv3`) | **nothing** - value only, so it reports `v, v != ""` and a blanked header starts a new transaction |
 | no reader at all (`NewSpanTracer`) | **nothing** - every key absent |
 

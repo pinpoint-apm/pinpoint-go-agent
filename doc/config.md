@@ -1338,7 +1338,7 @@ sampling:
   percentRate: 100        # 100%
 
 log:
-  level: "debug"          # also enables the shared-tracer check
+  level: "debug"
   output: "stderr"
 
 sql:
@@ -1360,8 +1360,8 @@ http:
 ```
 
 Keep `log.level: debug` for at least one run of any new instrumentation: the
-API-contract checks that catch a tracer shared across goroutines only run at
-`debug` and `trace`.
+`called after EndSpan` warnings of the API-contract checks are logged at
+`debug`. The check for a tracer shared across goroutines warns at every level.
 
 ### Production
 

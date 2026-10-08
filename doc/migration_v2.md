@@ -76,7 +76,7 @@ find none started and record nothing. Do not use it to put the migration off.
 | `pphttp.WrapHandle(agent, name, pattern, h)`, `WrapHandleFunc(...)` | removed | `pphttp.WrapHandler(h)`, `WrapHandlerFunc(f)`; register under the pattern as before |
 | `ppbeego.Middleware()` | removed | `web.InsertFilterChain("/*", ppbeego.ServerFilterChain())` |
 | `ppbeego.DoRequest(tracer, req)` | removed | `req.AddFilters(ppbeego.ClientFilterChain(tracer))` before sending `req` |
-| `ppsarama.ConsumeMessage`, `WrapConsumerMessage`, `NewConsumer`, `WrapPartitionConsumer` (and `ppsaramaibm`) | removed | `ConsumeMessageContext(handler, ctx, msg)` on a raw `sarama` consumer, with `ppsarama.NewContext` carrying the broker addresses |
+| `ppsarama.ConsumeMessage`, `WrapConsumerMessage`, `NewConsumer`, `WrapPartitionConsumer` (and `ppsaramaibm`) | removed | `ConsumeMessageContext(handler, ctx, msg)` on a raw `sarama` consumer, with `ppsaramaibm.NewContext` carrying the broker addresses |
 | `ppsarama.WithContext(ctx, producer)`, `producer.WithContext(ctx)` (and `ppsaramaibm`) | removed | `SendMessageContext`, `SendMessagesContext`, `InputContext` with the context; `SendMessage`, `SendMessages` and `Input` produce without tracing |
 | `plugin/sarama` (`ppsarama`, Shopify/sarama) | removed | move to IBM/sarama upstream and `plugin/sarama-IBM/v2` (`ppsaramaibm`, the same API) |
 | `plugin/goredis` (`ppgoredis`, go-redis v6), `plugin/goredisv7` (`ppgoredisv7`) | removed | go-redis v6 and v7 are end-of-life: `plugin/goredisv8/v2` or `plugin/goredisv9/v2`, which instrument through a hook (`NewHook`) instead of a wrapped client |
