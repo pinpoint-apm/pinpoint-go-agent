@@ -1323,6 +1323,19 @@ func (config *Config) defaultIfOutOfRange(name string, min, max int) {
 	}
 }
 
+// unlimitedOrAtLeast stages a limit the snapshot holds as int32: -1 means
+// unlimited, and so does a value above MaxInt32, where converting it wrapped
+// to 0 or below and dropped every event. A value under min is raised to min.
+func (config *Config) unlimitedOrAtLeast(name string, min int) {
+	v := config.stagedInt(name)
+	if v == -1 || v > math.MaxInt32 {
+		v = math.MaxInt32
+	} else if v < min {
+		v = min
+	}
+	config.cfgMap[name].value = v
+}
+
 // zeroIfNegative normalizes a negative value to 0 on options where 0 already
 // carries the meaning: the feature off, or a throughput unlimited. A negative
 // value has always behaved like 0 here, so storing 0 keeps the published value
@@ -1438,21 +1451,11 @@ func (config *Config) publish() {
 	config.defaultIfOutOfRange(CfgStatQueueSize, 1, maxQueueSize)
 	config.defaultIfOutOfRange(CfgCollectorGrpcSenderQueueSize, 1, maxQueueSize)
 	config.defaultIfOutOfRange(CfgCollectorGrpcSpanBatchSize, 1, maxQueueSize)
-	if config.stagedInt(CfgCollectorGrpcSpanBatchFlushInterval) < 1 {
-		config.cfgMap[CfgCollectorGrpcSpanBatchFlushInterval].value = defaultSpanBatchFlushInterval
-	}
-	if config.stagedInt(CfgCollectorGrpcSpanBatchCollectDeadline) < 1 {
-		config.cfgMap[CfgCollectorGrpcSpanBatchCollectDeadline].value = defaultSpanBatchCollectDeadline
-	}
-	if config.stagedInt(CfgCollectorGrpcSpanBatchMaxConcurrentRequests) < 1 {
-		config.cfgMap[CfgCollectorGrpcSpanBatchMaxConcurrentRequests].value = defaultSpanBatchMaxConcurrentRequests
-	}
-	if config.stagedInt(CfgCollectorAgentInfoSendRetryInterval) < 1 {
-		config.cfgMap[CfgCollectorAgentInfoSendRetryInterval].value = defaultAgentInfoSendRetryInterval
-	}
-	if config.stagedInt(CfgCollectorAgentInfoMaxTryPerAttempt) < 1 {
-		config.cfgMap[CfgCollectorAgentInfoMaxTryPerAttempt].value = defaultAgentInfoMaxTryPerAttempt
-	}
+	config.defaultIfOutOfRange(CfgCollectorGrpcSpanBatchFlushInterval, 1, math.MaxInt32)
+	config.defaultIfOutOfRange(CfgCollectorGrpcSpanBatchCollectDeadline, 1, math.MaxInt32)
+	config.defaultIfOutOfRange(CfgCollectorGrpcSpanBatchMaxConcurrentRequests, 1, math.MaxInt32)
+	config.defaultIfOutOfRange(CfgCollectorAgentInfoSendRetryInterval, 1, math.MaxInt32)
+	config.defaultIfOutOfRange(CfgCollectorAgentInfoMaxTryPerAttempt, 1, math.MaxInt32)
 	// The gRPC sizes and keepalive times: a 0 or negative message size fails
 	// every send with ResourceExhausted, and a negative keepalive timeout
 	// drops the connection after every ping, so a value out of range recovers
@@ -1475,27 +1478,10 @@ func (config *Config) publish() {
 	if config.stagedInt(CfgCollectorGrpcIdleTimeout) < 0 {
 		config.cfgMap[CfgCollectorGrpcIdleTimeout].value = grpcIdleTimeout
 	}
-	// The snapshot holds both as int32: a value above MaxInt32 is as unlimited
-	// as -1, where converting it wrapped to 0 or below and dropped every event.
-	maxDepth := config.stagedInt(CfgSpanMaxCallStackDepth)
-	if maxDepth == -1 || maxDepth > math.MaxInt32 {
-		maxDepth = math.MaxInt32
-	} else if maxDepth < minEventDepth {
-		maxDepth = minEventDepth
-	}
-	config.cfgMap[CfgSpanMaxCallStackDepth].value = maxDepth
+	config.unlimitedOrAtLeast(CfgSpanMaxCallStackDepth, minEventDepth)
+	config.unlimitedOrAtLeast(CfgSpanMaxCallStackSequence, minEventSequence)
 
-	maxSeq := config.stagedInt(CfgSpanMaxCallStackSequence)
-	if maxSeq == -1 || maxSeq > math.MaxInt32 {
-		maxSeq = math.MaxInt32
-	} else if maxSeq < minEventSequence {
-		maxSeq = minEventSequence
-	}
-	config.cfgMap[CfgSpanMaxCallStackSequence].value = maxSeq
-
-	if config.stagedInt(CfgLogMaxSize) < 1 {
-		config.cfgMap[CfgLogMaxSize].value = 10
-	}
+	config.defaultIfOutOfRange(CfgLogMaxSize, 1, math.MaxInt32)
 	// Log.MaxBackups: 0 means "keep every backup" to lumberjack but "keep none"
 	// the disk. Rotation with no history is Log.MaxSize alone.
 	if backups := config.stagedInt(CfgLogMaxBackups); backups < 1 {
