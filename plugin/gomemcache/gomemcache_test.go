@@ -13,15 +13,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// WithContext must hand each request its own copy and keep the shared
-// receiver's tracer rebind race-free. Run under -race.
+// WithContext must hand each request its own copy and leave the shared
+// receiver alone: a receiver rebound per request recorded one request's
+// commands on another request's tracer. Run under -race.
 func TestClient_WithContextIsConcurrencySafe(t *testing.T) {
 	mc := NewClient("localhost:1")
 
-	c := mc.WithContext(context.Background())
+	tracer := pptest.NewRecordingTracer()
+	c := mc.WithContext(pinpoint.NewContext(context.Background(), tracer))
 	assert.NotSame(t, mc, c, "WithContext returned the shared wrapper, want a copy")
 	assert.Same(t, mc.Client, c.Client, "the copy must share the underlying memcache client")
 	assert.Equal(t, mc.endpoint, c.endpoint, "the copy must keep the endpoint")
+	_, _ = mc.Get("foo")
+	assert.Empty(t, tracer.Events, "the shared receiver must not record on a request's tracer")
+	_, _ = c.Get("foo")
+	assert.Len(t, tracer.Events, 1, "the copy records on the request's tracer")
 
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
@@ -129,21 +135,21 @@ func TestNewClient_WithoutAServer(t *testing.T) {
 	assert.Equal(t, "", tracer.Last().EndPoint)
 }
 
-// WithContext also rebinds the shared receiver, so the tracer the next call
-// records against is the one bound last.
-func TestClient_WithContextRebindsTheReceiver(t *testing.T) {
+// Two requests binding the same shared client each get a copy that records
+// only its own calls, in whichever order the requests interleave.
+func TestClient_WithContextCopiesAreIndependent(t *testing.T) {
 	mc := NewClient("localhost:1")
 
 	first := pptest.NewRecordingTracer()
-	mc.WithContext(pinpoint.NewContext(context.Background(), first))
-	_, _ = mc.Get("foo")
-
+	a := mc.WithContext(pinpoint.NewContext(context.Background(), first))
 	second := pptest.NewRecordingTracer()
-	mc.WithContext(pinpoint.NewContext(context.Background(), second))
-	_, _ = mc.Get("bar")
+	b := mc.WithContext(pinpoint.NewContext(context.Background(), second))
+
+	_, _ = a.Get("foo")
+	_, _ = b.Get("bar")
 
 	require.Len(t, first.Events, 1, "the first tracer must keep only its own call")
-	require.Len(t, second.Events, 1, "the rebound tracer must record the next call")
+	require.Len(t, second.Events, 1, "the second tracer must keep only its own call")
 	assert.Equal(t, "foo", first.Events[0].Strings[pinpoint.AnnotationArgs0])
 	assert.Equal(t, "bar", second.Events[0].Strings[pinpoint.AnnotationArgs0])
 }

@@ -61,15 +61,13 @@ func WrapClient(client *memcache.Client, endpoint string) *Client {
 
 // WithContext returns a copy of the client bound to the tracer in the given
 // context. It is possible to trace only when the given context contains a
-// pinpoint.Tracer. Use the returned copy for the request's calls: the receiver
-// is also updated for backward compatibility, but concurrent requests sharing
-// the receiver record their commands on whichever tracer was bound last.
+// pinpoint.Tracer. Use the returned copy for the request's calls; the receiver
+// is left as it was. Rebinding it as well made concurrent requests sharing one
+// client record their commands on whichever tracer was bound last, from
+// another request's goroutine (doc/api_contracts.md 1).
 func (c *Client) WithContext(ctx context.Context) *Client {
-	box := &tracerBox{pinpoint.FromContext(ctx)}
-	c.tracer.Store(box)
-
 	copied := &Client{Client: c.Client, endpoint: c.endpoint}
-	copied.tracer.Store(box)
+	copied.tracer.Store(&tracerBox{pinpoint.FromContext(ctx)})
 	return copied
 }
 

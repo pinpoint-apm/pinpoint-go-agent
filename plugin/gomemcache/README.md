@@ -19,10 +19,11 @@ mc := ppgomemcache.NewClient(addr...)
 ```
 
 It is necessary to pass the context containing the pinpoint.Tracer to Client using Client.WithContext.
+WithContext returns a per-request copy; use that copy for the request's calls and keep the original client shared.
 
 ``` go
-mc.WithContext(pinpoint.NewContext(context.Background(), tracer))
-mc.Get("foo")
+c := mc.WithContext(pinpoint.NewContext(context.Background(), tracer))
+c.Get("foo")
 ```
 
 ``` go
@@ -35,9 +36,9 @@ import (
 func doMemcache(w http.ResponseWriter, r *http.Request) {
     addr := []string{"localhost:11211"}
     mc := ppgomemcache.NewClient(addr...)
-    mc.WithContext(r.Context())
+    c := mc.WithContext(r.Context())
 
-    item, err = mc.Get("foo")
+    item, err = c.Get("foo")
 	
     ...
 }
