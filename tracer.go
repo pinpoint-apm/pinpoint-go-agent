@@ -90,7 +90,7 @@ type Tracer interface {
 	IsSampled() bool
 
 	// AddMetric adds a custom metric.
-	AddMetric(metric string, value interface{})
+	AddMetric(metric string, value any)
 }
 
 // SpanJSON renders what the tracer has recorded on its span as JSON - the rpc

@@ -317,7 +317,7 @@ func Test_noopSpan_WrapGoroutine(t *testing.T) {
 	defer root.EndSpan()
 
 	var got Tracer
-	var value interface{}
+	var value any
 	root.WrapGoroutine("worker", func(ctx context.Context) {
 		got = FromContext(ctx)
 		value = ctx.Value(ctxKey{})

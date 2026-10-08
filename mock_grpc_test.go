@@ -44,7 +44,7 @@ func newTestAgent(config *Config) *agent {
 		appType:   ServiceTypeGoApp,
 		startTime: time.Now().UnixNano() / int64(time.Millisecond),
 		spanQueue: newSpanQueue(cacheSize),
-		metaChan:  make(chan interface{}, cacheSize),
+		metaChan:  make(chan any, cacheSize),
 		config:    config,
 		stats:     newAgentStats(),
 		urlStats:  newUrlStats(config),

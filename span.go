@@ -702,7 +702,7 @@ func (span *span) EndSpanEvent() {
 	// endSpanEvent. This guard and the overflow loop in endSpanEvent read
 	// eventOverflow at different moments, so a value taken here can still
 	// end up on the overflow path - both paths must re-panic it.
-	var recovered interface{}
+	var recovered any
 	if span.eventOverflow.Load() == 0 && !span.recovered.Load() {
 		recovered = recover()
 	}
@@ -712,7 +712,7 @@ func (span *span) EndSpanEvent() {
 // endSpanEvent is the unguarded body: EndSpan sets finished first and then
 // ends the async span's own event through this path. recovered is the panic
 // value EndSpanEvent caught, or nil.
-func (span *span) endSpanEvent(recovered interface{}) {
+func (span *span) endSpanEvent(recovered any) {
 	// A CAS loop, not a check-then-Add: two concurrent ends of the same
 	// placeholder would drive the counter to -1, after which the next real
 	// overflow only brings it back to 0 and its end pops a live ancestor off the
@@ -1007,7 +1007,7 @@ func (span *span) collectUrlStat(stat *UrlStatEntry) {
 	span.requestStats.collectUrlStat(span.cfg, stat)
 }
 
-func (span *span) AddMetric(metric string, value interface{}) {
+func (span *span) AddMetric(metric string, value any) {
 	// collectUrlStat is reached only from here, and EndSpan reads span.urlStat
 	// after enqueueing the final chunk: a late write both races that read and
 	// sets a stat nothing enqueues.
@@ -1025,7 +1025,7 @@ func (span *span) AddMetric(metric string, value interface{}) {
 }
 
 func (span *span) JsonString() []byte {
-	m := make(map[string]interface{}, 0)
+	m := make(map[string]any, 0)
 	m["RpcName"] = span.rpcName
 	m["EndPoint"] = span.endPoint
 	m["RemoteAddr"] = span.remoteAddr

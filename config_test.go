@@ -811,12 +811,12 @@ func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
 // 1e20 took a different value on each CPU; only a float holding an int
 // converts.
 func Test_convertCfgValue_IntTakesOnlyIntegralFloats(t *testing.T) {
-	for _, v := range []interface{}{20.0, float32(20)} {
+	for _, v := range []any{20.0, float32(20)} {
 		got, err := convertCfgValue(CfgInt, v)
 		assert.NoError(t, err)
 		assert.Equal(t, 20, got)
 	}
-	for _, v := range []interface{}{2.5, math.Inf(1), math.Inf(-1), math.NaN(), 1e20, -1e20} {
+	for _, v := range []any{2.5, math.Inf(1), math.Inf(-1), math.NaN(), 1e20, -1e20} {
 		_, err := convertCfgValue(CfgInt, v)
 		assert.Error(t, err, "%v", v)
 	}

@@ -264,7 +264,7 @@ func setSqlSpanEvent(tracer Tracer, start time.Time, err error, sql string, args
 }
 
 func (c *sqlConn) namedValueToString(named []driver.NamedValue) string {
-	return bindValuesString(c.cfg(), len(named), func(i int) interface{} { return named[i].Value })
+	return bindValuesString(c.cfg(), len(named), func(i int) any { return named[i].Value })
 }
 
 // BindValuesString renders args as the bind value list of a SQL span event:
@@ -272,12 +272,12 @@ func (c *sqlConn) namedValueToString(named []driver.NamedValue) string {
 // when SQL.TraceBindValue is off. It is what the database/sql wrapper records,
 // for a plugin that instruments a driver outside database/sql (pgxv5) to hand
 // to SetSQL as well.
-func BindValuesString(args []interface{}) string {
-	return bindValuesString(GetConfig().load(), len(args), func(i int) interface{} { return args[i] })
+func BindValuesString(args []any) string {
+	return bindValuesString(GetConfig().load(), len(args), func(i int) any { return args[i] })
 }
 
 // bindValuesString renders n bind values, value(i) being the i-th, under cfg.
-func bindValuesString(cfg *configSnapshot, n int, value func(int) interface{}) string {
+func bindValuesString(cfg *configSnapshot, n int, value func(int) any) string {
 	if !cfg.sqlTraceBindValue || n == 0 {
 		return ""
 	}
@@ -291,7 +291,7 @@ func bindValuesString(cfg *configSnapshot, n int, value func(int) interface{}) s
 	return b.String()
 }
 
-func writeBindValue(b *strings.Builder, index int, value interface{}, numComma int, maxSize int) bool {
+func writeBindValue(b *strings.Builder, index int, value any, numComma int, maxSize int) bool {
 	if maxSize <= 0 {
 		return false
 	}
@@ -319,7 +319,7 @@ func writeBindValue(b *strings.Builder, index int, value interface{}, numComma i
 // last values as stubs, and it is a value's own head that a reader needs to
 // recognize it by. maxBindValueAnnotationSize is what the span side reserves for
 // the result.
-func writeAbbreviatedBindValue(b *strings.Builder, value interface{}, maxSize int) {
+func writeAbbreviatedBindValue(b *strings.Builder, value any, maxSize int) {
 	if value, ok := value.(string); ok {
 		writeAbbreviated(b, value, len(value), maxSize)
 		return

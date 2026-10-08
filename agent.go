@@ -68,7 +68,7 @@ type agent struct {
 	statGrpc    *statGrpc
 	cmdGrpc     *cmdGrpc
 	spanQueue   *spanQueue
-	metaChan    chan interface{}
+	metaChan    chan any
 	urlStatChan chan *urlStat
 	statChan    chan *pb.PStatMessage
 
@@ -368,7 +368,7 @@ func newAgentStruct(config *Config) *agent {
 		objName:     config.objName,
 		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
 		spanQueue:   newSpanQueue(config.Int(CfgSpanQueueSize)),
-		metaChan:    make(chan interface{}, config.Int(CfgCollectorGrpcSenderQueueSize)),
+		metaChan:    make(chan any, config.Int(CfgCollectorGrpcSenderQueueSize)),
 		urlStatChan: make(chan *urlStat, config.Int(CfgHttpUrlStatQueueSize)),
 		statChan:    make(chan *pb.PStatMessage, config.Int(CfgStatQueueSize)),
 		config:      config,
@@ -1246,7 +1246,7 @@ func (agent *agent) scheduleMetaRetry(item pendingMeta) {
 
 // pendingMeta is a metadata item on the retry schedule.
 type pendingMeta struct {
-	md interface{}
+	md any
 	// attempts counts the sends made so far.
 	attempts int
 	dueAt    time.Time
@@ -1348,7 +1348,7 @@ func (q *metaRetryQueue) length() int {
 // failed send and this call the key may have been evicted and re-registered
 // under a new id whose metadata did go out, and removing that entry would
 // re-issue the id a third time for nothing.
-func (agent *agent) deleteMetaCache(md interface{}) {
+func (agent *agent) deleteMetaCache(md any) {
 	switch md := md.(type) {
 	case apiMeta:
 		agent.apiCache.remove(apiCacheKey{md.descriptor, md.apiType}, func(id int32) bool { return id == md.id })
@@ -1367,7 +1367,7 @@ func (agent *agent) deleteMetaCache(md interface{}) {
 // span pointing at an id the collector never received; dropping it makes the
 // next span register the metadata again. Same policy the send-failure path
 // uses.
-func (agent *agent) enqueueMeta(md interface{}) {
+func (agent *agent) enqueueMeta(md any) {
 	if !agent.tryEnqueueMeta(md) {
 		agent.deleteMetaCache(md)
 	}
@@ -1398,7 +1398,7 @@ func (agent *agent) metaQueueFull() bool {
 // pipeline stalled; dropping it (and releasing its entry, which the caller
 // does) orphans all of them, while the newcomer is referenced by the one span
 // that created it.
-func (agent *agent) tryEnqueueMeta(md interface{}) bool {
+func (agent *agent) tryEnqueueMeta(md any) bool {
 	if !agent.tracingEnabled() {
 		return false
 	}
@@ -1450,7 +1450,7 @@ func (g *idGen) next(kind string) int32 {
 // goroutines missing on the same key both mint, and the one peekOrAdd admits
 // is the value both return.
 func registerMeta[K comparable, V any](agent *agent, cache *metaCache[K, V], kind string, key K,
-	mint func() (V, bool), md func(V) interface{}) V {
+	mint func() (V, bool), md func(V) any) V {
 	var zero V
 	if !agent.tracingEnabled() {
 		return zero
@@ -1482,7 +1482,7 @@ func registerMeta[K comparable, V any](agent *agent, cache *metaCache[K, V], kin
 func (agent *agent) cacheError(errorName string) int32 {
 	return registerMeta(agent, agent.errorCache, "error", errorName,
 		func() (int32, bool) { id := agent.errorIdGen.next("error"); return id, id != 0 },
-		func(id int32) interface{} { return stringMeta{id: id, funcName: errorName} })
+		func(id int32) any { return stringMeta{id: id, funcName: errorName} })
 }
 
 // validUTF8 replaces invalid UTF-8 sequences in s with the replacement rune.
@@ -1554,7 +1554,7 @@ func (agent *agent) cacheSql(sql string) int32 {
 	return registerMeta(agent, agent.sqlCache, "sql", key,
 		// A wrapped sequence records no SQL: SetSQL skips a zero id.
 		func() (int32, bool) { id := agent.sqlIdGen.next("sql"); return id, id != 0 },
-		func(id int32) interface{} { return sqlMeta{id: id, sql: abbreviateString(sql, maxSqlSize), key: key} })
+		func(id int32) any { return sqlMeta{id: id, sql: abbreviateString(sql, maxSqlSize), key: key} })
 }
 
 func (agent *agent) cacheSqlUid(sql string) []byte {
@@ -1571,7 +1571,7 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 	key := sqlHashOf(sql)
 	return registerMeta(agent, agent.sqlUidCache, "sql uid", key,
 		func() ([]byte, bool) { return key[:], true },
-		func(uid []byte) interface{} {
+		func(uid []byte) any {
 			return sqlUidMeta{uid: uid, sql: abbreviateString(sql, maxSqlSize), key: key}
 		})
 }
@@ -1630,7 +1630,7 @@ func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {
 	key := apiCacheKey{descriptor, apiType}
 	return registerMeta(agent, agent.apiCache, "api", key,
 		func() (int32, bool) { id := agent.apiIdGen.next("api"); return id, id != 0 },
-		func(id int32) interface{} { return apiMeta{id: id, descriptor: descriptor, apiType: apiType} })
+		func(id int32) any { return apiMeta{id: id, descriptor: descriptor, apiType: apiType} })
 }
 
 // enqueueExceptionMeta sends chains, taken from span under errorChainsLock by
@@ -1780,19 +1780,19 @@ func (t *logThrottle) acquire() (held int64, ok bool) {
 	return t.suppressed.Swap(0), true
 }
 
-func (t *logThrottle) warnf(format string, args ...interface{}) {
+func (t *logThrottle) warnf(format string, args ...any) {
 	t.logf(logrus.WarnLevel, format, args...)
 }
 
-func (t *logThrottle) errorf(format string, args ...interface{}) {
+func (t *logThrottle) errorf(format string, args ...any) {
 	t.logf(logrus.ErrorLevel, format, args...)
 }
 
-func (t *logThrottle) infof(format string, args ...interface{}) {
+func (t *logThrottle) infof(format string, args ...any) {
 	t.logf(logrus.InfoLevel, format, args...)
 }
 
-func (t *logThrottle) logf(level logrus.Level, format string, args ...interface{}) {
+func (t *logThrottle) logf(level logrus.Level, format string, args ...any) {
 	n, ok := t.acquire()
 	if !ok {
 		return

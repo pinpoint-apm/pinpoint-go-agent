@@ -67,7 +67,7 @@ type bindStringer string
 func (s bindStringer) String() string { return "stringer:" + string(s) }
 
 func Test_writeBindValue_PreservesFormatting(t *testing.T) {
-	values := []interface{}{
+	values := []any{
 		nil,
 		"text",
 		[]byte{0, 1, 127, 255},
@@ -94,7 +94,7 @@ func Test_writeBindValue_LimitsLargeValues(t *testing.T) {
 	const maxSize = 65
 	tests := []struct {
 		name       string
-		value      interface{}
+		value      any
 		wantPrefix string
 		wantSuffix string
 	}{
@@ -141,29 +141,29 @@ func Test_writeBindValue_TruncatesOversizedBytes(t *testing.T) {
 func Test_writeBindValue_MatchesJavaBindValueJoin(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
-		values  []interface{}
+		values  []any
 		maxSize int
 		want    string
 		more    bool
 	}{
-		{name: "at the limit", values: []interface{}{"1234"}, maxSize: 4, want: "1234", more: true},
-		{name: "one byte over", values: []interface{}{"12345"}, maxSize: 4, want: "1234...(5)", more: true},
-		{name: "far over the budget", values: []interface{}{strings.Repeat("v", 20)}, maxSize: 4, want: "vvvv...(20)", more: true},
-		{name: "a value that fits, then one that does not", values: []interface{}{"1", strings.Repeat("z", 11)}, maxSize: 4, want: "1, zzzz...(11)", more: true},
-		{name: "tail dropped after a value that fit", values: []interface{}{"1234", "5"}, maxSize: 4, want: "1234, ...(2)"},
-		{name: "both markers in one list", values: []interface{}{"12345", strings.Repeat("z", 11)}, maxSize: 10, want: "12345, " + strings.Repeat("z", 10) + "...(11)", more: true},
-		{name: "a CLOB at the default limit", values: []interface{}{strings.Repeat("v", 2000)}, maxSize: 1024, want: strings.Repeat("v", 1024) + "...(2000)", more: true},
-		{name: "oversized value", values: []interface{}{strings.Repeat("x", 5000)}, maxSize: 1024, want: strings.Repeat("x", 1024) + "...(5000)", more: true},
-		{name: "budget spent by the first value", values: []interface{}{strings.Repeat("p", 1023), "z"}, maxSize: 1024, want: strings.Repeat("p", 1023) + ", ...(2)"},
-		{name: "everything fits", values: []interface{}{strings.Repeat("p", 1020), "z"}, maxSize: 1024, want: strings.Repeat("p", 1020) + ", z", more: true},
-		{name: "two of three values dropped", values: []interface{}{"0123456789", "b", "c"}, maxSize: 10, want: "0123456789, ...(3)"},
+		{name: "at the limit", values: []any{"1234"}, maxSize: 4, want: "1234", more: true},
+		{name: "one byte over", values: []any{"12345"}, maxSize: 4, want: "1234...(5)", more: true},
+		{name: "far over the budget", values: []any{strings.Repeat("v", 20)}, maxSize: 4, want: "vvvv...(20)", more: true},
+		{name: "a value that fits, then one that does not", values: []any{"1", strings.Repeat("z", 11)}, maxSize: 4, want: "1, zzzz...(11)", more: true},
+		{name: "tail dropped after a value that fit", values: []any{"1234", "5"}, maxSize: 4, want: "1234, ...(2)"},
+		{name: "both markers in one list", values: []any{"12345", strings.Repeat("z", 11)}, maxSize: 10, want: "12345, " + strings.Repeat("z", 10) + "...(11)", more: true},
+		{name: "a CLOB at the default limit", values: []any{strings.Repeat("v", 2000)}, maxSize: 1024, want: strings.Repeat("v", 1024) + "...(2000)", more: true},
+		{name: "oversized value", values: []any{strings.Repeat("x", 5000)}, maxSize: 1024, want: strings.Repeat("x", 1024) + "...(5000)", more: true},
+		{name: "budget spent by the first value", values: []any{strings.Repeat("p", 1023), "z"}, maxSize: 1024, want: strings.Repeat("p", 1023) + ", ...(2)"},
+		{name: "everything fits", values: []any{strings.Repeat("p", 1020), "z"}, maxSize: 1024, want: strings.Repeat("p", 1020) + ", z", more: true},
+		{name: "two of three values dropped", values: []any{"0123456789", "b", "c"}, maxSize: 10, want: "0123456789, ...(3)"},
 		// The budget is spent between values, so "abcdefgh" goes in whole even
 		// though it lands on the limit; the round after it finds nothing left.
-		{name: "value landing on the limit", values: []interface{}{"0123456789", "abcdefgh", "xyz"}, maxSize: 20, want: "0123456789, abcdefgh, ...(3)"},
+		{name: "value landing on the limit", values: []any{"0123456789", "abcdefgh", "xyz"}, maxSize: 20, want: "0123456789, abcdefgh, ...(3)"},
 		// The marker counts the bind values, so it fits no limit at all -
 		// appending it past the limit is what keeps the truncation visible.
-		{name: "limit shorter than the marker", values: []interface{}{"a", "b", "c"}, maxSize: 2, want: "a, ...(3)"},
-		{name: "tracing off", values: []interface{}{"abc"}, maxSize: 0, want: ""},
+		{name: "limit shorter than the marker", values: []any{"a", "b", "c"}, maxSize: 2, want: "a, ...(3)"},
+		{name: "tracing off", values: []any{"abc"}, maxSize: 0, want: ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var b strings.Builder
@@ -182,7 +182,7 @@ func Test_writeBindValue_MatchesJavaBindValueJoin(t *testing.T) {
 func Benchmark_writeBindValue_Large(b *testing.B) {
 	for _, benchmark := range []struct {
 		name  string
-		value interface{}
+		value any
 	}{
 		{"string", strings.Repeat("x", 1<<20)},
 		{"bytes", bytes.Repeat([]byte{255}, 1<<20)},
@@ -389,7 +389,7 @@ func Test_sqlConn_UsesLiveConfig(t *testing.T) {
 // no reflection, no fmt.Sprint string per value. Test_writeBindValue_PreservesFormatting
 // pins the output; this pins the cost.
 func Test_writeBindValue_DriverValuesDoNotAllocate(t *testing.T) {
-	values := []interface{}{nil, int64(-42), float64(1.25), true, []byte{0, 1, 127, 255}, "text"}
+	values := []any{nil, int64(-42), float64(1.25), true, []byte{0, 1, 127, 255}, "text"}
 	write := func(b *strings.Builder) {
 		for i, value := range values {
 			writeBindValue(b, i, value, len(values)-1, 1024)

@@ -443,7 +443,7 @@ func Test_idGen_next(t *testing.T) {
 
 func Test_agent_tryEnqueueMetaReturnsWhenDropRaceLeavesQueueEmpty(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
-	agent.metaChan = make(chan interface{})
+	agent.metaChan = make(chan any)
 
 	result := callBoolWithTimeout(t, "tryEnqueueMeta", func() bool {
 		return agent.tryEnqueueMeta(stringMeta{id: 1, funcName: "error"})
@@ -834,7 +834,7 @@ func Test_agent_GetAgentIsRaceFreeAgainstShutdown(t *testing.T) {
 // items keep their entries.
 func Test_agent_MetaQueueFullMintsNoId(t *testing.T) {
 	a := newTestAgent(defaultConfig())
-	a.metaChan = make(chan interface{}, 2)
+	a.metaChan = make(chan any, 2)
 
 	oldest := a.cacheError("oldest")
 	a.cacheError("filler")
@@ -865,7 +865,7 @@ func Test_agent_MetaOverflowInvalidatesOneCacheEntryPerOverflow(t *testing.T) {
 	const queueSize = 4
 
 	a := newTestAgent(defaultConfig())
-	a.metaChan = make(chan interface{}, queueSize)
+	a.metaChan = make(chan any, queueSize)
 
 	names := make([]string, queueSize)
 	for i := range names {
@@ -892,7 +892,7 @@ func Test_agent_MetaOverflowInvalidatesOneCacheEntryPerDrop(t *testing.T) {
 	const queueSize, enqueued = 4, 100
 
 	a := newTestAgent(defaultConfig())
-	a.metaChan = make(chan interface{}, queueSize)
+	a.metaChan = make(chan any, queueSize)
 
 	for i := 0; i < enqueued; i++ {
 		a.cacheError(fmt.Sprintf("error-%d", i))
@@ -927,7 +927,7 @@ func Test_agent_MetaOverflowCountsDropsFromConcurrentProducers(t *testing.T) {
 	const producers, perProducer = 8, 250
 
 	a := newTestAgent(defaultConfig())
-	a.metaChan = make(chan interface{}, 4)
+	a.metaChan = make(chan any, 4)
 
 	var wg sync.WaitGroup
 	for p := 0; p < producers; p++ {
@@ -964,7 +964,7 @@ func Test_agent_MetaOverflowRateLimitsWarning(t *testing.T) {
 	const queueSize, enqueued = 4, 100
 
 	a := newTestAgent(defaultConfig())
-	a.metaChan = make(chan interface{}, queueSize)
+	a.metaChan = make(chan any, queueSize)
 
 	var buf bytes.Buffer
 	defer captureWarnLog(&buf)()

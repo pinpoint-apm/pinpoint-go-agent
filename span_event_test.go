@@ -128,7 +128,7 @@ func Test_spanEvent_SetSQLLeavesDriverBindValuesAlone(t *testing.T) {
 	cfg.Set(CfgSQLMaxBindValueSize, limit)
 	se := newSpanEvent(testSpanWithConfig(cfg), "query")
 
-	values := []interface{}{
+	values := []any{
 		strings.Repeat("a", limit-len(", ")-1),
 		strings.Repeat("b", 100*limit),
 		"c",

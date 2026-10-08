@@ -862,7 +862,7 @@ func sendMeta[M proto.Message](agentGrpc *agentGrpc, kind string, in M, call fun
 }
 
 // sendMetadata makes one send of md, built into the message of its kind.
-func (agentGrpc *agentGrpc) sendMetadata(md interface{}) error {
+func (agentGrpc *agentGrpc) sendMetadata(md any) error {
 	client := agentGrpc.metaClient
 	switch md := md.(type) {
 	case apiMeta:

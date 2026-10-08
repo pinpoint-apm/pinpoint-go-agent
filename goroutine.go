@@ -269,7 +269,7 @@ func typeRuntimeG() reflect.Type {
 	for i, base := range sections {
 		for _, offset := range offsets[i] {
 			e := eface{typ: add(base, uintptr(offset), "")}
-			typ := reflect.TypeOf(*(*interface{})(unsafe.Pointer(&e)))
+			typ := reflect.TypeOf(*(*any)(unsafe.Pointer(&e)))
 			if typ.Kind() == reflect.Ptr && typ.Elem().String() == "runtime.g" {
 				return typ.Elem()
 			}

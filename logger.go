@@ -205,7 +205,7 @@ type logEntry struct {
 // IsLogLevelEnabled covers both, and each Logf below re-checks its own. The
 // extra write goes through a copy of the entry so its Logger can point at the
 // extra logger while the original keeps the default one.
-func (l logEntry) log(level logrus.Level, format string, args ...interface{}) {
+func (l logEntry) log(level logrus.Level, format string, args ...any) {
 	if !IsLogLevelEnabled(level) { // also false before init: discard
 		return
 	}
@@ -218,22 +218,22 @@ func (l logEntry) log(level logrus.Level, format string, args ...interface{}) {
 	}
 }
 
-func (l logEntry) Errorf(format string, args ...interface{}) {
+func (l logEntry) Errorf(format string, args ...any) {
 	l.log(logrus.ErrorLevel, format, args...)
 }
 
-func (l logEntry) Warnf(format string, args ...interface{}) {
+func (l logEntry) Warnf(format string, args ...any) {
 	l.log(logrus.WarnLevel, format, args...)
 }
 
-func (l logEntry) Infof(format string, args ...interface{}) {
+func (l logEntry) Infof(format string, args ...any) {
 	l.log(logrus.InfoLevel, format, args...)
 }
 
-func (l logEntry) Debugf(format string, args ...interface{}) {
+func (l logEntry) Debugf(format string, args ...any) {
 	l.log(logrus.DebugLevel, format, args...)
 }
 
-func (l logEntry) Tracef(format string, args ...interface{}) {
+func (l logEntry) Tracef(format string, args ...any) {
 	l.log(logrus.TraceLevel, format, args...)
 }

@@ -283,7 +283,7 @@ func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
 
 func (agent *agent) getActiveSpanCount(now time.Time) []int32 {
 	counts := []int32{0, 0, 0, 0}
-	agent.realTimeActiveSpan.Range(func(k, v interface{}) bool {
+	agent.realTimeActiveSpan.Range(func(k, v any) bool {
 		bucketActiveSpan(counts, now, v.(*activeSpanInfo).startTime)
 		return true
 	})

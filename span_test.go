@@ -957,7 +957,7 @@ func TestSpan_EndSpanEventRepanicsOriginalValue(t *testing.T) {
 	span := defaultTestSpan()
 	span.NewSpanEvent("event")
 
-	var got interface{}
+	var got any
 	func() {
 		defer func() { got = recover() }()
 		defer span.EndSpanEvent()
@@ -1712,7 +1712,7 @@ func TestSpan_EndSpanEventOverflowRepanicsRecovered(t *testing.T) {
 	span := defaultTestSpan()
 	span.eventOverflow.Store(1)
 
-	var got interface{}
+	var got any
 	func() {
 		defer func() { got = recover() }()
 		span.endSpanEvent("sentinel")

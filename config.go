@@ -197,12 +197,12 @@ const (
 )
 
 type cfgMapItem struct {
-	value        interface{}
-	defaultValue interface{}
+	value        any
+	defaultValue any
 	// baseValue is the value NewConfig had before it read the config file: the
 	// ConfigOption's, or the registered default. A dynamic option the file
 	// stops setting goes back to it on reload.
-	baseValue interface{}
+	baseValue any
 	valueType int
 	cmdKey    string
 	envKey    string
@@ -311,7 +311,7 @@ func initConfig() {
 // Call it only during package initialization (an init function), before any
 // NewConfig call: it writes the unsynchronized package-global registry that
 // NewConfig reads, so a concurrent call at runtime is a data race.
-func AddConfig(cfgName string, valueType int, defaultValue interface{}, dynamic bool) {
+func AddConfig(cfgName string, valueType int, defaultValue any, dynamic bool) {
 	item := &cfgMapItem{
 		defaultValue: defaultValue,
 		valueType:    valueType,
@@ -401,7 +401,7 @@ type Config struct {
 // builds a whole new snapshot and publishes it with a single atomic store, so
 // an in-flight request can never observe a half-applied reload.
 type configSnapshot struct {
-	values  map[string]interface{}
+	values  map[string]any
 	sampler *traceSampler
 	// newExceptionLimiter caps how many new exception chains a second are
 	// nil means unlimited.
@@ -588,7 +588,7 @@ func GetConfig() *Config {
 // updates the stored value only; the agent applies it after a restart.
 // A value that does not convert to the option's type is rejected with a
 // warning and the option keeps the value it already had.
-func (config *Config) Set(cfgName string, value interface{}) {
+func (config *Config) Set(cfgName string, value any) {
 	config.mu.Lock()
 	defer config.mu.Unlock()
 
@@ -637,7 +637,7 @@ func (config *Config) Bool(cfgName string) bool {
 // staged reads a value straight out of the cfgMap staging area. Only the
 // snapshot build path may use it: it bypasses the published snapshot, and the
 // caller must hold config.mu.
-func (config *Config) staged(cfgName string) interface{} {
+func (config *Config) staged(cfgName string) any {
 	if v, ok := config.cfgMap[cfgName]; ok {
 		return v.value
 	}
@@ -735,7 +735,7 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 // loadConfig to report; a value that does not convert is applied as the zero
 // value and corrected by the next pass or by setup.
 func (config *Config) applyLogging(sources *cfgSources) {
-	resolve := func(name string) interface{} {
+	resolve := func(name string) any {
 		if value, _, ok := sources.lookup(name, config.cfgMap[name]); ok {
 			return value
 		}
@@ -864,7 +864,7 @@ type cfgSources struct {
 
 // lookup returns the value of the option name (whose registry entry is item)
 // from the highest-precedence source that sets it, and that source.
-func (s *cfgSources) lookup(name string, item *cfgMapItem) (interface{}, int, bool) {
+func (s *cfgSources) lookup(name string, item *cfgMapItem) (any, int, bool) {
 	if v, ok := s.cmd[item.cmdKey]; ok {
 		return v, cfgSrcCmd, true
 	}
@@ -889,11 +889,11 @@ func (s *cfgSources) lookup(name string, item *cfgMapItem) (interface{}, int, bo
 // "profile.<name>.".
 type configFile struct {
 	path   string
-	values map[string]interface{}
+	values map[string]any
 }
 
 func newConfigFile(path string) *configFile {
-	return &configFile{path: path, values: map[string]interface{}{}}
+	return &configFile{path: path, values: map[string]any{}}
 }
 
 // read (re)reads the file. The extension names the format: YAML (.yaml,
@@ -903,7 +903,7 @@ func (f *configFile) read() error {
 	if err != nil {
 		return err
 	}
-	var tree map[string]interface{}
+	var tree map[string]any
 	switch ext := strings.ToLower(filepath.Ext(f.path)); ext {
 	case ".yaml", ".yml":
 		err = yaml.Unmarshal(data, &tree)
@@ -917,7 +917,7 @@ func (f *configFile) read() error {
 	if err != nil {
 		return fmt.Errorf("config file %s: %w", f.path, err)
 	}
-	values := make(map[string]interface{})
+	values := make(map[string]any)
 	flattenConfig("", tree, values)
 	f.values = values
 	return nil
@@ -927,14 +927,14 @@ func (f *configFile) read() error {
 // is stored under its own key as well as flattened, so an option given a
 // mapping where a scalar belongs reads the mapping and is rejected as a value
 // of the wrong type rather than silently left unset.
-func flattenConfig(prefix string, tree map[string]interface{}, flat map[string]interface{}) {
+func flattenConfig(prefix string, tree map[string]any, flat map[string]any) {
 	for k, v := range tree {
 		key := strings.ToLower(k)
 		if prefix != "" {
 			key = prefix + "." + key
 		}
 		flat[key] = v
-		if sub, ok := v.(map[string]interface{}); ok {
+		if sub, ok := v.(map[string]any); ok {
 			flattenConfig(key, sub, flat)
 		}
 	}
@@ -944,8 +944,8 @@ func flattenConfig(prefix string, tree map[string]interface{}, flat map[string]i
 // comment and a line with no separator is a key with an empty value. No
 // escapes, continuations or ${} references: the agent's keys and values need
 // none, and every value is a string that convertCfgValue types.
-func parseProperties(data []byte) map[string]interface{} {
-	tree := make(map[string]interface{})
+func parseProperties(data []byte) map[string]any {
+	tree := make(map[string]any)
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || line[0] == '#' || line[0] == '!' {
@@ -967,7 +967,7 @@ func (f *configFile) isSet(key string) bool {
 	return ok && v != nil
 }
 
-func (f *configFile) get(key string) interface{} {
+func (f *configFile) get(key string) any {
 	return f.values[strings.ToLower(key)]
 }
 
@@ -1148,7 +1148,7 @@ func cfgTypeName(valueType int) string {
 // ten), and a float converts to an int only when it holds one - how a JSON
 // file spells every number - where int(f) would truncate a fraction or, past
 // the int range, take a value that differs between CPUs.
-func convertCfgValue(valueType int, value interface{}) (interface{}, error) {
+func convertCfgValue(valueType int, value any) (any, error) {
 	if valueType == CfgStringSlice {
 		return toStringSlice(value)
 	}
@@ -1169,7 +1169,7 @@ func convertCfgValue(valueType int, value interface{}) (interface{}, error) {
 
 // scalarString is a scalar config value as text; a float is written out in
 // full rather than as 1e+06.
-func scalarString(value interface{}) (string, error) {
+func scalarString(value any) (string, error) {
 	switch v := value.(type) {
 	case string:
 		return v, nil
@@ -1188,7 +1188,7 @@ func scalarString(value interface{}) (string, error) {
 // an actual sequence: a bare scalar where a list belongs - a list written
 // without its dashes, say - is reported instead of passing as a one-entry
 // list. An element that is not a scalar reads as "".
-func toStringSlice(value interface{}) ([]string, error) {
+func toStringSlice(value any) ([]string, error) {
 	switch v := value.(type) {
 	case []string:
 		return v, nil
@@ -1211,7 +1211,7 @@ func toStringSlice(value interface{}) ([]string, error) {
 // type when they are staged, so this is a type assertion; anything else - an
 // option read as a type it was not registered with - goes through
 // convertCfgValue and reads as the zero value when it does not convert.
-func valueAs[T int | float64 | bool | string | []string](value interface{}) T {
+func valueAs[T int | float64 | bool | string | []string](value any) T {
 	v, ok := value.(T)
 	if ok {
 		return v
@@ -1243,7 +1243,7 @@ func valueAs[T int | float64 | bool | string | []string](value interface{}) T {
 // holds its declared type whatever source it came from. That is what keeps the
 // accessors off the silent zero-conversion path and what makes the DeepEqual
 // in loadDynamicConfig compare like with like across a reload.
-func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value interface{}, source int) {
+func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value any, source int) {
 	converted, err := convertCfgValue(item.valueType, value)
 	if err != nil {
 		Log("config").Warnf("%s = %v is not a valid %s, keeping %v",
@@ -1510,7 +1510,7 @@ func (config *Config) publish() {
 	config.cfgMap[CfgErrorMaxChainDepth].value = chainDepth
 	config.zeroIfNegative(CfgErrorNewThroughput)
 
-	values := make(map[string]interface{}, len(config.cfgMap))
+	values := make(map[string]any, len(config.cfgMap))
 	for k, v := range config.cfgMap {
 		values[k] = v.value
 	}
@@ -1547,7 +1547,7 @@ func (config *Config) publish() {
 // newTraceSampler carries the previous sampler over when no sampling option
 // changed, so an unrelated reload does not reset the throughput limiter's
 // counters.
-func newTraceSampler(prev *configSnapshot, values map[string]interface{}) *traceSampler {
+func newTraceSampler(prev *configSnapshot, values map[string]any) *traceSampler {
 	if prev != nil && prev.sampler != nil && sameValues(prev.values, values, samplingOpts) {
 		return prev.sampler
 	}
@@ -1567,7 +1567,7 @@ func newTraceSampler(prev *configSnapshot, values map[string]interface{}) *trace
 // for an Error.NewThroughput of 0 or less, which means unlimited. Like
 // newTraceSampler it carries the previous limiter over when the option did
 // not change, so an unrelated reload does not refill the token bucket.
-func newExceptionLimiter(prev *configSnapshot, values map[string]interface{}) *rate.Limiter {
+func newExceptionLimiter(prev *configSnapshot, values map[string]any) *rate.Limiter {
 	if prev != nil && sameValues(prev.values, values, []string{CfgErrorNewThroughput}) {
 		return prev.newExceptionLimiter
 	}
@@ -1577,7 +1577,7 @@ func newExceptionLimiter(prev *configSnapshot, values map[string]interface{}) *r
 
 // sameValues compares config values with DeepEqual: a value can be a slice
 // (CfgStringSlice options), and == panics on those.
-func sameValues(a, b map[string]interface{}, keys []string) bool {
+func sameValues(a, b map[string]any, keys []string) bool {
 	for _, k := range keys {
 		if !reflect.DeepEqual(a[k], b[k]) {
 			return false
@@ -1692,7 +1692,7 @@ func isContainerEnv() bool {
 }
 
 // withValue is the shape of every plain ConfigOption: it stores v under key.
-func withValue(key string, v interface{}) ConfigOption {
+func withValue(key string, v any) ConfigOption {
 	return func(c *Config) { c.cfgMap[key].value = v }
 }
 
