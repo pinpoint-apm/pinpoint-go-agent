@@ -1,7 +1,6 @@
 package pinpoint
 
 import (
-	"math/rand/v2"
 	"os"
 	"runtime"
 	"runtime/metrics"
@@ -642,32 +641,6 @@ func (stats *agentStats) reset() {
 		atomic.StoreInt64(&s.skipNew, 0)
 		atomic.StoreInt64(&s.skipCont, 0)
 	}
-}
-
-func addSampledActiveSpan(span *span) {
-	if span.activeKey == 0 {
-		// The top bit keeps it non-zero without touching the low bits the
-		// shard is picked by. Drawn once, so a second Extract re-registers the
-		// same entry instead of leaking the first.
-		span.activeKey = int64(rand.Uint64() | 1<<63)
-	}
-	span.agent.stats.activeSpan.store(span.activeKey, span.startTime)
-	addRealTimeSampledActiveSpan(span)
-}
-
-func dropSampledActiveSpan(span *span) {
-	span.agent.stats.activeSpan.remove(span.activeKey)
-	dropRealTimeSampledActiveSpan(span)
-}
-
-func addUnSampledActiveSpan(span *noopSpan) {
-	span.agent.stats.activeSpan.store(span.spanId, span.startTime)
-	addRealTimeUnSampledActiveSpan(span)
-}
-
-func dropUnSampledActiveSpan(span *noopSpan) {
-	span.agent.stats.activeSpan.remove(span.spanId)
-	dropRealTimeUnSampledActiveSpan(span)
 }
 
 func (stats *agentStats) incrSampleNew() {

@@ -239,30 +239,30 @@ func Test_realTimeActiveSpan_DropFollowsWhatAddStored(t *testing.T) {
 
 	// No viewer at start: nothing stored, nothing tracked.
 	untracked := defaultSpan(agent)
-	addRealTimeSampledActiveSpan(untracked)
+	untracked.begin(agent, untracked.txId, "/", true)
 	assert.False(t, untracked.realTimeTracked.Load())
 	agent.atcStreamCount.Store(1) // a viewer attaches before the end
-	dropRealTimeSampledActiveSpan(untracked)
+	untracked.end(agent)
 
 	// Viewer at start: stored and tracked; the viewer leaves before the end,
 	// and the entry still goes.
 	tracked := defaultSpan(agent)
-	addRealTimeSampledActiveSpan(tracked)
+	tracked.begin(agent, tracked.txId, "/", true)
 	assert.True(t, tracked.realTimeTracked.Load())
 	_, stored := agent.realTimeActiveSpan.Load(tracked.goroutineId.Load())
 	assert.True(t, stored)
 	agent.atcStreamCount.Store(0)
-	dropRealTimeSampledActiveSpan(tracked)
+	tracked.end(agent)
 	_, stored = agent.realTimeActiveSpan.Load(tracked.goroutineId.Load())
-	assert.False(t, stored, "the entry add stored must be removed whatever the viewer count at end")
+	assert.False(t, stored, "the entry begin stored must be removed whatever the viewer count at end")
 
 	// The unsampled span follows the same rule.
 	agent.atcStreamCount.Store(1)
-	noop := &noopSpan{agent: agent, startTime: time.Now()}
-	addRealTimeUnSampledActiveSpan(noop)
-	assert.True(t, noop.realTimeTracked)
+	noop := &noopSpan{agent: agent, requestStats: requestStats{startTime: time.Now()}}
+	noop.begin(agent, TransactionId{}, "/", false)
+	assert.True(t, noop.realTimeTracked.Load())
 	agent.atcStreamCount.Store(0)
-	dropRealTimeUnSampledActiveSpan(noop)
-	_, stored = agent.realTimeActiveSpan.Load(noop.goroutineId)
+	noop.end(agent)
+	_, stored = agent.realTimeActiveSpan.Load(noop.goroutineId.Load())
 	assert.False(t, stored)
 }

@@ -330,7 +330,7 @@ func BenchmarkExtractContinue(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		s.extract(reader)
-		dropSampledActiveSpan(s) // keep activeSpan balanced
+		s.end(s.agent) // keep activeSpan balanced
 	}
 }
 
@@ -355,7 +355,7 @@ func BenchmarkExtractContinueHttpHeader(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		s.extract(reader)
-		dropSampledActiveSpan(s)
+		s.end(s.agent)
 	}
 }
 
@@ -388,7 +388,7 @@ func BenchmarkExtractNewTrace(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		s.extract(reader)
-		dropSampledActiveSpan(s)
+		s.end(s.agent)
 	}
 }
 

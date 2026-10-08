@@ -96,6 +96,8 @@ type span struct {
 	remoteAddr        string
 	acceptorHost      string
 	annotations       annotation
+	// requestStats: the per-request statistics shared with noopSpan.
+	requestStats
 	// loggingInfo is atomic like the counters below: the logging plugins
 	// call SetLogging from whichever goroutine logs with the request's
 	// tracer, and two of them at once were a data race.
@@ -122,7 +124,6 @@ type span struct {
 	spanEvents    []*spanEvent
 	spanEventLock sync.Mutex
 
-	startTime     time.Time
 	elapsed       int64
 	operationName string
 	flags         int
@@ -131,34 +132,13 @@ type span struct {
 	// accumulates its ErrorCategory bits with an atomic OR (markSpanError),
 	// which needs nothing more than that - the mask carries no other state
 	// (DefaultShared.maskErrorCode: getAndUpdate(x -> x | mask)).
-	err           atomic.Int32
-	statusErr     atomic.Int32
-	errorFuncId   int32
-	errorString   string
-	recovered     atomic.Bool
-	asyncId       int32
-	asyncSequence int32
-	goroutineId   atomic.Int64
-	// realTimeTracked records that addRealTimeSampledActiveSpan stored this
-	// span in agent.realTimeActiveSpan, so EndSpan deletes only what was
-	// stored: the store is gated by atcStreamCount at start, and a viewer that
-	// attached or left in between makes the count at end time no guide.
-	realTimeTracked atomic.Bool
-	// activeKey is this span's key in the active span registry, drawn locally
-	// on first registration (0: not drawn yet). Not spanId: a continued span
-	// takes its id from the upstream header, so two in-flight requests carrying
-	// the same headers - a retrying proxy, a header-copying client - shared one
-	// entry, the first EndSpan removed it from under the other, and every such
-	// request locked the same shard.
-	activeKey  int64
-	eventStack stack
-	// urlStat is nil until AddMetric records an entry; it then points at
-	// urlStatBuf, and EndSpan queues urlStatRecord. Both live in the span so
-	// a request with URL statistics costs no allocation beyond the span:
-	// the entry copy and the record were two more per request.
-	urlStat         *UrlStatEntry
-	urlStatBuf      UrlStatEntry
-	urlStatRecord   urlStat
+	err             atomic.Int32
+	errorFuncId     int32
+	errorString     string
+	recovered       atomic.Bool
+	asyncId         int32
+	asyncSequence   int32
+	eventStack      stack
 	errorChains     []*exception
 	errorChainsLock sync.Mutex
 	// refusedChainHeads holds the heads of the chains the throughput limiter
@@ -304,7 +284,7 @@ func (span *span) EndSpan() {
 	span.elapsed = max(endTime.UnixMilli()-span.startTime.UnixMilli(), 0)
 
 	if !span.isAsyncSpan() {
-		dropSampledActiveSpan(span)
+		span.end(span.agent)
 		span.agent.stats.collectResponseTime(span.elapsed)
 	}
 
@@ -356,13 +336,10 @@ func (span *span) EndSpan() {
 		errorChainDroppedLog.warnf("exception entry limit dropped %d error chain link(s): %s", dropped, span.operationName)
 	}
 
-	if span.urlStat != nil {
-		// Read from the root: an async worker that failed before this end
-		// marked it there. One that ends later is not seen (see newAsyncSpan).
-		root := span.root()
-		span.urlStatRecord = urlStat{entry: span.urlStat, endTime: endTime, elapsed: span.elapsed, statusErr: int(root.statusErr.Load() | root.err.Load())}
-		span.agent.enqueueUrlStat(&span.urlStatRecord)
-	}
+	// Read from the root: an async worker that failed before this end marked
+	// it there. One that ends later is not seen (see newAsyncSpan).
+	root := span.root()
+	span.endUrlStat(span.agent, endTime, span.elapsed, root.statusErr.Load()|root.err.Load())
 
 	// Last: the final chunk is enqueued and the url stat read, so nothing this
 	// span still owns is written from here on. Seals the Annotation handles
@@ -503,7 +480,7 @@ func (span *span) extract(reader DistributedTracingContextReader) {
 	if !continued {
 		span.spanId = generateSpanId()
 		span.parentSpanId = -1
-		addSampledActiveSpan(span)
+		span.begin(span.agent, span.txId, span.rpcName, true)
 		if IsTraceLogLevelEnabled() {
 			Log("span").Tracef("span extract: new transaction %s, %d", span.txId, span.spanId)
 		}
@@ -564,7 +541,7 @@ func (span *span) extract(reader DistributedTracingContextReader) {
 		span.remoteAddr = host // for message queue (kafka, ...)
 	}
 
-	addSampledActiveSpan(span)
+	span.begin(span.agent, span.txId, span.rpcName, true)
 	if IsTraceLogLevelEnabled() {
 		Log("span").Tracef("span extract: %s, %s, %s, %s, %s, %s", tid, spanid, pappname, pspanid, papptype, host)
 	}
@@ -1005,13 +982,6 @@ func (span *span) SetLogging(logInfo int32) {
 	span.loggingInfo.Store(logInfo)
 }
 
-func (span *span) collectUrlStat(stat *UrlStatEntry) {
-	if span.cfg.collectUrlStat {
-		mergeUrlStat(&span.urlStatBuf, span.urlStat != nil, stat)
-		span.urlStat = &span.urlStatBuf
-	}
-}
-
 // mergeUrlStat applies a recorded entry onto dst, the entry a span holds; has
 // says whether dst holds one already. Shared by span and noopSpan so both
 // paths use the same merge rule: the URL is first-write-wins, while the
@@ -1031,6 +1001,10 @@ func mergeUrlStat(dst *UrlStatEntry, has bool, stat *UrlStatEntry) {
 	if keep {
 		dst.Url = url
 	}
+}
+
+func (span *span) collectUrlStat(stat *UrlStatEntry) {
+	span.requestStats.collectUrlStat(span.cfg, stat)
 }
 
 func (span *span) AddMetric(metric string, value interface{}) {

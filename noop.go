@@ -49,22 +49,16 @@ func (agent *noopAgent) Shutdown() {
 }
 
 type noopSpan struct {
-	agent       *agent
-	cfg         *configSnapshot
-	spanId      int64
-	startTime   time.Time
-	rpcName     string
-	goroutineId int64
-	// realTimeTracked: see span.realTimeTracked. Plain like goroutineId, which
-	// the same start/end pair writes and reads.
-	realTimeTracked bool
-	withStats       atomic.Bool
-	unsampled       bool
-	// urlStat, urlStatBuf and urlStatRecord: see span.
-	urlStat       *UrlStatEntry
-	urlStatBuf    UrlStatEntry
-	urlStatRecord urlStat
-	statusErr     atomic.Int32
+	agent   *agent
+	cfg     *configSnapshot
+	spanId  int64
+	rpcName string
+	// requestStats: the per-request statistics shared with span. withStats
+	// says whether this span keeps them at all: only the unsampled span of a
+	// real request does, never the shared singleton or an async child.
+	requestStats
+	withStats atomic.Bool
+	unsampled bool
 	// traceRoot is the unsampled span holding the statistics, nil when this
 	// span is the root itself. An unsampled async child keeps no statistics of
 	// its own: a failure it records goes to the root's statusErr, so the URL
@@ -108,7 +102,7 @@ func newUnSampledSpan(agent *agent, rpcName string) *noopSpan {
 	span.withStats.Store(true)
 	span.unsampled = true
 
-	addUnSampledActiveSpan(&span)
+	span.begin(agent, TransactionId{}, rpcName, false)
 
 	return &span
 }
@@ -118,16 +112,13 @@ func (span *noopSpan) EndSpan() {
 	// A second EndSpan must not double-count; the swap also orders EndSpan
 	// against SetError/SetFailure racing from other goroutines.
 	if span.withStats.CompareAndSwap(true, false) {
-		dropUnSampledActiveSpan(span)
+		span.end(span.agent)
 		endTime := time.Now()
 		// Clamped like span.EndSpan: an NTP step between start and end makes
 		// this negative, which shrank the response-time total.
 		elapsed := max(endTime.UnixMilli()-span.startTime.UnixMilli(), 0)
 		span.agent.stats.collectResponseTime(elapsed)
-		if span.urlStat != nil {
-			span.urlStatRecord = urlStat{entry: span.urlStat, endTime: endTime, elapsed: elapsed, statusErr: int(span.statusErr.Load())}
-			span.agent.enqueueUrlStat(&span.urlStatRecord)
-		}
+		span.endUrlStat(span.agent, endTime, elapsed, span.statusErr.Load())
 	}
 }
 
@@ -246,13 +237,11 @@ func (span *noopSpan) IsSampled() bool {
 	return false
 }
 
-// collectUrlStat follows the same first-wins policy as span.collectUrlStat
-// (see mergeUrlStat); withStats keeps the process-wide singleton from being
-// written to.
+// collectUrlStat records the entry as span.collectUrlStat does; withStats
+// keeps the process-wide singleton from being written to.
 func (span *noopSpan) collectUrlStat(stat *UrlStatEntry) {
-	if span.withStats.Load() && span.cfg.collectUrlStat {
-		mergeUrlStat(&span.urlStatBuf, span.urlStat != nil, stat)
-		span.urlStat = &span.urlStatBuf
+	if span.withStats.Load() {
+		span.requestStats.collectUrlStat(span.cfg, stat)
 	}
 }
 

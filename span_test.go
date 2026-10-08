@@ -217,7 +217,7 @@ func Test_span_Extract_registersActiveSpanOnce(t *testing.T) {
 			}})
 
 			assert.Equal(t, 1, countActiveSpans(span.agent), "active span registered once")
-			dropSampledActiveSpan(span)
+			span.end(span.agent)
 			assert.Equal(t, 0, countActiveSpans(span.agent), "registered under the final span id")
 		})
 	}
@@ -1324,14 +1324,14 @@ func Test_span_Extract_malformedHeaderWarningIsThrottled(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		span := defaultTestSpan()
 		span.extract(&DistributedTracingContextMap{m: map[string]string{HeaderTraceId: "not^a^traceid"}})
-		dropSampledActiveSpan(span)
+		span.end(span.agent)
 	}
 	assert.Equal(t, 1, strings.Count(buf.String(), "malformed trace id header"), buf.String())
 
 	malformedTraceIdLog.next.Store(0) // the interval elapses
 	span := defaultTestSpan()
 	span.extract(&DistributedTracingContextMap{m: map[string]string{HeaderTraceId: "not^a^traceid"}})
-	dropSampledActiveSpan(span)
+	span.end(span.agent)
 	assert.Equal(t, 2, strings.Count(buf.String(), "malformed trace id header"))
 	assert.Contains(t, buf.String(), "(999 similar warning(s) suppressed)")
 }
@@ -2017,7 +2017,7 @@ func Test_ChunkKeyTimeAndStartElapsed(t *testing.T) {
 
 	t.Run("final chunk keys off the span start time", func(t *testing.T) {
 		chunk := &spanChunk{
-			span:       &span{startTime: spanStart},
+			span:       &span{requestStats: requestStats{startTime: spanStart}},
 			eventChunk: []*spanEvent{testSpanEvent(0, 1, 1_050), testSpanEvent(1, 2, 1_120)},
 			final:      true,
 		}
@@ -2030,7 +2030,7 @@ func Test_ChunkKeyTimeAndStartElapsed(t *testing.T) {
 
 	t.Run("non-final chunk keys off its first event", func(t *testing.T) {
 		chunk := &spanChunk{
-			span:       &span{startTime: spanStart},
+			span:       &span{requestStats: requestStats{startTime: spanStart}},
 			eventChunk: []*spanEvent{testSpanEvent(0, 1, 1_050), testSpanEvent(1, 2, 1_120)},
 			final:      false,
 		}
@@ -2046,7 +2046,7 @@ func Test_ChunkKeyTimeAndStartElapsed(t *testing.T) {
 // correct on a sorted chunk.
 func Test_ChunkSortsBySequence(t *testing.T) {
 	chunk := &spanChunk{
-		span:       &span{startTime: time.UnixMilli(1_000)},
+		span:       &span{requestStats: requestStats{startTime: time.UnixMilli(1_000)}},
 		eventChunk: []*spanEvent{testSpanEvent(2, 1, 1_300), testSpanEvent(0, 1, 1_100), testSpanEvent(1, 1, 1_200)},
 		final:      false,
 	}
@@ -2065,7 +2065,7 @@ func Test_ChunkSortsBySequence(t *testing.T) {
 // the span is still live on the request goroutine, so reading it back off the
 // span there would race with SetEndPoint.
 func Test_ChunkSnapshotsEndPoint(t *testing.T) {
-	sp := &span{startTime: time.UnixMilli(1_000)}
+	sp := &span{requestStats: requestStats{startTime: time.UnixMilli(1_000)}}
 	sp.endPoint = "before"
 	sp.cfg = &configSnapshot{spanEventChunkSize: defaultEventChunkSize}
 
@@ -2080,7 +2080,7 @@ func Test_ChunkSnapshotsEndPoint(t *testing.T) {
 // with depth 0, which the collector reads as "same as previous".
 func Test_ChunkDepthCompression(t *testing.T) {
 	chunk := &spanChunk{
-		span:       &span{startTime: time.UnixMilli(1_000)},
+		span:       &span{requestStats: requestStats{startTime: time.UnixMilli(1_000)}},
 		eventChunk: []*spanEvent{testSpanEvent(0, 2, 1_100), testSpanEvent(1, 2, 1_200), testSpanEvent(2, 3, 1_300)},
 		final:      false,
 	}

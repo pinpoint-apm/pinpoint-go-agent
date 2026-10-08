@@ -279,40 +279,6 @@ func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
 	}
 }
 
-func addRealTimeSampledActiveSpan(span *span) {
-	if span.agent.atcStreamCount.Load() > 0 {
-		span.goroutineId.Store(curGoroutineID())
-		s := &activeSpanInfo{span.startTime, span.txId.String(), span.rpcName, true}
-		span.agent.realTimeActiveSpan.Store(span.goroutineId.Load(), s)
-		span.realTimeTracked.Store(true)
-	}
-}
-
-// dropRealTimeSampledActiveSpan removes the entry add stored, if it stored one.
-// Gated by the span's own flag rather than atcStreamCount: the count may have
-// changed since the start, and a sync.Map lookup per EndSpan for a feature
-// that is off nearly all the time is a fixed cost the flag avoids.
-func dropRealTimeSampledActiveSpan(span *span) {
-	if span.realTimeTracked.Load() {
-		span.agent.realTimeActiveSpan.Delete(span.goroutineId.Load())
-	}
-}
-
-func addRealTimeUnSampledActiveSpan(span *noopSpan) {
-	if span.agent.atcStreamCount.Load() > 0 {
-		span.goroutineId = curGoroutineID()
-		s := &activeSpanInfo{span.startTime, "", span.rpcName, false}
-		span.agent.realTimeActiveSpan.Store(span.goroutineId, s)
-		span.realTimeTracked = true
-	}
-}
-
-func dropRealTimeUnSampledActiveSpan(span *noopSpan) {
-	if span.realTimeTracked {
-		span.agent.realTimeActiveSpan.Delete(span.goroutineId)
-	}
-}
-
 func (agent *agent) getActiveSpanCount(now time.Time) []int32 {
 	counts := []int32{0, 0, 0, 0}
 	agent.realTimeActiveSpan.Range(func(k, v interface{}) bool {
