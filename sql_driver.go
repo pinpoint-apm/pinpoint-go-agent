@@ -243,30 +243,15 @@ func (c *sqlConn) PrepareContext(ctx context.Context, query string) (driver.Stmt
 	return prepare(stmt, err, c, query)
 }
 
-func (c *sqlConn) newSqlSpanEventWithNamedValue(ctx context.Context, operation string, start time.Time, err error, sql string, args []driver.NamedValue) {
+// newSqlSpanEvent records one driver call as a span event: sql and its bind
+// values args for a statement, both empty for a transaction boundary. The
+// bind values are rendered only for a sampled tracer.
+func (c *sqlConn) newSqlSpanEvent(ctx context.Context, operation string, start time.Time, err error, sql string, args []driver.NamedValue) {
 	tracer := NewDatabaseTracer(ctx, operation, &c.dbInfo)
 	defer tracer.EndSpanEvent()
 
 	if tracer.IsSampled() {
 		setSqlSpanEvent(tracer, start, err, sql, c.namedValueToString(args))
-	}
-}
-
-func (c *sqlConn) newSqlSpanEventWithValue(ctx context.Context, operation string, start time.Time, err error, sql string, args []driver.Value) {
-	tracer := NewDatabaseTracer(ctx, operation, &c.dbInfo)
-	defer tracer.EndSpanEvent()
-
-	if tracer.IsSampled() {
-		setSqlSpanEvent(tracer, start, err, sql, c.valueToString(args))
-	}
-}
-
-func (c *sqlConn) newSqlSpanEventNoSql(ctx context.Context, operation string, start time.Time, err error) {
-	tracer := NewDatabaseTracer(ctx, operation, &c.dbInfo)
-	defer tracer.EndSpanEvent()
-
-	if tracer.IsSampled() {
-		setSqlSpanEvent(tracer, start, err, "", "")
 	}
 }
 
@@ -280,10 +265,6 @@ func setSqlSpanEvent(tracer Tracer, start time.Time, err error, sql string, args
 
 func (c *sqlConn) namedValueToString(named []driver.NamedValue) string {
 	return bindValuesString(c.cfg(), len(named), func(i int) interface{} { return named[i].Value })
-}
-
-func (c *sqlConn) valueToString(values []driver.Value) string {
-	return bindValuesString(c.cfg(), len(values), func(i int) interface{} { return values[i] })
 }
 
 // BindValuesString renders args as the bind value list of a SQL span event:
@@ -472,7 +453,7 @@ func (c *sqlConn) ExecContext(ctx context.Context, query string, args []driver.N
 		result, err := ec.ExecContext(ctx, query, args)
 
 		if err != driver.ErrSkip {
-			c.newSqlSpanEventWithNamedValue(ctx, "ConnExecContext", start, err, query, args)
+			c.newSqlSpanEvent(ctx, "ConnExecContext", start, err, query, args)
 		}
 
 		return result, err
@@ -483,20 +464,14 @@ func (c *sqlConn) ExecContext(ctx context.Context, query string, args []driver.N
 		return nil, driver.ErrSkip
 	}
 
-	// sourced: database/sql/cxtutil.go
-	dargs, err := namedValueToValue(args)
+	dargs, err := legacyArgs(ctx, args)
 	if err != nil {
 		return nil, err
-	}
-	select {
-	default:
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	}
 
 	result, err := e.Exec(query, dargs)
 	if err != driver.ErrSkip {
-		c.newSqlSpanEventWithValue(ctx, "ConnExec", start, err, query, dargs)
+		c.newSqlSpanEvent(ctx, "ConnExec", start, err, query, args)
 	}
 
 	return result, err
@@ -508,7 +483,7 @@ func (c *sqlConn) QueryContext(ctx context.Context, query string, args []driver.
 	if qc, ok := c.Conn.(driver.QueryerContext); ok {
 		rows, err := qc.QueryContext(ctx, query, args)
 		if err != driver.ErrSkip {
-			c.newSqlSpanEventWithNamedValue(ctx, "ConnQueryContext", start, err, query, args)
+			c.newSqlSpanEvent(ctx, "ConnQueryContext", start, err, query, args)
 		}
 
 		return rows, err
@@ -519,20 +494,14 @@ func (c *sqlConn) QueryContext(ctx context.Context, query string, args []driver.
 		return nil, driver.ErrSkip
 	}
 
-	// sourced: database/sql/cxtutil.go
-	dargs, err := namedValueToValue(args)
+	dargs, err := legacyArgs(ctx, args)
 	if err != nil {
 		return nil, err
-	}
-	select {
-	default:
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	}
 
 	rows, err := q.Query(query, dargs)
 	if err != driver.ErrSkip {
-		c.newSqlSpanEventWithValue(ctx, "ConnQuery", start, err, query, dargs)
+		c.newSqlSpanEvent(ctx, "ConnQuery", start, err, query, args)
 	}
 
 	return rows, err
@@ -546,7 +515,7 @@ func (c *sqlConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx
 	if cbt, ok := c.Conn.(driver.ConnBeginTx); ok {
 		tx, err = cbt.BeginTx(ctx, opts)
 		if cfg := c.cfg(); cfg.sqlTraceCommit || cfg.sqlTraceRollback {
-			c.newSqlSpanEventNoSql(ctx, "BeginTx", start, err)
+			c.newSqlSpanEvent(ctx, "BeginTx", start, err, "", nil)
 			if err == nil {
 				tx = &sqlTx{tx, c, ctx}
 			}
@@ -575,7 +544,7 @@ func (c *sqlConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx
 		}
 	}
 	if cfg := c.cfg(); cfg.sqlTraceCommit || cfg.sqlTraceRollback {
-		c.newSqlSpanEventNoSql(ctx, "Begin", start, err)
+		c.newSqlSpanEvent(ctx, "Begin", start, err, "", nil)
 		if err == nil {
 			tx = &sqlTx{tx, c, ctx}
 		}
@@ -593,7 +562,7 @@ func (t *sqlTx) Commit() (err error) {
 	start := time.Now()
 	err = t.Tx.Commit()
 	if t.conn.cfg().sqlTraceCommit {
-		t.conn.newSqlSpanEventNoSql(t.ctx, "Commit", start, err)
+		t.conn.newSqlSpanEvent(t.ctx, "Commit", start, err, "", nil)
 	}
 	return err
 }
@@ -602,7 +571,7 @@ func (t *sqlTx) Rollback() (err error) {
 	start := time.Now()
 	err = t.Tx.Rollback()
 	if t.conn.cfg().sqlTraceRollback {
-		t.conn.newSqlSpanEventNoSql(t.ctx, "Rollback", start, err)
+		t.conn.newSqlSpanEvent(t.ctx, "Rollback", start, err, "", nil)
 	}
 	return err
 }
@@ -640,23 +609,17 @@ func (s *sqlStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (dr
 
 	if sec, ok := s.Stmt.(driver.StmtExecContext); ok {
 		result, err := sec.ExecContext(ctx, args)
-		s.conn.newSqlSpanEventWithNamedValue(ctx, "StmtExecContext", start, err, s.sql, args)
+		s.conn.newSqlSpanEvent(ctx, "StmtExecContext", start, err, s.sql, args)
 		return result, err
 	}
 
-	// sourced: database/sql/cxtutil.go
-	dargs, err := namedValueToValue(args)
+	dargs, err := legacyArgs(ctx, args)
 	if err != nil {
 		return nil, err
 	}
-	select {
-	default:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
 
 	result, err := s.Stmt.Exec(dargs) //lint:ignore SA1019 fallback for a statement without StmtExecContext
-	s.conn.newSqlSpanEventWithValue(ctx, "StmtExec", start, err, s.sql, dargs)
+	s.conn.newSqlSpanEvent(ctx, "StmtExec", start, err, s.sql, args)
 	return result, err
 }
 
@@ -665,11 +628,24 @@ func (s *sqlStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (d
 
 	if sqc, ok := s.Stmt.(driver.StmtQueryContext); ok {
 		rows, err := sqc.QueryContext(ctx, args)
-		s.conn.newSqlSpanEventWithNamedValue(ctx, "StmtQueryContext", start, err, s.sql, args)
+		s.conn.newSqlSpanEvent(ctx, "StmtQueryContext", start, err, s.sql, args)
 		return rows, err
 	}
 
-	// sourced: database/sql/cxtutil.go
+	dargs, err := legacyArgs(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.Stmt.Query(dargs) //lint:ignore SA1019 fallback for a statement without StmtQueryContext
+	s.conn.newSqlSpanEvent(ctx, "StmtQuery", start, err, s.sql, args)
+	return rows, err
+}
+
+// legacyArgs converts the arguments for a driver without the Context
+// interfaces, as database/sql/ctxutil.go does: a named parameter is refused,
+// and a context already done fails the call before it reaches the driver.
+func legacyArgs(ctx context.Context, args []driver.NamedValue) ([]driver.Value, error) {
 	dargs, err := namedValueToValue(args)
 	if err != nil {
 		return nil, err
@@ -679,10 +655,7 @@ func (s *sqlStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (d
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-
-	rows, err := s.Stmt.Query(dargs) //lint:ignore SA1019 fallback for a statement without StmtQueryContext
-	s.conn.newSqlSpanEventWithValue(ctx, "StmtQuery", start, err, s.sql, dargs)
-	return rows, err
+	return dargs, nil
 }
 
 // sourced: database/sql/cxtutil.go
