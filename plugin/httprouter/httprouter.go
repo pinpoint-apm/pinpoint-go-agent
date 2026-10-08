@@ -20,7 +20,6 @@ import (
 
 	"github.com/julienschmidt/httprouter"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
-	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 const serverName = "HttpRouter Server"
@@ -42,26 +41,17 @@ func wrapHandle(handler httprouter.Handle, path string) httprouter.Handle {
 	return wrapHandleWithName(handler, pphttp.HandlerFuncName(handler), path)
 }
 
+// wrapHandleWithName is pphttp.TraceHandler for a httprouter.Handle, whose
+// third argument keeps it from being an http.Handler: the handler is wrapped
+// into one per request, with the route's Params bound.
 func wrapHandleWithName(handler httprouter.Handle, handlerName string, path string) httprouter.Handle {
+	var urlPattern func(*http.Request) string
+	if path != "" {
+		urlPattern = func(*http.Request) string { return path }
+	}
 	return func(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
-		if !pinpoint.GetAgent().Enable() {
-			handler(w, r, p)
-			return
-		}
-
-		status := http.StatusOK
-		tracer := pphttp.NewHttpServerTracer(r, serverName)
-		w = pphttp.WrapResponseWriter(w, &status)
-		r = pinpoint.RequestWithTracerContext(r, tracer)
-		pphttp.TraceSpan(tracer, handlerName, func() int {
-			handler(w, r, p)
-			return status
-		}, func(status int) {
-			if path != "" {
-				pphttp.CollectUrlStat(tracer, path, r.Method, status)
-			}
-			pphttp.RecordHttpServerResponse(tracer, status, w.Header())
-		})
+		serve := func(w http.ResponseWriter, r *http.Request) { handler(w, r, p) }
+		pphttp.TraceHandler(http.HandlerFunc(serve), serverName, handlerName, urlPattern).ServeHTTP(w, r)
 	}
 }
 
