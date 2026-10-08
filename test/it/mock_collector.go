@@ -4,7 +4,9 @@ package it
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"sync"
@@ -616,7 +618,8 @@ func (g *streamGate) check() error {
 	return nil
 }
 
-// done records the normal completion of a stream.
+// done records the end of a stream: OK for a clean end, the error's code
+// otherwise.
 func (g *streamGate) done(err error) error {
 	if err != nil {
 		g.c.addResult(g.rpc, nil, status.Code(err), false, err.Error())
@@ -624,6 +627,18 @@ func (g *streamGate) done(err error) error {
 	}
 	g.c.addResult(g.rpc, nil, codes.OK, true, "success")
 	return nil
+}
+
+// recvEnd turns a Recv error into what done records: nil for io.EOF, which is
+// the client's CloseSend and a clean end, and the error itself otherwise - a
+// client that cancelled or a transport that reset. Recorded as a failure,
+// since done(nil) on every Recv error made a stream torn down by error look
+// exactly like a graceful close in RpcResults.
+func recvEnd(err error) error {
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
 }
 
 // --- Agent service ---------------------------------------------------------
@@ -654,7 +669,7 @@ func (s *agentService) PingSession(stream grpc.BidiStreamingServer[pb.PPing, pb.
 	for {
 		ping, err := stream.Recv()
 		if err != nil {
-			return g.done(nil)
+			return g.done(recvEnd(err))
 		}
 		msg := clone(ping)
 		s.c.record(func(snap *Snapshot) {
@@ -754,7 +769,7 @@ func (s *statService) SendAgentStat(stream grpc.ClientStreamingServer[pb.PStatMe
 	for {
 		stat, err := stream.Recv()
 		if err != nil {
-			_ = g.done(nil)
+			_ = g.done(recvEnd(err))
 			return stream.SendAndClose(&emptypb.Empty{})
 		}
 		msg := clone(stat)
@@ -845,7 +860,7 @@ func (s *commandService) CommandStreamActiveThreadCount(stream grpc.ClientStream
 	for {
 		res, err := stream.Recv()
 		if err != nil {
-			_ = g.done(nil)
+			_ = g.done(recvEnd(err))
 			return stream.SendAndClose(&emptypb.Empty{})
 		}
 		msg := clone(res)

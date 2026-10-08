@@ -231,13 +231,20 @@ func TestResendsStatOnReopenedStream(t *testing.T) {
 		return hasResultSuccess(s, RpcSendAgentStat, codes.Unavailable, false)
 	}, waitTimeout)
 	n := len(mc.Snapshot().Stats)
+	resumed := time.Now()
 	mc.EndOutage()
 
-	// The next tick's send finds the stream dead and reopens it, so its stat
-	// lands about one interval from here; dropped, the first one would come a
-	// tick later.
+	// The next tick's send finds the stream dead and reopens it, and re-sends
+	// the stat that tick collected, within one interval of here; dropped, the
+	// first stat to arrive would be the following tick's, collected a full
+	// interval later. Judged on the stat's own collection timestamp rather
+	// than on when it arrives, so a slow runner cannot turn a re-sent stat
+	// into a "dropped" verdict.
 	interval := time.Duration(agent.Config().Int(pinpoint.CfgStatCollectInterval)) * time.Millisecond
-	mc.WaitFor(t, func(s Snapshot) bool { return len(s.Stats) > n }, interval*3/2,
+	mc.WaitFor(t, func(s Snapshot) bool { return len(s.Stats) > n }, waitTimeout)
+	stats := mc.Snapshot().Stats[n].Message.GetAgentStatBatch().GetAgentStat()
+	require.NotEmpty(t, stats)
+	assert.Less(t, stats[0].GetTimestamp(), resumed.Add(interval*3/2).UnixMilli(),
 		"the stat that found the stream closed was dropped instead of re-sent")
 }
 
