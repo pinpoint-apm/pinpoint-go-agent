@@ -107,6 +107,14 @@ func dslString(req *http.Request) (string, error) {
 	return string(dsl), err
 }
 
+// CloseIdleConnections forwards http.Client.CloseIdleConnections to the
+// wrapped transport, which the embedding would otherwise hide.
+func (t *transport) CloseIdleConnections() {
+	if c, ok := t.rt.(interface{ CloseIdleConnections() }); ok {
+		c.CloseIdleConnections()
+	}
+}
+
 // maxBodyRead bounds what is read for the annotation. Only the first
 // MaxDslLength characters are ever recorded, so reading a whole multi-megabyte
 // _bulk payload just to slice 256 bytes off it was pure waste; the slack keeps

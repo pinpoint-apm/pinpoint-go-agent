@@ -29,7 +29,8 @@ func (t *pgxTracer) TraceConnectStart(ctx context.Context, c pgx.TraceConnectSta
 
 func (t *pgxTracer) TraceConnectEnd(ctx context.Context, data pgx.TraceConnectEndData) {
 	if tracer := pinpoint.FromContext(ctx); tracer.IsSampled() {
-		tracer.EndSpanEvent()
+		defer tracer.EndSpanEvent()
+		tracer.SpanEvent().SetError(data.Err, "pgx.Connect error")
 	}
 }
 

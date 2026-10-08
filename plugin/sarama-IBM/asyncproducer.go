@@ -84,6 +84,13 @@ func (p *asyncProducer) flushInput() {
 }
 
 // InputContext sends a given message with tracer context to the input channel of sarama.AsyncProducer.
+//
+// Two things differ from writing to Input() directly. The send does not watch
+// ctx.Done(): like Input(), it blocks until sarama takes the message, so a
+// request deadline does not cut it short. And a message handed over after, or
+// racing, Close/AsyncClose is dropped without an Errors() entry - only its
+// span records sarama.ErrShuttingDown - where raw sarama panics on the closed
+// input or reports ErrShuttingDown on Errors().
 func (p *asyncProducer) InputContext(ctx context.Context, msg *sarama.ProducerMessage) {
 	select {
 	case <-p.done:
