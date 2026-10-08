@@ -35,13 +35,14 @@ func NewKafkaConsumerTracer(operation string, msg KafkaConsumerMessage, reader D
 
 	tracer := agent.NewSpanTracerWithReader(operation, msg.RpcName(), reader)
 
+	// A nil reader is a nil carrier, which NewSpanTracerWithReader tolerates;
+	// this fallback has to as well.
 	broker := msg.Broker
+	if broker == "" && reader != nil {
+		broker, _ = reader.Get(HeaderHost)
+	}
 	if broker == "" {
-		if host, _ := reader.Get(HeaderHost); host != "" {
-			broker = host
-		} else {
-			broker = "Unknown"
-		}
+		broker = "Unknown"
 	}
 
 	span := tracer.Span()

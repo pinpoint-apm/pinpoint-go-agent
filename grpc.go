@@ -456,8 +456,10 @@ func routeSourceIP(addr string) string {
 	}
 	defer conn.Close()
 
-	if ip := conn.LocalAddr().(*net.UDPAddr).IP; !ip.IsLoopback() {
-		return ip.String()
+	// Two-value form: LocalAddr is nil when getsockname failed, and a panic
+	// here would disable the agent at registration.
+	if addr, ok := conn.LocalAddr().(*net.UDPAddr); ok && !addr.IP.IsLoopback() {
+		return addr.IP.String()
 	}
 	return ""
 }

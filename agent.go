@@ -56,8 +56,11 @@ type agent struct {
 	serviceName string
 	objName     *objectName
 
-	startTime   int64
-	sequence    int64
+	startTime int64
+	// sequence is atomic.Int64 rather than an int64 under atomic.AddInt64: the
+	// typed value guarantees the 64-bit alignment the 386 and arm builds need,
+	// which a plain field only had by the luck of its position in the struct.
+	sequence    atomic.Int64
 	agentGrpc   *agentGrpc
 	spanGrpc    *spanGrpc
 	statGrpc    *statGrpc
@@ -880,10 +883,10 @@ func (agent *agent) samplingSpan(samplingFunc func() bool, operation string, rpc
 }
 
 func (agent *agent) generateTransactionId() TransactionId {
-	// Use the value returned by AddInt64: reading agent.sequence separately
-	// races with concurrent increments and could hand two transactions the
-	// same sequence (or a torn read on 32-bit).
-	seq := atomic.AddInt64(&agent.sequence, 1)
+	// Use the value returned by Add: reading agent.sequence separately races
+	// with concurrent increments and could hand two transactions the same
+	// sequence (or a torn read on 32-bit).
+	seq := agent.sequence.Add(1)
 	return TransactionId{agent.agentID, agent.startTime, seq}
 }
 

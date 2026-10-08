@@ -52,6 +52,13 @@ func TestNewKafkaConsumerTracer(t *testing.T) {
 		})
 	}
 
+	// A nil carrier gets the noop tracer from NewSpanTracerWithReader; the
+	// broker fallback must not dereference it on the way.
+	assert.NotPanics(t, func() {
+		tracer := NewKafkaConsumerTracer("Kafka Consumer Invocation", KafkaConsumerMessage{Topic: "widgets"}, nil)
+		assert.Equal(t, NoopTracer(), tracer)
+	})
+
 	a.Shutdown()
 	assert.Equal(t, NoopTracer(), NewKafkaConsumerTracer("Kafka Consumer Invocation", KafkaConsumerMessage{}, HttpHeaderReader(http.Header{})),
 		"a disabled agent must hand back the noop tracer")
