@@ -34,8 +34,7 @@ func wrap(handler echo.HandlerFunc, funcName func(*echo.Context) string) echo.Ha
 			spanName = funcName(c)
 		}
 
-		ctx := pinpoint.NewContext(req.Context(), tracer)
-		c.SetRequest(req.WithContext(ctx))
+		c.SetRequest(pinpoint.RequestWithTracerContext(req, tracer))
 		var err error
 		pphttp.TraceSpan(tracer, spanName, func() int {
 			if err = handler(c); err != nil {
