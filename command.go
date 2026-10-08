@@ -189,10 +189,9 @@ func (agent *agent) serveCommandStream(attempt int) int {
 			agent.handleActiveThreadCount(reqId, stream)
 		case *pb.PCmdRequest_CommandActiveThreadDump:
 			if c := cmdReq.GetCommandActiveThreadDump(); c != nil {
-				limit := c.GetLimit()
-				threadName := c.GetThreadName()
-				localId := c.GetLocalTraceId()
-				agent.cmdGrpc.sendActiveThreadDump(reqId, limit, threadName, localId, dumpGoroutine(agent))
+				// The request's local trace ids are not used: goroutines are
+				// selected by thread name, as the light dump selects by limit.
+				agent.cmdGrpc.sendActiveThreadDump(reqId, c.GetLimit(), c.GetThreadName(), dumpGoroutine(agent))
 			}
 		case *pb.PCmdRequest_CommandActiveThreadLightDump:
 			if c := cmdReq.GetCommandActiveThreadLightDump(); c != nil {

@@ -828,6 +828,14 @@ func (span *span) newAsyncSpan() Tracer {
 		// from goroutines sharing the parent tracer, and an unsynchronized
 		// update here could hand two async spans the same (asyncId, sequence).
 		span.spanEventLock.Lock()
+		// Re-checked under the lock, as Inject does: another goroutine of the
+		// call stack may have ended the peeked event since the peek, and once
+		// appended to a chunk the sender reads it, so writing its async id
+		// then is a data race. A finished event forks nothing.
+		if se.warnIfFinished("NewGoroutineTracer") {
+			span.spanEventLock.Unlock()
+			return NoopTracer()
+		}
 		for se.asyncId == noneAsyncId {
 			se.asyncId = span.agent.asyncIdGen.Add(1)
 		}

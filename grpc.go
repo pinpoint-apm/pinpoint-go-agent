@@ -617,11 +617,16 @@ func (agentGrpc *agentGrpc) sendAgentInfo(ctx context.Context, agentInfo *pb.PAg
 
 	result, err := agentGrpc.agentClient.RequestAgentInfo(ctx, agentInfo)
 	if err != nil {
-		Log("grpc").Errorf("send agent info - %v", err)
+		// Throttled: registration retries at Collector.AgentInfo.SendRetryInterval
+		// for as long as the collector is down, and the "still waiting" line
+		// of registerAgentWithRetry already says tracing is off.
+		agentInfoSendLog.errorf("send agent info - %v", err)
 	}
 
 	return result, err
 }
+
+var agentInfoSendLog = logThrottle{src: "grpc"}
 
 // registrationWaitLogInterval paces the line that says why tracing is off while
 // registration is still in progress. A variable so tests can shorten it.
@@ -1123,6 +1128,9 @@ func waitUntilReady(ctx context.Context, grpcConn *grpc.ClientConn, timeout time
 	defer cancel()
 
 	state := grpcConn.GetState()
+	// One line per attempt, deliberately unthrottled: with the state lines and
+	// the not-ready WARN held back across attempts, this is what shows the
+	// back-off loop is still trying.
 	Log("grpc").Infof("wait %s connection ready - state: %s, timeout: %s", which, state.String(), timeout.String())
 
 	stateLog := channelStateLogFor(which)
@@ -1463,10 +1471,12 @@ func (spanGrpc *spanGrpc) releaseSpanBatchPermit() {
 	<-spanGrpc.concurrentRequestPermit
 }
 
-// awaitInFlightSpanBatch waits briefly for async sends.
-// Shutdown is best effort: wait up to three seconds for accepted requests, then continue closing.
+// awaitInFlightSpanBatch waits briefly for async sends. Shutdown is best
+// effort: wait up to shutdownTimeout for accepted requests, then continue
+// closing - the same bound the worker drain has, so a test that shortens one
+// shortens both.
 func (spanGrpc *spanGrpc) awaitInFlightSpanBatch() {
-	if !waitTimeout(&spanGrpc.inFlight, 3*time.Second) {
+	if !waitTimeout(&spanGrpc.inFlight, shutdownTimeout) {
 		Log("grpc").Warnf("Timed out waiting for in-flight span requests to complete")
 	}
 }
@@ -2056,7 +2066,7 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 	return err
 }
 
-func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadName []string, localId []int64, dump *goroutineDump) {
+func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadName []string, dump *goroutineDump) {
 	status := int32(0)
 	msg := ""
 
@@ -2071,7 +2081,7 @@ func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadNam
 			Status:     status,
 			Message:    &wrappers.StringValue{Value: msg},
 		},
-		ThreadDump: makePActiveThreadDumpList(dump, int(limit), threadName, localId),
+		ThreadDump: makePActiveThreadDumpList(dump, int(limit), threadName),
 		Type:       "Go",
 		Version:    runtime.Version(),
 	}
@@ -2089,7 +2099,7 @@ func (cmdGrpc *cmdGrpc) sendActiveThreadDump(reqId int32, limit int32, threadNam
 	}
 }
 
-func makePActiveThreadDumpList(dump *goroutineDump, limit int, threadName []string, localId []int64) []*pb.PActiveThreadDump {
+func makePActiveThreadDumpList(dump *goroutineDump, limit int, threadName []string) []*pb.PActiveThreadDump {
 	dumpList := make([]*pb.PActiveThreadDump, 0)
 
 	if dump != nil {

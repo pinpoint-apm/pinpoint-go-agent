@@ -2025,7 +2025,7 @@ func Test_cmdGrpc_sendActiveThreadDump(t *testing.T) {
 		dump.add(testGoroutine(id))
 	}
 
-	agent.cmdGrpc.sendActiveThreadDump(1, 0, []string{"goroutine 2"}, nil, dump)
+	agent.cmdGrpc.sendActiveThreadDump(1, 0, []string{"goroutine 2"}, dump)
 	agent.cmdGrpc.sendActiveThreadLightDump(2, 0, dump)
 
 	dumps, lightDumps := client.sentDumps()
@@ -2050,7 +2050,7 @@ func Test_cmdGrpc_sendActiveThreadDump_reportsDumpFailure(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	_, client := newMockCmdGrpc(agent)
 
-	agent.cmdGrpc.sendActiveThreadDump(1, 0, nil, nil, nil)
+	agent.cmdGrpc.sendActiveThreadDump(1, 0, nil, nil)
 	agent.cmdGrpc.sendActiveThreadLightDump(2, 0, nil)
 
 	dumps, lightDumps := client.sentDumps()

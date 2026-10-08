@@ -121,7 +121,7 @@ func Test_makePActiveThreadDumpListPreservesRequestedOrderAndLimit(t *testing.T)
 		dump.add(testGoroutine(id))
 	}
 
-	got := makePActiveThreadDumpList(dump, 2, []string{"goroutine 3", "missing", "goroutine 1", "goroutine 2"}, nil)
+	got := makePActiveThreadDumpList(dump, 2, []string{"goroutine 3", "missing", "goroutine 1", "goroutine 2"})
 	require.Len(t, got, 2)
 	assert.Equal(t, "goroutine 3", got[0].GetThreadDump().GetThreadName())
 	assert.Equal(t, "goroutine 1", got[1].GetThreadDump().GetThreadName())
