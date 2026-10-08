@@ -71,7 +71,7 @@ Each plugin is its own module, so they run one at a time. This is the loop CI
 uses, and the one to run locally before touching a plugin:
 
 ```bash
-for dir in plugin/*/; do (cd "$dir" && go test -race ./) || echo "FAILED: $dir"; done
+for dir in plugin/*/; do (cd "$dir" && go test -race ./ && go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...) || echo "FAILED: $dir"; done
 ```
 
 Only the module's own package is tested — each plugin's example is a `main`

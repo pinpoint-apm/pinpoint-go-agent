@@ -213,7 +213,7 @@ func TestConsumeMessageContext_PanicPropagates(t *testing.T) {
 // NewContext is how an application tells the plugin which brokers it is
 // consuming from; a nil context must not take the consumer down.
 func TestNewContext(t *testing.T) {
-	ctx := NewContext(nil, []string{"broker1:9092"})
+	ctx := NewContext(nil, []string{"broker1:9092"}) //lint:ignore SA1012 NewContext tolerates nil on purpose
 	require.NotNil(t, ctx)
 	assert.Equal(t, []string{"broker1:9092"}, ctx.Value(contextKey))
 
@@ -226,7 +226,7 @@ func TestNewContext(t *testing.T) {
 // addresses.
 func TestNewContext_ForeignStringKeyDoesNotShadowTheAddresses(t *testing.T) {
 	ctx := NewContext(context.Background(), []string{"broker1:9092"})
-	ctx = context.WithValue(ctx, "ppsaramaibm.broker.address", "not a slice") //nolint:staticcheck // the point of the test
+	ctx = context.WithValue(ctx, "ppsaramaibm.broker.address", "not a slice") //lint:ignore SA1029 a foreign string key is the point of the test
 
 	assert.Equal(t, []string{"broker1:9092"}, ctx.Value(contextKey))
 }

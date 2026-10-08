@@ -63,7 +63,12 @@ jobs:
     - name: Staticcheck
       if: matrix.go-version == '1.26.x'
       # internal/protobuf is generated (protoc, grpcmock) and is not ours to lint.
-      run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 $(go list ./... | grep -v /internal/protobuf)
+      run: |
+        go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 $(go list ./... | grep -v /internal/protobuf)
+        (cd test/it && go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...)
+        (cd test/e2e && go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...)
+        # The kratos examples carry generated protobuf code of their own.
+        (cd example && go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 $(go list ./... | grep -v /helloworld))
 
     # -race for the same reason the plugin job uses it: the agent's own workers,
     # span queue, config snapshot and metadata caches are all concurrent, and

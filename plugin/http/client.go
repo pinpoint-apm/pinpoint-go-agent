@@ -178,6 +178,7 @@ func WrapClient(client *http.Client) *http.Client {
 	}
 
 	c := *client
+	//lint:ignore SA1012 nil is "no client context": the request's own is used
 	c.Transport = wrapRoundTripper(nil, c.Transport)
 	return &c
 }

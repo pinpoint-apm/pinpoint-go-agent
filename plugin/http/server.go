@@ -726,7 +726,8 @@ func (w *responseWriter) Unwrap() http.ResponseWriter {
 // channel that never fires, what a writer without it gets, is a correct answer
 // for it: the client has not gone away as far as this writer can tell.
 func (w *responseWriter) CloseNotify() <-chan bool {
-	if cn, ok := w.ResponseWriter.(http.CloseNotifier); ok { //nolint:staticcheck // kept for the handlers that still assert it
+	//lint:ignore SA1019 kept for the handlers that still assert it
+	if cn, ok := w.ResponseWriter.(http.CloseNotifier); ok {
 		return cn.CloseNotify()
 	}
 	return make(chan bool)

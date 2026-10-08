@@ -482,14 +482,14 @@ func Test_responseWriter_CloseNotifier(t *testing.T) {
 	status := 0
 	closed := make(chan bool, 1)
 	wrapped := WrapResponseWriter(closeNotifyWriter{httptest.NewRecorder(), closed}, &status)
-	cn, ok := wrapped.(http.CloseNotifier) //nolint:staticcheck // the interface under test
+	cn, ok := wrapped.(http.CloseNotifier) //lint:ignore SA1019 the interface under test
 	require.True(t, ok)
 	closed <- true
 	assert.True(t, <-cn.CloseNotify(), "delegated to the underlying writer")
 
 	for mask := 0; mask < 8; mask++ {
 		original := responseWriterWithOptionalInterfaces(httptest.NewRecorder(), &optionalResponseWriter{}, mask)
-		cn, ok := WrapResponseWriter(original, &status).(http.CloseNotifier) //nolint:staticcheck // the interface under test
+		cn, ok := WrapResponseWriter(original, &status).(http.CloseNotifier) //lint:ignore SA1019 the interface under test
 		require.True(t, ok, "mask%03b", mask)
 		select {
 		case <-cn.CloseNotify():

@@ -186,7 +186,7 @@ func onError(w http.ResponseWriter, r *http.Request) {
 	tracer.NewSpanEvent("failing_operation")
 	tracer.SpanEvent().SetError(errors.New("simulated error: connection timeout"), "ConnectionTimeout")
 	tracer.EndSpanEvent()
-	tracer.Span().SetError(errors.New("Internal Server Error"))
+	tracer.Span().SetError(errors.New("internal server error"))
 
 	writeText(w, r, tracer, http.StatusInternalServerError, "error")
 }

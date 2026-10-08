@@ -209,9 +209,9 @@ func (h requestHeader) Values(key string) []string {
 }
 
 func (h requestHeader) VisitAll(f func(name string, values []string)) {
-	h.Hdr.VisitAll(func(key, value []byte) {
+	for key, value := range h.Hdr.All() {
 		f(string(key), []string{string(value)})
-	})
+	}
 }
 
 // responseHeader adapts a *fasthttp.ResponseHeader to pphttp.Header.
@@ -228,9 +228,9 @@ func (h responseHeader) Values(key string) []string {
 }
 
 func (h responseHeader) VisitAll(f func(name string, values []string)) {
-	h.Hdr.VisitAll(func(key, value []byte) {
+	for key, value := range h.Hdr.All() {
 		f(string(key), []string{string(value)})
-	})
+	}
 }
 
 // cookie adapts the cookies of a *fasthttp.RequestHeader to pphttp.Cookie.
@@ -239,9 +239,9 @@ type cookie struct {
 }
 
 func (c cookie) VisitAll(f func(name string, value string)) {
-	c.Hdr.VisitAllCookie(func(key, value []byte) {
+	for key, value := range c.Hdr.Cookies() {
 		f(string(key), string(value))
-	})
+	}
 }
 
 // DoClient instruments outbound requests and add distributed tracing headers.
