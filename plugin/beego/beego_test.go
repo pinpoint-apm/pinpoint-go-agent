@@ -246,6 +246,33 @@ func TestClientFilterChain_WithNoopTracer(t *testing.T) {
 	assert.True(t, called, "the next filter did not run")
 }
 
+// The nil-tracer form is the one installed once on settings shared by every
+// request, so each call has to read its own request's tracer from the context.
+// Assigning it to the captured parameter pinned the first request's tracer on
+// every later request and raced between them.
+func TestClientFilterChain_NilTracerReadsEachRequestsOwnTracer(t *testing.T) {
+	pptest.StartAgent(t)
+
+	first := pinpoint.GetAgent().NewSpanTracer("test", "/first")
+	defer first.EndSpan()
+	second := pinpoint.GetAgent().NewSpanTracer("test", "/second")
+	defer second.EndSpan()
+	require.NotEqual(t, first.TransactionId(), second.TransactionId())
+
+	var sentHeader http.Header
+	filter := ClientFilterChain(nil)(func(ctx context.Context, r *httplib.BeegoHTTPRequest) (*http.Response, error) {
+		sentHeader = r.GetRequest().Header.Clone()
+		return &http.Response{StatusCode: http.StatusOK}, nil
+	})
+
+	for _, tracer := range []pinpoint.Tracer{first, second} {
+		_, err := filter(pinpoint.NewContext(context.Background(), tracer), httplib.Get("http://localhost:9090/hello"))
+		require.NoError(t, err)
+		assert.Equal(t, tracer.TransactionId().String(), sentHeader.Get(pinpoint.HeaderTraceId),
+			"the shared filter must inject the calling request's own trace id")
+	}
+}
+
 // statusAnnotation reads the recorded HTTP status back out of the span JSON:
 // {"key":46,"value":{"Field":{"IntValue":500}}}.
 func statusAnnotation(t *testing.T, tracer pinpoint.Tracer) int {

@@ -83,11 +83,16 @@ func responseStatus(ctx *beegoContext.Context) int {
 func ClientFilterChain(tracer pinpoint.Tracer) func(httplib.Filter) httplib.Filter {
 	return func(next httplib.Filter) httplib.Filter {
 		return func(ctx context.Context, req *httplib.BeegoHTTPRequest) (resp *http.Response, err error) {
-			if tracer == nil {
-				tracer = pinpoint.FromContext(ctx)
+			// A local, never the captured parameter: assigning the request's
+			// tracer to the closure variable pinned the first request's tracer
+			// on every later request through a shared filter chain, and the
+			// write raced with the other requests reading it.
+			reqTracer := tracer
+			if reqTracer == nil {
+				reqTracer = pinpoint.FromContext(ctx)
 			}
 			// See DoRequest for why the returned tracer ends the event.
-			t := pphttp.NewHttpClientTracer(tracer, "beego/v2.DoRequest()", req.GetRequest())
+			t := pphttp.NewHttpClientTracer(reqTracer, "beego/v2.DoRequest()", req.GetRequest())
 			defer func() {
 				pphttp.EndHttpClientTracer(t, resp, err)
 			}()
