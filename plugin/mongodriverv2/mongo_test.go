@@ -362,3 +362,61 @@ func TestMonitor_ConcurrentCommands(t *testing.T) {
 		t.Errorf("%d spans left in the map, want none", len(m.spans))
 	}
 }
+
+// The span map is bounded: a command whose Succeeded or Failed never arrives -
+// a driver bug, a connection that vanished - must not pin its tracer forever.
+// At maxPendingSpans the next Started evicts one pending command, ending its
+// event with errSpanEvicted so the trace says what happened, and the map stays
+// at the cap.
+func TestMonitor_EvictsAtTheCap(t *testing.T) {
+	m := &monitor{spans: make(map[spanKey]pinpoint.Tracer)}
+	tracers := make([]*recordingTracer, 0, maxPendingSpans+1)
+	for i := 0; i <= maxPendingSpans; i++ {
+		tracer := newRecordingTracer()
+		tracers = append(tracers, tracer)
+		m.Started(pinpoint.NewContext(context.Background(), tracer), startedEvent(t, "mongo1:27017[-3]", int64(i), "find", "widgets"))
+	}
+
+	if len(m.spans) != maxPendingSpans {
+		t.Fatalf("%d spans in the map, want the cap of %d", len(m.spans), maxPendingSpans)
+	}
+	if got := m.pending.Load(); got != maxPendingSpans {
+		t.Errorf("pending = %d, want %d", got, maxPendingSpans)
+	}
+	evicted := 0
+	for _, tracer := range tracers {
+		if e := tracer.events[0]; e.ended {
+			evicted++
+			if !errors.Is(e.err, errSpanEvicted) {
+				t.Errorf("evicted event error = %v, want errSpanEvicted", e.err)
+			}
+		}
+	}
+	if evicted != 1 {
+		t.Errorf("%d commands evicted, want exactly 1 per Started past the cap", evicted)
+	}
+}
+
+// With nothing in flight Finished returns before taking the lock; a finish
+// that arrives after the map drained must still be a harmless no-op.
+func TestMonitor_PendingTracksTheMap(t *testing.T) {
+	m := &monitor{spans: make(map[spanKey]pinpoint.Tracer)}
+	tracer := newRecordingTracer()
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+
+	started := startedEvent(t, "mongo1:27017[-3]", 7, "find", "widgets")
+	m.Started(ctx, started)
+	if got := m.pending.Load(); got != 1 {
+		t.Fatalf("pending after Started = %d, want 1", got)
+	}
+
+	finished := event.CommandFinishedEvent{ConnectionID: started.ConnectionID, RequestID: started.RequestID}
+	m.Succeeded(ctx, &event.CommandSucceededEvent{CommandFinishedEvent: finished})
+	if got := m.pending.Load(); got != 0 {
+		t.Fatalf("pending after Succeeded = %d, want 0", got)
+	}
+	m.Succeeded(ctx, &event.CommandSucceededEvent{CommandFinishedEvent: finished})
+	if len(tracer.events) != 1 || !tracer.events[0].ended {
+		t.Errorf("the span event must be ended exactly once")
+	}
+}
