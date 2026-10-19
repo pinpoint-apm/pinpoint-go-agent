@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent"
 	"go.mongodb.org/mongo-driver/bson"
@@ -130,5 +131,16 @@ func abbreviateJson(b []byte, length int) string {
 	if len(b) <= length {
 		return string(b)
 	}
-	return string(b[:length]) + "...(" + fmt.Sprint(length) + ")"
+
+	// Reserve the marker so the annotation stays inside length, and cut back to a
+	// rune start: a proto3 string field rejects invalid UTF-8 and drops the span.
+	marker := "...(" + fmt.Sprint(length) + ")"
+	cut := length - len(marker)
+	if cut < 0 {
+		cut = 0
+	}
+	for cut > 0 && !utf8.RuneStart(b[cut]) {
+		cut--
+	}
+	return string(b[:cut]) + marker
 }
