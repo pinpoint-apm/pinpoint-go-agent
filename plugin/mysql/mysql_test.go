@@ -1,0 +1,133 @@
+package ppmysql
+
+import (
+	"database/sql"
+	"database/sql/driver"
+	"testing"
+
+	"github.com/go-sql-driver/mysql"
+	"github.com/pinpoint-apm/pinpoint-go-agent"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const driverName = "mysql-pinpoint"
+
+// The endpoint recorded on every span event comes from here, so each transport
+// mysql supports has to reduce to a host the collector can group by.
+func Test_parseConfig(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		cfg      mysql.Config
+		wantHost string
+		wantName string
+	}{
+		{
+			name:     "tcp host and port",
+			cfg:      mysql.Config{Net: "tcp", Addr: "127.0.0.1:3306", DBName: "testdb"},
+			wantHost: "127.0.0.1",
+			wantName: "testdb",
+		},
+		{
+			// SplitHostPort fails without a colon, so the address is the host.
+			name:     "tcp without a port",
+			cfg:      mysql.Config{Net: "tcp", Addr: "dbhost", DBName: "testdb"},
+			wantHost: "dbhost",
+			wantName: "testdb",
+		},
+		{
+			name:     "tcp port only",
+			cfg:      mysql.Config{Net: "tcp", Addr: ":3306", DBName: "testdb"},
+			wantHost: "localhost",
+			wantName: "testdb",
+		},
+		{
+			name:     "ipv6 host",
+			cfg:      mysql.Config{Net: "tcp", Addr: "[::1]:3306", DBName: "testdb"},
+			wantHost: "::1",
+			wantName: "testdb",
+		},
+		{
+			// The socket path is not an address the collector can group by.
+			name:     "unix socket",
+			cfg:      mysql.Config{Net: "unix", Addr: "/tmp/mysql.sock", DBName: "testdb"},
+			wantHost: "localhost",
+			wantName: "testdb",
+		},
+		{
+			// A Cloud SQL instance name has colons but is not host:port.
+			name:     "cloudsql instance",
+			cfg:      mysql.Config{Net: "cloudsql", Addr: "project:region:instance", DBName: "testdb"},
+			wantHost: "project:region:instance",
+			wantName: "testdb",
+		},
+		{
+			name:     "no database selected",
+			cfg:      mysql.Config{Net: "tcp", Addr: "127.0.0.1:3306"},
+			wantHost: "127.0.0.1",
+			wantName: "",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var info pinpoint.DBInfo
+			cfg := tt.cfg
+			parseConfig(&info, &cfg)
+
+			assert.Equal(t, tt.wantHost, info.DBHost)
+			assert.Equal(t, tt.wantName, info.DBName)
+		})
+	}
+}
+
+// parseDSN hands mysql's own parse of the dsn to parseConfig.
+func Test_parseDSN(t *testing.T) {
+	var info pinpoint.DBInfo
+	parseDSN(&info, "root:p123@tcp(127.0.0.1:3306)/testdb")
+
+	assert.Equal(t, "127.0.0.1", info.DBHost)
+	assert.Equal(t, "testdb", info.DBName)
+}
+
+// An unparsable DSN must leave the driver's shared DBInfo alone rather than
+// half-filling it: sql.Open reports the same error and the connection fails.
+func Test_parseDSN_InvalidLeavesInfoUntouched(t *testing.T) {
+	for _, dsn := range []string{
+		"not a dsn",
+		"root:p123@tcp(127.0.0.1:3306)", // no database part at all
+		"root:p123@tcp(127.0.0.1:3306)/testdb?parseTime=nope",
+	} {
+		info := pinpoint.DBInfo{DBHost: "keep", DBName: "keep"}
+		parseDSN(&info, dsn)
+
+		assert.Equal(t, "keep", info.DBHost, "parseDSN(%q) overwrote the host", dsn)
+		assert.Equal(t, "keep", info.DBName, "parseDSN(%q) overwrote the database name", dsn)
+	}
+}
+
+// The registered driver has to carry the mysql service types; a wrong type
+// files every query under the wrong node on the server map.
+func TestRegisteredDriverInfo(t *testing.T) {
+	assert.EqualValues(t, pinpoint.ServiceTypeMysql, dbInfo.DBType)
+	assert.EqualValues(t, pinpoint.ServiceTypeMysqlExecuteQuery, dbInfo.QueryType)
+	assert.NotNil(t, dbInfo.ParseDSN, "without a ParseDSN the wrapper never learns the host or database")
+}
+
+// Opening through the registered name must hand database/sql the instrumented
+// driver, not the bare mysql one - otherwise nothing is ever traced.
+func TestOpenUsesTheInstrumentedDriver(t *testing.T) {
+	db, err := sql.Open(driverName, "root:p123@tcp(127.0.0.1:3306)/testdb")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// A type switch over both forms, not a comparison against a constructed
+	// driver value: that only catches a bare driver registered in exactly the
+	// same form. The plugin registers MySQLDriver by value, and sql.Open hands
+	// it to OpenConnector, whose connector reports the driver as a pointer, so
+	// asserting either form alone passed with the bare driver registered.
+	switch db.Driver().(type) {
+	case mysql.MySQLDriver, *mysql.MySQLDriver:
+		assert.Fail(t, "the bare mysql driver was registered, so nothing is traced")
+	}
+	assert.Implements(t, (*driver.DriverContext)(nil), db.Driver(),
+		"the wrapper must keep the driver's OpenConnector reachable, or database/sql re-parses the dsn per connection")
+}
