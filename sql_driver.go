@@ -67,7 +67,7 @@ func (d *sqlDriver) Open(name string) (driver.Conn, error) {
 
 	sc := newSqlConn(conn, d.dbInfo)
 	parseDSN(&sc.dbInfo, name)
-	return sc, nil
+	return sc.withSessionInterfaces(), nil
 }
 
 func (d *sqlDriver) OpenConnector(name string) (driver.Connector, error) {
@@ -96,7 +96,7 @@ func (c *sqlConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	if conn, err := c.Connector.Connect(ctx); err != nil {
 		return nil, err
 	} else {
-		return newSqlConn(conn, c.dbInfo), nil
+		return newSqlConn(conn, c.dbInfo).withSessionInterfaces(), nil
 	}
 }
 
@@ -116,6 +116,69 @@ func newSqlConn(conn driver.Conn, dbInfo DBInfo) *sqlConn {
 		dbInfo: dbInfo,
 		config: GetConfig(),
 	}
+}
+
+// The shapes withSessionInterfaces returns: each adds to sqlConn exactly the
+// session interfaces of the connection it wraps.
+type (
+	sqlConnResetter struct {
+		*sqlConn
+		driver.SessionResetter
+	}
+	sqlConnValidator struct {
+		*sqlConn
+		driver.Validator
+	}
+	sqlConnResetterValidator struct {
+		*sqlConn
+		driver.SessionResetter
+		driver.Validator
+	}
+)
+
+// withSessionInterfaces returns c with SessionResetter and Validator exactly
+// when the wrapped connection has them. database/sql decides from their mere
+// presence (beginDC's keepConnOnRollback) whether a connection survives a
+// rollback its context triggered. Claiming both for a driver that has neither
+// - go-ora v2, the sqlite drivers - put a connection whose rollback had just
+// failed back in the pool with its transaction still open on the server,
+// where go-ora's next statement committed it.
+func (c *sqlConn) withSessionInterfaces() driver.Conn {
+	r, isResetter := c.Conn.(driver.SessionResetter)
+	v, isValidator := c.Conn.(driver.Validator)
+	switch {
+	case isResetter && isValidator:
+		return sqlConnResetterValidator{c, r, v}
+	case isResetter:
+		return sqlConnResetter{c, r}
+	case isValidator:
+		return sqlConnValidator{c, v}
+	}
+	return c
+}
+
+// The wrapper embeds the driver.Conn interface, which hides the underlying
+// connection's optional interfaces from database/sql's type assertions:
+// without the passthroughs below, a driver's custom argument types stop
+// converting (NamedValueChecker) and Ping degrades to a no-op. Each method
+// delegates when the underlying connection implements the interface and
+// otherwise answers exactly as database/sql would have for a driver without
+// it. SessionResetter and Validator cannot be answered that way, since their
+// presence alone changes database/sql's behavior; withSessionInterfaces adds
+// them only for a connection that has them.
+
+func (c *sqlConn) Ping(ctx context.Context) error {
+	if p, ok := c.Conn.(driver.Pinger); ok {
+		return p.Ping(ctx)
+	}
+	return nil
+}
+
+func (c *sqlConn) CheckNamedValue(nv *driver.NamedValue) error {
+	if nvc, ok := c.Conn.(driver.NamedValueChecker); ok {
+		return nvc.CheckNamedValue(nv)
+	}
+	return driver.ErrSkip // use the default argument handling
 }
 
 func prepare(stmt driver.Stmt, err error, conn *sqlConn, sql string) (driver.Stmt, error) {
@@ -342,6 +405,27 @@ type sqlStmt struct {
 	driver.Stmt
 	conn *sqlConn
 	sql  string
+}
+
+// CheckNamedValue mirrors database/sql's own checker selection for the wrapped
+// pair: it consults only the outermost statement's checker, so this must fall
+// back from the underlying statement to the underlying connection before
+// yielding to the default handling.
+func (s *sqlStmt) CheckNamedValue(nv *driver.NamedValue) error {
+	if nvc, ok := s.Stmt.(driver.NamedValueChecker); ok {
+		return nvc.CheckNamedValue(nv)
+	}
+	if nvc, ok := s.conn.Conn.(driver.NamedValueChecker); ok {
+		return nvc.CheckNamedValue(nv)
+	}
+	return driver.ErrSkip
+}
+
+func (s *sqlStmt) ColumnConverter(idx int) driver.ValueConverter {
+	if cc, ok := s.Stmt.(driver.ColumnConverter); ok {
+		return cc.ColumnConverter(idx)
+	}
+	return driver.DefaultParameterConverter
 }
 
 func (s *sqlStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
