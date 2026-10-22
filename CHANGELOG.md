@@ -235,6 +235,18 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **`pinpoint.ReloadConfig(yaml)`** applies a complete configuration, in the
+  config file's YAML form, to the running agent, for a process that manages
+  the agent's configuration itself - a control plane, an admin endpoint, a
+  `SIGHUP` handler - and so has no config file for the agent to watch. The
+  dynamic options take the YAML's values and one the YAML omits goes back to
+  its config function value or default; a flag, environment variable or
+  `Config.Set()` value still wins. The returned `ConfigReloadResult` says
+  whether the reload was applied, why it was refused - no running agent, a
+  config file in use, invalid YAML, a value of the wrong type or a
+  configuration `NewAgent` would refuse - and lists in `RestartRequired` the
+  non-dynamic options the YAML would have changed. A refused reload changes
+  nothing. See [Reloading from YAML](doc/config.md#reloading-from-yaml).
 - **`pinpoint.IsInjected`, `pinpoint.RemoteHost` and `pinpoint.AnnotationList`**
   are the helpers the plugins shared by copy: the already-injected check of a
   client plugin, the port-stripped peer address of a server plugin, and the

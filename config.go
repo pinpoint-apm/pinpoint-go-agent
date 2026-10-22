@@ -1517,11 +1517,21 @@ func (config *Config) reloadConfig(f *configFile) {
 // loadDynamicConfig restages the dynamic options from the config file and
 // returns the set of option names whose value actually changed.
 func (config *Config) loadDynamicConfig(sources *cfgSources) map[string]bool {
+	return config.restage(sources, false)
+}
+
+// restage re-reads the options from sources - the dynamic ones, or with all
+// every option, which only ReloadConfig's private candidate does - and
+// returns the set of option names whose value actually changed. An option
+// whose value came from the command line, the environment or Set() is left
+// alone; one the sources no longer set goes back to its base value. The
+// caller must hold config.mu.
+func (config *Config) restage(sources *cfgSources, all bool) map[string]bool {
 	changed := make(map[string]bool)
 
 	for _, k := range slices.Sorted(maps.Keys(config.cfgMap)) {
 		v := config.cfgMap[k]
-		if !v.dynamic {
+		if !v.dynamic && !all {
 			continue
 		}
 		if v.source > cfgSrcProfile {

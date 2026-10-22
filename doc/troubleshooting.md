@@ -454,6 +454,10 @@ samples, and a first connect is not an outage and gets no summary.
   environment. The startup config dump shows the effective value.
 * Watch for `src=config` lines on save; a parse error leaves the previous
   values in place.
+* A process without a config file can still change the dynamic options at
+  runtime: `pinpoint.ReloadConfig(yaml)` applies a complete configuration to
+  the running agent and reports, in `RestartRequired`, the non-dynamic options
+  it could not apply. See [Reloading from YAML](config.md#reloading-from-yaml).
 
 ---
 

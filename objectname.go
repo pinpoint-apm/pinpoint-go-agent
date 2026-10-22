@@ -128,6 +128,29 @@ func (o *objectName) versionString() string {
 // required field aborts agent startup with an error. v1 and v3 differ only in the
 // applicationName length limit; v4 allows a longer agentName.
 func resolveObjectName(config *Config) (*objectName, error) {
+	uid, err := uuid.NewV7()
+	if err != nil {
+		return nil, errors.New("failed to generate AgentID: " + err.Error())
+	}
+	agentID := encodeUID(uid)
+	Log("config").Infof("auto-generated AgentID: %v", agentID)
+	return resolveObjectNameWithID(config, agentID, uid)
+}
+
+// resolveObjectNameKeeping resolves the identity that config describes with
+// the agent id of running kept, for ReloadConfig's check of a candidate
+// configuration: the id is never configurable, so with it held fixed the
+// candidate differs from the running identity only where the configuration
+// does. Without a running identity it resolves as resolveObjectName does.
+func resolveObjectNameKeeping(config *Config, running *objectName) (*objectName, error) {
+	if running == nil {
+		return resolveObjectName(config)
+	}
+	return resolveObjectNameWithID(config, running.agentID, running.agentUID)
+}
+
+// resolveObjectNameWithID is resolveObjectName with the agent id given.
+func resolveObjectNameWithID(config *Config, agentID string, uid uuid.UUID) (*objectName, error) {
 	version := parseNameVersion(config.String(CfgUIDVersion))
 	appNameMax, agentNameMax := appNameMaxLenV3, agentNameMaxLen
 	switch version {
@@ -136,13 +159,6 @@ func resolveObjectName(config *Config) (*objectName, error) {
 	case nameV4:
 		agentNameMax = agentNameMaxLenV4
 	}
-
-	uid, err := uuid.NewV7()
-	if err != nil {
-		return nil, errors.New("failed to generate AgentID: " + err.Error())
-	}
-	agentID := encodeUID(uid)
-	Log("config").Infof("auto-generated AgentID: %v", agentID)
 
 	appName := config.String(CfgAppName)
 	if !IsValidId(appName, appNameMax) {

@@ -1,0 +1,308 @@
+package pinpoint
+
+import (
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// requireNoAgent makes sure no agent from an earlier test is still the global
+// one, so a test of ReloadConfig starts from a known state.
+func requireNoAgent(t *testing.T) {
+	t.Helper()
+	if a := GetAgent(); a != NoopAgent() {
+		a.Shutdown()
+	}
+	require.Equal(t, NoopAgent(), GetAgent())
+}
+
+// newReloadAgent starts an agent that talks to no collector and stops it when
+// the test ends.
+func newReloadAgent(t *testing.T, opts ...ConfigOption) (Agent, *Config) {
+	t.Helper()
+	requireNoAgent(t)
+	config, err := NewConfig(opts...)
+	require.NoError(t, err)
+	config.offGrpc = true
+	agent, err := NewAgent(config)
+	require.NoError(t, err)
+	t.Cleanup(agent.Shutdown)
+	return agent, config
+}
+
+func TestReloadConfig_NoAgent(t *testing.T) {
+	requireNoAgent(t)
+
+	result := ReloadConfig("applicationName: nobody\nsampling:\n  counterRate: 3\n")
+	assert.Equal(t, ConfigReloadNoAgent, result.Status)
+	assert.False(t, result.OK())
+	assert.Contains(t, result.Message, "no agent is running")
+	assert.Empty(t, result.RestartRequired)
+}
+
+func TestReloadConfig_AppliesDynamicAndReportsNonDynamic(t *testing.T) {
+	_, config := newReloadAgent(t, WithAppName("reload-yaml"), WithSamplingCounterRate(5))
+
+	var rateReloads, commitReloads int
+	config.AddReloadCallback([]string{CfgSamplingCounterRate}, func() { rateReloads++ })
+	config.AddReloadCallback([]string{CfgSQLTraceCommit}, func() { commitReloads++ })
+
+	result := ReloadConfig(`
+applicationName: reload-yaml
+collector:
+  host: other.collector
+  agentPort: 19991
+sampling:
+  counterRate: 2
+span:
+  maxCallStackDepth: 12
+`)
+	require.Equal(t, ConfigReloadApplied, result.Status, result.Message)
+	assert.True(t, result.OK())
+	assert.Empty(t, result.Message)
+	assert.Equal(t, []string{CfgCollectorAgentPort, CfgCollectorHost}, result.RestartRequired)
+
+	assert.Equal(t, 2, config.Int(CfgSamplingCounterRate), "dynamic option applied")
+	assert.Equal(t, 12, config.Int(CfgSpanMaxCallStackDepth))
+	assert.Equal(t, int32(12), config.load().spanMaxEventDepth, "snapshot rebuilt")
+	assert.Equal(t, "localhost", config.String(CfgCollectorHost), "non-dynamic option kept")
+	assert.Equal(t, 9991, config.Int(CfgCollectorAgentPort))
+	assert.Equal(t, 1, rateReloads)
+	assert.Equal(t, 0, commitReloads, "callback fired for an option the yaml did not change")
+
+	// The same YAML again changes nothing, and still reports what a restart
+	// would change.
+	result = ReloadConfig("applicationName: reload-yaml\ncollector:\n  host: other.collector\nsampling:\n  counterRate: 2\nspan:\n  maxCallStackDepth: 12\n")
+	require.Equal(t, ConfigReloadApplied, result.Status, result.Message)
+	assert.Equal(t, []string{CfgCollectorHost}, result.RestartRequired)
+	assert.Equal(t, 1, rateReloads, "callback fired for an unchanged option")
+
+	// The YAML is the complete configuration: an omitted dynamic option goes
+	// back to the config function's value or the default, not the last YAML's.
+	result = ReloadConfig("applicationName: reload-yaml\n")
+	require.Equal(t, ConfigReloadApplied, result.Status, result.Message)
+	assert.Empty(t, result.RestartRequired)
+	assert.Equal(t, 5, config.Int(CfgSamplingCounterRate), "back to the config function's value")
+	assert.Equal(t, defaultEventDepth, config.Int(CfgSpanMaxCallStackDepth), "back to the default")
+	assert.Equal(t, 2, rateReloads)
+}
+
+// An identity the YAML omits resolves to the running one: the agent name that
+// fell back to the agent id, the auto-detected container flag.
+func TestReloadConfig_OmittedIdentityIsNotRestartRequired(t *testing.T) {
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+	_, config := newReloadAgent(t, WithAppName("reload-identity"))
+	require.True(t, config.Bool(CfgIsContainerEnv))
+	require.NotEmpty(t, config.String(CfgAgentName), "agent name falls back to the id")
+
+	result := ReloadConfig("applicationName: reload-identity\n")
+	require.Equal(t, ConfigReloadApplied, result.Status, result.Message)
+	assert.Empty(t, result.RestartRequired)
+
+	// A changed identity is reported, with the YAML's value resolved as
+	// NewAgent would resolve it.
+	result = ReloadConfig("applicationName: reload-identity\nagentName: another-agent\n")
+	require.Equal(t, ConfigReloadApplied, result.Status, result.Message)
+	assert.Equal(t, []string{CfgAgentName}, result.RestartRequired)
+	assert.NotEqual(t, "another-agent", config.String(CfgAgentName), "identity is not reloadable")
+}
+
+func TestReloadConfig_EnvAndSetValuesWin(t *testing.T) {
+	t.Setenv("PINPOINT_GO_SAMPLING_COUNTERRATE", "7")
+	t.Setenv("PINPOINT_GO_COLLECTOR_HOST", "env.collector")
+	_, config := newReloadAgent(t, WithAppName("reload-env"))
+	config.Set(CfgSpanMaxCallStackDepth, 9)
+
+	result := ReloadConfig(`
+applicationName: reload-env
+collector:
+  host: yaml.collector
+sampling:
+  counterRate: 2
+span:
+  maxCallStackDepth: 20
+  maxCallStackSequence: 500
+`)
+	require.Equal(t, ConfigReloadApplied, result.Status, result.Message)
+	assert.Equal(t, 7, config.Int(CfgSamplingCounterRate), "environment variable keeps its value")
+	assert.Equal(t, 9, config.Int(CfgSpanMaxCallStackDepth), "Set() keeps its value")
+	assert.Equal(t, 500, config.Int(CfgSpanMaxCallStackSequence), "an unpinned option is applied")
+	assert.Empty(t, result.RestartRequired, "an option pinned by the environment would not change on a restart either")
+	assert.Equal(t, "env.collector", config.String(CfgCollectorHost))
+}
+
+func TestReloadConfig_ProfileInsideTheYAML(t *testing.T) {
+	_, config := newReloadAgent(t, WithAppName("reload-profile"))
+
+	result := ReloadConfig(`
+applicationName: reload-profile
+activeProfile: dev
+sampling:
+  counterRate: 2
+profile:
+  dev:
+    sampling:
+      counterRate: 3
+`)
+	require.Equal(t, ConfigReloadApplied, result.Status, result.Message)
+	assert.Equal(t, 3, config.Int(CfgSamplingCounterRate), "the active profile overrides the top level")
+	assert.Equal(t, "dev", config.String(CfgActiveProfile))
+	assert.Empty(t, result.RestartRequired, "the profile the yaml selected is in effect, not pending a restart")
+}
+
+func TestReloadConfig_ConfigFileActive(t *testing.T) {
+	path := t.TempDir() + "/pinpoint-config.yaml"
+	writeConfigRate(t, path, 4)
+	_, config := newReloadAgent(t, WithAppName("reload-file"), WithConfigFile(path))
+	require.Equal(t, 4, config.Int(CfgSamplingCounterRate))
+
+	result := ReloadConfig("applicationName: reload-file\nsampling:\n  counterRate: 2\n")
+	assert.Equal(t, ConfigReloadConfigFileActive, result.Status)
+	assert.Contains(t, result.Message, path)
+	assert.Equal(t, 4, config.Int(CfgSamplingCounterRate), "the file stays the source")
+}
+
+func TestReloadConfig_InvalidYAML(t *testing.T) {
+	_, config := newReloadAgent(t, WithAppName("reload-bad-yaml"), WithSamplingCounterRate(5))
+
+	for name, text := range map[string]string{
+		"syntax error": "sampling: [\n",
+		"scalar":       "hello",
+		"sequence":     "- applicationName: x\n",
+		"empty":        "",
+		"null":         "~\n",
+	} {
+		result := ReloadConfig(text)
+		assert.Equal(t, ConfigReloadInvalidYAML, result.Status, name)
+		assert.Contains(t, result.Message, "config yaml", name)
+		assert.Equal(t, 5, config.Int(CfgSamplingCounterRate), "%s changed the config", name)
+	}
+
+	// An empty mapping is the explicit way to ask for every default.
+	result := ReloadConfig("{}")
+	require.Equal(t, ConfigReloadApplied, result.Status, result.Message)
+	assert.Equal(t, 5, config.Int(CfgSamplingCounterRate), "the config function's value is the base, not the default")
+}
+
+func TestReloadConfig_InvalidConfig(t *testing.T) {
+	_, config := newReloadAgent(t, WithAppName("reload-bad-config"), WithSamplingCounterRate(5))
+
+	// A value of the wrong type refuses the whole document, nothing applied.
+	result := ReloadConfig("applicationName: reload-bad-config\nsampling:\n  counterRate: abc\nspan:\n  maxCallStackDepth: 12\n")
+	assert.Equal(t, ConfigReloadInvalidConfig, result.Status)
+	assert.Contains(t, result.Message, CfgSamplingCounterRate+" = abc is not a valid int")
+	assert.Equal(t, 5, config.Int(CfgSamplingCounterRate))
+	assert.Equal(t, defaultEventDepth, config.Int(CfgSpanMaxCallStackDepth), "a valid option of a refused yaml was applied")
+
+	// A configuration NewAgent would refuse.
+	result = ReloadConfig("applicationName: \"\"\nsampling:\n  counterRate: 2\n")
+	assert.Equal(t, ConfigReloadInvalidConfig, result.Status)
+	assert.Contains(t, result.Message, "application name is required")
+	assert.Equal(t, 5, config.Int(CfgSamplingCounterRate))
+
+	result = ReloadConfig("applicationName: reload-bad-config\nuid:\n  version: v4\nserviceName: ab\nsampling:\n  counterRate: 2\n")
+	assert.Equal(t, ConfigReloadInvalidConfig, result.Status)
+	assert.Contains(t, result.Message, "service name is required")
+	assert.Equal(t, 5, config.Int(CfgSamplingCounterRate))
+
+	// A mapping where a scalar belongs is a wrong type, not a missing key.
+	result = ReloadConfig("applicationName: reload-bad-config\nsampling:\n  counterRate:\n    nested: 1\n")
+	assert.Equal(t, ConfigReloadInvalidConfig, result.Status)
+	assert.Equal(t, 5, config.Int(CfgSamplingCounterRate))
+}
+
+// An out-of-range value and an unknown key are handled as at startup, with the
+// reload applied.
+func TestReloadConfig_OutOfRangeAndUnknownKeysAreTolerated(t *testing.T) {
+	_, config := newReloadAgent(t, WithAppName("reload-range"))
+
+	result := ReloadConfig("applicationName: reload-range\nnoSuchOption: 1\nspan:\n  eventChunkSize: 0\n  queueSize: 0\n")
+	require.Equal(t, ConfigReloadApplied, result.Status, result.Message)
+	assert.Equal(t, defaultEventChunkSize, config.Int(CfgSpanEventChunkSize), "out-of-range dynamic value falls back to the default")
+	assert.Empty(t, result.RestartRequired, "an out-of-range non-dynamic value normalizes to the running default")
+}
+
+// A panic inside the reload is reported as an error, and leaves the Config
+// usable - the lock released - for the next call.
+func TestReloadConfig_RecoversPanic(t *testing.T) {
+	_, config := newReloadAgent(t, WithAppName("reload-panic"))
+	const broken = "Test.Broken"
+	config.mu.Lock()
+	config.cfgMap[broken] = nil
+	config.mu.Unlock()
+
+	result := ReloadConfig("applicationName: reload-panic\n")
+	assert.Equal(t, ConfigReloadError, result.Status)
+	assert.Contains(t, result.Message, "panic")
+
+	config.mu.Lock()
+	delete(config.cfgMap, broken)
+	config.mu.Unlock()
+	result = ReloadConfig("applicationName: reload-panic\nsampling:\n  counterRate: 2\n")
+	require.Equal(t, ConfigReloadApplied, result.Status, result.Message)
+	assert.Equal(t, 2, config.Int(CfgSamplingCounterRate))
+}
+
+func TestReloadConfig_AfterShutdown(t *testing.T) {
+	agent, _ := newReloadAgent(t, WithAppName("reload-shutdown"))
+	agent.Shutdown()
+
+	result := ReloadConfig("applicationName: reload-shutdown\n")
+	assert.Equal(t, ConfigReloadNoAgent, result.Status)
+}
+
+// Reloads from several goroutines while requests create spans: run with -race.
+func TestReloadConfig_ConcurrentWithSpans(t *testing.T) {
+	agent, config := newReloadAgent(t, WithAppName("reload-concurrent"))
+	yamls := []string{
+		"applicationName: reload-concurrent\nsampling:\n  counterRate: 1\nspan:\n  maxCallStackDepth: 10\n",
+		"applicationName: reload-concurrent\nsampling:\n  counterRate: 2\nspan:\n  maxCallStackDepth: 20\n",
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for n := 0; n < 50; n++ {
+				result := ReloadConfig(yamls[(i+n)%2])
+				assert.Equal(t, ConfigReloadApplied, result.Status, result.Message)
+			}
+		}(i)
+	}
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := 0; n < 200; n++ {
+				tracer := agent.NewSpanTracer("reload", "/concurrent")
+				tracer.NewSpanEvent("work").EndSpanEvent()
+				tracer.EndSpan()
+				_ = config.Int(CfgSamplingCounterRate)
+			}
+		}()
+	}
+	wg.Wait()
+
+	rate := config.Int(CfgSamplingCounterRate)
+	assert.Contains(t, []int{1, 2}, rate)
+	depth := config.load().spanMaxEventDepth
+	assert.Equal(t, int32(rate*10), depth, "the last reload published its whole generation at once")
+}
+
+func TestConfigReloadStatus_String(t *testing.T) {
+	for status, want := range map[ConfigReloadStatus]string{
+		ConfigReloadApplied:          "applied",
+		ConfigReloadNoAgent:          "no_agent",
+		ConfigReloadConfigFileActive: "config_file_active",
+		ConfigReloadInvalidYAML:      "invalid_yaml",
+		ConfigReloadInvalidConfig:    "invalid_config",
+		ConfigReloadError:            "error",
+	} {
+		assert.Equal(t, want, status.String())
+	}
+	assert.True(t, strings.HasPrefix(ConfigReloadStatus(42).String(), "ConfigReloadStatus("))
+}

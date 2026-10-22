@@ -513,6 +513,16 @@ ctx := pinpoint.NewContext(context.Background(), tracer.NewGoroutineTracer())
 * `GetAgent()` never returns `nil`; before creation it returns `NoopAgent()`.
   That is what makes `pinpoint.GetAgent().NewSpanTracer(...)` safe in library
   code that cannot know whether the application started an agent.
+* `ReloadConfig(yaml)` applies a **complete** configuration to the running
+  agent: the dynamic options take the YAML's values, one the YAML omits goes
+  back to its config function value or default, and a flag, environment
+  variable or `Config.Set()` value still wins. It never panics; the returned
+  `ConfigReloadResult` says whether it was applied (`OK()`), why it was
+  refused (`Status`, `Message`), and which non-dynamic options it could not
+  apply (`RestartRequired`). A refused reload changes nothing. It is refused
+  while the agent reads a config file (`ConfigFile`), which outranks YAML as it
+  does at startup, and without a running agent. See
+  [Reloading from YAML](config.md#reloading-from-yaml).
 
 ## 13. Server Metadata
 

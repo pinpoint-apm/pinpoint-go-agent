@@ -43,6 +43,59 @@ lines on save; a parse error leaves the previous values in place.
 `NewAgent()` starts a new one, both without a restart. See
 [Troubleshooting](troubleshooting.md#stopping-and-resuming-the-agent).
 
+### Reloading from YAML
+A process that manages the agent's configuration itself - a control plane pushing new settings, an admin
+endpoint, a `SIGHUP` handler, a test harness - has no config file for the agent to watch. It applies a new
+configuration to the running agent with `pinpoint.ReloadConfig()`:
+
+```go
+result := pinpoint.ReloadConfig(`
+applicationName: MyApp
+collector:
+  host: pinpoint-collector
+sampling:
+  type: PERCENT
+  percentRate: 5
+log:
+  level: debug
+`)
+if !result.OK() {
+    log.Printf("pinpoint config not reloaded (%s): %s", result.Status, result.Message)
+} else if len(result.RestartRequired) > 0 {
+    log.Printf("pinpoint config reloaded; restart required for %s", strings.Join(result.RestartRequired, ", "))
+}
+```
+
+The YAML is the **complete** configuration, in the config file's form (keys are case-insensitive, a
+`profile.<ActiveProfile>` section applies as in a file). The dynamic options take the value it gives them;
+a dynamic option it omits goes back to the value it had before any YAML or config file set it - the config
+function's, or the default - so the result depends only on the last YAML applied, not on the history of
+calls. Precedence is the startup precedence: an option given by command line flag or environment variable,
+or set through `Config.Set()`, keeps that value.
+
+The non-dynamic options keep their running values. Those the YAML would have given another value are
+returned in `RestartRequired`, by config key, and logged as a warning, so the caller can tell that a restart
+is needed to apply them; an option pinned by a flag or an environment variable would not change on a
+restart either, so it is not listed. `ReloadConfig()` never panics; `result.Status` says what happened:
+
+| `Status` | When | Changed |
+|---|---|---|
+| `ConfigReloadApplied` | the dynamic options were applied | yes; `RestartRequired` lists the rest |
+| `ConfigReloadNoAgent` | `NewAgent()` has not run, failed, or the agent was shut down | nothing |
+| `ConfigReloadConfigFileActive` | the agent reads a config file (`ConfigFile`); the file outranks YAML as it does at startup, so change the file | nothing |
+| `ConfigReloadInvalidYAML` | a YAML syntax error, or a document that is not a mapping - a scalar, a sequence, or an empty document (`{}` asks for every default explicitly) | nothing |
+| `ConfigReloadInvalidConfig` | a value of the wrong type for its option, or a configuration `NewAgent()` would refuse: an empty `ApplicationName`, an invalid `ServiceName` for `Uid.Version` v4 | nothing |
+| `ConfigReloadError` | an unexpected internal error | nothing |
+
+`Message` says why a reload was refused. Unlike a config file, a YAML with a value of the wrong type is
+refused as a whole rather than applied without that value: a program that composes the document gets told
+instead of running on a partly applied one. An out-of-range value and an unknown key are handled as at
+startup - the option falls back to its default, the key is ignored - each with a warning.
+
+`ReloadConfig()` is safe to call from any goroutine while requests create spans. Concurrent calls, and
+`Config.Set()`, are serialized; the components derived from the changed options are rebuilt behind the
+config snapshot, so an in-flight request never sees a half-applied change.
+
 ### Malformed Values
 A value that cannot be converted to the type its option is declared with is rejected: the agent logs
 
@@ -1461,9 +1514,11 @@ The agent id cannot be pinned: the agent generates one per process, so every
 replica is distinct. Use `AgentName` for the human-readable label. `IsContainerEnv` is detected
 automatically; set it only if the detection is wrong.
 
-If you want reloadable options in a container, you still need a config file:
-mount one from a ConfigMap and point `ConfigFile` at it. Editing the ConfigMap
-then changes the sampling rate or log level on running pods.
+If you want reloadable options in a container, either mount a config file
+from a ConfigMap and point `ConfigFile` at it - editing the ConfigMap then
+changes the sampling rate or log level on running pods - or have the
+application apply a configuration it receives itself with
+[`pinpoint.ReloadConfig()`](#reloading-from-yaml).
 
 ### Profiles
 
