@@ -216,13 +216,16 @@ Use v1 or v3; the v4 details below are documented for when server-side support s
 | ApplicationName | **required**, max 24 bytes | **required**, max 254 bytes | **required**, max 254 bytes |
 | AgentId | not configurable, always auto-generated | same as v1 | same as v1 |
 | AgentName | optional, max 255 bytes; falls back to AgentId when unset or invalid | same as v1 | optional, max 254 bytes; falls back to AgentId when unset or invalid |
-| ServiceName | not used | not used | **required**, max 254 bytes |
+| ServiceName | not used | not used | **required**, 3 to 254 bytes |
 | ApiKey | not used | not used | optional (no length or character check); the `apikey` header is sent only when set |
 | gRPC `protocol.version` header | 100 | 100 | 400 |
 | gRPC headers sent | `applicationname`, `agentid`, `agentname`, `starttime`, `servicetype`, `protocol.version` | same as v1 | v1 headers plus `servicename`, and `apikey` when ApiKey is set |
 
 ApplicationName, AgentId, AgentName and ServiceName must match `[a-zA-Z0-9\._\-]+`,
-and the maximum lengths above are UTF-8 byte lengths.
+and the lengths above are UTF-8 byte lengths.
+ServiceName additionally needs at least 3 bytes, matching the Pinpoint Java agent and the
+web UI's service registry; the collector itself accepts shorter names, but they could not be
+registered as a service.
 ApiKey is not validated.
 
 An auto-generated agent id is a 22 character URL-safe Base64 UUIDv7.
@@ -239,9 +242,9 @@ it is added by the ping stream for every version.
 
 ### ServiceName
 ServiceName option sets the service name reported to Pinpoint collector.
-It is used only when Uid.Version is v4, where it is required and its maximum length is 254 bytes.
+It is used only when Uid.Version is v4, where it is required and its length must be between 3 and 254 bytes.
 It is ignored for v1 and v3.
-If it is not set, has invalid characters, or the maximum length is exceeded, agent startup fails.
+If it is not set, has invalid characters, or its length is out of range, agent startup fails.
 Note that v4 is not usable at this time, so this option currently has no effect. See [Uid.Version](#uidversion).
 
 * PINPOINT_GO_SERVICENAME

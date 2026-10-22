@@ -21,6 +21,7 @@ const (
 const (
 	agentIDMaxLen     = 24  // AGENT_ID_MAX_LEN
 	agentNameMaxLen   = 255 // AGENT_NAME_MAX_LEN
+	serviceNameMinLen = 3   // SERVICE_NAME_MIN_LEN
 	serviceNameMaxLen = 254 // SERVICE_NAME_MAX_LEN
 	appNameMaxLenV1   = 24  // v1: applicationName uses the agentId limit
 	appNameMaxLenV3   = 254 // APPLICATION_NAME_MAX_LEN_V3 (= SERVICE_NAME_MAX_LEN)
@@ -158,10 +159,15 @@ func resolveObjectName(config *Config) (*objectName, error) {
 		return o, nil
 	}
 
+	// serviceName: the collector only checks the characters and the maximum
+	// length, but the Java agent (IdValidatorV4) and the web UI's service
+	// registry also require SERVICE_NAME_MIN_LEN, so a shorter name would
+	// be accepted on the wire yet could never be registered as a service.
 	o.serviceName = config.String(CfgServiceName)
-	if !IsValidId(o.serviceName, serviceNameMaxLen) {
+	if !IsValidId(o.serviceName, serviceNameMaxLen) || len(o.serviceName) < serviceNameMinLen {
 		return nil, errors.New("service name is required and must match " +
-			cfgIdPattern + " within " + strconv.Itoa(serviceNameMaxLen) + " bytes")
+			cfgIdPattern + " between " + strconv.Itoa(serviceNameMinLen) +
+			" and " + strconv.Itoa(serviceNameMaxLen) + " bytes")
 	}
 	// apiKey: optional; an empty value is kept and the apikey header is then
 	// not sent. No length or character check.

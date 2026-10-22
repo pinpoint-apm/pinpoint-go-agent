@@ -120,6 +120,28 @@ func TestResolveObjectName_V4_MissingServiceName(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// serviceName length boundary: SERVICE_NAME_MIN_LEN (3) to SERVICE_NAME_MAX_LEN (254).
+func TestResolveObjectName_V4_ServiceNameLength(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		valid bool
+	}{
+		{strings.Repeat("s", serviceNameMinLen-1), false},
+		{strings.Repeat("s", serviceNameMinLen), true},
+		{strings.Repeat("s", serviceNameMaxLen), true},
+		{strings.Repeat("s", serviceNameMaxLen+1), false},
+	} {
+		c := newCfg(t, WithUidVersion("v4"), WithAppName("MyApp"), WithServiceName(tc.name))
+		o, err := resolveObjectName(c)
+		if tc.valid {
+			assert.NoError(t, err, "serviceName of %d bytes must be accepted", len(tc.name))
+			assert.Equal(t, tc.name, o.serviceName)
+		} else {
+			assert.Error(t, err, "serviceName of %d bytes must be rejected", len(tc.name))
+		}
+	}
+}
+
 func TestResolveObjectName_V4_ApiKeyOptional(t *testing.T) {
 	c := newCfg(t, WithUidVersion("v4"), WithAppName("MyApp"), WithServiceName("Svc"))
 	o, err := resolveObjectName(c)
