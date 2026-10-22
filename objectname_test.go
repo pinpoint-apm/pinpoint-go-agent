@@ -120,10 +120,13 @@ func TestResolveObjectName_V4_MissingServiceName(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestResolveObjectName_V4_MissingApiKey(t *testing.T) {
+func TestResolveObjectName_V4_ApiKeyOptional(t *testing.T) {
 	c := newCfg(t, WithUidVersion("v4"), WithAppName("MyApp"), WithServiceName("Svc"))
-	_, err := resolveObjectName(c)
-	assert.Error(t, err)
+	o, err := resolveObjectName(c)
+	assert.NoError(t, err)
+	assert.True(t, o.isV4())
+	assert.Equal(t, "Svc", o.serviceName)
+	assert.Empty(t, o.apiKey)
 }
 
 func TestResolveObjectName_V4_MissingAppName(t *testing.T) {
@@ -276,5 +279,21 @@ func TestAgentHeaderMap_V4(t *testing.T) {
 	assert.Equal(t, "secret", m[headerApiKey])
 	assert.Equal(t, "12345", m[headerStartTime])
 	assert.Equal(t, "1800", m[headerServiceType])
+	assert.Equal(t, "400", m[headerProtocolVersion])
+}
+
+func TestAgentHeaderMap_V4_ApiKeyOptional(t *testing.T) {
+	// An unset ApiKey omits the apikey header; servicename is still sent.
+	o := &objectName{
+		version:         nameV4,
+		agentID:         "uuid-base64",
+		agentName:       "agent-name",
+		applicationName: "app",
+		serviceName:     "svc",
+	}
+	m := agentHeaderMap(agentWith(o))
+	_, hasApiKey := m[headerApiKey]
+	assert.False(t, hasApiKey, "empty apiKey is omitted for v4")
+	assert.Equal(t, "svc", m[headerServiceName])
 	assert.Equal(t, "400", m[headerProtocolVersion])
 }

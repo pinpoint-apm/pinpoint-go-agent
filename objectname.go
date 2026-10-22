@@ -81,7 +81,7 @@ type objectName struct {
 	agentName       string    // always non-empty after resolution
 	applicationName string    // required
 	serviceName     string    // v4 only; "" for v1/v3
-	apiKey          string    // v4 only; "" for v1/v3 (never logged)
+	apiKey          string    // v4 only, optional; "" for v1/v3 or when unset (never logged)
 	agentUID        uuid.UUID // v4 only; zero value otherwise
 }
 
@@ -123,8 +123,8 @@ func (o *objectName) versionString() string {
 // resolveObjectName builds the agent ObjectName from config according to the
 // configured version (Uid.Version). agentId is always a freshly generated
 // base64(UUIDv7), never user-configurable; applicationName is required for
-// every version, serviceName and apiKey for v4 as well. A missing required
-// field aborts agent startup with an error. v1 and v3 differ only in the
+// every version, serviceName for v4 as well, and apiKey is optional. A missing
+// required field aborts agent startup with an error. v1 and v3 differ only in the
 // applicationName length limit; v4 allows a longer agentName.
 func resolveObjectName(config *Config) (*objectName, error) {
 	version := parseNameVersion(config.String(CfgUIDVersion))
@@ -163,11 +163,9 @@ func resolveObjectName(config *Config) (*objectName, error) {
 		return nil, errors.New("service name is required and must match " +
 			cfgIdPattern + " within " + strconv.Itoa(serviceNameMaxLen) + " bytes")
 	}
-	// apiKey: required, only checked for non-emptiness.
+	// apiKey: optional; an empty value is kept and the apikey header is then
+	// not sent. No length or character check.
 	o.apiKey = config.String(CfgApiKey)
-	if o.apiKey == "" {
-		return nil, errors.New("api key (" + CfgApiKey + ") is required")
-	}
 	o.agentUID = uid
 	return o, nil
 }

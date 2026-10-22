@@ -1175,8 +1175,8 @@ func (config *Config) normalizeCfgValues() {
 // checkNameAndID resolves the agent self-identification (ObjectName) according
 // to the configured version (Uid.Version: v1/v3/v4) and writes the resolved
 // values back into config so accessors stay consistent. Missing required fields
-// (applicationName for all versions; serviceName/apiKey for v4) return an error
-// that aborts agent startup.
+// (applicationName for all versions; serviceName for v4) return an error that
+// aborts agent startup.
 func (config *Config) checkNameAndID() error {
 	objName, err := resolveObjectName(config)
 	if err != nil {

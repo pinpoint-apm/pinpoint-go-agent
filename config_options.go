@@ -21,7 +21,7 @@ func WithUidVersion(version string) ConfigOption { return withValue(CfgUIDVersio
 // WithServiceName sets the service name (required for v4).
 func WithServiceName(name string) ConfigOption { return withValue(CfgServiceName, name) }
 
-// WithApiKey sets the api key (required for v4).
+// WithApiKey sets the api key (optional, used only for v4).
 func WithApiKey(apiKey string) ConfigOption { return withValue(CfgApiKey, apiKey) }
 
 // WithConfigFile sets the configuration file.

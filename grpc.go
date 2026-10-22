@@ -91,10 +91,13 @@ func agentHeaderMap(agent *agent) map[string]string {
 		headerProtocolVersion: strconv.Itoa(agent.objName.protocolVersion()),
 	}
 	if agent.objName.isV4() {
-		// v4: agentName is always present; servicename and apikey are sent.
+		// v4: agentName is always present; servicename is sent, and apikey
+		// only when one is configured.
 		m[headerAgentName] = agent.agentName
 		m[headerServiceName] = agent.serviceName
-		m[headerApiKey] = agent.objName.apiKey
+		if agent.objName.apiKey != "" {
+			m[headerApiKey] = agent.objName.apiKey
+		}
 	} else if agent.agentName != "" {
 		// v1/v3: agentName is optional on the wire.
 		m[headerAgentName] = agent.agentName

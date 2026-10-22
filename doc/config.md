@@ -217,13 +217,13 @@ Use v1 or v3; the v4 details below are documented for when server-side support s
 | AgentId | not configurable, always auto-generated | same as v1 | same as v1 |
 | AgentName | optional, max 255 bytes; falls back to AgentId when unset or invalid | same as v1 | optional, max 254 bytes; falls back to AgentId when unset or invalid |
 | ServiceName | not used | not used | **required**, max 254 bytes |
-| ApiKey | not used | not used | **required**, non-empty (no length or character check) |
+| ApiKey | not used | not used | optional (no length or character check); the `apikey` header is sent only when set |
 | gRPC `protocol.version` header | 100 | 100 | 400 |
-| gRPC headers sent | `applicationname`, `agentid`, `agentname`, `starttime`, `servicetype`, `protocol.version` | same as v1 | v1 headers plus `servicename` and `apikey` |
+| gRPC headers sent | `applicationname`, `agentid`, `agentname`, `starttime`, `servicetype`, `protocol.version` | same as v1 | v1 headers plus `servicename`, and `apikey` when ApiKey is set |
 
 ApplicationName, AgentId, AgentName and ServiceName must match `[a-zA-Z0-9\._\-]+`,
 and the maximum lengths above are UTF-8 byte lengths.
-ApiKey is checked for non-emptiness only.
+ApiKey is not validated.
 
 An auto-generated agent id is a 22 character URL-safe Base64 UUIDv7.
 Because v4 always generates it, the agent id changes on every restart; use AgentName for a stable label.
@@ -251,10 +251,11 @@ Note that v4 is not usable at this time, so this option currently has no effect.
 
 ### ApiKey
 ApiKey option sets the api key sent to Pinpoint collector on the `apikey` gRPC header.
-It is used only when Uid.Version is v4, where it is required.
+It is used only when Uid.Version is v4, where it is optional.
 It is ignored for v1 and v3.
-Only non-emptiness is checked; there is no length or character restriction.
-If it is not set, agent startup fails.
+There is no length or character restriction.
+If it is not set, the agent starts without sending the `apikey` header;
+whether the collector accepts such an agent depends on the collector's own configuration.
 The value is masked in agent logs and is never logged in plaintext.
 Note that v4 is not usable at this time, so this option currently has no effect. See [Uid.Version](#uidversion).
 
