@@ -1186,10 +1186,20 @@ func (config *Config) checkNameAndID() error {
 	defer config.mu.Unlock()
 
 	config.objName = objName
-	config.cfgMap[CfgAgentName].value = objName.agentName
-	config.cfgMap[CfgServiceName].value = objName.serviceName
+	config.setResolvedIdentity(objName)
 	config.publish()
 	return nil
+}
+
+// setResolvedIdentity writes the resolved identity - trimmed, with the agent
+// name fallback, and the v4-only values empty for v1/v3 - over the configured
+// one. ReloadConfig does the same to its candidate, so that both sides of its
+// comparison hold resolved values. The caller must hold config.mu.
+func (config *Config) setResolvedIdentity(o *objectName) {
+	config.cfgMap[CfgAppName].value = o.applicationName
+	config.cfgMap[CfgAgentName].value = o.agentName
+	config.cfgMap[CfgServiceName].value = o.serviceName
+	config.cfgMap[CfgApiKey].value = o.apiKey
 }
 
 var samplingOpts = []string{

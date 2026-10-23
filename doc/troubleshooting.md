@@ -196,7 +196,8 @@ application is untraced.
 | `ApplicationName` not set | it is required; without it the agent cannot start |
 | Name/ID too long or has invalid characters | `ApplicationName`, `AgentName` must match `[a-zA-Z0-9\._\-]+`; length limits depend on [Uid.Version](config.md#uidversion) |
 | `Enable=false` left in a config file or the environment | the resolved config dump shows `Enable = false` |
-| `Uid.Version` is `v4` | v4 is not accepted by any released collector yet; use `v1` or `v3` |
+| `ApiKey` has a control or non-ASCII character (v4) | it must be printable ASCII; surrounding whitespace is trimmed, as for the names |
+| `Uid.Version` is `v4` | the agent starts, but a 3.1.x collector refuses every call (`INVALID_ARGUMENT`) unless `ApiKey` is set and matches `[a-zA-Z0-9\._\-]+`; use `v1` or `v3` ([Uid.Version](config.md#uidversion)) |
 | A second `NewAgent()` call | returns `agent is already created`; the first agent is still the live one |
 | Config file not found or unparseable | look for `src=config` errors; the path is resolved as given, relative to the working directory |
 

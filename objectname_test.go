@@ -2,11 +2,21 @@ package pinpoint
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"net"
 	"strings"
 	"testing"
 
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 func TestParseNameVersion(t *testing.T) {
@@ -149,6 +159,70 @@ func TestResolveObjectName_V4_ApiKeyOptional(t *testing.T) {
 	assert.True(t, o.isV4())
 	assert.Equal(t, "Svc", o.serviceName)
 	assert.Empty(t, o.apiKey)
+}
+
+// Surrounding whitespace is dropped from every identity value, as the Java
+// agent trims its sources, and the trimmed values are what config reports.
+func TestResolveObjectName_TrimsIdentity(t *testing.T) {
+	t.Setenv("PINPOINT_GO_APPLICATIONNAME", " MyApp\n")
+	c := newCfg(t, WithUidVersion("v4"), WithAgentName("\tmy-name "),
+		WithServiceName(" Svc "), WithApiKey(" secret\r\n"))
+	require.NoError(t, c.checkNameAndID())
+
+	o := c.objName
+	assert.Equal(t, "MyApp", o.applicationName)
+	assert.Equal(t, "my-name", o.agentName)
+	assert.Equal(t, "Svc", o.serviceName)
+	assert.Equal(t, "secret", o.apiKey)
+	for k, want := range map[string]string{
+		CfgAppName: "MyApp", CfgAgentName: "my-name", CfgServiceName: "Svc", CfgApiKey: "secret",
+	} {
+		assert.Equal(t, want, c.String(k), k)
+	}
+
+	// A whitespace-only api key is an unset one: no apikey header.
+	c = newCfg(t, WithUidVersion("v4"), WithAppName("MyApp"), WithServiceName("Svc"), WithApiKey(" \n"))
+	o, err := resolveObjectName(c)
+	require.NoError(t, err)
+	assert.Empty(t, o.apiKey)
+	_, hasApiKey := agentHeaderMap(agentWith(o))[headerApiKey]
+	assert.False(t, hasApiKey)
+}
+
+// An api key gRPC metadata cannot carry aborts startup instead of failing
+// every RPC, and the error does not echo the key.
+func TestResolveObjectName_V4_ApiKeyNonPrintable(t *testing.T) {
+	for _, key := range []string{"sec\nret", "sec\tret", "secret\x7f", "sécret", "키"} {
+		c := newCfg(t, WithUidVersion("v4"), WithAppName("MyApp"), WithServiceName("Svc"), WithApiKey(key))
+		_, err := resolveObjectName(c)
+		if assert.Error(t, err, "api key %q", key) {
+			assert.NotContains(t, err.Error(), key)
+		}
+	}
+
+	// Every printable ASCII character is accepted, space included.
+	var printable strings.Builder
+	for b := byte(0x20); b <= 0x7E; b++ {
+		printable.WriteByte(b)
+	}
+	key := "k" + printable.String() // the leading space would be trimmed
+	c := newCfg(t, WithUidVersion("v4"), WithAppName("MyApp"), WithServiceName("Svc"), WithApiKey(key))
+	o, err := resolveObjectName(c)
+	require.NoError(t, err)
+	assert.Equal(t, key, o.apiKey)
+
+	// grpc-go agrees: it validates outgoing metadata before it dials, so with
+	// a dialer that always fails the RPC ends Unavailable, not Internal.
+	conn, err := grpc.NewClient("passthrough:///collector",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+			return nil, errors.New("no collector")
+		}))
+	require.NoError(t, err)
+	defer conn.Close()
+	ctx := metadata.NewOutgoingContext(context.Background(), metadata.New(agentHeaderMap(agentWith(o))))
+	err = conn.Invoke(ctx, "/v1.Agent/RequestAgentInfo", &pb.PAgentInfo{}, &pb.PResult{})
+	assert.Equal(t, codes.Unavailable, status.Code(err), "%v", err)
 }
 
 func TestResolveObjectName_V4_MissingAppName(t *testing.T) {

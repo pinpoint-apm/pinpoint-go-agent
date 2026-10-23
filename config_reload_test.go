@@ -110,6 +110,19 @@ func TestReloadConfig_OmittedIdentityIsNotRestartRequired(t *testing.T) {
 	assert.NotEqual(t, "another-agent", config.String(CfgAgentName), "identity is not reloadable")
 }
 
+// The YAML's identity is trimmed as at startup, so whitespace alone is not a
+// change, and a running v3 agent ignores the v4-only ApiKey on both sides.
+func TestReloadConfig_TrimmedIdentityIsNotRestartRequired(t *testing.T) {
+	t.Setenv("PINPOINT_GO_APPLICATIONNAME", "reload-trim\n")
+	_, config := newReloadAgent(t, WithAgentName("trim-agent"), WithApiKey("unused-key"))
+	require.Equal(t, "reload-trim", config.String(CfgAppName))
+	require.Empty(t, config.String(CfgApiKey), "v3 does not use an api key")
+
+	result := ReloadConfig("agentName: ' trim-agent '\napiKey: another-key\n")
+	require.Equal(t, ConfigReloadApplied, result.Status, result.Message)
+	assert.Empty(t, result.RestartRequired)
+}
+
 func TestReloadConfig_EnvAndSetValuesWin(t *testing.T) {
 	t.Setenv("PINPOINT_GO_SAMPLING_COUNTERRATE", "7")
 	t.Setenv("PINPOINT_GO_COLLECTOR_HOST", "env.collector")

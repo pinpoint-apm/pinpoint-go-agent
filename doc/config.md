@@ -84,7 +84,7 @@ restart either, so it is not listed. `ReloadConfig()` never panics; `result.Stat
 | `ConfigReloadNoAgent` | `NewAgent()` has not run, failed, or the agent was shut down | nothing |
 | `ConfigReloadConfigFileActive` | the agent reads a config file (`ConfigFile`); the file outranks YAML as it does at startup, so change the file | nothing |
 | `ConfigReloadInvalidYAML` | a YAML syntax error, or a document that is not a mapping - a scalar, a sequence, or an empty document (`{}` asks for every default explicitly) | nothing |
-| `ConfigReloadInvalidConfig` | a value of the wrong type for its option, or a configuration `NewAgent()` would refuse: an empty `ApplicationName`, an invalid `ServiceName` for `Uid.Version` v4 | nothing |
+| `ConfigReloadInvalidConfig` | a value of the wrong type for its option, or a configuration `NewAgent()` would refuse: an empty `ApplicationName`, an invalid `ServiceName` or `ApiKey` for `Uid.Version` v4 | nothing |
 | `ConfigReloadError` | an unexpected internal error | nothing |
 
 `Message` says why a reload was refused. Unlike a config file, a YAML with a value of the wrong type is
@@ -252,10 +252,12 @@ Uid.Version option selects the agent identity format used to identify the agent 
 Supported values are v1, v3 and v4.
 The default is v3, and unknown or empty values fall back to v3.
 
-**v4 is not usable at this time.**
-The v4 identity protocol is implemented in the agent, but it has not been released on the Pinpoint server side yet,
-so no collector accepts it.
-Use v1 or v3; the v4 details below are documented for when server-side support ships.
+**v4 is not ready for production use yet.**
+The released collectors (3.1.0 and 3.1.1) accept a v4 agent only when ApiKey is set
+and matches `[a-zA-Z0-9\._\-]+` within 255 bytes; otherwise they refuse every call with `INVALID_ARGUMENT`.
+Even then they record every v4 agent under the `DEFAULT` service.
+Collectors from Pinpoint 4.0.0, which is not released yet, accept v4 without an ApiKey.
+Use v1 or v3 until then.
 
 * PINPOINT_GO_UID_VERSION
 * string
@@ -270,7 +272,7 @@ Use v1 or v3; the v4 details below are documented for when server-side support s
 | AgentId | not configurable, always auto-generated | same as v1 | same as v1 |
 | AgentName | optional, max 255 bytes; falls back to AgentId when unset or invalid | same as v1 | optional, max 254 bytes; falls back to AgentId when unset or invalid |
 | ServiceName | not used | not used | **required**, 3 to 254 bytes |
-| ApiKey | not used | not used | optional (no length or character check); the `apikey` header is sent only when set |
+| ApiKey | not used | not used | optional, printable ASCII; the `apikey` header is sent only when set |
 | gRPC `protocol.version` header | 100 | 100 | 400 |
 | gRPC headers sent | `applicationname`, `agentid`, `agentname`, `starttime`, `servicetype`, `protocol.version` | same as v1 | v1 headers plus `servicename`, and `apikey` when ApiKey is set |
 
@@ -279,7 +281,10 @@ and the lengths above are UTF-8 byte lengths.
 ServiceName additionally needs at least 3 bytes, matching the Pinpoint Java agent and the
 web UI's service registry; the collector itself accepts shorter names, but they could not be
 registered as a service.
-ApiKey is not validated.
+ApiKey has no length limit. It must be printable ASCII (0x20-0x7E), the only characters a gRPC header can carry,
+and any other character aborts startup.
+Surrounding whitespace is removed from ApplicationName, AgentName, ServiceName and ApiKey before they are checked,
+as the Java agent does, so a trailing newline from an environment variable is harmless.
 
 An auto-generated agent id is a 22 character URL-safe Base64 UUIDv7.
 Because v4 always generates it, the agent id changes on every restart; use AgentName for a stable label.
@@ -298,7 +303,8 @@ ServiceName option sets the service name reported to Pinpoint collector.
 It is used only when Uid.Version is v4, where it is required and its length must be between 3 and 254 bytes.
 It is ignored for v1 and v3.
 If it is not set, has invalid characters, or its length is out of range, agent startup fails.
-Note that v4 is not usable at this time, so this option currently has no effect. See [Uid.Version](#uidversion).
+The released collectors record every v4 agent under the `DEFAULT` service whatever this is set to.
+See [Uid.Version](#uidversion).
 
 * PINPOINT_GO_SERVICENAME
 * string
@@ -309,11 +315,13 @@ Note that v4 is not usable at this time, so this option currently has no effect.
 ApiKey option sets the api key sent to Pinpoint collector on the `apikey` gRPC header.
 It is used only when Uid.Version is v4, where it is optional.
 It is ignored for v1 and v3.
-There is no length or character restriction.
-If it is not set, the agent starts without sending the `apikey` header;
-whether the collector accepts such an agent depends on the collector's own configuration.
+There is no length restriction. It must be printable ASCII (0x20-0x7E), the only characters a gRPC header can carry,
+and surrounding whitespace is removed; any other character aborts startup.
+If it is not set, the agent starts without sending the `apikey` header.
+A 3.1.x collector refuses such an agent, and it also refuses a key that does not match `[a-zA-Z0-9\._\-]+` within 255 bytes.
+A collector from 4.0.0 accepts it.
 The value is masked in agent logs and is never logged in plaintext.
-Note that v4 is not usable at this time, so this option currently has no effect. See [Uid.Version](#uidversion).
+See [Uid.Version](#uidversion).
 
 * PINPOINT_GO_APIKEY
 * string

@@ -118,6 +118,12 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   read** - a syntax error, an unsupported extension. The `Config` comes back
   complete on defaults and the other sources, so `cfg, _ := NewConfig(...)`
   behaves as before; a missing file is still optional and only logged.
+- **Surrounding whitespace is trimmed from the agent identity**:
+  `ApplicationName`, `AgentName`, `ServiceName` and `ApiKey`, as the Java agent
+  does. `PINPOINT_GO_APPLICATIONNAME="myapp "` no longer aborts startup, and
+  `Config.String` reports the trimmed values the agent runs with. A v4
+  `ApiKey` that is not printable ASCII aborts startup; gRPC cannot send it, and
+  before this change every call failed instead.
 - **`SQL.CacheLengthLimit` no longer bounds the SQL-UID cache.** The cache keys
   on the statement's hash, so a statement past the limit registers its UID once
   instead of re-sending the metadata on every execution; the limit applies to

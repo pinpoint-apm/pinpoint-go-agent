@@ -52,6 +52,18 @@ func isIDChars(s string) bool {
 	return true
 }
 
+// isPrintableASCII reports whether every byte of s is in [0x20, 0x7E], the
+// characters grpc-go allows in a non-binary metadata value: it refuses every
+// RPC that carries any other byte.
+func isPrintableASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] > 0x7E {
+			return false
+		}
+	}
+	return true
+}
+
 // IsValidId reports whether value is a non-empty id of at most maxLen UTF-8
 // bytes made only of allowed id characters (IdValidateUtils.validateId).
 // Plugins use it for ids that arrive on the wire, such as the app= token of
@@ -150,6 +162,9 @@ func resolveObjectNameKeeping(config *Config, running *objectName) (*objectName,
 }
 
 // resolveObjectNameWithID is resolveObjectName with the agent id given.
+// Surrounding whitespace is dropped from every identity value, as the Java
+// agent trims each of its sources: an environment variable or a flag easily
+// carries a stray space or newline that would otherwise fail validation.
 func resolveObjectNameWithID(config *Config, agentID string, uid uuid.UUID) (*objectName, error) {
 	version := parseNameVersion(config.String(CfgUIDVersion))
 	appNameMax, agentNameMax := appNameMaxLenV3, agentNameMaxLen
@@ -160,7 +175,7 @@ func resolveObjectNameWithID(config *Config, agentID string, uid uuid.UUID) (*ob
 		agentNameMax = agentNameMaxLenV4
 	}
 
-	appName := config.String(CfgAppName)
+	appName := strings.TrimSpace(config.String(CfgAppName))
 	if !IsValidId(appName, appNameMax) {
 		return nil, errors.New("application name is required and must match " +
 			cfgIdPattern + " within " + strconv.Itoa(appNameMax) + " bytes")
@@ -179,15 +194,21 @@ func resolveObjectNameWithID(config *Config, agentID string, uid uuid.UUID) (*ob
 	// length, but the Java agent (IdValidatorV4) and the web UI's service
 	// registry also require SERVICE_NAME_MIN_LEN, so a shorter name would
 	// be accepted on the wire yet could never be registered as a service.
-	o.serviceName = config.String(CfgServiceName)
+	o.serviceName = strings.TrimSpace(config.String(CfgServiceName))
 	if !IsValidId(o.serviceName, serviceNameMaxLen) || len(o.serviceName) < serviceNameMinLen {
 		return nil, errors.New("service name is required and must match " +
 			cfgIdPattern + " between " + strconv.Itoa(serviceNameMinLen) +
 			" and " + strconv.Itoa(serviceNameMaxLen) + " bytes")
 	}
 	// apiKey: optional; an empty value is kept and the apikey header is then
-	// not sent. No length or character check.
-	o.apiKey = config.String(CfgApiKey)
+	// not sent. No length check, and no character check beyond the one gRPC
+	// metadata imposes: a key it cannot carry would pass startup and then fail
+	// every RPC, which reads as an unreachable collector. The message leaves
+	// the key out, as everything that logs it does.
+	o.apiKey = strings.TrimSpace(config.String(CfgApiKey))
+	if !isPrintableASCII(o.apiKey) {
+		return nil, errors.New("api key must contain only printable ASCII characters (0x20-0x7E)")
+	}
 	o.agentUID = uid
 	return o, nil
 }
@@ -197,7 +218,7 @@ func resolveObjectNameWithID(config *Config, agentID string, uid uuid.UUID) (*ob
 // invalid one falls back to the id with a warning rather than failing startup,
 // and the warning is what keeps a typo from staying invisible.
 func resolveAgentName(config *Config, agentID string, maxLen int) string {
-	agentName := config.String(CfgAgentName)
+	agentName := strings.TrimSpace(config.String(CfgAgentName))
 	if IsValidId(agentName, maxLen) {
 		return agentName
 	}

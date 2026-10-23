@@ -195,8 +195,7 @@ func (config *Config) stageYAML(text string) (ConfigReloadResult, map[string]boo
 	}
 	// checkNameAndID writes the resolved identity back, so the running values
 	// are the resolved ones; compare the candidate's resolved values likewise.
-	candidate.cfgMap[CfgAgentName].value = objName.agentName
-	candidate.cfgMap[CfgServiceName].value = objName.serviceName
+	candidate.setResolvedIdentity(objName)
 
 	var restart []string
 	changed := make(map[string]bool)
