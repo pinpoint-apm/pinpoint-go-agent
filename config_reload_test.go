@@ -91,13 +91,13 @@ span:
 	assert.Equal(t, 2, rateReloads)
 }
 
-// An identity the YAML omits resolves to the running one: the agent name that
-// fell back to the agent id, the auto-detected container flag.
+// An identity the YAML omits resolves to the running one: the generated agent
+// name, the auto-detected container flag.
 func TestReloadConfig_OmittedIdentityIsNotRestartRequired(t *testing.T) {
 	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
 	_, config := newReloadAgent(t, WithAppName("reload-identity"))
 	require.True(t, config.Bool(CfgIsContainerEnv))
-	require.NotEmpty(t, config.String(CfgAgentName), "agent name falls back to the id")
+	require.Equal(t, defaultAgentName(), config.String(CfgAgentName), "agent name is generated")
 
 	result := ReloadConfig("applicationName: reload-identity\n")
 	require.Equal(t, ConfigReloadApplied, result.Status, result.Message)

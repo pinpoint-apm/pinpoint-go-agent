@@ -237,12 +237,14 @@ See [Identity Versions](#identity-versions).
 
 ### AgentName
 AgentName option sets the agent name.
-If this option is not set, the generated AgentId is used as AgentName.
+If this option is not set, the agent generates `<hostname>-<pid>`, such as `web-01-4321`:
+a character of the host name outside `[a-zA-Z0-9\._\-]` becomes `_`, and a host name too
+long for the limit is cut. The name is made once per process.
 The maximum length is 255 bytes for Uid.Version v1 and v3, and 254 bytes for v4,
 and it must match `[a-zA-Z0-9\._\-]+`.
 A value that is too long or has invalid characters does not stop the agent:
-it is logged at warn and the generated AgentId is used instead.
-Check the agent log for that warning if the agent shows up under an AgentId you did not expect.
+it is logged at warn and the generated name is used instead.
+Check the agent log for that warning if the agent shows up under a `<hostname>-<pid>` name you did not expect.
 See [Identity Versions](#identity-versions).
 
 * PINPOINT_GO_AGENTNAME
@@ -275,7 +277,7 @@ Against a 3.1.x collector, set Uid.Version to v3 (ServiceName is then not needed
 |---|---|---|---|
 | ApplicationName | **required**, max 24 bytes | **required**, max 254 bytes | **required**, max 254 bytes |
 | AgentId | not configurable, always auto-generated | same as v1 | same as v1 |
-| AgentName | optional, max 255 bytes; falls back to AgentId when unset or invalid | same as v1 | optional, max 254 bytes; falls back to AgentId when unset or invalid |
+| AgentName | optional, max 255 bytes; falls back to `<hostname>-<pid>` when unset or invalid | same as v1 | optional, max 254 bytes; falls back to `<hostname>-<pid>` when unset or invalid |
 | ServiceName | not used | not used | **required**, 3 to 254 bytes |
 | ApiKey | not used | not used | optional, printable ASCII; the `apikey` header is sent only when set |
 | gRPC `protocol.version` header | 100 | 100 | 400 |
@@ -298,7 +300,7 @@ v1 and v3 are identical on the wire, both sending `protocol.version=100`;
 they differ only in the ApplicationName length limit.
 A missing or invalid required value aborts agent startup:
 NewAgent returns a no-op agent and an error.
-AgentName is not required, so an invalid one warns and falls back to AgentId instead of aborting.
+AgentName is not required, so an invalid one warns and falls back to `<hostname>-<pid>` instead of aborting.
 
 The `socketid` header is not listed above because it is not part of the identity headers;
 it is added by the ping stream for every version.

@@ -2,8 +2,10 @@ package pinpoint
 
 import (
 	"errors"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 )
@@ -93,7 +95,7 @@ func parseNameVersion(version string) nameVersion {
 type objectName struct {
 	version         nameVersion
 	agentID         string    // always auto-generated base64(UUIDv7)
-	agentName       string    // always non-empty after resolution
+	agentName       string    // always non-empty after resolution: configured or "host-pid"
 	applicationName string    // required
 	serviceName     string    // v4 only; "" for v1/v3
 	apiKey          string    // v4 only, optional; "" for v1/v3 or when unset (never logged)
@@ -185,7 +187,7 @@ func resolveObjectNameWithID(config *Config, agentID string, uid uuid.UUID) (*ob
 	o := &objectName{
 		version:         version,
 		agentID:         agentID,
-		agentName:       resolveAgentName(config, agentID, agentNameMax),
+		agentName:       resolveAgentName(config, agentNameMax),
 		applicationName: appName,
 	}
 	if version != nameV4 {
@@ -215,18 +217,45 @@ func resolveObjectNameWithID(config *Config, agentID string, uid uuid.UUID) (*ob
 	return o, nil
 }
 
-// resolveAgentName returns the configured agent name, or agentID when it is
-// unset or invalid. agentName is a display label, not a required value, so an
-// invalid one falls back to the id with a warning rather than failing startup,
-// and the warning is what keeps a typo from staying invisible.
-func resolveAgentName(config *Config, agentID string, maxLen int) string {
+// resolveAgentName returns the configured agent name, or defaultAgentName when
+// it is unset or invalid. agentName is a display label, not a required value, so
+// an invalid one falls back with a warning rather than failing startup, and the
+// warning is what keeps a typo from staying invisible.
+func resolveAgentName(config *Config, maxLen int) string {
 	agentName := strings.TrimSpace(config.String(CfgAgentName))
 	if IsValidId(agentName, maxLen) {
 		return agentName
 	}
+	generated := defaultAgentName()
 	if agentName != "" {
-		Log("config").Warnf("%s = %q must match %s within %d bytes, using AgentID %q instead",
-			CfgAgentName, agentName, cfgIdPattern, maxLen, agentID)
+		Log("config").Warnf("%s = %q must match %s within %d bytes, using %q instead",
+			CfgAgentName, agentName, cfgIdPattern, maxLen, generated)
 	}
-	return agentID
+	return generated
+}
+
+// defaultAgentName is the agent name of a process that sets none: its host name
+// and pid, which say which instance it is in the web UI where the random agent
+// id cannot. It is made once per process, so a host name
+// that changes later, such as a laptop's DHCP name, does not read to
+// ReloadConfig as an AgentName change.
+var defaultAgentName = sync.OnceValue(func() string {
+	return makeAgentName(getHostName(), os.Getpid())
+})
+
+// makeAgentName returns "host-pid", with every character of host that is not an
+// id character replaced by '_' and host cut to fit the v4 limit, the shorter of
+// the two, so the name is valid for every Uid.Version.
+func makeAgentName(host string, pid int) string {
+	suffix := "-" + strconv.Itoa(pid)
+	host = strings.Map(func(r rune) rune {
+		if isIDChars(string(r)) {
+			return r
+		}
+		return '_'
+	}, host)
+	if maxHost := agentNameMaxLenV4 - len(suffix); len(host) > maxHost {
+		host = host[:maxHost]
+	}
+	return host + suffix
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"strings"
 	"testing"
 
@@ -74,8 +75,23 @@ func TestResolveObjectName_AutoGenAgentId(t *testing.T) {
 	c := newCfg(t, WithAppName("MyApp"), WithServiceName("MyService"))
 	o, err := resolveObjectName(c)
 	assert.NoError(t, err)
-	assert.Len(t, o.agentID, uidBase64Len)  // base64(UUIDv7)
-	assert.Equal(t, o.agentID, o.agentName) // agentName falls back to agentId
+	assert.Len(t, o.agentID, uidBase64Len) // base64(UUIDv7)
+	assert.Equal(t, defaultAgentName(), o.agentName)
+}
+
+// An unset agentName is generated from the host name and the pid, made valid
+// and short enough for every Uid.Version whatever the host name holds.
+func TestMakeAgentName(t *testing.T) {
+	assert.Equal(t, "web-01.example.com-42", makeAgentName("web-01.example.com", 42))
+	assert.Equal(t, "unknown_host-42", makeAgentName("unknown host", 42))
+	assert.Equal(t, "h__st_x-7", makeAgentName("hé st\nx", 7))
+
+	long := makeAgentName(strings.Repeat("h", 300), 12345)
+	assert.Len(t, long, agentNameMaxLenV4)
+	assert.True(t, strings.HasSuffix(long, "-12345"))
+	assert.True(t, IsValidId(long, agentNameMaxLenV4))
+
+	assert.Equal(t, makeAgentName(getHostName(), os.Getpid()), defaultAgentName())
 }
 
 func TestResolveObjectName_AppNameRequired(t *testing.T) {
@@ -131,8 +147,8 @@ func TestResolveObjectName_V4_Success(t *testing.T) {
 	// agentId is always generated.
 	assert.Len(t, o.agentID, uidBase64Len)
 	assert.Equal(t, encodeUID(o.agentUID), o.agentID)
-	// agentName falls back to base64(agentId UUID) when not provided.
-	assert.Equal(t, o.agentID, o.agentName)
+	// agentName is generated from the host name and pid when not provided.
+	assert.Equal(t, defaultAgentName(), o.agentName)
 	assert.Equal(t, "MyService", o.serviceName)
 	assert.Equal(t, "secret-key", o.apiKey)
 }
@@ -266,7 +282,7 @@ func TestValidateID_ByteLength(t *testing.T) {
 	assert.False(t, IsValidId("", 5))
 }
 
-// An invalid non-empty agentName falls back to the agentId with a warning,
+// An invalid non-empty agentName falls back to the generated one with a warning,
 // rather than aborting startup, for both v1/v3 and v4.
 func TestResolveObjectName_InvalidAgentNameFallsBack(t *testing.T) {
 	for _, tc := range []struct {
@@ -288,7 +304,7 @@ func TestResolveObjectName_InvalidAgentNameFallsBack(t *testing.T) {
 				restore()
 
 				assert.NoError(t, err, "invalid agentName must not abort startup")
-				assert.Equal(t, o.agentID, o.agentName, "agentName falls back to agentId")
+				assert.Equal(t, defaultAgentName(), o.agentName, "agentName falls back to the generated one")
 				assert.Contains(t, buf.String(), CfgAgentName, "the fallback is warned about")
 				assert.Equal(t, 1, strings.Count(buf.String(), "\n"), "exactly one warning")
 			}
@@ -311,9 +327,9 @@ func TestResolveObjectName_AgentNameHeader(t *testing.T) {
 			o, err := resolveObjectName(newCfg(t, opts...))
 			restore()
 			assert.NoError(t, err)
-			assert.Equal(t, o.agentID, o.agentName, "empty agentName falls back to agentId")
+			assert.Equal(t, defaultAgentName(), o.agentName, "empty agentName is generated")
 			assert.Empty(t, buf.String(), "an unset agentName is not warned about")
-			assert.Equal(t, o.agentID, agentHeaderMap(agentWith(o))[headerAgentName])
+			assert.Equal(t, defaultAgentName(), agentHeaderMap(agentWith(o))[headerAgentName])
 
 			o, err = resolveObjectName(newCfg(t, append(opts, WithAgentName("my-name"))...))
 			assert.NoError(t, err)

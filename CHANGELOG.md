@@ -129,6 +129,11 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   `Config.String` reports the trimmed values the agent runs with. A v4
   `ApiKey` that is not printable ASCII aborts startup; gRPC cannot send it, and
   before this change every call failed instead.
+- **An unset `AgentName` is `<hostname>-<pid>`**, such as `web-01-4321`,
+  instead of the generated agent id, so the instances of an application can be
+  told apart in the web UI without setting one. An invalid `AgentName` falls
+  back to the same name, with the warning as before. The Java agent still
+  falls back to the agent id.
 - **`SQL.CacheLengthLimit` no longer bounds the SQL-UID cache.** The cache keys
   on the statement's hash, so a statement past the limit registers its UID once
   instead of re-sending the metadata on every execution; the limit applies to
