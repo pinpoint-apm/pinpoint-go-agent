@@ -2031,3 +2031,14 @@ func TestAccessorsBeforeInit(t *testing.T) {
 	assert.Equal(t, "localhost", GetConfig().String(CfgCollectorHost), "the noop config carries the defaults")
 	assert.False(t, GetConfig().Bool("Auto.Nothing.Registered"), "an unregistered key reads as its zero value")
 }
+
+// ClusterNamespace reaches the agent, where Inject and Extract read it.
+func Test_agent_NewAgent_clusterNamespace(t *testing.T) {
+	c, err := NewConfig(WithAppName("test"), WithServiceName("test-service"), WithClusterNamespace("ns"))
+	assert.NoError(t, err, "NewConfig")
+	c.offGrpc = true
+
+	a, err := NewAgent(c)
+	assert.NoError(t, err, "NewAgent")
+	assert.Equal(t, "ns", a.(*agent).clusterNamespace, CfgClusterNamespace)
+}

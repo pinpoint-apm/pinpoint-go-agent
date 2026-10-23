@@ -49,12 +49,13 @@ func initPackage() {
 }
 
 type agent struct {
-	appName     string
-	appType     int32
-	agentID     string
-	agentName   string
-	serviceName string
-	objName     *objectName
+	appName          string
+	appType          int32
+	agentID          string
+	agentName        string
+	serviceName      string
+	clusterNamespace string
+	objName          *objectName
 
 	startTime int64
 	// sequence is atomic.Int64 rather than an int64 under atomic.AddInt64: the
@@ -310,20 +311,21 @@ func NewAgent(config *Config) (Agent, error) {
 // connect it to.
 func newAgentStruct(config *Config) *agent {
 	agent := &agent{
-		appName:     config.objName.applicationName,
-		appType:     int32(config.Int(CfgAppType)),
-		agentID:     config.objName.agentID,
-		agentName:   config.objName.agentName,
-		serviceName: config.objName.serviceName,
-		objName:     config.objName,
-		startTime:   time.Now().UnixNano() / int64(time.Millisecond),
-		spanQueue:   newSpanQueue(config.Int(CfgSpanQueueSize)),
-		metaChan:    make(chan any, config.Int(CfgCollectorGrpcSenderQueueSize)),
-		urlStatChan: make(chan *urlStat, config.Int(CfgHttpUrlStatQueueSize)),
-		statChan:    make(chan *pb.PStatMessage, config.Int(CfgStatQueueSize)),
-		config:      config,
-		stats:       newAgentStats(),
-		urlStats:    newUrlStats(config),
+		appName:          config.objName.applicationName,
+		appType:          int32(config.Int(CfgAppType)),
+		agentID:          config.objName.agentID,
+		agentName:        config.objName.agentName,
+		serviceName:      config.objName.serviceName,
+		clusterNamespace: config.String(CfgClusterNamespace),
+		objName:          config.objName,
+		startTime:        time.Now().UnixNano() / int64(time.Millisecond),
+		spanQueue:        newSpanQueue(config.Int(CfgSpanQueueSize)),
+		metaChan:         make(chan any, config.Int(CfgCollectorGrpcSenderQueueSize)),
+		urlStatChan:      make(chan *urlStat, config.Int(CfgHttpUrlStatQueueSize)),
+		statChan:         make(chan *pb.PStatMessage, config.Int(CfgStatQueueSize)),
+		config:           config,
+		stats:            newAgentStats(),
+		urlStats:         newUrlStats(config),
 	}
 	// The SQL caches are sized by SQL.CacheSize; the api and error caches keep
 	// the shared default. Config has already confined the value to

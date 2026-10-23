@@ -435,6 +435,13 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 	if span.agent.serviceName != "" {
 		writer.Set(HeaderParentServiceName, span.agent.serviceName)
 	}
+	// Name this agent's cluster when it has one, as Java writes
+	// profiler.cluster.namespace; the receiver compares it against its own
+	// (see sameClusterNamespace). Omitted when unset: an empty value would be
+	// read as a different namespace, not as none.
+	if span.agent.clusterNamespace != "" {
+		writer.Set(HeaderParentApplicationNamespace, span.agent.clusterNamespace)
+	}
 
 	if se == nil {
 		// Overflowed: the event was dropped, but the destination it recorded
@@ -459,6 +466,12 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 func (span *span) extract(reader DistributedTracingContextReader) {
 	tid, _ := reader.Get(HeaderTraceId)
 	txId, continued := continueHeaders(reader)
+	if continued && !sameClusterNamespace(span.agent.clusterNamespace, reader) {
+		// The headers describe another cluster's transaction, which this hop
+		// must not join; it starts one of its own, as Java's RequestTraceReader
+		// answers a namespace mismatch with newTrace().
+		continued = false
+	}
 	if continued {
 		span.txId = txId
 	} else {
@@ -575,6 +588,26 @@ func continueHeaders(reader DistributedTracingContextReader) (TransactionId, boo
 		return TransactionId{}, false
 	}
 	return TransactionId{agentId, startTime, sequence}, true
+}
+
+// sameClusterNamespace reports whether a continued trace may be joined, as
+// Java's DefaultNameSpaceChecker decides it. With no ClusterNamespace
+// configured every peer is accepted. Otherwise a peer that sent no namespace
+// header is accepted, so agents that predate the header still link up, and any
+// other value - the empty string included - names a different cluster, whose
+// transaction this agent must not continue.
+func sameClusterNamespace(mine string, reader DistributedTracingContextReader) bool {
+	if mine == "" {
+		return true
+	}
+	parent, ok := reader.Get(HeaderParentApplicationNamespace)
+	if !ok || parent == mine {
+		return true
+	}
+	if IsDebugLogLevelEnabled() {
+		Log("span").Debugf("cluster namespace mismatch: mine=%q, parent=%q; starting a new transaction", mine, parent)
+	}
+	return false
 }
 
 // splitTransactionId parses an "agentId^startTime^sequence" trace id header

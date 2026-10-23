@@ -2262,3 +2262,67 @@ func Test_span_AsyncSpanId(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("%d^%d^%d", tt.spanId, tt.asyncId, tt.seqNum), span.AsyncSpanId())
 	}
 }
+
+// ClusterNamespace keeps clusters that call each other over one network
+// apart, as Java's DefaultNameSpaceChecker does: a continued trace is joined
+// unless this agent has a namespace and the peer sent a different one. A peer
+// that sent none is accepted so that agents predating the header still link
+// up; an empty value is a different namespace, not a missing header.
+func Test_span_Extract_clusterNamespace(t *testing.T) {
+	const upstream = "t123456^12345^1"
+	tests := []struct {
+		name      string
+		mine      string
+		headers   map[string]string
+		continued bool
+	}{
+		{"no namespace configured accepts any peer", "", map[string]string{HeaderParentApplicationNamespace: "other"}, true},
+		{"same namespace", "ns", map[string]string{HeaderParentApplicationNamespace: "ns"}, true},
+		{"peer sent no namespace", "ns", map[string]string{}, true},
+		{"different namespace", "ns", map[string]string{HeaderParentApplicationNamespace: "other"}, false},
+		{"empty namespace is a different one", "ns", map[string]string{HeaderParentApplicationNamespace: ""}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			span := defaultTestSpan()
+			span.agent.clusterNamespace = tt.mine
+			m := map[string]string{
+				HeaderTraceId:               upstream,
+				HeaderSpanId:                "67890",
+				HeaderParentSpanId:          "123",
+				HeaderParentApplicationName: "upstream",
+			}
+			for k, v := range tt.headers {
+				m[k] = v
+			}
+
+			span.extract(&DistributedTracingContextMap{m})
+
+			if tt.continued {
+				assert.Equal(t, upstream, span.txId.String(), "continues the upstream transaction")
+				assert.Equal(t, int64(67890), span.spanId, "spanId")
+				assert.Equal(t, int64(123), span.parentSpanId, "parentSpanId")
+				assert.Equal(t, "upstream", span.parentAppName, "parentAppName")
+			} else {
+				assert.Equal(t, span.agent.agentID, span.txId.AgentId, "starts a new local transaction")
+				assert.Equal(t, int64(-1), span.parentSpanId, "root span")
+				assert.NotEqual(t, int64(67890), span.spanId, "span id header must be ignored")
+				assert.Empty(t, span.parentAppName, "parent app header must be ignored")
+			}
+		})
+	}
+}
+
+// With ClusterNamespace set the agent names its cluster on every outbound
+// call, as Java writes Pinpoint-pAppNamespace from profiler.cluster.namespace.
+// Test_span_Inject covers the unset case, where the header is omitted.
+func Test_span_Inject_clusterNamespace(t *testing.T) {
+	span := defaultTestSpan()
+	span.agent.clusterNamespace = "ns"
+	span.NewSpanEvent("t")
+	m := make(map[string]string)
+
+	span.Inject(&DistributedTracingContextMap{m})
+
+	assert.Equal(t, "ns", m[HeaderParentApplicationNamespace], HeaderParentApplicationNamespace)
+}

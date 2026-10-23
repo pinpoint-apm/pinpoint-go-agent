@@ -335,6 +335,19 @@ See [Uid.Version](#uidversion).
 * default: ""
 * case-sensitive
 
+### ClusterNamespace
+ClusterNamespace option names the Pinpoint cluster this agent belongs to, as Java's `profiler.cluster.namespace` does.
+It keeps traces apart between clusters that call each other over a shared network.
+When set, every outbound call carries it in the `Pinpoint-pAppNamespace` header,
+and an inbound call whose `Pinpoint-pAppNamespace` header holds a different value starts a new transaction instead of continuing the caller's.
+An inbound call without the header is continued, so agents that predate the header still link up.
+When unset, no header is sent and every inbound trace is continued.
+
+* PINPOINT_GO_CLUSTERNAMESPACE
+* string
+* default: ""
+* case-sensitive
+
 ### Collector.Host
 Collector.Host option sets the host address of Pinpoint collector.
 

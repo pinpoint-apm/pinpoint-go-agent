@@ -121,6 +121,7 @@ const (
 	CfgErrorMaxChainDepth         = "Error.MaxChainDepth"
 	CfgUIDVersion                 = "Uid.Version"
 	CfgServiceName                = "ServiceName"
+	CfgClusterNamespace           = "ClusterNamespace"
 	CfgApiKey                     = "ApiKey"
 )
 
@@ -311,6 +312,7 @@ func initConfig() {
 	AddConfig(CfgErrorMaxChainDepth, CfgInt, defaultErrorMaxChainDepth, true)
 	AddConfig(CfgUIDVersion, CfgString, "v4", false)
 	AddConfig(CfgServiceName, CfgString, "", false)
+	AddConfig(CfgClusterNamespace, CfgString, "", false)
 	AddConfig(CfgApiKey, CfgString, "", false)
 }
 

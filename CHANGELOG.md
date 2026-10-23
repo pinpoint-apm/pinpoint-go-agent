@@ -251,6 +251,13 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **`ClusterNamespace`**, Java's `profiler.cluster.namespace`. When set, it is
+  sent as `Pinpoint-pAppNamespace` on every outbound call, and an inbound call
+  carrying a different value starts a new transaction instead of continuing
+  the caller's, as Java's `DefaultNameSpaceChecker` decides it; a call without
+  the header is continued. Until now the agent never sent the header and
+  continued every trace, so two Pinpoint clusters on one network could not be
+  kept apart. Not dynamic: a change takes effect after a restart.
 - **Span batches and the stat stream are gzip-compressed**
   (`Collector.Grpc.Compression`, `WithCollectorGrpcCompression`: `gzip`, the
   default, or `none`), as in the Java agent, whose two keys this one option

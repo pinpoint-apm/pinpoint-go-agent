@@ -21,6 +21,15 @@ func WithUidVersion(version string) ConfigOption { return withValue(CfgUIDVersio
 // WithServiceName sets the service name (required for v4).
 func WithServiceName(name string) ConfigOption { return withValue(CfgServiceName, name) }
 
+// WithClusterNamespace names the Pinpoint cluster this agent belongs to, Java's
+// profiler.cluster.namespace. When set, it is sent as Pinpoint-pAppNamespace on
+// every outbound call, and an inbound call carrying a different value starts a
+// new transaction instead of continuing the caller's. Unset (the default), no
+// header is sent and every trace is continued.
+func WithClusterNamespace(namespace string) ConfigOption {
+	return withValue(CfgClusterNamespace, namespace)
+}
+
 // WithApiKey sets the api key (optional, used only for v4).
 func WithApiKey(apiKey string) ConfigOption { return withValue(CfgApiKey, apiKey) }
 
