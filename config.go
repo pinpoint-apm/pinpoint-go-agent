@@ -65,6 +65,11 @@ const (
 	// retry schedule has a fixed bound of its own (metaRetryQueueSize in
 	// grpc.go), not this one.
 	CfgCollectorGrpcSenderQueueSize = "Collector.Grpc.SenderQueueSize"
+	// Collector.Grpc.Compression compresses the span batches and the stat
+	// stream, the two Java agent keys
+	// profiler.transport.grpc.span.batch-sender.compression and
+	// profiler.transport.grpc.stat.sender.compression in one.
+	CfgCollectorGrpcCompression = "Collector.Grpc.Compression"
 	// Collector.Grpc.SpanBatch* tune the unary SendSpanBatch sender.
 	CfgCollectorGrpcSpanBatchSize                  = "Collector.Grpc.SpanBatchSize"
 	CfgCollectorGrpcSpanBatchFlushInterval         = "Collector.Grpc.SpanBatchFlushInterval"
@@ -125,6 +130,9 @@ const (
 	samplingTypePercent = "PERCENT"
 	// percent sampler is named PERCENT already and needs no alias.
 	samplingTypeCounting = "COUNTING"
+	// Collector.Grpc.Compression values, those of the Java agent.
+	compressionGzip = "gzip"
+	compressionNone = "none"
 
 	defaultErrorCallStackDepth = 32
 	// defaultLogMaxBackups keeps the on-disk footprint of a library's log small
@@ -253,6 +261,7 @@ func initConfig() {
 	AddConfig(CfgCollectorGrpcIdleTimeout, CfgInt, grpcIdleTimeout, false)
 	AddConfig(CfgCollectorGrpcDnsResolverEnable, CfgBool, true, false)
 	AddConfig(CfgCollectorGrpcSenderQueueSize, CfgInt, defaultMetaQueueSize, false)
+	AddConfig(CfgCollectorGrpcCompression, CfgString, compressionGzip, false)
 	AddConfig(CfgLogLevel, CfgString, "info", true)
 	AddConfig(CfgLogOutput, CfgString, "stdout", true)
 	AddConfig(CfgLogMaxSize, CfgInt, 10, true)
@@ -1271,6 +1280,18 @@ func (config *Config) publish() {
 		sampleType = samplingTypeCounter
 	}
 	config.cfgMap[CfgSamplingType].value = sampleType
+
+	// As in the Java agent, a blank or unknown value is gzip: compression is
+	// an optimization a typo must neither disable nor turn into an error.
+	compression := strings.ToLower(strings.TrimSpace(config.stagedString(CfgCollectorGrpcCompression)))
+	if compression == "" {
+		compression = compressionGzip
+	} else if compression != compressionGzip && compression != compressionNone {
+		Log("config").Warnf("%s = %q is not one of gzip or none, using gzip",
+			CfgCollectorGrpcCompression, config.stagedString(CfgCollectorGrpcCompression))
+		compression = compressionGzip
+	}
+	config.cfgMap[CfgCollectorGrpcCompression].value = compression
 
 	// Only the documented levels pass. logrus.ParseLevel also accepts fatal
 	// and panic, which would silence warn and error while looking like a

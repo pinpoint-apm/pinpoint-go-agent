@@ -31,8 +31,10 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	empty "google.golang.org/protobuf/types/known/emptypb"
 )
 
 type blockingAgentInfoClient struct {
@@ -1780,6 +1782,150 @@ func Test_spanGrpc_sendSpanBatch_spanShapePerChunk(t *testing.T) {
 	assert.NotNil(t, batch[2].GetSpanChunk(), "an async span is a PSpanChunk even when final")
 	assert.Equal(t, int32(11), batch[2].GetSpanChunk().GetLocalAsyncId().GetAsyncId())
 	assert.Equal(t, int32(3), batch[2].GetSpanChunk().GetLocalAsyncId().GetSequence())
+}
+
+// encodingRecorder is a server stats.Handler that records the request
+// encoding of every RPC, "" for an uncompressed one.
+type encodingRecorder struct {
+	mu        sync.Mutex
+	encodings []string
+}
+
+func (r *encodingRecorder) HandleRPC(_ context.Context, rs stats.RPCStats) {
+	if h, ok := rs.(*stats.InHeader); ok {
+		r.mu.Lock()
+		r.encodings = append(r.encodings, h.Compression)
+		r.mu.Unlock()
+	}
+}
+
+func (r *encodingRecorder) seen() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.encodings)
+}
+
+func (r *encodingRecorder) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context {
+	return ctx
+}
+func (r *encodingRecorder) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context {
+	return ctx
+}
+func (r *encodingRecorder) HandleConn(context.Context, stats.ConnStats) {}
+
+// startEncodingServer serves the services register adds on 127.0.0.1:0 until
+// the test ends, and returns its port and the encodings it receives.
+func startEncodingServer(t *testing.T, register func(*grpc.Server)) (int, *encodingRecorder) {
+	t.Helper()
+	rec := &encodingRecorder{}
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	srv := grpc.NewServer(grpc.StatsHandler(rec))
+	register(srv)
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+	return lis.Addr().(*net.TCPAddr).Port, rec
+}
+
+// errNoGzip is how grpc-java answers a compression it cannot read.
+var errNoGzip = status.Error(codes.Unimplemented, "Can't find decompressor for gzip")
+
+// gzipRejectingSpanServer rejects its first SendSpanBatch with errNoGzip.
+type gzipRejectingSpanServer struct {
+	pb.UnimplementedSpanServer
+	mu    sync.Mutex
+	spans []int
+}
+
+func (s *gzipRejectingSpanServer) SendSpanBatch(_ context.Context, in *pb.PSpanMessageBatch) (*pb.PSpanResultBatch, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.spans = append(s.spans, len(in.GetSpan()))
+	if len(s.spans) == 1 {
+		return nil, errNoGzip
+	}
+	return &pb.PSpanResultBatch{}, nil
+}
+
+// Span batches go out gzip-compressed by default, and a collector that cannot
+// read gzip turns compression off for the batches after the one it rejected.
+func Test_spanGrpc_sendSpanBatch_gzipFallsBackToUncompressed(t *testing.T) {
+	server := &gzipRejectingSpanServer{}
+	port, rec := startEncodingServer(t, func(s *grpc.Server) { pb.RegisterSpanServer(s, server) })
+
+	cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorHost("127.0.0.1"), WithCollectorSpanPort(port))
+	require.NoError(t, err)
+	agent := newTestAgent(cfg)
+	spanGrpc, err := newSpanGrpc(agent)
+	require.NoError(t, err)
+	defer spanGrpc.close()
+	agent.spanGrpc = spanGrpc
+
+	for range 2 {
+		span := defaultSpan(agent)
+		span.NewSpanEvent("t1")
+		spanGrpc.sendSpanBatchAsync([]*spanChunk{span.newEventChunk(true)})
+		spanGrpc.awaitInFlightSpanBatch()
+	}
+
+	assert.Equal(t, []string{"gzip", ""}, rec.seen())
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	assert.Equal(t, []int{1, 1}, server.spans, "the gzip batch decodes like the uncompressed one")
+	assert.False(t, spanGrpc.compress.Load())
+}
+
+// gzipRejectingStatServer fails its first stream with errNoGzip at once, as
+// grpc-java does from the request headers, and counts what later streams
+// receive.
+type gzipRejectingStatServer struct {
+	pb.UnimplementedStatServer
+	streams  atomic.Int32
+	received atomic.Int32
+}
+
+func (s *gzipRejectingStatServer) SendAgentStat(stream pb.Stat_SendAgentStatServer) error {
+	if s.streams.Add(1) == 1 {
+		return errNoGzip
+	}
+	for {
+		if _, err := stream.Recv(); err != nil {
+			if errors.Is(err, io.EOF) {
+				return stream.SendAndClose(&empty.Empty{})
+			}
+			return err
+		}
+		s.received.Add(1)
+	}
+}
+
+// The stat stream is opened with gzip by default. A collector that cannot read
+// it ends the stream, a later send sees only io.EOF, and the close behind it
+// gets the status: the replacement stream is uncompressed.
+func Test_statGrpc_gzipFallsBackToUncompressed(t *testing.T) {
+	server := &gzipRejectingStatServer{}
+	port, rec := startEncodingServer(t, func(s *grpc.Server) { pb.RegisterStatServer(s, server) })
+
+	cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorHost("127.0.0.1"), WithCollectorStatPort(port))
+	require.NoError(t, err)
+	agent := newTestAgent(cfg)
+	statGrpc, err := newStatGrpc(agent)
+	require.NoError(t, err)
+	defer statGrpc.close()
+	agent.statGrpc = statGrpc
+
+	msg := makePAgentStatBatch([]*inspectorStats{{sampleTime: time.Now()}})
+	stream := statGrpc.newStatStreamWithRetry()
+	// The first sends can still succeed before the rejection reaches the
+	// client; sendStatsOrReopen replaces the stream on the first that fails.
+	require.Eventually(t, func() bool {
+		stream = agent.sendStatsOrReopen(stream, msg)
+		return server.received.Load() > 0
+	}, 5*time.Second, 10*time.Millisecond)
+	stream.close()
+
+	assert.Equal(t, []string{"gzip", ""}, rec.seen())
+	assert.False(t, statGrpc.compress.Load())
 }
 
 // The caller that produced this trace is described on the accept event, service

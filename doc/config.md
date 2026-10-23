@@ -607,6 +607,25 @@ per failed span when `Error.TraceCallStack` is on, so raise this together with
 * type: int
 * default: 10
 
+### Collector.Grpc.Compression
+Collector.Grpc.Compression option sets the compression of the span batches (SendSpanBatch requests) and of the
+agent stat stream, which carries the agent statistics and the URL statistics: "gzip" or "none".
+It stands for the two Java agent keys `profiler.transport.grpc.span.batch-sender.compression` and
+`profiler.transport.grpc.stat.sender.compression`, which take the same values and default.
+
+A collector accepts gzip without configuration. If it answers that it cannot decompress gzip, the agent logs a
+warning and sends uncompressed from then on, until it restarts: the span batch rejected and the stats sent on the
+rejected stat stream are lost. Span batches and the stat stream fall back each on its own.
+
+The Java agent compresses only stat messages of 512 bytes or more; grpc-go cannot choose per message, so this
+agent compresses every message of the stat stream. A stat batch at the default [Stat.BatchCount](#statbatchcount)
+shrinks to about half and a URL stat with many URLs much more, while a lone small message grows by some 25 bytes.
+
+* PINPOINT_GO_COLLECTOR_GRPC_COMPRESSION
+* type: string
+* default: gzip
+* case-insensitive; a blank value is gzip, and an unknown one falls back to gzip with a warning log
+
 ### Sampling.Type
 Sampling.Type option sets the type of agent sampler.
 Either "COUNTER" or "PERCENT" must be specified. "COUNTING" is accepted as an

@@ -251,6 +251,14 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Added
 
+- **Span batches and the stat stream are gzip-compressed**
+  (`Collector.Grpc.Compression`, `WithCollectorGrpcCompression`: `gzip`, the
+  default, or `none`), as in the Java agent, whose two keys this one option
+  stands for. A collector accepts gzip without configuration; one that answers
+  it cannot decompress gzip gets the following batches and streams
+  uncompressed, with a warning in the log.
+  Unlike the Java agent, every stat message is compressed, a lone small one
+  included, since grpc-go cannot choose per message.
 - **`pinpoint.ReloadConfig(yaml)`** applies a complete configuration, in the
   config file's YAML form, to the running agent, for a process that manages
   the agent's configuration itself - a control plane, an admin endpoint, a

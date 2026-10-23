@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
@@ -14,10 +15,18 @@ type statGrpc struct {
 	statClient pb.StatClient
 	stream     *statStream
 	agent      *agent
+
+	// compress is Collector.Grpc.Compression=gzip until a collector fails
+	// a stream because it cannot decompress gzip; the streams opened after
+	// that are uncompressed.
+	compress atomic.Bool
 }
 
 type statStream struct {
 	streamHandle[pb.Stat_SendAgentStatClient]
+	// compress is the statGrpc flag, turned off by close when the collector
+	// rejected this stream's gzip.
+	compress *atomic.Bool
 }
 
 func newStatGrpc(agent *agent) (*statGrpc, error) {
@@ -26,11 +35,13 @@ func newStatGrpc(agent *agent) (*statGrpc, error) {
 		return nil, err
 	}
 
-	return &statGrpc{
+	s := &statGrpc{
 		statConn:   conn,
 		statClient: pb.NewStatClient(conn),
 		agent:      agent,
-	}, nil
+	}
+	s.compress.Store(agent.config.String(CfgCollectorGrpcCompression) == compressionGzip)
+	return s, nil
 }
 
 func (statGrpc *statGrpc) close() {
@@ -41,14 +52,20 @@ func (statGrpc *statGrpc) close() {
 
 func (statGrpc *statGrpc) newStatStream() bool {
 	ctx, cancel := context.WithCancel(grpcMetadataContext(statGrpc.agent, -1))
-	stream, err := statGrpc.statClient.SendAgentStat(ctx)
+	// Unlike grpc-java, grpc-go cannot compress per message, so every message
+	// of a gzip stream is compressed, a lone small stat included.
+	var opts []grpc.CallOption
+	if statGrpc.compress.Load() {
+		opts = gzipCallOptions
+	}
+	stream, err := statGrpc.statClient.SendAgentStat(ctx, opts...)
 	if err != nil {
 		cancel()
 		Log("grpc").Errorf("make stat stream - %v", err)
 		return false
 	}
 
-	statGrpc.stream = &statStream{newStreamHandle(stream, cancel, newStreamAge(statGrpc.agent))}
+	statGrpc.stream = &statStream{newStreamHandle(stream, cancel, newStreamAge(statGrpc.agent)), &statGrpc.compress}
 	return true
 }
 
@@ -59,8 +76,14 @@ func (statGrpc *statGrpc) newStatStreamWithRetry() *statStream {
 	return &statStream{}
 }
 
+// close also learns why the collector ended the stream: a send only sees
+// io.EOF, and the status comes from CloseAndRecv.
 func (s *statStream) close() {
-	s.streamHandle.close(func(c pb.Stat_SendAgentStatClient) error { _, err := c.CloseAndRecv(); return err }, "stat")
+	s.streamHandle.close(func(c pb.Stat_SendAgentStatClient) error {
+		_, err := c.CloseAndRecv()
+		disableGzipIfRejected(s.compress, err, "stat streams")
+		return err
+	}, "stat")
 }
 
 func (s *statStream) sendStats(stats *pb.PStatMessage) error {

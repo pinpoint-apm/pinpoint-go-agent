@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
@@ -27,6 +28,11 @@ type spanGrpc struct {
 	// receive from it.
 	concurrentRequestPermit chan struct{}
 	inFlight                sync.WaitGroup
+
+	// compress is Collector.Grpc.Compression=gzip until a collector
+	// answers that it cannot decompress gzip; it then stays off for the life
+	// of the sender, as in the Java agent.
+	compress atomic.Bool
 }
 
 func newSpanGrpc(agent *agent) (*spanGrpc, error) {
@@ -35,7 +41,7 @@ func newSpanGrpc(agent *agent) (*spanGrpc, error) {
 		return nil, err
 	}
 
-	return &spanGrpc{
+	s := &spanGrpc{
 		spanConn:                conn,
 		spanClient:              pb.NewSpanClient(conn),
 		agent:                   agent,
@@ -44,7 +50,9 @@ func newSpanGrpc(agent *agent) (*spanGrpc, error) {
 		batchCollectDeadline:    time.Duration(agent.config.Int(CfgCollectorGrpcSpanBatchCollectDeadline)) * time.Millisecond,
 		maxConcurrentRequests:   agent.config.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests),
 		concurrentRequestPermit: make(chan struct{}, agent.config.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests)),
-	}, nil
+	}
+	s.compress.Store(agent.config.String(CfgCollectorGrpcCompression) == compressionGzip)
+	return s, nil
 }
 
 // close releases the connection without waiting for in-flight batches: the
@@ -160,8 +168,13 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 			ctx, cancel := context.WithTimeout(grpcMetadataContext(spanGrpc.agent, -1), sendStreamTimeOut)
 			defer cancel()
 
-			response, err := spanGrpc.spanClient.SendSpanBatch(ctx, spanMessageBatch)
+			var opts []grpc.CallOption
+			if spanGrpc.compress.Load() {
+				opts = gzipCallOptions
+			}
+			response, err := spanGrpc.spanClient.SendSpanBatch(ctx, spanMessageBatch, opts...)
 			if err != nil {
+				disableGzipIfRejected(&spanGrpc.compress, err, "span batches")
 				// Lost like a head-drop or a permit skip, and counted with
 				// them, so reportSpanDrops covers every cause.
 				spanGrpc.agent.spanDrops.record(int64(len(chunks)))

@@ -54,6 +54,7 @@ func TestNewConfig_DefaultValue(t *testing.T) {
 	assert.Equal(t, defaultSpanBatchFlushInterval, c.Int(CfgCollectorGrpcSpanBatchFlushInterval), CfgCollectorGrpcSpanBatchFlushInterval)
 	assert.Equal(t, defaultSpanBatchCollectDeadline, c.Int(CfgCollectorGrpcSpanBatchCollectDeadline), CfgCollectorGrpcSpanBatchCollectDeadline)
 	assert.Equal(t, defaultSpanBatchMaxConcurrentRequests, c.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests), CfgCollectorGrpcSpanBatchMaxConcurrentRequests)
+	assert.Equal(t, compressionGzip, c.String(CfgCollectorGrpcCompression), CfgCollectorGrpcCompression)
 	assert.Equal(t, defaultEventChunkSize, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
 	assert.Equal(t, defaultEventDepth, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
 	assert.Equal(t, defaultEventSequence, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
@@ -101,6 +102,7 @@ func TestNewConfig_WithFunc(t *testing.T) {
 		WithCollectorGrpcSpanBatchFlushInterval(2000),
 		WithCollectorGrpcSpanBatchCollectDeadline(250),
 		WithCollectorGrpcSpanBatchMaxConcurrentRequests(4),
+		WithCollectorGrpcCompression("none"),
 		WithSpanEventChunkSize(100),
 		WithSpanMaxCallStackDepth(100),
 		WithSpanMaxCallStackSequence(1000),
@@ -145,6 +147,7 @@ func TestNewConfig_WithFunc(t *testing.T) {
 	assert.Equal(t, 2000, c.Int(CfgCollectorGrpcSpanBatchFlushInterval), CfgCollectorGrpcSpanBatchFlushInterval)
 	assert.Equal(t, 250, c.Int(CfgCollectorGrpcSpanBatchCollectDeadline), CfgCollectorGrpcSpanBatchCollectDeadline)
 	assert.Equal(t, 4, c.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests), CfgCollectorGrpcSpanBatchMaxConcurrentRequests)
+	assert.Equal(t, compressionNone, c.String(CfgCollectorGrpcCompression), CfgCollectorGrpcCompression)
 	assert.Equal(t, 100, c.Int(CfgSpanEventChunkSize), CfgSpanEventChunkSize)
 	assert.Equal(t, 100, c.Int(CfgSpanMaxCallStackDepth), CfgSpanMaxCallStackDepth)
 	assert.Equal(t, 1000, c.Int(CfgSpanMaxCallStackSequence), CfgSpanMaxCallStackSequence)
@@ -1597,4 +1600,14 @@ func TestEmptyArgsDoNotPanic(t *testing.T) {
 	config := defaultConfig()
 	assert.NotPanics(t, func() { assert.Empty(t, config.parseCmdArgs()) })
 	assert.NotPanics(t, func() { assert.Empty(t, makeServerMetaData(config).VmArg) })
+}
+
+// As in the Java agent, the value is case-insensitive, and a blank or unknown
+// one is gzip.
+func Test_Config_compressionNormalized(t *testing.T) {
+	for in, want := range map[string]string{"": "gzip", " GZIP ": "gzip", "None": "none", "zstd": "gzip"} {
+		c, err := NewConfig(WithAppName("TestApp"), WithCollectorGrpcCompression(in))
+		require.NoError(t, err)
+		assert.Equal(t, want, c.String(CfgCollectorGrpcCompression), "%q", in)
+	}
 }

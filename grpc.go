@@ -12,7 +12,9 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
@@ -21,6 +23,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -1193,6 +1196,25 @@ func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc f
 func closeStream(cancel context.CancelFunc, op func() error, which string) {
 	sendStreamWithTimeout(op, cancel, closeStreamTimeOut, which)
 	cancel()
+}
+
+// gzipCallOptions compresses a call: SendSpanBatch requests and the stat
+// stream. Importing encoding/gzip registers the compressor process-wide, which
+// also lets the client read a gzip response.
+var gzipCallOptions = []grpc.CallOption{grpc.UseCompressor(gzip.Name)}
+
+// disableGzipIfRejected turns compress off, for the life of the sender as in
+// the Java agent, when err is a collector that cannot decompress gzip:
+// grpc-java answers UNIMPLEMENTED "Can't find decompressor for gzip", grpc-go
+// "grpc: Decompressor is not installed for grpc-encoding".
+func disableGzipIfRejected(compress *atomic.Bool, err error, which string) {
+	s := status.Convert(err)
+	if s.Code() != codes.Unimplemented || !strings.Contains(strings.ToLower(s.Message()), "decompressor") {
+		return
+	}
+	if compress.CompareAndSwap(true, false) {
+		Log("grpc").Warnf("collector does not accept gzip %s (%v); sending them uncompressed from now on", which, err)
+	}
 }
 
 // streamHandle is what the long-lived client streams share: the generated

@@ -313,6 +313,12 @@ func WithCollectorGrpcSpanBatchMaxConcurrentRequests(max int) ConfigOption {
 	return withValue(CfgCollectorGrpcSpanBatchMaxConcurrentRequests, max)
 }
 
+// WithCollectorGrpcCompression sets the compression of the span batches and
+// the stat stream: "gzip" (the default) or "none".
+func WithCollectorGrpcCompression(compression string) ConfigOption {
+	return withValue(CfgCollectorGrpcCompression, compression)
+}
+
 // WithSpanEventChunkSize sets the event chunk of a span.
 func WithSpanEventChunkSize(size int) ConfigOption { return withValue(CfgSpanEventChunkSize, size) }
 
