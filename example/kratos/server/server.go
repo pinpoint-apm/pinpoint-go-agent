@@ -45,6 +45,7 @@ func (s *server) SayHello(ctx context.Context, in *helloworld.HelloRequest) (*he
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("TestKratosServer"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

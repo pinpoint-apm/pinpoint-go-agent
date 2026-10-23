@@ -75,6 +75,7 @@ func decodeName(_ context.Context, r *http.Request) (interface{}, error) {
 func main() {
 	cfg, _ := pinpoint.NewConfig(
 		pinpoint.WithAppName("GoKitHttpGateway"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithAgentName("GoKitHttpGatewayAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME")+"/tmp/pinpoint-config.yaml"),
 	)

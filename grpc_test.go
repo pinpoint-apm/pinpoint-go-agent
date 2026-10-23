@@ -1597,7 +1597,7 @@ func Test_agentGrpc_registerAgentWithRetry_saysWhyTracingIsOff(t *testing.T) {
 // A connect that fails outside Shutdown must not leave the dead agent as the
 // global: GetAgent falls back to Noop and NewAgent can be called again.
 func Test_connectGrpcServer_failureReleasesGlobalAgent(t *testing.T) {
-	cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorGrpcSslEnable(true), WithCollectorGrpcTrustCertFilePath("/nonexistent/ca.pem"))
+	cfg, err := NewConfig(WithAppName("TestApp"), WithServiceName("test-service"), WithCollectorGrpcSslEnable(true), WithCollectorGrpcTrustCertFilePath("/nonexistent/ca.pem"))
 	require.NoError(t, err)
 	a, err := NewAgent(cfg)
 	require.NoError(t, err)
@@ -1616,7 +1616,7 @@ func Test_connectGrpcServer_failureClosesConfigWatcher(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	writeConfigRate(t, path, 1)
 
-	cfg, err := NewConfig(WithAppName("TestApp"), WithConfigFile(path),
+	cfg, err := NewConfig(WithAppName("TestApp"), WithServiceName("test-service"), WithConfigFile(path),
 		WithCollectorGrpcSslEnable(true), WithCollectorGrpcTrustCertFilePath("/nonexistent/ca.pem"))
 	require.NoError(t, err)
 	// NewConfig starts the watcher, so the channel is captured before the

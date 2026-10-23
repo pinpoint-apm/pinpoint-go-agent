@@ -49,6 +49,7 @@ func main() {
 
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoChiTest"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithAgentName("GoChiTestAgent"),
 		pinpoint.WithHttpUrlStatEnable(true),
 		//pinpoint.WithSamplingCounterRate(10),

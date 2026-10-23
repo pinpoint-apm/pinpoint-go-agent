@@ -161,6 +161,7 @@ func searchDocument(ctx context.Context, es *elasticsearch.Client) bytes.Buffer 
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoElasticTest"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

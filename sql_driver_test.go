@@ -372,7 +372,7 @@ func Test_sqlConn_UsesLiveConfig(t *testing.T) {
 	conn := newSqlConn(&fakeDriverConn{}, DBInfo{})
 	assert.Equal(t, GetConfig().load(), conn.cfg(), "config resolved per operation")
 
-	c, err := NewConfig(WithAppName("TestApp"), WithSQLMaxBindValueSize(7))
+	c, err := NewConfig(WithAppName("TestApp"), WithServiceName("test-service"), WithSQLMaxBindValueSize(7))
 	assert.NoError(t, err)
 	c.offGrpc = true
 	a, err := NewAgent(c)

@@ -300,7 +300,7 @@ func initConfig() {
 	AddConfig(CfgErrorCallStackDepth, CfgInt, defaultErrorCallStackDepth, true)
 	AddConfig(CfgErrorNewThroughput, CfgInt, defaultErrorNewThroughput, true)
 	AddConfig(CfgErrorMaxChainDepth, CfgInt, defaultErrorMaxChainDepth, true)
-	AddConfig(CfgUIDVersion, CfgString, "v3", false)
+	AddConfig(CfgUIDVersion, CfgString, "v4", false)
 	AddConfig(CfgServiceName, CfgString, "", false)
 	AddConfig(CfgApiKey, CfgString, "", false)
 }
@@ -669,6 +669,7 @@ func (config *Config) stagedString(cfgName string) string {
 //
 //	opts := []pinpoint.ConfigOption{
 //	  pinpoint.WithAppName("GoTestApp"),
+//	  pinpoint.WithServiceName("GoTestService"),
 //	  pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 //	}
 //	cfg, err := pinpoint.NewConfig(opts...)

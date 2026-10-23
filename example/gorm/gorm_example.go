@@ -51,6 +51,7 @@ func gormQuery(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoGormTest"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithAgentName("GoGormTestId"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}

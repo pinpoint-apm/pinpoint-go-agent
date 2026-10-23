@@ -34,6 +34,7 @@ func Test_agent_NewAgentError(t *testing.T) {
 func Test_agent_NewAgent(t *testing.T) {
 	opts := []ConfigOption{
 		WithAppName("test"),
+		WithServiceName("test-service"),
 	}
 	c, _ := NewConfig(opts...)
 	c.offGrpc = true
@@ -62,6 +63,7 @@ func Test_agent_NewAgent(t *testing.T) {
 func Test_agent_GlobalAgent(t *testing.T) {
 	opts := []ConfigOption{
 		WithAppName("testGlobal"),
+		WithServiceName("test-service"),
 	}
 	c, _ := NewConfig(opts...)
 	c.offGrpc = true
@@ -82,6 +84,7 @@ func Test_agent_GlobalAgent(t *testing.T) {
 func Test_agent_NewSpanTracer(t *testing.T) {
 	opts := []ConfigOption{
 		WithAppName("test"),
+		WithServiceName("test-service"),
 	}
 	c, _ := NewConfig(opts...)
 	c.offGrpc = true
@@ -104,6 +107,7 @@ func Test_agent_NewSpanTracer(t *testing.T) {
 func Test_agent_NewSpanTracerWithReader(t *testing.T) {
 	opts := []ConfigOption{
 		WithAppName("test"),
+		WithServiceName("test-service"),
 	}
 	c, _ := NewConfig(opts...)
 	c.offGrpc = true
@@ -553,7 +557,7 @@ func startTestWorker(agent *agent, name string, body func()) {
 // A worker stuck on an unreachable collector must not hold Shutdown forever,
 // and Shutdown is serialized, so a concurrent second call waits for the first.
 func Test_agent_ShutdownIsSerialized(t *testing.T) {
-	c, _ := NewConfig(WithAppName("test"))
+	c, _ := NewConfig(WithAppName("test"), WithServiceName("test-service"))
 	c.offGrpc = true
 	a, _ := NewAgent(c)
 	agent := a.(*agent)
@@ -590,6 +594,7 @@ func Test_agent_ShutdownIsSerialized(t *testing.T) {
 func Test_agent_ShutdownNoStartupDelay(t *testing.T) {
 	opts := []ConfigOption{
 		WithAppName("test"),
+		WithServiceName("test-service"),
 	}
 	c, _ := NewConfig(opts...)
 	c.offGrpc = true
@@ -785,6 +790,7 @@ func Test_agent_sendMetaWorkerStopsWhileAllPermitsHeld(t *testing.T) {
 func Test_agent_ShutdownReleasesGlobalWhenNeverRegistered(t *testing.T) {
 	opts := []ConfigOption{
 		WithAppName("test"),
+		WithServiceName("test-service"),
 	}
 	c, _ := NewConfig(opts...)
 	c.offGrpc = true
@@ -806,7 +812,7 @@ func Test_agent_ShutdownReleasesGlobalWhenNeverRegistered(t *testing.T) {
 }
 
 func Test_agent_GetAgentIsRaceFreeAgainstShutdown(t *testing.T) {
-	c, _ := NewConfig(WithAppName("test"))
+	c, _ := NewConfig(WithAppName("test"), WithServiceName("test-service"))
 	c.offGrpc = true
 	a, err := NewAgent(c)
 	assert.NoError(t, err, "new agent")
@@ -1506,6 +1512,7 @@ func Test_agent_continueHeaders_table(t *testing.T) {
 	// every row and the stat counters alone say which sampler ran.
 	c, _ := NewConfig(
 		WithAppName("test"),
+		WithServiceName("test-service"),
 		WithSamplingType("COUNTER"),
 		WithSamplingCounterRate(1),
 	)
@@ -1650,7 +1657,7 @@ func Test_HttpHeaderWriter_storesCanonicalKeys(t *testing.T) {
 // The headers Inject writes must be readable as a continued trace by the other
 // side - proof that Inject really emits all three headers the new check needs.
 func Test_agent_continueHeaders_roundTrip(t *testing.T) {
-	c, _ := NewConfig(WithAppName("test"))
+	c, _ := NewConfig(WithAppName("test"), WithServiceName("test-service"))
 	c.offGrpc = true
 	a, _ := NewAgent(c)
 	agent := a.(*agent)
@@ -1787,7 +1794,7 @@ func Test_agent_DefaultNeverCallsSignalNotify(t *testing.T) {
 	var notifies atomic.Int32
 	swapForTest(t, &signalNotify, func(chan<- os.Signal, ...os.Signal) { notifies.Add(1) })
 
-	c, _ := NewConfig(WithAppName("test"))
+	c, _ := NewConfig(WithAppName("test"), WithServiceName("test-service"))
 	c.offGrpc = true
 	a, err := NewAgent(c)
 	require.NoError(t, err, "new agent")
@@ -1806,7 +1813,7 @@ func Test_agent_DefaultNeverCallsSignalNotify(t *testing.T) {
 // teardown is serialized by shutdownOnce, so the second call is a no-op.
 func Test_agent_ShutdownTwiceViaSignalAndCall(t *testing.T) {
 	replaceRaiseSignal(t)
-	c, _ := NewConfig(WithAppName("test"))
+	c, _ := NewConfig(WithAppName("test"), WithServiceName("test-service"))
 	c.offGrpc = true
 	a, err := NewAgent(c)
 	require.NoError(t, err, "new agent")
@@ -1976,7 +1983,7 @@ func Test_ShutdownIsIdempotent(t *testing.T) {
 func TestNewAgent_PanicWhileConnectingIsRecovered(t *testing.T) {
 	swapForTest(t, &getHostName, func() string { panic("boom") })
 
-	config, err := NewConfig(WithAppName("connect-panic"))
+	config, err := NewConfig(WithAppName("connect-panic"), WithServiceName("test-service"))
 	require.NoError(t, err)
 	a, err := NewAgent(config)
 	require.NoError(t, err)

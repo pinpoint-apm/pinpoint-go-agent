@@ -250,6 +250,7 @@ func setGlobalAgent(a Agent) {
 //
 //	opts := []pinpoint.ConfigOption{
 //	  pinpoint.WithAppName("GoTestApp"),
+//	  pinpoint.WithServiceName("GoTestService"),
 //	  pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 //	}
 //	cfg, err := pinpoint.NewConfig(opts...)
@@ -1202,8 +1203,9 @@ func NewTestAgent(config *Config) (Agent, error) {
 
 	if config.objName == nil {
 		if err := config.checkNameAndID(); err != nil {
-			// Tests may omit required identity fields; fall back to a default
-			// v3 identity so the header builder has a non-nil object name.
+			// Tests may omit required identity fields, such as the ServiceName
+			// the default v4 requires; fall back to a v3 identity so the header
+			// builder has a non-nil object name.
 			agentID := ""
 			if uid, err := uuid.NewV7(); err == nil {
 				agentID = encodeUID(uid)

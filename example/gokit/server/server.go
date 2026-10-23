@@ -51,6 +51,7 @@ func encodeResponse(_ context.Context, resp interface{}) (interface{}, error) {
 func main() {
 	cfg, _ := pinpoint.NewConfig(
 		pinpoint.WithAppName("GoKitGrpcServer"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithAgentName("GoKitGrpcServerAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME")+"/tmp/pinpoint-config.yaml"),
 	)

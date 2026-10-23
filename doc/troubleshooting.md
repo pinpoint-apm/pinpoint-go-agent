@@ -194,10 +194,11 @@ application is untraced.
 | Cause | Check |
 |---|---|
 | `ApplicationName` not set | it is required; without it the agent cannot start |
+| `ServiceName` not set | the default [Uid.Version](config.md#uidversion) v4 requires it (3 to 254 bytes); set it, or set `Uid.Version` to `v3` |
 | Name/ID too long or has invalid characters | `ApplicationName`, `AgentName` must match `[a-zA-Z0-9\._\-]+`; length limits depend on [Uid.Version](config.md#uidversion) |
 | `Enable=false` left in a config file or the environment | the resolved config dump shows `Enable = false` |
 | `ApiKey` has a control or non-ASCII character (v4) | it must be printable ASCII; surrounding whitespace is trimmed, as for the names |
-| `Uid.Version` is `v4` | the agent starts, but a 3.1.x collector refuses every call (`INVALID_ARGUMENT`) unless `ApiKey` is set and matches `[a-zA-Z0-9\._\-]+`; use `v1` or `v3` ([Uid.Version](config.md#uidversion)) |
+| `Uid.Version` is `v4`, the default, against a 3.1.x collector | the agent starts, but the collector refuses every call unless `ApiKey` is set and matches `[a-zA-Z0-9\._\-]+`: `send agent info - rpc error: code = InvalidArgument desc = apiKey` repeats and registration waits forever; set `Uid.Version` to `v3` ([Uid.Version](config.md#uidversion)) |
 | A second `NewAgent()` call | returns `agent is already created`; the first agent is still the live one |
 | Config file not found or unparseable | look for `src=config` errors; the path is resolved as given, relative to the working directory |
 

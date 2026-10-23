@@ -15,7 +15,7 @@ func WithAppType(typ int32) ConfigOption { return withValue(CfgAppType, typ) }
 func WithAgentName(name string) ConfigOption { return withValue(CfgAgentName, name) }
 
 // WithUidVersion sets the agent self-identification version (v1, v3, or v4).
-// Unknown values fall back to v3.
+// The default is v4, and unknown values fall back to v4.
 func WithUidVersion(version string) ConfigOption { return withValue(CfgUIDVersion, version) }
 
 // WithServiceName sets the service name (required for v4).

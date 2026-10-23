@@ -129,6 +129,7 @@ The deprecated `LogLevel` key is gone too: `LogLevel` in the config file,
 
 | Option | v1 | v2 default | To keep the v1 behavior |
 |---|---|---|---|
+| [Uid.Version](config.md#uidversion) (new) | no service name; ApplicationName up to 24 bytes | `v4`: [ServiceName](config.md#servicename) is required, and a 3.1.x collector refuses the agent without an [ApiKey](config.md#apikey) | `v1`, or `v3` for ApplicationName up to 254 bytes |
 | [Log.Output](config.md#logoutput) | `stderr` | `stdout` | `stderr` |
 | [Collector.Grpc.DnsResolverEnable](config.md#collectorgrpcdnsresolverenable) (new) | one address per collector host | `true`: every address of the host, re-resolved as records change | `false` |
 | [Collector.Grpc.KeepAlivePermitWithoutCalls](config.md#collectorgrpckeepalivepermitwithoutcalls) (new) | keepalive pings with no stream open | `false`: pings only while a stream is open | `true` |

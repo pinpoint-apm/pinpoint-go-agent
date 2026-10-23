@@ -42,6 +42,7 @@ func rueidisv1(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoRueidisTest"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithAgentName("GoRueidisTestAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}

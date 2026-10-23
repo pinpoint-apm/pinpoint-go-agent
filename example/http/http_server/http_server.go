@@ -60,6 +60,7 @@ func main() {
 
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoHttpTest"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithAgentName("GoHttpAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 

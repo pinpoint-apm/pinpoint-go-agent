@@ -203,7 +203,7 @@ func Test_ReloadAppliesLogMaxBackups(t *testing.T) {
 	}
 	write(2)
 
-	config, err := NewConfig(WithAppName("log-reload"), WithConfigFile(cfgPath))
+	config, err := NewConfig(WithAppName("log-reload"), WithServiceName("test-service"), WithConfigFile(cfgPath))
 	require.NoError(t, err)
 	config.offGrpc = true
 	a, err := NewAgent(config)

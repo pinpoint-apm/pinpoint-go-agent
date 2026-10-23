@@ -132,6 +132,7 @@ func setup() {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoDbServerExample"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithAgentName("GoDbServerExampleAgent"),
 		pinpoint.WithCollectorHost(envOr("PINPOINT_GO_COLLECTOR_HOST", "localhost")),
 		// Record only the User-Agent request header on the span (see doc/config.md).

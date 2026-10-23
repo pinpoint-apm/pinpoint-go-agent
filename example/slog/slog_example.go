@@ -28,6 +28,7 @@ func attrs(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoSlogTest"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithAgentName("GoSlogTestAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}

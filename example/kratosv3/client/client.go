@@ -21,6 +21,7 @@ import (
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("TestKratosClient"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
 	cfg, _ := pinpoint.NewConfig(opts...)

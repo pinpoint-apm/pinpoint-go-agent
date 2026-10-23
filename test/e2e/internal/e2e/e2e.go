@@ -40,10 +40,15 @@ func CollectorHost() string {
 }
 
 // ConfigureAgentEnvironment applies the per-process identity and the feature
-// switches the suite depends on, without overriding the runner.
+// switches the suite depends on, without overriding the runner. The suite runs
+// as Uid.Version v3, which every 3.1.x collector accepts; the runner sets
+// PINPOINT_GO_UID_VERSION=v4 and PINPOINT_GO_SERVICENAME for a v4 run. An
+// environment variable, unlike the shared config file, also reaches the
+// agents the upstream starts on files of their own.
 func ConfigureAgentEnvironment(application, agentName string) {
 	SetDefaultEnv("PINPOINT_GO_APPLICATIONNAME", application)
 	SetDefaultEnv("PINPOINT_GO_AGENTNAME", agentName)
+	SetDefaultEnv("PINPOINT_GO_UID_VERSION", "v3")
 	SetDefaultEnv("PINPOINT_GO_HTTP_URLSTAT_ENABLE", "true")
 	SetDefaultEnv("PINPOINT_GO_SQL_TRACEQUERYSTAT", "true")
 	SetDefaultEnv("PINPOINT_GO_SQL_TRACEBINDVALUE", "true")

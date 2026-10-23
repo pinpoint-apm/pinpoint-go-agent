@@ -58,6 +58,7 @@ func doCassandra(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoCassandraV2Test"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithAgentName("GoCassandraV2TestAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}

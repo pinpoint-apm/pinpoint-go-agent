@@ -146,6 +146,7 @@ func tx(ctx context.Context, db *sql.DB) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoPgSqlTest"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithAgentName("GoPgSqlTestId"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}

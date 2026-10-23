@@ -29,7 +29,7 @@ func (l *lifecycle) Store(enabled bool) {
 // and shutting down - are distinct values, where the enable bool alone read
 // false for the first and the last.
 func Test_lifecycle_PhasesAreDistinguishable(t *testing.T) {
-	c, _ := NewConfig(WithAppName("test"))
+	c, _ := NewConfig(WithAppName("test"), WithServiceName("test-service"))
 	c.offGrpc = true
 	a, err := NewAgent(c)
 	require.NoError(t, err)
@@ -61,7 +61,7 @@ func Test_lifecycle_PhasesAreDistinguishable(t *testing.T) {
 // An agent that is shut down before it ever registered skips stopping: there
 // is nothing to drain, and the request path must not open up for the window.
 func Test_lifecycle_ShutdownBeforeRegistrationGoesStraightToStopped(t *testing.T) {
-	c, _ := NewConfig(WithAppName("test"))
+	c, _ := NewConfig(WithAppName("test"), WithServiceName("test-service"))
 	c.offGrpc = true
 	a, err := NewAgent(c)
 	require.NoError(t, err)

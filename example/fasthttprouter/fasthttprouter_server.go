@@ -49,6 +49,7 @@ func sleep() {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoFasthttpRouterTest"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithHttpUrlStatEnable(true),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}

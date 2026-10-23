@@ -36,6 +36,7 @@ func outGoing(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoHttpMuxTest"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithAgentName("GoHttpMuxTest_GoHttpMuxAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 		pphttp.WithHttpServerStatusCodeError([]string{"500", "400"}),

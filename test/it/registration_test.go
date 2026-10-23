@@ -207,6 +207,7 @@ func TestStaysDisabledWhileRegistrationIsRejected(t *testing.T) {
 func TestCreatesNoopAgentWhenDisabledByConfig(t *testing.T) {
 	config, err := pinpoint.NewConfig(
 		pinpoint.WithAppName("noop-agent-it"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithEnable(false),
 	)
 	require.NoError(t, err)

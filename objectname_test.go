@@ -28,9 +28,9 @@ func TestParseNameVersion(t *testing.T) {
 		"v4":      nameV4,
 		"V4":      nameV4,
 		" v4 ":    nameV4,
-		"":        nameV3, // missing -> default v3
-		"v2":      nameV3, // unknown -> fallback v3
-		"unknown": nameV3,
+		"":        nameV4, // missing -> default v4
+		"v2":      nameV4, // unknown -> fallback v4
+		"unknown": nameV4,
 	}
 	for in, want := range cases {
 		assert.Equal(t, want, parseNameVersion(in), "parseNameVersion(%q)", in)
@@ -44,8 +44,21 @@ func newCfg(t *testing.T, opts ...ConfigOption) *Config {
 	return c
 }
 
-func TestResolveObjectName_V3_Default(t *testing.T) {
-	c := newCfg(t, WithAppName("MyApp"), WithAgentName("my-name"))
+// v4 is the default, so a configuration that names no version needs a
+// ServiceName.
+func TestResolveObjectName_V4_Default(t *testing.T) {
+	_, err := resolveObjectName(newCfg(t, WithAppName("MyApp")))
+	assert.ErrorContains(t, err, "service name is required")
+
+	o, err := resolveObjectName(newCfg(t, WithAppName("MyApp"), WithServiceName("MyService")))
+	require.NoError(t, err)
+	assert.Equal(t, nameV4, o.version)
+	assert.Equal(t, "MyService", o.serviceName)
+	assert.Equal(t, protocolVersionV4, o.protocolVersion())
+}
+
+func TestResolveObjectName_V3(t *testing.T) {
+	c := newCfg(t, WithUidVersion("v3"), WithAppName("MyApp"), WithAgentName("my-name"))
 	o, err := resolveObjectName(c)
 	assert.NoError(t, err)
 	assert.Equal(t, nameV3, o.version)
@@ -58,7 +71,7 @@ func TestResolveObjectName_V3_Default(t *testing.T) {
 }
 
 func TestResolveObjectName_AutoGenAgentId(t *testing.T) {
-	c := newCfg(t, WithAppName("MyApp"))
+	c := newCfg(t, WithAppName("MyApp"), WithServiceName("MyService"))
 	o, err := resolveObjectName(c)
 	assert.NoError(t, err)
 	assert.Len(t, o.agentID, uidBase64Len)  // base64(UUIDv7)

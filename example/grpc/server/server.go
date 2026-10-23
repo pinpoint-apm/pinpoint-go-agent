@@ -76,6 +76,7 @@ func printGreeting(ctx context.Context, in *testapp.Greeting) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("TestGrpcServer"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithAgentName("TestGrpcServerAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}

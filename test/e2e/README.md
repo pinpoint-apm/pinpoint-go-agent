@@ -48,7 +48,10 @@ or export `PINPOINT_GO_COLLECTOR_GRPC_SSLENABLE=true` and
 empty trust path with TLS on falls back to the system root CAs. Each process gets a unique
 `PINPOINT_GO_AGENTNAME` (the agent id itself is always generated), so concurrent runs are
 distinguishable under the stable applications `go-e2e-http-upstream`,
-`go-e2e-http-downstream` and `go-e2e-grpc-downstream`.
+`go-e2e-http-downstream` and `go-e2e-grpc-downstream`. The agents identify
+as `Uid.Version` v3, not the agent's default v4, so that a 3.1.x collector
+accepts them; export `PINPOINT_GO_UID_VERSION=v4` and `PINPOINT_GO_SERVICENAME`
+to run them as v4.
 
 To exercise the stack without a collector, `--local-collector` starts a bundled
 stub that accepts everything and records nothing:

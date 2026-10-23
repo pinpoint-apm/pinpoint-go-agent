@@ -114,6 +114,7 @@ func TestConfigWatcherDoesNotAccumulateAcrossAgentLifecycles(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		config, err := NewConfig(
 			WithAppName("watcher-lifecycle"),
+			WithServiceName("test-service"),
 			WithConfigFile(path),
 		)
 		require.NoError(t, err)
@@ -134,6 +135,7 @@ func TestConfigWatcherRestartsWhenConfigIsReused(t *testing.T) {
 
 	config, err := NewConfig(
 		WithAppName("watcher-reuse"),
+		WithServiceName("test-service"),
 		WithConfigFile(path),
 	)
 	require.NoError(t, err)
@@ -179,7 +181,7 @@ func TestNewAgentFailureStopsWatcherAndConfigCanBeRetried(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	writeConfigRate(t, path, 1)
 
-	config, err := NewConfig(WithConfigFile(path))
+	config, err := NewConfig(WithConfigFile(path), WithServiceName("test-service"))
 	require.NoError(t, err)
 	t.Cleanup(config.Close)
 	failedDone := requireWatcher(t, config)
@@ -203,6 +205,7 @@ func TestDisabledAgentStopsConfigWatcher(t *testing.T) {
 
 	config, err := NewConfig(
 		WithAppName("watcher-disabled"),
+		WithServiceName("test-service"),
 		WithConfigFile(path),
 		WithEnable(false),
 	)
@@ -223,6 +226,7 @@ func TestRejectedConfigWatcherStopsWithoutAffectingRunningAgent(t *testing.T) {
 	newConfig := func() *Config {
 		config, err := NewConfig(
 			WithAppName("watcher-reject"),
+			WithServiceName("test-service"),
 			WithConfigFile(path),
 		)
 		require.NoError(t, err)
@@ -268,6 +272,7 @@ func TestConfigWatcherReloadShutdownRace(t *testing.T) {
 
 	config, err := NewConfig(
 		WithAppName("watcher-race"),
+		WithServiceName("test-service"),
 		WithConfigFile(path),
 	)
 	require.NoError(t, err)

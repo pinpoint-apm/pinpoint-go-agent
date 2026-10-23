@@ -76,14 +76,16 @@ func IsValidId(value string, maxLen int) bool {
 }
 
 // parseNameVersion parses the configured version string (case-insensitive).
+// An empty or unknown value is v4, as NameVersion.getVersion of the Java agent
+// resolves it.
 func parseNameVersion(version string) nameVersion {
 	switch strings.ToLower(strings.TrimSpace(version)) {
 	case "v1":
 		return nameV1
-	case "v4":
-		return nameV4
-	default:
+	case "v3":
 		return nameV3
+	default:
+		return nameV4
 	}
 }
 

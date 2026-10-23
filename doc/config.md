@@ -51,6 +51,7 @@ configuration to the running agent with `pinpoint.ReloadConfig()`:
 ```go
 result := pinpoint.ReloadConfig(`
 applicationName: MyApp
+serviceName: MyService
 collector:
   host: pinpoint-collector
 sampling:
@@ -150,6 +151,7 @@ For `.` delimited path keys, they are accessed in nested field.
 The format of the YAML config file is as follows:
 ``` yaml
 applicationName: "MyAppName"
+serviceName: "MyService"
 collector:
   host: "collector.myhost.com"
 sampling:
@@ -250,23 +252,26 @@ See [Identity Versions](#identity-versions).
 ### Uid.Version
 Uid.Version option selects the agent identity format used to identify the agent to Pinpoint collector.
 Supported values are v1, v3 and v4.
-The default is v3, and unknown or empty values fall back to v3.
+The default is v4, and unknown or empty values fall back to v4, as in the Pinpoint Java agent.
+v4 requires [ServiceName](#servicename), so an agent that sets neither ServiceName nor another
+Uid.Version does not start.
 
-**v4 is not ready for production use yet.**
-The released collectors (3.1.0 and 3.1.1) accept a v4 agent only when ApiKey is set
-and matches `[a-zA-Z0-9\._\-]+` within 255 bytes; otherwise they refuse every call with `INVALID_ARGUMENT`.
-Even then they record every v4 agent under the `DEFAULT` service.
-Collectors from Pinpoint 4.0.0, which is not released yet, accept v4 without an ApiKey.
-Use v1 or v3 until then.
+Whether a collector accepts v4 depends on its release:
+* Pinpoint 4.0.0 and later accept v4, with or without an ApiKey.
+* Pinpoint 3.1.0 and 3.1.1 accept v4 only when ApiKey is set and matches `[a-zA-Z0-9\._\-]+`
+  within 255 bytes, and record every v4 agent under the `DEFAULT` service.
+  Without such a key they refuse every call with `INVALID_ARGUMENT`, and the agent never registers.
+
+Against a 3.1.x collector, set Uid.Version to v3 (ServiceName is then not needed), or set an ApiKey.
 
 * PINPOINT_GO_UID_VERSION
 * string
-* default: "v3"
+* default: "v4"
 * case-insensitive
 
 #### Identity Versions
 
-| | v1 | v3 (default) | v4 |
+| | v1 | v3 | v4 (default) |
 |---|---|---|---|
 | ApplicationName | **required**, max 24 bytes | **required**, max 254 bytes | **required**, max 254 bytes |
 | AgentId | not configurable, always auto-generated | same as v1 | same as v1 |
@@ -300,10 +305,10 @@ it is added by the ping stream for every version.
 
 ### ServiceName
 ServiceName option sets the service name reported to Pinpoint collector.
-It is used only when Uid.Version is v4, where it is required and its length must be between 3 and 254 bytes.
+It is required with Uid.Version v4, the default, and its length must be between 3 and 254 bytes.
 It is ignored for v1 and v3.
 If it is not set, has invalid characters, or its length is out of range, agent startup fails.
-The released collectors record every v4 agent under the `DEFAULT` service whatever this is set to.
+A 3.1.x collector records every v4 agent under the `DEFAULT` service whatever this is set to.
 See [Uid.Version](#uidversion).
 
 * PINPOINT_GO_SERVICENAME
@@ -313,13 +318,13 @@ See [Uid.Version](#uidversion).
 
 ### ApiKey
 ApiKey option sets the api key sent to Pinpoint collector on the `apikey` gRPC header.
-It is used only when Uid.Version is v4, where it is optional.
+It is used only with Uid.Version v4, the default, where it is optional.
 It is ignored for v1 and v3.
 There is no length restriction. It must be printable ASCII (0x20-0x7E), the only characters a gRPC header can carry,
 and surrounding whitespace is removed; any other character aborts startup.
 If it is not set, the agent starts without sending the `apikey` header.
-A 3.1.x collector refuses such an agent, and it also refuses a key that does not match `[a-zA-Z0-9\._\-]+` within 255 bytes.
-A collector from 4.0.0 accepts it.
+A collector from 4.0.0 accepts such an agent. A 3.1.x collector refuses it, and also refuses a key that does not match
+`[a-zA-Z0-9\._\-]+` within 255 bytes.
 The value is masked in agent logs and is never logged in plaintext.
 See [Uid.Version](#uidversion).
 
@@ -1410,6 +1415,7 @@ instrumentation.
 
 ```yaml
 applicationName: "MyApp-Dev"
+serviceName: "MyService"
 agentName: "dev-agent-1"
 
 collector:
@@ -1451,6 +1457,7 @@ Sample a fraction, cap the peak, and log only what you would act on.
 
 ```yaml
 applicationName: "MyApp"
+serviceName: "MyService"
 # The agent id is generated per process, which is what you want when
 # instances are ephemeral. Set agentName for a stable label instead.
 agentName: "myapp-prod"
@@ -1495,6 +1502,7 @@ not.
 
 ```yaml
 applicationName: "MyApp"
+serviceName: "MyService"
 # the agent id is generated per container
 agentName: "myapp"
 collector:
@@ -1511,6 +1519,7 @@ the config file:
 
 ```bash
 PINPOINT_GO_APPLICATIONNAME=MyApp
+PINPOINT_GO_SERVICENAME=MyService
 PINPOINT_GO_AGENTNAME=myapp
 PINPOINT_GO_COLLECTOR_HOST=pinpoint-collector.monitoring.svc.cluster.local
 PINPOINT_GO_SAMPLING_TYPE=PERCENT

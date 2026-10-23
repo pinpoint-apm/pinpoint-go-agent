@@ -33,6 +33,7 @@ func logger(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoZapTest"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithAgentName("GoZapTestAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}

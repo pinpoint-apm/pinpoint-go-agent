@@ -25,6 +25,11 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   unary `SendSpanBatch` requests, which a collector implements from 3.1.0; the
   long-lived `SendSpan` stream of v1 is gone. Against an older collector every
   batch fails and its spans are dropped.
+- **The agent identity defaults to `Uid.Version` v4**, as in the Java agent,
+  and an unknown value falls back to v4. v4 requires `ServiceName`: without it
+  `NewAgent` returns an error, `Enable: false` included. A 3.1.x collector
+  accepts a v4 agent only with an `ApiKey`; against one, set `Uid.Version: v3`,
+  which needs no `ServiceName`.
 - **The agent id is not configurable.** `WithAgentId`, `CfgAgentID`, the
   `AgentId` key, `PINPOINT_GO_AGENTID` and `--pinpoint-agentid` are gone:
   every process generates its own id, so an instance shows up under a new id

@@ -20,11 +20,12 @@ func requireNoAgent(t *testing.T) {
 }
 
 // newReloadAgent starts an agent that talks to no collector and stops it when
-// the test ends.
+// the test ends. It names a service, which the default Uid.Version v4
+// requires, ahead of opts.
 func newReloadAgent(t *testing.T, opts ...ConfigOption) (Agent, *Config) {
 	t.Helper()
 	requireNoAgent(t)
-	config, err := NewConfig(opts...)
+	config, err := NewConfig(append([]ConfigOption{WithServiceName("test-service")}, opts...)...)
 	require.NoError(t, err)
 	config.offGrpc = true
 	agent, err := NewAgent(config)
@@ -114,7 +115,7 @@ func TestReloadConfig_OmittedIdentityIsNotRestartRequired(t *testing.T) {
 // change, and a running v3 agent ignores the v4-only ApiKey on both sides.
 func TestReloadConfig_TrimmedIdentityIsNotRestartRequired(t *testing.T) {
 	t.Setenv("PINPOINT_GO_APPLICATIONNAME", "reload-trim\n")
-	_, config := newReloadAgent(t, WithAgentName("trim-agent"), WithApiKey("unused-key"))
+	_, config := newReloadAgent(t, WithUidVersion("v3"), WithAgentName("trim-agent"), WithApiKey("unused-key"))
 	require.Equal(t, "reload-trim", config.String(CfgAppName))
 	require.Empty(t, config.String(CfgApiKey), "v3 does not use an api key")
 

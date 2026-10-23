@@ -50,6 +50,7 @@ func saveAsync(w http.ResponseWriter, r *http.Request) {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoKafkaAsyncProducer"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 		pinpoint.WithSamplingType("percent"),
 		pinpoint.WithSamplingPercentRate(10),

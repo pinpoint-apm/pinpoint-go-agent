@@ -22,6 +22,7 @@ func processMessage(ctx context.Context, msg *kafka.Message) error {
 func main() {
 	opts := []pinpoint.ConfigOption{
 		pinpoint.WithAppName("GoKafkaConsumer"),
+		pinpoint.WithUidVersion("v3"),
 		pinpoint.WithAgentName("GoKafkaConsumerAgent"),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
 	}
