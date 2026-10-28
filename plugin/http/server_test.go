@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
@@ -445,6 +446,68 @@ func Test_responseWriter_ReadFrom(t *testing.T) {
 	}
 }
 
+// net/http commits the header of an io.Copy with its first byte, so a source
+// that fails before delivering anything leaves the handler free to answer with
+// an error status. Committing 200 up front sent that error as a 200.
+func Test_responseWriter_ReadFromLeavesAFailedCopyUncommitted(t *testing.T) {
+	upstream := errors.New("upstream failed")
+	recorded := make(chan int, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		status := 0
+		w = WrapResponseWriter(w, &status)
+		if _, err := io.Copy(w, iotest.ErrReader(upstream)); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+		}
+		recorded <- status
+	}))
+	defer srv.Close()
+
+	resp, err := srv.Client().Get(srv.URL)
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusBadGateway, resp.StatusCode, "the failed copy committed the response")
+	assert.Equal(t, http.StatusBadGateway, <-recorded)
+}
+
+// flushErrorWriter is a writer whose flush fails, as net/http's do once the
+// client has gone.
+type flushErrorWriter struct {
+	http.ResponseWriter
+	err error
+}
+
+func (w flushErrorWriter) Flush()            {}
+func (w flushErrorWriter) FlushError() error { return w.err }
+
+// http.ResponseController.Flush looks for FlushError before Flush, so a shape
+// with Flush alone answered nil for a client that had gone, and a streaming
+// handler watching that error never stopped. Every flushing shape has to have
+// FlushError, reaching the original writer and recording the implicit 200.
+func Test_responseWriter_FlushError(t *testing.T) {
+	for mask := 0; mask < 8; mask++ {
+		t.Run(fmt.Sprintf("mask%03b", mask), func(t *testing.T) {
+			optional := &optionalResponseWriter{}
+			status := 0
+			wrapped := WrapResponseWriter(responseWriterWithOptionalInterfaces(httptest.NewRecorder(), optional, mask), &status)
+
+			_, ok := wrapped.(interface{ FlushError() error })
+			require.Equal(t, mask&1 != 0, ok, "FlushError must be reachable exactly when Flush is")
+			err := http.NewResponseController(wrapped).Flush()
+			if mask&1 == 0 {
+				assert.ErrorIs(t, err, http.ErrNotSupported)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, 1, optional.flushes, "the flush never reached the original writer")
+			assert.Equal(t, http.StatusOK, status, "a flush commits the implicit 200")
+		})
+	}
+
+	gone := errors.New("client gone")
+	wrapped := WrapResponseWriter(flushErrorWriter{httptest.NewRecorder(), gone}, nil)
+	assert.ErrorIs(t, http.NewResponseController(wrapped).Flush(), gone, "the original writer's flush error was lost")
+}
+
 func Test_responseWriter_PreservesOptionalInterfaces(t *testing.T) {
 	for mask := 0; mask < 8; mask++ {
 		t.Run(fmt.Sprintf("mask%03b", mask), func(t *testing.T) {
@@ -746,6 +809,45 @@ func TestRecordHttpServerResponse_ErrorMarkExcludeKeepsA5xxSuccessful(t *testing
 	assert.Equal(t, 0, span.Err, "an excluded cause must not fail the span")
 	assert.Contains(t, span.annotations(pinpoint.AnnotationHttpStatusCode, "IntValue"),
 		float64(http.StatusInternalServerError), "the status code is still annotated")
+}
+
+// failureSpan records the SetFailure calls made on a span.
+type failureSpan struct {
+	pinpoint.SpanRecorder
+	failures []pinpoint.ErrorCategory
+}
+
+func (s *failureSpan) SetFailure(category ...pinpoint.ErrorCategory) {
+	s.failures = append(s.failures, category...)
+}
+
+// unsampledTracer is the tracer of a request that lost the sampling decision,
+// with a span that records SetFailure.
+type unsampledTracer struct {
+	pinpoint.Tracer
+	span *failureSpan
+}
+
+func (t unsampledTracer) IsSampled() bool             { return false }
+func (t unsampledTracer) Span() pinpoint.SpanRecorder { return t.span }
+
+// An unsampled request feeds the URL statistics too, and an error status fails
+// them through the span's SetFailure, which the unsampled span implements for
+// that: skipped, every unsampled 5xx counted as a success.
+func TestRecordHttpServerResponse_FailsAnUnsampledRequest(t *testing.T) {
+	pptest.StartAgent(t, WithHttpServerStatusCodeError([]string{"5xx"}))
+
+	for _, tt := range []struct {
+		code int
+		want []pinpoint.ErrorCategory
+	}{
+		{http.StatusInternalServerError, []pinpoint.ErrorCategory{pinpoint.ErrorCategoryHttpStatus}},
+		{http.StatusNotFound, nil},
+	} {
+		span := &failureSpan{SpanRecorder: pinpoint.NoopTracer().Span()}
+		RecordHttpServerResponse(unsampledTracer{pinpoint.NoopTracer(), span}, tt.code, http.Header{})
+		assert.Equal(t, tt.want, span.failures, "status %d", tt.code)
+	}
 }
 
 // A recorded response header is read off the writer the handler wrote to, so

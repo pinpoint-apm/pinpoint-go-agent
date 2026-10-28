@@ -529,12 +529,22 @@ func RecordHttpServerResponse(tracer pinpoint.Tracer, status int, h http.Header)
 func RecordHttpServerResponseWithReader(tracer pinpoint.Tracer, status int, h Header) {
 	// A nested layer leaves the status and response headers to the layer that
 	// owns the span; both layers see the same status through the wrapped writer.
-	if tracer.IsSampled() && !pinpoint.IsNestedTracer(tracer) {
-		span := tracer.Span()
-		cfg := httpCfg()
-		recordServerHttpStatus(cfg, span, status)
-		cfg.srvResHeader.recordHeader(span.Annotations(), pinpoint.AnnotationHttpResponseHeader, h)
+	if pinpoint.IsNestedTracer(tracer) {
+		return
 	}
+	span := tracer.Span()
+	cfg := httpCfg()
+	if !tracer.IsSampled() {
+		// An unsampled request still feeds the URL statistics, and an error
+		// status fails them through its span's SetFailure, there for that:
+		// skipped, every unsampled 5xx counted as a success.
+		if cfg.srvStatus.isError(status) {
+			span.SetFailure(pinpoint.ErrorCategoryHttpStatus)
+		}
+		return
+	}
+	recordServerHttpStatus(cfg, span, status)
+	cfg.srvResHeader.recordHeader(span.Annotations(), pinpoint.AnnotationHttpResponseHeader, h)
 }
 
 func wrapHandler(pattern string, handler http.Handler, serverName ...string) http.Handler {
@@ -741,6 +751,10 @@ func (w *responseWriter) WriteHeader(status int) {
 	if status >= 100 && status <= 199 && status != http.StatusSwitchingProtocols {
 		return
 	}
+	w.recordStatus(status)
+}
+
+func (w *responseWriter) recordStatus(status int) {
 	w.wroteHeader = true
 	w.code = status
 	if w.status != nil {
@@ -750,17 +764,24 @@ func (w *responseWriter) WriteHeader(status int) {
 
 // ReadFrom keeps net/http's sendfile fast path (http.ServeFile, io.Copy from a
 // file, reverse proxies) through the wrapper: without it every such response
-// fell back to the generic user-space copy loop. The status is recorded as
-// Write records it; a writer without ReadFrom gets the io.Copy fallback.
-func (w *responseWriter) ReadFrom(r io.Reader) (int64, error) {
-	if !w.wroteHeader {
-		w.WriteHeader(http.StatusOK)
-	}
+// fell back to the generic user-space copy loop. A writer without ReadFrom
+// gets the io.Copy fallback.
+//
+// The header is left to the underlying writer, which commits it with the first
+// byte as net/http does: committed up front, a source that failed before
+// delivering anything answered the handler's own error status with 200. The
+// implicit 200 a delivered byte committed is recorded as Write records it.
+func (w *responseWriter) ReadFrom(r io.Reader) (n int64, err error) {
 	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
-		return rf.ReadFrom(r)
+		n, err = rf.ReadFrom(r)
+	} else {
+		// Wrapped in a plain io.Writer so io.Copy cannot find this ReadFrom again.
+		n, err = io.Copy(struct{ io.Writer }{w.ResponseWriter}, r)
 	}
-	// Wrapped in a plain io.Writer so io.Copy cannot find this ReadFrom again.
-	return io.Copy(struct{ io.Writer }{w.ResponseWriter}, r)
+	if n > 0 && !w.wroteHeader {
+		w.recordStatus(http.StatusOK)
+	}
+	return n, err
 }
 
 func (w *responseWriter) Write(p []byte) (int, error) {
@@ -777,10 +798,26 @@ func (w *responseWriter) flush(f http.Flusher) {
 	f.Flush()
 }
 
+// flushError is Flush with the underlying writer's error: net/http's own
+// writers report a gone client there, and http.ResponseController.Flush asks
+// for FlushError before Flush, so a shape with Flush alone answered nil and a
+// streaming handler watching that error never stopped.
+func (w *responseWriter) flushError() error {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return http.NewResponseController(w.ResponseWriter).Flush()
+}
+
 func (w *responseWriterF) Flush()   { w.responseWriter.flush(w.Flusher) }
 func (w *responseWriterFH) Flush()  { w.responseWriter.flush(w.Flusher) }
 func (w *responseWriterFP) Flush()  { w.responseWriter.flush(w.Flusher) }
 func (w *responseWriterFHP) Flush() { w.responseWriter.flush(w.Flusher) }
+
+func (w *responseWriterF) FlushError() error   { return w.responseWriter.flushError() }
+func (w *responseWriterFH) FlushError() error  { return w.responseWriter.flushError() }
+func (w *responseWriterFP) FlushError() error  { return w.responseWriter.flushError() }
+func (w *responseWriterFHP) FlushError() error { return w.responseWriter.flushError() }
 
 // Unwrap lets http.ResponseController reach the underlying writer.
 func (w *responseWriter) Unwrap() http.ResponseWriter {
