@@ -374,11 +374,11 @@ func Test_spanWorkers_warnAboutSaturatedQueue(t *testing.T) {
 	go agent.superviseWorker("batch", agent.sendSpanBatchWorker)
 	agent.workerWg.Wait()
 
-	assert.Equal(t, 1, strings.Count(buf.String(), "span queue overflow"),
+	assert.Equal(t, 1, strings.Count(buf.String(), "span drops:"),
 		"the worker must warn once per report interval, not once per cycle")
 	assert.Contains(t, buf.String(),
-		fmt.Sprintf("%d dropped in total (oldest overwritten, max queue size %d)",
-			enqueued-queueCap, queueCap))
+		fmt.Sprintf("span drops: %d in total, %d overwritten by span queue overflow (max queue size %d), 0 dropped by the batch sender",
+			enqueued-queueCap, enqueued-queueCap, queueCap))
 }
 
 // A collector outage must not turn metadata drops into metadata inflow. The

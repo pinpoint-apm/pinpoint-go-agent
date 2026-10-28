@@ -264,7 +264,9 @@ loop rather than one per iteration.
   by the `database/sql` or pgx wrapper mean; those lists are within the bound
   by construction and are never cut here. `sql` itself is bounded elsewhere
   (`SQL.CacheLengthLimit`, the normalization cap), and the normalized
-  parameters are never cut.
+  parameters are never cut: a parameter list longer than 64 KiB is dropped as
+  a whole, since a cut one would misplace every value after the cut, and the
+  statement is recorded with its placeholders unfilled.
 
 ## 8. Keep Operation and Error Names Low-Cardinality
 

@@ -75,9 +75,10 @@ type agent struct {
 	statChan    chan *pb.PStatMessage
 
 	// One reporter per bounded queue: each counts the records that queue lost
-	// to overflow and rate-limits its overflow warning. spanDrops counts only
-	// the batches the sender skipped for want of a permit; the span queue's
-	// head-drops live in its per-shard counters and are added at report time.
+	// to overflow and rate-limits its overflow warning. spanDrops counts the
+	// spans the batch sender lost - skipped for want of a permit, failed to
+	// send, or too large for any request; the span queue's head-drops live in
+	// its per-shard counters and are added at report time.
 	urlStatDrops dropReporter
 	metaDrops    dropReporter
 	statDrops    dropReporter
@@ -183,6 +184,14 @@ const (
 	defaultAgentInfoMaxTryPerAttempt  = 3
 
 	maxSqlSize = 64 * 1024
+	// maxSqlParamSize bounds the literal parameters a SQL span event carries
+	// (SetSQL). They ride on the span itself and were its one field with no
+	// bound short of maxSqlNormalizeLength, so a chunk of events each carrying
+	// a bulk insert's worth of literals outgrew the request that carried it.
+	// The published statement is cut at maxSqlSize, so parameters well past
+	// that fill placeholders the web never shows anyway. A longer list is
+	// dropped whole, never cut (see SetSQL).
+	maxSqlParamSize = maxSqlSize
 	// maxErrorMessageSize abbreviates error messages to 256 chars before
 	// recording them on a span or span event.
 	maxErrorMessageSize = 256
@@ -995,14 +1004,24 @@ func (agent *agent) sendSpanBatchWorker() {
 	Log("agent").Infof("end span batch goroutine")
 }
 
-// reportSpanDrops warns about spans lost to a saturated span queue or skipped
-// by the batch sender, and returns how long the rate limit holds back a total
-// it did not log. Called by the span batch worker once per cycle: producers
-// only bump their shard's counter, so the clock read and the logging land on
-// the consumer.
+// reportSpanDrops warns about spans lost to a saturated span queue or by the
+// batch sender, and returns how long the rate limit holds back a total it did
+// not log. Called by the span batch worker once per cycle: producers only bump
+// their shard's counter, so the clock read and the logging land on the
+// consumer. The line keeps the two causes apart: an overflow is sized away
+// with Span.QueueSize, a sender loss is a collector that is down, slow or
+// refusing the request, and one "queue overflow" for both sent an operator to
+// the wrong knob.
 func (agent *agent) reportSpanDrops() time.Duration {
-	total := agent.spanQueue.dropCount() + agent.spanDrops.dropped.Load()
-	return agent.spanDrops.reportTotal(total, "span", agent.spanQueue.capacity)
+	overflow, sender := agent.spanQueue.dropCount(), agent.spanDrops.dropped.Load()
+	held, ok := agent.spanDrops.acquire(overflow + sender)
+	if !ok {
+		return held
+	}
+	Log("agent").Warnf("span drops: %d in total, %d overwritten by span queue overflow (max queue size %d), "+
+		"%d dropped by the batch sender (no permit, a failed or an oversize request)",
+		overflow+sender, overflow, agent.spanQueue.capacity, sender)
+	return 0
 }
 
 func (agent *agent) enqueueSpan(span *spanChunk) bool {

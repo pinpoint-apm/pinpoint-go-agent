@@ -677,7 +677,9 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 		if !sleepUnlessStopped(agentGrpc.agent, retryDelay) {
 			return false
 		}
-		backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent")
+		if !backOffUntilReady(agentGrpc.agent, agentGrpc.agentConn, "agent") {
+			return false
+		}
 	}
 	return false
 }
@@ -758,11 +760,12 @@ const metaRetryQueueSize = 1000
 // log. What was lost is still counted (dropReporter), and each line says how
 // many it held back.
 var (
-	metaSendLog         = logThrottle{src: "grpc"}
-	metaSkipLog         = logThrottle{src: "grpc"}
-	spanBatchSkipLog    = logThrottle{src: "grpc"}
-	spanBatchFailLog    = logThrottle{src: "grpc"}
-	spanBatchPartialLog = logThrottle{src: "grpc"}
+	metaSendLog          = logThrottle{src: "grpc"}
+	metaSkipLog          = logThrottle{src: "grpc"}
+	spanBatchSkipLog     = logThrottle{src: "grpc"}
+	spanBatchFailLog     = logThrottle{src: "grpc"}
+	spanBatchPartialLog  = logThrottle{src: "grpc"}
+	spanBatchOversizeLog = logThrottle{src: "grpc"}
 )
 
 // metaVerdict is what becomes of a metadata item after one send attempt.
@@ -1137,14 +1140,15 @@ func waitUntilReady(ctx context.Context, grpcConn *grpc.ClientConn, timeout time
 }
 
 // backOffUntilReady waits for the connection to become ready, backing off
-// between attempts. It returns as soon as shutdown begins, so a pending
-// back-off interval does not delay it.
-func backOffUntilReady(agent *agent, grpcConn *grpc.ClientConn, which string) {
+// between attempts, and reports whether it did. It returns false as soon as
+// shutdown begins, so a pending back-off interval does not delay it.
+func backOffUntilReady(agent *agent, grpcConn *grpc.ClientConn, which string) bool {
 	for attempt := 0; !agent.stopping(); attempt++ {
 		if waitUntilReady(agent.stopSignal(), grpcConn, backOffSleep(attempt), which) {
-			return
+			return true
 		}
 	}
+	return false
 }
 
 // sleepUnlessStopped waits d, returning false as soon as shutdown begins so
@@ -1186,7 +1190,14 @@ func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc f
 			continue
 		}
 		readyFailures = 0
-		backOffUntilReady(agent, grpcConn, which)
+		// A wait cut short by shutdown ends the retries. The loop condition
+		// alone did not: workerContinues holds through the stopping phase,
+		// while the wait returns at once from it, so a connection that was
+		// not READY at shutdown spun this loop flat out - a failed open and
+		// an error line per turn - until the phase reached stopped.
+		if !backOffUntilReady(agent, grpcConn, which) {
+			return false
+		}
 	}
 	return false
 }

@@ -198,8 +198,18 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	// Neither nsql nor param is abbreviated: cacheSql and cacheSqlUid abbreviate
 	// only the text they publish, the id and the UID cover the whole normalized
 	// statement, and the server splits param on ',' to fill the <idx>#/<idx>$
-	// placeholders of nsql, so a cut param leaves placeholders exposed.
-	//
+	// placeholders of nsql, so a cut param leaves placeholders exposed. A param
+	// past maxSqlParamSize is dropped whole instead, and the web shows the
+	// statement with its placeholders unfilled, as it shows one that had no
+	// literals: the statement keeps its id, its UID and its count, and the
+	// chunk carrying it stays sendable (sendSpanBatchAsync).
+	if len(param) > maxSqlParamSize {
+		if IsDebugLogLevelEnabled() {
+			Log("span").Debugf("SetSQL: %d bytes of SQL parameters past the cap dropped, statement recorded without them", len(param))
+		}
+		param = ""
+	}
+
 	// args is bounded by maxBindValueAnnotationSize rather than by
 	// SQL.MaxBindValueSize itself, so a list the driver writers composed within
 	// the limit passes through untouched while args from a caller that bounds

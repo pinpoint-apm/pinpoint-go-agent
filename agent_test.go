@@ -1412,10 +1412,14 @@ func Test_sendSpanBatchWorker_reportsHeldBackDrops(t *testing.T) {
 	agent.spanQueue.close()
 	agent.workerWg.Wait()
 
-	assert.Equal(t, 3, strings.Count(buf.String(), "span queue overflow"))
+	assert.Equal(t, 3, strings.Count(buf.String(), "span drops:"))
 	for _, total := range []int{1, 31, 531} {
-		assert.Contains(t, buf.String(), fmt.Sprintf("span queue overflow: %d dropped in total", total))
+		assert.Contains(t, buf.String(), fmt.Sprintf("span drops: %d in total", total))
 	}
+	// Every drop here was the sender's: the line says so, rather than blaming
+	// a queue that never overflowed.
+	assert.Contains(t, buf.String(), "0 overwritten by span queue overflow (max queue size")
+	assert.Contains(t, buf.String(), "531 dropped by the batch sender")
 }
 
 // Each overflow head-drops the oldest record and queues the new one, so a full

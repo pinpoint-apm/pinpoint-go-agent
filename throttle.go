@@ -70,20 +70,33 @@ func (r *dropReporter) report(queue string, queueSize int) time.Duration {
 // It returns how long that limit holds back a total it did not log, for a
 // consumer that would otherwise go quiet before reporting it.
 func (r *dropReporter) reportTotal(total int64, queue string, queueSize int) time.Duration {
+	held, ok := r.acquire(total)
+	if !ok {
+		return held
+	}
+	Log("agent").Warnf(
+		"%s queue overflow: %d dropped in total (oldest overwritten, max queue size %d)",
+		queue, total, queueSize)
+	return 0
+}
+
+// acquire is the rate limit alone, for a caller with a line of its own to log
+// (reportSpanDrops). It reports whether a warning about total may be logged
+// now - total differs from the last one logged and the limit is open - and
+// records total when it may. A refused call returns how long the limit holds
+// it back, 0 when there was nothing new to report.
+func (r *dropReporter) acquire(total int64) (held time.Duration, ok bool) {
 	if total == r.reported.Load() {
-		return 0
+		return 0, false
 	}
 
 	now := time.Now().UnixNano()
 	next := r.reportAt.Load()
 	if now < next || !r.reportAt.CompareAndSwap(next, now+int64(dropReportInterval)) {
-		return time.Duration(r.reportAt.Load() - now)
+		return time.Duration(r.reportAt.Load() - now), false
 	}
 	r.reported.Store(total)
-	Log("agent").Warnf(
-		"%s queue overflow: %d dropped in total (oldest overwritten, max queue size %d)",
-		queue, total, queueSize)
-	return 0
+	return 0, true
 }
 
 // logThrottle rate-limits one warning site to a message per dropReportInterval,

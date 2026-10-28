@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"cmp"
 	"context"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -10,6 +11,7 @@ import (
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -153,37 +155,101 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 				return
 			}
 
-			if IsDebugLogLevelEnabled() {
-				Log("grpc").Debugf("SendSpanBatch size=%d messageSize=%d", len(spanMessageBatch.GetSpan()), proto.Size(spanMessageBatch))
-			}
-			if IsTraceLogLevelEnabled() {
-				Log("grpc").Tracef("PSpanMessageBatch: %s", spanMessageBatch.String())
-			}
-
 			if grpc.EnableTracing {
 				// Completed unary traces can also retain their request.
 				spanMessageBatch = proto.Clone(spanMessageBatch).(*pb.PSpanMessageBatch)
 			}
 
-			ctx, cancel := context.WithTimeout(grpcMetadataContext(spanGrpc.agent, -1), sendStreamTimeOut)
-			defer cancel()
-
-			var opts []grpc.CallOption
-			if spanGrpc.compress.Load() {
-				opts = gzipCallOptions
+			// Measured against Collector.Grpc.MaxSendMessageSize before the
+			// send: grpc-go refuses a request past it before writing a byte,
+			// and a collector refuses one past its own inbound limit, either
+			// way losing every span the request carried. One size pass is
+			// what the common case costs; a batch past the limit goes out in
+			// as many requests as it takes, and only a span that no request
+			// can carry is dropped (splitSpanMessages).
+			maxSize := spanGrpc.agent.config.Int(CfgCollectorGrpcMaxSendMessageSize)
+			size := proto.Size(spanMessageBatch)
+			if IsDebugLogLevelEnabled() {
+				Log("grpc").Debugf("SendSpanBatch size=%d messageSize=%d", len(spanMessageBatch.GetSpan()), size)
 			}
-			response, err := spanGrpc.spanClient.SendSpanBatch(ctx, spanMessageBatch, opts...)
-			if err != nil {
-				disableGzipIfRejected(&spanGrpc.compress, err, "span batches")
-				// Lost like a head-drop or a permit skip, and counted with
-				// them, so reportSpanDrops covers every cause.
-				spanGrpc.agent.spanDrops.record(int64(len(chunks)))
-				spanBatchFailLog.infof("SendSpanBatch failed - %d spans dropped: %v", len(chunks), err)
+			if IsTraceLogLevelEnabled() {
+				Log("grpc").Tracef("PSpanMessageBatch: %s", spanMessageBatch.String())
+			}
+			if size <= maxSize {
+				spanGrpc.sendSpanMessageBatch(spanMessageBatch)
 				return
 			}
-			handleSpanBatchResponse(response)
+			for _, msgs := range splitSpanMessages(spanMessageBatch.GetSpan(), maxSize, &spanGrpc.agent.spanDrops) {
+				spanGrpc.sendSpanMessageBatch(&pb.PSpanMessageBatch{Span: msgs})
+			}
 		})
 	}()
+}
+
+// sendSpanMessageBatch makes one SendSpanBatch call under sendStreamTimeOut.
+// The spans of a failed call are lost like a head-drop or a permit skip, and
+// counted with them, so reportSpanDrops covers every cause.
+func (spanGrpc *spanGrpc) sendSpanMessageBatch(batch *pb.PSpanMessageBatch) {
+	ctx, cancel := context.WithTimeout(grpcMetadataContext(spanGrpc.agent, -1), sendStreamTimeOut)
+	defer cancel()
+
+	var opts []grpc.CallOption
+	if spanGrpc.compress.Load() {
+		opts = gzipCallOptions
+	}
+	response, err := spanGrpc.spanClient.SendSpanBatch(ctx, batch, opts...)
+	if err != nil {
+		disableGzipIfRejected(&spanGrpc.compress, err, "span batches")
+		spanGrpc.agent.spanDrops.record(int64(len(batch.GetSpan())))
+		spanBatchFailLog.infof("SendSpanBatch failed - %d spans dropped: %v", len(batch.GetSpan()), err)
+		return
+	}
+	handleSpanBatchResponse(response)
+}
+
+// splitSpanMessages groups msgs, in order, into batches whose serialized size
+// stays within maxSize, placing each message by its own framed size. A message
+// over the limit on its own is dropped and counted on drops: no request could
+// carry it. Called only for a batch already measured past the limit, so the
+// size pass per message is paid on that path alone.
+func splitSpanMessages(msgs []*pb.PSpanMessage, maxSize int, drops *dropReporter) [][]*pb.PSpanMessage {
+	var batches [][]*pb.PSpanMessage
+	start, size := 0, 0
+	for i, m := range msgs {
+		// The message as the batch frames it: the span field's tag and the
+		// length prefix, then the message itself.
+		n := protowire.SizeTag(1) + protowire.SizeBytes(proto.Size(m))
+		if n > maxSize {
+			if i > start {
+				batches = append(batches, msgs[start:i])
+			}
+			start, size = i+1, 0
+			drops.record(1)
+			spanBatchOversizeLog.warnf("span dropped: %d bytes serialized exceeds %s %d, which no request can carry: %s",
+				n, CfgCollectorGrpcMaxSendMessageSize, maxSize, describeSpanMessage(m))
+			continue
+		}
+		if size+n > maxSize {
+			batches = append(batches, msgs[start:i])
+			start, size = i, 0
+		}
+		size += n
+	}
+	if start < len(msgs) {
+		batches = append(batches, msgs[start:])
+	}
+	return batches
+}
+
+// describeSpanMessage names the span a message carries for a log line, by its
+// transaction id and span id, whichever of the two shapes it has.
+func describeSpanMessage(m *pb.PSpanMessage) string {
+	tx, spanId := m.GetSpan().GetTransactionId(), m.GetSpan().GetSpanId()
+	if c := m.GetSpanChunk(); c != nil {
+		tx, spanId = c.GetTransactionId(), c.GetSpanId()
+	}
+	return TransactionId{tx.GetAgentId(), tx.GetAgentStartTime(), tx.GetSequence()}.String() +
+		" span " + strconv.FormatInt(spanId, 10)
 }
 
 // acquireSpanBatchPermit waits up to the configured flush timeout for an async batch request slot.

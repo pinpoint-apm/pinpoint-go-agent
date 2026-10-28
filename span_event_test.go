@@ -81,14 +81,15 @@ func Test_spanEvent_SetSQLBoundsAnnotationValues(t *testing.T) {
 	cfg.Set(CfgSQLMaxBindValueSize, limit)
 	span := testSpanWithConfig(cfg)
 	se := newSpanEvent(span, "query")
-	literal := strings.Repeat("l", maxSqlSize+100)
+	literal := strings.Repeat("l", maxSqlParamSize) // at the cap: kept whole
 	args := strings.Repeat("a", 1024)
 
 	se.SetSQL("SELECT '"+literal+"'", args)
 
 	assert.Len(t, se.annotations.values, 1)
 	annotation := se.annotations.values[0]
-	// Only the bind values are bounded: the normalized literal is a parameter
+	// Only the bind values are bounded by SQL.MaxBindValueSize: the normalized
+	// literal is a parameter and passes whole up to maxSqlParamSize, while
 	// the limit is the room the bind value writers get for the values they
 	// abbreviate and for their own markers.
 	assert.Equal(t, literal, annotation.s1)
@@ -114,6 +115,22 @@ func Test_spanEvent_SetSQLKeepsParamOfLargeInList(t *testing.T) {
 	assert.Len(t, se.annotations.values, 1)
 	assert.Equal(t, param, se.annotations.values[0].s1)
 	assert.Equal(t, args[:maxBindValueAnnotationSize(limit)]+"...(1024)", se.annotations.values[0].s2)
+}
+
+// A parameter list past maxSqlParamSize is dropped whole, never cut: the
+// statement keeps its id, so the web shows it with the placeholders unfilled,
+// as it shows a statement that had no literals.
+func Test_spanEvent_SetSQLDropsParamPastTheCap(t *testing.T) {
+	se := newSpanEvent(testSpanWithConfig(defaultConfig()), "query")
+	literal := strings.Repeat("x", maxSqlParamSize+1)
+
+	se.SetSQL("SELECT '"+literal+"'", "")
+
+	require.Len(t, se.annotations.values, 1)
+	annotation := se.annotations.values[0]
+	assert.EqualValues(t, AnnotationSqlId, annotation.key)
+	assert.NotZero(t, annotation.i1, "the statement keeps its id")
+	assert.Empty(t, annotation.s1, "the parameters are dropped whole")
 }
 
 // SetSQL's own bound exists for a caller that composes args itself; a list the

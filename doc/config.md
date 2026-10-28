@@ -443,6 +443,10 @@ The default is false. Agents older than this release always behaved as if it wer
 
 ### Collector.Grpc.MaxSendMessageSize
 Collector.Grpc.MaxSendMessageSize option sets the max size in bytes of a gRPC message the agent can send.
+Keep it at or below the collector's inbound limit: a request over either limit is refused whole, with every
+span in it. The span batch sender measures each batch against this option before sending it and sends one
+over the limit in several requests; a single span chunk over the limit on its own cannot be sent at all and
+is dropped, with a `span dropped: ... exceeds Collector.Grpc.MaxSendMessageSize` warning naming the span.
 
 * PINPOINT_GO_COLLECTOR_GRPC_MAXSENDMESSAGESIZE
 * int
@@ -866,7 +870,9 @@ SQL.MaxBindValueSize option sets the max length of traced bind value for SQL Dri
 It applies to bind values only. A truncated list ends with a
 `...(number of bind values)` marker, appended past the limit. The parameters
 extracted by SQL normalization are never truncated, because the server splits
-them on `,` to restore the original statement. Only
+them on `,` to restore the original statement; a parameter list longer than
+64KB is dropped as a whole instead, and the statement is shown with its
+placeholders unfilled. Only
 the SQL text published as metadata is truncated, at 64KB, and it carries a
 `...(original length)` marker.
 

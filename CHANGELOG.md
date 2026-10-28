@@ -422,6 +422,23 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Fixed
 
+- **A span batch over `Collector.Grpc.MaxSendMessageSize` is sent in several
+  requests, not lost.** grpc-go refuses a request past the limit before
+  sending it, and the collector refuses one past its own inbound limit, so an
+  oversize batch lost every span in it - up to `Collector.Grpc.SpanBatchSize`
+  of them - with an info line. The sender now measures each batch and sends
+  one over the limit in as many requests as it takes; only a span chunk too
+  large for any request is dropped, with a warning naming the span. The SQL
+  parameters a span event carries, the one span field with no bound of its
+  own, are dropped whole past 64 KiB and the statement is shown with its
+  placeholders unfilled. The rate-limited drop warning now tells a span queue
+  overflow from a sender loss, where every loss read as `span queue overflow`.
+- **Shutdown during a collector outage no longer spins the stream workers.**
+  The ping, stat and command workers kept retrying to open their stream
+  through the stopping phase while the readiness wait returned at once from
+  it, so a stream that could not open was retried flat out - a failed open
+  and an error line per turn - until the workers were stopped. A wait cut
+  short by shutdown now ends the retries.
 - **`Sampling.PercentRate` is rounded to hundredths of a percent, not
   truncated.** `0.29 * 100` is `28.999999999999996` in float64, so 0.29%
   sampled 0.28%, 2.3% sampled 2.29% and 4.35% sampled 4.34%. A rate below the

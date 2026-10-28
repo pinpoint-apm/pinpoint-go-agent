@@ -249,7 +249,6 @@ func WithActiveProfile(profile string) ConfigOption { return withValue(CfgActive
 func WithSQLTraceBindValue(trace bool) ConfigOption { return withValue(CfgSQLTraceBindValue, trace) }
 
 // WithSQLMaxBindValueSize sets the max length of traced bind value for SQL Driver.
-// It also caps the literal parameters extracted by SQL normalization.
 func WithSQLMaxBindValueSize(size int) ConfigOption { return withValue(CfgSQLMaxBindValueSize, size) }
 
 // WithSQLTraceCommit enables commit tracing for SQL Driver.

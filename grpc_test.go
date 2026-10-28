@@ -266,6 +266,35 @@ func Test_backOffUntilReady_abortsOnShutdown(t *testing.T) {
 	}
 }
 
+// A wait for readiness that shutdown cuts short ends the retries. With the
+// phase stopping, workerContinues still holds while backOffUntilReady returns
+// at once, and the loop between the two spun flat out - millions of failed
+// opens, an error line each - until the phase reached stopped, a window that
+// Config.Close can hold open for seconds.
+func Test_newStreamWithRetry_stopsOnceShutdownCutsTheWait(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.config.offGrpc = false
+	// An idle channel is not READY, so a failed open goes on to wait for it.
+	conn, err := grpc.NewClient("127.0.0.1:1", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+	agent.signalShutdown()
+	require.Equal(t, phaseStopping, agent.enable.current())
+
+	attempts := 0
+	done := make(chan bool, 1)
+	go func() {
+		done <- newStreamWithRetry(agent, conn, func() bool { attempts++; return false }, "test")
+	}()
+	select {
+	case ok := <-done:
+		assert.False(t, ok, "no stream was opened")
+	case <-time.After(time.Second):
+		t.Fatal("newStreamWithRetry kept retrying while the agent was stopping")
+	}
+	assert.Equal(t, 1, attempts, "one open; the wait shutdown cut short ends the retries")
+}
+
 func Test_backOffSleep_rampsGentlyToCeiling(t *testing.T) {
 	// 3s x 1.2^attempt, clamped at 30s, then randomized by +/-30%.
 	wantMillis := []float64{
@@ -2014,6 +2043,74 @@ func Test_spanGrpc_sendSpanBatchAsync_permitExhaustionDropsBatch(t *testing.T) {
 	spanGrpc.awaitInFlightSpanBatch()
 	assert.Equal(t, 2, client.requestCount(), "the released permit lets the next batch through")
 	assert.Empty(t, spanGrpc.concurrentRequestPermit)
+}
+
+// A batch past Collector.Grpc.MaxSendMessageSize goes out in several requests
+// rather than being refused whole, and a span chunk too large for any request
+// is the only thing dropped.
+func Test_spanGrpc_sendSpanBatchAsync_splitsAnOversizeBatch(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+
+	agent := newTestAgent(defaultConfig())
+	client := &mockSpanGrpcClient{}
+	spanGrpc := newMockSpanGrpc(agent)
+	spanGrpc.spanClient = client
+
+	// Four chunks of a little over 1 KB and a limit that takes two per
+	// request; the fifth is over the limit on its own.
+	const limit = 2500
+	agent.config.Set(CfgCollectorGrpcMaxSendMessageSize, limit)
+	chunk := func(size int) *spanChunk {
+		span := defaultSpan(agent)
+		span.NewSpanEvent("event")
+		span.SpanEvent().Annotations().AppendString(AnnotationArgs0, strings.Repeat("x", size))
+		span.EndSpanEvent()
+		return span.newEventChunk(true)
+	}
+	spanGrpc.sendSpanBatchAsync([]*spanChunk{chunk(1000), chunk(1000), chunk(1000), chunk(1000), chunk(3000)})
+	spanGrpc.awaitInFlightSpanBatch()
+
+	require.Equal(t, 2, client.requestCount(), "two spans fit a request")
+	sent := 0
+	for _, req := range client.requests {
+		assert.LessOrEqual(t, proto.Size(req), limit, "every request stays within the limit")
+		sent += len(req.GetSpan())
+	}
+	assert.Equal(t, 4, sent, "every span a request can carry is sent")
+	assert.EqualValues(t, 1, agent.spanDrops.dropped.Load(), "the one span no request can carry is dropped")
+	assert.Contains(t, buf.String(), "span dropped: ")
+	assert.Contains(t, buf.String(), "exceeds "+CfgCollectorGrpcMaxSendMessageSize+" 2500")
+	assert.Empty(t, spanGrpc.concurrentRequestPermit)
+}
+
+// splitSpanMessages keeps the order and the grouping exact: a batch is cut
+// where the next message would not fit, and an oversize message is dropped
+// without taking the messages around it with it.
+func Test_splitSpanMessages(t *testing.T) {
+	msg := func(size int) *pb.PSpanMessage {
+		return &pb.PSpanMessage{Field: &pb.PSpanMessage_Span{Span: &pb.PSpan{
+			TransactionId: &pb.PTransactionId{AgentId: "a", Sequence: int64(size)},
+			AcceptEvent:   &pb.PAcceptEvent{Rpc: strings.Repeat("r", size)},
+		}}}
+	}
+	framed := func(m *pb.PSpanMessage) int {
+		return proto.Size(&pb.PSpanMessageBatch{Span: []*pb.PSpanMessage{m}})
+	}
+	small, big := msg(100), msg(1000)
+	limit := framed(small)*2 + framed(small)/2 // two small ones, not three
+
+	var drops dropReporter
+	batches := splitSpanMessages([]*pb.PSpanMessage{small, small, small, big, small}, limit, &drops)
+
+	require.Len(t, batches, 3)
+	assert.Equal(t, []*pb.PSpanMessage{small, small}, batches[0])
+	assert.Equal(t, []*pb.PSpanMessage{small}, batches[1], "the cut lands before the message that does not fit")
+	assert.Equal(t, []*pb.PSpanMessage{small}, batches[2], "the oversize message is dropped, its neighbours kept")
+	assert.EqualValues(t, 1, drops.dropped.Load())
+	for _, b := range batches {
+		assert.LessOrEqual(t, proto.Size(&pb.PSpanMessageBatch{Span: b}), limit)
+	}
 }
 
 // A failed send returns its permit, so a collector outage cannot leak the
