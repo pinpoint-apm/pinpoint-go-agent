@@ -33,6 +33,7 @@ package ppkratosv3
 
 import (
 	"context"
+	nethttp "net/http"
 	"net/textproto"
 	"strings"
 
@@ -149,7 +150,7 @@ func ClientMiddleware() middleware.Middleware {
 					se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, makeUrl(tr, remote))
 				}
 
-				tracer.Inject(headerWriter{tr.RequestHeader(), tr.Kind()})
+				tracer.Inject(clientHeaderWriter(tr))
 				reply, err = handler(ctx, req)
 				// Guarded: SetError is an interface method, so its variadic
 				// name escapes and allocated on every call, nil error and all.
@@ -248,11 +249,31 @@ func (r headerReader) Get(key string) (string, bool) {
 	return v, v != ""
 }
 
-// headerWriter is Inject's carrier over a kratos transport.Header, spelling
-// the keys as headerReader reads them.
+// headerWriter is Inject's carrier over a kratos transport.Header, or the
+// http.Header clientHeaderWriter gives a request, spelling the keys as
+// headerReader reads them.
 type headerWriter struct {
-	hdr  transport.Header
+	hdr interface {
+		Set(key, value string)
+	}
 	kind transport.Kind
+}
+
+// clientHeaderWriter is the carrier of a client call's request header. A
+// kratos HTTP request may carry a nil one: the http.Header CallOption makes
+// the caller's header the request's as it is, and kratos's own example passes
+// a nil `var header http.Header`. kratos writes into it only for a body or a
+// user agent, so such a GET worked without this middleware and panicked on
+// the nil map with it. The request gets a header of its own instead, which
+// Invoke sends: the transport's carrier still holds the nil map.
+func clientHeaderWriter(tr transport.Transporter) headerWriter {
+	if ht, ok := tr.(http.Transporter); ok {
+		if req := ht.Request(); req != nil && req.Header == nil {
+			req.Header = nethttp.Header{}
+			return headerWriter{req.Header, tr.Kind()}
+		}
+	}
+	return headerWriter{tr.RequestHeader(), tr.Kind()}
 }
 
 func (w headerWriter) Set(key string, value string) {

@@ -149,7 +149,8 @@ func TestRouter_PassesThroughWhenAgentDisabled(t *testing.T) {
 	r.GET("/hello/{name}", func(ctx *fasthttp.RequestCtx) {
 		called = true
 		assert.Equal(t, "pinpoint", ctx.UserValue("name"), "route parameter")
-		assert.Nil(t, ctx.UserValue(ppfasthttp.CtxKey), "a disabled agent still stored a tracer context")
+		tracer := pinpoint.FromContext(ctx.UserValue(ppfasthttp.CtxKey).(context.Context))
+		assert.Equal(t, pinpoint.NoopTracer(), tracer, "a disabled agent must hand the handler a no-op tracer")
 		ctx.SetStatusCode(http.StatusNoContent)
 	})
 

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/go-kratos/kratos/v2/transport"
+	khttp "github.com/go-kratos/kratos/v2/transport/http"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
@@ -310,6 +311,42 @@ func TestClientAndServerShareOneTransaction(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, callee)
 	assert.Equal(t, caller.TransactionId().String(), callee.TransactionId().String())
+}
+
+// kratos's http.Header CallOption makes the caller's header the request's as
+// it is, and the one its own example passes is a nil `var header http.Header`.
+// A GET with it carries no body, so kratos writes nothing into the nil map;
+// the middleware's Inject did and panicked. The call has to go out with the
+// trace headers, and the option still hands back the reply header.
+func TestClientMiddleware_NilRequestHeader(t *testing.T) {
+	pptest.StartAgent(t)
+
+	received := make(chan http.Header, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("{}"))
+	}))
+	defer srv.Close()
+
+	conn, err := khttp.NewClient(context.Background(),
+		khttp.WithEndpoint(srv.Listener.Addr().String()),
+		khttp.WithMiddleware(ClientMiddleware()))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
+	defer tracer.EndSpan()
+
+	var header http.Header
+	reply := map[string]any{}
+	err = conn.Invoke(pinpoint.NewContext(context.Background(), tracer),
+		http.MethodGet, "/hello", nil, &reply, khttp.Header(&header))
+	require.NoError(t, err)
+
+	got := <-received
+	assert.Equal(t, tracer.TransactionId().String(), got.Get(pinpoint.HeaderTraceId))
+	assert.Equal(t, "application/json", header.Get("Content-Type"), "the CallOption lost the reply header")
 }
 
 // A call made without a kratos client transport must still go through.

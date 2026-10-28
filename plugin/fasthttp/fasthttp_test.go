@@ -258,13 +258,15 @@ func TestWrapHandler_PanicPropagates(t *testing.T) {
 	assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "a panicking handler must fail the span")
 }
 
-// With no agent running the wrapper must be a straight pass-through, and must
-// not leave a user value the handler would type-assert on.
+// With no agent running the wrapper must be a straight pass-through that still
+// leaves a context under CtxKey: the documented handler type-asserts it
+// unchecked, and fasthttp does not recover the panic a missing one raised.
 func TestWrapHandler_PassesThroughWhenAgentDisabled(t *testing.T) {
 	called := false
 	h := WrapHandler(func(ctx *fasthttp.RequestCtx) {
 		called = true
-		assert.Nil(t, ctx.UserValue(CtxKey), "a disabled agent still stored a tracer context")
+		tracer := pinpoint.FromContext(ctx.UserValue(CtxKey).(context.Context))
+		assert.Equal(t, pinpoint.NoopTracer(), tracer, "a disabled agent must hand the handler a no-op tracer")
 		ctx.SetStatusCode(http.StatusNoContent)
 	})
 
@@ -273,6 +275,15 @@ func TestWrapHandler_PassesThroughWhenAgentDisabled(t *testing.T) {
 
 	require.True(t, called, "the handler did not run")
 	assert.Equal(t, http.StatusNoContent, ctx.Response.StatusCode())
+
+	// An outer layer's context is the handler's, not replaced by the no-op one.
+	outer, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx = newRequestCtx(http.MethodGet, "http://localhost/hello")
+	ctx.SetUserValue(CtxKey, outer)
+	WrapHandler(func(ctx *fasthttp.RequestCtx) {
+		assert.Same(t, outer, ctx.UserValue(CtxKey), "the wrapper replaced an outer layer's context")
+	})(ctx)
 }
 
 // DoClient is what links the caller's span to the callee's, so it has to

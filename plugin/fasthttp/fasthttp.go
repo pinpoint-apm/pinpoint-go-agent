@@ -13,7 +13,8 @@
 //	})
 //
 // WrapHandler sets the pinpoint.Tracer as a user value of fasthttp handler's context.
-// By using the ppfasthttp.CtxKey, this tracer can be obtained.
+// By using the ppfasthttp.CtxKey, this tracer can be obtained. The value is
+// there on every request, a no-op tracer's while the agent is disabled.
 //
 //	func requestHandler(ctx *fasthttp.RequestCtx) {
 //	    tracer := pinpoint.FromContext(ctx.UserValue(ppfasthttp.CtxKey).(context.Context))
@@ -40,6 +41,10 @@ import (
 const serverName = "FastHttp Server"
 const CtxKey = "pinpoint"
 
+// noopContext is the CtxKey value of a request served while the agent is
+// disabled. One shared value, so the disabled path allocates nothing.
+var noopContext = pinpoint.NewContext(context.Background(), pinpoint.NoopTracer())
+
 // WrapHandler wraps the given http request handler.
 func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.RequestHandler {
 	handlerName := pphttp.HandlerFuncName(handler)
@@ -50,6 +55,15 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 
 	return func(ctx *fasthttp.RequestCtx) {
 		if !pinpoint.GetAgent().Enable() {
+			// The handler still finds a context under CtxKey, as the documented
+			// unchecked assertion expects: left unset, the assertion panicked,
+			// and fasthttp recovers no handler panic, so every request took the
+			// process down until the agent was enabled - for a collector that
+			// does not answer at startup, until it does. An outer layer's
+			// context is kept.
+			if _, ok := ctx.UserValue(CtxKey).(context.Context); !ok {
+				ctx.SetUserValue(CtxKey, noopContext)
+			}
 			handler(ctx)
 			return
 		}
