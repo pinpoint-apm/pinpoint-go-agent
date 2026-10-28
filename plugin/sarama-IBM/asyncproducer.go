@@ -16,18 +16,27 @@ type AsyncProducer interface {
 
 type asyncProducer struct {
 	sarama.AsyncProducer
-	addrs        []string
-	config       *sarama.Config
-	inputContext chan *sarama.ProducerMessage
-	input        chan *sarama.ProducerMessage
-	successes    chan *sarama.ProducerMessage
-	errors       chan *sarama.ProducerError
-	done         chan struct{}
-	inputDone    chan struct{}
-	ackDone      chan struct{}
-	drainDone    chan struct{}
-	flush        chan chan struct{}
-	closeOnce    sync.Once
+	addrs  []string
+	config *sarama.Config
+	// input carries what Input and InputContext both accept, in one FIFO: two
+	// channels the forwarder picked between at random reordered one
+	// goroutine's messages across the two, and a key's messages with them.
+	input chan *sarama.ProducerMessage
+	// inputLock is held shared by InputContext's sends and exclusively by the
+	// drainer while it closes input, which sets inputClosed.
+	inputLock   sync.RWMutex
+	inputClosed bool
+	// refused hands forwardAcks the messages sent once the forwarder had gone,
+	// to return on Errors() as sarama's dispatcher does while it shuts down.
+	refused   chan *sarama.ProducerMessage
+	successes chan *sarama.ProducerMessage
+	errors    chan *sarama.ProducerError
+	done      chan struct{}
+	inputDone chan struct{}
+	ackDone   chan struct{}
+	drainDone chan struct{}
+	flush     chan chan struct{}
+	closeOnce sync.Once
 	// spans holds the tracer of every message waiting for its ack, under the
 	// message itself: sarama hands the same *ProducerMessage back on
 	// Successes and Errors, so the ack needs no id. One message object in
@@ -53,23 +62,16 @@ func (p *asyncProducer) AbortTxn() error {
 	return p.AsyncProducer.AbortTxn()
 }
 
-// flushBuffers answers one flushInput: a message accepted before the request
-// may have been queued after the forwarder last looked, so both buffers are
-// forwarded up to their lengths now, which covers it and ends even while other
-// goroutines keep sending. The forwarder is the only receiver on these
-// channels, so the receives cannot block. False once sarama is gone.
-func (p *asyncProducer) flushBuffers(flushed chan struct{}) bool {
-	for n := len(p.inputContext); n > 0; n-- {
-		if !p.forward(<-p.inputContext) {
-			return false
-		}
-	}
+// forwardBuffered hands sarama what input holds now, up to its length, which
+// covers every message accepted before the call and ends even while other
+// goroutines keep sending. The forwarder is the only receiver on input, so the
+// receives cannot block. False once sarama is gone.
+func (p *asyncProducer) forwardBuffered() bool {
 	for n := len(p.input); n > 0; n-- {
 		if !p.forward(<-p.input) {
 			return false
 		}
 	}
-	close(flushed)
 	return true
 }
 
@@ -90,27 +92,29 @@ func (p *asyncProducer) flushInput() {
 
 // InputContext sends a given message with tracer context to the input channel of sarama.AsyncProducer.
 //
-// Two things differ from writing to Input() directly. The send does not watch
-// ctx.Done(): like Input(), it blocks until sarama takes the message, so a
-// request deadline does not cut it short. And a message handed over after, or
-// racing, Close/AsyncClose is dropped without an Errors() entry - only its
-// span records sarama.ErrShuttingDown - where raw sarama panics on the closed
-// input or reports ErrShuttingDown on Errors().
+// It sends on the channel Input() returns, so one goroutine's messages keep
+// their order across the two. The send does not watch ctx.Done(): like
+// Input(), it blocks until the wrapper takes the message, so a request
+// deadline does not cut it short. A message handed over while Close/AsyncClose
+// is under way comes back on Errors() with sarama.ErrShuttingDown, as raw
+// sarama's does, and its span records the error. One handed over as the
+// shutdown completes, or after, is dropped, where raw sarama panics on its
+// closed channels.
 func (p *asyncProducer) InputContext(ctx context.Context, msg *sarama.ProducerMessage) {
-	select {
-	case <-p.done:
+	// Held shared until the message is sent or turned away: the drainer closes
+	// input under it exclusively, so the send never races that close, and the
+	// drainer sweeps up whatever was sent, ending its span, before closing.
+	p.inputLock.RLock()
+	defer p.inputLock.RUnlock()
+	if p.inputClosed {
 		return
-	default:
 	}
 
 	// A disabled agent traces nothing and injects nothing - not even the
 	// unsampled marker - so the message headers are left untouched. A nested
 	// message (isNested) is sent as it is for the same reason.
 	if !pinpoint.GetAgent().Enable() || isNested(msg) {
-		select {
-		case p.inputContext <- msg:
-		case <-p.done:
-		}
+		p.send(msg)
 		return
 	}
 
@@ -130,15 +134,27 @@ func (p *asyncProducer) InputContext(ctx context.Context, msg *sarama.ProducerMe
 	// still strictly precedes the send, so a broker ack cannot beat it.
 	span, track := newAsyncProducerTracer(tracer.NewGoroutineTracer(), p.addrs, msg, p.config)
 	saveAsyncProducerTracer(p, span, msg, track)
-	select {
-	case p.inputContext <- msg:
-	case <-p.done:
+	if !p.send(msg) {
 		endAsyncProducerTracer(p, msg, sarama.ErrShuttingDown)
 	}
 }
 
+// send hands InputContext's message to input, or reports that the wrapper has
+// shut down: ackDone closes before the drainer takes inputLock to close input,
+// so a send blocked on a full input lets the drainer go ahead.
+func (p *asyncProducer) send(msg *sarama.ProducerMessage) bool {
+	select {
+	case p.input <- msg:
+		return true
+	case <-p.ackDone:
+		return false
+	}
+}
+
 // Input returns the input channel; a message sent on it is produced without
-// tracing. Use InputContext.
+// tracing. Use InputContext, which sends on the same channel. A message sent
+// while Close/AsyncClose is under way comes back on Errors() with
+// sarama.ErrShuttingDown, as raw sarama's does.
 func (p *asyncProducer) Input() chan<- *sarama.ProducerMessage {
 	return p.input
 }
@@ -237,8 +253,8 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 		AsyncProducer: producer,
 		addrs:         addrs,
 		config:        config,
-		inputContext:  make(chan *sarama.ProducerMessage, config.ChannelBufferSize),
 		input:         make(chan *sarama.ProducerMessage, config.ChannelBufferSize),
+		refused:       make(chan *sarama.ProducerMessage),
 		successes:     make(chan *sarama.ProducerMessage, config.ChannelBufferSize),
 		errors:        make(chan *sarama.ProducerError, config.ChannelBufferSize),
 		done:          make(chan struct{}),
@@ -261,67 +277,39 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 func (p *asyncProducer) forwardInput() {
 	// Keep a closed underlying input from panicking the host application.
 	// AsyncClose waits for this goroutine before closing that input itself.
-	// Nothing receives from the wrapper's inputs once this returns, so hand
-	// them to a drainer before releasing AsyncClose.
+	// Nothing receives from the wrapper's input once this returns, so hand
+	// it to a drainer before releasing AsyncClose.
 	defer func() {
 		go drainAsyncProducerInput(p)
 		close(p.inputDone)
 	}()
 	defer func() {
-		// A dead forwarder means every later message is silently dropped
-		// by the drainer, so its death must never be silent itself.
+		// A dead forwarder means every later message is refused by the
+		// drainer, so its death must never be silent itself.
 		if r := recover(); r != nil {
 			pinpoint.Log("sarama").Errorf("async producer input forwarder died: %v", r)
 		}
 	}()
 
 	for {
-		// An already accepted message takes priority over the shutdown
-		// signal. The wrapper's inputs are buffered, so during shutdown
-		// both are ready at once and a plain select picks between them at
-		// random: returning on done left the buffered messages to the
-		// drainer, which discards them, breaking AsyncClose's promise to
-		// deliver everything it has accepted. sarama keeps consuming its
-		// own input until AsyncClose, and AsyncClose waits for this
-		// goroutine, so those messages still have a path out.
-		//
-		// ponytail: drains what is there rather than a length snapshot, so
-		// a goroutine still writing to the untraced Input channel during
-		// shutdown can extend the drain; InputContext stops accepting on
-		// done by itself. Snapshot the lengths if that ever matters.
-		// A flush request is served between two forwards as well as on an
-		// empty queue: served only there, CommitTxn and AbortTxn waited
-		// for a gap in the inputs that a steadily producing application
-		// never gave them.
 		select {
-		case flushed := <-p.flush:
-			if !p.flushBuffers(flushed) {
+		case msg := <-p.input:
+			if !p.forward(msg) {
 				return
 			}
-		default:
-		}
-
-		msg, ok := p.takeInput()
-		if !ok {
-			select {
-			case <-p.done:
-				// A send may have completed after takeInput's empty
-				// check but before shutdown. Recheck before exiting,
-				// since select can choose done over that queued message.
-				msg, ok = p.takeInput()
-				if !ok {
-					return
-				}
-			case msg = <-p.inputContext:
-			case msg = <-p.input:
-			case flushed := <-p.flush:
-				if !p.flushBuffers(flushed) {
-					return
-				}
-				continue
+		case flushed := <-p.flush:
+			if !p.forwardBuffered() {
+				return
 			}
-		}
-		if !p.forward(msg) {
+			close(flushed)
+		case <-p.done:
+			// What input holds now was accepted before the shutdown and goes
+			// to sarama, which keeps consuming its own input until AsyncClose -
+			// and AsyncClose waits for this goroutine. A message sent later is
+			// the drainer's, which returns it on Errors() as sarama does once
+			// it is shutting down: forwarding until input ran dry let a
+			// steadily producing application stretch the shutdown without end.
+			p.forwardBuffered()
 			return
 		}
 	}
@@ -334,10 +322,8 @@ func (p *asyncProducer) forwardAcks() {
 	// Closed only here, and only after sarama has closed its own pair:
 	// AsyncClose guarantees delivery of every in-flight message on
 	// Successes/Errors before closing them, and the user is entitled to
-	// drain all of it through the wrapper. p.inputContext is never
-	// closed - its senders are user goroutines, and closing a
-	// channel under a sender panics the send. p.input is closed
-	// instead by the drainer below, once no legitimate sender is left.
+	// drain all of it through the wrapper. p.input is closed by the
+	// drainer below, once ackDone has turned InputContext's sends away.
 	defer close(p.ackDone)
 	defer close(p.successes)
 	defer close(p.errors)
@@ -360,20 +346,9 @@ func (p *asyncProducer) forwardAcks() {
 			}
 			endAsyncProducerTracer(p, e.Msg, e.Err)
 			p.errors <- e
+		case msg := <-p.refused:
+			p.errors <- &sarama.ProducerError{Msg: msg, Err: sarama.ErrShuttingDown}
 		}
-	}
-}
-
-// takeInput pulls an already accepted message off the wrapper's inputs without
-// blocking, reporting whether it found one.
-func (p *asyncProducer) takeInput() (*sarama.ProducerMessage, bool) {
-	select {
-	case msg := <-p.inputContext:
-		return msg, true
-	case msg := <-p.input:
-		return msg, true
-	default:
-		return nil, false
 	}
 }
 
@@ -400,48 +375,62 @@ func sendAsyncProducerMessage(input chan<- *sarama.ProducerMessage, msg *sarama.
 	return true
 }
 
-// drainAsyncProducerInput discards what reaches the wrapper's inputs after the
-// forwarder has drained them and gone - a message pushed once the shutdown was
-// already under way, or one left behind when sarama's input was closed unexpectedly. It
-// outlives AsyncClose - which returns as soon as the input forwarder is gone -
-// and stops once the wrapper is fully shut down, sweeping up whoever parked in
-// the meantime.
+// drainAsyncProducerInput refuses what reaches input after the forwarder has
+// gone - a message sent once the shutdown was under way, or one left behind
+// when sarama's input was closed unexpectedly. It outlives AsyncClose - which
+// returns as soon as the input forwarder is gone - and stops once the wrapper
+// is fully shut down, sweeping up whoever parked in the meantime.
 //
-// It then closes wrapped.input, so that a send issued after shutdown panics
+// It then closes input, so that a send on Input() issued after shutdown panics
 // the caller exactly as raw sarama's own closed input does, instead of parking
-// on a channel that nothing will ever receive from again. Racing a send against
-// that close is reported by the race detector, again just as it is for raw
-// sarama - the send is a programming error either way. wrapped.inputContext
-// needs no such close: InputContext gives up on wrapped.done by itself.
+// on a channel that nothing will ever receive from again. Racing such a send
+// against that close is reported by the race detector, again just as it is
+// for raw sarama - the send is a programming error either way. InputContext
+// holds inputLock across its send, so the close waits for it, and it gives up
+// on ackDone, which closes first.
 func drainAsyncProducerInput(wrapped *asyncProducer) {
 	defer close(wrapped.drainDone)
 
 	for {
 		select {
-		case msg := <-wrapped.inputContext:
-			// InputContext already traced and possibly saved this message's
-			// span; a drained message gets no ack, so end it here. A span not
-			// in the map was already ended at save time.
-			endAsyncProducerTracer(wrapped, msg, sarama.ErrShuttingDown)
-		case <-wrapped.input:
+		case msg := <-wrapped.input:
+			wrapped.refuse(msg)
 		case <-wrapped.ackDone:
+			wrapped.inputLock.Lock()
+			wrapped.inputClosed = true
 			for sweepAsyncProducerInput(wrapped) {
 			}
 			close(wrapped.input)
+			wrapped.inputLock.Unlock()
 			return
 		}
 	}
 }
 
-// sweepAsyncProducerInput drops one parked message, reporting whether it found
-// one. Both cases of the drainer's select are ready when a sender is parked as
-// ackDone closes, and select would pick between them at random.
+// refuse ends the span of a message the forwarder can no longer take and
+// returns the message on Errors() with sarama.ErrShuttingDown, as sarama's
+// dispatcher does with what reaches it while it shuts down: discarded, it was
+// lost without the signal an application spools or retries from. forwardAcks
+// owns Errors() and closes it, so the message goes through it; once forwardAcks
+// has finished - a message caught in that last instant - it is only dropped,
+// where sarama's own dispatcher panics on its closed Errors channel.
+func (p *asyncProducer) refuse(msg *sarama.ProducerMessage) {
+	endAsyncProducerTracer(p, msg, sarama.ErrShuttingDown)
+	if !p.config.Producer.Return.Errors {
+		return
+	}
+	select {
+	case p.refused <- msg:
+	case <-p.ackDone:
+	}
+}
+
+// sweepAsyncProducerInput drops one parked message, ending its span, and
+// reports whether it found one.
 func sweepAsyncProducerInput(wrapped *asyncProducer) bool {
 	select {
-	case msg := <-wrapped.inputContext:
+	case msg := <-wrapped.input:
 		endAsyncProducerTracer(wrapped, msg, sarama.ErrShuttingDown)
-		return true
-	case <-wrapped.input:
 		return true
 	default:
 		return false

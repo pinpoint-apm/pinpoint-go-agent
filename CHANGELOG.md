@@ -12,8 +12,7 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   interface.** Neither is tracing API: `JsonString` is a test and debugging
   rendering, now `pinpoint.SpanJSON(tracer)`, and `AsyncSpanId` is the optional
   `pinpoint.AsyncSpanIdentifier` capability, which the package's own tracers
-  implement and `ppsaramaibm` asserts on the goroutine tracer it forks. A
-  tracer of your own no longer has to provide either.
+  implement. A tracer of your own no longer has to provide either.
 - **Every module path carries `/v2`.** The agent is
   `github.com/pinpoint-apm/pinpoint-go-agent/v2` and each plugin
   `github.com/pinpoint-apm/pinpoint-go-agent/plugin/<name>/v2`; the package
