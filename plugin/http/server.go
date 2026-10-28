@@ -402,8 +402,17 @@ func nginxMillis(v string) int64 {
 	if err != nil || sec > math.MaxInt64/1000 || sec < math.MinInt64/1000 {
 		return 0
 	}
+	// The milliseconds are checked against the room left rather than added
+	// first: past it the sum wrapped, "-9223372036854775.999" to a large
+	// positive time.
 	if strings.HasPrefix(v, "-") {
+		if sec*1000 < math.MinInt64+ms {
+			return 0
+		}
 		return sec*1000 - ms
+	}
+	if sec*1000 > math.MaxInt64-ms {
+		return 0
 	}
 	return sec*1000 + ms
 }

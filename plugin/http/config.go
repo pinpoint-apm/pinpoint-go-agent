@@ -279,11 +279,14 @@ func httpCfg() *httpConfig {
 	defer httpConfigMu.Unlock()
 	if source := httpConfigSource.Load(); source == nil || source.agent != agent {
 		config := agent.Config()
-		curHttpConfig.Store(newHttpConfigFor(config))
 		// One callback per Config, not per agent: the root reuses a Config
 		// across NewAgent/Shutdown cycles, and a callback per cycle grew its
 		// list by one and kept every retired agent reachable from a closure.
 		// The callback owns the Config, so it serves whichever agent runs on it.
+		// Registered before the derived value is built from config: built
+		// first, a reload landing in between ran the callbacks without this
+		// one and left the derived value on the options it replaced. A run
+		// of it the reload starts meanwhile waits on httpConfigMu.
 		if source == nil || source.config != config {
 			config.AddReloadCallback(httpConfigOpts, func() {
 				httpConfigMu.Lock()
@@ -293,6 +296,7 @@ func httpCfg() *httpConfig {
 				}
 			})
 		}
+		curHttpConfig.Store(newHttpConfigFor(config))
 		httpConfigSource.Store(&httpConfigOwner{agent: agent, config: config})
 	}
 	return curHttpConfig.Load()

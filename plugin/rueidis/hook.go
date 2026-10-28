@@ -2,6 +2,7 @@ package pprueidis
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -101,7 +102,10 @@ func (h *Hook) Receive(client rueidis.Client, ctx context.Context, subscribe rue
 
 	err = client.Receive(ctx, subscribe, fn)
 
-	if tracer.IsSampled() {
+	// Receive returns once its ctx is done or the client is closed, which is
+	// how a subscription normally ends - an SSE or websocket handler's when
+	// its client goes away - so neither fails the transaction.
+	if tracer.IsSampled() && ctx.Err() == nil && !errors.Is(err, rueidis.ErrClosing) {
 		setSpanError(se, err)
 	}
 	return err

@@ -17,6 +17,7 @@ package ppslog
 import (
 	"context"
 	"log/slog"
+	"slices"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
@@ -85,8 +86,14 @@ func (h *handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	if len(attrs) == 0 {
 		return h
 	}
+	// A handler handed attrs owns them and may modify them (slog.Handler), so
+	// each receiver gets a copy of its own: the next handler, and each replay
+	// of the chain for a record logged under an open group, which runs on
+	// every goroutine logging. Handed one slice, a handler that rewrote its
+	// keys in place rewrote them again on every line, and raced doing so.
+	saved := slices.Clone(attrs)
 	return h.with(h.next.WithAttrs(attrs), func(next slog.Handler) slog.Handler {
-		return next.WithAttrs(attrs)
+		return next.WithAttrs(slices.Clone(saved))
 	}, h.group)
 }
 

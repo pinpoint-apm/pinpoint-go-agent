@@ -211,3 +211,38 @@ func TestHooks_ConcurrentCommands(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// go-redis's async AutoPipeliner runs a command it sends apart on a goroutine
+// of its own with the caller's context, so a hook running off the caller's
+// goroutine records on a goroutine tracer forked for it, and one on the
+// caller's goroutine on the caller's tracer, as before.
+func Test_onOwnGoroutine(t *testing.T) {
+	pptest.StartAgent(t)
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/redis")
+	defer tracer.EndSpan()
+	defer tracer.NewSpanEvent("handler").EndSpanEvent()
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+
+	same, fork := onOwnGoroutine(ctx, tracer)
+	assert.Nil(t, fork, "the caller's own goroutine needs no fork")
+	assert.Same(t, ctx, same)
+
+	type result struct {
+		ctx  context.Context
+		fork pinpoint.Tracer
+	}
+	off := make(chan result)
+	go func() {
+		c, f := onOwnGoroutine(ctx, tracer)
+		if f != nil {
+			defer f.EndSpan()
+		}
+		off <- result{c, f}
+	}()
+	got := <-off
+	if got.fork == nil {
+		t.Skip("goroutine ids are not readable here")
+	}
+	assert.NotEqual(t, tracer, got.fork)
+	assert.Equal(t, got.fork, pinpoint.FromContext(got.ctx), "the hook records on the fork")
+}

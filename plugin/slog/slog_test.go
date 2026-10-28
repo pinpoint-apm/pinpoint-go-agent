@@ -260,3 +260,37 @@ func TestHandler_ConcurrentLogging(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// keyRewriter is a handler that rewrites, in place, the keys of the attributes
+// WithAttrs hands it, as slog.Handler allows: the handler owns them.
+type keyRewriter struct {
+	slog.Handler
+}
+
+func (h keyRewriter) WithAttrs(attrs []slog.Attr) slog.Handler {
+	for i := range attrs {
+		attrs[i].Key = "app." + attrs[i].Key
+	}
+	return keyRewriter{h.Handler.WithAttrs(attrs)}
+}
+
+func (h keyRewriter) WithGroup(name string) slog.Handler {
+	return keyRewriter{h.Handler.WithGroup(name)}
+}
+
+// Each handler WithAttrs hands attributes to owns them, so each gets a copy: a
+// line logged under an open group replays the chain, and handed the one slice
+// a handler that rewrites its keys rewrote them again on every line.
+func TestHandler_WithAttrsHandsEachHandlerItsOwnAttributes(t *testing.T) {
+	pptest.StartAgent(t)
+	ctx := pinpoint.NewContext(context.Background(), newTracer(t))
+	var out bytes.Buffer
+	logger := slog.New(NewHandler(keyRewriter{slog.NewJSONHandler(&out, nil)})).With("k", "v").WithGroup("g")
+
+	for range 3 {
+		out.Reset()
+		logger.InfoContext(ctx, "message")
+		fields := loggedFields(t, &out)
+		assert.Equal(t, "v", fields["app.k"], "the key was rewritten more than once: %v", fields)
+	}
+}

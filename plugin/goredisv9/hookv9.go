@@ -62,6 +62,11 @@ func (r *hook) ProcessHook(hook redis.ProcessHook) redis.ProcessHook {
 		if !tracer.IsSampled() {
 			return hook(ctx, cmd)
 		}
+		ctx, fork := onOwnGoroutine(ctx, tracer)
+		if fork != nil {
+			defer fork.EndSpan()
+			tracer = fork
+		}
 
 		defer tracer.EndSpanEvent()
 		se := r.newSpanEvent(ctx, opName, cmd.Name())
@@ -79,6 +84,11 @@ func (r *hook) ProcessPipelineHook(hook redis.ProcessPipelineHook) redis.Process
 		if !tracer.IsSampled() {
 			return hook(ctx, cmds)
 		}
+		ctx, fork := onOwnGoroutine(ctx, tracer)
+		if fork != nil {
+			defer fork.EndSpan()
+			tracer = fork
+		}
 
 		defer tracer.EndSpanEvent()
 		se := r.newSpanEvent(ctx, opName, cmdName(cmds))
@@ -86,6 +96,20 @@ func (r *hook) ProcessPipelineHook(hook redis.ProcessPipelineHook) redis.Process
 		setSpanError(se, err)
 		return err
 	}
+}
+
+// onOwnGoroutine hands the hook a context whose tracer it may record on here,
+// and the goroutine tracer it forked for that, to end, if it had to: go-redis's
+// async AutoPipeliner runs a command it sends apart - a blocking one, one with
+// a read timeout - through the hook chain on a goroutine of its own, with the
+// caller's context, while the caller carries on, and recorded on the caller's
+// tracer from there the event interleaved with the caller's own.
+func onOwnGoroutine(ctx context.Context, tracer pinpoint.Tracer) (context.Context, pinpoint.Tracer) {
+	if pinpoint.OnTracerGoroutine(tracer) {
+		return ctx, nil
+	}
+	fork := tracer.NewGoroutineTracer()
+	return pinpoint.NewContext(ctx, fork), fork
 }
 
 // newSpanEvent opens the event and returns its recorder, which the error is

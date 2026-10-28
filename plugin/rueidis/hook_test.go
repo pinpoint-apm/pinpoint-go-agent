@@ -145,3 +145,44 @@ func Test_multiResultError(t *testing.T) {
 		rueidis.NewErrorResult(first),
 	}), first)
 }
+
+// receiveClient is a rueidis client whose Receive returns err.
+type receiveClient struct {
+	rueidis.Client
+	err error
+}
+
+func (c receiveClient) Receive(context.Context, rueidis.Completed, func(rueidis.PubSubMessage)) error {
+	return c.err
+}
+
+// Receive returns once its ctx is done or the client is closed, which is how a
+// subscription normally ends, so neither fails the transaction; a subscribe
+// that failed does, and every error still reaches the caller.
+func TestHook_ReceiveRecordsOnlyAFailedSubscribe(t *testing.T) {
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	failed := errors.New("subscribe failed")
+
+	for _, tt := range []struct {
+		name string
+		ctx  context.Context
+		err  error
+		want error
+	}{
+		{"ctx done", canceled, context.Canceled, nil},
+		{"client closed", context.Background(), rueidis.ErrClosing, nil},
+		{"subscribe failed", context.Background(), failed, failed},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tracer := pptest.NewRecordingTracer()
+			err := testHook().Receive(receiveClient{err: tt.err}, pinpoint.NewContext(tt.ctx, tracer),
+				rueidis.Builder{}.Subscribe().Channel("news").Build(), nil)
+
+			assert.ErrorIs(t, err, tt.err, "the error must reach the caller")
+			require.Len(t, tracer.Events, 1)
+			assert.Equal(t, tt.want, tracer.Events[0].Err)
+			assert.True(t, tracer.Events[0].Ended)
+		})
+	}
+}

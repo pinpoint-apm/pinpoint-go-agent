@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1304,4 +1305,24 @@ func TestWrapResponseWriter_OneAllocation(t *testing.T) {
 	var status int
 	assert.Equal(t, 1.0, testing.AllocsPerRun(100, func() { WrapResponseWriter(rec, &status) }))
 	assert.Equal(t, 1.0, testing.AllocsPerRun(100, func() { wrapResponseWriter(rec, nil) }))
+}
+
+// nginx times are "sec.mmm" read into milliseconds; one that would not fit is
+// unset, as the single ParseInt it replaced made it, at either end - the
+// negative end wrapped to a large positive time.
+func Test_nginxMillis(t *testing.T) {
+	for v, want := range map[string]int64{
+		"1504230492.763":        1504230492763,
+		"-0.500":                -500,
+		"9223372036854775.807":  math.MaxInt64,
+		"9223372036854775.808":  0,
+		"-9223372036854775.808": math.MinInt64,
+		"-9223372036854775.809": 0,
+		"-9223372036854775.999": 0,
+		"9223372036854776.000":  0,
+		"1504230492.76":         0,
+		"1504230492.7a3":        0,
+	} {
+		assert.Equal(t, want, nginxMillis(v), v)
+	}
 }
