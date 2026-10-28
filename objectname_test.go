@@ -422,3 +422,21 @@ func TestAgentHeaderMap_V4_ApiKeyOptional(t *testing.T) {
 	assert.Equal(t, "svc", m[headerServiceName])
 	assert.Equal(t, "400", m[headerProtocolVersion])
 }
+
+// ClusterNamespace rides in a header of every outbound call, so a value gRPC
+// metadata refuses is dropped with a warning instead of failing every traced
+// gRPC call, and surrounding whitespace is trimmed as on the identity values.
+func Test_resolveClusterNamespace(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                  "",
+		"prod":              "prod",
+		" prod-1 \n":        "prod-1",
+		"prod cluster":      "prod cluster",
+		"운영":                "",
+		"prod\r\nX-Evil: 1": "",
+	} {
+		config, err := NewConfig(WithAppName("app"), WithClusterNamespace(in))
+		require.NoError(t, err)
+		assert.Equal(t, want, resolveClusterNamespace(config), "%q", in)
+	}
+}

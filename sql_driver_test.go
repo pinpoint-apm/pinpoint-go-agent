@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -117,6 +118,53 @@ func Test_writeBindValue_LimitsLargeValues(t *testing.T) {
 			assert.True(t, strings.HasSuffix(b.String(), tt.wantSuffix), b.String())
 			assert.True(t, utf8.ValidString(b.String()), b.String())
 		})
+	}
+}
+
+type bindRow struct {
+	ID     int
+	Name   string
+	hidden bool
+	Tags   map[string]any
+}
+
+// A map or a struct a driver passes through unconverted - pgx hands its bind
+// values on as the application gave them - is written element by element,
+// byte for byte what fmt.Sprint writes for it while it fits.
+func Test_writeBindValue_CompositesMatchFmt(t *testing.T) {
+	for _, value := range []any{
+		map[string]any{"b": 2, "a": "x", "c": nil, "d": []byte{1, 2}},
+		map[int]string{2: "b", 1: "a", 10: "j"},
+		map[string]int(nil),
+		map[string]int{},
+		bindRow{ID: 7, Name: "n", hidden: true, Tags: map[string]any{"k": 1.5}},
+		struct{}{},
+		time.Date(2026, time.August, 28, 1, 2, 3, 4, time.UTC), // a Stringer renders itself
+	} {
+		var b strings.Builder
+		writeAbbreviatedBindValue(&b, value, 4096)
+		assert.Equal(t, fmt.Sprint(value), b.String())
+	}
+}
+
+// A composite holding a large value is cut at the budget like any other value,
+// without being rendered whole first: a pgx.NamedArgs with a 1 MiB document
+// allocated megabytes for an annotation of a kilobyte.
+func Test_writeBindValue_LimitsLargeComposites(t *testing.T) {
+	const maxSize = 1024
+	for _, value := range []any{
+		map[string]any{"data": bytes.Repeat([]byte{255}, 1<<20), "id": 1},
+		bindRow{Name: strings.Repeat("x", 1<<20), Tags: map[string]any{"k": 1}},
+	} {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		var b strings.Builder
+		writeAbbreviatedBindValue(&b, value, maxSize)
+		runtime.ReadMemStats(&after)
+
+		assert.LessOrEqual(t, b.Len(), maxSize+2*maxBindValueMarkerSize, b.String())
+		assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(256<<10), "the composite was rendered whole")
+		assert.True(t, utf8.ValidString(b.String()))
 	}
 }
 
@@ -351,8 +399,17 @@ func Test_sqlConn_SessionInterfacesMatchDriver(t *testing.T) {
 			}
 			_, isQueryer := conn.(driver.QueryerContext)
 			assert.True(t, isQueryer, "still the instrumented wrapper")
+			assert.Same(t, tt.conn, UnwrapSQLConn(conn), "a Conn.Raw callback reaches the driver's own connection")
 		})
 	}
+}
+
+// A connection the wrapper did not make comes back as it is, so a Conn.Raw
+// callback can unwrap whatever it is handed.
+func TestUnwrapSQLConn_LeavesOtherConnectionsAlone(t *testing.T) {
+	conn := &fakeDriverConn{}
+	assert.Same(t, conn, UnwrapSQLConn(conn))
+	assert.Nil(t, UnwrapSQLConn(nil))
 }
 
 func Test_sqlConn_DirectExecutionFallbackPreservesNamedArguments(t *testing.T) {

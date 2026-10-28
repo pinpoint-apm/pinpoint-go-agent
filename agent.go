@@ -329,7 +329,7 @@ func newAgentStruct(config *Config) *agent {
 		agentID:          config.objName.agentID,
 		agentName:        config.objName.agentName,
 		serviceName:      config.objName.serviceName,
-		clusterNamespace: config.String(CfgClusterNamespace),
+		clusterNamespace: resolveClusterNamespace(config),
 		objName:          config.objName,
 		startTime:        time.Now().UnixNano() / int64(time.Millisecond),
 		spanQueue:        newSpanQueue(config.Int(CfgSpanQueueSize)),

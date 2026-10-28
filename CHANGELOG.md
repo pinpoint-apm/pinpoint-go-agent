@@ -273,7 +273,13 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   the caller's, as Java's `DefaultNameSpaceChecker` decides it; a call without
   the header is continued. Until now the agent never sent the header and
   continued every trace, so two Pinpoint clusters on one network could not be
-  kept apart. Not dynamic: a change takes effect after a restart.
+  kept apart. Not dynamic: a change takes effect after a restart. A value
+  outside printable ASCII is ignored with a warning, since gRPC metadata
+  refuses it and every traced gRPC call would fail.
+- **`pinpoint.UnwrapSQLConn`** returns the driver's own connection under one
+  `WrapSQLDriver` wrapped, for a `database/sql` `Conn.Raw` callback: it is
+  handed the wrapper, so a type assertion to the driver's type - pgx's
+  documented `driverConn.(*stdlib.Conn)` - failed and panicked.
 - **Span batches and the stat stream are gzip-compressed**
   (`Collector.Grpc.Compression`, `WithCollectorGrpcCompression`: `gzip`, the
   default, or `none`), as in the Java agent, whose two keys this one option

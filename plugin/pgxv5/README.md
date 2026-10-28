@@ -71,3 +71,15 @@ Spans will be created for queries and other statement executions if the context 
 ctx := pinpoint.NewContext(context.Background(), tracer)
 row := db.QueryRowContext(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
 ```
+
+A `sql.Conn.Raw` callback is handed the instrumented connection, not pgx's
+`*stdlib.Conn`. Unwrap it with `pinpoint.UnwrapSQLConn` before the type
+assertion pgx documents, which would otherwise fail and panic; what runs on the
+unwrapped connection is not traced.
+
+``` go
+err = conn.Raw(func(driverConn any) error {
+    pgxConn := pinpoint.UnwrapSQLConn(driverConn).(*stdlib.Conn).Conn()
+    ...
+})
+```

@@ -217,6 +217,23 @@ func resolveObjectNameWithID(config *Config, agentID string, uid uuid.UUID) (*ob
 	return o, nil
 }
 
+// resolveClusterNamespace returns the configured ClusterNamespace, trimmed as
+// the identity values are, or "" for one a header cannot carry. It goes out in
+// the Pinpoint-pAppNamespace header of every outbound call, and gRPC metadata
+// refuses a value outside printable ASCII (0x20-0x7E): such a namespace failed
+// every traced gRPC call with Internal, and a control character every net/http
+// one too, which reads as the callee being down. Dropped, the agent behaves as
+// with none configured, and the warning keeps the mistake visible.
+func resolveClusterNamespace(config *Config) string {
+	namespace := strings.TrimSpace(config.String(CfgClusterNamespace))
+	if isPrintableASCII(namespace) {
+		return namespace
+	}
+	Log("config").Warnf("%s = %q must contain only printable ASCII characters (0x20-0x7E), so no namespace is used",
+		CfgClusterNamespace, namespace)
+	return ""
+}
+
 // resolveAgentName returns the configured agent name, or defaultAgentName when
 // it is unset or invalid. agentName is a display label, not a required value, so
 // an invalid one falls back with a warning rather than failing startup, and the

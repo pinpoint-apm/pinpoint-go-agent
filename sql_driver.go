@@ -1,11 +1,13 @@
 package pinpoint
 
 import (
+	"cmp"
 	"context"
 	"database/sql/driver"
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -134,6 +136,32 @@ func newSqlConn(conn driver.Conn, dbInfo DBInfo) *sqlConn {
 		Conn:   conn,
 		dbInfo: dbInfo,
 	}
+}
+
+// driverConn is the connection the wrapper stands for, promoted to every shape
+// withSessionInterfaces returns; UnwrapSQLConn reaches it through this method.
+func (c *sqlConn) driverConn() driver.Conn {
+	return c.Conn
+}
+
+// UnwrapSQLConn returns the driver's own connection under one that
+// WrapSQLDriver wrapped, and conn itself for any other. database/sql's
+// Conn.Raw hands its callback the connection the driver returned, which is the
+// wrapper: a type assertion to the driver's own connection type, such as
+// pgx's documented driverConn.(*stdlib.Conn), fails on it, and panics when
+// unchecked. Assert on the unwrapped one instead:
+//
+//	err := conn.Raw(func(driverConn any) error {
+//		pgxConn := pinpoint.UnwrapSQLConn(driverConn).(*stdlib.Conn).Conn()
+//		...
+//	})
+//
+// What runs on the unwrapped connection is not traced.
+func UnwrapSQLConn(conn any) any {
+	if w, ok := conn.(interface{ driverConn() driver.Conn }); ok {
+		return w.driverConn()
+	}
+	return conn
 }
 
 // The shapes withSessionInterfaces returns: each adds to sqlConn exactly the
@@ -361,16 +389,109 @@ func writeAbbreviatedBindValue(b *strings.Builder, value any, maxSize int) {
 	// million-element argument from being built whole to keep a kilobyte. The
 	// length marker survives that slicing because an array reports its element
 	// count, not the width of its rendering.
-	if rv := reflect.ValueOf(value); rv.Kind() == reflect.Slice {
+	rv := reflect.ValueOf(value)
+	switch rv.Kind() {
+	case reflect.Slice:
 		elems := rv.Len()
 		if elems > maxSize {
 			value = rv.Slice(0, maxSize).Interface()
 		}
 		writeAbbreviated(b, fmt.Sprint(value), elems, maxSize)
 		return
+	case reflect.Map, reflect.Struct:
+		if !rendersItself(value) {
+			writeAbbreviatedComposite(b, rv, maxSize)
+			return
+		}
 	}
 	s := fmt.Sprint(value)
 	writeAbbreviated(b, s, len(s), maxSize)
+}
+
+// rendersItself reports whether fmt.Sprint renders value through a method of
+// its own rather than field by field.
+func rendersItself(value any) bool {
+	switch value.(type) {
+	case fmt.Formatter, error, fmt.Stringer:
+		return true
+	}
+	return false
+}
+
+// writeAbbreviatedComposite writes a map or a struct as fmt.Sprint renders it -
+// "map[k:v ...]" with the keys in order, "{f ...}" - element by element, each
+// abbreviated within what is left of maxSize, and cuts it once maxSize of it
+// is written, the cut marked with its element count as a slice's is. Built
+// whole by fmt.Sprint before the cut, a pgx.NamedArgs holding a 1 MiB document
+// allocated megabytes for an annotation of a kilobyte.
+func writeAbbreviatedComposite(b *strings.Builder, rv reflect.Value, maxSize int) {
+	end := b.Len() + maxSize // where maxSize of the composite is written
+	var keys []reflect.Value
+	var n int
+	if rv.Kind() == reflect.Map {
+		keys = sortedMapKeys(rv)
+		n = len(keys)
+		b.WriteString("map[")
+	} else {
+		n = rv.NumField()
+		b.WriteByte('{')
+	}
+	for i := range n {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		if b.Len() >= end {
+			writeBindMarker(b, n)
+			return
+		}
+		if keys == nil {
+			writeAbbreviatedElem(b, rv.Field(i), end-b.Len())
+			continue
+		}
+		writeAbbreviatedElem(b, keys[i], end-b.Len())
+		b.WriteByte(':')
+		if b.Len() >= end {
+			writeBindMarker(b, n)
+			return
+		}
+		writeAbbreviatedElem(b, rv.MapIndex(keys[i]), end-b.Len())
+	}
+	if keys == nil {
+		b.WriteByte('}')
+	} else {
+		b.WriteByte(']')
+	}
+}
+
+// writeAbbreviatedElem writes one element of a composite. An unexported struct
+// field cannot be taken out as an interface value, so fmt renders it whole.
+func writeAbbreviatedElem(b *strings.Builder, v reflect.Value, maxSize int) {
+	if v.CanInterface() {
+		writeAbbreviatedBindValue(b, v.Interface(), maxSize)
+		return
+	}
+	s := fmt.Sprint(v)
+	writeAbbreviated(b, s, len(s), maxSize)
+}
+
+// sortedMapKeys returns the keys of a map in the order fmt prints them for the
+// usual key kinds: numbers by value, strings and anything else by rendering.
+func sortedMapKeys(rv reflect.Value) []reflect.Value {
+	keys := rv.MapKeys()
+	slices.SortFunc(keys, func(a, b reflect.Value) int {
+		switch a.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			return cmp.Compare(a.Int(), b.Int())
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+			return cmp.Compare(a.Uint(), b.Uint())
+		case reflect.Float32, reflect.Float64:
+			return cmp.Compare(a.Float(), b.Float())
+		case reflect.String:
+			return strings.Compare(a.String(), b.String())
+		}
+		return strings.Compare(fmt.Sprint(a), fmt.Sprint(b))
+	})
+	return keys
 }
 
 // writeAbbreviatedByteSlice writes v as fmt.Sprint does ("[1 2 3]") without

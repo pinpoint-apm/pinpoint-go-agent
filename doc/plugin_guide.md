@@ -146,7 +146,9 @@ row := db.QueryRowContext(ctx, "SELECT count(*) FROM tables")
 
 The blank import is enough — the driver registers itself in `init()`. Use the
 `Context` variants of the query methods; the plain `Query`/`Exec` methods have
-nowhere to carry a tracer and produce no span event.
+nowhere to carry a tracer and produce no span event. A `sql.Conn.Raw` callback
+is handed the instrumented connection: `pinpoint.UnwrapSQLConn` returns the
+driver's own one for a type assertion such as pgx's `*stdlib.Conn`.
 
 SQL statements are normalized (literals replaced with placeholders) before
 being sent, so the UI groups repeated statements. What is recorded is governed
