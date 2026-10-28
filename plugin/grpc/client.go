@@ -50,8 +50,10 @@ func (cs *clientStream) endSpan(err error) {
 }
 
 // kvInjectionWriter collects the injected headers so they go out through one
-// metadata.AppendToOutgoingContext call rather than a lowercase allocation per
-// Set.
+// metadata.AppendToOutgoingContext call. The keys are stored pre-lowered:
+// AppendToOutgoingContext runs strings.ToLower over every key it is given,
+// which allocates a new string for each of the mixed-case pinpoint names and
+// returns a lowercase one as it is.
 type kvInjectionWriter struct {
 	kv []string
 	// buf backs kv so the writer and its slice are one allocation; the ten
@@ -60,7 +62,7 @@ type kvInjectionWriter struct {
 }
 
 func (w *kvInjectionWriter) Set(key string, value string) {
-	w.kv = append(w.kv, key, value)
+	w.kv = append(w.kv, loweredKey(key), value)
 }
 
 func newClientTracer(ctx context.Context, method string, target string) (context.Context, pinpoint.Tracer) {

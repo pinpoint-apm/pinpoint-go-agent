@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-kratos/kratos/v3/transport"
@@ -17,16 +18,16 @@ import (
 )
 
 // header is a transport.Header backed by a map, standing in for the http.Header
-// or metadata.MD a real transport carries. The middleware only calls Get and
-// Set; the embedded interface is nil.
+// or metadata.MD a real transport carries: case-insensitive on the key, as both
+// are. The middleware only calls Get and Set; the embedded interface is nil.
 type header struct {
 	transport.Header
 	m map[string]string
 }
 
 func newHeader() header                { return header{m: map[string]string{}} }
-func (h header) Get(key string) string { return h.m[key] }
-func (h header) Set(key, value string) { h.m[key] = value }
+func (h header) Get(key string) string { return h.m[strings.ToLower(key)] }
+func (h header) Set(key, value string) { h.m[strings.ToLower(key)] = value }
 
 // grpcTransport is a transport.Transporter of kind grpc.
 type grpcTransport struct {

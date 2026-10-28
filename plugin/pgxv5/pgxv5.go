@@ -2,12 +2,38 @@ package pppgxv5
 
 import (
 	"context"
+	"runtime"
+	"sync"
+	"weak"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
 type pgxTracer struct{}
+
+// connInfos caches the DBInfo of each live connection. pgx's Conn.Config() is
+// not an accessor but a deep copy of the ConnConfig - a tls.Config clone under
+// its lock, the runtime parameter map, the fallbacks: 5 allocations and ~1KB
+// per call - and it was paid on every sampled query and every statement of a
+// batch for two strings that never change for a connection. Weak keys, since
+// pgx has no close hook and a plain map would pin every pooled connection ever
+// opened; the cleanup drops the entry when the connection is collected.
+var connInfos sync.Map // weak.Pointer[pgx.Conn] -> *pinpoint.DBInfo
+
+func connDBInfo(c *pgx.Conn) *pinpoint.DBInfo {
+	k := weak.Make(c)
+	if v, ok := connInfos.Load(k); ok {
+		return v.(*pinpoint.DBInfo)
+	}
+	config := c.Config()
+	info := &pinpoint.DBInfo{QueryType: pinpoint.ServiceTypePgSqlExecuteQuery, DBName: config.Database, DBHost: config.Host}
+	if v, loaded := connInfos.LoadOrStore(k, info); loaded {
+		return v.(*pinpoint.DBInfo)
+	}
+	runtime.AddCleanup(c, func(k weak.Pointer[pgx.Conn]) { connInfos.Delete(k) }, k)
+	return info
+}
 
 var (
 	// Checking interface implementations
@@ -101,15 +127,15 @@ func (t *pgxTracer) TraceCopyFromEnd(ctx context.Context, _ *pgx.Conn, data pgx.
 	}
 }
 
-// connSpanEvent is newSpanEvent for a live connection. The sampling check
-// comes first: pgx's Conn.Config() is not an accessor but a deep copy of the
-// ConnConfig - a tls.Config clone, the runtime parameter map, the fallbacks -
-// which an unsampled query paid for on every call and threw away.
+// connSpanEvent is newSpanEvent for a live connection, reading the DBInfo off
+// connInfos. The sampling check comes first so an unsampled query touches
+// neither the cache nor, on a miss, Conn.Config().
 func connSpanEvent(ctx context.Context, c *pgx.Conn, cmd string) pinpoint.Tracer {
-	if tracer := pinpoint.FromContext(ctx); !tracer.IsSampled() {
+	tracer := pinpoint.FromContext(ctx)
+	if !tracer.IsSampled() {
 		return tracer
 	}
-	return newSpanEvent(ctx, c.Config(), cmd)
+	return pinpoint.NewDatabaseTracer(ctx, cmd, connDBInfo(c))
 }
 
 func newSpanEvent(ctx context.Context, config *pgx.ConnConfig, cmd string) pinpoint.Tracer {

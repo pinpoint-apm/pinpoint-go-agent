@@ -155,3 +155,10 @@ func TestObserver_IgnoresUnsampledQueries(t *testing.T) {
 		o.ObserveBatch(ctx, gocql.ObservedBatch{Statements: []string{"SELECT 1"}})
 	}, "an untraced query must be stepped over, not recorded")
 }
+
+// A host is formatted once; later calls hit the cache and allocate nothing.
+func TestHostnameAndPort_Cached(t *testing.T) {
+	h := host(t)
+	assert.Equal(t, h.HostnameAndPort(), hostnameAndPort(h))
+	assert.Zero(t, testing.AllocsPerRun(100, func() { hostnameAndPort(h) }))
+}

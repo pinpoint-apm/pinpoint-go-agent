@@ -9,12 +9,34 @@ package ppgocql
 
 import (
 	"context"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"weak"
 
 	"github.com/gocql/gocql"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
+
+// hostNames caches HostnameAndPort per host. gocql formats it on every call
+// under the HostInfo's write lock - the lock the driver read-locks on its own
+// path for every query, so each sampled query contended with host selection -
+// and allocates twice, for a string that never changes for a host. Weak keys:
+// a host that left the ring is dropped with its HostInfo.
+var hostNames sync.Map // weak.Pointer[gocql.HostInfo] -> string
+
+func hostnameAndPort(h *gocql.HostInfo) string {
+	k := weak.Make(h)
+	if v, ok := hostNames.Load(k); ok {
+		return v.(string)
+	}
+	name := h.HostnameAndPort()
+	if _, loaded := hostNames.LoadOrStore(k, name); !loaded {
+		runtime.AddCleanup(h, func(k weak.Pointer[gocql.HostInfo]) { hostNames.Delete(k) }, k)
+	}
+	return name
+}
 
 type Observer struct{}
 
@@ -35,7 +57,7 @@ func (o *Observer) ObserveQuery(ctx context.Context, query gocql.ObservedQuery) 
 		return
 	}
 
-	info := cassandraInfo(query.Keyspace, query.Host.HostnameAndPort())
+	info := cassandraInfo(query.Keyspace, hostnameAndPort(query.Host))
 	span := pinpoint.NewDatabaseTracer(ctx, "cassandra.query", &info)
 	defer span.EndSpanEvent()
 
@@ -54,7 +76,7 @@ func (o *Observer) ObserveBatch(ctx context.Context, batch gocql.ObservedBatch) 
 		return
 	}
 
-	info := cassandraInfo(batch.Keyspace, batch.Host.HostnameAndPort())
+	info := cassandraInfo(batch.Keyspace, hostnameAndPort(batch.Host))
 	span := pinpoint.NewDatabaseTracer(ctx, "cassandra.batch", &info)
 	defer span.EndSpanEvent()
 

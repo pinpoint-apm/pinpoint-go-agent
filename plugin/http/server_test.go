@@ -1193,3 +1193,13 @@ func TestServeMux_NilHandlerPanicsAtRegistration(t *testing.T) {
 	assert.PanicsWithValue(t, "http: nil handler", func() { mux.HandleFunc("/y", nil) })
 	assert.PanicsWithValue(t, "http: nil handler", func() { WrapHandler(nil) })
 }
+
+// Wrapping is one allocation, the wrapper itself: a recorder escaping to the
+// heap beside it made every wrapped request pay two, and the status handed in
+// by TraceHandler a third.
+func TestWrapResponseWriter_OneAllocation(t *testing.T) {
+	rec := httptest.NewRecorder() // an http.Flusher: the F shape
+	var status int
+	assert.Equal(t, 1.0, testing.AllocsPerRun(100, func() { WrapResponseWriter(rec, &status) }))
+	assert.Equal(t, 1.0, testing.AllocsPerRun(100, func() { wrapResponseWriter(rec, nil) }))
+}

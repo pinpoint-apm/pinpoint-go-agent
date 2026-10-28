@@ -38,6 +38,7 @@ package ppkratos
 
 import (
 	"context"
+	"net/textproto"
 	"strings"
 
 	"github.com/go-kratos/kratos/v2/middleware"
@@ -98,7 +99,7 @@ func serverTracer(ctx context.Context, tr transport.Transporter) pinpoint.Tracer
 		return pinpoint.NestedTracer(existing)
 	}
 	return pinpoint.GetAgent().NewSpanTracerWithReader("Kratos Server", tr.Operation(),
-		headerReader{tr.RequestHeader()})
+		headerReader{tr.RequestHeader(), tr.Kind()})
 }
 
 // serverRemoteAddr takes the transporter the caller already has instead of
@@ -153,7 +154,7 @@ func ClientMiddleware() middleware.Middleware {
 					se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, makeUrl(tr, remote))
 				}
 
-				tracer.Inject(tr.RequestHeader())
+				tracer.Inject(headerWriter{tr.RequestHeader(), tr.Kind()})
 				reply, err = handler(ctx, req)
 				tracer.SpanEvent().SetError(err, "rpc error")
 				return reply, err
@@ -190,6 +191,48 @@ func makeUrl(tr transport.Transporter, addr string) string {
 	return scheme + addr + tr.Operation()
 }
 
+// The kratos carrier re-spells every key it is given: http.Header canonicalizes
+// it and metadata.MD lower-cases it, on Get and Set alike, and each allocates a
+// string for seven of the ten pinpoint names, so one request paid some twenty
+// allocations reading its trace context and a client call as many writing it.
+// Handed the spelling the transport stores, both return the key as it is.
+var (
+	pinpointHeaderNames = []string{
+		pinpoint.HeaderTraceId, pinpoint.HeaderSpanId, pinpoint.HeaderParentSpanId,
+		pinpoint.HeaderSampled, pinpoint.HeaderFlags, pinpoint.HeaderParentApplicationName,
+		pinpoint.HeaderParentApplicationType, pinpoint.HeaderParentApplicationNamespace,
+		pinpoint.HeaderParentServiceName, pinpoint.HeaderHost,
+	}
+	canonicalKeys = spellHeaderNames(textproto.CanonicalMIMEHeaderKey)
+	loweredKeys   = spellHeaderNames(strings.ToLower)
+)
+
+func spellHeaderNames(spell func(string) string) map[string]string {
+	m := make(map[string]string, len(pinpointHeaderNames))
+	for _, k := range pinpointHeaderNames {
+		m[k] = spell(k)
+	}
+	return m
+}
+
+// carrierKey is key as the transport of the given kind stores it; another
+// kind, or a name outside the pinpoint set, is passed through.
+func carrierKey(kind transport.Kind, key string) string {
+	var keys map[string]string
+	switch kind {
+	case transport.KindHTTP:
+		keys = canonicalKeys
+	case transport.KindGRPC:
+		keys = loweredKeys
+	default:
+		return key
+	}
+	if k, ok := keys[key]; ok {
+		return k
+	}
+	return key
+}
+
 // headerReader adapts a kratos transport.Header to the tracing carrier.
 // transport.Header hands out a value and nothing else, so a header carried
 // with an empty value cannot be told from one that is absent: it reads as
@@ -197,10 +240,22 @@ func makeUrl(tr transport.Transporter, addr string) string {
 // plugin did before the carrier reported presence, and only the transport can
 // close the gap.
 type headerReader struct {
-	hdr transport.Header
+	hdr  transport.Header
+	kind transport.Kind
 }
 
 func (r headerReader) Get(key string) (string, bool) {
-	v := r.hdr.Get(key)
+	v := r.hdr.Get(carrierKey(r.kind, key))
 	return v, v != ""
+}
+
+// headerWriter is Inject's carrier over a kratos transport.Header, spelling
+// the keys as headerReader reads them.
+type headerWriter struct {
+	hdr  transport.Header
+	kind transport.Kind
+}
+
+func (w headerWriter) Set(key string, value string) {
+	w.hdr.Set(carrierKey(w.kind, key), value)
 }

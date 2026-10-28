@@ -571,13 +571,14 @@ func TraceHandler(handler http.Handler, serverName, funcName string, urlPattern 
 			return
 		}
 
-		status := http.StatusOK
 		tracer := NewHttpServerTracer(r, serverName)
-		w = WrapResponseWriter(w, &status)
+		// The status is read off the recorder itself: a local int handed to
+		// WrapResponseWriter escaped to the heap on every request.
+		w, rec := wrapResponseWriter(w, nil)
 		r = pinpoint.RequestWithTracerContext(r, tracer)
 		TraceSpan(tracer, funcName, func() int {
 			handler.ServeHTTP(w, r)
-			return status
+			return rec.code
 		}, func(status int) {
 			// Route-pattern lookups can be costly per call, so don't pay for
 			// them when the stat would be dropped anyway.
@@ -603,6 +604,9 @@ func WrapHandlerFunc(handler func(http.ResponseWriter, *http.Request), serverNam
 
 type responseWriter struct {
 	http.ResponseWriter
+	// code is the status written so far, http.StatusOK until WriteHeader;
+	// status, when set, is the caller's copy of it (WrapResponseWriter).
+	code        int
 	status      *int
 	wroteHeader bool
 }
@@ -655,31 +659,49 @@ type (
 	}
 )
 
-// WrapResponseWriter records the response status while preserving exactly the
-// optional HTTP interfaces implemented by w.
+// WrapResponseWriter records the response status into status while preserving
+// exactly the optional HTTP interfaces implemented by w.
 func WrapResponseWriter(w http.ResponseWriter, status *int) http.ResponseWriter {
-	rw := responseWriter{ResponseWriter: w, status: status}
+	wrapped, _ := wrapResponseWriter(w, status)
+	return wrapped
+}
+
+// wrapResponseWriter is WrapResponseWriter returning the recorder as well, so
+// a caller reads the status off its code field with no *int of its own. The
+// default shape is built as a fresh literal, never as &rw: escape analysis is
+// flow-insensitive, so one &rw moved rw to the heap on every path and made
+// the seven wrapping shapes two allocations instead of one.
+func wrapResponseWriter(w http.ResponseWriter, status *int) (http.ResponseWriter, *responseWriter) {
+	rw := responseWriter{ResponseWriter: w, code: http.StatusOK, status: status}
 	f, canFlush := w.(http.Flusher)
 	h, canHijack := w.(http.Hijacker)
 	p, canPush := w.(http.Pusher)
 
 	switch {
 	case canFlush && canHijack && canPush:
-		return &responseWriterFHP{rw, f, h, p}
+		x := &responseWriterFHP{rw, f, h, p}
+		return x, &x.responseWriter
 	case canFlush && canHijack:
-		return &responseWriterFH{rw, f, h}
+		x := &responseWriterFH{rw, f, h}
+		return x, &x.responseWriter
 	case canFlush && canPush:
-		return &responseWriterFP{rw, f, p}
+		x := &responseWriterFP{rw, f, p}
+		return x, &x.responseWriter
 	case canHijack && canPush:
-		return &responseWriterHP{rw, h, p}
+		x := &responseWriterHP{rw, h, p}
+		return x, &x.responseWriter
 	case canFlush:
-		return &responseWriterF{rw, f}
+		x := &responseWriterF{rw, f}
+		return x, &x.responseWriter
 	case canHijack:
-		return &responseWriterH{rw, h}
+		x := &responseWriterH{rw, h}
+		return x, &x.responseWriter
 	case canPush:
-		return &responseWriterP{rw, p}
+		x := &responseWriterP{rw, p}
+		return x, &x.responseWriter
 	default:
-		return &rw
+		x := &responseWriter{ResponseWriter: w, code: http.StatusOK, status: status}
+		return x, x
 	}
 }
 
@@ -693,7 +715,10 @@ func (w *responseWriter) WriteHeader(status int) {
 		return
 	}
 	w.wroteHeader = true
-	*w.status = status
+	w.code = status
+	if w.status != nil {
+		*w.status = status
+	}
 }
 
 // ReadFrom keeps net/http's sendfile fast path (http.ServeFile, io.Copy from a
