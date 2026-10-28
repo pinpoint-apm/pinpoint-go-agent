@@ -249,6 +249,23 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   `gopkg.in/yaml.v2` were in the module graph of every application importing
   the agent.
 
+- **Agent log lines and levels tidied.** `success to register agent` is now
+  `agent registered`, `success to make <s> stream` is `<s> stream opened` and
+  `success to refresh agent info` is `agent info refreshed`; a script that
+  greps the first must follow. A missing `ConfigFile` is logged at info
+  (`config file <path> not found`) instead of error: the file is optional,
+  and the error line is kept for a file that exists but cannot be read. The
+  `SendSpanBatch failed` and `SendSpanBatch skipped` drop lines move from info
+  to warn, so an agent logging at `Log.Level: warn` still sees why its spans
+  were dropped. The `register agent - <message>, retrying` warning and the
+  `make <s> stream` errors are rate limited to a line a minute, like the other
+  per-attempt sites, instead of a line per attempt. A stat collection that
+  panicked is logged at error like every other recovered panic, and the
+  goelastic plugin's `dsl read error` at debug like the driver wrappers' DSN
+  parse errors. The suppression suffix of a rate-limited line reads `similar
+  line(s) suppressed`, since it also follows info and error lines, and the
+  active thread count lines name their numbers (`reqId=`, `open streams=`).
+
 ### Added
 
 - **`ClusterNamespace`**, Java's `profiler.cluster.namespace`. When set, it is

@@ -59,7 +59,9 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	dsl, err := dslString(req)
 	if err != nil {
-		pinpoint.Log("goelastic").Errorf("dsl read error: %s", err.Error())
+		// Debug, like the dsn parse errors of the driver wrappers: the client
+		// reports its own body problems, and this runs once per request.
+		pinpoint.Log("goelastic").Debugf("dsl read error: %v", err)
 	}
 	if len(dsl) > MaxDslLength {
 		// Back off to a rune start: a byte-offset cut can split a multi-byte

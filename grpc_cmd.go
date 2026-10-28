@@ -92,7 +92,7 @@ func (cmdGrpc *cmdGrpc) newHandleCommandStream() bool {
 	stream, err := cmdGrpc.cmdClient.HandleCommandV2(ctx)
 	if err != nil {
 		cancel()
-		Log("grpc").Errorf("make command stream - %v", err)
+		cmdStreamOpenLog.errorf("make command stream - %v", err)
 		return false
 	}
 

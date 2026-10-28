@@ -235,7 +235,7 @@ if $LOAD_ONLY; then
     # then the agents hand out noop tracers and the load would go untraced.
     echo "Waiting for agent registration"
     for log in upstream.log downstream.log grpcserver.log; do
-        if ! retry grep -q 'success to register agent' "$LOG_DIR/$log"; then
+        if ! retry grep -q 'agent registered' "$LOG_DIR/$log"; then
             echo "$log shows no agent registration after ${PINPOINT_E2E_AGENT_TIMEOUT}s; see $LOG_DIR" >&2
             exit 1
         fi
@@ -298,7 +298,7 @@ sleep 3
 echo ""
 echo "Collector transport evidence"
 for log in upstream.log downstream.log grpcserver.log; do
-    if grep -q 'success to register agent' "$LOG_DIR/$log"; then
+    if grep -q 'agent registered' "$LOG_DIR/$log"; then
         echo "  PASS  $log registered with collector"
     else
         echo "  FAIL  $log has no successful agent registration" >&2

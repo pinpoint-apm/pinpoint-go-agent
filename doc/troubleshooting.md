@@ -25,13 +25,13 @@ Lines look like this (logrus text format, with the source module tagged):
 ```text
 INFO[2026-09-03 11:36:00.000000] new pinpoint agent          module=pinpoint src=agent
 INFO[2026-09-03 11:36:00.010000] connect to collector: my-collector:9991 (ssl: false)  module=pinpoint src=grpc
-INFO[2026-09-03 11:36:00.120000] success to register agent   module=pinpoint src=agent
+INFO[2026-09-03 11:36:00.120000] agent registered            module=pinpoint src=agent
 INFO[2026-09-03 11:36:00.121000] start ping goroutine        module=pinpoint src=agent
 INFO[2026-09-03 11:36:00.121000] start span batch goroutine  module=pinpoint src=agent
 INFO[2026-09-03 11:36:00.121000] start send stats goroutine  module=pinpoint src=agent
 ```
 
-The workers start only after `success to register agent` — registration is the
+The workers start only after `agent registered` — registration is the
 precondition for tracing here. Until the collector accepts the AgentInfo,
 `NewSpanTracer()` returns a no-op tracer and no stats are collected, so a blocked agent
 port (9991) alone is enough to make a fully instrumented application report
@@ -56,7 +56,7 @@ Three lines tell you almost everything:
 |---|---|
 | `new pinpoint agent` | config validated, agent object built |
 | `connect to collector: <addr> (ssl: <bool>)` | the address actually used, after all config sources resolved |
-| `success to register agent` | the collector accepted this agent's identity |
+| `agent registered` | the collector accepted this agent's identity |
 
 `new pinpoint agent` is followed by the resolved configuration, one
 `key = value` line per option, with sensitive values (such as `ApiKey`)
@@ -102,10 +102,10 @@ read goes to stderr regardless. That is
 * a command line flag that fails to parse (`command line config loading error`)
   and a `ConfigOption` value of the wrong type, both of which precede any
   logging configuration;
-* `config file loading error` and `config file doesn't have the profile`, when
-  `Log.Output` is set only in that config file - set it with
-  `PINPOINT_GO_LOG_OUTPUT` or `--pinpoint-log-output` and these go to the file
-  too.
+* `config file loading error`, `config file <path> not found` and `config file
+  doesn't have the profile`, when `Log.Output` is set only in that config
+  file - set it with `PINPOINT_GO_LOG_OUTPUT` or `--pinpoint-log-output` and
+  these go to the file too.
 
 A `NewConfig` call made while another agent is already running leaves that
 agent's logging alone; its load messages go to the running agent's output.
@@ -214,7 +214,7 @@ invalid `ApplicationName` is fatal.
 
 Work down this list; it is ordered by how often each turns out to be the cause.
 
-1. **Agent registered?** Without `success to register agent` the problem is
+1. **Agent registered?** Without `agent registered` the problem is
    connectivity or identity, not instrumentation. See
    [Cannot Connect to Collector](#cannot-connect-to-collector).
 2. **Collector older than 3.1.0?** `SendSpanBatch failed - N spans dropped` in
@@ -394,7 +394,7 @@ A call chain that shows as separate transactions instead of one:
 
 ### Cannot Connect to Collector
 
-**Symptoms:** no `success to register agent`; repeated `src=grpc` errors.
+**Symptoms:** no `agent registered`; repeated `src=grpc` errors.
 
 * Verify `Collector.Host` and the **three** ports — agent (9991), span (9993)
   and stat (9992) are separate and all must be reachable. The
@@ -415,8 +415,8 @@ nc -vz your-collector-host 9991
   While the collector is unreachable the wait for the connection to come back
   paces the loop instead, backing off to 30s. A collector that answers the
   registration with `success=false` (still initializing, briefly refusing) is
-  retried the same way and logs `register agent - <message>, retrying`; it is
-  never treated as permanent.
+  retried the same way and logs `register agent - <message>, retrying`, at
+  most once a minute; it is never treated as permanent.
 * If the connection cannot even be set up (bad TLS material, unparsable
   address) the agent logs `failed to connect to collector, agent disabled` and
   releases itself, so `GetAgent()` returns the no-op agent and `NewAgent` can be

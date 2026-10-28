@@ -297,7 +297,7 @@ func Test_urlStatSnapshotThrottlesTheDropWarning(t *testing.T) {
 	addTestUrlStat(snapshot, "/dropped-later", "", 0, 10, endTime)
 
 	assert.Equal(t, 2, strings.Count(buf.String(), "url stat limit reached"))
-	assert.Contains(t, buf.String(), "(999 similar warning(s) suppressed)")
+	assert.Contains(t, buf.String(), "(999 similar line(s) suppressed)")
 	assert.Len(t, snapshot.urlMap, 1)
 }
 

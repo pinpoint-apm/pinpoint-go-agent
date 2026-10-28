@@ -238,7 +238,7 @@ func goIdFromDump() int64 {
 	b = b[prefix:runtime.Stack(b, false)]
 	idStr := string(b[:bytes.IndexByte(b, ' ')])
 	if IsDebugLogLevelEnabled() {
-		Log("cmd").Debugf("idStr: '%s'", idStr)
+		Log("cmd").Debugf("goroutine id from stack: %q", idStr)
 	}
 	id, _ := strconv.ParseInt(idStr, 10, 64)
 	return id

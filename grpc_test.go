@@ -707,7 +707,7 @@ func Test_sendMetadata_failureLogIsThrottled(t *testing.T) {
 
 	metaSendLog.next.Store(0) // the interval elapses
 	assert.Error(t, agentGrpc.sendMetadata(stringMeta{id: 1, funcName: "test.error"}))
-	assert.Contains(t, buf.String(), "(99 similar warning(s) suppressed)")
+	assert.Contains(t, buf.String(), "(99 similar line(s) suppressed)")
 }
 
 // A collector that is up but refusing (Unavailable) answers at once, so the
@@ -1613,7 +1613,7 @@ func Test_agentGrpc_registerAgentWithRetry_saysWhyTracingIsOff(t *testing.T) {
 	assert.Contains(t, out, "NewSpan is a noop and no stats are collected")
 	assert.Contains(t, out, "collector unreachable or the send failed")
 	assert.Less(t, strings.LastIndex(out, "still waiting for agent registration"),
-		strings.Index(out, "success to register agent"),
+		strings.Index(out, "agent registered"),
 		"the wait line must stop once the collector accepts")
 
 	require.True(t, register(&mockAgentGrpcClient{rejects: 2}))

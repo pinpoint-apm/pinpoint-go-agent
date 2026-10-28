@@ -228,7 +228,7 @@ func Test_activeSpanRegistryEvictionWarningIsThrottled(t *testing.T) {
 	activeSpanEvictLog.next.Store(0) // the interval elapses
 	r.store(activeSpanMaxSize+500, now)
 	assert.Equal(t, 2, strings.Count(buf.String(), "active span registry full"))
-	assert.Contains(t, buf.String(), "(499 similar warning(s) suppressed)")
+	assert.Contains(t, buf.String(), "(499 similar line(s) suppressed)")
 	assert.Contains(t, buf.String(), "501 evicted in total")
 }
 
@@ -364,7 +364,7 @@ func fastStatConfig(collectIntervalMs int) *Config {
 
 // A getStats panic costs exactly that tick's snapshot: the cursor stays put,
 // the next tick fills the same slot, and the failure is reported through a
-// throttled WARN.
+// throttled ERROR.
 func Test_collectAgentStatWorker_failedCollectionSkipsOnlyThatSnapshot(t *testing.T) {
 	config := fastStatConfig(10) // never completes within the test
 	agent := newTestAgent(config)
@@ -396,7 +396,7 @@ func Test_collectAgentStatWorker_failedCollectionSkipsOnlyThatSnapshot(t *testin
 	assert.NotContains(t, logged, "restart collect agent stat", "the collect loop must not have been restarted")
 }
 
-// Two failures inside one report interval yield one WARN line that counts
+// Two failures inside one report interval yield one ERROR line that counts
 // what it suppressed, like the other throttled warning sites.
 func Test_collectAgentStatWorker_collectionFailureWarningIsThrottled(t *testing.T) {
 	config := fastStatConfig(5)

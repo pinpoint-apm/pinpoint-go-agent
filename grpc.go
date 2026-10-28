@@ -610,7 +610,10 @@ func (agentGrpc *agentGrpc) sendAgentInfo(ctx context.Context, agentInfo *pb.PAg
 	return result, err
 }
 
-var agentInfoSendLog = logThrottle{src: "grpc"}
+var (
+	agentInfoSendLog       = logThrottle{src: "grpc"}
+	agentRegisterRejectLog = logThrottle{src: "agent"}
+)
 
 // registrationWaitLogInterval paces the line that says why tracing is off while
 // registration is still in progress. A variable so tests can shorten it.
@@ -665,13 +668,16 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 		res, err := agentGrpc.sendAgentInfo(ctx, agentInfo)
 		if err == nil {
 			if res.Success {
-				Log("agent").Infof("success to register agent")
+				Log("agent").Infof("agent registered")
 				return true
 			}
 			// A rejection is retried rather than fatal: the collector answers
 			// this way while initializing or briefly refusing, and giving up
-			// would leave this process untraced until it restarts.
-			Log("agent").Warnf("register agent - %s, retrying", res.Message)
+			// would leave this process untraced until it restarts. Throttled
+			// like the send failure: a collector that keeps rejecting is asked
+			// again every SendRetryInterval, and the "still waiting" line
+			// above already names the rejection.
+			agentRegisterRejectLog.warnf("register agent - %s, retrying", res.Message)
 		}
 		// A transport that worked and a collector that said no are different
 		// stories for the waiting operator: only the second one is likely to
@@ -707,7 +713,7 @@ func (agentGrpc *agentGrpc) refreshAgentInfo(maxTry int, retryInterval time.Dura
 		ctx, agentInfo := agentGrpc.makeAgentInfo()
 
 		if res, err := agentGrpc.sendAgentInfo(ctx, agentInfo); err == nil && res.Success {
-			Log("agent").Infof("success to refresh agent info")
+			Log("agent").Infof("agent info refreshed")
 			return true
 		}
 		if try+1 < maxTry && !sleepUnlessStopped(agentGrpc.agent, retryInterval) {
@@ -766,7 +772,9 @@ const metaRetryQueueSize = 1000
 // while the collector is down every send fails, and a line per failed send -
 // several per hot metadata key a second, one per batch - buried the host's own
 // log. What was lost is still counted (dropReporter), and each line says how
-// many it held back.
+// many it held back. The span drop lines are WARN like the drop totals of
+// reportSpanDrops: they carry the cause the totals lack, and the
+// troubleshooting guide sends an operator looking for them.
 var (
 	metaSendLog          = logThrottle{src: "grpc"}
 	metaSkipLog          = logThrottle{src: "grpc"}
@@ -774,6 +782,17 @@ var (
 	spanBatchFailLog     = logThrottle{src: "grpc"}
 	spanBatchPartialLog  = logThrottle{src: "grpc"}
 	spanBatchOversizeLog = logThrottle{src: "grpc"}
+)
+
+// The stream open sites are throttled for the same reason: newStreamWithRetry
+// retries at the reconnect back-off for as long as the collector is down, and
+// the connection-not-ready WARN already says data is not being sent meanwhile.
+// One per stream so the ping stream's line cannot hide the stat stream's. The
+// active thread count stream is opened once per command, so its site is not.
+var (
+	pingStreamOpenLog = logThrottle{src: "grpc"}
+	statStreamOpenLog = logThrottle{src: "grpc"}
+	cmdStreamOpenLog  = logThrottle{src: "grpc"}
 )
 
 // metaVerdict is what becomes of a metadata item after one send attempt.
@@ -1178,7 +1197,7 @@ func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc f
 	// the stat worker still sends the final url stat tick while stopping.
 	for agent.workerContinues() {
 		if newStreamFunc() {
-			Log("grpc").Infof("success to make %s stream", which)
+			Log("grpc").Infof("%s stream opened", which)
 			return true
 		}
 		if agent.config.offGrpc {
@@ -1290,7 +1309,7 @@ func (agentGrpc *agentGrpc) newPingStream() bool {
 	stream, err := agentGrpc.agentClient.PingSession(ctx)
 	if err != nil {
 		cancel()
-		Log("grpc").Errorf("make ping stream - %v", err)
+		pingStreamOpenLog.errorf("make ping stream - %v", err)
 		return false
 	}
 

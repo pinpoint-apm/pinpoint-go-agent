@@ -170,7 +170,7 @@ func (t *logThrottle) logf(level logrus.Level, format string, args ...any) {
 // emit logs the line, noting the n calls the throttle held back before it.
 func (t *logThrottle) emit(level logrus.Level, format string, args []any, n int64) {
 	if n > 0 {
-		format += " (%d similar warning(s) suppressed)"
+		format += " (%d similar line(s) suppressed)"
 		args = append(args, n)
 	}
 	src := t.src

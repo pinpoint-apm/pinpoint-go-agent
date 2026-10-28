@@ -102,7 +102,7 @@ type agentStats struct {
 	collected     []*inspectorStats
 	batch         atomic.Int32
 	workerStarted bool
-	// collectFailures throttles the WARN for a collection that panicked.
+	// collectFailures throttles the ERROR for a collection that panicked.
 	collectFailures logThrottle
 	// Test seam: number of upcoming getStats calls that panic.
 	failCollects atomic.Int32
@@ -605,13 +605,13 @@ func (agent *agent) collectAgentStatWorker() {
 
 // collect is getStats with a per-collection recover: a panic while sampling
 // (a transient /proc read failure, a gopsutil error path) is logged through a
-// throttled WARN and reported as a nil snapshot, so the caller skips the
-// sample and keeps collecting.
+// throttled ERROR, as every other recovered panic is, and reported as a nil
+// snapshot, so the caller skips the sample and keeps collecting.
 func (stats *agentStats) collect() (snapshot *inspectorStats) {
 	defer func() {
 		if e := recover(); e != nil {
 			snapshot = nil
-			stats.collectFailures.warnf("agent stat collection failed, snapshot skipped: %v", e)
+			stats.collectFailures.errorf("agent stat collection failed, snapshot skipped: %v", e)
 		}
 	}()
 	return stats.getStats()

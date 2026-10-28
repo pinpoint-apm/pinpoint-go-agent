@@ -1158,8 +1158,8 @@ func TestNewConfig_LoadWarningsReachTheConfiguredLogFile(t *testing.T) {
 		assert.Contains(t, string(b), `Sampling.Type = \"bogus\" is not supported`)
 	})
 
-	// With the output given by the environment, even an unreadable config
-	// file is reported in the file.
+	// With the output given by the environment, even a missing config file
+	// is reported in the file.
 	t.Run("output from the environment", func(t *testing.T) {
 		logFile := filepath.Join(t.TempDir(), "pinpoint.log")
 		t.Setenv("PINPOINT_GO_LOG_OUTPUT", logFile)
@@ -1170,7 +1170,7 @@ func TestNewConfig_LoadWarningsReachTheConfiguredLogFile(t *testing.T) {
 
 		b, err := os.ReadFile(logFile)
 		require.NoError(t, err)
-		assert.Contains(t, string(b), "config file loading error")
+		assert.Contains(t, string(b), "not found, using the other sources")
 	})
 }
 

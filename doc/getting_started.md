@@ -273,10 +273,10 @@ by default:
 ```text
 INFO[...] new pinpoint agent          module=pinpoint src=agent
 INFO[...] connect to collector: collector.myhost.com:9991 (ssl: false)  module=pinpoint src=grpc
-INFO[...] success to register agent   module=pinpoint src=agent
+INFO[...] agent registered            module=pinpoint src=agent
 ```
 
-`success to register agent` means the collector accepted this agent. Then send
+`agent registered` means the collector accepted this agent. Then send
 a request through an instrumented handler:
 
 ```bash

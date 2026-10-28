@@ -852,11 +852,13 @@ func (config *Config) loadConfigFile(sources *cfgSources) (*configFile, error) {
 
 	f := newConfigFile(cfgFile)
 	err := f.read()
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) {
+		// Info, not Error: the file is optional (see above), so a missing one
+		// is a notice of which sources are in use, not a failure.
+		Log("config").Infof("config file %s not found, using the other sources; the config file watcher picks it up once it appears", cfgFile)
+		err = nil
+	} else if err != nil {
 		Log("config").Errorf("config file loading error: %v", err)
-		if errors.Is(err, fs.ErrNotExist) {
-			err = nil
-		}
 	}
 	config.configFile = cfgFile
 	config.configFileCfg = f
@@ -1652,7 +1654,7 @@ func (config *Config) printConfigString() {
 	for _, k := range slices.Sorted(maps.Keys(values)) {
 		if k == CfgApiKey {
 			if values[k] == "" {
-				Log("config").Infof("%s = ", k)
+				Log("config").Infof("%s = (empty)", k)
 			} else {
 				Log("config").Infof("%s = ****", k)
 			}

@@ -61,7 +61,7 @@ func (statGrpc *statGrpc) newStatStream() bool {
 	stream, err := statGrpc.statClient.SendAgentStat(ctx, opts...)
 	if err != nil {
 		cancel()
-		Log("grpc").Errorf("make stat stream - %v", err)
+		statStreamOpenLog.errorf("make stat stream - %v", err)
 		return false
 	}
 

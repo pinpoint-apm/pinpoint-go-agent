@@ -158,7 +158,7 @@ go list -m all | grep pinpoint-go-agent
 ```
 
 lists only `/v2` modules. At startup the agent logs
-`success to register agent`, on stdout now. If it registers but no transaction
+`agent registered`, on stdout now. If it registers but no transaction
 shows up, look for `SendSpanBatch failed` in its log (see
 [Check the requirements](#1-check-the-requirements)), then work through
 [No Data in the Pinpoint UI](troubleshooting.md#no-data-in-the-pinpoint-ui).

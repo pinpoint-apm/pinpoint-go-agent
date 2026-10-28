@@ -122,7 +122,7 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 		// Counted with the queue's head-drops: these spans are lost the same
 		// way, and reportSpanDrops would otherwise under-report the loss.
 		spanGrpc.agent.spanDrops.record(int64(len(chunks)))
-		spanBatchSkipLog.infof(
+		spanBatchSkipLog.warnf(
 			"SendSpanBatch skipped: %d spans dropped, no available permits within %s concurrentRequests:%d/%d",
 			len(chunks),
 			spanGrpc.batchFlushTimeout.String(),
@@ -201,7 +201,7 @@ func (spanGrpc *spanGrpc) sendSpanMessageBatch(batch *pb.PSpanMessageBatch) {
 	if err != nil {
 		disableGzipIfRejected(&spanGrpc.compress, err, "span batches")
 		spanGrpc.agent.spanDrops.record(int64(len(batch.GetSpan())))
-		spanBatchFailLog.infof("SendSpanBatch failed - %d spans dropped: %v", len(batch.GetSpan()), err)
+		spanBatchFailLog.warnf("SendSpanBatch failed - %d spans dropped: %v", len(batch.GetSpan()), err)
 		return
 	}
 	handleSpanBatchResponse(response)
@@ -283,7 +283,7 @@ func (spanGrpc *spanGrpc) releaseSpanBatchPermit() {
 // shortens both.
 func (spanGrpc *spanGrpc) awaitInFlightSpanBatch() {
 	if !waitTimeout(&spanGrpc.inFlight, shutdownTimeout) {
-		Log("grpc").Warnf("Timed out waiting for in-flight span requests to complete")
+		Log("grpc").Warnf("timed out after %v waiting for in-flight span batch requests; their spans may not have reached the collector", shutdownTimeout)
 	}
 }
 
@@ -309,7 +309,7 @@ func handleSpanBatchResponse(response *pb.PSpanResultBatch) {
 
 	if partialSuccess.GetErrorMessage() != "" {
 		spanBatchPartialLog.infof(
-			"SendSpanBatch warning: errorId=%d, %s",
+			"SendSpanBatch collector notice: errorId=%d, %s",
 			partialSuccess.GetErrorId(),
 			partialSuccess.GetErrorMessage(),
 		)

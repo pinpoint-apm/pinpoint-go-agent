@@ -182,7 +182,7 @@ func (agent *agent) serveCommandStream(attempt int) int {
 		attempt = 0 // the stream is healthy; restart the back-off
 
 		reqId := cmdReq.GetRequestId()
-		Log("cmd").Infof("command request: %v, %v", cmdReq, reqId)
+		Log("cmd").Infof("command request: %v", cmdReq)
 		switch cmdReq.Command.(type) {
 		case *pb.PCmdRequest_CommandEcho:
 			msg := cmdReq.GetCommandEcho().GetMessage()
@@ -216,7 +216,7 @@ func (agent *agent) handleActiveThreadCount(reqId int32, cmd *cmdStream) {
 	// same-id predecessor are then decided under a single lock, and a request
 	// that the cap rejects never opens a stream at all.
 	if !agent.cmdGrpc.atcStreams.add(s) {
-		Log("cmd").Warnf("reject active thread count stream: %d, %d", reqId, agent.cmdGrpc.atcStreams.count())
+		Log("cmd").Warnf("reject active thread count stream: reqId=%d, %d stream(s) already open (max %d)", reqId, agent.cmdGrpc.atcStreams.count(), maxActiveThreadCountStreams)
 		if err := cmd.sendFailMessage(reqId, "too many active thread count streams"); err != nil {
 			Log("cmd").Errorf("send fail message - %d, %v", reqId, err)
 		}
@@ -235,14 +235,14 @@ func (agent *agent) handleActiveThreadCount(reqId int32, cmd *cmdStream) {
 }
 
 func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
-	Log("cmd").Infof("active thread count stream goroutine start: %d, %d", s.reqId, agent.cmdGrpc.atcStreams.count())
+	Log("cmd").Infof("active thread count stream goroutine start: reqId=%d, open streams=%d", s.reqId, agent.cmdGrpc.atcStreams.count())
 
 	// Deferred so that every exit path - send error, stop request and agent
 	// shutdown alike - frees the slot this stream holds.
 	defer func() {
 		s.close()
 		agent.cmdGrpc.atcStreams.remove(s)
-		Log("cmd").Infof("active thread count stream goroutine finish: %d, %d", s.reqId, agent.cmdGrpc.atcStreams.count())
+		Log("cmd").Infof("active thread count stream goroutine finish: reqId=%d, open streams=%d", s.reqId, agent.cmdGrpc.atcStreams.count())
 	}()
 
 	shutdown := agent.stopSignal().Done()

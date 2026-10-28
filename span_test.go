@@ -1332,7 +1332,7 @@ func Test_span_Extract_malformedHeaderWarningIsThrottled(t *testing.T) {
 	span.extract(&DistributedTracingContextMap{m: map[string]string{HeaderTraceId: "not^a^traceid"}})
 	span.end(span.agent)
 	assert.Equal(t, 2, strings.Count(buf.String(), "malformed trace id header"))
-	assert.Contains(t, buf.String(), "(999 similar warning(s) suppressed)")
+	assert.Contains(t, buf.String(), "(999 similar line(s) suppressed)")
 }
 
 // Goroutine-sharing detection must not change the call stack: an event
