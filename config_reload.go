@@ -162,9 +162,11 @@ func (config *Config) reloadYAML(text string) ConfigReloadResult {
 // the non-dynamic ones included, normalized by publish and with the identity
 // resolved as NewAgent resolves it - so that the comparison that produces
 // RestartRequired compares like with like, and so that a refused YAML leaves
-// the Config untouched. Only the dynamic options are then copied over. The
-// lock is released by defer so that a panic, which ReloadConfig recovers,
-// cannot leave it held.
+// the Config untouched. Only the dynamic options are then copied over, and the
+// components the candidate built from them - and the warnings it logged
+// building them - are taken over rather than built a second time. The lock is
+// released by defer so that a panic, which ReloadConfig recovers, cannot
+// leave it held.
 func (config *Config) stageYAML(text string) (ConfigReloadResult, map[string]bool, []reloadCallback) {
 	config.mu.Lock()
 	defer config.mu.Unlock()
@@ -214,7 +216,7 @@ func (config *Config) stageYAML(text string) (ConfigReloadResult, map[string]boo
 			restart = append(restart, k)
 		}
 	}
-	config.publish()
+	config.publishFrom(candidate.load())
 	callback := make([]reloadCallback, len(config.callback))
 	copy(callback, config.callback)
 	return ConfigReloadResult{Status: ConfigReloadApplied, RestartRequired: restart}, changed, callback

@@ -439,6 +439,11 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   which selects the `Collector.Grpc.ConnectionMaxAge` balancer. The lookup is
   now disabled: no extra query per resolution, and a DNS zone the agent does
   not own can no longer change how it connects.
+- **`ReloadConfig` warns once about a value it had to correct.** The YAML was
+  resolved on a private candidate and then published again, and the sampler
+  and the error mark mask were built, and warned about, on both; the final
+  publish now takes the candidate's components over. A reload of unrelated
+  options no longer repeats a standing `Span.ErrorMark` warning either.
 - **Shutdown during a collector outage no longer spins the stream workers.**
   The ping, stat and command workers kept retrying to open their stream
   through the stopping phase while the readiness wait returned at once from

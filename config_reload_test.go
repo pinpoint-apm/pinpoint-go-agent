@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"bytes"
 	"strings"
 	"sync"
 	"testing"
@@ -241,6 +242,31 @@ func TestReloadConfig_OutOfRangeAndUnknownKeysAreTolerated(t *testing.T) {
 
 // A panic inside the reload is reported as an error, and leaves the Config
 // usable - the lock released - for the next call.
+// The candidate resolves the YAML first, so that RestartRequired compares
+// like with like, and the final publish takes its components over: a value
+// the YAML got wrong is warned about once, not once per publish.
+func TestReloadConfig_WarnsOnceAboutAValue(t *testing.T) {
+	cfg, err := NewConfig(WithAppName("TestApp"), WithServiceName("TestService"))
+	require.NoError(t, err)
+	agent, err := NewTestAgent(cfg)
+	require.NoError(t, err)
+	defer agent.Shutdown()
+
+	var buf bytes.Buffer
+	defer captureWarnLog(&buf)()
+	require.True(t, ReloadConfig("Span:\n  ErrorMark: bogus\nSampling:\n  CounterRate: -1\n").OK())
+
+	// logrus escapes the quotes around bogus, so the match stops before them.
+	assert.Equal(t, 1, strings.Count(buf.String(), "is not a valid error category"))
+	assert.Equal(t, 1, strings.Count(buf.String(), "sampling counter rate -1 is negative"))
+
+	// An unrelated reload does not repeat them either: the mask and the
+	// sampler are carried over while their options stand.
+	buf.Reset()
+	require.True(t, ReloadConfig("Span:\n  ErrorMark: bogus\n  EventChunkSize: 10\nSampling:\n  CounterRate: -1\n").OK())
+	assert.Empty(t, buf.String())
+}
+
 func TestReloadConfig_RecoversPanic(t *testing.T) {
 	_, config := newReloadAgent(t, WithAppName("reload-panic"))
 	const broken = "Test.Broken"

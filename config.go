@@ -1263,6 +1263,16 @@ func (config *Config) zeroIfNegative(name string) {
 // built here so that one store makes the whole generation visible at once.
 // The caller must hold config.mu.
 func (config *Config) publish() {
+	config.publishFrom(config.load())
+}
+
+// publishFrom is publish with prev as the generation the derived components -
+// the sampler, the exception limiter, the error mark mask - are carried over
+// from when the options behind them did not change. That is the published
+// snapshot, or ReloadConfig's candidate: its components were built, and
+// warned about, from the very values being published, so building them again
+// here logged every warning of a reload twice. The caller must hold config.mu.
+func (config *Config) publishFrom(prev *configSnapshot) {
 	// The normalized type is stored, not just used here: newTraceSampler and
 	// the rest compare the published value against samplingTypeCounter, so
 	// uppercasing a local copy alone would route "counter" - and the COUNTING
@@ -1457,13 +1467,26 @@ func (config *Config) publish() {
 		errorCallStackDepth:  valueAs[int](values[CfgErrorCallStackDepth]),
 		errorIgnoreRules:     parseIgnoreErrorRules(valueAs[[]string](values[CfgSpanIgnoreErrors])),
 		errorMaxChainDepth:   valueAs[int](values[CfgErrorMaxChainDepth]),
-		errorMarkMask: parseErrorMarkMask(valueAs[[]string](values[CfgSpanErrorMark]),
-			valueAs[[]string](values[CfgSpanErrorMarkExclude])),
+		errorMarkMask:        newErrorMarkMask(prev, values),
 	}
-	snapshot.sampler = newTraceSampler(config.load(), values)
-	snapshot.newExceptionLimiter = newExceptionLimiter(config.load(), values)
+	snapshot.sampler = newTraceSampler(prev, values)
+	snapshot.newExceptionLimiter = newExceptionLimiter(prev, values)
 
 	config.snapshot.Store(snapshot)
+}
+
+// newErrorMarkMask resolves Span.ErrorMark and Span.ErrorMarkExclude, carrying
+// the previous mask over when neither changed: the parse warns about every
+// unknown category, and a reload of unrelated options should not repeat a
+// warning the operator has already seen. A zero previous mask is a snapshot
+// built by hand (see configSnapshot.errorMarkMask), never carried over.
+func newErrorMarkMask(prev *configSnapshot, values map[string]any) ErrorCategory {
+	if prev != nil && prev.errorMarkMask != 0 &&
+		sameValues(prev.values, values, []string{CfgSpanErrorMark, CfgSpanErrorMarkExclude}) {
+		return prev.errorMarkMask
+	}
+	return parseErrorMarkMask(valueAs[[]string](values[CfgSpanErrorMark]),
+		valueAs[[]string](values[CfgSpanErrorMarkExclude]))
 }
 
 // newTraceSampler carries the previous sampler over when no sampling option

@@ -176,6 +176,11 @@ Two things to know about this pattern:
 * The agent is a process-global singleton. Calling `NewAgent()` while one is
   live returns the **existing** agent plus an `agent is already created`
   error — you must `Shutdown()` first.
+* `Shutdown()` returns within milliseconds against a reachable collector and
+  within about six seconds at worst: up to three seconds waiting for a config
+  file reload callback in progress to finish, then up to three draining the
+  worker goroutines. Whatever is still queued after that is dropped and
+  counted in the `span drops` and `queue overflow` warnings.
 * Call `defer agent.Shutdown()` in `main()` for normal exits. Spans are sent by
   a separate goroutine, so a process that exits immediately after the last
   request can drop the spans still in the queue. A `defer` does not run when
@@ -266,7 +271,8 @@ defer stop()
 ```
 
 On one of the signals the watcher calls `Shutdown()`, which drains the queue
-for at most three seconds, then restores the default signal handling with
+for at most three seconds (about six when a config file reload callback is in
+flight, see above), then restores the default signal handling with
 `signal.Stop` and re-raises the same signal. The process still dies of the
 signal, with the same `128+signum` exit status it would have had, so
 orchestrators and shell scripts see nothing different. The agent never calls

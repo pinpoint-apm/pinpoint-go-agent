@@ -60,9 +60,11 @@ func shutdownSignalsFor(goos string) []os.Signal {
 // does not exit until the orchestrator escalates to SIGKILL. With no sigs the
 // helper watches SIGTERM and SIGINT (os.Interrupt); SIGTERM alone on Windows.
 //
-// When a watched signal arrives the helper calls Shutdown(), which drains the
-// span queue for at most shutdownTimeout, restores the default disposition of
-// the signal with signal.Stop, and raises the same signal again. Under the
+// When a watched signal arrives the helper calls Shutdown(), which waits at
+// most shutdownTimeout for a config file reload callback in progress and then
+// at most shutdownTimeout more for the workers to drain the span queue (see
+// Agent.Shutdown), restores the default disposition of the signal with
+// signal.Stop, and raises the same signal again. Under the
 // default disposition that terminates the process with exit status 128+signum,
 // exactly as it would have without the helper. The helper never calls
 // os.Exit.

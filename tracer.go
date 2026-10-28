@@ -53,6 +53,11 @@ type Agent interface {
 	// agent's end time, so the web UI keeps listing the agent as alive.
 	// ShutdownOnSignal is the opt-in way to run it on a signal; nothing can
 	// run it on os.Exit.
+	//
+	// Shutdown returns within milliseconds against a reachable collector, and
+	// within about six seconds at worst: up to three waiting for a config
+	// file reload callback in progress, then up to three draining the
+	// workers; whatever is still queued after that is dropped and counted.
 	Shutdown()
 }
 
