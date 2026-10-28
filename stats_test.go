@@ -309,12 +309,19 @@ func Test_bucketActiveSpanBoundariesAreInclusiveMilliseconds(t *testing.T) {
 func Test_numFDAndNumThreadsReportUncollectedAsMinusOne(t *testing.T) {
 	stats := newAgentStats()
 	stats.proc = nil
+	// Where countOpenFDs reads the descriptors itself (Linux), numFD does not
+	// need the process handle, so only a platform without it reports -1.
+	_, fdCounted := countOpenFDs()
 
-	assert.EqualValues(t, uncollectedUsage, stats.numFD())
+	if !fdCounted {
+		assert.EqualValues(t, uncollectedUsage, stats.numFD())
+	}
 	assert.EqualValues(t, uncollectedUsage, stats.numThreads())
 
 	snapshot := stats.getStats()
-	assert.EqualValues(t, uncollectedUsage, snapshot.numOpenFD)
+	if !fdCounted {
+		assert.EqualValues(t, uncollectedUsage, snapshot.numOpenFD)
+	}
 	assert.EqualValues(t, uncollectedUsage, snapshot.numThreads)
 }
 
