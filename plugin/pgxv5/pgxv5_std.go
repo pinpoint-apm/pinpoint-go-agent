@@ -21,8 +21,11 @@ func DBInfo() pinpoint.DBInfo {
 	}
 }
 
+// The wrapped driver is pgx's own, not a fresh stdlib.Driver: the name
+// stdlib.RegisterConnConfig returns is looked up in that driver's registry,
+// and a fresh one parsed it as a DSN and failed every connect.
 func init() {
-	sql.Register("pgxv5-pinpoint", pinpoint.WrapSQLDriver(&stdlib.Driver{}, DBInfo()))
+	sql.Register("pgxv5-pinpoint", pinpoint.WrapSQLDriver(stdlib.GetDefaultDriver(), DBInfo()))
 }
 
 func parseDSN(info *pinpoint.DBInfo, dsn string) {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -109,22 +110,49 @@ func Test_newSpanEventIgnoresUnsampledCalls(t *testing.T) {
 	assert.False(t, connSpanEvent(ctx, &pgx.Conn{}, "pgx.Query").IsSampled())
 }
 
-// Connecting is a span event of its own, opened on start and closed on end -
-// pgx calls the two on the same context, so an unbalanced pair would skew the
-// event stack of the request that opened the connection.
+// forkingTracer is a RecordingTracer whose goroutine tracers record on their
+// own, as a real tracer's async spans do.
+type forkingTracer struct {
+	*pptest.RecordingTracer
+	forks []*goroutineTracer
+}
+
+func (t *forkingTracer) NewGoroutineTracer() pinpoint.Tracer {
+	fork := &goroutineTracer{RecordingTracer: pptest.NewRecordingTracer()}
+	t.forks = append(t.forks, fork)
+	return fork
+}
+
+type goroutineTracer struct {
+	*pptest.RecordingTracer
+	spanEnded bool
+}
+
+func (t *goroutineTracer) EndSpan() { t.spanEnded = true }
+
+// pgxpool connects on puddle's constructor goroutine with the values of the
+// Acquire ctx, so the connect is recorded on a goroutine tracer of its own -
+// event and span both ended - and the request's tracer, busy on its own
+// goroutine or long past the call after a canceled Acquire, is left alone.
 func TestTraceConnect(t *testing.T) {
-	tracer := pptest.NewRecordingTracer()
+	tracer := &forkingTracer{RecordingTracer: pptest.NewRecordingTracer()}
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 	pgxT := NewTracer()
 
+	want := errors.New("connect failed")
 	ctx = pgxT.TraceConnectStart(ctx, pgx.TraceConnectStartData{ConnConfig: testConfig(t)})
-	pgxT.TraceConnectEnd(ctx, pgx.TraceConnectEndData{})
+	pgxT.TraceConnectEnd(ctx, pgx.TraceConnectEndData{Err: want})
 
-	require.Len(t, tracer.Events, 1)
-	e := tracer.Events[0]
+	assert.Empty(t, tracer.Events, "the connect was recorded on the caller's tracer")
+	require.Len(t, tracer.forks, 1)
+	fork := tracer.forks[0]
+	require.Len(t, fork.Events, 1)
+	e := fork.Events[0]
 	assert.Equal(t, "pgx.Connect", e.Operation)
 	assert.Equal(t, "dbhost", e.EndPoint)
+	assert.Equal(t, want, e.Err)
 	assert.True(t, e.Ended, "the span event was left open")
+	assert.True(t, fork.spanEnded, "the goroutine tracer was never ended")
 }
 
 // pgx hands each Start callback a live *pgx.Conn to read the connection config
@@ -140,9 +168,8 @@ func TestEndCallbacks(t *testing.T) {
 		end       func(context.Context, error)
 	}{
 		{"pgx.Query", func(ctx context.Context, err error) { pgxT.TraceQueryEnd(ctx, nil, pgx.TraceQueryEndData{Err: err}) }},
-		{"pgx.Batch", func(ctx context.Context, err error) { pgxT.TraceBatchEnd(ctx, nil, pgx.TraceBatchEndData{Err: err}) }},
-		{"pgx.CopyFrom", func(ctx context.Context, err error) {
-			pgxT.TraceCopyFromEnd(ctx, nil, pgx.TraceCopyFromEndData{Err: err})
+		{"pgx.Batch", func(ctx context.Context, err error) {
+			pgxT.TraceBatchEnd(batchStarted(ctx), nil, pgx.TraceBatchEndData{Err: err})
 		}},
 	} {
 		t.Run(tt.operation, func(t *testing.T) {
@@ -161,20 +188,72 @@ func TestEndCallbacks(t *testing.T) {
 	}
 }
 
-// The copy target is what CopyFrom records in place of a SQL statement, so the
-// identifier has to reach the annotation the way pgx sanitizes it. Asserting
-// pgx.Identifier.Sanitize on its own tested pgx, not the plugin.
-func TestCopyFromTargetIsSanitized(t *testing.T) {
+// pgx calls TraceBatchEnd twice for a batch that fails before it is sent: from
+// SendBatch, and again from the BatchResults.Close the caller must make. The
+// second call must leave the caller's own event open and free of the error.
+func TestTraceBatchEnd_SecondCallIsIgnored(t *testing.T) {
+	tracer := pptest.NewRecordingTracer()
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+	tracer.NewSpanEvent("caller")
+	newSpanEvent(ctx, testConfig(t), "pgx.Batch") // what TraceBatchStart opens
+	ctx = batchStarted(ctx)
+
+	pgxT := NewTracer()
+	want := errors.New("prepare failed")
+	pgxT.TraceBatchEnd(ctx, nil, pgx.TraceBatchEndData{Err: want})
+	pgxT.TraceBatchEnd(ctx, nil, pgx.TraceBatchEndData{Err: want})
+
+	require.Len(t, tracer.Events, 2)
+	assert.True(t, tracer.Events[1].Ended, "the batch event was left open")
+	assert.Equal(t, want, tracer.Events[1].Err)
+	assert.False(t, tracer.Events[0].Ended, "the second TraceBatchEnd ended the caller's event")
+	assert.Nil(t, tracer.Events[0].Err, "the batch error landed on the caller's event")
+}
+
+// CopyFrom returns without TraceCopyFromEnd when it cannot describe the target
+// table, so its start opens nothing: the event is recorded whole at the end,
+// starting when the copy started, with the copy target pgx sanitizes in place
+// of a SQL statement. Asserting pgx.Identifier.Sanitize on its own tested pgx,
+// not the plugin.
+func TestTraceCopyFrom(t *testing.T) {
 	tracer := pptest.NewRecordingTracer()
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 
-	recordCopyFromTarget(newSpanEvent(ctx, testConfig(t), "pgx.CopyFrom"),
-		pgx.Identifier{"public", "users"})
+	before := time.Now()
+	ctx = NewTracer().TraceCopyFromStart(ctx, nil, pgx.TraceCopyFromStartData{TableName: pgx.Identifier{"public", "users"}})
+	assert.Empty(t, tracer.Events, "the start opened an event a failed describe leaves open")
+
+	start, ok := ctx.Value(copyFromKey{}).(*copyFromStart)
+	require.True(t, ok, "the start handed the end nothing to record")
+	want := errors.New("copy failed")
+	recordCopyFrom(newSpanEvent(ctx, testConfig(t), "pgx.CopyFrom"), start, want) // what the end does
 
 	require.Len(t, tracer.Events, 1)
-	assert.Equal(t, `"public"."users"`,
-		tracer.Events[0].Strings[pinpoint.AnnotationArgs0],
+	e := tracer.Events[0]
+	assert.Equal(t, `"public"."users"`, e.Strings[pinpoint.AnnotationArgs0],
 		"the sanitized copy target belongs in the Args0 annotation")
+	assert.Equal(t, want, e.Err)
+	assert.False(t, e.Start.Before(before), "the event does not start when the copy did")
+	assert.False(t, e.End.Before(e.Start))
+	assert.True(t, e.Ended, "the span event was left open")
+}
+
+// stdlib.RegisterConnConfig registers a ConnConfig with pgx's own driver: the
+// name it returns has to open through this package's driver too, where a
+// fresh stdlib.Driver parsed it as a DSN and failed every connect.
+func TestOpenRegisteredConnConfig(t *testing.T) {
+	config, err := pgx.ParseConfig("postgres://testuser@127.0.0.1:1/testdb?connect_timeout=1")
+	require.NoError(t, err)
+	name := stdlib.RegisterConnConfig(config)
+	defer stdlib.UnregisterConnConfig(name)
+
+	db, err := sql.Open(driverName, name)
+	require.NoError(t, err)
+	defer db.Close()
+
+	err = db.PingContext(context.Background())
+	require.Error(t, err, "nothing listens on port 1")
+	assert.NotContains(t, err.Error(), "cannot parse", "the registered config was not found")
 }
 
 // Bind values can hold personal data, so SQL.TraceBindValue is a privacy gate:

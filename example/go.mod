@@ -20,7 +20,7 @@ require (
 	github.com/gofiber/fiber/v3 v3.5.0
 	github.com/gomodule/redigo v2.0.0+incompatible
 	github.com/gorilla/mux v1.8.1
-	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/julienschmidt/httprouter v1.3.0
 	github.com/labstack/echo/v4 v4.16.0
 	github.com/labstack/echo/v5 v5.3.1
