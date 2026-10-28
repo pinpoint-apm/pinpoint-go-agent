@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/resolver"
+	"google.golang.org/grpc/resolver/manual"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
@@ -381,6 +382,42 @@ func Test_expiringPickFirst_rotatesConnectionsWithoutFailingRpcs(t *testing.T) {
 	conns := counter.conns.Load()
 	assert.GreaterOrEqual(t, conns, int32(3), "the connection is rotated while traffic flows")
 	assert.LessOrEqual(t, conns, int32(30), "%d calls must not open a connection per call", calls)
+}
+
+// A service config the resolver hands the channel - what the dns resolver
+// builds from a _grpc_config TXT record - is ignored: the agent's own default
+// service config keeps selecting the policy. Here the resolver asks for
+// round_robin, which would hold one connection for the life of the channel;
+// the max age rotation going ahead shows the agent's config won.
+func Test_expiringPickFirst_ignoresResolverServiceConfig(t *testing.T) {
+	counter := &connCounter{}
+	lis := startTestServer(t, grpc.StatsHandler(counter))
+
+	cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorGrpcConnectionMaxAge(50))
+	require.NoError(t, err)
+	r := manual.NewBuilderWithScheme("agenttest")
+	// The channel's ClientConn parses the config, and it exists only once
+	// the channel builds the resolver, so the state is set from there.
+	r.BuildCallback = func(_ resolver.Target, cc resolver.ClientConn, _ resolver.BuildOptions) {
+		r.InitialState(resolver.State{
+			Addresses:     []resolver.Address{{Addr: lis.Addr().String()}},
+			ServiceConfig: cc.ParseServiceConfig(`{"loadBalancingConfig":[{"round_robin":{}}]}`),
+		})
+	}
+	opts := append(newGrpcChannelOptions(cfg).dialOptions(insecure.NewCredentials()), grpc.WithResolvers(r))
+	conn, err := grpc.NewClient(r.Scheme()+":///collector", opts...)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := conn.Invoke(ctx, "/pinpoint.test/Ping", &emptypb.Empty{}, &emptypb.Empty{})
+		cancel()
+		require.Equal(t, codes.Unimplemented, status.Code(err))
+		time.Sleep(5 * time.Millisecond)
+	}
+	assert.GreaterOrEqual(t, counter.conns.Load(), int32(3),
+		"the agent's policy rotates the connection; the resolver's round_robin would have kept one")
 }
 
 // With the policy left unselected the channel behaves as before: one

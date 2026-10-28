@@ -532,7 +532,9 @@ Collector.Grpc.DnsResolverEnable option selects the gRPC name resolver used for 
 The default true uses the `dns` resolver: the collector host is resolved into the channel's address list,
 so a host with several A records gives the agent every collector instance to pick from and to fail over to,
 and the list is re-resolved as the records change. An IP literal, or a name in `/etc/hosts` such as the
-default `localhost`, works unchanged.
+default `localhost`, works unchanged. Only the addresses come from DNS: the agent does not look up the
+`_grpc_config` TXT record that gRPC's `dns` resolver would otherwise read a service config from, and a
+record a zone happens to hold cannot change how the agent connects.
 false falls back to the legacy `passthrough` scheme, which hands the address to the dialer untouched:
 the host is resolved once per new connection, so the channel only ever holds a single address and
 [Collector.Grpc.ConnectionMaxAge](#collectorgrpcconnectionmaxage) cannot spread connections across

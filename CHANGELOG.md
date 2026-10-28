@@ -433,6 +433,12 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   own, are dropped whole past 64 KiB and the statement is shown with its
   placeholders unfilled. The rate-limited drop warning now tells a span queue
   overflow from a sender loss, where every loss read as `span queue overflow`.
+- **The collector channels take no service config from DNS.** gRPC's `dns`
+  resolver queries a `_grpc_config.<collector host>` TXT record on every
+  resolution and a record it finds outranks the agent's own service config,
+  which selects the `Collector.Grpc.ConnectionMaxAge` balancer. The lookup is
+  now disabled: no extra query per resolution, and a DNS zone the agent does
+  not own can no longer change how it connects.
 - **Shutdown during a collector outage no longer spins the stream workers.**
   The ping, stat and command workers kept retrying to open their stream
   through the stopping phase while the readiness wait returned at once from

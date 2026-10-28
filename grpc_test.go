@@ -997,7 +997,7 @@ func Test_grpcChannelOptions_defaults(t *testing.T) {
 	assert.Equal(t, 4*1024*1024, o.maxRecvMsgSize, "max receive message size")
 	assert.Equal(t, uint32(8*1024), o.maxHeaderListSize, "max header list size")
 	assert.Zero(t, o.idleTimeout, "idle timeout disabled: grpc-go would otherwise default to 30 minutes")
-	assert.Len(t, o.dialOptions(insecure.NewCredentials()), 8)
+	assert.Len(t, o.dialOptions(insecure.NewCredentials()), 9)
 }
 
 func Test_grpcChannelOptions_configured(t *testing.T) {
@@ -2414,7 +2414,7 @@ func Test_config_grpcRenewalDisabledByDefault(t *testing.T) {
 	assert.Equal(t, 0, cfg.Int(CfgCollectorGrpcConnectionMaxAge))
 	assert.Equal(t, 0, cfg.Int(CfgCollectorGrpcStreamMaxAge))
 	assert.Zero(t, newGrpcChannelOptions(cfg).connectionMaxAge)
-	assert.Len(t, newGrpcChannelOptions(cfg).dialOptions(insecure.NewCredentials()), 8)
+	assert.Len(t, newGrpcChannelOptions(cfg).dialOptions(insecure.NewCredentials()), 9)
 
 	cfg, err = NewConfig(WithAppName("TestApp"),
 		WithCollectorGrpcConnectionMaxAge(-1), WithCollectorGrpcStreamMaxAge(-1))
@@ -2433,7 +2433,7 @@ func Test_grpcChannelOptions_connectionMaxAgeSelectsExpiringPolicy(t *testing.T)
 
 	o := newGrpcChannelOptions(cfg)
 	assert.Equal(t, 10*time.Minute, o.connectionMaxAge)
-	assert.Len(t, o.dialOptions(insecure.NewCredentials()), 9, "the default service config selecting the policy")
+	assert.Len(t, o.dialOptions(insecure.NewCredentials()), 10, "the default service config selecting the policy")
 }
 
 func Test_streamAge_expiresWithinJitter(t *testing.T) {

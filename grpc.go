@@ -302,6 +302,14 @@ func (o grpcChannelOptions) dialOptions(creds credentials.TransportCredentials) 
 		// timeout are independent: renewal acts only on a channel that is
 		// sending, idling only on one that is not.
 		grpc.WithIdleTimeout(o.idleTimeout),
+		// The channel takes its service config from this process alone. Without
+		// this the dns resolver queries a _grpc_config.<collector host> TXT
+		// record on every resolution - a wasted lookup, every 30 seconds while
+		// the collector is down - and a record it finds there outranks the
+		// default service config below, so a DNS zone the agent does not own
+		// could swap the balancer the agent selected, or hand it a config that
+		// does not parse. The agent never wants a service config from DNS.
+		grpc.WithDisableServiceConfig(),
 	}
 	// Only when enabled: with the option absent the channel keeps grpc-go's
 	// default pick_first policy, so the default configuration is unchanged.
