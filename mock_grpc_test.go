@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -39,15 +40,16 @@ func swapForTest[T any](t testing.TB, p *T, v T) {
 
 func newTestAgent(config *Config) *agent {
 	a := &agent{
-		appName:   "testApp",
-		agentID:   "testAgent",
-		appType:   ServiceTypeGoApp,
-		startTime: time.Now().UnixNano() / int64(time.Millisecond),
-		spanQueue: newSpanQueue(cacheSize),
-		metaChan:  make(chan any, cacheSize),
-		config:    config,
-		stats:     newAgentStats(),
-		urlStats:  newUrlStats(config),
+		appName:    "testApp",
+		agentID:    "testAgent",
+		appType:    ServiceTypeGoApp,
+		appTypeStr: strconv.Itoa(ServiceTypeGoApp), // as newAgentStruct sets it
+		startTime:  time.Now().UnixNano() / int64(time.Millisecond),
+		spanQueue:  newSpanQueue(cacheSize),
+		metaChan:   make(chan any, cacheSize),
+		config:     config,
+		stats:      newAgentStats(),
+		urlStats:   newUrlStats(config),
 		objName: &objectName{
 			version:         nameV3,
 			agentID:         "testAgent",

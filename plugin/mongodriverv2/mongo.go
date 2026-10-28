@@ -58,7 +58,7 @@ func (m *monitor) Started(ctx context.Context, evt *event.CommandStartedEvent) {
 		DBName:    evt.DatabaseName,
 		DBHost:    ppmongomonitor.Host(evt.ConnectionID),
 	}
-	tracer = pinpoint.NewDatabaseTracer(ctx, "mongodb."+evt.CommandName, dbInfo)
+	tracer = pinpoint.NewDatabaseTracer(ctx, operationName(evt.CommandName), dbInfo)
 
 	collection := collectionName(evt)
 	a := tracer.SpanEvent().Annotations()
@@ -70,6 +70,34 @@ func (m *monitor) Started(ctx context.Context, evt *event.CommandStartedEvent) {
 	}
 
 	m.Monitor.Started(ppmongomonitor.Key{ConnectionID: evt.ConnectionID, RequestID: evt.RequestID}, tracer)
+}
+
+// operationName is the span event name, "mongodb.<command>": a constant for
+// the common commands, so the concatenation is not made per command.
+func operationName(command string) string {
+	switch command {
+	case "find":
+		return "mongodb.find"
+	case "insert":
+		return "mongodb.insert"
+	case "update":
+		return "mongodb.update"
+	case "delete":
+		return "mongodb.delete"
+	case "aggregate":
+		return "mongodb.aggregate"
+	case "getMore":
+		return "mongodb.getMore"
+	case "count":
+		return "mongodb.count"
+	case "distinct":
+		return "mongodb.distinct"
+	case "findAndModify":
+		return "mongodb.findAndModify"
+	case "killCursors":
+		return "mongodb.killCursors"
+	}
+	return "mongodb." + command
 }
 
 // commandAnnotation renders the command as extended JSON cut to maxSize; a

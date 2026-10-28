@@ -320,9 +320,13 @@ func appendProxyHeader(a pinpoint.Annotation, code int32, p proxyRequest) {
 }
 
 // proxyTokens calls fn with the key and value of every "k=v" token of value;
-// tokens without '=' are skipped.
+// tokens without '=' are skipped. Cut by Cut rather than strings.Split: the
+// header is on every request behind a proxy, and Split allocated the token
+// slice each time.
 func proxyTokens(value string, fn func(k, v string)) {
-	for _, tok := range strings.Split(value, " ") {
+	for value != "" {
+		var tok string
+		tok, value, _ = strings.Cut(value, " ")
 		if k, v, ok := strings.Cut(tok, "="); ok {
 			fn(k, v)
 		}
@@ -383,11 +387,25 @@ func nginxMillis(v string) int64 {
 	if dot == -1 || len(v)-dot != 4 {
 		return 0
 	}
-	n, err := strconv.ParseInt(v[:dot]+v[dot+1:], 10, 64)
-	if err != nil {
+	// The two halves are read apart - the concatenation that read them as one
+	// number allocated per request - which keeps the result the same: the
+	// three digits are checked to be digits, the seconds carry the sign, and
+	// a value that would not fit is 0, as ParseInt's overflow made it.
+	ms := int64(0)
+	for _, c := range []byte(v[dot+1:]) {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		ms = ms*10 + int64(c-'0')
+	}
+	sec, err := strconv.ParseInt(v[:dot], 10, 64)
+	if err != nil || sec > math.MaxInt64/1000 || sec < math.MinInt64/1000 {
 		return 0
 	}
-	return n
+	if strings.HasPrefix(v, "-") {
+		return sec*1000 - ms
+	}
+	return sec*1000 + ms
 }
 
 // nginxDurationMicros converts a "sec.mmm" duration to microseconds. Not

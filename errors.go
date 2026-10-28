@@ -67,10 +67,22 @@ func errorCallStack(err error) []uintptr {
 	return nil
 }
 
+// stackTrace resolves the call stack through runtime.CallersFrames, which
+// symbolizes the program counters in one pass and expands the frames the
+// compiler inlined; FuncForPC on each counter missed those and cost a lookup
+// per frame.
 func (e *errorWithCallStack) stackTrace() []frame {
-	f := make([]frame, len(e.callstack))
-	for i := 0; i < len(f); i++ {
-		f[i] = newFrame(e.callstack[i])
+	if len(e.callstack) == 0 {
+		return nil
+	}
+	f := make([]frame, 0, len(e.callstack))
+	frames := runtime.CallersFrames(e.callstack)
+	for {
+		fr, more := frames.Next()
+		f = append(f, newFrame(fr))
+		if !more {
+			break
+		}
 	}
 	return f
 }
@@ -82,19 +94,12 @@ type frame struct {
 	line       int32
 }
 
-func newFrame(f uintptr) frame {
-	moduleName := "unknown"
-	funcName := "unknown"
-	file := "unknown"
-	line := 0
-
-	pc := uintptr(f) - 1
-	if fn := runtime.FuncForPC(pc); fn != nil {
-		file, line = fn.FileLine(pc)
-		moduleName, funcName = splitName(fn.Name())
+func newFrame(fr runtime.Frame) frame {
+	if fr.Function == "" {
+		return frame{"unknown", "unknown", "unknown", int32(fr.Line)}
 	}
-
-	return frame{moduleName, funcName, file, int32(line)}
+	moduleName, funcName := splitName(fr.Function)
+	return frame{moduleName, funcName, fr.File, int32(fr.Line)}
 }
 
 func splitName(fullName string) (string, string) {

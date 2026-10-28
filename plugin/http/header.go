@@ -1,6 +1,7 @@
 package pphttp
 
 import (
+	"net/textproto"
 	"strings"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
@@ -41,15 +42,25 @@ func (h *allHttpHeaderRecorder) recordCookie(annotation pinpoint.Annotation, coo
 
 type defaultHttpHeaderRecorder struct {
 	cfg []string
+	// lookup is cfg in canonical form, computed once: net/http's Header.Values
+	// canonicalizes the key it is given on every call, allocating for a name
+	// that is not canonical already - per configured name per request - and
+	// returns one that is as given. fasthttp normalizes its own either way.
+	// The annotation keeps the configured spelling.
+	lookup []string
 }
 
 func newDefaultHttpHeaderRecorder(headers []string) *defaultHttpHeaderRecorder {
-	return &defaultHttpHeaderRecorder{cfg: headers}
+	lookup := make([]string, len(headers))
+	for i, name := range headers {
+		lookup[i] = textproto.CanonicalMIMEHeaderKey(name)
+	}
+	return &defaultHttpHeaderRecorder{cfg: headers, lookup: lookup}
 }
 
 func (h *defaultHttpHeaderRecorder) recordHeader(annotation pinpoint.Annotation, key int, header Header) {
-	for _, name := range h.cfg {
-		if v := header.Values(name); len(v) > 0 {
+	for i, name := range h.cfg {
+		if v := header.Values(h.lookup[i]); len(v) > 0 {
 			vStr := strings.Join(v[:], ",")
 			annotation.AppendStringString(int32(key), name, vStr)
 		}

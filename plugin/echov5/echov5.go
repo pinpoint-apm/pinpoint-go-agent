@@ -12,6 +12,8 @@
 package ppechov5
 
 import (
+	"strings"
+
 	"github.com/labstack/echo/v5"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
@@ -64,10 +66,19 @@ func wrap(handler echo.HandlerFunc, funcName func(*echo.Context) string) echo.Ha
 // therefore the only one left to report; without it the name is fixed, as in
 // the gin and fiber plugins. WrapHandler still reports the real function name.
 func routeName(c *echo.Context) string {
-	if ri := c.RouteInfo(); ri.Name != "" && ri.Name != ri.Method+":"+ri.Path {
+	if ri := c.RouteInfo(); ri.Name != "" && !isDefaultRouteName(ri) {
 		return ri.Name + "()"
 	}
 	return "echo.HandlerFunc()"
+}
+
+// isDefaultRouteName reports whether ri.Name is the "METHOD:/path" RouteInfo
+// falls back to, compared in place: building that string to compare against
+// allocated on every sampled request of a route longer than a few bytes.
+func isDefaultRouteName(ri echo.RouteInfo) bool {
+	return len(ri.Name) == len(ri.Method)+1+len(ri.Path) &&
+		strings.HasPrefix(ri.Name, ri.Method) && ri.Name[len(ri.Method)] == ':' &&
+		strings.HasSuffix(ri.Name, ri.Path)
 }
 
 // Middleware returns an echo middleware that creates a pinpoint.Tracer that instruments the echo handler function.

@@ -105,6 +105,15 @@ const maxBatchSQL = 64 * 1024
 
 func batchSQL(statements []string) string {
 	var b strings.Builder
+	// Sized up front, to the cap: grown by doubling, a 16 KB batch regrew the
+	// buffer half a dozen times and copied about twice its final size.
+	size := 0
+	for _, statement := range statements {
+		if size += len(statement) + 2; size > maxBatchSQL {
+			break
+		}
+	}
+	b.Grow(size)
 	for i, statement := range statements {
 		if b.Len() > maxBatchSQL {
 			b.WriteString("...(")

@@ -90,7 +90,6 @@ type span struct {
 	parentAppName     string
 	parentAppType     int
 	parentServiceName string
-	serviceType       int32
 	rpcName           string
 	endPoint          string
 	remoteAddr        string
@@ -120,9 +119,21 @@ type span struct {
 	// sqlCount counts the executed queries behind SQL.ErrorCount, and is
 	// atomic for the same reason: a plugin may run them from several
 	// goroutines of one call stack.
-	sqlCount      atomic.Int32
+	sqlCount atomic.Int32
+	// serviceType sits in the padding after sqlCount: the cached id strings
+	// below added 32 bytes, and the span must stay within the 896-byte size
+	// class - the next one is 1024 - or every sampled request grows by 128.
+	serviceType   int32
 	spanEvents    []*spanEvent
 	spanEventLock sync.Mutex
+	// txIdStr and spanIdStr are the trace id and this span's id as Inject
+	// writes them, rendered on the first Inject and kept: both are fixed for
+	// the span's life, and a service fanning out to several callees formatted
+	// them - two allocations - per outbound call. Written and read under
+	// spanEventLock, which Inject holds anyway; a span that never injects pays
+	// nothing.
+	txIdStr   string
+	spanIdStr string
 
 	elapsed       int64
 	operationName string
@@ -148,7 +159,6 @@ type span struct {
 	// maxRefusedChainHeads, oldest evicted, since a burst is unbounded.
 	// Guarded by errorChainsLock like errorChains.
 	refusedChainHeads []error
-	refusedChainNext  int
 	// errorChainDropLog makes the entry cap log once a span, like
 	// eventOverflowLog, so a dropped exception entry is never silent.
 	errorChainDropLog atomic.Bool
@@ -158,6 +168,11 @@ type span struct {
 	// the total is known.
 	errorChainDrop atomic.Int32
 	finished       atomic.Bool
+	// refusedChainNext is the ring index into refusedChainHeads, an int32 in
+	// the padding after finished for the same reason serviceType moved: Go
+	// adds an 8-byte malloc header to an object this large, so the struct
+	// has to stay at 888 bytes to be allocated from the 896-byte class.
+	refusedChainNext int32
 	// traceRoot is the span whose PSpan carries the error mask, nil when this
 	// span is the root itself. An async span is serialized as a PSpanChunk,
 	// which has no error field, so only the mask moves to the root: the error
@@ -395,13 +410,19 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 		}
 	}
 
-	writer.Set(HeaderTraceId, span.txId.String())
-
 	// Overflowed: the next span id is generated but not recorded, so the
 	// downstream still joins this transaction under this span as its parent.
 	// Only the caller-side event->span link is lost, along with the event.
 	nextSpanId := nextSpanId(span.spanId, span.parentSpanId)
 	destinationId := ""
+	span.spanEventLock.Lock()
+	if span.txIdStr == "" {
+		span.txIdStr = span.txId.String()
+	}
+	if span.spanIdStr == "" {
+		span.spanIdStr = strconv.FormatInt(span.spanId, 10)
+	}
+	txIdStr, spanIdStr := span.txIdStr, span.spanIdStr
 	if se != nil {
 		// Another goroutine of this call stack (see the type comment) may end
 		// the peeked event right after the peek; once appended to a chunk the
@@ -411,7 +432,6 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 		// event is seen finished here and the link is dropped, falling back to
 		// the span-level id like the overflow path, or the writes land before
 		// the append hands the event to the sender.
-		span.spanEventLock.Lock()
 		if se.warnIfFinished("Inject") {
 			se = nil
 		} else {
@@ -422,14 +442,15 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 			se.endPoint = cmp.Or(se.endPoint, se.destinationId)
 			destinationId = se.destinationId
 		}
-		span.spanEventLock.Unlock()
 	}
-	writer.Set(HeaderSpanId, strconv.FormatInt(nextSpanId, 10))
+	span.spanEventLock.Unlock()
 
-	writer.Set(HeaderParentSpanId, strconv.FormatInt(span.spanId, 10))
+	writer.Set(HeaderTraceId, txIdStr)
+	writer.Set(HeaderSpanId, strconv.FormatInt(nextSpanId, 10))
+	writer.Set(HeaderParentSpanId, spanIdStr)
 	writer.Set(HeaderFlags, strconv.Itoa(span.flags))
 	writer.Set(HeaderParentApplicationName, span.agent.appName)
-	writer.Set(HeaderParentApplicationType, strconv.Itoa(int(span.agent.appType)))
+	writer.Set(HeaderParentApplicationType, span.agent.appTypeString())
 
 	// Propagate this agent's serviceName when present; v1/v3 emit no such header.
 	if span.agent.serviceName != "" {
@@ -668,23 +689,27 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 	}
 
 	cfg := span.cfg
-	// Judged on the position the event has already reserved, not on a load
-	// taken before it: the reservation is atomic, so the pair examined here is
-	// the pair this event will carry, and no concurrent reservation can move
-	// the counters under the decision.
+	// Judged on the position reserved for the event, not on a load taken
+	// before it: the reservation is atomic, so the pair examined here is the
+	// pair this event will carry, and no concurrent reservation can move the
+	// counters under the decision. Judged before the event is built, too: an
+	// overflowed event is dropped, so building it first - the allocation and
+	// the api cache lookup - was work thrown away on every call past the limit.
 	//
-	// se.depth is the depth the new event would be recorded at (eventDepth
-	// starts at 1), so se.depth-1 is the number of events already open and is
-	// what the limit is compared against: with spanMaxEventDepth=3 the deepest
-	// recorded level is 4.
-	se := newSpanEvent(span, operationName)
-	if se.sequence >= cfg.spanMaxEventSequence || se.depth-1 > cfg.spanMaxEventDepth {
-		span.releaseEventPosition(se.sequence)
+	// depth is the depth the new event would be recorded at (eventDepth starts
+	// at 1), so depth-1 is the number of events already open and is what the
+	// limit is compared against: with spanMaxEventDepth=3 the deepest recorded
+	// level is 4.
+	sequence, depth := span.reserveEventPosition()
+	if sequence >= cfg.spanMaxEventSequence || depth-1 > cfg.spanMaxEventDepth {
+		span.releaseEventPosition(sequence)
 		span.eventOverflow.Add(1)
 		if span.eventOverflowLog.CompareAndSwap(false, true) {
-			callStackOverflowLog.warnf("callStack maximum depth/sequence exceeded. (depth=%d, seq=%d)", se.depth, se.sequence)
+			callStackOverflowLog.warnf("callStack maximum depth/sequence exceeded. (depth=%d, seq=%d)", depth, sequence)
 		}
 	} else {
+		se := defaultSpanEvent(span, operationName, sequence, depth)
+		se.apiId = span.agent.cacheSpanApi(operationName, apiTypeDefault)
 		span.appendSpanEvent(se)
 	}
 	return span

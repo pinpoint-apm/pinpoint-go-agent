@@ -100,7 +100,7 @@ func (stats *urlStats) add(us *urlStat) {
 	stats.mu.Lock()
 	defer stats.mu.Unlock()
 	if !stats.retiredThrough.IsZero() && !tick.After(stats.retiredThrough) {
-		urlStatLateLog.warnf("dropping late url stat for retired tick %s", tick)
+		urlStatLateLog.warnLazy("dropping late url stat for retired tick %s", func() []any { return []any{tick} })
 		return
 	}
 	for _, completed := range stats.completed {
@@ -285,9 +285,11 @@ func (snapshot *urlStatSnapshot) add(us *urlStat) {
 	e, ok := snapshot.urlMap[key]
 	if !ok {
 		if snapshot.count >= snapshot.config.urlStatLimitSize {
-			urlStatLimitLog.warnf(
+			// Lazy: displayUrl builds a string, and at the limit every
+			// request with a new pattern reaches this line.
+			urlStatLimitLog.warnLazy(
 				"url stat limit reached: dropping %q and every other new url pattern (max %d distinct urls per snapshot)",
-				key.displayUrl(), snapshot.config.urlStatLimitSize)
+				func() []any { return []any{key.displayUrl(), snapshot.config.urlStatLimitSize} })
 			return
 		}
 		e = newEachUrlStat(key.displayUrl(), key.tick)

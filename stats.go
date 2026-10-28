@@ -328,9 +328,11 @@ func (r *activeSpanRegistry) store(key int64, startTime time.Time) {
 	s.mu.Unlock()
 	if evicted {
 		total := r.evicted.Add(1)
-		activeSpanEvictLog.warnf("active span registry full (%d spans, max %d): evicted an entry, "+
+		// Lazy: size takes every shard lock, and a leaking application
+		// evicts on every span start, nearly all of them suppressed.
+		activeSpanEvictLog.warnLazy("active span registry full (%d spans, max %d): evicted an entry, "+
 			"%d evicted in total; spans may not be ended (missing EndSpan on an error path)",
-			r.size(), activeSpanMaxSize, total)
+			func() []any { return []any{r.size(), activeSpanMaxSize, total} })
 	}
 }
 

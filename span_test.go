@@ -2326,3 +2326,22 @@ func Test_span_Inject_clusterNamespace(t *testing.T) {
 
 	assert.Equal(t, "ns", m[HeaderParentApplicationNamespace], HeaderParentApplicationNamespace)
 }
+
+// Inject renders the trace id, the span id and the application type once per
+// span (and once per agent): a service fanning out to several callees paid
+// those allocations per outbound call. What is left per Inject is the next
+// span id, which is new every time.
+func TestSpan_InjectRendersConstantHeadersOnce(t *testing.T) {
+	a := newTestAgent(defaultConfig())
+	s := newSampledSpan(a, "op", "/rpc")
+	s.extract(&DistributedTracingContextMap{m: map[string]string{}})
+	s.NewSpanEvent("client")
+	w := &DistributedTracingContextMap{m: map[string]string{}}
+	s.Inject(w)
+	tid := w.m[HeaderTraceId]
+
+	assert.Equal(t, 1.0, testing.AllocsPerRun(100, func() { s.Inject(w) }), "one allocation, the next span id")
+	assert.Equal(t, tid, w.m[HeaderTraceId], "the cached trace id is the span's")
+	assert.Equal(t, strconv.FormatInt(s.spanId, 10), w.m[HeaderParentSpanId])
+	assert.Equal(t, strconv.Itoa(int(a.appType)), w.m[HeaderParentApplicationType])
+}

@@ -49,8 +49,11 @@ func initPackage() {
 }
 
 type agent struct {
-	appName          string
-	appType          int32
+	appName string
+	appType int32
+	// appTypeStr is appType as Inject writes it, rendered once: strconv on a
+	// service type outside its small-integer cache allocated per outbound call.
+	appTypeStr       string
 	agentID          string
 	agentName        string
 	serviceName      string
@@ -313,6 +316,7 @@ func newAgentStruct(config *Config) *agent {
 	agent := &agent{
 		appName:          config.objName.applicationName,
 		appType:          int32(config.Int(CfgAppType)),
+		appTypeStr:       strconv.Itoa(config.Int(CfgAppType)),
 		agentID:          config.objName.agentID,
 		agentName:        config.objName.agentName,
 		serviceName:      config.objName.serviceName,
@@ -339,6 +343,16 @@ func newAgentStruct(config *Config) *agent {
 	agent.rawSqlCache = newMetaCache[string, normalizedSql](sqlCacheSize)
 	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
 	return agent
+}
+
+// appTypeString is appType as Inject writes it: the string rendered once by
+// newAgentStruct, or rendered here for an agent built as a struct literal
+// (the tests'), which must not send an empty type.
+func (agent *agent) appTypeString() string {
+	if agent.appTypeStr != "" {
+		return agent.appTypeStr
+	}
+	return strconv.Itoa(int(agent.appType))
 }
 
 // closeGrpc closes whatever connections connectGrpcServer managed to create.

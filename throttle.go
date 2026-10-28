@@ -134,11 +134,28 @@ func (t *logThrottle) infof(format string, args ...any) {
 	t.logf(logrus.InfoLevel, format, args...)
 }
 
+// warnLazy is warnf for a site whose arguments are costly to produce - a
+// registry size summed under every shard lock, a string built per call - so
+// that args runs only for the line that is logged and never for a suppressed
+// one, which at a throttled site is nearly every call.
+func (t *logThrottle) warnLazy(format string, args func() []any) {
+	n, ok := t.acquire()
+	if !ok {
+		return
+	}
+	t.emit(logrus.WarnLevel, format, args(), n)
+}
+
 func (t *logThrottle) logf(level logrus.Level, format string, args ...any) {
 	n, ok := t.acquire()
 	if !ok {
 		return
 	}
+	t.emit(level, format, args, n)
+}
+
+// emit logs the line, noting the n calls the throttle held back before it.
+func (t *logThrottle) emit(level logrus.Level, format string, args []any, n int64) {
 	if n > 0 {
 		format += " (%d similar warning(s) suppressed)"
 		args = append(args, n)

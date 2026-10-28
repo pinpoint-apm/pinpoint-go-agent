@@ -354,10 +354,10 @@ func Test_wrappedConn_WithoutAContext(t *testing.T) {
 	// the caller is that startSpanEvent opens no event and takes no lock, and
 	// the background context it starts out on is what makes that so.
 	assert.Equal(t, context.Background(), c.ctx, "the wrapper starts out untraced")
-	end := c.startSpanEvent(c.ctx, "redigo.Conn.Do()", "GET")
+	rec := c.startSpanEvent(c.ctx, "redigo.Conn.Do()", "GET")
 	assert.True(t, c.opMu.TryLock(), "an untraced operation must not hold the span event lock")
 	c.opMu.Unlock()
-	assert.NotPanics(t, func() { end(nil) }, "the untraced end must be a no-op")
+	assert.NotPanics(t, func() { rec.end(nil) }, "the untraced end must be a no-op")
 }
 
 // WrapConn is the exported makeWrappedConn for connections dialed elsewhere

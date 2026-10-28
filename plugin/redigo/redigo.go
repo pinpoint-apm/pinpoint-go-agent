@@ -40,10 +40,6 @@ var (
 	errContextNotSupported = errors.New("redis: connection does not support ConnWithContext")
 )
 
-// noopEnd is handed back when nothing was recorded, so untraced operations
-// don't allocate a closure per command.
-var noopEnd = func(error) {}
-
 type wrappedConn struct {
 	base   redis.Conn
 	dbInfo pinpoint.DBInfo
@@ -197,8 +193,8 @@ func (c *wrappedConn) Err() error {
 }
 
 func (c *wrappedConn) Send(cmd string, args ...interface{}) (err error) {
-	end := c.startSpanEvent(c.currentContext(), "redigo.Send()", cmd)
-	defer func() { end(err) }()
+	rec := c.startSpanEvent(c.currentContext(), "redigo.Send()", cmd)
+	defer func() { rec.end(err) }()
 
 	err = c.base.Send(cmd, args...)
 	return
@@ -209,16 +205,16 @@ func (c *wrappedConn) Flush() error {
 }
 
 func (c *wrappedConn) Receive() (r interface{}, err error) {
-	end := c.startSpanEvent(c.currentContext(), "redigo.Receive()", "")
-	defer func() { end(err) }()
+	rec := c.startSpanEvent(c.currentContext(), "redigo.Receive()", "")
+	defer func() { rec.end(err) }()
 
 	r, err = c.base.Receive()
 	return
 }
 
 func (c *wrappedConn) Do(cmd string, args ...interface{}) (r interface{}, err error) {
-	end := c.startSpanEvent(c.currentContext(), "redigo.Do()", cmd)
-	defer func() { end(err) }()
+	rec := c.startSpanEvent(c.currentContext(), "redigo.Do()", cmd)
+	defer func() { rec.end(err) }()
 
 	r, err = c.base.Do(cmd, args...)
 	return
@@ -230,8 +226,8 @@ func (c *wrappedConn) DoWithTimeout(readTimeout time.Duration, cmd string, args 
 		return nil, errTimeoutNotSupported
 	}
 
-	end := c.startSpanEvent(c.currentContext(), "redigo.DoWithTimeout()", cmd)
-	defer func() { end(err) }()
+	rec := c.startSpanEvent(c.currentContext(), "redigo.DoWithTimeout()", cmd)
+	defer func() { rec.end(err) }()
 
 	r, err = cwt.DoWithTimeout(readTimeout, cmd, args...)
 	return
@@ -243,8 +239,8 @@ func (c *wrappedConn) ReceiveWithTimeout(timeout time.Duration) (r interface{}, 
 		return nil, errTimeoutNotSupported
 	}
 
-	end := c.startSpanEvent(c.currentContext(), "redigo.ReceiveWithTimeout()", "")
-	defer func() { end(err) }()
+	rec := c.startSpanEvent(c.currentContext(), "redigo.ReceiveWithTimeout()", "")
+	defer func() { rec.end(err) }()
 
 	r, err = cwt.ReceiveWithTimeout(timeout)
 	return
@@ -256,8 +252,8 @@ func (c *wrappedConn) DoContext(ctx context.Context, cmd string, args ...interfa
 		return nil, errContextNotSupported
 	}
 
-	end := c.startSpanEvent(ctx, "redigo.DoContext()", cmd)
-	defer func() { end(err) }()
+	rec := c.startSpanEvent(ctx, "redigo.DoContext()", cmd)
+	defer func() { rec.end(err) }()
 
 	r, err = cwc.DoContext(ctx, cmd, args...)
 	return
@@ -269,8 +265,8 @@ func (c *wrappedConn) ReceiveContext(ctx context.Context) (r interface{}, err er
 		return nil, errContextNotSupported
 	}
 
-	end := c.startSpanEvent(ctx, "redigo.ReceiveContext()", "")
-	defer func() { end(err) }()
+	rec := c.startSpanEvent(ctx, "redigo.ReceiveContext()", "")
+	defer func() { rec.end(err) }()
 
 	r, err = cwc.ReceiveContext(ctx)
 	return
@@ -283,29 +279,43 @@ func (c *wrappedConn) ReceiveContext(ctx context.Context) (r interface{}, err er
 // EndSpanEvent pairs from two goroutines corrupt its event stack. When another
 // operation on this connection is already recording, this one proceeds
 // untraced instead.
-func (c *wrappedConn) startSpanEvent(ctx context.Context, operation string, cmd string) func(error) {
-	// An unsampled tracer records nothing: skip the lock and don't allocate
-	// the closure the caller is about to defer.
+func (c *wrappedConn) startSpanEvent(ctx context.Context, operation string, cmd string) recording {
+	// An unsampled tracer records nothing: skip the lock. The zero recording
+	// ends nothing.
 	tracer := pinpoint.FromContext(ctx)
 	if !tracer.IsSampled() {
-		return noopEnd
+		return recording{}
 	}
 
 	if !c.opMu.TryLock() {
-		return noopEnd
+		return recording{}
 	}
 
 	se := pinpoint.NewDatabaseTracer(ctx, operation, &c.dbInfo).SpanEvent()
 	if cmd != "" {
 		se.Annotations().AppendString(pinpoint.AnnotationArgs0, cmd)
 	}
+	return recording{se: se, tracer: tracer, c: c}
+}
 
-	// The error goes on the event opened above, not on whatever is on top of
-	// the stack by the time the call ends - another goroutine's under a
-	// fan-out on one request.
-	return func(err error) {
-		se.SetError(err)
-		tracer.EndSpanEvent()
-		c.opMu.Unlock()
+// recording is one operation being recorded: what end needs to complete it.
+// A value rather than a closure, which escaped to the heap once per sampled
+// operation; the callers' deferred end is open-coded and allocates nothing.
+type recording struct {
+	se     pinpoint.SpanEventRecorder
+	tracer pinpoint.Tracer
+	c      *wrappedConn
+}
+
+// end completes the recording with the operation's error; the zero recording
+// does nothing. The error goes on the event opened in startSpanEvent, not on
+// whatever is on top of the stack by the time the call ends - another
+// goroutine's under a fan-out on one request.
+func (r recording) end(err error) {
+	if r.c == nil {
+		return
 	}
+	r.se.SetError(err)
+	r.tracer.EndSpanEvent()
+	r.c.opMu.Unlock()
 }
