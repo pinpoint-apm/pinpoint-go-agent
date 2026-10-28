@@ -89,8 +89,7 @@ func handlerNameMap(e *echo.Echo) map[key]string {
 	return names.(map[key]string)
 }
 
-func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
-	var last atomic.Pointer[echoNames]
+func wrap(handler echo.HandlerFunc, funcName string, last *atomic.Pointer[echoNames]) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		if !pinpoint.GetAgent().Enable() {
 			return handler(c)
@@ -109,7 +108,7 @@ func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
 			// consulted for it, as echov5 does.
 			name = "echo.HandlerFunc()"
 			if tracer.IsSampled() {
-				name = handlerName(c, req, &last)
+				name = handlerName(c, req, last)
 			}
 		}
 
@@ -142,15 +141,19 @@ func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
 
 // Middleware returns an echo middleware that creates a pinpoint.Tracer that instruments the echo handler function.
 func Middleware() echo.MiddlewareFunc {
+	// Held here, not in wrap: echo applies its middleware to the handler on
+	// every request, so a cache made per wrap was new on every request and
+	// never hit, and each sampled request looked the route table up again.
+	var last atomic.Pointer[echoNames]
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return wrap(next, "")
+		return wrap(next, "", &last)
 	}
 }
 
 // WrapHandler wraps the given echo handler and adds the pinpoint.Tracer to the request's context.
 // By using the pinpoint.FromContext function, this tracer can be obtained.
 func WrapHandler(handler echo.HandlerFunc) echo.HandlerFunc {
-	return wrap(handler, pphttp.HandlerFuncName(handler))
+	return wrap(handler, pphttp.HandlerFuncName(handler), new(atomic.Pointer[echoNames]))
 }
 
 // statusCode reports the status echo's HTTPErrorHandler will send for err.

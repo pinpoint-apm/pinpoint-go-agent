@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/labstack/echo/v4"
@@ -303,7 +304,7 @@ func Test_wrap_ResolvesTheNamePerRequest(t *testing.T) {
 	pptest.StartAgent(t)
 
 	e := echo.New()
-	shared := wrap(func(c echo.Context) error { return c.NoContent(http.StatusNoContent) }, "")
+	shared := wrap(func(c echo.Context) error { return c.NoContent(http.StatusNoContent) }, "", new(atomic.Pointer[echoNames]))
 	e.GET("/first", shared)
 	e.GET("/second", shared)
 

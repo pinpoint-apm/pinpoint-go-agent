@@ -287,9 +287,13 @@ tracer.NewSpanEvent("getUser")
 tracer.SpanEvent().Annotations().AppendString(pinpoint.AnnotationArgs0, userId)
 ```
 
-The same applies to the `rpcName` passed to `NewSpanTracer()`: pass the routed
-URL **pattern** (`/users/{id}`), not the resolved path (`/users/1234`). The
-framework plugins do this for you where the framework exposes the pattern.
+The `rpcName` passed to `NewSpanTracer()` is not interned: it is the span's
+own data, the request path as the Java agent records it, so a resolved path
+(`/users/1234`) costs nothing there. The URL statistics are kept under a URL
+string instead: pass `pphttp.CollectUrlStat` the routed **pattern**
+(`/users/{id}`), not the resolved path, or every id becomes an entry of its
+own. The framework plugins do this for you where the framework exposes the
+pattern.
 
 ## 9. Error Recording
 

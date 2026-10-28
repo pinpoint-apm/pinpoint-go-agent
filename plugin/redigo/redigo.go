@@ -14,10 +14,9 @@
 //
 //	redis.DoContext(c, pinpoint.NewContext(context.Background(), tracer), "GET", "vehicle")
 //
-// or
-//
-//	c, err := ppredigo.DialContext(pinpoint.NewContext(context.Background(), tracer), "tcp", "127.0.0.1:6379")
-//	c.Do("SET", "vehicle", "truck")
+// The context DialContext and DialURLContext take bounds the dial alone, as in
+// redigo: it is not bound to the connection, which a pool hands on to later
+// requests, so a command on it is traced through one of the two above.
 package ppredigo
 
 import (
@@ -129,7 +128,7 @@ func Dial(network string, address string, options ...redis.DialOption) (redis.Co
 }
 
 // DialContext wraps redis.DialContext and returns a new redis.Conn ready to instrument.
-// It is possible to trace only when the given context contains a pinpoint.Tracer.
+// ctx bounds the dial alone; commands are traced through WithContext or redis.DoContext.
 func DialContext(ctx context.Context, network string, address string, options ...redis.DialOption) (redis.Conn, error) {
 	c, err := redis.DialContext(ctx, network, address, options...)
 	if err != nil {
@@ -174,7 +173,7 @@ func DialURL(rawurl string, options ...redis.DialOption) (redis.Conn, error) {
 }
 
 // DialURLContext wraps redis.DialURLContext and returns a new redis.Conn ready to instrument.
-// It is possible to trace only when the given context contains a pinpoint.Tracer.
+// ctx bounds the dial alone; commands are traced through WithContext or redis.DoContext.
 func DialURLContext(ctx context.Context, rawurl string, options ...redis.DialOption) (redis.Conn, error) {
 	c, err := redis.DialURLContext(ctx, rawurl, options...)
 	if err != nil {

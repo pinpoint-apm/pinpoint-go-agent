@@ -82,10 +82,11 @@ http.HandleFunc("/", pphttp.WrapHandlerFunc(index))
 ```
 
 Prefer `Middleware()` over per-handler wrapping where the framework offers it:
-the middleware sees the framework's routed pattern, so the span is named
-`/users/{id}` rather than `/users/1234`, which is what keeps the Pinpoint UI's
-URL list readable (see
+the middleware sees the framework's routed pattern, which the URL statistics
+are kept under - `/users/{id}` rather than `/users/1234` - and that is what
+keeps their list readable (see
 [contract 8](api_contracts.md#8-keep-operation-and-error-names-low-cardinality)).
+The span itself carries the request path, as the Java agent's does.
 
 Which URLs, methods, headers and cookies are recorded is controlled by the
 `Http.Server.*` options in [Configuration](config.md#httpserverstatuscodeerrors),
