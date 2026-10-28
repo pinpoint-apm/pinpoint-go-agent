@@ -59,7 +59,7 @@ func Test_dslString_LimitsCopiedBodyRead(t *testing.T) {
 
 	dsl, err := dslString(req)
 	require.NoError(t, err)
-	assert.Len(t, dsl, maxBodyRead, "the body copy must be read only up to the limit")
+	assert.Equal(t, huge[:MaxDslLength], dsl, "the body copy is read up to the limit and cut to what is recorded")
 
 	sent, err := io.ReadAll(req.Body)
 	require.NoError(t, err)

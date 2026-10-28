@@ -56,7 +56,11 @@ func (t *pgxTracer) TraceConnectStart(ctx context.Context, c pgx.TraceConnectSta
 func (t *pgxTracer) TraceConnectEnd(ctx context.Context, data pgx.TraceConnectEndData) {
 	if tracer := pinpoint.FromContext(ctx); tracer.IsSampled() {
 		defer tracer.EndSpanEvent()
-		tracer.SpanEvent().SetError(data.Err, "pgx.Connect error")
+		// Guarded at every site: SetError is an interface method, so its
+		// variadic name escapes and allocated on every call, nil error and all.
+		if data.Err != nil {
+			tracer.SpanEvent().SetError(data.Err, "pgx.Connect error")
+		}
 	}
 }
 
@@ -73,9 +77,9 @@ func (t *pgxTracer) TraceQueryStart(ctx context.Context, c *pgx.Conn, data pgx.T
 func (t *pgxTracer) TraceQueryEnd(ctx context.Context, c *pgx.Conn, data pgx.TraceQueryEndData) {
 	if tracer := pinpoint.FromContext(ctx); tracer.IsSampled() {
 		defer tracer.EndSpanEvent()
-
-		se := tracer.SpanEvent()
-		se.SetError(data.Err, "pgx.Query error")
+		if data.Err != nil {
+			tracer.SpanEvent().SetError(data.Err, "pgx.Query error")
+		}
 	}
 }
 
@@ -91,16 +95,18 @@ func (t *pgxTracer) TraceBatchQuery(ctx context.Context, c *pgx.Conn, data pgx.T
 		se := tracer.SpanEvent()
 		sqlArgs := t.composeArgs(data.Args)
 		se.SetSQL(data.SQL, sqlArgs)
-		se.SetError(data.Err, "pgx.BatchQuery error")
+		if data.Err != nil {
+			se.SetError(data.Err, "pgx.BatchQuery error")
+		}
 	}
 }
 
 func (t *pgxTracer) TraceBatchEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceBatchEndData) {
 	if tracer := pinpoint.FromContext(ctx); tracer.IsSampled() {
 		defer tracer.EndSpanEvent()
-
-		se := tracer.SpanEvent()
-		se.SetError(data.Err, "pgx.Batch error")
+		if data.Err != nil {
+			tracer.SpanEvent().SetError(data.Err, "pgx.Batch error")
+		}
 	}
 }
 
@@ -121,9 +127,9 @@ func recordCopyFromTarget(tracer pinpoint.Tracer, target pgx.Identifier) {
 func (t *pgxTracer) TraceCopyFromEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceCopyFromEndData) {
 	if tracer := pinpoint.FromContext(ctx); tracer.IsSampled() {
 		defer tracer.EndSpanEvent()
-
-		se := tracer.SpanEvent()
-		se.SetError(data.Err, "pgx.CopyFrom error")
+		if data.Err != nil {
+			tracer.SpanEvent().SetError(data.Err, "pgx.CopyFrom error")
+		}
 	}
 }
 

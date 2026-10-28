@@ -50,13 +50,34 @@ func isNested(msg *sarama.ProducerMessage) bool {
 	if msg == nil {
 		return true
 	}
-	w := &distributedTracingContextWriterProducer{msg: msg}
-	if pinpoint.IsInjected(w) {
+	r := producerHeaderReader{msg}
+	if pinpoint.IsInjected(r) {
 		return true
 	}
-	// The async producer's own header counts as a context too.
-	_, ok := w.Get(HeaderAsyncSpanId)
+	// The ack id an earlier release wrote counts as a context too.
+	_, ok := r.Get(HeaderAsyncSpanId)
 	return ok
+}
+
+// producerHeaderReader reads a message's record headers as a tracing carrier.
+// One pointer wide, so it is handed to an interface without an allocation;
+// the writer below, which carries a flag as well, is not.
+type producerHeaderReader struct {
+	msg *sarama.ProducerMessage
+}
+
+// Get reports a record header written with an empty value as present, as the
+// consumer reader does: the same message headers are read back here.
+func (r producerHeaderReader) Get(key string) (string, bool) {
+	if r.msg == nil {
+		return "", false
+	}
+	for _, h := range r.msg.Headers {
+		if string(h.Key) == key {
+			return string(h.Value), true
+		}
+	}
+	return "", false
 }
 
 // newProducerHeaderWriter returns the writer the trace context is injected into
@@ -110,18 +131,8 @@ func (m *distributedTracingContextWriterProducer) Set(key string, value string) 
 	})
 }
 
-// Get reports a record header written with an empty value as present, as the
-// consumer reader does: the same message headers are read back here.
 func (m *distributedTracingContextWriterProducer) Get(key string) (string, bool) {
-	if m.msg == nil {
-		return "", false
-	}
-	for _, h := range m.msg.Headers {
-		if string(h.Key) == key {
-			return string(h.Value), true
-		}
-	}
-	return "", false
+	return producerHeaderReader{m.msg}.Get(key)
 }
 
 // SendMessageContext produces a given message with tracer context.

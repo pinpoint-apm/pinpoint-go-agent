@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"weak"
 
 	"github.com/labstack/echo/v4"
@@ -50,24 +51,46 @@ func makeHandlerNameMap(e *echo.Echo) map[key]string {
 	return names
 }
 
-func handlerName(c echo.Context, r *http.Request) string {
+// echoNames is the route table of one Echo. wrap keeps the last one it
+// served: a middleware's requests all come from the Echo it is registered on,
+// so the pointer comparison spares the weak map - weak.Make takes a runtime
+// lock that every request of the instance contended on - on every request but
+// the first. The Echo is as long-lived as the middleware holding it.
+type echoNames struct {
+	e     *echo.Echo
+	names map[key]string
+}
+
+func handlerName(c echo.Context, r *http.Request, last *atomic.Pointer[echoNames]) string {
 	e := c.Echo()
-	k := weak.Make(e)
-	names, ok := handlerNames.Load(k)
-	if !ok {
-		var loaded bool
-		if names, loaded = handlerNames.LoadOrStore(k, makeHandlerNameMap(e)); !loaded {
-			runtime.AddCleanup(e, func(k weak.Pointer[echo.Echo]) { handlerNames.Delete(k) }, k)
-		}
+	var names map[key]string
+	if l := last.Load(); l != nil && l.e == e {
+		names = l.names
+	} else {
+		names = handlerNameMap(e)
+		last.Store(&echoNames{e, names})
 	}
 
-	if name, ok := names.(map[key]string)[key{r.Method, c.Path()}]; ok {
+	if name, ok := names[key{r.Method, c.Path()}]; ok {
 		return name
 	}
 	return "echo.HandlerFunc()"
 }
 
+func handlerNameMap(e *echo.Echo) map[key]string {
+	k := weak.Make(e)
+	if names, ok := handlerNames.Load(k); ok {
+		return names.(map[key]string)
+	}
+	names, loaded := handlerNames.LoadOrStore(k, makeHandlerNameMap(e))
+	if !loaded {
+		runtime.AddCleanup(e, func(k weak.Pointer[echo.Echo]) { handlerNames.Delete(k) }, k)
+	}
+	return names.(map[key]string)
+}
+
 func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
+	var last atomic.Pointer[echoNames]
 	return func(c echo.Context) error {
 		if !pinpoint.GetAgent().Enable() {
 			return handler(c)
@@ -82,7 +105,12 @@ func wrap(handler echo.HandlerFunc, funcName string) echo.HandlerFunc {
 		// raced between concurrent requests.
 		name := funcName
 		if name == "" {
-			name = handlerName(c, req)
+			// An unsampled span discards the name, so the route table is not
+			// consulted for it, as echov5 does.
+			name = "echo.HandlerFunc()"
+			if tracer.IsSampled() {
+				name = handlerName(c, req, &last)
+			}
 		}
 
 		c.SetRequest(pinpoint.RequestWithTracerContext(req, tracer))

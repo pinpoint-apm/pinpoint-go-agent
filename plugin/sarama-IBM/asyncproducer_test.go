@@ -159,6 +159,12 @@ func (t *recordingTracer) NewGoroutineTracer() pinpoint.Tracer { return t }
 func (t *recordingTracer) NewSpanEvent(string) pinpoint.Tracer { return t }
 func (t *recordingTracer) IsSampled() bool                     { return true }
 func (t *recordingTracer) AsyncSpanId() string                 { return t.id }
+
+// Inject writes a trace context, as a sampled tracer's does: a message that
+// carries one is nested on a later send, which is how a retry is recognized.
+func (t *recordingTracer) Inject(w pinpoint.DistributedTracingContextWriter) {
+	w.Set(pinpoint.HeaderTraceId, t.id)
+}
 func (t *recordingTracer) EndSpan() {
 	t.endOnce.Do(func() { close(t.ended) })
 }

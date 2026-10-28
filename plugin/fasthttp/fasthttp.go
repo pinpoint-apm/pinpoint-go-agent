@@ -30,6 +30,7 @@ package ppfasthttp
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
@@ -53,7 +54,7 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 			return
 		}
 
-		method := string(ctx.Method())
+		method := MethodString(ctx.Method())
 		tracer := serverTracer(ctx, method)
 		// Not derived from the RequestCtx, although it is a context.Context:
 		// fasthttp reuses it for the next request once the handler returns,
@@ -76,6 +77,36 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 			RecordServerResponse(tracer, ctx, status)
 		})
 	}
+}
+
+// MethodString is a fasthttp request method as a string. The method outlives
+// the request - the URL statistics entry keeps it - so it cannot share
+// fasthttp's reused buffer; a standard method comes back as net/http's
+// constant, which the switch matches without allocating, and only another
+// method is copied. For the plugins of frameworks built on fasthttp as well
+// (ppfiber, ppfiberv3).
+func MethodString(method []byte) string {
+	switch string(method) {
+	case http.MethodGet:
+		return http.MethodGet
+	case http.MethodPost:
+		return http.MethodPost
+	case http.MethodPut:
+		return http.MethodPut
+	case http.MethodDelete:
+		return http.MethodDelete
+	case http.MethodHead:
+		return http.MethodHead
+	case http.MethodOptions:
+		return http.MethodOptions
+	case http.MethodPatch:
+		return http.MethodPatch
+	case http.MethodConnect:
+		return http.MethodConnect
+	case http.MethodTrace:
+		return http.MethodTrace
+	}
+	return string(method)
 }
 
 // serverTracer starts the request's span, or hands back a nested view of the
@@ -106,8 +137,15 @@ func NewServerTracer(ctx *fasthttp.RequestCtx, method string, serverName string)
 	// The sampling check keeps the host copy and remote-addr formatting
 	// off the unsampled path; the callee would discard them.
 	if tracer.IsSampled() {
+		// The query string is a copy out of the reused request buffer, made
+		// only when it is recorded (Http.Server.RecordRequestParam, default
+		// off); the callee drops it otherwise.
+		rawQuery := ""
+		if pphttp.IsRecordRequestParamEnabled() {
+			rawQuery = string(ctx.URI().QueryString())
+		}
 		pphttp.RecordHttpServerRequestWithQuery(tracer, string(ctx.Host()), ctx.RemoteAddr().String(),
-			requestHeader{&ctx.Request.Header}, cookie{&ctx.Request.Header}, string(ctx.URI().QueryString()))
+			requestHeader{&ctx.Request.Header}, cookie{&ctx.Request.Header}, rawQuery)
 	}
 	return tracer
 }
@@ -133,8 +171,9 @@ func RecordServerResponse(tracer pinpoint.Tracer, ctx *fasthttp.RequestCtx, stat
 func before(tracer pinpoint.Tracer, operationName string, req *fasthttp.Request) {
 	tracer.NewSpanEvent(operationName)
 	se := tracer.SpanEvent()
-	se.SetEndPoint(string(req.Host()))
-	se.SetDestination(string(req.Host()))
+	host := string(req.Host()) // one copy for both
+	se.SetEndPoint(host)
+	se.SetDestination(host)
 	se.SetServiceType(pinpoint.ServiceTypeGoHttpClient)
 
 	if tracer.IsSampled() {

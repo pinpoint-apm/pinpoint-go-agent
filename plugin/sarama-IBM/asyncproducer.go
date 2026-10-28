@@ -28,8 +28,13 @@ type asyncProducer struct {
 	drainDone    chan struct{}
 	flush        chan chan struct{}
 	closeOnce    sync.Once
-	spans        map[string]pinpoint.Tracer
-	spansLock    sync.Mutex
+	// spans holds the tracer of every message waiting for its ack, under the
+	// message itself: sarama hands the same *ProducerMessage back on
+	// Successes and Errors, so the ack needs no id. One message object in
+	// flight twice at once keeps only the later span; the retry pattern that
+	// re-sends an object does so after its ack, and is nested anyway.
+	spans     map[*sarama.ProducerMessage]pinpoint.Tracer
+	spansLock sync.Mutex
 }
 
 // CommitTxn and AbortTxn first hand sarama every message the wrapper has
@@ -123,8 +128,8 @@ func (p *asyncProducer) InputContext(ctx context.Context, msg *sarama.ProducerMe
 	// The span is created and saved here, in the caller's goroutine: producer
 	// goroutines are not serialized behind the input forwarder, and the save
 	// still strictly precedes the send, so a broker ack cannot beat it.
-	span, id := newAsyncProducerTracer(tracer.NewGoroutineTracer(), p.addrs, msg, p.config)
-	saveAsyncProducerTracer(p, span, id)
+	span, track := newAsyncProducerTracer(tracer.NewGoroutineTracer(), p.addrs, msg, p.config)
+	saveAsyncProducerTracer(p, span, msg, track)
 	select {
 	case p.inputContext <- msg:
 	case <-p.done:
@@ -241,7 +246,7 @@ func wrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sa
 		ackDone:       make(chan struct{}),
 		drainDone:     make(chan struct{}),
 		flush:         make(chan chan struct{}),
-		spans:         make(map[string]pinpoint.Tracer),
+		spans:         make(map[*sarama.ProducerMessage]pinpoint.Tracer),
 	}
 
 	go wrapped.forwardInput()
@@ -443,6 +448,10 @@ func sweepAsyncProducerInput(wrapped *asyncProducer) bool {
 	}
 }
 
+// HeaderAsyncSpanId is the record header earlier releases wrote to match an
+// ack to its span. It is no longer written - the span map is keyed by the
+// message, which sarama returns as it is - and is kept for isNested, which
+// still reads a message carrying it as injected.
 const HeaderAsyncSpanId = "Pinpoint-AsyncSpanID"
 
 // trackAcks reports whether delivery acks can be relied on to end the tracers.
@@ -452,10 +461,9 @@ func trackAcks(config *sarama.Config) bool {
 	return config.Producer.Return.Successes && config.Producer.Return.Errors
 }
 
-// newAsyncProducerTracer also returns the async span id when the ack path
-// will end the span, or "" when it will not. The id is a formatted string, so
-// it is computed once here and shared by the header and the span map key.
-func newAsyncProducerTracer(tracer pinpoint.Tracer, addrs []string, msg *sarama.ProducerMessage, config *sarama.Config) (pinpoint.Tracer, string) {
+// newAsyncProducerTracer also reports whether the ack path will end the span,
+// in which case the caller keeps it in the span map until the ack.
+func newAsyncProducerTracer(tracer pinpoint.Tracer, addrs []string, msg *sarama.ProducerMessage, config *sarama.Config) (pinpoint.Tracer, bool) {
 	tracer.NewSpanEvent("sarama.AsyncProducer.SendMessage")
 	se := tracer.SpanEvent()
 	se.SetServiceType(pinpoint.ServiceTypeKafkaClient)
@@ -465,28 +473,21 @@ func newAsyncProducerTracer(tracer pinpoint.Tracer, addrs []string, msg *sarama.
 		se.SetDestination(addrs[0])
 	}
 
-	// Without headers there is no ack id either, so the span is ended at save
-	// time instead of waiting in the span map for an ack it cannot be matched
-	// to.
-	id := ""
-	if headersSupported(config) {
-		writer := newProducerHeaderWriter(msg)
-		tracer.Inject(writer)
-		if a, ok := tracer.(pinpoint.AsyncSpanIdentifier); ok && trackAcks(config) && tracer.IsSampled() {
-			id = a.AsyncSpanId()
-			writer.Set(HeaderAsyncSpanId, id)
-		}
+	// Without headers no trace context travels with the message, so the span
+	// is ended at save time instead of waiting for the ack.
+	if !headersSupported(config) {
+		return tracer, false
 	}
-
-	return tracer, id
+	tracer.Inject(newProducerHeaderWriter(msg))
+	return tracer, trackAcks(config) && tracer.IsSampled()
 }
 
-func saveAsyncProducerTracer(wrapped *asyncProducer, span pinpoint.Tracer, id string) {
-	if id != "" {
+func saveAsyncProducerTracer(wrapped *asyncProducer, span pinpoint.Tracer, msg *sarama.ProducerMessage, track bool) {
+	if track {
 		wrapped.spansLock.Lock()
 		defer wrapped.spansLock.Unlock()
 
-		wrapped.spans[id] = span
+		wrapped.spans[msg] = span
 	} else {
 		span.EndSpanEvent()
 		span.EndSpan()
@@ -494,20 +495,17 @@ func saveAsyncProducerTracer(wrapped *asyncProducer, span pinpoint.Tracer, id st
 }
 
 func endAsyncProducerTracer(wrapped *asyncProducer, msg *sarama.ProducerMessage, err error) {
-	headers := &distributedTracingContextWriterProducer{msg: msg}
-	if id, _ := headers.Get(HeaderAsyncSpanId); id != "" {
-		wrapped.spansLock.Lock()
-		span, ok := wrapped.spans[id]
-		delete(wrapped.spans, id)
-		wrapped.spansLock.Unlock()
+	wrapped.spansLock.Lock()
+	span, ok := wrapped.spans[msg]
+	delete(wrapped.spans, msg)
+	wrapped.spansLock.Unlock()
 
-		if ok {
-			if err != nil {
-				span.SpanEvent().SetError(err)
-			}
-			span.EndSpanEvent()
-			span.EndSpan()
+	if ok {
+		if err != nil {
+			span.SpanEvent().SetError(err)
 		}
+		span.EndSpanEvent()
+		span.EndSpan()
 	}
 }
 
@@ -517,7 +515,7 @@ func endAsyncProducerTracer(wrapped *asyncProducer, msg *sarama.ProducerMessage,
 func endRemainingAsyncProducerTracers(wrapped *asyncProducer) {
 	wrapped.spansLock.Lock()
 	spans := wrapped.spans
-	wrapped.spans = make(map[string]pinpoint.Tracer)
+	wrapped.spans = make(map[*sarama.ProducerMessage]pinpoint.Tracer)
 	wrapped.spansLock.Unlock()
 
 	for _, span := range spans {

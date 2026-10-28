@@ -341,6 +341,14 @@ func IsUrlStatEnabled() bool {
 	return httpCfg().urlStatEnabled
 }
 
+// IsRecordRequestParamEnabled reports whether Http.Server.RecordRequestParam
+// is on. A plugin whose query string is a copy out of a reused buffer
+// (fasthttp) uses it to skip the copy that
+// RecordHttpServerRequestWithQuery would otherwise drop.
+func IsRecordRequestParamEnabled() bool {
+	return httpCfg().srvRequestParam
+}
+
 func recordServerHttpStatus(cfg *httpConfig, span pinpoint.SpanRecorder, status int) {
 	if cfg.srvStatus.isError(status) {
 		// records ErrorCategory.HTTP_STATUS: an operator who does not want a

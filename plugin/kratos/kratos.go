@@ -156,7 +156,11 @@ func ClientMiddleware() middleware.Middleware {
 
 				tracer.Inject(headerWriter{tr.RequestHeader(), tr.Kind()})
 				reply, err = handler(ctx, req)
-				tracer.SpanEvent().SetError(err, "rpc error")
+				// Guarded: SetError is an interface method, so its variadic
+				// name escapes and allocated on every call, nil error and all.
+				if err != nil {
+					tracer.SpanEvent().SetError(err, "rpc error")
+				}
 				return reply, err
 			} else {
 				return handler(ctx, req)

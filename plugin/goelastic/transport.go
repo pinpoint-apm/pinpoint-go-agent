@@ -18,6 +18,7 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"unicode/utf8"
 
@@ -84,7 +85,10 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func dslString(req *http.Request) (string, error) {
-	if req.URL.RawQuery != "" {
+	// URL.Query() parses the whole query string into a map; it is only worth
+	// it when a q parameter can be in there at all, which a request carrying
+	// refresh, routing or filter_path alone is not.
+	if rq := req.URL.RawQuery; rq != "" && (strings.HasPrefix(rq, "q=") || strings.Contains(rq, "&q=")) {
 		if dsl := req.URL.Query().Get("q"); dsl != "" {
 			return dsl, nil
 		}
@@ -96,15 +100,32 @@ func dslString(req *http.Request) (string, error) {
 		return "", nil
 	}
 
-	dsl, err := getBodyFromCopy(req)
+	b := dslBufs.Get().(*dslBuf)
+	defer dslBufs.Put(b)
+	dsl, err := b.readBody(req)
 	if err != nil {
 		return "", err
 	}
 
 	if req.Header.Get("Content-Encoding") == "gzip" {
-		dsl, err = unzip(dsl)
+		dsl, err = b.unzip(dsl)
 	}
-	return string(dsl), err
+	// Cut while still bytes: only MaxDslLength of it is recorded, and the
+	// string conversion is the one copy left on this path.
+	return string(cutDsl(dsl)), err
+}
+
+// cutDsl is dsl cut to MaxDslLength on a rune start: a byte-offset cut can
+// split a multi-byte rune, and a proto3 string field rejects invalid UTF-8.
+func cutDsl(dsl []byte) []byte {
+	if len(dsl) <= MaxDslLength {
+		return dsl
+	}
+	cut := MaxDslLength
+	for cut > 0 && !utf8.RuneStart(dsl[cut]) {
+		cut--
+	}
+	return dsl[:cut]
 }
 
 // CloseIdleConnections forwards http.Client.CloseIdleConnections to the
@@ -121,35 +142,52 @@ func (t *transport) CloseIdleConnections() {
 // the truncation marker meaningful for gzipped bodies.
 const maxBodyRead = 4 * MaxDslLength
 
-func getBodyFromCopy(req *http.Request) ([]byte, error) {
+// dslBuf is what reading one body for the annotation needs, pooled: the fixed
+// buffers the body and its inflated form are read into with io.ReadFull - a
+// LimitReader plus io.ReadAll regrew a fresh slice through 512, 896 and 1408
+// bytes per request - and the readers over them. gzip.NewReader alone allocates
+// a 32 KiB window and the huffman tables per call, for at most maxBodyRead
+// bytes of output.
+type dslBuf struct {
+	body [maxBodyRead]byte
+	out  [maxBodyRead]byte
+	raw  bytes.Reader
+	gz   gzip.Reader
+}
+
+var dslBufs = sync.Pool{New: func() any { return new(dslBuf) }}
+
+// readBody reads the request's body copy into b.body, up to maxBodyRead: a
+// copy the request itself does not use, so it can be read partially. The
+// result is valid until b is returned to the pool.
+func (b *dslBuf) readBody(req *http.Request) ([]byte, error) {
 	body, err := req.GetBody()
 	if err != nil {
 		return nil, err
 	}
 	defer body.Close()
-	// A copy the request itself does not use, so it can be read partially.
-	return io.ReadAll(io.LimitReader(body, maxBodyRead))
+	n, err := io.ReadFull(body, b.body[:])
+	if err == io.EOF || err == io.ErrUnexpectedEOF {
+		err = nil // a body shorter than the buffer is the usual case
+	}
+	return b.body[:n], err
 }
 
-// gzipReaders keeps the inflaters: gzip.NewReader allocates a 32 KiB window
-// and the huffman tables per call, for at most maxBodyRead bytes of output.
-var gzipReaders = sync.Pool{New: func() any { return new(gzip.Reader) }}
-
-func unzip(dsl []byte) ([]byte, error) {
-	r := gzipReaders.Get().(*gzip.Reader)
-	defer gzipReaders.Put(r)
-	if err := r.Reset(bytes.NewReader(dsl)); err != nil {
+// unzip inflates dsl into b.out, up to maxBodyRead: inflating the whole
+// payload would undo the read limit, and the result feeds the annotation only.
+// A body that is no gzip stream comes back as it is, with the error.
+func (b *dslBuf) unzip(dsl []byte) ([]byte, error) {
+	b.raw.Reset(dsl)
+	if err := b.gz.Reset(&b.raw); err != nil {
 		return dsl, err
 	}
-	defer r.Close()
-	// Inflating the whole payload would undo the read limit above; the result
-	// feeds the annotation only.
-	out, err := io.ReadAll(io.LimitReader(r, maxBodyRead))
+	defer b.gz.Close()
+	n, err := io.ReadFull(&b.gz, b.out[:])
 	// The compressed input was itself cut at maxBodyRead, so running into the
 	// truncated tail is the normal case, not a failure: propagating it logged
 	// an error - and allocated a logrus entry - on every compressed request.
-	if err == io.ErrUnexpectedEOF {
+	if err == io.EOF || err == io.ErrUnexpectedEOF {
 		err = nil
 	}
-	return out, err
+	return b.out[:n], err
 }

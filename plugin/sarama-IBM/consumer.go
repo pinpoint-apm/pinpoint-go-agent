@@ -93,8 +93,9 @@ type distributedTracingContextReaderConsumer struct {
 
 // Get reports a record header carried with an empty value as present: a
 // producer that wrote a blank Pinpoint-SpanID still describes a hop, and the
-// trace continues through it.
-func (m *distributedTracingContextReaderConsumer) Get(key string) (string, bool) {
+// trace continues through it. A value receiver: the one-pointer struct is
+// handed to the tracer as an interface without an allocation per message.
+func (m distributedTracingContextReaderConsumer) Get(key string) (string, bool) {
 	for _, h := range m.msg.Headers {
 		if h != nil && string(h.Key) == key {
 			return string(h.Value), true
@@ -128,5 +129,5 @@ func newConsumerTracer(ctx context.Context, msg *sarama.ConsumerMessage) pinpoin
 			m.Broker = addrs[0]
 		}
 	}
-	return pinpoint.NewKafkaConsumerTracer("Sarama Consumer Invocation", m, &distributedTracingContextReaderConsumer{msg})
+	return pinpoint.NewKafkaConsumerTracer("Sarama Consumer Invocation", m, distributedTracingContextReaderConsumer{msg})
 }

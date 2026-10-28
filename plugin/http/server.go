@@ -566,27 +566,36 @@ func TraceSpan(tracer pinpoint.Tracer, funcName string, fn func() int, after fun
 // when the framework has resolved the route; nil disables URL stat collection.
 func TraceHandler(handler http.Handler, serverName, funcName string, urlPattern func(*http.Request) string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !pinpoint.GetAgent().Enable() {
-			handler.ServeHTTP(w, r)
-			return
-		}
+		ServeTraced(w, r, handler, serverName, funcName, urlPattern)
+	})
+}
 
-		tracer := NewHttpServerTracer(r, serverName)
-		// The status is read off the recorder itself: a local int handed to
-		// WrapResponseWriter escaped to the heap on every request.
-		w, rec := wrapResponseWriter(w, nil)
-		r = pinpoint.RequestWithTracerContext(r, tracer)
-		TraceSpan(tracer, funcName, func() int {
-			handler.ServeHTTP(w, r)
-			return rec.code
-		}, func(status int) {
-			// Route-pattern lookups can be costly per call, so don't pay for
-			// them when the stat would be dropped anyway.
-			if urlPattern != nil && IsUrlStatEnabled() {
-				CollectUrlStat(tracer, urlPattern(r), r.Method, status)
-			}
-			RecordHttpServerResponse(tracer, status, w.Header())
-		})
+// ServeTraced is TraceHandler for one request: it serves r with handler inside
+// the trace TraceHandler describes. It is for an adapter whose handler type
+// cannot be wrapped once at registration - httprouter's Handle carries the
+// route's Params - so that binding them per request costs no closure and no
+// http.Handler of its own.
+func ServeTraced(w http.ResponseWriter, r *http.Request, handler http.Handler, serverName, funcName string, urlPattern func(*http.Request) string) {
+	if !pinpoint.GetAgent().Enable() {
+		handler.ServeHTTP(w, r)
+		return
+	}
+
+	tracer := NewHttpServerTracer(r, serverName)
+	// The status is read off the recorder itself: a local int handed to
+	// WrapResponseWriter escaped to the heap on every request.
+	w, rec := wrapResponseWriter(w, nil)
+	r = pinpoint.RequestWithTracerContext(r, tracer)
+	TraceSpan(tracer, funcName, func() int {
+		handler.ServeHTTP(w, r)
+		return rec.code
+	}, func(status int) {
+		// Route-pattern lookups can be costly per call, so don't pay for
+		// them when the stat would be dropped anyway.
+		if urlPattern != nil && IsUrlStatEnabled() {
+			CollectUrlStat(tracer, urlPattern(r), r.Method, status)
+		}
+		RecordHttpServerResponse(tracer, status, w.Header())
 	})
 }
 

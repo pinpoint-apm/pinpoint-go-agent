@@ -64,7 +64,11 @@ func (o *Observer) ObserveQuery(ctx context.Context, query gocql.ObservedQuery) 
 	se := span.SpanEvent()
 	se.SetSQL(query.Statement, "")
 	se.FixDuration(query.Start, query.End)
-	se.SetError(query.Err, "query error")
+	// Guarded: SetError is an interface method, so its variadic name escapes
+	// and allocated on every call, nil error and all.
+	if query.Err != nil {
+		se.SetError(query.Err, "query error")
+	}
 }
 
 // ObserveBatch instruments all batch queries created from gocql session.
@@ -84,7 +88,9 @@ func (o *Observer) ObserveBatch(ctx context.Context, batch gocql.ObservedBatch) 
 	se.FixDuration(batch.Start, batch.End)
 
 	se.SetSQL(batchSQL(batch.Statements), "")
-	se.SetError(batch.Err, "batch error")
+	if batch.Err != nil {
+		se.SetError(batch.Err, "batch error")
+	}
 }
 
 // cassandraInfo describes the keyspace and host a query ran against.

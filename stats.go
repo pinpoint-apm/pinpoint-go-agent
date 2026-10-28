@@ -400,6 +400,13 @@ type statsCounterSnapshot [statCounterCount]int64
 const uncollectedUsage = -1
 
 func (stats *agentStats) numFD() int32 {
+	// Linux counts the descriptors itself (countOpenFDs): gopsutil's NumFDs
+	// reads /proc/<pid>/fd with Readdirnames, a string per open descriptor
+	// every collection, which on a server holding tens of thousands of
+	// sockets was megabytes of garbage per sample.
+	if n, ok := countOpenFDs(); ok {
+		return n
+	}
 	if stats.proc != nil {
 		if n, err := stats.proc.NumFDs(); err == nil {
 			return n

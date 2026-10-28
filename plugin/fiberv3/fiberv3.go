@@ -39,7 +39,7 @@ func wrap(f func(c fiber.Ctx) error, handlerName string) fiber.Handler {
 			return f(c)
 		}
 
-		method := string(c.RequestCtx().Method())
+		method := ppfasthttp.MethodString(c.RequestCtx().Method())
 		tracer := serverTracer(c, method)
 		// Derive from the request's own context, not a fresh background one:
 		// replacing it discarded whatever an earlier middleware had put there

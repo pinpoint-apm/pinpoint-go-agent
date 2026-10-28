@@ -50,9 +50,21 @@ func wrapHandleWithName(handler httprouter.Handle, handlerName string, path stri
 		urlPattern = func(*http.Request) string { return path }
 	}
 	return func(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
-		serve := func(w http.ResponseWriter, r *http.Request) { handler(w, r, p) }
-		pphttp.TraceHandler(http.HandlerFunc(serve), serverName, handlerName, urlPattern).ServeHTTP(w, r)
+		pphttp.ServeTraced(w, r, paramsHandler{handler, p}, serverName, handlerName, urlPattern)
 	}
+}
+
+// paramsHandler is a httprouter.Handle with its route Params bound, as the
+// http.Handler ServeTraced serves. A value, not a closure: the closure and
+// the per-request http.HandlerFunc TraceHandler built around it were two heap
+// allocations per request; boxing this value into the interface is one.
+type paramsHandler struct {
+	handler httprouter.Handle
+	p       httprouter.Params
+}
+
+func (h paramsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.handler(w, r, h.p)
 }
 
 type Router struct {
