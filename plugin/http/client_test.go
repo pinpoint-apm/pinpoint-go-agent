@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -441,33 +442,81 @@ func TestWrapClient_UnsampledRequestStillSendsS0(t *testing.T) {
 		"an unsampled transaction must still tell the callee not to trace")
 }
 
-// A request that already carries a Pinpoint context - a client wrapped twice, or
-// a proxy forwarding its inbound headers - is nested: the context already
-// present travels alone and no second span event is recorded.
+// A request that already carries the context its own span injected - a client
+// wrapped twice - is nested: that context travels alone and no second span
+// event is recorded.
 func TestWrapClient_NestedRequestIsNotTraced(t *testing.T) {
 	pptest.StartAgent(t)
 
-	for _, marker := range []string{pinpoint.HeaderTraceId, pinpoint.HeaderSampled} {
+	tracer := serverTracer(t)
+	rt := &recordingTransport{}
+	client := WrapClient(&http.Client{Transport: rt})
+
+	req, err := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer),
+		http.MethodGet, "http://example.com/callee", nil)
+	require.NoError(t, err)
+	tracer.NewSpanEvent("outer layer")
+	tracer.Inject(pinpoint.HttpHeaderWriter(req.Header))
+	outer := pinpointHeaders(t, req.Header)
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	require.NotNil(t, rt.sent)
+	assert.Equal(t, outer, pinpointHeaders(t, rt.sent.Header), "the outer layer's context travels alone")
+
+	// The caller's own event was not popped by the nested call's after().
+	tracer.EndSpanEvent()
+}
+
+// A request that carries another span's context - a proxy forwarding the
+// headers its own caller sent, here the proxy's own span id with the caller's
+// as the parent - gets this span's context in place of that one, stale keys
+// included: sent on, the callee continued under the proxy's span id, two spans
+// of one transaction sharing it, and the proxy's call went unrecorded.
+func TestWrapClient_ForwardedContextIsReplaced(t *testing.T) {
+	pptest.StartAgent(t)
+
+	for _, forwarded := range []map[string]string{
+		{"Pinpoint-TraceID": "", "Pinpoint-SpanID": "", "Pinpoint-pSpanID": "12345", "Pinpoint-Host": "stale:80"},
+		{"Pinpoint-Sampled": "s0"},
+	} {
 		tracer := serverTracer(t)
+		spanId := strconv.FormatInt(tracer.SpanId(), 10)
 		rt := &recordingTransport{}
 		client := WrapClient(&http.Client{Transport: rt})
 
 		req, err := http.NewRequestWithContext(pinpoint.NewContext(context.Background(), tracer),
 			http.MethodGet, "http://example.com/callee", nil)
 		require.NoError(t, err)
-		req.Header.Set(marker, "outer")
+		for k, v := range forwarded {
+			switch k {
+			case "Pinpoint-TraceID":
+				v = tracer.TransactionId().String()
+			case "Pinpoint-SpanID":
+				v = spanId
+			}
+			req.Header.Set(k, v)
+		}
+		tracer.NewSpanEvent("proxy handler")
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		resp.Body.Close()
+		tracer.EndSpanEvent()
 
 		require.NotNil(t, rt.sent)
-		assert.Len(t, pinpointHeaders(t, rt.sent.Header), 1, "%s: the outer context travels alone", marker)
-		assert.Equal(t, []string{"outer"}, rt.sent.Header.Values(marker))
-
-		// The caller's own event was not popped by the nested call's after().
-		tracer.NewSpanEvent("still open")
-		tracer.EndSpanEvent()
+		sent := rt.sent.Header
+		assert.Equal(t, spanId, sent.Get(pinpoint.HeaderParentSpanId), "the callee's parent must be this span")
+		assert.NotEqual(t, spanId, sent.Get(pinpoint.HeaderSpanId), "the callee must not take this span's id")
+		assert.Equal(t, "example.com", sent.Get(pinpoint.HeaderHost), "a stale header was left in place")
+		assert.Empty(t, sent.Values(pinpoint.HeaderSampled), "a stale unsampled marker was left in place")
+		for name, values := range sent {
+			assert.Len(t, values, 1, "%s carries two values", name)
+		}
+		assert.Equal(t, forwarded["Pinpoint-Host"], req.Header.Get(pinpoint.HeaderHost),
+			"the caller's own request must stay as it was")
 	}
 }
 

@@ -3,6 +3,7 @@ package ppconfluentkafka
 import (
 	"context"
 	"net"
+	"strconv"
 	"testing"
 	"time"
 
@@ -134,8 +135,8 @@ func Test_ProduceContext_Events(t *testing.T) {
 	}
 }
 
-// A message that already carries a Pinpoint context - an outer instrumented
-// layer, or a retry re-sending the same message object - is sent untouched.
+// A message carrying a context no transaction of this tracer's can replace -
+// here no tracer at all - is sent untouched.
 func Test_ProduceContext_NestedMessageIsNotTraced(t *testing.T) {
 	pptest.StartAgent(t)
 	p := newTestProducer(t)
@@ -149,12 +150,63 @@ func Test_ProduceContext_NestedMessageIsNotTraced(t *testing.T) {
 	<-reports
 }
 
+// isNested sends as it is a message carrying the context tracer's own span
+// injected, and any context for a tracer that has none to replace it with.
 func Test_isNested(t *testing.T) {
+	pptest.StartAgent(t)
 	hdr := func(k string) []kafka.Header { return []kafka.Header{{Key: k, Value: []byte("v")}} }
-	assert.False(t, isNested(&kafka.Message{}))
-	assert.False(t, isNested(&kafka.Message{Headers: hdr("x-app")}))
-	assert.True(t, isNested(&kafka.Message{Headers: hdr(pinpoint.HeaderTraceId)}))
-	assert.True(t, isNested(&kafka.Message{Headers: hdr(pinpoint.HeaderSampled)}), "an unsampled context is a context too")
+	noop := pinpoint.NoopTracer()
+	assert.False(t, isNested(noop, &kafka.Message{}))
+	assert.False(t, isNested(noop, &kafka.Message{Headers: hdr("x-app")}))
+	assert.True(t, isNested(noop, &kafka.Message{Headers: hdr(pinpoint.HeaderTraceId)}))
+	assert.True(t, isNested(noop, &kafka.Message{Headers: hdr(pinpoint.HeaderSampled)}), "an unsampled context is a context too")
+
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
+	defer tracer.EndSpan()
+	defer tracer.NewSpanEvent("produce").EndSpanEvent()
+	own := newMessage("widgets")
+	tracer.Inject(&headerWriter{msg: own})
+	assert.True(t, isNested(tracer, own), "the span's own context")
+	assert.False(t, isNested(tracer, &kafka.Message{Headers: hdr(pinpoint.HeaderTraceId)}), "another span's context")
+}
+
+// A message carrying another span's context - a relay copying the headers of
+// the record it consumed, whose span id is the relay's own - gets this span's
+// context in place of that one, stale keys included, and keeps the
+// application's own headers: sent on as it was, the downstream consumer
+// continued under the relay's span id.
+func Test_newProducerTracer_ForwardedContextIsReplaced(t *testing.T) {
+	pptest.StartAgent(t)
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/relay")
+	defer tracer.EndSpan()
+	defer tracer.NewSpanEvent("relay").EndSpanEvent()
+	spanId := strconv.FormatInt(tracer.SpanId(), 10)
+
+	consumed := []kafka.Header{
+		{Key: "x-app", Value: []byte("keep-me")},
+		{Key: pinpoint.HeaderTraceId, Value: []byte(tracer.TransactionId().String())},
+		{Key: pinpoint.HeaderSpanId, Value: []byte(spanId)},
+		{Key: pinpoint.HeaderParentSpanId, Value: []byte("12345")},
+		{Key: pinpoint.HeaderHost, Value: []byte("stale:9092")},
+	}
+	msg := newMessage("widgets")
+	msg.Headers = append([]kafka.Header(nil), consumed...)
+	require.False(t, isNested(tracer, msg))
+
+	newProducerTracer(tracer, "broker:9092", msg).EndSpanEvent()
+
+	got := map[string][]string{}
+	for _, h := range msg.Headers {
+		got[h.Key] = append(got[h.Key], string(h.Value))
+	}
+	assert.Equal(t, []string{"keep-me"}, got["x-app"])
+	assert.Equal(t, []string{spanId}, got[pinpoint.HeaderParentSpanId], "the consumer's parent must be this span")
+	assert.NotEqual(t, []string{spanId}, got[pinpoint.HeaderSpanId], "the consumer must not take this span's id")
+	assert.Equal(t, []string{"broker:9092"}, got[pinpoint.HeaderHost], "a stale header was left in place")
+	for key, values := range got {
+		assert.Len(t, values, 1, "%s carries two values", key)
+	}
+	assert.Equal(t, "stale:9092", string(consumed[4].Value), "the consumed headers must stay as they were")
 }
 
 // A header written with an empty value is present, unlike one never written.

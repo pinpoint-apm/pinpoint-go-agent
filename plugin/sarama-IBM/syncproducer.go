@@ -37,12 +37,14 @@ func headersSupported(config *sarama.Config) bool {
 	return config.Version.IsAtLeast(sarama.V0_11_0_0)
 }
 
-// isNested reports whether msg already carries a Pinpoint trace context - an
-// outer instrumented layer, or the retry pattern re-sending the same message
-// object. The producer then records no span event and writes no header: the
-// context already present travels alone. The async producer's own ack id counts
-// too, since nothing but a previous injection of this plugin writes it.
-func isNested(msg *sarama.ProducerMessage) bool {
+// isNested reports whether msg already carries the trace context tracer's own
+// span injected - an outer instrumented layer, or the retry pattern re-sending
+// a message object the same request sent. The producer then records no span
+// event and writes no header: that context travels alone. Another span's
+// context - a relay copying a consumed record's headers, which made the
+// downstream consumer continue under the relay's own span id - is not, and
+// the header writer leaves it behind as it adds this span's.
+func isNested(tracer pinpoint.Tracer, msg *sarama.ProducerMessage) bool {
 	// A nil message is passed through untouched, as a nested one is: sarama
 	// logs and ignores it. Tracing it read msg.Topic and panicked - in the
 	// caller for InputContext, and in the input forwarder for Input, whose
@@ -51,12 +53,7 @@ func isNested(msg *sarama.ProducerMessage) bool {
 		return true
 	}
 	r := producerHeaderReader{msg}
-	if pinpoint.IsInjected(r) {
-		return true
-	}
-	// The ack id an earlier release wrote counts as a context too.
-	_, ok := r.Get(HeaderAsyncSpanId)
-	return ok
+	return pinpoint.IsInjected(r) && pinpoint.IsInjectedBy(tracer, r)
 }
 
 // producerHeaderReader reads a message's record headers as a tracing carrier.
@@ -82,7 +79,8 @@ func (r producerHeaderReader) Get(key string) (string, bool) {
 
 // newProducerHeaderWriter returns the writer the trace context is injected into
 // msg through. The caller has already ruled out a nested message (isNested),
-// so Set is a plain append onto headers that carry no Pinpoint context yet.
+// so a Pinpoint context the headers carry is another span's, which Set leaves
+// behind as it copies them.
 func newProducerHeaderWriter(msg *sarama.ProducerMessage) *distributedTracingContextWriterProducer {
 	return &distributedTracingContextWriterProducer{msg: msg}
 }
@@ -118,10 +116,17 @@ func (m *distributedTracingContextWriterProducer) Set(key string, value string) 
 	// It is grown once for the injected set instead of through the append
 	// doublings, into a new array, so no header is written into spare
 	// capacity the application's slice may share with another message.
+	// Another span's context is not copied: Inject omits a header it has no
+	// value for, so a stale one left in place was read as this injection's.
+	// Nor is the ack id an earlier release wrote, which no reader takes now.
 	if !m.grown {
 		const injectedHeaders = 10
-		grown := make([]sarama.RecordHeader, len(m.msg.Headers), len(m.msg.Headers)+injectedHeaders)
-		copy(grown, m.msg.Headers)
+		grown := make([]sarama.RecordHeader, 0, len(m.msg.Headers)+injectedHeaders)
+		for _, h := range m.msg.Headers {
+			if k := string(h.Key); k != HeaderAsyncSpanId && !pinpoint.IsInjectedHeader(k) {
+				grown = append(grown, h)
+			}
+		}
 		m.msg.Headers = grown
 		m.grown = true
 	}
@@ -225,10 +230,10 @@ func WrapSyncProducer(producer sarama.SyncProducer, addrs []string, config *sara
 }
 
 func newSyncProducerTracer(ctx context.Context, p *syncProducer, msg *sarama.ProducerMessage) pinpoint.Tracer {
-	if isNested(msg) {
+	tracer := pinpoint.FromContext(ctx)
+	if isNested(tracer, msg) {
 		return pinpoint.NoopTracer()
 	}
-	tracer := pinpoint.FromContext(ctx)
 
 	tracer.NewSpanEvent("sarama.SyncProducer.SendMessage")
 	se := tracer.SpanEvent()

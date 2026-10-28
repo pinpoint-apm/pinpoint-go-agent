@@ -299,7 +299,13 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   client plugin, the port-stripped peer address of a server plugin, and the
   bounded list annotation of a batch. `IsInjected` goes by header presence,
   as the kafka plugins did, so the http client now treats an injected header
-  with an empty value as a context too.
+  with an empty value as a context too. `IsInjectedBy` tells a context the
+  tracer's own span injected from another span's: the http, gRPC, sarama and
+  confluent-kafka clients send the first as it is and replace the second,
+  which a proxy or a relay forwarded and the callee read as its own span id
+  (`IsInjectedHeader` names the keys to clear). `OnTracerGoroutine` reports
+  whether a callback runs on the goroutine its tracer tracks; the gocql
+  observers record on a goroutine tracer when it does not.
 - **`Collector.AgentInfo.SendArgs`** (`WithCollectorAgentInfoSendArgs`) turns
   off sending the process's command line arguments with the agent information,
   for a command line that carries a password or a token. On by default, as

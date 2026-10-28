@@ -56,6 +56,10 @@ func (o *Observer) ObserveQuery(ctx context.Context, query gocql.ObservedQuery) 
 	if !tracer.IsSampled() {
 		return
 	}
+	ctx, fork := onOwnGoroutine(ctx, tracer)
+	if fork != nil {
+		defer fork.EndSpan()
+	}
 
 	info := cassandraInfo(query.Keyspace, hostnameAndPort(query.Host))
 	span := pinpoint.NewDatabaseTracer(ctx, "cassandra.query", &info)
@@ -79,6 +83,10 @@ func (o *Observer) ObserveBatch(ctx context.Context, batch gocql.ObservedBatch) 
 	if !tracer.IsSampled() {
 		return
 	}
+	ctx, fork := onOwnGoroutine(ctx, tracer)
+	if fork != nil {
+		defer fork.EndSpan()
+	}
 
 	info := cassandraInfo(batch.Keyspace, hostnameAndPort(batch.Host))
 	span := pinpoint.NewDatabaseTracer(ctx, "cassandra.batch", &info)
@@ -91,6 +99,19 @@ func (o *Observer) ObserveBatch(ctx context.Context, batch gocql.ObservedBatch) 
 	if batch.Err != nil {
 		se.SetError(batch.Err, "batch error")
 	}
+}
+
+// onOwnGoroutine hands the observer a context whose tracer it may record on
+// here, and the goroutine tracer it forked for that, to end, if it had to:
+// gocql runs a page prefetch and a speculative execution on goroutines of its
+// own, with the query's context, and recorded on the caller's tracer from
+// there the event interleaved with the ones the caller was opening meanwhile.
+func onOwnGoroutine(ctx context.Context, tracer pinpoint.Tracer) (context.Context, pinpoint.Tracer) {
+	if pinpoint.OnTracerGoroutine(tracer) {
+		return ctx, nil
+	}
+	fork := tracer.NewGoroutineTracer()
+	return pinpoint.NewContext(ctx, fork), fork
 }
 
 // cassandraInfo describes the keyspace and host a query ran against.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -122,31 +123,55 @@ func Test_newClientTracer_InjectsMetadata(t *testing.T) {
 	assert.Equal(t, tracer.TransactionId().String(), md.Get(pinpoint.HeaderTraceId)[0])
 }
 
-// Pinpoint metadata the caller's outgoing context already carries - an outer
-// instrumented layer, an interceptor registered twice, or inbound metadata a
-// gateway forwards - marks the call as nested: no span event and no header, as
-// receiver's Get took the first.
+// Pinpoint metadata the caller's span already injected - an outer
+// instrumented layer, an interceptor registered twice - marks the call as
+// nested: no span event and no header, as a second value left the receiver's
+// Get reading the first.
 func Test_newClientTracer_NestedCallIsNotTraced(t *testing.T) {
 	pptest.StartAgent(t)
 
-	for _, marker := range []string{pinpoint.HeaderTraceId, pinpoint.HeaderSampled} {
-		tracer := pinpoint.GetAgent().NewSpanTracer("test", "/gateway")
-		outer := metadata.Pairs("authorization", "bearer token", marker, "outer")
-		ctx := metadata.NewOutgoingContext(pinpoint.NewContext(context.Background(), tracer), outer)
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/gateway")
+	defer tracer.EndSpan()
+	ctx, outer := newClientTracer(pinpoint.NewContext(context.Background(), tracer), "/outer.Layer/Call", "localhost:8080")
+	before, _ := metadata.FromOutgoingContext(ctx)
 
-		newCtx, spanTracer := newClientTracer(ctx, "/testapp.Hello/Greet", "localhost:8080")
-		assert.False(t, spanTracer.IsSampled(), "%s: a nested call records no span event", marker)
-		spanTracer.EndSpanEvent()
+	newCtx, spanTracer := newClientTracer(ctx, "/testapp.Hello/Greet", "localhost:8080")
+	assert.False(t, spanTracer.IsSampled(), "a nested call records no span event")
+	spanTracer.EndSpanEvent()
 
-		md, ok := metadata.FromOutgoingContext(newCtx)
-		require.True(t, ok)
-		assert.Equal(t, outer, md, "%s: the outer context travels alone", marker)
-		assert.Equal(t, []string{"outer"}, md.Get(marker))
+	md, ok := metadata.FromOutgoingContext(newCtx)
+	require.True(t, ok)
+	assert.Equal(t, before, md, "the outer layer's context travels alone")
+	outer.EndSpanEvent()
+}
 
-		tracer.NewSpanEvent("still open")
-		tracer.EndSpanEvent()
-		tracer.EndSpan()
-	}
+// Pinpoint metadata another span wrote - a gateway forwarding what its own
+// caller sent, the gateway's own span id with the caller's as the parent -
+// is replaced by this span's, stale keys included, and the application's own
+// metadata stays: sent on, the callee continued under the gateway's span id.
+func Test_newClientTracer_ForwardedContextIsReplaced(t *testing.T) {
+	pptest.StartAgent(t)
+
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/gateway")
+	defer tracer.EndSpan()
+	spanId := strconv.FormatInt(tracer.SpanId(), 10)
+	forwarded := metadata.Pairs("authorization", "bearer token",
+		"pinpoint-traceid", tracer.TransactionId().String(), "pinpoint-spanid", spanId,
+		"pinpoint-pspanid", "12345", "pinpoint-host", "stale:80", "pinpoint-sampled", "s0")
+	ctx := metadata.NewOutgoingContext(pinpoint.NewContext(context.Background(), tracer), forwarded)
+
+	newCtx, spanTracer := newClientTracer(ctx, "/testapp.Hello/Greet", "localhost:8080")
+	assert.True(t, spanTracer.IsSampled(), "the gateway's call must be recorded")
+	spanTracer.EndSpanEvent()
+
+	md, ok := metadata.FromOutgoingContext(newCtx)
+	require.True(t, ok)
+	assert.Equal(t, []string{spanId}, md.Get(pinpoint.HeaderParentSpanId), "the callee's parent must be this span")
+	assert.NotEqual(t, []string{spanId}, md.Get(pinpoint.HeaderSpanId), "the callee must not take this span's id")
+	assert.Equal(t, []string{"localhost:8080"}, md.Get(pinpoint.HeaderHost), "a stale key was left in place")
+	assert.Empty(t, md.Get(pinpoint.HeaderSampled), "a stale unsampled marker was left in place")
+	assert.Equal(t, []string{"bearer token"}, md.Get("authorization"), "the application's own metadata must survive")
+	assert.Equal(t, []string{"stale:80"}, forwarded.Get(pinpoint.HeaderHost), "the caller's metadata must stay as it was")
 }
 
 // The destination recorded for a client call is the dial target, which gRPC

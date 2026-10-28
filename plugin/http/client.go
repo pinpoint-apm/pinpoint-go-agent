@@ -15,8 +15,9 @@ import (
 // framework's own HTTP client (plugin/beego) or a compile-time hook inside
 // (*http.Transport).RoundTrip. The request is modified, so a caller bound by
 // the RoundTripper contract copies it first, as WrapClient does. A request
-// whose headers already carry a Pinpoint trace gets a noop tracer, so that
-// two layers around one request record one event. End it with
+// whose headers already carry the trace context tracer's span injected gets
+// a noop tracer, so that two layers around one request record one event;
+// another span's context in them is replaced by this span's. End it with
 // EndHttpClientTracer. Applications use WrapClient or DoClient.
 func NewHttpClientTracer(tracer pinpoint.Tracer, operationName string, req *http.Request) pinpoint.Tracer {
 	return before(tracer, operationName, req)
@@ -26,15 +27,24 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 	if tracer == nil {
 		return tracer
 	}
-	// Nested in an outer instrumented layer - a client wrapped twice, or a
-	// proxy forwarding its inbound headers - that already wrote the context:
-	// does. The returned noop tracer keeps after() from ending the caller's
-	// open event.
+	// Nested in an outer instrumented layer that already wrote this span's
+	// context - a client wrapped twice: that context travels alone, and the
+	// returned noop tracer keeps after() from ending the caller's open event.
+	// Another span's context - a proxy forwarding the headers its own caller
+	// sent - is cleared for this span's: sent on, the callee continued under
+	// the proxy's own span id, and the proxy's call went unrecorded.
 	// Read through HttpHeaderReader rather than Header.Get: it looks the
 	// pre-canonicalized key up directly, where Get canonicalizes
 	// "Pinpoint-TraceID" on every call and allocates doing so.
-	if pinpoint.IsInjected(pinpoint.HttpHeaderReader(req.Header)) {
-		return pinpoint.NoopTracer()
+	if r := pinpoint.HttpHeaderReader(req.Header); pinpoint.IsInjected(r) {
+		if pinpoint.IsInjectedBy(tracer, r) {
+			return pinpoint.NoopTracer()
+		}
+		for key := range req.Header {
+			if pinpoint.IsInjectedHeader(key) {
+				delete(req.Header, key)
+			}
+		}
 	}
 
 	// One lookup: each SpanEvent() call takes the event stack lock.

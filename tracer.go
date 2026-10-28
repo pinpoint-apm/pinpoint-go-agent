@@ -311,15 +311,18 @@ func (w *httpHeaderWriter) Set(key string, value string) {
 // pre-lowered keys and pphttp's pre-canonicalized proxy header names.
 var canonicalHeaderKeys = func() map[string]string {
 	m := make(map[string]string)
-	for _, k := range []string{
-		HeaderTraceId, HeaderSpanId, HeaderParentSpanId, HeaderSampled, HeaderFlags,
-		HeaderParentApplicationName, HeaderParentApplicationType,
-		HeaderParentApplicationNamespace, HeaderParentServiceName, HeaderHost,
-	} {
+	for _, k := range injectedHeaders {
 		m[k] = textproto.CanonicalMIMEHeaderKey(k)
 	}
 	return m
 }()
+
+// injectedHeaders are the headers Inject may write.
+var injectedHeaders = [...]string{
+	HeaderTraceId, HeaderSpanId, HeaderParentSpanId, HeaderSampled, HeaderFlags,
+	HeaderParentApplicationName, HeaderParentApplicationType,
+	HeaderParentApplicationNamespace, HeaderParentServiceName, HeaderHost,
+}
 
 func canonicalHeaderKey(key string) string {
 	if c, ok := canonicalHeaderKeys[key]; ok {
@@ -460,6 +463,69 @@ func IsInjected(reader DistributedTracingContextReader) bool {
 	}
 	_, ok := reader.Get(HeaderSampled)
 	return ok
+}
+
+// IsInjectedBy reports whether the context reader holds is tracer's own: one
+// its span injected - an outer instrumented layer of the same call, a wrapper
+// applied twice, a message re-sent by the request that sent it - which a
+// client plugin leaves to travel alone, as IsInjected describes. Another
+// span's context is not: a proxy forwarding its inbound headers, a relay
+// copying a consumed record's headers. Sent on as it was, it made the callee
+// continue under the span id the caller had handed this span, two spans of
+// one transaction sharing it, and this span's call went unrecorded. A plugin
+// clears that context (IsInjectedHeader) and injects its own. A tracer that
+// stands for no transaction injects nothing, so for it any context travels as
+// it is, and so does it for a tracer the agent did not make.
+func IsInjectedBy(tracer Tracer, reader DistributedTracingContextReader) bool {
+	if n, ok := tracer.(nestedTracer); ok {
+		tracer = n.Tracer
+	}
+	switch t := tracer.(type) {
+	case *span:
+		// Inject writes the span's own id as the callee's parent.
+		v, ok := reader.Get(HeaderParentSpanId)
+		return ok && v == strconv.FormatInt(t.spanId, 10)
+	case *noopSpan:
+		if !t.unsampled {
+			return true
+		}
+		// An unsampled span writes the unsampled marker alone.
+		_, traced := reader.Get(HeaderTraceId)
+		return !traced
+	}
+	return true
+}
+
+// IsInjectedHeader reports whether key, in any case, names a header Inject may
+// write: what a plugin clears from a carrier holding another span's context
+// (IsInjectedBy) before injecting, since Inject omits a header it has no
+// value for and a stale one left in place is read as this injection's own.
+func IsInjectedHeader(key string) bool {
+	for _, h := range injectedHeaders {
+		if strings.EqualFold(key, h) {
+			return true
+		}
+	}
+	return false
+}
+
+// OnTracerGoroutine reports whether the calling goroutine is the one tracer's
+// call stack runs on - the goroutine its first span event was opened on. A
+// library callback that may run on a goroutine of its own, such as gocql's
+// query observer during a page prefetch, records on tracer.NewGoroutineTracer()
+// when it is not: a tracer tracks one goroutine (doc/api_contracts.md rule 1).
+// True when the agent cannot tell: no event opened yet, goroutine ids not
+// readable, or a tracer the agent did not make.
+func OnTracerGoroutine(tracer Tracer) bool {
+	if n, ok := tracer.(nestedTracer); ok {
+		tracer = n.Tracer
+	}
+	t, ok := tracer.(*span)
+	if !ok || goIdOffset <= 0 {
+		return true
+	}
+	gid := t.goroutineId.Load()
+	return gid == -1 || gid == goIdFromG()
 }
 
 // RemoteHost is the host of a peer address, for SpanRecorder.SetRemoteAddress:

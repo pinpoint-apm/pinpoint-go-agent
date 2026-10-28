@@ -83,7 +83,8 @@ func (p *Producer) ProduceContext(ctx context.Context, msg *kafka.Message, deliv
 	// A disabled agent traces nothing and injects nothing - not even the
 	// unsampled marker - so the message headers are left untouched. A nested
 	// message (isNested) is sent as it is for the same reason.
-	if msg == nil || !pinpoint.GetAgent().Enable() || isNested(msg) {
+	tracer := pinpoint.FromContext(ctx)
+	if msg == nil || !pinpoint.GetAgent().Enable() || isNested(tracer, msg) {
 		return p.Producer.Produce(msg, deliveryChan)
 	}
 
@@ -92,7 +93,7 @@ func (p *Producer) ProduceContext(ctx context.Context, msg *kafka.Message, deliv
 	// - and an application tracking the last delivered offset by them - and
 	// could still be sending after Flush returned, into a channel the
 	// application had closed.
-	tracer := newProducerTracer(pinpoint.FromContext(ctx), p.broker, msg)
+	tracer = newProducerTracer(tracer, p.broker, msg)
 	defer tracer.EndSpanEvent()
 	err := p.Producer.Produce(msg, deliveryChan)
 	tracer.SpanEvent().SetError(err)
@@ -109,11 +110,16 @@ func newProducerTracer(tracer pinpoint.Tracer, broker string, msg *kafka.Message
 	return tracer
 }
 
-// isNested reports whether msg already carries a Pinpoint trace context - an
-// outer instrumented layer, or the retry pattern re-sending the same message
-// object. The producer then records no span event and writes no header.
-func isNested(msg *kafka.Message) bool {
-	return pinpoint.IsInjected(headerReader{msg})
+// isNested reports whether msg already carries the trace context tracer's own
+// span injected - an outer instrumented layer, or the retry pattern re-sending
+// a message object the same request sent. The producer then records no span
+// event and writes no header. Another span's context - a relay copying a
+// consumed record's headers, which made the downstream consumer continue
+// under the relay's own span id - is not, and the header writer leaves it
+// behind as it adds this span's.
+func isNested(tracer pinpoint.Tracer, msg *kafka.Message) bool {
+	r := headerReader{msg}
+	return pinpoint.IsInjected(r) && pinpoint.IsInjectedBy(tracer, r)
 }
 
 type headerWriter struct {
@@ -124,12 +130,18 @@ type headerWriter struct {
 
 // Set appends the header into a slice of the message's own: the first write
 // copies the headers into a new array, so nothing lands in spare capacity the
-// application's slice may share with another message.
+// application's slice may share with another message. Another span's context
+// is not copied (isNested): Inject omits a header it has no value for, so a
+// stale one left in place was read as this injection's own.
 func (w *headerWriter) Set(key string, value string) {
 	if !w.grown {
 		const injectedHeaders = 8
-		grown := make([]kafka.Header, len(w.msg.Headers), len(w.msg.Headers)+injectedHeaders)
-		copy(grown, w.msg.Headers)
+		grown := make([]kafka.Header, 0, len(w.msg.Headers)+injectedHeaders)
+		for _, h := range w.msg.Headers {
+			if !pinpoint.IsInjectedHeader(h.Key) {
+				grown = append(grown, h)
+			}
+		}
 		w.msg.Headers = grown
 		w.grown = true
 	}

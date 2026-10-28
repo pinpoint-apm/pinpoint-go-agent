@@ -30,6 +30,63 @@ func TestIsInjected(t *testing.T) {
 	}
 }
 
+// IsInjectedBy tells a context the tracer's own span wrote, which a client
+// plugin leaves to travel alone, from another span's - a proxy forwarding the
+// headers its own caller sent - which it clears and replaces with its own.
+func TestIsInjectedBy(t *testing.T) {
+	a := newTestAgent(defaultConfig())
+	s := newSampledSpan(a, "op", "/rpc")
+	s.NewSpanEvent("call")
+	defer s.EndSpanEvent()
+
+	own := http.Header{}
+	s.Inject(HttpHeaderWriter(own))
+	assert.True(t, IsInjectedBy(s, HttpHeaderReader(own)), "the span's own injection")
+	assert.True(t, IsInjectedBy(NestedTracer(s), HttpHeaderReader(own)), "the same span through a nested view")
+
+	// What this span's caller sent it: the span's own id as the callee's, the
+	// caller's as the parent.
+	forwarded := http.Header{}
+	forwarded.Set(HeaderTraceId, s.txId.String())
+	forwarded.Set(HeaderSpanId, strconv.FormatInt(s.spanId, 10))
+	forwarded.Set(HeaderParentSpanId, "12345")
+	assert.False(t, IsInjectedBy(s, HttpHeaderReader(forwarded)), "a context forwarded from the caller")
+
+	unsampled := newUnSampledSpan(a, "/rpc")
+	assert.True(t, IsInjectedBy(unsampled, HttpHeaderReader(http.Header{"Pinpoint-Sampled": {"s0"}})),
+		"an unsampled span writes the marker alone")
+	assert.False(t, IsInjectedBy(unsampled, HttpHeaderReader(forwarded)), "a sampled context under an unsampled span")
+	assert.True(t, IsInjectedBy(NoopTracer(), HttpHeaderReader(forwarded)), "a no-op tracer injects nothing to replace it with")
+}
+
+// IsInjectedHeader names exactly what Inject may write, in any case: a carrier
+// holding another span's context is cleared of these before the injection.
+func TestIsInjectedHeader(t *testing.T) {
+	for _, key := range []string{HeaderTraceId, "pinpoint-traceid", "Pinpoint-Pspanid", HeaderSampled, HeaderHost, HeaderParentServiceName} {
+		assert.True(t, IsInjectedHeader(key), key)
+	}
+	for _, key := range []string{"Pinpoint-Custom", "X-Request-Id", ""} {
+		assert.False(t, IsInjectedHeader(key), key)
+	}
+}
+
+// OnTracerGoroutine tells the goroutine a span's call stack runs on from any
+// other, and says yes whenever it cannot tell.
+func TestOnTracerGoroutine(t *testing.T) {
+	assert.True(t, OnTracerGoroutine(NoopTracer()), "not a tracer the agent tracks")
+
+	s := newSampledSpan(newTestAgent(defaultConfig()), "op", "/rpc")
+	assert.True(t, OnTracerGoroutine(s), "no event opened yet")
+	s.NewSpanEvent("call")
+	defer s.EndSpanEvent()
+	assert.True(t, OnTracerGoroutine(s))
+	assert.True(t, OnTracerGoroutine(NestedTracer(s)))
+
+	other := make(chan bool)
+	go func() { other <- OnTracerGoroutine(s) }()
+	assert.Equal(t, goIdOffset == 0, <-other, "another goroutine, where goroutine ids are readable")
+}
+
 // RemoteHost strips a port only when there is one, keeps a bare IP, and falls
 // back to loopback for a peer that is no network address.
 func TestRemoteHost(t *testing.T) {

@@ -66,10 +66,12 @@ func (w *kvInjectionWriter) Set(key string, value string) {
 }
 
 func newClientTracer(ctx context.Context, method string, target string) (context.Context, pinpoint.Tracer) {
-	if isNested(ctx) {
+	tracer := pinpoint.FromContext(ctx)
+	ctx, nested := outgoingContext(ctx, tracer)
+	if nested {
 		return ctx, pinpoint.NoopTracer()
 	}
-	tracer := pinpoint.FromContext(ctx).NewSpanEvent(method)
+	tracer = tracer.NewSpanEvent(method)
 	if tracer.IsSampled() {
 		se := tracer.SpanEvent()
 		se.SetServiceType(pinpoint.ServiceTypeGrpc)
@@ -95,21 +97,35 @@ func newClientTracer(ctx context.Context, method string, target string) (context
 	return ctx, tracer
 }
 
-// isNested reports whether the caller's outgoing metadata already carries a
-// Pinpoint trace context - an outer instrumented layer, an interceptor
-// registered twice, or a gateway forwarding its inbound metadata with
-// records no span event and writes no header, so the context already present
-// travels alone; appending a second value left the receiver's Get reading the
-// Pinpoint-TraceID or Pinpoint-Sampled.
+// outgoingContext checks the caller's outgoing metadata for a Pinpoint trace
+// context. One tracer's span injected - an outer instrumented layer, an
+// interceptor registered twice - makes the call nested: it records no span
+// event and writes no header, so that context travels alone; appending a
+// second value left the receiver's Get reading the first. Another span's - a
+// gateway forwarding the metadata its own caller sent - is cleared from the
+// returned context for this span's: sent on, the callee continued under the
+// gateway's own span id, and the gateway's call went unrecorded.
 //
 // FromOutgoingContext copies the caller's MD: a cost per call that only exists
 // when the caller set metadata of its own.
-func isNested(ctx context.Context) bool {
+func outgoingContext(ctx context.Context, tracer pinpoint.Tracer) (context.Context, bool) {
 	md, ok := metadata.FromOutgoingContext(ctx)
 	if !ok {
-		return false
+		return ctx, false
 	}
-	return pinpoint.IsInjected(outgoingMetadataReader(md))
+	r := outgoingMetadataReader(md)
+	if !pinpoint.IsInjected(r) {
+		return ctx, false
+	}
+	if pinpoint.IsInjectedBy(tracer, r) {
+		return ctx, true
+	}
+	for key := range md {
+		if pinpoint.IsInjectedHeader(key) {
+			delete(md, key)
+		}
+	}
+	return metadata.NewOutgoingContext(ctx, md), false
 }
 
 // outgoingMetadataReader reads the caller's outgoing metadata as a tracing

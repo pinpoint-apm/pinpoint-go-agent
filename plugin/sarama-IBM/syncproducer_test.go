@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strconv"
 	"testing"
 
 	"github.com/IBM/sarama"
@@ -22,10 +23,9 @@ var pinpointHeaders = []string{
 	pinpoint.HeaderParentApplicationName,
 }
 
-// A message that already carries a Pinpoint context - an outer instrumented
-// layer, or the retry pattern re-sending the message object a previous send
-// span event is recorded and no header is written, so the message keeps
-// exactly the one set of headers it arrived with.
+// A message carrying a context no transaction of this tracer's can replace -
+// here no tracer at all - is sent as it is: no span event is recorded and no
+// header written, so the message keeps exactly the headers it arrived with.
 func Test_newSyncProducerTracer_NestedMessageIsNotTraced(t *testing.T) {
 	msg := &sarama.ProducerMessage{
 		Topic: "topic",
@@ -44,15 +44,67 @@ func Test_newSyncProducerTracer_NestedMessageIsNotTraced(t *testing.T) {
 	assert.False(t, tracer.IsSampled(), "a nested message gets a noop tracer")
 }
 
+// A message carrying another span's context - a relay copying the headers of
+// the record it consumed, whose span id is the relay's own - gets this span's
+// context in place of that one, stale keys and an earlier release's ack id
+// included, and keeps the application's own headers: sent on as it was, the
+// downstream consumer continued under the relay's span id.
+func Test_newSyncProducerTracer_ForwardedContextIsReplaced(t *testing.T) {
+	pptest.StartAgent(t)
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/relay")
+	defer tracer.EndSpan()
+	defer tracer.NewSpanEvent("relay").EndSpanEvent()
+	spanId := strconv.FormatInt(tracer.SpanId(), 10)
+
+	consumed := []sarama.RecordHeader{
+		{Key: []byte("x-app"), Value: []byte("keep-me")},
+		{Key: []byte(pinpoint.HeaderTraceId), Value: []byte(tracer.TransactionId().String())},
+		{Key: []byte(pinpoint.HeaderSpanId), Value: []byte(spanId)},
+		{Key: []byte(pinpoint.HeaderParentSpanId), Value: []byte("12345")},
+		{Key: []byte(pinpoint.HeaderHost), Value: []byte("stale:9092")},
+		{Key: []byte(HeaderAsyncSpanId), Value: []byte("1^2^3")},
+	}
+	msg := &sarama.ProducerMessage{Topic: "topic", Headers: append([]sarama.RecordHeader(nil), consumed...)}
+
+	newSyncProducerTracer(pinpoint.NewContext(context.Background(), tracer), &syncProducer{addrs: []string{"broker:9092"}}, msg).EndSpanEvent()
+
+	got := map[string][]string{}
+	for _, h := range msg.Headers {
+		got[string(h.Key)] = append(got[string(h.Key)], string(h.Value))
+	}
+	assert.Equal(t, []string{"keep-me"}, got["x-app"])
+	assert.Equal(t, []string{spanId}, got[pinpoint.HeaderParentSpanId], "the consumer's parent must be this span")
+	assert.NotEqual(t, []string{spanId}, got[pinpoint.HeaderSpanId], "the consumer must not take this span's id")
+	assert.Equal(t, []string{"broker:9092"}, got[pinpoint.HeaderHost], "a stale header was left in place")
+	assert.Empty(t, got[HeaderAsyncSpanId], "the earlier release's ack id was left in place")
+	for key, values := range got {
+		assert.Len(t, values, 1, "%s carries two values", key)
+	}
+	assert.Equal(t, "stale:9092", string(consumed[4].Value), "the consumed headers must stay as they were")
+}
+
+// isNested sends as it is a nil message and one carrying the context tracer's
+// own span injected, and nothing else.
 func Test_isNested(t *testing.T) {
+	pptest.StartAgent(t)
 	hdr := func(k string) []sarama.RecordHeader {
 		return []sarama.RecordHeader{{Key: []byte(k), Value: []byte("v")}}
 	}
-	assert.False(t, isNested(&sarama.ProducerMessage{}))
-	assert.False(t, isNested(&sarama.ProducerMessage{Headers: hdr("x-app")}))
-	assert.True(t, isNested(&sarama.ProducerMessage{Headers: hdr(pinpoint.HeaderTraceId)}))
-	assert.True(t, isNested(&sarama.ProducerMessage{Headers: hdr(pinpoint.HeaderSampled)}), "an unsampled context is a context too")
-	assert.True(t, isNested(&sarama.ProducerMessage{Headers: hdr(HeaderAsyncSpanId)}), "a previous async injection's ack id")
+	noop := pinpoint.NoopTracer()
+	assert.True(t, isNested(noop, nil))
+	assert.False(t, isNested(noop, &sarama.ProducerMessage{}))
+	assert.False(t, isNested(noop, &sarama.ProducerMessage{Headers: hdr("x-app")}))
+	assert.True(t, isNested(noop, &sarama.ProducerMessage{Headers: hdr(pinpoint.HeaderTraceId)}), "a no-op tracer has no context to replace it with")
+	assert.True(t, isNested(noop, &sarama.ProducerMessage{Headers: hdr(pinpoint.HeaderSampled)}), "an unsampled context is a context too")
+	assert.False(t, isNested(noop, &sarama.ProducerMessage{Headers: hdr(HeaderAsyncSpanId)}), "an earlier release's ack id alone is no context")
+
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
+	defer tracer.EndSpan()
+	defer tracer.NewSpanEvent("produce").EndSpanEvent()
+	own := &sarama.ProducerMessage{}
+	tracer.Inject(newProducerHeaderWriter(own))
+	assert.True(t, isNested(tracer, own), "the span's own context")
+	assert.False(t, isNested(tracer, &sarama.ProducerMessage{Headers: hdr(pinpoint.HeaderTraceId)}), "another span's context")
 }
 
 type stubSyncProducer struct {

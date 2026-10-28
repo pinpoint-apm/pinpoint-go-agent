@@ -165,3 +165,38 @@ func TestHostnameAndPort_Cached(t *testing.T) {
 	assert.Equal(t, h.HostnameAndPort(), hostnameAndPort(h))
 	assert.Zero(t, testing.AllocsPerRun(100, func() { hostnameAndPort(h) }))
 }
+
+// gocql runs a page prefetch and a speculative execution on goroutines of its
+// own with the query's context, so an observation arriving off the caller's
+// goroutine is recorded on a goroutine tracer forked for it, and one on the
+// caller's goroutine on the caller's tracer, as before.
+func Test_onOwnGoroutine(t *testing.T) {
+	pptest.StartAgent(t)
+	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/rows")
+	defer tracer.EndSpan()
+	defer tracer.NewSpanEvent("rows").EndSpanEvent()
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+
+	same, fork := onOwnGoroutine(ctx, tracer)
+	assert.Nil(t, fork, "the caller's own goroutine needs no fork")
+	assert.Same(t, ctx, same)
+
+	type result struct {
+		ctx  context.Context
+		fork pinpoint.Tracer
+	}
+	off := make(chan result)
+	go func() {
+		c, f := onOwnGoroutine(ctx, tracer)
+		if f != nil {
+			defer f.EndSpan()
+		}
+		off <- result{c, f}
+	}()
+	got := <-off
+	if got.fork == nil {
+		t.Skip("goroutine ids are not readable here")
+	}
+	assert.NotEqual(t, tracer, got.fork)
+	assert.Equal(t, got.fork, pinpoint.FromContext(got.ctx), "the observer records on the fork")
+}

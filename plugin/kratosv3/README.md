@@ -112,6 +112,30 @@ func callHTTP(w http.ResponseWriter, r *http.Request) {
 ```
 [Full Example Source](/example/kratosv3/client/client.go)
 
+### gRPC streams
+ServerMiddleware and ClientMiddleware trace unary calls and HTTP requests. Install
+them with `Middleware` and `WithMiddleware`, not with kratos's `StreamMiddleware`
+and `WithStreamMiddleware`. kratos runs a stream middleware once per
+message, on whichever goroutine sends or receives it: the caller's tracer would
+be shared by two goroutines and the request metadata written from both at once,
+which stops the process with `fatal error: concurrent map writes`, and on the
+server every message would become a span of its own, its normal end an error.
+Trace a gRPC stream with the stream interceptors of [plugin/grpc](/plugin/grpc),
+which kratos takes as options too.
+
+``` go
+srv := transgrpc.NewServer(
+    transgrpc.Middleware(ppkratosv3.ServerMiddleware()),
+    transgrpc.StreamInterceptor(ppgrpc.StreamServerInterceptor()),
+)
+```
+
+``` go
+// among the options of the gRPC client
+transgrpc.WithMiddleware(ppkratosv3.ClientMiddleware()),
+transgrpc.WithStreamInterceptor(ppgrpc.StreamClientInterceptor()),
+```
+
 ### Notes
 
 A handler error fails the span, as the gRPC plugin does: kratos reports a

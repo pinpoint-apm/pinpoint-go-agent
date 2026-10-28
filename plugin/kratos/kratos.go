@@ -52,6 +52,12 @@ import (
 // ServerMiddleware returns a server side middleware ready to instrument
 // and adds the pinpoint.Tracer to the handler's context.
 // By using the pinpoint.FromContext function, this tracer can be obtained.
+// It is a unary middleware: install it with Middleware or WithMiddleware, not
+// with kratos's StreamMiddleware or WithStreamMiddleware, which run it once per
+// stream message on whichever goroutine sends or receives it - sharing the
+// caller's tracer between goroutines and writing the request metadata from
+// both at once, a fatal error. Trace a gRPC stream with ppgrpc's stream
+// interceptors through StreamInterceptor and WithStreamInterceptor.
 func ServerMiddleware() middleware.Middleware {
 	return func(handler middleware.Handler) middleware.Handler {
 		return func(ctx context.Context, req interface{}) (reply interface{}, err error) {
@@ -127,6 +133,12 @@ func serverEndpoint(endpoint string) string {
 }
 
 // ClientMiddleware returns a client side middleware ready to instrument.
+// It is a unary middleware: install it with Middleware or WithMiddleware, not
+// with kratos's StreamMiddleware or WithStreamMiddleware, which run it once per
+// stream message on whichever goroutine sends or receives it - sharing the
+// caller's tracer between goroutines and writing the request metadata from
+// both at once, a fatal error. Trace a gRPC stream with ppgrpc's stream
+// interceptors through StreamInterceptor and WithStreamInterceptor.
 func ClientMiddleware() middleware.Middleware {
 	return func(handler middleware.Handler) middleware.Handler {
 		return func(ctx context.Context, req interface{}) (reply interface{}, err error) {

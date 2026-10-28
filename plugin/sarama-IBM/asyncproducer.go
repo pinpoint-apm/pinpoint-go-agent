@@ -113,7 +113,8 @@ func (p *asyncProducer) InputContext(ctx context.Context, msg *sarama.ProducerMe
 	// A disabled agent traces nothing and injects nothing - not even the
 	// unsampled marker - so the message headers are left untouched. A nested
 	// message (isNested) is sent as it is for the same reason.
-	if !pinpoint.GetAgent().Enable() || isNested(msg) {
+	tracer := pinpoint.FromContext(ctx)
+	if !pinpoint.GetAgent().Enable() || isNested(tracer, msg) {
 		p.send(msg)
 		return
 	}
@@ -125,7 +126,6 @@ func (p *asyncProducer) InputContext(ctx context.Context, msg *sarama.ProducerMe
 	// the caller had no event open, which is every caller at span level (a
 	// batch job, a hand-built NewSpanTracer), with only a throttled log to say
 	// so. An HTTP handler worked by accident, under the handler's own event.
-	tracer := pinpoint.FromContext(ctx)
 	tracer.NewSpanEvent("sarama.AsyncProducer.Input()")
 	defer tracer.EndSpanEvent()
 
@@ -439,8 +439,8 @@ func sweepAsyncProducerInput(wrapped *asyncProducer) bool {
 
 // HeaderAsyncSpanId is the record header earlier releases wrote to match an
 // ack to its span. It is no longer written - the span map is keyed by the
-// message, which sarama returns as it is - and is kept for isNested, which
-// still reads a message carrying it as injected.
+// message, which sarama returns as it is - and is kept for the header writer,
+// which drops it from a message sent again.
 const HeaderAsyncSpanId = "Pinpoint-AsyncSpanID"
 
 // trackAcks reports whether delivery acks can be relied on to end the tracers.

@@ -402,10 +402,27 @@ A `DistributedTracingContextWriter` must therefore not assume every header
 arrives on every call. Writers that append (`metadata.AppendToOutgoingContext`
 in the gRPC plugin) or that write into a fresh carrier need no care. A writer
 handed a carrier that may already hold headers from an earlier injection must
-**clear the `Pinpoint-` keys first**: overwriting only what it is given leaves
-the omitted ones behind to be read as this injection's own. The sarama
-producer writer does this, because the retry pattern re-sends the same
-message object.
+**clear the `Pinpoint-` keys first** (`pinpoint.IsInjectedHeader` names them):
+overwriting only what it is given leaves the omitted ones behind to be read as
+this injection's own.
+
+### A context already in the carrier
+
+A client plugin that finds a trace context already in its carrier asks whose
+it is (`pinpoint.IsInjectedBy`):
+
+| Context in the carrier | What the plugin does |
+|---|---|
+| injected by this tracer's own span - an outer instrumented layer, a wrapper applied twice, a message re-sent by the request that sent it | records no event and writes nothing: that context travels alone |
+| another span's - a proxy forwarding the headers its own caller sent, a relay copying a consumed record's headers | clears it and injects its own, recording the call |
+| any, with a tracer that stands for no transaction | leaves it as it is: such a tracer injects nothing to replace it with |
+
+Forwarded as it was, another span's context made the callee continue under
+the span id the caller had handed the forwarding span: two spans of one
+transaction shared it, and the forwarding call itself went unrecorded. The
+http, gRPC, sarama and confluent-kafka plugins decide this way; the fasthttp
+client clears its request's headers before every injection, since fasthttp
+requests are reused.
 
 ### An inbound request continues a trace only with all three headers
 
