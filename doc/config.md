@@ -910,6 +910,10 @@ SQL.TraceCommit option enables commit tracing for SQL Driver.
 ### SQL.TraceRollback
 SQL.TraceRollback option enables rollback tracing for SQL Driver.
 
+Rollbacks with a canceled transaction context are not traced: `database/sql` may
+run them on a background goroutine that cannot share the request's tracer.
+The actual rollback still runs and its result is unchanged.
+
 * PINPOINT_GO_SQL_TRACEROLLBACK
 * type: bool
 * default: true

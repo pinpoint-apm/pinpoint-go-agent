@@ -27,10 +27,13 @@ func (c *fakeDriverConn) Begin() (driver.Tx, error) {
 	return &fakeDriverTx{}, nil
 }
 
-type fakeDriverTx struct{ rolledBack bool }
+type fakeDriverTx struct {
+	rolledBack bool
+	err        error
+}
 
 func (t *fakeDriverTx) Commit() error   { return nil }
-func (t *fakeDriverTx) Rollback() error { t.rolledBack = true; return nil }
+func (t *fakeDriverTx) Rollback() error { t.rolledBack = true; return t.err }
 
 type checkerDriverConn struct {
 	fakeDriverConn
@@ -581,6 +584,59 @@ func Test_sqlDriver_LegacyInterfacesAreTraced(t *testing.T) {
 	}
 	assert.Equal(t, []string{"ConnExec", "ConnQuery", "StmtExec", "StmtQuery", "Begin", "Rollback"}, ops)
 	assert.Equal(t, []string{"1", "x", "2", "3"}, binds, "bind values of the SQL events")
+}
+
+func Test_sqlTx_AutomaticRollbackDoesNotTrace(t *testing.T) {
+	wrapped := WrapSQLDriver(legacyDriver{}, DBInfo{QueryType: ServiceTypeMysqlExecuteQuery})
+	connector, err := wrapped.(driver.DriverContext).OpenConnector("dsn")
+	require.NoError(t, err)
+	db := sql.OpenDB(connector)
+	defer db.Close()
+
+	tracer := newTestAgent(defaultConfig()).NewSpanTracer("sql", "/sql").(*span)
+	defer tracer.EndSpan()
+	defer tracer.NewSpanEvent("request").EndSpanEvent()
+	requestEvent := tracer.SpanEvent().(*spanEvent)
+	ctx, cancel := context.WithCancel(NewContext(context.Background(), tracer))
+	defer cancel()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	cancel()
+	// Without session interfaces, database/sql closes the connection after its automatic rollback finishes.
+	require.Eventually(t, func() bool { return db.Stats().InUse == 0 }, time.Second, time.Millisecond)
+	assert.Same(t, requestEvent, tracer.SpanEvent())
+	assert.False(t, requestEvent.finished.Load())
+	require.Len(t, tracer.spanEvents, 1, "automatic rollback must not touch the request tracer")
+	assert.Equal(t, "Begin", tracer.spanEvents[0].operationName)
+}
+
+func Test_sqlTx_RollbackPreservesError(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("canceled=%v", canceled), func(t *testing.T) {
+			tracer := newTestAgent(defaultConfig()).NewSpanTracer("sql", "/sql").(*span)
+			defer tracer.EndSpan()
+			ctx, cancel := context.WithCancel(NewContext(context.Background(), tracer))
+			defer cancel()
+			if canceled {
+				cancel()
+			}
+			rollbackErr := errors.New("rollback failed")
+			base := &fakeDriverTx{err: rollbackErr}
+			tx := &sqlTx{Tx: base, conn: newSqlConn(&fakeDriverConn{}, DBInfo{}), ctx: ctx}
+
+			assert.Same(t, rollbackErr, tx.Rollback())
+			assert.True(t, base.rolledBack, "cancellation must not skip the driver rollback")
+			if canceled {
+				assert.Empty(t, tracer.spanEvents)
+			} else {
+				require.Len(t, tracer.spanEvents, 1)
+				assert.Equal(t, "Rollback", tracer.spanEvents[0].operationName)
+				assert.Equal(t, rollbackErr.Error(), tracer.spanEvents[0].errorString)
+			}
+		})
+	}
 }
 
 // The fallbacks mirror database/sql: a context canceled before the call

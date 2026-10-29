@@ -691,7 +691,8 @@ func (t *sqlTx) Commit() (err error) {
 func (t *sqlTx) Rollback() (err error) {
 	start := time.Now()
 	err = t.Tx.Rollback()
-	if t.conn.cfg().sqlTraceRollback {
+	// database/sql rolls back canceled transactions on its own goroutine, which cannot share the request tracer.
+	if t.ctx.Err() == nil && t.conn.cfg().sqlTraceRollback {
 		t.conn.newSqlSpanEvent(t.ctx, "Rollback", start, err, "", nil)
 	}
 	return err
