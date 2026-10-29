@@ -194,10 +194,10 @@ func resolveObjectNameWithID(config *Config, agentID string, uid uuid.UUID) (*ob
 		return o, nil
 	}
 
-	// serviceName: the collector only checks the characters and the maximum
-	// length, but the Java agent (IdValidatorV4) and the web UI's service
-	// registry also require SERVICE_NAME_MIN_LEN, so a shorter name would
-	// be accepted on the wire yet could never be registered as a service.
+	// serviceName: the Java agent (IdValidatorV4), the web UI's service
+	// registry and, from 4.0.0, the collector require SERVICE_NAME_MIN_LEN. A
+	// 3.1.x collector checks only the characters and the maximum length, so a
+	// shorter name would pass there yet could never be registered as a service.
 	o.serviceName = strings.TrimSpace(config.String(CfgServiceName))
 	if !IsValidId(o.serviceName, serviceNameMaxLen) || len(o.serviceName) < serviceNameMinLen {
 		return nil, errors.New("service name is required and must match " +

@@ -285,9 +285,9 @@ Against a 3.1.x collector, set Uid.Version to v3 (ServiceName is then not needed
 
 ApplicationName, AgentId, AgentName and ServiceName must match `[a-zA-Z0-9\._\-]+`,
 and the lengths above are UTF-8 byte lengths.
-ServiceName additionally needs at least 3 bytes, matching the Pinpoint Java agent and the
-web UI's service registry; the collector itself accepts shorter names, but they could not be
-registered as a service.
+ServiceName additionally needs at least 3 bytes, matching the Pinpoint Java agent, the web UI's
+service registry and, from 4.0.0, the collector, which refuses a shorter name with `INVALID_ARGUMENT`.
+A 3.1.x collector accepts a shorter name, but it could not be registered as a service.
 ApiKey has no length limit. It must be printable ASCII (0x20-0x7E), the only characters a gRPC header can carry,
 and any other character aborts startup.
 Surrounding whitespace is removed from ApplicationName, AgentName, ServiceName and ApiKey before they are checked,
@@ -310,6 +310,13 @@ ServiceName option sets the service name reported to Pinpoint collector.
 It is required with Uid.Version v4, the default, and its length must be between 3 and 254 bytes.
 It is ignored for v1 and v3.
 If it is not set, has invalid characters, or its length is out of range, agent startup fails.
+
+A collector from 4.0.0 looks the service up by default, so register the service in the Pinpoint web
+before starting the agent. For a name that is not registered the collector refuses AgentInfo with
+`Service not found. serviceName=<name>`: the agent logs the rejection and keeps retrying, and tracing
+stays disabled (NewSpan is a noop and no stats are collected) until the service is registered.
+A collector run with the service feature off (`pinpoint.collector.service.lookup.enabled=false`) does
+not look the name up and records every agent under the `DEFAULT` service.
 A 3.1.x collector records every v4 agent under the `DEFAULT` service whatever this is set to.
 See [Uid.Version](#uidversion).
 
