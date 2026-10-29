@@ -139,6 +139,7 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
+	github.com/elastic/lumberjack v0.0.0-20260715013204-c5b60bbeaaab // indirect
 	github.com/go-kit/log v0.2.1 // indirect
 	github.com/go-logfmt/logfmt v0.6.0 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
@@ -174,7 +175,7 @@ require (
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriverv2/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongomonitor/v2 v2.0.0
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongomonitor/v2 v2.0.0 // indirect
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle/v2 v2.0.0
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3/v2 v2.0.0
@@ -198,7 +199,6 @@ require (
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/protobuf v1.36.11
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 

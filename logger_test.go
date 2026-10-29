@@ -5,14 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/elastic/lumberjack"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 type trackingWriteCloser struct {
@@ -38,6 +39,104 @@ func Test_SetOutputClosesPreviousFileLogger(t *testing.T) {
 
 	require.True(t, previous.closed, "previous file logger was not closed")
 	require.Nil(t, l.fileLogger, "file logger reference was not cleared")
+}
+
+func logRotationWorkers() int {
+	for size := 64 << 10; ; size *= 2 {
+		buf := make([]byte, size)
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return bytes.Count(buf[:n], []byte(".(*Logger).millRun("))
+		}
+	}
+}
+
+func Test_SetOutputStopsPreviousRotationWorkers(t *testing.T) {
+	before := logRotationWorkers()
+	l := newLogger()
+	t.Cleanup(func() { l.setOutput("stderr", 10, 1) })
+	dir := t.TempDir()
+	for i := 0; i < 6; i++ {
+		path := filepath.Join(dir, fmt.Sprintf("agent-%d.log", i))
+		for _, settings := range [][2]int{{1, 1}, {2, 1}, {2, 2}} {
+			l.setOutput(path, settings[0], settings[1])
+			l.defaultLogger.Info("start rotation worker")
+		}
+		l.setOutput("stderr", 10, 1)
+	}
+
+	require.Eventually(t, func() bool { return logRotationWorkers() == before },
+		time.Second, 10*time.Millisecond, "closed outputs retained log rotation workers")
+}
+
+func Test_SetOutputWhileLogging(t *testing.T) {
+	l := newLogger()
+	t.Cleanup(func() { l.setOutput("stderr", 10, 1) })
+	dir := t.TempDir()
+	l.setOutput(filepath.Join(dir, "agent-0.log"), 1, 1)
+	const lines = 500
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for i := 0; i < lines; i++ {
+			l.defaultLogger.Infof("reload-race-line %d", i)
+		}
+	})
+	for i := 0; i < 100; i++ {
+		l.setOutput(filepath.Join(dir, fmt.Sprintf("agent-%d.log", i%3)), 1+i%2, 1+i%3)
+	}
+	wg.Wait()
+	l.setOutput("stderr", 10, 1)
+
+	files, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	got := 0
+	for _, file := range files {
+		data, err := os.ReadFile(filepath.Join(dir, file.Name()))
+		require.NoError(t, err)
+		got += bytes.Count(data, []byte("reload-race-line"))
+	}
+	assert.Equal(t, lines, got, "output switches must not lose or duplicate log lines")
+}
+
+func Test_FileOutputRotationAndRetentionAfterReload(t *testing.T) {
+	l := newLogger()
+	t.Cleanup(func() { l.setOutput("stderr", 10, 1) })
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.log")
+	oldest := filepath.Join(dir, "agent-2000-01-01T00-00-00.000.log")
+	latest := filepath.Join(dir, "agent-2001-01-01T00-00-00.000.log")
+	unrelated := filepath.Join(dir, "keep.log")
+	for _, file := range []string{oldest, latest, unrelated} {
+		require.NoError(t, os.WriteFile(file, []byte("keep until rotated"), 0o600))
+	}
+	original := bytes.Repeat([]byte("x"), 1<<20)
+	require.NoError(t, os.WriteFile(path, original, 0o600))
+	l.setOutput(path, 1, 2)
+	l.defaultLogger.Info("after rotation")
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(oldest)
+		return os.IsNotExist(err)
+	}, time.Second, 10*time.Millisecond)
+	require.FileExists(t, latest, "existing lumberjack backups must count toward retention")
+	backups, err := filepath.Glob(filepath.Join(dir, "agent-*.log"))
+	require.NoError(t, err)
+	require.Len(t, backups, 2)
+	rotated, err := os.ReadFile(backups[1])
+	require.NoError(t, err)
+	assert.Equal(t, original, rotated, "rotation must preserve the previous file contents")
+
+	l.setOutput(path, 2, 1)
+	l.defaultLogger.Info("after reload")
+	l.setOutput("stderr", 10, 1)
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(latest)
+		return os.IsNotExist(err)
+	}, time.Second, 10*time.Millisecond)
+	require.FileExists(t, unrelated, "retention must leave unrelated files alone")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "after rotation")
+	assert.Contains(t, string(data), "after reload")
 }
 
 func Test_SetupClosesFileLoggerFromPreviousAgent(t *testing.T) {

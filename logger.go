@@ -7,8 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/elastic/lumberjack"
 	"github.com/sirupsen/logrus"
-	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 var logger *logrusLogger
@@ -125,6 +125,7 @@ func (l *logrusLogger) setOutputLocked(out string, maxSize, maxBackups int) {
 	} else if strings.EqualFold(out, "stderr") {
 		output = os.Stderr
 	} else {
+		// This fork's Close also stops and joins the backup cleanup worker.
 		fileLogger = &lumberjack.Logger{
 			Filename:   out,
 			MaxSize:    maxSize,

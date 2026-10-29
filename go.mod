@@ -3,6 +3,7 @@ module github.com/pinpoint-apm/pinpoint-go-agent/v2
 go 1.25.0
 
 require (
+	github.com/elastic/lumberjack v0.0.0-20260715013204-c5b60bbeaaab
 	github.com/google/uuid v1.6.0
 	github.com/pkg/errors v0.9.1
 	github.com/shirou/gopsutil/v3 v3.24.5
@@ -13,7 +14,6 @@ require (
 	golang.org/x/time v0.15.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.11
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
 )
 
