@@ -383,29 +383,28 @@ func writeAbbreviatedBindValue(b *strings.Builder, value any, maxSize int) {
 		return
 	}
 
-	// fmt.Sprint preserves the established "[1 2 3]" representation. Every
-	// element adds at least one character to it, so no more than maxSize
-	// elements can contribute to its prefix: slicing the rest away keeps a
-	// million-element argument from being built whole to keep a kilobyte. The
-	// length marker survives that slicing because an array reports its element
-	// count, not the width of its rendering.
 	rv := reflect.ValueOf(value)
 	switch rv.Kind() {
-	case reflect.Slice:
-		elems := rv.Len()
-		if elems > maxSize {
-			value = rv.Slice(0, maxSize).Interface()
-		}
-		writeAbbreviated(b, fmt.Sprint(value), elems, maxSize)
-		return
-	case reflect.Map, reflect.Struct:
+	case reflect.Slice, reflect.Map, reflect.Struct:
 		if !rendersItself(value) {
-			writeAbbreviatedComposite(b, rv, maxSize)
+			if !writeBindCompositePrefix(b, rv, maxSize) {
+				n := 0
+				if rv.Kind() == reflect.Struct {
+					n = rv.NumField()
+				} else {
+					n = rv.Len()
+				}
+				writeBindMarker(b, n)
+			}
 			return
 		}
 	}
 	s := fmt.Sprint(value)
-	writeAbbreviated(b, s, len(s), maxSize)
+	n := len(s)
+	if rv.Kind() == reflect.Slice {
+		n = rv.Len()
+	}
+	writeAbbreviated(b, s, n, maxSize)
 }
 
 // rendersItself reports whether fmt.Sprint renders value through a method of
@@ -418,60 +417,79 @@ func rendersItself(value any) bool {
 	return false
 }
 
-// writeAbbreviatedComposite writes a map or a struct as fmt.Sprint renders it -
-// "map[k:v ...]" with the keys in order, "{f ...}" - element by element, each
-// abbreviated within what is left of maxSize, and cuts it once maxSize of it
-// is written, the cut marked with its element count as a slice's is. Built
-// whole by fmt.Sprint before the cut, a pgx.NamedArgs holding a 1 MiB document
-// allocated megabytes for an annotation of a kilobyte.
-func writeAbbreviatedComposite(b *strings.Builder, rv reflect.Value, maxSize int) {
-	end := b.Len() + maxSize // where maxSize of the composite is written
+// writeBindCompositePrefix renders only the prefix needed for an annotation;
+// limiting element count alone still formats large or nested elements whole.
+func writeBindCompositePrefix(b *strings.Builder, rv reflect.Value, maxSize int) bool {
+	if maxSize <= 0 {
+		return false
+	}
+	end := b.Len() + maxSize
 	var keys []reflect.Value
 	var n int
-	if rv.Kind() == reflect.Map {
+	open, close := "[", "]"
+	switch rv.Kind() {
+	case reflect.Map:
 		keys = sortedMapKeys(rv)
 		n = len(keys)
-		b.WriteString("map[")
-	} else {
+		open = "map["
+	case reflect.Struct:
 		n = rv.NumField()
-		b.WriteByte('{')
+		open, close = "{", "}"
+	default:
+		n = rv.Len()
+	}
+	if !writeBindTextPrefix(b, open, end-b.Len()) {
+		return false
 	}
 	for i := range n {
-		if i > 0 {
-			b.WriteByte(' ')
+		if i > 0 && !writeBindTextPrefix(b, " ", end-b.Len()) {
+			return false
 		}
-		if b.Len() >= end {
-			writeBindMarker(b, n)
-			return
+		var elem reflect.Value
+		switch rv.Kind() {
+		case reflect.Map:
+			if !writeBindValuePrefix(b, keys[i], end-b.Len()) || !writeBindTextPrefix(b, ":", end-b.Len()) {
+				return false
+			}
+			elem = rv.MapIndex(keys[i])
+		case reflect.Struct:
+			elem = rv.Field(i)
+		default:
+			elem = rv.Index(i)
 		}
-		if keys == nil {
-			writeAbbreviatedElem(b, rv.Field(i), end-b.Len())
-			continue
+		if !writeBindValuePrefix(b, elem, end-b.Len()) {
+			return false
 		}
-		writeAbbreviatedElem(b, keys[i], end-b.Len())
-		b.WriteByte(':')
-		if b.Len() >= end {
-			writeBindMarker(b, n)
-			return
-		}
-		writeAbbreviatedElem(b, rv.MapIndex(keys[i]), end-b.Len())
 	}
-	if keys == nil {
-		b.WriteByte('}')
-	} else {
-		b.WriteByte(']')
-	}
+	return writeBindTextPrefix(b, close, end-b.Len())
 }
 
-// writeAbbreviatedElem writes one element of a composite. An unexported struct
-// field cannot be taken out as an interface value, so fmt renders it whole.
-func writeAbbreviatedElem(b *strings.Builder, v reflect.Value, maxSize int) {
-	if v.CanInterface() {
-		writeAbbreviatedBindValue(b, v.Interface(), maxSize)
-		return
+// Nested values share the remaining budget; only the outer value adds a marker.
+func writeBindValuePrefix(b *strings.Builder, v reflect.Value, maxSize int) bool {
+	if maxSize <= 0 {
+		return false
 	}
-	s := fmt.Sprint(v)
-	writeAbbreviated(b, s, len(s), maxSize)
+	if !v.IsValid() {
+		return writeBindTextPrefix(b, "<nil>", maxSize)
+	}
+	if v.Kind() == reflect.Interface && !v.IsNil() {
+		return writeBindValuePrefix(b, v.Elem(), maxSize)
+	}
+	if !v.CanInterface() || !rendersItself(v.Interface()) {
+		switch v.Kind() {
+		case reflect.String:
+			return writeBindTextPrefix(b, v.String(), maxSize)
+		case reflect.Slice, reflect.Array, reflect.Map, reflect.Struct:
+			return writeBindCompositePrefix(b, v, maxSize)
+		case reflect.Pointer:
+			if v.IsNil() {
+				return writeBindTextPrefix(b, "<nil>", maxSize)
+			}
+			// fmt prints nested pointers as addresses rather than dereferencing them.
+			return writeBindTextPrefix(b, fmt.Sprintf("0x%x", v.Pointer()), maxSize)
+		}
+	}
+	return writeBindTextPrefix(b, fmt.Sprint(v), maxSize)
 }
 
 // sortedMapKeys returns the keys of a map in the order fmt prints them for the
@@ -541,16 +559,22 @@ func writeAbbreviatedBytes(b *strings.Builder, value []byte, maxSize int) {
 // rune boundary: protobuf rejects invalid UTF-8 string fields at marshal time,
 // so a mid-rune cut would fail the whole span carrying the annotation.
 func writeAbbreviated(b *strings.Builder, value string, valueLen int, maxSize int) {
+	if !writeBindTextPrefix(b, value, maxSize) {
+		writeBindMarker(b, valueLen)
+	}
+}
+
+func writeBindTextPrefix(b *strings.Builder, value string, maxSize int) bool {
 	if len(value) <= maxSize {
 		b.WriteString(value)
-		return
+		return true
 	}
 	cut := maxSize
 	for cut > 0 && !utf8.RuneStart(value[cut]) {
 		cut--
 	}
 	b.WriteString(value[:cut])
-	writeBindMarker(b, valueLen)
+	return false
 }
 
 // writeBindMarker appends the "...(n)" marker that reports one of two events,

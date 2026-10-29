@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -69,6 +70,10 @@ func (s *fakeDriverStmt) Query(args []driver.Value) (driver.Rows, error)  { retu
 type bindStringer string
 
 func (s bindStringer) String() string { return "stringer:" + string(s) }
+
+type bindSliceStringer []string
+
+func (s bindSliceStringer) String() string { return "slice:" + strings.Join(s, "/") }
 
 func Test_writeBindValue_PreservesFormatting(t *testing.T) {
 	values := []any{
@@ -171,6 +176,65 @@ func Test_writeBindValue_LimitsLargeComposites(t *testing.T) {
 	}
 }
 
+func Test_writeBindValue_SlicesMatchFmt(t *testing.T) {
+	row := bindRow{ID: 7, Name: "n"}
+	for _, value := range []any{
+		[]string(nil),
+		[]string{},
+		[]string{"", "", ""},
+		[]string{"가나다", "🙂", "tail"},
+		[]int32{1, -2, 300},
+		[][]byte{{0, 127, 255}, {}},
+		[]any{nil, true, int64(-42), 1.25, []string{"a", "b"}},
+		[]any{[2]string{"가", "b"}, map[string]any{"a": "가", "b": 2}, row},
+		[]any{&row, (*bindRow)(nil), bindStringer("value")},
+		[]any{errors.New("failure"), time.Date(2026, time.October, 29, 1, 2, 3, 4, time.UTC)},
+		bindSliceStringer{"one", "two"},
+	} {
+		rendered := fmt.Sprint(value)
+		for limit := 1; limit <= len(rendered)+1; limit++ {
+			want := rendered
+			if len(want) > limit {
+				want = want[:limit]
+				for !utf8.ValidString(want) {
+					want = want[:len(want)-1]
+				}
+				want += fmt.Sprintf("...(%d)", reflect.ValueOf(value).Len())
+			}
+			var got strings.Builder
+			writeAbbreviatedBindValue(&got, value, limit)
+			assert.Equal(t, want, got.String(), "%T at limit %d", value, limit)
+			assert.True(t, utf8.ValidString(got.String()))
+		}
+	}
+}
+
+func Test_writeBindValue_LimitsLargeSliceElements(t *testing.T) {
+	const maxSize = 1024
+	type text string
+	large := strings.Repeat("x", 1<<20)
+	for _, value := range []any{
+		[]string{large},
+		[]text{text(large)},
+		[][]byte{bytes.Repeat([]byte{255}, 1<<20)},
+		[]any{[]string{large}},
+		[]any{[1]string{large}},
+		[]any{map[string]string{"data": large}},
+		[]any{struct{ hidden string }{large}},
+	} {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		var b strings.Builder
+		writeAbbreviatedBindValue(&b, value, maxSize)
+		runtime.ReadMemStats(&after)
+
+		assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(256<<10), "%T was rendered whole", value)
+		assert.LessOrEqual(t, b.Len(), maxSize+maxBindValueMarkerSize)
+		assert.True(t, strings.HasSuffix(b.String(), "...(1)"), b.String())
+		assert.True(t, utf8.ValidString(b.String()))
+	}
+}
+
 func Test_writeBindValue_TruncatesOversizedBytes(t *testing.T) {
 	value := bytes.Repeat([]byte{255}, 5000)
 	want := fmt.Sprint(value)
@@ -237,6 +301,8 @@ func Benchmark_writeBindValue_Large(b *testing.B) {
 	}{
 		{"string", strings.Repeat("x", 1<<20)},
 		{"bytes", bytes.Repeat([]byte{255}, 1<<20)},
+		{"string_slice", []string{strings.Repeat("x", 1<<20)}},
+		{"nested_bytes", [][]byte{bytes.Repeat([]byte{255}, 1<<20)}},
 	} {
 		b.Run(benchmark.name, func(b *testing.B) {
 			b.SetBytes(1 << 20)

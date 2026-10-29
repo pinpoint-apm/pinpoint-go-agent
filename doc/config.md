@@ -887,6 +887,12 @@ placeholders unfilled. Only
 the SQL text published as metadata is truncated, at 64KB, and it carries a
 `...(original length)` marker.
 
+Slices, maps, and structs are rendered incrementally, with nested values sharing
+the remaining byte budget. A truncated composite gets one `...(element count)`
+marker, and UTF-8 characters are kept whole. Custom `String`, `Error`, and
+`Format` methods still run normally; their own allocations are not limited by
+this option.
+
 A negative value turns bind value tracing off entirely - the size becomes 0 and
 `SQL.TraceBindValue` is set to false - and logs a warning.
 
