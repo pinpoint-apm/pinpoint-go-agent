@@ -131,6 +131,101 @@ func Test_agent_NewSpanTracerWithReader(t *testing.T) {
 	assert.Equal(t, int64(67890), span.SpanId(), "SpanId")
 }
 
+func Test_agent_NewSpanTracerWithReader_clusterNamespace(t *testing.T) {
+	for _, counterRate := range []int{0, 1} {
+		for _, tt := range []struct {
+			name      string
+			mine      string
+			parent    map[string]string
+			continued bool
+		}{
+			{"unset", "", map[string]string{HeaderParentApplicationNamespace: "other"}, true},
+			{"same", "ns", map[string]string{HeaderParentApplicationNamespace: "ns"}, true},
+			{"missing", "ns", map[string]string{}, true},
+			{"different", "ns", map[string]string{HeaderParentApplicationNamespace: "other"}, false},
+			{"empty", "ns", map[string]string{HeaderParentApplicationNamespace: ""}, false},
+		} {
+			t.Run(fmt.Sprintf("%s/rate=%d", tt.name, counterRate), func(t *testing.T) {
+				cfg := defaultConfig()
+				cfg.Set(CfgSamplingCounterRate, counterRate)
+				a := newTestAgent(cfg)
+				a.clusterNamespace = tt.mine
+				defer a.Shutdown()
+				headers := map[string]string{
+					HeaderTraceId:               "upstream^12345^1",
+					HeaderSpanId:                "67890",
+					HeaderParentSpanId:          "123",
+					HeaderParentApplicationName: "upstream",
+				}
+				for k, v := range tt.parent {
+					headers[k] = v
+				}
+
+				tr := a.NewSpanTracerWithReader("request", "/", &DistributedTracingContextMap{m: headers})
+				defer tr.EndSpan()
+				wantSampled := tt.continued || counterRate == 1
+				require.Equal(t, wantSampled, tr.IsSampled())
+				wantStat := statUnSampleNew
+				if tt.continued {
+					wantStat = statSampleCont
+				} else if wantSampled {
+					wantStat = statSampleNew
+				}
+				var wantCounters statsCounterSnapshot
+				wantCounters[wantStat] = 1
+				assert.Equal(t, wantCounters, a.stats.readCounters())
+				if wantSampled {
+					s := tr.(*span)
+					if tt.continued {
+						assert.Equal(t, "upstream^12345^1", s.txId.String())
+						assert.Equal(t, int64(123), s.parentSpanId)
+					} else {
+						assert.Equal(t, a.agentID, s.txId.AgentId)
+						assert.Equal(t, int64(-1), s.parentSpanId)
+						assert.Empty(t, s.parentAppName)
+					}
+				}
+			})
+		}
+	}
+}
+
+func Test_agent_NewSpanTracerWithReader_clusterNamespaceThroughput(t *testing.T) {
+	for _, exhaustNew := range []bool{false, true} {
+		t.Run(fmt.Sprintf("exhaustNew=%v", exhaustNew), func(t *testing.T) {
+			cfg := defaultConfig()
+			cfg.Set(CfgSamplingNewThroughput, 1)
+			cfg.Set(CfgSamplingContinueThroughput, 1)
+			a := newTestAgent(cfg)
+			a.clusterNamespace = "ns"
+			defer a.Shutdown()
+			sampler := cfg.load().sampler
+			limiter := sampler.continueSampleLimiter
+			wantStat := statSampleNew
+			if exhaustNew {
+				limiter = sampler.newSampleLimiter
+				wantStat = statSkipNew
+			}
+			// Freeze the empty bucket so scheduler delays cannot refill it.
+			limiter.SetLimit(0)
+			require.True(t, limiter.Allow())
+			reader := &DistributedTracingContextMap{m: map[string]string{
+				HeaderTraceId:                    "upstream^12345^1",
+				HeaderSpanId:                     "67890",
+				HeaderParentSpanId:               "123",
+				HeaderParentApplicationNamespace: "other",
+			}}
+
+			tr := a.NewSpanTracerWithReader("request", "/", reader)
+			defer tr.EndSpan()
+			assert.Equal(t, !exhaustNew, tr.IsSampled())
+			var wantCounters statsCounterSnapshot
+			wantCounters[wantStat] = 1
+			assert.Equal(t, wantCounters, a.stats.readCounters())
+		})
+	}
+}
+
 func Test_abbreviateString_RuneSafe(t *testing.T) {
 	assert.Equal(t, "abc", abbreviateString("abc", 5))
 	assert.Equal(t, "0123456789", abbreviateString("0123456789", 10), "exactly at the limit is untouched")
@@ -1531,7 +1626,7 @@ func Test_agent_continueHeaders_table(t *testing.T) {
 			before := agent.stats.readCounters()
 			reader := &DistributedTracingContextMap{m: tt.headers}
 
-			_, continued := continueHeaders(reader)
+			_, continued := continueHeaders(reader, agent.clusterNamespace)
 			assert.Equal(t, tt.continued, continued, "continueHeaders")
 
 			tr := agent.NewSpanTracerWithReader("test", "/", reader)
@@ -1580,7 +1675,7 @@ func Test_agent_continueHeaders_blankParentSpanId(t *testing.T) {
 		HeaderParentSpanId: "",
 	}}
 
-	txId, continued := continueHeaders(reader)
+	txId, continued := continueHeaders(reader, agent.clusterNamespace)
 	assert.True(t, continued, "blank parent span id still describes a hop")
 	assert.Equal(t, "t123456", txId.AgentId, "transaction id inherited")
 
@@ -1600,10 +1695,10 @@ func Test_agent_continueHeaders_valueOnlyCarrier(t *testing.T) {
 		HeaderParentSpanId: "123",
 	}
 
-	_, continued := continueHeaders(valueOnlyCarrier(blank))
+	_, continued := continueHeaders(valueOnlyCarrier(blank), "")
 	assert.False(t, continued, "a value-only carrier cannot tell blank from absent")
 
-	_, continued = continueHeaders(&DistributedTracingContextMap{m: blank})
+	_, continued = continueHeaders(&DistributedTracingContextMap{m: blank}, "")
 	assert.True(t, continued, "the same headers continue from a carrier that can")
 }
 
@@ -1616,11 +1711,11 @@ func Test_agent_continueHeaders_httpHeaderReader(t *testing.T) {
 	h.Set(HeaderTraceId, "t123456^12345^1")
 	h.Set(HeaderParentSpanId, "123")
 
-	_, continued := continueHeaders(HttpHeaderReader(h))
+	_, continued := continueHeaders(HttpHeaderReader(h), "")
 	assert.False(t, continued, "no span id header at all: new transaction")
 
 	h.Set(HeaderSpanId, "")
-	txId, continued := continueHeaders(HttpHeaderReader(h))
+	txId, continued := continueHeaders(HttpHeaderReader(h), "")
 	assert.True(t, continued, "blank span id header is still a hop")
 	assert.Equal(t, "t123456", txId.AgentId, "transaction id inherited")
 
@@ -1675,7 +1770,7 @@ func Test_agent_continueHeaders_roundTrip(t *testing.T) {
 	caller.EndSpanEvent()
 	caller.EndSpan()
 
-	txId, continued := continueHeaders(&DistributedTracingContextMap{m})
+	txId, continued := continueHeaders(&DistributedTracingContextMap{m}, agent.clusterNamespace)
 	assert.True(t, continued, "injected headers must continue the trace: %v", m)
 	assert.Equal(t, caller.TransactionId(), txId, "transaction id")
 }

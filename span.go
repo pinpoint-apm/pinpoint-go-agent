@@ -486,13 +486,7 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 // runs once, on the span samplingSpan has just created.
 func (span *span) extract(reader DistributedTracingContextReader) {
 	tid, _ := reader.Get(HeaderTraceId)
-	txId, continued := continueHeaders(reader)
-	if continued && !sameClusterNamespace(span.agent.clusterNamespace, reader) {
-		// The headers describe another cluster's transaction, which this hop
-		// must not join; it starts one of its own, as Java's RequestTraceReader
-		// answers a namespace mismatch with newTrace().
-		continued = false
-	}
+	txId, continued := continueHeaders(reader, span.agent.clusterNamespace)
 	if continued {
 		span.txId = txId
 	} else {
@@ -591,12 +585,13 @@ func (span *span) extract(reader DistributedTracingContextReader) {
 // Presence is the carrier's answer, the second result of Get, so a carrier that
 // cannot tell a blank header from an absent one reports the blank one as absent
 // and the request starts a new transaction. The trace id must also parse: one
-// that does not names no transaction to continue.
+// that does not names no transaction to continue. A different cluster namespace
+// also starts a new transaction and must use the new-transaction sampler.
 //
 // Both the sampler choice (NewSpanTracerWithReader) and the context extraction
 // (extract) call this, so the two cannot disagree about which trace a request
 // belongs to.
-func continueHeaders(reader DistributedTracingContextReader) (TransactionId, bool) {
+func continueHeaders(reader DistributedTracingContextReader, clusterNamespace string) (TransactionId, bool) {
 	tid, _ := reader.Get(HeaderTraceId)
 	agentId, startTime, sequence, ok := splitTransactionId(tid)
 	if !ok {
@@ -606,6 +601,9 @@ func continueHeaders(reader DistributedTracingContextReader) (TransactionId, boo
 		return TransactionId{}, false
 	}
 	if _, ok := reader.Get(HeaderParentSpanId); !ok {
+		return TransactionId{}, false
+	}
+	if !sameClusterNamespace(clusterNamespace, reader) {
 		return TransactionId{}, false
 	}
 	return TransactionId{agentId, startTime, sequence}, true

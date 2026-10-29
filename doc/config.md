@@ -347,6 +347,8 @@ ClusterNamespace option names the Pinpoint cluster this agent belongs to, as Jav
 It keeps traces apart between clusters that call each other over a shared network.
 When set, every outbound call carries it in the `Pinpoint-pAppNamespace` header,
 and an inbound call whose `Pinpoint-pAppNamespace` header holds a different value starts a new transaction instead of continuing the caller's.
+This new transaction uses the local sampling rate and `Sampling.NewThroughput`,
+and is counted as a new transaction in sampling statistics.
 An inbound call without the header is continued, so agents that predate the header still link up.
 When unset, no header is sent and every inbound trace is continued.
 Surrounding whitespace is dropped. The value has to be printable ASCII (0x20-0x7E), since a header carries it:

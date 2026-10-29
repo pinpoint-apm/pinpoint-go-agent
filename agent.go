@@ -887,12 +887,10 @@ func (agent *agent) newSpanTracerWithReader(operation string, rpcName string, re
 	}
 
 	sampler := agent.config.load().sampler
-	// isContinueSampled is unconditionally true, so it must only be picked for
-	// headers extract will actually continue. continueHeaders is the single
-	// definition of that: a second definition would let a peer bypass the
-	// sampling rate with headers extract then starts a new transaction for.
+	// Continuation bypasses the base sampling rate, so only pick it for headers
+	// extract will actually continue, including the cluster namespace check.
 	// extract calls it again, which is cheaper than widening its signature.
-	if _, continued := continueHeaders(reader); !continued {
+	if _, continued := continueHeaders(reader, agent.clusterNamespace); !continued {
 		return agent.samplingSpan(func() bool { return sampler.isNewSampled(agent.stats) }, operation, rpcName, reader)
 	}
 	return agent.samplingSpan(func() bool { return sampler.isContinueSampled(agent.stats) }, operation, rpcName, reader)
