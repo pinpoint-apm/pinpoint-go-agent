@@ -70,8 +70,8 @@ func (agent *agent) sendMetaWorker() {
 	// per span.
 	permit := make(chan struct{}, agent.metaMaxConcurrentRequests())
 	var inFlight sync.WaitGroup
-	// Deferred so both exits -- the stop signal and a disabled agent -- wait
-	// for the sends already accepted, giving them the same best-effort flush.
+	// Wait for the final sends after draining the queue, including those
+	// dispatched during shutdown.
 	defer func() {
 		inFlight.Wait()
 		// No later cycle will log what the rate limit holds back, so the last
@@ -85,7 +85,7 @@ func (agent *agent) sendMetaWorker() {
 	stop := agent.stopSignal().Done()
 	agent.metaRetry.init(metaRetryQueueSize)
 
-	for agent.workerContinues() {
+	for {
 		// Reported here rather than from the producers: enqueueMeta and the
 		// send goroutines only bump a counter. Before the wait, so that a
 		// total the rate limit holds back can bound it.
@@ -95,14 +95,17 @@ func (agent *agent) sendMetaWorker() {
 		// out a delay ago, a new item is an id whose spans are going out now.
 		var item pendingMeta
 		select {
-		case <-stop:
-			return
 		case md := <-agent.metaChan:
 			item = pendingMeta{md: md}
 		default:
+			// Stop only after the queue is empty, even if shutdown completed
+			// its phase transition before this worker was scheduled.
+			if !agent.tracingEnabled() {
+				return
+			}
 			var ok, stopped bool
 			if item, ok, stopped = agent.awaitMeta(stop, held); stopped {
-				return
+				continue // recheck the queue before exiting
 			} else if !ok {
 				continue
 			}
@@ -114,15 +117,9 @@ func (agent *agent) sendMetaWorker() {
 			continue
 		}
 
-		// The permit acquisition obeys stop too: with every permit held by a
-		// slow send, a plain send here parks the worker where the stop signal
-		// cannot reach it, and it would dispatch one more send after shutdown
-		// began. The item just pulled is dropped, like the rest of the queue.
-		select {
-		case <-stop:
-			return
-		case permit <- struct{}{}:
-		}
+		// Keep the dequeued item through shutdown. The shared shutdown deadline
+		// closes the collector connection to unblock stalled sends.
+		permit <- struct{}{}
 		inFlight.Add(1)
 		go func(item pendingMeta) {
 			defer inFlight.Done()

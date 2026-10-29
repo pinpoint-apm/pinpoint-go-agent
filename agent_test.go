@@ -836,9 +836,10 @@ func Test_agent_ShutdownDoesNotCloseProducerChannels(t *testing.T) {
 	agent.statChan = make(chan *pb.PStatMessage, 1)
 	agent.urlStatChan = make(chan *urlStat, 1)
 
-	agent.workerWg.Add(2)
-	go agent.superviseWorker("meta", agent.sendMetaWorker)
-	go agent.superviseWorker("collect uri stat", agent.collectUrlStatWorker)
+	agent.startWorkers([]worker{
+		{name: "meta", body: agent.sendMetaWorker, start: true},
+		{name: "collect uri stat", body: agent.collectUrlStatWorker, start: true},
+	})
 
 	start := time.Now()
 	agent.Shutdown()
@@ -849,10 +850,8 @@ func Test_agent_ShutdownDoesNotCloseProducerChannels(t *testing.T) {
 	assert.NotPanics(t, func() { agent.urlStatChan <- &urlStat{} }, "urlStatChan")
 }
 
-// With every permit held by a slow send, the worker parks on the permit
-// acquisition; that wait must obey the stop signal, or the worker dispatches
-// one more send after shutdown began.
-func Test_agent_sendMetaWorkerStopsWhileAllPermitsHeld(t *testing.T) {
+// Shutdown must retain both the item waiting for a permit and the queued items.
+func Test_agent_sendMetaWorkerDrainsWhileAllPermitsHeld(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	blocking := &blockingMetaClient{release: make(chan struct{})}
 	agent.agentGrpc = &agentGrpc{metaClient: metaClientFunc(blocking.block), agent: agent}
@@ -871,13 +870,64 @@ func Test_agent_sendMetaWorkerStopsWhileAllPermitsHeld(t *testing.T) {
 	agent.metaChan <- stringMeta{id: 99, funcName: "f"}
 	assert.Eventually(t, func() bool { return len(agent.metaChan) == 0 },
 		5*time.Second, time.Millisecond, "worker pulled the extra item")
+	for i := 0; i < 3; i++ {
+		agent.metaChan <- stringMeta{id: int32(100 + i), funcName: "f"}
+	}
 
 	agent.signalShutdown()
 	close(blocking.release)
 
 	assert.True(t, waitTimeout(&agent.workerWg, 5*time.Second), "worker exits")
-	_, total := blocking.stats()
-	assert.Equal(t, permits, total, "no send dispatched after the stop signal")
+	max, total := blocking.stats()
+	assert.Equal(t, permits+4, total, "the pending item and queued metadata must drain")
+	assert.Equal(t, permits, max, "draining must retain the concurrency limit")
+	assert.Empty(t, agent.metaChan)
+}
+
+// A worker first scheduled after shutdown must still deliver the API ids that
+// the queued spans reference, even though the lifecycle is already stopped.
+func Test_agent_ShutdownDrainsMetadataForQueuedSpans(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agent.spanGrpc = newMockSpanGrpc(agent)
+	agentGrpc, meta := newMockMetaAgentGrpc(agent)
+	agent.agentGrpc = agentGrpc
+
+	const spans = 8
+	for i := 0; i < spans; i++ {
+		operation := fmt.Sprintf("shutdown.api.%d", i)
+		agent.NewSpanTracer(operation, operation).EndSpan()
+	}
+	require.Len(t, agent.metaChan, spans)
+	agent.startWorkers([]worker{
+		{name: "meta", start: true, body: func() {
+			<-agent.spanQueue.done // shutdown has moved the lifecycle to stopped
+			agent.sendMetaWorker()
+		}},
+		{name: "span batch", start: true, body: agent.sendSpanBatchWorker},
+	})
+	agent.Shutdown()
+
+	api, _, _, _, _ := meta.sentMeta()
+	require.Len(t, api, spans)
+	assert.Empty(t, agent.metaChan)
+	byID := make(map[int32]string, len(api))
+	for _, md := range api {
+		byID[md.GetApiId()] = md.GetApiInfo()
+	}
+	client := agent.spanGrpc.spanClient.(*mockSpanGrpcClient)
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	count := 0
+	for _, batch := range client.requests {
+		for _, message := range batch.GetSpan() {
+			span := message.GetSpan()
+			require.NotNil(t, span)
+			assert.Equal(t, span.GetAcceptEvent().GetRpc(), byID[span.GetApiId()],
+				"every delivered span must have its API metadata")
+			count++
+		}
+	}
+	assert.Equal(t, spans, count)
 }
 
 // An agent that never finished registration must still release the global, so

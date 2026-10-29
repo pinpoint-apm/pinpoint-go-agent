@@ -799,9 +799,9 @@ func (agent *agent) shutdownAgent() {
 	// Their producers (request-path goroutines for url stat and meta, ticker
 	// workers for stat) only check enable before sending, which is check-then-
 	// act against a close and panics with "send on closed channel" when the
-	// send lands after it. signalShutdown() above already cancelled stopCtx,
-	// which is what stops the consumers; whatever is still queued is dropped
-	// with the channel itself.
+	// send lands after it. signalShutdown() above already cancelled stopCtx:
+	// metadata and stat senders drain their queued records before exiting,
+	// within the same worker deadline as the span sender.
 	agent.spanQueue.close()
 
 	// To terminate the listening state of the command stream, close the command

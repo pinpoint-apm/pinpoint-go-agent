@@ -179,8 +179,9 @@ Two things to know about this pattern:
 * `Shutdown()` returns within milliseconds against a reachable collector and
   within about six seconds at worst: up to three seconds waiting for a config
   file reload callback in progress to finish, then up to three draining the
-  worker goroutines. Whatever is still queued after that is dropped and
-  counted in the `span drops` and `queue overflow` warnings.
+  worker goroutines. Spans and their queued metadata are drained within that
+  same budget; metadata retries stop when shutdown begins. An exceeded worker
+  deadline logs `shutdown timeout`, and any records left at that point may be lost.
 * Call `defer agent.Shutdown()` in `main()` for normal exits. Spans are sent by
   a separate goroutine, so a process that exits immediately after the last
   request can drop the spans still in the queue. A `defer` does not run when

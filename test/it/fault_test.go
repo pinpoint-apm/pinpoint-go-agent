@@ -291,6 +291,31 @@ func TestShutdownCancelsStalledSends(t *testing.T) {
 	}
 }
 
+// A stalled metadata RPC must not hold the queue drain past the shared
+// three-second shutdown budget or wait for its own five-second deadline.
+func TestShutdownCancelsStalledMetadataDrain(t *testing.T) {
+	mc, agent := startStack(t, pinpoint.WithCollectorGrpcSpanBatchMaxConcurrentRequests(1))
+	mc.TimeoutNext(RpcApiMetadata)
+	agent.NewSpanTracer("shutdown.metadata.stalled", "/shutdown-metadata-stalled").EndSpan()
+	mc.WaitFor(t, func(s Snapshot) bool {
+		return countApiMetadata(s, "shutdown.metadata.stalled") == 1
+	}, waitTimeout)
+
+	// One item waits for the held permit; the others remain in the queue.
+	for i := 0; i < 8; i++ {
+		operation := fmt.Sprintf("shutdown.metadata.queued.%d", i)
+		agent.NewSpanTracer(operation, operation).EndSpan()
+	}
+	started := time.Now()
+	agent.Shutdown()
+	assert.Less(t, time.Since(started), 4500*time.Millisecond,
+		"the metadata drain must obey the worker shutdown budget")
+	assert.False(t, agent.Enable())
+	mc.WaitFor(t, func(s Snapshot) bool {
+		return hasResult(s, RpcApiMetadata, codes.Canceled)
+	}, 2*time.Second, "closing the connection must cancel the stalled metadata RPC")
+}
+
 // Every RPC fails while the connections stay up -- an unhealthy collector
 // rather than a dead host. The application-facing side must be unaffected, the
 // agent's queues and retries must behave as designed, and every channel must
