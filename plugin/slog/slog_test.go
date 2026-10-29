@@ -167,8 +167,7 @@ func TestHandler_HandleWithoutATracer(t *testing.T) {
 }
 
 // WithAttrs and WithGroup have to be delegated, or the application's own
-// attributes are dropped. The ids must survive both, and stay at the top level
-// under a group - a qualified key is not the one the UI looks for.
+// attributes are dropped. The ids follow the same group as other record attributes.
 func TestHandler_WithAttrsAndWithGroup(t *testing.T) {
 	pptest.StartAgent(t)
 	tracer := newTracer(t)
@@ -183,9 +182,9 @@ func TestHandler_WithAttrsAndWithGroup(t *testing.T) {
 		require.True(t, ok, "the group is missing: %v", fields)
 		assert.Equal(t, "bar", group["foo"])
 		assert.Equal(t, "qux", group["baz"])
-		assert.Equal(t, tracer.TransactionId().String(), fields[pinpoint.LogTransactionIdKey],
-			"the ids must not be qualified by the application's group")
-		assert.Equal(t, float64(tracer.SpanId()), fields[pinpoint.LogSpanIdKey])
+		assert.Equal(t, tracer.TransactionId().String(), group[pinpoint.LogTransactionIdKey],
+			"the ids follow the application's group")
+		assert.Equal(t, float64(tracer.SpanId()), group[pinpoint.LogSpanIdKey])
 	})
 
 	t.Run("attributes before and after a group", func(t *testing.T) {
@@ -197,7 +196,7 @@ func TestHandler_WithAttrsAndWithGroup(t *testing.T) {
 		group, ok := fields["g"].(map[string]interface{})
 		require.True(t, ok, "the group is missing: %v", fields)
 		assert.Equal(t, float64(2), group["after"])
-		assert.Equal(t, tracer.TransactionId().String(), fields[pinpoint.LogTransactionIdKey])
+		assert.Equal(t, tracer.TransactionId().String(), group[pinpoint.LogTransactionIdKey])
 	})
 
 	t.Run("nested groups", func(t *testing.T) {
@@ -210,7 +209,7 @@ func TestHandler_WithAttrsAndWithGroup(t *testing.T) {
 		inner, ok := outer["inner"].(map[string]interface{})
 		require.True(t, ok, "the inner group is missing: %v", fields)
 		assert.Equal(t, "bar", inner["foo"])
-		assert.Equal(t, tracer.TransactionId().String(), fields[pinpoint.LogTransactionIdKey])
+		assert.Equal(t, tracer.TransactionId().String(), inner[pinpoint.LogTransactionIdKey])
 	})
 
 	t.Run("group without a sampled tracer", func(t *testing.T) {
@@ -278,9 +277,8 @@ func (h keyRewriter) WithGroup(name string) slog.Handler {
 	return keyRewriter{h.Handler.WithGroup(name)}
 }
 
-// Each handler WithAttrs hands attributes to owns them, so each gets a copy: a
-// line logged under an open group replays the chain, and handed the one slice
-// a handler that rewrites its keys rewrote them again on every line.
+// WithAttrs hands ownership to the underlying handler once. Logging must not
+// replay a handler that rewrites the attributes in place.
 func TestHandler_WithAttrsHandsEachHandlerItsOwnAttributes(t *testing.T) {
 	pptest.StartAgent(t)
 	ctx := pinpoint.NewContext(context.Background(), newTracer(t))

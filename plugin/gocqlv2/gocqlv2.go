@@ -10,9 +10,9 @@ package ppgocqlv2
 import (
 	"context"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 	"weak"
 
 	"github.com/apache/cassandra-gocql-driver/v2"
@@ -126,25 +126,33 @@ const maxBatchSQL = 64 * 1024
 
 func batchSQL(statements []string) string {
 	var b strings.Builder
-	// Sized up front, to the cap: grown by doubling, a 16 KB batch regrew the
-	// buffer half a dozen times and copied about twice its final size.
 	size := 0
 	for _, statement := range statements {
-		if size += len(statement) + 2; size > maxBatchSQL {
+		size += min(len(statement), maxBatchSQL) + 2
+		if size >= maxBatchSQL {
+			size = maxBatchSQL
 			break
 		}
 	}
 	b.Grow(size)
-	for i, statement := range statements {
-		if b.Len() > maxBatchSQL {
-			b.WriteString("...(")
-			b.WriteString(strconv.Itoa(len(statements) - i))
-			b.WriteString(" more statements)")
-			break
+	for _, statement := range statements {
+		room := maxBatchSQL - b.Len() - 2
+		if room < 0 || len(statement) > room {
+			if room > 0 {
+				b.WriteByte('[')
+				b.WriteString(statement[:room])
+			}
+			const marker = "...(truncated)"
+			prefix := b.String()
+			cut := min(len(prefix), maxBatchSQL-len(marker))
+			for cut > 0 && cut < len(prefix) && !utf8.RuneStart(prefix[cut]) {
+				cut--
+			}
+			return prefix[:cut] + marker
 		}
-		b.WriteString("[")
+		b.WriteByte('[')
 		b.WriteString(statement)
-		b.WriteString("]")
+		b.WriteByte(']')
 	}
 	return b.String()
 }

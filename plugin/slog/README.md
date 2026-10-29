@@ -21,12 +21,17 @@ logger := slog.New(ppslog.NewHandler(slog.NewJSONHandler(os.Stdout, nil)))
 logger.ErrorContext(ctx, "handler log message")
 ```
 
-The application's own attributes and groups are kept, and the two ids stay at the top level
-even under `WithGroup`, since a qualified key is not the one the Pinpoint web UI looks for.
+The application's own attributes and groups are kept. Under `WithGroup`, the two ids
+are qualified by that group too. The underlying handler processes `With` attributes
+once; logging never replays them or reevaluates their values.
+
+This changes the previous top-level placement of ids under groups. Log consumers
+must use the grouped keys. For top-level ids required by the Pinpoint web UI, use
+`NewAttrs` on an unwrapped logger before adding groups, once per request.
 
 ``` go
 logger.WithGroup("req").With("foo", "bar").ErrorContext(ctx, "handler log message")
-// {"msg":"handler log message","req":{"foo":"bar"},"PtxId":"...","PspanId":...}
+// {"msg":"handler log message","req":{"foo":"bar","PtxId":"...","PspanId":...}}
 ```
 
 Use NewAttrs where the tracer is at hand but the handler is not wrapped.

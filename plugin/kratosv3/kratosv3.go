@@ -162,7 +162,17 @@ func ClientMiddleware() middleware.Middleware {
 					se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, makeUrl(tr, remote))
 				}
 
-				tracer.Inject(clientHeaderWriter(tr))
+				writer := clientHeaderWriter(tr)
+				if tracer != pinpoint.NoopTracer() {
+					if headers, ok := writer.hdr.(nethttp.Header); ok {
+						for key := range headers {
+							if pinpoint.IsInjectedHeader(key) {
+								delete(headers, key)
+							}
+						}
+					}
+				}
+				tracer.Inject(writer)
 				reply, err = handler(ctx, req)
 				// Guarded: SetError is an interface method, so its variadic
 				// name escapes and allocated on every call, nil error and all.
@@ -277,11 +287,13 @@ type headerWriter struct {
 // a nil `var header http.Header`. kratos writes into it only for a body or a
 // user agent, so such a GET worked without this middleware and panicked on
 // the nil map with it. The request gets a header of its own instead, which
-// Invoke sends: the transport's carrier still holds the nil map.
+// Invoke sends. Always use it: the transport carrier may still hold the old nil map.
 func clientHeaderWriter(tr transport.Transporter) headerWriter {
 	if ht, ok := tr.(http.Transporter); ok {
-		if req := ht.Request(); req != nil && req.Header == nil {
-			req.Header = nethttp.Header{}
+		if req := ht.Request(); req != nil {
+			if req.Header == nil {
+				req.Header = nethttp.Header{}
+			}
 			return headerWriter{req.Header, tr.Kind()}
 		}
 	}

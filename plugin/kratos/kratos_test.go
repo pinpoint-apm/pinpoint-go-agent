@@ -67,6 +67,16 @@ func (t *httpTransport) Request() *http.Request {
 }
 func (t *httpTransport) PathTemplate() string { return t.operation }
 
+// Read the request actually sent, including a header initialized by middleware.
+type requestTestHeader struct {
+	transport.Header
+	h http.Header
+}
+
+func (h requestTestHeader) Get(key string) string        { return h.h.Get(key) }
+func (h requestTestHeader) Set(key, value string)        { h.h.Set(key, value) }
+func (t *httpTransport) RequestHeader() transport.Header { return requestTestHeader{h: t.req.Header} }
+
 // pinpointHeaders are the distributed tracing headers Inject writes; the callee
 // continues the transaction from them.
 var pinpointHeaders = []string{
