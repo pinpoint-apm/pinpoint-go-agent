@@ -230,19 +230,13 @@ func makeUrl(tr transport.Transporter, addr string) string {
 // allocations reading its trace context and a client call as many writing it.
 // Handed the spelling the transport stores, both return the key as it is.
 var (
-	pinpointHeaderNames = []string{
-		pinpoint.HeaderTraceId, pinpoint.HeaderSpanId, pinpoint.HeaderParentSpanId,
-		pinpoint.HeaderSampled, pinpoint.HeaderFlags, pinpoint.HeaderParentApplicationName,
-		pinpoint.HeaderParentApplicationType, pinpoint.HeaderParentApplicationNamespace,
-		pinpoint.HeaderParentServiceName, pinpoint.HeaderHost,
-	}
 	canonicalKeys = spellHeaderNames(textproto.CanonicalMIMEHeaderKey)
 	loweredKeys   = spellHeaderNames(strings.ToLower)
 )
 
 func spellHeaderNames(spell func(string) string) map[string]string {
-	m := make(map[string]string, len(pinpointHeaderNames))
-	for _, k := range pinpointHeaderNames {
+	m := make(map[string]string)
+	for k := range pinpoint.InjectedHeaders() {
 		m[k] = spell(k)
 	}
 	return m

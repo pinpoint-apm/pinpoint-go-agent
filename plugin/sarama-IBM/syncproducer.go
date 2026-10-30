@@ -88,13 +88,8 @@ func newProducerHeaderWriter(msg *sarama.ProducerMessage) *distributedTracingCon
 // same bytes per call. sarama encodes a record header's key and never writes
 // into it, so messages share these. Any other key is converted as before.
 var headerKeys = func() map[string][]byte {
-	m := make(map[string][]byte)
-	for _, k := range []string{
-		pinpoint.HeaderTraceId, pinpoint.HeaderSpanId, pinpoint.HeaderParentSpanId,
-		pinpoint.HeaderSampled, pinpoint.HeaderFlags, pinpoint.HeaderParentApplicationName,
-		pinpoint.HeaderParentApplicationType, pinpoint.HeaderParentApplicationNamespace,
-		pinpoint.HeaderParentServiceName, pinpoint.HeaderHost, HeaderAsyncSpanId,
-	} {
+	m := map[string][]byte{HeaderAsyncSpanId: []byte(HeaderAsyncSpanId)}
+	for k := range pinpoint.InjectedHeaders() {
 		m[k] = []byte(k)
 	}
 	return m

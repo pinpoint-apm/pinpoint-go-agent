@@ -200,7 +200,8 @@ Each new plugin needs:
    has the helpers the existing plugins share: `pinpoint.IsInjected` and
    `pinpoint.IsInjectedBy` for a client that must not start a second event on
    a carrier its own span already injected, and `pinpoint.IsInjectedHeader`
-   for clearing another span's context from one; `pinpoint.OnTracerGoroutine`
+   (or the `pinpoint.InjectedHeaders` list) for clearing another span's
+   context from one; `pinpoint.OnTracerGoroutine`
    for a callback the library may run on a goroutine of its own;
    `pinpoint.RemoteHost` for the peer address a server records; and
    `pinpoint.AnnotationList` for a batch annotation that must not grow with

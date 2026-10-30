@@ -335,7 +335,8 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   tracer's own span injected from another span's: the http, gRPC, sarama and
   confluent-kafka clients send the first as it is and replace the second,
   which a proxy or a relay forwarded and the callee read as its own span id
-  (`IsInjectedHeader` names the keys to clear). `OnTracerGoroutine` reports
+  (`IsInjectedHeader` names the keys to clear, and `InjectedHeaders` lists
+  them for a plugin that pre-spells or deletes them). `OnTracerGoroutine` reports
   whether a callback runs on the goroutine its tracer tracks - for a request,
   the one it started on, so a callback that runs elsewhere before the request
   opened any event is not taken for it; the gocql observers and the goredisv9

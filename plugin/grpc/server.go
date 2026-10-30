@@ -73,12 +73,7 @@ func (m distributedTracingContextReaderMD) Get(key string) (string, bool) {
 // whole MD per lookup.
 var loweredHeaderKeys = func() map[string]string {
 	m := make(map[string]string)
-	for _, k := range []string{
-		pinpoint.HeaderTraceId, pinpoint.HeaderSpanId, pinpoint.HeaderParentSpanId,
-		pinpoint.HeaderSampled, pinpoint.HeaderFlags, pinpoint.HeaderParentApplicationName,
-		pinpoint.HeaderParentApplicationType, pinpoint.HeaderParentApplicationNamespace,
-		pinpoint.HeaderParentServiceName, pinpoint.HeaderHost,
-	} {
+	for k := range pinpoint.InjectedHeaders() {
 		m[k] = strings.ToLower(k)
 	}
 	return m

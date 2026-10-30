@@ -18,9 +18,11 @@ package pinpoint
 
 import (
 	"context"
+	"iter"
 	"net"
 	"net/http"
 	"net/textproto"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -507,6 +509,12 @@ func IsInjectedHeader(key string) bool {
 		}
 	}
 	return false
+}
+
+// InjectedHeaders yields the names of the headers Inject may write, for a
+// plugin that clears them from, or pre-spells them for, a carrier of its own.
+func InjectedHeaders() iter.Seq[string] {
+	return slices.Values(injectedHeaders[:])
 }
 
 // OnTracerGoroutine reports whether the calling goroutine is the one tracer's

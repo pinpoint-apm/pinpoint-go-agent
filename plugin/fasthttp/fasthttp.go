@@ -164,18 +164,6 @@ func NewServerTracer(ctx *fasthttp.RequestCtx, method string, serverName string)
 	return tracer
 }
 
-// injectedHeaders are the headers Inject may write. before clears them from
-// the outgoing request first: fasthttp requests are reused, and one sent
-// again without Reset still carried the previous call's Pinpoint headers -
-// an unsampled call's "s0" over a later sampled one made the callee drop that
-// trace, and a noop-tracer call forwarded the previous transaction's ids.
-var injectedHeaders = []string{
-	pinpoint.HeaderTraceId, pinpoint.HeaderSpanId, pinpoint.HeaderParentSpanId,
-	pinpoint.HeaderSampled, pinpoint.HeaderFlags,
-	pinpoint.HeaderParentApplicationName, pinpoint.HeaderParentApplicationType,
-	pinpoint.HeaderParentApplicationNamespace, pinpoint.HeaderParentServiceName, pinpoint.HeaderHost,
-}
-
 // RecordServerResponse records the status and the configured response headers
 // of a request NewServerTracer started.
 func RecordServerResponse(tracer pinpoint.Tracer, ctx *fasthttp.RequestCtx, status int) {
@@ -197,7 +185,11 @@ func before(tracer pinpoint.Tracer, operationName string, req *fasthttp.Request)
 		pphttp.RecordClientHttpCookie(a, cookie{&req.Header})
 	}
 
-	for _, key := range injectedHeaders {
+	// fasthttp requests are reused, and one sent again without Reset still
+	// carried the previous call's Pinpoint headers - an unsampled call's "s0"
+	// over a later sampled one made the callee drop that trace, and a
+	// noop-tracer call forwarded the previous transaction's ids.
+	for key := range pinpoint.InjectedHeaders() {
 		req.Header.Del(key)
 	}
 	tracer.Inject(&req.Header)
