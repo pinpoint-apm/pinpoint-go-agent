@@ -122,20 +122,20 @@ func makePEachUriStatList(stat *urlStatSnapshot) []*pb.PEachUriStat {
 func makePEachUriStat(e *eachUrlStat) *pb.PEachUriStat {
 	return &pb.PEachUriStat{
 		Uri:             validUTF8(e.url),
-		TotalHistogram:  makePUriHistogram(e.totalHistogram),
-		FailedHistogram: makePUriHistogram(e.failedHistogram),
+		TotalHistogram:  makePUriHistogram(&e.totalHistogram),
+		FailedHistogram: makePUriHistogram(&e.failedHistogram),
 		Timestamp:       e.tickTime.UnixNano() / int64(time.Millisecond),
 	}
 }
 
 func makePUriHistogram(h *urlStatHistogram) *pb.PUriHistogram {
-	if h == nil || h.isEmpty() {
+	if h.isEmpty() {
 		return &pb.PUriHistogram{}
 	}
 
 	return &pb.PUriHistogram{
 		Total:     h.total,
 		Max:       h.max,
-		Histogram: h.histogram,
+		Histogram: h.histogram[:],
 	}
 }

@@ -150,7 +150,7 @@ func Test_makePAgentUriStatConvertsLikeJavaAgentMapper(t *testing.T) {
 }
 
 func Test_makePUriHistogramReturnsEmptyForNoSamplesLikeJavaAgentMapper(t *testing.T) {
-	histogram := makePUriHistogram(newStatHistogram())
+	histogram := makePUriHistogram(&urlStatHistogram{})
 
 	assert.Equal(t, int64(0), histogram.GetTotal())
 	assert.Equal(t, int64(0), histogram.GetMax())
@@ -229,7 +229,7 @@ func findEachUrlStat(t *testing.T, snapshot *urlStatSnapshot, url string, endTim
 	return nil
 }
 
-func histogramCount(histogram *urlStatHistogram) int32 {
+func histogramCount(histogram urlStatHistogram) int32 {
 	var count int32
 	for _, bucketCount := range histogram.histogram {
 		count += bucketCount
@@ -749,7 +749,7 @@ func Test_urlStatCollectWorkerDrainsOnStop(t *testing.T) {
 // A negative elapsed - a wall clock stepped back between start and end - must
 // not shrink the totals, so the sink clamps it to 0.
 func Test_urlStatHistogramClampsNegativeElapsed(t *testing.T) {
-	hg := newStatHistogram()
+	hg := &urlStatHistogram{}
 	hg.add(50)
 	hg.add(-30)
 	assert.Equal(t, int64(50), hg.total, "a negative sample adds nothing")
@@ -773,7 +773,7 @@ func Test_UrlStatWindow(t *testing.T) {
 // decides on a count field; both ports decide on the bucket sum, so a single
 // 0ms sample must still count as non-empty.
 func Test_UrlStatEmptyHistogram(t *testing.T) {
-	hg := newStatHistogram()
+	hg := &urlStatHistogram{}
 	assert.True(t, hg.isEmpty(), "a fresh histogram is empty")
 
 	hg.add(0)

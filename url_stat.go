@@ -221,8 +221,8 @@ func (snapshot *urlStatSnapshot) merge(other *urlStatSnapshot) {
 			// The same url in the same tick reached both snapshots - a
 			// straggler that arrived after its tick was closed. Fold, do not
 			// drop.
-			e.totalHistogram.merge(stat.totalHistogram)
-			e.failedHistogram.merge(stat.failedHistogram)
+			e.totalHistogram.merge(&stat.totalHistogram)
+			e.failedHistogram.merge(&stat.failedHistogram)
 			continue
 		}
 		snapshot.urlMap[key] = stat
@@ -255,15 +255,15 @@ func (k urlKey) displayUrl() string {
 
 type eachUrlStat struct {
 	url             string
-	totalHistogram  *urlStatHistogram
-	failedHistogram *urlStatHistogram
+	totalHistogram  urlStatHistogram
+	failedHistogram urlStatHistogram
 	tickTime        time.Time
 }
 
 type urlStatHistogram struct {
 	total     int64
 	max       int64
-	histogram []int32
+	histogram [urlStatBucketSize]int32
 }
 
 // urlStatLimitLog reports the dropped url patterns. At the limit every request
@@ -311,18 +311,7 @@ func (snapshot *urlStatSnapshot) add(us *urlStat) {
 }
 
 func newEachUrlStat(url string, tick time.Time) *eachUrlStat {
-	return &eachUrlStat{
-		url:             url,
-		totalHistogram:  newStatHistogram(),
-		failedHistogram: newStatHistogram(),
-		tickTime:        tick,
-	}
-}
-
-func newStatHistogram() *urlStatHistogram {
-	return &urlStatHistogram{
-		histogram: make([]int32, urlStatBucketSize),
-	}
+	return &eachUrlStat{url: url, tickTime: tick}
 }
 
 func (hg *urlStatHistogram) add(elapsed int64) {
@@ -348,12 +337,7 @@ func (hg *urlStatHistogram) merge(other *urlStatHistogram) {
 }
 
 func (hg *urlStatHistogram) isEmpty() bool {
-	for _, count := range hg.histogram {
-		if count != 0 {
-			return false
-		}
-	}
-	return true
+	return hg.histogram == [urlStatBucketSize]int32{}
 }
 
 // urlStatBucketBounds are the exclusive upper bounds of the first seven
