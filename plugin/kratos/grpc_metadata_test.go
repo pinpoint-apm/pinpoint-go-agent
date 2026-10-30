@@ -72,11 +72,21 @@ func TestClientMiddleware_GRPCOutgoingMetadata(t *testing.T) {
 			require.Len(t, sent.Get(pinpoint.HeaderSpanId), 1)
 			assert.Empty(t, sent.Get(pinpoint.HeaderSampled))
 			assert.Empty(t, sent.Get(pinpoint.HeaderParentApplicationNamespace))
-			callee := agent.NewSpanTracerWithReader("callee", "/callee", outgoingMetadataReader(sent))
+			callee := agent.NewSpanTracerWithReader("callee", "/callee", mdReader(sent))
 			defer callee.EndSpan()
 			assert.True(t, callee.IsSampled())
 			assert.Equal(t, caller.TransactionId(), callee.TransactionId())
 			assert.NotEqual(t, caller.SpanId(), callee.SpanId())
 		})
 	}
+}
+
+// mdReader reads the metadata a call sent, as the callee's server reads it.
+type mdReader metadata.MD
+
+func (m mdReader) Get(key string) (string, bool) {
+	if v := metadata.MD(m).Get(key); len(v) > 0 {
+		return v[0], true
+	}
+	return "", false
 }

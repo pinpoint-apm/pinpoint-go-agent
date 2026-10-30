@@ -41,7 +41,6 @@ import (
 	"github.com/go-kratos/kratos/v3/transport"
 	"github.com/go-kratos/kratos/v3/transport/http"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 )
 
@@ -148,7 +147,9 @@ func ClientMiddleware() middleware.Middleware {
 				tracer := pinpoint.FromContext(ctx)
 				if tr.Kind() == transport.KindGRPC {
 					var nested bool
-					ctx, nested = outgoingContext(ctx, tracer)
+					// Kratos appends its carrier to outgoing metadata, so
+					// stale values there would win.
+					ctx, nested = pinpoint.OutgoingGrpcContext(ctx, tracer)
 					if nested {
 						return handler(ctx, req)
 					}
@@ -331,30 +332,4 @@ func (w headerWriter) clear() {
 			}
 		}
 	}
-}
-
-// Kratos appends its carrier to outgoing metadata, so stale values there would win.
-func outgoingContext(ctx context.Context, tracer pinpoint.Tracer) (context.Context, bool) {
-	md, ok := metadata.FromOutgoingContext(ctx)
-	if !ok || !pinpoint.IsInjected(outgoingMetadataReader(md)) {
-		return ctx, false
-	}
-	if pinpoint.IsInjectedBy(tracer, outgoingMetadataReader(md)) {
-		return ctx, true
-	}
-	for key := range md {
-		if pinpoint.IsInjectedHeader(key) {
-			delete(md, key)
-		}
-	}
-	return metadata.NewOutgoingContext(ctx, md), false
-}
-
-type outgoingMetadataReader metadata.MD
-
-func (m outgoingMetadataReader) Get(key string) (string, bool) {
-	if values := metadata.MD(m).Get(key); len(values) > 0 {
-		return values[0], true
-	}
-	return "", false
 }

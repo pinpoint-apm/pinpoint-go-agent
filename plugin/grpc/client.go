@@ -67,7 +67,7 @@ func (w *kvInjectionWriter) Set(key string, value string) {
 
 func newClientTracer(ctx context.Context, method string, target string) (context.Context, pinpoint.Tracer) {
 	tracer := pinpoint.FromContext(ctx)
-	ctx, nested := outgoingContext(ctx, tracer)
+	ctx, nested := pinpoint.OutgoingGrpcContext(ctx, tracer)
 	if nested {
 		return ctx, pinpoint.NoopTracer()
 	}
@@ -95,48 +95,6 @@ func newClientTracer(ctx context.Context, method string, target string) (context
 	}
 
 	return ctx, tracer
-}
-
-// outgoingContext checks the caller's outgoing metadata for a Pinpoint trace
-// context. One tracer's span injected - an outer instrumented layer, an
-// interceptor registered twice - makes the call nested: it records no span
-// event and writes no header, so that context travels alone; appending a
-// second value left the receiver's Get reading the first. Another span's - a
-// gateway forwarding the metadata its own caller sent - is cleared from the
-// returned context for this span's: sent on, the callee continued under the
-// gateway's own span id, and the gateway's call went unrecorded.
-//
-// FromOutgoingContext copies the caller's MD: a cost per call that only exists
-// when the caller set metadata of its own.
-func outgoingContext(ctx context.Context, tracer pinpoint.Tracer) (context.Context, bool) {
-	md, ok := metadata.FromOutgoingContext(ctx)
-	if !ok {
-		return ctx, false
-	}
-	r := outgoingMetadataReader(md)
-	if !pinpoint.IsInjected(r) {
-		return ctx, false
-	}
-	if pinpoint.IsInjectedBy(tracer, r) {
-		return ctx, true
-	}
-	for key := range md {
-		if pinpoint.IsInjectedHeader(key) {
-			delete(md, key)
-		}
-	}
-	return metadata.NewOutgoingContext(ctx, md), false
-}
-
-// outgoingMetadataReader reads the caller's outgoing metadata as a tracing
-// carrier, by the lowered keys grpc-go stores.
-type outgoingMetadataReader metadata.MD
-
-func (m outgoingMetadataReader) Get(key string) (string, bool) {
-	if v := m[loweredKey(key)]; len(v) > 0 {
-		return v[0], true
-	}
-	return "", false
 }
 
 func makeUrl(remote string, method string) string {

@@ -19,6 +19,7 @@ package pinpoint
 import (
 	"context"
 	"iter"
+	"maps"
 	"net"
 	"net/http"
 	"net/textproto"
@@ -26,6 +27,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"google.golang.org/grpc/metadata"
 )
 
 // Agent instruments an application and makes spans and manages it.
@@ -515,6 +518,58 @@ func IsInjectedHeader(key string) bool {
 // plugin that clears them from, or pre-spells them for, a carrier of its own.
 func InjectedHeaders() iter.Seq[string] {
 	return slices.Values(injectedHeaders[:])
+}
+
+// loweredHeaderKeys spells the injected headers as grpc-go stores metadata
+// keys, so a lookup is the MD's direct map hit instead of a lowering per call.
+var loweredHeaderKeys = func() map[string]string {
+	m := make(map[string]string, len(injectedHeaders))
+	for _, k := range injectedHeaders {
+		m[k] = strings.ToLower(k)
+	}
+	return m
+}()
+
+// outgoingMetadataReader reads outgoing gRPC metadata as a tracing carrier.
+type outgoingMetadataReader metadata.MD
+
+func (m outgoingMetadataReader) Get(key string) (string, bool) {
+	l, ok := loweredHeaderKeys[key]
+	if !ok {
+		l = strings.ToLower(key)
+	}
+	if v := m[l]; len(v) > 0 {
+		return v[0], true
+	}
+	return "", false
+}
+
+// OutgoingGrpcContext decides a gRPC client call against the trace context the
+// caller's outgoing metadata already carries, as IsInjectedBy decides an HTTP
+// one. A context tracer's own span injected - an outer instrumented layer, an
+// interceptor registered twice - makes the call nested (true): it records no
+// span event and writes no header, so that context travels alone, where a
+// second value left the receiver's Get reading the first. Another span's - a
+// gateway forwarding the metadata its own caller sent - is cleared from the
+// returned context for this span's: sent on, the callee continued under the
+// gateway's own span id, and the gateway's call went unrecorded.
+//
+// FromOutgoingContext copies the caller's MD: a cost per call that only
+// exists when the caller set metadata of its own.
+func OutgoingGrpcContext(ctx context.Context, tracer Tracer) (context.Context, bool) {
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if !ok {
+		return ctx, false
+	}
+	r := outgoingMetadataReader(md)
+	if !IsInjected(r) {
+		return ctx, false
+	}
+	if IsInjectedBy(tracer, r) {
+		return ctx, true
+	}
+	maps.DeleteFunc(md, func(k string, _ []string) bool { return IsInjectedHeader(k) })
+	return metadata.NewOutgoingContext(ctx, md), false
 }
 
 // OnTracerGoroutine reports whether the calling goroutine is the one tracer's
