@@ -13,6 +13,10 @@ import (
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 	"google.golang.org/grpc"
+	// Registers the gzip decompressor: the agent gzip-compresses span batches
+	// and the stat stream by default (Collector.Grpc.Compression), as a real
+	// collector accepts.
+	_ "google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
