@@ -88,25 +88,25 @@ func (c *Client) recordMemcacheSpanEvent(tracer pinpoint.Tracer, op string, key 
 	tracer.EndSpanEvent()
 }
 
-func (c *Client) Add(item *memcache.Item) error {
+// do runs call, one memcache operation that returns only an error, and
+// records it as the op span event.
+func (c *Client) do(op string, key string, call func() error) error {
 	start := time.Now()
-	err := c.Client.Add(item)
-	c.newMemcacheSpanEvent("gomemcache.Add()", item.Key, start, err)
+	err := call()
+	c.newMemcacheSpanEvent(op, key, start, err)
 	return err
+}
+
+func (c *Client) Add(item *memcache.Item) error {
+	return c.do("gomemcache.Add()", item.Key, func() error { return c.Client.Add(item) })
 }
 
 func (c *Client) Set(item *memcache.Item) error {
-	start := time.Now()
-	err := c.Client.Set(item)
-	c.newMemcacheSpanEvent("gomemcache.Set()", item.Key, start, err)
-	return err
+	return c.do("gomemcache.Set()", item.Key, func() error { return c.Client.Set(item) })
 }
 
 func (c *Client) Replace(item *memcache.Item) error {
-	start := time.Now()
-	err := c.Client.Replace(item)
-	c.newMemcacheSpanEvent("gomemcache.Replace()", item.Key, start, err)
-	return err
+	return c.do("gomemcache.Replace()", item.Key, func() error { return c.Client.Replace(item) })
 }
 
 func (c *Client) Get(key string) (item *memcache.Item, err error) {
@@ -133,10 +133,7 @@ func joinKeys(keys []string) string {
 }
 
 func (c *Client) Delete(key string) error {
-	start := time.Now()
-	err := c.Client.Delete(key)
-	c.newMemcacheSpanEvent("gomemcache.Delete()", key, start, err)
-	return err
+	return c.do("gomemcache.Delete()", key, func() error { return c.Client.Delete(key) })
 }
 
 func (c *Client) Increment(key string, delta uint64) (uint64, error) {
@@ -154,36 +151,21 @@ func (c *Client) Decrement(key string, delta uint64) (uint64, error) {
 }
 
 func (c *Client) CompareAndSwap(item *memcache.Item) error {
-	start := time.Now()
-	err := c.Client.CompareAndSwap(item)
-	c.newMemcacheSpanEvent("gomemcache.CompareAndSwap()", item.Key, start, err)
-	return err
+	return c.do("gomemcache.CompareAndSwap()", item.Key, func() error { return c.Client.CompareAndSwap(item) })
 }
 
-func (c *Client) Touch(key string, seconds int32) (err error) {
-	start := time.Now()
-	err = c.Client.Touch(key, seconds)
-	c.newMemcacheSpanEvent("gomemcache.Touch()", key, start, err)
-	return
+func (c *Client) Touch(key string, seconds int32) error {
+	return c.do("gomemcache.Touch()", key, func() error { return c.Client.Touch(key, seconds) })
 }
 
 func (c *Client) Ping() error {
-	start := time.Now()
-	err := c.Client.Ping()
-	c.newMemcacheSpanEvent("gomemcache.Ping()", "", start, err)
-	return err
+	return c.do("gomemcache.Ping()", "", func() error { return c.Client.Ping() })
 }
 
 func (c *Client) DeleteAll() error {
-	start := time.Now()
-	err := c.Client.DeleteAll()
-	c.newMemcacheSpanEvent("gomemcache.DeleteAll()", "", start, err)
-	return err
+	return c.do("gomemcache.DeleteAll()", "", func() error { return c.Client.DeleteAll() })
 }
 
 func (c *Client) FlushAll() error {
-	start := time.Now()
-	err := c.Client.FlushAll()
-	c.newMemcacheSpanEvent("gomemcache.FlushAll()", "", start, err)
-	return err
+	return c.do("gomemcache.FlushAll()", "", func() error { return c.Client.FlushAll() })
 }
