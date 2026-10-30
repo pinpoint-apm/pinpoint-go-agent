@@ -29,7 +29,7 @@ func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
 	root.Span().SetLogging(pinpoint.Logged)
 	root.Span().SetError(errors.New("upstream unavailable"))
 	root.AddMetric(pinpoint.MetricURLStat, &pinpoint.UrlStatEntry{
-		Url: "/orders/{id}", Method: "GET", Status: 503,
+		Url: "/orders/{id}", Method: "GET",
 	})
 
 	// Every annotation shape the public API can record.

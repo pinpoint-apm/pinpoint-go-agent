@@ -809,7 +809,7 @@ func TestKeepsProducingSpansWhileShuttingDown(t *testing.T) {
 				tracer.SpanEvent().SetError(errors.New("shutdown load"), "ShutdownLoad")
 				tracer.EndSpanEvent()
 				tracer.AddMetric(pinpoint.MetricURLStat, &pinpoint.UrlStatEntry{
-					Url: "/shutdown-load/{id}", Method: "GET", Status: 200,
+					Url: "/shutdown-load/{id}", Method: "GET",
 				})
 				tracer.EndSpan()
 			}
