@@ -1,6 +1,7 @@
 package pphttp
 
 import (
+	"cmp"
 	"context"
 	"maps"
 	"net/http"
@@ -179,14 +180,8 @@ func (r *roundTripper) CloseIdleConnections() {
 //	client := pphttp.WrapClient(&http.Client{})
 //	client.Do(req)
 func WrapClient(client *http.Client) *http.Client {
-	if client == nil {
-		client = http.DefaultClient
-	}
-
-	c := *client
 	//lint:ignore SA1012 nil is "no client context": the request's own is used
-	c.Transport = wrapRoundTripper(nil, c.Transport)
-	return &c
+	return WrapClientWithContext(nil, client)
 }
 
 // WrapClientWithContext returns a new *http.Client ready to instrument.
@@ -198,24 +193,9 @@ func WrapClient(client *http.Client) *http.Client {
 //	client := pphttp.WrapClientWithContext(pinpoint.NewContext(context.Background(), tracer), &http.Client{})
 //	client.Get(external_url)
 func WrapClientWithContext(ctx context.Context, client *http.Client) *http.Client {
-	if client == nil {
-		client = http.DefaultClient
-	}
-
-	c := *client
-	c.Transport = wrapRoundTripper(ctx, c.Transport)
+	c := *cmp.Or(client, http.DefaultClient)
+	c.Transport = &roundTripper{original: cmp.Or(c.Transport, http.DefaultTransport), ctx: ctx}
 	return &c
-}
-
-func wrapRoundTripper(ctx context.Context, original http.RoundTripper) http.RoundTripper {
-	if original == nil {
-		original = http.DefaultTransport
-	}
-
-	return &roundTripper{
-		original: original,
-		ctx:      ctx,
-	}
 }
 
 func (r *roundTripper) RoundTrip(req *http.Request) (resp *http.Response, err error) {
