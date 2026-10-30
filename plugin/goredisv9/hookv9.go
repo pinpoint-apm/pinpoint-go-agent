@@ -55,47 +55,36 @@ func (r *hook) DialHook(hook redis.DialHook) redis.DialHook {
 }
 
 func (r *hook) ProcessHook(hook redis.ProcessHook) redis.ProcessHook {
-	opName := "go-redis/v9.Process()"
-
 	return func(ctx context.Context, cmd redis.Cmder) error {
-		tracer := pinpoint.FromContext(ctx)
-		if !tracer.IsSampled() {
-			return hook(ctx, cmd)
-		}
-		ctx, fork := onOwnGoroutine(ctx, tracer)
-		if fork != nil {
-			defer fork.EndSpan()
-			tracer = fork
-		}
-
-		defer tracer.EndSpanEvent()
-		se := r.newSpanEvent(ctx, opName, cmd.Name())
-		err := hook(ctx, cmd)
-		setSpanError(se, err)
-		return err
+		return r.trace(ctx, "go-redis/v9.Process()", cmd.Name, func(ctx context.Context) error { return hook(ctx, cmd) })
 	}
 }
 
 func (r *hook) ProcessPipelineHook(hook redis.ProcessPipelineHook) redis.ProcessPipelineHook {
-	opName := "go-redis/v9.ProcessPipeline()"
-
 	return func(ctx context.Context, cmds []redis.Cmder) error {
-		tracer := pinpoint.FromContext(ctx)
-		if !tracer.IsSampled() {
-			return hook(ctx, cmds)
-		}
-		ctx, fork := onOwnGoroutine(ctx, tracer)
-		if fork != nil {
-			defer fork.EndSpan()
-			tracer = fork
-		}
-
-		defer tracer.EndSpanEvent()
-		se := r.newSpanEvent(ctx, opName, cmdName(cmds))
-		err := hook(ctx, cmds)
-		setSpanError(se, err)
-		return err
+		return r.trace(ctx, "go-redis/v9.ProcessPipeline()", func() string { return cmdName(cmds) },
+			func(ctx context.Context) error { return hook(ctx, cmds) })
 	}
+}
+
+// trace records next, the rest of the hook chain, as the op span event on the
+// tracer in ctx. name, the command's, is read only for a sampled tracer.
+func (r *hook) trace(ctx context.Context, op string, name func() string, next func(context.Context) error) error {
+	tracer := pinpoint.FromContext(ctx)
+	if !tracer.IsSampled() {
+		return next(ctx)
+	}
+	ctx, fork := onOwnGoroutine(ctx, tracer)
+	if fork != nil {
+		defer fork.EndSpan()
+		tracer = fork
+	}
+
+	defer tracer.EndSpanEvent()
+	se := r.newSpanEvent(ctx, op, name())
+	err := next(ctx)
+	setSpanError(se, err)
+	return err
 }
 
 // onOwnGoroutine hands the hook a context whose tracer it may record on here,
