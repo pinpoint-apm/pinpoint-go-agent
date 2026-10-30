@@ -140,25 +140,24 @@ func Test_serverRemoteAddr(t *testing.T) {
 	assert.Equal(t, "10.0.0.5", serverRemoteAddr(transport.NewServerContext(context.Background(), bareIPTr), bareIPTr))
 }
 
-// The destination recorded for a client call is the callee: the Host header for
-// HTTP, the dial endpoint for gRPC.
-func Test_clientRemoteAddr(t *testing.T) {
+// A client call records the callee - the Host header for HTTP, the dial
+// endpoint for gRPC - as its destination and in its URL.
+func Test_clientCall(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://provider:8000/hello", nil)
-	assert.Equal(t, "provider:8000", clientRemoteAddr(newHttpTransport("", "/helloworld.Greeter/SayHello", req)))
+	st, remote, url := clientCall(newHttpTransport("", "/helloworld.Greeter/SayHello", req))
+	assert.Equal(t, int32(pinpoint.ServiceTypeGoHttpClient), st)
+	assert.Equal(t, "provider:8000", remote)
+	assert.Equal(t, "http://provider:8000/helloworld.Greeter/SayHello", url)
 
-	assert.Equal(t, "discovery:///provider",
-		clientRemoteAddr(newGrpcTransport("discovery:///provider", "/helloworld.Greeter/SayHello")))
+	st, remote, url = clientCall(newGrpcTransport("discovery:///provider", "/helloworld.Greeter/SayHello"))
+	assert.Equal(t, int32(pinpoint.ServiceTypeGrpc), st)
+	assert.Equal(t, "discovery:///provider", remote)
+	assert.Equal(t, "grpc://discovery:///provider/helloworld.Greeter/SayHello", url)
 
 	// A gRPC transport with no endpoint leaves nothing to record.
-	assert.Equal(t, "127.0.0.1", clientRemoteAddr(newGrpcTransport("", "/helloworld.Greeter/SayHello")))
-}
-
-func Test_makeUrl(t *testing.T) {
-	httpTr := newHttpTransport("", "/helloworld.Greeter/SayHello", httptest.NewRequest(http.MethodGet, "/", nil))
-	assert.Equal(t, "http://provider:8000/helloworld.Greeter/SayHello", makeUrl(httpTr, "provider:8000"))
-
-	grpcTr := newGrpcTransport("", "/helloworld.Greeter/SayHello")
-	assert.Equal(t, "grpc://provider:9000/helloworld.Greeter/SayHello", makeUrl(grpcTr, "provider:9000"))
+	_, remote, url = clientCall(newGrpcTransport("", "/helloworld.Greeter/SayHello"))
+	assert.Equal(t, "127.0.0.1", remote)
+	assert.Equal(t, "grpc://127.0.0.1/helloworld.Greeter/SayHello", url)
 }
 
 // The middleware wraps the handler, so the handler's reply and error have to

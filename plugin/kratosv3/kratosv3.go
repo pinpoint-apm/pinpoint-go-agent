@@ -32,6 +32,7 @@
 package ppkratosv3
 
 import (
+	"cmp"
 	"context"
 	"maps"
 	nethttp "net/http"
@@ -57,37 +58,34 @@ import (
 func ServerMiddleware() middleware.Middleware {
 	return func(handler middleware.Handler) middleware.Handler {
 		return func(ctx context.Context, req interface{}) (reply interface{}, err error) {
-			if !pinpoint.GetAgent().Enable() {
+			tr, ok := transport.FromServerContext(ctx)
+			if !ok || !pinpoint.GetAgent().Enable() {
 				return handler(ctx, req)
 			}
 
-			if tr, ok := transport.FromServerContext(ctx); ok {
-				tracer := serverTracer(ctx, tr)
-				defer tracer.EndSpan()
-				defer tracer.NewSpanEvent(tr.Operation()).EndSpanEvent()
+			tracer := serverTracer(ctx, tr)
+			defer tracer.EndSpan()
+			defer tracer.NewSpanEvent(tr.Operation()).EndSpanEvent()
 
-				span := tracer.Span()
-				// A nested layer leaves the span-level request attributes to
-				// the layer that owns the span.
-				if !pinpoint.IsNestedTracer(tracer) {
-					if tr.Kind() == transport.KindGRPC {
-						span.SetServiceType(pinpoint.ServiceTypeGrpcServer)
-					}
-					// The endpoint trim and peer-address formatting are
-					// discarded on an unsampled span.
-					if tracer.IsSampled() {
-						span.SetEndPoint(serverEndpoint(tr.Endpoint()))
-						span.SetRemoteAddress(serverRemoteAddr(ctx, tr))
-					}
+			span := tracer.Span()
+			// A nested layer leaves the span-level request attributes to
+			// the layer that owns the span.
+			if !pinpoint.IsNestedTracer(tracer) {
+				if tr.Kind() == transport.KindGRPC {
+					span.SetServiceType(pinpoint.ServiceTypeGrpcServer)
 				}
-
-				ctx = pinpoint.NewContext(ctx, tracer)
-				reply, err = handler(ctx, req)
-				span.SetError(err)
-				return reply, err
-			} else {
-				return handler(ctx, req)
+				// The endpoint trim and peer-address formatting are
+				// discarded on an unsampled span.
+				if tracer.IsSampled() {
+					span.SetEndPoint(serverEndpoint(tr.Endpoint()))
+					span.SetRemoteAddress(serverRemoteAddr(ctx, tr))
+				}
 			}
+
+			ctx = pinpoint.NewContext(ctx, tracer)
+			reply, err = handler(ctx, req)
+			span.SetError(err)
+			return reply, err
 		}
 	}
 }
@@ -140,90 +138,74 @@ func ClientMiddleware() middleware.Middleware {
 		return func(ctx context.Context, req interface{}) (reply interface{}, err error) {
 			// A disabled agent traces nothing and injects nothing - not even
 			// the unsampled marker.
-			if !pinpoint.GetAgent().Enable() {
+			tr, ok := transport.FromClientContext(ctx)
+			if !ok || !pinpoint.GetAgent().Enable() {
 				return handler(ctx, req)
 			}
 
-			if tr, ok := transport.FromClientContext(ctx); ok {
-				tracer := pinpoint.FromContext(ctx)
-				if tr.Kind() == transport.KindGRPC {
-					var nested bool
-					// Kratos appends its carrier to outgoing metadata, so
-					// stale values there would win.
-					ctx, nested = pinpoint.OutgoingGrpcContext(ctx, tracer)
-					if nested {
-						return handler(ctx, req)
-					}
+			tracer := pinpoint.FromContext(ctx)
+			if tr.Kind() == transport.KindGRPC {
+				var nested bool
+				// Kratos appends its carrier to outgoing metadata, so
+				// stale values there would win.
+				ctx, nested = pinpoint.OutgoingGrpcContext(ctx, tracer)
+				if nested {
+					return handler(ctx, req)
 				}
-				// A context already in the header is decided as the other
-				// clients decide it (doc/api_contracts.md): this span's own -
-				// the middleware installed twice - travels alone, with no
-				// second event, and another span's is cleared for this one's.
-				// Clearing whatever was there made a stacked middleware record
-				// one call as two events, and scanned every header per call.
-				writer := clientHeaderWriter(tr)
-				if r := writer.reader(); r != nil && pinpoint.IsInjected(r) {
-					if pinpoint.IsInjectedBy(tracer, r) {
-						return handler(ctx, req)
-					}
-					writer.clear()
-				}
-				defer tracer.NewSpanEvent(tr.Operation()).EndSpanEvent()
-
-				// The URL annotation and destination are discarded on an
-				// unsampled span event.
-				if tracer.IsSampled() {
-					se := tracer.SpanEvent()
-					if tr.Kind() == transport.KindGRPC {
-						se.SetServiceType(pinpoint.ServiceTypeGrpc)
-					} else {
-						se.SetServiceType(pinpoint.ServiceTypeGoHttpClient)
-					}
-
-					remote := clientRemoteAddr(tr)
-					se.SetDestination(remote)
-					se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, makeUrl(tr, remote))
-				}
-
-				tracer.Inject(writer)
-				reply, err = handler(ctx, req)
-				// Guarded: SetError is an interface method, so its variadic
-				// name escapes and allocated on every call, nil error and all.
-				if err != nil {
-					tracer.SpanEvent().SetError(err, "rpc error")
-				}
-				return reply, err
-			} else {
-				return handler(ctx, req)
 			}
+			// A context already in the header is decided as the other
+			// clients decide it (doc/api_contracts.md): this span's own -
+			// the middleware installed twice - travels alone, with no
+			// second event, and another span's is cleared for this one's.
+			// Clearing whatever was there made a stacked middleware record
+			// one call as two events, and scanned every header per call.
+			writer := clientHeaderWriter(tr)
+			if r := writer.reader(); r != nil && pinpoint.IsInjected(r) {
+				if pinpoint.IsInjectedBy(tracer, r) {
+					return handler(ctx, req)
+				}
+				writer.clear()
+			}
+			defer tracer.NewSpanEvent(tr.Operation()).EndSpanEvent()
+
+			// The URL annotation and destination are discarded on an
+			// unsampled span event.
+			if tracer.IsSampled() {
+				serviceType, remote, url := clientCall(tr)
+				se := tracer.SpanEvent()
+				se.SetServiceType(serviceType)
+				se.SetDestination(remote)
+				se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, url)
+			}
+
+			tracer.Inject(writer)
+			reply, err = handler(ctx, req)
+			// Guarded: SetError is an interface method, so its variadic
+			// name escapes and allocated on every call, nil error and all.
+			if err != nil {
+				tracer.SpanEvent().SetError(err, "rpc error")
+			}
+			return reply, err
 		}
 	}
 }
 
-func clientRemoteAddr(tr transport.Transporter) (addr string) {
-	switch tr.Kind() {
-	case transport.KindHTTP:
-		if ht, ok := tr.(http.Transporter); ok {
-			addr = ht.Request().Host
-		}
-	case transport.KindGRPC:
-		addr = tr.Endpoint()
-	}
-	if addr == "" {
-		addr = "127.0.0.1"
-	}
-	return addr
-}
-
-func makeUrl(tr transport.Transporter, addr string) string {
-	scheme := ""
+// clientCall is what a client call records for tr's kind: the service type,
+// the callee - the Host header for HTTP, the dial endpoint for gRPC, 127.0.0.1
+// when there is none - and the URL.
+func clientCall(tr transport.Transporter) (serviceType int32, remote, url string) {
+	serviceType, scheme := int32(pinpoint.ServiceTypeGoHttpClient), ""
 	switch tr.Kind() {
 	case transport.KindHTTP:
 		scheme = "http://"
+		if ht, ok := tr.(http.Transporter); ok {
+			remote = ht.Request().Host
+		}
 	case transport.KindGRPC:
-		scheme = "grpc://"
+		serviceType, scheme, remote = pinpoint.ServiceTypeGrpc, "grpc://", tr.Endpoint()
 	}
-	return scheme + addr + tr.Operation()
+	remote = cmp.Or(remote, "127.0.0.1")
+	return serviceType, remote, scheme + remote + tr.Operation()
 }
 
 // The kratos carrier re-spells every key it is given: http.Header canonicalizes
