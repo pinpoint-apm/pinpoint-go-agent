@@ -40,11 +40,7 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 		if pinpoint.IsInjectedBy(tracer, r) {
 			return pinpoint.NoopTracer()
 		}
-		for key := range req.Header {
-			if pinpoint.IsInjectedHeader(key) {
-				delete(req.Header, key)
-			}
-		}
+		maps.DeleteFunc(req.Header, func(k string, _ []string) bool { return pinpoint.IsInjectedHeader(k) })
 	}
 
 	// One lookup: each SpanEvent() call takes the event stack lock.

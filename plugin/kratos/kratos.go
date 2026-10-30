@@ -38,6 +38,7 @@ package ppkratos
 
 import (
 	"context"
+	"maps"
 	nethttp "net/http"
 	"net/textproto"
 	"strings"
@@ -331,10 +332,6 @@ func (w headerWriter) reader() pinpoint.DistributedTracingContextReader {
 // A kratos transport.Header has no delete; Inject overwrites what it writes.
 func (w headerWriter) clear() {
 	if h, ok := w.hdr.(nethttp.Header); ok {
-		for key := range h {
-			if pinpoint.IsInjectedHeader(key) {
-				delete(h, key)
-			}
-		}
+		maps.DeleteFunc(h, func(k string, _ []string) bool { return pinpoint.IsInjectedHeader(k) })
 	}
 }
