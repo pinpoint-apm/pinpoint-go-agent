@@ -184,9 +184,7 @@ func closedAddr(t *testing.T) string {
 	return addr
 }
 
-// Client and its embedded *memcache.Client are exported, so a literal
-// construction skips the store WrapClient makes; the first operation then
-// dereferenced a nil box.
+// A client built as a literal has no bound tracer and must still be safe to use.
 func TestClient_BuiltAsALiteralHasANoopTracer(t *testing.T) {
 	c := &Client{Client: memcache.New("localhost:11211")}
 	assert.NotPanics(t, func() {

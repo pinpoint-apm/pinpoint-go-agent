@@ -10,16 +10,14 @@ import (
 	"testing"
 
 	"github.com/labstack/echo/v4"
+	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// The wrapper reports the status echo's HTTPErrorHandler will send, instead of
-// invoking that handler itself to read the status off the response. echo's own
-// middleware wrap errors rather than replacing them, so the status has to be
-// read through the error chain.
+// Compare the recorded status with the response Echo actually sends.
 func Test_statusCode(t *testing.T) {
 	tests := []struct {
 		name string
@@ -28,15 +26,38 @@ func Test_statusCode(t *testing.T) {
 	}{
 		{name: "an HTTPError carries its own status", err: echo.NewHTTPError(http.StatusNotFound), want: http.StatusNotFound},
 		{name: "a plain error is a server error", err: errors.New("boom"), want: http.StatusInternalServerError},
-		{name: "a wrapped HTTPError is unwrapped", err: fmt.Errorf("wrapped: %w", echo.NewHTTPError(http.StatusTeapot)), want: http.StatusTeapot},
-		{name: "a twice-wrapped HTTPError is still unwrapped", err: fmt.Errorf("wrapped: %w", fmt.Errorf("wrapped: %w", echo.NewHTTPError(http.StatusTeapot))), want: http.StatusTeapot},
+		{name: "a wrapped HTTPError is a server error", err: fmt.Errorf("wrapped: %w", echo.NewHTTPError(http.StatusTeapot)), want: http.StatusInternalServerError},
+		{name: "a twice-wrapped HTTPError is a server error", err: fmt.Errorf("wrapped: %w", fmt.Errorf("wrapped: %w", echo.NewHTTPError(http.StatusTeapot))), want: http.StatusInternalServerError},
+		{name: "an internal HTTPError overrides the status", err: echo.NewHTTPError(500).SetInternal(echo.NewHTTPError(404)), want: 404},
+		{name: "a wrapped internal HTTPError does not override the status", err: echo.NewHTTPError(500).SetInternal(fmt.Errorf("wrapped: %w", echo.NewHTTPError(404))), want: 500},
 		{name: "a wrapped plain error is a server error", err: fmt.Errorf("wrapped: %w", errors.New("boom")), want: http.StatusInternalServerError},
 		{name: "an HTTPError built with a message", err: echo.NewHTTPError(http.StatusBadRequest, "bad"), want: http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, statusCode(tt.err))
+			pptest.StartAgent(t, pphttp.WithHttpServerRecordHandlerError(false))
+			var tracer pinpoint.Tracer
+			e := echo.New()
+			e.Use(Middleware())
+			e.GET("/", func(c echo.Context) error {
+				tracer = pinpoint.TracerFromRequestContext(c.Request())
+				return tt.err
+			})
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+			assert.Equal(t, tt.want, rec.Code)
+			span := pptest.SpanOf(t, tracer)
+			var statuses []int
+			for _, value := range span["Annotations"].([]interface{}) {
+				a := value.(map[string]interface{})
+				if a["key"] == float64(pinpoint.AnnotationHttpStatusCode) {
+					field := a["value"].(map[string]interface{})["Field"].(map[string]interface{})
+					statuses = append(statuses, int(field["IntValue"].(float64)))
+				}
+			}
+			assert.Equal(t, []int{rec.Code}, statuses)
+			assert.Equal(t, rec.Code >= 500, span["Err"] != float64(0))
 		})
 	}
 }

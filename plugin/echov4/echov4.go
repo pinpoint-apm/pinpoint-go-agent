@@ -12,7 +12,6 @@
 package ppechov4
 
 import (
-	"errors"
 	"net/http"
 	"runtime"
 	"sync"
@@ -156,10 +155,12 @@ func WrapHandler(handler echo.HandlerFunc) echo.HandlerFunc {
 	return wrap(handler, pphttp.HandlerFuncName(handler), new(atomic.Pointer[echoNames]))
 }
 
-// statusCode reports the status echo's HTTPErrorHandler will send for err.
+// statusCode follows Echo's default error handler, including its Internal override.
 func statusCode(err error) int {
-	var e *echo.HTTPError
-	if errors.As(err, &e) {
+	if e, ok := err.(*echo.HTTPError); ok {
+		if internal, ok := e.Internal.(*echo.HTTPError); ok {
+			e = internal
+		}
 		return e.Code
 	}
 	return http.StatusInternalServerError

@@ -17,6 +17,7 @@ import (
 	"testing"
 	"testing/iotest"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
@@ -1297,6 +1298,10 @@ func TestFormatRequestParams(t *testing.T) {
 		{"undecodable kept verbatim", "bad=%zz%4&ok=%41", "bad=%zz%4&ok=A"},
 		{"long value cut", "k=" + long, "k=" + strings.Repeat("v", 64) + "..."},
 		{"long key cut", long + "=1", strings.Repeat("v", 64) + "...=1"},
+		{"short Korean value", "q=" + url.QueryEscape(strings.Repeat("한", 22)), "q=" + strings.Repeat("한", 22)},
+		{"exact Unicode limit", "q=" + strings.Repeat("한", 64), "q=" + strings.Repeat("한", 64)},
+		{"long Unicode value", "q=" + strings.Repeat("😀", 65), "q=" + strings.Repeat("😀", 64) + "..."},
+		{"long Unicode key", strings.Repeat("한", 65) + "=1", strings.Repeat("한", 64) + "...=1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1307,6 +1312,14 @@ func TestFormatRequestParams(t *testing.T) {
 	got := FormatRequestParams(strings.Join(many, "&"))
 	assert.True(t, strings.HasSuffix(got, "&..."), got)
 	assert.LessOrEqual(t, len(got), 512+4)
+
+	entry := "q=" + strings.Repeat("한", 60)
+	query := strings.Repeat(entry+"&", 7) + entry
+	assert.Equal(t, query, FormatRequestParams(query), "the total limit counts characters, not bytes")
+	got = FormatRequestParams(query + "&" + entry)
+	assert.Equal(t, query+"&...", got)
+	assert.True(t, utf8.ValidString(got))
+	assert.LessOrEqual(t, utf8.RuneCountInString(got), requestParamTotalLimit+4)
 }
 
 func TestClientUrl(t *testing.T) {

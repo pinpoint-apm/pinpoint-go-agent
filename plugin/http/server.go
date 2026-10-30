@@ -33,6 +33,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
@@ -127,8 +128,12 @@ const (
 // through RecordHttpServerRequest.
 func FormatRequestParams(rawQuery string) string {
 	cut := func(s string) string {
-		if len(s) > requestParamEntryLimit {
-			return s[:requestParamEntryLimit] + "..."
+		n := 0
+		for i := range s {
+			if n == requestParamEntryLimit {
+				return s[:i] + "..."
+			}
+			n++
 		}
 		return s
 	}
@@ -140,6 +145,7 @@ func FormatRequestParams(rawQuery string) string {
 	}
 
 	var b strings.Builder
+	length := 0
 	for rest := rawQuery; rest != ""; {
 		var item string
 		item, rest, _ = strings.Cut(rest, "&")
@@ -150,12 +156,15 @@ func FormatRequestParams(rawQuery string) string {
 		entry := cut(unescape(k)) + "=" + cut(unescape(v))
 		if b.Len() > 0 {
 			b.WriteByte('&')
+			length++
 		}
-		if b.Len()+len(entry) > requestParamTotalLimit {
+		entryLength := utf8.RuneCountInString(entry)
+		if length+entryLength > requestParamTotalLimit {
 			b.WriteString("...")
 			break
 		}
 		b.WriteString(entry)
+		length += entryLength
 	}
 	return b.String()
 }

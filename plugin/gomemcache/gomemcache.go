@@ -19,28 +19,19 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
-// tracerBox exists because tracer implementations differ by concrete type,
-// which an atomic.Value would reject; a typed pointer box takes any of them.
-type tracerBox struct{ t pinpoint.Tracer }
-
 // Client wraps memcache.Client.
 type Client struct {
 	*memcache.Client
 	endpoint string
 
-	// The memcache client is goroutine-safe and meant to be shared, so the
-	// tracer bound by WithContext must be too: an unguarded interface field
-	// written per request is a torn-readable data race. An atomic pointer
-	// rather than a mutex - the lock serialized every operation of every
-	// goroutine sharing the client just to read one field.
-	tracer atomic.Pointer[tracerBox]
+	// WithContext creates a new wrapper, so this field is never rebound.
+	tracer pinpoint.Tracer
 }
 
 // NewClient wraps memcache.New and returns a memcache.Client wrapper ready to instrument.
@@ -53,9 +44,7 @@ func NewClient(server ...string) *Client {
 // endpoint (NewClient joins the server addresses with ","). The compile-time
 // instrumentation tool uses it from its memcache.New hook.
 func WrapClient(client *memcache.Client, endpoint string) *Client {
-	c := &Client{Client: client, endpoint: endpoint}
-	c.tracer.Store(&tracerBox{pinpoint.NoopTracer()})
-	return c
+	return &Client{Client: client, endpoint: endpoint}
 }
 
 // WithContext returns a copy of the client bound to the tracer in the given
@@ -65,16 +54,13 @@ func WrapClient(client *memcache.Client, endpoint string) *Client {
 // client record their commands on whichever tracer was bound last, from
 // another request's goroutine (doc/api_contracts.md 1).
 func (c *Client) WithContext(ctx context.Context) *Client {
-	copied := &Client{Client: c.Client, endpoint: c.endpoint}
-	copied.tracer.Store(&tracerBox{pinpoint.FromContext(ctx)})
-	return copied
+	return &Client{Client: c.Client, endpoint: c.endpoint, tracer: pinpoint.FromContext(ctx)}
 }
 
-// currentTracer is the tracer WithContext bound, or the noop tracer for a
-// Client built as a struct literal, which nothing stored a box into.
+// currentTracer returns the bound tracer, or the noop tracer for an unbound client.
 func (c *Client) currentTracer() pinpoint.Tracer {
-	if box := c.tracer.Load(); box != nil {
-		return box.t
+	if c.tracer != nil {
+		return c.tracer
 	}
 	return pinpoint.NoopTracer()
 }

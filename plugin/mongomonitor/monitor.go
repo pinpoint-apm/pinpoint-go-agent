@@ -7,6 +7,7 @@ package ppmongomonitor
 
 import (
 	"errors"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -156,14 +157,11 @@ func (m *Monitor) Pending() int {
 // Host is the bare host of a driver connection id, which the driver reports
 // as an address with a pool index appended ("localhost:27017[-13]").
 func Host(connID string) string {
-	hostname := connID
-	if idx := strings.IndexByte(connID, '['); idx >= 0 {
-		hostname = hostname[:idx]
+	hostname, _, _ := strings.Cut(connID, "[-")
+	if host, _, err := net.SplitHostPort(hostname); err == nil {
+		return host
 	}
-	if idx := strings.IndexByte(hostname, ':'); idx >= 0 {
-		hostname = hostname[:idx]
-	}
-	return hostname
+	return strings.Trim(hostname, "[]")
 }
 
 // AbbreviateJSON cuts b to length bytes including a "...(length)" marker, on

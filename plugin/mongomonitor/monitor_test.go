@@ -155,6 +155,11 @@ func TestHost(t *testing.T) {
 		{"mongo1.example:27017[-1]", "mongo1.example"},
 		{"localhost:27017", "localhost"},
 		{"localhost", "localhost"},
+		{"[2001:db8::1]:27017[-13]", "2001:db8::1"},
+		{"[2001:db8::1]:27017", "2001:db8::1"},
+		{"[fe80::1%eth0]:27017[-2]", "fe80::1%eth0"},
+		{"[::1]", "::1"},
+		{"2001:db8::1", "2001:db8::1"},
 		{"", ""},
 	} {
 		assert.Equal(t, tt.want, Host(tt.connID), "Host(%q)", tt.connID)
