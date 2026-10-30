@@ -1004,8 +1004,13 @@ func (f *configFile) sub(prefix string) *configFile {
 func (config *Config) loadProfile(sources *cfgSources) *configFile {
 	item := config.cfgMap[CfgActiveProfile]
 	profile := valueAs[string](item.value)
-	if value, _, ok := sources.lookup(CfgActiveProfile, item); ok {
-		profile = valueAs[string](value)
+	// Resolve the selector with the same pinning and removed-key fallback as restage.
+	if item.source <= cfgSrcProfile {
+		if value, _, ok := sources.lookup(CfgActiveProfile, item); ok {
+			profile = valueAs[string](value)
+		} else if item.source != cfgSrcDefault {
+			profile = valueAs[string](item.baseValue)
+		}
 	}
 	if profile == "" {
 		return nil
@@ -1580,9 +1585,9 @@ func (config *Config) loadDynamicConfig(sources *cfgSources) map[string]bool {
 	return config.restage(sources, false)
 }
 
-// restage re-reads the options from sources - the dynamic ones, or with all
-// every option, which only ReloadConfig's private candidate does - and
-// returns the set of option names whose value actually changed. An option
+// restage re-reads the dynamic options and ActiveProfile from sources and
+// returns the set of option names whose value actually changed. With all,
+// it re-reads every option for ReloadConfig's private candidate. An option
 // whose value came from the command line, the environment or Set() is left
 // alone; one the sources no longer set goes back to its base value. The
 // caller must hold config.mu.
@@ -1591,7 +1596,7 @@ func (config *Config) restage(sources *cfgSources, all bool) map[string]bool {
 
 	for _, k := range slices.Sorted(maps.Keys(config.cfgMap)) {
 		v := config.cfgMap[k]
-		if !v.dynamic && !all {
+		if !v.dynamic && k != CfgActiveProfile && !all {
 			continue
 		}
 		if v.source > cfgSrcProfile {

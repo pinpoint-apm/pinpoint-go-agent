@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -166,6 +167,76 @@ profile:
 	assert.Equal(t, 3, config.Int(CfgSamplingCounterRate), "the active profile overrides the top level")
 	assert.Equal(t, "dev", config.String(CfgActiveProfile))
 	assert.Empty(t, result.RestartRequired, "the profile the yaml selected is in effect, not pending a restart")
+}
+
+func TestConfigReload_ProfilePrecedenceAndRemoval(t *testing.T) {
+	const profiles = `sampling:
+  counterRate: 50
+profile:
+  dev:
+    sampling:
+      counterRate: 1
+  prod:
+    sampling:
+      counterRate: 100
+`
+	for _, mode := range []string{"file", "yaml"} {
+		for _, tc := range []struct {
+			name, base, pinned string
+			source             int
+		}{
+			{name: "default"},
+			{name: "option", base: "prod"},
+			{name: "env", pinned: "prod", source: cfgSrcEnv},
+			{name: "cmd", pinned: "prod", source: cfgSrcCmd},
+			{name: "set", pinned: "prod", source: cfgSrcAPI},
+			{name: "set-empty", source: cfgSrcAPI},
+		} {
+			t.Run(mode+"/"+tc.name, func(t *testing.T) {
+				t.Setenv("PINPOINT_GO_ACTIVEPROFILE", "")
+				swapForTest(t, &os.Args, []string{"profile-test"})
+				if tc.source == cfgSrcEnv {
+					t.Setenv("PINPOINT_GO_ACTIVEPROFILE", tc.pinned)
+				} else if tc.source == cfgSrcCmd {
+					os.Args = append(os.Args, "--pinpoint-activeprofile="+tc.pinned)
+				}
+				path := t.TempDir() + "/config.yaml"
+				opts := []ConfigOption{WithAppName("reload-profile"), WithAgentName("reload-profile"), WithUidVersion("v3"), WithActiveProfile(tc.base)}
+				if mode == "file" {
+					require.NoError(t, os.WriteFile(path, []byte("activeProfile: dev\n"+profiles), 0o600))
+					opts = append(opts, WithConfigFile(path))
+				}
+				config, err := NewConfig(opts...)
+				require.NoError(t, err)
+				config.Close() // Drive file reloads directly so the assertions do not race the watcher.
+				if tc.source == cfgSrcAPI {
+					config.Set(CfgActiveProfile, tc.pinned)
+				}
+
+				for _, selected := range []string{"dev", "prod", "omitted", ""} {
+					text, want := profiles, selected
+					if selected == "omitted" {
+						want = tc.base
+					} else {
+						text = "activeProfile: '" + selected + "'\n" + text
+					}
+					if tc.source > cfgSrcProfile {
+						want = tc.pinned
+					}
+					if mode == "file" {
+						require.NoError(t, os.WriteFile(path, []byte(text), 0o600))
+						config.reloadConfig(newConfigFile(path))
+					} else {
+						result := config.reloadYAML(text)
+						require.Equal(t, ConfigReloadApplied, result.Status, result.Message)
+						assert.Empty(t, result.RestartRequired)
+					}
+					assert.Equal(t, want, config.String(CfgActiveProfile), "selection: %q", selected)
+					assert.Equal(t, map[string]int{"": 50, "dev": 1, "prod": 100}[want], config.Int(CfgSamplingCounterRate), "selection: %q", selected)
+				}
+			})
+		}
+	}
 }
 
 func TestReloadConfig_ConfigFileActive(t *testing.T) {
