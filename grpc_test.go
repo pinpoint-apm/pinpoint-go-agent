@@ -115,7 +115,6 @@ func Test_spanGrpc_sendSpanBatch(t *testing.T) {
 func Test_spanGrpc_sendSpanBatchEmptyReleasesPermit(t *testing.T) {
 	spanGrpc := &spanGrpc{
 		batchFlushTimeout:       time.Millisecond,
-		maxConcurrentRequests:   1,
 		concurrentRequestPermit: make(chan struct{}, 1),
 	}
 
@@ -1029,10 +1028,8 @@ func Test_grpcChannelOptions_configured(t *testing.T) {
 
 func Test_makePException_EmptyCallstack(t *testing.T) {
 	e := &exception{
-		callstack: &errorWithCallStack{
-			err:       status.Error(codes.Unknown, "boom"),
-			errorTime: time.Now(),
-		},
+		err:         status.Error(codes.Unknown, "boom"),
+		errorTime:   time.Now(),
 		exceptionId: 1,
 		className:   "status.Error",
 	}
@@ -1049,7 +1046,7 @@ func Test_makePException_EmptyCallstack(t *testing.T) {
 func Test_makePException_AbbreviatesMessage(t *testing.T) {
 	msg := strings.Repeat("e", 3*1024)
 	p := makePException(&exception{
-		callstack: &errorWithCallStack{err: errors.New(msg), errorTime: time.Now()},
+		err: errors.New(msg), errorTime: time.Now(),
 	})
 	assert.Equal(t, strings.Repeat("e", maxExceptionMessageSize)+"...(3072)", p.ExceptionMessage)
 }
@@ -1063,7 +1060,7 @@ func Test_makePExceptionMetaData_SanitizesInvalidUTF8(t *testing.T) {
 		uriTemplate: "/" + bad,
 		exceptions: []*exception{{
 			className: bad,
-			callstack: &errorWithCallStack{err: errors.New(bad), errorTime: time.Now()},
+			err:       errors.New(bad), errorTime: time.Now(),
 		}},
 	})
 	md.Exceptions[0].StackTraceElement = makePStackTraceElementList([]frame{{file: "/home/caf\xe9/main.go"}})
@@ -1137,7 +1134,7 @@ func Test_agentGrpc_sendExceptionMetadata(t *testing.T) {
 			exceptionId: 44,
 			depth:       1,
 			className:   "errors.errorString",
-			callstack:   &errorWithCallStack{err: errors.New("boom"), errorTime: errorTime, callstack: pcs},
+			err:         errors.New("boom"), errorTime: errorTime, pcs: pcs,
 		}},
 	}))
 
@@ -1278,7 +1275,7 @@ func Test_sendMetaWorker_sendsEveryMetadataType(t *testing.T) {
 	agent.metaChan <- sqlUidMeta{uid: []byte{1, 2}, sql: "SELECT 2"}
 	agent.metaChan <- exceptionMeta{
 		spanId:     4,
-		exceptions: []*exception{{exceptionId: 5, callstack: &errorWithCallStack{err: errors.New("boom")}}},
+		exceptions: []*exception{{exceptionId: 5, err: errors.New("boom")}},
 	}
 
 	agent.workerWg.Add(1)
@@ -1778,7 +1775,6 @@ func newBoundedSpanGrpc(agent *agent, client *mockSpanGrpcClient) *spanGrpc {
 	spanGrpc.batchSize = 1
 	spanGrpc.batchFlushTimeout = 10 * time.Millisecond
 	spanGrpc.batchCollectDeadline = 10 * time.Millisecond
-	spanGrpc.maxConcurrentRequests = 1
 	spanGrpc.concurrentRequestPermit = make(chan struct{}, 1)
 	return spanGrpc
 }
@@ -2282,9 +2278,9 @@ func Test_cmdGrpc_sendActiveThreadDump(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	_, client := newMockCmdGrpc(agent)
 
-	dump := newGoroutineDump()
+	dump := &goroutineDump{}
 	for id := int64(1); id <= 2; id++ {
-		dump.add(testGoroutine(id))
+		dump.goroutines = append(dump.goroutines, testGoroutine(id))
 	}
 
 	agent.cmdGrpc.sendActiveThreadDump(1, 0, []string{"goroutine 2"}, dump)

@@ -25,7 +25,7 @@ func Test_newSpanEvent(t *testing.T) {
 func Test_spanEvent_end(t *testing.T) {
 	span := defaultTestSpan()
 	se := newSpanEvent(span, "t1")
-	span.appendSpanEvent(se)
+	span.eventStack.push(se)
 	assert.Equal(t, se.parentSpan.eventDepth.Load(), int32(2), "eventDepth")
 
 	time.Sleep(100 * time.Millisecond)
@@ -34,21 +34,6 @@ func Test_spanEvent_end(t *testing.T) {
 	assert.Equal(t, se.operationName, "t1", "operationName")
 	assert.Equal(t, se.parentSpan.eventDepth.Load(), int32(1), "eventDepth")
 	assert.Greater(t, se.endElapsed, int64(99), "endElapsed")
-}
-
-func Test_spanEvent_generateNextSpanId(t *testing.T) {
-	span := defaultTestSpan()
-	se := newSpanEvent(span, "t1")
-	id := se.generateNextSpanId()
-	assert.Equal(t, se.operationName, "t1", "operationName")
-	assert.Equal(t, se.nextSpanId, id, "nextSpanId")
-	assert.NotEqual(t, se.nextSpanId, int64(0), "nextSpanId")
-
-	// the event path must avoid the parent span's ids as well
-	se.parentSpan.spanId = 10
-	se.parentSpan.parentSpanId = 20
-	stubSpanIdGenerator(t, 10, 20, -1, 30)
-	assert.Equal(t, int64(30), se.generateNextSpanId(), "nextSpanId on collision")
 }
 
 func Test_SetError_AbbreviatesMessage(t *testing.T) {
@@ -405,12 +390,10 @@ func Test_spanEvent_SetErrorRateLimitsExceptionChain(t *testing.T) {
 
 			assert.Equal(t, int32(ErrorCategoryException), span.err.Load(), "span failure marking")
 			if tt.sampled {
-				assert.NotZero(t, se.exceptionId, "exceptionId")
 				require.Len(t, se.annotations.values, 1)
 				assert.Equal(t, int32(AnnotationExceptionChainId), se.annotations.values[0].key)
-				assert.Equal(t, se.exceptionId, se.annotations.values[0].l)
+				assert.NotZero(t, se.annotations.values[0].l, "exception chain id")
 			} else {
-				assert.Zero(t, se.exceptionId, "exceptionId")
 				assert.Empty(t, se.annotations.values, "annotations")
 			}
 		})

@@ -116,9 +116,9 @@ func Test_parseProfileSkipsUntrackedBlocksAndReadsHeaders(t *testing.T) {
 }
 
 func Test_makePActiveThreadDumpListPreservesRequestedOrderAndLimit(t *testing.T) {
-	dump := newGoroutineDump()
+	dump := &goroutineDump{}
 	for id := int64(1); id <= 3; id++ {
-		dump.add(testGoroutine(id))
+		dump.goroutines = append(dump.goroutines, testGoroutine(id))
 	}
 
 	got := makePActiveThreadDumpList(dump, 2, []string{"goroutine 3", "missing", "goroutine 1", "goroutine 2"})

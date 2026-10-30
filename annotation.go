@@ -189,7 +189,7 @@ func (a *annotation) getListInto(b *spanMessageBuilder) []*pb.PAnnotation {
 }
 
 // getList materializes the list on a throwaway builder, so the result is
-// plainly GC-owned. Non-transport callers (JsonString) use this.
+// plainly GC-owned. Non-transport callers (SpanJSON) use this.
 func (a *annotation) getList() []*pb.PAnnotation {
 	return a.getListInto(&spanMessageBuilder{})
 }

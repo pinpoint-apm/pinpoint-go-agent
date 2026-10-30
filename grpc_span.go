@@ -17,13 +17,12 @@ import (
 
 // spanGrpc sends spans as unary SendSpanBatch requests.
 type spanGrpc struct {
-	spanConn              *grpc.ClientConn
-	spanClient            pb.SpanClient
-	agent                 *agent
-	batchSize             int
-	batchFlushTimeout     time.Duration
-	batchCollectDeadline  time.Duration
-	maxConcurrentRequests int
+	spanConn             *grpc.ClientConn
+	spanClient           pb.SpanClient
+	agent                *agent
+	batchSize            int
+	batchFlushTimeout    time.Duration
+	batchCollectDeadline time.Duration
 
 	// Buffered channel used as a semaphore that bounds the number of
 	// in-flight SendSpanBatch requests. Acquire = send to it; release =
@@ -50,7 +49,6 @@ func newSpanGrpc(agent *agent) (*spanGrpc, error) {
 		batchSize:               agent.config.Int(CfgCollectorGrpcSpanBatchSize),
 		batchFlushTimeout:       time.Duration(agent.config.Int(CfgCollectorGrpcSpanBatchFlushInterval)) * time.Millisecond,
 		batchCollectDeadline:    time.Duration(agent.config.Int(CfgCollectorGrpcSpanBatchCollectDeadline)) * time.Millisecond,
-		maxConcurrentRequests:   agent.config.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests),
 		concurrentRequestPermit: make(chan struct{}, agent.config.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests)),
 	}
 	s.compress.Store(agent.config.String(CfgCollectorGrpcCompression) == compressionGzip)
@@ -127,20 +125,18 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 			len(chunks),
 			spanGrpc.batchFlushTimeout.String(),
 			len(spanGrpc.concurrentRequestPermit),
-			spanGrpc.maxConcurrentRequests,
+			cap(spanGrpc.concurrentRequestPermit),
 		)
 		return
 	}
 
-	spanGrpc.inFlight.Add(1)
-	go func() {
-		defer spanGrpc.inFlight.Done()
+	spanGrpc.inFlight.Go(func() {
 		defer spanGrpc.releaseSpanBatchPermit()
 
 		// The message is built here rather than on the worker so that the
 		// defers above cover the build too. A panic in makePSpanMessageBatch
 		// on the worker was recovered by superviseWorker, which restarted the
-		// worker but could not return this permit: maxConcurrentRequests such
+		// worker but could not return this permit: as many such
 		// panics left every later batch waiting out the flush timeout and
 		// being dropped for the life of the agent.
 		builder := acquireSpanMessageBuilder()
@@ -183,7 +179,7 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 				spanGrpc.sendSpanMessageBatch(&pb.PSpanMessageBatch{Span: msgs})
 			}
 		})
-	}()
+	})
 }
 
 // sendSpanMessageBatch makes one SendSpanBatch call under sendStreamTimeOut.
@@ -253,7 +249,8 @@ func describeSpanMessage(m *pb.PSpanMessage) string {
 }
 
 // acquireSpanBatchPermit waits up to the configured flush timeout for an async batch request slot.
-// The buffered channel acts like the semaphore: its capacity is maxConcurrentRequests.
+// The buffered channel acts like the semaphore: its capacity is
+// Collector.Grpc.SpanBatchMaxConcurrentRequests.
 func (spanGrpc *spanGrpc) acquireSpanBatchPermit() bool {
 	// A free permit is the normal case; take it without allocating a timer.
 	select {

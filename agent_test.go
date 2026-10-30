@@ -488,7 +488,7 @@ func Test_agent_SQLIdCacheIgnoresLengthLimit(t *testing.T) {
 			second := a.cacheSql(sql)
 
 			assert.Equal(t, first, second, "the same sql must keep its id")
-			assert.Equal(t, int32(1), atomic.LoadInt32(&a.sqlIdGen.id), "only one id may be issued")
+			assert.Equal(t, int32(1), a.sqlIdGen.id.Load(), "only one id may be issued")
 			assert.Len(t, a.metaChan, 1, "metadata must be enqueued once")
 		})
 	}
@@ -515,7 +515,7 @@ func Test_agent_MetadataCachesDropOverflowedIds(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			a := newTestAgent(defaultConfig())
 			gen := tt.gen(a)
-			gen.id = math.MaxInt32
+			gen.id.Store(math.MaxInt32)
 
 			assert.Zero(t, tt.cache(a), "an overflowed id must not be recorded")
 			assert.Empty(t, a.metaChan, "no metadata may be enqueued for a dropped id")
@@ -523,7 +523,7 @@ func Test_agent_MetadataCachesDropOverflowedIds(t *testing.T) {
 			// The wrap latches: left unlatched the sequence climbs back through
 			// the negatives and starts reissuing ids that already name entries.
 			assert.True(t, gen.wrapped.Load(), "the wrap must latch")
-			gen.id = 0
+			gen.id.Store(0)
 			assert.Zero(t, tt.cache(a), "a latched sequence must not resume")
 		})
 	}
@@ -535,20 +535,21 @@ func Test_idGen_next(t *testing.T) {
 	assert.Equal(t, int32(1), g.next("test"))
 	assert.Equal(t, int32(2), g.next("test"))
 
-	g.id = math.MaxInt32
+	g.id.Store(math.MaxInt32)
 	assert.Zero(t, g.next("test"), "a wrapped sequence issues nothing")
 	assert.Zero(t, g.next("test"), "and stays wrapped")
 }
 
-func Test_agent_tryEnqueueMetaReturnsWhenDropRaceLeavesQueueEmpty(t *testing.T) {
+func Test_agent_enqueueMetaReturnsWhenDropRaceLeavesQueueEmpty(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agent.metaChan = make(chan any)
 
-	result := callBoolWithTimeout(t, "tryEnqueueMeta", func() bool {
-		return agent.tryEnqueueMeta(stringMeta{id: 1, funcName: "error"})
+	callBoolWithTimeout(t, "enqueueMeta", func() bool {
+		agent.enqueueMeta(stringMeta{id: 1, funcName: "error"})
+		return true
 	})
 
-	assert.False(t, result)
+	assert.EqualValues(t, 1, agent.metaDrops.dropped.Load(), "the refused item is counted as a drop")
 }
 
 // An unbuffered urlStatChan makes every send and receive miss: the eviction
@@ -996,9 +997,9 @@ func Test_agent_MetaQueueFullMintsNoId(t *testing.T) {
 		assert.Nil(t, a.cacheSqlUid("select 2"), "no sql uid while the queue is full")
 		assert.Zero(t, a.cacheSpanApi("api", apiTypeDefault), "no api id while the queue is full")
 	}
-	assert.EqualValues(t, 0, a.errorIdGen.id-2, "no id spent on the refused uses")
-	assert.EqualValues(t, 0, a.sqlIdGen.id)
-	assert.EqualValues(t, 0, a.apiIdGen.id)
+	assert.EqualValues(t, 0, a.errorIdGen.id.Load()-2, "no id spent on the refused uses")
+	assert.EqualValues(t, 0, a.sqlIdGen.id.Load())
+	assert.EqualValues(t, 0, a.apiIdGen.id.Load())
 	assert.EqualValues(t, 12, a.metaDrops.dropped.Load(), "every refused use counts as a drop")
 	_, cached := a.errorCache.peek("boom")
 	assert.False(t, cached, "a refused item is not cached")

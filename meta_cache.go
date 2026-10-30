@@ -102,10 +102,7 @@ func newMetaCache[K comparable, V any](capacity int) *metaCache[K, V] {
 			perShard = 0 // never selected by shard()
 		}
 		s.cap = perShard
-		s.ageThreshold = uint64(perShard / 2)
-		if s.ageThreshold < 1 {
-			s.ageThreshold = 1
-		}
+		s.ageThreshold = uint64(max(perShard/2, 1))
 	}
 	return c
 }

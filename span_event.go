@@ -24,7 +24,6 @@ type spanEvent struct {
 	asyncSeqGen   int32
 	apiId         int32
 	isTimeFixed   bool
-	exceptionId   int64
 	// finished is set by end(). From then on the event may sit in a chunk the
 	// sender goroutine is serializing, so every public setter becomes a no-op
 	// instead of racing with makePSpanEvent.
@@ -53,7 +52,7 @@ func defaultSpanEvent(span *span, operationName string, sequence int32, depth in
 }
 
 func newSpanEventGoroutine(span *span) *spanEvent {
-	// Reserved like any other event, and never refused: newAsyncSpan builds
+	// Reserved like any other event, and never refused: NewGoroutineTracer builds
 	// the span it passes here, so the reservation is the span's first, (0, 1),
 	// which no call stack limit can be below.
 	sequence, depth := span.reserveEventPosition()
@@ -93,11 +92,6 @@ func (se *spanEvent) warnIfFinished(setter string) bool {
 	return true
 }
 
-func (se *spanEvent) generateNextSpanId() int64 {
-	se.nextSpanId = nextSpanId(se.parentSpan.spanId, se.parentSpan.parentSpanId)
-	return se.nextSpanId
-}
-
 func (se *spanEvent) SetError(e error, errorName ...string) {
 	// After EndSpan the span is on its way to the sender goroutine; a
 	// retained recorder must not write into it (see doc/api_contracts.md 5).
@@ -105,18 +99,13 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 		return
 	}
 
-	var errName string
-	if len(errorName) > 0 {
-		errName = errorName[0]
-	} else {
-		errName = errorTypeName(e)
-	}
+	errName := errorNameOf(e, errorName)
 
-	id := se.agent().cacheError(errName)
+	id := se.parentSpan.agent.cacheError(errName)
 	se.errorFuncId = id
 	se.errorString = abbreviateString(e.Error(), maxErrorMessageSize)
 
-	cfg := se.config()
+	cfg := se.parentSpan.cfg
 	// Marking the span failed drives PSpan.err, the URL stat failed histogram
 	// and the scatter failure point. An error matching Span.IgnoreErrors keeps
 	// its exception info but skips that marking.
@@ -130,7 +119,6 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 		// A chain the Error.NewThroughput limiter denied, or one refused by the
 		// entry cap, never reaches the wire, so it gets no annotation either.
 		if eid := se.parentSpan.traceCallStack(e, errName, cfg.errorCallStackDepth, time.UnixMilli(se.startTime)); eid != noExceptionChainId {
-			se.exceptionId = eid
 			se.Annotations().AppendLong(AnnotationExceptionChainId, eid)
 		}
 	}
@@ -166,8 +154,8 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 		return
 	}
 
-	agent := se.agent()
-	cfg := se.config()
+	agent := se.parentSpan.agent
+	cfg := se.parentSpan.cfg
 
 	// A statement past the normalization cap is dropped whole - not counted,
 	// not normalized, not annotated. Cutting it and normalizing the rest would
@@ -256,12 +244,4 @@ func (se *spanEvent) FixDuration(start time.Time, end time.Time) {
 	se.startTime = start.UnixMilli()
 	se.endElapsed = end.UnixMilli() - se.startTime
 	se.isTimeFixed = true
-}
-
-func (se *spanEvent) agent() *agent {
-	return se.parentSpan.agent
-}
-
-func (se *spanEvent) config() *configSnapshot {
-	return se.parentSpan.cfg
 }

@@ -76,18 +76,10 @@ type spanQueueShard struct {
 }
 
 func newSpanQueue(capacity int) *spanQueue {
-	if capacity < 1 {
-		capacity = 1
-	}
+	capacity = max(capacity, 1)
 	// Tiny queues gain no useful contention reduction from near-empty shards
 	// and would unnecessarily relax their FIFO behavior.
-	shardCount := capacity / spanQueueMinShardCap
-	if shardCount > spanQueueMaxShards {
-		shardCount = spanQueueMaxShards
-	}
-	if shardCount < 1 {
-		shardCount = 1
-	}
+	shardCount := min(max(capacity/spanQueueMinShardCap, 1), spanQueueMaxShards)
 
 	q := &spanQueue{
 		shards:   make([]spanQueueShard, shardCount),

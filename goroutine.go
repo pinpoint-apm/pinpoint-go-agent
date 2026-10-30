@@ -66,10 +66,11 @@ func (g *goroutine) threadState() pb.PThreadState {
 }
 
 func newGoroutine(id int64, state string, line []byte) *goroutine {
+	state, _, _ = strings.Cut(state, ",")
 	g := &goroutine{
 		id:     id,
 		header: goroutineHeaderPrefix + strconv.FormatInt(id, 10),
-		state:  strings.TrimSpace(strings.Split(state, ",")[0]),
+		state:  strings.TrimSpace(state),
 		buf:    &bytes.Buffer{},
 	}
 	g.addLine(line)
@@ -114,10 +115,6 @@ type goroutineDump struct {
 	goroutines []*goroutine
 }
 
-func (gd *goroutineDump) add(g *goroutine) {
-	gd.goroutines = append(gd.goroutines, g)
-}
-
 // indexByHeader indexes only the requested names, keeping the full/light dump
 // parse path unchanged while reducing selection from M scans of A goroutines
 // to one scan plus M lookups.
@@ -141,12 +138,6 @@ func (gd *goroutineDump) indexByHeader(names []string) map[string]*goroutine {
 		}
 	}
 	return index
-}
-
-func newGoroutineDump() *goroutineDump {
-	return &goroutineDump{
-		goroutines: []*goroutine{},
-	}
 }
 
 func dumpGoroutine(agent *agent) *goroutineDump {
@@ -183,7 +174,7 @@ func dumpGoroutineProfile(agent *agent, write func(io.Writer) error) (dump *goro
 // block is skipped line by line without a goroutine struct or a buffer, where
 // collecting it first copied the whole dump a second time only to drop it.
 func parseProfile(r io.Reader, agent *agent) *goroutineDump {
-	dump := newGoroutineDump()
+	dump := &goroutineDump{}
 	// g collects the stack lines of a tracked goroutine; inBlock says a block
 	// is open, tracked or not, so a header is looked for only between blocks.
 	var g *goroutine
@@ -211,7 +202,7 @@ func parseProfile(r io.Reader, agent *agent) *goroutineDump {
 		if v, ok := agent.realTimeActiveSpan.Load(id); ok {
 			g = newGoroutine(id, string(state), line)
 			g.span = v.(*activeSpanInfo)
-			dump.add(g)
+			dump.goroutines = append(dump.goroutines, g)
 		}
 	}
 
@@ -231,16 +222,12 @@ func curGoroutineID() int64 {
 	}
 }
 
-var prefix = len("goroutine ")
-
+// goIdFromDump reads the id off the header of the current goroutine's stack,
+// which fits the 64 bytes with room to spare.
 func goIdFromDump() int64 {
-	b := make([]byte, 64)
-	b = b[prefix:runtime.Stack(b, false)]
-	idStr := string(b[:bytes.IndexByte(b, ' ')])
-	if IsDebugLogLevelEnabled() {
-		Log("cmd").Debugf("goroutine id from stack: %q", idStr)
-	}
-	id, _ := strconv.ParseInt(idStr, 10, 64)
+	var b [64]byte
+	line, _, _ := bytes.Cut(b[:runtime.Stack(b[:], false)], []byte{'\n'})
+	id, _, _ := parseGoroutineHeader(line)
 	return id
 }
 

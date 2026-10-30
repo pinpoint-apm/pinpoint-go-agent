@@ -126,10 +126,7 @@ const (
 // backOffSleep returns how long to wait before reconnect attempt+1, with the
 // first attempt numbered 0.
 func backOffSleep(attempt int) time.Duration {
-	dur := float64(backOffInitialInterval) * math.Pow(backOffMultiplier, float64(attempt))
-	if dur > float64(backOffMaxInterval) {
-		dur = float64(backOffMaxInterval)
-	}
+	dur := min(float64(backOffInitialInterval)*math.Pow(backOffMultiplier, float64(attempt)), float64(backOffMaxInterval))
 
 	// Randomize so agents restarted together do not reconnect in lockstep. The
 	// interval lands within +/-30% of the ceiling rather than always on it.
@@ -928,11 +925,11 @@ func makePExceptionList(exceptions []*exception) []*pb.PException {
 }
 
 func makePException(e *exception) *pb.PException {
-	frames := e.callstack.stackTrace()
+	frames := e.stackTrace()
 	return &pb.PException{
 		ExceptionClassName: validUTF8(e.className),
-		ExceptionMessage:   validUTF8(abbreviateString(e.callstack.err.Error(), maxExceptionMessageSize)),
-		StartTime:          e.callstack.errorTime.UnixNano() / int64(time.Millisecond),
+		ExceptionMessage:   validUTF8(abbreviateString(e.err.Error(), maxExceptionMessageSize)),
+		StartTime:          e.errorTime.UnixMilli(),
 		ExceptionId:        e.exceptionId,
 		ExceptionDepth:     e.depth,
 		StackTraceElement:  makePStackTraceElementList(frames),

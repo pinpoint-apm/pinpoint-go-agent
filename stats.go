@@ -421,20 +421,14 @@ func (stats *agentStats) cpuLoad() (float64, float64) {
 // numCPU is runtime.NumCPU(), which under a cgroup CPU quota can exceed the
 // cores the process may actually use; honoring the quota is out of scope.
 func normalizeCpuLoad(procPercent, sysPercent float64, numCPU int) (float64, float64) {
-	if numCPU < 1 {
-		numCPU = 1
-	}
-	return clampUnit(procPercent / 100 / float64(numCPU)), clampUnit(sysPercent / 100)
+	return clampUnit(procPercent / 100 / float64(max(numCPU, 1))), clampUnit(sysPercent / 100)
 }
 
 func clampUnit(v float64) float64 {
-	if v != v || v < 0 { // NaN or negative
+	if v != v { // NaN, which min and max would pass on
 		return 0
 	}
-	if v > 1 {
-		return 1
-	}
-	return v
+	return min(max(v, 0), 1)
 }
 
 // getStats samples the agent and reports the measured collection interval in

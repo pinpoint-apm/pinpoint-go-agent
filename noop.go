@@ -49,10 +49,9 @@ func (agent *noopAgent) Shutdown() {
 }
 
 type noopSpan struct {
-	agent   *agent
-	cfg     *configSnapshot
-	spanId  int64
-	rpcName string
+	agent  *agent
+	cfg    *configSnapshot
+	spanId int64
 	// requestStats: the per-request statistics shared with span. withStats
 	// says whether this span keeps them at all: only the unsampled span of a
 	// real request does, never the shared singleton or an async child.
@@ -98,7 +97,6 @@ func newUnSampledSpan(agent *agent, rpcName string) *noopSpan {
 	span.cfg = agent.config.load()
 	span.spanId = generateSpanId()
 	span.startTime = time.Now()
-	span.rpcName = rpcName
 	span.withStats.Store(true)
 	span.unsampled = true
 
@@ -179,10 +177,7 @@ func (span *noopSpan) SetError(e error, errorName ...string) {
 	if e == nil || !root.withStats.Load() {
 		return // see SetFailure for why the singleton is never written
 	}
-	errName := errorTypeName(e)
-	if len(errorName) > 0 {
-		errName = errorName[0]
-	}
+	errName := errorNameOf(e, errorName)
 	if !root.cfg.ignoreError(e, errName) && root.cfg.marksError(ErrorCategoryException) {
 		root.statusErr.Store(1)
 	}
@@ -251,11 +246,6 @@ func (span *noopSpan) AddMetric(metric string, value any) {
 			span.collectUrlStat(entry)
 		}
 	}
-}
-
-// JsonString is what json.Marshal makes of a struct with no exported fields.
-func (span *noopSpan) JsonString() []byte {
-	return []byte("{}")
 }
 
 type noopSpanEvent struct {

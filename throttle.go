@@ -1,6 +1,7 @@
 package pinpoint
 
 import (
+	"cmp"
 	"sync/atomic"
 	"time"
 
@@ -12,8 +13,9 @@ import (
 var dropReportInterval = 60 * time.Second
 
 // headDropEnqueue queues v on ch and, when ch is full, head-drops the oldest
-// record to make room - the policy of the url stat and stat queues, and of
-// tryEnqueueMeta. An overflow costs exactly one record: the evicted one, or v
+// record to make room - the policy of the url stat and stat queues; the
+// metadata queue refuses the newcomer instead (enqueueMeta). An overflow
+// costs exactly one record: the evicted one, or v
 // itself when another producer takes the freed slot first. It reports whether
 // v was queued and how many records were lost.
 func headDropEnqueue[T any](ch chan T, v T) (queued bool, dropped int64) {
@@ -59,17 +61,11 @@ func (r *dropReporter) record(n int64) {
 // report logs the running total at most once per dropReportInterval, and only
 // when drops have accumulated since the last warning. WARN so the data loss is
 // visible at the default log level, rate-limited so a saturated queue cannot
-// log once per dropped record. Like reportTotal, it returns how long the limit
-// holds back a total it did not log.
+// log once per dropped record. It returns how long the limit holds back a
+// total it did not log, for a consumer that would otherwise go quiet before
+// reporting it.
 func (r *dropReporter) report(queue string, queueSize int) time.Duration {
-	return r.reportTotal(r.dropped.Load(), queue, queueSize)
-}
-
-// reportTotal is report for a queue that keeps its own drop counter: total is
-// that queue's running total, so the reporter contributes only the rate limit.
-// It returns how long that limit holds back a total it did not log, for a
-// consumer that would otherwise go quiet before reporting it.
-func (r *dropReporter) reportTotal(total int64, queue string, queueSize int) time.Duration {
+	total := r.dropped.Load()
 	held, ok := r.acquire(total)
 	if !ok {
 		return held
@@ -173,9 +169,5 @@ func (t *logThrottle) emit(level logrus.Level, format string, args []any, n int6
 		format += " (%d similar line(s) suppressed)"
 		args = append(args, n)
 	}
-	src := t.src
-	if src == "" {
-		src = "span"
-	}
-	Log(src).log(level, format, args...)
+	Log(cmp.Or(t.src, "span")).log(level, format, args...)
 }

@@ -77,13 +77,6 @@ func newUrlStats(config *Config) *urlStats {
 	return stats
 }
 
-// completedTick is readable once a tick has been closed onto the completed
-// queue since the previous read. Several closes coalesce into one wakeup;
-// takeSnapshot drains the whole queue anyway.
-func (stats *urlStats) completedTick() <-chan struct{} {
-	return stats.completedWake
-}
-
 func (stats *urlStats) newSnapshot() *urlStatSnapshot {
 	return &urlStatSnapshot{
 		urlMap: make(map[urlKey]*eachUrlStat),
@@ -200,7 +193,6 @@ func (stats *urlStats) tickIsOverLocked(now time.Time) bool {
 type urlStatSnapshot struct {
 	urlMap map[urlKey]*eachUrlStat
 	config *configSnapshot
-	count  int
 	// tick is the newest tick accepted so far, and is the boundary
 	// urlStats.add cuts on. Advanced by max rather than by last, so an
 	// out-of-order straggler cannot move it back and cut the same tick twice.
@@ -226,7 +218,6 @@ func (snapshot *urlStatSnapshot) merge(other *urlStatSnapshot) {
 			continue
 		}
 		snapshot.urlMap[key] = stat
-		snapshot.count++
 	}
 	if snapshot.tick.Before(other.tick) {
 		snapshot.tick = other.tick
@@ -284,7 +275,7 @@ func (snapshot *urlStatSnapshot) add(us *urlStat) {
 
 	e, ok := snapshot.urlMap[key]
 	if !ok {
-		if snapshot.count >= snapshot.config.urlStatLimitSize {
+		if len(snapshot.urlMap) >= snapshot.config.urlStatLimitSize {
 			// Lazy: displayUrl builds a string, and at the limit every
 			// request with a new pattern reaches this line.
 			urlStatLimitLog.warnLazy(
@@ -294,7 +285,6 @@ func (snapshot *urlStatSnapshot) add(us *urlStat) {
 		}
 		e = newEachUrlStat(key.displayUrl(), key.tick)
 		snapshot.urlMap[key] = e
-		snapshot.count++
 	}
 
 	// Only accepted entries advance the cut boundary: an entry the limit

@@ -4,7 +4,6 @@ import (
 	"context"
 	"slices"
 	"sync/atomic"
-	"time"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 
@@ -124,7 +123,7 @@ func makePEachUriStat(e *eachUrlStat) *pb.PEachUriStat {
 		Uri:             validUTF8(e.url),
 		TotalHistogram:  makePUriHistogram(&e.totalHistogram),
 		FailedHistogram: makePUriHistogram(&e.failedHistogram),
-		Timestamp:       e.tickTime.UnixNano() / int64(time.Millisecond),
+		Timestamp:       e.tickTime.UnixMilli(),
 	}
 }
 

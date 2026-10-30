@@ -1064,7 +1064,7 @@ func TestNewHttpServerTracer_BlankSpanIdHeaderContinuesTheTrace(t *testing.T) {
 		"an absent span id header starts a new transaction")
 }
 
-// spanJson is the subset of a span JsonString asserts against.
+// spanJson is the subset of pinpoint.SpanJSON's output the tests assert against.
 type spanJson struct {
 	RpcName     string        `json:"RpcName"`
 	EndPoint    string        `json:"EndPoint"`

@@ -19,12 +19,6 @@ type causer interface {
 	Cause() error
 }
 
-type errorWithCallStack struct {
-	err       error
-	errorTime time.Time
-	callstack []uintptr
-}
-
 // errorTypeName names the error by its dynamic type with any pointer stripped,
 // e.g. "errors.withStack".
 func errorTypeName(err error) string {
@@ -71,12 +65,12 @@ func errorCallStack(err error) []uintptr {
 // symbolizes the program counters in one pass and expands the frames the
 // compiler inlined; FuncForPC on each counter missed those and cost a lookup
 // per frame.
-func (e *errorWithCallStack) stackTrace() []frame {
-	if len(e.callstack) == 0 {
+func (e *exception) stackTrace() []frame {
+	if len(e.pcs) == 0 {
 		return nil
 	}
-	f := make([]frame, 0, len(e.callstack))
-	frames := runtime.CallersFrames(e.callstack)
+	f := make([]frame, 0, len(e.pcs))
+	frames := runtime.CallersFrames(e.pcs)
 	for {
 		fr, more := frames.Next()
 		f = append(f, newFrame(fr))
@@ -141,7 +135,7 @@ func sameError(a, b error) (same bool) {
 
 func (span *span) findError(err error) *exception {
 	for _, chain := range span.errorChains {
-		if sameError(chain.callstack.err, err) {
+		if sameError(chain.err, err) {
 			return chain
 		}
 	}
@@ -242,14 +236,12 @@ func (span *span) addCauserCallStack(err error, eid int64, errorTime time.Time) 
 			break
 		}
 		span.errorChains = append(span.errorChains, &exception{
-			callstack: &errorWithCallStack{
-				err:       e,
-				errorTime: errorTime,
-				callstack: errorCallStack(e),
-			},
 			exceptionId: eid,
 			depth:       int32(depth),
 			className:   errorTypeName(e),
+			err:         e,
+			errorTime:   errorTime,
+			pcs:         errorCallStack(e),
 		})
 	}
 }
@@ -286,13 +278,11 @@ func (span *span) traceCallStack(err error, className string, depth int, errorTi
 
 		existing := len(span.errorChains)
 		span.errorChains = append(span.errorChains, &exception{
-			callstack: &errorWithCallStack{
-				err:       err,
-				errorTime: errorTime,
-				callstack: callstack,
-			},
 			exceptionId: eid,
 			className:   className,
+			err:         err,
+			errorTime:   errorTime,
+			pcs:         callstack,
 		})
 		span.addCauserCallStack(err, eid, errorTime)
 

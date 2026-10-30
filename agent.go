@@ -807,7 +807,7 @@ func (agent *agent) shutdownAgent() {
 	if agent.urlStatChan != nil {
 		late := agent.drainUrlStatChan()
 		if snapshot := agent.urlStats.takeSnapshot(true); !snapshot.isEmpty() {
-			late += snapshot.count
+			late += len(snapshot.urlMap)
 		}
 		if late > 0 {
 			agent.urlStatDrops.record(int64(late))
@@ -1070,7 +1070,7 @@ func (agent *agent) collectUrlStatWorker() {
 func (agent *agent) sendUrlStatWorker() {
 	Log("agent").Infof("start send uri stat goroutine")
 
-	// A completed tick is sent as soon as urlStats closes it (completedTick);
+	// A completed tick is sent as soon as urlStats closes it (completedWake);
 	// the ticker is only the ceiling on the trailing tick of an agent whose
 	// traffic stopped, which nothing arrives to close. It rides the agent stat
 	// interval rather than a second timer of its own. Read once:
@@ -1079,7 +1079,7 @@ func (agent *agent) sendUrlStatWorker() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	stop := agent.stopSignal().Done()
-	completed := agent.urlStats.completedTick()
+	completed := agent.urlStats.completedWake
 
 	for agent.workerContinues() {
 		select {

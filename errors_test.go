@@ -63,9 +63,9 @@ func TestSpan_TraceCallStackChainDepthAndClassName(t *testing.T) {
 				assert.Equal(t, eid, ec.exceptionId, "exception id")
 				assert.Equal(t, int32(i), ec.depth, "depth")
 				assert.Equal(t, tt.classNames[i], ec.className, "class name")
-				assert.Equal(t, start, ec.callstack.errorTime, "start time")
+				assert.Equal(t, start, ec.errorTime, "start time")
 			}
-			assert.Same(t, inner, span.errorChains[len(span.errorChains)-1].callstack.err)
+			assert.Same(t, inner, span.errorChains[len(span.errorChains)-1].err)
 			assertChainDepthsContiguous(t, span)
 		})
 	}
@@ -79,7 +79,7 @@ func TestSpan_TraceCallStackJoinedErrorFollowsFirstCause(t *testing.T) {
 	span.traceCallStack(errors.Join(first, second), "", 32, time.Now())
 
 	require.Len(t, span.errorChains, 2)
-	assert.Same(t, first, span.errorChains[1].callstack.err, "first element recorded")
+	assert.Same(t, first, span.errorChains[1].err, "first element recorded")
 	assertChainDepthsContiguous(t, span)
 }
 
@@ -105,7 +105,7 @@ func TestSpan_TraceCallStackCollectsConfiguredDepth(t *testing.T) {
 			})
 
 			require.Len(t, span.errorChains, 1)
-			assert.Len(t, span.errorChains[0].callstack.callstack, depth, "frames captured")
+			assert.Len(t, span.errorChains[0].pcs, depth, "frames captured")
 		})
 	}
 }
@@ -123,7 +123,7 @@ func TestSpan_TraceCallStackSkipsAgentFrames(t *testing.T) {
 	setErrorFrame(span, errors.New("boom"))
 
 	require.Len(t, span.errorChains, 1)
-	frames := span.errorChains[0].callstack.stackTrace()
+	frames := span.errorChains[0].stackTrace()
 	require.NotEmpty(t, frames)
 	assert.Equal(t, "TestSpan_TraceCallStackSkipsAgentFrames", frames[0].funcName)
 }
@@ -302,9 +302,9 @@ func TestSpan_TraceCallStackRenumbersJoinedChain(t *testing.T) {
 
 	require.Len(t, span.errorChains, 3)
 	assert.Equal(t, []int32{2, 0, 1}, chainDepths(span), "outermost error at depth 0")
-	assert.Same(t, inner, span.errorChains[0].callstack.err, "depth 2")
-	assert.Same(t, outer, span.errorChains[1].callstack.err, "depth 0")
-	assert.Same(t, mid, span.errorChains[2].callstack.err, "depth 1")
+	assert.Same(t, inner, span.errorChains[0].err, "depth 2")
+	assert.Same(t, outer, span.errorChains[1].err, "depth 0")
+	assert.Same(t, mid, span.errorChains[2].err, "depth 1")
 	assertChainDepthsContiguous(t, span)
 }
 

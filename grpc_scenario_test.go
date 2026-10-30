@@ -83,7 +83,6 @@ func Test_sendSpanBatchWorker_resumesAfterCollectorOutage(t *testing.T) {
 	agent.spanGrpc.spanClient = client
 	agent.spanGrpc.batchSize = 1 // one chunk per batch keeps the count exact
 	agent.spanGrpc.batchCollectDeadline = time.Millisecond
-	agent.spanGrpc.maxConcurrentRequests = 2
 	agent.spanGrpc.concurrentRequestPermit = make(chan struct{}, 2)
 
 	for i := 0; i < 4; i++ {
@@ -361,7 +360,6 @@ func Test_spanWorkers_warnAboutSaturatedQueue(t *testing.T) {
 	agent.spanGrpc.spanClient = client
 	agent.spanGrpc.batchSize = 1 // one cycle per chunk, so the poll repeats
 	agent.spanGrpc.batchCollectDeadline = time.Millisecond
-	agent.spanGrpc.maxConcurrentRequests = 2
 	agent.spanGrpc.concurrentRequestPermit = make(chan struct{}, 2)
 
 	var buf bytes.Buffer

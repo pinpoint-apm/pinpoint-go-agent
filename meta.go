@@ -57,7 +57,9 @@ type exception struct {
 	exceptionId int64
 	depth       int32  // 0 for the recorded error, 1..n down its cause chain
 	className   string // SetError name or the error's Go type name
-	callstack   *errorWithCallStack
+	err         error
+	errorTime   time.Time // start of the span event that failed
+	pcs         []uintptr // the error's own stack, or the one SetError was called from
 }
 
 func (agent *agent) sendMetaWorker() {
@@ -103,10 +105,10 @@ func (agent *agent) sendMetaWorker() {
 			if !agent.tracingEnabled() {
 				return
 			}
-			var ok, stopped bool
-			if item, ok, stopped = agent.awaitMeta(stop, held); stopped {
-				continue // recheck the queue before exiting
-			} else if !ok {
+			// Nothing to send yet, or the stop signal: either way recheck the
+			// queue, which exits once it is empty.
+			var ok bool
+			if item, ok = agent.awaitMeta(stop, held); !ok {
 				continue
 			}
 		}
@@ -120,15 +122,13 @@ func (agent *agent) sendMetaWorker() {
 		// Keep the dequeued item through shutdown. The shared shutdown deadline
 		// closes the collector connection to unblock stalled sends.
 		permit <- struct{}{}
-		inFlight.Add(1)
-		go func(item pendingMeta) {
-			defer inFlight.Done()
+		inFlight.Go(func() {
 			defer func() { <-permit }()
 
 			recoverPanic("meta send", func() {
 				agent.sendMetadataOnce(item)
 			})
-		}(item)
+		})
 	}
 }
 
@@ -138,8 +138,8 @@ func (agent *agent) sendMetaWorker() {
 // retry is only ever appended behind the head, so the head's due time is
 // fixed until it is popped. A held-back drop total arms it sooner, so a burst
 // that ends in silence still gets logged: popDue then finds nothing due, ok
-// is false, and the next cycle reports it. stopped reports the stop signal.
-func (agent *agent) awaitMeta(stop <-chan struct{}, held time.Duration) (item pendingMeta, ok, stopped bool) {
+// is false, and the next cycle reports it. The stop signal returns false too.
+func (agent *agent) awaitMeta(stop <-chan struct{}, held time.Duration) (item pendingMeta, ok bool) {
 	retry := &agent.metaRetry
 	wait, armed := retry.headWait(time.Now())
 	if held > 0 && (!armed || held < wait) {
@@ -153,7 +153,6 @@ func (agent *agent) awaitMeta(stop <-chan struct{}, held time.Duration) (item pe
 	}
 	select {
 	case <-stop:
-		stopped = true
 	case md := <-agent.metaChan:
 		item, ok = pendingMeta{md: md}, true
 	case <-retry.wake:
@@ -163,7 +162,7 @@ func (agent *agent) awaitMeta(stop <-chan struct{}, held time.Duration) (item pe
 	if timer != nil {
 		timer.Stop()
 	}
-	return item, ok, stopped
+	return item, ok
 }
 
 // releaseParkedMeta handles a parked release come due: the drop a rejection
@@ -304,17 +303,15 @@ func (q *metaRetryQueue) init(capacity int) {
 func (q *metaRetryQueue) push(item pendingMeta) (evicted pendingMeta, ok bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if q.capacity > 0 && len(q.items) >= q.capacity {
+	if len(q.items) >= q.capacity {
 		evicted, ok = q.items[0], true
 		q.items[0] = pendingMeta{}
 		q.items = q.items[1:]
 	}
 	q.items = append(q.items, item)
-	if q.wake != nil {
-		select {
-		case q.wake <- struct{}{}:
-		default:
-		}
+	select {
+	case q.wake <- struct{}{}:
+	default:
 	}
 	return evicted, ok
 }
@@ -367,10 +364,24 @@ func (agent *agent) deleteMetaCache(md any) {
 // span pointing at an id the collector never received; dropping it makes the
 // next span register the metadata again. Same policy the send-failure path
 // uses.
+//
+// A new item is refused when the queue is full. Unlike a span, metadata has no
+// recency value, and what differs between the oldest and the newest item is
+// how many spans already reference the id. The producer registers the id in
+// the cache before enqueueing, so the item at the head has been reused by
+// every span that hit its entry while the pipeline stalled; dropping it (and
+// releasing its entry) orphans all of them, while the newcomer is referenced
+// by the one span that created it.
 func (agent *agent) enqueueMeta(md any) {
-	if !agent.tryEnqueueMeta(md) {
-		agent.deleteMetaCache(md)
+	if agent.tracingEnabled() {
+		select {
+		case agent.metaChan <- md:
+			return
+		default:
+			agent.metaDrops.record(1)
+		}
 	}
+	agent.deleteMetaCache(md)
 }
 
 // metaQueueFull reports whether the metadata queue has no room, counting the
@@ -390,35 +401,13 @@ func (agent *agent) metaQueueFull() bool {
 	return true
 }
 
-// tryEnqueueMeta queues md, refusing a new item when the queue is full.
-// Unlike a span, metadata has no recency value, and what differs between
-// the oldest and the newest item is how many spans already reference the id.
-// The producer registers the id in the cache before enqueueing, so the item
-// at the head has been reused by every span that hit its entry while the
-// pipeline stalled; dropping it (and releasing its entry, which the caller
-// does) orphans all of them, while the newcomer is referenced by the one span
-// that created it.
-func (agent *agent) tryEnqueueMeta(md any) bool {
-	if !agent.tracingEnabled() {
-		return false
-	}
-
-	select {
-	case agent.metaChan <- md:
-		return true
-	default:
-		agent.metaDrops.record(1)
-		return false
-	}
-}
-
 // idGen is an agent-local metadata id sequence. The collector keys its API,
 // string and SQL metadata by these int32 ids, so once the sequence wraps past
 // math.MaxInt32 its next lap recycles ids that already name other entries, and
 // the spans carrying them would point at another entry's text. next refuses to
 // issue anything past the wrap instead.
 type idGen struct {
-	id int32
+	id atomic.Int32
 	// wrapped latches the wrap: without it the sequence would climb back
 	// through the negatives and start handing out colliding ids again. Its CAS
 	// also keeps the warning to one line per process.
@@ -432,7 +421,7 @@ func (g *idGen) next(kind string) int32 {
 	if g.wrapped.Load() {
 		return 0
 	}
-	id := atomic.AddInt32(&g.id, 1)
+	id := g.id.Add(1)
 	if id > 0 {
 		return id
 	}

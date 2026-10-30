@@ -181,7 +181,7 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 		},
 		HistogramSchemaType: 2,
 		ActiveThreadCount:   activeThreadCount,
-		TimeStamp:           now.UnixNano() / int64(time.Millisecond),
+		TimeStamp:           now.UnixMilli(),
 	}
 
 	if IsDebugLogLevelEnabled() {
@@ -264,7 +264,7 @@ func makePActiveThreadDumpList(dump *goroutineDump, limit int, threadName []stri
 
 func makePActiveThreadDump(g *goroutine) *pb.PActiveThreadDump {
 	aDump := &pb.PActiveThreadDump{
-		StartTime: g.span.startTime.UnixNano() / int64(time.Millisecond),
+		StartTime: g.span.startTime.UnixMilli(),
 		ThreadDump: &pb.PThreadDump{
 			ThreadName:  g.header,
 			ThreadId:    g.id,
@@ -311,7 +311,7 @@ func makePActiveThreadLightDumpList(dump *goroutineDump, limit int) []*pb.PActiv
 
 func makePActiveThreadLightDump(g *goroutine) *pb.PActiveThreadLightDump {
 	aDump := &pb.PActiveThreadLightDump{
-		StartTime: g.span.startTime.UnixNano() / int64(time.Millisecond),
+		StartTime: g.span.startTime.UnixMilli(),
 		ThreadDump: &pb.PThreadLightDump{
 			ThreadName:  g.header,
 			ThreadId:    g.id,

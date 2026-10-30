@@ -18,6 +18,7 @@ package pinpoint
 
 import (
 	"context"
+	"encoding/json"
 	"iter"
 	"maps"
 	"net"
@@ -112,10 +113,18 @@ func SpanJSON(tracer Tracer) []byte {
 	if n, ok := tracer.(nestedTracer); ok {
 		tracer = n.Tracer
 	}
-	if j, ok := tracer.(interface{ JsonString() []byte }); ok {
-		return j.JsonString()
+	s, ok := tracer.(*span)
+	if !ok {
+		return []byte("{}")
 	}
-	return []byte("{}")
+	b, _ := json.Marshal(map[string]any{
+		"RpcName":     s.rpcName,
+		"EndPoint":    s.endPoint,
+		"RemoteAddr":  s.remoteAddr,
+		"Err":         s.err.Load(),
+		"Annotations": s.annotations.getList(),
+	})
+	return b
 }
 
 // AsyncSpanIdentifier is the optional capability of a goroutine tracer that
@@ -506,12 +515,7 @@ func IsInjectedBy(tracer Tracer, reader DistributedTracingContextReader) bool {
 // (IsInjectedBy) before injecting, since Inject omits a header it has no
 // value for and a stale one left in place is read as this injection's own.
 func IsInjectedHeader(key string) bool {
-	for _, h := range injectedHeaders {
-		if strings.EqualFold(key, h) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(injectedHeaders[:], func(h string) bool { return strings.EqualFold(key, h) })
 }
 
 // InjectedHeaders yields the names of the headers Inject may write, for a

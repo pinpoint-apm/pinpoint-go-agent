@@ -246,11 +246,11 @@ func Test_agent_urlStatSnapshot_isPerAgent(t *testing.T) {
 	endTime := time.Unix(1700000000, 123000000).UTC()
 	addTestUrlStat(first.urlStats.snapshot, "/only-on-first", "GET", 0, 100, endTime)
 
-	assert.Equal(t, 1, first.urlStats.takeSnapshot(true).count, "first agent")
-	assert.Equal(t, 0, second.urlStats.takeSnapshot(true).count, "second agent")
+	assert.Equal(t, 1, len(first.urlStats.takeSnapshot(true).urlMap), "first agent")
+	assert.Equal(t, 0, len(second.urlStats.takeSnapshot(true).urlMap), "second agent")
 
 	// taking the snapshot leaves the agent a fresh one to keep filling
-	assert.Equal(t, 0, first.urlStats.snapshot.count, "first agent after take")
+	assert.Equal(t, 0, len(first.urlStats.snapshot.urlMap), "first agent after take")
 }
 
 // At the limit a new url pattern is dropped, and the drop is not silent: an
@@ -271,7 +271,7 @@ func Test_urlStatSnapshotWarnsWhenAPatternIsDroppedAtTheLimit(t *testing.T) {
 	addTestUrlStat(snapshot, "/dropped", "", 0, 30, endTime)
 
 	assert.Len(t, snapshot.urlMap, 2)
-	assert.Equal(t, 2, snapshot.count)
+	assert.Equal(t, 2, len(snapshot.urlMap))
 	findEachUrlStat(t, snapshot, "/kept1", endTime)
 	findEachUrlStat(t, snapshot, "/kept2", endTime)
 	assert.Contains(t, buf.String(), "url stat limit reached")
@@ -697,7 +697,7 @@ func Test_urlStatSnapshot_MethodKeyBuildsDisplayOnce(t *testing.T) {
 
 	// Same url, other method: a distinct entry.
 	snapshot.add(&urlStat{entry: &UrlStatEntry{Url: "/orders/{id}", Method: "POST"}, endTime: endTime, elapsed: 10})
-	assert.Equal(t, 2, snapshot.count)
+	assert.Equal(t, 2, len(snapshot.urlMap))
 }
 
 // Records still queued in urlStatChan when shutdown begins are aggregated
@@ -743,7 +743,7 @@ func Test_urlStatCollectWorkerDrainsOnStop(t *testing.T) {
 
 	assert.Empty(t, agent.urlStatChan, "drained on stop")
 	snapshot := agent.urlStats.takeSnapshot(true)
-	assert.Equal(t, 2, snapshot.count, "the drained records are aggregated")
+	assert.Equal(t, 2, len(snapshot.urlMap), "the drained records are aggregated")
 }
 
 // A negative elapsed - a wall clock stepped back between start and end - must
@@ -866,7 +866,7 @@ func Test_urlStatSnapshotMergeFoldsSharedKeys(t *testing.T) {
 	into.merge(other)
 
 	require.Len(t, into.urlMap, 2)
-	assert.Equal(t, 2, into.count, "a shared key is counted once")
+	assert.Equal(t, 2, len(into.urlMap), "a shared key is counted once")
 	folded := into.urlMap[urlKey{url: "/a", tick: tick}]
 	assert.Equal(t, int64(410), folded.totalHistogram.total)
 	assert.Equal(t, int64(400), folded.totalHistogram.max)

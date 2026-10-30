@@ -178,7 +178,6 @@ func Test_spanGrpc_tracingRetainsStableMessages(t *testing.T) {
 	batchClient := &retainingSpanBatchClient{}
 	spanGrpc := newMockSpanGrpc(agent)
 	spanGrpc.spanClient = batchClient
-	spanGrpc.maxConcurrentRequests = 1
 	spanGrpc.concurrentRequestPermit = make(chan struct{}, 1)
 	spanGrpc.sendSpanBatchAsync([]*spanChunk{slabTestChunk(agent, 8, 3)})
 	spanGrpc.inFlight.Wait()
@@ -226,7 +225,6 @@ func Test_spanGrpc_sendSpanBatchAsync_noDataMixing(t *testing.T) {
 	client := &mixCheckSpanClient{}
 	spanGrpc := newMockSpanGrpc(agent)
 	spanGrpc.spanClient = client
-	spanGrpc.maxConcurrentRequests = 8
 	spanGrpc.concurrentRequestPermit = make(chan struct{}, 8)
 
 	const senders, batchesPerSender, spansPerBatch = 4, 25, 5

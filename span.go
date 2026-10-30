@@ -3,7 +3,6 @@ package pinpoint
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -62,10 +61,7 @@ func (se *overflowSpanEvent) SetError(e error, errorName ...string) {
 	if e == nil || span.finished.Load() {
 		return
 	}
-	errName := errorTypeName(e)
-	if len(errorName) > 0 {
-		errName = errorName[0]
-	}
+	errName := errorNameOf(e, errorName)
 	if !span.cfg.ignoreError(e, errName) {
 		span.markSpanError(ErrorCategoryException)
 	}
@@ -204,6 +200,15 @@ func firstErrorCategory(category []ErrorCategory) ErrorCategory {
 		return category[0]
 	}
 	return ErrorCategoryUnknown
+}
+
+// errorNameOf is the error group name a SetError caller passed, or e's type
+// name when it passed none.
+func errorNameOf(e error, errorName []string) string {
+	if len(errorName) > 0 {
+		return errorName[0]
+	}
+	return errorTypeName(e)
 }
 
 // markSpanError ORs one ErrorCategory bit into the root's error mask and
@@ -352,7 +357,7 @@ func (span *span) EndSpan() {
 	}
 
 	// Read from the root: an async worker that failed before this end marked
-	// it there. One that ends later is not seen (see newAsyncSpan).
+	// it there. One that ends later is not seen (see NewGoroutineTracer).
 	root := span.root()
 	span.endUrlStat(span.agent, endTime, span.elapsed, root.statusErr.Load()|root.err.Load())
 
@@ -435,7 +440,7 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 		if se.warnIfFinished("Inject") {
 			se = nil
 		} else {
-			nextSpanId = se.generateNextSpanId()
+			se.nextSpanId = nextSpanId
 			// endPoint (the address actually contacted) falls back to
 			// destinationId (the logical node) only when the plugin left it
 			// unset; a recorded endPoint is never overwritten.
@@ -538,15 +543,12 @@ func (span *span) extract(reader DistributedTracingContextReader) {
 		}
 	}
 
+	// The span is fresh, so an absent header leaves its zero value in place.
 	flag, _ := reader.Get(HeaderFlags)
-	if flag != "" {
-		span.flags, _ = strconv.Atoi(flag)
-	}
+	span.flags, _ = strconv.Atoi(flag)
 
 	pappname, _ := reader.Get(HeaderParentApplicationName)
-	if pappname != "" {
-		span.parentAppName = pappname
-	}
+	span.parentAppName = pappname
 
 	// An unparseable type leaves parentAppType at its -1 UNDEFINED default:
 	// taking the discarded Atoi result would write 0, which is no service type.
@@ -557,10 +559,7 @@ func (span *span) extract(reader DistributedTracingContextReader) {
 		}
 	}
 
-	pservicename, _ := reader.Get(HeaderParentServiceName)
-	if pservicename != "" {
-		span.parentServiceName = pservicename
-	}
+	span.parentServiceName, _ = reader.Get(HeaderParentServiceName)
 
 	host, _ := reader.Get(HeaderHost)
 	if host != "" {
@@ -644,30 +643,25 @@ func sameClusterNamespace(mine string, reader DistributedTracingContextReader) b
 //     a third delimiter and never looks past it, so "a^1^2^3" is the
 //     transaction "a^1^2".
 func splitTransactionId(tid string) (agentId string, startTime int64, sequence int64, ok bool) {
-	i := strings.IndexByte(tid, '^')
-	// i < 1 rejects both a missing delimiter and an empty agent id; isIDChars
-	// is validateID without the length bound.
-	if i < 1 || !isIDChars(tid[:i]) {
+	// isIDChars is validateID without the length bound.
+	agentId, rest, ok := strings.Cut(tid, "^")
+	if !ok || agentId == "" || !isIDChars(agentId) {
 		return "", 0, 0, false
 	}
-	rest := tid[i+1:]
-	j := strings.IndexByte(rest, '^')
-	if j < 0 {
+	start, seq, ok := strings.Cut(rest, "^")
+	if !ok {
 		return "", 0, 0, false
 	}
-	startTime, err := strconv.ParseInt(rest[:j], 10, 64)
+	startTime, err := strconv.ParseInt(start, 10, 64)
 	if err != nil {
 		return "", 0, 0, false
 	}
-	seq := rest[j+1:]
-	if k := strings.IndexByte(seq, '^'); k >= 0 {
-		seq = seq[:k]
-	}
+	seq, _, _ = strings.Cut(seq, "^")
 	sequence, err = strconv.ParseInt(seq, 10, 64)
 	if err != nil {
 		return "", 0, 0, false
 	}
-	return tid[:i], startTime, sequence, true
+	return agentId, startTime, sequence, true
 }
 
 func (span *span) NewSpanEvent(operationName string) Tracer {
@@ -708,7 +702,9 @@ func (span *span) NewSpanEvent(operationName string) Tracer {
 	} else {
 		se := defaultSpanEvent(span, operationName, sequence, depth)
 		se.apiId = span.agent.cacheSpanApi(operationName, apiTypeDefault)
-		span.appendSpanEvent(se)
+		// The counters were advanced by the reservation above; the stack has
+		// its own lock, so spanEventLock is not taken here.
+		span.eventStack.push(se)
 	}
 	return span
 }
@@ -740,13 +736,6 @@ func (span *span) reserveEventPosition() (sequence, depth int32) {
 func (span *span) releaseEventPosition(sequence int32) {
 	span.eventDepth.Add(-1)
 	span.eventSequence.CompareAndSwap(sequence+1, sequence)
-}
-
-// appendSpanEvent pushes the event: the counters were advanced by the
-// reserveEventPosition the event was built with. The stack has its own lock
-// and nothing reads it under spanEventLock, so that lock is not taken here.
-func (span *span) appendSpanEvent(se *spanEvent) {
-	span.eventStack.push(se)
 }
 
 func (span *span) EndSpanEvent() {
@@ -838,7 +827,7 @@ func (span *span) appendEndedSpanEvent(se *spanEvent) {
 	}
 }
 
-func (span *span) newAsyncSpan() Tracer {
+func (span *span) NewGoroutineTracer() Tracer {
 	if span.warnAfterEndSpan("NewGoroutineTracer") || span.eventOverflow.Load() > 0 {
 		return NoopTracer()
 	}
@@ -877,7 +866,7 @@ func (span *span) newAsyncSpan() Tracer {
 		asyncSpan.asyncSequence = se.asyncSeqGen
 		span.spanEventLock.Unlock()
 
-		asyncSpan.appendSpanEvent(newSpanEventGoroutine(asyncSpan))
+		asyncSpan.eventStack.push(newSpanEventGoroutine(asyncSpan))
 
 		return asyncSpan
 	} else {
@@ -890,12 +879,8 @@ func (span *span) isAsyncSpan() bool {
 	return span.asyncId != noneAsyncId
 }
 
-func (span *span) NewGoroutineTracer() Tracer {
-	return span.newAsyncSpan()
-}
-
 func (span *span) WrapGoroutine(goroutineName string, goroutine func(context.Context), ctx context.Context) func() {
-	asyncSpan := span.newAsyncSpan()
+	asyncSpan := span.NewGoroutineTracer()
 
 	newCtx := NewContext(ctx, asyncSpan)
 
@@ -953,10 +938,7 @@ func (span *span) SetError(e error, errorName ...string) {
 		return
 	}
 
-	errName := errorTypeName(e)
-	if len(errorName) > 0 {
-		errName = errorName[0]
-	}
+	errName := errorNameOf(e, errorName)
 	id := span.agent.cacheError(errName)
 	span.errorFuncId = id
 	span.errorString = abbreviateString(e.Error(), maxErrorMessageSize)
@@ -1078,17 +1060,6 @@ func (span *span) AddMetric(metric string, value any) {
 			addMetricTypeLog.warnf("AddMetric: value for %s must be *UrlStatEntry", metric)
 		}
 	}
-}
-
-func (span *span) JsonString() []byte {
-	m := make(map[string]any, 0)
-	m["RpcName"] = span.rpcName
-	m["EndPoint"] = span.endPoint
-	m["RemoteAddr"] = span.remoteAddr
-	m["Err"] = span.err.Load()
-	m["Annotations"] = span.annotations.getList()
-	b, _ := json.Marshal(m)
-	return b
 }
 
 // canAddErrorChain reports whether another exception entry fits. Callers hold

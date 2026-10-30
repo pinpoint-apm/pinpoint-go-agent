@@ -241,7 +241,6 @@ func newMockSpanGrpc(agent *agent) *spanGrpc {
 		batchSize:               defaultSpanBatchSize,
 		batchFlushTimeout:       time.Duration(defaultSpanBatchFlushInterval) * time.Millisecond,
 		batchCollectDeadline:    time.Duration(defaultSpanBatchCollectDeadline) * time.Millisecond,
-		maxConcurrentRequests:   defaultSpanBatchMaxConcurrentRequests,
 		concurrentRequestPermit: make(chan struct{}, defaultSpanBatchMaxConcurrentRequests),
 	}
 }

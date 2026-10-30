@@ -274,7 +274,6 @@ func Test_noopSpan_RecordersLeaveSingletonUntouched(t *testing.T) {
 	wg.Wait()
 
 	assert.Zero(t, defaultNoopSpan.spanId)
-	assert.Empty(t, defaultNoopSpan.rpcName)
 	assert.Zero(t, defaultNoopSpan.statusErr.Load())
 	assert.False(t, defaultNoopSpan.withStats.Load())
 	assert.Nil(t, defaultNoopSpan.urlStat)

@@ -1,6 +1,9 @@
 package pinpoint
 
-import "strconv"
+import (
+	"cmp"
+	"strconv"
+)
 
 // KafkaConsumerMessage describes the consumed record a Kafka consumer span is
 // started for. Broker is the address the application gave its plugin; when it
@@ -41,9 +44,7 @@ func NewKafkaConsumerTracer(operation string, msg KafkaConsumerMessage, reader D
 	if broker == "" && reader != nil {
 		broker, _ = reader.Get(HeaderHost)
 	}
-	if broker == "" {
-		broker = "Unknown"
-	}
+	broker = cmp.Or(broker, "Unknown")
 
 	span := tracer.Span()
 	span.SetServiceType(ServiceTypeKafkaClient)

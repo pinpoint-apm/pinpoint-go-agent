@@ -123,7 +123,6 @@ func Benchmark_spanTransport_batchSendPerBatch50(b *testing.B) {
 	a := benchAgent()
 	spanGrpc := newMockSpanGrpc(a)
 	spanGrpc.spanClient = stubSpanBatchClient{}
-	spanGrpc.maxConcurrentRequests = 8
 	spanGrpc.concurrentRequestPermit = make(chan struct{}, 8)
 	chunks := make([]*spanChunk, defaultSpanBatchSize)
 	for i := range chunks {
