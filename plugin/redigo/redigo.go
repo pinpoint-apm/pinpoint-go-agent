@@ -272,7 +272,7 @@ func (c *wrappedConn) ReceiveContext(ctx context.Context) (r interface{}, err er
 }
 
 // startSpanEvent records the operation on the tracer in ctx and returns the
-// function that completes the recording. redigo supports one goroutine in
+// recording, whose end completes it. redigo supports one goroutine in
 // Send/Flush concurrent with another blocked in Receive (the pub/sub pattern),
 // but a pinpoint.Tracer is not goroutine-safe: interleaved NewSpanEvent/
 // EndSpanEvent pairs from two goroutines corrupt its event stack. When another

@@ -430,10 +430,12 @@ func drainAsyncProducerInput(wrapped *asyncProducer) {
 // dispatcher does with what reaches it while it shuts down: discarded, it was
 // lost without the signal an application spools or retries from. forwardAcks
 // owns Errors() and keeps receiving refused until the drainer closes it, so
-// the message always gets through.
+// the message always gets through. A nil is dropped, as sarama's dispatcher
+// drops one before it looks at the shutdown: on Errors() it made a
+// ProducerError whose Msg the application's error loop dereferenced.
 func (p *asyncProducer) refuse(msg *sarama.ProducerMessage) {
 	endAsyncProducerTracer(p, msg, sarama.ErrShuttingDown)
-	if p.config.Producer.Return.Errors {
+	if msg != nil && p.config.Producer.Return.Errors {
 		p.refused <- msg
 	}
 }

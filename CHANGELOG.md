@@ -241,12 +241,15 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   and rejects `0x10`, `1_000` and `10.0` with the usual "is not a valid int"
   warning; a bool option takes the numbers 1 and 0 but no other, and a number
   option no longer takes a bool. A YAML or JSON number is read as before.
-- `gopkg.in/natefinch/lumberjack.v2` is v2.2.1, up from v2.0.0 (2016). A log
-  file it creates is `0600` instead of `0644` and a log directory `0755`
-  instead of `0744`; an existing file keeps its mode, also across rotation.
-  v2.0.0 had no go.mod, so its test dependencies `BurntSushi/toml` and
-  `gopkg.in/yaml.v2` were in the module graph of every application importing
-  the agent.
+- **The log file rotation is `github.com/elastic/lumberjack`**, Elastic's
+  maintained hard fork of `gopkg.in/natefinch/lumberjack.v2` (v2.0.0 before),
+  at commit c5b60bbeaaab, which has no release tag. Its `Close` stops the
+  backup cleanup goroutine, which the unmaintained original leaked on every
+  `Log.Output` change. A log file it creates is `0600` instead of `0644` and a
+  log directory `0755` instead of `0744`; an existing file keeps its mode,
+  also across rotation. v2.0.0 had no go.mod, so its test dependencies
+  `BurntSushi/toml` and `gopkg.in/yaml.v2` were in the module graph of every
+  application importing the agent.
 
 - **Agent log lines and levels tidied.** `success to register agent` is now
   `agent registered`, `success to make <s> stream` is `<s> stream opened` and
@@ -542,7 +545,9 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   `Errors()`** with `sarama.ErrShuttingDown`, as raw sarama's does, including
   every one still queued in the wrapper when sarama finished. It was dropped,
   with only its span recording the error, and `Close()` left it out of the
-  `ProducerErrors` it returns.
+  `ProducerErrors` it returns. `Input()` and `InputContext()` share one FIFO
+  channel: two channels picked between at random reordered one goroutine's
+  messages across the two, and a key's messages on its partition with them.
 - **`ppbeego` records the status the response went out with.** `Output.Body`
   (behind `ServeJSON`, `Render` and the rest) resets `Output.Status` to 0 after
   writing the header, so nearly every response was recorded as status 0 and a
@@ -569,6 +574,23 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 - **`pppgxv5` copies the connection config only for a sampled query.** Each
   callback called `Conn.Config()` - a deep copy with a `tls.Config` clone -
   before the sampling check, on every query of an unsampled request.
+- **`pppgxv5` requires pgx v5.11.0**, whose `Exec` and `Query` no longer skip
+  the query end when deallocating invalidated statements fails, and follows
+  pgx's call paths more closely: the second batch end pgx reports for a batch
+  that fails before it is sent no longer ends the caller's own event, a
+  `CopyFrom` is recorded whole at its end, since pgx skips the end when it
+  cannot describe the target, a connect is recorded on a goroutine tracer of
+  its own, since pgxpool connects on its own goroutine, and the wrapped stdlib
+  driver opens a name from `stdlib.RegisterConnConfig` instead of failing it
+  as an unparsable DSN.
+- **`pprueidis` records no error for a subscription its context or the
+  client's close ended**, how a subscription normally ends, so an SSE or
+  websocket handler whose client went away no longer fails the transaction.
+- **`ppgocql` and `ppgocqlv2` build a batch annotation of at most 64 KiB**,
+  the marker included, cut on a character boundary. A statement was appended
+  whole before the size was checked, so a single 4 MiB statement built a
+  4 MiB string only to be cut. A cut batch now ends in `...(truncated)`
+  instead of `...(N more statements)`.
 - **A wrapped SQL driver no longer keeps a connection whose rollback failed.**
   The wrapper claimed `driver.SessionResetter` and `driver.Validator` for every
   driver, and database/sql decides from their presence alone whether a

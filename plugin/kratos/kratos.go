@@ -150,6 +150,19 @@ func ClientMiddleware() middleware.Middleware {
 
 			if tr, ok := transport.FromClientContext(ctx); ok {
 				tracer := pinpoint.FromContext(ctx)
+				// A context already in the header is decided as the other
+				// clients decide it (doc/api_contracts.md): this span's own -
+				// the middleware installed twice - travels alone, with no
+				// second event, and another span's is cleared for this one's.
+				// Clearing whatever was there made a stacked middleware record
+				// one call as two events, and scanned every header per call.
+				writer := clientHeaderWriter(tr)
+				if r := writer.reader(); r != nil && pinpoint.IsInjected(r) {
+					if pinpoint.IsInjectedBy(tracer, r) {
+						return handler(ctx, req)
+					}
+					writer.clear()
+				}
 				defer tracer.NewSpanEvent(tr.Operation()).EndSpanEvent()
 
 				// The URL annotation and destination are discarded on an
@@ -167,16 +180,6 @@ func ClientMiddleware() middleware.Middleware {
 					se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, makeUrl(tr, remote))
 				}
 
-				writer := clientHeaderWriter(tr)
-				if tracer != pinpoint.NoopTracer() {
-					if headers, ok := writer.hdr.(nethttp.Header); ok {
-						for key := range headers {
-							if pinpoint.IsInjectedHeader(key) {
-								delete(headers, key)
-							}
-						}
-					}
-				}
 				tracer.Inject(writer)
 				reply, err = handler(ctx, req)
 				// Guarded: SetError is an interface method, so its variadic
@@ -307,4 +310,28 @@ func clientHeaderWriter(tr transport.Transporter) headerWriter {
 
 func (w headerWriter) Set(key string, value string) {
 	w.hdr.Set(carrierKey(w.kind, key), value)
+}
+
+// reader reads the carrier back, as the callee will.
+func (w headerWriter) reader() pinpoint.DistributedTracingContextReader {
+	if h, ok := w.hdr.(nethttp.Header); ok {
+		return pinpoint.HttpHeaderReader(h)
+	}
+	if h, ok := w.hdr.(transport.Header); ok {
+		return headerReader{h, w.kind}
+	}
+	return nil
+}
+
+// clear removes another span's context from an HTTP request header, so that
+// Inject, which omits a header it has no value for, leaves none of it behind.
+// A kratos transport.Header has no delete; Inject overwrites what it writes.
+func (w headerWriter) clear() {
+	if h, ok := w.hdr.(nethttp.Header); ok {
+		for key := range h {
+			if pinpoint.IsInjectedHeader(key) {
+				delete(h, key)
+			}
+		}
+	}
 }

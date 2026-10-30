@@ -57,7 +57,7 @@ type Agent interface {
 	// Shutdown returns within milliseconds against a reachable collector, and
 	// within about six seconds at worst: up to three waiting for a config
 	// file reload callback in progress, then up to three draining the
-	// workers; whatever is still queued after that is dropped and counted.
+	// workers; whatever is still queued after that may be lost.
 	Shutdown()
 }
 
@@ -115,10 +115,10 @@ func SpanJSON(tracer Tracer) []byte {
 
 // AsyncSpanIdentifier is the optional capability of a goroutine tracer that
 // stands for an asynchronous span: AsyncSpanId renders "spanId^asyncId^sequence",
-// the id a messaging plugin carries in a message header to end the span on the
-// broker's acknowledgement. The tracers of this package implement it; a
-// plugin asserts it on the goroutine tracer it forked, and records no id for a
-// tracer that lacks it.
+// an id that tells one asynchronous span from another, as the sarama async
+// producer once carried it in a message header to match a broker's
+// acknowledgement to its span. The tracers of this package implement it; code
+// asserting it on a goroutine tracer has to allow for one that lacks it.
 type AsyncSpanIdentifier interface {
 	AsyncSpanId() string
 }

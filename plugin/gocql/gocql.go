@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 	"weak"
 
@@ -56,7 +57,7 @@ func (o *Observer) ObserveQuery(ctx context.Context, query gocql.ObservedQuery) 
 	if !tracer.IsSampled() {
 		return
 	}
-	ctx, fork := onOwnGoroutine(ctx, tracer)
+	ctx, fork := onOwnGoroutine(ctx, tracer, query.Start, query.End)
 	if fork != nil {
 		defer fork.EndSpan()
 	}
@@ -83,7 +84,7 @@ func (o *Observer) ObserveBatch(ctx context.Context, batch gocql.ObservedBatch) 
 	if !tracer.IsSampled() {
 		return
 	}
-	ctx, fork := onOwnGoroutine(ctx, tracer)
+	ctx, fork := onOwnGoroutine(ctx, tracer, batch.Start, batch.End)
 	if fork != nil {
 		defer fork.EndSpan()
 	}
@@ -108,11 +109,14 @@ func (o *Observer) ObserveBatch(ctx context.Context, batch gocql.ObservedBatch) 
 // there the event interleaved with the ones the caller was opening meanwhile.
 // One made while the caller has no event open is not recorded: a goroutine
 // tracer has nothing to link to.
-func onOwnGoroutine(ctx context.Context, tracer pinpoint.Tracer) (context.Context, pinpoint.Tracer) {
+func onOwnGoroutine(ctx context.Context, tracer pinpoint.Tracer, start, end time.Time) (context.Context, pinpoint.Tracer) {
 	if pinpoint.OnTracerGoroutine(tracer) {
 		return ctx, nil
 	}
 	fork := tracer.NewGoroutineTracer()
+	// Forked after the call it records: the invocation takes the call's own
+	// time, as the event under it does, instead of starting after both.
+	fork.SpanEvent().FixDuration(start, end)
 	return pinpoint.NewContext(ctx, fork), fork
 }
 

@@ -470,6 +470,52 @@ func Test_responseWriter_ReadFromLeavesAFailedCopyUncommitted(t *testing.T) {
 	assert.Equal(t, http.StatusBadGateway, <-recorded)
 }
 
+// commitOnReadFrom commits 200 the moment its ReadFrom is called, as chi's
+// WrapResponseWriter does, and ignores a later status as net/http does.
+type commitOnReadFrom struct {
+	http.ResponseWriter
+	committed int
+}
+
+func (w *commitOnReadFrom) WriteHeader(code int) {
+	if w.committed == 0 {
+		w.committed = code
+	}
+}
+
+func (w *commitOnReadFrom) Write(p []byte) (int, error) {
+	w.WriteHeader(http.StatusOK)
+	return len(p), nil
+}
+
+func (w *commitOnReadFrom) ReadFrom(r io.Reader) (int64, error) {
+	w.WriteHeader(http.StatusOK)
+	return io.Copy(io.Discard, r)
+}
+
+// The status recorded is the one that went out: under a writer that commits on
+// ReadFrom, a copy failing before its first byte committed 200 there, and the
+// handler's error status that followed was recorded but never sent.
+func Test_responseWriter_ReadFromUnderCommittingWriter(t *testing.T) {
+	inner := &commitOnReadFrom{ResponseWriter: httptest.NewRecorder()}
+	status := 0
+	w := WrapResponseWriter(inner, &status)
+	_, err := io.Copy(w, iotest.ErrReader(errors.New("upstream failed")))
+	require.Error(t, err)
+	w.WriteHeader(http.StatusBadGateway)
+	assert.Equal(t, http.StatusBadGateway, inner.committed, "the failed copy committed the response")
+	assert.Equal(t, inner.committed, status)
+
+	inner = &commitOnReadFrom{ResponseWriter: httptest.NewRecorder()}
+	status = 0
+	w = WrapResponseWriter(inner, &status)
+	n, err := io.Copy(w, strings.NewReader(strings.Repeat("x", 4096)))
+	require.NoError(t, err)
+	assert.Equal(t, int64(4096), n)
+	assert.Equal(t, http.StatusOK, inner.committed)
+	assert.Equal(t, http.StatusOK, status)
+}
+
 // flushErrorWriter is a writer whose flush fails, as net/http's do once the
 // client has gone.
 type flushErrorWriter struct {
@@ -1322,6 +1368,11 @@ func Test_nginxMillis(t *testing.T) {
 		"9223372036854776.000":  0,
 		"1504230492.76":         0,
 		"1504230492.7a3":        0,
+		".500":                  500,
+		"-.500":                 -500,
+		"+.500":                 500,
+		"+1.500":                1500,
+		"--1.500":               0,
 	} {
 		assert.Equal(t, want, nginxMillis(v), v)
 	}

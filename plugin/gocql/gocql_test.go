@@ -174,7 +174,7 @@ func Test_onOwnGoroutine(t *testing.T) {
 	defer tracer.NewSpanEvent("rows").EndSpanEvent()
 	ctx := pinpoint.NewContext(context.Background(), tracer)
 
-	same, fork := onOwnGoroutine(ctx, tracer)
+	same, fork := onOwnGoroutine(ctx, tracer, time.Now(), time.Now())
 	assert.Nil(t, fork, "the caller's own goroutine needs no fork")
 	assert.Same(t, ctx, same)
 
@@ -184,7 +184,7 @@ func Test_onOwnGoroutine(t *testing.T) {
 	}
 	off := make(chan result)
 	go func() {
-		c, f := onOwnGoroutine(ctx, tracer)
+		c, f := onOwnGoroutine(ctx, tracer, time.Now(), time.Now())
 		if f != nil {
 			defer f.EndSpan()
 		}

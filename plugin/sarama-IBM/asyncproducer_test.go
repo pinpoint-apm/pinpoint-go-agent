@@ -441,6 +441,31 @@ func Test_asyncProducer_ShutdownReturnsEveryQueuedMessage(t *testing.T) {
 	}
 }
 
+// A nil sent during the shutdown is dropped, as sarama's dispatcher drops one
+// before it looks at the shutdown, not returned as a ProducerError with a nil
+// Msg for the application's error loop to dereference.
+func Test_asyncProducer_NilMessageDuringShutdownIsDropped(t *testing.T) {
+	stub := newStubAsyncProducer()
+	closing, release := make(chan struct{}), make(chan struct{})
+	stub.onClose = func() {
+		close(closing)
+		<-release
+		close(stub.successes)
+		close(stub.errors)
+	}
+	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
+	p.AsyncClose()
+	recv(t, closing, "underlying AsyncClose")
+
+	p.Input() <- nil
+	msg := &sarama.ProducerMessage{Topic: "topic"}
+	p.Input() <- msg
+	close(release)
+	got := requireErrorsUntilClosed(t, p)
+	require.Len(t, got, 1)
+	assert.Same(t, msg, got[0].Msg)
+}
+
 // sarama closing its acks with no shutdown through the wrapper - the underlying
 // producer closed directly - still closes the wrapper's channels: the input
 // forwarder, idle on an empty input, stops as well, so the drainer whose end

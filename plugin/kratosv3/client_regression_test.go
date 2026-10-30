@@ -72,3 +72,46 @@ func TestClientMiddleware_ReplacesStaleSamplingHeader(t *testing.T) {
 		t.Error("sampled caller lost downstream trace because stale s0 was retained")
 	}
 }
+
+// eventCounter counts the span events opened on the tracer it wraps.
+type eventCounter struct {
+	pinpoint.Tracer
+	events int
+}
+
+func (c *eventCounter) NewSpanEvent(operation string) pinpoint.Tracer {
+	c.events++
+	c.Tracer.NewSpanEvent(operation)
+	return c
+}
+
+// The middleware installed twice records one call as one event: the inner
+// layer finds the context the outer one injected and lets it travel alone,
+// where clearing it and injecting again recorded the call twice, the outer
+// event's span id reaching no callee.
+func TestClientMiddleware_StackedRecordsOneEvent(t *testing.T) {
+	agent := pptest.StartAgent(t)
+	var spanIds []string
+	c, err := khttp.NewClient(context.Background(), khttp.WithEndpoint("127.0.0.1:8000"),
+		khttp.WithMiddleware(ClientMiddleware(), ClientMiddleware()),
+		khttp.WithTransport(regressionTransportFunc(func(r *http.Request) (*http.Response, error) {
+			spanIds = r.Header.Values(pinpoint.HeaderSpanId)
+			return regressionResponse(r), nil
+		})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	tr := &eventCounter{Tracer: agent.NewSpanTracer("review", "/caller")}
+	defer tr.EndSpan()
+	var reply map[string]any
+	if err = c.Invoke(pinpoint.NewContext(context.Background(), tr), "GET", "/test", nil, &reply); err != nil {
+		t.Fatal(err)
+	}
+	if tr.events != 1 {
+		t.Errorf("one call recorded as %d events", tr.events)
+	}
+	if len(spanIds) != 1 {
+		t.Errorf("the callee got span ids %q", spanIds)
+	}
+}

@@ -2027,6 +2027,19 @@ func Test_ChunkKeyTimeAndStartElapsed(t *testing.T) {
 		assert.Equal(t, int64(70), chunk.eventChunk[1].startElapsed, "later events are relative to the previous event")
 	})
 
+	t.Run("final async chunk keys off an event fixed before its start", func(t *testing.T) {
+		chunk := &spanChunk{
+			span:       &span{requestStats: requestStats{startTime: spanStart}, asyncId: 1},
+			eventChunk: []*spanEvent{testSpanEvent(0, 1, 900), testSpanEvent(1, 2, 900)},
+			final:      true,
+		}
+		chunk.optimizeSpanEvents()
+
+		assert.Equal(t, int64(900), chunk.keyTime)
+		assert.Equal(t, int64(0), chunk.eventChunk[0].startElapsed, "no negative start for the first event")
+		assert.Equal(t, int64(0), chunk.eventChunk[1].startElapsed)
+	})
+
 	t.Run("non-final chunk keys off its first event", func(t *testing.T) {
 		chunk := &spanChunk{
 			span:       &span{requestStats: requestStats{startTime: spanStart}},

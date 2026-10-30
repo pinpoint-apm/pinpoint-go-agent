@@ -42,12 +42,22 @@ func (h *allHttpHeaderRecorder) recordCookie(annotation pinpoint.Annotation, coo
 
 type defaultHttpHeaderRecorder struct {
 	cfg []string
-	// lookup is cfg in canonical form, computed once: net/http's Header.Values
-	// canonicalizes the key it is given on every call, allocating for a name
-	// that is not canonical already - per configured name per request - and
-	// returns one that is as given. fasthttp normalizes its own either way.
-	// The annotation keeps the configured spelling.
+	// lookup is cfg in canonical form, computed once, for the net/http
+	// adapter (lookupKey). The annotation keeps the configured spelling.
 	lookup []string
+}
+
+// lookupKey is the spelling to look a header up by in hdr: canonical, computed
+// once, for the net/http adapter, whose Values canonicalizes the key it is
+// given on every call - allocating for a name that is not canonical already -
+// and name itself for any other. fasthttp with its header name normalizing
+// disabled matches only the spelling on the wire, which a canonical key
+// missed for every name that is not canonical.
+func lookupKey(hdr Header, name, canonical string) string {
+	if _, ok := hdr.(header); ok {
+		return canonical
+	}
+	return name
 }
 
 func newDefaultHttpHeaderRecorder(headers []string) *defaultHttpHeaderRecorder {
@@ -58,9 +68,9 @@ func newDefaultHttpHeaderRecorder(headers []string) *defaultHttpHeaderRecorder {
 	return &defaultHttpHeaderRecorder{cfg: headers, lookup: lookup}
 }
 
-func (h *defaultHttpHeaderRecorder) recordHeader(annotation pinpoint.Annotation, key int, header Header) {
+func (h *defaultHttpHeaderRecorder) recordHeader(annotation pinpoint.Annotation, key int, hdr Header) {
 	for i, name := range h.cfg {
-		if v := header.Values(h.lookup[i]); len(v) > 0 {
+		if v := hdr.Values(lookupKey(hdr, name, h.lookup[i])); len(v) > 0 {
 			vStr := strings.Join(v[:], ",")
 			annotation.AppendStringString(int32(key), name, vStr)
 		}

@@ -836,7 +836,8 @@ func (config *Config) parseCmdArgs() map[string]string {
 
 // loadConfigFile reads the config file, if one is named. A file that is not
 // there is not an error: the file is optional, every example names one that
-// may not exist, and the watcher picks it up once it appears. A file that is
+// may not exist, and the watcher applies its reloadable options once it
+// appears. A file that is
 // there and cannot be read - a syntax error, an unsupported extension - is
 // returned as well as logged, so a caller that checks NewConfig's error sees
 // its misconfiguration instead of running on defaults.
@@ -855,7 +856,7 @@ func (config *Config) loadConfigFile(sources *cfgSources) (*configFile, error) {
 	if errors.Is(err, fs.ErrNotExist) {
 		// Info, not Error: the file is optional (see above), so a missing one
 		// is a notice of which sources are in use, not a failure.
-		Log("config").Infof("config file %s not found, using the other sources; the config file watcher picks it up once it appears", cfgFile)
+		Log("config").Infof("config file %s not found, using the other sources; once it appears, the config file watcher applies its reloadable options, the others at the next start", cfgFile)
 		err = nil
 	} else if err != nil {
 		Log("config").Errorf("config file loading error: %v", err)

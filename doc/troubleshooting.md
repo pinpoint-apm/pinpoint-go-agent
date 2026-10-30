@@ -206,7 +206,7 @@ application is untraced.
 | `ApiKey` has a control or non-ASCII character (v4) | it must be printable ASCII; surrounding whitespace is trimmed, as for the names |
 | `Uid.Version` is `v4`, the default, against a 3.1.x collector | the agent starts, but the collector refuses every call unless `ApiKey` is set and matches `[a-zA-Z0-9\._\-]+`: `send agent info - rpc error: code = InvalidArgument desc = apiKey` repeats and registration waits forever; set `Uid.Version` to `v3` ([Uid.Version](config.md#uidversion)) |
 | A second `NewAgent()` call | returns `agent is already created`; the first agent is still the live one |
-| Config file not found or unparseable | look for `src=config` errors; the path is resolved as given, relative to the working directory |
+| Config file not found or unparseable | look for the `src=config` lines: `config file <path> not found` (info) or `config file loading error` (error); the path is resolved as given, relative to the working directory |
 
 The agent id is never configured; the agent always generates its own. An
 invalid `ApplicationName` is fatal.

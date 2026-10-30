@@ -1175,7 +1175,7 @@ func (agent *agent) sendStatsWorker() {
 			// both cases are ready together here, and a select picks between
 			// ready cases at random. One pass over the queue, no waiting - a
 			// record enqueued after this returns is dropped with the channel,
-			// as the teardown comment in shutdownAgent says.
+			// which shutdownAgent never closes.
 			for {
 				select {
 				case stats = <-agent.statChan:
@@ -1203,9 +1203,9 @@ func (agent *agent) sendStatsWorker() {
 func (agent *agent) sendStatsOrReopen(stream *statStream, stats *pb.PStatMessage) *statStream {
 	stream = renewIfExpired(stream, agent.statGrpc.newStatStreamWithRetry, "stat")
 	// An empty stream is what newStatStreamWithRetry hands back once shutdown
-	// began during its wait. The stat is dropped with the rest of the queue,
-	// as the teardown comment in shutdownAgent says, and not reported as a
-	// send failure: during a collector outage every queued stat logged one.
+	// began during its wait. The stat is dropped, as the rest of the queue
+	// then is, and not reported as a send failure: during a collector outage
+	// every queued stat logged one.
 	if !stream.open() {
 		return stream
 	}

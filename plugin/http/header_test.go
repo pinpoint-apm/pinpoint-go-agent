@@ -107,6 +107,34 @@ func Test_defaultHttpHeaderRecorder_recordHeader(t *testing.T) {
 		"a header that is absent must not be annotated at all")
 }
 
+// exactHeader matches names exactly, as fasthttp does with its header name
+// normalizing disabled.
+type exactHeader map[string]string
+
+func (h exactHeader) Values(key string) []string {
+	if v, ok := h[key]; ok {
+		return []string{v}
+	}
+	return nil
+}
+
+func (h exactHeader) VisitAll(func(string, []string)) {}
+
+// Only the net/http adapter is looked up by the canonical spelling: an exact
+// lookup missed every configured name and proxy header that is not canonical.
+func Test_lookupKey_ExactHeader(t *testing.T) {
+	h := exactHeader{"X-Request-ID": "req-1", "Pinpoint-ProxyNginx": "t=1504248328.423 D=123"}
+
+	a := newRecordingAnnotation()
+	newDefaultHttpHeaderRecorder([]string{"X-Request-ID"}).recordHeader(a, pinpoint.AnnotationHttpRequestHeader, h)
+	assert.Equal(t, map[string]string{"X-Request-ID": "req-1"}, a.values(pinpoint.AnnotationHttpRequestHeader))
+
+	p := &proxyAnnotation{}
+	setProxyHeaderNames(p, h, nil)
+	require.Len(t, p.got, 1, "the nginx proxy header was not found")
+	assert.Equal(t, int64(1504248328423), p.got[0].receivedTime)
+}
+
 func Test_allHttpHeaderRecorder(t *testing.T) {
 	h := http.Header{}
 	h.Add("X-A", "1")

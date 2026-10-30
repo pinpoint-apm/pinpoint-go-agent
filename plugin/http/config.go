@@ -219,7 +219,9 @@ type httpConfig struct {
 	cltCookie          httpHeaderRecorder
 	recordHandlerError bool
 	urlStatEnabled     bool
-	// Pre-canonicalized proxy user header names; see proxyHeaderApache.
+	// Pre-canonicalized proxy user header names, as the real IP ones below.
+	// Unlike the configured headers and the proxy headers (lookupKey) they
+	// are looked up canonical on every adapter.
 	srvProxyUserHeaders []string
 	srvProxyHeader      bool
 	srvRequestParam     bool

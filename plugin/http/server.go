@@ -254,15 +254,21 @@ func forwardedFor(element string) string {
 	return ""
 }
 
-// The proxy header names, pre-canonicalized: none of the wire spellings is in
-// textproto canonical form, so passing them raw made http.Header.Values take
-// the allocating canonicalization slow path on every lookup - twice, for
-// headers that are usually absent. fasthttp's Peek normalizes its argument
-// itself, so the canonical spelling matches there too.
+// The proxy header names as the proxies send them, and pre-canonicalized for
+// the net/http adapter (lookupKey): none of the wire spellings is in textproto
+// canonical form, so passing them raw made http.Header.Values take the
+// allocating canonicalization slow path on every lookup - twice, for headers
+// that are usually absent.
+const (
+	proxyHeaderApache = "Pinpoint-ProxyApache"
+	proxyHeaderNginx  = "Pinpoint-ProxyNginx"
+	proxyHeaderApp    = "Pinpoint-ProxyApp"
+)
+
 var (
-	proxyHeaderApache = textproto.CanonicalMIMEHeaderKey("Pinpoint-ProxyApache")
-	proxyHeaderNginx  = textproto.CanonicalMIMEHeaderKey("Pinpoint-ProxyNginx")
-	proxyHeaderApp    = textproto.CanonicalMIMEHeaderKey("Pinpoint-ProxyApp")
+	canonicalProxyHeaderApache = textproto.CanonicalMIMEHeaderKey(proxyHeaderApache)
+	canonicalProxyHeaderNginx  = textproto.CanonicalMIMEHeaderKey(proxyHeaderNginx)
+	canonicalProxyHeaderApp    = textproto.CanonicalMIMEHeaderKey(proxyHeaderApp)
 )
 
 const (
@@ -293,13 +299,13 @@ type proxyRequest struct {
 // headers - so a request that passed through more than one proxy gets one
 // annotation per hop rather than only the first match.
 func setProxyHeaderNames(a pinpoint.Annotation, h Header, userHeaders []string) {
-	if v := headerFirst(h, proxyHeaderApache); v != "" {
+	if v := headerFirst(h, lookupKey(h, proxyHeaderApache, canonicalProxyHeaderApache)); v != "" {
 		appendProxyHeader(a, proxyTypeApache, parseProxyApache(v))
 	}
-	if v := headerFirst(h, proxyHeaderNginx); v != "" {
+	if v := headerFirst(h, lookupKey(h, proxyHeaderNginx, canonicalProxyHeaderNginx)); v != "" {
 		appendProxyHeader(a, proxyTypeNginx, parseProxyNginx(v))
 	}
-	if v := headerFirst(h, proxyHeaderApp); v != "" {
+	if v := headerFirst(h, lookupKey(h, proxyHeaderApp, canonicalProxyHeaderApp)); v != "" {
 		appendProxyHeader(a, proxyTypeApp, parseProxyApp(v))
 	}
 	for _, name := range userHeaders {
@@ -398,9 +404,15 @@ func nginxMillis(v string) int64 {
 		}
 		ms = ms*10 + int64(c-'0')
 	}
-	sec, err := strconv.ParseInt(v[:dot], 10, 64)
-	if err != nil || sec > math.MaxInt64/1000 || sec < math.MinInt64/1000 {
-		return 0
+	// No seconds digits - ".500", "-.500" - are 0 seconds, as the
+	// concatenation read them.
+	sec := int64(0)
+	if s := v[:dot]; s != "" && s != "+" && s != "-" {
+		var err error
+		sec, err = strconv.ParseInt(s, 10, 64)
+		if err != nil || sec > math.MaxInt64/1000 || sec < math.MinInt64/1000 {
+			return 0
+		}
 	}
 	// The milliseconds are checked against the room left rather than added
 	// first: past it the sum wrapped, "-9223372036854775.999" to a large
@@ -776,21 +788,28 @@ func (w *responseWriter) recordStatus(status int) {
 // fell back to the generic user-space copy loop. A writer without ReadFrom
 // gets the io.Copy fallback.
 //
-// The header is left to the underlying writer, which commits it with the first
-// byte as net/http does: committed up front, a source that failed before
-// delivering anything answered the handler's own error status with 200. The
-// implicit 200 a delivered byte committed is recorded as Write records it.
+// Until the header is out, the first bytes go through Write, as net/http's own
+// ReadFrom copies them: the header is committed with the first byte delivered,
+// and recorded as Write records it. Committed up front, a source that failed
+// before delivering anything answered the handler's own error status with 200,
+// and so it still did through a writer underneath that commits on ReadFrom
+// itself - chi's WrapResponseWriter - while the error status was recorded.
 func (w *responseWriter) ReadFrom(r io.Reader) (n int64, err error) {
+	if !w.wroteHeader {
+		// Wrapped in a plain io.Writer so io.Copy cannot find this ReadFrom
+		// again; 512 is what net/http sniffs a content type from.
+		n, err = io.Copy(struct{ io.Writer }{w}, io.LimitReader(r, 512))
+		if err != nil || n < 512 {
+			return n, err
+		}
+	}
+	var m int64
 	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
-		n, err = rf.ReadFrom(r)
+		m, err = rf.ReadFrom(r)
 	} else {
-		// Wrapped in a plain io.Writer so io.Copy cannot find this ReadFrom again.
-		n, err = io.Copy(struct{ io.Writer }{w.ResponseWriter}, r)
+		m, err = io.Copy(struct{ io.Writer }{w.ResponseWriter}, r)
 	}
-	if n > 0 && !w.wroteHeader {
-		w.recordStatus(http.StatusOK)
-	}
-	return n, err
+	return n + m, err
 }
 
 func (w *responseWriter) Write(p []byte) (int, error) {

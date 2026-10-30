@@ -915,8 +915,8 @@ func (span *span) SpanId() int64 {
 }
 
 // AsyncSpanId renders "spanId^asyncId^sequence". By hand rather than with
-// fmt.Sprintf, which boxes the three integers: the Kafka async producer calls
-// this once per message.
+// fmt.Sprintf, which boxes the three integers: a caller may need one per
+// message it sends.
 func (span *span) AsyncSpanId() string {
 	var buf [64]byte // three integers at their widest plus two separators
 	b := strconv.AppendInt(buf[:0], span.spanId, 10)
@@ -1169,6 +1169,15 @@ func (chunk *spanChunk) optimizeSpanEvents() {
 	})
 	if chunk.final {
 		chunk.keyTime = chunk.span.startTime.UnixMilli()
+		// A goroutine tracer forked to record a callback's own measurement
+		// after the fact - gocql's observer off the caller's goroutine -
+		// fixes its events to before the fork. The chunk's key time is all
+		// the collector knows of an async span's start, so it moves back to
+		// the first event instead of sending that event a negative
+		// startElapsed.
+		if chunk.span.isAsyncSpan() {
+			chunk.keyTime = min(chunk.keyTime, chunk.eventChunk[0].startTime)
+		}
 	} else {
 		chunk.keyTime = chunk.eventChunk[0].startTime
 	}
