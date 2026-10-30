@@ -13,10 +13,7 @@ package ppechov4
 
 import (
 	"net/http"
-	"runtime"
-	"sync"
 	"sync/atomic"
-	"weak"
 
 	"github.com/labstack/echo/v4"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
@@ -30,18 +27,6 @@ type key struct {
 	path   string
 }
 
-// handlerNames caches the route table of each *echo.Echo, built from its
-// Routes() on the instance's first request. Per instance rather than once per
-// process: a second Echo in the same process, a test suite's instances, or an
-// instance built after the first request all reported "echo.HandlerFunc()"
-// for every route under a single process-wide map.
-//
-// Keyed by a weak pointer, with a cleanup that drops the entry once the Echo
-// is collected: keyed by the pointer itself, every instance ever served - a
-// test suite's, a per-tenant one - stayed reachable for the life of the
-// process.
-var handlerNames sync.Map // weak.Pointer[echo.Echo] -> map[key]string
-
 func makeHandlerNameMap(e *echo.Echo) map[key]string {
 	names := make(map[key]string)
 	for _, r := range e.Routes() {
@@ -50,11 +35,13 @@ func makeHandlerNameMap(e *echo.Echo) map[key]string {
 	return names
 }
 
-// echoNames is the route table of one Echo. wrap keeps the last one it
-// served: a middleware's requests all come from the Echo it is registered on,
-// so the pointer comparison spares the weak map - weak.Make takes a runtime
-// lock that every request of the instance contended on - on every request but
-// the first. The Echo is as long-lived as the middleware holding it.
+// echoNames is the route table of one Echo, built from its Routes() on the
+// first sampled request a Middleware serves. Per instance rather than once per
+// process: a second Echo in the same process, a test suite's instances, or an
+// instance built after the first request all reported "echo.HandlerFunc()"
+// for every route under a single process-wide table. A middleware's requests
+// all come from the Echo it is registered on, so the one it holds is that
+// Echo's; one shared across instances rebuilds the table as it switches.
 type echoNames struct {
 	e     *echo.Echo
 	names map[key]string
@@ -62,30 +49,16 @@ type echoNames struct {
 
 func handlerName(c echo.Context, r *http.Request, last *atomic.Pointer[echoNames]) string {
 	e := c.Echo()
-	var names map[key]string
-	if l := last.Load(); l != nil && l.e == e {
-		names = l.names
-	} else {
-		names = handlerNameMap(e)
-		last.Store(&echoNames{e, names})
+	l := last.Load()
+	if l == nil || l.e != e {
+		l = &echoNames{e, makeHandlerNameMap(e)}
+		last.Store(l)
 	}
 
-	if name, ok := names[key{r.Method, c.Path()}]; ok {
+	if name, ok := l.names[key{r.Method, c.Path()}]; ok {
 		return name
 	}
 	return "echo.HandlerFunc()"
-}
-
-func handlerNameMap(e *echo.Echo) map[key]string {
-	k := weak.Make(e)
-	if names, ok := handlerNames.Load(k); ok {
-		return names.(map[key]string)
-	}
-	names, loaded := handlerNames.LoadOrStore(k, makeHandlerNameMap(e))
-	if !loaded {
-		runtime.AddCleanup(e, func(k weak.Pointer[echo.Echo]) { handlerNames.Delete(k) }, k)
-	}
-	return names.(map[key]string)
 }
 
 func wrap(handler echo.HandlerFunc, funcName string, last *atomic.Pointer[echoNames]) echo.HandlerFunc {
@@ -152,7 +125,8 @@ func Middleware() echo.MiddlewareFunc {
 // WrapHandler wraps the given echo handler and adds the pinpoint.Tracer to the request's context.
 // By using the pinpoint.FromContext function, this tracer can be obtained.
 func WrapHandler(handler echo.HandlerFunc) echo.HandlerFunc {
-	return wrap(handler, pphttp.HandlerFuncName(handler), new(atomic.Pointer[echoNames]))
+	// The name is the handler's own, so the route table is never consulted.
+	return wrap(handler, pphttp.HandlerFuncName(handler), nil)
 }
 
 // statusCode follows Echo's default error handler, including its Internal override.
