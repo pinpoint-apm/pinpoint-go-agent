@@ -211,7 +211,7 @@ func Test_statStream_sendStat(t *testing.T) {
 	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
 	stream := agent.statGrpc.newStatStreamWithRetry()
 
-	stats := make([]*inspectorStats, 1)
+	stats := make([]*pb.PAgentStat, 1)
 	stats[0] = agent.stats.getStats()
 	msg := makePAgentStatBatch(stats)
 	err := stream.sendStats(msg)
@@ -232,7 +232,7 @@ func Test_statStream_sendStatRetry(t *testing.T) {
 	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
 	stream := agent.statGrpc.newStatStreamWithRetry()
 
-	stats := make([]*inspectorStats, 1)
+	stats := make([]*pb.PAgentStat, 1)
 	stats[0] = agent.stats.getStats()
 	msg := makePAgentStatBatch(stats)
 	err := stream.sendStats(msg)
@@ -1943,7 +1943,7 @@ func Test_statGrpc_gzipFallsBackToUncompressed(t *testing.T) {
 	defer statGrpc.close()
 	agent.statGrpc = statGrpc
 
-	msg := makePAgentStatBatch([]*inspectorStats{{sampleTime: time.Now()}})
+	msg := makePAgentStatBatch([]*pb.PAgentStat{{Timestamp: time.Now().UnixMilli()}})
 	stream := statGrpc.newStatStreamWithRetry()
 	// The first sends can still succeed before the rejection reaches the
 	// client; sendStatsOrReopen replaces the stream on the first that fails.

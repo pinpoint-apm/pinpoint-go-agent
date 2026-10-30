@@ -10,33 +10,10 @@ import (
 	"time"
 	"unsafe"
 
+	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/process"
 )
-
-type inspectorStats struct {
-	sampleTime   time.Time
-	interval     int64
-	cpuProcLoad  float64
-	cpuSysLoad   float64
-	heapUsed     int64
-	heapMax      int64
-	nonHeapUsed  int64
-	nonHeapMax   int64
-	gcNum        int64
-	gcTime       int64
-	numOpenFD    int64
-	numThreads   int64
-	responseAvg  int64
-	responseMax  int64
-	sampleNew    int64
-	sampleCont   int64
-	unSampleNew  int64
-	unSampleCont int64
-	skipNew      int64
-	skipCont     int64
-	activeSpan   []int32
-}
 
 // The per-request counters (response time acc/max/count plus the six sampler
 // outcomes) are sharded by goroutine id. As process-global singles, every
@@ -100,7 +77,7 @@ type agentStats struct {
 	// apart from the first run (see collectAgentStatWorker), and batch is atomic
 	// only so tests can watch the cursor from another goroutine; the worker is
 	// its sole writer.
-	collected     []*inspectorStats
+	collected     []*pb.PAgentStat
 	batch         atomic.Int32
 	workerStarted bool
 	// collectFailures throttles the ERROR for a collection that panicked.
@@ -465,7 +442,7 @@ func clampUnit(v float64) float64 {
 // Truncating to whole seconds first (4.99s -> 4000ms) inflated TPS by up to
 // 25%. The first sample measures from init, which the stat worker calls just
 // before its ticker starts, so it needs no configured value to stand in.
-func (stats *agentStats) getStats() *inspectorStats {
+func (stats *agentStats) getStats() *pb.PAgentStat {
 	if stats.failCollects.Load() > 0 {
 		stats.failCollects.Add(-1)
 		panic("injected getStats failure")
@@ -482,36 +459,58 @@ func (stats *agentStats) getStats() *inspectorStats {
 	// GrpcStats::collect clamps the same way).
 	interval := max(now.Sub(stats.lastCollectTime).Milliseconds(), 1)
 
-	inspector := inspectorStats{
-		sampleTime:  now,
-		interval:    interval,
-		cpuProcLoad: procCpu,
-		cpuSysLoad:  sysCpu,
-		heapUsed:    int64(memStat.heapInuse),
-		heapMax:     int64(memStat.heapSys),
-		nonHeapUsed: int64(memStat.stackInuse),
-		nonHeapMax:  int64(memStat.stackSys),
-		// GarbageCollectorMXBean counts: the web's inspector-definition-for-agent.yml
-		// runs gcOldCount/gcOldTime through its "delta" post-processor, so
-		// sending per-interval deltas would be differentiated twice.
-		gcNum:        int64(memStat.numGC),
-		gcTime:       int64(memStat.pauseTotalNs / uint64(time.Millisecond)),
-		numOpenFD:    int64(stats.numFD()),
-		numThreads:   int64(stats.numThreads()),
-		responseAvg:  calcResponseAvg(counters[statAccResponseTime], counters[statRequestCount]),
-		responseMax:  counters[statMaxResponseTime],
-		sampleNew:    counters[statSampleNew],
-		sampleCont:   counters[statSampleCont],
-		unSampleNew:  counters[statUnSampleNew],
-		unSampleCont: counters[statUnSampleCont],
-		skipNew:      counters[statSkipNew],
-		skipCont:     counters[statSkipCont],
-		activeSpan:   stats.activeSpan.count(now),
+	stat := &pb.PAgentStat{
+		Timestamp:       now.UnixMilli(),
+		CollectInterval: interval,
+		Gc: &pb.PJvmGc{
+			// Go's collector is none of the types this field enumerates. The
+			// counts below are Go's own: NumGC counts whole cycles (Go has no
+			// generations) and PauseTotalNs sums stop-the-world time only.
+			Type:                 pb.PJvmGcType_JVM_GC_TYPE_UNKNOWN,
+			JvmMemoryHeapUsed:    int64(memStat.heapInuse),
+			JvmMemoryHeapMax:     int64(memStat.heapSys),
+			JvmMemoryNonHeapUsed: int64(memStat.stackInuse),
+			JvmMemoryNonHeapMax:  int64(memStat.stackSys),
+			// GarbageCollectorMXBean counts: the web's inspector-definition-for-agent.yml
+			// runs gcOldCount/gcOldTime through its "delta" post-processor, so
+			// sending per-interval deltas would be differentiated twice.
+			JvmGcOldCount: int64(memStat.numGC),
+			JvmGcOldTime:  int64(memStat.pauseTotalNs / uint64(time.Millisecond)),
+		},
+		CpuLoad: &pb.PCpuLoad{
+			JvmCpuLoad:    procCpu,
+			SystemCpuLoad: sysCpu,
+		},
+		Transaction: &pb.PTransaction{
+			SampledNewCount:            counters[statSampleNew],
+			SampledContinuationCount:   counters[statSampleCont],
+			UnsampledNewCount:          counters[statUnSampleNew],
+			UnsampledContinuationCount: counters[statUnSampleCont],
+			SkippedNewCount:            counters[statSkipNew],
+			SkippedContinuationCount:   counters[statSkipCont],
+		},
+		ActiveTrace: &pb.PActiveTrace{
+			Histogram: &pb.PActiveTraceHistogram{
+				Version:             1,
+				HistogramSchemaType: 2, //NORMAL SCHEMA
+				ActiveTraceCount:    stats.activeSpan.count(now),
+			},
+		},
+		ResponseTime: &pb.PResponseTime{
+			Avg: calcResponseAvg(counters[statAccResponseTime], counters[statRequestCount]),
+			Max: counters[statMaxResponseTime],
+		},
+		FileDescriptor: &pb.PFileDescriptor{
+			OpenFileDescriptorCount: int64(stats.numFD()),
+		},
+		TotalThread: &pb.PTotalThread{
+			TotalThreadCount: int64(stats.numThreads()),
+		},
 	}
 
 	stats.lastCollectTime = now
 
-	return &inspector
+	return stat
 }
 
 // drainCounters sweeps every shard, swapping each counter to zero and summing
@@ -561,7 +560,7 @@ func (agent *agent) collectAgentStatWorker() {
 		stats.init()
 	}
 	if len(stats.collected) != cfgBatchCount {
-		stats.collected = make([]*inspectorStats, cfgBatchCount)
+		stats.collected = make([]*pb.PAgentStat, cfgBatchCount)
 		stats.batch.Store(0)
 	}
 
@@ -601,7 +600,7 @@ func (agent *agent) collectAgentStatWorker() {
 // (a transient /proc read failure, a gopsutil error path) is logged through a
 // throttled ERROR, as every other recovered panic is, and reported as a nil
 // snapshot, so the caller skips the sample and keeps collecting.
-func (stats *agentStats) collect() (snapshot *inspectorStats) {
+func (stats *agentStats) collect() (snapshot *pb.PAgentStat) {
 	defer func() {
 		if e := recover(); e != nil {
 			snapshot = nil

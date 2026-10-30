@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"context"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -93,64 +94,14 @@ func (s *statStream) sendStats(stats *pb.PStatMessage) error {
 	return s.send(func(c pb.Stat_SendAgentStatClient) error { return c.Send(stats) }, "stat stream.Send()")
 }
 
-func makePAgentStatBatch(stats []*inspectorStats) *pb.PStatMessage {
-	l := make([]*pb.PAgentStat, 0, len(stats))
-	for _, s := range stats {
-		l = append(l, makePAgentStat(s))
-	}
+// makePAgentStatBatch copies the slice: the stat worker reuses its array for
+// the next batch.
+func makePAgentStatBatch(stats []*pb.PAgentStat) *pb.PStatMessage {
 	return &pb.PStatMessage{
 		Field: &pb.PStatMessage_AgentStatBatch{
 			AgentStatBatch: &pb.PAgentStatBatch{
-				AgentStat: l,
+				AgentStat: slices.Clone(stats),
 			},
-		},
-	}
-}
-
-func makePAgentStat(stat *inspectorStats) *pb.PAgentStat {
-	return &pb.PAgentStat{
-		Timestamp:       stat.sampleTime.UnixNano() / int64(time.Millisecond),
-		CollectInterval: stat.interval,
-		Gc: &pb.PJvmGc{
-			// Go's collector is none of the types this field enumerates. The
-			// counts below are Go's own: NumGC counts whole cycles (Go has no
-			// generations) and PauseTotalNs sums stop-the-world time only.
-			Type:                 pb.PJvmGcType_JVM_GC_TYPE_UNKNOWN,
-			JvmMemoryHeapUsed:    stat.heapUsed,
-			JvmMemoryHeapMax:     stat.heapMax,
-			JvmMemoryNonHeapUsed: stat.nonHeapUsed,
-			JvmMemoryNonHeapMax:  stat.nonHeapMax,
-			JvmGcOldCount:        stat.gcNum,
-			JvmGcOldTime:         stat.gcTime,
-		},
-		CpuLoad: &pb.PCpuLoad{
-			JvmCpuLoad:    stat.cpuProcLoad,
-			SystemCpuLoad: stat.cpuSysLoad,
-		},
-		Transaction: &pb.PTransaction{
-			SampledNewCount:            stat.sampleNew,
-			SampledContinuationCount:   stat.sampleCont,
-			UnsampledNewCount:          stat.unSampleNew,
-			UnsampledContinuationCount: stat.unSampleCont,
-			SkippedNewCount:            stat.skipNew,
-			SkippedContinuationCount:   stat.skipCont,
-		},
-		ActiveTrace: &pb.PActiveTrace{
-			Histogram: &pb.PActiveTraceHistogram{
-				Version:             1,
-				HistogramSchemaType: 2, //NORMAL SCHEMA
-				ActiveTraceCount:    stat.activeSpan,
-			},
-		},
-		ResponseTime: &pb.PResponseTime{
-			Avg: stat.responseAvg,
-			Max: stat.responseMax,
-		},
-		FileDescriptor: &pb.PFileDescriptor{
-			OpenFileDescriptorCount: stat.numOpenFD,
-		},
-		TotalThread: &pb.PTotalThread{
-			TotalThreadCount: stat.numThreads,
 		},
 	}
 }

@@ -121,8 +121,8 @@ func Test_sendStatsWorker_reopensStreamAfterSendErrorAndResumes(t *testing.T) {
 	client.OnSendAgentStat(mock.Anything).Return(healthy, nil)
 	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
 
-	agent.statChan <- makePAgentStatBatch([]*inspectorStats{agent.stats.getStats()})
-	agent.statChan <- makePAgentStatBatch([]*inspectorStats{agent.stats.getStats()})
+	agent.statChan <- makePAgentStatBatch([]*pb.PAgentStat{agent.stats.getStats()})
+	agent.statChan <- makePAgentStatBatch([]*pb.PAgentStat{agent.stats.getStats()})
 
 	agent.workerWg.Add(1)
 	go agent.superviseWorker("send stats", agent.sendStatsWorker)
@@ -283,10 +283,10 @@ func Test_sendStatsWorker_renewsAgedStream(t *testing.T) {
 	agent.workerWg.Add(1)
 	go agent.superviseWorker("send stats", agent.sendStatsWorker)
 
-	agent.statChan <- makePAgentStatBatch([]*inspectorStats{agent.stats.getStats()})
+	agent.statChan <- makePAgentStatBatch([]*pb.PAgentStat{agent.stats.getStats()})
 	require.Eventually(t, func() bool { return sent.get() == 1 }, 2*time.Second, 2*time.Millisecond, "the first batch to be sent")
 	time.Sleep(2 * streamMaxAgeForTest * time.Millisecond)
-	agent.statChan <- makePAgentStatBatch([]*inspectorStats{agent.stats.getStats()})
+	agent.statChan <- makePAgentStatBatch([]*pb.PAgentStat{agent.stats.getStats()})
 	require.Eventually(t, func() bool { return sent.get() == 2 }, 2*time.Second, 2*time.Millisecond, "the second batch to be sent")
 
 	agent.signalShutdown()

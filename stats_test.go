@@ -110,8 +110,8 @@ func Test_getStatsReportsCumulativeGcCounters(t *testing.T) {
 	runtime.GC()
 	second := stats.getStats()
 
-	assert.Greater(t, second.gcNum, first.gcNum, "gcNum is cumulative, so a GC between samples must raise it")
-	assert.GreaterOrEqual(t, second.gcTime, first.gcTime, "gcTime is cumulative and never decreases")
+	assert.Greater(t, second.Gc.JvmGcOldCount, first.Gc.JvmGcOldCount, "gcNum is cumulative, so a GC between samples must raise it")
+	assert.GreaterOrEqual(t, second.Gc.JvmGcOldTime, first.Gc.JvmGcOldTime, "gcTime is cumulative and never decreases")
 }
 
 // Test_activeSpanShardIsCacheLinePadded guards the false-sharing fix: the shards
@@ -237,7 +237,7 @@ func Test_getStatsIntervalIsMeasuredMilliseconds(t *testing.T) {
 	stats := newAgentStats()
 	stats.lastCollectTime = time.Now().Add(-4990 * time.Millisecond)
 
-	interval := stats.getStats().interval
+	interval := stats.getStats().CollectInterval
 	assert.GreaterOrEqual(t, interval, int64(4990))
 	assert.Less(t, interval, int64(5000), "must not truncate to whole seconds")
 }
@@ -249,7 +249,7 @@ func Test_getStatsIntervalIsClampedToOneMillisecond(t *testing.T) {
 	stats := newAgentStats()
 	stats.lastCollectTime = time.Now().Add(time.Hour) // the clock went backwards
 
-	assert.Equal(t, int64(1), stats.getStats().interval)
+	assert.Equal(t, int64(1), stats.getStats().CollectInterval)
 }
 
 func Test_normalizeCpuLoad(t *testing.T) {
@@ -321,9 +321,9 @@ func Test_numFDAndNumThreadsReportUncollectedAsMinusOne(t *testing.T) {
 
 	snapshot := stats.getStats()
 	if !fdCounted {
-		assert.EqualValues(t, uncollectedUsage, snapshot.numOpenFD)
+		assert.EqualValues(t, uncollectedUsage, snapshot.FileDescriptor.OpenFileDescriptorCount)
 	}
-	assert.EqualValues(t, uncollectedUsage, snapshot.numThreads)
+	assert.EqualValues(t, uncollectedUsage, snapshot.TotalThread.TotalThreadCount)
 }
 
 // readMemStats replaced runtime.ReadMemStats (a stop-the-world per sample) with
@@ -491,7 +491,7 @@ func Test_collectAgentStatWorker_restartKeepsPartialBatchAndRetakesBaseline(t *t
 	// The first sample after the restart measures from the restart, not
 	// across the gap since the last sample of the previous run.
 	first := agent.stats.collected[kept]
-	assert.Less(t, first.interval, int64(30), "the restart gap must not be reported as the interval")
+	assert.Less(t, first.CollectInterval, int64(30), "the restart gap must not be reported as the interval")
 }
 
 // ===========================================================================
