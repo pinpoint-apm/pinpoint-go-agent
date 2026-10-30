@@ -13,10 +13,6 @@ import (
 
 var logger *logrusLogger
 
-func initLogger() {
-	logger = newLogger()
-}
-
 // Log returns a log entry for src. The entry is a value carrying only the
 // source: the logrus entry behind it is built in log, after the level check,
 // so a call whose level is disabled - every Debugf and Tracef site at the
@@ -37,7 +33,7 @@ func IsLogLevelEnabled(level logrus.Level) bool {
 	if logger.defaultLogger.GetLevel() >= level {
 		return true
 	}
-	extra := logger.extra()
+	extra := logger.extraLogger.Load()
 	return extra != nil && extra.GetLevel() >= level
 }
 
@@ -65,10 +61,6 @@ type logrusLogger struct {
 	maxSize       int
 	maxBackups    int
 	config        *Config
-}
-
-func (l *logrusLogger) extra() *logrus.Logger {
-	return l.extraLogger.Load()
 }
 
 func newLogger() *logrusLogger {
@@ -171,18 +163,14 @@ func (l *logrusLogger) setup(config *Config) {
 	l.setOutputLocked(config.String(CfgLogOutput), config.Int(CfgLogMaxSize), config.Int(CfgLogMaxBackups))
 }
 
-func (l *logrusLogger) reloadLevel(config *Config) {
+// reload applies a reloaded config's logging, if the logger is bound to it.
+// setLevel is idempotent and setOutputLocked skips an unchanged output, so
+// one callback serves all four keys.
+func (l *logrusLogger) reload(config *Config) {
 	l.outputMu.Lock()
 	defer l.outputMu.Unlock()
 	if l.config == config {
 		l.setLevel(config.String(CfgLogLevel))
-	}
-}
-
-func (l *logrusLogger) reloadOutput(config *Config) {
-	l.outputMu.Lock()
-	defer l.outputMu.Unlock()
-	if l.config == config {
 		l.setOutputLocked(config.String(CfgLogOutput), config.Int(CfgLogMaxSize), config.Int(CfgLogMaxBackups))
 	}
 }
@@ -206,7 +194,7 @@ func (l logEntry) log(level logrus.Level, format string, args ...any) {
 	}
 	entry := logger.newEntry(l.src)
 	entry.Logf(level, format, args...)
-	if extraLogger := logger.extra(); extraLogger != nil {
+	if extraLogger := logger.extraLogger.Load(); extraLogger != nil {
 		extra := entry.Dup()
 		extra.Logger = extraLogger
 		extra.Logf(level, format, args...)

@@ -737,7 +737,7 @@ func captureWarnLog(buf *bytes.Buffer) func() {
 // Log.Level to the default logger while it loads, which would undo a redirect
 // of that logger under the test. The extra logger gets every line regardless.
 func captureLogAt(buf *bytes.Buffer, level logrus.Level) func() {
-	prev := logger.extra()
+	prev := logger.extraLogger.Load()
 	capture := logrus.New()
 	capture.SetOutput(buf)
 	capture.SetLevel(level)
@@ -2161,7 +2161,7 @@ func TestAccessorsBeforeInit(t *testing.T) {
 	})
 
 	// The state before init: nothing set, the noop agent's initializer not run.
-	globalAgent = atomic.Value{}
+	globalAgent.Store(nil)
 	defaultNoopAgent = nil
 	logger = nil
 	cfgBaseMap = nil

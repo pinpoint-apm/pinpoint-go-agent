@@ -156,7 +156,7 @@ func Test_SetupClosesFileLoggerFromPreviousAgent(t *testing.T) {
 
 func Test_IsLogLevelEnabledChecksExtraLogger(t *testing.T) {
 	oldDefaultLevel := logger.defaultLogger.GetLevel()
-	oldExtraLogger := logger.extra()
+	oldExtraLogger := logger.extraLogger.Load()
 	t.Cleanup(func() {
 		logger.defaultLogger.SetLevel(oldDefaultLevel)
 		logger.extraLogger.Store(oldExtraLogger)
@@ -177,7 +177,7 @@ func Test_IsLogLevelEnabledChecksExtraLogger(t *testing.T) {
 // SetExtraLogger can be called while other goroutines are logging. Run under
 // -race.
 func Test_SetExtraLoggerIsRaceFree(t *testing.T) {
-	oldExtraLogger := logger.extra()
+	oldExtraLogger := logger.extraLogger.Load()
 	t.Cleanup(func() { logger.extraLogger.Store(oldExtraLogger) })
 
 	var wg sync.WaitGroup
@@ -253,7 +253,7 @@ func Test_OutputSwitchReformatsEachTime(t *testing.T) {
 func Test_ReusedEntryWritesToBothLoggers(t *testing.T) {
 	oldOutput := logger.defaultLogger.Out
 	oldLevel := logger.defaultLogger.GetLevel()
-	oldExtraLogger := logger.extra()
+	oldExtraLogger := logger.extraLogger.Load()
 	t.Cleanup(func() {
 		logger.defaultLogger.SetOutput(oldOutput)
 		logger.defaultLogger.SetLevel(oldLevel)

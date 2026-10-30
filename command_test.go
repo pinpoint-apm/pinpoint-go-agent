@@ -18,7 +18,7 @@ func drainAtcStreams(t *testing.T, agent *agent) {
 
 	agent.signalShutdown()
 	require.Eventually(t, func() bool {
-		return agent.cmdGrpc.atcStreams.count() == 0
+		return int(agent.atcStreamCount.Load()) == 0
 	}, 2*time.Second, 2*time.Millisecond, "active thread count streams to drain on shutdown")
 }
 
@@ -31,14 +31,14 @@ func Test_agent_handleActiveThreadCountRejectsBeyondLimit(t *testing.T) {
 	for i := 0; i < maxActiveThreadCountStreams; i++ {
 		agent.handleActiveThreadCount(int32(i), cmd)
 	}
-	assert.Equal(t, maxActiveThreadCountStreams, agent.cmdGrpc.atcStreams.count())
+	assert.Equal(t, maxActiveThreadCountStreams, int(agent.atcStreamCount.Load()))
 
 	const excess = 20
 	for i := 0; i < excess; i++ {
 		agent.handleActiveThreadCount(int32(maxActiveThreadCountStreams+i), cmd)
 	}
 
-	assert.Equal(t, maxActiveThreadCountStreams, agent.cmdGrpc.atcStreams.count())
+	assert.Equal(t, maxActiveThreadCountStreams, int(agent.atcStreamCount.Load()))
 	// Rejected requests open no stream and leave no goroutine behind.
 	assert.Equal(t, maxActiveThreadCountStreams, client.streamCount())
 	assert.LessOrEqual(t, runtime.NumGoroutine()-base, maxActiveThreadCountStreams+2)
@@ -63,7 +63,7 @@ func Test_agent_handleActiveThreadCountReplacesSameRequestId(t *testing.T) {
 
 	require.Eventually(t, func() bool { return client.stream(0).isClosed() }, 2*time.Second, 2*time.Millisecond, "superseded stream to close")
 	require.Eventually(t, func() bool {
-		return agent.cmdGrpc.atcStreams.count() == 1
+		return int(agent.atcStreamCount.Load()) == 1
 	}, 2*time.Second, 2*time.Millisecond, "superseded stream to leave the registry")
 	assert.Equal(t, 2, client.streamCount())
 	assert.False(t, client.stream(1).isClosed())
@@ -80,7 +80,7 @@ func Test_agent_handleActiveThreadCountReleasesSlotOnSendError(t *testing.T) {
 	agent.handleActiveThreadCount(1, cmd)
 
 	require.Eventually(t, func() bool {
-		return agent.cmdGrpc.atcStreams.count() == 0
+		return int(agent.atcStreamCount.Load()) == 0
 	}, 2*time.Second, 2*time.Millisecond, "failed stream to leave the registry")
 	assert.True(t, client.stream(0).isClosed())
 }
@@ -93,7 +93,7 @@ func Test_agent_handleActiveThreadCountReleasesSlotWhenStreamCannotOpen(t *testi
 	client.openErr = errors.New("open failed")
 	agent.handleActiveThreadCount(1, cmd)
 
-	assert.Equal(t, 0, agent.cmdGrpc.atcStreams.count())
+	assert.Equal(t, 0, int(agent.atcStreamCount.Load()))
 	assert.Equal(t, 0, client.streamCount())
 }
 

@@ -38,7 +38,7 @@ var initDone bool
 // Package variable initializers run again in between too, so this must not
 // rely on a value it set surviving until init.
 func initPackage() {
-	initLogger()
+	logger = newLogger()
 	initConfig()
 	if defaultNoopAgent == nil {
 		defaultNoopAgent = &noopAgent{}
@@ -216,22 +216,16 @@ func maxBindValueAnnotationSize(maxSize int) int {
 	return 2*maxSize + 2*maxBindValueMarkerSize + len(", ")
 }
 
-// globalAgent is an atomic.Value rather than a plain interface variable:
+// globalAgent is an atomic pointer rather than a plain interface variable:
 // plugins call GetAgent on every request while NewAgent and Shutdown swap the
 // value, and an unsynchronized two-word interface write can be torn - a reader
 // could pair one implementation's itab with another's data pointer.
 // globalAgentLock serializes the writers, so two concurrent NewAgent calls
 // cannot both pass the already-created check and leak the loser's agent.
 var (
-	globalAgent     atomic.Value // holds agentHolder
+	globalAgent     atomic.Pointer[Agent]
 	globalAgentLock sync.Mutex
 )
-
-// agentHolder keeps the concrete type stored in globalAgent constant across
-// the *agent and noop implementations; atomic.Value panics when it varies.
-type agentHolder struct {
-	agent Agent
-}
 
 // ErrAgentAlreadyCreated is returned by NewAgent, together with the existing
 // agent, when an agent exists already. An application whose agent may have
@@ -244,15 +238,15 @@ var ErrAgentAlreadyCreated = errors.New("agent is already created")
 // NewAgent ran. It is safe to call before this package's init function ran
 // (see initPackage).
 func GetAgent() Agent {
-	if h, ok := globalAgent.Load().(agentHolder); ok {
-		return h.agent
+	if a := globalAgent.Load(); a != nil {
+		return *a
 	}
 	initPackage()
-	return globalAgent.Load().(agentHolder).agent
+	return *globalAgent.Load()
 }
 
 func setGlobalAgent(a Agent) {
-	globalAgent.Store(agentHolder{a})
+	globalAgent.Store(&a)
 }
 
 // NewAgent creates an Agent and spawns goroutines that manage spans and statistical data.
@@ -306,8 +300,7 @@ func NewAgent(config *Config) (Agent, error) {
 	agent.stopSignal()
 
 	config.logCallbackOnce.Do(func() {
-		config.AddReloadCallback([]string{CfgLogLevel}, func() { logger.reloadLevel(config) })
-		config.AddReloadCallback([]string{CfgLogOutput, CfgLogMaxSize, CfgLogMaxBackups}, func() { logger.reloadOutput(config) })
+		config.AddReloadCallback([]string{CfgLogLevel, CfgLogOutput, CfgLogMaxSize, CfgLogMaxBackups}, func() { logger.reload(config) })
 	})
 
 	if !config.offGrpc {
@@ -331,7 +324,7 @@ func newAgentStruct(config *Config) *agent {
 		serviceName:      config.objName.serviceName,
 		clusterNamespace: resolveClusterNamespace(config),
 		objName:          config.objName,
-		startTime:        time.Now().UnixNano() / int64(time.Millisecond),
+		startTime:        time.Now().UnixMilli(),
 		spanQueue:        newSpanQueue(config.Int(CfgSpanQueueSize)),
 		metaChan:         make(chan any, config.Int(CfgCollectorGrpcSenderQueueSize)),
 		urlStatChan:      make(chan *urlStat, config.Int(CfgHttpUrlStatQueueSize)),
@@ -352,16 +345,6 @@ func newAgentStruct(config *Config) *agent {
 	agent.rawSqlCache = newMetaCache[string, normalizedSql](sqlCacheSize)
 	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
 	return agent
-}
-
-// appTypeString is appType as Inject writes it: the string rendered once by
-// newAgentStruct, or rendered here for an agent built as a struct literal
-// (the tests'), which must not send an empty type.
-func (agent *agent) appTypeString() string {
-	if agent.appTypeStr != "" {
-		return agent.appTypeStr
-	}
-	return strconv.Itoa(int(agent.appType))
 }
 
 // closeGrpc closes whatever connections connectGrpcServer managed to create.
@@ -858,15 +841,7 @@ func (agent *agent) drainUrlStatChan() int {
 }
 
 func (agent *agent) NewSpanTracer(operation string, rpcName string) Tracer {
-	var tracer Tracer
-
-	if agent.tracingEnabled() {
-		reader := &noopDistributedTracingContextReader{}
-		tracer = agent.NewSpanTracerWithReader(operation, rpcName, reader)
-	} else {
-		tracer = NoopTracer()
-	}
-	return tracer
+	return agent.NewSpanTracerWithReader(operation, rpcName, &noopDistributedTracingContextReader{})
 }
 
 func (agent *agent) NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
@@ -889,20 +864,16 @@ func (agent *agent) newSpanTracerWithReader(operation string, rpcName string, re
 	// Continuation bypasses the base sampling rate, so only pick it for headers
 	// extract will actually continue, including the cluster namespace check.
 	// extract calls it again, which is cheaper than widening its signature.
-	if _, continued := continueHeaders(reader, agent.clusterNamespace); !continued {
-		return agent.samplingSpan(func() bool { return sampler.isNewSampled(agent.stats) }, operation, rpcName, reader)
+	decide := sampler.isNewSampled
+	if _, continued := continueHeaders(reader, agent.clusterNamespace); continued {
+		decide = sampler.isContinueSampled
 	}
-	return agent.samplingSpan(func() bool { return sampler.isContinueSampled(agent.stats) }, operation, rpcName, reader)
-}
-
-func (agent *agent) samplingSpan(samplingFunc func() bool, operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
-	if samplingFunc() {
-		tracer := newSampledSpan(agent, operation, rpcName)
-		tracer.extract(reader)
-		return tracer
-	} else {
+	if !decide(agent.stats) {
 		return newUnSampledSpan(agent, rpcName)
 	}
+	tracer := newSampledSpan(agent, operation, rpcName)
+	tracer.extract(reader)
+	return tracer
 }
 
 func (agent *agent) generateTransactionId() TransactionId {

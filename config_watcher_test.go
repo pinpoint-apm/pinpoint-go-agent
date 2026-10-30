@@ -163,7 +163,7 @@ func TestConfigWatcherRestartsWhenConfigIsReused(t *testing.T) {
 	config.mu.Lock()
 	callbacks := len(config.callback)
 	config.mu.Unlock()
-	require.Equal(t, 2, callbacks, "reload callbacks accumulated across agent lifetimes")
+	require.Equal(t, 1, callbacks, "reload callbacks accumulated across agent lifetimes")
 
 	// A stale idempotent Shutdown must not close the reused Config's new watcher.
 	first.Shutdown()

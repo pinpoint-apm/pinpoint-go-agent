@@ -212,8 +212,8 @@ type cfgMapItem struct {
 	// stops setting goes back to it on reload.
 	baseValue any
 	valueType int
-	cmdKey    string
-	envKey    string
+	cmdKey    string // the --pinpoint- flag name
+	envKey    string // the PINPOINT_GO_ variable name
 	dynamic   bool
 	source    int
 }
@@ -323,10 +323,11 @@ func initConfig() {
 // NewConfig reads, so a concurrent call at runtime is a data race.
 func AddConfig(cfgName string, valueType int, defaultValue any, dynamic bool) {
 	item := &cfgMapItem{
+		value:        defaultValue,
 		defaultValue: defaultValue,
 		valueType:    valueType,
-		cmdKey:       cmdName(cfgName),
-		envKey:       envName(cfgName),
+		cmdKey:       "pinpoint-" + strings.ReplaceAll(strings.ToLower(cfgName), ".", "-"),
+		envKey:       "PINPOINT_GO_" + strings.ReplaceAll(strings.ToUpper(cfgName), ".", "_"),
 		dynamic:      dynamic,
 	}
 	cfgBaseMap[cfgName] = item
@@ -345,24 +346,10 @@ func AddConfig(cfgName string, valueType int, defaultValue any, dynamic bool) {
 func (config *Config) addItem(cfgName string, item *cfgMapItem) {
 	config.mu.Lock()
 	defer config.mu.Unlock()
-	config.cfgMap[cfgName] = &cfgMapItem{
-		value:        item.defaultValue,
-		defaultValue: item.defaultValue,
-		valueType:    item.valueType,
-		cmdKey:       item.cmdKey,
-		envKey:       item.envKey,
-		dynamic:      item.dynamic,
-	}
+	c := *item
+	config.cfgMap[cfgName] = &c
 	config.normalizeCfgValues()
 	config.publish()
-}
-
-func cmdName(cfgName string) string {
-	return "pinpoint-" + strings.ReplaceAll(strings.ToLower(cfgName), ".", "-")
-}
-
-func envName(cfgName string) string {
-	return strings.ReplaceAll(strings.ToLower(cfgName), ".", "_")
 }
 
 // Config holds agent configuration, for passing to NewAgent.
@@ -398,8 +385,7 @@ type Config struct {
 	watchMu       sync.Mutex
 	watcherStop   chan struct{}
 	watcherDone   chan struct{}
-	configFile    string
-	configFileCfg *configFile
+	configFileCfg *configFile // nil without a config file; its path is the file's
 
 	containerCheck bool
 	offGrpc        bool //for test
@@ -602,18 +588,10 @@ func (config *Config) Set(cfgName string, value any) {
 	config.mu.Lock()
 	defer config.mu.Unlock()
 
-	if v, ok := config.cfgMap[cfgName]; ok {
-		converted, err := convertCfgValue(v.valueType, value)
-		if err != nil {
-			Log("config").Warnf("%s = %v is not a valid %s, keeping %v",
-				cfgName, value, cfgTypeName(v.valueType), v.value)
-			return
-		}
+	if v, ok := config.cfgMap[cfgName]; ok && config.setFinalValue(cfgName, v, value, cfgSrcAPI) {
 		if !v.dynamic {
 			Log("config").Warnf("config %s is not dynamic: the new value takes effect after restart", cfgName)
 		}
-		v.value = converted
-		v.source = cfgSrcAPI
 		config.publish()
 	}
 }
@@ -644,22 +622,16 @@ func (config *Config) Bool(cfgName string) bool {
 	return valueAs[bool](config.load().values[cfgName])
 }
 
-// staged reads a value straight out of the cfgMap staging area. Only the
-// snapshot build path may use it: it bypasses the published snapshot, and the
-// caller must hold config.mu.
-func (config *Config) staged(cfgName string) any {
-	if v, ok := config.cfgMap[cfgName]; ok {
-		return v.value
-	}
-	return nil
-}
-
+// stagedInt and stagedString read a value straight out of the cfgMap staging
+// area, which holds every registered option. Only the snapshot build path may
+// use them: they bypass the published snapshot, and the caller must hold
+// config.mu.
 func (config *Config) stagedInt(cfgName string) int {
-	return valueAs[int](config.staged(cfgName))
+	return valueAs[int](config.cfgMap[cfgName].value)
 }
 
 func (config *Config) stagedString(cfgName string) string {
-	return valueAs[string](config.staged(cfgName))
+	return valueAs[string](config.cfgMap[cfgName].value)
 }
 
 // NewConfig creates a Config populated with default settings, command line arguments,
@@ -707,7 +679,7 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	}
 
 	// What the options left is the base the file layers over; a reload that
-	// finds a key gone from the file restores it (loadDynamicConfig).
+	// finds a key gone from the file restores it (restage).
 	for _, v := range config.cfgMap {
 		v.baseValue = v.value
 	}
@@ -722,7 +694,7 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 
 	sources.profile = config.loadProfile(sources)
 	config.applyLogging(sources)
-	config.loadConfig(sources)
+	config.restage(sources, true)
 
 	if config.containerCheck {
 		config.cfgMap[CfgIsContainerEnv].value = isContainerEnv()
@@ -760,18 +732,11 @@ func defaultConfig() *Config {
 	config := new(Config)
 	config.cfgMap = make(map[string]*cfgMapItem, 0)
 	for k, v := range cfgBaseMap {
-		config.cfgMap[k] = &cfgMapItem{
-			value:        v.defaultValue,
-			defaultValue: v.defaultValue,
-			valueType:    v.valueType,
-			cmdKey:       v.cmdKey,
-			envKey:       v.envKey,
-			dynamic:      v.dynamic,
-		}
+		c := *v
+		config.cfgMap[k] = &c
 	}
 
 	config.containerCheck = true
-	config.callback = make([]reloadCallback, 0)
 
 	config.mu.Lock()
 	defer config.mu.Unlock()
@@ -861,7 +826,6 @@ func (config *Config) loadConfigFile(sources *cfgSources) (*configFile, error) {
 	} else if err != nil {
 		Log("config").Errorf("config file loading error: %v", err)
 	}
-	config.configFile = cfgFile
 	config.configFileCfg = f
 	return f, err
 }
@@ -884,7 +848,7 @@ func (s *cfgSources) lookup(name string, item *cfgMapItem) (any, int, bool) {
 	}
 	if s.env {
 		// An empty variable counts as unset, as it always did.
-		if v, ok := os.LookupEnv("PINPOINT_GO_" + strings.ToUpper(item.envKey)); ok && v != "" {
+		if v, ok := os.LookupEnv(item.envKey); ok && v != "" {
 			return v, cfgSrcEnv, true
 		}
 	}
@@ -1022,14 +986,6 @@ func (config *Config) loadProfile(sources *cfgSources) *configFile {
 	return sub
 }
 
-func (config *Config) loadConfig(sources *cfgSources) {
-	for _, k := range slices.Sorted(maps.Keys(config.cfgMap)) {
-		if value, source, ok := sources.lookup(k, config.cfgMap[k]); ok {
-			config.setFinalValue(k, config.cfgMap[k], value, source)
-		}
-	}
-}
-
 // cfgTypeName names a value type for the log lines below.
 func cfgTypeName(valueType int) string {
 	switch valueType {
@@ -1153,21 +1109,21 @@ func valueAs[T int | float64 | bool | string | []string](value any) T {
 // The converted value is what gets stored, never the raw one, so an option
 // holds its declared type whatever source it came from. That is what keeps the
 // accessors off the silent zero-conversion path and what makes the DeepEqual
-// in loadDynamicConfig compare like with like across a reload.
-func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value any, source int) {
+// in restage compare like with like across a reload.
+func (config *Config) setFinalValue(cfgName string, item *cfgMapItem, value any, source int) bool {
 	converted, err := convertCfgValue(item.valueType, value)
 	if err != nil {
 		Log("config").Warnf("%s = %v is not a valid %s, keeping %v",
 			cfgName, value, cfgTypeName(item.valueType), item.value)
-		return
+		return false
 	}
-	value = converted
 
-	item.value = value
+	item.value = converted
 	item.source = source
 	if cfgName == CfgIsContainerEnv {
 		config.containerCheck = false
 	}
+	return true
 }
 
 // normalizeCfgValues converts the staged values that were written into the
@@ -1410,28 +1366,18 @@ func (config *Config) publishFrom(prev *configSnapshot) {
 	config.defaultIfOutOfRange(CfgCollectorGrpcFlowControlWindow, 1, math.MaxInt32)
 	config.defaultIfOutOfRange(CfgCollectorGrpcWriteBufferSize, 0, math.MaxInt32)
 	config.defaultIfOutOfRange(CfgCollectorGrpcMaxHeaderListSize, 1, math.MaxInt32)
-	// A negative max age means the same as the default: renewal off.
-	if config.stagedInt(CfgCollectorGrpcConnectionMaxAge) < 0 {
-		config.cfgMap[CfgCollectorGrpcConnectionMaxAge].value = grpcConnectionMaxAge
-	}
-	if config.stagedInt(CfgCollectorGrpcStreamMaxAge) < 0 {
-		config.cfgMap[CfgCollectorGrpcStreamMaxAge].value = grpcStreamMaxAge
-	}
-	// A negative idle timeout means the same as the default: idling off.
-	if config.stagedInt(CfgCollectorGrpcIdleTimeout) < 0 {
-		config.cfgMap[CfgCollectorGrpcIdleTimeout].value = grpcIdleTimeout
-	}
+	// A negative max age or idle timeout means the same as the default, 0:
+	// renewal or idling off.
+	config.zeroIfNegative(CfgCollectorGrpcConnectionMaxAge)
+	config.zeroIfNegative(CfgCollectorGrpcStreamMaxAge)
+	config.zeroIfNegative(CfgCollectorGrpcIdleTimeout)
 	config.unlimitedOrAtLeast(CfgSpanMaxCallStackDepth, minEventDepth)
 	config.unlimitedOrAtLeast(CfgSpanMaxCallStackSequence, minEventSequence)
 
 	config.defaultIfOutOfRange(CfgLogMaxSize, 1, math.MaxInt32)
 	// Log.MaxBackups: 0 means "keep every backup" to lumberjack but "keep none"
 	// the disk. Rotation with no history is Log.MaxSize alone.
-	if backups := config.stagedInt(CfgLogMaxBackups); backups < 1 {
-		Log("config").Warnf("%s = %d is out of range, using default %d",
-			CfgLogMaxBackups, backups, defaultLogMaxBackups)
-		config.cfgMap[CfgLogMaxBackups].value = defaultLogMaxBackups
-	}
+	config.defaultIfOutOfRange(CfgLogMaxBackups, 1, math.MaxInt32)
 
 	// Dynamic key, so both bounds must be enforced on every publish: a reload
 	// can otherwise inject a value that makes traceCallStack's allocation panic
@@ -1568,24 +1514,17 @@ func (config *Config) reloadConfig(f *configFile) {
 
 	sources := &cfgSources{file: f}
 	sources.profile = config.loadProfile(sources)
-	changed := config.loadDynamicConfig(sources)
+	changed := config.restage(sources, false)
 	config.publish()
 	// Callbacks read the config they were just given a new generation of, and
 	// may register further callbacks, so run them off a copy with the lock
 	// released.
-	callback := make([]reloadCallback, len(config.callback))
-	copy(callback, config.callback)
+	callback := slices.Clone(config.callback)
 	config.mu.Unlock()
 
 	for _, cb := range callback {
 		cb.do(changed)
 	}
-}
-
-// loadDynamicConfig restages the dynamic options from the config file and
-// returns the set of option names whose value actually changed.
-func (config *Config) loadDynamicConfig(sources *cfgSources) map[string]bool {
-	return config.restage(sources, false)
 }
 
 // restage re-reads the dynamic options and ActiveProfile from sources and
@@ -1623,19 +1562,14 @@ func (config *Config) restage(sources *cfgSources, all bool) map[string]bool {
 	return changed
 }
 
+// do runs the callback when one of its options changed, isolated from the
+// config watcher: a panic in any goroutine normally terminates the host
+// process, and recovering here also lets reloadConfig continue with the
+// remaining callbacks.
 func (cb reloadCallback) do(changed map[string]bool) {
-	for _, k := range cb.cfgNames {
-		if changed[k] {
-			cb.invoke()
-			break
-		}
+	if !slices.ContainsFunc(cb.cfgNames, func(k string) bool { return changed[k] }) {
+		return
 	}
-}
-
-// invoke isolates a caller-supplied callback from the config watcher. A panic
-// in any goroutine normally terminates the host process; recovering here also
-// lets reloadConfig continue with the remaining callbacks.
-func (cb reloadCallback) invoke() {
 	defer func() {
 		if e := recover(); e != nil {
 			Log("config").Errorf("config reload callback panic (%v): %v\n%s", cb.cfgNames, e, debug.Stack())
@@ -1644,17 +1578,11 @@ func (cb reloadCallback) invoke() {
 	cb.callback()
 }
 
+// isContainerEnv reports Docker's /.dockerenv, or anything but its absence,
+// or a Kubernetes service host in the environment.
 func isContainerEnv() bool {
 	_, err := os.Stat("/.dockerenv")
-	if err == nil || !os.IsNotExist(err) {
-		return true
-	}
-
-	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
-		return true
-	}
-
-	return false
+	return !errors.Is(err, fs.ErrNotExist) || os.Getenv("KUBERNETES_SERVICE_HOST") != ""
 }
 
 func (config *Config) printConfigString() {

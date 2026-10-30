@@ -589,7 +589,7 @@ func Test_reloadConfig_unknownLogLevelKeepsCurrentLevel(t *testing.T) {
 	config, err := NewConfig(WithAppName("reloadApp"), WithLogLevel("error"))
 	require.NoError(t, err)
 	logger.setup(config)
-	config.AddReloadCallback([]string{CfgLogLevel}, func() { logger.reloadLevel(config) })
+	config.AddReloadCallback([]string{CfgLogLevel}, func() { logger.reload(config) })
 	require.Equal(t, logrus.ErrorLevel, logger.defaultLogger.GetLevel())
 
 	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")

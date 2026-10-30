@@ -60,8 +60,8 @@ func (config *Config) startConfigWatcher() bool {
 	// The baseline is taken here, not in the poller: a rewrite between this
 	// return and the goroutine's first stat would otherwise become the
 	// baseline and never be reloaded.
-	last, _ := configFileStamp(config.configFile)
-	go config.pollConfigFile(stop, done, config.configFile, config.configFileCfg, last)
+	last, _ := configFileStamp(config.configFileCfg.path)
+	go config.pollConfigFile(stop, done, config.configFileCfg, last)
 	return true
 }
 
@@ -74,7 +74,7 @@ func (config *Config) startConfigWatcher() bool {
 //
 // ponytail: mtime+size, so a same-size rewrite inside the file system's
 // timestamp granularity is missed; hash the contents if that ever bites.
-func (config *Config) pollConfigFile(stop, done chan struct{}, configFile string, f *configFile, last fileStamp) {
+func (config *Config) pollConfigFile(stop, done chan struct{}, f *configFile, last fileStamp) {
 	defer close(done)
 
 	ticker := time.NewTicker(configPollInterval)
@@ -88,7 +88,7 @@ func (config *Config) pollConfigFile(stop, done chan struct{}, configFile string
 		// A file that is missing right now - an unlink+rewrite saver between
 		// its two steps - keeps the old stamp, so the rewrite is seen as a
 		// change on a later tick.
-		stamp, ok := configFileStamp(configFile)
+		stamp, ok := configFileStamp(f.path)
 		if !ok || stamp.same(last) {
 			continue
 		}

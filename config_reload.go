@@ -171,9 +171,9 @@ func (config *Config) stageYAML(text string) (ConfigReloadResult, map[string]boo
 	config.mu.Lock()
 	defer config.mu.Unlock()
 
-	if config.configFile != "" {
+	if config.configFileCfg != nil {
 		return refuseReload(ConfigReloadConfigFileActive,
-			"config file "+config.configFile+" is the configuration source and outranks yaml; change the file instead"), nil, nil
+			"config file "+config.configFileCfg.path+" is the configuration source and outranks yaml; change the file instead"), nil, nil
 	}
 
 	f, err := parseConfigYAML(text)
@@ -217,8 +217,7 @@ func (config *Config) stageYAML(text string) (ConfigReloadResult, map[string]boo
 		}
 	}
 	config.publishFrom(candidate.load())
-	callback := make([]reloadCallback, len(config.callback))
-	copy(callback, config.callback)
+	callback := slices.Clone(config.callback)
 	return ConfigReloadResult{Status: ConfigReloadApplied, RestartRequired: restart}, changed, callback
 }
 

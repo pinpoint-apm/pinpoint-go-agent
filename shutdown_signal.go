@@ -13,7 +13,6 @@ import (
 // prove the default: without ShutdownOnSignal the agent never touches it.
 var (
 	signalNotify = signal.Notify
-	signalStop   = signal.Stop
 
 	// raiseSignal re-delivers sig to this process once the agent is down.
 	// os.Process.Signal rather than syscall.Kill so the file builds on every
@@ -123,18 +122,18 @@ func ShutdownOnSignal(agent Agent, sigs ...os.Signal) (stop func()) {
 		// process with 128+signum. signal.Reset would do the same but would
 		// also tear down a channel the host registered for the same signal,
 		// which is not this helper's to touch.
-		signalStop(ch)
+		signal.Stop(ch)
 		if err := raiseSignal(sig); err != nil {
 			Log("agent").Warnf("re-raise %v after shutdown failed: %v", sig, err)
 		}
 	}()
 
-	var once sync.Once
+	release := sync.OnceFunc(func() {
+		signal.Stop(ch)
+		close(done)
+	})
 	return func() {
-		once.Do(func() {
-			signalStop(ch)
-			close(done)
-		})
+		release()
 		<-exited
 	}
 }

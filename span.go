@@ -450,7 +450,7 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 	writer.Set(HeaderParentSpanId, spanIdStr)
 	writer.Set(HeaderFlags, strconv.Itoa(span.flags))
 	writer.Set(HeaderParentApplicationName, span.agent.appName)
-	writer.Set(HeaderParentApplicationType, span.agent.appTypeString())
+	writer.Set(HeaderParentApplicationType, span.agent.appTypeStr)
 
 	// Propagate this agent's serviceName when present; v1/v3 emit no such header.
 	if span.agent.serviceName != "" {
@@ -483,7 +483,7 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 }
 
 // extract continues the trace the reader's headers carry, or starts one. It
-// runs once, on the span samplingSpan has just created.
+// runs once, on the span newSpanTracerWithReader has just created.
 func (span *span) extract(reader DistributedTracingContextReader) {
 	tid, _ := reader.Get(HeaderTraceId)
 	txId, continued := continueHeaders(reader, span.agent.clusterNamespace)
