@@ -96,14 +96,11 @@ func (b *expiringPickFirst) UpdateClientConnState(state balancer.ClientConnState
 		b.maxAge = time.Duration(cfg.MaxAgeMillis) * time.Millisecond
 	}
 
-	// Endpoints supersede Addresses, and the channel wraps Addresses into
-	// Endpoints as well, so flatten whichever is present into one address list.
+	// The channel wraps a resolver's bare Addresses into Endpoints, so the
+	// Endpoints are the whole list; flatten them into one address list.
 	var addrs []resolver.Address
 	for _, endpoint := range state.ResolverState.Endpoints {
 		addrs = append(addrs, endpoint.Addresses...)
-	}
-	if len(addrs) == 0 {
-		addrs = state.ResolverState.Addresses
 	}
 	if len(addrs) == 0 {
 		b.resolverErrorLocked(fmt.Errorf("%s: no addresses resolved", expiringPickFirstName))
@@ -228,14 +225,10 @@ func (b *expiringPickFirst) onSubConnState(sd *expiringSubConn, state balancer.S
 		return
 	}
 
-	if b.ready == sd {
-		b.ready = nil
-	}
-	if b.connecting == sd {
-		b.connecting = nil
-	}
-	if b.failure == sd {
-		b.failure = nil
+	for _, slot := range []**expiringSubConn{&b.ready, &b.connecting, &b.failure} {
+		if *slot == sd {
+			*slot = nil
+		}
 	}
 
 	if state.ConnectivityState == connectivity.TransientFailure || state.ConnectivityState == connectivity.Idle {
@@ -282,29 +275,19 @@ func (b *expiringPickFirst) onSubConnState(sd *expiringSubConn, state balancer.S
 }
 
 func (b *expiringPickFirst) updateBalancingStateLocked() {
+	state, p := connectivity.Idle, &expiringPicker{err: balancer.ErrNoSubConnAvailable}
 	switch {
 	case b.ready != nil:
-		b.cc.UpdateState(balancer.State{
-			ConnectivityState: connectivity.Ready,
-			Picker:            &expiringPicker{b: b, sd: b.ready},
-		})
+		state, p = connectivity.Ready, &expiringPicker{b: b, sd: b.ready}
 	case b.connecting != nil:
-		b.cc.UpdateState(balancer.State{
-			ConnectivityState: connectivity.Connecting,
-			Picker:            &expiringPicker{err: balancer.ErrNoSubConnAvailable},
-		})
+		state = connectivity.Connecting
 	case b.failure != nil:
-		b.cc.UpdateState(balancer.State{
-			ConnectivityState: connectivity.TransientFailure,
-			Picker:            &expiringPicker{err: b.failureErr},
-		})
+		state, p.err = connectivity.TransientFailure, b.failureErr
 	default:
 		// An IDLE channel reconnects on its first pick, as pick_first does.
-		b.cc.UpdateState(balancer.State{
-			ConnectivityState: connectivity.Idle,
-			Picker:            &expiringPicker{err: balancer.ErrNoSubConnAvailable, exitIdle: sync.OnceFunc(b.ExitIdle)},
-		})
+		p.exitIdle = sync.OnceFunc(b.ExitIdle)
 	}
+	b.cc.UpdateState(balancer.State{ConnectivityState: state, Picker: p})
 }
 
 // agent's SynchronizationContext: Pick must not block, and creating a SubConn

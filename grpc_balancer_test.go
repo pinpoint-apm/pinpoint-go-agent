@@ -98,7 +98,7 @@ func newExpiringPickFirst(t *testing.T, maxAgeMillis int64) (*expiringPickFirst,
 	cfg, err := expiringPickFirstBuilder{}.ParseConfig([]byte(`{"maxAgeMillis":` + strconv.FormatInt(maxAgeMillis, 10) + `}`))
 	require.NoError(t, err)
 	require.NoError(t, b.UpdateClientConnState(balancer.ClientConnState{
-		ResolverState:  resolver.State{Addresses: []resolver.Address{{Addr: "collector:9991"}}},
+		ResolverState:  endpointState("collector:9991"),
 		BalancerConfig: cfg,
 	}))
 	return b, cc
@@ -200,7 +200,7 @@ func Test_expiringPickFirst_retriesSuccessorWhenTheSlotWasTaken(t *testing.T) {
 	cfg, err := expiringPickFirstBuilder{}.ParseConfig([]byte(`{"maxAgeMillis":1}`))
 	require.NoError(t, err)
 	require.NoError(t, b.UpdateClientConnState(balancer.ClientConnState{
-		ResolverState:  resolver.State{Addresses: []resolver.Address{{Addr: "collector-2:9991"}}},
+		ResolverState:  endpointState("collector-2:9991"),
 		BalancerConfig: cfg,
 	}))
 	require.Equal(t, 2, cc.count(), "the address change opens a SubConn into the CONNECTING slot")
@@ -451,7 +451,7 @@ func Test_expiringPickFirst_appliesChangedAddresses(t *testing.T) {
 	old := cc.subConn(0)
 
 	require.NoError(t, b.UpdateClientConnState(balancer.ClientConnState{
-		ResolverState: resolver.State{Addresses: []resolver.Address{{Addr: "collector-2:9991"}}},
+		ResolverState: endpointState("collector-2:9991"),
 	}))
 	require.Equal(t, 2, cc.count(), "the new address list opens a SubConn on it")
 	successor := cc.subConn(1)
@@ -480,7 +480,7 @@ func Test_expiringPickFirst_replacesNonServingSubConnsOnAddressChange(t *testing
 			cc.subConn(0).setState(tc.state)
 
 			require.NoError(t, b.UpdateClientConnState(balancer.ClientConnState{
-				ResolverState: resolver.State{Addresses: []resolver.Address{{Addr: "collector-2:9991"}}},
+				ResolverState: endpointState("collector-2:9991"),
 			}))
 			assert.EqualValues(t, 1, cc.subConn(0).shutdowns.Load(), "the stale attempt is dropped")
 			require.Equal(t, 2, cc.count())
@@ -498,13 +498,9 @@ func Test_expiringPickFirst_ignoresUnchangedAddresses(t *testing.T) {
 
 	for i := 0; i < 10; i++ {
 		require.NoError(t, b.UpdateClientConnState(balancer.ClientConnState{
-			ResolverState: resolver.State{Addresses: []resolver.Address{{Addr: "collector:9991"}}},
+			ResolverState: endpointState("collector:9991"),
 		}))
 	}
-	// The same list as Endpoints rather than Addresses is still the same list.
-	require.NoError(t, b.UpdateClientConnState(balancer.ClientConnState{
-		ResolverState: resolver.State{Endpoints: []resolver.Endpoint{{Addresses: []resolver.Address{{Addr: "collector:9991"}}}}},
-	}))
 
 	assert.Equal(t, 1, cc.count(), "an unchanged list opens no SubConn")
 	assert.EqualValues(t, 1, cc.subConn(0).connects.Load())
@@ -532,4 +528,10 @@ func must(sc balancer.SubConn, err error) balancer.SubConn {
 		panic(err)
 	}
 	return sc
+}
+
+// endpointState is a resolver state holding addr, as the channel hands it to
+// the balancer: in Endpoints, which it fills from a resolver's bare Addresses.
+func endpointState(addr string) resolver.State {
+	return resolver.State{Endpoints: []resolver.Endpoint{{Addresses: []resolver.Address{{Addr: addr}}}}}
 }
