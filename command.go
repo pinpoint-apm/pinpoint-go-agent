@@ -248,7 +248,7 @@ func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
 	shutdown := agent.stopSignal().Done()
 	timer := time.NewTimer(activeThreadCountInterval)
 	defer timer.Stop()
-	for agent.workerContinues() && !s.stopped() {
+	for agent.workerContinues() && s.stopCtx.Err() == nil {
 		err := s.sendActiveThreadCount()
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
@@ -272,7 +272,7 @@ func (agent *agent) sendActiveThreadCount(s *activeThreadCountStream) {
 		// ends, so a stopped stream that only re-tested workerContinues would
 		// spin.
 		select {
-		case <-s.stop:
+		case <-s.stopCtx.Done():
 			return
 		case <-shutdown:
 			return

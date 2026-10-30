@@ -1229,13 +1229,6 @@ func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc f
 	return false
 }
 
-// closeStream runs a stream's close op under closeStreamTimeOut and then
-// cancels its context; every stream's close is this shape.
-func closeStream(cancel context.CancelFunc, op func() error, which string) {
-	sendStreamWithTimeout(op, cancel, closeStreamTimeOut, which)
-	cancel()
-}
-
 // gzipCallOptions compresses a call: SendSpanBatch requests and the stat
 // stream. Importing encoding/gzip registers the compressor process-wide, which
 // also lets the client read a gzip response.
@@ -1287,13 +1280,15 @@ func (h *streamHandle[S]) send(op func(S) error, which string) error {
 	return err
 }
 
-// close runs op, the stream's own close, through closeStream and forgets the
-// stream; a handle holding none does nothing.
+// close runs op, the stream's own close, under closeStreamTimeOut, cancels
+// the stream's context and forgets the stream; a handle holding none does
+// nothing.
 func (h *streamHandle[S]) close(op func(S) error, which string) {
 	if !h.open() {
 		return
 	}
-	closeStream(h.cancel, func() error { return op(h.stream) }, which+" stream close")
+	sendStreamWithTimeout(func() error { return op(h.stream) }, h.cancel, closeStreamTimeOut, which+" stream close")
+	h.cancel()
 	var none S
 	h.stream = none
 	Log("grpc").Infof("close %s stream", which)

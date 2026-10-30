@@ -5,7 +5,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
@@ -147,21 +146,23 @@ func (s *cmdStream) recvCommandRequest() (*pb.PCmdRequest, error) {
 }
 
 type activeThreadCountStream struct {
+	streamHandle[pb.ProfilerCommandService_CommandStreamActiveThreadCountClient]
 	streams  *atcStreams
-	stream   pb.ProfilerCommandService_CommandStreamActiveThreadCountClient
 	reqId    int32
 	actCount int32
-	cancel   context.CancelFunc
 
-	// stop is the only cross-goroutine signal to this stream, closed by
-	// requestStop. cancel stays owned by the goroutine running the stream, so
-	// a stop never races with the stream being opened.
-	stop     chan struct{}
-	stopOnce sync.Once
+	// stopCtx is the only cross-goroutine signal to this stream, cancelled by
+	// requestStop: safe from any goroutine, and more than once - a stream can
+	// be superseded while already stopping. The stream's own cancel stays
+	// owned by the goroutine running it, so a stop never races with the
+	// stream being opened.
+	stopCtx     context.Context
+	requestStop context.CancelFunc
 }
 
 func newActiveThreadCountStream(streams *atcStreams, reqId int32) *activeThreadCountStream {
-	return &activeThreadCountStream{streams: streams, reqId: reqId, stop: make(chan struct{})}
+	stopCtx, requestStop := context.WithCancel(context.Background())
+	return &activeThreadCountStream{streams: streams, reqId: reqId, stopCtx: stopCtx, requestStop: requestStop}
 }
 
 // openActiveThreadCountStream opens the gRPC stream for an already registered
@@ -175,35 +176,19 @@ func (cmdGrpc *cmdGrpc) openActiveThreadCountStream(s *activeThreadCountStream) 
 		return false
 	}
 
-	s.stream, s.cancel = stream, cancel
+	s.streamHandle = newStreamHandle(stream, cancel, streamAge{})
 	return true
 }
 
-// requestStop asks the stream to finish. Safe from any goroutine, and safe to
-// call more than once - a stream can be superseded while already stopping.
-func (s *activeThreadCountStream) requestStop() {
-	s.stopOnce.Do(func() { close(s.stop) })
-}
-
-func (s *activeThreadCountStream) stopped() bool {
-	select {
-	case <-s.stop:
-		return true
-	default:
-		return false
-	}
-}
-
 func (s *activeThreadCountStream) close() {
-	if s.stream == nil {
-		return
-	}
-	closeStream(s.cancel, func() error { _, err := s.stream.CloseAndRecv(); return err }, "arc stream.CloseAndRecv()")
-	s.stream = nil
+	s.streamHandle.close(func(c pb.ProfilerCommandService_CommandStreamActiveThreadCountClient) error {
+		_, err := c.CloseAndRecv()
+		return err
+	}, "active thread count")
 }
 
 func (s *activeThreadCountStream) sendActiveThreadCount() error {
-	if s.stream == nil {
+	if !s.open() {
 		return status.Errorf(codes.Unavailable, "active thread count stream is nil")
 	}
 
@@ -226,11 +211,9 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 		Log("grpc").Debugf("PCmdActiveThreadCountRes: %s", gRes.String())
 	}
 
-	err := sendStreamWithTimeout(func() error { return s.stream.Send(gRes) }, s.cancel, sendStreamTimeOut, "arc stream.Send()")
-	if err != nil {
-		s.cancel()
-	}
-	return err
+	return s.send(func(c pb.ProfilerCommandService_CommandStreamActiveThreadCountClient) error {
+		return c.Send(gRes)
+	}, "arc stream.Send()")
 }
 
 // callCommand makes one unary command RPC under commandStreamTimeOut: res is
