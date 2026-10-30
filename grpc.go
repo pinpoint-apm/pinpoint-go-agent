@@ -77,10 +77,9 @@ func grpcMetadataContext(agent *agent, socketId int64) context.Context {
 		return agent.baseOutgoingContext()
 	}
 
-	// Only the ping stream sets a socketId; it is low frequency, so build fresh.
-	m := agentHeaderMap(agent)
-	m[headerSocketID] = strconv.FormatInt(socketId, 10)
-	return metadata.NewOutgoingContext(internalContext(context.Background()), metadata.New(m))
+	// Only the ping stream sets a socketId. The pair is added to the shared
+	// base context, which grpc-go merges with it when it sends.
+	return metadata.AppendToOutgoingContext(agent.baseOutgoingContext(), headerSocketID, strconv.FormatInt(socketId, 10))
 }
 
 func agentHeaderMap(agent *agent) map[string]string {

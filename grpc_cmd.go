@@ -3,8 +3,6 @@ package pinpoint
 import (
 	"context"
 	"runtime"
-	"strconv"
-	"strings"
 	"time"
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
@@ -16,33 +14,18 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// supportedCommandCodes lists the commands this agent serves. It must stay in
-// step with the switch in serveCommandStream.
-var supportedCommandCodes = []int32{
-	int32(pb.PCommandType_ECHO),
-	int32(pb.PCommandType_ACTIVE_THREAD_COUNT),
-	int32(pb.PCommandType_ACTIVE_THREAD_DUMP),
-	int32(pb.PCommandType_ACTIVE_THREAD_LIGHT_DUMP),
-}
-
-// supportCommandCodeHeader renders supportedCommandCodes as the ';'-separated
-// list the collector expects in the header.
-func supportCommandCodeHeader() string {
-	codes := make([]string, len(supportedCommandCodes))
-	for i, c := range supportedCommandCodes {
-		codes[i] = strconv.Itoa(int(c))
-	}
-	return strings.Join(codes, ";")
-}
+// supportCommandCodeHeader lists the commands this agent serves - ECHO,
+// ACTIVE_THREAD_COUNT, ACTIVE_THREAD_DUMP and ACTIVE_THREAD_LIGHT_DUMP - as the
+// ';'-separated, ascending PCommandType codes the collector expects in the
+// header. It must stay in step with the switch in serveCommandStream.
+const supportCommandCodeHeader = "710;730;740;750"
 
 // commandMetadataContext is grpcMetadataContext plus the supportcommandcode
 // header the HandleCommandV2 stream requires. The header replaces the V1
 // handshake message: the collector registers the connection from it as soon as
 // the stream opens, and rejects a V2 stream that lacks it.
 func commandMetadataContext(agent *agent) context.Context {
-	m := agentHeaderMap(agent)
-	m[headerSupportCommandCode] = supportCommandCodeHeader()
-	return metadata.NewOutgoingContext(internalContext(context.Background()), metadata.New(m))
+	return metadata.AppendToOutgoingContext(agent.baseOutgoingContext(), headerSupportCommandCode, supportCommandCodeHeader)
 }
 
 type cmdGrpc struct {

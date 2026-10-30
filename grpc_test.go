@@ -2210,15 +2210,18 @@ func Test_streams_nilStreamReportsUnavailable(t *testing.T) {
 // collector splits the value on ";" and both reference agents send the codes
 // in ascending order.
 func Test_supportCommandCodeHeader_format(t *testing.T) {
-	assert.Equal(t, "710;730;740;750", supportCommandCodeHeader())
-
-	assert.True(t, slices.IsSorted(supportedCommandCodes), "codes must be advertised in ascending order")
-	assert.Equal(t, []int32{
-		int32(pb.PCommandType_ECHO),
-		int32(pb.PCommandType_ACTIVE_THREAD_COUNT),
-		int32(pb.PCommandType_ACTIVE_THREAD_DUMP),
-		int32(pb.PCommandType_ACTIVE_THREAD_LIGHT_DUMP),
-	}, supportedCommandCodes)
+	served := []pb.PCommandType{
+		pb.PCommandType_ECHO,
+		pb.PCommandType_ACTIVE_THREAD_COUNT,
+		pb.PCommandType_ACTIVE_THREAD_DUMP,
+		pb.PCommandType_ACTIVE_THREAD_LIGHT_DUMP,
+	}
+	assert.True(t, slices.IsSorted(served), "codes must be advertised in ascending order")
+	want := make([]string, len(served))
+	for i, c := range served {
+		want[i] = strconv.Itoa(int(c))
+	}
+	assert.Equal(t, strings.Join(want, ";"), supportCommandCodeHeader)
 }
 
 // The V2 command stream is registered from its headers alone, so the context

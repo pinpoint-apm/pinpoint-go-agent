@@ -521,9 +521,7 @@ func BenchmarkGrpcMetadataContext(b *testing.B) {
 }
 
 // BenchmarkGrpcMetadataContextPing measures the ping path (socketId > 0), which
-// still builds the metadata map fresh because the socket id varies. It is the
-// same construction the socketId <= 0 path used before caching, so it shows the
-// cost BenchmarkGrpcMetadataContext now avoids.
+// appends the varying socket id to the cached base context.
 func BenchmarkGrpcMetadataContextPing(b *testing.B) {
 	a := benchAgent()
 
