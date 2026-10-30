@@ -300,6 +300,22 @@ func TestReloadConfig_InvalidConfig(t *testing.T) {
 	assert.Equal(t, 5, config.Int(CfgSamplingCounterRate))
 }
 
+func TestReloadConfig_InvalidListElementKeepsCurrentConfig(t *testing.T) {
+	_, config := newReloadAgent(t, WithAppName("reload-bad-list"), WithSamplingCounterRate(5), WithSpanErrorMark("exception"))
+	before := config.load()
+	for _, invalid := range []string{"{exception: true}", "[exception]", "null"} {
+		t.Run(invalid, func(t *testing.T) {
+			result := ReloadConfig("sampling:\n  counterRate: 2\nspan:\n  errorMark: [sql, " + invalid + "]\n")
+			assert.Equal(t, ConfigReloadInvalidConfig, result.Status)
+			assert.Contains(t, result.Message, CfgSpanErrorMark)
+			assert.Contains(t, result.Message, "is not a valid string slice")
+			assert.Same(t, before, config.load(), "a refused YAML must not publish any changes")
+			assert.Equal(t, 5, config.Int(CfgSamplingCounterRate))
+			assert.True(t, config.load().marksError(ErrorCategoryException))
+		})
+	}
+}
+
 // An out-of-range value and an unknown key are handled as at startup, with the
 // reload applied.
 func TestReloadConfig_OutOfRangeAndUnknownKeysAreTolerated(t *testing.T) {

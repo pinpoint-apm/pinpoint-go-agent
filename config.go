@@ -1095,7 +1095,7 @@ func scalarString(value any) (string, error) {
 // config file or an environment variable spells one. Any other value must be
 // an actual sequence: a bare scalar where a list belongs - a list written
 // without its dashes, say - is reported instead of passing as a one-entry
-// list. An element that is not a scalar reads as "".
+// list. An element that is not a scalar rejects the whole list.
 func toStringSlice(value any) ([]string, error) {
 	switch v := value.(type) {
 	case []string:
@@ -1109,7 +1109,10 @@ func toStringSlice(value any) ([]string, error) {
 	}
 	var list []string
 	for i := range rv.Len() {
-		s, _ := scalarString(rv.Index(i).Interface())
+		s, err := scalarString(rv.Index(i).Interface())
+		if err != nil {
+			return nil, fmt.Errorf("element %d: %w", i, err)
+		}
 		list = append(list, s)
 	}
 	return list, nil

@@ -835,6 +835,24 @@ func Test_convertCfgValue_IntStringIsDecimal(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func Test_convertCfgValue_StringSliceElements(t *testing.T) {
+	for _, value := range []any{
+		"exception,true,42",
+		[]string{"exception", "true", "42"},
+		[]any{"exception", true, 42},
+		[3]any{"exception", true, 42},
+	} {
+		got, err := convertCfgValue(CfgStringSlice, value)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"exception", "true", "42"}, got)
+	}
+	for _, invalid := range []any{map[string]any{"exception": true}, []string{"exception"}, nil} {
+		got, err := convertCfgValue(CfgStringSlice, []any{"sql", invalid, "http-status"})
+		assert.Error(t, err, "element: %#v", invalid)
+		assert.Empty(t, got, "an invalid element must reject the whole list")
+	}
+}
+
 // The snapshot holds the call stack limits as int32, so a value above
 // MaxInt32 must mean unlimited like -1 rather than wrap to 0 and drop every
 // span event.
@@ -1103,6 +1121,17 @@ func TestNewConfig_MalformedValueKeepsCurrentValue(t *testing.T) {
 			check: func(t *testing.T, c *Config) {
 				assert.Empty(t, c.StringSlice(CfgSpanIgnoreErrors))
 				assert.Empty(t, c.load().errorIgnoreRules)
+			},
+		},
+		{
+			name:     "string slice containing a mapping",
+			body:     "Span:\n  ErrorMark:\n    - exception: true\n",
+			cfgName:  CfgSpanErrorMark,
+			raw:      "[map[exception:true]]",
+			typeName: "string slice",
+			check: func(t *testing.T, c *Config) {
+				assert.Empty(t, c.StringSlice(CfgSpanErrorMark))
+				assert.Equal(t, allErrorCategories, c.load().errorMarkMask)
 			},
 		},
 		{
