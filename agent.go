@@ -136,7 +136,7 @@ type agent struct {
 	workerWg  sync.WaitGroup
 
 	// enable is the lifecycle phase (see lifecycle.go): registering, running,
-	// stopping, stopped or failed. It moves only through transitionTo, and is
+	// stopping, stopped or failed. It moves only through cas and beginShutdown, and is
 	// read only through the named predicates.
 	enable lifecycle
 
@@ -397,7 +397,7 @@ func (agent *agent) connectGrpcServer() {
 		// moved the phase on; only a connect that failed is still registering.
 		// The transition is a CAS, so a Shutdown racing this defer wins or
 		// loses cleanly and the loser leaves the release to the winner.
-		if agent.enable.current() != phaseRegistering || !agent.enable.tryTransitionTo(phaseFailed) {
+		if !agent.enable.cas(phaseRegistering, phaseFailed) {
 			return
 		}
 		Log("agent").Errorf("failed to connect to collector, agent disabled: %v", err)
@@ -459,7 +459,7 @@ func (agent *agent) connect() (err error) {
 	// phase to stopped; workers started now would only find it so and exit,
 	// and the closed connections are already released by that Shutdown. The
 	// refusal is that race's normal outcome, so it is not warned about.
-	if !agent.enable.tryTransitionTo(phaseRunning) {
+	if !agent.enable.cas(phaseRegistering, phaseRunning) {
 		return nil
 	}
 	agent.startWorkers(agent.workerTable())
@@ -783,10 +783,9 @@ func (agent *agent) shutdownAgent() {
 	// to tear down. signalShutdown above put it straight into stopped, so only
 	// an agent that ran is still stopping; shutdownOnce already rules out a
 	// second caller reaching this.
-	if agent.enable.current() != phaseStopping {
+	if !agent.enable.cas(phaseStopping, phaseStopped) {
 		return
 	}
-	agent.enable.transitionTo(phaseStopped)
 
 	// The teardown below is ordered against the workers that workerTable
 	// declares: the url stat flush above fed sendStatsWorker, spanQueue.close
@@ -1261,7 +1260,7 @@ func NewTestAgent(config *Config) (Agent, error) {
 	agent.agentGrpc = &agentGrpc{agent: agent}
 
 	setGlobalAgent(agent)
-	agent.enable.transitionTo(phaseRunning)
+	agent.enable.cas(phaseRegistering, phaseRunning)
 
 	return agent, nil
 }

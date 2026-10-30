@@ -1,9 +1,6 @@
 package pinpoint
 
-import (
-	"slices"
-	"sync/atomic"
-)
+import "sync/atomic"
 
 // agentPhase is the agent's lifecycle phase, held as one value rather than a
 // pair of flags so the phases are mutually exclusive by construction.
@@ -38,16 +35,6 @@ func (p agentPhase) String() string {
 	return "unknown"
 }
 
-// validTransitions lists, per source phase, the phases it may move to. Every
-// edge is forward: nothing returns to registering or running, so a torn-down
-// agent can never come back to life.
-var validTransitions = map[agentPhase][]agentPhase{
-	phaseRegistering: {phaseRunning, phaseFailed, phaseStopped},
-	phaseRunning:     {phaseStopping},
-	phaseStopping:    {phaseStopped},
-	phaseFailed:      {phaseStopped},
-}
-
 // lifecycle holds the phase as one atomic integer rather than a mutex-guarded
 // enum: tracingEnabled is read on the request path, where a lock would cost one
 // acquisition per span. Transitions are a CAS, so two writers racing for the
@@ -60,32 +47,17 @@ func (l *lifecycle) current() agentPhase {
 	return agentPhase(l.phase.Load())
 }
 
-// transitionTo moves to the given phase and reports whether it did. A move
-// the table does not allow is refused and logged, never applied: the phase
-// stays where it is so the caller can decide what that means for it.
-func (l *lifecycle) transitionTo(to agentPhase) bool {
-	if l.tryTransitionTo(to) {
-		return true
+// cas moves the phase from one value to another and reports whether it did.
+// Every edge is forward - nothing returns to registering or running, so a
+// torn-down agent can never come back to life - and each caller names its own
+// source phase. A refusal is a concurrent Shutdown having moved the phase on
+// first, the expected outcome of that race: the caller decides what it means.
+func (l *lifecycle) cas(from, to agentPhase) bool {
+	if !l.phase.CompareAndSwap(int32(from), int32(to)) {
+		return false
 	}
-	Log("agent").Warnf("agent phase transition refused: %s -> %s", l.current(), to)
-	return false
-}
-
-// tryTransitionTo is transitionTo without the warning, for the edges a
-// concurrent Shutdown can legitimately make impossible: a registration that
-// finishes, or fails, against an agent Shutdown has already moved to stopped.
-// There the refusal is the expected outcome of the race, not a bug to report.
-func (l *lifecycle) tryTransitionTo(to agentPhase) bool {
-	for {
-		from := l.current()
-		if !slices.Contains(validTransitions[from], to) {
-			return false
-		}
-		if l.phase.CompareAndSwap(int32(from), int32(to)) {
-			Log("agent").Infof("agent phase: %s -> %s", from, to)
-			return true
-		}
-	}
+	Log("agent").Infof("agent phase: %s -> %s", from, to)
+	return true
 }
 
 // beginShutdown moves a running agent to stopping, where the workers drain,
@@ -106,8 +78,7 @@ func (l *lifecycle) beginShutdown() {
 		default:
 			return
 		}
-		if l.phase.CompareAndSwap(int32(from), int32(to)) {
-			Log("agent").Infof("agent phase: %s -> %s", from, to)
+		if l.cas(from, to) {
 			return
 		}
 	}

@@ -8,7 +8,7 @@ import (
 )
 
 // Load and Store are test seams only, which is why they live in a _test file:
-// production code moves the phase through transitionTo and reads it through
+// production code moves the phase through cas and reads it through
 // the named predicates. Tests that build an agent by hand need to put it into
 // a phase without going through registration or Shutdown, and the existing
 // tests do so through the former enable bool's API: Store(true) is a running
@@ -39,7 +39,7 @@ func Test_lifecycle_PhasesAreDistinguishable(t *testing.T) {
 	assert.False(t, agent.tracingEnabled())
 	assert.False(t, agent.stopping())
 
-	require.True(t, agent.enable.transitionTo(phaseRunning))
+	require.True(t, agent.enable.cas(phaseRegistering, phaseRunning))
 	assert.Equal(t, phaseRunning, agent.enable.current())
 	assert.True(t, agent.tracingEnabled())
 	assert.True(t, agent.workerContinues())
@@ -75,10 +75,11 @@ func Test_lifecycle_ShutdownBeforeRegistrationGoesStraightToStopped(t *testing.T
 
 func Test_lifecycle_FailedRegistrationIsItsOwnPhase(t *testing.T) {
 	agent := &agent{}
-	require.True(t, agent.enable.transitionTo(phaseFailed))
+	require.True(t, agent.enable.cas(phaseRegistering, phaseFailed))
 	assert.False(t, agent.tracingEnabled(), "a failed agent does not record")
 	assert.False(t, agent.stopping(), "and is not shutting down either, as the shutdown flag was not set on this path")
-	assert.True(t, agent.enable.transitionTo(phaseStopped), "Shutdown after a failure still lands on stopped")
+	agent.enable.beginShutdown()
+	assert.Equal(t, phaseStopped, agent.enable.current(), "Shutdown after a failure still lands on stopped")
 }
 
 // beginShutdown takes the one edge the current phase allows - running drains
@@ -104,35 +105,15 @@ func Test_lifecycle_BeginShutdownPicksTheEdgeForThePhase(t *testing.T) {
 	}
 }
 
-func Test_lifecycle_RefusesInvalidTransitions(t *testing.T) {
-	for _, tt := range []struct {
-		from, to agentPhase
-	}{
-		{phaseRegistering, phaseStopping},
-		{phaseRunning, phaseRegistering},
-		{phaseRunning, phaseStopped},
-		{phaseRunning, phaseFailed},
-		{phaseStopping, phaseRunning},
-		{phaseStopped, phaseRunning},
-		{phaseStopped, phaseStopping},
-		{phaseFailed, phaseRunning},
-	} {
-		t.Run(tt.from.String()+"->"+tt.to.String(), func(t *testing.T) {
-			var l lifecycle
-			l.phase.Store(int32(tt.from))
-			assert.False(t, l.transitionTo(tt.to))
-			assert.Equal(t, tt.from, l.current(), "a refused transition leaves the phase where it was")
-		})
-	}
-}
-
-// Only one of two writers racing for the same edge wins; the other is
-// refused rather than applied twice.
-func Test_lifecycle_TransitionIsExclusive(t *testing.T) {
+// cas applies an edge only from its named source phase, and only once: of two
+// writers racing for the same edge one wins and the other is refused.
+func Test_lifecycle_CasNeedsItsSourcePhase(t *testing.T) {
 	var l lifecycle
-	l.phase.Store(int32(phaseRunning))
-	assert.True(t, l.transitionTo(phaseStopping))
-	assert.False(t, l.transitionTo(phaseStopping))
+	assert.False(t, l.cas(phaseRunning, phaseStopping), "not running yet")
+	assert.Equal(t, phaseRegistering, l.current(), "a refused cas leaves the phase where it was")
+	assert.True(t, l.cas(phaseRegistering, phaseRunning))
+	assert.True(t, l.cas(phaseRunning, phaseStopping))
+	assert.False(t, l.cas(phaseRunning, phaseStopping), "the edge is taken once")
 	assert.Equal(t, phaseStopping, l.current())
 }
 
