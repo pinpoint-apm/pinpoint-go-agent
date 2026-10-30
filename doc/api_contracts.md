@@ -102,7 +102,7 @@ the wrapped function returns. Do not call it yourself on a wrapped tracer.
 **What happens on misuse:** the late call is dropped, not applied. Every span
 recorder setter — `SetError`, `SetFailure`, `SetServiceType`, `SetRpcName`,
 `SetRemoteAddress`, `SetEndPoint`, `SetAcceptorHost`, `SetLogging`,
-`Annotations` and `AddMetric` — returns without writing once `EndSpan()` has
+`Annotations` and `RecordUrlStat` — returns without writing once `EndSpan()` has
 run, and warns `abnormal span - <setter> called after EndSpan` at debug level;
 the span event setters do the same after `EndSpanEvent()`. The lifecycle
 calls — `NewSpanEvent`, `EndSpanEvent`, `Inject`, `NewGoroutineTracer` and
@@ -494,10 +494,9 @@ why `Http.UrlStat.Enable` gives useful numbers at low sampling rates. No-op
 tracers collect nothing, so an excluded URL is absent from these statistics as
 well as from traces.
 
-`AddMetric(MetricURLStat, *UrlStatEntry)` may be called more than once on a
-span. The `Url` is **first-wins**: once the span holds a non-empty `Url`, later
-calls keep it and refresh only `Method`. An empty `Url` does not
-claim the slot, so a later real one still fills it. The entry is copied; the
+`RecordUrlStat(*UrlStatEntry)` may be called more than once on a span. The
+`Url` is **first-wins**: once the span holds a non-empty `Url`, later calls
+keep it and refresh only `Method`. An empty `Url` does not claim the slot, so a later real one still fills it. The entry is copied; the
 span neither keeps the caller's pointer nor writes into it.
 
 `IsSampled()` exists for the rare case where the instrumentation itself is

@@ -1032,21 +1032,14 @@ func (span *span) collectUrlStat(stat *UrlStatEntry) {
 	span.requestStats.collectUrlStat(span.cfg, stat)
 }
 
-func (span *span) AddMetric(metric string, value any) {
+func (span *span) RecordUrlStat(stat *UrlStatEntry) {
 	// collectUrlStat is reached only from here, and EndSpan reads span.urlStat
 	// after enqueueing the final chunk: a late write both races that read and
 	// sets a stat nothing enqueues.
-	if span.warnIfFinished("AddMetric") {
+	if stat == nil || span.warnIfFinished("RecordUrlStat") {
 		return
 	}
-
-	if metric == MetricURLStat {
-		if entry, ok := value.(*UrlStatEntry); ok && entry != nil {
-			span.collectUrlStat(entry)
-		} else {
-			addMetricTypeLog.warnf("AddMetric: value for %s must be *UrlStatEntry", metric)
-		}
-	}
+	span.collectUrlStat(stat)
 }
 
 // canAddErrorChain reports whether another exception entry fits. Callers hold

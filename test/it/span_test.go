@@ -28,7 +28,7 @@ func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
 	root.Span().SetAcceptorHost("api.example.test")
 	root.Span().SetLogging(pinpoint.Logged)
 	root.Span().SetError(errors.New("upstream unavailable"))
-	root.AddMetric(pinpoint.MetricURLStat, &pinpoint.UrlStatEntry{
+	root.RecordUrlStat(&pinpoint.UrlStatEntry{
 		Url: "/orders/{id}", Method: "GET",
 	})
 

@@ -100,8 +100,10 @@ type Tracer interface {
 	// IsSampled returns whether the span has been sampled.
 	IsSampled() bool
 
-	// AddMetric adds a custom metric.
-	AddMetric(metric string, value any)
+	// RecordUrlStat records the span's URL statistics entry. Once a span holds
+	// a real Url, later calls keep it and refresh only the Method; an empty Url
+	// counts as "not recorded yet". The entry is copied, and a nil one ignored.
+	RecordUrlStat(stat *UrlStatEntry)
 }
 
 // SpanJSON renders what the tracer has recorded on its span as JSON - the rpc
@@ -382,7 +384,7 @@ func (tid TransactionId) String() string {
 	return b.String()
 }
 
-// UrlStatEntry is the URL statistics record a plugin hands to AddMetric. It
+// UrlStatEntry is the URL statistics record a plugin hands to RecordUrlStat. It
 // carries no status: the failed histogram follows the span's failure mark,
 // which the HTTP plugin sets from Http.Server.StatusCodeErrors before it
 // records the entry, so a plugin that records an entry directly marks an error
@@ -446,10 +448,6 @@ const (
 	LogSpanIdKey        = "PspanId"
 	Logged              = 1
 	NotLogged           = 0
-	// MetricURLStat records the span's URL statistics entry (*UrlStatEntry):
-	// once a span holds a real Url, later calls keep it and refresh only the
-	// Method and Status. An empty Url counts as "not recorded yet".
-	MetricURLStat = "URLStat"
 )
 
 // IsInjected reports whether the carrier already holds a trace context this

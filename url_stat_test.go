@@ -803,11 +803,9 @@ func Test_UrlStatUnknownKey(t *testing.T) {
 }
 
 // Test_UrlStatTemplateIsFirstWriteWins locks the merge rule:
-// MetricURLStat keeps the first URL template, and method and status are
+// RecordUrlStat keeps the first URL template, and the method is
 // last-write-wins.
 func Test_UrlStatTemplateIsFirstWriteWins(t *testing.T) {
-	assert.Equal(t, "URLStat", MetricURLStat, "the metric name plugins record under")
-
 	var kept UrlStatEntry
 	mergeUrlStat(&kept, false, &UrlStatEntry{Url: "/route/{id}", Method: "GET"})
 	assert.Equal(t, "/route/{id}", kept.Url)

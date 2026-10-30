@@ -116,7 +116,6 @@ var (
 	// once a span is once a request for an endpoint that always overflows or
 	// always reaches the entry cap, so these throttle across spans too.
 	callStackOverflowLog, errorChainLimitLog, errorChainDroppedLog logThrottle
-	addMetricTypeLog                                               logThrottle
 )
 
 // acquire reports whether the site may log now and, if so, how many calls it

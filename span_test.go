@@ -802,16 +802,7 @@ func Test_span_WrapGoroutine(t *testing.T) {
 	f()
 }
 
-func TestSpan_AddMetric_IgnoresWrongValueType(t *testing.T) {
-	span := defaultSpan(newTestAgent(defaultConfig()))
-
-	assert.NotPanics(t, func() {
-		span.AddMetric(MetricURLStat, UrlStatEntry{Url: "/"})
-		NoopTracer().AddMetric(MetricURLStat, UrlStatEntry{Url: "/"})
-	})
-}
-
-func TestSpan_AddMetric_IgnoresTypedNilURLStat(t *testing.T) {
+func TestSpan_RecordUrlStat_IgnoresNil(t *testing.T) {
 	config := defaultConfig()
 	config.Set(CfgHttpUrlStatEnable, true)
 	agent := newTestAgent(config)
@@ -820,50 +811,50 @@ func TestSpan_AddMetric_IgnoresTypedNilURLStat(t *testing.T) {
 	var entry *UrlStatEntry
 
 	assert.NotPanics(t, func() {
-		sampled.AddMetric(MetricURLStat, entry)
-		unsampled.AddMetric(MetricURLStat, entry)
+		sampled.RecordUrlStat(entry)
+		unsampled.RecordUrlStat(entry)
 	})
 	assert.Nil(t, sampled.urlStat)
 	assert.Nil(t, unsampled.urlStat)
 }
 
-func TestSpan_AddMetric_URLStatIsFirstWinsOnUrl(t *testing.T) {
+func TestSpan_RecordUrlStat_URLStatIsFirstWinsOnUrl(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgHttpUrlStatEnable, true)
 	span := newSampledSpan(newTestAgent(cfg), "op", "/rpc")
 
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/api/v1/users/{id}", Method: "GET"})
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/api/v1/users/42", Method: "POST"})
+	span.RecordUrlStat(&UrlStatEntry{Url: "/api/v1/users/{id}", Method: "GET"})
+	span.RecordUrlStat(&UrlStatEntry{Url: "/api/v1/users/42", Method: "POST"})
 
 	assert.Equal(t, "/api/v1/users/{id}", span.urlStat.Url, "first Url is kept")
 	assert.Equal(t, "POST", span.urlStat.Method, "Method is last-wins")
 }
 
 // call without a Url does not claim the slot, so a later real Url fills it.
-func TestSpan_AddMetric_URLStatUnknownDoesNotClaimUrl(t *testing.T) {
+func TestSpan_RecordUrlStat_URLStatUnknownDoesNotClaimUrl(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgHttpUrlStatEnable, true)
 	span := newSampledSpan(newTestAgent(cfg), "op", "/rpc")
 
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Method: "GET"})
+	span.RecordUrlStat(&UrlStatEntry{Method: "GET"})
 	assert.Equal(t, urlStatUnknown, span.urlStat.Url)
 
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	span.RecordUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 	assert.Equal(t, "/users/{id}", span.urlStat.Url, "a real Url replaces the stand-in")
 
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Method: "GET"})
+	span.RecordUrlStat(&UrlStatEntry{Method: "GET"})
 	assert.Equal(t, "/users/{id}", span.urlStat.Url, "an empty Url does not clear a recorded one")
 }
 
 // The caller's entry is copied: the span neither keeps the pointer nor writes
 // the urlStatUnknown stand-in back into it.
-func TestSpan_AddMetric_URLStatDoesNotAliasCallerEntry(t *testing.T) {
+func TestSpan_RecordUrlStat_URLStatDoesNotAliasCallerEntry(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgHttpUrlStatEnable, true)
 	span := newSampledSpan(newTestAgent(cfg), "op", "/rpc")
 
 	entry := &UrlStatEntry{Method: "GET"}
-	span.AddMetric(MetricURLStat, entry)
+	span.RecordUrlStat(entry)
 	assert.Equal(t, "", entry.Url, "caller's entry untouched")
 	assert.NotSame(t, entry, span.urlStat)
 
@@ -872,10 +863,10 @@ func TestSpan_AddMetric_URLStatDoesNotAliasCallerEntry(t *testing.T) {
 }
 
 // With Http.UrlStat.Enable off nothing is recorded.
-func TestSpan_AddMetric_URLStatDisabledRecordsNothing(t *testing.T) {
+func TestSpan_RecordUrlStat_URLStatDisabledRecordsNothing(t *testing.T) {
 	span := newSampledSpan(newTestAgent(defaultConfig()), "op", "/rpc")
 
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	span.RecordUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 	assert.Nil(t, span.urlStat)
 }
 
@@ -1159,17 +1150,17 @@ func TestSpan_AnnotationHandleHeldPastEndIsSealed(t *testing.T) {
 }
 
 // EndSpan reads span.urlStat after enqueueing the final chunk, so a late
-// AddMetric would race that read for a stat nothing enqueues.
-func TestSpan_AddMetricAfterEndSpanIsNoop(t *testing.T) {
+// RecordUrlStat would race that read for a stat nothing enqueues.
+func TestSpan_RecordUrlStatAfterEndSpanIsNoop(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgHttpUrlStatEnable, true)
 	agent := newTestAgent(cfg)
 	agent.urlStatChan = make(chan *urlStat, 1)
 	span := newSampledSpan(agent, "op", "/rpc")
 
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	span.RecordUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 	span.EndSpan()
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/late", Method: "POST"})
+	span.RecordUrlStat(&UrlStatEntry{Url: "/late", Method: "POST"})
 
 	assert.Equal(t, "/users/{id}", span.urlStat.Url, "urlStat")
 }
@@ -1204,7 +1195,7 @@ func TestSpan_LateSetterConcurrentWithSenderIsRaceFree(t *testing.T) {
 			span.SetAcceptorHost("late")
 			span.SetLogging(2)
 			span.Annotations().AppendString(AnnotationHttpUrl, "late")
-			span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/late", Method: "POST"})
+			span.RecordUrlStat(&UrlStatEntry{Url: "/late", Method: "POST"})
 			a.AppendString(AnnotationHttpUrl, "late") // handle taken before the end
 		}
 	})
@@ -1538,7 +1529,7 @@ func TestOverflowSpanEvent_SetErrorMarksSpanFailed(t *testing.T) {
 			agent := newTestAgent(cfg)
 			agent.urlStatChan = make(chan *urlStat, 1)
 			span := newSampledSpan(agent, "op", "/rpc")
-			span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+			span.RecordUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 			for span.eventOverflow.Load() == 0 {
 				span.NewSpanEvent("t")
 			}
@@ -1620,7 +1611,7 @@ func TestSpan_AsyncErrorFailsTheTraceRoot(t *testing.T) {
 			agent := newTestAgent(cfg)
 			agent.urlStatChan = make(chan *urlStat, 1)
 			root := newSampledSpan(agent, "op", "/rpc")
-			root.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+			root.RecordUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 			root.NewSpanEvent("fork")
 
 			async := root.NewGoroutineTracer()
@@ -1659,7 +1650,7 @@ func TestSpan_AsyncErrorAfterRootEndIsNotReported(t *testing.T) {
 	agent := newTestAgent(cfg)
 	agent.urlStatChan = make(chan *urlStat, 1)
 	root := newSampledSpan(agent, "op", "/rpc")
-	root.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	root.RecordUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 	root.NewSpanEvent("fork")
 	async := root.NewGoroutineTracer()
 	root.EndSpanEvent()
@@ -1782,7 +1773,7 @@ func TestSpan_ErrorMarkExcludeLeavesAFailingStatusUnmarked(t *testing.T) {
 	agent := newTestAgent(cfg)
 	agent.urlStatChan = make(chan *urlStat, 1)
 	span := newSampledSpan(agent, "op", "/rpc")
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	span.RecordUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 
 	span.SetFailure(ErrorCategoryHttpStatus)
 	assert.Equal(t, int32(0), span.err.Load(), "an excluded cause must not fail the transaction")

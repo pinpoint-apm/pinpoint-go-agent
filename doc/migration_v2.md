@@ -73,6 +73,7 @@ find none started and record nothing. Do not use it to put the migration off.
 | `pplogrus.WithField(tracer)` | removed | `pplogrus.NewField(tracer)` |
 | `Tracer.NewAsyncSpan()` | removed | `NewGoroutineTracer()` |
 | `Tracer.JsonString()`, `Tracer.AsyncSpanId()` | removed | `pinpoint.SpanJSON(tracer)` for the first; nothing replaces the second |
+| `tracer.AddMetric(pinpoint.MetricURLStat, entry)` | removed | `tracer.RecordUrlStat(entry)`; an implementation of `Tracer`, such as a mock, renames the method |
 | `pinpoint.UrlStatEntry.Status` | removed | drop the field; mark an error status on the span with `SetFailure(pinpoint.ErrorCategoryHttpStatus)` |
 | `ppsaramaibm.HeaderAsyncSpanId` | removed | nothing: no v2 release writes or reads that header |
 | `Tracer.Extract(reader)` | removed | create the span with `Agent.NewSpanTracerWithReader(operation, rpcName, reader)` |

@@ -1007,7 +1007,7 @@ type metricCountingTracer struct {
 	metrics int
 }
 
-func (t *metricCountingTracer) AddMetric(string, interface{}) { t.metrics++ }
+func (t *metricCountingTracer) RecordUrlStat(*pinpoint.UrlStatEntry) { t.metrics++ }
 
 // URL stats are off by default; CollectUrlStat must not build an entry that
 // every consumer would drop, and IsUrlStatEnabled must let plugins skip their

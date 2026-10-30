@@ -237,7 +237,7 @@ func BenchmarkSpanLifecycleShapes(b *testing.B) {
 					tracer := a.NewSpanTracerWithReader("operation", "/bench/rpc", reader)
 					tracer.NewSpanEvent("event1").EndSpanEvent()
 					tracer.NewSpanEvent("event2").EndSpanEvent()
-					tracer.AddMetric(MetricURLStat, entry)
+					tracer.RecordUrlStat(entry)
 					tracer.EndSpan()
 				}
 			})

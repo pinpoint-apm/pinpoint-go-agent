@@ -114,17 +114,17 @@ func Test_noopSpan_SetError_SingletonUntouched(t *testing.T) {
 // The unsampled span follows span.collectUrlStat's policy: Url first-wins,
 // Method and Status last-wins, the urlStatUnknown stand-in does not claim the
 // slot, and the caller's entry is copied.
-func Test_noopSpan_AddMetric_URLStatIsFirstWinsOnUrl(t *testing.T) {
+func Test_noopSpan_RecordUrlStat_URLStatIsFirstWinsOnUrl(t *testing.T) {
 	c, err := NewConfig(WithAppName("unsampledUrlStatApp"), WithHttpUrlStatEnable(true))
 	require.NoError(t, err)
 	span := newUnSampledSpan(newTestAgent(c), "/test")
 
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Method: "GET"})
+	span.RecordUrlStat(&UrlStatEntry{Method: "GET"})
 	assert.Equal(t, urlStatUnknown, span.urlStat.Url)
 
 	first := &UrlStatEntry{Url: "/users/{id}", Method: "GET"}
-	span.AddMetric(MetricURLStat, first)
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/42", Method: "POST"})
+	span.RecordUrlStat(first)
+	span.RecordUrlStat(&UrlStatEntry{Url: "/users/42", Method: "POST"})
 	assert.Equal(t, "/users/{id}", span.urlStat.Url, "first real Url is kept")
 	assert.Equal(t, "POST", span.urlStat.Method, "Method is last-wins")
 	assert.NotSame(t, first, span.urlStat, "caller's entry is copied")
@@ -132,12 +132,12 @@ func Test_noopSpan_AddMetric_URLStatIsFirstWinsOnUrl(t *testing.T) {
 
 // The singleton stays untouched (withStats gate) and a disabled gate records
 // nothing.
-func Test_noopSpan_AddMetric_URLStatGates(t *testing.T) {
-	NoopTracer().AddMetric(MetricURLStat, &UrlStatEntry{Url: "/singleton", Method: "GET"})
+func Test_noopSpan_RecordUrlStat_URLStatGates(t *testing.T) {
+	NoopTracer().RecordUrlStat(&UrlStatEntry{Url: "/singleton", Method: "GET"})
 	assert.Nil(t, defaultNoopSpan.urlStat)
 
 	span := newUnSampledSpan(newTestAgent(defaultConfig()), "/test")
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	span.RecordUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 	assert.Nil(t, span.urlStat)
 }
 

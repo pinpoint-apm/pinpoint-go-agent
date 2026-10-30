@@ -13,6 +13,11 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   rendering, now `pinpoint.SpanJSON(tracer)`, and `AsyncSpanId` is gone with
   its last user, the sarama async producer, which matches an ack to its span
   by the message itself. A tracer of your own no longer has to provide either.
+- **`Tracer.AddMetric(metric, value)` is `Tracer.RecordUrlStat(*UrlStatEntry)`.**
+  URL statistics were its only metric: the string key, `pinpoint.MetricURLStat`,
+  and the `any` value checked at run time are gone, so a wrong value is a
+  compile error instead of a warning. An implementation of `Tracer` of your own,
+  such as a mock, renames the method; one that embeds a `Tracer` needs nothing.
 - **`ppsaramaibm.HeaderAsyncSpanId` and `pinpoint.UrlStatEntry.Status` are
   gone.** The header is the ack id v1 wrote on every async message; no v2
   producer writes or reads it. `Status` was never read: the failed histogram

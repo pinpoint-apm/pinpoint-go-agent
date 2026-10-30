@@ -104,7 +104,7 @@ Http:
 				tracer.SpanEvent().SetSQL("select * from t where id = ?", "1")
 				tracer.SpanEvent().SetError(errors.New("race error"))
 				tracer.EndSpanEvent()
-				tracer.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/race", Method: "GET"})
+				tracer.RecordUrlStat(&UrlStatEntry{Url: "/race", Method: "GET"})
 				tracer.EndSpan()
 			}
 		})
