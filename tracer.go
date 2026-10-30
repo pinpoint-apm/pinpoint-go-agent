@@ -127,16 +127,6 @@ func SpanJSON(tracer Tracer) []byte {
 	return b
 }
 
-// AsyncSpanIdentifier is the optional capability of a goroutine tracer that
-// stands for an asynchronous span: AsyncSpanId renders "spanId^asyncId^sequence",
-// an id that tells one asynchronous span from another, as the sarama async
-// producer once carried it in a message header to match a broker's
-// acknowledgement to its span. The tracers of this package implement it; code
-// asserting it on a goroutine tracer has to allow for one that lacks it.
-type AsyncSpanIdentifier interface {
-	AsyncSpanId() string
-}
-
 // ErrorCategory is the cause that failed a transaction, carried as one bit of
 // PSpan.err. The bit values are a wire contract, not an internal detail: the
 // collector reads them to tell an exception apart from a failing HTTP status,
@@ -392,15 +382,14 @@ func (tid TransactionId) String() string {
 	return b.String()
 }
 
-// UrlStatEntry is the URL statistics record a plugin hands to AddMetric.
-// Status is informational: the failed histogram follows the span's failure
-// mark, which the HTTP plugin sets from Http.Server.StatusCodeErrors before it
+// UrlStatEntry is the URL statistics record a plugin hands to AddMetric. It
+// carries no status: the failed histogram follows the span's failure mark,
+// which the HTTP plugin sets from Http.Server.StatusCodeErrors before it
 // records the entry, so a plugin that records an entry directly marks an error
 // status with SetFailure(ErrorCategoryHttpStatus) itself.
 type UrlStatEntry struct {
 	Url    string
 	Method string
-	Status int
 }
 
 // Pre-defined service types.

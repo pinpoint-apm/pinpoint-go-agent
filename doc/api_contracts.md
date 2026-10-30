@@ -496,7 +496,7 @@ well as from traces.
 
 `AddMetric(MetricURLStat, *UrlStatEntry)` may be called more than once on a
 span. The `Url` is **first-wins**: once the span holds a non-empty `Url`, later
-calls keep it and refresh only `Method` and `Status`. An empty `Url` does not
+calls keep it and refresh only `Method`. An empty `Url` does not
 claim the slot, so a later real one still fills it. The entry is copied; the
 span neither keeps the caller's pointer nor writes into it.
 

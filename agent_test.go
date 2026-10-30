@@ -2171,7 +2171,7 @@ func TestAccessorsBeforeInit(t *testing.T) {
 	// Logging is discarded rather than attempted: logrus may be uninitialized too.
 	Log("init").Infof("a hook logs before init")
 	Log("init").Errorf("and errors")
-	assert.False(t, IsDebugLogLevelEnabled())
+	assert.False(t, isDebugLogLevelEnabled())
 
 	agent := GetAgent()
 	require.NotNil(t, agent)

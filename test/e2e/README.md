@@ -6,8 +6,8 @@ C++ agent's `test/e2e`:
 - `smoke_test.sh` is a deterministic correctness suite. It checks agent
   registration, the public tracing API, HTTP/gRPC propagation, all four gRPC
   RPC shapes, annotations, SQL metadata, call-stack errors, goroutine spans,
-  URL/method filters, span limits, sampling reload, the config-file watcher, and
-  lifecycle shutdown/restart.
+  URL/method filters, span limits, sampling reload, and lifecycle
+  shutdown/restart.
 - `cmd/load` is the load generator. With `--rps` it is a
   constant-arrival-rate test that schedules request starts at monotonic-clock
   deadlines, reports latency and scheduling lag, and fails when errors or
@@ -95,8 +95,6 @@ The suite fails unless all of the following are observed:
   an unmatched control still traces, and `ExcludeMethod` is honored;
 - an agent restart changes counter sampling and both sampled and unsampled
   decisions are observed;
-- the config-file watcher applies a new sampling rate to the running agent with
-  no restart;
 - shutdown disables the global agent and a subsequent cold agent registers and
   records a trace;
 - every process log contains a successful AgentInfo registration, the upstream

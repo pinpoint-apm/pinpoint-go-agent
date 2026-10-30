@@ -79,12 +79,14 @@ func RecordHttpServerRequest(tracer pinpoint.Tracer, req *http.Request) {
 	RecordHttpServerRequestWithQuery(tracer, req.Host, req.RemoteAddr, header{req.Header}, cookie{req}, req.URL.RawQuery)
 }
 
-// RecordHttpServerRequestWithReader records sampled request attributes from
-// framework-native request data. Adapters without a net/http request (fasthttp,
-// fiber) use this instead of materializing one just to have it read here.
-// remoteAddr is the transport-level peer address; the headers listed in
+// RecordHttpServerRequestWithQuery records sampled request attributes from
+// framework-native request data, plus the raw query string as annotation 41
+// when Http.Server.RecordRequestParam is on (default off: query strings carry
+// tokens and ids). Adapters without a net/http request (fasthttp, fiber) use
+// this instead of materializing one just to have it read here. remoteAddr is
+// the transport-level peer address; the headers listed in
 // Http.Server.RealIpHeader override it, exactly as in RecordHttpServerRequest.
-func RecordHttpServerRequestWithReader(tracer pinpoint.Tracer, host string, remoteAddr string, h Header, c Cookie) {
+func RecordHttpServerRequestWithQuery(tracer pinpoint.Tracer, host string, remoteAddr string, h Header, c Cookie, rawQuery string) {
 	// A nested layer leaves the request attributes to the layer that owns the span.
 	if !tracer.IsSampled() || pinpoint.IsNestedTracer(tracer) {
 		return
@@ -101,18 +103,9 @@ func RecordHttpServerRequestWithReader(tracer pinpoint.Tracer, host string, remo
 	if cfg.srvProxyHeader {
 		setProxyHeaderNames(a, h, cfg.srvProxyUserHeaders)
 	}
-}
-
-// RecordHttpServerRequestWithQuery is RecordHttpServerRequestWithReader plus the
-// raw query string, recorded as annotation 41 when
-// Http.Server.RecordRequestParam is on (default off: query strings carry tokens
-// and ids).
-func RecordHttpServerRequestWithQuery(tracer pinpoint.Tracer, host string, remoteAddr string, h Header, c Cookie, rawQuery string) {
-	RecordHttpServerRequestWithReader(tracer, host, remoteAddr, h, c)
-	if !tracer.IsSampled() || !httpCfg().srvRequestParam || rawQuery == "" {
-		return
+	if cfg.srvRequestParam && rawQuery != "" {
+		a.AppendString(pinpoint.AnnotationHttpParam, formatRequestParams(rawQuery))
 	}
-	tracer.Span().Annotations().AppendString(pinpoint.AnnotationHttpParam, FormatRequestParams(rawQuery))
 }
 
 // Size limits of the recorded request parameter annotation.
@@ -121,12 +114,12 @@ const (
 	requestParamTotalLimit = 512
 )
 
-// FormatRequestParams renders a raw query string as the collector expects it:
+// formatRequestParams renders a raw query string as the collector expects it:
 // "k=v&k=v", percent-decoded ("+" is a space; an undecodable token is kept
 // verbatim), each key and value cut to 64 characters and the whole string to
 // 512, with "..." marking every cut. Exported for the adapters that do not go
 // through RecordHttpServerRequest.
-func FormatRequestParams(rawQuery string) string {
+func formatRequestParams(rawQuery string) string {
 	cut := func(s string) string {
 		n := 0
 		for i := range s {
@@ -167,11 +160,11 @@ func FormatRequestParams(rawQuery string) string {
 	return b.String()
 }
 
-// ClientUrl builds the client AnnotationHttpUrl value, "METHOD url". The
+// clientUrl builds the client AnnotationHttpUrl value, "METHOD url". The
 // query string is dropped unless Http.Client.RecordUrlQuery is on; the
 // fragment is kept, and a password in the userinfo is masked. A nil URL
 // yields the bare method.
-func ClientUrl(method string, u *url.URL) string {
+func clientUrl(method string, u *url.URL) string {
 	if u == nil {
 		return method
 	}
@@ -183,7 +176,7 @@ func ClientUrl(method string, u *url.URL) string {
 	return method + " " + u.Redacted()
 }
 
-// ClientUrlString is ClientUrl for adapters that hold the URL as a string
+// ClientUrlString is clientUrl for adapters that hold the URL as a string
 // (fasthttp): the same rule, applied by cutting at the first "?" and keeping
 // a trailing "#fragment".
 func ClientUrlString(method, rawUrl string) string {
@@ -674,10 +667,11 @@ type responseWriter struct {
 
 // Go has no conditional interface implementation, so keeping the underlying
 // writer's optional interfaces reachable takes one wrapper type per
-// combination. A single type implementing all three would make type
-// assertions succeed on writers that do not support them, breaking the
-// feature detection handlers rely on: SSE flushing (http.Flusher) and
-// WebSocket upgrades (http.Hijacker). io.ReaderFrom needs no combination of
+// combination. A single type implementing both would make type assertions
+// succeed on writers that do not support them, breaking the feature
+// detection handlers rely on: SSE flushing (http.Flusher) and WebSocket
+// upgrades (http.Hijacker). http.Pusher is not carried: browsers no longer
+// accept HTTP/2 server push, and each interface carried doubles the shapes. io.ReaderFrom needs no combination of
 // its own: responseWriter implements it on every shape, since an io.Copy
 // fallback is always a correct ReadFrom for a writer without one.
 //
@@ -693,35 +687,16 @@ type (
 		responseWriter
 		http.Hijacker
 	}
-	responseWriterP struct {
-		responseWriter
-		http.Pusher
-	}
 	responseWriterFH struct {
 		responseWriter
 		http.Flusher
 		http.Hijacker
 	}
-	responseWriterFP struct {
-		responseWriter
-		http.Flusher
-		http.Pusher
-	}
-	responseWriterHP struct {
-		responseWriter
-		http.Hijacker
-		http.Pusher
-	}
-	responseWriterFHP struct {
-		responseWriter
-		http.Flusher
-		http.Hijacker
-		http.Pusher
-	}
 )
 
 // WrapResponseWriter records the response status into status while preserving
-// exactly the optional HTTP interfaces implemented by w.
+// exactly the http.Flusher and http.Hijacker w implements; http.Pusher is not
+// carried.
 func WrapResponseWriter(w http.ResponseWriter, status *int) http.ResponseWriter {
 	wrapped, _ := wrapResponseWriter(w, status)
 	return wrapped
@@ -731,34 +706,21 @@ func WrapResponseWriter(w http.ResponseWriter, status *int) http.ResponseWriter 
 // a caller reads the status off its code field with no *int of its own. The
 // default shape is built as a fresh literal, never as &rw: escape analysis is
 // flow-insensitive, so one &rw moved rw to the heap on every path and made
-// the seven wrapping shapes two allocations instead of one.
+// the three wrapping shapes two allocations instead of one.
 func wrapResponseWriter(w http.ResponseWriter, status *int) (http.ResponseWriter, *responseWriter) {
 	rw := responseWriter{ResponseWriter: w, code: http.StatusOK, status: status}
 	f, canFlush := w.(http.Flusher)
 	h, canHijack := w.(http.Hijacker)
-	p, canPush := w.(http.Pusher)
 
 	switch {
-	case canFlush && canHijack && canPush:
-		x := &responseWriterFHP{rw, f, h, p}
-		return x, &x.responseWriter
 	case canFlush && canHijack:
 		x := &responseWriterFH{rw, f, h}
-		return x, &x.responseWriter
-	case canFlush && canPush:
-		x := &responseWriterFP{rw, f, p}
-		return x, &x.responseWriter
-	case canHijack && canPush:
-		x := &responseWriterHP{rw, h, p}
 		return x, &x.responseWriter
 	case canFlush:
 		x := &responseWriterF{rw, f}
 		return x, &x.responseWriter
 	case canHijack:
 		x := &responseWriterH{rw, h}
-		return x, &x.responseWriter
-	case canPush:
-		x := &responseWriterP{rw, p}
 		return x, &x.responseWriter
 	default:
 		x := &responseWriter{ResponseWriter: w, code: http.StatusOK, status: status}
@@ -833,15 +795,11 @@ func (w *responseWriter) flushError() error {
 	return http.NewResponseController(w.ResponseWriter).Flush()
 }
 
-func (w *responseWriterF) Flush()   { w.responseWriter.flush(w.Flusher) }
-func (w *responseWriterFH) Flush()  { w.responseWriter.flush(w.Flusher) }
-func (w *responseWriterFP) Flush()  { w.responseWriter.flush(w.Flusher) }
-func (w *responseWriterFHP) Flush() { w.responseWriter.flush(w.Flusher) }
+func (w *responseWriterF) Flush()  { w.responseWriter.flush(w.Flusher) }
+func (w *responseWriterFH) Flush() { w.responseWriter.flush(w.Flusher) }
 
-func (w *responseWriterF) FlushError() error   { return w.responseWriter.flushError() }
-func (w *responseWriterFH) FlushError() error  { return w.responseWriter.flushError() }
-func (w *responseWriterFP) FlushError() error  { return w.responseWriter.flushError() }
-func (w *responseWriterFHP) FlushError() error { return w.responseWriter.flushError() }
+func (w *responseWriterF) FlushError() error  { return w.responseWriter.flushError() }
+func (w *responseWriterFH) FlushError() error { return w.responseWriter.flushError() }
 
 // Unwrap lets http.ResponseController reach the underlying writer.
 func (w *responseWriter) Unwrap() http.ResponseWriter {
@@ -902,12 +860,14 @@ func HandlerFuncName(f interface{}) string {
 	return v.Type().String() + "()"
 }
 
-// CollectUrlStat collects HTTP URL statistics.
+// CollectUrlStat collects HTTP URL statistics. status is not recorded: the
+// failed histogram follows the span's failure mark, which the status already
+// set through Http.Server.StatusCodeErrors.
 func CollectUrlStat(tracer pinpoint.Tracer, url string, method string, status int) {
 	// URL stats are off by default and the consumers drop the entry when
 	// disabled, so don't allocate one per request just to have it discarded.
 	if !httpCfg().urlStatEnabled {
 		return
 	}
-	tracer.AddMetric(pinpoint.MetricURLStat, &pinpoint.UrlStatEntry{Url: url, Method: method, Status: status})
+	tracer.AddMetric(pinpoint.MetricURLStat, &pinpoint.UrlStatEntry{Url: url, Method: method})
 }

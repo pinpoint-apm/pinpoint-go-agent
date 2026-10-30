@@ -56,7 +56,7 @@ func NewHttpClientTracer(tracer pinpoint.Tracer, operationName string, req *http
 
 	if tracer.IsSampled() {
 		a := se.Annotations()
-		a.AppendString(pinpoint.AnnotationHttpUrl, ClientUrl(req.Method, req.URL))
+		a.AppendString(pinpoint.AnnotationHttpUrl, clientUrl(req.Method, req.URL))
 		RecordClientHttpRequestHeader(a, header{req.Header})
 		RecordClientHttpCookie(a, cookie{req})
 	}

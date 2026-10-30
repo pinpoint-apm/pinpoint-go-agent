@@ -926,7 +926,7 @@ func (agent *agent) sendPingWorker() {
 			Log("agent").Infof("end ping goroutine")
 			return
 		case t := <-ticker.C:
-			if IsDebugLogLevelEnabled() {
+			if isDebugLogLevelEnabled() {
 				Log("agent").Debugf("ping at %v", t)
 			}
 		}

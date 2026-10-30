@@ -806,8 +806,8 @@ func TestSpan_AddMetric_IgnoresWrongValueType(t *testing.T) {
 	span := defaultSpan(newTestAgent(defaultConfig()))
 
 	assert.NotPanics(t, func() {
-		span.AddMetric(MetricURLStat, UrlStatEntry{Url: "/", Status: 200})
-		NoopTracer().AddMetric(MetricURLStat, UrlStatEntry{Url: "/", Status: 200})
+		span.AddMetric(MetricURLStat, UrlStatEntry{Url: "/"})
+		NoopTracer().AddMetric(MetricURLStat, UrlStatEntry{Url: "/"})
 	})
 }
 
@@ -832,12 +832,11 @@ func TestSpan_AddMetric_URLStatIsFirstWinsOnUrl(t *testing.T) {
 	cfg.Set(CfgHttpUrlStatEnable, true)
 	span := newSampledSpan(newTestAgent(cfg), "op", "/rpc")
 
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/api/v1/users/{id}", Method: "GET", Status: 0})
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/api/v1/users/42", Method: "POST", Status: 500})
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/api/v1/users/{id}", Method: "GET"})
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/api/v1/users/42", Method: "POST"})
 
 	assert.Equal(t, "/api/v1/users/{id}", span.urlStat.Url, "first Url is kept")
 	assert.Equal(t, "POST", span.urlStat.Method, "Method is last-wins")
-	assert.Equal(t, 500, span.urlStat.Status, "Status is last-wins")
 }
 
 // call without a Url does not claim the slot, so a later real Url fills it.
@@ -849,12 +848,11 @@ func TestSpan_AddMetric_URLStatUnknownDoesNotClaimUrl(t *testing.T) {
 	span.AddMetric(MetricURLStat, &UrlStatEntry{Method: "GET"})
 	assert.Equal(t, urlStatUnknown, span.urlStat.Url)
 
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET", Status: 200})
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 	assert.Equal(t, "/users/{id}", span.urlStat.Url, "a real Url replaces the stand-in")
 
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Method: "GET", Status: 500})
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Method: "GET"})
 	assert.Equal(t, "/users/{id}", span.urlStat.Url, "an empty Url does not clear a recorded one")
-	assert.Equal(t, 500, span.urlStat.Status)
 }
 
 // The caller's entry is copied: the span neither keeps the pointer nor writes
@@ -2255,25 +2253,6 @@ func TestSpanInjectExtract_ServiceNameRoundTrip(t *testing.T) {
 	receiver := defaultTestSpan()
 	receiver.extract(&DistributedTracingContextMap{carrier})
 	assert.Equal(t, "ServiceA", receiver.parentServiceName)
-}
-
-// AsyncSpanId is formatted by hand; it must read exactly as
-// "spanId^asyncId^sequence" does through fmt at every width, the widest
-// values included, since the 64-byte buffer is sized for them.
-func Test_span_AsyncSpanId(t *testing.T) {
-	span := defaultSpan(newTestAgent(defaultConfig()))
-	for _, tt := range []struct {
-		spanId          int64
-		asyncId, seqNum int32
-	}{
-		{0, 0, 0},
-		{1234567890123, 7, 3},
-		{math.MinInt64, math.MinInt32, math.MinInt32},
-		{math.MaxInt64, math.MaxInt32, math.MaxInt32},
-	} {
-		span.spanId, span.asyncId, span.asyncSequence = tt.spanId, tt.asyncId, tt.seqNum
-		assert.Equal(t, fmt.Sprintf("%d^%d^%d", tt.spanId, tt.asyncId, tt.seqNum), span.AsyncSpanId())
-	}
 }
 
 // ClusterNamespace keeps clusters that call each other over one network

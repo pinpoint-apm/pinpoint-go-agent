@@ -81,7 +81,7 @@ func (r producerHeaderReader) Get(key string) (string, bool) {
 // same bytes per call. sarama encodes a record header's key and never writes
 // into it, so messages share these. Any other key is converted as before.
 var headerKeys = func() map[string][]byte {
-	m := map[string][]byte{HeaderAsyncSpanId: []byte(HeaderAsyncSpanId)}
+	m := make(map[string][]byte)
 	for k := range pinpoint.InjectedHeaders() {
 		m[k] = []byte(k)
 	}
@@ -104,12 +104,11 @@ func (m *distributedTracingContextWriterProducer) Set(key string, value string) 
 	// capacity the application's slice may share with another message.
 	// Another span's context is not copied: Inject omits a header it has no
 	// value for, so a stale one left in place was read as this injection's.
-	// Nor is the ack id an earlier release wrote, which no reader takes now.
 	if !m.grown {
 		const injectedHeaders = 10
 		grown := make([]sarama.RecordHeader, 0, len(m.msg.Headers)+injectedHeaders)
 		for _, h := range m.msg.Headers {
-			if k := string(h.Key); k != HeaderAsyncSpanId && !pinpoint.IsInjectedHeader(k) {
+			if !pinpoint.IsInjectedHeader(string(h.Key)) {
 				grown = append(grown, h)
 			}
 		}

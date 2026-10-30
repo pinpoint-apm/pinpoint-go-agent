@@ -582,7 +582,7 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 		Container: agentGrpc.agent.config.Bool(CfgIsContainerEnv),
 	}
 
-	if IsDebugLogLevelEnabled() {
+	if isDebugLogLevelEnabled() {
 		Log("grpc").Debugf("agent info: %s", agentInfo.String())
 	}
 
@@ -849,7 +849,7 @@ func metaResult(res *pb.PResult, err error) error {
 // sendMeta makes one metadata RPC: kind names it in the log lines, in is the
 // message and call is the MetadataClient method that carries it.
 func sendMeta[M proto.Message](agentGrpc *agentGrpc, kind string, in M, call func(context.Context, M, ...grpc.CallOption) (*pb.PResult, error)) error {
-	if IsDebugLogLevelEnabled() {
+	if isDebugLogLevelEnabled() {
 		Log("grpc").Debugf("%s metadata: %v", kind, in)
 	}
 

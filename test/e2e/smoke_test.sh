@@ -204,17 +204,6 @@ wait_for_body "restored upstream agent" "$BASE_URL/ready" \
     '"agent_enabled":true' || true
 
 echo ""
-echo "Config file watcher"
-# Production reconfiguration flows through the watcher, not through an agent
-# restart. The endpoint points a fresh agent at a config file it owns, edits the
-# sampling rate, and waits for the running agent to follow. It restarts the
-# agent twice, so it needs more than the default request timeout.
-http_request POST "$BASE_URL/agent/watch-reload" --max-time 120
-assert_status "config file watcher" 200
-assert_contains "watched agent started" '"started":true'
-assert_contains "watcher applied the new rate" '"reloaded":true'
-
-echo ""
 echo "Agent shutdown and restart"
 http_request POST "$BASE_URL/agent/shutdown"
 assert_status "agent shutdown" 200

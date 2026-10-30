@@ -163,7 +163,6 @@ func (t *recordingTracer) SpanEvent() pinpoint.SpanEventRecorder { return t.se }
 func (t *recordingTracer) NewGoroutineTracer() pinpoint.Tracer { return t }
 func (t *recordingTracer) NewSpanEvent(string) pinpoint.Tracer { return t }
 func (t *recordingTracer) IsSampled() bool                     { return true }
-func (t *recordingTracer) AsyncSpanId() string                 { return t.id }
 
 // Inject writes a trace context, as a sampled tracer's does: a message that
 // carries one is nested on a later send, which is how a retry is recognized.
@@ -449,10 +448,6 @@ func Test_asyncProducer_NoErrorReturnsEndsSpansImmediately(t *testing.T) {
 
 	recv(t, tracer.ended, "span end")
 	requireSpanCount(t, p, 0)
-	for _, h := range msg.Headers {
-		assert.NotEqual(t, HeaderAsyncSpanId, string(h.Key),
-			"no async span id header must be added when acks cannot end the tracer")
-	}
 }
 
 // Input and InputContext both send on sarama's own input, so one goroutine's

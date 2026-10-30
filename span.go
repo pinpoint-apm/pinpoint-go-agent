@@ -348,7 +348,7 @@ func (span *span) EndSpan() {
 		if len(chains) > 0 {
 			span.agent.enqueueExceptionMeta(span, chains)
 		}
-	} else if IsTraceLogLevelEnabled() {
+	} else if isTraceLogLevelEnabled() {
 		Log("span").Tracef("span channel - max capacity reached or closed")
 	}
 
@@ -482,7 +482,7 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 		writer.Set(HeaderHost, destinationId)
 	}
 
-	if IsTraceLogLevelEnabled() {
+	if isTraceLogLevelEnabled() {
 		Log("span").Tracef("span inject: %v, %d, %d, %s", span.txId, nextSpanId, span.spanId, destinationId)
 	}
 }
@@ -514,7 +514,7 @@ func (span *span) extract(reader DistributedTracingContextReader) {
 		span.spanId = generateSpanId()
 		span.parentSpanId = -1
 		span.begin(span.agent, span.txId, span.rpcName, true)
-		if IsTraceLogLevelEnabled() {
+		if isTraceLogLevelEnabled() {
 			Log("span").Tracef("span extract: new transaction %s, %d", span.txId, span.spanId)
 		}
 		return
@@ -569,7 +569,7 @@ func (span *span) extract(reader DistributedTracingContextReader) {
 	}
 
 	span.begin(span.agent, span.txId, span.rpcName, true)
-	if IsTraceLogLevelEnabled() {
+	if isTraceLogLevelEnabled() {
 		Log("span").Tracef("span extract: %s, %s, %s, %s, %s, %s", tid, spanid, pappname, pspanid, papptype, host)
 	}
 }
@@ -622,7 +622,7 @@ func sameClusterNamespace(mine string, reader DistributedTracingContextReader) b
 	if !ok || parent == mine {
 		return true
 	}
-	if IsDebugLogLevelEnabled() {
+	if isDebugLogLevelEnabled() {
 		Log("span").Debugf("cluster namespace mismatch: mine=%q, parent=%q; starting a new transaction", mine, parent)
 	}
 	return false
@@ -821,7 +821,7 @@ func (span *span) appendEndedSpanEvent(se *spanEvent) {
 	span.spanEvents = append(span.spanEvents, se)
 	if !span.finished.Load() && len(span.spanEvents) >= span.cfg.spanEventChunkSize {
 		chunk := span.newEventChunk(false)
-		if !chunk.enqueue() && IsTraceLogLevelEnabled() {
+		if !chunk.enqueue() && isTraceLogLevelEnabled() {
 			Log("span").Tracef("span channel - max capacity reached or closed")
 		}
 	}
@@ -897,19 +897,6 @@ func (span *span) TransactionId() TransactionId {
 
 func (span *span) SpanId() int64 {
 	return span.spanId
-}
-
-// AsyncSpanId renders "spanId^asyncId^sequence". By hand rather than with
-// fmt.Sprintf, which boxes the three integers: a caller may need one per
-// message it sends.
-func (span *span) AsyncSpanId() string {
-	var buf [64]byte // three integers at their widest plus two separators
-	b := strconv.AppendInt(buf[:0], span.spanId, 10)
-	b = append(b, '^')
-	b = strconv.AppendInt(b, int64(span.asyncId), 10)
-	b = append(b, '^')
-	b = strconv.AppendInt(b, int64(span.asyncSequence), 10)
-	return string(b)
 }
 
 func (span *span) Span() SpanRecorder {

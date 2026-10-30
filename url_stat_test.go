@@ -812,10 +812,9 @@ func Test_UrlStatTemplateIsFirstWriteWins(t *testing.T) {
 	mergeUrlStat(&kept, false, &UrlStatEntry{Url: "/route/{id}", Method: "GET"})
 	assert.Equal(t, "/route/{id}", kept.Url)
 
-	mergeUrlStat(&kept, true, &UrlStatEntry{Url: "/route/7", Method: "POST", Status: 500})
+	mergeUrlStat(&kept, true, &UrlStatEntry{Url: "/route/7", Method: "POST"})
 	assert.Equal(t, "/route/{id}", kept.Url, "the template is first-write-wins")
 	assert.Equal(t, "POST", kept.Method, "the method is last-write-wins")
-	assert.Equal(t, 500, kept.Status, "the status code is last-write-wins")
 
 	// The unknown stand-in is the absence of a template, not a value: it never
 	// wins over a real one, in either direction.

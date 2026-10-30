@@ -81,7 +81,7 @@ func (s *statStream) close() {
 }
 
 func (s *statStream) sendStats(stats *pb.PStatMessage) error {
-	if s.open() && IsTraceLogLevelEnabled() {
+	if s.open() && isTraceLogLevelEnabled() {
 		Log("grpc").Tracef("PStatMessage: %s", stats.String())
 	}
 	return s.send(func(c pb.Stat_SendAgentStatClient) error { return c.Send(stats) }, "stat stream.Send()")

@@ -193,7 +193,7 @@ func BenchmarkSpanLifecycleShapes(b *testing.B) {
 		HeaderParentApplicationType: "1800",
 		HeaderHost:                  "10.0.0.1:8080",
 	}
-	entry := &UrlStatEntry{Url: "/bench/rpc", Method: "GET", Status: 200}
+	entry := &UrlStatEntry{Url: "/bench/rpc", Method: "GET"}
 	shapes := []struct {
 		name    string
 		cfg     string

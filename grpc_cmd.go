@@ -100,7 +100,7 @@ func (s *cmdStream) sendFailMessage(reqId int32, msg string) error {
 		},
 	}
 
-	if s.open() && IsDebugLogLevelEnabled() {
+	if s.open() && isDebugLogLevelEnabled() {
 		Log("grpc").Debugf("PCmdMessage: %s", gCmd.String())
 	}
 	return s.send(func(c pb.ProfilerCommandService_HandleCommandV2Client) error { return c.Send(gCmd) }, "cmd stream.Send()")
@@ -116,7 +116,7 @@ func (s *cmdStream) recvCommandRequest() (*pb.PCmdRequest, error) {
 		return nil, err
 	}
 
-	if IsDebugLogLevelEnabled() {
+	if isDebugLogLevelEnabled() {
 		Log("grpc").Debugf("PCmdRequest: %s", gCmdReq.String())
 	}
 	return gCmdReq, nil
@@ -184,7 +184,7 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 		TimeStamp:           now.UnixMilli(),
 	}
 
-	if IsDebugLogLevelEnabled() {
+	if isDebugLogLevelEnabled() {
 		Log("grpc").Debugf("PCmdActiveThreadCountRes: %s", gRes.String())
 	}
 
@@ -196,7 +196,7 @@ func (s *activeThreadCountStream) sendActiveThreadCount() error {
 // callCommand makes one unary command RPC under commandStreamTimeOut: res is
 // the response it carries, logged at debug, and what names it in the logs.
 func (cmdGrpc *cmdGrpc) callCommand(what string, res interface{ String() string }, call func(context.Context) error) {
-	if IsDebugLogLevelEnabled() {
+	if isDebugLogLevelEnabled() {
 		Log("grpc").Debugf("send %s: %s", what, res.String())
 	}
 
@@ -249,7 +249,7 @@ func makePActiveThreadDumpList(dump *goroutineDump, limit int, threadName []stri
 			}
 		}
 
-		if IsDebugLogLevelEnabled() {
+		if isDebugLogLevelEnabled() {
 			Log("grpc").Debugf("send makePActiveThreadDumpList: %v", selected)
 		}
 

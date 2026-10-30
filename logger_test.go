@@ -164,14 +164,14 @@ func Test_IsLogLevelEnabledChecksExtraLogger(t *testing.T) {
 
 	logger.defaultLogger.SetLevel(logrus.InfoLevel)
 	logger.extraLogger.Store(nil)
-	require.False(t, IsDebugLogLevelEnabled(), "debug should be disabled when default logger is info and extra logger is nil")
+	require.False(t, isDebugLogLevelEnabled(), "debug should be disabled when default logger is info and extra logger is nil")
 
 	extraLogger := logrus.New()
 	extraLogger.SetLevel(logrus.TraceLevel)
 	SetExtraLogger(extraLogger)
 
-	require.True(t, IsDebugLogLevelEnabled(), "debug should be enabled when extra logger is trace")
-	require.True(t, IsTraceLogLevelEnabled(), "trace should be enabled when extra logger is trace")
+	require.True(t, isDebugLogLevelEnabled(), "debug should be enabled when extra logger is trace")
+	require.True(t, isTraceLogLevelEnabled(), "trace should be enabled when extra logger is trace")
 }
 
 // SetExtraLogger can be called while other goroutines are logging. Run under
@@ -183,7 +183,7 @@ func Test_SetExtraLoggerIsRaceFree(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		for i := 0; i < 200; i++ {
-			IsDebugLogLevelEnabled()
+			isDebugLogLevelEnabled()
 			Log("test").Debugf("line %d", i)
 		}
 	})

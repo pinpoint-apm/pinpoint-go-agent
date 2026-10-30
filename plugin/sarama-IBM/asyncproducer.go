@@ -218,12 +218,6 @@ func sendAsyncProducerMessage(input chan<- *sarama.ProducerMessage, msg *sarama.
 	return true
 }
 
-// HeaderAsyncSpanId is the record header earlier releases wrote to match an
-// ack to its span. It is no longer written - the span map is keyed by the
-// message, which sarama returns as it is - and is kept for the header writer,
-// which drops it from a message sent again.
-const HeaderAsyncSpanId = "Pinpoint-AsyncSpanID"
-
 // trackAcks reports whether delivery acks can be relied on to end the tracers.
 // Successes alone is not enough: with Return.Errors off, a failed message gets
 // no ack at all, and its tracer would sit in the span map until shutdown.

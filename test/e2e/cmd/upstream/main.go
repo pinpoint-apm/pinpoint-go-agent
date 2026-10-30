@@ -6,12 +6,10 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"net/http/pprof"
 	"os"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -20,15 +18,12 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/e2e/internal/e2e"
 )
 
-// Environment variables the lifecycle endpoints override. A reload rides the
-// environment rather than a ConfigOption: this suite points every process at a
-// config file, whose values win over ConfigOption, so an inline option would be
-// ignored. Environment variables are applied after the file, and a restarted
-// agent is a first load.
-const (
-	envConfigFile          = "PINPOINT_GO_CONFIGFILE"
-	envSamplingCounterRate = "PINPOINT_GO_SAMPLING_COUNTERRATE"
-)
+// envSamplingCounterRate is the variable /agent/reload overrides. A reload
+// rides the environment rather than a ConfigOption: this suite points every
+// process at a config file, whose values win over ConfigOption, so an inline
+// option would be ignored. Environment variables are applied after the file,
+// and a restarted agent is a first load.
+const envSamplingCounterRate = "PINPOINT_GO_SAMPLING_COUNTERRATE"
 
 var (
 	grpcTarget = "localhost:50051"
@@ -85,10 +80,10 @@ func onAgentShutdown(w http.ResponseWriter, r *http.Request) {
 	e2e.WriteJSON(w, http.StatusOK, map[string]string{"status": "shutdown"})
 }
 
-// onAgentReload restarts the agent with a new sampling rate. Production
-// reconfiguration goes through the config-file watcher (see
-// /agent/watch-reload); this endpoint is the coarse restart path, which the
-// smoke test uses to get a deterministic sampler.
+// onAgentReload restarts the agent with a new sampling rate: the coarse
+// restart path, which the smoke test uses to get a deterministic sampler. The
+// config-file watcher that reconfigures a running agent is covered by
+// test/it's TestReloadsConfigFileAndAppliesNewSamplingRate.
 func onAgentReload(w http.ResponseWriter, r *http.Request) {
 	counterRate := e2e.IntParam(r, "counter_rate", 1, 0, 1000)
 
@@ -100,87 +95,6 @@ func onAgentReload(w http.ResponseWriter, r *http.Request) {
 		"status":        "reloaded",
 		"counter_rate":  agent.Config().Int(pinpoint.CfgSamplingCounterRate),
 		"agent_enabled": started,
-	})
-}
-
-// restoreEnv puts an environment variable back the way it was.
-func restoreEnv(key, value string, present bool) {
-	if present {
-		os.Setenv(key, value)
-	} else {
-		os.Unsetenv(key)
-	}
-}
-
-// onAgentWatchReload drives the config-file watcher end to end: it points a
-// fresh agent at a file this process alone owns, edits the sampling rate, and
-// waits for the running agent to follow with no restart. Every other server in
-// the run reads the shared pinpoint-config.yaml, hence the private file.
-func onAgentWatchReload(w http.ResponseWriter, r *http.Request) {
-	path := filepath.Join(os.TempDir(),
-		"pinpoint-go-e2e-watch-"+e2e.EnvOr("PINPOINT_GO_AGENTNAME", "e2e")+".yaml")
-
-	agentMu.Lock()
-	defer agentMu.Unlock()
-	if agent == nil {
-		// After /agent/shutdown, like onAgentReload: start one to reconfigure.
-		agent = startAgent()
-	}
-
-	// The private file carries the collector ports too: it replaces the shared
-	// file wholesale, and the collector host arrives through the environment.
-	config := agent.Config()
-	writeConfig := func(rate int) error {
-		body := fmt.Sprintf("Collector:\n  AgentPort: %d\n  SpanPort: %d\n  StatPort: %d\n"+
-			"Sampling:\n  Type: COUNTER\n  CounterRate: %d\n",
-			config.Int(pinpoint.CfgCollectorAgentPort),
-			config.Int(pinpoint.CfgCollectorSpanPort),
-			config.Int(pinpoint.CfgCollectorStatPort),
-			rate)
-		return os.WriteFile(path, []byte(body), 0o600)
-	}
-	if err := writeConfig(1); err != nil {
-		e2e.WriteJSON(w, http.StatusInternalServerError, map[string]string{"status": "write_failed"})
-		return
-	}
-	defer os.Remove(path)
-
-	originalConfigFile, hadConfigFile := os.LookupEnv(envConfigFile)
-	originalRate, hadRate := os.LookupEnv(envSamplingCounterRate)
-	// The rate has to ride the file here. An environment override -- which
-	// /agent/reload leaves behind -- is applied after the file and would mask
-	// the reload this endpoint exists to observe.
-	os.Unsetenv(envSamplingCounterRate)
-	os.Setenv(envConfigFile, path)
-
-	started := restartAgentAndWait(30 * time.Second)
-	before := probeSampled(40, "/watch-probe/before/")
-
-	after := before
-	waitedMs := 0
-	if err := writeConfig(2); err == nil {
-		for waitedMs < 30000 {
-			time.Sleep(250 * time.Millisecond)
-			waitedMs += 250
-			after = probeSampled(40, "/watch-probe/after/")
-			if after < 40 {
-				break
-			}
-		}
-	}
-
-	// Restore the shared configuration before returning.
-	restoreEnv(envConfigFile, originalConfigFile, hadConfigFile)
-	restoreEnv(envSamplingCounterRate, originalRate, hadRate)
-	restartAgentAndWait(30 * time.Second)
-
-	e2e.WriteJSON(w, http.StatusOK, map[string]any{
-		"status":         "ok",
-		"started":        started,
-		"before_sampled": before,
-		"after_sampled":  after,
-		"waited_ms":      waitedMs,
-		"reloaded":       before == 40 && after > 0 && after < 40,
 	})
 }
 
@@ -209,7 +123,6 @@ func main() {
 	mux.HandleFunc("POST /agent/start", onAgentStart)
 	mux.HandleFunc("POST /agent/shutdown", onAgentShutdown)
 	mux.HandleFunc("POST /agent/reload", onAgentReload)
-	mux.HandleFunc("POST /agent/watch-reload", onAgentWatchReload)
 
 	// HTTP-only endpoints
 	mux.HandleFunc("GET /simple", onSimple)

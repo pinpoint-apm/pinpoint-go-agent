@@ -3,7 +3,6 @@ package pinpoint
 import (
 	"context"
 	"errors"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -125,10 +124,9 @@ func Test_noopSpan_AddMetric_URLStatIsFirstWinsOnUrl(t *testing.T) {
 
 	first := &UrlStatEntry{Url: "/users/{id}", Method: "GET"}
 	span.AddMetric(MetricURLStat, first)
-	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/42", Method: "POST", Status: 500})
+	span.AddMetric(MetricURLStat, &UrlStatEntry{Url: "/users/42", Method: "POST"})
 	assert.Equal(t, "/users/{id}", span.urlStat.Url, "first real Url is kept")
 	assert.Equal(t, "POST", span.urlStat.Method, "Method is last-wins")
-	assert.Equal(t, 500, span.urlStat.Status, "Status is last-wins")
 	assert.NotSame(t, first, span.urlStat, "caller's entry is copied")
 }
 
@@ -299,12 +297,7 @@ func Test_noopAgent(t *testing.T) {
 }
 
 func Test_noopSpan_Identity(t *testing.T) {
-	assert.Equal(t, "0^Noop", NoopTracer().(AsyncSpanIdentifier).AsyncSpanId())
 	assert.JSONEq(t, "{}", string(SpanJSON(NoopTracer())))
-
-	span := newUnSampledSpan(newTestAgent(defaultConfig()), "/test")
-	defer span.EndSpan()
-	assert.Equal(t, strconv.FormatInt(span.SpanId(), 10)+"^Noop", span.AsyncSpanId())
 }
 
 // The goroutine WrapGoroutine returns runs under a child of the tracer, which

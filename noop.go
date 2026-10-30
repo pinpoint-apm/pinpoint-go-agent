@@ -2,7 +2,6 @@ package pinpoint
 
 import (
 	"context"
-	"strconv"
 	"sync/atomic"
 	"time"
 )
@@ -151,10 +150,6 @@ func (span *noopSpan) TransactionId() TransactionId {
 
 func (span *noopSpan) SpanId() int64 {
 	return span.spanId
-}
-
-func (span *noopSpan) AsyncSpanId() string {
-	return strconv.FormatInt(span.spanId, 10) + "^Noop"
 }
 
 func (span *noopSpan) Span() SpanRecorder {

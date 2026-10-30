@@ -462,7 +462,7 @@ func registerMeta[K comparable, V any](agent *agent, cache *metaCache[K, V], kin
 	agent.enqueueMeta(m)
 	// Debug, not info: a miss runs on the request goroutine, and a workload
 	// whose cardinality exceeds the cache would otherwise log per request.
-	if IsDebugLogLevelEnabled() {
+	if isDebugLogLevelEnabled() {
 		Log("agent").Debugf("register %s metadata: %+v", kind, m)
 	}
 	return v
@@ -606,7 +606,7 @@ func (agent *agent) enqueueExceptionMeta(span *span, chains []*exception) {
 	}
 
 	agent.enqueueMeta(md)
-	if IsDebugLogLevelEnabled() {
+	if isDebugLogLevelEnabled() {
 		Log("agent").Debugf("enqueue exception meta: %v", md)
 	}
 }

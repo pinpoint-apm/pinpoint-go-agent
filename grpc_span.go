@@ -165,10 +165,10 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 			// can carry is dropped (splitSpanMessages).
 			maxSize := spanGrpc.agent.config.Int(CfgCollectorGrpcMaxSendMessageSize)
 			size := proto.Size(spanMessageBatch)
-			if IsDebugLogLevelEnabled() {
+			if isDebugLogLevelEnabled() {
 				Log("grpc").Debugf("SendSpanBatch size=%d messageSize=%d", len(spanMessageBatch.GetSpan()), size)
 			}
-			if IsTraceLogLevelEnabled() {
+			if isTraceLogLevelEnabled() {
 				Log("grpc").Tracef("PSpanMessageBatch: %s", spanMessageBatch.String())
 			}
 			if size <= maxSize {

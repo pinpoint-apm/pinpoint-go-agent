@@ -62,7 +62,6 @@ func Test_newSyncProducerTracer_ForwardedContextIsReplaced(t *testing.T) {
 		{Key: []byte(pinpoint.HeaderSpanId), Value: []byte(spanId)},
 		{Key: []byte(pinpoint.HeaderParentSpanId), Value: []byte("12345")},
 		{Key: []byte(pinpoint.HeaderHost), Value: []byte("stale:9092")},
-		{Key: []byte(HeaderAsyncSpanId), Value: []byte("1^2^3")},
 	}
 	msg := &sarama.ProducerMessage{Topic: "topic", Headers: append([]sarama.RecordHeader(nil), consumed...)}
 
@@ -76,7 +75,6 @@ func Test_newSyncProducerTracer_ForwardedContextIsReplaced(t *testing.T) {
 	assert.Equal(t, []string{spanId}, got[pinpoint.HeaderParentSpanId], "the consumer's parent must be this span")
 	assert.NotEqual(t, []string{spanId}, got[pinpoint.HeaderSpanId], "the consumer must not take this span's id")
 	assert.Equal(t, []string{"broker:9092"}, got[pinpoint.HeaderHost], "a stale header was left in place")
-	assert.Empty(t, got[HeaderAsyncSpanId], "the earlier release's ack id was left in place")
 	for key, values := range got {
 		assert.Len(t, values, 1, "%s carries two values", key)
 	}
@@ -96,7 +94,6 @@ func Test_isNested(t *testing.T) {
 	assert.False(t, isNested(noop, &sarama.ProducerMessage{Headers: hdr("x-app")}))
 	assert.True(t, isNested(noop, &sarama.ProducerMessage{Headers: hdr(pinpoint.HeaderTraceId)}), "a no-op tracer has no context to replace it with")
 	assert.True(t, isNested(noop, &sarama.ProducerMessage{Headers: hdr(pinpoint.HeaderSampled)}), "an unsampled context is a context too")
-	assert.False(t, isNested(noop, &sarama.ProducerMessage{Headers: hdr(HeaderAsyncSpanId)}), "an earlier release's ack id alone is no context")
 
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
 	defer tracer.EndSpan()

@@ -72,6 +72,9 @@ find none started and record nothing. Do not use it to put the migration off.
 | `pinpoint.WithSamplingRate(n)` | removed | `WithSamplingCounterRate(n)` |
 | `pplogrus.WithField(tracer)` | removed | `pplogrus.NewField(tracer)` |
 | `Tracer.NewAsyncSpan()` | removed | `NewGoroutineTracer()` |
+| `Tracer.JsonString()`, `Tracer.AsyncSpanId()` | removed | `pinpoint.SpanJSON(tracer)` for the first; nothing replaces the second |
+| `pinpoint.UrlStatEntry.Status` | removed | drop the field; mark an error status on the span with `SetFailure(pinpoint.ErrorCategoryHttpStatus)` |
+| `ppsaramaibm.HeaderAsyncSpanId` | removed | nothing: no v2 release writes or reads that header |
 | `Tracer.Extract(reader)` | removed | create the span with `Agent.NewSpanTracerWithReader(operation, rpcName, reader)` |
 | `pphttp.WrapHandle(agent, name, pattern, h)`, `WrapHandleFunc(...)` | removed | `pphttp.WrapHandler(h)`, `WrapHandlerFunc(f)`; register under the pattern as before |
 | `ppbeego.Middleware()` | removed | `web.InsertFilterChain("/*", ppbeego.ServerFilterChain())` |

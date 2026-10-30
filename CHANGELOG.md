@@ -10,9 +10,15 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 - **`Tracer.JsonString` and `Tracer.AsyncSpanId` are no longer on the `Tracer`
   interface.** Neither is tracing API: `JsonString` is a test and debugging
-  rendering, now `pinpoint.SpanJSON(tracer)`, and `AsyncSpanId` is the optional
-  `pinpoint.AsyncSpanIdentifier` capability, which the package's own tracers
-  implement. A tracer of your own no longer has to provide either.
+  rendering, now `pinpoint.SpanJSON(tracer)`, and `AsyncSpanId` is gone with
+  its last user, the sarama async producer, which matches an ack to its span
+  by the message itself. A tracer of your own no longer has to provide either.
+- **`ppsaramaibm.HeaderAsyncSpanId` and `pinpoint.UrlStatEntry.Status` are
+  gone.** The header is the ack id v1 wrote on every async message; no v2
+  producer writes or reads it. `Status` was never read: the failed histogram
+  follows the span's failure mark, which an entry recorded by hand sets with
+  `SetFailure(ErrorCategoryHttpStatus)`. `pphttp.CollectUrlStat` keeps its
+  `status` parameter.
 - **Every module path carries `/v2`.** The agent is
   `github.com/pinpoint-apm/pinpoint-go-agent/v2` and each plugin
   `github.com/pinpoint-apm/pinpoint-go-agent/plugin/<name>/v2`; the package
@@ -457,8 +463,8 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   (used by `RecordHttpServerRequest`, so every net/http based plugin gets it)
   records the query string as annotation 41 (`HTTP.PARAM`) in Java's
   `HttpServletParameterExtractor` format when `Http.Server.RecordRequestParam`
-  is on (default `false`; Java defaults on). `pphttp.FormatRequestParams` is
-  exported for adapters that hold the query outside a net/http request.
+  is on (default `false`; Java defaults on). An adapter that holds the query
+  outside a net/http request passes it to `RecordHttpServerRequestWithQuery`.
 - New `pinpoint.ShutdownOnSignal(agent, sigs...) (stop func())` calls
   `Shutdown()` when the process receives one of the given signals (`SIGTERM`
   and `SIGINT` by default), then restores the default signal handling and

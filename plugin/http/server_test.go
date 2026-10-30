@@ -567,10 +567,10 @@ func Test_responseWriter_PreservesOptionalInterfaces(t *testing.T) {
 
 			flusher, flushes := wrapped.(http.Flusher)
 			hijacker, hijacks := wrapped.(http.Hijacker)
-			pusher, pushes := wrapped.(http.Pusher)
+			_, pushes := wrapped.(http.Pusher)
 			require.Equal(t, mask&1 != 0, flushes, "http.Flusher must be reachable exactly when the original implements it")
 			require.Equal(t, mask&2 != 0, hijacks, "http.Hijacker must be reachable exactly when the original implements it")
-			require.Equal(t, mask&4 != 0, pushes, "http.Pusher must be reachable exactly when the original implements it")
+			require.False(t, pushes, "http.Pusher is not carried, whatever the original implements")
 
 			if flushes {
 				flusher.Flush()
@@ -579,12 +579,8 @@ func Test_responseWriter_PreservesOptionalInterfaces(t *testing.T) {
 				_, _, err := hijacker.Hijack()
 				assert.ErrorIs(t, err, errOptionalResponseWriter, "Hijack() must reach the original writer")
 			}
-			if pushes {
-				assert.ErrorIs(t, pusher.Push("/asset", nil), errOptionalResponseWriter, "Push() must reach the original writer")
-			}
 			assert.Equal(t, mask&1, optional.flushes, "delegated Flush calls")
 			assert.Equal(t, (mask>>1)&1, optional.hijacks, "delegated Hijack calls")
-			assert.Equal(t, (mask>>2)&1, optional.pushes, "delegated Push calls")
 
 			wrapped.WriteHeader(http.StatusCreated)
 			wantStatus := http.StatusCreated
@@ -1305,18 +1301,18 @@ func TestFormatRequestParams(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, FormatRequestParams(tt.in))
+			assert.Equal(t, tt.want, formatRequestParams(tt.in))
 		})
 	}
 
-	got := FormatRequestParams(strings.Join(many, "&"))
+	got := formatRequestParams(strings.Join(many, "&"))
 	assert.True(t, strings.HasSuffix(got, "&..."), got)
 	assert.LessOrEqual(t, len(got), 512+4)
 
 	entry := "q=" + strings.Repeat("한", 60)
 	query := strings.Repeat(entry+"&", 7) + entry
-	assert.Equal(t, query, FormatRequestParams(query), "the total limit counts characters, not bytes")
-	got = FormatRequestParams(query + "&" + entry)
+	assert.Equal(t, query, formatRequestParams(query), "the total limit counts characters, not bytes")
+	got = formatRequestParams(query + "&" + entry)
 	assert.Equal(t, query+"&...", got)
 	assert.True(t, utf8.ValidString(got))
 	assert.LessOrEqual(t, utf8.RuneCountInString(got), requestParamTotalLimit+4)
@@ -1327,21 +1323,21 @@ func TestClientUrl(t *testing.T) {
 	require.NoError(t, err)
 
 	pptest.StartAgent(t)
-	assert.Equal(t, "GET https://h/p#frag", ClientUrl("GET", u))
+	assert.Equal(t, "GET https://h/p#frag", clientUrl("GET", u))
 	assert.Equal(t, "GET https://h/p#frag", ClientUrlString("GET", "https://h/p?token=x#frag"))
 	assert.Equal(t, "GET https://h/p", ClientUrlString("GET", "https://h/p?token=x"))
 	assert.Equal(t, "GET https://h/p", ClientUrlString("GET", "https://h/p"))
-	assert.Equal(t, "GET", ClientUrl("GET", nil))
+	assert.Equal(t, "GET", clientUrl("GET", nil))
 	assert.Equal(t, "https://h/p?token=x#frag", u.String(), "the caller's URL must not be modified")
 
 	pptest.StartAgent(t, WithHttpClientRecordUrlQuery(true))
-	assert.Equal(t, "GET https://h/p?token=x#frag", ClientUrl("GET", u))
+	assert.Equal(t, "GET https://h/p?token=x#frag", clientUrl("GET", u))
 	assert.Equal(t, "GET https://h/p?token=x#frag", ClientUrlString("GET", "https://h/p?token=x#frag"))
 
 	// A password in the URL's userinfo is masked in the recorded URL.
 	u, err = url.Parse("https://user:secret@example.com/p?q=1")
 	require.NoError(t, err)
-	got := ClientUrl(http.MethodGet, u)
+	got := clientUrl(http.MethodGet, u)
 	assert.NotContains(t, got, "secret")
 	assert.Contains(t, got, "user:xxxxx@example.com/p")
 }

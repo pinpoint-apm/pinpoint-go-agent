@@ -37,11 +37,11 @@ func IsLogLevelEnabled(level logrus.Level) bool {
 	return extra != nil && extra.GetLevel() >= level
 }
 
-func IsDebugLogLevelEnabled() bool {
+func isDebugLogLevelEnabled() bool {
 	return IsLogLevelEnabled(logrus.DebugLevel)
 }
 
-func IsTraceLogLevelEnabled() bool {
+func isTraceLogLevelEnabled() bool {
 	return IsLogLevelEnabled(logrus.TraceLevel)
 }
 

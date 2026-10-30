@@ -44,7 +44,7 @@ func defaultSpanEvent(span *span, operationName string, sequence int32, depth in
 	se.nextSpanId = noneSpanId
 	se.serviceType = ServiceTypeGoFunction
 
-	if IsTraceLogLevelEnabled() {
+	if isTraceLogLevelEnabled() {
 		Log("span").Tracef("newSpanEvent: %s, %d, %d, %s", se.operationName, se.sequence, se.depth, time.Now())
 	}
 
@@ -74,7 +74,7 @@ func (se *spanEvent) end() {
 	if !se.isTimeFixed {
 		se.endElapsed = time.Now().UnixMilli() - se.startTime
 	}
-	if IsTraceLogLevelEnabled() {
+	if isTraceLogLevelEnabled() {
 		Log("span").Tracef("endSpanEvent: %s", se.operationName)
 	}
 	// After finished: an Annotation handle taken before the end bypasses the
@@ -162,7 +162,7 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	// lose a placeholder when the cut lands inside a literal; see
 	// maxSqlNormalizeLength.
 	if !sqlNormalizable(sql) {
-		if IsDebugLogLevelEnabled() {
+		if isDebugLogLevelEnabled() {
 			Log("span").Debugf("SetSQL: statement of %d bytes past the normalization cap dropped", len(sql))
 		}
 		return
@@ -183,7 +183,7 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	// literals: the statement keeps its id, its UID and its count, and the
 	// chunk carrying it stays sendable (sendSpanBatchAsync).
 	if len(param) > maxSqlParamSize {
-		if IsDebugLogLevelEnabled() {
+		if isDebugLogLevelEnabled() {
 			Log("span").Debugf("SetSQL: %d bytes of SQL parameters past the cap dropped, statement recorded without them", len(param))
 		}
 		param = ""

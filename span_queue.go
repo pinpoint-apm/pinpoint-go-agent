@@ -232,7 +232,7 @@ func (s *spanQueueShard) enqueueOrOverwrite(chunk *spanChunk, closed *atomic.Boo
 		s.head = s.next(s.head)
 		s.size--
 		s.drops.Add(1)
-		if IsDebugLogLevelEnabled() {
+		if isDebugLogLevelEnabled() {
 			Log("agent").Debugf("discard oldest span, shard size:%d", s.size)
 		}
 	}

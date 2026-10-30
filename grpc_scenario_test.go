@@ -160,7 +160,7 @@ func Test_sendStatsWorker_drainsLastUrlStatDuringShutdown(t *testing.T) {
 	agent.startWorkers([]worker{{name: "send stats", body: agent.sendStatsWorker, start: true}})
 	<-entered
 	agent.urlStats.add(&urlStat{
-		entry:   &UrlStatEntry{Url: "/shutdown", Status: 200},
+		entry:   &UrlStatEntry{Url: "/shutdown"},
 		endTime: time.Now(),
 		elapsed: 1,
 	})
