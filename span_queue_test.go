@@ -229,3 +229,15 @@ func Test_SpanQueueHeadDrops(t *testing.T) {
 	}
 	assert.Equal(t, []int64{3, 4, 5, 6}, survived, "the newest survive, the oldest are discarded")
 }
+
+// length counts the spans the queue holds; tests only.
+func (q *spanQueue) length() int {
+	var total int
+	for i := range q.shards {
+		s := &q.shards[i]
+		s.mu.Lock()
+		total += s.size
+		s.mu.Unlock()
+	}
+	return total
+}

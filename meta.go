@@ -343,13 +343,6 @@ func (q *metaRetryQueue) popDue(now time.Time) (pendingMeta, bool) {
 	return item, true
 }
 
-// length reports how many entries are scheduled.
-func (q *metaRetryQueue) length() int {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	return len(q.items)
-}
-
 // deleteMetaCache drops the cache entry whose metadata md failed to reach the
 // collector. The entry is matched on its value as well as its key: between the
 // failed send and this call the key may have been evicted and re-registered

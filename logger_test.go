@@ -369,3 +369,10 @@ func Test_TracefLogsAtTraceLevelOnly(t *testing.T) {
 	assert.Contains(t, buf.String(), "kept 2")
 	assert.Contains(t, buf.String(), "level=trace")
 }
+
+// setOutput is setOutputLocked under outputMu; tests only.
+func (l *logrusLogger) setOutput(out string, maxSize, maxBackups int) {
+	l.outputMu.Lock()
+	defer l.outputMu.Unlock()
+	l.setOutputLocked(out, maxSize, maxBackups)
+}

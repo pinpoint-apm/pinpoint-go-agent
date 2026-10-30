@@ -27,3 +27,7 @@ func TestEncodeUID_GoldenVectors(t *testing.T) {
 		assert.Len(t, got, uidBase64Len, "length of %s", v.uuid)
 	}
 }
+
+// uidBase64Len is the fixed length of a base64-encoded UUID: 16 bytes encoded
+// with URL-safe base64 without padding always yields 22 characters.
+const uidBase64Len = 22

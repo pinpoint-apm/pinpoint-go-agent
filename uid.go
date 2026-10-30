@@ -6,10 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// uidBase64Len is the fixed length of a base64-encoded UUID: 16 bytes encoded
-// with URL-safe base64 without padding always yields 22 characters.
-const uidBase64Len = 22
-
 // encodeUID serializes a UUID to its 16-byte network-order layout (most
 // significant bits first, big-endian, then the least significant bits) and
 // encodes it with RFC 4648 §5 URL-and-filename-safe base64 without padding.

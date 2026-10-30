@@ -74,10 +74,6 @@ func handlerName(handler HandlerContextFunc) string {
 	return "HandlerContextFunc()"
 }
 
-func makeRpcName(msg *kafka.Message) string {
-	return consumerMessage(msg).RpcName()
-}
-
 func consumerMessage(msg *kafka.Message) pinpoint.KafkaConsumerMessage {
 	return pinpoint.KafkaConsumerMessage{
 		Topic:     topicOf(msg),

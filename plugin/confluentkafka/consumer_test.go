@@ -106,3 +106,8 @@ func TestConsumeMessageContext_HandlerEvent(t *testing.T) {
 	assert.True(t, forked.IsSampled(), "the handler had no event for a goroutine tracer to link to")
 	assert.True(t, strings.HasSuffix(handlerName(processWidgets), ".processWidgets()"), handlerName(processWidgets))
 }
+
+// makeRpcName is the rpc name a consumer span records for msg.
+func makeRpcName(msg *kafka.Message) string {
+	return consumerMessage(msg).RpcName()
+}

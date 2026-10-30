@@ -1208,12 +1208,6 @@ type stack struct {
 	buf  []*spanEvent
 }
 
-func (s *stack) len() int {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	return len(s.buf)
-}
-
 func (s *stack) push(v *spanEvent) {
 	s.lock.Lock()
 	defer s.lock.Unlock()

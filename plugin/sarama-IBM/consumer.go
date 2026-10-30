@@ -124,10 +124,6 @@ func handlerName(handler HandlerContextFunc) string {
 	return "HandlerContextFunc()"
 }
 
-func makeRpcName(msg *sarama.ConsumerMessage) string {
-	return consumerMessage(msg).RpcName()
-}
-
 func consumerMessage(msg *sarama.ConsumerMessage) pinpoint.KafkaConsumerMessage {
 	return pinpoint.KafkaConsumerMessage{Topic: msg.Topic, Partition: msg.Partition, Offset: msg.Offset}
 }

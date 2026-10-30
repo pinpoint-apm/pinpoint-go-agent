@@ -218,17 +218,6 @@ func (q *spanQueue) dropCount() int64 {
 	return total
 }
 
-func (q *spanQueue) length() int {
-	var total int
-	for i := range q.shards {
-		s := &q.shards[i]
-		s.mu.Lock()
-		total += s.size
-		s.mu.Unlock()
-	}
-	return total
-}
-
 func (s *spanQueueShard) tryEnqueue(chunk *spanChunk, closed *atomic.Bool) bool {
 	s.mu.Lock()
 	if s.size == len(s.cells) || closed.Load() {

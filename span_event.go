@@ -52,14 +52,6 @@ func defaultSpanEvent(span *span, operationName string, sequence int32, depth in
 	return &se
 }
 
-func newSpanEvent(span *span, operationName string) *spanEvent {
-	sequence, depth := span.reserveEventPosition()
-	se := defaultSpanEvent(span, operationName, sequence, depth)
-	se.apiId = span.agent.cacheSpanApi(operationName, apiTypeDefault)
-
-	return se
-}
-
 func newSpanEventGoroutine(span *span) *spanEvent {
 	// Reserved like any other event, and never refused: newAsyncSpan builds
 	// the span it passes here, so the reservation is the span's first, (0, 1),

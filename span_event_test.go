@@ -590,3 +590,13 @@ func Test_spanEvent_SetSQLDropsAStatementPastTheNormalizationCap(t *testing.T) {
 		})
 	}
 }
+
+// newSpanEvent builds an event on span as NewSpanEvent does, without its
+// overflow check; tests only.
+func newSpanEvent(span *span, operationName string) *spanEvent {
+	sequence, depth := span.reserveEventPosition()
+	se := defaultSpanEvent(span, operationName, sequence, depth)
+	se.apiId = span.agent.cacheSpanApi(operationName, apiTypeDefault)
+
+	return se
+}

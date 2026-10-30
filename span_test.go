@@ -2358,3 +2358,10 @@ func TestSpan_InjectRendersConstantHeadersOnce(t *testing.T) {
 	assert.Equal(t, strconv.FormatInt(s.spanId, 10), w.m[HeaderParentSpanId])
 	assert.Equal(t, strconv.Itoa(int(a.appType)), w.m[HeaderParentApplicationType])
 }
+
+// len counts the open events; tests only.
+func (s *stack) len() int {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	return len(s.buf)
+}

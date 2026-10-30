@@ -2701,3 +2701,10 @@ func Test_MetadataRetryBudget(t *testing.T) {
 	assert.Equal(t, metaRejected, metaVerdictOf(rejected, 1),
 		"port consensus: a PResult.success=false reply is not retried")
 }
+
+// length reports how many entries are scheduled; tests only.
+func (q *metaRetryQueue) length() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.items)
+}

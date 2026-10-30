@@ -105,12 +105,6 @@ func (l *logrusLogger) setLevel(level string) {
 	l.defaultLogger.SetLevel(lvl)
 }
 
-func (l *logrusLogger) setOutput(out string, maxSize, maxBackups int) {
-	l.outputMu.Lock()
-	defer l.outputMu.Unlock()
-	l.setOutputLocked(out, maxSize, maxBackups)
-}
-
 func (l *logrusLogger) setOutputLocked(out string, maxSize, maxBackups int) {
 	// The output is applied up to three times on the way to a running agent
 	// (twice while NewConfig loads, once by setup), so an unchanged one is
