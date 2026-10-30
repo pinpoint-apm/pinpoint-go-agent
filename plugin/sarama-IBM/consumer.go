@@ -22,14 +22,15 @@
 //	    _ = ppsaramaibm.ConsumeMessageContext(process, ctx, msg)
 //	  }
 //
-// ConsumeMessageContext passes a context added pinpoint.Tracer to HandlerContextFunc.
-// In HandlerContextFunc, this tracer can be obtained by using the pinpoint.FromContext function.
+// ConsumeMessageContext records the handler call as a span event named after
+// the handler function, as the HTTP and gRPC server plugins do, and passes a
+// context added pinpoint.Tracer to HandlerContextFunc. In HandlerContextFunc,
+// this tracer can be obtained by using the pinpoint.FromContext function; calls
+// traced with the context are recorded under the handler's event.
 //
 //	func process(ctx context.Context, msg *sarama.ConsumerMessage) error {
-//	  tracer := pinpoint.FromContext(ctx)
-//	  defer tracer.NewSpanEvent("process").EndSpanEvent()
-//
 //	  fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
+//	  return save(ctx, msg) // traced under the handler's event
 //
 // To instrument a Kafka producer, use NewSyncProducer or NewAsyncProducer and
 // send through SendMessageContext (or InputContext) with the context that
@@ -43,6 +44,8 @@ package ppsaramaibm
 import (
 	"context"
 	"errors"
+	"reflect"
+	"runtime"
 
 	"github.com/IBM/sarama"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
@@ -81,6 +84,14 @@ func ConsumeMessageContext(handler HandlerContextFunc, ctx context.Context, msg 
 	}
 	tracer := newConsumerTracer(ctx, msg)
 	defer tracer.EndSpan()
+	// The handler call is an event of the span, named after the handler as
+	// the HTTP and gRPC servers name theirs: what the handler records goes
+	// under it, and a goroutine tracer forked during it - by the handler, or
+	// by a plugin whose callback runs off this goroutine - has an event to
+	// link to, where a span with none forked a noop that recorded nothing.
+	if tracer.IsSampled() {
+		defer tracer.NewSpanEvent(handlerName(handler)).EndSpanEvent()
+	}
 
 	err := handler(pinpoint.NewContext(ctx, tracer), msg)
 	tracer.Span().SetError(err)
@@ -102,6 +113,15 @@ func (m distributedTracingContextReaderConsumer) Get(key string) (string, bool) 
 		}
 	}
 	return "", false
+}
+
+// handlerName is the handler's function name and "()", as
+// pphttp.HandlerFuncName names an HTTP handler.
+func handlerName(handler HandlerContextFunc) string {
+	if fn := runtime.FuncForPC(reflect.ValueOf(handler).Pointer()); fn != nil {
+		return fn.Name() + "()"
+	}
+	return "HandlerContextFunc()"
 }
 
 func makeRpcName(msg *sarama.ConsumerMessage) string {

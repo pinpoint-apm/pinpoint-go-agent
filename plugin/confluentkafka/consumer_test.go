@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
@@ -85,4 +86,23 @@ func Test_ConsumeMessageContext(t *testing.T) {
 	assert.Equal(t, producerTracer.TransactionId(), got.TransactionId(), "the consumer span must continue the producer's transaction")
 
 	assert.ErrorIs(t, ConsumeMessageContext(nil, context.Background(), nil), errNilConsumerMessage)
+}
+
+// processWidgets is a named handler, whose name the handler event takes.
+func processWidgets(context.Context, *kafka.Message) error { return nil }
+
+// The handler runs inside an event named after it, as an HTTP or gRPC handler
+// does: a goroutine tracer forked during it links to that event, where the
+// span alone, with no event open, forked a noop that recorded nothing.
+func TestConsumeMessageContext_HandlerEvent(t *testing.T) {
+	pptest.StartAgent(t)
+	var forked pinpoint.Tracer
+	err := ConsumeMessageContext(func(ctx context.Context, _ *kafka.Message) error {
+		forked = pinpoint.FromContext(ctx).NewGoroutineTracer()
+		forked.EndSpan()
+		return nil
+	}, context.Background(), consumed("widgets", 1, 7))
+	require.NoError(t, err)
+	assert.True(t, forked.IsSampled(), "the handler had no event for a goroutine tracer to link to")
+	assert.True(t, strings.HasSuffix(handlerName(processWidgets), ".processWidgets()"), handlerName(processWidgets))
 }

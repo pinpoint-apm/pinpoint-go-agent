@@ -12,9 +12,6 @@ import (
 )
 
 func processMessage(ctx context.Context, msg *kafka.Message) error {
-	tracer := pinpoint.FromContext(ctx)
-	defer tracer.NewSpanEvent("processMessage").EndSpanEvent()
-
 	fmt.Printf("Message on %s: %s\n", msg.TopicPartition, string(msg.Value))
 	return nil
 }

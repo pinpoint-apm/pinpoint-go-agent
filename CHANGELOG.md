@@ -118,6 +118,15 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 - **`pinpoint.NewKafkaConsumerTracer` starts a Kafka consumer span.** The
   sarama and confluent plugins both build theirs through it; a plugin for
   another Kafka client can do the same.
+- **`ppsaramaibm.ConsumeMessageContext` and
+  `ppconfluentkafka.ConsumeMessageContext` record the handler call as a span
+  event** named after the handler function, as the HTTP and gRPC server
+  plugins record theirs. What the handler records goes under it, and a
+  goroutine tracer forked during it - by the handler, or by the gocql,
+  go-redis and pgx plugins off the consumer's goroutine - now records,
+  where a consumer span with no event open forked a noop that recorded
+  nothing. A handler that opened an event of its own for the same call can
+  drop it.
 - **`NewConfig` returns an error for a config file that exists but cannot be
   read** - a syntax error, an unsupported extension. The `Config` comes back
   complete on defaults and the other sources, so `cfg, _ := NewConfig(...)`

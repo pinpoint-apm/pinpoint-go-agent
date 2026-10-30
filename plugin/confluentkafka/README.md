@@ -31,14 +31,13 @@ for {
 }
 ```
 
-ConsumeMessageContext passes a context added pinpoint.Tracer to HandlerContextFunc.
-In HandlerContextFunc, this tracer can be obtained by using the pinpoint.FromContext function.
+ConsumeMessageContext records the handler call as a span event named after the handler function,
+as the HTTP and gRPC server plugins do, and passes a context added pinpoint.Tracer to HandlerContextFunc.
+In HandlerContextFunc, this tracer can be obtained by using the pinpoint.FromContext function;
+calls traced with the context are recorded under the handler's event.
 
 ``` go
 func processMessage(ctx context.Context, msg *kafka.Message) error {
-    tracer := pinpoint.FromContext(ctx)
-    defer tracer.NewSpanEvent("processMessage").EndSpanEvent()
-
     fmt.Printf("Message on %s: %s\n", msg.TopicPartition, string(msg.Value))
     return nil
 }

@@ -41,15 +41,14 @@ func main() {
     err := group.Consume(ctx, topics, handler)
 ```
 
-ConsumeMessageContext passes a context added pinpoint.Tracer to HandlerContextFunc.
+ConsumeMessageContext records the handler call as a span event named after the handler function,
+as the HTTP and gRPC server plugins do, and passes a context added pinpoint.Tracer to HandlerContextFunc.
 In HandlerContextFunc, this tracer can be obtained by using the pinpoint.FromContext function.
-Alternatively, the context may be propagated where the context that contains the pinpoint.Tracer is required.
+Alternatively, the context may be propagated where the context that contains the pinpoint.Tracer is required:
+calls traced with it are recorded under the handler's event.
 
 ``` go
 func process(ctx context.Context, msg *sarama.ConsumerMessage) error {
-    tracer := pinpoint.FromContext(ctx)
-    defer tracer.NewSpanEvent("process").EndSpanEvent()
-
     fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
 ```
 
@@ -63,8 +62,6 @@ import (
 )
 
 func processMessage(ctx context.Context, msg *sarama.ConsumerMessage) error {
-    tracer := pinpoint.FromContext(ctx)
-    defer tracer.NewSpanEvent("processMessage").EndSpanEvent()
     fmt.Println("retrieving message: ", string(msg.Value))
     ...
 }

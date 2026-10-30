@@ -3,6 +3,8 @@ package ppconfluentkafka
 import (
 	"context"
 	"errors"
+	"reflect"
+	"runtime"
 	"strings"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
@@ -49,10 +51,27 @@ func ConsumeMessageContext(handler HandlerContextFunc, ctx context.Context, msg 
 	}
 	tracer := newConsumerTracer(ctx, msg)
 	defer tracer.EndSpan()
+	// The handler call is an event of the span, named after the handler as
+	// the HTTP and gRPC servers name theirs: what the handler records goes
+	// under it, and a goroutine tracer forked during it - by the handler, or
+	// by a plugin whose callback runs off this goroutine - has an event to
+	// link to, where a span with none forked a noop that recorded nothing.
+	if tracer.IsSampled() {
+		defer tracer.NewSpanEvent(handlerName(handler)).EndSpanEvent()
+	}
 
 	err := handler(pinpoint.NewContext(ctx, tracer), msg)
 	tracer.Span().SetError(err)
 	return err
+}
+
+// handlerName is the handler's function name and "()", as
+// pphttp.HandlerFuncName names an HTTP handler.
+func handlerName(handler HandlerContextFunc) string {
+	if fn := runtime.FuncForPC(reflect.ValueOf(handler).Pointer()); fn != nil {
+		return fn.Name() + "()"
+	}
+	return "HandlerContextFunc()"
 }
 
 func makeRpcName(msg *kafka.Message) string {

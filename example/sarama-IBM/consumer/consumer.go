@@ -32,9 +32,6 @@ func outGoingRequest(ctx context.Context) string {
 }
 
 func processMessage(ctx context.Context, msg *sarama.ConsumerMessage) error {
-	tracer := pinpoint.FromContext(ctx)
-	defer tracer.NewSpanEvent("processMessage").EndSpanEvent()
-
 	fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
 	fmt.Println("retrieving message: ", string(msg.Value))
 

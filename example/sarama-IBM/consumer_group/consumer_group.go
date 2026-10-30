@@ -26,9 +26,6 @@ func (h exampleConsumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSessi
 }
 
 func process(ctx context.Context, msg *sarama.ConsumerMessage) error {
-	tracer := pinpoint.FromContext(ctx)
-	defer tracer.NewSpanEvent("process").EndSpanEvent()
-
 	fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
 
 	return nil

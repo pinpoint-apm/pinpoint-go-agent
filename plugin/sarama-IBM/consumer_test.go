@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/IBM/sarama"
@@ -245,4 +246,23 @@ func TestConsumeMessageContext_NilContext(t *testing.T) {
 		_ = ConsumeMessageContext(func(context.Context, *sarama.ConsumerMessage) error { return nil },
 			nil, &sarama.ConsumerMessage{Topic: "topic"})
 	})
+}
+
+// processWidgets is a named handler, whose name the handler event takes.
+func processWidgets(context.Context, *sarama.ConsumerMessage) error { return nil }
+
+// The handler runs inside an event named after it, as an HTTP or gRPC handler
+// does: a goroutine tracer forked during it links to that event, where the
+// span alone, with no event open, forked a noop that recorded nothing.
+func TestConsumeMessageContext_HandlerEvent(t *testing.T) {
+	pptest.StartAgent(t)
+	var forked pinpoint.Tracer
+	err := ConsumeMessageContext(func(ctx context.Context, _ *sarama.ConsumerMessage) error {
+		forked = pinpoint.FromContext(ctx).NewGoroutineTracer()
+		forked.EndSpan()
+		return nil
+	}, context.Background(), &sarama.ConsumerMessage{Topic: "widgets"})
+	require.NoError(t, err)
+	assert.True(t, forked.IsSampled(), "the handler had no event for a goroutine tracer to link to")
+	assert.True(t, strings.HasSuffix(handlerName(processWidgets), ".processWidgets()"), handlerName(processWidgets))
 }
