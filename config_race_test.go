@@ -97,7 +97,7 @@ Http:
 				_ = config.Float(CfgSamplingPercentRate)
 				_ = config.String(CfgSamplingType)
 				_ = config.StringSlice(CfgActiveProfile)
-				_ = conn.namedValueToString(named)
+				_ = bindValuesString(conn.cfg(), len(named), func(i int) any { return named[i].Value })
 
 				tracer := agent.NewSpanTracer("raceOp", "/race")
 				tracer.NewSpanEvent("evt")

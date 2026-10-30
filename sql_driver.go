@@ -260,13 +260,9 @@ func (c *sqlConn) PrepareContext(ctx context.Context, query string) (driver.Stmt
 	// yields a live statement instead of an error, and that statement stays
 	// open on the connection with no owner to close it.
 	stmt, err := c.Conn.Prepare(query)
-	if err == nil {
-		select {
-		default:
-		case <-ctx.Done():
-			stmt.Close()
-			return nil, ctx.Err()
-		}
+	if err == nil && ctx.Err() != nil {
+		stmt.Close()
+		return nil, ctx.Err()
 	}
 	return prepare(stmt, err, c, query)
 }
@@ -279,20 +275,12 @@ func (c *sqlConn) newSqlSpanEvent(ctx context.Context, operation string, start t
 	defer tracer.EndSpanEvent()
 
 	if tracer.IsSampled() {
-		setSqlSpanEvent(tracer, start, err, sql, c.namedValueToString(args))
+		// One lookup: each SpanEvent() call takes the event stack lock.
+		se := tracer.SpanEvent()
+		se.SetSQL(sql, bindValuesString(c.cfg(), len(args), func(i int) any { return args[i].Value }))
+		se.SetError(err, "SQL error")
+		se.FixDuration(start, time.Now())
 	}
-}
-
-func setSqlSpanEvent(tracer Tracer, start time.Time, err error, sql string, args string) {
-	// One lookup: each SpanEvent() call takes the event stack lock.
-	se := tracer.SpanEvent()
-	se.SetSQL(sql, args)
-	se.SetError(err, "SQL error")
-	se.FixDuration(start, time.Now())
-}
-
-func (c *sqlConn) namedValueToString(named []driver.NamedValue) string {
-	return bindValuesString(c.cfg(), len(named), func(i int) any { return named[i].Value })
 }
 
 // BindValuesString renders args as the bind value list of a SQL span event:
@@ -657,39 +645,31 @@ func (c *sqlConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx
 	var err error
 
 	start := time.Now()
+	op := "BeginTx"
 	if cbt, ok := c.Conn.(driver.ConnBeginTx); ok {
 		tx, err = cbt.BeginTx(ctx, opts)
-		if cfg := c.cfg(); cfg.sqlTraceCommit || cfg.sqlTraceRollback {
-			c.newSqlSpanEvent(ctx, "BeginTx", start, err, "", nil)
-			if err == nil {
-				tx = &sqlTx{tx, c, ctx}
-			}
+	} else {
+		// database/sql routes every BeginTx here because the wrapper
+		// implements driver.ConnBeginTx, so its own fallback checks never
+		// run; mirror them (database/sql/ctxutil.go). Silently calling Begin
+		// would downgrade a Serializable or read-only request to a default
+		// read-write transaction.
+		if opts.Isolation != 0 { // 0 == sql.LevelDefault
+			return nil, errors.New("sql: driver does not support non-default isolation level")
 		}
-		return tx, err
-	}
+		if opts.ReadOnly {
+			return nil, errors.New("sql: driver does not support read-only transactions")
+		}
 
-	// database/sql routes every BeginTx here because the wrapper implements
-	// driver.ConnBeginTx, so its own fallback checks never run; mirror them
-	// (database/sql/ctxutil.go). Silently calling Begin would downgrade a
-	// Serializable or read-only request to a default read-write transaction.
-	if opts.Isolation != 0 { // 0 == sql.LevelDefault
-		return nil, errors.New("sql: driver does not support non-default isolation level")
-	}
-	if opts.ReadOnly {
-		return nil, errors.New("sql: driver does not support read-only transactions")
-	}
-
-	tx, err = c.Conn.Begin() //lint:ignore SA1019 fallback for a driver without ConnBeginTx
-	if err == nil {
-		select {
-		case <-ctx.Done():
+		op = "Begin"
+		tx, err = c.Conn.Begin() //lint:ignore SA1019 fallback for a driver without ConnBeginTx
+		if err == nil && ctx.Err() != nil {
 			tx.Rollback()
 			return nil, ctx.Err()
-		default:
 		}
 	}
 	if cfg := c.cfg(); cfg.sqlTraceCommit || cfg.sqlTraceRollback {
-		c.newSqlSpanEvent(ctx, "Begin", start, err, "", nil)
+		c.newSqlSpanEvent(ctx, op, start, err, "", nil)
 		if err == nil {
 			tx = &sqlTx{tx, c, ctx}
 		}
@@ -792,26 +772,15 @@ func (s *sqlStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (d
 // interfaces, as database/sql/ctxutil.go does: a named parameter is refused,
 // and a context already done fails the call before it reaches the driver.
 func legacyArgs(ctx context.Context, args []driver.NamedValue) ([]driver.Value, error) {
-	dargs, err := namedValueToValue(args)
-	if err != nil {
-		return nil, err
-	}
-	select {
-	default:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	return dargs, nil
-}
-
-// sourced: database/sql/cxtutil.go
-func namedValueToValue(named []driver.NamedValue) ([]driver.Value, error) {
-	dargs := make([]driver.Value, len(named))
-	for n, param := range named {
+	dargs := make([]driver.Value, len(args))
+	for n, param := range args {
 		if len(param.Name) > 0 {
 			return nil, errors.New("sql: driver does not support the use of Named Parameters")
 		}
 		dargs[n] = param.Value
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return dargs, nil
 }
