@@ -62,13 +62,13 @@ func Test_wrappedConn_MissingOptionalInterfaces(t *testing.T) {
 	c := wrapConn(&fakeRedisConn{}, "localhost").(*wrappedConn)
 
 	_, err := c.DoWithTimeout(0, "PING")
-	assert.ErrorIs(t, err, errTimeoutNotSupported)
+	assert.EqualError(t, err, "redis: connection does not support ConnWithTimeout")
 	_, err = c.ReceiveWithTimeout(0)
-	assert.ErrorIs(t, err, errTimeoutNotSupported)
+	assert.EqualError(t, err, "redis: connection does not support ConnWithTimeout")
 	_, err = c.DoContext(context.Background(), "PING")
-	assert.ErrorIs(t, err, errContextNotSupported)
+	assert.EqualError(t, err, "redis: connection does not support ConnWithContext")
 	_, err = c.ReceiveContext(context.Background())
-	assert.ErrorIs(t, err, errContextNotSupported)
+	assert.EqualError(t, err, "redis: connection does not support ConnWithContext")
 
 	// The pass-through methods must reach the base connection either way.
 	assert.NoError(t, c.Close())
@@ -284,9 +284,8 @@ func Test_makeWrappedConn(t *testing.T) {
 
 func Test_makeWrappedConnURL(t *testing.T) {
 	for _, tt := range []struct {
-		rawurl  string
-		want    string
-		wantErr bool
+		rawurl string
+		want   string
 	}{
 		{rawurl: "redis://redis1:6379", want: "redis1"},
 		// redigo defaults the port, so a URL without one is a working dial and
@@ -296,16 +295,9 @@ func Test_makeWrappedConnURL(t *testing.T) {
 		{rawurl: "redis://", want: "localhost"},
 		{rawurl: "redis://user:pw@redis1:6379/0", want: "redis1"},
 		{rawurl: "redis://[::1]:6379", want: "::1"},
-		{rawurl: "redis://redis1:6379/\x7f", want: "unknown", wantErr: true},
 	} {
 		t.Run(tt.rawurl, func(t *testing.T) {
-			c, err := makeWrappedConnURL(&fakeRedisConn{}, tt.rawurl)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-			require.NotNil(t, c, "a connection that is already open must be handed back either way")
+			c := makeWrappedConnURL(&fakeRedisConn{}, tt.rawurl)
 			assert.Equal(t, tt.want, c.(*wrappedConn).dbInfo.DBHost)
 		})
 	}
@@ -368,6 +360,6 @@ func TestWrapConn(t *testing.T) {
 	wc, ok := c.(*wrappedConn)
 	require.True(t, ok)
 	assert.Equal(t, "redis1", wc.dbInfo.DBHost)
-	assert.Same(t, base, wc.base)
+	assert.Same(t, base, wc.Conn)
 	assert.Same(t, c, WrapConn(c, "other:6379"), "an already wrapped connection is returned as it is")
 }

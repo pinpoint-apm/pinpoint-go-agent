@@ -20,8 +20,8 @@
 package ppredigo
 
 import (
+	"cmp"
 	"context"
-	"errors"
 	"net"
 	"net/url"
 	"sync"
@@ -31,16 +31,12 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
-// The same errors redigo's own helpers return when a connection lacks the
-// optional interface; the wrapper advertises both unconditionally, so it must
-// answer for a base connection that has neither instead of panicking.
-var (
-	errTimeoutNotSupported = errors.New("redis: connection does not support ConnWithTimeout")
-	errContextNotSupported = errors.New("redis: connection does not support ConnWithContext")
-)
-
+// wrappedConn embeds the connection it records, so Close, Err and Flush are
+// its own. It advertises ConnWithTimeout and ConnWithContext unconditionally
+// and answers through redigo's own helpers, which return redigo's errors for
+// a base connection that has neither.
 type wrappedConn struct {
-	base   redis.Conn
+	redis.Conn
 	dbInfo pinpoint.DBInfo
 
 	// ctxMu guards the context bound by WithContext; opMu serializes span
@@ -51,13 +47,9 @@ type wrappedConn struct {
 	opMu  sync.Mutex
 }
 
-type pinpointContext interface {
-	WithContext(ctx context.Context)
-}
-
 func wrapConn(c redis.Conn, addr string) redis.Conn {
 	return &wrappedConn{
-		base:   c,
+		Conn:   c,
 		dbInfo: pinpoint.DBInfo{QueryType: pinpoint.ServiceTypeRedis, DBName: "REDIS", DBHost: addr},
 		ctx:    context.Background(),
 	}
@@ -84,7 +76,7 @@ func (c *wrappedConn) currentContext() context.Context {
 // and redis.ReceiveContext, which the pool forwards to the wrapped
 // connection with the context.
 func WithContext(c redis.Conn, ctx context.Context) {
-	if wc, ok := c.(pinpointContext); ok {
+	if wc, ok := c.(*wrappedConn); ok {
 		wc.WithContext(ctx)
 	} else if c != nil {
 		pinpoint.Log("redigo").Debugf("WithContext: %T is not a connection this package wrapped (a pooled connection is traced through redis.DoContext)", c)
@@ -119,12 +111,7 @@ func makeWrappedConn(c redis.Conn, address string) redis.Conn {
 
 // Dial wraps redis.Dial and returns a new redis.Conn ready to instrument.
 func Dial(network string, address string, options ...redis.DialOption) (redis.Conn, error) {
-	c, err := redis.Dial(network, address, options...)
-	if err != nil {
-		return nil, err
-	}
-
-	return makeWrappedConn(c, address), nil
+	return DialContext(context.Background(), network, address, options...)
 }
 
 // DialContext wraps redis.DialContext and returns a new redis.Conn ready to instrument.
@@ -138,38 +125,17 @@ func DialContext(ctx context.Context, network string, address string, options ..
 	return makeWrappedConn(c, address), nil
 }
 
-func makeWrappedConnURL(c redis.Conn, rawurl string) (redis.Conn, error) {
-	var host string
-
-	u, err := url.Parse(rawurl)
-	if err == nil {
-		// A redis URL may omit the port - redigo defaults it to 6379 - so the
-		// split failing is not a dial failure. Keeping SplitHostPort's error
-		// here reported an already-connected DialURL as failed, and the caller
-		// dropped a live connection.
-		if h, _, splitErr := net.SplitHostPort(u.Host); splitErr == nil {
-			host = h
-		} else {
-			host = u.Host
-		}
-		if host == "" {
-			host = "localhost"
-		}
-	} else {
-		host = "unknown"
-	}
-
-	return wrapConn(c, host), err
+// makeWrappedConnURL derives the endpoint from a URL redigo has already
+// parsed and dialed. A redis URL may omit the port - redigo defaults it to
+// 6379 - and the host, which redigo defaults to localhost.
+func makeWrappedConnURL(c redis.Conn, rawurl string) redis.Conn {
+	u, _ := url.Parse(rawurl)
+	return wrapConn(c, cmp.Or(u.Hostname(), "localhost"))
 }
 
 // DialURL wraps redis.DialURL and returns a new redis.Conn ready to instrument.
 func DialURL(rawurl string, options ...redis.DialOption) (redis.Conn, error) {
-	c, err := redis.DialURL(rawurl, options...)
-	if err != nil {
-		return nil, err
-	}
-
-	return makeWrappedConnURL(c, rawurl)
+	return DialURLContext(context.Background(), rawurl, options...)
 }
 
 // DialURLContext wraps redis.DialURLContext and returns a new redis.Conn ready to instrument.
@@ -180,95 +146,56 @@ func DialURLContext(ctx context.Context, rawurl string, options ...redis.DialOpt
 		return nil, err
 	}
 
-	return makeWrappedConnURL(c, rawurl)
-}
-
-func (c *wrappedConn) Close() error {
-	return c.base.Close()
-}
-
-func (c *wrappedConn) Err() error {
-	return c.base.Err()
+	return makeWrappedConnURL(c, rawurl), nil
 }
 
 func (c *wrappedConn) Send(cmd string, args ...interface{}) (err error) {
 	rec := c.startSpanEvent(c.currentContext(), "redigo.Send()", cmd)
 	defer func() { rec.end(err) }()
 
-	err = c.base.Send(cmd, args...)
-	return
-}
-
-func (c *wrappedConn) Flush() error {
-	return c.base.Flush()
+	return c.Conn.Send(cmd, args...)
 }
 
 func (c *wrappedConn) Receive() (r interface{}, err error) {
 	rec := c.startSpanEvent(c.currentContext(), "redigo.Receive()", "")
 	defer func() { rec.end(err) }()
 
-	r, err = c.base.Receive()
-	return
+	return c.Conn.Receive()
 }
 
 func (c *wrappedConn) Do(cmd string, args ...interface{}) (r interface{}, err error) {
 	rec := c.startSpanEvent(c.currentContext(), "redigo.Do()", cmd)
 	defer func() { rec.end(err) }()
 
-	r, err = c.base.Do(cmd, args...)
-	return
+	return c.Conn.Do(cmd, args...)
 }
 
 func (c *wrappedConn) DoWithTimeout(readTimeout time.Duration, cmd string, args ...interface{}) (r interface{}, err error) {
-	cwt, ok := c.base.(redis.ConnWithTimeout)
-	if !ok {
-		return nil, errTimeoutNotSupported
-	}
-
 	rec := c.startSpanEvent(c.currentContext(), "redigo.DoWithTimeout()", cmd)
 	defer func() { rec.end(err) }()
 
-	r, err = cwt.DoWithTimeout(readTimeout, cmd, args...)
-	return
+	return redis.DoWithTimeout(c.Conn, readTimeout, cmd, args...)
 }
 
 func (c *wrappedConn) ReceiveWithTimeout(timeout time.Duration) (r interface{}, err error) {
-	cwt, ok := c.base.(redis.ConnWithTimeout)
-	if !ok {
-		return nil, errTimeoutNotSupported
-	}
-
 	rec := c.startSpanEvent(c.currentContext(), "redigo.ReceiveWithTimeout()", "")
 	defer func() { rec.end(err) }()
 
-	r, err = cwt.ReceiveWithTimeout(timeout)
-	return
+	return redis.ReceiveWithTimeout(c.Conn, timeout)
 }
 
 func (c *wrappedConn) DoContext(ctx context.Context, cmd string, args ...interface{}) (r interface{}, err error) {
-	cwc, ok := c.base.(redis.ConnWithContext)
-	if !ok {
-		return nil, errContextNotSupported
-	}
-
 	rec := c.startSpanEvent(ctx, "redigo.DoContext()", cmd)
 	defer func() { rec.end(err) }()
 
-	r, err = cwc.DoContext(ctx, cmd, args...)
-	return
+	return redis.DoContext(c.Conn, ctx, cmd, args...)
 }
 
 func (c *wrappedConn) ReceiveContext(ctx context.Context) (r interface{}, err error) {
-	cwc, ok := c.base.(redis.ConnWithContext)
-	if !ok {
-		return nil, errContextNotSupported
-	}
-
 	rec := c.startSpanEvent(ctx, "redigo.ReceiveContext()", "")
 	defer func() { rec.end(err) }()
 
-	r, err = cwc.ReceiveContext(ctx)
-	return
+	return redis.ReceiveContext(c.Conn, ctx)
 }
 
 // startSpanEvent records the operation on the tracer in ctx and returns the
