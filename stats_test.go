@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"math"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"testing"
@@ -326,8 +327,8 @@ func Test_numFDAndNumThreadsReportUncollectedAsMinusOne(t *testing.T) {
 }
 
 // readMemStats replaced runtime.ReadMemStats (a stop-the-world per sample) with
-// runtime/metrics. The fields it derives must stay the documented equivalents
-// of the MemStats fields they replaced, within the drift of two separate reads.
+// runtime/metrics for memory and runtime/debug for GC counters. The fields
+// must match MemStats within the drift of two separate reads.
 func Test_readMemStatsMatchesRuntimeMemStats(t *testing.T) {
 	stats := newAgentStats()
 	// Settle allocation so the two reads see the same heap.
@@ -349,6 +350,39 @@ func Test_readMemStatsMatchesRuntimeMemStats(t *testing.T) {
 	within("stackSys", got.stackSys, ms.StackSys)
 	assert.Equal(t, uint64(ms.NumGC), got.numGC, "numGC")
 	assert.Greater(t, got.numGC, uint64(0))
+}
+
+func Test_readMemStatsGCCountersSurviveGOMAXPROCSChanges(t *testing.T) {
+	previousProcs := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(previousProcs)
+	previousGC := debug.SetGCPercent(-1)
+	defer debug.SetGCPercent(previousGC)
+	runtime.GC()
+
+	stats := &agentStats{memSamples: newMemSamples()}
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+	assert.Positive(t, before.PauseTotalNs)
+	for _, procs := range []int{1, 2, 1, 4} {
+		runtime.GOMAXPROCS(procs)
+		got := stats.readMemStats()
+		assert.Equal(t, before.PauseTotalNs, got.pauseTotalNs, "GOMAXPROCS=%d must not rescale past pauses", procs)
+		assert.Equal(t, uint64(before.NumGC), got.numGC)
+	}
+
+	runtime.GC()
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+	got := stats.readMemStats()
+	assert.Equal(t, after.PauseTotalNs, got.pauseTotalNs)
+	assert.Greater(t, got.pauseTotalNs, before.PauseTotalNs)
+	assert.Equal(t, uint64(after.NumGC), got.numGC)
+	assert.Greater(t, got.numGC, uint64(before.NumGC))
+}
+
+func Test_readMemStatsReusesBuffers(t *testing.T) {
+	stats := &agentStats{memSamples: newMemSamples()}
+	assert.Zero(t, testing.AllocsPerRun(10, func() { stats.readMemStats() }))
 }
 
 // fastStatConfig builds a config with a sub-second collect interval, which

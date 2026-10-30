@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"os"
 	"runtime"
+	"runtime/debug"
 	"runtime/metrics"
 	"sync"
 	"sync/atomic"
@@ -113,6 +114,9 @@ type agentStats struct {
 	// runtime/metrics reads without a pause. The slice is built once and
 	// reused; only the stat worker reads it. Order matches memSample*.
 	memSamples []metrics.Sample
+
+	// gcStats reuses the GC history buffers; only the stat worker reads it.
+	gcStats debug.GCStats
 }
 
 // Indexes into agentStats.memSamples.
@@ -123,8 +127,6 @@ const (
 	memSampleHeapFree            // /memory/classes/heap/free:bytes
 	memSampleHeapStacks          // /memory/classes/heap/stacks:bytes
 	memSampleOsStacks            // /memory/classes/os-stacks:bytes
-	memSampleGcCycles            // /gc/cycles/total:gc-cycles
-	memSampleGcPauseCpu          // /cpu/classes/gc/pause:cpu-seconds
 	memSampleCount
 )
 
@@ -136,8 +138,6 @@ func newMemSamples() []metrics.Sample {
 		memSampleHeapFree:     "/memory/classes/heap/free:bytes",
 		memSampleHeapStacks:   "/memory/classes/heap/stacks:bytes",
 		memSampleOsStacks:     "/memory/classes/os-stacks:bytes",
-		memSampleGcCycles:     "/gc/cycles/total:gc-cycles",
-		memSampleGcPauseCpu:   "/cpu/classes/gc/pause:cpu-seconds",
 	}
 	samples := make([]metrics.Sample, len(names))
 	for i, name := range names {
@@ -146,17 +146,14 @@ func newMemSamples() []metrics.Sample {
 	return samples
 }
 
-// memStats is the subset of runtime.MemStats the agent reports, read through
-// runtime/metrics. Each field is the documented equivalent of the MemStats
-// field it replaces (see the runtime/metrics package doc): HeapInuse is
+// memStats is the subset of runtime.MemStats the agent reports. Its memory
+// fields use the documented runtime/metrics equivalents: HeapInuse is
 // objects+unused, HeapSys adds released+free, StackInuse is heap/stacks and
-// StackSys adds os-stacks. NumGC is /gc/cycles/total.
+// StackSys adds os-stacks.
 //
-// PauseTotalNs has no exact counterpart: /gc/pauses:seconds is a histogram.
-// /cpu/classes/gc/pause:cpu-seconds is the pause wall time multiplied by
-// GOMAXPROCS at the time of each pause, so dividing by the current GOMAXPROCS
-// recovers the wall time exactly while GOMAXPROCS is constant, which it is in
-// practice; a change mid-run skews the pauses before it by the ratio.
+// ReadGCStats supplies NumGC and PauseTotalNs without stopping the world.
+// Unlike dividing cumulative GC CPU time by the current GOMAXPROCS, its pause
+// total stays exact when GOMAXPROCS changes between collections.
 type memStats struct {
 	heapInuse, heapSys, stackInuse, stackSys uint64
 	numGC                                    uint64
@@ -166,15 +163,12 @@ type memStats struct {
 func (stats *agentStats) readMemStats() memStats {
 	s := stats.memSamples
 	metrics.Read(s)
+	debug.ReadGCStats(&stats.gcStats)
 	u := func(i int) uint64 {
 		if s[i].Value.Kind() == metrics.KindUint64 {
 			return s[i].Value.Uint64()
 		}
 		return 0
-	}
-	var pauseNs uint64
-	if s[memSampleGcPauseCpu].Value.Kind() == metrics.KindFloat64 {
-		pauseNs = uint64(s[memSampleGcPauseCpu].Value.Float64() / float64(runtime.GOMAXPROCS(0)) * float64(time.Second))
 	}
 	heapInuse := u(memSampleHeapObjects) + u(memSampleHeapUnused)
 	stackInuse := u(memSampleHeapStacks)
@@ -183,8 +177,8 @@ func (stats *agentStats) readMemStats() memStats {
 		heapSys:      heapInuse + u(memSampleHeapReleased) + u(memSampleHeapFree),
 		stackInuse:   stackInuse,
 		stackSys:     stackInuse + u(memSampleOsStacks),
-		numGC:        u(memSampleGcCycles),
-		pauseTotalNs: pauseNs,
+		numGC:        uint64(stats.gcStats.NumGC),
+		pauseTotalNs: uint64(stats.gcStats.PauseTotal),
 	}
 }
 
