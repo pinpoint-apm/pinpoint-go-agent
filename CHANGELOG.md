@@ -127,6 +127,17 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   where a consumer span with no event open forked a noop that recorded
   nothing. A handler that opened an event of its own for the same call can
   drop it.
+- **The `ppsaramaibm` async producer sends straight to sarama's input.**
+  `Input`, `CommitTxn` and `AbortTxn` are sarama's own, and `InputContext`
+  sends on the same channel instead of through a wrapper buffer of
+  `ChannelBufferSize` in front of it, so a send blocks as long as one on raw
+  sarama does. sarama's unbuffered input already keeps one goroutine's
+  messages in order, queues a transaction's end marker behind them and refuses
+  a message sent during the shutdown with `sarama.ErrShuttingDown`. A message
+  `InputContext` hands over once the shutdown has closed that input is still
+  dropped, with its span recording the error. A send racing that close is a
+  data race, as it is on raw sarama's `Input()`. `AsyncClose` and `Close` can
+  still be called more than once.
 - **`NewConfig` returns an error for a config file that exists but cannot be
   read** - a syntax error, an unsupported extension. The `Config` comes back
   complete on defaults and the other sources, so `cfg, _ := NewConfig(...)`
@@ -551,12 +562,12 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   input forwarder died and every later message was dropped in silence, while
   `InputContext` panicked in the caller.
 - **The sarama async producer returns a message sent during its shutdown on
-  `Errors()`** with `sarama.ErrShuttingDown`, as raw sarama's does, including
-  every one still queued in the wrapper when sarama finished. It was dropped,
-  with only its span recording the error, and `Close()` left it out of the
-  `ProducerErrors` it returns. `Input()` and `InputContext()` share one FIFO
-  channel: two channels picked between at random reordered one goroutine's
-  messages across the two, and a key's messages on its partition with them.
+  `Errors()`** with `sarama.ErrShuttingDown`, as raw sarama's does. It was
+  dropped, with only its span recording the error, and `Close()` left it out
+  of the `ProducerErrors` it returns. `Input()` and `InputContext()` send on
+  sarama's own input: two wrapper channels picked between at random reordered
+  one goroutine's messages across the two, and a key's messages on its
+  partition with them.
 - **`ppbeego` records the status the response went out with.** `Output.Body`
   (behind `ServeJSON`, `Render` and the rest) resets `Output.Status` to 0 after
   writing the header, so nearly every response was recorded as status 0 and a
@@ -628,8 +639,9 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   `AbortTxn` went straight to sarama while accepted messages could still sit in
   the wrapper's buffer, so they reached sarama after the end-of-transaction
   marker: rejected as outside a transaction while the commit reported success,
-  or a `WaitGroup` panic in `CommitTxn`. Both now hand sarama every accepted
-  message first.
+  or a `WaitGroup` panic in `CommitTxn`. No message waits in a wrapper buffer
+  now: every one sent before `CommitTxn` or `AbortTxn` is on sarama's input,
+  ahead of the marker.
 - **`Span.EventChunkSize` and `Collector.Grpc.SpanBatchSize` have an upper bound.** Only
   values below 1 were refused, and every sampled request sized its chunk
   buffer by the first (1e7 allocated 76MiB a request), every batch its slice

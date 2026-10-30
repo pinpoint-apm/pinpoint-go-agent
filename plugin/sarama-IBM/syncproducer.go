@@ -46,9 +46,7 @@ func headersSupported(config *sarama.Config) bool {
 // the header writer leaves it behind as it adds this span's.
 func isNested(tracer pinpoint.Tracer, msg *sarama.ProducerMessage) bool {
 	// A nil message is passed through untouched, as a nested one is: sarama
-	// logs and ignores it. Tracing it read msg.Topic and panicked - in the
-	// caller for InputContext, and in the input forwarder for Input, whose
-	// death then dropped every later message in silence.
+	// logs and ignores it. Tracing it read msg.Topic and panicked the caller.
 	if msg == nil {
 		return true
 	}

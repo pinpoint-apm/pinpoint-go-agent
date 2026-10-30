@@ -67,7 +67,6 @@ func TestWrapAsyncProducer(t *testing.T) {
 	wrapped.AsyncClose()
 	close(release)
 	requireChannelsClosed(t, p)
-	recv(t, p.drainDone, "input drainer")
 }
 
 // sarama.NewSyncProducer and NewAsyncProducer return nil with their error, and

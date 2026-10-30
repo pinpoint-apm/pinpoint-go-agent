@@ -3,10 +3,12 @@ package ppsaramaibm
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/IBM/sarama/mocks"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
 	"github.com/stretchr/testify/assert"
@@ -21,9 +23,11 @@ type stubAsyncProducer struct {
 	onClose   func()
 }
 
+// AsyncClose runs onClose on a goroutine of its own and returns, as sarama's
+// shutdown does.
 func (s *stubAsyncProducer) AsyncClose() {
 	if s.onClose != nil {
-		s.onClose()
+		go s.onClose()
 	}
 }
 func (s *stubAsyncProducer) Input() chan<- *sarama.ProducerMessage     { return s.input }
@@ -65,8 +69,9 @@ func (s *txnStubAsyncProducer) CommitTxn() error { s.committedWith = len(s.input
 func (s *txnStubAsyncProducer) AbortTxn() error  { s.abortedWith = len(s.input); return nil }
 
 // sarama ends a transaction behind the messages already on its own input, so
-// CommitTxn and AbortTxn must first hand it every message the wrapper accepted:
-// one still in the wrapper's buffer landed after the marker.
+// every message Input and InputContext accepted must be on that input when
+// CommitTxn or AbortTxn runs: one still in a wrapper buffer landed after the
+// marker.
 func Test_asyncProducer_EndTxnForwardsAcceptedMessagesFirst(t *testing.T) {
 	stub := &txnStubAsyncProducer{stubAsyncProducer: newStubAsyncProducer()}
 	p := wrapAsyncProducer(stub, nil, newConfig())
@@ -267,265 +272,39 @@ func Test_asyncProducer_AsyncCloseDrainsInFlightAcks(t *testing.T) {
 	requireSpanCount(t, p, 0)
 }
 
-// A message InputContext hands over while the shutdown is under way comes back
-// on Errors() with sarama.ErrShuttingDown, as raw sarama's does, its span
-// ended with the same error; one handed over once the shutdown has completed
-// is dropped, and the call returns rather than panicking or parking.
-func Test_asyncProducer_InputContextAfterAsyncClose(t *testing.T) {
-	pptest.StartAgent(t)
+// A repeated AsyncClose or Close shuts the underlying producer down once:
+// sarama's own sends its shutdown marker again and panics once the first has
+// closed its input.
+func Test_asyncProducer_RepeatedCloseClosesUnderlyingOnce(t *testing.T) {
 	stub := newStubAsyncProducer()
-	closing, release := make(chan struct{}), make(chan struct{})
+	var closes atomic.Int32
 	stub.onClose = func() {
-		close(closing)
-		<-release
-		close(stub.successes)
-		close(stub.errors)
-	}
-	p := wrapAsyncProducer(stub, []string{"broker:9092"}, ackConfig())
-	p.AsyncClose()
-	recv(t, closing, "underlying AsyncClose")
-
-	tracer := newRecordingTracer("during")
-	msg := &sarama.ProducerMessage{Topic: "topic"}
-	p.InputContext(pinpoint.NewContext(context.Background(), tracer), msg)
-	refused := recv(t, p.Errors(), "the refused message on Errors()")
-	assert.Same(t, msg, refused.Msg)
-	assert.ErrorIs(t, refused.Err, sarama.ErrShuttingDown)
-	recv(t, tracer.ended, "span of the refused message")
-	assert.ErrorIs(t, tracer.se.err, sarama.ErrShuttingDown)
-
-	close(release)
-	assert.Empty(t, requireErrorsUntilClosed(t, p))
-	recv(t, p.drainDone, "input drainer")
-
-	after := newRecordingTracer("after")
-	returned := make(chan struct{})
-	go func() {
-		p.InputContext(pinpoint.NewContext(context.Background(), after), &sarama.ProducerMessage{Topic: "topic"})
-		close(returned)
-	}()
-	recv(t, returned, "InputContext after the shutdown")
-	requireSpanCount(t, p, 0)
-}
-
-// A send that begins while AsyncClose is still shutting down must return
-// rather than park forever: AsyncClose releases as soon as the input forwarder
-// is gone, so the drainer has to keep receiving until the wrapper is closed.
-// AsyncClose must return without waiting for the shutdown it triggered, the way
-// raw sarama's does, even though the underlying close has to wait for the input
-// forwarder first.
-func Test_asyncProducer_AsyncCloseDoesNotBlock(t *testing.T) {
-	stub := newStubAsyncProducer()
-	release := make(chan struct{})
-	stub.onClose = func() {
-		<-release
+		closes.Add(1)
 		close(stub.successes)
 		close(stub.errors)
 	}
 	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
 
-	returned := make(chan struct{})
-	go func() {
-		p.AsyncClose()
-		close(returned)
-	}()
-	recv(t, returned, "AsyncClose")
-	p.AsyncClose() // a repeat call must not block on the pending shutdown either
-
-	close(release)
-	requireChannelsClosed(t, p)
-	recv(t, p.drainDone, "input drainer")
-}
-
-func Test_asyncProducer_InputDuringAsyncCloseReturns(t *testing.T) {
-	stub := newStubAsyncProducer()
-	closing, release := make(chan struct{}), make(chan struct{})
-	stub.onClose = func() {
-		close(closing)
-		<-release
-		close(stub.successes)
-		close(stub.errors)
-	}
-	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
-
-	closeReturned := make(chan struct{})
-	go func() {
-		p.AsyncClose()
-		close(closeReturned)
-	}()
-	// The input forwarder is gone and the underlying shutdown is pending, so
-	// only the drainer can still receive from the wrapper's input.
-	recv(t, closing, "underlying AsyncClose")
-
-	msg := &sarama.ProducerMessage{Topic: "topic"}
-	sent := make(chan struct{})
-	go func() {
-		p.Input() <- msg
-		close(sent)
-	}()
-	recv(t, sent, "Input racing AsyncClose")
-
-	// Raw sarama's dispatcher returns such a message on Errors(); discarded,
-	// it was lost without the signal an application spools or retries from.
-	refused := recv(t, p.Errors(), "the refused message on Errors()")
-	assert.Same(t, msg, refused.Msg)
-	assert.ErrorIs(t, refused.Err, sarama.ErrShuttingDown)
-
-	close(release)
-	recv(t, closeReturned, "AsyncClose")
-	assert.Empty(t, requireErrorsUntilClosed(t, p))
-	recv(t, p.drainDone, "input drainer")
-}
-
-// With Return.Errors off sarama returns nothing on Errors(), so neither does the
-// wrapper for a message sent during the shutdown.
-func Test_asyncProducer_InputDuringAsyncCloseWithoutReturnErrors(t *testing.T) {
-	stub := newStubAsyncProducer()
-	closing, release := make(chan struct{}), make(chan struct{})
-	stub.onClose = func() {
-		close(closing)
-		<-release
-		close(stub.successes)
-		close(stub.errors)
-	}
-	config := newConfig()
-	config.Producer.Return.Errors = false
-	p := wrapAsyncProducer(stub, []string{"broker:9092"}, config)
 	p.AsyncClose()
-	recv(t, closing, "underlying AsyncClose")
-
-	p.Input() <- &sarama.ProducerMessage{Topic: "topic"}
-	close(release)
-	assert.Empty(t, requireErrorsUntilClosed(t, p))
-	recv(t, p.drainDone, "input drainer")
-}
-
-// Every message handed over during the shutdown comes back on Errors(), the
-// ones still queued in the wrapper's input when sarama finished included:
-// forwardAcks stopped at sarama's close, and the drainer ended those with only
-// their span recording the error.
-func Test_asyncProducer_ShutdownReturnsEveryQueuedMessage(t *testing.T) {
-	for range 20 {
-		stub := newStubAsyncProducer()
-		closing, release := make(chan struct{}), make(chan struct{})
-		stub.onClose = func() {
-			close(closing)
-			<-release
-			close(stub.successes)
-			close(stub.errors)
-		}
-		config := newConfig()
-		config.ChannelBufferSize = 1
-		p := wrapAsyncProducer(stub, []string{"broker:9092"}, config)
-		p.AsyncClose()
-		recv(t, closing, "underlying AsyncClose")
-
-		// The first refused message fills Errors(), forwardAcks holds the
-		// second, the drainer the third, and the fourth waits in input.
-		sent := make([]*sarama.ProducerMessage, 4)
-		for i := range sent {
-			sent[i] = &sarama.ProducerMessage{Topic: "topic"}
-			p.Input() <- sent[i]
-		}
-		require.Eventually(t, func() bool { return len(p.errors) == 1 && len(p.input) == 1 },
-			time.Second, time.Millisecond)
-
-		close(release)
-		got := requireErrorsUntilClosed(t, p)
-		require.Len(t, got, len(sent))
-		for i, e := range got {
-			assert.Same(t, sent[i], e.Msg)
-			assert.ErrorIs(t, e.Err, sarama.ErrShuttingDown)
-		}
-		recv(t, p.drainDone, "input drainer")
-	}
-}
-
-// A nil sent during the shutdown is dropped, as sarama's dispatcher drops one
-// before it looks at the shutdown, not returned as a ProducerError with a nil
-// Msg for the application's error loop to dereference.
-func Test_asyncProducer_NilMessageDuringShutdownIsDropped(t *testing.T) {
-	stub := newStubAsyncProducer()
-	closing, release := make(chan struct{}), make(chan struct{})
-	stub.onClose = func() {
-		close(closing)
-		<-release
-		close(stub.successes)
-		close(stub.errors)
-	}
-	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
 	p.AsyncClose()
-	recv(t, closing, "underlying AsyncClose")
-
-	p.Input() <- nil
-	msg := &sarama.ProducerMessage{Topic: "topic"}
-	p.Input() <- msg
-	close(release)
-	got := requireErrorsUntilClosed(t, p)
-	require.Len(t, got, 1)
-	assert.Same(t, msg, got[0].Msg)
+	require.NoError(t, p.Close())
+	require.NoError(t, p.Close())
+	assert.Equal(t, int32(1), closes.Load())
 }
 
 // sarama closing its acks with no shutdown through the wrapper - the underlying
-// producer closed directly - still closes the wrapper's channels: the input
-// forwarder, idle on an empty input, stops as well, so the drainer whose end
-// Errors() waits for runs.
+// producer closed directly - still closes the wrapper's channels.
 func Test_asyncProducer_UnderlyingClosedDirectlyClosesChannels(t *testing.T) {
 	stub := newStubAsyncProducer()
 	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
 	stub.AsyncClose()
 	assert.Empty(t, requireErrorsUntilClosed(t, p))
-	recv(t, p.drainDone, "input drainer")
 }
 
-// InputContext racing a shutdown leaves no span behind: one saved while the
-// shutdown completed sat in the span map, never ended, once its message
-// landed in a buffer nothing read any more.
-func Test_asyncProducer_InputContextRacingCloseEndsEverySpan(t *testing.T) {
-	pptest.StartAgent(t)
-	for range 20 {
-		stub := newStubAsyncProducer()
-		go func() {
-			for range stub.input {
-			}
-		}()
-		p := wrapAsyncProducer(stub, []string{"broker:9092"}, ackConfig())
-
-		var senders sync.WaitGroup
-		for i := range 8 {
-			senders.Go(func() {
-				tracer := newRecordingTracer(string(rune('a' + i)))
-				p.InputContext(pinpoint.NewContext(context.Background(), tracer), &sarama.ProducerMessage{Topic: "topic"})
-			})
-		}
-		closed := make(chan error, 1)
-		go func() { closed <- p.Close() }()
-		senders.Wait()
-		recv(t, closed, "Close")
-		recv(t, p.drainDone, "input drainer")
-		requireSpanCount(t, p, 0)
-		close(stub.input)
-	}
-}
-
-// Once shutdown has completed there is no receiver left, so a send on Input is
-// a programming error. It must fail loudly like raw sarama's closed input
-// rather than park forever.
-func Test_asyncProducer_InputAfterShutdownPanics(t *testing.T) {
-	stub := newStubAsyncProducer()
-	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
-	require.NoError(t, p.Close())
-	recv(t, p.drainDone, "input drainer")
-
-	panicked := make(chan any, 1)
-	go func() {
-		defer func() { panicked <- recover() }()
-		p.Input() <- &sarama.ProducerMessage{Topic: "topic"}
-	}()
-	require.NotNil(t, recv(t, panicked, "Input after shutdown to panic"), "sending on Input after shutdown did not panic")
-}
-
-func Test_asyncProducer_UnderlyingInputPanicCleansTracer(t *testing.T) {
+// Once the shutdown has closed sarama's input, InputContext neither panics nor
+// leaves its span behind: the send is refused and the span records
+// sarama.ErrShuttingDown.
+func Test_asyncProducer_InputContextOnClosedInputEndsSpan(t *testing.T) {
 	pptest.StartAgent(t)
 	config := ackConfig()
 
@@ -541,8 +320,7 @@ func Test_asyncProducer_UnderlyingInputPanicCleansTracer(t *testing.T) {
 		close(inputReturned)
 	}()
 	recv(t, inputReturned, "wrapper input")
-	recv(t, p.inputDone, "input forwarder")
-	recv(t, tracer.ended, "panicked-send tracer")
+	recv(t, tracer.ended, "refused-send tracer")
 	require.Equal(t, sarama.ErrShuttingDown, tracer.se.err, "the span event recorded the wrong verdict")
 	requireSpanCount(t, p, 0)
 
@@ -568,7 +346,6 @@ func Test_asyncProducer_ShutdownEndsRemainingTracer(t *testing.T) {
 	recv(t, tracer.ended, "remaining tracer")
 	require.Equal(t, sarama.ErrShuttingDown, tracer.se.err, "the span event recorded the wrong verdict")
 	requireSpanCount(t, p, 0)
-	recv(t, p.drainDone, "input drainer")
 }
 
 // Close must return the undelivered messages as ProducerErrors, like raw
@@ -596,8 +373,7 @@ func Test_asyncProducer_CloseCollectsErrors(t *testing.T) {
 }
 
 // A nil sarama.Config is legal for sarama.NewAsyncProducer, so the wrapper must
-// not let it kill the input forwarder - every later message would be consumed
-// and silently dropped by the drainer.
+// substitute sarama's default as sarama does, not panic reading it.
 func Test_asyncProducer_NilConfigStillDeliversMessages(t *testing.T) {
 	pptest.StartAgent(t)
 	stub := newStubAsyncProducer()
@@ -679,15 +455,15 @@ func Test_asyncProducer_NoErrorReturnsEndsSpansImmediately(t *testing.T) {
 	}
 }
 
-// Input and InputContext share one FIFO: two channels the forwarder picked
-// between at random reordered one goroutine's messages across the two, and a
-// key's messages on its partition with them.
+// Input and InputContext both send on sarama's own input, so one goroutine's
+// messages keep their order across the two, and a key's messages on its
+// partition with them.
 func Test_asyncProducer_InputAndInputContextKeepOrder(t *testing.T) {
+	sent := make([]*sarama.ProducerMessage, 100)
 	stub := newStubAsyncProducer()
-	stub.input = make(chan *sarama.ProducerMessage) // sarama busy: the wrapper buffers
+	stub.input = make(chan *sarama.ProducerMessage, len(sent))
 	p := wrapAsyncProducer(stub, nil, newConfig())
 
-	sent := make([]*sarama.ProducerMessage, 100)
 	for i := range sent {
 		sent[i] = &sarama.ProducerMessage{Topic: "widgets", Key: sarama.StringEncoder("k")}
 		if i%2 == 0 {
@@ -704,6 +480,33 @@ func Test_asyncProducer_InputAndInputContextKeepOrder(t *testing.T) {
 	requireChannelsClosed(t, p)
 }
 
+// Against sarama's own mock producer, which closes its input before its acks as
+// sarama does: an acked message ends its span with no error, and InputContext
+// after Close neither panics nor leaves its span behind.
+func Test_asyncProducer_SaramaMockShutdown(t *testing.T) {
+	pptest.StartAgent(t)
+	config := ackConfig()
+	mock := mocks.NewAsyncProducer(t, config)
+	mock.ExpectInputAndSucceed()
+	p := wrapAsyncProducer(mock, []string{"broker:9092"}, config)
+
+	acked := newRecordingTracer("acked")
+	msg := &sarama.ProducerMessage{Topic: "topic"}
+	p.InputContext(pinpoint.NewContext(context.Background(), acked), msg)
+	require.Same(t, msg, recv(t, p.Successes(), "the ack"))
+	recv(t, acked.ended, "acked tracer")
+	assert.NoError(t, acked.se.err)
+
+	require.NoError(t, p.Close())
+	late := newRecordingTracer("late")
+	assert.NotPanics(t, func() {
+		p.InputContext(pinpoint.NewContext(context.Background(), late), &sarama.ProducerMessage{Topic: "topic"})
+	})
+	recv(t, late.ended, "late tracer")
+	assert.ErrorIs(t, late.se.err, sarama.ErrShuttingDown)
+	requireSpanCount(t, p, 0)
+}
+
 // A closed underlying input cannot panic the host process.
 func Test_sendAsyncProducerMessage_closedInput(t *testing.T) {
 	input := make(chan *sarama.ProducerMessage)
@@ -711,52 +514,8 @@ func Test_sendAsyncProducerMessage_closedInput(t *testing.T) {
 	assert.False(t, sendAsyncProducerMessage(input, &sarama.ProducerMessage{}))
 }
 
-// Close must flush buffered messages through an underlying producer that only
-// resumes receiving after shutdown has started.
-func Test_asyncProducer_CloseDrainsBufferedMessagesThroughBackpressure(t *testing.T) {
-	stub := newStubAsyncProducer()
-	stub.input = make(chan *sarama.ProducerMessage)
-	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
-	const count = 32
-	messages := make([]*sarama.ProducerMessage, count)
-	for i := range messages {
-		messages[i] = &sarama.ProducerMessage{Topic: "topic"}
-		p.InputContext(context.Background(), messages[i])
-	}
-	closed := make(chan error, 1)
-	go func() { closed <- p.Close() }()
-	recv(t, p.done, "shutdown signal")
-	for _, want := range messages {
-		require.Same(t, want, recv(t, stub.input, "accepted message"))
-	}
-	require.NoError(t, recv(t, closed, "Close"))
-	recv(t, p.drainDone, "input drainer")
-}
-
-// sarama logs and ignores a nil message on Input(); the wrapper hands it on
-// untouched. Tracing it dereferenced the nil in the input forwarder, whose
-// death then dropped every later message in silence.
-func Test_asyncProducer_NilMessageOnInputIsPassedThrough(t *testing.T) {
-	pptest.StartAgent(t)
-	stub := newStubAsyncProducer()
-	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
-
-	p.Input() <- nil
-	p.Input() <- &sarama.ProducerMessage{Topic: "widgets"}
-
-	select {
-	case <-p.inputDone:
-		t.Fatal("the input forwarder died on a nil message")
-	case <-time.After(100 * time.Millisecond):
-	}
-	assert.Nil(t, recv(t, stub.input, "the nil message"), "the nil is forwarded for sarama to ignore")
-	msg := recv(t, stub.input, "the message after the nil")
-	require.NotNil(t, msg)
-	assert.Equal(t, "widgets", msg.Topic, "the message after the nil is delivered")
-}
-
-// The same nil through InputContext, which traces in the caller's goroutine:
-// it must not panic there either.
+// sarama logs and ignores a nil message; InputContext, which traces in the
+// caller's goroutine, hands it on untouched instead of panicking there.
 func Test_asyncProducer_NilMessageOnInputContextIsPassedThrough(t *testing.T) {
 	pptest.StartAgent(t)
 	stub := newStubAsyncProducer()
