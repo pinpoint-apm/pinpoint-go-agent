@@ -400,6 +400,59 @@ func Test_asyncProducer_InputDuringAsyncCloseWithoutReturnErrors(t *testing.T) {
 	recv(t, p.drainDone, "input drainer")
 }
 
+// Every message handed over during the shutdown comes back on Errors(), the
+// ones still queued in the wrapper's input when sarama finished included:
+// forwardAcks stopped at sarama's close, and the drainer ended those with only
+// their span recording the error.
+func Test_asyncProducer_ShutdownReturnsEveryQueuedMessage(t *testing.T) {
+	for range 20 {
+		stub := newStubAsyncProducer()
+		closing, release := make(chan struct{}), make(chan struct{})
+		stub.onClose = func() {
+			close(closing)
+			<-release
+			close(stub.successes)
+			close(stub.errors)
+		}
+		config := newConfig()
+		config.ChannelBufferSize = 1
+		p := wrapAsyncProducer(stub, []string{"broker:9092"}, config)
+		p.AsyncClose()
+		recv(t, closing, "underlying AsyncClose")
+
+		// The first refused message fills Errors(), forwardAcks holds the
+		// second, the drainer the third, and the fourth waits in input.
+		sent := make([]*sarama.ProducerMessage, 4)
+		for i := range sent {
+			sent[i] = &sarama.ProducerMessage{Topic: "topic"}
+			p.Input() <- sent[i]
+		}
+		require.Eventually(t, func() bool { return len(p.errors) == 1 && len(p.input) == 1 },
+			time.Second, time.Millisecond)
+
+		close(release)
+		got := requireErrorsUntilClosed(t, p)
+		require.Len(t, got, len(sent))
+		for i, e := range got {
+			assert.Same(t, sent[i], e.Msg)
+			assert.ErrorIs(t, e.Err, sarama.ErrShuttingDown)
+		}
+		recv(t, p.drainDone, "input drainer")
+	}
+}
+
+// sarama closing its acks with no shutdown through the wrapper - the underlying
+// producer closed directly - still closes the wrapper's channels: the input
+// forwarder, idle on an empty input, stops as well, so the drainer whose end
+// Errors() waits for runs.
+func Test_asyncProducer_UnderlyingClosedDirectlyClosesChannels(t *testing.T) {
+	stub := newStubAsyncProducer()
+	p := wrapAsyncProducer(stub, []string{"broker:9092"}, newConfig())
+	stub.AsyncClose()
+	assert.Empty(t, requireErrorsUntilClosed(t, p))
+	recv(t, p.drainDone, "input drainer")
+}
+
 // InputContext racing a shutdown leaves no span behind: one saved while the
 // shutdown completed sat in the span map, never ended, once its message
 // landed in a buffer nothing read any more.

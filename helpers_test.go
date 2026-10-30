@@ -87,6 +87,28 @@ func TestOnTracerGoroutine(t *testing.T) {
 	assert.Equal(t, goIdOffset == 0, <-other, "another goroutine, where goroutine ids are readable")
 }
 
+// A request's goroutine is known from its start, before any event: a library
+// callback that runs elsewhere first - a gocql speculative attempt, a go-redis
+// AutoPipeliner command - must not be taken for it and claim the span.
+func TestOnTracerGoroutine_PinnedAtRequestStart(t *testing.T) {
+	if goIdOffset <= 0 {
+		t.Skip("goroutine ids are not readable")
+	}
+	s := newSampledSpan(newTestAgent(defaultConfig()), "op", "/rpc")
+	s.extract(&noopDistributedTracingContextReader{})
+
+	other := make(chan bool)
+	go func() {
+		on := OnTracerGoroutine(s)
+		if on {
+			s.NewSpanEvent("callback").EndSpanEvent()
+		}
+		other <- on
+	}()
+	assert.False(t, <-other, "a callback off the request's goroutine before any event")
+	assert.True(t, OnTracerGoroutine(s), "the request's own goroutine")
+}
+
 // RemoteHost strips a port only when there is one, keeps a bare IP, and falls
 // back to loopback for a peer that is no network address.
 func TestRemoteHost(t *testing.T) {

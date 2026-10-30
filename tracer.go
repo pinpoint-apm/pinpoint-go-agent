@@ -510,12 +510,13 @@ func IsInjectedHeader(key string) bool {
 }
 
 // OnTracerGoroutine reports whether the calling goroutine is the one tracer's
-// call stack runs on - the goroutine its first span event was opened on. A
-// library callback that may run on a goroutine of its own, such as gocql's
-// query observer during a page prefetch, records on tracer.NewGoroutineTracer()
-// when it is not: a tracer tracks one goroutine (doc/api_contracts.md rule 1).
-// True when the agent cannot tell: no event opened yet, goroutine ids not
-// readable, or a tracer the agent did not make.
+// call stack runs on - the goroutine its request started on, or for a goroutine
+// tracer the one its first span event was opened on. A library callback that
+// may run on a goroutine of its own, such as gocql's query observer during a
+// page prefetch, records on tracer.NewGoroutineTracer() when it is not: a
+// tracer tracks one goroutine (doc/api_contracts.md rule 1). True when the
+// agent cannot tell: a goroutine tracer with no event opened yet, goroutine ids
+// not readable, or a tracer the agent did not make.
 func OnTracerGoroutine(tracer Tracer) bool {
 	if n, ok := tracer.(nestedTracer); ok {
 		tracer = n.Tracer

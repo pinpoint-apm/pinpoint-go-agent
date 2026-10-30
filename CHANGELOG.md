@@ -287,7 +287,10 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   it cannot decompress gzip gets the following batches and streams
   uncompressed, with a warning in the log.
   Unlike the Java agent, every stat message is compressed, a lone small one
-  included, since grpc-go cannot choose per message.
+  included, since grpc-go cannot choose per message. A gzip writer grpc-go has
+  to make again after a garbage collection allocates about 800 KB, so a
+  process that collects often may prefer `none`
+  ([Collector.Grpc.Compression](doc/config.md#collectorgrpccompression)).
 - **`pinpoint.ReloadConfig(yaml)`** applies a complete configuration, in the
   config file's YAML form, to the running agent, for a process that manages
   the agent's configuration itself - a control plane, an admin endpoint, a
@@ -310,8 +313,10 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   confluent-kafka clients send the first as it is and replace the second,
   which a proxy or a relay forwarded and the callee read as its own span id
   (`IsInjectedHeader` names the keys to clear). `OnTracerGoroutine` reports
-  whether a callback runs on the goroutine its tracer tracks; the gocql
-  observers record on a goroutine tracer when it does not.
+  whether a callback runs on the goroutine its tracer tracks - for a request,
+  the one it started on, so a callback that runs elsewhere before the request
+  opened any event is not taken for it; the gocql observers and the goredisv9
+  hooks record on a goroutine tracer when it does not.
 - **`Collector.AgentInfo.SendArgs`** (`WithCollectorAgentInfoSendArgs`) turns
   off sending the process's command line arguments with the agent information,
   for a command line that carries a password or a token. On by default, as
@@ -533,6 +538,11 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   ignores a nil on `Input()`; the wrapper dereferenced it, and on `Input()` the
   input forwarder died and every later message was dropped in silence, while
   `InputContext` panicked in the caller.
+- **The sarama async producer returns a message sent during its shutdown on
+  `Errors()`** with `sarama.ErrShuttingDown`, as raw sarama's does, including
+  every one still queued in the wrapper when sarama finished. It was dropped,
+  with only its span recording the error, and `Close()` left it out of the
+  `ProducerErrors` it returns.
 - **`ppbeego` records the status the response went out with.** `Output.Body`
   (behind `ServeJSON`, `Render` and the rest) resets `Output.Status` to 0 after
   writing the header, so nearly every response was recorded as status 0 and a

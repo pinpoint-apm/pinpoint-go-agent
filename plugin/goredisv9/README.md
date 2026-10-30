@@ -29,7 +29,9 @@ rc.Pipeline()
 
 The commands go-redis's AutoPipeliner batches are sent with a context of its
 own and are not traced. One it sends apart from the batch, such as a blocking
-command, runs on a goroutine of its own and is recorded on a goroutine tracer.
+command, runs on a goroutine of its own and is recorded on a goroutine tracer,
+which needs a span event open in the caller: sent with none open, it is not
+recorded.
 
 ``` go
 package main

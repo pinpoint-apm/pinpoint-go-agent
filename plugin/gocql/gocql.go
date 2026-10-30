@@ -106,6 +106,8 @@ func (o *Observer) ObserveBatch(ctx context.Context, batch gocql.ObservedBatch) 
 // gocql runs a page prefetch and a speculative execution on goroutines of its
 // own, with the query's context, and recorded on the caller's tracer from
 // there the event interleaved with the ones the caller was opening meanwhile.
+// One made while the caller has no event open is not recorded: a goroutine
+// tracer has nothing to link to.
 func onOwnGoroutine(ctx context.Context, tracer pinpoint.Tracer) (context.Context, pinpoint.Tracer) {
 	if pinpoint.OnTracerGoroutine(tracer) {
 		return ctx, nil

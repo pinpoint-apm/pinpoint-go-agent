@@ -103,7 +103,9 @@ func (r *hook) ProcessPipelineHook(hook redis.ProcessPipelineHook) redis.Process
 // async AutoPipeliner runs a command it sends apart - a blocking one, one with
 // a read timeout - through the hook chain on a goroutine of its own, with the
 // caller's context, while the caller carries on, and recorded on the caller's
-// tracer from there the event interleaved with the caller's own.
+// tracer from there the event interleaved with the caller's own. One sent
+// while the caller has no event open is not recorded: a goroutine tracer has
+// nothing to link to.
 func onOwnGoroutine(ctx context.Context, tracer pinpoint.Tracer) (context.Context, pinpoint.Tracer) {
 	if pinpoint.OnTracerGoroutine(tracer) {
 		return ctx, nil

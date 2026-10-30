@@ -45,8 +45,9 @@ f := tracer.WrapGoroutine("worker", func(ctx context.Context) { work(ctx) }, ctx
 go f()
 ```
 
-**What happens on misuse:** the agent records the goroutine id of the first
-`NewSpanEvent()` call and, on a call from a different goroutine, warns
+**What happens on misuse:** the agent records the goroutine id the request
+started on - for a goroutine tracer, that of its first `NewSpanEvent()` call -
+and, on a call from a different goroutine, warns
 `span is shared by more than one goroutine` (throttled) and **still records the
 event**, so the shape of the trace does not depend on whether the check ran.
 The check runs at every log level, so a concurrency mistake is visible in a

@@ -37,7 +37,8 @@ type requestStats struct {
 
 	// goroutineId is the goroutine the request runs on: the real-time map's
 	// key, and on a sampled span what NewSpanEvent's goroutine-sharing check
-	// compares against (-1 until either sets it).
+	// and OnTracerGoroutine compare against. begin sets it; a goroutine tracer,
+	// which never begins, holds -1 until its first NewSpanEvent sets it.
 	goroutineId atomic.Int64
 
 	// realTimeTracked records that begin stored this span in
@@ -59,6 +60,15 @@ func (s *requestStats) begin(agent *agent, txId TransactionId, entryPoint string
 		s.activeKey = int64(rand.Uint64() | 1<<63)
 	}
 	agent.stats.activeSpan.store(s.activeKey, s.startTime)
+
+	// Pinned where the request starts, not by its first span event:
+	// OnTracerGoroutine is asked before any event may exist, and a library
+	// callback off this goroutine - a gocql speculative attempt, a go-redis
+	// AutoPipeliner command - was otherwise taken for it, claimed the span,
+	// and made this goroutine read as a foreign one.
+	if goIdOffset > 0 {
+		s.goroutineId.Store(goIdFromG())
+	}
 
 	if agent.atcStreamCount.Load() > 0 {
 		txIdString := ""
