@@ -282,13 +282,13 @@ func Test_newStreamWithRetry_stopsOnceShutdownCutsTheWait(t *testing.T) {
 	require.Equal(t, phaseStopping, agent.enable.current())
 
 	attempts := 0
-	done := make(chan bool, 1)
+	done := make(chan *pingStream, 1)
 	go func() {
-		done <- newStreamWithRetry(agent, conn, func() bool { attempts++; return false }, "test")
+		done <- newStreamWithRetry(agent, conn, func() *pingStream { attempts++; return nil }, "test")
 	}()
 	select {
-	case ok := <-done:
-		assert.False(t, ok, "no stream was opened")
+	case s := <-done:
+		assert.False(t, s.open(), "no stream was opened")
 	case <-time.After(time.Second):
 		t.Fatal("newStreamWithRetry kept retrying while the agent was stopping")
 	}
@@ -2253,8 +2253,9 @@ func Test_cmdGrpc_newHandleCommandStream_usesV2WithHeader(t *testing.T) {
 	}).Return(stream, nil)
 	agent.cmdGrpc = &cmdGrpc{cmdClient: client, agent: agent, atcStreams: atcStreams{agent: agent}}
 
-	require.True(t, agent.cmdGrpc.newHandleCommandStream())
-	agent.cmdGrpc.stream.cancel()
+	s := agent.cmdGrpc.newHandleCommandStream()
+	require.NotNil(t, s)
+	s.cancel()
 
 	client.AssertNumberOfCalls(t, "HandleCommandV2", 1)
 	client.AssertNotCalled(t, "HandleCommand", mock.Anything)

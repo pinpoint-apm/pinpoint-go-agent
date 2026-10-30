@@ -48,7 +48,6 @@ func commandMetadataContext(agent *agent) context.Context {
 type cmdGrpc struct {
 	cmdConn    *grpc.ClientConn
 	cmdClient  pb.ProfilerCommandServiceClient
-	stream     *cmdStream
 	agent      *agent
 	atcStreams atcStreams
 }
@@ -73,7 +72,7 @@ func (cmdGrpc *cmdGrpc) close() {
 	}
 }
 
-func (cmdGrpc *cmdGrpc) newHandleCommandStream() bool {
+func (cmdGrpc *cmdGrpc) newHandleCommandStream() *cmdStream {
 	// The command worker sits in Recv waiting for the collector, so unlike the
 	// sending streams it cannot check the age before each operation. The max
 	// age is the stream deadline instead: at expiry Recv returns
@@ -92,18 +91,13 @@ func (cmdGrpc *cmdGrpc) newHandleCommandStream() bool {
 	if err != nil {
 		cancel()
 		cmdStreamOpenLog.errorf("make command stream - %v", err)
-		return false
+		return nil
 	}
-
-	cmdGrpc.stream = &cmdStream{newStreamHandle(stream, cancel, age)}
-	return true
+	return &cmdStream{newStreamHandle(stream, cancel, age)}
 }
 
 func (cmdGrpc *cmdGrpc) newCommandStreamWithRetry() *cmdStream {
-	if newStreamWithRetry(cmdGrpc.agent, cmdGrpc.cmdConn, cmdGrpc.newHandleCommandStream, "command") {
-		return cmdGrpc.stream
-	}
-	return &cmdStream{}
+	return newStreamWithRetry(cmdGrpc.agent, cmdGrpc.cmdConn, cmdGrpc.newHandleCommandStream, "command")
 }
 
 func (s *cmdStream) close() {

@@ -14,7 +14,6 @@ import (
 type statGrpc struct {
 	statConn   *grpc.ClientConn
 	statClient pb.StatClient
-	stream     *statStream
 	agent      *agent
 
 	// compress is Collector.Grpc.Compression=gzip until a collector fails
@@ -51,7 +50,7 @@ func (statGrpc *statGrpc) close() {
 	}
 }
 
-func (statGrpc *statGrpc) newStatStream() bool {
+func (statGrpc *statGrpc) newStatStream() *statStream {
 	ctx, cancel := context.WithCancel(grpcMetadataContext(statGrpc.agent, -1))
 	// Unlike grpc-java, grpc-go cannot compress per message, so every message
 	// of a gzip stream is compressed, a lone small stat included.
@@ -63,18 +62,13 @@ func (statGrpc *statGrpc) newStatStream() bool {
 	if err != nil {
 		cancel()
 		statStreamOpenLog.errorf("make stat stream - %v", err)
-		return false
+		return nil
 	}
-
-	statGrpc.stream = &statStream{newStreamHandle(stream, cancel, newStreamAge(statGrpc.agent)), &statGrpc.compress}
-	return true
+	return &statStream{newStreamHandle(stream, cancel, newStreamAge(statGrpc.agent)), &statGrpc.compress}
 }
 
 func (statGrpc *statGrpc) newStatStreamWithRetry() *statStream {
-	if newStreamWithRetry(statGrpc.agent, statGrpc.statConn, statGrpc.newStatStream, "stat") {
-		return statGrpc.stream
-	}
-	return &statStream{}
+	return newStreamWithRetry(statGrpc.agent, statGrpc.statConn, statGrpc.newStatStream, "stat")
 }
 
 // close also learns why the collector ended the stream: a send only sees

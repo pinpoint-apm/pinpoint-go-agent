@@ -403,7 +403,6 @@ type agentGrpc struct {
 	agentClient  pb.AgentClient
 	metaClient   pb.MetadataClient
 	pingSocketId int64
-	pingStream   *pingStream
 	agent        *agent
 	// retryDelay is the pause between metadata retries: metaRetryDelay in
 	// production, shortened by tests.
@@ -1191,14 +1190,17 @@ func sleepUnlessStopped(agent *agent, d time.Duration) bool {
 	}
 }
 
-func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc func() bool, which string) bool {
+// newStreamWithRetry opens a stream with open, which returns nil on a failure,
+// until one opens; a wait cut short by shutdown ends the retries with a
+// stream that holds none.
+func newStreamWithRetry[S any](agent *agent, grpcConn *grpc.ClientConn, open func() *S, which string) *S {
 	readyFailures := 0
 	// workerContinues, not Enable: a stream is (re)opened by a worker, and
 	// the stat worker still sends the final url stat tick while stopping.
 	for agent.workerContinues() {
-		if newStreamFunc() {
+		if s := open(); s != nil {
 			Log("grpc").Infof("%s stream opened", which)
-			return true
+			return s
 		}
 		if agent.config.offGrpc {
 			continue
@@ -1211,7 +1213,7 @@ func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc f
 		// waits for readiness as before, and resets the pacing.
 		if grpcConn.GetState() == connectivity.Ready {
 			if !sleepUnlessStopped(agent, backOffSleep(readyFailures)) {
-				return false
+				return new(S)
 			}
 			readyFailures++
 			continue
@@ -1223,10 +1225,10 @@ func newStreamWithRetry(agent *agent, grpcConn *grpc.ClientConn, newStreamFunc f
 		// not READY at shutdown spun this loop flat out - a failed open and
 		// an error line per turn - until the phase reached stopped.
 		if !backOffUntilReady(agent, grpcConn, which) {
-			return false
+			return new(S)
 		}
 	}
-	return false
+	return new(S)
 }
 
 // gzipCallOptions compresses a call: SendSpanBatch requests and the stat
@@ -1298,25 +1300,20 @@ type pingStream struct {
 	streamHandle[pb.Agent_PingSessionClient]
 }
 
-func (agentGrpc *agentGrpc) newPingStream() bool {
+func (agentGrpc *agentGrpc) newPingStream() *pingStream {
 	agentGrpc.pingSocketId++
 	ctx, cancel := context.WithCancel(grpcMetadataContext(agentGrpc.agent, agentGrpc.pingSocketId))
 	stream, err := agentGrpc.agentClient.PingSession(ctx)
 	if err != nil {
 		cancel()
 		pingStreamOpenLog.errorf("make ping stream - %v", err)
-		return false
+		return nil
 	}
-
-	agentGrpc.pingStream = &pingStream{newStreamHandle(stream, cancel, newStreamAge(agentGrpc.agent))}
-	return true
+	return &pingStream{newStreamHandle(stream, cancel, newStreamAge(agentGrpc.agent))}
 }
 
 func (agentGrpc *agentGrpc) newPingStreamWithRetry() *pingStream {
-	if newStreamWithRetry(agentGrpc.agent, agentGrpc.agentConn, agentGrpc.newPingStream, "ping") {
-		return agentGrpc.pingStream
-	}
-	return &pingStream{}
+	return newStreamWithRetry(agentGrpc.agent, agentGrpc.agentConn, agentGrpc.newPingStream, "ping")
 }
 
 var ping = pb.PPing{}
