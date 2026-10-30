@@ -152,6 +152,7 @@ func (b *expiringPickFirst) ResolverError(err error) {
 }
 
 // resolverErrorLocked reports the error only while nothing is READY: unlike
+// the Java agent's clear(), a working connection is never torn down over a
 // name resolution problem.
 func (b *expiringPickFirst) resolverErrorLocked(err error) {
 	if b.closed || b.ready != nil {
@@ -290,6 +291,7 @@ func (b *expiringPickFirst) updateBalancingStateLocked() {
 	b.cc.UpdateState(balancer.State{ConnectivityState: state, Picker: p})
 }
 
+// requestSuccessor runs on its own goroutine, the stand-in for the Java
 // agent's SynchronizationContext: Pick must not block, and creating a SubConn
 // takes the balancer lock and the channel's own locks.
 func (b *expiringPickFirst) requestSuccessor(sd *expiringSubConn) {

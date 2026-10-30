@@ -41,7 +41,7 @@ func TestNewHook_Endpoint(t *testing.T) {
 		{"single address", rueidis.ClientOption{InitAddress: []string{"redis1:6379"}}, "redis1:6379"},
 		{"several addresses", rueidis.ClientOption{InitAddress: []string{"redis1:6379", "redis2:6379"}}, "redis1:6379,redis2:6379"},
 		{"no address", rueidis.ClientOption{}, "unknown"},
-		{"an empty address list", rueidis.ClientOption{InitAddress: []string{}}, ""},
+		{"an empty address list", rueidis.ClientOption{InitAddress: []string{}}, "unknown"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			tracer := pptest.NewRecordingTracer()
@@ -102,31 +102,10 @@ func Test_cmdNames_EmptyBatch(t *testing.T) {
 
 // Commands() carries the full command including keys and values; only the verb
 // may reach the annotation.
-// maxListedCmds is pinpoint.AnnotationList's cap, which the multi annotation follows.
-const maxListedCmds = 32
-
 func Test_cmdVerb(t *testing.T) {
 	assert.Equal(t, "", cmdVerb(nil))
 	assert.Equal(t, "", cmdVerb([]string{}))
 	assert.Equal(t, "SET", cmdVerb([]string{"SET", "key", "value"}))
-}
-
-// A multi has no size limit on the rueidis side, so the annotation lists at
-// most maxListedCmds verbs and summarizes the rest.
-func Test_cmdNames_CapsTheListedCommands(t *testing.T) {
-	verb := func(int) string { return "GET" }
-
-	assert.Equal(t, "", cmdNames(0, verb))
-	assert.Equal(t, "GET", cmdNames(1, verb))
-	assert.Equal(t, "GET, GET", cmdNames(2, verb))
-
-	atCap := cmdNames(maxListedCmds, verb)
-	assert.NotContains(t, atCap, "more)", "a batch at the cap must be listed whole")
-
-	over := cmdNames(maxListedCmds+3, verb)
-	assert.Contains(t, over, ", ...(3 more)")
-	assert.Equal(t, len(atCap)+len(", ...(3 more)"), len(over),
-		"commands past the cap must not be listed")
 }
 
 // A batch fails as a whole on its first failed command; reporting a later one

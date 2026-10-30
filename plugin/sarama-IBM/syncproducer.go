@@ -137,11 +137,6 @@ func (p *syncProducer) SendMessageContext(ctx context.Context, msg *sarama.Produ
 	return partition, offset, err
 }
 
-// SendMessage produces a given message without tracing. Use SendMessageContext.
-func (p *syncProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
-	return p.SyncProducer.SendMessage(msg)
-}
-
 // SendMessagesContext produces a given set of messages with tracer context.
 func (p *syncProducer) SendMessagesContext(ctx context.Context, msgs []*sarama.ProducerMessage) error {
 	if !pinpoint.GetAgent().Enable() {
@@ -171,11 +166,6 @@ func (p *syncProducer) SendMessagesContext(ctx context.Context, msgs []*sarama.P
 	err := p.SyncProducer.SendMessages(msgs)
 	se.SetError(err)
 	return err
-}
-
-// SendMessages produces a given set of messages without tracing. Use SendMessagesContext.
-func (p *syncProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
-	return p.SyncProducer.SendMessages(msgs)
 }
 
 // NewSyncProducer wraps sarama.NewSyncProducer and returns a sarama.SyncProducer ready to instrument.

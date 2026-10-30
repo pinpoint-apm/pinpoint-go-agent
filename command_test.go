@@ -57,7 +57,7 @@ func Test_agent_handleActiveThreadCountReplacesSameRequestId(t *testing.T) {
 	defer drainAtcStreams(t, agent)
 
 	agent.handleActiveThreadCount(7, cmd)
-	require.Eventually(t, func() bool { return client.stream(0).sendCount() > 0 }, 2*time.Second, 2*time.Millisecond, "first stream to sample")
+	require.Eventually(t, func() bool { return len(client.stream(0).sentResponses()) > 0 }, 2*time.Second, 2*time.Millisecond, "first stream to sample")
 
 	agent.handleActiveThreadCount(7, cmd)
 

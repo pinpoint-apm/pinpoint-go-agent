@@ -63,15 +63,6 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		// reports its own body problems, and this runs once per request.
 		pinpoint.Log("goelastic").Debugf("dsl read error: %v", err)
 	}
-	if len(dsl) > MaxDslLength {
-		// Back off to a rune start: a byte-offset cut can split a multi-byte
-		// rune, and a proto3 string field rejects invalid UTF-8.
-		cut := MaxDslLength
-		for cut > 0 && !utf8.RuneStart(dsl[cut]) {
-			cut--
-		}
-		dsl = dsl[0:cut]
-	}
 	se.Annotations().AppendString(pinpoint.AnnotationEsDsl, dsl)
 
 	// Since the service type ELASTICSEARCH_HIGHLEVEL_CLIENT(9204) depends on HTTP_CLIENT_4(9052),
@@ -92,7 +83,7 @@ func dslString(req *http.Request) (string, error) {
 	// refresh, routing or filter_path alone is not.
 	if rq := req.URL.RawQuery; rq != "" && (strings.HasPrefix(rq, "q=") || strings.Contains(rq, "&q=")) {
 		if dsl := req.URL.Query().Get("q"); dsl != "" {
-			return dsl, nil
+			return cutDsl(dsl), nil
 		}
 	}
 	// Without GetBody there is no copy to read: consuming req.Body would stall a
@@ -119,7 +110,7 @@ func dslString(req *http.Request) (string, error) {
 
 // cutDsl is dsl cut to MaxDslLength on a rune start: a byte-offset cut can
 // split a multi-byte rune, and a proto3 string field rejects invalid UTF-8.
-func cutDsl(dsl []byte) []byte {
+func cutDsl[T string | []byte](dsl T) T {
 	if len(dsl) <= MaxDslLength {
 		return dsl
 	}

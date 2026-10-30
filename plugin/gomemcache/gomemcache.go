@@ -121,15 +121,12 @@ func (c *Client) GetMulti(keys []string) (map[string]*memcache.Item, error) {
 	items, err := c.Client.GetMulti(keys)
 	tracer := c.currentTracer()
 	if tracer.IsSampled() {
-		c.recordMemcacheSpanEvent(tracer, "gomemcache.GetMulti()", joinKeys(keys), start, err)
+		// Bounded: GetMulti has no key-count limit, so listing every key
+		// would grow the span with the caller's batch.
+		keyList := pinpoint.AnnotationList(len(keys), func(i int) string { return keys[i] })
+		c.recordMemcacheSpanEvent(tracer, "gomemcache.GetMulti()", keyList, start, err)
 	}
 	return items, err
-}
-
-// joinKeys lists the keys, bounded: GetMulti has no key-count limit, so listing
-// every key would grow the span with the caller's batch.
-func joinKeys(keys []string) string {
-	return pinpoint.AnnotationList(len(keys), func(i int) string { return keys[i] })
 }
 
 func (c *Client) Delete(key string) error {

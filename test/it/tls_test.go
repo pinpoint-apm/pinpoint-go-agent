@@ -1,20 +1,12 @@
 package it
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
-	"net"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/testapp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,29 +15,8 @@ import (
 // temporary directory and returns their paths.
 func selfSignedCert(t *testing.T, commonName string) (certFile, keyFile string) {
 	t.Helper()
-
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	certFile, keyFile, err := testapp.WriteSelfSignedCert(t.TempDir(), commonName)
 	require.NoError(t, err)
-
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: commonName},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	require.NoError(t, err)
-	keyDer, err := x509.MarshalECPrivateKey(key)
-	require.NoError(t, err)
-
-	dir := t.TempDir()
-	certFile = filepath.Join(dir, "cert.pem")
-	keyFile = filepath.Join(dir, "key.pem")
-	require.NoError(t, os.WriteFile(certFile,
-		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600))
-	require.NoError(t, os.WriteFile(keyFile,
-		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDer}), 0o600))
 	return certFile, keyFile
 }
 

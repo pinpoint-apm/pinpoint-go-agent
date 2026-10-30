@@ -157,11 +157,8 @@ func Test_spanMessageBuilder_unknownAddressAndUnsetNextSpanId(t *testing.T) {
 }
 
 type retainingSpanBatchClient struct {
+	pb.SpanClient
 	request *pb.PSpanMessageBatch
-}
-
-func (c *retainingSpanBatchClient) SendSpan(context.Context, ...grpc.CallOption) (pb.Span_SendSpanClient, error) {
-	panic("not used")
 }
 
 func (c *retainingSpanBatchClient) SendSpanBatch(_ context.Context, in *pb.PSpanMessageBatch, _ ...grpc.CallOption) (*pb.PSpanResultBatch, error) {
@@ -190,13 +187,10 @@ func Test_spanGrpc_tracingRetainsStableMessages(t *testing.T) {
 // still owns the builder — and holds the call briefly so many builders stay
 // in flight at once.
 type mixCheckSpanClient struct {
+	pb.SpanClient
 	mu       sync.Mutex
 	errs     []error
 	received int
-}
-
-func (c *mixCheckSpanClient) SendSpan(ctx context.Context, _ ...grpc.CallOption) (pb.Span_SendSpanClient, error) {
-	panic("not used")
 }
 
 func (c *mixCheckSpanClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch, _ ...grpc.CallOption) (*pb.PSpanResultBatch, error) {

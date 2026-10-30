@@ -142,7 +142,7 @@ func Test_allHttpHeaderRecorder(t *testing.T) {
 	h.Set("X-B", "3")
 
 	a := newRecordingAnnotation()
-	newAllHttpHeaderRecorder().recordHeader(a, pinpoint.AnnotationHttpRequestHeader, header{h})
+	(&allHttpHeaderRecorder{}).recordHeader(a, pinpoint.AnnotationHttpRequestHeader, header{h})
 
 	assert.Equal(t, map[string]string{"X-A": "1,2", "X-B": "3"},
 		a.values(pinpoint.AnnotationHttpRequestHeader))
@@ -155,7 +155,7 @@ func Test_allHttpHeaderRecorder_recordCookie(t *testing.T) {
 	)
 
 	a := newRecordingAnnotation()
-	newAllHttpHeaderRecorder().recordCookie(a, c)
+	(&allHttpHeaderRecorder{}).recordCookie(a, c)
 
 	assert.Equal(t, map[string]string{"session": "s1", "other": "x"}, a.cookies())
 }

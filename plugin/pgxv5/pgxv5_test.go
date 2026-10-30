@@ -261,13 +261,12 @@ func TestOpenRegisteredConnConfig(t *testing.T) {
 // many there were.
 func TestComposeArgs_HonoursTheBindValueGate(t *testing.T) {
 	agent := pptest.StartAgent(t)
-	pgxT := NewTracer()
 
 	agent.Config().Set(pinpoint.CfgSQLTraceBindValue, true)
-	assert.Equal(t, "secret, 42", pgxT.composeArgs([]any{"secret", 42}))
+	assert.Equal(t, "secret, 42", pinpoint.BindValuesString([]any{"secret", 42}))
 
 	agent.Config().Set(pinpoint.CfgSQLTraceBindValue, false)
-	assert.Empty(t, pgxT.composeArgs([]any{"secret", 42}), "bind values leaked with tracing off")
+	assert.Empty(t, pinpoint.BindValuesString([]any{"secret", 42}), "bind values leaked with tracing off")
 }
 
 // A statement with no bind values has nothing to record, whatever the gate says.
@@ -275,8 +274,8 @@ func TestComposeArgs_NoArguments(t *testing.T) {
 	agent := pptest.StartAgent(t)
 	agent.Config().Set(pinpoint.CfgSQLTraceBindValue, true)
 
-	assert.Empty(t, NewTracer().composeArgs(nil))
-	assert.Empty(t, NewTracer().composeArgs([]any{}))
+	assert.Empty(t, pinpoint.BindValuesString(nil))
+	assert.Empty(t, pinpoint.BindValuesString([]any{}))
 }
 
 // SQL.MaxBindValueSize bounds what one statement can add to a span, so the
@@ -286,8 +285,8 @@ func TestComposeArgs_HonoursTheSizeLimit(t *testing.T) {
 	agent.Config().Set(pinpoint.CfgSQLTraceBindValue, true)
 	agent.Config().Set(pinpoint.CfgSQLMaxBindValueSize, 32)
 
-	got := NewTracer().composeArgs([]any{strings.Repeat("x", 1<<10)})
+	got := pinpoint.BindValuesString([]any{strings.Repeat("x", 1<<10)})
 
-	assert.LessOrEqual(t, len(got), 32+len("...(1024)"), "composeArgs grew past the configured limit")
-	assert.True(t, strings.HasSuffix(got, "...(1024)"), "composeArgs() = %q, want the truncation marker", got)
+	assert.LessOrEqual(t, len(got), 32+len("...(1024)"), "the bind values grew past the configured limit")
+	assert.True(t, strings.HasSuffix(got, "...(1024)"), "BindValuesString() = %q, want the truncation marker", got)
 }

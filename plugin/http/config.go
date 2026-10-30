@@ -209,7 +209,7 @@ func WithHttpClientRecordUrlQuery(record bool) pinpoint.ConfigOption {
 // request never sees a partially initialized filter or recorder.
 type httpConfig struct {
 	srvUrl             *httpUrlFilter
-	srvMethod          *httpMethodFilter
+	srvExcludeMethods  []string
 	srvStatus          httpStatusError
 	srvReqHeader       httpHeaderRecorder
 	srvResHeader       httpHeaderRecorder
@@ -307,7 +307,7 @@ func httpCfg() *httpConfig {
 func newHttpConfigFor(config *pinpoint.Config) *httpConfig {
 	return &httpConfig{
 		srvUrl:              setupHttpUrlFilter(trimStringSlice(config.StringSlice(CfgHttpServerExcludeUrl))),
-		srvMethod:           &httpMethodFilter{excludeMethod: trimStringSlice(config.StringSlice(CfgHttpServerExcludeMethod))},
+		srvExcludeMethods:   trimStringSlice(config.StringSlice(CfgHttpServerExcludeMethod)),
 		srvStatus:           parseHttpStatusErrors(config.StringSlice(CfgHttpServerStatusCodeErrors)),
 		srvReqHeader:        makeHttpHeaderRecorderFor(config, CfgHttpServerRecordRequestHeader),
 		srvResHeader:        makeHttpHeaderRecorderFor(config, CfgHttpServerRecordResponseHeader),
@@ -389,9 +389,9 @@ func makeHttpHeaderRecorderFor(config *pinpoint.Config, cfgName string) httpHead
 	cfg := trimStringSlice(config.StringSlice(cfgName))
 
 	if len(cfg) == 0 {
-		return newNoopHttpHeaderRecorder()
+		return &noopHttpHeaderRecorder{}
 	} else if strings.EqualFold(cfg[0], "HEADERS-ALL") {
-		return newAllHttpHeaderRecorder()
+		return &allHttpHeaderRecorder{}
 	} else {
 		return newDefaultHttpHeaderRecorder(cfg)
 	}

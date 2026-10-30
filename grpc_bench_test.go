@@ -106,11 +106,7 @@ func benchMarshal(b *testing.B, marshal bool, msg proto.Message) {
 // machinery: per-span timer + marshal on the stream path vs per-batch
 // goroutine + permit + context on the batch path.
 
-type stubSpanBatchClient struct{}
-
-func (stubSpanBatchClient) SendSpan(ctx context.Context, _ ...grpc.CallOption) (pb.Span_SendSpanClient, error) {
-	panic("not used")
-}
+type stubSpanBatchClient struct{ pb.SpanClient }
 
 func (stubSpanBatchClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch, _ ...grpc.CallOption) (*pb.PSpanResultBatch, error) {
 	_, err := proto.Marshal(in)

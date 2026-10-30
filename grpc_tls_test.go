@@ -2,20 +2,15 @@ package pinpoint
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/testapp"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
@@ -23,28 +18,8 @@ import (
 // genTestCert writes a self-signed cert/key pair for 127.0.0.1 into dir.
 func genTestCert(t *testing.T, dir string) (certFile, keyFile string) {
 	t.Helper()
-
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	assert.NoError(t, err)
-
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "pinpoint-test"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	assert.NoError(t, err)
-	keyDer, err := x509.MarshalECPrivateKey(key)
-	assert.NoError(t, err)
-
-	certFile = filepath.Join(dir, "cert.pem")
-	keyFile = filepath.Join(dir, "key.pem")
-	assert.NoError(t, os.WriteFile(certFile,
-		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600))
-	assert.NoError(t, os.WriteFile(keyFile,
-		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDer}), 0600))
+	certFile, keyFile, err := testapp.WriteSelfSignedCert(dir, "pinpoint-test")
+	require.NoError(t, err)
 	return certFile, keyFile
 }
 

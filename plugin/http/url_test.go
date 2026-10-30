@@ -323,7 +323,7 @@ func TestHttpUrlFilterShortUrlDoesNotAllocate(t *testing.T) {
 }
 
 func TestHttpMethodFilter(t *testing.T) {
-	f := &httpMethodFilter{excludeMethod: trimStringSlice([]string{" put ", "DELETE"})}
+	f := &httpConfig{srvExcludeMethods: trimStringSlice([]string{" put ", "DELETE"})}
 
 	for _, method := range []string{"PUT", "put", "Put", "DELETE", "delete"} {
 		assert.True(t, f.isExcludedMethod(method), "isExcludedMethod(%q) must be case-insensitive", method)
@@ -347,10 +347,9 @@ func TestUrlAndMethodFiltersComeFromAgentConfig(t *testing.T) {
 	assert.True(t, urlFilter.isFiltered("/ab/exclude.html"), "the configured Ant pattern should filter")
 	assert.False(t, urlFilter.isFiltered("/keep/a/b"))
 
-	methodFilter := cfg.srvMethod
-	assert.True(t, methodFilter.isExcludedMethod("PUT"), "surrounding whitespace must be trimmed off the config value")
-	assert.True(t, methodFilter.isExcludedMethod("DELETE"))
-	assert.False(t, methodFilter.isExcludedMethod("GET"))
+	assert.True(t, cfg.isExcludedMethod("PUT"), "surrounding whitespace must be trimmed off the config value")
+	assert.True(t, cfg.isExcludedMethod("DELETE"))
+	assert.False(t, cfg.isExcludedMethod("GET"))
 }
 
 // trimStringSlice must copy: the slice it is handed belongs to the published

@@ -136,8 +136,7 @@ test. See [test/e2e/README.md](/test/e2e/README.md).
 ## Benchmarks
 
 Performance-sensitive paths carry benchmarks next to their unit tests
-(`benchmark_test.go`, `grpc_bench_test.go`, `stats_bench_test.go`,
-`sql_util_bench_test.go`):
+(`benchmark_test.go`, `grpc_bench_test.go`, `sql_util_bench_test.go`):
 
 ```bash
 go test -run '^$' -bench . -benchmem

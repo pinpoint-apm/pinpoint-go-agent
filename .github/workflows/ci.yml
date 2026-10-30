@@ -40,9 +40,6 @@ jobs:
           test/it/go.sum
           example/go.sum
 
-    - name: Build
-      run: go build -v
-
     # The agent supports exactly the four architectures internal/asm has a
     # Getg body for, and this runner is one of them. Type-checking the module
     # for the other three is what compiles their assembly declarations and
@@ -113,19 +110,18 @@ jobs:
         go-version: ${{ matrix.go-version }}
         cache-dependency-path: plugin/*/go.sum
 
-    # One module at a time, since each plugin has its own go.mod. The plugin
-    # examples live in the root example module and are built by the agent
-    # job, so go build ./... and go test both stay on the module's own
-    # package. Several plugins guard against data
-    # races the agent's tracers are sensitive to, so -race is part of the
-    # contract, not an extra. Every module runs before the step fails, so one
+    # One module at a time, since each plugin has its own go.mod. Every plugin
+    # module is one package and its examples live in the root example module,
+    # built by the agent job, so go test compiles all of it. Several plugins
+    # guard against data races the agent's tracers are sensitive to, so -race
+    # is part of the contract, not an extra. Every module runs before the step fails, so one
     # broken plugin does not hide the rest.
     - name: Plugin build and test
       run: |
         failed=()
         for dir in plugin/*/; do
           echo "::group::${dir}"
-          (cd "$dir" && go build ./... && go test -race -v ./) || failed+=("$dir")
+          (cd "$dir" && go test -race -v ./) || failed+=("$dir")
           echo "::endgroup::"
         done
         if [ ${#failed[@]} -ne 0 ]; then

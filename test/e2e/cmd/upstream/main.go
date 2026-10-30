@@ -1,7 +1,6 @@
 // upstream is the traced HTTP server at the top of the end-to-end stack. It
 // exercises the public tracing API, calls the HTTP and gRPC downstreams, and
-// exposes agent lifecycle endpoints the smoke test drives. See
-// test/e2e/README.md for the endpoint list.
+// exposes agent lifecycle endpoints the smoke test drives.
 package main
 
 import (
@@ -263,7 +262,7 @@ func main() {
 		}()
 	})
 
-	log.Printf("end-to-end test server starting on %s (see test/e2e/README.md for endpoints)", e2e.Addr(port))
+	log.Printf("end-to-end test server starting on %s", e2e.Addr(port))
 	log.Printf("collector: %s", e2e.CollectorHost())
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("listen: %v", err)

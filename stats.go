@@ -286,6 +286,7 @@ func (r *activeSpanRegistry) store(key int64, startTime time.Time) {
 	if _, present := s.m[key]; !present && len(s.m) >= activeSpanShardMaxSize {
 		// Full: make room by dropping one existing entry, as Caffeine evicts on
 		// insert. Which one is up to Go's randomized map iteration - the same
+		// "arbitrary victim" Java's approximate policy amounts to for a stream
 		// of one-shot keys - and the victim's later remove is a harmless
 		// delete of a missing key. Refusing the new span instead would freeze
 		// the histogram on the leaked entries and hide every live request.

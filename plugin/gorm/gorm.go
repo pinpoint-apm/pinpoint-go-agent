@@ -54,43 +54,40 @@ func registerCallbacks(db *gorm.DB) {
 	//https://github.com/go-gorm/gorm/blob/master/callbacks/callbacks.go
 
 	create := db.Callback().Create()
-	_ = create.Before("gorm:before_create").Register(beforeCreateCallback, wrapBefore("gorm.create"))
+	_ = create.Before("gorm:before_create").Register(beforeCreateCallback, before("gorm.create"))
 	_ = create.After("gorm:after_create").Register("pinpoint:after_create", after)
 
 	update := db.Callback().Update()
-	_ = update.Before("gorm:before_update").Register("pinpoint:before_update", wrapBefore("gorm.update"))
+	_ = update.Before("gorm:before_update").Register("pinpoint:before_update", before("gorm.update"))
 	_ = update.After("gorm:after_update").Register("pinpoint:after_update", after)
 
 	delete := db.Callback().Delete()
-	_ = delete.Before("gorm:before_delete").Register("pinpoint:before_delete", wrapBefore("gorm.delete"))
+	_ = delete.Before("gorm:before_delete").Register("pinpoint:before_delete", before("gorm.delete"))
 	_ = delete.After("gorm:after_delete").Register("pinpoint:after_delete", after)
 
 	query := db.Callback().Query()
-	_ = query.Before("gorm:query").Register("pinpoint:before_query", wrapBefore("gorm.query"))
+	_ = query.Before("gorm:query").Register("pinpoint:before_query", before("gorm.query"))
 	_ = query.After("gorm:after_query").Register("pinpoint:after_query", after)
 
 	row := db.Callback().Row()
-	_ = row.Before("gorm:row").Register("pinpoint:before_row", wrapBefore("gorm.row"))
+	_ = row.Before("gorm:row").Register("pinpoint:before_row", before("gorm.row"))
 	_ = row.After("gorm:row").Register("pinpoint:after_row", after)
 
 	raw := db.Callback().Raw()
-	_ = raw.Before("gorm:raw").Register("pinpoint:before_raw", wrapBefore("gorm.raw"))
+	_ = raw.Before("gorm:raw").Register("pinpoint:before_raw", before("gorm.raw"))
 	_ = raw.After("gorm:raw").Register("pinpoint:after_raw", after)
 }
 
-func wrapBefore(operationName string) func(*gorm.DB) {
-	return func(scope *gorm.DB) {
-		before(scope, operationName)
-	}
-}
-
-func before(db *gorm.DB, operationName string) {
-	// FromContext never returns nil - it falls back to the noop tracer - so
-	// gate on sampling, which is what actually decides whether anything is
-	// recorded.
-	if tracer := pinpoint.FromContext(db.Statement.Context); tracer.IsSampled() {
-		span := tracer.NewSpanEvent(operationName)
-		span.SpanEvent().SetServiceType(pinpoint.ServiceTypeGoFunction)
+// before returns the callback that opens the operationName event.
+func before(operationName string) func(*gorm.DB) {
+	return func(db *gorm.DB) {
+		// FromContext never returns nil - it falls back to the noop tracer -
+		// so gate on sampling, which is what actually decides whether
+		// anything is recorded.
+		if tracer := pinpoint.FromContext(db.Statement.Context); tracer.IsSampled() {
+			span := tracer.NewSpanEvent(operationName)
+			span.SpanEvent().SetServiceType(pinpoint.ServiceTypeGoFunction)
+		}
 	}
 }
 

@@ -100,10 +100,6 @@ repo_requires() {
 	' "$1"
 }
 
-has_replace() {
-	awk -v path="$2" '$1 == "replace" && $2 == path { found = 1 } END { exit !found }' "$1"
-}
-
 version_go() {
 	sed -nE 's/^[[:space:]]*Version[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/p' version.go
 }
@@ -121,14 +117,17 @@ fail_on_problems() {
 	fi
 }
 
+# check_paths leaves the module paths and the replace directives to
+# set-major-version.sh --check, which holds every module to the root module's
+# major version, and checks that the root's is this version's.
 check_paths() {
-	local dir got want hint=""
-	[ "$MAJOR" -lt 2 ] || hint=" (scripts/set-major-version.sh $MAJOR moves them)"
-	for dir in $(published_dirs); do
-		got="$(module_path "$dir/go.mod")"
-		want="$(want_path "$dir")"
-		[ "$got" = "$want" ] || problem "$dir/go.mod declares $got, want $want for $VERSION$hint"
-	done
+	"$ROOT_DIR/scripts/set-major-version.sh" --check >/dev/null ||
+		problem "module paths or in-repo requirements disagree (scripts/set-major-version.sh --check)"
+	local got want
+	got="$(module_path go.mod)"
+	want="$(want_path .)"
+	[ "$got" = "$want" ] ||
+		problem "go.mod declares $got, want $want for $VERSION (scripts/set-major-version.sh $MAJOR moves the modules)"
 }
 
 check_requires() {
@@ -138,8 +137,6 @@ check_requires() {
 			[ -n "$path" ] || continue
 			[ "$ver" = "$VERSION" ] ||
 				problem "$gomod requires $path $ver, want $VERSION (scripts/release.sh prepare $VERSION sets it)"
-			has_replace "$gomod" "$path" ||
-				problem "$gomod requires $path with no replace directive, so builds here would fetch it"
 		done <<< "$(repo_requires "$gomod")"
 	done
 }

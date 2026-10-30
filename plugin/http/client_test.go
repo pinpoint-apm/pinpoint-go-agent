@@ -533,7 +533,7 @@ func TestBefore_RecordsTheUrlWithoutItsQueryByDefault(t *testing.T) {
 		req, err := http.NewRequest(http.MethodGet, "https://h/p?token=x", nil)
 		require.NoError(t, err)
 
-		got := before(tracer, "http/Client.Do()", req)
+		got := NewHttpClientTracer(tracer, "http/Client.Do()", req)
 		got.EndSpanEvent()
 		tracer.EndSpan()
 

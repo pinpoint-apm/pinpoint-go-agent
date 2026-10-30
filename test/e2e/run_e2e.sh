@@ -78,16 +78,8 @@ done
 if [[ -n "$LOAD_RPS" && -z "$LOAD_MODE" ]]; then
     LOAD_MODE="mixed"
 fi
-if $PROFILE && [[ -z "$LOAD_MODE" ]]; then
-    echo "--profile requires a load phase (--load-mode or --load-rps)." >&2
-    exit 2
-fi
-if [[ -n "$MAX_ERROR_RATE" && -z "$LOAD_MODE" ]]; then
-    echo "--max-error-rate requires a load phase (--load-mode or --load-rps)." >&2
-    exit 2
-fi
-if $LOAD_ONLY && [[ -z "$LOAD_MODE" ]]; then
-    echo "--load-only requires a load phase (--load-mode or --load-rps)." >&2
+if [[ -z "$LOAD_MODE" ]] && { $PROFILE || $LOAD_ONLY || [[ -n "$MAX_ERROR_RATE" ]]; }; then
+    echo "--profile, --load-only and --max-error-rate require a load phase (--load-mode or --load-rps)." >&2
     exit 2
 fi
 

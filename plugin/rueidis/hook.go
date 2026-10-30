@@ -1,6 +1,7 @@
 package pprueidis
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"strings"
@@ -20,18 +21,10 @@ type Hook struct {
 	dbInfo pinpoint.DBInfo
 }
 
-// redisInfo describes the Redis endpoint the span events report.
-func redisInfo(endpoint string) pinpoint.DBInfo {
-	return pinpoint.DBInfo{QueryType: pinpoint.ServiceTypeRedis, DBName: "REDIS", DBHost: endpoint}
-}
-
 // NewHook creates a ruedis.Hook to instrument redis calls.
 func NewHook(opts rueidis.ClientOption) *Hook {
-	endpoint := "unknown"
-	if opts.InitAddress != nil {
-		endpoint = strings.Join(opts.InitAddress, ",")
-	}
-	return &Hook{dbInfo: redisInfo(endpoint)}
+	endpoint := cmp.Or(strings.Join(opts.InitAddress, ","), "unknown")
+	return &Hook{dbInfo: pinpoint.DBInfo{QueryType: pinpoint.ServiceTypeRedis, DBName: "REDIS", DBHost: endpoint}}
 }
 
 func (h *Hook) Do(client rueidis.Client, ctx context.Context, cmd rueidis.Completed) (resp rueidis.RedisResult) {
@@ -158,18 +151,12 @@ func cmdVerb(commands []string) string {
 	return commands[0]
 }
 
-// cmdNames lists a multi's verbs, bounded: rueidis puts no limit on the batch
-// size, so listing every verb would grow with the caller's batch.
-func cmdNames(n int, verb func(i int) string) string {
-	return pinpoint.AnnotationList(n, verb)
-}
-
 func cmdCompletedName(cmds []rueidis.Completed) string {
-	return cmdNames(len(cmds), func(i int) string { return cmdVerb(cmds[i].Commands()) })
+	return pinpoint.AnnotationList(len(cmds), func(i int) string { return cmdVerb(cmds[i].Commands()) })
 }
 
 func cmdCacheableName(cmds []rueidis.CacheableTTL) string {
-	return cmdNames(len(cmds), func(i int) string { return cmdVerb(cmds[i].Cmd.Commands()) })
+	return pinpoint.AnnotationList(len(cmds), func(i int) string { return cmdVerb(cmds[i].Cmd.Commands()) })
 }
 
 // setSpanError records err on the span event, except a cache miss: a nil

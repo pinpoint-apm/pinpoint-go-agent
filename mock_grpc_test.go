@@ -185,8 +185,10 @@ func newMockAgentGrpc(agent *agent) *agentGrpc {
 	return agentGrpc
 }
 
-// mockSpanGrpcClient records SendSpanBatch payloads.
+// mockSpanGrpcClient records SendSpanBatch payloads; the embedded client
+// stands for the methods the agent never calls.
 type mockSpanGrpcClient struct {
+	pb.SpanClient
 	mu       sync.Mutex
 	requests []*pb.PSpanMessageBatch
 	response *pb.PSpanResultBatch
@@ -194,10 +196,6 @@ type mockSpanGrpcClient struct {
 	// hold, when set, parks every SendSpanBatch until it is closed, which is
 	// how a test keeps a request in flight and its permit held.
 	hold chan struct{}
-}
-
-func (spanGrpcClient *mockSpanGrpcClient) SendSpan(context.Context, ...grpc.CallOption) (pb.Span_SendSpanClient, error) {
-	panic("not used")
 }
 
 func (spanGrpcClient *mockSpanGrpcClient) SendSpanBatch(ctx context.Context, in *pb.PSpanMessageBatch, _ ...grpc.CallOption) (*pb.PSpanResultBatch, error) {
@@ -267,12 +265,6 @@ func (s *mockAtcStream) CloseAndRecv() (*empty.Empty, error) {
 	defer s.mu.Unlock()
 	s.closed = true
 	return &empty.Empty{}, nil
-}
-
-func (s *mockAtcStream) sendCount() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.responses)
 }
 
 func (s *mockAtcStream) sentResponses() []*pb.PCmdActiveThreadCountRes {

@@ -10,7 +10,7 @@ func newHttpConfig() *httpConfig { return newHttpConfigFor(pinpoint.GetConfig())
 
 func isExcludedUrl(url string) bool { return httpCfg().srvUrl.isFiltered(url) }
 
-func isExcludedMethod(method string) bool { return httpCfg().srvMethod.isExcludedMethod(method) }
+func isExcludedMethod(method string) bool { return httpCfg().isExcludedMethod(method) }
 
 func makeHttpHeaderRecorder(cfgName string) httpHeaderRecorder {
 	return makeHttpHeaderRecorderFor(pinpoint.GetConfig(), cfgName)

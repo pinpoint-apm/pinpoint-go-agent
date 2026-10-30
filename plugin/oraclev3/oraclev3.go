@@ -17,8 +17,8 @@
 package pporaclev3
 
 import (
+	"cmp"
 	"database/sql"
-	"net"
 	"net/url"
 	"strings"
 
@@ -55,13 +55,6 @@ func parseDSN(info *pinpoint.DBInfo, dbUrl string) {
 		return
 	}
 
-	host, _, err := net.SplitHostPort(u.Host)
-	if err != nil {
-		host = u.Host
-	} else if host == "" {
-		host = "localhost"
-	}
-
-	info.DBHost = host
+	info.DBHost = cmp.Or(u.Hostname(), "localhost")
 	info.DBName = strings.Trim(u.Path, "/")
 }

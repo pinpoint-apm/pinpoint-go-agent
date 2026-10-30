@@ -89,7 +89,7 @@ func (t *pgxTracer) TraceConnectEnd(ctx context.Context, data pgx.TraceConnectEn
 func (t *pgxTracer) TraceQueryStart(ctx context.Context, c *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
 	if tracer := connSpanEvent(ctx, c, "pgx.Query"); tracer.IsSampled() {
 		se := tracer.SpanEvent()
-		sqlArgs := t.composeArgs(data.Args)
+		sqlArgs := pinpoint.BindValuesString(data.Args)
 		se.SetSQL(data.SQL, sqlArgs)
 	}
 
@@ -130,7 +130,7 @@ func (t *pgxTracer) TraceBatchQuery(ctx context.Context, c *pgx.Conn, data pgx.T
 		defer tracer.EndSpanEvent()
 
 		se := tracer.SpanEvent()
-		sqlArgs := t.composeArgs(data.Args)
+		sqlArgs := pinpoint.BindValuesString(data.Args)
 		se.SetSQL(data.SQL, sqlArgs)
 		if data.Err != nil {
 			se.SetError(data.Err, "pgx.BatchQuery error")
@@ -207,8 +207,4 @@ func newSpanEvent(ctx context.Context, config *pgx.ConnConfig, cmd string) pinpo
 	}
 	info := pinpoint.DBInfo{QueryType: pinpoint.ServiceTypePgSqlExecuteQuery, DBName: config.Database, DBHost: config.Host}
 	return pinpoint.NewDatabaseTracer(ctx, cmd, &info)
-}
-
-func (t *pgxTracer) composeArgs(args []any) string {
-	return pinpoint.BindValuesString(args)
 }

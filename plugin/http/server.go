@@ -68,7 +68,7 @@ func NewHttpServerTracerWithReader(method, path, operation string, reader pinpoi
 	// The config is loaded once per call site: httpCfg is three atomic loads,
 	// and one load also keeps a reload from splitting a request across two
 	// generations of the filters.
-	if cfg := httpCfg(); cfg.srvUrl.isFiltered(path) || cfg.srvMethod.isExcludedMethod(method) {
+	if cfg := httpCfg(); cfg.srvUrl.isFiltered(path) || cfg.isExcludedMethod(method) {
 		return pinpoint.NoopTracer()
 	}
 	return pinpoint.GetAgent().NewSpanTracerWithReader(operation, path, reader)
@@ -146,9 +146,7 @@ func FormatRequestParams(rawQuery string) string {
 
 	var b strings.Builder
 	length := 0
-	for rest := rawQuery; rest != ""; {
-		var item string
-		item, rest, _ = strings.Cut(rest, "&")
+	for item := range strings.SplitSeq(rawQuery, "&") {
 		if item == "" {
 			continue
 		}
@@ -247,9 +245,7 @@ func resolveRemoteAddr(h Header, remoteAddr string, headers []string, emptyValue
 // "[::1]"; RFC 7239 brackets IPv6). Returns "" when the element has no for=
 // token.
 func forwardedFor(element string) string {
-	for rest := element; rest != ""; {
-		var pair string
-		pair, rest, _ = strings.Cut(rest, ";")
+	for pair := range strings.SplitSeq(element, ";") {
 		k, v, ok := strings.Cut(pair, "=")
 		if !ok || !strings.EqualFold(strings.TrimSpace(k), "for") {
 			continue
@@ -335,13 +331,11 @@ func appendProxyHeader(a pinpoint.Annotation, code int32, p proxyRequest) {
 }
 
 // proxyTokens calls fn with the key and value of every "k=v" token of value;
-// tokens without '=' are skipped. Cut by Cut rather than strings.Split: the
+// tokens without '=' are skipped. SplitSeq rather than strings.Split: the
 // header is on every request behind a proxy, and Split allocated the token
 // slice each time.
 func proxyTokens(value string, fn func(k, v string)) {
-	for value != "" {
-		var tok string
-		tok, value, _ = strings.Cut(value, " ")
+	for tok := range strings.SplitSeq(value, " ") {
 		if k, v, ok := strings.Cut(tok, "="); ok {
 			fn(k, v)
 		}
@@ -772,21 +766,14 @@ func wrapResponseWriter(w http.ResponseWriter, status *int) (http.ResponseWriter
 	}
 }
 
+// WriteHeader records the first final status; a 1xx informational header other
+// than 101 Switching Protocols is not final.
 func (w *responseWriter) WriteHeader(status int) {
-	if w.wroteHeader {
-		w.ResponseWriter.WriteHeader(status)
-		return
-	}
 	w.ResponseWriter.WriteHeader(status)
-	if status >= 100 && status <= 199 && status != http.StatusSwitchingProtocols {
+	if w.wroteHeader || (status >= 100 && status <= 199 && status != http.StatusSwitchingProtocols) {
 		return
 	}
-	w.recordStatus(status)
-}
-
-func (w *responseWriter) recordStatus(status int) {
-	w.wroteHeader = true
-	w.code = status
+	w.wroteHeader, w.code = true, status
 	if w.status != nil {
 		*w.status = status
 	}

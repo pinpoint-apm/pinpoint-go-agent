@@ -23,7 +23,7 @@ without adding that dependency to the agent module. Run it from this directory.
 ```bash
 go test ./...            # full suite, ~1.5 minutes
 go test -short ./...     # skips the URL-statistics test's 30s tick
-go test -race ./...      # clean: the agent races this suite used to surface are fixed
+go test -race ./...
 go test -run TestSendsAllMetadataAndCompleteSpanShapes -v
 ```
 
@@ -141,12 +141,6 @@ collector:
 
 ## Known limitations
 
-The suite no longer reports data races. It used to surface agent races between
-`Shutdown()` and the worker goroutines (`statTicker`/`statDone`,
-`urlStatTicker`/`urlStatDone`, `pingTicker`/`pingDone`), on `gAtcStreamCount`,
-and on the `stats.go` globals reinitialized by `initStats()`; those are fixed in
-the agent.
-
 **Process-global agent state constrains the suite.** A Pinpoint agent is a
 process-global singleton, so the tests run sequentially and each shuts its
 agent down in `t.Cleanup`. One consequence remains: the `plugin/http` package
@@ -160,7 +154,7 @@ because the feature does not exist here: the C API and fork scenarios, the
 already-normalized URL template), and the destructor-driven cleanup of an
 abandoned span. Where behavior differs, the Go test asserts the Go behavior and says so in a comment — a malformed inbound
 trace id starts a new transaction instead of dropping the request, `EndSpan`
-discards events the application left open, and a metadata publication rejected
+ends and sends the events the application left open, and a metadata publication rejected
 with `PResult.success=false` is not retried (a transport error is, up to the
 agent's attempt budget, after which the cache entry is released and the item is
 re-registered under a fresh id).

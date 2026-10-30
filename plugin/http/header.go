@@ -23,10 +23,6 @@ type httpHeaderRecorder interface {
 
 type allHttpHeaderRecorder struct{}
 
-func newAllHttpHeaderRecorder() *allHttpHeaderRecorder {
-	return &allHttpHeaderRecorder{}
-}
-
 func (h *allHttpHeaderRecorder) recordHeader(annotation pinpoint.Annotation, key int, header Header) {
 	header.VisitAll(func(name string, values []string) {
 		vStr := strings.Join(values[:], ",")
@@ -93,10 +89,6 @@ func (h *defaultHttpHeaderRecorder) recordCookie(annotation pinpoint.Annotation,
 }
 
 type noopHttpHeaderRecorder struct{}
-
-func newNoopHttpHeaderRecorder() *noopHttpHeaderRecorder {
-	return &noopHttpHeaderRecorder{}
-}
 
 func (h *noopHttpHeaderRecorder) recordHeader(annotation pinpoint.Annotation, key int, header Header) {
 }

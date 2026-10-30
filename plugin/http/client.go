@@ -21,10 +21,6 @@ import (
 // another span's context in them is replaced by this span's. End it with
 // EndHttpClientTracer. Applications use WrapClient or DoClient.
 func NewHttpClientTracer(tracer pinpoint.Tracer, operationName string, req *http.Request) pinpoint.Tracer {
-	return before(tracer, operationName, req)
-}
-
-func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pinpoint.Tracer {
 	if tracer == nil {
 		return tracer
 	}
@@ -79,10 +75,6 @@ func before(tracer pinpoint.Tracer, operationName string, req *http.Request) pin
 // EndHttpClientTracer records the response (status code, configured headers)
 // or the error on the span event NewHttpClientTracer started and ends it.
 func EndHttpClientTracer(tracer pinpoint.Tracer, resp *http.Response, err error) {
-	after(tracer, resp, err)
-}
-
-func after(tracer pinpoint.Tracer, resp *http.Response, err error) {
 	if tracer == nil {
 		return
 	}
@@ -138,10 +130,10 @@ func DoClient(doFunc func(req *http.Request) (*http.Response, error), req *http.
 	}
 
 	req = withOwnHeader(req)
-	tracer := before(pinpoint.TracerFromRequestContext(req), "http/Client.Do()", req)
+	tracer := NewHttpClientTracer(pinpoint.TracerFromRequestContext(req), "http/Client.Do()", req)
 	// Deferred so a panicking doFunc still ends the client event; left open,
 	// EndSpan would close it with the request's whole duration.
-	defer func() { after(tracer, resp, err) }()
+	defer func() { EndHttpClientTracer(tracer, resp, err) }()
 	return doFunc(req)
 }
 
@@ -215,9 +207,9 @@ func (r *roundTripper) RoundTrip(req *http.Request) (resp *http.Response, err er
 	}
 
 	req = withOwnHeader(req)
-	tracer = before(tracer, "http/Client.Do()", req)
+	tracer = NewHttpClientTracer(tracer, "http/Client.Do()", req)
 	// Deferred for the same reason as in DoClient: a panicking transport must
 	// not leave the client event open.
-	defer func() { after(tracer, resp, err) }()
+	defer func() { EndHttpClientTracer(tracer, resp, err) }()
 	return r.original.RoundTrip(req)
 }

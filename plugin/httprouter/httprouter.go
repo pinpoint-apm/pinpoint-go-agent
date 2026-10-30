@@ -15,7 +15,6 @@
 package pphttprouter
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/julienschmidt/httprouter"
@@ -37,14 +36,11 @@ func WrapHandle(handler httprouter.Handle, path ...string) httprouter.Handle {
 	return wrapHandle(handler, "")
 }
 
+// wrapHandle is pphttp.TraceHandler for a httprouter.Handle, whose third
+// argument keeps it from being an http.Handler: the handler is wrapped into one
+// per request, with the route's Params bound.
 func wrapHandle(handler httprouter.Handle, path string) httprouter.Handle {
-	return wrapHandleWithName(handler, pphttp.HandlerFuncName(handler), path)
-}
-
-// wrapHandleWithName is pphttp.TraceHandler for a httprouter.Handle, whose
-// third argument keeps it from being an http.Handler: the handler is wrapped
-// into one per request, with the route's Params bound.
-func wrapHandleWithName(handler httprouter.Handle, handlerName string, path string) httprouter.Handle {
+	handlerName := pphttp.HandlerFuncName(handler)
 	var urlPattern func(*http.Request) string
 	if path != "" {
 		urlPattern = func(*http.Request) string { return path }
@@ -110,15 +106,12 @@ func (r *Router) Handle(method, path string, handle httprouter.Handle) {
 	r.Router.Handle(method, path, wrapHandle(handle, path))
 }
 
+// Handler traces handler and hands it to httprouter's own Handler, which puts
+// the Params in the request context; it registers on the embedded Router, so
+// nothing is wrapped twice.
 func (r *Router) Handler(method, path string, handler http.Handler) {
-	f := func(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
-		if len(p) > 0 {
-			ctx := context.WithValue(r.Context(), httprouter.ParamsKey, p)
-			r = r.WithContext(ctx)
-		}
-		handler.ServeHTTP(w, r)
-	}
-	r.Router.Handle(method, path, wrapHandleWithName(f, pphttp.HandlerFuncName(handler), path))
+	r.Router.Handler(method, path, pphttp.TraceHandler(handler, serverName, pphttp.HandlerFuncName(handler),
+		func(*http.Request) string { return path }))
 }
 
 func (r *Router) HandlerFunc(method, path string, handler http.HandlerFunc) {

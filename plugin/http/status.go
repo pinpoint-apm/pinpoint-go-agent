@@ -17,30 +17,19 @@ type httpStatusError map[int]bool
 // through "5xx" case-insensitively, or a single status code - into the set.
 func parseHttpStatusErrors(cfg []string) httpStatusError {
 	h := httpStatusError{}
-	setRange := func(min, max int) {
-		for code := min; code <= max; code++ {
-			h[code] = true
-		}
-	}
 	for _, s := range trimStringSlice(cfg) {
-		switch {
-		case strings.EqualFold(s, "1xx"):
-			setRange(100, 199)
-		case strings.EqualFold(s, "2xx"):
-			setRange(200, 299)
-		case strings.EqualFold(s, "3xx"):
-			setRange(300, 399)
-		case strings.EqualFold(s, "4xx"):
-			setRange(400, 499)
-		case strings.EqualFold(s, "5xx"):
-			setRange(500, 599)
-		default:
-			c, err := strconv.Atoi(s)
-			if err != nil {
-				c = -1
+		if len(s) == 3 && '1' <= s[0] && s[0] <= '5' && strings.EqualFold(s[1:], "xx") {
+			base := int(s[0]-'0') * 100
+			for code := base; code < base+100; code++ {
+				h[code] = true
 			}
-			h[c] = true
+			continue
 		}
+		c, err := strconv.Atoi(s)
+		if err != nil {
+			c = -1
+		}
+		h[c] = true
 	}
 	return h
 }

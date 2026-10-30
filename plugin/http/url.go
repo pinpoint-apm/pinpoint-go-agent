@@ -1,6 +1,7 @@
 package pphttp
 
 import (
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -248,15 +249,8 @@ func (h *httpUrlFilter) antFiltered(url string) bool {
 	return false
 }
 
-type httpMethodFilter struct {
-	excludeMethod []string
-}
-
-func (h *httpMethodFilter) isExcludedMethod(method string) bool {
-	for _, em := range h.excludeMethod {
-		if strings.EqualFold(em, method) {
-			return true
-		}
-	}
-	return false
+// isExcludedMethod reports whether method is one of Http.Server.ExcludeMethod,
+// in any case.
+func (cfg *httpConfig) isExcludedMethod(method string) bool {
+	return slices.ContainsFunc(cfg.srvExcludeMethods, func(m string) bool { return strings.EqualFold(m, method) })
 }
