@@ -248,7 +248,7 @@ func newAsyncProducerTracer(tracer pinpoint.Tracer, addrs []string, msg *sarama.
 	if !headersSupported(config) {
 		return tracer, false
 	}
-	tracer.Inject(newProducerHeaderWriter(msg))
+	tracer.Inject(&distributedTracingContextWriterProducer{msg: msg})
 	return tracer, trackAcks(config) && tracer.IsSampled()
 }
 

@@ -29,7 +29,7 @@ func TestWrapSyncProducer(t *testing.T) {
 	_, _, err := wrapped.SendMessageContext(pinpoint.NewContext(context.Background(), tracer), msg)
 	require.NoError(t, err)
 	require.Len(t, stub.sent, 1, "the underlying producer must receive the message")
-	tid, ok := (&distributedTracingContextWriterProducer{msg: msg}).Get(pinpoint.HeaderTraceId)
+	tid, ok := producerHeaderReader{msg}.Get(pinpoint.HeaderTraceId)
 	assert.True(t, ok, "the produced message is missing the trace header")
 	assert.Equal(t, tracer.TransactionId().String(), tid)
 }

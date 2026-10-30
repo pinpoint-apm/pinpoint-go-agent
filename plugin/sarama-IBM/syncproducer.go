@@ -23,6 +23,10 @@ type syncProducer struct {
 	noHeaders bool
 }
 
+// distributedTracingContextWriterProducer is the writer the trace context is
+// injected into msg through. The caller has already ruled out a nested
+// message (isNested), so a Pinpoint context the headers carry is another
+// span's, which Set leaves behind as it copies them.
 type distributedTracingContextWriterProducer struct {
 	msg   *sarama.ProducerMessage
 	grown bool
@@ -64,23 +68,12 @@ type producerHeaderReader struct {
 // Get reports a record header written with an empty value as present, as the
 // consumer reader does: the same message headers are read back here.
 func (r producerHeaderReader) Get(key string) (string, bool) {
-	if r.msg == nil {
-		return "", false
-	}
 	for _, h := range r.msg.Headers {
 		if string(h.Key) == key {
 			return string(h.Value), true
 		}
 	}
 	return "", false
-}
-
-// newProducerHeaderWriter returns the writer the trace context is injected into
-// msg through. The caller has already ruled out a nested message (isNested),
-// so a Pinpoint context the headers carry is another span's, which Set leaves
-// behind as it copies them.
-func newProducerHeaderWriter(msg *sarama.ProducerMessage) *distributedTracingContextWriterProducer {
-	return &distributedTracingContextWriterProducer{msg: msg}
 }
 
 // headerKeys is the byte form of every header name this plugin writes, built
@@ -127,10 +120,6 @@ func (m *distributedTracingContextWriterProducer) Set(key string, value string) 
 		Key:   headerKey(key),
 		Value: []byte(value),
 	})
-}
-
-func (m *distributedTracingContextWriterProducer) Get(key string) (string, bool) {
-	return producerHeaderReader{m.msg}.Get(key)
 }
 
 // SendMessageContext produces a given message with tracer context.
@@ -238,7 +227,7 @@ func newSyncProducerTracer(ctx context.Context, p *syncProducer, msg *sarama.Pro
 	}
 
 	if !p.noHeaders {
-		tracer.Inject(newProducerHeaderWriter(msg))
+		tracer.Inject(&distributedTracingContextWriterProducer{msg: msg})
 	}
 
 	return tracer

@@ -102,7 +102,7 @@ func Test_isNested(t *testing.T) {
 	defer tracer.EndSpan()
 	defer tracer.NewSpanEvent("produce").EndSpanEvent()
 	own := &sarama.ProducerMessage{}
-	tracer.Inject(newProducerHeaderWriter(own))
+	tracer.Inject(&distributedTracingContextWriterProducer{msg: own})
 	assert.True(t, isNested(tracer, own), "the span's own context")
 	assert.False(t, isNested(tracer, &sarama.ProducerMessage{Headers: hdr(pinpoint.HeaderTraceId)}), "another span's context")
 }
@@ -212,13 +212,12 @@ func Test_syncProducer_SendMessageContext(t *testing.T) {
 	require.Len(t, stub.sent, 1)
 	assert.Same(t, msg, stub.sent[0], "the underlying producer received a different message")
 
-	writer := &distributedTracingContextWriterProducer{msg: msg}
 	for _, key := range pinpointHeaders {
-		v, ok := writer.Get(key)
+		v, ok := producerHeaderReader{msg}.Get(key)
 		assert.True(t, ok, "the produced message is missing the %s header", key)
 		assert.NotEmpty(t, v, "the %s header is empty", key)
 	}
-	tid, _ := writer.Get(pinpoint.HeaderTraceId)
+	tid, _ := producerHeaderReader{msg}.Get(pinpoint.HeaderTraceId)
 	assert.Equal(t, tracer.TransactionId().String(), tid)
 }
 
@@ -326,26 +325,26 @@ func Test_distributedTracingContextWriterProducer(t *testing.T) {
 	msg := &sarama.ProducerMessage{Topic: "widgets"}
 	w := &distributedTracingContextWriterProducer{msg: msg}
 
-	_, ok := w.Get(pinpoint.HeaderTraceId)
+	_, ok := producerHeaderReader{msg}.Get(pinpoint.HeaderTraceId)
 	assert.False(t, ok, "an untouched message carries no header")
 
 	w.Set(pinpoint.HeaderTraceId, "txid^1^1")
 	w.Set(pinpoint.HeaderSpanId, "7")
 
-	v, ok := w.Get(pinpoint.HeaderTraceId)
+	v, ok := producerHeaderReader{msg}.Get(pinpoint.HeaderTraceId)
 	assert.True(t, ok)
 	assert.Equal(t, "txid^1^1", v)
-	v, ok = w.Get(pinpoint.HeaderSpanId)
+	v, ok = producerHeaderReader{msg}.Get(pinpoint.HeaderSpanId)
 	assert.True(t, ok)
 	assert.Equal(t, "7", v)
-	_, ok = w.Get("X-Absent")
+	_, ok = producerHeaderReader{msg}.Get("X-Absent")
 	assert.False(t, ok)
 	assert.Len(t, msg.Headers, 2, "each header must be appended to the message once")
 
 	// A header written with an empty value is present, unlike one never
 	// written - the value alone reports both as "".
 	w.Set(pinpoint.HeaderParentSpanId, "")
-	v, ok = w.Get(pinpoint.HeaderParentSpanId)
+	v, ok = producerHeaderReader{msg}.Get(pinpoint.HeaderParentSpanId)
 	assert.True(t, ok, "a header written with an empty value is present")
 	assert.Equal(t, "", v)
 }
