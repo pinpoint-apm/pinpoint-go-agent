@@ -1016,7 +1016,7 @@ func TestCollectUrlStat_GatedByUrlStatEnable(t *testing.T) {
 	t.Run("disabled", func(t *testing.T) {
 		pptest.StartAgent(t)
 		tracer := &metricCountingTracer{Tracer: pinpoint.NoopTracer()}
-		CollectUrlStat(tracer, "/users/", http.MethodGet, 200)
+		CollectUrlStat(tracer, "/users/", http.MethodGet)
 		assert.False(t, IsUrlStatEnabled())
 		assert.Equal(t, 0, tracer.metrics, "a URL stat was reported while disabled")
 	})
@@ -1024,7 +1024,7 @@ func TestCollectUrlStat_GatedByUrlStatEnable(t *testing.T) {
 	t.Run("enabled", func(t *testing.T) {
 		pptest.StartAgent(t, pinpoint.WithHttpUrlStatEnable(true))
 		tracer := &metricCountingTracer{Tracer: pinpoint.NoopTracer()}
-		CollectUrlStat(tracer, "/users/", http.MethodGet, 200)
+		CollectUrlStat(tracer, "/users/", http.MethodGet)
 		assert.True(t, IsUrlStatEnabled())
 		assert.Equal(t, 1, tracer.metrics, "the URL stat was not reported while enabled")
 	})

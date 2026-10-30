@@ -50,7 +50,7 @@ func wrap(handler echo.HandlerFunc, funcName func(*echo.Context) string) echo.Ha
 			_, status := echo.ResolveResponseStatus(c.Response(), err)
 			return status
 		}, func(status int) {
-			pphttp.CollectUrlStat(tracer, c.Path(), req.Method, status)
+			pphttp.CollectUrlStat(tracer, c.Path(), req.Method)
 			pphttp.RecordHttpServerResponse(tracer, status, c.Response().Header())
 		})
 		return err

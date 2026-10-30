@@ -40,7 +40,7 @@ func newSpan(r *http.Request) pinpoint.Tracer {
 // finishSpan records the response and ends the span. The trace headers are set
 // before the body is written so a caller can read them off the response.
 func finishSpan(w http.ResponseWriter, r *http.Request, tracer pinpoint.Tracer, status int) {
-	pphttp.CollectUrlStat(tracer, r.URL.Path, r.Method, status)
+	pphttp.CollectUrlStat(tracer, r.URL.Path, r.Method)
 	pphttp.RecordHttpServerResponse(tracer, status, w.Header())
 	tracer.EndSpan()
 }

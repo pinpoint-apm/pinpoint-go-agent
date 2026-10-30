@@ -211,13 +211,13 @@ func TestAggregatesUrlStatisticsIncludingFailuresAndUnsampledSpans(t *testing.T)
 	// failed one is counted in both histograms.
 	success := agent.NewSpanTracer("url.stat.success", "/url-stat/success")
 	require.True(t, success.IsSampled())
-	pphttp.CollectUrlStat(success, "/api/orders/{id}/items", "GET", 200)
+	pphttp.CollectUrlStat(success, "/api/orders/{id}/items", "GET")
 	time.Sleep(120 * time.Millisecond)
 	success.EndSpan()
 
 	failure := agent.NewSpanTracer("url.stat.failure", "/url-stat/failure")
 	require.True(t, failure.IsSampled())
-	pphttp.CollectUrlStat(failure, "/api/orders/{id}/items", "GET", 503)
+	pphttp.CollectUrlStat(failure, "/api/orders/{id}/items", "GET")
 	failure.Span().SetFailure()
 	time.Sleep(350 * time.Millisecond)
 	failure.EndSpan()
@@ -227,7 +227,7 @@ func TestAggregatesUrlStatisticsIncludingFailuresAndUnsampledSpans(t *testing.T)
 		pinpoint.HeaderSampled: "s0",
 	})
 	require.False(t, unsampled.IsSampled())
-	pphttp.CollectUrlStat(unsampled, "/unsampled/{id}", "GET", 200)
+	pphttp.CollectUrlStat(unsampled, "/unsampled/{id}", "GET")
 	unsampled.EndSpan()
 
 	const aggregated = "GET /api/orders/{id}/items"

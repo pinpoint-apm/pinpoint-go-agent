@@ -22,8 +22,8 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   gone.** The header is the ack id v1 wrote on every async message; no v2
   producer writes or reads it. `Status` was never read: the failed histogram
   follows the span's failure mark, which an entry recorded by hand sets with
-  `SetFailure(ErrorCategoryHttpStatus)`. `pphttp.CollectUrlStat` keeps its
-  `status` parameter.
+  `SetFailure(ErrorCategoryHttpStatus)`. `pphttp.CollectUrlStat(tracer, url,
+  method)` drops its `status` parameter with it.
 - **Every module path carries `/v2`.** The agent is
   `github.com/pinpoint-apm/pinpoint-go-agent/v2` and each plugin
   `github.com/pinpoint-apm/pinpoint-go-agent/plugin/<name>/v2`; the package

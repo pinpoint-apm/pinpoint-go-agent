@@ -86,7 +86,7 @@ func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.Re
 			return ctx.Response.StatusCode()
 		}, func(status int) {
 			if urlPattern != "" {
-				pphttp.CollectUrlStat(tracer, urlPattern, method, status)
+				pphttp.CollectUrlStat(tracer, urlPattern, method)
 			}
 			RecordServerResponse(tracer, ctx, status)
 		})

@@ -455,7 +455,7 @@ plugins collect them automatically. In a hand-written server, report the
 **routed pattern**:
 
 ```go
-pphttp.CollectUrlStat(tracer, "/users/{id}", r.Method, status)
+pphttp.CollectUrlStat(tracer, "/users/{id}", r.Method)
 ```
 
 Passing the resolved path instead would create one entry per id and exhaust

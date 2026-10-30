@@ -53,7 +53,7 @@ func wrap(f func(c *fiber.Ctx) error, handlerName string) fiber.Handler {
 			}
 			return c.Response().StatusCode()
 		}, func(status int) {
-			pphttp.CollectUrlStat(tracer, c.Route().Path, method, status)
+			pphttp.CollectUrlStat(tracer, c.Route().Path, method)
 			ppfasthttp.RecordServerResponse(tracer, c.Context(), status)
 		})
 		return err

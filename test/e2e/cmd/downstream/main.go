@@ -43,7 +43,7 @@ func trace(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusServiceUnavailable
 		tracer.Span().SetError(errors.New("downstream failed on purpose"))
 	}
-	pphttp.CollectUrlStat(tracer, r.URL.Path, r.Method, status)
+	pphttp.CollectUrlStat(tracer, r.URL.Path, r.Method)
 
 	incomingTrace := r.Header.Get(pinpoint.HeaderTraceId)
 	body := traceResponse{

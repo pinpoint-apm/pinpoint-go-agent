@@ -104,7 +104,7 @@ func wrap(handler echo.HandlerFunc, funcName string, last *atomic.Pointer[echoNa
 			}
 			return statusCode(err)
 		}, func(status int) {
-			pphttp.CollectUrlStat(tracer, c.Path(), req.Method, status)
+			pphttp.CollectUrlStat(tracer, c.Path(), req.Method)
 			pphttp.RecordHttpServerResponse(tracer, status, c.Response().Header())
 		})
 		return err

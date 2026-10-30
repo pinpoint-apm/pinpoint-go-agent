@@ -638,7 +638,7 @@ func ServeTraced(w http.ResponseWriter, r *http.Request, handler http.Handler, s
 		// Route-pattern lookups can be costly per call, so don't pay for
 		// them when the stat would be dropped anyway.
 		if urlPattern != nil && IsUrlStatEnabled() {
-			CollectUrlStat(tracer, urlPattern(r), r.Method, status)
+			CollectUrlStat(tracer, urlPattern(r), r.Method)
 		}
 		RecordHttpServerResponse(tracer, status, w.Header())
 	})
@@ -860,10 +860,10 @@ func HandlerFuncName(f interface{}) string {
 	return v.Type().String() + "()"
 }
 
-// CollectUrlStat collects HTTP URL statistics. status is not recorded: the
-// failed histogram follows the span's failure mark, which the status already
-// set through Http.Server.StatusCodeErrors.
-func CollectUrlStat(tracer pinpoint.Tracer, url string, method string, status int) {
+// CollectUrlStat collects HTTP URL statistics. It takes no status: the failed
+// histogram follows the span's failure mark, which the response status sets
+// through Http.Server.StatusCodeErrors.
+func CollectUrlStat(tracer pinpoint.Tracer, url string, method string) {
 	// URL stats are off by default and the consumers drop the entry when
 	// disabled, so don't allocate one per request just to have it discarded.
 	if !httpCfg().urlStatEnabled {

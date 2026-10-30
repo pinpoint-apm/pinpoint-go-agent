@@ -40,7 +40,7 @@ func wrap(doFunc func(c *gin.Context), funcName string) gin.HandlerFunc {
 			}
 			return c.Writer.Status()
 		}, func(status int) {
-			pphttp.CollectUrlStat(tracer, c.FullPath(), c.Request.Method, status)
+			pphttp.CollectUrlStat(tracer, c.FullPath(), c.Request.Method)
 			pphttp.RecordHttpServerResponse(tracer, status, c.Writer.Header())
 		})
 	}

@@ -75,6 +75,7 @@ find none started and record nothing. Do not use it to put the migration off.
 | `Tracer.JsonString()`, `Tracer.AsyncSpanId()` | removed | `pinpoint.SpanJSON(tracer)` for the first; nothing replaces the second |
 | `tracer.AddMetric(pinpoint.MetricURLStat, entry)` | removed | `tracer.RecordUrlStat(entry)`; an implementation of `Tracer`, such as a mock, renames the method |
 | `pinpoint.UrlStatEntry.Status` | removed | drop the field; mark an error status on the span with `SetFailure(pinpoint.ErrorCategoryHttpStatus)` |
+| `pphttp.CollectUrlStat(tracer, url, method, status)` | `CollectUrlStat(tracer, url, method)` | drop the status argument; the status already marks the span through `Http.Server.StatusCodeErrors` |
 | `ppsaramaibm.HeaderAsyncSpanId` | removed | nothing: no v2 release writes or reads that header |
 | `Tracer.Extract(reader)` | removed | create the span with `Agent.NewSpanTracerWithReader(operation, rpcName, reader)` |
 | `pphttp.WrapHandle(agent, name, pattern, h)`, `WrapHandleFunc(...)` | removed | `pphttp.WrapHandler(h)`, `WrapHandlerFunc(f)`; register under the pattern as before |

@@ -74,7 +74,7 @@ func TestHttpHelpersPopulateServerAndClientWireData(t *testing.T) {
 	responseHeader := http.Header{}
 	responseHeader.Set("x-response-id", "server-response-6")
 	pphttp.RecordHttpServerResponse(tracer, http.StatusServiceUnavailable, responseHeader)
-	pphttp.CollectUrlStat(tracer, "/http-helper/{id}", http.MethodPost, http.StatusServiceUnavailable)
+	pphttp.CollectUrlStat(tracer, "/http-helper/{id}", http.MethodPost)
 	tracer.EndSpan()
 
 	mc.WaitFor(t, func(s Snapshot) bool {
