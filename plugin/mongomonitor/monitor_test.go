@@ -181,3 +181,8 @@ func TestAbbreviateJSON(t *testing.T) {
 	assert.True(t, utf8.ValidString(AbbreviateJSON([]byte(strings.Repeat("가", 100)), 20)),
 		"the cut must land on a rune start")
 }
+
+func TestOperationName(t *testing.T) {
+	assert.Equal(t, "mongodb.find", OperationName("find"))
+	assert.Equal(t, "mongodb.ping", OperationName("ping"), "an uncommon command is concatenated")
+}

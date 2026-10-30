@@ -154,6 +154,35 @@ func (m *Monitor) Pending() int {
 	return int(m.pending.Load())
 }
 
+// OperationName is the span event name of a command, "mongodb.<command>": a
+// constant for the common commands, so the concatenation is not made per
+// command. Both MongoDB plugins name their events through it.
+func OperationName(command string) string {
+	switch command {
+	case "find":
+		return "mongodb.find"
+	case "insert":
+		return "mongodb.insert"
+	case "update":
+		return "mongodb.update"
+	case "delete":
+		return "mongodb.delete"
+	case "aggregate":
+		return "mongodb.aggregate"
+	case "getMore":
+		return "mongodb.getMore"
+	case "count":
+		return "mongodb.count"
+	case "distinct":
+		return "mongodb.distinct"
+	case "findAndModify":
+		return "mongodb.findAndModify"
+	case "killCursors":
+		return "mongodb.killCursors"
+	}
+	return "mongodb." + command
+}
+
 // Host is the bare host of a driver connection id, which the driver reports
 // as an address with a pool index appended ("localhost:27017[-13]").
 func Host(connID string) string {
