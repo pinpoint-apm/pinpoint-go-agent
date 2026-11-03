@@ -324,7 +324,7 @@ func Test_agent_SQLCachesKeyTheWholeStatement(t *testing.T) {
 
 	t.Run("sql id", func(t *testing.T) {
 		a := newTestAgent(defaultConfig())
-		firstID, secondID := a.cacheSql(first), a.cacheSql(second)
+		firstID, secondID := a.cacheSql(first, sqlHashOf(first)), a.cacheSql(second, sqlHashOf(second))
 
 		assert.NotEqual(t, firstID, secondID, "each statement needs its own id")
 		cached, ok := a.sqlCache.peek(sqlHashOf(second))
@@ -344,7 +344,7 @@ func Test_agent_SQLCachesKeyTheWholeStatement(t *testing.T) {
 
 	t.Run("sql uid", func(t *testing.T) {
 		a := newTestAgent(noSqlCacheBypassConfig())
-		firstUid, secondUid := a.cacheSqlUid(first), a.cacheSqlUid(second)
+		firstUid, secondUid := a.cacheSqlUid(first, sqlHashOf(first)), a.cacheSqlUid(second, sqlHashOf(second))
 
 		assert.NotEqual(t, firstUid, secondUid, "the uid hashes the whole statement")
 		cached, ok := a.sqlUidCache.peek(sqlHashOf(second))
@@ -373,7 +373,7 @@ func Test_agent_QueuedSqlIdMetaHoldsNoUntruncatedKey(t *testing.T) {
 	require.Less(t, len(huge), maxSqlNormalizeLength)
 
 	a := newTestAgent(defaultConfig())
-	id := a.cacheSql(huge)
+	id := a.cacheSql(huge, sqlHashOf(huge))
 	require.NotZero(t, id)
 
 	md := (<-a.metaChan).(sqlMeta)
@@ -393,7 +393,7 @@ func Test_agent_SQLUidCacheEvictsEmptyNormalizedStatement(t *testing.T) {
 	require.Empty(t, nsql, "the normalization of a lone comment is empty")
 
 	a := newTestAgent(defaultConfig())
-	require.NotNil(t, a.cacheSqlUid(nsql))
+	require.NotNil(t, a.cacheSqlUid(nsql, sqlHashOf(nsql)))
 	_, cached := a.sqlUidCache.peek(sqlHashOf(nsql))
 	require.True(t, cached, "the empty statement is cached")
 
@@ -415,8 +415,8 @@ func Test_agent_SQLCachesBypassKeysOverLengthLimit(t *testing.T) {
 
 	t.Run("sql uid", func(t *testing.T) {
 		a := newTestAgent(defaultConfig())
-		first := a.cacheSqlUid(sql)
-		second := a.cacheSqlUid(sql)
+		first := a.cacheSqlUid(sql, sqlHashOf(sql))
+		second := a.cacheSqlUid(sql, sqlHashOf(sql))
 
 		cached, ok := a.sqlUidCache.peek(sqlHashOf(sql))
 		assert.True(t, ok, "a sql over the length limit is still cached by its hash")
@@ -454,7 +454,7 @@ func Test_agent_SQLCacheLengthLimitIsFixedAtConstruction(t *testing.T) {
 	a := newTestAgent(cfg)
 	assert.Equal(t, defaultSqlCacheLengthLimit, a.sqlCacheLengthLimit)
 
-	a.cacheSqlUid(sql)
+	a.cacheSqlUid(sql, sqlHashOf(sql))
 	a.normalizeSql(sql)
 	require.Len(t, a.metaChan, 1)
 
@@ -462,7 +462,7 @@ func Test_agent_SQLCacheLengthLimitIsFixedAtConstruction(t *testing.T) {
 	assert.Equal(t, 10, cfg.Int(CfgSQLCacheLengthLimit), "the config itself still publishes the value")
 	assert.True(t, a.sqlCacheable(sql), "the agent keeps the limit it was built with")
 
-	a.cacheSqlUid(sql)
+	a.cacheSqlUid(sql, sqlHashOf(sql))
 	a.normalizeSql(sql)
 	assert.Len(t, a.metaChan, 1, "a cached statement must not be re-sent after a runtime Set")
 	_, cached := a.sqlUidCache.peek(sqlHashOf(sql))
@@ -484,8 +484,8 @@ func Test_agent_SQLIdCacheIgnoresLengthLimit(t *testing.T) {
 			cfg.Set(CfgSQLCacheLengthLimit, limit)
 			a := newTestAgent(cfg)
 
-			first := a.cacheSql(sql)
-			second := a.cacheSql(sql)
+			first := a.cacheSql(sql, sqlHashOf(sql))
+			second := a.cacheSql(sql, sqlHashOf(sql))
 
 			assert.Equal(t, first, second, "the same sql must keep its id")
 			assert.Equal(t, int32(1), a.sqlIdGen.id.Load(), "only one id may be issued")
@@ -504,7 +504,7 @@ func Test_agent_MetadataCachesDropOverflowedIds(t *testing.T) {
 		cache func(*agent) int32
 	}{
 		{"sql", func(a *agent) *idGen { return &a.sqlIdGen },
-			func(a *agent) int32 { return a.cacheSql("select 1") }},
+			func(a *agent) int32 { return a.cacheSql("select 1", sqlHashOf("select 1")) }},
 		{"error", func(a *agent) *idGen { return &a.errorIdGen },
 			func(a *agent) int32 { return a.cacheError("boom") }},
 		{"api", func(a *agent) *idGen { return &a.apiIdGen },
@@ -993,8 +993,8 @@ func Test_agent_MetaQueueFullMintsNoId(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		assert.Zero(t, a.cacheError("boom"), "no error id while the queue is full")
-		assert.Zero(t, a.cacheSql("select 1"), "no sql id while the queue is full")
-		assert.Nil(t, a.cacheSqlUid("select 2"), "no sql uid while the queue is full")
+		assert.Zero(t, a.cacheSql("select 1", sqlHashOf("select 1")), "no sql id while the queue is full")
+		assert.Nil(t, a.cacheSqlUid("select 2", sqlHashOf("select 2")), "no sql uid while the queue is full")
 		assert.Zero(t, a.cacheSpanApi("api", apiTypeDefault), "no api id while the queue is full")
 	}
 	assert.EqualValues(t, 0, a.errorIdGen.id.Load()-2, "no id spent on the refused uses")
@@ -1677,7 +1677,7 @@ func Test_agent_continueHeaders_table(t *testing.T) {
 			before := agent.stats.readCounters()
 			reader := &DistributedTracingContextMap{m: tt.headers}
 
-			_, continued := continueHeaders(reader, agent.clusterNamespace)
+			continued := continueHeaders(reader, agent.clusterNamespace).continued
 			assert.Equal(t, tt.continued, continued, "continueHeaders")
 
 			tr := agent.NewSpanTracerWithReader("test", "/", reader)
@@ -1726,12 +1726,13 @@ func Test_agent_continueHeaders_blankParentSpanId(t *testing.T) {
 		HeaderParentSpanId: "",
 	}}
 
-	txId, continued := continueHeaders(reader, agent.clusterNamespace)
+	in := continueHeaders(reader, agent.clusterNamespace)
+	txId, continued := in.txId, in.continued
 	assert.True(t, continued, "blank parent span id still describes a hop")
 	assert.Equal(t, "t123456", txId.AgentId, "transaction id inherited")
 
 	span := defaultSpan(agent)
-	span.extract(reader)
+	span.extractFrom(reader)
 	assert.Equal(t, "t123456", span.txId.AgentId, "extracted transaction id")
 	assert.Equal(t, int64(-1), span.parentSpanId, "unparseable parent span id stays root")
 }
@@ -1746,10 +1747,10 @@ func Test_agent_continueHeaders_valueOnlyCarrier(t *testing.T) {
 		HeaderParentSpanId: "123",
 	}
 
-	_, continued := continueHeaders(valueOnlyCarrier(blank), "")
+	continued := continueHeaders(valueOnlyCarrier(blank), "").continued
 	assert.False(t, continued, "a value-only carrier cannot tell blank from absent")
 
-	_, continued = continueHeaders(&DistributedTracingContextMap{m: blank}, "")
+	continued = continueHeaders(&DistributedTracingContextMap{m: blank}, "").continued
 	assert.True(t, continued, "the same headers continue from a carrier that can")
 }
 
@@ -1762,11 +1763,12 @@ func Test_agent_continueHeaders_httpHeaderReader(t *testing.T) {
 	h.Set(HeaderTraceId, "t123456^12345^1")
 	h.Set(HeaderParentSpanId, "123")
 
-	_, continued := continueHeaders(HttpHeaderReader(h), "")
+	continued := continueHeaders(HttpHeaderReader(h), "").continued
 	assert.False(t, continued, "no span id header at all: new transaction")
 
 	h.Set(HeaderSpanId, "")
-	txId, continued := continueHeaders(HttpHeaderReader(h), "")
+	in := continueHeaders(HttpHeaderReader(h), "")
+	txId, continued := in.txId, in.continued
 	assert.True(t, continued, "blank span id header is still a hop")
 	assert.Equal(t, "t123456", txId.AgentId, "transaction id inherited")
 
@@ -1775,6 +1777,46 @@ func Test_agent_continueHeaders_httpHeaderReader(t *testing.T) {
 	v, ok := HttpHeaderReader(h).Get(HeaderParentSpanId)
 	assert.True(t, ok, "a canonicalized key must still be found")
 	assert.Equal(t, "123", v)
+}
+
+// countingCarrier counts the lookups of each header.
+type countingCarrier struct {
+	m     map[string]string
+	reads map[string]int
+}
+
+func (c countingCarrier) Get(key string) (string, bool) {
+	c.reads[key]++
+	v, ok := c.m[key]
+	return v, ok
+}
+
+// A request reads each header once: the sampler choice and extract share one
+// reading of the trace and span ids, where a gRPC or Kafka carrier allocates
+// per lookup.
+func Test_agent_newSpanTracerWithReader_readsEachHeaderOnce(t *testing.T) {
+	continued := map[string]string{
+		HeaderTraceId:               "t123456^12345^1",
+		HeaderSpanId:                "67890",
+		HeaderParentSpanId:          "123",
+		HeaderFlags:                 "0",
+		HeaderParentApplicationName: "upstream",
+		HeaderParentApplicationType: "1800",
+		HeaderHost:                  "10.0.0.1:8080",
+	}
+	for name, headers := range map[string]map[string]string{"continued": continued, "new": {}} {
+		t.Run(name, func(t *testing.T) {
+			agent := newTestAgent(defaultConfig())
+			c := countingCarrier{m: headers, reads: map[string]int{}}
+			tracer := agent.newSpanTracerWithReader("op", "/rpc", c)
+			defer tracer.EndSpan()
+
+			require.True(t, tracer.IsSampled())
+			for key, n := range c.reads {
+				assert.Equal(t, 1, n, "%s read %d times", key, n)
+			}
+		})
+	}
 }
 
 // NewTestAgent refuses what NewAgent refuses: a nil config dereferenced, and
@@ -1855,7 +1897,8 @@ func Test_agent_continueHeaders_roundTrip(t *testing.T) {
 	caller.EndSpanEvent()
 	caller.EndSpan()
 
-	txId, continued := continueHeaders(&DistributedTracingContextMap{m}, agent.clusterNamespace)
+	in := continueHeaders(&DistributedTracingContextMap{m}, agent.clusterNamespace)
+	txId, continued := in.txId, in.continued
 	assert.True(t, continued, "injected headers must continue the trace: %v", m)
 	assert.Equal(t, caller.TransactionId(), txId, "transaction id")
 }
@@ -1870,22 +1913,22 @@ func Test_agent_SQLCachesRefuseAKeyPastTheNormalizationCap(t *testing.T) {
 
 	t.Run("sql id", func(t *testing.T) {
 		a := newTestAgent(defaultConfig())
-		assert.Equal(t, int32(0), a.cacheSql(past), "no id for a key past the cap")
+		assert.Equal(t, int32(0), a.cacheSql(past, sqlHashOf(past)), "no id for a key past the cap")
 		_, cached := a.sqlCache.peek(sqlHashOf(past))
 		assert.False(t, cached)
 		assert.Empty(t, a.metaChan, "nothing queued for a refused key")
 
-		assert.NotEqual(t, int32(0), a.cacheSql(within), "a key at the cap is admitted")
+		assert.NotEqual(t, int32(0), a.cacheSql(within, sqlHashOf(within)), "a key at the cap is admitted")
 	})
 
 	t.Run("sql uid", func(t *testing.T) {
 		a := newTestAgent(noSqlCacheBypassConfig())
-		assert.Nil(t, a.cacheSqlUid(past), "no uid for a key past the cap")
+		assert.Nil(t, a.cacheSqlUid(past, sqlHashOf(past)), "no uid for a key past the cap")
 		_, cached := a.sqlUidCache.peek(sqlHashOf(past))
 		assert.False(t, cached)
 		assert.Empty(t, a.metaChan, "nothing queued for a refused key")
 
-		assert.Equal(t, sqlUid(within), a.cacheSqlUid(within), "a key at the cap is admitted")
+		assert.Equal(t, sqlUid(within), a.cacheSqlUid(within, sqlHashOf(within)), "a key at the cap is admitted")
 	})
 }
 
@@ -2095,8 +2138,8 @@ func Test_SqlCacheLengthLimitAppliesToTheRawCacheOnly(t *testing.T) {
 
 	// The id cache takes both: an id is drawn from a sequence, so a bypass
 	// would mint a new one per execution.
-	assert.NotZero(t, agent.cacheSql(short))
-	assert.NotZero(t, agent.cacheSql(long))
+	assert.NotZero(t, agent.cacheSql(short, sqlHashOf(short)))
+	assert.NotZero(t, agent.cacheSql(long, sqlHashOf(long)))
 	_, shortHasId := agent.sqlCache.peek(sqlHashOf(short))
 	_, longHasId := agent.sqlCache.peek(sqlHashOf(long))
 	assert.True(t, shortHasId, "a short statement is cached by id")
@@ -2104,8 +2147,8 @@ func Test_SqlCacheLengthLimitAppliesToTheRawCacheOnly(t *testing.T) {
 
 	// The UID cache takes both as well: a bypass re-sent the UID metadata on
 	// every execution of a long statement.
-	assert.NotEmpty(t, agent.cacheSqlUid(short))
-	assert.NotEmpty(t, agent.cacheSqlUid(long))
+	assert.NotEmpty(t, agent.cacheSqlUid(short, sqlHashOf(short)))
+	assert.NotEmpty(t, agent.cacheSqlUid(long, sqlHashOf(long)))
 	_, shortHasUid := agent.sqlUidCache.peek(sqlHashOf(short))
 	_, longHasUid := agent.sqlUidCache.peek(sqlHashOf(long))
 	assert.True(t, shortHasUid, "a short statement is cached by uid")
@@ -2121,8 +2164,8 @@ func Test_SqlCacheLengthLimitAppliesToTheRawCacheOnly(t *testing.T) {
 
 	// Bypassing the cache must not change the value it would have returned:
 	// the same id and the same UID come back for a repeated statement.
-	assert.Equal(t, agent.cacheSql(long), agent.cacheSql(long), "the id is stable")
-	assert.Equal(t, agent.cacheSqlUid(long), agent.cacheSqlUid(long), "the uid is stable")
+	assert.Equal(t, agent.cacheSql(long, sqlHashOf(long)), agent.cacheSql(long, sqlHashOf(long)), "the id is stable")
+	assert.Equal(t, agent.cacheSqlUid(long, sqlHashOf(long)), agent.cacheSqlUid(long, sqlHashOf(long)), "the uid is stable")
 }
 
 // Test_ShutdownDeadline locks the bound on the blocking phase

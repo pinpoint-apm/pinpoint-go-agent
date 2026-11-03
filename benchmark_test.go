@@ -193,7 +193,7 @@ func BenchmarkSpanLifecycleShapes(b *testing.B) {
 		HeaderParentApplicationType: "1800",
 		HeaderHost:                  "10.0.0.1:8080",
 	}
-	entry := &UrlStatEntry{Url: "/bench/rpc", Method: "GET"}
+	entry := UrlStatEntry{Url: "/bench/rpc", Method: "GET"}
 	shapes := []struct {
 		name    string
 		cfg     string
@@ -329,7 +329,7 @@ func BenchmarkExtractContinue(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		s.extract(reader)
+		s.extractFrom(reader)
 		s.end(s.agent) // keep activeSpan balanced
 	}
 }
@@ -354,7 +354,7 @@ func BenchmarkExtractContinueHttpHeader(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		s.extract(reader)
+		s.extractFrom(reader)
 		s.end(s.agent)
 	}
 }
@@ -387,7 +387,7 @@ func BenchmarkExtractNewTrace(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		s.extract(reader)
+		s.extractFrom(reader)
 		s.end(s.agent)
 	}
 }

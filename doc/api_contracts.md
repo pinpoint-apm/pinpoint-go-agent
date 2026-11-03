@@ -494,10 +494,10 @@ why `Http.UrlStat.Enable` gives useful numbers at low sampling rates. No-op
 tracers collect nothing, so an excluded URL is absent from these statistics as
 well as from traces.
 
-`RecordUrlStat(*UrlStatEntry)` may be called more than once on a span. The
+`RecordUrlStat(UrlStatEntry)` may be called more than once on a span. The
 `Url` is **first-wins**: once the span holds a non-empty `Url`, later calls
-keep it and refresh only `Method`. An empty `Url` does not claim the slot, so a later real one still fills it. The entry is copied; the
-span neither keeps the caller's pointer nor writes into it.
+keep it and refresh only `Method`. An empty `Url` does not claim the slot, so a later real one still fills it. The entry is taken by
+value, so the span never shares the caller's.
 
 `IsSampled()` exists for the rare case where the instrumentation itself is
 expensive - serializing a payload to annotate, for example. Use it to skip that

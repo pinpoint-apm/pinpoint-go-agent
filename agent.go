@@ -863,16 +863,16 @@ func (agent *agent) newSpanTracerWithReader(operation string, rpcName string, re
 	sampler := agent.config.load().sampler
 	// Continuation bypasses the base sampling rate, so only pick it for headers
 	// extract will actually continue, including the cluster namespace check.
-	// extract calls it again, which is cheaper than widening its signature.
+	in := continueHeaders(reader, agent.clusterNamespace)
 	decide := sampler.isNewSampled
-	if _, continued := continueHeaders(reader, agent.clusterNamespace); continued {
+	if in.continued {
 		decide = sampler.isContinueSampled
 	}
 	if !decide(agent.stats) {
 		return newUnSampledSpan(agent, rpcName)
 	}
 	tracer := newSampledSpan(agent, operation, rpcName)
-	tracer.extract(reader)
+	tracer.extract(reader, in)
 	return tracer
 }
 

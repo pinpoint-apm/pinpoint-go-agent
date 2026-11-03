@@ -63,9 +63,10 @@ func TestNormalizeSqlCacheEquivalence(t *testing.T) {
 	for _, sql := range corpus {
 		wantSql, wantParam := newSqlNormalizer(sql, removeComments).run()
 		for _, path := range []string{"miss", "hit"} {
-			gotSql, gotParam := a.normalizeSql(sql)
-			assert.Equal(t, wantSql, gotSql, "%s path: normalizeSql(%.60q)", path, sql)
-			assert.Equal(t, wantParam, gotParam, "%s path: normalizeSql(%.60q)", path, sql)
+			got := a.normalizeSql(sql)
+			assert.Equal(t, wantSql, got.sql, "%s path: normalizeSql(%.60q)", path, sql)
+			assert.Equal(t, wantParam, got.param, "%s path: normalizeSql(%.60q)", path, sql)
+			assert.Equal(t, sqlHashOf(wantSql), got.key, "%s path: normalizeSql(%.60q)", path, sql)
 		}
 	}
 }
@@ -78,8 +79,7 @@ func TestNormalizeSqlCacheConcurrent(t *testing.T) {
 	a := newTestAgent(defaultConfig())
 	expected := make([]normalizedSql, len(queries))
 	for i, q := range queries {
-		nsql, param := newSqlNormalizer(q, a.config.load().sqlRemoveComments).run()
-		expected[i] = normalizedSql{sql: nsql, param: param}
+		expected[i] = normalizeSqlText(q, a.config.load().sqlRemoveComments)
 	}
 
 	var wg sync.WaitGroup
@@ -88,8 +88,7 @@ func TestNormalizeSqlCacheConcurrent(t *testing.T) {
 			for pass := 0; pass < 3; pass++ {
 				for i := range queries {
 					idx := (i + g*137) % len(queries)
-					nsql, param := a.normalizeSql(queries[idx])
-					if !assert.Equal(t, expected[idx], normalizedSql{sql: nsql, param: param}, "goroutine %d: mixed result for query %d", g, idx) {
+					if !assert.Equal(t, expected[idx], a.normalizeSql(queries[idx]), "goroutine %d: mixed result for query %d", g, idx) {
 						return
 					}
 				}

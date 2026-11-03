@@ -170,16 +170,17 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 		return
 	}
 
-	var nsql, param string
+	var n normalizedSql
 	if cfg.sqlEnableRawSqlCache {
-		nsql, param = agent.normalizeSql(sql)
+		n = agent.normalizeSql(sql)
 	} else {
-		nsql, param = newSqlNormalizer(sql, cfg.sqlRemoveComments).run()
+		n = normalizeSqlText(sql, cfg.sqlRemoveComments)
 	}
-	// Neither nsql nor param is abbreviated: cacheSql and cacheSqlUid abbreviate
+	param := n.param
+	// Neither n.sql nor param is abbreviated: cacheSql and cacheSqlUid abbreviate
 	// only the text they publish, the id and the UID cover the whole normalized
 	// statement, and the server splits param on ',' to fill the <idx>#/<idx>$
-	// placeholders of nsql, so a cut param leaves placeholders exposed. A param
+	// placeholders of n.sql, so a cut param leaves placeholders exposed. A param
 	// past maxSqlParamSize is dropped whole instead, and the web shows the
 	// statement with its placeholders unfilled, as it shows one that had no
 	// literals: the statement keeps its id, its UID and its count, and the
@@ -201,13 +202,13 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	}
 
 	if cfg.sqlTraceQueryStat {
-		id := agent.cacheSqlUid(nsql)
+		id := agent.cacheSqlUid(n.sql, n.key)
 		if id == nil {
 			return
 		}
 		se.annotations.appendOwnedBytesStringString(AnnotationSqlUid, id, param, args)
 	} else {
-		id := agent.cacheSql(nsql)
+		id := agent.cacheSql(n.sql, n.key)
 		if id == 0 {
 			return
 		}

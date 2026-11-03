@@ -292,6 +292,10 @@ func BindValuesString(args []any) string {
 	return bindValuesString(GetConfig().load(), len(args), func(i int) any { return args[i] })
 }
 
+// bindValueSizeHint is the bytes bindValuesString reserves per value: a typical
+// bind value - an id, a flag, a short string - and its ", " separator.
+const bindValueSizeHint = 16
+
 // bindValuesString renders n bind values, value(i) being the i-th, under cfg.
 func bindValuesString(cfg *configSnapshot, n int, value func(int) any) string {
 	if !cfg.sqlTraceBindValue || n == 0 {
@@ -299,6 +303,13 @@ func bindValuesString(cfg *configSnapshot, n int, value func(int) any) string {
 	}
 
 	var b strings.Builder
+	// Sized up front for typical values, within the list's budget: grown from
+	// empty, the builder reallocated at 8, 16, 32 and 64 bytes, four
+	// allocations for a five-value list where one does. A list with longer
+	// values still grows past this.
+	if size := min(n*bindValueSizeHint, cfg.sqlMaxBindValueSize); size > 0 {
+		b.Grow(size)
+	}
 	for i := 0; i < n; i++ {
 		if !writeBindValue(&b, i, value(i), n-1, cfg.sqlMaxBindValueSize) {
 			break

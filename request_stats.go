@@ -95,7 +95,7 @@ func (s *requestStats) end(agent *agent) {
 
 // collectUrlStat records stat as the request's URL statistics entry when cfg
 // collects them; see mergeUrlStat for how a later entry combines with it.
-func (s *requestStats) collectUrlStat(cfg *configSnapshot, stat *UrlStatEntry) {
+func (s *requestStats) collectUrlStat(cfg *configSnapshot, stat UrlStatEntry) {
 	if cfg.collectUrlStat {
 		mergeUrlStat(&s.urlStatBuf, s.urlStat != nil, stat)
 		s.urlStat = &s.urlStatBuf

@@ -68,6 +68,21 @@ func (spanGrpc *spanGrpc) close() {
 	}
 }
 
+// maxSpanBatchPollInterval caps how long collectSpanBatch leaves a queued chunk
+// unseen. Chunks pile up for at most that long between polls, so it stays far
+// below what fills the span queue: 1024 chunks at 5ms is 200k spans/s.
+const maxSpanBatchPollInterval = 5 * time.Millisecond
+
+// spanBatchPollInterval is how often collectSpanBatch looks for more chunks
+// while it waits out the collect deadline: a tenth of it, at most
+// maxSpanBatchPollInterval.
+func spanBatchPollInterval(collectDeadline time.Duration) time.Duration {
+	if d := collectDeadline / 10; d > 0 && d < maxSpanBatchPollInterval {
+		return d
+	}
+	return maxSpanBatchPollInterval
+}
+
 // collectSpanBatch gathers the first span plus queued spans until batch size or collect deadline is reached.
 // The batch worker blocks for the first item, then uses a short collection window to improve
 // batch density without delaying sparse traffic too long.
@@ -75,12 +90,21 @@ func (spanGrpc *spanGrpc) collectSpanBatch(first *spanChunk, queue *spanQueue) (
 	batch := make([]*spanChunk, 0, spanGrpc.batchSize)
 	batch = append(batch, first)
 
-	// The deadline timer is armed only once the queue runs dry: a batch that
-	// fills straight from the queue never waits, so it never needs one.
+	// The deadline timer and the poll ticker are armed only once the queue runs
+	// dry: a batch that fills straight from the queue never waits, so it never
+	// needs them.
+	//
+	// The wait polls instead of taking queue.wake: every enqueue tops the token
+	// up, so waiting on it woke this goroutine once per span at any load short
+	// of saturation - the producer's notify handing off to it on the request
+	// goroutine - and each wake swept the shards for a single chunk. Left
+	// untaken, the token stays set and a notify finds it full without a lock.
 	var timer *time.Timer
+	var poll *time.Ticker
 	defer func() {
 		if timer != nil {
 			timer.Stop()
+			poll.Stop()
 		}
 	}()
 
@@ -91,9 +115,10 @@ func (spanGrpc *spanGrpc) collectSpanBatch(first *spanChunk, queue *spanQueue) (
 		}
 		if timer == nil {
 			timer = time.NewTimer(spanGrpc.batchCollectDeadline)
+			poll = time.NewTicker(spanBatchPollInterval(spanGrpc.batchCollectDeadline))
 		}
 		select {
-		case <-queue.wake:
+		case <-poll.C:
 		case <-queue.done:
 			// Drain what remains; report closed only once the queue is empty so
 			// the worker comes back for a leftover larger than one batch.

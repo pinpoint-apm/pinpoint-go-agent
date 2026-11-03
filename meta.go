@@ -488,7 +488,10 @@ func (agent *agent) sqlCacheable(sql string) bool {
 	return len(sql) < agent.sqlCacheLengthLimit
 }
 
-func (agent *agent) cacheSql(sql string) int32 {
+// cacheSql takes key, the sqlHashOf of sql, from the caller: normalizeSql keeps
+// it with the normalized statement, so a cached statement is not hashed again
+// per execution - for a 2 KB statement the hash was over half the cost of a hit.
+func (agent *agent) cacheSql(sql string, key sqlHash) int32 {
 	// Keyed on a hash of the untruncated statement, not on the abbreviated
 	// text: an abbreviated key keeps no more than a 64KB prefix and the total
 	// length, so two statements agreeing on both would share one id and the
@@ -504,14 +507,14 @@ func (agent *agent) cacheSql(sql string) int32 {
 	if !sqlNormalizable(sql) {
 		return 0
 	}
-	key := sqlHashOf(sql)
 	return registerMeta(agent, agent.sqlCache, "sql", key,
 		// A wrapped sequence records no SQL: SetSQL skips a zero id.
 		func() (int32, bool) { id := agent.sqlIdGen.next("sql"); return id, id != 0 },
 		func(id int32) any { return sqlMeta{id: id, sql: abbreviateString(sql, maxSqlSize), key: key} })
 }
 
-func (agent *agent) cacheSqlUid(sql string) []byte {
+// cacheSqlUid takes key, the sqlHashOf of sql, from the caller, as cacheSql does.
+func (agent *agent) cacheSqlUid(sql string, key sqlHash) []byte {
 	// The UID is the hash of the untruncated statement, and the cache keys on
 	// that same hash: a text key was bounded by SQL.CacheLengthLimit, so every
 	// execution of a statement past it - 2 KB by default, which an ORM reaches
@@ -522,9 +525,10 @@ func (agent *agent) cacheSqlUid(sql string) []byte {
 	if !sqlNormalizable(sql) {
 		return nil
 	}
-	key := sqlHashOf(sql)
 	return registerMeta(agent, agent.sqlUidCache, "sql uid", key,
-		func() ([]byte, bool) { return key[:], true },
+		// The UID is a copy made on a miss: slicing key itself would move it
+		// to the heap on every call, hits included.
+		func() ([]byte, bool) { uid := key; return uid[:], true },
 		func(uid []byte) any {
 			return sqlUidMeta{uid: uid, sql: abbreviateString(sql, maxSqlSize), key: key}
 		})
@@ -550,19 +554,29 @@ func sqlHashOf(sql string) sqlHash {
 	return h
 }
 
-// normalizedSql is the immutable result of normalizing one raw SQL text.
-// Both fields are strings, so a cached value can be handed to any number of
+// normalizedSql is the immutable result of normalizing one raw SQL text: the
+// normalized statement, the extracted parameters, and key, the statement's
+// sqlHashOf that cacheSql and cacheSqlUid look it up by. The strings are shared
+// and the hash is a value, so a cached result can be handed to any number of
 // callers without copying.
 type normalizedSql struct {
 	sql   string
 	param string
+	key   sqlHash
 }
 
-// normalizeSql returns the normalized SQL and extracted parameters for sql,
-// memoized by the raw SQL text so repeated statements skip re-parsing. It uses
-// the same sharded metaCache as the id caches above, so a hot statement is a
-// lock-free lookup and stays resident under aged promotion.
-func (agent *agent) normalizeSql(sql string) (string, string) {
+// normalizeSqlText normalizes sql and hashes the result, uncached.
+func normalizeSqlText(sql string, removeComments bool) normalizedSql {
+	nsql, param := newSqlNormalizer(sql, removeComments).run()
+	return normalizedSql{sql: nsql, param: param, key: sqlHashOf(nsql)}
+}
+
+// normalizeSql returns the normalized SQL, the extracted parameters and the
+// statement's hash for sql, memoized by the raw SQL text so repeated statements
+// skip re-parsing and re-hashing. It uses the same sharded metaCache as the id
+// caches above, so a hot statement is a lock-free lookup and stays resident
+// under aged promotion.
+func (agent *agent) normalizeSql(sql string) normalizedSql {
 	// SQL.CacheLengthLimit applies here as it does to the metadata caches: the
 	// raw text is both key and value, so an over-limit statement would pin twice
 	// its size per entry - the memory the limit exists to cap.
@@ -570,14 +584,14 @@ func (agent *agent) normalizeSql(sql string) (string, string) {
 	// consistent with the value read here.
 	removeComments := agent.config.load().sqlRemoveComments
 	if len(sql) > maxSqlSize || !agent.sqlCacheable(sql) {
-		return newSqlNormalizer(sql, removeComments).run()
+		return normalizeSqlText(sql, removeComments)
 	}
 	if n, ok := agent.rawSqlCache.peek(sql); ok {
-		return n.sql, n.param
+		return n
 	}
-	nsql, param := newSqlNormalizer(sql, removeComments).run()
-	agent.rawSqlCache.peekOrAdd(sql, normalizedSql{sql: nsql, param: param})
-	return nsql, param
+	n := normalizeSqlText(sql, removeComments)
+	agent.rawSqlCache.peekOrAdd(sql, n)
+	return n
 }
 
 func (agent *agent) cacheSpanApi(descriptor string, apiType int) int32 {

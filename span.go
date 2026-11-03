@@ -488,20 +488,20 @@ func (span *span) Inject(writer DistributedTracingContextWriter) {
 }
 
 // extract continues the trace the reader's headers carry, or starts one. It
-// runs once, on the span newSpanTracerWithReader has just created.
-func (span *span) extract(reader DistributedTracingContextReader) {
-	tid, _ := reader.Get(HeaderTraceId)
-	txId, continued := continueHeaders(reader, span.agent.clusterNamespace)
-	if continued {
-		span.txId = txId
+// runs once, on the span newSpanTracerWithReader has just created, with the
+// inboundTrace that function read for the sampler: the trace and span id headers
+// are not read again.
+func (span *span) extract(reader DistributedTracingContextReader, in inboundTrace) {
+	if in.continued {
+		span.txId = in.txId
 	} else {
 		span.txId = span.agent.generateTransactionId()
 		// Only a trace id that was sent and could not be parsed is worth a
 		// warning; an entry request carrying no Pinpoint headers is normal, and
 		// so is a peer that sent a trace id without the two span id headers.
-		if tid != "" {
-			if _, _, _, ok := splitTransactionId(tid); !ok {
-				malformedTraceIdLog.warnf("malformed trace id header %q: ignoring pinpoint headers, starting a new transaction", tid)
+		if in.tid != "" {
+			if _, _, _, ok := splitTransactionId(in.tid); !ok {
+				malformedTraceIdLog.warnf("malformed trace id header %q: ignoring pinpoint headers, starting a new transaction", in.tid)
 			}
 		}
 	}
@@ -510,7 +510,7 @@ func (span *span) extract(reader DistributedTracingContextReader) {
 	// a new transaction, so the remaining Pinpoint headers describe a trace it
 	// is not part of: adopting their span/parent ids would record a non-root
 	// span pointing at a parent that does not exist in this transaction.
-	if !continued {
+	if !in.continued {
 		span.spanId = generateSpanId()
 		span.parentSpanId = -1
 		span.begin(span.agent, span.txId, span.rpcName, true)
@@ -525,7 +525,7 @@ func (span *span) extract(reader DistributedTracingContextReader) {
 	// span ids are int64, and 0 would mean platform int, so a 32-bit build would
 	// fail to parse an upstream node's id and silently leave the span id at
 	// zero, breaking the distributed trace.
-	spanid, _ := reader.Get(HeaderSpanId)
+	spanid := in.spanId
 	if v, err := strconv.ParseInt(spanid, 10, 64); err == nil {
 		span.spanId = v
 	} else {
@@ -533,7 +533,7 @@ func (span *span) extract(reader DistributedTracingContextReader) {
 		span.spanId = generateSpanId()
 	}
 
-	pspanid, _ := reader.Get(HeaderParentSpanId)
+	pspanid := in.parentSpanId
 	if pspanid != "" {
 		if v, err := strconv.ParseInt(pspanid, 10, 64); err == nil {
 			span.parentSpanId = v
@@ -577,12 +577,12 @@ func (span *span) extract(reader DistributedTracingContextReader) {
 
 	span.begin(span.agent, span.txId, span.rpcName, true)
 	if isTraceLogLevelEnabled() {
-		Log("span").Tracef("span extract: %s, %s, %s, %s, %s, %s", tid, spanid, pappname, pspanid, papptype, host)
+		Log("span").Tracef("span extract: %s, %s, %s, %s, %s, %s", in.tid, spanid, pappname, pspanid, papptype, host)
 	}
 }
 
 // continueHeaders reports whether the inbound headers describe a hop this span
-// can attach to, and returns the transaction id to continue when they do. All
+// can attach to, with the transaction id to continue when they do. All
 // three of the trace id and the two span id headers must be present: a trace id
 // on its own names a transaction but not a position in it, so continuing on it
 // alone would record a non-root span whose parent is in no trace and burn a
@@ -594,25 +594,41 @@ func (span *span) extract(reader DistributedTracingContextReader) {
 // that does not names no transaction to continue. A different cluster namespace
 // also starts a new transaction and must use the new-transaction sampler.
 //
-// Both the sampler choice (NewSpanTracerWithReader) and the context extraction
-// (extract) call this, so the two cannot disagree about which trace a request
-// belongs to.
-func continueHeaders(reader DistributedTracingContextReader, clusterNamespace string) (TransactionId, bool) {
-	tid, _ := reader.Get(HeaderTraceId)
-	agentId, startTime, sequence, ok := splitTransactionId(tid)
+// newSpanTracerWithReader calls this once and hands the result to both the
+// sampler choice and the context extraction (extract), so the two cannot
+// disagree about which trace a request belongs to, and no header is read twice:
+// a lookup is a map hit for net/http, but an allocation per hit and a scan of
+// every header per miss for gRPC metadata and Kafka records.
+func continueHeaders(reader DistributedTracingContextReader, clusterNamespace string) inboundTrace {
+	var in inboundTrace
+	in.tid, _ = reader.Get(HeaderTraceId)
+	agentId, startTime, sequence, ok := splitTransactionId(in.tid)
 	if !ok {
-		return TransactionId{}, false
+		return in
 	}
-	if _, ok := reader.Get(HeaderSpanId); !ok {
-		return TransactionId{}, false
+	if in.spanId, ok = reader.Get(HeaderSpanId); !ok {
+		return in
 	}
-	if _, ok := reader.Get(HeaderParentSpanId); !ok {
-		return TransactionId{}, false
+	if in.parentSpanId, ok = reader.Get(HeaderParentSpanId); !ok {
+		return in
 	}
 	if !sameClusterNamespace(clusterNamespace, reader) {
-		return TransactionId{}, false
+		return in
 	}
-	return TransactionId{agentId, startTime, sequence}, true
+	in.txId = TransactionId{agentId, startTime, sequence}
+	in.continued = true
+	return in
+}
+
+// inboundTrace is what continueHeaders read off the inbound headers. tid is the
+// raw trace id header, and spanId and parentSpanId the raw span id headers as
+// far as they were read; txId is the transaction to continue when continued.
+type inboundTrace struct {
+	tid          string
+	spanId       string
+	parentSpanId string
+	txId         TransactionId
+	continued    bool
 }
 
 // sameClusterNamespace reports whether a continued trace may be joined, as
@@ -1021,12 +1037,11 @@ func (span *span) SetLogging(logInfo int32) {
 // route must not be replaced by a later, less precise URL, but response fields
 // may arrive later.
 //
-// The caller's entry is copied, never stored or written to, so later caller
-// mutation cannot change the span's statistic.
-func mergeUrlStat(dst *UrlStatEntry, has bool, stat *UrlStatEntry) {
+// The entry arrives by value, so the span never shares the caller's.
+func mergeUrlStat(dst *UrlStatEntry, has bool, stat UrlStatEntry) {
 	keep := has && dst.Url != urlStatUnknown
 	url := dst.Url
-	*dst = *stat
+	*dst = stat
 	if dst.Url == "" {
 		dst.Url = urlStatUnknown
 	}
@@ -1035,15 +1050,15 @@ func mergeUrlStat(dst *UrlStatEntry, has bool, stat *UrlStatEntry) {
 	}
 }
 
-func (span *span) collectUrlStat(stat *UrlStatEntry) {
+func (span *span) collectUrlStat(stat UrlStatEntry) {
 	span.requestStats.collectUrlStat(span.cfg, stat)
 }
 
-func (span *span) RecordUrlStat(stat *UrlStatEntry) {
+func (span *span) RecordUrlStat(stat UrlStatEntry) {
 	// collectUrlStat is reached only from here, and EndSpan reads span.urlStat
 	// after enqueueing the final chunk: a late write both races that read and
 	// sets a stat nothing enqueues.
-	if stat == nil || span.warnIfFinished("RecordUrlStat") {
+	if span.warnIfFinished("RecordUrlStat") {
 		return
 	}
 	span.collectUrlStat(stat)

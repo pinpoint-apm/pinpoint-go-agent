@@ -78,7 +78,7 @@ func Test_span_Extract(t *testing.T) {
 	}
 
 	span := defaultTestSpan()
-	span.extract(&DistributedTracingContextMap{m})
+	span.extractFrom(&DistributedTracingContextMap{m})
 
 	assert.Equal(t, span.txId.AgentId, "t123456", "AgentId")
 	assert.Equal(t, span.txId.StartTime, int64(12345), "StartTime")
@@ -100,7 +100,7 @@ func Test_span_Extract_acceptorHostFallback(t *testing.T) {
 	}
 
 	span := defaultTestSpan()
-	span.extract(&DistributedTracingContextMap{m})
+	span.extractFrom(&DistributedTracingContextMap{m})
 	assert.Empty(t, span.acceptorHost, "no header, no endPoint yet")
 
 	span.SetEndPoint("localhost:8080")
@@ -125,7 +125,7 @@ func Test_span_Extract_acceptorHostHeaderWins(t *testing.T) {
 	}
 
 	span := defaultTestSpan()
-	span.extract(&DistributedTracingContextMap{m})
+	span.extractFrom(&DistributedTracingContextMap{m})
 	span.SetEndPoint("localhost:8080")
 
 	assert.Equal(t, "upstream:8080", span.acceptorHost, "acceptorHost")
@@ -153,7 +153,7 @@ func Test_span_Extract_malformedTraceId(t *testing.T) {
 				HeaderHost:                  "upstream:8080",
 			}}
 
-			assert.NotPanics(t, func() { span.extract(reader) }, "Extract must not panic")
+			assert.NotPanics(t, func() { span.extractFrom(reader) }, "Extract must not panic")
 			assert.Equal(t, span.agent.agentID, span.txId.AgentId, "a new local transaction id is assigned")
 			assert.Equal(t, int64(-1), span.parentSpanId, "root span")
 			assert.NotEqual(t, int64(67890), span.spanId, "span id header must be ignored")
@@ -193,7 +193,7 @@ func Test_span_Extract_noTraceId(t *testing.T) {
 		HeaderHost:                  "upstream:8080",
 	}}
 
-	span.extract(reader)
+	span.extractFrom(reader)
 
 	assert.Equal(t, span.agent.agentID, span.txId.AgentId, "a new local transaction id is assigned")
 	assert.Equal(t, int64(-1), span.parentSpanId, "root span")
@@ -210,7 +210,7 @@ func Test_span_Extract_registersActiveSpanOnce(t *testing.T) {
 	for _, tid := range []string{"t123456^12345^1", "malformed", ""} {
 		t.Run(tid, func(t *testing.T) {
 			span := defaultTestSpan()
-			span.extract(&DistributedTracingContextMap{m: map[string]string{
+			span.extractFrom(&DistributedTracingContextMap{m: map[string]string{
 				HeaderTraceId: tid,
 				HeaderSpanId:  "67890",
 			}})
@@ -233,8 +233,8 @@ func Test_span_Extract_sameHeadersRegisterSeparately(t *testing.T) {
 		HeaderParentSpanId: "123",
 	}
 	first, second := defaultSpan(agent), defaultSpan(agent)
-	first.extract(&DistributedTracingContextMap{m: headers})
-	second.extract(&DistributedTracingContextMap{m: headers})
+	first.extractFrom(&DistributedTracingContextMap{m: headers})
+	second.extractFrom(&DistributedTracingContextMap{m: headers})
 	assert.Equal(t, first.spanId, second.spanId, "both continue the upstream span id")
 	assert.Equal(t, 2, countActiveSpans(agent), "each in-flight request has its own entry")
 
@@ -246,7 +246,7 @@ func Test_span_Extract_sameHeadersRegisterSeparately(t *testing.T) {
 
 func Test_span_Extract_malformedSpanIds(t *testing.T) {
 	span := defaultTestSpan()
-	span.extract(&DistributedTracingContextMap{m: map[string]string{
+	span.extractFrom(&DistributedTracingContextMap{m: map[string]string{
 		HeaderTraceId:      "t123456^12345^1",
 		HeaderSpanId:       "abc",
 		HeaderParentSpanId: "0x10",
@@ -802,29 +802,13 @@ func Test_span_WrapGoroutine(t *testing.T) {
 	f()
 }
 
-func TestSpan_RecordUrlStat_IgnoresNil(t *testing.T) {
-	config := defaultConfig()
-	config.Set(CfgHttpUrlStatEnable, true)
-	agent := newTestAgent(config)
-	sampled := defaultSpan(agent)
-	unsampled := newUnSampledSpan(agent, "/test")
-	var entry *UrlStatEntry
-
-	assert.NotPanics(t, func() {
-		sampled.RecordUrlStat(entry)
-		unsampled.RecordUrlStat(entry)
-	})
-	assert.Nil(t, sampled.urlStat)
-	assert.Nil(t, unsampled.urlStat)
-}
-
 func TestSpan_RecordUrlStat_URLStatIsFirstWinsOnUrl(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgHttpUrlStatEnable, true)
 	span := newSampledSpan(newTestAgent(cfg), "op", "/rpc")
 
-	span.RecordUrlStat(&UrlStatEntry{Url: "/api/v1/users/{id}", Method: "GET"})
-	span.RecordUrlStat(&UrlStatEntry{Url: "/api/v1/users/42", Method: "POST"})
+	span.RecordUrlStat(UrlStatEntry{Url: "/api/v1/users/{id}", Method: "GET"})
+	span.RecordUrlStat(UrlStatEntry{Url: "/api/v1/users/42", Method: "POST"})
 
 	assert.Equal(t, "/api/v1/users/{id}", span.urlStat.Url, "first Url is kept")
 	assert.Equal(t, "POST", span.urlStat.Method, "Method is last-wins")
@@ -836,37 +820,21 @@ func TestSpan_RecordUrlStat_URLStatUnknownDoesNotClaimUrl(t *testing.T) {
 	cfg.Set(CfgHttpUrlStatEnable, true)
 	span := newSampledSpan(newTestAgent(cfg), "op", "/rpc")
 
-	span.RecordUrlStat(&UrlStatEntry{Method: "GET"})
+	span.RecordUrlStat(UrlStatEntry{Method: "GET"})
 	assert.Equal(t, urlStatUnknown, span.urlStat.Url)
 
-	span.RecordUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	span.RecordUrlStat(UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 	assert.Equal(t, "/users/{id}", span.urlStat.Url, "a real Url replaces the stand-in")
 
-	span.RecordUrlStat(&UrlStatEntry{Method: "GET"})
+	span.RecordUrlStat(UrlStatEntry{Method: "GET"})
 	assert.Equal(t, "/users/{id}", span.urlStat.Url, "an empty Url does not clear a recorded one")
-}
-
-// The caller's entry is copied: the span neither keeps the pointer nor writes
-// the urlStatUnknown stand-in back into it.
-func TestSpan_RecordUrlStat_URLStatDoesNotAliasCallerEntry(t *testing.T) {
-	cfg := defaultConfig()
-	cfg.Set(CfgHttpUrlStatEnable, true)
-	span := newSampledSpan(newTestAgent(cfg), "op", "/rpc")
-
-	entry := &UrlStatEntry{Method: "GET"}
-	span.RecordUrlStat(entry)
-	assert.Equal(t, "", entry.Url, "caller's entry untouched")
-	assert.NotSame(t, entry, span.urlStat)
-
-	entry.Url = "/mutated-after"
-	assert.Equal(t, urlStatUnknown, span.urlStat.Url)
 }
 
 // With Http.UrlStat.Enable off nothing is recorded.
 func TestSpan_RecordUrlStat_URLStatDisabledRecordsNothing(t *testing.T) {
 	span := newSampledSpan(newTestAgent(defaultConfig()), "op", "/rpc")
 
-	span.RecordUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	span.RecordUrlStat(UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 	assert.Nil(t, span.urlStat)
 }
 
@@ -911,7 +879,7 @@ func TestSpan_ExtractParsesFullRangeSpanId(t *testing.T) {
 		HeaderParentSpanId: "-9007199254740993",
 	}}
 
-	span.extract(reader)
+	span.extractFrom(reader)
 	assert.Equal(t, int64(9007199254740993), span.spanId, "spanId")
 	assert.Equal(t, int64(-9007199254740993), span.parentSpanId, "parentSpanId")
 }
@@ -928,14 +896,14 @@ func TestSpan_GeneratedSpanIdCoversFullInt64Range(t *testing.T) {
 	// Two ids: the span's own, and the one Inject draws for the next node.
 	stubSpanIdGenerator(t, math.MinInt64, math.MaxInt64)
 	span := defaultSpan(newTestAgent(defaultConfig()))
-	span.extract(&DistributedTracingContextMap{m: map[string]string{}})
+	span.extractFrom(&DistributedTracingContextMap{m: map[string]string{}})
 	assert.Equal(t, int64(math.MinInt64), span.spanId, "generated spanId")
 
 	m := make(map[string]string)
 	span.Inject(&DistributedTracingContextMap{m})
 
 	next := defaultSpan(newTestAgent(defaultConfig()))
-	next.extract(&DistributedTracingContextMap{m: m})
+	next.extractFrom(&DistributedTracingContextMap{m: m})
 	assert.Equal(t, int64(math.MaxInt64), next.spanId, "spanId after round trip")
 	assert.Equal(t, int64(math.MinInt64), next.parentSpanId, "parentSpanId after round trip")
 }
@@ -1158,9 +1126,9 @@ func TestSpan_RecordUrlStatAfterEndSpanIsNoop(t *testing.T) {
 	agent.urlStatChan = make(chan *urlStat, 1)
 	span := newSampledSpan(agent, "op", "/rpc")
 
-	span.RecordUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	span.RecordUrlStat(UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 	span.EndSpan()
-	span.RecordUrlStat(&UrlStatEntry{Url: "/late", Method: "POST"})
+	span.RecordUrlStat(UrlStatEntry{Url: "/late", Method: "POST"})
 
 	assert.Equal(t, "/users/{id}", span.urlStat.Url, "urlStat")
 }
@@ -1195,7 +1163,7 @@ func TestSpan_LateSetterConcurrentWithSenderIsRaceFree(t *testing.T) {
 			span.SetAcceptorHost("late")
 			span.SetLogging(2)
 			span.Annotations().AppendString(AnnotationHttpUrl, "late")
-			span.RecordUrlStat(&UrlStatEntry{Url: "/late", Method: "POST"})
+			span.RecordUrlStat(UrlStatEntry{Url: "/late", Method: "POST"})
 			a.AppendString(AnnotationHttpUrl, "late") // handle taken before the end
 		}
 	})
@@ -1289,7 +1257,7 @@ func BenchmarkValidateID(b *testing.B) {
 // rather than the 0 the discarded parse result would write.
 func Test_span_Extract_malformedParentAppTypeKeepsDefault(t *testing.T) {
 	span := defaultTestSpan()
-	span.extract(&DistributedTracingContextMap{m: map[string]string{
+	span.extractFrom(&DistributedTracingContextMap{m: map[string]string{
 		HeaderTraceId:               "t123456^12345^1",
 		HeaderSpanId:                "67890",
 		HeaderParentSpanId:          "123",
@@ -1311,14 +1279,14 @@ func Test_span_Extract_malformedHeaderWarningIsThrottled(t *testing.T) {
 
 	for i := 0; i < 1000; i++ {
 		span := defaultTestSpan()
-		span.extract(&DistributedTracingContextMap{m: map[string]string{HeaderTraceId: "not^a^traceid"}})
+		span.extractFrom(&DistributedTracingContextMap{m: map[string]string{HeaderTraceId: "not^a^traceid"}})
 		span.end(span.agent)
 	}
 	assert.Equal(t, 1, strings.Count(buf.String(), "malformed trace id header"), buf.String())
 
 	malformedTraceIdLog.next.Store(0) // the interval elapses
 	span := defaultTestSpan()
-	span.extract(&DistributedTracingContextMap{m: map[string]string{HeaderTraceId: "not^a^traceid"}})
+	span.extractFrom(&DistributedTracingContextMap{m: map[string]string{HeaderTraceId: "not^a^traceid"}})
 	span.end(span.agent)
 	assert.Equal(t, 2, strings.Count(buf.String(), "malformed trace id header"))
 	assert.Contains(t, buf.String(), "(999 similar line(s) suppressed)")
@@ -1529,7 +1497,7 @@ func TestOverflowSpanEvent_SetErrorMarksSpanFailed(t *testing.T) {
 			agent := newTestAgent(cfg)
 			agent.urlStatChan = make(chan *urlStat, 1)
 			span := newSampledSpan(agent, "op", "/rpc")
-			span.RecordUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+			span.RecordUrlStat(UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 			for span.eventOverflow.Load() == 0 {
 				span.NewSpanEvent("t")
 			}
@@ -1611,7 +1579,7 @@ func TestSpan_AsyncErrorFailsTheTraceRoot(t *testing.T) {
 			agent := newTestAgent(cfg)
 			agent.urlStatChan = make(chan *urlStat, 1)
 			root := newSampledSpan(agent, "op", "/rpc")
-			root.RecordUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+			root.RecordUrlStat(UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 			root.NewSpanEvent("fork")
 
 			async := root.NewGoroutineTracer()
@@ -1650,7 +1618,7 @@ func TestSpan_AsyncErrorAfterRootEndIsNotReported(t *testing.T) {
 	agent := newTestAgent(cfg)
 	agent.urlStatChan = make(chan *urlStat, 1)
 	root := newSampledSpan(agent, "op", "/rpc")
-	root.RecordUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	root.RecordUrlStat(UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 	root.NewSpanEvent("fork")
 	async := root.NewGoroutineTracer()
 	root.EndSpanEvent()
@@ -1773,7 +1741,7 @@ func TestSpan_ErrorMarkExcludeLeavesAFailingStatusUnmarked(t *testing.T) {
 	agent := newTestAgent(cfg)
 	agent.urlStatChan = make(chan *urlStat, 1)
 	span := newSampledSpan(agent, "op", "/rpc")
-	span.RecordUrlStat(&UrlStatEntry{Url: "/users/{id}", Method: "GET"})
+	span.RecordUrlStat(UrlStatEntry{Url: "/users/{id}", Method: "GET"})
 
 	span.SetFailure(ErrorCategoryHttpStatus)
 	assert.Equal(t, int32(0), span.err.Load(), "an excluded cause must not fail the transaction")
@@ -2136,7 +2104,7 @@ func Test_ParentAppTypeDefaultsToUndefined(t *testing.T) {
 		if typ != "" {
 			m[HeaderParentApplicationType] = typ
 		}
-		span.extract(&DistributedTracingContextMap{m})
+		span.extractFrom(&DistributedTracingContextMap{m})
 		assert.Equal(t, "upstream", span.parentAppName)
 		assert.Equal(t, -1, span.parentAppType, "pAppType %q", typ)
 	}
@@ -2156,7 +2124,7 @@ func Test_span_Extract_flagsWidth(t *testing.T) {
 		{"4294967297", 0},
 	} {
 		span := defaultTestSpan()
-		span.extract(&DistributedTracingContextMap{m: map[string]string{
+		span.extractFrom(&DistributedTracingContextMap{m: map[string]string{
 			HeaderTraceId:      "t123456^12345^1",
 			HeaderSpanId:       "67890",
 			HeaderParentSpanId: "123",
@@ -2254,7 +2222,7 @@ func TestSpanExtract_ServiceName(t *testing.T) {
 		HeaderParentSpanId:      "123",
 		HeaderParentServiceName: "UpstreamService",
 	}}
-	span.extract(reader)
+	span.extractFrom(reader)
 	assert.Equal(t, "UpstreamService", span.parentServiceName)
 }
 
@@ -2268,7 +2236,7 @@ func TestSpanInjectExtract_ServiceNameRoundTrip(t *testing.T) {
 	sender.Inject(&DistributedTracingContextMap{carrier})
 
 	receiver := defaultTestSpan()
-	receiver.extract(&DistributedTracingContextMap{carrier})
+	receiver.extractFrom(&DistributedTracingContextMap{carrier})
 	assert.Equal(t, "ServiceA", receiver.parentServiceName)
 }
 
@@ -2305,7 +2273,7 @@ func Test_span_Extract_clusterNamespace(t *testing.T) {
 				m[k] = v
 			}
 
-			span.extract(&DistributedTracingContextMap{m})
+			span.extractFrom(&DistributedTracingContextMap{m})
 
 			if tt.continued {
 				assert.Equal(t, upstream, span.txId.String(), "continues the upstream transaction")
@@ -2343,7 +2311,7 @@ func Test_span_Inject_clusterNamespace(t *testing.T) {
 func TestSpan_InjectRendersConstantHeadersOnce(t *testing.T) {
 	a := newTestAgent(defaultConfig())
 	s := newSampledSpan(a, "op", "/rpc")
-	s.extract(&DistributedTracingContextMap{m: map[string]string{}})
+	s.extractFrom(&DistributedTracingContextMap{m: map[string]string{}})
 	s.NewSpanEvent("client")
 	w := &DistributedTracingContextMap{m: map[string]string{}}
 	s.Inject(w)

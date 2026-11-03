@@ -102,8 +102,9 @@ type Tracer interface {
 
 	// RecordUrlStat records the span's URL statistics entry. Once a span holds
 	// a real Url, later calls keep it and refresh only the Method; an empty Url
-	// counts as "not recorded yet". The entry is copied, and a nil one ignored.
-	RecordUrlStat(stat *UrlStatEntry)
+	// counts as "not recorded yet". The entry is taken by value: a pointer
+	// through this interface would escape and cost an allocation per request.
+	RecordUrlStat(stat UrlStatEntry)
 }
 
 // SpanJSON renders what the tracer has recorded on its span as JSON - the rpc

@@ -183,6 +183,33 @@ func Test_spanGrpc_collectSpanBatch_stopsAtBatchSize(t *testing.T) {
 	assert.Equal(t, 1, queue.length(), "third chunk should wait for the next batch")
 }
 
+// A chunk enqueued while the batch waits is picked up by the next poll, well
+// before the collect deadline, though the wait no longer takes queue.wake.
+func Test_spanGrpc_collectSpanBatch_pollsDuringTheWait(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	spanGrpc := newMockSpanGrpc(agent)
+	spanGrpc.batchSize = 2
+	spanGrpc.batchCollectDeadline = 10 * time.Second
+
+	first := newTestSpanChunk(agent)
+	second := newTestSpanChunk(agent)
+	queue := newSpanQueue(2)
+	time.AfterFunc(20*time.Millisecond, func() { queue.enqueue(second) })
+
+	start := time.Now()
+	batch, closed := spanGrpc.collectSpanBatch(first, queue)
+
+	assert.False(t, closed)
+	assert.Equal(t, []*spanChunk{first, second}, batch)
+	assert.Less(t, time.Since(start), time.Second, "collected by a poll, not the deadline")
+}
+
+func Test_spanBatchPollInterval(t *testing.T) {
+	assert.Equal(t, maxSpanBatchPollInterval, spanBatchPollInterval(500*time.Millisecond), "capped")
+	assert.Equal(t, 2*time.Millisecond, spanBatchPollInterval(20*time.Millisecond), "a tenth of a short deadline")
+	assert.Equal(t, maxSpanBatchPollInterval, spanBatchPollInterval(0), "a zero deadline cannot make a zero ticker")
+}
+
 func Test_spanGrpc_collectSpanBatch_flushesClosedQueue(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	spanGrpc := newMockSpanGrpc(agent)
@@ -1243,8 +1270,8 @@ func Test_sendMetaWorker_releasesSqlCachesOnFailure(t *testing.T) {
 	const sql = "SELECT * FROM t WHERE id = 1"
 	sqlCached := func() bool { _, ok := agent.sqlCache.peek(sqlHashOf(sql)); return ok }
 	sqlUidCached := func() bool { _, ok := agent.sqlUidCache.peek(sqlHashOf(sql)); return ok }
-	assert.NotZero(t, agent.cacheSql(sql))
-	assert.NotEmpty(t, agent.cacheSqlUid(sql))
+	assert.NotZero(t, agent.cacheSql(sql, sqlHashOf(sql)))
+	assert.NotEmpty(t, agent.cacheSqlUid(sql, sqlHashOf(sql)))
 	assert.True(t, sqlCached())
 	assert.True(t, sqlUidCached())
 

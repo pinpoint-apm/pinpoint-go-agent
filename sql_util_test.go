@@ -132,7 +132,7 @@ func Test_sqlNormalizer_JavaEquivalence_SqlPastTheCap(t *testing.T) {
 	assert.Empty(t, param)
 
 	a := newTestAgent(defaultConfig())
-	uid := a.cacheSqlUid(nsql)
+	uid := a.cacheSqlUid(nsql, sqlHashOf(nsql))
 	assert.Equal(t, sqlUid(nsql), uid, "the uid must hash the untruncated normalized sql")
 	assert.NotEqual(t, sqlUid(abbreviateString(nsql, maxSqlSize)), uid)
 

@@ -794,11 +794,11 @@ func Test_UrlStatUnknownKey(t *testing.T) {
 	agent.urlStatChan = make(chan *urlStat, 1)
 
 	span := newSampledSpan(agent, "op", "/rpc")
-	span.collectUrlStat(&UrlStatEntry{Method: "GET"})
+	span.collectUrlStat(UrlStatEntry{Method: "GET"})
 	assert.Equal(t, javaNullUri, span.urlStat.Url)
 
 	unsampled := newUnSampledSpan(agent, "/rpc")
-	unsampled.collectUrlStat(&UrlStatEntry{Method: "GET"})
+	unsampled.collectUrlStat(UrlStatEntry{Method: "GET"})
 	assert.Equal(t, javaNullUri, unsampled.urlStat.Url)
 }
 
@@ -807,30 +807,22 @@ func Test_UrlStatUnknownKey(t *testing.T) {
 // last-write-wins.
 func Test_UrlStatTemplateIsFirstWriteWins(t *testing.T) {
 	var kept UrlStatEntry
-	mergeUrlStat(&kept, false, &UrlStatEntry{Url: "/route/{id}", Method: "GET"})
+	mergeUrlStat(&kept, false, UrlStatEntry{Url: "/route/{id}", Method: "GET"})
 	assert.Equal(t, "/route/{id}", kept.Url)
 
-	mergeUrlStat(&kept, true, &UrlStatEntry{Url: "/route/7", Method: "POST"})
+	mergeUrlStat(&kept, true, UrlStatEntry{Url: "/route/7", Method: "POST"})
 	assert.Equal(t, "/route/{id}", kept.Url, "the template is first-write-wins")
 	assert.Equal(t, "POST", kept.Method, "the method is last-write-wins")
 
 	// The unknown stand-in is the absence of a template, not a value: it never
 	// wins over a real one, in either direction.
 	overUnknown := UrlStatEntry{Url: urlStatUnknown}
-	mergeUrlStat(&overUnknown, true, &UrlStatEntry{Url: "/late"})
+	mergeUrlStat(&overUnknown, true, UrlStatEntry{Url: "/late"})
 	assert.Equal(t, "/late", overUnknown.Url, "a recorded template replaces the unknown stand-in")
 
 	underUnknown := UrlStatEntry{Url: "/early"}
-	mergeUrlStat(&underUnknown, true, &UrlStatEntry{Method: "GET"})
+	mergeUrlStat(&underUnknown, true, UrlStatEntry{Method: "GET"})
 	assert.Equal(t, "/early", underUnknown.Url, "an entry with no url does not erase the template")
-
-	// The caller's entry is copied, so a later mutation of it cannot reach
-	// the statistic the span kept.
-	entry := &UrlStatEntry{Url: "/copied", Method: "GET"}
-	var merged UrlStatEntry
-	mergeUrlStat(&merged, false, entry)
-	entry.Method = "DELETE"
-	assert.Equal(t, "GET", merged.Method, "the recorded entry is a copy")
 }
 
 // Test_UrlStatWithoutAnEndTimeIsSkipped locks that an entry

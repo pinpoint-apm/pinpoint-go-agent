@@ -874,5 +874,5 @@ func CollectUrlStat(tracer pinpoint.Tracer, url string, method string) {
 	if !httpCfg().urlStatEnabled {
 		return
 	}
-	tracer.RecordUrlStat(&pinpoint.UrlStatEntry{Url: url, Method: method})
+	tracer.RecordUrlStat(pinpoint.UrlStatEntry{Url: url, Method: method})
 }

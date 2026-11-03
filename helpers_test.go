@@ -95,7 +95,7 @@ func TestOnTracerGoroutine_PinnedAtRequestStart(t *testing.T) {
 		t.Skip("goroutine ids are not readable")
 	}
 	s := newSampledSpan(newTestAgent(defaultConfig()), "op", "/rpc")
-	s.extract(&noopDistributedTracingContextReader{})
+	s.extractFrom(&noopDistributedTracingContextReader{})
 
 	other := make(chan bool)
 	go func() {
@@ -140,4 +140,10 @@ func TestAnnotationList(t *testing.T) {
 	over := AnnotationList(maxAnnotationListItems+3, item)
 	assert.True(t, strings.HasSuffix(over, ", ...(3 more)"), "got %q", over)
 	assert.Equal(t, len(atCap)+len(", ...(3 more)"), len(over), "the cap names the same items and counts the rest")
+}
+
+// extractFrom reads the inbound headers and extracts from them, as
+// newSpanTracerWithReader does.
+func (span *span) extractFrom(reader DistributedTracingContextReader) {
+	span.extract(reader, continueHeaders(reader, span.agent.clusterNamespace))
 }

@@ -229,16 +229,14 @@ func (span *noopSpan) IsSampled() bool {
 
 // collectUrlStat records the entry as span.collectUrlStat does; withStats
 // keeps the process-wide singleton from being written to.
-func (span *noopSpan) collectUrlStat(stat *UrlStatEntry) {
+func (span *noopSpan) collectUrlStat(stat UrlStatEntry) {
 	if span.withStats.Load() {
 		span.requestStats.collectUrlStat(span.cfg, stat)
 	}
 }
 
-func (span *noopSpan) RecordUrlStat(stat *UrlStatEntry) {
-	if stat != nil {
-		span.collectUrlStat(stat)
-	}
+func (span *noopSpan) RecordUrlStat(stat UrlStatEntry) {
+	span.collectUrlStat(stat)
 }
 
 type noopSpanEvent struct {

@@ -35,7 +35,9 @@ type spanQueue struct {
 	capacity int
 
 	// wake carries at most one token; enqueue tops it up and the consumer
-	// sweeps every shard per token, so coalesced wake-ups lose nothing.
+	// sweeps every shard per token, so coalesced wake-ups lose nothing. Only
+	// dequeue waits on it: collectSpanBatch polls, so the token it leaves set
+	// costs dequeue one sweep that finds nothing.
 	wake   chan struct{}
 	done   chan struct{}
 	closed atomic.Bool
