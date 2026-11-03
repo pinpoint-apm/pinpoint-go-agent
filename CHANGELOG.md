@@ -492,6 +492,43 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Fixed
 
+- **`HttpHeaderWriter` on a nil `http.Header` writes nothing instead of
+  panicking.** A hand-built `&http.Request{}` carries a nil Header until
+  `http.Client` sends it, so `tracer.Inject(pinpoint.HttpHeaderWriter(req.Header))`
+  before the send panicked on the request goroutine, sampled span or not.
+- **A nil handler is no longer registered as a live wrapper.**
+  `ppfasthttp.WrapHandler(nil)` and `pphttprouter.WrapHandle(nil)` return nil,
+  so the router refuses the route or answers it 404 as it does unwrapped, and
+  `pphttp.WrapHandlerFunc(nil)` panics like `pphttp.WrapHandler(nil)`. The
+  wrapper called the nil func on every request instead; under fasthttp, which
+  recovers no handler panic, the first request ended the process.
+- **A millisecond option above 100 years falls back to its default.**
+  `Collector.Grpc.IdleTimeout`, `StreamMaxAge`, `ConnectionMaxAge` and
+  `Collector.AgentInfo.RefreshInterval` overflowed the Duration past about 292
+  years: a "never" such as `9223372036854775807` made the idle timeout
+  negative, which grpc-go's idle timer refires at once while a stream is open,
+  and turned the others off or into microseconds.
+- **A config file caught empty mid-save is not reloaded.** A truncate+write
+  save leaves the file empty for a moment, and an empty YAML document parses
+  to no keys, so a poll landing there put every dynamic option back to its
+  base value until the write did, running the reload callbacks twice. An
+  empty file is skipped like a missing one; a file meant to set nothing can
+  say so with a comment.
+- **A nil pointer error no longer panics in `SetError` or loses the exception
+  metadata.** An error holding a nil pointer (`var e *MyErr; return e`)
+  compares != nil. `SetError` called its `Error()` on the request goroutine,
+  and a wrapper whose cause was a nil pointer carried it to the metadata
+  sender, whose recovered panic dropped the span's whole exception metadata.
+  Its message is now `<nil>`, and a nil pointer cause ends the chain.
+- **A `TracerHooks.FromContext` hook returning nil, and `NestedTracer(nil)`,
+  no longer hand out a nil tracer.** The hook's nil keeps the tracer the
+  context held and `NestedTracer` views nil as the noop tracer, where
+  `NewDatabaseTracer` and the plugins' nested views panicked on it.
+- **The ppgrpc and kratos server interceptors accept a peer with no
+  address.** grpc-go allows a nil `peer.Peer.Addr`, which a custom
+  `net.Conn` returning a nil `RemoteAddr` produces, and the sampled request
+  panicked in the interceptor, which grpc-go does not recover; the remote
+  address falls back as for a call with no peer.
 - **A span batch over `Collector.Grpc.MaxSendMessageSize` is sent in several
   requests, not lost.** grpc-go refuses a request past the limit before
   sending it, and the collector refuses one past its own inbound limit, so an

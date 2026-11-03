@@ -904,6 +904,40 @@ func TestNewConfig_CollectorGrpcIdleTimeout(t *testing.T) {
 	}
 }
 
+// A "never" spelled as a huge number, such as math.MaxInt, overflowed
+// ms * time.Millisecond: IdleTimeout wrapped to -1ms, which grpc-go's idle
+// timer refires at once while a stream is open, and the max ages and the
+// AgentInfo refresh cycle turned off or shrank to microseconds. Above 100
+// years each restores its default; the maximum itself stays a positive
+// Duration.
+func TestConfig_millisecondOptionsAboveMaximumRestoreDefault(t *testing.T) {
+	if math.MaxInt < maxDurationOptionMs {
+		t.Skip("a 32-bit int cannot exceed the maximum")
+	}
+	limit := maxDurationOptionMs
+	for _, name := range []string{
+		CfgCollectorGrpcConnectionMaxAge, CfgCollectorGrpcStreamMaxAge,
+		CfgCollectorGrpcIdleTimeout, CfgCollectorAgentInfoRefreshInterval,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, err := NewConfig(WithAppName("TestApp"))
+			require.NoError(t, err)
+			def := c.Int(name)
+
+			c.Set(name, int(limit))
+			assert.Equal(t, int(limit), c.Int(name), "the maximum is kept")
+			assert.Positive(t, time.Duration(c.Int(name))*time.Millisecond)
+
+			c.Set(name, math.MaxInt)
+			assert.Equal(t, def, c.Int(name), "above the maximum restores the default")
+		})
+	}
+
+	c, err := NewConfig(WithAppName("TestApp"), WithCollectorGrpcIdleTimeout(math.MaxInt))
+	require.NoError(t, err)
+	assert.Zero(t, newGrpcChannelOptions(c).idleTimeout, "idling stays off, not a negative timeout")
+}
+
 func TestNewConfig_ClampErrorCallStackDepth(t *testing.T) {
 	c, err := NewConfig(WithAppName("TestApp"), WithErrorCallStackDepth(0))
 	assert.NoError(t, err)

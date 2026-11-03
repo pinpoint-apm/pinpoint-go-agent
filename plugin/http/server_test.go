@@ -1350,6 +1350,7 @@ func TestServeMux_NilHandlerPanicsAtRegistration(t *testing.T) {
 	assert.PanicsWithValue(t, "http: nil handler", func() { mux.Handle("/x", nil) })
 	assert.PanicsWithValue(t, "http: nil handler", func() { mux.HandleFunc("/y", nil) })
 	assert.PanicsWithValue(t, "http: nil handler", func() { WrapHandler(nil) })
+	assert.PanicsWithValue(t, "http: nil handler", func() { WrapHandlerFunc(nil) })
 }
 
 // Wrapping is one allocation, the wrapper itself: a recorder escaping to the

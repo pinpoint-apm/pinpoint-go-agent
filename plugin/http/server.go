@@ -653,6 +653,11 @@ func WrapHandler(handler http.Handler, serverName ...string) http.Handler {
 // WrapHandlerFunc wraps the given http handler function and adds the pinpoint.Tracer to the request's context.
 // By using the pinpoint.FromContext function, this tracer can be obtained.
 func WrapHandlerFunc(handler func(http.ResponseWriter, *http.Request), serverName ...string) func(http.ResponseWriter, *http.Request) {
+	// http.HandlerFunc(nil) is a non-nil interface, so wrapHandler's own check
+	// let it through and the nil func was called on every request.
+	if handler == nil {
+		panic("http: nil handler")
+	}
 	return wrapHandler("", http.HandlerFunc(handler), serverName...).ServeHTTP
 }
 

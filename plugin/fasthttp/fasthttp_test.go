@@ -258,6 +258,13 @@ func TestWrapHandler_PanicPropagates(t *testing.T) {
 	assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "a panicking handler must fail the span")
 }
 
+// A nil handler stays nil, so fasthttp/router refuses it at registration
+// instead of the process dying on the first request: fasthttp recovers no
+// handler panic.
+func TestWrapHandler_NilHandlerStaysNil(t *testing.T) {
+	assert.Nil(t, WrapHandler(nil, "/x"))
+}
+
 // With no agent running the wrapper must be a straight pass-through that still
 // leaves a context under CtxKey: the documented handler type-asserts it
 // unchecked, and fasthttp does not recover the panic a missing one raised.

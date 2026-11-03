@@ -120,6 +120,8 @@ func Test_serverRemoteAddr(t *testing.T) {
 	// both leave nothing to split.
 	assert.Equal(t, "127.0.0.1", serverRemoteAddr(transport.NewServerContext(context.Background(), grpcTr), grpcTr),
 		"a gRPC call with no peer falls back")
+	noPeerAddr := peer.NewContext(transport.NewServerContext(context.Background(), grpcTr), &peer.Peer{})
+	assert.Equal(t, "127.0.0.1", serverRemoteAddr(noPeerAddr, grpcTr), "a gRPC peer with no address falls back")
 
 	noAddr := httptest.NewRequest(http.MethodGet, "/hello", nil)
 	noAddr.RemoteAddr = ""

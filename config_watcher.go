@@ -87,9 +87,13 @@ func (config *Config) pollConfigFile(stop, done chan struct{}, f *configFile, la
 		}
 		// A file that is missing right now - an unlink+rewrite saver between
 		// its two steps - keeps the old stamp, so the rewrite is seen as a
-		// change on a later tick.
+		// change on a later tick. So does an empty one, a truncate+write saver
+		// between its two steps: an empty YAML document parses without error
+		// to no keys, and reloading it put every dynamic option back to its
+		// base value until the write landed, running the callbacks twice. A
+		// file meant to set nothing can still say so with a comment.
 		stamp, ok := configFileStamp(f.path)
-		if !ok || stamp.same(last) {
+		if !ok || stamp.size == 0 || stamp.same(last) {
 			continue
 		}
 		last = stamp

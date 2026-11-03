@@ -86,6 +86,41 @@ func TestConfigWatcherReloadRestoresRemovedKey(t *testing.T) {
 	assert.Equal(t, 50.0, config.Float(CfgSamplingPercentRate), "the key still in the file is applied")
 }
 
+// A truncate+write saver leaves the file empty between its two steps. A poll
+// landing there must keep the current values: an empty YAML document parses to
+// no keys, and reloading it put every dynamic option back to its base value
+// until the write landed.
+func TestConfigWatcherSkipsEmptyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	writeConfigRate(t, path, 2)
+
+	config, err := NewConfig(WithAppName("watcher-empty"), WithSamplingCounterRate(5), WithConfigFile(path))
+	require.NoError(t, err)
+	requireWatcher(t, config)
+	t.Cleanup(config.Close)
+	require.Equal(t, 2, config.Int(CfgSamplingCounterRate), "the file overrides the option")
+
+	var reloads sync.Mutex
+	reloaded := 0
+	config.AddReloadCallback([]string{CfgSamplingCounterRate}, func() {
+		reloads.Lock()
+		reloaded++
+		reloads.Unlock()
+	})
+
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	time.Sleep(5 * configPollInterval)
+	assert.Equal(t, 2, config.Int(CfgSamplingCounterRate), "an empty file reset the option to its base value")
+
+	writeConfigRate(t, path, 3)
+	require.Eventually(t, func() bool {
+		return config.Int(CfgSamplingCounterRate) == 3
+	}, 2*time.Second, 10*time.Millisecond, "the write after the truncate was not reloaded")
+	reloads.Lock()
+	defer reloads.Unlock()
+	assert.Equal(t, 1, reloaded, "the callback ran for the empty file too")
+}
+
 func TestConfigWatcherReloadKeepsEnvValue(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	write := func(rate int, percent float64) {

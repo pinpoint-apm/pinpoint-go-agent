@@ -47,6 +47,13 @@ var noopContext = pinpoint.NewContext(context.Background(), pinpoint.NoopTracer(
 
 // WrapHandler wraps the given http request handler.
 func WrapHandler(handler fasthttp.RequestHandler, pattern ...string) fasthttp.RequestHandler {
+	// A nil handler stays nil, so the router refuses it at registration as it
+	// does unwrapped. Wrapped into a live closure it registered fine, and the
+	// first request called the nil func where fasthttp recovers no panic,
+	// taking the process down.
+	if handler == nil {
+		return nil
+	}
 	handlerName := pphttp.HandlerFuncName(handler)
 	urlPattern := ""
 	if len(pattern) > 0 {

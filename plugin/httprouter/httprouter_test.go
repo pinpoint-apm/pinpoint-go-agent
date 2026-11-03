@@ -253,6 +253,20 @@ func TestRouter_PanicPropagates(t *testing.T) {
 	})
 }
 
+// A nil Handle answers its route with httprouter's own 404, as it does
+// unwrapped, instead of the wrapper calling the nil func on every request.
+func TestRouter_NilHandleIsNotFound(t *testing.T) {
+	pptest.StartAgent(t)
+
+	assert.Nil(t, WrapHandle(nil, "/x"))
+
+	r := New()
+	r.GET("/x", nil)
+	rec := httptest.NewRecorder()
+	assert.NotPanics(t, func() { r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/x", nil)) })
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
 // With no agent running the wrapper must be a straight pass-through.
 func TestRouter_PassesThroughWhenAgentDisabled(t *testing.T) {
 	r := New()

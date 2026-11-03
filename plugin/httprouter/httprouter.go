@@ -40,6 +40,12 @@ func WrapHandle(handler httprouter.Handle, path ...string) httprouter.Handle {
 // argument keeps it from being an http.Handler: the handler is wrapped into one
 // per request, with the route's Params bound.
 func wrapHandle(handler httprouter.Handle, path string) httprouter.Handle {
+	// A nil Handle stays nil, so httprouter answers its route with a 404 as it
+	// does unwrapped, instead of the wrapper calling the nil func on every
+	// request.
+	if handler == nil {
+		return nil
+	}
 	handlerName := pphttp.HandlerFuncName(handler)
 	var urlPattern func(*http.Request) string
 	if path != "" {

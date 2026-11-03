@@ -16,6 +16,11 @@ func NestedTracer(tracer Tracer) Tracer {
 	if _, ok := tracer.(nestedTracer); ok {
 		return tracer
 	}
+	// A view of nil had every method panic through the nil embedded Tracer;
+	// the noop tracer is what FromContext would have found instead.
+	if tracer == nil {
+		tracer = NoopTracer()
+	}
 	return nestedTracer{tracer}
 }
 

@@ -40,3 +40,15 @@ func TestNestedTracer_Noop(t *testing.T) {
 	nested.NewSpanEvent("x").EndSpanEvent()
 	nested.EndSpan()
 }
+
+// A nil tracer is viewed as the noop tracer rather than wrapped as nil, whose
+// every method panicked.
+func TestNestedTracer_Nil(t *testing.T) {
+	nested := NestedTracer(nil)
+	assert.True(t, IsNestedTracer(nested))
+	assert.False(t, nested.IsSampled())
+	assert.NotPanics(t, func() {
+		nested.NewSpanEvent("x").EndSpanEvent()
+		nested.EndSpan()
+	})
+}

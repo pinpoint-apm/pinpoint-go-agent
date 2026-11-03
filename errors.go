@@ -32,12 +32,46 @@ func errorTypeName(err error) string {
 	return t.String()
 }
 
+// isNilPointerError reports whether err holds a nil pointer: the typed nil of
+// `var e *MyErr; return e`, which compares != nil. A method on it panics as
+// soon as it reads a field, so the agent calls none.
+func isNilPointerError(err error) bool {
+	v := reflect.ValueOf(err)
+	return v.Kind() == reflect.Pointer && v.IsNil()
+}
+
+// errorMessage is err.Error(), or "<nil>" - what fmt prints - for a nil
+// pointer error, whose Error() would panic inside SetError on the request
+// goroutine.
+func errorMessage(err error) string {
+	if isNilPointerError(err) {
+		return "<nil>"
+	}
+	return err.Error()
+}
+
 // nextCause steps one link down an error chain, preferring pkg/errors'
 // Cause() and falling back to the standard Unwrap() (fmt.Errorf %w).
 // A multi-unwrap error (errors.Join, Unwrap() []error) contributes only its
 // first element: the Pinpoint exception chain is a single line of causes and
 // cannot represent a tree.
+//
+// A nil pointer error ends the chain, whether it is err itself or the cause
+// it unwraps to - a wrapper whose cause field is a nil *T. Recorded as a link,
+// its Error() panicked on the metadata sender, dropping the span's whole
+// exception metadata on every failed request.
 func nextCause(err error) error {
+	if isNilPointerError(err) {
+		return nil
+	}
+	cause := unwrapCause(err)
+	if isNilPointerError(cause) {
+		return nil
+	}
+	return cause
+}
+
+func unwrapCause(err error) error {
 	if c, ok := err.(causer); ok {
 		return c.Cause()
 	}
@@ -54,6 +88,9 @@ func nextCause(err error) error {
 
 // errorCallStack is the stack the error carries itself, nil when it has none.
 func errorCallStack(err error) []uintptr {
+	if isNilPointerError(err) {
+		return nil
+	}
 	if pkgErr, ok := err.(pkgErrorStackTracer); ok {
 		st := pkgErr.StackTrace()
 		return *(*[]uintptr)(unsafe.Pointer(&st))

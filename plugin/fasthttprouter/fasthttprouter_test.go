@@ -123,6 +123,13 @@ func TestRouter_UnmatchedPath(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, ctx.Response.StatusCode())
 }
 
+// A nil handler is refused at registration, as fasthttp/router refuses it
+// unwrapped, rather than registered and called on the first request.
+func TestRouter_NilHandlerPanicsAtRegistration(t *testing.T) {
+	r := New()
+	assert.PanicsWithValue(t, "handler must not be nil", func() { r.GET("/x", nil) })
+}
+
 // A route registered through the router re-panics exactly as the bare fasthttp
 // wrapper does.
 func TestRouter_PanicPropagates(t *testing.T) {

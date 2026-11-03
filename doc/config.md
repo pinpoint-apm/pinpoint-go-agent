@@ -390,7 +390,7 @@ Collector.StatPort option sets the stat port of Pinpoint collector.
 
 ### Collector.AgentInfo.RefreshInterval
 Collector.AgentInfo.RefreshInterval option sets the cycle for re-sending the agent information to the collector.
-If it is 0 or less, the agent information is sent only once at agent startup.
+If it is 0 or less, the agent information is sent only once at agent startup. A value above 100 years (3153600000000 ms) falls back to the default.
 
 * PINPOINT_GO_COLLECTOR_AGENTINFO_REFRESHINTERVAL
 * type: int
@@ -523,7 +523,7 @@ Use it when the collector sits behind an L4 load balancer or is scaled out, so t
 connected spread across the collector instances over time instead of staying pinned to the one they first reached.
 The connection is only replaced while traffic flows, and the age is randomized by +/-10% so that agents
 deployed together do not reconnect in lockstep.
-The default 0 keeps a working connection for as long as the agent runs.
+The default 0 keeps a working connection for as long as the agent runs. A value above 100 years (3153600000000 ms) falls back to the default.
 
 Spreading across instances needs the `dns` resolver
 ([Collector.Grpc.DnsResolverEnable](#collectorgrpcdnsresolverenable), the default), which supplies the
@@ -561,7 +561,7 @@ streams.
 A stream older than this is closed normally and reopened before the next send, so no stat is dropped;
 the command stream, which waits on the collector, is reopened when its age runs out.
 The age is randomized by +/-10%.
-The default 0 keeps a stream open until it fails.
+The default 0 keeps a stream open until it fails. A value above 100 years (3153600000000 ms) falls back to the default.
 
 * PINPOINT_GO_COLLECTOR_GRPC_STREAMMAXAGE
 * int
@@ -578,7 +578,7 @@ Without this option grpc-go (v1.82.1) would apply its own default of 30 minutes,
 traffic reaches on the span channel, which only carries unary SendSpanBatch requests.
 Note that with [Collector.Grpc.KeepAlivePermitWithoutCalls](#collectorgrpckeepalivepermitwithoutcalls) at its
 default false, a connection with no open stream sends no keepalive pings even when idling is disabled.
-A negative value is treated as 0.
+A negative value is treated as 0, and a value above 100 years (3153600000000 ms) as the default.
 
 * PINPOINT_GO_COLLECTOR_GRPC_IDLETIMEOUT
 * int

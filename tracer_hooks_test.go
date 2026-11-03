@@ -62,6 +62,14 @@ func TestTracerHooks(t *testing.T) {
 	assert.Same(t, other, FromContext(context.Background()))
 	other.EndSpan()
 
+	// A hook returning nil keeps what the context held: FromContext never
+	// returns nil, and NewDatabaseTracer uses the result unchecked.
+	SetTracerHooks(TracerHooks{FromContext: func(Tracer) Tracer { return nil }})
+	assert.Equal(t, NoopTracer(), FromContext(context.Background()))
+	assert.NotPanics(t, func() {
+		NewDatabaseTracer(context.Background(), "query", &DBInfo{}).EndSpanEvent()
+	})
+
 	// Unregistered: everything passes through, nothing is called.
 	SetTracerHooks(TracerHooks{})
 	assert.Equal(t, NoopTracer(), FromContext(context.Background()))

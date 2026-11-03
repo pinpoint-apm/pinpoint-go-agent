@@ -928,7 +928,7 @@ func (span *span) SetError(e error, errorName ...string) {
 	errName := errorNameOf(e, errorName)
 	id := span.agent.cacheError(errName)
 	span.errorFuncId = id
-	span.errorString = abbreviateString(e.Error(), maxErrorMessageSize)
+	span.errorString = abbreviateString(errorMessage(e), maxErrorMessageSize)
 	// An error matching Span.IgnoreErrors is still recorded, but does not fail
 	// the span.
 	if !span.cfg.ignoreError(e, errName) {

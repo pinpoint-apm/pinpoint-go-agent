@@ -928,7 +928,7 @@ func makePException(e *exception) *pb.PException {
 	frames := e.stackTrace()
 	return &pb.PException{
 		ExceptionClassName: validUTF8(e.className),
-		ExceptionMessage:   validUTF8(abbreviateString(e.err.Error(), maxExceptionMessageSize)),
+		ExceptionMessage:   validUTF8(abbreviateString(errorMessage(e.err), maxExceptionMessageSize)),
 		StartTime:          e.errorTime.UnixMilli(),
 		ExceptionId:        e.exceptionId,
 		ExceptionDepth:     e.depth,

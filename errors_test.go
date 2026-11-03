@@ -342,6 +342,53 @@ func Test_splitName_NoDot(t *testing.T) {
 	assert.Equal(t, "Func", fn, "func name")
 }
 
+// fieldError reads its receiver in Error(), as most user error types do, so a
+// nil *fieldError panics there.
+type fieldError struct{ msg string }
+
+func (e *fieldError) Error() string { return e.msg }
+
+// nilCauseError is a wrapper whose cause field holds a nil *fieldError: Unwrap
+// returns it as a typed nil, which compares != nil.
+type nilCauseError struct{ cause *fieldError }
+
+func (e nilCauseError) Error() string { return "wrapper" }
+func (e nilCauseError) Unwrap() error { return e.cause }
+
+// A nil pointer cause ends the chain. Recorded as a link, its Error() panicked
+// on the metadata sender, which dropped the span's whole exception metadata.
+func TestSpan_TraceCallStackEndsAtNilPointerCause(t *testing.T) {
+	span := defaultSpan(newTestAgent(defaultConfig()))
+	span.traceCallStack(nilCauseError{}, "", 32, time.Now())
+
+	require.Len(t, span.errorChains, 1, "the nil cause must not be a link")
+	assert.NotPanics(t, func() { makePExceptionList(span.errorChains) })
+}
+
+// A nil pointer error handed to SetError compares != nil, so it still fails
+// the span, the event and the exception chain - but the agent calls none of
+// its methods: Error() on it panicked on the request goroutine, also when a
+// Span.IgnoreErrors message rule asked for the text.
+func TestSetError_NilPointerError(t *testing.T) {
+	var nilErr error = (*fieldError)(nil)
+
+	cfg := defaultConfig()
+	cfg.Set(CfgErrorTraceCallStack, true)
+	cfg.Set(CfgSpanIgnoreErrors, []string{":never matches"})
+	span := testSpanWithConfig(cfg)
+
+	assert.NotPanics(t, func() { span.SetError(nilErr) })
+	assert.Equal(t, "<nil>", span.errorString)
+	assert.Equal(t, span.agent.cacheError("pinpoint.fieldError"), span.errorFuncId)
+
+	se := newSpanEvent(span, "event")
+	assert.NotPanics(t, func() { se.SetError(nilErr) })
+	assert.Equal(t, "<nil>", se.errorString)
+	assert.NotZero(t, span.err.Load(), "the span is failed")
+	require.Len(t, span.errorChains, 1)
+	assert.NotPanics(t, func() { makePExceptionList(span.errorChains) })
+}
+
 // uncomparableError is the shape of a common user error type - Go's own
 // errors.Join value and validator.ValidationErrors are both slices - whose
 // dynamic type cannot be compared with ==.

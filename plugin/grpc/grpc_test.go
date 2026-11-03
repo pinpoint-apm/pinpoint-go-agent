@@ -63,6 +63,8 @@ func Test_remoteAddr(t *testing.T) {
 	// An interceptor can run without a peer - in tests, or over an in-process
 	// transport - and must still produce an address.
 	assert.Equal(t, "127.0.0.1", remoteAddr(context.Background()), "a call with no peer falls back")
+	assert.Equal(t, "127.0.0.1", remoteAddr(peer.NewContext(context.Background(), &peer.Peer{})),
+		"a peer with no address falls back")
 }
 
 // value drops the presence result, for assertions about the value alone.

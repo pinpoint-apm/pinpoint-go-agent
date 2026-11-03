@@ -179,6 +179,12 @@ const (
 	// 100 years. An expiry this long is already "never" in practice, and the
 	// bound keeps hours * time.Hour from overflowing the Duration.
 	maxSqlCacheExpireHours = 24 * 365 * 100
+	// 100 years in milliseconds, the ceiling of the millisecond duration
+	// options without one of their own: past about 292 years ms *
+	// time.Millisecond overflows the Duration, and the stream max age jitter
+	// scales it by up to 1.1 on top. An int64, so it still compiles where int
+	// is 32 bits and cannot reach it.
+	maxDurationOptionMs int64 = 100 * 365 * 24 * 60 * 60 * 1000
 
 	// How many queries one trace may run before it is marked failed; 0 turns
 	// the check off.
@@ -545,7 +551,7 @@ func (snapshot *configSnapshot) ignoreError(err error, errName string) bool {
 			}
 			if r.messageContains != "" {
 				if !haveMsg {
-					msg, haveMsg = e.Error(), true
+					msg, haveMsg = errorMessage(e), true
 				}
 				if !strings.Contains(msg, r.messageContains) {
 					continue
@@ -1225,6 +1231,17 @@ func (config *Config) zeroIfNegative(name string) {
 	}
 }
 
+// defaultIfAbove restores the key's registered default when the staged value
+// exceeds max, logging a warning. Every lower value keeps the meaning the
+// option gives it, 0 or a negative "off" included.
+func (config *Config) defaultIfAbove(name string, max int64) {
+	if v := config.stagedInt(name); int64(v) > max {
+		def := config.cfgMap[name].defaultValue
+		Log("config").Warnf("%s = %d is above the maximum %d, using default %v", name, v, max, def)
+		config.cfgMap[name].value = def
+	}
+}
+
 // publish normalizes the staged cfgMap values and installs the result as a new
 // snapshot with a single atomic store. Everything derived from the config is
 // built here so that one store makes the whole generation visible at once.
@@ -1371,6 +1388,14 @@ func (config *Config) publishFrom(prev *configSnapshot) {
 	config.zeroIfNegative(CfgCollectorGrpcConnectionMaxAge)
 	config.zeroIfNegative(CfgCollectorGrpcStreamMaxAge)
 	config.zeroIfNegative(CfgCollectorGrpcIdleTimeout)
+	// A "never" spelled as a huge number overflowed ms * time.Millisecond: an
+	// IdleTimeout of MaxInt64 wrapped to -1ms, which grpc-go's idle timer
+	// refires at once for as long as a stream is open, and the max ages and
+	// the refresh cycle turned off or shrank to microseconds.
+	config.defaultIfAbove(CfgCollectorGrpcConnectionMaxAge, maxDurationOptionMs)
+	config.defaultIfAbove(CfgCollectorGrpcStreamMaxAge, maxDurationOptionMs)
+	config.defaultIfAbove(CfgCollectorGrpcIdleTimeout, maxDurationOptionMs)
+	config.defaultIfAbove(CfgCollectorAgentInfoRefreshInterval, maxDurationOptionMs)
 	config.unlimitedOrAtLeast(CfgSpanMaxCallStackDepth, minEventDepth)
 	config.unlimitedOrAtLeast(CfgSpanMaxCallStackSequence, minEventSequence)
 

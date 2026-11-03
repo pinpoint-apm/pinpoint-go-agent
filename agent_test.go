@@ -1804,6 +1804,28 @@ func Test_HttpHeaderWriter_storesCanonicalKeys(t *testing.T) {
 		"Set replaces the value like Header.Set, it does not append")
 }
 
+// A hand-built &http.Request{} carries a nil Header until http.Client sends
+// it, so Inject through HttpHeaderWriter(req.Header) must write nothing rather
+// than panic on the nil map, on a sampled span and on an unsampled one alike.
+func Test_HttpHeaderWriter_nilHeader(t *testing.T) {
+	c, _ := NewConfig(WithAppName("test"), WithServiceName("test-service"))
+	c.offGrpc = true
+	a, _ := NewAgent(c)
+	agent := a.(*agent)
+	agent.enable.Store(true)
+	defer a.Shutdown()
+
+	req := &http.Request{}
+	sampled := agent.NewSpanTracer("test", "/")
+	defer sampled.EndSpan()
+	assert.NotPanics(t, func() { sampled.Inject(HttpHeaderWriter(req.Header)) })
+
+	unsampled := newUnSampledSpan(agent, "/")
+	defer unsampled.EndSpan()
+	assert.NotPanics(t, func() { unsampled.Inject(HttpHeaderWriter(req.Header)) })
+	assert.Nil(t, req.Header)
+}
+
 // The headers Inject writes must be readable as a continued trace by the other
 // side - proof that Inject really emits all three headers the new check needs.
 func Test_agent_continueHeaders_roundTrip(t *testing.T) {

@@ -301,6 +301,13 @@ type httpHeaderWriter struct {
 }
 
 func (w *httpHeaderWriter) Set(key string, value string) {
+	// A hand-built &http.Request{} has a nil Header, which http.Client fills in
+	// only when it sends the request: Inject before that wrote into a nil map
+	// and panicked on the request goroutine, where Header.Set does the same.
+	// Nothing is written, as Inject does for a nil writer.
+	if w.h == nil {
+		return
+	}
 	if w.n < len(w.vals) {
 		w.vals[w.n] = value
 		w.h[canonicalHeaderKey(key)] = w.vals[w.n : w.n+1 : w.n+1]

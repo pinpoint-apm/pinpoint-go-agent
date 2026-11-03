@@ -12,7 +12,7 @@ import "sync/atomic"
 type TracerHooks struct {
 	// FromContext is called by FromContext with the tracer it found in the
 	// context, NoopTracer() when there is none, and returns the tracer
-	// FromContext returns instead.
+	// FromContext returns instead; nil keeps the tracer it was given.
 	FromContext func(Tracer) Tracer
 	// SpanStart is called with the tracer NewSpanTracer and
 	// NewSpanTracerWithReader return, NoopTracer() included.
@@ -35,7 +35,13 @@ func SetTracerHooks(h TracerHooks) { tracerHooks.Store(&h) }
 
 func hookFromContext(tracer Tracer) Tracer {
 	if h := tracerHooks.Load(); h != nil && h.FromContext != nil {
-		return h.FromContext(tracer)
+		// FromContext never returns nil, and its callers use the result
+		// unchecked: NewDatabaseTracer dereferenced a nil from the hook at
+		// once, and the plugins wrapped it in a NestedTracer whose every method
+		// panicked.
+		if t := h.FromContext(tracer); t != nil {
+			return t
+		}
 	}
 	return tracer
 }

@@ -110,7 +110,10 @@ func startSpan(ctx context.Context, rpcName string) pinpoint.Tracer {
 
 func remoteAddr(ctx context.Context) (addr string) {
 	addr = ""
-	if p, ok := peer.FromContext(ctx); ok {
+	// A nil Addr is legal - peer.Peer's own String handles it - and a custom
+	// net.Conn whose RemoteAddr is nil puts one there; grpc-go recovers no
+	// handler panic, so the process went down with it.
+	if p, ok := peer.FromContext(ctx); ok && p.Addr != nil {
 		addr = p.Addr.String()
 	}
 	return pinpoint.RemoteHost(addr)

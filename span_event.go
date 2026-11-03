@@ -103,7 +103,7 @@ func (se *spanEvent) SetError(e error, errorName ...string) {
 
 	id := se.parentSpan.agent.cacheError(errName)
 	se.errorFuncId = id
-	se.errorString = abbreviateString(e.Error(), maxErrorMessageSize)
+	se.errorString = abbreviateString(errorMessage(e), maxErrorMessageSize)
 
 	cfg := se.parentSpan.cfg
 	// Marking the span failed drives PSpan.err, the URL stat failed histogram
