@@ -3,6 +3,7 @@ package pinpoint
 import (
 	"cmp"
 	"context"
+	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -347,7 +348,7 @@ func (b *spanMessageBuilder) makePSpan(chunk *spanChunk) *pb.PSpanMessage {
 	pspan.SpanId = span.spanId
 	pspan.ParentSpanId = span.parentSpanId
 	pspan.StartTime = span.startTime.UnixMilli()
-	pspan.Elapsed = int32(span.elapsed)
+	pspan.Elapsed = clampToInt32(span.elapsed)
 	pspan.ServiceType = span.serviceType
 
 	acceptEvent := b.acceptEvents.get()
@@ -450,12 +451,20 @@ func (b *spanMessageBuilder) annotationsWithApi(a *annotation, apiId int32, oper
 	return list
 }
 
+// clampToInt32 narrows a millisecond count for an int32 proto field,
+// saturating instead of wrapping: a span or event of more than 24.8 days - a
+// long-lived stream handler ended at shutdown - reported a negative elapsed,
+// while the int64 response time statistics stayed right.
+func clampToInt32(ms int64) int32 {
+	return int32(min(max(ms, math.MinInt32), math.MaxInt32))
+}
+
 func (b *spanMessageBuilder) makePSpanEvent(event *spanEvent) *pb.PSpanEvent {
 	aSpanEvent := b.events.get()
 	aSpanEvent.Sequence = event.sequence
 	aSpanEvent.Depth = event.depth
-	aSpanEvent.StartElapsed = int32(event.startElapsed)
-	aSpanEvent.EndElapsed = int32(event.endElapsed)
+	aSpanEvent.StartElapsed = clampToInt32(event.startElapsed)
+	aSpanEvent.EndElapsed = clampToInt32(event.endElapsed)
 	aSpanEvent.ServiceType = event.serviceType
 	aSpanEvent.Annotation = b.annotationsWithApi(&event.annotations, event.apiId, event.operationName)
 	aSpanEvent.ApiId = event.apiId

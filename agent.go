@@ -1201,6 +1201,15 @@ func (agent *agent) sendStatsOrReopen(stream *statStream, stats *pb.PStatMessage
 // NewAgent does. The *testing.T of v1 was never used; dropping it keeps the
 // testing package out of production binaries.
 func NewTestAgent(config *Config) (Agent, error) {
+	// As NewAgent refuses them: a nil config dereferenced here, and a Config
+	// built by hand instead of by NewConfig has no sampler, so the first
+	// NewSpanTracer panicked on it.
+	if config == nil {
+		return NoopAgent(), errors.New("configuration is missing")
+	}
+	if config.snapshot.Load() == nil {
+		return NoopAgent(), errors.New("configuration was not made by NewConfig")
+	}
 	config.offGrpc = true
 	logger.setup(config)
 

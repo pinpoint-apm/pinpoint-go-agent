@@ -41,6 +41,18 @@ func Test_SetOutputClosesPreviousFileLogger(t *testing.T) {
 	require.Nil(t, l.fileLogger, "file logger reference was not cleared")
 }
 
+// A blank Log.Output is the default stdout, not a lumberjack file with no
+// name, which lumberjack places in $TMPDIR.
+func Test_SetOutputBlankIsStdout(t *testing.T) {
+	for _, out := range []string{"", "  "} {
+		l := newLogger()
+		l.setOutput("stderr", 10, 1)
+		l.setOutput(out, 10, 1)
+		assert.Nil(t, l.fileLogger, "%q must not open a file", out)
+		assert.Same(t, os.Stdout, l.defaultLogger.Out, "%q must write to stdout", out)
+	}
+}
+
 func logRotationWorkers() int {
 	for size := 64 << 10; ; size *= 2 {
 		buf := make([]byte, size)

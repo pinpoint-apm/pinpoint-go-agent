@@ -63,6 +63,20 @@ func TestMonitor_StartedAndFinished(t *testing.T) {
 	assert.True(t, failed.Events[0].Ended)
 }
 
+// A Monitor declared as a value works like one from NewMonitor: Started wrote
+// to a nil map on it.
+func TestMonitor_ZeroValueIsUsable(t *testing.T) {
+	var m Monitor
+	key := Key{ConnectionID: "mongo1:27017[-3]", RequestID: 42}
+
+	var tracer *pptest.RecordingTracer
+	assert.NotPanics(t, func() { tracer = started(&m, key) })
+	m.Finished(key, nil)
+	require.Len(t, tracer.Events, 1)
+	assert.True(t, tracer.Events[0].Ended)
+	assert.Zero(t, m.Pending())
+}
+
 // A key Started never saw - an unsampled command, a driver heartbeat - must
 // not end a span event that was never opened.
 func TestMonitor_FinishedWithoutStarted(t *testing.T) {

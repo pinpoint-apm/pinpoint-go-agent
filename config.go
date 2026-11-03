@@ -619,8 +619,10 @@ func (config *Config) String(cfgName string) string {
 
 // StringSlice returns a string slice value for the specified configuration item.
 // The returned slice belongs to the published snapshot - copy it before writing.
+// Its capacity is its length, so an append reallocates instead of writing into
+// spare capacity another caller's append shares.
 func (config *Config) StringSlice(cfgName string) []string {
-	return valueAs[[]string](config.load().values[cfgName])
+	return slices.Clip(valueAs[[]string](config.load().values[cfgName]))
 }
 
 // Bool returns a boolean value for the specified configuration item.
@@ -1030,7 +1032,15 @@ func convertCfgValue(valueType int, value any) (any, error) {
 	case CfgInt:
 		return strconv.Atoi(s)
 	case CfgFloat:
-		return strconv.ParseFloat(s, 64)
+		// ParseFloat accepts NaN and Inf, which no float option means. NaN
+		// passed every range check of Sampling.PercentRate - converting it
+		// sampled nothing on arm64 and everything on amd64 - and, never equal
+		// to itself, made every reload republish it as changed.
+		f, err := strconv.ParseFloat(s, 64)
+		if err == nil && (math.IsNaN(f) || math.IsInf(f, 0)) {
+			return nil, fmt.Errorf("%s is not a finite number", s)
+		}
+		return f, err
 	case CfgBool:
 		return strconv.ParseBool(s)
 	}
@@ -1061,7 +1071,11 @@ func scalarString(value any) (string, error) {
 func toStringSlice(value any) ([]string, error) {
 	switch v := value.(type) {
 	case []string:
-		return v, nil
+		// Copied: Set and the ConfigOption functions hand in the caller's own
+		// slice, and a later write to it changed the published snapshot while
+		// what publish had derived from it - the ignore rules, the error mark
+		// mask - stayed as they were.
+		return slices.Clone(v), nil
 	case string:
 		return strings.Split(v, ","), nil
 	}
@@ -1288,6 +1302,12 @@ func (config *Config) publishFrom(prev *configSnapshot) {
 		compression = compressionGzip
 	}
 	config.cfgMap[CfgCollectorGrpcCompression].value = compression
+
+	// A service type code is a short in the Java agent and the collector. The
+	// agent sends it as int32 but writes the Pinpoint-pAppType header from the
+	// full int, so a wider value told the collector one type and the callee
+	// another.
+	config.defaultIfOutOfRange(CfgAppType, math.MinInt16, math.MaxInt16)
 
 	// Only the documented levels pass. logrus.ParseLevel also accepts fatal
 	// and panic, which would silence warn and error while looking like a
@@ -1526,7 +1546,7 @@ func (config *Config) AddReloadCallback(optNames []string, callback func()) {
 	if config.static {
 		return
 	}
-	config.callback = append(config.callback, reloadCallback{optNames, callback})
+	config.callback = append(config.callback, reloadCallback{slices.Clone(optNames), callback})
 }
 
 func (config *Config) reloadConfig(f *configFile) {

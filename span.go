@@ -544,18 +544,25 @@ func (span *span) extract(reader DistributedTracingContextReader) {
 	}
 
 	// The span is fresh, so an absent header leaves its zero value in place.
+	// Parsed to 32 bits, the width of PSpan.Flag: a wider value was cut on the
+	// wire while Inject passed the full one downstream, so an out of range
+	// value is dropped like an unparseable one.
 	flag, _ := reader.Get(HeaderFlags)
-	span.flags, _ = strconv.Atoi(flag)
+	if v, err := strconv.ParseInt(flag, 10, 32); err == nil {
+		span.flags = int(v)
+	}
 
 	pappname, _ := reader.Get(HeaderParentApplicationName)
 	span.parentAppName = pappname
 
 	// An unparseable type leaves parentAppType at its -1 UNDEFINED default:
 	// taking the discarded Atoi result would write 0, which is no service type.
+	// So does one outside the 16 bits of a service type code, a short in the
+	// Java agent and the collector, which a wider parse cut to another type.
 	papptype, _ := reader.Get(HeaderParentApplicationType)
 	if papptype != "" {
-		if v, err := strconv.Atoi(papptype); err == nil {
-			span.parentAppType = v
+		if v, err := strconv.ParseInt(papptype, 10, 16); err == nil {
+			span.parentAppType = int(v)
 		}
 	}
 

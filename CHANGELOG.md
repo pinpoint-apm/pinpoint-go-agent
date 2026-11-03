@@ -492,6 +492,37 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Fixed
 
+- **Out of range numbers no longer wrap or turn into something else.**
+  - The int32 `Elapsed`, `StartElapsed` and `EndElapsed` of a span or span
+    event of more than 24.8 days saturate instead of wrapping negative.
+  - The `Pinpoint-Flags` header is parsed to 32 bits and `Pinpoint-pAppType`
+    to the 16 bits of a service type code, as the Java agent's `parseShort`
+    does; a wider value is dropped like an unparseable one, where it was cut
+    to another value on the wire while `Inject` passed the full one on.
+  - `ApplicationType` outside -32768 to 32767 falls back to the default.
+  - A float option given `NaN` or `Inf` is rejected like any value that does
+    not convert. `NaN` passed every range check of `Sampling.PercentRate`,
+    sampling nothing on arm64 and everything on amd64, and as it never equals
+    itself every reload republished it as changed.
+- **A span event's elapsed is never negative.** It is clamped at 0 as the
+  span's is, against a wall clock step back or a `FixDuration` end before its
+  start.
+- **A blank `Log.Output` is stdout.** As a file name it opened a lumberjack
+  log with no name, which lumberjack puts in `$TMPDIR/<binary>-lumberjack.log`.
+- **`Config` keeps its own copy of a `[]string` it is given, and
+  `StringSlice` returns one with no spare capacity.** The slice handed to
+  `Set` or to `WithSpanIgnoreErrors` and the like stayed the caller's: a later
+  write changed the published value behind the ignore rules and the error mark
+  mask built from it, and two callers appending to a `StringSlice` result
+  could write into one backing array. `AddReloadCallback` copies its option
+  names too.
+- **`NewTestAgent` refuses a nil `Config` and one not made by `NewConfig`**, as
+  `NewAgent` does: the nil one panicked at once, and the hand-built one, which
+  has no sampler, on the first `NewSpanTracer`.
+- **`ppredigo.WrapConn(nil)` returns nil**, as the kafka producer wrappers do:
+  a failed dial's nil connection came back as a non-nil one that panicked on
+  the caller's deferred `Close`. A zero `ppmongomonitor.Monitor` is usable, as
+  one from `NewMonitor` is, where `Started` wrote to a nil map.
 - **`HttpHeaderWriter` on a nil `http.Header` writes nothing instead of
   panicking.** A hand-built `&http.Request{}` carries a nil Header until
   `http.Client` sends it, so `tracer.Inject(pinpoint.HttpHeaderWriter(req.Header))`

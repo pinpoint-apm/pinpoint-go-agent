@@ -36,6 +36,25 @@ func Test_spanEvent_end(t *testing.T) {
 	assert.Greater(t, se.endElapsed, int64(99), "endElapsed")
 }
 
+// The event's elapsed is clamped at 0 as the span's is: a wall clock step
+// back between start and end, or a FixDuration end before its start, sent a
+// negative EndElapsed.
+func Test_spanEvent_endElapsedNeverNegative(t *testing.T) {
+	span := defaultTestSpan()
+	se := newSpanEvent(span, "clock step")
+	span.eventStack.push(se)
+	se.startTime = time.Now().Add(time.Hour).UnixMilli() // the clock stepped back since
+	se.end()
+	assert.Zero(t, se.endElapsed)
+
+	fixed := newSpanEvent(span, "fixed")
+	now := time.Now()
+	fixed.FixDuration(now, now.Add(-time.Second))
+	assert.Zero(t, fixed.endElapsed)
+	fixed.FixDuration(now, now.Add(time.Second))
+	assert.Equal(t, int64(1000), fixed.endElapsed)
+}
+
 func Test_SetError_AbbreviatesMessage(t *testing.T) {
 	long := strings.Repeat("e", 300)
 	tests := []struct {

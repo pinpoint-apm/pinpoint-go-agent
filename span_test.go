@@ -2123,7 +2123,9 @@ func Test_PropagationHeaderNames(t *testing.T) {
 func Test_ParentAppTypeDefaultsToUndefined(t *testing.T) {
 	assert.Equal(t, -1, defaultTestSpan().parentAppType, "a fresh span")
 
-	for _, typ := range []string{"", "abc"} {
+	// Out of a short's range, as Java's parseShort rejects it: a wider parse
+	// cut 4294969096 to 1800, the Go service type.
+	for _, typ := range []string{"", "abc", "40000", "4294969096"} {
 		span := defaultTestSpan()
 		m := map[string]string{
 			HeaderTraceId:               "t123456^12345^1",
@@ -2137,6 +2139,30 @@ func Test_ParentAppTypeDefaultsToUndefined(t *testing.T) {
 		span.extract(&DistributedTracingContextMap{m})
 		assert.Equal(t, "upstream", span.parentAppName)
 		assert.Equal(t, -1, span.parentAppType, "pAppType %q", typ)
+	}
+}
+
+// Pinpoint-Flags is parsed to the 32 bits of PSpan.Flag. A wider value was
+// cut on the wire while Inject passed the full one downstream; it is dropped
+// like an unparseable one.
+func Test_span_Extract_flagsWidth(t *testing.T) {
+	for _, tt := range []struct {
+		header string
+		want   int
+	}{
+		{"1", 1},
+		{"-1", -1},
+		{"not-a-number", 0},
+		{"4294967297", 0},
+	} {
+		span := defaultTestSpan()
+		span.extract(&DistributedTracingContextMap{m: map[string]string{
+			HeaderTraceId:      "t123456^12345^1",
+			HeaderSpanId:       "67890",
+			HeaderParentSpanId: "123",
+			HeaderFlags:        tt.header,
+		}})
+		assert.Equal(t, tt.want, span.flags, "flags %q", tt.header)
 	}
 }
 

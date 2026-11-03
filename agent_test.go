@@ -1777,6 +1777,18 @@ func Test_agent_continueHeaders_httpHeaderReader(t *testing.T) {
 	assert.Equal(t, "123", v)
 }
 
+// NewTestAgent refuses what NewAgent refuses: a nil config dereferenced, and
+// a Config not made by NewConfig has no sampler for the first NewSpanTracer.
+func Test_NewTestAgent_rejectsMissingConfig(t *testing.T) {
+	for _, c := range []*Config{nil, {}} {
+		var a Agent
+		var err error
+		require.NotPanics(t, func() { a, err = NewTestAgent(c) })
+		assert.Error(t, err)
+		assert.Equal(t, NoopAgent(), a)
+	}
+}
+
 // HttpHeaderWriter stores under the key Header.Set would have chosen, so a
 // value it wrote is read back by Header.Get, by HttpHeaderReader and by a
 // caller iterating the map with the canonical name.

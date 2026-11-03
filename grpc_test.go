@@ -2654,6 +2654,20 @@ func Test_AgentInfoSchedule(t *testing.T) {
 	assert.Equal(t, 3000, defaultAgentInfoSendRetryInterval, "matches the C++ agent, not Java's effective 300000ms - see doc/development.md")
 }
 
+// The int32 elapsed fields saturate instead of wrapping: a span of more than
+// 24.8 days reported a negative elapsed.
+func Test_makePSpan_elapsedSaturates(t *testing.T) {
+	const thirtyDays = int64(30 * 24 * time.Hour / time.Millisecond)
+	agent := newTestAgent(defaultConfig())
+	span := newSampledSpan(agent, "op", "/rpc")
+	span.elapsed = thirtyDays
+	assert.Equal(t, int32(math.MaxInt32), (&spanMessageBuilder{}).makePSpan(span.newEventChunk(true)).GetSpan().GetElapsed())
+
+	assert.Equal(t, int32(math.MaxInt32), clampToInt32(thirtyDays))
+	assert.Equal(t, int32(math.MinInt32), clampToInt32(-thirtyDays))
+	assert.Equal(t, int32(42), clampToInt32(42))
+}
+
 // Test_ParentInfoRequiresAParentAppName locks that PParentInfo
 // is emitted only when parentAppName is non-empty. An acceptor host alone must
 // not create an unnamed parent node.

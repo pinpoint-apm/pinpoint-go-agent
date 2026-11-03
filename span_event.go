@@ -72,7 +72,9 @@ func (se *spanEvent) end() {
 	}
 	se.parentSpan.eventDepth.Add(-1)
 	if !se.isTimeFixed {
-		se.endElapsed = time.Now().UnixMilli() - se.startTime
+		// Wall clock, clamped as the span's elapsed is: an NTP step back
+		// between start and end sent a negative EndElapsed.
+		se.endElapsed = max(time.Now().UnixMilli()-se.startTime, 0)
 	}
 	if isTraceLogLevelEnabled() {
 		Log("span").Tracef("endSpanEvent: %s", se.operationName)
@@ -242,6 +244,7 @@ func (se *spanEvent) FixDuration(start time.Time, end time.Time) {
 		return
 	}
 	se.startTime = start.UnixMilli()
-	se.endElapsed = end.UnixMilli() - se.startTime
+	// An end before the start is clamped like a wall clock step back in end.
+	se.endElapsed = max(end.UnixMilli()-se.startTime, 0)
 	se.isTimeFixed = true
 }

@@ -106,7 +106,10 @@ func (l *logrusLogger) setOutputLocked(out string, maxSize, maxBackups int) {
 	}
 	var output io.Writer
 	var fileLogger io.WriteCloser
-	if strings.EqualFold(out, "stdout") {
+	// A blank output is the default stdout. As a file name it became a
+	// lumberjack logger with no Filename, which writes to
+	// $TMPDIR/<binary>-lumberjack.log: a log in a directory nobody looks in.
+	if strings.TrimSpace(out) == "" || strings.EqualFold(out, "stdout") {
 		output = os.Stdout
 	} else if strings.EqualFold(out, "stderr") {
 		output = os.Stderr

@@ -105,6 +105,11 @@ func NewMonitor() *Monitor {
 func (m *Monitor) Started(key Key, tracer pinpoint.Tracer) {
 	var evicted pinpoint.Tracer
 	m.mu.Lock()
+	// A zero Monitor is usable, as its mutex is: only NewMonitor made the map,
+	// and Started on a Monitor declared as a value wrote to a nil one.
+	if m.spans == nil {
+		m.spans = make(map[Key]pinpoint.Tracer)
+	}
 	// ponytail: arbitrary eviction at the cap; per-entry deadlines if evicted
 	// spans ever show up in real traces.
 	if len(m.spans) >= MaxPendingSpans {

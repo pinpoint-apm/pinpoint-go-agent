@@ -90,6 +90,12 @@ func WithContext(c redis.Conn, ctx context.Context) {
 // wrapping the result of redis.DialContext (every Dial variant funnels into
 // it).
 func WrapConn(c redis.Conn, address string) redis.Conn {
+	// A failed dial returns a nil Conn beside its error. Wrapped, it became a
+	// non-nil Conn that panicked on the caller's deferred Close; nil stays
+	// nil, as the producer wrappers of the kafka plugins keep it.
+	if c == nil {
+		return nil
+	}
 	if _, ok := c.(*wrappedConn); ok {
 		return c
 	}

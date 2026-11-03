@@ -34,6 +34,12 @@ func (f *fakeRedisConn) Receive() (interface{}, error) {
 	return nil, nil
 }
 
+// A failed dial returns a nil Conn beside its error; WrapConn keeps it nil, so
+// the caller's nil check and deferred Close behave as without the wrapper.
+func Test_WrapConn_nilStaysNil(t *testing.T) {
+	assert.Nil(t, WrapConn(nil, "localhost:6379"))
+}
+
 // redigo supports one goroutine in Send/Flush concurrent with another blocked
 // in Receive (pub/sub); the wrapper must not corrupt or race in that pattern.
 // Run under -race.

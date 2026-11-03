@@ -904,6 +904,65 @@ func TestNewConfig_CollectorGrpcIdleTimeout(t *testing.T) {
 	}
 }
 
+// A []string handed to Config is copied, so the caller writing to it later
+// cannot change the published snapshot behind what publish derived from it.
+// What StringSlice returns has no spare capacity, so two callers appending to
+// it do not write into one backing array.
+func TestConfig_stringSliceIsNotShared(t *testing.T) {
+	rules := []string{"a:x", "b:y"}
+	c, err := NewConfig(WithAppName("TestApp"), WithSpanIgnoreErrors(rules...))
+	require.NoError(t, err)
+	rules[0] = "changed"
+	assert.Equal(t, []string{"a:x", "b:y"}, c.StringSlice(CfgSpanIgnoreErrors), "an option's slice")
+
+	set := []string{"c:z"}
+	c.Set(CfgSpanIgnoreErrors, set)
+	set[0] = "changed"
+	assert.Equal(t, []string{"c:z"}, c.StringSlice(CfgSpanIgnoreErrors), "a Set slice")
+
+	// Built element by element from a list, the stored slice can have spare
+	// capacity.
+	c.Set(CfgSpanIgnoreErrors, []any{"d:1", "e:2", "f:3"})
+	a := append(c.StringSlice(CfgSpanIgnoreErrors), "a")
+	b := append(c.StringSlice(CfgSpanIgnoreErrors), "b")
+	assert.Equal(t, "a", a[3], "the second append overwrote the first")
+	assert.Equal(t, "b", b[3])
+}
+
+// NaN and Inf are not float option values. NaN passed every range check of
+// the percent sampler and never equalled itself, so every reload republished
+// it as a change; either is rejected like any other value that does not
+// convert, from any source.
+func TestConfig_floatRejectsNaNAndInf(t *testing.T) {
+	for _, v := range []any{"NaN", "nan", "Inf", "-Inf", "+infinity", math.NaN(), math.Inf(1)} {
+		c, err := NewConfig(WithAppName("TestApp"), WithSamplingPercentRate(10))
+		require.NoError(t, err)
+		c.Set(CfgSamplingPercentRate, v)
+		assert.Equal(t, 10.0, c.Float(CfgSamplingPercentRate), "%v must be rejected", v)
+	}
+
+	t.Setenv("PINPOINT_GO_SAMPLING_PERCENTRATE", "NaN")
+	c, err := NewConfig(WithAppName("TestApp"))
+	require.NoError(t, err)
+	assert.Equal(t, 100.0, c.Float(CfgSamplingPercentRate), "an env NaN keeps the default")
+}
+
+// ApplicationType is a service type code, a short in the Java agent and the
+// collector: a value outside it restores the default instead of being cut to
+// another type on the wire.
+func TestConfig_appTypeRange(t *testing.T) {
+	c, err := NewConfig(WithAppName("TestApp"), WithAppType(math.MaxInt16))
+	require.NoError(t, err)
+	assert.Equal(t, math.MaxInt16, c.Int(CfgAppType), "the largest short is kept")
+
+	c, err = NewConfig(WithAppName("TestApp"), WithAppType(math.MaxInt16+1))
+	require.NoError(t, err)
+	assert.Equal(t, ServiceTypeGoApp, c.Int(CfgAppType), "out of range restores the default")
+
+	c.Set(CfgAppType, math.MinInt16-1)
+	assert.Equal(t, ServiceTypeGoApp, c.Int(CfgAppType), "Set normalizes too")
+}
+
 // A "never" spelled as a huge number, such as math.MaxInt, overflowed
 // ms * time.Millisecond: IdleTimeout wrapped to -1ms, which grpc-go's idle
 // timer refires at once while a stream is open, and the max ages and the
