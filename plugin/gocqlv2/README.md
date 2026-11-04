@@ -24,7 +24,9 @@ cluster.QueryObserver = observer
 cluster.BatchObserver = observer
 ```
 
-It is necessary to pass the context containing the pinpoint.Tracer using the pinpoint.WithContext function.
+It is necessary to pass the context containing the pinpoint.Tracer with the driver's `*Context` methods:
+`Query.ExecContext`, `IterContext`, `ScanContext` and `MapScanContext`, or `Batch.ExecContext`
+(`WithContext`, deprecated in v2, works too).
 
 ``` go
 import (
@@ -41,7 +43,7 @@ func doCassandra(w http.ResponseWriter, r *http.Request) {
 
     session, _ := cluster.CreateSession()
     query := session.Query(`SELECT id, text FROM tweet WHERE timeline = ? LIMIT 1`, "me")
-    err := query.WithContext(r.Context()).Consistency(gocql.One).Scan(&id, &text)
+    err := query.Consistency(gocql.One).ScanContext(r.Context(), &id, &text)
     ...
 }
 

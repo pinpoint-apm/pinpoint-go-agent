@@ -69,15 +69,17 @@ This package supports URL Statistics feature. It aggregates response times, succ
 But, WrapHandler and WrapHandlerFunc function doesn't support URL Statistics feature.
 
 #### Config Options
-* [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
-* [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
-* [Http.Server.ExcludeMethod](/doc/config.md#Http.Server.ExcludeMethod)
-* [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
-* [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
-* [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
-* [Http.Server.ProxyUserHeaderNames](/doc/config.md#Http.Server.ProxyUserHeaderNames)
-* [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
-* [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)
+* [Http.Server.StatusCodeErrors](/doc/config.md#httpserverstatuscodeerrors)
+* [Http.Server.ExcludeUrl](/doc/config.md#httpserverexcludeurl)
+* [Http.Server.ExcludeMethod](/doc/config.md#httpserverexcludemethod)
+* [Http.Server.RecordRequestHeader](/doc/config.md#httpserverrecordrequestheader)
+* [Http.Server.RecordResponseHeader](/doc/config.md#httpserverrecordresponseheader)
+* [Http.Server.RecordRequestCookie](/doc/config.md#httpserverrecordrequestcookie)
+* [Http.Server.ProxyUserHeaderNames](/doc/config.md#httpserverproxyuserheadernames)
+* [Http.UrlStat.Enable](/doc/config.md#httpurlstatenable)
+* [Http.UrlStat.LimitSize](/doc/config.md#httpurlstatlimitsize)
+
+The full list of `Http.Server.*` and `Http.UrlStat.*` options is in [Configuration](/doc/config.md#httpserverstatuscodeerrors).
 
 ### http client
 This package instruments outbound requests and add distributed tracing headers.
@@ -120,6 +122,8 @@ func main() {
 [Full Example Source](/example/http/http_server/http_server.go)
 
 #### Config Options
-* [Http.Client.RecordRequestHeader](/doc/config.md#Http.Client.RecordRequestHeader)
-* [Http.Client.RecordResponseHeader](/doc/config.md#Http.Client.RecordResponseHeader)
-* [Http.Client.RecordRequestCookie](/doc/config.md#Http.Client.RecordRequestCookie)
+* [Http.Client.RecordRequestHeader](/doc/config.md#httpclientrecordrequestheader)
+* [Http.Client.RecordResponseHeader](/doc/config.md#httpclientrecordresponseheader)
+* [Http.Client.RecordRequestCookie](/doc/config.md#httpclientrecordrequestcookie)
+
+The full list of `Http.Client.*` options is in [Configuration](/doc/config.md#httpclientrecordrequestheader).

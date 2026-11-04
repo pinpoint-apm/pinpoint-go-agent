@@ -32,9 +32,10 @@ Alternatively, the context of the request may be propagated where the context th
 
 ``` go
 import (
+    "io"
     "net/http"
 
-    "github.com/go-chi/chi"
+    "github.com/go-chi/chi/v5"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi/v2"
 )
@@ -57,13 +58,20 @@ func main() {
 [Full Example Source](/example/chi/chi_server.go)
 
 This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
+The pattern is read from chi v5's route context (`github.com/go-chi/chi/v5`): requests routed by an older chi
+are still traced, but their URL statistics land under `/NULL`.
+Register the middleware after chi's `Recoverer` (`r.Use(middleware.Recoverer, ppchi.Middleware())`), so a panic is
+recorded before `Recoverer` turns it into a 500; see
+[Where the middleware goes](/doc/plugin_guide.md#where-the-middleware-goes).
 
 ### Config Options
-* [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
-* [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
-* [Http.Server.ExcludeMethod](/doc/config.md#Http.Server.ExcludeMethod)
-* [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
-* [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
-* [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
-* [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
-* [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)
+* [Http.Server.StatusCodeErrors](/doc/config.md#httpserverstatuscodeerrors)
+* [Http.Server.ExcludeUrl](/doc/config.md#httpserverexcludeurl)
+* [Http.Server.ExcludeMethod](/doc/config.md#httpserverexcludemethod)
+* [Http.Server.RecordRequestHeader](/doc/config.md#httpserverrecordrequestheader)
+* [Http.Server.RecordResponseHeader](/doc/config.md#httpserverrecordresponseheader)
+* [Http.Server.RecordRequestCookie](/doc/config.md#httpserverrecordrequestcookie)
+* [Http.UrlStat.Enable](/doc/config.md#httpurlstatenable)
+* [Http.UrlStat.LimitSize](/doc/config.md#httpurlstatlimitsize)
+
+The full list of `Http.Server.*` and `Http.UrlStat.*` options is in [Configuration](/doc/config.md#httpserverstatuscodeerrors).

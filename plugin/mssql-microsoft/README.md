@@ -1,9 +1,11 @@
 # ppmssqlmicrosoft
 This package instruments the [microsoft/go-mssqldb](https://github.com/microsoft/go-mssqldb) package.
 
-This is the maintained successor of [denisenkom/go-mssqldb](https://github.com/denisenkom/go-mssqldb),
-which is instrumented by [plugin/mssql](/plugin/mssql).
-The two register different driver names, so a binary may import both.
+The driver behaves like go-mssqldb's `sqlserver` driver name, not the deprecated `mssql`: the query text goes to
+the server as written, so parameters are `@p1` or `@name`, and the `?`, `$1` and `:1` placeholders `mssql` rewrites
+are a syntax error. With sqlx, register the name: `sqlx.BindDriver("mssql-microsoft-pinpoint", sqlx.AT)`.
+go-mssqldb's `SetLogger` and `SetContextLogger` configure its own two driver instances only, so connections
+opened through this plugin do not log through them.
 
 ## Installation
 

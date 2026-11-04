@@ -26,6 +26,11 @@ c := mc.WithContext(pinpoint.NewContext(context.Background(), tracer))
 c.Get("foo")
 ```
 
+`Get`, `GetMulti`, `Set`, `Add`, `Replace`, `CompareAndSwap`, `Delete`, `DeleteAll`, `FlushAll`, `Increment`,
+`Decrement`, `Touch` and `Ping` are traced; `Append`, `Prepend` and `GetAndTouch` reach the embedded
+`*memcache.Client` and are not. A client created elsewhere (`memcache.NewFromSelector`, ...) is instrumented
+with `ppgomemcache.WrapClient(client, endpoint)`.
+
 ``` go
 import (
     "github.com/bradfitz/gomemcache/memcache"

@@ -20,21 +20,34 @@ Use WrapHandler to select the handlers you want to track:
 fasthttp.ListenAndServe(":9000", ppfasthttp.WrapHandler(requestHandler))
 ```
 
-WrapHandler sets the pinpoint.Tracer as a user value of fasthttp handler's context.
-By using the ppfasthttp.CtxKey, this tracer can be obtained in your handler.
-Alternatively, the context of the handler may be propagated where the context that contains the pinpoint.Tracer is required.
+WrapHandler stores a context.Context carrying the pinpoint.Tracer as the user value `ppfasthttp.CtxKey` of the
+handler's `*fasthttp.RequestCtx`. Pass that context wherever a context with the tracer is required (DoClient, a
+database query, an outgoing gRPC call). The `*fasthttp.RequestCtx` itself is a context.Context too, but the wrong
+one: its Value reads the request's user values, so `pinpoint.FromContext(ctx)` finds no tracer and the call records
+nothing. See [Getting the tracer in a handler](/doc/plugin_guide.md#getting-the-tracer-in-a-handler).
+
+WrapHandler sets the user value on every request it wraps, the agent disabled included. A handler that may also run
+unwrapped asserts it with comma-ok: an unchecked assertion panics there, and fasthttp does not recover a handler
+panic.
 
 ``` go
 package main
 
 import (
+    "context"
+    "fmt"
+
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2"
     "github.com/valyala/fasthttp"
 )
 
 func requestHandler(ctx *fasthttp.RequestCtx) {
-    tracer := pinpoint.FromContext(ctx.UserValue(ppfasthttp.CtxKey).(context.Context))
+    tctx, ok := ctx.UserValue(ppfasthttp.CtxKey).(context.Context)
+    if !ok {
+        tctx = context.Background() // not wrapped: this request is not traced
+    }
+    tracer := pinpoint.FromContext(tctx)
     defer tracer.NewSpanEvent("f1").EndSpanEvent()
 
     fmt.Fprintf(ctx, "Hello, world!\n\n")
@@ -50,18 +63,20 @@ func main() {
 [Full Example Source](/example/fasthttp/fasthttp_server.go)
 
 This package supports URL Statistics feature. It aggregates response times, successes and failures for each pattern given as parameter of a WrapHandler function.
+A handler wrapped without a pattern collects no URL statistics.
 
 ### Config Options
-* [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
-* [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
-* [Http.Server.ExcludeMethod](/doc/config.md#Http.Server.ExcludeMethod)
-* [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
-* [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
-* [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
-* [Http.Server.RecordHandlerError](/doc/config.md#Http.Server.RecordHandlerError)
-* [Http.Server.ProxyUserHeaderNames](/doc/config.md#Http.Server.ProxyUserHeaderNames)
-* [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
-* [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)
+* [Http.Server.StatusCodeErrors](/doc/config.md#httpserverstatuscodeerrors)
+* [Http.Server.ExcludeUrl](/doc/config.md#httpserverexcludeurl)
+* [Http.Server.ExcludeMethod](/doc/config.md#httpserverexcludemethod)
+* [Http.Server.RecordRequestHeader](/doc/config.md#httpserverrecordrequestheader)
+* [Http.Server.RecordResponseHeader](/doc/config.md#httpserverrecordresponseheader)
+* [Http.Server.RecordRequestCookie](/doc/config.md#httpserverrecordrequestcookie)
+* [Http.Server.ProxyUserHeaderNames](/doc/config.md#httpserverproxyuserheadernames)
+* [Http.UrlStat.Enable](/doc/config.md#httpurlstatenable)
+* [Http.UrlStat.LimitSize](/doc/config.md#httpurlstatlimitsize)
+
+The full list of `Http.Server.*` and `Http.UrlStat.*` options is in [Configuration](/doc/config.md#httpserverstatuscodeerrors).
 
 ### client
 This package instruments outbound requests and add distributed tracing headers.
@@ -96,6 +111,8 @@ func client(ctx *fasthttp.RequestCtx) {
 [Full Example Source](/example/fasthttp/fasthttp_server.go)
 
 #### Config Options
-* [Http.Client.RecordRequestHeader](/doc/config.md#Http.Client.RecordRequestHeader)
-* [Http.Client.RecordResponseHeader](/doc/config.md#Http.Client.RecordResponseHeader)
-* [Http.Client.RecordRequestCookie](/doc/config.md#Http.Client.RecordRequestCookie)
+* [Http.Client.RecordRequestHeader](/doc/config.md#httpclientrecordrequestheader)
+* [Http.Client.RecordResponseHeader](/doc/config.md#httpclientrecordresponseheader)
+* [Http.Client.RecordRequestCookie](/doc/config.md#httpclientrecordrequestcookie)
+
+The full list of `Http.Client.*` options is in [Configuration](/doc/config.md#httpclientrecordrequestheader).

@@ -62,11 +62,11 @@ This package supports URL Statistics feature. It aggregates response times, succ
 WrapHandle collects URL Statistics only when it is given the route pattern as its second argument, e.g. `pphttprouter.WrapHandle(hello, "/hello/:name")`; without it the statistics are skipped.
 
 ### Config Options
-* [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
-* [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
-* [Http.Server.ExcludeMethod](/doc/config.md#Http.Server.ExcludeMethod)
-* [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
-* [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
-* [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
-* [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
-* [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)
+* [Http.Server.StatusCodeErrors](/doc/config.md#httpserverstatuscodeerrors)
+* [Http.Server.ExcludeUrl](/doc/config.md#httpserverexcludeurl)
+* [Http.Server.ExcludeMethod](/doc/config.md#httpserverexcludemethod)
+* [Http.Server.RecordRequestHeader](/doc/config.md#httpserverrecordrequestheader)
+* [Http.Server.RecordResponseHeader](/doc/config.md#httpserverrecordresponseheader)
+* [Http.Server.RecordRequestCookie](/doc/config.md#httpserverrecordrequestcookie)
+* [Http.UrlStat.Enable](/doc/config.md#httpurlstatenable)
+* [Http.UrlStat.LimitSize](/doc/config.md#httpurlstatlimitsize)

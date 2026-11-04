@@ -18,7 +18,8 @@ This package instruments Kafka consumers and producers.
 
 ### Consumer
 To instrument a Kafka consumer, use ConsumeMessageContext.
-In order to display the kafka broker on the pinpoint screen, a context with the bootstrap servers must be created and delivered using NewContext.
+To show the broker the consumer reads from on the pinpoint screen, pass it a context with the bootstrap servers, made by NewContext.
+Without one, the span shows the broker the producer recorded on the message, or `Unknown` for a message from an uninstrumented producer.
 
 ``` go
 ctx := ppconfluentkafka.NewContext(context.Background(), "localhost:9092")
@@ -42,6 +43,10 @@ func processMessage(ctx context.Context, msg *kafka.Message) error {
     return nil
 }
 ```
+
+The span ends when the handler returns, so call ConsumeMessageContext on the goroutine that processes the message;
+in a worker pool, call it in the worker. See [Message queues](/doc/plugin_guide.md#message-queues).
+
 [Full Example Source](/example/confluentkafka/consumer/consumer.go)
 
 ### Producer
@@ -60,5 +65,17 @@ func save(w http.ResponseWriter, r *http.Request) {
 
 The span event covers the enqueue, and a failed enqueue is recorded on it.
 The delivery report goes where `Produce` sends it - the delivery channel, or `Events()` without one - untouched and in librdkafka's order.
+A failed delivery arrives later, in that report, and is not recorded; record it yourself where you read the report:
+
+``` go
+if m := (<-deliveryChan).(*kafka.Message); m.TopicPartition.Error != nil {
+    pinpoint.FromContext(r.Context()).Span().SetError(m.TopicPartition.Error)
+}
+```
+
+`Produce` and `ProduceChannel` produce without tracing, since they carry no context.
+
+A `*kafka.Producer` created elsewhere is wrapped with `WrapProducer(producer, conf)`;
+the first `bootstrap.servers` entry of `conf` is the broker shown on the pinpoint screen.
 
 [Full Example Source](/example/confluentkafka/producer/producer.go)

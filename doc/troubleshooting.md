@@ -173,11 +173,27 @@ c, _ := pinpoint.NewConfig(pinpoint.WithConfigFile("/etc/myapp/pinpoint-config.y
 agent, err := pinpoint.NewAgent(c)      // resume: a fresh agent, same process
 ```
 
-Two things to know about this pattern:
+What to know about this pattern:
 
 * The agent is a process-global singleton. Calling `NewAgent()` while one is
   live returns the **existing** agent plus an `agent is already created`
   error — you must `Shutdown()` first.
+* A handle keeps the agent it was given. After a resume, a
+  `defer agent.Shutdown()` and a `ShutdownOnSignal(agent)` watcher set up in
+  `main()` still point at the stopped agent, so the new one is never flushed on
+  exit. Shut down whichever agent is current, and re-arm the watcher:
+
+  ```go
+  defer func() { pinpoint.GetAgent().Shutdown() }()
+  stop := pinpoint.ShutdownOnSignal(agent)
+  defer func() { stop() }()
+
+  // to resume:
+  agent.Shutdown()
+  stop()
+  agent, err = pinpoint.NewAgent(c)
+  stop = pinpoint.ShutdownOnSignal(agent)
+  ```
 * `Shutdown()` returns within milliseconds against a reachable collector and
   within about six seconds at worst: up to three seconds waiting for a config
   file reload callback in progress to finish, then up to three draining the
@@ -236,9 +252,12 @@ Work down this list; it is ordered by how often each turns out to be the cause.
    `ApplicationName` actually sent.
 6. **Time skew.** Pinpoint indexes spans by timestamp. A host clock minutes off
    puts your traces outside the window you are looking at.
-7. **Process exited too early.** Short-lived programs need
-   `defer agent.Shutdown()`; see above. Only the last spans before a restart
-   missing? See [Spans Missing at Shutdown or on a Rollout](#spans-missing-at-shutdown-or-on-a-rollout).
+7. **Process exited too early, or started too early.** A short-lived program
+   records nothing before the agent registers and loses what is queued without
+   `Shutdown()`; see
+   [Short-lived programs](getting_started.md#short-lived-programs). Only the
+   last spans before a restart missing? See
+   [Spans Missing at Shutdown or on a Rollout](#spans-missing-at-shutdown-or-on-a-rollout).
 
 ### Spans Missing at Shutdown or on a Rollout
 
@@ -335,6 +354,7 @@ case:
 | `abnormal span - has no event` | recorder or goroutine tracer requested with no active event | open a span event first |
 | `span is shared by more than one goroutine` | one tracer used from several goroutines | `NewGoroutineTracer()` or `WrapGoroutine()` per goroutine |
 | `callStack maximum depth/sequence exceeded` | span overflowed | record fewer events (one per loop, not per iteration), or raise `Span.MaxCallStackDepth` / `Span.MaxCallStackSequence` |
+| (no warning) transaction failed, but no event has an error | it ran `SQL.ErrorCount` statements (default 100); those recorded by pgx's native tracer and by gocql count too | an N+1 loop is what the mark surfaces; for batch work raise the option, or keep the count without the verdict with `Span.ErrorMarkExclude: sql` ([SQL.ErrorCount](config.md#sqlerrorcount)) |
 
 The `called after EndSpan` warnings for setters are logged at `debug` level,
 which is why this list is worth a debug run; the lifecycle ones (`NewSpanEvent`,
@@ -352,7 +372,9 @@ A call chain that shows as separate transactions instead of one:
 * **A tracer must reach the client call.** The client wrapper pulls the tracer
   from the request context; a request built with `context.Background()` carries
   nothing. Use `req.WithContext(r.Context())` or
-  `pinpoint.RequestWithTracerContext()`.
+  `pinpoint.RequestWithTracerContext()`. In a framework handler, check which
+  value carries the tracer:
+  [Getting the tracer in a handler](plugin_guide.md#getting-the-tracer-in-a-handler).
 * **The callee must extract.** Use `NewSpanTracerWithReader()`, or the server
   wrapper, which does it for you.
 * **Both nodes must reach the same collector**, and both must appear in the UI
@@ -365,10 +387,12 @@ A call chain that shows as separate transactions instead of one:
 
 ### High Memory Usage
 
-* **Span queue backing up.** If the collector is slow or unreachable, spans
-  queue until `Span.QueueSize` (default 1024); past that the oldest queued
-  spans are overwritten, and the agent logs `span drops: N in total, M
-  overwritten by span queue overflow` at WARN. Lowering
+* **Span queue backing up.** If the collector is slow or unreachable, span
+  chunks queue until `Span.QueueSize` (default 1024; a span is one chunk per
+  `Span.EventChunkSize` events plus its final one); past that the oldest
+  queued chunks are overwritten, and the agent logs `span drops: N in total, M
+  overwritten by span queue overflow` at WARN, counting chunks. See
+  [Collector Down or Slow](#collector-down-or-slow) for the whole bound. Lowering
   the queue bounds the memory; fixing the collector fixes the cause. The
   metadata queue is bounded separately by `Collector.Grpc.SenderQueueSize`
   (default 1000); while it is full, new metadata is left unregistered for
@@ -384,7 +408,9 @@ A call chain that shows as separate transactions instead of one:
   if every query inlines distinct literals.
 * **Leaked tracers.** A goroutine tracer whose `EndSpan()` never runs keeps its
   span alive. `WrapGoroutine()` cannot leak this way; hand-rolled goroutine
-  tracers can.
+  tracers can. A span whose `EndSpan()` never runs also stays registered as an
+  active request; once that registry is full (10240 entries) the agent logs
+  `active span registry full ... spans may not be ended` (`src=stats`).
 
 ### High CPU Usage or Slow Responses
 
@@ -401,6 +427,27 @@ A call chain that shows as separate transactions instead of one:
   Record one event around the loop.
 * **`Collector.Grpc.SpanBatch*`.** For a very high span rate, tune `Collector.Grpc.SpanBatchSize` and
   `Collector.Grpc.SpanBatchMaxConcurrentRequests`.
+
+### Collector Down or Slow
+
+No request waits for the collector. `NewAgent()` returns before it connects,
+and spans, metadata and statistics go into bounded queues that the agent's own
+goroutines drain; a full queue drops instead of blocking. What an outage costs
+the application:
+
+* **Down from the start:** tracing waits for registration, so every tracer is
+  a no-op - no cost, and no data.
+* **Lost later:** requests are traced and queued as usual. The span queue holds
+  `Span.QueueSize` chunks (1024), a span taking one per
+  `Span.EventChunkSize` events (20) plus its final one, and then overwrites
+  the oldest. Up to `Collector.Grpc.SpanBatchMaxConcurrentRequests` x
+  `Collector.Grpc.SpanBatchSize` more chunks (10 x 50) are held by send
+  requests, each for up to 5 seconds. That is the memory to plan for.
+* **Slow:** the same, and a batch that finds no free request slot within
+  `Collector.Grpc.SpanBatchFlushInterval` (1 s) is dropped with
+  `SendSpanBatch skipped: N spans dropped`.
+* `Shutdown()` stays within its bound whatever the collector does; see
+  [Stopping and Resuming the Agent](#stopping-and-resuming-the-agent).
 
 ### Cannot Connect to Collector
 

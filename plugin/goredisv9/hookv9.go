@@ -3,13 +3,14 @@
 // This package instruments the go-redis/v9 calls.
 // Use the NewHook as the redis.Hook.
 //
-//	rc = redis.NewClient(redisOpts)
-//	rc.AddHook(ppgoredisv9.NewHook(redisOpts))
+//	rc := redis.NewClient(opts)
+//	rc.AddHook(ppgoredisv9.NewHook(opts))
 //
-// It is necessary to pass the context containing the pinpoint.Tracer to redis.Client.
+// It is necessary to pass the context containing the pinpoint.Tracer with each
+// command; a pipeline is recorded on the context given to Exec.
 //
-//	rc = rc.WithContext(pinpoint.NewContext(context.Background(), tracer))
-//	rc.Pipeline()
+//	ctx := pinpoint.NewContext(context.Background(), tracer)
+//	val, err := rc.Get(ctx, "key").Result()
 package ppgoredisv9
 
 import (

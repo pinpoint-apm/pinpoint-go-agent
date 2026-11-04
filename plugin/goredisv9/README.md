@@ -1,5 +1,5 @@
 # ppgoredisv9
-This package instruments the [go-redis/redis/v9](https://github.com/go-redis/redis) package.
+This package instruments the [redis/go-redis/v9](https://github.com/redis/go-redis) package.
 
 ## Installation
 
@@ -16,16 +16,25 @@ This package instruments the go-redis/v9 calls. Use the NewHook or NewClusterHoo
 Only available in versions of go-redis with an AddHook() function.
 
 ``` go
-rc = redis.NewClient(redisOpts)
-client.AddHook(ppgoredisv9.NewHook(opts))
+rc := redis.NewClient(opts)
+rc.AddHook(ppgoredisv9.NewHook(opts))
 ```
 
-It is necessary to pass the context containing the pinpoint.Tracer to redis.Client.
+It is necessary to pass the context containing the pinpoint.Tracer with each command.
+A pipeline is recorded on the context given to `Exec` (or `Pipelined`); the contexts of the queued commands are not used.
 
 ``` go
-rc = rc.WithContext(pinpoint.NewContext(context.Background(), tracer))
-rc.Pipeline()
+ctx := pinpoint.NewContext(context.Background(), tracer)
+val, err := rc.Get(ctx, "key").Result()
+
+pipe := rc.Pipeline()
+pipe.Incr(ctx, "counter")
+cmds, err := pipe.Exec(ctx)
 ```
+
+The span events report the address in the options as the endpoint. For a Sentinel, Ring or universal client,
+give the hook a label of your own, `ppgoredisv9.NewHook(&redis.Options{Addr: "sentinel-master"})`;
+`NewHook(nil)` reports `unknown`.
 
 The commands go-redis's AutoPipeliner batches are sent with a context of its
 own and are not traced. One it sends apart from the batch, such as a blocking
@@ -37,7 +46,7 @@ recorded.
 package main
 
 import (
-    "github.com/go-redis/redis/v9"
+    "github.com/redis/go-redis/v9"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv9/v2"
 )

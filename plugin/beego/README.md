@@ -53,14 +53,16 @@ func main() {
 This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
 
 #### Config Options
-* [Http.Server.StatusCodeErrors](/doc/config.md#Http.Server.StatusCodeErrors)
-* [Http.Server.ExcludeUrl](/doc/config.md#Http.Server.ExcludeUrl)
-* [Http.Server.ExcludeMethod](/doc/config.md#Http.Server.ExcludeMethod)
-* [Http.Server.RecordRequestHeader](/doc/config.md#Http.Server.RecordRequestHeader)
-* [Http.Server.RecordResponseHeader](/doc/config.md#Http.Server.RecordResponseHeader)
-* [Http.Server.RecordRequestCookie](/doc/config.md#Http.Server.RecordRequestCookie)
-* [Http.UrlStat.Enable](/doc/config.md#Http.UrlStat.Enable)
-* [Http.UrlStat.LimitSize](/doc/config.md#Http.UrlStat.LimitSize)
+* [Http.Server.StatusCodeErrors](/doc/config.md#httpserverstatuscodeerrors)
+* [Http.Server.ExcludeUrl](/doc/config.md#httpserverexcludeurl)
+* [Http.Server.ExcludeMethod](/doc/config.md#httpserverexcludemethod)
+* [Http.Server.RecordRequestHeader](/doc/config.md#httpserverrecordrequestheader)
+* [Http.Server.RecordResponseHeader](/doc/config.md#httpserverrecordresponseheader)
+* [Http.Server.RecordRequestCookie](/doc/config.md#httpserverrecordrequestcookie)
+* [Http.UrlStat.Enable](/doc/config.md#httpurlstatenable)
+* [Http.UrlStat.LimitSize](/doc/config.md#httpurlstatlimitsize)
+
+The full list of `Http.Server.*` and `Http.UrlStat.*` options is in [Configuration](/doc/config.md#httpserverstatuscodeerrors).
 
 ### client
 This package instruments outbound requests and add distributed tracing headers.
@@ -88,7 +90,23 @@ func (m *MainController) Get() {
 ```
 [Full Example Source](/example/beego/beego_server.go)
 
+`ClientFilterChain(nil)` takes the tracer from the request's own context instead, so it can be registered once
+for every request:
+
+``` go
+httplib.AddDefaultFilter(ppbeego.ClientFilterChain(nil)) // at startup, before requests are built
+
+req := httplib.NewBeegoRequestWithCtx(m.Ctx.Request.Context(), "http://localhost:9090/", "GET")
+str, err := req.String()
+```
+
+A request built with `httplib.Get()` or `NewBeegoRequest()` carries `context.Background()` and is not traced this
+way. A filter built with a tracer records every request on that tracer: add it per request with `req.AddFilters`,
+never with `AddDefaultFilter`.
+
 #### Config Options
-* [Http.Client.RecordRequestHeader](/doc/config.md#Http.Client.RecordRequestHeader)
-* [Http.Client.RecordResponseHeader](/doc/config.md#Http.Client.RecordResponseHeader)
-* [Http.Client.RecordRequestCookie](/doc/config.md#Http.Client.RecordRequestCookie)
+* [Http.Client.RecordRequestHeader](/doc/config.md#httpclientrecordrequestheader)
+* [Http.Client.RecordResponseHeader](/doc/config.md#httpclientrecordresponseheader)
+* [Http.Client.RecordRequestCookie](/doc/config.md#httpclientrecordrequestcookie)
+
+The full list of `Http.Client.*` options is in [Configuration](/doc/config.md#httpclientrecordrequestheader).

@@ -24,6 +24,13 @@ entry := pplogrus.NewEntry(tracer).WithField("foo", "bar")
 entry.Error("entry log message")
 ```
 
+NewEntry starts from logrus' standard logger, so the line goes to that logger's output, formatter and level.
+With a `*logrus.Logger` of your own, use NewLoggerEntry:
+
+``` go
+entry := pplogrus.NewLoggerEntry(logger, tracer).WithField("foo", "bar")
+```
+
 You can use NewHook as the logrus.Hook.
 It is necessary to pass the context containing the pinpoint.Tracer to logrus.Logger.
 

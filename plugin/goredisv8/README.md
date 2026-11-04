@@ -16,16 +16,25 @@ This package instruments the go-redis/v8 calls. Use the NewHook or NewClusterHoo
 Only available in versions of go-redis with an AddHook() function.
 
 ``` go
-rc = redis.NewClient(redisOpts)
-client.AddHook(ppgoredisv8.NewHook(opts))
+rc := redis.NewClient(opts)
+rc.AddHook(ppgoredisv8.NewHook(opts))
 ```
 
-It is necessary to pass the context containing the pinpoint.Tracer to redis.Client.
+It is necessary to pass the context containing the pinpoint.Tracer with each command.
+A pipeline is recorded on the context given to `Exec` (or `Pipelined`); the contexts of the queued commands are not used.
 
 ``` go
-rc = rc.WithContext(pinpoint.NewContext(context.Background(), tracer))
-rc.Pipeline()
+ctx := pinpoint.NewContext(context.Background(), tracer)
+val, err := rc.Get(ctx, "key").Result()
+
+pipe := rc.Pipeline()
+pipe.Incr(ctx, "counter")
+cmds, err := pipe.Exec(ctx)
 ```
+
+The span events report the address in the options as the endpoint. For a Sentinel, Ring or universal client,
+give the hook a label of your own, `ppgoredisv8.NewHook(&redis.Options{Addr: "sentinel-master"})`;
+`NewHook(nil)` reports `unknown`.
 
 ``` go
 package main

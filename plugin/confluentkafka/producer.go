@@ -4,8 +4,9 @@
 // This package instruments Kafka consumers and producers.
 //
 // To instrument a Kafka consumer, use ConsumeMessageContext.
-// In order to display the kafka broker on the pinpoint screen,
-// a context with the bootstrap servers must be created and delivered using NewContext.
+// To show the broker the consumer reads from on the pinpoint screen, pass it a
+// context with the bootstrap servers, made by NewContext. Without one, the span shows the
+// broker the producer recorded on the message, or Unknown.
 //
 //	ctx := ppconfluentkafka.NewContext(context.Background(), "localhost:9092")
 //	for {

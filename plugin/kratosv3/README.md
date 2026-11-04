@@ -138,9 +138,18 @@ transgrpc.WithStreamInterceptor(ppgrpc.StreamClientInterceptor()),
 
 ### Notes
 
-A handler error fails the span, as the gRPC plugin does: kratos reports a
+ServerMiddleware does not go through the [http plugin](/plugin/http), so an
+HTTP request is recorded as a kratos call too: the span is named after the
+kratos operation (`/helloworld.Greeter/SayHello`), not the path, and no HTTP
+status is recorded - the outcome is the error the handler returns. None of the
+`Http.Server.*` options applies (`ExcludeUrl`, `ExcludeMethod`,
+`StatusCodeErrors`, `RecordHandlerError`, header, cookie and parameter
+recording, `RealIpHeader`): the remote address of an HTTP transport is the
+socket's `RemoteAddr`. No URL statistics are collected.
+
+A handler error fails the span, as the gRPC plugin does. kratos reports a
 `404` as an `errors.NotFound` error, so such a response is a failed
-transaction here where it is not under the net/http plugins, whose
-`Http.Server.RecordHandlerError` option does not reach this plugin. The remote
-address of an HTTP transport is the socket's `RemoteAddr`; the
-`Http.Server.RealIpHeader` option is not applied either.
+transaction here. So is a 404 an echo or fiber handler returns as an error,
+by default ([Http.Server.RecordHandlerError](/doc/config.md#httpserverrecordhandlererror));
+the net/http, chi and gorilla plugins judge a 404 by its status alone, which
+the default `Http.Server.StatusCodeErrors` (`5xx`) does not count.

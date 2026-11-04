@@ -23,7 +23,7 @@ cluster.QueryObserver = observer
 cluster.BatchObserver = observer
 ```
 
-It is necessary to pass the context containing the pinpoint.Tracer using the pinpoint.WithContext function.
+It is necessary to pass the context containing the pinpoint.Tracer with gocql's `Query.WithContext` (or `Batch.WithContext`).
 
 ``` go
 import (

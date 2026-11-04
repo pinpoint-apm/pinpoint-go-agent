@@ -3,8 +3,9 @@
 // This package instruments Kafka consumers and producers.
 //
 // To instrument a Kafka consumer, use ConsumeMessageContext.
-// In order to display the kafka broker on the pinpoint screen,
-// a context with broker addresses must be created and delivered using NewContext.
+// To show the broker the consumer reads from on the pinpoint screen, pass it a
+// context with broker addresses, made by NewContext. Without one, the span shows the
+// broker the producer recorded on the message, or Unknown.
 //
 // ConsumePartition example:
 //

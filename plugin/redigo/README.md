@@ -32,6 +32,26 @@ Also, you can use function taking the context like redis.DoContext.
 redis.DoContext(c, pinpoint.NewContext(context.Background(), tracer), "GET", "vehicle")
 ```
 
+### Connection pools
+Dial the pool's connections through this package, and pass the context with each command through
+`redis.DoContext` (or `redis.ReceiveContext`). A pooled connection is redigo's own wrapper in front of the
+instrumented one, so WithContext cannot reach it: it does nothing there, and `Do`, `Send` and `Receive`
+on a pooled connection are not traced.
+
+``` go
+pool := &redis.Pool{
+    DialContext: func(ctx context.Context) (redis.Conn, error) {
+        return ppredigo.DialContext(ctx, "tcp", "127.0.0.1:6379")
+    },
+}
+
+conn := pool.Get()
+defer conn.Close()
+v, err := redis.DoContext(conn, r.Context(), "GET", "vehicle")
+```
+
+A connection dialed some other way is instrumented with `ppredigo.WrapConn(conn, address)`.
+
 ``` go
 package main
 

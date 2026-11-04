@@ -83,7 +83,7 @@ restart either, so it is not listed. `ReloadConfig()` never panics; `result.Stat
 |---|---|---|
 | `ConfigReloadApplied` | the dynamic options were applied | yes; `RestartRequired` lists the rest |
 | `ConfigReloadNoAgent` | `NewAgent()` has not run, failed, or the agent was shut down | nothing |
-| `ConfigReloadConfigFileActive` | the agent reads a config file (`ConfigFile`); the file outranks YAML as it does at startup, so change the file | nothing |
+| `ConfigReloadConfigFileActive` | a config file is configured (`ConfigFile`), even one that does not exist yet - the watcher applies it once it appears; the file outranks YAML as it does at startup, so change the file | nothing |
 | `ConfigReloadInvalidYAML` | a YAML syntax error, or a document that is not a mapping - a scalar, a sequence, or an empty document (`{}` asks for every default explicitly) | nothing |
 | `ConfigReloadInvalidConfig` | a value of the wrong type for its option, or a configuration `NewAgent()` would refuse: an empty or invalid `ApplicationName`, an invalid `ServiceName` or `ApiKey` for `Uid.Version` v4 | nothing |
 | `ConfigReloadError` | an unexpected internal error | nothing |
@@ -1277,7 +1277,23 @@ If sets to "HEADERS-ALL", it records all request cookies.
 * dynamic
 
 ### Http.Server.RecordHandlerError
-Http.Server.RecordHandlerError sets whether to record the error returned by http handler.
+Http.Server.RecordHandlerError sets whether to record the error returned by http handler: the error a gin
+handler adds with `c.Error()` - as `c.Bind()` and `c.AbortWithError()` do - and the error an echo or fiber
+handler returns. The other server plugins see no handler error.
+
+A recorded error **fails the transaction whatever the response status**. By default, then, a 4xx that comes as
+an error - `c.BindJSON()` on invalid input, `echo.NewHTTPError(400)`, `fiber.ErrNotFound`, and the 404 and 405
+that echo and fiber return for a path no route matches - counts as a failed transaction and as a failure in the
+URL statistics. To leave those to [Http.Server.StatusCodeErrors](#httpserverstatuscodeerrors) while other errors
+still fail, list the framework's error type in [Span.IgnoreErrors](#spanignoreerrors): `*echo.HTTPError`,
+`*fiber.Error`. Every gin handler error is a `*gin.Error`, so for gin list the type it wraps instead. Turning
+this option off stops recording handler errors altogether, messages included.
+
+echo and fiber choose the response status for an error in their error handler, after the middleware has
+returned, so the plugin derives it from the error: the code of a `*echo.HTTPError` (echo v4), the status echo v5
+resolves for the error (from its `StatusCode() int`), the code of a `*fiber.Error`, and 500 for any other error.
+A custom `HTTPErrorHandler` or fiber `ErrorHandler` that maps an error to another status is not seen - the trace
+says 500 where the client got 404 - so return the framework's error type for those outcomes.
 
 * PINPOINT_GO_HTTP_SERVER_RECORDHANDLERERROR
 * type: bool
@@ -1400,7 +1416,9 @@ Http:
 ### Http.UrlStat.Enable
 Http.UrlStat.Enable option enables the agent's HTTP URL statistics feature.
 If this is set as false, the agent doesn't collect HTTP URL statistics.
-Pinpoint Go Agent collects response times, successes and failures for all http requests regardless of sampling.
+Pinpoint Go Agent collects response times, successes and failures for the requests the HTTP plugins trace,
+regardless of sampling. Which entry points report a URL, and under which pattern, is in the
+[plugin guide](plugin_guide.md#url-statistics): `pphttp.WrapHandler`, gRPC and kratos report none.
 The HTTP URL statistics feature is supported from Pinpoint version 2.5.0.
 
 Statistics are aggregated into 30 second ticks, and **only a tick that is over is
@@ -1634,7 +1652,22 @@ See [ActiveProfile](#activeprofile) for the file layout.
   dump prints it as `****`.
 * Turn `SQL.TraceBindValue` off wherever query parameters can carry personal
   data. It is on by default because it is the single most useful thing in a
-  slow-query trace, which is exactly why it needs a deliberate decision.
+  slow-query trace, which is exactly why it needs a deliberate decision. It
+  covers bind values only: a literal written into the statement -
+  `WHERE email = 'a@b.com'` - is extracted by normalization and sent with the
+  statement on every execution, for the UI to show the original statement, so
+  pass sensitive values as arguments.
+* The other store plugins record the following, with no switch unless one is
+  named:
+
+  | Plugin | Recorded |
+  |---|---|
+  | mongodriver, mongodriverv2 | the command as extended JSON, filter values and inserted documents included, cut to `Mongo.CommandMaxSize`; off with `Mongo.RecordCommand: false` |
+  | goelastic | the first 256 bytes of the request body - the query, or the document being indexed - or the `q` parameter |
+  | gomemcache | the key; the first 32 keys of a `GetMulti` |
+  | gohbase | the row key; a `Scan`'s start and stop rows |
+  | gocql, gocqlv2 | the statement text, literals included; bound values never |
+  | goredisv8, goredisv9, rueidis, redigo | the command name only |
 * Record headers by name, not `HEADERS-ALL`, in production —
   `Authorization`, `Cookie` and `Set-Cookie` all land in the trace otherwise.
 * Use TLS to the collector (`Collector.Grpc.SslEnable`). Leave

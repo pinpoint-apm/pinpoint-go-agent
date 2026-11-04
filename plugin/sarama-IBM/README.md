@@ -16,7 +16,8 @@ This package instruments Kafka consumers and producers.
 
 ### Consumer
 To instrument a Kafka consumer, use ConsumeMessageContext.
-In order to display the kafka broker on the pinpoint screen, a context with broker addresses must be created and delivered using NewContext.
+To show the broker the consumer reads from on the pinpoint screen, pass it a context with the broker addresses, made by NewContext.
+Without one, the span shows the broker the producer recorded on the message, or `Unknown` for a message from an uninstrumented producer.
 
 ConsumePartition example:
 ``` go
@@ -51,6 +52,9 @@ calls traced with it are recorded under the handler's event.
 func process(ctx context.Context, msg *sarama.ConsumerMessage) error {
     fmt.Printf("Message topic:%q partition:%d offset:%d\n", msg.Topic, msg.Partition, msg.Offset)
 ```
+
+The span ends when the handler returns, so call ConsumeMessageContext on the goroutine that processes the message;
+in a worker pool, call it in the worker. See [Message queues](/doc/plugin_guide.md#message-queues).
 
 ``` go
 package main
@@ -102,7 +106,10 @@ config.Producer.Return.Successes = true
 producer, err := ppsaramaibm.NewSyncProducer(brokers, config)
 ```
 
-Use SendMessageContext with the context containing the pinpoint.Tracer; SendMessage produces without tracing.
+Use SendMessageContext, or SendMessagesContext for a batch, with the context containing the pinpoint.Tracer;
+SendMessage and SendMessages produce without tracing.
+A batch is recorded as one `sarama.SyncProducer.SendMessages` event, which carries the duration and the error,
+with an event per message under it.
 
 ``` go
 ctx := pinpoint.NewContext(context.Background(), tracer)
@@ -163,6 +170,16 @@ ctx := pinpoint.NewContext(context.Background(), tracer)
 producer.InputContext(ctx, msg)
 ```
 
+InputContext records a `sarama.AsyncProducer.Input()` event on the caller, and under it a
+`sarama.AsyncProducer.SendMessage` event that lasts until the broker acknowledges the message and records a failed delivery.
+That needs both `config.Producer.Return.Successes` (off in sarama's default config) and `config.Producer.Return.Errors`
+(on by default); with either off, the event ends at once and a failed delivery is not recorded.
+An acknowledgment that arrives after the request has ended is still recorded on its event, but no longer fails the transaction.
+Like Input, InputContext blocks until sarama takes the message; it does not watch the context's deadline.
+
+Read `Errors()`, and `Successes()` when it is enabled, from the wrapper, as sarama requires of its own channels:
+one nobody reads stalls the producer. Close the producer through the wrapper too.
+
 ``` go
 package main
 
@@ -211,3 +228,17 @@ func main() {
 
 ```
 [Full Example Source](/example/sarama-IBM/asyncproducer/asyncproducer.go)
+
+#### Producers created elsewhere
+A producer created another way - `sarama.NewSyncProducerFromClient`, `sarama.NewAsyncProducerFromClient`,
+or one a library hands you - is wrapped with WrapSyncProducer or WrapAsyncProducer.
+`addrs[0]` is the broker shown on the pinpoint screen, and `config` is the producer's own configuration
+(`nil` for sarama's default), which decides the header and acknowledgment handling above.
+
+``` go
+p, err := sarama.NewSyncProducerFromClient(client)
+producer := ppsaramaibm.WrapSyncProducer(p, brokers, client.Config())
+```
+
+After WrapAsyncProducer, use only the wrapper: it reads the original producer's `Successes()` and `Errors()` itself
+to end the message events, and its `Close()` drains them.

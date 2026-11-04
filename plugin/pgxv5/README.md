@@ -21,12 +21,24 @@ cfg.Tracer = pppgxv5.NewTracer()
 conn, err := pgx.ConnectConfig(context.Background(), cfg)
 ```
 
+For a pool, set it on the connection config the pool is built from:
+
+``` go
+cfg, err := pgxpool.ParseConfig("postgresql://test:test!@localhost/testdb?sslmode=disable")
+cfg.ConnConfig.Tracer = pppgxv5.NewTracer()
+pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+```
+
 It is necessary to pass the context containing the pinpoint.Tracer to pgx calls.
 
 ``` go
 ctx := pinpoint.NewContext(context.Background(), tracer)
 rows := conn.QueryRow(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
 ```
+
+A query's event stays open until its `Rows` is closed (for `QueryRow`, until `Scan` returns): it covers the row loop,
+and whatever the loop records nests under it. Close every `Rows`; one left open keeps its event open for the rest
+of the request, with every later event nested under it.
 
 ``` go
 import (
@@ -65,12 +77,16 @@ db, err := sql.Open("pgxv5-pinpoint", "postgresql://test:test!@localhost/testdb?
 ```
 
 It is necessary to pass the context containing the pinpoint.Tracer to all exec and query methods on SQL driver.
-Spans will be created for queries and other statement executions if the context methods are used, and the context includes a transaction.
+Span events are recorded for queries and other statement executions made with the context methods and a context carrying the pinpoint.Tracer.
 
 ``` go
 ctx := pinpoint.NewContext(context.Background(), tracer)
 row := db.QueryRowContext(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
 ```
+
+Use the driver or the native tracer on a connection, not both: a connection opened through `pgxv5-pinpoint`
+from a config that also carries `NewTracer()` records every query twice. A name from `stdlib.RegisterConnConfig`
+opens through `pgxv5-pinpoint`, but carries no host or database name for the span events to report.
 
 A `sql.Conn.Raw` callback is handed the instrumented connection, not pgx's
 `*stdlib.Conn`. Unwrap it with `pinpoint.UnwrapSQLConn` before the type

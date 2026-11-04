@@ -20,7 +20,7 @@ db, err := sql.Open("pq-pinpoint", "postgresql://test:test!@localhost/testdb?ssl
 ```
 
 It is necessary to pass the context containing the pinpoint.Tracer to all exec and query methods on SQL driver.
-Spans will be created for queries and other statement executions if the context methods are used, and the context includes a transaction.
+Span events are recorded for queries and other statement executions made with the context methods and a context carrying the pinpoint.Tracer.
 
 ``` go
 ctx := pinpoint.NewContext(context.Background(), tracer)

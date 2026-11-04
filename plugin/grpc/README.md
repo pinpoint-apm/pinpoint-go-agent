@@ -24,6 +24,16 @@ grpcServer := grpc.NewServer(
 )
 ```
 
+With other interceptors, list ppgrpc's first: a call that a later one rejects (authentication, rate limiting) is
+then traced too, and the later ones find the tracer in the context.
+
+``` go
+grpcServer := grpc.NewServer(
+    grpc.ChainUnaryInterceptor(ppgrpc.UnaryServerInterceptor(), auth),
+    grpc.ChainStreamInterceptor(ppgrpc.StreamServerInterceptor(), streamAuth),
+)
+```
+
 ppgrpc's server interceptor adds the pinpoint.Tracer to the gRPC server handler's context.
 By using the pinpoint.FromContext function, this tracer can be obtained.
 Alternatively, the context of the handler may be propagated where the context that contains the pinpoint.Tracer is required.
@@ -143,3 +153,27 @@ func doGrpc(w http.ResponseWriter, r *http.Request) {
 
 A handler error fails the span: the error is the RPC's status, so unlike the
 net/http plugins there is no `Http.Server.RecordHandlerError` switch here.
+
+Every method is traced, health checks (`/grpc.health.v1.Health/Check`, and
+`Watch`, a stream that lasts as long as the client watches) and server
+reflection included. The `Http.Server.*` options, `ExcludeUrl` among them, do
+not reach gRPC, and no URL statistics are collected. To leave a method out,
+call the interceptor conditionally (the same works for the stream one):
+
+``` go
+pp := ppgrpc.UnaryServerInterceptor()
+skipHealth := func(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grpc.UnaryHandler) (any, error) {
+    if strings.HasPrefix(info.FullMethod, "/grpc.health.v1.Health/") {
+        return h(ctx, req)
+    }
+    return pp(ctx, req, info, h)
+}
+grpcServer := grpc.NewServer(grpc.ChainUnaryInterceptor(skipHealth /*, auth, ... */))
+```
+
+A stream is one transaction: its span ends when the stream handler returns, so
+it reaches the UI when the stream closes, with the stream's lifetime as its
+response time. A handler that sends on one goroutine and receives on another
+gives the second its own tracer
+(`pinpoint.FromContext(stream.Context()).NewGoroutineTracer()`). See
+[Long-lived connections](/doc/plugin_guide.md#long-lived-connections).

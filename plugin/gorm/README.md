@@ -18,6 +18,17 @@ This package instruments the go-gorm/gorm calls. Use the Open as the gorm.Open.
 g, err := ppgorm.Open(mysql.New(mysql.Config{Conn: db}), &gorm.Config{})
 ```
 
+ppgorm records the GORM call only. The SQL, its bind values and the database node come from the
+`database/sql` driver underneath, so give GORM a pool opened through a pinpoint SQL plugin -
+`Conn: db` with `db` from `sql.Open("mysql-pinpoint", dsn)` as above, or the driver name:
+
+``` go
+g, err := ppgorm.Open(mysql.New(mysql.Config{DriverName: "mysql-pinpoint", DSN: dsn}), &gorm.Config{})
+```
+
+The dialectors' defaults, `mysql.Open(dsn)` and `postgres.Open(dsn)`, open the pool through the
+uninstrumented driver, and no SQL is recorded. See [SQL databases](/doc/plugin_guide.md#sql-databases).
+
 Or register the callbacks on a `*gorm.DB` opened elsewhere (idempotent; the
 compile-time instrumentation tool uses it from its `gorm.Open` hook):
 

@@ -309,6 +309,39 @@ exits without `Shutdown()` drops whatever is still queued. A `defer` does not
 run on a signal or `os.Exit()`; see
 [Troubleshooting](troubleshooting.md#spans-missing-at-shutdown-or-on-a-rollout).
 
+### Short-lived programs
+
+A CLI, a batch run or a one-shot job needs one more step. `NewAgent()` returns
+at once and registers with the collector in the background; until the
+collector accepts the agent, every tracer is a no-op, so work that starts right
+after `NewAgent()` records nothing. `Agent.Enable()` turns true once the agent
+is registered. Wait for it, with a bound:
+
+```go
+agent, err := pinpoint.NewAgent(cfg)
+if err != nil {
+	log.Printf("pinpoint agent start failed: %v", err)
+}
+defer agent.Shutdown()
+
+// A disabled or failed agent is NoopAgent(), which never becomes enabled.
+if agent != pinpoint.NoopAgent() {
+	for deadline := time.Now().Add(3 * time.Second); !agent.Enable() && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+```
+
+The plugins look the agent up on every call, so a handler can be wrapped and
+`sql.Open` called before `NewAgent()`; a call made before registration passes
+through untraced.
+
+At the end, `Shutdown()` is what sends the last spans: an ended span otherwise
+waits up to `Collector.Grpc.SpanBatchCollectDeadline` (500 ms) for others to
+share its batch, while `Shutdown()` sends the queue at once. There is no flush
+that keeps the agent running, and a runtime that freezes the process between
+invocations holds whatever was queued until the process runs again.
+
 ## Runnable examples
 
 The [example](/example) directory has complete programs you can build and run:

@@ -55,6 +55,19 @@ production log too. It is gated only on the goroutine id being readable; where
 the agent cannot read it there is no detection and a shared tracer degrades
 silently.
 
+**A goroutine tracer has no span of its own on the wire.** It is sent as a
+`PSpanChunk` of its request's transaction, which carries its span events and
+its end point and nothing else. Its `Span()` accepts every write, but
+`Annotations()`, `SetRpcName()`, `SetRemoteAddress()`, `SetAcceptorHost()`,
+`SetServiceType()`, `SetLogging()` and the message of `Span().SetError()` are
+never sent; `SetError()` and `SetFailure()` still fail the transaction
+(rule 9). Record what the goroutine did on its span event instead:
+
+```go
+t := pinpoint.FromContext(ctx) // inside the goroutine
+t.SpanEvent().SetError(err)    // t.Span().SetError(err) would send no message
+```
+
 ## 2. A Goroutine Tracer Needs an Active Span Event
 
 `NewGoroutineTracer()` links the new call stack to the event that spawned it.
@@ -317,8 +330,9 @@ pattern.
 * An error recorded on a goroutine or async tracer (`SetError`, `SetFailure`,
   an event `SetError`, the `SQL.ErrorCount` limit) fails the **root** span:
   an async span goes out as a `PSpanChunk`, which has no `err` field, so the
-  flag is stored on the root. Only the flag moves; the error message and
-  exception chain stay on the tracer that recorded them. The root's final chunk
+  flag is stored on the root. Only the flag moves: an event's error message and
+  exception chain are sent with the event, while the message of a
+  `Span().SetError()` on a goroutine tracer is not sent at all (rule 1). The root's final chunk
   goes out at the root's own `EndSpan()`, so a child that fails **after** the
   root ended is not reflected in `PSpan.err` or the URL stat. An **unsampled**
   transaction follows the same rule: its async children carry a link to the
@@ -359,6 +373,8 @@ the sampling decision, while a *no-op tracer* stands for no transaction at all.
 | the URL or method is excluded from tracking | `NoopTracer()` | no-op |
 | no tracer in the context | `FromContext()` returns `NoopTracer()` | no-op |
 | agent disabled, not yet created, or startup failed | `GetAgent()` returns `NoopAgent()`, whose tracers are no-ops | no-op |
+| agent created, but the collector has not accepted it yet | `NewSpanTracer()` returns `NoopTracer()` ([Short-lived programs](getting_started.md#short-lived-programs)) | no-op |
+| `NewSpanTracerWithReader()` given a `nil` reader | `NoopTracer()`; an empty reader starts a new transaction instead | no-op |
 
 Every method on both is safe to call and does nothing, which is the point:
 instrumentation code needs no `nil` checks and no sampling branches.
@@ -528,9 +544,10 @@ ctx := pinpoint.NewContext(context.Background(), tracer.NewGoroutineTracer())
 ## 12. Agent Lifecycle
 
 * The agent is a **process-global singleton**. A second `NewAgent()` call
-  returns the existing agent together with an `agent is already created` error,
-  and closes the `Config` you passed if it is a different one. Check the error;
-  do not assume a fresh agent.
+  returns the existing agent together with `pinpoint.ErrAgentAlreadyCreated`,
+  and closes the `Config` you passed if it is a different one. Test for it with
+  `errors.Is`: the returned agent is the live one and keeps tracing, but the
+  options of the `Config` you passed are not applied.
 * `NewAgent()` returns `NoopAgent()` **and** an error when a required identity
   value is missing or invalid. The application keeps running untraced, so the
   returned error is the only signal — log it.
@@ -550,8 +567,9 @@ ctx := pinpoint.NewContext(context.Background(), tracer.NewGoroutineTracer())
   `ConfigReloadResult` says whether it was applied (`OK()`), why it was
   refused (`Status`, `Message`), and which non-dynamic options it could not
   apply (`RestartRequired`). A refused reload changes nothing. It is refused
-  while the agent reads a config file (`ConfigFile`), which outranks YAML as it
-  does at startup, and without a running agent. See
+  while a config file is configured (`ConfigFile`), even one that does not
+  exist yet, since the file outranks YAML as it does at startup, and without a
+  running agent. See
   [Reloading from YAML](config.md#reloading-from-yaml).
 
 ## 13. Server Metadata

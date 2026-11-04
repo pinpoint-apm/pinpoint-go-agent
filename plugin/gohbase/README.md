@@ -26,6 +26,11 @@ putRequest, _ := hrpc.NewPutStr(ctx, "table", "key", values)
 client.Put(putRequest)
 ```
 
+`Get`, `Put`, `Delete`, `Append`, `Increment`, `CheckAndPut` and `Scan` are traced; `ScanV2`,
+`CheckAndPutWithCompareType`, `CheckAndMutate` and `SendBatch` pass through untraced.
+`Scan` records the creation of the scanner only: the rows are fetched lazily in `Next`, outside the event.
+A client created elsewhere is instrumented with `ppgohbase.WrapClient(client, zkquorum)`.
+
 ``` go
 import (
     "github.com/tsuna/gohbase/hrpc"

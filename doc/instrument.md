@@ -21,9 +21,11 @@ To report a span, You can call Agent interface.
 
 * **Agent.NewSpanTracerWithReader()** returns a span Tracer that continues a transaction passed from the previous node.
   A span is sampled according to a given sampling policy, and trace data is not collected if not sampled.
-  Distributed tracing headers are extracted from the reader. If it is empty, new transaction is started.
+  Distributed tracing headers are extracted from the reader. If it carries none, a new transaction is started;
+  a `nil` reader starts nothing and returns `NoopTracer()`.
 
-The point at which the span can be created is the http or grpc server request handler.
+A span is usually created in a server's request handler; for work that no request starts, see
+[Jobs, consumers and workers](#jobs-consumers-and-workers).
 The following is an example of creating a span from http server request handler:
 
 ``` go
@@ -85,7 +87,8 @@ Most of these data are sent from the previous node, usually packed in the reques
 Pinpoint Go Agent provides two functions below to read and write these data.
 
 * **Agent.NewSpanTracerWithReader**(operation, rpcName string, reader DistributedTracingContextReader) creates a span
-  that continues the transaction the reader's headers carry, or starts a new one when they carry none.
+  that continues the transaction the reader's headers carry, or starts a new one when they carry none
+  (a `nil` reader returns `NoopTracer()`).
   The reader's **Get**(key) returns the header value and whether the carrier holds the key at all;
   a header carried with an empty value is reported as present and continues the trace.
   A `net/http.Header` is wrapped with **pinpoint.HttpHeaderReader**() to be used as a reader.
@@ -160,6 +163,10 @@ func tableCount(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
+Each web framework keeps the request's tracer somewhere else, and in some of
+them the obvious `context.Context` value carries none; see
+[Getting the tracer in a handler](plugin_guide.md#getting-the-tracer-in-a-handler).
+
 ## Instrument Goroutine
 
 A tracer tracks a single call stack, so a goroutine needs its own: create one
@@ -219,6 +226,52 @@ func asyncWithWrapper(w http.ResponseWriter, r *http.Request) {
     go f()
 }
 ```
+
+A goroutine tracer has no span of its own on the wire, so most of what it
+writes through `Span()` is never sent: record what the goroutine did on its
+span event (`tracer.SpanEvent().SetError(err)`). See
+[contract 1](api_contracts.md#1-a-tracer-tracks-one-goroutine).
+
+## Jobs, consumers and workers
+
+Work that no request starts - a scheduled job, a queue consumer, a worker
+pool - starts its own transaction, one per unit of work:
+
+```go
+func runReport(ctx context.Context) {
+    tracer := pinpoint.GetAgent().NewSpanTracer("ReportJob", "/jobs/report")
+    defer tracer.EndSpan()
+    defer tracer.NewSpanEvent("runReport").EndSpanEvent()
+
+    ctx = pinpoint.NewContext(ctx, tracer) // the plugins look for it here
+    rows, err := db.QueryContext(ctx, reportQuery)
+    ...
+    f := tracer.WrapGoroutine("mailReport", mailReport, ctx)
+    go f()
+}
+```
+
+* **One span per run, message or item, never one per worker or process.** A
+  span is sent only by its `EndSpan()`, and it counts as an active request
+  until then. A long one also runs into the per-span limits: its 100th SQL
+  statement marks it failed ([SQL.ErrorCount](config.md#sqlerrorcount)), and
+  events past `Span.MaxCallStackSequence` (5000) are dropped.
+* **Open an event before forking.** A span from `NewSpanTracer()` has none, and
+  `NewGoroutineTracer()` or `WrapGoroutine()` called without one returns a
+  no-op tracer ([contract 2](api_contracts.md#2-a-goroutine-tracer-needs-an-active-span-event)).
+* **A consumer continues the producer's transaction** with
+  `NewSpanTracerWithReader()` over the message headers; for Kafka,
+  `pinpoint.NewKafkaConsumerTracer()` does it the way the
+  [Kafka plugins](plugin_guide.md#message-queues) do. A `nil` reader
+  returns a no-op tracer, not a new transaction: use `NewSpanTracer()` when
+  there is no carrier.
+* **In a worker pool**, a job that comes from a request carries a goroutine
+  tracer made on the request's goroutine, under an open event, and the worker
+  ends it; a job with no request behind it gets a span of its own in the
+  worker. Never hand a worker the request's own tracer, or a context holding
+  it ([contract 11](api_contracts.md#11-context-carries-a-tracer-not-a-span)).
+* Keep the rpc name fixed per kind of job, as for any span
+  ([contract 8](api_contracts.md#8-keep-operation-and-error-names-low-cardinality)).
 
 ## Annotations
 
@@ -315,6 +368,31 @@ Stack capture and symbolization is the most expensive thing the agent does per
 error, which is why it is off by default. Turn it on when you are diagnosing,
 and keep the depth modest.
 
+### Panics
+
+A panic that unwinds through a deferred `EndSpanEvent()` is recorded on the
+way: the innermost open event gets it as an error named `panic`, the span is
+failed with it, and the panic goes on with its original value - the agent never
+swallows one, so no `recover()` of your own is needed for the trace. The
+plugins' server wrappers open such an event around every handler.
+
+This needs `EndSpanEvent()` to be the deferred call itself:
+
+```go
+// DO: records a panic
+defer tracer.NewSpanEvent("work").EndSpanEvent()
+```
+
+```go
+// DON'T: the event ends as a success
+tracer.NewSpanEvent("work")
+defer func() { tracer.EndSpanEvent() }()
+```
+
+Called from inside a deferred closure, it cannot see the panic (Go's `recover`
+works only in the deferred function itself). A span with no event open records
+no panic: `EndSpan()` does not look for one.
+
 ## Sampling policy
 
 Sampling is decided once, when the span is created, and applies to the whole
@@ -373,8 +451,9 @@ func init() {
 }
 ```
 
-`ParseDSN` is optional but worth writing: without it the UI has no database
-name or host for the node.
+`ParseDSN` is optional but worth writing: without a database name the events
+carry no destination, so the database never appears as a node on the server
+map, and the host is dropped with it.
 
 The wrapper handles statement normalization, bind values, commit/rollback
 events and query statistics, all governed by the `SQL.*`
@@ -401,10 +480,48 @@ func fetch(ctx context.Context, key string) (string, error) {
 ```
 
 `SetDestination()` is the node label on the server map, so keep it stable
-(a cluster or logical database name), not per-connection. `SetEndPoint()` is
-independent of it: `Inject()` copies the destination into the end point only
-when the event has none, so an end point you recorded is what the collector
-receives.
+(a cluster or logical database name), not per-connection. The end point is
+sent only together with a destination: an event without one has no node, and
+its end point is dropped. `Inject()` copies the destination into the end point
+only when the event has none, so an end point you recorded is what the
+collector receives.
+
+### Recording a query after it ran
+
+A client that reports a query once it has finished - a query observer, or a
+hook handed the start and end times - records the event after the fact, as the
+gocql plugin does. `pinpoint.NewDatabaseTracer()` opens the event from a
+`DBInfo`: `QueryType` is its service type, `DBName` its destination and
+`DBHost` its end point (`DBType` is not read). `SetSQL()` gives the statement
+the normalization, SQL metadata and [SQL.ErrorCount](config.md#sqlerrorcount)
+counting of the `database/sql` wrapper; its second argument is the bind values,
+`pinpoint.BindValuesString(args)` to record them under `SQL.TraceBindValue` or
+`""`. `FixDuration()` replaces the event's own timing with the measured one:
+
+```go
+var dbInfo = pinpoint.DBInfo{
+    QueryType: pinpoint.ServiceTypeCassandraExecuteQuery,
+    DBName:    "orders",   // destination: the node on the server map
+    DBHost:    "10.0.0.7", // end point
+}
+
+// q is what the client hands its observer: statement, arguments, error, times.
+func (o *observer) ObserveQuery(ctx context.Context, q QueryEvent) {
+    tracer := pinpoint.NewDatabaseTracer(ctx, "mydb.query", &dbInfo)
+    defer tracer.EndSpanEvent()
+
+    se := tracer.SpanEvent()
+    se.SetSQL(q.Statement, pinpoint.BindValuesString(q.Args))
+    se.SetError(q.Err)
+    se.FixDuration(q.Start, q.End)
+}
+```
+
+The callback records on the tracer of the context it is given, so it must run
+on that tracer's goroutine. A library that may call it from a goroutine of its
+own is checked with `pinpoint.OnTracerGoroutine(tracer)`; when that is false,
+record on `tracer.NewGoroutineTracer()` instead
+([contract 1](api_contracts.md#1-a-tracer-tracks-one-goroutine)).
 
 ## Instrument an HTTP server by hand
 
@@ -456,9 +573,10 @@ downstream node continues the transaction.
 
 URL statistics aggregate per-URL throughput and latency independently of
 sampling — they are collected for unsampled transactions too, which makes them
-the useful signal at low sampling rates. Enable `Http.UrlStat.Enable`; the
-plugins collect them automatically. In a hand-written server, report the
-**routed pattern**:
+the useful signal at low sampling rates. Enable `Http.UrlStat.Enable`; which
+plugin entry points then collect them, and under which key, is in
+[URL statistics](plugin_guide.md#url-statistics). In a hand-written server,
+report the **routed pattern**:
 
 ```go
 pphttp.CollectUrlStat(tracer, "/users/{id}", r.Method)
@@ -496,11 +614,76 @@ useful constants:
 ## Correlating your logs
 
 `LogTransactionIdKey` (`PtxId`) and `LogSpanIdKey` (`PspanId`) are the field
-names Pinpoint looks for when linking a span to your application logs. The
+names for a span's ids in your application logs; Pinpoint Web's log link, once
+configured, opens your log page with these two values. `PtxId` is
+`tracer.TransactionId().String()` (`agentId^agentStartTime^sequence`) and
+`PspanId` is `tracer.SpanId()`. The
 [slog, logrus and zap plugins](plugin_guide.md#logging-integration) set them
-for you; with any other logging library, add them yourself and call
-`tracer.Span().SetLogging(pinpoint.Logged)` so the UI knows a log line exists
-for the span.
+for you. With any other logging library, add them yourself, for a sampled
+tracer only, and mark the span so the UI knows a log line exists for it:
+
+```go
+if tracer.IsSampled() {
+    tracer.Span().SetLogging(pinpoint.Logged)
+    log.Printf("order placed %s=%s %s=%d",
+        pinpoint.LogTransactionIdKey, tracer.TransactionId(),
+        pinpoint.LogSpanIdKey, tracer.SpanId())
+}
+```
+
+An unsampled or no-op tracer has no transaction to link to: its
+`TransactionId()` is the placeholder `Noop^0^0` on every request. `PspanId` is
+a signed 64-bit integer over its whole range, so store it as a 64-bit integer
+or a string; a tool that keeps numbers as doubles rounds it. A goroutine
+tracer carries its request's ids, but its `SetLogging()` is not sent
+([contract 1](api_contracts.md#1-a-tracer-tracks-one-goroutine)): mark the
+span on the request's own goroutine.
+
+## Testing instrumented code
+
+A unit test needs no agent. Until `NewAgent()` runs, `GetAgent()` is
+`NoopAgent()` and `FromContext()` returns `NoopTracer()`, so every wrapper
+passes through and every recording call does nothing.
+
+To assert what your code records, start an offline agent with
+`NewTestAgent()`. It traces at once, connects to nothing and drops what it
+would send, and an identity it cannot validate - no `ServiceName`, say - falls
+back to a v3 one instead of failing. It replaces the global agent, so shut it
+down when the test ends and do not run such tests in parallel. `SpanJSON()`
+renders what a tracer recorded on its span:
+
+```go
+func TestCheckout(t *testing.T) {
+    cfg, err := pinpoint.NewConfig(pinpoint.WithAppName("test"))
+    if err != nil {
+        t.Fatal(err)
+    }
+    agent, err := pinpoint.NewTestAgent(cfg)
+    if err != nil {
+        t.Fatal(err)
+    }
+    t.Cleanup(agent.Shutdown)
+
+    tracer := agent.NewSpanTracer("checkout", "/checkout")
+    checkout(pinpoint.NewContext(context.Background(), tracer))
+    tracer.EndSpan()
+
+    var span struct{ Err int32 }
+    if err := json.Unmarshal(pinpoint.SpanJSON(tracer), &span); err != nil {
+        t.Fatal(err)
+    }
+    if span.Err != 0 {
+        t.Errorf("transaction failed: %s", pinpoint.SpanJSON(tracer))
+    }
+}
+```
+
+The JSON holds `RpcName`, `EndPoint`, `RemoteAddr`, `Err` (the cause bitmask
+of [contract 9](api_contracts.md#9-error-recording)) and `Annotations`
+(`{"key":46,"value":{"Field":{"IntValue":500}}}`); a no-op or unsampled tracer
+renders `{}`. Span events are not in it. To assert on the events your code
+opens, hand it a tracer of your own that embeds `pinpoint.NoopTracer()` and
+overrides `NewSpanEvent`, `SpanEvent` and `EndSpanEvent`.
 
 ## Checklist for a new instrumentation
 

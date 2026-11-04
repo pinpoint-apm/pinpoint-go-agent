@@ -26,12 +26,19 @@ are qualified by that group too. The underlying handler processes `With` attribu
 once; logging never replays them or reevaluates their values.
 
 This changes the previous top-level placement of ids under groups. Log consumers
-must use the grouped keys. For top-level ids required by the Pinpoint web UI, use
-`NewAttrs` on an unwrapped logger before adding groups, once per request.
+must use the grouped keys.
 
 ``` go
 logger.WithGroup("req").With("foo", "bar").ErrorContext(ctx, "handler log message")
 // {"msg":"handler log message","req":{"foo":"bar","PtxId":"...","PspanId":...}}
+```
+
+Where your log store searches for the ids at the top level, add them with `NewAttrs` to the
+unwrapped handler before the group, once per request:
+
+``` go
+base := slog.NewJSONHandler(os.Stdout, nil)
+logger := slog.New(base.WithAttrs(ppslog.NewAttrs(pinpoint.FromContext(ctx)))).WithGroup("req")
 ```
 
 Use NewAttrs where the tracer is at hand but the handler is not wrapped.
