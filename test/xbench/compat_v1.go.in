@@ -13,3 +13,7 @@ func (m mapWriter) Set(k, v string) { m[k] = v }
 func versionOpts() []pinpoint.ConfigOption {
 	return []pinpoint.ConfigOption{pinpoint.WithAgentId("xbench-agent")}
 }
+
+func recordUrlStat(t pinpoint.Tracer, url, method string) {
+	t.AddMetric(pinpoint.MetricURLStat, &pinpoint.UrlStatEntry{Url: url, Method: method, Status: 200})
+}

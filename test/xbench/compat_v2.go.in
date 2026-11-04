@@ -10,7 +10,17 @@ type mapWriter map[string]string
 
 func (m mapWriter) Set(k, v string) { m[k] = v }
 
-// v1 sizes the url stat queue with Span.QueueSize; match it.
+// v1 sizes the url stat queue with Span.QueueSize; match it. Uid v3 is the
+// identity v1 has: the v4 default would also require a ServiceName.
 func versionOpts() []pinpoint.ConfigOption {
-	return []pinpoint.ConfigOption{pinpoint.WithHttpUrlStatQueueSize(65536)}
+	return []pinpoint.ConfigOption{
+		pinpoint.WithHttpUrlStatQueueSize(65536),
+		pinpoint.WithUidVersion("v3"),
+	}
+}
+
+// v2 takes the entry by value and has no status: an entry counts as failed
+// when the span is marked failed, which this one is not, like v1's 200.
+func recordUrlStat(t pinpoint.Tracer, url, method string) {
+	t.RecordUrlStat(pinpoint.UrlStatEntry{Url: url, Method: method})
 }

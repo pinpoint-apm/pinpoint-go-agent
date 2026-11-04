@@ -93,8 +93,10 @@ reporting a fast number.
 - What the majors spell differently goes in `compat_v1.go.in` and
   `compat_v2.go.in`. Today that is the module path (`run.sh` replaces the
   `PINPOINT` import), `DistributedTracingContextReader.Get`, which returns
-  `(string, bool)` in v2, `WithAgentId`, which v2 removed, and the url stat queue
-  size.
+  `(string, bool)` in v2, `WithAgentId`, which v2 removed, the url stat queue
+  size, the url stat entry (`AddMetric` in v1, `RecordUrlStat` in v2) and
+  `Uid.Version` v3, the identity v1 has, since v2's v4 default would also
+  require a `ServiceName`.
 - `run.sh` picks the compat file from the base's `module` line: a path ending
   in `/v2` uses `compat_v2.go.in`, anything else `compat_v1.go.in`.
 - The templates end in `.go.in` so the root module never compiles them: the

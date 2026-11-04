@@ -120,7 +120,7 @@ var shapes = []shape{
 	}},
 	{"UrlStat", newTrace, true, func(t pinpoint.Tracer) {
 		twoEvents(t)
-		t.AddMetric(pinpoint.MetricURLStat, &pinpoint.UrlStatEntry{Url: "/bench/rpc", Method: "GET", Status: 200})
+		recordUrlStat(t, "/bench/rpc", "GET")
 	}},
 }
 
