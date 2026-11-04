@@ -1127,17 +1127,17 @@ func Test_agent_MetaOverflowRateLimitsWarning(t *testing.T) {
 	assert.Greater(t, a.metaDrops.dropped.Load(), int64(1), "test did not saturate the queue")
 	assert.Empty(t, buf.String(), "the producer path must not log")
 
-	a.metaDrops.report("meta", queueSize)
-	a.metaDrops.report("meta", queueSize)
+	a.metaDrops.report("meta", dropsNewest, queueSize)
+	a.metaDrops.report("meta", dropsNewest, queueSize)
 	assert.Equal(t, 1, strings.Count(buf.String(), "meta queue overflow"),
 		"a saturated queue must warn once per report interval, not once per drop")
 	assert.Contains(t, buf.String(),
-		fmt.Sprintf("%d dropped in total (oldest overwritten, max queue size %d)",
+		fmt.Sprintf("%d dropped in total (new items refused, max queue size %d)",
 			a.metaDrops.dropped.Load(), queueSize))
 
 	// Once the interval elapses, a report with no new drops stays silent.
 	a.metaDrops.reportAt.Store(0)
-	a.metaDrops.report("meta", queueSize)
+	a.metaDrops.report("meta", dropsNewest, queueSize)
 	assert.Equal(t, 1, strings.Count(buf.String(), "meta queue overflow"))
 }
 
@@ -1425,12 +1425,12 @@ func Test_dropReporter_rateLimitsAndAccumulates(t *testing.T) {
 	var r dropReporter
 
 	// Nothing dropped yet: no warning, and no interval consumed either.
-	r.report("test", 8)
+	r.report("test", dropsOldest, 8)
 	assert.Empty(t, buf.String(), "a reporter with no drops must stay silent")
 
 	r.record(3)
 	for i := 0; i < 10; i++ {
-		r.report("test", 8)
+		r.report("test", dropsOldest, 8)
 	}
 	assert.Equal(t, 1, strings.Count(buf.String(), "test queue overflow"),
 		"repeated reports inside one interval must warn once")
@@ -1438,13 +1438,13 @@ func Test_dropReporter_rateLimitsAndAccumulates(t *testing.T) {
 
 	// Interval elapsed but no new drops: still silent.
 	r.reportAt.Store(0)
-	r.report("test", 8)
+	r.report("test", dropsOldest, 8)
 	assert.Equal(t, 1, strings.Count(buf.String(), "test queue overflow"),
 		"an elapsed interval with no new drops must not warn")
 
 	// New drops after the interval carry the running total, not a fresh count.
 	r.record(4)
-	r.report("test", 8)
+	r.report("test", dropsOldest, 8)
 	assert.Equal(t, 2, strings.Count(buf.String(), "test queue overflow"))
 	assert.Contains(t, buf.String(), "7 dropped in total (oldest overwritten, max queue size 8)")
 	assert.EqualValues(t, 7, r.dropped.Load(), "the total must never be reset by a report")
@@ -1506,9 +1506,9 @@ func Test_agent_ShutdownReportsHeldBackDrops(t *testing.T) {
 		return agent.metaDrops.reported.Load() == 1 && agent.metaRetryDrops.reported.Load() == 1
 	}, 2*time.Second, 2*time.Millisecond, "the meta worker's first reports")
 	agent.statDrops.record(1)
-	agent.statDrops.report("stat", 1)
+	agent.statDrops.report("stat", dropsOldest, 1)
 	agent.urlStatDrops.record(1)
-	agent.urlStatDrops.report("url stat", 1)
+	agent.urlStatDrops.report("url stat", dropsOldest, 1)
 
 	agent.metaDrops.record(2)
 	agent.metaRetryDrops.record(3)

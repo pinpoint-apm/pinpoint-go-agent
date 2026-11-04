@@ -58,21 +58,29 @@ func (r *dropReporter) record(n int64) {
 	r.dropped.Add(n)
 }
 
+// What a full queue loses, for report's line: stat and url stat drop their
+// head, the meta retry schedule evicts its oldest entry, and the meta queue
+// refuses the new item (see enqueueMeta for why it keeps the old ones).
+const (
+	dropsOldest = "oldest overwritten"
+	dropsNewest = "new items refused"
+)
+
 // report logs the running total at most once per dropReportInterval, and only
 // when drops have accumulated since the last warning. WARN so the data loss is
 // visible at the default log level, rate-limited so a saturated queue cannot
 // log once per dropped record. It returns how long the limit holds back a
 // total it did not log, for a consumer that would otherwise go quiet before
 // reporting it.
-func (r *dropReporter) report(queue string, queueSize int) time.Duration {
+func (r *dropReporter) report(queue, lost string, queueSize int) time.Duration {
 	total := r.dropped.Load()
 	held, ok := r.acquire(total)
 	if !ok {
 		return held
 	}
 	Log("agent").Warnf(
-		"%s queue overflow: %d dropped in total (oldest overwritten, max queue size %d)",
-		queue, total, queueSize)
+		"%s queue overflow: %d dropped in total (%s, max queue size %d)",
+		queue, total, lost, queueSize)
 	return 0
 }
 

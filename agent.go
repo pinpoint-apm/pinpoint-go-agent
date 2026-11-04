@@ -820,9 +820,9 @@ func (agent *agent) shutdownAgent() {
 	// after this: the last report bypasses the limit. The url stat total
 	// includes the late records above.
 	agent.statDrops.reportAt.Store(0)
-	agent.statDrops.report("stat", cap(agent.statChan))
+	agent.statDrops.report("stat", dropsOldest, cap(agent.statChan))
 	agent.urlStatDrops.reportAt.Store(0)
-	agent.urlStatDrops.report("url stat", cap(agent.urlStatChan))
+	agent.urlStatDrops.report("url stat", dropsOldest, cap(agent.urlStatChan))
 }
 
 // drainUrlStatChan aggregates every record queued so far without blocking and
@@ -1041,7 +1041,7 @@ func (agent *agent) enqueueUrlStat(stat *urlStat) bool {
 	queued, dropped := headDropEnqueue(agent.urlStatChan, stat)
 	if dropped > 0 {
 		agent.urlStatDrops.record(dropped)
-		agent.urlStatDrops.report("url stat", cap(agent.urlStatChan))
+		agent.urlStatDrops.report("url stat", dropsOldest, cap(agent.urlStatChan))
 	}
 	return queued
 }
@@ -1123,7 +1123,7 @@ func (agent *agent) enqueueStat(stat *pb.PStatMessage) bool {
 		// outage parks it in newStatStreamWithRetry and silences the warning
 		// for exactly the stretch where the drops happen. Same policy as
 		// enqueueUrlStat.
-		agent.statDrops.report("stat", cap(agent.statChan))
+		agent.statDrops.report("stat", dropsOldest, cap(agent.statChan))
 	}
 	return queued
 }

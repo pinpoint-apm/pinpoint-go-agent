@@ -182,8 +182,8 @@ func (agent *agent) releaseParkedMeta(item pendingMeta) {
 // schedule, and returns how long the rate limit holds back a total it did not
 // log: the sooner of the two queues', so each is logged once its limit lifts.
 func (agent *agent) reportMetaDrops() time.Duration {
-	held := agent.metaDrops.report("meta", cap(agent.metaChan))
-	retryHeld := agent.metaRetryDrops.report("meta retry", agent.metaRetry.capacity)
+	held := agent.metaDrops.report("meta", dropsNewest, cap(agent.metaChan))
+	retryHeld := agent.metaRetryDrops.report("meta retry", dropsOldest, agent.metaRetry.capacity)
 	if held <= 0 || (retryHeld > 0 && retryHeld < held) {
 		held = retryHeld
 	}
