@@ -3,7 +3,10 @@
 // This package instruments the Oracle driver calls.
 // Use this package's driver in place of the Oracle driver.
 //
-//	db, err := sql.Open("oraclev3-pinpoint", "oracle://scott:tiger@localhost:1521/xe")
+//	db, err := sql.Open("oraclev3-pinpoint", "oracle://scott:tiger@localhost:1521/xe?FAST%20LOGIN=false")
+//
+// Keep FAST LOGIN=false in the DSN: with go-ora v3.0.1 fast login on, every
+// connection after the first fails with EOF. See the README.
 //
 // It is necessary to pass the context containing the pinpoint.Tracer to all exec and query methods on SQL driver.
 //

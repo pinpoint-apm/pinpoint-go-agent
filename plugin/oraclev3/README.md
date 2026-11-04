@@ -14,6 +14,15 @@ This package instruments the [sijms/go-ora/v3](https://github.com/sijms/go-ora) 
 > names the plugins themselves register (`oracle-pinpoint`, `oraclev3-pinpoint`)
 > are already distinct. Pick one go-ora major per binary.
 
+> **Note**
+> go-ora v3.0.1 fails every connection after the first with `EOF` unless the
+> DSN turns fast login off with `FAST LOGIN=false` (`?FAST%20LOGIN=false` in a
+> URL DSN). The first connection stores a fast login cookie in a package-wide
+> store, every later connection - a new `sql.DB` or the pool growing - logs in
+> with it, and Oracle 23 closes the session. The error is not
+> `driver.ErrBadConn`, so go-ora does not drop the cookie and retry. The plain
+> go-ora v3 driver fails the same way; v2 has no fast login and is not affected.
+
 ## Installation
 
 ```bash
@@ -29,7 +38,7 @@ This package instruments the Oracle driver calls.
 Use this package's driver in place of the Oracle driver.
 
 ``` go
-db, err := sql.Open("oraclev3-pinpoint", "oracle://scott:tiger@localhost:1521/xe")
+db, err := sql.Open("oraclev3-pinpoint", "oracle://scott:tiger@localhost:1521/xe?FAST%20LOGIN=false")
 ```
 
 It is necessary to pass the context containing the pinpoint.Tracer to all exec and query methods on SQL driver.
@@ -47,7 +56,7 @@ import (
 )
 
 func query(w http.ResponseWriter, r *http.Request) {
-    conn, err := sql.Open("oraclev3-pinpoint", "oracle://scott:tiger@localhost:1521/xe")
+    conn, err := sql.Open("oraclev3-pinpoint", "oracle://scott:tiger@localhost:1521/xe?FAST%20LOGIN=false")
     rows, _ := conn.QueryContext(r.Context(), "SELECT * FROM BONUS")
 
     for rows.Next() {

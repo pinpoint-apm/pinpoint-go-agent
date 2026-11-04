@@ -78,7 +78,10 @@ func withTracer(f func(context.Context, *sql.DB) error, ctx context.Context, con
 }
 
 func query(w http.ResponseWriter, r *http.Request) {
-	conn, err := sql.Open("oraclev3-pinpoint", "oracle://scott:tiger@localhost:1521/FREEPDB1")
+	// FAST LOGIN=false: go-ora v3.0.1 logs every connection after the first
+	// in with a cached fast login cookie, which Oracle 23 answers with EOF.
+	// See plugin/oraclev3/README.md.
+	conn, err := sql.Open("oraclev3-pinpoint", "oracle://scott:tiger@localhost:1521/FREEPDB1?FAST%20LOGIN=false")
 	if err != nil {
 		fmt.Println("open error: ", err)
 		return
