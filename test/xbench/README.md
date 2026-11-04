@@ -109,10 +109,42 @@ reporting a fast number.
 - The templates end in `.go.in` so the root module never compiles them: the
   `PINPOINT` placeholder and the v1 import would break `go vet ./...`.
 
+## Results: v1.4.8 against v2 (Intel Core Ultra 7 265, 10 rounds)
+
+Measured at b5a882d with the 64MB ballast and the prefault, in a container
+pinned to the eight P-cores (`--cpuset-cpus=0-7`), so `-cpu=8` never reaches an
+E-core. Medians; the `-cpu=4` and `-cpu=8` columns are the change against
+v1.4.8 at the same count.
+
+| shape | -cpu=1 | -cpu=4 | -cpu=8 | allocs/op |
+|---|---|---|---|---|
+| Sampled | 3.43µs → 847ns (−75%) | −79% | −79% | 68 → 4 |
+| Continued | 4.05µs → 847ns (−79%) | −81% | −82% | 78 → 4 |
+| Nested10 | 14.4µs → 2.79µs (−81%) | −79% | −79% | 282 → 13 |
+| SQL | 7.06µs → 533ns (−92%) | −89% | −87% | 86 → 4 |
+| Error | 2.61µs → 469ns (−82%) | −79% | −79% | 48 → 3 |
+| Inject | 3.84µs → 909ns (−76%) | −74% | −77% | 70 → 8 |
+| UrlStat | 4.84µs → 741ns (−85%) | −63% | −59% | 79 → 4 |
+| Unsampled | 144ns → 143ns (~) | −67% | −78% | 4 → 1 |
+| UnsampledHeader | 143ns → 132ns (−8%) | −67% | −79% | 4 → 1 |
+
+Geomean: −77% time, −66% bytes and −92% allocations, with no shape slower at
+any count.
+
+- The v1.4.8 `-cpu=1` rows vary by up to ±40%, for the same reason as v1.4.7's
+  below. Compare the `-cpu=4` and `-cpu=8` rows for stable numbers.
+- `Unsampled` at `-cpu=1` is the one row without a significant change
+  (p=0.072). v2 allocates 192B per unsampled request against v1.4.8's 176B,
+  but in one allocation instead of four, which is what it wins at `-cpu=4` and
+  above.
+- `UrlStat` gains the least as cores are added: 353ns at `-cpu=8` against
+  134-153ns for `Sampled` and `Continued`, which have the same two events. Its entry is a second send per
+  request on an agent-wide channel (`urlStatChan`), after the span's.
+
 ## Results: v1.4.7 against v2 (Apple M1 Pro, 6 rounds)
 
-Measured at 8bc1d4f with the 64MB ballast. Medians; the `-cpu=4` and
-`-cpu=8` columns are the change against v1.4.7 at the same count.
+Measured at 8bc1d4f with the 64MB ballast, before the prefault. Medians; the
+`-cpu=4` and `-cpu=8` columns are the change against v1.4.7 at the same count.
 
 | shape | -cpu=1 | -cpu=4 | -cpu=8 | allocs/op |
 |---|---|---|---|---|
