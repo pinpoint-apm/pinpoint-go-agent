@@ -27,6 +27,28 @@ var agent pinpoint.Agent
 // request-path regression at -cpu=1. Pointer-free, so the GC never scans it.
 var ballast = make([]byte, 64<<20)
 
+// prefault faults in as much heap as the ballast's GC goal leaves room for and
+// frees it again, so the timed loop that follows reuses memory that is already
+// backed instead of taking a page fault every 4KB of new heap. v1.4.8's agent
+// churns its heap in the background and arrives warm; v2 at rest allocates
+// next to nothing, so its first -cpu=1 Unsampled run of 50000x read as +43% for
+// the ~2,300 faults behind its 9.6MB of 192B tracers. It runs right before
+// each timed loop: the background scavenger hands idle pages back to the OS
+// within the 2s drain sleep, so a prefault in TestMain is gone by then. Every
+// page is written: fresh memory is known zero, so allocating it touches nothing.
+func prefault() {
+	const chunk = 8 << 10
+	chunks := make([][]byte, len(ballast)/chunk)
+	for i := range chunks {
+		chunks[i] = make([]byte, chunk)
+		for j := 0; j < chunk; j += 4 << 10 {
+			chunks[i][j] = 1
+		}
+	}
+	runtime.KeepAlive(chunks)
+	runtime.GC()
+}
+
 func TestMain(m *testing.M) {
 	rate, _ := strconv.Atoi(os.Getenv("XBENCH_RATE"))
 	opts := append(versionOpts(),
@@ -145,6 +167,7 @@ func BenchmarkRequest(b *testing.B) {
 				b.Fatal(fmt.Sprintf("shape %s: sampled=%v spanId=%d", s.name, t.IsSampled(), t.SpanId()))
 			}
 			t.EndSpan()
+			prefault()
 			b.ReportAllocs()
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {

@@ -79,6 +79,13 @@ reporting a fast number.
   heap goal and more GCs: v2's ~2MB live heap against v1.4.7's ~16MB meant
   133 GCs against 27 over the same 2,000,000 requests, each a stop-the-world
   the one P at `-cpu=1` waits out, and read as a +26% unsampled regression.
+- Right before each timed loop the benchmark faults in and frees 64MB of heap,
+  so the loop reuses backed pages instead of taking a page fault every 4KB of
+  new heap. v1's agent churns its heap in the background and arrives warm; v2
+  at rest allocates next to nothing, so without it v2's first 50000x run at
+  `-cpu=1` paid ~2,300 faults and `Unsampled` read as +43% against v1.4.8. It
+  cannot be done once in `TestMain`: the background scavenger returns the
+  freed pages to the OS during the 2s drain sleep.
 - The span queue and the url stat queue are both 65536, so 50000 requests never
   reach the head-drop path, which is cheaper and would flatter the number. v1
   sizes the url stat queue with `Span.QueueSize`, so `compat_v2.go.in` sets
