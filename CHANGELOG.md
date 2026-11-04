@@ -492,6 +492,36 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Fixed
 
+- **`Collector.Grpc.ConnectionMaxAge` spreads connections across the collector
+  instances.** A renewed connection dialed the same address list in the same
+  order, so behind several DNS A records every renewal went back to the first
+  instance that accepted, and nothing looked the host up again. Each
+  replacement now starts one address further into the list, from a random
+  first one, and has the resolver look the host up again; a DNS answer that
+  only reorders the records is not taken for an address change.
+- **A runtime `Collector.Grpc.MaxSendMessageSize` no longer moves the span batch
+  limit.** The connection keeps the size it was dialed with, but the span batch
+  splitter and the exception metadata size guard read the live value, so
+  raising it with `Config.Set` let batches through that grpc-go then refused,
+  with all their spans.
+- **`SQL.RemoveComments` stays as the agent was built with it.** Normalization
+  read the live value, so a `Config.Set` applied it at once and split one
+  statement across two SQL ids.
+- **A config file reload runs a callback only for an option whose value
+  changed.** A value the agent normalizes - a lowercase `Sampling.Type`, a
+  `Log.MaxBackups` of 0, a negative `SQL.MaxBindValueSize` - was compared as
+  the file spells it against the normalized one, so every reload of an
+  unchanged file re-ran the logger's and the HTTP plugin's reload callbacks.
+- **`ppkratos` and `ppkratosv3` continue a trace whose `Pinpoint-SpanID` a
+  proxy blanked.** They read a header's presence from
+  `transport.Header.Values`; reading the value alone, a blank span id started
+  a new transaction, where the other server plugins continue the caller's.
+- **At a `SQL.MaxBindValueSize` of 0 or less, `SetSQL` drops the bind value
+  list a plugin composed itself.** It was recorded without a limit, while the
+  `database/sql` and pgx wrappers record no bind values then.
+- **The `SpanStart` tracer hook also sees `NoopTracer()`** from a disabled
+  agent's `NewSpanTracer` and `NewSpanTracerWithReader` and from
+  `NewKafkaConsumerTracer`, as `TracerHooks` documents.
 - **A goroutine tracer's `SetLogging()` and `Span().SetError()` reach the
   collector.** A goroutine tracer goes out as a `PSpanChunk`, which has
   neither field, so both were stored where nothing sent them: a log line

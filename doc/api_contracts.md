@@ -271,7 +271,9 @@ loop rather than one per iteration.
   caller that composes the bind value list itself gets it cut to roughly twice
   `SQL.MaxBindValueSize` — the room the agent's own driver wrappers need for
   the values they abbreviate and for their markers — with an
-  `...(original byte length of args)` marker on the cut. The number is the
+  `...(original byte length of args)` marker on the cut. At a
+  `SQL.MaxBindValueSize` of 0 or less, where the wrappers record no bind
+  values, `args` is dropped. The number in the marker is the
   length of the string passed in, not a bind value count and not one value's
   length, so it does not mean what the `...(n)` markers inside a list composed
   by the `database/sql` or pgx wrapper mean; those lists are within the bound
@@ -499,7 +501,7 @@ and `pinpoint.HttpHeaderReader` adapts a `net/http.Header`.
 | gRPC metadata (`plugin/grpc`) | `metadata.ValueFromIncomingContext` |
 | fasthttp request header (`plugin/fasthttp`, `plugin/fiber`, `plugin/fiberv3`) | `RequestHeader.PeekAll` |
 | sarama record headers (`plugin/sarama-IBM`) | the header slice |
-| kratos `transport.Header` (`plugin/kratos`, `plugin/kratosv3`) | **nothing** - value only, so it reports `v, v != ""` and a blanked header starts a new transaction |
+| kratos `transport.Header` (`plugin/kratos`, `plugin/kratosv3`) | `transport.Header.Values` |
 | no reader at all (`NewSpanTracer`) | **nothing** - every key absent |
 
 `Pinpoint-TraceID` does not follow this: it must **parse**, so a blank trace id

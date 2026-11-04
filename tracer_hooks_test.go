@@ -78,3 +78,23 @@ func TestTracerHooks(t *testing.T) {
 	last.EndSpan()
 	assert.Len(t, starts, 3, "the last tracer, made with the hooks unregistered, must not be seen") // tracer, unsampled, other
 }
+
+// SpanStart sees NoopTracer() too: the noop agent's tracers, and the one
+// NewKafkaConsumerTracer returns for a disabled agent, go through the hook as
+// an enabled agent's do.
+func TestTracerHooks_SpanStartSeesNoopTracer(t *testing.T) {
+	prevHooks, prevAgent := tracerHooks.Load(), GetAgent()
+	t.Cleanup(func() {
+		tracerHooks.Store(prevHooks)
+		setGlobalAgent(prevAgent)
+	})
+	setGlobalAgent(NoopAgent())
+
+	var starts []Tracer
+	SetTracerHooks(TracerHooks{SpanStart: func(tr Tracer) { starts = append(starts, tr) }})
+
+	NoopAgent().NewSpanTracer("op", "/rpc")
+	NoopAgent().NewSpanTracerWithReader("op", "/rpc", &noopDistributedTracingContextReader{})
+	NewKafkaConsumerTracer("Kafka Consumer Invocation", KafkaConsumerMessage{Topic: "widgets"}, nil)
+	assert.Equal(t, []Tracer{NoopTracer(), NoopTracer(), NoopTracer()}, starts)
+}

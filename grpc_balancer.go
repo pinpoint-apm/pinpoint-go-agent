@@ -1,8 +1,10 @@
 package pinpoint
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -25,6 +27,13 @@ import (
 // than its max age, the next pick creates a successor. The successor replaces
 // the incumbent only when it becomes READY (make-before-break); if it never
 // does, the incumbent keeps serving.
+//
+// With several resolved addresses - a host with several A records - each
+// SubConn starts one address further into the list than the last, from a
+// random first one, so successive rotations walk the collector instances and
+// agents deployed together start out spread across them. Each rotation also
+// asks the resolver to look again, and an address list that changed moves the
+// connection onto the new list (readdressLocked).
 const expiringPickFirstName = "subconnection_expiring_pick_first"
 
 func init() {
@@ -50,7 +59,7 @@ type expiringPickFirstBuilder struct{}
 func (expiringPickFirstBuilder) Name() string { return expiringPickFirstName }
 
 func (expiringPickFirstBuilder) Build(cc balancer.ClientConn, _ balancer.BuildOptions) balancer.Balancer {
-	return &expiringPickFirst{cc: cc}
+	return &expiringPickFirst{cc: cc, next: rand.Int()}
 }
 
 func (expiringPickFirstBuilder) ParseConfig(js json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
@@ -73,6 +82,8 @@ type expiringPickFirst struct {
 	closed bool
 	maxAge time.Duration
 	addrs  []resolver.Address
+	// next, modulo len(addrs), is the address the next SubConn starts at.
+	next int
 
 	ready      *expiringSubConn
 	connecting *expiringSubConn
@@ -110,8 +121,11 @@ func (b *expiringPickFirst) UpdateClientConnState(state balancer.ClientConnState
 
 	// A resolver that re-resolves repeats the same list far more often than it
 	// changes it, so the SubConns are left alone unless the list really
-	// changed. Order counts: it is the order one SubConn dials the addresses
-	// in.
+	// changed. Sorted first, because the order means nothing here - each
+	// SubConn picks its own first address (createSubConnLocked) - and a
+	// resolver that shuffles its answers, as DNS round robin does, would
+	// otherwise change the list on every resolution a rotation asks for.
+	slices.SortStableFunc(addrs, func(x, y resolver.Address) int { return cmp.Compare(x.Addr, y.Addr) })
 	if slices.EqualFunc(b.addrs, addrs, resolver.Address.Equal) {
 		return nil
 	}
@@ -198,9 +212,15 @@ func (b *expiringPickFirst) createSubConnLocked() bool {
 		return false
 	}
 
+	// grpc-go dials a SubConn's addresses in order and keeps the first that
+	// connects, so the same list every time would take each rotation back to
+	// the instance it left. Each SubConn starts one address further on.
+	start := b.next % len(b.addrs)
+	b.next = start + 1
+
 	sd := &expiringSubConn{}
 	//lint:ignore SA1019 one SubConn over the whole list is what make-before-break needs; see readdressLocked
-	sc, err := b.cc.NewSubConn(b.addrs, balancer.NewSubConnOptions{
+	sc, err := b.cc.NewSubConn(slices.Concat(b.addrs[start:], b.addrs[:start]), balancer.NewSubConnOptions{
 		StateListener: func(state balancer.SubConnState) { b.onSubConnState(sd, state) },
 	})
 	if err != nil {
@@ -294,7 +314,8 @@ func (b *expiringPickFirst) updateBalancingStateLocked() {
 
 // requestSuccessor runs on its own goroutine, the stand-in for the Java
 // agent's SynchronizationContext: Pick must not block, and creating a SubConn
-// takes the balancer lock and the channel's own locks.
+// and asking for a resolution take the balancer lock and the channel's own
+// locks.
 func (b *expiringPickFirst) requestSuccessor(sd *expiringSubConn) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -311,6 +332,9 @@ func (b *expiringPickFirst) requestSuccessor(sd *expiringSubConn) {
 		sd.successor.Store(false)
 		return
 	}
+	// The dns resolver looks again only when asked, so the successor may be on
+	// a stale list; an answer that changed it reaches UpdateClientConnState.
+	b.cc.ResolveNow(resolver.ResolveNowOptions{})
 	channelRotations.Add(1)
 }
 

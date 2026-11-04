@@ -71,7 +71,7 @@ func (t *RecordingTracer) EndSpanEvent() { t.open().Ended = true }
 // Last is the span event started last, ended or not.
 func (t *RecordingTracer) Last() *RecordedEvent {
 	if len(t.Events) == 0 {
-		panic("pptest: SpanEvent or EndSpanEvent before any NewSpanEvent")
+		panic("pptest: Last before any NewSpanEvent")
 	}
 	return t.Events[len(t.Events)-1]
 }

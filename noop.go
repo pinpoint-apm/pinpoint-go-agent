@@ -28,12 +28,14 @@ func NoopAgent() Agent {
 	return defaultNoopAgent
 }
 
+// NewSpanTracer and NewSpanTracerWithReader hand the noop tracer to the
+// SpanStart hook, as an agent that traces hands it every tracer it returns.
 func (agent *noopAgent) NewSpanTracer(operation string, rpcName string) Tracer {
-	return NoopTracer()
+	return hookSpanStart(NoopTracer())
 }
 
 func (agent *noopAgent) NewSpanTracerWithReader(operation string, rpcName string, reader DistributedTracingContextReader) Tracer {
-	return NoopTracer()
+	return hookSpanStart(NoopTracer())
 }
 
 func (agent *noopAgent) Enable() bool {

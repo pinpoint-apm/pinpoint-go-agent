@@ -104,9 +104,11 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	port := e2e.Port(os.Args[1:], 50051)
 
-	e2e.ConfigureAgentEnvironment("go-e2e-grpc-downstream", "go-e2e-grpc-down")
-	// The gRPC downstream records no URL statistics: it serves no URLs.
+	// The gRPC downstream records no URL statistics: it serves no URLs. The
+	// default goes in ahead of the suite's "true", which only fills an unset
+	// variable; the runner's environment still wins over both.
 	e2e.SetDefaultEnv("PINPOINT_GO_HTTP_URLSTAT_ENABLE", "false")
+	e2e.ConfigureAgentEnvironment("go-e2e-grpc-downstream", "go-e2e-grpc-down")
 	agent := e2e.StartAgent(e2e.ConfigFileOption())
 	defer agent.Shutdown()
 

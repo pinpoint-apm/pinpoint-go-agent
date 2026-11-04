@@ -249,16 +249,19 @@ func carrierKey(kind transport.Kind, key string) string {
 }
 
 // headerReader adapts a kratos transport.Header to the tracing carrier. It
-// reads Get, so a header carried with an empty value reads as absent, and such
-// a request starts a new transaction.
+// reads Values, which both the HTTP and the gRPC carrier leave nil for a header
+// the request does not carry, so a header carried with an empty value reads as
+// present: a hop whose Pinpoint-SpanID a proxy blanked continues the trace.
 type headerReader struct {
 	hdr  transport.Header
 	kind transport.Kind
 }
 
 func (r headerReader) Get(key string) (string, bool) {
-	v := r.hdr.Get(carrierKey(r.kind, key))
-	return v, v != ""
+	if v := r.hdr.Values(carrierKey(r.kind, key)); len(v) > 0 {
+		return v[0], true
+	}
+	return "", false
 }
 
 // headerWriter is Inject's carrier over a kratos transport.Header, or the

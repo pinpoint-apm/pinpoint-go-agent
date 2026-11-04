@@ -186,15 +186,18 @@ const (
 	// so a hung collector costs a short wait and a retry rather than a minute
 	// of boot latency.
 	agentGrpcTimeOut = 5 * time.Second
+)
 
-	// metaGrpcTimeOut bounds each metadata RPC (api/string/sql/sqlUid/
-	// exception). These run under sendMetaWorker's permits
-	// (agent.metaMaxConcurrentRequests). Kept short so a hung collector cannot
-	// pin every permit until metaChan fills and refuses new metadata: ample for
-	// a healthy collector, short enough that permits recycle before the queue
-	// fills.
-	metaGrpcTimeOut = 5 * time.Second
+// metaGrpcTimeOut bounds each metadata RPC (api/string/sql/sqlUid/
+// exception). These run under sendMetaWorker's permits
+// (agent.metaMaxConcurrentRequests). Kept short so a hung collector cannot
+// pin every permit until metaChan fills and refuses new metadata: ample for
+// a healthy collector, short enough that permits recycle before the queue
+// fills. A variable so a test can tell it apart from agentGrpcTimeOut and
+// sendStreamTimeOut, which are 5s as well.
+var metaGrpcTimeOut = 5 * time.Second
 
+const (
 	sendStreamTimeOut    = 5 * time.Second
 	closeStreamTimeOut   = 1 * time.Second
 	commandStreamTimeOut = 1 * time.Second
@@ -293,11 +296,11 @@ func (o grpcChannelOptions) dialOptions(creds credentials.TransportCredentials) 
 		// with no traffic sends no pings even with idling off; keeping the
 		// transport up still spares the reconnect and the backoff. A channel
 		// that leaves idle re-resolves the collector host (dns resolver, see
-		// collectorTarget), so an idle reconnect would pick up a DNS change; a
-		// Collector.Grpc.ConnectionMaxAge rotation does not, since its
-		// successor dials the addresses that resolver last returned.
-		// ConnectionMaxAge and the idle timeout are independent: renewal acts
-		// only on a channel that is sending, idling only on one that is not.
+		// collectorTarget), so an idle reconnect would pick up a DNS change, as
+		// a Collector.Grpc.ConnectionMaxAge rotation does by asking for a
+		// fresh resolution. ConnectionMaxAge and the idle timeout are
+		// independent: renewal acts only on a channel that is sending, idling
+		// only on one that is not.
 		grpc.WithIdleTimeout(o.idleTimeout),
 		// The channel takes its service config from this process alone. Without
 		// this the dns resolver queries a _grpc_config.<collector host> TXT
@@ -361,15 +364,15 @@ func connectCollector(config *Config, portOption string) (*grpc.ClientConn, erro
 // bare host:port is also what localIP probes.
 //
 // dns is the default. It resolves the collector host into the channel's address
-// list and resolves it again when asked: grpc-go asks after a connection fails
-// or drops, at most once per 30s (internal/resolver/dns.MinResolutionInterval).
-// The expiringPickFirst balancer (grpc_balancer.go) relies on this: with
-// several A records its SubConn holds them all and dials them in order, so a
-// failure moves on to another collector instance, and its ResolveNow on failure
-// and its address-change readdressing both act on a resolver that can answer.
-// A Collector.Grpc.ConnectionMaxAge rotation asks for no resolution and dials
-// the same list in the same order, so it reaches the first address that
-// accepts, normally the instance it left.
+// list and resolves it again when asked, at most once per 30s
+// (internal/resolver/dns.MinResolutionInterval): grpc-go asks after a
+// connection fails or drops, and the expiringPickFirst balancer
+// (grpc_balancer.go) at every Collector.Grpc.ConnectionMaxAge rotation too.
+// That balancer relies on this: with several A records its SubConn holds them
+// all and dials them in order, so a failure moves on to another collector
+// instance; each rotation starts its successor one address further into the
+// list, so successive rotations walk the instances; and its ResolveNow and its
+// address-change readdressing both act on a resolver that can answer.
 //
 // passthrough is the pre-dns-resolver behavior, kept only as a rollback lever
 // (Collector.Grpc.DnsResolverEnable=false). It hands the target to the dialer
@@ -402,6 +405,10 @@ type agentGrpc struct {
 	metaClient   pb.MetadataClient
 	pingSocketId int64
 	agent        *agent
+	// maxSendMsgSize is the Collector.Grpc.MaxSendMessageSize agentConn was
+	// dialed with. The key is not dynamic, and grpc-go holds the connection to
+	// the dialed value whatever the live config says later.
+	maxSendMsgSize int
 	// retryDelay is the pause between metadata retries: metaRetryDelay in
 	// production, shortened by tests.
 	retryDelay time.Duration
@@ -417,11 +424,12 @@ func newAgentGrpc(agent *agent) (*agentGrpc, error) {
 	}
 
 	return &agentGrpc{
-		agentConn:   conn,
-		agentClient: pb.NewAgentClient(conn),
-		metaClient:  pb.NewMetadataClient(conn),
-		agent:       agent,
-		retryDelay:  metaRetryDelay,
+		agentConn:      conn,
+		agentClient:    pb.NewAgentClient(conn),
+		metaClient:     pb.NewMetadataClient(conn),
+		agent:          agent,
+		maxSendMsgSize: agent.config.Int(CfgCollectorGrpcMaxSendMessageSize),
+		retryDelay:     metaRetryDelay,
 	}, nil
 }
 
@@ -742,15 +750,15 @@ const metaRetryMaxAttempts = 3
 // budget would fire back to back against an already overloaded collector.
 const metaRetryDelay = time.Second
 
-// metaGiveUpParks is how many retry delays, after the first, a given-up item's
-// cache entry is held before its release while give-ups follow one another
-// with no delivery between them, unless the collector delivers another item
-// first. The first give-up since a delivery is released at once: its next use
+// metaGiveUpParks is how many retry delays a given-up item's cache entry is
+// held before its release while give-ups follow one another with no delivery
+// between them, unless the collector delivers another item first. The first
+// give-up since a delivery is released at once: its next use
 // re-registers it under a fresh id, which is all a failure the collector is
 // already over needs. Released at once throughout an outage, though, each hot
 // API, SQL or error name minted a new id and cycled through its attempt budget
 // every couple of seconds - an RPC and an error line each time - for as long
-// as the collector stayed down; held, it cycles once per metaGiveUpParks+1
+// as the collector stayed down; held, it cycles once per metaGiveUpParks
 // delays. A delivery means the collector is back, so the entry is released at
 // its next delay and the re-registration is not held up once the outage is
 // over. The schedule keeps a single delay (see metaRetryQueue), so a long wait
@@ -804,7 +812,7 @@ const (
 	metaRetryLater
 	// metaGiveUp: the attempt budget is spent. The cache entry is released so
 	// the next use registers the item again: at once, or after up to
-	// metaGiveUpParks+1 retry delays while the give-ups keep coming.
+	// metaGiveUpParks retry delays while the give-ups keep coming.
 	metaGiveUp
 	// metaRejected: a failure a retry cannot change. The cache entry is released
 	// after one metaRetryDelay rather than at once: the release is what makes
@@ -890,14 +898,14 @@ func (agentGrpc *agentGrpc) sendMetadata(md any) error {
 
 func (agentGrpc *agentGrpc) sendExceptionMetadata(in *pb.PExceptionMetaData) error {
 	// Drop a message the channel would reject anyway, before encoding it.
-	// The bound is the configured Collector.Grpc.MaxSendMessageSize, the same
-	// value connectCollector passes to grpc.MaxCallSendMsgSize. No margin is
+	// The bound is maxSendMsgSize, the value connectCollector passed to
+	// grpc.MaxCallSendMsgSize when it dialed agentConn. No margin is
 	// needed: grpc-go compares the serialized message body alone against that
 	// limit (payloadLen > maxSendMessageSize), and the collector's inbound
 	// limit likewise counts only the message body. The 5-byte length prefix
 	// and HTTP/2 framing/headers are outside both checks, and proto.Size is
 	// exactly the serialized body length when no compressor is configured.
-	maxSize := agentGrpc.agent.config.Int(CfgCollectorGrpcMaxSendMessageSize)
+	maxSize := agentGrpc.maxSendMsgSize
 	if size := proto.Size(in); size > maxSize {
 		err := status.Errorf(codes.ResourceExhausted, "gRPC message exceeds maximum size: %d > %d", size, maxSize)
 		metaSkipLog.warnf("skip exception metadata - %v", err)

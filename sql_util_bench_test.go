@@ -42,10 +42,17 @@ func uniqueSQLs(base string, n int) []string {
 	return qs
 }
 
+// noSqlCacheBypassConfig turns SQL.CacheLengthLimit off, so the raw SQL cache
+// memoizes a SQL of any length up to maxSqlSize: benchLongSQL is past the
+// default limit (2048), which would take the uncached bypass instead.
+func noSqlCacheBypassConfig() *Config {
+	cfg := defaultConfig()
+	cfg.Set(CfgSQLCacheLengthLimit, -1)
+	return cfg
+}
+
 // The most important test: on both the miss path and the hit path, the cached
 // result must be byte-identical to what the uncached normalizer produces.
-// benchLongSQL is past the default SQL.CacheLengthLimit (2048), so it takes
-// neither: both of its passes go through the uncached bypass.
 func TestNormalizeSqlCacheEquivalence(t *testing.T) {
 	corpus := []string{
 		"select * from table a = 1 and b=50 and c=? and d='11'",
@@ -60,8 +67,8 @@ func TestNormalizeSqlCacheEquivalence(t *testing.T) {
 		benchLongSQL,
 	}
 
-	a := newTestAgent(defaultConfig())
-	removeComments := a.config.load().sqlRemoveComments
+	a := newTestAgent(noSqlCacheBypassConfig())
+	removeComments := a.sqlRemoveComments
 	for _, sql := range corpus {
 		wantSql, wantParam := newSqlNormalizer(sql, removeComments).run()
 		for _, path := range []string{"miss", "hit"} {
@@ -71,6 +78,8 @@ func TestNormalizeSqlCacheEquivalence(t *testing.T) {
 			assert.Equal(t, sqlHashOf(wantSql), got.key, "%s path: normalizeSql(%.60q)", path, sql)
 		}
 	}
+	_, cached := a.rawSqlCache.peek(benchLongSQL)
+	assert.True(t, cached, "the long statement must take the cache paths, not the bypass")
 }
 
 // Run with -race: concurrent callers over more unique queries than the cache
@@ -81,7 +90,7 @@ func TestNormalizeSqlCacheConcurrent(t *testing.T) {
 	a := newTestAgent(defaultConfig())
 	expected := make([]normalizedSql, len(queries))
 	for i, q := range queries {
-		expected[i] = normalizeSqlText(q, a.config.load().sqlRemoveComments)
+		expected[i] = normalizeSqlText(q, a.sqlRemoveComments)
 	}
 
 	var wg sync.WaitGroup
@@ -116,10 +125,9 @@ func BenchmarkSqlNormalizeHugeLiteral(b *testing.B) {
 }
 
 // Win case: the same statement repeats, every call after the first is a hit.
-// The Long variant is past the default SQL.CacheLengthLimit (2048), so it never
-// hits: it measures the uncached bypass.
+// The Long variant hits too: the agent memoizes a statement of any length.
 func benchmarkNormalizeCachedRepeat(b *testing.B, sql string) {
-	a := newTestAgent(defaultConfig())
+	a := newTestAgent(noSqlCacheBypassConfig())
 	a.normalizeSql(sql)
 	b.SetBytes(int64(len(sql)))
 	b.ReportAllocs()
@@ -130,10 +138,10 @@ func benchmarkNormalizeCachedRepeat(b *testing.B, sql string) {
 
 // Loss case: every statement is unique, every call is a miss plus an LRU
 // insert and eviction. The delta against the uncached baseline is the cache's
-// worst-case overhead. The Long variant bypasses the cache, as in the win case.
+// worst-case overhead.
 func benchmarkNormalizeCachedUnique(b *testing.B, base string, n int) {
 	queries := uniqueSQLs(base, n)
-	a := newTestAgent(defaultConfig())
+	a := newTestAgent(noSqlCacheBypassConfig())
 	b.SetBytes(int64(len(queries[0])))
 	b.ReportAllocs()
 	for i := 0; b.Loop(); i++ {
@@ -154,6 +162,17 @@ func BenchmarkSqlNormalizeCachedLongUnique(b *testing.B) {
 	benchmarkNormalizeCachedUnique(b, benchLongSQL, 2048)
 }
 
+// Bypass case: past the default SQL.CacheLengthLimit (2048) benchLongSQL is not
+// memoized, so every call normalizes and hashes it again.
+func BenchmarkSqlNormalizeLongPastLengthLimit(b *testing.B) {
+	a := newTestAgent(defaultConfig())
+	b.SetBytes(int64(len(benchLongSQL)))
+	b.ReportAllocs()
+	for b.Loop() {
+		a.normalizeSql(benchLongSQL)
+	}
+}
+
 // Concurrent hits: SetSQL runs on many request goroutines at once, so the hit
 // path must scale, not serialize on the cache lock.
 func BenchmarkSqlNormalizeCachedShortRepeatParallel(b *testing.B) {
@@ -168,14 +187,15 @@ func BenchmarkSqlNormalizeCachedShortRepeatParallel(b *testing.B) {
 	})
 }
 
-// Uncached runs over the same unique-query sets, so the CachedUnique deltas
-// above isolate the cache's miss overhead instead of the extra literal's cost.
+// Uncached runs over the same unique-query sets, normalizing and hashing as a
+// miss does, so the CachedUnique deltas above isolate the cache's miss overhead
+// instead of the extra literal's cost.
 func benchmarkNormalizeUniqueNoCache(b *testing.B, base string, n int) {
 	queries := uniqueSQLs(base, n)
 	b.SetBytes(int64(len(queries[0])))
 	b.ReportAllocs()
 	for i := 0; b.Loop(); i++ {
-		newSqlNormalizer(queries[i%len(queries)], true).run()
+		normalizeSqlText(queries[i%len(queries)], true)
 	}
 }
 

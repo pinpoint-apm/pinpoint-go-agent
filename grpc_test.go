@@ -1185,7 +1185,7 @@ func Test_agentGrpc_sendExceptionMetadata(t *testing.T) {
 
 // The size guard follows the configured Collector.Grpc.MaxSendMessageSize,
 // not the write buffer size: a message under the limit is sent, one over it is
-// dropped before encoding, and lowering the limit lowers the guard.
+// dropped before encoding, and configuring a lower limit lowers the guard.
 func Test_agentGrpc_sendExceptionMetadata_sizeGuardFollowsConfiguredLimit(t *testing.T) {
 	// A message that fits the 4MB send limit but exceeds the write buffer
 	// must be sent; the two limits are unrelated.
@@ -1195,7 +1195,8 @@ func Test_agentGrpc_sendExceptionMetadata_sizeGuardFollowsConfiguredLimit(t *tes
 	_, _, _, _, except := meta.sentMeta()
 	assert.Len(t, except, 1, "a message under MaxSendMessageSize is sent")
 
-	// Lowering the limit in config lowers the guard.
+	// A lower limit in the config the connection is dialed with lowers the
+	// guard.
 	cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorGrpcMaxSendMessageSize(64*1024))
 	require.NoError(t, err)
 	agent = newTestAgent(cfg)
@@ -1205,6 +1206,23 @@ func Test_agentGrpc_sendExceptionMetadata_sizeGuardFollowsConfiguredLimit(t *tes
 	assert.Error(t, agentGrpc.sendMetadata(exceptionMeta{uriTemplate: strings.Repeat("x", 64*1024)}))
 	_, _, _, _, except = meta.sentMeta()
 	assert.Len(t, except, 1, "only the message under the configured limit reaches the collector")
+}
+
+// The guard keeps the limit the agent connection was dialed with: lowered at
+// runtime, Collector.Grpc.MaxSendMessageSize, which is not dynamic, must not
+// drop a message that connection still carries.
+func Test_agentGrpc_sendExceptionMetadata_sizeGuardKeepsTheDialedLimit(t *testing.T) {
+	agent := newTestAgent(defaultConfig())
+	agentGrpc, err := newAgentGrpc(agent)
+	require.NoError(t, err)
+	defer agentGrpc.close()
+	meta := &mockMetaGrpcClient{}
+	agentGrpc.metaClient = metaClientFunc(meta.record)
+
+	agent.config.Set(CfgCollectorGrpcMaxSendMessageSize, 64*1024)
+	assert.NoError(t, agentGrpc.sendMetadata(exceptionMeta{uriTemplate: strings.Repeat("x", 128*1024)}))
+	_, _, _, _, except := meta.sentMeta()
+	assert.Len(t, except, 1, "the connection was dialed with the 4MB default")
 }
 
 // An oversized exception is reported as ResourceExhausted, which metaVerdictOf does
@@ -2078,22 +2096,17 @@ func Test_spanGrpc_sendSpanBatchAsync_splitsAnOversizeBatch(t *testing.T) {
 	var buf bytes.Buffer
 	defer captureWarnLog(&buf)()
 
-	agent := newTestAgent(defaultConfig())
+	// Four chunks of a little over 1 KB and a limit that takes two per
+	// request; the fifth is over the limit on its own.
+	const limit = 2500
+	cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorGrpcMaxSendMessageSize(limit))
+	require.NoError(t, err)
+	agent := newTestAgent(cfg)
 	client := &mockSpanGrpcClient{}
 	spanGrpc := newMockSpanGrpc(agent)
 	spanGrpc.spanClient = client
 
-	// Four chunks of a little over 1 KB and a limit that takes two per
-	// request; the fifth is over the limit on its own.
-	const limit = 2500
-	agent.config.Set(CfgCollectorGrpcMaxSendMessageSize, limit)
-	chunk := func(size int) *spanChunk {
-		span := defaultSpan(agent)
-		span.NewSpanEvent("event")
-		span.SpanEvent().Annotations().AppendString(AnnotationArgs0, strings.Repeat("x", size))
-		span.EndSpanEvent()
-		return span.newEventChunk(true)
-	}
+	chunk := func(size int) *spanChunk { return sizedSpanChunk(agent, size) }
 	spanGrpc.sendSpanBatchAsync([]*spanChunk{chunk(1000), chunk(1000), chunk(1000), chunk(1000), chunk(3000)})
 	spanGrpc.awaitInFlightSpanBatch()
 
@@ -2108,6 +2121,41 @@ func Test_spanGrpc_sendSpanBatchAsync_splitsAnOversizeBatch(t *testing.T) {
 	assert.Contains(t, buf.String(), "span dropped: ")
 	assert.Contains(t, buf.String(), "exceeds "+CfgCollectorGrpcMaxSendMessageSize+" 2500")
 	assert.Empty(t, spanGrpc.concurrentRequestPermit)
+}
+
+// Collector.Grpc.MaxSendMessageSize is not dynamic: grpc-go holds the span
+// connection to the limit it was dialed with, so a value raised at runtime
+// must not let a batch past that limit, which grpc-go would refuse with every
+// span in it.
+func Test_spanGrpc_sendSpanBatchAsync_splitsAtTheDialedLimit(t *testing.T) {
+	const limit = 2500
+	cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorGrpcMaxSendMessageSize(limit))
+	require.NoError(t, err)
+	agent := newTestAgent(cfg)
+	spanGrpc, err := newSpanGrpc(agent)
+	require.NoError(t, err)
+	defer spanGrpc.close()
+	client := &mockSpanGrpcClient{}
+	spanGrpc.spanClient = client
+
+	agent.config.Set(CfgCollectorGrpcMaxSendMessageSize, 4*limit)
+	spanGrpc.sendSpanBatchAsync([]*spanChunk{sizedSpanChunk(agent, 1000), sizedSpanChunk(agent, 1000), sizedSpanChunk(agent, 1000)})
+	spanGrpc.awaitInFlightSpanBatch()
+
+	require.Equal(t, 2, client.requestCount(), "split at the dialed limit")
+	for _, req := range client.requests {
+		assert.LessOrEqual(t, proto.Size(req), limit)
+	}
+}
+
+// sizedSpanChunk is a final span chunk whose one event carries size bytes of
+// annotation.
+func sizedSpanChunk(agent *agent, size int) *spanChunk {
+	span := defaultSpan(agent)
+	span.NewSpanEvent("event")
+	span.SpanEvent().Annotations().AppendString(AnnotationArgs0, strings.Repeat("x", size))
+	span.EndSpanEvent()
+	return span.newEventChunk(true)
 }
 
 // splitSpanMessages keeps the order and the grouping exact: a batch is cut
@@ -2419,7 +2467,10 @@ func Test_grpcChannelOptions_dialOptions_flowControlWindow(t *testing.T) {
 
 // Metadata sends carry metaGrpcTimeOut, so a hung collector cannot pin
 // sendMetaWorker's permits past it while metaChan fills and refuses new items.
+// The other 5s timeouts would pass a check against the production value, so
+// the test sets one no other timeout has.
 func Test_sendApiMetadata_usesMetaDeadline(t *testing.T) {
+	swapForTest(t, &metaGrpcTimeOut, 42*time.Second)
 	cfg, _ := NewConfig(WithAppName("TestApp"))
 	agent := newTestAgent(cfg)
 	var deadline time.Time

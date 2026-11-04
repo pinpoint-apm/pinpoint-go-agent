@@ -169,7 +169,8 @@ func (agent *agent) awaitMeta(stop <-chan struct{}, held time.Duration) (item pe
 // releaseParkedMeta handles a parked release come due: the drop a rejection
 // earned, delayed by one retry interval (metaRejected), or a given-up item's,
 // which is parked once more while it has parks left and the collector has
-// delivered nothing since, so it waits up to metaGiveUpParks+1 intervals.
+// delivered nothing since: the first interval and up to metaGiveUpParks-1
+// more, metaGiveUpParks in all.
 func (agent *agent) releaseParkedMeta(item pendingMeta) {
 	if item.parks > 0 && agent.metaDelivered.Load() == item.delivered {
 		item.parks--
@@ -226,7 +227,7 @@ func (agent *agent) sendMetadataOnce(item pendingMeta) {
 			return
 		}
 		agent.scheduleMetaRetry(pendingMeta{md: item.md, releaseOnly: true,
-			parks: metaGiveUpParks, delivered: agent.metaDelivered.Load()})
+			parks: metaGiveUpParks - 1, delivered: agent.metaDelivered.Load()})
 	case metaRejected:
 		// Exception metadata is never cached, so there is nothing to park.
 		if _, ok := item.md.(exceptionMeta); ok {
@@ -582,9 +583,9 @@ func (agent *agent) normalizeSql(sql string) normalizedSql {
 	// text is both key and value, so an over-limit statement would pin twice its
 	// size per entry - the memory the limit exists to cap. Text past maxSqlSize
 	// is never memoized, whatever the limit.
-	// SQL.RemoveComments is startup-only, so entries already in the cache stay
-	// consistent with the value read here.
-	removeComments := agent.config.load().sqlRemoveComments
+	// Comments are handled as the agent was built to (sqlRemoveComments), so
+	// every entry in the cache was normalized the same way.
+	removeComments := agent.sqlRemoveComments
 	if len(sql) > maxSqlSize || !agent.sqlCacheable(sql) {
 		return normalizeSqlText(sql, removeComments)
 	}

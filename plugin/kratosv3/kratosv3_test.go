@@ -20,7 +20,8 @@ import (
 
 // header is a transport.Header backed by a map, standing in for the http.Header
 // or metadata.MD a real transport carries: case-insensitive on the key, as both
-// are. The middleware only calls Get and Set; the embedded interface is nil.
+// are, and Values is nil for a key it does not hold. The middleware only calls
+// Get, Set and Values; the embedded interface is nil.
 type header struct {
 	transport.Header
 	m map[string]string
@@ -29,6 +30,12 @@ type header struct {
 func newHeader() header                { return header{m: map[string]string{}} }
 func (h header) Get(key string) string { return h.m[strings.ToLower(key)] }
 func (h header) Set(key, value string) { h.m[strings.ToLower(key)] = value }
+func (h header) Values(key string) []string {
+	if v, ok := h.m[strings.ToLower(key)]; ok {
+		return []string{v}
+	}
+	return nil
+}
 
 // grpcTransport is a transport.Transporter of kind grpc.
 type grpcTransport struct {
@@ -75,6 +82,7 @@ type requestTestHeader struct {
 
 func (h requestTestHeader) Get(key string) string        { return h.h.Get(key) }
 func (h requestTestHeader) Set(key, value string)        { h.h.Set(key, value) }
+func (h requestTestHeader) Values(key string) []string   { return h.h.Values(key) }
 func (t *httpTransport) RequestHeader() transport.Header { return requestTestHeader{h: t.req.Header} }
 
 // pinpointHeaders are the distributed tracing headers Inject writes; the callee
@@ -322,6 +330,43 @@ func TestClientAndServerShareOneTransaction(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, callee)
 	assert.Equal(t, caller.TransactionId().String(), callee.TransactionId().String())
+}
+
+// A proxy that blanks Pinpoint-SpanID instead of dropping it must not split the
+// trace: both kratos carriers keep a header set to "" apart from an absent one,
+// so the callee continues the caller's transaction, as pphttp's server does.
+func TestServerMiddleware_BlankSpanIdHeaderContinuesTheTrace(t *testing.T) {
+	pptest.StartAgent(t)
+
+	caller := pinpoint.GetAgent().NewSpanTracer("caller", "/caller")
+	defer caller.EndSpan()
+
+	for _, tt := range []struct {
+		name string
+		tr   transport.Transporter
+	}{
+		{"http", newHttpTransport("http://127.0.0.1:8000", "/helloworld.Greeter/SayHello",
+			httptest.NewRequest(http.MethodGet, "/hello", nil))},
+		{"grpc", newGrpcTransport("grpc://127.0.0.1:9000", "/helloworld.Greeter/SayHello")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			caller.NewSpanEvent("call")
+			caller.Inject(tt.tr.RequestHeader())
+			caller.EndSpanEvent()
+			tt.tr.RequestHeader().Set(pinpoint.HeaderSpanId, "")
+
+			var callee pinpoint.Tracer
+			_, err := ServerMiddleware()(func(ctx context.Context, req interface{}) (interface{}, error) {
+				callee = pinpoint.FromContext(ctx)
+				return nil, nil
+			})(transport.NewServerContext(context.Background(), tt.tr), "request")
+
+			require.NoError(t, err)
+			require.NotNil(t, callee)
+			assert.Equal(t, caller.TransactionId().String(), callee.TransactionId().String(),
+				"a blanked span id header must not start a new transaction")
+		})
+	}
 }
 
 // kratos's http.Header CallOption makes the caller's header the request's as

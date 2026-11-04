@@ -301,8 +301,19 @@ func TestWrapHandle_PassesThroughWhenAgentDisabled(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 }
 
-// WrapHandle given the route pattern still traces and routes the call with URL
-// statistics on; the one-argument form keeps working.
+// urlStatTracer keeps the URL stats reported on it.
+type urlStatTracer struct {
+	pinpoint.Tracer
+	stats []pinpoint.UrlStatEntry
+}
+
+func (t *urlStatTracer) RecordUrlStat(e pinpoint.UrlStatEntry) { t.stats = append(t.stats, e) }
+
+// WrapHandle given the route pattern collects the URL statistic under it and
+// still traces and routes the call; the one-argument form keeps working and
+// collects none. The stats are read back from a tracer the request carries, as
+// behind an outer instrumented layer: the handler nests under it and records
+// the stat on it.
 func TestWrapHandle_WithPathCollectsUrlStat(t *testing.T) {
 	pptest.StartAgent(t, pinpoint.WithHttpUrlStatEnable(true))
 
@@ -328,4 +339,14 @@ func TestWrapHandle_WithPathCollectsUrlStat(t *testing.T) {
 	rec = httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/plain", nil))
 	assert.Equal(t, http.StatusOK, rec.Code)
+
+	urlStats := func(path string) []pinpoint.UrlStatEntry {
+		outer := &urlStatTracer{Tracer: pinpoint.NoopTracer()}
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		r.ServeHTTP(httptest.NewRecorder(), pinpoint.RequestWithTracerContext(req, outer))
+		return outer.stats
+	}
+	assert.Equal(t, []pinpoint.UrlStatEntry{{Url: "/hello/:name", Method: http.MethodGet}},
+		urlStats("/hello/pinpoint"), "the URL stat is collected under the path WrapHandle was given")
+	assert.Empty(t, urlStats("/plain"), "WrapHandle without a path collected a URL stat")
 }

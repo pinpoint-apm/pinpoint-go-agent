@@ -382,8 +382,19 @@ func TestReloadConfig_AfterShutdown(t *testing.T) {
 }
 
 // Reloads from several goroutines while requests create spans: run with -race.
+// NewTestAgent rather than newReloadAgent: an agent that is still registering
+// hands out NoopTracer(), and the spans would exercise nothing.
 func TestReloadConfig_ConcurrentWithSpans(t *testing.T) {
-	agent, config := newReloadAgent(t, WithAppName("reload-concurrent"))
+	requireNoAgent(t)
+	config, err := NewConfig(WithServiceName("test-service"), WithAppName("reload-concurrent"))
+	require.NoError(t, err)
+	agent, err := NewTestAgent(config)
+	require.NoError(t, err)
+	t.Cleanup(agent.Shutdown)
+	probe := agent.NewSpanTracer("reload", "/probe")
+	require.NotEqual(t, NoopTracer(), probe, "the agent must hand out real tracers")
+	probe.EndSpan()
+
 	yamls := []string{
 		"applicationName: reload-concurrent\nsampling:\n  counterRate: 1\nspan:\n  maxCallStackDepth: 10\n",
 		"applicationName: reload-concurrent\nsampling:\n  counterRate: 2\nspan:\n  maxCallStackDepth: 20\n",

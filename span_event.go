@@ -174,7 +174,7 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	if cfg.sqlEnableRawSqlCache {
 		n = agent.normalizeSql(sql)
 	} else {
-		n = normalizeSqlText(sql, cfg.sqlRemoveComments)
+		n = normalizeSqlText(sql, agent.sqlRemoveComments)
 	}
 	param := n.param
 	// Neither n.sql nor param is abbreviated: cacheSql and cacheSqlUid abbreviate
@@ -195,10 +195,13 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	// args is bounded by maxBindValueAnnotationSize rather than by
 	// SQL.MaxBindValueSize itself, so a list the driver writers composed within
 	// the limit passes through untouched while args from a caller that bounds
-	// nothing still cannot grow the span without limit. See
+	// nothing still cannot grow the span without limit. At a limit of 0 the
+	// writers trace no bind values at all, and args is dropped. See
 	// doc/api_contracts.md 7.
 	if cfg.sqlMaxBindValueSize > 0 {
 		args = abbreviateString(args, maxBindValueAnnotationSize(cfg.sqlMaxBindValueSize))
+	} else {
+		args = ""
 	}
 
 	if cfg.sqlTraceQueryStat {

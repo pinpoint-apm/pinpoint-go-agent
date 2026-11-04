@@ -183,16 +183,30 @@ func Benchmark_spanQueue_enqueueSaturated(b *testing.B) {
 	})
 }
 
+// Benchmark_spanQueue_enqueueDequeue is the steady state: producers enqueue
+// in parallel while the one consumer the queue's contract allows drains it, as
+// the span batch worker does.
 func Benchmark_spanQueue_enqueueDequeue(b *testing.B) {
 	q := newSpanQueue(1024)
 	chunk := &spanChunk{}
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for {
+			if _, ok := q.dequeue(0); !ok {
+				return
+			}
+		}
+	}()
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			q.enqueue(chunk)
-			q.tryDequeue()
 		}
 	})
+	b.StopTimer()
+	q.close()
+	<-drained
 }
 
 // ===========================================================================

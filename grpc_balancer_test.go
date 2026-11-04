@@ -91,14 +91,19 @@ func (sc *fakeSubConn) setState(s connectivity.State) {
 	sc.listener(balancer.SubConnState{ConnectivityState: s})
 }
 
-func newExpiringPickFirst(t *testing.T, maxAgeMillis int64) (*expiringPickFirst, *fakeBalancerCC) {
+// newExpiringPickFirst builds the policy on addrs, collector:9991 when none
+// are given.
+func newExpiringPickFirst(t *testing.T, maxAgeMillis int64, addrs ...string) (*expiringPickFirst, *fakeBalancerCC) {
 	t.Helper()
+	if len(addrs) == 0 {
+		addrs = []string{"collector:9991"}
+	}
 	cc := &fakeBalancerCC{}
 	b := expiringPickFirstBuilder{}.Build(cc, balancer.BuildOptions{}).(*expiringPickFirst)
 	cfg, err := expiringPickFirstBuilder{}.ParseConfig([]byte(`{"maxAgeMillis":` + strconv.FormatInt(maxAgeMillis, 10) + `}`))
 	require.NoError(t, err)
 	require.NoError(t, b.UpdateClientConnState(balancer.ClientConnState{
-		ResolverState:  endpointState("collector:9991"),
+		ResolverState:  endpointState(addrs...),
 		BalancerConfig: cfg,
 	}))
 	return b, cc
@@ -106,9 +111,9 @@ func newExpiringPickFirst(t *testing.T, maxAgeMillis int64) (*expiringPickFirst,
 
 // readyExpiringPickFirst brings the first SubConn to READY and lets it pass
 // its max age.
-func readyExpiringPickFirst(t *testing.T, maxAgeMillis int64) (*expiringPickFirst, *fakeBalancerCC) {
+func readyExpiringPickFirst(t *testing.T, maxAgeMillis int64, addrs ...string) (*expiringPickFirst, *fakeBalancerCC) {
 	t.Helper()
-	b, cc := newExpiringPickFirst(t, maxAgeMillis)
+	b, cc := newExpiringPickFirst(t, maxAgeMillis, addrs...)
 	require.Equal(t, 1, cc.count(), "the first address update opens one SubConn")
 	require.EqualValues(t, 1, cc.subConn(0).connects.Load())
 	cc.subConn(0).setState(connectivity.Connecting)
@@ -524,6 +529,105 @@ func Test_expiringPickFirst_requestsResolutionOnFailureAndIdle(t *testing.T) {
 	assert.EqualValues(t, 2, cc.resolveNow.Load(), "IDLE re-resolves")
 }
 
+// grpc-go dials a SubConn's addresses in order and keeps the first that
+// connects, so each successor starts one address further into the list:
+// successive rotations walk the collector instances instead of reconnecting
+// to the one they left, and every SubConn still holds every address to fail
+// over to.
+func Test_expiringPickFirst_rotationWalksTheAddresses(t *testing.T) {
+	addrs := []string{"collector-1:9991", "collector-2:9991", "collector-3:9991"}
+	_, cc := readyExpiringPickFirst(t, 1, addrs...)
+
+	for i := 1; i <= 3; i++ {
+		cc.pick() // the READY SubConn is past its max age
+		require.Eventually(t, func() bool { return cc.count() == i+1 }, 2*time.Second, 2*time.Millisecond, "successor %d", i)
+		cc.subConn(i).setState(connectivity.Ready)
+		time.Sleep(2 * time.Millisecond) // past the successor's jittered max age
+	}
+
+	first := func(i int) string { return cc.subConn(i).addrs[0].Addr }
+	for i := 0; i < cc.count(); i++ {
+		var held []string
+		for _, a := range cc.subConn(i).addrs {
+			held = append(held, a.Addr)
+		}
+		assert.ElementsMatch(t, addrs, held, "SubConn %d", i)
+		if i > 0 {
+			assert.NotEqual(t, first(i-1), first(i), "successor %d starts where the SubConn it replaces did", i)
+		}
+	}
+	assert.ElementsMatch(t, addrs, []string{first(1), first(2), first(3)}, "three rotations reach all three instances")
+}
+
+// A rotation asks the resolver to look again, so a record change reaches the
+// next connection through the address-change path. A single address - an L4
+// balancer's VIP - is dialed by the successor as before.
+func Test_expiringPickFirst_rotationRequestsResolution(t *testing.T) {
+	_, cc := readyExpiringPickFirst(t, 1)
+	require.Zero(t, cc.resolveNow.Load(), "connecting is no reason to re-resolve")
+
+	cc.pick()
+	require.Eventually(t, func() bool { return cc.resolveNow.Load() == 1 }, 2*time.Second, 2*time.Millisecond,
+		"the rotation to request a fresh resolution")
+	require.Equal(t, 2, cc.count())
+	assert.Equal(t, cc.subConn(0).addrs, cc.subConn(1).addrs, "a single address is dialed as before")
+}
+
+// A resolver that shuffles its answer, as DNS round robin does, repeats the
+// same addresses in another order. That is no address change: taken for one,
+// the fresh resolution every rotation asks for would replace the successor
+// the rotation had just opened.
+func Test_expiringPickFirst_ignoresReorderedAddresses(t *testing.T) {
+	b, cc := newExpiringPickFirst(t, 0, "collector-1:9991", "collector-2:9991", "collector-3:9991")
+	cc.subConn(0).setState(connectivity.Ready)
+
+	require.NoError(t, b.UpdateClientConnState(balancer.ClientConnState{
+		ResolverState: endpointState("collector-3:9991", "collector-1:9991", "collector-2:9991"),
+	}))
+	assert.Equal(t, 1, cc.count(), "a reordered list opens no SubConn")
+	assert.EqualValues(t, 0, cc.subConn(0).shutdowns.Load())
+}
+
+// The rotation on a real channel reaches every collector instance the
+// resolver lists, including one that shows up later: the third server here
+// is listed only once the channel asks the resolver again.
+func Test_expiringPickFirst_rotationReachesEveryInstance(t *testing.T) {
+	var counters [3]connCounter
+	addrs := make([]resolver.Address, len(counters))
+	for i := range counters {
+		addrs[i] = resolver.Address{Addr: startTestServer(t, grpc.StatsHandler(&counters[i])).Addr().String()}
+	}
+	r := manual.NewBuilderWithScheme("agenttest")
+	r.InitialState(resolver.State{Addresses: addrs[:2]})
+	r.ResolveNowCallback = func(resolver.ResolveNowOptions) { go r.UpdateState(resolver.State{Addresses: addrs}) }
+
+	conn, err := grpc.NewClient(r.Scheme()+":///collector",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultServiceConfig(expiringPickFirstServiceConfig(20*time.Millisecond)),
+		grpc.WithResolvers(r))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	reachedAll := func() bool {
+		for i := range counters {
+			if counters[i].conns.Load() == 0 {
+				return false
+			}
+		}
+		return true
+	}
+	for deadline := time.Now().Add(5 * time.Second); !reachedAll() && time.Now().Before(deadline); {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := conn.Invoke(ctx, "/pinpoint.test/Ping", &emptypb.Empty{}, &emptypb.Empty{})
+		cancel()
+		require.Equal(t, codes.Unimplemented, status.Code(err))
+		time.Sleep(5 * time.Millisecond)
+	}
+	for i := range counters {
+		assert.NotZero(t, counters[i].conns.Load(), "instance %d was never connected to", i)
+	}
+}
+
 func must(sc balancer.SubConn, err error) balancer.SubConn {
 	if err != nil {
 		panic(err)
@@ -531,8 +635,13 @@ func must(sc balancer.SubConn, err error) balancer.SubConn {
 	return sc
 }
 
-// endpointState is a resolver state holding addr, as the channel hands it to
-// the balancer: in Endpoints, which it fills from a resolver's bare Addresses.
-func endpointState(addr string) resolver.State {
-	return resolver.State{Endpoints: []resolver.Endpoint{{Addresses: []resolver.Address{{Addr: addr}}}}}
+// endpointState is a resolver state holding addrs, as the channel hands it to
+// the balancer: one Endpoint per address, which it fills from a resolver's
+// bare Addresses.
+func endpointState(addrs ...string) resolver.State {
+	var s resolver.State
+	for _, addr := range addrs {
+		s.Endpoints = append(s.Endpoints, resolver.Endpoint{Addresses: []resolver.Address{{Addr: addr}}})
+	}
+	return s
 }

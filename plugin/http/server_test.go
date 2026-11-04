@@ -988,28 +988,39 @@ func TestRecordHttpHandlerError(t *testing.T) {
 	}
 }
 
-// A mux route serves its handler a sampled tracer while URL statistics are on:
-// collecting the stat under the pattern on the way out must not disturb the
-// request.
+// A pattern registered on the mux is collected as a URL statistic; WrapHandler
+// has no pattern to report and must not collect one. Each request carries a
+// tracer, as behind an outer instrumented layer: the handler nests under it
+// and records the stat on it, where the test reads it back.
 func TestCollectUrlStat(t *testing.T) {
 	pptest.StartAgent(t, pinpoint.WithHttpUrlStatEnable(true))
 
-	var tracer pinpoint.Tracer
+	serve := func(h http.Handler) *metricCountingTracer {
+		outer := &metricCountingTracer{Tracer: pinpoint.NoopTracer()}
+		req := httptest.NewRequest(http.MethodGet, "/users/42", nil)
+		h.ServeHTTP(httptest.NewRecorder(), pinpoint.RequestWithTracerContext(req, outer))
+		return outer
+	}
+
 	mux := NewServeMux()
-	mux.HandleFunc("/users/", func(w http.ResponseWriter, r *http.Request) {
-		tracer = pinpoint.TracerFromRequestContext(r)
-	})
-	mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users/42", nil))
-	require.NotNil(t, tracer)
-	assert.True(t, tracer.IsSampled())
+	mux.HandleFunc("/users/", func(http.ResponseWriter, *http.Request) {})
+	got := serve(mux)
+	assert.Equal(t, 1, got.metrics, "the mux route collected no URL stat")
+	assert.Equal(t, pinpoint.UrlStatEntry{Url: "/users/", Method: http.MethodGet}, got.last,
+		"the URL stat is collected under the pattern, not the request path")
+
+	assert.Zero(t, serve(WrapHandler(http.NotFoundHandler())).metrics,
+		"WrapHandler collected a URL stat with no pattern to report")
 }
 
+// metricCountingTracer counts the URL stats reported on it and keeps the last.
 type metricCountingTracer struct {
 	pinpoint.Tracer
 	metrics int
+	last    pinpoint.UrlStatEntry
 }
 
-func (t *metricCountingTracer) RecordUrlStat(pinpoint.UrlStatEntry) { t.metrics++ }
+func (t *metricCountingTracer) RecordUrlStat(e pinpoint.UrlStatEntry) { t.metrics++; t.last = e }
 
 // URL stats are off by default; CollectUrlStat must not build an entry that
 // every consumer would drop, and IsUrlStatEnabled must let plugins skip their

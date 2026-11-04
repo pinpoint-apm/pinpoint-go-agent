@@ -811,6 +811,32 @@ func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
 	assert.NotContains(t, buf.String(), "out of range")
 }
 
+// A file reload runs a callback only for an option whose published value
+// changed. A value the publish normalizes - a Log.MaxBackups of 0 recovers the
+// default, a lowercase Sampling.Type is uppercased, a negative
+// SQL.MaxBindValueSize publishes 0 - was compared as the file spells it against
+// the normalized one, so it counted as changed on every reload of an unchanged
+// file.
+func Test_reloadConfig_NormalizedValueIsNotAChange(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	body := "Log:\n  MaxBackups: 0\nSampling:\n  Type: counter\nSQL:\n  MaxBindValueSize: -1\n"
+	require.NoError(t, os.WriteFile(cfgFile, []byte(body), 0o600))
+	defer captureWarnLog(&bytes.Buffer{})()
+
+	config, err := NewConfig(WithAppName("reloadApp"), WithConfigFile(cfgFile))
+	require.NoError(t, err)
+	defer config.Close()
+
+	fired := map[string]int{}
+	for _, k := range []string{CfgLogMaxBackups, CfgSamplingType, CfgSQLMaxBindValueSize, CfgSQLTraceBindValue} {
+		config.AddReloadCallback([]string{k}, func() { fired[k]++ })
+	}
+	config.reloadConfig(newConfigFile(cfgFile))
+	config.reloadConfig(newConfigFile(cfgFile))
+	assert.Empty(t, fired, "an unchanged file changed nothing")
+	assert.False(t, config.Bool(CfgSQLTraceBindValue), "the negative size still turns bind value tracing off")
+}
+
 // A float reaches an int option from a YAML or JSON file, or from Set.
 // int(f) is implementation-defined for a value int cannot hold, so .inf or
 // 1e20 took a different value on each CPU; only a float holding an int
@@ -1050,6 +1076,15 @@ func TestNewConfig_ClampSqlMaxBindValueSize(t *testing.T) {
 	assert.False(t, c.Bool(CfgSQLTraceBindValue), "a negative size turns bind value tracing off")
 	assert.Equal(t, 1, strings.Count(buf.String(), "\n"), "one warning line")
 	assert.Contains(t, buf.String(), CfgSQLTraceBindValue, "the warning hides that tracing was turned off")
+
+	// A publish that does not stage the size again - a Set of another key,
+	// NewAgent's identity publish - keeps tracing off while the size stays
+	// negative, and does not warn about the same size again.
+	buf.Reset()
+	c.Set(CfgSQLTraceCommit, false)
+	assert.Equal(t, 0, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
+	assert.False(t, c.Bool(CfgSQLTraceBindValue), "a negative size keeps bind value tracing off")
+	assert.Empty(t, buf.String(), "the same negative size was warned about again")
 
 	// Fixing the size brings tracing back: only the bad size turned it off,
 	// and SQL.TraceBindValue itself was never set to false.

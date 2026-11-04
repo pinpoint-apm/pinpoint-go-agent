@@ -185,6 +185,24 @@ func Test_spanEvent_SetSQLKeepsParamWhenBindSizeIsZero(t *testing.T) {
 	assert.Equal(t, "", se.annotations.values[0].s2)
 }
 
+// At a SQL.MaxBindValueSize of 0 the bind value writers trace nothing, so args
+// a caller composed itself is dropped as well rather than recorded without a
+// bound. A negative size is published as 0.
+func Test_spanEvent_SetSQLDropsArgsWhenBindSizeIsZero(t *testing.T) {
+	for _, size := range []int{0, -1} {
+		cfg := defaultConfig()
+		cfg.Set(CfgSQLMaxBindValueSize, size)
+		require.Empty(t, bindValuesString(cfg.load(), 1, func(int) any { return "v" }),
+			"size %d: the writers render no bind values", size)
+		se := newSpanEvent(testSpanWithConfig(cfg), "query")
+
+		se.SetSQL("SELECT * FROM t WHERE id = ?", "42")
+
+		require.Len(t, se.annotations.values, 1, "size %d", size)
+		assert.Empty(t, se.annotations.values[0].s2, "size %d", size)
+	}
+}
+
 // SetSQL leaves the size limit to the normalizer and the meta caches, so the
 // published sql meta must stay bounded without SetSQL abbreviating again.
 func Test_spanEvent_SetSQLPublishesBoundedSqlMeta(t *testing.T) {

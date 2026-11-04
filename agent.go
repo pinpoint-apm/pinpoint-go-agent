@@ -108,6 +108,10 @@ type agent struct {
 	// entries in the raw SQL cache nor turn a cached statement into one
 	// normalized on every use.
 	sqlCacheLengthLimit int
+	// sqlRemoveComments is SQL.RemoveComments, read once in NewAgent as well:
+	// the normalized text is the SQL id cache key and the UID hash input, so a
+	// runtime change would split one statement across two ids.
+	sqlRemoveComments bool
 
 	// asyncIdGen numbers this agent's async chunks. Like the ids above it is
 	// reported with the agent's own transaction ids, so it restarts per agent.
@@ -339,6 +343,7 @@ func newAgentStruct(config *Config) *agent {
 	// [1, maxSqlCacheSize].
 	sqlCacheSize := config.Int(CfgSQLCacheSize)
 	agent.sqlCacheLengthLimit = config.Int(CfgSQLCacheLengthLimit)
+	agent.sqlRemoveComments = config.Bool(CfgSQLRemoveComments)
 	agent.errorCache = newMetaCache[string, int32](cacheSize)
 	agent.sqlCache = newMetaCache[sqlHash, int32](sqlCacheSize)
 	agent.sqlUidCache = newMetaCache[sqlHash, []byte](sqlCacheSize)

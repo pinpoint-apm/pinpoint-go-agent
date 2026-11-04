@@ -60,6 +60,7 @@ func newTestAgent(config *Config) *agent {
 	a.enable.Store(true)
 	sqlCacheSize := config.Int(CfgSQLCacheSize)
 	a.sqlCacheLengthLimit = config.Int(CfgSQLCacheLengthLimit)
+	a.sqlRemoveComments = config.Bool(CfgSQLRemoveComments)
 	a.errorCache = newMetaCache[string, int32](cacheSize)
 	a.sqlCache = newMetaCache[sqlHash, int32](sqlCacheSize)
 	a.sqlUidCache = newMetaCache[sqlHash, []byte](sqlCacheSize)
@@ -176,7 +177,11 @@ func (metaGrpcClient *mockMetaGrpcClient) sentMeta() (api []*pb.PApiMetaData, st
 // request and keeps it, so a test can assert on the payload put on the wire.
 func newMockMetaAgentGrpc(agent *agent) (*agentGrpc, *mockMetaGrpcClient) {
 	meta := &mockMetaGrpcClient{}
-	return &agentGrpc{metaClient: metaClientFunc(meta.record), agent: agent}, meta
+	return &agentGrpc{
+		metaClient:     metaClientFunc(meta.record),
+		agent:          agent,
+		maxSendMsgSize: agent.config.Int(CfgCollectorGrpcMaxSendMessageSize),
+	}, meta
 }
 
 func newMockAgentGrpc(agent *agent) *agentGrpc {
@@ -239,6 +244,7 @@ func newMockSpanGrpc(agent *agent) *spanGrpc {
 		batchSize:               defaultSpanBatchSize,
 		batchFlushTimeout:       time.Duration(defaultSpanBatchFlushInterval) * time.Millisecond,
 		batchCollectDeadline:    time.Duration(defaultSpanBatchCollectDeadline) * time.Millisecond,
+		maxSendMsgSize:          agent.config.Int(CfgCollectorGrpcMaxSendMessageSize),
 		concurrentRequestPermit: make(chan struct{}, defaultSpanBatchMaxConcurrentRequests),
 	}
 }

@@ -137,7 +137,7 @@ type headerWriter struct {
 // stale one left in place was read as this injection's own.
 func (w *headerWriter) Set(key string, value string) {
 	if !w.grown {
-		const injectedHeaders = 8
+		const injectedHeaders = 10
 		grown := make([]kafka.Header, 0, len(w.msg.Headers)+injectedHeaders)
 		for _, h := range w.msg.Headers {
 			if !pinpoint.IsInjectedHeader(h.Key) {

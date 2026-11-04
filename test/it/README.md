@@ -143,10 +143,9 @@ collector:
 
 **Process-global agent state constrains the suite.** A Pinpoint agent is a
 process-global singleton, so the tests run sequentially and each shuts its
-agent down in `t.Cleanup`. One consequence remains: the `plugin/http` package
-publishes its own config snapshot once per process, so every test here shares
-the HTTP settings from `defaultOptions`. Changing them per test would
-silently have no effect.
+agent down in `t.Cleanup`. The `plugin/http` package derives its settings from
+the running agent and rebuilds them for each new one, so a test's
+`pphttp.With*` options apply to its own agent.
 
 **Differences from the C++ suite.** Some C++ tests have no Go counterpart
 because the feature does not exist here: the C API and fork scenarios, the

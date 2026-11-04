@@ -300,14 +300,6 @@ func TestNewAgent_SQLCacheSizeSizesOnlyTheSqlCaches(t *testing.T) {
 	assert.Equal(t, cacheSize/metaCacheShardCount, a.errorCache.shards[0].cap, "errorCache keeps cacheSize")
 }
 
-// noSqlCacheBypassConfig turns SQL.CacheLengthLimit off, so the raw SQL cache
-// memoizes a SQL of any length up to maxSqlSize.
-func noSqlCacheBypassConfig() *Config {
-	cfg := defaultConfig()
-	cfg.Set(CfgSQLCacheLengthLimit, -1)
-	return cfg
-}
-
 // The SQL caches key on the hash of the untruncated normalized statement and
 // publish text abbreviated to maxSqlSize. An abbreviated key keeps no more than
 // a 64KB prefix and the total length, so two statements agreeing on both would
@@ -342,7 +334,7 @@ func Test_agent_SQLCachesKeyTheWholeStatement(t *testing.T) {
 	})
 
 	t.Run("sql uid", func(t *testing.T) {
-		a := newTestAgent(noSqlCacheBypassConfig())
+		a := newTestAgent(defaultConfig())
 		firstUid, secondUid := a.cacheSqlUid(first, sqlHashOf(first)), a.cacheSqlUid(second, sqlHashOf(second))
 
 		assert.NotEqual(t, firstUid, secondUid, "the uid hashes the whole statement")
@@ -443,31 +435,48 @@ func Test_agent_SQLCachesBypassKeysOverLengthLimit(t *testing.T) {
 	})
 }
 
-// SQL.CacheLengthLimit is fixed, read once in NewAgent like SQL.CacheSize.
-// Lowering it after construction must change nothing: the entries already
-// cached stay, and a statement within the limit the agent was built with keeps
-// hitting the raw SQL cache instead of being normalized on every use.
+// SQL.CacheLengthLimit is fixed, read once in NewAgent like SQL.CacheSize, and
+// bounds the raw SQL cache alone. Lowering it after construction must not stop
+// a statement within the limit the agent was built with from being memoized.
 func Test_agent_SQLCacheLengthLimitIsFixedAtConstruction(t *testing.T) {
-	sql := strings.Repeat("x", 1000)
 	cfg := defaultConfig()
 	a := newTestAgent(cfg)
-	assert.Equal(t, defaultSqlCacheLengthLimit, a.sqlCacheLengthLimit)
-
-	a.cacheSqlUid(sql, sqlHashOf(sql))
-	a.normalizeSql(sql)
-	require.Len(t, a.metaChan, 1)
-
 	cfg.Set(CfgSQLCacheLengthLimit, 10)
-	assert.Equal(t, 10, cfg.Int(CfgSQLCacheLengthLimit), "the config itself still publishes the value")
-	assert.True(t, a.sqlCacheable(sql), "the agent keeps the limit it was built with")
+	require.Equal(t, 10, cfg.Int(CfgSQLCacheLengthLimit), "the config itself still publishes the value")
 
-	a.cacheSqlUid(sql, sqlHashOf(sql))
+	sql := strings.Repeat("x", 1000) // within the limit built with, past the one Set
 	a.normalizeSql(sql)
-	assert.Len(t, a.metaChan, 1, "a cached statement must not be re-sent after a runtime Set")
-	_, cached := a.sqlUidCache.peek(sqlHashOf(sql))
-	assert.True(t, cached)
-	_, cached = a.rawSqlCache.peek(sql)
-	assert.True(t, cached)
+	_, cached := a.rawSqlCache.peek(sql)
+	assert.True(t, cached, "the agent keeps the limit it was built with")
+}
+
+// SQL.RemoveComments is read once when the agent is built: the normalized text
+// is the SQL id cache key and the UID hash input, so a runtime change would
+// split one statement across two ids. A Set after construction changes the
+// config, not the normalization, with the raw SQL cache on or off.
+func Test_agent_SQLRemoveCommentsIsFixedAtConstruction(t *testing.T) {
+	const sql = "select /* hint */ 1"
+	for _, remove := range []bool{true, false} {
+		for _, rawCache := range []bool{true, false} {
+			t.Run(fmt.Sprintf("remove %v raw cache %v", remove, rawCache), func(t *testing.T) {
+				cfg, err := NewConfig(WithAppName("removeComments"), WithSQLRemoveComments(remove),
+					WithSQLEnableRawSqlCache(rawCache))
+				require.NoError(t, err)
+				a, err := NewTestAgent(cfg)
+				require.NoError(t, err)
+				t.Cleanup(a.Shutdown)
+
+				cfg.Set(CfgSQLRemoveComments, !remove)
+				require.Equal(t, !remove, cfg.Bool(CfgSQLRemoveComments), "the config itself publishes the value")
+
+				agent := a.(*agent)
+				newSpanEvent(defaultSpan(agent), "query").SetSQL(sql, "")
+				want, _ := newSqlNormalizer(sql, remove).run()
+				_, ok := agent.sqlCache.peek(sqlHashOf(want))
+				assert.True(t, ok, "the statement is normalized as the agent was built to: %q", want)
+			})
+		}
+	}
 }
 
 // The SQL-ID cache is exempt from SQL.CacheLengthLimit: its ids come from an
@@ -1925,7 +1934,7 @@ func Test_agent_SQLCachesRefuseAKeyPastTheNormalizationCap(t *testing.T) {
 	})
 
 	t.Run("sql uid", func(t *testing.T) {
-		a := newTestAgent(noSqlCacheBypassConfig())
+		a := newTestAgent(defaultConfig())
 		assert.Nil(t, a.cacheSqlUid(past, sqlHashOf(past)), "no uid for a key past the cap")
 		_, cached := a.sqlUidCache.peek(sqlHashOf(past))
 		assert.False(t, cached)

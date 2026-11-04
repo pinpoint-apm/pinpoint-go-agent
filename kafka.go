@@ -31,9 +31,10 @@ func (m KafkaConsumerMessage) RpcName() string {
 func NewKafkaConsumerTracer(operation string, msg KafkaConsumerMessage, reader DistributedTracingContextReader) Tracer {
 	agent := GetAgent()
 	// A disabled agent returns the noop tracer anyway; return it before
-	// building the rpc name it would throw away.
+	// building the rpc name it would throw away, through the SpanStart hook
+	// NewSpanTracerWithReader would have called.
 	if !agent.Enable() {
-		return NoopTracer()
+		return hookSpanStart(NoopTracer())
 	}
 
 	tracer := agent.NewSpanTracerWithReader(operation, msg.RpcName(), reader)

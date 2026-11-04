@@ -425,7 +425,6 @@ type configSnapshot struct {
 	sqlTraceQueryStat    bool              // CfgSQLTraceQueryStat
 	sqlEnableRawSqlCache bool              // CfgSQLEnableRawSqlCache
 	sqlErrorCount        int               // CfgSQLErrorCount
-	sqlRemoveComments    bool              // CfgSQLRemoveComments
 	spanEventChunkSize   int               // CfgSpanEventChunkSize
 	spanMaxEventDepth    int32             // CfgSpanMaxCallStackDepth
 	spanMaxEventSequence int32             // CfgSpanMaxCallStackSequence
@@ -439,6 +438,11 @@ type configSnapshot struct {
 	// carries ErrorCategoryUnknown, so zero can only come from a snapshot built
 	// by hand rather than by NewConfig.
 	errorMarkMask ErrorCategory // CfgSpanErrorMark, CfgSpanErrorMarkExclude
+	// negativeMaxBind is a negative SQL.MaxBindValueSize as staged, published
+	// as 0 with SQL.TraceBindValue off, and 0 when the size is not negative.
+	// A publish warns only when it differs from the previous snapshot's, so a
+	// size that stays negative is warned about once.
+	negativeMaxBind int
 }
 
 // ignoreErrorRule is one parsed Span.IgnoreErrors entry, "<type>:<message>";
@@ -1337,24 +1341,22 @@ func (config *Config) publishFrom(prev *configSnapshot) {
 	}
 
 	// Both branches warn so an invalid value cannot silently change bind-value
-	// recording. A negative size turns SQL.TraceBindValue off in the published
-	// values only (see below): written into cfgMap, the false outlived the bad
-	// size, since a reload or Set that fixed the size did not touch the other
-	// option, and tracing stayed off until restart. The size is staged as 0,
-	// though, so only the publish that finds the negative value turns the
-	// option off: a later one that does not stage it again - a Set of another
-	// key, NewAgent's identity publish, ReloadConfig's, which copies the
-	// candidate's 0 - publishes SQL.TraceBindValue as configured. A size of 0
-	// renders no bind values either way.
+	// recording. A negative size is published as 0 with SQL.TraceBindValue off,
+	// in the published values only (see below), and stays staged as it is:
+	// written into cfgMap, the false outlived the bad size, since a reload or
+	// Set that fixed the size did not touch the other option, and a 0 staged
+	// for the size turned tracing back on at the next publish that did not
+	// stage it again - a Set of another key, NewAgent's identity publish. Left
+	// negative, it also reads as unchanged to a reload of the same file, and it
+	// is warned about when it appears, not on every publish.
 	maxBind := config.stagedInt(CfgSQLMaxBindValueSize)
 	if maxBind > maxSqlBindValueSize {
 		Log("config").Warnf("%s = %d is out of range, using %d",
 			CfgSQLMaxBindValueSize, maxBind, maxSqlBindValueSize)
 		config.cfgMap[CfgSQLMaxBindValueSize].value = maxSqlBindValueSize
-	} else if maxBind < 0 {
+	} else if maxBind < 0 && (prev == nil || prev.negativeMaxBind != maxBind) {
 		Log("config").Warnf("%s = %d is negative, using 0 and turning %s off",
 			CfgSQLMaxBindValueSize, maxBind, CfgSQLTraceBindValue)
-		config.cfgMap[CfgSQLMaxBindValueSize].value = 0
 	}
 
 	// Non-dynamic, like SQL.CacheSize: the agent reads it once at startup.
@@ -1469,6 +1471,7 @@ func (config *Config) publishFrom(prev *configSnapshot) {
 		values[k] = v.value
 	}
 	if maxBind < 0 {
+		values[CfgSQLMaxBindValueSize] = 0
 		values[CfgSQLTraceBindValue] = false
 	}
 
@@ -1479,12 +1482,12 @@ func (config *Config) publishFrom(prev *configSnapshot) {
 		urlStatWithMethod:    valueAs[bool](values[CfgHttpUrlStatWithMethod]),
 		sqlTraceBindValue:    valueAs[bool](values[CfgSQLTraceBindValue]),
 		sqlMaxBindValueSize:  valueAs[int](values[CfgSQLMaxBindValueSize]),
+		negativeMaxBind:      min(maxBind, 0),
 		sqlTraceCommit:       valueAs[bool](values[CfgSQLTraceCommit]),
 		sqlTraceRollback:     valueAs[bool](values[CfgSQLTraceRollback]),
 		sqlTraceQueryStat:    valueAs[bool](values[CfgSQLTraceQueryStat]),
 		sqlEnableRawSqlCache: valueAs[bool](values[CfgSQLEnableRawSqlCache]),
 		sqlErrorCount:        valueAs[int](values[CfgSQLErrorCount]),
-		sqlRemoveComments:    valueAs[bool](values[CfgSQLRemoveComments]),
 		spanEventChunkSize:   valueAs[int](values[CfgSpanEventChunkSize]),
 		spanMaxEventDepth:    int32(valueAs[int](values[CfgSpanMaxCallStackDepth])),
 		spanMaxEventSequence: int32(valueAs[int](values[CfgSpanMaxCallStackSequence])),
@@ -1584,8 +1587,19 @@ func (config *Config) reloadConfig(f *configFile) {
 
 	sources := &cfgSources{file: f}
 	sources.profile = config.loadProfile(sources)
-	changed := config.restage(sources, false)
+	// Changed means a changed published value. Staged values are compared as
+	// a source spells them against what the last publish normalized, so a
+	// value the publish rewrites - a lowercase Sampling.Type, an out-of-range
+	// Log.MaxBackups - read as changed on every reload of an unchanged file.
+	before := config.load().values
+	config.restage(sources, false)
 	config.publish()
+	changed := make(map[string]bool)
+	for k, v := range config.load().values {
+		if !reflect.DeepEqual(before[k], v) {
+			changed[k] = true
+		}
+	}
 	// Callbacks read the config they were just given a new generation of, and
 	// may register further callbacks, so run them off a copy with the lock
 	// released.
@@ -1597,15 +1611,12 @@ func (config *Config) reloadConfig(f *configFile) {
 	}
 }
 
-// restage re-reads the dynamic options and ActiveProfile from sources and
-// returns the set of option names whose value actually changed. With all,
-// it re-reads every option, for NewConfig's first load and ReloadConfig's
+// restage re-reads the dynamic options and ActiveProfile from sources. With
+// all, it re-reads every option, for NewConfig's first load and ReloadConfig's
 // private candidate. An option whose value came from the command line, the
 // environment or Set() is left alone; one the sources no longer set goes back
 // to its base value. The caller must hold config.mu.
-func (config *Config) restage(sources *cfgSources, all bool) map[string]bool {
-	changed := make(map[string]bool)
-
+func (config *Config) restage(sources *cfgSources, all bool) {
 	for _, k := range slices.Sorted(maps.Keys(config.cfgMap)) {
 		v := config.cfgMap[k]
 		if !v.dynamic && k != CfgActiveProfile && !all {
@@ -1616,7 +1627,6 @@ func (config *Config) restage(sources *cfgSources, all bool) map[string]bool {
 			continue
 		}
 
-		oldValue := v.value
 		if value, source, ok := sources.lookup(k, v); ok {
 			config.setFinalValue(k, v, value, source)
 		} else if v.source != cfgSrcDefault {
@@ -1625,11 +1635,7 @@ func (config *Config) restage(sources *cfgSources, all bool) map[string]bool {
 			// the file's last value left a deleted key in force until restart.
 			v.value, v.source = v.baseValue, cfgSrcDefault
 		}
-		if !reflect.DeepEqual(oldValue, v.value) {
-			changed[k] = true
-		}
 	}
-	return changed
 }
 
 // do runs the callback when one of its options changed, isolated from the
