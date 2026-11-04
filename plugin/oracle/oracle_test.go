@@ -31,7 +31,7 @@ func Test_parseDSN(t *testing.T) {
 			wantName: "xe",
 		},
 		{
-			// SplitHostPort fails without a colon, so the authority is the host.
+			// Without a port, url.Hostname is the whole authority.
 			name:     "no port",
 			dsn:      "oracle://scott:tiger@dbhost/xe",
 			wantHost: "dbhost",

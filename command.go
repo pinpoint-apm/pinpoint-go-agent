@@ -85,7 +85,7 @@ func (r *atcStreams) remove(s *activeThreadCountStream) {
 	}
 }
 
-// publishCount republishes the stream count for addRealTime*ActiveSpan, which
+// publishCount republishes the stream count for requestStats.begin, which
 // reads it on every span start and cannot afford to take this lock. Callers
 // must hold r.mu.
 func (r *atcStreams) publishCount() {
@@ -122,10 +122,9 @@ func (agent *agent) runCommandService() {
 	Log("cmd").Infof("start command goroutine")
 
 	for attempt := 0; agent.workerContinues(); attempt++ {
-		// Pace consecutive stream failures. newCommandStreamWithRetry's
-		// back-off only waits while the connection is not ready, so a
-		// collector whose channel is READY but whose command stream fails
-		// immediately (unimplemented, instant close) would otherwise spin
+		// Pace consecutive stream failures. newCommandStreamWithRetry paces
+		// only a failed open, so a collector whose command stream opens but
+		// fails at once (unimplemented, instant close) would otherwise spin
 		// this loop hot, opening streams continuously inside the host
 		// application.
 		if attempt > 0 && !sleepUnlessStopped(agent, backOffSleep(attempt-1)) {

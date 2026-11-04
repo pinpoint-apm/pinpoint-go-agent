@@ -508,7 +508,8 @@ func Test_expiringPickFirst_ignoresUnchangedAddresses(t *testing.T) {
 	assert.Same(t, cc.subConn(0), must(cc.pick()))
 }
 
-// for a fresh resolution, so a collector that moved is found again.
+// A failed or dropped connection asks for a fresh resolution, so a collector
+// that moved is found again.
 func Test_expiringPickFirst_requestsResolutionOnFailureAndIdle(t *testing.T) {
 	_, cc := newExpiringPickFirst(t, 0)
 	sc := cc.subConn(0)

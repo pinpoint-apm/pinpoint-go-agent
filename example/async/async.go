@@ -136,8 +136,8 @@ func main() {
 		//pinpoint.WithLogOutput(os.Getenv("HOME") + "/tmp/pinpoint.log"),
 		//pinpoint.WithSamplingCounterRate(100),
 		pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
-		//phttp.WithHttpServerRecordRequestHeader([]string{"HEADERS-ALL"}),
-		//phttp.WithHttpServerRecordRespondHeader([]string{"HEADERS-ALL"}),
+		//pphttp.WithHttpServerRecordRequestHeader([]string{"HEADERS-ALL"}),
+		//pphttp.WithHttpServerRecordRespondHeader([]string{"HEADERS-ALL"}),
 	}
 	c, _ := pinpoint.NewConfig(opts...)
 	agent, err := pinpoint.NewAgent(c)

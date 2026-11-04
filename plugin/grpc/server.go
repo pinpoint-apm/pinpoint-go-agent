@@ -14,7 +14,7 @@
 //	func (s *Server) UnaryCallUnaryReturn(ctx context.Context, msg *testapp.Greeting) (*testapp.Greeting, error) {
 //	    tracer := pinpoint.FromContext(ctx)
 //	    tracer.NewSpanEvent("gRPC Server Handler").EndSpanEvent()
-//	    return "hi", nil
+//	    return &testapp.Greeting{Msg: "hi"}, nil
 //	}
 //
 // To instrument a gRPC client, use UnaryClientInterceptor and StreamClientInterceptor.

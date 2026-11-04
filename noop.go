@@ -160,10 +160,10 @@ func (span *noopSpan) SpanEvent() SpanEventRecorder {
 	return &span.noopSe
 }
 
-// DisableSpanRecorder.recordException marks the span level (the span event
-// level, DisableSpanEventRecorder, stays a no-op). Only the failure flag is
-// kept: the span itself is never sent. Span.IgnoreErrors applies here too, or
-// an excluded error would fail the URL stat of unsampled requests while
+// SetError fails the URL stat of an unsampled request. Only the span level
+// records it - noopSpanEvent.SetError stays a no-op - and only the failure
+// flag is kept: the span itself is never sent. Span.IgnoreErrors applies here
+// too, or an excluded error would fail the URL stat of unsampled requests while
 // sparing sampled ones, and Span.ErrorMark / Span.ErrorMarkExclude apply for
 // the same reason - the category is ErrorCategoryException, as on a sampled
 // span.

@@ -209,10 +209,6 @@ func BenchmarkActiveThreadCountSampling(b *testing.B) {
 	}
 }
 
-// EndSpan deletes the real-time active span entry only when the start stored
-// one, judged by the span's own flag rather than the viewer count at end time:
-// a viewer that attached in between must not cost a lookup, and one that left
-// in between must not leave the entry behind.
 // The real-time span map has no bound of its own, so the last viewer leaving
 // clears it: a span never ended while a viewer was attached must not keep
 // its entry for the life of the agent.
@@ -234,6 +230,10 @@ func Test_atcStreamsClearsRealTimeSpansWhenLastViewerLeaves(t *testing.T) {
 	assert.Equal(t, int32(0), agent.atcStreamCount.Load())
 }
 
+// EndSpan deletes the real-time active span entry only when the start stored
+// one, judged by the span's own flag rather than the viewer count at end time:
+// a viewer that attached in between must not cost a lookup, and one that left
+// in between must not leave the entry behind.
 func Test_realTimeActiveSpan_DropFollowsWhatAddStored(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 

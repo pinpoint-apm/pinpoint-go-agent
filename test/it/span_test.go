@@ -172,8 +172,8 @@ func TestSendsAllMetadataAndCompleteSpanShapes(t *testing.T) {
 
 // Go's EndSpan finalizes a span whose events were left open by the
 // application: the unclosed events are ended at EndSpan and sent with the
-// sequence and break the collector's call tree. The span itself is still
-// delivered exactly once.
+// span, since dropping them would leave holes in the sequence and break the
+// collector's call tree. The span itself is still delivered exactly once.
 func TestFinalizesSpanWithUnclosedEvents(t *testing.T) {
 	mc, agent := startStack(t)
 
@@ -273,7 +273,7 @@ func TestKeepsTraceContextWhenEventLimitsOverflow(t *testing.T) {
 	spanID := tracer.SpanId()
 
 	// MaxCallStackDepth is 2, but one level deeper than the value is still
-	// three of these levels are kept.
+	// recorded, so all three of these levels are kept.
 	tracer.NewSpanEvent("depth.level1").SpanEvent().SetDestination("depth-destination")
 	tracer.NewSpanEvent("depth.level2").SpanEvent().SetDestination("depth-destination2")
 	tracer.NewSpanEvent("depth.level3").SpanEvent().SetDestination("depth-destination3")

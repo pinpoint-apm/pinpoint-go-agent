@@ -232,7 +232,7 @@ func TestRecordsSqlErrorAndTransactionSpanEvents(t *testing.T) {
 	}, waitTimeout)
 
 	events := eventsForSpan(mc.Snapshot(), spanID)
-	// ConnBeginTx, the traced statement, and Commit.
+	// Begin, the traced statement, and Commit.
 	assert.GreaterOrEqual(t, len(events), 3)
 	found := false
 	for _, e := range events {

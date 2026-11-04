@@ -65,8 +65,8 @@ func Test_noopSpan_Inject_SingletonNotMutated(t *testing.T) {
 }
 
 // An unsampled span is a real transaction, so a recorded error must fail its
-// failure rate of low-sampled traffic is biased toward zero. Span.IgnoreErrors
-// applies as on the sampled path.
+// URL stat; otherwise the failure rate of low-sampled traffic is biased toward
+// zero. Span.IgnoreErrors applies as on the sampled path.
 func Test_noopSpan_SetError_FailsUrlStat(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -112,8 +112,7 @@ func Test_noopSpan_SetError_SingletonUntouched(t *testing.T) {
 }
 
 // The unsampled span follows span.collectUrlStat's policy: Url first-wins,
-// Method and Status last-wins, the urlStatUnknown stand-in does not claim the
-// slot.
+// Method last-wins, the urlStatUnknown stand-in does not claim the slot.
 func Test_noopSpan_RecordUrlStat_URLStatIsFirstWinsOnUrl(t *testing.T) {
 	c, err := NewConfig(WithAppName("unsampledUrlStatApp"), WithHttpUrlStatEnable(true))
 	require.NoError(t, err)
@@ -161,10 +160,9 @@ func Test_noopSpan_SetError_ConcurrentWithEndSpan(t *testing.T) {
 }
 
 // doc/api_contracts.md promises that an error recorded on an async or
-// unsampled path too: continueDisableAsyncContextTraceObject hands the child
-// the parent's LocalTraceRoot, so DisableSpanRecorder writes the failure into
-// the shared root. The child keeps no statistics of its own, so without the
-// link the failure would vanish.
+// goroutine tracer fails the root, on the unsampled path too: the child links
+// to the root (traceRoot) and writes the failure there. The child keeps no
+// statistics of its own, so without the link the failure would vanish.
 func Test_noopSpan_AsyncChild_FailsRootUrlStat(t *testing.T) {
 	tests := []struct {
 		name  string

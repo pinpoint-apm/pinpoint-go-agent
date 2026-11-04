@@ -36,7 +36,7 @@ func TestClient_WithContextIsConcurrencySafe(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 10; j++ {
 				c := mc.WithContext(context.Background())
-				_, _ = c.Get("foo") // no server: errors fast, still records the span event
+				_, _ = c.Get("foo") // no server: errors fast; the unsampled copy records nothing
 			}
 		}()
 	}

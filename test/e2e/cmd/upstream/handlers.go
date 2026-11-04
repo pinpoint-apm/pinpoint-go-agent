@@ -96,7 +96,8 @@ func onDeep(w http.ResponseWriter, r *http.Request) {
 	writeText(w, r, tracer, http.StatusOK, fmt.Sprintf("depth=%d overflow_context=%t", depth, overflowContext))
 }
 
-// onWide records many sequential events, crossing the sequence limit.
+// onWide records width sequential events, so a width past the sequence limit
+// (the smoke test sends 256) exercises the sequence overflow.
 func onWide(w http.ResponseWriter, r *http.Request) {
 	defer track()()
 	tracer := newSpan(r)

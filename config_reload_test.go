@@ -327,8 +327,6 @@ func TestReloadConfig_OutOfRangeAndUnknownKeysAreTolerated(t *testing.T) {
 	assert.Empty(t, result.RestartRequired, "an out-of-range non-dynamic value normalizes to the running default")
 }
 
-// A panic inside the reload is reported as an error, and leaves the Config
-// usable - the lock released - for the next call.
 // The candidate resolves the YAML first, so that RestartRequired compares
 // like with like, and the final publish takes its components over: a value
 // the YAML got wrong is warned about once, not once per publish.
@@ -354,6 +352,8 @@ func TestReloadConfig_WarnsOnceAboutAValue(t *testing.T) {
 	assert.Empty(t, buf.String())
 }
 
+// A panic inside the reload is reported as an error, and leaves the Config
+// usable - the lock released - for the next call.
 func TestReloadConfig_RecoversPanic(t *testing.T) {
 	_, config := newReloadAgent(t, WithAppName("reload-panic"))
 	const broken = "Test.Broken"

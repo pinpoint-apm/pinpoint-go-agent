@@ -136,9 +136,6 @@ func TestSpan_TraceCallStackUsesGivenClassName(t *testing.T) {
 	assert.Equal(t, "MyError", span.errorChains[0].className)
 }
 
-// ExceptionChainSampler; 0 or less means unlimited. The bucket starts empty
-// (see newTokenBucket), so a fresh agent records the first chain and denies the
-// rest of a burst whatever the throughput, until idle time has refilled it.
 // unlimitedNewChainsConfig is defaultConfig without the Error.NewThroughput
 // limiter, for tests that record several new chains at once on a fresh agent
 // and are about something other than the limiter: a fresh bucket admits only
@@ -149,6 +146,10 @@ func unlimitedNewChainsConfig() *Config {
 	return cfg
 }
 
+// Error.NewThroughput limits new exception chains; 0 or less means unlimited.
+// The bucket starts empty (see newTokenBucket), so a fresh agent records the
+// first chain and denies the rest of a burst whatever the throughput, until
+// idle time has refilled it.
 func TestSpan_TraceCallStackLimitsNewChains(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -324,7 +325,7 @@ func TestSpan_TraceCallStackMaxChainDepth(t *testing.T) {
 
 			want := depth
 			if depth < 1 {
-				want = 9 // 0 is unlimited: every link of this chain
+				want = 9 // 0 falls back to the maxCauserDepth ceiling: every link of this chain
 			}
 			assert.Len(t, span.errorChains, want, "links recorded")
 			assertChainDepthsContiguous(t, span)
@@ -389,9 +390,9 @@ func TestSetError_NilPointerError(t *testing.T) {
 	assert.NotPanics(t, func() { makePExceptionList(span.errorChains) })
 }
 
-// uncomparableError is the shape of a common user error type - Go's own
-// errors.Join value and validator.ValidationErrors are both slices - whose
-// dynamic type cannot be compared with ==.
+// uncomparableError is the shape of a common user error type -
+// validator.ValidationErrors is a slice - whose dynamic type cannot be compared
+// with ==.
 type uncomparableError []string
 
 func (e uncomparableError) Error() string { return strings.Join(e, ",") }
@@ -444,9 +445,10 @@ func Test_sameError(t *testing.T) {
 }
 
 // A chain the limiter refused stays refused on the span: a later error whose
-// the stored DISABLED state without asking the sampler again. The limiter is
-// swapped for one holding a permit after the refusal, so a continuation that
-// asked it would be admitted; an unrelated new chain still is.
+// cause chain reaches the refused head reuses that refusal without asking the
+// limiter again. The limiter is swapped for one holding a permit after the
+// refusal, so a continuation that asked it would be admitted; an unrelated new
+// chain still is.
 func TestSpan_TraceCallStackRefusedChainDoesNotReaskLimiter(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgErrorNewThroughput, 1)
@@ -468,7 +470,7 @@ func TestSpan_TraceCallStackRefusedChainDoesNotReaskLimiter(t *testing.T) {
 
 // Two chains refused back to back must both stay latched. With a single slot
 // the older head is overwritten, and the rest of that chain's links are then
-// would have admitted.
+// charged as brand new chains, which under a burst crowd out other chains.
 func TestSpan_TraceCallStackKeepsEveryRefusedChainHead(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgErrorNewThroughput, 0)

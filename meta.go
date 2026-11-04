@@ -93,8 +93,9 @@ func (agent *agent) sendMetaWorker() {
 		// total the rate limit holds back can bound it.
 		held := agent.reportMetaDrops()
 
-		// retry schedule: a retry is a second try at an id whose spans went
-		// out a delay ago, a new item is an id whose spans are going out now.
+		// New metadata goes before the retry schedule: a retry is a second try
+		// at an id whose spans went out a delay ago, a new item is an id whose
+		// spans are going out now.
 		var item pendingMeta
 		select {
 		case md := <-agent.metaChan:
@@ -167,8 +168,8 @@ func (agent *agent) awaitMeta(stop <-chan struct{}, held time.Duration) (item pe
 
 // releaseParkedMeta handles a parked release come due: the drop a rejection
 // earned, delayed by one retry interval (metaRejected), or a given-up item's,
-// delayed by up to metaGiveUpParks of them unless the collector has delivered
-// another item since - then it is parked once more.
+// which is parked once more while it has parks left and the collector has
+// delivered nothing since, so it waits up to metaGiveUpParks+1 intervals.
 func (agent *agent) releaseParkedMeta(item pendingMeta) {
 	if item.parks > 0 && agent.metaDelivered.Load() == item.delivered {
 		item.parks--
@@ -577,9 +578,10 @@ func normalizeSqlText(sql string, removeComments bool) normalizedSql {
 // caches above, so a hot statement is a lock-free lookup and stays resident
 // under aged promotion.
 func (agent *agent) normalizeSql(sql string) normalizedSql {
-	// SQL.CacheLengthLimit applies here as it does to the metadata caches: the
-	// raw text is both key and value, so an over-limit statement would pin twice
-	// its size per entry - the memory the limit exists to cap.
+	// SQL.CacheLengthLimit bounds this cache alone (see sqlCacheable): the raw
+	// text is both key and value, so an over-limit statement would pin twice its
+	// size per entry - the memory the limit exists to cap. Text past maxSqlSize
+	// is never memoized, whatever the limit.
 	// SQL.RemoveComments is startup-only, so entries already in the cache stay
 	// consistent with the value read here.
 	removeComments := agent.config.load().sqlRemoveComments

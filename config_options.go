@@ -141,8 +141,9 @@ func WithCollectorGrpcConnectionMaxAge(ms int) ConfigOption {
 // the collector target. The default true uses the dns resolver, which keeps
 // every address a collector hostname resolves to and re-resolves it. false
 // falls back to the passthrough scheme, which hands the target to the dialer
-// as-is: one address at a time, no re-resolution. Keep it true unless the dns
-// resolver has to be rolled back without a redeploy.
+// as-is: the channel holds one address, which the dialer resolves anew for
+// each connection. Keep it true unless the dns resolver has to be rolled back
+// without a redeploy.
 func WithCollectorGrpcDnsResolverEnable(enable bool) ConfigOption {
 	return withValue(CfgCollectorGrpcDnsResolverEnable, enable)
 }
@@ -268,10 +269,11 @@ func WithSQLEnableRawSqlCache(enable bool) ConfigOption {
 // metadata continuously. Read once at agent startup.
 func WithSQLCacheSize(size int) ConfigOption { return withValue(CfgSQLCacheSize, size) }
 
-// WithSQLCacheLengthLimit sets the max length in bytes of a raw SQL text whose
-// normalization is memoized (the raw SQL cache). The SQL-ID and SQL-UID caches
-// are exempt: both key on a hash of the statement, so an entry costs the same
-// whatever its length. -1 memoizes every SQL.
+// WithSQLCacheLengthLimit sets the length in bytes from which a raw SQL text's
+// normalization is no longer memoized (the raw SQL cache). The SQL-ID and
+// SQL-UID caches are exempt: both key on a hash of the statement, so an entry
+// costs the same whatever its length. -1 lifts the limit, though a text over
+// 64 KiB is never memoized.
 func WithSQLCacheLengthLimit(limit int) ConfigOption { return withValue(CfgSQLCacheLengthLimit, limit) }
 
 // WithSQLCacheExpireHours sets how many hours a SQL UID stays cached before
@@ -280,8 +282,9 @@ func WithSQLCacheLengthLimit(limit int) ConfigOption { return withValue(CfgSQLCa
 func WithSQLCacheExpireHours(hours int) ConfigOption { return withValue(CfgSQLCacheExpireHours, hours) }
 
 // WithSQLRemoveComments drops comments from normalized SQL instead of copying
-// startup-only: the normalized text is the SQL id cache key and the UID hash
-// input, so changing it at runtime would split one statement across two ids.
+// them. It is startup-only: the normalized text is the SQL id cache key and the
+// UID hash input, so changing it at runtime would split one statement across
+// two ids.
 func WithSQLRemoveComments(remove bool) ConfigOption { return withValue(CfgSQLRemoveComments, remove) }
 
 // WithSQLErrorCount sets how many SQL executions mark a span failed. A value of

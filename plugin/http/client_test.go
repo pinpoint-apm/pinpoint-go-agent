@@ -322,8 +322,9 @@ func TestClientHeaderRecordersUseTheClientOptions(t *testing.T) {
 		"a server-side option must not record a client header")
 }
 
-// The deprecated pair is the same before/after code path; it must keep working
-// for callers that have not migrated.
+// NewHttpClientTracer and EndHttpClientTracer are the halves WrapClient and
+// DoClient run around a request, exported for instrumentation that cannot wrap
+// the client; they must keep working when called directly.
 func TestNewAndEndHttpClientTracer(t *testing.T) {
 	pptest.StartAgent(t)
 	tracer := serverTracer(t)
@@ -466,7 +467,7 @@ func TestWrapClient_NestedRequestIsNotTraced(t *testing.T) {
 	require.NotNil(t, rt.sent)
 	assert.Equal(t, outer, pinpointHeaders(t, rt.sent.Header), "the outer layer's context travels alone")
 
-	// The caller's own event was not popped by the nested call's after().
+	// The caller's own event was not popped by the nested call's EndHttpClientTracer.
 	tracer.EndSpanEvent()
 }
 
@@ -520,7 +521,7 @@ func TestWrapClient_ForwardedContextIsReplaced(t *testing.T) {
 	}
 }
 
-func TestBefore_RecordsTheUrlWithoutItsQueryByDefault(t *testing.T) {
+func TestNewHttpClientTracer_RecordsTheUrlWithoutItsQueryByDefault(t *testing.T) {
 	for _, tt := range []struct {
 		record bool
 		want   string

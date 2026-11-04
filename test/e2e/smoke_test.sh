@@ -185,8 +185,8 @@ echo "Config reload and sampling"
 http_request POST "$BASE_URL/agent/reload?counter_rate=2" --max-time 60
 assert_status "reload counter sampling" 200
 assert_contains "reload counter rate" '"counter_rate":2'
-# A reload restarts the agent and NewAgent returns before registration
-# completes, so probing straight away would only see noop tracers.
+# /agent/reload restarts the agent and waits up to 30s for it to register;
+# confirm it did, or the probe below would only see noop tracers.
 wait_for_body "reloaded upstream agent" "$BASE_URL/ready" \
     '"agent_enabled":true' || true
 http_request GET "$BASE_URL/sampling-probe?count=40"

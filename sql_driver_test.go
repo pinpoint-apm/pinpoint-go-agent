@@ -107,8 +107,8 @@ func Test_writeBindValue_LimitsLargeValues(t *testing.T) {
 		wantPrefix string
 		wantSuffix string
 	}{
-		// A string reports its length in bytes, an array the number of
-		// StringUtils.abbreviate and ArrayUtils.abbreviate report it.
+		// A string reports its length in bytes, a slice the number of
+		// elements it holds - the value's own length either way.
 		{name: "string", value: strings.Repeat("가", 1<<20), wantPrefix: "가", wantSuffix: "...(3145728)"},
 		{name: "bytes", value: bytes.Repeat([]byte{255}, 1<<20), wantPrefix: "[255 ", wantSuffix: "...(1048576)"},
 		{name: "slice", value: make([]int32, 1<<20), wantPrefix: "[0 0 ", wantSuffix: "...(1048576)"},

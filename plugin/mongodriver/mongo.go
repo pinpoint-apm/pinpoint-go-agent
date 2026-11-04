@@ -25,7 +25,7 @@ import (
 	"go.mongodb.org/mongo-driver/event"
 )
 
-// The Mongo.* options are shared with the mongodriver plugin and live in
+// The Mongo.* options are shared with the mongodriverv2 plugin and live in
 // ppmongomonitor; these names keep them on this package.
 const (
 	CfgMongoRecordCommand  = ppmongomonitor.CfgMongoRecordCommand

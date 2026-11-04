@@ -81,7 +81,8 @@ type expiringPickFirst struct {
 }
 
 // expiringSubConn is one SubConn with the data the picker reads without the
-// PickProgress CAS, so exactly one pick per SubConn requests a successor.
+// balancer lock: expiresAt is fixed at creation and successor is a CAS flag,
+// so exactly one pick per SubConn requests a successor.
 type expiringSubConn struct {
 	sc        balancer.SubConn
 	expiresAt time.Time

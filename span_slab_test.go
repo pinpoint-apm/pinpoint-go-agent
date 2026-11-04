@@ -133,7 +133,8 @@ func Test_spanMessageBuilder_errorNextEventAndAsyncChunk(t *testing.T) {
 }
 
 // What the collector gets for the addresses a span never recorded: "UNKNOWN"
-// next span id on a message event whose caller never injected a trace context.
+// on the accept event, and no next span id on a message event whose caller
+// never injected a trace context.
 func Test_spanMessageBuilder_unknownAddressAndUnsetNextSpanId(t *testing.T) {
 	a := newTestAgent(defaultConfig())
 

@@ -4,8 +4,9 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
-// Shorthands for the config the request path reads: newHttpConfig builds it
-// from the agent config, the others read the one httpCfg holds.
+// Shorthands for the config the request path reads: newHttpConfig and
+// makeHttpHeaderRecorder build from the agent config, the others read the one
+// httpCfg holds.
 func newHttpConfig() *httpConfig { return newHttpConfigFor(pinpoint.GetConfig()) }
 
 func isExcludedUrl(url string) bool { return httpCfg().srvUrl.isFiltered(url) }

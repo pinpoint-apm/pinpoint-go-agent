@@ -93,11 +93,12 @@ func (r ConfigReloadResult) OK() bool {
 // run for the options that changed.
 //
 // The non-dynamic options - the identity, Collector.*, the queue and cache
-// sizes, Enable - keep their running values. Those the YAML would have given
-// another value are returned in RestartRequired and logged as a warning, so
-// the caller can tell that a restart is needed to apply them. An option set
-// by a flag or an environment variable would not change on a restart either,
-// so it is not listed.
+// sizes, Enable - keep their running values, except ActiveProfile, which
+// selects the profile within the YAML as it does within a config file. Those
+// the YAML would have given another value are returned in RestartRequired and
+// logged as a warning, so the caller can tell that a restart is needed to
+// apply them. An option set by a flag or an environment variable would not
+// change on a restart either, so it is not listed.
 //
 // The reload is refused, with nothing changed, when no agent is running
 // (ConfigReloadNoAgent), when the agent reads a config file, which outranks
@@ -108,9 +109,10 @@ func (r ConfigReloadResult) OK() bool {
 // for Uid.Version v4 (ConfigReloadInvalidConfig). Unlike a config file, a
 // YAML with a value of the wrong type is refused as a whole rather than
 // applied without that value: a caller that composes the document gets told
-// instead of running on a partly applied one. An out-of-range value and an
-// unknown key are handled as at startup: the option falls back to its
-// default, the key is ignored, each with a warning.
+// instead of running on a partly applied one. An out-of-range value is
+// normalized as at startup, in most cases back to the option's default with a
+// warning. An unknown key is ignored with a warning, which a config file's
+// unknown key does not get.
 //
 // ReloadConfig is safe to call from any goroutine while requests create
 // spans; concurrent calls and Config.Set are serialized.

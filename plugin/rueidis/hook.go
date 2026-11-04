@@ -21,7 +21,7 @@ type Hook struct {
 	dbInfo pinpoint.DBInfo
 }
 
-// NewHook creates a ruedis.Hook to instrument redis calls.
+// NewHook creates a rueidishook.Hook that instruments redis calls.
 func NewHook(opts rueidis.ClientOption) *Hook {
 	endpoint := cmp.Or(strings.Join(opts.InitAddress, ","), "unknown")
 	return &Hook{dbInfo: pinpoint.DBInfo{QueryType: pinpoint.ServiceTypeRedis, DBName: "REDIS", DBHost: endpoint}}

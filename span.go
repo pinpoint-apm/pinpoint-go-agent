@@ -137,8 +137,7 @@ type span struct {
 	// err/statusErr are atomic for the reason above: an event setter run from
 	// another goroutine of the call stack races the sender reading them. err
 	// accumulates its ErrorCategory bits with an atomic OR (markSpanError),
-	// which needs nothing more than that - the mask carries no other state
-	// (DefaultShared.maskErrorCode: getAndUpdate(x -> x | mask)).
+	// which needs nothing more than that - the mask carries no other state.
 	err             atomic.Int32
 	errorFuncId     int32
 	errorString     string
@@ -169,10 +168,13 @@ type span struct {
 	// adds an 8-byte malloc header to an object this large, so the struct
 	// has to stay at 888 bytes to be allocated from the 896-byte class.
 	refusedChainNext int32
-	// traceRoot is the span whose PSpan carries the error mask, nil when this
-	// span is the root itself. An async span is serialized as a PSpanChunk,
-	// which has no error field, so only the mask moves to the root: the error
-	// string and the exception chain stay on the recording span.
+	// traceRoot is the trace root, nil when this span is the root itself. An
+	// async span is serialized as a PSpanChunk, which has neither an error nor
+	// a logging field, so the trace-wide state lives on the root: the error
+	// mask, the URL statistics failure flag, the SQL.ErrorCount count and the
+	// logging flag. The error string and the exception chain stay on the
+	// recording span; a goroutine tracer records its span-level error on its
+	// Goroutine Invocation event.
 	traceRoot *span
 
 	// stackBuf and chunkBuf back eventStack and the first event chunk, so a
@@ -185,7 +187,8 @@ type span struct {
 	chunkBuf [defaultEventChunkSize]*spanEvent
 }
 
-// root returns the span carrying the trace-wide error mask and failure flag.
+// root returns the trace root, the span holding the trace-wide state listed on
+// traceRoot.
 func (span *span) root() *span {
 	if span.traceRoot != nil {
 		return span.traceRoot
@@ -666,7 +669,7 @@ func sameClusterNamespace(mine string, reader DistributedTracingContextReader) b
 //     a third delimiter and never looks past it, so "a^1^2^3" is the
 //     transaction "a^1^2".
 func splitTransactionId(tid string) (agentId string, startTime int64, sequence int64, ok bool) {
-	// isIDChars is validateID without the length bound.
+	// isIDChars is IsValidId without the length bound.
 	agentId, rest, ok := strings.Cut(tid, "^")
 	if !ok || agentId == "" || !isIDChars(agentId) {
 		return "", 0, 0, false
@@ -777,9 +780,8 @@ func (span *span) EndSpanEvent() {
 	span.endSpanEvent(recovered)
 }
 
-// endSpanEvent is the unguarded body: EndSpan sets finished first and then
-// ends the async span's own event through this path. recovered is the panic
-// value EndSpanEvent caught, or nil.
+// endSpanEvent is the body of EndSpanEvent past its after-EndSpan guard and
+// its recover(). recovered is the panic value EndSpanEvent caught, or nil.
 func (span *span) endSpanEvent(recovered any) {
 	// A CAS loop, not a check-then-Add: two concurrent ends of the same
 	// placeholder would drive the counter to -1, after which the next real
@@ -1037,18 +1039,18 @@ func (span *span) SetLogging(logInfo int32) {
 	if span.warnIfFinished("SetLogging") {
 		return
 	}
-	// On the root: only its PSpan carries the flag, a goroutine tracer going
-	// out as a PSpanChunk, so a log line written from a goroutine marked
-	// nothing. Java keeps it on the shared TraceRoot too.
+	// On the root: only its PSpan carries the flag - a goroutine tracer goes
+	// out as a PSpanChunk, which has none - so a log line written from a
+	// goroutine still marks the transaction.
 	span.root().loggingInfo.Store(logInfo)
 }
 
 // mergeUrlStat applies a recorded entry onto dst, the entry a span holds; has
 // says whether dst holds one already. Shared by span and noopSpan so both
 // paths use the same merge rule: the URL is first-write-wins, while the
-// method and status come from the most recent entry. A matched
-// route must not be replaced by a later, less precise URL, but response fields
-// may arrive later.
+// method comes from the most recent entry. A matched route must not be
+// replaced by a later, less precise URL; an entry without a Url records
+// urlStatUnknown, which claims nothing, so a later real Url still fills it.
 //
 // The entry arrives by value, so the span never shares the caller's.
 func mergeUrlStat(dst *UrlStatEntry, has bool, stat UrlStatEntry) {

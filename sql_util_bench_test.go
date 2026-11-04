@@ -44,6 +44,8 @@ func uniqueSQLs(base string, n int) []string {
 
 // The most important test: on both the miss path and the hit path, the cached
 // result must be byte-identical to what the uncached normalizer produces.
+// benchLongSQL is past the default SQL.CacheLengthLimit (2048), so it takes
+// neither: both of its passes go through the uncached bypass.
 func TestNormalizeSqlCacheEquivalence(t *testing.T) {
 	corpus := []string{
 		"select * from table a = 1 and b=50 and c=? and d='11'",
@@ -114,6 +116,8 @@ func BenchmarkSqlNormalizeHugeLiteral(b *testing.B) {
 }
 
 // Win case: the same statement repeats, every call after the first is a hit.
+// The Long variant is past the default SQL.CacheLengthLimit (2048), so it never
+// hits: it measures the uncached bypass.
 func benchmarkNormalizeCachedRepeat(b *testing.B, sql string) {
 	a := newTestAgent(defaultConfig())
 	a.normalizeSql(sql)
@@ -126,7 +130,7 @@ func benchmarkNormalizeCachedRepeat(b *testing.B, sql string) {
 
 // Loss case: every statement is unique, every call is a miss plus an LRU
 // insert and eviction. The delta against the uncached baseline is the cache's
-// worst-case overhead.
+// worst-case overhead. The Long variant bypasses the cache, as in the win case.
 func benchmarkNormalizeCachedUnique(b *testing.B, base string, n int) {
 	queries := uniqueSQLs(base, n)
 	a := newTestAgent(defaultConfig())

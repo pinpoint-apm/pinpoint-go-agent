@@ -272,8 +272,9 @@ func Test_wrappedConn_ConcurrentOperationGoesUntraced(t *testing.T) {
 }
 
 // The endpoint is what puts the call on the right node of the server map, and
-// the two Dial families derive it differently: a network address must carry a
-// port, while a URL's authority may leave both parts implicit.
+// the two Dial families derive it differently: a network address loses its
+// port, and one with none - a unix socket path - is kept whole, while a URL's
+// authority may leave both parts implicit.
 func Test_makeWrappedConn(t *testing.T) {
 	c := makeWrappedConn(&fakeRedisConn{}, "redis1:6379")
 	assert.Equal(t, "redis1", c.(*wrappedConn).dbInfo.DBHost, "the port is not part of the endpoint")

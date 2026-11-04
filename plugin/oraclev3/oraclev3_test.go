@@ -15,9 +15,9 @@ const driverName = "oraclev3-pinpoint"
 
 // The endpoint recorded on every span event comes from here, so the service
 // name in the URL path has to reduce to a bare database name and the authority
-// to a bare host. v3 parses the DSN the same way v2 did -- url.Parse, then
-// SplitHostPort over the authority and the path trimmed to the service name --
-// so the expectations below carry over unchanged.
+// to a bare host. v3 parses the DSN the same way v2 did -- url.Parse, then the
+// authority's host name and the path trimmed to the service name -- so the
+// expectations below carry over unchanged.
 func Test_parseDSN(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
@@ -32,7 +32,7 @@ func Test_parseDSN(t *testing.T) {
 			wantName: "xe",
 		},
 		{
-			// SplitHostPort fails without a colon, so the authority is the host.
+			// Without a port, url.Hostname is the whole authority.
 			name:     "no port",
 			dsn:      "oracle://scott:tiger@dbhost/xe",
 			wantHost: "dbhost",

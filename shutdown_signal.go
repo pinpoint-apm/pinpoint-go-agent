@@ -8,9 +8,10 @@ import (
 	"syscall"
 )
 
-// The os/signal calls behind ShutdownOnSignal, wrapped so a test can replace
-// them - like getHostName in grpc.go. signalNotify is also what lets a test
-// prove the default: without ShutdownOnSignal the agent never touches it.
+// signalNotify and raiseSignal are the process-wide calls behind
+// ShutdownOnSignal, wrapped so a test can replace them - like getHostName in
+// grpc.go; signal.Stop is called directly. signalNotify is also what lets a
+// test prove the default: without ShutdownOnSignal the agent never touches it.
 var (
 	signalNotify = signal.Notify
 

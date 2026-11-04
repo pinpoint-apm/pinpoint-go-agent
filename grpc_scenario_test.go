@@ -252,9 +252,6 @@ func Test_runCommandService_pacesReconnectsAndStopsPromptly(t *testing.T) {
 	}
 }
 
-// Stream renewal is the normal path, not the outage path: a worker swaps an
-// aged stream for a new one between two sends, so no send fails and both are
-// delivered.
 // streamMaxAgeForTest is the Collector.Grpc.StreamMaxAge the renewal
 // scenarios below run with. It has to be long enough that the first send
 // cannot outlive it: the worker opens the stream and then re-checks the age
@@ -264,6 +261,9 @@ func Test_runCommandService_pacesReconnectsAndStopsPromptly(t *testing.T) {
 // keep a wide margin.
 const streamMaxAgeForTest = 50
 
+// Stream renewal is the normal path, not the outage path: a worker swaps an
+// aged stream for a new one between two sends, so no send fails and both are
+// delivered.
 func Test_sendStatsWorker_renewsAgedStream(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgCollectorGrpcStreamMaxAge, streamMaxAgeForTest)
@@ -339,7 +339,7 @@ func Test_runCommandService_renewsAgedStreamWithoutBackOff(t *testing.T) {
 func Test_spanWorkers_warnAboutSaturatedQueue(t *testing.T) {
 	const queueCap, enqueued = 4, 6
 
-	// The queue is filled and closed up front, so each worker drains exactly
+	// The queue is filled and closed up front, so the worker drains exactly
 	// queueCap chunks and exits - several report calls, one warning.
 	fill := func(agent *agent) {
 		for i := 0; i < enqueued; i++ {

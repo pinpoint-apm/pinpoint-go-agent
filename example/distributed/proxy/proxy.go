@@ -15,8 +15,9 @@
 //	       annotation, and injects the Pinpoint-* propagation headers - the
 //	       backend continues this trace from them
 //	     · the downstream status code is recorded on the event
-//	     · a failed call is recorded as an error on the event; recording it
-//	       on the span too marks the whole transaction failed
+//	     · a failed call is recorded as an error on the event, which already
+//	       marks the whole transaction failed; recording it on the span too
+//	       puts the cause on the span itself
 //	  → the wrapper records the response and ends the span
 package main
 
@@ -53,8 +54,9 @@ func members(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := pphttp.WrapClient(nil).Do(req)
 	if err != nil {
-		// The client event already carries the error; recording it on the
-		// span as well marks the transaction failed with its cause.
+		// The client event already carries the error and marks the transaction
+		// failed; recording it on the span as well puts the cause on the span
+		// itself.
 		pinpoint.FromContext(r.Context()).Span().SetError(err)
 		http.Error(w, `{"error":"backend unreachable"}`, http.StatusBadGateway)
 		return

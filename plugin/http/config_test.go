@@ -17,7 +17,7 @@ import (
 // recorders were published as one immutable value, the reload callback
 // reassigned ten plain package globals that every request read.
 func TestHttpConfigReloadRace(t *testing.T) {
-	// startAgent, not a bare NewTestAgent: it shuts the agent down.
+	// pptest.StartAgent, not a bare NewTestAgent: it shuts the agent down.
 	pptest.StartAgent(t,
 		WithHttpServerExcludeUrl([]string{"/skip/*", "/**/*.do"}),
 		WithHttpServerExcludeMethod([]string{"put", "delete"}),

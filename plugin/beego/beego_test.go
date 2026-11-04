@@ -60,8 +60,9 @@ func TestServerFilterChain_TracesAndPassesTheContextThrough(t *testing.T) {
 	assert.Equal(t, "10.0.0.1", span["RemoteAddr"])
 }
 
-// The status the span records is beego's Output.Status, set after the handler
-// has run; a configured error class turns the span red.
+// The status the span records is the one the response went out with
+// (responseStatus), read after the handler has run; a configured error class
+// turns the span red.
 func TestServerFilterChain_RecordsTheFinalStatus(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -156,7 +156,8 @@ func Test_setProxyHeader(t *testing.T) {
 	}
 }
 
-// runs every parser: a request that crossed two proxies carries two annotations.
+// Every proxy header present is recorded: a request that crossed two proxies
+// carries two annotations.
 func Test_setProxyHeader_EveryHeader(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Pinpoint-ProxyApache", "t=1500968753503000 D=125")
@@ -987,8 +988,9 @@ func TestRecordHttpHandlerError(t *testing.T) {
 	}
 }
 
-// A pattern registered on the mux is collected as a URL statistic; WrapHandler
-// has no pattern to report and must not collect one.
+// A mux route serves its handler a sampled tracer while URL statistics are on:
+// collecting the stat under the pattern on the way out must not disturb the
+// request.
 func TestCollectUrlStat(t *testing.T) {
 	pptest.StartAgent(t, pinpoint.WithHttpUrlStatEnable(true))
 

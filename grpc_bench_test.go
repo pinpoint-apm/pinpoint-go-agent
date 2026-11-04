@@ -5,8 +5,8 @@ package pinpoint
 // These measure the sender-side protobuf work that runs once per span send:
 // building the PSpanMessage object graph (makePSpan / makePSpanChunk /
 // makePSpanMessageBatch) and, for scale, the wire serialization gRPC performs
-// on top of it. They quantify the allocation cost of building a fresh protobuf
-// struct per send.
+// on top of it. They track what building that graph on the pooled
+// spanMessageBuilder allocates per send.
 //
 // Run:
 //
@@ -99,12 +99,11 @@ func benchMarshal(b *testing.B, marshal bool, msg proto.Message) {
 	}
 }
 
-// --- stream vs batch, agent-side cost over a stub transport ---
+// --- batch send, agent-side cost over a stub transport ---
 //
-// The stubs perform the wire marshal a real grpc-go Send / unary call does,
-// but no network I/O, so the numbers compare the two transports' agent-side
-// machinery: per-span timer + marshal on the stream path vs per-batch
-// goroutine + permit + context on the batch path.
+// The stub performs the wire marshal a real unary call does, but no network
+// I/O, so the numbers are the batch path's agent-side machinery: per-batch
+// goroutine + permit + message build + context + marshal.
 
 type stubSpanBatchClient struct{ pb.SpanClient }
 

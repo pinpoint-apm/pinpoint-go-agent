@@ -147,7 +147,9 @@ func Test_activeSpanRegistrySizeTracksStoreAndRemove(t *testing.T) {
 	assert.Equal(t, 0, r.size())
 }
 
-// when span ids spread evenly, and never more.
+// The cap is applied per shard, so the registry as a whole holds
+// activeSpanMaxSize spans - the Java agent's maximum - when the keys spread
+// evenly, and never more.
 func Test_activeSpanRegistryIsBoundedAtTheJavaMaximum(t *testing.T) {
 	var buf bytes.Buffer
 	defer captureLogAt(&buf, logrus.InfoLevel)()
@@ -277,8 +279,9 @@ func Test_normalizeCpuLoad(t *testing.T) {
 }
 
 // The bucket boundaries are inclusive on the upper side and compared in whole
-// elapsedTime <= slotTime). An exact boundary is the case float seconds got
-// wrong.
+// milliseconds, as the NORMAL histogram schema defines its slots
+// (1000/3000/5000, elapsedTime <= slotTime). An exact boundary is the case
+// float seconds got wrong.
 func Test_bucketActiveSpanBoundariesAreInclusiveMilliseconds(t *testing.T) {
 	now := time.Now()
 
@@ -499,6 +502,7 @@ func Test_collectAgentStatWorker_restartKeepsPartialBatchAndRetakesBaseline(t *t
 // cross-agent rationale and references live in doc/development.md.
 // ===========================================================================
 
+// Test_TransactionCounters locks that all six counters Java's
 // DefaultTransactionCounter reports exist here and drain independently. A
 // missing one shows up as a flat line in the Inspector, not as an error.
 func Test_TransactionCounters(t *testing.T) {

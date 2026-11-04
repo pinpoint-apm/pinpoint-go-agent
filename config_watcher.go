@@ -14,8 +14,8 @@ var configPollInterval = time.Second
 // the poller again.
 //
 // Close must not be called from a reload callback: callbacks run on the very
-// goroutine Close waits for, so a callback that closes its own Config
-// deadlocks and leaves the watcher lock held.
+// goroutine Close waits for, so a callback that closes its own Config stalls
+// for shutdownTimeout before Close gives up the wait and returns.
 func (config *Config) Close() {
 	config.watchMu.Lock()
 	defer config.watchMu.Unlock()

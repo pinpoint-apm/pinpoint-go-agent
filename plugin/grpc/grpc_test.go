@@ -460,8 +460,8 @@ func TestStreamClientInterceptor_DoesNotAppendIntoTheCallersOptions(t *testing.T
 type forkingTracer struct {
 	pinpoint.Tracer
 	ends int32
-	// spanEnded is atomic: a stream abandoned by its context ends the span on
-	// the interceptor's watcher goroutine, which a test reads concurrently.
+	// spanEnded is atomic: a stream's span is ended by gRPC's OnFinish
+	// callback, which may run on a goroutine of gRPC's own.
 	spanEnded atomic.Bool
 	child     *forkingTracer
 }

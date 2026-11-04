@@ -13,9 +13,9 @@ import (
 // annotation stores recorded annotations as compact value structs instead of
 // eagerly building the protobuf object graph. Append* runs on the application
 // hot path, so it only copies the raw values into a slice (one amortized
-// allocation) rather than allocating the 3-8 protobuf objects each annotation
-// shape needs. The protobuf messages are materialized lazily in getList(),
-// which the agent calls on its sender goroutine at serialization time.
+// allocation) rather than allocating the 3-6 protobuf objects each annotation
+// shape needs. The protobuf messages are materialized lazily, on the sender
+// goroutine's spanMessageBuilder at serialization time (getListInto).
 type annotation struct {
 	values         []annotationValue
 	annotationLock sync.Mutex
@@ -68,8 +68,10 @@ func (a *annotation) append(v annotationValue) {
 	a.annotationLock.Unlock()
 }
 
-// seal drops every later append. The owner calls it once its final chunk is
-// on its way to the sender, so nothing appended from here on could be sent.
+// seal drops every later append. The owner calls it when it ends - a span
+// event in end(), the span once its final chunk is on its way to the sender -
+// so a late append is dropped outright rather than sent or not depending on
+// when the sender gets to the chunk.
 func (a *annotation) seal() {
 	a.sealed.Store(true)
 }

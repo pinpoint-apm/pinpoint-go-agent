@@ -10,7 +10,6 @@ import (
 // significant bits first, big-endian, then the least significant bits) and
 // encodes it with RFC 4648 §5 URL-and-filename-safe base64 without padding.
 //
-// Base64Utils.encode(UUID): google/uuid stores the UUID in the same RFC 4122
 // The result is always exactly 22 characters.
 func encodeUID(u uuid.UUID) string {
 	// u is a [16]byte already in big-endian network order.

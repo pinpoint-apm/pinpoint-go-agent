@@ -424,7 +424,7 @@ func waitNotReady(t *testing.T, conn *grpc.ClientConn) {
 // The moment the channel comes back is the one line the outage cannot be
 // reconstructed without: it must be logged as a "-> READY" transition and
 // closed with the outage summary, whether the wait found the channel in
-// AbstractGrpcDataSender's ConnectivityStateMonitor.
+// TRANSIENT_FAILURE or in CONNECTING.
 func Test_waitUntilReady_logsRecoveryToReady(t *testing.T) {
 	const which = "recovery-test"
 	freshChannelStateLog(t, which)
@@ -1099,7 +1099,7 @@ func Test_makePExceptionMetaData_SanitizesInvalidUTF8(t *testing.T) {
 // --- metadata ---------------------------------------------------------------
 
 // Each metadata type must reach the collector with the fields the caller
-// MetaDataSqlUidTest.
+// supplied.
 func Test_agentGrpc_sendMetadata_payloads(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agentGrpc, meta := newMockMetaAgentGrpc(agent)
@@ -1224,7 +1224,7 @@ func Test_agentGrpc_sendExceptionMetadata_oversizedIsSkippedWithoutRetry(t *test
 }
 
 // A retryable failure is retried within the attempt budget, and a send that
-// GrpcMetadataRetriesFailedResultWithoutEvictingCache.
+// then succeeds keeps its cache entry.
 func Test_sendMetaWorker_succeedsAfterRetryableFailure(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	failing := &failingMetaClient{
@@ -1261,7 +1261,7 @@ func Test_isRetryableError(t *testing.T) {
 
 // The sql and sql-uid caches are released the same way the api and string
 // caches are when their metadata never reaches the collector, so the next use
-// GrpcMetadataEvictsSqlCacheAfterRetryExhaustion / ...SqlUidCache...
+// re-registers them.
 func Test_sendMetaWorker_releasesSqlCachesOnFailure(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agentGrpc, failing := newFailingMetaAgentGrpc(agent, status.Errorf(codes.Unavailable, "collector down"))
@@ -1320,7 +1320,7 @@ func Test_sendMetaWorker_sendsEveryMetadataType(t *testing.T) {
 // --- agent info -------------------------------------------------------------
 
 // The registration payload describes the running process, and its headers ride
-// GrpcAgentRegisterAgentUsesDefaultServerMetaData.
+// along on the same context.
 func Test_agentGrpc_makeAgentInfo(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agentGrpc := newMockAgentGrpc(agent)
@@ -1350,9 +1350,10 @@ func Test_agentGrpc_makeAgentInfo(t *testing.T) {
 }
 
 // vmArg is raw argv - bytes the process was started with, not something the
-// agent produced - so it can hold anything the shell allows. A PAgentInfo the
-// collector rejects for invalid UTF-8 fails registration permanently (retries
-// resend the same bytes), and an agent that never registers stores no traces.
+// agent produced - so it can hold anything the shell allows. A PAgentInfo with
+// invalid UTF-8 fails to marshal, which fails registration permanently (every
+// retry builds the same bytes), and an agent that never registers stores no
+// traces.
 func Test_agentGrpc_makeAgentInfo_SanitizesInvalidUTF8(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agentGrpc := newMockAgentGrpc(agent)
@@ -1431,8 +1432,8 @@ func Test_agentGrpc_makeAgentInfo_EmptyServerInfoKeepsDefault(t *testing.T) {
 	assert.Len(t, info.GetServerMetaData().GetServiceInfo(), 1)
 }
 
-// Host-supplied metadata is sanitized like argv: one bad byte would make the
-// collector reject every registration attempt.
+// Host-supplied metadata is sanitized like argv: one bad byte would fail the
+// marshal of every registration attempt.
 func Test_agentGrpc_makeAgentInfo_SanitizesHostServerMetaData(t *testing.T) {
 	cfg, err := NewConfig(WithAppName("TestApp"),
 		WithServerInfo("caf\xe9"),
@@ -1457,8 +1458,8 @@ func Test_agentGrpc_makeAgentInfo_SanitizesHostServerMetaData(t *testing.T) {
 
 // --- local IP ---------------------------------------------------------------
 
-// Everything below runs without network access: it only inspects local
-// interfaces and the loopback route.
+// The local IP tests below run without network access: they only inspect
+// local interfaces and the loopback route.
 
 func Test_firstUnicastIP(t *testing.T) {
 	ipNet := func(s string) net.Addr { return &net.IPNet{IP: net.ParseIP(s)} }
@@ -1514,7 +1515,8 @@ func Test_localIP_neverLoopback(t *testing.T) {
 }
 
 // A collector that answers Success=false (initializing, briefly refusing) is
-// instead of leaving the agent permanently disabled.
+// retried like a transport failure instead of leaving the agent permanently
+// disabled.
 func Test_agentGrpc_registerAgentWithRetry_retriesOnRejection(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	client := &mockAgentGrpcClient{rejects: 2}
@@ -1554,8 +1556,8 @@ func Test_agentGrpc_registerAgentWithRetry_rejectionStopsOnShutdown(t *testing.T
 	assert.Len(t, client.sentAgentInfo(), 1)
 }
 
-// The boot retry is paced by Collector.AgentInfo.SendRetryInterval, the same
-// back-off, which an operator cannot tune and which escalates to 30s.
+// The boot retry is paced by Collector.AgentInfo.SendRetryInterval, not by the
+// connection back-off, which an operator cannot tune and which escalates to 30s.
 func Test_agentGrpc_registerAgentWithRetry_usesConfiguredRetryInterval(t *testing.T) {
 	defer captureWarnLog(&bytes.Buffer{})()
 
@@ -1578,10 +1580,10 @@ func Test_agentGrpc_registerAgentWithRetry_usesConfiguredRetryInterval(t *testin
 	}
 }
 
-// (registerAgent calls build_agent_info per attempt). An outage outlives the
-// values in it - a NIC that comes up late, a hostname that moves, a reloaded
-// option - and whatever the loop captured first is otherwise what the
-// collector carries until the next refresh cycle.
+// The AgentInfo is rebuilt on every attempt. An outage outlives the values in
+// it - a NIC that comes up late, a hostname that moves, a reloaded option - and
+// whatever the loop captured first is otherwise what the collector carries
+// until the next refresh cycle.
 func Test_agentGrpc_registerAgentWithRetry_rebuildsAgentInfoPerAttempt(t *testing.T) {
 	defer captureWarnLog(&bytes.Buffer{})()
 
@@ -1727,7 +1729,8 @@ func dialReadyConn(t *testing.T) *grpc.ClientConn {
 	return conn
 }
 
-// agent's GrpcAgentRegisterWithRetryRetriesUntilSuccess.
+// A transport failure is retried until the collector answers, with a
+// registerRetryDelay pause between attempts.
 func Test_agentGrpc_registerAgentWithRetry_retriesUntilSuccess(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	client := &mockAgentGrpcClient{failures: 2}
@@ -1770,7 +1773,7 @@ func TestIsInternalContext(t *testing.T) {
 }
 
 // Only the ping stream identifies a socket, and it must not pollute the header
-// GrpcMetadataTest.SocketIdNeverInBaseHeaderSet.
+// set every other RPC shares.
 func Test_grpcMetadataContext_socketId(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 
@@ -1981,7 +1984,7 @@ func Test_statGrpc_gzipFallsBackToUncompressed(t *testing.T) {
 }
 
 // The caller that produced this trace is described on the accept event, service
-// GrpcSpanBatchCarriesParentServiceNameTest.
+// name included.
 func Test_spanGrpc_sendSpanBatch_carriesParentInfo(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agent.spanGrpc = newMockSpanGrpc(agent)
@@ -2047,7 +2050,7 @@ func Test_makePSpanMessageBatch_skipsEmptyChunks(t *testing.T) {
 
 // With every permit held by a slow collector, a new batch is dropped rather
 // than parking the sender behind it; completing the in-flight request lets the
-// GrpcSpanPermitExhaustionDropsBatchTest.
+// next one through.
 func Test_spanGrpc_sendSpanBatchAsync_permitExhaustionDropsBatch(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	client := &mockSpanGrpcClient{hold: make(chan struct{})}
@@ -2137,7 +2140,7 @@ func Test_splitSpanMessages(t *testing.T) {
 }
 
 // A failed send returns its permit, so a collector outage cannot leak the
-// GrpcSpanErrorStatusReleasesPermitTest.
+// sender's capacity away, and the spans it carried are counted as dropped.
 func Test_spanGrpc_sendSpanBatchAsync_errorReleasesPermit(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	client := &mockSpanGrpcClient{err: status.Errorf(codes.Unavailable, "collector down")}
@@ -2177,7 +2180,7 @@ func Test_spanGrpc_sendSpanBatchAsync_buildPanicReleasesPermit(t *testing.T) {
 }
 
 // A partially rejected batch is a warning, not a sender failure: the permit
-// GrpcSpanPartialSuccessHandledTest.
+// comes back and later batches still go out.
 func Test_spanGrpc_sendSpanBatchAsync_partialSuccessKeepsSending(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	client := &mockSpanGrpcClient{response: &pb.PSpanResultBatch{
@@ -2414,9 +2417,8 @@ func Test_grpcChannelOptions_dialOptions_flowControlWindow(t *testing.T) {
 	assert.Equal(t, uint32(window-65535), update.Increment, "connection window")
 }
 
-// Metadata sends must carry the short metaGrpcTimeOut, not agentGrpcTimeOut:
-// a hung collector otherwise pins sendMetaWorker's permits for a minute per
-// attempt while metaChan overflows and evicts cache entries.
+// Metadata sends carry metaGrpcTimeOut, so a hung collector cannot pin
+// sendMetaWorker's permits past it while metaChan fills and refuses new items.
 func Test_sendApiMetadata_usesMetaDeadline(t *testing.T) {
 	cfg, _ := NewConfig(WithAppName("TestApp"))
 	agent := newTestAgent(cfg)
@@ -2433,7 +2435,7 @@ func Test_sendApiMetadata_usesMetaDeadline(t *testing.T) {
 }
 
 // Renewal is off unless configured: the defaults are zero, negative values
-// normalize to zero, and no service config (the ninth dial option) is added,
+// normalize to zero, and no service config (the tenth dial option) is added,
 // so the channel keeps grpc-go's default pick_first policy.
 func Test_config_grpcRenewalDisabledByDefault(t *testing.T) {
 	cfg, err := NewConfig(WithAppName("TestApp"))
@@ -2650,21 +2652,16 @@ func Test_CollectorPortDefaults(t *testing.T) {
 	assert.Equal(t, 9993, cfgBaseMap[CfgCollectorSpanPort].defaultValue, "Java profiler.transport.grpc.span.collector.port")
 }
 
-// Test_GrpcChannelDefaults locks the channel options that were
-// verified equal across the three agents. flowControlWindow, writeBufferSize
-// three at the C-core defaults, which doc/development.md records. The idle
-// timeout is deliberately not locked: all three agents disable idling, but
-// decision is shared, not the value (doc/development.md, "Java and C++
-// agent parity").
+// Test_GrpcChannelDefaults locks connection and stream renewal off by default,
+// as in the Java agent. Test_grpcChannelOptions_defaults pins the other channel
+// defaults.
 func Test_GrpcChannelDefaults(t *testing.T) {
 	assert.Equal(t, 0, grpcConnectionMaxAge, "renewal off, as in Java")
 	assert.Equal(t, 0, grpcStreamMaxAge, "renewal off, as in Java")
 }
 
-// Test_ReconnectBackoff locks the reconnect backoff shape: a
-// x1.2 ramp from 3s to a 30s ceiling, randomized +/-30%, with the jitter
-// applied after the clamp so a capped interval lands within +/-30% of the
-// ceiling rather than always on it.
+// Test_ReconnectBackoff locks the reconnect backoff constants: a x1.2 ramp
+// from 3s to a 30s ceiling, randomized +/-30%.
 func Test_ReconnectBackoff(t *testing.T) {
 	assert.Equal(t, 3*time.Second, backOffInitialInterval)
 	assert.Equal(t, 1.2, backOffMultiplier)
@@ -2672,9 +2669,11 @@ func Test_ReconnectBackoff(t *testing.T) {
 	assert.Equal(t, 0.3, backOffJitter)
 }
 
-// Test_AgentInfoSchedule locks the AgentInfo refresh cadence.
-// (profiler.agentInfo.send.retry.interval): registration gates tracing in both
-// ports, so it has to retry far more often. doc/development.md records that.
+// Test_AgentInfoSchedule locks the AgentInfo refresh cadence. The retry
+// interval deliberately differs from the Java agent's effective 300000ms
+// (profiler.agentInfo.send.retry.interval): registration gates tracing in this
+// agent and the C++ one, so both have to retry far more often.
+// doc/development.md records that.
 func Test_AgentInfoSchedule(t *testing.T) {
 	assert.Equal(t, 24*60*60*1000, defaultAgentInfoRefreshInterval, "Java AgentInfoSender refresh interval")
 	assert.Equal(t, 3, defaultAgentInfoMaxTryPerAttempt, "Java AgentInfoSender maxTryPerAttempt")
@@ -2701,7 +2700,7 @@ func Test_makePSpan_elapsedSaturates(t *testing.T) {
 func Test_ParentInfoRequiresAParentAppName(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 
-	// Set on both paths: an acceptor host alone must not produce a parent.
+	// An acceptor host alone must not produce a parent.
 	orphan := newSampledSpan(agent, "op", "/rpc")
 	orphan.acceptorHost = "api.example.com:8080"
 	orphan.parentServiceName = "parent-service"

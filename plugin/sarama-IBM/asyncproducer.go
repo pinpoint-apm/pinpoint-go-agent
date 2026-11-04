@@ -43,10 +43,11 @@ type asyncProducer struct {
 // Input(), it blocks until sarama takes the message, so a request deadline
 // does not cut it short. A message handed over while Close/AsyncClose is under
 // way comes back on Errors() with sarama.ErrShuttingDown, as raw sarama's
-// does, and its span records the error. One handed over once the shutdown has
-// closed sarama's input is dropped, its span recording the same error, where a
-// send on Input() panics. A send racing that close is a data race, as it is on
-// raw sarama's Input().
+// does; one handed over once the shutdown has closed sarama's input is
+// dropped, where a send on Input() panics. Either way a span still waiting for
+// the message's ack (see NewAsyncProducer) records the error; one that ended
+// at the hand-over does not. A send racing that close is a data race, as it is
+// on raw sarama's Input().
 func (p *asyncProducer) InputContext(ctx context.Context, msg *sarama.ProducerMessage) {
 	// A disabled agent traces nothing and injects nothing - not even the
 	// unsampled marker - so the message headers are left untouched. A nested
@@ -114,8 +115,10 @@ func (p *asyncProducer) Close() error {
 }
 
 // NewAsyncProducer wraps sarama.NewAsyncProducer and returns a AsyncProducer ready to instrument.
-// It requires the underlying sarama Config.Producer.Return.Successes,
-// so we can know whether successes will be returned.
+// A sampled message's span waits for the broker's ack only when config turns
+// on both Producer.Return.Successes and Producer.Return.Errors and its Version
+// carries record headers (Kafka 0.11+); otherwise the span ends when
+// InputContext hands the message over.
 func NewAsyncProducer(addrs []string, config *sarama.Config) (AsyncProducer, error) {
 	producer, err := sarama.NewAsyncProducer(addrs, config)
 	if err != nil {

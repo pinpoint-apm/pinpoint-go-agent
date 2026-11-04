@@ -53,7 +53,7 @@ func TestRotatesConnectionsAndStreamsWithoutLosingSpans(t *testing.T) {
 	assert.True(t, agent.Enable())
 }
 
-// The defaults leave both renewals off: one connection per endpoint for the
+// The defaults leave both renewals off: one connection per channel for the
 // life of the agent, exactly as before the option existed.
 func TestKeepsOneConnectionPerEndpointByDefault(t *testing.T) {
 	mc, agent := startStack(t)

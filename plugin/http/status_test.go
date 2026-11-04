@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// Pins the bit table to what the option actually means.
+// Pins the status set to what the option actually means.
 func TestHttpStatusErrorTokens(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -59,9 +59,9 @@ func TestHttpStatusErrorTokens(t *testing.T) {
 			notErrs: []int{500},
 		},
 		{
-			// An unparsable token must never fire: parsing it to -1 and
-			// comparing that against the status would match nothing a real
-			// response carries, but it must not match anything at all.
+			// An unparsable token is kept as -1, as the old matcher compared
+			// it: it never fires for a status a real response carries, and -1
+			// itself keeps its old verdict.
 			name:    "unparsable tokens never fire",
 			cfg:     []string{"abc", "6xx", "5x", "40 4", ""},
 			errors:  []int{-1},
@@ -74,9 +74,9 @@ func TestHttpStatusErrorTokens(t *testing.T) {
 			notErrs: []int{99, 600, -1},
 		},
 		{
-			// The bit table stops at statusTableSize; codes past it fall back
-			// to the out-of-table slice and must still be honoured.
-			name:    "codes past the bit table still match",
+			// Codes no status class covers, past 599, are single codes like
+			// any other and must still be honoured.
+			name:    "codes past the status classes still match",
 			cfg:     []string{"639", "640", "641", "1000"},
 			errors:  []int{639, 640, 641, 1000},
 			notErrs: []int{638, 642, 999, 1001},

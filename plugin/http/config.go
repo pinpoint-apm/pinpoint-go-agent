@@ -197,7 +197,7 @@ func WithHttpClientRecordRequestCookie(cookie []string) pinpoint.ConfigOption {
 }
 
 // WithHttpClientRecordUrlQuery sets whether the client URL annotation keeps
-// its query string. Off by default: the URL is recorded up to the "?".
+// its query string. Off by default: the URL is recorded without it.
 //
 //	pphttp.WithHttpClientRecordUrlQuery(true)
 func WithHttpClientRecordUrlQuery(record bool) pinpoint.ConfigOption {
@@ -357,10 +357,10 @@ func IsRecordRequestParamEnabled() bool {
 
 func recordServerHttpStatus(cfg *httpConfig, span pinpoint.SpanRecorder, status int) {
 	if cfg.srvStatus.isError(status) {
-		// records ErrorCategory.HTTP_STATUS: an operator who does not want a
-		// 5xx to count as a transaction failure drops that one cause with
-		// Span.ErrorMarkExclude and keeps every other kind of failure. The
-		// annotation below is recorded either way.
+		// The failure is recorded as ErrorCategory.HTTP_STATUS: an operator
+		// who does not want a 5xx to count as a transaction failure drops that
+		// one cause with Span.ErrorMarkExclude and keeps every other kind of
+		// failure. The annotation below is recorded either way.
 		span.SetFailure(pinpoint.ErrorCategoryHttpStatus)
 	}
 	span.Annotations().AppendInt(pinpoint.AnnotationHttpStatusCode, int32(status))

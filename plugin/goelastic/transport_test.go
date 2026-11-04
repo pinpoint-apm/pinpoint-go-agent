@@ -204,8 +204,8 @@ func TestRoundTrip_RecordsTheTransportError(t *testing.T) {
 	}
 }
 
-// Only the first MaxDslLength characters are recorded, so a long query has to
-// be cut rather than blow up the annotation.
+// Only the first MaxDslLength bytes are recorded, so a long query has to be cut
+// rather than blow up the annotation.
 func TestRoundTrip_TruncatesTheDsl(t *testing.T) {
 	body := `{"query":"` + strings.Repeat("x", 4*MaxDslLength) + `"}`
 	req, tracer := tracedRequest(t, http.MethodPost, "http://es:9200/test/_search", strings.NewReader(body))
@@ -341,7 +341,8 @@ func TestNewTransport_KeepsTheGivenTransport(t *testing.T) {
 }
 
 // A DSL that fails to read must not lose the call: the request still goes out,
-// with an empty annotation instead of a query.
+// and the event is still annotated - here with the raw body, which would not
+// inflate.
 func TestRoundTrip_RecordsTheCallWhenTheDslCannotBeRead(t *testing.T) {
 	req, tracer := tracedRequest(t, http.MethodPost, "http://es:9200/test/_search", strings.NewReader("not gzip"))
 	req.Header.Set("Content-Encoding", "gzip")

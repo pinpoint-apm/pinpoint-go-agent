@@ -150,8 +150,8 @@ func (se *spanEvent) SetEndPoint(endPoint string) {
 func (se *spanEvent) SetSQL(sql string, args string) {
 	// An empty statement records nothing: no annotation, no SQL count, no
 	// metadata. The sql/driver wrapper records Begin, BeginTx, Commit and
-	// Rollback through newSqlSpanEvent with sql == "", so this guard is what keeps a transaction boundary from carrying an
-	// empty SQL annotation.
+	// Rollback through newSqlSpanEvent with sql == "", so this guard is what
+	// keeps a transaction boundary from carrying an empty SQL annotation.
 	if sql == "" || se.warnIfFinished("SetSQL") {
 		return
 	}

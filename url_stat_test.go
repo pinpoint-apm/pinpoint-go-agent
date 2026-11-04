@@ -335,8 +335,8 @@ func Test_urlStatSendsOneTickInOneMessage(t *testing.T) {
 	assert.Equal(t, tick.UnixMilli(), each["/a"].GetTimestamp())
 }
 
-// A tick is sent when it is closed, not on the next tick of the send timer:
-// that is over has nothing left to wait for. The timer here is far longer
+// A tick is sent when it is closed, not on the next tick of the send timer: a
+// tick that is over has nothing left to wait for. The timer here is far longer
 // than the test, so only the wakeup can deliver the message.
 func Test_urlStatSendWorkerWakesOnACompletedTick(t *testing.T) {
 	config := defaultConfig()
@@ -411,7 +411,8 @@ func Test_urlStatSendWorkerTimerFollowsStatCollectInterval(t *testing.T) {
 	assert.True(t, waitTimeout(&agent.workerWg, 5*time.Second), "worker exits on the stop signal")
 }
 
-// an empty queue rather than sending an empty PAgentUriStat.
+// No traffic, no message: a flush of an empty snapshot sends no empty
+// PAgentUriStat.
 func Test_urlStatSendsNothingWithoutTraffic(t *testing.T) {
 	agent, stats := newUrlStatSendTestAgent(t)
 
@@ -522,7 +523,8 @@ func Test_urlStatCompletedQueueDropsTheOldestTickAtTheCap(t *testing.T) {
 	// second one over to whatever line the next window grants.
 	assert.Equal(t, 1, strings.Count(buf.String(), "url stat snapshot queue overflow"), buf.String())
 
-	// Six ticks closed, the four newest survive: /tick0 and /tick1 are gone.
+	// maxCompletedUrlStatSnapshots+2 ticks closed, the newest
+	// maxCompletedUrlStatSnapshots survive: /tick0 and /tick1 are gone.
 	snapshot := stats.takeSnapshot(false)
 	assert.Len(t, snapshot.urlMap, maxCompletedUrlStatSnapshots)
 	for i := 0; i <= maxCompletedUrlStatSnapshots+2; i++ {
@@ -769,9 +771,10 @@ func Test_UrlStatWindow(t *testing.T) {
 	assert.Equal(t, 5, maxCompletedUrlStatSnapshots, "Java snapshotQueue effective capacity (SNAPSHOT_LIMIT 4, checked before offer) / C++ kMaxCompletedSnapshots")
 }
 
-// Test_UrlStatEmptyHistogram locks that an all-zero histogram
-// decides on a count field; both ports decide on the bucket sum, so a single
-// 0ms sample must still count as non-empty.
+// Test_UrlStatEmptyHistogram locks that an all-zero histogram reports empty,
+// which is what sends it as an empty PUriHistogram. Emptiness is decided on the
+// buckets, so a single 0ms sample, whose total is 0, must still count as
+// non-empty.
 func Test_UrlStatEmptyHistogram(t *testing.T) {
 	hg := &urlStatHistogram{}
 	assert.True(t, hg.isEmpty(), "a fresh histogram is empty")
@@ -782,8 +785,9 @@ func Test_UrlStatEmptyHistogram(t *testing.T) {
 	assert.Equal(t, int32(1), hg.histogram[0])
 }
 
-// Test_UrlStatUnknownKey locks the stand-in URL used when a span
-// src/url_stat.h). Both the sampled and the unsampled span paths are exercised.
+// Test_UrlStatUnknownKey locks the stand-in URL used when a span records URL
+// stats without a URI template to Java's URITemplate.NULL_URI ("/NULL"). Both
+// the sampled and the unsampled span paths are exercised.
 func Test_UrlStatUnknownKey(t *testing.T) {
 	const javaNullUri = "/NULL"
 	assert.Equal(t, javaNullUri, urlStatUnknown)

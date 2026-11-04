@@ -15,11 +15,12 @@ set -uo pipefail
 # Usage: scripts/coverage.sh [OUT_DIR]
 #
 # OUT_DIR (default: $TMPDIR/pinpoint-go-coverage) ends up holding unit/, it/
-# and e2e/ (binary data), all.out (the merged text profile) and agent.html
-# (the agent package, line by line); a previous run's copies of those are
-# removed first, and nothing else in the directory is touched. The run goes on
-# past a failing suite, so one break still reports the rest, and exits 1 if
-# any suite failed. e2e needs the ports run_e2e.sh defaults to.
+# and e2e/ (binary data), all.out (the merged text profile), agent.out (its
+# agent-package lines) and agent.html (the agent package, line by line); a
+# previous run's copies of those are removed first, and nothing else in the
+# directory is touched. The run goes on past a failing suite, so one break
+# still reports the rest, and exits 1 if any suite failed. e2e needs the ports
+# run_e2e.sh defaults to.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${1:-${TMPDIR:-/tmp}/pinpoint-go-coverage}"

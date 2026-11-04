@@ -88,8 +88,9 @@ func (s *cmdStream) close() {
 }
 
 // sendFailMessage rejects a command on the command stream itself, which is the
-// only channel the protocol offers for a request the agent will not serve:
-// sets the request id and a reason and leaves status at its default.
+// only channel the protocol offers for a request the agent will not serve: a
+// PCmdMessage.failMessage that carries the request id and a reason and leaves
+// status at its default.
 func (s *cmdStream) sendFailMessage(reqId int32, msg string) error {
 	gCmd := &pb.PCmdMessage{
 		Message: &pb.PCmdMessage_FailMessage{

@@ -1,7 +1,7 @@
 // Package pinpoint provides the APIs to instrument Go applications for Pinpoint (https://github.com/pinpoint-apm/pinpoint).
 //
 // This package enables you to monitor Go applications using Pinpoint.
-// Go applications must be instrumented manually at the source code level,
+// Go applications must be instrumented manually at the source code level.
 // Developers can instrument Go applications using the APIs provided in this package.
 // It has support for instrumenting Go’s built-in http package, database/sql drivers
 // and plug-ins for popular frameworks and toolkits (like Gin and gRPC, ...).
@@ -291,10 +291,12 @@ func HttpHeaderWriter(h http.Header) DistributedTracingContextWriter {
 }
 
 // httpHeaderWriter carves the one-element value slices out of vals: Inject
-// writes up to eight headers, and a []string{value} per header was seven of
-// the nine allocations of an Inject. The slices are capped at one element,
-// so a later Header.Add on a key reallocates instead of writing into the
-// neighbour's slot. A ninth header gets a slice of its own.
+// writes six headers always and up to three more (the service name, the
+// cluster namespace and Pinpoint-Host), and a []string{value} per header was
+// seven of the nine allocations of an Inject. The slices are capped at one
+// element, so a later Header.Add on a key reallocates instead of writing into
+// the neighbour's slot. A ninth header, written only when all three optional
+// ones are, gets a slice of its own.
 type httpHeaderWriter struct {
 	h    http.Header
 	n    int
@@ -393,10 +395,10 @@ func (tid TransactionId) String() string {
 }
 
 // UrlStatEntry is the URL statistics record a plugin hands to RecordUrlStat. It
-// carries no status: the failed histogram follows the span's failure mark,
-// which the HTTP plugin sets from Http.Server.StatusCodeErrors before it
-// records the entry, so a plugin that records an entry directly marks an error
-// status with SetFailure(ErrorCategoryHttpStatus) itself.
+// carries no status: the failed histogram follows the span's failure mark as
+// it stands at EndSpan. The HTTP plugin sets the mark from
+// Http.Server.StatusCodeErrors, and a plugin that records an entry directly
+// marks an error status with SetFailure(ErrorCategoryHttpStatus) itself.
 type UrlStatEntry struct {
 	Url    string
 	Method string
@@ -578,7 +580,7 @@ func OutgoingGrpcContext(ctx context.Context, tracer Tracer) (context.Context, b
 // page prefetch, records on tracer.NewGoroutineTracer() when it is not: a
 // tracer tracks one goroutine (doc/api_contracts.md rule 1). True when the
 // agent cannot tell: a goroutine tracer with no event opened yet, goroutine ids
-// not readable, or a tracer the agent did not make.
+// not readable, a tracer that is not sampled, or one the agent did not make.
 func OnTracerGoroutine(tracer Tracer) bool {
 	if n, ok := tracer.(nestedTracer); ok {
 		tracer = n.Tracer

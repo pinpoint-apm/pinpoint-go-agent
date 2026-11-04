@@ -14,11 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The http plugin publishes its own config snapshot once per process (see
-// pphttp.httpCfg), so every test in this package must share the HTTP settings
-// from defaultOptions. Changing them per test would silently have no
-// effect after the first HTTP request of the run.
-
 func serverRequest(t *testing.T, method, target string, headers map[string]string) *http.Request {
 	t.Helper()
 	req := httptest.NewRequest(method, target, nil)
@@ -145,8 +140,8 @@ func TestRecordsEveryProxyHopAndDropsMalformedNginxTime(t *testing.T) {
 		"Pinpoint-ProxyNginx": "t=1e300 D=25",
 	})
 	// Every proxy header present gets its own annotation, so a request behind
-	// two proxies shows both hops. The nginx t= here has two decimals, so only
-	// the Apache and App hops survive.
+	// two proxies shows both hops. The nginx t= here has one decimal place, not
+	// sec.mmm, so only the Apache and App hops survive.
 	trace("/proxy-multi", "http.proxy.multi", map[string]string{
 		"Pinpoint-ProxyApache": "t=1710000002000000 D=9",
 		"Pinpoint-ProxyNginx":  "t=1710000003.5",

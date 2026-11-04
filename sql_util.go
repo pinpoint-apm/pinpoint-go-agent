@@ -30,9 +30,10 @@ type sqlNormalizer struct {
 }
 
 // maxSqlNormalizeLength is the hard memory cap on SQL normalization, in bytes.
-// It is not the metadata cap: maxSqlSize (64KB) bounds only the text cacheSql
-// and cacheSqlUid publish, while the normalized output, the cache keys and the
-// queued metadata are bounded by this one.
+// It is not the metadata cap: maxSqlSize (64KB) bounds the text cacheSql and
+// cacheSqlUid publish, which is what the queued metadata carries, while this
+// one bounds the raw statement SetSQL normalizes and the normalized text the
+// SQL id and UID are computed from.
 //
 // A statement past the cap is dropped whole rather than cut and normalized: a
 // cut landing inside a literal loses that literal's placeholder and yields a

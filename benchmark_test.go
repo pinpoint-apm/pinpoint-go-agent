@@ -11,10 +11,10 @@ package pinpoint
 //	go test -run=^$ -bench=. -benchmem
 //	go test -run=^$ -bench=Parallel -benchmem -cpu=1,4,8   // scalability under contention
 //
-// The parallel variants are the important ones for shared-state contention: the
-// apiCache lru lock (cacheSpanApi) is taken on every span event and an
-// active-span registry shard lock on every span, so their cost only shows up
-// across multiple cores.
+// The parallel variants are the important ones for shared-state contention:
+// every span event looks up the shared apiCache (cacheSpanApi, a lock-free hit
+// at steady state) and every span takes an active-span registry shard lock, so
+// their cost only shows up across multiple cores.
 
 import (
 	"errors"
@@ -38,8 +38,8 @@ func benchAgent() *agent {
 
 	// Keep trace/debug guards short-circuited (the production-relevant condition
 	// for the hot path) regardless of any level a previously run unit test left
-	// on the global logger. Warn also suppresses the one-time cache-miss INFO
-	// lines so they don't clutter benchmark output.
+	// on the global logger, which also keeps the debug-level metadata
+	// registration lines out of the benchmark output.
 	logger.defaultLogger.SetLevel(logrus.WarnLevel)
 	logger.extraLogger.Store(nil)
 
@@ -135,9 +135,10 @@ func BenchmarkSpanEventNested(b *testing.B) {
 	}
 }
 
-// BenchmarkSpanEventParallel exercises the shared-state contention of the span
-// event path across cores: every goroutine hits the same apiCache lru lock in
-// cacheSpanApi. Each goroutine owns its own span (spans are not goroutine-safe).
+// BenchmarkSpanEventParallel exercises the shared state of the span event path
+// across cores: every goroutine looks up the same apiCache entry in
+// cacheSpanApi. Each goroutine owns its own span, as a tracer instruments one
+// call stack.
 func BenchmarkSpanEventParallel(b *testing.B) {
 	a := benchAgent()
 	stop := startDrain(a)
@@ -155,9 +156,8 @@ func BenchmarkSpanEventParallel(b *testing.B) {
 
 // BenchmarkSpanLifecycle measures a full transaction end to end: span creation,
 // a few span events, and EndSpan. Beyond the event path this also covers the
-// sharded active-span registry store/remove, the real-time active-span sync.Map
-// delete EndSpan runs whether or not a stream is active, and the response-time
-// atomics.
+// sharded active-span registry store/remove and the response-time atomics; the
+// real-time active-span map is touched only while a viewer is attached.
 func BenchmarkSpanLifecycle(b *testing.B) {
 	a := benchAgent()
 	stop := startDrain(a)
@@ -174,15 +174,14 @@ func BenchmarkSpanLifecycle(b *testing.B) {
 }
 
 // BenchmarkSpanLifecycleShapes measures the full transaction path under
-// contention (active-span registry shard churn and the apiCache lru lock across
-// cores) per request shape, after the C++ agent's span_lifecycle_benchmark: the shapes cost very
-// different amounts and real traffic is a mix of them. unsampled is what most
-// requests pay whenever sampling is on; continued parses the inbound trace and
-// bypasses the sampler; urlStat adds the per-request urlStatChan push and the
-// collector goroutine aggregating it. Each shape is verified before it is
-// timed, so a phase cannot degrade to noop spans and still publish a fast
-// number. Run with -cpu=1,4,8: ns/op that stays flat as goroutines are added
-// means no cross-core contention.
+// contention (active-span registry shard churn and the shared apiCache across
+// cores) per request shape: the shapes cost very different amounts and real
+// traffic is a mix of them. unsampled is what most requests pay whenever
+// sampling is on; continued parses the inbound trace and bypasses the sampler;
+// urlStat adds the per-request urlStatChan push and the collector goroutine
+// aggregating it. Each shape is verified before it is timed, so a phase cannot
+// degrade to noop spans and still publish a fast number. Run with -cpu=1,4,8:
+// ns/op that stays flat as goroutines are added means no cross-core contention.
 func BenchmarkSpanLifecycleShapes(b *testing.B) {
 	continued := map[string]string{
 		HeaderTraceId:               "test-agent^1610000000000^12345",
@@ -275,8 +274,9 @@ func BenchmarkOptimizeSpanEvents(b *testing.B) {
 
 // BenchmarkActiveSpanRegistryParallel measures the in-flight span registry the
 // way requests hit it: every goroutine registers a span and immediately
-// unregisters it, walking its own span-id range so the goroutines land on
-// different shards the way random span ids spread them in production.
+// unregisters it, walking its own key range so the goroutines land on different
+// shards the way the random registry keys (requestStats.activeKey) spread them
+// in production.
 //
 // Run with -cpu=1,4,16. The -cpu=1 number is the uncontended store/delete cost;
 // what the higher counts add on top is shard contention, which is both the lock
@@ -311,7 +311,7 @@ func BenchmarkActiveSpanRegistryParallel(b *testing.B) {
 // BenchmarkExtractContinue isolates distributed-tracing header parsing on the
 // continue-trace path (TraceID present): trace-id parsing + ParseInt + the
 // active-span registry store. The span is allocated once so the measurement
-// reflects Extract itself, not span creation (covered by BenchmarkNewSampledSpan).
+// reflects extract itself, not span creation (covered by BenchmarkNewSampledSpan).
 func BenchmarkExtractContinue(b *testing.B) {
 	a := benchAgent()
 	stop := startDrain(a)
@@ -442,9 +442,9 @@ func BenchmarkCacheSpanApiParallel(b *testing.B) {
 }
 
 // BenchmarkAnnotationAppendString measures recording a string annotation on the
-// application hot path. Protobuf construction is deferred to getList(), so the
-// append itself is just a slice append (the &annotation{} allocation here is
-// benchmark setup, not part of Append).
+// application hot path. Protobuf construction is deferred to serialization
+// (getListInto), so the append itself is just a slice append (the
+// &annotation{} allocation here is benchmark setup, not part of Append).
 func BenchmarkAnnotationAppendString(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
@@ -465,10 +465,11 @@ func BenchmarkAnnotationAppendIntStringString(b *testing.B) {
 }
 
 // BenchmarkAnnotationBuildList measures the deferred sender-side cost: record a
-// few annotations and materialize the protobuf list via getList() (what the
-// agent does once per span/event during serialization). Confirms that deferring
-// construction does not increase the total work, only relocates it off the
-// request hot path.
+// few annotations and materialize the protobuf list via getList(), which runs
+// getListInto - what the sender does once per span/event - on a throwaway
+// builder, so its allocations are a fresh builder's, not a recycled one's.
+// Confirms that deferring construction does not increase the total work, only
+// relocates it off the request hot path.
 func BenchmarkAnnotationBuildList(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
@@ -480,8 +481,10 @@ func BenchmarkAnnotationBuildList(b *testing.B) {
 	}
 }
 
-// BenchmarkSetSQL measures SQL normalization (newSqlNormalizer.run) plus the SQL
-// id cache lookup and annotation append — the per-query hot path for DB-heavy apps.
+// BenchmarkSetSQL measures the per-query hot path for DB-heavy apps on a
+// repeated statement: a raw SQL cache hit for its normalization
+// (SQL.EnableRawSqlCache is on by default), the SQL id cache lookup and the
+// annotation append. sql_util_bench_test.go measures the normalizer itself.
 func BenchmarkSetSQL(b *testing.B) {
 	a := benchAgent()
 	stop := startDrain(a)
@@ -497,7 +500,7 @@ func BenchmarkSetSQL(b *testing.B) {
 }
 
 // BenchmarkSendStreamWithTimeout measures the per-send overhead of the timeout
-// wrapper used by the streaming span/ping/stat/command senders: one timer,
+// wrapper used by the ping, stat and command stream senders: one timer,
 // closure and channel per send. The send itself is a no-op so the result is
 // pure wrapper overhead.
 func BenchmarkSendStreamWithTimeout(b *testing.B) {

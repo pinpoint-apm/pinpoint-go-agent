@@ -9,10 +9,11 @@ import (
 )
 
 // slab hands out pointers to zeroed T values carved from one reusable backing
-// array, so a protobuf message graph costs one allocation per node type at
-// steady state instead of one per node. Growth mid-build is safe: append
-// initializes the new slot before its pointer is taken, and pointers handed
-// out earlier keep referencing the orphaned old array, which stays valid.
+// array, so a protobuf message graph costs no allocation per node: the array
+// grows by doubling, and a recycled slab that already fits allocates nothing.
+// Growth mid-build is safe: append initializes the new slot before its pointer
+// is taken, and pointers handed out earlier keep referencing the orphaned old
+// array, which stays valid.
 type slab[T any] struct{ buf []T }
 
 func (s *slab[T]) get() *T {
@@ -64,14 +65,14 @@ func (s *ptrSlab[T]) retained() int {
 	return cap(s.buf) * int(unsafe.Sizeof((*T)(nil)))
 }
 
-// spanMessageBuilder builds PSpanMessage graphs out of reusable slabs — the Go
-// build on the arena, send, arena_.Reset()).
+// spanMessageBuilder builds PSpanMessage graphs out of reusable slabs: build,
+// send, reset, so a recycled builder serves the next batch without allocating
+// its message nodes again.
 //
 // Ownership: every message a build method returns lives on the builder's slabs
 // and dies at releaseSpanMessageBuilder. Release strictly after the collector
-// send completes: stream.Send marshals synchronously before returning, and a
-// unary SendSpanBatch call marshals during the call, so "after Send / the call
-// returns" is the normal reuse boundary. grpc-go tracing retains requests
+// send completes: a unary SendSpanBatch call marshals during the call, so "the
+// call returned" is the normal reuse boundary. grpc-go tracing retains requests
 // beyond that boundary, so senders pass it a GC-owned clone instead. Releasing
 // earlier recycles memory a send still references and mixes data between spans.
 type spanMessageBuilder struct {
@@ -157,9 +158,9 @@ func (b *spanMessageBuilder) stringValue(s string) *wrappers.StringValue {
 // overflow. sync.Pool alone is emptied every second GC cycle, and a builder
 // rebuilt from zero regrows all of its slabs by doubling: measured on the
 // 50-span batch benchmark, that regrowth was ~70KB and 14 allocations per
-// batch, more than the marshal itself. The batch sender bounds its live
-// builders by Collector.Grpc.SpanBatchMaxConcurrentRequests (default 10) plus the one the
-// worker is filling, so a free list of that order holds the steady state.
+// batch, more than the marshal itself. The batch sender takes a builder only
+// under one of its Collector.Grpc.SpanBatchMaxConcurrentRequests permits
+// (default 10), so a free list of that order holds the steady state.
 //
 // ponytail: fixed capacity; size it from config if the default permit count
 // is raised well past it.

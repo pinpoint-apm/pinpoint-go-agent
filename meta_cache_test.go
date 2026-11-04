@@ -214,8 +214,8 @@ func BenchmarkMetaCacheMixedSaturated(b *testing.B) {
 
 // BenchmarkMetaCacheShard guards the reason shard hashes with
 // maphash.Comparable rather than maphash.String: the runtime hasher it
-// dispatches to is AES-accelerated, which is what keeps a maxSqlSize key off
-// the microsecond scale on the insert path (#189).
+// dispatches to hashes the key in one call, where maphash.String chains one
+// call per 128 bytes (#189).
 func BenchmarkMetaCacheShard(b *testing.B) {
 	c := newMetaCache[string, int32](cacheSize)
 	for _, size := range []int{190, 1024, 8 * 1024, maxSqlSize} {

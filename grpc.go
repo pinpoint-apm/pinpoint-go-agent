@@ -58,8 +58,8 @@ func internalContext(ctx context.Context) context.Context {
 }
 
 // IsInternalContext reports whether ctx belongs to one of the agent's own
-// RPCs to the collector (agent registration and ping, span, stat and command
-// streams). gRPC client instrumentation applied process-wide skips such a
+// RPCs to the collector (registration, metadata, span batches, stats, pings
+// and commands). gRPC client instrumentation applied process-wide skips such a
 // call: it carries no tracer anyway, and tracing the agent's transport would
 // be self-instrumentation.
 func IsInternalContext(ctx context.Context) bool {
@@ -83,8 +83,8 @@ func grpcMetadataContext(agent *agent, socketId int64) context.Context {
 }
 
 func agentHeaderMap(agent *agent) map[string]string {
-	// ClientHeaderFactoryV1 (v1/v3, protocol.version=100) and
-	// ClientHeaderFactoryV4 (v4, protocol.version=400).
+	// Headers branch on the ObjectName version: protocol.version is 100 for
+	// v1/v3 and 400 for v4.
 	m := map[string]string{
 		headerAppName:         agent.appName,
 		headerAgentID:         agent.agentID,
@@ -116,7 +116,8 @@ func (agent *agent) baseOutgoingContext() context.Context {
 }
 
 const (
-	// x1.2 ramp from 3s to a 30s ceiling, randomized +/-30%.
+	// Reconnect back-off: a x1.2 ramp from 3s to a 30s ceiling, randomized
+	// +/-30%.
 	backOffInitialInterval = 3 * time.Second
 	backOffMultiplier      = 1.2
 	backOffMaxInterval     = 30 * time.Second
@@ -129,7 +130,8 @@ func backOffSleep(attempt int) time.Duration {
 	dur := min(float64(backOffInitialInterval)*math.Pow(backOffMultiplier, float64(attempt)), float64(backOffMaxInterval))
 
 	// Randomize so agents restarted together do not reconnect in lockstep. The
-	// interval lands within +/-30% of the ceiling rather than always on it.
+	// jitter is applied after the clamp, so a capped interval lands within
+	// +/-30% of the ceiling rather than always on it.
 	return randomize(time.Duration(dur), backOffJitter)
 }
 
@@ -143,7 +145,8 @@ func randomize(d time.Duration, jitter float64) time.Duration {
 const streamAgeJitter = 0.1
 
 // streamAge is embedded in the long-lived streams: expiresAt is set when the
-// stream is opened and zero when Collector.Grpc.StreamMaxAge is off.
+// ping, stat or command stream is opened, and zero when
+// Collector.Grpc.StreamMaxAge is off.
 type streamAge struct {
 	expiresAt time.Time
 }
@@ -185,12 +188,11 @@ const (
 	agentGrpcTimeOut = 5 * time.Second
 
 	// metaGrpcTimeOut bounds each metadata RPC (api/string/sql/sqlUid/
-	// exception). These run under sendMetaWorker's permits (agent.
-	// metaMaxConcurrentRequests), and a failed send evicts the item's cache entry so it is
-	// re-registered on next use. Kept short so a hung collector cannot pin every
-	// permit until metaChan overflows and each head-drop re-queues the same
-	// metadata: ample for a healthy collector, short enough that permits recycle
-	// before the queue fills.
+	// exception). These run under sendMetaWorker's permits
+	// (agent.metaMaxConcurrentRequests). Kept short so a hung collector cannot
+	// pin every permit until metaChan fills and refuses new metadata: ample for
+	// a healthy collector, short enough that permits recycle before the queue
+	// fills.
 	metaGrpcTimeOut = 5 * time.Second
 
 	sendStreamTimeOut    = 5 * time.Second
@@ -208,7 +210,7 @@ const (
 	grpcWriteBufferSize   = 64 * 1024
 	grpcMaxMessageSize    = 4 * 1024 * 1024
 	grpcMaxHeaderListSize = 8 * 1024
-	// grpc-go v1.82.1 puts a channel into IDLE after 30 minutes without an RPC
+	// grpc-go v1.83.2 puts a channel into IDLE after 30 minutes without an RPC
 	// (dialoptions.go defaultDialOptions: idleTimeout 30 * time.Minute) and
 	// documents WithIdleTimeout(0) as the way to disable idling. 0 here is
 	// that disable value, and it is the default: see dialOptions.
@@ -271,7 +273,7 @@ func (o grpcChannelOptions) dialOptions(creds credentials.TransportCredentials) 
 			grpc.MaxCallSendMsgSize(o.maxSendMsgSize),
 			grpc.MaxCallRecvMsgSize(o.maxRecvMsgSize)),
 		// Idle timeout, disabled by default (Collector.Grpc.IdleTimeout = 0).
-		// Without this option grpc-go v1.82.1 uses 30 minutes (dialoptions.go
+		// Without this option grpc-go v1.83.2 uses 30 minutes (dialoptions.go
 		// defaultDialOptions; WithIdleTimeout's doc: "A default timeout of 30
 		// minutes will be used if this dial option is not set at dial time and
 		// idleness can be disabled by passing a timeout of zero"). When the
@@ -280,23 +282,22 @@ func (o grpcChannelOptions) dialOptions(creds credentials.TransportCredentials) 
 		// and the keepalive pings stop with the transport, which lets a
 		// firewall or L4 balancer forget the connection unnoticed. The idle
 		// manager counts an open stream as an ongoing RPC (stream.go
-		// OnCallBegin/OnCallEnd), so the agent channel (ping and command
-		// streams) and the stat channel (stat stream) rarely qualify; the span
-		// channel sends unary SendSpanBatch RPCs and goes quiet whenever the
-		// application has no traffic, which is exactly where the 30-minute
-		// default would bite.
+		// OnCallBegin/OnCallEnd), so the agent channel (ping stream), the
+		// command channel (command stream) and the stat channel (stat stream)
+		// rarely qualify; the span channel sends unary SendSpanBatch RPCs and
+		// goes quiet whenever the application has no traffic, which is exactly
+		// where the 30-minute default would bite.
 		//
-		// Two things this does not change. Keepalive pings only run while a
-		// stream is open unless PermitWithoutStream is set (default false), so
-		// a unary-only channel with no traffic sends no pings even with idling
-		// off; keeping the transport up still spares the reconnect and the
-		// backoff. And a channel that leaves idle re-resolves the collector
-		// host (dns resolver, see collectorTarget), so an idle reconnect would
-		// pick up a DNS change; Collector.Grpc.ConnectionMaxAge
-		// already provides that on purpose, while traffic flows, without
-		// tearing the transport down first. ConnectionMaxAge and the idle
-		// timeout are independent: renewal acts only on a channel that is
-		// sending, idling only on one that is not.
+		// Keepalive pings only run while a stream is open unless
+		// PermitWithoutStream is set (default false), so a unary-only channel
+		// with no traffic sends no pings even with idling off; keeping the
+		// transport up still spares the reconnect and the backoff. A channel
+		// that leaves idle re-resolves the collector host (dns resolver, see
+		// collectorTarget), so an idle reconnect would pick up a DNS change; a
+		// Collector.Grpc.ConnectionMaxAge rotation does not, since its
+		// successor dials the addresses that resolver last returned.
+		// ConnectionMaxAge and the idle timeout are independent: renewal acts
+		// only on a channel that is sending, idling only on one that is not.
 		grpc.WithIdleTimeout(o.idleTimeout),
 		// The channel takes its service config from this process alone. Without
 		// this the dns resolver queries a _grpc_config.<collector host> TXT
@@ -315,9 +316,10 @@ func (o grpcChannelOptions) dialOptions(creds credentials.TransportCredentials) 
 	return opts
 }
 
-// TLS disabled is insecure, a configured trust cert path is the trust root,
-// and an empty path with TLS enabled falls back to the system root CAs. An
-// unreadable or invalid cert is an error, never a silent insecure downgrade.
+// collectorCredentials returns the channel credentials: TLS disabled is
+// insecure, a configured trust cert path is the trust root, and an empty path
+// with TLS enabled falls back to the system root CAs. An unreadable or invalid
+// cert is an error, never a silent insecure downgrade.
 func collectorCredentials(config *Config) (credentials.TransportCredentials, error) {
 	if !config.Bool(CfgCollectorGrpcSslEnable) {
 		return insecure.NewCredentials(), nil
@@ -359,15 +361,15 @@ func connectCollector(config *Config, portOption string) (*grpc.ClientConn, erro
 // bare host:port is also what localIP probes.
 //
 // dns is the default. It resolves the collector host into the channel's address
-// list and keeps re-resolving, which the expiringPickFirst balancer
-// (grpc_balancer.go) relies on: with several A records the picked SubConn holds
-// them all, so a rotation or a failure moves to another collector instance, and
-// its ResolveNow on failure and its address-change readdressing both act on a
-// resolver that can answer.
-// The dns resolver also re-resolves at most every 30s
-// (internal/resolver/dns.MinResolutionInterval), so a very short
-// Collector.Grpc.ConnectionMaxAge rotates faster than the records refresh -
-// see doc/config.md.
+// list and resolves it again when asked: grpc-go asks after a connection fails
+// or drops, at most once per 30s (internal/resolver/dns.MinResolutionInterval).
+// The expiringPickFirst balancer (grpc_balancer.go) relies on this: with
+// several A records its SubConn holds them all and dials them in order, so a
+// failure moves on to another collector instance, and its ResolveNow on failure
+// and its address-change readdressing both act on a resolver that can answer.
+// A Collector.Grpc.ConnectionMaxAge rotation asks for no resolution and dials
+// the same list in the same order, so it reaches the first address that
+// accepts, normally the instance it left.
 //
 // passthrough is the pre-dns-resolver behavior, kept only as a rollback lever
 // (Collector.Grpc.DnsResolverEnable=false). It hands the target to the dialer
@@ -526,9 +528,9 @@ func makeGoLibraryInfo() *pb.PServiceInfo {
 
 // makeServerMetaData builds PServerMetaData: the configured ServerInfo (or the
 // default), argv, and the agent's own Go build entry followed by the host's
-// WithServiceInfo entries. Host strings are sanitized like argv: the collector
-// rejects a PAgentInfo with invalid UTF-8 and the same bytes would be re-sent
-// on every retry.
+// WithServiceInfo entries. Host strings are sanitized like argv: a PAgentInfo
+// with invalid UTF-8 fails to marshal, and every retry would build the same
+// bytes.
 func makeServerMetaData(config *Config) *pb.PServerMetaData {
 	// os.Args is empty for a process exec'd with no argv at all; [1:] on it
 	// panicked the registration goroutine, and with it the host.
@@ -559,9 +561,9 @@ func makeServerMetaData(config *Config) *pb.PServerMetaData {
 func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 	// Registration carries the only strings on this path the agent does not
 	// produce itself - raw argv, a host name and the server metadata - and a
-	// PAgentInfo the collector rejects for invalid UTF-8 is a permanent failure:
-	// the same bytes are sent on every retry, and an unregistered agent has no
-	// traces stored at all.
+	// PAgentInfo with invalid UTF-8 fails to marshal, a permanent failure: every
+	// retry builds the same bytes, and an unregistered agent has no traces
+	// stored at all.
 
 	agentInfo := &pb.PAgentInfo{
 		Hostname:     validUTF8(getHostName()),
@@ -575,8 +577,8 @@ func (agentGrpc *agentGrpc) makeAgentInfo() (context.Context, *pb.PAgentInfo) {
 
 		JvmInfo: &pb.PJvmInfo{
 			VmVersion: fmt.Sprintf("%s(%d)", runtime.Version(), goIdOffset),
-			// Same reason as PJvmGc.type in makePAgentStat: Go's runtime is
-			// none of the VM types the field enumerates.
+			// Same reason as PJvmGc.Type in getStats: Go's runtime is none of
+			// the VM types the field enumerates.
 			GcType: pb.PJvmGcType_JVM_GC_TYPE_UNKNOWN,
 		},
 		Container: agentGrpc.agent.config.Bool(CfgIsContainerEnv),
@@ -622,8 +624,9 @@ var registrationWaitLogInterval = 30 * time.Second
 func registerRetryInterval(config *Config) time.Duration {
 	interval := time.Duration(config.Int(CfgCollectorAgentInfoSendRetryInterval)) * time.Millisecond
 	if interval <= 0 {
-		// NewConfig floors this at 1ms, but Config.Set bypasses that, and this
-		// loop is unbounded: a zero pause would poll the collector flat out.
+		// Every publish, Config.Set included, replaces a value below 1ms with
+		// the default, so only a Config never published reads 0 here; this
+		// loop is unbounded, and a zero pause would poll the collector flat out.
 		interval = defaultAgentInfoSendRetryInterval * time.Millisecond
 	}
 	return randomize(interval, backOffJitter)
@@ -656,8 +659,8 @@ func (agentGrpc *agentGrpc) registerAgentWithRetry() bool {
 		// the hostname and the server metadata can move too, and whatever this
 		// loop captured first is what the collector would carry until the next
 		// refresh cycle. Nothing here does I/O beyond a local route lookup and
-		// an interface scan, and attempts are at least backOffInitialInterval
-		// apart, so the repeat is free.
+		// an interface scan, and attempts are a registerRetryInterval apart, so
+		// the repeat is cheap.
 		ctx, agentInfo := agentGrpc.makeAgentInfo()
 
 		res, err := agentGrpc.sendAgentInfo(ctx, agentInfo)
@@ -739,19 +742,19 @@ const metaRetryMaxAttempts = 3
 // budget would fire back to back against an already overloaded collector.
 const metaRetryDelay = time.Second
 
-// metaGiveUpParks is how many retry delays a given-up item's cache entry is
-// held before its release while give-ups follow one another with no delivery
-// between them, unless the collector delivers another item first. The first
-// give-up since a delivery is released at once: its next use re-registers it
-// under a fresh id, which is all a failure the collector is already over
-// needs. Released at once throughout an outage, though, each hot API, SQL or
-// error name minted a new id and cycled through its attempt budget every
-// couple of seconds - an RPC and an error line each time - for as long as the
-// collector stayed down; held, it cycles once per metaGiveUpParks delays. A
-// delivery means the collector is back, so the entry is released at its next
-// delay and the re-registration is not held up once the outage is over. The
-// schedule keeps a single delay (see metaRetryQueue), so a long wait is
-// served as repeated parks of one delay each.
+// metaGiveUpParks is how many retry delays, after the first, a given-up item's
+// cache entry is held before its release while give-ups follow one another
+// with no delivery between them, unless the collector delivers another item
+// first. The first give-up since a delivery is released at once: its next use
+// re-registers it under a fresh id, which is all a failure the collector is
+// already over needs. Released at once throughout an outage, though, each hot
+// API, SQL or error name minted a new id and cycled through its attempt budget
+// every couple of seconds - an RPC and an error line each time - for as long
+// as the collector stayed down; held, it cycles once per metaGiveUpParks+1
+// delays. A delivery means the collector is back, so the entry is released at
+// its next delay and the re-registration is not held up once the outage is
+// over. The schedule keeps a single delay (see metaRetryQueue), so a long wait
+// is served as repeated parks of one delay each.
 const metaGiveUpParks = 30
 
 // metaRetryQueueSize bounds the retry schedule. It is budgeted separately from
@@ -801,7 +804,7 @@ const (
 	metaRetryLater
 	// metaGiveUp: the attempt budget is spent. The cache entry is released so
 	// the next use registers the item again: at once, or after up to
-	// metaGiveUpParks retry delays while the give-ups keep coming.
+	// metaGiveUpParks+1 retry delays while the give-ups keep coming.
 	metaGiveUp
 	// metaRejected: a failure a retry cannot change. The cache entry is released
 	// after one metaRetryDelay rather than at once: the release is what makes
@@ -1007,9 +1010,10 @@ type channelStateLog struct {
 
 var (
 	channelStateLogsMu sync.Mutex
-	// channelStateLogs is one record per channel label. Per channel rather
-	// than shared: the four channels flap together when the collector goes,
-	// and a shared window would let the agent channel's lines hide the span
+	// channelStateLogs is one record per channel label: agent, ping, stat and
+	// command (the span sender never waits for readiness). Per label rather
+	// than shared: the channels flap together when the collector goes, and a
+	// shared window would let the agent channel's lines hide the stat
 	// channel's first recovery.
 	channelStateLogs = map[string]*channelStateLog{}
 )
@@ -1029,9 +1033,9 @@ func channelStateLogFor(which string) *channelStateLog {
 	return l
 }
 
-// observeNotReady records that a wait found the channel in state, which is
-// not READY. Counted as a loss only once per outage: the wait loops re-enter
-// with the same outage in progress on every back-off attempt.
+// observeNotReady records that a wait found the channel not READY. Counted as
+// a loss only once per outage: the wait loops re-enter with the same outage in
+// progress on every back-off attempt.
 func (l *channelStateLog) observeNotReady() {
 	l.mu.Lock()
 	defer l.mu.Unlock()

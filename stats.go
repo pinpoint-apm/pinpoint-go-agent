@@ -167,8 +167,8 @@ func newAgentStats() *agentStats {
 	return stats
 }
 
-// init primes the CPU and memory baselines and clears the counters, so the
-// first sample measures from a known start. The stat worker calls it on its
+// init primes the CPU and collect-time baselines and clears the counters, so
+// the first sample measures from a known start. The stat worker calls it on its
 // first run, which can be seconds after the agent was created.
 func (stats *agentStats) init() {
 	stats.resetBaseline()
@@ -213,12 +213,12 @@ func (stats *agentStats) shard() *statShard {
 }
 
 // activeSpanRegistry tracks the start time of in-flight spans under a key that
-// is random and local to the process: an unsampled span's generated span id, a
-// sampled span's activeKey (its span id can come from an upstream header). It
-// replaces a sync.Map so that store/delete on the span hot path avoid boxing
-// the int64 key and time.Time value into interface{} (the sync.Map did 3 heap
-// allocations per sampled span). Sharding by the random key keeps the per-span
-// store/delete churn from serializing on a single lock.
+// is random and local to the process (requestStats.activeKey), not the span id,
+// which a continued span takes from an upstream header. It replaces a sync.Map
+// so that store/delete on the span hot path avoid boxing the int64 key and
+// time.Time value into interface{} (the sync.Map did 3 heap allocations per
+// sampled span). Sharding by the random key keeps the per-span store/delete
+// churn from serializing on a single lock.
 const activeSpanShardCount = 32 // must be a power of two
 
 // activeSpanMaxSize bounds the active-span registry. Without it a span that is
@@ -332,10 +332,10 @@ func (r *activeSpanRegistry) remove(key int64) {
 // bucketActiveSpan increments the [<=1s, <=3s, <=5s, >5s] bucket in counts for
 // a span started at startTime.
 //
-// NORMAL schema (BaseHistogramSchema: slots 1000/3000/5000ms, compared with
-// elapsedTime <= slotTime). Comparing float seconds put a span at exactly
-// 1000ms in the second bucket, and left the boundary at the mercy of float
-// rounding.
+// The buckets compare whole milliseconds with an inclusive upper bound, as the
+// NORMAL histogram schema defines its slots (1000/3000/5000ms, elapsedTime <=
+// slotTime). Comparing float seconds put a span at exactly 1000ms in the second
+// bucket, and left the boundary at the mercy of float rounding.
 func bucketActiveSpan(counts []int32, now time.Time, startTime time.Time) {
 	switch d := now.Sub(startTime).Milliseconds(); {
 	case d <= 1000:
@@ -466,9 +466,10 @@ func (stats *agentStats) getStats() *pb.PAgentStat {
 			JvmMemoryHeapMax:     int64(memStat.heapSys),
 			JvmMemoryNonHeapUsed: int64(memStat.stackInuse),
 			JvmMemoryNonHeapMax:  int64(memStat.stackSys),
-			// GarbageCollectorMXBean counts: the web's inspector-definition-for-agent.yml
-			// runs gcOldCount/gcOldTime through its "delta" post-processor, so
-			// sending per-interval deltas would be differentiated twice.
+			// Cumulative since process start: the web's
+			// inspector-definition-for-agent.yml runs gcOldCount/gcOldTime
+			// through its "delta" post-processor, so sending per-interval
+			// deltas would be differentiated twice.
 			JvmGcOldCount: int64(memStat.numGC),
 			JvmGcOldTime:  int64(memStat.pauseTotalNs / uint64(time.Millisecond)),
 		},
@@ -570,6 +571,7 @@ func (agent *agent) collectAgentStatWorker() {
 			Log("stats").Infof("end collect agent stat goroutine")
 			return
 		case <-ticker.C:
+			// collect recovers a panic while sampling, so a failed
 			// collection costs this one snapshot, not the partial batch.
 			// The batch cursor is left alone, so the next tick fills the
 			// same slot. superviseWorker remains the backstop for anything

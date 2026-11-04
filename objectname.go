@@ -30,14 +30,15 @@ const (
 	agentNameMaxLenV4 = 254 // AGENT_NAME_MAX_LEN_V4
 )
 
-// ProtocolVersion (V1 = 1_00, V4 = 4_00).
+// Protocol versions sent on the gRPC protocol.version header (see
+// protocolVersion).
 const (
 	protocolVersionV1 = 100
 	protocolVersionV4 = 400
 )
 
 // isIDChars reports whether every byte of s is an allowed id character:
-// IdValidateUtils.ID_PATTERN_VALUE. A byte loop rather than a regexp because
+// [a-zA-Z0-9], '.', '-' or '_'. A byte loop rather than a regexp because
 // splitTransactionId validates the agent id of every inbound trace id header:
 // the equivalent `^[a-zA-Z0-9._\-]+$` match costs ~316ns against ~18ns here
 // (see BenchmarkValidateID). Every allowed character is single-byte ASCII, so
@@ -142,7 +143,7 @@ func (o *objectName) versionString() string {
 // base64(UUIDv7), never user-configurable; applicationName is required for
 // every version, serviceName for v4 as well, and apiKey is optional. A missing
 // required field aborts agent startup with an error. v1 and v3 differ only in the
-// applicationName length limit; v4 allows a longer agentName.
+// applicationName length limit; v4 has a shorter agentName limit.
 func resolveObjectName(config *Config) (*objectName, error) {
 	uid, err := uuid.NewV7()
 	if err != nil {

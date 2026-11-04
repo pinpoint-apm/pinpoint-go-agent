@@ -71,7 +71,7 @@ func newTestAgent(config *Config) *agent {
 }
 
 // mockAgentGrpcClient answers RequestAgentInfo and records what it was sent.
-// The zero value always succeeds; failures and reject script the collector
+// The zero value always succeeds; failures and rejects script the collector
 // side of the register-with-retry loop.
 type mockAgentGrpcClient struct {
 	mu       sync.Mutex
@@ -311,7 +311,7 @@ func (s *mockCmdStream) failMessages() []*pb.PCmdResponse {
 
 // mockCmdGrpcClient hands out mockAtcStreams and keeps them in issue order.
 type mockCmdGrpcClient struct {
-	pb.ProfilerCommandServiceClient // never called; only the method below is
+	pb.ProfilerCommandServiceClient // never called; only the methods below are
 	mu                              sync.Mutex
 	streams                         []*mockAtcStream
 	sendErr                         error

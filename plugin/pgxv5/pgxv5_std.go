@@ -10,8 +10,9 @@ import (
 )
 
 // DBInfo returns the database description the plugin instruments the driver
-// with: service types and the DSN parser that fills in the host and database
-// name. It is a constructor rather than a variable so that a caller that runs
+// with: service types, the DSN parser that fills in the host and database
+// name, and the connection reader that fills them in when the DSN was a
+// stdlib.RegisterConnConfig name. It is a constructor rather than a variable so that a caller that runs
 // before this package initialized (the compile-time instrumentation tool's
 // sql.Register hook, inside the driver's init) gets a complete value.
 func DBInfo() pinpoint.DBInfo {
@@ -34,7 +35,8 @@ func parseDSN(info *pinpoint.DBInfo, dsn string) {
 	config, err := pgconn.ParseConfig(dsn)
 	if err != nil {
 		// Debug, like the other drivers' wrappers: the driver itself reports a
-		// DSN it cannot use, and this runs once per pooled connection.
+		// DSN it cannot use, and a stdlib.RegisterConnConfig name, which pgconn
+		// cannot parse either, is read off each connection by parseConn.
 		pinpoint.Log("pgxv5").Debugf("dsn parse error: %v", err)
 		return
 	}

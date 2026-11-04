@@ -568,9 +568,10 @@ func writeAbbreviatedBytes(b *strings.Builder, value []byte, maxSize int) {
 
 // writeAbbreviated writes value cut to maxSize, marking the cut with valueLen -
 // the length of the value itself, which is not always the length of the text
-// being cut: an array reports how many elements it holds. The cut lands on a
-// rune boundary: protobuf rejects invalid UTF-8 string fields at marshal time,
-// so a mid-rune cut would fail the whole span carrying the annotation.
+// being cut: a slice that renders itself reports how many elements it holds.
+// The cut lands on a rune boundary: protobuf rejects invalid UTF-8 string
+// fields at marshal time, so a mid-rune cut would fail the whole span carrying
+// the annotation.
 func writeAbbreviated(b *strings.Builder, value string, valueLen int, maxSize int) {
 	if !writeBindTextPrefix(b, value, maxSize) {
 		writeBindMarker(b, valueLen)

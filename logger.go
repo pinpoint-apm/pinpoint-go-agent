@@ -119,8 +119,7 @@ func (l *logrusLogger) setOutputLocked(out string, maxSize, maxBackups int) {
 			Filename:   out,
 			MaxSize:    maxSize,
 			MaxBackups: maxBackups,
-			// (Log.MaxBackups is its only retention key), so a Go-only key
-			// would be one more thing the ports disagree on. MaxBackups
+			// Neither age nor compression is a config key: Log.MaxBackups
 			// already bounds the disk footprint to MaxSize x (MaxBackups+1).
 			// No MaxAge: a hard-coded 30 days deleted backups before
 			// MaxBackups was reached on a low-traffic process, so the

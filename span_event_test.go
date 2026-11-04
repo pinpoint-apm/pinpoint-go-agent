@@ -93,9 +93,9 @@ func Test_spanEvent_SetSQLBoundsAnnotationValues(t *testing.T) {
 	assert.Len(t, se.annotations.values, 1)
 	annotation := se.annotations.values[0]
 	// Only the bind values are bounded by SQL.MaxBindValueSize: the normalized
-	// literal is a parameter and passes whole up to maxSqlParamSize, while
-	// the limit is the room the bind value writers get for the values they
-	// abbreviate and for their own markers.
+	// literal is a parameter and passes whole up to maxSqlParamSize. The
+	// allowance over the limit is the room the bind value writers get for the
+	// values they abbreviate and for their own markers.
 	assert.Equal(t, literal, annotation.s1)
 	assert.Equal(t, args[:maxBindValueAnnotationSize(limit)]+"...(1024)", annotation.s2)
 }
@@ -204,8 +204,9 @@ func Test_spanEvent_SetSQLPublishesBoundedSqlMeta(t *testing.T) {
 	assert.Equal(t, abbreviateString(sql, maxSqlSize), md.sql)
 }
 
-// executes the configured number of queries is marked failed, so an N+1 loop
-// shows up as an error instead of just a slow trace.
+// SQL.ErrorCount: a span that executes the configured number of queries is
+// marked failed, so an N+1 loop shows up as an error instead of just a slow
+// trace.
 func Test_spanEvent_SetSQLCountMarksFailedSpan(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -221,8 +222,8 @@ func Test_spanEvent_SetSQLCountMarksFailedSpan(t *testing.T) {
 		{"at limit", 3, "SELECT 1", 3, false, int32(ErrorCategorySql), 3},
 		{"above limit", 3, "SELECT 1", 5, false, int32(ErrorCategorySql), 3},
 		{"negative limit", -1, "SELECT 1", 5, false, 0, 0},
-		// 1 is the smallest threshold that still counts: the first query marks.
-		// option cannot express because 0 means off (doc/config.md SQL.ErrorCount).
+		// 1 is the smallest threshold that still counts: the first query marks;
+		// 0 means off (doc/config.md SQL.ErrorCount).
 		{"limit one", 1, "SELECT 1", 2, false, int32(ErrorCategorySql), 1},
 		// commit and rollback events reach SetSQL with no sql at all
 		{"empty sql", 3, "", 5, false, 0, 0},
@@ -246,8 +247,9 @@ func Test_spanEvent_SetSQLCountMarksFailedSpan(t *testing.T) {
 	}
 }
 
-// so a statement whose metadata registration fails leaves no annotation and no
-// count: a span is never marked for SQL the UI cannot show.
+// SetSQL counts after the annotation, so a statement whose metadata
+// registration fails leaves no annotation and no count: a span is never marked
+// for SQL the UI cannot show.
 func Test_spanEvent_SetSQLCountSkipsUnregisteredStatement(t *testing.T) {
 	for _, queryStat := range []bool{false, true} {
 		t.Run(fmt.Sprintf("TraceQueryStat=%v", queryStat), func(t *testing.T) {
@@ -272,7 +274,8 @@ func Test_spanEvent_SetSQLCountSkipsUnregisteredStatement(t *testing.T) {
 	}
 }
 
-// code, so a failed span never counts and the count never resumes.
+// SetSQL stops counting once the transaction has an error, so a failed span
+// never counts and the count never resumes.
 func Test_spanEvent_SetSQLCountSkipsFailedSpan(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgSQLErrorCount, 3)
@@ -384,7 +387,8 @@ func Test_span_getExceptionChainId_isPerAgent(t *testing.T) {
 }
 
 // A chain the Error.NewThroughput limiter denies carries no exception id and no
-// neither. The span is still marked failed either way.
+// AnnotationExceptionChainId annotation. The span is still marked failed
+// either way.
 func Test_spanEvent_SetErrorRateLimitsExceptionChain(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgErrorTraceCallStack, true)
@@ -567,8 +571,9 @@ func Test_spanEvent_SetSQLCountExcludedCategoryLeavesTheTransactionClean(t *test
 }
 
 // A statement past maxSqlNormalizeLength is dropped whole: not normalized, not
-// annotated, no metadata queued, and not counted toward SQL.ErrorCount. The
-// SQL id / UID no other agent computes when the cut lands inside a literal.
+// annotated, no metadata queued, and not counted toward SQL.ErrorCount.
+// Cutting it and normalizing the rest would yield a SQL id / UID no other
+// agent computes when the cut lands inside a literal.
 func Test_spanEvent_SetSQLDropsAStatementPastTheNormalizationCap(t *testing.T) {
 	for _, queryStat := range []bool{false, true} {
 		t.Run(fmt.Sprintf("TraceQueryStat=%v", queryStat), func(t *testing.T) {

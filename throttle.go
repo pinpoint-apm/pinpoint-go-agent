@@ -15,9 +15,10 @@ var dropReportInterval = 60 * time.Second
 // headDropEnqueue queues v on ch and, when ch is full, head-drops the oldest
 // record to make room - the policy of the url stat and stat queues; the
 // metadata queue refuses the newcomer instead (enqueueMeta). An overflow
-// costs exactly one record: the evicted one, or v
-// itself when another producer takes the freed slot first. It reports whether
-// v was queued and how many records were lost.
+// normally costs one record, the evicted one. When another producer takes the
+// freed slot first, v is lost as well, and when the consumer drained one
+// meanwhile, nothing is evicted. It reports whether v was queued and how many
+// records were lost.
 func headDropEnqueue[T any](ch chan T, v T) (queued bool, dropped int64) {
 	select {
 	case ch <- v:
@@ -52,8 +53,9 @@ type dropReporter struct {
 }
 
 // record counts n drops and nothing else - no clock read, no logging - so it
-// is cheap enough for a producer hot path. The warning is left to report,
-// which a consumer calls.
+// is cheap enough for a producer hot path. The warning is left to report or
+// acquire: the span and metadata workers call them once per cycle, the url
+// stat and stat producers only after a drop.
 func (r *dropReporter) record(n int64) {
 	r.dropped.Add(n)
 }
@@ -106,11 +108,11 @@ func (r *dropReporter) acquire(total int64) (held time.Duration, ok bool) {
 // logThrottle rate-limits one warning site to a message per dropReportInterval,
 // counting what it held back in between. For warnings a peer or the
 // application can trigger once per request - a malformed header, an
-// unbalanced span - where an unthrottled WARN is a log-flooding lever that
-// covers the same sites.
+// unbalanced span - where an unthrottled WARN is a log-flooding lever anyone
+// able to send a request can pull.
 type logThrottle struct {
-	// src names the log source. The empty value logs under "span", where every
-	// site but the url stat limit one lives.
+	// src names the log source. The empty value logs under "span", the source
+	// of the span-level sites declared below.
 	src        string
 	next       atomic.Int64 // unix nano before which the site stays silent
 	suppressed atomic.Int64

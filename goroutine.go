@@ -83,8 +83,8 @@ const goroutineHeaderPrefix = "goroutine "
 // parseGoroutineHeader reads "goroutine <id> [<state>]:", the block header
 // runtime.Stack writes, and reports false for any other line. The state is
 // everything between the brackets, "select, 3 minutes" included; the caller
-// keeps the first word. By hand rather than with a regexp: the dump has one
-// header per goroutine of the process, and ^goroutine\s+(\d+)\s+\[(.*)\]:$
+// cuts it at the first comma. By hand rather than with a regexp: the dump has
+// one header per goroutine of the process, and ^goroutine\s+(\d+)\s+\[(.*)\]:$
 // took a third of the parse on a 10k-goroutine dump.
 func parseGoroutineHeader(line []byte) (id int64, state []byte, ok bool) {
 	if !bytes.HasPrefix(line, []byte(goroutineHeaderPrefix)) {

@@ -13,8 +13,8 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
-// TraceHeaders are the response headers every server sets so the caller can
-// verify propagation without reading the collector.
+// HeaderTraceID and HeaderSpanID are the response headers the HTTP servers set
+// so the caller can verify propagation without reading the collector.
 const (
 	HeaderTraceID = "X-It-Trace-Id"
 	HeaderSpanID  = "X-It-Span-Id"
@@ -28,7 +28,7 @@ func SetDefaultEnv(key, value string) {
 	}
 }
 
-// EnvOr returns the value of key, or fallback when it is unset.
+// EnvOr returns the value of key, or fallback when it is unset or empty.
 func EnvOr(key, fallback string) string {
 	return cmp.Or(os.Getenv(key), fallback)
 }
@@ -42,9 +42,7 @@ func CollectorHost() string {
 // ConfigureAgentEnvironment applies the per-process identity and the feature
 // switches the suite depends on, without overriding the runner. The suite runs
 // as Uid.Version v3, which every 3.1.x collector accepts; the runner sets
-// PINPOINT_GO_UID_VERSION=v4 and PINPOINT_GO_SERVICENAME for a v4 run. An
-// environment variable, unlike the shared config file, also reaches the
-// agents the upstream starts on files of their own.
+// PINPOINT_GO_UID_VERSION=v4 and PINPOINT_GO_SERVICENAME for a v4 run.
 func ConfigureAgentEnvironment(application, agentName string) {
 	SetDefaultEnv("PINPOINT_GO_APPLICATIONNAME", application)
 	SetDefaultEnv("PINPOINT_GO_AGENTNAME", agentName)
@@ -56,9 +54,9 @@ func ConfigureAgentEnvironment(application, agentName string) {
 }
 
 // StartAgent builds a config from the shared config file plus the environment
-// and installs a new global agent. It returns the agent even when startup
-// failed, in which case the noop agent is returned and the caller keeps
-// serving untraced requests.
+// and installs a new global agent. It returns an agent even when startup
+// failed, the noop agent or the one already installed, so the caller keeps
+// serving requests.
 func StartAgent(opts ...pinpoint.ConfigOption) pinpoint.Agent {
 	config, err := pinpoint.NewConfig(opts...)
 	if err != nil {
@@ -96,7 +94,8 @@ func IntParam(r *http.Request, name string, def, lo, hi int) int {
 	return min(max(v, lo), hi)
 }
 
-// SpanIDString renders a span id the way the smoke test expects to read it.
+// SpanIDString renders a span id in decimal, as the Pinpoint span id headers
+// carry it, so it compares equal to what the next hop received.
 func SpanIDString(tracer pinpoint.Tracer) string {
 	return strconv.FormatInt(tracer.SpanId(), 10)
 }

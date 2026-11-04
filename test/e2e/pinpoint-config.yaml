@@ -16,9 +16,9 @@ Collector:
   SpanPort: 9993
   StatPort: 9992
 
-  # Periodic AgentInfo re-send. Off by default in the agent; the live suite
-  # turns it on so a long run exercises the refresh scheduler and its bounded
-  # retry, not just the boot registration.
+  # Periodic AgentInfo re-send, every 24h by default in the agent; the live
+  # suite shortens it so a long run exercises the refresh scheduler and its
+  # bounded retry, not just the boot registration.
   AgentInfo:
     RefreshInterval: 30000 # ms; 0 disables the periodic re-send
     SendRetryInterval: 3000 # ms between tries within one refresh
@@ -44,6 +44,7 @@ Collector:
     # spread long-running agents across a scaled-out collector, e.g. 600000.
     ConnectionMaxAge: 0 # ms
     StreamMaxAge: 0 # ms
+    # Span batching is set off the agent's defaults (50, 1000, 500, 10).
     SpanBatchSize: 8 # small so the smoke run crosses batches; --load-only uses 50
     SpanBatchFlushInterval: 500
     SpanBatchCollectDeadline: 1000

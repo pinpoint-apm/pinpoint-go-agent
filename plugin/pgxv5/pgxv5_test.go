@@ -44,8 +44,9 @@ func Test_parseDSN(t *testing.T) {
 	assert.Equal(t, "testdb", info.DBName)
 }
 
-// An unparsable DSN must leave the driver's shared DBInfo alone rather than
-// half-filling it: sql.Open reports the same error and the connection fails.
+// An unparsable DSN must leave the DBInfo alone rather than half-filling it:
+// pgx's driver parses the DSN only when it connects, so sql.Open succeeds and
+// every connection fails with the parse error.
 func Test_parseDSN_InvalidLeavesInfoUntouched(t *testing.T) {
 	for _, dsn := range []string{
 		"postgres://dbhost:notaport/testdb",
@@ -93,9 +94,9 @@ func TestOpenUsesTheInstrumentedDriver(t *testing.T) {
 		"the wrapper must keep the driver's OpenConnector reachable")
 }
 
-// Every pgx callback opens its span event through this one function, so the
-// service type, endpoint and destination it sets are what the whole tracer
-// records.
+// TraceConnectStart opens its span event through newSpanEvent, and every other
+// callback through connSpanEvent, which builds the same DBInfo from the live
+// connection's config: what newSpanEvent sets is what the whole tracer records.
 func Test_newSpanEvent(t *testing.T) {
 	tracer := pptest.NewRecordingTracer()
 	newSpanEvent(pinpoint.NewContext(context.Background(), tracer), testConfig(t), "pgx.Query")
@@ -165,12 +166,13 @@ func TestTraceConnect(t *testing.T) {
 	assert.True(t, fork.spanEnded, "the goroutine tracer was never ended")
 }
 
-// pgx hands each Start callback a live *pgx.Conn to read the connection config
-// off, and there is no way to build one without a server; what those halves
-// record is covered through newSpanEvent. The End halves take the connection
-// but never use it, so the pairing they complete - and the error they record,
-// none on success - is testable here. TraceBatchEnd is the only thing that
-// closes the enclosing batch event.
+// pgx hands TraceQueryStart, TraceBatchStart, TraceBatchQuery and
+// TraceCopyFromEnd a live *pgx.Conn to read the connection config off, and
+// there is no way to build one without a server; what they record is covered
+// through newSpanEvent and recordCopyFrom. TraceQueryEnd and TraceBatchEnd take
+// the connection but never use it, so the pairing they complete - and the
+// error they record, none on success - is testable here. TraceBatchEnd is the
+// only thing that closes the enclosing batch event.
 func TestEndCallbacks(t *testing.T) {
 	pgxT := NewTracer()
 	for _, tt := range []struct {
@@ -289,7 +291,7 @@ func TestComposeArgs_NoArguments(t *testing.T) {
 }
 
 // SQL.MaxBindValueSize bounds what one statement can add to a span, so the
-// composed argument list must respect it end to end, not only inside writeArg.
+// composed argument list must respect it end to end, not only per value.
 func TestComposeArgs_HonoursTheSizeLimit(t *testing.T) {
 	agent := pptest.StartAgent(t)
 	agent.Config().Set(pinpoint.CfgSQLTraceBindValue, true)

@@ -109,9 +109,10 @@ func newMetaCache[K comparable, V any](capacity int) *metaCache[K, V] {
 
 // shard picks the lock that serializes inserts of key. maphash.Comparable
 // dispatches to the runtime's own type hasher, the same one a map[K]V would
-// use, which is AES-accelerated for strings; maphash.String is not, and
-// measured 4-6x slower on the SQL-sized keys these caches hold: 590 ns vs
-// 105 ns for 8 KB, 6.5 us vs 1.5 us for maxSqlSize (#189).
+// use, which hashes a string in one AES-accelerated call; maphash.String feeds
+// that hasher one 128-byte block at a time and measured 4-6x slower on
+// SQL-sized keys: 590 ns vs 105 ns for 8 KB, 6.5 us vs 1.5 us for maxSqlSize
+// (#189).
 func (c *metaCache[K, V]) shard(key K) *metaCacheShard {
 	return &c.shards[maphash.Comparable(metaCacheSeed, key)%c.shardCount]
 }

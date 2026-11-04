@@ -189,7 +189,8 @@ func newStringAnnotation() *stringAnnotation {
 
 func (a *stringAnnotation) AppendString(key int32, s string) { a.strs[key] = append(a.strs[key], s) }
 
-// annotationTracer hands before() a span event whose annotations are captured.
+// annotationTracer hands NewHttpClientTracer a span event whose annotations are
+// captured.
 type annotationTracer struct {
 	pinpoint.Tracer
 	a *stringAnnotation

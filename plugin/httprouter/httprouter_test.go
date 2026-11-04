@@ -301,8 +301,8 @@ func TestWrapHandle_PassesThroughWhenAgentDisabled(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 }
 
-// WrapHandle given the route pattern collects the URL statistic under it and
-// still traces and routes the call; the one-argument form keeps working.
+// WrapHandle given the route pattern still traces and routes the call with URL
+// statistics on; the one-argument form keeps working.
 func TestWrapHandle_WithPathCollectsUrlStat(t *testing.T) {
 	pptest.StartAgent(t, pinpoint.WithHttpUrlStatEnable(true))
 

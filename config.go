@@ -129,7 +129,9 @@ const (
 	cfgIdPattern        = "[a-zA-Z0-9\\._\\-]+"
 	samplingTypeCounter = "COUNTER"
 	samplingTypePercent = "PERCENT"
-	// percent sampler is named PERCENT already and needs no alias.
+	// samplingTypeCounting is another name of the counter sampler, so a config
+	// that spells it COUNTING does not take the fallback path; the percent
+	// sampler is named PERCENT already and needs no alias.
 	samplingTypeCounting = "COUNTING"
 	// Collector.Grpc.Compression values, those of the Java agent.
 	compressionGzip = "gzip"
@@ -146,14 +148,16 @@ const (
 	defaultErrorNewThroughput = 1000
 	// Bound the per-error runtime.Callers allocation. This option is dynamic
 	// and can come from a config file, so an accidental huge value must not turn
-	// one instrumented error into an allocation spike or an integer-overflow
-	// panic in make([]uintptr, depth+3).
+	// one instrumented error into an allocation spike or a makeslice panic in
+	// traceCallStack's make([]uintptr, depth).
 	maxErrorCallStackDepth = 1024
 
 	// Entries per SQL cache; the api and error caches keep cacheSize instead.
 	defaultSqlCacheSize = 1024
-	// The upper bound keeps a typo from committing gigabytes at startup: each
-	// of the three caches is bounded by this x SQL.CacheLengthLimit.
+	// The upper bound keeps a typo from letting the caches grow to gigabytes:
+	// the raw SQL cache holds up to this many texts shorter than
+	// SQL.CacheLengthLimit, each with its normalization, while the id and UID
+	// caches key on a 16-byte statement hash.
 	maxSqlCacheSize = 65536
 
 	// The bind value budget of one SQL span event: it bounds the whole list,
@@ -163,16 +167,17 @@ const (
 	// available up to this bound.
 	//
 	// Not unbounded, though. Bind values ride on the span itself, one
-	// annotation per SQL span event, and the span send path - unlike the
-	// metadata one, see sendExceptionMetadata - has no size guard: a span whose
-	// serialized size passes Collector.Grpc.MaxSendMessageSize is rejected by
-	// grpc-go at Send, and the whole span is lost, not just its bind values.
+	// annotation per SQL span event, and a span message whose serialized size
+	// passes Collector.Grpc.MaxSendMessageSize fits in no request: the batch
+	// sender drops it whole (splitSpanMessages), not just its bind values.
 	// A sixteenth of the 4MiB default message size still leaves room for 16
 	// span events carrying bind values at the limit, and is 256x the default -
 	// past any real "let me see the long bind value" need.
 	maxSqlBindValueSize = grpcMaxMessageSize / 16
 
-	// SQL at or above this many bytes bypasses the SQL metadata caches.
+	// SQL at or above this many bytes bypasses the raw SQL cache, so its
+	// normalization is not memoized; the id and UID caches key on the
+	// statement hash and ignore the limit.
 	defaultSqlCacheLengthLimit = 2048
 	// Seven days.
 	defaultSqlCacheExpireHours = 168
@@ -366,8 +371,9 @@ func (config *Config) addItem(cfgName string, item *cfgMapItem) {
 // stable; only the snapshot it points at is replaced.
 type Config struct {
 	// mu guards the cfgMap staging area and the reload callback list. Readers
-	// never take it - they load the published snapshot instead - so it is only
-	// ever contended between startup and the config watcher goroutine.
+	// never take it - they load the published snapshot instead - so only the
+	// writers contend for it: startup, Set, AddReloadCallback, ReloadConfig and
+	// the config file poller.
 	mu       sync.Mutex
 	cfgMap   map[string]*cfgMapItem
 	callback []reloadCallback
@@ -405,8 +411,8 @@ type Config struct {
 type configSnapshot struct {
 	values  map[string]any
 	sampler *traceSampler
-	// newExceptionLimiter caps how many new exception chains a second are
-	// nil means unlimited.
+	// newExceptionLimiter caps how many new exception chains are recorded a
+	// second; nil means unlimited.
 	newExceptionLimiter *rate.Limiter
 
 	collectUrlStat       bool              // CfgHttpUrlStatEnable
@@ -580,7 +586,9 @@ func (config *Config) load() *configSnapshot {
 // ConfigOption represents an option that can be passed to NewConfig.
 type ConfigOption func(*Config)
 
-// GetConfig returns a global Config created by NewConfig.
+// GetConfig returns the global agent's Config: the one passed to NewAgent, or,
+// while no agent runs, the noop agent's Config, built from the registered
+// defaults alone.
 func GetConfig() *Config {
 	return GetAgent().Config()
 }
@@ -652,7 +660,6 @@ func (config *Config) stagedString(cfgName string) string {
 //  5. default
 //
 // configuration keys used in config files are case-insensitive.
-// The generated Config is maintained globally.
 // When a Config with a config file is not passed to NewAgent, the caller should
 // call Close to stop its file watcher.
 //
@@ -716,15 +723,16 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 	return config, fileErr
 }
 
-// applyLogging resolves Log.Level, Log.Output, Log.MaxSize and Log.MaxBackups from the sources
-// read so far, in loadConfig's precedence, and hands them to the logger before
-// the rest of the load, so that the warnings the load emits - a value of the
-// wrong type, an unsupported Sampling.Type - reach the configured output. The
-// values come from the config file themselves, so this runs twice: with the
-// command line and environment alone, then again once the file and profile
-// are read. Nothing is staged here and type errors are left for
-// loadConfig to report; a value that does not convert is applied as the zero
-// value and corrected by the next pass or by setup.
+// applyLogging resolves Log.Level, Log.Output, Log.MaxSize and Log.MaxBackups
+// from the sources read so far, in the precedence restage applies, and hands
+// them to the logger before the rest of the load, so that the warnings the
+// load emits - a value of the wrong type, an unsupported Sampling.Type - reach
+// the configured output. The values come from the config file themselves, so
+// this runs twice: with the command line and environment alone, then again
+// once the file and profile are read. Nothing is staged here and type errors
+// are left for restage (setFinalValue) to report; a value that does not
+// convert is applied as the zero value and corrected by the next pass or by
+// setup.
 func (config *Config) applyLogging(sources *cfgSources) {
 	resolve := func(name string) any {
 		if value, _, ok := sources.lookup(name, config.cfgMap[name]); ok {
@@ -926,10 +934,10 @@ func flattenConfig(prefix string, tree map[string]any, flat map[string]any) {
 	}
 }
 
-// parseProperties reads key=value (or key: value) lines; a # or ! starts a
-// comment and a line with no separator is a key with an empty value. No
-// escapes, continuations or ${} references: the agent's keys and values need
-// none, and every value is a string that convertCfgValue types.
+// parseProperties reads key=value (or key: value) lines; a line starting with
+// # or ! is a comment and a line with no separator is a key with an empty
+// value. No escapes, continuations or ${} references: the agent's keys and
+// values need none, and every value is a string that convertCfgValue types.
 func parseProperties(data []byte) map[string]any {
 	tree := make(map[string]any)
 	for _, line := range strings.Split(string(data), "\n") {
@@ -1121,7 +1129,7 @@ func valueAs[T int | float64 | bool | string | []string](value any) T {
 }
 
 // setFinalValue stages a value coming from a config file, a profile, an
-// environment variable or a command line flag.
+// environment variable, a command line flag or Set.
 //
 // A value that does not convert to the option's registered type is dropped
 // with a warning and the option keeps what it already had.
@@ -1283,7 +1291,8 @@ func (config *Config) publishFrom(prev *configSnapshot) {
 		// Only the type falls back, never the rate. Overwriting the rate with 0
 		// made rateSampler drop every trace, so a typo in this dynamic key -
 		// including on a reload - switched tracing off with nothing in the log
-		// default of 1 samples everything.
+		// to say so. The rate keeps its value, whose default of 1 samples
+		// everything.
 		Log("config").Warnf("%s = %q is not supported, using %s with %s = %d",
 			CfgSamplingType, config.stagedString(CfgSamplingType), samplingTypeCounter,
 			CfgSamplingCounterRate, config.stagedInt(CfgSamplingCounterRate))
@@ -1309,13 +1318,13 @@ func (config *Config) publishFrom(prev *configSnapshot) {
 	// another.
 	config.defaultIfOutOfRange(CfgAppType, math.MinInt16, math.MaxInt16)
 
-	// Only the documented levels pass. logrus.ParseLevel also accepts fatal
-	// and panic, which would silence warn and error while looking like a
-	// valid setting. An unknown level keeps the level already published, or
-	// the default on the first publish. Logged at Error, not Warn,
-	// because the level being kept may well be error: at Warn the one line
-	// explaining the rejected value would be the one line the operator cannot
-	// see.
+	// Only the documented levels pass, warn also spelled warning.
+	// logrus.ParseLevel also accepts fatal and panic, which would silence warn
+	// and error while looking like a valid setting. An unknown level keeps the
+	// level already published, or the default on the first publish. Logged at
+	// Error, not Warn, because the level being kept may well be error: at Warn
+	// the one line explaining the rejected value would be the one line the
+	// operator cannot see.
 	level := config.stagedString(CfgLogLevel)
 	if lvl, err := logrus.ParseLevel(level); err != nil || lvl < logrus.ErrorLevel {
 		current, ok := config.load().values[CfgLogLevel]
@@ -1331,7 +1340,12 @@ func (config *Config) publishFrom(prev *configSnapshot) {
 	// recording. A negative size turns SQL.TraceBindValue off in the published
 	// values only (see below): written into cfgMap, the false outlived the bad
 	// size, since a reload or Set that fixed the size did not touch the other
-	// option, and tracing stayed off until restart.
+	// option, and tracing stayed off until restart. The size is staged as 0,
+	// though, so only the publish that finds the negative value turns the
+	// option off: a later one that does not stage it again - a Set of another
+	// key, NewAgent's identity publish, ReloadConfig's, which copies the
+	// candidate's 0 - publishes SQL.TraceBindValue as configured. A size of 0
+	// renders no bind values either way.
 	maxBind := config.stagedInt(CfgSQLMaxBindValueSize)
 	if maxBind > maxSqlBindValueSize {
 		Log("config").Warnf("%s = %d is out of range, using %d",
@@ -1344,8 +1358,9 @@ func (config *Config) publishFrom(prev *configSnapshot) {
 	}
 
 	// Non-dynamic, like SQL.CacheSize: the agent reads it once at startup.
-	// Only -1 turns the bypass off and memoizes every SQL; any other negative
-	// value recovers the default, the rule Span.MaxCallStackDepth already follows.
+	// Only -1 means unlimited, as for Span.MaxCallStackDepth: every SQL up to
+	// maxSqlSize (64 KiB) is memoized. Any other negative value recovers the
+	// default.
 	if limit := config.stagedInt(CfgSQLCacheLengthLimit); limit == -1 {
 		config.cfgMap[CfgSQLCacheLengthLimit].value = math.MaxInt32
 	} else if limit < 0 {
@@ -1358,18 +1373,18 @@ func (config *Config) publishFrom(prev *configSnapshot) {
 	// values are invalid rather than another spelling of no expiry.
 	config.defaultIfOutOfRange(CfgSQLCacheExpireHours, 0, maxSqlCacheExpireHours)
 
-	// Dynamic, and a chunk's worth of span events is what every sampled
-	// request sizes its buffer by, so the upper bound is the typo guard the
-	// queues use.
+	// Dynamic, and a span holds up to a chunk's worth of span events before it
+	// cuts a chunk (only the preallocation is capped, see eventChunkCap), so
+	// the upper bound is the typo guard the queues use.
 	config.defaultIfOutOfRange(CfgSpanEventChunkSize, 1, maxQueueSize)
 
-	// Dynamic key, and unlike the queues below a bad value here is silent data
-	// loss rather than a panic: with a limit of 0 or less, snapshot.count is
+	// Dynamic key, and unlike the queues below a bad value here loses data
+	// rather than panicking: with a limit of 0 or less, len(snapshot.urlMap) is
 	// already at it before the first url, so every url stat entry is dropped.
-	// The lower bound is therefore 1; the upper bound is maxQueueSize, the typo guard the queues use -
-	// the map grows lazily so a large limit costs nothing up front, but a map
-	// of that many distinct urls is a runaway pattern set, not a capacity
-	// anyone configures.
+	// The lower bound is therefore 1; the upper bound is maxQueueSize, the typo
+	// guard the queues use - the map grows lazily so a large limit costs
+	// nothing up front, but a map of that many distinct urls is a runaway
+	// pattern set, not a capacity anyone configures.
 	config.defaultIfOutOfRange(CfgHttpUrlStatLimitSize, 1, maxQueueSize)
 
 	// These non-dynamic keys are range checked here, not in NewConfig, because
@@ -1422,8 +1437,9 @@ func (config *Config) publishFrom(prev *configSnapshot) {
 	config.unlimitedOrAtLeast(CfgSpanMaxCallStackSequence, minEventSequence)
 
 	config.defaultIfOutOfRange(CfgLogMaxSize, 1, math.MaxInt32)
-	// Log.MaxBackups: 0 means "keep every backup" to lumberjack but "keep none"
-	// the disk. Rotation with no history is Log.MaxSize alone.
+	// Log.MaxBackups below 1 recovers the default: 0 means "keep every backup"
+	// to lumberjack, which can fill the disk, where an operator who writes it
+	// more likely means "keep none".
 	config.defaultIfOutOfRange(CfgLogMaxBackups, 1, math.MaxInt32)
 
 	// Dynamic key, so both bounds must be enforced on every publish: a reload
@@ -1437,8 +1453,10 @@ func (config *Config) publishFrom(prev *configSnapshot) {
 	}
 	config.cfgMap[CfgErrorCallStackDepth].value = errorDepth
 
-	// cause walk runs on a request goroutine over an arbitrary user Cause()
-	// implementation and must stay bounded whatever the config asks for.
+	// Error.MaxChainDepth of 0 or less, or above maxCauserDepth, is the
+	// maxCauserDepth ceiling (the default): the cause walk runs on a request
+	// goroutine over an arbitrary user Cause() implementation and must stay
+	// bounded whatever the config asks for.
 	chainDepth := config.stagedInt(CfgErrorMaxChainDepth)
 	if chainDepth < 1 || chainDepth > maxCauserDepth {
 		chainDepth = defaultErrorMaxChainDepth
@@ -1543,7 +1561,9 @@ type reloadCallback struct {
 	callback func()
 }
 
-// AddReloadCallback adds a callback function will be called after reloading config file.
+// AddReloadCallback registers callback to run after a config file reload or a
+// ReloadConfig call that changed one of optNames. On the noop agent's Config,
+// which nothing reloads, it does nothing.
 func (config *Config) AddReloadCallback(optNames []string, callback func()) {
 	config.mu.Lock()
 	defer config.mu.Unlock()
@@ -1579,10 +1599,10 @@ func (config *Config) reloadConfig(f *configFile) {
 
 // restage re-reads the dynamic options and ActiveProfile from sources and
 // returns the set of option names whose value actually changed. With all,
-// it re-reads every option for ReloadConfig's private candidate. An option
-// whose value came from the command line, the environment or Set() is left
-// alone; one the sources no longer set goes back to its base value. The
-// caller must hold config.mu.
+// it re-reads every option, for NewConfig's first load and ReloadConfig's
+// private candidate. An option whose value came from the command line, the
+// environment or Set() is left alone; one the sources no longer set goes back
+// to its base value. The caller must hold config.mu.
 func (config *Config) restage(sources *cfgSources, all bool) map[string]bool {
 	changed := make(map[string]bool)
 

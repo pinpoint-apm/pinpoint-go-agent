@@ -68,8 +68,8 @@ func defaultOptions(mc *MockCollector) []pinpoint.ConfigOption {
 		pinpoint.WithCollectorAgentPort(mc.AgentPort()),
 		pinpoint.WithCollectorSpanPort(mc.SpanPort()),
 		pinpoint.WithCollectorStatPort(mc.StatPort()),
-		// AgentInfo refresh. A zero interval keeps the periodic re-send off, which
-		// is the agent's default.
+		// AgentInfo refresh. A zero interval keeps the periodic re-send off; the
+		// agent's default re-sends every 24h.
 		pinpoint.WithCollectorAgentInfoRefreshInterval(0),
 		pinpoint.WithCollectorAgentInfoSendRetryInterval(50),
 		pinpoint.WithCollectorAgentInfoMaxTryPerAttempt(2),
@@ -506,8 +506,7 @@ func registeredAgentID(t *testing.T, mc *MockCollector) string {
 }
 
 // expectCommonMetadata asserts the agent identity headers every collector
-// channel must carry. Only the ping and active-thread-count streams add a
-// socket id.
+// channel must carry. Only the ping stream adds a socket id.
 func expectCommonMetadata(t *testing.T, md RpcMetadata, expectSocketID bool) {
 	t.Helper()
 	assert.Equal(t, itAppName, md.Get("applicationname"))

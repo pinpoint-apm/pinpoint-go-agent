@@ -65,7 +65,9 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	se.Annotations().AppendString(pinpoint.AnnotationEsDsl, dsl)
 
-	// Since the service type ELASTICSEARCH_HIGHLEVEL_CLIENT(9204) depends on HTTP_CLIENT_4(9052),
+	// The service type ELASTICSEARCH_HIGHLEVEL_CLIENT(9204) depends on
+	// HTTP_CLIENT_4(9052), so the HTTP call gets a span event of its own under
+	// the Elasticsearch one.
 	defer tracer.NewSpanEvent("transport.RoundTrip()").EndSpanEvent()
 	se = tracer.SpanEvent()
 	se.SetServiceType(ServiceTypeHttpClient4)
@@ -130,9 +132,9 @@ func (t *transport) CloseIdleConnections() {
 }
 
 // maxBodyRead bounds what is read for the annotation. Only the first
-// MaxDslLength characters are ever recorded, so reading a whole multi-megabyte
-// _bulk payload just to slice 256 bytes off it was pure waste; the slack keeps
-// the truncation marker meaningful for gzipped bodies.
+// MaxDslLength bytes are ever recorded, so reading a whole multi-megabyte
+// _bulk payload just to slice 256 bytes off it was pure waste; the slack is for
+// a gzipped body, whose compressed head has to inflate to MaxDslLength bytes.
 const maxBodyRead = 4 * MaxDslLength
 
 // dslBuf is what reading one body for the annotation needs, pooled: the fixed

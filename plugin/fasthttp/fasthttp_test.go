@@ -74,9 +74,9 @@ func Test_reqHeader(t *testing.T) {
 	assert.Len(t, visited["X-Multi"], 2, "VisitAll must report both values of a repeated header")
 }
 
-// HeaderReader is the tracing carrier: a header sent with an empty value is
+// headerReader is the tracing carrier: a header sent with an empty value is
 // present, so the trace continues through a hop whose Pinpoint-SpanID a proxy
-// blanked instead of dropping. RequestHeader.Get cannot say that, which is why
+// blanked instead of dropping. requestHeader.Get cannot say that, which is why
 // the carrier is its own type.
 func Test_headerReader(t *testing.T) {
 	ctx := newRequestCtx(http.MethodGet, "http://localhost/hello")
@@ -112,8 +112,6 @@ func Test_resHeader(t *testing.T) {
 	assert.Equal(t, []string{"ok"}, visited["X-Result"])
 }
 
-// Cookies live in the Cookie request header; the adapter has to split them
-// into pairs so the cookie recorder sees names, not one blob.
 // A header the configuration asks for but the client did not send must not be
 // annotated. The recorder decides on Values returning a non-empty slice, so an
 // adapter that answered []string{""} for every absent header put an empty
@@ -135,6 +133,8 @@ func TestWrapHandler_DoesNotRecordAbsentRequestHeaders(t *testing.T) {
 	assert.NotContains(t, string(encoded), "X-Absent")
 }
 
+// Cookies live in the Cookie request header; the adapter has to split them
+// into pairs so the cookie recorder sees names, not one blob.
 func Test_cookie(t *testing.T) {
 	ctx := newRequestCtx(http.MethodGet, "http://localhost/hello")
 	ctx.Request.Header.SetCookie("first", "1")

@@ -224,9 +224,10 @@ func Test_traceSampler_burst(t *testing.T) {
 }
 
 func Test_traceSampler_hugeThroughput(t *testing.T) {
-	// a tps beyond one event per nanosecond makes per() an infinite rate: the
-	// burst of tps must neither overflow the limiter nor throttle anything,
-	// and the drain that empties a fresh bucket must not apply either.
+	// a tps beyond one event per nanosecond makes the newTokenBucket rate
+	// infinite: the burst of tps must neither overflow the limiter nor
+	// throttle anything, and the drain that empties a fresh bucket must not
+	// apply either.
 	s := buildTraceSampler(newRateSampler(1), math.MaxInt32, math.MaxInt32)
 	stats := newAgentStats()
 
@@ -242,10 +243,11 @@ func Test_newPercentSampler_RoundsToHundredths(t *testing.T) {
 	}
 }
 
-// configured rate to hundredths of a percent and then picks one of three
-// (FalseSampler), >= 10000 always samples (TrueSampler), anything between
-// runs PercentRateSampler. Here the same three cases fall out of the
-// rate newPercentSampler computes plus the two guards in isSampled.
+// The Java agent turns the configured rate into hundredths of a percent and
+// picks one of three samplers: <= 0 never samples (FalseSampler), >= 10000
+// always samples (TrueSampler), anything between runs PercentRateSampler. Here
+// the same three cases fall out of the rate newPercentSampler computes plus the
+// two guards in isSampled.
 func Test_percentSampler_javaMapping(t *testing.T) {
 	tests := []struct {
 		percent float64
@@ -259,7 +261,8 @@ func Test_percentSampler_javaMapping(t *testing.T) {
 		{0.5, 50, 5},
 		{50, 5000, 500},
 		{100, 10000, 1000},
-		// to 100 lands on 10000, which isSampled treats as always-sample too.
+		// Java hands 15000 to TrueSampler; the clamp to 100 lands on 10000,
+		// which isSampled treats as always-sample too.
 		{150, 10000, 1000},
 	}
 	for _, tt := range tests {
@@ -353,9 +356,10 @@ func TestRateSamplerRateOneSkipsCounter(t *testing.T) {
 // cross-agent rationale and references live in doc/development.md.
 // ===========================================================================
 
-// Test_CountingSamplerPhase locks the counting sampler's phase.
-// the process is sampled and every rate-th one after it - not the rate-th
-// request.
+// Test_CountingSamplerPhase locks the counting sampler's phase. The
+// pre-increment value decides, as in Java's CountingSampler, so the first
+// request of the process is sampled and every rate-th one after it - not the
+// rate-th request.
 func Test_CountingSamplerPhase(t *testing.T) {
 	s := newRateSampler(3)
 
@@ -368,6 +372,7 @@ func Test_CountingSamplerPhase(t *testing.T) {
 	assert.Equal(t, []int{1, 4, 7, 10}, sampled, "the first call and every 3rd after it")
 }
 
+// Test_CountingSamplerEdgeRates locks the rates the Java agent hands to
 // TrueSampler and FalseSampler instead of CountingSampler.
 func Test_CountingSamplerEdgeRates(t *testing.T) {
 	always := newRateSampler(1)
@@ -386,9 +391,10 @@ func Test_CountingSamplerEdgeRates(t *testing.T) {
 	}
 }
 
-// PercentRateSampler adds the rate to a counter and samples on a remainder in
-// (0, rate] - the first request lands on exactly rate and is sampled, where a
-// [0, rate) window would sample the second one instead.
+// Test_PercentSamplerWindow locks the admission window. Like Java's
+// PercentRateSampler, the sampler adds the rate to a counter and samples on a
+// remainder in (0, rate] - the first request lands on exactly rate and is
+// sampled, where a [0, rate) window would sample the second one instead.
 func Test_PercentSamplerWindow(t *testing.T) {
 	s := newPercentSampler(1) // rate 100 of 10000
 
@@ -401,10 +407,12 @@ func Test_PercentSamplerWindow(t *testing.T) {
 	assert.Equal(t, []int{1, 101}, sampled, "one per hundred, starting at the first call")
 }
 
-// Test_ThroughputLimiterInitialState locks the shape of the
-// bucket behind every per-second throughput option (Sampling.NewThroughput,
-// builds a Guava SmoothBursty whose initial storedPermits is 0: a fresh limiter
-// injected through AllowN so the test is exact and sleep-free.
+// Test_ThroughputLimiterInitialState locks the shape of the bucket behind every
+// per-second throughput option (Sampling.NewThroughput,
+// Sampling.ContinueThroughput, Error.NewThroughput). Like the Guava SmoothBursty
+// the Java agent's RateLimiter.create builds, whose initial storedPermits is 0,
+// a fresh limiter admits its first caller and paces the next ones at tps. Times
+// are injected through AllowN so the test is exact and sleep-free.
 func Test_ThroughputLimiterInitialState(t *testing.T) {
 	const tps = 10 // one token per 100ms
 	l := newTokenBucket(tps)

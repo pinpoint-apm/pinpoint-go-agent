@@ -126,8 +126,9 @@ func cassandraInfo(keyspace, host string) pinpoint.DBInfo {
 }
 
 // maxBatchSQL bounds the batch annotation: gocql puts no limit on the batch
-// size, and SetSQL keeps only a 64KB prefix anyway, so building the whole
-// batch as one string paid O(batch) for a capped result.
+// size, while SetSQL publishes at most a 64KB prefix of a statement and drops
+// one past 1MB whole, so building the whole batch as one string paid O(batch)
+// for a text that was cut, or not recorded at all.
 const maxBatchSQL = 64 * 1024
 
 func batchSQL(statements []string) string {

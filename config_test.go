@@ -540,8 +540,8 @@ func Test_reloadConfig(t *testing.T) {
 	config, err := NewConfig(WithAppName("reloadApp"))
 	assert.NoError(t, err)
 
-	// The core registers no dynamic string slice option, but the http plugin
-	// does; inject one so the reload path is exercised with a slice value.
+	// Inject a dynamic string slice option so the reload path is exercised
+	// with a slice value.
 	config.cfgMap[sliceOpt] = &cfgMapItem{
 		value:        []string{"before"},
 		defaultValue: []string{},
@@ -637,8 +637,8 @@ func Test_reloadConfig_recoversCallbackPanic(t *testing.T) {
 }
 
 // A delete-then-recreate save (unlink+rewrite editors, deploy tools) must not
-// end the watcher: it watches the directory, so it survives the Remove and the
-// following Create still reloads the recreated file.
+// end the watcher: the poller keeps the old stamp while the file is missing,
+// so the recreated file reads as a change and is reloaded.
 func Test_configWatcher_SurvivesFileRemoval(t *testing.T) {
 	cfgFile := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	assert.NoError(t, os.WriteFile(cfgFile, []byte("Span:\n  MaxCallStackDepth: 12\n"), 0o600))
@@ -734,8 +734,10 @@ func TestNewConfig_HttpUrlStatQueueSizeIsIndependentOfSpanQueueSize(t *testing.T
 	assert.Equal(t, defaultQueueSize, c.Int(CfgSpanQueueSize), CfgSpanQueueSize)
 }
 
-// panics the stat worker (time.NewTicker(0), zero-length batch indexing) and a
-// huge one allocates a giant channel buffer or stalls the stat collector.
+// Out-of-range queue sizes and stat settings fall back to the default with a
+// warning. Left as configured, a non-positive value panics the stat worker
+// (time.NewTicker(0), zero-length batch indexing) and a huge one allocates a
+// giant channel buffer or stalls the stat collector.
 func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -809,7 +811,7 @@ func TestNewConfig_OutOfRangeQueueSizeAndStatOptions(t *testing.T) {
 	assert.NotContains(t, buf.String(), "out of range")
 }
 
-// A float reaches an int option from a YAML, JSON or TOML file, or from Set.
+// A float reaches an int option from a YAML or JSON file, or from Set.
 // int(f) is implementation-defined for a value int cannot hold, so .inf or
 // 1e20 took a different value on each CPU; only a float holding an int
 // converts.
@@ -872,8 +874,8 @@ func TestNewConfig_CallStackLimitsAboveMaxInt32AreUnlimited(t *testing.T) {
 }
 
 // Collector.Grpc.IdleTimeout defaults to 0, which is grpc-go's documented
-// "idling disabled" value (WithIdleTimeout, v1.82.1; the unset default would be
-// 30 minutes). A negative value normalizes to the default like the other
+// "idling disabled" value (WithIdleTimeout; the unset default would be 30
+// minutes). A negative value normalizes to the default like the other
 // Collector.Grpc.*MaxAge keys; a positive value is kept and re-enables idling.
 func TestNewConfig_CollectorGrpcIdleTimeout(t *testing.T) {
 	c, err := NewConfig(WithAppName("TestApp"))
@@ -1021,9 +1023,10 @@ func TestNewConfig_ClampErrorCallStackDepth(t *testing.T) {
 	assert.Equal(t, maxErrorCallStackDepth, c.Int(CfgErrorCallStackDepth), CfgErrorCallStackDepth)
 }
 
-// event's bind values from filling a whole gRPC message applies. Both clamps
-// warn - a silent one leaves the config file saying 4096 while the agent runs
-// at 1024.
+// SQL.MaxBindValueSize is not pulled back down to its default: only the
+// ceiling that keeps one span event's bind values from filling a whole gRPC
+// message applies. Both clamps - above the ceiling and below 0 - warn, so the
+// value in effect never silently differs from the configured one.
 func TestNewConfig_ClampSqlMaxBindValueSize(t *testing.T) {
 	var buf bytes.Buffer
 	defer captureWarnLog(&buf)()
@@ -1076,7 +1079,9 @@ func TestNewConfig_SamplingTypeFallbackKeepsRate(t *testing.T) {
 	assert.Equal(t, 5, c.Int(CfgSamplingCounterRate), "the reload fallback wiped the rate")
 }
 
-// sampler it asks for instead of falling through to the percent sampler.
+// The type is stored normalized, so a lowercase type or the COUNTING alias
+// reaches the sampler it asks for instead of falling through to the percent
+// sampler.
 func TestNewConfig_SamplingTypeAliases(t *testing.T) {
 	for _, given := range []string{"counter", " Counting ", samplingTypeCounting} {
 		c, err := NewConfig(WithAppName("TestApp"), WithSamplingType(given), WithSamplingCounterRate(100))
@@ -1137,9 +1142,10 @@ func TestNewConfig_SQLCacheExpireHours(t *testing.T) {
 	}
 }
 
-// the default with a warning outside [1, maxSqlCacheSize]: 0 or a negative
-// would leave the SQL caches with no usable capacity and the upper bound keeps
-// a typo from committing gigabytes at startup.
+// SQL.CacheSize defaults to 1024, is read from the option, and recovers the
+// default with a warning outside [1, maxSqlCacheSize]: 0 or a negative would
+// leave the SQL caches with no usable capacity, and the upper bound keeps a
+// typo from letting the caches grow to gigabytes.
 func TestNewConfig_SQLCacheSize(t *testing.T) {
 	c, err := NewConfig(WithAppName("TestApp"))
 	assert.NoError(t, err)
@@ -1563,7 +1569,8 @@ func Test_marksError_ZeroMaskReadsAsEveryCategory(t *testing.T) {
 	assert.True(t, emptyConfigSnapshot.marksError(ErrorCategoryException))
 }
 
-// which is also how a config file spells a string slice on one line.
+// An environment variable spells the list as one comma-separated string, which
+// is also how a config file spells a string slice on one line.
 func TestNewConfig_ErrorMarkFromEnv(t *testing.T) {
 	t.Setenv("PINPOINT_GO_SPAN_ERRORMARK", "exception, sql")
 	t.Setenv("PINPOINT_GO_SPAN_ERRORMARKEXCLUDE", "sql")
@@ -1680,12 +1687,13 @@ func Test_ErrorMarkMaskResolution(t *testing.T) {
 	}
 }
 
-// Test_ConfigRejectsAnUnsupportedLogLevel locks the same rule
-// one layer up, where an operator actually meets it: a value that is not one of
-// trace, debug, info, warn or error keeps the level
-// already published, or the default on the first publish. logrus itself would
-// also take fatal and panic, which would silence warn and error while looking
-// like a valid setting, so the agent refuses them too.
+// Test_ConfigRejectsAnUnsupportedLogLevel locks the rule of
+// Test_UnsupportedLogLevelKeepsTheCurrentLevel (logger_test.go) one layer up,
+// where an operator actually meets it: a value that is not one of trace,
+// debug, info, warn (or warning) or error keeps the level already published,
+// or the default on the first publish. logrus itself would also take fatal and
+// panic, which would silence warn and error while looking like a valid
+// setting, so the agent refuses them too.
 func Test_ConfigRejectsAnUnsupportedLogLevel(t *testing.T) {
 	t.Cleanup(func() { logger.setLevel("info") })
 

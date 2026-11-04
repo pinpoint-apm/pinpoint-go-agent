@@ -90,7 +90,7 @@ func Test_span_Extract(t *testing.T) {
 }
 
 // Without a Pinpoint-Host header the acceptor host falls back to the endPoint
-// back to requestAdaptor.getAcceptorHost().
+// the server plugin sets afterwards (SetEndPoint).
 func Test_span_Extract_acceptorHostFallback(t *testing.T) {
 	m := map[string]string{
 		HeaderTraceId:               "t123456^12345^1",
@@ -140,7 +140,7 @@ func Test_span_Extract_malformedTraceId(t *testing.T) {
 		"no-separator",    // missing both separators (would index s[1] before)
 		"agent^123",       // missing sequence separator (would index s[2] before)
 		"agent^bad^worse", // non-numeric time/sequence
-		"a^b^c^d",         // too many fields
+		"a^b^c^d",         // 'b' is not a number; a 4th field is ignored
 	}
 	for _, tid := range cases {
 		t.Run(tid, func(t *testing.T) {
@@ -276,7 +276,8 @@ func Test_splitTransactionId(t *testing.T) {
 		{"agent^^1", false, "", 0, 0},
 		{"agent^1^", false, "", 0, 0},
 		{"^1^2", false, "", 0, 0},
-		// registers, not when it parses this header.
+		// No length bound on the agent id here: the bound applies when an agent
+		// registers its own id, not when it parses this header.
 		{"abcdefghijklmnopqrstuvwxy^1^2", true, "abcdefghijklmnopqrstuvwxy", 1, 2}, // 25 chars
 		{"a^9223372036854775808^0", false, "", 0, 0},                               // overflows int64
 		{"a^123456789012345678901^0", false, "", 0, 0},                             // 21 digits: overflows int64
@@ -417,7 +418,8 @@ func Test_span_Inject_Host(t *testing.T) {
 }
 
 // endPoint (the address actually contacted) and destinationId (the logical node
-// plugin left unset, and never overwrites one it recorded.
+// label) are independent: Inject fills in only an endPoint the plugin left
+// unset, and never overwrites one it recorded.
 func Test_span_Inject_EndPoint(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -452,10 +454,10 @@ func Test_span_Inject_EventOverflow(t *testing.T) {
 	// Overflow limits profiling detail; it is not a sampling decision. The
 	// trace context must still be written or the downstream starts a new
 	// trace and the call chain is cut here.
-	// The limits are the smallest publishable ones: applyDynamicConfig clamps
-	// MaxCallStackDepth to minEventDepth and MaxCallStackSequence to
-	// minEventSequence, so the event counts below are what it takes to overflow
-	// them.
+	// The limits are the smallest publishable ones: publishing a snapshot
+	// (publishFrom) clamps MaxCallStackDepth to minEventDepth and
+	// MaxCallStackSequence to minEventSequence, so the event counts below are
+	// what it takes to overflow them.
 	tests := []struct {
 		name     string
 		limitOpt string
@@ -615,9 +617,9 @@ func Test_span_NewSpanEventDepthOverflow(t *testing.T) {
 	assert.Equal(t, s.eventStack.len(), 0, "stack.len()")
 }
 
-// DefaultCallStack.push, isDepthOverflow checks maxDepth < index where index is
-// the pre-push element count, so with maxDepth=3 the 4th push (index=3) is
-// still recorded at depth 4 (CallStackTest).
+// Span.MaxCallStackDepth allows max+1 nesting levels: the limit is compared
+// with the events already open, so with max=3 the 4th event is still
+// recorded, at depth 4, and only the 5th overflows.
 func Test_span_NewSpanEventDepthBoundary(t *testing.T) {
 	for _, max := range []int{minEventDepth, 3} {
 		t.Run(fmt.Sprintf("max=%d", max), func(t *testing.T) {
@@ -814,7 +816,8 @@ func TestSpan_RecordUrlStat_URLStatIsFirstWinsOnUrl(t *testing.T) {
 	assert.Equal(t, "POST", span.urlStat.Method, "Method is last-wins")
 }
 
-// call without a Url does not claim the slot, so a later real Url fills it.
+// The urlStatUnknown stand-in is not a recorded Url: a first call without a
+// Url does not claim the slot, so a later real Url fills it.
 func TestSpan_RecordUrlStat_URLStatUnknownDoesNotClaimUrl(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Set(CfgHttpUrlStatEnable, true)
@@ -885,7 +888,7 @@ func TestSpan_ExtractParsesFullRangeSpanId(t *testing.T) {
 }
 
 // generateSpanId must draw negative ids too, and a negative id has to survive
-// the round trip out through Inject and back in through Extract.
+// the round trip out through Inject and back in through extract.
 func TestSpan_GeneratedSpanIdCoversFullInt64Range(t *testing.T) {
 	negative := false
 	for i := 0; i < 10_000 && !negative; i++ {
@@ -924,7 +927,6 @@ func TestSpan_EndSpanEventRepanicsOriginalValue(t *testing.T) {
 	assert.Equal(t, "sentinel", got, "original panic value preserved")
 }
 
-// The event that records a panic is shipped before the panic is re-raised.
 // A call stack overflow blocks span events only; span.SetError must still
 // record the transaction failure and its exception info on the PSpan.
 func TestSpan_SetErrorDuringEventOverflow(t *testing.T) {
@@ -1016,6 +1018,7 @@ func TestSpan_SettersAfterEndSpanAreNoop(t *testing.T) {
 	assert.Len(t, span.annotations.getList(), 1, "annotations")
 }
 
+// The event that records a panic is recorded before the panic is re-raised.
 func TestSpan_EndSpanEventRecordsPanickedEvent(t *testing.T) {
 	span := defaultTestSpan()
 	span.NewSpanEvent("event")
@@ -1367,7 +1370,7 @@ func TestSpan_EndSpanKeepsLeftoverEventsInFinalChunk(t *testing.T) {
 }
 
 // The async span's own goroutine event is ended by EndSpan after finished is
-// set; it must not be dropped by the EndSpanEvent guard.
+// set; it must still reach the final chunk.
 func TestSpan_AsyncEndSpanKeepsItsEvent(t *testing.T) {
 	parent := defaultTestSpan()
 	parent.NewSpanEvent("t")
@@ -1478,7 +1481,8 @@ func Test_spanEvent_end_Idempotent(t *testing.T) {
 }
 
 // An error recorded on a span event past the call stack limit still fails the
-// DisabledSpanEvent::SetError does the same. Nothing is recorded on the event.
+// transaction, unless Span.IgnoreErrors matches it. Nothing is recorded on the
+// event.
 func TestOverflowSpanEvent_SetErrorMarksSpanFailed(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1545,8 +1549,7 @@ func TestOverflowSpanEvent_SetErrorAfterEndSpanIsNoop(t *testing.T) {
 }
 
 // An async span is serialized as a PSpanChunk, which has no err field, so a
-// failure recorded on it must reach the root span's PSpan.err and URL stat -
-// root's (SpanMessageMapper: span.traceRoot.shared.errorCode -> err).
+// failure recorded on it must reach the root span's PSpan.err and URL stat.
 func TestSpan_AsyncErrorFailsTheTraceRoot(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1653,7 +1656,8 @@ func TestSpan_AsyncSpanLevelWritesReachTheWire(t *testing.T) {
 }
 
 // Known limit: the root's final chunk is sent at its own EndSpan, so a child
-// store until the last child ends; this agent does not (yet).
+// that fails after the root has ended is not reflected in PSpan.err or the URL
+// stat.
 func TestSpan_AsyncErrorAfterRootEndIsNotReported(t *testing.T) {
 	cfg, err := NewConfig(WithAppName("asyncLateErrApp"))
 	assert.NoError(t, err)
@@ -1774,8 +1778,8 @@ func TestSpan_ErrorCategoryPerCause(t *testing.T) {
 
 // Span.ErrorMarkExclude: a category outside the enabled set masks nothing at
 // all, so "a 5xx is not a transaction failure" becomes expressible without
-// ConfigurableErrorRecorder.recordError. The status annotation the plugin
-// records is untouched; only the verdict is dropped.
+// giving up exception marking. The status annotation the plugin records is
+// untouched; only the verdict is dropped.
 func TestSpan_ErrorMarkExcludeLeavesAFailingStatusUnmarked(t *testing.T) {
 	cfg, err := NewConfig(WithAppName("markExcludeApp"), WithSpanErrorMarkExclude("http-status"))
 	require.NoError(t, err)
@@ -2007,10 +2011,10 @@ func testSpanEvent(sequence, depth int32, startTime int64) *spanEvent {
 	return &spanEvent{sequence: sequence, depth: depth, startTime: startTime}
 }
 
-// Test_ChunkKeyTimeAndStartElapsed locks the two values the
-// the final chunk keys off the span's start time, a non-final chunk off its
-// first event, and every startElapsed is the delta to the previous event
-// (to keyTime for the first).
+// Test_ChunkKeyTimeAndStartElapsed locks the two time values a chunk carries:
+// the final chunk keys off the span's start time (an async one off an earlier
+// fixed first event), a non-final chunk off its first event, and every
+// startElapsed is the delta to the previous event (to keyTime for the first).
 func Test_ChunkKeyTimeAndStartElapsed(t *testing.T) {
 	spanStart := time.UnixMilli(1_000)
 
@@ -2054,8 +2058,9 @@ func Test_ChunkKeyTimeAndStartElapsed(t *testing.T) {
 	})
 }
 
-// Test_ChunkSortsBySequence locks that a chunk is ordered by
-// correct on a sorted chunk.
+// Test_ChunkSortsBySequence locks that a chunk is ordered by sequence before
+// it is sent: keyTime and the startElapsed and depth deltas are only correct
+// on a sorted chunk.
 func Test_ChunkSortsBySequence(t *testing.T) {
 	chunk := &spanChunk{
 		span:       &span{requestStats: requestStats{startTime: time.UnixMilli(1_000)}},
@@ -2109,8 +2114,8 @@ func Test_Sentinels(t *testing.T) {
 	assert.Equal(t, int32(0), int32(noneAsyncId), "Java: asyncId 0 means no async context")
 }
 
-// Test_PropagationHeaderNames locks all ten header names against
-// across a process boundary, with no error anywhere.
+// Test_PropagationHeaderNames locks all ten header names: a misspelled one
+// breaks propagation across a process boundary, with no error anywhere.
 func Test_PropagationHeaderNames(t *testing.T) {
 	assert.Equal(t, "Pinpoint-TraceID", HeaderTraceId)
 	assert.Equal(t, "Pinpoint-SpanID", HeaderSpanId)

@@ -91,7 +91,10 @@ func ClientFilterChain(tracer pinpoint.Tracer) func(httplib.Filter) httplib.Filt
 			if reqTracer == nil {
 				reqTracer = pinpoint.FromContext(ctx)
 			}
-			// See DoRequest for why the returned tracer ends the event.
+			// The event is ended through the tracer NewHttpClientTracer
+			// returns, not reqTracer: for a request that already carries this
+			// span's context it is a noop, and ending reqTracer would close
+			// whatever event the caller had open.
 			t := pphttp.NewHttpClientTracer(reqTracer, "beego/v2.DoRequest()", req.GetRequest())
 			defer func() {
 				pphttp.EndHttpClientTracer(t, resp, err)

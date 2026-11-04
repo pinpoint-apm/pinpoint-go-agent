@@ -138,7 +138,7 @@ func splitName(fullName string) (string, string) {
 	if lastIdx < 0 {
 		// fullName[:-1] would panic. Ordinary Go frames always carry a dot,
 		// but the frames can come from a user error type's StackTrace(), and
-		// this runs on the recover-less metadata sender goroutine.
+		// a panic on the metadata sender drops the span's exception metadata.
 		return "unknown", fullName
 	}
 	return fullName[:lastIdx], fullName[lastIdx+1:]
@@ -227,9 +227,8 @@ func (span *span) getExceptionChainId(err error) (int64, bool) {
 
 // maxRefusedChainHeads is how many refused chain heads a span remembers. A
 // burst refuses chains without bound, so the latch has to forget some; 8 is
-// the same order as minErrorChainEntry (10), the number of exception entries a
-// span keeps at all - a chain whose head fell out of the ring has almost
-// certainly lost its recorded links to the entry cap too.
+// the same order as minErrorChainEntry (10), the floor on the exception entries
+// a span keeps.
 const maxRefusedChainHeads = 8
 
 // isRefusedChainHead reports whether err is one of the heads the limiter
@@ -286,7 +285,9 @@ func (span *span) addCauserCallStack(err error, eid int64, errorTime time.Time) 
 // traceCallStack records err (depth 0) and its cause chain on the span.
 // className is the name given to SetError, or "" to use the error's type
 // name; errorTime is the start time of the span event that failed. It returns
-// the chain id, or noExceptionChainId when the rate limiter denied a new chain.
+// the chain id, or noExceptionChainId when the chain is not recorded: the
+// span's exception entry cap is full, the rate limiter denied a new chain, or
+// err continues a chain it refused.
 func (span *span) traceCallStack(err error, className string, depth int, errorTime time.Time) int64 {
 	span.errorChainsLock.Lock()
 	defer span.errorChainsLock.Unlock()

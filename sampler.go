@@ -44,8 +44,8 @@ func (s *rateSampler) isSampled() bool {
 	if s.rate == 1 {
 		return true
 	}
-	// getAndIncrement: the first request of the process is sampled and the
-	// rate-th one after it, not the rate-th request.
+	// The pre-increment value decides: the first request of the process is
+	// sampled and the rate-th one after it, not the rate-th request.
 	samplingCount := atomic.AddUint64(&s.counter, 1) - 1
 	isSampled := samplingCount % s.rate
 	return isSampled == 0

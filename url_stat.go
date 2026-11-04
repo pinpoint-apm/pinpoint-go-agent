@@ -172,8 +172,8 @@ func (stats *urlStats) takeSnapshot(includeInProgress bool) *urlStatSnapshot {
 	}
 	// Every retained tick goes out in one message: PAgentUriStat carries a
 	// repeated eachUriStat and each entry stamps its own tick, so draining one
-	// tick per send would take four send intervals to clear a backlog the
-	// stream is finally able to accept.
+	// tick per send would take up to maxCompletedUrlStatSnapshots send
+	// intervals to clear a backlog the stream is finally able to accept.
 	for _, completed := range stats.completed {
 		taken.merge(completed)
 	}

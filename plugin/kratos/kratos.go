@@ -217,9 +217,10 @@ func clientCall(tr transport.Transporter) (serviceType int32, remote, url string
 }
 
 // The kratos carrier re-spells every key it is given: http.Header canonicalizes
-// it and metadata.MD lower-cases it, on Get and Set alike, and each allocates a
-// string for seven of the ten pinpoint names, so one request paid some twenty
-// allocations reading its trace context and a client call as many writing it.
+// it and metadata.MD lower-cases it, on Get and Set alike, allocating a string
+// for every key it changes - seven of the ten pinpoint names, all ten under
+// metadata.MD - so one request paid some twenty allocations reading its trace
+// context and a client call as many writing it.
 // Handed the spelling the transport stores, both return the key as it is.
 var (
 	canonicalKeys = spellHeaderNames(textproto.CanonicalMIMEHeaderKey)
@@ -252,12 +253,9 @@ func carrierKey(kind transport.Kind, key string) string {
 	return key
 }
 
-// headerReader adapts a kratos transport.Header to the tracing carrier.
-// transport.Header hands out a value and nothing else, so a header carried
-// with an empty value cannot be told from one that is absent: it reads as
-// absent, and such a request starts a new transaction. That is what this
-// plugin did before the carrier reported presence, and only the transport can
-// close the gap.
+// headerReader adapts a kratos transport.Header to the tracing carrier. It
+// reads Get, so a header carried with an empty value reads as absent, and such
+// a request starts a new transaction.
 type headerReader struct {
 	hdr  transport.Header
 	kind transport.Kind

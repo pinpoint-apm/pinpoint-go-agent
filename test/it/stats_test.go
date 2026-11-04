@@ -13,17 +13,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// urlStatFlushInterval is the agent's hard-coded URL-statistics send interval,
-// which is also the width of the tick the statistics are bucketed into. There
-// is no configuration knob for either, so the URL-stat test has to wait for
-// real ones.
+// urlStatFlushInterval is the agent's hard-coded URL-statistics tick, the
+// window the statistics are bucketed into. There is no configuration knob for
+// it, so the URL-stat test has to wait for a real one.
 //
-// A tick goes out on the first send after its window ends, and the two are not
-// aligned: the send timer starts with the agent, the tick boundary sits on
-// absolute time. A burst can therefore need one interval for its tick to end
-// and another for the next send to come round, so the wait below budgets for
-// two. It costs nothing when the first send carries it, which is almost every
-// run - WaitFor returns as soon as the data lands.
+// A tick goes out once its window has ended: at once when later traffic
+// closes it, otherwise within one Stat.CollectInterval (1s here). The
+// window sits on absolute time, so a burst can wait up to one interval for its
+// tick to end. The wait below budgets for two, which costs nothing - WaitFor
+// returns as soon as the data lands.
 const urlStatFlushInterval = 30 * time.Second
 
 func TestStreamsAgentStatistics(t *testing.T) {
@@ -115,8 +113,8 @@ func TestReportsResponseTimeAndRuntimeStatistics(t *testing.T) {
 	assert.Greater(t, runtime.GetGc().GetJvmMemoryHeapUsed(), int64(0))
 	assert.GreaterOrEqual(t, runtime.GetGc().GetJvmMemoryHeapMax(), int64(0))
 	// gopsutil reports no file-descriptor count on some platforms (darwin).
-	// UNCOLLECTED_USAGE - never as 0, which the inspector charts as a real
-	// measurement of zero open descriptors.
+	// An uncollected reading must go out as -1 - never as 0, which the
+	// inspector charts as a real measurement of zero open descriptors.
 	require.NotNil(t, runtime.GetFileDescriptor())
 	if fd := runtime.GetFileDescriptor().GetOpenFileDescriptorCount(); fd != -1 {
 		assert.Greater(t, fd, int64(0), "a collected fd count is positive; an uncollected one is -1")
@@ -124,7 +122,8 @@ func TestReportsResponseTimeAndRuntimeStatistics(t *testing.T) {
 }
 
 // continueCarrier builds the headers an upstream hop actually sends. All three
-// a trace id on its own starts a new transaction and takes the new-trace sampler.
+// are required to continue a trace; a trace id on its own starts a new
+// transaction and takes the new-trace sampler.
 func continueCarrier(traceID string) mapCarrier {
 	return mapCarrier{
 		pinpoint.HeaderTraceId:      traceID,

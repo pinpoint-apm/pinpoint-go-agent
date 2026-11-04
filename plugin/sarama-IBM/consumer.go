@@ -38,7 +38,8 @@
 // carries the pinpoint.Tracer. SendMessage and Input produce without tracing.
 //
 //	config := sarama.NewConfig()
-//	producer, err = ppsaramaibm.NewSyncProducer(brokers, config)
+//	config.Producer.Return.Successes = true // a SyncProducer requires it
+//	producer, err := ppsaramaibm.NewSyncProducer(brokers, config)
 //	partition, offset, err := producer.SendMessageContext(r.Context(), msg)
 package ppsaramaibm
 
@@ -52,7 +53,7 @@ import (
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 )
 
-// errNilConsumerMessage guards the Consume entry points: a nil message would
+// errNilConsumerMessage guards ConsumeMessageContext: a nil message would
 // panic inside the tracer on the consumer goroutine, propagate out of
 // ConsumeClaim and kill the whole consumer-group session.
 var errNilConsumerMessage = errors.New("ppsaramaibm: nil sarama.ConsumerMessage")

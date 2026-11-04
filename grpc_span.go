@@ -183,9 +183,10 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 			}
 
 			// Measured against Collector.Grpc.MaxSendMessageSize before the
-			// send: grpc-go refuses a request past it before writing a byte,
-			// and a collector refuses one past its own inbound limit, either
-			// way losing every span the request carried. One size pass is
+			// send: grpc-go refuses a request whose payload is past it - the
+			// compressed payload under gzip - before writing a byte, and a
+			// collector refuses one past its own inbound limit, either way
+			// losing every span the request carried. One size pass is
 			// what the common case costs; a batch past the limit goes out in
 			// as many requests as it takes, and only a span that no request
 			// can carry is dropped (splitSpanMessages).

@@ -30,7 +30,7 @@ func wrap(handler echo.HandlerFunc, funcName func(*echo.Context) string) echo.Ha
 		req := c.Request()
 		tracer := pphttp.NewHttpServerTracer(req, serverName)
 		// An unsampled tracer discards the name; routeName's RouteInfo clones
-		// the route's parameter slice and builds a comparison string per call.
+		// the route's parameter slice per call.
 		spanName := "echo.HandlerFunc()"
 		if tracer.IsSampled() {
 			spanName = funcName(c)

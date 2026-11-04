@@ -20,7 +20,7 @@ import (
 // DefaultCommandMaxSize is the default of Mongo.CommandMaxSize: the size the
 // command annotation is cut to, and the BSON size above which the command is
 // not converted at all. MarshalExtJSON buffers the whole result, so a command
-// whose source BSON already reaches the limit is skipped instead of
+// whose source BSON already exceeds the limit is skipped instead of
 // converted.
 const DefaultCommandMaxSize = 64 * 1024
 
@@ -69,7 +69,7 @@ func CommandSettings(cfg *pinpoint.Config) (record bool, maxSize int) {
 
 // MaxPendingSpans bounds the span map. The driver pairs every started event
 // with a finished one, but a pairing that never arrives would otherwise hold
-// its tracer forever; past the cap the oldest-unknown entry is evicted.
+// its tracer forever; past the cap an arbitrary entry is evicted.
 const MaxPendingSpans = 4096
 
 // ErrSpanEvicted ends the span event of a command evicted at MaxPendingSpans.

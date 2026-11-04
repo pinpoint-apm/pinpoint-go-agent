@@ -11,10 +11,12 @@
 //	http.HandleFunc("/", pphttp.WrapHandlerFunc(index))
 //
 // This package instruments outbound requests and add distributed tracing headers.
-// Use WrapClient, WrapClientWithContext or DoClient.
+// Use WrapClient, WrapClientWithContext or DoClient. The tracer comes from the
+// request's context (ctx below, such as a traced handler's r.Context()):
 //
+//	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 //	client := pphttp.WrapClient(&http.Client{})
-//	client.Get(external_url)
+//	client.Do(req)
 //
 // or
 //
@@ -62,8 +64,8 @@ func NewHttpServerTracer(req *http.Request, operation string) (tracer pinpoint.T
 }
 
 // NewHttpServerTracerWithReader creates an HTTP server tracer without requiring
-// a net/http request. Framework adapters can make the sampling decision from
-// their native request before converting it for sampled-request annotations.
+// a net/http request. Framework adapters make the sampling decision from their
+// native request and record a sampled one with RecordHttpServerRequestWithQuery.
 func NewHttpServerTracerWithReader(method, path, operation string, reader pinpoint.DistributedTracingContextReader) pinpoint.Tracer {
 	// The config is loaded once per call site: httpCfg is three atomic loads,
 	// and one load also keeps a reload from splitting a request across two
@@ -117,8 +119,7 @@ const (
 // formatRequestParams renders a raw query string as the collector expects it:
 // "k=v&k=v", percent-decoded ("+" is a space; an undecodable token is kept
 // verbatim), each key and value cut to 64 characters and the whole string to
-// 512, with "..." marking every cut. Exported for the adapters that do not go
-// through RecordHttpServerRequest.
+// 512, with "..." marking every cut.
 func formatRequestParams(rawQuery string) string {
 	cut := func(s string) string {
 		n := 0
@@ -276,7 +277,7 @@ const (
 	proxyTypeUser   int32 = 4
 )
 
-// IdValidateUtils.validateId for the app= token.
+// proxyAppMaxLength is the most bytes an app= token may have.
 const proxyAppMaxLength = 30
 
 // proxyRequest is one parsed proxy header. A header is recorded only when its
@@ -364,10 +365,10 @@ func parseProxyApache(value string) proxyRequest {
 }
 
 // parseProxyNginx reads "t=<sec.mmm> D=<sec.mmm>": nginx's $msec and
-// NginxRequestParser (toReceivedTimeMillis / toDurationTimeMicros) checks
-// that shape and treats anything else, including a value with no decimal
-// point, as 0. Reading the digits around the point as an integer keeps the
-// millisecond exact where a float multiply could round it.
+// $request_time are seconds with exactly three decimals, and a value of any
+// other shape, including one with no decimal point, is malformed (nginxMillis).
+// Reading the digits around the point as an integer keeps the millisecond
+// exact where a float multiply could round it.
 func parseProxyNginx(value string) proxyRequest {
 	p := newProxyRequest("")
 	proxyTokens(value, func(k, v string) {
@@ -466,8 +467,9 @@ func proxyPercent(v string) int32 {
 	return int32(n)
 }
 
-// does. An app= token that is not a valid id - the [a-zA-Z0-9._-] character
-// class, at most proxyAppMaxLength bytes - discards the header.
+// parseProxyApp reads "t=<epoch millis> app=<id>". An app= token that is not
+// a valid id - the [a-zA-Z0-9._-] character class, at most proxyAppMaxLength
+// bytes - discards the header.
 func parseProxyApp(value string) proxyRequest {
 	p := newProxyRequest("")
 	proxyTokens(value, func(k, v string) {
@@ -837,13 +839,15 @@ func NewServeMux() *serveMux {
 }
 
 // Handle registers the handler for the given pattern.
-// The handler is wrapped by WrapHandler.
+// The handler is traced as WrapHandler traces it, and its URL statistics are
+// collected under pattern.
 func (mux *serveMux) Handle(pattern string, handler http.Handler) {
 	mux.ServeMux.Handle(pattern, wrapHandler(pattern, handler))
 }
 
 // HandleFunc registers the handler function for the given pattern.
-// The handler is wrapped by WrapHandlerFunc.
+// The handler is traced as WrapHandlerFunc traces it, and its URL statistics
+// are collected under pattern.
 func (mux *serveMux) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
 	if handler == nil {
 		panic("http: nil handler")

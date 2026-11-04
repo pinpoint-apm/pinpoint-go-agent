@@ -49,8 +49,10 @@ func headersSupported(config *sarama.Config) bool {
 // downstream consumer continue under the relay's own span id - is not, and
 // the header writer leaves it behind as it adds this span's.
 func isNested(tracer pinpoint.Tracer, msg *sarama.ProducerMessage) bool {
-	// A nil message is passed through untouched, as a nested one is: sarama
-	// logs and ignores it. Tracing it read msg.Topic and panicked the caller.
+	// A nil message is passed through untouched, as a nested one is, and left
+	// to sarama: the async producer logs and ignores it, the sync producer
+	// panics on it as it does unwrapped. Tracing it read msg.Topic and
+	// panicked the caller.
 	if msg == nil {
 		return true
 	}

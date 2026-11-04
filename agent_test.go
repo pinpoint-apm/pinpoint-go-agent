@@ -300,22 +300,21 @@ func TestNewAgent_SQLCacheSizeSizesOnlyTheSqlCaches(t *testing.T) {
 	assert.Equal(t, cacheSize/metaCacheShardCount, a.errorCache.shards[0].cap, "errorCache keeps cacheSize")
 }
 
-// noSqlCacheBypassConfig turns SQL.CacheLengthLimit off, so a SQL of any length
-// is cached.
+// noSqlCacheBypassConfig turns SQL.CacheLengthLimit off, so the raw SQL cache
+// memoizes a SQL of any length up to maxSqlSize.
 func noSqlCacheBypassConfig() *Config {
 	cfg := defaultConfig()
 	cfg.Set(CfgSQLCacheLengthLimit, -1)
 	return cfg
 }
 
-// The SQL caches key on the untruncated normalized statement and publish text
-// abbreviated to maxSqlSize.
-// An abbreviated key keeps no more than a 64KB prefix and the total length, so
-// two statements agreeing on both would share one entry: the second would
-// answer with the first's id and never publish its own metadata. The two texts
-// differ past the cap, so the id meta cannot carry an abbreviated key and
-// carries none: deleteMetaCache removes by id. The uid meta carries the hash,
-// which is 16 bytes whatever the statement's length.
+// The SQL caches key on the hash of the untruncated normalized statement and
+// publish text abbreviated to maxSqlSize. An abbreviated key keeps no more than
+// a 64KB prefix and the total length, so two statements agreeing on both would
+// share one entry: the second would answer with the first's id and never
+// publish its own metadata. Both metas carry the hash, which is 16 bytes
+// whatever the statement's length, so deleteMetaCache drops exactly the entry
+// that published the metadata.
 func Test_agent_SQLCachesKeyTheWholeStatement(t *testing.T) {
 	prefix := strings.Repeat("x", maxSqlSize)
 	first, second := prefix+"select 1", prefix+"select 2"
@@ -363,11 +362,11 @@ func Test_agent_SQLCachesKeyTheWholeStatement(t *testing.T) {
 	})
 }
 
-// A queued sql id meta holds no more than maxSqlSize of text. The id cache is
-// keyed by the untruncated normalized statement, up to maxSqlNormalizeLength
-// (1 MiB), and a queued copy of that key would have made the metadata queue
-// hold up to its capacity x 1 MiB through a collector outage. The drop path
-// still finds the entry, by id.
+// A queued sql id meta holds no more than maxSqlSize of text. The normalized
+// statement can be up to maxSqlNormalizeLength (1 MiB), and a queued copy of
+// the whole text would have made the metadata queue hold up to its capacity x
+// 1 MiB through a collector outage. The meta carries the statement's hash
+// instead, by which the drop path still finds the entry.
 func Test_agent_QueuedSqlIdMetaHoldsNoUntruncatedKey(t *testing.T) {
 	huge := "select " + strings.Repeat("x", maxSqlNormalizeLength-8)
 	require.Less(t, len(huge), maxSqlNormalizeLength)
@@ -385,7 +384,7 @@ func Test_agent_QueuedSqlIdMetaHoldsNoUntruncatedKey(t *testing.T) {
 	assert.False(t, still, "a dropped meta still evicts the entry that published its id")
 }
 
-// A SQL whose normalization is empty ("/* hint */" under Sql.RemoveComments) is
+// A SQL whose normalization is empty ("/* hint */" under SQL.RemoveComments) is
 // a statement like any other: cached under the hash of the empty text, and
 // evicted after a failed send so the collector never misses its UID.
 func Test_agent_SQLUidCacheEvictsEmptyNormalizedStatement(t *testing.T) {
@@ -447,7 +446,7 @@ func Test_agent_SQLCachesBypassKeysOverLengthLimit(t *testing.T) {
 // SQL.CacheLengthLimit is fixed, read once in NewAgent like SQL.CacheSize.
 // Lowering it after construction must change nothing: the entries already
 // cached stay, and a statement within the limit the agent was built with keeps
-// hitting the cache instead of re-sending its metadata on every use.
+// hitting the raw SQL cache instead of being normalized on every use.
 func Test_agent_SQLCacheLengthLimitIsFixedAtConstruction(t *testing.T) {
 	sql := strings.Repeat("x", 1000)
 	cfg := defaultConfig()
@@ -746,8 +745,9 @@ func captureLogAt(buf *bytes.Buffer, level logrus.Level) func() {
 	return func() { logger.extraLogger.Store(prev) }
 }
 
-// Each overflow head-drops the oldest record and queues the new one, so a full
-// queue costs exactly one record per enqueue and holds the newest records.
+// With one producer, each overflow head-drops the oldest record and queues the
+// new one, so a full queue costs exactly one record per enqueue and holds the
+// newest records.
 func Test_agent_enqueueUrlStatOverflowLosesExactlyOneRecord(t *testing.T) {
 	const queueSize, enqueued = 4, 100
 
@@ -1568,8 +1568,9 @@ func Test_sendSpanBatchWorker_reportsHeldBackDrops(t *testing.T) {
 	assert.Contains(t, buf.String(), "531 dropped by the batch sender")
 }
 
-// Each overflow head-drops the oldest record and queues the new one, so a full
-// queue costs exactly one record per enqueue and holds the newest records.
+// With one producer, each overflow head-drops the oldest record and queues the
+// new one, so a full queue costs exactly one record per enqueue and holds the
+// newest records.
 func Test_agent_enqueueStatOverflowLosesExactlyOneRecord(t *testing.T) {
 	const queueSize, enqueued = 4, 100
 
@@ -1632,8 +1633,10 @@ func Test_sqlUid_MatchesJavaGuavaMurmur3_128(t *testing.T) {
 	}
 }
 
-// things that must move together: which sampler ran, whether the parent span id
-// was adopted, and whether the transaction id was inherited or generated.
+// A trace is continued only when the trace id parses and both span id headers
+// are present. Each row asserts the three things that must move together:
+// which sampler ran, whether the parent span id was adopted, and whether the
+// transaction id was inherited or generated.
 //
 // A trace id on its own must not take the continue sampler: it would leave
 // parentSpanId at its default, with no parent node in the trace.
@@ -1716,8 +1719,9 @@ func Test_agent_continueHeaders_table(t *testing.T) {
 
 // A blank Pinpoint-pSpanID continues the trace like a blank Pinpoint-SpanID:
 // the transaction is inherited. The span stays a root, because an unparseable
-// takes (Test_span_Extract_malformedSpanIds), which the shared table cannot
-// express since it asserts an adopted parent for every continued row.
+// parent span id is not adopted - the same path a malformed one takes
+// (Test_span_Extract_malformedSpanIds), which the shared table cannot express
+// since it asserts an adopted parent for every continued row.
 func Test_agent_continueHeaders_blankParentSpanId(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	reader := &DistributedTracingContextMap{m: map[string]string{
@@ -1903,10 +1907,9 @@ func Test_agent_continueHeaders_roundTrip(t *testing.T) {
 	assert.Equal(t, caller.TransactionId(), txId, "transaction id")
 }
 
-// The normalized text is what both caches key on and what every queued meta
-// carries in key, so it is bounded here too: literal-heavy SQL normalizes
-// larger than it came in, and a key past maxSqlNormalizeLength is refused
-// rather than admitted to the cache or metaChan.
+// Both caches check the normalized text against maxSqlNormalizeLength as well:
+// literal-heavy SQL normalizes larger than it came in, and a statement past the
+// cap is refused rather than admitted to the cache or metaChan.
 func Test_agent_SQLCachesRefuseAKeyPastTheNormalizationCap(t *testing.T) {
 	within := strings.Repeat("x", maxSqlNormalizeLength)
 	past := within + "x"
@@ -2114,10 +2117,11 @@ func Test_agent_ShutdownTimeoutLeavesOnlyTheStuckWorker(t *testing.T) {
 // cross-agent rationale and references live in doc/development.md.
 // ===========================================================================
 
+// Test_MessageLimits locks the message and SQL size limits to the Java agent's:
 // AbstractRecorder abbreviates an exception message to 256 chars before
-// recording it on a span or span event, and
-// profiler.exceptiontrace.errormessage.max defaults to 2048 for one exception
-// metadata entry.
+// recording it on a span or span event, profiler.exceptiontrace.errormessage.max
+// defaults to 2048 for one exception metadata entry, and
+// profiler.jdbc.maxsqllength to 64KiB.
 func Test_MessageLimits(t *testing.T) {
 	assert.Equal(t, 256, maxErrorMessageSize, "Java AbstractRecorder.recordException")
 	assert.Equal(t, 2048, maxExceptionMessageSize, "Java profiler.exceptiontrace.errormessage.max")
@@ -2162,8 +2166,8 @@ func Test_SqlCacheLengthLimitAppliesToTheRawCacheOnly(t *testing.T) {
 	assert.True(t, shortMemoized, "a short statement's normalization is memoized")
 	assert.False(t, longMemoized, "the length limit bypasses the raw cache")
 
-	// Bypassing the cache must not change the value it would have returned:
-	// the same id and the same UID come back for a repeated statement.
+	// A long statement keeps a stable id and UID: the same id and the same UID
+	// come back for a repeated statement.
 	assert.Equal(t, agent.cacheSql(long, sqlHashOf(long)), agent.cacheSql(long, sqlHashOf(long)), "the id is stable")
 	assert.Equal(t, agent.cacheSqlUid(long, sqlHashOf(long)), agent.cacheSqlUid(long, sqlHashOf(long)), "the uid is stable")
 }

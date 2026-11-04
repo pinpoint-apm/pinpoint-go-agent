@@ -299,8 +299,8 @@ func TestRejectedConfigWatcherStopsWithoutAffectingRunningAgent(t *testing.T) {
 	requireWatcherDone(t, replacementDone)
 }
 
-// Run with -race. File events reload immutable snapshots while the same Config
-// repeatedly transfers between agent lifetimes and concurrent readers.
+// Run with -race. File rewrites reload immutable snapshots while the same
+// Config repeatedly transfers between agent lifetimes and concurrent readers.
 func TestConfigWatcherReloadShutdownRace(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
 	writeConfigRate(t, path, 1)

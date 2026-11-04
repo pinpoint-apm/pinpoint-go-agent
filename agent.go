@@ -28,7 +28,7 @@ func init() {
 var initDone bool
 
 // initPackage is this package's initialization. init runs it, and so does the
-// first GetAgent, NoopAgent or Log call that arrives before init did: Go
+// first GetAgent or NoopAgent call that arrives before init did: Go
 // initializes packages one at a time, dependencies first and then in import
 // path order, and a compile-time instrumentation hook is reached from the init
 // function of a package that does not import this one (a sql.Open in a
@@ -105,7 +105,8 @@ type agent struct {
 
 	// sqlCacheLengthLimit is SQL.CacheLengthLimit read once in NewAgent, like
 	// SQL.CacheSize: the key is fixed, so a reload can neither leave over-limit
-	// entries in the caches nor turn a cached statement into one re-sent per use.
+	// entries in the raw SQL cache nor turn a cached statement into one
+	// normalized on every use.
 	sqlCacheLengthLimit int
 
 	// asyncIdGen numbers this agent's async chunks. Like the ids above it is
@@ -192,11 +193,11 @@ const (
 	// that fill placeholders the web never shows anyway. A longer list is
 	// dropped whole, never cut (see SetSQL).
 	maxSqlParamSize = maxSqlSize
-	// maxErrorMessageSize abbreviates error messages to 256 chars before
+	// maxErrorMessageSize abbreviates error messages to 256 bytes before
 	// recording them on a span or span event.
 	maxErrorMessageSize = 256
 	// maxExceptionMessageSize bounds the message of one exception metadata
-	// default. A cause chain carries one message per link, and a driver error
+	// entry. A cause chain carries one message per link, and a driver error
 	// quoting a whole statement is easily megabytes on its own.
 	maxExceptionMessageSize = 2048
 	// maxBindValueMarkerSize bounds either "...(n)" marker the bind value
@@ -390,12 +391,12 @@ func (agent *agent) connectGrpcServer() {
 			// global. Shutdown's Close is guarded by the same identity check,
 			// so once this agent is no longer the global that guard fails and
 			// Config.Close - the only path that stops the watcher goroutine -
-			// never runs, leaking the goroutine and its inotify watch for the
-			// life of the process. Closing while still holding the global (and
-			// the lock) is what makes it safe: no NewAgent can have restarted
-			// the watcher on this Config yet, which is exactly the case the
-			// guard in signalShutdown exists to protect. Close is idempotent,
-			// so the user's later Shutdown is a no-op here.
+			// never runs, leaking the goroutine for the life of the process.
+			// Closing while still holding the global (and the lock) is what
+			// makes it safe: no NewAgent can have restarted the watcher on
+			// this Config yet, which is exactly the case the guard in
+			// signalShutdown exists to protect. Close is idempotent, so the
+			// user's later Shutdown is a no-op here.
 			if agent.config != nil {
 				agent.config.Close()
 			}
@@ -419,8 +420,8 @@ func (agent *agent) connectGrpcServer() {
 }
 
 // connect opens the collector connections, registers the agent and starts the
-// workers. A nil error with the phase still registering means the registration
-// was cut short by Shutdown.
+// workers. A nil error with the phase not running means the registration was
+// cut short by Shutdown, which has already moved the phase to stopped.
 func (agent *agent) connect() (err error) {
 	if agent.agentGrpc, err = newAgentGrpc(agent); err != nil {
 		return err
@@ -530,7 +531,7 @@ type workerState struct {
 // workerStateOf finds the state slot of a started worker by name, or nil for a
 // worker the table did not start - tests drive superviseWorker directly with
 // names that have no slot. A linear scan: the table is under ten entries and
-// each worker looks itself up twice in its lifetime.
+// each worker looks itself up once, when its supervisor starts.
 func (agent *agent) workerStateOf(name string) *workerState {
 	for _, st := range agent.workerStates {
 		if st.name == name {
@@ -725,7 +726,7 @@ func (agent *agent) shutdownAgent() {
 	// worker drains the queue once on the stop, which is what actually gets the
 	// last tick out. The drain first aggregates what the request path queued and
 	// collectUrlStatWorker has not consumed, so the flush sees it. Skipped for
-	// an agent that never ran - it has no workers and no stat queue.
+	// an agent that never ran - it has no workers to send the tick.
 	if agent.tracingEnabled() {
 		agent.drainUrlStatChan()
 		agent.flushUrlStat(true)
@@ -772,18 +773,18 @@ func (agent *agent) shutdownAgent() {
 
 	// The teardown below is ordered against the workers that workerTable
 	// declares: the url stat flush above fed sendStatsWorker, spanQueue.close
-	// wakes the span or span batch worker, and the cmdGrpc close ends the
-	// command worker's listening stream. Those orderings are explained at
-	// each step; the list of workers they apply to lives in workerTable.
+	// wakes the span batch worker, and the cmdGrpc close ends the command
+	// worker's listening stream. Those orderings are explained at each step;
+	// the list of workers they apply to lives in workerTable.
 	//
 	// spanQueue.close() signals; it does not close the channel producers use.
-	// The three chans below get the same treatment - deliberately never closed.
-	// Their producers (request-path goroutines for url stat and meta, ticker
-	// workers for stat) only check enable before sending, which is check-then-
-	// act against a close and panics with "send on closed channel" when the
-	// send lands after it. signalShutdown() above already cancelled stopCtx:
-	// metadata and stat senders drain their queued records before exiting,
-	// within the same worker deadline as the span sender.
+	// The url stat, meta and stat chans get the same treatment - deliberately
+	// never closed. Their producers (request-path goroutines for url stat and
+	// meta, ticker workers for stat) only check enable before sending, which
+	// is check-then-act against a close and panics with "send on closed
+	// channel" when the send lands after it. signalShutdown() above already
+	// cancelled stopCtx: metadata and stat senders drain their queued records
+	// before exiting, within the same worker deadline as the span sender.
 	agent.spanQueue.close()
 
 	// To terminate the listening state of the command stream, close the command

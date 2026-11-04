@@ -238,8 +238,8 @@ summarise() {
     [[ -s "$LOAD_LOG" ]] && sed -n '/Results/,$p' "$LOAD_LOG" | grep -vE '^ *[0-9]+\.[0-9]+ \|'
     echo ""
     # Grouped by signature rather than counted: full mode deliberately crosses
-    # the e2e config's reduced Span.MaxCallStackDepth/MaxCallStackSequence, so
-    # a bare count reads as a problem when the commonest entry is an expected
+    # the e2e config's reduced Span.MaxCallStackDepth (/deep?depth=30), so a
+    # bare count reads as a problem when the commonest entry is an expected
     # one. The agent throttles a repeating warning to one line a minute, so the
     # line count stays small over 12 h even though the event count does not.
     local warnfile="$OUT_DIR/warnings.txt" warns

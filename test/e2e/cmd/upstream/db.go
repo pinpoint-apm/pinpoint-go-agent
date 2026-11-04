@@ -96,7 +96,7 @@ func onDbBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 // onDbComplex traces a CRUD cycle with joins, subqueries and aggregation, plus a
-// transaction so the commit/rollback instrumentation is exercised.
+// transaction so the begin/commit instrumentation is exercised.
 func onDbComplex(w http.ResponseWriter, r *http.Request) {
 	defer track()()
 	tracer := newSpan(r)
@@ -134,7 +134,7 @@ func onDbComplex(w http.ResponseWriter, r *http.Request) {
 	traceSQL(ctx, tracer, "SELECT name, age, CASE WHEN age < 30 THEN 'Young' "+
 		"WHEN age < 40 THEN 'Middle' ELSE 'Senior' END as age_group FROM e2e_users ORDER BY age")
 
-	// A transaction adds ConnBeginTx/Commit span events to the mix.
+	// A transaction adds Begin/Commit span events to the mix.
 	if tx, err := db.BeginTx(ctx, nil); err == nil {
 		tx.ExecContext(ctx, "UPDATE e2e_users SET age = age + 1 WHERE name = ?", "Alice")
 		if err := tx.Commit(); err != nil {

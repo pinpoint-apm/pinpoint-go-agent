@@ -27,9 +27,9 @@ func Test_spanQueue_shardCapacitySumsToCapacity(t *testing.T) {
 	}
 }
 
-// Test_spanQueue_singleProducerUsesFullCapacity is the scenario that motivated
-// shard placement must retain the full configured capacity, not one shard's
-// slice of it.
+// Test_spanQueue_singleProducerUsesFullCapacity covers a stalled consumer and a
+// single producer: non-sticky shard placement must retain the full configured
+// capacity, not one shard's slice of it.
 func Test_spanQueue_singleProducerUsesFullCapacity(t *testing.T) {
 	const capacity = 1024
 	q := newSpanQueue(capacity)

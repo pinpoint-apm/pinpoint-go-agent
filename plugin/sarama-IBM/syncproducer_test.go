@@ -46,9 +46,9 @@ func Test_newSyncProducerTracer_NestedMessageIsNotTraced(t *testing.T) {
 
 // A message carrying another span's context - a relay copying the headers of
 // the record it consumed, whose span id is the relay's own - gets this span's
-// context in place of that one, stale keys and an earlier release's ack id
-// included, and keeps the application's own headers: sent on as it was, the
-// downstream consumer continued under the relay's span id.
+// context in place of that one, stale keys included, and keeps the
+// application's own headers: sent on as it was, the downstream consumer
+// continued under the relay's span id.
 func Test_newSyncProducerTracer_ForwardedContextIsReplaced(t *testing.T) {
 	pptest.StartAgent(t)
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/relay")
@@ -81,8 +81,9 @@ func Test_newSyncProducerTracer_ForwardedContextIsReplaced(t *testing.T) {
 	assert.Equal(t, "stale:9092", string(consumed[4].Value), "the consumed headers must stay as they were")
 }
 
-// isNested sends as it is a nil message and one carrying the context tracer's
-// own span injected, and nothing else.
+// isNested sends as it is a nil message, one carrying the context tracer's own
+// span injected, and any context for a tracer that has none to replace it with
+// - and nothing else.
 func Test_isNested(t *testing.T) {
 	pptest.StartAgent(t)
 	hdr := func(k string) []sarama.RecordHeader {
@@ -123,8 +124,8 @@ func (s *stubSyncProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
 
 // capturingTracer records what the producer wrapper puts on a span event. A
 // real tracer's recorders are write-only, so this stands in for one. Span
-// events nest like the real tracer's - a batch send opens all of them before
-// closing any - so open events are kept on a stack.
+// events nest like the real tracer's - a batch send opens each message's event
+// under the batch event - so open events are kept on a stack.
 type capturingTracer struct {
 	pinpoint.Tracer
 	events []*capturedEvent
@@ -236,8 +237,9 @@ func Test_newSyncProducerTracer_RecordsTopicAndBroker(t *testing.T) {
 	assert.True(t, e.ended, "the span event was left open")
 }
 
-// A batch send is one span event per message - each one is a separate record
-// on a topic - and all of them have to be closed once the batch returns.
+// A batch send is one span event for the call, carrying the destination and
+// the send error, with one event per message - each one is a separate record
+// on a topic - under it; all of them have to be closed once the batch returns.
 func Test_syncProducer_SendMessagesContext(t *testing.T) {
 	pptest.StartAgent(t)
 	tracer := newCapturingTracer()

@@ -188,7 +188,7 @@ func TestMiddleware_RecordsTheFinalStatus(t *testing.T) {
 			wantStatus: http.StatusOK,
 		},
 		{
-			name:       "an HTTPError the client sees as 4xx does not fail the span by default",
+			name:       "an HTTPError the client sees as 4xx fails the span as an error, not by its status",
 			handler:    func(c echo.Context) error { return echo.NewHTTPError(http.StatusNotFound) },
 			wantStatus: http.StatusNotFound,
 			wantFail:   true, // the returned error itself is recorded

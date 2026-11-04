@@ -50,8 +50,9 @@ func (l *lifecycle) current() agentPhase {
 // cas moves the phase from one value to another and reports whether it did.
 // Every edge is forward - nothing returns to registering or running, so a
 // torn-down agent can never come back to life - and each caller names its own
-// source phase. A refusal is a concurrent Shutdown having moved the phase on
-// first, the expected outcome of that race: the caller decides what it means.
+// source phase. A refusal means the phase was not at from - a registration
+// that finished, an agent that never ran, a Shutdown that moved it on first -
+// and the caller decides what that means.
 func (l *lifecycle) cas(from, to agentPhase) bool {
 	if !l.phase.CompareAndSwap(int32(from), int32(to)) {
 		return false

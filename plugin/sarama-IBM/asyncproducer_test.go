@@ -95,8 +95,8 @@ func Test_asyncProducer_EndTxnForwardsAcceptedMessagesFirst(t *testing.T) {
 // Below Kafka 0.11 sarama rejects every message carrying headers, so the
 // wrapper must leave a message's nil headers nil whenever it injects nothing -
 // no tracer in the context - and inject nothing on such a producer, even for a
-// sampled tracer, where the span must not then wait for an ack it cannot be
-// matched to.
+// sampled tracer, whose span then ends at the hand-over: no trace context
+// travels with the message.
 func TestProducers_WriteNoHeadersUnlessInjecting(t *testing.T) {
 	pptest.StartAgent(t)
 	tracer := pinpoint.GetAgent().NewSpanTracer("test", "/produce")
@@ -185,8 +185,9 @@ func recv[T any](t *testing.T, ch <-chan T, name string) T {
 	}
 }
 
-// requireChannelClosed reads the channel dry and fails if it is still open:
-// after shutdown the wrapper owes the caller a closed channel, not a stall.
+// requireChannelsClosed receives once from the wrapper's Successes and Errors
+// and fails unless both report closed: after shutdown the wrapper owes the
+// caller closed channels, not a stall.
 func requireChannelsClosed(t *testing.T, p *asyncProducer) {
 	t.Helper()
 	_, ok := <-p.Successes()

@@ -343,9 +343,8 @@ func Test_ReloadAppliesLogMaxBackups(t *testing.T) {
 // cross-agent rationale and references live in doc/development.md.
 // ===========================================================================
 
-// Test_UnsupportedLogLevelKeepsTheCurrentLevel locks that an
-// unsupported level leaves the current level unchanged and logs the error.
-// Both "warn" and "warning" are accepted.
+// Test_UnsupportedLogLevelKeepsTheCurrentLevel locks that an unsupported level
+// leaves the current level unchanged. Both "warn" and "warning" are accepted.
 func Test_UnsupportedLogLevelKeepsTheCurrentLevel(t *testing.T) {
 	l := newLogger()
 

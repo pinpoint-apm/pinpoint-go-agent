@@ -82,9 +82,10 @@ func Test_sqlNormalizer_DefaultSqlNormalizerCases(t *testing.T) {
 	})
 }
 
-// 64KB cap to SqlCacheService, which abbreviates only the text it publishes. A
-// normalizer that stopped at the cap would drop every bind value behind it and
-// hand the UID a truncated string.
+// The normalizer works on the whole statement and leaves the 64KB metadata cap
+// (maxSqlSize) to cacheSql and cacheSqlUid, which abbreviate only the text they
+// publish. A normalizer that stopped at the cap would drop every bind value
+// behind it and hand the UID a truncated string.
 func Test_sqlNormalizer_NormalizesPastTheMetadataCap(t *testing.T) {
 	t.Run("unchanged sql", func(t *testing.T) {
 		raw := strings.Repeat("x", maxSqlSize+100)
@@ -387,8 +388,9 @@ func displayName(sql string) string {
 	return strings.ReplaceAll(sql, "\n", "\\n")
 }
 
-// place, leaves the number-token-start flag alone, and swallows the newline
-// that ends a line comment.
+// TestNormalizeRemoveComments covers SQL.RemoveComments: a removed comment
+// leaves nothing in its place and the number-token-start flag alone, and takes
+// the newline that ends a line comment with it.
 func TestNormalizeRemoveComments(t *testing.T) {
 	tests := []struct {
 		sql        string
@@ -397,7 +399,8 @@ func TestNormalizeRemoveComments(t *testing.T) {
 	}{
 		{"SELECT /*+ INDEX(t idx) */ * FROM t WHERE id = 10", "SELECT  * FROM t WHERE id = 0#", "10"},
 		{"SELECT * FROM t -- c\nWHERE id = 1", "SELECT * FROM t WHERE id = 0#", "1"},
-		// The comment is not a number token boundary, so 1 stays a literal.
+		// The comment is not a number token boundary, so the 1 after SELECT
+		// is copied as is, not extracted.
 		{"SELECT/*c*/1", "SELECT1", ""},
 		// A line comment at eof needs no terminating newline.
 		{"SELECT 1 -- trailing", "SELECT 0# ", "1"},
@@ -417,10 +420,11 @@ func TestNormalizeRemoveComments(t *testing.T) {
 	}
 }
 
-// ParserContext: only a positional placeholder ($1, $2, ...) turns the
-// number-token-start flag off. A '$' before anything else leaves the flag
-// alone, and neither a string literal nor a comment touches it on the way to
-// the next digit, so the digit is still extracted.
+// TestNormalizeDollarNumberTokenStart pins the '$' rule: only a positional
+// placeholder ($1, $2, ...) turns the number-token-start flag off. A '$'
+// before anything else leaves the flag alone, and neither a string literal nor
+// a comment touches it on the way to the next digit, so the digit is still
+// extracted.
 func TestNormalizeDollarNumberTokenStart(t *testing.T) {
 	runNormalizeCases(t, []normalizeRow{
 		// $ before a digit: the placeholder is kept whole.

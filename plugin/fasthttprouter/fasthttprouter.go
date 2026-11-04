@@ -5,7 +5,7 @@
 //
 //	r := ppfasthttprouter.New()
 //	r.GET("/", Index)
-//	r.GET("/hello/:name", Hello)
+//	r.GET("/hello/{name}", Hello)
 package ppfasthttprouter
 
 import (
@@ -143,8 +143,8 @@ func (g *Group) Handle(method, path string, handler fasthttp.RequestHandler) {
 	g.group.Handle(method, path, g.wrap(path, handler))
 }
 
-// ServeFiles, ServeFS and ServeFilesCustom serve files untraced, as the
-// Router's do.
+// ServeFiles serves files untraced, as the Router's does; so do ServeFS and
+// ServeFilesCustom.
 func (g *Group) ServeFiles(path string, rootPath string) {
 	g.group.ServeFiles(path, rootPath)
 }

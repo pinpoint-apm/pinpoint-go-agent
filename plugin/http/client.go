@@ -26,7 +26,8 @@ func NewHttpClientTracer(tracer pinpoint.Tracer, operationName string, req *http
 	}
 	// Nested in an outer instrumented layer that already wrote this span's
 	// context - a client wrapped twice: that context travels alone, and the
-	// returned noop tracer keeps after() from ending the caller's open event.
+	// returned noop tracer keeps EndHttpClientTracer from ending the caller's
+	// open event.
 	// Another span's context - a proxy forwarding the headers its own caller
 	// sent - is cleared for this span's: sent on, the callee continued under
 	// the proxy's own span id, and the proxy's call went unrecorded.
@@ -177,7 +178,6 @@ func WrapClient(client *http.Client) *http.Client {
 }
 
 // WrapClientWithContext returns a new *http.Client ready to instrument.
-// It is possible to trace only when the given context contains a pinpoint.Tracer.
 // The context's tracer is the fallback for a request whose own context carries
 // none; a request that does carry one is traced on its own, so the client may
 // outlive the request it was built for.
