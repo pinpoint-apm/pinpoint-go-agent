@@ -661,11 +661,13 @@ The Java agent compresses only stat messages of 512 bytes or more; grpc-go canno
 agent compresses every message of the stat stream. A stat batch at the default [Stat.BatchCount](#statbatchcount)
 shrinks to about half and a URL stat with many URLs much more, while a lone small message grows by some 25 bytes.
 
-Compression also costs allocations. grpc-go keeps its gzip writers in a `sync.Pool`, which the garbage collector
-empties, and every writer it has to make again allocates about 800 KB. A process that collects often - a small
-heap, a low `GOGC` or a tight `GOMEMLIMIT` - pays that on many span batches and stat messages: a span batch can
-allocate up to ten times what it does uncompressed. Where the network to the collector is cheap, "none" trades the
-bandwidth back for those allocations.
+Compression also costs memory. A gzip writer is about 1 MB of compressor state. Span batches are compressed with a
+compressor of the span connection's own that keeps two writers between batches, so with gzip on the agent holds
+up to 2 MB more and a batch allocates only its output; a burst of more than two overlapping batches builds writers
+that are dropped after the send. The stat stream, which sends a few messages a minute, uses grpc-go's registered
+gzip compressor, which keeps its writers in a `sync.Pool` that the garbage collector empties, so a stat message
+may build a new writer. Where the network to the collector is cheap, "none" trades the bandwidth back for both.
+The application's own gRPC clients and servers are not affected either way.
 
 * PINPOINT_GO_COLLECTOR_GRPC_COMPRESSION
 * type: string

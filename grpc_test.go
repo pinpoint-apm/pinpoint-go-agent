@@ -1941,7 +1941,9 @@ func Test_spanGrpc_sendSpanBatch_gzipFallsBackToUncompressed(t *testing.T) {
 		spanGrpc.awaitInFlightSpanBatch()
 	}
 
-	assert.Equal(t, []string{"gzip", ""}, rec.seen())
+	// The span connection compresses with a compressor of its own, which a
+	// call can only turn off by naming identity, gRPC's uncompressed encoding.
+	assert.Equal(t, []string{"gzip", "identity"}, rec.seen())
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	assert.Equal(t, []int{1, 1}, server.spans, "the gzip batch decodes like the uncompressed one")

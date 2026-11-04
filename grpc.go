@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
@@ -340,14 +341,16 @@ func collectorCredentials(config *Config) (credentials.TransportCredentials, err
 	return creds, nil
 }
 
-func connectCollector(config *Config, portOption string) (*grpc.ClientConn, error) {
+// extra adds dial options of the caller's own, such as the span connection's
+// compressor.
+func connectCollector(config *Config, portOption string, extra ...grpc.DialOption) (*grpc.ClientConn, error) {
 	creds, err := collectorCredentials(config)
 	if err != nil {
 		Log("grpc").Errorf("collector TLS credentials - %v", err)
 		return nil, err
 	}
 
-	opts := newGrpcChannelOptions(config).dialOptions(creds)
+	opts := append(newGrpcChannelOptions(config).dialOptions(creds), extra...)
 	addr := serverAddr(config, portOption)
 	target := collectorTarget(config, addr)
 	Log("grpc").Infof("connect to collector: %s (ssl: %v)", target, config.Bool(CfgCollectorGrpcSslEnable))
@@ -1243,6 +1246,10 @@ func newStreamWithRetry[S any](agent *agent, grpcConn *grpc.ClientConn, open fun
 // stream. Importing encoding/gzip registers the compressor process-wide, which
 // also lets the client read a gzip response.
 var gzipCallOptions = []grpc.CallOption{grpc.UseCompressor(gzip.Name)}
+
+// identityCallOptions sends a call uncompressed on a connection dialed with a
+// compressor of its own (the span connection), which a call option overrides.
+var identityCallOptions = []grpc.CallOption{grpc.UseCompressor(encoding.Identity)}
 
 // disableGzipIfRejected turns compress off, for the life of the sender as in
 // the Java agent, when err is a collector that cannot decompress gzip:

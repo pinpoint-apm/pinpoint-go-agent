@@ -522,6 +522,16 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 - **The `SpanStart` tracer hook also sees `NoopTracer()`** from a disabled
   agent's `NewSpanTracer` and `NewSpanTracerWithReader` and from
   `NewKafkaConsumerTracer`, as `TracerHooks` documents.
+- **Span batches reuse their gzip writer.** grpc-go's gzip compressor keeps
+  its writers in a `sync.Pool`, which a batch compressed on a goroutine of its
+  own rarely hits: a writer put back lands in one P's private slot, and every
+  GC empties the pool. Over a 3 h soak at 100 RPS about one batch in four built
+  a new writer of some 1 MB, a quarter of everything the process allocated.
+  The span connection now compresses with a gzip compressor of its own that
+  keeps two writers across goroutines and GCs; the application's own gRPC
+  keeps grpc-go's. Once a collector refuses gzip, batches go out with
+  `grpc-encoding: identity`, gRPC's name for uncompressed, where they carried
+  no encoding before.
 - **The stat, command and active thread count streams no longer keep what
   they sent.** grpc-go keeps every message sent on a client stream for a
   transparent retry until the stream is committed, by a receive or by the kept

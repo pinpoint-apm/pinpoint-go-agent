@@ -39,10 +39,19 @@ type spanGrpc struct {
 	// answers that it cannot decompress gzip; it then stays off for the life
 	// of the sender, as in the Java agent.
 	compress atomic.Bool
+	// gzipConn is a connection dialed with gzipFreeList, which compresses
+	// every call on it unless the call says identity.
+	gzipConn bool
 }
 
 func newSpanGrpc(agent *agent) (*spanGrpc, error) {
-	conn, err := connectCollector(agent.config, CfgCollectorSpanPort)
+	gzipConn := agent.config.String(CfgCollectorGrpcCompression) == compressionGzip
+	var opts []grpc.DialOption
+	if gzipConn {
+		//lint:ignore SA1019 the per-connection compressor; UseCompressor only names the process-wide one (gzip_compressor.go)
+		opts = append(opts, grpc.WithCompressor(newGzipFreeList(spanGzipWriters)))
+	}
+	conn, err := connectCollector(agent.config, CfgCollectorSpanPort, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +66,8 @@ func newSpanGrpc(agent *agent) (*spanGrpc, error) {
 		maxSendMsgSize:          agent.config.Int(CfgCollectorGrpcMaxSendMessageSize),
 		concurrentRequestPermit: make(chan struct{}, agent.config.Int(CfgCollectorGrpcSpanBatchMaxConcurrentRequests)),
 	}
-	s.compress.Store(agent.config.String(CfgCollectorGrpcCompression) == compressionGzip)
+	s.gzipConn = gzipConn
+	s.compress.Store(gzipConn)
 	return s, nil
 }
 
@@ -214,6 +224,19 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 	})
 }
 
+// callOptions compresses a batch through the connection's own compressor, and
+// sends it as identity once a collector has refused gzip. A sender built
+// without that connection, as the tests' are, sends what it is told.
+func (spanGrpc *spanGrpc) callOptions() []grpc.CallOption {
+	switch {
+	case spanGrpc.gzipConn && !spanGrpc.compress.Load():
+		return identityCallOptions
+	case !spanGrpc.gzipConn && spanGrpc.compress.Load():
+		return gzipCallOptions
+	}
+	return nil
+}
+
 // sendSpanMessageBatch makes one SendSpanBatch call under sendStreamTimeOut.
 // The spans of a failed call are lost like a head-drop or a permit skip, and
 // counted with them, so reportSpanDrops covers every cause.
@@ -221,11 +244,7 @@ func (spanGrpc *spanGrpc) sendSpanMessageBatch(batch *pb.PSpanMessageBatch) {
 	ctx, cancel := context.WithTimeout(grpcMetadataContext(spanGrpc.agent, -1), sendStreamTimeOut)
 	defer cancel()
 
-	var opts []grpc.CallOption
-	if spanGrpc.compress.Load() {
-		opts = gzipCallOptions
-	}
-	response, err := spanGrpc.spanClient.SendSpanBatch(ctx, batch, opts...)
+	response, err := spanGrpc.spanClient.SendSpanBatch(ctx, batch, spanGrpc.callOptions()...)
 	if err != nil {
 		disableGzipIfRejected(&spanGrpc.compress, err, "span batches")
 		spanGrpc.agent.spanDrops.record(int64(len(batch.GetSpan())))
