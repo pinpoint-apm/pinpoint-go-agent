@@ -96,16 +96,17 @@ loaded, in two passes: first from the command line and environment, then again
 once the config file and profile have been read. The warnings the load itself
 emits - a value of the wrong type, an unsupported `Sampling.Type`, an out of
 range `SQL.CacheLengthLimit` - therefore reach the file you configured. Not
-everything can: what is logged before the value that names the file has been
-read goes to stderr regardless. That is
+everything can:
 
-* a command line flag that fails to parse (`command line config loading error`)
-  and a `ConfigOption` value of the wrong type, both of which precede any
-  logging configuration;
+* a command line flag that fails to parse (`command line flag <flag> needs a
+  value ..., ignored`) and a `ConfigOption` value of the wrong type precede any
+  logging configuration and go to stderr regardless;
 * `config file loading error`, `config file <path> not found` and `config file
-  doesn't have the profile`, when `Log.Output` is set only in that config
-  file - set it with `PINPOINT_GO_LOG_OUTPUT` or `--pinpoint-log-output` and
-  these go to the file too.
+  doesn't have the profile` are logged before the file is read, so when
+  `Log.Output` is set only in that config file they go to the output the
+  command line and environment chose - `stdout` by default. Set it with
+  `PINPOINT_GO_LOG_OUTPUT` or `--pinpoint-log-output` and these go to the file
+  too.
 
 A `NewConfig` call made while another agent is already running leaves that
 agent's logging alone; its load messages go to the running agent's output.
@@ -152,8 +153,9 @@ sampling:
   percentRate: 0
 ```
 
-URL statistics are still collected for unsampled requests, so basic throughput
-and latency numbers survive. This is the right first step when the concern is
+URL statistics are still collected for unsampled requests when
+[Http.UrlStat.Enable](config.md#httpurlstatenable) is on (it is off by
+default), so basic throughput and latency numbers survive. This is the right first step when the concern is
 trace volume rather than the agent itself.
 
 ---
@@ -201,7 +203,7 @@ application is untraced.
 |---|---|
 | `ApplicationName` not set | it is required; without it the agent cannot start |
 | `ServiceName` not set | the default [Uid.Version](config.md#uidversion) v4 requires it (3 to 254 bytes); set it, or set `Uid.Version` to `v3` |
-| Name/ID too long or has invalid characters | `ApplicationName`, `AgentName` must match `[a-zA-Z0-9\._\-]+`; length limits depend on [Uid.Version](config.md#uidversion) |
+| Name/ID too long or has invalid characters | `ApplicationName` must match `[a-zA-Z0-9\._\-]+`; length limits depend on [Uid.Version](config.md#uidversion). An invalid `AgentName` does not stop the agent: it is replaced by `<host>-<pid>` with a warning |
 | `Enable=false` left in a config file or the environment | the resolved config dump shows `Enable = false` |
 | `ApiKey` has a control or non-ASCII character (v4) | it must be printable ASCII; surrounding whitespace is trimmed, as for the names |
 | `Uid.Version` is `v4`, the default, against a 3.1.x collector | the agent starts, but the collector refuses every call unless `ApiKey` is set and matches `[a-zA-Z0-9\._\-]+`: `send agent info - rpc error: code = InvalidArgument desc = apiKey` repeats and registration waits forever; set `Uid.Version` to `v3` ([Uid.Version](config.md#uidversion)) |
@@ -224,9 +226,12 @@ Work down this list; it is ordered by how often each turns out to be the cause.
 3. **Is anything instrumented?** Go is not auto-instrumented. A span only
    exists where your code created one — via a plugin wrapper or
    `NewSpanTracer()`. An agent can be perfectly healthy and report nothing.
-4. **Sampling.** `Sampling.PercentRate` of 0 collects nothing;
+4. **Sampling.** With `Sampling.Type: PERCENT`, a `Sampling.PercentRate` of 0
+   collects nothing; with the default `COUNTER` type the rate is
+   `Sampling.CounterRate` and `PercentRate` is ignored.
    `Sampling.NewThroughput` caps new transactions per second. Set
-   `percentRate: 100` while diagnosing.
+   `counterRate: 1` (or `percentRate: 100` with the `PERCENT` type) while
+   diagnosing.
 5. **Wrong application in the UI.** The resolved config dump shows the
    `ApplicationName` actually sent.
 6. **Time skew.** Pinpoint indexes spans by timestamp. A host clock minutes off
@@ -331,8 +336,10 @@ case:
 | `span is shared by more than one goroutine` | one tracer used from several goroutines | `NewGoroutineTracer()` or `WrapGoroutine()` per goroutine |
 | `callStack maximum depth/sequence exceeded` | span overflowed | record fewer events (one per loop, not per iteration), or raise `Span.MaxCallStackDepth` / `Span.MaxCallStackSequence` |
 
-The `called after EndSpan` warnings are logged at `debug` level, which is why
-this list is worth a debug run; the shared-tracer check runs at every level. See
+The `called after EndSpan` warnings for setters are logged at `debug` level,
+which is why this list is worth a debug run; the lifecycle ones (`NewSpanEvent`,
+`EndSpanEvent`, `Inject`, `NewGoroutineTracer`) are WARN lines, throttled to one
+a minute; the shared-tracer check runs at every level. See
 [Contracts](api_contracts.md) for each rule in full.
 
 ### Missing Distributed Traces
@@ -359,8 +366,9 @@ A call chain that shows as separate transactions instead of one:
 ### High Memory Usage
 
 * **Span queue backing up.** If the collector is slow or unreachable, spans
-  queue until `Span.QueueSize` (default 1024) and are then dropped. Look for
-  `span channel - max capacity reached or closed` at `trace` level. Lowering
+  queue until `Span.QueueSize` (default 1024); past that the oldest queued
+  spans are overwritten, and the agent logs `span drops: N in total, M
+  overwritten by span queue overflow` at WARN. Lowering
   the queue bounds the memory; fixing the collector fixes the cause. The
   metadata queue is bounded separately by `Collector.Grpc.SenderQueueSize`
   (default 1000); while it is full, new metadata is left unregistered for
@@ -380,8 +388,9 @@ A call chain that shows as separate transactions instead of one:
 
 ### High CPU Usage or Slow Responses
 
-* **Sampling rate.** `percentRate: 100` traces every transaction. Lower the
-  rate (`percentRate: 1` is 1%) or set `Sampling.NewThroughput` to cap
+* **Sampling rate.** The default (`COUNTER`, `counterRate: 1`) traces every
+  transaction. Raise `counterRate` (`100` is 1 in 100), or with
+  `Sampling.Type: PERCENT` lower `percentRate` (`1` is 1%), or set `Sampling.NewThroughput` to cap
   transactions per second under load.
 * **Debug logging.** `debug`/`trace` levels add per-event work. Never leave
   them on in production.
@@ -435,7 +444,8 @@ nc -vz your-collector-host 9991
 **Symptoms:** a gap in spans or stats that closed by itself; you need to know
 when the connection was lost and when it came back.
 
-Each collector channel (`agent`, `span`, `stat`, `command`) logs under
+Each collector channel that waits for a ready connection (`agent`, `ping`,
+`stat`, `command`; the span sender does not) logs under
 `src=grpc`, rate limited to one line per channel per minute so a flapping
 collector cannot flood the log; a line that closes a quiet window carries the
 number of transitions it folded:

@@ -42,8 +42,8 @@ For more information on config option, refer the [Configuration](config.md) docu
 ``` go
 func main() {
 	opts := []pinpoint.ConfigOption{
-		pinpoint.WithAppName("Your Application Name"),
-		pinpoint.WithServiceName("Your Service Name"),
+		pinpoint.WithAppName("MyAppName"),
+		pinpoint.WithServiceName("MyServiceName"),
 		pinpoint.WithAgentName("my-agent"),
 		pinpoint.WithCollectorHost("pinpoint's collector host"),
 	}
@@ -81,6 +81,10 @@ The complete example code for tracing the http server's handler is as follows:
 package main
 
 import (
+	"io"
+	"log"
+	"net/http"
+
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 )
@@ -272,11 +276,12 @@ by default:
 
 ```text
 INFO[...] new pinpoint agent          module=pinpoint src=agent
-INFO[...] connect to collector: collector.myhost.com:9991 (ssl: false)  module=pinpoint src=grpc
+INFO[...] connect to collector: dns:///collector.myhost.com:9991 (ssl: false)  module=pinpoint src=grpc
 INFO[...] agent registered            module=pinpoint src=agent
 ```
 
-`agent registered` means the collector accepted this agent. Then send
+The resolved config, logged under `src=config`, comes between the first two
+lines. `agent registered` means the collector accepted this agent. Then send
 a request through an instrumented handler:
 
 ```bash
@@ -329,7 +334,7 @@ PINPOINT_GO_COLLECTOR_HOST=collector.myhost.com example/run.sh mysql
 ```
 
 Every plugin directory also carries its own `README.md`; its example is
-`example/<plugin>`.
+`example/<plugin>` (`plugin/mongomonitor`, a shared helper, has none).
 
 ## Next Steps
 

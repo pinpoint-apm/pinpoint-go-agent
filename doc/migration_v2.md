@@ -85,7 +85,7 @@ find none started and record nothing. Do not use it to put the migration off.
 | `ppsarama.WithContext(ctx, producer)`, `producer.WithContext(ctx)` (and `ppsaramaibm`) | removed | `SendMessageContext`, `SendMessagesContext`, `InputContext` with the context; `SendMessage`, `SendMessages` and `Input` produce without tracing |
 | `plugin/sarama` (`ppsarama`, Shopify/sarama) | removed | move to IBM/sarama upstream and `plugin/sarama-IBM/v2` (`ppsaramaibm`, the same API) |
 | `plugin/goredis` (`ppgoredis`, go-redis v6), `plugin/goredisv7` (`ppgoredisv7`) | removed | go-redis v6 and v7 are end-of-life: `plugin/goredisv8/v2` or `plugin/goredisv9/v2`, which instrument through a hook (`NewHook`) instead of a wrapped client |
-| `plugin/mssql` (`ppmssql`, denisenkom/go-mssqldb) | removed | `plugin/mssql-microsoft/v2` with microsoft/go-mssqldb; open with `sql.Open("mssql-microsoft-pinpoint", dsn)` instead of `"sqlserver-pinpoint"` |
+| `plugin/mssql` (`ppmssqldb`, denisenkom/go-mssqldb) | removed | `plugin/mssql-microsoft/v2` with microsoft/go-mssqldb; open with `sql.Open("mssql-microsoft-pinpoint", dsn)` instead of `"sqlserver-pinpoint"` |
 | `plugin/echo` (`ppecho`) | removed | use `plugin/echov4` or `plugin/echov5`: echo v3 is end-of-life upstream with an unpatched advisory |
 
 A carrier of your own - a message queue's headers, say - now tells a key held
@@ -141,7 +141,7 @@ The deprecated `LogLevel` key is gone too: `LogLevel` in the config file,
 | [Http.Client.RecordUrlQuery](config.md#httpclientrecordurlquery) (new) | `HTTP.URL` keeps the query | `false`: cut at the `?` | `true` |
 | [SQL.RemoveComments](config.md#sqlremovecomments) (new) | comments kept in the SQL | `true`: comments removed | `false` |
 | [Http.UrlStat.LimitSize](config.md#httpurlstatlimitsize) | 1024 | 1000 | 1024 |
-| [Stat.CollectInterval](config.md#statcollectinterval) | up to 60000 ms | up to 10000 ms; a larger value falls back to the 5000 ms default | none |
+| [Stat.CollectInterval](config.md#statcollectinterval) | any value, no range check | 1000 to 10000 ms; a value outside falls back to the 5000 ms default | none |
 
 ## 5. Expect some recorded data to change
 

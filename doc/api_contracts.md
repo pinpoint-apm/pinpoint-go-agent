@@ -226,9 +226,10 @@ overflow:
 
 The span itself, its own annotations, and every event recorded before the
 overflow are sent normally. The agent logs
-`callStack maximum depth/sequence exceeded` **once per span** — a span that
-overflows usually overflows thousands of times, and one line per event would
-be its own outage.
+`callStack maximum depth/sequence exceeded` at most **once per span**, and that
+line is further throttled across spans to one per minute — a span that
+overflows usually overflows thousands of times, an endpoint that overflows does
+so on every request, and one line per event would be its own outage.
 
 Overflow is a symptom, not a tuning knob: a request that legitimately makes
 5000 traced calls is usually a loop that should record one event around the
@@ -328,8 +329,10 @@ pattern.
   call for an HTTP status that counts as an error but carries no Go `error`.
   The optional category is the cause recorded in `PSpan.err`, defaulting to
   `ErrorCategoryUnknown`; only the first one given is used.
-* Call-stack capture (`Error.TraceCallStack`) prefers the stack the error
-  carries itself, i.e. errors implementing `StackTrace() errors.StackTrace`
+* Call-stack capture (`Error.TraceCallStack`) and the exception chain apply to
+  `SpanEventRecorder.SetError` only; `SpanRecorder.SetError` records the error
+  name and message on the span without either. The capture prefers the stack
+  the error carries itself, i.e. errors implementing `StackTrace() errors.StackTrace`
   such as `github.com/pkg/errors` errors. An error without one — a plain
   `errors.New` — is recorded with exactly `Error.CallStackDepth` frames
   captured at the `SetError` call site.
@@ -394,9 +397,9 @@ something to put in it:
 |---|---|
 | `Pinpoint-TraceID`, `-SpanID`, `-pSpanID`, `-Flags`, `-pAppName`, `-pAppType` | always, on a sampled span |
 | `Pinpoint-Sampled` | only by an unsampled span (`s0`) |
-| `Pinpoint-pServiceName` | `Span.ServiceName` is set (v4 collectors) |
+| `Pinpoint-pServiceName` | [`ServiceName`](config.md#servicename) is set (v4 only) |
 | `Pinpoint-Host` | a destination was recorded on the event, or - while overflowed - on the span |
-| `Pinpoint-pAppNamespace` | never; this agent has no namespace to send |
+| `Pinpoint-pAppNamespace` | [`ClusterNamespace`](config.md#clusternamespace) is set |
 
 An empty value is not a neutral one. A receiver configured with a cluster
 namespace accepts a missing `Pinpoint-pAppNamespace` for backward
@@ -433,13 +436,15 @@ requests are reused.
 
 `NewSpanTracerWithReader()` treats a request as a continuation of an existing
 trace only when
-**all three** of these are present:
+**all three** of these are present, and the cluster namespace does not
+contradict this agent's:
 
 | Header | Requirement |
 |---|---|
 | `Pinpoint-TraceID` | present **and parseable** as `agentId^startTime^sequence` |
 | `Pinpoint-SpanID` | present (any value, including an empty one) |
 | `Pinpoint-pSpanID` | present (any value, including an empty one) |
+| `Pinpoint-pAppNamespace` | when `ClusterNamespace` is set: absent, or equal to it |
 
 Anything else starts a **new transaction**: a fresh transaction id, a fresh span
 id, `parentSpanId = -1`, and none of the other inbound `Pinpoint-` headers read.
@@ -449,14 +454,16 @@ The headers are read in this order:
 1. `Pinpoint-Sampled: s0` -> tracing disabled for this request, before anything
    else is looked at
 2. no `Pinpoint-TraceID` -> new trace
-3. no `Pinpoint-pSpanID` -> new trace
-4. no `Pinpoint-SpanID` -> new trace
-5. otherwise -> continue, with `Pinpoint-Flags` defaulting to `0` when absent
+3. no `Pinpoint-SpanID` -> new trace
+4. no `Pinpoint-pSpanID` -> new trace
+5. `ClusterNamespace` set and `Pinpoint-pAppNamespace` present with another
+   value -> new trace
+6. otherwise -> continue, with `Pinpoint-Flags` defaulting to `0` when absent
 
 A trace id on its own names a transaction but not a position inside it.
 Continuing on it alone records a non-root span whose parent is in no trace, and
-spends a continue-sampler slot - `isContinueSampled()` is unconditionally true -
-on a hop that does not exist. Header-stripping proxies, gateways and hand-rolled
+spends a continue-sampler slot - which `isContinueSampled()` grants every time
+unless `Sampling.ContinueThroughput` is set - on a hop that does not exist. Header-stripping proxies, gateways and hand-rolled
 clients produce exactly that shape.
 
 The two span id headers are checked for **presence only**: a value that will

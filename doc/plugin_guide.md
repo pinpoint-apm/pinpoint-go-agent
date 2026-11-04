@@ -15,8 +15,11 @@ the libraries you actually instrument:
 go get github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin/v2
 ```
 
-Each package name is the directory prefixed with `pp` (`plugin/gin` is
-`ppgin`), and every plugin directory carries a `README.md` and a runnable
+Each package name is usually the directory prefixed with `pp` (`plugin/gin` is
+`ppgin`); the exceptions are `plugin/mongodriver` (`ppmongo`),
+`plugin/mongodriverv2` (`ppmongov2`), `plugin/sarama-IBM` (`ppsaramaibm`) and
+`plugin/mssql-microsoft` (`ppmssqlmicrosoft`). Every plugin directory carries a
+`README.md` and, except the shared `plugin/mongomonitor` helper, a runnable
 example under [example/](/example) (`example/<plugin>`) — those are the
 authoritative reference for the plugin's options.
 

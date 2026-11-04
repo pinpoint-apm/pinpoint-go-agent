@@ -85,7 +85,7 @@ restart either, so it is not listed. `ReloadConfig()` never panics; `result.Stat
 | `ConfigReloadNoAgent` | `NewAgent()` has not run, failed, or the agent was shut down | nothing |
 | `ConfigReloadConfigFileActive` | the agent reads a config file (`ConfigFile`); the file outranks YAML as it does at startup, so change the file | nothing |
 | `ConfigReloadInvalidYAML` | a YAML syntax error, or a document that is not a mapping - a scalar, a sequence, or an empty document (`{}` asks for every default explicitly) | nothing |
-| `ConfigReloadInvalidConfig` | a value of the wrong type for its option, or a configuration `NewAgent()` would refuse: an empty `ApplicationName`, an invalid `ServiceName` or `ApiKey` for `Uid.Version` v4 | nothing |
+| `ConfigReloadInvalidConfig` | a value of the wrong type for its option, or a configuration `NewAgent()` would refuse: an empty or invalid `ApplicationName`, an invalid `ServiceName` or `ApiKey` for `Uid.Version` v4 | nothing |
 | `ConfigReloadError` | an unexpected internal error | nothing |
 
 `Message` says why a reload was refused. Unlike a config file, a YAML with a value of the wrong type is
@@ -111,10 +111,14 @@ a config function and `Config.Set()`. So `Sampling.CounterRate: abc` leaves the 
 of turning it into 0, which would have stopped sampling every transaction with nothing in the log.
 
 A comma separated string is still accepted where a list is expected (`a,b,c`), because that is how an
-environment variable spells one, but a bare scalar is not: a list has to be written as a list.
+environment variable spells one; a YAML string scalar is split the same way (`statusCodeErrors: 5xx` is
+`["5xx"]`). A scalar of another type is not: `statusCodeErrors: 500` is rejected, so a number list has to be
+written as a list.
 
 A value of the right type but outside the option's range is a separate check, described with the option
-below; those recover the option's default rather than keeping the previous value.
+below. What it recovers depends on the option: some are clamped to the nearest bound (`Sampling.PercentRate`,
+`SQL.MaxBindValueSize`, `Error.CallStackDepth`, `Span.MaxCallStackDepth`), some fall back to the default
+(`Stat.CollectInterval`), and `Log.Level` keeps the value already in effect.
 
 ## Configuration Option
 The titles below are used as configuration keys in config file.
@@ -128,7 +132,8 @@ Every key has the same three spellings, derived from the key:
 
 Five functions deviate from the rule: `WithAppName()` (ApplicationName), `WithAppType()` (ApplicationType),
 `WithHttpServerStatusCodeError()`, `WithHttpServerRecordRespondHeader()` and `WithHttpClientRecordRespondHeader()`.
-The `Mongo.*` functions live in the mongodriver plugin packages, not in `pinpoint`.
+The `Http.Server.*` and `Http.Client.*` functions live in the http plugin package (`pphttp`), and the
+`Mongo.*` functions in the mongodriver plugin packages, not in `pinpoint`.
 Each option below lists its environment variable, then its value type and additional information.
 
 ### ConfigFile
@@ -401,7 +406,7 @@ If it is 0 or less, the agent information is sent only once at agent startup. A 
 ### Collector.AgentInfo.SendRetryInterval
 Collector.AgentInfo.SendRetryInterval option sets the wait between agent information send retries.
 It paces two loops: the registration retry at agent startup, which repeats until the collector accepts the AgentInfo, and the retries within one periodic refresh cycle.
-The wait is randomized by +/-30% so agents restarted together do not retry in lockstep, and it does not escalate - a collector that keeps rejecting the registration is polled at this interval for as long as the process runs.
+At startup the wait is randomized by +/-30% so agents restarted together do not retry in lockstep (the refresh retries wait exactly this interval), and it does not escalate - a collector that keeps rejecting the registration is polled at this interval for as long as the process runs.
 Only the refresh use has no effect if Collector.AgentInfo.RefreshInterval is 0.
 
 * PINPOINT_GO_COLLECTOR_AGENTINFO_SENDRETRYINTERVAL
@@ -575,7 +580,7 @@ before gRPC closes it and puts the channel into IDLE. An idle channel also stops
 firewall or L4 load balancer on the path can drop the connection unnoticed, and the next send pays a reconnect
 and possibly a backoff wait.
 The default 0 disables idling: a quiet channel keeps its connection for as long as the agent runs.
-Without this option grpc-go (v1.82.1) would apply its own default of 30 minutes, which an application with no
+Without this option grpc-go (v1.83.2) would apply its own default of 30 minutes, which an application with no
 traffic reaches on the span channel, which only carries unary SendSpanBatch requests.
 Note that with [Collector.Grpc.KeepAlivePermitWithoutCalls](#collectorgrpckeepalivepermitwithoutcalls) at its
 default false, a connection with no open stream sends no keepalive pings even when idling is disabled.
@@ -691,7 +696,7 @@ Sample 1/rate. In other words, if the rate is 1, then it will be 100% and if it 
 
 ### Sampling.PercentRate
 Sampling.PercentRate option sets the sampling rate for a 'percent sampler'.
-The rate is truncated to hundredths of a percent, and a truncated rate of 0
+The rate is rounded to hundredths of a percent (`0.015` samples 0.02%), and a rate of 0
 samples no new transaction at all - so `0`, a negative rate, and any positive
 rate below `0.01` (e.g. `0.005`) all turn percent sampling off; a rate below
 `0.01` also logs a warning, because a positive rate that samples nothing is
@@ -1414,7 +1419,7 @@ The send timer has no option of its own: it follows `Stat.CollectInterval`
 boundary and, once traffic stops, the last tick is closed and sent within one
 `Stat.CollectInterval`.
 
-At most 4 completed ticks (two minutes) are retained while the stat stream is down.
+At most 5 completed 30 second ticks (two and a half minutes) are retained while the stat stream is down.
 Beyond that the oldest tick is dropped and the agent logs a rate-limited warning.
 
 * PINPOINT_GO_HTTP_URLSTAT_ENABLE

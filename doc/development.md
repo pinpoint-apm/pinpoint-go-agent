@@ -17,7 +17,7 @@ important thing to know before running anything:
 
 | Path | Module | Why separate |
 |---|---|---|
-| `/` | `pinpoint-go-agent` | the agent; depends on nothing but gRPC and its own support libraries |
+| `/` | `pinpoint-go-agent/v2` | the agent; depends on nothing but gRPC and its own support libraries |
 | `plugin/<name>/` | one module each | so instrumenting Gin does not pull in Kafka, Mongo and Elasticsearch |
 | `example/` | own module | depends on the agent and every plugin, via `replace` |
 | `test/it/` | own module | depends on `plugin/http`, which the agent module must not |
@@ -67,8 +67,10 @@ reason, rather than widening the configuration.
 
 ## Test the plugins
 
-Each plugin is its own module, so they run one at a time. This is the loop CI
-uses, and the one to run locally before touching a plugin:
+Each plugin is its own module, so they run one at a time. This is the loop to
+run locally before touching a plugin: CI's plugin job runs the same `go test`
+loop, but not the staticcheck half, so a plugin lint finding is caught only
+here:
 
 ```bash
 for dir in plugin/*/; do (cd "$dir" && go test -race ./ && go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...) || echo "FAILED: $dir"; done
@@ -164,8 +166,10 @@ suite and the grpc examples talk over, from `test/testapp/testapp.proto`.
 
 The script downloads pinned versions of `protoc`, `protoc-gen-go`,
 `protoc-gen-go-grpc` and the gRPC mock generator into `.tools/`, so it does not
-depend on what happens to be installed: each one has to report the pinned
-version before it is used, and a copy elsewhere on `PATH` is not taken. That
+depend on what happens to be installed: `protoc` is unpacked into a directory
+named after its version and the generators are installed with
+`go install <module>@<version>`, all into `.tools/bin`, which goes first on
+`PATH`, so a copy elsewhere on `PATH` is not taken. That
 matters because every generator stamps its own version into the files it
 writes, so an older one rewrites the whole tree along with the header saying
 which version wrote it.
@@ -354,7 +358,7 @@ the key it came from.
 
 [`.github/workflows/ci.yml`](/.github/workflows/ci.yml) runs on every push and
 pull request to `main`: the agent build and tests plus `test/it` on Go 1.25 and
-1.26, the plugin loop above with `-race` on both versions, `test/it` under
+1.26, the plugin `go test -race` loop above (without staticcheck) on both versions, `test/it` under
 `GOEXPERIMENT=goroutineleakprofile` on 1.26, and
 `scripts/set-major-version.sh --check`. `test/e2e` is **not** in CI: it needs a
 live collector. `fail-fast` is off on purpose, so a break on one Go version or

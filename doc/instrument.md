@@ -229,7 +229,7 @@ annotate, and pick the `Append*` method matching the value shape.
 ```go
 se := tracer.SpanEvent()
 se.Annotations().AppendString(pinpoint.AnnotationHttpUrl, req.URL.String())
-se.Annotations().AppendInt(pinpoint.AnnotationHttpStatusCode, resp.StatusCode)
+se.Annotations().AppendInt(pinpoint.AnnotationHttpStatusCode, int32(resp.StatusCode))
 ```
 
 ### Predefined annotation keys
@@ -318,8 +318,11 @@ and keep the depth modest.
 ## Sampling policy
 
 Sampling is decided once, when the span is created, and applies to the whole
-transaction. An unsampled transaction produces a no-op tracer: your instruments
-still run and record nothing.
+transaction. An unsampled transaction produces an unsampled span: your
+instruments still run and record no trace data, but the span still feeds the
+response-time and URL statistics, and `Inject()` writes `Pinpoint-Sampled: s0`
+so the callees skip the transaction too. It is not the same as `NoopTracer()`;
+see [contract 10](api_contracts.md#10-no-op-and-unsampled-tracers-are-deliberately-silent).
 
 There are two samplers, chosen by `Sampling.Type`:
 
@@ -412,27 +415,30 @@ header/cookie recording, status handling, URL and method filters — without
 re-implementing it:
 
 ```go
-import pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+import (
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
+)
 
 func handle(w http.ResponseWriter, r *http.Request) {
     tracer := pphttp.NewHttpServerTracer(r, "MyServer")
     defer tracer.EndSpan()
-    if !tracer.IsSampled() {
-        next(w, r)
-        return
-    }
 
     status := http.StatusOK
     w = pphttp.WrapResponseWriter(w, &status)
     defer func() { pphttp.RecordHttpServerResponse(tracer, status, w.Header()) }()
 
-    next(w, r)
+    next(w, pinpoint.RequestWithTracerContext(r, tracer))
 }
 ```
 
 `NewHttpServerTracer()` extracts the incoming trace context and records the
 request; `WrapResponseWriter()` captures the status the handler actually wrote;
 `RecordHttpServerResponse()` records the status and response headers.
+`RequestWithTracerContext()` hands the tracer to `next`, which gets it back with
+`pinpoint.FromContext(r.Context())`. Do not skip the response recording for an
+unsampled request: `RecordHttpServerResponse()` still fails the URL statistics
+on an error status there, and does nothing more.
 `NewHttpServerTracerWithReader()` is the variant for a non-`net/http` carrier.
 
 For an outgoing call:
@@ -504,7 +510,8 @@ Before shipping a hand-written instrument:
       `defer`, so an early return or panic cannot leave it open.
 - [ ] `EndSpan()` runs exactly once, via `defer`, on every path.
 - [ ] Operation names are fixed strings; per-request values are annotations.
-- [ ] A root span's `rpcName` is the routed pattern, not the resolved path.
+- [ ] A root span's `rpcName` is the request path; URL statistics get the
+      routed pattern (`CollectUrlStat`), not the resolved path.
 - [ ] Goroutines get their own tracer (`WrapGoroutine()` or
       `NewGoroutineTracer()`), never a shared one.
 - [ ] Outbound calls `Inject()` (directly, or via a client wrapper) and receive
@@ -513,5 +520,5 @@ Before shipping a hand-written instrument:
 - [ ] Remote calls set service type, destination and endpoint.
 - [ ] No credentials or personal data in annotations.
 - [ ] Verified once with `PINPOINT_GO_LOG_LEVEL=debug`, with no `src=span`
-      warnings — the `called after EndSpan` ones are logged only at that
-      level.
+      warnings — the `called after EndSpan` warnings for setters are logged
+      only at that level (the lifecycle ones are throttled warnings).
