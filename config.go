@@ -1328,7 +1328,10 @@ func (config *Config) publishFrom(prev *configSnapshot) {
 	}
 
 	// Both branches warn so an invalid value cannot silently change bind-value
-	// recording.
+	// recording. A negative size turns SQL.TraceBindValue off in the published
+	// values only (see below): written into cfgMap, the false outlived the bad
+	// size, since a reload or Set that fixed the size did not touch the other
+	// option, and tracing stayed off until restart.
 	maxBind := config.stagedInt(CfgSQLMaxBindValueSize)
 	if maxBind > maxSqlBindValueSize {
 		Log("config").Warnf("%s = %d is out of range, using %d",
@@ -1337,7 +1340,6 @@ func (config *Config) publishFrom(prev *configSnapshot) {
 	} else if maxBind < 0 {
 		Log("config").Warnf("%s = %d is negative, using 0 and turning %s off",
 			CfgSQLMaxBindValueSize, maxBind, CfgSQLTraceBindValue)
-		config.cfgMap[CfgSQLTraceBindValue].value = false
 		config.cfgMap[CfgSQLMaxBindValueSize].value = 0
 	}
 
@@ -1447,6 +1449,9 @@ func (config *Config) publishFrom(prev *configSnapshot) {
 	values := make(map[string]any, len(config.cfgMap))
 	for k, v := range config.cfgMap {
 		values[k] = v.value
+	}
+	if maxBind < 0 {
+		values[CfgSQLTraceBindValue] = false
 	}
 
 	snapshot := &configSnapshot{

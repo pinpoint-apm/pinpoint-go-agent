@@ -1047,6 +1047,12 @@ func TestNewConfig_ClampSqlMaxBindValueSize(t *testing.T) {
 	assert.False(t, c.Bool(CfgSQLTraceBindValue), "a negative size turns bind value tracing off")
 	assert.Equal(t, 1, strings.Count(buf.String(), "\n"), "one warning line")
 	assert.Contains(t, buf.String(), CfgSQLTraceBindValue, "the warning hides that tracing was turned off")
+
+	// Fixing the size brings tracing back: only the bad size turned it off,
+	// and SQL.TraceBindValue itself was never set to false.
+	c.Set(CfgSQLMaxBindValueSize, 100)
+	assert.Equal(t, 100, c.Int(CfgSQLMaxBindValueSize), CfgSQLMaxBindValueSize)
+	assert.True(t, c.Bool(CfgSQLTraceBindValue), "a fixed size turns bind value tracing back on")
 }
 
 // A bad Sampling.Type must cost the type only. Overwriting Sampling.CounterRate
