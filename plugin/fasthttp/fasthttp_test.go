@@ -569,3 +569,46 @@ func TestWrapHandler_BareRequestCtx(t *testing.T) {
 	})
 	assert.True(t, called)
 }
+
+// A standard method comes back as net/http's constant, so the URL statistics
+// entry keeping it shares no memory with fasthttp's reused buffer; any other
+// method is copied out of it.
+func TestMethodString(t *testing.T) {
+	for _, method := range []string{
+		http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodHead,
+		http.MethodOptions, http.MethodPatch, http.MethodConnect, http.MethodTrace,
+	} {
+		buf := []byte(method)
+		got := MethodString(buf)
+		assert.Equal(t, method, got)
+		buf[0] = 'X'
+		assert.Equal(t, method, got, "the method shares the request buffer")
+	}
+
+	buf := []byte("PURGE")
+	got := MethodString(buf)
+	buf[0] = 'X'
+	assert.Equal(t, "PURGE", got, "a custom method shares the request buffer")
+}
+
+// With the agent disabled DoClient only makes the call: no tracing header is
+// injected, and the caller's error comes back unchanged.
+func TestDoClient_PassesThroughWhenAgentDisabled(t *testing.T) {
+	require.False(t, pinpoint.GetAgent().Enable(), "a previous test left the agent running")
+
+	req := fasthttp.AcquireRequest()
+	defer fasthttp.ReleaseRequest(req)
+	req.SetRequestURI("http://localhost:9090/hello")
+	res := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseResponse(res)
+
+	called := false
+	want := errors.New("dial failed")
+	err := DoClient(func() error { called = true; return want }, context.Background(), req, res)
+
+	assert.True(t, called, "the call was not made")
+	assert.ErrorIs(t, err, want)
+	for _, key := range pinpointHeaders {
+		assert.Empty(t, req.Header.Peek(key), "a disabled agent injected the %s header", key)
+	}
+}

@@ -196,7 +196,13 @@ func TestAbbreviateJSON(t *testing.T) {
 		"the cut must land on a rune start")
 }
 
+// Every common command has its own constant, which must spell the same name
+// the concatenation would; an uncommon command is concatenated.
 func TestOperationName(t *testing.T) {
-	assert.Equal(t, "mongodb.find", OperationName("find"))
-	assert.Equal(t, "mongodb.ping", OperationName("ping"), "an uncommon command is concatenated")
+	for _, command := range []string{
+		"find", "insert", "update", "delete", "aggregate", "getMore",
+		"count", "distinct", "findAndModify", "killCursors", "ping",
+	} {
+		assert.Equal(t, "mongodb."+command, OperationName(command))
+	}
 }

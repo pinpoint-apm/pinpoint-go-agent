@@ -4,7 +4,10 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
+	"testing/fstest"
 
 	ppfasthttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2"
 
@@ -204,4 +207,81 @@ func TestRouter_PassesThroughWhenAgentDisabled(t *testing.T) {
 
 	require.True(t, called, "the handler did not run")
 	assert.Equal(t, http.StatusNoContent, ctx.Response.StatusCode())
+}
+
+// A group's method helpers register on the router underneath with the group
+// prefix, so each has to keep its route and method and still trace, like the
+// router's own.
+func TestGroup_AllMethodsStayRouted(t *testing.T) {
+	pptest.StartAgent(t)
+
+	for _, tt := range []struct {
+		method   string
+		register func(*Group, string, fasthttp.RequestHandler)
+	}{
+		{http.MethodGet, (*Group).GET},
+		{http.MethodHead, (*Group).HEAD},
+		{http.MethodPost, (*Group).POST},
+		{http.MethodPut, (*Group).PUT},
+		{http.MethodPatch, (*Group).PATCH},
+		{http.MethodDelete, (*Group).DELETE},
+		{http.MethodConnect, (*Group).CONNECT},
+		{http.MethodOptions, (*Group).OPTIONS},
+		{http.MethodTrace, (*Group).TRACE},
+		{"PROPFIND", (*Group).ANY},
+		{"PURGE", func(g *Group, p string, h fasthttp.RequestHandler) { g.Handle("PURGE", p, h) }},
+	} {
+		t.Run(tt.method, func(t *testing.T) {
+			r := New()
+			var name string
+			var tracer pinpoint.Tracer
+			tt.register(r.Group("/api"), "/hello/{name}", func(ctx *fasthttp.RequestCtx) {
+				name, _ = ctx.UserValue("name").(string)
+				tracer = tracerOf(t, ctx)
+				ctx.SetStatusCode(http.StatusNoContent)
+			})
+
+			ctx := serve(r.Handler, tt.method, "http://localhost/api/hello/pinpoint")
+
+			assert.Equal(t, "pinpoint", name, "route parameter")
+			require.NotNil(t, tracer, "the group %s wrapper did not trace", tt.method)
+			assert.True(t, tracer.IsSampled(), "handler received an unsampled tracer")
+			assert.Equal(t, http.StatusNoContent, ctx.Response.StatusCode())
+			assert.Equal(t, "/api/hello/pinpoint", pptest.SpanOf(t, tracer)["RpcName"])
+		})
+	}
+}
+
+// A group's file routes are served under the group prefix, untraced like the
+// router's.
+func TestGroup_ServeFilesUntraced(t *testing.T) {
+	pptest.StartAgent(t)
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("from disk"), 0o600))
+
+	for _, tt := range []struct {
+		name     string
+		register func(*Group)
+		want     string
+	}{
+		{"ServeFiles", func(g *Group) { g.ServeFiles("/static/{filepath:*}", dir) }, "from disk"},
+		{"ServeFS", func(g *Group) {
+			g.ServeFS("/static/{filepath:*}", fstest.MapFS{"hello.txt": {Data: []byte("from fs")}})
+		}, "from fs"},
+		{"ServeFilesCustom", func(g *Group) {
+			g.ServeFilesCustom("/static/{filepath:*}", &fasthttp.FS{Root: dir})
+		}, "from disk"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := New()
+			tt.register(r.Group("/assets"))
+
+			ctx := serve(r.Handler, http.MethodGet, "http://localhost/assets/static/hello.txt")
+
+			assert.Equal(t, http.StatusOK, ctx.Response.StatusCode())
+			assert.Equal(t, tt.want, string(ctx.Response.Body()))
+			assert.Nil(t, ctx.UserValue(ppfasthttp.CtxKey), "a file route was traced")
+		})
+	}
 }

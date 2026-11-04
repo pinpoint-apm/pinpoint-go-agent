@@ -167,12 +167,12 @@ func TestTraceConnect(t *testing.T) {
 }
 
 // pgx hands TraceQueryStart, TraceBatchStart, TraceBatchQuery and
-// TraceCopyFromEnd a live *pgx.Conn to read the connection config off, and
-// there is no way to build one without a server; what they record is covered
-// through newSpanEvent and recordCopyFrom. TraceQueryEnd and TraceBatchEnd take
-// the connection but never use it, so the pairing they complete - and the
-// error they record, none on success - is testable here. TraceBatchEnd is the
-// only thing that closes the enclosing batch event.
+// TraceCopyFromEnd a live *pgx.Conn to read the connection config off;
+// pgxv5_conn_test.go builds one against an in-process server. TraceQueryEnd and
+// TraceBatchEnd take the connection but never use it, so the pairing they
+// complete - and the error they record, none on success - is testable here
+// without one. TraceBatchEnd is the only thing that closes the enclosing batch
+// event.
 func TestEndCallbacks(t *testing.T) {
 	pgxT := NewTracer()
 	for _, tt := range []struct {

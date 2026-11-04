@@ -3,6 +3,7 @@ package ppredigo
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 	"time"
 
@@ -369,4 +370,60 @@ func TestWrapConn(t *testing.T) {
 	assert.Equal(t, "redis1", wc.dbInfo.DBHost)
 	assert.Same(t, base, wc.Conn)
 	assert.Same(t, c, WrapConn(c, "other:6379"), "an already wrapped connection is returned as it is")
+}
+
+// The Dial wrappers hand back the wrapped connection redigo dialed, with the
+// endpoint taken from the address or URL, and pass a failed dial's error
+// through with no connection. The dial goes through an injected dialer, so no
+// server is needed: redigo sends nothing on a connection with no password,
+// database or client name to set.
+func TestDialWrappers(t *testing.T) {
+	var dialed []string
+	dialer := redis.DialContextFunc(func(_ context.Context, _, addr string) (net.Conn, error) {
+		dialed = append(dialed, addr)
+		client, server := net.Pipe()
+		t.Cleanup(func() { server.Close() })
+		return client, nil
+	})
+	ctx := context.Background()
+
+	for _, tt := range []struct {
+		name string
+		dial func() (redis.Conn, error)
+		want string
+	}{
+		{"Dial", func() (redis.Conn, error) { return Dial("tcp", "redis1:6379", dialer) }, "redis1"},
+		{"DialContext", func() (redis.Conn, error) { return DialContext(ctx, "tcp", "redis2:6379", dialer) }, "redis2"},
+		{"DialURL", func() (redis.Conn, error) { return DialURL("redis://redis3:6379", dialer) }, "redis3"},
+		{"DialURLContext", func() (redis.Conn, error) { return DialURLContext(ctx, "redis://redis4", dialer) }, "redis4"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := tt.dial()
+			require.NoError(t, err)
+			defer c.Close()
+			w, ok := c.(*wrappedConn)
+			require.True(t, ok, "the dialed connection was not wrapped")
+			assert.Equal(t, tt.want, w.dbInfo.DBHost)
+		})
+	}
+	assert.Equal(t, []string{"redis1:6379", "redis2:6379", "redis3:6379", "redis4:6379"}, dialed)
+}
+
+func TestDialWrappers_DialFailure(t *testing.T) {
+	want := errors.New("connection refused")
+	failing := redis.DialContextFunc(func(context.Context, string, string) (net.Conn, error) { return nil, want })
+	ctx := context.Background()
+
+	for name, dial := range map[string]func() (redis.Conn, error){
+		"Dial":           func() (redis.Conn, error) { return Dial("tcp", "redis1:6379", failing) },
+		"DialContext":    func() (redis.Conn, error) { return DialContext(ctx, "tcp", "redis1:6379", failing) },
+		"DialURL":        func() (redis.Conn, error) { return DialURL("redis://redis1:6379", failing) },
+		"DialURLContext": func() (redis.Conn, error) { return DialURLContext(ctx, "redis://redis1:6379", failing) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, err := dial()
+			assert.ErrorIs(t, err, want)
+			assert.Nil(t, c, "a failed dial must not hand back a connection")
+		})
+	}
 }

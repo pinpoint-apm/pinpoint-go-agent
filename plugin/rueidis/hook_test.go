@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/v2/test/pptest"
@@ -164,4 +165,184 @@ func TestHook_ReceiveRecordsOnlyAFailedSubscribe(t *testing.T) {
 			assert.True(t, tracer.Events[0].Ended)
 		})
 	}
+}
+
+// fakeClient is a rueidis client whose command methods return canned results,
+// so the hook can be driven without a server.
+type fakeClient struct {
+	rueidis.Client
+	result  rueidis.RedisResult
+	results []rueidis.RedisResult
+	calls   int
+}
+
+func (c *fakeClient) Do(context.Context, rueidis.Completed) rueidis.RedisResult {
+	c.calls++
+	return c.result
+}
+
+func (c *fakeClient) DoCache(context.Context, rueidis.Cacheable, time.Duration) rueidis.RedisResult {
+	c.calls++
+	return c.result
+}
+
+func (c *fakeClient) DoMulti(context.Context, ...rueidis.Completed) []rueidis.RedisResult {
+	c.calls++
+	return c.results
+}
+
+func (c *fakeClient) DoMultiCache(context.Context, ...rueidis.CacheableTTL) []rueidis.RedisResult {
+	c.calls++
+	return c.results
+}
+
+func (c *fakeClient) DoStream(context.Context, rueidis.Completed) rueidis.RedisResultStream {
+	c.calls++
+	return rueidis.NewErrorResultStream(errStream)
+}
+
+func (c *fakeClient) DoMultiStream(context.Context, ...rueidis.Completed) rueidis.MultiRedisResultStream {
+	c.calls++
+	return rueidis.NewErrorResultStream(errStream)
+}
+
+var errStream = errors.New("stream")
+
+var redisNil = rueidis.Nil
+
+// slot0Key returns a key in cluster slot 0. A command is built here from the
+// zero rueidis.Builder, the only one constructible without a live client, and
+// that builder panics on a key outside slot 0; the hash tag pins the slot.
+func slot0Key(name string) string { return "{key3444}" + name }
+
+// Do and DoCache record only the verb, end their span event, hand the client's
+// result back unchanged, and record a failure but not a cache miss.
+func TestHook_SingleCommand(t *testing.T) {
+	failed := errors.New("WRONGTYPE")
+	get := rueidis.Builder{}.Get().Key(slot0Key("secret-key")).Build()
+	cached := rueidis.Builder{}.Get().Key(slot0Key("secret-key")).Cache()
+
+	for _, call := range []struct {
+		name      string
+		operation string
+		do        func(*Hook, rueidis.Client, context.Context) rueidis.RedisResult
+	}{
+		{"Do", "rueidis.Do()", func(h *Hook, c rueidis.Client, ctx context.Context) rueidis.RedisResult {
+			return h.Do(c, ctx, get)
+		}},
+		{"DoCache", "rueidis.DoCache()", func(h *Hook, c rueidis.Client, ctx context.Context) rueidis.RedisResult {
+			return h.DoCache(c, ctx, cached, time.Minute)
+		}},
+	} {
+		for _, tt := range []struct {
+			name    string
+			result  rueidis.RedisResult
+			wantErr error
+		}{
+			{"success", rueidis.RedisResult{}, nil},
+			{"failure", rueidis.NewErrorResult(failed), failed},
+			{"cache miss", rueidis.NewErrorResult(redisNil), nil},
+		} {
+			t.Run(call.name+"/"+tt.name, func(t *testing.T) {
+				tracer := pptest.NewRecordingTracer()
+				client := &fakeClient{result: tt.result}
+
+				resp := call.do(testHook(), client, pinpoint.NewContext(context.Background(), tracer))
+
+				assert.Equal(t, 1, client.calls)
+				assert.Equal(t, tt.result.Error(), resp.Error(), "the client's result must reach the caller")
+				require.Len(t, tracer.Events, 1)
+				e := tracer.Events[0]
+				assert.Equal(t, call.operation, e.Operation)
+				assert.Equal(t, "GET", e.Strings[pinpoint.AnnotationArgs0], "only the verb may be recorded")
+				assert.Equal(t, tt.wantErr, e.Err)
+				assert.True(t, e.Ended)
+			})
+		}
+	}
+}
+
+// DoMulti and DoMultiCache annotate every verb of the batch and fail on its
+// first failed command, skipping misses.
+func TestHook_MultiCommand(t *testing.T) {
+	failed := errors.New("WRONGTYPE")
+	set := rueidis.Builder{}.Set().Key(slot0Key("k")).Value("v").Build()
+	get := rueidis.Builder{}.Get().Key(slot0Key("k")).Build()
+	cachedGet := rueidis.CT(rueidis.Builder{}.Get().Key(slot0Key("k")).Cache(), time.Minute)
+	cachedHget := rueidis.CT(rueidis.Builder{}.Hget().Key(slot0Key("h")).Field("f").Cache(), time.Minute)
+
+	for _, call := range []struct {
+		name      string
+		operation string
+		verbs     string
+		do        func(*Hook, rueidis.Client, context.Context) []rueidis.RedisResult
+	}{
+		{"DoMulti", "rueidis.DoMulti()", pinpoint.AnnotationList(2, func(i int) string { return []string{"SET", "GET"}[i] }),
+			func(h *Hook, c rueidis.Client, ctx context.Context) []rueidis.RedisResult {
+				return h.DoMulti(c, ctx, set, get)
+			}},
+		{"DoMultiCache", "rueidis.DoMultiCache()", pinpoint.AnnotationList(2, func(i int) string { return []string{"GET", "HGET"}[i] }),
+			func(h *Hook, c rueidis.Client, ctx context.Context) []rueidis.RedisResult {
+				return h.DoMultiCache(c, ctx, cachedGet, cachedHget)
+			}},
+	} {
+		for _, tt := range []struct {
+			name    string
+			results []rueidis.RedisResult
+			wantErr error
+		}{
+			{"success", []rueidis.RedisResult{{}, {}}, nil},
+			{"miss then failure", []rueidis.RedisResult{rueidis.NewErrorResult(redisNil), rueidis.NewErrorResult(failed)}, failed},
+			{"misses only", []rueidis.RedisResult{rueidis.NewErrorResult(redisNil), rueidis.NewErrorResult(redisNil)}, nil},
+		} {
+			t.Run(call.name+"/"+tt.name, func(t *testing.T) {
+				tracer := pptest.NewRecordingTracer()
+				client := &fakeClient{results: tt.results}
+
+				resps := call.do(testHook(), client, pinpoint.NewContext(context.Background(), tracer))
+
+				assert.Equal(t, 1, client.calls)
+				assert.Len(t, resps, len(tt.results), "the client's results must reach the caller")
+				require.Len(t, tracer.Events, 1)
+				e := tracer.Events[0]
+				assert.Equal(t, call.operation, e.Operation)
+				assert.Equal(t, call.verbs, e.Strings[pinpoint.AnnotationArgs0])
+				assert.Equal(t, tt.wantErr, e.Err)
+				assert.True(t, e.Ended)
+			})
+		}
+	}
+}
+
+// An untraced call still reaches the client and records nothing.
+func TestHook_UnsampledCallsPassThrough(t *testing.T) {
+	ctx := context.Background()
+	client := &fakeClient{result: rueidis.NewErrorResult(errors.New("x")), results: []rueidis.RedisResult{{}}}
+	h := testHook()
+	get := rueidis.Builder{}.Get().Key(slot0Key("k")).Build()
+	cached := rueidis.Builder{}.Get().Key(slot0Key("k")).Cache()
+
+	assert.Error(t, h.Do(client, ctx, get).Error())
+	assert.Error(t, h.DoCache(client, ctx, cached, time.Minute).Error())
+	assert.Len(t, h.DoMulti(client, ctx, get), 1)
+	assert.Len(t, h.DoMultiCache(client, ctx, rueidis.CT(cached, time.Minute)), 1)
+	assert.NoError(t, h.Receive(receiveClient{}, ctx, rueidis.Builder{}.Subscribe().Channel("c").Build(), nil))
+	assert.Equal(t, 4, client.calls)
+}
+
+// The stream calls are pass-through: they reach the client and open no span
+// event, since the response is read after the call returns.
+func TestHook_StreamsArePassThrough(t *testing.T) {
+	tracer := pptest.NewRecordingTracer()
+	ctx := pinpoint.NewContext(context.Background(), tracer)
+	client := &fakeClient{}
+	get := rueidis.Builder{}.Get().Key(slot0Key("k")).Build()
+
+	s := testHook().DoStream(client, ctx, get)
+	assert.ErrorIs(t, s.Error(), errStream)
+	m := testHook().DoMultiStream(client, ctx, get, get)
+	assert.ErrorIs(t, m.Error(), errStream)
+
+	assert.Equal(t, 2, client.calls)
+	assert.Empty(t, tracer.Events, "a stream call must record nothing")
 }

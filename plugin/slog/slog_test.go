@@ -292,3 +292,15 @@ func TestHandler_WithAttrsHandsEachHandlerItsOwnAttributes(t *testing.T) {
 		assert.Equal(t, "v", fields["app.k"], "the key was rewritten more than once: %v", fields)
 	}
 }
+
+// Neither an empty attribute list nor an empty group name changes a handler,
+// so both hand back the instrumented handler itself rather than a copy.
+func TestHandler_NoOpWithAttrsAndWithGroup(t *testing.T) {
+	h := NewHandler(slog.NewJSONHandler(&bytes.Buffer{}, nil))
+
+	assert.Same(t, h, h.WithAttrs(nil))
+	assert.Same(t, h, h.WithAttrs([]slog.Attr{}))
+	assert.Same(t, h, h.WithGroup(""))
+	assert.NotSame(t, h, h.WithAttrs([]slog.Attr{slog.String("k", "v")}))
+	assert.NotSame(t, h, h.WithGroup("g"))
+}
