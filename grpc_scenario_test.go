@@ -37,11 +37,11 @@ func (c *counter) get() int32           { return c.n.Load() }
 func Test_sendPingWorker_replacesStreamTheCollectorBroke(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 
-	broken := grpcmock.NewMockAgent_PingSessionClient()
+	broken := committable(grpcmock.NewMockAgent_PingSessionClient())
 	broken.OnSend(mock.Anything).Return(collectorDown())
 	broken.On("CloseSend").Return(nil)
 
-	healthy := grpcmock.NewMockAgent_PingSessionClient()
+	healthy := committable(grpcmock.NewMockAgent_PingSessionClient())
 	healthy.OnSend(mock.Anything).Return(nil)
 	healthy.OnRecv().Return(&pb.PPing{}, nil)
 	healthy.On("CloseSend").Return(nil)
@@ -106,12 +106,12 @@ func Test_sendStatsWorker_reopensStreamAfterSendErrorAndResumes(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 	agent.statChan = make(chan *pb.PStatMessage, 4)
 
-	broken := grpcmock.NewMockStat_SendAgentStatClient()
+	broken := committable(grpcmock.NewMockStat_SendAgentStatClient())
 	broken.OnSend(mock.Anything).Return(collectorDown())
 	broken.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
 
 	var stats counter
-	healthy := grpcmock.NewMockStat_SendAgentStatClient()
+	healthy := committable(grpcmock.NewMockStat_SendAgentStatClient())
 	healthy.OnSend(mock.Anything).Run(stats.count).Return(nil)
 	healthy.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
 
@@ -144,7 +144,7 @@ func Test_sendStatsWorker_drainsLastUrlStatDuringShutdown(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var sent counter
-	stream := grpcmock.NewMockStat_SendAgentStatClient()
+	stream := committable(grpcmock.NewMockStat_SendAgentStatClient())
 	stream.OnSend(mock.Anything).Run(func(mock.Arguments) {
 		if sent.n.Add(1) == 1 {
 			close(entered)
@@ -187,7 +187,7 @@ func Test_workers_closeTheirStreamOnThePanicPath(t *testing.T) {
 	t.Run("ping", func(t *testing.T) {
 		agent := newTestAgent(defaultConfig())
 
-		stream := grpcmock.NewMockAgent_PingSessionClient()
+		stream := committable(grpcmock.NewMockAgent_PingSessionClient())
 		stream.OnSend(mock.Anything).Run(func(mock.Arguments) { panic("ping send exploded") }).Return(nil)
 		stream.On("CloseSend").Return(nil)
 
@@ -204,7 +204,7 @@ func Test_workers_closeTheirStreamOnThePanicPath(t *testing.T) {
 
 		// The command worker's stream outlives a whole loop of handler calls,
 		// so its close sits in serveCommandStream - the scope the panic unwinds.
-		stream := grpcmock.NewMockProfilerCommandService_HandleCommandV2Client()
+		stream := committable(grpcmock.NewMockProfilerCommandService_HandleCommandV2Client())
 		stream.OnRecv().Run(func(mock.Arguments) { panic("command handler exploded") }).Return(nil, nil)
 		stream.On("CloseSend").Return(nil)
 
@@ -224,7 +224,7 @@ func Test_workers_closeTheirStreamOnThePanicPath(t *testing.T) {
 func Test_runCommandService_pacesReconnectsAndStopsPromptly(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 
-	stream := grpcmock.NewMockProfilerCommandService_HandleCommandV2Client()
+	stream := committable(grpcmock.NewMockProfilerCommandService_HandleCommandV2Client())
 	stream.OnRecv().Return((*pb.PCmdRequest)(nil), collectorDown())
 	stream.On("CloseSend").Return(nil)
 
@@ -271,7 +271,7 @@ func Test_sendStatsWorker_renewsAgedStream(t *testing.T) {
 	agent.statChan = make(chan *pb.PStatMessage, 4)
 
 	var sent counter
-	stream := grpcmock.NewMockStat_SendAgentStatClient()
+	stream := committable(grpcmock.NewMockStat_SendAgentStatClient())
 	stream.OnSend(mock.Anything).Run(sent.count).Return(nil)
 	stream.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
 
@@ -306,7 +306,7 @@ func Test_runCommandService_renewsAgedStreamWithoutBackOff(t *testing.T) {
 	// Each HandleCommandV2 hands its context over so that Recv, like the real
 	// stream, returns once the deadline set on that context passes.
 	contexts := make(chan context.Context, 16)
-	stream := grpcmock.NewMockProfilerCommandService_HandleCommandV2Client()
+	stream := committable(grpcmock.NewMockProfilerCommandService_HandleCommandV2Client())
 	stream.OnRecv().Run(func(mock.Arguments) {
 		ctx := <-contexts
 		<-ctx.Done()

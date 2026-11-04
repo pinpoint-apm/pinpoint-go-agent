@@ -1268,7 +1268,22 @@ type streamHandle[S comparable] struct {
 	streamAge
 }
 
+// newStreamHandle commits the stream before handing it out. Until a client
+// stream is committed, grpc-go keeps every message sent on it, the message
+// itself and its encoded payload, for a transparent retry, and it does so
+// with retries disabled too. A stream commits when Header, Context or a
+// successful RecvMsg is called, or when the kept payloads pass
+// MaxRetryRPCBufferSize (256 KB): the stat and active thread count streams
+// receive nothing until they close and the command stream nothing until the
+// collector's first command, so they kept every message sent, and the cap counts
+// gzip-compressed bytes, so a 3 h soak at the e2e settings piled up some 5 MB
+// of stat messages before the collector ended the stream. Context does not
+// block. The retry it gives up was never useful here: a failed send closes
+// the stream, and the worker reopens it and sends again (sendStatsOrReopen).
 func newStreamHandle[S comparable](stream S, cancel context.CancelFunc, age streamAge) streamHandle[S] {
+	if cs, ok := any(stream).(interface{ Context() context.Context }); ok {
+		cs.Context()
+	}
 	return streamHandle[S]{stream: stream, cancel: cancel, streamAge: age}
 }
 

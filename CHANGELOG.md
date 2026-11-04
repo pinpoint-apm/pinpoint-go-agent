@@ -522,6 +522,15 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 - **The `SpanStart` tracer hook also sees `NoopTracer()`** from a disabled
   agent's `NewSpanTracer` and `NewSpanTracerWithReader` and from
   `NewKafkaConsumerTracer`, as `TracerHooks` documents.
+- **The stat, command and active thread count streams no longer keep what
+  they sent.** grpc-go keeps every message sent on a client stream for a
+  transparent retry until the stream is committed, by a receive or by the kept
+  payloads passing 256 KB, and it counts those payloads gzip-compressed. The
+  stat stream receives nothing until it closes, so it held every stat and URL
+  stat message of its life: live heap grew by some 2 MB an hour in a 3 h
+  soak, about 5 MB in all, until the collector ended the stream. Each stream
+  is now committed as it opens; a failed send already reopens the stream and
+  sends again.
 - **A goroutine tracer's `SetLogging()` and `Span().SetError()` reach the
   collector.** A goroutine tracer goes out as a `PSpanChunk`, which has
   neither field, so both were stored where nothing sent them: a log line

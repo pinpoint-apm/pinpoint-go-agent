@@ -11,6 +11,7 @@ import (
 
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 	grpcmock "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf/mock"
+	"github.com/stretchr/testify/mock"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -109,8 +110,17 @@ func (agentGrpcClient *mockAgentGrpcClient) callTimes() []time.Time {
 	return append([]time.Time(nil), agentGrpcClient.callAt...)
 }
 
+// committable lets a generated stream mock through newStreamHandle, which
+// calls Context once to commit every stream it hands out.
+func committable[M interface {
+	On(string, ...any) *mock.Call
+}](m M) M {
+	m.On("Context").Return(context.Background()).Maybe()
+	return m
+}
+
 func (agentGrpcClient *mockAgentGrpcClient) PingSession(ctx context.Context, _ ...grpc.CallOption) (pb.Agent_PingSessionClient, error) {
-	return grpcmock.NewMockAgent_PingSessionClient(), nil
+	return committable(grpcmock.NewMockAgent_PingSessionClient()), nil
 }
 
 // metaClientFunc adapts one func to pb.MetadataClient, so a test scripts the
@@ -252,12 +262,15 @@ func newMockSpanGrpc(agent *agent) *spanGrpc {
 // mockAtcStream stands in for the collector side of an active thread count
 // stream: it counts samples and records that it was closed.
 type mockAtcStream struct {
-	grpc.ClientStream // never called; the agent only uses Send/CloseAndRecv
+	grpc.ClientStream // never called; the agent only uses Context/Send/CloseAndRecv
 	mu                sync.Mutex
 	responses         []*pb.PCmdActiveThreadCountRes
 	closed            bool
 	sendErr           error
 }
+
+// Context is what newStreamHandle calls to commit a stream.
+func (s *mockAtcStream) Context() context.Context { return context.Background() }
 
 func (s *mockAtcStream) Send(response *pb.PCmdActiveThreadCountRes) error {
 	s.mu.Lock()
@@ -287,10 +300,13 @@ func (s *mockAtcStream) isClosed() bool {
 
 // mockCmdStream records what the agent writes back on the command stream.
 type mockCmdStream struct {
-	grpc.ClientStream // never called; the agent only uses Send/Recv
+	grpc.ClientStream // never called; the agent only uses Context/Send/Recv
 	mu                sync.Mutex
 	sent              []*pb.PCmdMessage
 }
+
+// Context is what newStreamHandle calls to commit a stream.
+func (s *mockCmdStream) Context() context.Context { return context.Background() }
 
 func (s *mockCmdStream) Send(m *pb.PCmdMessage) error {
 	s.mu.Lock()

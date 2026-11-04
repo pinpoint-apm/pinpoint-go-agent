@@ -230,7 +230,7 @@ func Test_spanGrpc_collectSpanBatch_flushesClosedQueue(t *testing.T) {
 
 func Test_statStream_sendStat(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
-	statStream := grpcmock.NewMockStat_SendAgentStatClient()
+	statStream := committable(grpcmock.NewMockStat_SendAgentStatClient())
 	statStream.OnSend(mock.Anything).Return(nil)
 	client := grpcmock.NewMockStatClient()
 	client.OnSendAgentStat(mock.Anything).Return(statStream, nil)
@@ -250,7 +250,7 @@ func newTestSpanChunk(agent *agent) *spanChunk {
 
 func Test_statStream_sendStatRetry(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
-	statStream := grpcmock.NewMockStat_SendAgentStatClient()
+	statStream := committable(grpcmock.NewMockStat_SendAgentStatClient())
 	statStream.OnSend(mock.Anything).Return(nil)
 	client := grpcmock.NewMockStatClient()
 	client.OnSendAgentStat(mock.Anything).Return((*grpcmock.MockStat_SendAgentStatClient)(nil), collectorDown()).Times(3)
@@ -2001,6 +2001,86 @@ func Test_statGrpc_gzipFallsBackToUncompressed(t *testing.T) {
 	assert.False(t, statGrpc.compress.Load())
 }
 
+// silentStatServer reads a stat stream to its end and sends nothing back
+// before then, headers included, as the collector does: a client stream
+// whose server stays silent is never committed by a receive.
+type silentStatServer struct {
+	pb.UnimplementedStatServer
+	received atomic.Int32
+}
+
+func (s *silentStatServer) SendAgentStat(stream pb.Stat_SendAgentStatServer) error {
+	for {
+		if _, err := stream.Recv(); err != nil {
+			if errors.Is(err, io.EOF) {
+				return stream.SendAndClose(&empty.Empty{})
+			}
+			return err
+		}
+		s.received.Add(1)
+	}
+}
+
+// A sent stat must not outlive its send. An uncommitted grpc-go client
+// stream keeps each sent message for a transparent retry until its gzipped
+// payloads reach 256 KB, so the stat stream, which receives nothing until it
+// closes, kept every stat of its life: some 5 MB over a 3 h soak.
+func Test_statStream_doesNotKeepSentStats(t *testing.T) {
+	server := &silentStatServer{}
+	port, _ := startEncodingServer(t, func(s *grpc.Server) { pb.RegisterStatServer(s, server) })
+
+	cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorHost("127.0.0.1"), WithCollectorStatPort(port))
+	require.NoError(t, err)
+	agent := newTestAgent(cfg)
+	statGrpc, err := newStatGrpc(agent)
+	require.NoError(t, err)
+	defer statGrpc.close()
+	require.True(t, statGrpc.compress.Load(), "the stat stream is gzip by default, which hides the kept messages from the 256 KB cap")
+
+	stream := statGrpc.newStatStreamWithRetry()
+	require.True(t, stream.open())
+	defer stream.close()
+
+	const sends = 20
+	var freed atomic.Int32
+	for i := range sends {
+		stats := make([]*pb.PAgentStat, 6)
+		for j := range stats {
+			stats[j] = &pb.PAgentStat{Timestamp: int64(i*10 + j), CollectInterval: 5000, Gc: &pb.PJvmGc{}}
+		}
+		msg := makePAgentStatBatch(stats)
+		runtime.AddCleanup(msg, func(*atomic.Int32) { freed.Add(1) }, &freed)
+		require.NoError(t, stream.sendStats(msg))
+	}
+	require.Eventually(t, func() bool { return server.received.Load() == sends }, 5*time.Second, 10*time.Millisecond)
+
+	// The stream is still open, so whatever it kept is still reachable.
+	assert.Eventually(t, func() bool {
+		runtime.GC()
+		return freed.Load() == sends
+	}, 5*time.Second, 10*time.Millisecond, "the open stat stream kept sent stats alive")
+	runtime.KeepAlive(stream)
+}
+
+// committingStream records the Context call that commits a grpc-go client
+// stream.
+type committingStream struct{ contexts *atomic.Int32 }
+
+func (s *committingStream) Context() context.Context {
+	s.contexts.Add(1)
+	return context.Background()
+}
+
+// Every long-lived stream goes through newStreamHandle, so the commit there
+// covers the command stream, which receives nothing until the collector's
+// first command, as well as the stat stream.
+func Test_newStreamHandle_commitsTheStream(t *testing.T) {
+	var contexts atomic.Int32
+	h := newStreamHandle[*committingStream](&committingStream{&contexts}, func() {}, streamAge{})
+	assert.True(t, h.open())
+	assert.Equal(t, int32(1), contexts.Load(), "the stream was handed out uncommitted")
+}
+
 // The caller that produced this trace is described on the accept event, service
 // name included.
 func Test_spanGrpc_sendSpanBatch_carriesParentInfo(t *testing.T) {
@@ -2322,7 +2402,7 @@ func Test_commandMetadataContext_carriesSupportCommandCode(t *testing.T) {
 func Test_cmdGrpc_newHandleCommandStream_usesV2WithHeader(t *testing.T) {
 	agent := newTestAgent(defaultConfig())
 
-	stream := grpcmock.NewMockProfilerCommandService_HandleCommandV2Client()
+	stream := committable(grpcmock.NewMockProfilerCommandService_HandleCommandV2Client())
 	var got metadata.MD
 	client := grpcmock.NewMockProfilerCommandServiceClient()
 	client.OnHandleCommandV2(mock.Anything).Run(func(args mock.Arguments) {

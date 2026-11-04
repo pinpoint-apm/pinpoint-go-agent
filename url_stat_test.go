@@ -480,7 +480,7 @@ func Test_urlStatShutdownSendsTheQueuedTickAfterStop(t *testing.T) {
 	agent.urlStats.add(newTestUrlStat("/in-progress", 20, tick))
 
 	var sent counter
-	stream := grpcmock.NewMockStat_SendAgentStatClient()
+	stream := committable(grpcmock.NewMockStat_SendAgentStatClient())
 	stream.OnSend(mock.Anything).Run(sent.count).Return(nil)
 	stream.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
 	client := grpcmock.NewMockStatClient()
