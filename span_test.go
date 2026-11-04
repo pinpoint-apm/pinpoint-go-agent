@@ -1609,6 +1609,49 @@ func TestSpan_AsyncErrorFailsTheTraceRoot(t *testing.T) {
 	}
 }
 
+// A goroutine tracer goes out as a PSpanChunk, which carries neither the
+// logging flag nor a span-level exception: SetLogging lands on the root's
+// PSpan, and Span().SetError on the Goroutine Invocation event the chunk
+// carries, instead of on fields no message sends.
+func TestSpan_AsyncSpanLevelWritesReachTheWire(t *testing.T) {
+	cfg, err := NewConfig(WithAppName("asyncSpanLevelApp"))
+	assert.NoError(t, err)
+	agent := newTestAgent(cfg)
+	root := newSampledSpan(agent, "op", "/rpc")
+	root.NewSpanEvent("fork")
+
+	async := root.NewGoroutineTracer()
+	async.Span().SetLogging(Logged)
+	async.Span().SetError(errors.New("boom"))
+	async.EndSpan()
+
+	chunk, ok := agent.spanQueue.tryDequeue()
+	if !assert.True(t, ok, "async chunk") {
+		return
+	}
+	pchunk := (&spanMessageBuilder{}).makePSpanMessage(chunk).GetSpanChunk()
+	if !assert.NotNil(t, pchunk) || !assert.NotEmpty(t, pchunk.SpanEvent) {
+		return
+	}
+	invocation := pchunk.SpanEvent[0]
+	assert.Equal(t, int32(ServiceTypeAsync), invocation.ServiceType, "the Goroutine Invocation event")
+	assert.Equal(t, "boom", invocation.GetExceptionInfo().GetStringValue().GetValue(), "span-level error message")
+
+	root.EndSpanEvent()
+	root.EndSpan()
+	chunk, ok = agent.spanQueue.tryDequeue()
+	if !assert.True(t, ok, "root final chunk") {
+		return
+	}
+	pspan := (&spanMessageBuilder{}).makePSpanMessage(chunk).GetSpan()
+	if !assert.NotNil(t, pspan) {
+		return
+	}
+	assert.Equal(t, int32(Logged), pspan.LoggingTransactionInfo, "logging flag on the root")
+	assert.Equal(t, int32(ErrorCategoryException), pspan.Err, "the failure still fails the root")
+	assert.Nil(t, pspan.ExceptionInfo, "the message stays on the goroutine's event")
+}
+
 // Known limit: the root's final chunk is sent at its own EndSpan, so a child
 // store until the last child ends; this agent does not (yet).
 func TestSpan_AsyncErrorAfterRootEndIsNotReported(t *testing.T) {

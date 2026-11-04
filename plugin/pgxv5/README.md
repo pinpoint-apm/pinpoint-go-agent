@@ -86,7 +86,7 @@ row := db.QueryRowContext(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
 
 Use the driver or the native tracer on a connection, not both: a connection opened through `pgxv5-pinpoint`
 from a config that also carries `NewTracer()` records every query twice. A name from `stdlib.RegisterConnConfig`
-opens through `pgxv5-pinpoint`, but carries no host or database name for the span events to report.
+opens through `pgxv5-pinpoint` too; its host and database name are read from each new connection.
 
 A `sql.Conn.Raw` callback is handed the instrumented connection, not pgx's
 `*stdlib.Conn`. Unwrap it with `pinpoint.UnwrapSQLConn` before the type

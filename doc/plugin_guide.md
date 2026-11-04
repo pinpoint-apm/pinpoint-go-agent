@@ -179,7 +179,7 @@ pattern comes from depends on the entry point:
 | fiber `Middleware()` | the route pattern | traced, counted under the middleware's own path (`/` for `app.Use(...)`) |
 | gorilla `Middleware()` | the path template | not traced: gorilla runs middleware only on a match |
 | `pphttp.NewServeMux` | the pattern as registered | not traced |
-| `pphttprouter.New`, `ppfasthttprouter.New` | the registered path | not traced |
+| `pphttprouter.New`, `ppfasthttprouter.New` (its groups too) | the registered path | not traced |
 | `ppfasthttp.WrapHandler(h, pattern)`, `pphttprouter.WrapHandle(h, path)` | the pattern argument; nothing without one | - |
 | `pphttp.WrapHandler`, `pphttp.WrapHandlerFunc` | nothing | - |
 | gRPC, kratos | nothing | - |

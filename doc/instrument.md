@@ -227,9 +227,10 @@ func asyncWithWrapper(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-A goroutine tracer has no span of its own on the wire, so most of what it
-writes through `Span()` is never sent: record what the goroutine did on its
-span event (`tracer.SpanEvent().SetError(err)`). See
+A goroutine tracer has no span of its own on the wire: its `Span().SetError()`
+is recorded on its Goroutine Invocation event and its `SetLogging()` on the
+request's span, but its other span-level writes - annotations, rpc name,
+remote address - are never sent, so record those on its span events. See
 [contract 1](api_contracts.md#1-a-tracer-tracks-one-goroutine).
 
 ## Jobs, consumers and workers
@@ -635,9 +636,9 @@ An unsampled or no-op tracer has no transaction to link to: its
 `TransactionId()` is the placeholder `Noop^0^0` on every request. `PspanId` is
 a signed 64-bit integer over its whole range, so store it as a 64-bit integer
 or a string; a tool that keeps numbers as doubles rounds it. A goroutine
-tracer carries its request's ids, but its `SetLogging()` is not sent
-([contract 1](api_contracts.md#1-a-tracer-tracks-one-goroutine)): mark the
-span on the request's own goroutine.
+tracer carries its request's ids, and its `SetLogging()` marks the request's
+span, as long as the request has not ended
+([contract 1](api_contracts.md#1-a-tracer-tracks-one-goroutine)).
 
 ## Testing instrumented code
 

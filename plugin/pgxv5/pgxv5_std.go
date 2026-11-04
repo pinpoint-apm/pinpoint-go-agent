@@ -2,6 +2,7 @@ package pppgxv5
 
 import (
 	"database/sql"
+	"database/sql/driver"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -18,6 +19,7 @@ func DBInfo() pinpoint.DBInfo {
 		DBType:    pinpoint.ServiceTypePgSql,
 		QueryType: pinpoint.ServiceTypePgSqlExecuteQuery,
 		ParseDSN:  parseDSN,
+		ParseConn: parseConn,
 	}
 }
 
@@ -39,4 +41,16 @@ func parseDSN(info *pinpoint.DBInfo, dsn string) {
 
 	info.DBHost = config.Host
 	info.DBName = config.Database
+}
+
+// parseConn reads the host and database from the connection itself when the
+// DSN was a stdlib.RegisterConnConfig name, which pgconn cannot parse and
+// pgx keeps in a registry it does not export: those connections were drawn
+// to no database node.
+func parseConn(info *pinpoint.DBInfo, conn driver.Conn) {
+	if c, ok := conn.(*stdlib.Conn); ok {
+		config := c.Conn().Config()
+		info.DBHost = config.Host
+		info.DBName = config.Database
+	}
 }

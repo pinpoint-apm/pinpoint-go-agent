@@ -65,6 +65,16 @@ func TestRegisteredDriverInfo(t *testing.T) {
 	assert.Equal(t, pinpoint.ServiceTypePgSql, DBInfo().DBType)
 	assert.Equal(t, pinpoint.ServiceTypePgSqlExecuteQuery, DBInfo().QueryType)
 	assert.NotNil(t, DBInfo().ParseDSN, "without a ParseDSN the wrapper never learns the host or database")
+	assert.NotNil(t, DBInfo().ParseConn, "without a ParseConn a RegisterConnConfig name has no database node")
+}
+
+// parseConn reads only pgx's own connections; any other leaves the DBInfo as
+// it is.
+func Test_parseConn_IgnoresOtherConnections(t *testing.T) {
+	info := pinpoint.DBInfo{DBHost: "keep", DBName: "keep"}
+	parseConn(&info, nil)
+	assert.Equal(t, "keep", info.DBHost)
+	assert.Equal(t, "keep", info.DBName)
 }
 
 // Opening through the registered name must hand database/sql the instrumented

@@ -947,6 +947,16 @@ func (span *span) SetError(e error, errorName ...string) {
 	if e == nil || span.warnIfFinished("SetError") {
 		return
 	}
+	// A goroutine tracer goes out as a PSpanChunk, which has no exception
+	// field: its span-level error goes on the Goroutine Invocation event at
+	// the bottom of its call stack, which the chunk carries and whose
+	// SetError fails the root as this one would.
+	if span.isAsyncSpan() {
+		if se, ok := span.eventStack.bottom(); ok {
+			se.SetError(e, errorName...)
+			return
+		}
+	}
 
 	errName := errorNameOf(e, errorName)
 	id := span.agent.cacheError(errName)
@@ -1027,7 +1037,10 @@ func (span *span) SetLogging(logInfo int32) {
 	if span.warnIfFinished("SetLogging") {
 		return
 	}
-	span.loggingInfo.Store(logInfo)
+	// On the root: only its PSpan carries the flag, a goroutine tracer going
+	// out as a PSpanChunk, so a log line written from a goroutine marked
+	// nothing. Java keeps it on the shared TraceRoot too.
+	span.root().loggingInfo.Store(logInfo)
 }
 
 // mergeUrlStat applies a recorded entry onto dst, the entry a span holds; has
@@ -1207,6 +1220,18 @@ func (s *stack) peek() (*spanEvent, bool) {
 
 	if n := len(s.buf); n > 0 {
 		return s.buf[n-1], true
+	}
+	return nil, false
+}
+
+// bottom returns the oldest open event: for a goroutine tracer, its Goroutine
+// Invocation event, until EndSpan ends it.
+func (s *stack) bottom() (*spanEvent, bool) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if len(s.buf) > 0 {
+		return s.buf[0], true
 	}
 	return nil, false
 }

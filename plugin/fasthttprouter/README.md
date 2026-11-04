@@ -59,15 +59,15 @@ func main() {
 ```
 [Full Example Source](/example/fasthttprouter/fasthttprouter_server.go)
 
-Only the routes registered on the Router itself (`GET` ... `ANY`, `Handle`) are traced.
-`r.Group(...)` is fasthttp/router's own: its routes are registered unwrapped, record nothing, and carry no
-`ppfasthttp.CtxKey` value, so an unchecked type assertion on it panics there, and fasthttp does not recover a
-handler panic. Wrap the routes of a group yourself, with the full pattern for the URL statistics:
+The routes of a group are traced as well, nested groups included, and the URL statistics get the full pattern,
+the group's prefix and the route's path:
 
 ``` go
 api := r.Group("/api")
-api.GET("/users/{id}", ppfasthttp.WrapHandler(user, "/api/users/{id}"))
+api.GET("/users/{id}", user) // counted under /api/users/{id}
 ```
+
+The file-serving routes (`ServeFiles`, `ServeFS`, `ServeFilesCustom`) are not traced, on the Router or on a group.
 
 This package supports URL Statistics feature. It aggregates response times, successes and failures for each router pattern.
 A request no route matches is not traced.

@@ -566,6 +566,51 @@ func TestIsWrappedSQLDriver(t *testing.T) {
 	assert.True(t, IsWrappedSQLDriver(WrapSQLDriver(plain, DBInfo{})))
 }
 
+// A data source name ParseDSN cannot read - pgx's RegisterConnConfig names -
+// left every connection without a database node. ParseConn fills it in from
+// the open connection, on both open paths, and only when ParseDSN found
+// nothing: a name ParseDSN did read is never overridden.
+func TestWrapSQLDriver_ParseConnFillsWhatParseDSNCouldNot(t *testing.T) {
+	info := DBInfo{
+		ParseDSN: func(info *DBInfo, dsn string) {
+			if dsn == "plain-dsn" {
+				info.DBName, info.DBHost = "fromdsn", "dsnhost"
+			}
+		},
+		ParseConn: func(info *DBInfo, conn driver.Conn) {
+			if _, ok := conn.(*legacyConn); ok {
+				info.DBName, info.DBHost = "fromconn", "connhost"
+			}
+		},
+	}
+	wrapped := WrapSQLDriver(legacyDriver{}, info)
+	open := func(name string) DBInfo {
+		conn, err := wrapped.Open(name)
+		require.NoError(t, err)
+		return conn.(*sqlConn).dbInfo
+	}
+	connect := func(name string) DBInfo {
+		connector, err := wrapped.(driver.DriverContext).OpenConnector(name)
+		require.NoError(t, err)
+		conn, err := connector.Connect(context.Background())
+		require.NoError(t, err)
+		return conn.(*sqlConn).dbInfo
+	}
+
+	for _, path := range []struct {
+		name string
+		open func(string) DBInfo
+	}{{"Open", open}, {"Connect", connect}} {
+		got := path.open("registeredConnConfig0")
+		assert.Equal(t, "fromconn", got.DBName, "%s: ParseConn fills the name ParseDSN could not read", path.name)
+		assert.Equal(t, "connhost", got.DBHost, path.name)
+
+		got = path.open("plain-dsn")
+		assert.Equal(t, "fromdsn", got.DBName, "%s: a name ParseDSN read is kept", path.name)
+		assert.Equal(t, "dsnhost", got.DBHost, path.name)
+	}
+}
+
 // legacyDriver is a driver with a connector whose connections offer only the
 // pre-context interfaces (Execer, Queryer, Prepare, Begin) and whose
 // statements only Exec and Query: the wrapper's fallback paths.

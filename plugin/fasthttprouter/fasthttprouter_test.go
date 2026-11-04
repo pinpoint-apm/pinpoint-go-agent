@@ -80,6 +80,45 @@ func TestRouter_AllMethodsStayRouted(t *testing.T) {
 	}
 }
 
+// A group's routes, nested groups included, are traced like the router's own:
+// fasthttp/router's Group registers on the router underneath, past the
+// wrapping, so they used to run untraced and without the CtxKey value.
+func TestRouter_GroupRoutesAreTraced(t *testing.T) {
+	pptest.StartAgent(t)
+
+	r := New()
+	api := r.Group("/api")
+	v1 := api.Group("/v1")
+	same := v1.Group("/") // fasthttp/router returns the group itself
+
+	for _, tt := range []struct {
+		name     string
+		register func(path string, h fasthttp.RequestHandler)
+		uri      string
+	}{
+		{"group", func(p string, h fasthttp.RequestHandler) { api.GET(p, h) }, "/api/users/pinpoint"},
+		{"nested group", func(p string, h fasthttp.RequestHandler) { v1.POST(p, h) }, "/api/v1/users/pinpoint"},
+		{"root of a group", func(p string, h fasthttp.RequestHandler) { same.Handle("PURGE", p, h) }, "/api/v1/users/pinpoint"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var name string
+			var tracer pinpoint.Tracer
+			tt.register("/users/{name}", func(ctx *fasthttp.RequestCtx) {
+				name, _ = ctx.UserValue("name").(string)
+				tracer = tracerOf(t, ctx)
+			})
+
+			method := map[string]string{"group": http.MethodGet, "nested group": http.MethodPost, "root of a group": "PURGE"}[tt.name]
+			serve(r.Handler, method, "http://localhost"+tt.uri)
+
+			assert.Equal(t, "pinpoint", name, "route parameter")
+			require.NotNil(t, tracer, "the group route was not traced")
+			assert.True(t, tracer.IsSampled())
+			assert.Equal(t, tt.uri, pptest.SpanOf(t, tracer)["RpcName"])
+		})
+	}
+}
+
 // The router knows the route pattern, so it hands it to the wrapper for URL
 // statistics while the span still names itself after the concrete path.
 func TestRouter_SpanNameIsTheRequestPath(t *testing.T) {

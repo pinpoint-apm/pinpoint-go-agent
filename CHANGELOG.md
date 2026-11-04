@@ -492,6 +492,34 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Fixed
 
+- **A goroutine tracer's `SetLogging()` and `Span().SetError()` reach the
+  collector.** A goroutine tracer goes out as a `PSpanChunk`, which has
+  neither field, so both were stored where nothing sent them: a log line
+  written only from a goroutine - a Kafka handler's fan-out, a
+  `WrapGoroutine` worker - gave its transaction no log link, and the error
+  message was lost while the failure flag still reached the root.
+  `SetLogging()` now marks the request's span, as Java keeps the flag on the
+  shared `TraceRoot`, and `Span().SetError()` is recorded on the goroutine's
+  Goroutine Invocation event.
+- **`ppfasthttprouter` traces the routes of `r.Group(...)`.** fasthttp/router's
+  `Group` registered on the router underneath, past the wrapping, so group
+  routes ran untraced and without the `ppfasthttp.CtxKey` value, whose
+  unchecked type assertion then panicked. `Router.Group` returns a
+  `ppfasthttprouter.Group`, nested groups included, and the URL statistics get
+  the group's prefix with the route's path.
+- **A `stdlib.RegisterConnConfig` name keeps its database node.** pgconn cannot
+  parse the name, so `pgxv5-pinpoint` connections opened by it carried no host
+  or database name and drew no node on the server map. The new optional
+  `DBInfo.ParseConn` reads both from the opened connection when `ParseDSN`
+  found neither, and `pppgxv5` reads them from pgx's connection config.
+- **A fixed `SQL.MaxBindValueSize` turns bind value tracing back on.** A
+  negative size turned `SQL.TraceBindValue` off by writing into its stored
+  value, which a later reload or `Set` fixing the size never touched, so bind
+  values stayed off until restart. It is turned off in the published values
+  only, while the size is negative.
+- **The metadata queue's overflow warning says new items are refused.** It
+  shared the other queues' `oldest overwritten` wording, but the metadata queue
+  keeps what it holds and drops the new item.
 - **Out of range numbers no longer wrap or turn into something else.**
   - The int32 `Elapsed`, `StartElapsed` and `EndElapsed` of a span or span
     event of more than 24.8 days saturate instead of wrapping negative.

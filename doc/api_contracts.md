@@ -57,16 +57,14 @@ silently.
 
 **A goroutine tracer has no span of its own on the wire.** It is sent as a
 `PSpanChunk` of its request's transaction, which carries its span events and
-its end point and nothing else. Its `Span()` accepts every write, but
+its end point and nothing else. Two span-level writes are redirected so that
+they still arrive: `Span().SetError()` is recorded on the goroutine's
+`Goroutine Invocation` event, the first event of its chunk, and `SetLogging()`
+marks the request's span, as long as that has not been sent yet. The rest -
 `Annotations()`, `SetRpcName()`, `SetRemoteAddress()`, `SetAcceptorHost()`,
-`SetServiceType()`, `SetLogging()` and the message of `Span().SetError()` are
-never sent; `SetError()` and `SetFailure()` still fail the transaction
-(rule 9). Record what the goroutine did on its span event instead:
-
-```go
-t := pinpoint.FromContext(ctx) // inside the goroutine
-t.SpanEvent().SetError(err)    // t.Span().SetError(err) would send no message
-```
+`SetServiceType()` - is accepted and never sent; record what the goroutine did
+on its span events instead. `SetError()` and `SetFailure()` fail the
+transaction either way (rule 9).
 
 ## 2. A Goroutine Tracer Needs an Active Span Event
 
@@ -330,9 +328,10 @@ pattern.
 * An error recorded on a goroutine or async tracer (`SetError`, `SetFailure`,
   an event `SetError`, the `SQL.ErrorCount` limit) fails the **root** span:
   an async span goes out as a `PSpanChunk`, which has no `err` field, so the
-  flag is stored on the root. Only the flag moves: an event's error message and
-  exception chain are sent with the event, while the message of a
-  `Span().SetError()` on a goroutine tracer is not sent at all (rule 1). The root's final chunk
+  flag is stored on the root. Only the flag moves: the error message and
+  exception chain are sent with the event that recorded them - for a
+  `Span().SetError()` on a goroutine tracer, its Goroutine Invocation event
+  (rule 1). The root's final chunk
   goes out at the root's own `EndSpan()`, so a child that fails **after** the
   root ended is not reflected in `PSpan.err` or the URL stat. An **unsampled**
   transaction follows the same rule: its async children carry a link to the
@@ -345,7 +344,9 @@ pattern.
   `ErrorCategoryUnknown`; only the first one given is used.
 * Call-stack capture (`Error.TraceCallStack`) and the exception chain apply to
   `SpanEventRecorder.SetError` only; `SpanRecorder.SetError` records the error
-  name and message on the span without either. The capture prefers the stack
+  name and message on the span without either. On a goroutine tracer,
+  `Span().SetError()` is an event error on its Goroutine Invocation event
+  (rule 1), so both apply there. The capture prefers the stack
   the error carries itself, i.e. errors implementing `StackTrace() errors.StackTrace`
   such as `github.com/pkg/errors` errors. An error without one — a plain
   `errors.New` — is recorded with exactly `Error.CallStackDepth` frames

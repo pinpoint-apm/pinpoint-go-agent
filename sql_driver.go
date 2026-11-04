@@ -21,11 +21,22 @@ type DBInfo struct {
 	DBHost    string
 
 	ParseDSN func(info *DBInfo, dsn string)
+	// ParseConn fills in DBName and DBHost from a newly opened connection -
+	// the driver's own - for a data source name ParseDSN cannot read, such as
+	// the name pgx's stdlib.RegisterConnConfig returns. Optional; it runs per
+	// connection, and only when ParseDSN left both empty.
+	ParseConn func(info *DBInfo, conn driver.Conn)
 }
 
 func parseDSN(info *DBInfo, dsn string) {
 	if f := info.ParseDSN; f != nil {
 		f(info, dsn)
+	}
+}
+
+func parseConn(info *DBInfo, conn driver.Conn) {
+	if f := info.ParseConn; f != nil && info.DBName == "" && info.DBHost == "" {
+		f(info, conn)
 	}
 }
 
@@ -89,6 +100,7 @@ func (d *sqlDriver) Open(name string) (driver.Conn, error) {
 
 	sc := newSqlConn(conn, d.dbInfo)
 	parseDSN(&sc.dbInfo, name)
+	parseConn(&sc.dbInfo, conn)
 	return sc.withSessionInterfaces(), nil
 }
 
@@ -118,7 +130,9 @@ func (c *sqlConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	if conn, err := c.Connector.Connect(ctx); err != nil {
 		return nil, err
 	} else {
-		return newSqlConn(conn, c.dbInfo).withSessionInterfaces(), nil
+		sc := newSqlConn(conn, c.dbInfo)
+		parseConn(&sc.dbInfo, conn)
+		return sc.withSessionInterfaces(), nil
 	}
 }
 
