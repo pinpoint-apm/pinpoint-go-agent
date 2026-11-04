@@ -330,7 +330,7 @@ func onStats(w http.ResponseWriter, r *http.Request) {
 	if elapsed > 0 {
 		rps = float64(total) / float64(elapsed)
 	}
-	e2e.WriteJSON(w, http.StatusOK, map[string]any{
+	stats := map[string]any{
 		"uptime_seconds":      elapsed,
 		"total_requests":      total,
 		"active_requests":     activeRequests.Load(),
@@ -342,7 +342,66 @@ func onStats(w http.ResponseWriter, r *http.Request) {
 		"pid":             os.Getpid(),
 		"goroutines":      runtime.NumGoroutine(),
 		"heap_live_bytes": heapLiveBytes(),
-	})
+	}
+	for name, v := range memoryClasses() {
+		stats[name] = v
+	}
+	e2e.WriteJSON(w, http.StatusOK, stats)
+}
+
+// memoryMetrics maps each mem_*_bytes field of /stats to the runtime/metrics
+// classes it sums. Together they say where memory the runtime holds went
+// when RSS grows and the live heap does not: the classes partition
+// /memory/classes/total, so a growing RSS shows up in one of them, or, when
+// none of them grows, outside the Go runtime altogether.
+var memoryMetrics = []struct {
+	field   string
+	classes []string
+}{
+	// Everything the runtime has mapped read-write, released pages included.
+	{"mem_total_bytes", []string{"/memory/classes/total:bytes"}},
+	// Live objects plus the garbage not yet swept.
+	{"mem_heap_objects_bytes", []string{"/memory/classes/heap/objects:bytes"}},
+	// Free space inside spans that hold objects: fragmentation.
+	{"mem_heap_unused_bytes", []string{"/memory/classes/heap/unused:bytes"}},
+	// Free spans still resident, not yet returned to the OS.
+	{"mem_heap_free_bytes", []string{"/memory/classes/heap/free:bytes"}},
+	// Free spans returned to the OS: mapped, but not in RSS.
+	{"mem_heap_released_bytes", []string{"/memory/classes/heap/released:bytes"}},
+	// Goroutine stacks, and the system stacks of OS threads.
+	{"mem_stacks_bytes", []string{"/memory/classes/heap/stacks:bytes", "/memory/classes/os-stacks:bytes"}},
+	// Span and cache bookkeeping, GC metadata.
+	{"mem_metadata_bytes", []string{
+		"/memory/classes/metadata/mcache/free:bytes", "/memory/classes/metadata/mcache/inuse:bytes",
+		"/memory/classes/metadata/mspan/free:bytes", "/memory/classes/metadata/mspan/inuse:bytes",
+		"/memory/classes/metadata/other:bytes",
+	}},
+	// Heap, block and mutex profile buckets: one per distinct stack, never freed.
+	{"mem_profiling_bytes", []string{"/memory/classes/profiling/buckets:bytes"}},
+	{"mem_other_bytes", []string{"/memory/classes/other:bytes"}},
+	// The heap size at which the next GC starts.
+	{"gc_goal_bytes", []string{"/gc/heap/goal:bytes"}},
+}
+
+func memoryClasses() map[string]uint64 {
+	var samples []metrics.Sample
+	for _, m := range memoryMetrics {
+		for _, c := range m.classes {
+			samples = append(samples, metrics.Sample{Name: c})
+		}
+	}
+	metrics.Read(samples)
+	out := make(map[string]uint64, len(memoryMetrics))
+	i := 0
+	for _, m := range memoryMetrics {
+		for range m.classes {
+			if samples[i].Value.Kind() == metrics.KindUint64 {
+				out[m.field] += samples[i].Value.Uint64()
+			}
+			i++
+		}
+	}
+	return out
 }
 
 // heapLiveBytes is the heap the last GC marked live. Unlike HeapAlloc it holds

@@ -222,7 +222,17 @@ the upstream server every `--sample-interval` seconds (default 60):
   `/gc/heap/live:bytes`, what the last GC marked live, which unlike `HeapAlloc`
   does not saw-tooth between GC cycles;
 - `agent_enabled` and `total_requests` from `/stats`. An agent that goes offline
-  mid-run looks like a healthy run in every request-side metric.
+  mid-run looks like a healthy run in every request-side metric;
+- the Go runtime's own account of the memory it holds, also from `/stats`
+  (`runtime/metrics` `/memory/classes`), in the `mem_*_kb` columns appended
+  after those: heap objects, heap fragmentation (`unused`), free heap not yet
+  returned to the OS, heap returned to it, stacks, metadata, profiling buckets,
+  other, everything the runtime has mapped, and the GC goal. When RSS grows and
+  the live heap does not, the summary's breakdown says which of them grew, or,
+  in its "RSS outside the runtime" line, that none did: that line is RSS less
+  what the runtime has mapped and not released (the binary, libc, cgo), an
+  estimate because mapped pages are not all resident. The breakdown explains
+  a verdict and does not count toward it.
 
 The output is the series in `resources.csv`, not the exit status. The summary
 fits a least-squares slope to the second half of each series, since the first

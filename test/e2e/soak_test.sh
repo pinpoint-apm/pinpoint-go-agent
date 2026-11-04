@@ -185,8 +185,16 @@ sampler() {
     # inherited, the first /stats that did not answer would end the series at
     # exactly the moment it got interesting.
     set +e
-    echo "iso_time,elapsed_s,rss_kb,threads,fds,cpu_s,goroutines,heap_live_kb,agent_enabled,total_requests" > "$CSV"
-    local start n=0 now rss cpu thr fd st gor heap enabled total
+    # The mem_* columns, appended so the first ten keep their places, are the
+    # Go runtime's own account of the memory it holds (runtime/metrics
+    # /memory/classes, see the upstream's /stats): when RSS grows and the live
+    # heap does not, they say whether it is fragmentation, free pages not yet
+    # returned, stacks, metadata or nothing of the runtime's.
+    local mem_fields="mem_total mem_heap_objects mem_heap_unused mem_heap_free mem_heap_released mem_stacks mem_metadata mem_profiling mem_other gc_goal"
+    local header="iso_time,elapsed_s,rss_kb,threads,fds,cpu_s,goroutines,heap_live_kb,agent_enabled,total_requests" f
+    for f in $mem_fields; do header+=",${f}_kb"; done
+    echo "$header" > "$CSV"
+    local start n=0 now rss cpu thr fd st gor heap enabled total mem v
     start=$(date +%s)
     while kill -0 "$UPSTREAM_PID" 2>/dev/null; do
         read -r rss cpu <<<"$(ps -o rss=,time= -p "$UPSTREAM_PID")"
@@ -206,9 +214,14 @@ sampler() {
         total=$(json_field total_requests "$st")
         gor=$(json_field goroutines "$st")
         heap=$(json_field heap_live_bytes "$st"); [[ -n "$heap" ]] && heap=$(( heap / 1024 ))
+        mem=""
+        for f in $mem_fields; do
+            v=$(json_field "${f}_bytes" "$st"); [[ -n "$v" ]] && v=$(( v / 1024 ))
+            mem+=",$v"
+        done
         now=$(date +%s)
-        printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$(stamp)" "$(( now - start ))" \
-            "$rss" "$thr" "$fd" "$cpu" "$gor" "$heap" "$enabled" "$total" >> "$CSV"
+        printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s%s\n' "$(stamp)" "$(( now - start ))" \
+            "$rss" "$thr" "$fd" "$cpu" "$gor" "$heap" "$enabled" "$total" "$mem" >> "$CSV"
         # The latest goroutine dump and heap profile, so a GROWING verdict can
         # be traced to its stacks without rerunning the soak.
         curl -sf --max-time 10 -o "$OUT_DIR/goroutines.tmp" \
@@ -312,6 +325,38 @@ for key, label, scale, unit in (("rss_kb", "RSS", 1024, " MB"),
     print(f"  {label:10s} first {v[0]:7{f}}{unit:3s}  max {max(v):7{f}}  last {v[-1]:7{f}}"
           f"   2nd half {min(y for _, y in sec):{f}}-{max(y for _, y in sec):{f}}"
           f" at {drift:+.3f}+/-{err:.3f}{unit}/h" + ("   <-- GROWING" if flag else ""))
+# Where the runtime's memory went, judged the same way but kept out of the
+# verdict: these explain a growing RSS or heap, they are not a second leak
+# signal. "outside the runtime" is RSS less what the runtime has mapped and
+# not released - the binary, libc, cgo - and is an estimate: mapped pages are
+# not all resident.
+if "mem_total_kb" in rows[0] and any(r["mem_total_kb"] for r in rows):
+    for r in rows:
+        if r["rss_kb"] and r["mem_total_kb"] and r["mem_heap_released_kb"]:
+            r["rss_outside_kb"] = str(float(r["rss_kb"]) - float(r["mem_total_kb"]) + float(r["mem_heap_released_kb"]))
+        else:
+            r["rss_outside_kb"] = ""
+    print("\nGo runtime memory (runtime/metrics /memory/classes), MB:")
+    for key, label in (("mem_heap_objects_kb", "heap objects"),
+                       ("mem_heap_unused_kb", "heap unused (fragmentation)"),
+                       ("mem_heap_free_kb", "heap free, not released"),
+                       ("mem_heap_released_kb", "heap released to the OS"),
+                       ("mem_stacks_kb", "stacks"),
+                       ("mem_metadata_kb", "metadata"),
+                       ("mem_profiling_kb", "profiling buckets"),
+                       ("mem_other_kb", "other"),
+                       ("mem_total_kb", "total mapped"),
+                       ("gc_goal_kb", "GC goal"),
+                       ("rss_outside_kb", "RSS outside the runtime")):
+        pts = series(key, 1024)
+        sec = [p for p in pts if p[0] >= half]
+        if len(sec) < 3:
+            continue
+        v = [y for _, y in pts]
+        drift, err = trend_per_hour(sec)
+        flag = drift > SLOPE_LIMIT and drift > SLOPE_SIGMA * err
+        print(f"  {label:28s} first {v[0]:6.1f}  max {max(v):6.1f}  last {v[-1]:6.1f}"
+              f"   2nd half at {drift:+.3f}+/-{err:.3f} MB/h" + ("   <-- growing" if flag else ""))
 cpu = series("cpu_s")
 span = cpu[-1][0] - cpu[0][0]
 used = cpu[-1][1] - cpu[0][1]
