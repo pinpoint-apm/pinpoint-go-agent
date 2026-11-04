@@ -45,12 +45,7 @@ type spanGrpc struct {
 }
 
 func newSpanGrpc(agent *agent) (*spanGrpc, error) {
-	gzipConn := agent.config.String(CfgCollectorGrpcCompression) == compressionGzip
-	var opts []grpc.DialOption
-	if gzipConn {
-		//lint:ignore SA1019 the per-connection compressor; UseCompressor only names the process-wide one (gzip_compressor.go)
-		opts = append(opts, grpc.WithCompressor(newGzipFreeList(spanGzipWriters)))
-	}
+	opts, gzipConn := gzipDialOptions(agent.config, spanGzipWriters)
 	conn, err := connectCollector(agent.config, CfgCollectorSpanPort, opts...)
 	if err != nil {
 		return nil, err
@@ -224,17 +219,9 @@ func (spanGrpc *spanGrpc) sendSpanBatchAsync(chunks []*spanChunk) {
 	})
 }
 
-// callOptions compresses a batch through the connection's own compressor, and
-// sends it as identity once a collector has refused gzip. A sender built
-// without that connection, as the tests' are, sends what it is told.
+// callOptions compresses a batch as compressCallOptions says.
 func (spanGrpc *spanGrpc) callOptions() []grpc.CallOption {
-	switch {
-	case spanGrpc.gzipConn && !spanGrpc.compress.Load():
-		return identityCallOptions
-	case !spanGrpc.gzipConn && spanGrpc.compress.Load():
-		return gzipCallOptions
-	}
-	return nil
+	return compressCallOptions(spanGrpc.gzipConn, spanGrpc.compress.Load())
 }
 
 // sendSpanMessageBatch makes one SendSpanBatch call under sendStreamTimeOut.

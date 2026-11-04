@@ -110,8 +110,9 @@ func Test_gzipFreeList_batchDoesNotAllocateAWriter(t *testing.T) {
 	assert.Less(t, perBatch, uint64(128<<10), "a batch allocated %d bytes; a new gzip writer is about 1 MB", perBatch)
 }
 
-// callOptions turns the connection's own compressor off only by naming
-// identity, and leaves a sender without that connection as it was.
+// The connection's own compressor is turned off only by naming identity, and
+// a sender without that connection is left as it was; the span and stat
+// senders both choose their call options this way.
 func Test_spanGrpc_callOptions(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
@@ -128,6 +129,27 @@ func Test_spanGrpc_callOptions(t *testing.T) {
 			s := &spanGrpc{gzipConn: tt.gzipConn}
 			s.compress.Store(tt.compress)
 			assert.Equal(t, tt.want, s.callOptions())
+		})
+	}
+}
+
+// The stat connection, like the span one, is dialed with gzipFreeList when
+// Compression is gzip: at a few messages a minute, grpc-go's pool was empty
+// for nearly every one of them.
+func Test_newStatGrpc_dialsItsOwnCompressor(t *testing.T) {
+	for _, tt := range []struct {
+		compression string
+		want        bool
+	}{{"gzip", true}, {"none", false}} {
+		t.Run(tt.compression, func(t *testing.T) {
+			cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorHost("127.0.0.1"),
+				WithCollectorGrpcCompression(tt.compression))
+			require.NoError(t, err)
+			s, err := newStatGrpc(newTestAgent(cfg))
+			require.NoError(t, err)
+			defer s.close()
+			assert.Equal(t, tt.want, s.gzipConn)
+			assert.Equal(t, tt.want, s.compress.Load())
 		})
 	}
 }

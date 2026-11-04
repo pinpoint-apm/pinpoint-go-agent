@@ -1999,7 +1999,9 @@ func Test_statGrpc_gzipFallsBackToUncompressed(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 	stream.close()
 
-	assert.Equal(t, []string{"gzip", ""}, rec.seen())
+	// Like the span connection, the stat connection compresses with a
+	// compressor of its own, which a stream turns off by naming identity.
+	assert.Equal(t, []string{"gzip", "identity"}, rec.seen())
 	assert.False(t, statGrpc.compress.Load())
 }
 

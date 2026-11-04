@@ -19,6 +19,9 @@ type statGrpc struct {
 	// a stream because it cannot decompress gzip; the streams opened after
 	// that are uncompressed.
 	compress atomic.Bool
+	// gzipConn is a connection dialed with gzipFreeList, which compresses
+	// every stream on it unless the stream says identity.
+	gzipConn bool
 }
 
 type statStream struct {
@@ -29,7 +32,8 @@ type statStream struct {
 }
 
 func newStatGrpc(agent *agent) (*statGrpc, error) {
-	conn, err := connectCollector(agent.config, CfgCollectorStatPort)
+	opts, gzipConn := gzipDialOptions(agent.config, statGzipWriters)
+	conn, err := connectCollector(agent.config, CfgCollectorStatPort, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -38,8 +42,9 @@ func newStatGrpc(agent *agent) (*statGrpc, error) {
 		statConn:   conn,
 		statClient: pb.NewStatClient(conn),
 		agent:      agent,
+		gzipConn:   gzipConn,
 	}
-	s.compress.Store(agent.config.String(CfgCollectorGrpcCompression) == compressionGzip)
+	s.compress.Store(gzipConn)
 	return s, nil
 }
 
@@ -53,10 +58,7 @@ func (statGrpc *statGrpc) newStatStream() *statStream {
 	ctx, cancel := context.WithCancel(grpcMetadataContext(statGrpc.agent, -1))
 	// Unlike grpc-java, grpc-go cannot compress per message, so every message
 	// of a gzip stream is compressed, a lone small stat included.
-	var opts []grpc.CallOption
-	if statGrpc.compress.Load() {
-		opts = gzipCallOptions
-	}
+	opts := compressCallOptions(statGrpc.gzipConn, statGrpc.compress.Load())
 	stream, err := statGrpc.statClient.SendAgentStat(ctx, opts...)
 	if err != nil {
 		cancel()
