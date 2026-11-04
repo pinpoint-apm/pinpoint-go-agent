@@ -16,7 +16,7 @@ if ! nc -z 127.0.0.1 3306 2>/dev/null; then
     echo "starting MySQL container..."
     container=$(docker run -d --rm -p 3306:3306 \
         -e MYSQL_ROOT_PASSWORD=p123 -e MYSQL_DATABASE=testdb mysql:8.0)
-    until docker exec "$container" mysqladmin ping -h localhost -uroot -pp123 --silent 2>/dev/null; do
+    until docker exec "$container" mysqladmin ping -h 127.0.0.1 -uroot -pp123 --silent 2>/dev/null; do
         sleep 2
     done
 fi
