@@ -66,6 +66,7 @@ func newTestAgent(config *Config) *agent {
 	a.sqlCache = newMetaCache[sqlHash, int32](sqlCacheSize)
 	a.sqlUidCache = newMetaCache[sqlHash, []byte](sqlCacheSize)
 	a.rawSqlCache = newMetaCache[string, normalizedSql](sqlCacheSize)
+	a.longSqlCache = newMetaCache[sqlHash, longSql](sqlCacheSize)
 	a.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
 	a.config.offGrpc = true
 

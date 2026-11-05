@@ -156,8 +156,9 @@ const (
 	defaultSqlCacheSize = 1024
 	// The upper bound keeps a typo from letting the caches grow to gigabytes:
 	// the raw SQL cache holds up to this many texts shorter than
-	// SQL.CacheLengthLimit, each with its normalization, while the id and UID
-	// caches key on a 16-byte statement hash.
+	// SQL.CacheLengthLimit, each with its normalization, and as many longer
+	// statements by hash with parameters shorter than the limit, while the id
+	// and UID caches key on a 16-byte statement hash.
 	maxSqlCacheSize = 65536
 
 	// The bind value budget of one SQL span event: it bounds the whole list,
@@ -175,9 +176,9 @@ const (
 	// past any real "let me see the long bind value" need.
 	maxSqlBindValueSize = grpcMaxMessageSize / 16
 
-	// SQL at or above this many bytes bypasses the raw SQL cache, so its
-	// normalization is not memoized; the id and UID caches key on the
-	// statement hash and ignore the limit.
+	// SQL at or above this many bytes is memoized by its hash, without its
+	// text, and only when its parameters are shorter than this; the id and UID
+	// caches key on the statement hash and ignore the limit.
 	defaultSqlCacheLengthLimit = 2048
 	// Seven days.
 	defaultSqlCacheExpireHours = 168

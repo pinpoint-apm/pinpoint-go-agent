@@ -205,13 +205,13 @@ func (se *spanEvent) SetSQL(sql string, args string) {
 	}
 
 	if cfg.sqlTraceQueryStat {
-		id := agent.cacheSqlUid(n.sql, n.key)
+		id := agent.cacheSqlUid(n, sql)
 		if id == nil {
 			return
 		}
 		se.annotations.appendOwnedBytesStringString(AnnotationSqlUid, id, param, args)
 	} else {
-		id := agent.cacheSql(n.sql, n.key)
+		id := agent.cacheSql(n, sql)
 		if id == 0 {
 			return
 		}

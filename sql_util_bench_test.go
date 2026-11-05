@@ -162,8 +162,10 @@ func BenchmarkSqlNormalizeCachedLongUnique(b *testing.B) {
 	benchmarkNormalizeCachedUnique(b, benchLongSQL, 2048)
 }
 
-// Bypass case: past the default SQL.CacheLengthLimit (2048) benchLongSQL is not
-// memoized, so every call normalizes and hashes it again.
+// Bypass case: past the default SQL.CacheLengthLimit (2048) a statement is
+// memoized by its hash only when its parameters are shorter than the limit,
+// and benchLongSQL's literals are not, so every call normalizes and hashes it
+// again. BenchmarkSetSQLPastLengthLimit covers a long statement that is kept.
 func BenchmarkSqlNormalizeLongPastLengthLimit(b *testing.B) {
 	a := newTestAgent(defaultConfig())
 	b.SetBytes(int64(len(benchLongSQL)))

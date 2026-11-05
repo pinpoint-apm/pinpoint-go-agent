@@ -147,3 +147,9 @@ func TestAnnotationList(t *testing.T) {
 func (span *span) extractFrom(reader DistributedTracingContextReader) {
 	span.extract(reader, continueHeaders(reader, span.agent.clusterNamespace))
 }
+
+// normalizedOf is sql taken as an already normalized statement, for the tests of
+// the SQL id and UID caches.
+func normalizedOf(sql string) normalizedSql {
+	return normalizedSql{sql: sql, key: sqlHashOf(sql)}
+}

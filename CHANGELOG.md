@@ -168,6 +168,11 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   on the statement's hash, so a statement past the limit registers its UID once
   instead of re-sending the metadata on every execution; the limit applies to
   the raw SQL cache alone.
+- **A statement past `SQL.CacheLengthLimit` is memoized by its hash.** It was
+  normalized again on every execution, so a 3 KB statement cost about 40 times
+  one within the limit. The raw SQL cache keeps such a statement's normalized
+  hash and parameters, without its text, when the parameters are shorter than
+  the limit; a long statement of inline literals is still normalized every time.
 - `Log.Output` defaults to `stdout`; it was `stderr`.
 - **The config file is polled, not watched.** The dynamic options reload when
   the file's modification time or size changes, checked every second, so a

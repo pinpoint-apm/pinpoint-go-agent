@@ -1288,8 +1288,8 @@ func Test_sendMetaWorker_releasesSqlCachesOnFailure(t *testing.T) {
 	const sql = "SELECT * FROM t WHERE id = 1"
 	sqlCached := func() bool { _, ok := agent.sqlCache.peek(sqlHashOf(sql)); return ok }
 	sqlUidCached := func() bool { _, ok := agent.sqlUidCache.peek(sqlHashOf(sql)); return ok }
-	assert.NotZero(t, agent.cacheSql(sql, sqlHashOf(sql)))
-	assert.NotEmpty(t, agent.cacheSqlUid(sql, sqlHashOf(sql)))
+	assert.NotZero(t, agent.cacheSql(normalizedOf(sql), sql))
+	assert.NotEmpty(t, agent.cacheSqlUid(normalizedOf(sql), sql))
 	assert.True(t, sqlCached())
 	assert.True(t, sqlUidCached())
 

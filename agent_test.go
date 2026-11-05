@@ -290,9 +290,10 @@ func TestNewAgent_SQLCacheSizeSizesOnlyTheSqlCaches(t *testing.T) {
 	a := newTestAgent(cfg)
 
 	for name, c := range map[string]*metaCacheShard{
-		"sqlCache":    &a.sqlCache.shards[0],
-		"sqlUidCache": &a.sqlUidCache.shards[0],
-		"rawSqlCache": &a.rawSqlCache.shards[0],
+		"sqlCache":     &a.sqlCache.shards[0],
+		"sqlUidCache":  &a.sqlUidCache.shards[0],
+		"rawSqlCache":  &a.rawSqlCache.shards[0],
+		"longSqlCache": &a.longSqlCache.shards[0],
 	} {
 		assert.Equal(t, 64/metaCacheShardCount, c.cap, "%s takes SQL.CacheSize", name)
 	}
@@ -315,7 +316,7 @@ func Test_agent_SQLCachesKeyTheWholeStatement(t *testing.T) {
 
 	t.Run("sql id", func(t *testing.T) {
 		a := newTestAgent(defaultConfig())
-		firstID, secondID := a.cacheSql(first, sqlHashOf(first)), a.cacheSql(second, sqlHashOf(second))
+		firstID, secondID := a.cacheSql(normalizedOf(first), first), a.cacheSql(normalizedOf(second), second)
 
 		assert.NotEqual(t, firstID, secondID, "each statement needs its own id")
 		cached, ok := a.sqlCache.peek(sqlHashOf(second))
@@ -335,7 +336,7 @@ func Test_agent_SQLCachesKeyTheWholeStatement(t *testing.T) {
 
 	t.Run("sql uid", func(t *testing.T) {
 		a := newTestAgent(defaultConfig())
-		firstUid, secondUid := a.cacheSqlUid(first, sqlHashOf(first)), a.cacheSqlUid(second, sqlHashOf(second))
+		firstUid, secondUid := a.cacheSqlUid(normalizedOf(first), first), a.cacheSqlUid(normalizedOf(second), second)
 
 		assert.NotEqual(t, firstUid, secondUid, "the uid hashes the whole statement")
 		cached, ok := a.sqlUidCache.peek(sqlHashOf(second))
@@ -364,7 +365,7 @@ func Test_agent_QueuedSqlIdMetaHoldsNoUntruncatedKey(t *testing.T) {
 	require.Less(t, len(huge), maxSqlNormalizeLength)
 
 	a := newTestAgent(defaultConfig())
-	id := a.cacheSql(huge, sqlHashOf(huge))
+	id := a.cacheSql(normalizedOf(huge), huge)
 	require.NotZero(t, id)
 
 	md := (<-a.metaChan).(sqlMeta)
@@ -384,7 +385,7 @@ func Test_agent_SQLUidCacheEvictsEmptyNormalizedStatement(t *testing.T) {
 	require.Empty(t, nsql, "the normalization of a lone comment is empty")
 
 	a := newTestAgent(defaultConfig())
-	require.NotNil(t, a.cacheSqlUid(nsql, sqlHashOf(nsql)))
+	require.NotNil(t, a.cacheSqlUid(normalizedOf(nsql), nsql))
 	_, cached := a.sqlUidCache.peek(sqlHashOf(nsql))
 	require.True(t, cached, "the empty statement is cached")
 
@@ -406,8 +407,8 @@ func Test_agent_SQLCachesBypassKeysOverLengthLimit(t *testing.T) {
 
 	t.Run("sql uid", func(t *testing.T) {
 		a := newTestAgent(defaultConfig())
-		first := a.cacheSqlUid(sql, sqlHashOf(sql))
-		second := a.cacheSqlUid(sql, sqlHashOf(sql))
+		first := a.cacheSqlUid(normalizedOf(sql), sql)
+		second := a.cacheSqlUid(normalizedOf(sql), sql)
 
 		cached, ok := a.sqlUidCache.peek(sqlHashOf(sql))
 		assert.True(t, ok, "a sql over the length limit is still cached by its hash")
@@ -426,13 +427,92 @@ func Test_agent_SQLCachesBypassKeysOverLengthLimit(t *testing.T) {
 		a := newTestAgent(defaultConfig())
 		a.normalizeSql(sql)
 		_, cached := a.rawSqlCache.peek(sql)
-		assert.False(t, cached, "a sql over the length limit must not be memoized")
+		assert.False(t, cached, "a sql over the length limit must not be memoized by its text")
+		_, cached = a.longSqlCache.peek(sqlHashOf(sql))
+		assert.True(t, cached, "it is memoized by its hash instead")
 
 		withinLimit := "select * from t where id = 1"
 		a.normalizeSql(withinLimit)
 		_, cached = a.rawSqlCache.peek(withinLimit)
 		assert.True(t, cached, "a sql within the limit is still memoized")
+		_, cached = a.longSqlCache.peek(sqlHashOf(withinLimit))
+		assert.False(t, cached, "and only by its text")
 	})
+}
+
+// A statement past SQL.CacheLengthLimit is memoized by its hash: a hit gives
+// back the parameters and the normalized statement's hash without its text,
+// which sqlText recovers, and every path agrees with the uncached normalizer.
+func Test_agent_longSqlCache_hitMatchesTheNormalizer(t *testing.T) {
+	a := newTestAgent(defaultConfig())
+	for _, sql := range []string{
+		"SELECT * FROM t WHERE id IN (?" + strings.Repeat(", ?", 1000) + ")",
+		"SELECT * FROM t WHERE id IN (?" + strings.Repeat(", ?", 1000) + ") AND name = 'x' AND n = 7",
+		"SELECT * FROM t WHERE id IN (?" + strings.Repeat(", ?", 30000) + ")", // past maxSqlSize
+	} {
+		require.False(t, a.sqlCacheable(sql) && len(sql) <= maxSqlSize, "a %d-byte statement takes the raw SQL cache", len(sql))
+		want := normalizeSqlText(sql, a.sqlRemoveComments)
+
+		miss := a.normalizeSql(sql)
+		assert.Equal(t, want, miss, "the miss returns the full result")
+
+		hit := a.normalizeSql(sql)
+		assert.Empty(t, hit.sql, "a hit carries no text")
+		assert.Equal(t, want.param, hit.param)
+		assert.Equal(t, want.key, hit.key)
+		assert.Equal(t, want.sql, a.sqlText(hit, sql), "sqlText recovers the normalized text")
+	}
+}
+
+// What longSqlCache keeps is bounded by SQL.CacheLengthLimit: a statement
+// whose parameters reach it is normalized on every execution, and a limit of 0
+// memoizes nothing at all.
+func Test_agent_longSqlCache_admitsParametersWithinTheLimit(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Set(CfgSQLCacheLengthLimit, 64)
+	a := newTestAgent(cfg)
+
+	few := "select * from t where a = 1 and b = 'two' and c = ?" + strings.Repeat(" ", 64)
+	many := "select * from t where id in (" + strings.Repeat("1234567, ", 20) + "0)"
+	a.normalizeSql(few)
+	a.normalizeSql(many)
+	_, cached := a.longSqlCache.peek(sqlHashOf(few))
+	assert.True(t, cached, "parameters within the limit are kept")
+	_, cached = a.longSqlCache.peek(sqlHashOf(many))
+	assert.False(t, cached, "parameters reaching the limit are not")
+
+	cfg = defaultConfig()
+	cfg.Set(CfgSQLCacheLengthLimit, 0)
+	a = newTestAgent(cfg)
+	a.normalizeSql("select 1")
+	_, cached = a.longSqlCache.peek(sqlHashOf("select 1"))
+	assert.False(t, cached, "a limit of 0 memoizes nothing")
+}
+
+// A hit that finds its id or UID evicted registers the statement again, and the
+// metadata it publishes carries the text, normalized again from the raw SQL.
+func Test_agent_longSqlCache_hitPublishesTheText(t *testing.T) {
+	sql := "SELECT * FROM t WHERE name = 'x' AND id IN (?" + strings.Repeat(", ?", 1000) + ")"
+	for _, queryStat := range []bool{false, true} {
+		t.Run(fmt.Sprintf("TraceQueryStat=%v", queryStat), func(t *testing.T) {
+			a := newTestAgent(defaultConfig())
+			want := normalizeSqlText(sql, a.sqlRemoveComments)
+			a.normalizeSql(sql)
+			hit := a.normalizeSql(sql)
+			require.Empty(t, hit.sql, "the second call is a hit")
+
+			var md any
+			if queryStat {
+				require.Equal(t, want.key[:], a.cacheSqlUid(hit, sql))
+				md = <-a.metaChan
+				assert.Equal(t, want.sql, md.(sqlUidMeta).sql)
+			} else {
+				require.NotZero(t, a.cacheSql(hit, sql))
+				md = <-a.metaChan
+				assert.Equal(t, want.sql, md.(sqlMeta).sql)
+			}
+		})
+	}
 }
 
 // SQL.CacheLengthLimit is fixed, read once in NewAgent like SQL.CacheSize, and
@@ -492,8 +572,8 @@ func Test_agent_SQLIdCacheIgnoresLengthLimit(t *testing.T) {
 			cfg.Set(CfgSQLCacheLengthLimit, limit)
 			a := newTestAgent(cfg)
 
-			first := a.cacheSql(sql, sqlHashOf(sql))
-			second := a.cacheSql(sql, sqlHashOf(sql))
+			first := a.cacheSql(normalizedOf(sql), sql)
+			second := a.cacheSql(normalizedOf(sql), sql)
 
 			assert.Equal(t, first, second, "the same sql must keep its id")
 			assert.Equal(t, int32(1), a.sqlIdGen.id.Load(), "only one id may be issued")
@@ -512,7 +592,7 @@ func Test_agent_MetadataCachesDropOverflowedIds(t *testing.T) {
 		cache func(*agent) int32
 	}{
 		{"sql", func(a *agent) *idGen { return &a.sqlIdGen },
-			func(a *agent) int32 { return a.cacheSql("select 1", sqlHashOf("select 1")) }},
+			func(a *agent) int32 { return a.cacheSql(normalizedOf("select 1"), "select 1") }},
 		{"error", func(a *agent) *idGen { return &a.errorIdGen },
 			func(a *agent) int32 { return a.cacheError("boom") }},
 		{"api", func(a *agent) *idGen { return &a.apiIdGen },
@@ -1002,8 +1082,8 @@ func Test_agent_MetaQueueFullMintsNoId(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		assert.Zero(t, a.cacheError("boom"), "no error id while the queue is full")
-		assert.Zero(t, a.cacheSql("select 1", sqlHashOf("select 1")), "no sql id while the queue is full")
-		assert.Nil(t, a.cacheSqlUid("select 2", sqlHashOf("select 2")), "no sql uid while the queue is full")
+		assert.Zero(t, a.cacheSql(normalizedOf("select 1"), "select 1"), "no sql id while the queue is full")
+		assert.Nil(t, a.cacheSqlUid(normalizedOf("select 2"), "select 2"), "no sql uid while the queue is full")
 		assert.Zero(t, a.cacheSpanApi("api", apiTypeDefault), "no api id while the queue is full")
 	}
 	assert.EqualValues(t, 0, a.errorIdGen.id.Load()-2, "no id spent on the refused uses")
@@ -1925,22 +2005,22 @@ func Test_agent_SQLCachesRefuseAKeyPastTheNormalizationCap(t *testing.T) {
 
 	t.Run("sql id", func(t *testing.T) {
 		a := newTestAgent(defaultConfig())
-		assert.Equal(t, int32(0), a.cacheSql(past, sqlHashOf(past)), "no id for a key past the cap")
+		assert.Equal(t, int32(0), a.cacheSql(normalizedOf(past), past), "no id for a key past the cap")
 		_, cached := a.sqlCache.peek(sqlHashOf(past))
 		assert.False(t, cached)
 		assert.Empty(t, a.metaChan, "nothing queued for a refused key")
 
-		assert.NotEqual(t, int32(0), a.cacheSql(within, sqlHashOf(within)), "a key at the cap is admitted")
+		assert.NotEqual(t, int32(0), a.cacheSql(normalizedOf(within), within), "a key at the cap is admitted")
 	})
 
 	t.Run("sql uid", func(t *testing.T) {
 		a := newTestAgent(defaultConfig())
-		assert.Nil(t, a.cacheSqlUid(past, sqlHashOf(past)), "no uid for a key past the cap")
+		assert.Nil(t, a.cacheSqlUid(normalizedOf(past), past), "no uid for a key past the cap")
 		_, cached := a.sqlUidCache.peek(sqlHashOf(past))
 		assert.False(t, cached)
 		assert.Empty(t, a.metaChan, "nothing queued for a refused key")
 
-		assert.Equal(t, sqlUid(within), a.cacheSqlUid(within, sqlHashOf(within)), "a key at the cap is admitted")
+		assert.Equal(t, sqlUid(within), a.cacheSqlUid(normalizedOf(within), within), "a key at the cap is admitted")
 	})
 }
 
@@ -2151,8 +2231,8 @@ func Test_SqlCacheLengthLimitAppliesToTheRawCacheOnly(t *testing.T) {
 
 	// The id cache takes both: an id is drawn from a sequence, so a bypass
 	// would mint a new one per execution.
-	assert.NotZero(t, agent.cacheSql(short, sqlHashOf(short)))
-	assert.NotZero(t, agent.cacheSql(long, sqlHashOf(long)))
+	assert.NotZero(t, agent.cacheSql(normalizedOf(short), short))
+	assert.NotZero(t, agent.cacheSql(normalizedOf(long), long))
 	_, shortHasId := agent.sqlCache.peek(sqlHashOf(short))
 	_, longHasId := agent.sqlCache.peek(sqlHashOf(long))
 	assert.True(t, shortHasId, "a short statement is cached by id")
@@ -2160,8 +2240,8 @@ func Test_SqlCacheLengthLimitAppliesToTheRawCacheOnly(t *testing.T) {
 
 	// The UID cache takes both as well: a bypass re-sent the UID metadata on
 	// every execution of a long statement.
-	assert.NotEmpty(t, agent.cacheSqlUid(short, sqlHashOf(short)))
-	assert.NotEmpty(t, agent.cacheSqlUid(long, sqlHashOf(long)))
+	assert.NotEmpty(t, agent.cacheSqlUid(normalizedOf(short), short))
+	assert.NotEmpty(t, agent.cacheSqlUid(normalizedOf(long), long))
 	_, shortHasUid := agent.sqlUidCache.peek(sqlHashOf(short))
 	_, longHasUid := agent.sqlUidCache.peek(sqlHashOf(long))
 	assert.True(t, shortHasUid, "a short statement is cached by uid")
@@ -2177,8 +2257,8 @@ func Test_SqlCacheLengthLimitAppliesToTheRawCacheOnly(t *testing.T) {
 
 	// A long statement keeps a stable id and UID: the same id and the same UID
 	// come back for a repeated statement.
-	assert.Equal(t, agent.cacheSql(long, sqlHashOf(long)), agent.cacheSql(long, sqlHashOf(long)), "the id is stable")
-	assert.Equal(t, agent.cacheSqlUid(long, sqlHashOf(long)), agent.cacheSqlUid(long, sqlHashOf(long)), "the uid is stable")
+	assert.Equal(t, agent.cacheSql(normalizedOf(long), long), agent.cacheSql(normalizedOf(long), long), "the id is stable")
+	assert.Equal(t, agent.cacheSqlUid(normalizedOf(long), long), agent.cacheSqlUid(normalizedOf(long), long), "the uid is stable")
 }
 
 // Test_ShutdownDeadline locks the bound on the blocking phase

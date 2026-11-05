@@ -20,6 +20,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -491,6 +492,26 @@ func BenchmarkSetSQL(b *testing.B) {
 	defer stop()
 	s := defaultSpan(a)
 	const query = "SELECT id, name, email FROM users WHERE id = 1234 AND status = 'active' AND age > 21"
+
+	b.ReportAllocs()
+	for b.Loop() {
+		se := newSpanEvent(s, "query")
+		se.SetSQL(query, "")
+	}
+}
+
+// BenchmarkSetSQLPastLengthLimit is BenchmarkSetSQL for a statement past the
+// default SQL.CacheLengthLimit (2048): an ORM's IN list of placeholders, which
+// the raw SQL cache does not take.
+func BenchmarkSetSQLPastLengthLimit(b *testing.B) {
+	a := benchAgent()
+	stop := startDrain(a)
+	defer stop()
+	s := defaultSpan(a)
+	query := "SELECT id, name, email FROM users WHERE id IN (?" + strings.Repeat(", ?", 1000) + ")"
+	if a.sqlCacheable(query) {
+		b.Fatalf("a %d-byte statement is within the limit", len(query))
+	}
 
 	b.ReportAllocs()
 	for b.Loop() {

@@ -100,8 +100,11 @@ type agent struct {
 	sqlIdGen    idGen
 	sqlUidCache *metaCache[sqlHash, []byte]
 	rawSqlCache *metaCache[string, normalizedSql]
-	apiCache    *metaCache[apiCacheKey, int32]
-	apiIdGen    idGen
+	// longSqlCache memoizes the statements rawSqlCache does not take, by hash
+	// and without their text; see normalizeLongSql.
+	longSqlCache *metaCache[sqlHash, longSql]
+	apiCache     *metaCache[apiCacheKey, int32]
+	apiIdGen     idGen
 
 	// sqlCacheLengthLimit is SQL.CacheLengthLimit read once in NewAgent, like
 	// SQL.CacheSize: the key is fixed, so a reload can neither leave over-limit
@@ -349,6 +352,7 @@ func newAgentStruct(config *Config) *agent {
 	agent.sqlUidCache = newMetaCache[sqlHash, []byte](sqlCacheSize)
 	agent.sqlUidCache.ttl = time.Duration(config.Int(CfgSQLCacheExpireHours)) * time.Hour
 	agent.rawSqlCache = newMetaCache[string, normalizedSql](sqlCacheSize)
+	agent.longSqlCache = newMetaCache[sqlHash, longSql](sqlCacheSize)
 	agent.apiCache = newMetaCache[apiCacheKey, int32](cacheSize)
 	return agent
 }

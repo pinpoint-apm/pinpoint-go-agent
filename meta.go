@@ -477,10 +477,11 @@ func (agent *agent) cacheError(errorName string) int32 {
 }
 
 // sqlCacheable reports whether a raw SQL text is short enough to memoize its
-// normalization (rawSqlCache), which holds the text as key and value. Anything
-// longer is normalized on every use, so a handful of huge generated statements
-// cannot pin megabytes of cache for the life of the process. The limit
-// (SQL.CacheLengthLimit) is in bytes.
+// normalization by the text (rawSqlCache), which holds the text as key and
+// value. Anything longer is memoized by its hash (longSqlCache), which holds
+// no text, so a handful of huge generated statements cannot pin megabytes of
+// cache for the life of the process. The limit (SQL.CacheLengthLimit) is in
+// bytes, and bounds the parameters longSqlCache keeps as well.
 //
 // The id and UID caches are not bounded by it: both key on the statement's
 // 128-bit hash (sqlHash), so an entry costs the same whatever the statement's
@@ -490,10 +491,12 @@ func (agent *agent) sqlCacheable(sql string) bool {
 	return len(sql) < agent.sqlCacheLengthLimit
 }
 
-// cacheSql takes key, the sqlHashOf of sql, from the caller: normalizeSql keeps
-// it with the normalized statement, so a cached statement is not hashed again
-// per execution - for a 2 KB statement the hash was over half the cost of a hit.
-func (agent *agent) cacheSql(sql string, key sqlHash) int32 {
+// cacheSql registers the normalized statement n by n.key, which normalizeSql
+// keeps with it, so a cached statement is not hashed again per execution - for
+// a 2 KB statement the hash was over half the cost of a hit. raw is the
+// statement n came from: the text is read (sqlText) only to publish the
+// metadata of a miss.
+func (agent *agent) cacheSql(n normalizedSql, raw string) int32 {
 	// Keyed on a hash of the untruncated statement, not on the abbreviated
 	// text: an abbreviated key keeps no more than a 64KB prefix and the total
 	// length, so two statements agreeing on both would share one id and the
@@ -506,17 +509,21 @@ func (agent *agent) cacheSql(sql string, key sqlHash) int32 {
 	// but literal-heavy SQL normalizes larger than it came in, so the key is
 	// checked here as well - a key past the cap is refused (no id, so SetSQL
 	// records no annotation) rather than admitted to the cache and metaChan.
-	if !sqlNormalizable(sql) {
+	// A result longSqlCache answered carries no text, and was admitted only
+	// within the cap.
+	if !sqlNormalizable(n.sql) {
 		return 0
 	}
-	return registerMeta(agent, agent.sqlCache, "sql", key,
+	return registerMeta(agent, agent.sqlCache, "sql", n.key,
 		// A wrapped sequence records no SQL: SetSQL skips a zero id.
 		func() (int32, bool) { id := agent.sqlIdGen.next("sql"); return id, id != 0 },
-		func(id int32) any { return sqlMeta{id: id, sql: abbreviateString(sql, maxSqlSize), key: key} })
+		func(id int32) any {
+			return sqlMeta{id: id, sql: abbreviateString(agent.sqlText(n, raw), maxSqlSize), key: n.key}
+		})
 }
 
-// cacheSqlUid takes key, the sqlHashOf of sql, from the caller, as cacheSql does.
-func (agent *agent) cacheSqlUid(sql string, key sqlHash) []byte {
+// cacheSqlUid registers the normalized statement n by n.key, as cacheSql does.
+func (agent *agent) cacheSqlUid(n normalizedSql, raw string) []byte {
 	// The UID is the hash of the untruncated statement, and the cache keys on
 	// that same hash: a text key was bounded by SQL.CacheLengthLimit, so every
 	// execution of a statement past it - 2 KB by default, which an ORM reaches
@@ -524,15 +531,15 @@ func (agent *agent) cacheSqlUid(sql string, key sqlHash) []byte {
 	// 16 bytes per statement whatever its length, and only the published text
 	// is abbreviated. Nothing past maxSqlNormalizeLength gets a UID at all (see
 	// cacheSql).
-	if !sqlNormalizable(sql) {
+	if !sqlNormalizable(n.sql) {
 		return nil
 	}
-	return registerMeta(agent, agent.sqlUidCache, "sql uid", key,
-		// The UID is a copy made on a miss: slicing key itself would move it
-		// to the heap on every call, hits included.
-		func() ([]byte, bool) { uid := key; return uid[:], true },
+	return registerMeta(agent, agent.sqlUidCache, "sql uid", n.key,
+		// The UID is a copy made on a miss: slicing the key itself would move
+		// it to the heap on every call, hits included.
+		func() ([]byte, bool) { uid := n.key; return uid[:], true },
 		func(uid []byte) any {
-			return sqlUidMeta{uid: uid, sql: abbreviateString(sql, maxSqlSize), key: key}
+			return sqlUidMeta{uid: uid, sql: abbreviateString(agent.sqlText(n, raw), maxSqlSize), key: n.key}
 		})
 }
 
@@ -561,10 +568,33 @@ func sqlHashOf(sql string) sqlHash {
 // sqlHashOf that cacheSql and cacheSqlUid look it up by. The strings are shared
 // and the hash is a value, so a cached result can be handed to any number of
 // callers without copying.
+//
+// A result longSqlCache answered has no sql: that cache keeps no text, and
+// sqlText normalizes the raw statement again for the one use that needs it,
+// metadata a miss publishes. The raw statement is not kept here: a fourth
+// field, a 64-byte value, made a rawSqlCache hit twice as slow.
 type normalizedSql struct {
 	sql   string
 	param string
 	key   sqlHash
+}
+
+// sqlText is n's normalized statement, normalized again from raw, the statement
+// n came from, when longSqlCache answered without it. A statement that does
+// normalize to nothing is normalized again to nothing.
+func (agent *agent) sqlText(n normalizedSql, raw string) string {
+	if n.sql != "" {
+		return n.sql
+	}
+	nsql, _ := newSqlNormalizer(raw, agent.sqlRemoveComments).run()
+	return nsql
+}
+
+// longSql is what longSqlCache keeps of a statement: the normalized
+// statement's hash and its parameters, not its text.
+type longSql struct {
+	key   sqlHash
+	param string
 }
 
 // normalizeSqlText normalizes sql and hashes the result, uncached.
@@ -587,13 +617,33 @@ func (agent *agent) normalizeSql(sql string) normalizedSql {
 	// every entry in the cache was normalized the same way.
 	removeComments := agent.sqlRemoveComments
 	if len(sql) > maxSqlSize || !agent.sqlCacheable(sql) {
-		return normalizeSqlText(sql, removeComments)
+		return agent.normalizeLongSql(sql)
 	}
 	if n, ok := agent.rawSqlCache.peek(sql); ok {
 		return n
 	}
 	n := normalizeSqlText(sql, removeComments)
 	agent.rawSqlCache.peekOrAdd(sql, n)
+	return n
+}
+
+// normalizeLongSql memoizes a statement the raw SQL cache does not take by the
+// sqlHashOf of its raw text, keeping only what a hit needs: the normalized
+// statement's hash, which the id and UID caches key on, and its parameters. An
+// entry so costs less than SQL.CacheLengthLimit whatever the statement's length,
+// where normalizing again on every execution made a 3 KB statement cost 40
+// times one within the limit. A result whose parameters reach the limit is not
+// kept, since they are what the entry would hold: a statement of inline
+// literals is normalized on every execution, as before.
+func (agent *agent) normalizeLongSql(sql string) normalizedSql {
+	rawKey := sqlHashOf(sql)
+	if m, ok := agent.longSqlCache.peek(rawKey); ok {
+		return normalizedSql{param: m.param, key: m.key}
+	}
+	n := normalizeSqlText(sql, agent.sqlRemoveComments)
+	if agent.sqlCacheable(n.param) && sqlNormalizable(n.sql) {
+		agent.longSqlCache.peekOrAdd(rawKey, longSql{key: n.key, param: n.param})
+	}
 	return n
 }
 

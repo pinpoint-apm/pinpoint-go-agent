@@ -269,11 +269,12 @@ func WithSQLEnableRawSqlCache(enable bool) ConfigOption {
 // metadata continuously. Read once at agent startup.
 func WithSQLCacheSize(size int) ConfigOption { return withValue(CfgSQLCacheSize, size) }
 
-// WithSQLCacheLengthLimit sets the length in bytes from which a raw SQL text's
-// normalization is no longer memoized (the raw SQL cache). The SQL-ID and
-// SQL-UID caches are exempt: both key on a hash of the statement, so an entry
-// costs the same whatever its length. -1 lifts the limit, though a text over
-// 64 KiB is never memoized.
+// WithSQLCacheLengthLimit sets the length in bytes from which the raw SQL cache
+// memoizes a statement's normalization by its hash instead of its text,
+// keeping its parameters only when they are shorter than the limit. The SQL-ID
+// and SQL-UID caches are exempt: both key on a hash of the statement, so an
+// entry costs the same whatever its length. 0 memoizes nothing; -1 lifts the
+// limit, though a text over 64 KiB is memoized by its hash.
 func WithSQLCacheLengthLimit(limit int) ConfigOption { return withValue(CfgSQLCacheLengthLimit, limit) }
 
 // WithSQLCacheExpireHours sets how many hours a SQL UID stays cached before
