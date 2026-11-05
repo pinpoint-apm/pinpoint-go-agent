@@ -289,16 +289,16 @@ func TestNewAgent_SQLCacheSizeSizesOnlyTheSqlCaches(t *testing.T) {
 	cfg.Set(CfgSQLCacheSize, 64)
 	a := newTestAgent(cfg)
 
-	for name, c := range map[string]*metaCacheShard{
-		"sqlCache":     &a.sqlCache.shards[0],
-		"sqlUidCache":  &a.sqlUidCache.shards[0],
-		"rawSqlCache":  &a.rawSqlCache.shards[0],
-		"longSqlCache": &a.longSqlCache.shards[0],
+	for name, capacity := range map[string]int64{
+		"sqlCache":     a.sqlCache.capacity,
+		"sqlUidCache":  a.sqlUidCache.capacity,
+		"rawSqlCache":  a.rawSqlCache.capacity,
+		"longSqlCache": a.longSqlCache.capacity,
 	} {
-		assert.Equal(t, 64/metaCacheShardCount, c.cap, "%s takes SQL.CacheSize", name)
+		assert.EqualValues(t, 64, capacity, "%s takes SQL.CacheSize", name)
 	}
-	assert.Equal(t, cacheSize/metaCacheShardCount, a.apiCache.shards[0].cap, "apiCache keeps cacheSize")
-	assert.Equal(t, cacheSize/metaCacheShardCount, a.errorCache.shards[0].cap, "errorCache keeps cacheSize")
+	assert.EqualValues(t, cacheSize, a.apiCache.capacity, "apiCache keeps cacheSize")
+	assert.EqualValues(t, cacheSize, a.errorCache.capacity, "errorCache keeps cacheSize")
 }
 
 // The SQL caches key on the hash of the untruncated normalized statement and

@@ -50,7 +50,7 @@ func TestMetaCacheRemoveKeepsAnUnexpectedValue(t *testing.T) {
 	v, ok := c.peek("a")
 	assert.True(t, ok, "an entry with a different value is not the one that failed")
 	assert.Equal(t, int32(2), v)
-	assert.Equal(t, int64(1), c.shard("a").size.Load())
+	assert.Equal(t, int64(1), c.size.Load())
 }
 
 // An entry older than the ttl reads as a miss and is dropped, so the next
@@ -70,7 +70,7 @@ func TestMetaCacheExpiresAfterTtl(t *testing.T) {
 	now = now.Add(time.Nanosecond)
 	_, ok = c.peek("a")
 	assert.False(t, ok, "expired at the ttl")
-	assert.Equal(t, int64(0), c.shard("a").size.Load(), "the expired entry is removed, not left to age out")
+	assert.Equal(t, int64(0), c.size.Load(), "the expired entry is removed, not left to age out")
 
 	_, ok = c.peekOrAdd("a", 2)
 	assert.False(t, ok, "the key is free for re-registration")
@@ -84,34 +84,34 @@ func TestMetaCacheExpiresAfterTtl(t *testing.T) {
 	assert.True(t, ok)
 }
 
+// An insert past the capacity evicts the cache's least recently used entry,
+// whatever shard it is in and whatever shard the new key lands on.
 func TestMetaCacheEvictsLeastRecentlyUsed(t *testing.T) {
-	// capacity 16 over 16 shards = 1 entry per shard: two keys in the same
-	// shard evict each other. Find such a pair (the hash seed is random per
-	// process), then check the older key is the one that goes.
 	c := newMetaCache[string, int32](metaCacheShardCount)
-	first := "key-0"
-	second := ""
-	for i := 1; i < 1000; i++ {
-		k := fmt.Sprintf("key-%d", i)
-		if c.shard(k) == c.shard(first) {
-			second = k
-			break
-		}
+	for i := 0; i < metaCacheShardCount; i++ {
+		c.peekOrAdd(fmt.Sprintf("key-%d", i), int32(i))
 	}
-	assert.NotEmpty(t, second)
+	// Two keys in one shard, as the hash seed (random per process) puts them,
+	// no longer evict each other while the cache has room.
+	_, ok := c.m.Load("key-0")
+	assert.True(t, ok, "within the capacity nothing is evicted")
 
-	c.peekOrAdd(first, 1)
-	c.peekOrAdd(second, 2)
-	_, ok := c.peek(first)
-	assert.False(t, ok)
-	v, ok := c.peek(second)
+	c.peekOrAdd("key-new", 99)
+	_, ok = c.m.Load("key-0")
+	assert.False(t, ok, "the least recently used entry goes")
+	for i := 1; i < metaCacheShardCount; i++ {
+		_, ok := c.m.Load(fmt.Sprintf("key-%d", i))
+		assert.True(t, ok, "key-%d stays", i)
+	}
+	v, ok := c.peek("key-new")
 	assert.True(t, ok)
-	assert.Equal(t, int32(2), v)
+	assert.Equal(t, int32(99), v)
+	assert.EqualValues(t, metaCacheShardCount, c.size.Load())
 }
 
 func TestMetaCacheConcurrent(t *testing.T) {
-	// Small capacity keeps every shard full, so promotion, eviction, and
-	// removal all race against lock-free peeks under -race.
+	// Small capacity keeps the cache full, so promotion, eviction across
+	// shards, and removal all race against lock-free peeks under -race.
 	c := newMetaCache[string, int32](64)
 	keys := make([]string, 512)
 	for i := range keys {
@@ -132,6 +132,10 @@ func TestMetaCacheConcurrent(t *testing.T) {
 		})
 	}
 	wg.Wait()
+	n := int64(0)
+	c.m.Range(func(any, any) bool { n++; return true })
+	assert.Equal(t, n, c.size.Load(), "size counts the entries")
+	assert.LessOrEqual(t, n, int64(64))
 }
 
 func TestMetaCachePeekNoAlloc(t *testing.T) {
@@ -232,20 +236,14 @@ func BenchmarkMetaCacheShard(b *testing.B) {
 // it avoids the shard lock and leaves the order untouched.
 func TestMetaCacheHitsWithoutInsertsDoNotPromote(t *testing.T) {
 	c := newMetaCache[string, int32](cacheSize)
-	s := c.shard("k0")
-
-	// Fill s to capacity through keys that hash to it, so it is full and
-	// every entry is a promotion candidate once aged.
-	keys := make([]string, 0, s.cap)
-	next := 0 // first key number the fill did not try
-	for ; len(keys) < s.cap; next++ {
-		k := fmt.Sprintf("k%d", next)
-		if c.shard(k) == s {
-			c.peekOrAdd(k, int32(next))
-			keys = append(keys, k)
-		}
+	// Fill the cache, so it is full and every entry is a promotion candidate
+	// once aged.
+	keys := make([]string, cacheSize)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("k%d", i)
+		c.peekOrAdd(keys[i], int32(i))
 	}
-	assert.Equal(t, int64(s.cap), s.size.Load())
+	assert.True(t, c.full.Load())
 	entry := func(k string) *metaCacheEntry[string, int32] {
 		raw, _ := c.m.Load(k)
 		return raw.(*metaCacheEntry[string, int32])
@@ -255,74 +253,73 @@ func TestMetaCacheHitsWithoutInsertsDoNotPromote(t *testing.T) {
 	for _, k := range keys {
 		c.peek(k)
 	}
-	oldest := entry(keys[0])
-	before, oldestMark := s.opSeq.Load(), oldest.lastPromoted.Load()
+	before := c.clock.Load()
 
-	// Rotate over more keys than ageThreshold, several times over: the entries
-	// age past the threshold again and again, yet nothing was inserted.
+	// Rotate over the whole cache several times over: the entries age past
+	// the threshold again and again, yet nothing was inserted.
 	for round := 0; round < 4; round++ {
 		for _, k := range keys {
 			_, ok := c.peek(k)
 			assert.True(t, ok)
 		}
 	}
-	assert.Equal(t, before, s.opSeq.Load(), "hits without an insert must not promote")
-	assert.Equal(t, oldestMark, oldest.lastPromoted.Load())
+	assert.Equal(t, before, c.clock.Load(), "hits without an insert must not promote")
 
-	// One insert re-arms promotion: the next hit on an aged entry promotes it
-	// exactly once, and the hits after that are lock-free again.
+	// One insert re-arms promotion in its shard: the next hit on an aged entry
+	// there promotes it exactly once, and the hits after that are lock-free
+	// again.
+	s := c.shard(keys[0])
 	extra := ""
-	for i := next; ; i++ { // past every key the fill tried, so this is a real insert
+	for i := len(keys); ; i++ {
 		if k := fmt.Sprintf("k%d", i); c.shard(k) == s {
 			extra = k
 			break
 		}
 	}
 	c.peekOrAdd(extra, 0)
-	// The settling rotation promoted the entries in key order, so keys[1] sits
-	// near the back, well past the threshold, and survives the one eviction.
-	assert.Equal(t, int64(s.cap), s.size.Load(), "the insert evicts exactly one entry")
-	_, ok := c.m.Load(keys[1])
-	assert.True(t, ok)
-	survivor := entry(keys[1])
+	assert.EqualValues(t, cacheSize, c.size.Load(), "the insert evicts exactly one entry")
+	var survivor *metaCacheEntry[string, int32]
+	for _, k := range keys {
+		if _, ok := c.m.Load(k); ok && c.shard(k) == s {
+			if e := entry(k); s.promotionDue(e.lastPromoted.Load(), e.promotedInsertSeq.Load()) {
+				survivor = e
+				break
+			}
+		}
+	}
+	if !assert.NotNil(t, survivor, "an aged entry in the shard the insert went to") {
+		return
+	}
 	mark := survivor.lastPromoted.Load()
-	c.peek(keys[1])
+	c.peek(survivor.key)
 	promoted := survivor.lastPromoted.Load()
 	assert.Greater(t, promoted, mark, "an aged entry is promoted once an insert happened")
 	for i := 0; i < 8; i++ {
-		c.peek(keys[1])
+		c.peek(survivor.key)
 	}
 	assert.Equal(t, promoted, survivor.lastPromoted.Load(), "promoted once per insert, not per hit")
 }
 
-// The shard split keeps the configured total: the remainder goes to the first
-// shards and the shard count is clamped to the capacity.
-func TestMetaCacheCapacityIsSplitExactly(t *testing.T) {
+// The capacity bounds the cache as a whole: it holds that many entries, the
+// most recently used, however their keys hash. The shard count is clamped to
+// the capacity, and every key lands on a shard in use.
+func TestMetaCacheHoldsExactlyItsCapacity(t *testing.T) {
 	for _, tc := range []struct{ capacity, shards int }{{1024, 16}, {1000, 16}, {10, 10}, {1, 1}, {17, 16}} {
 		c := newMetaCache[string, int32](tc.capacity)
-		total := 0
-		for i := range c.shards {
-			total += c.shards[i].cap
-		}
-		assert.Equal(t, tc.capacity, total, "capacity %d: total", tc.capacity)
 		assert.EqualValues(t, tc.shards, c.shardCount, "capacity %d: shards in use", tc.capacity)
-		for i := range c.shards {
-			if i < tc.shards {
-				assert.GreaterOrEqual(t, c.shards[i].cap, 1, "capacity %d: shard %d in use", tc.capacity, i)
-			} else {
-				assert.Zero(t, c.shards[i].cap, "capacity %d: shard %d unused", tc.capacity, i)
-			}
+		n := 3 * tc.capacity
+		for i := 0; i < n; i++ {
+			key := fmt.Sprintf("key-%d", i)
+			c.peekOrAdd(key, int32(i))
+			v, ok := c.peek(key)
+			assert.True(t, ok, "%q must be cached", key)
+			assert.Equal(t, int32(i), v)
 		}
-	}
-
-	// Every key lands on a shard in use.
-	c := newMetaCache[string, int32](10)
-	for i := 0; i < 200; i++ {
-		key := string(rune('a'+i%26)) + string(rune(i))
-		c.peekOrAdd(key, int32(i))
-		v, ok := c.peek(key)
-		assert.True(t, ok, "%q must be cached", key)
-		assert.Equal(t, int32(i), v)
+		assert.EqualValues(t, tc.capacity, c.size.Load(), "capacity %d: size", tc.capacity)
+		for i := 0; i < n; i++ {
+			_, ok := c.m.Load(fmt.Sprintf("key-%d", i))
+			assert.Equal(t, i >= n-tc.capacity, ok, "capacity %d: key-%d", tc.capacity, i)
+		}
 	}
 }
 
@@ -348,5 +345,59 @@ func TestMetaCachePeekOrAddExpiresLikePeek(t *testing.T) {
 	v, ok = c.peek("a")
 	assert.True(t, ok)
 	assert.Equal(t, int32(3), v)
-	assert.Equal(t, int64(1), c.shard("a").size.Load(), "replaced in place, not double counted")
+	assert.Equal(t, int64(1), c.size.Load(), "replaced in place, not double counted")
+}
+
+// A working set below the capacity stays cached whatever shards its keys hash
+// to. Bounded per shard, a cyclic working set at 90% of the capacity missed a
+// fifth of its lookups: a shard its keys overfilled evicted the key due next,
+// and for the SQL id cache each miss minted a new id.
+func TestMetaCacheWorkingSetBelowCapacityStaysCached(t *testing.T) {
+	for _, capacity := range []int{16, 100, cacheSize} {
+		c := newMetaCache[string, int32](capacity)
+		keys := make([]string, capacity*9/10)
+		for i := range keys {
+			keys[i] = fmt.Sprintf("select * from t%d where id = ?", i)
+		}
+		misses := 0
+		for round := 0; round < 5; round++ {
+			for i, k := range keys {
+				if _, ok := c.peek(k); !ok {
+					if round > 0 {
+						misses++
+					}
+					c.peekOrAdd(k, int32(i))
+				}
+			}
+		}
+		assert.Zero(t, misses, "capacity %d: a working set of %d", capacity, len(keys))
+	}
+}
+
+// Past the capacity the cache evicts the least recently used entry across
+// shards: a hot set read between inserts of one-off keys stays cached, and the
+// cache holds no more than its capacity.
+func TestMetaCacheKeepsAHotSetUnderChurn(t *testing.T) {
+	c := newMetaCache[string, int32](cacheSize)
+	hot := make([]string, cacheSize/2)
+	for i := range hot {
+		hot[i] = fmt.Sprintf("select * from hot%d where id = ?", i)
+	}
+	misses := 0
+	for i := 0; i < 50*cacheSize; i++ {
+		k := hot[i%len(hot)]
+		if i%4 == 3 {
+			k = fmt.Sprintf("select * from churn%d", i)
+		}
+		if _, ok := c.peek(k); !ok {
+			if i >= 10*cacheSize && strings.Contains(k, "hot") {
+				misses++
+			}
+			c.peekOrAdd(k, 0)
+		}
+	}
+	assert.Zero(t, misses, "hot keys evicted by one-off keys")
+	n := 0
+	c.m.Range(func(any, any) bool { n++; return true })
+	assert.LessOrEqual(t, n, cacheSize)
 }
