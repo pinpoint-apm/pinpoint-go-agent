@@ -7,6 +7,13 @@ Enable: true
 
 IsContainerEnv: true
 
+# --- Identity ---
+# v4 UIDs register under a service; every process of the run shares this one.
+# A 3.1.x collector accepts only v3: export PINPOINT_GO_UID_VERSION=v3 for it.
+Uid:
+  Version: "v4"
+ServiceName: "pinpoint-go-e2e"
+
 # --- Collector (gRPC) ---
 # Collector.Host is intentionally absent: run_e2e.sh must supply
 # PINPOINT_GO_COLLECTOR_HOST, which makes the collector an explicit runtime
@@ -40,10 +47,13 @@ Collector:
     # trust path with TLS on falls back to the system root CAs.
     SslEnable: false
     TrustCertFilePath: ""
-    # Connection and stream renewal, off by default in the agent (0). Set to
-    # spread long-running agents across a scaled-out collector, e.g. 600000.
-    ConnectionMaxAge: 0 # ms
-    StreamMaxAge: 0 # ms
+    # Connection and stream renewal, off by default in the agent (0), and set
+    # to spread long-running agents across a scaled-out collector, e.g.
+    # 600000. Short here so every run rotates the collector connections
+    # (make-before-break) and renews the stat stream against the live
+    # collector; run_e2e.sh asserts both from the logs.
+    ConnectionMaxAge: 10000 # ms
+    StreamMaxAge: 10000 # ms
     # Span batching is set off the agent's defaults (50, 1000, 500, 10).
     SpanBatchSize: 8 # small so the smoke run crosses batches; --load-only uses 50
     SpanBatchFlushInterval: 500
@@ -73,9 +83,11 @@ Span:
   EventChunkSize: 8 # forces multiple PSpanChunk sends in the smoke phase
 
 # --- Statistics ---
+# A batch of 2 sends the stat stream every 10s rather than the default 30s,
+# so a short run reaches a send past Collector.Grpc.StreamMaxAge.
 Stat:
   CollectInterval: 5000 # ms
-  BatchCount: 6
+  BatchCount: 2
 
 # --- HTTP ---
 Http:
@@ -100,6 +112,11 @@ Http:
     # OPTIONS is used by nothing else here, so excluding it cannot affect
     # another assertion.
     ExcludeMethod: ["OPTIONS"]
+    # Off by default in the agent; the smoke requests carry a query string,
+    # a user proxy header and cookies for these to record.
+    RecordRequestParam: true
+    ProxyUserHeaderNames:
+      - "X-E2E-Proxy-Time"
     RecordRequestHeader:
       - "User-Agent"
       - "Content-Type"
@@ -124,6 +141,10 @@ Http:
       - "Content-Type"
       - "X-It-Trace-Id"
       - "X-It-Span-Id"
+    RecordRequestCookie:
+      - "session_id"
+      - "token"
+    RecordUrlQuery: true
 
 # --- SQL ---
 SQL:

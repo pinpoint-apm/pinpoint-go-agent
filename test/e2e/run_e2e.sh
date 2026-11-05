@@ -108,7 +108,13 @@ else
 fi
 
 export PINPOINT_GO_COLLECTOR_HOST
-export PINPOINT_GO_CONFIGFILE="${PINPOINT_GO_CONFIGFILE:-$SCRIPT_DIR/pinpoint-config.yaml}"
+# Every agent watches its config file, and smoke_test.sh rewrites it to drive a
+# live reload, so the stack reads a copy in the log directory and the source
+# file is never touched.
+CONFIG_SOURCE="${PINPOINT_GO_CONFIGFILE:-$SCRIPT_DIR/pinpoint-config.yaml}"
+cp "$CONFIG_SOURCE" "$LOG_DIR/pinpoint-config.yaml"
+export PINPOINT_GO_CONFIGFILE="$LOG_DIR/pinpoint-config.yaml"
+export PINPOINT_E2E_MUTABLE_CONFIG="$PINPOINT_GO_CONFIGFILE"
 # Debug level, because the transport evidence below reads the span-batch lines
 # the agent only logs at that level. --load-only skips that check, and debug
 # logging would inflate the load numbers.
@@ -180,7 +186,7 @@ echo "==========================================="
 echo " Pinpoint Go Agent - End-to-End Test Stack"
 echo "==========================================="
 echo "Collector: $PINPOINT_GO_COLLECTOR_HOST$($LOCAL_COLLECTOR && echo ' (bundled stub)')"
-echo "Config:    $PINPOINT_GO_CONFIGFILE"
+echo "Config:    $CONFIG_SOURCE (run copy: $PINPOINT_GO_CONFIGFILE)"
 echo "Binaries:  $BIN_DIR"
 echo "Logs:      $LOG_DIR"
 echo "Run ID:    $RUN_SUFFIX"
@@ -207,6 +213,7 @@ PINPOINT_GO_APPLICATIONNAME="go-e2e-http-upstream" \
 PINPOINT_GO_AGENTNAME="e2e-up-$RUN_SUFFIX" \
     "$UPSTREAM_BIN" "$PORT" >"$LOG_DIR/upstream.log" 2>&1 &
 UPSTREAM_PID=$!
+STACK_STARTED=$SECONDS
 
 sleep 1
 for process in "$GRPC_PID:$GRPC_BIN" "$DOWNSTREAM_PID:$DOWNSTREAM_BIN" \
@@ -312,6 +319,57 @@ if grep -q 'SendSpanBatch failed' "$LOG_DIR/upstream.log"; then
 else
     echo "  PASS  no span batch was rejected"
 fi
+
+# The effective value of a millisecond option: the environment's, else the
+# run's config file's, else 0 (the agent default for the max ages).
+config_ms() {
+    local key=$1 env=$2 value
+    value=${!env:-}
+    if [[ -z "$value" ]]; then
+        value=$(sed -n "s/^[[:space:]]*$key:[[:space:]]*\([0-9][0-9]*\).*/\1/p" \
+            "$PINPOINT_GO_CONFIGFILE" | head -1)
+    fi
+    echo "${value:-0}"
+}
+
+# With Collector.Grpc.ConnectionMaxAge and StreamMaxAge on, the downstreams,
+# which run the whole time, must have rotated a collector connection
+# make-before-break and renewed their stat stream. The upstream restarts its
+# agent during the smoke run, so its connections may not reach their age.
+#
+# A renewal is only due once a max age, +10% jitter, has passed, and a stream
+# renews at its next send, at most a stat interval later (10 s with the config
+# file's batch of 2). A run that ends before that, even with the retry window,
+# such as a soak shorter than its 10 min ages, is skipped rather than failed.
+renewal_due() {
+    local age_ms=$1
+    local run_ms=$(( (SECONDS - STACK_STARTED + PINPOINT_E2E_AGENT_TIMEOUT) * 1000 ))
+    [[ $age_ms -gt 0 && $(( age_ms * 11 / 10 + 10000 )) -le $run_ms ]]
+}
+renewal_evidence=()
+connection_max_age=$(config_ms ConnectionMaxAge PINPOINT_GO_COLLECTOR_GRPC_CONNECTIONMAXAGE)
+stream_max_age=$(config_ms StreamMaxAge PINPOINT_GO_COLLECTOR_GRPC_STREAMMAXAGE)
+if renewal_due "$connection_max_age"; then
+    renewal_evidence+=("reached its max age, creating a successor" "is replaced with")
+elif [[ $connection_max_age -gt 0 ]]; then
+    echo "  SKIP  connection rotation (the run is shorter than ConnectionMaxAge=${connection_max_age}ms)"
+fi
+if renewal_due "$stream_max_age"; then
+    renewal_evidence+=("renew stat stream: max age reached")
+elif [[ $stream_max_age -gt 0 ]]; then
+    echo "  SKIP  stat stream renewal (the run is shorter than StreamMaxAge=${stream_max_age}ms)"
+fi
+for log in downstream.log grpcserver.log; do
+    # The +-guard: bash 3.2 (macOS) calls an empty array unbound under set -u.
+    for evidence in ${renewal_evidence[@]+"${renewal_evidence[@]}"}; do
+        if retry grep -q "$evidence" "$LOG_DIR/$log"; then
+            echo "  PASS  $log: $evidence"
+        else
+            echo "  FAIL  $log shows no \"$evidence\" after ${PINPOINT_E2E_AGENT_TIMEOUT}s" >&2
+            RESULT=1
+        fi
+    done
+done
 
 if [[ $RESULT -ne 0 ]]; then
     echo ""

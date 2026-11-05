@@ -71,6 +71,31 @@ wait_for_body() {
     return 1
 }
 
+# probe_sampling QUERY sets SAMPLED and UNSAMPLED from /sampling-probe.
+probe_sampling() {
+    http_request GET "$BASE_URL/sampling-probe?$1"
+    SAMPLED=$(printf '%s' "$HTTP_BODY" | sed -n 's/.*"sampled":\([0-9][0-9]*\).*/\1/p')
+    UNSAMPLED=$(printf '%s' "$HTTP_BODY" | sed -n 's/.*"unsampled":\([0-9][0-9]*\).*/\1/p')
+}
+
+assert_sampled_between() {
+    local name=$1 lo=$2 hi=$3
+    if [[ -n "$SAMPLED" && "$SAMPLED" -ge $lo && "$SAMPLED" -le $hi ]]; then
+        pass "$name sampled=$SAMPLED unsampled=$UNSAMPLED"
+    else
+        fail "$name expected $lo..$hi sampled" "$HTTP_BODY"
+    fi
+}
+
+# reload_sampler QUERY restarts the upstream agent through /agent/reload and
+# waits for it to register again.
+reload_sampler() {
+    local name=$1 query=$2
+    http_request POST "$BASE_URL/agent/reload?$query" --max-time 60
+    assert_status "$name" 200
+    assert_contains "$name enabled" '"agent_enabled":true'
+}
+
 echo "==========================================="
 echo " Pinpoint Go Agent - Correctness Smoke Test"
 echo "==========================================="
@@ -87,12 +112,13 @@ wait_for_body "gRPC downstream propagation" "$BASE_URL/grpc-unary" \
 
 echo ""
 echo "Public API and HTTP metadata"
-http_request GET "$BASE_URL/features" \
+http_request GET "$BASE_URL/features?mode=smoke&id=go-e2e-feature-001" \
     -H 'User-Agent: pinpoint-go-smoke' \
     -H 'Content-Type: application/json' \
     -H 'X-Request-ID: go-e2e-feature-001' \
     -H 'X-Forwarded-For: 192.0.2.20, 192.0.2.21' \
     -H 'Pinpoint-ProxyNginx: t=1 D=2' \
+    -H "X-E2E-Proxy-Time: t=$(($(date +%s) * 1000)) D=150" \
     -H 'Cookie: session_id=smoke-session; token=smoke-token'
 assert_status "features" 200
 assert_contains "features sampled" '"sampled":true'
@@ -181,7 +207,39 @@ assert_status "excluded OPTIONS method" 200
 assert_contains "excluded OPTIONS not traced" '"traced":false'
 
 echo ""
-echo "Config reload and sampling"
+echo "Config file reload"
+# Every agent polls its config file once a second and applies the dynamic
+# options that changed, here one more Http.Server.ExcludeUrl entry, without a
+# restart. run_e2e.sh hands the stack a copy of the file and names it in
+# PINPOINT_E2E_MUTABLE_CONFIG; without one the section is skipped rather than
+# rewrite a file someone else owns.
+if [[ -n "${PINPOINT_E2E_MUTABLE_CONFIG:-}" && -w "${PINPOINT_E2E_MUTABLE_CONFIG}" ]]; then
+    config_file=$PINPOINT_E2E_MUTABLE_CONFIG
+    config_backup="$config_file.orig"
+    cp "$config_file" "$config_backup"
+    http_request GET "$BASE_URL/filter/reload"
+    assert_contains "/filter/reload traced before the rewrite" '"traced":true'
+    # Written aside and renamed, so a poll never reads a half-written file.
+    sed 's|^\([[:space:]]*\)ExcludeUrl:.*|&\
+\1  - "/filter/reload"|' "$config_backup" >"$config_file.tmp"
+    mv "$config_file.tmp" "$config_file"
+    wait_for_body "rewritten ExcludeUrl excludes /filter/reload" \
+        "$BASE_URL/filter/reload" '"traced":false' || true
+    http_request GET "$BASE_URL/filter/kept"
+    assert_contains "/filter/kept still traced after the reload" '"traced":true'
+    http_request GET "$BASE_URL/filter/exact"
+    assert_contains "/filter/exact still excluded after the reload" '"traced":false'
+    cp "$config_backup" "$config_file.tmp"
+    mv "$config_file.tmp" "$config_file"
+    rm -f "$config_backup"
+    wait_for_body "restored ExcludeUrl traces /filter/reload" \
+        "$BASE_URL/filter/reload" '"traced":true' || true
+else
+    echo "  SKIP  no PINPOINT_E2E_MUTABLE_CONFIG to rewrite (run through run_e2e.sh)"
+fi
+
+echo ""
+echo "Sampling reload (agent restart)"
 http_request POST "$BASE_URL/agent/reload?counter_rate=2" --max-time 60
 assert_status "reload counter sampling" 200
 assert_contains "reload counter rate" '"counter_rate":2'
@@ -189,17 +247,37 @@ assert_contains "reload counter rate" '"counter_rate":2'
 # confirm it did, or the probe below would only see noop tracers.
 wait_for_body "reloaded upstream agent" "$BASE_URL/ready" \
     '"agent_enabled":true' || true
-http_request GET "$BASE_URL/sampling-probe?count=40"
+probe_sampling "count=40"
 assert_status "sampling probe" 200
-sampled=$(printf '%s' "$HTTP_BODY" | sed -n 's/.*"sampled":\([0-9][0-9]*\).*/\1/p')
-unsampled=$(printf '%s' "$HTTP_BODY" | sed -n 's/.*"unsampled":\([0-9][0-9]*\).*/\1/p')
-if [[ -n "$sampled" && -n "$unsampled" && "$sampled" -gt 0 && "$unsampled" -gt 0 ]]; then
-    pass "counter sampling produced sampled=$sampled unsampled=$unsampled"
-else
-    fail "counter sampling did not produce both decisions" "$HTTP_BODY"
-fi
-http_request POST "$BASE_URL/agent/reload?counter_rate=1" --max-time 60
-assert_status "restore full sampling" 200
+# A restarted counter sampler admits the first trace and every second one.
+assert_sampled_between "counter sampling 1/2" 20 20
+
+# The percent sampler is a counter too, so 50% of a fresh one is exact.
+reload_sampler "reload percent sampling" "counter_rate=1&sampling_type=PERCENT&percent_rate=50"
+assert_contains "reload percent type" '"sampling_type":"PERCENT"'
+probe_sampling "count=40"
+assert_sampled_between "percent sampling 50%" 20 20
+
+# A throughput bucket holds one second of permits, 5 here, refilled at 5 per
+# second, and the 40 probes take far less than the 200 ms one refill takes.
+reload_sampler "reload new throughput" "counter_rate=1&new_throughput=5"
+assert_contains "reload new throughput value" '"new_throughput":5'
+probe_sampling "count=40"
+assert_sampled_between "new throughput 5/s" 1 6
+probe_sampling "count=40&continue=1"
+assert_sampled_between "continued traces ignore new throughput" 40 40
+
+reload_sampler "reload continue throughput" "counter_rate=1&continue_throughput=5"
+assert_contains "reload continue throughput value" '"continue_throughput":5'
+probe_sampling "count=40&continue=1"
+assert_sampled_between "continue throughput 5/s" 1 6
+probe_sampling "count=40"
+assert_sampled_between "new traces ignore continue throughput" 40 40
+
+reload_sampler "restore full sampling" "counter_rate=1"
+assert_contains "restored counter type" '"sampling_type":"COUNTER"'
+assert_contains "restored unlimited new throughput" '"new_throughput":0'
+assert_contains "restored unlimited continue throughput" '"continue_throughput":0'
 wait_for_body "restored upstream agent" "$BASE_URL/ready" \
     '"agent_enabled":true' || true
 

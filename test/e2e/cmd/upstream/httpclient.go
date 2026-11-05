@@ -46,7 +46,8 @@ func onHttpClient(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Has("error") {
 		path = "/error"
 	}
-	url := "http://" + httpTarget + path
+	// The query string is there for Http.Client.RecordUrlQuery to record.
+	url := "http://" + httpTarget + path + "?hop=upstream"
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {

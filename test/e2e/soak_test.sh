@@ -396,6 +396,11 @@ echo "--- phase 2/2: ${hours} h soak at ${SAMPLING_RATE} % sampling ---"
 
 export PINPOINT_GO_SAMPLING_TYPE=PERCENT
 export PINPOINT_GO_SAMPLING_PERCENTRATE="$SAMPLING_RATE"
+# pinpoint-config.yaml renews the collector connections and streams every 10 s
+# so a short run crosses a renewal; over hours that is churn, not a soak. Ten
+# minutes is the production-like spacing, still dozens of renewals in 12 h.
+export PINPOINT_GO_COLLECTOR_GRPC_CONNECTIONMAXAGE=600000
+export PINPOINT_GO_COLLECTOR_GRPC_STREAMMAXAGE=600000
 
 RUN_PID=""; SAMPLER_PID=""; UPSTREAM_PID=""
 on_signal() {

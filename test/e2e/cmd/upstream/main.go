@@ -25,6 +25,32 @@ import (
 // and a restarted agent is a first load.
 const envSamplingCounterRate = "PINPOINT_GO_SAMPLING_COUNTERRATE"
 
+// reloadSamplingParams are the other sampling options /agent/reload takes, by
+// query parameter. Unlike counter_rate, an absent one goes back to the value
+// the process started with, so a plain ?counter_rate=1 undoes them all.
+var reloadSamplingParams = []struct {
+	param, env string
+}{
+	{"sampling_type", "PINPOINT_GO_SAMPLING_TYPE"},
+	{"percent_rate", "PINPOINT_GO_SAMPLING_PERCENTRATE"},
+	{"new_throughput", "PINPOINT_GO_SAMPLING_NEWTHROUGHPUT"},
+	{"continue_throughput", "PINPOINT_GO_SAMPLING_CONTINUETHROUGHPUT"},
+}
+
+// startupSamplingEnv holds what each reloadSamplingParams variable was at
+// startup, absent ones included.
+var startupSamplingEnv = map[string]*string{}
+
+func init() {
+	for _, p := range reloadSamplingParams {
+		if v, ok := os.LookupEnv(p.env); ok {
+			startupSamplingEnv[p.env] = &v
+		} else {
+			startupSamplingEnv[p.env] = nil
+		}
+	}
+}
+
 var (
 	grpcTarget = "localhost:50051"
 	httpTarget = "localhost:8091"
@@ -80,21 +106,36 @@ func onAgentShutdown(w http.ResponseWriter, r *http.Request) {
 	e2e.WriteJSON(w, http.StatusOK, map[string]string{"status": "shutdown"})
 }
 
-// onAgentReload restarts the agent with a new sampling rate: the coarse
-// restart path, which the smoke test uses to get a deterministic sampler. The
-// config-file watcher that reconfigures a running agent is covered by
-// test/it's TestReloadsConfigFileAndAppliesNewSamplingRate.
+// onAgentReload restarts the agent with a new sampler: the coarse restart
+// path, which the smoke test uses to get a deterministic sampler, since a
+// restart starts the counters and the throughput buckets afresh. The smoke
+// test drives the config-file watcher that reconfigures a running agent
+// separately, through Http.Server.ExcludeUrl.
 func onAgentReload(w http.ResponseWriter, r *http.Request) {
 	counterRate := e2e.IntParam(r, "counter_rate", 1, 0, 1000)
 
 	agentMu.Lock()
 	defer agentMu.Unlock()
 	os.Setenv(envSamplingCounterRate, strconv.Itoa(counterRate))
+	for _, p := range reloadSamplingParams {
+		if v := r.URL.Query().Get(p.param); v != "" {
+			os.Setenv(p.env, v)
+		} else if orig := startupSamplingEnv[p.env]; orig != nil {
+			os.Setenv(p.env, *orig)
+		} else {
+			os.Unsetenv(p.env)
+		}
+	}
 	started := restartAgentAndWait(30 * time.Second)
+	config := agent.Config()
 	e2e.WriteJSON(w, http.StatusOK, map[string]any{
-		"status":        "reloaded",
-		"counter_rate":  agent.Config().Int(pinpoint.CfgSamplingCounterRate),
-		"agent_enabled": started,
+		"status":              "reloaded",
+		"sampling_type":       config.String(pinpoint.CfgSamplingType),
+		"counter_rate":        config.Int(pinpoint.CfgSamplingCounterRate),
+		"percent_rate":        config.Float(pinpoint.CfgSamplingPercentRate),
+		"new_throughput":      config.Int(pinpoint.CfgSamplingNewThroughput),
+		"continue_throughput": config.Int(pinpoint.CfgSamplingContinueThroughput),
+		"agent_enabled":       started,
 	})
 }
 
@@ -144,6 +185,8 @@ func main() {
 	mux.HandleFunc("GET /filter/mid/ant/x/y", onFilterProbe)
 	mux.HandleFunc("GET /filter/query", onFilterProbe)
 	mux.HandleFunc("GET /filter/kept", onFilterProbe)
+	// Excluded only while the smoke test's config-file rewrite lists it.
+	mux.HandleFunc("GET /filter/reload", onFilterProbe)
 	mux.HandleFunc("OPTIONS /filter/method", onFilterProbe)
 
 	// Client endpoints

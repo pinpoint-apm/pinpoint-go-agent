@@ -49,9 +49,10 @@ empty trust path with TLS on falls back to the system root CAs. Each process get
 `PINPOINT_GO_AGENTNAME` (the agent id itself is always generated), so concurrent runs are
 distinguishable under the stable applications `go-e2e-http-upstream`,
 `go-e2e-http-downstream` and `go-e2e-grpc-downstream`. The agents identify
-as `Uid.Version` v3, not the agent's default v4, so that a 3.1.x collector
-accepts them; export `PINPOINT_GO_UID_VERSION=v4` and `PINPOINT_GO_SERVICENAME`
-to run them as v4.
+as `Uid.Version` v4 under the service `pinpoint-go-e2e`, both set in
+`pinpoint-config.yaml`. A 3.1.x collector accepts only v3, so export
+`PINPOINT_GO_UID_VERSION=v3` to run against one; `PINPOINT_GO_SERVICENAME`
+picks another service.
 
 To exercise the stack without a collector, `--local-collector` starts a bundled
 stub that accepts everything and records nothing:
@@ -93,19 +94,46 @@ The suite fails unless all of the following are observed:
   context;
 - one probe behind every `Http.Server.ExcludeUrl` pattern kind is untraced while
   an unmatched control still traces, and `ExcludeMethod` is honored;
-- an agent restart changes counter sampling and both sampled and unsampled
-  decisions are observed;
+- rewriting the config file adds an `ExcludeUrl` entry to the running agents
+  within a few seconds, without a restart, and restoring it takes the entry
+  away again. `run_e2e.sh` hands the stack a copy of the config file in the log
+  directory (`PINPOINT_E2E_MUTABLE_CONFIG`), so the source file is never
+  rewritten; `smoke_test.sh` run on its own skips the check;
+- agent restarts change the sampler, and each one admits exactly what it
+  should: half of a fresh `COUNTER` 2 and of a `PERCENT` 50 sampler, at most one
+  bucket of `Sampling.NewThroughput` new traces while continued ones pass, and
+  the reverse for `Sampling.ContinueThroughput`;
 - shutdown disables the global agent and a subsequent cold agent registers and
   records a trace;
 - every process log contains a successful AgentInfo registration, the upstream
   log shows span batches leaving for the collector, and none of them was
-  rejected.
+  rejected;
+- with `Collector.Grpc.ConnectionMaxAge` and `StreamMaxAge` on, the downstream
+  logs show a collector connection replaced make-before-break and a stat stream
+  renewed. The upstream is left out: its agent restarts during the smoke run.
 
 `pinpoint-config.yaml` also spells out the collector channel options, the
 periodic AgentInfo refresh and the URL-stat queue size, so a live run exercises
-the configured paths rather than the built-in defaults. Their behavior is
-asserted deterministically in [test/it](../it/README.md); here they only have to
-survive a real run.
+the configured paths rather than the built-in defaults. It also turns on
+options the agent leaves off, so a live collector receives what they record:
+the request query string (`Http.Server.RecordRequestParam`), a user proxy
+header (`ProxyUserHeaderNames`), and the outbound query string and cookies
+(`Http.Client.RecordUrlQuery`, `RecordRequestCookie`). The connection and
+stream max ages are 10 s, and `Stat.BatchCount` is 2 so the stat stream sends
+every 10 s, so even a smoke-only run renews them. Their behavior is asserted
+deterministically in [test/it](../it/README.md); here they only have to survive
+a real run.
+
+Some options stay off because a live run cannot check them:
+
+- `Collector.Grpc.SslEnable` needs a TLS collector (see above).
+- `KeepAlivePermitWithoutCalls` can get the agent disconnected for sending too
+  many pings, depending on the collector's policy.
+- `IdleTimeout` never fires, because the ping and stat streams stay open.
+- `Span.IgnoreErrors` and `ErrorMark` change only the stored error flag, which
+  nothing here reads back.
+- The Kafka helpers need a broker.
+- `ApiKey` needs a collector that checks it.
 
 The local response assertions prove propagation and public API behavior. The
 transport-log assertions prove that data reached the configured collector. If a
@@ -126,7 +154,10 @@ the exported ones:
 - the sampling check restarts the upstream agent through
   `POST /agent/reload?counter_rate=N`, which sets
   `PINPOINT_GO_SAMPLING_COUNTERRATE` in the server's environment and is never
-  undone. The upstream ends at counter rate 1 and samples every load request
+  undone. Its other sampling parameters (`sampling_type`, `percent_rate`,
+  `new_throughput`, `continue_throughput`) go back to the server's startup
+  environment on the next reload that leaves them out, so the smoke run ends
+  with none of them set. The upstream ends at counter rate 1 and samples every load request
   whatever rate was exported, and the downstreams continue its decision, so the
   whole stack traces 100%;
 - the runner defaults `PINPOINT_GO_LOG_LEVEL` to `debug` for its span-batch
@@ -213,8 +244,12 @@ It runs in two phases. `run_e2e.sh` runs first, unmodified, as a gate: the
 smoke checks need every request sampled and the span-batch check needs debug
 logging, neither of which a soak can have, so a broken stack fails in minutes
 rather than after 12 h. Then `run_e2e.sh --load-only` is the soak itself, at the
-requested sampling and the config file's `info` level, while the script samples
-the upstream server every `--sample-interval` seconds (default 60):
+requested sampling and the config file's `info` level. In that phase the
+collector connection and stream max ages are 10 minutes, not the config file's
+10 s, so the agents renew at a production-like pace rather than churning for
+hours. A soak shorter than those ages skips the renewal check instead of failing
+it. While the soak runs, the script samples the upstream server every
+`--sample-interval` seconds (default 60):
 
 - RSS, CPU time, OS threads and open fds, read from outside the process (`ps`,
   and `lsof` on macOS or `/proc` on Linux), so they survive a wedged server;

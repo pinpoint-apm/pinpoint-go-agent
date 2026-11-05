@@ -298,11 +298,13 @@ func onFeatures(w http.ResponseWriter, r *http.Request) {
 }
 
 // onSamplingProbe reports how many of count fresh traces the current sampler
-// admits. It is how the smoke test observes a sampling reload.
+// admits. It is how the smoke test observes a sampling reload. With
+// ?continue=1 every trace continues an upstream one, which bypasses the base
+// sampler and draws on Sampling.ContinueThroughput instead.
 func onSamplingProbe(w http.ResponseWriter, r *http.Request) {
 	defer track()()
 	count := e2e.IntParam(r, "count", 20, 1, 1000)
-	sampled := probeSampled(count, "/sampling-probe/")
+	sampled := probeSampled(count, "/sampling-probe/", r.URL.Query().Has("continue"))
 	e2e.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":    "ok",
 		"total":     count,
@@ -311,10 +313,20 @@ func onSamplingProbe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func probeSampled(count int, prefix string) int {
+func probeSampled(count int, prefix string, continued bool) int {
 	sampled := 0
 	for i := 0; i < count; i++ {
-		tracer := pinpoint.GetAgent().NewSpanTracer("sampling-probe", prefix+strconv.Itoa(i))
+		rpcName := prefix + strconv.Itoa(i)
+		var tracer pinpoint.Tracer
+		if continued {
+			h := http.Header{}
+			h.Set(pinpoint.HeaderTraceId, "go-e2e-probe-parent^1700000000000^"+strconv.Itoa(i))
+			h.Set(pinpoint.HeaderSpanId, strconv.Itoa(i+1))
+			h.Set(pinpoint.HeaderParentSpanId, "-1")
+			tracer = pinpoint.GetAgent().NewSpanTracerWithReader("sampling-probe", rpcName, pinpoint.HttpHeaderReader(h))
+		} else {
+			tracer = pinpoint.GetAgent().NewSpanTracer("sampling-probe", rpcName)
+		}
 		if tracer.IsSampled() {
 			sampled++
 		}
