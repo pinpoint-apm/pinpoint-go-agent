@@ -17,13 +17,13 @@ require (
 )
 
 require (
-	github.com/andybalholm/brotli v1.2.2 // indirect
+	github.com/andybalholm/brotli v1.2.7 // indirect
 	github.com/elastic/lumberjack v0.0.0-20260715013204-c5b60bbeaaab // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/gofiber/schema v1.8.3 // indirect
 	github.com/gofiber/utils/v2 v2.4.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/klauspost/compress v1.19.2 // indirect
+	github.com/klauspost/compress v1.20.2 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

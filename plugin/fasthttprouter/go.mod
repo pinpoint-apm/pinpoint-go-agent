@@ -11,11 +11,11 @@ require (
 )
 
 require (
-	github.com/andybalholm/brotli v1.2.2 // indirect
+	github.com/andybalholm/brotli v1.2.7 // indirect
 	github.com/elastic/lumberjack v0.0.0-20260715013204-c5b60bbeaaab // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/klauspost/compress v1.19.1 // indirect
+	github.com/klauspost/compress v1.20.2 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect

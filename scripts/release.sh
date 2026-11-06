@@ -28,11 +28,13 @@ set -euo pipefail
 # pushed tag cannot be moved, and a broken release is fixed by the next version
 # plus a retract directive.
 #
-# REMOTE names the remote to check and push to (default: origin).
+# REMOTE names the remote to check and push to (default: origin), and BRANCH
+# the branch of it the release commit has to be on (default: main).
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_PATH="github.com/pinpoint-apm/pinpoint-go-agent"
 REMOTE="${REMOTE:-origin}"
+BRANCH="${BRANCH:-main}"
 # A semantic version without build metadata, which module versions cannot
 # carry; numeric identifiers take no leading zero.
 NUM='(0|[1-9][0-9]*)'
@@ -64,7 +66,8 @@ EOF
 # The published modules' directories: the root and each plugin.
 published_dirs() {
 	echo .
-	git ls-files 'plugin/*/go.mod' | sed 's#/go\.mod$##'
+	# glob magic, so that * stays within one directory, as in the CI loop.
+	git ls-files ':(glob)plugin/*/go.mod' | sed 's#/go\.mod$##'
 }
 
 # The tag of the module in directory $1.
@@ -194,6 +197,12 @@ cmd_prepare() {
 	log "next: commit and push this, let CI pass, then run scripts/release.sh tag $VERSION"
 }
 
+# The command that deletes this version's local tags, for a release stopped
+# before its push.
+untag_hint() {
+	echo "git tag -l '$VERSION' 'plugin/*/$VERSION' | xargs git tag -d"
+}
+
 cmd_check() {
 	check_paths
 	check_requires
@@ -209,11 +218,12 @@ cmd_tag() {
 	local dir head n=0
 	head="$(git rev-parse HEAD)"
 	for dir in $(published_dirs); do
-		git tag "$(tag_name "$dir")" "$head"
+		git tag "$(tag_name "$dir")" "$head" ||
+			die "tagging stopped at $dir; $(untag_hint)"
 		n=$((n + 1))
 	done
 	log "tagged $n modules at $(git rev-parse --short HEAD): $VERSION and plugin/<name>/$VERSION"
-	log "next: scripts/release.sh push $VERSION"
+	log "next: scripts/release.sh push $VERSION; to drop the tags instead: $(untag_hint)"
 }
 
 cmd_push() {
@@ -227,10 +237,11 @@ cmd_push() {
 		refs+=("refs/tags/$tag")
 	done
 
-	# A tag on a commit that no branch holds would publish code CI never saw.
+	# A tag on a commit main does not hold would publish code CI never saw
+	# there; a feature branch's commit is not a release.
 	git fetch --quiet "$REMOTE" || die "cannot fetch $REMOTE"
-	[ -n "$(git for-each-ref --contains "$head" --format='%(refname)' "refs/remotes/$REMOTE/")" ] ||
-		die "$head is on no branch of $REMOTE; push the release commit and let CI pass first"
+	git merge-base --is-ancestor "$head" "refs/remotes/$REMOTE/$BRANCH" ||
+		die "$head is not on $REMOTE/$BRANCH; push the release commit there and let CI pass first"
 	taken="$(git ls-remote --tags "$REMOTE" "${refs[@]}")" || die "cannot list the tags on $REMOTE"
 	[ -z "$taken" ] || die "some $VERSION tags already exist on $REMOTE:"$'\n'"$taken"
 
@@ -255,8 +266,9 @@ cmd_verify() {
 	work="$(mktemp -d "${TMPDIR:-/tmp}/pinpoint-release.XXXXXX")"
 	trap "rm -rf '$work'" EXIT
 	# A fresh module per published module, with no replace directives and no
-	# workspace: what a user's go get sees.
-	export GOFLAGS=-mod=mod GOWORK=off
+	# workspace: what a user's go get sees. No -mod=mod: go get writes go.mod
+	# and go.sum itself, and the build then runs readonly, as a user's does.
+	export GOFLAGS= GOWORK=off
 	log "fetching through GOPROXY=$(go env GOPROXY)"
 	for dir in $(published_dirs); do
 		path="$(want_path "$dir")"

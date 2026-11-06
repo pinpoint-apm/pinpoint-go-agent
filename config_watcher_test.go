@@ -116,9 +116,16 @@ func TestConfigWatcherSkipsEmptyFile(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return config.Int(CfgSamplingCounterRate) == 3
 	}, 2*time.Second, 10*time.Millisecond, "the write after the truncate was not reloaded")
-	reloads.Lock()
-	defer reloads.Unlock()
-	assert.Equal(t, 1, reloaded, "the callback ran for the empty file too")
+	// The reload publishes the value before it runs the callbacks, so the
+	// count can trail the value just seen.
+	count := func() int {
+		reloads.Lock()
+		defer reloads.Unlock()
+		return reloaded
+	}
+	require.Eventually(t, func() bool { return count() >= 1 }, 2*time.Second, 10*time.Millisecond,
+		"the callback did not run for the write")
+	assert.Equal(t, 1, count(), "the callback ran for the empty file too")
 }
 
 func TestConfigWatcherReloadKeepsEnvValue(t *testing.T) {
