@@ -65,44 +65,36 @@ This package supports URL Statistics feature. It aggregates response times, succ
 The full list of `Http.Server.*` and `Http.UrlStat.*` options is in [Configuration](/doc/config.md#httpserverstatuscodeerrors).
 
 ### client
-This package instruments outbound requests and add distributed tracing headers.
-Add the ClientFilterChain as the filter chain of the request.
+This package instruments outbound requests and adds distributed tracing headers.
+Register `ClientFilterChain(nil)` once, at startup, and build each request with a context that carries the
+tracer: the filter reads the tracer from the request's own context.
 
-``` go
-req := httplib.Get("http://localhost:9090/")
-req.AddFilters(ppbeego.ClientFilterChain(tracer))
-```
 ``` go
 import (
 	"github.com/beego/beego/v2/client/httplib"
-	"github.com/pinpoint-apm/pinpoint-go-agent/v2"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego/v2"
 )
 
-func (m *MainController) Get() {
-    tracer := pinpoint.FromContext(m.Ctx.Request.Context())
+func main() {
+    // ... start the agent
+    httplib.AddDefaultFilter(ppbeego.ClientFilterChain(nil)) // before requests are built
+    // ... run the server
+}
 
-    req := httplib.Get("http://localhost:9090/")
-    req.AddFilters(ppbeego.ClientFilterChain(tracer))
+func (m *MainController) Get() {
+    req := httplib.NewBeegoRequestWithCtx(m.Ctx.Request.Context(), "http://localhost:9090/", "GET")
     str, _ := req.String()
     m.Ctx.WriteString(str)
 }
 ```
 [Full Example Source](/example/beego/beego_server.go)
 
-`ClientFilterChain(nil)` takes the tracer from the request's own context instead, so it can be registered once
-for every request:
+Outside a traced handler, put the tracer in the context yourself with `pinpoint.NewContext(ctx, tracer)`. A request
+built with `httplib.Get()` or `NewBeegoRequest()` carries `context.Background()` and is not traced.
 
-``` go
-httplib.AddDefaultFilter(ppbeego.ClientFilterChain(nil)) // at startup, before requests are built
-
-req := httplib.NewBeegoRequestWithCtx(m.Ctx.Request.Context(), "http://localhost:9090/", "GET")
-str, err := req.String()
-```
-
-A request built with `httplib.Get()` or `NewBeegoRequest()` carries `context.Background()` and is not traced this
-way. A filter built with a tracer records every request on that tracer: add it per request with `req.AddFilters`,
-never with `AddDefaultFilter`.
+Do not add a filter built with a tracer through `req.AddFilters`. httplib copies its default settings into every
+request, spare capacity included, so `AddFilters` appends into an array the requests share: concurrent requests
+run each other's filters, record on each other's tracers and send each other's trace ids.
 
 #### Config Options
 * [Http.Client.RecordRequestHeader](/doc/config.md#httpclientrecordrequestheader)

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/sirupsen/logrus"
 
@@ -212,6 +213,23 @@ func addTestUrlStat(snapshot *urlStatSnapshot, url string, method string, status
 		elapsed:   elapsed,
 		statusErr: statusErr,
 	})
+}
+
+// net/http slices Request.Method out of the HTTP/1.x request line, so a key
+// holding the recorded strings kept the whole line - URI and all, up to
+// MaxHeaderBytes - alive for the life of the snapshot.
+func Test_urlStatSnapshot_KeysDoNotPinTheRecordedStrings(t *testing.T) {
+	snapshot, tick := newUrlStatTestSnapshot(10, true)
+	line := "GET /users?q=" + strings.Repeat("x", 1<<16) + " HTTP/1.1"
+	method, url := line[:3], line[4:10]
+	addTestUrlStat(snapshot, url, method, 0, 10, tick)
+
+	require.Len(t, snapshot.urlMap, 1)
+	for key, stat := range snapshot.urlMap {
+		assert.Equal(t, "GET /users", stat.url)
+		assert.NotSame(t, unsafe.StringData(method), unsafe.StringData(key.method), "the method key aliases the request line")
+		assert.NotSame(t, unsafe.StringData(url), unsafe.StringData(key.url), "the url key aliases the request line")
+	}
 }
 
 func findEachUrlStat(t *testing.T, snapshot *urlStatSnapshot, url string, endTime time.Time) *eachUrlStat {

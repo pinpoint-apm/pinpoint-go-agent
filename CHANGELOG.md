@@ -849,3 +849,25 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 - **`ppsaramaibm` `WrapSyncProducer(nil)` and `WrapAsyncProducer(nil)`
   return nil.** The async wrapper's delivery goroutine read a nil producer's
   channels and crashed the process.
+- **`ppgrpc` names a stream of an unknown service `grpc.UnknownServiceHandler()`.**
+  Under `grpc.UnknownServiceHandler` the stream interceptor gets a nil
+  service and the client's raw `:path` as `FullMethod`, up to the 16 MiB
+  header limit, so a span event named after it made every new path an API
+  metadata entry of that size. The span's rpcName still carries the method.
+- **URL statistics keys no longer pin the request line.** net/http slices
+  `Request.Method` out of the HTTP/1.x request line, so under
+  `Http.UrlStat.WithMethod` each new key of a tick kept its first request's
+  whole line alive, URI and all, up to `MaxHeaderBytes`, for the life of the
+  snapshot. A new key holds its own copy of the method and URL.
+- **`ppechov4` keeps one route table per Echo.** Each `Middleware()` value
+  copied all of `e.Routes()` on its first sampled request, so route- or
+  group-level middleware cost instances x routes, about 200 MB for 1000 routes
+  with a `Middleware()` each. The values on one Echo now share its table,
+  which is dropped once the Echo is collected.
+- **`ppbeego` documents a client filter that is safe under concurrency.**
+  httplib copies its default settings into every request, spare capacity
+  included, so the documented `req.AddFilters(ppbeego.ClientFilterChain(tracer))`
+  appended into one array the requests share: concurrent requests ran each
+  other's filters and sent each other's trace ids. Register
+  `ClientFilterChain(nil)` once with `httplib.AddDefaultFilter` and build
+  requests with `httplib.NewBeegoRequestWithCtx`.

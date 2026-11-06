@@ -13,7 +13,10 @@ package ppechov4
 
 import (
 	"net/http"
+	"runtime"
+	"sync"
 	"sync/atomic"
+	"weak"
 
 	"github.com/labstack/echo/v4"
 	"github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
@@ -35,13 +38,34 @@ func makeHandlerNameMap(e *echo.Echo) map[key]string {
 	return names
 }
 
-// echoNames is the route table of one Echo, built from its Routes() on the
-// first sampled request a Middleware serves. Per instance rather than once per
-// process: a second Echo in the same process, a test suite's instances, or an
-// instance built after the first request all reported "echo.HandlerFunc()"
-// for every route under a single process-wide table. A middleware's requests
-// all come from the Echo it is registered on, so the one it holds is that
-// Echo's; one shared across instances rebuilds the table as it switches.
+// routeNames holds the route table of each live Echo, built from its Routes()
+// on the first sampled request any of its Middleware values serves. Per Echo
+// rather than once per process: a second Echo in the same process, a test
+// suite's instances, or an instance built after the first request all reported
+// "echo.HandlerFunc()" for every route under a single process-wide table. Not
+// per Middleware value either: route- and group-level Middleware() each copied
+// the whole table, instances x routes in all. Weak keys, as pppgxv5's
+// connInfos: an Echo has no close hook, and the cleanup drops its table once
+// it is collected.
+var routeNames sync.Map // weak.Pointer[echo.Echo] -> map[key]string
+
+func echoRouteNames(e *echo.Echo) map[key]string {
+	k := weak.Make(e)
+	if v, ok := routeNames.Load(k); ok {
+		return v.(map[key]string)
+	}
+	names := makeHandlerNameMap(e)
+	if v, loaded := routeNames.LoadOrStore(k, names); loaded {
+		return v.(map[key]string)
+	}
+	runtime.AddCleanup(e, func(k weak.Pointer[echo.Echo]) { routeNames.Delete(k) }, k)
+	return names
+}
+
+// echoNames is the route table a Middleware last served, with its Echo: a
+// middleware's requests all come from the Echo it is registered on, so the
+// weak lookup runs once, not per request. One shared across instances looks
+// the table up again as it switches.
 type echoNames struct {
 	e     *echo.Echo
 	names map[key]string
@@ -51,7 +75,7 @@ func handlerName(c echo.Context, r *http.Request, last *atomic.Pointer[echoNames
 	e := c.Echo()
 	l := last.Load()
 	if l == nil || l.e != e {
-		l = &echoNames{e, makeHandlerNameMap(e)}
+		l = &echoNames{e, echoRouteNames(e)}
 		last.Store(l)
 	}
 

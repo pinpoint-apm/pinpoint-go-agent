@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/beego/beego/v2/client/httplib"
@@ -272,6 +273,39 @@ func TestClientFilterChain_NilTracerReadsEachRequestsOwnTracer(t *testing.T) {
 		assert.Equal(t, tracer.TransactionId().String(), sentHeader.Get(pinpoint.HeaderTraceId),
 			"the shared filter must inject the calling request's own trace id")
 	}
+}
+
+// The documented form: one ClientFilterChain(nil) on httplib's default
+// settings, and each request built with its tracer's context. Requests in
+// flight together each send their own trace id. A filter with a tracer added
+// per request through req.AddFilters does not: httplib's requests share the
+// array AddFilters appends into.
+func TestClientFilterChain_DefaultFilterKeepsConcurrentRequestsApart(t *testing.T) {
+	pptest.StartAgent(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.Header.Get(pinpoint.HeaderTraceId)))
+	}))
+	defer srv.Close()
+
+	saved := httplib.GetDefaultSetting()
+	defer httplib.SetDefaultSetting(saved)
+	httplib.AddDefaultFilter(ClientFilterChain(nil))
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tracer := pinpoint.GetAgent().NewSpanTracer("test", "/caller")
+			defer tracer.EndSpan()
+
+			got, err := httplib.NewBeegoRequestWithCtx(pinpoint.NewContext(context.Background(), tracer), srv.URL, http.MethodGet).String()
+			assert.NoError(t, err)
+			assert.Equal(t, tracer.TransactionId().String(), got, "a request sent another request's trace id")
+		}()
+	}
+	wg.Wait()
 }
 
 // statusAnnotation reads the recorded HTTP status back out of the span JSON:

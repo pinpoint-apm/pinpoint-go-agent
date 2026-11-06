@@ -5,11 +5,13 @@
 //
 //	web.InsertFilterChain("/*", ppbeego.ServerFilterChain())
 //
-// This package instruments outbound requests and add distributed tracing headers.
-// Add the ClientFilterChain as the filter chain of the request:
+// This package instruments outbound requests and adds distributed tracing headers.
+// Register ClientFilterChain(nil) once, and build each request with a context
+// carrying the tracer:
 //
-//	req := httplib.Get("http://localhost:9090/")
-//	req.AddFilters(ppbeego.ClientFilterChain(tracer))
+//	httplib.AddDefaultFilter(ppbeego.ClientFilterChain(nil)) // at startup
+//
+//	req := httplib.NewBeegoRequestWithCtx(pinpoint.NewContext(ctx, tracer), "http://localhost:9090/", "GET")
 package ppbeego
 
 import (
@@ -76,10 +78,13 @@ func responseStatus(ctx *beegoContext.Context) int {
 }
 
 // ClientFilterChain returns filter function that will trace the outgoing requests.
-// The filter records on tracer, so add it per request (req.AddFilters) rather
-// than on settings shared by every request, which would record every caller's
-// request on the one tracer. A nil tracer reads the request's own, from the
-// context the filter is called with, which is the form that is safe to share.
+// A nil tracer reads each request's own, from the context the filter is called
+// with: register it once with httplib.AddDefaultFilter and build requests with
+// httplib.NewBeegoRequestWithCtx. Do not add a filter with a tracer through
+// req.AddFilters: httplib copies its default settings into every request,
+// spare capacity included, so AddFilters appends into an array the requests
+// share, and a concurrent request runs that filter, recording on that tracer
+// and sending its trace id, instead of its own.
 func ClientFilterChain(tracer pinpoint.Tracer) func(httplib.Filter) httplib.Filter {
 	return func(next httplib.Filter) httplib.Filter {
 		return func(ctx context.Context, req *httplib.BeegoHTTPRequest) (resp *http.Response, err error) {

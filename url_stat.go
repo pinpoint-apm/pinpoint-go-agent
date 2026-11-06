@@ -2,6 +2,7 @@ package pinpoint
 
 import (
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -283,6 +284,11 @@ func (snapshot *urlStatSnapshot) add(us *urlStat) {
 				func() []any { return []any{key.displayUrl(), snapshot.config.urlStatLimitSize} })
 			return
 		}
+		// A key lives as long as its snapshot, and the strings recorded can be
+		// substrings of the whole request: net/http slices Request.Method out
+		// of the HTTP/1.x request line, so a key holding it pinned the line,
+		// URI and all. Cloned once per new key, not per hit.
+		key.url, key.method = strings.Clone(key.url), strings.Clone(key.method)
 		e = newEachUrlStat(key.displayUrl(), key.tick)
 		snapshot.urlMap[key] = e
 	}

@@ -139,6 +139,8 @@ func UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 	}
 }
 
+const unknownServiceEvent = "grpc.UnknownServiceHandler()"
+
 // StreamServerInterceptor returns a grpc.StreamServerInterceptor ready to instrument
 // and adds the pinpoint.Tracer to the grpc.StreamHandler's context.
 // By using the pinpoint.FromContext function, this tracer can be obtained.
@@ -150,7 +152,15 @@ func StreamServerInterceptor() grpc.StreamServerInterceptor {
 
 		tracer := startSpan(stream.Context(), info.FullMethod)
 		defer tracer.EndSpan()
-		defer tracer.NewSpanEvent(info.FullMethod).EndSpanEvent()
+		// The event name keys the agent's API metadata cache. A stream that
+		// grpc.UnknownServiceHandler serves comes with a nil srv and the
+		// client's raw :path as FullMethod, up to the 16 MiB header limit, so
+		// it gets a fixed name; the span's rpcName still carries the method.
+		event := info.FullMethod
+		if srv == nil {
+			event = unknownServiceEvent
+		}
+		defer tracer.NewSpanEvent(event).EndSpanEvent()
 
 		ctx := pinpoint.NewContext(stream.Context(), tracer)
 		wrappedStream := &serverStream{stream, ctx}

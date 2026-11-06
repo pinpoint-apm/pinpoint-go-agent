@@ -34,6 +34,7 @@ func main() {
 	web.Router("/path/*", ctrl, "get:Splat")
 	web.Router("/regexp/:username:string", ctrl, "get:Regexp")
 	web.InsertFilterChain("/*", ppbeego.ServerFilterChain())
+	httplib.AddDefaultFilter(ppbeego.ClientFilterChain(nil))
 	web.Run("localhost:9000")
 }
 
@@ -48,8 +49,7 @@ func (ctrl *MainController) Hello() {
 	defer tracer.NewSpanEvent("f1").EndSpanEvent()
 	defer tracer.NewSpanEvent("f2").EndSpanEvent()
 
-	req := httplib.Get("http://localhost:9090/")
-	req.AddFilters(ppbeego.ClientFilterChain(tracer))
+	req := httplib.NewBeegoRequestWithCtx(ctrl.Ctx.Request.Context(), "http://localhost:9090/", "GET")
 
 	_, err := req.Response()
 	if err == nil {

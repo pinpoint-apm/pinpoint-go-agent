@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -641,6 +642,36 @@ func TestStreamServerInterceptor(t *testing.T) {
 	assert.ErrorIs(t, err, want, "the handler's error must come back unchanged")
 	assert.Equal(t, "/testapp.Hello/Stream", pptest.SpanOf(t, tracer)["RpcName"])
 	assert.NotEqual(t, float64(0), pptest.SpanOf(t, tracer)["Err"], "the handler error must fail the span")
+}
+
+// grpc.UnknownServiceHandler hands the interceptor a nil srv and whatever :path
+// the client sent as FullMethod. Named after it, every new path minted an API
+// metadata entry as large as the path, so the event takes a fixed name there;
+// a registered method keeps its own.
+func TestStreamServerInterceptor_UnknownServiceGetsAFixedEventName(t *testing.T) {
+	pptest.StartAgent(t)
+
+	for _, tc := range []struct {
+		srv  interface{}
+		want string
+	}{
+		{nil, unknownServiceEvent},
+		{"the service implementation", "/testapp.Hello/Stream"},
+	} {
+		rec := pptest.NewRecordingTracer()
+		fullMethod := "/testapp.Hello/Stream"
+		if tc.srv == nil {
+			fullMethod = "/no.such.Service/" + strings.Repeat("x", 4096)
+		}
+		err := StreamServerInterceptor()(tc.srv,
+			&fakeServerStream{ctx: pinpoint.NewContext(context.Background(), rec)},
+			&grpc.StreamServerInfo{FullMethod: fullMethod},
+			func(interface{}, grpc.ServerStream) error { return nil })
+
+		require.NoError(t, err)
+		require.Len(t, rec.Events, 1)
+		assert.Equal(t, tc.want, rec.Events[0].Operation)
+	}
 }
 
 // The stream interceptor reads its tracing metadata off the stream's context,

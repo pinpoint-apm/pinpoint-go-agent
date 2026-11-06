@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
+	"weak"
 
 	"github.com/labstack/echo/v4"
 	pphttp "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
@@ -346,6 +349,53 @@ func Test_wrap_ResolvesTheNamePerRequest(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+// Route- and group-level Middleware() values on one Echo look up one route
+// table: each used to copy the whole of e.Routes(), instances x routes in all.
+// The names still come out per route.
+func TestMiddleware_SharesOneRouteTablePerEcho(t *testing.T) {
+	pptest.StartAgent(t)
+
+	e := echo.New()
+	var lasts [3]atomic.Pointer[echoNames]
+	for i := range lasts {
+		e.GET(fmt.Sprintf("/r%d", i), func(c echo.Context) error { return c.NoContent(http.StatusNoContent) },
+			func(next echo.HandlerFunc) echo.HandlerFunc { return wrap(next, "", &lasts[i]) })
+	}
+	for i := range lasts {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/r%d", i), nil))
+		require.Equal(t, http.StatusNoContent, rec.Code)
+	}
+
+	first := lasts[0].Load()
+	require.NotNil(t, first)
+	for i := range lasts {
+		l := lasts[i].Load()
+		require.NotNil(t, l, "route %d never looked its name up", i)
+		assert.Equal(t, fmt.Sprintf("%p", first.names), fmt.Sprintf("%p", l.names), "route %d built its own table", i)
+		assert.Contains(t, l.names[key{http.MethodGet, fmt.Sprintf("/r%d", i)}], "TestMiddleware_SharesOneRouteTablePerEcho")
+	}
+}
+
+// The tables are held weakly: an Echo that is dropped leaves the cache, as a
+// test suite's many instances do.
+func Test_echoRouteNames_DroppedWhenEchoIsCollected(t *testing.T) {
+	e := echo.New()
+	e.GET("/", func(c echo.Context) error { return nil })
+	echoRouteNames(e)
+	key := weak.Make(e)
+	_, ok := routeNames.Load(key)
+	require.True(t, ok)
+
+	e = nil //nolint:ineffassign // drops the last strong reference
+
+	assert.Eventually(t, func() bool {
+		runtime.GC()
+		_, ok := routeNames.Load(key)
+		return !ok
+	}, 5*time.Second, 10*time.Millisecond, "the table of a collected Echo was never dropped")
 }
 
 // statusAnnotation reads the recorded HTTP status back out of the span JSON:
