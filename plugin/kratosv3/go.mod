@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/go-kratos/kratos/v3 v3.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0
+	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0-rc.1
 	github.com/stretchr/testify v1.12.1
 	google.golang.org/grpc v1.83.2
 )

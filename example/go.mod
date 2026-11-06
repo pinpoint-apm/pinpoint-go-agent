@@ -24,10 +24,10 @@ require (
 	github.com/julienschmidt/httprouter v1.3.0
 	github.com/labstack/echo/v4 v4.16.0
 	github.com/labstack/echo/v5 v5.3.1
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0-rc.1
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/redis/rueidis v1.0.77
 	github.com/redis/rueidis/rueidishook v1.0.77
@@ -150,42 +150,42 @@ require (
 	github.com/lufia/plan9stats v0.0.0-20230326075908-cb1d2100619a // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/confluentkafka/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/echov4/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/echov5/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiber/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiberv3/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocqlv2/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelastic/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv9/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/httprouter/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratos/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriverv2/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongomonitor/v2 v2.0.0 // indirect
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/slog/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/zap/v2 v2.0.0
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/beego/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/chi/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/confluentkafka/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/echov4/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/echov5/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttprouter/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiber/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiberv3/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gin/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocql/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gocqlv2/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelastic/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gohbase/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv9/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/httprouter/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratos/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratosv3/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriver/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongodriverv2/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mongomonitor/v2 v2.0.0-rc.1 // indirect
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/redigo/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/rueidis/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/slog/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/zap/v2 v2.0.0-rc.1
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20221212215047-62379fc7944b // indirect
 	github.com/shirou/gopsutil/v3 v3.24.5 // indirect

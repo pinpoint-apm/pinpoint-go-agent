@@ -4,8 +4,8 @@ go 1.25.0
 
 require (
 	github.com/gofiber/fiber/v2 v2.52.14
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0-rc.1
 	github.com/stretchr/testify v1.12.1
 )
 
@@ -26,7 +26,7 @@ require (
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.16 // indirect
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2 v2.0.0
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2 v2.0.0-rc.1
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect

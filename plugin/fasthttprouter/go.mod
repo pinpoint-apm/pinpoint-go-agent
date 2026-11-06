@@ -4,8 +4,8 @@ go 1.25.0
 
 require (
 	github.com/fasthttp/router v1.5.4
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2 v2.0.0
-	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/fasthttp/v2 v2.0.0-rc.1
+	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0-rc.1
 	github.com/stretchr/testify v1.12.1
 	github.com/valyala/fasthttp v1.73.0
 )
@@ -17,7 +17,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.20.2 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
-	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0 // indirect
+	github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2 v2.0.0-rc.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/savsgio/gotils v0.0.0-20240704082632-aef3928b8a38 // indirect

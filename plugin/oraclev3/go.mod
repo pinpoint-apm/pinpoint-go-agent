@@ -3,7 +3,7 @@ module github.com/pinpoint-apm/pinpoint-go-agent/plugin/oraclev3/v2
 go 1.25.0
 
 require (
-	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0
+	github.com/pinpoint-apm/pinpoint-go-agent/v2 v2.0.0-rc.1
 	github.com/sijms/go-ora/v3 v3.0.1
 	github.com/stretchr/testify v1.12.1
 )
