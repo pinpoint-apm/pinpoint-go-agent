@@ -5,7 +5,7 @@ an application, start with [Getting Started](getting_started.md) instead.
 
 ## Prerequisites
 
-* **Go 1.25+** — the floor in `go.mod`. CI verifies 1.25 and 1.26.
+* **Go 1.25+** — the floor in `go.mod`. CI verifies 1.25, 1.26 and 1.27.
 * Nothing else for a normal build. Protobuf regeneration is the one exception
   and has [its own section](#regenerating-the-protobuf-code); the generated
   code is committed, so you do not need `protoc` to build or test.
@@ -357,8 +357,8 @@ the key it came from.
 ## Continuous integration
 
 [`.github/workflows/ci.yml`](/.github/workflows/ci.yml) runs on every push and
-pull request to `main`: the agent build and tests plus `test/it` on Go 1.25 and
-1.26, the plugin `go test -race` loop above (without staticcheck) on both versions, `test/it` under
+pull request to `main`: the agent build and tests plus `test/it` on Go 1.25, 1.26 and
+1.27 (staticcheck on 1.26 only), the plugin `go test -race` loop above on the same three versions, `test/it` under
 `GOEXPERIMENT=goroutineleakprofile` on 1.26, and
 `scripts/set-major-version.sh --check`. `test/e2e` is **not** in CI: it needs a
 live collector. `fail-fast` is off on purpose, so a break on one Go version or

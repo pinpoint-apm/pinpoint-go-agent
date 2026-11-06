@@ -19,13 +19,13 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    # go.mod's floor and the newest toolchain the agent is verified against.
+    # go.mod's floor through the newest toolchain the agent is verified against.
     # fail-fast is off so a break on one version still reports the other,
     # which is what tells a version-specific regression from a real one.
     strategy:
       fail-fast: false
       matrix:
-        go-version: [ 1.25.x, 1.26.x ]
+        go-version: [ 1.25.x, 1.26.x, 1.27.x ]
     steps:
     - uses: actions/checkout@v4
 
@@ -100,7 +100,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go-version: [ 1.25.x, 1.26.x ]
+        go-version: [ 1.25.x, 1.26.x, 1.27.x ]
     steps:
     - uses: actions/checkout@v4
 
