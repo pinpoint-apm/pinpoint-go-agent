@@ -66,9 +66,14 @@ type metaCacheShardInternal struct {
 	// a promotion and the lock-free hit path is never taken. The order is stale
 	// only over such an insert-free stretch.
 	//
-	// An insert into another shard can evict from this one, too, but keys hash
-	// evenly enough that this shard sees inserts at its share of the rate: its
-	// entries age and are promoted in step with the cache.
+	// An insert into another shard can evict from this one, too, and keys hash
+	// only roughly evenly. A shard that sees fewer operations than its share
+	// ages its entries more slowly than the cache's clock, so it promotes a hot
+	// key late, and for about one hash seed in a hundred a few such keys fall to
+	// the cache's LRU eviction under heavy churn (TestMetaCacheKeepsAHotSetUnderChurn).
+	// Such a key costs one re-registration. Aging by the cache's clock instead
+	// would close that gap, at the price of reading a word every insert writes
+	// on each lock-free hit.
 	insertSeq atomic.Uint64
 	index     uint64 // in metaCache.shards and metaCache.tailUsed
 }
