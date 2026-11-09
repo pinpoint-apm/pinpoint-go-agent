@@ -937,6 +937,7 @@ func Test_agent_ShutdownDoesNotCloseProducerChannels(t *testing.T) {
 
 	assert.NotPanics(t, func() { agent.metaChan <- stringMeta{} }, "metaChan")
 	assert.NotPanics(t, func() { agent.statChan <- &pb.PStatMessage{} }, "statChan")
+	assert.NotPanics(t, func() { agent.urlStatSendChan <- &pb.PStatMessage{} }, "urlStatSendChan")
 	assert.NotPanics(t, func() { agent.urlStatChan <- &urlStat{} }, "urlStatChan")
 }
 

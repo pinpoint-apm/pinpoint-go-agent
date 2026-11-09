@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unsafe"
@@ -372,12 +373,12 @@ func Test_urlStatSendWorkerWakesOnACompletedTick(t *testing.T) {
 
 	agent.urlStats.add(newTestUrlStat("/a", 10, tick))
 	time.Sleep(50 * time.Millisecond)
-	assert.Empty(t, agent.statChan, "an open tick is not a reason to send")
+	assert.Empty(t, agent.urlStatSendChan, "an open tick is not a reason to send")
 
 	agent.urlStats.add(newTestUrlStat("/a", 20, tick.Add(urlStatCollectInterval))) // closes the tick
 	var sent *pb.PStatMessage
 	select {
-	case sent = <-agent.statChan:
+	case sent = <-agent.urlStatSendChan:
 	case <-time.After(3 * time.Second):
 		t.Fatal("the closed tick must be sent at once, not after Stat.CollectInterval")
 	}
@@ -388,7 +389,7 @@ func Test_urlStatSendWorkerWakesOnACompletedTick(t *testing.T) {
 	// The wakeup ended one wait, not the worker: a later close wakes it again.
 	agent.urlStats.add(newTestUrlStat("/a", 30, tick.Add(2*urlStatCollectInterval)))
 	select {
-	case sent = <-agent.statChan:
+	case sent = <-agent.urlStatSendChan:
 	case <-time.After(3 * time.Second):
 		t.Fatal("the worker must keep serving completed ticks")
 	}
@@ -419,7 +420,7 @@ func Test_urlStatSendWorkerTimerFollowsStatCollectInterval(t *testing.T) {
 	go agent.superviseWorker("send uri stat", agent.sendUrlStatWorker)
 
 	select {
-	case sent := <-agent.statChan:
+	case sent := <-agent.urlStatSendChan:
 		assert.Len(t, eachUriStatsByUri(t, sent.GetAgentUriStat()), 1)
 	case <-time.After(5 * time.Second):
 		t.Fatal("the trailing tick must be sent within Stat.CollectInterval (1s here), not 30s")
@@ -516,6 +517,89 @@ func Test_urlStatShutdownSendsTheQueuedTickAfterStop(t *testing.T) {
 
 	assert.Equal(t, int32(1), sent.get(), "the queued tick must be sent before the worker stops")
 	assert.Empty(t, agent.statChan)
+	assert.Empty(t, agent.urlStatSendChan)
+}
+
+// The shutdown flush does not wait for the hand-off: with an earlier message
+// still waiting there, the tick in progress goes through statChan, and the
+// worker's stop drain sends both.
+func Test_urlStatShutdownFlushWithTheHandOffTaken(t *testing.T) {
+	agent, _ := newUrlStatSendTestAgent(t)
+	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+	fixUrlStatClock(t, tick.Add(urlStatCollectInterval+time.Second))
+	agent.urlStats.add(newTestUrlStat("/closed", 10, tick))
+	agent.urlStats.add(newTestUrlStat("/in-progress", 20, tick.Add(urlStatCollectInterval)))
+	agent.flushUrlStat(false)
+	require.Len(t, agent.urlStatSendChan, 1, "the closed tick waits in the hand-off")
+
+	var uris []string
+	var mu sync.Mutex
+	stream := committable(grpcmock.NewMockStat_SendAgentStatClient())
+	stream.OnSend(mock.Anything).Run(func(args mock.Arguments) {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, each := range args.Get(0).(*pb.PStatMessage).GetAgentUriStat().GetEachUriStat() {
+			uris = append(uris, each.GetUri())
+		}
+	}).Return(nil)
+	stream.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
+	client := grpcmock.NewMockStatClient()
+	client.OnSendAgentStat(mock.Anything).Return(stream, nil)
+	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
+
+	agent.flushUrlStat(true)
+	assert.Len(t, agent.statChan, 1, "the shutdown flush is not dropped for want of the hand-off")
+	agent.signalShutdown()
+
+	agent.workerWg.Add(1)
+	go agent.superviseWorker("send stats", agent.sendStatsWorker)
+	require.True(t, waitTimeout(&agent.workerWg, time.Second), "send stats worker did not stop")
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.ElementsMatch(t, []string{"/closed", "/in-progress"}, uris)
+}
+
+// A stat stream that does not drain - the collector is down and
+// sendStatsWorker is parked waiting for it - costs one waiting message and
+// the retained ticks, however long it lasts. Handed over through statChan,
+// every tick was a message of its own there, so the backlog grew with the
+// outage up to Stat.QueueSize messages of up to Http.UrlStat.LimitSize urls
+// each, and the maxCompletedUrlStatSnapshots bound never applied.
+func Test_urlStatStalledStatStreamKeepsTheBacklogBounded(t *testing.T) {
+	agent, stats := newUrlStatSendTestAgent(t)
+	tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
+	setNow := fixUrlStatClock(t, tick.Add(time.Second))
+
+	// Each tick is closed by the next one's traffic, and flushed as the send
+	// worker would; nothing takes the hand-off.
+	const ticks = 50
+	for i := range ticks {
+		at := tick.Add(time.Duration(i) * urlStatCollectInterval)
+		setNow(at.Add(time.Second))
+		agent.urlStats.add(newTestUrlStat(fmt.Sprintf("/tick%d", i), 10, at))
+		agent.flushUrlStat(false)
+	}
+
+	assert.Empty(t, agent.statChan, "url stat ticks do not pile up in the stat queue")
+	assert.Len(t, agent.urlStatSendChan, 1, "one message waits for the stat worker")
+	assert.Len(t, agent.urlStats.completed, maxCompletedUrlStatSnapshots, "the rest is the retained ticks")
+
+	// The stream recovers: the waiting message goes first, then the next
+	// flush carries the retained ticks - the newest closed ones - in one.
+	sent := stats()
+	require.Len(t, sent, 1)
+	assert.Contains(t, eachUriStatsByUri(t, sent[0]), "/tick0")
+
+	agent.flushUrlStat(false)
+	sent = stats()
+	require.Len(t, sent, 1)
+	each := eachUriStatsByUri(t, sent[0])
+	assert.Len(t, each, maxCompletedUrlStatSnapshots)
+	for i := ticks - 1 - maxCompletedUrlStatSnapshots; i < ticks-1; i++ {
+		assert.Contains(t, each, fmt.Sprintf("/tick%d", i))
+	}
+	assert.Len(t, agent.urlStats.snapshot.urlMap, 1, "the open tick keeps collecting")
 }
 
 // A stats stream that never drains must not let the completed queue grow
@@ -666,10 +750,14 @@ func newUrlStatSendTestAgent(t *testing.T) (*agent, func() []*pb.PAgentUriStat) 
 	a := newTestAgent(config)
 	a.statChan = make(chan *pb.PStatMessage, 16)
 
+	// Both ways a flush hands a message over: the one-message hand-off, and
+	// statChan when the shutdown flush finds the hand-off taken.
 	return a, func() []*pb.PAgentUriStat {
 		var sent []*pb.PAgentUriStat
 		for {
 			select {
+			case msg := <-a.urlStatSendChan:
+				sent = append(sent, msg.GetAgentUriStat())
 			case msg := <-a.statChan:
 				sent = append(sent, msg.GetAgentUriStat())
 			default:

@@ -73,6 +73,10 @@ type agent struct {
 	metaChan    chan any
 	urlStatChan chan *urlStat
 	statChan    chan *pb.PStatMessage
+	// urlStatSendChan hands one url stat message to sendStatsWorker. It holds
+	// a single message so that a stat stream which is not draining leaves the
+	// ticks in urlStats, under maxCompletedUrlStatSnapshots (see flushUrlStat).
+	urlStatSendChan chan *pb.PStatMessage
 
 	// One reporter per bounded queue: each counts the records that queue lost
 	// to overflow and rate-limits its overflow warning. spanDrops counts the
@@ -337,6 +341,7 @@ func newAgentStruct(config *Config) *agent {
 		metaChan:         make(chan any, config.Int(CfgCollectorGrpcSenderQueueSize)),
 		urlStatChan:      make(chan *urlStat, config.Int(CfgHttpUrlStatQueueSize)),
 		statChan:         make(chan *pb.PStatMessage, config.Int(CfgStatQueueSize)),
+		urlStatSendChan:  make(chan *pb.PStatMessage, 1),
 		config:           config,
 		stats:            newAgentStats(),
 		urlStats:         newUrlStats(config),
@@ -730,12 +735,13 @@ func (agent *agent) Shutdown() {
 func (agent *agent) shutdownAgent() {
 	// Flush the url stat tick in progress before anything is signalled. Both url
 	// stat workers and sendStatsWorker stop on stopCtx, so a flush issued after
-	// the signal could land on a queue nobody reads any more: enqueueing here
-	// puts the tick in statChan before sendStatsWorker sees the stop, and that
-	// worker drains the queue once on the stop, which is what actually gets the
-	// last tick out. The drain first aggregates what the request path queued and
-	// collectUrlStatWorker has not consumed, so the flush sees it. Skipped for
-	// an agent that never ran - it has no workers to send the tick.
+	// the signal could land on a queue nobody reads any more: flushing here
+	// hands the tick to sendStatsWorker (urlStatSendChan, or statChan when that
+	// is taken) before it sees the stop, and that worker drains both once on
+	// the stop, which is what actually gets the last tick out. The drain first
+	// aggregates what the request path queued and collectUrlStatWorker has not
+	// consumed, so the flush sees it. Skipped for an agent that never ran - it
+	// has no workers to send the tick.
 	if agent.tracingEnabled() {
 		agent.drainUrlStatChan()
 		agent.flushUrlStat(true)
@@ -1104,10 +1110,20 @@ func (agent *agent) sendUrlStatWorker() {
 	}
 }
 
-// flushUrlStat sends the url stat ticks that are over, if any: the ones closed
-// by later traffic, plus the tick in progress once its window has elapsed.
-// includeInProgress takes the tick in progress whatever its window and is set
-// only on the shutdown path, where no later send will ever come for it.
+// flushUrlStat hands the url stat ticks that are over, if any, to
+// sendStatsWorker: the ones closed by later traffic, plus the tick in progress
+// once its window has elapsed. includeInProgress takes the tick in progress
+// whatever its window and is set only on the shutdown path, where no later
+// send will ever come for it.
+//
+// The hand-off (urlStatSendChan) holds one message. While that message is
+// still waiting - the stat worker is parked on a stream that does not open -
+// a flush takes nothing, so the ticks stay in urlStats, whose
+// maxCompletedUrlStatSnapshots bound is all a collector outage costs. Handed
+// over through statChan instead, every tick became a message of its own
+// there, up to Stat.QueueSize of them at some 0.4MB each with
+// Http.UrlStat.LimitSize at its default: an outage of a few hours grew the
+// agent by hundreds of megabytes, and that bound never applied.
 //
 // An empty snapshot is not enqueued: there is nothing for the collector to
 // store, and the sender would otherwise wake for nothing.
@@ -1115,12 +1131,25 @@ func (agent *agent) flushUrlStat(includeInProgress bool) {
 	if !agent.config.load().collectUrlStat {
 		return
 	}
+	// The shutdown flush is the last one and takes the tick in progress
+	// anyway, so it does not wait for the hand-off.
+	if !includeInProgress && len(agent.urlStatSendChan) > 0 {
+		return
+	}
 
 	snapshot := agent.urlStats.takeSnapshot(includeInProgress)
 	if snapshot.isEmpty() {
 		return
 	}
-	agent.enqueueStat(makePAgentUriStat(snapshot))
+	msg := makePAgentUriStat(snapshot)
+	select {
+	case agent.urlStatSendChan <- msg:
+	default:
+		// The shutdown flush found the hand-off taken, or raced a periodic
+		// flush to it: this one message goes through statChan, which
+		// sendStatsWorker drains on the stop as well.
+		agent.enqueueStat(msg)
+	}
 }
 
 func (agent *agent) enqueueStat(stat *pb.PStatMessage) bool {
@@ -1159,13 +1188,15 @@ func (agent *agent) sendStatsWorker() {
 			for {
 				select {
 				case stats = <-agent.statChan:
-					stream = agent.sendStatsOrReopen(stream, stats)
+				case stats = <-agent.urlStatSendChan:
 				default:
 					Log("agent").Infof("end send stats goroutine")
 					return
 				}
+				stream = agent.sendStatsOrReopen(stream, stats)
 			}
 		case stats = <-agent.statChan:
+		case stats = <-agent.urlStatSendChan:
 		}
 
 		stream = agent.sendStatsOrReopen(stream, stats)

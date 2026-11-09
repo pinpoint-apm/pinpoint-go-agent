@@ -48,9 +48,11 @@ func newTestAgent(config *Config) *agent {
 		startTime:  time.Now().UnixNano() / int64(time.Millisecond),
 		spanQueue:  newSpanQueue(cacheSize),
 		metaChan:   make(chan any, cacheSize),
-		config:     config,
-		stats:      newAgentStats(),
-		urlStats:   newUrlStats(config),
+		// One message, as newAgentStruct makes it: the flush gates on it.
+		urlStatSendChan: make(chan *pb.PStatMessage, 1),
+		config:          config,
+		stats:           newAgentStats(),
+		urlStats:        newUrlStats(config),
 		objName: &objectName{
 			version:         nameV3,
 			agentID:         "testAgent",

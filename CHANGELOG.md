@@ -497,6 +497,14 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 
 ### Fixed
 
+- **URL statistics no longer pile up while the collector is down.** Every
+  closed 30 second tick became a message of its own in the stat queue, so with
+  `Http.UrlStat.Enable` an outage grew the agent for hours, up to
+  `Stat.QueueSize` (1024) messages of up to `Http.UrlStat.LimitSize` URLs each:
+  some 200MB at the defaults, about 0.4MB per 1000 URLs. The 5 retained ticks
+  the documentation promised were never the bound. The ticks now go to the
+  sender one message at a time and otherwise stay among those 5, which is all
+  an outage of any length costs.
 - **`Collector.Grpc.ConnectionMaxAge` spreads connections across the collector
   instances.** A renewed connection dialed the same address list in the same
   order, so behind several DNS A records every renewal went back to the first

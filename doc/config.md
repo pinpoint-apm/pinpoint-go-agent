@@ -877,9 +877,11 @@ Stat.BatchCount option sets batch delivery units for collected statistics.
 
 ### Stat.QueueSize
 Stat.QueueSize option sets the size of the agent's stat queue for gRPC.
-This queue buffers the collected agent stat and URL stat messages waiting to be
-sent to the collector; it is independent of Span.QueueSize, which the stat queue
-used to share.
+This queue buffers the collected agent stat messages waiting to be sent to the
+collector; it is independent of Span.QueueSize, which the stat queue used to share.
+URL statistics do not wait in it: they are handed to the sender one message at a
+time and otherwise stay in their own retained ticks (see
+[Http.UrlStat.Enable](#httpurlstatenable)).
 When the queue is full the oldest message is overwritten, and the agent logs a
 rate-limited warning carrying the cumulative number of dropped messages.
 
@@ -1450,8 +1452,10 @@ The send timer has no option of its own: it follows `Stat.CollectInterval`
 boundary and, once traffic stops, the last tick is closed and sent within one
 `Stat.CollectInterval`.
 
-At most 5 completed 30 second ticks (two and a half minutes) are retained while the stat stream is down.
-Beyond that the oldest tick is dropped and the agent logs a rate-limited warning.
+While the stat stream is down, the agent keeps one message waiting for the sender
+and at most 5 further completed 30 second ticks (two and a half minutes). Beyond that
+the oldest of those ticks is dropped and the agent logs a rate-limited warning, so a
+long collector outage does not grow the URL statistics backlog.
 
 * PINPOINT_GO_HTTP_URLSTAT_ENABLE
 * type: bool
