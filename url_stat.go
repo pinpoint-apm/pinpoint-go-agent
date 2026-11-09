@@ -171,10 +171,9 @@ func (stats *urlStats) takeSnapshot(includeInProgress bool) *urlStatSnapshot {
 	if includeInProgress || stats.tickIsOverLocked(now) {
 		taken, stats.snapshot = stats.snapshot, fresh
 	}
-	// Every retained tick goes out in one message: PAgentUriStat carries a
-	// repeated eachUriStat and each entry stamps its own tick, so draining one
-	// tick per send would take up to maxCompletedUrlStatSnapshots send
-	// intervals to clear a backlog the stream is finally able to accept.
+	// Hand every retained tick to the sender together: each entry stamps its
+	// own tick, and the sender splits by message size. Draining one tick per
+	// send interval would delay clearing a backlog the stream can now accept.
 	for _, completed := range stats.completed {
 		taken.merge(completed)
 	}

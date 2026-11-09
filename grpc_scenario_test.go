@@ -118,7 +118,7 @@ func Test_sendStatsWorker_reopensStreamAfterSendErrorAndResumes(t *testing.T) {
 	client := grpcmock.NewMockStatClient()
 	client.OnSendAgentStat(mock.Anything).Return(broken, nil).Once()
 	client.OnSendAgentStat(mock.Anything).Return(healthy, nil)
-	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
+	agent.statGrpc = &statGrpc{statClient: client, agent: agent, maxSendMsgSize: agent.config.Int(CfgCollectorGrpcMaxSendMessageSize)}
 
 	agent.statChan <- makePAgentStatBatch([]*pb.PAgentStat{agent.stats.getStats()})
 	agent.statChan <- makePAgentStatBatch([]*pb.PAgentStat{agent.stats.getStats()})
@@ -154,7 +154,7 @@ func Test_sendStatsWorker_drainsLastUrlStatDuringShutdown(t *testing.T) {
 	stream.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
 	client := grpcmock.NewMockStatClient()
 	client.OnSendAgentStat(mock.Anything).Return(stream, nil)
-	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
+	agent.statGrpc = &statGrpc{statClient: client, agent: agent, maxSendMsgSize: agent.config.Int(CfgCollectorGrpcMaxSendMessageSize)}
 
 	agent.statChan <- &pb.PStatMessage{}
 	agent.startWorkers([]worker{{name: "send stats", body: agent.sendStatsWorker, start: true}})
@@ -277,7 +277,7 @@ func Test_sendStatsWorker_renewsAgedStream(t *testing.T) {
 
 	client := grpcmock.NewMockStatClient()
 	client.OnSendAgentStat(mock.Anything).Return(stream, nil)
-	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
+	agent.statGrpc = &statGrpc{statClient: client, agent: agent, maxSendMsgSize: agent.config.Int(CfgCollectorGrpcMaxSendMessageSize)}
 
 	agent.workerWg.Add(1)
 	go agent.superviseWorker("send stats", agent.sendStatsWorker)

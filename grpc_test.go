@@ -234,7 +234,7 @@ func Test_statStream_sendStat(t *testing.T) {
 	statStream.OnSend(mock.Anything).Return(nil)
 	client := grpcmock.NewMockStatClient()
 	client.OnSendAgentStat(mock.Anything).Return(statStream, nil)
-	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
+	agent.statGrpc = &statGrpc{statClient: client, agent: agent, maxSendMsgSize: agent.config.Int(CfgCollectorGrpcMaxSendMessageSize)}
 	stream := agent.statGrpc.newStatStreamWithRetry()
 
 	stats := make([]*pb.PAgentStat, 1)
@@ -255,7 +255,7 @@ func Test_statStream_sendStatRetry(t *testing.T) {
 	client := grpcmock.NewMockStatClient()
 	client.OnSendAgentStat(mock.Anything).Return((*grpcmock.MockStat_SendAgentStatClient)(nil), collectorDown()).Times(3)
 	client.OnSendAgentStat(mock.Anything).Return(statStream, nil)
-	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
+	agent.statGrpc = &statGrpc{statClient: client, agent: agent, maxSendMsgSize: agent.config.Int(CfgCollectorGrpcMaxSendMessageSize)}
 	stream := agent.statGrpc.newStatStreamWithRetry()
 
 	stats := make([]*pb.PAgentStat, 1)

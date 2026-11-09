@@ -504,7 +504,7 @@ func Test_urlStatShutdownSendsTheQueuedTickAfterStop(t *testing.T) {
 	stream.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
 	client := grpcmock.NewMockStatClient()
 	client.OnSendAgentStat(mock.Anything).Return(stream, nil)
-	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
+	agent.statGrpc = &statGrpc{statClient: client, agent: agent, maxSendMsgSize: agent.config.Int(CfgCollectorGrpcMaxSendMessageSize)}
 
 	// shutdownAgent's order: flush first, signal second, both before the
 	// worker gets to look.
@@ -545,7 +545,7 @@ func Test_urlStatShutdownFlushWithTheHandOffTaken(t *testing.T) {
 	stream.OnCloseAndRecv().Return(&emptypb.Empty{}, nil)
 	client := grpcmock.NewMockStatClient()
 	client.OnSendAgentStat(mock.Anything).Return(stream, nil)
-	agent.statGrpc = &statGrpc{statClient: client, agent: agent}
+	agent.statGrpc = &statGrpc{statClient: client, agent: agent, maxSendMsgSize: agent.config.Int(CfgCollectorGrpcMaxSendMessageSize)}
 
 	agent.flushUrlStat(true)
 	assert.Len(t, agent.statChan, 1, "the shutdown flush is not dropped for want of the hand-off")

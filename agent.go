@@ -1193,13 +1193,13 @@ func (agent *agent) sendStatsWorker() {
 					Log("agent").Infof("end send stats goroutine")
 					return
 				}
-				stream = agent.sendStatsOrReopen(stream, stats)
+				stream = agent.sendStats(stream, stats)
 			}
 		case stats = <-agent.statChan:
 		case stats = <-agent.urlStatSendChan:
 		}
 
-		stream = agent.sendStatsOrReopen(stream, stats)
+		stream = agent.sendStats(stream, stats)
 	}
 }
 

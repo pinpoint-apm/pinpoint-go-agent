@@ -505,6 +505,11 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   the documentation promised were never the bound. The ticks now go to the
   sender one message at a time and otherwise stay among those 5, which is all
   an outage of any length costs.
+  On recovery and shutdown the sender splits a retained snapshot at
+  `Collector.Grpc.MaxSendMessageSize`, keeping each URL/tick histogram whole,
+  so several individually sendable ticks cannot be lost as one oversized
+  message. Only an entry too large to fit by itself is dropped, with a
+  rate-limited warning.
 - **`Collector.Grpc.ConnectionMaxAge` spreads connections across the collector
   instances.** A renewed connection dialed the same address list in the same
   order, so behind several DNS A records every renewal went back to the first

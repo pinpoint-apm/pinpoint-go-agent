@@ -8,12 +8,17 @@ import (
 	pb "github.com/pinpoint-apm/pinpoint-go-agent/v2/internal/protobuf"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 )
 
 type statGrpc struct {
 	statConn   *grpc.ClientConn
 	statClient pb.StatClient
 	agent      *agent
+	// The limit statConn was dialed with; changing the non-dynamic config
+	// later does not change grpc-go's limit on the connection.
+	maxSendMsgSize int
 
 	// compress is Collector.Grpc.Compression=gzip until a collector fails
 	// a stream because it cannot decompress gzip; the streams opened after
@@ -39,10 +44,11 @@ func newStatGrpc(agent *agent) (*statGrpc, error) {
 	}
 
 	s := &statGrpc{
-		statConn:   conn,
-		statClient: pb.NewStatClient(conn),
-		agent:      agent,
-		gzipConn:   gzipConn,
+		statConn:       conn,
+		statClient:     pb.NewStatClient(conn),
+		agent:          agent,
+		maxSendMsgSize: agent.config.Int(CfgCollectorGrpcMaxSendMessageSize),
+		gzipConn:       gzipConn,
 	}
 	s.compress.Store(gzipConn)
 	return s, nil
@@ -89,6 +95,63 @@ func (s *statStream) sendStats(stats *pb.PStatMessage) error {
 	return s.send(func(c pb.Stat_SendAgentStatClient) error { return c.Send(stats) }, "stat stream.Send()")
 }
 
+// sendStats splits a retained URL-stat snapshot only after the worker takes
+// it, so the one-message hand-off still bounds the outage backlog. Each part
+// has its own retry: a reconnect must not replay parts already sent. Measure
+// the uncompressed size as for span batches, so the collector's decoded limit
+// and a fallback from gzip to an uncompressed stream are both respected.
+func (agent *agent) sendStats(stream *statStream, stats *pb.PStatMessage) *statStream {
+	uriStats := stats.GetAgentUriStat()
+	maxSize := agent.statGrpc.maxSendMsgSize
+	if uriStats == nil || proto.Size(stats) <= maxSize {
+		return agent.sendStatsOrReopen(stream, stats)
+	}
+	for _, entries := range splitUrlStatEntries(uriStats, maxSize) {
+		msg := makePAgentUriStatMessage(uriStats.GetBucketVersion(), entries)
+		stream = agent.sendStatsOrReopen(stream, msg)
+	}
+	return stream
+}
+
+var urlStatMessageOversizeLog = logThrottle{src: "url stat"}
+
+// splitUrlStatEntries keeps each URL/tick histogram whole and fits groups to
+// maxSize, including the two protobuf envelopes. Only an entry that cannot
+// fit by itself is dropped; the entries around it can still be sent. The
+// groups share the original slice and do not copy the histogram payloads.
+func splitUrlStatEntries(stats *pb.PAgentUriStat, maxSize int) [][]*pb.PEachUriStat {
+	headerSize := proto.Size(&pb.PAgentUriStat{BucketVersion: stats.GetBucketVersion()})
+	messageSize := func(entriesSize int) int {
+		// PStatMessage.agentUriStat is field 3, a length-delimited message.
+		return protowire.SizeTag(3) + protowire.SizeBytes(headerSize+entriesSize)
+	}
+	entries := stats.GetEachUriStat()
+	var batches [][]*pb.PEachUriStat
+	start, size := 0, 0
+	for i, entry := range entries {
+		// PAgentUriStat.eachUriStat is repeated message field 2.
+		n := protowire.SizeTag(2) + protowire.SizeBytes(proto.Size(entry))
+		if entrySize := messageSize(n); entrySize > maxSize {
+			if i > start {
+				batches = append(batches, entries[start:i])
+			}
+			start, size = i+1, 0
+			urlStatMessageOversizeLog.warnf("url stat entry dropped: %d bytes serialized exceeds %s %d",
+				entrySize, CfgCollectorGrpcMaxSendMessageSize, maxSize)
+			continue
+		}
+		if messageSize(size+n) > maxSize {
+			batches = append(batches, entries[start:i])
+			start, size = i, 0
+		}
+		size += n
+	}
+	if start < len(entries) {
+		batches = append(batches, entries[start:])
+	}
+	return batches
+}
+
 // makePAgentStatBatch copies the slice: the stat worker reuses its array for
 // the next batch.
 func makePAgentStatBatch(stats []*pb.PAgentStat) *pb.PStatMessage {
@@ -102,11 +165,15 @@ func makePAgentStatBatch(stats []*pb.PAgentStat) *pb.PStatMessage {
 }
 
 func makePAgentUriStat(stat *urlStatSnapshot) *pb.PStatMessage {
+	return makePAgentUriStatMessage(urlStatBucketVersion, makePEachUriStatList(stat))
+}
+
+func makePAgentUriStatMessage(bucketVersion int32, entries []*pb.PEachUriStat) *pb.PStatMessage {
 	return &pb.PStatMessage{
 		Field: &pb.PStatMessage_AgentUriStat{
 			AgentUriStat: &pb.PAgentUriStat{
-				BucketVersion: urlStatBucketVersion,
-				EachUriStat:   makePEachUriStatList(stat),
+				BucketVersion: bucketVersion,
+				EachUriStat:   entries,
 			},
 		},
 	}

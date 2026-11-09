@@ -464,6 +464,9 @@ Keep it at or below the collector's inbound limit: a request over either limit i
 span in it. The span batch sender measures each batch against this option before sending it and sends one
 over the limit in several requests; a single span chunk over the limit on its own cannot be sent at all and
 is dropped, with a `span dropped: ... exceeds Collector.Grpc.MaxSendMessageSize` warning naming the span.
+The URL-statistics sender also splits a retained snapshot into messages within this limit,
+using the uncompressed size and keeping each URL/tick histogram whole. A single URL/tick
+entry that cannot fit is dropped with a rate-limited warning; the other entries are still sent.
 
 * PINPOINT_GO_COLLECTOR_GRPC_MAXSENDMESSAGESIZE
 * int
@@ -1456,6 +1459,8 @@ While the stat stream is down, the agent keeps one message waiting for the sende
 and at most 5 further completed 30 second ticks (two and a half minutes). Beyond that
 the oldest of those ticks is dropped and the agent logs a rate-limited warning, so a
 long collector outage does not grow the URL statistics backlog.
+On recovery or shutdown, retained statistics are split at
+`Collector.Grpc.MaxSendMessageSize` by the sender, preserving the backlog bound.
 
 * PINPOINT_GO_HTTP_URLSTAT_ENABLE
 * type: bool
