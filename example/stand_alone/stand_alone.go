@@ -83,6 +83,13 @@ func main() {
 	defer agent.Shutdown()
 	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
+	// The first run() starts at once, and every tracer is a no-op until the
+	// collector has accepted the agent: wait for that, with a bound, or the
+	// first run goes untraced (doc/getting_started.md, Short-lived programs).
+	for deadline := time.Now().Add(3 * time.Second); !agent.Enable() && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+	}
+
 	db, err = sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/information_schema")
 	if err != nil {
 		log.Fatalf("cannot open database: %v", err)

@@ -74,7 +74,11 @@ func deleteData(ctx context.Context, conn *sql.DB) error {
 func withTracer(f func(context.Context, *sql.DB) error, ctx context.Context, conn *sql.DB) error {
 	tracer := pinpoint.FromContext(ctx)
 	defer tracer.NewSpanEvent(pphttp.HandlerFuncName(f)).EndSpanEvent()
-	return f(ctx, conn)
+	err := f(ctx, conn)
+	// A failure that happens before a statement reaches the driver - the
+	// connection itself - leaves no SQL event, so record it on this one.
+	tracer.SpanEvent().SetError(err)
+	return err
 }
 
 func query(w http.ResponseWriter, r *http.Request) {

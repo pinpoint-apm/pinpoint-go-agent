@@ -43,8 +43,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
+	// e.Start shuts the server down gracefully on SIGTERM or Ctrl-C and
+	// returns, so this deferred Shutdown sends the last spans.
+	// pinpoint.ShutdownOnSignal would compete with it for the same signals.
 	defer agent.Shutdown()
-	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
 	e := echo.New()
 

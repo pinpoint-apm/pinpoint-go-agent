@@ -53,8 +53,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("pinpoint agent start fail: %v", err)
 	}
+	// app.Run handles SIGTERM, SIGQUIT and SIGINT itself and returns once the
+	// servers have stopped, so this deferred Shutdown sends the last spans.
+	// pinpoint.ShutdownOnSignal would compete with it for the same signals.
 	defer agent.Shutdown()
-	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
 	s := &server{}
 	httpSrv := http.NewServer(

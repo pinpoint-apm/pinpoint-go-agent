@@ -27,7 +27,7 @@ func logger(w http.ResponseWriter, r *http.Request) {
 	logger := ppzap.NewLogger(base, tracer).With(zap.String("foo", "bar"))
 	logger.Error("logger log message")
 
-	logger.Sugar().Errorw("sugared log message", "foo", "bar")
+	logger.Sugar().Errorw("sugared log message", "count", 2) // foo=bar is already on logger
 }
 
 func main() {
