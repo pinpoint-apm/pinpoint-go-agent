@@ -19,8 +19,7 @@ go get github.com/pinpoint-apm/pinpoint-go-agent/v2
 * Go 1.25+
 * Pinpoint 3.1.0+
   * The default agent identity, [Uid.Version](doc/config.md#uidversion) v4, needs a ServiceName.
-    A 3.1.x collector accepts it only with an ApiKey; set `Uid.Version: v3` for one without.
-* Linux, OS X, and Windows are supported.
+  * The default Uid.Version is set for Pinpoint 4.0.0. With a collector older than 4.0.0, set `Uid.Version: v3`.
 
 Moving from v1? See [Migrating from v1 to v2](doc/migration_v2.md).
 
