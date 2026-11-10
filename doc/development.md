@@ -59,7 +59,8 @@ The agent's tracers are concurrency-sensitive, so `-race` is part of the
 contract rather than an occasional extra. Run it before sending a change that
 touches spans, the queue or the config snapshot.
 
-staticcheck runs in CI on the newest toolchain and has to come back clean. A
+staticcheck runs in CI on Go 1.26, the toolchain staticcheck v0.8.1 is built
+for, and has to come back clean. A
 deliberate use of deprecated API - the `database/sql` fallbacks for drivers
 without the Context interfaces, the balancer's `NewSubConn` - carries a
 `//lint:ignore SA1019 <reason>` directive on its line; add one, with the
@@ -97,7 +98,7 @@ go test -run TestSendsAllMetadataAndCompleteSpanShapes -v
 Every received protobuf and its client metadata are copied into a thread-safe
 snapshot, so a test asserts on the real message rather than on an internal
 call. Coverage spans span lifecycle and chunking, async/goroutine spans,
-propagation, v1/v3/v4 identity metadata, SQL metadata through the real driver,
+propagation, v3 (whose headers v1 shares) and v4 identity metadata, SQL metadata through the real driver,
 agent and URL statistics, sampling and throughput limits, the `plugin/http`
 helpers, and profiler commands over the real bidirectional stream. See
 [test/it/README.md](/test/it/README.md).
@@ -203,7 +204,7 @@ Each new plugin needs:
    has the helpers the existing plugins share: `pinpoint.IsInjected` and
    `pinpoint.IsInjectedBy` for a client that must not start a second event on
    a carrier its own span already injected, and `pinpoint.IsInjectedHeader`
-   (or the `pinpoint.InjectedHeaders` list) for clearing another span's
+   (or `pinpoint.InjectedHeaders()`, an iterator over the names) for clearing another span's
    context from one; `pinpoint.OnTracerGoroutine`
    for a callback the library may run on a goroutine of its own;
    `pinpoint.RemoteHost` for the peer address a server records; and
@@ -258,7 +259,7 @@ references live here.
 | `SQL.RemoveComments` defaults to on | `profiler.jdbc.removecomments` is absent from the distributed `pinpoint.config`, and the unresolved placeholder leaves the field initializer in place |
 | the request query string annotation format | `HttpServletParameterExtractor` |
 | the client URL annotation drops its query by default | `profiler.<plugin>.param` / `InterceptorUtils.getHttpUrl` — **Java defaults this on; the Go agent defaults it off**, because query strings routinely carry tokens and user ids |
-| the gRPC flow control window and write buffer follow Java | `ClientOption` / `DefaultChannelFactory.setupClientOption`: a fixed 1 MiB window with BDP auto-tuning off. All three agents disable the idle timeout, but by different means, so the decision is shared and the value is not. The HTTP/2 mechanics are in `grpc.go` above `dialOptions` |
+| the gRPC flow control window and write buffer follow Java | `ClientOption` / `DefaultChannelFactory.setupClientOption`: a fixed 1 MiB window with BDP auto-tuning off. All three agents disable the idle timeout, but by different means, so the decision is shared and the value is not. The HTTP/2 mechanics are in the comment inside `dialOptions` in `grpc.go` |
 
 **Aligned with the C++ agent**
 
@@ -269,7 +270,7 @@ references live here.
 | `Log.MaxBackups` exists, with no age or compression key | the C++ agent has no such setting, and a Go-only key would leave the two agents' config files disagreeing |
 | `Log.MaxBackups` rejects 0 | the rotation library reads 0 as "keep every backup", which can fill the disk, while a reader of the C++ agent would take it as "keep none" |
 | `Collector.Grpc.KeepAlivePermitWithoutCalls` defaults to false | agents older than this release behaved as if it were true |
-| the SQL cache options are fixed at startup | the C++ agent fixes them too; see the read-once note above |
+| the SQL cache options are fixed at startup | the C++ agent fixes them too; they are not marked dynamic in [Configuration](config.md) |
 | the gRPC channel state log lines are worded identically | they are the log-only stand-in for Java's Channelz reporters |
 | `ServerInfo` is a config key here | the C++ agent takes it through `AgentOptions.server_info` only |
 | a statement over the 1 MiB normalization cap is dropped, not cut | a cut landing inside a literal loses the placeholder and yields a SQL id / UID no other agent computes; C++ `kMaxNormalizedSqlLength` uses the same value and the same drop policy |
@@ -293,7 +294,7 @@ the key it came from.
 | `Collector.Grpc.SenderQueueSize` | `profiler.transport.grpc.metadata.sender.executor.queue.size`; the C++ agent's key of the same name |
 | `Sampling.Type: "COUNTING"` | the Java name for the counter sampler, kept as an alias of `"COUNTER"` |
 | `Stat.CollectInterval` range | the Java agent's 1000-10000 bounds |
-| `Span.IgnoreErrors` | `profiler.ignore-error-handler.<name>.class-name`, `.exception-message.contains`, `.nested=true` |
+| `Span.IgnoreErrors` | `profiler.ignore-error-handler.<name>.class-name`, `.exception-message@contains`, `.nested=true` |
 | `Span.ErrorMark` | `profiler.error.mark` — unset there means every cause, as an empty list does here |
 | `Span.ErrorMarkExclude` | `profiler.error.mark.exclude` (`mark.removeAll(exclude)`, so an exclusion wins) |
 | `SQL.CacheSize` | `profiler.jdbc.sqlcachesize`; C++ `Sql.CacheSize` |
@@ -304,7 +305,7 @@ the key it came from.
 | `Error.NewThroughput` | `profiler.exceptiontrace.new.throughput` |
 | `Error.MaxChainDepth` | `profiler.exceptiontrace.max.depth`, which defaults to 5 |
 | `Http.Server.ProxyHeaderEnable` | `profiler.proxy.http.header.enable` |
-| `Http.Server.ProxyUserHeaderNames` | `profiler.proxy.user.header.names`; the `t=` / `D=` format inference follows `UserRequestParser` |
+| `Http.Server.ProxyUserHeaderNames` | `profiler.proxy.http.headers`; the `t=` / `D=` format inference follows `UserRequestParser` |
 | `Http.Server.RealIpHeader` | `profiler.server.realipheader` (`RealIpHeaderResolver`) — **Java trusts no header by default; this agent keeps `X-Forwarded-For` then `X-Real-Ip`** so existing deployments record the same address as before |
 | `Http.Server.RealIpEmptyValue` | `profiler.server.realipemptyvalue` |
 | `Http.Server.RecordRequestParam` | `profiler.server.tracerequestparam` |
@@ -344,9 +345,9 @@ the key it came from.
   sampling rate.
 * **JVM-shaped stat fields carry Go values.** Go's GC is concurrent and
   non-generational, so `PJvmInfo.gcType` and `PJvmGc.type` are
-  `JVM_GC_TYPE_UNKNOWN`, as in the C++ agent. `jvmGcOldCount` carries
-  `runtime.MemStats.NumGC` and `jvmGcOldTime` carries `PauseTotalNs` in
-  milliseconds, so both read lower than a JVM's.
+  `JVM_GC_TYPE_UNKNOWN`, as in the C++ agent. `jvmGcOldCount` carries the GC
+  cycle count and `jvmGcOldTime` the total stop-the-world pause in
+  milliseconds, both from `debug.ReadGCStats`, so both read lower than a JVM's.
 * **No shutdown hook.** Java closes itself from a JVM shutdown hook. Go has no
   `atexit`, and a `signal.Notify` installed by default would change
   process-wide state behind the application's back, so `ShutdownOnSignal` is
@@ -398,8 +399,8 @@ Cut a pre-release first. The module proxy and the checksum database keep the
 first content they see for a version, so a pushed tag cannot be moved: a
 broken release is fixed by the next version, with a `retract` directive for
 the broken one. `check` and `tag` refuse a version whose tags already exist
-here or on the remote, and `push` refuses a commit that no branch of the remote
-holds.
+here or on the remote, and `push` refuses a commit that the remote's `main`
+(`$REMOTE/$BRANCH`) does not hold.
 
 A new major version starts with
 [`scripts/set-major-version.sh`](/scripts/set-major-version.sh) `N`, which

@@ -112,9 +112,9 @@ the wrapped function returns. Do not call it yourself on a wrapped tracer.
 
 **What happens on misuse:** the late call is dropped, not applied. Every span
 recorder setter — `SetError`, `SetFailure`, `SetServiceType`, `SetRpcName`,
-`SetRemoteAddress`, `SetEndPoint`, `SetAcceptorHost`, `SetLogging`,
-`Annotations` and `RecordUrlStat` — returns without writing once `EndSpan()` has
-run, and warns `abnormal span - <setter> called after EndSpan` at debug level;
+`SetRemoteAddress`, `SetEndPoint`, `SetAcceptorHost`, `SetLogging` and
+`Annotations` — and `Tracer.RecordUrlStat` return without writing once
+`EndSpan()` has run, and warn `abnormal span - <setter> called after EndSpan` at debug level;
 the span event setters do the same after `EndSpanEvent()`. The lifecycle
 calls — `NewSpanEvent`, `EndSpanEvent`, `Inject`, `NewGoroutineTracer` and
 `WrapGoroutine` — are dropped too: `NewSpanEvent`
@@ -160,8 +160,9 @@ with the durations shifted by one event.
 
 `Tracer.Span()` returns a recorder for the span; `Tracer.SpanEvent()` returns a
 recorder for the **innermost currently active** event. Neither is a value to
-hold on to: after the event ends, a retained `SpanEventRecorder` writes into an
-event that is already on its way to the collector.
+hold on to: after the event ends, a retained `SpanEventRecorder` points at an
+event that is already on its way to the collector, and every write through it
+is dropped.
 
 ```go
 // DON'T: the handle outlives the event it points at
@@ -278,7 +279,8 @@ loop rather than one per iteration.
   length, so it does not mean what the `...(n)` markers inside a list composed
   by the `database/sql` or pgx wrapper mean; those lists are within the bound
   by construction and are never cut here. `sql` itself is bounded elsewhere
-  (`SQL.CacheLengthLimit`, the normalization cap), and the normalized
+  (the published text is cut at 64 KiB, and a statement past the 1 MiB
+  normalization cap is not recorded at all), and the normalized
   parameters are never cut: a parameter list longer than 64 KiB is dropped as
   a whole, since a cut one would misplace every value after the cut, and the
   statement is recorded with its placeholders unfilled.
@@ -286,10 +288,12 @@ loop rather than one per iteration.
 ## 8. Keep Operation and Error Names Low-Cardinality
 
 Operation names (`NewSpanTracer`, `NewSpanEvent`) and error names are interned:
-the agent assigns each distinct string an id and sends the string to the
-collector once as API metadata. A name that varies per request turns that cache
-into an unbounded map and floods the collector's API list, which is also what
-makes the Pinpoint UI's call tree unreadable.
+the agent assigns each distinct string an id from a cache of 1024 entries and
+sends the string to the collector as metadata (API metadata for an operation
+name, string metadata for an error name). A name that varies per request keeps
+evicting that cache, so every new value mints a new id and sends its metadata
+again; that floods the collector's API list, which is also what makes the
+Pinpoint UI's call tree unreadable.
 
 ```go
 // DON'T: a distinct API entry per user
@@ -336,8 +340,10 @@ pattern.
   (rule 1). The root's final chunk
   goes out at the root's own `EndSpan()`, so a child that fails **after** the
   root ended is not reflected in `PSpan.err` or the URL stat. An **unsampled**
-  transaction follows the same rule: its async children carry a link to the
-  root, so the failure lands on the root's URL stat.
+  transaction follows the same rule for the span-level calls only: a child's
+  `Span().SetError()` or `Span().SetFailure()` lands on the root's URL stat. An
+  event `SetError` and the `SQL.ErrorCount` limit record nothing on an
+  unsampled transaction, root or child.
 * A `nil` error is ignored by both, so the common
   `tracer.SpanEvent().SetError(err)` after a call needs no guard.
 * `SetFailure(category...)` marks failure without an error message — the right
@@ -351,8 +357,8 @@ pattern.
   (rule 1), so both apply there. The capture prefers the stack
   the error carries itself, i.e. errors implementing `StackTrace() errors.StackTrace`
   such as `github.com/pkg/errors` errors. An error without one — a plain
-  `errors.New` — is recorded with exactly `Error.CallStackDepth` frames
-  captured at the `SetError` call site.
+  `errors.New` — is recorded with up to `Error.CallStackDepth` frames (fewer
+  when the call stack is shallower), starting at the `SetError` call site.
 * `Cause()` and `Unwrap()` (`fmt.Errorf("%w")`) chains are walked to build
   the exception chain, bounded at 64 links so a self-referential or cyclic
   user error cannot hang the request goroutine. A multi-unwrap error
@@ -486,8 +492,10 @@ unless `Sampling.ContinueThroughput` is set - on a hop that does not exist. Head
 clients produce exactly that shape.
 
 The two span id headers are checked for **presence only**: a value that will
-not parse still describes a hop, and is kept as a null span id rather than
-rejected.
+not parse still describes a hop, and neither starts a new transaction. An
+unparseable `Pinpoint-SpanID` is replaced by a newly generated span id, with a
+`malformed span id header` warning, and an unparseable `Pinpoint-pSpanID`
+leaves the span with no parent (-1).
 
 A header **present with an empty value** is present, so the trace continues
 across a proxy that blanks `Pinpoint-SpanID` rather than dropping it. Presence
@@ -554,8 +562,9 @@ ctx := pinpoint.NewContext(context.Background(), tracer.NewGoroutineTracer())
 * `NewAgent()` returns `NoopAgent()` **and** an error when a required identity
   value is missing or invalid. The application keeps running untraced, so the
   returned error is the only signal — log it.
-* With `Enable=false`, `NewAgent()` returns `NoopAgent()` and a `nil` error.
-  That is not a failure.
+* With `Enable=false` and a valid identity, `NewAgent()` returns `NoopAgent()`
+  and a `nil` error. That is not a failure. The identity is checked first, so
+  a missing or invalid one returns an error even with `Enable=false`.
 * `Shutdown()` stops the agent's goroutines; that agent never traces again.
   Tracers already in flight keep working as no-ops. To resume tracing, build a
   new agent with `NewAgent()` — no process restart needed. See

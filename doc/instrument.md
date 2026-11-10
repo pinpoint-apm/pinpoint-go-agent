@@ -50,7 +50,7 @@ The SpanRecorder and Annotation interface allow trace data to be recorded in a S
 ## SpanEvent
 
 SpanEvent represents an operation within a span, such as a database query, a request to another service, or function call.
-To report a span, You can call **Tracer.NewSpanEvent()**.
+To report a span event, call **Tracer.NewSpanEvent()**.
 **Tracer.EndSpanEvent()** must be called to complete a span event.
 
 The SpanEventRecorder and Annotation interface allow trace data to be recorded in a SpanEvent.
@@ -90,7 +90,8 @@ Pinpoint Go Agent provides two functions below to read and write these data.
   that continues the transaction the reader's headers carry, or starts a new one when they carry none
   (a `nil` reader returns `NoopTracer()`).
   The reader's **Get**(key) returns the header value and whether the carrier holds the key at all;
-  a header carried with an empty value is reported as present and continues the trace.
+  a span id header (`Pinpoint-SpanID`, `Pinpoint-pSpanID`) carried with an empty value is reported
+  as present and still continues the trace, while `Pinpoint-TraceID` must parse.
   A `net/http.Header` is wrapped with **pinpoint.HttpHeaderReader**() to be used as a reader.
 * **Tracer.Inject**(writer DistributedTracingContextWriter) injects distributed tracing headers to the writer.
 
@@ -228,9 +229,11 @@ func asyncWithWrapper(w http.ResponseWriter, r *http.Request) {
 ```
 
 A goroutine tracer has no span of its own on the wire: its `Span().SetError()`
-is recorded on its Goroutine Invocation event and its `SetLogging()` on the
-request's span, but its other span-level writes - annotations, rpc name,
-remote address - are never sent, so record those on its span events. See
+is recorded on its Goroutine Invocation event, its `SetFailure()` fails the
+request's transaction, its `SetLogging()` marks the request's span and its end
+point goes out with its events, but its other span-level writes - annotations,
+rpc name, remote address, acceptor host - are never sent, so record those on
+its span events. See
 [contract 1](api_contracts.md#1-a-tracer-tracks-one-goroutine).
 
 ## Jobs, consumers and workers
@@ -258,8 +261,8 @@ func runReport(ctx context.Context) {
   statement marks it failed ([SQL.ErrorCount](config.md#sqlerrorcount)), and
   events past `Span.MaxCallStackSequence` (5000) are dropped.
 * **Open an event before forking.** A span from `NewSpanTracer()` has none, and
-  `NewGoroutineTracer()` or `WrapGoroutine()` called without one returns a
-  no-op tracer ([contract 2](api_contracts.md#2-a-goroutine-tracer-needs-an-active-span-event)).
+  `NewGoroutineTracer()` called without one returns a no-op tracer, and
+  `WrapGoroutine()` hands its goroutine one ([contract 2](api_contracts.md#2-a-goroutine-tracer-needs-an-active-span-event)).
 * **A consumer continues the producer's transaction** with
   `NewSpanTracerWithReader()` over the message headers; for Kafka,
   `pinpoint.NewKafkaConsumerTracer()` does it the way the
@@ -349,9 +352,11 @@ the cause is `pinpoint.ErrorCategoryUnknown`. See
 
 ### Call stacks
 
-`Error.TraceCallStack` records the stack where the error was created, and
-`Error.CallStackDepth` bounds it. The agent reads the stack **from the error
-value**, so this works with errors that carry one — those implementing
+`Error.TraceCallStack` records a call stack for an error passed to a span
+event's `SetError()` (a goroutine tracer's `Span().SetError()` included); the
+span-level `SetError()` of a request records none. The agent reads the stack
+**from the error value** and sends it whole, so this works with errors that
+carry one — those implementing
 `StackTrace() errors.StackTrace`, as `github.com/pkg/errors` errors do:
 
 ```go
@@ -360,8 +365,9 @@ if err != nil {
 }
 ```
 
-An error that carries no stack — a plain `errors.New` — is recorded with
-`Error.CallStackDepth` frames captured at the `SetError` call site. How the
+An error that carries no stack — a plain `errors.New` — is recorded with up to
+`Error.CallStackDepth` frames captured at the `SetError` call site; the depth
+bounds only that captured stack. How the
 `Cause()`/`Unwrap()` chain is walked into the exception chain is in
 [contract 9](api_contracts.md#9-error-recording).
 

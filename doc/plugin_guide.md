@@ -55,8 +55,10 @@ their own.
 * Plugins with a version suffix (`echov4`, `goredisv9`, ...) track that major
   version of the library. Pick the one matching your dependency; they are
   separate modules and cannot be mixed for one library.
-* Every wrapper is safe to leave in place when the agent is disabled or the
-  transaction is unsampled — it passes through and records nothing.
+* Every wrapper is safe to leave in place when the agent is disabled - it
+  passes through and records nothing - or the transaction is unsampled: no
+  span or event is sent, but the request still counts in the URL statistics
+  and outgoing calls carry the unsampled flag.
 
 ---
 
@@ -65,10 +67,10 @@ their own.
 These open the root span of a transaction: they extract the incoming
 distributed-tracing headers, put a tracer where the handler can reach it
 ([Getting the tracer in a handler](#getting-the-tracer-in-a-handler)), and
-record the URL, status and configured headers. kratos is the exception to the
-last part: its middleware names the span after the kratos operation
-(`/helloworld.Greeter/SayHello`), for HTTP requests too, records no HTTP
-status, and none of the `Http.Server.*` options apply to it.
+record the URL, status and configured headers. gRPC and kratos are the
+exceptions to the last part: they record no HTTP status, and none of the
+`Http.Server.*` options apply to them. kratos also names the span after the
+kratos operation (`/helloworld.Greeter/SayHello`), for HTTP requests too.
 
 | Plugin package | Instrumented package | Entry point |
 |---|---|---|
@@ -369,8 +371,9 @@ verdict with `Span.ErrorMarkExclude: sql`.
 | [plugin/gohbase](/plugin/gohbase) | [tsuna/gohbase](https://github.com/tsuna/gohbase) | `NewClient` |
 | [plugin/goelastic](/plugin/goelastic) | [elastic/go-elasticsearch](https://github.com/elastic/go-elasticsearch) v7, v8 and v9 | `NewTransport` |
 
-These clients hook into the library's own observability seam — a hook, monitor,
-observer or `RoundTripper` — so you register once at construction:
+Most of these clients hook into the library's own observability seam — a hook,
+monitor, observer or `RoundTripper` — so you register once at construction
+(gomemcache, gohbase and redigo wrap the client or connection instead):
 
 ```go
 // redis/go-redis/v9
@@ -389,12 +392,17 @@ cluster.BatchObserver = observer
 
 The tracer still has to reach each call in its context — `client.Get(ctx, key)`
 with a context from `pinpoint.NewContext()`, or the request context in a
-handler.
+handler. gohbase takes it from the context of the hrpc request, and
+gomemcache, whose calls take no context, from the copy `mc.WithContext(ctx)`
+returns.
 
 Each store is drawn on the server map as one node: `REDIS`, `MEMCACHED`,
 `HBASE` and `ElasticSearch` by name, MongoDB by database and Cassandra by
 keyspace, so a gocql session without `cluster.Keyspace` can lose its node. The
-address contacted is the endpoint. The go-redis hooks read it from
+endpoint is the address the client was configured with - every address,
+comma-joined, for a cluster or a server list, and the ZooKeeper quorum for
+HBase - while the MongoDB, Cassandra, Elasticsearch and redigo plugins report
+the host actually contacted. The go-redis hooks read it from
 `Options.Addr` or `ClusterOptions.Addrs`; for a Sentinel, Ring or universal
 client, pass `&redis.Options{Addr: "<label>"}`, since `NewHook(nil)` reports
 `unknown`.
@@ -449,8 +457,9 @@ handlers return belongs to none of them - give it a span of its own
 
 Each message is recorded as `kafka://topic=<t>?partition=<p>&offset=<o>`, with
 the topic, partition and offset as annotations. Its broker is the first address
-given to `NewContext`; without one, the broker the producer recorded, or
-`Unknown` for a message from an uninstrumented producer. An error the handler
+given to `NewContext` (`Unknown` if it was given none); without a `NewContext`
+context, the broker the producer recorded, or `Unknown` for a message from an
+uninstrumented producer. An error the handler
 returns fails the transaction, and a panic is recorded and re-raised. A message
 carrying a Pinpoint context follows the producer's sampling decision, capped by
 `Sampling.ContinueThroughput`; one without starts a new transaction at this

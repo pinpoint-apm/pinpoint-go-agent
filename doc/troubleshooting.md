@@ -24,7 +24,7 @@ Lines look like this (logrus text format, with the source module tagged):
 
 ```text
 INFO[2026-09-03 11:36:00.000000] new pinpoint agent          module=pinpoint src=agent
-INFO[2026-09-03 11:36:00.010000] connect to collector: my-collector:9991 (ssl: false)  module=pinpoint src=grpc
+INFO[2026-09-03 11:36:00.010000] connect to collector: dns:///my-collector:9991 (ssl: false)  module=pinpoint src=grpc
 INFO[2026-09-03 11:36:00.120000] agent registered            module=pinpoint src=agent
 INFO[2026-09-03 11:36:00.121000] start ping goroutine        module=pinpoint src=agent
 INFO[2026-09-03 11:36:00.121000] start span batch goroutine  module=pinpoint src=agent
@@ -44,9 +44,12 @@ INFO[2026-09-03 11:36:30.010000] still waiting for agent registration after 3000
 ```
 
 The parenthesis separates the two cases: `collector unreachable or the send
-failed` is a connectivity problem, while `collector rejected the registration,
-likely permanent` means the collector answered and said no — that one usually
-waits forever unless the configuration changes. Tracing does not start until
+failed` means the call itself failed - no connection, a timeout, or the
+collector refusing the call with an error status (such as `InvalidArgument
+desc = apiKey`, below); the `send agent info - ...` line before it says which.
+`collector rejected the registration, likely permanent` means the call went
+through and the collector answered no. A refusal of either kind usually waits
+forever unless the configuration changes. Tracing does not start until
 registration succeeds, which is why a blocked agent port shows up as "no data at
 all" rather than as partial data.
 
@@ -55,7 +58,7 @@ Three lines tell you almost everything:
 | Line | Means |
 |---|---|
 | `new pinpoint agent` | config validated, agent object built |
-| `connect to collector: <addr> (ssl: <bool>)` | the address actually used, after all config sources resolved |
+| `connect to collector: <addr> (ssl: <bool>)` | the address actually used, after all config sources resolved, as a gRPC target (`dns:///host:port`, or `passthrough:///host:port` with `Collector.Grpc.DnsResolverEnable: false`) |
 | `agent registered` | the collector accepted this agent's identity |
 
 `new pinpoint agent` is followed by the resolved configuration, one
@@ -81,8 +84,10 @@ if err != nil {
 }
 ```
 
-Note that `Enable=false` returns a no-op agent with a `nil` error — that is a
-deliberate opt-out, not a failure.
+Note that `Enable=false` with a valid identity returns a no-op agent with a
+`nil` error — that is a deliberate opt-out, not a failure. The identity is
+checked first, so a missing `ApplicationName` or `ServiceName` is still
+reported as an error.
 
 ### Routing the agent's own logs
 
@@ -102,7 +107,8 @@ everything can:
   value ..., ignored`) and a `ConfigOption` value of the wrong type precede any
   logging configuration and go to stderr regardless;
 * `config file loading error`, `config file <path> not found` and `config file
-  doesn't have the profile` are logged before the file is read, so when
+  doesn't have the profile` are logged before the file's own `Log.*` values
+  are applied, so when
   `Log.Output` is set only in that config file they go to the output the
   command line and environment chose - `stdout` by default. Set it with
   `PINPOINT_GO_LOG_OUTPUT` or `--pinpoint-log-output` and these go to the file
@@ -142,8 +148,10 @@ becomes a no-op call. See [Enable](config.md#enable).
 
 ### Sampling to zero
 
-To keep the agent connected but stop collecting transactions, set the sampling
-rate to zero instead. Unlike `Enable`, `Sampling.PercentRate` is
+To keep the agent connected but stop starting new transactions, set the
+sampling rate to zero instead. A request that continues a sampled trace from
+an upstream agent is still traced; only `Sampling.ContinueThroughput` limits
+those. Unlike `Enable`, `Sampling.PercentRate` is
 [dynamic](config.md#dynamic-configuration), so this takes effect on a running
 process as soon as the config file is saved:
 
@@ -220,7 +228,7 @@ application is untraced.
 | `ApplicationName` not set | it is required; without it the agent cannot start |
 | `ServiceName` not set | the default [Uid.Version](config.md#uidversion) v4 requires it (3 to 254 bytes); set it, or set `Uid.Version` to `v3` |
 | Name/ID too long or has invalid characters | `ApplicationName` must match `[a-zA-Z0-9\._\-]+`; length limits depend on [Uid.Version](config.md#uidversion). An invalid `AgentName` does not stop the agent: it is replaced by `<host>-<pid>` with a warning |
-| `Enable=false` left in a config file or the environment | the resolved config dump shows `Enable = false` |
+| `Enable=false` left in a config file or the environment | there is no `new pinpoint agent` line and no config dump, and `NewAgent()` returns a `nil` error; check `PINPOINT_GO_ENABLE`, `--pinpoint-enable` and the config file's `enable` key |
 | `ApiKey` has a control or non-ASCII character (v4) | it must be printable ASCII; surrounding whitespace is trimmed, as for the names |
 | `Uid.Version` is `v4`, the default, against a 3.1.x collector | the agent starts, but the collector refuses every call unless `ApiKey` is set and matches `[a-zA-Z0-9\._\-]+`: `send agent info - rpc error: code = InvalidArgument desc = apiKey` repeats and registration waits forever; set `Uid.Version` to `v3` ([Uid.Version](config.md#uidversion)) |
 | A second `NewAgent()` call | returns `agent is already created`; the first agent is still the live one |
@@ -236,14 +244,16 @@ Work down this list; it is ordered by how often each turns out to be the cause.
 1. **Agent registered?** Without `agent registered` the problem is
    connectivity or identity, not instrumentation. See
    [Cannot Connect to Collector](#cannot-connect-to-collector).
-2. **Collector older than 3.1.0?** `SendSpanBatch failed - N spans dropped` in
-   the agent log means the collector does not implement the span sender.
-   Upgrade the collector.
+2. **Collector older than 3.1.0?** `SendSpanBatch failed - N spans dropped:
+   rpc error: code = Unimplemented ...` in the agent log means the collector
+   does not implement the span sender. Upgrade the collector. The same line
+   with another code is a failed send of another kind, such as `Unavailable`.
 3. **Is anything instrumented?** Go is not auto-instrumented. A span only
    exists where your code created one — via a plugin wrapper or
    `NewSpanTracer()`. An agent can be perfectly healthy and report nothing.
 4. **Sampling.** With `Sampling.Type: PERCENT`, a `Sampling.PercentRate` of 0
-   collects nothing; with the default `COUNTER` type the rate is
+   starts no new transaction (one continued from a sampled upstream is still
+   traced); with the default `COUNTER` type the rate is
    `Sampling.CounterRate` and `PercentRate` is ignored.
    `Sampling.NewThroughput` caps new transactions per second. Set
    `counterRate: 1` (or `percentRate: 100` with the `PERCENT` type) while
@@ -339,7 +349,8 @@ anything when a program calls `os.Exit()` — directly, through `log.Fatal*`, or
 through a framework that exits on error. If you opted in to `ShutdownOnSignal`
 and still lose spans, look for an `os.Exit` on the exit path and call
 `agent.Shutdown()` before it. The same applies to a `panic` that is not
-recovered and to `SIGKILL`, which no process can observe.
+recovered on another goroutine (a panic that unwinds `main` still runs its
+deferred `Shutdown()`) and to `SIGKILL`, which no process can observe.
 
 ### Traces Are Incomplete or Look Wrong
 
@@ -397,8 +408,10 @@ A call chain that shows as separate transactions instead of one:
   metadata queue is bounded separately by `Collector.Grpc.SenderQueueSize`
   (default 1000); while it is full, new metadata is left unregistered for
   that use (no id is spent) and the agent logs `meta queue overflow`.
-* **High-cardinality names.** Operation and error names are interned per
-  process, so a name built from a request value grows an unbounded cache. See
+* **High-cardinality names.** Operation and error names are interned in a
+  cache of 1024 entries, so a name built from a request value keeps missing
+  it: every miss mints a new id and sends the metadata again, flooding the
+  collector's API list. See
   [contract 8](api_contracts.md#8-keep-operation-and-error-names-low-cardinality).
   The same applies to URL statistics: an un-templated URL per request is what
   `Http.UrlStat.LimitSize` exists to cap.
@@ -493,9 +506,11 @@ when the connection was lost and when it came back.
 
 Each collector channel that waits for a ready connection (`agent`, `ping`,
 `stat`, `command`; the span sender does not) logs under
-`src=grpc`, rate limited to one line per channel per minute so a flapping
-collector cannot flood the log; a line that closes a quiet window carries the
-number of transitions it folded:
+`src=grpc`. Each kind of line below is rate limited to one per channel per
+minute, on its own window, so a flapping collector cannot flood the log; the
+first READY, and the first recovery to READY in a window, are logged past the
+limit, and a line that closes a quiet window carries the number of transitions
+it folded:
 
 | Line | Level | Means |
 |---|---|---|
@@ -504,7 +519,10 @@ number of transitions it folded:
 | `<channel> connection not ready (state <s>): waited <d> so far` | WARN | the outage is ongoing and data is not being sent meanwhile |
 
 The state is a sampled read, not a stream: `from` and `to` are consecutive
-samples, and a first connect is not an outage and gets no summary.
+samples, and a first connect is not an outage and gets no summary. Besides
+these, every connection attempt logs `wait <channel> connection ready - state:
+<state>, timeout: <timeout>` at INFO without a limit, which shows the retry
+loop is still running.
 
 ### Configuration Changes Not Taking Effect
 

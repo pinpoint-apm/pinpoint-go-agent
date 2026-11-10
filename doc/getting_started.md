@@ -380,5 +380,6 @@ Every plugin directory also carries its own `README.md`; its example is
 * [Configuration](config.md) — every option, plus sampling and privacy
   settings for production.
 * [Troubleshooting](troubleshooting.md) — when the trace does not show up. Run
-  once with `PINPOINT_GO_LOG_LEVEL=debug` first: the agent prints its resolved
-  configuration and reports API misuse (`src=span`) that is silent at `info`.
+  once with `PINPOINT_GO_LOG_LEVEL=debug` first: besides the resolved
+  configuration it always prints, the agent then reports API misuse
+  (`src=span`) that is silent at `info`.

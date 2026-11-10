@@ -36,8 +36,9 @@ Two things make a reload not happen, and both are easy to miss:
 
 A reload rebuilds the components derived from the changed options (the
 sampler, the logger, the HTTP filters) behind an immutable snapshot, so an
-in-flight request never sees a half-applied change. Watch for `src=config`
-lines on save; a parse error leaves the previous values in place.
+in-flight request never sees a half-applied change. A save that does not
+parse, or a value that is rejected, logs a `src=config` line and leaves the
+previous values in place; a clean reload logs nothing.
 
 `Enable` cannot be reloaded, but `Agent.Shutdown()` stops a running agent and
 `NewAgent()` starts a new one, both without a restart. See
@@ -74,7 +75,7 @@ function's, or the default - so the result depends only on the last YAML applied
 calls. Precedence is the startup precedence: an option given by command line flag or environment variable,
 or set through `Config.Set()`, keeps that value.
 
-The non-dynamic options keep their running values. Those the YAML would have given another value are
+The non-dynamic options other than `ActiveProfile` keep their running values. Those the YAML would have given another value are
 returned in `RestartRequired`, by config key, and logged as a warning, so the caller can tell that a restart
 is needed to apply them; an option pinned by a flag or an environment variable would not change on a
 restart either, so it is not listed. `ReloadConfig()` never panics; `result.Status` says what happened:
@@ -91,7 +92,8 @@ restart either, so it is not listed. `ReloadConfig()` never panics; `result.Stat
 `Message` says why a reload was refused. Unlike a config file, a YAML with a value of the wrong type is
 refused as a whole rather than applied without that value: a program that composes the document gets told
 instead of running on a partly applied one. An out-of-range value is normalized as at startup (see
-[Malformed Values](#malformed-values)) with a warning, and an unknown key is ignored with a warning.
+[Malformed Values](#malformed-values)), with a warning for most options, and an unknown key is ignored
+with a warning.
 
 `ReloadConfig()` is safe to call from any goroutine while requests create spans. Concurrent calls, and
 `Config.Set()`, are serialized; the components derived from the changed options are rebuilt behind the
@@ -117,8 +119,9 @@ written as a list.
 
 A value of the right type but outside the option's range is a separate check, described with the option
 below. What it recovers depends on the option: some are clamped to the nearest bound (`Sampling.PercentRate`,
-`SQL.MaxBindValueSize`, `Error.CallStackDepth`, `Span.MaxCallStackDepth`), some fall back to the default
-(`Stat.CollectInterval`), and `Log.Level` keeps the value already in effect.
+`SQL.MaxBindValueSize`, `Span.MaxCallStackDepth`), some fall back to the default (`Stat.CollectInterval`),
+`Error.CallStackDepth` is clamped above its range and falls back to the default below it, and `Log.Level`
+keeps the value already in effect.
 
 ## Configuration Option
 The titles below are used as configuration keys in config file.
@@ -173,6 +176,8 @@ log:
 ### ActiveProfile
 The configuration profile feature is supported.
 You can set the profile in the config file and specify the profile to activate with the ActiveProfile option.
+ActiveProfile is not marked dynamic, but a config file reload or `ReloadConfig()` re-reads it: switching
+it changes which profile's dynamic options apply, while its non-dynamic options still need a restart.
 
 * PINPOINT_GO_ACTIVEPROFILE
 * string
@@ -796,7 +801,7 @@ Example (yaml):
 Span:
   IgnoreErrors:
     - "*errors.errorString:not found"
-    - "*context.deadlineExceededError"
+    - "context.deadlineExceededError"
 ```
 
 ### Span.ErrorMark
@@ -808,7 +813,9 @@ threw and returned 5xx reports `6`.
 
 Each entry is one of `exception`, `http-status` and `sql`, matched case-insensitively; a
 single entry may hold several of them comma separated. No entries at all - the default -
-means every cause. An unrecognised name is warned about and ignored, so a typo narrows nothing.
+means every cause. An unrecognised name is warned about and left out of the list, so the cause
+it was meant to name no longer fails a transaction; a list in which no name is recognised marks
+only the unknown cause.
 
 The unknown cause (`1`) is not nameable and is always marked: it is what
 `SpanRecorder.SetFailure()` records when its caller names no cause, and excluding it would
@@ -890,7 +897,8 @@ This queue buffers the collected agent stat messages waiting to be sent to the
 collector; it is independent of Span.QueueSize, which the stat queue used to share.
 URL statistics do not wait in it: they are handed to the sender one message at a
 time and otherwise stay in their own retained ticks (see
-[Http.UrlStat.Enable](#httpurlstatenable)).
+[Http.UrlStat.Enable](#httpurlstatenable)). The one exception is the final
+flush at shutdown, which goes into this queue when the hand-off is taken.
 When the queue is full the oldest message is overwritten, and the agent logs a
 rate-limited warning carrying the cumulative number of dropped messages.
 
@@ -1194,9 +1202,10 @@ ServerInfo option sets the server description sent in the agent information
 (`PServerMetaData.serverInfo`) and shown on the server information view of the
 Pinpoint UI. If it is not set, "Go Application" is sent.
 
-The value is read at startup and sent with every agent information send, so a
-change to it reaches the collector with the next `Collector.AgentInfo.RefreshInterval`
-cycle at the earliest, not on the change itself.
+The value is read each time the agent information is sent, so a change made with
+`Config.Set()` (the config file does not reload it) reaches the collector with
+the next `Collector.AgentInfo.RefreshInterval` cycle at the earliest, not on the
+change itself.
 
 The other server metadata, the service information list, is a list of named
 lists and has no config file spelling. It is set with `WithServiceInfo()`; see
@@ -1580,8 +1589,10 @@ http:
 ```
 
 Keep `log.level: debug` for at least one run of any new instrumentation: the
-`called after EndSpan` warnings of the API-contract checks are logged at
-`debug`. The check for a tracer shared across goroutines warns at every level.
+`called after EndSpan` messages for a recorder setter (`SetError`, `SetSQL`,
+annotations, ...) are logged at `debug`. Those for `NewSpanEvent`,
+`EndSpanEvent`, `Inject` and `NewGoroutineTracer`, and the check for a tracer
+shared across goroutines, warn at every level, rate limited.
 
 ### Production
 
