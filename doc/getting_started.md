@@ -15,6 +15,46 @@ Go compiles to native machine code, so there is nothing to attach at startup.
 Instrumentation is a source change, which is why this guide is about code and
 not about a launcher.
 
+## How Pinpoint sees your application
+
+The other guides use a handful of terms:
+
+* **Application** — `ApplicationName`: the processes that run the same code.
+  It is one node on the server map.
+* **Agent** — one process. The agent generates its id at every start, so a
+  restarted process is a new agent; `AgentName` is the label you read, and it
+  defaults to `<hostname>-<pid>`.
+* **Service** — `ServiceName`: a group of applications, required by the
+  default agent identity ([Uid.Version](config.md#uidversion) v4).
+* **Transaction** — one request, followed through every application it
+  reaches. The agents pass its id downstream in `Pinpoint-*` headers.
+* **Span** — the part of a transaction one process handled. A server plugin
+  opens it when a request arrives and ends it with the response; a background
+  job opens its own.
+* **Span event** — one step inside a span: a query, an outgoing call, a block
+  of code you mark. Nested span events make up the call tree.
+
+Not every transaction is recorded. The first application a request reaches
+decides whether to sample it (`Sampling.*`; by default every transaction is
+recorded), and the applications after it follow that decision through the
+headers. An unsampled request sends no span, but it still counts in the agent
+statistics and the URL statistics below.
+
+### What the agent sends
+
+| Data | Sent | Shown in the Pinpoint UI |
+|---|---|---|
+| spans and span events of sampled requests | in batches, up to half a second after a request ends (`Collector.Grpc.SpanBatchCollectDeadline`) | server map, response time scatter chart, call tree |
+| the text of each distinct SQL statement, operation name and error name | the first time it is used, and again once it has dropped out of the agent's cache | resolved into the call tree |
+| agent statistics: process and system CPU, heap and stack memory, GC cycles and pause time, requests by sampling outcome, average and maximum response time, active requests by age, open file descriptors and OS threads | every 5 s (`Stat.CollectInterval`), six samples to a message (`Stat.BatchCount`) | inspector |
+| URL statistics: the request count and response time histogram of each URL pattern | every 30 s, only with `Http.UrlStat.Enable` | URL statistics |
+| agent information: host name, IP, pid, Go version, `ServerInfo`, and the command line unless `Collector.AgentInfo.SendArgs` is off | at registration, then every 24 h (`Collector.AgentInfo.RefreshInterval`) | server information |
+| the count of active requests in real time and, when asked, the stacks of the goroutines serving them | only while someone has the real-time view open, for requests that started after it opened | real-time active request chart, active thread dump |
+
+Go has no JVM, so the inspector's JVM-named charts carry Go values: heap is
+the Go heap, non-heap the goroutine stacks, and the thread count counts OS
+threads, not goroutines.
+
 ## Install
 ### Go get
 ```
@@ -172,6 +212,45 @@ func main() {
 }
 ```
 
+## Instrument gRPC
+
+The gRPC plugin is a set of interceptors. On a server they open the span of
+each call; list them first when you chain others, so a call that a later
+interceptor rejects is traced too:
+
+```go
+import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2"
+
+server := grpc.NewServer(
+	grpc.ChainUnaryInterceptor(ppgrpc.UnaryServerInterceptor()),
+	grpc.ChainStreamInterceptor(ppgrpc.StreamServerInterceptor()),
+)
+```
+
+On a client they record each call as a span event and pass the transaction on
+in the call's metadata:
+
+```go
+conn, err := grpc.NewClient(addr,
+	grpc.WithTransportCredentials(insecure.NewCredentials()),
+	grpc.WithChainUnaryInterceptor(ppgrpc.UnaryClientInterceptor()),
+	grpc.WithChainStreamInterceptor(ppgrpc.StreamClientInterceptor()),
+)
+```
+
+A handler's `ctx` carries the call's tracer. Pass it to the calls the handler
+makes - another gRPC call, a query, an HTTP request - and they join the same
+transaction:
+
+```go
+func (s *server) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.User, error) {
+	row := s.db.QueryRowContext(ctx, "SELECT name FROM users WHERE id = ?", req.Id)
+	...
+}
+```
+
+See [plugin/grpc](/plugin/grpc) for streams and a complete example.
+
 ## Instrument Database Query
 Pinpoint mysql plugin is a 'database/sql' driver that instruments the go-sql-driver/mysql. 
 When invoking the sql.Open() function, instead of the go-sql-driver/mysql driver,
@@ -229,6 +308,36 @@ func main() {
 	// ... http.ListenAndServe
 }
 ```
+
+## Keep the context flowing
+
+The agent finds the request a call belongs to through `context.Context`: a
+plugin reads the tracer from the context it is given. A call made with
+`context.Background()`, or with no context at all, belongs to no request and
+records nothing. Two habits keep every call of a request in its trace:
+
+* **Pass the request's context down.** Use `r.Context()` in a net/http
+  handler, the handler's `ctx` in gRPC, and each framework's equivalent
+  ([Getting the tracer in a handler](plugin_guide.md#getting-the-tracer-in-a-handler)),
+  and hand it to the context-taking form of every call: `db.QueryContext`,
+  `http.NewRequestWithContext`, `rdb.Get(ctx, key)`.
+* **Give a goroutine its own tracer.** A tracer tracks one goroutine; two
+  goroutines recording on one tracer corrupt its call tree. Work you hand to
+  another goroutine gets a goroutine tracer, which records it under the same
+  request:
+
+  ```go
+  tracer := pinpoint.FromContext(r.Context())
+  f := tracer.WrapGoroutine("sendMail", func(ctx context.Context) {
+      sendMail(ctx) // ctx carries the goroutine's own tracer
+  }, r.Context())
+  go f()
+  ```
+
+  See [Instrument Goroutine](instrument.md#instrument-goroutine).
+
+When a call you expected is missing from a trace, a context that did not get
+passed is the usual reason.
 
 ## Configure the Agent
 
@@ -341,6 +450,35 @@ waits up to `Collector.Grpc.SpanBatchCollectDeadline` (500 ms) for others to
 share its batch, while `Shutdown()` sends the queue at once. There is no flush
 that keeps the agent running, and a runtime that freezes the process between
 invocations holds whatever was queued until the process runs again.
+
+## Before production
+
+The defaults are chosen for a first trace. Review these before the agent goes
+live:
+
+* **Sampling.** Every transaction is recorded by default. On a busy service,
+  sample a fraction with `Sampling.Type: PERCENT` and `Sampling.PercentRate`,
+  and cap the peak with `Sampling.NewThroughput`
+  ([Sampling policy](instrument.md#sampling-policy)).
+* **Names.** Give every instance of one application the same
+  `ApplicationName`. Leave `AgentName` unset, or set it per instance - in
+  Kubernetes, from the pod name ([Containers](config.md#containers)) - so the
+  instances can be told apart.
+* **Shutdown.** Call `ShutdownOnSignal`, or `Shutdown()` from your own signal
+  handler, so the last spans go out on `SIGTERM`; otherwise every rollout loses
+  the last moments of each instance
+  ([Spans Missing at Shutdown](troubleshooting.md#spans-missing-at-shutdown-or-on-a-rollout)).
+* **What gets recorded.** SQL bind values are recorded by default
+  (`SQL.TraceBindValue`), and the store plugins record keys, commands or
+  queries. Read the [security notes](config.md#best-practices) and turn off
+  what may carry personal data.
+* **URL statistics.** Turn on `Http.UrlStat.Enable` for per-URL request counts
+  and response times in the inspector. They are keyed by the route pattern, so
+  register routes with patterns rather than one path per resource.
+* **Collector connection.** Use TLS (`Collector.Grpc.SslEnable`) when the
+  collector is reached over a network you do not trust.
+* **Logs.** The agent logs to stdout at `info`. `Log.Output` sends it to a
+  file instead, rotated by `Log.MaxSize` and `Log.MaxBackups`.
 
 ## Runnable examples
 

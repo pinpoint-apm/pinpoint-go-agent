@@ -1646,8 +1646,7 @@ not.
 ```yaml
 applicationName: "MyApp"
 serviceName: "MyService"
-# the agent id is generated per container
-agentName: "myapp"
+# agentName left unset: <hostname>-<pid> tells the replicas apart
 collector:
   host: "pinpoint-collector.monitoring.svc.cluster.local"
 log:
@@ -1663,7 +1662,6 @@ the config file:
 ```bash
 PINPOINT_GO_APPLICATIONNAME=MyApp
 PINPOINT_GO_SERVICENAME=MyService
-PINPOINT_GO_AGENTNAME=myapp
 PINPOINT_GO_COLLECTOR_HOST=pinpoint-collector.monitoring.svc.cluster.local
 PINPOINT_GO_SAMPLING_TYPE=PERCENT
 PINPOINT_GO_SAMPLING_PERCENTRATE=1
@@ -1671,8 +1669,28 @@ PINPOINT_GO_LOG_OUTPUT=stdout
 ```
 
 The agent id cannot be pinned: the agent generates one per process, so every
-replica is distinct. Use `AgentName` for the human-readable label. `IsContainerEnv` is detected
-automatically; set it only if the detection is wrong.
+replica is distinct. `AgentName` is the label you read, and one name shared by
+every replica cannot tell them apart. Leave it unset - a pod's host name is the
+pod name, so the default `<hostname>-<pid>` already names the pod - or set it
+from the pod name with the downward API:
+
+```yaml
+env:
+  - name: PINPOINT_GO_AGENTNAME
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.name
+```
+
+`IsContainerEnv` is detected automatically; set it only if the detection is
+wrong.
+
+A rollout stops each pod with `SIGTERM`. Call
+`pinpoint.ShutdownOnSignal(agent)`, or `agent.Shutdown()` from your own signal
+handler, so the agent sends its last spans before the process exits; it takes
+about six seconds at most, well within Kubernetes' default 30-second
+termination grace period. See
+[Spans Missing at Shutdown](troubleshooting.md#spans-missing-at-shutdown-or-on-a-rollout).
 
 If you want reloadable options in a container, either mount a config file
 from a ConfigMap and point `ConfigFile` at it - editing the ConfigMap then
