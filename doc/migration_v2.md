@@ -29,12 +29,27 @@ the collector before the agent.
 
 From v2 on, Go puts the major version in the module path, so the agent and each
 plugin have a new one. The package names stay (`pinpoint`, `pphttp`, `ppgin`,
-...), so only import lines change:
+...), so for every plugin v2 still has, only import lines change:
 
 | v1 | v2 |
 |---|---|
 | `github.com/pinpoint-apm/pinpoint-go-agent` | `github.com/pinpoint-apm/pinpoint-go-agent/v2` |
 | `github.com/pinpoint-apm/pinpoint-go-agent/plugin/<name>` | `github.com/pinpoint-apm/pinpoint-go-agent/plugin/<name>/v2` |
+
+Five v1 plugins have no v2 module. Move off them first: the rewrite below
+turns their imports into v2 paths that no module provides, and `go mod tidy`
+stops on them.
+
+| v1 | Move to |
+|---|---|
+| `plugin/sarama` (`ppsarama`, Shopify/sarama) | IBM/sarama upstream and `plugin/sarama-IBM` (`ppsaramaibm`, the same API) |
+| `plugin/goredis` (`ppgoredis`, go-redis v6) | go-redis v8 or v9 with `plugin/goredisv8` or `plugin/goredisv9`: add `NewHook(opts)` to a plain client with `AddHook` instead of creating a `ppgoredis.NewClient`, and pass the context to each command instead of `WithContext` |
+| `plugin/goredisv7` (`ppgoredisv7`, go-redis v7) | go-redis v8 or v9 with `plugin/goredisv8` or `plugin/goredisv9`: `NewHook` and `NewClusterHook` are added as before, and the context goes to each command instead of `WithContext` |
+| `plugin/mssql` (`ppmssqldb`, denisenkom/go-mssqldb) | microsoft/go-mssqldb with `plugin/mssql-microsoft`; open with `sql.Open("mssql-microsoft-pinpoint", dsn)` instead of `"sqlserver-pinpoint"` |
+| `plugin/echo` (`ppecho`, echo v3) | echo v4 or v5 with `plugin/echov4` or `plugin/echov5`: echo v3 is end-of-life upstream with an unpatched advisory |
+
+go-redis v6 and v7 are end-of-life upstream too. Import a replacement under the
+v1 path shown; the rewrite below moves it to v2 with the rest.
 
 This rewrites every such import under the current directory, then lets
 `go mod tidy` swap the requirements:
@@ -68,7 +83,6 @@ find none started and record nothing. Do not use it to put the migration off.
 | `pinpoint.WithAgentId(id)`, `pinpoint.CfgAgentID` | removed | drop them; see [The agent id](#the-agent-id) |
 | `.../protobuf`, `.../protobuf/mock`, `.../asm` | moved under `internal/` | nothing replaces them: they are the agent's wire format and its goroutine pointer helper, not API |
 | `pphttp.WrapResponseWriter` returns the unexported `*responseWriter` | returns `http.ResponseWriter` | nothing where the result was used as an `http.ResponseWriter` |
-| `(*ppgomemcache.Client).WithContext(ctx)` returns nothing | returns the `*Client` bound to the context's tracer | use the returned copy for the request's calls |
 | `pinpoint.NewTestAgent(config, t)` | `NewTestAgent(config)` | drop the `*testing.T`; it was never used |
 | `pinpoint.WithSamplingRate(n)` | removed | `WithSamplingCounterRate(n)` |
 | `pplogrus.WithField(tracer)` | removed | `pplogrus.NewField(tracer)` |
@@ -82,12 +96,8 @@ find none started and record nothing. Do not use it to put the migration off.
 | `pphttp.WrapHandle(agent, name, pattern, h)`, `WrapHandleFunc(...)` | removed | `pphttp.WrapHandler(h)`, `WrapHandlerFunc(f)`; register under the pattern as before |
 | `ppbeego.Middleware()` | removed | `web.InsertFilterChain("/*", ppbeego.ServerFilterChain())` |
 | `ppbeego.DoRequest(tracer, req)` | removed | `httplib.AddDefaultFilter(ppbeego.ClientFilterChain(nil))` once, and build `req` with `httplib.NewBeegoRequestWithCtx(pinpoint.NewContext(ctx, tracer), url, method)` |
-| `ppsarama.ConsumeMessage`, `WrapConsumerMessage`, `NewConsumer`, `WrapPartitionConsumer` (and `ppsaramaibm`) | removed | `ConsumeMessageContext(handler, ctx, msg)` on a raw `sarama` consumer, with `ppsaramaibm.NewContext` carrying the broker addresses |
-| `ppsarama.WithContext(ctx, producer)`, `producer.WithContext(ctx)` (and `ppsaramaibm`) | removed | `SendMessageContext`, `SendMessagesContext`, `InputContext` with the context; `SendMessage`, `SendMessages` and `Input` produce without tracing |
-| `plugin/sarama` (`ppsarama`, Shopify/sarama) | removed | move to IBM/sarama upstream and `plugin/sarama-IBM/v2` (`ppsaramaibm`, the same API) |
-| `plugin/goredis` (`ppgoredis`, go-redis v6), `plugin/goredisv7` (`ppgoredisv7`) | removed | go-redis v6 and v7 are end-of-life: `plugin/goredisv8/v2` or `plugin/goredisv9/v2`, which instrument through a hook (`NewHook`) instead of a wrapped client |
-| `plugin/mssql` (`ppmssqldb`, denisenkom/go-mssqldb) | removed | `plugin/mssql-microsoft/v2` with microsoft/go-mssqldb; open with `sql.Open("mssql-microsoft-pinpoint", dsn)` instead of `"sqlserver-pinpoint"` |
-| `plugin/echo` (`ppecho`) | removed | use `plugin/echov4` or `plugin/echov5`: echo v3 is end-of-life upstream with an unpatched advisory |
+| `ppsaramaibm.ConsumeMessage`, `WrapConsumerMessage`, `NewConsumer`, `WrapPartitionConsumer` (also in `ppsarama`) | removed | `ConsumeMessageContext(handler, ctx, msg)` on a raw `sarama` consumer, with `ppsaramaibm.NewContext` carrying the broker addresses |
+| `ppsaramaibm.WithContext(ctx, producer)`, `producer.WithContext(ctx)` (also in `ppsarama`) | removed | `SendMessageContext`, `SendMessagesContext`, `InputContext` with the context; `SendMessage`, `SendMessages` and `Input` produce without tracing |
 
 A carrier of your own - a message queue's headers, say - now tells a key held
 with an empty value from a key it does not hold. The difference decides whether
@@ -108,8 +118,25 @@ func (r headerReader) Get(key string) (string, bool) {
 ```
 
 A source that cannot tell the two apart reports a value it has as present and
-an empty one as absent: `return v, v != ""`. For an `http.Header`,
-`pinpoint.HttpHeaderReader(h)` does this already.
+an empty one as absent: `return v, v != ""`. An `http.Header` can tell them
+apart, and `pinpoint.HttpHeaderReader(h)` reports a header held with an empty
+value as present.
+
+One change still compiles but stops tracing. `(*ppgomemcache.Client).WithContext(ctx)`
+returns a copy of the client bound to the context's tracer and leaves the
+receiver as it was; v1 bound the receiver and returned nothing. A v1 call on a
+line of its own still compiles, and the calls after it record nothing. Use the
+copy for the request's calls:
+
+```go
+// v1
+mc.WithContext(ctx)
+mc.Get("foo")
+
+// v2
+c := mc.WithContext(ctx)
+c.Get("foo")
+```
 
 ## 4. Check the configuration
 

@@ -107,7 +107,7 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   majors.
   denisenkom/go-mssqldb is deprecated for its fork microsoft/go-mssqldb, so
   `plugin/mssql-microsoft` is the SQL Server plugin; its driver is registered
-  as `mssql-microsoft-pinpoint`, where `ppmssql` used `sqlserver-pinpoint`.
+  as `mssql-microsoft-pinpoint`, where `ppmssqldb` used `sqlserver-pinpoint`.
 - **`plugin/echo` is gone.** It instrumented labstack/echo v3, which is
   end-of-life upstream with an unpatched advisory (GHSA-vfp3-v2gw-7wfq) and no
   fixed v3 release to pin, and its code was a copy of `plugin/echov4`. Use
@@ -166,10 +166,10 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
 - The new `SQL.RemoveComments` defaults to `true`: comments are dropped from the
   normalized SQL, which changes the text, and with it the SQL id, of every
   statement that carries one. `false` keeps them as v1 did.
-- `Stat.CollectInterval` is capped at `10000` ms, Java's
-  `DefaultAgentStatMonitor` maximum, instead of `60000`; a larger value falls
-  back to the default as before. A six-minute stat batch is no longer
-  reachable by misconfiguration.
+- `Stat.CollectInterval` takes 1000 to 10000 ms, the bounds of Java's
+  `DefaultAgentStatMonitor`; a value outside them falls back to the 5000 ms
+  default with a warning. v1 took any value, so an interval set above 10
+  seconds now runs at 5.
 - URL statistics recorded without a URI template are now keyed as `/NULL`
   (Java's `URITemplate.NULL_URI`, also used by the C++ agent) instead of
   `UNKNOWN_URL`. Server-side history under the old `UNKNOWN_URL` key does not
