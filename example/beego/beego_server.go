@@ -49,7 +49,7 @@ func (ctrl *MainController) Hello() {
 	defer tracer.NewSpanEvent("f1").EndSpanEvent()
 	defer tracer.NewSpanEvent("f2").EndSpanEvent()
 
-	req := httplib.NewBeegoRequestWithCtx(ctrl.Ctx.Request.Context(), "http://localhost:9090/", "GET")
+	req := httplib.NewBeegoRequestWithCtx(ctrl.Ctx.Request.Context(), "http://localhost:9001/query", "GET")
 
 	_, err := req.Response()
 	if err == nil {

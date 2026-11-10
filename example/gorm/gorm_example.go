@@ -25,27 +25,36 @@ var db *sql.DB // opened once in main, shared by every request
 func gormQuery(w http.ResponseWriter, r *http.Request) {
 	gormdb, err := ppgorm.Open(mysql.New(mysql.Config{Conn: db}), &gorm.Config{})
 	if err != nil {
-		panic("failed to connect database")
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
 	}
 
 	ctx := r.Context() // carries the request's tracer; no need to rewrap it
 	gormdb = gormdb.WithContext(ctx)
 
-	gormdb.AutoMigrate(&Product{})
+	if err := gormdb.AutoMigrate(&Product{}); err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
 
-	// Create
-	gormdb.Create(&Product{Code: "D42", Price: 100})
+	// Create. Every request works on the row it creates, by the ID gorm
+	// filled in: a fixed ID 1 is soft-deleted by the first request, so later
+	// ones would miss it and leave their own rows behind.
+	product := Product{Code: "D42", Price: 100}
+	if err := gormdb.Create(&product).Error; err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
 
 	// Read
-	var product Product
-	gormdb.First(&product, 1)
-	gormdb.First(&product, "code = ?", "D42")
+	gormdb.First(&product, product.ID)
+	gormdb.First(&product, "id = ? AND code = ?", product.ID, "D42")
 
 	// Update - update product's price to 200
 	gormdb.Model(&product).Update("Price", 200)
 
 	// Delete - delete product
-	gormdb.Delete(&product, 1)
+	gormdb.Delete(&product)
 }
 
 func main() {

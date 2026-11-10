@@ -62,7 +62,7 @@ func main() {
 	defer agent.Shutdown()
 	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
-	listener, err := net.Listen("tcp", "localhost:8080")
+	listener, err := net.Listen("tcp", "localhost:18080")
 	if err != nil {
 		log.Fatal(err)
 	}

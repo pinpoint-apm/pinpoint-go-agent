@@ -86,7 +86,7 @@ func main() {
 	defer agent.Shutdown()
 	defer pinpoint.ShutdownOnSignal(agent)() // SIGTERM, SIGINT
 
-	conn, err := grpc.NewClient("localhost:8080",
+	conn, err := grpc.NewClient("localhost:18080", // gokit/server
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithUnaryInterceptor(ppgrpc.UnaryClientInterceptor()),
 		grpc.WithStreamInterceptor(ppgrpc.StreamClientInterceptor()),

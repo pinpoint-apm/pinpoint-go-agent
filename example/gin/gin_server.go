@@ -18,7 +18,7 @@ import (
 func extCall(c *gin.Context) {
 	sleep()
 	tracer := pinpoint.FromContext(c.Request.Context())
-	req, _ := http.NewRequest("GET", "http://localhost:9000/query", nil)
+	req, _ := http.NewRequest("GET", "http://localhost:9001/query", nil)
 
 	tracer = pphttp.NewHttpClientTracer(tracer, "http.DefaultClient.Do", req)
 	resp, err := http.DefaultClient.Do(req)

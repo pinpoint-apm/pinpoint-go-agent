@@ -18,7 +18,7 @@ func index(w http.ResponseWriter, r *http.Request) {
 
 func wrapRequest(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context() // carries the request's tracer; no need to rewrap it
-	req, _ := http.NewRequestWithContext(ctx, "GET", "http://localhost:9000/hello", nil)
+	req, _ := http.NewRequestWithContext(ctx, "GET", "http://localhost:9000/async_wrapper", nil)
 
 	resp, err := pphttp.DoClient(http.DefaultClient.Do, req)
 	if nil != err {

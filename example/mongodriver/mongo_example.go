@@ -24,14 +24,16 @@ func mongodb(w http.ResponseWriter, r *http.Request) {
 
 	client, err := mongo.Connect(ctx, opts)
 	if err != nil {
-		panic(err)
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
 	}
 	defer client.Disconnect(ctx)
 
 	collection := client.Database("testdb").Collection("example")
 	_, err = collection.InsertOne(r.Context(), bson.M{"foo": "bar", "apm": "pinpoint"})
 	if err != nil {
-		panic(err)
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
 	}
 	io.WriteString(w, "insert success")
 }

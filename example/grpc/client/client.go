@@ -120,7 +120,7 @@ func streamCallStreamReturn(ctx context.Context, client testapp.HelloClient) {
 
 func doGrpc(w http.ResponseWriter, r *http.Request) {
 	conn, err := grpc.NewClient(
-		"dns:///localhost:8080",
+		"dns:///localhost:18080", // grpc/server
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithUnaryInterceptor(ppgrpc.UnaryClientInterceptor()),
 		grpc.WithStreamInterceptor(ppgrpc.StreamClientInterceptor()),

@@ -16,7 +16,7 @@ Inside an endpoint, `pinpoint.FromContext(ctx)` returns the tracer.
 
 ## The demo
 
-- **[server](server/server.go)** (`GoKitGrpcServer`, port 8080) — go-kit gRPC
+- **[server](server/server.go)** (`GoKitGrpcServer`, port 18080) — go-kit gRPC
   service, traced by the ppgrpc server interceptors.
 - **[gateway](gateway/gateway.go)** (`GoKitHttpGateway`, port 8000) — go-kit
   HTTP service, traced by `pphttp.WrapHandler`.

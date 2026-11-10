@@ -18,9 +18,10 @@ func rueidisv1(w http.ResponseWriter, r *http.Request) {
 		InitAddress: []string{"localhost:6379"},
 	}
 
-	client, err := rueidis.NewClient(opt)
+	client, err := rueidis.NewClient(opt) // connects, so it fails while Redis is down
 	if err != nil {
-		panic(err)
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
 	}
 	client = rueidishook.WithHook(client, pprueidis.NewHook(opt))
 
