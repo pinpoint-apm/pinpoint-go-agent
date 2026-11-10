@@ -3,7 +3,8 @@
 v2 changes the import path of every module, so moving to it is a deliberate
 step: `go get -u` keeps an application that imports v1 on v1. This guide covers
 what changes for an application coming from v1.4.x, in the order to do it. The
-full list of changes is in the [changelog](/CHANGELOG.md).
+changes that matter to an application are listed in the
+[changelog](/CHANGELOG.md).
 
 * [1. Check the requirements](#1-check-the-requirements)
 * [2. Move every import to v2 at once](#2-move-every-import-to-v2-at-once)
