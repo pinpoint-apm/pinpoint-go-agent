@@ -510,6 +510,11 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   so several individually sendable ticks cannot be lost as one oversized
   message. Only an entry too large to fit by itself is dropped, with a
   rate-limited warning.
+  Delivery stays at most once: the messages of a split snapshot are sent back
+  to back without an acknowledgement each, so a stream that breaks part-way
+  can lose the ones sent before the message that failed, and on shutdown the
+  remaining statistics are sent only on a stat stream that does not have to be
+  reopened.
 - **`Collector.Grpc.ConnectionMaxAge` spreads connections across the collector
   instances.** A renewed connection dialed the same address list in the same
   order, so behind several DNS A records every renewal went back to the first

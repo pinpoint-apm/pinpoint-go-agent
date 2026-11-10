@@ -1184,7 +1184,9 @@ func (agent *agent) sendStatsWorker() {
 			// both cases are ready together here, and a select picks between
 			// ready cases at random. One pass over the queue, no waiting - a
 			// record enqueued after this returns is dropped with the channel,
-			// which shutdownAgent never closes.
+			// which shutdownAgent never closes. The drain goes out on the
+			// stream as it is: one that needs replacing by now costs the
+			// rest of the drain (sendStatsOrReopen).
 			for {
 				select {
 				case stats = <-agent.statChan:
@@ -1211,6 +1213,15 @@ func (agent *agent) sendStatsWorker() {
 // of being lost with the dead stream. If that fails too it is dropped, and the
 // next send replaces the stream again. The empty stream returned while
 // stopping is not retried on.
+//
+// A known limit of the stop drain: by the time it runs shutdownAgent has, as
+// a rule, moved the agent to the stopped phase, where newStatStreamWithRetry
+// gives up without an attempt (newStreamWithRetry). A stream that has to be
+// replaced there - one past Collector.Grpc.StreamMaxAge, or one the collector
+// already ended, which the failed send finds out - is replaced by the empty
+// stream, and stats and everything still queued behind it, the parts of a
+// split URL-stat message included (sendStats), are dropped without a warning.
+// The drain delivers only on a stream that is still usable.
 func (agent *agent) sendStatsOrReopen(stream *statStream, stats *pb.PStatMessage) *statStream {
 	stream = renewIfExpired(stream, agent.statGrpc.newStatStreamWithRetry, "stat")
 	// An empty stream is what newStatStreamWithRetry hands back once shutdown

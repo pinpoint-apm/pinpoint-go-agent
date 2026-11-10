@@ -27,38 +27,48 @@ type recordingStatServer struct {
 	entries  int
 }
 
-// The wire encoder is the size oracle, including varint length boundaries and
-// a nonzero bucket version. No URL/tick entry may be split across messages.
+// The wire encoder is the size oracle. The URI lengths sweep the points below
+// 16 KiB where a length prefix the split computes itself grows by a byte: an
+// entry's own, and the envelope's around one entry and around two. The
+// ten-byte varint of a negative bucket version moves the envelope's points off
+// the entries'. The six lengths tried before sat on the URI field's own
+// boundaries, which proto.Size counts, and a formula that took the envelope's
+// prefix from the entries alone passed them. No URL/tick entry may be split
+// across messages.
 func Test_splitUrlStatEntries_fitsTheCompleteEnvelope(t *testing.T) {
-	for _, size := range []int{1, 64, 127, 128, 16383, 16384} {
-		t.Run(fmt.Sprint(size), func(t *testing.T) {
-			entry := &pb.PEachUriStat{
-				Uri:             strings.Repeat("u", size),
-				Timestamp:       1700000000000,
-				TotalHistogram:  &pb.PUriHistogram{Total: 20, Max: 10, Histogram: []int32{2, 0, 0, 0, 0, 0, 0, 0}},
-				FailedHistogram: &pb.PUriHistogram{Total: 10, Max: 10, Histogram: []int32{1, 0, 0, 0, 0, 0, 0, 0}},
+	const version = -1 // A negative int32 takes a ten-byte varint.
+	var sizes []int
+	for _, r := range [][2]int{{1, 200}, {8100, 8250}, {16280, 16420}} {
+		for size := r[0]; size <= r[1]; size++ {
+			sizes = append(sizes, size)
+		}
+	}
+	for _, size := range sizes {
+		entry := &pb.PEachUriStat{
+			Uri:             strings.Repeat("u", size),
+			Timestamp:       1700000000000,
+			TotalHistogram:  &pb.PUriHistogram{Total: 20, Max: 10, Histogram: []int32{2, 0, 0, 0, 0, 0, 0, 0}},
+			FailedHistogram: &pb.PUriHistogram{Total: 10, Max: 10, Histogram: []int32{1, 0, 0, 0, 0, 0, 0, 0}},
+		}
+		entries := []*pb.PEachUriStat{entry, entry, entry}
+		stats := &pb.PAgentUriStat{BucketVersion: version, EachUriStat: entries}
+		limit := proto.Size(makePAgentUriStatMessage(version, entries[:2]))
+		for _, maxSize := range []int{limit, limit - 1} {
+			batches := splitUrlStatEntries(stats, maxSize)
+			want := 2 // two entries fit exactly, the third starts a new message
+			if maxSize < limit {
+				want = 3 // one byte below the boundary leaves one entry per message
 			}
-			const version = -1 // A negative int32 takes a ten-byte varint.
-			entries := []*pb.PEachUriStat{entry, entry, entry}
-			stats := &pb.PAgentUriStat{BucketVersion: version, EachUriStat: entries}
-			limit := proto.Size(makePAgentUriStatMessage(version, entries[:2]))
-			for _, maxSize := range []int{limit, limit - 1} {
-				batches := splitUrlStatEntries(stats, maxSize)
-				if maxSize == limit {
-					require.Len(t, batches, 2, "two entries fit exactly, the third starts a new message")
-				} else {
-					require.Len(t, batches, 3, "one byte below the boundary requires one entry per message")
-				}
-				var sent []*pb.PEachUriStat
-				for _, batch := range batches {
-					wire, err := proto.Marshal(makePAgentUriStatMessage(version, batch))
-					require.NoError(t, err)
-					require.LessOrEqual(t, len(wire), maxSize)
-					sent = append(sent, batch...)
-				}
-				assert.Equal(t, entries, sent, "histograms and timestamps remain intact")
+			require.Len(t, batches, want, "uri length %d, max size %d", size, maxSize)
+			var sent []*pb.PEachUriStat
+			for _, batch := range batches {
+				wire, err := proto.Marshal(makePAgentUriStatMessage(version, batch))
+				require.NoError(t, err)
+				require.LessOrEqual(t, len(wire), maxSize, "uri length %d", size)
+				sent = append(sent, batch...)
 			}
-		})
+			require.Equal(t, entries, sent, "histograms and timestamps remain intact")
+		}
 	}
 }
 
@@ -85,7 +95,10 @@ func Test_splitUrlStatEntries_dropsOnlyAnUnsendableEntry(t *testing.T) {
 	assert.Empty(t, splitUrlStatEntries(stats, 1), "even the envelope cannot fit")
 }
 
-// Reopen at the failed part, without resending a successful prefix. The
+// A part whose Send fails is sent again on a new stream, and the parts sent
+// before it are not replayed. What the mock stream accepted counts as sent
+// here; on a real stream a Send that returned nil has only queued its part,
+// which the failure of a later one can still lose (agent.sendStats). The
 // partition uses the connection's original limit even after a config change.
 func Test_sendStats_retriesOnlyTheFailedPartAtTheDialedLimit(t *testing.T) {
 	const limit = 260
@@ -126,7 +139,7 @@ func Test_sendStats_retriesOnlyTheFailedPartAtTheDialedLimit(t *testing.T) {
 	stream = a.sendStats(stream, message)
 	stream.close()
 
-	assert.Equal(t, entries, sent, "every entry is delivered once and in order")
+	assert.Equal(t, entries, sent, "every entry is handed to a stream once and in order")
 	assert.True(t, proto.Equal(original, message), "partitioning must not mutate the queued message")
 	broken.AssertNumberOfCalls(t, "Send", 2)
 	healthy.AssertNumberOfCalls(t, "Send", 2)
@@ -156,10 +169,13 @@ func (s *recordingStatServer) snapshot() ([]*pb.PStatMessage, int) {
 	return slices.Clone(s.messages), s.entries
 }
 
-// Each tick fits the default 4 MiB limit, but five retained ticks do not.
-// Exercise the real sender and gRPC limits after recovery and on the shutdown
-// fallback through statChan, including the collector's decoded limit with gzip.
+// One tick fits the limit, but five retained ticks do not. Exercise the real
+// worker and gRPC streams after recovery and on the shutdown fallback through
+// statChan, with and without gzip. The limit is scaled down to 64 KiB, so the
+// test moves kilobytes rather than megabytes: at the default 4 MiB it took 6s
+// under -race, a second or two per case against its five-second deadlines.
 func Test_sendStatsWorker_splitsRetainedUrlStats(t *testing.T) {
+	const limit = 64 << 10
 	for _, compression := range []string{compressionNone, compressionGzip} {
 		for _, shutdown := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/shutdown=%t", compression, shutdown), func(t *testing.T) {
@@ -167,7 +183,7 @@ func Test_sendStatsWorker_splitsRetainedUrlStats(t *testing.T) {
 				port, _ := startEncodingServer(t, func(s *grpc.Server) { pb.RegisterStatServer(s, server) })
 				cfg, err := NewConfig(WithAppName("TestApp"), WithCollectorHost("127.0.0.1"),
 					WithCollectorStatPort(port), WithCollectorGrpcCompression(compression),
-					WithHttpUrlStatEnable(true), WithHttpUrlStatLimitSize(10000))
+					WithCollectorGrpcMaxSendMessageSize(limit), WithHttpUrlStatEnable(true))
 				require.NoError(t, err)
 				a := newTestAgent(cfg)
 				a.statChan = make(chan *pb.PStatMessage, 16)
@@ -177,7 +193,7 @@ func Test_sendStatsWorker_splitsRetainedUrlStats(t *testing.T) {
 
 				tick := time.Unix(1700000000, 0).UTC().Truncate(urlStatCollectInterval)
 				setNow := fixUrlStatClock(t, tick.Add(time.Second))
-				const ticks, routes = 8, 10000
+				const ticks, routes = 8, 300
 				suffix := strings.Repeat("x", 90)
 				for window := range ticks {
 					at := tick.Add(time.Duration(window) * urlStatCollectInterval)
@@ -222,9 +238,12 @@ func Test_sendStatsWorker_splitsRetainedUrlStats(t *testing.T) {
 				}, 5*time.Second, time.Millisecond, "all retained URL/tick entries must reach the collector")
 
 				messages, _ := server.snapshot()
+				require.GreaterOrEqual(t, len(messages), 5, "the retained ticks went out in parts")
 				seen := make(map[urlKey]bool, wantEntries)
 				for _, msg := range messages {
-					require.LessOrEqual(t, proto.Size(msg), grpcMaxMessageSize)
+					// The test server takes up to 4 MiB, so this is the agent's
+					// own bound, on the decoded size also under gzip.
+					require.LessOrEqual(t, proto.Size(msg), limit)
 					for _, entry := range msg.GetAgentUriStat().GetEachUriStat() {
 						at := time.UnixMilli(entry.GetTimestamp()).UTC()
 						window := int(at.Sub(tick) / urlStatCollectInterval)

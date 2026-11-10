@@ -96,10 +96,22 @@ func (s *statStream) sendStats(stats *pb.PStatMessage) error {
 }
 
 // sendStats splits a retained URL-stat snapshot only after the worker takes
-// it, so the one-message hand-off still bounds the outage backlog. Each part
-// has its own retry: a reconnect must not replay parts already sent. Measure
+// it, so the one-message hand-off still bounds the outage backlog. Measure
 // the uncompressed size as for span batches, so the collector's decoded limit
 // and a fallback from gzip to an uncompressed stream are both respected.
+//
+// The parts go out back to back on the stream, each through
+// sendStatsOrReopen, and their delivery is at most once. A part whose own
+// Send fails is sent once more on the replacement stream. The parts sent
+// before it are not replayed, and may be lost: a Send that returned nil has
+// only queued its message, grpc-go writes it out afterwards, and the cancel
+// that follows a failed Send discards what the collector has not read by
+// then. Such a part goes without a log line of its own; the one error names
+// the part that failed. Against a collector that did not read its stream for
+// 7s, an uncompressed 8 MB message in two parts delivered the second part
+// only. Nothing tells the sender which of the earlier parts arrived, and
+// replaying one that did would count it twice: the collector stores every
+// URL/tick entry it receives as a row of its own and sums the rows.
 func (agent *agent) sendStats(stream *statStream, stats *pb.PStatMessage) *statStream {
 	uriStats := stats.GetAgentUriStat()
 	maxSize := agent.statGrpc.maxSendMsgSize

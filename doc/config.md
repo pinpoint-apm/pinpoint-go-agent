@@ -467,6 +467,10 @@ is dropped, with a `span dropped: ... exceeds Collector.Grpc.MaxSendMessageSize`
 The URL-statistics sender also splits a retained snapshot into messages within this limit,
 using the uncompressed size and keeping each URL/tick histogram whole. A single URL/tick
 entry that cannot fit is dropped with a rate-limited warning; the other entries are still sent.
+The messages of a split snapshot are sent back to back on the stat stream and are not acknowledged
+one by one, so their delivery is at most once: when a send fails part-way, only the message that
+failed is sent again on a new stream, and the ones sent before it on the broken stream may be lost
+without a log line of their own.
 
 * PINPOINT_GO_COLLECTOR_GRPC_MAXSENDMESSAGESIZE
 * int
@@ -573,6 +577,8 @@ Collector.Grpc.StreamMaxAge option sets the max age in milliseconds of the long-
 streams.
 A stream older than this is closed normally and reopened before the next send, so no stat is dropped;
 the command stream, which waits on the collector, is reopened when its age runs out.
+The exception is shutdown: a stat stream past its age is not reopened once the agent has stopped,
+so the stats still queued at that point, the final URL statistics among them, are not sent.
 The age is randomized by +/-10%.
 The default 0 keeps a stream open until it fails. A value above 100 years (3153600000000 ms) falls back to the default.
 
@@ -1461,6 +1467,15 @@ the oldest of those ticks is dropped and the agent logs a rate-limited warning, 
 long collector outage does not grow the URL statistics backlog.
 On recovery or shutdown, retained statistics are split at
 `Collector.Grpc.MaxSendMessageSize` by the sender, preserving the backlog bound.
+
+Delivery is best effort, at most once. A message the stat stream accepted can still be lost
+when the stream breaks before the collector has read it, which for a split snapshot can take
+the messages sent before the one that failed
+(see [Collector.Grpc.MaxSendMessageSize](#collectorgrpcmaxsendmessagesize)).
+On shutdown the remaining statistics are sent only on a stat stream that is still usable:
+when the stream would have to be reopened at that point - it is past
+[Collector.Grpc.StreamMaxAge](#collectorgrpcstreammaxage), or the collector has already
+ended it - they are dropped without a warning.
 
 * PINPOINT_GO_HTTP_URLSTAT_ENABLE
 * type: bool
