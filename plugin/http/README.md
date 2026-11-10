@@ -35,7 +35,11 @@ Alternatively, the context of the request may be propagated where the context th
 package main
 
 import (
+    "context"
+    "log"
     "net/http"
+    "os"
+
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 )
@@ -55,8 +59,11 @@ func main() {
     opts := []pinpoint.ConfigOption{
         pinpoint.WithConfigFile(os.Getenv("HOME") + "/tmp/pinpoint-config.yaml"),
     }
-    cfg, err := pinpoint.NewConfig(opts...)
+    cfg, _ := pinpoint.NewConfig(opts...)
     agent, err := pinpoint.NewAgent(cfg)
+    if err != nil {
+        log.Printf("pinpoint agent start failed: %v", err) // keeps running, untraced
+    }
     defer agent.Shutdown()
 
     mux := pphttp.NewServeMux()
@@ -87,6 +94,15 @@ Use WrapClient, WrapClientWithContext or DoClient.
 
 ``` go
 client := pphttp.WrapClient(&http.Client{})
+req, _ := http.NewRequestWithContext(r.Context(), "GET", external_url, nil)
+client.Do(req)
+```
+
+`WrapClient` takes the tracer from each request's context, so `client.Get(url)`, whose request carries
+`context.Background()`, records nothing. For that form, build the client with the context:
+
+``` go
+client := pphttp.WrapClientWithContext(r.Context(), &http.Client{})
 client.Get(external_url)
 ```
 

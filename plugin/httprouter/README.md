@@ -33,6 +33,10 @@ Alternatively, the context of the request may be propagated where the context th
 
 ``` go
 import (
+    "fmt"
+    "net/http"
+    "time"
+
     "github.com/julienschmidt/httprouter"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/httprouter/v2"

@@ -25,8 +25,7 @@ The application's own attributes and groups are kept. Under `WithGroup`, the two
 are qualified by that group too. The underlying handler processes `With` attributes
 once; logging never replays them or reevaluates their values.
 
-This changes the previous top-level placement of ids under groups. Log consumers
-must use the grouped keys.
+Log consumers that search for the ids must then use the grouped keys.
 
 ``` go
 logger.WithGroup("req").With("foo", "bar").ErrorContext(ctx, "handler log message")
@@ -51,9 +50,9 @@ logger.LogAttrs(ctx, slog.LevelError, "oh, what a wonderful world", ppslog.NewAt
 ``` go
 import (
     "log/slog"
+    "net/http"
     "os"
 
-    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/slog/v2"
 )
 

@@ -135,9 +135,7 @@ func NewAsyncProducer(addrs []string, config *sarama.Config) (AsyncProducer, err
 // broker addresses; the first is the span event's destination. A producer
 // that is already wrapped is returned as it is, and a nil one - what
 // sarama.NewAsyncProducer returns with its error - as nil: the wrapper's
-// delivery goroutine read its channels and crashed the process. The
-// compile-time instrumentation tool uses it from its sarama.NewAsyncProducer
-// hook.
+// delivery goroutine read its channels and crashed the process.
 func WrapAsyncProducer(producer sarama.AsyncProducer, addrs []string, config *sarama.Config) AsyncProducer {
 	if producer == nil {
 		return nil

@@ -27,8 +27,7 @@ const serverName = "HttpRouter Server"
 // By using the pinpoint.FromContext function, this tracer can be obtained.
 // The optional path is the route pattern the handler is registered under
 // ("/hello/:name"); with it the URL statistics are collected as the Router of
-// this package does, without it they are skipped. The compile-time
-// instrumentation tool passes it from the registration it hooks.
+// this package does, without it they are skipped.
 func WrapHandle(handler httprouter.Handle, path ...string) httprouter.Handle {
 	if len(path) > 0 {
 		return wrapHandle(handler, path[0])

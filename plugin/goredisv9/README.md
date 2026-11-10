@@ -38,28 +38,41 @@ give the hook a label of your own, `ppgoredisv9.NewHook(&redis.Options{Addr: "se
 
 The commands go-redis's AutoPipeliner batches are sent with a context of its
 own and are not traced. One it sends apart from the batch, such as a blocking
-command, runs on a goroutine of its own and is recorded on a goroutine tracer,
-which needs a span event open in the caller: sent with none open, it is not
-recorded.
+command, is traced like any other command on the default, blocking
+AutoPipeliner (`AutoPipeline()`), which runs it on the caller's goroutine. On
+the async one (`AsyncAutoPipeline()`) it runs on a goroutine of its own and is
+recorded on a goroutine tracer, which needs a span event open in the caller:
+sent with none open, it is not recorded.
 
 ``` go
 package main
 
 import (
+    "fmt"
+    "net/http"
+
     "github.com/redis/go-redis/v9"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv9/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 )
 
 var redisClient *redis.Client
 
 func redisv9(w http.ResponseWriter, r *http.Request) {
+    // r.Context() carries the tracer the HTTP plugin put there.
     ctx := r.Context()
-    client := redisClient
 
-    err := client.Set(ctx, "key", "value", 0).Err()
-    val, err := client.Get(ctx, "key").Result()
-    fmt.Println("key", val)
+    if err := redisClient.Set(ctx, "key", "value", 0).Err(); err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    val, err := redisClient.Get(ctx, "key").Result()
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    fmt.Fprintln(w, "key", val)
 }
 
 func main() {

@@ -41,8 +41,7 @@ func NewClient(server ...string) *Client {
 
 // WrapClient wraps a *memcache.Client created elsewhere the way NewClient
 // wraps the one it creates; endpoint is what the span events report as the
-// endpoint (NewClient joins the server addresses with ","). The compile-time
-// instrumentation tool uses it from its memcache.New hook.
+// endpoint (NewClient joins the server addresses with ",").
 func WrapClient(client *memcache.Client, endpoint string) *Client {
 	return &Client{Client: client, endpoint: endpoint}
 }

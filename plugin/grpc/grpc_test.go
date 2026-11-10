@@ -746,7 +746,7 @@ func TestServerInterceptors_PassThroughWhenAgentDisabled(t *testing.T) {
 }
 
 // A server interceptor that finds a tracer already in the context — another
-// server interceptor outside it, or compile-time instrumentation — records
+// server interceptor outside it — records
 // its span event on that span instead of starting a second transaction for
 // the same request, and leaves ending the span to the outer layer.
 func TestUnaryServerInterceptor_ReusesTheContextTracer(t *testing.T) {

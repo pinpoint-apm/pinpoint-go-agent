@@ -29,17 +29,39 @@ row := db.QueryRowContext(ctx, "SELECT count(*) from tables")
 ``` go
 import (
     "database/sql"
-    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "fmt"
+    "log"
+    "net/http"
+
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
     _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2"
 )
 
-func query(w http.ResponseWriter, r *http.Request) {
-    db, err := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/information_schema")
-    row := db.QueryRowContext(r.Context(), "SELECT count(*) from tables")
+var db *sql.DB // opened once in main and shared by the handlers
 
+func query(w http.ResponseWriter, r *http.Request) {
     var count int
-    row.Scan(&count)
-    fmt.Println("number of tables in information_schema", count)
+    // r.Context() carries the tracer the HTTP plugin put there.
+    err := db.QueryRowContext(r.Context(), "SELECT count(*) from tables").Scan(&count)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    fmt.Fprintln(w, "number of tables in information_schema", count)
+}
+
+func main() {
+    // ... create the agent, as in the Getting Started guide
+
+    var err error
+    db, err = sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/information_schema")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer db.Close()
+
+    http.HandleFunc("/query", pphttp.WrapHandlerFunc(query))
+    log.Fatal(http.ListenAndServe(":8000", nil))
 }
 ```
 [Full Example Source](/example/mysql/mysql_example.go)

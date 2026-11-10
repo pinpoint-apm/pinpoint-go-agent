@@ -74,8 +74,8 @@ func TestOpen_RegistersEveryCallback(t *testing.T) {
 // Each pair has to open exactly one span event, name it after the statement
 // kind, and close it - an unbalanced pair leaves the span-event stack of the
 // request skewed for everything that follows. Instrument is idempotent, so a
-// second registration (Open after Open, or a manual Open next to the
-// compile-time hook) must not add a second event.
+// second registration (Open after Open, or Instrument on an opened db) must
+// not add a second event.
 func TestCallbacks_RecordOneSpanEventPerStatement(t *testing.T) {
 	db := openDB(t)
 	require.Same(t, db, Instrument(db))

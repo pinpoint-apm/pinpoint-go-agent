@@ -33,17 +33,19 @@ with `ppgomemcache.WrapClient(client, endpoint)`.
 
 ``` go
 import (
+    "net/http"
+
     "github.com/bradfitz/gomemcache/memcache"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gomemcache/v2"
 )
 
-func doMemcache(w http.ResponseWriter, r *http.Request) {
-    addr := []string{"localhost:11211"}
-    mc := ppgomemcache.NewClient(addr...)
-    c := mc.WithContext(r.Context())
+var mc = ppgomemcache.NewClient("localhost:11211") // created once and shared
 
-    item, err = c.Get("foo")
+func doMemcache(w http.ResponseWriter, r *http.Request) {
+    c := mc.WithContext(r.Context()) // a per-request copy bound to the request's tracer
+
+    item, err := c.Get("foo")
 	
     ...
 }

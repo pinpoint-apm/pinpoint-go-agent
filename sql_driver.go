@@ -75,10 +75,9 @@ type (
 )
 
 // IsWrappedSQLDriver reports whether drv came from WrapSQLDriver. Code that
-// wraps drivers as they are registered - the compile-time instrumentation
-// tool's sql.Register hook - uses it to leave a driver a plugin already
-// wrapped (mysql-pinpoint, pq-pinpoint, ...) alone, so that a query is
-// recorded once.
+// wraps drivers as they are registered uses it to leave a driver a plugin
+// already wrapped (mysql-pinpoint, pq-pinpoint, ...) alone, so that a query
+// is recorded once.
 func IsWrappedSQLDriver(drv driver.Driver) bool {
 	switch drv.(type) {
 	case *sqlDriver, wrappedSQLDriver, wrappedSQLDriverContext:

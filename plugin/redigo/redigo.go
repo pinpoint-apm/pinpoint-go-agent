@@ -86,9 +86,7 @@ func WithContext(c redis.Conn, ctx context.Context) {
 // WrapConn returns a redis.Conn that records the operations of c as span
 // events, with the endpoint derived from the dial address as Dial does. A
 // connection this package already wrapped is returned as it is. It serves
-// callers that dialed themselves, such as the compile-time instrumentation
-// wrapping the result of redis.DialContext (every Dial variant funnels into
-// it).
+// callers that dialed themselves.
 func WrapConn(c redis.Conn, address string) redis.Conn {
 	// A failed dial returns a nil Conn beside its error. Wrapped, it became a
 	// non-nil Conn that panicked on the caller's deferred Close; nil stays

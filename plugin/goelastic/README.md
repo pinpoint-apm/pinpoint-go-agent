@@ -13,7 +13,7 @@ import "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelastic/v2"
 [![PkgGoDev](https://pkg.go.dev/badge/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelastic/v2)](https://pkg.go.dev/github.com/pinpoint-apm/pinpoint-go-agent/plugin/goelastic/v2)
 
 This package instruments the elasticsearch calls.
-Use the NewTransport function as the elasticsearch.Client's Transport.
+Use the NewTransport function as the Transport field of elasticsearch.Config.
 
 ``` go
 es, err := elasticsearch.NewClient(
@@ -35,6 +35,8 @@ res, err = es.Search(
 
 ``` go
 import (
+    "net/http"
+
     "github.com/elastic/go-elasticsearch/v8"
     "github.com/elastic/go-elasticsearch/v8/esapi"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
@@ -44,7 +46,7 @@ import (
 func goelastic(w http.ResponseWriter, req *http.Request) {
     ctx := req.Context()
     es, err := elasticsearch.NewClient(
-        elasticsearch.Config{Transport: ppgoelastic.NewTransport(nil)}
+        elasticsearch.Config{Transport: ppgoelastic.NewTransport(nil)},
     )
 
     ...

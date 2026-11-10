@@ -42,6 +42,8 @@ entry.Error("hook log message")
 
 ``` go
 import (
+    "net/http"
+
     "github.com/sirupsen/logrus"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/logrus/v2"
@@ -50,7 +52,7 @@ import (
 func logging(w http.ResponseWriter, r *http.Request) {
     logger := logrus.New()
     tracer := pinpoint.TracerFromRequestContext(r)
-    logger.WithFields(pplogrus.NewField(tracer)).Fatal("ohhh, what a world")
+    logger.WithFields(pplogrus.NewField(tracer)).Error("ohhh, what a world")
 }
 ```
 [Full Example Source](/example/logrus/logrus_example.go)

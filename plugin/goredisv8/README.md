@@ -40,20 +40,31 @@ give the hook a label of your own, `ppgoredisv8.NewHook(&redis.Options{Addr: "se
 package main
 
 import (
+    "fmt"
+    "net/http"
+
     "github.com/go-redis/redis/v8"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/goredisv8/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 )
 
 var redisClient *redis.Client
 
 func redisv8(w http.ResponseWriter, r *http.Request) {
+    // r.Context() carries the tracer the HTTP plugin put there.
     ctx := r.Context()
-    client := redisClient
 
-    err := client.Set(ctx, "key", "value", 0).Err()
-    val, err := client.Get(ctx, "key").Result()
-    fmt.Println("key", val)
+    if err := redisClient.Set(ctx, "key", "value", 0).Err(); err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    val, err := redisClient.Get(ctx, "key").Result()
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    fmt.Fprintln(w, "key", val)
 }
 
 func main() {

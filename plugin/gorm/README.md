@@ -29,8 +29,8 @@ g, err := ppgorm.Open(mysql.New(mysql.Config{DriverName: "mysql-pinpoint", DSN: 
 The dialectors' defaults, `mysql.Open(dsn)` and `postgres.Open(dsn)`, open the pool through the
 uninstrumented driver, and no SQL is recorded. See [SQL databases](/doc/plugin_guide.md#sql-databases).
 
-Or register the callbacks on a `*gorm.DB` opened elsewhere (idempotent; the
-compile-time instrumentation tool uses it from its `gorm.Open` hook):
+Or register the callbacks on a `*gorm.DB` opened elsewhere (idempotent, so it
+is safe on a db `ppgorm.Open` already instrumented):
 
 ``` go
 g = ppgorm.Instrument(g)
@@ -44,28 +44,58 @@ g.Create(&Product{Code: "D42", Price: 100})
 ```
 
 ``` go
-package main
-
 import (
-    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "database/sql"
+    "log"
+    "net/http"
+
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorm/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
     _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mysql/v2"
     "gorm.io/driver/mysql"
     "gorm.io/gorm"
 )
 
-func gormQuery(w http.ResponseWriter, r *http.Request) {
-    db, err := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/testdb")
-    gormdb, err := ppgorm.Open(mysql.New(mysql.Config{Conn: db}), &gorm.Config{})
-    gormdb = gormdb.WithContext(r.Context())
+type Product struct {
+    gorm.Model
+    Code  string
+    Price uint
+}
 
-    gormdb.AutoMigrate(&Product{})
-    gormdb.Create(&Product{Code: "D42", Price: 100})
+var gormdb *gorm.DB // opened once in main and shared by the handlers
+
+func gormQuery(w http.ResponseWriter, r *http.Request) {
+    // r.Context() carries the tracer the HTTP plugin put there.
+    db := gormdb.WithContext(r.Context())
+
+    db.Create(&Product{Code: "D42", Price: 100})
 
     var product Product
-    gormdb.First(&product, "code = ?", "D42")
-
+    if err := db.First(&product, "code = ?", "D42").Error; err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
     ...
+}
+
+func main() {
+    // ... create the agent, as in the Getting Started guide
+
+    // parseTime lets gorm.Model's time columns scan into time.Time.
+    sqlDB, err := sql.Open("mysql-pinpoint", "root:p123@tcp(127.0.0.1:3306)/testdb?parseTime=true")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer sqlDB.Close()
+
+    gormdb, err = ppgorm.Open(mysql.New(mysql.Config{Conn: sqlDB}), &gorm.Config{})
+    if err != nil {
+        log.Fatal(err)
+    }
+    gormdb.AutoMigrate(&Product{})
+
+    http.HandleFunc("/gorm", pphttp.WrapHandlerFunc(gormQuery))
+    log.Fatal(http.ListenAndServe(":8000", nil))
 }
 ```
 [Full Example Source](/example/gorm/gorm_example.go)

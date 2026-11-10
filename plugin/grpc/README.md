@@ -50,13 +50,21 @@ func (s *Server) UnaryCallUnaryReturn(ctx context.Context, msg *testapp.Greeting
 package main
 
 import (
-    "github.com/pinpoint-apm/pinpoint-go-agent/v2/test/testapp"
-    "google.golang.org/grpc"
+    "context"
+    "io"
+    "log"
+    "net"
+
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/v2/test/testapp"
+    "google.golang.org/grpc"
 )
 
-type Server struct{}
+type Server struct {
+    testapp.UnimplementedHelloServer
+}
+
 var returnMsg = &testapp.Greeting{Msg: "Hello!!"}
 
 func (s *Server) UnaryCallUnaryReturn(ctx context.Context, msg *testapp.Greeting) (*testapp.Greeting, error) {
@@ -67,6 +75,12 @@ func (s *Server) UnaryCallUnaryReturn(ctx context.Context, msg *testapp.Greeting
 func (s *Server) StreamCallUnaryReturn(stream testapp.Hello_StreamCallUnaryReturnServer) error {
     for {
         in, err := stream.Recv()
+        if err == io.EOF {
+            return stream.SendAndClose(returnMsg)
+        }
+        if err != nil {
+            return err
+        }
         printGreeting(stream.Context(), in)
     }
 }
@@ -78,7 +92,11 @@ func printGreeting(ctx context.Context, in *testapp.Greeting) {
 
 func main() {
     ... //setup agent
-	
+
+    listener, err := net.Listen("tcp", "localhost:8080")
+    if err != nil {
+        log.Fatal(err)
+    }
     grpcServer := grpc.NewServer(
         grpc.UnaryInterceptor(ppgrpc.UnaryServerInterceptor()),
         grpc.StreamInterceptor(ppgrpc.StreamServerInterceptor()),
@@ -86,7 +104,6 @@ func main() {
     testapp.RegisterHelloServer(grpcServer, &Server{})
     grpcServer.Serve(listener)
 }
-
 ```
 [Full Example Source](/example/grpc/server/server.go)
 
@@ -96,6 +113,7 @@ To instrument a gRPC client, use UnaryClientInterceptor and StreamClientIntercep
 ``` go
 conn, err := grpc.NewClient(
     "localhost:8080",
+    grpc.WithTransportCredentials(insecure.NewCredentials()),
     grpc.WithUnaryInterceptor(ppgrpc.UnaryClientInterceptor()),
     grpc.WithStreamInterceptor(ppgrpc.StreamClientInterceptor()),
 )
@@ -110,21 +128,36 @@ client.UnaryCallUnaryReturn(pinpoint.NewContext(context.Background(), tracer), g
 
 ``` go
 import (
-    "google.golang.org/grpc"
-    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "context"
+    "log"
+    "net/http"
+
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/grpc/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2/test/testapp"
+    "google.golang.org/grpc"
+    "google.golang.org/grpc/credentials/insecure"
 )
+
+var greeting = &testapp.Greeting{Msg: "Hello!"}
 
 func unaryCallUnaryReturn(ctx context.Context, client testapp.HelloClient) {
     in, err := client.UnaryCallUnaryReturn(ctx, greeting)
+    if err != nil {
+        log.Println(err)
+        return
+    }
     log.Println(in.Msg)
 }
 
 func streamCallUnaryReturn(ctx context.Context, client testapp.HelloClient) {
     stream, err := client.StreamCallUnaryReturn(ctx)
+    if err != nil {
+        log.Println(err)
+        return
+    }
 
-    for i := 0; i < numStreamSend; i++ {
+    for i := 0; i < 3; i++ {
         if err := stream.Send(greeting); err != nil {
             break
         }
@@ -133,18 +166,31 @@ func streamCallUnaryReturn(ctx context.Context, client testapp.HelloClient) {
     ...
 }
 
+var client testapp.HelloClient // built once in main and shared
+
 func doGrpc(w http.ResponseWriter, r *http.Request) {
+    ctx := r.Context() // carries the tracer the HTTP plugin put there
+    unaryCallUnaryReturn(ctx, client)
+    streamCallUnaryReturn(ctx, client)
+}
+
+func main() {
+    ... //setup agent
+
     conn, err := grpc.NewClient(
         "localhost:8080",
-        grpc.WithInsecure(),
+        grpc.WithTransportCredentials(insecure.NewCredentials()),
         grpc.WithUnaryInterceptor(ppgrpc.UnaryClientInterceptor()),
         grpc.WithStreamInterceptor(ppgrpc.StreamClientInterceptor()),
     )
+    if err != nil {
+        log.Fatal(err)
+    }
     defer conn.Close()
+    client = testapp.NewHelloClient(conn)
 
-    ctx := r.Context()
-    unaryCallUnaryReturn(ctx, client)
-    streamCallUnaryReturn(ctx, client)
+    http.HandleFunc("/grpc", pphttp.WrapHandlerFunc(doGrpc))
+    http.ListenAndServe(":8000", nil)
 }
 ```
 [Full Example Source](/example/grpc/client/client.go)

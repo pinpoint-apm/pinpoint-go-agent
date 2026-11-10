@@ -28,12 +28,15 @@ app.Get("/hello", ppfiber.WrapHandler(hello))
 
 For each request, a pinpoint.Tracer is stored in the user context.
 By using the pinpoint.FromContext function, this tracer can be obtained in your handler.
-Alternatively, the context of the request may be propagated where the context that contains the pinpoint.Tracer is required.
+Alternatively, pass `c.UserContext()` wherever a context carrying the pinpoint.Tracer is required.
+`c.Context()` is the `*fasthttp.RequestCtx` and carries no tracer.
 
 ``` go
 package main
 
 import (
+    "log"
+
     "github.com/gofiber/fiber/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiber/v2"
@@ -51,6 +54,7 @@ func main() {
 	
     app := fiber.New()
     app.Use(ppfiber.Middleware())
+    app.Get("/hello", hello)
     log.Fatal(app.Listen(":9000"))
 }
 ```

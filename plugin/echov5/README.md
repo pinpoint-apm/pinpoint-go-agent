@@ -35,7 +35,8 @@ Use WrapHandler for the routes that matter - it reports the handler's function n
 e.GET("/hello", ppechov5.WrapHandler(hello))
 ```
 
-Or register the route with a name, which the Middleware reports as-is. This
+Or register the route with a name: the Middleware names the span event after it,
+with `()` appended (`hello()` for a route named `hello`). This
 covers a whole router without wrapping each handler.
 
 ``` go

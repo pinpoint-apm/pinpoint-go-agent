@@ -30,9 +30,9 @@ var initDone bool
 // initPackage is this package's initialization. init runs it, and so does the
 // first GetAgent or NoopAgent call that arrives before init did: Go
 // initializes packages one at a time, dependencies first and then in import
-// path order, and a compile-time instrumentation hook is reached from the init
-// function of a package that does not import this one (a sql.Open in a
-// package init, for instance) with every variable here still zero. Running the
+// path order, and a call can arrive from the init function of a package
+// that does not import this one (a sql.Open in a package init, for instance)
+// with every variable here still zero. Running the
 // steps twice is harmless: no other package can have registered configuration
 // in between, since anything that could has this package as a dependency.
 // Package variable initializers run again in between too, so this must not
@@ -241,9 +241,9 @@ var (
 
 // ErrAgentAlreadyCreated is returned by NewAgent, together with the existing
 // agent, when an agent exists already. An application whose agent may have
-// been created before its own NewAgent call - by the compile-time
-// instrumentation tool's bootstrap, or by another package - checks for it
-// with errors.Is and keeps the returned agent instead of failing.
+// been created before its own NewAgent call - by another package, for
+// instance - checks for it with errors.Is and keeps the returned agent
+// instead of failing.
 var ErrAgentAlreadyCreated = errors.New("agent is already created")
 
 // GetAgent returns a global Agent created by NewAgent, or NoopAgent before

@@ -34,6 +34,8 @@ Alternatively, the context of the request may be propagated where the context th
 package main
 
 import (
+    "log"
+
     "github.com/gofiber/fiber/v3"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/fiberv3/v2"
@@ -51,6 +53,7 @@ func main() {
 	
     app := fiber.New()
     app.Use(ppfiberv3.Middleware())
+    app.Get("/hello", hello)
     log.Fatal(app.Listen(":9000"))
 }
 ```

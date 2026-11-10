@@ -33,7 +33,9 @@ func (h exampleConsumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSessi
     ctx := sess.Context()
     for msg := range claim.Messages() {
         _ = ppsaramaibm.ConsumeMessageContext(process, ctx, msg)
+        sess.MarkMessage(msg, "")
     }
+    return nil
 }
 
 func main() {     
@@ -60,6 +62,9 @@ in a worker pool, call it in the worker. See [Message queues](/doc/plugin_guide.
 package main
 
 import (
+    "context"
+    "fmt"
+
     "github.com/IBM/sarama"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2"
@@ -85,7 +90,8 @@ func subscribe() {
                 ppsaramaibm.ConsumeMessageContext(processMessage, ctx, msg)
             }
         }(pc)
-	...	
+    }
+    ...
 }
 
 func main() {
@@ -120,8 +126,12 @@ partition, offset, err := producer.SendMessageContext(ctx, msg)
 package main
 
 import (
+    "log"
+    "net/http"
+
     "github.com/IBM/sarama"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2"
 )
 
@@ -138,7 +148,7 @@ func save(w http.ResponseWriter, r *http.Request) {
     ...
 }
 
-var producer sarama.SyncProducer
+var producer ppsaramaibm.SyncProducer
 
 func main() {
     ... //setup agent
@@ -147,7 +157,13 @@ func main() {
     config.Producer.Return.Successes = true
     ...
 
-    producer, err := ppsaramaibm.NewSyncProducer([]string{"127.0.0.1:9092"}, config)
+    var err error
+    producer, err = ppsaramaibm.NewSyncProducer([]string{"127.0.0.1:9092"}, config)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer producer.Close()
+
     http.HandleFunc("/save", pphttp.WrapHandlerFunc(save))
 }
 
@@ -173,7 +189,8 @@ producer.InputContext(ctx, msg)
 InputContext records a `sarama.AsyncProducer.Input()` event on the caller, and under it a
 `sarama.AsyncProducer.SendMessage` event that lasts until the broker acknowledges the message and records a failed delivery.
 That needs both `config.Producer.Return.Successes` (off in sarama's default config) and `config.Producer.Return.Errors`
-(on by default); with either off, the event ends at once and a failed delivery is not recorded.
+(on by default), and a `config.Version` of Kafka 0.11 or later; otherwise the event ends at once and a failed
+delivery is not recorded.
 An acknowledgment that arrives after the request has ended is still recorded on its event, but no longer fails the transaction.
 Like Input, InputContext blocks until sarama takes the message; it does not watch the context's deadline.
 
@@ -184,8 +201,12 @@ one nobody reads stalls the producer. Close the producer through the wrapper too
 package main
 
 import (
+    "log"
+    "net/http"
+
     "github.com/IBM/sarama"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/sarama-IBM/v2"
 )
 
@@ -197,12 +218,12 @@ func prepareAsyncMessage(topic, message string) *sarama.ProducerMessage {
 }
 
 func saveAsync(w http.ResponseWriter, r *http.Request) {
-    msg := prepareMessage("topic", "Hello, Kafka!!")
+    msg := prepareAsyncMessage("topic", "Hello, Kafka!!")
     producer.InputContext(r.Context(), msg)
     ...
 }
 
-var producer sarama.AsyncProducer
+var producer ppsaramaibm.AsyncProducer
 
 func main() {
     ... //setup agent
@@ -211,7 +232,12 @@ func main() {
     config.Producer.Return.Successes = true
     ...
 
-    producer, err := ppsaramaibm.NewAsyncProducer([]string{"127.0.0.1:9092"}, config)
+    var err error
+    producer, err = ppsaramaibm.NewAsyncProducer([]string{"127.0.0.1:9092"}, config)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer producer.Close()
     go func() {
         for {
             select {
@@ -228,6 +254,12 @@ func main() {
 
 ```
 [Full Example Source](/example/sarama-IBM/asyncproducer/asyncproducer.go)
+
+#### Trace headers
+Both producers pass the transaction on in record headers, which Kafka has from 0.11. With a `config.Version`
+below `sarama.V0_11_0_0` (sarama's default is newer) neither producer writes a header, since sarama would reject
+every message that carries one: the send is still recorded as a span event, but the consumer starts a new
+transaction.
 
 #### Producers created elsewhere
 A producer created another way - `sarama.NewSyncProducerFromClient`, `sarama.NewAsyncProducerFromClient`,

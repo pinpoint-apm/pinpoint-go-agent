@@ -40,8 +40,7 @@ func NewClient(zkquorum string, options ...hbase.Option) *Client {
 // WrapClient returns a Client that records the operations of c as span
 // events with zkquorum as the endpoint, as NewClient does for the client it
 // creates. A *Client is returned as it is. It serves callers that created the
-// gohbase client themselves, such as the compile-time instrumentation
-// wrapping the result of gohbase.NewClient.
+// gohbase client themselves.
 func WrapClient(c hbase.Client, zkquorum string) *Client {
 	if w, ok := c.(*Client); ok {
 		return w

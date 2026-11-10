@@ -228,9 +228,8 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   before.
 - **One request, one span when server instrumentation is layered.**
   `pphttp.NewHttpServerTracer` and the `ppgrpc` server interceptors reuse the
-  tracer already in the request context — a middleware installed twice, a
-  framework middleware inside `WrapHandler`, or the compile-time
-  instrumentation tool in front of the manual wrapper — instead of starting a
+  tracer already in the request context — a middleware installed twice, or a
+  framework middleware inside `WrapHandler` — instead of starting a
   second transaction: the inner layer records its span event on the existing
   span, records no second status, and its `EndSpan` is ignored
   (`pinpoint.NestedTracer`, `pinpoint.IsNestedTracer`). This is what the Java

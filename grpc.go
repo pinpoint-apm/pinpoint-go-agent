@@ -50,8 +50,8 @@ const (
 
 // internalContextKey marks the contexts of the agent's own RPCs to the
 // collector. Instrumentation of google.golang.org/grpc that is applied to
-// every client connection in the process - the compile-time instrumentation
-// tool - reads it through IsInternalContext to leave those RPCs alone.
+// every client connection in the process reads it through IsInternalContext
+// to leave those RPCs alone.
 type internalContextKey struct{}
 
 func internalContext(ctx context.Context) context.Context {

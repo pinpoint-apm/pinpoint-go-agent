@@ -36,21 +36,50 @@ row, err := db.QueryContext(ctx, "SELECT * FROM Inventory")
 ``` go
 import (
     "database/sql"
-    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "fmt"
+    "log"
+    "net/http"
+
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
     _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/mssql-microsoft/v2"
 )
 
+var db *sql.DB // opened once in main and shared by the handlers
+
 func query(w http.ResponseWriter, r *http.Request) {
-    dsn := "server=localhost;user id=sa;password=TestPass123;port=1433;database=TestDB"
-    db, err := sql.Open("mssql-microsoft-pinpoint", dsn)
+    // r.Context() carries the tracer the HTTP plugin put there.
+    rows, err := db.QueryContext(r.Context(), "SELECT id, name, quantity FROM Inventory")
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    defer rows.Close()
+
+    for rows.Next() {
+        var (
+            id, quantity int
+            name         string
+        )
+        if err := rows.Scan(&id, &name, &quantity); err != nil {
+            http.Error(w, err.Error(), http.StatusInternalServerError)
+            return
+        }
+        fmt.Fprintf(w, "item: %d, %s, %d\n", id, name, quantity)
+    }
+}
+
+func main() {
+    // ... create the agent, as in the Getting Started guide
+
+    var err error
+    db, err = sql.Open("mssql-microsoft-pinpoint", "server=localhost;user id=sa;password=TestPass123;port=1433;database=TestDB")
+    if err != nil {
+        log.Fatal(err)
+    }
     defer db.Close()
 
-    rows, _ := db.QueryContext(r.Context(), "SELECT * FROM Inventory")
-    for rows.Next() {
-        _ = rows.Scan(&id, &name, &quantity)
-        fmt.Printf("user: %d, %s, %d\n", id, name, quantity)
-    }
-    rows.Close()
+    http.HandleFunc("/query", pphttp.WrapHandlerFunc(query))
+    log.Fatal(http.ListenAndServe(":8000", nil))
 }
 ```
 [Full Example Source](/example/mssql-microsoft/mssql_example.go)

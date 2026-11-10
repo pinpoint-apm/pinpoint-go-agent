@@ -42,27 +42,45 @@ of the request, with every later event nested under it.
 
 ``` go
 import (
-    "github.com/jackc/pgx/v5"
-    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "context"
+    "fmt"
+    "log"
+    "net/http"
+
+    "github.com/jackc/pgx/v5/pgxpool"
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgxv5/v2"
 )
 
-func connect() *pgx.Conn {
-    cfg, err := pgx.ParseConfig(connUrl)
-    cfg.Tracer = pppgxv5.NewTracer()
-    conn, err := pgx.ConnectConfig(context.Background(), cfg)
-    return conn
-}
+var pool *pgxpool.Pool // opened once in main and shared by the handlers
 
 func tableCount(w http.ResponseWriter, r *http.Request) {
-    dbConn := connect()
-    defer dbConn.Close(context.Background())
+    var count int
+    // r.Context() carries the tracer the HTTP plugin put there.
+    err := pool.QueryRow(r.Context(), "SELECT count(*) FROM pg_catalog.pg_tables").Scan(&count)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    fmt.Fprintln(w, "number of entries in pg_catalog.pg_tables", count)
+}
 
-    tracer := pinpoint.FromContext(r.Context())
-    ctx := pinpoint.NewContext(context.Background(), tracer)
+func main() {
+    // ... create the agent, as in the Getting Started guide
 
-    rows := dbConn.QueryRow(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
-    ...
+    cfg, err := pgxpool.ParseConfig("postgresql://test:test!@localhost/testdb?sslmode=disable")
+    if err != nil {
+        log.Fatal(err)
+    }
+    cfg.ConnConfig.Tracer = pppgxv5.NewTracer()
+    pool, err = pgxpool.NewWithConfig(context.Background(), cfg)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer pool.Close()
+
+    http.HandleFunc("/tables", pphttp.WrapHandlerFunc(tableCount))
+    log.Fatal(http.ListenAndServe(":8000", nil))
 }
 ```
 

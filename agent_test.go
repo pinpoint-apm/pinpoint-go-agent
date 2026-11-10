@@ -2315,9 +2315,9 @@ func TestNewAgent_PanicWhileConnectingIsRecovered(t *testing.T) {
 	assert.Equal(t, NoopAgent(), GetAgent(), "the failed agent is released")
 }
 
-// A compile-time instrumentation hook can call into this package from the
-// init function of a package that does not import it, before this package
-// initialized. Every accessor a hook may touch answers as it would right
+// A call can reach this package from the init function of a package that
+// does not import it, before this package initialized. Every accessor such a
+// call may touch answers as it would right
 // after init instead of panicking on the zero-valued globals.
 func TestAccessorsBeforeInit(t *testing.T) {
 	savedAgent := globalAgent.Load()

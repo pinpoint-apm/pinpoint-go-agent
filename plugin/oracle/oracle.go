@@ -29,8 +29,8 @@ import (
 // DBInfo returns the database description the plugin instruments the driver
 // with: service types and the DSN parser that fills in the host and database
 // name. It is a constructor rather than a variable so that a caller that runs
-// before this package initialized (the compile-time instrumentation tool's
-// sql.Register hook, inside the driver's init) gets a complete value.
+// before this package initialized (code reached from the driver's init)
+// gets a complete value.
 func DBInfo() pinpoint.DBInfo {
 	return pinpoint.DBInfo{
 		DBType:    pinpoint.ServiceTypeOracle,

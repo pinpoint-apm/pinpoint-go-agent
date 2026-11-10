@@ -34,10 +34,12 @@ Alternatively, the context of the request may be propagated where the context th
 package main
 
 import (
+    "io"
+    "net/http"
+
     "github.com/gorilla/mux"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/gorilla/v2"
-    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
 )
 
 func hello(w http.ResponseWriter, r *http.Request) {
@@ -49,8 +51,9 @@ func main() {
 	
     r := mux.NewRouter()
     r.Use(ppgorilla.Middleware())
+    r.HandleFunc("/", hello) // the middleware runs only for a route that matched
+    // without the middleware: r.HandleFunc("/", ppgorilla.WrapHandlerFunc(hello))
 
-    //r.HandleFunc("/", ppgorilla.WrapHandlerFunc(hello)))
     http.ListenAndServe(":8000", r)
 }
 

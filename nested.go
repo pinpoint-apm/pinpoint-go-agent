@@ -2,8 +2,8 @@ package pinpoint
 
 // NestedTracer returns a view of tracer for an instrumentation layer that
 // found tracer already active in the context it was handed: a middleware
-// installed twice, a framework middleware inside a wrapped handler, or
-// compile-time instrumentation outside a manual wrapper. The view records
+// installed twice, or a framework middleware inside a wrapped handler. The
+// view records
 // span events, distributed tracing headers and errors on the existing span
 // and ignores EndSpan, which belongs to the layer that created the span. The
 // Java agent behaves the same way: DefaultTraceFactory.checkAndGet keeps the

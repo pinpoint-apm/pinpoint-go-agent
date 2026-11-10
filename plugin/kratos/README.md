@@ -48,9 +48,13 @@ func (s *server) SayHello(ctx context.Context, in *helloworld.HelloRequest) (*he
 package main
 
 import (
+    "context"
+    "fmt"
+    "log"
+
     "github.com/go-kratos/kratos/v2"
-    "github.com/go-kratos/kratos/v2/transport"
     "github.com/go-kratos/kratos/v2/transport/http"
+    "github.com/pinpoint-apm/pinpoint-go-agent/example/kratos/helloworld"
     "github.com/pinpoint-apm/pinpoint-go-agent/v2"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratos/v2"
 )
@@ -68,7 +72,7 @@ func (s *server) SayHello(ctx context.Context, in *helloworld.HelloRequest) (*he
 
 func main() {
     ... //setup agent
-	
+
     s := &server{}
     httpSrv := http.NewServer(
         http.Address(":8000"),
@@ -76,9 +80,13 @@ func main() {
             ppkratos.ServerMiddleware(),
         ),
     )
-    ...
-}
+    helloworld.RegisterGreeterHTTPServer(httpSrv, s)
 
+    app := kratos.New(kratos.Name("helloworld"), kratos.Server(httpSrv))
+    if err := app.Run(); err != nil {
+        log.Fatal(err)
+    }
+}
 ```
 [Full Example Source](/example/kratos/server/server.go)
 
@@ -102,8 +110,11 @@ reply, err := client.SayHello(pinpoint.NewContext(context.Background(), tracer),
 
 ``` go
 import (
+    "context"
+    "net/http"
+
     transhttp "github.com/go-kratos/kratos/v2/transport/http"
-    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    pb "github.com/pinpoint-apm/pinpoint-go-agent/example/kratos/helloworld"
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/kratos/v2"
 )
 
@@ -113,6 +124,11 @@ func callHTTP(w http.ResponseWriter, r *http.Request) {
         transhttp.WithMiddleware(ppkratos.ClientMiddleware()),
         transhttp.WithEndpoint("127.0.0.1:8000"),
     )
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    defer conn.Close()
 
     client := pb.NewGreeterHTTPClient(conn)
     reply, err := client.SayHello(r.Context(), &pb.HelloRequest{Name: "kratos"})
@@ -156,9 +172,10 @@ status is recorded - the outcome is the error the handler returns. None of the
 recording, `RealIpHeader`): the remote address of an HTTP transport is the
 socket's `RemoteAddr`. No URL statistics are collected.
 
-A handler error fails the span, as the gRPC plugin does. kratos reports a
-`404` as an `errors.NotFound` error, so such a response is a failed
-transaction here. So is a 404 an echo or fiber handler returns as an error,
-by default ([Http.Server.RecordHandlerError](/doc/config.md#httpserverrecordhandlererror));
+A handler error fails the span, as the gRPC plugin does, so a handler that
+returns `errors.NotFound` (a `404`) makes a failed transaction. So does a 404
+an echo or fiber handler returns as an error, by default
+([Http.Server.RecordHandlerError](/doc/config.md#httpserverrecordhandlererror));
 the net/http, chi and gorilla plugins judge a 404 by its status alone, which
-the default `Http.Server.StatusCodeErrors` (`5xx`) does not count.
+the default `Http.Server.StatusCodeErrors` (`5xx`) does not count. A path no
+route matches is answered outside the middleware and is not traced at all.

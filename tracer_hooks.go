@@ -3,10 +3,9 @@ package pinpoint
 import "sync/atomic"
 
 // TracerHooks are the callbacks a goroutine-local tracer registers with
-// SetTracerHooks: the compile-time instrumentation tool's
-// instrumentation/runtime module keeps the current goroutine's tracer in the
-// Go runtime and needs to know when a tracer is created, handed to a
-// goroutine, ended, and what FromContext found. Every field may be nil. The
+// SetTracerHooks: code that keeps the current goroutine's tracer in the Go
+// runtime needs to know when a tracer is created, handed to a goroutine,
+// ended, and what FromContext found. Every field may be nil. The
 // hooks run on the caller's goroutine, on the agent's hot path, and must
 // not block; they receive the agent's Tracer interface and use nothing else.
 type TracerHooks struct {

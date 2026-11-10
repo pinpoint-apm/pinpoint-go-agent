@@ -187,8 +187,7 @@ func NewSyncProducer(addrs []string, config *sarama.Config) (SyncProducer, error
 // producer's configuration (nil means sarama's default): below Kafka 0.11
 // (Config.Version) no trace header is written. A producer that is already
 // wrapped is returned as it is, and a nil one - what sarama.NewSyncProducer
-// returns with its error - as nil. The compile-time instrumentation tool uses
-// it from its sarama.NewSyncProducer hook.
+// returns with its error - as nil.
 func WrapSyncProducer(producer sarama.SyncProducer, addrs []string, config *sarama.Config) SyncProducer {
 	if producer == nil {
 		return nil

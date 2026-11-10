@@ -13,8 +13,7 @@ import (
 // injects the distributed tracing headers into req.Header: the entry half of
 // what WrapClient and DoClient do around a request. It is for instrumentation
 // that cannot wrap the client itself, such as an adapter driving a
-// framework's own HTTP client (plugin/beego) or a compile-time hook inside
-// (*http.Transport).RoundTrip. The request is modified, so a caller bound by
+// framework's own HTTP client (plugin/beego). The request is modified, so a caller bound by
 // the RoundTripper contract copies it first, as WrapClient does. A request
 // whose headers already carry the trace context tracer's span injected gets
 // a noop tracer, so that two layers around one request record one event;

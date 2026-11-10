@@ -360,8 +360,8 @@ func Test_wrappedConn_WithoutAContext(t *testing.T) {
 	assert.NotPanics(t, func() { rec.end(nil) }, "the untraced end must be a no-op")
 }
 
-// WrapConn is the exported makeWrappedConn for connections dialed elsewhere
-// (compile-time instrumentation); wrapping twice must not stack two layers.
+// WrapConn is the exported makeWrappedConn for connections dialed elsewhere;
+// wrapping twice must not stack two layers.
 func TestWrapConn(t *testing.T) {
 	base := &fakeRedisConn{}
 	c := WrapConn(base, "redis1:6379")

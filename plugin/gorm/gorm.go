@@ -36,11 +36,10 @@ func Open(dialector gorm.Dialector, opts ...gorm.Option) (*gorm.DB, error) {
 const beforeCreateCallback = "pinpoint:before_create"
 
 // Instrument registers the plugin's callbacks on a db that gorm.Open returned
-// and returns it. Open calls it; a compile-time hook on gorm.Open, or an
-// application that opened the db itself, calls it directly. It is idempotent:
-// a db that already carries the callbacks is left alone, so Open on top of an
-// instrumented db, or Open next to a compile-time hook, records every
-// statement once.
+// and returns it. Open calls it; an application that opened the db itself
+// calls it directly. It is idempotent: a db that already carries the
+// callbacks is left alone, so Open on top of an instrumented db records
+// every statement once.
 func Instrument(db *gorm.DB) *gorm.DB {
 	if db == nil || db.Callback().Create().Get(beforeCreateCallback) != nil {
 		return db

@@ -19,9 +19,9 @@ var logger *logrusLogger
 // default level - allocates nothing. Built eagerly, each call cost two logrus
 // entries and a Fields map (six allocations) for a line that was then dropped.
 //
-// Before this package's init function ran (a compile-time instrumentation
-// hook reached from another package's init) the entry discards what is
-// logged: logrus may not be initialized either.
+// Before this package's init function ran (a call reached from another
+// package's init) the entry discards what is logged: logrus may not be
+// initialized either.
 func Log(src string) logEntry {
 	return logEntry{src: src}
 }

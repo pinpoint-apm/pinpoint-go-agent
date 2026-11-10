@@ -1250,8 +1250,8 @@ func TestRealIpOptions(t *testing.T) {
 }
 
 // A request whose context already carries a tracer — WrapHandler inside
-// WrapHandler here; a framework middleware inside a wrapped handler, or
-// compile-time instrumentation outside the wrapper, in practice — is one
+// WrapHandler here; a framework middleware inside a wrapped handler, in
+// practice — is one
 // request and gets one span: the inner layer records its span event on the
 // outer's span, records no second status, and its EndSpan does not end it
 // (Java: DefaultTraceFactory.checkAndGet keeps the existing Trace).

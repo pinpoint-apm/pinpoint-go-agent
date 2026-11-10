@@ -29,18 +29,40 @@ row := db.QueryRowContext(ctx, "SELECT count(*) FROM pg_catalog.pg_tables")
 
 ``` go
 import (
-    pinpoint "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "database/sql"
+    "fmt"
+    "log"
+    "net/http"
+
     "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
     _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/pgsql/v2"
 )
 
-func query(w http.ResponseWriter, r *http.Request) {
-    db, err := sql.Open("pq-pinpoint", "postgresql://test:test!@localhost/testdb?sslmode=disable")
-    row := db.QueryRowContext(r.Context(), "SELECT count(*) FROM pg_catalog.pg_tables")
+var db *sql.DB // opened once in main and shared by the handlers
 
+func query(w http.ResponseWriter, r *http.Request) {
     var count int
-    err = row.Scan(&count)
-    fmt.Println("number of entries in pg_catalog.pg_tables", count)
+    // r.Context() carries the tracer the HTTP plugin put there.
+    err := db.QueryRowContext(r.Context(), "SELECT count(*) FROM pg_catalog.pg_tables").Scan(&count)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    fmt.Fprintln(w, "number of entries in pg_catalog.pg_tables", count)
+}
+
+func main() {
+    // ... create the agent, as in the Getting Started guide
+
+    var err error
+    db, err = sql.Open("pq-pinpoint", "postgresql://test:test!@localhost/testdb?sslmode=disable")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer db.Close()
+
+    http.HandleFunc("/query", pphttp.WrapHandlerFunc(query))
+    log.Fatal(http.ListenAndServe(":8000", nil))
 }
 ```
 [Full Example Source](/example/pgsql/pgsql_example.go)

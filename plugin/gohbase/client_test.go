@@ -191,8 +191,8 @@ func TestNewClient_KeepsTheQuorum(t *testing.T) {
 	assert.Equal(t, "zk1.example:2181,zk2.example:2181", c.dbInfo.DBHost)
 }
 
-// WrapClient is NewClient for a client created elsewhere (compile-time
-// instrumentation); wrapping twice must not stack two layers.
+// WrapClient is NewClient for a client created elsewhere; wrapping twice
+// must not stack two layers.
 func TestWrapClient(t *testing.T) {
 	base := &fakeClient{}
 	c := WrapClient(base, "zk1,zk2")

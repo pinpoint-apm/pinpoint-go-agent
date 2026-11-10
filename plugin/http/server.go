@@ -47,8 +47,8 @@ const defaultServerName = "HTTP Server"
 // and then creates a span that initiates or continues the transaction.
 //
 // A request whose context already carries a tracer — a middleware installed
-// twice, a framework middleware inside a wrapped handler, or compile-time
-// instrumentation in front of the manual wrapper — gets a nested view of that
+// twice, or a framework middleware inside a wrapped handler — gets a nested
+// view of that
 // tracer (pinpoint.NestedTracer) instead of a second span: the layer records
 // its span event on the existing span and its EndSpan is ignored, as the Java
 // agent keeps the existing Trace for one request.

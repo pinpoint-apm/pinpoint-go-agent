@@ -21,6 +21,7 @@
 //
 //	conn, err := grpc.NewClient(
 //	    "localhost:8080",
+//	    grpc.WithTransportCredentials(insecure.NewCredentials()),
 //	    grpc.WithUnaryInterceptor(ppgrpc.UnaryClientInterceptor()),
 //	    grpc.WithStreamInterceptor(ppgrpc.StreamClientInterceptor()),
 //	)
@@ -87,8 +88,7 @@ func loweredKey(key string) string {
 }
 
 // startSpan starts the server span, or reuses the tracer an outer layer (an
-// interceptor registered twice, or compile-time instrumentation in front of
-// the manual one) already put in the context: one request is one span, as
+// interceptor registered twice) already put in the context: one request is one span, as
 // in the Java agent (DefaultTraceFactory.checkAndGet). The nested view
 // records this layer's span event and error on the existing span and leaves
 // EndSpan to the owner.

@@ -42,18 +42,50 @@ row, err := db.QueryContext(ctx, "SELECT * FROM BONUS")
 ``` go
 import (
     "database/sql"
-    "github.com/pinpoint-apm/pinpoint-go-agent/v2"
+    "fmt"
+    "log"
+    "net/http"
+
+    "github.com/pinpoint-apm/pinpoint-go-agent/plugin/http/v2"
     _ "github.com/pinpoint-apm/pinpoint-go-agent/plugin/oracle/v2"
 )
 
+var db *sql.DB // opened once in main and shared by the handlers
+
 func query(w http.ResponseWriter, r *http.Request) {
-    conn, err := sql.Open("oracle-pinpoint", "oracle://scott:tiger@localhost:1521/xe")
-    rows, _ := conn.QueryContext(r.Context(), "SELECT * FROM BONUS")
+    // r.Context() carries the tracer the HTTP plugin put there.
+    rows, err := db.QueryContext(r.Context(), "SELECT ENAME, JOB, SAL, COMM FROM BONUS")
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    defer rows.Close()
 
     for rows.Next() {
-        err = rows.Scan(&ename, &job, &sal, &comm)
-        fmt.Println("ENAME: ", ename, "\tJOB: ", job, "\tSAL: ", sal, "\tCOMM: ", comm)
+        var (
+            ename, job string
+            sal, comm  float32
+        )
+        if err := rows.Scan(&ename, &job, &sal, &comm); err != nil {
+            http.Error(w, err.Error(), http.StatusInternalServerError)
+            return
+        }
+        fmt.Fprintln(w, "ENAME:", ename, "JOB:", job, "SAL:", sal, "COMM:", comm)
     }
+}
+
+func main() {
+    // ... create the agent, as in the Getting Started guide
+
+    var err error
+    db, err = sql.Open("oracle-pinpoint", "oracle://scott:tiger@localhost:1521/xe")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer db.Close()
+
+    http.HandleFunc("/query", pphttp.WrapHandlerFunc(query))
+    log.Fatal(http.ListenAndServe(":8000", nil))
 }
 ```
 [Full Example Source](/example/oracle/oracle_example.go)
