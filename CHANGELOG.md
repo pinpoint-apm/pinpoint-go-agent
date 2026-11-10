@@ -1,6 +1,6 @@
 # Changelog
 
-## v2.0.0 (unreleased)
+## v2.0.0 (2026-11-11)
 
 Every module moves to a `/v2` module path, so an application moves to v2 on
 purpose: `go get -u` keeps it on v1. What to change, in order, is in
