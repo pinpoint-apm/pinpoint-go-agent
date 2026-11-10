@@ -57,20 +57,21 @@ func (r *hook) DialHook(hook redis.DialHook) redis.DialHook {
 
 func (r *hook) ProcessHook(hook redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
-		return r.trace(ctx, "go-redis/v9.Process()", cmd.Name, func(ctx context.Context) error { return hook(ctx, cmd) })
+		return r.trace(ctx, "go-redis/v9.Process()", cmd.Name, []redis.Cmder{cmd}, func(ctx context.Context) error { return hook(ctx, cmd) })
 	}
 }
 
 func (r *hook) ProcessPipelineHook(hook redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return func(ctx context.Context, cmds []redis.Cmder) error {
-		return r.trace(ctx, "go-redis/v9.ProcessPipeline()", func() string { return cmdName(cmds) },
+		return r.trace(ctx, "go-redis/v9.ProcessPipeline()", func() string { return cmdName(cmds) }, cmds,
 			func(ctx context.Context) error { return hook(ctx, cmds) })
 	}
 }
 
 // trace records next, the rest of the hook chain, as the op span event on the
-// tracer in ctx. name, the command's, is read only for a sampled tracer.
-func (r *hook) trace(ctx context.Context, op string, name func() string, next func(context.Context) error) error {
+// tracer in ctx. name, the command's, is read only for a sampled tracer; cmds
+// are the commands it runs.
+func (r *hook) trace(ctx context.Context, op string, name func() string, cmds []redis.Cmder, next func(context.Context) error) error {
 	tracer := pinpoint.FromContext(ctx)
 	if !tracer.IsSampled() {
 		return next(ctx)
@@ -84,7 +85,7 @@ func (r *hook) trace(ctx context.Context, op string, name func() string, next fu
 	defer tracer.EndSpanEvent()
 	se := r.newSpanEvent(ctx, op, name())
 	err := next(ctx)
-	setSpanError(se, err)
+	setSpanError(se, err, cmds)
 	return err
 }
 
@@ -116,11 +117,53 @@ func (r *hook) newSpanEvent(ctx context.Context, operation string, cmd string) p
 
 // setSpanError records err on the span event, except a cache miss: redis.Nil
 // is a normal outcome, and recording it marked every miss as a failure (and
-// walked the stack per miss with Error.TraceCallStack on).
-func setSpanError(se pinpoint.SpanEventRecorder, err error) {
-	if err != nil && !errors.Is(err, redis.Nil) {
+// walked the stack per miss with Error.TraceCallStack on). Nor is a server's
+// refusal of an optional connection handshake command an error of the
+// request: see isHandshakeRefusal.
+func setSpanError(se pinpoint.SpanEventRecorder, err error, cmds []redis.Cmder) {
+	if err != nil && !errors.Is(err, redis.Nil) && !isHandshakeRefusal(err, cmds) {
 		se.SetError(err)
 	}
+}
+
+// isHandshakeRefusal reports whether err is a server's refusal of commands
+// that are all optional parts of go-redis's connection handshake, which runs
+// through the hooks with the context of the command that needed the new
+// connection. go-redis carries on when the server rejects HELLO (it falls back
+// to RESP2), CLIENT SETINFO, CLIENT TRACKING or, in its default auto mode,
+// CLIENT MAINT_NOTIFICATIONS - every Redis before 8 rejects the last - so
+// recording the refusal failed the request whose command opened the
+// connection, though nothing failed. A handshake failure go-redis does not
+// tolerate fails that command instead, which is recorded on its own event.
+func isHandshakeRefusal(err error, cmds []redis.Cmder) bool {
+	var serverErr redis.Error
+	if len(cmds) == 0 || !errors.As(err, &serverErr) {
+		return false
+	}
+	for _, cmd := range cmds {
+		if !isOptionalHandshakeCmd(cmd) {
+			return false
+		}
+	}
+	return true
+}
+
+func isOptionalHandshakeCmd(cmd redis.Cmder) bool {
+	switch cmd.Name() {
+	case "hello":
+		return true
+	case "client":
+		args := cmd.Args()
+		if len(args) < 2 {
+			return false
+		}
+		sub, _ := args[1].(string)
+		switch strings.ToLower(sub) {
+		case "setinfo", "tracking", "maint_notifications":
+			return true
+		}
+	}
+	return false
 }
 
 // cmdName lists the pipeline's commands, bounded: the pipeline size is

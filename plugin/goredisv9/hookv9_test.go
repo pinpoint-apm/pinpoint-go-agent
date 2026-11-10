@@ -109,6 +109,85 @@ func TestProcessPipelineHook(t *testing.T) {
 	assert.True(t, e.Ended, "the span event was left open")
 }
 
+// serverError is an error reply from the server, which go-redis tells apart
+// from a transport error by its RedisError method.
+type serverError string
+
+func (e serverError) Error() string { return string(e) }
+func (serverError) RedisError()     {}
+
+// go-redis runs its connection handshake through the hooks with the context
+// of the command that needed the new connection, and carries on when the
+// server rejects an optional part of it: every Redis before 8 rejects CLIENT
+// MAINT_NOTIFICATIONS, which go-redis v9 sends by default. Such a refusal must
+// not fail the request; the command still gets its event. A transport error on
+// the same command, and a server error on any other command, are recorded.
+func TestProcessHook_HandshakeRefusalIsNotAnError(t *testing.T) {
+	ctx := context.Background()
+	unknownSub := serverError("ERR unknown subcommand 'maint_notifications'. Try CLIENT HELP.")
+	cases := []struct {
+		name    string
+		cmd     redis.Cmder
+		err     error
+		wantErr bool
+	}{
+		{"maint_notifications refused", redis.NewStatusCmd(ctx, "client", "maint_notifications", "on", "moving-endpoint-type", "internal-ip"), unknownSub, false},
+		{"setinfo refused", redis.NewStatusCmd(ctx, "client", "setinfo", "LIB-NAME", "go-redis"), serverError("ERR unknown subcommand 'setinfo'"), false},
+		{"tracking refused", redis.NewStatusCmd(ctx, "CLIENT", "TRACKING", "on"), serverError("ERR syntax error"), false},
+		{"hello refused", redis.NewMapStringInterfaceCmd(ctx, "hello", 3), serverError("ERR unknown command 'hello'"), false},
+		{"handshake transport error", redis.NewStatusCmd(ctx, "client", "maint_notifications", "on"), errors.New("connection reset"), true},
+		{"other client subcommand", redis.NewStatusCmd(ctx, "client", "kill", "id", 1), serverError("ERR No such client"), true},
+		{"ordinary command", cmd("get"), serverError("WRONGTYPE Operation against a key holding the wrong kind of value"), true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tracer := pptest.NewRecordingTracer()
+			err := NewHook(&redis.Options{Addr: "redis1:6379"}).
+				ProcessHook(func(context.Context, redis.Cmder) error { return c.err })(pinpoint.NewContext(ctx, tracer), c.cmd)
+
+			assert.Equal(t, c.err, err, "the command's error must come back unchanged")
+			require.Len(t, tracer.Events, 1, "the command keeps its span event")
+			if c.wantErr {
+				assert.Equal(t, c.err, tracer.Events[0].Err)
+			} else {
+				assert.NoError(t, tracer.Events[0].Err, "a tolerated handshake refusal failed the request")
+			}
+		})
+	}
+}
+
+// go-redis sends the two CLIENT SETINFO commands of the handshake as one
+// pipeline. Their refusal is tolerated as for a single command; a pipeline
+// that also carries a command of the application's records its error.
+func TestProcessPipelineHook_HandshakeRefusalIsNotAnError(t *testing.T) {
+	ctx := context.Background()
+	refused := serverError("ERR unknown subcommand 'setinfo'")
+	setinfo := func() redis.Cmder { return redis.NewStatusCmd(ctx, "client", "setinfo", "LIB-VER", "9.22.0") }
+
+	for _, c := range []struct {
+		name    string
+		cmds    []redis.Cmder
+		wantErr bool
+	}{
+		{"handshake pipeline", []redis.Cmder{setinfo(), setinfo()}, false},
+		{"mixed pipeline", []redis.Cmder{setinfo(), cmd("get")}, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			tracer := pptest.NewRecordingTracer()
+			err := NewHook(&redis.Options{Addr: "redis1:6379"}).
+				ProcessPipelineHook(func(context.Context, []redis.Cmder) error { return refused })(pinpoint.NewContext(ctx, tracer), c.cmds)
+
+			assert.Equal(t, refused, err)
+			require.Len(t, tracer.Events, 1)
+			if c.wantErr {
+				assert.Equal(t, refused, tracer.Events[0].Err)
+			} else {
+				assert.NoError(t, tracer.Events[0].Err)
+			}
+		})
+	}
+}
+
 // A failed pipeline records the error on its single event.
 func TestProcessPipelineHook_Error(t *testing.T) {
 	tracer := pptest.NewRecordingTracer()
