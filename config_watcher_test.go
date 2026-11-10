@@ -2,12 +2,16 @@ package pinpoint
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -409,4 +413,127 @@ func TestConfigWatcherCloseDoesNotHangOnBlockedReloadCallback(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("abandoned watcher goroutine never exited")
 	}
+}
+
+// A Close that gave up on a blocked reload callback leaves a poller that must
+// not start another reload. Once the callback returns, the stop and a tick are
+// both ready and a select takes either; the file is rewritten while the
+// callback blocks, so a poller that took the tick published the rewrite and
+// ran the callbacks again, after Close had returned. Repeated because a select
+// that does not put the stop first still took it about two runs in three.
+func TestConfigWatcherAbandonedPollerStartsNoReload(t *testing.T) {
+	swapForTest(t, &shutdownTimeout, 50*time.Millisecond)
+
+	for run := 0; run < 20; run++ {
+		path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+		writeConfigRate(t, path, 1)
+
+		config, err := NewConfig(WithAppName("watcher-abandon"), WithConfigFile(path))
+		require.NoError(t, err)
+		done := requireWatcher(t, config)
+
+		var calls atomic.Int32
+		entered, release := make(chan struct{}), make(chan struct{})
+		config.AddReloadCallback([]string{CfgSamplingCounterRate}, func() {
+			if calls.Add(1) == 1 {
+				close(entered)
+				<-release
+			}
+		})
+
+		writeConfigRate(t, path, 2)
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("reload callback never ran")
+		}
+		config.Close() // gives up after shutdownTimeout
+
+		// Another size, so the stamp differs whatever the mtime granularity.
+		writeConfigRate(t, path, 30)
+		close(release)
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("abandoned watcher goroutine never exited")
+		}
+		require.Equal(t, 2, config.Int(CfgSamplingCounterRate), "run %d: the abandoned poller reloaded after Close returned", run)
+		require.EqualValues(t, 1, calls.Load(), "run %d: the callbacks ran again after Close returned", run)
+	}
+}
+
+// panicOnceHook is a log hook of the host application's that fails: it panics
+// on the first line containing substr and is harmless from then on, so the
+// line that reports the recovered panic goes through.
+type panicOnceHook struct {
+	substr string
+	fired  atomic.Bool
+}
+
+func (h *panicOnceHook) Levels() []logrus.Level { return logrus.AllLevels }
+
+func (h *panicOnceHook) Fire(e *logrus.Entry) error {
+	if strings.Contains(e.Message, h.substr) && h.fired.CompareAndSwap(false, true) {
+		panic("log hook failure")
+	}
+	return nil
+}
+
+// panicOnLog installs a panicOnceHook for substr on the extra logger, which
+// gets every agent log line, until the test ends.
+func panicOnLog(t *testing.T, substr string) *panicOnceHook {
+	t.Helper()
+	hook := &panicOnceHook{substr: substr}
+	extra := logrus.New()
+	extra.SetOutput(io.Discard)
+	extra.AddHook(hook)
+	prev := logger.extraLogger.Load()
+	SetExtraLogger(extra)
+	t.Cleanup(func() { logger.extraLogger.Store(prev) })
+	return hook
+}
+
+// The poller is an agent goroutine inside the host process, and its reload
+// path parses an operator's file and logs through the host's hooks. A panic
+// there - here the hook failing on the warning for a value of the wrong type -
+// must not end the process or the poller, and must not leave config.mu held:
+// the next rewrite of the file is still applied.
+func TestConfigWatcherSurvivesReloadPanic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	writeConfigRate(t, path, 1)
+
+	config, err := NewConfig(WithAppName("watcher-panic"), WithConfigFile(path))
+	require.NoError(t, err)
+	done := requireWatcher(t, config)
+	t.Cleanup(config.Close)
+
+	hook := panicOnLog(t, "is not a valid")
+	require.NoError(t, os.WriteFile(path, []byte("Sampling:\n  CounterRate: abc\n"), 0o600))
+	require.Eventually(t, hook.fired.Load, 2*time.Second, 5*time.Millisecond, "the reload never reached the failing hook")
+
+	writeConfigRate(t, path, 7)
+	require.Eventually(t, func() bool {
+		return config.Int(CfgSamplingCounterRate) == 7
+	}, 2*time.Second, 10*time.Millisecond, "the poller stopped reloading after a panic")
+	select {
+	case <-done:
+		t.Fatal("the poller exited on the panic")
+	default:
+	}
+}
+
+// NewAgent reloads the file on its caller's goroutine, where a panic is the
+// caller's to recover. Whoever recovers it, the lock the reload staged under
+// must be free again, or every later Set, AddReloadCallback and reload blocks.
+func TestReloadConfigPanicReleasesConfigLock(t *testing.T) {
+	config, err := NewConfig(WithAppName("reload-panic"))
+	require.NoError(t, err)
+
+	path := filepath.Join(t.TempDir(), "pinpoint-config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("Sampling:\n  CounterRate: abc\n"), 0o600))
+
+	panicOnLog(t, "is not a valid")
+	require.Panics(t, func() { config.reloadConfig(newConfigFile(path)) })
+	require.True(t, config.mu.TryLock(), "the panic left config.mu held")
+	config.mu.Unlock()
 }

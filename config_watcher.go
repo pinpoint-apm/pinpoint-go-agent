@@ -28,9 +28,11 @@ func (config *Config) Close() {
 	// callback. Callbacks are caller-supplied (see AddReloadCallback) and Close
 	// is on the Shutdown path, so bound the wait the same way the worker drain
 	// is bounded - a slow callback must not keep the process alive. The
-	// abandoned goroutine only has to finish the callback in flight before it
-	// sees the stop; it publishes nothing after the timeout, having published
-	// before the callbacks ran.
+	// abandoned goroutine finishes the reload it is in - the remaining
+	// callbacks of a generation it already published, which nothing would
+	// deliver later: the next reload compares against that generation and
+	// finds nothing changed - and then exits on the stop without starting
+	// another (see pollConfigFile).
 	close(config.watcherStop)
 	timer := time.NewTimer(shutdownTimeout)
 	select {
@@ -85,6 +87,16 @@ func (config *Config) pollConfigFile(stop, done chan struct{}, f *configFile, la
 			return
 		case <-ticker.C:
 		}
+		// The stop outranks a tick. A select with both ready takes either, and
+		// both are ready whenever a reload outlasted the poll interval - every
+		// time, that is, Close gave up on a slow callback. Taking the tick
+		// then reloaded a file rewritten in the meantime: a publish and a round
+		// of callbacks after Close, and Shutdown with it, had returned.
+		select {
+		case <-stop:
+			return
+		default:
+		}
 		// A file that is missing right now - an unlink+rewrite saver between
 		// its two steps - keeps the old stamp, so the rewrite is seen as a
 		// change on a later tick. So does an empty one, a truncate+write saver
@@ -97,7 +109,12 @@ func (config *Config) pollConfigFile(stop, done chan struct{}, f *configFile, la
 			continue
 		}
 		last = stamp
-		config.reloadConfig(f)
+		// Recovered like the workers are (see superviseWorker): this goroutine
+		// parses a file an operator edits and logs through whatever hooks the
+		// host installed, and a panic there took the host process down. The
+		// poller carries on: last already holds this stamp, so the contents
+		// that panicked are not read again until the file changes.
+		recoverPanic("config file watcher", func() { config.reloadConfig(f) })
 	}
 }
 

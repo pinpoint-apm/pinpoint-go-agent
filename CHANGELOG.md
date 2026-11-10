@@ -535,6 +535,20 @@ purpose: `go get -u` keeps it on v1. What to change, in order, is in
   `Log.MaxBackups` of 0, a negative `SQL.MaxBindValueSize` - was compared as
   the file spells it against the normalized one, so every reload of an
   unchanged file re-ran the logger's and the HTTP plugin's reload callbacks.
+- **A panic while the config file is reloaded no longer ends the host
+  process.** The file poller recovered a panic in a reload callback only: one
+  raised while the file was parsed or applied - a log hook of the application's
+  failing on the warning for a value of the wrong type, say - unwound the
+  poller's goroutine and the process with it. The poller now recovers it, logs
+  it and keeps watching the file, and the reload releases the `Config` lock on
+  the way out, so a later `Set`, `AddReloadCallback` or reload does not block.
+- **A config file poller that `Config.Close` gave up on starts no further
+  reload.** `Close`, and `Shutdown` through it, waits 3 seconds for a reload
+  callback in progress and then returns. When the file was rewritten in the
+  meantime, the poller left behind reloaded it once the callback returned,
+  about one time in three: new values were published and the callbacks ran
+  after `Shutdown` had returned. It now finishes the callbacks of the reload
+  it was in and exits.
 - **`ppkratos` and `ppkratosv3` continue a trace whose `Pinpoint-SpanID` a
   proxy blanked.** They read a header's presence from
   `transport.Header.Values`; reading the value alone, a blank span id started

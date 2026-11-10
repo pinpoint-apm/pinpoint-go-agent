@@ -1579,11 +1579,30 @@ func (config *Config) AddReloadCallback(optNames []string, callback func()) {
 }
 
 func (config *Config) reloadConfig(f *configFile) {
-	config.mu.Lock()
-	if err := f.read(); err != nil {
-		config.mu.Unlock()
+	callback, changed, err := config.publishFile(f)
+	if err != nil {
 		Log("config").Errorf("config file reloading error: %v", err)
 		return
+	}
+	// Callbacks read the config they were just given a new generation of, and
+	// may register further callbacks, so they run off a copy with the lock
+	// released.
+	for _, cb := range callback {
+		cb.do(changed)
+	}
+}
+
+// publishFile re-reads f and publishes the dynamic options it changed, under
+// config.mu, and returns the callbacks to run with the options that changed.
+// The lock is released by defer, as in stageYAML: a panic here is recovered by
+// the config file poller, or by the caller of NewAgent, and one that left the
+// lock held blocked every later Set, AddReloadCallback and reload for good.
+func (config *Config) publishFile(f *configFile) ([]reloadCallback, map[string]bool, error) {
+	config.mu.Lock()
+	defer config.mu.Unlock()
+
+	if err := f.read(); err != nil {
+		return nil, nil, err
 	}
 
 	sources := &cfgSources{file: f}
@@ -1601,15 +1620,7 @@ func (config *Config) reloadConfig(f *configFile) {
 			changed[k] = true
 		}
 	}
-	// Callbacks read the config they were just given a new generation of, and
-	// may register further callbacks, so run them off a copy with the lock
-	// released.
-	callback := slices.Clone(config.callback)
-	config.mu.Unlock()
-
-	for _, cb := range callback {
-		cb.do(changed)
-	}
+	return slices.Clone(config.callback), changed, nil
 }
 
 // restage re-reads the dynamic options and ActiveProfile from sources. With
